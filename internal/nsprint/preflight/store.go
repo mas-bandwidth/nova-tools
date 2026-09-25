@@ -22,8 +22,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Windows from #2756: a starting reservation is released at 60 s (the start
-// window), a living lease is stale at 120 s (2x the 60 s beat), the
+// Windows from #2756: a dealt or claimed reservation is released at 60 s (the
+// start window), a running lease is stale at 120 s (2x the 60 s beat), the
 // reconciler lease has a 6 s TTL and passes at least every 20 s, and a
 // retired file touched inside 10 minutes means something still writes it.
 const (
@@ -341,7 +341,15 @@ func consumers(ctx context.Context, c *redis.Client) ([]consumer, error) {
 	return out, nil
 }
 
-// 7.3: leased is not equal to living beats past the start window (Johnny 10).
+// 7.3: a lease in a consumer's one working set (<consumer>:cards:working,
+// #3998) that is past its start window or its beat (Johnny 10). Each member
+// is judged by its own record, read in one pipeline: a sprint card
+// (s:<S>:card:<label>) dealt past the start window is late, launched or
+// running with no beat (beat_at, else launched_at) inside BeatStale is
+// stale; a friend-queue lease (<S>/<id>/<attempt>, s:<S>:task:<id>) claimed
+// past the start window is late, working with no beat inside BeatStale
+// stale; a copy or task card (task:<id>) whose lease_until has passed is
+// stale.
 func checkLeases(ctx context.Context, c *redis.Client) Line {
 	const n, name = "7.3", "leases-vs-beats"
 	now, err := c.Time(ctx).Result()
@@ -353,45 +361,99 @@ func checkLeases(ctx context.Context, c *redis.Client) Line {
 		return redLine(n, name, err)
 	}
 	pipe := c.Pipeline()
-	starting := make([]*redis.ZSliceCmd, len(cs))
-	living := make([]*redis.ZSliceCmd, len(cs))
+	working := make([]*redis.StringSliceCmd, len(cs))
 	for i, k := range cs {
-		starting[i] = pipe.ZRangeWithScores(ctx, k.kind+":"+k.name+":starting", 0, -1)
-		living[i] = pipe.ZRangeWithScores(ctx, k.kind+":"+k.name+":living", 0, -1)
+		working[i] = pipe.ZRange(ctx, k.kind+":"+k.name+":cards:working", 0, -1)
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return redLine(n, name, err)
 	}
-	var reds []string
-	leased, beats := 0, 0
-	for i, k := range cs {
-		late, stale := 0, 0
-		for _, z := range starting[i].Val() {
-			if now.Sub(stamp(z.Score)) > StartWindow {
-				late++
+	type probe struct {
+		consumer int
+		kind     string // card, lease, task
+		fields   *redis.SliceCmd
+	}
+	var probes []probe
+	pipe = c.Pipeline()
+	for i := range cs {
+		for _, m := range working[i].Val() {
+			switch {
+			case strings.HasPrefix(m, "s:") && strings.Contains(m, ":card:"):
+				probes = append(probes, probe{i, "card", pipe.HMGet(ctx, m, "state", "dealt_at", "beat_at", "launched_at")})
+			case strings.Count(m, "/") == 2:
+				parts := strings.SplitN(m, "/", 3)
+				probes = append(probes, probe{i, "lease", pipe.HMGet(ctx, "task:"+parts[1], "state", "claimed_at", "beat_at")})
+			default:
+				probes = append(probes, probe{i, "task", pipe.HMGet(ctx, "task:"+m, "lease_until")})
 			}
-		}
-		for _, z := range living[i].Val() {
-			if now.Sub(stamp(z.Score)) > BeatStale {
-				stale++
-			}
-		}
-		leased += len(starting[i].Val()) + len(living[i].Val())
-		beats += len(living[i].Val()) - stale
-		var why []string
-		if late > 0 {
-			why = append(why, fmt.Sprintf("%d starting past %s", late, wholeSecs(StartWindow)))
-		}
-		if stale > 0 {
-			why = append(why, fmt.Sprintf("%d living beat past %s", stale, wholeSecs(BeatStale)))
-		}
-		if len(why) > 0 {
-			reds = append(reds, fmt.Sprintf("%s %s %s (leased %d, living beats %d)", k.kind, k.name,
-				strings.Join(why, ", "), len(starting[i].Val())+len(living[i].Val()), len(living[i].Val())-stale))
 		}
 	}
-	return verdict(n, name, reds, fmt.Sprintf("%d consumers, leased %d, living beats %d, no reservation past %s and no beat past %s",
-		len(cs), leased, beats, wholeSecs(StartWindow), wholeSecs(BeatStale)))
+	if len(probes) > 0 {
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return redLine(n, name, err)
+		}
+	}
+	late, stale := make([]int, len(cs)), make([]int, len(cs))
+	str := func(v any) string { s, _ := v.(string); return s }
+	older := func(v any, window time.Duration) bool {
+		at, ok := parseStamp(str(v))
+		return ok && now.Sub(at) > window
+	}
+	for _, p := range probes {
+		v := p.fields.Val()
+		switch p.kind {
+		case "card":
+			switch str(v[0]) {
+			case "dealt":
+				if older(v[1], StartWindow) {
+					late[p.consumer]++
+				}
+			case "launched", "running":
+				last := v[2]
+				if str(last) == "" {
+					last = v[3]
+				}
+				if older(last, BeatStale) {
+					stale[p.consumer]++
+				}
+			}
+		case "lease":
+			switch str(v[0]) {
+			case "claimed":
+				if older(v[1], StartWindow) {
+					late[p.consumer]++
+				}
+			case "working":
+				if older(v[2], BeatStale) {
+					stale[p.consumer]++
+				}
+			}
+		default:
+			if older(v[0], 0) {
+				stale[p.consumer]++
+			}
+		}
+	}
+	var reds []string
+	leased, live := 0, 0
+	for i, k := range cs {
+		held := len(working[i].Val())
+		leased += held
+		live += held - late[i] - stale[i]
+		var why []string
+		if late[i] > 0 {
+			why = append(why, fmt.Sprintf("%d dealt or claimed past %s", late[i], wholeSecs(StartWindow)))
+		}
+		if stale[i] > 0 {
+			why = append(why, fmt.Sprintf("%d with no beat past %s or a lapsed lease", stale[i], wholeSecs(BeatStale)))
+		}
+		if len(why) > 0 {
+			reds = append(reds, fmt.Sprintf("%s %s %s (working %d, live %d)", k.kind, k.name,
+				strings.Join(why, ", "), held, held-late[i]-stale[i]))
+		}
+	}
+	return verdict(n, name, reds, fmt.Sprintf("%d consumers, working %d, live %d, nothing dealt past %s and no beat past %s",
+		len(cs), leased, live, wholeSecs(StartWindow), wholeSecs(BeatStale)))
 }
 
 // 7.7: the reconciler lease is missing or stale, or its last pass is old. A

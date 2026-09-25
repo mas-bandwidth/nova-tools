@@ -88,7 +88,7 @@ func fleetFixture(t *testing.T) (*miniredis.Miniredis, string, time.Time) {
 			"disk_gib", "812")
 		mr.HSet("bench:"+b+":desired", "slots", "24", "paused", "0")
 	}
-	mr.ZAdd("bench:hulk:living", 1, "card-1")
+	mr.ZAdd("bench:hulk:cards:working", 1, "card-1")
 	mr.SAdd("sprints", "s1", "s0")
 	mr.HSet("s:s1", "status", "open")
 	mr.HSet("s:s0", "status", "closed")

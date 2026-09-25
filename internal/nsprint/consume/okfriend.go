@@ -520,18 +520,17 @@ func (o *OkFriend) census(ctx context.Context) (*readerCensus, error) {
 	c.secPrefixes = strings.FieldsFunc(policy["security_paths"], func(r rune) bool { return r == ' ' || r == ',' })
 	pipe := client.Pipeline()
 	type row struct {
-		beat          *redis.IntCmd
-		desired       *redis.SliceCmd
-		start, living *redis.IntCmd
-		open          *redis.IntCmd
+		beat    *redis.IntCmd
+		desired *redis.SliceCmd
+		working *redis.IntCmd
+		open    *redis.IntCmd
 	}
 	rows := make([]row, len(names))
 	for i, f := range names {
 		rows[i] = row{
 			beat:    pipe.Exists(ctx, "friend:"+f+":beat"),
 			desired: pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "paused"),
-			start:   pipe.ZCard(ctx, "friend:"+f+":starting"),
-			living:  pipe.ZCard(ctx, "friend:"+f+":living"),
+			working: pipe.ZCard(ctx, "friend:"+f+":cards:working"),
 			open:    pipe.ZCard(ctx, "s:"+o.Sprint+":open:"+f),
 		}
 	}
@@ -551,7 +550,7 @@ func (o *OkFriend) census(ctx context.Context) (*readerCensus, error) {
 			continue
 		}
 		c.friends = append(c.friends, f)
-		c.load[f] = int(r.start.Val() + r.living.Val() + r.open.Val())
+		c.load[f] = int(r.working.Val() + r.open.Val())
 	}
 	return c, nil
 }

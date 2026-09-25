@@ -39,8 +39,6 @@ type Policy struct {
 type Fillstate struct {
 	Friend        string
 	Slots         int
-	Starting      int
-	Living        int
 	Leased        int
 	Working       int
 	Deficit       int
@@ -58,10 +56,10 @@ type Fillstate struct {
 // Line returns the WIDTH row string. If stale (> 3s old), prints "?" for all fields.
 func (fs Fillstate) Line(nowMs int64) string {
 	if fs.At == 0 || nowMs-fs.At > 3000 {
-		return fmt.Sprintf("WIDTH %s slots=? starting=? living=? leased=? working=? deficit=? eligible=? idle=? peak=?@? at=?", fs.Friend)
+		return fmt.Sprintf("WIDTH %s slots=? leased=? working=? deficit=? eligible=? idle=? peak=?@? at=?", fs.Friend)
 	}
-	return fmt.Sprintf("WIDTH %s slots=%d starting=%d living=%d leased=%d working=%d deficit=%d eligible=%d idle=%s peak=%d@%d at=%d",
-		fs.Friend, fs.Slots, fs.Starting, fs.Living, fs.Leased, fs.Working, fs.Deficit, fs.Eligible, fs.IdleString(), fs.Peak, fs.PeakAt, fs.At)
+	return fmt.Sprintf("WIDTH %s slots=%d leased=%d working=%d deficit=%d eligible=%d idle=%s peak=%d@%d at=%d",
+		fs.Friend, fs.Slots, fs.Leased, fs.Working, fs.Deficit, fs.Eligible, fs.IdleString(), fs.Peak, fs.PeakAt, fs.At)
 }
 
 // UnmeasuredLine is the WIDTH row for a friend that has declared slots in
@@ -72,7 +70,7 @@ func UnmeasuredLine(friend, slots string) string {
 	if _, err := strconv.Atoi(slots); err != nil {
 		slots = "?"
 	}
-	return fmt.Sprintf("WIDTH %s slots=%s starting=? living=? leased=? working=? deficit=? eligible=? idle=? peak=?@? at=?", friend, slots)
+	return fmt.Sprintf("WIDTH %s slots=%s leased=? working=? deficit=? eligible=? idle=? peak=?@? at=?", friend, slots)
 }
 
 // IdleString formats the typed idle counts into <reason>:<n>,...
@@ -104,8 +102,6 @@ func FleetLine(working, slots, deficit int) string {
 // ParseFillstate parses a Redis HGetAll map into a Fillstate struct.
 func ParseFillstate(friend string, m map[string]string) Fillstate {
 	slots, _ := strconv.Atoi(m["slots"])
-	starting, _ := strconv.Atoi(m["starting"])
-	living, _ := strconv.Atoi(m["living"])
 	leased, _ := strconv.Atoi(m["leased"])
 	working, _ := strconv.Atoi(m["working"])
 	deficit, _ := strconv.Atoi(m["deficit"])
@@ -122,8 +118,6 @@ func ParseFillstate(friend string, m map[string]string) Fillstate {
 	return Fillstate{
 		Friend:        friend,
 		Slots:         slots,
-		Starting:      starting,
-		Living:        living,
 		Leased:        leased,
 		Working:       working,
 		Deficit:       deficit,

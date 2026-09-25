@@ -321,7 +321,7 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if typed != nil && typed.Verdict == "HOLD" && typed.Kind == "" {
 		// The classifier names another pull by number, so it needs the
 		// task's PR.
-		prText, err := st.Client().HGet(ctx, "s:"+*sprint+":task:"+*id, "pr").Result()
+		prText, err := st.Client().HGet(ctx, "task:"+*id, "pr").Result()
 		if err != nil && !errors.Is(err, redis.Nil) {
 			return refuse(errOut, "task done", err.Error())
 		}

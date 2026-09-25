@@ -101,7 +101,7 @@ func seedCarry(t *testing.T, ctx context.Context, client *redis.Client, r carryR
 	pipe.HSet(ctx, land.ReadKey(S, carryUnit, "emma"), "seq", "5", "head", r.a, "verdict", "APPROVE", "score", "10", "kind", "", "at", "1")
 	pipe.HSet(ctx, "s:"+S+":disp:nova-tools:7", "emma@"+r.a, "APPROVE 10 https://example.com/r 1")
 	tA := task.ReviewID(carryRepoN, carryPR, r.a, "emma")
-	pipe.HSet(ctx, "s:"+S+":task:"+tA, "state", "done", "kind", "review", "repo", carryRepoN, "pr", "7", "head", r.a)
+	pipe.HSet(ctx, "task:"+tA, "state", "done", "kind", "review", "repo", carryRepoN, "pr", "7", "head", r.a)
 	seedCI(ctx, pipe, carryRepoN, newHead)
 	pipe.XAdd(ctx, &redis.XAddArgs{Stream: "s:" + S + ":log", Values: []any{
 		"kind", "pr head", "repo", carryRepoN, "pr", "7", "head", newHead, "prev", r.a, "source", "ls-remote", "at", "1"}})
@@ -152,7 +152,7 @@ func TestHeadChangeCarriesRead(t *testing.T) {
 			if v := client.HGet(ctx, "s:"+carrySprint+":disp:nova-tools:7", "emma@"+r.b).Val(); v == "" {
 				t.Fatal("no disp row at the new head")
 			}
-			if n := client.Exists(ctx, "s:"+carrySprint+":task:"+task.ReviewID(carryRepoN, carryPR, r.b, "emma")).Val(); n != 0 {
+			if n := client.Exists(ctx, "task:"+task.ReviewID(carryRepoN, carryPR, r.b, "emma")).Val(); n != 0 {
 				t.Fatal("a re-read was queued for emma at the new head")
 			}
 			if v := client.HGet(ctx, land.UnitKey(carrySprint, carryUnit), line.FieldHead).Val(); v != r.b {
@@ -186,7 +186,7 @@ func TestHeadChangeRefusesChangedDiff(t *testing.T) {
 	if h := client.HGet(ctx, land.ReadKey(carrySprint, carryUnit, "emma"), "head").Val(); h != r.a {
 		t.Fatalf("read head %q moved on a changed diff", h)
 	}
-	if s := client.HGet(ctx, "s:"+carrySprint+":task:"+task.ReviewID(carryRepoN, carryPR, r.c, "emma"), "state").Val(); s != "open" {
+	if s := client.HGet(ctx, "task:"+task.ReviewID(carryRepoN, carryPR, r.c, "emma"), "state").Val(); s != "open" {
 		t.Fatalf("emma's re-read at the new head state %q, want open", s)
 	}
 	if s := client.HGet(ctx, "s:"+carrySprint+":card:"+carryLabel, "state").Val(); s != "review-ready" {
@@ -210,7 +210,7 @@ func TestHeadChangeNoMirrorQueuesReRead(t *testing.T) {
 	if !strings.Contains(out.String(), "CARRY SKIPPED nova-tools#7 why=no mirror of nova-tools\n") {
 		t.Fatalf("no SKIPPED line:\n%s", out.String())
 	}
-	if s := client.HGet(ctx, "s:"+carrySprint+":task:"+task.ReviewID(carryRepoN, carryPR, r.b, "emma"), "state").Val(); s != "open" {
+	if s := client.HGet(ctx, "task:"+task.ReviewID(carryRepoN, carryPR, r.b, "emma"), "state").Val(); s != "open" {
 		t.Fatalf("emma's re-read state %q, want open", s)
 	}
 }

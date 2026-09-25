@@ -33,7 +33,7 @@ func newOneStore(t *testing.T) *oneStore {
 	return fx
 }
 
-func (fx *oneStore) key(id string) string { return "s:" + fx.S + ":task:" + id }
+func (fx *oneStore) key(id string) string { return "task:" + id }
 
 func (fx *oneStore) push(id, to string, mod func(*task.PushRequest)) task.PushResult {
 	fx.t.Helper()
@@ -272,8 +272,9 @@ func TestOneTaskStoreControls(t *testing.T) {
 		fx.wantCall("down a", func() (task.Reply, error) { return task.FriendDown(fx.ctx, fx.st, "a", true, "gone", "c", "") }, "DOWN")
 		r, err = task.Move(fx.ctx, fx.st, fx.S, "m2", "b", "c", "")
 		fx.want("move of a down owner's lease", r, err, "MOVED")
-		if fx.state("m2") != "open" || fx.field("m2", "owner") != "" || !contains(fx.queue("b"), "m2") ||
-			fx.client.ZCard(fx.ctx, "friend:a:starting").Val() != 0 {
+		// one store (#3778): the card names the friend whose queue it is on
+		if fx.state("m2") != "open" || fx.field("m2", "owner") != "b" || !contains(fx.queue("b"), "m2") ||
+			fx.client.ZCard(fx.ctx, "friend:a:cards:working").Val() != 0 {
 			t.Fatal("down owner's lease did not reopen on b")
 		}
 		if got, _ := task.Done(fx.ctx, fx.st, task.DoneRequest{Sprint: fx.S, ID: "m2", Token: claim.Token, Evidence: "late"}); got != task.DoneFenced {

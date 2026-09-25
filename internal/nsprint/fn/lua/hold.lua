@@ -208,36 +208,34 @@ do
   -- create_task is ns_task_push's create-only write with its field set; the
   -- payload sha comes from the Go caller (task.PayloadSHA).
   local function create_task(S, c, repo, pr, head, actor, idem, at)
-    local key = 's:' .. S .. ':task:' .. c.id
+    local key = 'task:' .. c.id
     if redis.call('EXISTS', key) == 1 then
       return 'EXISTS'
     end
-    redis.call('HSET', key,
+    local err = NS.task.create(c.id, {
       'kind', c.kind, 'repo', repo, 'ref', repo .. '#' .. pr, 'pr', pr, 'head', head,
-      'title', c.title, 'effects', 'none', 'owner', '', 'priority', '1',
-      'state', 'open', 'attempt', '0', 'token', '0', 'payload_sha', c.sha,
+      'title', c.title, 'effects', 'none', 'priority', '1',
+      'attempt', '0', 'token', '0', 'payload_sha', c.sha,
       'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
       'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '',
-      'est', '', 'pushed_at', tostring(at))
-    redis.call('ZADD', 's:' .. S .. ':open:' .. c.to, -1, c.id)
-    redis.call('SADD', 's:' .. S .. ':idx:task:open', c.id)
+      'est', '', 'pushed_at', tostring(at), 'dest', c.to },
+      { where = 'ready', state = 'open', friend = c.to, sprint = S, qscore = -1, created = at, by = actor, why = 'hold-route' })
+    if err then
+      return 'EXISTS'
+    end
     receipt(S, 'task push', c.id, '', 'open', actor, 'hold-route', '', idem, at)
     return 'CREATED'
   end
 
   local function close_task(S, id, to, evidence, actor, at)
-    local key = 's:' .. S .. ':task:' .. id
+    local key = 'task:' .. id
     local state = redis.call('HGET', key, 'state')
     if not state or state == 'closed' or state == 'cancelled' then
       return false
     end
-    redis.call('HSET', key, 'state', 'closed', 'evidence', evidence, 'closed_at', tostring(at))
-    redis.call('SREM', 's:' .. S .. ':idx:task:open', id)
-    redis.call('SREM', 's:' .. S .. ':idx:task:claimed', id)
-    redis.call('SREM', 's:' .. S .. ':idx:task:working', id)
-    redis.call('SADD', 's:' .. S .. ':idx:task:closed', id)
-    if to and to ~= '' then
-      redis.call('ZREM', 's:' .. S .. ':open:' .. to, id)
+    if NS.task.set(id, 'closed', { sprint = S, by = actor, why = evidence,
+        fields = { 'evidence', evidence, 'closed_at', tostring(at) } }) then
+      return false
     end
     receipt(S, 'task done', id, state, 'closed', actor, 'hold-route repair', evidence, '', at)
     return true
@@ -281,7 +279,7 @@ do
     for _, idx in ipairs(LIVE_FIX_IDX) do
       for _, id in ipairs(redis.call('SMEMBERS', 's:' .. S .. ':idx:task:' .. idx)) do
         if string.sub(id, 1, #prefix) == prefix then
-          local st = redis.call('HGET', 's:' .. S .. ':task:' .. id, 'state')
+          local st = redis.call('HGET', 'task:' .. id, 'state')
           if st and st ~= 'closed' and st ~= 'cancelled' then
             return id
           end
@@ -377,7 +375,7 @@ do
         return { 'GONE' }
       end
       for _, c in ipairs(cands) do
-        if recorded or redis.call('EXISTS', 's:' .. S .. ':task:' .. c.id) == 1 then
+        if recorded or redis.call('EXISTS', 'task:' .. c.id) == 1 then
           redis.call('HDEL', parks, park_field)
           return { 'OWNED' }
         end
@@ -385,7 +383,7 @@ do
     else
       if recorded then
         local rid = string.match(recorded, '^(%S+)')
-        if redis.call('EXISTS', 's:' .. S .. ':task:' .. rid) == 1 then
+        if redis.call('EXISTS', 'task:' .. rid) == 1 then
           return finish('OWNED')
         end
         -- Recovery (a): owner field present, no task hash -> push the recorded id.
@@ -398,7 +396,7 @@ do
         end
       end
       for _, c in ipairs(cands) do
-        if redis.call('EXISTS', 's:' .. S .. ':task:' .. c.id) == 1 then
+        if redis.call('EXISTS', 'task:' .. c.id) == 1 then
           -- Recovery (b): task present, no owner field -> write the owner.
           redis.call('HSET', owners, owner_field, c.id .. ' ' .. at .. ' ' .. c.to)
           return finish('OWNER ' .. c.id)

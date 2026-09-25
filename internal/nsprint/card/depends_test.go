@@ -57,7 +57,7 @@ func TestCardPushAcceptsEveryDependsOnForm(t *testing.T) {
 	mustPush(t, ctx, client, parent.render(), "pool")
 	// Task and stream records must exist at push; open ones park the card.
 	client.HSet(ctx, "s:"+sprint+":stream:nova-pulse", "state", "open")
-	client.HSet(ctx, "s:"+sprint+":task:build-index", "state", "open")
+	client.HSet(ctx, "task:build-index", "state", "open")
 
 	cases := []struct {
 		label string
@@ -123,7 +123,7 @@ func TestCardReleaseFreesOnDoneTask(t *testing.T) {
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
-	client.HSet(ctx, "s:"+sprint+":task:build-index", "state", "open")
+	client.HSet(ctx, "task:build-index", "state", "open")
 	f := validCard(srv.URL + "/acme/public.git")
 	f.label, f.depends = "wait-task", "task:build-index"
 	mustPush(t, ctx, client, f.render(), "waiting")
@@ -133,7 +133,7 @@ func TestCardReleaseFreesOnDoneTask(t *testing.T) {
 	if res.Code != 0 || !strings.Contains(res.Stdout, "moved=0 waiting=1") {
 		t.Fatalf("open task release: exit %d stdout %q stderr %q", res.Code, res.Stdout, res.Stderr)
 	}
-	client.HSet(ctx, "s:"+sprint+":task:build-index", "state", "closed")
+	client.HSet(ctx, "task:build-index", "state", "closed")
 	res = card.ReleaseWith(ctx, client, sprint, refs)
 	if res.Code != 0 || !strings.Contains(res.Stdout, "moved=1 waiting=0") {
 		t.Fatalf("done task release: exit %d stdout %q stderr %q", res.Code, res.Stdout, res.Stderr)
@@ -207,13 +207,13 @@ func TestCardPushRefusesUnknownTaskAndStream(t *testing.T) {
 		{label: "cancelled-task-child", dep: "task:cancelled-task", seed: "cancelled-task",
 			want: "DEPENDS-ON: task:cancelled-task is cancelled in sprint " + sprint + " and will never finish"},
 		{label: "unknown-task-child", dep: "task:missing-task",
-			want: "DEPENDS-ON: task:missing-task has no record s:" + sprint + ":task:missing-task in sprint " + sprint},
+			want: "DEPENDS-ON: task:missing-task has no record task:missing-task in sprint " + sprint},
 		{label: "unknown-stream-child", dep: "stream/missing-stream",
 			want: "DEPENDS-ON: stream/missing-stream has no record s:" + sprint + ":stream:missing-stream in sprint " + sprint},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			if tc.seed != "" {
-				if err := client.HSet(ctx, "s:"+sprint+":task:"+tc.seed, "state", "cancelled").Err(); err != nil {
+				if err := client.HSet(ctx, "task:"+tc.seed, "state", "cancelled").Err(); err != nil {
 					t.Fatal(err)
 				}
 			}

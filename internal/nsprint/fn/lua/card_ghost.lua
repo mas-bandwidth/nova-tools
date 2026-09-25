@@ -3,35 +3,36 @@
 -- showing up, and make sure that the fleet table is accurate?"
 --
 -- Found that day: bench:<b>:cards:ready on six benches held cards of a
--- closed sprint forever, and bench:hetzner:living held three leases of
+-- closed sprint forever, and bench:hetzner's old lease ledger held three leases of
 -- fleet-probe cards nothing ever released, so the bench ran 2 of 5 slots.
 -- This file is the three things that retire them (the record is the truth):
 --
 --   retire     every card of a closed sprint that is not done moves to
 --              done/fail (state superseded, reason sprint-closed, token
 --              cleared so a still-running wrapper's next beat is FENCED)
---              through NS.card.move, and its bench leases go; sprint close
+--              through NS.card.move (which takes it out of its bench's
+--              one lease ledger, bench:<b>:cards:working, #3998); sprint close
 --              (sprint.lua) calls it in the same call, and ns_sprint_retire
 --              is the fenced duty form for a sprint closed by any path.
---   lease reap ns_lease_reap walks bench:<b>:starting and :living of every
---              registered bench and drops an entry whose card record is gone,
---              names another attempt, is past running, sits in a closed
---              sprint, or has not beaten for stale_ms (90 s; a DOWN bench
---              keeps the leases of its live cards); fenced by the reconciler
---              token, one cap:log slot-freed receipt per bench.
+--   lease reap ns_lease_reap walks the one lease ledger of every registered
+--              bench, bench:<b>:cards:working (#3998: the two old lease
+--              ledgers are folded into it; only the move writes it), and
+--              frees the slot of a card that sits in a closed sprint by
+--              retiring the card through NS.card.move; fenced by the
+--              reconciler token, one cap:log slot-freed receipt per bench.
+--              A member whose record is gone or names another bench is card
+--              fsck's repair (the fsck duty), and a live card with no beat
+--              is the expire sweep's beat-lost reclaim: neither is a lease
+--              this file may drop, since it writes no table set.
 --   discovery  ns_fsck_sprints names every sprint the fsck duty walks: the
 --              open ones (sprints), every one ever opened (sprint:order) and
 --              every sprint a card id in a bench, stream or friend view
 --              names, each with its status, read-only.
 --
--- The lease sets are not yet views of the one move (nova-tools#3929 folds
--- them into working): lease_drop below is the only place this file writes
--- them. The card itself moves only through NS.card.move.
+-- This file writes no table set: the card moves only through NS.card.move.
 do
 local CARD = NS.card
 local CG_PLACES = { 'waiting', 'ready', 'working', 'done', 'parked' }
--- Fine states that hold a lease slot; any other state's lease is a ghost.
-local CG_LIVE = { dealt = true, launched = true, running = true }
 -- Fine states that can never hold one again (the card moved on).
 local CG_PAST = {
   queued = true, ended = true, harvested = true, refused = true, ['review-ready'] = true,
@@ -56,14 +57,10 @@ local function cg_closed(S)
   return st ~= false and st ~= nil and st ~= 'open' and st ~= 'opening'
 end
 
-local function lease_drop(bench, member)
-  return redis.call('ZREM', 'bench:' .. bench .. ':starting', member) +
-    redis.call('ZREM', 'bench:' .. bench .. ':living', member)
-end
-
--- Retire one card of a closed sprint: its leases on its bench (every
--- attempt) and its bench queue entry go, and a card not yet done moves to
--- done/fail. A null card (created, in no set) is placed in waiting first.
+-- Retire one card of a closed sprint: its bench queue entry goes, and a card
+-- not yet done moves to done/fail (the move takes it out of its bench's
+-- cards:working, its lease). A null card (created, in no set) is placed in
+-- waiting first.
 -- Returns moved (bool), refusal (nil or text).
 local function cg_retire_card(S, id, by, at)
   local label = string.sub(id, #('s:' .. S .. ':card:') + 1)
@@ -71,7 +68,6 @@ local function cg_retire_card(S, id, by, at)
   if not c[4] then return false, 'NOCARD ' .. id end
   local bench = c[2] or ''
   if bench ~= '' then
-    for a = 1, tonumber(c[3]) or 0 do lease_drop(bench, S .. '/' .. label .. '/' .. a) end
     redis.call('ZREM', 's:' .. S .. ':bench:' .. bench .. ':queue', label)
   end
   if c[1] == 'done' then return false, nil end
@@ -98,30 +94,12 @@ local function cg_retire(S, by)
   return n, refused
 end
 
--- Why one lease entry is a ghost, or nil when it holds a live slot.
-local function cg_ghost(bench, member, score, stale_ms, now, down)
-  local S, label, attempt = string.match(member, '^([-a-z0-9]+)/([A-Za-z0-9][A-Za-z0-9._-]*)/([1-9][0-9]*)$')
-  -- A member in any other shape is not judged: no evidence is not negative
-  -- evidence.
-  if not S then return nil end
-  local id = 's:' .. S .. ':card:' .. label
-  local c = redis.call('HMGET', id, 'state', 'attempt', 'bench', 'beat_at', 'launched_at', 'dealt_at')
-  if not c[1] then return 'no-record' end
-  if cg_closed(S) then
-    if not CG_PAST[c[1]] then cg_retire_card(S, id, 'lease-reap', now) end
-    return 'sprint-closed'
-  end
-  if c[2] ~= attempt then return 'attempt ' .. tostring(c[2]) end
-  if (c[3] or '') ~= bench then return 'bench ' .. tostring(c[3]) end
-  if CG_PAST[c[1]] then return 'state ' .. c[1] end
-  if not CG_LIVE[c[1]] or down then return nil end
-  local last = tonumber(c[4]) or tonumber(c[5]) or tonumber(c[6]) or tonumber(score) or 0
-  if now - last >= stale_ms then return 'no-beat ' .. tostring(math.floor((now - last) / 1000)) .. 's' end
-  return nil
-end
-
--- ns_lease_reap(token, stale_ms): drop every ghost lease of every registered
--- bench. {'REAPED', n, '<bench> <member> <why>'...} or {'FENCED'}.
+-- ns_lease_reap(token, stale_ms): free every closed sprint's lease on every
+-- registered bench: a sprint card in bench:<b>:cards:working whose sprint is
+-- closed is retired (done/fail superseded, sprint-closed) through the move.
+-- stale_ms is checked for the caller's contract; the beat-lost reclaim is the
+-- expire sweep's. {'REAPED', n, '<bench> working <card> <why>'...} or
+-- {'FENCED'}.
 local function lease_reap(keys, args)
   if cg_fenced(args[1]) then return { 'FENCED' } end
   local stale_ms = tonumber(args[2])
@@ -131,19 +109,17 @@ local function lease_reap(keys, args)
   local benches = redis.call('SMEMBERS', 'benches')
   table.sort(benches)
   for _, b in ipairs(benches) do
-    local down = string.upper(redis.call('HGET', 'bench:' .. b .. ':state', 'state') or '') == 'DOWN'
     local freed = 0
-    for _, set in ipairs({ 'starting', 'living' }) do
-      local members = redis.call('ZRANGE', 'bench:' .. b .. ':' .. set, 0, -1, 'WITHSCORES')
-      for i = 1, #members, 2 do
-        -- Still there (a retire above may have dropped this card's other
-        -- entries), then judged; a closed sprint's card is retired in place.
-        local key = 'bench:' .. b .. ':' .. set
-        local why = redis.call('ZSCORE', key, members[i]) and cg_ghost(b, members[i], members[i + 1], stale_ms, now, down)
-        if why then
-          redis.call('ZREM', key, members[i])
-          freed = freed + 1
-          if #out < 52 then out[#out + 1] = b .. ' ' .. set .. ' ' .. members[i] .. ' ' .. why end
+    for _, id in ipairs(redis.call('ZRANGE', 'bench:' .. b .. ':cards:working', 0, -1)) do
+      local S = string.match(id, '^s:([-a-z0-9]+):card:[A-Za-z0-9][A-Za-z0-9._-]*$')
+      if S and cg_closed(S) then
+        local st = redis.call('HGET', id, 'state')
+        if st and not CG_PAST[st] then
+          local moved = cg_retire_card(S, id, 'lease-reap', now)
+          if moved then
+            freed = freed + 1
+            if #out < 52 then out[#out + 1] = b .. ' working ' .. id .. ' sprint-closed' end
+          end
         end
       end
     end

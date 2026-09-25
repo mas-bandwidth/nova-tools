@@ -42,6 +42,7 @@ const usage = `nova-card: the card wrapper; owns one card attempt on a bench (#3
 
 usage:
   nova-card <sprint>/<label>/<attempt>     (the launch line on stdin)
+  nova-card copy <copy>                    (the line <copy> <token> on stdin)
   nova-card version
   nova-card help
 
@@ -49,6 +50,13 @@ nova-card is started by ` + "`nova-sprint card launch --stdin`" + `, never by ha
 its stdin is the one line <sprint> <label> <attempt> <token>, and the line
 must name the card in argv. The token is read from stdin only and is never
 printed, passed to the harness, or written to a receipt (token_sha only).
+
+A consumer copy (#3998) runs the same way under ` + "`nova-card copy <copy>`" + `, started
+by the bench's copy session (` + "`nova-sprint card session --as bench:<b>`" + `) after
+one ` + "`card work --fill`" + `: its stdin line is <copy> <token>, its card is rendered
+from task:<copy>, it beats with card beat and ends with card end --id <copy>
+(unless the card ended itself). Its job and results paths use the sprint
+` + "`copies`" + ` and the label <primary>-c<n>.
 
 The bench configures it through the environment the launcher runs in:
   NOVA_CARD_REDIS    the sprint Redis address
@@ -101,6 +109,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 		}
 		fmt.Fprintln(stdout, buildinfo.Line("nova-card", version))
 		return 0
+	}
+	if args[0] == launch.CopyArg {
+		if len(args) != 2 {
+			return refuse(stderr, "copy wants one copy id: nova-card copy <primary>~<n>")
+		}
+		return runCopy(args[1], stdin, stdout, stderr, getenv, ack)
 	}
 	if len(args) != 1 {
 		return refuse(stderr, "wants one card <sprint>/<label>/<attempt>")
@@ -329,4 +343,51 @@ func cardFromArg(arg string) (launch.Line, bool) {
 func refuse(stderr io.Writer, why string) int {
 	fmt.Fprintf(stderr, "nova-card: %s; run: nova-card help\n", why)
 	return 2
+}
+
+// runCopy is `nova-card copy <copy>` (#3998): the consumer copy's wrapper.
+// Its one stdin line is <copy> <token>, and it must name the copy in argv.
+func runCopy(id string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, ack func(string)) int {
+	sc := bufio.NewScanner(io.LimitReader(stdin, 4096))
+	if !sc.Scan() {
+		return refuse(stderr, "no copy line on stdin")
+	}
+	line, err := launch.ParseCopyLine(strings.TrimRight(sc.Text(), "\r"))
+	if err != nil {
+		return refuse(stderr, "stdin is not a copy line: "+err.Error())
+	}
+	if line.Copy != id {
+		return refuse(stderr, "the copy line on stdin names "+oneline.Escape(line.Copy)+", not "+oneline.Escape(id))
+	}
+	n, err := card.CopyNumber(id)
+	if err != nil {
+		return refuse(stderr, err.Error())
+	}
+	l := launch.Line{Sprint: card.CopySprint, Label: card.CopyCardLabel(id), Attempt: n}
+	cfg, err := config(l, getenv)
+	if err != nil {
+		ack("REFUSED " + err.Error())
+		rep := card.WrapperReport{Code: card.WrapperExitUsage, Card: id, Why: err.Error()}
+		fmt.Fprintln(stdout, rep.Line())
+		return card.WrapperExitUsage
+	}
+	cfg.Copy = id
+	ctx := context.Background()
+	st, err := store.Open(ctx, getenv("NOVA_CARD_REDIS"))
+	if err != nil {
+		ack("REFUSED redis unavailable")
+		rep := card.WrapperReport{Code: card.WrapperExitRedis, Card: id, Why: "redis: " + err.Error()}
+		fmt.Fprintln(stdout, rep.Line())
+		return card.WrapperExitRedis
+	}
+	defer st.Close()
+	cfg.Store = st
+	cfg.Started = func() { ack("LAUNCHED") }
+	ledger := &card.CopyLedger{Client: st.Client(), Copy: id, Bench: cfg.Bench, Token: line.Token}
+	rep := card.RunWrapper(ctx, cfg, ledger)
+	if rep.Code != card.WrapperExitEnded {
+		ack("REFUSED " + rep.Why)
+	}
+	fmt.Fprintln(stdout, rep.Line())
+	return rep.Code
 }

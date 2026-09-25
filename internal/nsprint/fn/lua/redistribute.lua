@@ -101,8 +101,7 @@ local function rd_free(g, sprints)
     return nil
   end
   local free = tonumber(redis.call('HGET', 'friend:' .. g .. ':desired', 'slots') or '0') or 0
-  free = free - redis.call('ZCARD', 'friend:' .. g .. ':starting') -
-    redis.call('ZCARD', 'friend:' .. g .. ':living')
+  free = free - NS.moves.held('friend:' .. g)
   for _, S in ipairs(sprints) do
     free = free - redis.call('ZCARD', 's:' .. S .. ':open:' .. g)
   end
@@ -122,7 +121,7 @@ local function rd_pick(cands, exclude, free)
 end
 
 local function rd_has_work(f, sprints)
-  if redis.call('ZCARD', 'friend:' .. f .. ':starting') + redis.call('ZCARD', 'friend:' .. f .. ':living') > 0 then
+  if NS.moves.held('friend:' .. f) > 0 then
     return true
   end
   for _, S in ipairs(sprints) do
@@ -168,7 +167,7 @@ local function rd_held(S, g, cache)
   end
   local held = {}
   local function note(id, how)
-    local v = redis.call('HMGET', 's:' .. S .. ':task:' .. id, 'kind', 'repo', 'pr', 'head')
+    local v = redis.call('HMGET', 'task:' .. id, 'kind', 'repo', 'pr', 'head')
     if (v[1] == 'read' or v[1] == 'review') and v[2] and v[3] and v[4] and v[4] ~= '' then
       local ident = v[2] .. '|' .. v[3] .. '|' .. v[4]
       if not held[ident] then
@@ -179,12 +178,10 @@ local function rd_held(S, g, cache)
   for _, id in ipairs(redis.call('SMEMBERS', 's:' .. S .. ':done:' .. g)) do
     note(id, 'closed')
   end
-  for _, zkey in ipairs({ 'friend:' .. g .. ':starting', 'friend:' .. g .. ':living' }) do
-    for _, identity in ipairs(redis.call('ZRANGE', zkey, 0, -1)) do
-      local LS, id = string.match(identity, '^([^/]+)/(.+)/%d+$')
-      if LS == S then
-        note(id, 'working')
-      end
+  for _, identity in ipairs(NS.moves.leases('friend:' .. g)) do
+    local LS, id = string.match(identity, '^([^/]+)/(.+)/%d+$')
+    if LS == S then
+      note(id, 'working')
     end
   end
   for _, id in ipairs(redis.call('ZRANGE', 's:' .. S .. ':open:' .. g, 0, -1)) do
@@ -254,12 +251,12 @@ local function rd_carried_hold(S, f, key)
   return hold
 end
 
-local function rd_place(S, id, score, target)
-  if target then
-    redis.call('ZADD', 's:' .. S .. ':open:' .. target, score, id)
-  else
-    redis.call('ZADD', 's:' .. S .. ':ready', score, id)
-  end
+-- rd_place is the one task move (NS.task, 02_card_move.lua) of a task to
+-- ready on target's queue at score (the sprint's ready pool when target is
+-- nil), with more record fields; it returns the move's refusal or nil.
+local function rd_place(S, id, score, target, why, actor, fields)
+  return NS.task.set(id, 'open', { friend = target or '', sprint = S, qscore = score, by = actor, why = why,
+    fields = fields })
 end
 
 -- rd_release cancels a read that only f could answer and pushes one release
@@ -271,7 +268,7 @@ local function rd_release(ctx, S, id, score, key, hold)
   local head = redis.call('HGET', 's:' .. S .. ':pr:' .. repo .. ':' .. pr, 'head') or
     redis.call('HGET', key, 'head') or ''
   local rid = 'release-' .. repo .. '-' .. pr
-  local rkey = 's:' .. S .. ':task:' .. rid
+  local rkey = 'task:' .. rid
   local target = nil
   if redis.call('EXISTS', rkey) == 0 then
     local exclude = { [f] = true }
@@ -285,15 +282,15 @@ local function rd_release(ctx, S, id, score, key, hold)
     local priority = redis.call('HGET', key, 'priority') or '0'
     local ref = redis.call('HGET', key, 'ref') or ''
     local payload = redis.sha1hex(table.concat({ 'read', repo, ref, pr, head, title }, '\31'))
-    redis.call('HSET', rkey,
+    NS.task.create(rid, {
       'kind', 'read', 'repo', repo, 'ref', ref, 'pr', pr, 'head', head,
-      'title', title, 'effects', 'none', 'owner', '', 'priority', priority,
-      'state', 'open', 'attempt', '0', 'token', '0', 'payload_sha', payload,
+      'title', title, 'effects', 'none', 'priority', priority,
+      'attempt', '0', 'token', '0', 'payload_sha', payload,
       'reason', 'release', 'evidence', '', 'claimed_at', '', 'started_at', '',
       'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '',
-      'moved_from', f, 'hold', hold)
-    rd_place(S, rid, score, target)
-    redis.call('SADD', 's:' .. S .. ':idx:task:open', rid)
+      'moved_from', f, 'hold', hold, 'dest', target or '' },
+      { where = 'ready', state = 'open', friend = target or '', sprint = S, qscore = score, created = ctx.at,
+        by = ctx.actor, why = 'release' })
     rd_log(S, 'task push', rid, '', 'open', 0, '', ctx.actor, 'release', 'hold=' .. hold .. ' to=' .. (target or 'ready'), ctx.idem, ctx.at)
     if target then
       ctx.free[target] = ctx.free[target] - 1
@@ -302,12 +299,11 @@ local function rd_release(ctx, S, id, score, key, hold)
       ctx.unrouted = ctx.unrouted + 1
     end
   end
-  redis.call('ZREM', 's:' .. S .. ':open:' .. f, id)
-  redis.call('SREM', 's:' .. S .. ':idx:task:open', id)
-  redis.call('SADD', 's:' .. S .. ':idx:task:cancelled', id)
-  redis.call('HSET', key, 'state', 'cancelled', 'reason', 'carried HOLD: ' .. rid,
-    'title', rd_mark(redis.call('HGET', key, 'title') or '', ctx.marker), 'moved_from', f)
-  rd_log(S, 'task cancel', id, 'open', 'cancelled', redis.call('HGET', key, 'attempt') or '0', '', ctx.actor,
+  local from_state = redis.call('HGET', key, 'state') or 'open'
+  NS.task.set(id, 'cancelled', { sprint = S, by = ctx.actor, why = 'carried HOLD: ' .. rid,
+    fields = { 'reason', 'carried HOLD: ' .. rid, 'title', rd_mark(redis.call('HGET', key, 'title') or '', ctx.marker),
+      'moved_from', f } })
+  rd_log(S, 'task cancel', id, from_state, 'cancelled', redis.call('HGET', key, 'attempt') or '0', '', ctx.actor,
     'carried HOLD: ' .. rid, 'hold=' .. hold, ctx.idem, ctx.at)
   ctx.released = ctx.released + 1
 end
@@ -328,7 +324,7 @@ end
 -- keep-on-f outcome of a hand move never apply to it.
 local function rd_route(ctx, S, id, score, requeue)
   local f = ctx.f
-  local key = 's:' .. S .. ':task:' .. id
+  local key = 'task:' .. id
   local kind = redis.call('HGET', key, 'kind') or 'work'
   if ctx.kinds and not requeue and not ctx.kinds[kind] then
     return
@@ -376,10 +372,8 @@ local function rd_route(ctx, S, id, score, requeue)
     rd_event(ctx, 'KEPT', id, f, ctx.to .. ' cannot receive it')
     return
   end
-  redis.call('ZREM', 's:' .. S .. ':open:' .. f, id)
-  rd_place(S, id, score, target)
-  redis.call('HSET', key, 'owner', '', 'moved_from', f,
-    'title', rd_mark(redis.call('HGET', key, 'title') or '', ctx.marker))
+  rd_place(S, id, score, target, ctx.marker, ctx.actor, { 'moved_from', f, 'dest', target or '',
+    'title', rd_mark(redis.call('HGET', key, 'title') or '', ctx.marker) })
   rd_log(S, ctx.log_kind or 'task move', id, 'open', 'open', redis.call('HGET', key, 'attempt') or '0', '', ctx.actor,
     ctx.marker, 'to=' .. (target or 'ready'), ctx.idem, ctx.at)
   rd_event(ctx, 'MOVED', id, target or 'ready', ctx.marker)
@@ -396,37 +390,34 @@ end
 -- rd_close_leases fences and closes every lease f holds, then requeues.
 local function rd_close_leases(ctx)
   local f = ctx.f
-  for _, zkey in ipairs({ 'friend:' .. f .. ':starting', 'friend:' .. f .. ':living' }) do
-    for _, identity in ipairs(redis.call('ZRANGE', zkey, 0, -1)) do
-      redis.call('ZREM', zkey, identity)
-      ctx.leases = ctx.leases + 1
-      local evidence = 'lease ' .. identity .. ' closed: ' .. f .. ' ' .. ctx.why
-      local S, id, attempt = string.match(identity, '^([^/]+)/(.+)/(%d+)$')
-      local key = S and ('s:' .. S .. ':task:' .. id) or ''
-      local state = S and redis.call('HGET', key, 'state') or nil
-      if state and (state == 'claimed' or state == 'working') and
-          redis.call('HGET', key, 'owner') == f and redis.call('HGET', key, 'attempt') == attempt then
-        local token_sha = redis.call('HGET', key, 'token_sha') or ''
-        redis.call('HSET', key, 'token', 'fenced')
-        redis.call('SREM', 's:' .. S .. ':idx:task:' .. state, id)
-        if (redis.call('HGET', key, 'effects') or 'none') == 'external' then
-          redis.call('HSET', key, 'state', 'reconcile-required', 'reason', evidence)
-          redis.call('SADD', 's:' .. S .. ':idx:task:reconcile-required', id)
-          redis.call('HSET', 's:' .. S .. ':unresolved', id .. ':lease-close:',
-            'state=' .. state .. ' attempt=' .. attempt .. ' token_sha=' .. token_sha ..
-            ' reason=' .. f .. ' ' .. ctx.why .. ' at=' .. tostring(ctx.at))
-          rd_log(S, 'task lease-close', id, state, 'reconcile-required', attempt, token_sha, ctx.actor,
-            ctx.marker, evidence, ctx.idem, ctx.at)
-        else
-          redis.call('HSET', key, 'state', 'open', 'reason', evidence)
-          redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
-          rd_log(S, 'task lease-close', id, state, 'open', attempt, token_sha, ctx.actor,
-            ctx.marker, evidence, ctx.idem, ctx.at)
-          rd_route(ctx, S, id, tonumber(redis.call('HGET', key, 'priority') or '0') or 0, true)
-        end
+  for _, identity in ipairs(NS.moves.leases('friend:' .. f)) do
+    NS.moves.drop('friend:' .. f, identity)
+    ctx.leases = ctx.leases + 1
+    local evidence = 'lease ' .. identity .. ' closed: ' .. f .. ' ' .. ctx.why
+    local S, id, attempt = string.match(identity, '^([^/]+)/(.+)/(%d+)$')
+    local key = S and ('task:' .. id) or ''
+    local state = S and redis.call('HGET', key, 'state') or nil
+    if state and (state == 'claimed' or state == 'working') and
+        redis.call('HGET', key, 'owner') == f and redis.call('HGET', key, 'attempt') == attempt then
+      local token_sha = redis.call('HGET', key, 'token_sha') or ''
+      redis.call('HSET', key, 'token', 'fenced')
+      if (redis.call('HGET', key, 'effects') or 'none') == 'external' then
+        NS.task.set(id, 'reconcile-required', { sprint = S, by = ctx.actor, why = evidence,
+          fields = { 'reason', evidence } })
+        redis.call('HSET', 's:' .. S .. ':unresolved', id .. ':lease-close:',
+          'state=' .. state .. ' attempt=' .. attempt .. ' token_sha=' .. token_sha ..
+          ' reason=' .. f .. ' ' .. ctx.why .. ' at=' .. tostring(ctx.at))
+        rd_log(S, 'task lease-close', id, state, 'reconcile-required', attempt, token_sha, ctx.actor,
+          ctx.marker, evidence, ctx.idem, ctx.at)
       else
-        rd_caplog('lease-dropped', f, evidence, ctx.actor, ctx.idem, ctx.at)
+        -- rd_route below is the one move out of the lease (working -> ready)
+        redis.call('HSET', key, 'reason', evidence)
+        rd_log(S, 'task lease-close', id, state, 'open', attempt, token_sha, ctx.actor,
+          ctx.marker, evidence, ctx.idem, ctx.at)
+        rd_route(ctx, S, id, tonumber(redis.call('HGET', key, 'priority') or '0') or 0, true)
       end
+    else
+      rd_caplog('lease-dropped', f, evidence, ctx.actor, ctx.idem, ctx.at)
     end
   end
 end

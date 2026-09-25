@@ -24,7 +24,7 @@ import (
 //
 // It costs two round trips however many sprints and claims (#3261; it was
 // 4 + S + 2k): one pipeline reads the `friends` membership of as, its desired
-// slots, starting, living and ns_task_take_view (every open sprint's queue
+// slots, its working set (#3998) and ns_task_take_view (every open sprint's queue
 // for as and the task fields its rank needs); Go ranks in memory
 // (deal.RankSnapshot); one ns_task_take_n call claims down the ranked list
 // until the free slots fill. A non-member returns ErrNotFriend before any
@@ -38,8 +38,7 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 	pipe := client.Pipeline()
 	member := pipe.SIsMember(ctx, "friends", as)
 	desiredCmd := pipe.HGet(ctx, "friend:"+as+":desired", "slots")
-	startingCmd := pipe.ZCard(ctx, "friend:"+as+":starting")
-	livingCmd := pipe.ZCard(ctx, "friend:"+as+":living")
+	workingCmd := pipe.ZCard(ctx, "friend:"+as+":cards:working")
 	viewCmd := pipe.FCallRO(ctx, FunctionTakeView, nil, as, sprint, id)
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return nil, fmt.Errorf("task take: read friend %s: %w", as, err)
@@ -51,7 +50,7 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 	if err != nil {
 		return nil, fmt.Errorf("task take: friend %s has no desired slots: %w", as, err)
 	}
-	free := desired - int(startingCmd.Val()+livingCmd.Val())
+	free := desired - int(workingCmd.Val())
 	if free <= 0 {
 		return []Claim{}, nil
 	}
@@ -267,7 +266,7 @@ func Take(ctx context.Context, st *store.Store, req TakeRequest) (Claim, bool, e
 	var values []any
 	var status string
 	for tries := 0; tries < 3; tries++ {
-		previous, err := st.Client().HGet(ctx, "s:"+req.Sprint+":task:"+req.ID, "attempt").Int()
+		previous, err := st.Client().HGet(ctx, "task:"+req.ID, "attempt").Int()
 		if err == redis.Nil {
 			previous = 0
 		} else if err != nil {

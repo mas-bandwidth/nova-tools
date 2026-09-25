@@ -80,7 +80,7 @@ func rdFixture(t *testing.T, st *store.Store, client *redis.Client, f string) ma
 		must(client.HSet(ctx, "friend:"+name+":roles", "roles", roles).Err())
 	}
 	must(client.HSet(ctx, "friend:fran:desired", "slots", "2").Err())
-	must(client.ZAdd(ctx, "friend:fran:living",
+	must(client.ZAdd(ctx, "friend:fran:cards:working",
 		redis.Z{Score: 9e12, Member: "other/x1/1"}, redis.Z{Score: 9e12, Member: "other/x2/1"}).Err())
 
 	prs := map[int]struct {
@@ -140,7 +140,7 @@ func rdCounts(t *testing.T, client *redis.Client, f string, open, leased int64) 
 	t.Helper()
 	ctx := context.Background()
 	gotOpen := client.ZCard(ctx, "s:"+rdSprint+":open:"+f).Val()
-	gotLeased := client.ZCard(ctx, "friend:"+f+":starting").Val() + client.ZCard(ctx, "friend:"+f+":living").Val()
+	gotLeased := client.ZCard(ctx, "friend:"+f+":cards:working").Val()
 	if gotOpen != open || gotLeased != leased {
 		t.Fatalf("%s: open %d leased %d, want open %d leased %d", f, gotOpen, gotLeased, open, leased)
 	}
@@ -184,7 +184,7 @@ func rdAssertMoved(t *testing.T, st *store.Store, client *redis.Client, f, why s
 		}
 	}
 	for _, id := range []string{"read-a", "read-b", "read-d", "build-1", "fix-1", "build-2"} {
-		key := "s:" + rdSprint + ":task:" + id
+		key := "task:" + id
 		if state := client.HGet(ctx, key, "state").Val(); state != "open" {
 			t.Fatalf("%s state %q, want open", id, state)
 		}
@@ -233,11 +233,11 @@ func rdAssertMoved(t *testing.T, st *store.Store, client *redis.Client, f, why s
 
 	// The carried HOLD: the re-read is cancelled and exactly one release task
 	// exists, on a may-hold non-author reader other than f, at the current head.
-	if state := client.HGet(ctx, "s:"+rdSprint+":task:reread-c", "state").Val(); state != "cancelled" {
+	if state := client.HGet(ctx, "task:reread-c", "state").Val(); state != "cancelled" {
 		t.Fatalf("reread-c state %q, want cancelled", state)
 	}
 	releases := 0
-	for _, key := range client.Keys(ctx, "s:"+rdSprint+":task:release-*").Val() {
+	for _, key := range client.Keys(ctx, "task:release-*").Val() {
 		releases++
 		rel := client.HGetAll(ctx, key).Val()
 		if rel["pr"] != "103" || rel["head"] != rdHead('d') || rel["state"] != "open" {
@@ -246,7 +246,7 @@ func rdAssertMoved(t *testing.T, st *store.Store, client *redis.Client, f, why s
 		if !strings.Contains(rel["title"], marker) || !strings.Contains(rel["title"], "--releases") {
 			t.Fatalf("release title %q lacks the marker or the --releases recipe", rel["title"])
 		}
-		owner := rdQueueOf(t, client, strings.TrimPrefix(key, "s:"+rdSprint+":task:"))
+		owner := rdQueueOf(t, client, strings.TrimPrefix(key, "task:"))
 		if owner != "stella" && owner != "johnny" {
 			t.Fatalf("release task on %q", owner)
 		}

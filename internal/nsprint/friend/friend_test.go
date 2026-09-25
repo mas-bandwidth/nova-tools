@@ -106,7 +106,7 @@ func fsOpen(client *redis.Client, f string) int64 {
 
 func fsLeased(client *redis.Client, f string) int64 {
 	ctx := context.Background()
-	return client.ZCard(ctx, "friend:"+f+":starting").Val() + client.ZCard(ctx, "friend:"+f+":living").Val()
+	return client.ZCard(ctx, "friend:"+f+":cards:working").Val()
 }
 
 func fsQueueOf(client *redis.Client, id string, names ...string) string {
@@ -205,14 +205,14 @@ func TestControl43(t *testing.T) {
 		}
 	}
 	for _, id := range []string{"read-a", "read-b", "build-1", "fix-1", "build-2", "build-3"} {
-		if title := client.HGet(ctx, "s:"+fsSprint+":task:"+id, "title").Val(); !strings.Contains(title, marker) {
+		if title := client.HGet(ctx, "task:"+id, "title").Val(); !strings.Contains(title, marker) {
 			t.Fatalf("%s title %q lacks %q", id, title, marker)
 		}
 	}
-	if got := client.HGet(ctx, "s:"+fsSprint+":task:reread-c", "state").Val(); got != "cancelled" {
+	if got := client.HGet(ctx, "task:reread-c", "state").Val(); got != "cancelled" {
 		t.Fatalf("reread-c %q, want cancelled", got)
 	}
-	if keys := client.Keys(ctx, "s:"+fsSprint+":task:release-*").Val(); len(keys) != 1 {
+	if keys := client.Keys(ctx, "task:release-*").Val(); len(keys) != 1 {
 		t.Fatalf("release tasks %v, want exactly one", keys)
 	}
 
@@ -223,7 +223,7 @@ func TestControl43(t *testing.T) {
 		t.Fatalf("show rows %v", rows)
 	}
 	line := rows[0].Line()
-	for _, want := range []string{"friend=emma", "state=out-of-credits", "until=", "open=0", "living=0", "wake=none"} {
+	for _, want := range []string{"friend=emma", "state=out-of-credits", "until=", "open=0", "working=0", "wake=none"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("show line %q lacks %q", line, want)
 		}
@@ -450,7 +450,7 @@ func TestControl45(t *testing.T) {
 			if owner := fsQueueOf(client, id, "stella", "johnny", "rowan"); owner != "johnny" {
 				t.Fatalf("%s on %q, want the builder johnny", id, owner)
 			}
-			if title := client.HGet(ctx, "s:"+fsSprint+":task:"+id, "title").Val(); !strings.Contains(title, "[moved from kim: idle]") {
+			if title := client.HGet(ctx, "task:"+id, "title").Val(); !strings.Contains(title, "[moved from kim: idle]") {
 				t.Fatalf("title %q", title)
 			}
 		}
@@ -767,7 +767,7 @@ func TestWakeMissedRedistributesSameTick(t *testing.T) {
 	if fsOpen(client, "ada") != 0 {
 		t.Fatal("the task stayed on ada")
 	}
-	title := client.HGet(ctx, "s:"+fsSprint+":task:build-1", "title").Val()
+	title := client.HGet(ctx, "task:build-1", "title").Val()
 	if !strings.Contains(title, "[moved from ada: wake-missed]") {
 		t.Fatalf("title %q lacks the wake-missed marker", title)
 	}

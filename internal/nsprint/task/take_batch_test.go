@@ -65,7 +65,7 @@ func (r *recorder) trips() int { return len(r.singles) + len(r.pipelines) }
 func seedOpenTask(t *testing.T, client *redis.Client, S, friend, id string, score float64, needs string) {
 	t.Helper()
 	ctx := context.Background()
-	key := "s:" + S + ":task:" + id
+	key := "task:" + id
 	if err := client.HSet(ctx, key, "state", "open", "title", "task "+id, "kind", "build", "ref", "r-"+id,
 		"priority", "5", "pushed_at", "1", "est", "30", "owner", "", "attempt", "0").Err(); err != nil {
 		t.Fatal(err)
@@ -129,10 +129,10 @@ func TestTakeAvailableThreeQueuesFiveClaimsOnePipelineOneFCall(t *testing.T) {
 	if p := strings.Join(rec.pipelines[0], ","); !strings.Contains(p, "fcall_ro ns_task_take_view") {
 		t.Fatalf("pipeline %s does not carry the view", p)
 	}
-	if n, _ := client.ZCard(ctx, "friend:f1:starting").Result(); n != 5 {
+	if n, _ := client.ZCard(ctx, "friend:f1:cards:working").Result(); n != 5 {
 		t.Fatalf("starting=%d, want 5", n)
 	}
-	if st, _ := client.HGet(ctx, "s:batch-c:task:c3", "state").Result(); st != "open" {
+	if st, _ := client.HGet(ctx, "task:c3", "state").Result(); st != "open" {
 		t.Fatalf("c3 state=%q, want open", st)
 	}
 }
@@ -168,7 +168,7 @@ func TestTakeAvailableFullFriendOneTrip(t *testing.T) {
 	seedFriend(t, client, "f1", 1)
 	openSprint(client, "full", 1)
 	seedOpenTask(t, client, "full", "f1", "x", 1, "")
-	client.ZAdd(ctx, "friend:f1:living", redis.Z{Score: 1, Member: "full/y/1"})
+	client.ZAdd(ctx, "friend:f1:cards:working", redis.Z{Score: 1, Member: "full/y/1"})
 	rec := &recorder{}
 	client.AddHook(rec)
 	claims, err := task.TakeAvailable(ctx, st, "f1", "", "", 0, "f1", "")
@@ -217,7 +217,7 @@ func TestTakeAvailableRetryFallsBackToOneTake(t *testing.T) {
 	rec := &recorder{}
 	rec.before = func(cmd redis.Cmder) {
 		if commandLine(cmd) == "fcall ns_task_take_n" {
-			other.HSet(ctx, "s:race:task:r1", "attempt", "3")
+			other.HSet(ctx, "task:r1", "attempt", "3")
 		}
 	}
 	client.AddHook(rec)

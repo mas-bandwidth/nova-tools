@@ -82,7 +82,7 @@ func Read(ctx context.Context, c *redis.Client, sprint string) (Snapshot, error)
 			}
 			seen[k] = true
 			ic := itemCmd{sprint: x.sprint, kind: x.kind, id: id, inFlight: x.inFlight,
-				hash: pipe.HMGet(ctx, "s:"+x.sprint+":"+x.kind+":"+id, itemFields...)}
+				hash: pipe.HMGet(ctx, itemKey(x.sprint, x.kind, id), itemFields...)}
 			items = append(items, ic)
 		}
 	}
@@ -201,7 +201,7 @@ func readDeps(ctx context.Context, c *redis.Client, cands []Item) (map[string]de
 		slash := strings.IndexByte(k, '/')
 		S, id := k[:slash], k[slash+1:]
 		cards[i] = pipe.HMGet(ctx, "s:"+S+":card:"+id, "state", "outcome", "repo", "base", "pr", "pushed_sha")
-		tasks[i] = pipe.HMGet(ctx, "s:"+S+":task:"+id, "state", "repo", "base", "pr")
+		tasks[i] = pipe.HMGet(ctx, "task:"+id, "state", "repo", "base", "pr")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("ready: dependencies: %w", err)
@@ -255,4 +255,13 @@ func str(v []any, i int) string {
 	}
 	s, _ := v[i].(string)
 	return s
+}
+
+// itemKey is a card's record (s:<S>:card:<id>) or a task's (task:<id>: one
+// task store, nova-tools #3778).
+func itemKey(sprint, kind, id string) string {
+	if kind == "task" {
+		return "task:" + id
+	}
+	return "s:" + sprint + ":" + kind + ":" + id
 }

@@ -182,7 +182,7 @@ func TestServeFakeDispatchScoreLineClosesTask(t *testing.T) {
 	if !strings.HasPrefix(h["evidence"], "SCORE who=emma head="+serveHead) {
 		t.Fatalf("evidence %q is not the child's SCORE line", h["evidence"])
 	}
-	if n := client.ZCard(ctx, "friend:emma:starting").Val() + client.ZCard(ctx, "friend:emma:living").Val(); n != 0 {
+	if n := client.ZCard(ctx, "friend:emma:cards:working").Val(); n != 0 {
 		t.Fatalf("%d leases left after the close", n)
 	}
 	kinds := strings.Join(logKinds(t, client), " ")
@@ -265,7 +265,7 @@ func TestServeWidthRespected(t *testing.T) {
 		if res.Live > 1 {
 			t.Fatalf("live %d over width 1", res.Live)
 		}
-		if n := client.ZCard(ctx, "friend:emma:starting").Val() + client.ZCard(ctx, "friend:emma:living").Val(); n > 1 {
+		if n := client.ZCard(ctx, "friend:emma:cards:working").Val(); n > 1 {
 			t.Fatalf("%d leases held at width 1", n)
 		}
 	}
@@ -469,7 +469,7 @@ func TestServeStopGivesWorkBack(t *testing.T) {
 	if state := client.HGet(ctx, task.Key("s1", "w1"), "state").Val(); state != "open" {
 		t.Fatalf("state %q after stop, want open", state)
 	}
-	if n := client.ZCard(ctx, "friend:emma:living").Val(); n != 0 {
+	if n := client.ZCard(ctx, "friend:emma:cards:working").Val(); n != 0 {
 		t.Fatalf("%d living leases after stop", n)
 	}
 	if client.Exists(ctx, life.LockKey("emma")).Val() != 0 {

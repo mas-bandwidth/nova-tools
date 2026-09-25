@@ -139,7 +139,7 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "CONSUMED ok-to-friend sprint="+S+" n=1") {
 		t.Fatalf("consume ok-to-friend once: exit %d out %q err %q", code, out, errOut)
 	}
-	h, err := c.HGetAll(ctx, "s:"+S+":task:harvest-"+label).Result()
+	h, err := c.HGetAll(ctx, "task:harvest-"+label).Result()
 	if err != nil || h["state"] != "open" || h["kind"] != "harvest" {
 		t.Fatalf("harvest-%s = %v (%v); want an open harvest task", label, h, err)
 	}
@@ -167,7 +167,7 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 	}
 	pr, _ := strconv.Atoi(card["pr"])
 	readID := task.ReviewID(repo, pr, pushed, friend)
-	read, err := c.HGetAll(ctx, "s:"+S+":task:"+readID).Result()
+	read, err := c.HGetAll(ctx, "task:"+readID).Result()
 	if err != nil || read["state"] != "open" || read["head"] != pushed {
 		t.Fatalf("read task %s = %v (%v); want an open read for %s at %s", readID, read, err, friend, pushed)
 	}
@@ -250,7 +250,7 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 	if !strings.Contains(rOut.String(), "DUTIES refill,ok-to-friend,harvest,pr-to-read") {
 		t.Fatalf("reconcile out %q; want the consumer duties on the DUTIES line", rOut.String())
 	}
-	if state, err := c.HGet(ctx, "s:"+S+":task:harvest-"+label2, "state").Result(); err != nil || state != "open" {
+	if state, err := c.HGet(ctx, "task:harvest-"+label2, "state").Result(); err != nil || state != "open" {
 		t.Fatalf("harvest-%s after one reconcile pass: state %q (%v); want open", label2, state, err)
 	}
 }

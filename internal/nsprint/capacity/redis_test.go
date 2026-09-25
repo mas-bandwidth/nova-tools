@@ -62,14 +62,14 @@ func TestControl27RedisAtomicCeiling(t *testing.T) {
 		t.Fatalf("capacity receipts=%d want 4 successful writes only", count)
 	}
 
-	// A width edit is the capacity writer; the read includes both lease stages.
-	c.ZAdd(ctx, "friend:a:starting", redis.Z{Member: "one"})
-	c.ZAdd(ctx, "friend:a:living", redis.Z{Member: "two"})
+	// A width edit is the capacity writer; the read is the one lease ledger (#3998).
+	c.ZAdd(ctx, "friend:a:cards:working", redis.Z{Member: "one"})
+	c.ZAdd(ctx, "friend:a:cards:working", redis.Z{Member: "two"})
 	width, err := task.GetWidth(ctx, st, "a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if width.Desired != 32 || width.Starting != 1 || width.Living != 1 || width.Leased != 2 || width.Free != 30 {
+	if width.Desired != 32 || width.Leased != 2 || width.Free != 30 {
 		t.Fatalf("width=%+v", width)
 	}
 	if _, err := capacity.SetMachine(ctx, st, "ctl-machine", 64, 0, 0, "test", ""); err != nil {
@@ -130,12 +130,12 @@ func TestControl22RedisStaleQueueAndFriendIsolation(t *testing.T) {
 	s := "control-22334455"
 	c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: s})
 	c.ZAdd(ctx, "s:"+s+":open:a", redis.Z{Member: "live"}, redis.Z{Member: "closed"})
-	c.HSet(ctx, "s:"+s+":task:live", "state", "open", "owner", "")
-	c.HSet(ctx, "s:"+s+":task:closed", "state", "closed", "owner", "a")
+	c.HSet(ctx, "task:live", "state", "open", "owner", "")
+	c.HSet(ctx, "task:closed", "state", "closed", "owner", "a")
 	c.SAdd(ctx, "s:"+s+":idx:task:claimed", "other")
-	c.HSet(ctx, "s:"+s+":task:other", "state", "claimed", "owner", "b")
+	c.HSet(ctx, "task:other", "state", "claimed", "owner", "b")
 	c.SAdd(ctx, "s:"+s+":idx:task:working", "mine")
-	c.HSet(ctx, "s:"+s+":task:mine", "state", "working", "owner", "a")
+	c.HSet(ctx, "task:mine", "state", "working", "owner", "a")
 	rows, err := task.ListStore(ctx, st, task.ListRequest{As: "a"})
 	if err != nil {
 		t.Fatal(err)

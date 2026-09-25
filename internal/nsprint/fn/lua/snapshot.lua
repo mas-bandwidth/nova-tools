@@ -13,8 +13,8 @@
 --
 --   time     <unix seconds>
 --   error    <message>
---   bench    name up desired missing starting living stale leased queue done why
---   friend   name up desired missing starting living stale leased queue done why
+--   bench    name up desired missing ready working stale leased queue done why
+--   friend   name up desired missing ready working stale leased queue done why
 --   pipeline sprint queued dealt running ended harvested review-ready
 --            land-ready landed pool waiting backpressure orphan reconcile
 --   proc     name up age why
@@ -29,7 +29,6 @@ local MAX_OPEN_SPRINTS = 16
 local MAX_BENCHES = 64
 local MAX_FRIENDS = 16
 local BOUND_REMEDY = '--layout live'
-local LIVING_FRESH_MS = 120000
 
 local function zcard(k) return tonumber(redis.call('ZCARD', k)) end
 local function scard(k) return tonumber(redis.call('SCARD', k)) end
@@ -41,15 +40,24 @@ local function desired_of(prefix)
   return tonumber(v) or 0, 0
 end
 
--- A bench and a friend row are one shape (6.4): width is derived from
--- starting + living, never stored.
+-- A bench and a friend row are one shape (6.4), read from the consumer's
+-- sets (#3998): ready is ZCARD <consumer>:cards:ready, leased is ZCARD
+-- <consumer>:cards:working (the one lease ledger: the width in use, derived,
+-- never stored), stale the working copies whose lease (task:<copy>
+-- lease_until) has lapsed, and working the rest.
 local function count_row(bucket, name, sprints, now_ms)
-  local up = exists(bucket .. ':' .. name .. ':beat')
-  local desired, missing = desired_of(bucket .. ':' .. name)
-  local starting = zcard(bucket .. ':' .. name .. ':starting')
-  local living = redis.call('ZCOUNT', bucket .. ':' .. name .. ':living', now_ms - LIVING_FRESH_MS, '+inf')
-  local total = zcard(bucket .. ':' .. name .. ':living')
-  local leased = starting + total
+  local c = bucket .. ':' .. name
+  local up = exists(c .. ':beat')
+  local desired, missing = desired_of(c)
+  local ready = zcard(c .. ':cards:ready')
+  local leased = zcard(c .. ':cards:working')
+  local stale = 0
+  for _, id in ipairs(redis.call('ZRANGE', c .. ':cards:working', 0, -1)) do
+    if string.match(id, '^%S+~%d+$') then
+      local lease = tonumber(redis.call('HGET', 'task:' .. id, 'lease_until'))
+      if lease and lease < now_ms then stale = stale + 1 end
+    end
+  end
   local queue, done = 0, 0
   for _, sp in ipairs(sprints) do
     if bucket == 'bench' then
@@ -60,17 +68,16 @@ local function count_row(bucket, name, sprints, now_ms)
       done = done + scard('s:' .. sp .. ':done:' .. name)
     end
   end
-  return up, desired, missing, starting, tonumber(living), total - tonumber(living),
-    leased, queue, done
+  return up, desired, missing, ready, leased - stale, stale, leased, queue, done
 end
 
 local function append_row(out, bucket, name, sprints, now_ms)
-  local up, desired, missing, starting, living, stale, leased, queue, done =
+  local up, desired, missing, ready, working, stale, leased, queue, done =
     count_row(bucket, name, sprints, now_ms)
   local why = {}
   if missing == 1 then why[#why + 1] = 'missing: desired' end
   if up == 0 then why[#why + 1] = 'down: beat' end
-  if stale > 0 then why[#why + 1] = 'stale: living >120s' end
+  if stale > 0 then why[#why + 1] = 'stale: lease lapsed' end
   if bucket == 'friend' then
     -- friend:<f>:state (out-of-credits from the keeper, down from the
     -- redistribute tick, #3047) is printed on the row it describes.
@@ -82,8 +89,8 @@ local function append_row(out, bucket, name, sprints, now_ms)
   out[#out + 1] = tostring(up)
   out[#out + 1] = tostring(desired)
   out[#out + 1] = tostring(missing)
-  out[#out + 1] = tostring(starting)
-  out[#out + 1] = tostring(living)
+  out[#out + 1] = tostring(ready)
+  out[#out + 1] = tostring(working)
   out[#out + 1] = tostring(stale)
   out[#out + 1] = tostring(leased)
   out[#out + 1] = tostring(queue)

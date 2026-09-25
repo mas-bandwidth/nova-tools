@@ -68,6 +68,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/file"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
@@ -728,6 +729,10 @@ func harvestCard(ctx context.Context, st *store.Store, opt Options, l lease, inf
 		return res, err
 	}
 	body := Body(opt.Sprint, l.bench, c, rec, rangePaths)
+	// #3488: the body passes the posted-body rule before any REST call.
+	if lint := file.LintBody([]byte(body)); len(lint) > 0 {
+		return res, fail(CodeCreateFailed, c.Label, "PR body refused before the create: %s", strings.Join(lint, "; "))
+	}
 	pr, cerr := opt.Forge.OpenPR(ctx, c.Repo, c.Branch, c.Base, Title(opt.Sprint, c, rec), body)
 	if err := fault(opt, FaultAfterCreate); err != nil {
 		return res, err

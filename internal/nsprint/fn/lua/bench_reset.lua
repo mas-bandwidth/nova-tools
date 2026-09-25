@@ -112,8 +112,6 @@ do
               priority = tonumber(redis.call('ZSCORE', qk, label) or c[6]) or 0,
               fields = { 'token', '', 'reason', 'bench-reset' } }) then
           local pin = c[5] or ''
-          redis.call('ZREM', 'bench:' .. bench .. ':starting', S .. '/' .. label .. '/' .. attempt)
-          redis.call('ZREM', 'bench:' .. bench .. ':living', S .. '/' .. label .. '/' .. attempt)
           if pin ~= bench then
             redis.call('ZREM', qk, label)
           end

@@ -291,8 +291,8 @@ func TestCensusSetKeys(t *testing.T) {
 	for set, want := range map[string][2]string{
 		"benches":            {"benches", "bench:"},
 		"friends":            {"friends", "friend:"},
-		"sprint:s1:working":  {"s:s1:idx:task:working", "s:s1:task:"},
-		"sprint:s-2:claimed": {"s:s-2:idx:task:claimed", "s:s-2:task:"},
+		"sprint:s1:working":  {"s:s1:idx:task:working", "task:"},
+		"sprint:s-2:claimed": {"s:s-2:idx:task:claimed", "task:"},
 	} {
 		index, prefix, err := store.CensusSet(set)
 		if err != nil || index != want[0] || prefix != want[1] {

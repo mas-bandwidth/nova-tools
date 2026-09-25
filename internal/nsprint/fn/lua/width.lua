@@ -6,12 +6,12 @@
 -- Keys:
 --   friend:<f>:desired    the declared slots (capacity function, one writer).
 --   friend:<f>:beat       TTL 5 s; up = key exists.
---   friend:<f>:starting   zset of claimed tasks.
---   friend:<f>:living     zset of tasks with beats.
+--   friend:<f>:cards:working  the one lease ledger (#3998): taken tasks,
+--                         task cards and copies; ZCARD is the width in use.
 --   friend:<f>:fillstate  one writer, ns_width_write (the width duty):
 --                         slots, leased, working, deficit, eligible,
 --                         idle_no_ready, idle_deps, idle_input, idle_unfilled,
---                         peak, peak_at, unfilled_since, starting, living, at.
+--                         peak, peak_at, unfilled_since, at.
 --                         fill_at, fill_n written by ns_width_fill.
 --                         eligible (recipient) and idle_unfilled (sender)
 --                         consumed by ns_width_move as it moves, so the
@@ -73,26 +73,24 @@ function WD.is_dedup(S, f, repo, pr, head, exclude_id)
   end
   for _, tid in ipairs(redis.call('SMEMBERS', 's:' .. S .. ':done:' .. f)) do
     if tid ~= exclude_id then
-      local tk = 's:' .. S .. ':task:' .. tid
+      local tk = 'task:' .. tid
       if redis.call('HGET', tk, 'repo') == repo and redis.call('HGET', tk, 'pr') == pr and redis.call('HGET', tk, 'head') == head then
         return true
       end
     end
   end
-  for _, zkey in ipairs({ 'friend:' .. f .. ':starting', 'friend:' .. f .. ':living' }) do
-    for _, identity in ipairs(redis.call('ZRANGE', zkey, 0, -1)) do
-      local s, tid = string.match(identity, '^([^/]+)/(.+)/%d+$')
-      if s == S and tid ~= exclude_id then
-        local tk = 's:' .. S .. ':task:' .. tid
-        if redis.call('HGET', tk, 'repo') == repo and redis.call('HGET', tk, 'pr') == pr and redis.call('HGET', tk, 'head') == head then
-          return true
-        end
+  for _, identity in ipairs(NS.moves.leases('friend:' .. f)) do
+    local s, tid = string.match(identity, '^([^/]+)/(.+)/%d+$')
+    if s == S and tid ~= exclude_id then
+      local tk = 'task:' .. tid
+      if redis.call('HGET', tk, 'repo') == repo and redis.call('HGET', tk, 'pr') == pr and redis.call('HGET', tk, 'head') == head then
+        return true
       end
     end
   end
   for _, tid in ipairs(redis.call('ZRANGE', 's:' .. S .. ':open:' .. f, 0, -1)) do
     if tid ~= exclude_id then
-      local tk = 's:' .. S .. ':task:' .. tid
+      local tk = 'task:' .. tid
       if redis.call('HGET', tk, 'repo') == repo and redis.call('HGET', tk, 'pr') == pr and redis.call('HGET', tk, 'head') == head then
         return true
       end
@@ -132,7 +130,7 @@ function WD.ready(S, key)
             return false, 'deps'
           end
         else
-          local dk = 's:' .. S .. ':task:' .. dep
+          local dk = 'task:' .. dep
           if redis.call('EXISTS', dk) == 1 then
             if redis.call('HGET', dk, 'state') ~= 'closed' then
               return false, 'deps'
@@ -170,9 +168,9 @@ end
 --   next: num_open_sprints
 --   next .. : open sprint names
 --   next: num_friends
---   then 15 fields per friend:
+--   then 13 fields per friend:
 --     f, slots, leased, working, deficit, eligible, idle_no_ready, idle_deps,
---     idle_input, idle_unfilled, peak, peak_at, unfilled_since, starting, living
+--     idle_input, idle_unfilled, peak, peak_at, unfilled_since
 local function width_write(keys, args)
   local fence = args[1]
   if not WD.holds(fence) then
@@ -221,9 +219,7 @@ local function width_write(keys, args)
       local peak = args[idx + 10] or '0'
       local peak_at = args[idx + 11] or '0'
       local unfilled_since = args[idx + 12] or '0'
-      local starting = args[idx + 13] or '0'
-      local living = args[idx + 14] or '0'
-      idx = idx + 15
+      idx = idx + 13
 
       local key = 'friend:' .. f .. ':fillstate'
       redis.call('HSET', key,
@@ -239,8 +235,6 @@ local function width_write(keys, args)
         'peak', peak,
         'peak_at', peak_at,
         'unfilled_since', unfilled_since,
-        'starting', starting,
-        'living', living,
         'at', tostring(at)
       )
     end
@@ -260,9 +254,7 @@ local function width_write(keys, args)
       local peak = args[i + 10] or '0'
       local peak_at = args[i + 11] or '0'
       local unfilled_since = args[i + 12] or '0'
-      local starting = args[i + 13] or '0'
-      local living = args[i + 14] or '0'
-      i = i + 15
+      i = i + 13
 
       local key = 'friend:' .. f .. ':fillstate'
       redis.call('HSET', key,
@@ -278,8 +270,6 @@ local function width_write(keys, args)
         'peak', peak,
         'peak_at', peak_at,
         'unfilled_since', unfilled_since,
-        'starting', starting,
-        'living', living,
         'at', tostring(at)
       )
     end
@@ -314,9 +304,7 @@ local function width_fill(keys, args)
     return { 'OK', '0', '0' }
   end
 
-  local starting = redis.call('ZCARD', 'friend:' .. f .. ':starting')
-  local living = redis.call('ZCARD', 'friend:' .. f .. ':living')
-  local leased = starting + living
+  local leased = NS.moves.held('friend:' .. f)
   local deficit = math.max(0, slots - leased)
   if deficit <= 0 then
     return { 'OK', '0', '0' }
@@ -375,7 +363,7 @@ local function width_fill(keys, args)
     local task_ids = redis.call('ZRANGE', qkey, 0, -1)
     for _, id in ipairs(task_ids) do
       if #claimed >= limit then break end
-      local key = 's:' .. S .. ':task:' .. id
+      local key = 'task:' .. id
       if redis.call('EXISTS', key) == 1 and redis.call('HGET', key, 'state') == 'open' and redis.call('ZSCORE', qkey, id) then
         local ready = WD.ready(S, key)
         if ready then
@@ -389,19 +377,11 @@ local function width_fill(keys, args)
             local token = tostring(attempt) .. '.' .. rand_part
             local token_sha = string.sub(redis.sha1hex(token), 1, 12)
 
-            redis.call('HSET', key,
-              'state', 'claimed',
-              'owner', f,
-              'attempt', tostring(attempt),
-              'token', token,
-              'token_sha', token_sha,
-              'claimed_at', tostring(now)
-            )
-            redis.call('ZREM', 's:' .. S .. ':ready', id)
-            redis.call('ZREM', qkey, id)
-            redis.call('SREM', 's:' .. S .. ':idx:task:open', id)
-            redis.call('SADD', 's:' .. S .. ':idx:task:claimed', id)
-            redis.call('ZADD', 'friend:' .. f .. ':starting', now, S .. '/' .. id .. '/' .. attempt)
+            -- the one task move (NS.task, 02_card_move.lua): ready -> working
+            NS.task.set(id, 'claimed', { friend = f, sprint = S, by = actor, why = 'fill',
+              fields = { 'attempt', tostring(attempt), 'token', token, 'token_sha', token_sha,
+                'claimed_at', tostring(now) } })
+            NS.moves.hold('friend:' .. f, S .. '/' .. id .. '/' .. attempt, now)
 
             WD.receipt(S, 'task take', id, 'open', 'claimed', attempt, token_sha, actor, '', '', idem, now)
 
@@ -516,7 +496,7 @@ local function width_move(keys, args)
       if moved >= max_move then break end
       local id = task_entries[i]
       local score = tonumber(task_entries[i+1])
-      local key = 's:' .. S .. ':task:' .. id
+      local key = 'task:' .. id
       if redis.call('EXISTS', key) == 1 and redis.call('HGET', key, 'state') == 'open' then
         local kind = redis.call('HGET', key, 'kind') or ''
         if kind == '' or kind == 'work' or kind == 'fix' or kind == 'build' then
@@ -526,9 +506,8 @@ local function width_move(keys, args)
             local pr = redis.call('HGET', key, 'pr') or ''
             local head = redis.call('HGET', key, 'head') or ''
             if not WD.is_dedup(S, to_f, repo, pr, head, nil) then
-              redis.call('ZREM', from_q, id)
-              redis.call('ZADD', to_q, score, id)
-              redis.call('HSET', key, 'owner', to_f)
+              NS.task.set(id, 'open', { friend = to_f, sprint = S, qscore = score, by = 'width', why = 'underfull',
+                fields = { 'dest', to_f } })
               redis.call('XADD', 's:' .. S .. ':log', '*',
                 'kind', 'width move',
                 'id', id,

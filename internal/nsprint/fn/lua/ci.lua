@@ -240,7 +240,7 @@ local function ci_settle_waiting(repo, head, final, pkg, actor, at)
   local wkey = 'ci:' .. repo .. ':' .. head .. ':waiting'
   for _, member in ipairs(redis.call('SMEMBERS', wkey)) do
     local T, id = string.match(member, '^([^/]+)/(.+)$')
-    local key = T and ('s:' .. T .. ':task:' .. id) or ''
+    local key = T and ('task:' .. id) or ''
     local row = T and redis.call('HMGET', key, 'state', 'repo', 'head', 'to', 'priority', 'reason', 'wait_score') or {}
     local state = row[1]
     local live = row[2] == repo and row[3] == head and
@@ -253,22 +253,15 @@ local function ci_settle_waiting(repo, head, final, pkg, actor, at)
       -- is -priority), else its stored priority unchanged, as ns_task_push
       -- scores a plain push and task_beat requeues. Never negated here.
       local score = tonumber(row[7]) or tonumber(row[5]) or 0
-      redis.call('HSET', key, 'state', 'open', 'reason', '', 'enqueued_at', at)
+      -- the one task move (NS.task, 02_card_move.lua): waiting|parked -> ready
+      NS.task.set(id, 'open', { friend = to, sprint = T, qscore = score, by = actor, why = 'ci-ok',
+        fields = { 'reason', '', 'enqueued_at', at } })
       redis.call('HDEL', key, 'wait_score')
-      redis.call('SREM', 's:' .. T .. ':idx:task:' .. state, id)
-      redis.call('SADD', 's:' .. T .. ':idx:task:open', id)
-      if to ~= '' then
-        redis.call('ZADD', 's:' .. T .. ':open:' .. to, score, id)
-      else
-        redis.call('ZADD', 's:' .. T .. ':ready', score, id)
-      end
       redis.call('SREM', wkey, member)
       ci_receipt(T, 'task', id, state, 'open', 0, '', actor, 'ci-ok',
         'ci:' .. repo .. ':' .. head .. ' OK', 'ci-ok:' .. head .. ':' .. id, at)
     elseif state == 'waiting-ci' then
-      redis.call('HSET', key, 'state', 'parked', 'reason', 'ci-fail')
-      redis.call('SREM', 's:' .. T .. ':idx:task:waiting-ci', id)
-      redis.call('SADD', 's:' .. T .. ':idx:task:parked', id)
+      NS.task.set(id, 'parked', { sprint = T, by = actor, why = 'ci-fail', fields = { 'reason', 'ci-fail' } })
       ci_receipt(T, 'task', id, 'waiting-ci', 'parked', 0, '', actor, 'ci-fail',
         'ci:' .. repo .. ':' .. head .. ' FAIL pkg=' .. pkg, 'ci-fail:' .. head .. ':' .. id, at)
     end
@@ -365,7 +358,6 @@ local function ci_end(keys, args)
   local at = ci_now_ms()
   local repo, pr, head = ci_hget(card_key, 'ci_repo'), ci_hget(card_key, 'ci_pr'), ci_hget(card_key, 'ci_head')
   local bench = ci_hget(card_key, 'bench')
-  local member = S .. '/' .. label .. '/' .. attempt
 
   local prev = ci_hget(card_key, 'prev')
   local disp = ci_hget(card_key, 'disp')
@@ -400,8 +392,6 @@ local function ci_end(keys, args)
   if outcome == 'DONE' and final == 'OK' then ok = 'ok' end
   local refused = CARD.move(card_key, 'done', { state = 'ended', ok = ok, by = actor, why = reason })
   if refused then return { 'STATE', attempt } end
-  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
   redis.call('SADD', 's:' .. S .. ':bench:' .. bench .. ':ended', label)
 
   local flaky = ''

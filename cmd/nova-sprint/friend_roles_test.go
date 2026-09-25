@@ -120,7 +120,7 @@ func TestRolesSetByCoordinatorRoutesNextCall(t *testing.T) {
 	}
 	seed(t, addr, [][]string{
 		{"SADD", "sprints", "s"}, {"HSET", "s:s", "status", "open"},
-		{"HSET", "s:s:task:r", "state", "open", "kind", "read", "priority", "1", "repo", "r", "pr", "1", "head", strings.Repeat("1", 40), "author", "a"},
+		{"HSET", "task:r", "state", "open", "kind", "read", "priority", "1", "repo", "r", "pr", "1", "head", strings.Repeat("1", 40), "author", "a"},
 		{"ZADD", "s:s:open:c", "1", "r"}, {"SADD", "s:s:idx:task:open", "r"},
 	})
 	t.Setenv("NOVA_FRIEND", "a")

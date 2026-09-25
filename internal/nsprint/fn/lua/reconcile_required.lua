@@ -57,8 +57,6 @@ local function rr_requeue(S, label, card, bench, member, from, reason, evidence,
   local refused = CARD.move(card, 'ready', { state = 'queued', by = 'reconciler', why = reason,
     fields = { 'token', '', 'retries', tostring(retries + 1), 'reason', reason, 'requeued_at', tostring(at) } })
   if refused then return rr_reply(2, 'STATE', attempt, '') end
-  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
   redis.call('ZREM', 's:' .. S .. ':bench:' .. bench .. ':queue', label)
   local r = rr_receipt(S, 'card', label, from, 'queued', attempt, token_sha,
     'reconciler', reason, evidence, idem, at)
@@ -113,8 +111,6 @@ redis.register_function('ns_card_reclaim', function(keys, args)
         fields = { 'token', '', 'reason', 'beat-lost', 'required_at', tostring(now) } }) then
       return rr_reply(2, 'STATE', attempt, '')
     end
-    redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-    redis.call('ZREM', 'bench:' .. bench .. ':living', member)
     local r = rr_receipt(S, 'card', label, state, 'reconcile-required', attempt, token_sha,
       'reconciler', 'beat-lost', identity, idem, now)
     redis.call('HSET', 's:' .. S .. ':idem', idem, r)
@@ -201,9 +197,6 @@ redis.register_function('ns_card_required_timeout', function(keys, args)
         'why_at', tostring(now), 'ended_at', tostring(now) } }) then
     return rr_reply(2, 'STATE', attempt, '')
   end
-  local member = S .. '/' .. label .. '/' .. attempt
-  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
   local r = rr_receipt(S, 'card', label, 'reconcile-required', 'ended', attempt,
     rr_get(card, 'token_sha'), 'reconciler', 'reconcile-timeout', why, idem, now)
   redis.call('HSET', card, 'end_receipt', r)
@@ -485,7 +478,7 @@ redis.register_function('ns_task_assign', function(keys, args)
   local S, id, consumer, rtoken = args[1], args[2], args[3] or '', args[4] or ''
   if rr_fenced(rtoken) then return rr_reply(3, 'FENCED', '', '') end
   if consumer == '' then return rr_reply(1, 'USAGE', '', '') end
-  local task = 's:' .. S .. ':task:' .. id
+  local task = 'task:' .. id
   if redis.call('EXISTS', task) == 0 then return rr_reply(5, 'NOTFOUND', '', '') end
   local attempt = rr_get(task, 'attempt')
   local idem = 'route:' .. id .. ':' .. attempt
@@ -506,9 +499,9 @@ redis.register_function('ns_task_assign', function(keys, args)
   end
   if registered == 0 then return rr_reply(2, 'CONSUMER', attempt, '') end
   local now = rr_now()
-  redis.call('ZREM', 's:' .. S .. ':ready', id)
-  redis.call('ZADD', 's:' .. S .. ':open:' .. consumer, score, id)
-  redis.call('HSET', task, 'owner', consumer)
+  local err = NS.task.set(id, 'open', { friend = consumer, sprint = S, qscore = score, by = 'reconciler', why = 'route',
+    fields = { 'dest', consumer } })
+  if err then return rr_reply(2, 'STATE', attempt, err) end
   local r = rr_receipt(S, 'task', id, 'ready', 'open:' .. consumer, attempt, '', 'reconciler', 'route', consumer, idem, now)
   redis.call('HSET', 's:' .. S .. ':idem', idem, r)
   return rr_reply(0, 'OK', attempt, r)

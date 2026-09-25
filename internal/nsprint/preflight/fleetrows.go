@@ -114,7 +114,7 @@ type BenchFacts struct {
 	DiskGiB int      // free GiB under the bench root
 	DiskOK  bool     // the beat carried a readable disk fact
 	Slots   int      // bench:<b>:desired slots
-	Leased  int      // starting reservations plus living leases
+	Leased  int      // ZCARD bench:<b>:cards:working, the one lease ledger (#3998)
 }
 
 // Free is the bench's free slots now.
@@ -168,19 +168,18 @@ func GatherFleet(ctx context.Context, c *redis.Client, sprint string) (Fleet, er
 	benches := names.Val()
 	sort.Strings(benches)
 	type cmds struct {
-		beat, desired             *redis.MapStringStringCmd
-		starting, living, harvest *redis.IntCmd
+		beat, desired    *redis.MapStringStringCmd
+		working, harvest *redis.IntCmd
 	}
 	cs := make([]cmds, len(benches))
 	status := make([]*redis.StringCmd, len(sprints.Val()))
 	pipe = c.Pipeline()
 	for i, b := range benches {
 		cs[i] = cmds{
-			beat:     pipe.HGetAll(ctx, "bench:"+b+":beat"),
-			desired:  pipe.HGetAll(ctx, "bench:"+b+":desired"),
-			starting: pipe.ZCard(ctx, "bench:"+b+":starting"),
-			living:   pipe.ZCard(ctx, "bench:"+b+":living"),
-			harvest:  pipe.Exists(ctx, "lease:harvest:"+b),
+			beat:    pipe.HGetAll(ctx, "bench:"+b+":beat"),
+			desired: pipe.HGetAll(ctx, "bench:"+b+":desired"),
+			working: pipe.ZCard(ctx, "bench:"+b+":cards:working"),
+			harvest: pipe.Exists(ctx, "lease:harvest:"+b),
 		}
 	}
 	for i, s := range sprints.Val() {
@@ -202,7 +201,7 @@ func GatherFleet(ctx context.Context, c *redis.Client, sprint string) (Fleet, er
 		b.Paused = desired["paused"] == "1" || desired["paused"] == "true"
 		b.Slots, _ = strconv.Atoi(desired["slots"])
 		b.Desired = b.Slots
-		b.Leased = int(cs[i].starting.Val() + cs[i].living.Val())
+		b.Leased = int(cs[i].working.Val())
 		if len(beat) > 0 {
 			b.BeatPresent = true
 			if at, ok := parseStamp(beat["at"]); ok {

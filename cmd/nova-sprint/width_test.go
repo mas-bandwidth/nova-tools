@@ -48,7 +48,7 @@ func TestWidthVerbs(t *testing.T) {
 		nowMs := timeVal.UnixMilli()
 
 		for i := 1; i <= 4; i++ {
-			client.ZAdd(ctx, "friend:f1:living", redis.Z{Score: float64(nowMs), Member: fmt.Sprintf("m%d", i)})
+			client.ZAdd(ctx, "friend:f1:cards:working", redis.Z{Score: float64(nowMs), Member: fmt.Sprintf("m%d", i)})
 		}
 
 		lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c8"})
@@ -70,7 +70,7 @@ func TestWidthVerbs(t *testing.T) {
 			t.Fatalf("width code=%d stderr=%q", code, stderr.String())
 		}
 		outStr := stdout.String()
-		wantF3 := "WIDTH f3 slots=? starting=? living=? leased=? working=? deficit=? eligible=? idle=? peak=?@? at=?"
+		wantF3 := "WIDTH f3 slots=? leased=? working=? deficit=? eligible=? idle=? peak=?@? at=?"
 		if !strings.Contains(outStr, wantF3) {
 			t.Fatalf("width output does not contain stale ? line for f3: %q", outStr)
 		}
@@ -131,7 +131,7 @@ func TestWidthVerbs(t *testing.T) {
 		for i := 1; i <= 5; i++ {
 			id := fmt.Sprintf("t%d", i)
 			client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: float64(i), Member: id})
-			client.HSet(ctx, "s:"+sprint+":task:"+id, "state", "open", "kind", "work", "ref", id)
+			client.HSet(ctx, "task:"+id, "state", "open", "kind", "work", "ref", id)
 		}
 
 		var out1, err1 bytes.Buffer
@@ -236,7 +236,7 @@ func TestWidthVerbs(t *testing.T) {
 		if len(lines) != 1 {
 			t.Fatalf("width --as a printed %d lines; want exactly 1: %q", len(lines), stdout.String())
 		}
-		re := regexp.MustCompile(`^WIDTH a slots=8 starting=\d+ living=\d+ leased=\d+ working=\d+ deficit=\d+ `)
+		re := regexp.MustCompile(`^WIDTH a slots=8 leased=\d+ working=\d+ deficit=\d+ `)
 		if !re.MatchString(lines[0]) {
 			t.Fatalf("line %q does not match %s", lines[0], re.String())
 		}
@@ -249,7 +249,7 @@ func TestWidthVerbs(t *testing.T) {
 		if err != nil || !ok {
 			t.Fatalf("read fillstate: ok=%v err=%v", ok, err)
 		}
-		if fsData.Slots != gw.Desired || fsData.Starting != gw.Starting || fsData.Living != gw.Living || fsData.Leased != gw.Leased || fsData.Deficit != gw.Free {
+		if fsData.Slots != gw.Desired || fsData.Leased != gw.Leased || fsData.Deficit != gw.Free {
 			t.Fatalf("mismatch with task.GetWidth: fillstate=%+v getWidth=%+v", fsData, gw)
 		}
 	})
@@ -323,7 +323,7 @@ func TestWidthAsDesiredNoFillstate(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("width --as f code=%d stderr=%q; want 0", code, stderr.String())
 	}
-	want := "WIDTH f slots=8 starting=? living=? leased=? working=? deficit=? eligible=? idle=? peak=?@? at=?\n"
+	want := "WIDTH f slots=8 leased=? working=? deficit=? eligible=? idle=? peak=?@? at=?\n"
 	if stdout.String() != want {
 		t.Fatalf("width --as f stdout=%q; want %q", stdout.String(), want)
 	}
@@ -360,14 +360,14 @@ func TestWidthAsDesiredNoFillstate(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := strconv.FormatInt(now.UnixMilli(), 10)
-	client.HSet(ctx, "friend:f:fillstate", "slots", "8", "starting", "1", "living", "5", "leased", "6",
+	client.HSet(ctx, "friend:f:fillstate", "slots", "8", "leased", "6",
 		"working", "5", "deficit", "2", "eligible", "3", "peak", "7", "peak_at", at, "at", at)
 	stdout.Reset()
 	stderr.Reset()
 	if code := run([]string{"width", "--as", "f", "--redis", addr}, &stdout, &stderr); code != 0 {
 		t.Fatalf("width --as f (fillstate) code=%d stderr=%q", code, stderr.String())
 	}
-	want = "WIDTH f slots=8 starting=1 living=5 leased=6 working=5 deficit=2 eligible=3 idle=- peak=7@" + at + " at=" + at + "\n"
+	want = "WIDTH f slots=8 leased=6 working=5 deficit=2 eligible=3 idle=- peak=7@" + at + " at=" + at + "\n"
 	if stdout.String() != want {
 		t.Fatalf("width --as f (fillstate) stdout=%q; want %q", stdout.String(), want)
 	}

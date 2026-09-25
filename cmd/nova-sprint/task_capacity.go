@@ -79,6 +79,6 @@ func runTaskWidth(ctx context.Context, args []string, out, errOut io.Writer) int
 	if err != nil {
 		return refuse(errOut, "task width", err.Error())
 	}
-	fmt.Fprintf(out, "WIDTH %s desired=%d starting=%d living=%d leased=%d free=%d\n", *as, width.Desired, width.Starting, width.Living, width.Leased, width.Free)
+	fmt.Fprintf(out, "WIDTH %s desired=%d leased=%d free=%d\n", *as, width.Desired, width.Leased, width.Free)
 	return 0
 }

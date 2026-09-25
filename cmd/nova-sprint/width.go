@@ -131,7 +131,7 @@ func runWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 				for _, s := range client.SMembers(ctx, "sprints").Val() {
 					for _, r := range readers {
 						for _, tid := range client.ZRange(ctx, "s:"+s+":open:"+r, 0, -1).Val() {
-							kind := client.HGet(ctx, "s:"+s+":task:"+tid, "kind").Val()
+							kind := client.HGet(ctx, "task:"+tid, "kind").Val()
 							if kind == "read" || kind == "review" {
 								readBound = true
 								break

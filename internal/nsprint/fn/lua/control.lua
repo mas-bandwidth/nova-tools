@@ -19,9 +19,11 @@
 do
   local CARD = NS.card
   local CT_WHERE = { 'waiting', 'ready', 'working', 'done', 'parked', 'ok', 'fail' }
+  -- (the old lease ledgers fold into <consumer>:cards:working, #3998: the
+  -- CT_WHERE sweep below takes them)
   local CT_BENCH = { '', ':desired', ':beat', ':queue', ':working', ':done', ':state', ':live',
-    ':living', ':starting', ':owner', ':land', ':hold', ':ssh', ':reset', ':conform' }
-  local CT_FRIEND = { '', ':desired', ':beat', ':queue', ':state', ':living', ':starting', ':roles',
+    ':owner', ':land', ':hold', ':ssh', ':reset', ':conform' }
+  local CT_FRIEND = { '', ':desired', ':beat', ':queue', ':state', ':roles',
     ':serve', ':slots', ':down', ':fillstate', ':idle', ':last', ':log', ':wake', ':wakehealth',
     ':wakepath', ':waiting' }
   local CT_SPRINT = { '', ':pool', ':waiting', ':log', ':paused', ':drain:imported', ':ready', ':done',

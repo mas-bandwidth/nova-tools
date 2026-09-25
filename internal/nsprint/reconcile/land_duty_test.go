@@ -314,7 +314,7 @@ func TestLandDutyLandsEveryReadStreamInOneBatch(t *testing.T) {
 	if id != "rebase-15-"+fx.heads[15][:8] {
 		t.Errorf("rebase id %q", id)
 	}
-	tk, _ := c.HGetAll(ctx, "s:"+ldSprint+":task:"+id).Result()
+	tk, _ := c.HGetAll(ctx, "task:"+id).Result()
 	l, _, _ := stream.LoadLanding(ctx, c, ldRepo, "landing-beta")
 	title := tk["title"]
 	if tk["kind"] != "rebase" || !strings.Contains(title, "stream/landing-beta at "+l.Head[:8]) || !strings.Contains(title, "a.txt") {

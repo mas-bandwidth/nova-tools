@@ -147,7 +147,7 @@ func reviewTasks(t *testing.T, client *redis.Client, sprint, label string) map[s
 	must(t, err)
 	out := map[string]map[string]string{}
 	for _, id := range ids {
-		h, err := client.HGetAll(ctx, "s:"+sprint+":task:"+id).Result()
+		h, err := client.HGetAll(ctx, "task:"+id).Result()
 		must(t, err)
 		if (h["kind"] == "review" || h["kind"] == "read") && strings.Contains(h["ref"], "/"+label+"/") {
 			out[id] = h
@@ -188,7 +188,7 @@ func TestControl07NoReviewBeforePR(t *testing.T) {
 		}
 	}
 	for _, label := range []string{"card-1", "card-2", "card-4"} {
-		h, err := client.HGetAll(ctx, "s:"+sprint+":task:harvest-"+label).Result()
+		h, err := client.HGetAll(ctx, "task:harvest-"+label).Result()
 		must(t, err)
 		if h["state"] != "open" || h["kind"] != "harvest" {
 			t.Fatalf("harvest-%s = %v; want an open harvest task", label, h)
@@ -202,7 +202,7 @@ func TestControl07NoReviewBeforePR(t *testing.T) {
 			t.Fatalf("harvest-%s created %d ms after the end; want within 60 s", label, created-ended)
 		}
 	}
-	if n, _ := client.Exists(ctx, "s:"+sprint+":task:harvest-card-3").Result(); n != 0 {
+	if n, _ := client.Exists(ctx, "task:harvest-card-3").Result(); n != 0 {
 		t.Fatal("a FAILED card got a harvest task; only DONE is harvested")
 	}
 
@@ -328,7 +328,7 @@ func TestControl14NoCardHandledTwice(t *testing.T) {
 	if pending.Count != 1 {
 		t.Fatalf("after the kill %d events pending; want the one delivered and unacked", pending.Count)
 	}
-	if n, _ := client.Exists(ctx, "s:"+sprint+":task:harvest-card-5", "s:"+sprint+":task:harvest-card-6").Result(); n != 0 {
+	if n, _ := client.Exists(ctx, "task:harvest-card-5", "task:harvest-card-6").Result(); n != 0 {
 		t.Fatal("the killed instance wrote a transition before its ack")
 	}
 
@@ -464,7 +464,7 @@ func TestOkFriendReviewConflictStaysHarvested(t *testing.T) {
 	for _, f := range []string{"ctl-a", "ctl-b", "ctl-c"} {
 		id := task.ReviewID(ctlRepo, 105, head, f)
 		conflicts[id] = f
-		must(t, client.HSet(ctx, "s:"+sprint+":task:"+id, "kind", "review", "state", "open",
+		must(t, client.HSet(ctx, "task:"+id, "kind", "review", "state", "open",
 			"payload_sha", "not-this-payload").Err())
 	}
 	harvestCard(t, client, sprint, "card-5", 105, head)
@@ -504,7 +504,7 @@ func TestOkFriendReviewConflictStaysHarvested(t *testing.T) {
 
 	// A human clears the conflicting ids; the retried event routes the read.
 	for id := range conflicts {
-		must(t, client.Del(ctx, "s:"+sprint+":task:"+id).Err())
+		must(t, client.Del(ctx, "task:"+id).Err())
 	}
 	if _, err := ok.Pass(ctx); err != nil {
 		t.Fatalf("pass after the ids were cleared: %v", err)
@@ -540,7 +540,7 @@ func TestOkFriendRunBacksOffOnBlocked(t *testing.T) {
 	head := strings.Repeat("6", 40)
 	for _, f := range []string{"ctl-a", "ctl-b", "ctl-c"} {
 		id := task.ReviewID(ctlRepo, 106, head, f)
-		must(t, client.HSet(ctx, "s:"+sprint+":task:"+id, "kind", "review", "state", "open",
+		must(t, client.HSet(ctx, "task:"+id, "kind", "review", "state", "open",
 			"payload_sha", "not-this-payload").Err())
 	}
 	harvestCard(t, client, sprint, "card-6", 106, head)
