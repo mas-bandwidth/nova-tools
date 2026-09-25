@@ -41,6 +41,20 @@ func wrTask(t *testing.T, c *redis.Client, id, state string, created int64, kv .
 	}
 }
 
+// wrFriend registers a live friend with slots: a consumer with seats, so a
+// released task has somewhere to go (#4059).
+func wrFriend(t *testing.T, c *redis.Client, name string, slots int) {
+	t.Helper()
+	ctx := context.Background()
+	pipe := c.Pipeline()
+	pipe.SAdd(ctx, "friends", name)
+	pipe.Set(ctx, "friend:"+name+":slots", slots, 0)
+	pipe.HSet(ctx, "friend:"+name, "at", time.Now().UTC().Format(time.RFC3339))
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func wrMembers(t *testing.T, c *redis.Client, state string) map[string]float64 {
 	t.Helper()
 	zs, err := c.ZRangeWithScores(context.Background(), ws.Key(wrStream, state), 0, -1).Result()
@@ -74,6 +88,7 @@ func TestWaitingResolvesWhenDepsLand(t *testing.T) {
 	wrTask(t, c, "H", "waiting", 2004, "blocked_on", "mas-bandwidth/nova-tools#78")
 	wrTask(t, c, "J", "waiting", 2005, "blocked_on", "o/r#99")
 	wrTask(t, c, "K", "waiting", 2006) // no blocked_on: no evidence, stays
+	wrFriend(t, c, "emma", 10)
 
 	st := store.New(c)
 	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test"})
@@ -102,7 +117,7 @@ func TestWaitingResolvesWhenDepsLand(t *testing.T) {
 	if s, _ := c.HGet(ctx, "task:B", "where").Result(); s != "ready" {
 		t.Fatalf("task:B where %q, want ready (the pointer, #3778)", s)
 	}
-	want := `RESOLVE stream="nova-sprint + merge + bus" ready=2 still=5 on=mas-bandwidth/nova-tools#78,task:D unknown=o/r#99,task:ghost` + "\n"
+	want := `RESOLVE stream="nova-sprint + merge + bus" ready=2 still=5 on=mas-bandwidth/nova-tools#78,task:D unknown=o/r#99,task:ghost noconsumer=- noseat=-` + "\n"
 	if out.String() != want {
 		t.Fatalf("receipt\n%q\nwant\n%q", out.String(), want)
 	}
@@ -157,6 +172,7 @@ func TestWaitingResolveStopsAtLeaseMargin(t *testing.T) {
 	ctx := context.Background()
 	wrTask(t, c, "A", "landed", 1000)
 	wrTask(t, c, "B", "waiting", 2000, "blocked_on", "task:A")
+	wrFriend(t, c, "emma", 10)
 
 	clock := newFakeClock(time.Unix(1_700_000_000, 0))
 	lease, err := reconcile.Acquire(ctx, store.New(c), reconcile.AcquireOptions{Host: "test", TTL: 6 * time.Second, Clock: clock})

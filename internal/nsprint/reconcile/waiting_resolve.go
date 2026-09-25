@@ -24,15 +24,27 @@ package reconcile
 //   - blocked_on "none" or "-" has nothing to wait on and is met; an empty
 //     blocked_on is no evidence either way and the task stays waiting.
 //
-// A task whose every entry is met moves waiting -> ready through
-// ns_ws_move_many (ws.MoveMany, the ws index's one writer), one call per
-// stream per distinct blocked_on, so the ws:log entry's why names the
-// dependencies that released it; its score in ready is its created_at,
-// unchanged. Reads are pipelined rounds over the sets and the named records,
-// never a SCAN or KEYS. The duty prints one receipt line per stream with
-// waiting tasks when it moves something or what is still waiting changed:
+// A task whose every entry is met moves waiting -> ready only when it has a
+// consumer this tick (nova-tools #4059; consumer.go): a live friend WHO
+// admits with a seat, or a route that names the swarm. Glenn 2026-09-25
+// 1:40 PM ET: waiting -> ready is ONE WAY, and a ready card is dealt at once
+// (the deal duty runs next in the same pass, with the same answer), so ready
+// is never a resting state. The plan walks the ready cards and the released
+// ones together in the deal's order (ws:order rank, then oldest first), so a
+// seat the deal will give an older ready card is not promised twice.
 //
-//	RESOLVE stream=<s> ready=<k> still=<n> on=<unmet deps> unknown=<deps>
+// The move goes through ns_ws_move_many (ws.MoveMany, the ws index's one
+// writer), one call per stream per distinct blocked_on, so the ws:log entry's
+// why names the dependencies that released it; its score in ready is its
+// created_at, unchanged. A released task with no consumer stays in waiting
+// with why=no-consumer, written once through ns_ws_note (one ws:log entry the
+// first time, nothing after); one whose friends are full (no-seat) stays in
+// waiting and nothing is written. Reads are pipelined rounds over the sets
+// and the named records, never a SCAN or KEYS. The duty prints one receipt
+// line per stream with waiting tasks when it moves something or what is
+// still waiting changed:
+//
+//	RESOLVE stream=<s> ready=<k> still=<n> on=<unmet deps> unknown=<deps> noconsumer=<ids> noseat=<ids>
 //
 // Every write is bounded by the lease (#3322, #3805): no move starts with
 // less than the write margin of the lease left, and a fenced lease stops the
@@ -77,12 +89,16 @@ type ResolveLine struct {
 	On      []string   // unmet dependencies that have a record
 	Unknown []string   // dependencies with no record
 	Refused []ws.IDWhy // ids ns_ws_move_many refused (left waiting, counted in Still)
+	// NoConsumer and NoSeat are the released ids left waiting (counted in
+	// Still): no consumer at all, or every admitted friend full this tick.
+	NoConsumer []string
+	NoSeat     []string
 }
 
 // String is the receipt line.
 func (r ResolveLine) String() string {
-	return fmt.Sprintf("RESOLVE stream=%s ready=%d still=%d on=%s unknown=%s",
-		wrField(r.Stream), len(r.Ready), r.Still, wrList(r.On), wrList(r.Unknown))
+	return fmt.Sprintf("RESOLVE stream=%s ready=%d still=%d on=%s unknown=%s noconsumer=%s noseat=%s",
+		wrField(r.Stream), len(r.Ready), r.Still, wrList(r.On), wrList(r.Unknown), wrList(r.NoConsumer), wrList(r.NoSeat))
 }
 
 func wrField(s string) string {
@@ -120,7 +136,7 @@ func (d *WaitingResolve) print(lines []ResolveLine) {
 	for _, r := range lines {
 		// What is still waiting, and on what: an idle pass over the same
 		// waiting set prints nothing.
-		held := fmt.Sprintf("%d %s %s", r.Still, wrList(r.On), wrList(r.Unknown))
+		held := fmt.Sprintf("%d %s %s %s %s", r.Still, wrList(r.On), wrList(r.Unknown), wrList(r.NoConsumer), wrList(r.NoSeat))
 		if len(r.Ready) == 0 && d.last[r.Stream] == held {
 			continue
 		}
@@ -227,8 +243,11 @@ const (
 
 type wrWaiter struct {
 	id, stream, blockedOn string
+	score                 float64
 	deps                  []wrDep
 	none                  bool
+	card                  planCard
+	record                bool // task:<id> exists (a card-model id has none)
 }
 
 // Pass resolves every stream's waiting set once and returns one line per
@@ -253,35 +272,42 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 
 	// Round 2: every stream's waiting set, oldest first.
 	pipe := c.Pipeline()
-	waitCmds := make([]*redis.StringSliceCmd, len(streams))
+	waitCmds := make([]*redis.ZSliceCmd, len(streams))
 	for i, s := range streams {
-		waitCmds[i] = pipe.ZRange(ctx, ws.Key(s, "waiting"), 0, -1)
+		waitCmds[i] = pipe.ZRangeWithScores(ctx, ws.Key(s, "waiting"), 0, -1)
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("waiting-resolve: waiting sets: %w", err)
 	}
 	var waiters []*wrWaiter
 	for i, s := range streams {
-		for _, id := range waitCmds[i].Val() {
-			waiters = append(waiters, &wrWaiter{id: id, stream: s})
+		for _, z := range waitCmds[i].Val() {
+			id, _ := z.Member.(string)
+			waiters = append(waiters, &wrWaiter{id: id, stream: s, score: z.Score})
 		}
 	}
 	if len(waiters) == 0 {
 		return nil, nil
 	}
 
-	// Round 3: each waiting task's blocked_on.
+	// Round 3: each waiting task's blocked_on and the fields its consumer
+	// is read from.
 	pipe = c.Pipeline()
-	boCmds := make([]*redis.StringCmd, len(waiters))
+	boCmds := make([]*redis.SliceCmd, len(waiters))
 	for i, w := range waiters {
-		boCmds[i] = pipe.HGet(ctx, "task:"+w.id, "blocked_on")
+		boCmds[i] = pipe.HMGet(ctx, "task:"+w.id, append([]string{"blocked_on"}, planFields...)...)
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("waiting-resolve: blocked_on: %w", err)
 	}
 	taskDeps, refDeps := map[string]wrStatus{}, map[string]wrStatus{}
 	for i, w := range waiters {
-		w.blockedOn = strings.TrimSpace(boCmds[i].Val())
+		v := boCmds[i].Val()
+		w.card = planCard{id: w.id, stream: w.stream, score: w.score, waiting: true}
+		if len(v) > 1 {
+			w.record = w.card.setFields(v[1:])
+		}
+		w.blockedOn = strings.TrimSpace(wrStr(v, 0))
 		w.deps, w.none = wrParse(w.blockedOn)
 		for _, dep := range w.deps {
 			switch dep.kind {
@@ -368,12 +394,7 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	// lines never grows past len(streams), so the pointers into it hold.
 	lines := make([]ResolveLine, 0, len(streams))
 	byStream := map[string]*ResolveLine{}
-	type group struct {
-		stream, why string
-		ids         []string
-	}
-	var groups []*group
-	groupOf := map[string]*group{}
+	var released []*wrWaiter
 	for _, w := range waiters {
 		r := byStream[w.stream]
 		if r == nil {
@@ -403,8 +424,39 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 				met = false
 			}
 		}
-		if !met {
+		if !met || !w.record {
 			r.Still++
+			continue
+		}
+		released = append(released, w)
+	}
+
+	// The consumers (#4059): a released task moves to ready only when the
+	// deal, next in this pass, will take it; else it stays waiting.
+	placed, err := d.place(ctx, released)
+	if err != nil {
+		return lines, err
+	}
+	type group struct {
+		stream, why string
+		ids         []string
+	}
+	var groups []*group
+	groupOf := map[string]*group{}
+	var notes []string
+	for _, w := range released {
+		r := byStream[w.stream]
+		switch placed[w.id] {
+		case NoConsumer:
+			r.Still++
+			r.NoConsumer = append(r.NoConsumer, w.id)
+			if w.card.why != NoConsumer {
+				notes = append(notes, w.id)
+			}
+			continue
+		case NoSeat:
+			r.Still++
+			r.NoSeat = append(r.NoSeat, w.id)
 			continue
 		}
 		gk := w.stream + "\x00" + w.blockedOn
@@ -462,6 +514,14 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 			r.Ready = append(r.Ready, id)
 		}
 	}
+	// The no-consumer notes, one fenced call, written once per card.
+	if len(notes) > 0 {
+		if err := d.note(ctx, l, notes); errors.Is(err, ErrFenced) {
+			return lines, err
+		} else if err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
 	for i := range lines {
 		sort.Strings(lines[i].On)
 		sort.Strings(lines[i].Unknown)
@@ -470,6 +530,109 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		return lines, fmt.Errorf("waiting-resolve: %s", strings.Join(errs, "; "))
 	}
 	return lines, nil
+}
+
+// place answers, for each released task, who takes it this tick (consumer.go):
+// the plan walks every ws ready set and the released tasks together in the
+// deal's order, so the seats the ready cards will take are taken first. It
+// returns id -> NoConsumer, NoSeat, or the consumer.
+func (d *WaitingResolve) place(ctx context.Context, released []*wrWaiter) (map[string]string, error) {
+	out := map[string]string{}
+	if len(released) == 0 {
+		return out, nil
+	}
+	c := d.Client
+	cs, err := readConsumers(ctx, c)
+	if err != nil {
+		return nil, fmt.Errorf("waiting-resolve: %w", err)
+	}
+	p1 := c.Pipeline()
+	order := p1.ZRange(ctx, "ws:order", 0, -1)
+	names := p1.SMembers(ctx, "ws:names")
+	if _, err := p1.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("waiting-resolve: streams: %w", err)
+	}
+	streams := streamOrder(order.Val(), names.Val())
+	p2 := c.Pipeline()
+	ready := make([]*redis.ZSliceCmd, len(streams))
+	for i, s := range streams {
+		ready[i] = p2.ZRangeWithScores(ctx, ws.Key(s, "ready"), 0, -1)
+	}
+	if _, err := p2.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("waiting-resolve: ready sets: %w", err)
+	}
+	var readyCards []planCard
+	for i, s := range streams {
+		for _, z := range ready[i].Val() {
+			id, _ := z.Member.(string)
+			readyCards = append(readyCards, planCard{id: id, stream: s, score: z.Score})
+		}
+	}
+	p3 := c.Pipeline()
+	fields := make([]*redis.SliceCmd, len(readyCards))
+	for i, k := range readyCards {
+		fields[i] = p3.HMGet(ctx, "task:"+k.id, planFields...)
+	}
+	if len(readyCards) > 0 {
+		if _, err := p3.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return nil, fmt.Errorf("waiting-resolve: ready cards: %w", err)
+		}
+	}
+	byStream := map[string][]planCard{}
+	for i := range readyCards {
+		if readyCards[i].setFields(fields[i].Val()) {
+			byStream[readyCards[i].stream] = append(byStream[readyCards[i].stream], readyCards[i])
+		}
+	}
+	for _, w := range released {
+		byStream[w.stream] = append(byStream[w.stream], w.card)
+	}
+	for _, s := range streams {
+		cards := byStream[s]
+		planOrder(cards)
+		for _, k := range cards {
+			to, why := cs.place(k)
+			if k.waiting {
+				if to == "" {
+					out[k.id] = why
+				} else {
+					out[k.id] = to
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+// note writes why=no-consumer on the released tasks that have no consumer,
+// through ns_ws_note (fenced; a card already carrying it writes nothing).
+func (d *WaitingResolve) note(ctx context.Context, l *Lease, ids []string) error {
+	if left, m := l.Remaining(), d.margin(l); left < m {
+		return fmt.Errorf("%d no-consumer note(s) not written: LEASE-MARGIN: %s of the lease left, below the %s write margin",
+			len(ids), left.Round(time.Millisecond), m)
+	}
+	args := []any{l.Token(), d.actor(), NoConsumer}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	reply, err := d.Client.FCall(ctx, "ns_ws_note", nil, args...).Slice()
+	if err != nil {
+		return fmt.Errorf("ns_ws_note: %w", err)
+	}
+	if len(reply) > 0 && fmt.Sprint(reply[0]) == "FENCED" {
+		return fmt.Errorf("ns_ws_note: %w", ErrFenced)
+	}
+	if len(reply) < 4 || fmt.Sprint(reply[0]) != "NOTED" {
+		return fmt.Errorf("ns_ws_note: %v", reply)
+	}
+	var bad []string
+	for i := 4; i+1 < len(reply); i += 2 {
+		bad = append(bad, fmt.Sprintf("%v refused: %v", reply[i], reply[i+1]))
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("ns_ws_note: %s", strings.Join(bad, "; "))
+	}
+	return nil
 }
 
 // wrNames is every owner/repo#n a task's pr, ref and origin name.

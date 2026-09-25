@@ -102,8 +102,9 @@ func (f *dealFixture) members(t *testing.T, key string) []string {
 // plus one card only stella (down) may take. One pass moves 3 + 1 cards to
 // the friends' working sets, oldest first by ws:order rank (the second
 // stream's cards are older, and still wait for the first stream's), the
-// ready ZCARDs drop by the 4 dealt, the stella card goes back to waiting with
-// why=no-consumer, and a second pass moves nothing.
+// ready ZCARDs drop by the 4 dealt, the stella card (no live consumer) is
+// named idle and is NOT moved back to waiting (#4059: waiting -> ready is one
+// way), and a second pass moves nothing and prints nothing.
 func TestDealFillsEveryOpenSlotInOneTick(t *testing.T) {
 	f := newDealFixture(t)
 	const s1, s2 = "nova-sprint", "swarm: cards"
@@ -149,8 +150,8 @@ func TestDealFillsEveryOpenSlotInOneTick(t *testing.T) {
 	if h, _ := f.c.HMGet(f.ctx, "task:a03", "state", "owner").Result(); h[0] != "working" || h[1] != "rowan" {
 		t.Fatalf("task a03 state/owner %v, want working/rowan", h)
 	}
-	if n := f.zcard(t, "ws:"+s1+":ready"); n != 6 {
-		t.Fatalf("ws:%s:ready %d, want 11 - 4 dealt - 1 returned = 6", s1, n)
+	if n := f.zcard(t, "ws:"+s1+":ready"); n != 7 {
+		t.Fatalf("ws:%s:ready %d, want 11 - 4 dealt = 7", s1, n)
 	}
 	if n := f.zcard(t, "ws:"+s2+":ready"); n != 10 {
 		t.Fatalf("ws:%s:ready %d, want 10: rank 2 waits for rank 1", s2, n)
@@ -161,21 +162,20 @@ func TestDealFillsEveryOpenSlotInOneTick(t *testing.T) {
 	if sc, err := f.c.ZScore(f.ctx, "ws:"+s1+":working", "a00").Result(); err != nil || sc != float64(cardEpoch+2000) {
 		t.Fatalf("a00 working score %v %v, want its created_at 2000", sc, err)
 	}
-	h, _ := f.c.HMGet(f.ctx, "task:only-stella", "state", "why").Result()
-	if h[0] != "waiting" || h[1] != reconcile.NoConsumer {
-		t.Fatalf("only-stella state/why %v, want waiting/%s", h, reconcile.NoConsumer)
+	if h, _ := f.c.HGet(f.ctx, "task:only-stella", "state").Result(); h != "ready" {
+		t.Fatalf("only-stella state %q, want ready: no duty moves ready -> waiting", h)
 	}
-	if sc, err := f.c.ZScore(f.ctx, "ws:"+s1+":waiting", "only-stella").Result(); err != nil || sc != float64(cardEpoch+1500) {
-		t.Fatalf("only-stella waiting score %v %v, want 1500", sc, err)
+	if n := f.zcard(t, "ws:"+s1+":waiting"); n != 0 {
+		t.Fatalf("ws:%s:waiting %d, want 0: the deal never returns a card", s1, n)
 	}
 	for _, want := range []string{"DEAL emma took=3 open=3 from=" + s1, "DEAL rowan took=1 open=1 from=" + s1,
-		"DEAL waiting returned=1 why=no-consumer ids=only-stella"} {
+		"DEAL ready idle=1 ids=only-stella"} {
 		if !strings.Contains(out.String(), want+"\n") {
 			t.Fatalf("receipts %q, want the line %q", out.String(), want)
 		}
 	}
-	if n, _ := f.c.XLen(f.ctx, "ws:log").Result(); n != 5 {
-		t.Fatalf("ws:log %d entries, want one per move (5)", n)
+	if n, _ := f.c.XLen(f.ctx, "ws:log").Result(); n != 4 {
+		t.Fatalf("ws:log %d entries, want one per move (4)", n)
 	}
 
 	out.Reset()
@@ -183,14 +183,15 @@ func TestDealFillsEveryOpenSlotInOneTick(t *testing.T) {
 	if p.Counts.Dealt != 0 || out.Len() != 0 {
 		t.Fatalf("second pass dealt %d, receipts %q; want nothing", p.Counts.Dealt, out.String())
 	}
-	if n := f.zcard(t, "ws:"+s1+":ready") + f.zcard(t, "ws:"+s2+":ready"); n != 16 {
-		t.Fatalf("ready %d after the second pass, want 16", n)
+	if n := f.zcard(t, "ws:"+s1+":ready") + f.zcard(t, "ws:"+s2+":ready"); n != 17 {
+		t.Fatalf("ready %d after the second pass, want 17", n)
 	}
 }
 
 // TestDealHonoursWhoKindAndOwner: WHO except sends a card past a friend, a
-// read card never reaches its author, an owned card and a swarm kind are
-// left in ready, and a fenced token moves nothing.
+// read card never reaches its author, an owned card is left to its owner, a
+// swarm kind goes to the swarm (ready -> working, owner swarm), and a fenced
+// token moves nothing.
 func TestDealHonoursWhoKindAndOwner(t *testing.T) {
 	f := newDealFixture(t)
 	const s = "nova-sprint"
@@ -220,11 +221,17 @@ func TestDealHonoursWhoKindAndOwner(t *testing.T) {
 	if got := strings.Join(res.Took["emma"], ","); got != "plain" {
 		t.Fatalf("emma took %q, want plain only (read-1 is hers, rowan is full)", got)
 	}
-	if got := f.members(t, "ws:"+s+":ready"); strings.Join(got, ",") != "owned,swarmed,read-1" {
-		t.Fatalf("ready %v, want owned,swarmed,read-1 left", got)
+	if got := strings.Join(res.Took[reconcile.Swarm], ","); got != "swarmed" {
+		t.Fatalf("swarm took %q, want swarmed (cfg:deal:kind swarm-build = swarm)", got)
 	}
-	if len(res.Returned) != 0 {
-		t.Fatalf("returned %v, want none: every card has a live consumer", res.Returned)
+	if h, _ := f.c.HMGet(f.ctx, "task:swarmed", "state", "owner").Result(); h[0] != "working" || h[1] != reconcile.Swarm {
+		t.Fatalf("task swarmed state/owner %v, want working/swarm", h)
+	}
+	if got := f.members(t, "ws:"+s+":ready"); strings.Join(got, ",") != "owned,read-1" {
+		t.Fatalf("ready %v, want owned (its owner's) and read-1 (rowan, its one reader, is full) left", got)
+	}
+	if len(res.Idle) != 0 {
+		t.Fatalf("idle %v, want none: every card has a live consumer", res.Idle)
 	}
 }
 
@@ -237,6 +244,9 @@ func TestWhoAdmits(t *testing.T) {
 		{"only stella", "emma", false}, {"only stella,emma", "Emma", true},
 		{"except emma", "emma", false}, {"except emma, rowan", "stella", true},
 		{"nobody", "emma", false},
+		{"friend", "emma", true}, {"friends", "rowan", true},
+		{"swarm", "emma", false}, {"swarm", "swarm", true},
+		{"", "swarm", false}, {"any", "swarm", false},
 	} {
 		if got := reconcile.WhoAdmits(c.who, c.f); got != c.want {
 			t.Errorf("WhoAdmits(%q, %q) = %v, want %v", c.who, c.f, got, c.want)
