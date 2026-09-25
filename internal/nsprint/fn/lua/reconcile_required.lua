@@ -387,6 +387,35 @@ redis.register_function('ns_expire_stamp', function(keys, args)
   return rr_reply(0, 'STAMPED', '', tostring(now))
 end)
 
+-- ns_expire_read: the expire duty's read of one card index (nova-tools
+-- #3620), in place of SORT <idx> BY nosort GET # GET s:<S>:card:*-><field>:
+-- SORT is @dangerous and the coordinator ACL refuses it. Read-only, so the
+-- duty calls it with FCALL_RO, one per sprint and state, all in its one read
+-- pipeline. The reply is SORT GET's shape: label, then each field's value
+-- ('' for a missing field or card), per member of s:<S>:idx:card:<state>.
+-- args: sprint, state, field...
+redis.register_function{
+  function_name = 'ns_expire_read',
+  flags = { 'no-writes' },
+  callback = function(keys, args)
+    local S, state = args[1] or '', args[2] or ''
+    if S == '' or state == '' then
+      return redis.error_reply('ns_expire_read: sprint and state are required')
+    end
+    local fields = {}
+    for i = 3, #args do fields[#fields + 1] = args[i] end
+    local out = {}
+    for _, label in ipairs(redis.call('SMEMBERS', 's:' .. S .. ':idx:card:' .. state)) do
+      out[#out + 1] = label
+      if #fields > 0 then
+        local vals = redis.call('HMGET', 's:' .. S .. ':card:' .. label, unpack(fields))
+        for i = 1, #fields do out[#out + 1] = vals[i] or '' end
+      end
+    end
+    return out
+  end,
+}
+
 -- ns_task_assign: route one ready task to one consumer (5.2 sweep, 5.3).
 -- Guard, owner, queue move, receipt and idem key in one call: two concurrent
 -- refills produce one assignment and one receipt, and there is no point

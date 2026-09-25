@@ -87,6 +87,42 @@ func Load(ctx context.Context, client *redis.Client) error {
 	return nil
 }
 
+// LoadMissing installs the embedded library only when the server holds no
+// nova_sprint library, and never replaces one it holds (#3620). A verb that
+// loads on the way to its FCALL (card push, drain and release, the
+// reconciler's calls and expire duty) runs whatever binary its host has; with
+// Load, an older binary REPLACEd the deployed library with its own and every
+// function added since vanished from the store ("ERR Function not found" from
+// the reconciler's ns_fleet_step, #3620). Upgrading the library is the
+// deploy's job (`nova-sprint fn load`, which uses Ensure). A caller whose ACL
+// refuses FUNCTION LIST is not the deployer: it loads nothing and its FCALL
+// answers for the store.
+func LoadMissing(ctx context.Context, client *redis.Client) error {
+	libs, err := client.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: Library}).Result()
+	if err != nil {
+		if strings.Contains(err.Error(), "NOPERM") {
+			return nil
+		}
+		return fmt.Errorf("list %s function library: %w", Library, err)
+	}
+	for _, lib := range libs {
+		if lib.Name == Library {
+			return nil
+		}
+	}
+	source, err := Source()
+	if err != nil {
+		return err
+	}
+	if err := client.FunctionLoad(ctx, source).Err(); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			return nil // another caller loaded it between the list and the load
+		}
+		return fmt.Errorf("load %s function library: %w", Library, err)
+	}
+	return nil
+}
+
 // Sum names one library version: the first 16 hex digits of the SHA-256 of
 // its source. fn load prints it; fn check compares the loaded code's Sum with
 // the embedded one.

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
@@ -184,7 +185,7 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	loop := &reconcile.Loop{
 		Lease:   lease,
 		Duties:  named.wrap(duties, names),
-		OnError: func(err error) { fmt.Fprintf(errOut, "nova-sprint reconcile: pass: %v\n", err) },
+		OnError: func(err error) { fmt.Fprintf(errOut, "%s nova-sprint reconcile: pass: %v\n", logStamp(), err) },
 	}
 	if *widthTicks > 0 {
 		fmt.Fprintf(out, "WIDTH on rebalance_ticks=%d\n", *widthTicks)
@@ -263,8 +264,18 @@ func (n *namedDuties) note(name string, err error) {
 	}
 	n.last[name] = text
 	if err != nil {
-		fmt.Fprintf(n.errOut, "nova-sprint reconcile: duty %s: %s\n", name, text)
+		fmt.Fprintf(n.errOut, "%s nova-sprint reconcile: duty %s: %s\n", logStamp(), name, text)
 	}
+}
+
+// reconcileClock is the log lines' clock; a test pins it.
+var reconcileClock = time.Now
+
+// logStamp leads every line the running loop writes to stderr (#3620: a
+// "Function not found" line with no time could not be placed before or after
+// a restart). UTC, milliseconds, RFC 3339.
+func logStamp() string {
+	return reconcileClock().UTC().Format("2006-01-02T15:04:05.000Z07:00")
 }
 
 func (n *namedDuties) failed() bool {
