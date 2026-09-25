@@ -233,6 +233,7 @@ func TestBusThousandEntryReadUnderOneSecond(t *testing.T) {
 	t.Parallel()
 	ctx, c := fixture(t)
 	pipe := c.Pipeline()
+	pipe.XGroupCreateMkStream(ctx, bus.InboxKey("rowan"), "rowan", "0") // what bus.Post puts first
 	for i := 0; i < 1000; i++ {
 		pipe.FCall(ctx, bus.PostFunction, nil, "stella", "rowan", "note", fmt.Sprintf("n%04d", i), "body", "", "")
 	}

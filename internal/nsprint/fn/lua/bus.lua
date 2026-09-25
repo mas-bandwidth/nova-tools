@@ -5,10 +5,11 @@
 -- entry's id). No TTL, no trim: a message is never lost.
 --
 -- ns_bus_post is the one multi-key step: the outbox copy carries the id the
--- inbox XADD returned, so the two XADDs are one call (both or neither). A
--- person's inbox group is created at 0 here, before the first entry, so a
--- message posted before its reader's first `bus read` is still unread;
--- bus:all has one group per reader, created by that reader's first read.
+-- inbox XADD returned, so the two XADDs are one call (both or neither). The
+-- post's pipeline creates a person's inbox group at 0 just before this call
+-- (internal/nsprint/bus Post), so a message posted before its reader's first
+-- `bus read` is still unread; bus:all has one group per reader, created by
+-- that reader's first read. The function runs TIME and XADD only.
 
 local bus_max_body = 16384
 
@@ -31,9 +32,6 @@ local function bus_post(keys, args)
     return redis.error_reply('ns_bus_post refuses a body over 16384 bytes')
   end
   local inbox = 'bus:' .. to
-  if to ~= 'all' then
-    redis.pcall('XGROUP', 'CREATE', inbox, to, '0', 'MKSTREAM')
-  end
   local at = tostring(bus_now_ms())
   local xid = redis.call('XADD', inbox, '*',
     'from', from, 'to', to, 'kind', kind, 'subject', subject or '',

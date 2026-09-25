@@ -10,8 +10,9 @@
 //	bus:sent:<from> STREAM, the sender's outbox: the same fields plus xid,
 //	                the inbox entry's id.
 //
-// A post is one FCALL (ns_bus_post, internal/nsprint/fn/lua/bus.lua): both
-// XADDs in one step, the outbox copy naming the id the inbox XADD returned.
+// A post is one pipeline: the person's group create at 0, then one FCALL
+// (ns_bus_post, internal/nsprint/fn/lua/bus.lua) with both XADDs in one step,
+// the outbox copy naming the id the inbox XADD returned.
 // A read is one pipeline (the group creates, this reader's pending entries,
 // then new ones) and one XACK pipeline after the entries are printed, so a
 // reader that dies between delivery and ack gets the same entries again on
@@ -48,7 +49,7 @@ const PostFunction = "ns_bus_post"
 
 // SeatRules is the whole ACL a seat needs for every bus verb, and all it
 // grants: the one key pattern ~bus:*, the stream commands the verbs send, and
-// the commands ns_bus_post runs under its caller (XGROUP CREATE, TIME, XADD).
+// the commands ns_bus_post runs under its caller (TIME, XADD).
 // The fleet store's ACL (rowan-tools, the redis play) grants ~bus:* to the
 // friend seat; internal/ci's TestBusFriendSeatReachesOnlyBus runs every verb
 // under exactly these rules and is refused a key outside bus:*.
@@ -149,13 +150,27 @@ func Check(m Message) error {
 	return nil
 }
 
-// Post checks the message and adds it to the inbox and the sender's outbox in
-// one FCALL. It returns the inbox entry id.
+// Post checks the message and adds it to the inbox and the sender's outbox:
+// one pipeline, one round trip, holding the person's group create at 0 (a
+// no-op once it exists; bus:all's groups are each reader's own) and the one
+// FCALL that writes both entries. It returns the inbox entry id.
 func Post(ctx context.Context, c redis.Cmdable, m Message) (string, error) {
 	if err := Check(m); err != nil {
 		return "", err
 	}
-	id, err := c.FCall(ctx, PostFunction, nil, m.From, m.To, m.Kind, m.Subject, m.Body, m.Ref, m.Re).Text()
+	pipe := c.Pipeline()
+	var create *redis.StatusCmd
+	if m.To != All {
+		create = pipe.XGroupCreateMkStream(ctx, InboxKey(m.To), m.To, "0")
+	}
+	post := pipe.FCall(ctx, PostFunction, nil, m.From, m.To, m.Kind, m.Subject, m.Body, m.Ref, m.Re)
+	_, _ = pipe.Exec(ctx)
+	if create != nil {
+		if err := ignoreBusy(create.Err()); err != nil {
+			return "", err
+		}
+	}
+	id, err := post.Text()
 	if err != nil {
 		if strings.Contains(err.Error(), "Function not found") {
 			return "", fmt.Errorf("%s is not loaded: run nova-sprint fn load (%w)", PostFunction, err)
