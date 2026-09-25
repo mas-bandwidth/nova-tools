@@ -7,13 +7,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
-// TestCardPromptNamesTheResultGrammar is nova-tools#3651: a DONE card ended
-// `missing` because nothing told the worker the RESULT.md fields card end
-// requires. The prompt for a typed card names every field the Contract table
-// requires of its kind (R, D and P rows) and every required section, read from
-// the same tables typedrec.ParseResult reads. RED WITHOUT CardPrompt: the
-// prompt was the card text alone.
-func TestCardPromptNamesTheResultGrammar(t *testing.T) {
+// TestCardPromptIsTheTwoLineContract is nova-tools#3689 (it replaces #3651's
+// long grammar): the prompt for a typed card is the card text byte for byte
+// and then the two-line contract -- line 1 verbatim, line 2 DONE, ABSTAIN or
+// BLOCKED, an optional note -- plus, for a kind whose record needs something
+// only the model can know, those fields. It never asks for a field the card
+// wrapper writes (typedrec.WrapperOwned). RED ON #3651's PROMPT: it asked for
+// SCHEMA, BRANCH, PATHS, CHECK and the rest, and the model's BRANCH
+// contradicted the wrapper's.
+func TestCardPromptIsTheTwoLineContract(t *testing.T) {
 	for _, kind := range typedrec.Kinds {
 		t.Run(kind, func(t *testing.T) {
 			card := "RESULT: c1 sha=0123456789ab nova-tools " + kind + ": a card\nKIND: " + kind + "\nBASE: dev\n"
@@ -22,35 +24,23 @@ func TestCardPromptNamesTheResultGrammar(t *testing.T) {
 				t.Fatalf("the prompt does not start with the card text byte for byte:\n%s", prompt)
 			}
 			brief := prompt[len(card):]
-			if !strings.Contains(brief, "RESULT-FORMAT") || !strings.Contains(brief, "SCHEMA: v2") || !strings.Contains(brief, "KIND: "+kind) {
-				t.Fatalf("no RESULT-FORMAT paragraph for KIND %s:\n%s", kind, brief)
+			if !strings.Contains(brief, "RESULT-FORMAT") || !strings.Contains(brief, "line 1: this card's line 1, verbatim") || !strings.Contains(brief, "`DONE`, `ABSTAIN <why>` or `BLOCKED <why>`") {
+				t.Fatalf("no two-line contract for KIND %s:\n%s", kind, brief)
 			}
-			for _, field := range typedrec.Contract.FieldKeys() {
-				switch typedrec.Contract.RequirementFor(field, kind) {
-				case typedrec.ReqRequired, typedrec.ReqDone, typedrec.ReqPass:
-					if !strings.Contains(brief, "- "+field+": ") {
-						t.Errorf("KIND %s: the brief does not name required field %s:\n%s", kind, field, brief)
-					}
-				case typedrec.ReqUnknown:
-					if strings.Contains(brief, "- "+field+": ") {
-						t.Errorf("KIND %s: the brief names %s, a field this kind refuses", kind, field)
-					}
+			for _, owned := range typedrec.WrapperOwned {
+				if strings.Contains(brief, "`"+owned+":") || strings.Contains(brief, "- "+owned+": ") {
+					t.Errorf("KIND %s: the brief asks the model for %s, which the wrapper writes:\n%s", kind, owned, brief)
 				}
 			}
-			for _, s := range typedrec.RequiredSections(kind) {
-				if !strings.Contains(brief, "`## "+s+"`") || !strings.Contains(brief, "\n## "+s+"\n") {
-					t.Errorf("KIND %s: the brief does not name and template section ## %s:\n%s", kind, s, brief)
-				}
+			if n := strings.Count(brief, "\n"); n > 8 {
+				t.Errorf("KIND %s: the brief is %d lines, want the short contract:\n%s", kind, n, brief)
 			}
 		})
 	}
-
-	// The fields #3651 names for a fix card, spelled out, so a Contract edit
-	// that drops one is seen here too.
 	brief := CardPrompt([]byte("RESULT: c1\nKIND: fix\n"))
-	for _, want := range []string{"SCHEMA: v2", "- KIND: ", "- ATTEMPT: ", "- CHECK: ", "- REPO: ", "- BRANCH: ", "- PATHS: ", "- RED: ", "- GREEN: ", "## Gates", "## Left owed"} {
-		if !strings.Contains(brief, want) {
-			t.Errorf("the fix brief does not name %q", want)
+	for _, gone := range []string{"SCHEMA: v2", "## Gates", "## Left owed", "Fill in this template"} {
+		if strings.Contains(brief, gone) {
+			t.Errorf("the fix brief still asks for %q", gone)
 		}
 	}
 }

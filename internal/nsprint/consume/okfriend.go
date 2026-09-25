@@ -431,13 +431,15 @@ func (o *OkFriend) onHarvested(ctx context.Context, e *okEvent, census *readerCe
 			valid, _ := resFields[0].(string)
 			cCheck, _ := resFields[1].(string)
 			defectField, _ := resFields[2].(string)
-			if valid != "1" {
+			// valid "" is a card that wrote no RESULT.md: the wrapper still
+			// records its facts (#3689), and that is no parse, as before.
+			if valid != "1" && valid != "" {
 				if defectField == "" {
 					defectField = "result"
 				}
 				return o.skip(ctx, e, defectField, "")
 			}
-			if cCheck != "pass" {
+			if valid == "1" && cCheck != "pass" {
 				return o.skip(ctx, e, "CHECK", "")
 			}
 		}

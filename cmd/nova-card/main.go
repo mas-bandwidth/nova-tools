@@ -188,7 +188,7 @@ func config(l launch.Line, getenv func(string) string) (card.WrapperConfig, erro
 		name string
 		dst  *time.Duration
 		need bool
-	}{{"NOVA_CARD_CLOCK", &cfg.Clock, true}, {"NOVA_CARD_BEAT", &cfg.BeatEvery, false}} {
+	}{{"NOVA_CARD_CLOCK", &cfg.Clock, true}, {"NOVA_CARD_BEAT", &cfg.BeatEvery, false}, {"NOVA_CARD_CHECK", &cfg.CheckTimeout, false}} {
 		v := getenv(kv.name)
 		if v == "" {
 			if kv.need {

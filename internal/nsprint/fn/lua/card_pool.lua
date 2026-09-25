@@ -40,6 +40,8 @@ redis.register_function('ns_card_push', function(keys, args)
   local route = args[13]
   local bench = args[14]
   local est = args[15]
+  -- test (#3689): the card's TEST line, which the wrapper runs at card end.
+  local test = args[16]
   if type(depends_on) ~= 'string' then
     depends_on = ''
   end
@@ -94,6 +96,10 @@ redis.register_function('ns_card_push', function(keys, args)
   if type(est) == 'string' and est ~= '' then
     table.insert(fields, 'est')
     table.insert(fields, est)
+  end
+  if type(test) == 'string' and test ~= '' then
+    table.insert(fields, 'test')
+    table.insert(fields, test)
   end
   redis.call('HSET', card, unpack(fields))
   redis.call('SADD', idx, label)

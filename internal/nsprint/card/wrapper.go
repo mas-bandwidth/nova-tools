@@ -21,10 +21,13 @@ package card
 //     minutes, recorded as wall_max_s on the card hash at launched) or a beat
 //     is fenced (FAILED other);
 //  6. copies <job>/out and harness.log into the results directory, writes
-//     wrapper.line (exit class, wall, the harness's RESULT line) and hands the
-//     end to the ledger, which writes end.record there FIRST and then calls
-//     ns_card_end (#2928): a fenced end still leaves the record for the
-//     reconciler;
+//     the card's record to Redis (#3689, wrapper_result.go: the typed RESULT
+//     fields synthesized from facts around the model's two lines, the card's
+//     TEST line run, and the wrapper's own facts, in one ns_card_result
+//     call), writes wrapper.line (exit class, wall, the harness's RESULT line)
+//     and hands the end to the ledger, which writes end.record there FIRST
+//     and then calls ns_card_end (#2928): a fenced end still leaves the record
+//     for the reconciler;
 //  7. deletes the job directory through safepath (results were copied out in
 //     step 6; a results directory is never deleted here).
 //
@@ -138,8 +141,12 @@ type WrapperLedger interface {
 // parsed RESULT envelope (ns_card_result writes the write-once result hash).
 // It is a separate interface so a ledger that records no result (a test
 // double) still satisfies WrapperLedger; RedisLedger implements both.
+//
+// facts (#3689) are the wrapper's own w_<name> fields, written in the same
+// ns_card_result call; a Fact w_result=absent is a card that wrote no
+// RESULT.md, recorded with valid "" (no parse) and the facts alone.
 type ResultRecorder interface {
-	Result(ctx context.Context, res typedrec.Result, resultsDir string) (int, error)
+	Result(ctx context.Context, res typedrec.Result, resultsDir string, facts ...Fact) (int, error)
 }
 
 // ResultFacts is the trusted card side of a RESULT parse: the card's KIND
@@ -206,7 +213,7 @@ func RecordResult(ctx context.Context, rec ResultRecorder, resultsDir string, at
 // Result calls ns_card_result (#2506) to record the parsed RESULT envelope:
 // schema, kind, valid, field, defect, line, the raw bytes and their sha256,
 // and one c_<field> claim per typed field. The hash is write-once per attempt.
-func (l *RedisLedger) Result(ctx context.Context, res typedrec.Result, resultsDir string) (int, error) {
+func (l *RedisLedger) Result(ctx context.Context, res typedrec.Result, resultsDir string, facts ...Fact) (int, error) {
 	const verb = "card result"
 	if l.Store == nil || l.Store.Client() == nil || !validSprintLabel(l.Sprint, l.Label) || l.Token == "" {
 		return usage(verb, l.Label).Code, nil
@@ -223,6 +230,11 @@ func (l *RedisLedger) Result(ctx context.Context, res typedrec.Result, resultsDi
 	if res.Valid {
 		validStr = "1"
 	}
+	for _, f := range facts {
+		if f.Name == "w_result" && f.Value == "absent" {
+			validStr = "" // no RESULT.md: no parse, the wrapper's facts only
+		}
+	}
 	args := []any{
 		l.Sprint, l.Label, attemptStr, l.Token,
 		res.Schema, res.Kind, validStr, res.Field, res.Defect, strconv.Itoa(res.Line),
@@ -238,6 +250,11 @@ func (l *RedisLedger) Result(ctx context.Context, res typedrec.Result, resultsDi
 	sort.Strings(claimKeys)
 	for _, k := range claimKeys {
 		args = append(args, "c_"+strings.ToLower(k), res.Claims[k])
+	}
+	for _, f := range facts {
+		if strings.HasPrefix(f.Name, "w_") {
+			args = append(args, f.Name, f.Value)
+		}
 	}
 	reply, err := fcall(ctx, l.Store, "ns_card_result", cardKeys(l.Sprint, l.Label), args...)
 	if err != nil {
@@ -275,6 +292,9 @@ type WrapperConfig struct {
 	// WallAfter is the wall cap's timer (#3653), separate from After so a
 	// test driving the card clock never fires the wall; nil is time.After.
 	WallAfter func(time.Duration) <-chan time.Time
+	// CheckTimeout bounds the wrapper's run of the card's TEST line at end
+	// (#3689); zero is DefaultCheckTimeout.
+	CheckTimeout time.Duration
 }
 
 // WrapperReport is what one run did; the command prints Line.
@@ -594,7 +614,39 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 	// other, so ns_harvest_due (ended DONE only) never offers an attempt that
 	// has no validated result hash behind it.
 	if rec, ok := ledger.(ResultRecorder); ok {
-		if _, _, rcode, rerr := RecordResult(ctx, rec, results, cfg.Attempt); rerr != nil || rcode != 0 {
+		// #3689: the wrapper writes the record (typed fields synthesized, its
+		// facts beside them) and Redis holds it; the beat keeps the lease live
+		// while the card's TEST line runs.
+		er := endRecord{cfg: cfg, job: job, results: results, end: end, wall: wall, why: rep.Why}
+		every := cfg.BeatEvery
+		if every <= 0 {
+			every = DefaultBeatEvery
+		}
+		var stop func()
+		if cfg.Tick != nil {
+			er.ticks, stop = cfg.Tick(every)
+		} else {
+			t := time.NewTicker(every)
+			er.ticks, stop = t.C, t.Stop
+		}
+		er.beat = func() {
+			if code, err := ledger.Beat(ctx); err == nil && code == 0 {
+				rep.Beats++
+			}
+		}
+		res, synth, rcode, rerr := recordEnd(ctx, rec, er)
+		stop()
+		if synth && rerr == nil && rcode == 0 && res.Defect == typedrec.DefectContradictory && wrapperField(res.Field) {
+			// The wrapper wrote this field from the card: a disagreement is a
+			// wrapper bug, logged; the card stays DONE.
+			bug := "wrapper bug: " + res.Field + " contradictory"
+			if rep.Why == "" {
+				rep.Why = bug
+			} else {
+				rep.Why += "; " + bug
+			}
+		}
+		if rerr != nil || rcode != 0 {
 			rwhy := fmt.Sprintf("result not recorded code=%d%s", rcode, errSuffix(rerr))
 			if end.Outcome == "DONE" {
 				end.Outcome, end.Reason = "FAILED", "other"

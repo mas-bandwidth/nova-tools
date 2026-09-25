@@ -372,6 +372,27 @@ redis.register_function('ns_card_result', function(keys, args)
     'v_pr_head', v_pr_head,
   }
 
+  -- w_synth=1 (#3689): the card wrapper wrote KIND, REPO, BRANCH and ATTEMPT
+  -- from this card hash and its own run, so a disagreement with the card is a
+  -- wrapper bug, never the model's: it is logged (wrapper_bug on the result
+  -- hash and a card-result-bug log entry) and the record keeps its validity,
+  -- so the card stays DONE. line 1 and HEAD are still the worker's and still
+  -- refuse.
+  local synth = false
+  for i = 14, #args, 2 do
+    if args[i] == 'w_synth' and args[i+1] == '1' then synth = true end
+  end
+  local bugs = {}
+  local function contradict(f)
+    if synth and f ~= 'line 1' and f ~= 'HEAD' then
+      table.insert(bugs, f)
+      return
+    end
+    valid = '0'
+    field = f
+    defect = 'contradictory'
+  end
+
   -- KIND is checked against the declared set and the card's own KIND here,
   -- whatever the caller's parse said: a valid=1 claim with a kind outside the
   -- six, or a kind other than a typed card's, is persisted invalid.
@@ -381,9 +402,7 @@ redis.register_function('ns_card_result', function(keys, args)
       field = 'KIND'
       defect = 'malformed'
     elseif RESULT_KINDS[v_kind] and kind ~= v_kind then
-      valid = '0'
-      field = 'KIND'
-      defect = 'contradictory'
+      contradict('KIND')
     end
   end
 
@@ -395,27 +414,26 @@ redis.register_function('ns_card_result', function(keys, args)
       table.insert(hset_args, v)
       if valid == '1' then
         if k == 'line1' and v_contract ~= '' and v ~= v_contract then
-          valid = '0'
-          field = 'line 1'
-          defect = 'contradictory'
+          contradict('line 1')
         elseif k == 'c_repo' and v ~= '' and v_repo ~= '' and v ~= v_repo then
-          valid = '0'
-          field = 'REPO'
-          defect = 'contradictory'
+          contradict('REPO')
         elseif k == 'c_branch' and v ~= '' and v_branch ~= '' and v ~= v_branch then
-          valid = '0'
-          field = 'BRANCH'
-          defect = 'contradictory'
+          contradict('BRANCH')
         elseif k == 'c_attempt' and v ~= '' and v_attempt ~= '' and v ~= v_attempt then
-          valid = '0'
-          field = 'ATTEMPT'
-          defect = 'contradictory'
+          contradict('ATTEMPT')
         elseif k == 'c_head' and v ~= '' and v_pr_head ~= '' and v ~= v_pr_head then
-          valid = '0'
-          field = 'HEAD'
-          defect = 'contradictory'
+          contradict('HEAD')
         end
       end
+    end
+  end
+  if #bugs > 0 then
+    local bug = table.concat(bugs, ',') .. ' contradictory'
+    table.insert(hset_args, 'wrapper_bug')
+    table.insert(hset_args, bug)
+    if keys[2] == 's:' .. sprint .. ':log' then
+      redis.call('XADD', keys[2], '*', 'kind', 'card', 'id', label, 'attempt', tostring(attempt),
+        'actor', 'card-result', 'reason', 'wrapper-bug', 'evidence', bug, 'at', at)
     end
   end
 
@@ -426,4 +444,34 @@ redis.register_function('ns_card_result', function(keys, args)
   redis.call('HSET', unpack(hset_args))
   return reply(0, 'OK', attempt, '')
 end)
+
+-- ns_card_show S label (read only, #3689): the card hash and its current
+-- attempt's result hash in one call, so nobody sshes to a bench to learn what
+-- a card did. The token is never returned. Reply: the card's field/value
+-- pairs, then '--', then the result hash's pairs (none when there is none).
+redis.register_function{
+  function_name = 'ns_card_show',
+  flags = { 'no-writes' },
+  callback = function(keys, args)
+    local sprint, label = args[1] or '', args[2] or ''
+    if sprint == '' or label == '' then return { 'USAGE' } end
+    local card_key = 's:' .. sprint .. ':card:' .. label
+    local out = {}
+    local attempt = ''
+    local h = redis.call('HGETALL', card_key)
+    for i = 1, #h, 2 do
+      if h[i] == 'attempt' then attempt = h[i + 1] end
+      if h[i] ~= 'token' then
+        table.insert(out, h[i])
+        table.insert(out, h[i + 1])
+      end
+    end
+    table.insert(out, '--')
+    if attempt ~= '' then
+      local r = redis.call('HGETALL', card_key .. ':result:a' .. attempt)
+      for i = 1, #r do table.insert(out, r[i]) end
+    end
+    return out
+  end,
+}
 end
