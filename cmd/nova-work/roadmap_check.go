@@ -5,37 +5,55 @@ import (
 	"fmt"
 	"io"
 	"os"
-"strings"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
 
-func extractMarkdown(form worklang.Form) string {
+func extractMarkdown(form worklang.Form) (string, error) {
 	var out bytes.Buffer
 
-	verification, _ := plistAny(form.List, "verification")
-	revStr, _ := plistString(verification.List, "revision")
+	verification, ok := plistAny(form.List, "verification")
+	if !ok {
+		return "", fmt.Errorf("missing verification form")
+	}
+	revStr, ok := plistString(verification.List, "revision")
+	if !ok {
+		return "", fmt.Errorf("missing revision string")
+	}
 	revShort := revStr
 	if len(revShort) > 8 {
 		revShort = revShort[:8]
 	}
-	suite, _ := plistString(verification.List, "suite")
-	suiteResult, _ := plistString(verification.List, "suite-result")
+	suite, ok := plistString(verification.List, "suite")
+	if !ok {
+		return "", fmt.Errorf("missing suite string")
+	}
+	suiteResult, ok := plistString(verification.List, "suite-result")
+	if !ok {
+		return "", fmt.Errorf("missing suite-result string")
+	}
 
 	if strings.HasPrefix(suite, "cd lisp/nova-work && ") {
 		suite = "lisp/nova-work/" + strings.TrimPrefix(suite, "cd lisp/nova-work && ./")
 	}
 
 	var total, pass int
-	fmt.Sscanf(suiteResult, "NOVA-WORK SLICE1 total=%d pass=%d", &total, &pass)
+	_, err := fmt.Sscanf(suiteResult, "NOVA-WORK SLICE1 total=%d pass=%d", &total, &pass)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse suiteResult: %w", err)
+	}
 	testsCount := ""
 	if total > 0 {
 		testsCount = fmt.Sprintf("%d/%d", pass, total)
 	}
 
-	byFeature, _ := plistAny(verification.List, "by-feature")
+	byFeature, ok := plistAny(verification.List, "by-feature")
+	if !ok {
+		return "", fmt.Errorf("missing by-feature form")
+	}
 	featureStates := make(map[string]roadmapByFeature)
 	featureCriteria := make(map[string][]worklang.Form)
 	featureTests := make(map[string]string)
@@ -44,30 +62,37 @@ func extractMarkdown(form worklang.Form) string {
 		if entry.Kind != worklang.List {
 			continue
 		}
-		id, _ := plistString(entry.List, "feature")
+		id, idOk := plistString(entry.List, "feature")
 		verified, vOk := plistInt(entry.List, "verified")
 		total, tOk := plistInt(entry.List, "total")
-		tests, _ := plistString(entry.List, "tests")
-		if id == "" || !vOk || !tOk {
+		tests, testsOk := plistString(entry.List, "tests")
+		if !idOk || !vOk || !tOk {
 			continue
 		}
 		featureStates[id] = roadmapByFeature{ID: id, Verified: verified, Total: total}
-		featureTests[id] = tests
+		if testsOk {
+			featureTests[id] = tests
+		}
 
-		crit, _ := plistAny(entry.List, "criteria")
-		if crit.Kind == worklang.List {
+		crit, critOk := plistAny(entry.List, "criteria")
+		if critOk && crit.Kind == worklang.List {
 			featureCriteria[id] = crit.List
 		}
 	}
 
-	epics, _ := plistAny(form.List, "epics")
+	epics, ok := plistAny(form.List, "epics")
+	if !ok {
+		return "", fmt.Errorf("missing epics form")
+	}
 	for i, epicNode := range epics.List {
 		if epicNode.Kind != worklang.List {
 			continue
 		}
-		epicId, _ := plistString(epicNode.List, "id")
-		epicTitle, _ := plistString(epicNode.List, "title")
-		_ = epicId
+		epicId, idOk := plistString(epicNode.List, "id")
+		epicTitle, titleOk := plistString(epicNode.List, "title")
+		if !idOk || !titleOk {
+			continue
+		}
 
 		if i > 0 {
 			fmt.Fprintf(&out, "\n<a id=\"%s\"></a>\n\n", oneline.Escape(strings.ToLower(epicId)))
@@ -77,13 +102,19 @@ func extractMarkdown(form worklang.Form) string {
 		fmt.Fprint(&out, "| Feature | Criteria verified | Verified |\n")
 		fmt.Fprint(&out, "|---|:---:|:---:|\n")
 
-		features, _ := plistAny(epicNode.List, "features")
+		features, featOk := plistAny(epicNode.List, "features")
+		if !featOk {
+			continue
+		}
 		for _, featNode := range features.List {
 			if featNode.Kind != worklang.List {
 				continue
 			}
-			fId, _ := plistString(featNode.List, "id")
-			fTitle, _ := plistString(featNode.List, "title")
+			fId, fIdOk := plistString(featNode.List, "id")
+			fTitle, fTitleOk := plistString(featNode.List, "title")
+			if !fIdOk || !fTitleOk {
+				continue
+			}
 			state := featureStates[fId]
 			status := "❌"
 			if state.Total > 0 && state.Verified == state.Total {
@@ -98,8 +129,11 @@ func extractMarkdown(form worklang.Form) string {
 			if featNode.Kind != worklang.List {
 				continue
 			}
-			fId, _ := plistString(featNode.List, "id")
-			fTitle, _ := plistString(featNode.List, "title")
+			fId, fIdOk := plistString(featNode.List, "id")
+			fTitle, fTitleOk := plistString(featNode.List, "title")
+			if !fIdOk || !fTitleOk {
+				continue
+			}
 
 			if j > 0 {
 				fmt.Fprint(&out, "\n")
@@ -107,8 +141,8 @@ func extractMarkdown(form worklang.Form) string {
 
 			fmt.Fprintf(&out, "**%s — %s**\n\n", oneline.Escape(fId), oneline.Escape(fTitle))
 
-			depsList, _ := plistAny(featNode.List, "depends-on")
-			if depsList.Kind == worklang.List && len(depsList.List) > 0 {
+			depsList, depsOk := plistAny(featNode.List, "depends-on")
+			if depsOk && depsList.Kind == worklang.List && len(depsList.List) > 0 {
 				deps := []string{}
 				for _, d := range depsList.List {
 					if d.Kind == worklang.String {
@@ -125,15 +159,18 @@ func extractMarkdown(form worklang.Form) string {
 				if critNode.Kind != worklang.List {
 					continue
 				}
-				cState, _ := plistString(critNode.List, "state")
-				cText, _ := plistString(critNode.List, "text")
+				cState, stateOk := plistString(critNode.List, "state")
+				cText, textOk := plistString(critNode.List, "text")
+				if !stateOk || !textOk {
+					continue
+				}
 				mark := " "
 				if cState == "verified" {
 					mark = "x"
 				}
 				fmt.Fprintf(&out, "- [%s] %s\n", oneline.Escape(mark), oneline.Escape(cText))
 			}
-				fmt.Fprint(&out, "\n")
+			fmt.Fprint(&out, "\n")
 
 			srcList, ok := plistAny(featNode.List, "source-sections")
 			if ok && srcList.Kind == worklang.List {
@@ -154,7 +191,7 @@ func extractMarkdown(form worklang.Form) string {
 		fmt.Fprint(&out, "</details>\n")
 	}
 
-	return out.String()
+	return out.String(), nil
 }
 
 func readRoadmapSexp() (*worklang.Form, error) {
@@ -176,7 +213,11 @@ func cmdRoadmapCheck(args []string, stdout, stderr io.Writer) int {
 	}
 	form := *formPtr
 
-	md := extractMarkdown(form)
+	md, err := extractMarkdown(form)
+	if err != nil {
+		fmt.Fprintf(stderr, "ROADMAP FAIL extracting markdown: %v\n", oneline.Err(err))
+		return 2
+	}
 
 	rPath := "ROADMAP.md"
 	rData, err := os.ReadFile(rPath)
