@@ -14,7 +14,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "drain",
-		Summary: "put parked work back: resume named benches/friends, import retired queue dirs once, release waiting cards",
+		Summary: "put parked work back: resume named benches/friends, import retired queue dirs once, release waiting cards; --control <id> tears a control run down",
 		Run:     runDrain,
 	})
 }
@@ -28,6 +28,9 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 // runDrain is `nova-sprint drain --sprint <S> [--resume bench:<b>|friend:<f>]...
 // [--queue-dir <dir>]...` (#3035). Every item prints one DRAIN OK or DRAIN
 // REFUSED line on stdout; exit 2 when anything was refused.
+// `nova-sprint drain --control control-<id>` (#3442) instead removes every
+// key that control run left in the store, in one call, and prints one
+// DRAIN DONE control=<id> line.
 func runDrain(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("drain", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
