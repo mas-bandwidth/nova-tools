@@ -23,4 +23,5 @@ make map            # regenerate AGENTS.md and per-directory maps
 | `profiles/` | swarm worker profiles | `go test ./internal/swarm` | `nova-swarm lint` |
 | `scripts/` | maintenance and operational scripts | none | none |
 | `testdata/` | shared test fixtures and data | `go test ./internal/ci` | `make test` |
+| `tests/` | bash test suites | `bats tests/` | `bats tests/` |
 | [tools/](tools/AGENTS.md) | developer and bench tools | `go test ./tools/...` | `make map` |
