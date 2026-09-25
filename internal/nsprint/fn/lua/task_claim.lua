@@ -1,8 +1,11 @@
 -- Task transitions for control 3 (push is create-only) and control 4 (one
 -- concurrent take wins). No shebang: loader.go prepends the single library
 -- header. Every transition below is one Redis Function call that checks the
--- guard, moves the id between index sets, reads server TIME and appends one
--- receipt, all atomically (spec #2756 2.1 rule 2, 3.1, 4.2).
+-- guard, moves the task through the one task move (NS.task, 02_card_move.lua:
+-- the record task:<id>, its where pointer, its sets and the sprint's idx and
+-- ready queues, nova-tools #3778, ruling 2026-09-25 09:35: one task store),
+-- reads server TIME and appends one receipt, all atomically (spec #2756 2.1
+-- rule 2, 3.1, 4.2).
 
 -- DEP is the DEPENDS-ON machinery of #3206 PR A (ruling nova-tools#3516:
 -- there is no blocked state; a task with an unmet dependency is waiting and
@@ -52,7 +55,7 @@ local function task_push(keys, args)
   -- needs (#2939): space-separated ids in <S> that must be closed before
   -- this task can be claimed; written only when non-empty.
   local needs = args[17] or ''
-  local key = 's:' .. S .. ':task:' .. id
+  local key = 'task:' .. id
 
   -- #2929 rev 5: a down friend gets nothing. The marker is read first, before
   -- any other read, so a re-push of an existing id is refused too; it is only
@@ -75,6 +78,11 @@ local function task_push(keys, args)
   end
 
   local existing = redis.call('HGET', key, 'payload_sha')
+  if not existing and redis.call('EXISTS', key) == 1 then
+    -- the id is a task card pushed another way (friend-queue, route): one
+    -- store, one id; a different payload
+    return { 'CONFLICT' }
+  end
   if existing then
     if existing ~= payload_sha then
       return { 'CONFLICT' }
@@ -109,32 +117,41 @@ local function task_push(keys, args)
   end
 
   local at = now_ms()
-  redis.call('HSET', key,
-    'kind', kind, 'repo', repo, 'ref', ref, 'pr', pr, 'head', head,
-    'title', title, 'effects', effects, 'owner', '', 'priority', tostring(priority),
-    'state', 'open', 'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
-    'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
-    'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '',
-    'est', est, 'pushed_at', tostring(at), 'pushed_by', actor or '')
-  if needs ~= '' then
-    redis.call('HSET', key, 'needs', needs)
-  end
-  -- #3206 PR A: the queue a task was pushed to, its front flag and the
-  -- DEPENDS-ON list stay on the hash, so move, front and the dependency
-  -- release find the queue without a scan. Author is the read rule's field.
+  -- #3206 PR A: the queue a task was pushed to (dest, which is also its
+  -- friend on the card), its front flag and the DEPENDS-ON list stay on the
+  -- record, so move, front and the dependency release find the queue without
+  -- a scan. Author is the read rule's field.
   local front_text = '0'
   if front then
     front_text = '1'
   end
-  redis.call('HSET', key, 'dest', to, 'front', front_text,
-    'depends_on', table.concat(conds, ';'), 'author', args[19] or '')
+  local fields = {
+    'kind', kind, 'repo', repo, 'ref', ref, 'pr', pr, 'head', head,
+    'title', title, 'effects', effects, 'priority', tostring(priority),
+    'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
+    'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
+    'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '',
+    'est', est, 'pushed_at', tostring(at), 'pushed_by', actor or '',
+    'dest', to, 'front', front_text, 'depends_on', table.concat(conds, ';'), 'author', args[19] or '' }
+  if needs ~= '' then
+    fields[#fields + 1] = 'needs'
+    fields[#fields + 1] = needs
+  end
   local unmet = DEP.unmet(S, conds)
+  local o = { where = 'ready', state = 'open', friend = to, sprint = S, front = front_text, created = at,
+    by = actor, why = 'push' }
+  if #unmet > 0 then
+    o.where, o.state, o.why = 'waiting', 'waiting', 'depends-on ' .. table.concat(unmet, ';')
+  end
+  local err = NS.task.create(id, fields, o)
+  if err then
+    return { 'INVALID', err }
+  end
   if #unmet > 0 then
     DEP.wait(S, id, key, to, unmet, at)
     receipt(S, 'task push', id, '', 'waiting', 0, '', actor, to, 'depends-on ' .. table.concat(unmet, ';'), '', idem, at)
     return { 'CREATED', 'waiting', tostring(#unmet) }
   end
-  DEP.enqueue(S, id, to, front, priority)
   receipt(S, 'task push', id, '', 'open', 0, '', actor, to, '', '', idem, at)
   if #conds > 0 then
     return { 'CREATED', 'on-met' }
@@ -151,7 +168,7 @@ local function task_take(keys, args)
   local S, id, friend = args[1], args[2], args[3]
   local expected_attempt, token, token_sha = tonumber(args[4]), args[5], args[6]
   local actor, idem = args[7], args[8]
-  local key = 's:' .. S .. ':task:' .. id
+  local key = 'task:' .. id
 
   if redis.call('EXISTS', key) == 0 then
     return { 'NOTFOUND' }
@@ -215,12 +232,11 @@ local function task_take(keys, args)
     return { 'RETRY' }
   end
   local at = now_ms()
-  redis.call('HSET', key, 'state', 'claimed', 'owner', friend,
-    'attempt', tostring(attempt), 'token', token, 'token_sha', token_sha, 'claimed_at', tostring(at))
-  redis.call('ZREM', 's:' .. S .. ':ready', id)
-  redis.call('ZREM', 's:' .. S .. ':open:' .. friend, id)
-  redis.call('SREM', 's:' .. S .. ':idx:task:open', id)
-  redis.call('SADD', 's:' .. S .. ':idx:task:claimed', id)
+  local err = NS.task.set(id, 'claimed', { friend = friend, sprint = S, by = actor, why = 'take',
+    fields = { 'attempt', tostring(attempt), 'token', token, 'token_sha', token_sha, 'claimed_at', tostring(at) } })
+  if err then
+    return { 'REFUSED', err }
+  end
   redis.call('ZADD', 'friend:' .. friend .. ':starting', at, S .. '/' .. id .. '/' .. attempt)
   receipt(S, 'task take', id, 'open', 'claimed', attempt, token_sha, actor, friend, '', '', idem, at)
   return { 'CLAIMED', S, id, tostring(attempt), token,
@@ -247,7 +263,7 @@ local function task_done(keys, args)
   local as = args[10] or ''
   local typ, who, url, comment_id = args[11] or '', args[12] or '', args[13] or '', args[14] or ''
   local kind_explicit, kind_derived, scope, reason = args[15] or '', args[16] or '', args[17] or '', args[18] or ''
-  local key = 's:' .. S .. ':task:' .. id
+  local key = 'task:' .. id
 
   if redis.call('EXISTS', key) == 0 then
     return { 'NOTFOUND' }
@@ -257,7 +273,10 @@ local function task_done(keys, args)
   -- so only a claimed or working lease closes). Anything else without the
   -- stored token refuses FENCED.
   if token == '' and as ~= '' then
-    if redis.call('HGET', key, 'owner') ~= as then
+    -- the card names its friend from the push (one store), so the owner
+    -- alone is no lease: only a claimed or working task of as closes
+    local st = redis.call('HGET', key, 'state')
+    if redis.call('HGET', key, 'owner') ~= as or (st ~= 'claimed' and st ~= 'working' and st ~= 'closed') then
       return { 'FENCED' }
     end
   elseif redis.call('HGET', key, 'token') ~= token then
@@ -306,11 +325,11 @@ local function task_done(keys, args)
 
   local attempt = tonumber(redis.call('HGET', key, 'attempt') or '0')
   local at = now_ms()
-  redis.call('HSET', key, 'state', 'closed', 'evidence', evidence,
-    'verdict', verdict, 'score', score, 'closed_at', tostring(at))
-  redis.call('SREM', 's:' .. S .. ':idx:task:claimed', id)
-  redis.call('SREM', 's:' .. S .. ':idx:task:working', id)
-  redis.call('SADD', 's:' .. S .. ':idx:task:closed', id)
+  local err = NS.task.set(id, 'closed', { sprint = S, by = actor, why = 'done',
+    fields = { 'evidence', evidence, 'verdict', verdict, 'score', score, 'closed_at', tostring(at) } })
+  if err then
+    return { 'REFUSED', err }
+  end
   local identity = S .. '/' .. id .. '/' .. attempt
   redis.call('ZREM', 'friend:' .. friend .. ':starting', identity)
   redis.call('ZREM', 'friend:' .. friend .. ':living', identity)

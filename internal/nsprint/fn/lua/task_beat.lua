@@ -33,15 +33,17 @@ local function slot_freed(S, id, friend, attempt, at)
 end
 
 -- requeue puts a reopened task back where its owner or the ready queue can
--- claim it again. The owner is kept (spec 3.1), so the work goes back
--- to `open:<owner>`; an ownerless task falls back to `ready`.
-local function requeue(S, id, friend, priority)
-  redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
-  if friend ~= '' then
-    redis.call('ZADD', 's:' .. S .. ':open:' .. friend, priority, id)
-  else
-    redis.call('ZADD', 's:' .. S .. ':ready', priority, id)
-  end
+-- claim it again, through the one task move (NS.task, 02_card_move.lua):
+-- the owner is kept (spec 3.1), so the work goes back to its friend's ready
+-- queue at its priority; an ownerless task falls back to the sprint's.
+local function requeue(S, id, why, actor, fields)
+  return NS.task.set(id, 'open', { sprint = S, by = actor, why = why, fields = fields })
+end
+
+-- to_state is the one move into a fine state that keeps its where
+-- (claimed -> working, working -> reconcile-required).
+local function to_state(S, id, state, why, actor, fields)
+  return NS.task.set(id, state, { sprint = S, by = actor, why = why, fields = fields })
 end
 
 -- task_beat: the process that started the child sends this every 60 s. The
@@ -51,7 +53,7 @@ end
 -- renew an attempt that the reconciler already reopened (spec 2.1 rule 8).
 local function task_beat(keys, args)
   local S, id, token, actor, idem = args[1], args[2], args[3], args[4], args[5]
-  local key = 's:' .. S .. ':task:' .. id
+  local key = 'task:' .. id
 
   if redis.call('EXISTS', key) == 0 then
     return { 'NOTFOUND' }
@@ -71,9 +73,8 @@ local function task_beat(keys, args)
   local at = now_ms()
 
   if state == 'claimed' then
-    redis.call('HSET', key, 'state', 'working', 'started_at', tostring(at), 'beat_at', tostring(at))
-    redis.call('SREM', 's:' .. S .. ':idx:task:claimed', id)
-    redis.call('SADD', 's:' .. S .. ':idx:task:working', id)
+    to_state(S, id, 'working', 'start-ack', actor, { 'started_at', tostring(at), 'beat_at', tostring(at) })
+    NS.task.renew(id, at)
     redis.call('ZREM', 'friend:' .. friend .. ':starting', identity)
     redis.call('ZADD', 'friend:' .. friend .. ':living', at, identity)
     receipt(S, 'task beat', id, 'claimed', 'working', attempt, token_sha, actor, 'start-ack', '', idem, at)
@@ -81,6 +82,7 @@ local function task_beat(keys, args)
   end
 
   redis.call('HSET', key, 'beat_at', tostring(at))
+  NS.task.renew(id, at)
   redis.call('ZADD', 'friend:' .. friend .. ':living', at, identity)
   receipt(S, 'task beat', id, 'working', 'working', attempt, token_sha, actor, '', '', idem, at)
   return { 'BEAT', S, id, tostring(attempt) }
@@ -93,7 +95,7 @@ end
 -- token's Done and any later beat refuse with exit 3 (spec 2.1 rule 8).
 local function task_cancel(keys, args)
   local S, id, token, reason, actor, idem = args[1], args[2], args[3], args[4], args[5], args[6]
-  local key = 's:' .. S .. ':task:' .. id
+  local key = 'task:' .. id
 
   if redis.call('EXISTS', key) == 0 then
     return { 'NOTFOUND' }
@@ -110,7 +112,6 @@ local function task_cancel(keys, args)
   local friend = redis.call('HGET', key, 'owner') or ''
   local effects = redis.call('HGET', key, 'effects') or 'none'
   local token_sha = redis.call('HGET', key, 'token_sha') or ''
-  local priority = tonumber(redis.call('HGET', key, 'priority') or '0')
   local identity = S .. '/' .. id .. '/' .. attempt
   local at = now_ms()
 
@@ -118,12 +119,9 @@ local function task_cancel(keys, args)
   redis.call('ZREM', 'friend:' .. friend .. ':starting', identity)
   redis.call('ZREM', 'friend:' .. friend .. ':living', identity)
   slot_freed(S, id, friend, attempt, at)
-  redis.call('SREM', 's:' .. S .. ':idx:task:claimed', id)
-  redis.call('SREM', 's:' .. S .. ':idx:task:working', id)
 
   if effects == 'external' then
-    redis.call('HSET', key, 'state', 'reconcile-required', 'reason', reason)
-    redis.call('SADD', 's:' .. S .. ':idx:task:reconcile-required', id)
+    to_state(S, id, 'reconcile-required', 'cancel ' .. (reason or ''), actor, { 'reason', reason })
     redis.call('HSET', 's:' .. S .. ':unresolved', id .. ':cancel-external:',
       'state=' .. state .. ' attempt=' .. tostring(attempt) .. ' token_sha=' .. token_sha ..
       ' reason=' .. reason .. ' at=' .. tostring(at))
@@ -131,8 +129,7 @@ local function task_cancel(keys, args)
     return { 'RECONCILE' }
   end
 
-  redis.call('HSET', key, 'state', 'open')
-  requeue(S, id, friend, priority)
+  requeue(S, id, 'cancel ' .. ((reason and reason ~= '') and reason or 'given back'), actor)
   receipt(S, 'task cancel', id, state, 'open', attempt, token_sha, actor, reason, '', idem, at)
   return { 'OPEN' }
 end
@@ -148,7 +145,7 @@ end
 -- refuses with exit 3.
 local function task_expire(keys, args)
   local S, id, actor, idem = args[1], args[2], args[3], args[4]
-  local key = 's:' .. S .. ':task:' .. id
+  local key = 'task:' .. id
 
   if redis.call('EXISTS', key) == 0 then
     return { 'NOTFOUND' }
@@ -164,12 +161,10 @@ local function task_expire(keys, args)
     local attempt = tonumber(redis.call('HGET', key, 'attempt') or '0')
     local friend = redis.call('HGET', key, 'owner') or ''
     local token_sha = redis.call('HGET', key, 'token_sha') or ''
-    local priority = tonumber(redis.call('HGET', key, 'priority') or '0')
-    redis.call('HSET', key, 'token', 'fenced', 'state', 'open')
-    redis.call('SREM', 's:' .. S .. ':idx:task:claimed', id)
+    redis.call('HSET', key, 'token', 'fenced')
     redis.call('ZREM', 'friend:' .. friend .. ':starting', S .. '/' .. id .. '/' .. attempt)
     slot_freed(S, id, friend, attempt, at)
-    requeue(S, id, friend, priority)
+    requeue(S, id, 'spawn-timeout', actor)
     receipt(S, 'task expire', id, 'claimed', 'open', attempt, token_sha, actor, 'spawn-timeout', '', idem, at)
     return { 'REOPENED' }
   end
@@ -183,15 +178,12 @@ local function task_expire(keys, args)
     local friend = redis.call('HGET', key, 'owner') or ''
     local token_sha = redis.call('HGET', key, 'token_sha') or ''
     local effects = redis.call('HGET', key, 'effects') or 'none'
-    local priority = tonumber(redis.call('HGET', key, 'priority') or '0')
     redis.call('HSET', key, 'token', 'fenced')
-    redis.call('SREM', 's:' .. S .. ':idx:task:working', id)
     redis.call('ZREM', 'friend:' .. friend .. ':living', S .. '/' .. id .. '/' .. attempt)
     slot_freed(S, id, friend, attempt, at)
 
     if effects == 'external' then
-      redis.call('HSET', key, 'state', 'reconcile-required', 'reason', 'beat-timeout')
-      redis.call('SADD', 's:' .. S .. ':idx:task:reconcile-required', id)
+      to_state(S, id, 'reconcile-required', 'beat-timeout', actor, { 'reason', 'beat-timeout' })
       redis.call('HSET', 's:' .. S .. ':unresolved', id .. ':beat-timeout:',
         'attempt=' .. tostring(attempt) .. ' token_sha=' .. token_sha ..
         ' effects=external at=' .. tostring(at))
@@ -199,8 +191,7 @@ local function task_expire(keys, args)
       return { 'RECONCILE' }
     end
 
-    redis.call('HSET', key, 'state', 'open')
-    requeue(S, id, friend, priority)
+    requeue(S, id, 'beat-timeout', actor)
     receipt(S, 'task expire', id, 'working', 'open', attempt, token_sha, actor, 'beat-timeout', '', idem, at)
     return { 'EXPIRED' }
   end

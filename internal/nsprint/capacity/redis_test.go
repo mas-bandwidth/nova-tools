@@ -130,12 +130,12 @@ func TestControl22RedisStaleQueueAndFriendIsolation(t *testing.T) {
 	s := "control-22334455"
 	c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: s})
 	c.ZAdd(ctx, "s:"+s+":open:a", redis.Z{Member: "live"}, redis.Z{Member: "closed"})
-	c.HSet(ctx, "s:"+s+":task:live", "state", "open", "owner", "")
-	c.HSet(ctx, "s:"+s+":task:closed", "state", "closed", "owner", "a")
+	c.HSet(ctx, "task:live", "state", "open", "owner", "")
+	c.HSet(ctx, "task:closed", "state", "closed", "owner", "a")
 	c.SAdd(ctx, "s:"+s+":idx:task:claimed", "other")
-	c.HSet(ctx, "s:"+s+":task:other", "state", "claimed", "owner", "b")
+	c.HSet(ctx, "task:other", "state", "claimed", "owner", "b")
 	c.SAdd(ctx, "s:"+s+":idx:task:working", "mine")
-	c.HSet(ctx, "s:"+s+":task:mine", "state", "working", "owner", "a")
+	c.HSet(ctx, "task:mine", "state", "working", "owner", "a")
 	rows, err := task.ListStore(ctx, st, task.ListRequest{As: "a"})
 	if err != nil {
 		t.Fatal(err)

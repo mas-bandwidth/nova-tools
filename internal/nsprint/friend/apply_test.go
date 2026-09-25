@@ -187,7 +187,7 @@ func apRecoverFixture(t *testing.T, st *store.Store, client *redis.Client) (stri
 		t.Fatalf("121 s moved %+v", move)
 	}
 	marker := "[moved from ada: wake-missed]"
-	if title := client.HGet(ctx, "s:"+fsSprint+":task:build-1", "title").Val(); strings.Count(title, marker) != 1 {
+	if title := client.HGet(ctx, "task:build-1", "title").Val(); strings.Count(title, marker) != 1 {
 		t.Fatalf("title %q, want one %q", title, marker)
 	}
 	return d1, client.XLen(ctx, friend.OutboxKey).Val()

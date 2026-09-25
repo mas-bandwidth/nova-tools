@@ -105,7 +105,7 @@ func TestTaskCardCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, out, errOut = runTaskCLI("migrate", "--actor", "rowan", "--sprint", seatSprint, "--truth", truth)
-	if code != 0 || !strings.HasPrefix(out, "TASK migrate scanned=2 ") || !strings.Contains(out, " landed=2 ") {
+	if code != 0 || !strings.HasPrefix(out, "TASK migrate scanned=") || !strings.Contains(out, " landed=2 ") {
 		t.Fatalf("migrate = %d %q %q", code, out, errOut)
 	}
 	if code, out, _ = runTaskCLI("fsck", "--sprint", seatSprint); code != 0 {

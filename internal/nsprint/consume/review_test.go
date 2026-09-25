@@ -443,7 +443,7 @@ func TestControl32HeadChange(t *testing.T) {
 	// Prior readers at head A: stella, johnny, emma, rowan, jev
 	for _, f := range []string{"stella", "johnny", "emma", "rowan", "jev"} {
 		tid := task.ReviewID(repo, prNum, headA, f)
-		pipe.HSet(ctx, "s:"+S+":task:"+tid,
+		pipe.HSet(ctx, "task:"+tid,
 			"state", "open", "kind", "review", "repo", repo, "pr", strconv.Itoa(prNum),
 			"head", headA, "owner", "", "priority", "5")
 		pipe.ZAdd(ctx, "s:"+S+":open:"+f, redis.Z{Score: 5, Member: tid})
@@ -480,7 +480,7 @@ func TestControl32HeadChange(t *testing.T) {
 	// Tasks at head A cancelled
 	for _, f := range []string{"stella", "johnny", "emma"} {
 		tid := task.ReviewID(repo, prNum, headA, f)
-		state, err := client.HGet(ctx, "s:"+S+":task:"+tid, "state").Result()
+		state, err := client.HGet(ctx, "task:"+tid, "state").Result()
 		if err != nil || state != "cancelled" {
 			t.Fatalf("task %s state = %q (%v), want 'cancelled'", tid, state, err)
 		}
@@ -492,7 +492,7 @@ func TestControl32HeadChange(t *testing.T) {
 	// New tasks at head B pushed to prior readers (stella, johnny, emma)
 	for _, f := range []string{"stella", "johnny", "emma"} {
 		tid := task.ReviewID(repo, prNum, headB, f)
-		state, err := client.HGet(ctx, "s:"+S+":task:"+tid, "state").Result()
+		state, err := client.HGet(ctx, "task:"+tid, "state").Result()
 		if err != nil || state != "open" {
 			t.Fatalf("new task %s state = %q (%v), want 'open'", tid, state, err)
 		}
@@ -504,7 +504,7 @@ func TestControl32HeadChange(t *testing.T) {
 	// Never pushed to author (rowan) or jev
 	for _, f := range []string{"rowan", "jev"} {
 		tid := task.ReviewID(repo, prNum, headB, f)
-		exists, err := client.Exists(ctx, "s:"+S+":task:"+tid).Result()
+		exists, err := client.Exists(ctx, "task:"+tid).Result()
 		if err != nil || exists != 0 {
 			t.Fatalf("unexpected task %s for %s at head B exists=%d (%v)", tid, f, exists, err)
 		}
@@ -537,7 +537,7 @@ func TestControl32HeadChange(t *testing.T) {
 		// Prior readers at head A: stella, johnny, emma
 		for _, f := range []string{"stella", "johnny", "emma"} {
 			tid := task.ReviewID(repo, pr2, headA, f)
-			pipe.HSet(ctx, "s:"+S+":task:"+tid,
+			pipe.HSet(ctx, "task:"+tid,
 				"state", "open", "kind", "review", "repo", repo, "pr", strconv.Itoa(pr2),
 				"head", headA, "owner", "", "priority", "5")
 			pipe.ZAdd(ctx, "s:"+S+":open:"+f, redis.Z{Score: 5, Member: tid})
@@ -569,7 +569,7 @@ func TestControl32HeadChange(t *testing.T) {
 		// stella and emma get their review task pushes at head B
 		for _, f := range []string{"stella", "emma"} {
 			tid := task.ReviewID(repo, pr2, headB, f)
-			state, err := client.HGet(ctx, "s:"+S+":task:"+tid, "state").Result()
+			state, err := client.HGet(ctx, "task:"+tid, "state").Result()
 			if err != nil || state != "open" {
 				t.Fatalf("new task %s state = %q (%v), want 'open'", tid, state, err)
 			}
@@ -577,7 +577,7 @@ func TestControl32HeadChange(t *testing.T) {
 
 		// johnny holds an open hold: skipped by pr-to-read!
 		johnnyTID := task.ReviewID(repo, pr2, headB, "johnny")
-		exists, err := client.Exists(ctx, "s:"+S+":task:"+johnnyTID).Result()
+		exists, err := client.Exists(ctx, "task:"+johnnyTID).Result()
 		if err != nil || exists != 0 {
 			t.Fatalf("johnny review task at head B exists=%d (%v); want skipped", exists, err)
 		}
@@ -848,7 +848,7 @@ func TestPrToReadMakesNoRestCall(t *testing.T) {
 	pipe.SAdd(ctx, "s:"+S+":idx:card:review-ready", label)
 	// Prior review task at headA for stella
 	tA := task.ReviewID(repo, prNum, headA, "stella")
-	pipe.HSet(ctx, "s:"+S+":task:"+tA, "state", "open", "kind", "review", "repo", repo, "pr", strconv.Itoa(prNum), "head", headA)
+	pipe.HSet(ctx, "task:"+tA, "state", "open", "kind", "review", "repo", repo, "pr", strconv.Itoa(prNum), "head", headA)
 	pipe.ZAdd(ctx, "s:"+S+":open:stella", redis.Z{Score: 5, Member: tA})
 	pipe.SAdd(ctx, "s:"+S+":idx:task:open", tA)
 	// CI verdict OK at headB
@@ -878,7 +878,7 @@ func TestPrToReadMakesNoRestCall(t *testing.T) {
 	}
 
 	// Verify head change happened, task at headA was cancelled, and card went land-ready
-	tAState, _ := client.HGet(ctx, "s:"+S+":task:"+tA, "state").Result()
+	tAState, _ := client.HGet(ctx, "task:"+tA, "state").Result()
 	if tAState != "cancelled" {
 		t.Fatalf("task %s state = %q, want 'cancelled'", tA, tAState)
 	}

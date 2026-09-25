@@ -69,12 +69,13 @@ func listCommandLine(cmd redis.Cmder) string {
 
 func (r *listRecorder) trips() int { return len(r.singles) + len(r.pipelines) }
 
-// seedListTask writes one task hash and optionally indexes it.
+// seedListTask writes one card record on the one store task:<id> (#3778),
+// the sprint a field; the sprint's index sets name it.
 func seedListTask(t *testing.T, client *redis.Client, S, id, state, owner string) {
 	t.Helper()
 	ctx := context.Background()
-	key := "s:" + S + ":task:" + id
-	if err := client.HSet(ctx, key, "state", state, "owner", owner, "title", "task "+id, "kind", "build", "ref", "r-"+id,
+	key := "task:" + id
+	if err := client.HSet(ctx, key, "sprint", S, "state", state, "owner", owner, "title", "task "+id, "kind", "build", "ref", "r-"+id,
 		"priority", "5", "pushed_at", "1", "est", "30", "attempt", "0").Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +148,11 @@ func TestListThreeSprintsOneTrip(t *testing.T) {
 
 	// A task owned by someone else should not appear.
 	seedListWorking(t, client, "list-a", "other", "a3")
+
+	// A record left at the retired s:<S>:task:<id> key is not the card: the
+	// one store is task:<id>, so an indexed id with no task:<id> lists nothing.
+	client.HSet(ctx, "s:list-b:task:b9", "state", "working", "owner", "f1")
+	client.SAdd(ctx, "s:list-b:idx:task:working", "b9")
 
 	rec := &listRecorder{}
 	client.AddHook(rec)

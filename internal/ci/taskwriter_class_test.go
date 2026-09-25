@@ -13,7 +13,9 @@ import (
 // internal/nsprint/fn/lua/02_card_move.lua (the Lua half of this rule is
 // internal/nsprint/fn/taskwriter_test.go). No non-test Go file under cmd/ or
 // internal/ writes a ws:<stream>:<where> set, a friend:<f>:cards:<where>
-// set, a friend-queue idx set or a task:<id> record with a direct Redis call;
+// set, a friend-queue idx set, a task:<id> record or the retired sprint store
+// (s:<S>:task:<id>, s:<S>:open:<f>, s:<S>:ready; one task store, 2026-09-25
+// 09:35 ET) with a direct Redis call;
 // a verb FCALLs ns_tcard_* (internal/nsprint/taskcard) instead. Fixtures that
 // seed a throwaway store (a *fixture*.go file, internal/nsprint/ws/wstest)
 // are the only exceptions.
@@ -23,7 +25,7 @@ func TestTaskCardsHaveOneWriter(t *testing.T) {
 	write := regexp.MustCompile(`\.(ZAdd|ZAddNX|ZAddXX|ZAddArgs|ZIncrBy|ZRem|ZRemRangeByScore|ZRemRangeByRank|ZUnionStore|ZInterStore|` +
 		`SAdd|SRem|SMove|HSet|HSetNX|HMSet|HDel|HIncrBy|Del|Unlink|Rename|RenameNX)\(ctx, ([^,)]+)`)
 	raw := regexp.MustCompile(`"(ZADD|ZREM|SADD|SREM|SMOVE|HSET|HDEL|DEL|RENAME|ZUNIONSTORE)", "(ws:|task:|friend:[^"]*:cards:|sprint:[^"]*:idx:)`)
-	key := regexp.MustCompile(`^("ws:"\s*\+|"task:"\s*\+|"friend:"\s*\+.*":cards:"|".*:idx:"|` +
+	key := regexp.MustCompile(`^("ws:"\s*\+|"task:"\s*\+|"friend:"\s*\+.*":cards:"|".*:idx:"|"s:"\s*\+.*":(task|open|ready)|` +
 		`(ws|taskcard|stream)\.(Key|WSKey|StreamKey|FriendKey)\(|(table\.)?(StreamKey|FriendKey|FriendCardsKey|WSKey)\()`)
 	// Inside the two packages that name the keys, a bare Key( is theirs.
 	bareKey := regexp.MustCompile(`^Key\(`)

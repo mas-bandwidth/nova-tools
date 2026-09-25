@@ -104,9 +104,11 @@ func (f *seatFixture) push(to, id string, extra ...string) string {
 
 func (f *seatFixture) wantOpen(id string) {
 	f.t.Helper()
-	h := f.client.HGetAll(context.Background(), "s:"+seatSprint+":task:"+id).Val()
-	if h["state"] != "open" || h["owner"] != "" {
-		f.t.Fatalf("task %s state=%q owner=%q; want open with no owner", id, h["state"], h["owner"])
+	// one task store (#3778): the card names its friend from the push, so
+	// "not taken" is state open at attempt 0
+	h := f.client.HGetAll(context.Background(), "task:"+id).Val()
+	if h["state"] != "open" || h["attempt"] != "0" {
+		f.t.Fatalf("task %s state=%q attempt=%q; want open, never taken", id, h["state"], h["attempt"])
 	}
 }
 
@@ -123,7 +125,7 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 		f := newSeat(t)
 		f.as("a")
 		f.push("b", "t1")
-		if got := f.client.HGet(ctx, "s:"+seatSprint+":task:t1", "pushed_by").Val(); got != "a" {
+		if got := f.client.HGet(ctx, "task:t1", "pushed_by").Val(); got != "a" {
 			t.Fatalf("pushed_by=%q, want a", got)
 		}
 		f.wantReceipt("task push", "a", "b")
@@ -133,8 +135,10 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 			t.Fatalf("take stdout %q; want CLAIMED %s/t1 and its TASK line", out, seatSprint)
 		}
 		f.wantReceipt("task take", "b", "b")
-		if n := f.client.Exists(ctx, "task:t1", "q:b").Val(); n != 0 {
-			t.Fatalf("%d bash-keyspace keys exist; want none", n)
+		// one task store (#3778): the take is the card's move to working and
+		// its friend-queue ready entry is gone
+		if w := f.client.HGet(ctx, "task:t1", "where").Val(); w != "working" || f.client.XLen(ctx, "q:b").Val() != 0 {
+			t.Fatalf("after take where=%q q:b=%d; want working and no ready entry", w, f.client.XLen(ctx, "q:b").Val())
 		}
 	})
 
@@ -180,7 +184,7 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 		if got := f.xlen(); got != before {
 			t.Fatalf("log grew by %d; want unchanged", got-before)
 		}
-		if n := f.client.Exists(ctx, "s:"+seatSprint+":task:u2").Val(); n != 0 {
+		if n := f.client.Exists(ctx, "task:u2").Val(); n != 0 {
 			t.Fatalf("u2 was written")
 		}
 		f.wantOpen("u1")
@@ -269,7 +273,7 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 			if want := "PUSH DOWN id=" + c.id + " to=b down=" + marker + "\n"; out != want {
 				t.Fatalf("stdout %q; want %q", out, want)
 			}
-			if n := f.client.Exists(ctx, "s:"+seatSprint+":task:"+c.id).Val(); n != 0 {
+			if n := f.client.Exists(ctx, "task:"+c.id).Val(); n != 0 {
 				t.Fatalf("task %s written for a down friend", c.id)
 			}
 			if f.client.ZScore(ctx, "s:"+seatSprint+":open:b", c.id).Err() != redis.Nil ||

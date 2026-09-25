@@ -481,7 +481,7 @@ func (p *PRRead) Pass(ctx context.Context) (int, error) {
 		pipeTasks := client.Pipeline()
 		existsCmds := make([]*redis.IntCmd, len(friendsList))
 		for i, f := range friendsList {
-			existsCmds[i] = pipeTasks.Exists(ctx, fmt.Sprintf("s:%s:task:%s", p.Sprint, task.ReviewID(e.repo, prNum, e.prev, f)))
+			existsCmds[i] = pipeTasks.Exists(ctx, task.Key(p.Sprint, task.ReviewID(e.repo, prNum, e.prev, f)))
 		}
 		holdCmd := pipeTasks.HGetAll(ctx, fmt.Sprintf("s:%s:hold:%s:%s", p.Sprint, e.repo, e.pr))
 		prAuthorCmd := pipeTasks.HGet(ctx, fmt.Sprintf("s:%s:pr:%s:%s", p.Sprint, e.repo, e.pr), "author")

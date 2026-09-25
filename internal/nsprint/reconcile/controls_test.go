@@ -224,7 +224,7 @@ func TestControl25OrphanNeverDone(t *testing.T) {
 		t.Fatalf("unresolved items = %d, want 1", items)
 	}
 	// No harvest task and no review task exist for it.
-	if keys, _ := client.Keys(ctx, "s:"+sprint+":task:*").Result(); len(keys) != 0 {
+	if keys, _ := client.Keys(ctx, "task:*").Result(); len(keys) != 0 {
 		t.Fatalf("tasks exist for an orphan: %v", keys)
 	}
 	if got := receiptsTo(t, ctx, client, sprint, label, "ended"); got != 0 {
@@ -899,7 +899,7 @@ func TestControl09OneAssignmentOneReceipt(t *testing.T) {
 	st, client := newSprint(t)
 	const sprint, id = "control-09a0b1c2", "t9"
 	must(t, client.SAdd(ctx, "friends", "ctl-a", "ctl-b").Err())
-	must(t, client.HSet(ctx, "s:"+sprint+":task:"+id, "state", "open", "owner", "", "attempt", "0", "kind", "build").Err())
+	must(t, client.HSet(ctx, "task:"+id, "state", "open", "owner", "", "attempt", "0", "kind", "build").Err())
 	must(t, client.ZAdd(ctx, "s:"+sprint+":ready", redis.Z{Score: 5, Member: id}).Err())
 
 	var wg sync.WaitGroup
@@ -917,7 +917,7 @@ func TestControl09OneAssignmentOneReceipt(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-	owner, _ := client.HGet(ctx, "s:"+sprint+":task:"+id, "owner").Result()
+	owner, _ := client.HGet(ctx, "task:"+id, "owner").Result()
 	if owner != "ctl-a" && owner != "ctl-b" {
 		t.Fatalf("owner = %q", owner)
 	}
@@ -948,7 +948,7 @@ func TestControl09OneAssignmentOneReceipt(t *testing.T) {
 
 	// Crash: the client dies with the call in flight. The function ran whole
 	// or not at all; the retry returns the stored receipt and adds none.
-	must(t, client.HSet(ctx, "s:"+sprint+":task:u9", "state", "open", "owner", "", "attempt", "0").Err())
+	must(t, client.HSet(ctx, "task:u9", "state", "open", "owner", "", "attempt", "0").Err())
 	must(t, client.ZAdd(ctx, "s:"+sprint+":ready", redis.Z{Score: 1, Member: "u9"}).Err())
 	dying := redis.NewClient(&redis.Options{Addr: client.Options().Addr})
 	cctx, cancel := context.WithCancel(ctx)
@@ -960,19 +960,19 @@ func TestControl09OneAssignmentOneReceipt(t *testing.T) {
 	if err != nil || r.Code != 0 {
 		t.Fatalf("retry after crash: %+v %v", r, err)
 	}
-	ownerU, _ := client.HGet(ctx, "s:"+sprint+":task:u9", "owner").Result()
+	ownerU, _ := client.HGet(ctx, "task:u9", "owner").Result()
 	if ownerU != "ctl-a" || receiptsTo(t, ctx, client, sprint, "u9", "open:ctl-a") != 1 {
 		t.Fatalf("after crash and retry: owner %q receipts %d", ownerU, receiptsTo(t, ctx, client, sprint, "u9", "open:ctl-a"))
 	}
 	// Every owner has its receipt: no state without its receipt.
 	for _, tid := range []string{id, "u9"} {
-		o, _ := client.HGet(ctx, "s:"+sprint+":task:"+tid, "owner").Result()
+		o, _ := client.HGet(ctx, "task:"+tid, "owner").Result()
 		if receiptsTo(t, ctx, client, sprint, tid, "open:"+o) != 1 {
 			t.Fatalf("%s owned by %s without exactly one receipt", tid, o)
 		}
 	}
 	// A stale reconciler cannot route.
-	must(t, client.HSet(ctx, "s:"+sprint+":task:v9", "state", "open", "owner", "", "attempt", "0").Err())
+	must(t, client.HSet(ctx, "task:v9", "state", "open", "owner", "", "attempt", "0").Err())
 	must(t, client.ZAdd(ctx, "s:"+sprint+":ready", redis.Z{Score: 1, Member: "v9"}).Err())
 	if r, _ := reconcile.Assign(ctx, st, reconcile.AssignRequest{Sprint: sprint, ID: "v9", Consumer: "ctl-a", Fence: "rc-0.old"}); r.Code != 3 {
 		t.Fatalf("stale fence assign: %+v", r)
