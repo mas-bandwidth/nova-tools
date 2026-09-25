@@ -1105,3 +1105,14 @@ cmd/nova-sprint/lander_unit_test.go:TestLanderLoadsMembersFromUnitRecords serial
 cmd/nova-sprint/line_test.go:TestLineVerbPostListImport serial: t.Setenv
 cmd/nova-sprint/task_card_test.go:TestTaskMoveRefusesAPrimaryUnread serial: t.Setenv
 internal/nsprint/card/copy_test.go:TestReadCopyDealtToBenchRendersALintedCard serial: t.Setenv
+cmd/nova-sprint/seat_test.go:TestRedisCLIRunsOneCommandUnderTheSeat serial: t.Setenv
+cmd/nova-sprint/seat_test.go:TestTableRendersUnderSeatWithNoWrapper serial: t.Setenv
+cmd/nova-swarm/seat_event_test.go:TestSeatGivesTheCardEndWriterItsLogin serial: t.Setenv
+cmd/nova-tokens/token_ledger_test.go:TestLedgerAndReportDialAsTheAclUser serial: t.Setenv
+internal/nsprint/store/issue3277_test.go:TestOpenSendsNoCommand3277 serial: t.Setenv
+internal/nsprint/store/reach_test.go:TestUnreachable3277 serial: t.Setenv
+internal/presence/issue3277_test.go:TestOpenSendsNoCommand3277 serial: t.Setenv
+internal/presence/seat_test.go:TestOpenLogsInAsTheSeat serial: t.Setenv
+internal/seatcred/seatcred_test.go:TestResolveReadsTheSeatThroughTheSecretsLibrary serial: t.Setenv
+cmd/nova-sprint/task_queue_test.go:TestFriendDownRebalancesAtOnce serial: t.Setenv (through a helper)
+internal/nsprint/reconcile/rebalance_test.go:TestFriendStaleBeatRebalances serial: t.Setenv (through a helper)

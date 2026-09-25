@@ -12,6 +12,8 @@ import (
 )
 
 func TestFromArgsTakesTheSeatFlagOrTheEnvironment(t *testing.T) {
+	t.Parallel()
+
 	t.Cleanup(func() { seatcred.Select("") })
 	env := func(v string) func(string) string {
 		return func(k string) string {
@@ -52,6 +54,8 @@ func TestFromArgsTakesTheSeatFlagOrTheEnvironment(t *testing.T) {
 }
 
 func TestPasswordKeyNamesTheUsersVariable(t *testing.T) {
+	t.Parallel()
+
 	if got := seatcred.PasswordKey("coordinator"); got != "NOVA_REDIS_COORDINATOR_PASSWORD" {
 		t.Fatalf("PasswordKey = %s", got)
 	}
@@ -107,6 +111,8 @@ func TestResolveReadsTheSeatThroughTheSecretsLibrary(t *testing.T) {
 }
 
 func TestActiveResolvesOnceAndOnlyWhenSelected(t *testing.T) {
+	t.Parallel()
+
 	home := seattest.Home(t, "air", map[string]string{"NOVA_REDIS_BENCH_PASSWORD": "air-bench-test-pw-11"})
 	seattest.Env(t, home)
 	if _, ok, _ := seatcred.Active(); ok {
@@ -120,6 +126,8 @@ func TestActiveResolvesOnceAndOnlyWhenSelected(t *testing.T) {
 }
 
 func TestChildEnvHandsThePasswordToTheChildOnly(t *testing.T) {
+	t.Parallel()
+
 	home := seattest.Home(t, "studio", map[string]string{"NOVA_REDIS_COORDINATOR_PASSWORD": "child-test-pw-5e"})
 	seattest.Env(t, home)
 	c, err := seatcred.Resolve("studio", os.Getenv)

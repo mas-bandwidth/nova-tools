@@ -162,8 +162,6 @@ func TestRedistributeFromMovesDownFriendsQueue(t *testing.T) {
 // TestFriendStaleBeatRebalances: a beat older than FriendLive is down too;
 // the pass that sees it go stale moves the friend's ready task.
 func TestFriendStaleBeatRebalances(t *testing.T) {
-	t.Parallel()
-
 	f := newDealFixture(t)
 	const s = "nova-sprint"
 	f.friend(t, "emma", 1, true, "pre-emma")

@@ -41,9 +41,10 @@ const serialTestsAllowlistPath = "testdata/serial-tests_allowlist.txt"
 // fleet_build TestFleetBuildCompileVerb and ...ExecGivesGoItsOwnCaches, jev
 // TestJevMechRefusals, lander_unit TestLanderLoadsMembersFromUnitRecords,
 // line TestLineVerbPostListImport, task_card TestTaskMoveRefusesAPrimaryUnread,
-// card TestReadCopyDealtToBenchRendersALintedCard); each owes a per-test seam,
+// card TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the
+// redis stream (seat and #3277 tests on t.Setenv); each owes a per-test seam,
 // and the list only shrinks from here.
-const serialTestsCeiling = 1096
+const serialTestsCeiling = 1107
 
 func TestEveryTestOpensWithTParallel(t *testing.T) {
 	t.Parallel()

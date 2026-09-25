@@ -8,6 +8,8 @@ import (
 
 // #3277: Open sends nothing; the column's first read dials.
 func TestOpenSendsNoCommand3277(t *testing.T) {
+	t.Parallel()
+
 	addr, count := testutil.CommandCounter(t)
 	r, err := Open(addr)
 	if err != nil {
