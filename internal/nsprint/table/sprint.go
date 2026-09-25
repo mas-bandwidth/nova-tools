@@ -177,6 +177,10 @@ func okPct(ok, done int64) string {
 	return strconv.FormatInt(100*ok/done, 10) + "%"
 }
 
+// FriendHostBeatKey is the beat of the machine every friend lives on today
+// (the Studio; hardcoded, see readOnce).
+const FriendHostBeatKey = "bench:studio:beat"
+
 // hostBeatStale is how old a consumer beat's own at may be before its row
 // prints down, for a beat key that outlived its TTL (a machine's load in
 // lines.go reads the same bound).
@@ -293,6 +297,12 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		cmds[i].beat = pipe.HMGet(ctx, c.ID()+":beat", "load1", "at")
 		cmds[i].down = pipe.Exists(ctx, c.ID()+":down")
 	}
+	// HARDCODED (Glenn 2026-09-25 11:25 PM ET, "everybody is on studio"): a
+	// friend's load is the load of the machine it lives on, and today every
+	// friend lives on the Studio, so friend rows show bench:studio:beat's
+	// load1. The proper fix is the friend beat carrying its own machine's
+	// load1 like the bench beat does; then this read goes.
+	studio := pipe.HMGet(ctx, FriendHostBeatKey, "load1")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, false, fmt.Errorf("pipeline: %w", err)
 	}
@@ -364,6 +374,13 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		if got, err := cmds[i].beat.Result(); err == nil && len(got) == 2 {
 			if load := sanitize(pipeValue(got[0])); load != "" {
 				row.Load = load
+			}
+			if c.Kind == "friend" && row.Load == "-" {
+				if got, err := studio.Result(); err == nil && len(got) == 1 {
+					if load := sanitize(pipeValue(got[0])); load != "" {
+						row.Load = load
+					}
+				}
 			}
 			if atMS, err := strconv.ParseInt(pipeValue(got[1]), 10, 64); err == nil && now.UnixMilli()-atMS <= hostBeatStale.Milliseconds() {
 				row.Up = true
@@ -450,9 +467,20 @@ func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
 	fmt.Fprintf(b, "%-20s | %5s | %7s | %5s | %5s | %5s | %4s | %-6s | %s\n", "consumer", "ready", "working", "done", "ok", "fail",
 		"ok%", "status", "load")
 	b.WriteString(consumerRule)
+	// The row is the name alone (Glenn 2026-09-25 11:20 PM ET: the friend:/bench:
+	// prefix is clutter); the kind shows only when a friend and a bench share
+	// a name, so the two rows stay apart.
+	kinds := map[string]int{}
+	for _, r := range rows {
+		kinds[r.Name] |= map[string]int{"friend": 1, "bench": 2}[r.Kind]
+	}
 	var tot [4]int64
 	var unread [4]bool
 	for _, r := range rows {
+		name := r.Name
+		if kinds[r.Name] == 3 {
+			name = r.ID()
+		}
 		cell := [4]string{}
 		for j, n := range []int64{r.Ready, r.Working, r.OK, r.Fail} {
 			cell[j] = strconv.FormatInt(n, 10)
@@ -470,7 +498,7 @@ func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
 		if r.Up {
 			status = "up"
 		}
-		fmt.Fprintf(b, "%-20s | %5s | %7s | %5s | %5s | %5s | %4s | %-6s | %s\n", r.ID(), cell[0], cell[1], done, cell[2], cell[3],
+		fmt.Fprintf(b, "%-20s | %5s | %7s | %5s | %5s | %5s | %4s | %-6s | %s\n", name, cell[0], cell[1], done, cell[2], cell[3],
 			pct, status, r.Load)
 	}
 	b.WriteString(consumerRule)

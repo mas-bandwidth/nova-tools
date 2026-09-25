@@ -68,8 +68,8 @@ func TestControl4071OneConsumerTable(t *testing.T) {
 	}
 	want := "consumer             | ready | working |  done |    ok |  fail |  ok% | status | load\n" +
 		"---------------------+-------+---------+-------+-------+-------+------+--------+------\n" +
-		"friend:emma          |     0 |       0 |     2 |     1 |     1 |  50% | up     | -\n" +
-		"bench:hetzner        |     0 |       0 |     2 |     1 |     1 |  50% | up     | 0.19\n" +
+		"emma                 |     0 |       0 |     2 |     1 |     1 |  50% | up     | -\n" +
+		"hetzner              |     0 |       0 |     2 |     1 |     1 |  50% | up     | 0.19\n" +
 		"---------------------+-------+---------+-------+-------+-------+------+--------+------\n" +
 		"total                |     0 |       0 |     4 |     2 |     2 |  50% |\n"
 	if block := consumerBlock(t, got); block != want {
@@ -107,11 +107,11 @@ func TestConsumerTableStatusAndOrder(t *testing.T) {
 	}
 	block := consumerBlock(t, snap.Render(now))
 	want := []string{
-		"friend:stella        |     0 |       1 |     0 |     0 |     0 |    - | down   | -",
-		"friend:rowan         |     0 |       0 |     0 |     0 |     0 |    - | up     | -",
-		"bench:hulk           |     2 |       0 |     0 |     0 |     0 |    - | down   | 0.40",
-		"bench:space          |     0 |       0 |     0 |     0 |     0 |    - | up     | 1.04",
-		"bench:extra          |     0 |       0 |     1 |     1 |     0 | 100% | down   | -",
+		"stella               |     0 |       1 |     0 |     0 |     0 |    - | down   | -",
+		"rowan                |     0 |       0 |     0 |     0 |     0 |    - | up     | -",
+		"hulk                 |     2 |       0 |     0 |     0 |     0 |    - | down   | 0.40",
+		"space                |     0 |       0 |     0 |     0 |     0 |    - | up     | 1.04",
+		"extra                |     0 |       0 |     1 |     1 |     0 | 100% | down   | -",
 	}
 	rows := strings.Split(block, "\n")[2:7]
 	if strings.Join(rows, "\n") != strings.Join(want, "\n") {
@@ -157,7 +157,9 @@ func TestConsumerTableKeyAllowlist(t *testing.T) {
 	sort.Strings(consumerKeys)
 	want := []string{
 		"EXISTS bench:hetzner:down", "EXISTS friend:emma:down",
-		"HMGET bench:hetzner:beat", "HMGET friend:emma:beat",
+		"HMGET bench:hetzner:beat",
+		"HMGET bench:studio:beat", // every friend lives on the Studio today: its load (hardcoded, see readOnce)
+		"HMGET friend:emma:beat",
 		"ZCARD bench:hetzner:cards:fail", "ZCARD bench:hetzner:cards:ok", "ZCARD bench:hetzner:cards:ready", "ZCARD bench:hetzner:cards:working",
 		"ZCARD friend:emma:cards:fail", "ZCARD friend:emma:cards:ok", "ZCARD friend:emma:cards:ready", "ZCARD friend:emma:cards:working",
 	}
