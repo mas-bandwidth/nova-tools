@@ -179,6 +179,19 @@ func FindBenchMirror(benchHome, baseRepo string) string {
 	return ""
 }
 
+// MirrorCloneArgs is the git argv of the one staging convention, for cards (StageCard) and
+// for ci run (internal/nsprint/ci): a local clone of the bench mirror that borrows its
+// objects and dissociates, so staging never reads the network and a later gc of the
+// mirror cannot take objects from under the clone. noCheckout leaves the worktree empty
+// for a caller that checks out an exact sha next.
+func MirrorCloneArgs(mirror, target string, noCheckout bool) []string {
+	args := []string{"clone", "-q"}
+	if noCheckout {
+		args = append(args, "--no-checkout")
+	}
+	return append(args, "--reference", mirror, "--dissociate", mirror, target)
+}
+
 func isGitDir(dir string) bool {
 	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err == nil {
 		return true
@@ -323,11 +336,10 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	defer cancel()
 
 	start := time.Now()
-	cloneArgs := []string{"clone", "-q"}
+	cloneArgs := []string{"clone", "-q", cloneSource, opts.TargetDir}
 	if mirror != "" {
-		cloneArgs = append(cloneArgs, "--reference", mirror, "--dissociate")
+		cloneArgs = MirrorCloneArgs(mirror, opts.TargetDir, false)
 	}
-	cloneArgs = append(cloneArgs, cloneSource, opts.TargetDir)
 
 	cloneCmd := stageGit(ctx, cloneArgs...)
 	if out, err := cloneCmd.CombinedOutput(); err != nil {

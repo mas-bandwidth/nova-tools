@@ -300,11 +300,10 @@ func runCIRequest(ctx context.Context, args []string, out, errOut io.Writer) int
 	return r.ExitCode()
 }
 
-// ciDefaultURL is the clone url a request without --url gets on a bench.
-func ciDefaultURL(repo string) string { return "git@github.com:mas-bandwidth/" + repo + ".git" }
-
-// runCIRun is one runner-only pass for a bench: claim one request, clone at
-// the sha, run the checks, write the receipts. IDLE (exit 0) when the pool
+// runCIRun is one runner-only pass for a bench: claim one request, stage
+// the sha from the bench mirror (--mirror-root, default ~/nova-bench/mirror;
+// a repo with no mirror clones the request's --url, never the forge's ssh
+// url), run the checks, write the receipts. IDLE (exit 0) when the pool
 // has nothing claimable; BLOCKED (exit 1) when the clone failed and the
 // request went back to the pool.
 func runCIRun(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -338,10 +337,10 @@ func runCIRun(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	defer st.Close()
 	res, err := ci.Run(ctx, st, ci.RunOptions{Bench: *bench, Scratch: *scratch, ResultsRoot: *results,
-		MirrorRoot: *mirror, URLFor: ciDefaultURL, Lease: *lease, Timeout: *timeout, Out: out})
+		MirrorRoot: *mirror, Lease: *lease, Timeout: *timeout, Out: out})
 	switch {
 	case err == ci.ErrBlocked:
-		fmt.Fprintf(errOut, "nova-sprint ci run: %s; the request is back in the pool, fix the bench's clone path\n", res.Blocked)
+		fmt.Fprintf(errOut, "nova-sprint ci run: %s; the request is back in the pool, fix the bench's mirror\n", res.Blocked)
 		return 1
 	case err != nil:
 		return refuse(errOut, "ci run", err.Error())

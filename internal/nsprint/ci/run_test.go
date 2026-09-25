@@ -226,7 +226,7 @@ func TestCIRunReleasesWhenTheCloneFailsAndFencesALapsedToken(t *testing.T) {
 	}
 
 	// A claim by another bench, then a receipt with the released token: FENCED.
-	c, ok, err := ci.Claim(f.ctx, f.st, "b2", time.Minute)
+	c, ok, err := ci.Claim(f.ctx, f.st, "b2", time.Minute, nil)
 	if err != nil || !ok || c.Attempt != 2 || len(c.Checks) != 2 {
 		t.Fatalf("claim = %+v, %v, %v", c, ok, err)
 	}
@@ -238,7 +238,7 @@ func TestCIRunReleasesWhenTheCloneFailsAndFencesALapsedToken(t *testing.T) {
 		t.Fatal("a fenced receipt was written")
 	}
 	// A second claim while the lease is live sees nothing.
-	if _, ok, err := ci.Claim(f.ctx, f.st, "b3", time.Minute); err != nil || ok {
+	if _, ok, err := ci.Claim(f.ctx, f.st, "b3", time.Minute, nil); err != nil || ok {
 		t.Fatalf("claim under a live lease = %v, %v; want nothing", ok, err)
 	}
 }
