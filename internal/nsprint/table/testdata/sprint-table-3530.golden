@@ -4,16 +4,16 @@ SPRINT TABLE *** PIT STOP ***
 
 stream                         | waiting | ready | working | merging | landed
 -------------------------------+---------+-------+---------+---------+-------
-swarm: cards                   |     150 |     5 |       6 |       0 |      0
-nova-sprint + merge + bus      |     310 |     6 |       0 |       1 |      2
-nova sprint migration          |      14 |     0 |       0 |       0 |      0
-fleet, ci, secrets, jev        |       0 |     0 |       2 |       0 |      1
-redis: store + bus             |      81 |     0 |       0 |       0 |      0
-landing: streams + lander      |       3 |     0 |       0 |       2 |      0
-rowan-tools                    |       1 |     0 |       0 |       0 |      3
-harvest                        |       0 |     4 |       0 |       0 |      0
+swarm: cards                   |     150 |     5 |       6 |     0/0 |      0
+nova-sprint + merge + bus      |     310 |     6 |       0 |     0/1 |      2
+nova sprint migration          |      14 |     0 |       0 |     0/0 |      0
+fleet, ci, secrets, jev        |       0 |     0 |       2 |     0/0 |      1
+redis: store + bus             |      81 |     0 |       0 |     0/0 |      0
+landing: streams + lander      |       3 |     0 |       0 |     0/2 |      0
+rowan-tools                    |       1 |     0 |       0 |     0/0 |      3
+harvest                        |       0 |     4 |       0 |     0/0 |      0
 -------------------------------+---------+-------+---------+---------+-------
-total                          |     559 |    15 |       8 |       3 |      6
+total                          |     559 |    15 |       8 |     0/3 |      6
 
 friend     | ready | working |  done | status    
 -----------+-------+---------+-------+------------
