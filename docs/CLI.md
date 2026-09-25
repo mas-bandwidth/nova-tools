@@ -4335,3 +4335,11 @@ The harness argv is the seat's declaration: `--dispatch` or the argv after `--`,
 `nova-sprint friend wake --as <f> [the same flags]` (and `friend serve --once`) is one pass: beat, take, dispatch, watch the children it started until they close, release the seat. `friend wake <f>` without `--as` is unchanged: it routes one wake through the reconciler's list.
 
 Exit 0 served; 1 refused with the remedy named (`seat-held holder=<session>`: a second serve on the seat while the first holds the lock; `no-dispatch`; `no-width`; `unregistered`); 2 usage, including `--as` not equal to `NOVA_FRIEND`.
+
+### The card model: `nova-sprint card fsck`, `card ls --unplaced`, `bench reindex`
+
+ONE PLACE (nova-tools#3692). Glenn: "cards are not allowed to disappear." A card is its record `s:<S>:card:<label>` (the card id), never deleted, listed forever in `sprint:<S>:cards`. Its `where` names its one place (`waiting`, `ready`, `working`, `done`, `parked`, or empty: null, in no table set), `where_ok` is `ok` or `fail` once done. The places are ZSETs of card ids, every score the card's `created_at`: `bench:<b>:cards:<where>` (plus `:ok` and `:fail`; `_pool` while the card has no bench), `ws:<stream>:<where>` for a card with a `STREAM:` line, `friend:<owner>:cards:<where>` for a card a friend holds. One Lua primitive (`internal/nsprint/fn/lua/02_card_move.lua`) is the only writer of the pointer and the sets, in one call; the host table's ready, working, done, ok and fail are those ZCARDs.
+
+- `nova-sprint card fsck --sprint <S> --redis <addr> [--repair]` walks both directions (every card in exactly one place per dimension, every set member pointing back, the places summing to the roster) and prints one `CARD FSCK` line; exit 1 names `--repair`.
+- `nova-sprint bench reindex --sprint <S> --redis <addr>` is the one-time rebuild for a sprint whose cards predate the model: it adopts them from the sprint's state indexes and fills every view.
+- `nova-sprint card ls --unplaced --sprint <S> --redis <addr>` lists the null cards.

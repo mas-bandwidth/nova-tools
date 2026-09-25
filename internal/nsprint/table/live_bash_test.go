@@ -153,7 +153,7 @@ func bashParity2674(t *testing.T) {
 			}
 			base := time.Now().Truncate(time.Second)
 			if !c.noRedis {
-				seedCommands(t, admin, shift2674(append(table.Fixture2674(), c.extra...), base.Sub(table.Fixture2674Now())))
+				seedCommands(t, admin, shift2674(withCardViews(append(table.Fixture2674(), c.extra...), table.Fixture2674Now()), base.Sub(table.Fixture2674Now())))
 			}
 			home := t.TempDir()
 			cfg := table.Fixture2674Config()

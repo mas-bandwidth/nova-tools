@@ -13,6 +13,10 @@
 // A card may name its bench with BENCH: <name>. Push refuses a name that is
 // not in the benches set; the stored card carries it as its bench pin, and the
 // dealer deals the card only to that bench (nova-tools#3650).
+//
+// STREAM: <name> and ORIGIN: <url> are optional (nova-tools#3692): the work
+// stream whose ws:<stream>:<where> view holds the card, and the GitHub issue
+// it came from. The card's one place and its views are fsck.go's.
 package card
 
 import (
@@ -101,6 +105,8 @@ type cardDoc struct {
 	Bench          string // BENCH: <name>, the one bench the dealer may deal this card to; absent is any bench
 	Est            string // EST: <minutes>, the card's est field (#3653); "" is absent or not a number of minutes
 	Test           string // TEST: <package> <TestName>, the card's test field the wrapper runs at end (#3689); "" is absent
+	Stream         string // STREAM: <name>, the work stream whose ws:<stream>:<where> view holds the card (#3692); "" is none
+	Origin         string // ORIGIN: <url>, the GitHub issue the card came from (#3692); "" is absent
 	Payload        string
 }
 
@@ -150,6 +156,10 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	if err != nil {
 		return cardDoc{}, err
 	}
+	stream, origin := strings.TrimSpace(header["STREAM"]), strings.TrimSpace(header["ORIGIN"])
+	if strings.ContainsAny(stream, "\r\n\t") || strings.ContainsAny(origin, "\r\n\t") {
+		return cardDoc{}, fmt.Errorf("STREAM: and ORIGIN: are one line each")
+	}
 	repo, err := probeRepo(ctx, cloneURL(header))
 	if err != nil {
 		return cardDoc{}, err
@@ -178,6 +188,8 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		Bench:          bench,
 		Est:            parseEst(header["EST"]),
 		Test:           strings.TrimSpace(header["TEST"]),
+		Stream:         stream,
+		Origin:         origin,
 		Payload:        hex.EncodeToString(sum[:]),
 	}, nil
 }

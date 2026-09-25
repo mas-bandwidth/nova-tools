@@ -705,6 +705,8 @@ func TestRunnerRowThenCIEndWritesVerdict(t *testing.T) {
 	token := attempt + ".0123456789abcdef0123456789abcdef"
 	must(t, f.client.HSet(f.ctx, card, "state", "dealt", "bench", ctlBench, "identity", identity, "token", token, "token_sha", "abcdefabcdef").Err())
 	must(t, f.client.SMove(f.ctx, "s:"+c33Sprint+":idx:card:queued", "s:"+c33Sprint+":idx:card:dealt", label).Err())
+	// The hand deal wrote the fine state around the card move (#3692).
+	must(t, f.client.FCall(f.ctx, "ns_card_repair", nil, c33Sprint).Err())
 
 	end, err := ci.End(f.ctx, st, ci.EndRecord{Sprint: c33Sprint, Label: label, Token: token, Identity: identity,
 		Outcome: "DONE", Reason: "done", Verdict: "OK", Actor: "wrapper"})

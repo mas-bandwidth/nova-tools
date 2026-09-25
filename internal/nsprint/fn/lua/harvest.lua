@@ -9,6 +9,10 @@
 -- it back and never opens a second PR. The harvested transition requires the
 -- PR head, read back by REST, to equal the card's pushed_sha.
 do
+  -- Every card state write here is NS.card (02_card_move.lua): harvested is
+  -- done -> done (the outcome kept), a refusal is any -> done/fail.
+  local CARD = NS.card
+
   local function hv_now_ms()
     local t = redis.call('TIME')
     return string.format('%.0f', tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000))
@@ -246,17 +250,18 @@ do
     if hv_hget(idem_key, 'pr:' .. repo .. ':' .. branch) ~= pr then return 'IDEM|' end
 
     local at = hv_now_ms()
+    if CARD.move(key, 'done', { state = 'harvested', by = actor, why = 'harvested',
+        fields = { 'pr', pr, 'head', head, 'harvested_at', at,
+          'harvest_step', 'harvested', 'harvest_step_at', at } }) then
+      return 'STATE|'
+    end
     local receipt = redis.call('XADD', 's:' .. S .. ':log', '*',
       'kind', 'card', 'id', label, 'from', 'ended', 'to', 'harvested',
       'attempt', attempt, 'token_sha', hv_hget(key, 'token_sha'),
       'actor', actor, 'reason', 'harvested',
       'evidence', 'pr=' .. pr .. ' head=' .. head .. ' branch=' .. branch,
       'idem', idem, 'at', at)
-    redis.call('HSET', key, 'state', 'harvested', 'pr', pr, 'head', head,
-      'harvested_at', at, 'harvest_receipt', receipt,
-      'harvest_step', 'harvested', 'harvest_step_at', at)
-    redis.call('SREM', 's:' .. S .. ':idx:card:ended', label)
-    redis.call('SADD', 's:' .. S .. ':idx:card:harvested', label)
+    redis.call('HSET', key, 'harvest_receipt', receipt)
     redis.call('HSET', 's:' .. S .. ':prcard', repo .. '#' .. pr, label) -- pr-to-read skips card PRs (#3040)
     redis.call('HSET', idem_key, idem, receipt)
     return 'OK|' .. receipt
@@ -281,6 +286,10 @@ do
     if state == 'refused' then return 'OK' end
 
     local at = hv_now_ms()
+    if CARD.move(key, 'done', { state = 'refused', ok = 'fail', by = 'card-harvest', why = 'refused',
+        fields = { 'refused_field', field, 'refused_defect', defect, 'refused_at', at } }) then
+      return 'STATE'
+    end
     local attempt = hv_hget(key, 'attempt')
     local token_sha = hv_hget(key, 'token_sha')
     local log_key = 's:' .. S .. ':log'
@@ -290,15 +299,8 @@ do
       'reason', 'refused', 'evidence', 'field=' .. field .. ' defect=' .. defect,
       'idem', 'refuse:' .. S .. ':' .. label .. ':' .. attempt, 'at', at)
 
-    redis.call('HSET', key,
-      'state', 'refused',
-      'refused_field', field,
-      'refused_defect', defect,
-      'refused_at', at,
-      'refused_receipt', receipt)
+    redis.call('HSET', key, 'refused_receipt', receipt)
 
-    redis.call('SREM', 's:' .. S .. ':idx:card:' .. state, label)
-    redis.call('SADD', 's:' .. S .. ':idx:card:refused', label)
     redis.call('SREM', 's:' .. S .. ':bench:' .. bench .. ':' .. state, label)
     redis.call('SADD', 's:' .. S .. ':bench:' .. bench .. ':refused', label)
     return 'OK'

@@ -13,6 +13,14 @@
 //	sprint:<S>:landed     the landed line                  (sprint-landed)
 //	q:blocked             ZCARD, the one blocked count     (friend-queue, #3219)
 //	bench:*               SCAN COUNT 1000, then HGETALL    (bench-row, card-dealer)
+//	bench:<b>:cards:<w>   ZCARD, w = ready working done ok fail (the card move, #3692)
+//
+// A host row's ready, working, done, ok and fail are the ZCARDs of its card
+// views, read in the same pipeline (nova-tools#3692, ONE PLACE: every card is
+// in one place, and these sets are the bench view of it). The bash
+// bench-row's queue, working, done, ok and fail fields are no longer read: it
+// counted job dirs, and cards that had ended printed as "-". host, at and
+// load1 still come from the bench's own hash.
 //
 // Bench keys are found by SCAN, as the bash does (a cursor walk; the bench
 // ACL user has no KEYS and no EVAL_RO); every value is then read in ONE
@@ -114,8 +122,14 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 	mget := pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy", "sprint:"+cfg.Sprint+":landed")
 	blocked := pipe.ZCard(ctx, "q:blocked")
 	hashes := make([]*redis.MapStringStringCmd, len(benchKeys))
+	cards := make([][]*redis.IntCmd, len(benchKeys))
 	for i, key := range benchKeys {
 		hashes[i] = pipe.HGetAll(ctx, key)
+		if name := strings.TrimPrefix(key, "bench:"); name != "pool" && !strings.Contains(name, ":") {
+			for _, w := range benchCardCells {
+				cards[i] = append(cards[i], pipe.ZCard(ctx, key+":cards:"+w))
+			}
+		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, fmt.Errorf("pipeline: %w", err)
@@ -162,12 +176,36 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		for f, v := range h {
 			fields[f] = sanitize(v)
 		}
+		cardCells(fields, cards[i])
 		snap.Benches = append(snap.Benches, BenchRow{Key: strings.TrimPrefix(key, "bench:"), Fields: fields})
 	}
 	if snap.XY == "" && cfg.XYFile != "" {
 		snap.XYFileLine, snap.XYFileMod, snap.XYFileOK = readXYFile(cfg.XYFile)
 	}
 	return snap, nil
+}
+
+// benchCardCells are the host row's card columns, each a ZCARD of
+// bench:<b>:cards:<cell>; the first is the row's queue column (ready).
+var benchCardCells = []string{"ready", "working", "done", "ok", "fail"}
+
+// cardCells writes the card view counts over the bench hash's own queue,
+// working, done, ok and fail (and drops the dealer's queue override): the
+// row prints the sets. A count that did not come back prints 0, as the bash
+// prints a missing field.
+func cardCells(fields map[string]string, cmds []*redis.IntCmd) {
+	if len(cmds) != len(benchCardCells) {
+		return
+	}
+	delete(fields, "dealer_queue")
+	delete(fields, "dealer_at")
+	for j, w := range benchCardCells {
+		field := w
+		if w == "ready" {
+			field = "queue"
+		}
+		fields[field] = strconv.FormatInt(cmds[j].Val(), 10)
+	}
 }
 
 // FailedLive is the tick whose read failed: the friend, xy and landed values

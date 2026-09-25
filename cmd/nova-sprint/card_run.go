@@ -14,13 +14,14 @@ import (
 func init() {
 	register(Verb{
 		Name:    "card",
-		Summary: "push, release, stop, show, launched, beat, and end one card attempt",
+		Summary: "push, release, stop, show, launched, beat, and end one card attempt; fsck and ls --unplaced the card model",
 		Run:     runCard,
 	})
 }
 
 func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) > 0 && (args[0] == "push" || args[0] == "release" || args[0] == "stop" || args[0] == "show") {
+	if len(args) > 0 && (args[0] == "push" || args[0] == "release" || args[0] == "stop" || args[0] == "show" ||
+		args[0] == "fsck" || args[0] == "ls") {
 		return runCardPool(ctx, args, stdout, stderr)
 	}
 	if len(args) == 0 {

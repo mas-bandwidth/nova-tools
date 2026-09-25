@@ -20,6 +20,9 @@
 -- one writer (#2756 2.1 rule 4). The table line for the cell is #3045's.
 
 local DEAL_LEASE = 'lease:reconciler'
+-- Every card state write here is NS.card (02_card_move.lua): deal is
+-- ready -> working, undeal working -> ready, gate ready <-> waiting.
+local CARD = NS.card
 
 local function deal_now_ms()
   local t = redis.call('TIME')
@@ -151,14 +154,11 @@ local function card_deal(keys, args)
         string.match(ctoken, '^%d+%.[0-9a-f]+$') and #ctoken == #tostring(attempt) + 33 and
         string.match(csha, '^[0-9a-f]+$') and #csha == 12 and
 		(pin == '' or pin == bench) and not deal_names(c[7], bench) and deal_runs(desired[3], c[4]) and
-        (not bp[S] or c[5] == 'priority') then
-      local identity = S .. '/' .. label .. '/' .. string.sub(c[6] or '', 1, 8) .. '/' .. bench .. '/' .. attempt
-      redis.call('HSET', ck, 'state', 'dealt', 'attempt', tostring(attempt),
-        'token', ctoken, 'token_sha', csha, 'bench', bench, 'pin', pin,
-        'identity', identity, 'dealt_at', tostring(at))
-      redis.call('ZREM', 's:' .. S .. ':pool', label)
-      redis.call('SREM', 's:' .. S .. ':idx:card:queued', label)
-      redis.call('SADD', 's:' .. S .. ':idx:card:dealt', label)
+        (not bp[S] or c[5] == 'priority') and
+        not CARD.move(ck, 'working', { state = 'dealt', bench = bench, by = actor, why = 'deal',
+          fields = { 'attempt', tostring(attempt), 'token', ctoken, 'token_sha', csha, 'pin', pin,
+            'identity', S .. '/' .. label .. '/' .. string.sub(c[6] or '', 1, 8) .. '/' .. bench .. '/' .. attempt,
+            'dealt_at', tostring(at) } }) then
       redis.call('ZADD', starting_key, at, S .. '/' .. label .. '/' .. attempt)
       redis.call('ZADD', 's:' .. S .. ':bench:' .. bench .. ':queue', score, label)
       deal_receipt(S, 'card deal', label, 'queued', 'dealt', attempt, csha, actor, '', idem, at)
@@ -200,19 +200,18 @@ local function card_undeal(keys, args)
     local S, label, attempt = args[i], args[i + 1], args[i + 2]
     local ck = 's:' .. S .. ':card:' .. label
     local c = redis.call('HMGET', ck, 'state', 'bench', 'attempt', 'token_sha', 'pin', 'retries', 'priority')
-    if c[1] == 'dealt' and c[2] == bench and c[3] == attempt then
+    -- A card NS.card refuses to move (drift) is skipped like a stale one:
+    -- the move is its first write, so it writes nothing.
+    local qk = 's:' .. S .. ':bench:' .. bench .. ':queue'
+    if c[1] == 'dealt' and c[2] == bench and c[3] == attempt and
+        not CARD.move(ck, 'ready', { state = 'queued', bench = c[5] or '', by = actor, why = reason,
+          pool_score = tonumber(redis.call('ZSCORE', qk, label) or c[7]) or 0,
+          fields = { 'token', '', 'reason', reason, 'retries', tostring((tonumber(c[6]) or 0) + 1) } }) then
       local pin = c[5] or ''
-      local qk = 's:' .. S .. ':bench:' .. bench .. ':queue'
-      local score = redis.call('ZSCORE', qk, label) or c[7] or '0'
-      redis.call('HSET', ck, 'state', 'queued', 'token', '', 'bench', pin,
-        'reason', reason, 'retries', tostring((tonumber(c[6]) or 0) + 1))
       redis.call('ZREM', 'bench:' .. bench .. ':starting', S .. '/' .. label .. '/' .. attempt)
       if pin ~= bench then
         redis.call('ZREM', qk, label)
       end
-      redis.call('ZADD', 's:' .. S .. ':pool', score, label)
-      redis.call('SREM', 's:' .. S .. ':idx:card:dealt', label)
-      redis.call('SADD', 's:' .. S .. ':idx:card:queued', label)
       deal_receipt(S, 'card undeal', label, 'dealt', 'queued', attempt, c[4], actor, reason, idem, at)
       n = n + 1
     end
@@ -278,19 +277,16 @@ local function card_gate(keys, args)
     if c[1] == 'queued' then
       if verb == 'wait' then
         local score = redis.call('ZSCORE', pool, label)
-        if score then
-          redis.call('ZREM', pool, label)
-          redis.call('SADD', waiting, label)
-          redis.call('HSET', ck, 'priority', tostring(score), 'wait_why', why or '')
+        if score and not CARD.move(ck, 'waiting', { by = actor, why = why,
+            fields = { 'priority', tostring(score), 'wait_why', why or '' } }) then
           deal_receipt(S, 'card wait', label, 'queued', 'queued', c[4], '', actor, why, idem, at)
           waited = waited + 1
         elseif redis.call('SISMEMBER', waiting, label) == 1 and c[3] ~= why then
           redis.call('HSET', ck, 'wait_why', why or '')
         end
       elseif verb == 'release' then
-        if redis.call('SISMEMBER', waiting, label) == 1 then
-          redis.call('SREM', waiting, label)
-          redis.call('ZADD', pool, tonumber(c[2]) or 0, label)
+        if redis.call('SISMEMBER', waiting, label) == 1 and
+            not CARD.move(ck, 'ready', { by = actor, why = 'depends-on landed', pool_score = tonumber(c[2]) or 0 }) then
           redis.call('HDEL', ck, 'wait_why')
           deal_receipt(S, 'card release', label, 'queued', 'queued', c[4], '', actor, 'depends-on landed', idem, at)
           released = released + 1

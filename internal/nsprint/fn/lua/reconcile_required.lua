@@ -42,10 +42,9 @@ local function rr_receipt(S, kind, id, from, to, attempt, token_sha, actor, reas
     'idem', idem or '', 'at', tostring(at))
 end
 
-local function rr_move(S, label, from, to)
-  redis.call('SREM', 's:' .. S .. ':idx:card:' .. from, label)
-  redis.call('SADD', 's:' .. S .. ':idx:card:' .. to, label)
-end
+-- Every card state write here is NS.card (02_card_move.lua): the reclaim
+-- moves are working -> working, a requeue is working -> ready.
+local CARD = NS.card
 
 -- Requeue under a new attempt: the old token is fenced (cleared), the
 -- reservation is freed, the label goes back to the pool. The next deal
@@ -53,16 +52,15 @@ end
 local function rr_requeue(S, label, card, bench, member, from, reason, evidence, idem, at)
   local attempt = rr_get(card, 'attempt')
   local retries = tonumber(rr_get(card, 'retries')) or 0
-  local priority = tonumber(rr_get(card, 'priority')) or 0
+  local token_sha = rr_get(card, 'token_sha')
+  local refused = CARD.move(card, 'ready', { state = 'queued', by = 'reconciler', why = reason,
+    fields = { 'token', '', 'retries', tostring(retries + 1), 'reason', reason, 'requeued_at', tostring(at) } })
+  if refused then return rr_reply(2, 'STATE', attempt, '') end
   redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
   redis.call('ZREM', 'bench:' .. bench .. ':living', member)
   redis.call('ZREM', 's:' .. S .. ':bench:' .. bench .. ':queue', label)
-  rr_move(S, label, from, 'queued')
-  redis.call('ZADD', 's:' .. S .. ':pool', priority, label)
-  local r = rr_receipt(S, 'card', label, from, 'queued', attempt, rr_get(card, 'token_sha'),
+  local r = rr_receipt(S, 'card', label, from, 'queued', attempt, token_sha,
     'reconciler', reason, evidence, idem, at)
-  redis.call('HSET', card, 'state', 'queued', 'token', '', 'retries', tostring(retries + 1),
-    'reason', reason, 'requeued_at', tostring(at))
   redis.call('HSET', 's:' .. S .. ':idem', idem, r)
   return rr_reply(0, 'QUEUED', attempt, r)
 end
@@ -92,10 +90,13 @@ redis.register_function('ns_card_reclaim', function(keys, args)
     local dealt_at = tonumber(rr_get(card, 'dealt_at')) or 0
     if now - dealt_at < start_ms then return rr_reply(0, 'NOTHING', attempt, '') end
     if redis.call('SISMEMBER', 'bench:' .. bench .. ':live', member) == 1 then
+      if CARD.move(card, 'working', { state = 'launched', by = 'reconciler', why = 'live-no-ack',
+          fields = { 'launched_at', tostring(now) } }) then
+        return rr_reply(2, 'STATE', attempt, '')
+      end
       local r = rr_receipt(S, 'card', label, 'dealt', 'launched', attempt, rr_get(card, 'token_sha'),
         'reconciler', 'live-no-ack', member, 'launched:' .. identity, now)
-      redis.call('HSET', card, 'state', 'launched', 'launched_at', tostring(now), 'launched_receipt', r)
-      rr_move(S, label, 'dealt', 'launched')
+      redis.call('HSET', card, 'launched_receipt', r)
       redis.call('HSET', 's:' .. S .. ':idem', 'launched:' .. identity, r)
       return rr_reply(0, 'LAUNCHED', attempt, r)
     end
@@ -106,13 +107,15 @@ redis.register_function('ns_card_reclaim', function(keys, args)
     local last = tonumber(rr_get(card, 'beat_at'))
     if not last then last = tonumber(rr_get(card, 'launched_at')) or 0 end
     if now - last < beat_ms then return rr_reply(0, 'NOTHING', attempt, '') end
+    local token_sha = rr_get(card, 'token_sha')
+    if CARD.move(card, 'working', { state = 'reconcile-required', by = 'reconciler', why = 'beat-lost',
+        fields = { 'token', '', 'reason', 'beat-lost', 'required_at', tostring(now) } }) then
+      return rr_reply(2, 'STATE', attempt, '')
+    end
     redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
     redis.call('ZREM', 'bench:' .. bench .. ':living', member)
-    rr_move(S, label, state, 'reconcile-required')
-    local r = rr_receipt(S, 'card', label, state, 'reconcile-required', attempt, rr_get(card, 'token_sha'),
+    local r = rr_receipt(S, 'card', label, state, 'reconcile-required', attempt, token_sha,
       'reconciler', 'beat-lost', identity, idem, now)
-    redis.call('HSET', card, 'state', 'reconcile-required', 'token', '', 'reason', 'beat-lost',
-      'required_at', tostring(now))
     redis.call('HSET', 's:' .. S .. ':idem', idem, r)
     return rr_reply(0, 'REQUIRED', attempt, r)
   end
@@ -145,11 +148,12 @@ redis.register_function('ns_card_required', function(keys, args)
     local member = S .. '/' .. label .. '/' .. attempt
     return rr_requeue(S, label, card, rr_get(card, 'bench'), member, 'reconcile-required', 'lost', '-', idem, now)
   end
-  rr_move(S, label, 'reconcile-required', 'orphan-effect')
+  if CARD.move(card, 'working', { state = 'orphan-effect', by = 'reconciler', why = 'orphan-effect',
+      fields = { 'reason', 'orphan-effect', 'orphan_evidence', evidence, 'orphan_at', tostring(now) } }) then
+    return rr_reply(2, 'STATE', attempt, '')
+  end
   local r = rr_receipt(S, 'card', label, 'reconcile-required', 'orphan-effect', attempt,
     rr_get(card, 'token_sha'), 'reconciler', 'orphan-effect', evidence, idem, now)
-  redis.call('HSET', card, 'state', 'orphan-effect', 'reason', 'orphan-effect',
-    'orphan_evidence', evidence, 'orphan_at', tostring(now))
   redis.call('HSETNX', 's:' .. S .. ':unresolved', label .. ':orphan-effect:' .. attempt,
     identity .. ' ' .. evidence)
   redis.call('HSET', 's:' .. S .. ':idem', idem, r)
