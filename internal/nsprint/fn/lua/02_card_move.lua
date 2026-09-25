@@ -667,6 +667,9 @@ local function card_purge(S)
       if p.state then redis.call('SREM', cm_idx(S, p.state), label) end
       local attempts = tonumber(redis.call('HGET', id, 'attempt')) or 0
       for a = 1, attempts do redis.call('DEL', id .. ':result:a' .. a) end
+      -- the body the wrapper ran (push stores it, nova-tools#4101)
+      local sha = redis.call('HGET', id, 'payload_sha')
+      if sha and sha ~= '' then redis.call('DEL', 's:' .. S .. ':body:sha256:' .. sha) end
       redis.call('DEL', id, id .. ':receipt', id .. ':lines', id .. ':rejected')
       n = n + 1
     end
