@@ -315,8 +315,8 @@ func (o *observed) Claim(ctx context.Context, nonce string) (int, error) {
 	return claimOf(o.inner).Claim(ctx, nonce)
 }
 
-func (o *observed) Launched(ctx context.Context, branch, job string) (int, error) {
-	code, err := o.inner.Launched(ctx, branch, job)
+func (o *observed) Launched(ctx context.Context, branch, job string, wallMax time.Duration) (int, error) {
+	code, err := o.inner.Launched(ctx, branch, job, wallMax)
 	o.events <- "launched"
 	return code, err
 }
@@ -569,13 +569,13 @@ func (r *racer) Claim(ctx context.Context, nonce string) (int, error) {
 	return claimOf(r.inner).Claim(ctx, nonce)
 }
 
-func (r *racer) Launched(ctx context.Context, branch, job string) (int, error) {
+func (r *racer) Launched(ctx context.Context, branch, job string, wallMax time.Duration) (int, error) {
 	r.race.mu.Lock()
 	if _, err := os.Stat(r.race.job); err == nil && r.race.dirSeen == "" {
 		r.race.dirSeen = "the job dir " + r.race.job + " existed before ns_card_launched returned 0"
 	}
 	r.race.mu.Unlock()
-	code, err := r.inner.Launched(ctx, branch, job)
+	code, err := r.inner.Launched(ctx, branch, job, wallMax)
 	if err != nil || code != 0 {
 		return code, err
 	}

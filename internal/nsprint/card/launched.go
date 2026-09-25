@@ -19,6 +19,9 @@ type LaunchRequest struct {
 	// Deadline is the launcher's absolute batch deadline. Zero preserves the
 	// direct verb's historical no-deadline behavior.
 	Deadline time.Time
+	// WallMax is the attempt's wall cap (#3653), stored as wall_max_s in
+	// whole seconds; zero stores nothing.
+	WallMax time.Duration
 }
 
 // Launched moves dealt to launched. A token that is not this attempt's token
@@ -32,8 +35,12 @@ func Launched(ctx context.Context, st *store.Store, req LaunchRequest) (Result, 
 	if !req.Deadline.IsZero() {
 		deadline = strconv.FormatInt(req.Deadline.UnixMilli(), 10)
 	}
+	wallMaxS := ""
+	if s := int64(req.WallMax / time.Second); s > 0 {
+		wallMaxS = strconv.FormatInt(s, 10)
+	}
 	reply, err := fcall(ctx, st, "ns_card_launched", cardKeys(req.Sprint, req.Label),
-		req.Sprint, req.Label, req.Token, req.Branch, req.JobDir, deadline)
+		req.Sprint, req.Label, req.Token, req.Branch, req.JobDir, deadline, wallMaxS)
 	if err != nil {
 		if res, down := redisDown(verb, req.Label, err); down {
 			return res, nil

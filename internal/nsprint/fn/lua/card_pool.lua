@@ -24,6 +24,8 @@ end
 --       not stored). A bench not in the benches set returns NOBENCH and
 --       writes nothing; a named bench is stored as the card's bench field,
 --       the pin ns_card_deal honours (pin == '' or pin == bench).
+--       card's ROUTE: pro|flash tier; empty or absent: not stored), est
+--       (the card's EST: line in minutes, #3653; empty or absent: not stored).
 -- priority is the card's PRIORITY: line (0 when absent) and its pool score.
 -- ready is resolved by the Go caller (card.Push); a caller that omits it
 -- (the pre-#3503 ten-argument shape) gets pool only when depends_on is empty.
@@ -37,6 +39,7 @@ redis.register_function('ns_card_push', function(keys, args)
   local depends_on_typed, ready_arg = args[11], args[12]
   local route = args[13]
   local bench = args[14]
+  local est = args[15]
   if type(depends_on) ~= 'string' then
     depends_on = ''
   end
@@ -87,6 +90,10 @@ redis.register_function('ns_card_push', function(keys, args)
   if bench ~= '' then
     table.insert(fields, 'bench')
     table.insert(fields, bench)
+  end
+  if type(est) == 'string' and est ~= '' then
+    table.insert(fields, 'est')
+    table.insert(fields, est)
   end
   redis.call('HSET', card, unpack(fields))
   redis.call('SADD', idx, label)

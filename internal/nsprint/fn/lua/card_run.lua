@@ -31,7 +31,7 @@ end
 
 local function reason_ok(outcome, reason)
   if outcome == 'DONE' and reason == 'done' then return true end
-  if reason == 'crash' or reason == 'timeout' or reason == 'idle-killed' or reason == 'tests-red' then
+  if reason == 'crash' or reason == 'timeout' or reason == 'wall' or reason == 'idle-killed' or reason == 'tests-red' then
     return outcome == 'FAILED'
   end
   if reason == 'env' or reason == 'base-moved' or reason == 'deps' or reason == 'spec' or reason == 'access' then
@@ -132,6 +132,12 @@ end)
 redis.register_function('ns_card_launched', function(keys, args)
   local sprint, label, token, branch, jobdir = args[1], args[2], args[3] or '', args[4] or '', args[5] or ''
   local deadline = args[6] or ''
+  -- wall_max_s (#3653): the attempt's wall cap in whole seconds; empty or
+  -- absent stores nothing (the pre-#3653 six-argument shape).
+  local wall_max_s = args[7] or ''
+  if wall_max_s ~= '' and not string.match(wall_max_s, '^[1-9][0-9]*$') then
+    return reply(1, 'USAGE', '', '')
+  end
   if not card_keys_ok(keys, sprint, label) then return reply(4, 'CONFLICT', '', '') end
   local card_key, log_key, idem_key = keys[1], keys[2], keys[3]
   local state = hget(card_key, 'state')
@@ -159,6 +165,7 @@ redis.register_function('ns_card_launched', function(keys, args)
   end
   local receipt = xadd(log_key, label, 'dealt', 'launched', attempt, hget(card_key, 'token_sha'), 'card-launched', 'launched', branch, idem, at)
   redis.call('HSET', card_key, 'state', 'launched', 'branch', branch, 'jobdir', jobdir, 'launched_at', at, 'launched_receipt', receipt)
+  if wall_max_s ~= '' then redis.call('HSET', card_key, 'wall_max_s', wall_max_s) end
   redis.call('SREM', 's:' .. sprint .. ':idx:card:dealt', label)
   redis.call('SADD', 's:' .. sprint .. ':idx:card:launched', label)
   redis.call('HSET', idem_key, idem, receipt)
