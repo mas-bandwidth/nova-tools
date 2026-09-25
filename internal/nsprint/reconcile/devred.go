@@ -89,7 +89,8 @@ type Outcome struct {
 	State           CIState
 	// Action is HELD (a new red tip: record written, task pushed), HOLDING
 	// (still red, nothing new), CLEARED (green again), GREEN (nothing held),
-	// NOTIP (no base tip recorded) or NOEVIDENCE (tip known, no CI record).
+	// NOTIP (no base tip recorded), NOEVIDENCE (tip known, no CI record) or
+	// LEFT (not started: less than the lease write margin left, #3805).
 	Action string
 	Task   string
 	Err    error
@@ -120,12 +121,16 @@ func short8(s string) string {
 	return s
 }
 
-// Run is the reconcile.Duty: one pass over every watched base. The lease is
-// not consulted: every write here is idempotent on the tip sha (HSETNX-shaped
-// by the sha compare) and a stale instance writing the same record is
-// harmless, so the duty needs no fence token.
-func (d *DevRed) Run(ctx context.Context, _ *Lease) (Counts, error) {
-	outs, err := d.Pass(ctx)
+// Run is the reconcile.Duty: one pass over every watched base. Every write
+// here is idempotent on the tip sha (HSETNX-shaped by the sha compare) and a
+// stale instance writing the same record is harmless, so the duty needs no
+// fence token; the lease bounds its time (#3805): no base starts with less
+// than the write margin left, and the forge read is cut at the lease budget.
+func (d *DevRed) Run(ctx context.Context, l *Lease) (Counts, error) {
+	outs, err := d.pass(ctx, l)
+	if errors.Is(err, ErrFenced) {
+		return Counts{}, err
+	}
 	var errs []error
 	if err != nil {
 		errs = append(errs, err)
@@ -139,7 +144,12 @@ func (d *DevRed) Run(ctx context.Context, _ *Lease) (Counts, error) {
 }
 
 // Pass runs one pass and returns one Outcome per base, in the order watched.
-func (d *DevRed) Pass(ctx context.Context) ([]Outcome, error) {
+func (d *DevRed) Pass(ctx context.Context) ([]Outcome, error) { return d.pass(ctx, nil) }
+
+// pass is Pass bounded by the lease l (nil: unbounded). A base not started
+// for the lease margin is an Outcome with Action LEFT, and the error names
+// how many were left.
+func (d *DevRed) pass(ctx context.Context, l *Lease) ([]Outcome, error) {
 	if d.Client == nil {
 		return nil, fmt.Errorf("dev-red: nil client")
 	}
@@ -157,9 +167,17 @@ func (d *DevRed) Pass(ctx context.Context) ([]Outcome, error) {
 		}
 	}
 	outs := make([]Outcome, 0, len(bases))
-	for _, rb := range bases {
-		o := d.one(ctx, rb)
-		outs = append(outs, o)
+	for i, rb := range bases {
+		if err := l.Bounded(0); err != nil {
+			if errors.Is(err, ErrFenced) {
+				return outs, err
+			}
+			for _, left := range bases[i:] {
+				outs = append(outs, Outcome{Repo: left.Repo, Base: left.Base, Action: "LEFT"})
+			}
+			return outs, fmt.Errorf("dev-red: %d of %d base(s) not started: %w", len(bases)-i, len(bases), err)
+		}
+		outs = append(outs, d.one(ctx, rb, l))
 	}
 	return outs, nil
 }
@@ -172,7 +190,7 @@ func (d *DevRed) now() time.Time {
 }
 
 // one is the duty for one base: tip, evidence, then hold, keep, or clear.
-func (d *DevRed) one(ctx context.Context, rb land.RepoBase) Outcome {
+func (d *DevRed) one(ctx context.Context, rb land.RepoBase, l *Lease) Outcome {
 	o := Outcome{Repo: rb.Repo, Base: rb.Base}
 	c := d.Client
 	pipe := c.Pipeline()
@@ -189,7 +207,7 @@ func (d *DevRed) one(ctx context.Context, rb land.RepoBase) Outcome {
 		return o
 	}
 	o.SHA = sha
-	st, err := d.evidence(ctx, rb, sha)
+	st, err := d.evidence(ctx, rb, sha, l)
 	if err != nil {
 		o.Err = err
 		return o
@@ -243,7 +261,7 @@ func (d *DevRed) one(ctx context.Context, rb land.RepoBase) Outcome {
 
 // evidence reads the commit's CI state: the plain record, the gated
 // receipt, then the budgeted forge read.
-func (d *DevRed) evidence(ctx context.Context, rb land.RepoBase, sha string) (CIState, error) {
+func (d *DevRed) evidence(ctx context.Context, rb land.RepoBase, sha string, l *Lease) (CIState, error) {
 	c := d.Client
 	rec, err := c.HGetAll(ctx, CIRecordKey(rb.Repo, sha)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
@@ -266,6 +284,13 @@ func (d *DevRed) evidence(ctx context.Context, rb land.RepoBase, sha string) (CI
 	if every <= 0 {
 		every = DefaultForgeEvery
 	}
+	// The lease budget first, so a read the lease has no room for does not
+	// spend the base's forge token.
+	fctx, cancel, err := l.Budget(ctx, 0)
+	if err != nil {
+		return CIState{}, err
+	}
+	defer cancel()
 	got, err := c.SetNX(ctx, ForgeBudgetKey(rb.Repo, rb.Base), sha, every).Result()
 	if err != nil {
 		return CIState{}, fmt.Errorf("forge budget: %w", err)
@@ -273,7 +298,11 @@ func (d *DevRed) evidence(ctx context.Context, rb land.RepoBase, sha string) (CI
 	if !got {
 		return CIState{}, nil
 	}
-	return d.Forge(ctx, rb.Repo, sha)
+	st, err := d.Forge(fctx, rb.Repo, sha)
+	if err != nil && ctx.Err() == nil && fctx.Err() != nil {
+		err = fmt.Errorf("forge read cut at the lease budget: %w", err)
+	}
+	return st, err
 }
 
 // stateOf reads a CI hash: verdict OK or FAIL, and the failing name from

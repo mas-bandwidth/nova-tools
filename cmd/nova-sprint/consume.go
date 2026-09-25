@@ -328,7 +328,9 @@ func harvestPass(ctx context.Context, st *store.Store, only string, benchList []
 
 // okFriendDuty is ok-to-friend as a reconcile duty: every pass, each open
 // sprint's log once, without blocking, as consumer reconciler-<instance>. A
-// new lease instance reclaims what a killed one left pending (Start).
+// new lease instance reclaims what a killed one left pending (Start). No
+// sprint starts with less than the lease write margin left (#3805): the
+// duty returns what it routed and names the sprints it left.
 type okFriendDuty struct {
 	st      *store.Store
 	started map[string]bool // "<consumer>/<sprint>"
@@ -342,7 +344,17 @@ func (d *okFriendDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.C
 	}
 	consumer := "reconciler-" + l.Instance()
 	var errs []string
-	for _, s := range sprints {
+	for i, s := range sprints {
+		if err := l.Bounded(0); errors.Is(err, reconcile.ErrFenced) {
+			return counts, err
+		} else if err != nil {
+			prior := ""
+			if len(errs) > 0 {
+				prior = strings.Join(errs, "; ") + "; "
+			}
+			return counts, fmt.Errorf("ok-to-friend: %s%d of %d sprint(s) not started (%s): %w",
+				prior, len(sprints)-i, len(sprints), strings.Join(sprints[i:], ","), err)
+		}
 		o := &consume.OkFriend{Store: d.st, Sprint: s, Consumer: consumer, Actor: "reconciler", Block: -1}
 		if key := consumer + "/" + s; !d.started[key] {
 			if err := o.Start(ctx); err != nil {
