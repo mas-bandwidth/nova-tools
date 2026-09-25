@@ -313,7 +313,7 @@ func TestBriefRenderDiffersOnlyInTaskFields(t *testing.T) {
 	}
 	putTask(t, client, "kind-harvest", "harvest", defaultTitle("9"))
 	code, lines := runRender(t, st, "kind-harvest", filepath.Join(dir, "harvest.md"))
-	only(t, "kind without a template", code, lines, "BRIEF REFUSED task=kind-harvest field=kind want=build|fix|read got=harvest")
+	only(t, "kind without a template", code, lines, "BRIEF REFUSED task=kind-harvest field=kind want=build|fix|read|rebase got=harvest")
 }
 
 func TestBriefLintRefusesEditedBrief(t *testing.T) {

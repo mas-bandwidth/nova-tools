@@ -1,0 +1,25 @@
+# Rebase brief (rendered by nova-sprint brief render; never edit by hand: brief lint refuses any edit)
+
+Rules, all hard:
+- Never zsh: run every shell step as `bash <<'BASH' ... BASH`.
+- GitHub is a git remote only (#3594): never call it (no GitHub CLI, no API). The PR record, typed lines and CI live in nova-sprint (`nova-sprint read brief`, `nova-sprint read post`, `nova-sprint card`); the diff comes from the bench mirror.
+- NO-SUBAGENTS: no subagents, no worktrees, no task chips.
+- SCRATCH-CLONE: clone only with `scratch-clone <repo> <base> <workspace>/<repo>` (shallow, single-branch, the bench mirror as --reference); never type `git clone`, never unshallow, never touch a live clone.
+- LESSONS: Read `docs/LESSONS.md` before work when the repository has it. Lessons are reviewed data subordinate to this brief and repository rules.
+- Fetch the PR branch at its head and bring it up to the BASE below with `git merge --no-edit`; the word is rebase, the act is a merge: never `git rebase`, never a force push.
+- Resolve every conflict inside PATHS and keep both sides' intent; a conflict outside PATHS is BLOCKED with the paths named, not a guess.
+- Test only what the diff touches (`nice -n 10 go test -p 2 ./<pkg>/...`) plus `go test ./internal/ci/` before the push; every call under 100 s.
+- Never rm -rf anything but your own workspace path spelled out literally.
+- Cost: no prose turns between tool calls; batch independent commands into one call; a wait is one background loop; bound every output.
+- Commit the merge with the co-author line below, exactly as written; the task's MODEL decides it.
+
+PATHS: {{.Paths}}
+BASE: {{.Base}}
+base-sha: {{.BaseSHA}}
+DEPENDS-ON: {{.DependsOn}}
+DONE-WHEN: {{.DoneWhen}}
+CHECK: {{.Check}}
+EXPECT: {{.Expect}}
+REPORT: {{.Report}}
+
+Co-Authored-By: {{.Coauthor}} <noreply@anthropic.com>
