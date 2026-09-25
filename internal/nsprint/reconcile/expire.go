@@ -20,6 +20,12 @@ package reconcile
 //  4. one pipeline of resolutions: ns_card_required for each card with an
 //     effect or with proven absence.
 //
+// Steps 3 and 4 run off the pass path (#3802: one bench's ssh held a pass
+// 10.7 s): the sweep starts one bounded worker per bench (ExpireDeadline) and
+// returns; a bench whose worker is still in flight gets no second one. The
+// worker resolves its bench's cards and writes proc:expire:<bench> in one
+// pipeline when it ends; its errors reach the next Run.
+//
 // Every function checks the reconciler fence before it writes; a FENCED
 // answer anywhere stops the duty with ErrFenced.
 
@@ -76,6 +82,62 @@ type Expire struct {
 	mu      sync.Mutex
 	sprints []string // the sprint index as the last gate read it
 	loaded  bool
+
+	wmu    sync.Mutex
+	busy   map[string]bool // bench -> its evidence worker is in flight
+	errs   []string        // worker errors no Run has returned yet
+	fenced bool            // a worker's resolution was FENCED
+	wctx   context.Context // every worker's context; Stop cancels it
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+}
+
+// ProbeProcKey is the row an evidence worker writes when it ends: at (ms),
+// took_ms, cards, resolved and err (- when clean).
+func ProbeProcKey(bench string) string { return "proc:expire:" + bench }
+
+// Wait blocks until no evidence worker is in flight or ctx ends; it reports
+// whether they all ended.
+func (e *Expire) Wait(ctx context.Context) bool {
+	done := make(chan struct{})
+	go func() {
+		e.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// Stop is the way out: it waits for the evidence workers until ctx ends
+// (each records its row), then cancels any still in flight. It holds no
+// bench lease, so it releases none.
+func (e *Expire) Stop(ctx context.Context) []string {
+	e.Wait(ctx)
+	e.wmu.Lock()
+	if e.cancel != nil {
+		e.cancel()
+	}
+	e.wmu.Unlock()
+	return nil
+}
+
+// drain returns the workers' errors since the last Run, ErrFenced first.
+func (e *Expire) drain() error {
+	e.wmu.Lock()
+	defer e.wmu.Unlock()
+	errs, fenced := e.errs, e.fenced
+	e.errs, e.fenced = nil, false
+	if fenced {
+		return fmt.Errorf("expire required: %w", ErrFenced)
+	}
+	if len(errs) > 0 {
+		return errors.New("expire: " + strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 // gateRow is one sprint's self-gate read.
@@ -91,6 +153,21 @@ func (e *Expire) Run(ctx context.Context, l *Lease) (Counts, error) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	c, err := e.run(ctx, l)
+	if werr := e.drain(); werr != nil {
+		switch {
+		case errors.Is(werr, ErrFenced):
+			return Counts{}, werr
+		case err == nil:
+			err = werr
+		case !errors.Is(err, ErrFenced):
+			err = fmt.Errorf("%w; %v", err, werr)
+		}
+	}
+	return c, err
+}
+
+func (e *Expire) run(ctx context.Context, l *Lease) (Counts, error) {
 	due, benches, now, err := e.gate(ctx)
 	if err != nil || len(due) == 0 {
 		return Counts{}, err
@@ -312,43 +389,8 @@ func (e *Expire) sweep(ctx context.Context, l *Lease, due, benches []string, now
 		}
 	}
 
-	// Step 3: evidence, one Prober call per bench, in parallel.
-	evidence := e.probe(ctx, beats, suspects)
-
-	// Step 4: one pipeline of resolutions.
-	if len(evidence) > 0 {
-		pipe = e.Client.Pipeline()
-		var rs []transition
-		for _, s := range suspects {
-			ev, ok := evidence[s.Key()]
-			if !ok {
-				continue
-			}
-			switch {
-			case ev.Effect() && ev.Absent:
-				errs = append(errs, fmt.Sprintf("required %s: %v", s.Key(), ErrEvidence))
-			case ev.Effect():
-				rs = append(rs, transition{kind: "required", cmd: pipe.FCall(ctx, "ns_card_required", nil, s.Sprint, s.Label, token, "effect", ev.String())})
-			case ev.Absent:
-				rs = append(rs, transition{kind: "required", cmd: pipe.FCall(ctx, "ns_card_required", nil, s.Sprint, s.Label, token, "absent", "")})
-			}
-		}
-		if len(rs) > 0 {
-			if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !anyReply(rs) {
-				return c, fmt.Errorf("expire resolutions: %w", err)
-			}
-			for _, t := range rs {
-				code, _, err := reply(t.cmd)
-				if err != nil {
-					errs = append(errs, fmt.Sprintf("required: %v", err))
-					continue
-				}
-				if code == 3 {
-					return c, fmt.Errorf("expire required: %w", ErrFenced)
-				}
-			}
-		}
-	}
+	// Steps 3 and 4: one evidence worker per bench, off the pass path.
+	e.probe(ctx, l, beats, suspects)
 	if len(errs) > 0 {
 		return c, errors.New("expire: " + strings.Join(errs, "; "))
 	}
@@ -397,14 +439,13 @@ func reply(cmd *redis.Cmd) (int, string, error) {
 	return code, parts[1], nil
 }
 
-// probe runs one Prober call per bench that has suspects, in parallel, each
-// bounded by ExpireDeadline. beats are the registered benches' beat hashes
+// probe starts one evidence worker per bench that has suspects and none in
+// flight, and returns at once. beats are the registered benches' beat hashes
 // (host, user) from step 1; a card on a bench outside the registry has
 // nothing to dial and gets no evidence.
-func (e *Expire) probe(ctx context.Context, beats map[string]*redis.SliceCmd, suspects []Suspect) map[string]Evidence {
-	out := map[string]Evidence{}
+func (e *Expire) probe(ctx context.Context, l *Lease, beats map[string]*redis.SliceCmd, suspects []Suspect) {
 	if e.Prober == nil || len(suspects) == 0 {
-		return out
+		return
 	}
 	byBench := map[string][]Suspect{}
 	for _, s := range suspects {
@@ -412,31 +453,112 @@ func (e *Expire) probe(ctx context.Context, beats map[string]*redis.SliceCmd, su
 			byBench[s.Bench] = append(byBench[s.Bench], s)
 		}
 	}
-	var mu sync.Mutex
-	var wg sync.WaitGroup
 	for b, cards := range byBench {
 		v := beats[b].Val()
 		bench := deal.Bench{Name: b, Host: str(v, 0), User: str(v, 1), Up: len(v) > 0 && v[0] != nil}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			pctx, cancel := context.WithTimeout(ctx, ExpireDeadline)
-			defer cancel()
-			ev, err := e.Prober.Probe(pctx, bench, cards)
-			if err != nil {
-				return
-			}
-			mu.Lock()
-			defer mu.Unlock()
-			for _, s := range cards {
-				if x, ok := ev[s.Key()]; ok {
-					out[s.Key()] = x
-				}
-			}
-		}()
+		e.start(ctx, l, bench, cards)
 	}
-	wg.Wait()
-	return out
+}
+
+// start runs one bench's evidence worker unless one is in flight: the
+// Prober call bounded by ExpireDeadline, then the resolutions and the row.
+func (e *Expire) start(ctx context.Context, l *Lease, bench deal.Bench, cards []Suspect) {
+	e.wmu.Lock()
+	if e.busy == nil {
+		e.busy = map[string]bool{}
+	}
+	if e.wctx == nil {
+		// The workers outlive the pass that started them; Stop ends them.
+		e.wctx, e.cancel = context.WithCancel(context.WithoutCancel(ctx))
+	}
+	if e.busy[bench.Name] || e.wctx.Err() != nil {
+		e.wmu.Unlock()
+		return
+	}
+	e.busy[bench.Name] = true
+	wctx := e.wctx
+	e.wg.Add(1)
+	e.wmu.Unlock()
+	go func() {
+		defer e.wg.Done()
+		defer func() {
+			e.wmu.Lock()
+			delete(e.busy, bench.Name)
+			e.wmu.Unlock()
+		}()
+		begin := time.Now()
+		pctx, cancel := context.WithTimeout(wctx, ExpireDeadline)
+		ev, perr := e.Prober.Probe(pctx, bench, cards)
+		cancel()
+		errs, fenced := e.resolve(wctx, l, bench.Name, cards, ev, perr, begin)
+		e.wmu.Lock()
+		defer e.wmu.Unlock()
+		e.errs = append(e.errs, errs...)
+		e.fenced = e.fenced || fenced
+	}()
+}
+
+// resolve is step 4 for one bench, in one pipeline: ns_card_required for
+// each card with an effect or proven absence, and the worker's row (at,
+// took_ms, cards, resolved = the resolutions sent, err = the probe's error or
+// -). A probe error is no evidence: it is the row's err, not a duty error. A
+// resolution that errs or is FENCED rewrites err in one more write.
+func (e *Expire) resolve(ctx context.Context, l *Lease, bench string, cards []Suspect, evidence map[string]Evidence, perr error, begin time.Time) ([]string, bool) {
+	token := l.Token()
+	// The row is written even when Stop cancelled the worker.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	pipe := e.Client.Pipeline()
+	var errs []string
+	var rs []transition
+	for _, s := range cards {
+		ev, ok := evidence[s.Key()]
+		if !ok || perr != nil {
+			continue
+		}
+		switch {
+		case ev.Effect() && ev.Absent:
+			errs = append(errs, fmt.Sprintf("required %s: %v", s.Key(), ErrEvidence))
+		case ev.Effect():
+			rs = append(rs, transition{kind: "required", cmd: pipe.FCall(ctx, "ns_card_required", nil, s.Sprint, s.Label, token, "effect", ev.String())})
+		case ev.Absent:
+			rs = append(rs, transition{kind: "required", cmd: pipe.FCall(ctx, "ns_card_required", nil, s.Sprint, s.Label, token, "absent", "")})
+		}
+	}
+	status := "-"
+	if perr != nil {
+		status = oneLine(perr.Error())
+	}
+	row := pipe.HSet(ctx, ProbeProcKey(bench), "at", time.Now().UnixMilli(), "took_ms", time.Since(begin).Milliseconds(),
+		"cards", len(cards), "resolved", len(rs), "err", status)
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !anyReply(rs) && row.Err() != nil {
+		return append(errs, fmt.Sprintf("resolutions %s: %v", bench, err)), false
+	}
+	fenced := false
+	for _, t := range rs {
+		code, _, err := reply(t.cmd)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Sprintf("required: %v", err))
+		case code == 3:
+			fenced = true
+		}
+	}
+	if fenced || len(errs) > 0 {
+		status = "FENCED"
+		if !fenced {
+			status = oneLine(strings.Join(errs, "; "))
+		}
+		if err := e.Client.HSet(ctx, ProbeProcKey(bench), "err", status).Err(); err != nil {
+			errs = append(errs, fmt.Sprintf("row %s: %v", bench, err))
+		}
+	}
+	return errs, fenced
+}
+
+// oneLine keeps a row's err on one line.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func str(v []any, i int) string {

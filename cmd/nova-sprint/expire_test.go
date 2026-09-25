@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -606,6 +607,7 @@ func TestExpireSweepThreeRoundTrips(t *testing.T) {
 	trips := &expireTrips{}
 	x.c.AddHook(trips)
 	c, err := duty.Run(x.ctx, l)
+	settle(t, duty)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -641,6 +643,7 @@ func TestExpireGatedToPolicy(t *testing.T) {
 	}
 	silent("first")
 	c, err := duty.Run(x.ctx, l)
+	settle(t, duty)
 	if err != nil || c.Expired != 2 {
 		t.Fatalf("first pass: %+v %v, want a sweep expiring 2", c, err)
 	}
@@ -659,6 +662,7 @@ func TestExpireGatedToPolicy(t *testing.T) {
 		calls := prober.total()
 		trips.reset()
 		c, err := duty.Run(x.ctx, l)
+		settle(t, duty)
 		if err != nil || c != (reconcile.Counts{}) {
 			t.Fatalf("%s: %+v %v, want nothing", what, c, err)
 		}
@@ -691,6 +695,7 @@ func TestExpireGatedToPolicy(t *testing.T) {
 	}
 	trips.reset()
 	c, err = duty.Run(x.ctx, l)
+	settle(t, duty)
 	if err != nil || c.Expired != 2 || trips.fcalls.Load() == 0 {
 		t.Fatalf("10000 ms after the stamp: %+v %v (%d FCALLs), want a sweep expiring 2", c, err, trips.fcalls.Load())
 	}
@@ -723,6 +728,7 @@ func TestUnreachableBenchIsNotAbsence(t *testing.T) {
 	if _, err := duty.Run(x.ctx, l); err != nil {
 		t.Fatal(err)
 	}
+	settle(t, duty)
 	if h := x.card(S, "on-down"); h["state"] != "reconcile-required" || x.inPool(S, "on-down") {
 		t.Fatalf("a card on an unreachable bench left reconcile-required: %v", h)
 	}
@@ -767,5 +773,97 @@ func TestUnreachableBenchIsNotAbsence(t *testing.T) {
 	}
 	if e := ev[S+"/alive"]; e.LivePID != "4242" || e.Absent {
 		t.Errorf("alive: %+v, want the live pid as an effect", e)
+	}
+}
+
+// settle waits for the duty's evidence workers (#3802: they run off the
+// pass path), so what they write is there to read.
+func settle(t *testing.T, duty *reconcile.Expire) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) // wall-ok: a test's give-up, not a product bound
+	defer cancel()
+	if !duty.Wait(ctx) {
+		t.Fatal("the expire duty's evidence workers did not end within 30 s")
+	}
+}
+
+// slowProber is an evidence session that does not answer until the test
+// releases it (#3802: the 10.7 s bench ssh; an event, not a clock). It
+// reports whether it is still in flight; ctx ending first is no evidence.
+type slowProber struct {
+	ev       map[string]reconcile.Evidence
+	release  chan struct{}
+	started  chan struct{} // gets one value per session started
+	calls    atomic.Int64
+	inFlight atomic.Int64
+}
+
+func (p *slowProber) Probe(ctx context.Context, _ deal.Bench, cards []reconcile.Suspect) (map[string]reconcile.Evidence, error) {
+	p.calls.Add(1)
+	p.inFlight.Add(1)
+	defer p.inFlight.Add(-1)
+	p.started <- struct{}{}
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	out := map[string]reconcile.Evidence{}
+	for _, c := range cards {
+		if e, ok := p.ev[c.Key()]; ok {
+			out[c.Key()] = e
+		}
+	}
+	return out, nil
+}
+
+// TestExpirePassNeverBlocksOnSSH is #3802's DONE-WHEN: the expire duty's
+// pass returns while a bench's evidence session is still in flight (on dev
+// it waited for the session, up to ExpireDeadline); the session runs in a
+// bounded worker, one per bench (a pass while it is in flight starts no
+// second one), and when it ends it resolves its cards and writes its row
+// proc:expire:<bench>.
+func TestExpirePassNeverBlocksOnSSH(t *testing.T) {
+	x := newExpireFixture(t)
+	const S, B = "expire-slow3802", "slow-bench"
+	x.sprint(S)
+	x.bench(B)
+	x.seed(S, "gone", "reconcile-required", "bench", B, "branch", "nova/"+S+"/gone-a1", "jobdir", "/j/gone", "repo", "o/r")
+	prober := &slowProber{ev: map[string]reconcile.Evidence{S + "/gone": {Absent: true}}, release: make(chan struct{}), started: make(chan struct{}, 4)}
+	duty := &reconcile.Expire{Client: x.c, Prober: prober}
+	l := x.lease("ctl-slow")
+
+	if _, err := duty.Run(x.ctx, l); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-prober.started:
+	case <-time.After(30 * time.Second): // wall-ok: a test's give-up, not a product bound
+		t.Fatal("no evidence session started within 30 s")
+	}
+	if n, f := prober.calls.Load(), prober.inFlight.Load(); n != 1 || f != 1 {
+		t.Fatalf("the pass returned with %d sessions started and %d in flight, want 1 and 1 (the pass never waits on ssh)", n, f)
+	}
+	if h := x.card(S, "gone"); h["state"] != "reconcile-required" {
+		t.Fatalf("gone resolved before its session ended: %v", h)
+	}
+	// Due again at once: the next pass sweeps, and the bench's worker is
+	// still in flight, so no second session starts.
+	x.must(x.c.HDel(x.ctx, reconcile.ProcKey, reconcile.ExpireStampField(S)).Err())
+	if _, err := duty.Run(x.ctx, l); err != nil {
+		t.Fatal(err)
+	}
+	if n, f := prober.calls.Load(), prober.inFlight.Load(); n != 1 || f != 1 {
+		t.Fatalf("second pass: %d sessions, %d in flight; want 1 and 1 (one worker per bench)", n, f)
+	}
+
+	close(prober.release)
+	settle(t, duty)
+	if h := x.card(S, "gone"); h["state"] != "queued" || h["reason"] != "lost" {
+		t.Fatalf("gone after its session: %v, want queued (lost)", h)
+	}
+	row := x.hash(reconcile.ProbeProcKey(B))
+	if row["cards"] != "1" || row["resolved"] != "1" || row["err"] != "-" || row["at"] == "" || row["took_ms"] == "" {
+		t.Fatalf("proc:expire:%s = %v, want cards=1 resolved=1 err=- at=<ms> took_ms=<ms>", B, row)
 	}
 }
