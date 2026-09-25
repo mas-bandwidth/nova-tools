@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,7 +50,10 @@ printed, passed to the harness, or written to a receipt (token_sha only).
 The bench configures it through the environment the launcher runs in:
   NOVA_CARD_REDIS    the sprint Redis address
   NOVA_CARD_BENCH    this bench's name, as the card hash names it
-  NOVA_CARD_HARNESS  absolute path of the harness program
+  NOVA_CARD_HARNESS  absolute path of a harness program; unset, the Go
+                     harness runs in-process (nova-sprint card run, #3681)
+                     from NOVA_CARD_HARNESS_BIN, NOVA_BENCH_SEAT,
+                     NOVA_CARD_DEADLINE, NOVA_CARD_TOKENS and HOME
   NOVA_CARD_JOBS     absolute root of job dirs (<root>/<S>/<label>/<attempt>)
   NOVA_CARD_RESULTS  absolute root of results (<root>/<identity>)
   NOVA_CARD_CLOCK    the card clock, a Go duration (45m)
@@ -117,6 +121,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 		return card.WrapperExitRedis
 	}
 	defer st.Close()
+	cfg.Store = st
 	cfg.Started = func() { ack("LAUNCHED") }
 	ledger := &card.RedisLedger{
 		Store: st, Sprint: line.Sprint, Label: line.Label, Token: line.Token,
@@ -204,13 +209,21 @@ func config(l launch.Line, getenv func(string) string) (card.WrapperConfig, erro
 		}
 		*kv.dst = d
 	}
-	for name, v := range map[string]string{"NOVA_CARD_BENCH": cfg.Bench, "NOVA_CARD_HARNESS": cfg.Harness, "NOVA_CARD_JOBS": cfg.JobsRoot, "NOVA_CARD_RESULTS": cfg.ResultsRoot} {
+	for name, v := range map[string]string{"NOVA_CARD_BENCH": cfg.Bench, "NOVA_CARD_JOBS": cfg.JobsRoot, "NOVA_CARD_RESULTS": cfg.ResultsRoot} {
 		if v == "" {
 			bad = append(bad, name)
 		}
 	}
+	if cfg.Harness == "" {
+		// No harness program: the Go harness in-process (#3681), configured
+		// from the same card.env the bash one read.
+		rc, missing := card.RunConfigFromEnv(getenv)
+		bad = append(bad, missing...)
+		cfg.InProcess = &rc
+	}
 	if len(bad) > 0 {
 		sort.Strings(bad)
+		bad = slices.Compact(bad)
 		return cfg, fmt.Errorf("missing or bad %s", strings.Join(bad, ", "))
 	}
 	return cfg, nil

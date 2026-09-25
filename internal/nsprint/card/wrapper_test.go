@@ -31,6 +31,9 @@ func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeHarnessEnv); mode != "" {
 		os.Exit(fakeHarness(mode))
 	}
+	if os.Getenv(fakeRunnerEnv) != "" {
+		os.Exit(fakeRunner())
+	}
 	os.Exit(m.Run())
 }
 
