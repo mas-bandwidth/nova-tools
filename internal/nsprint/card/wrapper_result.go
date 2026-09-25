@@ -371,8 +371,12 @@ func recordEnd(ctx context.Context, rec ResultRecorder, e endRecord) (res typedr
 		if len(note) > typedrec.MaxNoteBytes {
 			note = note[:typedrec.MaxNoteBytes]
 		}
+		line2 := m.Line2
+		if e.end.SynthLine2 != "" {
+			line2 = e.end.SynthLine2 // #3956: the wrapper wrote RESULT.md from the model's commit
+		}
 		facts = append(facts,
-			Fact{"w_synth", "1"}, Fact{"w_line2", oneField(m.Line2)}, Fact{"w_note", note},
+			Fact{"w_synth", "1"}, Fact{"w_line2", oneField(line2)}, Fact{"w_note", note},
 			Fact{"w_check", check.Check}, Fact{"w_check_cmd", oneField(check.Cmd)},
 			Fact{"w_check_ms", strconv.FormatInt(check.Wall.Milliseconds(), 10)},
 			Fact{"w_check_tail", check.Tail}, Fact{"w_paths", strings.Join(paths, " ")})
@@ -391,7 +395,14 @@ func recordEnd(ctx context.Context, rec ResultRecorder, e endRecord) (res typedr
 		}
 		opt.ExpectedAttempt = e.cfg.Attempt
 		res = typedrec.ParseResult(raw, opt)
-		facts = append(facts, Fact{"w_result", "present"})
+		if e.end.SynthLine2 != "" {
+			facts = append(facts, Fact{"w_result", "synthesized"}, Fact{"w_commit_sha", e.end.ModelCommit})
+			if !synth {
+				facts = append(facts, Fact{"w_line2", oneField(e.end.SynthLine2)})
+			}
+		} else {
+			facts = append(facts, Fact{"w_result", "present"})
+		}
 	} else {
 		facts = append(facts, Fact{"w_result", "absent"})
 	}

@@ -22,7 +22,9 @@ package card
 //     is fenced (FAILED other); a harness that exits non-zero after its
 //     program printed a NATIVE REFUSED line ends FAILED refused, that line the
 //     end's why on the card record and its w_why fact (#3194), never a bare
-//     crash;
+//     crash; a code card's harness that exits non-zero leaving a commit
+//     ahead of base_sha and no RESULT.md ends DONE, the wrapper writing
+//     RESULT.md from facts (#3956, wrapper_noresult.go);
 //  6. copies <job>/out and harness.log into the results directory, writes
 //     the card's record to Redis (#3689, wrapper_result.go: the typed RESULT
 //     fields synthesized from facts around the model's two lines, the card's
@@ -132,6 +134,10 @@ type WrapperEnd struct {
 	// Why is the end's one-line evidence, written to the card's why by card
 	// end: for FAILED refused, the refusal line (#3194). Empty is no evidence.
 	Why string
+	// SynthLine2 and ModelCommit are set when the wrapper ended the card DONE
+	// from the model's commit with no RESULT.md of the model's (#3956,
+	// NoResultCommitEnd): the result record's w_line2 and w_commit_sha.
+	SynthLine2, ModelCommit string
 }
 
 // WrapperLedger is the Redis side of one attempt. Every method returns the
@@ -579,6 +585,17 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	if end.Outcome == "FAILED" && end.Reason == "crash" && end.Exit > 0 {
 		if line, ok := NativeRefusal(job); ok {
 			end.Reason, end.Why, why = "refused", line, line
+		}
+	}
+	// A crash that left a commit and no RESULT.md is the work done (#3956):
+	// the wrapper writes RESULT.md from facts and the card ends DONE.
+	if end.Outcome == "FAILED" && end.Reason == "crash" {
+		var cf CardFacts
+		if r, ok := ledger.(CardFactsReader); ok {
+			cf, _ = r.CardFacts(ctx) // unread facts: line 1 from card.md, base from the remotes
+		}
+		if nr, ok := NoResultCommitEnd(c.Kind, job, cfg.card(), cf, end); ok {
+			end, why = nr, nr.Why
 		}
 	}
 	// A fenced beat ends here too: the ledger writes end.record before its

@@ -122,9 +122,25 @@ func fakeNative(mode, out string) int {
 		// #3689: the quack cards' shape, the BRANCH the card told the model.
 		body = "RESULT: " + os.Getenv("NOVA_CARD") + " sha=000000000000\nDONE\nBRANCH: rowan/" + parts[1] + "\n"
 	}
-	if err := os.WriteFile(filepath.Join(job, "RESULT.md"), []byte(body), 0o644); err != nil {
-		fmt.Println("fake native:", err)
-		return 9
+	// #3956: native-noresult is kimi-k3 on swarm-0925a, the fix committed on
+	// the card's branch and no RESULT.md, native INCOMPLETE and the harness
+	// exiting 1 (RunExitNoResult); native-noresult-nocommit left the fix
+	// uncommitted.
+	noResult := strings.HasPrefix(mode, "native-noresult")
+	if mode == "native-noresult" {
+		for _, args := range [][]string{{"checkout", "-q", "-b", "rowan/" + parts[1]}, {"commit", "-q", "-am", "the card's fix"}} {
+			git := exec.Command("git", append([]string{"-C", repo, "-c", "user.name=model", "-c", "user.email=model@card"}, args...)...)
+			if msg, err := git.CombinedOutput(); err != nil {
+				fmt.Println("fake native git:", err, string(msg))
+				return 9
+			}
+		}
+	}
+	if !noResult {
+		if err := os.WriteFile(filepath.Join(job, "RESULT.md"), []byte(body), 0o644); err != nil {
+			fmt.Println("fake native:", err)
+			return 9
+		}
 	}
 	if mode != "native" && mode != "native-nohandoff" {
 		// The bench harness's START line (rowan-tools' nova-card-harness):
@@ -140,6 +156,9 @@ func fakeNative(mode, out string) int {
 			fmt.Println("fake native hand-off:", err)
 			return 9
 		}
+	}
+	if noResult {
+		return card.RunExitNoResult
 	}
 	return 0
 }
