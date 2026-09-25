@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 )
@@ -285,6 +286,9 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 		if err != nil {
 			return refuse(errOut, "bench beat", err.Error())
 		}
+	}
+	if *launcher == "" {
+		*launcher = preflight.BatchLauncherName
 	}
 	// One connection for the whole loop (#3372): no dial, auth or fork per tick.
 	st, err := store.OpenSingle(ctx, lifeAddr(*addr))
