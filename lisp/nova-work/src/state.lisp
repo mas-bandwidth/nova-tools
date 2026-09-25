@@ -53,7 +53,30 @@
   ;; SPEC-WORK.md:1674-1689 -- the live lease's holder, or NIL for
   ;; `holder=unowned`. W is the view of O nodes whose holder is live, never a
   ;; field of its own.
-  holder)
+  holder
+  ;; SPEC-WORK.md "The data": "Unknown keys on a node are preserved and
+  ;; ignored, so a team may carry its own fields". The seed keys this struct
+  ;; has no slot for (an ingested unit's `:correspondence` and `:acceptance`,
+  ;; section 2 of the primary-source section), as a plist in the seed's own
+  ;; order. No verb reads them here; the storage split (src/render-filesystem)
+  ;; writes them back byte for byte (nova-tools#3174 part (i)).
+  extra)
+
+(defparameter *seed-known-keys*
+  '(:id :type :parent :coordinator :required :state :deps :links :title
+    :category :private :version :repo :estimate :holder
+    ;; Not read by MAKE-SEED-STATE but not unknown either: :children is
+    ;; derived from the :parent edges, and :priority is set by the storage
+    ;; split's loader after the seed is built.
+    :children :priority)
+  "The node keys the seed reads or derives. Every other key of a seed spec is
+kept, in order, in the node's EXTRA plist.")
+
+(defun %seed-extra-keys (spec)
+  "SPEC's keys outside *SEED-KNOWN-KEYS*, with their values, in SPEC's order."
+  (loop for (key value) on spec by #'cddr
+        unless (member key *seed-known-keys*)
+          append (list key value)))
 
 (defstruct (wstate (:conc-name wstate-))
   seed       ; the seed forest, verbatim, so a reconstruction starts where this did
@@ -216,7 +239,8 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                           :settles 0
                           :revived "-"
                           :estimate (getf spec :estimate +absent+)
-                          :holder (getf spec :holder)))))
+                          :holder (getf spec :holder)
+                          :extra (%seed-extra-keys spec)))))
     (setf order (nreverse order))
     ;; Containment edges, in seed order.
     (dolist (id order)

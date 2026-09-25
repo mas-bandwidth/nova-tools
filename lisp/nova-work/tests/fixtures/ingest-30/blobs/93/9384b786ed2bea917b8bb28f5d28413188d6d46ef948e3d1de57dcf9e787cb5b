@@ -1,0 +1,3 @@
+Connecting to "[::1]:4000" fails.
+The parser splits on ':' and a backslash \ in the log is escaped.
+Reported from café 雪.

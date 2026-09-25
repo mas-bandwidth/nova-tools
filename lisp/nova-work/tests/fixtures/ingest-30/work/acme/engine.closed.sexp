@@ -1,0 +1,5 @@
+(:key "1:gh/acme/engine/3" :kind :settle :node "gh/acme/engine/3" :rev 1 :disposition :done :reason "intake: closed, completed" :already-closed (:absent) :stamp "2026-09-22T01:00:00Z" :revived "-" :settles 1)
+(:key "2:gh/acme/engine/4" :kind :settle :node "gh/acme/engine/4" :rev 2 :disposition :done :reason "intake: closed, completed" :already-closed (:absent) :stamp "2026-09-22T02:00:00Z" :revived "-" :settles 1)
+(:key "3:gh/acme/engine/5" :kind :settle :node "gh/acme/engine/5" :rev 3 :disposition :cancelled :reason "intake: closed, not_planned" :already-closed (:absent) :stamp "2026-09-22T03:00:00Z" :revived "-" :settles 1)
+(:key "4:gh/acme/engine/6" :kind :settle :node "gh/acme/engine/6" :rev 4 :disposition :superseded :reason "intake: closed, duplicate of acme/engine#1" :already-closed (:absent) :stamp "2026-09-22T04:00:00Z" :revived "-" :settles 1)
+(:key "5:gh/acme/engine/12" :kind :settle :node "gh/acme/engine/12" :rev 5 :disposition :done :reason "intake: closed, completed" :already-closed (:absent) :stamp "2026-09-22T05:00:00Z" :revived "-" :settles 1)
