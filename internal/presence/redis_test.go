@@ -9,10 +9,10 @@ import (
 	"github.com/alicebob/miniredis/v2"
 )
 
-// The fake store proves the logic; this file proves the two commands the logic
-// is made of are the ones a Redis actually honours -- SET with EX, and an MGET
-// whose absent keys come back empty -- against miniredis, whose clock the test
-// moves instead of waiting.
+// The fake store proves the logic; this file proves the commands the logic is
+// made of are the ones a Redis actually honours -- HSET plus PEXPIRE in one
+// MULTI, and a pipeline of HMGET, PTTL and GET whose absent keys come back
+// empty -- against miniredis, whose clock the test moves instead of waiting.
 
 func TestAgainstRedisTheKeyExpiresAndTheMemoryDoesNot(t *testing.T) {
 	mr := miniredis.RunT(t)
@@ -172,9 +172,7 @@ func TestAgainstRedisAMissingBeatKeyIsAbsentAndALiveKeyIsPresent(t *testing.T) {
 		t.Fatal("a missing beat key is present; want absent")
 	}
 
-	if err := st.Set(ctx, LastKey("stella"), now.Format(Stamp), 0); err != nil {
-		t.Fatalf("set last: %v", err)
-	}
+	mr.Set(LastKey("stella"), now.Format(Stamp))
 	sts, err = Read(ctx, st, []string{"stella"}, now)
 	if err != nil {
 		t.Fatalf("read of :last alone: %v", err)
@@ -204,5 +202,136 @@ func TestAgainstRedisAMissingBeatKeyIsAbsentAndALiveKeyIsPresent(t *testing.T) {
 	}
 	if !mr.Exists(LastKey("stella")) {
 		t.Fatal("friend:stella:last did not survive the beat key's expiry")
+	}
+}
+
+// TestAgainstRedisBeatWritesWidthAndTTL is #2673's DONE-WHEN against a real
+// protocol: `nova-wake beat --width 8` lands as the hash friend:<name> with
+// at and width, carrying the beat's TTL, and :last with none.
+func TestAgainstRedisBeatWritesWidthAndTTL(t *testing.T) {
+	mr := miniredis.RunT(t)
+	ctx := context.Background()
+	st, err := Open(ctx, mr.Addr(), DefaultUser)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	now := time.Date(2026, 9, 22, 9, 41, 0, 0, time.UTC)
+	eight := int64(8)
+	if err := BeatSide(ctx, st, "Emma", now, DefaultTTL, Side{Width: &eight}); err != nil {
+		t.Fatalf("beat: %v", err)
+	}
+	if got := mr.HGet("friend:emma", "width"); got != "8" {
+		t.Fatalf("friend:emma width = %q; want 8", got)
+	}
+	if got := mr.HGet("friend:emma", "at"); got != "2026-09-22T09:41:00Z" {
+		t.Fatalf("friend:emma at = %q", got)
+	}
+	if got := mr.TTL("friend:emma"); got != DefaultTTL {
+		t.Fatalf("friend:emma ttl = %s; want %s", got, DefaultTTL)
+	}
+	if got := mr.TTL(LastKey("emma")); got != 0 {
+		t.Fatalf(":last ttl = %s; want none", got)
+	}
+	sts, err := Read(ctx, st, []string{"emma"}, now)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got := sts[0].Phrase(now); got != "emma up 0s width=8" {
+		t.Fatalf("phrase = %q", got)
+	}
+}
+
+// TestAgainstRedisATableRowIsNotPresenceAndABeatOnItIs: friend:<name> is also
+// the sprint table's row hash, written with no TTL. That row alone reads
+// down; a beat on the same hash keeps the row's fields and gives it the TTL
+// that reads up; and the beat lapsing takes the hash with it.
+func TestAgainstRedisATableRowIsNotPresenceAndABeatOnItIs(t *testing.T) {
+	mr := miniredis.RunT(t)
+	ctx := context.Background()
+	st, err := Open(ctx, mr.Addr(), DefaultUser)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	now := time.Date(2026, 9, 22, 9, 41, 0, 0, time.UTC)
+
+	mr.HSet("friend:stella", "at", now.Format(Stamp), "up", "1", "ready", "4")
+	sts, err := Read(ctx, st, []string{"stella"}, now)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if sts[0].Present() {
+		t.Fatal("a table row with no TTL is present; want down")
+	}
+	if err := Beat(ctx, st, "stella", now, DefaultTTL); err != nil {
+		t.Fatalf("beat on the row: %v", err)
+	}
+	if got := mr.HGet("friend:stella", "ready"); got != "4" {
+		t.Fatalf("the beat clobbered the row: ready = %q", got)
+	}
+	sts, err = Read(ctx, st, []string{"stella"}, now)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !sts[0].Present() {
+		t.Fatal("a beat on the row is not present; want up")
+	}
+	mr.FastForward(DefaultTTL + time.Second)
+	if mr.Exists("friend:stella") {
+		t.Fatal("friend:stella outlived its beat")
+	}
+}
+
+// TestAgainstRedisALegacyStringBeatIsReplaced: a beat older than #2673 left
+// friend:<name> as a plain string with a TTL. Reading it is not a failure,
+// and the next beat replaces it with the hash.
+func TestAgainstRedisALegacyStringBeatIsReplaced(t *testing.T) {
+	mr := miniredis.RunT(t)
+	ctx := context.Background()
+	st, err := Open(ctx, mr.Addr(), DefaultUser)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	now := time.Date(2026, 9, 22, 9, 41, 0, 0, time.UTC)
+
+	mr.Set("friend:johnny", now.Format(Stamp))
+	mr.SetTTL("friend:johnny", DefaultTTL)
+	sts, err := Read(ctx, st, []string{"johnny"}, now)
+	if err != nil {
+		t.Fatalf("read over a legacy string: %v", err)
+	}
+	if !sts[0].Present() {
+		t.Fatal("a legacy beat with a live TTL reads down; want up")
+	}
+	two := int64(2)
+	if err := BeatSide(ctx, st, "johnny", now, DefaultTTL, Side{Width: &two}); err != nil {
+		t.Fatalf("beat over a legacy string: %v", err)
+	}
+	if got := mr.HGet("friend:johnny", "width"); got != "2" {
+		t.Fatalf("width = %q; want the hash to replace the string", got)
+	}
+}
+
+// TestAgainstRedisFriendsReadsTheSet: the roster is SMEMBERS friends.
+func TestAgainstRedisFriendsReadsTheSet(t *testing.T) {
+	mr := miniredis.RunT(t)
+	ctx := context.Background()
+	st, err := Open(ctx, mr.Addr(), DefaultUser)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if _, err := mr.SAdd(FriendsSet, "stella", "emma", "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	names, err := Friends(ctx, st)
+	if err != nil {
+		t.Fatalf("friends: %v", err)
+	}
+	if got := strings.Join(names, ","); got != "emma,stella" {
+		t.Fatalf("roster = %q; want emma,stella", got)
 	}
 }

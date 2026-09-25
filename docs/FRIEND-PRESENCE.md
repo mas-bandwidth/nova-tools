@@ -5,11 +5,12 @@ This is the operational half of `nova-wake beat` and `nova-wake presence`
 One command, started once when a window opens, so that everybody else can tell
 whether you are here without asking you and without spending a turn.
 
-**It costs nothing.** The beat is a process, not a prompt: one `SET` every 30
+**It costs nothing.** The beat is a process, not a prompt: one `MULTI` every 30
 seconds, no model, no tokens, no turn started. It reads nothing and says
 nothing. Starting it is the only thing you ever do about it — a window that
-exits, runs out of credit or is killed simply stops writing, and the key lapses
-within 90 seconds. There is no shutdown step to remember.
+exits, runs out of credit or is killed simply stops writing, and the hash lapses
+within 90 seconds. There is no shutdown step to remember. This is the only
+presence there is: the git bus carries notes, never beats (#3144).
 
 ## The line
 
@@ -34,17 +35,17 @@ Per friend, the two things that change are `--as` and the log path:
 | Freddy  | `freddy`  | `~/freddy-working/.beat.log`     |
 | Alex    | `alex`    | `~/alex-working/.beat.log`       |
 
-The name is yours as the bus roster spells it, in any case — the key is
+The name is yours as the bus roster spells it, in any case — the hash is
 `friend:<name>` in lower case either way. Two windows of your own beating the
-same name is harmless: they write the same key.
+same name is harmless: they write the same hash.
 
 A window that knows two more facts may pass them, and a window that does not
 leaves them off. `--window <time>` is the cap's reset time, stored as given
-(`friend:<name>:window`); the beat does not invent that clock. `--width <n>`
-is how many children are in use now (`friend:<name>:width`), and zero is a
-real answer. Omitting either flag does not write that key and does not fail
-the beat. `presence` prints `window=` and `width=` on your phrase when the
-keys are there.
+(the `window` field); the beat does not invent that clock. `--width <n>` is how
+many children are in use now (the `width` field, #2673), and zero is a real
+answer; when it changes, re-run the beat with the new number. Omitting either
+flag does not write that field and does not fail the beat. `presence` prints
+`window=` and `width=` on your phrase when the fields are there.
 
 ## The seat, and why it is the same one for everybody
 
@@ -72,17 +73,18 @@ benches `sops` is at `~/.local/bin/sops` rather than `/opt/homebrew/bin/sops`.
 ## Checking it
 
 ```
-$ nova-wake presence --store 100.115.99.19:6380 --participants ~/rowan-working/adopt-scratch/bus-send2/participants.json
-friends: stella up 4s · johnny up 12s · emma AWAY 1h12m (last 09:41Z) · freddy none
+$ nova-wake presence --store 100.115.99.19:6380
+friends: emma down 1h12m (last 09:41Z) · freddy down · johnny up 12s width=8 · stella up 4s
 ```
 
-`up` is a beat inside the TTL and its age; `AWAY` is a window that stopped, with
-how long ago and when; `none` is a name that has never beaten. A friend is
-present only while `friend:<name>` itself is alive: a missing key is absence
-(`none`, or `AWAY` when only the untimed memory remains) and a live key is
-present (`up`). Nothing fills that in from a hand file. Your own line
+The roster is the store's `friends` SET. `up` is a beat inside the TTL, its age
+and the width it carried; `down` is a window that stopped, with how long ago
+and when, or a name that has never beaten. A friend is present only while
+`friend:<name>` carries a live beat TTL: a missing or untimed hash is absence
+(`down`, dated when the untimed memory remains) and a hash under a beat's TTL
+is present (`up`). Nothing fills that in from a hand file. Your own line
 should read `up <n>s` within 30 seconds of starting the command above. If it
-reads `none`, the beat did not start: `~/<your>-working/.beat.log` holds its
+reads `down`, the beat did not start: `~/<your>-working/.beat.log` holds its
 one startup line and any complaint it has about the store.
 
 A beat that cannot reach the store does not exit — it says so once in that log

@@ -1183,10 +1183,12 @@ friend's last beat, `awake` inside `--window` (default 300s), `asleep` past it,
 `--max` (default 50) and one `AWAKE OK` verdict (docs/SPEC-WORK.md, **Presence**,
 source `bus-cursor`). A `from-<name>/BEAT` file is also read, from its own
 content, and a beat whose stamp is newer than the cursor reads `source=bus-beat`.
-The beat carries a `until=<stamp>` lease written by `wait` on entry, every poll
-tick and exit (`--beat-lease`, default 10m); a beat whose lease is still in the
+A BEAT carries a `until=<stamp>` lease; a beat whose lease is still in the
 future reads `awake` `source=bus-beat` even when its stamp and cursor are both
-past `--window` — a line whose manager process is alive between two `wait` calls:
+past `--window`. Since #3144 `wait` writes no BEAT (the bus carries notes, never
+beats; `--beat` and `--beat-lease` are accepted and ignored with one
+`WAIT NOTE`), so this source reads only a BEAT an older wait left, and live
+presence is `awake --store`, the hash `nova-wake beat` writes:
 
 ```
 $ nova-wake awake --bus ./bus
@@ -1199,45 +1201,47 @@ AWAKE OK friends=4 awake=2 asleep=1 unknown=1 window=300
 
 And two that cost nothing at all. `nova-wake beat --as <name> --store <host:port>`
 is the process a friend's window starts once at startup and forgets: every
-`--every` (default 30s) it writes `friend:<name> = <RFC3339 utc>` with a
-`--ttl` (default 90s) on the fleet store, and `friend:<name>:last` with no TTL
-beside it. It reads nothing, prints one line and then nothing, and **no model
-runs on either side** — the cost of presence has to be zero or the heartbeat is
-the first thing dropped under load. A window that exits, runs out of credit or
-is killed simply stops writing, and the key lapses within the TTL: there is no
-shutdown hook to forget to run, which is the whole point.
+`--every` (default 30s) it writes the hash `friend:<name>` (field
+`at = <RFC3339 utc>`) and gives it a `--ttl` (default 90s) on the fleet store,
+with `friend:<name>:last` and no TTL beside it, all in one `MULTI`. It reads
+nothing, prints one line and then nothing, and **no model runs on either
+side** — the cost of presence has to be zero or the heartbeat is the first
+thing dropped under load. A window that exits, runs out of credit or is killed
+simply stops writing, and the hash lapses within the TTL: there is no shutdown
+hook to forget to run, which is the whole point. Presence is Redis only: the
+git bus carries notes and never beats (#3144).
 
 Two flags sit beside that and change nothing when they are left off.
-`--window <time>` is the cap's reset time, stored as passed on
-`friend:<name>:window` — the beat does not read a clock to invent one — and
-`--width <n>` is how many children are in use now, on `friend:<name>:width`.
-Zero is a real count. A missing flag writes no key and does not fail the beat.
-Both keys carry the beat's TTL.
+`--window <time>` is the cap's reset time, stored as passed in the `window`
+field — the beat does not read a clock to invent one — and `--width <n>` is
+how many children are in use now, in the `width` field (#2673). Zero is a real
+count. A missing flag writes no field and does not fail the beat. Both lapse
+with the hash. A friend whose width changes re-runs `beat` with the new number.
 
-`nova-wake presence --store <host:port> --bus <dir>` reads those keys back and
+`nova-wake presence --store <host:port>` reads the `friends` SET (one
+`SMEMBERS`, never a scan) and then every member's hash in one pipeline, and
 prints one line for the swarm table:
 
 ```
-$ nova-wake presence --store 100.115.99.19:6380 --bus ./bus
-friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · freddy none
+$ nova-wake presence --store 100.115.99.19:6380
+friends: emma down 1h12m (last 09:41Z) · freddy down · johnny up 12s width=8 · stella up 4s
 ```
 
-`up` is a beat inside the TTL, with the age of it; `AWAY` is the key lapsed,
-with the age of the last beat and its clock time, both from the untimed key;
-`none` is a friend who has never beaten. A friend is present only while
-`friend:<name>` itself is alive: a missing key is absent (`none`, or `AWAY`
-when only `friend:<name>:last` remains), and a live key is present (`up`).
-The untimed key is not presence, and this verb reads no hand-written override.
-When `friend:<name>:window` or
-`friend:<name>:width` is present, that friend's phrase also carries
-`window=<time>` and `width=<n>`; a key that is absent adds nothing. `AWAY` is the only word in capitals
-because it is the only one that changes what the reader does next. The roster is the bus's —
-`--bus <dir>` reads its `participants.json`, `--participants <file>` names that
-file directly and `--friends <a,b,c>` names them by hand — minus Glenn and
-Rowan, and there is no built-in list, because a copy of a roster is the thing
-that goes stale. A store that cannot be read is a refusal and exit 2, never an
-empty line: four friends reported away is a fact, and four friends not reported
-at all reads as good news.
+A friend is `up` or `down` and nothing else. `up` is a beat inside the TTL,
+with the age of it and the `width=<n>` (and `window=<time>`) that beat carried;
+`down` is a hash that lapsed, with the age of the last beat and its clock time
+from the untimed key, or a friend who has never beaten, with nothing after it.
+`friend:<name>` is also the hash the sprint table's row loop writes, with no
+TTL, so presence is not the hash's existence but its TTL: a friend is up only
+while `friend:<name>` carries a live expiry, which only a beat gives it. The
+untimed key is not presence, and this verb reads no hand-written override. The
+roster is the store's `friends` SET, sorted, minus Glenn and Rowan; `--bus
+<dir>` (its `participants.json`), `--participants <file>` or
+`--friends <a,b,c>` names one instead, and there is no built-in list, because a
+copy of a roster is the thing that goes stale. A store that cannot be read, or
+an empty `friends` SET, is a refusal and exit 2, never an empty line: four
+friends reported down is a fact, and four friends not reported at all reads as
+good news.
 
 The password is never a flag, a file this tool opens or a word in its output.
 It reaches `beat` as `NOVA_REDIS_BENCH_PASSWORD` through
@@ -1248,8 +1252,9 @@ line each friend adds to their own window is in
 [docs/FRIEND-PRESENCE.md](FRIEND-PRESENCE.md).
 
 This is the measured half of `awake`: `awake` reads presence out of the bus
-checkout, which is a git commit per beat and lags by a fetch, and `presence`
-reads it out of the store, which is a `SET` per beat and lags by nothing. Both
+checkout, which is a git commit per cursor move and lags by a fetch, and
+`presence` reads it out of the store, which is one `MULTI` per beat and lags by
+nothing. Both
 report; neither decides. Issue #2610.
 
 ### First run

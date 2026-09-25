@@ -87,7 +87,7 @@ func TestIssue2282(t *testing.T) {
 			t.Errorf("freddy never beat: state %v; want Never", got)
 		}
 		line := presence.Line(sts, now)
-		for _, want := range []string{"johnny up 5s", "stella up 5s", "emma up 5s", "freddy none"} {
+		for _, want := range []string{"johnny up 5s", "stella up 5s", "emma up 5s", "freddy down"} {
 			if !strings.Contains(line, want) {
 				t.Errorf("presence line %q does not list %q", line, want)
 			}
@@ -124,7 +124,7 @@ func TestIssue2282(t *testing.T) {
 			t.Errorf("emma aged out without her last beat: dated=%v last=%v; want %v", sts[2].Dated, sts[2].Last, t0)
 		}
 		line := presence.Line(sts, now)
-		if strings.Contains(line, "emma up") || !strings.Contains(line, "emma AWAY") {
+		if strings.Contains(line, "emma up") || !strings.Contains(line, "emma down") {
 			t.Errorf("presence line %q still lists emma live after her ttl", line)
 		}
 

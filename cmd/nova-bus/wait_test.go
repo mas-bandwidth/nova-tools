@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -646,110 +647,40 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 	}
 }
 
-// THE BEAT IS WRITTEN EVERY TICK. A waiting line's cursor does not move -- there was
-// nothing to read -- so a line whose cursor never moves reads asleep to `nova-wake awake`.
-// The BEAT is the file that moves anyway: rewritten on every poll, one line, the newest
-// stamp and the cursor the line is standing at. The write is unbounded; what is bounded is
-// the push, tested next. Here --beat is far longer than the wait, so nothing is pushed and
-// the only trace is the working-tree file, rewritten down to its last tick.
-func TestWaitWritesBeatEachTick(t *testing.T) {
-	if testing.Short() {
-		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
-	}
+// THE BUS CARRIES NOTES, NEVER BEATS (#3144). Until 2026-09-24 a wait rewrote
+// from-<lane>/BEAT every tick and pushed it as `beat <name>` every --beat: 393 of 500 bus
+// commits on 2026-09-23. Presence is friend:<name> in Redis, written by `nova-wake beat`.
+// A wait given the old --beat and --beat-lease, over many polls and many whole beats, makes
+// no beat commit, writes no BEAT file, and says once that the flags are retired.
+func TestWaitNeverCommitsABeat(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
-	checkout, _ := busDir(t)
+	checkout, bare := busDir(t)
 	settled(t, checkout)
+	before := strings.TrimSpace(gitIn(t, bare, "rev-parse", "main"))
 
-	invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "1h")...).mustCode(t, 0)
+	r := invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "150ms", "--beat-lease", "10m")...).mustCode(t, 0)
 
-	// Rewritten, not appended: one line, an RFC 3339 UTC stamp, the cursor sha, and a
-	// lease until=<stamp>.
-	beat := strings.TrimSpace(read(t, checkout, "from-ada/BEAT"))
-	fields := strings.Fields(beat)
-	if len(fields) != 3 {
-		t.Fatalf("BEAT is %q, want one line <stamp> <cursor> until=<stamp>", beat)
+	polls, err := strconv.Atoi(field(t, r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):], "polls="))
+	if err != nil || polls < 2 {
+		t.Fatalf("polls=%d, want several so a beat had every chance to land:\n%s", polls, r.stdout)
 	}
-	if _, err := time.Parse(time.RFC3339Nano, fields[0]); err != nil {
-		t.Fatalf("BEAT stamp %q is not an RFC 3339 UTC stamp: %v", fields[0], err)
+	if n := strings.Count(r.stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored"); n != 1 {
+		t.Fatalf("the retirement note printed %d times, want once:\n%s", n, r.stderr)
 	}
-	cursor := strings.Fields(read(t, checkout, "from-ada/CURSOR"))
-	if len(cursor) == 0 || fields[1] != cursor[0] {
-		t.Fatalf("BEAT cursor %q does not match CURSOR %q", fields[1], read(t, checkout, "from-ada/CURSOR"))
-	}
-	if strings.Count(beat, "\n") != 0 {
-		t.Fatalf("BEAT is more than one line (rewritten, not appended):\n%q", beat)
-	}
-}
-
-// THE BEAT CARRIES A LEASE, and it is written on exit as well as on every tick. A wait
-// that returns hands the harness the note and then is done: between that return and the
-// next wait there is a gap where the manager process is alive but no beat is written, and
-// over a slow note the gap outruns --window and the line reads asleep to `nova-wake
-// awake`. So the exit beat extends until=now+--beat-lease out over that gap, and the
-// lease is what keeps a working manager cycle reading awake.
-func TestWaitWritesLeaseOnExit(t *testing.T) {
-	if testing.Short() {
-		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
-	}
-	t.Parallel()
-	hermetic(t)
-	checkout, _ := busDir(t)
-	settled(t, checkout)
-
-	invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "1h")...).mustCode(t, 0)
-
-	beat := strings.TrimSpace(read(t, checkout, "from-ada/BEAT"))
-	fields := strings.Fields(beat)
-	if len(fields) != 3 || !strings.HasPrefix(fields[2], "until=") {
-		t.Fatalf("BEAT is %q, want <stamp> <cursor> until=<stamp>", beat)
-	}
-	stamp, err := time.Parse(time.RFC3339Nano, fields[0])
-	if err != nil {
-		t.Fatalf("BEAT stamp %q is not an RFC 3339 UTC stamp: %v", fields[0], err)
-	}
-	until, err := time.Parse(time.RFC3339Nano, strings.TrimPrefix(fields[2], "until="))
-	if err != nil {
-		t.Fatalf("BEAT until %q is not an RFC 3339 UTC stamp: %v", fields[2], err)
-	}
-	if d := until.Sub(stamp); d != 10*time.Minute {
-		t.Fatalf("the exit beat's lease is %s, want the 10m default: %q", d, beat)
-	}
-}
-
-// THE PUSH IS BOUNDED. A beat push costs somebody's server, so only the push is gated at
-// --beat, never the write: over a wait whose --beat is far longer than --interval the BEAT
-// is written on every poll but pushed only when a whole beat has elapsed. Here the beat is
-// short enough that a push MUST happen, and the assertion is that pushes never outrun the
-// polls -- a beat pushed once per poll would be a poller, not a beat.
-func TestWaitBeatPushBounded(t *testing.T) {
-	if testing.Short() {
-		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
-	}
-	t.Parallel()
-	hermetic(t)
-	checkout, _ := busDir(t)
-	settled(t, checkout)
-
-	r := invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "150ms")...).mustCode(t, 0)
-
-	pollCount, err := strconv.Atoi(field(t, r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):], "polls="))
-	if err != nil || pollCount < 1 {
-		t.Fatalf("polls=%d, want at least 1:\n%s", pollCount, r.stdout)
-	}
-
-	log := gitIn(t, checkout, "log", "--format=%s", "main")
-	beats := 0
-	for _, line := range strings.Split(log, "\n") {
-		if strings.Contains(line, "beat ada") {
-			beats++
+	for _, where := range []string{checkout, bare} {
+		if log := gitIn(t, where, "log", "--format=%s", "main"); strings.Contains(log, "beat ada") {
+			t.Fatalf("a wait committed a beat in %s:\n%s", where, log)
 		}
 	}
-	if beats < 1 {
-		t.Fatalf("a wait with --beat 150ms pushed no beat commit:\n%s", log)
+	if after := strings.TrimSpace(gitIn(t, bare, "rev-parse", "main")); after != before {
+		t.Fatalf("the bus moved from %s to %s under a wait that found nothing", before, after)
 	}
-	if beats > pollCount {
-		t.Fatalf("pushed %d beat commits over %d polls; the push is bounded by --beat, not once per tick:\n%s", beats, pollCount, log)
+	if _, err := os.Stat(filepath.Join(checkout, "from-ada", "BEAT")); !os.IsNotExist(err) {
+		t.Fatalf("the wait wrote from-ada/BEAT: %v", err)
+	}
+	if out := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain", "--untracked-files=all")); out != "" {
+		t.Fatalf("the wait left the checkout dirty:\n%s", out)
 	}
 }
 

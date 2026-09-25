@@ -170,25 +170,92 @@ func (r *Redis) Close() error {
 	return r.rdb.Close()
 }
 
-// Set is SET key value [EX ttl]; a ttl of 0 writes no expiry.
-func (r *Redis) Set(ctx context.Context, key, value string, ttl time.Duration) error {
-	return r.rdb.Set(ctx, key, value, ttl).Err()
+// WriteBeat is one MULTI/EXEC: HSET key fields..., PEXPIRE key ttl, SET
+// lastKey stamp with no expiry. A friend:<name> left as a plain string by a
+// beat older than #2673 answers WRONGTYPE to the HSET; that key is this
+// writer's own, so it is deleted and the beat is written once more.
+func (r *Redis) WriteBeat(ctx context.Context, key string, fields []string, ttl time.Duration, lastKey, stamp string) error {
+	if len(fields) == 0 || len(fields)%2 != 0 {
+		return fmt.Errorf("beat fields must be field, value pairs")
+	}
+	write := func() error {
+		_, err := r.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			args := make([]interface{}, len(fields))
+			for i, f := range fields {
+				args[i] = f
+			}
+			p.HSet(ctx, key, args...)
+			p.PExpire(ctx, key, ttl)
+			p.Set(ctx, lastKey, stamp, 0)
+			return nil
+		})
+		return err
+	}
+	err := write()
+	if err != nil && strings.Contains(err.Error(), "WRONGTYPE") {
+		if derr := r.rdb.Del(ctx, key).Err(); derr != nil {
+			return derr
+		}
+		err = write()
+	}
+	return err
 }
 
-// MGet is one MGET over every key, absent keys coming back as "".
-func (r *Redis) MGet(ctx context.Context, keys ...string) ([]string, error) {
+// ReadBeats is one pipeline: per key HMGET key at width window, PTTL key and
+// GET key:last. An absent key or field answers "". A key that is not a hash
+// (a beat older than #2673) reads its TTL and no fields.
+func (r *Redis) ReadBeats(ctx context.Context, keys []string) ([]Reading, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
-	vals, err := r.rdb.MGet(ctx, keys...).Result()
-	if err != nil {
-		return nil, err
+	type cmds struct {
+		fields *redis.SliceCmd
+		ttl    *redis.DurationCmd
+		last   *redis.StringCmd
 	}
-	out := make([]string, len(vals))
-	for i, v := range vals {
-		if s, ok := v.(string); ok {
-			out[i] = s
+	cs := make([]cmds, len(keys))
+	p := r.rdb.Pipeline()
+	for i, k := range keys {
+		cs[i] = cmds{
+			fields: p.HMGet(ctx, k, FieldAt, FieldWidth, FieldWindow),
+			ttl:    p.PTTL(ctx, k),
+			last:   p.Get(ctx, k+LastSuffix),
+		}
+	}
+	// Exec answers the first failed command's error; each command is read
+	// on its own below, where a missing :last (redis.Nil) and a legacy
+	// string key (WRONGTYPE) are readings, not failures.
+	_, _ = p.Exec(ctx)
+	out := make([]Reading, len(keys))
+	for i, c := range cs {
+		d, err := c.ttl.Result()
+		if err != nil {
+			return nil, err
+		}
+		out[i].Live = d > 0
+		if vals, err := c.fields.Result(); err == nil {
+			str := func(j int) string {
+				if j < len(vals) {
+					if s, ok := vals[j].(string); ok {
+						return s
+					}
+				}
+				return ""
+			}
+			out[i].At, out[i].Width, out[i].Window = str(0), str(1), str(2)
+		} else if !strings.Contains(err.Error(), "WRONGTYPE") {
+			return nil, err
+		}
+		if v, err := c.last.Result(); err == nil {
+			out[i].Last = v
+		} else if !errors.Is(err, redis.Nil) && !strings.Contains(err.Error(), "WRONGTYPE") {
+			return nil, err
 		}
 	}
 	return out, nil
+}
+
+// Members is SMEMBERS set.
+func (r *Redis) Members(ctx context.Context, set string) ([]string, error) {
+	return r.rdb.SMembers(ctx, set).Result()
 }

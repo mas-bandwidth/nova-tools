@@ -3210,21 +3210,28 @@ nova-wake beat --as <name> --store <host:port> [--every 30s] [--ttl 90s]
         [--window <time>] [--width <n>]
 ```
 
-which every `--every` writes `friend:<name>` = the current time in RFC3339 UTC
-with `EX <ttl>`, and `friend:<name>:last` = the same stamp with no expiry. It
+which every `--every` writes, in one `MULTI`, the hash `friend:<name>` with field
+`at` = the current time in RFC3339 UTC and `PEXPIRE <ttl>`, and
+`friend:<name>:last` = the same stamp with no expiry (#2673). It
 reads nothing, watches nothing, and starts no turn: **a heartbeat that spends a
 token is a heartbeat somebody turns off**, which is why this is not a source of
 `watch` and never wakes anybody. `--once` writes one beat and returns, for a
 check or a test.
 
-**Two more keys, and only when the caller passes them.** `--window <time>`
-writes `friend:<name>:window` = that time, the cap's reset, and `--width <n>`
-writes `friend:<name>:width` = how many children are in use now. Both take the
-beat's TTL. The time is the caller's: the beat does not read a clock to invent
-a reset. A missing flag writes no key and does not fail the beat. Zero children
-is a real `--width` and is written. `presence` prints `window=<time>` and
-`width=<n>` on that friend's phrase when the keys are there, and prints neither
-when they are not.
+**Two more fields, and only when the caller passes them.** `--window <time>`
+writes the field `window` = that time, the cap's reset, and `--width <n>`
+writes the field `width` = how many children are in use now, both in the same
+hash and so under the beat's TTL. The time is the caller's: the beat does not
+read a clock to invent a reset. A missing flag writes no field and does not
+fail the beat. Zero children is a real `--width` and is written; a friend whose
+width changes re-runs `beat` with the new number. `presence` prints
+`window=<time>` and `width=<n>` on an up friend's phrase when the fields are
+there, and prints neither when they are not.
+
+**Presence is Redis only** (#3144). The git message bus carries notes and never
+beats: `nova-bus wait` writes no `from-<name>/BEAT` and makes no `beat <name>`
+commit (79% of bus commits on 2026-09-23 were beats), and its `--beat` and
+`--beat-lease` flags are accepted and ignored with one `WAIT NOTE`.
 
 **The ending is the signal.** A window that exits, runs out of credit, is
 killed or loses its machine stops writing, and the key lapses inside the TTL.
@@ -3239,28 +3246,32 @@ hour. `friend:<name>:last` carries no TTL and survives the expiry, so the line
 can date the silence.
 
 ```
-nova-wake presence --store <host:port> (--bus <dir> | --participants <file> | --friends <a,b,c>)
-friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · freddy none
+nova-wake presence --store <host:port> [--bus <dir> | --participants <file> | --friends <a,b,c>]
+friends: emma down 1h12m (last 09:41Z) · freddy down · johnny up 12s width=8 · stella up 4s
 ```
 
-One MGET over every friend's keys, whatever the roster's length. `up` is
-a beat inside the TTL with its age; `AWAY` is the key lapsed, with the age and
-clock time of the last beat; `none` is a friend who has never beaten. **The key's
-existence is the presence and its value only dates it**: a value this build
-cannot parse reads `up` with no age rather than away, because a friend running
-an older beat is still here.
+One pipeline over every friend's hash (`HMGET at width window`, `PTTL`, and
+`GET` of `:last`), whatever the roster's length. A friend is `up` or `down`
+and nothing else. `up` is a beat inside the TTL with its age and the width it
+carried; `down` is the hash lapsed, with the age and clock time of the last
+beat, or a friend who has never beaten, with nothing after it. **The hash's
+live TTL is the presence and its `at` only dates it**: a value this build
+cannot parse reads `up` with no age rather than down.
 
-**A friend is present only while that beat key is alive** (#2675). `friend:<name>`
-with its TTL is the only evidence. A missing key is absent — `none` when the
-friend has never beaten, `AWAY` when only `friend:<name>:last` remains to date
-the silence — and a live key is present (`up`). The untimed key does not make
-them present, and nothing here reads a hand-written presence override. A friend
-who declines instrumentation is absent for exactly that reason: no beat key.
+**A friend is present only while that beat is alive** (#2675). `friend:<name>`
+is also the hash the sprint table's row loop writes with no TTL, so the evidence
+is the TTL a beat gives the hash (`PTTL` > 0), not the hash's existence. A
+missing or untimed hash is absent — `down`, dated when `friend:<name>:last`
+remains — and a hash under a live beat TTL is present (`up`). The untimed key
+does not make them present, and nothing here reads a hand-written presence
+override. A friend who declines instrumentation is absent for exactly that
+reason: no beat.
 
-**The roster is the bus's, never a copy.** `--bus <dir>` reads its
-`participants.json`, minus Glenn and Rowan; `--participants` names that file and
-`--friends` names them by hand. There is no built-in list, because the copy is
-what goes stale.
+**The roster is the store's `friends` SET, never a copy.** One `SMEMBERS
+friends`, sorted, minus Glenn and Rowan; no scan of `friend:*`. `--bus <dir>`
+(its `participants.json`), `--participants` (that file) or `--friends` (by
+hand) names one instead. There is no built-in list, because the copy is what
+goes stale. An empty `friends` SET is a refusal, not an empty line.
 
 **A store that cannot be read is a refusal, not an empty room.** `presence`
 exits 2 with one line on stderr and prints no `friends:` line at all: four
