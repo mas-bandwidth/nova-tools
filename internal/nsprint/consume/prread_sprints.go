@@ -20,13 +20,15 @@ import (
 // again and runs one PRRead.OnceN for each: the sprint's lease:route:<S>,
 // its group joined on first sight (PRRead.join, from 0, one PRREAD JOINED
 // line), then one pass. A sprint whose lease another router holds is served
-// by that router and skipped.
+// by that router and skipped. With Hold set, each sprint's hold-to-fix pass
+// (HoldRoute) runs under the same lease after its pr-to-read pass (#3799).
 type PRReadSprints struct {
 	Store    *store.Store
 	Instance string // lease instance and stream consumer for every sprint
 	Actor    string
 	Remote   Remote
 	Out      io.Writer
+	Hold     bool
 
 	reads map[string]*PRRead
 }
@@ -78,6 +80,9 @@ func (a *PRReadSprints) Pass(ctx context.Context) (int, error) {
 		if r == nil {
 			r = &PRRead{Store: a.Store, Sprint: s, Consumer: a.Instance, Instance: a.Instance,
 				Actor: a.Actor, Remote: a.Remote, Out: a.Out}
+			if a.Hold {
+				r.Hold = &HoldRoute{Store: a.Store, Sprint: s, Consumer: a.Instance, Actor: a.Actor, Out: a.Out, Block: -1}
+			}
 			a.reads[s] = r
 		}
 		got, err := r.OnceN(ctx)

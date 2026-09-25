@@ -13,8 +13,10 @@
 //
 // pr-to-read passes every open sprint's log too (prReadDuty), each under its
 // own lease:route:<S>, joining a sprint opened after the reconciler started
-// on the next pass. hold-to-fix (#3092) is not built on dev: its verb
-// refuses and names the issue, and `consume list` says so.
+// on the next pass. hold-to-fix (#3092, #3799) runs in the same pass under
+// the same lease:route:<S>, after pr-to-read, once s:<S>:policy has fix_to
+// and release_reader; `consume hold-to-fix once --sprint <S>` is one pass by
+// hand.
 package main
 
 import (
@@ -44,12 +46,6 @@ const (
 	groupHoldToFix = "hold-to-fix"
 )
 
-// consumeNotBuilt names each consumer whose handler is not on dev yet and the
-// issue that builds it.
-var consumeNotBuilt = map[string]string{
-	groupHoldToFix: "#3092",
-}
-
 // consumePRReadRemote is the remote seam for pr-to-read, swapped in tests.
 var consumePRReadRemote consume.Remote = consume.GitRemote
 
@@ -67,7 +63,7 @@ var consumeHarvestSeams = func() (harvest.Forge, harvest.Pusher) {
 func init() {
 	register(Verb{
 		Name:    "consume",
-		Summary: "run one consumer (ok-to-friend, harvest, pr-to-read; hold-to-fix once #3092 lands): consume <group> once|run --redis <addr>, or consume list",
+		Summary: "run one consumer (ok-to-friend, harvest, pr-to-read, hold-to-fix): consume <group> once|run --redis <addr>, or consume list",
 		Run:     runConsume,
 	})
 	registerReconcileDuty(consume.GroupOkFriend, func(st *store.Store) (reconcileDuty, error) {
@@ -98,15 +94,10 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(out, "%s duty=reconcile verb=consume proc=proc:%s\n", consume.GroupOkFriend, consume.GroupOkFriend)
 		fmt.Fprintf(out, "%s duty=reconcile verb=consume proc=proc:harvest:<bench>\n", groupHarvest)
 		fmt.Fprintf(out, "%s duty=reconcile,route verb=consume-once proc=proc:%s\n", groupPRToRead, groupPRToRead)
-		for _, g := range []string{groupHoldToFix} {
-			fmt.Fprintf(out, "%s not-built=%s\n", g, consumeNotBuilt[g])
-		}
+		fmt.Fprintf(out, "%s duty=reconcile,route verb=consume-once proc=proc:%s needs=fix_to,release_reader\n", groupHoldToFix, groupHoldToFix)
 		return 0
 	}
-	if issue, ok := consumeNotBuilt[group]; ok {
-		return refuse(errOut, "consume", fmt.Sprintf("%s is not built on dev (its handler is %s); nothing runs under this name yet", group, issue))
-	}
-	if group != consume.GroupOkFriend && group != groupHarvest && group != groupPRToRead {
+	if group != consume.GroupOkFriend && group != groupHarvest && group != groupPRToRead && group != groupHoldToFix {
 		return refuse(errOut, "consume", "unknown group "+group+"; want ok-to-friend, harvest, pr-to-read or hold-to-fix")
 	}
 	if len(args) < 2 || (args[1] != "once" && args[1] != "run") {
@@ -130,12 +121,12 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if *every <= 0 {
 		return refuse(errOut, "consume "+group, "--every must be above zero")
 	}
-	if group == groupPRToRead {
+	if group == groupPRToRead || group == groupHoldToFix {
 		if *sprint == "" {
 			return refuse(errOut, "consume "+group, "--sprint is required")
 		}
 		if mode == "run" {
-			return refuse(errOut, "consume "+group+" run", "pr-to-read runs under nova-sprint route --sprint <S>; consume pr-to-read takes once")
+			return refuse(errOut, "consume "+group+" run", group+" runs under nova-sprint route --sprint <S>; consume "+group+" takes once")
 		}
 	}
 	if *consumer == "" {
@@ -170,6 +161,21 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 			return 1
 		}
 		fmt.Fprintf(out, "CONSUMED pr-to-read sprint=%s\n", *sprint)
+		return 0
+	}
+	if group == groupHoldToFix {
+		h := &consume.HoldRoute{Store: st, Sprint: *sprint, Actor: *actor, Out: out}
+		n, err := h.Once(ctx)
+		var held *consume.LeaseHeldError
+		switch {
+		case errors.As(err, &held):
+			fmt.Fprintf(errOut, "REFUSED hold-to-fix sprint=%s %s held by %s at %s\n", *sprint, consume.LeaseKey(*sprint), held.Holder, held.At)
+			return 1
+		case err != nil:
+			fmt.Fprintf(errOut, "nova-sprint consume %s: %v\n", group, err)
+			return 1
+		}
+		fmt.Fprintf(out, "CONSUMED hold-to-fix sprint=%s n=%d\n", *sprint, n)
 		return 0
 	}
 
@@ -375,10 +381,11 @@ func (d *okFriendDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.C
 	return counts, nil
 }
 
-// prReadDuty is pr-to-read as a reconcile duty: every pass, every open
-// sprint in `sprints` (read again each pass, so a sprint opened after the
-// reconciler started is joined on the next pass) gets one pr-to-read pass
-// under its own lease:route:<S> (consume.PRReadSprints), as consumer
+// prReadDuty is pr-to-read and hold-to-fix as a reconcile duty: every pass,
+// every open sprint in `sprints` (read again each pass, so a sprint opened
+// after the reconciler started is joined on the next pass) gets one
+// pr-to-read pass and then one hold-to-fix pass (#3799) under its own
+// lease:route:<S> (consume.PRReadSprints with Hold), as consumer
 // reconciler-<instance>. A sprint a `nova-sprint route --sprint <S>` process
 // serves is held by it and skipped. The passes run off the reconciler's
 // goroutine, one at a time, since a pass may run git ls-remote; Run reports
@@ -414,7 +421,7 @@ func (d *prReadDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Cou
 	instance := "reconciler-" + l.Instance()
 	if d.all == nil || d.all.Instance != instance {
 		d.all = &consume.PRReadSprints{Store: d.st, Instance: instance, Actor: "reconciler",
-			Remote: consumePRReadRemote, Out: d.out}
+			Remote: consumePRReadRemote, Out: d.out, Hold: true}
 	}
 	all, wctx := d.all, d.ctx
 	d.busy = true

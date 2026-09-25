@@ -56,9 +56,9 @@ type Handler interface {
 // #3040: runner rows into ci:<repo>:<head>:<gid>, adoption of no-card PRs).
 type PRToRead interface{ Handler }
 
-// HoldToFix is the hold-to-fix rule (#2756 4.5; nova-tools #3092):
-// a typed HOLD at head becomes one fix task per dedup key. Not built yet;
-// the controls run a fake.
+// HoldToFix is the hold-to-fix rule (#2756 4.5; nova-tools #3092): a typed
+// HOLD at head becomes one fix task per dedup key. HoldRoute (hold.go) is the
+// built rule (#3799).
 type HoldToFix interface{ Handler }
 
 // RouteRule is one named rule of the router.

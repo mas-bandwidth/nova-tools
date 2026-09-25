@@ -11,9 +11,11 @@ package main
 //
 // Rules wired: ok-to-friend (#2933), report-to-read (#3036) and pr-to-read
 // (#2941 heads and reads, joined with #3040 runner rows and no-card PR
-// adoption from ev:github, each adoption cutting its ci card). Not wired yet, each one line here when its handler lands: the
-// 3.3 classification (#3076, consume.Classifier is already a consume.Handler)
-// and hold-to-fix (#3092, consume.HoldToFix).
+// adoption from ev:github, each adoption cutting its ci card) and hold-to-fix
+// (#3092 hold router, consume.HoldRoute, #3799; it routes once s:<S>:policy
+// has fix_to and release_reader). Not wired yet, one line here when its
+// handler lands: the 3.3 classification (#3076, consume.Classifier is already
+// a consume.Handler).
 //
 // Exit 0 stopped cleanly (SIGINT or SIGTERM; the lease is released), 1
 // REFUSED (another instance holds lease:route:<S>), 2 could not run or a
@@ -36,12 +38,12 @@ import (
 // routeNotWired names the rules the router does not run yet and the issue
 // that brings each; the start line prints them so a reader never assumes a
 // rule is running.
-const routeNotWired = "classify(#3076),hold-to-fix(#3092)"
+const routeNotWired = "classify(#3076)"
 
 func init() {
 	register(Verb{
 		Name:    "route",
-		Summary: "run ok-to-friend, report-to-read, pr-to-read (and, once built, classify, hold-to-fix) for one sprint in one process under lease:route:<S>; a second instance exits 1 REFUSED; route report --sprint <S> prints per-model ok/crash/refused/wall/fail/open and mean wall from the sprint's cards",
+		Summary: "run ok-to-friend, report-to-read, pr-to-read, hold-to-fix (and, once built, classify) for one sprint in one process under lease:route:<S>; a second instance exits 1 REFUSED; route report --sprint <S> prints per-model ok/crash/refused/wall/fail/open and mean wall from the sprint's cards",
 		Run:     runRoute,
 	})
 }
@@ -80,9 +82,10 @@ func runRoute(ctx context.Context, args []string, out, errOut io.Writer) int {
 	read := &consume.PRRead{Store: st, Sprint: *sprint, Consumer: instance, Instance: instance, Actor: *actor, Remote: consumePRReadRemote}
 	runner := routePRToRead(st, *sprint, instance, *actor, out)
 	pr := consume.JoinPRToRead(read, runner)
+	hold := &consume.HoldRoute{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor, Out: out}
 	router := &consume.Router{
 		Store: st, Sprint: *sprint, Instance: instance, Host: host,
-		Rules: consume.Rules(ok, report, nil, pr, nil),
+		Rules: consume.Rules(ok, report, nil, pr, hold),
 	}
 	fmt.Fprintf(out, "ROUTE sprint=%s instance=%s lease=%s rules=%s not-wired=%s\n",
 		*sprint, instance, consume.LeaseKey(*sprint), strings.Join(router.Names(), ","), routeNotWired)
