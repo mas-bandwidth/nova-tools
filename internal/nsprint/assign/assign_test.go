@@ -281,11 +281,13 @@ func TestAssignDedupOnFullHead(t *testing.T) {
 	if !ok {
 		t.Fatal("stella take refused")
 	}
-	done, err := task.Done(ctx, st, task.DoneRequest{Sprint: asSprint, ID: "read-1", Token: claim.Token,
-		Evidence: "HOLD 8 at head", Verdict: "HOLD", Score: "8", Head: asHead(1), Actor: "stella"})
+	// #3897: a read of a PR closes through its line on the PR record.
+	must(t, client.HSet(ctx, "pr:"+asRepo+":1", "head", asHead(1), "base", "dev").Err())
+	done, err := task.ReadDone(ctx, st, task.ReadDoneRequest{Sprint: asSprint, ID: "read-1", Token: claim.Token,
+		Evidence: "HOLD 8 at head", Line: "HOLD who=stella head=" + asHead(1) + " score=8/10", Actor: "stella"})
 	must(t, err)
-	if done != task.DoneClosed {
-		t.Fatalf("done: %s", done)
+	if done.Status != task.DoneClosed {
+		t.Fatalf("done: %+v", done)
 	}
 	// kim posted a typed line at PR 2's head without a task.
 	must(t, client.HSet(ctx, "s:"+asSprint+":disp:"+asRepo+":2", "kim@"+asHead(2), "APPROVE 9 by lane record").Err())

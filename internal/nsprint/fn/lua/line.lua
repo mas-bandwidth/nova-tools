@@ -170,5 +170,7 @@ do
   end
 
   redis.register_function('ns_line_post', line_post)
+  -- task_read_done.lua stores a read's line and closes its card in one call.
+  NS.line = { post = line_post }
   redis.register_function{ function_name = 'ns_line_list', callback = line_list, flags = { 'no-writes' } }
 end

@@ -202,6 +202,10 @@ func TestServeFakeDispatchScoreLineClosesTask(t *testing.T) {
 	if err := client.HSet(ctx, "s:s1:pr:nova-tools:7", "head", serveHead).Err(); err != nil {
 		t.Fatal(err)
 	}
+	// #3897: the read closes through its line on the PR record.
+	if err := client.HSet(ctx, "pr:nova-tools:7", "head", serveHead, "base", "dev").Err(); err != nil {
+		t.Fatal(err)
+	}
 	if got, err := task.Push(ctx, st, task.PushRequest{
 		Sprint: "s1", ID: "r1", Kind: task.KindRead, Title: "read nova-tools#7",
 		Effects: task.EffectsNone, PayloadSHA: "r1", To: "emma",
@@ -222,6 +226,9 @@ func TestServeFakeDispatchScoreLineClosesTask(t *testing.T) {
 	}
 	if !strings.HasPrefix(h["evidence"], "SCORE who=emma head="+serveHead) {
 		t.Fatalf("evidence %q is not the child's SCORE line", h["evidence"])
+	}
+	if n := client.LLen(ctx, "pr:nova-tools:7:lines").Val(); n != 1 {
+		t.Fatalf("%d lines on pr:nova-tools:7, want the read's one", n)
 	}
 	if n := client.ZCard(ctx, "friend:emma:starting").Val() + client.ZCard(ctx, "friend:emma:living").Val(); n != 0 {
 		t.Fatalf("%d leases left after the close", n)

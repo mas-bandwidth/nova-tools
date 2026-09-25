@@ -760,6 +760,16 @@ func (s *Server) close(ctx context.Context, c *child) {
 		s.endCard(ctx, c.claim.ID, rc, reason, line, output)
 		return
 	}
+	if rc == 0 && line != "" && c.kind == "read" && c.head != "" {
+		// nova-tools #3897: a PR read is done only by its line, stored with
+		// the close in one call; a line the store refuses closes blocked.
+		why, ok := s.readDone(ctx, c.claim, line)
+		if ok {
+			return
+		}
+		s.closeBlocked(ctx, c.claim, c.kind, c.head, reason+"; wrote "+line+"; refused "+why)
+		return
+	}
 	if rc == 0 && line != "" {
 		verdict, score := "", ""
 		if isReview(c.kind) {
@@ -808,6 +818,25 @@ func (s *Server) done(ctx context.Context, c task.Claim, kind, head, evidence, v
 		detail += " why=" + res.Why
 	}
 	s.receipt(ctx, "done", &c, detail+" evidence="+evidence)
+}
+
+// readDone closes a PR read through its typed line (task.ReadDone): ok when
+// the card closed, else the refusal.
+func (s *Server) readDone(ctx context.Context, c task.Claim, line string) (string, bool) {
+	res, err := task.ReadDone(ctx, s.st, task.ReadDoneRequest{Sprint: c.Sprint, ID: c.ID, Token: c.Token, Actor: s.cfg.Actor, Line: line})
+	if err != nil {
+		s.receipt(ctx, "done", &c, "error="+oneLine(err.Error()))
+		return oneLine(err.Error()), false
+	}
+	detail := "status=" + string(res.Status)
+	if res.Why != "" {
+		detail += " why=" + oneLine(res.Why)
+	}
+	s.receipt(ctx, "done", &c, detail+" evidence="+line)
+	if res.Status != task.DoneClosed && res.Status != task.DoneRepeat {
+		return string(res.Status) + " " + oneLine(res.Why), false
+	}
+	return "", true
 }
 
 // receipt appends one entry to friend:<f>:log and prints its line.
