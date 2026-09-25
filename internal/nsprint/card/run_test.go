@@ -226,6 +226,19 @@ func TestCardRunEachProviderGetsItsOwnKey(t *testing.T) {
 					t.Fatalf("runner argv lacks %q:\n%s", want, argv)
 				}
 			}
+			// #3151: an OpenRouter card hands native its route's pinned provider; no other does.
+			pinPath := filepath.Join(f.cfg.JobDir, card.PinConfigName)
+			if provider == "openrouter" {
+				if !strings.Contains(argv, "--config\n"+pinPath+"\n") {
+					t.Fatalf("openrouter runner argv lacks --config %s:\n%s", pinPath, argv)
+				}
+				pinned, err := os.ReadFile(pinPath)
+				if err != nil || !strings.Contains(string(pinned), `"allow_fallbacks": false`) {
+					t.Fatalf("pin config %s: %v %q", pinPath, err, pinned)
+				}
+			} else if strings.Contains(argv, "--config\n") {
+				t.Fatalf("%s runner argv carries --config:\n%s", provider, argv)
+			}
 			log := f.harnessLog()
 			start := fmt.Sprintf("START %s/%s/1 bench=testbench tier=flash route=%s model=%s key=%s sha=%s", f.sprint, f.label, rep.Route, rep.Model, key, f.sha[:12])
 			if !strings.Contains(log, start) || !strings.Contains(log, "END native rc=0 wall_s=") {

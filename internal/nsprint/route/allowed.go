@@ -65,6 +65,9 @@ type Row struct {
 	// rung. Both empty is a route with no preamble.
 	Faults     []string
 	FaultsFrom string
+	// Pin is the one upstream provider an OpenRouter route's requests are
+	// pinned to with fallbacks off (#3151, pin.go); "" off OpenRouter.
+	Pin string
 }
 
 // TypeRow widens one rung for one work type by held routes.
@@ -407,7 +410,7 @@ func (t *Table) addRow(it map[string]string) error {
 		}
 		var err error
 		switch key {
-		case "route", "rung", "model", "via", "state", "flag", "why":
+		case "route", "rung", "model", "via", "state", "flag", "why", "pin":
 			var s string
 			if s, err = scalar(raw); err != nil {
 				break
@@ -427,6 +430,8 @@ func (t *Table) addRow(it map[string]string) error {
 				r.Flag = s
 			case "why":
 				r.Why = s
+			case "pin":
+				r.Pin = s
 			}
 		case "faults":
 			r.Faults, err = parseFaults(raw)
@@ -497,6 +502,9 @@ func (t *Table) addRow(it map[string]string) error {
 		return fmt.Errorf("route %s: faults and faults_from go together", r.Route)
 	case r.FaultsFrom != "" && r.FaultsFrom != FromModel && r.FaultsFrom != FromRung:
 		return fmt.Errorf("route %s: faults_from %q, want model or rung", r.Route, r.FaultsFrom)
+	}
+	if err := checkPin(r); err != nil {
+		return err
 	}
 	switch have {
 	case 0:

@@ -270,6 +270,7 @@ func TestAllowedRoutesOverrideNeverAdmitsABenchedRoute(t *testing.T) {
     rung: pro
     model: m/a
     via: openrouter
+    pin: alibaba
     state: allowed
     run: 20
     scored: 10
@@ -285,6 +286,7 @@ func TestAllowedRoutesOverrideNeverAdmitsABenchedRoute(t *testing.T) {
     rung: pro
     model: m/b
     via: openrouter
+    pin: alibaba
     state: held
     flag: benched
     why: "ROUTE-BENCHED"
