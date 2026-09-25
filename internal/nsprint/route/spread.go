@@ -3,6 +3,7 @@ package route
 import (
 	"fmt"
 	"hash/fnv"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 )
@@ -14,12 +15,19 @@ const ViaDatacenter = "datacenter"
 // SpreadRow is one provider of one tier in the swarm's per-card spread (Glenn
 // 2026-09-24 7:10 PM ET: distribute across all four providers). Routes[0] is
 // the route a card picked for this provider runs on; the rest are documented
-// alternates, best first, that the pick never uses.
+// alternates, best first, that the pick never uses. Share is how many of the
+// tier's pick slots the row owns (default 1, at most MaxShare): #3949 gave
+// kimi-k3's former third of the pro cards to qwen3.6-plus as opencode share 2.
 type SpreadRow struct {
 	Tier, Provider, Via string
+	Share               int
 	Routes              []string
 	Why                 string
 }
+
+// MaxShare caps one spread row's share, so a typo cannot hand one provider
+// the whole tier.
+const MaxShare = 8
 
 // Spread returns the spread rows of one tier in file order, the order Pick
 // indexes them.
@@ -56,7 +64,9 @@ func SpreadIndex(label string, n int) int {
 }
 
 // Pick returns the route a card of this tier and label runs on: the first
-// route of the spread row SpreadIndex picks, and that row.
+// route of the spread row that owns slot SpreadIndex(label, sum of shares),
+// the rows owning consecutive slots in file order, and that row. With every
+// share 1 the slot is the row index.
 func (t *Table) Pick(tier, label string) (Row, SpreadRow, error) {
 	if label == "" {
 		return Row{}, SpreadRow{}, fmt.Errorf("an empty card label picks no provider")
@@ -65,16 +75,26 @@ func (t *Table) Pick(tier, label string) (Row, SpreadRow, error) {
 	if len(rows) == 0 {
 		return Row{}, SpreadRow{}, fmt.Errorf("tier %s has no spread rows; the tiers are %s", field(tier), strings.Join(t.SpreadTiers(), " and "))
 	}
-	s := rows[SpreadIndex(label, len(rows))]
-	return t.rows[t.byRoute[s.Routes[0]]], s, nil
+	total := 0
+	for _, s := range rows {
+		total += s.Share
+	}
+	slot := SpreadIndex(label, total)
+	for _, s := range rows {
+		if slot < s.Share {
+			return t.rows[t.byRoute[s.Routes[0]]], s, nil
+		}
+		slot -= s.Share
+	}
+	return Row{}, SpreadRow{}, fmt.Errorf("tier %s: slot past the shares (unreachable)", field(tier))
 }
 
-// RenderSpread prints the spread: one line per tier and provider with the
-// picked route, its launch string and state, then the alternates.
+// RenderSpread prints the spread: one line per tier and provider with its
+// share, the picked route, its launch string and state, then the alternates.
 func (t *Table) RenderSpread() string {
 	var b strings.Builder
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "tier\tindex\tprovider\troute\tlaunch\tstate\talternates")
+	fmt.Fprintln(tw, "tier\tindex\tprovider\tshare\troute\tlaunch\tstate\talternates")
 	for _, tier := range t.SpreadTiers() {
 		for i, s := range t.Spread(tier) {
 			r := t.rows[t.byRoute[s.Routes[0]]]
@@ -82,7 +102,7 @@ func (t *Table) RenderSpread() string {
 			if len(s.Routes) > 1 {
 				alt = strings.Join(s.Routes[1:], " ")
 			}
-			fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%s\t%s\n", s.Tier, i, s.Provider, r.Route, r.Launch(), r.State, alt)
+			fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\t%s\t%s\t%s\n", s.Tier, i, s.Provider, s.Share, r.Route, r.Launch(), r.State, alt)
 		}
 	}
 	_ = tw.Flush()
@@ -90,7 +110,7 @@ func (t *Table) RenderSpread() string {
 }
 
 func (t *Table) addSpread(it map[string]string) error {
-	var s SpreadRow
+	s := SpreadRow{Share: 1}
 	for key, raw := range it {
 		if key == "\x00section" {
 			continue
@@ -111,6 +131,16 @@ func (t *Table) addSpread(it map[string]string) error {
 			case "why":
 				s.Why = v
 			}
+		case "share":
+			v, err := scalar(raw)
+			if err != nil {
+				return err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 || n > MaxShare {
+				return fmt.Errorf("spread share %q wants a whole number 1..%d", v, MaxShare)
+			}
+			s.Share = n
 		case "routes":
 			if !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
 				return fmt.Errorf("spread routes wants a [flow, list] of routes")

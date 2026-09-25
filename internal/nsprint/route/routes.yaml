@@ -550,12 +550,18 @@ overrides:
 # spread: the swarm's per-card provider spread (Glenn 2026-09-24 7:10 PM ET:
 # "distribute across all routers ... By distributing across 4 providers, we
 # will work better at load"). One row per tier and provider, in the order the
-# pick indexes them: a card of tier T runs on provider
-# fnv32a(card label) mod (the tier's row count), and on that row's FIRST
-# route; the rest of the list are the documented alternates, best first, not
-# used by the pick. Deterministic and stateless: a retried card lands on the
-# same provider. Mercury is flash only; DeepSeek direct serves both tiers; the
-# opencode and openrouter rows carry non-DeepSeek models, for fairness.
+# pick indexes them: a card of tier T takes slot fnv32a(card label) mod (the
+# sum of the tier's shares); the rows own consecutive slots in file order, a
+# row owning share of them (default 1), and the card runs on the owning row's
+# FIRST route; the rest of the list are the documented alternates, best
+# first, not used by the pick. Deterministic and stateless: a retried card
+# lands on the same provider. Mercury is flash only; DeepSeek direct serves
+# both tiers; the opencode and openrouter rows carry non-DeepSeek models, for
+# fairness. OpenRouter is flash only since #3949: kimi-k3 (orkimi3) crashed
+# 14 of 14 pro cards in swarm-0925a (NATIVE INCOMPLETE after ~400 s, no
+# RESULT.md), and its share went to qwen3.6-plus (ocqwenplus, 17 ok of 19).
+# The remaining OpenRouter pro routes (ormimopro, orglm53) are held with no
+# swarm measurement; one re-enters here only by a measured A/B.
 # A spread row may name a held route (Glenn chose the providers; the rule above
 # still governs every row's state and the rung lists) but never a dropped or
 # dead one, and its via must be the route's via. Parse refuses anything else,
@@ -567,7 +573,7 @@ spread:
     provider: deepseek
     via: deepseek
     routes: [dsflash]
-    why: "DeepSeek direct; not yet measured on this route"
+    why: "DeepSeek direct; swarm-0925a: 4 ok, 0 crash"
   - tier: flash
     provider: opencode
     via: opencode
@@ -587,14 +593,10 @@ spread:
     provider: deepseek
     via: deepseek
     routes: [dspro]
-    why: "DeepSeek direct; not yet measured on this route"
+    why: "DeepSeek direct; swarm-0925a: 8 ok, 9 crash of 17 (kept at one share pending the next route report)"
   - tier: pro
     provider: opencode
     via: opencode
+    share: 2
     routes: [ocqwenplus, ocminimax]
-    why: "the two allowed pro routes, both opencode and not DeepSeek"
-  - tier: pro
-    provider: openrouter
-    via: openrouter
-    routes: [orkimi3, ormimopro, orglm53]
-    why: "pro A/B on OpenRouter after mimo went dead; measured per useful card (#3742): kimi-k3 8 of 12 scored at 8+, held only on cost; alternates held by efficiency, lower is better: 0.98, 10.80"
+    why: "the two allowed pro routes, both opencode and not DeepSeek; share 2 is kimi-k3's former third (#3949): qwen3.6-plus 17 ok and 2 crash of 19 in swarm-0925a, the best measured pro"
