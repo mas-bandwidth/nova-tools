@@ -100,6 +100,8 @@ type AcquireOptions struct {
 	// RenewAfter is the coalescing window of Renew; zero is
 	// DefaultRenewAfter. It is capped at TTL/12.
 	RenewAfter time.Duration
+	// RenewSeam, when set, is injected into Lease.RenewSeam (#3838).
+	RenewSeam func(ctx context.Context) error
 }
 
 // Clock is the lease's local clock. The lease deadline is the local time a
@@ -126,6 +128,10 @@ type Lease struct {
 
 	renewAfter time.Duration
 	every      time.Duration // heartbeat interval; zero when there is none
+
+	// RenewSeam, when set, is called by Renew instead of the Redis call; a
+	// test injects a failure here to test a missed renewal (#3838).
+	RenewSeam func(ctx context.Context) error
 
 	mu      sync.Mutex
 	renewed time.Time // local time the last successful renewal was sent
@@ -169,7 +175,7 @@ func Acquire(ctx context.Context, st *store.Store, opt AcquireOptions) (*Lease, 
 	switch {
 	case len(reply) >= 2 && reply[0] == "ACQUIRED":
 		l := &Lease{st: st, instance: instance, host: opt.Host, token: reply[1], ttl: ttl, clock: clock, renewed: sent,
-			renewAfter: opt.RenewAfter, fenced: make(chan struct{}), stop: make(chan struct{}), beat: make(chan struct{})}
+			renewAfter: opt.RenewAfter, RenewSeam: opt.RenewSeam, fenced: make(chan struct{}), stop: make(chan struct{}), beat: make(chan struct{})}
 		if l.renewAfter <= 0 {
 			l.renewAfter = DefaultRenewAfter
 		}
@@ -239,6 +245,16 @@ func (l *Lease) Renew(ctx context.Context) error {
 		return nil
 	}
 	sent := l.now()
+	if l.RenewSeam != nil {
+		err := l.RenewSeam(ctx)
+		if errors.Is(err, ErrFenced) {
+			l.Fence(err)
+		}
+		if err == nil {
+			l.renewedAt(sent)
+		}
+		return err
+	}
 	_, err := l.call(ctx, fnRenew, l.token, l.ttl.Milliseconds())
 	if err == nil {
 		l.renewedAt(sent)
