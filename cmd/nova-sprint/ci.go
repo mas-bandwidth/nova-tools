@@ -1,13 +1,20 @@
 // The ci verb (#2756 4.8 and section 10, nova-tools #2936) registers itself
 // through the S0 registry, so it never edits main.go. cut, rerun and dispose
 // are one guarded Redis Function call each; show and status only read.
+//
+// request, run and compare are our own CI (#3597, #3349): a head requested
+// into ci:pool, a bench's runner-only pass over it, and the one budgeted
+// parity read against GitHub. status --repo --sha prints that record's rows.
 package main
 
 import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -16,12 +23,12 @@ import (
 func init() {
 	register(Verb{
 		Name:    "ci",
-		Summary: "cut, show, rerun, dispose, status and parity of ci cards and the ci verdict",
+		Summary: "request, run, status and compare of our own ci; cut, show, rerun, dispose and parity of ci cards",
 		Run:     runCI,
 	})
 }
 
-const ciUsage = "want cut, show, rerun, dispose, status or parity"
+const ciUsage = "want request, run, status, compare, cut, show, rerun, dispose or parity"
 
 func runCI(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -40,6 +47,12 @@ func runCI(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runCIStatus(ctx, args[1:], out, errOut)
 	case "parity":
 		return runCIParity(ctx, args[1:], out, errOut)
+	case "request":
+		return runCIRequest(ctx, args[1:], out, errOut)
+	case "run":
+		return runCIRun(ctx, args[1:], out, errOut)
+	case "compare":
+		return runCICompare(ctx, args[1:], out, errOut)
 	default:
 		return refuse(errOut, "ci", "unknown subverb "+args[0]+"; "+ciUsage)
 	}
@@ -188,18 +201,32 @@ func runCIDispose(ctx context.Context, args []string, out, errOut io.Writer) int
 	return r.ExitCode()
 }
 
+// runCIStatus is two reads: --sprint prints the sprint's ci card line;
+// --repo and --sha print one head's request record and its check rows.
 func runCIStatus(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci status")
 	redisAddr := fs.String("redis", "", "")
 	sprint := fs.String("sprint", "", "")
+	repo := fs.String("repo", "", "")
+	sha := fs.String("sha", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci status", err.Error())
+	}
+	if (*repo == "") != (*sha == "") {
+		return refuse(errOut, "ci status", "needs both --repo and --sha for one head, or --sprint")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
 		return refuse(errOut, "ci status", err.Error())
 	}
 	defer st.Close()
+	if *repo != "" {
+		rows, err := ci.ReadRows(ctx, st, *repo, *sha)
+		if err != nil {
+			return refuse(errOut, "ci status", err.Error())
+		}
+		return ci.WriteRows(out, rows)
+	}
 	s, err := ci.ReadStatus(ctx, st, *sprint)
 	if err != nil {
 		return refuse(errOut, "ci status", err.Error())
@@ -230,4 +257,124 @@ func runCIParity(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return refuse(errOut, "ci parity", err.Error())
 	}
 	return ci.WriteParity(out, p)
+}
+
+// runCIRequest writes the request record for one head and puts it in the
+// pool. --checks narrows the repo's declared set; each name must be declared.
+func runCIRequest(ctx context.Context, args []string, out, errOut io.Writer) int {
+	fs := taskFlags("ci request")
+	redisAddr := fs.String("redis", "", "")
+	repo := fs.String("repo", "", "")
+	sha := fs.String("sha", "", "")
+	pr := fs.Int("pr", 0, "")
+	url := fs.String("url", "", "")
+	checks := fs.String("checks", "", "")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, "ci request", err.Error())
+	}
+	if *repo == "" || *sha == "" {
+		return refuse(errOut, "ci request", "needs --repo <r> and --sha <full sha>")
+	}
+	var wanted []string
+	for _, c := range strings.Split(*checks, ",") {
+		if c = strings.TrimSpace(c); c != "" {
+			wanted = append(wanted, c)
+		}
+	}
+	st, err := store.Open(ctx, *redisAddr)
+	if err != nil {
+		return refuse(errOut, "ci request", err.Error())
+	}
+	defer st.Close()
+	r, err := ci.Request(ctx, st, ci.RequestRequest{Repo: *repo, SHA: *sha, PR: *pr, URL: *url, Checks: wanted})
+	if err != nil {
+		return refuse(errOut, "ci request", err.Error())
+	}
+	if r.Status == "REFUSED" {
+		return refuse(errOut, "ci request", r.Detail)
+	}
+	fmt.Fprintf(out, "%s %s@%s %s\n", r.Status, *repo, (*sha)[:8], r.Detail)
+	return r.ExitCode()
+}
+
+// ciDefaultURL is the clone url a request without --url gets on a bench.
+func ciDefaultURL(repo string) string { return "git@github.com:mas-bandwidth/" + repo + ".git" }
+
+// runCIRun is one runner-only pass for a bench: claim one request, clone at
+// the sha, run the checks, write the receipts. IDLE (exit 0) when the pool
+// has nothing claimable; BLOCKED (exit 1) when the clone failed and the
+// request went back to the pool.
+func runCIRun(ctx context.Context, args []string, out, errOut io.Writer) int {
+	fs := taskFlags("ci run")
+	redisAddr := fs.String("redis", "", "")
+	bench := fs.String("bench", "", "")
+	results := fs.String("results", "", "")
+	scratch := fs.String("scratch", "", "")
+	mirror := fs.String("mirror-root", "", "")
+	lease := fs.Duration("lease", 30*time.Minute, "")
+	timeout := fs.Duration("check-timeout", 20*time.Minute, "")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, "ci run", err.Error())
+	}
+	if *bench == "" {
+		return refuse(errOut, "ci run", "needs --bench <name>")
+	}
+	home, _ := os.UserHomeDir()
+	if *results == "" && home != "" {
+		*results = filepath.Join(home, "nova-bench", "results")
+	}
+	if *mirror == "" && home != "" {
+		*mirror = filepath.Join(home, "nova-bench", "mirror")
+	}
+	if !filepath.IsAbs(*results) {
+		return refuse(errOut, "ci run", "needs --results <absolute dir> (the results root the logs land under)")
+	}
+	st, err := store.Open(ctx, *redisAddr)
+	if err != nil {
+		return refuse(errOut, "ci run", err.Error())
+	}
+	defer st.Close()
+	res, err := ci.Run(ctx, st, ci.RunOptions{Bench: *bench, Scratch: *scratch, ResultsRoot: *results,
+		MirrorRoot: *mirror, URLFor: ciDefaultURL, Lease: *lease, Timeout: *timeout, Out: out})
+	switch {
+	case err == ci.ErrBlocked:
+		fmt.Fprintf(errOut, "nova-sprint ci run: %s; the request is back in the pool, fix the bench's clone path\n", res.Blocked)
+		return 1
+	case err != nil:
+		return refuse(errOut, "ci run", err.Error())
+	case !res.Claimed:
+		fmt.Fprintf(out, "IDLE bench=%s\n", *bench)
+	}
+	return 0
+}
+
+// runCICompare is the one budgeted REST read: our receipts beside GitHub's
+// check conclusions for the sha. Exit 0 when every check agrees.
+func runCICompare(ctx context.Context, args []string, out, errOut io.Writer) int {
+	fs := taskFlags("ci compare")
+	redisAddr := fs.String("redis", "", "")
+	repo := fs.String("repo", "", "")
+	sha := fs.String("sha", "", "")
+	owner := fs.String("owner", "mas-bandwidth", "")
+	api := fs.String("forge-api", "https://api.github.com", "")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, "ci compare", err.Error())
+	}
+	if *repo == "" || *sha == "" {
+		return refuse(errOut, "ci compare", "needs --repo <r> and --sha <full sha>")
+	}
+	tok := strings.TrimSpace(os.Getenv("GH_TOKEN"))
+	if tok == "" {
+		tok = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+	}
+	st, err := store.Open(ctx, *redisAddr)
+	if err != nil {
+		return refuse(errOut, "ci compare", err.Error())
+	}
+	defer st.Close()
+	p, err := ci.Compare(ctx, st, ci.CompareRequest{Repo: *repo, SHA: *sha, Owner: *owner, BaseURL: *api, Token: tok})
+	if err != nil {
+		return refuse(errOut, "ci compare", err.Error())
+	}
+	return ci.WriteCompare(out, p)
 }
