@@ -224,3 +224,41 @@ func TestProgressSpeaksUpOnARunThatLooksLikeAHangAndThenHoldsItsPace(t *testing.
 		}
 	}
 }
+
+// A bare key (the tool's own invocation, Verb "") used to index an empty
+// field list and panic (nova-tools #3160). It is placed by the commit that
+// first added a file under cmd/<tool>, and a verb with words keeps its -S read.
+func TestAuthorsFromGitBareKey(t *testing.T) {
+	var calls [][]string
+	run := func(_ context.Context, _ string, args ...string) (string, error) {
+		calls = append(calls, append([]string(nil), args...))
+		return "Ada\nBob\n", nil
+	}
+	verbs := []Verb{{Tool: "nova-fix"}, {Tool: "nova-fix", Verb: "links"}}
+	authors, err := AuthorsFromGit(context.Background(), "/repo", verbs, run, nil)
+	if err != nil {
+		t.Fatalf("AuthorsFromGit: %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("%d git calls, want 2: %q", len(calls), calls)
+	}
+	want := "log --reverse --diff-filter=A --format=%an -- cmd/nova-fix"
+	if got := strings.Join(calls[0], " "); got != want {
+		t.Fatalf("bare key read %q, want %q", got, want)
+	}
+	for _, a := range calls[0] {
+		if a == "-S" {
+			t.Fatalf("bare key read carries -S: %q", calls[0])
+		}
+	}
+	if got := authors.Author("nova-fix"); got != "Ada" {
+		t.Fatalf("Author(nova-fix) = %q, want Ada", got)
+	}
+	words := strings.Join(calls[1], " ")
+	if !strings.Contains(words, "-S") || !strings.HasSuffix(words, "-- cmd/nova-fix") {
+		t.Fatalf("nova-fix links read %q, want the -S read under cmd/nova-fix", words)
+	}
+	if got := authors.Author("nova-fix links"); got != "Ada" {
+		t.Fatalf("Author(nova-fix links) = %q, want Ada", got)
+	}
+}

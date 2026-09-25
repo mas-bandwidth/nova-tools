@@ -42,6 +42,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/route"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
@@ -70,7 +71,18 @@ type Options struct {
 	Hook func(step string) error
 	// Jev, when set, calibrates the Jev grader at this fold (#3081).
 	Jev *JevCalib
+	// Verbs, when set, runs `verbs unused` and then `verbs unused --check`
+	// after the fold is recorded (#3160); nil prints the MISSING line.
+	Verbs *verbs.Config
 }
+
+// The verbs step's outcome on Result.Verbs (#3160). The fold is recorded
+// before the step runs, so none of these undoes it.
+const (
+	VerbsOK     = 0 // the step ran and the check passed (or the fold was already done)
+	VerbsFailed = 4 // the check failed: Main exits 4
+	VerbsNotRun = 5 // flags missing, or verbs unused refused or was fenced: Main exits 5
+)
 
 // Result is what the fold did.
 type Result struct {
@@ -79,6 +91,8 @@ type Result struct {
 	// PromptRefused is why a candidate Jev prompt was not adopted, or "".
 	// The fold is recorded either way; Main exits 3 on a refusal.
 	PromptRefused string
+	// Verbs is the verbs step's outcome: VerbsOK, VerbsFailed or VerbsNotRun.
+	Verbs int
 }
 
 // Route is one route's line: the model cards dealt on it this sprint.
@@ -248,7 +262,57 @@ func Run(ctx context.Context, client *redis.Client, opt Options, out io.Writer) 
 	if adopt != "" && res[0] == "RECORDED" {
 		fmt.Fprintf(out, "FOLD JEV ADOPTED sprint=%s prompt_sha=%s was=%s\n", opt.Sprint, oneline.Field(adopt), oneline.Field(current))
 	}
-	return Result{FoldSHA: sha, Made: made, PromptRefused: refused}, nil
+	return Result{FoldSHA: sha, Made: made, PromptRefused: refused, Verbs: foldVerbs(ctx, client, opt, out)}, nil
+}
+
+// foldVerbs is the fold's verbs step (#3160): `verbs unused` over the dev
+// build, then `verbs unused --check`, each line prefixed FOLD VERBS. It runs
+// only after the fold is recorded, so it never blocks or undoes the fold.
+func foldVerbs(ctx context.Context, client *redis.Client, opt Options, out io.Writer) int {
+	w := &prefixWriter{w: out, prefix: "FOLD VERBS sprint=" + opt.Sprint + " ", start: true}
+	if opt.Verbs == nil {
+		fmt.Fprintln(w, "MISSING flags=--tools,--repo,--receipts")
+		return VerbsNotRun
+	}
+	cfg := *opt.Verbs
+	if cfg.Now == nil {
+		cfg.Now = opt.Now
+	}
+	if verbs.Unused(ctx, client, cfg, w, w) != verbs.ExitOK {
+		return VerbsNotRun
+	}
+	switch verbs.Check(ctx, client, cfg.Repo, w, w) {
+	case verbs.ExitOK:
+		return VerbsOK
+	case verbs.ExitFail:
+		return VerbsFailed
+	}
+	return VerbsNotRun
+}
+
+// prefixWriter puts a prefix at the start of every line written through it.
+type prefixWriter struct {
+	w      io.Writer
+	prefix string
+	start  bool
+}
+
+func (p *prefixWriter) Write(b []byte) (int, error) {
+	var buf bytes.Buffer
+	for _, c := range b {
+		if p.start {
+			buf.WriteString(p.prefix)
+			p.start = false
+		}
+		buf.WriteByte(c)
+		if c == '\n' {
+			p.start = true
+		}
+	}
+	if _, err := p.w.Write(buf.Bytes()); err != nil {
+		return 0, err
+	}
+	return len(b), nil
 }
 
 // record moves the sprint closed -> folded with its fold_sha and appends the

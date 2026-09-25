@@ -99,9 +99,7 @@ func AuthorsFromGit(ctx context.Context, repo string, verbs []Verb, run Runner, 
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("authors: reading %s: %w", v.Key(), err)
 		}
-		word := strings.Fields(v.Verb)[0]
-		out, err := run(ctx, repo,
-			"log", "--reverse", "--format=%an", "-S", `"`+word+`"`, "--", "cmd/"+v.Tool)
+		out, err := run(ctx, repo, authorArgs(v)...)
 		if err != nil {
 			// A tool with no directory of its own, a shallow clone, a verb
 			// whose word never appeared as a literal: no author, not an error.
@@ -120,6 +118,20 @@ func AuthorsFromGit(ctx context.Context, repo string, verbs []Verb, run Runner, 
 		}
 	}
 	return authors, nil
+}
+
+// authorArgs is the git read that places one verb. A verb with words is found
+// by the first commit that changed how often its first word appears, quoted,
+// under cmd/<tool>. A bare key (the tool's own invocation, `verb=-`) has no
+// word to search for, so it is placed by the commit that first added a file
+// under cmd/<tool>: the commit that introduced the tool, and with it the bare
+// invocation (nova-tools #3160).
+func authorArgs(v Verb) []string {
+	words := strings.Fields(v.Verb)
+	if len(words) == 0 {
+		return []string{"log", "--reverse", "--diff-filter=A", "--format=%an", "--", "cmd/" + v.Tool}
+	}
+	return []string{"log", "--reverse", "--format=%an", "-S", `"` + words[0] + `"`, "--", "cmd/" + v.Tool}
 }
 
 func firstLine(s string) string {

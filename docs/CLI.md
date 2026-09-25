@@ -3666,6 +3666,42 @@ renders the #2674 port of rowan-tools `bin/sprint-table-redis` (the keys
 that script reads, the bytes it prints), waits for the file's next publish,
 and prints `MATCH` or a unified diff and exits 1.
 
+### Unused verbs and the fold's verbs step (#3160)
+
+```
+nova-sprint verbs unused --store <host:port> --tools <dir of nova-* binaries built at dev> --repo <nova-tools clone at dev> --receipts <dogfood receipts dir> [--days 14]
+nova-sprint verbs unused --check --store <host:port> --repo <nova-tools clone at dev>
+```
+
+`verbs unused` lists every verb the dev build ships (each binary's own
+`help`) that has no use and no counting dogfood receipt in the window
+(`--days`, default 14). A use is an entry with `verb` and `actor` on
+`cap:log` or on `s:<S>:log` for every sprint in `sprints` or in
+`sprint:order` up to the window's end (no KEYS or SCAN; its key is `tool`
+plus `verb`, `tool` defaulting to nova-sprint). A dogfood receipt counts when
+it names an inventory key, is ok with no edge, is by someone other than the
+verb's git author, falls in the window and names `#<n>` or `card-<id>`;
+every other line prints `VERBS SKIP receipt=<file:line> why=<field|parse>`.
+It prints `VERBS STREAMS n=<k> sprints=<k-1>`, then appends one entry to
+`verbs:unused:log` (fields `at, days, since, until, dev_sha, count, verbs,
+resolved, prev`; `MAXLEN ~ 10000`) by WATCH/MULTI/XADD/EXEC, so `resolved`
+(each key that left the list: `deleted`, `use` or `dogfood:<file:line>`)
+always describes the entry `prev` names, and prints `VERBS UNUSED count=<n>
+dev_sha=<sha8> id=<id>`. Exit 0 appended, 2 refused with nothing appended
+(`inventory`, `authors`, `receipts`, `repo`, `store`, or a flag), 3 the tip
+moved under three tries (`prev-moved tries=3`). `--check` reads the newest
+two entries: `FALLING` (exit 0) when the count fell at a newer dev sha, or at
+the same sha with every dropped key explained in `resolved`; `MISSING`,
+`BROKEN-CHAIN`, `NOT FALLING`, `STALE` or `UNEXPLAINED` exit 1. Nothing
+reaches GitHub.
+
+`nova-sprint fold <S> ... --tools <dir> --repo <clone> --receipts <dir>` runs
+both after the fold is recorded and prints each line prefixed `FOLD VERBS
+sprint=<S>`. Exit 4 is folded with the check failed; 5 is folded with the step
+not run (no verbs flags prints `FOLD VERBS sprint=<S> MISSING
+flags=--tools,--repo,--receipts`); some but not all three flags is refused
+(exit 2) before anything is read. A sprint already folded runs no verbs step.
+
 ### Merged-tree guards, dev-red and read carry (#3629, #3630)
 
 `internal/nsprint/land/guard` is the merged-tree guard suite: a library any
