@@ -40,6 +40,19 @@ local function is_review(kind)
   return kind == 'read' or kind == 'review'
 end
 
+-- #3897: a read of a PR is done only with its typed line on the PR record.
+-- READ_LINE is the capability ns_task_read_done (task_read_done.lua) passes
+-- as keys when it calls task_done after the line is stored in the same call;
+-- an FCALL's keys is never this table, so no caller can skip the line.
+local READ_LINE = {}
+
+-- read_remedy is the NOLINE refusal of a PR read closed without its line.
+local function read_remedy(id, owner, head)
+  return 'a read of a PR is done only with its SCORE line on the record: nova-sprint task done --id ' .. id ..
+    " --line 'SCORE who=" .. (owner or '<friend>') .. ' head=' .. (head or '<sha40>') ..
+    " score=N/10 gates=ci:ok,base:ok,scope:ok: <finding>'"
+end
+
 -- task_push: create-only (spec 3.1 row 1, 4.2). Same id and identical
 -- payload_sha writes nothing and exits 0 EXISTS; a different payload exits 4
 -- CONFLICT; a terminal id with the same payload exits 0 CLOSED and never
@@ -301,6 +314,15 @@ local function task_done(keys, args)
   local kind = redis.call('HGET', key, 'kind')
   local friend = redis.call('HGET', key, 'owner')
   local record = nil
+  -- #3897: a PR read (kind read, pr set) closes only through its line. A read
+  -- that could not happen closes BLOCKED (score 0, which no read counter
+  -- reads); a report read (pr 0) has no PR record to carry a line.
+  if kind == 'read' and keys ~= READ_LINE and verdict ~= 'BLOCKED' then
+    local pr = redis.call('HGET', key, 'pr') or ''
+    if pr ~= '' and pr ~= '0' then
+      return { 'NOLINE', read_remedy(id, friend, redis.call('HGET', key, 'head')) }
+    end
+  end
   if is_review(kind) then
     if verdict == '' or score == '' or redis.call('HGET', key, 'head') ~= head then
       return { 'INVALID' }
@@ -361,5 +383,6 @@ redis.register_function('ns_task_done', task_done)
 redis.register_function('ns_task_take_denied', task_take_denied)
 
 -- task_take.lua (a later file, in its own do-block) claims a batch through
--- this one guarded take (#3261); NS is the only way across file blocks.
-NS.claim = { take = task_take }
+-- this one guarded take (#3261), and task_read_done.lua closes a read through
+-- this one done with READ_LINE (#3897); NS is the only way across file blocks.
+NS.claim = { take = task_take, done = task_done, read_line = READ_LINE, read_remedy = read_remedy }

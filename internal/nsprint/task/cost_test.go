@@ -58,24 +58,26 @@ func TestControl55Cost(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("take = %v, %v", ok, err)
 	}
-	done := task.DoneRequest{
+	// #3897: a read of a PR closes through its line on the PR record.
+	client.HSet(ctx, "pr:repo:55", "head", head, "base", "dev")
+	done := task.ReadDoneRequest{
 		Sprint: sprint, ID: id, Token: claim.Token, Evidence: "APPROVE 9/10 at " + head[:7],
-		Verdict: "APPROVE", Score: "9", Head: head, Cost: &metered,
+		Line: "SCORE who=ctl-a head=" + head + " score=9/10", Cost: &metered,
 	}
 
 	// A cost that does not parse is refused before anything is written.
 	bad := done
 	bad.Cost = nil
 	bad.Evidence += " | cost_usd=a-dollar"
-	if got, err := task.Done(ctx, st, bad); err == nil {
-		t.Fatalf("done with cost_usd=a-dollar = %s; want refused", got)
+	if got, err := task.ReadDone(ctx, st, bad); err == nil {
+		t.Fatalf("done with cost_usd=a-dollar = %s; want refused", got.Status)
 	}
 	if state, _ := client.HGet(ctx, "task:"+id, "state").Result(); state == "closed" {
 		t.Fatal("a refused cost closed the task")
 	}
 
-	if got, err := task.Done(ctx, st, done); err != nil || got != task.DoneClosed {
-		t.Fatalf("done = %s, %v; want DONE", got, err)
+	if got, err := task.ReadDone(ctx, st, done); err != nil || got.Status != task.DoneClosed {
+		t.Fatalf("done = %+v, %v; want DONE", got, err)
 	}
 	evidence, _ := client.HGet(ctx, "task:"+id, "evidence").Result()
 	if want := "APPROVE 9/10 at " + head[:7] + " | " + metered.Clause(); evidence != want {
@@ -85,8 +87,8 @@ func TestControl55Cost(t *testing.T) {
 		t.Fatalf("stored cost = %+v, %v, %v; want %+v", got, found, err, metered)
 	}
 	// The same done again is identical evidence: exit 0 CLOSED, not CONFLICT.
-	if got, err := task.Done(ctx, st, done); err != nil || got != task.DoneRepeat {
-		t.Fatalf("repeated done = %s, %v; want CLOSED", got, err)
+	if got, err := task.ReadDone(ctx, st, done); err != nil || got.Status != task.DoneRepeat {
+		t.Fatalf("repeated done = %+v, %v; want CLOSED", got, err)
 	}
 	// A cost is not evidence: empty evidence stays empty and is refused.
 	if got := task.WithCost("", metered); got != "" {

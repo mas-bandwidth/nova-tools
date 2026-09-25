@@ -441,6 +441,8 @@ func (s DoneStatus) ExitCode() int {
 		return 3
 	case DoneConflict:
 		return 4
+	case DoneNoLine, DoneBadLine:
+		return 1
 	case DoneNoEvidence, DoneInvalid, DoneRefused:
 		return 2
 	default:
@@ -502,7 +504,7 @@ func DoneTyped(ctx context.Context, st *store.Store, req DoneRequest) (DoneOutco
 			out.Record = words[2:]
 		}
 		return out, nil
-	case DoneRefused:
+	case DoneRefused, DoneNoLine:
 		return DoneOutcome{Status: st, Why: strings.Join(words[1:], " ")}, nil
 	case DoneRepeat, DoneFenced, DoneConflict, DoneNoEvidence, DoneInvalid:
 		return DoneOutcome{Status: st}, nil

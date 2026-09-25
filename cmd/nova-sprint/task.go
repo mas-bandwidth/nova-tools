@@ -16,6 +16,9 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/disposition"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/line"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -275,11 +278,25 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 	// ns_task_done records it with the close in one atomic call.
 	bodyFile := fs.String("body-file", "", "")
 	url := fs.String("url", "", "")
+	// nova-tools #3897: a read of a PR is done only with its typed line,
+	// stored with the close in one call (ns_task_read_done); --mirror is
+	// where the scope gate is measured (default the bench mirror).
+	typedLine := fs.String("line", "", "")
+	mirror := fs.String("mirror", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "task done", err.Error())
 	}
 	if fs.NArg() > 0 {
 		return refuse(errOut, "task done", "takes flags, not positional arguments")
+	}
+	if *typedLine != "" {
+		if *verdict != "" || *score != 0 || *head != "" || *bodyFile != "" || *url != "" {
+			return refuse(errOut, "task done", "--line carries who, head and score; drop --verdict, --score, --head, --body-file and --url")
+		}
+		return runReadDone(ctx, *redisAddr, task.ReadDoneRequest{Sprint: *sprint, ID: *id, Token: *token, As: *as,
+			Actor: *actor, Idem: *idem, Evidence: *evidence, Line: *typedLine}, *mirror, out)
+	} else if *mirror != "" {
+		return refuse(errOut, "task done", "--mirror goes with --line")
 	}
 	var typed *task.TypedLine
 	if *bodyFile != "" {
@@ -339,12 +356,51 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return refuse(errOut, "task done", err.Error())
 	}
 	switch {
+	case res.Status == task.DoneNoLine:
+		_, _ = fmt.Fprintf(out, "REFUSED NOLINE id=%s %s\n", *id, res.Why)
 	case res.Status == task.DoneRefused:
 		_, _ = fmt.Fprintf(out, "REFUSED %s id=%s\n", res.Why, *id)
 	case len(res.Record) > 0:
 		_, _ = fmt.Fprintf(out, "DONE %s id=%s RECORD %s\n", res.Status, *id, strings.Join(res.Record, " "))
 	default:
 		_, _ = fmt.Fprintf(out, "DONE %s id=%s\n", res.Status, *id)
+	}
+	return res.Status.ExitCode()
+}
+
+// runReadDone is `task done --line`: the scope gate measured in the mirror
+// against the PR record's PATHS, then one ns_task_read_done call that
+// validates the line against the card, stores it and closes the card.
+func runReadDone(ctx context.Context, redisAddr string, req task.ReadDoneRequest, mirror string, out io.Writer) int {
+	st, err := openTaskStore(ctx, redisAddr)
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "REFUSED %v id=%s\n", err, req.ID)
+		return 1
+	}
+	defer st.Close()
+	c := st.Client()
+	if l, perr := line.Parse(req.Line); perr == nil {
+		f, err := c.HMGet(ctx, task.Key(req.Sprint, req.ID), "repo", "pr").Result()
+		if err == nil && len(f) == 2 {
+			repo, _ := f[0].(string)
+			n, _ := f[1].(string)
+			if _, name, err := prkey.Split(repo); err == nil && n != "" && n != "0" {
+				req.Scope = read.MeasureScope(ctx, c, name, n, l.Head, readMirror(mirror, name))
+			}
+		}
+	}
+	res, err := task.ReadDone(ctx, st, req)
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "REFUSED %v id=%s\n", err, req.ID)
+		return 1
+	}
+	switch res.Status {
+	case task.DoneClosed:
+		_, _ = fmt.Fprintf(out, "DONE DONE id=%s LINE %s lines=%d scope=%s\n", req.ID, res.LineKey, res.Lines, dash(req.Scope.Word))
+	case task.DoneNoLine, task.DoneBadLine:
+		_, _ = fmt.Fprintf(out, "REFUSED %s id=%s %s\n", res.Status, req.ID, res.Why)
+	default:
+		_, _ = fmt.Fprintf(out, "DONE %s id=%s\n", res.Status, req.ID)
 	}
 	return res.Status.ExitCode()
 }

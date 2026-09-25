@@ -106,6 +106,11 @@ func loopTable(ctx context.Context, addr string, cfg table.SprintConfig, opts ta
 	defer ticker.Stop()
 	var last *table.SprintSnapshot
 	failing := false
+
+	drawer := newTermDrawer(stdout, opts.loop, opts.out)
+	drawer.init()
+	defer drawer.close()
+
 	for {
 		now := time.Now()
 		var snap *table.SprintSnapshot
@@ -162,7 +167,7 @@ func loopTable(ctx context.Context, addr string, cfg table.SprintConfig, opts ta
 		}
 		body := snap.Render(now)
 		if opts.out == "" {
-			_, _ = io.WriteString(stdout, body)
+			_ = drawer.draw(body)
 		} else if err := writeAtomic(opts.out, body); err != nil {
 			fmt.Fprintf(stderr, "nova-sprint table: %s\n", oneline.Escape(err.Error()))
 		}

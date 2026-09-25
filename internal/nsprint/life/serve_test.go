@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +47,46 @@ func TestHelperDispatch(t *testing.T) {
 	case "die":
 		fmt.Println("boom: harness crashed before any line")
 		os.Exit(3)
+	case "slot":
+		// A card child (#4095): it marks itself live in NOVA_SERVE_LIVE and
+		// started in NOVA_SERVE_STARTED, holds its slot until it has seen a
+		// second child live or every one of NOVA_SERVE_TOTAL has started (up
+		// to NOVA_TEST_WAIT), records the most it saw live, then writes its
+		// typed line with the model serve gave it.
+		live, started := os.Getenv("NOVA_SERVE_LIVE"), os.Getenv("NOVA_SERVE_STARTED")
+		total, _ := strconv.Atoi(os.Getenv("NOVA_SERVE_TOTAL"))
+		id := os.Getenv(life.ServeEnvCard)
+		mark := filepath.Join(live, id)
+		if os.WriteFile(mark, nil, 0o644) != nil || os.WriteFile(filepath.Join(started, id), nil, 0o644) != nil {
+			fmt.Println("cannot mark", id)
+			os.Exit(5)
+		}
+		wait := 30 * time.Second
+		if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil {
+				wait = d
+			}
+		}
+		deadline, most := time.Now().Add(wait), 0
+		for {
+			nl, _ := os.ReadDir(live)
+			ns, _ := os.ReadDir(started)
+			most = max(most, len(nl))
+			if most >= 2 || len(ns) >= total {
+				break
+			}
+			if time.Now().After(deadline) {
+				fmt.Println("never saw a second child")
+				os.Exit(4)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if f, err := os.OpenFile(os.Getenv("NOVA_SERVE_SEEN"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintf(f, "%d\n", most)
+			_ = f.Close()
+		}
+		_ = os.Remove(mark)
+		fmt.Printf("DONE built %s model=%s\n", os.Getenv(life.ServeEnvCard), os.Getenv(life.ServeEnvModel))
 	case "wait":
 		// The child polls for its release file (the test's event) up to
 		// NOVA_TEST_WAIT; a child never released is what a stop kills.
@@ -161,6 +202,10 @@ func TestServeFakeDispatchScoreLineClosesTask(t *testing.T) {
 	if err := client.HSet(ctx, "s:s1:pr:nova-tools:7", "head", serveHead).Err(); err != nil {
 		t.Fatal(err)
 	}
+	// #3897: the read closes through its line on the PR record.
+	if err := client.HSet(ctx, "pr:nova-tools:7", "head", serveHead, "base", "dev").Err(); err != nil {
+		t.Fatal(err)
+	}
 	if got, err := task.Push(ctx, st, task.PushRequest{
 		Sprint: "s1", ID: "r1", Kind: task.KindRead, Title: "read nova-tools#7",
 		Effects: task.EffectsNone, PayloadSHA: "r1", To: "emma",
@@ -181,6 +226,9 @@ func TestServeFakeDispatchScoreLineClosesTask(t *testing.T) {
 	}
 	if !strings.HasPrefix(h["evidence"], "SCORE who=emma head="+serveHead) {
 		t.Fatalf("evidence %q is not the child's SCORE line", h["evidence"])
+	}
+	if n := client.LLen(ctx, "pr:nova-tools:7:lines").Val(); n != 1 {
+		t.Fatalf("%d lines on pr:nova-tools:7, want the read's one", n)
 	}
 	if n := client.ZCard(ctx, "friend:emma:starting").Val() + client.ZCard(ctx, "friend:emma:living").Val(); n != 0 {
 		t.Fatalf("%d leases left after the close", n)
