@@ -2,6 +2,8 @@ package merge
 
 import (
 	"encoding/json"
+
+
 	"fmt"
 	"sort"
 	"strconv"
@@ -223,6 +225,8 @@ type Host interface {
 	// Merge is that primitive, used only when AtomicMerge is true, and the host's merge
 	// commit must be the gated object.
 	Merge(n int, headOID, baseSHA, mergeSHA string) error
+	// Comments reads the pull request's issue comments from the host.
+	Comments(n int) ([]string, error)
 }
 
 // VerdictOpts configures options for parsing forge verdicts.
@@ -497,4 +501,23 @@ func (h *GH) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
 		opt = opts[0]
 	}
 	return ParseForgeVerdicts(comments, reviews, n, opt.Reviewers, opt.Author, opt.CurrentHead, opt.UntypedComments == "ignore")
+}
+
+// Comments reads this pull request's issue comments from the host.
+func (h *GH) Comments(n int) ([]string, error) {
+	out, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n))
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		return nil, fmt.Errorf("gh api comments did not answer json: %v", err)
+	}
+	var bodies []string
+	for _, c := range raw {
+		bodies = append(bodies, c.Body)
+	}
+	return bodies, nil
 }

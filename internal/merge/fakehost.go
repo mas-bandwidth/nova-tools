@@ -1,6 +1,9 @@
 package merge
 
-import "fmt"
+import (
+	"fmt"
+	"encoding/json"
+)
 
 // FakeHost is the host the tests drive. It lives beside the production one rather than in
 // a _test.go file because two packages need it -- internal/merge and cmd/nova-merge --
@@ -336,4 +339,26 @@ func (f *FakeHost) SetVerdictErr(n int, err error) {
 		f.VerdictErrs = map[int]error{}
 	}
 	f.VerdictErrs[n] = err
+}
+
+// Comments reads this pull request's issue comments from the fake host.
+func (f *FakeHost) Comments(n int) ([]string, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	raw := f.RawComments[n]
+	if raw == "" {
+		return nil, nil
+	}
+	var rawC []struct {
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(raw), &rawC); err == nil {
+		var bodies []string
+		for _, c := range rawC {
+			bodies = append(bodies, c.Body)
+		}
+		return bodies, nil
+	}
+	return []string{raw}, nil
 }
