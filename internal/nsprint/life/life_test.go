@@ -203,6 +203,42 @@ func TestBenchBeatSingleInstance(t *testing.T) {
 	}
 }
 
+// TestBenchBeatKeyHasTTL (#3372): every bench beat writes bench:<b>:beat,
+// :owner and :live with a TTL of 3 x the beat interval (BenchBeatTTL), so a
+// dead loop's row leaves the store on its own; an explicit TTL is honoured.
+func TestBenchBeatKeyHasTTL(t *testing.T) {
+	st, client, _ := controlRedis(t)
+	ctx := context.Background()
+	if life.BenchBeatTTL != 3*life.BeatInterval {
+		t.Fatalf("BenchBeatTTL %s, want 3 x %s", life.BenchBeatTTL, life.BeatInterval)
+	}
+	for _, tc := range []struct {
+		bench string
+		ttl   time.Duration
+		want  time.Duration
+	}{
+		{"b1", 0, life.BenchBeatTTL},
+		{"b2", 7 * time.Second, 7 * time.Second},
+	} {
+		res, err := life.BenchBeat(ctx, st, life.BenchRequest{
+			Bench: tc.bench, Host: "host-" + tc.bench, Session: "sess-" + tc.bench,
+			Live: []string{"card-1"}, Actor: "bench", TTL: tc.ttl,
+		})
+		if err != nil || !res.Accepted {
+			t.Fatalf("%s beat: %+v %v", tc.bench, res, err)
+		}
+		for _, key := range []string{"bench:" + tc.bench + ":beat", "bench:" + tc.bench + ":owner", "bench:" + tc.bench + ":live"} {
+			ttl, err := client.PTTL(ctx, key).Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ttl <= tc.want-time.Second || ttl > tc.want {
+				t.Fatalf("%s PTTL %s, want (%s, %s]", key, ttl, tc.want-time.Second, tc.want)
+			}
+		}
+	}
+}
+
 func TestFriendHelloPreservesConfiguredCapacity(t *testing.T) {
 	st, client, _ := controlRedis(t)
 	ctx := context.Background()

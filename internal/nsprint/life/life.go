@@ -36,6 +36,11 @@ const (
 // BeatInterval is the one-second presence cadence of #2756 v5.
 const BeatInterval = time.Second
 
+// BenchBeatTTL is the life of one bench beat (bench:<b>:beat, :live and
+// :owner): three intervals, so one slow or missed tick never drops the key
+// while a dead loop still frees the bench within three seconds (#3372).
+const BenchBeatTTL = 3 * BeatInterval
+
 // liveSeparator joins a bench's card identities, which Lua cannot receive as a
 // native array through FCALL.
 const liveSeparator = "\x1f"
@@ -242,6 +247,8 @@ type BenchRequest struct {
 	Live     []string
 	Actor    string
 	Idem     string
+	// TTL is the life of this beat's keys; zero means BenchBeatTTL.
+	TTL time.Duration
 }
 
 // BenchResult is one bench beat. Accepted is false when another live session
@@ -253,7 +260,7 @@ type BenchResult struct {
 
 // BenchBeat writes one bench beat and its live row, and refuses when a
 // different live session owns the bench. Ownership is fenced in Redis with the
-// beat TTL, so it works across processes; once the owner and beat expire the
+// beat TTL (req.TTL, else BenchBeatTTL), so it works across processes; once the owner and beat expire the
 // bench is free again (stale expiry recovery). Absence-to-presence is logged
 // to cap:log as bench-up.
 func BenchBeat(ctx context.Context, st *store.Store, req BenchRequest) (BenchResult, error) {
@@ -264,10 +271,14 @@ func BenchBeat(ctx context.Context, st *store.Store, req BenchRequest) (BenchRes
 	if build == "" {
 		build = buildinfo.Line("nova-sprint", "")
 	}
+	ttl := req.TTL
+	if ttl <= 0 {
+		ttl = BenchBeatTTL
+	}
 	reply, err := st.Client().FCall(ctx, FunctionBenchBeat, nil,
 		req.Bench, req.Host, req.User, req.Load1, req.SSH, req.Probe,
 		req.Launcher, strings.Join(req.Live, liveSeparator), req.Why,
-		req.Session, req.Actor, req.Idem, build).Result()
+		req.Session, req.Actor, req.Idem, build, ttl.Milliseconds()).Result()
 	if err != nil {
 		return BenchResult{}, fmt.Errorf("bench beat %s: %w", req.Bench, err)
 	}

@@ -265,7 +265,8 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 			return refuse(errOut, "bench beat", err.Error())
 		}
 	}
-	st, err := openLifeStore(ctx, lifeAddr(*addr))
+	// One connection for the whole loop (#3372): no dial, auth or fork per tick.
+	st, err := store.OpenSingle(ctx, lifeAddr(*addr))
 	if err != nil {
 		return refuse(errOut, "bench beat", err.Error())
 	}
@@ -292,22 +293,59 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	defer ticker.Stop()
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	return benchBeatLoop(signalCtx, ticker.C, life.BeatInterval, *bench, errOut,
+		func(ctx context.Context) (life.BenchResult, error) { return life.BenchBeat(ctx, st, req) })
+}
+
+// benchBeatMaxBackoff caps the wait between failed beats.
+const benchBeatMaxBackoff = 16 * time.Second
+
+// benchBeatLoop writes one beat per tick through the caller's one store
+// (#3372). A failed beat backs off: the next attempt waits one interval, then
+// doubles up to benchBeatMaxBackoff, and each attempt redials through the same
+// client; the first success resets it. Losing ownership exits 2; ctx ending
+// exits 0.
+func benchBeatLoop(ctx context.Context, ticks <-chan time.Time, interval time.Duration, bench string, errOut io.Writer, beat func(context.Context) (life.BenchResult, error)) int {
+	var backoff time.Duration
+	var next time.Time
 	for {
 		select {
-		case <-signalCtx.Done():
+		case <-ctx.Done():
 			return 0
-		case <-ticker.C:
-			beat, err := life.BenchBeat(signalCtx, st, req)
-			if err != nil {
-				fmt.Fprintf(errOut, "bench %s beat: %v\n", *bench, err)
+		case now := <-ticks:
+			if now.Before(next) {
 				continue
 			}
-			if !beat.Accepted {
-				fmt.Fprintf(errOut, "bench %s lost ownership to %s\n", *bench, beat.Owner)
+			res, err := beat(ctx)
+			if err != nil {
+				if ctx.Err() != nil {
+					return 0
+				}
+				backoff = benchBeatBackoff(backoff, interval)
+				next = now.Add(backoff)
+				fmt.Fprintf(errOut, "bench %s beat: %v; retry in %s\n", bench, err, backoff)
+				continue
+			}
+			backoff, next = 0, time.Time{}
+			if !res.Accepted {
+				fmt.Fprintf(errOut, "bench %s lost ownership to %s\n", bench, res.Owner)
 				return 2
 			}
 		}
 	}
+}
+
+// benchBeatBackoff is the wait after one more failure: one interval first,
+// then double the last wait, never above benchBeatMaxBackoff.
+func benchBeatBackoff(last, interval time.Duration) time.Duration {
+	next := interval
+	if last > 0 {
+		next = 2 * last
+	}
+	if next > benchBeatMaxBackoff {
+		next = benchBeatMaxBackoff
+	}
+	return next
 }
 
 func runBenchRelease(ctx context.Context, args []string, out, errOut io.Writer) int {

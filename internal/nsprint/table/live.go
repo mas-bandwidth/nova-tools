@@ -40,7 +40,13 @@ type LiveConfig struct {
 	Sprint   string        // sprint:<Sprint>:xy and sprint:<Sprint>:landed
 	XYFile   string        // SPRINT-XY.txt fallback while the xy key is missing (until #2679)
 	RowStale time.Duration // a friend row older than this prints "stale" (bash ROW_STALE_S=10)
+	// BenchStale: a host row whose own at is older than this prints "stale";
+	// zero is 2 x BenchBeatInterval (#3372). The bash of record used 60 s.
+	BenchStale time.Duration
 }
+
+// BenchBeatInterval is the cadence a bench writes its host row at.
+const BenchBeatInterval = time.Second
 
 // FriendRow is one friend:<f> hash plus its down flag, raw.
 type FriendRow struct {
@@ -214,11 +220,9 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 		if f["host"] != row.Key {
 			continue // a hash without its OWN host field (expired, partial) is not a row
 		}
-		// 60 s freshness on the bench's own beat; an unparseable at shows the row.
-		if at, ok := parseUTC(f["at"]); ok {
-			if age := now.Unix() - at.Unix(); age < 0 || age > 60 {
-				continue
-			}
+		if s.benchRowStale(f, now) {
+			fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", f["host"], "stale", "?", "?", "?", "?", "?", "?")
+			continue
 		}
 		queue := strconv.FormatInt(awkInt(f["queue"]), 10)
 		if dq, dat := f["dealer_queue"], f["dealer_at"]; dq != "" && dat != "" {
@@ -282,6 +286,23 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 		}
 	}
 	return b.String()
+}
+
+// benchRowStale is the host row's age rule (#3372): a row whose own at is
+// older than Config.BenchStale (2 beat intervals by default) prints "stale"
+// with no numbers and no share of the totals; it never vanishes and never
+// shows old numbers. An unparseable at shows the row; an at ahead of now is
+// clock skew and counts as fresh.
+func (s *LiveSnapshot) benchRowStale(f map[string]string, now time.Time) bool {
+	at, ok := parseUTC(f["at"])
+	if !ok {
+		return false
+	}
+	limit := s.Config.BenchStale
+	if limit <= 0 {
+		limit = 2 * BenchBeatInterval
+	}
+	return now.Sub(at) > limit
 }
 
 // friendStatus: down (the down flag) | ? (no row) | stale (older than

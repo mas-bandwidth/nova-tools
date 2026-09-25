@@ -46,6 +46,18 @@ func authFromEnv() (user, password string, err error) {
 }
 
 func Open(ctx context.Context, addr string) (*Store, error) {
+	return open(ctx, addr, 0)
+}
+
+// OpenSingle is Open with a pool of exactly one connection, for a long-lived
+// loop such as `nova-sprint bench beat` (#3372): every tick rides the one
+// authenticated connection, and a broken one is redialed by the same client
+// on the next command.
+func OpenSingle(ctx context.Context, addr string) (*Store, error) {
+	return open(ctx, addr, 1)
+}
+
+func open(ctx context.Context, addr string, poolSize int) (*Store, error) {
 	if addr == "" {
 		return nil, fmt.Errorf("redis address is required")
 	}
@@ -53,7 +65,7 @@ func Open(ctx context.Context, addr string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	client := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password})
+	client := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password, PoolSize: poolSize})
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
 		return nil, fmt.Errorf("redis at %s: %w", addr, err)
