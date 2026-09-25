@@ -279,16 +279,25 @@ local function ci_sorted_benches()
   return benches
 end
 
--- ns_ci_cut: cut ci-<pr>-<sha8> for one PR head (4.8, 10.2). The card waits
--- in pool at the front tier; PENDING lives only on the card in this same call.
--- An existing card for the label is EXISTS and writes nothing.
+-- ns_ci_cut: cut ci-<pr>-<head8>-<base8> for one PR head at one tested base
+-- tip (4.8, 10.2, nova-tools #3148). The card waits in pool at the front tier;
+-- PENDING lives only on the card in this same call. Each (head, base_sha) is
+-- its own unit: the same pair again is EXISTS; a card at the label for another
+-- full head or base_sha (an 8-hex prefix clash) is CONFLICT and writes
+-- nothing. The cut writes no ci: key (#3139 rev 7 3.7): the gids set that
+-- ns_ci_end writes is the head's index of tested bases.
 local function ci_cut(keys, args)
   local S, label, repo, pr, head, base = args[1], args[2], args[3], args[4], args[5], args[6]
   local base_sha, leg, paths, actor, idem = args[7], args[8], args[9], args[10], args[11]
   local card_key = 's:' .. S .. ':card:' .. label
 
   if ci_hget('s:' .. S, 'status') ~= 'open' then return { 'CLOSED' } end
-  if redis.call('EXISTS', card_key) == 1 then return { 'EXISTS', ci_hget(card_key, 'attempt') } end
+  if redis.call('EXISTS', card_key) == 1 then
+    if ci_hget(card_key, 'ci_head') == head and ci_hget(card_key, 'base_sha') == base_sha then
+      return { 'EXISTS', ci_hget(card_key, 'attempt') }
+    end
+    return { 'CONFLICT', label }
+  end
 
   local carried = false
   for _, b in ipairs(ci_sorted_benches()) do
@@ -524,7 +533,11 @@ local function ci_dispose(keys, args)
   end
   if item == '' then return { 'STATE' } end
 
-  local label = 'ci-' .. pr .. '-' .. string.sub(head, 1, 8)
+  -- The item names its card (<S>/<label>, written by ns_ci_end), so the
+  -- disposition lands on the (head, base) unit that went FLAKY (#3148).
+  local named = string.match(ci_hget(unresolved, item), '(%S+)$') or ''
+  if string.sub(named, 1, #S + 1) ~= S .. '/' then return { 'STATE' } end
+  local label = string.sub(named, #S + 2)
   local card_key = 's:' .. S .. ':card:' .. label
   if redis.call('EXISTS', card_key) == 0 then return { 'STATE' } end
   if ci_hget(card_key, 'verdict') ~= 'FLAKY' then return { 'STATE' } end

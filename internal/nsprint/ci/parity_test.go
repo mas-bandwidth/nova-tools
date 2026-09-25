@@ -28,7 +28,7 @@ func (f *fixture) cutEnd(prN int, sha, verdict string) {
 	if verdict == "" {
 		return
 	}
-	label := ci.Label(prN, sha)
+	label := ci.Label(prN, sha, base)
 	token, identity := f.deal(label, "ctl-a")
 	if r := f.end(label, token, identity, "DONE", "done", verdict, "internal/x", "TestX"); r.Status != "ENDED" {
 		f.t.Fatalf("end %s = %v; want ENDED", label, r)

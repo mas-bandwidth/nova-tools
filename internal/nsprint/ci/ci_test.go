@@ -66,7 +66,7 @@ func (f *fixture) cut() string {
 	if err != nil || r.Status != "CREATED" {
 		f.t.Fatalf("cut = %v, %v; want CREATED", r, err)
 	}
-	return ci.Label(pr, head)
+	return ci.Label(pr, head, base)
 }
 
 // deal stands in for the dealer (#2756 5.3, not in this slice): it gives the

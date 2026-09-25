@@ -103,7 +103,7 @@ func runCICut(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return refuse(errOut, "ci cut", err.Error())
 	}
-	fmt.Fprintf(out, "%s %s\n", r, ci.Label(*pr, *sha))
+	fmt.Fprintf(out, "%s %s\n", r, ci.Label(*pr, *sha, *base))
 	return r.ExitCode()
 }
 
@@ -138,6 +138,7 @@ func runCIRerun(ctx context.Context, args []string, out, errOut io.Writer) int {
 	sprint := fs.String("sprint", "", "")
 	repo := fs.String("repo", "nova-tools", "")
 	pr := fs.Int("pr", 0, "")
+	base := fs.String("base", "", "")
 	reason := fs.String("reason", "", "")
 	actor := fs.String("actor", "", "")
 	if err := fs.Parse(flags); err != nil {
@@ -146,6 +147,9 @@ func runCIRerun(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(pos) != 1 || len(pos[0]) != 40 {
 		return refuse(errOut, "ci rerun", "needs one full head sha")
 	}
+	if *pr > 0 && len(*base) != 40 {
+		return refuse(errOut, "ci rerun", "--pr needs --base, the full tested base tip sha: the label is ci-<pr>-<head8>-<base8>")
+	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
 		return refuse(errOut, "ci rerun", err.Error())
@@ -153,7 +157,7 @@ func runCIRerun(ctx context.Context, args []string, out, errOut io.Writer) int {
 	defer st.Close()
 	label := ""
 	if *pr > 0 {
-		label = ci.Label(*pr, pos[0])
+		label = ci.Label(*pr, pos[0], *base)
 	} else {
 		rec, err := ci.Read(ctx, st, *repo, pos[0])
 		if err != nil {
@@ -161,7 +165,7 @@ func runCIRerun(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 		s, l, ok := strings.Cut(rec.Fields["card"], "/")
 		if !ok || s != *sprint {
-			return refuse(errOut, "ci rerun", "no ci card for that head in sprint "+*sprint+"; pass --pr")
+			return refuse(errOut, "ci rerun", "no ci card for that head in sprint "+*sprint+"; pass --pr and --base")
 		}
 		label = l
 	}
