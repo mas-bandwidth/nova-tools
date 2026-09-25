@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // fakeWakeHost is the seam wakehealth.go takes: the units a supervisor has
@@ -51,14 +53,16 @@ func (f *fakeWakeHost) LoadUnit(_ context.Context, unit, file string) error {
 	return nil
 }
 
-func (f *fakeWakeHost) Behind(_ context.Context, dir string) (int, error) {
-	return f.behind[dir], nil
-}
-
-func (f *fakeWakeHost) Pull(_ context.Context, dir string) error {
+// FetchFF is #3134's Pull renamed (#3048 rev 3): a clone that is behind is
+// fast-forwarded and recorded; a current one makes no call.
+func (f *fakeWakeHost) FetchFF(_ context.Context, dir, _, _ string, _ time.Duration) (life.FetchFF, error) {
+	n := f.behind[dir]
+	if n == 0 {
+		return life.FetchFF{Fetched: "c0ffee00c0ffee00"}, nil
+	}
 	f.calls = append(f.calls, "pull "+dir)
 	f.behind[dir] = 0
-	return nil
+	return life.FetchFF{Fetched: "c0ffee00c0ffee00", Before: n}, nil
 }
 
 func beatsLive(live bool) life.BeatReader {
@@ -185,8 +189,9 @@ func TestWakeHealthPullsBehindBus(t *testing.T) {
 		t.Errorf("calls %q, want one pull of %s", got, d.Bus)
 	}
 	row := h.Row()
-	if !strings.Contains(row, "wake:bus-behind") || !strings.Contains(row, "behind=0") || h.State != life.WakeRepaired {
-		t.Errorf("row %q state %q; want wake:bus-behind, behind=0, repaired", row, h.State)
+	// rev 3 prints the fast-forward as behind=<before>-><after>.
+	if !strings.Contains(row, "wake:bus-behind") || !strings.Contains(row, "behind=3->0") || h.State != life.WakeRepaired {
+		t.Errorf("row %q state %q; want wake:bus-behind, behind=3->0, repaired", row, h.State)
 	}
 }
 
@@ -267,7 +272,7 @@ func TestWakeHealthRecordsRepairInRedis(t *testing.T) {
 	host.files[d.UnitFile] = true
 
 	h := life.CheckWake(ctx, host, beatsLive(true), d)
-	if err := life.RecordWake(ctx, st, h, "rowan", "tick-1"); err != nil {
+	if err := life.RecordWake(ctx, st, h, "", "rowan", "tick-1"); err != nil {
 		t.Fatal(err)
 	}
 	row, err := client.HGet(ctx, life.WakeHealthKey("walter"), "row").Result()
@@ -295,39 +300,86 @@ func TestWakeHealthRecordsRepairInRedis(t *testing.T) {
 	}
 }
 
-// TestExecWakeHostBehindAndPullOnRealGit runs the production Behind/Pull on a
-// real local clone three commits behind its (local path) upstream.
-func TestExecWakeHostBehindAndPullOnRealGit(t *testing.T) {
+// realGit is a throwaway repo helper: local paths only, no network, no
+// system or global config.
+func realGit(t *testing.T, home string) func(args ...string) string {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git unavailable: %v", err)
 	}
-	dir := t.TempDir()
-	up, clone := filepath.Join(dir, "up"), filepath.Join(dir, "clone")
-	git := func(args ...string) {
+	return func(args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+dir)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+home)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
+		return strings.TrimSpace(string(out))
 	}
+}
+
+// TestExecWakeHostBehindAndPullOnRealGit runs the production FetchFF on a
+// real local clone three commits behind its file:// remote.
+func TestExecWakeHostBehindAndPullOnRealGit(t *testing.T) {
+	defer testguard.AllowHosts()()
+	dir := t.TempDir()
+	git := realGit(t, dir)
+	up, clone := filepath.Join(dir, "up"), filepath.Join(dir, "clone")
 	git("init", "-q", up)
 	git("-C", up, "commit", "-q", "--allow-empty", "-m", "0")
 	git("clone", "-q", up, clone)
 	for i := 1; i <= 3; i++ {
 		git("-C", up, "commit", "-q", "--allow-empty", "-m", fmt.Sprint(i))
 	}
+	tip := git("-C", up, "rev-parse", "HEAD")
 
 	host := life.ExecWakeHost{}
 	ctx := context.Background()
-	n, err := host.Behind(ctx, clone)
-	if err != nil || n != 3 {
-		t.Fatalf("behind = %d, %v; want 3", n, err)
+	r, err := host.FetchFF(ctx, clone, "file://"+up, "main", life.FetchBound)
+	if err != nil || r.Before != 3 || r.After != 0 || r.Fetched != tip {
+		t.Fatalf("fetch-ff = %+v, %v; want before 3, after 0, fetched %s", r, err, tip)
 	}
-	if err := host.Pull(ctx, clone); err != nil {
-		t.Fatal(err)
+	if r, err := host.FetchFF(ctx, clone, "file://"+up, "main", life.FetchBound); err != nil || r.Before != 0 {
+		t.Fatalf("second fetch-ff = %+v, %v; want behind 0", r, err)
 	}
-	if n, err := host.Behind(ctx, clone); err != nil || n != 0 {
-		t.Fatalf("after pull behind = %d, %v; want 0", n, err)
+}
+
+// TestWakeFetchRealGitStaleUpstream is the rev 3 control: the clone's @{u} is
+// stale (HEAD..@{u} is 0) while the remote has 3 more commits pushed by a
+// second clone. FetchFF measures against the fetched id, finds behind=3, and
+// leaves HEAD at exactly the remote tip. A fetch of an unreachable remote
+// wraps ErrFetchFailed.
+func TestWakeFetchRealGitStaleUpstream(t *testing.T) {
+	defer testguard.AllowHosts()()
+	dir := t.TempDir()
+	git := realGit(t, dir)
+	bare, a, b := filepath.Join(dir, "remote.git"), filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	git("init", "-q", "--bare", bare)
+	git("clone", "-q", "file://"+bare, a)
+	git("-C", a, "commit", "-q", "--allow-empty", "-m", "0")
+	git("-C", a, "push", "-q", "origin", "HEAD:main")
+	git("-C", a, "branch", "-q", "--set-upstream-to=origin/main")
+	git("clone", "-q", "file://"+bare, b)
+	for i := 1; i <= 3; i++ {
+		git("-C", b, "commit", "-q", "--allow-empty", "-m", fmt.Sprint(i))
+	}
+	git("-C", b, "push", "-q", "origin", "HEAD:main")
+	tip := git("-C", b, "rev-parse", "HEAD")
+	if n := git("-C", a, "rev-list", "--count", "HEAD..@{u}"); n != "0" {
+		t.Fatalf("fixture: a's @{u} should be stale at behind 0, got %s", n)
+	}
+
+	ctx := context.Background()
+	r, err := life.ExecWakeHost{}.FetchFF(ctx, a, "file://"+bare, "main", life.FetchBound)
+	if err != nil || r.Before != 3 || r.After != 0 || r.Fetched != tip {
+		t.Fatalf("fetch-ff = %+v, %v; want before 3 after 0 fetched %s", r, err, tip)
+	}
+	if head := git("-C", a, "rev-parse", "HEAD"); head != tip {
+		t.Fatalf("HEAD %s, want the remote tip %s", head, tip)
+	}
+	_, err = life.ExecWakeHost{}.FetchFF(ctx, a, "file://"+filepath.Join(dir, "missing.git"), "main", life.FetchBound)
+	if !errors.Is(err, life.ErrFetchFailed) {
+		t.Fatalf("unreachable remote: %v, want ErrFetchFailed", err)
 	}
 }
