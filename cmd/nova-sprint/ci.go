@@ -261,6 +261,8 @@ func runCIParity(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 // runCIRequest writes the request record for one head and puts it in the
 // pool. --checks narrows the repo's declared set; each name must be declared.
+// A second request is EXISTS; --again resets the record to attempt 0 and
+// re-pools it (RESET), the one way back after a capped FAIL.
 func runCIRequest(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci request")
 	redisAddr := fs.String("redis", "", "")
@@ -269,6 +271,7 @@ func runCIRequest(ctx context.Context, args []string, out, errOut io.Writer) int
 	pr := fs.Int("pr", 0, "")
 	url := fs.String("url", "", "")
 	checks := fs.String("checks", "", "")
+	again := fs.Bool("again", false, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci request", err.Error())
 	}
@@ -286,7 +289,7 @@ func runCIRequest(ctx context.Context, args []string, out, errOut io.Writer) int
 		return refuse(errOut, "ci request", err.Error())
 	}
 	defer st.Close()
-	r, err := ci.Request(ctx, st, ci.RequestRequest{Repo: *repo, SHA: *sha, PR: *pr, URL: *url, Checks: wanted})
+	r, err := ci.Request(ctx, st, ci.RequestRequest{Repo: *repo, SHA: *sha, PR: *pr, URL: *url, Checks: wanted, Again: *again})
 	if err != nil {
 		return refuse(errOut, "ci request", err.Error())
 	}
