@@ -143,6 +143,7 @@ flock 9
 if [ -e "$OUT/$V" ]; then
 	rm -rf "$OUT/$V"
 	say "REMOVED stale out directory $OUT/$V"
+fi
 todo_new=()
 for p in "${todo[@]}"; do
 	if [ -e "$PUB/$p" ]; then
