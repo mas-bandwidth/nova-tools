@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+echo "nova-land-stream bash stub: exit 2" >&2
+exit 2

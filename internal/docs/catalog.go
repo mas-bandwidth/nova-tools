@@ -23,6 +23,7 @@ var DefaultCatalog = []Entry{
 	E("scripts", "maintenance and operational scripts", "none", "none"),
 	E("testdata", "shared test fixtures and data", "go test ./internal/ci", "make test"),
 	Page("tools", "developer and bench tools", "go test ./tools/...", "make map"),
+	E("tests", "bash test suites", "bats tests/", "bats tests/"),
 
 	// cmd/
 	E("cmd/nova-board", "board viewer and coordinator CLI", "go test ./cmd/nova-board", "go test ./cmd/nova-board"),
