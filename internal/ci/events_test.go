@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -424,5 +425,65 @@ func TestReactorRunReturnsAtItsDeadline(t *testing.T) {
 	r := NewReactor(rdb, &fakeForge{}, openGate{}, func(context.Context, int, string) error { return nil }, nil)
 	if err := r.Run(deadline); err != context.DeadlineExceeded {
 		t.Fatalf("Run returned %v, want the deadline", err)
+	}
+}
+
+// tripCounter is a go-redis hook that counts round trips: one per single command,
+// one per pipeline Exec regardless of how many commands it carries.
+type tripCounter struct{ n int }
+
+func (t *tripCounter) DialHook(next redis.DialHook) redis.DialHook                  { return next }
+func (t *tripCounter) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		t.n++
+		return next(ctx, cmd)
+	}
+}
+func (t *tripCounter) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		t.n++
+		return next(ctx, cmds)
+	}
+}
+
+// 11. PublishCardsDone with 100 pending entries uses at most 2 round trips:
+// one XREADGROUP and one pipeline of all PUBLISH + one XACK. This is the
+// DONE-WHEN test for #3269.
+func TestPublishCardsDoneBatchesToOnePipeline(t *testing.T) {
+	_, rdb, ctx := newBus(t)
+	tc := &tripCounter{}
+	rdb.AddHook(tc)
+
+	p := NewProducer(rdb, &fakeForge{}, "events", nil)
+	// First call creates the group (1 round trip) and reads nothing.
+	if _, err := p.PublishCardsDone(ctx); err != nil {
+		t.Fatal(err)
+	}
+	groupTrips := tc.n
+
+	// Seed 100 entries that are all card ends.
+	for i := 0; i < 100; i++ {
+		if err := rdb.XAdd(ctx, &redis.XAddArgs{
+			Stream: StreamCardsDone,
+			Values: map[string]interface{}{
+				"card":  fmt.Sprintf("card-%d", i),
+				"label": fmt.Sprintf("%d", i),
+				"event": "ok",
+			},
+		}).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// One tick: read then act.
+	if _, err := p.PublishCardsDone(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tickTrips := tc.n - groupTrips
+	if tickTrips > 2 {
+		t.Fatalf("one tick used %d round trips, want <= 2", tickTrips)
+	}
+	if tickTrips < 1 {
+		t.Fatalf("one tick used %d round trips, want >= 1", tickTrips)
 	}
 }
