@@ -32,11 +32,13 @@
 --                     head is close-over-recut: close-<n>-<sha8> to the
 --                     coordinator with the finding kept. Fields fix_task,
 --                     fix_task_head, fix_task_to, fix_task_kind are the receipt.
--- The task shape is the friend queue's: task:<id> hash, q:<friend> stream
--- entry `id`, sprint:<S>:idx:<friend>:open. When the stream index is present
--- (ws:names holds the stream) the task is also in ws:<stream>:ready, and a
--- merging move goes to ws:<stream>:merging; otherwise to the legacy
--- s:<S>:idx:task:merging set. The locals are scoped to this block.
+-- A task is a task card (02_card_move.lua, NS.task, nova-tools #3778): push
+-- is NS.task.create onto the friend's ready set, merging and cancel are
+-- NS.task.move, which keeps every set (ws:<stream>:<where>,
+-- friend:<f>:cards:<where>) and the friend-queue shape (q:<friend> entry,
+-- sprint:<S>:idx:<friend>:*) and the sprint's fine-state index
+-- (s:<S>:idx:task:<state>); this file writes none of them itself. The locals
+-- are scoped to this block.
 do
   local function now_ms()
     local t = redis.call('TIME')
@@ -55,10 +57,6 @@ do
       'idem', idem or '', 'at', tostring(at))
   end
 
-  local function ws_present(stream)
-    return stream ~= nil and stream ~= '' and redis.call('SISMEMBER', 'ws:names', stream) == 1
-  end
-
   local function ws_log(id, stream, from_state, to_state, by, why, at)
     redis.call('XADD', 'ws:log', 'MAXLEN', '~', 100000, '*',
       'id', id, 'stream', stream, 'from', from_state, 'to', to_state,
@@ -69,29 +67,19 @@ do
     return string.sub(head or '', 1, 8)
   end
 
-  -- push_task writes one task in the friend queue's shape onto `to`. The
-  -- queue entry id is kept as `xid` so a cancel can delete the entry; extra
-  -- is an optional flat list of further fields.
+  -- push_task creates one task card on `to`'s ready set (NS.task.create);
+  -- extra is an optional flat list of further fields. It returns the where
+  -- (ready), or the refusal.
   local function push_task(S, id, kind, to, title, repo, pr, head, stream, actor, why, at, extra)
-    local state = 'open'
-    if ws_present(stream) then
-      state = 'ready'
+    local fields = { 'kind', kind, 'ref', repo .. '#' .. pr, 'origin', 'https://github.com/' .. repo .. '/pull/' .. pr,
+      'repo', repo, 'pr', pr, 'head', head, 'title', title, 'route', 'reconcile' }
+    for _, v in ipairs(extra or {}) do fields[#fields + 1] = v end
+    local err, info = NS.task.create(id, fields, { where = 'ready', friend = to, stream = stream, sprint = S,
+      created = at, by = actor, why = why })
+    if err then
+      return 'refused ' .. err
     end
-    local xid = redis.call('XADD', 'q:' .. to, '*', 'id', id)
-    redis.call('HSET', 'task:' .. id,
-      'kind', kind, 'ref', repo .. '#' .. pr, 'repo', repo, 'pr', pr, 'head', head,
-      'owner', to, 'title', title, 'state', state, 'stream', stream, 'sprint', S,
-      'route', 'reconcile', 'created_at', tostring(at), 'state_at', tostring(at),
-      'queue', 'q:' .. to, 'xid', xid)
-    if extra and #extra > 0 then
-      redis.call('HSET', 'task:' .. id, unpack(extra))
-    end
-    redis.call('SADD', 'sprint:' .. S .. ':idx:' .. to .. ':open', id)
-    if state == 'ready' then
-      redis.call('ZADD', 'ws:' .. stream .. ':ready', at, id)
-    end
-    ws_log(id, stream, '', state, actor, why, at)
-    return state
+    return info.to
   end
 
   -- load is a friend's ready queue depth: both of its streams.
@@ -210,14 +198,11 @@ do
     return finish({ 'CREATED', id, author })
   end
 
-  -- task_key is the task's hash: the friend queue's task:<id>, else the
-  -- sprint store's s:<S>:task:<id>.
+  -- task_key is the task's record, task:<id> (one store, nova-tools #3778),
+  -- or nil when there is none.
   local function task_key(S, id)
     if redis.call('EXISTS', 'task:' .. id) == 1 then
       return 'task:' .. id
-    end
-    if redis.call('EXISTS', 's:' .. S .. ':task:' .. id) == 1 then
-      return 's:' .. S .. ':task:' .. id
     end
     return nil
   end
@@ -280,32 +265,26 @@ do
     if not tkey then
       return { 'SKIP', 'no-task' }
     end
-    local t = redis.call('HMGET', tkey, 'stream', 'state', 'owner')
-    local tstream, tstate, owner = t[1] or '', t[2] or '', t[3] or ''
-    if tstream == '' then
-      tstream = stream
-    end
-    if tstate == 'merging' then
+    local at = now_ms()
+    -- Through the one task move. A task nobody took is taken first
+    -- (ready -> working -> merging, two receipted moves); a closed one moves
+    -- on to merging (done/ok -> merging).
+    local p = NS.task.read(id)
+    local tstream, tstate = p.stream, p.where
+    if tstream == '' then tstream = stream end
+    if p.placed and tstate == 'merging' then
       redis.call('HSET', routed, idem, id)
       return { 'DUP', id }
     end
-    local at = now_ms()
-    if ws_present(tstream) then
-      if tstate ~= '' then
-        redis.call('ZREM', 'ws:' .. tstream .. ':' .. tstate, id)
-      end
-      redis.call('ZADD', 'ws:' .. tstream .. ':merging', at, id)
-      ws_log(id, tstream, tstate, 'merging', actor, 'route merging', at)
-    else
-      for _, st in ipairs({ 'open', 'claimed', 'working' }) do
-        redis.call('SREM', 's:' .. S .. ':idx:task:' .. st, id)
-        if owner ~= '' then
-          redis.call('SREM', 'sprint:' .. S .. ':idx:' .. owner .. ':' .. st, id)
-        end
-      end
-      redis.call('SADD', 's:' .. S .. ':idx:task:merging', id)
+    local o = { by = actor, why = 'route merging', stream = tstream, sprint = S, fields = { 'pr', pr, 'head', head } }
+    local err
+    if not p.placed or tstate == 'ready' then
+      err = NS.task.move(id, 'working', o)
     end
-    redis.call('HSET', tkey, 'state', 'merging', 'state_at', tostring(at), 'pr', pr, 'head', head, 'stream', tstream)
+    if not err then err = NS.task.move(id, 'merging', o) end
+    if err then
+      return { 'SKIP', 'task-' .. err }
+    end
     redis.call('HSET', routed, idem, id)
     receipt(S, 'task merging', id, tstate, 'merging', actor, 'route merging',
       'pr=' .. repo .. '#' .. pr .. ' head=' .. head .. ' approve=' .. approved .. ' ci=' .. tostring(#gids), idem, at)
@@ -415,33 +394,29 @@ do
       diff = r[10] or '', stream = r[11] or '' }
   end
 
-  -- task_open is true when the task hash exists in a state a reader can
-  -- still take or is on: ready, open, waiting, working, claimed.
+  -- task_open is true when the task card is where a reader can still take
+  -- it or is on it: ready, waiting, working. The second value is its where
+  -- (a record that predates the where field: its friend-queue state).
   local function task_open(id)
-    local st = redis.call('HGET', 'task:' .. id, 'state')
-    return st == 'ready' or st == 'open' or st == 'waiting' or st == 'working' or st == 'claimed', st or ''
+    local p = NS.task.read(id)
+    if not p then return false, '' end
+    local w = p.where
+    if not p.placed then
+      w = ({ open = 'ready', ready = 'ready', waiting = 'waiting', working = 'working', claimed = 'working' })[p.state]
+        or p.state
+    end
+    return w == 'ready' or w == 'waiting' or w == 'working', w
   end
 
-  -- cancel_task closes an unstarted task: state closed, cancelled 1, the
-  -- evidence, out of its ws set, its owner's open index and its queue entry.
+  -- cancel_task closes an unstarted task: done/fail through the one task
+  -- move (its sets, its friend's open index and its queue entry follow),
+  -- with the evidence.
   local function cancel_task(S, id, stream, actor, why, at)
-    local t = redis.call('HMGET', 'task:' .. id, 'state', 'owner', 'stream', 'queue', 'xid')
-    local st, owner, tstream = t[1] or '', t[2] or '', t[3] or ''
-    if tstream == '' then tstream = stream end
-    if tstream ~= '' and (st == 'ready' or st == 'waiting' or st == 'parked') then
-      redis.call('ZREM', 'ws:' .. tstream .. ':' .. st, id)
-    end
-    if owner ~= '' then
-      redis.call('SREM', 'sprint:' .. S .. ':idx:' .. owner .. ':open', id)
-      redis.call('SADD', 'sprint:' .. S .. ':idx:' .. owner .. ':closed', id)
-    end
-    if t[4] and t[4] ~= '' and t[5] and t[5] ~= '' then
-      redis.pcall('XDEL', t[4], t[5])
-    end
-    redis.call('HSET', 'task:' .. id, 'state', 'closed', 'cancelled', '1', 'evidence', why,
-      'closed_at', tostring(at), 'state_at', tostring(at))
-    ws_log(id, tstream, st, 'closed', actor, why, at)
-    receipt(S, 'task cancel', id, st, 'closed', actor, why, '', '', at)
+    local p = NS.task.read(id)
+    local st = p and p.where or ''
+    NS.task.move(id, 'done', { ok = 'fail', by = actor, why = why, sprint = S,
+      fields = { 'evidence', why, 'closed_at', tostring(at) } })
+    receipt(S, 'task cancel', id, st, 'done', actor, why, '', '', at)
   end
 
   -- ns_route_pr_read token S repo n stream actor reader...

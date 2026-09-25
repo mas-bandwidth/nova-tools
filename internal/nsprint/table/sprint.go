@@ -29,9 +29,11 @@
 //	friend:<f>:cards:<w>    ZCARD for ready, working: the friend's cells are
 //	                        the sizes of the sets its tasks move through (the card
 //	                        model, rowan-new specs/ws-index.md; nova-tools#3779)
-//	friend:<f>:cards:done   ZCOUNT from the current sprint's start to +inf: done
-//	                        counts only this sprint's cards (#3883); ZCARD beside
-//	                        it for the done base of a `table clear`
+//	friend:<f>:cards:<d>    ZCOUNT from the current sprint's start to +inf for
+//	                        d = done, merging, landed: the done column is this
+//	                        sprint's finished work (#3883), whose PR may still be
+//	                        merging or merged (#3778); ZCARD of the same three
+//	                        beside it for the done base of a `table clear`
 //	sprint:order            ZRANGE -1 -1 when no sprint is named: the newest
 //	                        sprint opened is the current one
 //	s:<S>                   HGET opened_at, the current sprint's start (ms)
@@ -66,6 +68,10 @@ var WSStates = []string{"waiting", "ready", "working", "merging", "landed"}
 // FriendWheres are the three friend:<f>:cards:<where> sets the friend block
 // counts, in column order.
 var FriendWheres = []string{"ready", "working", "done"}
+
+// FriendDoneWheres are the sets the done column adds up (#3778): a friend's
+// finished task sits in done, or in merging and landed when it named a PR.
+var FriendDoneWheres = []string{"done", "merging", "landed"}
 
 // FriendCardsKey is one friend's set of task ids at where.
 func FriendCardsKey(friend, where string) string { return "friend:" + friend + ":cards:" + where }
@@ -109,7 +115,7 @@ type SprintSnapshot struct {
 	Hosts      []HostRow
 	Friends    []FriendRow
 	DoneBase   map[string]string
-	// DoneAll is each friend's ZCARD friend:<f>:cards:done, every card it
+	// DoneAll is each friend's ZCARD friend:<f>:cards:done + merging + landed (#3778), every card it
 	// ever finished: the measure a `table clear` base (DoneBase) is taken in.
 	DoneAll map[string]int64
 	// DoneSprint is the sprint the done column is scoped to (#3883): the
@@ -244,19 +250,18 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 	rows := make([]*redis.SliceCmd, len(roster))
 	cells := make([][]*redis.IntCmd, len(roster))
-	doneAll := make([]*redis.IntCmd, len(roster))
+	doneAll := make([][]*redis.IntCmd, len(roster))
 	downs := make([]*redis.IntCmd, len(roster))
 	for i, f := range roster {
 		rows[i] = pipe.HMGet(ctx, "friend:"+f, "at", "up")
-		for _, w := range FriendWheres {
-			if w == "done" {
-				// Only this sprint's cards: the set is scored by created_at.
-				cells[i] = append(cells[i], pipe.ZCount(ctx, FriendCardsKey(f, w), since, "+inf"))
-				continue
-			}
+		for _, w := range FriendWheres[:2] {
 			cells[i] = append(cells[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
 		}
-		doneAll[i] = pipe.ZCard(ctx, FriendCardsKey(f, "done"))
+		for _, w := range FriendDoneWheres {
+			// Only this sprint's cards: every set is scored by created_at.
+			cells[i] = append(cells[i], pipe.ZCount(ctx, FriendCardsKey(f, w), since, "+inf"))
+			doneAll[i] = append(doneAll[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
+		}
 		downs[i] = pipe.Exists(ctx, "friend:"+f+":down")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
@@ -346,13 +351,31 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			row.At, row.Up = pipeValue(got[0]), pipeValue(got[1])
 		}
 		counts := []*string{&row.Ready, &row.Working, &row.Done}
+		var done int64
+		doneOK := true
 		for j, c := range cells[i] {
-			if n, err := c.Result(); err == nil {
-				*counts[j] = strconv.FormatInt(n, 10)
+			n, err := c.Result()
+			if j < 2 {
+				if err == nil {
+					*counts[j] = strconv.FormatInt(n, 10)
+				}
+				continue
 			}
+			doneOK = doneOK && err == nil
+			done += n
 		}
-		if n, err := doneAll[i].Result(); err == nil {
-			snap.DoneAll[f] = n
+		if doneOK {
+			row.Done = strconv.FormatInt(done, 10) // done + merging + landed (#3778)
+		}
+		var all int64
+		allOK := true
+		for _, c := range doneAll[i] {
+			n, err := c.Result()
+			allOK = allOK && err == nil
+			all += n
+		}
+		if allOK {
+			snap.DoneAll[f] = all // the same three sets a `table clear` base counts
 		}
 		if downs[i].Val() > 0 {
 			row.Down = "down"

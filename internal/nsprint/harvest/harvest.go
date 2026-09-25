@@ -940,6 +940,9 @@ func recordPR(ctx context.Context, st *store.Store, sprint string, l lease, c Ca
 		return v, nil
 	case "FENCED":
 		return 0, ErrFenced
+	case "NOCOPY":
+		// No card, no landing (#3915): the branch names no card; nothing written.
+		return 0, fmt.Errorf("%s: REFUSED no-copy: %s#%d %s; remedy: a PR is work only from a card's branch (take a card with nova-sprint task take)", c.Label, c.Repo, n, value)
 	default:
 		return 0, fmt.Errorf("%s: record PR refused %s", c.Label, reply)
 	}

@@ -53,7 +53,8 @@ func Mix(j int) string {
 func Created(i int) int64 { return 1700000000000 + int64(i) }
 
 // Fixture writes n tasks t00000.. round-robin across streams streams, in the
-// ws shape (hash + the one set scored by created_at), in one pipeline, and
+// task card shape (the record + its one stream set and friend set, scored
+// by created_at), in one pipeline, and
 // returns the ids.
 func Fixture(t *testing.T, c *redis.Client, n, streams int) []string {
 	t.Helper()
@@ -70,11 +71,23 @@ func Fixture(t *testing.T, c *redis.Client, n, streams int) []string {
 		stream, j := StreamName(i%streams), i/streams
 		state := Mix(j)
 		score := float64(Created(i))
-		pipe.HSet(ctx, "task:"+id, "stream", stream, "state", state, "order", fmt.Sprint(1000+j), "created_at", fmt.Sprint(Created(i)),
-			"title", fmt.Sprintf("STREAM: %s | task %d", stream, i), "owner", "f1", "kind", "code")
-		if state != "closed" {
-			pipe.ZAdd(ctx, "ws:"+stream+":"+state, redis.Z{Score: score, Member: id})
+		// The task card shape (nova-tools #3778): where names the one set
+		// (closed is done/fail), state mirrors it for bin/friend-queue, and
+		// the friend's set holds it too.
+		where, ok, mirror := state, "-", state
+		switch state {
+		case "closed":
+			where, ok = "done", "fail"
+		case "ready":
+			mirror = "open"
+		case "landed":
+			ok = "ok"
 		}
+		pipe.HSet(ctx, "task:"+id, "stream", stream, "where", where, "where_ok", ok, "state", mirror, "order", fmt.Sprint(1000+j),
+			"created_at", fmt.Sprint(Created(i)), "title", fmt.Sprintf("STREAM: %s | task %d", stream, i), "owner", "f1",
+			"friend", "f1", "kind", "code")
+		pipe.ZAdd(ctx, "ws:"+stream+":"+where, redis.Z{Score: score, Member: id})
+		pipe.ZAdd(ctx, "friend:f1:cards:"+where, redis.Z{Score: score, Member: id})
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatal(err)

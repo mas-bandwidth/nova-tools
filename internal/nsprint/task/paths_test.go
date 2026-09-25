@@ -51,7 +51,7 @@ func TestPushRefusesOverlappingBuildPaths(t *testing.T) {
 	if got.Status.ExitCode() == 0 {
 		t.Fatal("an overlap must exit non-zero")
 	}
-	if n, _ := client.Exists(ctx, "s:"+sprint+":task:build-3056-card-cut").Result(); n != 0 {
+	if n, _ := client.Exists(ctx, "task:build-3056-card-cut").Result(); n != 0 {
 		t.Fatal("a refused push must write no task hash")
 	}
 	if n, _ := receipts(ctx, client, "s:"+sprint+":log", "task push", "build-3056-card-cut"); n != 0 {

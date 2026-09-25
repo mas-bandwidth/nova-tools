@@ -283,7 +283,7 @@ func Rebalance(ctx context.Context, st *store.Store, req RebalanceRequest) ([]Re
 	hashes := map[string]*redis.SliceCmd{}
 	for i := range names {
 		for _, id := range cmds[i].open.Val() {
-			hashes[id] = pipe.HMGet(ctx, "s:"+S+":task:"+id, "state", "kind", "author", "title", "ref")
+			hashes[id] = pipe.HMGet(ctx, "task:"+id, "state", "kind", "author", "title", "ref")
 		}
 	}
 	if len(hashes) > 0 {

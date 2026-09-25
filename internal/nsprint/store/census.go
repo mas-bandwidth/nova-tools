@@ -64,7 +64,7 @@ func (s CensusSummary) Line() string {
 //
 //	benches                 SMEMBERS benches              -> bench:<name>
 //	friends                 SMEMBERS friends              -> friend:<name>
-//	sprint:<name>:<state>   SMEMBERS s:<name>:idx:task:<state> -> s:<name>:task:<id>
+//	sprint:<name>:<state>   SMEMBERS s:<name>:idx:task:<state> -> task:<id> (one task store)
 func CensusSet(set string) (index, prefix string, err error) {
 	switch set {
 	case "benches":
@@ -75,7 +75,7 @@ func CensusSet(set string) (index, prefix string, err error) {
 	if rest, ok := strings.CutPrefix(set, "sprint:"); ok {
 		name, state, ok := strings.Cut(rest, ":")
 		if ok && name != "" && state != "" && !strings.ContainsAny(name+state, ": \t\n") {
-			return "s:" + name + ":idx:task:" + state, "s:" + name + ":task:", nil
+			return "s:" + name + ":idx:task:" + state, "task:", nil
 		}
 		return "", "", fmt.Errorf("set %q: want sprint:<name>:<state>, for example sprint:fixes:working", set)
 	}

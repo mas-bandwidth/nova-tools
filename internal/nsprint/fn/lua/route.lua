@@ -44,8 +44,11 @@ do
   -- shape as ns_task_push; the payload sha is computed by the Go caller with
   -- task.PayloadSHA so a later `task push` of the same id compares equal.
   local function create_task(S, id, kind, title, effects, repo, pr, head, ref, to, front, priority, payload_sha, actor, idem, at)
-    local key = 's:' .. S .. ':task:' .. id
+    local key = 'task:' .. id
     local existing = redis.call('HGET', key, 'payload_sha')
+    if not existing and redis.call('EXISTS', key) == 1 then
+      return 'CONFLICT' -- a task card pushed another way holds the id
+    end
     if existing then
       if existing ~= payload_sha then
         return 'CONFLICT'
@@ -56,18 +59,18 @@ do
       end
       return 'EXISTS'
     end
-    redis.call('HSET', key,
-      'kind', kind, 'repo', repo, 'ref', ref, 'pr', pr, 'head', head,
-      'title', title, 'effects', effects, 'owner', '', 'priority', tostring(priority),
-      'state', 'open', 'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
-      'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
-      'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '')
     local score = tonumber(priority)
     if front then
       score = -score
     end
-    redis.call('ZADD', 's:' .. S .. ':open:' .. to, score, id)
-    redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
+    NS.task.create(id, {
+      'kind', kind, 'repo', repo, 'ref', ref, 'pr', pr, 'head', head,
+      'title', title, 'effects', effects, 'priority', tostring(priority),
+      'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
+      'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
+      'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '', 'dest', to },
+      { where = 'ready', state = 'open', friend = to, sprint = S, qscore = score, created = at, by = actor,
+        why = 'ok-to-friend' })
     receipt(S, 'task push', id, '', 'open', 0, actor, 'ok-to-friend', '', idem, at)
     return 'CREATED'
   end
@@ -162,7 +165,7 @@ do
       for i = 0, n - 1 do
         local id = args[base + i * 5]
         local payload_sha = args[base + i * 5 + 4]
-        local key = 's:' .. S .. ':task:' .. id
+        local key = 'task:' .. id
         local existing = redis.call('HGET', key, 'payload_sha')
         local why = nil
         if existing and existing ~= payload_sha then

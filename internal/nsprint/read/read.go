@@ -404,6 +404,11 @@ func Post(ctx context.Context, c *redis.Client, repo, n, line string, poster *Po
 	moves := ""
 	if EventKinds[kind] {
 		ev, err := postEvent(ctx, c, repo, n, line, now)
+		var nocopy *NoCopyError
+		if errors.As(err, &nocopy) {
+			fmt.Fprintf(stderr, "READ POST REFUSED repo=%s n=%s %v; remedy: %s\n", repo, n, err, NoCopyRemedy)
+			return 1
+		}
 		if err != nil {
 			fmt.Fprintf(stderr, "nova-sprint read post: %v\n", err)
 			return 2
@@ -453,11 +458,29 @@ type event struct {
 	Skipped []string
 }
 
+// NoCopyError is ns_read_post's NOCOPY (#3915, no card, no landing): a SCORE
+// on a PR that names no copy a consumer took; nothing was written.
+type NoCopyError struct{ Ref, Looked string }
+
+func (e *NoCopyError) Error() string {
+	return "no-copy: " + e.Ref + " names no working copy (" + e.Looked + ")"
+}
+
+// NoCopyRemedy is the refusal's remedy.
+const NoCopyRemedy = "take a card with nova-sprint task take --actor <f> (card work --as friend:<f>) and name its id (NOVA_TASK_ID) in the head branch"
+
 func postEvent(ctx context.Context, c *redis.Client, repo, n, line, now string) (event, error) {
 	var ev event
 	res, err := c.FCall(ctx, FunctionReadPost, nil, prkey.Name(repo), n, line, now).StringSlice()
 	if err != nil {
 		return ev, fmt.Errorf("%s: %w (a store whose library predates it: nova-sprint fn load)", FunctionReadPost, err)
+	}
+	if len(res) >= 2 && res[0] == "NOCOPY" {
+		looked := ""
+		if len(res) > 2 {
+			looked = res[2]
+		}
+		return ev, &NoCopyError{Ref: res[1], Looked: looked}
 	}
 	if len(res) < 6 || res[0] != "OK" {
 		return ev, fmt.Errorf("%s: %s", FunctionReadPost, strings.Join(res, " "))

@@ -73,7 +73,7 @@ function WD.is_dedup(S, f, repo, pr, head, exclude_id)
   end
   for _, tid in ipairs(redis.call('SMEMBERS', 's:' .. S .. ':done:' .. f)) do
     if tid ~= exclude_id then
-      local tk = 's:' .. S .. ':task:' .. tid
+      local tk = 'task:' .. tid
       if redis.call('HGET', tk, 'repo') == repo and redis.call('HGET', tk, 'pr') == pr and redis.call('HGET', tk, 'head') == head then
         return true
       end
@@ -83,7 +83,7 @@ function WD.is_dedup(S, f, repo, pr, head, exclude_id)
     for _, identity in ipairs(redis.call('ZRANGE', zkey, 0, -1)) do
       local s, tid = string.match(identity, '^([^/]+)/(.+)/%d+$')
       if s == S and tid ~= exclude_id then
-        local tk = 's:' .. S .. ':task:' .. tid
+        local tk = 'task:' .. tid
         if redis.call('HGET', tk, 'repo') == repo and redis.call('HGET', tk, 'pr') == pr and redis.call('HGET', tk, 'head') == head then
           return true
         end
@@ -92,7 +92,7 @@ function WD.is_dedup(S, f, repo, pr, head, exclude_id)
   end
   for _, tid in ipairs(redis.call('ZRANGE', 's:' .. S .. ':open:' .. f, 0, -1)) do
     if tid ~= exclude_id then
-      local tk = 's:' .. S .. ':task:' .. tid
+      local tk = 'task:' .. tid
       if redis.call('HGET', tk, 'repo') == repo and redis.call('HGET', tk, 'pr') == pr and redis.call('HGET', tk, 'head') == head then
         return true
       end
@@ -132,7 +132,7 @@ function WD.ready(S, key)
             return false, 'deps'
           end
         else
-          local dk = 's:' .. S .. ':task:' .. dep
+          local dk = 'task:' .. dep
           if redis.call('EXISTS', dk) == 1 then
             if redis.call('HGET', dk, 'state') ~= 'closed' then
               return false, 'deps'
@@ -375,7 +375,7 @@ local function width_fill(keys, args)
     local task_ids = redis.call('ZRANGE', qkey, 0, -1)
     for _, id in ipairs(task_ids) do
       if #claimed >= limit then break end
-      local key = 's:' .. S .. ':task:' .. id
+      local key = 'task:' .. id
       if redis.call('EXISTS', key) == 1 and redis.call('HGET', key, 'state') == 'open' and redis.call('ZSCORE', qkey, id) then
         local ready = WD.ready(S, key)
         if ready then
@@ -389,18 +389,10 @@ local function width_fill(keys, args)
             local token = tostring(attempt) .. '.' .. rand_part
             local token_sha = string.sub(redis.sha1hex(token), 1, 12)
 
-            redis.call('HSET', key,
-              'state', 'claimed',
-              'owner', f,
-              'attempt', tostring(attempt),
-              'token', token,
-              'token_sha', token_sha,
-              'claimed_at', tostring(now)
-            )
-            redis.call('ZREM', 's:' .. S .. ':ready', id)
-            redis.call('ZREM', qkey, id)
-            redis.call('SREM', 's:' .. S .. ':idx:task:open', id)
-            redis.call('SADD', 's:' .. S .. ':idx:task:claimed', id)
+            -- the one task move (NS.task, 02_card_move.lua): ready -> working
+            NS.task.set(id, 'claimed', { friend = f, sprint = S, by = actor, why = 'fill',
+              fields = { 'attempt', tostring(attempt), 'token', token, 'token_sha', token_sha,
+                'claimed_at', tostring(now) } })
             redis.call('ZADD', 'friend:' .. f .. ':starting', now, S .. '/' .. id .. '/' .. attempt)
 
             WD.receipt(S, 'task take', id, 'open', 'claimed', attempt, token_sha, actor, '', '', idem, now)
@@ -516,7 +508,7 @@ local function width_move(keys, args)
       if moved >= max_move then break end
       local id = task_entries[i]
       local score = tonumber(task_entries[i+1])
-      local key = 's:' .. S .. ':task:' .. id
+      local key = 'task:' .. id
       if redis.call('EXISTS', key) == 1 and redis.call('HGET', key, 'state') == 'open' then
         local kind = redis.call('HGET', key, 'kind') or ''
         if kind == '' or kind == 'work' or kind == 'fix' or kind == 'build' then
@@ -526,9 +518,8 @@ local function width_move(keys, args)
             local pr = redis.call('HGET', key, 'pr') or ''
             local head = redis.call('HGET', key, 'head') or ''
             if not WD.is_dedup(S, to_f, repo, pr, head, nil) then
-              redis.call('ZREM', from_q, id)
-              redis.call('ZADD', to_q, score, id)
-              redis.call('HSET', key, 'owner', to_f)
+              NS.task.set(id, 'open', { friend = to_f, sprint = S, qscore = score, by = 'width', why = 'underfull',
+                fields = { 'dest', to_f } })
               redis.call('XADD', 's:' .. S .. ':log', '*',
                 'kind', 'width move',
                 'id', id,

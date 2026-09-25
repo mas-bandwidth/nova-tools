@@ -337,6 +337,8 @@ func (s *Server) Pass(ctx context.Context) (PassResult, error) {
 				res.Closed++
 			}
 		}
+		// the start-ack of every child just spawned: one call (#3915)
+		s.beatLeases(ctx)
 	}
 	res.Live = s.Live()
 	return res, nil
@@ -520,7 +522,6 @@ func (s *Server) start(ctx context.Context, c task.Claim) error {
 	s.children[ch.key()] = ch
 	s.mu.Unlock()
 	s.receipt(ctx, "start", &c, fmt.Sprintf("pid=%d brief=%s argv=%s", cmd.Process.Pid, ch.briefSrc, argv[0]))
-	s.beatLease(ctx, ch)
 	return nil
 }
 
@@ -557,7 +558,8 @@ func (s *Server) writeBrief(ctx context.Context, ch *child, fields map[string]st
 	return os.WriteFile(ch.brief, []byte(b.String()), 0o644)
 }
 
-// beatLeases beats every child's task lease that is due.
+// beatLeases beats every child's task lease that is due, in one call
+// (task.BeatMany, #3915): working is exactly the children alive.
 func (s *Server) beatLeases(ctx context.Context) {
 	s.mu.Lock()
 	due := make([]*child, 0, len(s.children))
@@ -567,20 +569,30 @@ func (s *Server) beatLeases(ctx context.Context) {
 		}
 	}
 	s.mu.Unlock()
+	if len(due) == 0 {
+		return
+	}
+	sort.Slice(due, func(i, j int) bool { return due[i].key() < due[j].key() })
+	reqs := make([]task.BeatRequest, len(due))
+	for i, c := range due {
+		reqs[i] = task.BeatRequest{Sprint: c.claim.Sprint, ID: c.claim.ID, Token: c.claim.Token, Actor: s.cfg.Actor}
+	}
+	statuses, err := task.BeatMany(ctx, s.st, reqs)
+	now := s.now()
 	for _, c := range due {
-		s.beatLease(ctx, c)
+		c.lastBeat = now
+	}
+	if err != nil {
+		fmt.Fprintf(s.cfg.Out, "SERVE %s beat n=%d: %v\n", s.cfg.Friend, len(due), err)
+		return
+	}
+	for i, c := range due {
+		s.beatStatus(ctx, c, statuses[i])
 	}
 }
 
-func (s *Server) beatLease(ctx context.Context, c *child) {
-	status, err := task.Beat(ctx, s.st, task.BeatRequest{
-		Sprint: c.claim.Sprint, ID: c.claim.ID, Token: c.claim.Token, Actor: s.cfg.Actor,
-	})
-	c.lastBeat = s.now()
-	if err != nil {
-		fmt.Fprintf(s.cfg.Out, "SERVE %s beat %s/%s: %v\n", s.cfg.Friend, c.claim.Sprint, c.claim.ID, err)
-		return
-	}
+// beatStatus acts on one child's beat: a fenced lease stops the child.
+func (s *Server) beatStatus(ctx context.Context, c *child, status task.BeatStatus) {
 	if status == task.BeatFenced {
 		// The lease moved under us (the reconciler superseded the attempt);
 		// the child's work no longer has a task. Stop it.

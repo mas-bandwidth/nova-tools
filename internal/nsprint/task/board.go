@@ -97,7 +97,7 @@ func Owners(ctx context.Context, st *store.Store, sprint, prefix string) ([]Owne
 	pipe = client.Pipeline()
 	rows := make([]*redis.SliceCmd, len(ids))
 	for i, id := range ids {
-		rows[i] = pipe.HMGet(ctx, "s:"+sprint+":task:"+id, "owner", "dest", "state")
+		rows[i] = pipe.HMGet(ctx, "task:"+id, "owner", "dest", "state")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return nil, fmt.Errorf("task owners: %w", err)

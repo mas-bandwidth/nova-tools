@@ -18,7 +18,7 @@ const CheckpointKey = "ws:checkpoint"
 // CheckpointFields are the task hash fields a checkpoint row carries after
 // stream, state, score and id.
 var CheckpointFields = []string{"order", "blocked_on", "owner", "kind", "route", "est", "ref",
-	"title", "pr", "head", "created_at", "state_at", "parked_from"}
+	"title", "pr", "head", "created_at", "state_at", "parked_from", "where_ok", "friend", "origin"}
 
 // CheckpointResult is what Checkpoint wrote.
 type CheckpointResult struct {
@@ -82,7 +82,7 @@ func Checkpoint(ctx context.Context, c redis.Cmdable, path string, now time.Time
 	var sets []set
 	pipe := c.Pipeline()
 	for _, s := range streams {
-		for _, st := range States {
+		for _, st := range Wheres {
 			sets = append(sets, set{s, st, pipe.ZRangeWithScores(ctx, Key(s, st), 0, -1)})
 		}
 	}

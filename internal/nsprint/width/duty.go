@@ -213,7 +213,7 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 		pipe3 := client.Pipeline()
 		taskCmds := make([]*redis.SliceCmd, len(allOpenTasks))
 		for i, t := range allOpenTasks {
-			taskCmds[i] = pipe3.HMGet(ctx, "s:"+t.sprint+":task:"+t.id, "state", "kind", "depends_on", "repo", "pr", "head", "blocked_reason", "base")
+			taskCmds[i] = pipe3.HMGet(ctx, "task:"+t.id, "state", "kind", "depends_on", "repo", "pr", "head", "blocked_reason", "base")
 		}
 		if _, err := pipe3.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 			return reconcile.Counts{}, fmt.Errorf("width duty: round 3: %w", err)

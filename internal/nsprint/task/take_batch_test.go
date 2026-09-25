@@ -65,7 +65,7 @@ func (r *recorder) trips() int { return len(r.singles) + len(r.pipelines) }
 func seedOpenTask(t *testing.T, client *redis.Client, S, friend, id string, score float64, needs string) {
 	t.Helper()
 	ctx := context.Background()
-	key := "s:" + S + ":task:" + id
+	key := "task:" + id
 	if err := client.HSet(ctx, key, "state", "open", "title", "task "+id, "kind", "build", "ref", "r-"+id,
 		"priority", "5", "pushed_at", "1", "est", "30", "owner", "", "attempt", "0").Err(); err != nil {
 		t.Fatal(err)
@@ -132,7 +132,7 @@ func TestTakeAvailableThreeQueuesFiveClaimsOnePipelineOneFCall(t *testing.T) {
 	if n, _ := client.ZCard(ctx, "friend:f1:starting").Result(); n != 5 {
 		t.Fatalf("starting=%d, want 5", n)
 	}
-	if st, _ := client.HGet(ctx, "s:batch-c:task:c3", "state").Result(); st != "open" {
+	if st, _ := client.HGet(ctx, "task:c3", "state").Result(); st != "open" {
 		t.Fatalf("c3 state=%q, want open", st)
 	}
 }
@@ -217,7 +217,7 @@ func TestTakeAvailableRetryFallsBackToOneTake(t *testing.T) {
 	rec := &recorder{}
 	rec.before = func(cmd redis.Cmder) {
 		if commandLine(cmd) == "fcall ns_task_take_n" {
-			other.HSet(ctx, "s:race:task:r1", "attempt", "3")
+			other.HSet(ctx, "task:r1", "attempt", "3")
 		}
 	}
 	client.AddHook(rec)

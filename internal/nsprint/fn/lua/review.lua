@@ -64,14 +64,10 @@ do
       local f = args[idx]
       local tid = args[idx + 1]
       idx = idx + 2
-      local tkey = 's:' .. S .. ':task:' .. tid
+      local tkey = 'task:' .. tid
       local tstate = redis.call('HGET', tkey, 'state')
       if tstate == 'open' or tstate == 'leased' then
-        redis.call('HSET', tkey, 'state', 'cancelled', 'closed_at', at)
-        if f and f ~= '' then
-          redis.call('ZREM', 's:' .. S .. ':open:' .. f, tid)
-        end
-        redis.call('SREM', 's:' .. S .. ':idx:task:open', tid)
+        NS.task.set(tid, 'cancelled', { sprint = S, by = actor, why = 'head-change', fields = { 'closed_at', at } })
         redis.call('XADD', 's:' .. S .. ':log', '*',
           'kind', 'task cancel', 'id', tid, 'from', tstate, 'to', 'cancelled',
           'attempt', '0', 'token_sha', '', 'actor', actor, 'reason', 'head-change',
@@ -87,17 +83,16 @@ do
       local priority = args[idx + 2]
       local payload_sha = args[idx + 3]
       idx = idx + 4
-      local tkey = 's:' .. S .. ':task:' .. tid
-      local existing = redis.call('HGET', tkey, 'payload_sha')
-      if not existing then
-        redis.call('HSET', tkey,
+      local tkey = 'task:' .. tid
+      if redis.call('EXISTS', tkey) == 0 then
+        NS.task.create(tid, {
           'kind', 'review', 'repo', repo, 'ref', '', 'pr', pr, 'head', head,
           'title', 'review ' .. repo .. '#' .. pr .. ' at ' .. head, 'effects', 'none',
-          'owner', '', 'priority', priority, 'state', 'open', 'attempt', '0', 'token', '0',
+          'priority', priority, 'attempt', '0', 'token', '0',
           'payload_sha', payload_sha, 'reason', '', 'evidence', '', 'claimed_at', '',
-          'started_at', '', 'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '')
-        redis.call('ZADD', 's:' .. S .. ':open:' .. fid, tonumber(priority) or 0, tid)
-        redis.call('SADD', 's:' .. S .. ':idx:task:open', tid)
+          'started_at', '', 'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '', 'dest', fid },
+          { where = 'ready', state = 'open', friend = fid, sprint = S, qscore = tonumber(priority) or 0,
+            by = actor, why = 'head-change' })
         redis.call('XADD', 's:' .. S .. ':log', '*',
           'kind', 'task push', 'id', tid, 'from', '', 'to', 'open',
           'attempt', '0', 'token_sha', '', 'actor', actor, 'reason', 'head-change',

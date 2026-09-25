@@ -75,7 +75,7 @@ end
 -- one receipt. ctx carries the per-call caches.
 local function ra_assign_one(ctx, id, g)
   local S = ctx.S
-  local key = 's:' .. S .. ':task:' .. id
+  local key = 'task:' .. id
   local state = redis.call('HGET', key, 'state')
   local kind = redis.call('HGET', key, 'kind') or 'work'
   local status, detail = nil, ''
@@ -122,19 +122,15 @@ local function ra_assign_one(ctx, id, g)
     if not from then
       from, score = 'ready', tostring(redis.call('HGET', key, 'priority') or '0')
     end
-    if from == 'ready' then
-      redis.call('ZREM', 's:' .. S .. ':ready', id)
-    else
-      redis.call('ZREM', 's:' .. S .. ':open:' .. from, id)
-    end
-    redis.call('ZADD', 's:' .. S .. ':open:' .. g, score, id)
-    local fields = { 'owner', '' }
+    -- the one task move (NS.task): ready on g's queue at the same score
+    local fields = { 'dest', g }
     if from ~= 'ready' then
       local marker = '[moved from ' .. from .. ': ' .. ctx.reason .. ']'
-      fields = { 'owner', '', 'moved_from', from,
+      fields = { 'dest', g, 'moved_from', from,
         'title', rd_mark(redis.call('HGET', key, 'title') or '', marker) }
     end
-    redis.call('HSET', key, unpack(fields))
+    NS.task.set(id, 'open', { friend = g, sprint = S, qscore = score, by = ctx.actor, why = ctx.reason ~= '' and ctx.reason or 'assign',
+      fields = fields })
     rd_note_held(S, g, key, id, ctx.held)
     ctx.woken[g] = true
     status, detail = 'MOVED', 'from=' .. from

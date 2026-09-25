@@ -54,7 +54,7 @@ func TestFoldEstErrorPerOwner(t *testing.T) {
 			"state":      td.state,
 			"evidence":   td.evidence,
 		}
-		if err := client.HSet(ctx, "s:"+sprint+":task:"+td.id, fields).Err(); err != nil {
+		if err := client.HSet(ctx, "task:"+td.id, fields).Err(); err != nil {
 			t.Fatalf("hset task %s: %v", td.id, err)
 		}
 		if err := client.SAdd(ctx, "s:"+sprint+":idx:task:closed", td.id).Err(); err != nil {
@@ -111,7 +111,7 @@ func TestFoldPctDashWhenNoEstimate(t *testing.T) {
 			"state":      "closed",
 			"evidence":   "ev",
 		}
-		if err := client.HSet(ctx, "s:"+sprintEmma+":task:"+td.id, fields).Err(); err != nil {
+		if err := client.HSet(ctx, "task:"+td.id, fields).Err(); err != nil {
 			t.Fatal(err)
 		}
 		if err := client.SAdd(ctx, "s:"+sprintEmma+":idx:task:closed", td.id).Err(); err != nil {
@@ -151,7 +151,7 @@ func TestFoldPctDashWhenNoEstimate(t *testing.T) {
 		"state":      "closed",
 		"evidence":   "ev",
 	}
-	if err := client.HSet(ctx, "s:"+sprintZero+":task:t-zero", td).Err(); err != nil {
+	if err := client.HSet(ctx, "task:t-zero", td).Err(); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.SAdd(ctx, "s:"+sprintZero+":idx:task:closed", "t-zero").Err(); err != nil {

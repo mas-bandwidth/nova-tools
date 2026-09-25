@@ -41,7 +41,7 @@ local function redistribute_floor(keys, args)
           local items = redis.call('ZRANGE', 's:' .. S .. ':open:' .. donor.friend, 0, -1, 'WITHSCORES')
           for i = 1, #items, 2 do
             local id = items[i]
-            local key = 's:' .. S .. ':task:' .. id
+            local key = 'task:' .. id
             local kind = redis.call('HGET', key, 'kind') or 'work'
             local eligible = (kind == 'fix' and (fr_has_role(receiver, 'builder') or fr_has_role(receiver, 'coordinator'))) or
               ((kind == 'read' or kind == 'review') and fr_has_role(receiver, 'may-hold') and
