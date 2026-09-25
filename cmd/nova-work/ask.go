@@ -98,6 +98,17 @@ func askWith(args []string, stdout, stderr io.Writer, sender friends.Sender) int
 	if err != nil {
 		return refuse(stderr, " ask", oneline.Err(err))
 	}
+	// The record is written after the send, so a forest target is refused before
+	// it (#3340): the forest is the kernel's, and no note goes out for a record
+	// that cannot be kept.
+	if target := *record; !ws.Lisp || target != "" {
+		if !ws.Lisp {
+			target = *units
+		}
+		if isForestPath(target) {
+			return forestRefused(stderr, " ask", target)
+		}
+	}
 	u, err := ws.Unit(*unit)
 	if err != nil {
 		return refuse(stderr, " ask", oneline.Err(err))

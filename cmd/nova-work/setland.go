@@ -161,7 +161,7 @@ func writeStatus(path string, data []byte, ws *worklang.WorkSet, flip map[string
 	for _, fl := range flips {
 		out = append(out[:fl.at], append([]byte(to), out[fl.at+len(from):]...)...)
 	}
-	if err := replaceFile(path, out); err != nil {
+	if err := writeWorkSet(path, out); err != nil {
 		return nil, err
 	}
 	sort.Slice(flips, func(i, j int) bool { return flips[i].at < flips[j].at })
@@ -171,37 +171,6 @@ func writeStatus(path string, data []byte, ws *worklang.WorkSet, flip map[string
 type statusFlip struct {
 	unit string
 	at   int
-}
-
-// replaceFile writes beside the file and renames over it, so a reader never sees
-// half a work set, and the file keeps its mode.
-func replaceFile(path string, data []byte) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	if err := tmp.Close(); err != nil {
-		os.Remove(name)
-		return err
-	}
-	if err := os.WriteFile(name, data, info.Mode().Perm()); err != nil {
-		os.Remove(name)
-		return err
-	}
-	if err := os.Chmod(name, info.Mode().Perm()); err != nil {
-		os.Remove(name)
-		return err
-	}
-	if err := os.Rename(name, path); err != nil {
-		os.Remove(name)
-		return err
-	}
-	return nil
 }
 
 // percent is done over units, rounded down: 26 of 42 is 61, never a 62 the
