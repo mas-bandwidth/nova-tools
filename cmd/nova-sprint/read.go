@@ -155,7 +155,7 @@ func runReadCarry(ctx context.Context, st *store.Store, sub string, id land.ID, 
 		return 1
 	}
 	if sub == "carry" {
-		res, err := line.Carry(ctx, c, sprint, id, dir, baseRef)
+		res, err := line.Carry(ctx, c, sprint, "", id, dir, baseRef)
 		if err != nil {
 			fmt.Fprintf(errOut, "nova-sprint %s: %v\n", name, err)
 			return 1

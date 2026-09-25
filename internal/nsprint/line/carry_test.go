@@ -8,7 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
@@ -81,10 +82,12 @@ var id = land.ID{Repo: repo, N: 7}
 func storeFixture(t *testing.T, f repoFixture, head string) (context.Context, *redis.Client) {
 	t.Helper()
 	ctx := context.Background()
-	mr := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	addr := testutil.Start(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	if err := fn.Load(ctx, c); err != nil { t.Fatal(err) }
 	t.Cleanup(func() { _ = c.Close() })
 	c.SAdd(ctx, "friends", "emma", "rowan")
+	c.HSet(ctx, "lease:route:"+sprint, "instance", "tester")
 	c.HSet(ctx, land.UnitKey(sprint, unit), "repo", repo, "base", "dev", "head", head, "pr", "7", "branch", "feature")
 	c.Set(ctx, land.PRUnitKey(sprint, repo, 7), unit, 0)
 	c.HSet(ctx, land.ReadKey(sprint, unit, "emma"), "seq", "5", "head", f.a, "verdict", "APPROVE", "score", "10", "kind", "", "at", "1")
@@ -105,7 +108,7 @@ func storeFixture(t *testing.T, f repoFixture, head string) (context.Context, *r
 func TestCarryIdenticalDiff(t *testing.T) {
 	f := newRepoFixture(t)
 	ctx, c := storeFixture(t, f, f.b)
-	res, err := line.Carry(ctx, c, sprint, id, f.dir, "")
+	res, err := line.Carry(ctx, c, sprint, "tester", id, f.dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +129,7 @@ func TestCarryIdenticalDiff(t *testing.T) {
 	if v := c.HGet(ctx, land.UnitKey(sprint, unit), line.FieldHead).Val(); v != f.b {
 		t.Fatalf("diff_head %q, want %s", v, f.b)
 	}
-	res, err = line.Carry(ctx, c, sprint, id, f.dir, "")
+	res, err = line.Carry(ctx, c, sprint, "tester", id, f.dir, "")
 	if err != nil || res.Outcome != line.Nothing {
 		t.Fatalf("second carry: %+v %v", res, err)
 	}
@@ -137,7 +140,7 @@ func TestCarryIdenticalDiff(t *testing.T) {
 func TestCarryRefusesChangedFiles(t *testing.T) {
 	f := newRepoFixture(t)
 	ctx, c := storeFixture(t, f, f.c)
-	res, err := line.Carry(ctx, c, sprint, id, f.dir, "")
+	res, err := line.Carry(ctx, c, sprint, "tester", id, f.dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +164,7 @@ func TestCarryRefusesChangedFiles(t *testing.T) {
 func TestLanderReadsCarriedLine(t *testing.T) {
 	f := newRepoFixture(t)
 	ctx, c := storeFixture(t, f, f.b)
-	if _, err := line.Carry(ctx, c, sprint, id, f.dir, ""); err != nil {
+	if _, err := line.Carry(ctx, c, sprint, "tester", id, f.dir, ""); err != nil {
 		t.Fatal(err)
 	}
 	u, err := land.LoadUnit(ctx, c, sprint, unit)
@@ -183,7 +186,7 @@ func TestCarryNeedsARecordedDigest(t *testing.T) {
 	f := newRepoFixture(t)
 	ctx, c := storeFixture(t, f, f.b)
 	c.HDel(ctx, land.UnitKey(sprint, unit), line.FieldSHA, line.FieldHead, line.FieldFiles)
-	_, err := line.Carry(ctx, c, sprint, id, f.dir, "")
+	_, err := line.Carry(ctx, c, sprint, "tester", id, f.dir, "")
 	if err == nil || !strings.Contains(err.Error(), "read digest") {
 		t.Fatalf("err %v", err)
 	}
