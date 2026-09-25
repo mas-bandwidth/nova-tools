@@ -12,8 +12,13 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 )
+
+// WhyCap bounds the evidence line card end hands ns_card_end, which keeps at
+// most 1024 bytes of it.
+const WhyCap = 512
 
 var (
 	// ErrNoRecord means the results directory has no end.record file.
@@ -165,6 +170,10 @@ type EndRequest struct {
 	Outcome    string
 	Reason     string
 	ResultsDir string
+	// Why is the wrapper's one-line evidence for the end (#3194): for FAILED
+	// refused, the refusal line the harness's program printed. ns_card_end
+	// writes it to the card's why when it is not empty.
+	Why string
 }
 
 // ResolveRequest is the reconciler ingest of an end record already on disk.
@@ -184,7 +193,7 @@ func End(ctx context.Context, st *store.Store, req EndRequest) (Result, error) {
 	if st == nil || st.Client() == nil || !validSprintLabel(req.Sprint, req.Label) || req.Token == "" || req.Outcome == "" || req.Reason == "" || !AbsResults(req.ResultsDir) {
 		return usage(verb, req.Label), nil
 	}
-	return callEnd(ctx, st, verb, "token", req.Sprint, req.Label, req.Token, req.ResultsDir, req.Outcome, req.Reason)
+	return callEnd(ctx, st, verb, "token", req.Sprint, req.Label, req.Token, req.ResultsDir, req.Outcome, req.Reason, req.Why)
 }
 
 // Resolve ends the attempt only when its own directory holds an end record
@@ -196,10 +205,10 @@ func Resolve(ctx context.Context, st *store.Store, req ResolveRequest) (Result, 
 	if st == nil || st.Client() == nil || !validSprintLabel(req.Sprint, req.Label) || !AbsResults(req.ResultsDir) {
 		return usage(verb, req.Label), nil
 	}
-	return callEnd(ctx, st, verb, "record", req.Sprint, req.Label, "", req.ResultsDir, "", "")
+	return callEnd(ctx, st, verb, "record", req.Sprint, req.Label, "", req.ResultsDir, "", "", "")
 }
 
-func callEnd(ctx context.Context, st *store.Store, verb, mode, sprint, label, token, results, claimOutcome, claimReason string) (Result, error) {
+func callEnd(ctx context.Context, st *store.Store, verb, mode, sprint, label, token, results, claimOutcome, claimReason, why string) (Result, error) {
 	dir, err := cleanResultsDir(results)
 	if err != nil {
 		return Result{}, err
@@ -237,7 +246,7 @@ func callEnd(ctx context.Context, st *store.Store, verb, mode, sprint, label, to
 	reply, err := fcall(ctx, st, "ns_card_end", cardKeys(sprint, label),
 		mode, sprint, label, token, dir,
 		ident, outcome, reason, sha, pushed, exitCode,
-		claimOutcome, claimReason)
+		claimOutcome, claimReason, oneline.Escape(oneline.Cap(why, WhyCap)))
 	if err != nil {
 		if res, down := redisDown(verb, label, err); down {
 			return res, nil

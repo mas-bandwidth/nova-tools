@@ -109,6 +109,7 @@ func (l *RedisLedger) End(ctx context.Context, end WrapperEnd) (int, error) {
 	res, err := End(ctx, l.Store, EndRequest{
 		Sprint: l.Sprint, Label: l.Label, Token: l.Token,
 		Outcome: end.Outcome, Reason: end.Reason, ResultsDir: end.ResultsDir,
+		Why: end.Why,
 	})
 	return res.Code, err
 }

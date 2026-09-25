@@ -41,6 +41,9 @@ func fakeHarness(mode string) int {
 	for _, kv := range os.Environ() {
 		fmt.Println(kv)
 	}
+	if mode == "refuse" || mode == "refuse-identity" {
+		return fakeRefusal(mode)
+	}
 	out := os.Getenv("NOVA_CARD_OUT")
 	if strings.HasPrefix(mode, "native") {
 		if code := fakeNative(mode, out); code != 0 {
