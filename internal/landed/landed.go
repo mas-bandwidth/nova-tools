@@ -24,7 +24,10 @@ A third subject names the fact directly, a commit reachable from the base.
 The forge is read through one seam, Runner, which runs `gh`; the merge runs in a
 blobless bare repository per repo under Cache, fetched from GitURL with gh as the
 credential helper, so only the commits and trees come down and a blob is fetched
-when the merge needs it. The tests fake gh and point GitURL at a local repository;
+when the merge needs it. The fetch is shallow: --depth DefaultDepth, the house's
+shallow ruling, deepened (the depth doubled) only while the PR's window start or
+its merge base lies past the fetched history (see cover). A window the clone could
+not reach is UNKNOWN: the rule never answers from a shallow cutoff. The tests fake gh and point GitURL at a local repository;
 nothing in them touches a network. A run asks each question once: a PR by its
 number, its content by its head sha and base, a commit's reachability by its sha,
 and it fetches the base once per repo. A question that could not be answered is
@@ -110,12 +113,28 @@ type Evaluator struct {
 	Cache string
 	// GitURL is where a repo is fetched from; nil is GitHub over https.
 	GitURL func(repo string) string
+	// Depth is the depth every fetch starts at; 0 is DefaultDepth.
+	Depth int
+	// MaxDeepen is how many times cover may double the depth; 0 is
+	// DefaultMaxDeepen and a negative number forbids deepening, which leaves a
+	// window past the first fetch unknown.
+	MaxDeepen int
 
 	prs     map[string]prResult
 	content map[string]Verdict
 	reach   map[string]Verdict
 	bases   map[string]baseResult
+	// depth is the depth each repo's clone was last fetched at in this run, so
+	// a later PR starts from it rather than shortening the history again.
+	depth map[string]int
 }
+
+// DefaultDepth is the first fetch's depth: every clone --depth 50 (the shallow
+// ruling, 2026-09-23).
+const DefaultDepth = 50
+
+// DefaultMaxDeepen bounds cover's doublings: 50 << 20 commits is past any history.
+const DefaultMaxDeepen = 20
 
 type baseResult struct {
 	dir  string
@@ -143,7 +162,7 @@ type prResult struct {
 func New(run Runner, repo, base, cache string) *Evaluator {
 	return &Evaluator{Run: run, Repo: repo, Base: base, Cache: cache,
 		prs: map[string]prResult{}, content: map[string]Verdict{},
-		reach: map[string]Verdict{}, bases: map[string]baseResult{}}
+		reach: map[string]Verdict{}, bases: map[string]baseResult{}, depth: map[string]int{}}
 }
 
 // Landed answers the `:landed :merged-or-closed-in-base` predicate for one subject.
@@ -257,8 +276,9 @@ func (e *Evaluator) mergeChangesNothing(ctx context.Context, repo string, n int,
 		return unknown("error:" + token(b.err.Error()))
 	}
 	ref := "refs/nova/pr/" + strconv.Itoa(n)
-	if _, err := e.git(ctx, b.dir, "fetch", "-q", "--filter=blob:none", "--no-tags", "origin",
-		"+refs/pull/"+strconv.Itoa(n)+"/head:"+ref); err != nil {
+	pullSpec := "+refs/pull/" + strconv.Itoa(n) + "/head:" + ref
+	if _, err := e.git(ctx, b.dir, "fetch", "-q", "--filter=blob:none", "--no-tags",
+		"--depth="+strconv.Itoa(e.depthOf(repo)), "origin", pullSpec); err != nil {
 		return unknown("error:" + token(err.Error()))
 	}
 	got, err := e.git(ctx, b.dir, "rev-parse", "--verify", ref+"^{commit}")
@@ -267,6 +287,9 @@ func (e *Evaluator) mergeChangesNothing(ctx context.Context, repo string, n int,
 	}
 	if strings.TrimSpace(got) != head {
 		return unknown("error:pull-head-moved-under-the-fetch")
+	}
+	if err := e.cover(ctx, repo, b.dir, head, pullSpec); err != nil {
+		return unknown("error:" + token(err.Error()))
 	}
 	tip := e.mergeAt(ctx, b.dir, "refs/heads/"+e.Base, b.tree, head)
 	if tip.Holds || !tip.Known {
@@ -334,6 +357,88 @@ func (e *Evaluator) landingWindow(ctx context.Context, dir, head, closedAt strin
 	return commits
 }
 
+// errShallowCutoff is cover's refusal: the window reaches past the history the
+// clone may fetch, so the rule has nothing to answer from.
+var errShallowCutoff = errors.New("window-past-shallow-cutoff")
+
+// depthOf is the depth repo's clone was last fetched at in this run.
+func (e *Evaluator) depthOf(repo string) int {
+	if d := e.depth[repo]; d > 0 {
+		return d
+	}
+	if e.Depth > 0 {
+		return e.Depth
+	}
+	return DefaultDepth
+}
+
+// cover is the deepen rule: the clone is shallow, and the rule may answer only
+// once the window start -- the head's commit time, where landingWindow begins --
+// is inside it, and the merge base merge-tree needs is too. Until both hold the
+// depth doubles, the base fetched into refs/nova/deepen/<base> so the run's pinned
+// tip does not move, and the pull head with it. A window inside the first fetch
+// fetches nothing more; a clone that is no longer shallow holds the whole history,
+// so its answer is a real one. Past MaxDeepen the answer is errShallowCutoff.
+func (e *Evaluator) cover(ctx context.Context, repo, dir, head, pullSpec string) error {
+	at, err := e.git(ctx, dir, "show", "-s", "--format=%ct", head)
+	if err != nil {
+		return err
+	}
+	since, err := strconv.ParseInt(strings.TrimSpace(at), 10, 64)
+	if err != nil {
+		return fmt.Errorf("head %s carries no commit time", short(head))
+	}
+	limit := e.MaxDeepen
+	if limit == 0 {
+		limit = DefaultMaxDeepen
+	}
+	for step := 0; ; step++ {
+		ok, err := e.covered(ctx, dir, head, since)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+		if step >= limit {
+			return errShallowCutoff
+		}
+		d := e.depthOf(repo) * 2
+		if _, err := e.git(ctx, dir, "fetch", "-q", "--filter=blob:none", "--no-tags",
+			"--depth="+strconv.Itoa(d), "origin",
+			"+refs/heads/"+e.Base+":refs/nova/deepen/"+e.Base, pullSpec); err != nil {
+			return err
+		}
+		e.depth[repo] = d
+	}
+}
+
+// covered says the clone answers for a window starting at since (unix seconds):
+// it is not shallow, or the base's first-parent history reaches a commit older
+// than since and the base and head have a merge base inside it.
+func (e *Evaluator) covered(ctx context.Context, dir, head string, since int64) (bool, error) {
+	shallow, err := e.git(ctx, dir, "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(shallow) != "true" {
+		return true, nil
+	}
+	older, err := e.git(ctx, dir, "rev-list", "--first-parent", "-n", "1",
+		"--until="+time.Unix(since-1, 0).UTC().Format(time.RFC3339), "refs/heads/"+e.Base)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(older) == "" {
+		return false, nil
+	}
+	if _, err := e.git(ctx, dir, "merge-base", "refs/heads/"+e.Base, head); err != nil {
+		// No merge base inside the fetched history: deepen, never answer.
+		return false, nil
+	}
+	return true, nil
+}
+
 func short(sha string) string {
 	if len(sha) > 12 {
 		return sha[:12]
@@ -342,7 +447,7 @@ func short(sha string) string {
 }
 
 // base makes (once) the blobless bare repository for repo under Cache and fetches
-// the base into it, once per run.
+// the base into it at the first depth, once per run.
 func (e *Evaluator) base(ctx context.Context, repo string) baseResult {
 	if b, ok := e.bases[repo]; ok {
 		return b
@@ -375,10 +480,12 @@ func (e *Evaluator) fetchBase(ctx context.Context, repo string) baseResult {
 			}
 		}
 	}
-	if _, err := e.git(ctx, dir, "fetch", "-q", "--filter=blob:none", "--no-tags", "origin",
-		"+refs/heads/"+e.Base+":refs/heads/"+e.Base); err != nil {
+	d := e.depthOf(repo)
+	if _, err := e.git(ctx, dir, "fetch", "-q", "--filter=blob:none", "--no-tags",
+		"--depth="+strconv.Itoa(d), "origin", "+refs/heads/"+e.Base+":refs/heads/"+e.Base); err != nil {
 		return baseResult{err: err}
 	}
+	e.depth[repo] = d
 	tree, err := e.git(ctx, dir, "rev-parse", "--verify", "refs/heads/"+e.Base+"^{tree}")
 	if err != nil {
 		return baseResult{err: err}

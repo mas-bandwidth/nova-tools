@@ -306,7 +306,9 @@ combined with another -- and :subject "commit:<sha>" holds when the commit is re
 from the base; (:kind :merged ... :predicate :merged-at) holds only when the PR is merged.
 A subject pinned as pr:<o/r>#<n>@<sha> asks about that head only: a pin the PR's last
 head does not match was superseded and is not landed. The merge runs in one blobless
-bare repository per repo under --cache. The base is
+bare repository per repo under --cache, fetched --depth 50 and deepened (the depth
+doubled) only while the PR's window start or merge base lies past it; a window the
+clone could not reach is unknown, never no (#3404). The base is
 --base, else the set's :base, and one is required. Each evaluable criterion prints one
 SET EVAL line with holds=yes|no|unknown and a why=; a criterion gh or git could not
 answer is unknown and counts as not done. A unit is decided by its criteria when every
