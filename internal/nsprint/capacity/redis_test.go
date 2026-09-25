@@ -27,6 +27,8 @@ func redisControl(t *testing.T) (*store.Store, *redis.Client) {
 }
 
 func TestControl27RedisAtomicCeiling(t *testing.T) {
+	t.Parallel()
+
 	st, c := redisControl(t)
 	ctx := context.Background()
 	if _, err := capacity.SetMachine(ctx, st, "ctl-machine", 64, 64, 128, "test", ""); err != nil {
@@ -125,6 +127,8 @@ func TestControl27RedisAtomicCeiling(t *testing.T) {
 }
 
 func TestControl22RedisStaleQueueAndFriendIsolation(t *testing.T) {
+	t.Parallel()
+
 	st, c := redisControl(t)
 	ctx := context.Background()
 	s := "control-22334455"

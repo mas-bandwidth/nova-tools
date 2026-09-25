@@ -26,6 +26,8 @@ func fakeNodes(t *testing.T) []Node {
 // bench=<name> and kind=<k> labels, the Job selects its card's kind with
 // nodeSelector, and a lisp card is only ever placed where lisp is labelled.
 func TestNodeLabelsAndNodeSelectorPerKind(t *testing.T) {
+	t.Parallel()
+
 	nodes := fakeNodes(t)
 	hulk := nodes[1]
 	if got := hulk.Labels[LabelBench]; got != "hulk" {
@@ -68,6 +70,8 @@ func TestNodeLabelsAndNodeSelectorPerKind(t *testing.T) {
 // needs a specific checkout is pinned hard to the bench whose local volume
 // holds it.
 func TestWarmCachePreferredAffinityAndLocalHardPin(t *testing.T) {
+	t.Parallel()
+
 	nodes := fakeNodes(t)
 	job := JobFor(Card{Name: "c1", Kind: KindGo, Repo: "nova-tools"})
 	if len(job.Affinity.Preferred) != 1 || job.Affinity.Preferred[0].Key != CacheLabel("nova-tools") {
@@ -104,6 +108,8 @@ func TestWarmCachePreferredAffinityAndLocalHardPin(t *testing.T) {
 // the mirror ReadOnlyMany + WaitForFirstConsumer and the Go cache
 // ReadWriteOnce, both under $HOME/nova-bench, and they survive a Job.
 func TestPersistentVolumesPerBench(t *testing.T) {
+	t.Parallel()
+
 	home := t.TempDir()
 	pvs := PersistentVolumesFor("hulk", home)
 	if len(pvs) != 2 {
@@ -149,6 +155,8 @@ func TestPersistentVolumesPerBench(t *testing.T) {
 // lanes/{red,green,small,next}/ and taken/, and a take is an atomic rename to
 // taken/<worker>-<name>.card that exactly one of two pullers wins.
 func TestWorkQueueLayoutOnSharedVolume(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	q, err := OpenQueue(root)
 	if err != nil {
@@ -204,6 +212,8 @@ func TestWorkQueueLayoutOnSharedVolume(t *testing.T) {
 // 26): a Job killed before its clip is observed by the puller; the card is
 // back in its lane once and re-runnable, its partial RESULT.md kept.
 func TestWorkerThatDiesMidCardReturnsTheCardToTheQueue(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	q, err := OpenQueue(root)
 	if err != nil {

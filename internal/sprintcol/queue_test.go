@@ -121,6 +121,8 @@ func sadd(t *testing.T, store *Redis, friend string, ids ...string) {
 // Each render is one SMEMBERS of the open index and, when it is not empty,
 // one pipeline of HMGET owner state.
 func TestQueueColumnReadsTheFixtureStoreAndNeverCallsGitHub(t *testing.T) {
+	t.Parallel()
+
 	store, hook := fixture(t)
 	deal(t, store, "rowan", "t1", false)
 	deal(t, store, "rowan", "t2", true)
@@ -191,6 +193,8 @@ func TestQueueColumnReadsTheFixtureStoreAndNeverCallsGitHub(t *testing.T) {
 // A name that would select another key is refused, and the refusal does not
 // call GitHub. An index of the wrong type is an error, not a poll.
 func TestQueueColumnRefusesABadKeyAndDoesNotCallGitHub(t *testing.T) {
+	t.Parallel()
+
 	store, _ := fixture(t)
 	if err := store.rdb.Set(context.Background(), OpenIndexKey(testSprint, "rowan"), "not-a-set", 0).Err(); err != nil {
 		t.Fatal(err)
@@ -227,6 +231,8 @@ func TestQueueColumnRefusesABadKeyAndDoesNotCallGitHub(t *testing.T) {
 // hash. The column is F and B. Closing B, then giving F to emma, drops the
 // count even while both stay in the index. GitHub is not called.
 func TestQueueColumnCountsOnlyOpenTasksOwnedByThisFriend(t *testing.T) {
+	t.Parallel()
+
 	store, _ := fixture(t)
 	ctx := context.Background()
 	const friend = "ada"
@@ -278,6 +284,8 @@ func TestQueueColumnCountsOnlyOpenTasksOwnedByThisFriend(t *testing.T) {
 // unchanged. A column that XRANGEs the streams reads 4,003 entries, then
 // 8,003, on every one-second tick.
 func TestQueueColumnCostIsTheLiveQueueNotTheHistory(t *testing.T) {
+	t.Parallel()
+
 	store, hook := fixture(t)
 	ctx := context.Background()
 	const friend = "ada"

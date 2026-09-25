@@ -13,6 +13,8 @@ import (
 var at = time.Date(2026, 9, 22, 9, 41, 0, 0, time.UTC)
 
 func TestBeatWritesThePresenceHashAndItsUntimedMemory(t *testing.T) {
+	t.Parallel()
+
 	st := NewFakeStore(at)
 	if err := Beat(context.Background(), st, "Johnny", at, DefaultTTL); err != nil {
 		t.Fatalf("beat: %v", err)
@@ -36,6 +38,8 @@ func TestBeatWritesThePresenceHashAndItsUntimedMemory(t *testing.T) {
 // TestBeatSideWritesWidthIntoTheHashWithTheTTL is #2673: the child count is a
 // field of the beat's own hash, written with it and lapsing with it.
 func TestBeatSideWritesWidthIntoTheHashWithTheTTL(t *testing.T) {
+	t.Parallel()
+
 	st := NewFakeStore(at)
 	eight := int64(8)
 	if err := BeatSide(context.Background(), st, "emma", at, DefaultTTL, Side{Width: &eight}); err != nil {
@@ -63,6 +67,8 @@ func TestBeatSideWritesWidthIntoTheHashWithTheTTL(t *testing.T) {
 }
 
 func TestTheTTLIsWhatMakesAFriendAway(t *testing.T) {
+	t.Parallel()
+
 	st := NewFakeStore(at)
 	if err := Beat(context.Background(), st, "emma", at, DefaultTTL); err != nil {
 		t.Fatalf("beat: %v", err)
@@ -92,6 +98,8 @@ func TestTheTTLIsWhatMakesAFriendAway(t *testing.T) {
 }
 
 func TestTheLineSaysUpOrDown(t *testing.T) {
+	t.Parallel()
+
 	st := NewFakeStore(at)
 	ctx := context.Background()
 	// Emma's window died an hour and twelve minutes ago; johnny and stella
@@ -116,6 +124,8 @@ func TestTheLineSaysUpOrDown(t *testing.T) {
 }
 
 func TestAStoreThatWillNotAnswerIsAnErrorAndNotAnEmptyRoom(t *testing.T) {
+	t.Parallel()
+
 	// The one reading this verb must never invent: a store that cannot be
 	// read is not four friends who are away.
 	st := NewFakeStore(at)
@@ -135,6 +145,8 @@ func TestAStoreThatWillNotAnswerIsAnErrorAndNotAnEmptyRoom(t *testing.T) {
 // is present, and the same key past its TTL is absent again. There is no
 // override file to consult when the key is gone.
 func TestAMissingBeatKeyIsAbsentAndALiveKeyIsPresent(t *testing.T) {
+	t.Parallel()
+
 	st := NewFakeStore(at)
 	ctx := context.Background()
 
@@ -193,6 +205,8 @@ func TestAMissingBeatKeyIsAbsentAndALiveKeyIsPresent(t *testing.T) {
 }
 
 func TestAKeyWhoseValueIsNotAStampIsStillPresence(t *testing.T) {
+	t.Parallel()
+
 	// The hash's live TTL is the presence; its at field only dates it. A
 	// friend running an older beat must not read as away.
 	st := NewFakeStore(at)
@@ -204,6 +218,8 @@ func TestAKeyWhoseValueIsNotAStampIsStillPresence(t *testing.T) {
 }
 
 func TestBeatRefusesAnEmptyNameOrAnEmptyTTL(t *testing.T) {
+	t.Parallel()
+
 	st := NewFakeStore(at)
 	if err := Beat(context.Background(), st, "  ", at, DefaultTTL); err == nil {
 		t.Fatal("beat accepted an empty name")
@@ -214,6 +230,8 @@ func TestBeatRefusesAnEmptyNameOrAnEmptyTTL(t *testing.T) {
 }
 
 func TestShortSaysTheAgeInTheFewestCharacters(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		d    time.Duration
 		want string
@@ -235,6 +253,8 @@ func TestShortSaysTheAgeInTheFewestCharacters(t *testing.T) {
 }
 
 func TestClockNamesTheDayOnceTheBeatIsOlderThanOne(t *testing.T) {
+	t.Parallel()
+
 	last := at
 	if got := Clock(last, at.Add(3*time.Hour)); got != "09:41Z" {
 		t.Errorf("same day: %q; want %q", got, "09:41Z")
@@ -245,6 +265,8 @@ func TestClockNamesTheDayOnceTheBeatIsOlderThanOne(t *testing.T) {
 }
 
 func TestTheRosterIsTheBusesMinusGlennAndRowan(t *testing.T) {
+	t.Parallel()
+
 	names, err := ParticipantNames([]byte(`{"participants":[
 	  {"name":"Rowan"},{"name":"Stella"},{"name":"Johnny"},
 	  {"name":"Emma"},{"name":"Freddy"},{"name":"Alex"},{"name":"Glenn"}]}`))
@@ -258,6 +280,8 @@ func TestTheRosterIsTheBusesMinusGlennAndRowan(t *testing.T) {
 }
 
 func TestARosterOfNobodyIsARefusalAndNotAnEmptyLine(t *testing.T) {
+	t.Parallel()
+
 	if _, err := ParticipantNames([]byte(`{"participants":[{"name":"Glenn"},{"name":"Rowan"}]}`)); err == nil {
 		t.Fatal("a participants file with no friends returned a roster")
 	}
@@ -267,6 +291,8 @@ func TestARosterOfNobodyIsARefusalAndNotAnEmptyLine(t *testing.T) {
 }
 
 func TestFriendsIsTheRegistrySetSortedMinusGlennAndRowan(t *testing.T) {
+	t.Parallel()
+
 	st := NewFakeStore(at)
 	if _, err := Friends(context.Background(), st); err == nil {
 		t.Fatal("an empty friends set returned a roster; an empty line reads as good news")
@@ -282,6 +308,8 @@ func TestFriendsIsTheRegistrySetSortedMinusGlennAndRowan(t *testing.T) {
 }
 
 func TestReadRefusesAnEmptyRoster(t *testing.T) {
+	t.Parallel()
+
 	if _, err := Read(context.Background(), NewFakeStore(at), nil, at); err == nil {
 		t.Fatal("Read with no names returned no error; an empty line reports nothing and looks like good news")
 	}

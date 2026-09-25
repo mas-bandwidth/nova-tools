@@ -56,6 +56,8 @@ func (s *ciFakeSource) Read(repo, sha string) (string, bool, error) {
 // head with a green check-run and no ci key is refused ci: MISSING, and with
 // ci:<repo>:<head> = OK it is admitted to the batch. GitHub is never asked.
 func TestLanderReadsCIFromRedisNeverCheckRuns(t *testing.T) {
+	t.Parallel()
+
 	const repo, sha = "owner/repo", "deadbeef"
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -254,6 +256,8 @@ func TestChecksMapsTheRecordWord(t *testing.T) {
 // The ci card receipt answers first, read as the HASH land reads. A stale
 // receipt (the base tip moved) says nothing, so the request record answers.
 func TestRedisCISourceReadsTheReceiptLandReads(t *testing.T) {
+	t.Parallel()
+
 	const repo, sha = "owner/repo", "deadbeef"
 	const base, tip = "dev", "tip1"
 	gid := civerdict.GID("single", base, tip, "req1", "pol1", "run1")

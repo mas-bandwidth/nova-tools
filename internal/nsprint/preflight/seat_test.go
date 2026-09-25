@@ -109,6 +109,8 @@ func noperm(cmd redis.Cmder) error {
 // NOPERM. 7.1 says it needs the preflight ACL user, once, instead of three
 // raw refusals, and every other check still runs.
 func TestPreflightInfoNeedsPreflightUser(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
 	mr.SetTime(t0)

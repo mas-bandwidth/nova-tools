@@ -12,6 +12,8 @@ import (
 )
 
 func TestSeatNeutralWakeHasNoTTL(t *testing.T) {
+	t.Parallel()
+
 	st, client := rdRedis(t)
 	ctx := context.Background()
 	if err := life.Wake(ctx, st, "g", "test", "g", ""); err != nil {
@@ -23,6 +25,8 @@ func TestSeatNeutralWakeHasNoTTL(t *testing.T) {
 }
 
 func TestSeatNeutralStaleWakeDiscarded(t *testing.T) {
+	t.Parallel()
+
 	st, client := rdRedis(t)
 	ctx := context.Background()
 	now := time.Now().UnixMilli()

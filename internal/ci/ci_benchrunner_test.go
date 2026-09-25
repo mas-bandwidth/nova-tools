@@ -76,6 +76,8 @@ func readBenchRunnerAllow(t *testing.T) benchRunnerAllow {
 // still a site (the file shrinks as sites retire), and no row is added after
 // the base the inventory was derived at.
 func TestCIOneBenchRunner(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	sites, err := FindBenchRunners(root)
 	if err != nil {

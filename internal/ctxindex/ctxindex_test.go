@@ -48,6 +48,8 @@ func fixture(t *testing.T) string {
 
 // Build writes the three indices at HEAD and each lookup answers by key.
 func TestBuildIndexesSpecsTestsAndSymbols(t *testing.T) {
+	t.Parallel()
+
 	repo := fixture(t)
 	out := filepath.Join(t.TempDir(), "ix")
 	st, err := Build(repo, out)
@@ -142,6 +144,8 @@ func TestLookupReadsOnlyItsBucket(t *testing.T) {
 // A rebuild at a later landing answers from the new head only: a spec ID removed there
 // is gone.
 func TestRebuildAnswersFromTheNewHeadOnly(t *testing.T) {
+	t.Parallel()
+
 	repo := fixture(t)
 	out := filepath.Join(t.TempDir(), "ix")
 	if _, err := Build(repo, out); err != nil {
@@ -230,6 +234,8 @@ func TestPartialBuildLeavesThePreviousIndexWhole(t *testing.T) {
 // A bucket in the CURRENT head's directory that is missing or carries another head is
 // a damaged index: the lookup, and so the cut, is refused rather than silently missing.
 func TestDamagedBucketRefusesTheLookup(t *testing.T) {
+	t.Parallel()
+
 	repo := fixture(t)
 	out := filepath.Join(t.TempDir(), "ix")
 	if _, err := Build(repo, out); err != nil {
@@ -272,6 +278,8 @@ func gitOutput(t *testing.T, repo string, args ...string) string {
 }
 
 func TestOpenRefusesAnUnbuiltIndex(t *testing.T) {
+	t.Parallel()
+
 	if _, err := Open(t.TempDir()); err == nil || !strings.Contains(err.Error(), "never built") {
 		t.Fatalf("err = %v", err)
 	}

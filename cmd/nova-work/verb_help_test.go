@@ -61,6 +61,8 @@ var all51Verbs = []string{
 }
 
 func TestEveryVerbHelpExits2(t *testing.T) {
+	t.Parallel()
+
 	if len(all51Verbs) != 51 {
 		t.Fatalf("expected 51 verbs, got %d", len(all51Verbs))
 	}

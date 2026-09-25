@@ -12,6 +12,8 @@ import (
 // The reader contract of docs/SPEC-WORKLANG.md, seen red first: three tests,
 // no network and no model call, every refusal named by the field it refuses.
 func TestWorklangReader(t *testing.T) {
+	t.Parallel()
+
 	// worklang-reader-refuses-a-dispatch-macro: a `#.` anywhere in code
 	// position is refused at exit 2 naming the byte offset, the refusal the
 	// work file already owes.

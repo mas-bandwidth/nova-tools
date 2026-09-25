@@ -16,6 +16,8 @@ import (
 // TestBenchSlotLeasesSectionNamesItsRules reads SPEC-SWARM.md: the spec is the
 // one place the contract is written, so a rule renamed out of the doc is red.
 func TestProfilesNameReasoningEffortAndVariantRules(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM-PROFILES.md"))
 	if err != nil {
 		t.Fatalf("the reasoning-effort contract is the profile spec's: %s", err)

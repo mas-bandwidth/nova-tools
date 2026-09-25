@@ -13,6 +13,8 @@ import (
 )
 
 func TestIssue181SwarmRetryAttemptIsItsOwnRow(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	pool := mkdir(t, filepath.Join(dir, "pool"))

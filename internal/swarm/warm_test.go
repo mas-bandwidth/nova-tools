@@ -44,6 +44,8 @@ func mustWrite(t *testing.T, path, body string) {
 // the bench already holds in a kept worktree, and falls back to the bench mirror when no
 // bench is warm.
 func TestPullPrefersTheBenchThatHoldsTheRepo(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	coldSlot := filepath.Join(root, "bench-a")
 	warmSlot := filepath.Join(root, "bench-b")

@@ -26,6 +26,8 @@ import (
 // ledgers ARE the record ("both written by machinery"), so what is on disk is
 // asserted, not just what was printed.
 func TestIssue2089(t *testing.T) {
+	t.Parallel()
+
 	ledger := filepath.Join(t.TempDir(), "dogfood-ledger")
 
 	// Ledger 1, cost per question. Two kinds answered both ways -- so the

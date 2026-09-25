@@ -66,6 +66,8 @@ func (f *fixture) parity(minHeads int) (string, int) {
 // key at all (MISSING), prints `PARITY FAIL <head>` and the verb exits 1.
 // Heads Actions failed, and PRs the sprint never cut, are not counted.
 func TestParityCountsEveryActionsPassedHead(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t, "ctl-a", "ctl-b")
 	f.client.HSet(f.ctx, "s:"+f.sprint+":policy", "ci_reruns", "0")
 	f.cutEnd(101, headA, ci.OK)   // Actions passed, key OK: parity

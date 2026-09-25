@@ -15,6 +15,8 @@ import (
 // merge.LockWait, a package constant of ten seconds, whatever the caller asked for, so a
 // verb given `--timeout 1` waited ten and a verb given `--timeout 60` gave up at ten.
 func TestTheStateLockWaitsTheVerbsOwnTimeout(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("slow: waits out a real lock --timeout; runs on the self-hosted legs and nightly")
 	}
@@ -49,10 +51,12 @@ func TestTheStateLockWaitsTheVerbsOwnTimeout(t *testing.T) {
 // to push it` naming a file that was never written -- a remedy that cannot work, about a
 // record that does not exist.
 func TestAContendedReadNamesAFileItReallyWrote(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("slow: waits out a real lock --timeout; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+
 	l := newLab(t)
 	setupPR(t, l, 951, "feature-a", "a.txt", false)
 	release, err := merge.Lock(filepath.Join(l.lane, merge.CheckoutLock), 2*time.Second)

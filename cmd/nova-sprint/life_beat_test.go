@@ -29,6 +29,8 @@ func runBeatLoop(t *testing.T, beat func(context.Context) (life.BenchResult, err
 // TestBenchBeatTwoTicksOneClient (#3372): the loop's ticks ride the one
 // connection the verb opened; two ticks dial nothing new.
 func TestBenchBeatTwoTicksOneClient(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	ctx := context.Background()
 	st, err := store.OpenSingle(ctx, mr.Addr())
@@ -72,6 +74,8 @@ func TestBenchBeatTwoTicksOneClient(t *testing.T) {
 // interval before the next attempt (a tick inside the wait is skipped), and
 // that attempt redials through the same client once Redis is back.
 func TestBenchBeatReconnectsWithBackoff(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	ctx := context.Background()
 	st, err := store.OpenSingle(ctx, mr.Addr())
@@ -135,6 +139,8 @@ func TestBenchBeatReconnectsWithBackoff(t *testing.T) {
 }
 
 func TestBenchBeatBackoffDoublesToCap(t *testing.T) {
+	t.Parallel()
+
 	var got []time.Duration
 	var b time.Duration
 	for i := 0; i < 7; i++ {
@@ -151,6 +157,8 @@ func TestBenchBeatBackoffDoublesToCap(t *testing.T) {
 
 // TestBenchBeatLostOwnershipExits2: a BUSY beat ends the loop with 2.
 func TestBenchBeatLostOwnershipExits2(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ticks := make(chan time.Time, 1)

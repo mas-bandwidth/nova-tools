@@ -13,6 +13,8 @@ import (
 // refused at load, because promotion is a person's commit and never the
 // tool's (SPEC-DECIDE housekeeping H1).
 func TestARuledKindMakesNoCallAndIsStillLogged(t *testing.T) {
+	t.Parallel()
+
 	const committed = `{"minds":[
 	  {"name":"flash","lineage":"deepseek","height":0,"availability":"available","ask":"card"},
 	  {"name":"pro","lineage":"deepseek","height":1,"availability":"available","ask":"card"},

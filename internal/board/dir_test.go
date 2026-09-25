@@ -25,6 +25,8 @@ func mustTime2(s string) time.Time {
 // CREATION IS EXCLUSIVE AGAINST HAND-MADE FILES, and the card file is never truncated. An
 // id that already exists is a refusal, and no card file is replaced, ever.
 func TestCreationIsExclusiveAndNeverTruncates(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	d, err := NewDir(dir)
 	if err != nil {
@@ -62,6 +64,8 @@ func TestCreationIsExclusiveAndNeverTruncates(t *testing.T) {
 // file without its version line is an error, because a later format read as this one would
 // be entries nobody wrote.
 func TestTheDirectoryCountsWhatItWillNotRead(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	d, err := NewDir(dir)
 	if err != nil {
@@ -105,6 +109,8 @@ func TestTheDirectoryCountsWhatItWillNotRead(t *testing.T) {
 // The directory backend APPENDS AND NEVER RUNS GIT, and it takes no lock: the fold is over
 // the card files and there is no shared file and no index.
 func TestTheDirectoryBackendWritesOneFilePerCardAndNothingElse(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	d, err := NewDir(dir)
 	if err != nil {
@@ -144,6 +150,8 @@ func TestTheDirectoryBackendWritesOneFilePerCardAndNothingElse(t *testing.T) {
 // value when a reader pasted it. Quote is now the real POSIX single-quote quoter, the
 // same SHAPE internal/merge/blocked.go's shellQuote uses.
 func TestQuoteIsPosixSingleQuotesSoPasteCannotExecute(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct{ in, want string }{
 		{"plain", "'plain'"},
 		{"a b", "'a b'"},

@@ -26,6 +26,8 @@ import (
 // six sets: a card in reading is left, not done. A reading set exists, so
 // merging is the read cards alone and reading the unread (#3900 x #3929).
 func TestStreamsTableFromRecords(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })

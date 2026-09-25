@@ -20,6 +20,8 @@ import "testing"
 // two places that ask -- the outcome and the violation word -- ask the same question of one
 // list, so the next end word added cannot be exempt in one place and not the other.
 func TestARateLimitDoesNotRewriteTheReapsOwnEnd(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		name      string
 		inLog     bool
@@ -42,6 +44,8 @@ func TestARateLimitDoesNotRewriteTheReapsOwnEnd(t *testing.T) {
 
 // AND THE CONSEQUENCE: the end the 429 path leaves behind still carries no violation word.
 func TestTheRateLimitedEndOfAReapKeepsItsFindings(t *testing.T) {
+	t.Parallel()
+
 	for _, end := range []string{EndBudget, EndUnverifiable, EndKilled} {
 		got := end
 		if rateLimitedOutcome(true, end, -1) {

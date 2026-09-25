@@ -8,6 +8,8 @@ import (
 // can triage after a harvest. Reverting decide.go kept this package green:
 // triage tests still drove decideOne, and the new names had no caller here.
 func TestDecideFinishedReturnsTheTypedDecision(t *testing.T) {
+	t.Parallel()
+
 	p, id := decideTestPool(t, "starting up\nInternal server error\n")
 	out, err := DecideFinished(p, decideFake(nil), 0.9, decideTestNow)
 	if err != nil {
@@ -33,6 +35,8 @@ func TestDecideFinishedReturnsTheTypedDecision(t *testing.T) {
 }
 
 func TestRequeueOnceRetriesAFinishedTaskAndRefusesASecondTime(t *testing.T) {
+	t.Parallel()
+
 	p, id := decideTestPool(t, "Internal server error\n")
 	next, ok := p.RequeueOnce(id, decideTestNow())
 	if !ok {

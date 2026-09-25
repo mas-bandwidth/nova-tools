@@ -55,6 +55,8 @@ func (h *cmdHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Proc
 }
 
 func TestWidthControls(t *testing.T) {
+	t.Parallel()
+
 	t.Run("C1", func(t *testing.T) {
 		addr := testutil.Start(t)
 		client := redis.NewClient(&redis.Options{Addr: addr})
@@ -930,6 +932,8 @@ func TestWidthControls(t *testing.T) {
 // TestWidthMoveRequiresFence tests Defect 1:
 // ns_width_move must require the fence token even when empty (""), failing closed with FENCED.
 func TestWidthMoveRequiresFence(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
@@ -985,6 +989,8 @@ func (h *moveRefusalHook) ProcessPipelineHook(next redis.ProcessPipelineHook) re
 // TestWidthDutySurfacesMoveRefusal tests Defect 2:
 // width duty must not drop the move reply; it must return ErrFenced on FENCED from ns_width_move.
 func TestWidthDutySurfacesMoveRefusal(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
@@ -1093,6 +1099,8 @@ func (h *unfencedHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis
 // READ-BOUND state must NOT be written outside the fenced Function.
 // Unfenced plain client writes to width:readers, s:<S>:backpressure, sprint:read_bound are forbidden.
 func TestWidthReadBoundFencedAtomic(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
@@ -1167,6 +1175,8 @@ func TestWidthReadBoundFencedAtomic(t *testing.T) {
 // ns_width_move calls in one pass (two senders, two sprints) never move more
 // tasks to a recipient than its original spare (deficit - eligible).
 func TestWidthMoveConsumesSpare(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
@@ -1234,6 +1244,8 @@ func TestWidthMoveConsumesSpare(t *testing.T) {
 // Every claim's suffix is 32 hex from the caller's random parts; a claim with
 // no random part left is not made; a malformed part refuses the call.
 func TestWidthFillNoPredictableToken(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
@@ -1314,6 +1326,8 @@ func TestWidthFillNoPredictableToken(t *testing.T) {
 // unbounded fill of 65 ready tasks claims all 65, not 64, and every claim's
 // suffix is a distinct 32-hex part. A bounded fill supplies max parts.
 func TestWidthFillSizesPartsToClaims(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })

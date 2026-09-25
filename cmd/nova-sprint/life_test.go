@@ -111,6 +111,8 @@ func TestLifeVerbRefusals(t *testing.T) {
 // TestLifeWakeModeLines: a turn 60 s after its delivery declares
 // scheduled-model-turn; one at 121 s is REFUSED with exit 1 and no write.
 func TestLifeWakeModeLines(t *testing.T) {
+	t.Parallel()
+
 	addr, client := lifeRedis(t)
 	ctx := context.Background()
 	st := store.New(client)
@@ -150,6 +152,8 @@ func TestLifeWakeModeLines(t *testing.T) {
 // before the wake poll and the take; a failed append ends the loop with
 // exit 3 and polls, takes and retries nothing.
 func TestPresenceLoopAppendsBeatEvent(t *testing.T) {
+	t.Parallel()
+
 	setup := func(t *testing.T) (*store.Store, *redis.Client, life.Presence) {
 		_, client := lifeRedis(t)
 		if err := client.HSet(context.Background(), "friend:ada:beat", "session", "s1", "host", "studio").Err(); err != nil {

@@ -8,6 +8,8 @@ import (
 )
 
 func TestParseCLIReadsTheVerbsAReferenceDeclares(t *testing.T) {
+	t.Parallel()
+
 	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
 	if err != nil {
 		t.Fatalf("ParseCLI: %v", err)
@@ -49,6 +51,8 @@ func TestParseCLIReadsTheVerbsAReferenceDeclares(t *testing.T) {
 // The document's order is the ledger's order, and the line number is how a
 // reader finds the declaration the row came from.
 func TestParseCLIKeepsTheDocumentsOrderAndTheDeclaringLine(t *testing.T) {
+	t.Parallel()
+
 	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
 	if err != nil {
 		t.Fatalf("ParseCLI: %v", err)
@@ -70,6 +74,8 @@ func TestParseCLIKeepsTheDocumentsOrderAndTheDeclaringLine(t *testing.T) {
 }
 
 func TestParseCLIRefusesTheShapesThatAreNotDeclarations(t *testing.T) {
+	t.Parallel()
+
 	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
 	if err != nil {
 		t.Fatalf("ParseCLI: %v", err)
@@ -90,6 +96,8 @@ func TestParseCLIRefusesTheShapesThatAreNotDeclarations(t *testing.T) {
 }
 
 func TestParseCLIRefusesAReferenceWithNoVerbs(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "empty.md")
 	if err := os.WriteFile(path, []byte("# Command reference\n\nNo verbs here.\n"), 0o644); err != nil {
@@ -101,6 +109,8 @@ func TestParseCLIRefusesAReferenceWithNoVerbs(t *testing.T) {
 }
 
 func TestParseCLIRefusesAMissingReference(t *testing.T) {
+	t.Parallel()
+
 	if _, err := ParseCLI(filepath.Join(t.TempDir(), "nope.md")); err == nil {
 		t.Fatal("a missing reference was accepted")
 	}
@@ -109,6 +119,8 @@ func TestParseCLIRefusesAMissingReference(t *testing.T) {
 // The real reference is the one the gate will run on, so the parser is held to
 // it here — loosely, on shape and not on a count that every doc change breaks.
 func TestParseCLIReadsThisRepositorysOwnReference(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join("..", "..", "docs", "CLI.md")
 	if _, err := os.Stat(path); err != nil {
 		t.Skipf("docs/CLI.md not present: %v", err)
@@ -153,6 +165,8 @@ func TestParseCLIReadsThisRepositorysOwnReference(t *testing.T) {
 // indented help block. A tool goes un-dogfooded forever by being documented in
 // a shape the extractor does not read, and nothing in the ledger says so.
 func TestParseCLIReadsTheIndentedUsageBlockShape(t *testing.T) {
+	t.Parallel()
+
 	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
 	if err != nil {
 		t.Fatalf("ParseCLI: %v", err)
@@ -181,6 +195,8 @@ func TestParseCLIReadsTheIndentedUsageBlockShape(t *testing.T) {
 }
 
 func TestParseCLIReadsTheTranscriptOnlyShape(t *testing.T) {
+	t.Parallel()
+
 	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
 	if err != nil {
 		t.Fatalf("ParseCLI: %v", err)
@@ -197,6 +213,8 @@ func TestParseCLIReadsTheTranscriptOnlyShape(t *testing.T) {
 }
 
 func TestParseCLIReadsTheVerbPerHeadingShape(t *testing.T) {
+	t.Parallel()
+
 	verbs, err := ParseCLI(filepath.Join("testdata", "cli-example.md"))
 	if err != nil {
 		t.Fatalf("ParseCLI: %v", err)
@@ -223,6 +241,8 @@ func TestParseCLIReadsTheVerbPerHeadingShape(t *testing.T) {
 // section to yields at least one verb. A tool with a section and no rows is
 // exactly the failure that hid nova-sandbox and nova-work.
 func TestEveryToolSectionOfTheRealReferenceYieldsAVerb(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join("..", "..", "docs", "CLI.md")
 	raw, err := os.ReadFile(path)
 	if err != nil {

@@ -13,6 +13,8 @@ import (
 // spec the way internal/decide's doc test reads SPEC-DECIDE.md, so the section
 // being cut back out of the doc is red before the gateway is ever built.
 func TestSpecChatNamesTheGatewayBehindSourceGateway(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-CHAT.md"))
 	if err != nil {
 		t.Fatalf("SPEC-CHAT.md is missing: %s", err)

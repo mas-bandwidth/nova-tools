@@ -25,6 +25,8 @@ func at(s string) time.Time {
 // comment body; parsing here is anchored at the line start with the id as the token
 // immediately after the verb.
 func TestParsingIsAnchoredAndByIdNeverBySubstring(t *testing.T) {
+	t.Parallel()
+
 	card := Event{Verb: "card", ID: idA, As: "rowan", At: at("2026-09-11T10:00:00Z"),
 		Hash: "aaaaaaaaaaaa", Owner: "rowan", By: "2026-09-11T14:00:00Z",
 		Default: "rowan files it", Tail: "the windows runner skips three steps, see 176549"}
@@ -53,6 +55,8 @@ func TestParsingIsAnchoredAndByIdNeverBySubstring(t *testing.T) {
 
 // The one-line guarantee over a card's text: a filer who pastes a newline files ONE card.
 func TestATextWithANewlineFilesOneCard(t *testing.T) {
+	t.Parallel()
+
 	card := Event{Verb: "card", ID: idA, As: "rowan", At: at("2026-09-11T10:00:00Z"),
 		Hash: "aaaaaaaaaaaa", Owner: "ada vale", By: "2026-09-11T14:00:00Z",
 		Default: "rowan files it anyway", Tail: Tail("two lines\nand a second")}
@@ -80,6 +84,8 @@ func TestATextWithANewlineFilesOneCard(t *testing.T) {
 
 // An unparsed line is counted and never guessed at.
 func TestAnUnparsedLineIsCountedAndNeverGuessedAt(t *testing.T) {
+	t.Parallel()
+
 	card := Event{Verb: "card", ID: idA, As: "rowan", At: at("2026-09-11T10:00:00Z"),
 		Hash: "aaaaaaaaaaaa", Owner: "rowan", By: "2026-09-11T14:00:00Z", Default: "d", Tail: "a thing"}
 	log := Log{Lines: []string{
@@ -101,6 +107,8 @@ func TestAnUnparsedLineIsCountedAndNeverGuessedAt(t *testing.T) {
 // The id is 128 bits from an injectable source, and it is a DRAW: nothing computed from
 // the fields.
 func TestTheIdIsAHundredAndTwentyEightBitsFromTheSource(t *testing.T) {
+	t.Parallel()
+
 	src := bytes.NewReader(bytes.Repeat([]byte{0xab}, 64))
 	id, err := NewID(src)
 	if err != nil {
@@ -127,6 +135,8 @@ func TestTheIdIsAHundredAndTwentyEightBitsFromTheSource(t *testing.T) {
 
 // The hash is over the text only, and it is never the identity.
 func TestTheContentHashIsOverTheTextAlone(t *testing.T) {
+	t.Parallel()
+
 	h := HashOf(Tail("the windows runner skips three steps"))
 	if len(h) != 12 || strings.Trim(h, "0123456789abcdef") != "" {
 		t.Fatalf("hash = %q, want twelve lower-case hex characters", h)

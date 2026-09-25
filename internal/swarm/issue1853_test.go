@@ -9,6 +9,8 @@ import (
 // paths, more than eight PATHS: globs, comma-only PATHS: lines, unknown kinds, and
 // TEST: none on gated kinds. Each subtest was a clean lint on the buggy code.
 func TestIssue1853(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name   string
 		header []string

@@ -113,6 +113,8 @@ func mutateFixtureRefs(t *testing.T, dir, base, head, tempRoot string) (*MutateR
 // passes, and the verdict is PASS -- the per-file rule is "at least one failing test",
 // never "every test fails".
 func TestMutatePassesWhenTheNewTestIsRedWithoutTheChange(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "fix")
 	write(t, dir, "sign/sign.go", `package sign
@@ -169,6 +171,8 @@ func TestSignZero(t *testing.T) {
 // test, because "your test is green" is not actionable and "TestAddIsCommutative is green
 // without your change" is.
 func TestMutateFailsAndNamesATestThatIsGreenWithoutTheChange(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "cosmetic")
 	write(t, dir, "sign/sign.go", `package sign
@@ -226,6 +230,8 @@ func TestSignNegative(t *testing.T) {
 // base does not have that file: reading it from the caller's working copy skips the one
 // file the range is about, and the verdict then rests on nothing.
 func TestMutateReadsATestFileTheHeadAddsWhileTheCallerSitsOnTheBase(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "fix")
 	write(t, dir, "sign/sign.go", `package sign
@@ -269,6 +275,8 @@ func TestSignZero(t *testing.T) {
 // The read rule, mechanised: a fix with no test is not admitted, and the refusal is the
 // answer rather than a green run over somebody else's tests.
 func TestMutateRefusesAChangeWithNoTestChange(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "untested")
 	write(t, dir, "sign/sign.go", `package sign
@@ -299,6 +307,8 @@ func Sign(n int) int {
 // its result -- green or red -- would say nothing about a change. The verb refuses rather
 // than hand back a verdict it cannot mean.
 func TestMutateRefusesWhenThereIsNoChangeToRevert(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "tests-only")
 	write(t, dir, "sign/sign_test.go", `package sign
@@ -329,6 +339,8 @@ func TestSignNegativeToo(t *testing.T) {
 // A `git worktree list` that grows by one per read is the repo's own record going wrong,
 // and a checkout of somebody's head left in the temp directory is worse.
 func TestMutateRemovesItsWorktreeOnBothPaths(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "cosmetic")
 	write(t, dir, "sign/sign.go", `package sign
@@ -392,6 +404,8 @@ func TestSignBig(t *testing.T) {
 // the reason that says why. The remedy for a new-API card is mutation-kill's seed form
 // (T13), not a control that cannot see.
 func TestMutateDoesNotCountABuildFailureAsAKill(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "newapi")
 	write(t, dir, "sign/sign.go", `package sign
@@ -446,6 +460,8 @@ func TestAbs(t *testing.T) {
 // the test that needed it then fails to COMPILE -- which since #1807 is a skip and not a
 // kill, so the skip is the observable that proves the file was removed.
 func TestMutateRemovesAFileTheHeadAdded(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "addfile")
 	write(t, dir, "sign/abs.go", `package sign
@@ -492,6 +508,8 @@ func TestAbs(t *testing.T) {
 // no such script is SKIPPED WITH ITS REASON NAMED rather than silently counted either way:
 // the one thing a mutation verdict must never be is quiet about what it did not run.
 func TestMutateSkipsALispProjectWithNoRunner(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "lisp")
 	write(t, dir, "lisp/nova-work/src/work.lisp", "(defun work () 1)\n")
@@ -516,6 +534,8 @@ func TestMutateSkipsALispProjectWithNoRunner(t *testing.T) {
 // The Lisp path that does run: a suite that fails with the change reverted is red, exactly
 // as a Go test function is, and the unit's name is the script the verb ran.
 func TestMutateRunsALispSuiteAndCountsItRed(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "lisp")
 	write(t, dir, "lisp/nova-work/run-tests.sh", "#!/bin/sh\nexec sh lisp/nova-work/tests/check.sh\n")
@@ -556,6 +576,8 @@ func TestMutateRunsALispSuiteAndCountsItRed(t *testing.T) {
 // There is no clock and no subprocess in this test: runVerdict is handed the four things a
 // finished run leaves behind, so what it pins is the rule.
 func TestARunTheBudgetEndedIsASkipAndNeverARedUnit(t *testing.T) {
+	t.Parallel()
+
 	units := []unit{
 		{name: "TestSignPositive", file: "sign/sign_test.go", pkg: "sign"},
 		{name: "TestSignZero", file: "sign/sign_test.go", pkg: "sign"},
@@ -598,6 +620,8 @@ func TestARunTheBudgetEndedIsASkipAndNeverARedUnit(t *testing.T) {
 // that is only ever exercised by the paths that happen to be easy is a rule with a
 // hole in exactly the place the ruling says must not be inferred.
 func TestResolveNamesOneUnitOrSaysWhyItCannot(t *testing.T) {
+	t.Parallel()
+
 	units := []unit{
 		{name: "TestSignZero", file: "sign/sign_test.go", pkg: "sign"},
 		{name: "TestShapeOnly", file: "shape/shape_test.go", pkg: "shape"},

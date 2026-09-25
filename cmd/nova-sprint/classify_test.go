@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -55,6 +56,8 @@ func classifyEnd(t *testing.T, c *redis.Client, sprint, label, outcome, reason, 
 }
 
 func TestClassifyVerbOnce(t *testing.T) {
+	t.Parallel()
+
 	addr, c := classifyRedis(t)
 	const sprint = "control-verb"
 	if err := c.HSet(context.Background(), "s:"+sprint, "status", "open").Err(); err != nil {
@@ -102,7 +105,7 @@ func TestClassifyMakesNoForgeCalls(t *testing.T) {
 	bin := t.TempDir()
 	calls := filepath.Join(t.TempDir(), "gh.calls")
 	script := filepath.Join(bin, "gh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >>\"$GH_CALLS\"\nexit 1\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >>\"$GH_CALLS\"\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))

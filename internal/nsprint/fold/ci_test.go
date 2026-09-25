@@ -165,6 +165,8 @@ func seedCI(t *testing.T, noWall bool) (*redis.Client, string) {
 // bench-minutes and wall per landed PR, and leaves the model cost per landed
 // card exactly as it is without the ci cards.
 func TestFoldCICostOnItsOwnLine(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	t.Run("fixture", func(t *testing.T) {

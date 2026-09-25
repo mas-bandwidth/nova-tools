@@ -16,6 +16,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/publish"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -387,7 +388,7 @@ func TestL19(t *testing.T) {
 		"if [ \"$n\" -le 2 ]; then echo 'nova-secrets: sops decrypt failed' >&2; exit 125; fi\n" +
 		"while [ \"$#\" -gt 0 ]; do a=\"$1\"; shift; [ \"$a\" = \"--\" ] && break; done\n" +
 		"exec \"$@\"\n"
-	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(fake, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	p := publish.New(publish.Config{

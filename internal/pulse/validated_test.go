@@ -7,6 +7,8 @@ package pulse
 import "testing"
 
 func TestCheckRefFormatBranchRefusesWhatGitRefuses(t *testing.T) {
+	t.Parallel()
+
 	bad := map[string]string{
 		"":                  "empty",
 		"rowan/has a space": "a space",
@@ -45,6 +47,8 @@ func TestCheckRefFormatBranchRefusesWhatGitRefuses(t *testing.T) {
 // TestCardFileNameIsTheQueuesContract: every cut card is a card-<n>.md, and a label that
 // already carries the prefix is not given it twice.
 func TestCardFileNameIsTheQueuesContract(t *testing.T) {
+	t.Parallel()
+
 	for label, want := range map[string]string{
 		"42":        "card-42.md",
 		"one":       "card-one.md",

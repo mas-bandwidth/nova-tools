@@ -15,6 +15,8 @@ import (
 // vector as a NAMED dimension. Two lanes are two dimensions of capacity 1; one
 // opaque "lane" count could not tell docs from merge.
 func TestUnitRequestCarriesTheLaneByName(t *testing.T) {
+	t.Parallel()
+
 	ws := parseFixture(t, "pitstop-2026-09-18-units.lisp")
 	u, ok := ws.Unit("certify:verb")
 	if !ok {
@@ -40,6 +42,8 @@ func TestUnitRequestCarriesTheLaneByName(t *testing.T) {
 // whatever their lanes say -- the check here puts them in DIFFERENT lanes, so
 // nothing but the writes intersection can be holding the second one.
 func TestRealUnitsSerializeOnAWriteTheyShare(t *testing.T) {
+	t.Parallel()
+
 	ws := parseFixture(t, "pitstop-2026-09-18-units.lisp")
 	first, ok := ws.Unit("certify:verb")
 	if !ok {

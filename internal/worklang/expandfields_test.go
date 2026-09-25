@@ -13,6 +13,8 @@ import (
 // :output, then :budget. :id keeps its own immediate refusal, because a node
 // with no :id cannot name itself in any of the other messages.
 func TestExpandNamesEveryMissingRequiredNodeField(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		plan string

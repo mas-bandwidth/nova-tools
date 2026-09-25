@@ -21,6 +21,8 @@ import (
 )
 
 func TestWidthVerbs(t *testing.T) {
+	t.Parallel()
+
 	t.Run("V1", func(t *testing.T) {
 		addr := testutil.Start(t)
 		client := redis.NewClient(&redis.Options{Addr: addr})
@@ -310,6 +312,8 @@ func TestWidthVerbs(t *testing.T) {
 // measured field and exits 0; the fleet line counts those slots; a friend
 // with no desired hash still exits 2; with a fillstate the numbers print.
 func TestWidthAsDesiredNoFillstate(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })

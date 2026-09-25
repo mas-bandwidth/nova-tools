@@ -18,6 +18,8 @@ var providersTSV string
 // in the fields the table declares as OS-specific, and that an unknown provider
 // returns an error rather than a guessed argv.
 func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
+	t.Parallel()
+
 	providers, err := readProvidersTSV(providersTSV)
 	if err != nil {
 		t.Fatalf("read providers.tsv: %v", err)

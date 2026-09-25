@@ -29,6 +29,8 @@ func (h *tripHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Pro
 }
 
 func TestConsumersOneRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	_, seed := redisControl(t)
 	ctx := context.Background()
 	seed.SAdd(ctx, "friends", "a", "b")
@@ -57,6 +59,8 @@ func TestConsumersOneRoundTrip(t *testing.T) {
 // reads plus the ceiling), and a desired write is that pipeline plus one
 // FCALL. store.Trips, the counter the verb prints as trips=<n>, agrees.
 func TestCapacityFourFriendsElevenBenchesOnePipeline(t *testing.T) {
+	t.Parallel()
+
 	st, seed := redisControl(t)
 	ctx := context.Background()
 	if _, err := capacity.SetMachine(ctx, st, "m", 100, 0, 0, "test", ""); err != nil {

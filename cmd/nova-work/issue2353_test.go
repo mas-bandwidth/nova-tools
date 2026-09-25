@@ -12,6 +12,8 @@ import (
 // client carries it, a well-formed report reaches the session dial and is
 // refused there as a missing session, not as an unknown or ahead verb.
 func TestIssue2353(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, stderr := invoke(
 		"report",
 		"--session", "missing.sock",
@@ -45,6 +47,8 @@ func TestIssue2353(t *testing.T) {
 // one this client forwards. The session-side refusals of rule 8 have no kernel
 // yet, so this test pins only what the client carries.
 func TestIssue2353ReportLineMatchesTheSpec(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-WORK.md"))
 	if err != nil {
 		t.Fatalf("read docs/SPEC-WORK.md: %v", err)
@@ -93,6 +97,8 @@ func TestIssue2353ReportLineMatchesTheSpec(t *testing.T) {
 // TestIssue2353ReportRefusesAnUnknownFlagAtTwo pins that report is a carried
 // verb with its own flag table: a flag outside it is exit 2 before any dial.
 func TestIssue2353ReportRefusesAnUnknownFlagAtTwo(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, stderr := invoke("report", "--session", "missing.sock", "--as", "Rowan", "--bogus", "x")
 	if code != 2 {
 		t.Fatalf("want exit 2, got %d (stdout=%q stderr=%q)", code, stdout, stderr)

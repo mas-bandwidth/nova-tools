@@ -15,6 +15,8 @@ import (
 // no watch at all.
 
 func TestDefaultNativeIdleIsTheBatchWindowNotAProviderDeadline(t *testing.T) {
+	t.Parallel()
+
 	if DefaultNativeIdle != 300*time.Second {
 		t.Fatalf("native idle is %s, want the same 300s window as batch", DefaultNativeIdle)
 	}
@@ -91,6 +93,8 @@ func (b *idleBench) tick(t *testing.T, at time.Duration) (IdleEnd, bool) {
 // TestWatchIdleEndsAStillCardAtItsIdleWindowAndNotAtItsDeadline: the whole point. A log that
 // does not grow and a tree that spends nothing ends the card at --idle.
 func TestWatchIdleEndsAStillCardAtItsIdleWindowAndNotAtItsDeadline(t *testing.T) {
+	t.Parallel()
+
 	b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
 	if _, ended := b.tick(t, 9*time.Second); ended {
 		t.Fatal("a card still for less than the window is not idle yet")
@@ -110,6 +114,8 @@ func TestWatchIdleEndsAStillCardAtItsIdleWindowAndNotAtItsDeadline(t *testing.T)
 // TestWatchIdleCarriesTheRefusalTheCardNeverMovedPast: when the card's own output named a
 // refusal and it never made another tool call, the end says so in one word and one path.
 func TestWatchIdleCarriesTheRefusalTheCardNeverMovedPast(t *testing.T) {
+	t.Parallel()
+
 	r := NewWallReader("c", nil)
 	_, _ = r.Write([]byte("STEP 3\nsh: 1: cannot create /etc/hosts: Permission denied\n"))
 	b := newIdleBench(t, 10*time.Second, r)
@@ -126,6 +132,8 @@ func TestWatchIdleCarriesTheRefusalTheCardNeverMovedPast(t *testing.T) {
 // watch reads the process tree at all. A `go test` prints nothing for minutes; its tree
 // spends CPU the whole time, and a card like that is working, not dead.
 func TestWatchIdleDoesNotCallAWorkingSilenceIdle(t *testing.T) {
+	t.Parallel()
+
 	b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
 	b.snap.ok = true
 	for at := time.Second; at <= 40*time.Second; at += 3 * time.Second {
@@ -146,6 +154,8 @@ func TestWatchIdleDoesNotCallAWorkingSilenceIdle(t *testing.T) {
 // writes a page at a time, comfortably past nativeLogDribble within the window, and IT is
 // still never idle. The old sentence is now the next test's subject.
 func TestWatchIdleKeepsACardWhoseLogIsGrowing(t *testing.T) {
+	t.Parallel()
+
 	b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
 	page := strings.Repeat("a harness step, printed\n", 256) // ~6 KiB per poll
 	for at := time.Second; at <= 40*time.Second; at += 3 * time.Second {
@@ -181,6 +191,8 @@ func appendTo(t *testing.T, path, body string) {
 // free and held a bench slot to its deadline with a dead tree behind it. A signal the
 // watched thing can feed is not a signal.
 func TestWatchIdleEndsACardThatOnlyDribblesIntoItsLog(t *testing.T) {
+	t.Parallel()
+
 	t.Run("one byte at a time", func(t *testing.T) {
 		b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
 		var ended bool
@@ -222,6 +234,8 @@ func TestWatchIdleEndsACardThatOnlyDribblesIntoItsLog(t *testing.T) {
 // TestWatchIdleLeavesACardThatAlreadyPublished: issue #916's rule, kept. A card whose
 // RESULT.md is on disk is finishing, and ending it would only race the write.
 func TestWatchIdleLeavesACardThatAlreadyPublished(t *testing.T) {
+	t.Parallel()
+
 	b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
 	if err := os.WriteFile(filepath.Join(b.job, "RESULT.md"), []byte("RESULT: done\nfindings: 0\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -234,6 +248,8 @@ func TestWatchIdleLeavesACardThatAlreadyPublished(t *testing.T) {
 // TestWatchIdleWithNoWindowWatchesNothing: --idle 0 is the behaviour every run had before
 // this file existed, and it is reachable by typing it.
 func TestWatchIdleWithNoWindowWatchesNothing(t *testing.T) {
+	t.Parallel()
+
 	out := WatchIdle(IdleWatch{Log: filepath.Join(t.TempDir(), "x"), Idle: NoIdleWindow}, make(chan struct{}))
 	if out != nil {
 		t.Fatal("a watch with no window hands back a nil channel, which a select waits on forever")
@@ -252,6 +268,8 @@ func TestWatchIdleWithNoWindowWatchesNothing(t *testing.T) {
 // reported `WALL task=... path=/var/db/xcode_select_link`, and a shift went looking at the
 // wall. A card that simply went still says THAT.
 func TestCardIdleLineIsNotAWallLine(t *testing.T) {
+	t.Parallel()
+
 	line := CardIdleLine("js-under-20-bytes", IdleEnd{Idle: 300 * time.Second, Step: "16"})
 	want := "CARD IDLE task=js-under-20-bytes step=16 idle=300s"
 	if line != want {
@@ -266,6 +284,8 @@ func TestCardIdleLineIsNotAWallLine(t *testing.T) {
 // floor, so the harness never looked idle and the watch never fired on a real card.
 // RED WITHOUT THE FIX: at one percent this card is kept alive for the whole run.
 func TestWatchIdleEndsAHarnessSpendingOnlyItsOwnEventLoop(t *testing.T) {
+	t.Parallel()
+
 	b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
 	b.snap.ok = true
 	var end IdleEnd
@@ -287,6 +307,8 @@ func TestWatchIdleEndsAHarnessSpendingOnlyItsOwnEventLoop(t *testing.T) {
 // and issue #593's case. A `go test` prints nothing and pins a core; nothing about raising
 // the share may make that card look dead.
 func TestWatchIdleKeepsACardSpendingARealShareOfACore(t *testing.T) {
+	t.Parallel()
+
 	b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
 	b.snap.ok = true
 	for at := time.Second; at <= 40*time.Second; at += 3 * time.Second {

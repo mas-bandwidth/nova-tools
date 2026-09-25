@@ -33,6 +33,8 @@ func heldIDs(t *testing.T, store string) map[string]bool {
 // It removes EXACTLY what it is given, with two leases that agree on owner AND label --
 // the pair the old by-owner-and-label release could not tell apart.
 func TestReleaseByIDTakesOnlyTheLeasesNamed(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t4\nreserve\t0\nbench\t4\n")
 	now := time.Now().UTC()
 
@@ -67,6 +69,8 @@ func TestReleaseByIDTakesOnlyTheLeasesNamed(t *testing.T) {
 // The pid is a fence: an id whose lease is no longer this holder's must be left alone, so
 // a stale list cannot take a seat somebody else has since been granted.
 func TestReleaseByIDLeavesALeaseThatIsNoLongerOurs(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t2\nreserve\t0\nbench\t2\n")
 	ids, _, _, _, _, ok, err := TakeSlotLeases(store, "bench", 1, time.Hour, "card-7", time.Now().UTC(), os.Getpid())
 	if err != nil || !ok {
@@ -89,6 +93,8 @@ func TestReleaseByIDLeavesALeaseThatIsNoLongerOurs(t *testing.T) {
 // -- is not an error: the caller's job is to stop holding, not to prove nobody tidied up
 // first.
 func TestReleaseByIDIsQuietAboutALeaseThatIsAlreadyGone(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t2\nreserve\t0\nbench\t2\n")
 	ids, _, _, _, _, ok, err := TakeSlotLeases(store, "bench", 1, time.Hour, "card-7", time.Now().UTC(), os.Getpid())
 	if err != nil || !ok {
@@ -110,6 +116,8 @@ func TestReleaseByIDIsQuietAboutALeaseThatIsAlreadyGone(t *testing.T) {
 // is a person's hand at a prompt, who wants exactly "free whatever this owner holds for
 // that card" and who can see the store. A deferred cleanup cannot.
 func TestReleaseByOwnerAndLabelStillTakesThemAll(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t4\nreserve\t0\nbench\t4\n")
 	now := time.Now().UTC()
 	for i := 0; i < 2; i++ {

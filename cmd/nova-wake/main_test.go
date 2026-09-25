@@ -206,6 +206,8 @@ func fakeBinDir(t *testing.T) string {
 // for the toolchain. A test that wakes the builder makes docs/TEST-DURATIONS.md
 // name the wrong test, and the next person looks in the wrong place.
 func TestMainBuildsAllFakesEagerly(t *testing.T) {
+	t.Parallel()
+
 	if fakePaths == nil {
 		t.Fatal("fakePaths is nil: the fakes were not built in TestMain; the first test to call buildFakes will be charged for the toolchain")
 	}
@@ -302,6 +304,8 @@ func entryJSON(t *testing.T, ghDir, number, state string, checks ...[2]string) {
 // 1. Every wait has a written deadline and a default action.
 
 func TestAWatchNamesItsDeadlineAndItsDefault(t *testing.T) {
+	t.Parallel()
+
 	state := filepath.Join(t.TempDir(), "wake.state")
 	base := []string{"watch", "--state", state, "--interval", "5s", "--reports", exampleReports}
 
@@ -422,6 +426,8 @@ func TestTheEntryIntervalIsTheRunLength(t *testing.T) {
 // 4. It finds itself by a file, never by pgrep.
 
 func TestASecondWatcherOnOneStateFileRefusesOnOneLine(t *testing.T) {
+	t.Parallel()
+
 	state := filepath.Join(t.TempDir(), "wake.state")
 	release, holder, err := wake.LockState(state)
 	if err != nil {
@@ -460,6 +466,8 @@ func TestASecondWatcherOnOneStateFileRefusesOnOneLine(t *testing.T) {
 // $TMPDIR. A loop that pgrepped its own command line on 2026-09-09 matched
 // itself and never ended.
 func TestTheSourceHoldsNoProcessScanAndNoTempDir(t *testing.T) {
+	t.Parallel()
+
 	for _, dir := range []string{".", filepath.Join("..", "..", "internal", "wake")} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -932,6 +940,8 @@ func TestNewMailReachesTheCheckoutThroughTheAdvance(t *testing.T) {
 // rule). A --baseline run lists the world, so it is not in that state, and a
 // line that says it is describes the run it is not.
 func TestTheOpeningLineSaysWhichFirstRunThisIs(t *testing.T) {
+	t.Parallel()
+
 	reports := t.TempDir()
 	write(t, filepath.Join(reports, "job", "RESULT.md"), "# a finding\n")
 	base := []string{"--max", "5s", "--on-deadline", "report", "--interval", "5s", "--reports", reports}
@@ -986,6 +996,8 @@ func TestARefusingBusIsBrokenAndNotAChange(t *testing.T) {
 // arrives on the third consecutive failure, and a --max under three intervals
 // would otherwise report a watch of nothing as a deadline reached.
 func TestAQuietVerdictSaysHowManySourcesCouldNotBeRead(t *testing.T) {
+	t.Parallel()
+
 	state := filepath.Join(t.TempDir(), "wake.state")
 	missing := filepath.Join(t.TempDir(), "there-is-no-such-directory")
 	r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
@@ -1091,6 +1103,8 @@ func TestRefreshListsWhatIsOwedBeforeWhatIsNewAndSurvivesAFailedPoll(t *testing.
 // Test 11 demands it by name: "with an injected stdout that fails mid-write, no
 // `printed=` mark is written for the failed line".
 func TestAFailedWriteIsNotADelivery(t *testing.T) {
+	t.Parallel()
+
 	reports := t.TempDir()
 	for _, name := range []string{"a", "b", "c"} {
 		write(t, filepath.Join(reports, name, "RESULT.md"), "# a finding in "+name+"\n")
@@ -1331,6 +1345,8 @@ func TestAKillAtEachOrderBoundaryReplaysRatherThanLoses(t *testing.T) {
 // PrintedLabel. This half exists because the label is what makes the failed-
 // write guard above able to fail at all.
 func TestTheStateFileSaysWhatReachedStdout(t *testing.T) {
+	t.Parallel()
+
 	reports := t.TempDir()
 	printed := filepath.Join(reports, "printed", "RESULT.md")
 	write(t, printed, "# a finding worth a line\n")

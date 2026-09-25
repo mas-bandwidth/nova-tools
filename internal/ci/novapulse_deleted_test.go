@@ -18,6 +18,8 @@ var novaPulseRun = regexp.MustCompile(`(Command(Context)?\(|\.String\()[^\n]*"no
 // engine no command reaches, is the one package left to delete), no bench
 // script installs or checks it, and docs/CLI.md's section says where its verbs went.
 func TestTheNovaPulseCommandIsDeleted(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	for _, gone := range []string{"cmd/nova-pulse", "tools/nova-pulse-run.sh"} {
 		if _, err := os.Stat(filepath.Join(root, gone)); err == nil {

@@ -53,6 +53,8 @@ func cases2674() []case2674 {
 // The "bash" subtest re-runs the pinned bash itself against a real
 // redis-server loaded with the same keys and requires bash == golden == Go.
 func TestControl2674SprintLayout(t *testing.T) {
+	t.Parallel()
+
 	cfg, now := table.Fixture2674Config(), table.Fixture2674Now()
 	for _, c := range cases2674() {
 		if c.golden == nil {
@@ -82,6 +84,8 @@ var stamp2674 = regexp.MustCompile(`[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}
 // fixture must sit at least 5 s from the threshold it is tested against, or
 // a slow bash tick would flip a cell and the control would measure load.
 func TestControl2674FixtureMargins(t *testing.T) {
+	t.Parallel()
+
 	now := table.Fixture2674Now()
 	cmds := append(table.Fixture2674(), table.Fixture2674Degraded()...)
 	checked := 0
@@ -128,6 +132,8 @@ func TestControl2674FixtureMargins(t *testing.T) {
 // prints the bash's never-read shape; after a good read it keeps that read's
 // friend rows and says how stale they are.
 func TestControl2674FailedTickNeverBlank(t *testing.T) {
+	t.Parallel()
+
 	cfg := table.Fixture2674Config()
 	now := table.Fixture2674Now()
 	got := table.FailedLive(cfg, nil).RenderLive(now)
@@ -163,6 +169,8 @@ func pad(v string, n int) string {
 }
 
 func TestFormatLandedAgesOut(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 23, 19, 26, 17, 0, time.UTC)
 	for raw, want := range map[string]string{
 		"": "landed: ?",
@@ -182,6 +190,8 @@ func TestFormatLandedAgesOut(t *testing.T) {
 // numbers and no share of the totals; it never vanishes, however old. A row
 // within 2 intervals prints its numbers.
 func TestTableShowsStaleBenchRowNotAbsent(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 24, 20, 0, 0, 0, time.UTC)
 	at := func(d time.Duration) string { return now.Add(-d).Format("2006-01-02T15:04:05Z") }
 	row := func(host, stamp string) []string {
@@ -222,6 +232,8 @@ func TestTableShowsStaleBenchRowNotAbsent(t *testing.T) {
 // pipeline with its one xy/landed MGET; only line 1 changes, and a failed
 // tick keeps the last good title.
 func TestLiveTitlePitstop(t *testing.T) {
+	t.Parallel()
+
 	cfg, now := table.Fixture2674Config(), table.Fixture2674Now()
 	golden := table.Golden2674()
 	rest := golden[strings.Index(golden, "\n"):]

@@ -20,6 +20,8 @@ func startRedis(t *testing.T, extra ...string) string {
 }
 
 func TestFunctionLibraryLoadsFromFiles(t *testing.T) {
+	t.Parallel()
+
 	addr := startRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	defer client.Close()
@@ -71,6 +73,8 @@ func (c countedConn) Read(p []byte) (int, error) {
 }
 
 func TestPipelineThousandReadsOneRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	addr := startRedis(t)
 	var writes atomic.Int64
 	var readCalls atomic.Int64

@@ -34,6 +34,8 @@ func admitWhyOf(t *testing.T, dir, label, model, cardBody string) string {
 }
 
 func TestAdmitRefusesCapitalisedContractForDeepSeek(t *testing.T) {
+	t.Parallel()
+
 	why := admitWhyOf(t, t.TempDir(), "c1", "opencode/deepseek-v4-flash",
 		"THIS IS A CAPITALISED CONTRACT BLOCK\nSTEP 1 clone the repo\n")
 	if why == "" {
@@ -49,6 +51,8 @@ func TestAdmitRefusesCapitalisedContractForDeepSeek(t *testing.T) {
 }
 
 func TestAdmitAcceptsNumberedStepsForDeepSeek(t *testing.T) {
+	t.Parallel()
+
 	why := admitWhyOf(t, t.TempDir(), "c2", "deepseek/v4-flash",
 		"RESULT: do the work\nSTEP 1 clone the repo\nSTEP 2 edit the file\n")
 	if why != "" {
@@ -57,6 +61,8 @@ func TestAdmitAcceptsNumberedStepsForDeepSeek(t *testing.T) {
 }
 
 func TestAdmitDoesNotCheckMercury(t *testing.T) {
+	t.Parallel()
+
 	// A Mercury card in every shape a DeepSeek card would be refused for is admitted.
 	body := "THIS IS A CAPITALISED CONTRACT BLOCK\nlauncher text here\n"
 	if why := admitWhyOf(t, t.TempDir(), "c3", "inception/mercury-2.5", body); why != "" {

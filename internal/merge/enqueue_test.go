@@ -62,6 +62,8 @@ func newFakeEnqueueHost() *fakeEnqueueHost {
 // A batch's own branch still needs that head's BATCH OK: the prefix is a name a card
 // can also write (harvest publishes any rowan/* BRANCH), not evidence the gate ran.
 func TestEnqueueTakesABatchBranch(t *testing.T) {
+	t.Parallel()
+
 	h := newFakeEnqueueHost()
 	h.ids[1341] = "PR_integration6"
 	head := strings.Repeat("a", 40)
@@ -79,6 +81,8 @@ func TestEnqueueTakesABatchBranch(t *testing.T) {
 // prefix used to admit at every enqueue door, and none of those doors ran the hold
 // fold. The prefix is not a receipt.
 func TestEnqueueRefusesACardMintedBatchPrefixWithoutAReceipt(t *testing.T) {
+	t.Parallel()
+
 	h := newFakeEnqueueHost()
 	err := NewEnqueuer(h).Enqueue(context.Background(),
 		EnqueuePR{Number: 1898, HeadRef: "rowan/integration-card-bypass", HeadSHA: strings.Repeat("a", 40)}, false)
@@ -100,6 +104,8 @@ func TestEnqueueRefusesACardMintedBatchPrefixWithoutAReceipt(t *testing.T) {
 // batch. Nothing is asked of the forge at all -- the refusal is decided before the door
 // is opened.
 func TestEnqueueRefusesAHeadThatIsNotABatch(t *testing.T) {
+	t.Parallel()
+
 	h := newFakeEnqueueHost()
 	err := NewEnqueuer(h).Enqueue(context.Background(),
 		EnqueuePR{Number: 1207, HeadRef: "rowan/impl-merge-queue", HeadSHA: strings.Repeat("b", 40)}, false)
@@ -121,6 +127,8 @@ func TestEnqueueRefusesAHeadThatIsNotABatch(t *testing.T) {
 // another name -- and the receipt is what says so: the BATCH OK line the gate printed for
 // exactly this commit.
 func TestEnqueueTakesANonBatchHeadWithThatHeadsReceipt(t *testing.T) {
+	t.Parallel()
+
 	head := strings.Repeat("c", 40)
 	h := newFakeEnqueueHost()
 	h.ids[99] = "PR_99"
@@ -138,6 +146,8 @@ func TestEnqueueTakesANonBatchHeadWithThatHeadsReceipt(t *testing.T) {
 // more, and the line still says OK. It is refused for a batch branch too -- a receipt
 // that names a different head is evidence about a tree nobody is landing.
 func TestEnqueueRefusesAReceiptForAnotherHead(t *testing.T) {
+	t.Parallel()
+
 	h := newFakeEnqueueHost()
 	receipt := "BATCH OK name=nightly base=" + strings.Repeat("d", 40) + " head=" + strings.Repeat("e", 40) + " members=1301 dropped=none"
 	for _, ref := range []string{"rowan/nightly", "rowan/integration-6"} {
@@ -158,6 +168,8 @@ func TestEnqueueRefusesAReceiptForAnotherHead(t *testing.T) {
 // A batch whose every member was dropped lands nothing, and a receipt for it is a receipt
 // for the base itself.
 func TestEnqueueRefusesAReceiptThatLandsNothing(t *testing.T) {
+	t.Parallel()
+
 	head := strings.Repeat("c", 40)
 	h := newFakeEnqueueHost()
 	receipt := "BATCH OK name=nightly base=" + strings.Repeat("d", 40) + " head=" + head + " members=none dropped=1301,1302"
@@ -174,6 +186,8 @@ func TestEnqueueRefusesAReceiptThatLandsNothing(t *testing.T) {
 // Anything that is not the gate's own green line is not a receipt: a FAIL line, a
 // truncated line, a line with no head.
 func TestEnqueueRefusesEveryLineThatIsNotABatchOK(t *testing.T) {
+	t.Parallel()
+
 	head := strings.Repeat("c", 40)
 	for _, receipt := range []string{
 		"",
@@ -197,6 +211,8 @@ func TestEnqueueRefusesEveryLineThatIsNotABatchOK(t *testing.T) {
 // The parse is a function of the line, so the gate's own format is pinned here rather than
 // read out of a refusal message.
 func TestParseBatchReceiptReadsTheGatesOwnLine(t *testing.T) {
+	t.Parallel()
+
 	head, base := strings.Repeat("c", 40), strings.Repeat("d", 40)
 	got, err := ParseBatchReceipt("BATCH OK name=integration-6 base=" + base + " head=" + head + " members=1301,1302 dropped=1307")
 	if err != nil {
@@ -209,6 +225,8 @@ func TestParseBatchReceiptReadsTheGatesOwnLine(t *testing.T) {
 
 // A number below one is not a pull request, and the door says so before it asks anything.
 func TestEnqueueRefusesANumberThatIsNotAPullRequest(t *testing.T) {
+	t.Parallel()
+
 	h := newFakeEnqueueHost()
 	if err := NewEnqueuer(h).Enqueue(context.Background(),
 		EnqueuePR{Number: 0, HeadRef: "rowan/integration-6"}, false); err == nil {
@@ -222,6 +240,8 @@ func TestEnqueueRefusesANumberThatIsNotAPullRequest(t *testing.T) {
 // The GraphQL this door speaks: enqueuePullRequest, with jump where the caller asked for
 // it, and NEVER a `pr merge`. The runner records every argument.
 func TestGHEnqueueSpeaksTheQueueMutationAndNeverAMerge(t *testing.T) {
+	t.Parallel()
+
 	r := &recordRunner{}
 	h := NewGHEnqueue("mas-bandwidth/nova-tools", 0, r)
 	r.out = "PR_kwDO\n"
@@ -253,6 +273,8 @@ func TestGHEnqueueSpeaksTheQueueMutationAndNeverAMerge(t *testing.T) {
 // Without jump the mutation carries no jump at all, rather than jump:false -- the input
 // this door sends is the one the forge documents.
 func TestGHEnqueueWithoutJumpSendsNoJump(t *testing.T) {
+	t.Parallel()
+
 	r := &recordRunner{out: "PR_kwDO\n"}
 	h := NewGHEnqueue("mas-bandwidth/nova-tools", 0, r)
 	head := strings.Repeat("a", 40)
@@ -284,6 +306,8 @@ func (r *recordRunner) Run(ctx context.Context, dir, name string, args ...string
 // offers them to the door, which refuses everything that is not a batch, and this asserts
 // the wiring where it matters: on a refusal the production host starts NO SUBPROCESS.
 func TestGHSweepEnqueueGoesThroughTheOneDoor(t *testing.T) {
+	t.Parallel()
+
 	r := &recordRunner{out: "PR_kwDO\n"}
 	h := NewGHSweep("mas-bandwidth/nova-tools", "dev", 0, r)
 
@@ -310,6 +334,8 @@ func TestGHSweepEnqueueGoesThroughTheOneDoor(t *testing.T) {
 // no receipt and no hold fold. A card BRANCH rowan/integration-* is therefore a batch
 // at this extra door. Close it: refuse, and start no subprocess.
 func TestGHSweepRefusesACardMintedBatchPrefixWithoutAReceipt(t *testing.T) {
+	t.Parallel()
+
 	r := &recordRunner{out: "PR_kwDO\n"}
 	h := NewGHSweep("mas-bandwidth/nova-tools", "dev", 0, r)
 	if err := h.Enqueue(SweepPR{Number: 1898, HeadRef: "rowan/integration-card-bypass", MergeState: "CLEAN"}); err == nil {

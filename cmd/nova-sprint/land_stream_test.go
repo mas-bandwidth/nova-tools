@@ -390,6 +390,8 @@ func TestLandStreamConflictStops(t *testing.T) {
 }
 
 func TestLandVerbsRefuseUsage(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{
 		{"land", "stream"},
 		{"land", "stream", "--repo", "nova-tools", "--stream", "s", "--redis", "127.0.0.1:1"},

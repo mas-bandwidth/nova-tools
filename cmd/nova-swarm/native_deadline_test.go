@@ -172,6 +172,8 @@ func pidGoneWithin(pid int, bound time.Duration) bool {
 // cleanup as the deadline -- the whole tree, the usage row, and a reason=terminated line --
 // never a silent exit that loses the spend.
 func TestNativeTermFromOutsideWritesUsage(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	tool, _ := builtBinaries(t)
 	bin := nativeHarness(t)

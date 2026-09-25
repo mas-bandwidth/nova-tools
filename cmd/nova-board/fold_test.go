@@ -153,6 +153,8 @@ func TestOneCardTakenByTwoClonesFoldsToOneOwnerEverywhere(t *testing.T) {
 // retakes over it, naming it in after=. The owner is Ada, and there is no conflict: a
 // clock behind is a clock, not a cause.
 func TestCausalOrderBeatsTheTotalKey(t *testing.T) {
+	t.Parallel()
+
 	b := newBench(t)
 	id := b.add(plain("rowan", "a card taken twice, the second knowing the first")...)
 	one := b.now.Add(time.Minute)
@@ -194,6 +196,8 @@ func TestCausalOrderBeatsTheTotalKey(t *testing.T) {
 // An event whose after= names a missing id, one naming an event of ANOTHER card, and two
 // naming each other are each QUARANTINED: not folded, counted, named once, never guessed at.
 func TestABrokenPredecessorIsQuarantinedAndCounted(t *testing.T) {
+	t.Parallel()
+
 	b := newBench(t)
 	id := b.add(plain("rowan", "a card somebody appends nonsense to")...)
 	other := b.add(plain("rowan", "another card entirely")...)
@@ -315,6 +319,8 @@ func TestTheIdIsRandomAndCreationIsExclusive(t *testing.T) {
 
 // A RETRY AFTER AN UNCERTAIN APPEND REUSES THE ID IT DREW.
 func TestAnIdRetryIsTheSameFilingOrARefusal(t *testing.T) {
+	t.Parallel()
+
 	b := newBench(t)
 	id := b.add(plain("rowan", "a filing whose outcome nobody saw")...)
 	// The same add, run again with --id and the same fields: existed=true, nothing written.

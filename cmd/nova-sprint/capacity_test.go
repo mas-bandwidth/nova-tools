@@ -111,6 +111,8 @@ func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 // through the CLI, not merely through the Go capacity API. The actor must be
 // preserved in the server-timed cap:log receipt.
 func TestCapacityAsActorControlReceipt(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
@@ -145,6 +147,8 @@ func TestCapacityAsActorControlReceipt(t *testing.T) {
 // TestL20bRunnerHooks exercises the CI runner hooks ACTIONS_RUNNER_HOOK_JOB_STARTED
 // and ACTIONS_RUNNER_HOOK_JOB_COMPLETED through the CLI verb `capacity hook`.
 func TestL20bRunnerHooks(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
@@ -289,6 +293,8 @@ func TestCapacityBenchWritesLegs(t *testing.T) {
 // as friend hello does (#3593). The refusal must hold even when the ceiling
 // would allow the raise, and must leave the name out of the friends set.
 func TestCapacityRefusesMappedLogin(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })

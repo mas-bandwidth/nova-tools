@@ -185,6 +185,8 @@ func (f *seatFixture) read(t *testing.T, rel string) string {
 // come out of a seat this machine can open and go into a file only the new seat's key
 // and the recovery key can open.
 func TestSeatAddReSealsNamedValuesIntoTheNewSeatsFile(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	lines, err := RunSeatAdd(f.options(t, "GH_TOKEN,DEEPSEEK_API_KEY"))
 	if err != nil {
@@ -254,6 +256,8 @@ func TestSeatAddReSealsNamedValuesIntoTheNewSeatsFile(t *testing.T) {
 // TestSeatAddLeavesAFileOnlyTheNewSeatCanOpen is the assertion the whole verb exists
 // for, proven through the fake's own recipient check rather than by reading the rule.
 func TestSeatAddLeavesAFileOnlyTheNewSeatCanOpen(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	if _, err := RunSeatAdd(f.options(t, "GH_TOKEN")); err != nil {
 		t.Fatalf("RunSeatAdd: %v", err)
@@ -271,6 +275,8 @@ func TestSeatAddLeavesAFileOnlyTheNewSeatCanOpen(t *testing.T) {
 // hit had he pointed the verb at a seat this bench has no key for. It must cost
 // nothing -- no rule, no file, no half-written store.
 func TestSeatAddRefusesWhenTheSourceSeatCannotBeOpenedHere(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	before := f.read(t, ".sops.yaml")
 
@@ -294,6 +300,8 @@ func TestSeatAddRefusesWhenTheSourceSeatCannotBeOpenedHere(t *testing.T) {
 // TestSeatAddRefusesAnExistingTargetFile: a verb that can overwrite a seat file is a
 // verb that can drop every value a seat holds.
 func TestSeatAddRefusesAnExistingTargetFile(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	mustWrite(t, filepath.Join(f.storeDir, "air.yaml"), "sops:\n", 0644)
 	_, err := RunSeatAdd(f.options(t, "GH_TOKEN"))
@@ -311,6 +319,8 @@ func TestSeatAddRefusesAnExistingTargetFile(t *testing.T) {
 // TestSeatAddRefusesAnExistingRule: the rule is the grant. A verb that rewrites one
 // silently is the recipient edit that never went through a review.
 func TestSeatAddRefusesAnExistingRule(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	mustWrite(t, filepath.Join(f.storeDir, ".sops.yaml"),
 		"creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: "+pubRowan+","+pubRecovery+
@@ -327,6 +337,8 @@ func TestSeatAddRefusesAnExistingRule(t *testing.T) {
 
 // TestSeatAddRefusesAKeyTheSourceDoesNotCarry, naming the key and never a value.
 func TestSeatAddRefusesAKeyTheSourceDoesNotCarry(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	before := f.read(t, ".sops.yaml")
 	_, err := RunSeatAdd(f.options(t, "GH_TOKEN,ABSENT_KEY"))
@@ -351,6 +363,8 @@ func TestSeatAddRefusesAKeyTheSourceDoesNotCarry(t *testing.T) {
 
 // TestSeatAddRefusesAnUnusableInvocation costs one refusal per shape and touches nothing.
 func TestSeatAddRefusesAnUnusableInvocation(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	for _, tc := range []struct {
 		name string
@@ -384,6 +398,8 @@ func TestSeatAddRefusesAnUnusableInvocation(t *testing.T) {
 // says no is a green test over a broken verb -- it has happened here once already, so
 // the fake is held to the three refusals this verb depends on.
 func TestTheFakeSopsRefusesWhatRealSopsRefuses(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 
 	// A clear file has no sops metadata, and sops will not decrypt one.

@@ -291,6 +291,8 @@ func TestNativeIdleReapsTheCardInsteadOfShootingIt(t *testing.T) {
 // TestNativeIdleZeroWatchesNothing: --idle 0 is the behaviour every run had before the watch
 // existed, and a caller can still type it. The card runs to its own end.
 func TestNativeIdleZeroWatchesNothing(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)

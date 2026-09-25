@@ -36,6 +36,8 @@ func publish(t *testing.T, client *redis.Client) (string, time.Time) {
 // for 3 s fails; a second-writer key fails and is named; a changed cell fails
 // and is named.
 func TestCheckLiveSameSecond(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := controlStore(t)
 	seedCommands(t, client, table.DefectFixture())
@@ -75,6 +77,8 @@ func TestCheckLiveSameSecond(t *testing.T) {
 }
 
 func TestCheckLiveMissingFile(t *testing.T) {
+	t.Parallel()
+
 	client := controlStore(t)
 	_, err := table.CheckLive(context.Background(), client, filepath.Join(t.TempDir(), "none.txt"), "", time.Now())
 	if err == nil || !strings.Contains(err.Error(), "--check --live") {
@@ -83,6 +87,8 @@ func TestCheckLiveMissingFile(t *testing.T) {
 }
 
 func TestDiffCellsNamesTheCell(t *testing.T) {
+	t.Parallel()
+
 	golden := table.DefectGolden()
 	if got := table.DiffCells(golden, golden); got != "" {
 		t.Fatalf("equal tables differ: %s", got)
@@ -112,6 +118,8 @@ func TestDiffCellsNamesTheCell(t *testing.T) {
 // with the fixture (and renders the golden), a re-run on it is accepted, and
 // a store holding a non-control sprint is refused by name.
 func TestPrepareCheck(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := controlStore(t)
 	// fn.Load writes the function library, not keys: the store is empty.

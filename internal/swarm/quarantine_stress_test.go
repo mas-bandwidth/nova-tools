@@ -20,6 +20,8 @@ import (
 // 3. Verify all failed cards transition to quarantine/ without leaving orphan locks or leaked limbo slots.
 // 4. Verify quarantine metadata files are well-formed JSON.
 func TestLimboLeakAndQuarantineGCStress(t *testing.T) {
+	t.Parallel()
+
 	// 1. Scratch directory: the test's own temp dir, removed by the testing package.
 	scratchRoot := t.TempDir()
 

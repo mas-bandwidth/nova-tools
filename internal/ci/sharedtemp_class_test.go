@@ -122,6 +122,8 @@ func TestNoTestGlobsTheSharedTempDir(t *testing.T) {
 // scanner that had quietly stopped matching would keep the tree green by finding
 // nothing at all.
 func TestSharedTempReadScannerReadsTheFixtures(t *testing.T) {
+	t.Parallel()
+
 	before := readFile(t, filepath.Join("testdata", "sharedtemp", "before.go.txt"))
 	found, err := sharedTempReads("internal/fixture/mutate_test.go", []byte(before))
 	if err != nil {

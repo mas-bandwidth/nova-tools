@@ -20,6 +20,8 @@ import (
 // 1,000 concurrent takes from land, swarm and ci on one machine never exceed its budget,
 // and a killed consumer's debit returns only after its process group is confirmed gone.
 func TestL20b(t *testing.T) {
+	t.Parallel()
+
 	st, c := redisControl(t)
 	ctx := context.Background()
 

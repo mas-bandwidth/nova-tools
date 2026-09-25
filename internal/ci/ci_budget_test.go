@@ -66,6 +66,8 @@ var pushStudioTimeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*\$\{\{\s*m
 const pushStudioCeiling = 20
 
 func TestPushStudioShardsCarryTheirOwnCeiling(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	for _, line := range strings.Split(jobBody(src, "test"), "\n") {
@@ -98,6 +100,8 @@ var usesRe = regexp.MustCompile(`uses:\s*([^/\s]+/[^@\s]+)@([0-9a-fA-F]{40})`)
 var usesDirectiveRe = regexp.MustCompile(`^\s*(-\s*)?uses:\s*\S`)
 
 func TestCLTierJobsStayWithinTheBudget(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	names := jobNames(src)
@@ -138,6 +142,8 @@ func TestCLTierJobsStayWithinTheBudget(t *testing.T) {
 // the map lookup above. If the job drifts back to two the fleet drops groups
 // again; if it drifts past five the exception has grown without a record.
 func TestMergeGateAllowanceCarriesItsReason(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	mins, ok := jobTimeouts(src)["test-hosted-merge"]
@@ -185,6 +191,8 @@ func TestMergeGateAllowanceCarriesItsReason(t *testing.T) {
 }
 
 func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	cert := readFile(t, filepath.Join(root, ".github", "workflows", "certification.yml"))
 
@@ -222,6 +230,8 @@ func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 }
 
 func TestEveryActionIsPinnedBySHA(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	for _, file := range []string{".github/workflows/ci.yml", ".github/workflows/certification.yml"} {
 		src := readFile(t, filepath.Join(root, file))
@@ -246,6 +256,8 @@ func TestEveryActionIsPinnedBySHA(t *testing.T) {
 // this file: the step's shape is the contract, so the assertion is on the words
 // a reviewer would look for.
 func TestFleetProbeRunsTheNetworkProbeInsideNovaSandbox(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	job := jobBody(src, "fleet-probe")
@@ -691,6 +703,8 @@ func certificationOKNeeds(src string) map[string]bool {
 // verdict) that no ci-ok step names would let ci-ok run zero steps and report
 // success over red needs (found on #766 before the queue was turned on).
 func TestEveryTriggeringEventReachesACIOKVerdict(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	i := strings.Index(src, "\n  ci-ok:")
@@ -716,6 +730,8 @@ var studioEntryRe = regexp.MustCompile(`entries\+=\(.*\\"os\\":\\"macOS\\",\\"ar
 // on batman or superman. (Run 35999520176's Intel cancellations predate #3492,
 // when every shard ran the whole tree.)
 func TestMacOSShardsLeaveTheStudio(t *testing.T) {
+	t.Parallel()
+
 	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	found := 0
 	for _, line := range strings.Split(jobBody(src, "test-packages"), "\n") {
@@ -749,6 +765,8 @@ var goTestTimeoutRe = regexp.MustCompile(`GOTEST_TIMEOUT="\$\{\{ matrix\.entry\.
 // shard's go test timeout must be under its job cap, so Go names a hang before
 // the runner cancels the job; space legs keep Go's 10m under the CL cap.
 func TestShardGoTestTimeoutFitsTheJobCap(t *testing.T) {
+	t.Parallel()
+
 	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
 	var caps, tos []string
 	for _, line := range strings.Split(job, "\n") {
@@ -777,6 +795,8 @@ func TestShardGoTestTimeoutFitsTheJobCap(t *testing.T) {
 // `test: PKGS := $(CL_PKGS)` override `make test PKGS=<shard>`, so every studio
 // shard of dev push run 35999520176 ran the whole tree.
 func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
+	t.Parallel()
+
 	src := readFile(t, filepath.Join(repoRoot(t), "Makefile"))
 	re := regexp.MustCompile(`(?m)^[A-Za-z0-9_.-]+:\s*PKGS\s*\?=`)
 	if m := re.FindString(src); m != "" {
@@ -802,6 +822,8 @@ const lispCeiling = 15
 // least twice the slowest measured lisp job, so the cap is a hang detector and
 // not a coin flip on the load of the minute.
 func TestLispCapIsAboveTheMeasuredFloor(t *testing.T) {
+	t.Parallel()
+
 	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	mins, ok := jobTimeouts(src)["lisp"]
 	if !ok {

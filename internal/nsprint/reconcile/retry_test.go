@@ -35,6 +35,8 @@ func seedEnded(t *testing.T, ctx context.Context, client *redis.Client, sprint, 
 // that receipt and writes nothing; the same card ending the same way on its
 // next attempt stays ended (retry_max 1); a stale fence writes nothing.
 func TestRetryOnceNeverTwice(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := newSprint(t)
 	const sprint = "retry-2930a0b1"
@@ -95,6 +97,8 @@ func TestRetryOnceNeverTwice(t *testing.T) {
 // (tests red, BLOCKED, ABSTAIN, DONE), and every card that is not ended, is
 // never fed back: NOTHING, no hash change, no receipt.
 func TestRetryNeverOnEffectOrFinding(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := newSprint(t)
 	const sprint = "retry-2930c0d1"
@@ -142,6 +146,8 @@ func TestRetryNeverOnEffectOrFinding(t *testing.T) {
 // TestParsePolicyDefaults: an absent or unreadable s:<S>:policy field reads
 // as its default (60000/180000/1/60000/10000); retry_max 0 is a policy.
 func TestParsePolicyDefaults(t *testing.T) {
+	t.Parallel()
+
 	if p := reconcile.ParsePolicy(nil); p != reconcile.DefaultPolicy ||
 		p.Start.Milliseconds() != 60000 || p.Beat.Milliseconds() != 180000 || p.RetryMax != 1 ||
 		p.Open.Milliseconds() != 60000 || p.ExpireEvery.Milliseconds() != 10000 {
@@ -162,6 +168,8 @@ func TestParsePolicyDefaults(t *testing.T) {
 // NOTHING (TestRetryNeverOnEffectOrFinding). #2930 probe step 2 (queued
 // retry:crash a1) needs this.
 func TestRetryAfterWrapperNoCommitEnd(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := newSprint(t)
 	const sprint = "retry-2930e0f1"

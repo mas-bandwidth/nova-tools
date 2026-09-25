@@ -39,6 +39,8 @@ func friendDoneCell(t *testing.T, snap *table.SprintSnapshot, now time.Time, fri
 // done cell adds the friend's merging and landed sets (#3778), each counted
 // from the same start.
 func TestFriendDoneCountsOnlyThisSprint(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })

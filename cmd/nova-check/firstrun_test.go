@@ -77,6 +77,8 @@ func examples(t *testing.T) []string {
 // drifted out of the flag set teaches the wrong invocation to exactly the
 // reader who cannot tell.
 func TestUsageBannerExamplesRun(t *testing.T) {
+	t.Parallel()
+
 	for _, ex := range examples(t) {
 		exit, stdout, stderr := runCheck(t, localize(strings.Fields(ex)[1:])...)
 		if exit == 2 {
@@ -95,6 +97,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 // Every verb the banner names is one a reader may type first, so every one of
 // them appears in the usage block above the examples.
 func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
+	t.Parallel()
+
 	exs := examples(t)
 	if !strings.HasPrefix(exs[0], "nova-check quickstart ") {
 		t.Errorf("the first example is %q; a first run should be offered quickstart first", exs[0])
@@ -108,6 +112,8 @@ func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
 // banner's floors line and kernel example used to point a first-time reader at
 // the root-level paths the seed no longer keeps; both must name docs/.
 func TestHelpNamesTheSeedFilesUnderDocs(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runCheck(t, "help")
 	if exit != 0 {
 		t.Fatalf("`nova-check help` must exit 0, got %d; stderr: %s", exit, stderr)
@@ -134,6 +140,8 @@ func TestHelpNamesTheSeedFilesUnderDocs(t *testing.T) {
 
 // (b) A refusal says what the flag or input WANTS, not only what was wrong.
 func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		args []string
@@ -175,6 +183,8 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 // two — being sent back a second time for something the first run could already
 // see is the stumble this pins shut.
 func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		args []string
@@ -204,6 +214,8 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 // quickstart runs BOTH checks even when the first says NO, for the same reason:
 // a first run should learn everything this pair can tell it in one go.
 func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("[gone](nowhere.md)\n"), 0o644); err != nil {
 		t.Fatal(err)

@@ -40,6 +40,8 @@ func sampleEntry() Entry {
 
 // --log is a path. An empty one is a refusal, never a guess at one.
 func TestOpenLogSinkIsAPath(t *testing.T) {
+	t.Parallel()
+
 	if _, err := OpenLogSink(""); err == nil {
 		t.Fatal("an empty --log must refuse rather than guess a path")
 	}
@@ -56,6 +58,8 @@ func TestOpenLogSinkIsAPath(t *testing.T) {
 // The file sink is the log as it has always been: the same rows AppendEntry
 // wrote and ReadEntries read.
 func TestFileSinkIsTheJSONLLogItAlwaysWas(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "decide.jsonl")
 	sink, err := OpenLogSink(path)
 	if err != nil {
@@ -89,6 +93,8 @@ func TestFileSinkIsTheJSONLLogItAlwaysWas(t *testing.T) {
 // The decide event is the whole decide_log row under decide_log's names: every
 // column the calibration set reads survives the mapping.
 func TestDecisionEventCarriesTheWholeRow(t *testing.T) {
+	t.Parallel()
+
 	e := sampleEntry()
 	e.SteppedUp, e.Escalated, e.Designated = true, true, true
 	e.Reason = "the lane's owner is up"
@@ -125,6 +131,8 @@ func TestDecisionEventCarriesTheWholeRow(t *testing.T) {
 // Stella's presence rule: a counter the provider did not report is ABSENT,
 // not zero, and a reported zero is a zero.
 func TestDecisionEventKeepsAnUnreportedCounterAbsent(t *testing.T) {
+	t.Parallel()
+
 	e := sampleEntry()
 	ev, err := DecisionEvent(e)
 	if err != nil {
@@ -146,6 +154,8 @@ func TestDecisionEventKeepsAnUnreportedCounterAbsent(t *testing.T) {
 // A stamp that is not a time is a refusal naming the unit, never a silent zero
 // stamp in the record.
 func TestDecisionEventRefusesATimeThatIsNotOne(t *testing.T) {
+	t.Parallel()
+
 	e := sampleEntry()
 	e.Time = "yesterday"
 	if _, err := DecisionEvent(e); err == nil || !strings.Contains(err.Error(), "u1") {
@@ -156,6 +166,8 @@ func TestDecisionEventRefusesATimeThatIsNotOne(t *testing.T) {
 // A reason longer than the stream's field ceiling is cut with the byte mark,
 // not refused: a long reason must not cost the whole decision.
 func TestDecisionEventCapsALongReason(t *testing.T) {
+	t.Parallel()
+
 	e := sampleEntry()
 	e.Reason = strings.Repeat("step 1: flash answered below the floor; ", 12)
 	ev, err := DecisionEvent(e)
@@ -174,6 +186,8 @@ func TestDecisionEventCapsALongReason(t *testing.T) {
 // card transition uses, onto cards:done, and the fold reads it into decisions
 // with the unreported counter NULL (a dash in the dump), never 0.
 func TestEventSinkWritesADecisionTheFoldReads(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	stream := events.NewFakeStream()
 	sink := &EventSink{Emitter: stream, Bench: "hulk"}
@@ -216,6 +230,8 @@ func TestEventSinkWritesADecisionTheFoldReads(t *testing.T) {
 // Tee writes every sink and reports every failure, so the file and the stream
 // are written together and neither failure hides the other.
 func TestTeeWritesEverySinkAndReportsEveryFailure(t *testing.T) {
+	t.Parallel()
+
 	a, b := NewFakeLogSink(), NewFakeLogSink()
 	both := Tee(a, nil, b)
 	if err := both.Append(sampleEntry()); err != nil {
@@ -239,6 +255,8 @@ func TestTeeWritesEverySinkAndReportsEveryFailure(t *testing.T) {
 // The summary is a projection of the rows, so it reads the same off the file
 // and off the fake.
 func TestSummaryIsTheSameOffEitherSink(t *testing.T) {
+	t.Parallel()
+
 	reg, err := LoadRegistry("")
 	if err != nil {
 		t.Fatal(err)
@@ -288,6 +306,8 @@ func TestSummaryIsTheSameOffEitherSink(t *testing.T) {
 
 // The fake keeps the order the rows were appended in.
 func TestFakeLogSinkKeepsTheOrder(t *testing.T) {
+	t.Parallel()
+
 	sink := NewFakeLogSink()
 	for _, id := range []string{"a", "b", "c"} {
 		e := sampleEntry()
@@ -311,6 +331,8 @@ func TestFakeLogSinkKeepsTheOrder(t *testing.T) {
 // fold stores NULL for both (a dash in the dump) -- never a present 0. The
 // control beside it: a row that CARRIED a zero confidence folds a 0.
 func TestAnOmittedConfidenceAndFloorFoldAsNullThroughDecisionEvent(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "decide.jsonl")
 	lines := `{"time":"2026-09-18T10:00:00Z","unit":"absent","kind":"rebase","evidence":{"id":"absent","kind":"rebase"},"rung_tried":"flash","height":0,"stepped_up":false,"escalated":false,"source":"rules","rowan_pick":"flash"}

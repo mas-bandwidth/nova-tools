@@ -38,6 +38,8 @@ func statAt(t *testing.T, res TuneResult, floor float64) FloorStat {
 // Rule 8: tonight's shape sets the floor from data — floor 0.9 agrees 9/9
 // (rate 1.0) and escalates the 21 wrong below it (rate 0.7).
 func TestTuneTonightShape(t *testing.T) {
+	t.Parallel()
+
 	res, err := Tune(tonightShape(9, 21), TuneOptions{})
 	if err != nil {
 		t.Fatalf("Tune: %v", err)
@@ -60,6 +62,8 @@ func TestTuneTonightShape(t *testing.T) {
 
 // Rows without a label are counted in lines but skipped as unlabeled.
 func TestTuneCountsUnlabeled(t *testing.T) {
+	t.Parallel()
+
 	data := append(tonightShape(9, 21), []byte(`{"decision":"abstain","confidence":0.95}`+"\n")...)
 	res, err := Tune(data, TuneOptions{})
 	if err != nil {
@@ -72,6 +76,8 @@ func TestTuneCountsUnlabeled(t *testing.T) {
 
 // The field names are configurable.
 func TestTuneCustomFields(t *testing.T) {
+	t.Parallel()
+
 	res, err := Tune([]byte(`{"pick":"go","conf":0.95,"outcome":"go"}`+"\n"), TuneOptions{
 		Choice: "pick", Conf: "conf", Label: "outcome", Floors: []float64{0.9},
 	})
@@ -86,6 +92,8 @@ func TestTuneCustomFields(t *testing.T) {
 
 // A line that is not a JSON object is refused, never guessed.
 func TestTuneRefusesBadLine(t *testing.T) {
+	t.Parallel()
+
 	if _, err := Tune([]byte("not json\n"), TuneOptions{}); err == nil {
 		t.Fatal("expected refusal on a line that is not JSON")
 	}

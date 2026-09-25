@@ -26,6 +26,8 @@ var transcriptLines = []string{
 }
 
 func TestStepsCutsCommandsFromTheirOutput(t *testing.T) {
+	t.Parallel()
+
 	steps, err := Steps("nova-alpha", transcriptLines)
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +50,8 @@ func TestStepsCutsCommandsFromTheirOutput(t *testing.T) {
 }
 
 func TestStepsReadsTheOneRedirectTheTranscriptsUse(t *testing.T) {
+	t.Parallel()
+
 	steps, err := Steps("nova-alpha", []string{"$ nova-alpha count < testdata/events.jsonl", "COUNT OK n=2"})
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +68,8 @@ func TestStepsReadsTheOneRedirectTheTranscriptsUse(t *testing.T) {
 // anyway: a pipeline compared against the first command's output alone would be
 // a green that means nothing.
 func TestStepsRefusesWhatItCannotRun(t *testing.T) {
+	t.Parallel()
+
 	for _, line := range []string{
 		"$ nova-alpha list | head -2",
 		"$ nova-alpha list > out.txt",
@@ -83,6 +89,8 @@ func TestStepsRefusesWhatItCannotRun(t *testing.T) {
 }
 
 func TestSplitShellKeepsAQuotedSentenceWhole(t *testing.T) {
+	t.Parallel()
+
 	got, err := SplitShell(`nova-alpha say --body "a \"brass\" fitting" --to Emma`)
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +110,8 @@ func TestSplitShellKeepsAQuotedSentenceWhole(t *testing.T) {
 // comparison cannot see: every line the document keeps still matches something
 // the tool printed, and a set lookup for a line that was deleted is never made.
 func TestAnAbridgedTranscriptIsRed(t *testing.T) {
+	t.Parallel()
+
 	step := Step{Line: "$ nova-alpha list", Want: []string{"LIST ENTRY name=gate"}}
 	res := Result{Stdout: "LIST ENTRY name=gate\nLIST OK n=1\n"}
 	problems := Compare(step, res, nil)
@@ -117,6 +127,8 @@ func TestAnAbridgedTranscriptIsRed(t *testing.T) {
 // see: the same lines, the same count, a different order, and every lookup
 // succeeds.
 func TestAReorderedTranscriptIsRed(t *testing.T) {
+	t.Parallel()
+
 	step := Step{Line: "$ nova-alpha list", Want: []string{"LIST OK n=1", "LIST ENTRY name=gate"}}
 	res := Result{Stdout: "LIST ENTRY name=gate\nLIST OK n=1\n"}
 	if len(Compare(step, res, nil)) != 2 {
@@ -128,6 +140,8 @@ func TestAReorderedTranscriptIsRed(t *testing.T) {
 // promised and the number on it is not, which is the whole reason a reader
 // checks their screen against a transcript at all.
 func TestAWrongValueIsRed(t *testing.T) {
+	t.Parallel()
+
 	step := Step{Line: "$ nova-alpha list", Want: []string{"LIST OK n=1"}}
 	problems := Compare(step, Result{Stdout: "LIST OK n=2\n"}, nil)
 	if len(problems) != 1 {
@@ -142,6 +156,8 @@ func TestAWrongValueIsRed(t *testing.T) {
 // worth a test here is not a norm that fails to match -- that is red and read --
 // but one that matches too much and turns a comparison into a formality.
 func TestADeclaredNormCoversOnlyItsOwnField(t *testing.T) {
+	t.Parallel()
+
 	step := Step{
 		Line: "$ nova-alpha put --name gate",
 		Want: []string{"PUT OK name=gate id=0f1e2d3c created=2026-09-19T06:29:53Z seen=2026-09-19T06:29:53Z"},
@@ -168,6 +184,8 @@ func TestADeclaredNormCoversOnlyItsOwnField(t *testing.T) {
 }
 
 func TestPathNormReducesBothSidesToTheDocumentedSpelling(t *testing.T) {
+	t.Parallel()
+
 	step := Step{Line: "$ nova-alpha where", Want: []string{"WHERE OK store=./cairns"}}
 	res := Result{Stdout: "WHERE OK store=/var/folders/T/x9/cairns\n"}
 	if problems := Compare(step, res, []Norm{Path("./cairns", "/var/folders/T/x9/cairns")}); len(problems) != 0 {
@@ -176,6 +194,8 @@ func TestPathNormReducesBothSidesToTheDocumentedSpelling(t *testing.T) {
 }
 
 func TestPathNormRecognizesACommaAfterThePath(t *testing.T) {
+	t.Parallel()
+
 	step := Step{Line: "$ nova-alpha where", Want: []string{"WHERE NOTE store=./cairns, using the documented location"}}
 	res := Result{Stdout: "WHERE NOTE store=/var/folders/T/x9/cairns, using the documented location\n"}
 	if problems := Compare(step, res, []Norm{Path("./cairns", "/var/folders/T/x9/cairns")}); len(problems) != 0 {
@@ -188,6 +208,8 @@ func TestPathNormRecognizesACommaAfterThePath(t *testing.T) {
 // The harness says so instead of picking one, because picking one is how a
 // transcript comes to show an interleaving the tool does not keep.
 func TestAStepThatWroteToBothStreamsIsReported(t *testing.T) {
+	t.Parallel()
+
 	step := Step{Line: "$ nova-alpha list", Want: []string{"LIST OK n=1"}}
 	problems := Compare(step, Result{Stdout: "LIST OK n=1\n", Stderr: "nova-alpha: a warning\n"}, nil)
 	if len(problems) != 1 {
@@ -201,6 +223,8 @@ func TestAStepThatWroteToBothStreamsIsReported(t *testing.T) {
 // A refusal is on stderr and is compared there, so a transcript may document
 // one without the harness being told which stream to read.
 func TestARefusalIsComparedOnStderr(t *testing.T) {
+	t.Parallel()
+
 	step := Step{Line: "$ nova-alpha", Want: []string{"nova-alpha: no verb given; run: nova-alpha help"}}
 	res := Result{Code: 2, Stderr: "nova-alpha: no verb given; run: nova-alpha help\n"}
 	if problems := Compare(step, res, nil); len(problems) != 0 {
@@ -213,6 +237,8 @@ func TestARefusalIsComparedOnStderr(t *testing.T) {
 // state that never happened, and a pile of consequent failures buries the one
 // that is true.
 func TestExecuteStopsAtACommandItCannotInvoke(t *testing.T) {
+	t.Parallel()
+
 	steps, err := Steps("nova-alpha", transcriptLines)
 	if err != nil {
 		t.Fatal(err)
@@ -247,6 +273,8 @@ var errNotInvokable = notInvokable{}
 // Reverting fix: drop `field:` from the Norm that Instant and HexID build (one
 // edit each) and apply falls back to the unanchored ReplaceAllString.
 func TestADeclaredNormDoesNotMatchAFieldWhoseNameEndsInIt(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		what string
 		want string
@@ -288,6 +316,8 @@ func TestADeclaredNormDoesNotMatchAFieldWhoseNameEndsInIt(t *testing.T) {
 // for the rows above REPLACES that pattern: a boundary that covered too much
 // must not become one that covers too little.
 func TestAHexIDNormCoversExactlyTheDigitsItDeclares(t *testing.T) {
+	t.Parallel()
+
 	step := Step{Line: "$ nova-alpha put", Want: []string{"OK id=aaaaaaaa"}}
 	if problems := Compare(step, Result{Stdout: "OK id=aaaaaaaabbbb\n"}, []Norm{HexID("id", 8)}); len(problems) != 1 {
 		t.Errorf("Compare found %d problems, want 1: an id longer than the %d digits declared was normalised anyway", len(problems), 8)
@@ -304,6 +334,8 @@ func TestAHexIDNormCoversExactlyTheDigitsItDeclares(t *testing.T) {
 // value the constructor did not promise is left where the comparison sees it.
 // Reverting fix: drop `valid: isInstant` from Instant (one edit).
 func TestAnInstantNormLeavesAnImpossibleInstantVisible(t *testing.T) {
+	t.Parallel()
+
 	for _, got := range []string{
 		"OK created=2026-99-99T99:99:99Z",
 		"OK created=2026-09-19T25:00:00Z",
@@ -329,6 +361,8 @@ func TestAnInstantNormLeavesAnImpossibleInstantVisible(t *testing.T) {
 // Reverting fix: delete the single-quote arm of SplitShell's bare state (one
 // edit) and the sentence splits again.
 func TestSplitShellKeepsASingleQuotedSentenceWhole(t *testing.T) {
+	t.Parallel()
+
 	got, err := SplitShell(`nova-alpha say --body 'hello world' --to Emma`)
 	if err != nil {
 		t.Fatal(err)
@@ -362,6 +396,8 @@ func TestSplitShellKeepsASingleQuotedSentenceWhole(t *testing.T) {
 // Reverting fix: delete the two `return nil, fmt.Errorf` arms for `\` and "`"
 // in SplitShell's bare state (one edit) and the altered argv comes back.
 func TestSplitShellRefusesQuotingItCannotRead(t *testing.T) {
+	t.Parallel()
+
 	for _, cmd := range []string{
 		`nova-alpha say --body 'hello`,
 		`nova-alpha say --body "hello`,
@@ -388,6 +424,8 @@ func TestSplitShellRefusesQuotingItCannotRead(t *testing.T) {
 // and a tool that started answering something else about itself is the kind of
 // drift a `version` line is in the transcript to catch.
 func TestGoBuildCoversTheMachineAndNotTheVersionWord(t *testing.T) {
+	t.Parallel()
+
 	step := Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha devel linux/amd64 go1.26.5"}}
 	if problems := Compare(step, Result{Stdout: "nova-alpha devel darwin/arm64 go1.27.1\n"}, []Norm{GoBuild()}); len(problems) != 0 {
 		t.Errorf("a declared build triple was not normalised: %v", problems)
@@ -404,6 +442,8 @@ func TestGoBuildCoversTheMachineAndNotTheVersionWord(t *testing.T) {
 // The same run had nowhere to state a JEV key, a forge credential or a posting
 // credential, and recorded those steps as defects too.
 func TestStepsReadsAPreconditionStatedOnTheCommandLine(t *testing.T) {
+	t.Parallel()
+
 	steps, err := Steps("nova-alpha", []string{
 		"$ nova-alpha check   # Platform: darwin",
 		"CHECK OK backend=sandbox-exec",
@@ -447,6 +487,8 @@ func TestStepsReadsAPreconditionStatedOnTheCommandLine(t *testing.T) {
 }
 
 func TestSkipReasonAnswersOnlyWhatTheDocumentStated(t *testing.T) {
+	t.Parallel()
+
 	onDarwin := Step{Line: "$ nova-alpha check", Platforms: []string{"darwin"}}
 	if why := onDarwin.SkipReason("darwin", nil); why != "" {
 		t.Errorf("a darwin step on darwin was skipped: %s", why)
@@ -470,6 +512,8 @@ func TestSkipReasonAnswersOnlyWhatTheDocumentStated(t *testing.T) {
 }
 
 func TestExecuteWithSkipsAStatedPreconditionAndRunsTheRest(t *testing.T) {
+	t.Parallel()
+
 	steps, err := Steps("nova-alpha", []string{
 		"$ nova-alpha check   # Platform: plan9",
 		"CHECK OK",
@@ -507,6 +551,8 @@ func TestExecuteWithSkipsAStatedPreconditionAndRunsTheRest(t *testing.T) {
 // the convention the marked lines are stderr's, standard output is compared
 // whole, and stderr is compared only for the lines the document shows.
 func TestAMarkedBlockComparesEachStreamOnItsOwnTerms(t *testing.T) {
+	t.Parallel()
+
 	step := Step{
 		Line: "$ nova-alpha check ./pages/RULES.md ./pages/journal.md",
 		Want: []string{
@@ -553,6 +599,8 @@ func TestAMarkedBlockComparesEachStreamOnItsOwnTerms(t *testing.T) {
 // reduce its coverage to NOTHING in every caller that compares shapes, which is
 // the opposite of what marking it is for.
 func TestShapeSeesThroughTheStreamMarker(t *testing.T) {
+	t.Parallel()
+
 	const line = "SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work."
 	want := Shape(line)
 	if want == "" {
@@ -569,6 +617,8 @@ func TestShapeSeesThroughTheStreamMarker(t *testing.T) {
 // findings live there: under the asymmetry alone, deleting every finding from
 // nova-self-talk's transcript is green, and that deletion is issue #1639.
 func TestStderrWholeMakesADroppedFindingRed(t *testing.T) {
+	t.Parallel()
+
 	lines := []string{
 		"$ nova-alpha check ./pages/journal.md",
 		"! ALPHA FAIL ./pages/journal.md: STANDING",
@@ -629,6 +679,8 @@ func TestStderrWholeMakesADroppedFindingRed(t *testing.T) {
 // for a capture group, expand it to nothing, and leave the two sides
 // disagreeing about a path that had just been normalised.
 func TestANormReplacesLiterally(t *testing.T) {
+	t.Parallel()
+
 	step := Step{Line: "$ nova-alpha init", Want: []string{"INIT OK remote=$PWD/rehearsal.git"}}
 	res := Result{Stdout: "INIT OK remote=/tmp/T/001/rehearsal.git\n"}
 	if problems := Compare(step, res, []Norm{Path("$PWD/rehearsal.git", "/tmp/T/001/rehearsal.git")}); len(problems) != 0 {
@@ -644,6 +696,8 @@ func TestANormReplacesLiterally(t *testing.T) {
 // not reach past its own two tokens, and must not match from the middle of a
 // longer one -- it was a plain ReplaceAll over every line of every step.
 func TestGoBuildCoversTwoWholeTokensAndNothingElse(t *testing.T) {
+	t.Parallel()
+
 	step := Step{Line: "$ nova-alpha where", Want: []string{"WHERE OK dir=/srv/linux/amd64 go1.26.5-cache"}}
 	res := Result{Stdout: "WHERE OK dir=/srv/darwin/arm64 go1.27.1-cache\n"}
 	if problems := Compare(step, res, []Norm{GoBuild()}); len(problems) != 1 {
@@ -668,6 +722,8 @@ func TestGoBuildCoversTwoWholeTokensAndNothingElse(t *testing.T) {
 // `705dd1c9` in the only way it can be: `Version` did not exist there, so the
 // package did not build.
 func TestVersionNormCoversTheStampAndDevelAndNothingElse(t *testing.T) {
+	t.Parallel()
+
 	step := Step{Line: "$ nova-alpha version", Want: []string{"nova-alpha v0.16.0-dev.c839379e.0.20260919144920-705dd1c92534 darwin/arm64 go1.27.1"}}
 	res := Result{Stdout: "nova-alpha devel darwin/arm64 go1.27.1\n"}
 	if problems := Compare(step, res, []Norm{Version(), GoBuild()}); len(problems) != 0 {
@@ -699,6 +755,8 @@ func TestVersionNormCoversTheStampAndDevelAndNothingElse(t *testing.T) {
 // is the simple entry point, and the simple entry point must never be green on
 // a promise it did not check.
 func TestExecuteRunsAStepThatStatesAPreconditionThisBenchMeets(t *testing.T) {
+	t.Parallel()
+
 	steps, err := Steps("nova-alpha", []string{
 		"$ nova-alpha list   # Platform: " + runtime.GOOS,
 		"LIST OK n=1",
@@ -723,6 +781,8 @@ func TestExecuteRunsAStepThatStatesAPreconditionThisBenchMeets(t *testing.T) {
 // itself; every other caller did not, and a caller cannot be asked to remember.
 // A sitting that ran nothing proved nothing, and it is the harness that knows.
 func TestExecuteRefusesABlockItSkippedEntirely(t *testing.T) {
+	t.Parallel()
+
 	steps, err := Steps("nova-alpha", []string{
 		"$ nova-alpha list   # Requires: NOPE",
 		"LIST OK n=1",
@@ -756,6 +816,8 @@ func TestExecuteRefusesABlockItSkippedEntirely(t *testing.T) {
 // swallowed: the block ran less than the document promises, and the caller is
 // told which step and in the document's own words.
 func TestExecuteReportsASkipItDidNotRun(t *testing.T) {
+	t.Parallel()
+
 	steps, err := Steps("nova-alpha", []string{
 		"$ nova-alpha list",
 		"LIST OK n=1",
@@ -781,6 +843,8 @@ func TestExecuteReportsASkipItDidNotRun(t *testing.T) {
 // lastComment tracked only the double quote, so this line was cut in half and
 // then failed as an unterminated quote -- a defect reported as the wrong defect.
 func TestAHashInsideSingleQuotesIsNotADeclaration(t *testing.T) {
+	t.Parallel()
+
 	steps, err := Steps("nova-alpha", []string{"$ nova-alpha say --body 'a # Platform: darwin thing'", "SAY OK"})
 	if err != nil {
 		t.Fatal(err)
@@ -796,6 +860,8 @@ func TestAHashInsideSingleQuotesIsNotADeclaration(t *testing.T) {
 // A `# Platform:` value that is not a GOOS is a step that skips on every bench
 // for ever and is never seen again. `macOS` is the one a person writes.
 func TestAPlatformDeclarationMustNameAGOOS(t *testing.T) {
+	t.Parallel()
+
 	for _, line := range []string{
 		"$ nova-alpha list   # Platform: macOS",
 		"$ nova-alpha list   # Platform: mac",

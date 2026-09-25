@@ -18,6 +18,8 @@ import (
 // t.Cleanup. The third subtest exists because the obvious fix -- returning on the
 // first unsafe root -- would break a caller who names several.
 func TestRemoveUnderRootsRefusesAnUnsafeRoot(t *testing.T) {
+	t.Parallel()
+
 	home, err := os.UserHomeDir()
 
 	t.Run("the user's home", func(t *testing.T) {
@@ -325,6 +327,8 @@ func TestRemoveUnderIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) {
 // under it, and a path that merely shares a prefix is not. The second half is what a
 // string prefix gets wrong in the other direction.
 func TestStrictlyUnderIsAnIdentityWalkNotAStringPrefix(t *testing.T) {
+	t.Parallel()
+
 	parent := t.TempDir()
 	root := filepath.Join(parent, "root")
 	deep := filepath.Join(root, "a", "b")

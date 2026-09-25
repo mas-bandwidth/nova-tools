@@ -15,6 +15,8 @@ func fixture(prefix string, n int) string {
 }
 
 func TestTheShapesLoad(t *testing.T) {
+	t.Parallel()
+
 	list, err := Shapes()
 	if err != nil {
 		t.Fatalf("keyshapes.txt: %v", err)
@@ -37,6 +39,8 @@ func TestTheShapesLoad(t *testing.T) {
 }
 
 func TestEachShapeCatchesItsOwnForm(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct{ shape, text string }{
 		{"forge-token", fixture("ghp_", 30)},
 		{"forge-fine-grained-token", fixture("github_pat_", 30)},
@@ -67,6 +71,8 @@ func TestEachShapeCatchesItsOwnForm(t *testing.T) {
 // TestTheScanNeverPrintsWhatItMatched is the rule the whole package exists under: a
 // finding's text is a shape name, a path and a line, and the value is in none of them.
 func TestTheScanNeverPrintsWhatItMatched(t *testing.T) {
+	t.Parallel()
+
 	secret := fixture("ghp_", 30)
 	found, err := ScanText("RESULT.md", "out: "+secret+"\n", nil)
 	if err != nil {
@@ -89,6 +95,8 @@ func TestTheScanNeverPrintsWhatItMatched(t *testing.T) {
 // this fleet holds may not match any published prefix, and the check still finds it --
 // reporting the VARIABLE's name and the value's LENGTH, never the value.
 func TestASecretNamedVariablesValueIsCaughtByLengthAndName(t *testing.T) {
+	t.Parallel()
+
 	value := "zzq" + strings.Repeat("7", 29) // no published prefix; 32 characters
 	env := []string{"SEAT_PROVIDER_KEY=" + value, "PATH=/usr/bin", "HOME=/home/x"}
 	found, err := ScanText("RESULT.md", "line one\nout: "+value+"\nline three\n", env)
@@ -110,6 +118,8 @@ func TestASecretNamedVariablesValueIsCaughtByLengthAndName(t *testing.T) {
 // TestPlainProseIsNoFinding: a shape that matched prose would be switched off within a
 // week, so the ordinary text a card writes must pass.
 func TestPlainProseIsNoFinding(t *testing.T) {
+	t.Parallel()
+
 	prose := `RESULT: fix the thing ok
 DONE
 BRANCH rowan/fix-1814
@@ -130,6 +140,8 @@ usd=0.0013 tokens_in=6176 sha=d5666ab9 eyJ
 }
 
 func TestScanFileIsQuietAboutAMissingFileAndLoudAboutAnUnreadableOne(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	found, err := ScanFile(filepath.Join(dir, "nothing.md"), nil)
 	if err != nil || len(found) != 0 {
@@ -144,6 +156,8 @@ func TestScanFileIsQuietAboutAMissingFileAndLoudAboutAnUnreadableOne(t *testing.
 }
 
 func TestSecretNameIsTheArgvLogsPredicate(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range []string{"DEEPSEEK_API_KEY", "GH_TOKEN", "SOPS_AGE_SECRET", "lower_case_key", "MiXeD_ToKeN"} {
 		if !SecretName(name) {
 			t.Fatalf("%s is not recognised as a secret name", name)

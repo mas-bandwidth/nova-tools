@@ -48,6 +48,8 @@ func testGateDrew(fs []CardHeaderFinding) bool {
 // RED: TEST names ./internal/pulse TestX, but the gate (header echo) runs only
 // ./internal/swarm -- no gate runs the named test, so the lint refuses.
 func TestLintRefusesATestNoGateRuns(t *testing.T) {
+	t.Parallel()
+
 	raw := gateCard("",
 		"KIND: fix-red",
 		"PATHS: internal/pulse/thing.go, internal/pulse/thing_test.go",
@@ -62,6 +64,8 @@ func TestLintRefusesATestNoGateRuns(t *testing.T) {
 // NEGATIVE CONTROL for the red above: the same card whose gate runs the package the
 // TEST: line names draws nothing.
 func TestLintAcceptsATestItsGateRuns(t *testing.T) {
+	t.Parallel()
+
 	raw := gateCard("",
 		"KIND: fix-red",
 		"PATHS: internal/pulse/thing.go, internal/pulse/thing_test.go",
@@ -76,6 +80,8 @@ func TestLintAcceptsATestItsGateRuns(t *testing.T) {
 // The `## Run` region is the clause-6 sole authority: when the region runs the package
 // but a stale header echo does not, the card is still accepted.
 func TestLintAcceptsWhenTheRunRegionRunsIt(t *testing.T) {
+	t.Parallel()
+
 	raw := gateCard("RUN:\n```sh\ngo test ./internal/pulse/ -run TestThing -count=1\n```",
 		"KIND: fix-red",
 		"PATHS: internal/pulse/thing.go, internal/pulse/thing_test.go",
@@ -89,6 +95,8 @@ func TestLintAcceptsWhenTheRunRegionRunsIt(t *testing.T) {
 
 // `./...` is a gate that runs every package, so it runs the named one.
 func TestLintAcceptsADotDotDotGate(t *testing.T) {
+	t.Parallel()
+
 	raw := gateCard("",
 		"KIND: fix-red",
 		"PATHS: internal/pulse/thing.go, internal/pulse/thing_test.go",
@@ -102,6 +110,8 @@ func TestLintAcceptsADotDotDotGate(t *testing.T) {
 
 // A parent directory run with `/...` covers a package under it.
 func TestLintAcceptsAParentEllipsisGate(t *testing.T) {
+	t.Parallel()
+
 	raw := gateCard("",
 		"KIND: fix-red",
 		"PATHS: internal/pulse/thing.go, internal/pulse/thing_test.go",
@@ -115,6 +125,8 @@ func TestLintAcceptsAParentEllipsisGate(t *testing.T) {
 
 // An opaque `make` gate could run any package, so it is not refused.
 func TestLintAcceptsAMakeGate(t *testing.T) {
+	t.Parallel()
+
 	raw := gateCard("",
 		"KIND: fix-red",
 		"PATHS: internal/pulse/thing.go, internal/pulse/thing_test.go",
@@ -129,6 +141,8 @@ func TestLintAcceptsAMakeGate(t *testing.T) {
 // RED: a card with a valid TEST: line but no gate at all -- no `RUN:` header and no
 // `## Run` region -- names a test no gate runs.
 func TestLintRefusesACardWithNoGateAtAll(t *testing.T) {
+	t.Parallel()
+
 	raw := gateCard("",
 		"KIND: fix-red",
 		"PATHS: internal/pulse/thing.go, internal/pulse/thing_test.go",
@@ -141,6 +155,8 @@ func TestLintRefusesACardWithNoGateAtAll(t *testing.T) {
 
 // `TEST: none` declares no Go anchor and so no gate obligation: never refused here.
 func TestLintAcceptsTestNone(t *testing.T) {
+	t.Parallel()
+
 	raw := gateCard("",
 		"KIND: read",
 		"PATHS: none",
@@ -154,6 +170,8 @@ func TestLintAcceptsTestNone(t *testing.T) {
 // A malformed TEST: line is `test-named`'s finding, not this check's: it must not draw a
 // second, confusing token for the same line.
 func TestLintLeavesMalformedTestToTestNamed(t *testing.T) {
+	t.Parallel()
+
 	raw := gateCard("",
 		"KIND: fix-red",
 		"PATHS: internal/pulse/thing.go",
@@ -167,6 +185,8 @@ func TestLintLeavesMalformedTestToTestNamed(t *testing.T) {
 
 // A card with no typed header at all is left alone by this check.
 func TestLintIgnoresACardWithoutATestLine(t *testing.T) {
+	t.Parallel()
+
 	raw := gateCard("",
 		"KIND: fix-red",
 		"PATHS: internal/pulse/thing.go, internal/pulse/thing_test.go",
@@ -181,6 +201,8 @@ func TestLintIgnoresACardWithoutATestLine(t *testing.T) {
 // is the -run regexp, not a package; `go test -run ./internal/pulse ./internal/swarm/`
 // runs ./internal/swarm only, so no gate runs ./internal/pulse and the lint refuses.
 func TestLintRefusesADetachedFlagValueAsPackage(t *testing.T) {
+	t.Parallel()
+
 	for _, run := range []string{
 		"RUN: go test -run ./internal/pulse ./internal/swarm/",
 		"RUN: go test -count 1 -run ./internal/pulse/ ./internal/swarm/",
@@ -203,6 +225,8 @@ func TestLintRefusesADetachedFlagValueAsPackage(t *testing.T) {
 // NEGATIVE CONTROL for the red above: a boolean flag takes no value, a `=`-joined value
 // consumes nothing, and a detached value is followed by the real package -- each runs it.
 func TestLintAcceptsAPackageAfterFlags(t *testing.T) {
+	t.Parallel()
+
 	for _, run := range []string{
 		"RUN: go test -v ./internal/pulse/",
 		"RUN: go test -run=TestX ./internal/pulse/",

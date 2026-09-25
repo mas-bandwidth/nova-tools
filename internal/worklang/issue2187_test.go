@@ -22,6 +22,8 @@ func (s *collectSink) Cut(e worklang.CutEvent)       { s.cuts = append(s.cuts, e
 // one cut event per card cut (card id, pool candidate, template, route),
 // while leaving the journal as the single replayable truth.
 func TestIssue2187(t *testing.T) {
+	t.Parallel()
+
 	const twoNodes = `(:plan :version 1
  (:node :id "n1" :kind docs :repo "o/r" :base "dev" :needs ()
   :inputs ((:spec "docs/a.md:1-2"))

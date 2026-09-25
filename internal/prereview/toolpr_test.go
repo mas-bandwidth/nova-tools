@@ -65,6 +65,8 @@ func loadToolPR(t *testing.T, n int) prereview.PR {
 // own cells quote check(true, ...) and // Simulate), so it is the skip that
 // keeps them out and not an empty corpus.
 func TestToolPRModeOnTheDryPass(t *testing.T) {
+	t.Parallel()
+
 	for _, n := range toolPRs {
 		pr := loadToolPR(t, n)
 		c := prereview.Mechanical(pr, prereview.InferCard(pr))
@@ -118,6 +120,8 @@ func skippedSections(diff string) string {
 // TestTellsSkipDocsAndTestdata: a docs page and a fixture quoting a tell are
 // skipped; the same line in a test file is not.
 func TestTellsSkipDocsAndTestdata(t *testing.T) {
+	t.Parallel()
+
 	line := "+check(true, \"x\")\n"
 	for _, tc := range []struct {
 		path string
@@ -139,6 +143,8 @@ func TestTellsSkipDocsAndTestdata(t *testing.T) {
 // TestSpearmanReproducesTheDryPass pins the measure against the report's own
 // numbers: raw scores and diff KB of the eight, rho -0.64.
 func TestSpearmanReproducesTheDryPass(t *testing.T) {
+	t.Parallel()
+
 	raw := []float64{3.69, 4.65, 6.70, 3.28, 5.66, 6.97, 7.27, 7.63}
 	kb := []float64{104, 286, 13, 60, 128, 33, 27, 20}
 	if got := prereview.Spearman(raw, kb); math.Abs(got-(-0.643)) > 0.001 {
@@ -172,6 +178,8 @@ func (a groupAsker) Ask(_ context.Context, state string, _ map[string]decide.Que
 // pull request is asked the old single question over the old state; a
 // recorded group pass replays.
 func TestScoreIsTheLowestFileGroup(t *testing.T) {
+	t.Parallel()
+
 	sec := func(p, body string) string {
 		return "diff --git a/" + p + " b/" + p + "\n--- a/" + p + "\n+++ b/" + p + "\n@@ -0,0 +1 @@\n+" + body + "\n"
 	}
@@ -231,6 +239,8 @@ func (f askerFunc) Ask(_ context.Context, state string, _ map[string]decide.Ques
 // `nova-decide review --pr-dir <toolPRDir> --record <toolPRDir>/jev --dry-run`
 // writes; until that pass is recorded it skips and says so.
 func TestToolPRScoreIsNotDiffSize(t *testing.T) {
+	t.Parallel()
+
 	dir := filepath.Join(toolPRDir, "jev")
 	if _, err := os.Stat(dir); err != nil {
 		t.Skipf("owed (#2621): no recorded group pass under %s; one paid --record run over the eight writes it", dir)

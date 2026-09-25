@@ -170,6 +170,8 @@ func micro(t *testing.T, s string) int64 {
 }
 
 func TestImportedRowsReconcileToProviderDailyTotal(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		provider, file string
 		fields         map[string]map[string]string // day -> field -> USD
@@ -283,6 +285,8 @@ func mustAtoi(t *testing.T, s string) int {
 }
 
 func TestCostImportReimport(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	const day, key, mem = "2026-09-21", "cost:anthropic:2026-09-21", "anthropic:2026-09-21"
 	r := newRig(t)
@@ -375,6 +379,8 @@ func TestCostImportReimport(t *testing.T) {
 }
 
 func TestCostImportWriteOutcomes(t *testing.T) {
+	t.Parallel()
+
 	const key21, key22, mem21 = "cost:anthropic:2026-09-21", "cost:anthropic:2026-09-22", "anthropic:2026-09-21"
 	file := fixture("anthropic.csv")
 

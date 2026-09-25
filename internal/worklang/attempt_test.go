@@ -46,6 +46,8 @@ func green() worklang.NewAttempt {
 // back a file its author no longer recognises, and the diff of a one-attempt
 // edit would be the whole file.
 func TestRecordRoundTripsEveryByteButTheEditedUnit(t *testing.T) {
+	t.Parallel()
+
 	before := readReal(t)
 	after, _ := mustRecord(t, before, "certify:verb", green())
 
@@ -88,6 +90,8 @@ func TestRecordRoundTripsEveryByteButTheEditedUnit(t *testing.T) {
 // door is held on the way IN as well as on the way out: a file is never written
 // and then found unreadable.
 func TestRecordRefusesAnOutcomeWithNoProof(t *testing.T) {
+	t.Parallel()
+
 	a := green()
 	a.Proof = worklang.Proof{}
 	_, _, err := worklang.Record(realSet, readReal(t), "certify:verb", a, worklang.DefaultLimits())
@@ -101,6 +105,8 @@ func TestRecordRefusesAnOutcomeWithNoProof(t *testing.T) {
 
 // worklang-uncertain-owes-no-proof-and-keeps-the-unit-uncertain (A4).
 func TestUncertainNeedsNoProofAndIsItsOwnState(t *testing.T) {
+	t.Parallel()
+
 	a := green()
 	a.Outcome, a.Proof = "uncertain", worklang.Proof{}
 	after, rec, err := worklang.Record(realSet, readReal(t), "certify:verb", a, worklang.DefaultLimits())
@@ -119,6 +125,8 @@ func TestUncertainNeedsNoProofAndIsItsOwnState(t *testing.T) {
 // the grammar names, and `red` is not one of them: a failed attempt leaves the
 // unit OPEN and the ladder is the retry policy.
 func TestEveryOutcomeLandsOnAStateTheGrammarNames(t *testing.T) {
+	t.Parallel()
+
 	known := map[string]bool{}
 	for _, s := range worklang.KnownStates() {
 		known[s] = true
@@ -148,6 +156,8 @@ func TestEveryOutcomeLandsOnAStateTheGrammarNames(t *testing.T) {
 // worklang-a-taken-unit-is-live-with-one-open-attempt, and the attempt that was
 // opened is the attempt that is CLOSED: one try is one record (A3).
 func TestTakeOpensOneAttemptAndRecordClosesTheSameOne(t *testing.T) {
+	t.Parallel()
+
 	taken, rec, err := worklang.Take(realSet, readReal(t), "certify:verb", worklang.NewAttempt{
 		Rung: "opus", Owner: "rowan-child", Started: "2026-09-18T12:00:00Z",
 	}, worklang.DefaultLimits())
@@ -198,6 +208,8 @@ func TestTakeOpensOneAttemptAndRecordClosesTheSameOne(t *testing.T) {
 // worklang-a-second-attempt-is-a-second-record, numbered from the records that
 // are there rather than from a counter.
 func TestASecondAttemptAppendsANumberedRecord(t *testing.T) {
+	t.Parallel()
+
 	failed := green()
 	failed.Outcome = "failed"
 	first, rec, err := worklang.Record(realSet, readReal(t), "harvest:bench", failed, worklang.DefaultLimits())
@@ -225,6 +237,8 @@ func TestASecondAttemptAppendsANumberedRecord(t *testing.T) {
 // worklang-proof-kind-is-read-off-the-value, so a caller names the evidence
 // once rather than naming it and then classifying it.
 func TestProofKindIsReadOffTheValue(t *testing.T) {
+	t.Parallel()
+
 	for value, kind := range map[string]string{
 		"https://forge.invalid/nova-tools/pull/1391": "url",
 		"8a132e77":                    "sha",
@@ -243,6 +257,8 @@ func TestProofKindIsReadOffTheValue(t *testing.T) {
 
 // worklang-a-unit-with-no-attempts-key-grows-one-and-the-set-still-reads.
 func TestTheEditedSetStillChecksClean(t *testing.T) {
+	t.Parallel()
+
 	after, _ := mustRecord(t, readReal(t), "air:bud-setup", green())
 	ws, err := worklang.ParseWorkSet(realSet, after, worklang.DefaultLimits())
 	if err != nil {
@@ -293,6 +309,8 @@ func attemptsOf(t *testing.T, data []byte, id string) []worklang.Attempt {
 // fixture that pins nothing. This test is the reminder, not a network read: it
 // only asks that the copy is the document it claims to be.
 func TestTheFixtureIsTheRealSetsShape(t *testing.T) {
+	t.Parallel()
+
 	data := readReal(t)
 	ws, err := worklang.ParseWorkSet(realSet, data, worklang.DefaultLimits())
 	if err != nil {
@@ -315,6 +333,8 @@ func TestTheFixtureIsTheRealSetsShape(t *testing.T) {
 // had no termination proof. It is refused now, for every outcome, and the
 // document -- state, reservation and record -- is left exactly as it was.
 func TestAnotherOwnerCannotFileOverAnOpenAttempt(t *testing.T) {
+	t.Parallel()
+
 	taken, _, err := worklang.Take(realSet, readReal(t), "certify:verb", worklang.NewAttempt{
 		Rung: "opus", Owner: "rowan-child", Started: "2026-09-18T12:00:00Z",
 	}, worklang.DefaultLimits())

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 const fakeHelp = `nova-fake: a thin client (see docs/SPEC-FAKE.md)
@@ -38,7 +40,7 @@ func toolsDir(t *testing.T, names ...string) string {
 	t.Helper()
 	dir := t.TempDir()
 	for _, name := range names {
-		if err := os.WriteFile(filepath.Join(dir, binName(name)), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		if err := testbin.WriteExecutable(filepath.Join(dir, binName(name)), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -56,6 +58,8 @@ func toolsDir(t *testing.T, names ...string) string {
 }
 
 func TestVerbsFromToolsAsksEachBinaryForItsOwnVerbs(t *testing.T) {
+	t.Parallel()
+
 	dir := toolsDir(t, "nova-fake")
 	var asked []string
 	run := func(ctx context.Context, bin string) (string, error) {
@@ -86,6 +90,8 @@ func TestVerbsFromToolsAsksEachBinaryForItsOwnVerbs(t *testing.T) {
 // tool is not a verb of that tool's, and counting it would let one worked
 // example invent verbs across the whole family.
 func TestVerbsFromToolsIgnoresAnotherToolsLineInAHelpBlock(t *testing.T) {
+	t.Parallel()
+
 	dir := toolsDir(t, "nova-fake")
 	run := func(ctx context.Context, bin string) (string, error) { return fakeHelp, nil }
 	verbs, _, err := VerbsFromTools(context.Background(), dir, run, nil)
@@ -100,6 +106,8 @@ func TestVerbsFromToolsIgnoresAnotherToolsLineInAHelpBlock(t *testing.T) {
 }
 
 func TestVerbsFromToolsNamesABinaryThatCannotAnswer(t *testing.T) {
+	t.Parallel()
+
 	dir := toolsDir(t, "nova-fake", "nova-broken")
 	run := func(ctx context.Context, bin string) (string, error) {
 		if strings.Contains(filepath.Base(bin), "nova-broken") {
@@ -120,6 +128,8 @@ func TestVerbsFromToolsNamesABinaryThatCannotAnswer(t *testing.T) {
 }
 
 func TestVerbsFromToolsRefusesWithNoDirectoryAndStopsOnADeadline(t *testing.T) {
+	t.Parallel()
+
 	if _, _, err := VerbsFromTools(context.Background(), "  ", nil, nil); err == nil {
 		t.Fatal("an empty --tools was accepted; every path comes from a flag")
 	}
@@ -133,6 +143,8 @@ func TestVerbsFromToolsRefusesWithNoDirectoryAndStopsOnADeadline(t *testing.T) {
 }
 
 func TestMergeVerbsLetsTheBinariesWinAndTheReferenceFillIn(t *testing.T) {
+	t.Parallel()
+
 	fromTools := verbs("nova-work ask", "nova-work asks")
 	fromCLI := verbs("nova-work session start", "nova-check links")
 	got := MergeVerbs(fromTools, fromCLI)
@@ -149,12 +161,14 @@ func TestMergeVerbsLetsTheBinariesWinAndTheReferenceFillIn(t *testing.T) {
 // One end-to-end read against a real executable written here, so the way this
 // invokes a binary is the way a binary is actually invoked. Local only.
 func TestVerbsFromToolsAgainstARealExecutable(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the fixture is a shell script")
 	}
 	dir := t.TempDir()
 	script := "#!/bin/sh\ncat <<'EOF'\n" + fakeHelp + "EOF\n"
-	if err := os.WriteFile(filepath.Join(dir, binName("nova-fake")), []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(dir, binName("nova-fake")), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -177,6 +191,8 @@ func TestVerbsFromToolsAgainstARealExecutable(t *testing.T) {
 // wants the bare spelling and a 0o111 bit finds nothing on the one platform
 // nobody develops on. Both spellings name the same tool, everywhere.
 func TestToolNameAcceptsBothSpellingsOfABuiltBinary(t *testing.T) {
+	t.Parallel()
+
 	for name, want := range map[string]string{
 		"nova-check":     "nova-check",
 		"nova-check.exe": "nova-check",
@@ -203,6 +219,8 @@ func TestToolNameAcceptsBothSpellingsOfABuiltBinary(t *testing.T) {
 // "Executable" is the platform's own answer, and both answers are checked here
 // rather than on whichever bench happens to run the suite.
 func TestRunnableIsThePlatformsOwnAnswer(t *testing.T) {
+	t.Parallel()
+
 	for name, tc := range map[string]struct {
 		goos string
 		file string
@@ -226,6 +244,8 @@ func TestRunnableIsThePlatformsOwnAnswer(t *testing.T) {
 // And the discovery itself reads a Windows-shaped directory: the `.exe` files
 // are the tools, and the verbs come back under the tool's own name.
 func TestVerbsFromToolsReadsAWindowsShapedDirectory(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "nova-fake.exe"), []byte("binary\n"), 0o644); err != nil {
 		t.Fatal(err)

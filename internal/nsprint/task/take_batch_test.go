@@ -88,6 +88,8 @@ func openSprint(client *redis.Client, S string, order float64) {
 // one pipeline (the friend reads and ns_task_take_view) and one FCALL
 // (ns_task_take_n); it was 4 + S + 2k = 17 round trips.
 func TestTakeAvailableThreeQueuesFiveClaimsOnePipelineOneFCall(t *testing.T) {
+	t.Parallel()
+
 	st, client := setupTakeTestRedis(t)
 	ctx := context.Background()
 	seedFriend(t, client, "f1", 5)
@@ -140,6 +142,8 @@ func TestTakeAvailableThreeQueuesFiveClaimsOnePipelineOneFCall(t *testing.T) {
 // TestTakeAvailableOneSprintEightSlotsTwoTrips is the issue's shape: one
 // sprint and 8 free slots was 21 round trips; it is one pipeline and one FCALL.
 func TestTakeAvailableOneSprintEightSlotsTwoTrips(t *testing.T) {
+	t.Parallel()
+
 	st, client := setupTakeTestRedis(t)
 	ctx := context.Background()
 	seedFriend(t, client, "f1", 8)
@@ -163,6 +167,8 @@ func TestTakeAvailableOneSprintEightSlotsTwoTrips(t *testing.T) {
 // TestTakeAvailableFullFriendOneTrip: no free slot is one pipeline, no claim
 // call, and the view reads no queue.
 func TestTakeAvailableFullFriendOneTrip(t *testing.T) {
+	t.Parallel()
+
 	st, client := setupTakeTestRedis(t)
 	ctx := context.Background()
 	seedFriend(t, client, "f1", 1)
@@ -180,6 +186,8 @@ func TestTakeAvailableFullFriendOneTrip(t *testing.T) {
 // TestTakeAvailableIDBlockedStrict: --id on a task with unmet needs returns
 // the BlockedError, still in two round trips.
 func TestTakeAvailableIDBlockedStrict(t *testing.T) {
+	t.Parallel()
+
 	st, client := setupTakeTestRedis(t)
 	ctx := context.Background()
 	seedFriend(t, client, "f1", 4)
@@ -206,6 +214,8 @@ func TestTakeAvailableIDBlockedStrict(t *testing.T) {
 // view and the batch claim answers RETRY in the batch; that one task is then
 // taken on its own, so the claim still lands.
 func TestTakeAvailableRetryFallsBackToOneTake(t *testing.T) {
+	t.Parallel()
+
 	st, client := setupTakeTestRedis(t)
 	ctx := context.Background()
 	seedFriend(t, client, "f1", 2)

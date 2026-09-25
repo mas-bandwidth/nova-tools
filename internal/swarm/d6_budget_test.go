@@ -13,6 +13,8 @@ import "testing"
 // The usage ROW (rule 12) still carries all five columns -- nothing is hidden, and `cost`
 // reads what it always read.
 func TestTheBudgetCountsSpendNotCacheReads(t *testing.T) {
+	t.Parallel()
+
 	// The shape of the real job: a small spend under a huge re-read.
 	u := ProviderUsage{Observed: true, Values: map[string]string{
 		"tokens_in": "11139", "tokens_out": "944", "cache_write": "3000",
@@ -43,6 +45,8 @@ func TestTheBudgetCountsSpendNotCacheReads(t *testing.T) {
 // AND THE COLUMNS THEMSELVES, so that a future edit that adds cache_read back has to say so
 // in this list and turn this test red.
 func TestBudgetColumnsAreSpendOnly(t *testing.T) {
+	t.Parallel()
+
 	want := []string{"tokens_in", "tokens_out", "reasoning"}
 	if len(BudgetColumns) != len(want) {
 		t.Fatalf("the budget counts %v, got %v", want, BudgetColumns)

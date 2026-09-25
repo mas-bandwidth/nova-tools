@@ -10,6 +10,8 @@ import (
 )
 
 func TestConstructPRBody_PreservesContractLineDoneRedGreen(t *testing.T) {
+	t.Parallel()
+
 	resultLines := []string{
 		"RESULT fix-widget-123 sha=abcdef123456 — fix widget crash on null pointer",
 		"DONE",
@@ -73,6 +75,8 @@ UNSURE: none`
 }
 
 func TestConstructPRBody_RedGreenExtractedFromReport(t *testing.T) {
+	t.Parallel()
+
 	resultLines := []string{
 		"RESULT feat-thing-456 sha=112233445566 — add thing feature",
 		"DONE",
@@ -121,6 +125,8 @@ UNSURE: none`
 }
 
 func TestConstructPRBody_MissingReportAndEmptyProvenance(t *testing.T) {
+	t.Parallel()
+
 	resultLines := []string{
 		"RESULT bare-card sha=000000000000 — bare card without report",
 		"DONE",
@@ -154,6 +160,8 @@ func TestConstructPRBody_MissingReportAndEmptyProvenance(t *testing.T) {
 }
 
 func TestBoundPRBody_MaxBodyBytesRespect(t *testing.T) {
+	t.Parallel()
+
 	resultLines := []string{
 		"RESULT bounds-test sha=aabbccddeeff — check MaxBodyBytes bounding",
 		"DONE",
@@ -213,6 +221,8 @@ func TestBoundPRBody_MaxBodyBytesRespect(t *testing.T) {
 }
 
 func TestBoundPRBody_OversizedReportPreservesProvenanceTable(t *testing.T) {
+	t.Parallel()
+
 	contract := "RESULT test-oversized sha=998877665544 — test oversized report preserves provenance"
 	red := "red: TestOversized: fail"
 	green := "green: TestOversized PASS: pass"
@@ -288,6 +298,8 @@ func TestBoundPRBody_OversizedReportPreservesProvenanceTable(t *testing.T) {
 }
 
 func TestSecretScan_RefusesSecretInReport(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	cleanResult := []string{
 		"RESULT clean-result sha=000000000000",
@@ -500,6 +512,8 @@ func TestHarvestWorking_RefusesSecretInReport(t *testing.T) {
 }
 
 func TestProvenance_ExtractionVariants(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	// 1. Usage TSV parsing
@@ -588,6 +602,8 @@ func TestProvenance_ExtractionVariants(t *testing.T) {
 }
 
 func TestCleanResultSection_EdgeCases(t *testing.T) {
+	t.Parallel()
+
 	// 1. Empty input
 	if got := cleanResultSection(nil, ""); got != nil {
 		t.Errorf("cleanResultSection(nil) = %v, want nil", got)
@@ -675,6 +691,8 @@ func checkPRBodyInvariants(body string, scannedText string, maxBytes int, wantCo
 }
 
 func TestMutation_PRBodyInvariantsWithTeeth(t *testing.T) {
+	t.Parallel()
+
 	contract := "RESULT test-card sha=112233445566 — test card title"
 	red := "red: TestWidget: crash on nil"
 	green := "green: TestWidget PASS: handles nil"

@@ -20,6 +20,8 @@ import (
 // PR, pushes nothing and reads nothing from GitHub. The origin is a local
 // bare repository and the push goes through the fake ssh of the zsh control.
 func TestHarvestTwoBenchesRecordAndBody(t *testing.T) {
+	t.Parallel()
+
 	for _, bin := range []string{"bash", "git", "perl"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skipf("%s unavailable", bin)
@@ -191,6 +193,8 @@ func TestHarvestTwoBenchesRecordAndBody(t *testing.T) {
 // written, ns_harvest_due reads the head back from the bare key, and the idem
 // field pr:<repo>:<branch> (another record) keeps the card's repo.
 func TestHarvestRecordKeyDropsTheOwner(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	ctx := context.Background()
 	const (

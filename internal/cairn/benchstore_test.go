@@ -50,6 +50,8 @@ func benchStore(t *testing.T, session string) (store, file string, before []byte
 }
 
 func TestAppendLandsInTheBenchFileStore(t *testing.T) {
+	t.Parallel()
+
 	const session = "b9395d11"
 	store, file, before := benchStore(t, session)
 	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
@@ -90,6 +92,8 @@ func TestAppendLandsInTheBenchFileStore(t *testing.T) {
 }
 
 func TestAppendToTheBenchFileRetriesAsADuplicate(t *testing.T) {
+	t.Parallel()
+
 	const session = "b9395d11"
 	store, file, _ := benchStore(t, session)
 	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
@@ -119,6 +123,8 @@ func TestAppendToTheBenchFileRetriesAsADuplicate(t *testing.T) {
 }
 
 func TestAppendToTheBenchFileRefusesDifferentProseUnderTheSameID(t *testing.T) {
+	t.Parallel()
+
 	const session = "b9395d11"
 	store, _, _ := benchStore(t, session)
 	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
@@ -133,6 +139,8 @@ func TestAppendToTheBenchFileRefusesDifferentProseUnderTheSameID(t *testing.T) {
 }
 
 func TestOpenOnABenchFileIsANoOpAndNeverSplitsTheRecord(t *testing.T) {
+	t.Parallel()
+
 	const session = "b9395d11"
 	store, file, before := benchStore(t, session)
 	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
@@ -153,6 +161,8 @@ func TestOpenOnABenchFileIsANoOpAndNeverSplitsTheRecord(t *testing.T) {
 }
 
 func TestAppendWithNoRecordAnywhereNamesTheOpenVerb(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
 	_, err := Append(store, "nosuch", "e-1", "words", "src", now, "manual")
@@ -168,6 +178,8 @@ func TestAppendWithNoRecordAnywhereNamesTheOpenVerb(t *testing.T) {
 }
 
 func TestCoverageCountsTheBenchSessionFiles(t *testing.T) {
+	t.Parallel()
+
 	store, _, _ := benchStore(t, "b9395d11")
 	if got := Coverage(store).Sessions; got != 1 {
 		t.Fatalf("Coverage counted %d sessions in a bench store holding one record; the ledger must not read zero over a store it can append to", got)

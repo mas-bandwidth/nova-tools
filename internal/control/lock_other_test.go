@@ -11,6 +11,8 @@ import (
 )
 
 func TestCoordinatorLockRefusesUnsupportedPlatform(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "coordinator.lock")
 	_, err := takeCoordinatorLock(context.Background(), path, time.Second)
 	if !errors.Is(err, ErrUnsupportedLock) {

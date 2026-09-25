@@ -96,6 +96,8 @@ func usageExamples(t *testing.T) []string {
 // The usage banner ends in one example per verb, in the order a first run
 // types them: the append needs the record the open created.
 func TestUsageBannerExamplesRun(t *testing.T) {
+	t.Parallel()
+
 	examples := usageExamples(t)
 	if len(examples) != 4 {
 		t.Fatalf("want an open, an append, an index and a receipt example under `example:`, got %d: %q", len(examples), examples)

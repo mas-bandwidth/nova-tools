@@ -60,6 +60,8 @@ func eventsDeps(addr string) Deps {
 // 1. --log writes the file Alloy tails, and every line carries the four labels its queries
 // select on plus the spec's fixed fields.
 func TestEventsLogWritesTheFileWithTheLabels(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nova-events.log")
@@ -108,6 +110,8 @@ func TestEventsLogWritesTheFileWithTheLabels(t *testing.T) {
 // 2. The stdout event line is unchanged: the JSON line is written BESIDE it, never
 // instead of it, so a reader that only knows the grammar still works.
 func TestEventsLogLeavesTheStdoutLineAlone(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	path := filepath.Join(t.TempDir(), "nova-events.log")
 	var out, errb bytes.Buffer
@@ -127,6 +131,8 @@ func TestEventsLogLeavesTheStdoutLineAlone(t *testing.T) {
 // 3. A --log path the verb cannot open is a refusal with the path named, not a silent
 // run with no log: a bench whose log never appears in Loki must say why.
 func TestEventsRefusesALogPathItCannotOpen(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	path := filepath.Join(t.TempDir(), "no-such-dir", "nova-events.log")
 	var out, errb bytes.Buffer
@@ -142,6 +148,8 @@ func TestEventsRefusesALogPathItCannotOpen(t *testing.T) {
 // 4. With no --log the lines go to stderr, which on a bench is the unit's journal and so
 // the source Alloy already reads. The stdout line is still the grammar's.
 func TestEventsWithoutALogWritesToStderr(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"events", "--redis", mr.Addr(), "--repo", "mas-bandwidth/nova-tools",
@@ -160,6 +168,8 @@ func TestEventsWithoutALogWritesToStderr(t *testing.T) {
 // 5. A card id off the stream shaped like an API key never reaches the log file. The
 // stream is data from outside this program, so this is the leak the emitter must stop.
 func TestEventsLogNeverCarriesASecret(t *testing.T) {
+	t.Parallel()
+
 	const secret = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
 	mr := miniredis.RunT(t)
 	path := filepath.Join(t.TempDir(), "nova-events.log")

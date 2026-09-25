@@ -55,6 +55,8 @@ func examples(t *testing.T) []string {
 // here: an example that has drifted out of the flag set teaches the wrong invocation to
 // exactly the reader who cannot tell.
 func TestUsageBannerExamplesRun(t *testing.T) {
+	t.Parallel()
+
 	pool := filepath.Join(t.TempDir(), "pool")
 	for _, ex := range examples(t) {
 		exit, stdout, stderr := runSwarm(t, localize(t, pool, strings.Fields(ex)[1:])...)
@@ -76,6 +78,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 // reads ./pool before then exits 2 as pasted, whatever localize does for the test above.
 // No prose setup line outside the block: onboarding.ExampleLines never runs it (#1455).
 func TestUsageBannerExamplesMakeThePoolBeforeReadingIt(t *testing.T) {
+	t.Parallel()
+
 	for _, ex := range examples(t) {
 		f := strings.Fields(ex)
 		for _, a := range f {
@@ -93,6 +97,8 @@ func TestUsageBannerExamplesMakeThePoolBeforeReadingIt(t *testing.T) {
 // (b) A bare invocation costs ONE line and names the door, rather than 60 lines of banner
 // on every flag typo.
 func TestABareInvocationCostsOneLineAndNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runSwarm(t)
 	if exit != 2 {
 		t.Errorf("a bare nova-swarm exits %d, want 2", exit)
@@ -112,6 +118,8 @@ func TestABareInvocationCostsOneLineAndNamesTheDoor(t *testing.T) {
 // and the field names, never the values, so the transcript stays a document rather than
 // becoming a fixture.
 func TestTheReadmeTranscriptIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)

@@ -17,6 +17,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // This package's tests run under go test, which 7.26 would report: every
@@ -36,7 +37,7 @@ func goTestStub(t *testing.T) func() int {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "go-test.log")
 	script := "#!/bin/sh\nif [ \"$1\" = test ]; then echo \"$*\" >> '" + log + "'; exit 0; fi\nexec '" + real + "' \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(dir, "go"), []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(dir, "go"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

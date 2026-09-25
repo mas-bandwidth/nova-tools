@@ -34,6 +34,8 @@ import (
 // way a stranger pastes it -- which is the only way the quoting in the banner is
 // exercised at all.
 func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the block is pasted through `sh -c` so the single-quoted inline --unit survives the shell; the fleet runs no windows leg")
 	}

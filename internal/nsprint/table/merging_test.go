@@ -96,6 +96,8 @@ func landingSeed(now time.Time) [][]string {
 // landing prints nothing. The steady tick is still one pipeline with no KEYS
 // and no SCAN.
 func TestMergingCellShowsReadUnreadAndLandLines(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
@@ -151,6 +153,8 @@ func TestMergingCellShowsReadUnreadAndLandLines(t *testing.T) {
 // unread, merging = read, merging no longer <read>/<unread>), and keeps that
 // source on a later tick when the set is empty again.
 func TestReadingSetIsTheSameSplitsOtherSource(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
@@ -194,6 +198,8 @@ func TestReadingSetIsTheSameSplitsOtherSource(t *testing.T) {
 // TestLandLineShapes: no stream PR yet prints ci=-, a stopped landing names
 // its state, and the age reads in seconds, minutes, then hours.
 func TestLandLineShapes(t *testing.T) {
+	t.Parallel()
+
 	now := table.SprintFixtureNow()
 	for _, c := range []struct {
 		row  table.LandRow

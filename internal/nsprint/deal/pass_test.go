@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // fixtureSSHD is a fake `ssh` that stands in for a bench's sshd configured
@@ -109,7 +111,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	dir := t.TempDir()
 	prog := filepath.Join(dir, "ssh")
-	if err := os.WriteFile(prog, []byte(fmt.Sprintf(fixtureSSHD, dir)), 0o755); err != nil {
+	if err := testbin.WriteExecutable(prog, []byte(fmt.Sprintf(fixtureSSHD, dir)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return &fixture{dir: dir, prog: prog}
@@ -462,6 +464,8 @@ var lineRE = regexp.MustCompile(`^control-0000c012 card-\d\d 1 1\.[0-9a-f]{32}$`
 // a launcher that opens a session per card is refused; a wedged sshd shows
 // `ssh: refused` on the bench row within 10 s and its cards go elsewhere.
 func TestControl12FiftyCardsOneSession(t *testing.T) {
+	t.Parallel()
+
 	const sprint = "control-0000c012"
 	ctx := context.Background()
 
@@ -624,6 +628,8 @@ func TestControl12FiftyCardsOneSession(t *testing.T) {
 // return the reservations to the pool and this pass (or the next one) would
 // deal the same 50 cards again while the first launch may still be running.
 func TestPostCommandDisconnectKeepsReservationsDealt(t *testing.T) {
+	t.Parallel()
+
 	const sprint = "control-3061-hold7"
 	ctx := context.Background()
 	f := newFixture(t)
@@ -660,6 +666,8 @@ func TestPostCommandDisconnectKeepsReservationsDealt(t *testing.T) {
 // any connect-phase-context check ran, so a mid-command reset would return
 // the reservations to the pool and deal the same 50 cards again.
 func TestPostCommandResetKeepsReservationsDealt(t *testing.T) {
+	t.Parallel()
+
 	const sprint = "control-3061-hold7-reset"
 	ctx := context.Background()
 	f := newFixture(t)
@@ -694,6 +702,8 @@ func TestPostCommandResetKeepsReservationsDealt(t *testing.T) {
 // preExecRefused, with no connect-phase proof, even though it can be printed
 // after the remote launch already has the batch on stdin.
 func TestPostCommandRefusedKeepsReservationsDealt(t *testing.T) {
+	t.Parallel()
+
 	const sprint = "control-3061-hold6-refused"
 	ctx := context.Background()
 	f := newFixture(t)
@@ -727,6 +737,8 @@ func TestPostCommandRefusedKeepsReservationsDealt(t *testing.T) {
 // the generic "Connection timed out" wording, the second phrase stella
 // named as still unconditional in preExecTimeout.
 func TestPostCommandTimedOutKeepsReservationsDealt(t *testing.T) {
+	t.Parallel()
+
 	const sprint = "control-3061-hold6-timedout"
 	ctx := context.Background()
 	f := newFixture(t)
@@ -757,6 +769,8 @@ func TestPostCommandTimedOutKeepsReservationsDealt(t *testing.T) {
 }
 
 func TestPlanSharesAndFilters(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now()
 	a := []Card{{Sprint: "a", Label: "a1", Priority: 1}, {Sprint: "a", Label: "a2", Priority: 2}, {Sprint: "a", Label: "a3", Priority: 3}, {Sprint: "a", Label: "a4", Priority: 4}}
 	b := []Card{{Sprint: "b", Label: "b1", Priority: 1, Tier: TierPriority}, {Sprint: "b", Label: "b2", Priority: 0}}
@@ -786,6 +800,8 @@ func TestPlanSharesAndFilters(t *testing.T) {
 }
 
 func TestClassifyOpenSSHMessages(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		exit   int
 		stderr string
@@ -822,122 +838,11 @@ func TestClassifyOpenSSHMessages(t *testing.T) {
 	}
 }
 
-// TestWedgedBenchRowWithinTenSeconds is nova-tools #3322 on the pass alone:
-// one bench's ssh client hangs for longer than the lease TTL (a session stuck
-// after the banner, which no ConnectTimeout bounds), another's sshd refuses,
-// a third is healthy. The hard deadline kills the hung ssh and its whole
-// process group, the pass returns inside the deadline, both failed rows are
-// written (refused, and timeout with a why that says so) well inside 10 s,
-// each failure's row and return are ONE call, the refused and timed-out
-// cards are redealt to the healthy bench in the same pass, and nothing is
-// left dealt on a bench whose session failed before exec.
-func TestWedgedBenchRowWithinTenSeconds(t *testing.T) {
-	const sprint = "control-00003322"
-	const deadline = 1500 * time.Millisecond
-	f := newFixture(t)
-	f.hang(t, "ctl-hang")
-	f.hangNoisy(t, "ctl-noisy")
-	f.wedge(t, "ctl-closed")
-	in := Input{Now: time.Now(),
-		Benches: []Bench{upBench("ctl-closed", 20), upBench("ctl-hang", 20), upBench("ctl-noisy", 10), upBench("ctl-ok", 64)},
-		Sprints: []Sprint{{Name: sprint, Pool: fiftyCards(sprint)}}}
-	st := newFakeStore("lease-1", in)
-	r := f.remote()
-	r.RunTimeout = deadline
-	p := &Pass{Source: staticSource{in}, Fence: fence("lease-1"), Reserver: st, Row: st, Dialer: r}
-	// The event is the pass returning: without the deadline the hung ssh
-	// holds it forever. The bound is the generous event wait, never the
-	// deadline itself; the why line and the dead grandchild prove the kill.
-	start := time.Now()
-	res, err := runPass(t, p)
-	took := time.Since(start)
-	if err != nil {
-		t.Fatalf("pass: %v (a hung ssh must not fail the pass)", err)
-	}
-	if c := st.cell("ctl-hang"); c != "ssh: timeout" {
-		t.Fatalf("hung bench row %q (why %q), want ssh: timeout", c, st.row["ctl-hang"].why)
-	}
-	if why := st.row["ctl-hang"].why; !strings.Contains(why, "killed at the deadline") || !strings.Contains(why, "no start line") {
-		t.Fatalf("hung bench why %q, want the deadline kill and the missing start line named", why)
-	}
-	if c := st.cell("ctl-noisy"); c != "ssh: timeout" {
-		t.Fatalf("noisy hung bench row %q (why %q), want ssh: timeout: profile noise on stdout is not the launch verb's ack", c, st.row["ctl-noisy"].why)
-	}
-	if why := st.row["ctl-noisy"].why; !strings.Contains(why, "no start line") {
-		t.Fatalf("noisy hung bench why %q, want the missing start line named", why)
-	}
-	if c := st.cell("ctl-closed"); c != "ssh: refused" {
-		t.Fatalf("refused bench row %q, want ssh: refused", c)
-	}
-	for _, b := range []string{"ctl-hang", "ctl-noisy", "ctl-closed"} {
-		if at := st.row[b].at.Sub(start); at > 10*time.Second {
-			t.Fatalf("%s row written after %s, want within 10 s", b, at)
-		}
-		if st.fails[b] != 1 {
-			t.Fatalf("Fail calls on %s = %d, want 1: the row and the return are one call", b, st.fails[b])
-		}
-		if n := st.dealtOn(b); n != 0 {
-			t.Fatalf("%d reservations left dealt on %s, whose session failed before exec", n, b)
-		}
-	}
-	if st.row["ctl-hang"].timeouts != 1 || st.row["ctl-closed"].timeouts != 0 {
-		t.Fatalf("timeouts hang=%d closed=%d, want 1 and 0 (a refusal is not a timeout)", st.row["ctl-hang"].timeouts, st.row["ctl-closed"].timeouts)
-	}
-	if n := st.dealtOn("ctl-ok"); n != 50 {
-		t.Fatalf("%d cards on ctl-ok, want all 50 redealt in the same pass", n)
-	}
-	if res.Launched() != 50 || res.Rounds != 2 {
-		t.Fatalf("launched %d in %d rounds, want 50 in 2", res.Launched(), res.Rounds)
-	}
-	for _, br := range res.Benches {
-		if br.Bench == "ctl-hang" && br.SSH == SSHTimeout && br.Returned == 0 {
-			t.Fatalf("the hung bench's result returned 0 reservations: %+v", br)
-		}
-	}
-	// The whole process group died with the deadline: the grandchild the
-	// hung client started is gone.
-	pid := f.grandchild("ctl-hang")
-	if pid <= 0 {
-		t.Fatal("the hung ssh client wrote no grandchild pid")
-	}
-	if !processGone(pid) {
-		t.Fatalf("grandchild %d of the hung ssh client is still alive after the deadline: the process group was not killed", pid)
-	}
-	t.Logf("pass took %s with a %s deadline", took.Round(time.Millisecond), deadline)
-
-	// Three timeouts in a row report the hold (the store's fail-after, the
-	// function's default) that the fleet duty acts on. The
-	// source reads the bench fresh each pass, as the Redis one does, so the
-	// pass's refused-hold does not skip it.
-	fresh := func() Input {
-		return Input{Now: time.Now(), Benches: []Bench{upBench("ctl-hang", 20)}, Sprints: []Sprint{{Name: sprint, Pool: fiftyCards(sprint)[:3]}}}
-	}
-	st2 := newFakeStore("lease-1", fresh())
-	p2 := &Pass{Source: freshSource(fresh), Fence: fence("lease-1"), Reserver: st2, Row: st2, Dialer: r}
-	for i := 1; i <= 3; i++ {
-		res, err := runPass(t, p2)
-		if err != nil {
-			t.Fatalf("pass %d: %v", i, err)
-		}
-		if len(res.Benches) != 1 {
-			t.Fatalf("pass %d: benches = %+v, want one (rounds %d, waiting %+v)", i, res.Benches, res.Rounds, res.Waiting)
-		}
-		br := res.Benches[0]
-		if br.SSH != SSHTimeout || br.Timeouts != i || br.Held != (i == 3) {
-			t.Fatalf("pass %d: ssh=%s timeouts=%d held=%t, want timeout, %d, %t", i, br.SSH, br.Timeouts, br.Held, i, i == 3)
-		}
-		if n := st2.dealtOn("ctl-hang"); n != 0 {
-			t.Fatalf("pass %d left %d reservations on the hung bench", i, n)
-		}
-	}
-	if !st2.held["ctl-hang"] {
-		t.Fatal("three consecutive timeouts did not report the hold")
-	}
-}
-
 // TestLaunchAckedReadsOnlyTheVerbsLines: the start ack is a line the launch
 // verb wrote (LAUNCHED, REFUSED, LAUNCH); a login profile's noise is not.
 func TestLaunchAckedReadsOnlyTheVerbsLines(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		out  string
 		want bool

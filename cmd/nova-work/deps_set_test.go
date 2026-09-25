@@ -15,6 +15,8 @@ import (
 // --needs list, a need re-sent by a re-run and a copy a broken graph already holds
 // are each one edge in the file, and the DEPENDENCIES OK line agrees.
 func TestDependenciesNeedsIsASet(t *testing.T) {
+	t.Parallel()
+
 	t.Run("a --needs list that names a need twice writes one edge", func(t *testing.T) {
 		path := writeSeed(t, `{"nodes":[{"id":"y"}]}`)
 		code, stdout, stderr := invoke("dependencies", "--graph", path, "--node", "x", "--needs", "y,y")

@@ -12,6 +12,8 @@ import (
 // two lineages, the friends above them, Fable and Astra at the top pair, then
 // all friends at once, then Glenn.
 func TestDefaultRegistryCarriesTheLadder(t *testing.T) {
+	t.Parallel()
+
 	reg, err := DefaultRegistry()
 	if err != nil {
 		t.Fatalf("the embedded registry does not parse: %v", err)
@@ -70,6 +72,8 @@ func TestDefaultRegistryCarriesTheLadder(t *testing.T) {
 
 // Every rung is reached one of three ways, and the row says which.
 func TestDefaultRegistryNamesHowEachRungIsAsked(t *testing.T) {
+	t.Parallel()
+
 	reg, err := DefaultRegistry()
 	if err != nil {
 		t.Fatal(err)
@@ -88,6 +92,8 @@ func TestDefaultRegistryNamesHowEachRungIsAsked(t *testing.T) {
 
 // A registry is data, and bad data is a refusal, never a guess.
 func TestParseRegistryRefusesBadRows(t *testing.T) {
+	t.Parallel()
+
 	for name, body := range map[string]string{
 		"empty":            `{"minds": []}`,
 		"duplicate name":   `{"minds":[{"name":"a","lineage":"x","height":0,"availability":"available"},{"name":"a","lineage":"y","height":1,"availability":"available"}]}`,
@@ -106,6 +112,8 @@ func TestParseRegistryRefusesBadRows(t *testing.T) {
 // The registry is a data file: a path loads one, an empty path is the embedded
 // default, and an unreadable path is a refusal.
 func TestLoadRegistry(t *testing.T) {
+	t.Parallel()
+
 	reg, err := LoadRegistry(filepath.Join("testdata", "registry.json"))
 	if err != nil {
 		t.Fatalf("testdata registry: %v", err)

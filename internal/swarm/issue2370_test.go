@@ -24,11 +24,15 @@ import (
 //     body/config/prefix or a job-ID/lineage conflict before launch/reclaim.
 
 func TestIssue2370(t *testing.T) {
+	t.Parallel()
+
 	t.Run("Publication", TestAttemptEvidencePublication)
 	t.Run("Recovery", TestAttemptRecoveryVerifiesAndQuarantines)
 }
 
 func TestAttemptEvidencePublication(t *testing.T) {
+	t.Parallel()
+
 	pool, err := OpenPool(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -182,6 +186,8 @@ func TestAttemptEvidencePublication(t *testing.T) {
 }
 
 func TestAttemptRecoveryVerifiesAndQuarantines(t *testing.T) {
+	t.Parallel()
+
 	pool, err := OpenPool(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

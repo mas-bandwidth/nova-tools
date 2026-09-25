@@ -52,6 +52,8 @@ var houseNames = []string{
 }
 
 func TestEveryDecideQuestionCarriesItsVersionedCriteria(t *testing.T) {
+	t.Parallel()
+
 	const root = "../.."
 	dir := filepath.Join(root, "docs", "decide")
 	entries, err := os.ReadDir(dir)
@@ -174,6 +176,8 @@ func TestEveryDecideQuestionCarriesItsVersionedCriteria(t *testing.T) {
 // The examples directory is where a house's own roster and its trial rows live,
 // and it says out loud that it binds nothing.
 func TestTheDecideExamplesSayTheyAreNotTheContract(t *testing.T) {
+	t.Parallel()
+
 	matches, err := filepath.Glob("../../docs/decide/examples/*.md")
 	if err != nil || len(matches) == 0 {
 		t.Fatalf("want at least one example file, got %v (%v)", matches, err)

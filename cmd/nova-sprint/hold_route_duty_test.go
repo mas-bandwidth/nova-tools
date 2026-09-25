@@ -142,7 +142,7 @@ func TestRouteVerbRunsHoldToFix(t *testing.T) {
 	done := make(chan int, 1)
 	go func() { done <- runRoute(ctx, []string{"--redis", addr, "--sprint", S}, &out, &errOut) }()
 	deadline := time.Now().Add(holdWait())
-	for time.Now().Before(deadline) && c.Exists(context.Background(), "s:"+S+":task:"+fix).Val() == 0 {
+	for time.Now().Before(deadline) && c.Exists(context.Background(), "task:"+fix).Val() == 0 {
 		time.Sleep(50 * time.Millisecond)
 	}
 	cancel()

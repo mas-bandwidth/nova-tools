@@ -29,6 +29,8 @@ import (
 // /opt to the literals. That is the whole of the repair, and it belongs in the table rather
 // than in every caller's argv.
 func TestAnOptionalRootsAncestorsAreGranted(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS != "darwin" {
 		t.Skipf("skipped on %s: the optional-root table and its ancestors are the darwin profile's", runtime.GOOS)
 	}
@@ -69,6 +71,8 @@ func TestAnOptionalRootsAncestorsAreGranted(t *testing.T) {
 // stat, never a listing. A subpath grant on /opt would hand the wall every other thing
 // installed there, which is the opposite of two lists and no defaults.
 func TestAnOptionalRootsAncestorIsMetadataOnly(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS != "darwin" {
 		t.Skipf("skipped on %s: the optional-root table is the darwin profile's", runtime.GOOS)
 	}
@@ -106,6 +110,8 @@ func hasPath(list []string, want string) bool {
 // SharedFrameworks next to Developer. A target already under /Library is
 // skipped, the same as any other optional root under a fixed prefix.
 func TestOptionalRootsIncludeTheXcodeSelectDeveloperDir(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS != "darwin" {
 		t.Skipf("skipped on %s: xcode_select_link is the darwin profile's", runtime.GOOS)
 	}

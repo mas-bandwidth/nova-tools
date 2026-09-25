@@ -10,6 +10,8 @@ import (
 // green: the behaviour tests live on BatchInput in internal/swarm, and the
 // CLI never named the flags.
 func TestBatchAcceptsTheGatherFlagsThatLandedUnguarded(t *testing.T) {
+	t.Parallel()
+
 	for _, flag := range []string{"--max-inflight", "--stall-after", "--harness", "--auth"} {
 		exit, _, stderr := runSwarm(t, "batch", flag, "1")
 		if exit != 2 {

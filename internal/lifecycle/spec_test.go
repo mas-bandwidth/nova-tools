@@ -20,6 +20,8 @@ import (
 )
 
 func TestDurableLaunch1_TwoDealersRaceOneReadyCard(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	a, err := lifecycle.Open(root)
 	if err != nil {
@@ -118,6 +120,8 @@ func TestDurableLaunch1_TwoDealersRaceOneReadyCard(t *testing.T) {
 }
 
 func TestDurableLaunch2_NoAcknowledgementBecomesUnknown(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	s, ctrl, now := openRun(t, root)
 	attempt := claimAndAdmit(t, s, ctrl, now, "card2", "hulk", "local")
@@ -177,6 +181,8 @@ func TestDurableLaunch2_NoAcknowledgementBecomesUnknown(t *testing.T) {
 }
 
 func TestDurableLaunch3_BoundAcknowledgementMakesStarted(t *testing.T) {
+	t.Parallel()
+
 	t.Run("correct-binding-makes-started", func(t *testing.T) {
 		root := t.TempDir()
 		s, ctrl, now := openRun(t, root)
@@ -253,6 +259,8 @@ func TestDurableLaunch3_BoundAcknowledgementMakesStarted(t *testing.T) {
 }
 
 func TestDurableLaunch4_MissingLeaseAndJobDirLeaveUnknownReserved(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	s, ctrl, now := openRun(t, root)
 
@@ -319,6 +327,8 @@ func TestDurableLaunch4_MissingLeaseAndJobDirLeaveUnknownReserved(t *testing.T) 
 }
 
 func TestDurableLaunch7_CrashReconstructsClaimedNotReady(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	now := time.Date(2026, 9, 20, 15, 0, 0, 0, time.UTC)
 	ctrl := newFake(now)
@@ -390,6 +400,8 @@ func TestDurableLaunch7_CrashReconstructsClaimedNotReady(t *testing.T) {
 }
 
 func TestDurableLaunch8_PauseRacingLaunchTwoLegalHistories(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 20, 16, 0, 0, 0, time.UTC)
 
 	t.Run("starting-linearizes-first-then-pause-outstanding", func(t *testing.T) {
@@ -505,6 +517,8 @@ func TestDurableLaunch8_PauseRacingLaunchTwoLegalHistories(t *testing.T) {
 }
 
 func TestReplayRefusesClaimedToReady(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	s, err := lifecycle.Open(root)
 	if err != nil {
@@ -543,6 +557,8 @@ func TestReplayRefusesClaimedToReady(t *testing.T) {
 }
 
 func TestApplyStartedIdenticalRetryIsIdempotent(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	s, ctrl, now := openRun(t, root)
 	attempt := claimAndAdmit(t, s, ctrl, now, "card-hold2", "hulk", "local")
@@ -595,6 +611,8 @@ func TestApplyStartedIdenticalRetryIsIdempotent(t *testing.T) {
 }
 
 func TestApplyStartedIdenticalRetryAfterFenceIsIdempotent(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	s, ctrl, now := openRun(t, root)
 	claimAndAdmit(t, s, ctrl, now, "card-hold3", "hulk", "local")

@@ -25,6 +25,8 @@ func stellaIndependentPrepared(t *testing.T) (string, string, Prepared, Prepared
 	return bare, clone, p, a
 }
 func TestStellaPreparedAttributePrefixesPublishExactBytes(t *testing.T) {
+	t.Parallel()
+
 	full, _ := ExpectedMergeAttributes("")
 	cases := []struct {
 		name   string
@@ -64,6 +66,8 @@ func TestStellaPreparedAttributePrefixesPublishExactBytes(t *testing.T) {
 }
 
 func TestStellaIndependentPreparedRequiresCompleteRemoteIndex(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaIndependentPrepared(t)
 	if _, e := SendPreparedArtifact(clone, "origin", "main", p, a, 1); e != nil {
 		t.Fatal(e)
@@ -93,6 +97,8 @@ func TestStellaIndependentPreparedRequiresCompleteRemoteIndex(t *testing.T) {
 	}
 }
 func TestStellaIndependentPreparedCannotConfirmCommitWithoutIndex(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	if e := p.Save(clone); e != nil {
 		t.Fatal(e)
@@ -111,6 +117,8 @@ func TestStellaIndependentPreparedCannotConfirmCommitWithoutIndex(t *testing.T) 
 	}
 }
 func TestStellaIndependentPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	path := filepath.Join(clone, AttributesName)
 	old, _ := os.ReadFile(path)
@@ -130,6 +138,8 @@ func TestStellaIndependentPreparedPreservesUnrelatedAttributeEdit(t *testing.T) 
 	}
 }
 func TestStellaIndependentPreparedRefusesUnknownArtifactField(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaIndependentPrepared(t)
 	b, _ := json.Marshal(a)
 	b = append(b[:len(b)-1], []byte(`,"unsupported":"synthetic"}`)...)
@@ -139,6 +149,8 @@ func TestStellaIndependentPreparedRefusesUnknownArtifactField(t *testing.T) {
 }
 
 func TestStellaIndependentPreparedPreservesUnrelatedAheadAttributeEdit(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	if e := p.Save(clone); e != nil {
 		t.Fatal(e)
@@ -166,6 +178,8 @@ func TestStellaIndependentPreparedPreservesUnrelatedAheadAttributeEdit(t *testin
 }
 
 func TestStellaIndependentPreparedRefusesAheadAttributeDeletion(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	if e := p.Save(clone); e != nil {
 		t.Fatal(e)
@@ -197,6 +211,8 @@ func TestStellaIndependentPreparedRefusesAheadAttributeDeletion(t *testing.T) {
 	}
 }
 func TestStellaIndependentPreparedRefusesIntermediateIndexLeak(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	if e := p.Save(clone); e != nil {
 		t.Fatal(e)

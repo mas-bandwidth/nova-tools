@@ -15,6 +15,8 @@ import (
 // members admitted to the gate (2), and one forge latency per mergeable read
 // plus one gate latency, and the registered /metrics handler serves them.
 func TestLandExportsMetrics(t *testing.T) {
+	t.Parallel()
+
 	clock := &fakeClock{at: time.Date(2026, 9, 23, 17, 0, 0, 0, time.UTC)}
 	set := metrics.New()
 	ln := land.Lane{

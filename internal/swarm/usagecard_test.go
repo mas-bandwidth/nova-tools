@@ -76,6 +76,8 @@ const cardUsageSchema = `CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT
 // and usd 1.0000 -- with the provider and model the store named. Reading from the primary
 // location carries no note, no absence reason, and the path that answered.
 func TestUsageReadsRunDataDirStore(t *testing.T) {
+	t.Parallel()
+
 	dataHome := t.TempDir()
 	db := loadCardUsageStoreAt(t, filepath.Join(dataHome, "opencode", "opencode.db"))
 	started, ended := cardUsageWindow()
@@ -112,6 +114,8 @@ func TestUsageReadsRunDataDirStore(t *testing.T) {
 // a note that names the store the reader looked for, and the no-store absence reason --
 // never a silent dash.
 func TestUsageRowNamesMissingStore(t *testing.T) {
+	t.Parallel()
+
 	dataHome := t.TempDir()
 	started, ended := cardUsageWindow()
 	usage, note, path, reason := ReadCardUsage(dataHome, started, ended)
@@ -141,6 +145,8 @@ func TestUsageRowNamesMissingStore(t *testing.T) {
 // at the same data directory. A store at <dataHome>/.local/share/opencode/opencode.db is read
 // when the primary location is empty, and the note records which path answered.
 func TestUsageFallsBackToLocalShareStore(t *testing.T) {
+	t.Parallel()
+
 	dataHome := t.TempDir()
 	db := loadCardUsageStoreAt(t, filepath.Join(dataHome, ".local", "share", "opencode", "opencode.db"))
 	started, ended := cardUsageWindow()
@@ -195,6 +201,8 @@ func TestUsageRowWithoutSqlite(t *testing.T) {
 // rows whose millisecond stamp lands inside it, and the kept rows are grouped by providerID
 // and modelID and summed. Rows outside the window, and non-assistant rows, never reach the sum.
 func TestUsageRowFromStoreMillis(t *testing.T) {
+	t.Parallel()
+
 	dataHome := t.TempDir()
 	started := time.UnixMilli(2000000000000)
 	ended := started.Add(10 * time.Second)

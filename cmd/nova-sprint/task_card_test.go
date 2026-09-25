@@ -14,6 +14,8 @@ import (
 // TestTaskCardDispatch: the card form is chosen by its flags, and the one
 // task store's and the batch forms keep theirs.
 func TestTaskCardDispatch(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		args []string
 		want bool

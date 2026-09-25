@@ -24,6 +24,8 @@ import (
 const bundledObservations = "../../internal/decide/testdata/reader-observations-2026-09-19.jsonl"
 
 func TestTheBundledObservationsCannotBlessAFloorThroughTheRealCLI(t *testing.T) {
+	t.Parallel()
+
 	floors := []string{"--floors", "0.5,0.65,0.8,0.9", "--max-escalation", "0.7"}
 
 	// 1. The refusal. No floor, no exit 0, and the reason names the status.

@@ -61,6 +61,8 @@ func writeIssue2111Record(t *testing.T, body string) string {
 }
 
 func TestIssue2111(t *testing.T) {
+	t.Parallel()
+
 	path := writeIssue2111Record(t, issue2111Pipeline)
 
 	// The whole pipeline: every stage shows its population right now -- a count and

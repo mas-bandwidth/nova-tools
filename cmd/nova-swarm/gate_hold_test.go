@@ -23,6 +23,8 @@ import (
 // TestDeniedPathWithASpaceStillRefuses is P1 as a CLI regression, at the full path. A
 // whitespace-bearing absolute path is not evidence of prose.
 func TestDeniedPathWithASpaceStillRefuses(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	for _, refused := range []string{
@@ -60,6 +62,8 @@ func TestDeniedPathWithASpaceStillRefuses(t *testing.T) {
 // may not assert that a gate never ran or that nothing was compiled, and may not prescribe
 // read_roots as the cure for a failed write.
 func TestRefusalClaimsNoCauseItCannotProve(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -141,6 +145,8 @@ func TestWalledRefusalOffersTheReadRootsAsOnePossibility(t *testing.T) {
 // NATIVE OK. The verdict is now taken from the bytes the parent received; what the card does
 // to the file afterwards cannot reach it.
 func TestADenialTheCardRewroteStillRefuses(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	const refused = "/opt/sdk/go1.26.5/bin/go"

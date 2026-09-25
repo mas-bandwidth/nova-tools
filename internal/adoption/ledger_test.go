@@ -9,6 +9,8 @@ import (
 )
 
 func TestVerifyDaemonAdoptionViaProbe(t *testing.T) {
+	t.Parallel()
+
 	ev := DaemonEvidence{
 		Bench:      "batman",
 		Daemon:     "nova-swarm",
@@ -28,6 +30,8 @@ func TestVerifyDaemonAdoptionViaProbe(t *testing.T) {
 }
 
 func TestVerifyDaemonAdoptionViaHeartbeat(t *testing.T) {
+	t.Parallel()
+
 	ev := DaemonEvidence{
 		Bench:      "superman",
 		Daemon:     "nova-pulse",
@@ -43,6 +47,8 @@ func TestVerifyDaemonAdoptionViaHeartbeat(t *testing.T) {
 }
 
 func TestVerifyDaemonAdoptionRefusesMismatchInstalledNotAdopted(t *testing.T) {
+	t.Parallel()
+
 	// Disk has new binary installed, but daemon is still executing old SHA!
 	ev := DaemonEvidence{
 		Bench:      "batman",
@@ -72,6 +78,8 @@ func TestVerifyDaemonAdoptionRefusesMismatchInstalledNotAdopted(t *testing.T) {
 }
 
 func TestVerifyDaemonAdoptionDaemonNotRunning(t *testing.T) {
+	t.Parallel()
+
 	ev := DaemonEvidence{
 		Bench:      "batman",
 		Daemon:     "nova-swarm",
@@ -91,6 +99,8 @@ func TestVerifyDaemonAdoptionDaemonNotRunning(t *testing.T) {
 }
 
 func TestVerifyDaemonAdoptionTargetMismatch(t *testing.T) {
+	t.Parallel()
+
 	ev := DaemonEvidence{
 		Bench:      "batman",
 		Daemon:     "nova-swarm",
@@ -110,6 +120,8 @@ func TestVerifyDaemonAdoptionTargetMismatch(t *testing.T) {
 }
 
 func TestVerifyDaemonAdoptionUnrecognizedEvidence(t *testing.T) {
+	t.Parallel()
+
 	ev := DaemonEvidence{
 		Bench:      "batman",
 		Daemon:     "nova-swarm",
@@ -129,6 +141,8 @@ func TestVerifyDaemonAdoptionUnrecognizedEvidence(t *testing.T) {
 }
 
 func TestHeartbeatIsStale(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now()
 	evFresh := DaemonEvidence{
 		Kind:       EvidenceHeartbeat,
@@ -157,6 +171,8 @@ func TestHeartbeatIsStale(t *testing.T) {
 }
 
 func TestComputeStageProgression(t *testing.T) {
+	t.Parallel()
+
 	const (
 		shaPR  = "a1b2c3d4e5f600112233445566778899aabbccdd"
 		shaDev = "a1b2c3d4e5f600112233445566778899aabbccdd"
@@ -304,6 +320,8 @@ func TestComputeStageProgression(t *testing.T) {
 }
 
 func TestMultiBenchFleetAdoptionRequiresAllBenches(t *testing.T) {
+	t.Parallel()
+
 	const target = "86abcf23dd6cd95668ae1a865e11e29556996b03"
 
 	rec := Record{
@@ -367,6 +385,8 @@ func TestMultiBenchFleetAdoptionRequiresAllBenches(t *testing.T) {
 }
 
 func TestLedgerSummarize(t *testing.T) {
+	t.Parallel()
+
 	const target = "86abcf23"
 	ledger := NewLedger()
 
@@ -424,6 +444,8 @@ func TestLedgerSummarize(t *testing.T) {
 }
 
 func TestLedgerRenderTable(t *testing.T) {
+	t.Parallel()
+
 	const target = "86abcf23dd6c"
 	ledger := NewLedger()
 	ledger.AddRecord(Record{
@@ -458,6 +480,8 @@ func TestLedgerRenderTable(t *testing.T) {
 }
 
 func TestTSVRoundtrip(t *testing.T) {
+	t.Parallel()
+
 	const target = "86abcf23dd6cd95668ae1a865e11e29556996b03"
 	ledger := NewLedger()
 	ledger.AddRecord(Record{

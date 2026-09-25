@@ -17,6 +17,8 @@ func paginationRequest(token string, cursor string, maxNotes int, maxBytes int64
 }
 
 func TestBodyPaginatorEmitsAnExactFitInsteadOfDeferringItForever(t *testing.T) {
+	t.Parallel()
+
 	items := []BodyItem{{Commit: paginationOne, Path: "from-bo/a.md", Entry: OpenEntry{Path: "from-bo/a.md"}, Body: []byte("exact")}}
 	page, err := BodyPageFor(items, paginationRequest("", paginationBase, 1, 5))
 	if err != nil {
@@ -28,6 +30,8 @@ func TestBodyPaginatorEmitsAnExactFitInsteadOfDeferringItForever(t *testing.T) {
 }
 
 func TestBodyPaginatorCarriesEarlierGapAcrossChangedBudgetAndLaterPages(t *testing.T) {
+	t.Parallel()
+
 	items := []BodyItem{
 		{Commit: paginationOne, Path: "from-bo/a.md", Entry: OpenEntry{Path: "from-bo/a.md"}, Body: []byte("too-large")},
 		{Commit: paginationTwo, Path: "from-bo/b.md", Entry: OpenEntry{Path: "from-bo/b.md"}, Body: []byte("ok")},
@@ -51,6 +55,8 @@ func TestBodyPaginatorCarriesEarlierGapAcrossChangedBudgetAndLaterPages(t *testi
 }
 
 func TestBodyPaginatorAdvancesToWholePrefixBeforeLaterGap(t *testing.T) {
+	t.Parallel()
+
 	items := []BodyItem{
 		{Commit: paginationOne, Path: "from-bo/a.md", Entry: OpenEntry{Path: "from-bo/a.md"}, Body: []byte("a")},
 		{Commit: paginationTwo, Path: "from-bo/b.md", Entry: OpenEntry{Path: "from-bo/b.md"}, Body: []byte("oversize")},
@@ -67,6 +73,8 @@ func TestBodyPaginatorAdvancesToWholePrefixBeforeLaterGap(t *testing.T) {
 }
 
 func TestBodyPaginatorRefusesExternalCursorChange(t *testing.T) {
+	t.Parallel()
+
 	items := []BodyItem{
 		{Commit: paginationOne, Path: "from-bo/a.md", Entry: OpenEntry{Path: "from-bo/a.md"}, Body: []byte("a")},
 		{Commit: paginationTwo, Path: "from-bo/b.md", Entry: OpenEntry{Path: "from-bo/b.md"}, Body: []byte("b")},
@@ -90,6 +98,8 @@ func TestBodyPaginatorRefusesExternalCursorChange(t *testing.T) {
 }
 
 func TestBodyPaginatorContinuationSurvivesItsOwnWholeCommitAdvance(t *testing.T) {
+	t.Parallel()
+
 	items := []BodyItem{
 		{Commit: paginationOne, Path: "from-bo/a.md", Entry: OpenEntry{Path: "from-bo/a.md"}, Body: []byte("a")},
 		{Commit: paginationTwo, Path: "from-bo/b.md", Entry: OpenEntry{Path: "from-bo/b.md"}, Body: []byte("b")},
@@ -115,6 +125,8 @@ func TestBodyPaginatorContinuationSurvivesItsOwnWholeCommitAdvance(t *testing.T)
 }
 
 func TestBodyItemsAtSnapshotReadsPinnedCommitNotChangedWorktree(t *testing.T) {
+	t.Parallel()
+
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -142,6 +154,8 @@ func TestBodyItemsAtSnapshotReadsPinnedCommitNotChangedWorktree(t *testing.T) {
 }
 
 func TestBodyRecordsAtSnapshotKeepsTwoReceiptOffsetsInOnePath(t *testing.T) {
+	t.Parallel()
+
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -171,6 +185,8 @@ func TestBodyRecordsAtSnapshotKeepsTwoReceiptOffsetsInOnePath(t *testing.T) {
 }
 
 func TestBodySnapshotReadsFirstParentMergeDelta(t *testing.T) {
+	t.Parallel()
+
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -212,6 +228,8 @@ func TestBodySnapshotReadsFirstParentMergeDelta(t *testing.T) {
 }
 
 func TestBodySnapshotUsesFinalRevisionAtHeadAndRetractedReplyDoesNotSettle(t *testing.T) {
+	t.Parallel()
+
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -244,6 +262,8 @@ func TestBodySnapshotUsesFinalRevisionAtHeadAndRetractedReplyDoesNotSettle(t *te
 }
 
 func TestBodySnapshotAllowsHardCeilingBodyAndNamesLargerBlobAsGap(t *testing.T) {
+	t.Parallel()
+
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -299,6 +319,8 @@ func TestBodySnapshotAllowsHardCeilingBodyAndNamesLargerBlobAsGap(t *testing.T) 
 }
 
 func TestBodySnapshotRefusesOversizedHeaderInsteadOfCallingSmallBodyOversize(t *testing.T) {
+	t.Parallel()
+
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)

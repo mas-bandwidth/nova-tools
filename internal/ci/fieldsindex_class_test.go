@@ -37,6 +37,8 @@ var splitFuncs = map[string]map[string]bool{
 // It walks every non-test .go file under cmd/ and internal/, and names the ones
 // that are neither guarded nor allowlisted with a reason.
 func TestNoUncheckedFieldsIndex(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	allow := readFieldsIndexAllowlist(t)
 	seen := map[string]bool{}

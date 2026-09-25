@@ -3,6 +3,8 @@ package tokens
 import "testing"
 
 func TestCostNodeAggregation(t *testing.T) {
+	t.Parallel()
+
 	receipts := []CostReceiptRow{
 		{NodeID: "a", Stage: "builder", PricedTokens: 1000, UnpricedTokens: 200, Usd: 50_000},   // $0.05
 		{NodeID: "a", Stage: "review", PricedTokens: 300, UnpricedTokens: 0, Usd: 15_000},       // $0.015

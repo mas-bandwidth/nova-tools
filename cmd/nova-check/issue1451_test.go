@@ -16,6 +16,8 @@ import (
 // ON the refusal line a reader scans, so this asserts it line by line, and a bare verb
 // that reports several missing flags must carry it on each of those lines.
 func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	exit, helpOut, helpErr := runCheck(t, "help")
 	if exit != 0 {
 		t.Fatalf("nova-check help: exit %d, want 0; stderr: %s", exit, helpErr)

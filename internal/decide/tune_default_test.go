@@ -30,6 +30,8 @@ import (
 const readerObservations = "testdata/reader-observations-2026-09-19.jsonl"
 
 func TestTheDefaultArithmeticCountsWhatEscalationAloneCannot(t *testing.T) {
+	t.Parallel()
+
 	// Observations: true is what admits this fixture at all now -- the
 	// adjudication boundary refuses it otherwise -- and what it buys is the
 	// ARITHMETIC. Neither read below recommends a floor: Render prints
@@ -84,6 +86,8 @@ func TestTheDefaultArithmeticCountsWhatEscalationAloneCannot(t *testing.T) {
 // silent zero: arithmetic against a default nothing ever returns is arithmetic
 // over an empty set.
 func TestADefaultNoRowEverAnsweredIsARefusal(t *testing.T) {
+	t.Parallel()
+
 	_, err := Tune(fixtureBytes(t), TuneOptions{
 		Floors:        []float64{0.5, 0.9},
 		MaxEscalation: 0.7,
@@ -99,6 +103,8 @@ func TestADefaultNoRowEverAnsweredIsARefusal(t *testing.T) {
 // without the flag that says out loud no floor comes out of it, and the
 // refusal is the sentinel a caller can name in one word.
 func TestAnObservationLogCannotSetAFloorWithoutSayingSo(t *testing.T) {
+	t.Parallel()
+
 	_, err := Tune(fixtureBytes(t), TuneOptions{Floors: []float64{0.5, 0.9}, MaxEscalation: 0.7})
 	if err == nil {
 		t.Fatal("the observation fixture set a floor")
@@ -129,6 +135,8 @@ func TestAnObservationLogCannotSetAFloorWithoutSayingSo(t *testing.T) {
 // The fixture says what it is. A row that claims to be adjudicated truth, or
 // that carries no provider binding, does not belong in it.
 func TestTheObservationFixtureIsLabelledAsObservations(t *testing.T) {
+	t.Parallel()
+
 	readme, err := os.ReadFile("testdata/README-reader-observations.md")
 	if err != nil {
 		t.Fatal(err)

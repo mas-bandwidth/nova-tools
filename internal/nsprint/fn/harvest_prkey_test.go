@@ -16,6 +16,8 @@ import (
 // pr:nova-tools:<n> (internal/nsprint/prkey) and never under
 // pr:mas-bandwidth/nova-tools:<n>, which read post cannot find.
 func TestHarvestPRWritesTheBareRecordKey(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	ctx := context.Background()
 	c := redis.NewClient(&redis.Options{Addr: addr})

@@ -45,6 +45,8 @@ const (
 // path that will not be there, and a root the standard names that the wall does not grant is
 // the original bug returning.
 func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	oses := swarm.ToolchainRootOSes()
 	if len(oses) == 0 {

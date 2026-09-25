@@ -13,6 +13,8 @@ import (
 // tail, cut on a rune boundary, mark what was dropped, return the input
 // unchanged when nothing needs to be dropped.
 func TestCapNeverPanicsAndNeverErasesNonemptyInput(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		in   string
@@ -49,6 +51,8 @@ func TestCapNeverPanicsAndNeverErasesNonemptyInput(t *testing.T) {
 // The truncation marker stays truthful: when nothing is actually dropped the
 // input is returned unchanged, with no zero-dropped marker.
 func TestCapZeroDropReturnsInputUnchanged(t *testing.T) {
+	t.Parallel()
+
 	in := "hello"
 	if out := Cap(in, len(in)); out != in {
 		t.Fatalf("Cap(input, len(input)) = %q, want %q", out, in)
@@ -65,6 +69,8 @@ func TestCapZeroDropReturnsInputUnchanged(t *testing.T) {
 
 // A real cut still cuts on a rune boundary and reports truthfully-dropped bytes.
 func TestCapCutsOnRuneBoundaryAndKeepsFirstRune(t *testing.T) {
+	t.Parallel()
+
 	// ASCII: the cut lands mid-string and the mark counts the rest.
 	// widest for an 11-byte input is len("...+11B") = 7, so budget = 5-7 clamped to 1.
 	out := Cap("hello world", 5)

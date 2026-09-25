@@ -81,6 +81,8 @@ func harvestStopFixture(t *testing.T) (*redis.Client, *store.Store, *reconcile.L
 // worker that does not answer in time has its lease released by its token.
 // Either way no bench is left held by the dead instance.
 func TestHarvestDutyStopOnFence(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	forge := &consumeForge{prs: map[string]harvest.PR{}}
 

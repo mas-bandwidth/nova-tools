@@ -98,6 +98,8 @@ func (f *fakeForge) Snapshot() (Snapshot, error) { return f.snap, f.err }
 // 1. A card written to the cards:done stream is republished as a card-done message and
 // acked in the events consumer group.
 func TestProducerPublishesCardDoneFromTheStream(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	sub := subscribe(t, rdb, ctx, ChannelCardDone)
 
@@ -135,6 +137,8 @@ func TestProducerPublishesCardDoneFromTheStream(t *testing.T) {
 // the decide events (#2623); a queued entry and a decide entry are acked and publish
 // nothing, an ok entry publishes one card-done, and the group owes no ack afterwards.
 func TestProducerAnnouncesOnlyACardsEnd(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	sub := subscribe(t, rdb, ctx, ChannelCardDone)
 
@@ -178,6 +182,8 @@ func TestProducerAnnouncesOnlyACardsEnd(t *testing.T) {
 // 2. A completed check suite is published once and only once: a second poll with the same
 // conclusion publishes nothing.
 func TestProducerPublishesPRChecksDoneOnlyOnChange(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	sub := subscribe(t, rdb, ctx, ChannelPRChecksDone)
 	p := NewProducer(rdb, &fakeForge{snap: Snapshot{PRs: []PRState{
@@ -208,6 +214,8 @@ func TestProducerPublishesPRChecksDoneOnlyOnChange(t *testing.T) {
 
 // 3. dev-moved is published on the first poll and again only when the base head moves.
 func TestProducerPublishesDevMovedOnlyOnChange(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	sub := subscribe(t, rdb, ctx, ChannelDevMoved)
 	forge := &fakeForge{snap: Snapshot{Base: "base-1"}}
@@ -243,6 +251,8 @@ func TestProducerPublishesDevMovedOnlyOnChange(t *testing.T) {
 
 // 4. A green PR that is neither skipped nor held is enqueued, once.
 func TestReactorEnqueuesGreenPR(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	var enqueued []int
 	r := NewReactor(rdb, &fakeForge{}, openGate{}, func(_ context.Context, pr int, _ string) error {
@@ -279,6 +289,8 @@ func (g oneGate) Held() (bool, string, error)  { return g.held, g.reason, nil }
 // 5. A PR the QUEUE skips is not enqueued -- the queue's own skip set, not a second one
 // in redis (edge 18).
 func TestReactorSkipsTheQueuesSkipSet(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	var enqueued []int
 	r := NewReactor(rdb, &fakeForge{}, oneGate{skip: map[int]bool{42: true}}, func(_ context.Context, pr int, _ string) error {
@@ -296,6 +308,8 @@ func TestReactorSkipsTheQueuesSkipSet(t *testing.T) {
 // 6. While the LANE'S hold stands every green PR waits, and the line carries the reason
 // the person wrote -- not the name of a redis key (edge 18).
 func TestReactorHoldsOnTheLanesHold(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	var enqueued []int
 	var log bytes.Buffer
@@ -317,6 +331,8 @@ func TestReactorHoldsOnTheLanesHold(t *testing.T) {
 // EDGE 17: a reactor built with no door says so on the first green pull request rather
 // than reporting an enqueue into a set nothing reads.
 func TestReactorWithNoDoorRefusesRatherThanReportingAnEnqueue(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	r := NewReactor(rdb, &fakeForge{}, openGate{}, nil, nil)
 	err := r.Handle(ctx, ChannelPRChecksDone, `{"number":42,"head":"a1b2","conclusion":"SUCCESS"}`)
@@ -331,6 +347,8 @@ func TestReactorWithNoDoorRefusesRatherThanReportingAnEnqueue(t *testing.T) {
 // EDGE 20: one malformed payload is one message dropped, said out loud and counted --
 // never the death of the reactor, which already ignores a channel it has never heard of.
 func TestReactorDropsAMalformedPayloadAndCarriesOn(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	var enqueued []int
 	var log bytes.Buffer
@@ -357,6 +375,8 @@ func TestReactorDropsAMalformedPayloadAndCarriesOn(t *testing.T) {
 
 // 7. A red conclusion does not enqueue.
 func TestReactorDoesNotEnqueueARed(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	var enqueued []int
 	r := NewReactor(rdb, &fakeForge{}, openGate{}, func(_ context.Context, pr int, _ string) error {
@@ -374,6 +394,8 @@ func TestReactorDoesNotEnqueueARed(t *testing.T) {
 // 8. A dev-moved event publishes rebase-wanted for every PR the move made DIRTY, once per
 // head, and not for a clean one.
 func TestReactorPublishesRebaseWantedForDirtyPRs(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	sub := subscribe(t, rdb, ctx, ChannelRebaseWanted)
 	forge := &fakeForge{snap: Snapshot{PRs: []PRState{
@@ -401,6 +423,8 @@ func TestReactorPublishesRebaseWantedForDirtyPRs(t *testing.T) {
 
 // 9. card-done publishes nothing: the recorder and the harvester read the stream directly.
 func TestReactorCardDonePublishesNothing(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	sub := subscribe(t, rdb, ctx, ChannelRebaseWanted, ChannelPRChecksDone, ChannelCardDone)
 	var enqueued []int
@@ -419,6 +443,8 @@ func TestReactorCardDonePublishesNothing(t *testing.T) {
 
 // 10. The loop form returns at its deadline rather than blocking forever.
 func TestReactorRunReturnsAtItsDeadline(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	deadline, cancel := context.WithTimeout(ctx, reactorDeadline())
 	defer cancel()
@@ -450,6 +476,8 @@ func (t *tripCounter) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.
 // one XREADGROUP and one pipeline of all PUBLISH + one XACK. This is the
 // DONE-WHEN test for #3269.
 func TestPublishCardsDoneBatchesToOnePipeline(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	tc := &tripCounter{}
 	rdb.AddHook(tc)

@@ -13,6 +13,8 @@ import (
 // work named fixture-retarget answered flash, one rung under, and named
 // fix-with-red-test it answered opus, two rungs over.
 func TestARowTestStartsAtTheCardRung(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	row := Unit{ID: "row-9-refuse-writes-nothing", Kind: KindRowTest, Files: 1, Packages: 1}
 	res := mustRoute(t, reg, row, DefaultFloor)
@@ -43,6 +45,8 @@ func TestARowTestStartsAtTheCardRung(t *testing.T) {
 // the shape of a trivial rebase AND of a subtle codegen fix, and the count
 // cannot tell them apart.
 func TestSizeNeverDropsARowTestBelowTheCardRung(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	start, _ := StartHeight(KindRowTest)
 	for _, u := range []Unit{
@@ -64,6 +68,8 @@ func TestSizeNeverDropsARowTestBelowTheCardRung(t *testing.T) {
 // eligible again and the answer is the child rung. The per-height sideways rule
 // cannot reach this, because flash and pro are one lineage at two heights.
 func TestAFailedCardRungTakesTheWholeLineageOut(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "cert-windows-legs", Kind: KindFleetChore, Files: 2, Packages: 2, Attempts: []Attempt{
 		{Rung: "flash", Outcome: OutcomeFailed, Reason: "the class test was never written"},
@@ -101,6 +107,8 @@ func TestAFailedCardRungTakesTheWholeLineageOut(t *testing.T) {
 // confidence keeps the rung the evidence supports and only a real collapse
 // steps up. The fake answers the numbers the provider actually returned.
 func TestTheDefaultFloorSitsBelowTheMeasuredBand(t *testing.T) {
+	t.Parallel()
+
 	if DefaultFloor > 0.67 {
 		t.Fatalf("the default floor is %v; the measured band's floor is 0.68, on the rebase unit that straddled 0.7 and routed two ways", DefaultFloor)
 	}
@@ -136,6 +144,8 @@ func TestTheDefaultFloorSitsBelowTheMeasuredBand(t *testing.T) {
 // Rule 8's other half: an outcome row joins a confidence to what followed, and
 // the summary reads it without counting a second decision.
 func TestAnOutcomeRowFeedsTheSummaryAndIsNotADecision(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	at := time.Date(2026, 9, 19, 1, 0, 0, 0, time.UTC)
 	decision := Entry{
@@ -189,6 +199,8 @@ func TestAnOutcomeRowFeedsTheSummaryAndIsNotADecision(t *testing.T) {
 // LastDecision reads the decision an outcome answers, and never an outcome row:
 // the kind and the rung come from the decision, not from a caller's memory.
 func TestLastDecisionSkipsOutcomeRows(t *testing.T) {
+	t.Parallel()
+
 	at := time.Date(2026, 9, 19, 1, 0, 0, 0, time.UTC)
 	first := Entry{Unit: "u", Kind: KindRowTest, RungTried: "pro", Source: SourceJev}
 	second := Entry{Unit: "u", Kind: KindRowTest, RungTried: "opus", Source: SourceRules}
@@ -219,6 +231,8 @@ func TestLastDecisionSkipsOutcomeRows(t *testing.T) {
 // the field TRUE is the open half (nova-tools#1501); this is the half that says
 // the ladder honours it.
 func TestAnAsleepMindIsNotOnTheHeightLadder(t *testing.T) {
+	t.Parallel()
+
 	asleep, err := ParseRegistry([]byte(`{"minds":[
 	  {"name":"flash","lineage":"deepseek","height":0,"kinds":[],"lanes":[],"availability":"available","ask":"card"},
 	  {"name":"pro","lineage":"deepseek","height":1,"kinds":[],"lanes":[],"availability":"available","ask":"card"},
@@ -277,6 +291,8 @@ func TestAnAsleepMindIsNotOnTheHeightLadder(t *testing.T) {
 // options at all, so no provider answer can recover it. Both halves are
 // asserted here.
 func TestTheSizeEvidenceReachesTheProviderAndThinEvidenceSaysSo(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	sized := Unit{ID: "ev-with", Kind: KindFixWithRedTest, Files: 2, Packages: 1}
 	fake := &fakeDecider{choice: "rung-1", conf: 0.80}
@@ -325,6 +341,8 @@ func TestTheSizeEvidenceReachesTheProviderAndThinEvidenceSaysSo(t *testing.T) {
 // priced as one -- 21 Flash cards over dogfood transcripts found four real
 // drifts for about 20 cents on 2026-09-18.
 func TestDogfoodIsItsOwnKindAndGuardIsUntouched(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	res := mustRoute(t, reg, Unit{ID: "dogfood-transcript-1", Kind: KindDogfood, Files: 1, Packages: 1}, DefaultFloor)
 	if res.Rung.Name != "flash" {

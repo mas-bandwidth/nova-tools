@@ -32,6 +32,8 @@ func redisLedger(t *testing.T) (*record.RedisLedger, *miniredis.Miniredis) {
 // #3243 under #2623): a day is replaced whole, the report is a GROUP BY that sums over the
 // rows that reported a type, and a type no row reported stays unknown rather than a zero.
 func TestTheRedisLedgerKeepsTheLedgerContract(t *testing.T) {
+	t.Parallel()
+
 	s, _ := redisLedger(t)
 	ctx := context.Background()
 	for range 2 {
@@ -89,6 +91,8 @@ func TestTheRedisLedgerKeepsTheLedgerContract(t *testing.T) {
 // tokens:ledger:<day> is a hash, one field per (card, model, repo), and a type no source
 // reported is stored as null, never as 0.
 func TestTheLedgerIsOneHashPerDayUnderTokensLedger(t *testing.T) {
+	t.Parallel()
+
 	s, mr := redisLedger(t)
 	ctx := context.Background()
 	if err := s.ReplaceLedgerDay(ctx, "2026-09-13", ledgerFixture()); err != nil {
@@ -111,6 +115,8 @@ func TestTheLedgerIsOneHashPerDayUnderTokensLedger(t *testing.T) {
 }
 
 func TestTheLedgerRefusesARepeatedKeyAForeignDayAndABadDay(t *testing.T) {
+	t.Parallel()
+
 	s, mr := redisLedger(t)
 	ctx := context.Background()
 	rows := ledgerFixture()
@@ -132,6 +138,8 @@ func TestTheLedgerRefusesARepeatedKeyAForeignDayAndABadDay(t *testing.T) {
 // TestTheLedgerReportRefusesAValueItCannotRead: a field that does not decode is an error
 // naming the key, never a row quietly skipped out of the month.
 func TestTheLedgerReportRefusesAValueItCannotRead(t *testing.T) {
+	t.Parallel()
+
 	s, mr := redisLedger(t)
 	mr.HSet("tokens:ledger:2026-09-02", `["c","m","r"]`, "not json")
 	_, _, _, err := s.LedgerReport(context.Background(), "2026-09", "tuple")

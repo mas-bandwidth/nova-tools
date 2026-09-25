@@ -44,6 +44,8 @@ func s7Terms(t *testing.T, extra ...string) CardWallTerms {
 // and docs/SPEC-*.md are contextual reads (TestWallTermsSpecIsContextualReadNotWrite),
 // not this outsider list.
 func TestWallTermsRefuseAPathOutsidePATHS(t *testing.T) {
+	t.Parallel()
+
 	terms := s7Terms(t)
 	if !terms.AdmitsRead("keep/in.go") {
 		t.Fatal("PATHS: keep/in.go must admit keep/in.go")
@@ -71,6 +73,8 @@ func TestWallTermsRefuseAPathOutsidePATHS(t *testing.T) {
 // same-package sibling are dispatcher-approved contextual reads, not writes.
 // A narrow PATHS glob is not the whole read scope.
 func TestWallTermsSpecIsContextualReadNotWrite(t *testing.T) {
+	t.Parallel()
+
 	terms := s7Terms(t)
 	for _, p := range []string{"docs/SPEC-DECIDE.md", "keep/other.go"} {
 		if !terms.AdmitsRead(p) {
@@ -89,6 +93,8 @@ func TestWallTermsSpecIsContextualReadNotWrite(t *testing.T) {
 // `_test.go` sibling, testdata under the same directory, and the TEST: package's
 // tests. A card that cannot read its own test spends a turn on a refusal.
 func TestWallTermsAdmitTheTestsOfPATHS(t *testing.T) {
+	t.Parallel()
+
 	terms := s7Terms(t)
 	for _, want := range []string{
 		"keep/in_test.go",
@@ -105,6 +111,8 @@ func TestWallTermsAdmitTheTestsOfPATHS(t *testing.T) {
 // tests are allowed to write (example.com), is not admitted. The fence's webfetch
 // key is deny. A mutation that returns true, or that writes allow, turns this red.
 func TestWallTermsRefuseANetworkFetch(t *testing.T) {
+	t.Parallel()
+
 	terms := s7Terms(t)
 	if AdmitsFetch("https://example.com/") {
 		t.Fatal("webfetch of https://example.com/ is admitted; S7 is no web")
@@ -123,6 +131,8 @@ func TestWallTermsRefuseANetworkFetch(t *testing.T) {
 // (`git status; curl`) and a first token with `/` (`/usr/bin/git`) do not.
 // This is a harness-prompt allowlist, not command confinement.
 func TestWallTermsOnlyPreApprovedCommands(t *testing.T) {
+	t.Parallel()
+
 	for _, line := range []string{"go test ./keep", "gofmt -l keep/in.go", "git status", "make test", "rg AdmitsRead"} {
 		if !AdmitsCommand(line) {
 			t.Errorf("pre-approved command %q was denied", line)
@@ -156,6 +166,8 @@ func TestWallTermsOnlyPreApprovedCommands(t *testing.T) {
 // native's nopromise. A model card without the word stays nopromise so the
 // provider API is the work.
 func TestWallTermsScriptIsNetDeny(t *testing.T) {
+	t.Parallel()
+
 	script := s7Terms(t, "MODE: script")
 	if !script.NetDeny {
 		t.Fatal("MODE: script is --net-deny; NetDeny is false")
@@ -169,6 +181,8 @@ func TestWallTermsScriptIsNetDeny(t *testing.T) {
 // TestWallTermsBodyOnlyModeDoesNotSelectScript is Stella H3: quoted or example
 // `MODE: script` in the body of a model card does not select script terms.
 func TestWallTermsBodyOnlyModeDoesNotSelectScript(t *testing.T) {
+	t.Parallel()
+
 	card := append(s7Card(t), []byte("For example a script card says\nMODE: script\n")...)
 	terms, err := WallTerms(card)
 	if err != nil {
@@ -182,6 +196,8 @@ func TestWallTermsBodyOnlyModeDoesNotSelectScript(t *testing.T) {
 // TestWallTermsConflictingModeHeadersRefuse is Stella H3: duplicate or
 // contradictory MODE fields in the typed header refuse.
 func TestWallTermsConflictingModeHeadersRefuse(t *testing.T) {
+	t.Parallel()
+
 	base := []string{
 		"KIND: fix-red",
 		"PATHS: keep/in.go",
@@ -207,6 +223,8 @@ func TestWallTermsConflictingModeHeadersRefuse(t *testing.T) {
 // granted root — the over-grant a parent-directory --read of a file glob would
 // be. File-level PATHS name no --read root.
 func TestWallTermsReadRootsDoNotAdmitAnOutsider(t *testing.T) {
+	t.Parallel()
+
 	repo := t.TempDir()
 	keep := filepath.Join(repo, "keep")
 	drop := filepath.Join(repo, "drop")
@@ -277,6 +295,8 @@ func TestWallTermsReadRootsDoNotAdmitAnOutsider(t *testing.T) {
 // grant. Unresolved roots refuse the same way. Do not follow a symlink out of
 // repoRoot.
 func TestWallTermsReadRootsRejectEscapingSymlink(t *testing.T) {
+	t.Parallel()
+
 	repo := t.TempDir()
 	outside := t.TempDir()
 	if err := os.WriteFile(filepath.Join(outside, "out.go"), []byte("package out\n"), 0o644); err != nil {
@@ -332,6 +352,8 @@ func TestWallTermsReadRootsRejectEscapingSymlink(t *testing.T) {
 // A policy whose Reads contain drop, or whose Net() is not denied on a script
 // card, turns this red.
 func TestSandboxPATHSReadSetDoesNotAdmitAnOutsider(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	base := t.TempDir()
 	write := filepath.Join(base, "w")
@@ -400,6 +422,8 @@ func sandboxEcho(t *testing.T) string {
 // TestSpecNamesTheHarnessWall is the deliverable in the specs: a rule renamed
 // out of SPEC-SWARM or SPEC-SANDBOX is red here before any launcher is trusted.
 func TestSpecNamesTheHarnessWall(t *testing.T) {
+	t.Parallel()
+
 	swarmDoc := readSpec(t, "SPEC-SWARM.md")
 	sandboxDoc := readSpec(t, "SPEC-SANDBOX.md")
 	section := swarmSection(t, swarmDoc, "## The harness wall (S7, issue #2498)")

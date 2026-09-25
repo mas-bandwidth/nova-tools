@@ -204,6 +204,8 @@ func TestHarvestBatchNeverStagesAnUneditedTemplate(t *testing.T) {
 // failing or opening a second one. Any other refusal stands, and a lookup that answers
 // nothing is its own refusal, naming both calls.
 func TestCreateFirstFindsThePROnlyWhenTheForgeSaysItExists(t *testing.T) {
+	t.Parallel()
+
 	exists := fmt.Errorf("HTTP 422: A pull request already exists for o:rowan/old.")
 	if !prExists(exists) || prExists(fmt.Errorf("gh api: refused")) || prExists(nil) {
 		t.Error("prExists reads the wrong refusals")
@@ -220,6 +222,8 @@ func TestCreateFirstFindsThePROnlyWhenTheForgeSaysItExists(t *testing.T) {
 }
 
 func TestResultStateReadsTheStateLine(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string][]string{
 		"DONE":    {"RESULT x sha=abc", "DONE"},
 		"DONE ":   {"RESULT x sha=abc", "", "DONE (green tests)"},
@@ -241,6 +245,8 @@ func TestResultStateReadsTheStateLine(t *testing.T) {
 }
 
 func TestParsePorcelainPushNamesEachRefsFate(t *testing.T) {
+	t.Parallel()
+
 	out := "To https://forge.invalid/o/r.git\n" +
 		"*\trefs/harvest/rowan/a:refs/heads/rowan/a\t[new branch]\n" +
 		" \trefs/harvest/rowan/b:refs/heads/rowan/b\tabc..def\n" +
@@ -262,6 +268,8 @@ func TestParsePorcelainPushNamesEachRefsFate(t *testing.T) {
 }
 
 func TestParseStagedReadsTheStageAnswer(t *testing.T) {
+	t.Parallel()
+
 	stages, staged, failed := parseStaged("STAGE\tnova-tools\t/h/nova-bench/harvest-stage/nova-tools.git\n" +
 		"STAGED\tcard-1\t" + stagedHead + "\n" +
 		"STAGE-FAIL\tcard-2\tfatal: couldn't find remote ref rowan/x\n" +

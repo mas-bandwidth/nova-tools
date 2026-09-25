@@ -29,6 +29,8 @@ func writeUnit(t *testing.T, u map[string]any) string {
 // With --no-jev the verb answers by the rules alone: no key, no network, one
 // line, and the same line twice.
 func TestRouteNoJevIsDeterministic(t *testing.T) {
+	t.Parallel()
+
 	unit := writeUnit(t, map[string]any{"id": "card-41", "kind": "rebase", "files": 2, "packages": 1})
 	var first, second bytes.Buffer
 	var stderr bytes.Buffer
@@ -54,6 +56,8 @@ func TestRouteNoJevIsDeterministic(t *testing.T) {
 
 // The unit is evidence, and every field of it is a flag too.
 func TestRouteTakesTheUnitAsFlags(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	code := run([]string{
 		"route", "--no-jev", "--unit-id", "card-77", "--kind", "fix-with-red-test",
@@ -75,6 +79,8 @@ func TestRouteTakesTheUnitAsFlags(t *testing.T) {
 // Below the floor the answer steps up and the exit is 3 -- a suggestion, never
 // an authorization.
 func TestRouteBelowTheFloorExits3(t *testing.T) {
+	t.Parallel()
+
 	unit := writeUnit(t, map[string]any{"id": "thin", "kind": "new-verb"})
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"route", "--unit", unit, "--no-jev", "--floor", "0.9"}, &stdout, &stderr)
@@ -88,6 +94,8 @@ func TestRouteBelowTheFloorExits3(t *testing.T) {
 
 // A unit the tool cannot read as evidence is a refusal, on stderr, at exit 2.
 func TestRouteRefusals(t *testing.T) {
+	t.Parallel()
+
 	good := writeUnit(t, map[string]any{"id": "u", "kind": "rebase", "files": 1})
 	for name, args := range map[string][]string{
 		"no unit":        {"route", "--no-jev"},
@@ -114,6 +122,8 @@ func TestRouteRefusals(t *testing.T) {
 // Every decision is logged: the evidence, the rung tried, the floor, and what
 // Rowan would have picked, one JSON object per line.
 func TestRouteAppendsToTheLog(t *testing.T) {
+	t.Parallel()
+
 	unit := writeUnit(t, map[string]any{"id": "card-9", "kind": "rebase", "files": 2, "packages": 1})
 	log := filepath.Join(t.TempDir(), "decide.jsonl")
 	var stdout, stderr bytes.Buffer
@@ -142,6 +152,8 @@ func TestRouteAppendsToTheLog(t *testing.T) {
 
 // A registry of one's own is a data file, named by a flag.
 func TestRouteTakesARegistryFile(t *testing.T) {
+	t.Parallel()
+
 	reg := filepath.Join(t.TempDir(), "registry.json")
 	body := `{"minds":[
 	  {"name":"tiny","lineage":"local","height":0,"availability":"available","ask":"card"},
@@ -162,6 +174,8 @@ func TestRouteTakesARegistryFile(t *testing.T) {
 
 // The second decision: continue, ask all friends, ask Glenn.
 func TestHelpVerbAnswers(t *testing.T) {
+	t.Parallel()
+
 	state := filepath.Join(t.TempDir(), "state.json")
 	body := `{"hours": 3, "retries_on_rung": 1, "failures_last_hour": 1, "self_inflicted": 0, "class_recurring": false, "landing_moved": true, "uncertainty": 0.2}`
 	if err := os.WriteFile(state, []byte(body), 0o600); err != nil {
@@ -193,6 +207,8 @@ func TestHelpVerbAnswers(t *testing.T) {
 // `nova-decide help` with no arguments is still the door the onboarding
 // standard names: the usage, on stdout, at exit 0.
 func TestHelpWithNoArgumentsIsTheUsage(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
@@ -209,6 +225,8 @@ func TestHelpWithNoArgumentsIsTheUsage(t *testing.T) {
 
 // An impossible state is a refusal, never an answer.
 func TestHelpRefusesImpossibleState(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"help", "--hours", "-1"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("exit = %d, want 2 (stdout=%q)", code, stdout.String())
@@ -221,6 +239,8 @@ func TestHelpRefusesImpossibleState(t *testing.T) {
 // The log verb reads the rows back: escalations per kind and the starting rung
 // regenerated from them.
 func TestLogVerbSummary(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	log := filepath.Join(dir, "decide.jsonl")
 	unit := writeUnit(t, map[string]any{"id": "u", "kind": "rebase", "files": 2, "packages": 1})
@@ -251,6 +271,8 @@ func TestLogVerbSummary(t *testing.T) {
 // No verb takes a key on argv: the key reaches the process only as an
 // environment variable nova-secrets exec set (rule 3).
 func TestNoVerbTakesAKeyOnArgv(t *testing.T) {
+	t.Parallel()
+
 	if strings.Contains(usage, "--key ") || strings.Contains(usage, "--api-key") {
 		t.Error("the usage offers a key flag; the key comes only from the environment")
 	}
@@ -262,6 +284,8 @@ func TestNoVerbTakesAKeyOnArgv(t *testing.T) {
 // is registry data and nothing here knows one: a ladder of its own names its
 // own models and the line carries them.
 func TestRoutePastesTheCoordinatorLine(t *testing.T) {
+	t.Parallel()
+
 	reg := filepath.Join(t.TempDir(), "registry.json")
 	body := `{"minds":[
 	  {"name":"tiny","lineage":"local","height":0,"availability":"available","ask":"card","model":"local/tiny-1"},
@@ -296,6 +320,8 @@ func TestRoutePastesTheCoordinatorLine(t *testing.T) {
 // it is asked in place of an id it does not have: "ask on the bus" is the
 // action, not a model to launch.
 func TestRoutePasteNamesHowAMindIsAsked(t *testing.T) {
+	t.Parallel()
+
 	unit := writeUnit(t, map[string]any{"id": "card-92", "kind": "design", "files": 2})
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"route", "--unit", unit, "--no-jev", "--paste"}, &stdout, &stderr); code != 0 {

@@ -23,6 +23,8 @@ import (
 // Antecedent: 285 PRs in about 8h against a land rate of about 5/h, then a
 // recut of 471 cards that opened 54 PRs of which none landed.
 func TestControl48(t *testing.T) {
+	t.Parallel()
+
 	st, client := redisStore48(t)
 	ctx := context.Background()
 	const sprint = "control-00000030"

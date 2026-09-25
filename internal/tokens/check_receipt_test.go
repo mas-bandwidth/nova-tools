@@ -16,6 +16,8 @@ func counts(v ...int64) Counts {
 }
 
 func TestCheckReceiptJoins(t *testing.T) {
+	t.Parallel()
+
 	dayRows := []DayRow{
 		{Date: "2026-09-15", Model: "claude-x", Repo: "nova-tools",
 			Counts: counts(1200, 800, 300, 150, 0)},

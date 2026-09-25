@@ -20,6 +20,8 @@ import (
 // changes no cell, and a bench in the benches SET whose beat has expired
 // still shows its cards with load "down" (cards never disappear).
 func TestControl2389HostRowFromBenchOwnKeys(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
@@ -63,6 +65,8 @@ func TestControl2389HostRowFromBenchOwnKeys(t *testing.T) {
 // bench:<b> hash's done/ok/fail change no cell, and the next tick after a
 // card moves working -> ok shows it in ok, done and ok%.
 func TestHostRowsFromBenchSets(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })

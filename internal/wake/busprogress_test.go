@@ -24,6 +24,8 @@ import (
 // got is not one of them. The refusal and the note are untouched, because the
 // allow-list still decides only what is suppressed and never what is shown.
 func TestProgressIsNeverRelayedAsABusLine(t *testing.T) {
+	t.Parallel()
+
 	b := &Bus{}
 	res := b.Classify(strings.Join([]string{
 		"INBOX WALK commits=1/1 notes=0 elapsed=3ms",

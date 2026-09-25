@@ -86,6 +86,8 @@ func seedStatus(t *testing.T) (*redis.Client, *store.Store) {
 // a = unique required head-and-base verdicts OK, b = required; a rerun is
 // another attempt of the same head, never an extra done.
 func TestStatusPrintsCIxy(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	t.Run("three-heads-one-rerun-one-fail", func(t *testing.T) {

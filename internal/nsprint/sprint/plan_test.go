@@ -244,6 +244,8 @@ func dealSlots(t *testing.T, c *redis.Client, bench string) int {
 // TestPlanControls is the #2380 rev 4 DONE-WHEN: one plan file, validated in
 // full, applied in one atomic step by an authorised seat, readable by any.
 func TestPlanControls(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	const s = "control-2380"
 
@@ -471,6 +473,8 @@ func TestPlanControls(t *testing.T) {
 // as a pair, name registered friends, and are stored by ns_sprint_plan; the
 // function refuses an unregistered friend even when Go validation passed.
 func TestPlanHoldPolicyKeys(t *testing.T) {
+	t.Parallel()
+
 	const head = "#nova-sprint-plan v1\npolicy\tbackpressure_missing\tclosed\npolicy\tci_reruns\t1\n" +
 		"policy\treaders\t1\npolicy\tabsent_after\t60m\nbench\ta\tm1\t6\n"
 	for _, c := range []struct{ tail, want string }{

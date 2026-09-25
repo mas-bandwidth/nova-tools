@@ -31,6 +31,8 @@ import (
 // launch seam` heading, and the platform line belongs in the section's prose
 // where a stranger reads it before the fence.
 func TestFirstRunTranscriptsNameTheirPlatform(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	md := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
 

@@ -16,6 +16,8 @@ import (
 // Darwin (winpath_test.go's shape: the path logic of a platform this build does not run
 // on is proved where the studio sits). linuxRoots applies this directory on linux.
 func TestWSL2ResolverConfigSymlinkDirectoryIsGranted(t *testing.T) {
+	t.Parallel()
+
 	base := t.TempDir()
 	targetDir := filepath.Join(base, "mnt", "wsl")
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {

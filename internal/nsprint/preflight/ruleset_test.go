@@ -53,6 +53,8 @@ func stubGreenRuleset() []Ruleset {
 // TestPreflightStubRulesetWithoutBypassPrintsNamedRefusal verifies DONE-WHEN:
 // preflight against a stub ruleset without the bypass prints the named refusal.
 func TestPreflightStubRulesetWithoutBypassPrintsNamedRefusal(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	// A stub ruleset where dev-landing has NO bypass for nova-lander
@@ -117,6 +119,8 @@ func TestPreflightStubRulesetWithoutBypassPrintsNamedRefusal(t *testing.T) {
 // TestPreflightStubRulesetWithBypassIsGreen verifies that a properly configured
 // ruleset passes preflight.
 func TestPreflightStubRulesetWithBypassIsGreen(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	stub := stubGreenRuleset()
 
@@ -138,6 +142,8 @@ func TestPreflightStubRulesetWithBypassIsGreen(t *testing.T) {
 // TestPreflightDevIntegrityBypassRefuses verifies that dev-integrity with any bypass
 // actor is refused.
 func TestPreflightDevIntegrityBypassRefuses(t *testing.T) {
+	t.Parallel()
+
 	stub := stubGreenRuleset()
 	stub[0].BypassActors = []BypassActor{
 		{ActorID: 1, ActorType: "Integration", BypassMode: "always"},
@@ -158,6 +164,8 @@ func TestPreflightDevIntegrityBypassRefuses(t *testing.T) {
 // TestPreflightDevLandingUnauthorizedBypassRefuses verifies that human/role bypass
 // on dev-landing is refused (humans keep the PR path).
 func TestPreflightDevLandingUnauthorizedBypassRefuses(t *testing.T) {
+	t.Parallel()
+
 	stub := stubGreenRuleset()
 	stub[1].BypassActors = append(stub[1].BypassActors, BypassActor{
 		ActorID: 5, ActorType: "RepositoryRole", BypassMode: "always",
@@ -177,6 +185,8 @@ func TestPreflightDevLandingUnauthorizedBypassRefuses(t *testing.T) {
 
 // TestPreflightMissingRulesRefuses verifies that missing rules are refused.
 func TestPreflightMissingRulesRefuses(t *testing.T) {
+	t.Parallel()
+
 	// Missing deletion
 	stub := stubGreenRuleset()
 	stub[0].Rules = []Rule{{Type: "non_fast_forward"}}
@@ -199,6 +209,8 @@ func TestPreflightMissingRulesRefuses(t *testing.T) {
 // TestFleetLandRulesetDevJSON verifies that the committed fleet/land/ruleset-dev.json
 // matches the specification and passes CheckRuleset.
 func TestFleetLandRulesetDevJSON(t *testing.T) {
+	t.Parallel()
+
 	root := moduleRoot(t)
 	rulesetPath := filepath.Join(root, "fleet", "land", "ruleset-dev.json")
 

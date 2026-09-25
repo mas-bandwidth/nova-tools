@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // A git that never returns is a tool that has stopped saying anything, which from the
@@ -24,7 +26,7 @@ func TestAGitThatHangsIsKilledAndNamed(t *testing.T) {
 	}
 	fake := t.TempDir()
 	script := "#!/bin/sh\nsleep 30\n"
-	if err := os.WriteFile(filepath.Join(fake, "git"), []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(fake, "git"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", fake+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -63,7 +65,7 @@ func TestAGitThatHangsIsKilledAndNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	quick := "#!/bin/sh\necho fine\n"
-	if err := os.WriteFile(filepath.Join(fake, "git"), []byte(quick), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(fake, "git"), []byte(quick), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	out, err := git(t.TempDir(), "fetch", "origin", "main")

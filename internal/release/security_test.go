@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // ---------------------------------------------------------------------------
@@ -40,6 +42,8 @@ func sensitiveForge() *fakeForge {
 // Johnny has read it, and the read is NAMED on the command line so the receipt
 // carries who vouched for it.
 func TestCutRefusesASensitiveRangeWithoutJohnnysRead(t *testing.T) {
+	t.Parallel()
+
 	f := sensitiveForge()
 	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
 	var out, errs bytes.Buffer
@@ -71,6 +75,8 @@ func TestCutRefusesASensitiveRangeWithoutJohnnysRead(t *testing.T) {
 // release that crossed the sensitive list is a fact somebody reads off the
 // terminal and out of a log months later.
 func TestCutWithJohnnysReadSaysSoOnItsOwnLine(t *testing.T) {
+	t.Parallel()
+
 	f := sensitiveForge()
 	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
 	var out, errs bytes.Buffer
@@ -92,6 +98,8 @@ func TestCutWithJohnnysReadSaysSoOnItsOwnLine(t *testing.T) {
 // A range that touched nothing on the list says nothing: the line exists to
 // mark the exception, and a line printed every time is a line nobody reads.
 func TestCutOfAnOrdinaryRangeSaysNothingAboutSensitivePaths(t *testing.T) {
+	t.Parallel()
+
 	f := cutForge()
 	f.files = map[string][]string{"v0.15.10...abc123abc123def": {"docs/SPEC-UPDATE.md", "internal/release/cut.go"}}
 	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
@@ -110,6 +118,8 @@ func TestCutOfAnOrdinaryRangeSaysNothingAboutSensitivePaths(t *testing.T) {
 // `internal/secrets/`, and a tool called `nova-secrets-viewer` under cmd/ is
 // its own directory, not this one.
 func TestSensitiveClassifiesByPrefixAndNothingElse(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		path string
 		hit  bool
@@ -152,6 +162,8 @@ func TestSensitiveClassifiesByPrefixAndNothingElse(t *testing.T) {
 // what --local-diff and --paths-from produce. See the lessons in
 // docs/SPEC-RELEASE.md and TestCutNamesTheTruncationBeforeTheHitsItFoundInIt.
 func TestCutRefusesARangeTooBigToClassify(t *testing.T) {
+	t.Parallel()
+
 	f := cutForge()
 	var many []string
 	for i := 0; i < CompareFileCap; i++ {
@@ -180,6 +192,8 @@ func TestCutRefusesARangeTooBigToClassify(t *testing.T) {
 // before anything is tagged: whitespace would split the line and `=` is what
 // internal/oneline reads as a separator.
 func TestCutRefusesASecurityReadNoReceiptCouldCarry(t *testing.T) {
+	t.Parallel()
+
 	for _, bad := range []string{"", "   ", "note 1234", "read=1234", "nota\tb", "-leading-dash"} {
 		if err := ValidSecurityRead(bad); err == nil {
 			t.Errorf("accepted %q", bad)
@@ -213,6 +227,8 @@ func TestCutRefusesASecurityReadNoReceiptCouldCarry(t *testing.T) {
 // the only place the digest lived was the changelog, and `adopt` had to be
 // handed it by a person retyping it.
 func TestTheTagIsAnnotatedAndCarriesTheSumsDigest(t *testing.T) {
+	t.Parallel()
+
 	goos, goarch := platformOf(t, "linux-amd64")
 	out := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	sums := filepath.Join(ArtifactDir(out, "v0.16.0", goos, goarch), SumsFile)
@@ -242,6 +258,8 @@ func TestTheTagIsAnnotatedAndCarriesTheSumsDigest(t *testing.T) {
 // first, then the ref that points at it. A ref created first would point at the
 // commit, which is the lightweight tag this replaces.
 func TestTheAnnotatedTagIsTheObjectThenTheRef(t *testing.T) {
+	t.Parallel()
+
 	object := tagObjectArgs("o/n", "v0.16.0", "abc123", "v0.16.0\n\nsums=deadbeef\n")
 	joined := strings.Join(object, " ")
 	for _, want := range []string{"--method POST", "repos/o/n/git/tags", "tag=v0.16.0", "object=abc123", "type=commit", "message=v0.16.0"} {
@@ -268,6 +286,8 @@ func TestTheAnnotatedTagIsTheObjectThenTheRef(t *testing.T) {
 // A digest is only a digest on its own line: a sha mentioned in prose inside a
 // release note must not be read as the one the release was cut with.
 func TestSumsInAnnotationReadsOnlyItsOwnLine(t *testing.T) {
+	t.Parallel()
+
 	digest := strings.Repeat("ab", 32)
 	if got := SumsInAnnotation("v0.16.0\n\nCut from abc.\nsums=" + digest + "\n"); got != digest {
 		t.Errorf("got %q", got)
@@ -287,6 +307,8 @@ func TestSumsInAnnotationReadsOnlyItsOwnLine(t *testing.T) {
 // through the tag OBJECT is the whole point of decision 2: it travelled by git,
 // not beside the bits, and nobody has to transcribe it.
 func TestAdoptReadsTheDigestFromTheTagObject(t *testing.T) {
+	t.Parallel()
+
 	goos, goarch := platformOf(t, "linux-amd64")
 	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	served := ArtifactDir(onHulk, "v0.16.0", goos, goarch)
@@ -316,6 +338,8 @@ func TestAdoptReadsTheDigestFromTheTagObject(t *testing.T) {
 // came from: which of the two is wrong is the whole question, and "the digest
 // does not match" cannot answer it.
 func TestAdoptRefusesWhenTheTagDigestAndTheBitsDisagree(t *testing.T) {
+	t.Parallel()
+
 	goos, goarch := platformOf(t, "linux-amd64")
 	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	served := ArtifactDir(onHulk, "v0.16.0", goos, goarch)
@@ -341,6 +365,8 @@ func TestAdoptRefusesWhenTheTagDigestAndTheBitsDisagree(t *testing.T) {
 // A tag with no annotation -- a lightweight ref, which is every tag this tool
 // created before today -- is said plainly, with the flag that gets past it.
 func TestAdoptSaysSoWhenTheTagCarriesNoDigest(t *testing.T) {
+	t.Parallel()
+
 	f := &fakeForge{messages: map[string]string{"v0.16.0": "v0.16.0\n\nCut from abc123.\n"}}
 	s := &fakeSSH{}
 	var o, e bytes.Buffer
@@ -386,6 +412,8 @@ func pulled(t *testing.T, version string) (out string, s *fakeSSH, changelog str
 // STAYS, marked in the changelog as pulled: a tag that vanishes is a history
 // that cannot be read, and this estate has never force-moved or deleted one.
 func TestPullDeletesTheArtifactsHereAndOnEveryMachine(t *testing.T) {
+	t.Parallel()
+
 	out, s, changelog := pulled(t, "v0.16.0")
 	goos, goarch := platformOf(t, "linux-amd64")
 	local := ArtifactDir(out, "v0.16.0", goos, goarch)
@@ -458,6 +486,8 @@ func TestPullDeletesTheArtifactsHereAndOnEveryMachine(t *testing.T) {
 // installed. Anything else sitting in that directory is somebody's, not this
 // verb's.
 func TestPullDeletesOnlyWhatTheChecksumFileNames(t *testing.T) {
+	t.Parallel()
+
 	out, s, changelog := pulled(t, "v0.16.0")
 	goos, goarch := platformOf(t, "linux-amd64")
 	local := ArtifactDir(out, "v0.16.0", goos, goarch)
@@ -485,6 +515,8 @@ func TestPullDeletesOnlyWhatTheChecksumFileNames(t *testing.T) {
 // `adopt --dry-run` does: nothing deleted here, nothing deleted there, and the
 // changelog untouched.
 func TestPullDryRunDeletesNothing(t *testing.T) {
+	t.Parallel()
+
 	out, s, changelog := pulled(t, "v0.16.0")
 	goos, goarch := platformOf(t, "linux-amd64")
 	local := ArtifactDir(out, "v0.16.0", goos, goarch)
@@ -523,6 +555,8 @@ func TestPullDryRunDeletesNothing(t *testing.T) {
 // the same rule adopt has, on the verb that deletes rather than the one that
 // installs.
 func TestPullRefusesAPathTheRemoteShellWouldReadAsSyntax(t *testing.T) {
+	t.Parallel()
+
 	out, s, changelog := pulled(t, "v0.16.0")
 	for _, hostile := range []string{"/tmp/x; rm -rf /", "~/build/../../etc", "relative/build", "/tmp/$(id)"} {
 		var o, e bytes.Buffer
@@ -542,6 +576,8 @@ func TestPullRefusesAPathTheRemoteShellWouldReadAsSyntax(t *testing.T) {
 // run twice must not stack two notes, and a pull of a version this changelog
 // does not describe is a pull somebody aimed at the wrong file.
 func TestMarkPulledIsIdempotentAndRefusesAnUnknownVersion(t *testing.T) {
+	t.Parallel()
+
 	text := "# nova-tools changelog\n\n## v0.16.0 — 2026-09-18\n\n- #1 the leak\n"
 	note := PulledNote(at(t), "it shipped a sealed key")
 	once, err := MarkPulled(text, "v0.16.0", note)
@@ -573,6 +609,8 @@ func TestMarkPulledIsIdempotentAndRefusesAnUnknownVersion(t *testing.T) {
 // the names are the release's own, read from the checksum file it was built
 // with.
 func TestPullRefusesWhenItCannotNameTheFiles(t *testing.T) {
+	t.Parallel()
+
 	_, s, changelog := pulled(t, "v0.16.0")
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"pull", "--version", "v0.16.0", "--out", t.TempDir(),
@@ -599,6 +637,8 @@ func TestPullRefusesWhenItCannotNameTheFiles(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIssue2285(t *testing.T) {
+	t.Parallel()
+
 	// -- fence 1: Locally it goes through safepath.RemoveUnder, only for
 	// regular files. A symlink or a directory in the release dir survives.
 	t.Run("non-regular-file", func(t *testing.T) {
@@ -648,7 +688,7 @@ func TestIssue2285(t *testing.T) {
 		}
 		installed := filepath.Join(binDir, "nova-update")
 		installedContent := []byte("this is the installed binary, not the release stamp")
-		if err := os.WriteFile(installed, installedContent, 0o755); err != nil {
+		if err := testbin.WriteExecutable(installed, installedContent, 0o755); err != nil {
 			t.Fatal(err)
 		}
 		local := ArtifactDir(out, "v0.16.0", goos, goarch)

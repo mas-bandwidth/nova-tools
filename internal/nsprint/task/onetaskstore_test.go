@@ -130,6 +130,8 @@ func (fx *oneStore) unchanged(what string, before map[string]string) {
 // blocked state; an unmet DEPENDS-ON is waiting and never ready). The migrate
 // subtests and drain_gate belong to PR B.
 func TestOneTaskStoreControls(t *testing.T) {
+	t.Parallel()
+
 	t.Run("push", func(t *testing.T) {
 		fx := newOneStore(t)
 		res := fx.push("p1", "a", nil)

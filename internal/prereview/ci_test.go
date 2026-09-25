@@ -52,6 +52,8 @@ func tuningWithCI() Tuning {
 // off, a score of 8 PASSes; with ci named in checks_enabled, it BOUNCEs.
 // #2522 at 8359db4f is green.
 func TestRecordedRollupsAreThe2704Controls(t *testing.T) {
+	t.Parallel()
+
 	if DefaultTuning().Enabled["ci"] {
 		t.Fatal("ci is in the default checks_enabled set")
 	}
@@ -95,6 +97,8 @@ func TestRecordedRollupsAreThe2704Controls(t *testing.T) {
 // ci-ok on some other commit does not bounce a head whose own ci-ok succeeded,
 // and a green ci-ok on some other commit does not pass a head that has none.
 func TestCICheckIgnoresARollupFromAnotherSHA(t *testing.T) {
+	t.Parallel()
+
 	head, runs := loadRollup(t, "2522-8359db4f.json")
 	stale := strings.Repeat("b", 40)
 	withStaleRed := append([]CheckRun{}, runs...)
@@ -122,6 +126,8 @@ func TestCICheckIgnoresARollupFromAnotherSHA(t *testing.T) {
 // TestLaterCIAttemptIsTheOneThatCounts. A rerun's success is the head's answer;
 // a later failure is, too.
 func TestLaterCIAttemptIsTheOneThatCounts(t *testing.T) {
+	t.Parallel()
+
 	head := strings.Repeat("d", 40)
 	runs := []CheckRun{
 		{Name: ciOK, Status: "completed", Conclusion: "failure", HeadSHA: head, CompletedAt: "2026-09-22T00:00:00Z"},
@@ -142,6 +148,8 @@ func TestLaterCIAttemptIsTheOneThatCounts(t *testing.T) {
 // by timestamp would keep the older success, and a score above pass_above
 // would PASS while that attempt is still pending. Both list orders count.
 func TestQueuedRerunWithNoTimestampsDoesNotPass(t *testing.T) {
+	t.Parallel()
+
 	head := strings.Repeat("e", 40)
 	success := fmt.Sprintf(`{"id":10,"name":%q,"status":"completed","conclusion":"success","head_sha":%q,"started_at":"2026-09-22T00:00:00Z","completed_at":"2026-09-22T00:05:00Z"}`, ciOK, head)
 	queued := fmt.Sprintf(`{"id":11,"name":%q,"status":"queued","conclusion":null,"head_sha":%q,"started_at":null,"completed_at":null}`, ciOK, head)
@@ -170,6 +178,8 @@ func TestQueuedRerunWithNoTimestampsDoesNotPass(t *testing.T) {
 // neutral, and a score above pass_above would PASS while the head is still red
 // or still running.
 func TestInProgressCIOKDoesNotPass(t *testing.T) {
+	t.Parallel()
+
 	head := strings.Repeat("c", 40)
 	got := ciCheck(PR{Head: head, Checks: []CheckRun{{
 		Name: ciOK, Status: "in_progress", HeadSHA: head, StartedAt: "2026-09-22T00:00:00Z",
@@ -188,6 +198,8 @@ func TestInProgressCIOKDoesNotPass(t *testing.T) {
 // TestCIIsKnownAndOffByDefault. checks_enabled can name ci, and a default run
 // does not enable it: schema has no ci-ok job. ci still prints before the score.
 func TestCIIsKnownAndOffByDefault(t *testing.T) {
+	t.Parallel()
+
 	saw := false
 	for _, n := range CheckNames {
 		if n == "ci" {

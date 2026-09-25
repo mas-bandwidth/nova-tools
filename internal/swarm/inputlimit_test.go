@@ -35,6 +35,8 @@ func inputLimitFixture(t *testing.T) []byte {
 // once: every provider says this in its own words, and the tool meets a new provider every
 // time a worker description changes.
 func TestTheProvidersInputLimitIsItsOwnFailureClass(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		name, log, want string
 		extra           []string
@@ -103,6 +105,8 @@ func TestTheProvidersInputLimitIsItsOwnFailureClass(t *testing.T) {
 // component name, an error prefix -- prose has more), and no quote character comes before it
 // on the line.
 func TestAMarkIsTheHarnessesOwnLabelAndNotAWordInASentence(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		name, log, want string
 	}{
@@ -229,6 +233,8 @@ func TestAMarkIsTheHarnessesOwnLabelAndNotAWordInASentence(t *testing.T) {
 // colon that only the SECOND token of an event prefix may carry, and the two-character floor
 // that keeps a single letter from being a verb of this family.
 func TestTheEventPrefixIsTwoCapsTokens(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		token       string
 		colonOK, ok bool
@@ -278,6 +284,8 @@ func TestTheEventPrefixIsTwoCapsTokens(t *testing.T) {
 // A collision is fixed on EITHER side: drop the word from the table when no provider specimen
 // says it (`refused`, `aborted`), or rename the event line. Never by leaving both.
 func TestNoEventLineOfThisFamilyHasAMarkForItsSecondWord(t *testing.T) {
+	t.Parallel()
+
 	prefix := regexp.MustCompile(`"([A-Z][A-Z0-9-]+) ([A-Z][A-Z0-9-]*):?`)
 	seen := 0
 	err := filepath.WalkDir(filepath.Join("..", ".."), func(path string, d os.DirEntry, err error) error {
@@ -319,6 +327,8 @@ func TestNoEventLineOfThisFamilyHasAMarkForItsSecondWord(t *testing.T) {
 // spend another 215 seconds and another input proving the same spec still does not fit.
 // A request that did not fit is not a wait.
 func TestAnInputLimitIsNotReadAsARateLimitToRetry(t *testing.T) {
+	t.Parallel()
+
 	log := inputLimitFixture(t)
 	if !RateLimited(log) {
 		t.Fatal("the provider's sentence holds the words `rate limit`; this test is about what is done with that")
@@ -340,6 +350,8 @@ func TestAnInputLimitIsNotReadAsARateLimitToRetry(t *testing.T) {
 // 2026-09-11, arriving by the other road): the completion evidence the supervisor wrote is
 // the outcome, and a reap's own end is the supervisor's verdict.
 func TestTheEndAnInputLimitMayRewrite(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "harness.log"), inputLimitFixture(t), 0o644); err != nil {
 		t.Fatal(err)
@@ -393,6 +405,8 @@ func TestTheEndAnInputLimitMayRewrite(t *testing.T) {
 // that names `max_input` and hands the harness more than that is refused with the class and
 // the MEASURED size, before a provider is paid to say the same thing.
 func TestATaskOverItsMaxInputIsRefusedWithTheMeasuredSize(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		name     string
 		maxInput int
@@ -427,6 +441,8 @@ func TestATaskOverItsMaxInputIsRefusedWithTheMeasuredSize(t *testing.T) {
 // is ADDED to the table, never substituted for it: a caller naming their own provider's
 // words cannot silently un-teach the tool OpenCode's.
 func TestAWorkerDescriptionMayNameItsOwnProviderPhrases(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "worker.json")
 	body := `{"name":"w","provider":"p","model":"m","env_var":"P_KEY","key_file":"` +
@@ -456,6 +472,8 @@ func TestAWorkerDescriptionMayNameItsOwnProviderPhrases(t *testing.T) {
 // never retried. A provider's sentence is a SENTENCE: long enough to be one, and carrying a
 // space or a digit so that one word can never be it.
 func TestAProviderPhraseHasAFloor(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		phrase string
 		ok     bool
@@ -498,6 +516,8 @@ func TestAProviderPhraseHasAFloor(t *testing.T) {
 // AND THE TABLE MEETS ITS OWN FLOOR. A phrase this repo ships that a description would be
 // refused for is a rule the tool does not keep.
 func TestTheTableMeetsItsOwnFloor(t *testing.T) {
+	t.Parallel()
+
 	for _, phrase := range InputLimitPhrases {
 		if reason, ok := TooShortForAPhrase(phrase); !ok {
 			t.Errorf("the table carries %q, which a description could not: %s", phrase, reason)
@@ -509,6 +529,8 @@ func TestTheTableMeetsItsOwnFloor(t *testing.T) {
 // the provider's refusal in its harness log is named `input-limit`, lands in failed/, and is
 // NOT re-queued. This is the shape of the two dead jobs, and it needs no provider.
 func TestARecoveredJobThatDiedOnTheInputLimitIsNamed(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p, w := recoveryPool(t, dir)
 	id := NewID(time.Now().UTC(), "inputlimit")
@@ -573,6 +595,8 @@ func TestARecoveredJobThatDiedOnTheInputLimitIsNamed(t *testing.T) {
 // the words -- no class, an unknown class, a value beside it -- is read as no signal, so the
 // fallback is the transcript heuristic and a false field cannot mint a class.
 func TestAStructuredSignalIsReadAsAField(t *testing.T) {
+	t.Parallel()
+
 	sig, ok := ReadInputLimitSignal([]byte("\x1b[91mINPUT LIMIT\x1b[0m class=token value=12345 limit=8192\n"))
 	if !ok {
 		t.Fatal("a structured line is a signal")
@@ -586,6 +610,8 @@ func TestAStructuredSignalIsReadAsAField(t *testing.T) {
 }
 
 func TestAProseLineIsNotAStructuredSignal(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []string{
 		"Error: Rate limit reached: input token limit exceeded\n",
 		"INPUT LIMIT class=fizz value=1 limit=2\n",
@@ -605,6 +631,8 @@ func TestAProseLineIsNotAStructuredSignal(t *testing.T) {
 // retried, so a class lost here is a second identical launch the dispatcher never means to
 // make.
 func TestInputLimitEndReadsTheStructuredSignalAsAField(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "harness.log"), []byte("INPUT LIMIT class=token value=12345 limit=8192\n"), 0o644); err != nil {
 		t.Fatal(err)

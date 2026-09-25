@@ -41,6 +41,8 @@ func readReady(t *testing.T, path, node string) string {
 // disk, so `ready` then reads the dependent ready; a refused line leaves the file
 // byte-identical and writes nothing to stdout.
 func TestIssue1796AcceptGraphThroughRun(t *testing.T) {
+	t.Parallel()
+
 	path, seed := writeAcceptGraph(t)
 	if got := readReady(t, path, "issues-sweep"); !strings.Contains(got, "ready=false") {
 		t.Fatalf("before accept: %q, want ready=false", got)

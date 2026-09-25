@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 type verbFakeBench struct {
@@ -33,7 +33,7 @@ func (f *verbFakeBench) Run(ctx context.Context, argv []string) (string, error) 
 		stage := strings.TrimSuffix(argv[len(argv)-1], "/")
 		for _, a := range argv {
 			if t, ok := strings.CutPrefix(a, "--include="); ok {
-				os.WriteFile(filepath.Join(stage, t), []byte(v), 0o755)
+				testbin.WriteExecutable(filepath.Join(stage, t), []byte(v), 0o755)
 			}
 		}
 		return "", nil

@@ -16,6 +16,8 @@ import (
 // empty -- against miniredis, whose clock the test moves instead of waiting.
 
 func TestAgainstRedisTheKeyExpiresAndTheMemoryDoesNot(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	ctx := context.Background()
 	st, err := Open(ctx, mr.Addr(), DefaultUser)
@@ -53,6 +55,8 @@ func TestAgainstRedisTheKeyExpiresAndTheMemoryDoesNot(t *testing.T) {
 }
 
 func TestAddrTakesHostPortAndRefusesAGuess(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct{ in, want string }{
 		{"store.invalid:6380", "store.invalid:6380"},
 		{"redis://store.invalid:6380", "store.invalid:6380"},
@@ -88,6 +92,8 @@ func TestAddrTakesHostPortAndRefusesAGuess(t *testing.T) {
 // string. This is pure string parsing: no network is dialled, and Stella's
 // synthetic secret and synthetic host never named a real credential.
 func TestAddrGrammarRefusesEverythingButHostPortWithoutLeakingASecret(t *testing.T) {
+	t.Parallel()
+
 	const secret = "SYNTHETIC_SECRET"
 	refusals := []string{
 		// The exact synthetic URL from comment 5783425783: a query value
@@ -156,6 +162,8 @@ func TestAddrGrammarRefusesEverythingButHostPortWithoutLeakingASecret(t *testing
 // holds is present, and friend:<name>:last surviving the TTL does not
 // flip that. miniredis moves its clock; the test does not wait.
 func TestAgainstRedisAMissingBeatKeyIsAbsentAndALiveKeyIsPresent(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	ctx := context.Background()
 	st, err := Open(ctx, mr.Addr(), DefaultUser)
@@ -210,6 +218,8 @@ func TestAgainstRedisAMissingBeatKeyIsAbsentAndALiveKeyIsPresent(t *testing.T) {
 // protocol: `nova-wake beat --width 8` lands as the hash friend:<name> with
 // at and width, carrying the beat's TTL, and :last with none.
 func TestAgainstRedisBeatWritesWidthAndTTL(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	ctx := context.Background()
 	st, err := Open(ctx, mr.Addr(), DefaultUser)
@@ -250,6 +260,8 @@ func TestAgainstRedisBeatWritesWidthAndTTL(t *testing.T) {
 // and leaves the row exactly as it was, no field written and no TTL given; and
 // a key of another type is refused the same way, never deleted.
 func TestAgainstRedisTheFriendRowIsPresenceAndBeatRefusesIt(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	ctx := context.Background()
 	st, err := Open(ctx, mr.Addr(), DefaultUser)
@@ -307,6 +319,8 @@ func TestAgainstRedisTheFriendRowIsPresenceAndBeatRefusesIt(t *testing.T) {
 // friend:<name> as a plain string with a TTL. Reading it is not a failure,
 // and the next beat replaces it with the hash.
 func TestAgainstRedisALegacyStringBeatIsReplaced(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	ctx := context.Background()
 	st, err := Open(ctx, mr.Addr(), DefaultUser)
@@ -336,6 +350,8 @@ func TestAgainstRedisALegacyStringBeatIsReplaced(t *testing.T) {
 
 // TestAgainstRedisFriendsReadsTheSet: the roster is SMEMBERS friends.
 func TestAgainstRedisFriendsReadsTheSet(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	ctx := context.Background()
 	st, err := Open(ctx, mr.Addr(), DefaultUser)

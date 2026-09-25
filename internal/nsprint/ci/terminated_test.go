@@ -9,12 +9,12 @@ package ci_test
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // killedOutput is what `go test` prints when the bench SIGTERMs a test
@@ -33,13 +33,15 @@ func termScript(t *testing.T, passAfter bool) string {
 	}
 	body += "printf '%s' '" + killedOutput + "'\nexit 1\n"
 	p := filepath.Join(dir, "term.sh")
-	if err := os.WriteFile(p, []byte(body), 0o755); err != nil {
+	if err := testbin.WriteExecutable(p, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return p
 }
 
 func TestBenchKilled(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		log  string
 		want bool
@@ -61,6 +63,8 @@ func TestBenchKilled(t *testing.T) {
 }
 
 func TestCITerminatedOnlyCheckIsReRunNotRed(t *testing.T) {
+	t.Parallel()
+
 	f := newRunFixture(t)
 	f.client.HSet(f.ctx, ci.ConfigKey(runRepo), "checks", "head,test", "check:test", termScript(t, true))
 	f.client.HSet(f.ctx, ci.PRKey(runRepo, 11), "head", f.sha)
@@ -93,6 +97,8 @@ func TestCITerminatedOnlyCheckIsReRunNotRed(t *testing.T) {
 }
 
 func TestCIHeadThatAlwaysDiesEndsRedAfterBoundedReruns(t *testing.T) {
+	t.Parallel()
+
 	f := newRunFixture(t)
 	f.client.HSet(f.ctx, ci.ConfigKey(runRepo), "checks", "head,test", "check:test", termScript(t, false))
 	if r, err := ci.Request(f.ctx, f.st, ci.RequestRequest{Repo: runRepo, SHA: f.sha, URL: f.url}); err != nil || r.Status != "CREATED" {

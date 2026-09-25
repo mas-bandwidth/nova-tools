@@ -219,6 +219,8 @@ func assertNoAsleep(t *testing.T, mr *miniredis.Miniredis, rows [][]IdleRow) {
 }
 
 func TestIdleEscalatesNudgeWakeRedistribute(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	// idle_ticks from a measured take latency: p95 2.4 s at a 1 s tick = 3.
 	idleTicks, err := IdleTicksFromTakeLatency([]time.Duration{
@@ -364,6 +366,8 @@ func TestIdleEscalatesNudgeWakeRedistribute(t *testing.T) {
 // state, the unit is reloaded, and the friend is working or the 5 tasks are
 // on other queues with the moved-from title, with zero coordinator calls.
 func TestAcceptance3033(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name      string
@@ -456,6 +460,8 @@ func TestAcceptance3033(t *testing.T) {
 // must not advance to 1 when Nudge itself errors, or the next tick skips the
 // nudge and goes straight to wake.
 func TestIdleFailedNudgeIsRetriedNotSkipped(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	w := newIdleWorld()
 	w.addFriend("johnny", 3)
@@ -499,6 +505,8 @@ func TestIdleFailedNudgeIsRetriedNotSkipped(t *testing.T) {
 // 1, so the next tick repeats repair-wake + wake instead of jumping to
 // redistribute.
 func TestIdleFailedWakeIsRetriedNotSkipped(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	w := newIdleWorld()
 	w.addFriend("johnny", 3)
@@ -572,6 +580,8 @@ func TestIdleStatesMutationCannotWidenLedger(t *testing.T) {
 // adapter can dedupe the replay) and must not be reused by a later,
 // unrelated episode for the same friend.
 func TestIdleActionIdemKeyStableAcrossRetryDistinctAcrossEpisodes(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	w := newIdleWorld()
 	w.addFriend("johnny", 3)
@@ -625,6 +635,8 @@ func TestIdleActionIdemKeyStableAcrossRetryDistinctAcrossEpisodes(t *testing.T) 
 // Slots observed, a friend under its slot count with open work must still
 // escalate.
 func TestIdleDeficitAdvancesDespitePartialWorking(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	w := newIdleWorld()
 	w.addFriend("johnny", 10)
@@ -707,6 +719,8 @@ func parseIdleTestInt64(s string) (int64, error) {
 // IdleLedger.Load), so a restarted ladder (a fresh IdleLadder value, same
 // backing store) continues counting where the last process left off.
 func TestIdleEpisodeSurvivesReconcilerRestart(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	w := newIdleWorld()
 	w.addFriend("johnny", 3)

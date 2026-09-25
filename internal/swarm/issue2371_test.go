@@ -12,6 +12,8 @@ import (
 )
 
 func TestIssue2371(t *testing.T) {
+	t.Parallel()
+
 	t.Run("schema_and_hash", func(t *testing.T) {
 		schemaIsString := func() {
 			r := validLaunchRecord()

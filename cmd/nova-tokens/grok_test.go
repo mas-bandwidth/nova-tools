@@ -14,6 +14,8 @@ import (
 // the tokens folded and the cost was dropped: TOKENS AVG printed usd=0 where
 // the source had reported a tick, and nothing anywhere carried the dollars.
 func TestGrokUsageFoldsToOneRowWithInOutUsd(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
 	out := mkdir(t, filepath.Join(dir, "out"))

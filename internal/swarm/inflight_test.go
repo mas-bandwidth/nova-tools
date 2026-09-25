@@ -22,6 +22,8 @@ import (
 // one at a time with the state checked after each. Without the hold-back the three are never
 // parked, the running count passes the cap, and the first check fails at once.
 func TestARouteAtItsCapHoldsTheRestBack(t *testing.T) {
+	t.Parallel()
+
 	f := newInflight(2)
 	const route = "opencode/muse-spark-1.3-contributor-free@muse"
 	var running, peak atomic.Int64
@@ -88,6 +90,8 @@ func TestARouteAtItsCapHoldsTheRestBack(t *testing.T) {
 // the tier queues on the credential -- so the route is the provider, the model and the key,
 // and neither the model alone nor the key alone is the unit.
 func TestTheCapIsPerRouteAndNotGlobal(t *testing.T) {
+	t.Parallel()
+
 	f := newInflight(1)
 	a := RouteKey("opencode/muse-spark", "key-one")
 	b := RouteKey("opencode/muse-spark", "key-two")
@@ -119,6 +123,8 @@ func TestTheCapIsPerRouteAndNotGlobal(t *testing.T) {
 // NO CAP IS TODAY'S BEHAVIOUR, BYTE FOR BYTE. A batch that asked for none launches every
 // card at once and prints no ROUTE line at all.
 func TestNoCapHoldsNothingBack(t *testing.T) {
+	t.Parallel()
+
 	f := newInflight(0)
 	const route = "m@k"
 	for i := 0; i < 50; i++ {
@@ -135,6 +141,8 @@ func TestNoCapHoldsNothingBack(t *testing.T) {
 // its deadline has passed: a card still held then is never going to run, and a launcher
 // goroutine parked on a condition variable is a batch that does not return.
 func TestClosingTheGateWakesEveryWaiterAndLaunchesNone(t *testing.T) {
+	t.Parallel()
+
 	f := newInflight(1)
 	const route = "m@k"
 	if !f.acquire(route) {
@@ -161,6 +169,8 @@ func TestClosingTheGateWakesEveryWaiterAndLaunchesNone(t *testing.T) {
 // A ROUTE NAMES ITS KEY BY PROFILE AND NEVER BY VALUE. This string reaches a STATUS line and
 // a log; a secret that can reach a log is a secret that will.
 func TestARouteNamesTheProfileNeverTheSecret(t *testing.T) {
+	t.Parallel()
+
 	got := RouteKey("opencode/muse", "muse-contributor-free")
 	if !strings.Contains(got, "muse-contributor-free") {
 		t.Fatalf("the route names the auth PROFILE: %q", got)
@@ -191,6 +201,8 @@ func waitFor(t *testing.T, ok func() bool) {
 // held-back=…` is read by splitting on spaces, so a route printed raw turns one line into
 // two and every field after it into a stranger -- and a newline in it forges a whole line.
 func TestTheRouteIsOneFieldOnTheStatusLine(t *testing.T) {
+	t.Parallel()
+
 	f := newInflight(1)
 	route := RouteKey("prov/model", "/tmp/my keys/auth.json")
 	if !f.acquire(route) {

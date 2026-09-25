@@ -89,6 +89,8 @@ func TestNativeDrainDeliversPoolIdentityToChild(t *testing.T) {
 }
 
 func TestBoundaryIdentityNegativeControlFallsBackToBenchConfigOrFails(t *testing.T) {
+	t.Parallel()
+
 	// Negative control verification:
 	// 1. Without pool identity delivery and config isolation, a commit created inside a job
 	//    falls back to hostile bench gitconfig (e.g. Hostile Ghost).

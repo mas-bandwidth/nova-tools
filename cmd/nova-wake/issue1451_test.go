@@ -13,6 +13,8 @@ import (
 // usage; the door is the LAST clause of each refusal line, and one bare verb may
 // refuse several missing flags, one line each, which this test reads one by one.
 func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	const door = "; run: nova-wake help"
 
 	help := wakeRun(t, "help")

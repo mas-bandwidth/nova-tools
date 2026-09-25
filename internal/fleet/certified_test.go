@@ -33,6 +33,8 @@ func row(name, roles, notes string) string {
 
 // TestCertifiedBenchNamesIsThePool: bench role and a dated certification, in file order.
 func TestCertifiedBenchNamesIsThePool(t *testing.T) {
+	t.Parallel()
+
 	reg := certifiedFixture(t,
 		row("bench-old", "bench", "certified=2026-09-01 the first one"),
 		row("bench-new", "bench", "certified=2026-09-18 (reports/fleet/certify-bench-new.md)"),
@@ -48,6 +50,8 @@ func TestCertifiedBenchNamesIsThePool(t *testing.T) {
 
 // TestCertifiedReadsTheDate: the date is the field, whatever follows it.
 func TestCertifiedReadsTheDate(t *testing.T) {
+	t.Parallel()
+
 	reg := certifiedFixture(t, row("bench-new", "bench", "certified=2026-09-18 (a report)"))
 	m, ok := reg.Lookup("bench-new")
 	if !ok {

@@ -39,6 +39,8 @@ func writeAllowlist(t *testing.T, root string, lines ...string) {
 }
 
 func TestPublicClassListedRepoIsAdmitted(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeAllowlist(t, root, "acme/public")
 	card := "RESULT: x\nSTEP 1\n" + forgeClone("acme/public") + " repo\n"
@@ -48,6 +50,8 @@ func TestPublicClassListedRepoIsAdmitted(t *testing.T) {
 }
 
 func TestPublicClassUnlistedRepoIsRefusedNamingIt(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeAllowlist(t, root, "acme/public")
 	card := "RESULT: x\nSTEP 1\n" + forgeClone("acme/secret") + " repo\n"
@@ -66,6 +70,8 @@ func TestPublicClassUnlistedRepoIsRefusedNamingIt(t *testing.T) {
 }
 
 func TestPaidClassAdmitsBoth(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeAllowlist(t, root, "acme/public")
 	listed := "RESULT: x\n" + forgeClone("acme/public") + " repo\n"

@@ -42,6 +42,8 @@ func runPush(t *testing.T, args ...string) (int, string, string) {
 // This drives the write and the read over one miniredis, through the same internal/redisq
 // that nova-swarm uses, and asserts the card that comes back is the card that went in.
 func TestPushThenPullReturnsTheSameCard(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	path := cardFile(t, "card-9346", "RESULT: CARD-9346 the ready set has a writer")
 
@@ -92,6 +94,8 @@ func TestPushThenPullReturnsTheSameCard(t *testing.T) {
 // is behind the cursor. Pushed, acknowledged, never delivered, never missed. So push makes
 // the group itself, and this pulls WITHOUT calling EnsureGroup first to prove it.
 func TestPushMakesTheGroupSoNothingIsPushedBehindTheCursor(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	path := cardFile(t, "card-1", "RESULT: CARD-1 a card pushed before any bench woke up")
 
@@ -115,6 +119,8 @@ func TestPushMakesTheGroupSoNothingIsPushedBehindTheCursor(t *testing.T) {
 // TestPushDirectoryModeIsTheSameContract: pull has two modes and so does push. A card in the
 // directory queue is read by the same reader nova-swarm falls back to.
 func TestPushDirectoryModeIsTheSameContract(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	path := cardFile(t, "card-dir", "RESULT: CARD-DIR the fallback has a writer too")
 
@@ -151,6 +157,8 @@ func TestPushDirectoryModeIsTheSameContract(t *testing.T) {
 // TestPushRefusesInOneRunNamingEveryProblem: a coordinator pushing a batch by hand finds out
 // about all of it at once. Each refusal is one line on stderr, exit 2, nothing written.
 func TestPushRefusesInOneRunNamingEveryProblem(t *testing.T) {
+	t.Parallel()
+
 	code, out, errb := runPush(t, "--priority", "-1")
 	if code != 2 {
 		t.Fatalf("a push with nothing named exits %d, want 2", code)
@@ -169,6 +177,8 @@ func TestPushRefusesInOneRunNamingEveryProblem(t *testing.T) {
 // green, small and next and ONLY those. A card in a fifth lane is written, acknowledged and
 // never taken, which is the worst shape a queue can have: it looks like it worked.
 func TestPushRefusesALaneNobodyReads(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	path := cardFile(t, "card-2", "RESULT: CARD-2 a card for a lane nobody reads")
 
@@ -199,6 +209,8 @@ func TestPushRefusesALaneNobodyReads(t *testing.T) {
 // TestPushRefusesACardWithNoResultLine and a label that cannot name a slot directory. Both
 // are refused at the ONE write rather than on the bench that takes it twenty minutes later.
 func TestPushRefusesACardWithNoResultLine(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 
 	noResult := cardFile(t, "card-3", "TODO: I meant to write this one")
@@ -232,6 +244,8 @@ func TestPushRefusesACardWithNoResultLine(t *testing.T) {
 // TestPushRefusesTwoStoresAtOnce: one mode per call. A card written to both is a card two
 // benches take, and the fence neither token sees.
 func TestPushRefusesTwoStoresAtOnce(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	path := cardFile(t, "card-6", "RESULT: CARD-6 two stores")
 	code, _, errb := runPush(t, "--stream", "fix", "--lane", "red", "--card", path,
@@ -247,6 +261,8 @@ func TestPushRefusesTwoStoresAtOnce(t *testing.T) {
 // TestPushRefusesUnsafeStream: --stream reaches a directory name on disk in directory mode,
 // so a stream name that escapes the queue root or carries illegal characters is refused.
 func TestPushRefusesUnsafeStream(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	path := cardFile(t, "card-stream", "RESULT: test stream validation")
 
@@ -265,6 +281,8 @@ func TestPushRefusesUnsafeStream(t *testing.T) {
 // in their body across multiple lines. In directory mode, the entire body must round-trip
 // without truncation or corruption.
 func TestPushDirectoryModeMultilineBodyRoundTrips(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	multilineBody := "RESULT: CARD-MULTI test multiline\n## Context\n- Step 1: parse\n- Step 2: key=value\nFinal line.\n"
 	path := filepath.Join(t.TempDir(), "card-multi.md")

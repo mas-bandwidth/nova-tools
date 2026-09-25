@@ -13,6 +13,8 @@ import (
 // concurrently (wall under 1.5x the slowest bench) and returns one error
 // naming every failed bench.
 func TestFleetVerbRunsBenchesConcurrently(t *testing.T) {
+	t.Parallel()
+
 	const n = 7
 	names := make([]string, n)
 	for i := range names {
@@ -65,6 +67,8 @@ func TestFleetVerbRunsBenchesConcurrently(t *testing.T) {
 
 // TestRunBenchesConcurrentlyReturnsNilOnSuccess: no failures returns nil.
 func TestRunBenchesConcurrentlyReturnsNilOnSuccess(t *testing.T) {
+	t.Parallel()
+
 	err := RunBenchesConcurrently([]string{"a", "b"}, func(name string) error {
 		return nil
 	})
@@ -78,6 +82,8 @@ func TestRunBenchesConcurrentlyReturnsNilOnSuccess(t *testing.T) {
 // finish only if the callbacks overlap. A sequential implementation blocks
 // the first callback forever and the test fails at its deadline instead.
 func TestRunBenchesConcurrentlyOverlapsCallbacks(t *testing.T) {
+	t.Parallel()
+
 	const n = 7
 	names := make([]string, n)
 	for i := range names {
@@ -143,6 +149,8 @@ func TestRunBenchesConcurrentlyOverlapsCallbacks(t *testing.T) {
 // TestRunBenchesConcurrentlyErrorOrderIsDeterministic: the joined error
 // lists failed benches in sorted order whatever order they finish in.
 func TestRunBenchesConcurrentlyErrorOrderIsDeterministic(t *testing.T) {
+	t.Parallel()
+
 	err := RunBenchesConcurrently([]string{"c", "a", "b"}, func(name string) error {
 		return errors.New("down")
 	})

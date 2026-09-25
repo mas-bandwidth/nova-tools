@@ -72,6 +72,8 @@ func start(t *testing.T) *redis.Client {
 // changing by exactly one per step, the record's where naming the one set,
 // the friend-queue shapes following, and fsck clean after every step.
 func TestPushTakeDoneLandWalksTheSets(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	before := table(t, c, "rowan")
@@ -168,6 +170,8 @@ func TestPushTakeDoneLandWalksTheSets(t *testing.T) {
 // landed without its merge sha, is REFUSED with the record, the sets and
 // ws:log untouched.
 func TestOffGraphIsRefusedAndWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	for _, p := range []taskcard.PushRequest{
@@ -227,6 +231,8 @@ func TestOffGraphIsRefusedAndWritesNothing(t *testing.T) {
 // TestFsckFindsDriftInjectedByHand: a set written around the one writer is
 // found by fsck (one line per drift) and refused by the next move.
 func TestFsckFindsDriftInjectedByHand(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	for _, id := range []string{"d1", "d2", "d3"} {
@@ -262,6 +268,8 @@ func TestFsckFindsDriftInjectedByHand(t *testing.T) {
 // working task whose lease lapsed back to ready, so the friend's working
 // ZCARD counts only held tasks.
 func TestLeaseLapsedGoesBackToReady(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	for _, id := range []string{"l1", "l2"} {
@@ -299,6 +307,8 @@ func TestLeaseLapsedGoesBackToReady(t *testing.T) {
 // every member of ws:<stream>:merging moves to landed at the merge sha in one
 // call, and the reply names each member's PR and origin for the CLOSE line.
 func TestLandStreamLandsEveryMergingMember(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	for i, id := range []string{"m1", "m2", "m3"} {

@@ -11,6 +11,8 @@ import (
 )
 
 func TestDirQueueMultilineRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	dq := &redisq.DirQueue{Root: root}
 	stream := "nova:queue:test:red"
@@ -57,6 +59,8 @@ func TestDirQueueMultilineRoundTrip(t *testing.T) {
 }
 
 func TestDirQueueLegacyRawRecordWithoutFormatMarker(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	dq := &redisq.DirQueue{Root: root}
 	stream := "nova:queue:test:legacy"
@@ -109,6 +113,8 @@ func TestDirQueueLegacyRawRecordWithoutFormatMarker(t *testing.T) {
 }
 
 func TestDirQueuePreChangeFixture(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	dq := &redisq.DirQueue{Root: root}
 	stream := "nova:queue:chore:small"
@@ -146,6 +152,8 @@ func TestDirQueuePreChangeFixture(t *testing.T) {
 }
 
 func TestDirQueueValueMatchingPrefixMarkerRoundTrips(t *testing.T) {
+	t.Parallel()
+
 	// stella's HOLD 7 on #2489 at 24d5bd7c: parseCardFile treated a leading "esc:" or
 	// "v1:" on a value as framing and stripped it, so a legitimate value that happens to
 	// start with either string was corrupted on read. Framing now lives only in the
@@ -180,6 +188,8 @@ func TestDirQueueValueMatchingPrefixMarkerRoundTrips(t *testing.T) {
 }
 
 func TestDirQueueLegacyValueMatchingPrefixMarkerRoundTrips(t *testing.T) {
+	t.Parallel()
+
 	// Same collision, on the unmarked legacy path: a raw pre-change value that happens
 	// to start with "esc:" or "v1:" must read back byte-for-byte, not stripped.
 	root := t.TempDir()
@@ -219,6 +229,8 @@ func TestDirQueueLegacyValueMatchingPrefixMarkerRoundTrips(t *testing.T) {
 }
 
 func TestDirQueueRejectsEscapedStream(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	dq := &redisq.DirQueue{Root: root}
 	escaped := "../../escaped:red"

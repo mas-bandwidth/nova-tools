@@ -23,6 +23,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
@@ -576,6 +577,8 @@ func line1Of(doc string) string {
 // expectation), by ValidateResultV2, by the cutter lint, and by
 // ns_card_result even when the caller's parse claims valid.
 func TestUnknownKindRefusedOnEveryPath(t *testing.T) {
+	t.Parallel()
+
 	report := typedrec.Exemplar(typedrec.KindReport)
 	bogus := strings.Replace(report, "KIND: report", "KIND: bogus", 1)
 	if bogus == report {
@@ -643,6 +646,8 @@ func TestUnknownKindRefusedOnEveryPath(t *testing.T) {
 // line 1 with a forged suffix are each persisted invalid with the
 // contradictory field named; the exact report record stays valid.
 func TestRecordResultEnforcesCardKindAndLine1(t *testing.T) {
+	t.Parallel()
+
 	st, client := resultRedis(t)
 	ctx := context.Background()
 	const sprint = "s1"
@@ -738,7 +743,7 @@ func TestWrapperRecordFailureIsNotHarvestDue(t *testing.T) {
 	root := t.TempDir()
 	harness := filepath.Join(root, "harness.sh")
 	script := "#!/bin/sh\nif [ \"$TYPEDREC_HARNESS\" = unreadable ]; then mkdir -p \"$NOVA_CARD_OUT/RESULT.md\"; else cp \"$TYPEDREC_RESULT\" \"$NOVA_CARD_OUT/RESULT.md\"; fi\n"
-	if err := os.WriteFile(harness, []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(harness, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

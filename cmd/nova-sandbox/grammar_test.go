@@ -90,6 +90,8 @@ func sorted(set map[string]bool) []string {
 // to the spec that no test knows about, and a reason the tests still allow after the spec
 // dropped it, are the same defect from either end.
 func TestProbeRefusalReasonsAreTheSpecsOwnSet(t *testing.T) {
+	t.Parallel()
+
 	spec := specProbeRefusalReasons(t)
 	if got, want := sorted(probeRefusalReasons), sorted(spec); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("the PROBE REFUSED reason set in these tests is not docs/SPEC-SANDBOX.md's:\n  tests: %s\n  spec:  %s\nthe spec's grammar block is the contract; update the tests to it (or the spec, if the tool changed)",
@@ -104,6 +106,8 @@ func TestProbeRefusalReasonsAreTheSpecsOwnSet(t *testing.T) {
 // the guard prints. This asserts all three halves: the binary prints it, the grammar set
 // does not hold it, and the internal-verb section says so in words.
 func TestTheInternalVerbsRefusalIsOutsideTheSetAndNamedInTheSpec(t *testing.T) {
+	t.Parallel()
+
 	// The binary, first: a test that the spec describes a line the tool never prints is a
 	// test pointed at nothing.
 	j := newJob(t)

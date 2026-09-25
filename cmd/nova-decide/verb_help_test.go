@@ -10,6 +10,8 @@ import (
 
 // #3399: Every sub-verb's --help and -h prints its usage at exit 0.
 func TestEverySubVerbHelpPrintsUsageAtExit0(t *testing.T) {
+	t.Parallel()
+
 	verbs := []string{"tune", "route", "help", "log", "classify", "review", "outcome"}
 	for _, verb := range verbs {
 		for _, flag := range []string{"--help", "-h"} {
@@ -101,6 +103,8 @@ func TestJSONStateRefusesAsBadStateFormat(t *testing.T) {
 // #3399: route and review share one Redis flag spelling (--store, --user,
 // --password-env), while keeping aliases (--store-user, --store-password-env).
 func TestRedisFlagsUnification(t *testing.T) {
+	t.Parallel()
+
 	for _, flag := range []string{"--user", "--store-user", "--password-env", "--store-password-env"} {
 		t.Run("route/"+flag, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer

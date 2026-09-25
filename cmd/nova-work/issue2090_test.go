@@ -39,6 +39,8 @@ import (
 //     pending on missing content, a source change or an uncertain network
 //     result.
 func TestIssue2090(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"absorb", "--session", "work.sock"}, &stdout, &stderr, "")
 	if code != 2 {

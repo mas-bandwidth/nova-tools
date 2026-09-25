@@ -207,6 +207,8 @@ func assertHostRow(t *testing.T, ctx context.Context, client *redis.Client, step
 // release, with card fsck and the Go-side check after every transition, and
 // the live table's host row read against the bench ZCARDs.
 func TestCardsNeverDisappear(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, client := newSprint(t)
 	srv := repoServer(t)
@@ -334,6 +336,8 @@ func TestCardsNeverDisappear(t *testing.T) {
 // pool; a card found in two places refuses to move until fsck --repair; and
 // repair restores the one place.
 func TestCardMoveRefusesOffGraphAndDrift(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, client := newSprint(t)
 	srv := repoServer(t)
@@ -375,6 +379,8 @@ func TestCardMoveRefusesOffGraphAndDrift(t *testing.T) {
 // (no roster, no where) are adopted by the one-time reindex, and a move on
 // one adopts it first.
 func TestReindexAdoptsCardsThatPredateTheModel(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, client := newSprint(t)
 	for l, st := range map[string]string{"old-q": "queued", "old-r": "running", "old-e": "ended", "old-w": "queued"} {
@@ -436,6 +442,8 @@ func ndSetup(t *testing.T, ctx context.Context, client *redis.Client) {
 // write; the deal deals nothing and the record, the pool, the starting set
 // and the log are exactly as they were.
 func TestMoveRefusesDriftOnTheNewBenchBeforeAnyWrite(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, client := newSprint(t)
 	ndSetup(t, ctx, client)
@@ -476,6 +484,8 @@ func TestMoveRefusesDriftOnTheNewBenchBeforeAnyWrite(t *testing.T) {
 // missing from the pool, or a label left in the waiting list, is drift that
 // --repair fixes.
 func TestFsckProvesTheDealerLists(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, client := newSprint(t)
 	srv := repoServer(t)
@@ -504,6 +514,8 @@ func TestFsckProvesTheDealerLists(t *testing.T) {
 // nothing, logs the refusal, returns 2|MOVE, and the card stays counted
 // where its sets say.
 func TestInvalidResultRefusedMoveSurfaces(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, client := newSprint(t)
 	ndSetup(t, ctx, client)
@@ -555,6 +567,8 @@ func TestInvalidResultRefusedMoveSurfaces(t *testing.T) {
 // card's created_at; a view or the roster re-scored by hand is drift that
 // --repair re-scores.
 func TestFsckChecksEveryScore(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, client := newSprint(t)
 	srv := repoServer(t)
@@ -579,6 +593,8 @@ func TestFsckChecksEveryScore(t *testing.T) {
 // record's priority field, and the dealer deals the lowest priority value
 // first, the oldest first among equals.
 func TestPoolIsAgeOrderedAndTheDealerDealsByPriority(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, client := newSprint(t)
 	ndSetup(t, ctx, client)

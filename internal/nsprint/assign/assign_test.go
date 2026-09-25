@@ -179,6 +179,8 @@ var fcallCalls = regexp.MustCompile(`(?m)^cmdstat_fcall:calls=(\d+),`)
 // clock); on the Studio it is a few milliseconds against the interim's ~60 s
 // per call.
 func TestControl46AssignStdinIsOneRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	st, client := asRedis(t)
@@ -267,6 +269,8 @@ func TestControl46AssignStdinIsOneRoundTrip(t *testing.T) {
 // head, friend). A friend with a closed read at that head, or a typed line at
 // that head, never receives it again; a new head is a new identity.
 func TestAssignDedupOnFullHead(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := asRedis(t)
 	asFixture(t, st, client, 3)
@@ -339,6 +343,8 @@ var asRoster = life.Roster{MayHold: []string{"stella", "johnny", "fran", "kim"},
 // friend alone; `--to stella` then moves the reads stella may take and keeps
 // the one she authored and the one she already holds, with a DEDUP line.
 func TestRedistributeFromByKindAndTo(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := asRedis(t)
 	asFixture(t, st, client, 3)
@@ -401,6 +407,8 @@ func TestRedistributeFromByKindAndTo(t *testing.T) {
 // no beat is the tick's redistribution: leases closed with evidence and
 // requeued, titles marked with the given reason.
 func TestRedistributeFromDownFriendClosesLeases(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := asRedis(t)
 	asFixture(t, st, client, 2)
@@ -431,6 +439,8 @@ func TestRedistributeFromDownFriendClosesLeases(t *testing.T) {
 // passed keeps its live lease unfenced (state cleared, open tasks still move);
 // an active out-of-credits window and a down friend still close it.
 func TestRedistributeFromExpiredOutOfCreditsKeepsLease(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name   string
 		until  time.Duration

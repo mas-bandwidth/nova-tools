@@ -16,6 +16,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/harvest"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -45,7 +46,7 @@ func writeFakeSSH(t *testing.T, dir, log string) string {
 	t.Helper()
 	ssh := filepath.Join(dir, "ssh")
 	script := strings.Replace(fakeSSHScript, "#!/bin/bash\n", "#!/bin/bash\nFAKE_SSH_LOG="+strconv.Quote(log)+"\n", 1)
-	if err := os.WriteFile(ssh, []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(ssh, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return ssh
@@ -362,6 +363,8 @@ func (z *zshBench) failedWith(res harvest.BenchResult, code string) {
 // nothing; and a pass that dies at any durable step is finished by the next
 // pass with one PR and one receipt.
 func TestHarvestZshBenchEndToEnd(t *testing.T) {
+	t.Parallel()
+
 	t.Run("zsh-emulator-has-teeth", func(t *testing.T) {
 		for _, bin := range []string{"bash", "perl"} {
 			if _, err := exec.LookPath(bin); err != nil {
@@ -534,6 +537,8 @@ func TestHarvestZshBenchEndToEnd(t *testing.T) {
 // forward, refuses published and harvested (their own writers), and a fenced
 // token writes nothing.
 func TestHarvestStepForwardOnly(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	ctx := context.Background()
 	seedEnded(t, c, "ctl-a", "card1", "model", "DONE", sha("card1"))
@@ -574,6 +579,8 @@ func TestHarvestStepForwardOnly(t *testing.T) {
 // pushed_sha "-" committed nothing: it is not in ns_harvest_due's rows and a
 // pass runs no push for it.
 func TestHarvestDueSkipsNoCommit(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	st := store.New(c)
 	ctx := context.Background()
@@ -607,6 +614,8 @@ func TestHarvestDueSkipsNoCommit(t *testing.T) {
 // TestHarvestRelativeResultsRefused (#2932 control 7): a relative results
 // in the card hash is HARVEST-FAILED err=results-relative and runs no ssh.
 func TestHarvestRelativeResultsRefused(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	st := store.New(c)
 	ctx := context.Background()
@@ -616,7 +625,7 @@ func TestHarvestRelativeResultsRefused(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "ssh.log")
 	ssh := filepath.Join(dir, "ssh")
-	if err := os.WriteFile(ssh, []byte("#!/bin/bash\necho \"$@\" >> "+strconv.Quote(log)+"\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(ssh, []byte("#!/bin/bash\necho \"$@\" >> "+strconv.Quote(log)+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	res := harvest.Run(ctx, st, harvest.Options{Sprint: sprint, Benches: []string{"ctl-a"}, Clock: time.Minute,
@@ -634,6 +643,8 @@ func TestHarvestRelativeResultsRefused(t *testing.T) {
 // --bench all covers every sprint in `sprints` and every bench in `benches`,
 // and a bench with no beat is skipped while the others finish.
 func TestHarvestLoopEveryOpenSprintEveryBench(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	st := store.New(c)
 	ctx := context.Background()

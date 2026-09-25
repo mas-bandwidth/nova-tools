@@ -85,6 +85,8 @@ func (d *workTypeDecider) Decide(ctx context.Context, state string, qs map[strin
 // is classified from the card text alone, with no model call, and the route
 // stamps WORKTYPE: and ROUTE: jev= onto the card.
 func TestJevWorkTypeOnEveryCard(t *testing.T) {
+	t.Parallel()
+
 	if len(WorkTypes) != 8 {
 		t.Fatalf("WorkTypes has %d members, want the report's 8: %v", len(WorkTypes), WorkTypes)
 	}
@@ -160,6 +162,8 @@ func TestJevWorkTypeOnEveryCard(t *testing.T) {
 // asked, once, and its answer is marked as Jev's. With no decider it is
 // unclassified, never guessed.
 func TestWorkTypeAsksJevOnlyWhenNoRuleFires(t *testing.T) {
+	t.Parallel()
+
 	card := "Look into the thing Glenn mentioned and do what seems right.\n"
 	got, err := ClassifyWorkType(context.Background(), nil, card)
 	if err != nil {
@@ -187,6 +191,8 @@ func TestWorkTypeAsksJevOnlyWhenNoRuleFires(t *testing.T) {
 // allowed_routes is read from a file keyed by work type, and a key that is not
 // one of the eight is refused rather than silently never matching.
 func TestWorkTypeRoutesRefusesAnUnknownType(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	good := filepath.Join(dir, "good.json")
 	if err := os.WriteFile(good, []byte(`{"issue-cold-read":["orqwenflash","ocdsflash"]}`), 0o600); err != nil {
@@ -214,6 +220,8 @@ func TestWorkTypeRoutesRefusesAnUnknownType(t *testing.T) {
 // type with no row admits nothing; and a card whose type produces a branch is
 // refused with no table at all, because for it the table is the gate.
 func TestWorkTypeAllowedRoutesGateTheSelectedRung(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	res := mustRoute(t, reg, Unit{ID: "card-gate", Kind: KindRebase, Files: 1, Packages: 1, Lanes: 1}, DefaultFloor)
 	if res.Rung.Name == "" || !res.Dispatchable() {

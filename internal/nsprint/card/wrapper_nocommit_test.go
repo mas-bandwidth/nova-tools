@@ -131,6 +131,8 @@ func TestWrapperNoCommitCodeCardEndsFail(t *testing.T) {
 // TestNoCommitEnd is the rule on its own: only a code card, harness DONE,
 // NO-COMMIT and a model line 2 of DONE turns into FAILED no-commit.
 func TestNoCommitEnd(t *testing.T) {
+	t.Parallel()
+
 	out := t.TempDir()
 	write := func(body string) {
 		t.Helper()

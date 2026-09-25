@@ -69,6 +69,8 @@ func seedLand(t *testing.T, sprint string, gates []landGate) *redis.Client {
 // core-s per landed unit, voided share, bisect share, selection misses and
 // git ops, each from the gate receipts in the sprint's window.
 func TestFoldLandFiveNumbers(t *testing.T) {
+	t.Parallel()
+
 	sel := "checks=selected packages=3"
 	gates := []landGate{
 		// Outside the window: before opened_at, never counted.
@@ -113,6 +115,8 @@ func TestFoldLandFiveNumbers(t *testing.T) {
 // TestFoldLandNoReceipts: a sprint the lander never gated prints the line with
 // every quotient as -, never a zero that reads as measured.
 func TestFoldLandNoReceipts(t *testing.T) {
+	t.Parallel()
+
 	c := seedLand(t, "s0", nil)
 	sum, err := fold.Read(context.Background(), c, "s0")
 	if err != nil {

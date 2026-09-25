@@ -13,6 +13,8 @@ import (
 // ledger's whole-millisecond resolution would be stored as wall_ms=0 and read
 // back as a zero-cost measurement. It is refused, and nothing is written.
 func TestDogfoodQuestionRefusesSubMillisecondWall(t *testing.T) {
+	t.Parallel()
+
 	ledger := filepath.Join(t.TempDir(), "dogfood-ledger")
 	code, stdout, stderr := invoke("dogfood", "question", "--ledger", ledger,
 		"--kind", "uid", "--mode", "link", "--tokens", "10", "--wall", "500us", "--now", "2026-09-20T09:00:00Z")
@@ -40,6 +42,8 @@ func TestDogfoodQuestionRefusesSubMillisecondWall(t *testing.T) {
 // rewrote the whole ledger, so concurrent recorders lost rows. Many concurrent
 // appends must all land, each as its own parseable line.
 func TestDogfoodAppendKeepsEveryConcurrentRow(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), dogfoodQuestionsFile)
 	const n = 64
 	var wg sync.WaitGroup

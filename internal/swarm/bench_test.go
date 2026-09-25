@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 func writeBenchTSV(t *testing.T, body string) string {
@@ -22,6 +24,8 @@ func writeBenchTSV(t *testing.T, body string) string {
 // The seven columns parse, a "-" cores row is no pinning, and every table refusal
 // above names the row that failed.
 func TestBenchTableParsed(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	p := writeBenchTSV(t, "name\thost\troot\tcores\tharness\tauth\twall\n"+
 		"b2\tb2\t/home/me/swarm\t1-15\t/home/me/.local/bin/opencode\t/home/me/.config/nova/auth\tnone\n"+
@@ -64,6 +68,8 @@ func TestBenchTableParsed(t *testing.T) {
 
 // A cores column parses into sorted cores, and "-" into none.
 func TestCoresList(t *testing.T) {
+	t.Parallel()
+
 	got, err := CoresList("1-15")
 	if err != nil || len(got) != 15 || got[0] != 1 || got[14] != 15 {
 		t.Fatalf("1-15 parses to 15 cores: %v %v", got, err)
@@ -84,6 +90,8 @@ func TestCoresList(t *testing.T) {
 // A bench name on the bus's friends list is refused, and nothing is written to the
 // bus: the check only reads the roster.
 func TestBenchNameIsNotAFriend(t *testing.T) {
+	t.Parallel()
+
 	busDir := t.TempDir()
 	roster := busDir + "/participants.json"
 	if err := os.WriteFile(roster, []byte(`{"participants":[{"name":"alice"},{"name":"bob"}]}`), 0o600); err != nil {
@@ -149,10 +157,10 @@ func fakeBin(t *testing.T, dir string) (sshLog, rsyncLog string) {
 		"src=\"$1\"; dst=\"$2\"; dst=\"${dst#*:}\"\n" +
 		"mkdir -p \"$(dirname \"$dst\")\"\n" +
 		"cp \"$src\" \"$dst\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(ssh), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(bin, "ssh"), []byte(ssh), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bin, "rsync"), []byte(rsync), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(bin, "rsync"), []byte(rsync), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// scp is the third program this path runs, and until 2026-09-18 it was the
@@ -165,7 +173,7 @@ func fakeBin(t *testing.T, dir string) (sshLog, rsyncLog string) {
 		"src=\"$1\"; dst=\"$2\"; src=\"${src#*:}\"\n" +
 		"mkdir -p \"$(dirname \"$dst\")\"\n" +
 		"cp \"$src\" \"$dst\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "scp"), []byte(scp), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(bin, "scp"), []byte(scp), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))

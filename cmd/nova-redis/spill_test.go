@@ -69,6 +69,8 @@ func (h *harness) runBare(args ...string) (int, string, string) {
 // reached, for spill and for recall. The Redis client would otherwise fill an
 // empty address in as localhost:6379, which is a guess the tool refuses to make.
 func TestAddrRefusedWhenMissingOrEmpty(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t)
 	// A regression must fail here, never reach a real host: the seam counts
 	// the dial and hands back a client on the fake whatever address it got.
@@ -116,6 +118,8 @@ func TestAddrRefusedWhenMissingOrEmpty(t *testing.T) {
 }
 
 func TestSpillRefusedWithoutOwner(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t)
 	code, stdout, stderr := h.run("spill", "--name", "note", "--ttl", "1h", "--value", "hi")
 	if code != 2 {
@@ -135,6 +139,8 @@ func TestSpillRefusedWithoutOwner(t *testing.T) {
 }
 
 func TestSpillRefusedWithoutTTL(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t)
 	code, stdout, stderr := h.run("spill", "--owner", "rowan", "--name", "note", "--value", "hi")
 	if code != 2 {
@@ -155,6 +161,8 @@ func TestSpillRefusedWithoutTTL(t *testing.T) {
 }
 
 func TestRecallRefusesAnExpiredKey(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t)
 	if code, _, stderr := h.run("spill", "--owner", "rowan", "--name", "note", "--ttl", "1h", "--value", "hi"); code != 0 {
 		t.Fatalf("spill exits %d; stderr=%q", code, stderr)
@@ -187,6 +195,8 @@ func TestRecallRefusesAnExpiredKey(t *testing.T) {
 }
 
 func TestEveryEphemeralKeyCarriesOwnerAndTTL(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t)
 	attempts := []struct {
 		args []string

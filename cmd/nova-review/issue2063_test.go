@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // TestIssue2063 is nova-tools #2063's control: the reads ledger. Who must read
@@ -259,7 +260,7 @@ func TestIssue2063(t *testing.T) {
 	// and cannot tell the author's own bus approve from a friend's.
 	fakeBin := filepath.Join(dir, "fakebin")
 	must(os.MkdirAll(fakeBin, 0o755))
-	must(os.WriteFile(filepath.Join(fakeBin, "gh"), []byte("#!/bin/sh\necho 'fake gh: HTTP 502 Bad Gateway' >&2\nexit 1\n"), 0o755))
+	must(testbin.WriteExecutable(filepath.Join(fakeBin, "gh"), []byte("#!/bin/sh\necho 'fake gh: HTTP 502 Bad Gateway' >&2\nexit 1\n"), 0o755))
 	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	prevView := viewPRReviews
 	viewPRReviews = ghPRReviews
@@ -283,7 +284,7 @@ func TestIssue2063(t *testing.T) {
 	// must not block Wait until the caller's timeout. --timeout is a day, so
 	// a reader that waits on the blocked child hangs past the test binary's
 	// deadline instead of returning: the event asserted is that run returns.
-	must(os.WriteFile(filepath.Join(fakeBin, "gh"), []byte("#!/bin/sh\nhead -c 6000000 /dev/zero\nexit 0\n"), 0o755))
+	must(testbin.WriteExecutable(filepath.Join(fakeBin, "gh"), []byte("#!/bin/sh\nhead -c 6000000 /dev/zero\nexit 0\n"), 0o755))
 	out.Reset()
 	errb.Reset()
 	code := run([]string{"reads", "--lane", lane, "--bus", bus, "--reviews", "1901:" + reviews1901, "--ready", "--timeout", "86400"}, &out, &errb)
@@ -307,6 +308,8 @@ func TestIssue2063(t *testing.T) {
 // with the word "Read" is prose, not a typed READ line, and must not refuse the
 // ledger (Johnny's nit on #2863); a mistyped READ #<n> line still refuses.
 func TestIssue2063ReviewProseIsNotTyped(t *testing.T) {
+	t.Parallel()
+
 	head := strings.Repeat("a", 40)
 	revs := []prReview{{Author: "johnny", State: "APPROVED", CommitID: head, SubmittedAt: "2026-09-23T14:21:21Z",
 		Body: "Read the spec first; the seam is fine.\nread carefully"}}

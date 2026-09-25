@@ -15,6 +15,8 @@ import (
 // the way TestBenchSlotLeasesSectionNamesItsRules reads the Bench slot leases
 // section: the spec is the one place the contract is written.
 func TestCrossToolEfficiencyCardNamesItsRules(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
 	if err != nil {
 		t.Fatalf("the cross-tool efficiency card's contract is the spec's: %s", err)

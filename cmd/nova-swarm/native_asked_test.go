@@ -47,6 +47,8 @@ func nativeAsked(t *testing.T, label, card string) (job, stdout, stderr string) 
 // exits 0 having published nothing. RED WITHOUT THE FIX: the job holds no RESULT.md at
 // all and the question is in a transcript nobody reads.
 func TestNativeWritesAnAskedResultForACardThatEndedWithAQuestion(t *testing.T) {
+	t.Parallel()
+
 	question := "Would you like me to proceed with moving RESULT.md into the nested repo and finalize the commit?"
 	job, stdout, stderr := nativeAsked(t, "asked", "FAKE-SAY "+question+"\nFAKE-NORESULT\n")
 
@@ -81,6 +83,8 @@ func TestNativeWritesAnAskedResultForACardThatEndedWithAQuestion(t *testing.T) {
 // default, so this is the ordinary ending: the report is the card's own, the verdict is
 // OK, and nothing is overwritten.
 func TestNativeLeavesAFinishedCardsReportAlone(t *testing.T) {
+	t.Parallel()
+
 	job, stdout, stderr := nativeAsked(t, "done", "FAKE-SAY Want me to open the PR as well?\nFAKE-FINDINGS 0\n")
 
 	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
@@ -101,6 +105,8 @@ func TestNativeLeavesAFinishedCardsReportAlone(t *testing.T) {
 // asked; the question-is-the-last-line half of the same shape is a row of the table in
 // internal/swarm/nativeasked_test.go, where it costs no provider retry to arrange.
 func TestNativeDoesNotCallACrashAnAskedCard(t *testing.T) {
+	t.Parallel()
+
 	job, stdout, _ := nativeAsked(t, "crash", "FAKE-SAY Should I retry the build?\nFAKE-429\n")
 
 	if raw, err := os.ReadFile(filepath.Join(job, "RESULT.md")); err == nil {

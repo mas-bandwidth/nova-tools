@@ -26,6 +26,8 @@ import (
 // the budget. A hosted leg that runs -short on the group, or one that runs full
 // but unscoped over the whole tree, is not the gate the dev push is.
 func TestMergeGroupRunsTheFullHostedLegs(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	blocks := jobBlocks(src)
@@ -64,6 +66,8 @@ func TestMergeGroupRunsTheFullHostedLegs(t *testing.T) {
 // "nothing to test for this change" and exits 0. Without the selection a docs
 // change pays twenty-four shards, which is what held the merge queue.
 func TestSelfHostedShardsSelectThePackagesAChangeTouches(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	block := jobBody(src, "test-packages")
@@ -208,6 +212,8 @@ var pushBranchesRe = regexp.MustCompile(`^\s*branches:\s*\[([^\]]*)\]\s*$`)
 // the list definition, and while either workflow's push trigger names a branch
 // the list does not.
 func TestIntegrationBranchesAreOneList(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	const ciFile = ".github/workflows/ci.yml"
 	const certFile = ".github/workflows/certification.yml"
@@ -292,6 +298,8 @@ func TestIntegrationBranchesAreOneList(t *testing.T) {
 // workflow. A literal divisor is a copy of a fact that lives on the machines,
 // and it went stale the day the fleet went from four runners to eight.
 func TestRunnersPerMachineIsOneNumber(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	const ciFile = ".github/workflows/ci.yml"
 	src := readFile(t, filepath.Join(root, ciFile))

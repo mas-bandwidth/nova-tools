@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // Test 6: TestSopsErrorsAreNeverPassedThroughRaw
@@ -46,7 +47,7 @@ fi
 echo "Fatal error: %s" >&2
 exit 1
 `, fakeSecret)
-	if err := os.WriteFile(fakeSops, []byte(fakeScript), 0755); err != nil {
+	if err := testbin.WriteExecutable(fakeSops, []byte(fakeScript), 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -178,7 +179,7 @@ func TestTheVersionProbeMakesNoNetworkCall(t *testing.T) {
 
 	// 1. Version 3.9.0 is refused naming brew upgrade
 	oldSops := filepath.Join(td, "old-sops")
-	_ = os.WriteFile(oldSops, []byte("#!/bin/sh\necho 'sops 3.9.0'\n"), 0755)
+	_ = testbin.WriteExecutable(oldSops, []byte("#!/bin/sh\necho 'sops 3.9.0'\n"), 0755)
 	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", oldSops)
 	if code != 2 || !strings.Contains(errOut, "brew upgrade sops") {
 		t.Errorf("expected brew upgrade refusal, got %d: %s", code, errOut)
@@ -186,7 +187,7 @@ func TestTheVersionProbeMakesNoNetworkCall(t *testing.T) {
 
 	// 2. banana is refused as unparseable
 	bananaSops := filepath.Join(td, "banana-sops")
-	_ = os.WriteFile(bananaSops, []byte("#!/bin/sh\necho 'banana'\n"), 0755)
+	_ = testbin.WriteExecutable(bananaSops, []byte("#!/bin/sh\necho 'banana'\n"), 0755)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", bananaSops)
 	if code != 2 || !strings.Contains(errOut, "unable to parse sops version") {
 		t.Errorf("expected unparseable version refusal, got %d: %s", code, errOut)
@@ -208,7 +209,7 @@ func TestTheVersionProbeMakesNoNetworkCall(t *testing.T) {
 	commitAndPush(t, storeDir)
 	probeLog := filepath.Join(td, "probe.log")
 	recording := filepath.Join(td, "recording-sops")
-	_ = os.WriteFile(recording, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo \"ARGS $*\" >> '"+probeLog+"'; env | sed 's/^/ENV /' >> '"+probeLog+"'; fi\nexec '"+sopsPath+"' \"$@\"\n"), 0755)
+	_ = testbin.WriteExecutable(recording, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo \"ARGS $*\" >> '"+probeLog+"'; env | sed 's/^/ENV /' >> '"+probeLog+"'; fi\nexec '"+sopsPath+"' \"$@\"\n"), 0755)
 	callerEnv := append(os.Environ(), "HTTPS_PROXY=http://proxy.invalid:3128", "ALL_PROXY=socks5://proxy.invalid:1080")
 	for _, verb := range [][]string{
 		{"check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", recording},

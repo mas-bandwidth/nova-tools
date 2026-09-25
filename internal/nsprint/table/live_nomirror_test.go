@@ -14,6 +14,8 @@ import (
 // too; a bench with no set prints the row unchanged; a set that cannot be
 // read (WRONGTYPE here) prints nomirror=?, never nothing.
 func TestHostRowPrintsNoMirror(t *testing.T) {
+	t.Parallel()
+
 	now := table.Fixture2674Now()
 	at := now.Add(-1 * time.Second).UTC().Format("2006-01-02T15:04:05Z")
 	old := now.Add(-1 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")

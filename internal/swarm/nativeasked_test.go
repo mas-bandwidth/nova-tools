@@ -19,6 +19,8 @@ const (
 // THE FOUR ENDINGS. The question test has to separate the card that asked from the three
 // cards it would otherwise be mistaken for, and each row here is one of them.
 func TestAskedSeparatesTheCardThatAskedFromTheThreeItIsNot(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		run  AskedRun
@@ -140,6 +142,8 @@ func TestAskedSeparatesTheCardThatAskedFromTheThreeItIsNot(t *testing.T) {
 // says the machinery wrote it; and there is no findings head, so no fold can ever count it
 // as work a worker did.
 func TestWriteAskedResultNamesTheQuestionAndItsAuthor(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	question := "Step 2: May I write RESULT.md?"
 
@@ -172,6 +176,8 @@ func TestWriteAskedResultNamesTheQuestionAndItsAuthor(t *testing.T) {
 // A CARD THAT PUBLISHED OWNS ITS REPORT. The write refuses rather than overwriting it, on
 // the same terms as the blocked report.
 func TestWriteAskedResultNeverOverwritesACardsOwnReport(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	own := []byte("RESULT: dogfood-question sha=abc123def456\n\n## Head\nfindings: 0\n")
 	if err := os.WriteFile(filepath.Join(job, "RESULT.md"), own, 0o644); err != nil {
@@ -201,6 +207,8 @@ func TestWriteAskedResultNeverOverwritesACardsOwnReport(t *testing.T) {
 // lookup, and ./repo's own commit count -- the last of these through git, which is the one
 // half the table test cannot reach.
 func TestAskedEndReadsTheJobTheRunLeftBehind(t *testing.T) {
+	t.Parallel()
+
 	t.Run("a question, no result, no commit", func(t *testing.T) {
 		job := t.TempDir()
 		writeCapture(t, job, dogfoodHulkTail)

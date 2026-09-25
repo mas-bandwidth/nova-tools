@@ -27,6 +27,8 @@ func routeThen(t *testing.T, id, kind string) string {
 // verb reads the kind and the rung from that decision, appends one row of its
 // own, and the summary then counts a success where it counted none.
 func TestOutcomeWritesTheOtherHalfOfTheRow(t *testing.T) {
+	t.Parallel()
+
 	log := routeThen(t, "row-card-9", "row-test")
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"outcome", "--log", log, "--unit-id", "row-card-9", "--result", "green"}, &stdout, &stderr); code != 0 {
@@ -66,6 +68,8 @@ func TestOutcomeWritesTheOtherHalfOfTheRow(t *testing.T) {
 // red and blocked are the other two words a manager has, and each maps to an
 // outcome the ladder already counts.
 func TestOutcomeMapsEveryResult(t *testing.T) {
+	t.Parallel()
+
 	for result, want := range map[string]string{
 		"green":   decide.OutcomeOK,
 		"red":     decide.OutcomeFailed,
@@ -85,6 +89,8 @@ func TestOutcomeMapsEveryResult(t *testing.T) {
 // Every refusal names what is missing and guesses nothing: an outcome against a
 // decision nobody made would regenerate a starting rung out of thin air.
 func TestOutcomeRefusals(t *testing.T) {
+	t.Parallel()
+
 	log := routeThen(t, "known", "rebase")
 	for name, args := range map[string][]string{
 		"no log":        {"outcome", "--unit-id", "known", "--result", "green"},

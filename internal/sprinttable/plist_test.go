@@ -8,6 +8,8 @@ import (
 )
 
 func TestLoopsPlistTemplateSetsAbandonProcessGroup(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join("..", "..", "fleet", "templates", "nova-loop.plist.j2")
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -26,6 +28,8 @@ func TestLoopsPlistTemplateSetsAbandonProcessGroup(t *testing.T) {
 }
 
 func TestAbandonProcessGroupRejectsAMissingOrFalseKey(t *testing.T) {
+	t.Parallel()
+
 	if AbandonProcessGroup("<key>KeepAlive</key>\n<true/>") {
 		t.Fatal("a different key read as AbandonProcessGroup")
 	}

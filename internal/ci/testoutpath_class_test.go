@@ -127,6 +127,8 @@ func TestToolRunsInTestsWriteIntoATempDir(t *testing.T) {
 // it, a scanner that had quietly stopped matching would keep the tree green by
 // finding nothing at all.
 func TestRelativeOutputPathScannerReadsTheFixtures(t *testing.T) {
+	t.Parallel()
+
 	before := readFile(t, filepath.Join("testdata", "testoutpath", "before.go.txt"))
 	found, err := relativeOutputPaths("cmd/fixture/firstrun_test.go", []byte(before))
 	if err != nil {

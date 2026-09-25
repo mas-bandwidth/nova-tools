@@ -90,6 +90,8 @@ func runCutAt(t *testing.T, td, benches string, templates map[string]string, poo
 // an https:// clone and checkout -b; a template whose rendered line 1 is prose, or
 // whose STEP 1 clones git@, is CUT REFUSED and writes no card.
 func TestCutLine1IsContract(t *testing.T) {
+	t.Parallel()
+
 	for kind, tmpl := range map[string]string{"read": readTemplate, "fix": fixTemplate} {
 		code, stdout, _, out, _ := runCut(t, map[string]string{kind: tmpl}, "mas-bandwidth/nova-tools\t1\t"+kind+"\tTitle\t"+kind+"\n")
 		if code != 0 {
@@ -160,6 +162,8 @@ func TestCutLine1IsContract(t *testing.T) {
 // cause. cut accepts a STEP 1 that only mkdirs, clones over https and checks out, and
 // refuses one that sets a TMPDIR, naming the rule, no card written.
 func TestCutStepOneSetsNoTmpDir(t *testing.T) {
+	t.Parallel()
+
 	// The STEP 1 every template now carries: no export, because the runner's own is
 	// already in the child's environment.
 	bare := strings.Replace(readTemplate, " && export TMPDIR=$PWD/scratch", "", 1)
@@ -201,6 +205,8 @@ func TestCutStepOneSetsNoTmpDir(t *testing.T) {
 // text.md lacking it is CUT REFUSED template=text; fix, replay and drift cards carry the
 // red-then-green row rule; no template mentions ../scratch.
 func TestCutTextTemplateForbidsBuild(t *testing.T) {
+	t.Parallel()
+
 	tmpls := map[string]string{"read": readTemplate, "fix": fixTemplate}
 	code, stdout, _, out, _ := runCut(t, tmpls,
 		"mas-bandwidth/nova-tools\t1\tread\tTitle\tread\nmas-bandwidth/nova-tools\t2\tfix\tTitle\tfix\n")
@@ -253,6 +259,8 @@ func TestCutTextTemplateForbidsBuild(t *testing.T) {
 // cut-accepts-kind-report: a report is a text kind, so a text template is cut, and
 // `text` still is. A nonsense kind on that same template is refused, not guessed.
 func TestCutAcceptsReportAndRefusesANonsenseKind(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, stderr, out, _ := runCut(t, map[string]string{"report": readTemplate, "text": readTemplate},
 		"mas-bandwidth/nova-tools\t1\treport\tTitle\treport\nmas-bandwidth/nova-tools\t2\ttext\tTitle\ttext\n")
 	if code != 0 {
@@ -284,6 +292,8 @@ func TestCutAcceptsReportAndRefusesANonsenseKind(t *testing.T) {
 // cutModelByKind: model is decided by the cost table -- flash (read|text|replay) on
 // read/text/tone/replay, pro (code) on fix/drift -- never by kind alone.
 func TestCutModelByKind(t *testing.T) {
+	t.Parallel()
+
 	tmpls := map[string]string{"read": readTemplate, "fix": fixTemplate, "text": readTemplate, "tone": readTemplate, "replay": fixTemplate, "drift": fixTemplate}
 	pool := "s\t1\tread\tt\tread\ns\t2\tfix\tt\tfix\ns\t3\ttext\tt\ttext\ns\t4\ttone\tt\ttone\ns\t5\treplay\tt\treplay\ns\t6\tdrift\tt\tdrift\n"
 	code, stdout, _, out, _ := runCut(t, tmpls, pool)
@@ -323,6 +333,8 @@ func TestCutModelByKind(t *testing.T) {
 // a template whose rendered card exceeds its budget is CUT REFUSED naming the rule, no card
 // written (#855: every tool call re-sends the whole context, so the step count is the bill).
 func TestCutStepsAreTheTurnBudget(t *testing.T) {
+	t.Parallel()
+
 	card := func(kind string, steps int) string {
 		var b strings.Builder
 		b.WriteString("RESULT <label> sha=<sha12>\nYou are a worker. The deadline is the machinery's.\n")
@@ -376,6 +388,8 @@ func TestCutStepsAreTheTurnBudget(t *testing.T) {
 // including a fix card that would take pro when both are named -- routes to that one model,
 // so a spend rule ("flash only tonight") is expressible without a --model flag (#635).
 func TestCutHoldsToOneModel(t *testing.T) {
+	t.Parallel()
+
 	td := t.TempDir()
 	tmpl := filepath.Join(td, "templates")
 	if err := os.MkdirAll(tmpl, 0o755); err != nil {
@@ -462,6 +476,8 @@ func TestCutValidateContractRefusesALocatorThatDoesNotResolve(t *testing.T) {
 // route=<model> reason=<class> on CUT ROUTE for the cheapest capable model -- the mutation
 // that matters: a pick that ignores cost and takes a route by kind.
 func TestCutPicksCheapestCapableRoute(t *testing.T) {
+	t.Parallel()
+
 	table := "model\tollama/local\topencode/go\topencode/zen\ncost\tzero 0\tflat 1.5\tmetered 8\ncapability\tread|text\tcode\treplay\n"
 	tmpls := map[string]string{"read": readTemplate, "fix": fixTemplate, "text": readTemplate, "tone": readTemplate, "replay": fixTemplate, "drift": fixTemplate}
 	pool := "s\t1\tread\tt\tread\ns\t2\tfix\tt\tfix\ns\t3\ttext\tt\ttext\ns\t4\ttone\tt\ttone\ns\t5\treplay\tt\treplay\ns\t6\tdrift\tt\tdrift\n"
@@ -503,6 +519,8 @@ func TestCutPicksCheapestCapableRoute(t *testing.T) {
 // an abstain routes one capability class above the first attempt's, so CUT ROUTE names a
 // stronger class and a reason that reflects it.
 func TestRetryMovesOneClassUp(t *testing.T) {
+	t.Parallel()
+
 	table := "model\tollama/local\topencode/go\topencode/zen\ncost\tzero 0\tflat 1.5\tmetered 8\ncapability\tread\tcode\tcode|replay\n"
 	tmpls := map[string]string{"fix": fixTemplate}
 	pool := "s\t1\tfix\tt\tfix\n"
@@ -533,6 +551,8 @@ func TestRetryMovesOneClassUp(t *testing.T) {
 // The cutter renders DEPENDS-ON: - when independent (empty or "-"), or DEPENDS-ON: a, b
 // when dependencies are provided, immediately after PATHS: (or TEST: when PATHS: is absent).
 func TestCutDependsOnHeader(t *testing.T) {
+	t.Parallel()
+
 	v2FixTemplate := `RESULT <label> sha=<sha12>
 KIND: fix
 SCHEMA: v2

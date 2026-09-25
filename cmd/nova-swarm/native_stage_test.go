@@ -58,6 +58,8 @@ func captureStageLine(t *testing.T, fn func()) string {
 // 2. Staging clones from the bench's local mirror (--reference or clone --shared) and dissociates.
 // 3. Staging past the timeout ends the card RESULT: BLOCKED stage-timeout <bench> <secs> and writes usage.tsv.
 func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	benchHome := filepath.Join(root, "bench-home")

@@ -15,6 +15,8 @@ import (
 // the way TestCrossToolEfficiencyCardNamesItsRules reads its section out of
 // SPEC-SWARM.md: the spec is the one place the contract is written.
 func TestNovaCheckEfficiencyCardNamesItsRules(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC.md"))
 	if err != nil {
 		t.Fatalf("the nova-check efficiency card's contract is the spec's: %s", err)

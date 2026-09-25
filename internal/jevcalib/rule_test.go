@@ -29,6 +29,8 @@ func readRows(t *testing.T, name string) []Row {
 // at the friends' exact heads, three prompts) to the numbers the tuning
 // ledger printed.
 func TestTuningRuleOnFixtureDistribution(t *testing.T) {
+	t.Parallel()
+
 	t.Run("pairs-2026-09-21", func(t *testing.T) {
 		s := Measure(Join(readRows(t, "pairs-2026-09-21.tsv"), "cold0921"))
 		if s.N != 65 || s.Within1 != 47 || s.FalsePass != 6 || s.FalseFail != 7 {

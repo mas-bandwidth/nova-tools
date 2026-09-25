@@ -15,6 +15,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -22,6 +23,8 @@ import (
 // NOVA_SERVE_FAKE set and it behaves as that mode says. Without the variable
 // it is an empty test.
 func TestHelperDispatch(t *testing.T) {
+	t.Parallel()
+
 	mode := os.Getenv("NOVA_SERVE_FAKE")
 	if mode == "" {
 		return
@@ -155,6 +158,8 @@ func logKinds(t *testing.T, client *redis.Client) []string {
 // with that line as its evidence, APPROVE 9, at the task's head; the seat's
 // receipts are on friend:emma:log and the seat is released after.
 func TestServeFakeDispatchScoreLineClosesTask(t *testing.T) {
+	t.Parallel()
+
 	st, client := seedSeat(t, 2)
 	ctx := context.Background()
 	// A read is pushed only against its PR record at the same head.
@@ -203,6 +208,8 @@ func TestServeFakeDispatchScoreLineClosesTask(t *testing.T) {
 // typed line closes its task with `blocked: exit=3 ...` naming the last line
 // it wrote, so the task never sits in working without a live child.
 func TestServeDyingDispatchLeavesBlockedEvidence(t *testing.T) {
+	t.Parallel()
+
 	st, client := seedSeat(t, 2)
 	ctx := context.Background()
 	pushWork(t, st, "w1")
@@ -228,6 +235,8 @@ func TestServeDyingDispatchLeavesBlockedEvidence(t *testing.T) {
 // TestServeWidthRespected: three ready tasks and a width of 1 run one child at
 // a time; every pass holds at most one lease and all three close.
 func TestServeWidthRespected(t *testing.T) {
+	t.Parallel()
+
 	st, client := seedSeat(t, 4)
 	ctx := context.Background()
 	for _, id := range []string{"w1", "w2", "w3"} {
@@ -285,6 +294,8 @@ func TestServeWidthRespected(t *testing.T) {
 // untimed; a second serve on the seat is refused with the holder named until
 // the first releases.
 func TestServeBeatHasTTLAndSecondSeatRefuses(t *testing.T) {
+	t.Parallel()
+
 	st, client := seedSeat(t, 2)
 	ctx := context.Background()
 	a, err := life.NewServer(st, serveConfig(t, "sess-a", 2, "done"))
@@ -339,6 +350,8 @@ func TestServeBeatHasTTLAndSecondSeatRefuses(t *testing.T) {
 // friend:<f>:beat and taking the seat lock. A serve release clears the lock
 // and beat without deleting the friend row.
 func TestServeBeatFriendRowPreserved(t *testing.T) {
+	t.Parallel()
+
 	st, client := seedSeat(t, 2)
 	ctx := context.Background()
 
@@ -449,6 +462,8 @@ func TestServeBeatFriendRowPreserved(t *testing.T) {
 // TestServeStopGivesWorkBack: stopping a serve with a live child kills the
 // child and gives its task back to the queue, so the next serve retakes it.
 func TestServeStopGivesWorkBack(t *testing.T) {
+	t.Parallel()
+
 	st, client := seedSeat(t, 2)
 	ctx := context.Background()
 	pushWork(t, st, "w1")
@@ -481,6 +496,8 @@ func TestServeStopGivesWorkBack(t *testing.T) {
 }
 
 func TestServeTypedLineAndVerdict(t *testing.T) {
+	t.Parallel()
+
 	out := "thinking\nSCORE who=emma head=abc score=8/10\nPASS\n"
 	if got := life.TypedLine(out); got != "SCORE who=emma head=abc score=8/10" {
 		t.Fatalf("TypedLine = %q", got)
@@ -511,6 +528,8 @@ func TestServeTypedLineAndVerdict(t *testing.T) {
 // control is one edit: drop the shim from the child's PATH in start and the
 // fake answers, exit=0 with one count.
 func TestServeChildReachesNoGh(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the refusing gh is a /bin/sh script")
 	}
@@ -519,7 +538,7 @@ func TestServeChildReachesNoGh(t *testing.T) {
 	pushWork(t, st, "w1")
 	fake := t.TempDir()
 	counter := filepath.Join(fake, "calls")
-	if err := os.WriteFile(filepath.Join(fake, "gh"), []byte("#!/bin/sh\necho call >> '"+counter+"'\necho fake gh answered\nexit 0\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(fake, "gh"), []byte("#!/bin/sh\necho call >> '"+counter+"'\necho fake gh answered\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cfg := serveConfig(t, "sess-1", 1, "gh")

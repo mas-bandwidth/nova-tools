@@ -89,6 +89,8 @@ func (f *firstReadFixture) fqShape(id, to string) map[string]string {
 // it; and it is a card: where=ready, in exactly ws:swarm:ready and
 // friend:emma:cards:ready, with one ws:log receipt.
 func TestFirstReadIsFriendQueueShape(t *testing.T) {
+	t.Parallel()
+
 	f := newFirstReadFixture(t, "fr-shape")
 	head := "cd4ad8d7aa11bb22cc33dd44ee55ff6600778899"
 	if err := f.client.SAdd(f.ctx, "ws:names", "swarm").Err(); err != nil {
@@ -144,6 +146,8 @@ func TestFirstReadIsFriendQueueShape(t *testing.T) {
 // cancel refused "not open (state=ready)"). Skipped without the variable: the
 // verb lives in another repository.
 func TestFirstReadFriendQueueVerbs(t *testing.T) {
+	t.Parallel()
+
 	bin := os.Getenv("NOVA_FRIEND_QUEUE_BIN")
 	if bin == "" {
 		t.Skip("NOVA_FRIEND_QUEUE_BIN is not set (a rowan-tools bin/friend-queue)")

@@ -93,6 +93,8 @@ nova-sprint + merge + bus|working|build-3321|lua-fn|nova-tools#3321|open
 // working back to ready, ends with fsck clean and the expected landed count,
 // and is idempotent.
 func TestMigrateTodaysShapes(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	truth := today(t, c)

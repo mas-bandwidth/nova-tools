@@ -13,6 +13,8 @@ import (
 // task whose PATHS intersect a live task's PATHS outside a DEPENDS-ON chain is
 // refused with both ids; the fixture push with the chain declared succeeds.
 func TestPushRefusesOverlappingBuildPaths(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	sprint := "paths-3067"
@@ -122,6 +124,8 @@ func TestPushRefusesOverlappingBuildPaths(t *testing.T) {
 // TestPathsParseAndIntersect pins the title grammar and the check-cut.py match
 // rule the push lint shares.
 func TestPathsParseAndIntersect(t *testing.T) {
+	t.Parallel()
+
 	paths, deps := task.ParseTitle("t | DONE-WHEN: a | PATHS: `cmd/a.go`, internal/b; rowan-tools: bin/c | DEPENDS-ON: #2929 (landed), build-x", "nova-tools")
 	want := []string{"nova-tools:cmd/a.go", "nova-tools:internal/b", "rowan-tools:bin/c"}
 	if strings.Join(paths, " ") != strings.Join(want, " ") {

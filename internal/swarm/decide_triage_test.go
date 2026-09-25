@@ -177,6 +177,8 @@ func TestTriageDecideReasonProviderError(t *testing.T) {
 // The same contract with no socket: the state triage builds starts with the
 // harness error line.
 func TestTriageDecideStateStartsWithErrorLine(t *testing.T) {
+	t.Parallel()
+
 	p, id := decideTestPool(t, "starting up\nworking\nInternal server error\n")
 	var gotState string
 	var out, errOut bytes.Buffer
@@ -202,6 +204,8 @@ func TestTriageDecideStateStartsWithErrorLine(t *testing.T) {
 
 // A redacted key never appears in the state sent.
 func TestTriageDecideRedactsSecrets(t *testing.T) {
+	t.Parallel()
+
 	p, _ := decideTestPool(t, "calling provider\nkey sk-abcdefgh12345678 failed\nAPI_KEY=hunter2-secret\nInternal server error\n")
 	var gotState string
 	var out, errOut bytes.Buffer
@@ -224,6 +228,8 @@ func TestTriageDecideRedactsSecrets(t *testing.T) {
 // decisions.log gains one line per task and is idempotent per (task,
 // attempt): a second triage --decide run adds nothing.
 func TestTriageDecideLogIdempotent(t *testing.T) {
+	t.Parallel()
+
 	p, id := decideTestPool(t, "starting up\nInternal server error\n")
 	run := func() string {
 		var out, errOut bytes.Buffer
@@ -270,6 +276,8 @@ func TestTriageDecideLogIdempotent(t *testing.T) {
 
 // Below the floor the line says decide=? and the pool's own class stands.
 func TestTriageDecideBelowFloorAbstains(t *testing.T) {
+	t.Parallel()
+
 	p, id := decideTestPool(t, "starting up\nInternal server error\n")
 	weak := func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
 		return map[string]decide.Answer{
@@ -301,6 +309,8 @@ func TestTriageDecideBelowFloorAbstains(t *testing.T) {
 // Provider usage from the Jev seam is recorded through the card-usage contract
 // (AppendCardUsage), matching nova-decide route (jev:swarm-usage).
 func TestTriageDecideRecordsProviderUsage(t *testing.T) {
+	t.Parallel()
+
 	p, id := decideTestPool(t, "starting up\nInternal server error\n")
 	customUsage := filepath.Join(t.TempDir(), "custom-usage.tsv")
 
@@ -398,6 +408,8 @@ func TestTriageDecideRecordsProviderUsage(t *testing.T) {
 // Supplying --usage pointing to an existing pool or job file path (alias)
 // must not append the usage row twice into one file.
 func TestTriageDecideDeduplicatesAliases(t *testing.T) {
+	t.Parallel()
+
 	p, id := decideTestPool(t, "starting up\nInternal server error\n")
 	poolUsage := p.Path("usage.tsv")
 
@@ -435,6 +447,8 @@ func TestTriageDecideDeduplicatesAliases(t *testing.T) {
 // An invalid destination directory passed via --usage is caught before any
 // provider call is made; provider call count must be 0 and triage exits 2.
 func TestTriageDecideDeterministicInvalidDestination(t *testing.T) {
+	t.Parallel()
+
 	p, _ := decideTestPool(t, "starting up\nInternal server error\n")
 	invalidDir := t.TempDir() // a directory, not a TSV file!
 
@@ -467,6 +481,8 @@ func TestTriageDecideDeterministicInvalidDestination(t *testing.T) {
 // When writing usage to a destination fails post-call, the call is retained;
 // a subsequent repair run recovers accounting without making another provider request.
 func TestTriageDecidePostCallPersistenceFailureAndRepair(t *testing.T) {
+	t.Parallel()
+
 	p, id := decideTestPool(t, "starting up\nInternal server error\n")
 	dir := t.TempDir()
 	validUsage := filepath.Join(dir, "valid-usage.tsv")
@@ -537,6 +553,8 @@ func TestTriageDecidePostCallPersistenceFailureAndRepair(t *testing.T) {
 
 // A failed provider call still records its usage with rc=2 before failing.
 func TestTriageDecideUsageOnFailure(t *testing.T) {
+	t.Parallel()
+
 	p, id := decideTestPool(t, "starting up\nInternal server error\n")
 	usageFile := filepath.Join(t.TempDir(), "usage.tsv")
 

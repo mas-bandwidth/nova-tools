@@ -3,6 +3,8 @@ package disposition
 import "testing"
 
 func TestParseTypedLines(t *testing.T) {
+	t.Parallel()
+
 	h := "B2D830D36BEF4D7D907B461E7A176C6009996D9D"
 	for _, tc := range []struct {
 		body, want string
@@ -30,6 +32,8 @@ func TestParseTypedLines(t *testing.T) {
 }
 
 func TestClassify(t *testing.T) {
+	t.Parallel()
+
 	for reason, want := range map[string]string{
 		"CI is red on shard 2. Pending rerun.":                   "ci",
 		"red at internal/x/y.go:12 on the shard":                 "substance",

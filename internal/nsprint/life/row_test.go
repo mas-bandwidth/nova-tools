@@ -76,6 +76,8 @@ func atoi(t *testing.T, s string) int {
 // table renders byte-equal to what sprint-table-redis printed on the captured
 // keyspace (Golden2674), 10/10.
 func TestControl3440RowVerbsRenderTheBashTable(t *testing.T) {
+	t.Parallel()
+
 	st, client, _ := controlRedis(t)
 	ctx := context.Background()
 	cfg, now := table.Fixture2674Config(), table.Fixture2674Now()
@@ -184,6 +186,8 @@ func TestControl3440RowVerbsRenderTheBashTable(t *testing.T) {
 // string is replaced by the hash, a friend with no beat is up=0, and a
 // missing index set counts 0.
 func TestFriendRowReplacesAWrongTypeAndCountsDown(t *testing.T) {
+	t.Parallel()
+
 	st, client, _ := controlRedis(t)
 	ctx := context.Background()
 	client.Set(ctx, "friend:walter", "legacy", 0)
@@ -209,6 +213,8 @@ func TestFriendRowReplacesAWrongTypeAndCountsDown(t *testing.T) {
 // TestBenchBeatWithoutRowStampWritesNoRow: a beat with no RowAt (callers
 // before #3440) leaves bench:<b> alone.
 func TestBenchBeatWithoutRowStampWritesNoRow(t *testing.T) {
+	t.Parallel()
+
 	st, client, _ := controlRedis(t)
 	ctx := context.Background()
 	if _, err := life.BenchBeat(ctx, st, life.BenchRequest{Bench: "b1", Session: "s", Actor: "bench"}); err != nil {

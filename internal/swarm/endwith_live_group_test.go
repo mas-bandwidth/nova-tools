@@ -24,6 +24,8 @@ func (c *graceClock) Sleep(d time.Duration) { c.now = c.now.Add(d) }
 
 // A disposable sleep process stands in for a surviving worker in its own group.
 func TestATamperedPidCannotPublishAttestationToALiveGroup(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	cmd := exec.Command("sleep", "30")
 	ownGroup(cmd)

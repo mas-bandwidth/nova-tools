@@ -25,6 +25,8 @@ func setupTakeTestRedis(t *testing.T) (*store.Store, *redis.Client) {
 // TestTakeAvailableClaimsInRankOrder asserts that TakeAvailable claims available
 // tasks in rank order: F, X1, L, T1, T2, U.
 func TestTakeAvailableClaimsInRankOrder(t *testing.T) {
+	t.Parallel()
+
 	st, client := setupTakeTestRedis(t)
 	ctx := context.Background()
 	sprint := "s-take-rank"

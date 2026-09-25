@@ -198,6 +198,8 @@ func fsckClean(t *testing.T, w *ghWorld, s, step string) card.FsckReport {
 // is clean, the done card keeps its ok, and a wrapper still running under a
 // retired card's token is fenced.
 func TestSprintCloseRetiresEveryCard(t *testing.T) {
+	t.Parallel()
+
 	w := newGhWorld(t)
 	const s = "close-3925"
 	w.open(t, s, 1)
@@ -271,6 +273,8 @@ func TestSprintCloseRetiresEveryCard(t *testing.T) {
 // closed by another path, records the finding, and leaves the host table's
 // ZCARDs equal to the records.
 func TestNoGhostCards(t *testing.T) {
+	t.Parallel()
+
 	w := newGhWorld(t)
 	const s, q, r = "live-3925", "quack-0925", "gate-3925"
 	w.open(t, s, 1)

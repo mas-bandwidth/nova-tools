@@ -12,6 +12,8 @@ import (
 // TestDevRedAndReadVerbsRefuseUsage: both verbs are registered and refuse
 // a missing subverb or flag with exit 2 and the remedy on the line.
 func TestDevRedAndReadVerbsRefuseUsage(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		args []string
 		want string
@@ -33,6 +35,8 @@ func TestDevRedAndReadVerbsRefuseUsage(t *testing.T) {
 
 // TestDevRedFromRuns: the forge seam's reading of check runs.
 func TestDevRedFromRuns(t *testing.T) {
+	t.Parallel()
+
 	type run = struct{ Name, Status, Conclusion string }
 	if st := devRedFromRuns(nil); st.Verdict != "" {
 		t.Fatalf("no runs: %+v", st)

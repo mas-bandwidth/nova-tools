@@ -25,6 +25,8 @@ import (
 // A fifth publish site therefore cannot appear without the guard, and a guard deleted from
 // an existing one is a named failure rather than a silent hole.
 func TestEveryPublishSiteIsBehindTheSecretScan(t *testing.T) {
+	t.Parallel()
+
 	// The guard is secretFindings; secretScan is its one wrapper, and the test asserts
 	// below that the wrapper really calls it rather than being a second implementation.
 	const guard = "secretFindings"
@@ -205,6 +207,8 @@ func publishes(call *ast.CallExpr) bool {
 // TestTheClassTestReadsThisPackage guards the guard: a class test pointed at an empty
 // directory passes for the wrong reason.
 func TestTheClassTestReadsThisPackage(t *testing.T) {
+	t.Parallel()
+
 	if _, err := os.Stat(filepath.Join(".", "harvest_secret.go")); err != nil {
 		t.Fatalf("the class test runs in the package directory, and harvest_secret.go is not there: %v", err)
 	}
@@ -213,6 +217,8 @@ func TestTheClassTestReadsThisPackage(t *testing.T) {
 // TestTheWrapperIsTheGuard: the class test accepts secretScan as the guard, so secretScan
 // must really be secretFindings' wrapper and not a second implementation that could drift.
 func TestTheWrapperIsTheGuard(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("harvest_secret.go")
 	if err != nil {
 		t.Fatal(err)
@@ -237,6 +243,8 @@ func TestTheWrapperIsTheGuard(t *testing.T) {
 // `return` or `continue`, never fall through to the push. The test reads the syntax tree,
 // so a fifth site, or an existing one edited to log-and-carry-on, is a named failure.
 func TestTheGuardsErrorPathIsTerminal(t *testing.T) {
+	t.Parallel()
+
 	guards := map[string]bool{"secretFindings": true, "secretScan": true}
 
 	fset := token.NewFileSet()

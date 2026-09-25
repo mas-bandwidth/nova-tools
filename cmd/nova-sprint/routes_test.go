@@ -28,6 +28,8 @@ import (
 // throwaway server testutil.Start runs; the fold is seeded with HSET of
 // (*route.Fold).Fields(), standing in for the fold's record script.
 func TestRoutesCheckReadsFold(t *testing.T) {
+	t.Parallel()
+
 	tab, err := route.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -230,6 +232,8 @@ func closedAddr(t *testing.T) string {
 // --preamble <route>` prints the route's one paragraph for a card front to
 // inline, and refuses (exit 1, nothing on stdout) a route that carries none.
 func TestRoutesPreamblePrintsTheParagraph(t *testing.T) {
+	t.Parallel()
+
 	tab, err := route.Load()
 	if err != nil {
 		t.Fatal(err)

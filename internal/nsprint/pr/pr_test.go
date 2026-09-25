@@ -54,6 +54,8 @@ func wantKept(t *testing.T, in pr.Input, landed []pr.Input) {
 }
 
 func TestPRRecordReapFields(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t)
 	const unit = "u-seven"
 	h.pushCard("card-seven", "internal/x a/b", "code")
@@ -169,6 +171,8 @@ func TestPRRecordReapFields(t *testing.T) {
 }
 
 func TestPRFieldSources(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t)
 	srv := repoServer(t)
 
@@ -381,6 +385,8 @@ func TestPRFieldSources(t *testing.T) {
 }
 
 func TestPRPathsCanon(t *testing.T) {
+	t.Parallel()
+
 	t.Run("space_in_json_form", func(t *testing.T) {
 		got, err := pr.CanonPaths(`["a b/c", "x"]`)
 		if err != nil || !reflect.DeepEqual(got, []string{"a b/c", "x"}) {
@@ -465,6 +471,8 @@ func TestPRPathsCanon(t *testing.T) {
 }
 
 func TestPRReapBehaviour(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t)
 
 	t.Run("x1_head_equals_approve_head", func(t *testing.T) {
@@ -605,6 +613,8 @@ func TestPRReapBehaviour(t *testing.T) {
 }
 
 func TestPRResolve(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t)
 	h.pushCard("c-r", "a/b", "code")
 	if _, err := h.head("u-r", h1, "c-r", "42"); err != nil {

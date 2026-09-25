@@ -32,6 +32,8 @@ func TestDarwinLsofFailureLeavesOldLock(t *testing.T) {
 // A pid that is gone between ps and lsof is not an owner. A pid that is still there
 // and has no cwd is an incomplete scan. The two are not the same answer.
 func TestDarwinVanishedGitIsNotAnUnreadableCwd(t *testing.T) {
+	t.Parallel()
+
 	procs, err := gitProcsFromPS("77 git status\n", map[string]string{}, nil, func(string) (bool, error) {
 		return false, nil
 	})

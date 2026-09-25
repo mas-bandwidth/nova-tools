@@ -56,6 +56,8 @@ var runnerOnlyRows = map[string]string{
 }
 
 func TestWorkflowsKeepOnlyRunnerOnlyRows(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	goTestTargets := makeGoTestTargets(t, readFile(t, filepath.Join(root, "Makefile")))
 	if !goTestTargets["test"] {

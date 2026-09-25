@@ -194,6 +194,8 @@ func TestRouteFallsToLowerComplexity(t *testing.T) {
 // Socket-free: the routes table picks exact, skips public for private
 // material, falls to the nearest lower complexity, else the default.
 func TestRouteTablePicksExactAndFallsBack(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	muse := filepath.Join(dir, "muse.json")
 	paid := filepath.Join(dir, "paid.json")
@@ -221,6 +223,8 @@ func TestRouteTablePicksExactAndFallsBack(t *testing.T) {
 
 // Socket-free: the verb asks the four documented questions.
 func TestRouteQuestionsHaveFourKinds(t *testing.T) {
+	t.Parallel()
+
 	qs := routeQuestions()
 	kind, ok := qs["kind"]
 	if !ok || kind.Choice["fix"] == "" || kind.Choice["probe"] == "" || kind.Choice["feat"] == "" || kind.Choice["port"] == "" {
@@ -235,6 +239,8 @@ func TestRouteQuestionsHaveFourKinds(t *testing.T) {
 	}
 }
 func TestRouteRefusesWithoutRoutes(t *testing.T) {
+	t.Parallel()
+
 	card := writeRouteFile(t, "card.md", "fix the named bug\n")
 	exit, _, stderr := runSwarm(t, "route", "--card", card)
 	if exit != 2 {

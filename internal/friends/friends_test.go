@@ -27,6 +27,8 @@ func write(t *testing.T, name, body string) string {
 }
 
 func TestLoadFindsTheUnitByID(t *testing.T) {
+	t.Parallel()
+
 	ws, err := Load(write(t, "units.json", oneUnit), DefaultMaxBytes)
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +46,8 @@ func TestLoadFindsTheUnitByID(t *testing.T) {
 }
 
 func TestLoadRefusesAFilePastTheByteCeilingWholeRatherThanTruncated(t *testing.T) {
+	t.Parallel()
+
 	p := write(t, "units.json", oneUnit)
 	if _, err := Load(p, 16); err == nil {
 		t.Fatal("a file past --max-bytes must be refused")
@@ -53,6 +57,8 @@ func TestLoadRefusesAFilePastTheByteCeilingWholeRatherThanTruncated(t *testing.T
 }
 
 func TestRenderCarriesTheHouseShape(t *testing.T) {
+	t.Parallel()
+
 	ws, err := Load(write(t, "units.json", oneUnit), DefaultMaxBytes)
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +86,8 @@ func TestRenderCarriesTheHouseShape(t *testing.T) {
 }
 
 func TestRenderRefusesASubjectThatWouldForgeAHeaderLine(t *testing.T) {
+	t.Parallel()
+
 	u := Unit{ID: "u1", Title: "one\nTo: somebody-else"}
 	if _, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: u, Deadline: time.Now().UTC(), Branch: "b"}); err == nil {
 		t.Fatal("a title with a newline must be refused, never written onto a header line")
@@ -91,6 +99,8 @@ func TestRenderRefusesASubjectThatWouldForgeAHeaderLine(t *testing.T) {
 // TestRenderWithoutAcceptanceTakesTheTitleAndSaysSo. What stays refused is a unit
 // with no TITLE, which would leave both the subject and the acceptance empty.
 func TestRenderRefusesAUnitWithNoTitle(t *testing.T) {
+	t.Parallel()
+
 	u := Unit{ID: "u1", Needs: []string{"n"}}
 	if _, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: u, Deadline: time.Now().UTC(), Branch: "b"}); err == nil {
 		t.Fatal("a unit with no title says nothing in a subject and nothing in an acceptance")
@@ -112,6 +122,8 @@ func (f *fake) Send(note string) (string, error) {
 func (f *fake) Where() string { return "(fake)" }
 
 func TestRecordWritesTheAskBackOntoTheUnit(t *testing.T) {
+	t.Parallel()
+
 	p := write(t, "units.json", oneUnit)
 	ws, err := Load(p, DefaultMaxBytes)
 	if err != nil {
@@ -137,6 +149,8 @@ func TestRecordWritesTheAskBackOntoTheUnit(t *testing.T) {
 }
 
 func TestOpenAsksFlagTheOverdueOnesAndCarryAge(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	ws := &WorkSet{Units: []Unit{{
 		ID: "u1", Asks: []Ask{
@@ -159,6 +173,8 @@ func TestOpenAsksFlagTheOverdueOnesAndCarryAge(t *testing.T) {
 }
 
 func TestSenderSeamIsWhatCarriesTheNote(t *testing.T) {
+	t.Parallel()
+
 	f := &fake{id: "2026-09-18T1200Z-ask-abcdef"}
 	id, err := f.Send("From: Rowan\nTo: Emma\nSubject: ask work: x\n\nbody\n")
 	if err != nil || id != f.id {
@@ -174,6 +190,8 @@ func TestSenderSeamIsWhatCarriesTheNote(t *testing.T) {
 }
 
 func TestSendOKLineYieldsTheID(t *testing.T) {
+	t.Parallel()
+
 	id, err := parseSendOK("SEND NOTE something\nSEND OK id=2026-09-18T1200Z-ask-abcdef path=from-rowan/x.md commit=deadbeef pushed=true attempts=1 wakes=1\n")
 	if err != nil {
 		t.Fatal(err)
@@ -191,6 +209,8 @@ func TestSendOKLineYieldsTheID(t *testing.T) {
 // each one is a test here before it is a line of code.
 
 func TestLoadReadsTheLispWorkSetACoordinatorActuallyWrites(t *testing.T) {
+	t.Parallel()
+
 	ws, err := Load("testdata/work-set.lisp", DefaultMaxBytes)
 	if err != nil {
 		t.Fatal(err)
@@ -227,6 +247,8 @@ func TestLoadReadsTheLispWorkSetACoordinatorActuallyWrites(t *testing.T) {
 }
 
 func TestLoadStillReadsTheJSONForm(t *testing.T) {
+	t.Parallel()
+
 	ws, err := Load(write(t, "units.json", oneUnit), DefaultMaxBytes)
 	if err != nil {
 		t.Fatal(err)
@@ -237,6 +259,8 @@ func TestLoadStillReadsTheJSONForm(t *testing.T) {
 }
 
 func TestLaneAndDeadlineSurviveTheJSONForm(t *testing.T) {
+	t.Parallel()
+
 	p := write(t, "units.json", `{"units":[{"id":"u1","title":"t","owner":"Emma","lane":"work","deadline":"2026-09-18T18:00Z","acceptance":["a"]}]}`)
 	ws, err := Load(p, DefaultMaxBytes)
 	if err != nil {
@@ -260,6 +284,8 @@ func TestLaneAndDeadlineSurviveTheJSONForm(t *testing.T) {
 }
 
 func TestRenderWithoutAcceptanceTakesTheTitleAndSaysSo(t *testing.T) {
+	t.Parallel()
+
 	u := Unit{ID: "pull:queue", Title: "the ready set in Redis", Owner: "Stella", Lane: "work"}
 	note, notices, err := Render(AskSpec{From: "Rowan", Owner: "Stella", Kind: "work", Unit: u, Deadline: time.Now().UTC().Add(time.Hour)})
 	if err != nil {
@@ -278,6 +304,8 @@ func TestRenderWithoutAcceptanceTakesTheTitleAndSaysSo(t *testing.T) {
 }
 
 func TestRenderOmitsTheBranchClauseWhenThereIsNoBranch(t *testing.T) {
+	t.Parallel()
+
 	u := Unit{ID: "u1", Title: "t", Acceptance: []string{"a"}}
 	note, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: u, Deadline: time.Now().UTC().Add(time.Hour)})
 	if err != nil {
@@ -300,6 +328,8 @@ func TestRenderOmitsTheBranchClauseWhenThereIsNoBranch(t *testing.T) {
 }
 
 func TestRenderPrintsTheTitleOnceOnly(t *testing.T) {
+	t.Parallel()
+
 	u := Unit{ID: "u1", Title: "retire the child shell", Acceptance: []string{"a"}}
 	note, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: u, Deadline: time.Now().UTC().Add(time.Hour)})
 	if err != nil {
@@ -311,6 +341,8 @@ func TestRenderPrintsTheTitleOnceOnly(t *testing.T) {
 }
 
 func TestRenderCcsTheSenderSoABroadcastIncludesSelf(t *testing.T) {
+	t.Parallel()
+
 	u := Unit{ID: "u1", Title: "t", Acceptance: []string{"a"}}
 	note, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: u, Deadline: time.Now().UTC().Add(time.Hour)})
 	if err != nil {
@@ -336,6 +368,8 @@ func TestRenderCcsTheSenderSoABroadcastIncludesSelf(t *testing.T) {
 }
 
 func TestOnBusListsTheAsksTheBusItselfRecords(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	rows, _, err := OnBus("testdata/bus", "Ada", "Bo", now, 0)
 	if err != nil {
@@ -362,6 +396,8 @@ func TestOnBusListsTheAsksTheBusItselfRecords(t *testing.T) {
 }
 
 func TestOnBusRefusesANameTheRosterDoesNotKnow(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	if _, _, err := OnBus("testdata/bus", "Nobody", "Bo", now, 0); err == nil {
 		t.Fatal("a sender the roster does not know must be refused by name")
@@ -372,6 +408,8 @@ func TestOnBusRefusesANameTheRosterDoesNotKnow(t *testing.T) {
 }
 
 func TestOnBusWithNoOwnerListsEveryAskTheSenderHasOut(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	rows, _, err := OnBus("testdata/bus", "Ada", "", now, 0)
 	if err != nil {
@@ -385,6 +423,8 @@ func TestOnBusWithNoOwnerListsEveryAskTheSenderHasOut(t *testing.T) {
 // ---- the sentence that says why the ask is yours ----
 
 func TestRenderSaysTheUnitNamesYouOnlyWhenItDoes(t *testing.T) {
+	t.Parallel()
+
 	owned := Unit{ID: "u1", Title: "the ready set", Owner: "Emma"}
 	note, notices, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: owned,
 		Deadline: time.Date(2026, 9, 18, 20, 0, 0, 0, time.UTC)})
@@ -405,6 +445,8 @@ func TestRenderSaysTheUnitNamesYouOnlyWhenItDoes(t *testing.T) {
 }
 
 func TestRenderSaysAssignedWhenTheUnitNamesNoOwner(t *testing.T) {
+	t.Parallel()
+
 	// The unit carries no :owner -- which is every unit of the real work set -- and the
 	// owner came from --owner. Saying "the unit names you as its owner" was a claim the
 	// file did not make, to the person least able to check it.
@@ -426,6 +468,8 @@ func TestRenderSaysAssignedWhenTheUnitNamesNoOwner(t *testing.T) {
 }
 
 func TestRenderSaysAssignedWhenTheUnitNamesSomebodyElse(t *testing.T) {
+	t.Parallel()
+
 	theirs := Unit{ID: "u1", Title: "the ready set", Owner: "Stella"}
 	note, notices, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: theirs,
 		Deadline: time.Date(2026, 9, 18, 20, 0, 0, 0, time.UTC)})
@@ -455,6 +499,8 @@ func hasNotice(notices []string, want string) bool {
 // ---- the bus read is bounded by files, newest first, and says when it was ----
 
 func TestOnBusReadsEveryNoteWhenItIsNotBounded(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	rows, bounded, err := OnBus("testdata/bus", "Ada", "Bo", now, 0)
 	if err != nil {
@@ -469,6 +515,8 @@ func TestOnBusReadsEveryNoteWhenItIsNotBounded(t *testing.T) {
 }
 
 func TestOnBusBoundsTheNewestNotesAndNamesTheBound(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	// The sender's lane holds four notes; read one and it is the NEWEST, which is the ask
 	// at 11:30. Oldest-first was the bug: it read the note nobody is waiting on.
@@ -499,6 +547,8 @@ func TestOnBusBoundsTheNewestNotesAndNamesTheBound(t *testing.T) {
 // could check and the other could not ask about. The fold is checked HERE, against
 // worklang's own reader, on the file a coordinator actually writes.
 func TestLoadReadsTheLispFormThroughWorklang(t *testing.T) {
+	t.Parallel()
+
 	const path = "testdata/work-set.lisp"
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -539,6 +589,8 @@ func TestLoadReadsTheLispFormThroughWorklang(t *testing.T) {
 }
 
 func TestLoadCarriesTheBranchAndAcceptanceTheGrammarWrites(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p := filepath.Join(dir, "set.lisp")
 	if err := os.WriteFile(p, []byte(`(work-set "s"
@@ -563,6 +615,8 @@ func TestLoadCarriesTheBranchAndAcceptanceTheGrammarWrites(t *testing.T) {
 }
 
 func TestOnBusDoesNotCallAnUnreadableNoteABound(t *testing.T) {
+	t.Parallel()
+
 	// Found by running this verb against the real bus: three lanes reported themselves
 	// bounded with no bound asked for, because a note that would not parse was counted
 	// as one the bound had cut off.

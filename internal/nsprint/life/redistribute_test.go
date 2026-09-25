@@ -276,6 +276,8 @@ func rdAssertMoved(t *testing.T, st *store.Store, client *redis.Client, f, why s
 // out-of-credits, and the very next tick (one Redis Function call, no model,
 // no coordinator) moves every open task and closes every lease.
 func TestOutOfCreditsRedistributesSameTick(t *testing.T) {
+	t.Parallel()
+
 	st, client := rdRedis(t)
 	ctx := context.Background()
 	tokens := rdFixture(t, st, client, "emma")
@@ -311,6 +313,8 @@ func TestOutOfCreditsRedistributesSameTick(t *testing.T) {
 // expired with open work is marked down on the first tick and redistributed
 // on the next, with no human noticing.
 func TestDownFriendRedistributesAfterOneTick(t *testing.T) {
+	t.Parallel()
+
 	st, client := rdRedis(t)
 	ctx := context.Background()
 	tokens := rdFixture(t, st, client, "emma")
@@ -342,6 +346,8 @@ func TestDownFriendRedistributesAfterOneTick(t *testing.T) {
 // TestFriendBackBeforeSecondTickKeepsWork: a friend whose beat returns before
 // the second tick keeps its work and its down mark is cleared.
 func TestFriendBackBeforeSecondTickKeepsWork(t *testing.T) {
+	t.Parallel()
+
 	st, client := rdRedis(t)
 	ctx := context.Background()
 	rdFixture(t, st, client, "emma")

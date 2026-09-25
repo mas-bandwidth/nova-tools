@@ -46,6 +46,8 @@ func handoffDirs(t *testing.T) (work, out string) {
 // 1. The default set is the card's receipt, its token row and its bundle, each
 // taken IF PRESENT. A read card writes no bundle and that is not a failure.
 func TestHandoffTakesTheDefaultsThatArePresent(t *testing.T) {
+	t.Parallel()
+
 	work, out := handoffDirs(t)
 	writeOn(t, work, "RESULT.md", "RESULT card1 sha=abc\nDONE\n")
 	writeOn(t, work, "usage.tsv", "in\tout\n10\t20\n")
@@ -78,6 +80,8 @@ func TestHandoffTakesTheDefaultsThatArePresent(t *testing.T) {
 // skip -- the run verb's rule 5, the same way --read refuses a named path that
 // is not there.
 func TestHandoffRefusesANamedArtifactTheCardNeverWrote(t *testing.T) {
+	t.Parallel()
+
 	work, out := handoffDirs(t)
 	writeOn(t, work, "RESULT.md", "x\n")
 	_, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1",
@@ -96,6 +100,8 @@ func TestHandoffRefusesANamedArtifactTheCardNeverWrote(t *testing.T) {
 // 3. Nothing escapes the volume. An absolute path, a `..` and a symlink pointing
 // off the volume are each refused by shape, before any copy.
 func TestHandoffRefusesAnythingThatWouldReachOffTheVolume(t *testing.T) {
+	t.Parallel()
+
 	work, out := handoffDirs(t)
 	writeOn(t, work, "RESULT.md", "x\n")
 	outside := filepath.Join(t.TempDir(), "secret.txt")
@@ -117,6 +123,8 @@ func TestHandoffRefusesAnythingThatWouldReachOffTheVolume(t *testing.T) {
 // 4. The set is measured BEFORE a byte is written and refused over the cap: a
 // handoff is a door, not a backup, and a truncated artifact is worse than none.
 func TestHandoffRefusesOverTheByteCapAndWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	work, out := handoffDirs(t)
 	writeOn(t, work, "RESULT.md", strings.Repeat("x", 4096))
 	_, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1", MaxBytes: 1024})
@@ -138,6 +146,8 @@ func TestHandoffRefusesOverTheByteCapAndWritesNothing(t *testing.T) {
 // 5. A directory named as an artifact is taken whole, one row per regular file,
 // with its shape kept under <out>/<name>/.
 func TestHandoffTakesADirectoryWhole(t *testing.T) {
+	t.Parallel()
+
 	work, out := handoffDirs(t)
 	writeOn(t, work, "art/one.txt", "1")
 	writeOn(t, work, "art/deep/two.txt", "22")
@@ -269,6 +279,8 @@ func TestRunRefusesWhenTheHandoffFailsAfterACleanCommand(t *testing.T) {
 // 8. The flags are checked before a volume is made: --artifact without --out,
 // a bad --out-max-bytes, a `..` in an artifact, and --out on windows.
 func TestRunValidatesTheHandoffFlagsBeforeAnythingIsMade(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		goos string
@@ -310,6 +322,8 @@ func TestRunValidatesTheHandoffFlagsBeforeAnythingIsMade(t *testing.T) {
 // 9. The banner answers the question. `run --help` names the door, the default
 // artifacts and the bundle that carries a commit out.
 func TestRunUsageNamesTheHandoffAndTheBundle(t *testing.T) {
+	t.Parallel()
+
 	for _, want := range []string{"--out <dir>", "--artifact <p>", "--out-max-bytes", "repo.bundle", "git bundle create"} {
 		if !strings.Contains(runUsage, want) {
 			t.Errorf("run --help does not name %q", want)

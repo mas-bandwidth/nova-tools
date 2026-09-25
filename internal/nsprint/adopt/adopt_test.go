@@ -42,6 +42,8 @@ func write(t *testing.T, c *redis.Client, r adopt.Receipt) adopt.Result {
 // nothing; an identical retry writes nothing; status reads 1/3 33%, then
 // 2/3 66% when a gap-carrying receipt adopts the second verb.
 func TestAdoptMatrixFromReceipts(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	c := store(t)
 
@@ -131,6 +133,8 @@ func TestAdoptMatrixFromReceipts(t *testing.T) {
 
 // TestReceiptCheck is the usage gate: each bad receipt names its flag.
 func TestReceiptCheck(t *testing.T) {
+	t.Parallel()
+
 	good := adopt.Receipt{Verb: "x", Who: "rowan", POV: "bench", State: "adopted"}
 	if err := good.Check(); err != nil {
 		t.Fatal(err)

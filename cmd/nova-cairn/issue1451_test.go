@@ -18,6 +18,8 @@ import (
 // banner contains "help" and gives the reader nothing to type, and a near miss
 // with the wrong spacing or semicolon must fail the literal test.
 func TestIssue1451EveryMissingFlagRefusalNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runCLI(t, "", "help")
 	if exit != 0 {
 		t.Fatalf("`nova-cairn help` must be exit 0, got %d; stderr: %s", exit, stderr)

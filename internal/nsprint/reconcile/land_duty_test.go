@@ -252,6 +252,8 @@ func lineFor(t *testing.T, p reconcile.LandPass, s string) reconcile.LandLine {
 // rebase task on its author's queue and its stream PR still opens with the
 // rest. Beta's reads exist only in the lines list read post writes.
 func TestLandDutyLandsEveryReadStreamInOneBatch(t *testing.T) {
+	t.Parallel()
+
 	fx := newLDFixture(t)
 	ctx, c := fx.ctx, fx.c
 	p, err := fx.d.Pass(ctx, "fixture-1", ldRepo)
@@ -338,6 +340,8 @@ func TestLandDutyLandsEveryReadStreamInOneBatch(t *testing.T) {
 // their CI wait and, once CI is green at the stream head, merge and move
 // their members to landed.
 func TestLandDutyOneWorkerPerRepoAndNextTickMerges(t *testing.T) {
+	t.Parallel()
+
 	fx := newLDFixture(t)
 	ctx, c := fx.ctx, fx.c
 	if _, err := fx.d.Pass(ctx, "fixture-1", ldRepo); err != nil {

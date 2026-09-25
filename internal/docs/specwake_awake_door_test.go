@@ -15,6 +15,8 @@ import (
 // still has no door, and a spec sentence that over-claimed would be worse
 // than the stale one.
 func TestSpecWakeSaysTheAwakeWorldRefusalsCarryTheDoor(t *testing.T) {
+	t.Parallel()
+
 	src, err := os.ReadFile("../../cmd/nova-wake/main.go")
 	if err != nil {
 		t.Fatalf("read cmd/nova-wake/main.go: %v", err)

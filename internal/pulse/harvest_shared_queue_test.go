@@ -262,6 +262,8 @@ func TestHarvestRefusesARootThatDoesNotResolveOnTheBench(t *testing.T) {
 // TestBenchListScriptAsksWhetherEachRootIsThere holds the one line of shell the refusal
 // above reads: the listing answers ROOT <path> ok|missing for every root it was given.
 func TestBenchListScriptAsksWhetherEachRootIsThere(t *testing.T) {
+	t.Parallel()
+
 	script := benchListScript([]string{"~/rowan-working/tmp", "/home/gaffer/rowan-swarm-root"})
 	for _, want := range []string{
 		"if [ -d '~/rowan-working/tmp' ]",

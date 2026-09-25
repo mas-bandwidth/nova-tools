@@ -62,6 +62,8 @@ var sshFamily = []string{"ssh", "scp", "sftp", "rsync"}
 // child itself the call stands BEFORE the first one: a guard after the exec
 // guards nothing.
 func TestNoTestReachesAHostThroughAnUnfakedSeam(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	allow := readHostSeamAllowlist(t)
 	seen := map[string]bool{}

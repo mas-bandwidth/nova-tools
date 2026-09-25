@@ -244,6 +244,8 @@ func waitJobsEmpty(dir string, bound time.Duration) []string {
 // above: a job dir the wrapper never removes is still reported left behind,
 // and one removed mid-wait is not.
 func TestWaitJobsEmptyStillFailsWhenNothingDeletes(t *testing.T) {
+	t.Parallel()
+
 	jobs := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(jobs, "adopt-real", "card-real-wrapper", "1"), 0o755); err != nil {
 		t.Fatal(err)

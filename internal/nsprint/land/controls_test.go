@@ -21,6 +21,8 @@ import (
 // Two concurrent plans naming one unit: one refused;
 // property test over 1,000 plans, no unit in two batches.
 func TestL1(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	// 1. Two concurrent plans naming one unit: one refused.
@@ -145,6 +147,8 @@ func TestL1(t *testing.T) {
 // TestL2 verifies control L2 (Issue #3139 rev 7 §11):
 // A redelivered entry read by two slots is gated once; the second gets STALE.
 func TestL2(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	unit := "gh/mas-bandwidth/nova-tools/102"
@@ -198,6 +202,8 @@ func TestL2(t *testing.T) {
 // TestL6 verifies control L6 (Issue #3139 rev 7 §11):
 // ns_land twice for one batch writes nothing the second time.
 func TestL6(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	unit := "gh/mas-bandwidth/nova-tools/106"
@@ -292,6 +298,8 @@ func TestL6(t *testing.T) {
 // TestL7 verifies control L7 (Issue #3139 rev 7 §11):
 // A landed unit never re-enters landable; a plan naming a landed head is refused.
 func TestL7(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	unit := "gh/mas-bandwidth/nova-tools/107"
@@ -342,6 +350,8 @@ func TestL7(t *testing.T) {
 // a HOLD after the cut (even before the physical push) lands with post_land=1 and its follow-up task;
 // no intent is cut with an open hold.
 func TestL23(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	// Case 1: HOLD before cut refuses intent
@@ -441,6 +451,8 @@ func TestL23(t *testing.T) {
 //
 // (iv) paused after the intent, the base moved by hand: both pushes refused, intent dead, chain re-planned.
 func TestL28(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	fromTip := "1111111111111111111111111111111111111111"
 
@@ -619,6 +631,8 @@ func TestL28(t *testing.T) {
 // a re-gate on A returns ALREADY; a RED on B never blocks A;
 // a policy change on A turns only A stale and leaves both receipts readable.
 func TestL31c(t *testing.T) {
+	t.Parallel()
+
 	orders := []struct {
 		name       string
 		firstBase  string
@@ -761,6 +775,8 @@ func TestL31c(t *testing.T) {
 //   - A harvested card's CICut carries its branch.
 //   - Preflight 7.16 is green on a gid source.
 func TestL31d(t *testing.T) {
+	t.Parallel()
+
 	t.Run("ns_ci_cut then ns_ci_end DONE OK creates receipt and makes head landable", func(t *testing.T) {
 		f := newLandFixture(t, "nova-tools", "dev")
 		st := store.New(f.client)

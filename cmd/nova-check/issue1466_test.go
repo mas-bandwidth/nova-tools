@@ -18,6 +18,8 @@ import (
 // EVERY invocation, so the --allow-empty case below pins today's summary line,
 // require-all=no and all.
 func TestIssue1466TheDogfoodGateRefusesAnEmptyReceiptSetUnlessAllowEmpty(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")

@@ -25,6 +25,8 @@ func withKind(f cardFix, kind string) []byte {
 // is a classification kind was stored, ran, and was refused as malformed only
 // at card end. RED WITHOUT THE CHECK: KIND: go-verb pushed with exit 0.
 func TestCardPushRefusesClassificationKind(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -67,6 +69,8 @@ func TestCardPushRefusesClassificationKind(t *testing.T) {
 // TestCardPushKeepsResultAndRunnerKinds: the six RESULT kinds, the runner
 // kinds and a card with no KIND line push as before, byte for byte.
 func TestCardPushKeepsResultAndRunnerKinds(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -99,6 +103,8 @@ func TestCardPushKeepsResultAndRunnerKinds(t *testing.T) {
 // (build/sprint-next/kinds.tsv, 846 rows on 2026-09-24) maps to a RESULT kind,
 // the table maps nothing else, and MapKind rewrites only the KIND line.
 func TestKindMapCoversTheWaitingSet(t *testing.T) {
+	t.Parallel()
+
 	want := map[string]string{
 		"go-verb": "fix", "go-fix": "fix", "lua-fn": "fix", "bats": "fix",
 		"security": "fix", "fleet": "fix", "retire": "fix",

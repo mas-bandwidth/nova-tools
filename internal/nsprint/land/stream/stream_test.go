@@ -65,6 +65,8 @@ func seed(t *testing.T, c *redis.Client, n int, head string, readAt int64, lines
 }
 
 func TestSlug(t *testing.T) {
+	t.Parallel()
+
 	for in, want := range map[string]string{"swarm: cards": "swarm-cards", strm: "landing-streams-lander", "  Redis  ": "redis"} {
 		got, err := Slug(in)
 		if err != nil || got != want {
@@ -82,6 +84,8 @@ func TestSlug(t *testing.T) {
 }
 
 func TestReadAtCountsOnlyAtHeadAndNeverJev(t *testing.T) {
+	t.Parallel()
+
 	head := "4760b3858aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	cases := []struct {
 		name  string
@@ -107,6 +111,8 @@ func TestReadAtCountsOnlyAtHeadAndNeverJev(t *testing.T) {
 }
 
 func TestRecordAndLines(t *testing.T) {
+	t.Parallel()
+
 	c := newRedis(t)
 	ctx := context.Background()
 	var ref *RefusedError
@@ -143,6 +149,8 @@ func TestRecordAndLines(t *testing.T) {
 }
 
 func TestMembersOrderAndFilters(t *testing.T) {
+	t.Parallel()
+
 	c := newRedis(t)
 	ctx := context.Background()
 	h := func(n int) string { return fmt.Sprintf("%07d%s", n, strings.Repeat("a", 33)) }
@@ -192,6 +200,8 @@ func TestMembersOrderAndFilters(t *testing.T) {
 }
 
 func TestSaveBuiltParksAndLandMembersLands(t *testing.T) {
+	t.Parallel()
+
 	c := newRedis(t)
 	ctx := context.Background()
 	for n := 1; n <= 3; n++ {
@@ -291,6 +301,8 @@ func TestSaveBuiltParksAndLandMembersLands(t *testing.T) {
 }
 
 func TestParseCloses(t *testing.T) {
+	t.Parallel()
+
 	for body, want := range map[string]string{
 		"Closes #3779\nfixes: #12 and resolved #12": "3779 12",
 		"DEPENDS-ON: #5; see #6":                    "-",
@@ -318,6 +330,8 @@ func (r *roundTrips) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.P
 // one per member and never a SCAN (the sub-second bar comes from that; the
 // measured time is logged, not asserted, per the CI-WAITS rule).
 func TestRedisPartsForAThousandAreFixedRoundTrips(t *testing.T) {
+	t.Parallel()
+
 	c := newRedis(t)
 	ctx := context.Background()
 	pipe := c.Pipeline()
@@ -364,6 +378,8 @@ func TestRedisPartsForAThousandAreFixedRoundTrips(t *testing.T) {
 }
 
 func TestStatusReadsRecordsOnly(t *testing.T) {
+	t.Parallel()
+
 	c := newRedis(t)
 	ctx := context.Background()
 	l := Landing{Repo: repo, Slug: "a", Streams: "a", Base: "dev", Branch: "stream/a", Head: strings.Repeat("c", 40), PR: 5, State: "open"}
@@ -382,6 +398,8 @@ func TestStatusReadsRecordsOnly(t *testing.T) {
 // The script and the member step end to end on a real redis-server (skipped
 // on a laptop without one, required under NOVA_CI=1).
 func TestLuaOnRealRedis(t *testing.T) {
+	t.Parallel()
+
 	c := newRedis(t)
 	ctx := context.Background()
 	for n := 1; n <= 2; n++ {
@@ -409,6 +427,8 @@ func TestLuaOnRealRedis(t *testing.T) {
 }
 
 func TestUnionCloses(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range [][3]string{
 		{"103", "7", "103 7"}, {"-", "7", "7"}, {"7", "7 8", "7 8"}, {"-", "-", "-"}, {"-", "", "-"}, {"", "", ""}, {"", "-", ""}, {"", "7", "7"},
 	} {

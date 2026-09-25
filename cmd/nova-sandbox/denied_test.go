@@ -50,6 +50,8 @@ const fakeDenialLog = `Timestamp                       (process)[PID]
 
 // The parser reads the OS's lines and nothing else: the operation, the path and the pid.
 func TestDenialsAreReadOffTheOSsOwnViolationLines(t *testing.T) {
+	t.Parallel()
+
 	got := parseDenials(fakeDenialLog, 0)
 	want := []deniedPath{
 		{Path: "/opt", Op: "read", PID: 4210},
@@ -79,6 +81,8 @@ func TestDenialsAreReadOffTheOSsOwnViolationLines(t *testing.T) {
 // on it, so a window of the log holds other people's violations too; the pid floor is the
 // narrowing that keeps a card from being handed a neighbour's problem.
 func TestDenialsBelowThePidFloorAreNotThisRuns(t *testing.T) {
+	t.Parallel()
+
 	got := parseDenials(fakeDenialLog, 4210)
 	for _, d := range got {
 		if d.PID < 4210 {
@@ -94,6 +98,8 @@ func TestDenialsBelowThePidFloorAreNotThisRuns(t *testing.T) {
 // operation on a path the caller already named, and printing a remedy that is already in
 // the argv would send a reader to fix what is not broken.
 func TestDenialsInsideTheAllowedSetAreNotReported(t *testing.T) {
+	t.Parallel()
+
 	got := outsideTheWall(parseDenials(fakeDenialLog, 0), []string{"/Volumes/nova-j1"})
 	for _, d := range got {
 		if strings.HasPrefix(d.Path, "/Volumes/nova-j1") {
@@ -146,6 +152,8 @@ func TestTheDenialReaderUsesPosixPathsOnEveryPlatform(t *testing.T) {
 // Rule 16's shape for a list: a cap, and one line standing for the rest. A command that
 // died early can trip hundreds of denials and a wall of them is not a remedy.
 func TestTheDeniedLinesAreCapped(t *testing.T) {
+	t.Parallel()
+
 	var many []deniedPath
 	for i := 0; i < 25; i++ {
 		many = append(many, deniedPath{Path: "/x/" + string(rune('a'+i)), Op: "read", PID: 1})
@@ -163,6 +171,8 @@ func TestTheDeniedLinesAreCapped(t *testing.T) {
 
 // Nothing denied is nothing printed: a clean run says nothing about denials at all.
 func TestNoDenialsPrintsNothing(t *testing.T) {
+	t.Parallel()
+
 	var errb bytes.Buffer
 	printDenied(&errb, nil, 10)
 	if errb.Len() != 0 {

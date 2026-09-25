@@ -144,6 +144,8 @@ func fsState(client *redis.Client, f string) map[string]string {
 // readers with free width, builds on another builder, every title carries
 // the marker and the carried-hold re-read is one release task.
 func TestControl43(t *testing.T) {
+	t.Parallel()
+
 	st, client := fsRedis(t)
 	ctx := context.Background()
 	fsFriends(t, client, "emma", "stella", "johnny", "rowan")
@@ -237,6 +239,8 @@ func TestControl43(t *testing.T) {
 // friend:<f>:events only in presence.lua (ns_friend_event); no Go source
 // writes any of the three; every XADD to the events stream is capped.
 func TestControl43OneWriter(t *testing.T) {
+	t.Parallel()
+
 	source, err := fn.Source()
 	fsMust(t, err)
 	sections := strings.Split(source, "\n-- lua/")
@@ -411,6 +415,8 @@ func (r *fsRepairer) Repair(_ context.Context, f string, wp friend.WakePath) (st
 // redistributes. A take at rung 2 stops the ladder. A human friend's rung 2
 // sends one notice to its channel. No key or row ever says asleep.
 func TestControl45(t *testing.T) {
+	t.Parallel()
+
 	policy := friend.Policy{IdleTicks: 3, UnderfullTicks: 3}
 
 	t.Run("unit", func(t *testing.T) {
@@ -558,6 +564,8 @@ func fsNoAsleep(t *testing.T, st *store.Store, client *redis.Client) {
 // comes on the same sweep count it would have without the restart. A replay
 // of one sweep's call (a lost response) does not advance twice.
 func TestLadderSurvivesRestart(t *testing.T) {
+	t.Parallel()
+
 	st, client := fsRedis(t)
 	ctx := context.Background()
 	fsIdleFixture(t, st, client, "kim")
@@ -660,6 +668,8 @@ func fsCapLog(t *testing.T, client *redis.Client) []redis.XMessage {
 // wake-missed on the report branch, still refuses an unknown state, and
 // both hold against the ladder's idle observation.
 func TestFriendStateAcceptsLifeStates(t *testing.T) {
+	t.Parallel()
+
 	st, client := fsRedis(t)
 	ctx := context.Background()
 	fsFriends(t, client, "ada", "stella", "johnny", "rowan")
@@ -686,6 +696,8 @@ func TestFriendStateAcceptsLifeStates(t *testing.T) {
 // when the stored state and idem still equal what it read, and only over a
 // state it may overwrite; otherwise STALE or HELD and nothing is written.
 func TestFriendStateIfMatch(t *testing.T) {
+	t.Parallel()
+
 	st, client := fsRedis(t)
 	ctx := context.Background()
 	fsFriends(t, client, "ada", "stella", "johnny", "rowan")
@@ -753,6 +765,8 @@ func fsMoveOf(moves []life.Move, f string) *life.Move {
 // wake-missed has its open task moved by the next redistribute call, with
 // the wake-missed marker.
 func TestWakeMissedRedistributesSameTick(t *testing.T) {
+	t.Parallel()
+
 	st, client := fsRedis(t)
 	ctx := context.Background()
 	fsFriends(t, client, "ada", "stella", "johnny", "rowan")
@@ -777,6 +791,8 @@ func TestWakeMissedRedistributesSameTick(t *testing.T) {
 // gone) in wake-missed has its work moved and stays wake-missed; a beat
 // never clears it as it clears down.
 func TestWakeMissedSurvivesBeat(t *testing.T) {
+	t.Parallel()
+
 	st, client := fsRedis(t)
 	ctx := context.Background()
 	fsFriends(t, client, "ada", "stella", "johnny", "rowan")
@@ -805,6 +821,8 @@ func TestWakeMissedSurvivesBeat(t *testing.T) {
 // refuses an unknown kind, a cause off turn-start, an unknown friend and an
 // actor that is not the friend (shape validation, not authentication).
 func TestFriendEventOneWriter(t *testing.T) {
+	t.Parallel()
+
 	_, client := fsRedis(t)
 	ctx := context.Background()
 	fsFriends(t, client, "ada", "bo", "stella", "johnny", "rowan")
@@ -845,6 +863,8 @@ func TestFriendEventOneWriter(t *testing.T) {
 // is given; a late, wrongly caused or wrong-kind pair is REFUSED and writes
 // nothing, a real receipt declares scheduled-model-turn.
 func TestFriendWakeModeRechecksReceipt(t *testing.T) {
+	t.Parallel()
+
 	_, client := fsRedis(t)
 	ctx := context.Background()
 	fsFriends(t, client, "ada", "stella", "johnny", "rowan")

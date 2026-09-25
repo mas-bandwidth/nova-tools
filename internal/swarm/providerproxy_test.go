@@ -28,6 +28,8 @@ func discardReq(r *http.Request) {
 // a real timer. Headers have arrived. No body byte follows. The proxy aborts
 // that one request and refuses the next one, so the upstream count stays 1.
 func TestSilentBodyAfterHeadersIsOneUpstreamRequest(t *testing.T) {
+	t.Parallel()
+
 	var upstream atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream.Add(1)
@@ -89,6 +91,8 @@ func TestSilentBodyAfterHeadersIsOneUpstreamRequest(t *testing.T) {
 // TestBodyThatResumesInsideTheDeadlineIsNotUnknown: headers, a pause shorter
 // than the gap, then the body. That is success. Nothing is marked lost.
 func TestBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
+	t.Parallel()
+
 	var upstream atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream.Add(1)
@@ -138,6 +142,8 @@ func TestBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
 // TestUnsetSilenceArmsFortyFiveSeconds: a proxy with no silence of its own
 // arms ProviderBodySilence. The clock fires at once so the test does not wait.
 func TestUnsetSilenceArmsFortyFiveSeconds(t *testing.T) {
+	t.Parallel()
+
 	var mu sync.Mutex
 	var armed []time.Duration
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -191,6 +197,8 @@ func TestUnsetSilenceArmsFortyFiveSeconds(t *testing.T) {
 }
 
 func TestPointProviderAtProxyKeepsTheKey(t *testing.T) {
+	t.Parallel()
+
 	in := []byte(`{"provider":{"fake":{"options":{"apiKey":"k","baseURL":"http://127.0.0.1:9/v1"}}}}`)
 	out, ok := PointProviderAtProxy(in, "fake", "http://127.0.0.1:8/v1")
 	if !ok {
@@ -208,6 +216,8 @@ func TestPointProviderAtProxyKeepsTheKey(t *testing.T) {
 }
 
 func TestProviderProxyEligibleIsHTTPOnly(t *testing.T) {
+	t.Parallel()
+
 	if !ProviderProxyEligible("http://127.0.0.1:9/v1") {
 		t.Fatal("an http base URL was not eligible")
 	}
@@ -221,6 +231,8 @@ func TestProviderProxyEligibleIsHTTPOnly(t *testing.T) {
 // with headers. The proxy ends it at its own header wait, marks it lost, and
 // refuses the next request, so the upstream count stays 1.
 func TestNoHeadersIsOneUpstreamRequestAndUnknown(t *testing.T) {
+	t.Parallel()
+
 	var upstream atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream.Add(1)
@@ -276,6 +288,8 @@ func TestNoHeadersIsOneUpstreamRequestAndUnknown(t *testing.T) {
 // wait, then a streamed body. The status, a header and every body byte pass
 // through unchanged. Nothing is marked lost.
 func TestDelayedHeadersInsideTheWaitPassThrough(t *testing.T) {
+	t.Parallel()
+
 	var upstream atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream.Add(1)
@@ -333,6 +347,8 @@ func TestDelayedHeadersInsideTheWaitPassThrough(t *testing.T) {
 // TestUnsetHeaderWaitIsFortyFiveSeconds: a proxy with no header wait of its
 // own waits ProviderHeaderTimeout.
 func TestUnsetHeaderWaitIsFortyFiveSeconds(t *testing.T) {
+	t.Parallel()
+
 	up := httptest.NewServer(http.NotFoundHandler())
 	defer up.Close()
 	p, err := ListenProviderProxy(ProviderProxyConfig{Upstream: up.URL})

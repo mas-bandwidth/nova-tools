@@ -16,6 +16,8 @@ import (
 // three reads priced $0.40, $1.10 and unmetered print read $ per landed with
 // unmetered 1, and a missing cost field is never summed as $0.
 func TestControl55Cost(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
@@ -80,6 +82,8 @@ func TestControl55Cost(t *testing.T) {
 // read $ per landed a lower bound with its coverage (priced reads over reads); with every read
 // priced the figure is exact.
 func TestFoldReadsPerLandedLowerBound(t *testing.T) {
+	t.Parallel()
+
 	control55 := func(third string) []fold.ReadTask {
 		return []fold.ReadTask{
 			{ID: "read-3101-a", Kind: "read", Evidence: "APPROVE 9/10 at abc1234 | cost_usd=0.40"},

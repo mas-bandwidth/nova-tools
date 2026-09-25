@@ -14,6 +14,8 @@ import (
 // so card run never refuses "no body" for a card the store lists. The probe
 // sprint quack-0925-1350 failed 12 of 12 that way.
 func TestPushStoresTheBodyTheWrapperRuns(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)

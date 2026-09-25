@@ -383,6 +383,8 @@ func TestEgressCheckGoesRedOnABrokenPlan(t *testing.T) {
 }
 
 func TestEgressVerbRefusesAnUnknownSubVerb(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	for _, args := range [][]string{{"egress"}, {"egress", "flush"}} {
 		code, _, errOut := j.tool(t, j.env(), args...)
@@ -396,6 +398,8 @@ func TestEgressVerbRefusesAnUnknownSubVerb(t *testing.T) {
 // the spec's grammar block — so this reads the spec rather than a copy of it, like
 // grammar_test.go does for the probe's reasons.
 func TestTheBlockedDestinationLineIsTheSpecsOwn(t *testing.T) {
+	t.Parallel()
+
 	spec := specSandbox(t)
 	inFence, found := false, false
 	for _, line := range strings.Split(spec, "\n") {
@@ -415,6 +419,8 @@ func TestTheBlockedDestinationLineIsTheSpecsOwn(t *testing.T) {
 // The run contract in the image's README is the other half of this wall, and a reader of
 // the image has to find the order the worker calls the verbs in.
 func TestTheImageReadmeCarriesTheEgressContract(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "infra", "image", "README.md"))
 	if err != nil {
 		t.Fatalf("infra/image/README.md is the run contract and it has to be readable: %s", err)

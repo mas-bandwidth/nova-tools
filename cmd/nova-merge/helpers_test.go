@@ -15,6 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // The fixture every contract test runs against: a BARE GIT REPOSITORY in t.TempDir() and
@@ -259,7 +260,7 @@ func buildLabFixture() (string, error) {
 	// The update hook records every push the remote received, so a test can assert that
 	// the base only ever moved forward by exactly one commit (demanded test 4).
 	if fail == nil {
-		fail = os.WriteFile(filepath.Join(remote, "hooks", "update"),
+		fail = testbin.WriteExecutable(filepath.Join(remote, "hooks", "update"),
 			[]byte("#!/bin/sh\necho \"$1 $2 $3\" >> \"$GIT_DIR/pushes\"\n"), 0o755)
 	}
 	if fail != nil {

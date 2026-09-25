@@ -17,6 +17,8 @@ import (
 
 // Below the floor the line says where the work goes next.
 func TestRouteLineCarriesTheNextRung(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"route", "--no-jev", "--unit-id", "thin", "--kind", "new-verb", "--floor", "0.9"}, &stdout, &stderr)
 	if code != 3 {
@@ -74,6 +76,8 @@ func TestRouteStepUpLogsEveryStep(t *testing.T) {
 // --max-steps without --step-up, and a step count that is not a count, are both
 // refusals naming the flag.
 func TestRouteStepUpFlagRefusals(t *testing.T) {
+	t.Parallel()
+
 	for name, args := range map[string][]string{
 		"max-steps alone": {"route", "--no-jev", "--unit-id", "u", "--kind", "rebase", "--files", "2", "--max-steps", "2"},
 		"zero steps":      {"route", "--no-jev", "--unit-id", "u", "--kind", "rebase", "--files", "2", "--step-up", "--max-steps", "0"},
@@ -91,6 +95,8 @@ func TestRouteStepUpFlagRefusals(t *testing.T) {
 // A sub-verb refuses an unknown flag BY NAME rather than swallowing it and
 // printing the banner at exit 0 (the report's `nova-decide help --state`).
 func TestHelpRefusesUnknownFlagsByName(t *testing.T) {
+	t.Parallel()
+
 	for name, args := range map[string][]string{
 		"a flag that wants a value": {"help", "--state"},
 		"a flag help does not hold": {"help", "--registry", "x"},

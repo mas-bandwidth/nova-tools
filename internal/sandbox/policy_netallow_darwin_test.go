@@ -22,6 +22,8 @@ import (
 // would have caught it: a run that cannot even compile its profile fails this test's
 // positive control before ever reaching the negative one.
 func TestNetAllowGrantsExactlyTheNamedLoopbackPort(t *testing.T) {
+	t.Parallel()
+
 	if _, ok := available(); !ok {
 		t.Skip("no sandbox-exec on this machine")
 	}

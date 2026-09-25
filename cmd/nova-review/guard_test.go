@@ -13,12 +13,16 @@ import (
 // Revert the commit's non-test files, keep the tests, run the named packages.
 
 func TestGuardUsageNamesTheVerb(t *testing.T) {
+	t.Parallel()
+
 	if !strings.Contains(usage, "nova-review guard --repo <dir> --head <ref>") {
 		t.Fatalf("the help does not carry the guard line:\n%s", usage)
 	}
 }
 
 func TestGuardVerbComputesGuardedWhenNamedTestsGoRed(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, true)
 	var out, errb bytes.Buffer
 	code := run([]string{"guard", "--repo", dir, "--head", "HEAD"}, &out, &errb)
@@ -38,6 +42,8 @@ func TestGuardVerbComputesGuardedWhenNamedTestsGoRed(t *testing.T) {
 }
 
 func TestGuardVerbComputesUnguardedWhenTestsStayGreen(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, false)
 	var out, errb bytes.Buffer
 	code := run([]string{"guard", "--repo", dir, "--head", "HEAD"}, &out, &errb)
@@ -54,6 +60,8 @@ func TestGuardVerbComputesUnguardedWhenTestsStayGreen(t *testing.T) {
 }
 
 func TestGuardVerbIsNotApplicableWhenTheFileIsForAnotherGOOS(t *testing.T) {
+	t.Parallel()
+
 	dir := otherGOOSLab(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"guard", "--repo", dir, "--head", "HEAD"}, &out, &errb)
@@ -73,6 +81,8 @@ func TestGuardVerbIsNotApplicableWhenTheFileIsForAnotherGOOS(t *testing.T) {
 }
 
 func TestGuardVerbReportsCompilerHeldWhenRevertDoesNotCompile(t *testing.T) {
+	t.Parallel()
+
 	dir := compilerHeldLab(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"guard", "--repo", dir, "--head", "HEAD"}, &out, &errb)
@@ -89,6 +99,8 @@ func TestGuardVerbReportsCompilerHeldWhenRevertDoesNotCompile(t *testing.T) {
 }
 
 func TestGuardVerbDoesNotReadAResultFile(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, true)
 	put(t, dir, "RESULT.md", "RESULT: card-tools20-guard\nUNGUARDED\n")
 	var out, errb bytes.Buffer
@@ -103,6 +115,8 @@ func TestGuardVerbDoesNotReadAResultFile(t *testing.T) {
 }
 
 func TestGuardVerbRecordsBothTails(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, true)
 	var out, errb bytes.Buffer
 	code := run([]string{"guard", "--repo", dir, "--head", "HEAD"}, &out, &errb)
@@ -119,6 +133,8 @@ func TestGuardVerbRecordsBothTails(t *testing.T) {
 }
 
 func TestGuardVerbRefusesWithoutRepoAndHead(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	if code := run([]string{"guard"}, &out, &errb); code != 2 {
 		t.Fatalf("exit %d, want 2 (stderr %s)", code, errb.String())
@@ -196,6 +212,8 @@ func otherGOOSLab(t *testing.T) string {
 }
 
 func TestGuardVerbDoesNotWriteTheCallersRepo(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, true)
 	before, err := os.ReadFile(filepath.Join(dir, "sign", "sign.go"))
 	if err != nil {

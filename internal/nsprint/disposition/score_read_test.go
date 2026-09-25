@@ -95,6 +95,8 @@ func (f readFixture) readsLine(t *testing.T) (string, int) {
 // author's SCORE and one under the bar are named and not counted; a SCORE
 // line with a verdict= key or no score is refused, never guessed.
 func TestScoreLineCountsAsRead(t *testing.T) {
+	t.Parallel()
+
 	f := newReadFixture(t)
 	h := f.head
 	if got := disposition.Parse("SCORE who=stella head=" + h + " verdict=APPROVE score=9").String(); got != "REFUSED unknown-key verdict" {
@@ -132,6 +134,8 @@ func TestScoreLineCountsAsRead(t *testing.T) {
 // TestHoldLineNeverCounts: the read rubric's HOLD line is a HOLD record
 // (a hold opens), whatever score it carries, and never counts as a read.
 func TestHoldLineNeverCounts(t *testing.T) {
+	t.Parallel()
+
 	f := newReadFixture(t)
 	h := f.head
 	if p := disposition.Parse("HOLD who=stella head=" + h + ": no score"); p.Outcome != disposition.Record || p.Line.Type != disposition.TypeHold || p.Line.Verdict != "HOLD" || p.Line.Score != 0 {

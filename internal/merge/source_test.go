@@ -47,6 +47,8 @@ func packageSource(t *testing.T) map[string]string {
 // but the lane's own state, log, outbox and record paths -- and git, not this code, is
 // what writes into a work tree.
 func TestNothingWritesIntoTheClonesWorkTree(t *testing.T) {
+	t.Parallel()
+
 	// The writing sites this package is allowed, EACH ONE NAMED. It used to be a file
 	// name with a sentence, so any number of opens in state.go, records.go or lock.go
 	// passed on the strength of the first (read 4b, finding 6). Three sites is the whole
@@ -100,6 +102,8 @@ func TestNothingWritesIntoTheClonesWorkTree(t *testing.T) {
 // Rule 13: nothing under /tmp, and the tool never matches a process by its own command
 // line. The state, the clone and the gate summaries live only under paths given by flags.
 func TestNothingReachesTmpOrTheProcessTable(t *testing.T) {
+	t.Parallel()
+
 	for name, src := range packageSource(t) {
 		for _, forbidden := range []string{`"/tmp`, "os.TempDir", "pgrep", `"ps"`, "/proc/", "TMPDIR"} {
 			if strings.Contains(src, forbidden) {
@@ -114,6 +118,8 @@ func TestNothingReachesTmpOrTheProcessTable(t *testing.T) {
 // which is the shape the prototype had when a hand-typed `gh pr merge --auto` reached
 // past its guard.
 func TestThePublicationHelperHasOneCallSiteInsideThePredicate(t *testing.T) {
+	t.Parallel()
+
 	fset := token.NewFileSet()
 	sites := map[string]int{}
 	for name := range packageSource(t) {
@@ -162,6 +168,8 @@ func enclosing(f *ast.File, fset *token.FileSet, pos token.Pos) string {
 // property of the call graph and never of a flag. The survey calls plan, which calls
 // neither build nor merge nor Publish nor Ready.
 func TestTheSurveysCallGraphCannotReachAMutation(t *testing.T) {
+	t.Parallel()
+
 	fset := token.NewFileSet()
 	forbidden := map[string]bool{"Publish": true, "merge": true, "build": true, "remerge": true, "Ready": true, "Deliver": true, "SaveTo": true, "Update": true}
 	for name := range packageSource(t) {
@@ -204,6 +212,8 @@ func TestTheSurveysCallGraphCannotReachAMutation(t *testing.T) {
 // call at all, which is what keeps gh pr merge out of the merge path entirely -- the
 // shape the prototype had when a hand-typed `gh pr merge --auto` reached past its guard.
 func TestNoGhPrMergeCallLacksABasePrecondition(t *testing.T) {
+	t.Parallel()
+
 	base := map[string]bool{"--match-base": true, "--match-base-commit": true, "--expected-base": true}
 	fset := token.NewFileSet()
 	calls := 0
@@ -267,6 +277,8 @@ func stringArgs(call *ast.CallExpr) []string {
 // So: every function that reaches Runner.Run calls guard() first, and this reads the
 // positions rather than trusting the order a reader remembers.
 func TestEveryRunnerCallSiteIsGuardedFirst(t *testing.T) {
+	t.Parallel()
+
 	fset := token.NewFileSet()
 	sites := 0
 	for name := range packageSource(t) {
@@ -334,6 +346,8 @@ func TestEveryRunnerCallSiteIsGuardedFirst(t *testing.T) {
 // all. The identity is now one helper, and this reads the source so a third writing site
 // added later is red here rather than on one operating system.
 func TestEveryCommitWritingCommandCarriesTheIdentity(t *testing.T) {
+	t.Parallel()
+
 	fset := token.NewFileSet()
 	checked := 0
 	for name := range packageSource(t) {
@@ -418,6 +432,8 @@ func writesACommit(words []string) bool {
 // sentinel writer, and the pattern for the file it used to leave behind stayed in the
 // ignore list -- a rule that reads as though a sentinel is still expected.
 func TestTheLanesIgnoreListNamesNoSentinel(t *testing.T) {
+	t.Parallel()
+
 	for _, leftover := range []string{".held", ".lock.d", ".lockdir"} {
 		if strings.Contains(GitIgnore, leftover) {
 			t.Errorf("the lane's .gitignore names %q; the lock is an OS lock the kernel releases on death, never a sentinel file or a directory (rule 1)", leftover)

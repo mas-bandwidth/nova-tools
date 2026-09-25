@@ -14,6 +14,8 @@ import (
 // MERGE WAIT MERGED must therefore carry base=<branch> so a coordinator can
 // tell a stack merge from a landing.
 func TestWaitMergedNamesItsBase(t *testing.T) {
+	t.Parallel()
+
 	host := NewFakeHost()
 	head := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 	mergeSHA := "ffffffffffffffffffffffffffffffffffffffff"

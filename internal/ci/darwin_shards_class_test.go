@@ -89,6 +89,8 @@ const darwinQuietHostMargin = 2.0
 // dealt by count off another platform's table, and a cap that was a convention
 // rather than a measurement.
 func TestDarwinMergeShardPlanIsDerivedFromMeasurements(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	_, full := readSizeTable(t, root, darwinSizesPath)
 	if len(full) == 0 {
@@ -179,6 +181,8 @@ func TestDarwinMergeShardPlanIsDerivedFromMeasurements(t *testing.T) {
 // the darwin table, and its ceiling is the Makefile's DARWIN_TIMEOUT rather than
 // the 100 s that linux keeps as its own.
 func TestMergeGateDarwinLegDealsFromTheDarwinTable(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	step := stepBody(src, "test (full, the packages this group changes, shard ${{ matrix.shard }} of ${{ needs.plan-merge.outputs.slots }})")

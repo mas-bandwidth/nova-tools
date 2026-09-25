@@ -20,6 +20,8 @@ import (
 // from the contract line. `chore` is NOT added to the gate vocabulary -- it is
 // a second name for a kind the table already holds.
 func TestCardIngestionCanonicalizesTheChoreAliasInHeaderAndContract(t *testing.T) {
+	t.Parallel()
+
 	t.Run("the card states KIND: chore itself", func(t *testing.T) {
 		u, ok := CardUnit("card-h", "CONTRACT: bump the pinned toolchain on every bench",
 			"KIND: chore\nFILES: 2\nPACKAGES: 1\nLANES: 1\nLANE: fleet\n")

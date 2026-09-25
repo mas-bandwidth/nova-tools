@@ -41,6 +41,8 @@ var (
 // It appears once per self-hosted job, so the test walks EVERY occurrence:
 // asserting only the first would pass a tree where five are fixed.
 func TestWorkspaceCleanupDoesNotFailBeforeCheckout(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	lines, bodies := workspaceCleanupStepBodies(src)

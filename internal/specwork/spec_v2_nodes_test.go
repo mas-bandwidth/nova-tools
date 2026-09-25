@@ -16,6 +16,8 @@ import (
 // instead of truncating the tree. The v2 features V2-F01 and V2-F02 of
 // ROADMAP.md hang on this section, so it is a gate and not prose.
 func TestSpecWorkV2RecursiveCoordinationNodes(t *testing.T) {
+	t.Parallel()
+
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)

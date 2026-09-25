@@ -13,6 +13,8 @@ import (
 // its rows against the slice, row for row, so a signature added to one and not the other is
 // red.
 func TestSignatureTableMatchesSpec(t *testing.T) {
+	t.Parallel()
+
 	spec := readSpecSignatureTable(t)
 	if len(spec) != len(failureSignatures) {
 		t.Fatalf("the spec table holds %d rows and the binary %d; they must agree", len(spec), len(failureSignatures))
@@ -28,6 +30,8 @@ func TestSignatureTableMatchesSpec(t *testing.T) {
 // the one detected, with its own class. A signature the binary lists but cannot see, or one
 // that returns the wrong class, is a bug in the table.
 func TestEachSignatureIsDetected(t *testing.T) {
+	t.Parallel()
+
 	for _, s := range failureSignatures {
 		s := s
 		t.Run(s.signature, func(t *testing.T) {
@@ -47,6 +51,8 @@ func TestEachSignatureIsDetected(t *testing.T) {
 // disposition, and the run's own harness-output.log holds the go toolchain's own words, so
 // the batch must score reason=signature and never print the BRANCH.
 func TestBatchScoresSignature(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -74,6 +80,8 @@ func TestBatchScoresSignature(t *testing.T) {
 // carries a known failure signature is not the read verdict the card wrote; it is an
 // ABSTAIN naming the signature and its class.
 func TestVerifyScoresSignature(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	result := filepath.Join(dir, "RESULT.md")
 	writeResult(t, result, contractLine, "BRANCH: rowan/swarm-signatures at abc123")

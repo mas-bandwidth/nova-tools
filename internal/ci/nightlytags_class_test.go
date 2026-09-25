@@ -234,6 +234,8 @@ func TestEveryTestBuildTagIsRunBySomeScheduledJob(t *testing.T) {
 // checker waves the file through and nothing ever executes it. So these two are
 // held to a scheduled job whether or not a file carries them TODAY.
 func TestTheNetworkExemptTagsHaveAHomeInTheSchedule(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	named := tagsNamedBySchedules(t, root)
 	for _, tag := range []string{"nightly", "soak"} {
@@ -248,6 +250,8 @@ func TestTheNetworkExemptTagsHaveAHomeInTheSchedule(t *testing.T) {
 // test above treats it as implicit. That is only true while something scheduled
 // actually passes -race.
 func TestSomeScheduledJobRunsTheRaceDetector(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	dir := filepath.Join(root, ".github", "workflows")
 	entries, err := os.ReadDir(dir)

@@ -33,6 +33,8 @@ func sortedScores(scores map[int32]float64, k int) []Scored {
 }
 
 func TestTopKMatchesFullSort(t *testing.T) {
+	t.Parallel()
+
 	rng := rand.New(rand.NewPCG(42, 91))
 	for _, n := range []int{0, 1, 7, 50, 51, 257, 4096} {
 		scores := make(map[int32]float64, n)
@@ -56,6 +58,8 @@ func TestTopKMatchesFullSort(t *testing.T) {
 // oracle both the pre-2f3c6e0e full sort and the heap satisfy, so it stayed
 // green when the production file was restored.
 func TestTopKSelectsWithABoundedHeap(t *testing.T) {
+	t.Parallel()
+
 	src, err := os.ReadFile("channels.go")
 	if err != nil {
 		t.Fatal(err)

@@ -23,6 +23,8 @@ func members(f *fixture, ns ...int) []Member {
 }
 
 func TestBuildParksTheRedMemberByBisect(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	b := build(f, t.TempDir(), testCmd)
 	res, err := b.Run(context.Background(), members(f, 1, 2, 5))
@@ -56,6 +58,8 @@ func TestBuildParksTheRedMemberByBisect(t *testing.T) {
 }
 
 func TestBuildStopsOnAConflict(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	b := build(f, t.TempDir(), testCmd)
 	res, err := b.Run(context.Background(), members(f, 1, 3, 4, 5))
@@ -75,6 +79,8 @@ func TestBuildStopsOnAConflict(t *testing.T) {
 }
 
 func TestBuildRedBaseStops(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	res, err := build(f, t.TempDir(), "false").Run(context.Background(), members(f, 1))
 	if err != nil {
@@ -86,6 +92,8 @@ func TestBuildRedBaseStops(t *testing.T) {
 }
 
 func TestBuildSkipsAMovedHead(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	ms := members(f, 1, 5)
 	ms[0].Head = strings.Repeat("e", 40) // the read was at another head
@@ -99,6 +107,8 @@ func TestBuildSkipsAMovedHead(t *testing.T) {
 }
 
 func TestBuildTestTimeoutIsRed(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	b := build(f, t.TempDir(), "sleep 30")
 	b.TestTimeout = 200 * time.Millisecond

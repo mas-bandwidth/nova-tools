@@ -18,6 +18,8 @@ import (
 // result counts under "-"; a record the roster does not list is not read; an
 // empty roster is REFUSED (exit 1) and a missing --sprint is usage (exit 2).
 func TestRouteReportCountsPerModel(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})

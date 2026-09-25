@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/rebase"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // TestRebaseCard is the #3094 done-when: a CONFLICTING landable fixture gets
@@ -273,7 +274,7 @@ func makeRepo(t *testing.T, kind string) (dir, bare, oldHead string) {
 	if kind == "drop" {
 		hook := filepath.Join(dir, ".git", "hooks", "prepare-commit-msg")
 		body := "#!/bin/sh\nprintf '\\nnote\\n' >> \"$1\"\n"
-		if err := os.WriteFile(hook, []byte(body), 0o755); err != nil {
+		if err := testbin.WriteExecutable(hook, []byte(body), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}

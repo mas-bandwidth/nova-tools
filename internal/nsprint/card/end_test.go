@@ -20,6 +20,8 @@ import (
 // not only the parent wait, fences a child that reaches launch after its one
 // batch deadline. The dealt card and event log remain untouched.
 func TestLaunchedRefusesAnExpiredBatchDeadline(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := newSprint(t)
 	id := card.Identity{Sprint: "deadline", Label: "expired", BaseSHA: "0123abcd", Bench: "ctl-bench", Attempt: 1}
@@ -46,6 +48,8 @@ func TestLaunchedRefusesAnExpiredBatchDeadline(t *testing.T) {
 }
 
 func TestEndRecordIsTheOnlyEnd(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := newSprint(t)
 	const (
@@ -260,6 +264,8 @@ func TestEndRecordIsTheOnlyEnd(t *testing.T) {
 // without weakening the identity check, free the bench slot, and expose the
 // ended card to harvest.
 func TestEndAfterPushAndDealRecordsEnded(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := newSprint(t)
 	const (
@@ -373,6 +379,8 @@ func TestEndAfterPushAndDealRecordsEnded(t *testing.T) {
 // prefix differs is still a real mismatch and refuses CONFLICT with no write:
 // the fix never weakens the check.
 func TestEndComparesIdentityBaseOnThePrefix(t *testing.T) {
+	t.Parallel()
+
 	const base8 = "89abcdef"
 	cases := []struct {
 		name     string
@@ -433,6 +441,8 @@ func TestEndComparesIdentityBaseOnThePrefix(t *testing.T) {
 }
 
 func TestControl26OtherAttemptResolvesNothing(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := newSprint(t)
 	const (
@@ -567,6 +577,8 @@ func TestControl26OtherAttemptResolvesNothing(t *testing.T) {
 }
 
 func TestEndRecordInWrongDirectoryResolvesNothing(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := newSprint(t)
 	const (

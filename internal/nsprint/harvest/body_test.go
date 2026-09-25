@@ -69,6 +69,8 @@ func quackRecord() (harvest.Card, harvest.Record) {
 // review's mechanical checks (internal/prereview) read donewhen, paths,
 // selfcheck and claims as present.
 func TestHarvestTypedBodyFromRecord(t *testing.T) {
+	t.Parallel()
+
 	rangePaths := []string{"internal/quack/batman.go", "internal/quack/batman_test.go"}
 	for _, tc := range []struct {
 		name  string
@@ -225,6 +227,8 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 // here has none, as on superman in quack-0925b), and the PATHS are the paths
 // base_sha..pushed_sha changed, read by git in the harvest clone.
 func TestHarvestPushesToRepoURLAndReadsRangePaths(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
 	}
@@ -335,6 +339,8 @@ func (p *rangePusher) PushRange(ctx context.Context, b harvest.BenchInfo, c harv
 // (pr_body, with pr and head) and writes one `pr head` log entry whose repo,
 // pr and head are the record's, in ns_pr_head's shape.
 func TestHarvestOpensTypedPRAndRecordsIt(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	st := store.New(c)
 	ctx := context.Background()
@@ -402,6 +408,8 @@ func (failingPusher) Push(context.Context, harvest.BenchInfo, harvest.Card) erro
 // the one move primitive (state refused, reason harvest, the err line as the
 // move's why); the next pass no longer sees it.
 func TestHarvestFailCapMovesCardToDoneFail(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	st := store.New(c)
 	ctx := context.Background()

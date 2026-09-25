@@ -15,6 +15,8 @@ import (
 // that said "refusing to guess" and then dumped the whole usage banner (which names help);
 // the door is asserted as the literal end of every refusal line instead.
 func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	help := invoke(t, "help")
 	wantExit(t, help, 0)
 

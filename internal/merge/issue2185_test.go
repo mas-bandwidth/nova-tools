@@ -24,12 +24,16 @@ import (
 // TestIssue2185 is the card anchor for nova-tools#2185; the scenario itself is
 // TestMergeEnqueueAndGroupEvents, the test the issue asks for.
 func TestIssue2185(t *testing.T) {
+	t.Parallel()
+
 	mergeEnqueueAndGroupEvents(t)
 }
 
 // TestMergeEnqueueAndGroupEvents drives Enqueue and one group through a
 // verdict over a temp repo and asserts the four event lines.
 func TestMergeEnqueueAndGroupEvents(t *testing.T) {
+	t.Parallel()
+
 	mergeEnqueueAndGroupEvents(t)
 }
 
@@ -180,6 +184,8 @@ func mergeEnqueueAndGroupEvents(t *testing.T) {
 // PR's standing park record (how long it has stood set aside), not 0s from
 // the new record's own instant.
 func TestIssue2185ParkAgeFromStandingRecord(t *testing.T) {
+	t.Parallel()
+
 	lane := t.TempDir()
 	if err := Init(lane, LaneConfig{
 		Repo:       "example.invalid/oak/repo",
@@ -220,6 +226,8 @@ func swapDefaultEvents(t *testing.T) *bytes.Buffer {
 // and the one door's constructor carries it, so every production enqueue -- nova-merge
 // land, nova-pulse's ledger, GHSweep.Enqueue -- is built with a sink, not a nil.
 func TestIssue2185ProductionSinkIsStderr(t *testing.T) {
+	t.Parallel()
+
 	// Compare the descriptor, not the *os.File: under `go test -json` (make test's
 	// GOFLAGS) the testing package swaps os.Stderr after package init, so the sink
 	// holds the process's fd 2 while os.Stderr is the harness's pipe.

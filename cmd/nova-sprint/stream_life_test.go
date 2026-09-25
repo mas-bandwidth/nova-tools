@@ -167,6 +167,8 @@ func TestStreamCloseMarksEveryMemberLanded(t *testing.T) {
 }
 
 func TestStreamLifeUsage(t *testing.T) {
+	t.Parallel()
+
 	for _, sub := range []string{"open", "rebase", "pr", "close"} {
 		if code, _, errOut := runSprint("stream", sub); code != 2 || strings.Count(errOut, "\n") != 1 {
 			t.Errorf("stream %s with no flags: exit %d, stderr %q", sub, code, errOut)

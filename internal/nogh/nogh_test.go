@@ -13,6 +13,8 @@ import (
 // TestWrittenGhRefuses: the written gh exits 2 with Refusal and is found
 // first through PathFirst, ahead of a gh later on PATH.
 func TestWrittenGhRefuses(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the refusing gh is a /bin/sh script")
 	}
@@ -45,6 +47,8 @@ func TestWrittenGhRefuses(t *testing.T) {
 }
 
 func TestPathFirst(t *testing.T) {
+	t.Parallel()
+
 	sep := string(os.PathListSeparator)
 	got := PathFirst([]string{"A=1", "PATH=/x", "PATH="}, "/s")
 	want := []string{"A=1", "PATH=/s" + sep + "/x", "PATH=/s"}

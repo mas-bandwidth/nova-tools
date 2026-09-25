@@ -73,6 +73,8 @@ func ledgerRow(t *testing.T, path string) map[string]any {
 // does not exist), reads the rollup and the base from the cache, and refuses
 // --post.
 func TestReviewPrDirDryRunReadsTheCacheAndNeverCallsGH(t *testing.T) {
+	t.Parallel()
+
 	noGH := filepath.Join(t.TempDir(), "no-such-gh")
 	checks := "donewhen,selfcheck,paths,claims,ci,base,score"
 	for _, c := range []struct {
@@ -156,6 +158,8 @@ func TestReviewPromptFromConf(t *testing.T) {
 // above 8 (the threshold it was tuned with); the default (the seed) keeps 7;
 // an explicit --pass-above wins either way.
 func TestReviewTunedPromptCarriesItsThreshold(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		name    string
 		args    []string

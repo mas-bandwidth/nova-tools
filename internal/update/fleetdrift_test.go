@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // #3880 DONE-WHEN: two fake benches beating different nova-sprint stamps make
@@ -24,7 +25,7 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 	mark := filepath.Join(trap, "ran")
 	for _, tool := range []string{"ssh", "git", "gh"} {
 		script := "#!/bin/sh\necho " + tool + " >> " + mark + "\nexit 1\n"
-		if err := os.WriteFile(filepath.Join(trap, tool), []byte(script), 0o755); err != nil {
+		if err := testbin.WriteExecutable(filepath.Join(trap, tool), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -84,6 +85,8 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 // --store is the fleet read: it takes no manifest, no snapshot and no note, so
 // a combination that would write a bus note is refused with exit 2.
 func TestReportStoreRefusesANote(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{
 		{"report", "--store", "127.0.0.1:1", "--send", "--as", "a", "--to", "b", "--bus", "x", "--remote", "r", "--branch", "b"},
 		{"report", "--store", "127.0.0.1:1", "--draft", "--as", "a", "--to", "b"},

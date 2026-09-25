@@ -12,6 +12,8 @@ import (
 // event (nova-pulse watch). The slot reads its own queue once to find it empty, blocks in
 // Ask, and reads it again only after the event fires -- it never spins on the queue.
 func TestAnIdleSlotAsksOnAnEventNotAPoll(t *testing.T) {
+	t.Parallel()
+
 	var reads, asks int32
 	event := make(chan struct{})
 	// asked is closed inside Ask, so the test observes the block itself rather than
@@ -66,6 +68,8 @@ func TestAnIdleSlotAsksOnAnEventNotAPoll(t *testing.T) {
 
 // A slot with work queued never asks: it takes what its own queue already holds.
 func TestASlotWithWorkQueuedNeverAsks(t *testing.T) {
+	t.Parallel()
+
 	var asks int32
 	slot := SlotWait{
 		Pending: func() int { return 2 },

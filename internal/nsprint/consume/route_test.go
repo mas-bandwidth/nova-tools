@@ -111,6 +111,8 @@ func rtEndedEvent(t *testing.T, client *redis.Client, sprint, label string) redi
 // task; a redelivered end event adds nothing. A card that committed still
 // gets its harvest task and no report read.
 func TestRouteReportReadForNoCommitCard(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -229,6 +231,8 @@ func TestRouteReportReadForNoCommitCard(t *testing.T) {
 // lease taken away stops the holder; a clean stop releases the lease so the
 // next instance starts.
 func TestRouteIsOneProcess(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	sprint := "control-3036c0d2"
 	seedSprint(t, client, sprint)

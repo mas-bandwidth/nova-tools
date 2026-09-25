@@ -31,6 +31,8 @@ import (
 // (0) The help line this verb is entered under is the one docs/SPEC-CI.md prints, so the
 // document and the code cannot drift apart in a rename.
 func TestFailedVerbLineMatchesTheSpec(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "SPEC-CI.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +72,8 @@ func findFailure(t *testing.T, fs []TestFailure, name string) TestFailure {
 // line endings, yields one finding per failing test, each with its package, its file and
 // its line -- the three things the hand pipeline had to be read for.
 func TestAPlainGoTestLogNamesEveryFailingTestWithItsFileAndLine(t *testing.T) {
+	t.Parallel()
+
 	failures, timeouts := ParseJobLog("test-windows-pr (0)", failedFixture(t, "windows-sandbox.log"))
 	if len(timeouts) != 0 {
 		t.Errorf("a plain failure log holds no timeout, got %d", len(timeouts))
@@ -108,6 +112,8 @@ func TestAPlainGoTestLogNamesEveryFailingTestWithItsFileAndLine(t *testing.T) {
 // (2) A test's own message lines come back in the order it printed them, including the
 // continuation lines indented under a t.Errorf -- the part a grep for `_test.go:` drops.
 func TestATestsOwnWordsComeBackWhole(t *testing.T) {
+	t.Parallel()
+
 	failures, _ := ParseJobLog("test-windows-pr (0)", failedFixture(t, "windows-sandbox.log"))
 	f := findFailure(t, failures, "TestTheDeniedLineNamesThePathTheOpAndTheRemedy")
 	if len(f.Lines) < 4 {
@@ -125,6 +131,8 @@ func TestATestsOwnWordsComeBackWhole(t *testing.T) {
 // interleaves parallel tests, so the message line of a failing test can sit between two
 // other tests' lines and still belong to it.
 func TestAJSONLogAttributesLinesByFrameNotByPosition(t *testing.T) {
+	t.Parallel()
+
 	failures, timeouts := ParseJobLog("test (3/4 studio)", failedFixture(t, "studio-review.log"))
 	if len(timeouts) != 0 {
 		t.Errorf("no timeout in this log, got %d", len(timeouts))
@@ -153,6 +161,8 @@ func TestAJSONLogAttributesLinesByFrameNotByPosition(t *testing.T) {
 
 // (4) The second JSON log, a different job and a different package, reads the same way.
 func TestTheSecondJSONLogReadsTheSameWay(t *testing.T) {
+	t.Parallel()
+
 	failures, _ := ParseJobLog("test (2/4 studio)", failedFixture(t, "pulse-flake.log"))
 	if len(failures) != 1 {
 		t.Fatalf("%d failing tests, want 1", len(failures))
@@ -169,6 +179,8 @@ func TestTheSecondJSONLogReadsTheSameWay(t *testing.T) {
 // (5) A timed-out package is not a failing test: it is a TIMEOUT naming the package, the
 // budget it blew and the tests that were still running when the alarm went off.
 func TestATimeoutNamesThePackageAndTheTestsStillRunning(t *testing.T) {
+	t.Parallel()
+
 	failures, timeouts := ParseJobLog("test-hosted-merge (darwin, 1)", failedFixture(t, "merge-darwin-timeout.log"))
 	if len(failures) != 0 {
 		t.Errorf("a timeout is not a failing test, got %d failures", len(failures))
@@ -197,6 +209,8 @@ func TestATimeoutNamesThePackageAndTheTestsStillRunning(t *testing.T) {
 // (6) A cancellation leaves nothing in the log, so it is read off the job's steps: the
 // step that was cut and how long it had been running.
 func TestACancelledStepIsReadFromTheJobNotTheLog(t *testing.T) {
+	t.Parallel()
+
 	start := time.Date(2026, 9, 18, 16, 25, 10, 0, time.UTC)
 	job := FailedJob{
 		ID:         105673768913,
@@ -227,6 +241,8 @@ func TestACancelledStepIsReadFromTheJobNotTheLog(t *testing.T) {
 // (7) A test's own words are bounded: --max-lines of them print and the rest are
 // counted, never dropped in silence.
 func TestTheMessageLinesAreCappedAndTheRestCounted(t *testing.T) {
+	t.Parallel()
+
 	report := FailedReport{Jobs: 1, Failures: []TestFailure{{
 		Job: "j", Package: "p", Test: "TestX", At: "x_test.go:1",
 		Lines: []string{"a", "b", "c", "d", "e"},
@@ -248,6 +264,8 @@ func TestTheMessageLinesAreCappedAndTheRestCounted(t *testing.T) {
 
 // (8) A clean run prints the one summary line and exits 0; a report is never silent.
 func TestACleanRunIsOneLineAndExitZero(t *testing.T) {
+	t.Parallel()
+
 	report := FailedReport{Jobs: 0}
 	lines := report.Lines(0)
 	if len(lines) != 1 || lines[0] != "FAILED OK jobs=0 tests=0" {
@@ -261,6 +279,8 @@ func TestACleanRunIsOneLineAndExitZero(t *testing.T) {
 // (9) The running list is capped at three with the rest counted, the same cap-and-count
 // rule slowtests uses for its slowest packages.
 func TestTheRunningListIsCappedAndCounted(t *testing.T) {
+	t.Parallel()
+
 	report := FailedReport{Jobs: 1, Timeouts: []Timeout{{
 		Job: "j", Package: "p", After: 100 * time.Second,
 		Running: []string{"TestA", "TestB", "TestC", "TestD", "TestE"},
@@ -278,6 +298,8 @@ func TestTheRunningListIsCappedAndCounted(t *testing.T) {
 // (10) The stripper takes the three things a GitHub Actions log wraps every line in --
 // the timestamp, the ANSI colour and the carriage return -- and nothing else.
 func TestStripLogLineTakesTheWrapperAndNothingElse(t *testing.T) {
+	t.Parallel()
+
 	raw := "2026-09-18T16:21:26.7443911Z \x1b[36;1m--- FAIL: TestX (0.00s)\x1b[0m\r"
 	if got := StripLogLine(raw); got != "--- FAIL: TestX (0.00s)" {
 		t.Errorf("stripped = %q", got)
@@ -347,6 +369,8 @@ func runFixtureForge(t *testing.T) *fakeFailForge {
 // (11) A whole run: only the jobs that did not succeed are read, and one report holds
 // every failing test of every one of them.
 func TestARunReadsOnlyTheJobsThatDidNotSucceed(t *testing.T) {
+	t.Parallel()
+
 	f := runFixtureForge(t)
 	runID, report, err := ReadFailedRun(f, RunSelector{Run: 35375346271}, "")
 	if err != nil {
@@ -377,6 +401,8 @@ func TestARunReadsOnlyTheJobsThatDidNotSucceed(t *testing.T) {
 // (12) --job keeps one job's findings and reads no other job's log: a forty-leg matrix
 // costs one call, not forty.
 func TestTheJobFilterReadsOnlyThatJobsLog(t *testing.T) {
+	t.Parallel()
+
 	f := runFixtureForge(t)
 	_, report, err := ReadFailedRun(f, RunSelector{Run: 35375346271}, "darwin")
 	if err != nil {
@@ -395,6 +421,8 @@ func TestTheJobFilterReadsOnlyThatJobsLog(t *testing.T) {
 // (12a) A --job that matched nothing is a refusal naming the jobs that did fail, never a
 // green report: the caller asked about a job this run does not have.
 func TestAJobFilterThatMatchesNothingSaysWhichJobsFailed(t *testing.T) {
+	t.Parallel()
+
 	f := runFixtureForge(t)
 	_, _, err := ReadFailedRun(f, RunSelector{Run: 35375346271}, "zzz")
 	if err == nil {
@@ -417,6 +445,8 @@ func TestAJobFilterThatMatchesNothingSaysWhichJobsFailed(t *testing.T) {
 // forge answers 404 for a cancelled job's log while its run is still in progress -- and
 // it was found by running this verb on its own pull request.
 func TestALogTheForgeWillNotGiveIsALineNotTheEndOfTheReport(t *testing.T) {
+	t.Parallel()
+
 	f := runFixtureForge(t)
 	delete(f.logs, 3) // the studio job's log: gone, as a cancelled job's blob is
 	_, report, err := ReadFailedRun(f, RunSelector{Run: 35375346271}, "")
@@ -453,6 +483,8 @@ func TestALogTheForgeWillNotGiveIsALineNotTheEndOfTheReport(t *testing.T) {
 // (13) The selector reaches the forge in the caller's own words, so --pr --merge-group is
 // one question to the forge rather than a branch this tool guessed.
 func TestTheSelectorReachesTheForgeUntouched(t *testing.T) {
+	t.Parallel()
+
 	f := &fakeFailForge{run: 42, logs: map[int64]string{}}
 	if _, _, err := ReadFailedRun(f, RunSelector{PR: 1370, MergeGroup: true}, ""); err != nil {
 		t.Fatal(err)
@@ -467,6 +499,8 @@ func TestTheSelectorReachesTheForgeUntouched(t *testing.T) {
 // step that went red, and the lines the runner itself marked as errors. A job counted in
 // jobs= and then never named is a report that reads as a green run.
 func TestAFailingJobWithNoTestEventIsNamedAnyway(t *testing.T) {
+	t.Parallel()
+
 	f := &fakeFailForge{
 		run: 35329874611,
 		jobs: []FailedJob{{
@@ -504,6 +538,8 @@ func TestAFailingJobWithNoTestEventIsNamedAnyway(t *testing.T) {
 // cancelled out from under it. The summary splits the count, so a reader sees which of
 // the eight is the red to chase and which seven are its collateral.
 func TestTheSummarySplitsARealRedFromItsCancelledSiblings(t *testing.T) {
+	t.Parallel()
+
 	start := time.Date(2026, 9, 18, 9, 31, 14, 0, time.UTC)
 	jobs := []FailedJob{{
 		ID: 11, Name: "inline-gate (ubuntu-latest, go)", Conclusion: "failure",
@@ -544,6 +580,8 @@ func TestTheSummarySplitsARealRedFromItsCancelledSiblings(t *testing.T) {
 // asked what the run said and it said something. Every cancelled job is already explained
 // by its own CANCELLED line, so none of them earns a NOTEST as well.
 func TestACancelledOnlyRunStaysExitOne(t *testing.T) {
+	t.Parallel()
+
 	start := time.Date(2026, 9, 18, 9, 31, 14, 0, time.UTC)
 	f := &fakeFailForge{
 		run: 35329874611,

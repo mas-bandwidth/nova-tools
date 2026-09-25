@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -58,6 +58,8 @@ func (nopDialer) Dial(Bench) Session { return nil }
 // it) while C, which waits for nothing, is; merge A's PR and B is dealt in the
 // next pass.
 func TestDependentDealtOnlyAfterDependencyPRMerged(t *testing.T) {
+	t.Parallel()
+
 	const sprint = "control-00003066"
 	ctx := context.Background()
 	c := dealRedis(t)
@@ -156,6 +158,8 @@ func TestDependentDealtOnlyAfterDependencyPRMerged(t *testing.T) {
 // only a merge into the card's base, a closed issue, a landed card or a card
 // closed with nothing to land releases it; everything else is named.
 func TestReadyNamesEveryEntry(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	prs := newFakePRs()
 	prs.set("o/r#1", Ref{IsPR: true, Merged: true, State: "closed", Base: "dev"})
@@ -260,6 +264,8 @@ func TestReadyNamesEveryEntry(t *testing.T) {
 // TestGHRefReadsPullsThenIssues runs GH against a fake gh in the test's temp
 // directory: a PR answers from pulls/<n>; a 404 there reads issues/<n>.
 func TestGHRefReadsPullsThenIssues(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "gh")
 	script := `#!/bin/sh
@@ -270,7 +276,7 @@ case "$2" in
   *) echo 'gh: HTTP 502' >&2; exit 1 ;;
 esac
 `
-	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(fake, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	g := GH{Program: fake}

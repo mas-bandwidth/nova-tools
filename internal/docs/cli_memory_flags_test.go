@@ -26,6 +26,8 @@ const cliDocPath = "../../docs/CLI.md"
 var directFlagCalls = []string{"fs.Bool(", "fs.String(", "fs.Int(", "fs.Float64(", "fs.Duration("}
 
 func TestTheCLIReferenceNamesEveryMemoryFlag(t *testing.T) {
+	t.Parallel()
+
 	lines := readTextLines(t, cliMainPath)
 
 	helper := helperFlagsRead(t, lines)

@@ -24,6 +24,8 @@ func seedOpenNeed(t *testing.T) *Graph {
 // launch reads the ready set and nothing else; a card whose need is an open PR is
 // never on a slot.
 func TestLaunchReadsTheReadySetNotTheQueue(t *testing.T) {
+	t.Parallel()
+
 	g := seedOpenNeed(t)
 
 	// a's one need is b, an open PR: a cannot proceed, and its row names the exact
@@ -60,6 +62,8 @@ func TestLaunchReadsTheReadySetNotTheQueue(t *testing.T) {
 // a-needs-cycle-refuses-at-seed (docs/SPEC-JOBS.md section 1, line 35): a :deps cycle
 // is refused before publication, so the graph can never deadlock.
 func TestANeedsCycleRefusesAtSeed(t *testing.T) {
+	t.Parallel()
+
 	_, err := Seed([]Node{
 		{ID: "a", Needs: []string{"b"}},
 		{ID: "b", Needs: []string{"a"}},
@@ -78,6 +82,8 @@ func TestANeedsCycleRefusesAtSeed(t *testing.T) {
 
 // blocks is the reverse edge written by the same insert as needs.
 func TestBlocksIsTheReverseEdgeOfTheSameInsert(t *testing.T) {
+	t.Parallel()
+
 	g := seedOpenNeed(t)
 	if got := g.Needs("a"); !sameIDs(got, []string{"b"}) {
 		t.Fatalf("needs(a) = %v, want [b]", got)

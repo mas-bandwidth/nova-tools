@@ -60,6 +60,8 @@ type runCommand struct {
 }
 
 func TestCIBuildTestLintCommandsGoThroughMake(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	cmds := runCommands(src)
@@ -110,6 +112,8 @@ func TestCIBuildTestLintCommandsGoThroughMake(t *testing.T) {
 // contract being pinned is the Makefile's text, which is what a friend reads and
 // what CI runs; that is exactly what the parser sees.
 func TestMakefileIsTheOneEntry(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
 
@@ -179,6 +183,8 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 // target (#2498 Item S4), that it is .PHONY, listed in help, and executes
 // tools/preflight.sh.
 func TestMakefilePreflightTarget(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
 

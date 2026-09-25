@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // fakeAgePub is the public key the stand-in age-keygen below writes into the key file
@@ -34,7 +36,7 @@ cat > "$out" <<'EOF'
 AGE-SECRET-KEY-1FAKE
 EOF
 `
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+	if err := testbin.WriteExecutable(path, []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -55,6 +57,8 @@ func nonEmptyLines(s string) []string {
 // where it is, and the next step; and the NOTE about the placeholder cannot be read as
 // a refusal (nova-tools#1393).
 func TestKeygenSuccessReadsAsSuccess(t *testing.T) {
+	t.Parallel()
+
 	bin := buildNovaSecrets(t)
 	ageKeygen := writeFakeAgeKeygen(t)
 

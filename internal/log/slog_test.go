@@ -16,6 +16,8 @@ import (
 // PARSES it back, which is the read a person does after the fact -- no buffer shortcut, and
 // the file is inside t.TempDir().
 func TestLongVerbWritesJSONLines(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "run.log")
 	f, err := os.Create(path)
 	if err != nil {

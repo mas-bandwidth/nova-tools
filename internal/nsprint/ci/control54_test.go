@@ -21,6 +21,8 @@ import (
 )
 
 func TestControl54CancelledLegRerunsOnceThenEndsRed(t *testing.T) {
+	t.Parallel()
+
 	f := newRunFixture(t)
 	f.client.HSet(f.ctx, ci.PRKey(runRepo, 54), "head", f.sha)
 	if r, err := ci.Request(f.ctx, f.st, ci.RequestRequest{Repo: runRepo, SHA: f.sha, PR: 54, URL: f.url}); err != nil || r.Status != "CREATED" {
@@ -78,6 +80,8 @@ func TestControl54CancelledLegRerunsOnceThenEndsRed(t *testing.T) {
 }
 
 func TestControl54TimedOutLegRerunsOnceThenEndsRed(t *testing.T) {
+	t.Parallel()
+
 	f := newRunFixture(t)
 	f.client.HSet(f.ctx, ci.ConfigKey(runRepo), "checks", "head,slow", "check:slow", "sleep 5")
 	if r, err := ci.Request(f.ctx, f.st, ci.RequestRequest{Repo: runRepo, SHA: f.sha, URL: f.url}); err != nil || r.Status != "CREATED" {

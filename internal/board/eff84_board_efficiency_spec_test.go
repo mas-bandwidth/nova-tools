@@ -14,6 +14,8 @@ import (
 // TestCrossToolEfficiencyCardNamesItsRules reads the cross-tool card out of SPEC-SWARM.md:
 // the spec is the one place the contract is written.
 func TestBoardEfficiencyCardNamesItsRules(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-BOARD.md"))
 	if err != nil {
 		t.Fatalf("the board efficiency card's contract is the spec's: %s", err)

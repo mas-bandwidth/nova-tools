@@ -13,6 +13,8 @@ import (
 // the door is the literal end of the line, appears exactly once, and that the refusal
 // still says what was wrong.
 func TestVersionsStrayArgumentRefusalNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	r := invoke(t, "version", "extra")
 	if r.exit != 2 {
 		t.Fatalf("exit %d, want 2\nstdout:\n%s\nstderr:\n%s", r.exit, r.stdout, r.stderr)

@@ -41,6 +41,8 @@ func cursorCommit(t *testing.T, dir, name string, when time.Time) {
 }
 
 func TestAwakeClassifiesByCursorAge(t *testing.T) {
+	t.Parallel()
+
 	dir := awakeBus(t)
 	cursorCommit(t, dir, "alice", at.Add(-10*time.Second)) // fresh -> awake
 	cursorCommit(t, dir, "bob", at.Add(-600*time.Second))  // old -> asleep
@@ -127,6 +129,8 @@ func TestFlagBeatsConfig(t *testing.T) {
 }
 
 func TestAwakeRefusesNonBus(t *testing.T) {
+	t.Parallel()
+
 	r := wakeRun(t, "awake")
 	if r.exit != 2 || !strings.Contains(r.stderr, "AWAKE REFUSED") {
 		t.Fatalf("missing --bus: exit=%d stderr=%s, want 2 and AWAKE REFUSED", r.exit, r.stderr)
@@ -140,6 +144,8 @@ func TestAwakeRefusesNonBus(t *testing.T) {
 }
 
 func TestAwakeBoundsLines(t *testing.T) {
+	t.Parallel()
+
 	dir := awakeBus(t)
 	for _, name := range []string{"a", "b", "c", "d", "e"} {
 		if err := os.MkdirAll(filepath.Join(dir, "from-"+name), 0o755); err != nil {
@@ -175,6 +181,8 @@ func TestAwakeBoundsLines(t *testing.T) {
 // alone it reads asleep. The exit beat wrote until=now+--beat-lease, so the friend stays
 // awake inside the lease even though both its cursor and its beat stamp are old.
 func TestAwakeHonoursBeatLease(t *testing.T) {
+	t.Parallel()
+
 	dir := awakeBus(t)
 	cursorCommit(t, dir, "rowan", at.Add(-472*time.Second)) // asleep by cursor alone
 	write(t, filepath.Join(dir, "from-rowan", "BEAT"),
@@ -216,6 +224,8 @@ func TestAwakeHonoursBeatLease(t *testing.T) {
 // beat is read from the file's own content, not from any commit, so it is written straight
 // into the working tree here and nothing is committed.
 func TestAwakeReadsBeatOverCursor(t *testing.T) {
+	t.Parallel()
+
 	dir := awakeBus(t)
 	cursorCommit(t, dir, "dave", at.Add(-600*time.Second)) // old: past --window, asleep by cursor
 	write(t, filepath.Join(dir, "from-dave", "BEAT"),

@@ -30,6 +30,8 @@ const specWakePath = "../../docs/SPEC-WAKE.md"
 // `WAIT` line as bookkeeping would pass the three positive checks and the tool
 // would go quiet about a refusal.
 func TestTheSpecNamesEveryWaitShapeTheCodeSuppresses(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(specWakePath)
 	if err != nil {
 		t.Fatalf("read %s: %v", specWakePath, err)

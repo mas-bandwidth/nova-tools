@@ -18,6 +18,8 @@ import (
 // this: a check about the repo, read as text, so the spec cannot silently drop the
 // requirement.
 func TestRecoverWhenRemoteServiceReturnsIsSpecified(t *testing.T) {
+	t.Parallel()
+
 	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-WORK.md"))
 
 	required := []string{

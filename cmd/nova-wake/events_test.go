@@ -365,6 +365,8 @@ func TestABranchMovingIsItsTwoShas(t *testing.T) {
 // 17. The lock source probes and never holds.
 
 func TestALockReleasedIsAChangeAndTheProbeNeverHolds(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lane.lock")
 	write(t, path, "")

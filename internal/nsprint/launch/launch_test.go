@@ -181,6 +181,8 @@ func commandOf(t *testing.T, pid int) string {
 // the verb exits within 5 s while every wrapper runs on, and killing the
 // parent ssh leaves every wrapper alive.
 func TestLaunchReturnsBeforeTheCardEnds(t *testing.T) {
+	t.Parallel()
+
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -333,6 +335,8 @@ func TestLaunchReturnsBeforeTheCardEnds(t *testing.T) {
 }
 
 func TestParseLineTakesOnlyTheCanonicalLine(t *testing.T) {
+	t.Parallel()
+
 	good := "s-1 card-a 2 2." + strings.Repeat("ab", 16)
 	l, err := ParseLine(good)
 	if err != nil || l.String() != good || l.CommandIdentity() != "nova-card s-1/card-a/2" {
@@ -395,6 +399,8 @@ func TestLaunchRefusesASecondLaunchOfOneAttempt(t *testing.T) {
 }
 
 func TestLaunchRefusesAMissingWrapper(t *testing.T) {
+	t.Parallel()
+
 	_, err := Launch(strings.NewReader(""), io.Discard, Config{Wrapper: filepath.Join(t.TempDir(), "nova-card")})
 	if err == nil || !strings.Contains(err.Error(), "MISSING") {
 		t.Fatalf("Launch with no wrapper: %v", err)
@@ -407,6 +413,8 @@ func TestLaunchRefusesAMissingWrapper(t *testing.T) {
 // child fits, while the second gets only the two seconds still left and must
 // time out without launching.
 func TestLaunchSharesOneBudgetAcrossAcknowledgements(t *testing.T) {
+	t.Parallel()
+
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -540,6 +548,8 @@ func TestLaunchOverrunsWithNothingRefused(t *testing.T) {
 // line goes to Config.Err as well as out, so a session log on the bench
 // shows why a card did not start; a LAUNCHED line stays on out only.
 func TestLaunchEchoesRefusalsToStderr(t *testing.T) {
+	t.Parallel()
+
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

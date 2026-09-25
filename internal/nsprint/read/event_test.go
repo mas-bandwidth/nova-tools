@@ -42,6 +42,8 @@ func stateOf(t *testing.T, c *redis.Client, id string) string {
 // why the line's "with <repo>#<n> (<sha>)"; the ws sets agree with every
 // record after each post (ws.Check), and a jev CLOSE moves nothing.
 func TestReadPostEventsMoveTasks(t *testing.T) {
+	t.Parallel()
+
 	_, base, head := mirrorFixture(t, false)
 	c := client(t)
 	ctx := context.Background()

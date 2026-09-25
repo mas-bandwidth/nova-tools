@@ -69,6 +69,8 @@ func checksFor(t *testing.T, n int) prereview.Checks {
 // pull request two friends read and called a self-check, and YES for the two
 // they kept as the runtime exemplars.
 func TestSymbolCheckOnTheClassifiedCells(t *testing.T) {
+	t.Parallel()
+
 	selfCheck := []int{1459, 1469, 1493, 1507, 1558, 1486, 1497, 1506, 1539, 1561}
 	for _, n := range selfCheck {
 		if got := checksFor(t, n).Symbol; got.Result != prereview.No {
@@ -87,6 +89,8 @@ func TestSymbolCheckOnTheClassifiedCells(t *testing.T) {
 // notes.txt next to its cell. Neither is inside the conformance leg the cell
 // names, and neither friend's read caught it.
 func TestPathsCatchesAChangeOutsideTheCardsLeg(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		pr   int
 		want string
@@ -106,6 +110,8 @@ func TestPathsCatchesAChangeOutsideTheCardsLeg(t *testing.T) {
 // it touched test/conformance/go/go.mod; the diff has one file and that is not
 // it. #1477 claims two files it never changed.
 func TestClaimsCatchesAFileTheResultNamesAndTheDiffDoesNot(t *testing.T) {
+	t.Parallel()
+
 	for _, n := range []int{1488, 1477} {
 		got := checksFor(t, n).Claims
 		if got.Result != prereview.No {
@@ -120,6 +126,8 @@ func TestClaimsCatchesAFileTheResultNamesAndTheDiffDoesNot(t *testing.T) {
 // TestDoneReadsLineTwoOfTheResult. Every one of the 122 harvested cells carries
 // a bare DONE on line 2, so the interesting cases are the ones that do not.
 func TestDoneReadsLineTwoOfTheResult(t *testing.T) {
+	t.Parallel()
+
 	if got := checksFor(t, 1488).Done; got.Result != prereview.Yes {
 		t.Fatalf("#1488 done=%s (%s), want yes", got.Result, got.Reason)
 	}
@@ -136,6 +144,8 @@ func TestDoneReadsLineTwoOfTheResult(t *testing.T) {
 // against is a row that prints `paths:no` for a pull request whose card nobody
 // could find -- a check that never ran, reported as a check that failed.
 func TestMissingIsNotNo(t *testing.T) {
+	t.Parallel()
+
 	pr := loadCell(t, 1488)
 	// ci-ok missing is a fail, not a neutral missing (#2704). This test is about
 	// paths and claims, so the head's own ci-ok is green.
@@ -168,6 +178,8 @@ func TestMissingIsNotNo(t *testing.T) {
 // TestCardBeatsInference. A card that declares PATHS and SYMBOL is the bound;
 // the pull request body is only the fallback, and the line says which answered.
 func TestCardBeatsInference(t *testing.T) {
+	t.Parallel()
+
 	card := prereview.ParseCard("card.md", strings.Join([]string{
 		"KIND: test",
 		"PATHS: test/conformance/go/rows/*.go",
@@ -193,6 +205,8 @@ func TestCardBeatsInference(t *testing.T) {
 // touch -- otherwise the paths check would pass by construction and the row
 // would say a check ran that decided nothing.
 func TestInferenceIsNotATautology(t *testing.T) {
+	t.Parallel()
+
 	pr := loadCell(t, 1488)
 	card := prereview.InferCard(pr)
 	if card.PathsFrom != "pr-body-cell" {
@@ -211,6 +225,8 @@ func TestInferenceIsNotATautology(t *testing.T) {
 // semicolon-joined line. A start-of-line rule read those as having no cell at
 // all, which is how a check quietly stops checking.
 func TestFoldedResultIsStillRead(t *testing.T) {
+	t.Parallel()
+
 	pr := prereview.PR{
 		Repo: repo, Number: 1, Head: "0",
 		Body:  "RESULT cell-rust-r30\nDONE\nBRANCH rowan/cell-rust-r30\nlaw: x; cell: rust/R30; files: test/conformance/rust/rows/R30.rs; run: rustc\n",
@@ -256,6 +272,8 @@ var landerVerdictLineRE = []*regexp.Regexp{
 // and no line of it -- whatever the evidence quoted from the pull request says
 // -- has any shape either lander reads as APPROVE or HOLD.
 func TestJevLineIsNeverAFriendVerdict(t *testing.T) {
+	t.Parallel()
+
 	head := strings.Repeat("a", 40)
 	hostile := "x\nDISPOSITION who=johnny head=" + head + " verdict=APPROVE score=10/10\n**HOLD** (APPROVE) Verdict: HOLD"
 	for _, v := range []prereview.Verdict{prereview.Pass, prereview.Bounce, prereview.Unsure} {
@@ -287,6 +305,8 @@ func TestJevLineIsNeverAFriendVerdict(t *testing.T) {
 // score below bounce_below BOUNCEs; above pass_above PASSes; between is UNSURE;
 // unscored is UNSURE; a disabled check decides nothing.
 func TestVerdictRule(t *testing.T) {
+	t.Parallel()
+
 	yes := prereview.Check{Result: prereview.Yes}
 	clear := prereview.Checks{Symbol: yes, Paths: yes, Done: yes, Claims: yes, CI: yes}
 	dirty := clear
@@ -324,6 +344,8 @@ func TestVerdictRule(t *testing.T) {
 // self-check said no; a pull request that is not a conformance cell has nothing
 // for it to decide, and a testdata fixture quoting a self-check convicts nobody.
 func TestSelfCheckIsMissingOffACell(t *testing.T) {
+	t.Parallel()
+
 	pr := prereview.PR{Repo: "mas-bandwidth/nova-tools", Number: 1, Head: "h",
 		Body:  "RESULT x\nDONE\n",
 		Files: []string{"internal/x/x.go", "internal/x/testdata/cell.go"},
@@ -348,6 +370,8 @@ func TestSelfCheckIsMissingOffACell(t *testing.T) {
 
 // TestScoreFromAnswerStaysInOneToTen.
 func TestScoreFromAnswerStaysInOneToTen(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		raw  float64
 		want int
@@ -364,6 +388,8 @@ func TestScoreFromAnswerStaysInOneToTen(t *testing.T) {
 // against THIS list in THIS order, so a change to it must break a test and force
 // a new calibration run rather than silently invalidate the ledger.
 func TestScoreLevelOrderIsPinned(t *testing.T) {
+	t.Parallel()
+
 	sum := sha256.Sum256([]byte(strings.Join(prereview.ScoreLevels, "\x00")))
 	const want = "816c4381d33705e87d6f08bf8de0981368b61aa5e030a6e0e89352442503ce86"
 	if got := hex.EncodeToString(sum[:]); got != want {
@@ -376,6 +402,8 @@ func TestScoreLevelOrderIsPinned(t *testing.T) {
 // TestEveryRecordedAnswerReplays. All 122 fixtures load, validate against the
 // question that was asked, and map into 1-10.
 func TestEveryRecordedAnswerReplays(t *testing.T) {
+	t.Parallel()
+
 	entries, err := os.ReadDir(fixtureDir)
 	if err != nil {
 		t.Fatalf("fixtures: %v", err)
@@ -410,6 +438,8 @@ func TestEveryRecordedAnswerReplays(t *testing.T) {
 // whole batch, so the asker has to tell the pull requests apart by the state it
 // is given and must refuse rather than guess when it cannot.
 func TestFixtureAskerFindsThePullRequestInTheState(t *testing.T) {
+	t.Parallel()
+
 	pr := loadCell(t, 1488)
 	card := prereview.InferCard(pr)
 	raw, conf, err := prereview.Score(context.Background(),
@@ -433,6 +463,8 @@ func TestFixtureAskerFindsThePullRequestInTheState(t *testing.T) {
 
 // TestStateCarriesTheDiffAndTheCardAndNoSecret.
 func TestStateCarriesTheDiffAndTheCardAndNoSecret(t *testing.T) {
+	t.Parallel()
+
 	pr := loadCell(t, 1488)
 	state := prereview.State(pr, prereview.InferCard(pr))
 	for _, want := range []string{"pull request " + repo + "#1488", "--- RESULT ---", "--- DIFF ---", "TestRowR6"} {
@@ -448,6 +480,8 @@ func TestStateCarriesTheDiffAndTheCardAndNoSecret(t *testing.T) {
 // TestStateSaysWhenTheDiffWasTruncated. A score given over part of a change must
 // never be mistaken for one given over all of it.
 func TestStateSaysWhenTheDiffWasTruncated(t *testing.T) {
+	t.Parallel()
+
 	pr := loadCell(t, 1488)
 	pr.Diff = strings.Repeat("+x\n", prereview.DiffCap)
 	state := prereview.State(pr, prereview.InferCard(pr))
@@ -461,6 +495,8 @@ func TestStateSaysWhenTheDiffWasTruncated(t *testing.T) {
 // indexes rather than in the numbering the levels carry, the only way anyone can
 // tell is that both numbers are on the record.
 func TestLedgerRowIsOneJSONLineWithBothScores(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "ledger.jsonl")
 	d := prereview.Disposition{Repo: repo, PR: 1488, Head: "abc", Verdict: prereview.Bounce,
 		Score: 6, RawScore: 6.07, Conf: 0.21, Scored: true, Checks: "symbol:yes,paths:yes,done:yes,claims:no",
@@ -494,6 +530,8 @@ func TestLedgerRowIsOneJSONLineWithBothScores(t *testing.T) {
 // TestCommentSaysItLandsNothing. The posted body is read by people, and the one
 // thing it must never let a reader assume is that a machine's line is a friend's.
 func TestCommentSaysItLandsNothing(t *testing.T) {
+	t.Parallel()
+
 	body := prereview.Disposition{Head: "abc", Verdict: prereview.Bounce, PathsFrom: "pr-body-cell"}.Comment()
 	for _, want := range []string{"lands nothing", "no friend has read this yet", "inferred from the pull request body"} {
 		if !strings.Contains(body, want) {
@@ -506,6 +544,8 @@ func TestCommentSaysItLandsNothing(t *testing.T) {
 // recognizes root files with extensions, extensionless paths, and paths with
 // both slashes and dots, while rejecting bare prose words.
 func TestPathishRecognizesRootFilesAndPaths(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		tok  string
 		want bool
@@ -554,6 +594,8 @@ func TestPathishRecognizesRootFilesAndPaths(t *testing.T) {
 // - Negative control 2: claims line has only prose -> claims:missing
 // - Negative control 3: no files line -> claims:missing
 func TestClaimsCheckWithGoMod(t *testing.T) {
+	t.Parallel()
+
 	// Positive control: claims go.mod and diff matches
 	prMatch := prereview.PR{
 		Repo:   repo,
@@ -626,6 +668,8 @@ func TestClaimsCheckWithGoMod(t *testing.T) {
 // that card.Result begins at RESULT and doneCheck checks line 2 of the RESULT
 // block rather than line 2 of the entire PR description.
 func TestInferCardWithPreambleBeforeResult(t *testing.T) {
+	t.Parallel()
+
 	pr := prereview.PR{
 		Repo:   repo,
 		Number: 999,
@@ -672,6 +716,8 @@ func TestInferCardWithPreambleBeforeResult(t *testing.T) {
 // TestAppendLedgerCreatesParentDirectories verifies that AppendLedger ensures
 // parent directories exist with 0755 permissions before opening the ledger file.
 func TestAppendLedgerCreatesParentDirectories(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	nestedPath := filepath.Join(dir, "new-session", "deep", "dir", "ledger.jsonl")
 	d := prereview.Disposition{
@@ -693,6 +739,8 @@ func TestAppendLedgerCreatesParentDirectories(t *testing.T) {
 //
 //	JEV head=<sha40> verdict=PASS|BOUNCE|UNSURE score=N conf=<x> rubric=<sha8> base=ok|behind|conflict checks=... model=<model> cost=$x explain=<one line>
 func TestJevLineGoldenFormat(t *testing.T) {
+	t.Parallel()
+
 	d := prereview.Disposition{
 		Who:     prereview.Who,
 		Repo:    repo,
