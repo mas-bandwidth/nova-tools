@@ -763,7 +763,7 @@ jobs:
         # and an Intel Mac at load 2; the cards make those packages fast. Until they land the budget is 300 s here so
         # a mechanical red does not hold dev, and every CI-SLOW line is still printed for the coordinator. This covers
         # the Intel Mac benches too (about 3x slower per core than the Studio) that cards 9352 to 9354 make fast.
-        # The budget is 60 s (the two-minute law) except, until cards 9352 to 9354 make cmd/nova-swarm, cmd/nova-pulse and
+        # The budget is 60 s (the two-minute law) except, until cards 9352 to 9354 make cmd/nova-swarm and
         # internal/swarm fast, on the Intel Mac benches (about 3x slower per core than the Studio), where the alert still
         # prints every CI-SLOW line but the budget is 300 s. Dated exception, 2026-09-18; remove with those cards.
         # All of it now lives in the Makefile's `test` target: the Makefile is the

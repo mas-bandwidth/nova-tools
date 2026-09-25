@@ -202,6 +202,7 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	loop := &reconcile.Loop{
 		Lease:   lease,
 		Duties:  named.wrap(duties, names),
+		Names:   names,
 		OnError: func(err error) { fmt.Fprintf(errOut, "%s nova-sprint reconcile: pass: %v\n", logStamp(), err) },
 		// Per-duty receipts (#3199): every pass under --once, so the probe
 		// says what each duty did; in the loop only a duty that moved

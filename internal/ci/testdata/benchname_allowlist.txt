@@ -14,7 +14,7 @@ internal/pulse/harvestbench.go:prTitle formats one harvested job's PR title and 
 internal/pulse/harvestbench.go:benchPRBody formats the PR body and touches no machine; the bench is a word in the provenance line
 internal/pulse/harvestbench.go:benchRepoURL builds the ssh://<bench><dir>/repo string the LOCAL clone fetches from; it opens nothing, and the name it formats is the one harvestBench's requireBench guard let past
 internal/pulse/harvestbench.go:markHarvested one `touch <dir>/.harvested` through the BenchShell seam, called only from harvestBench after its requireBench guard; the seam below it is sshShell.Run
-internal/pulse/harvestbench.go:sshShell.Run the raw ssh seam; the same road as cmd/nova-pulse's sshCapacity.Capacity -- it is constructed in exactly one place (harvestBench, when the caller injected no BenchShell) and reached only through that verb, which resolved the bench name first
+internal/pulse/harvestbench.go:sshShell.Run the raw ssh seam; the same road as the deleted nova-pulse command's sshCapacity.Capacity -- it is constructed in exactly one place (harvestBench, when the caller injected no BenchShell) and reached only through that verb, which resolved the bench name first
 
 # `harvest --bench --batch` (harvestBatch, #2926) resolves its name ONCE, at the verb's edge:
 # it calls requireBench (fleet.Registry.RequireBench) before any store read or ssh. These

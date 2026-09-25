@@ -20,6 +20,11 @@ package reconcile
 // author (a recut to the coordinator when the swarm built it; close over
 // recut on the third held head). The record's read_task/fix_task fields are
 // the idempotency and the receipt, so a second pass pushes nothing.
+//
+// Bounded by the reconciler lease (#3805): no sprint, leg or move starts
+// with less than the write margin of the lease left; the pass returns what
+// it moved and an error wrapping ErrLeaseMargin naming where it stopped and
+// how many sprints it did not start, which proc:reconciler err records.
 
 import (
 	"context"
@@ -69,6 +74,7 @@ type RouteDuty struct {
 	ConsumerMaxIdle time.Duration
 
 	instance string
+	lease    *Lease // the pass's bound, set by Run; nil under Pass alone
 	groups   map[string]bool
 	swept    map[string]time.Time // stream -> last consumer sweep
 	// done holds the labels and units whose move is final for this instance
@@ -95,7 +101,9 @@ func (d *RouteDuty) Run(ctx context.Context, l *Lease) (Counts, error) {
 		d.groups, d.done = map[string]bool{}, map[string]bool{}
 		d.swept = map[string]time.Time{}
 	}
+	d.lease = l
 	res, err := d.Pass(ctx, l.Token())
+	d.lease = nil
 	c := Counts{Reads: len(res.Reads), Fixes: len(res.Fixes), Merging: len(res.Merging), Carried: len(res.Carried)}
 	c.Routed = c.Reads + c.Fixes + c.Merging + c.Carried
 	return c, err
@@ -124,7 +132,19 @@ func (d *RouteDuty) Pass(ctx context.Context, token string) (RouteResult, error)
 		return res, fmt.Errorf("route: coordinator: %w", err)
 	}
 	var errs []string
-	for _, s := range sprints {
+	stopped := func(err error, where string, left int) (RouteResult, error) {
+		prior := ""
+		if len(errs) > 0 {
+			prior = strings.Join(errs, "; ") + "; "
+		}
+		return res, fmt.Errorf("route: %sstopped %s, %d of %d sprint(s) not started: %w", prior, where, left, len(sprints), err)
+	}
+	for i, s := range sprints {
+		if err := d.bounded(); errors.Is(err, ErrFenced) {
+			return res, err
+		} else if err != nil {
+			return stopped(err, "before "+s, len(sprints)-i)
+		}
 		stream, err := d.Client.HGet(ctx, "s:"+s, "stream").Result()
 		if err != nil && !errors.Is(err, redis.Nil) {
 			return res, fmt.Errorf("route: %s: %w", s, err)
@@ -132,12 +152,15 @@ func (d *RouteDuty) Pass(ctx context.Context, token string) (RouteResult, error)
 		if stream == "" {
 			stream = s
 		}
-		for _, leg := range []func(context.Context, string, string, string, []string, *RouteResult) error{
+		for j, leg := range []func(context.Context, string, string, string, []string, *RouteResult) error{
 			d.reads, d.fixes, d.merging,
 		} {
 			err := leg(ctx, token, s, stream, readers, &res)
 			if errors.Is(err, ErrFenced) {
 				return res, err
+			}
+			if errors.Is(err, ErrLeaseMargin) {
+				return stopped(err, "in "+s+" "+[]string{"reads", "fixes", "merging"}[j], len(sprints)-i-1)
 			}
 			if err != nil {
 				errs = append(errs, err.Error())
@@ -146,6 +169,9 @@ func (d *RouteDuty) Pass(ctx context.Context, token string) (RouteResult, error)
 		err = d.prLegs(ctx, token, s, stream, readers, coordinator, &res)
 		if errors.Is(err, ErrFenced) {
 			return res, err
+		}
+		if errors.Is(err, ErrLeaseMargin) {
+			return stopped(err, "in "+s+" pr", len(sprints)-i-1)
 		}
 		if err != nil {
 			errs = append(errs, err.Error())
@@ -156,6 +182,10 @@ func (d *RouteDuty) Pass(ctx context.Context, token string) (RouteResult, error)
 	}
 	return res, nil
 }
+
+// bounded is the lease bound before a move (Lease.Bounded; nil without a
+// lease).
+func (d *RouteDuty) bounded() error { return d.lease.Bounded(0) }
 
 func (d *RouteDuty) actor() string {
 	if d.Actor != "" {
@@ -252,6 +282,9 @@ func (d *RouteDuty) reads(ctx context.Context, token, S, stream string, readers 
 		if d.done[key] {
 			continue
 		}
+		if err := d.bounded(); err != nil {
+			return err
+		}
 		args := []any{token, S, label, stream, d.actor()}
 		for _, r := range readers {
 			args = append(args, r)
@@ -317,6 +350,13 @@ func (d *RouteDuty) fixes(ctx context.Context, token, S, stream string, _ []stri
 		if get("type") != "hold" {
 			ack = append(ack, m.ID)
 			continue
+		}
+		if err := d.bounded(); err != nil {
+			// Unacked entries stay pending and are claimed next pass.
+			if len(ack) > 0 {
+				_ = d.Client.XAck(ctx, ev, RouteGroup, ack...).Err()
+			}
+			return err
 		}
 		reply, err := d.Client.FCall(ctx, "ns_route_fix", nil,
 			token, S, m.ID, get("unit"), get("repo"), get("pr"), get("who"), get("head"), stream, d.actor()).StringSlice()
@@ -432,6 +472,9 @@ func (d *RouteDuty) merging(ctx context.Context, token, S, stream string, _ []st
 		if gids[i].Val() == 0 {
 			res.Skips["no-ci"]++
 			continue
+		}
+		if err := d.bounded(); err != nil {
+			return err
 		}
 		reply, err := d.Client.FCall(ctx, "ns_route_merging", nil,
 			token, S, c.unit, strconv.Itoa(d.bar()), stream, d.actor()).StringSlice()
@@ -597,6 +640,9 @@ func (d *RouteDuty) prLegs(ctx context.Context, token, S, stream string, readers
 		head, state, reads := str(v, 0), str(v, 1), str(v, 2)
 		if head == "" || (state != "" && state != "open") {
 			continue
+		}
+		if err := d.bounded(); err != nil {
+			return err
 		}
 		n := strconv.Itoa(c.n)
 		rkey := "prread/" + c.repo + "/" + n + "/" + head

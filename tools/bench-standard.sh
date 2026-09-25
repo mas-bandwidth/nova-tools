@@ -375,11 +375,11 @@ if [ "$OS" = "Linux" ]; then
   fi
 fi
 
-# (4) the 16 nova bins each report $NOVA_WANT.
+# (4) the 15 nova bins each report $NOVA_WANT.
 if [ -z "$NOVA_WANT" ]; then
   drift "NOVA_WANT unset (set NOVA_WANT to the wanted version)"
 else
-  for name in nova-board nova-bus nova-check nova-fuse nova-memory nova-merge nova-pulse nova-review nova-sandbox nova-secrets nova-self-talk nova-swarm nova-tokens nova-update nova-version nova-wake; do
+  for name in nova-board nova-bus nova-check nova-fuse nova-memory nova-merge nova-review nova-sandbox nova-secrets nova-self-talk nova-swarm nova-tokens nova-update nova-version nova-wake; do
     bin="$HOME_DIR/.local/bin/$name"
     if [ ! -x "$bin" ]; then
       drift "$name missing at $bin"

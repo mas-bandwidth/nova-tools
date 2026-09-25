@@ -27,7 +27,7 @@ import (
 func init() {
 	register(Verb{Name: "ws", Summary: "the ws index: migrate from task:*, counts, checkpoint to TSV", Run: runWS})
 	register(Verb{Name: "scope", Summary: "keep, park, unpark or list the streams in the sprint's scope", Run: runScope})
-	register(Verb{Name: "stream", Summary: "list, order or rename the work streams", Run: runStream})
+	register(Verb{Name: "stream", Summary: "list, order or rename the work streams; open, rebase, pr, status or close a stream branch", Run: runStream})
 }
 
 // wsStdin is what `--ids @-` reads; a test replaces it.
@@ -401,8 +401,11 @@ func runScopeLs(ctx context.Context, args []string, out, errOut io.Writer) int {
 }
 
 func runStream(ctx context.Context, args []string, out, errOut io.Writer) int {
-	sub, rest, code, ok := subverb(args, "stream", "ls, order or rename", errOut)
+	sub, rest, code, ok := subverb(args, "stream", "ls, order, rename, open, rebase, pr, status or close", errOut)
 	if !ok {
+		return code
+	}
+	if code, handled := runStreamLife(ctx, sub, rest, out, errOut); handled {
 		return code
 	}
 	switch sub {
@@ -413,7 +416,7 @@ func runStream(ctx context.Context, args []string, out, errOut io.Writer) int {
 	case "rename":
 		return runStreamRename(ctx, rest, out, errOut)
 	}
-	return refuse(errOut, "stream", "unknown subverb "+sub+"; want ls, order or rename")
+	return refuse(errOut, "stream", "unknown subverb "+sub+"; want ls, order, rename, open, rebase, pr, status or close")
 }
 
 func runStreamLs(ctx context.Context, args []string, out, errOut io.Writer) int {

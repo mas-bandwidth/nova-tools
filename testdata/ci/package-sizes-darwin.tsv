@@ -81,7 +81,6 @@ github.com/mas-bandwidth/nova-tools/internal/update	-	32.6
 github.com/mas-bandwidth/nova-tools/internal/bus	-	26.1
 github.com/mas-bandwidth/nova-tools/cmd/nova-review	-	23.7
 github.com/mas-bandwidth/nova-tools/internal/pulse	-	22.5
-github.com/mas-bandwidth/nova-tools/cmd/nova-pulse	-	14.4
 github.com/mas-bandwidth/nova-tools/cmd/nova-secrets	-	13.6
 github.com/mas-bandwidth/nova-tools/internal/review	-	10.4
 github.com/mas-bandwidth/nova-tools/cmd/nova-board	-	10.0

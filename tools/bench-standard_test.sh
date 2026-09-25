@@ -93,7 +93,7 @@ checks=(
   "sbcl not on PATH"     # (3)
   "harness missing"      # (3)
   "sandbox-network"      # (3b) network probe
-  "NOVA_WANT"            # (4) the 16 nova bins
+  "NOVA_WANT"            # (4) the 15 nova bins
   "seat keys"            # (5)
   "apiKey"               # (6) refuse plaintext
   "disk free"            # (7)
@@ -286,7 +286,7 @@ printf 'export PATH="$HOME/sdk/go/bin:$HOME/sdk/bin:$HOME/.local/bin:$HOME/go/bi
 printf '#!/usr/bin/env bash\necho "go version go1.26.6 linux/amd64"\n' > "$H2052/sdk/go/bin/go"
 printf '#!/usr/bin/env bash\necho "go version go1.20.0 linux/amd64"\n' > "$H2052/shadow/bin/go"
 for t in sbcl sops; do printf '#!/usr/bin/env bash\nexit 0\n' > "$H2052/.local/bin/$t"; done
-for b in nova-board nova-bus nova-check nova-fuse nova-memory nova-merge nova-pulse nova-review nova-sandbox nova-secrets nova-self-talk nova-swarm nova-tokens nova-update nova-version nova-wake; do
+for b in nova-board nova-bus nova-check nova-fuse nova-memory nova-merge nova-review nova-sandbox nova-secrets nova-self-talk nova-swarm nova-tokens nova-update nova-version nova-wake; do
   printf '#!/usr/bin/env bash\necho v1.0.0\n' > "$H2052/.local/bin/$b"
 done
 printf '#!/usr/bin/env bash\nexit 0\n' > "$H2052/nova-bench/harness-0/opencode"
@@ -344,9 +344,9 @@ exit 0
 EOF
 chmod +x "$HOME_HW/.local/bin/nova-secrets"
 
-# -- Mock the 16 nova-* binaries (each prints name + wanted version).
+# -- Mock the 15 nova-* binaries (each prints name + wanted version).
 for name in nova-board nova-bus nova-check nova-fuse nova-memory nova-merge \
-            nova-pulse nova-review nova-sandbox nova-self-talk \
+            nova-review nova-sandbox nova-self-talk \
             nova-swarm nova-tokens nova-update nova-version nova-wake; do
   printf '#!/bin/sh\necho "%s v0.0.0-test"\n' "$name" > "$HOME_HW/.local/bin/$name"
   chmod +x "$HOME_HW/.local/bin/$name"
@@ -459,7 +459,7 @@ rows_bench() {
   printf '#!/bin/sh\nexit 0\n' > "$b/nova-secrets"
   chmod +x "$b/curl" "$b/nova-secrets"
   for name in nova-board nova-bus nova-check nova-fuse nova-memory nova-merge \
-              nova-pulse nova-review nova-secrets nova-self-talk nova-swarm \
+              nova-review nova-secrets nova-self-talk nova-swarm \
               nova-tokens nova-update nova-version nova-wake; do
     printf '#!/bin/sh\necho v9.9.9-rows\n' > "$h/.local/bin/$name"
   done
