@@ -70,7 +70,8 @@ type OkFriend struct {
 	RetryWait time.Duration
 	RetryMax  time.Duration
 	// CICut is called for every harvested card before its review transition.
-	// nil skips the cut (the ci verb, #2842, is not wired in yet).
+	// nil skips the cut (controls only: `nova-sprint route` builds this rule
+	// with RouteOkFriend, which wires StoreCICut).
 	CICut func(context.Context, CICut) error
 
 	// deliverHook runs on every delivered event before it is handled; a test
@@ -93,9 +94,12 @@ var ErrNoReaders = errors.New("ok-to-friend: fewer eligible readers than require
 // retries it once the id is cleared.
 var ErrReviewBlocked = errors.New("ok-to-friend: a required read cannot be created")
 
-// retryable: the event stays pending and is retried next pass.
+// retryable: the event stays pending and is retried next pass. A ci cut that
+// cannot be made yet (ErrCutSkipped: no base tip recorded, no bench carries
+// the leg) waits the same way the pr-to-read adoption WAITs, never stopping
+// the router.
 func retryable(err error) bool {
-	return errors.Is(err, ErrNoReaders) || errors.Is(err, ErrReviewBlocked)
+	return errors.Is(err, ErrNoReaders) || errors.Is(err, ErrReviewBlocked) || errors.Is(err, ErrCutSkipped)
 }
 
 func (o *OkFriend) logKey() string { return "s:" + o.Sprint + ":log" }

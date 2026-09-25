@@ -68,7 +68,7 @@ func runRoute(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "route", err.Error())
 	}
 	host, _ := os.Hostname()
-	ok := &consume.OkFriend{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor}
+	ok := consume.RouteOkFriend(st, *sprint, instance, *actor)
 	report := &consume.Report{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor}
 	read := &consume.PRRead{Store: st, Sprint: *sprint, Consumer: instance, Instance: instance, Actor: *actor, Remote: consumePRReadRemote}
 	runner := routePRToRead(st, *sprint, instance, *actor, out)

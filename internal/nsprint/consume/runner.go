@@ -190,6 +190,14 @@ func StoreCICut(st *store.Store, actor string) func(context.Context, CICut) erro
 	}
 }
 
+// RouteOkFriend is the ok-to-friend rule exactly as `nova-sprint route`
+// wires it (nova-tools #3496): its CICut is StoreCICut, the one hook the
+// pr-to-read adoption also uses, so a harvested card's head gets its ci card
+// before its reads. A cut that cannot be made yet keeps the event pending.
+func RouteOkFriend(st *store.Store, sprint, consumer, actor string) *OkFriend {
+	return &OkFriend{Store: st, Sprint: sprint, Consumer: consumer, Actor: actor, CICut: StoreCICut(st, actor)}
+}
+
 func fullSHA(s string) bool {
 	if len(s) != 40 {
 		return false
