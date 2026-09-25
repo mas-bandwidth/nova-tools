@@ -8,6 +8,14 @@
 // and on exit closes the task with the typed line the child wrote or with
 // `blocked: <exit reason>`. A task is in working only while its child lives:
 // a serve that stops kills its children and gives their tasks back.
+//
+// Cards (nova-tools #4095): before the sprint-task take, each pass takes task
+// cards from friend:<f>:cards:ready (taskcard.Take, one call), renders each
+// card's brief from its record by kind (brief.RenderCard: build, fix, read,
+// rebase), beats the card's lease (taskcard.Beat) and ends it with the
+// child's typed line (taskcard.Done), or fails it (taskcard.Cancel) when the
+// child exits without one. A child's exit wakes the loop at once, so a freed
+// slot is filled by the same pass that closes it, not by a timer.
 package life
 
 import (
@@ -30,6 +38,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
@@ -57,6 +66,10 @@ const (
 	TokenDir    = "@dir"
 	TokenSprint = "@sprint"
 	TokenID     = "@id"
+	// TokenModel is the model ServeConfig.Models names for the task's kind;
+	// a dispatch that says @model refuses a kind with no model.
+	TokenModel = "@model"
+	TokenKind  = "@kind"
 )
 
 // Environment the child is started with, over the serve's own.
@@ -71,7 +84,14 @@ const (
 	ServeEnvBrief   = "NOVA_TASK_BRIEF"
 	ServeEnvOut     = "NOVA_TASK_OUT"
 	ServeEnvDir     = "NOVA_TASK_DIR"
+	ServeEnvModel   = "NOVA_TASK_MODEL"
+	// ServeEnvCard is set (to the card id) only for a card child.
+	ServeEnvCard = "NOVA_CARD_ID"
 )
+
+// CardsDirName is the directory under the serve root that holds each card
+// child's <id>-<started ms>/ dir.
+const CardsDirName = "cards"
 
 // ShimDirName is the directory under the serve root that holds the refusing
 // gh (internal/nogh) every child finds first on its PATH. The dot keeps it
@@ -143,6 +163,15 @@ type ServeConfig struct {
 	// Logins are `--login` aliases (#3797): written to friends:login once on
 	// start through ns_friend_hello, the only writer of that hash.
 	Logins []string
+	// Models maps a kind to the model its child runs (#4095): @model in the
+	// dispatch, NOVA_TASK_MODEL, and a card brief's co-author line. Keys are
+	// template kinds (build, fix, read, rebase; work is build, review is
+	// read); "*" is every other kind.
+	Models map[string]string
+	// Tick is the idle loop's period (BeatInterval when zero). It beats the
+	// seat and takes work that arrived while every child ran; a child's exit
+	// does not wait for it (#4095).
+	Tick time.Duration
 }
 
 // child is one dispatched task.
@@ -159,9 +188,18 @@ type child struct {
 	lastBeat time.Time
 	exited   chan struct{}
 	waitErr  error
+	// card is a task card (task:<id>, taken from friend:<f>:cards:ready)
+	// rather than a sprint task; model is the model its kind runs.
+	card  bool
+	model string
 }
 
-func (c *child) key() string { return c.claim.Sprint + "/" + c.claim.ID }
+func (c *child) key() string {
+	if c.card {
+		return "card:" + c.claim.ID
+	}
+	return c.claim.Sprint + "/" + c.claim.ID
+}
 
 // Server is one live seat.
 type Server struct {
@@ -170,6 +208,9 @@ type Server struct {
 	mu       sync.Mutex
 	children map[string]*child
 	now      func() time.Time
+	// wake gets one value when a child exits, so the loop closes it and
+	// fills its slot at once.
+	wake chan struct{}
 }
 
 // NewServer checks the config and returns a seat that has not beaten yet.
@@ -195,7 +236,10 @@ func NewServer(st *store.Store, cfg ServeConfig) (*Server, error) {
 	if cfg.Out == nil {
 		cfg.Out = io.Discard
 	}
-	return &Server{st: st, cfg: cfg, children: map[string]*child{}, now: time.Now}, nil
+	if cfg.Tick <= 0 {
+		cfg.Tick = BeatInterval
+	}
+	return &Server{st: st, cfg: cfg, children: map[string]*child{}, now: time.Now, wake: make(chan struct{}, 1)}, nil
 }
 
 // Live is the number of children running now.
@@ -319,7 +363,8 @@ type PassResult struct {
 }
 
 // Pass is one tick: beat, close the children that exited, beat the leases
-// that are due, take up to the free width and dispatch each claim.
+// that are due, take up to the free width (cards from friend:<f>:cards:ready
+// first, then sprint tasks) and dispatch each one.
 func (s *Server) Pass(ctx context.Context) (PassResult, error) {
 	var res PassResult
 	if err := s.Beat(ctx); err != nil {
@@ -328,6 +373,15 @@ func (s *Server) Pass(ctx context.Context) (PassResult, error) {
 	res.Closed = s.reap(ctx)
 	s.beatLeases(ctx)
 	free := s.cfg.Width - s.Live()
+	if free > 0 {
+		taken, failed, err := s.takeCards(ctx, free)
+		if err != nil {
+			return res, fmt.Errorf("friend serve %s: take cards: %w", s.cfg.Friend, err)
+		}
+		res.Taken += taken
+		res.Closed += failed
+		free = s.cfg.Width - s.Live()
+	}
 	if free > 0 {
 		claims, err := task.TakeAvailable(ctx, s.st, s.cfg.Friend, s.cfg.Sprint, "", free, s.cfg.Actor, "")
 		if err != nil {
@@ -363,7 +417,8 @@ func (s *Server) Wait(ctx context.Context) (int, error) {
 		select {
 		case <-ctx.Done():
 			return closed, ctx.Err()
-		case <-time.After(BeatInterval):
+		case <-s.wake:
+		case <-time.After(s.cfg.Tick):
 		}
 		n, err := s.Watch(ctx)
 		closed += n
@@ -388,6 +443,24 @@ func (s *Server) Stop(ctx context.Context, reason string) error {
 	for _, c := range live {
 		killGroup(c.cmd)
 		<-c.exited
+		if c.card {
+			// Given back: working -> ready on the friend's own set, so the
+			// next serve retakes it.
+			_, err := taskcard.Move(ctx, s.st.Client(), c.claim.ID, "ready", taskcard.Opts{
+				By: s.cfg.Actor, Why: "serve-stopped: " + reason})
+			if err != nil && first == nil {
+				first = err
+			}
+			detail := "status=ready reason=" + reason
+			if err != nil {
+				detail = "error=" + oneLine(err.Error())
+			}
+			s.cardReceipt(ctx, "cancel", c.claim.ID, detail)
+			s.mu.Lock()
+			delete(s.children, c.key())
+			s.mu.Unlock()
+			continue
+		}
 		status, err := task.Cancel(ctx, s.st, task.CancelRequest{
 			Sprint: c.claim.Sprint, ID: c.claim.ID, Token: c.claim.Token,
 			Reason: "serve-stopped: " + reason, Actor: s.cfg.Actor,
@@ -418,20 +491,23 @@ func Serve(ctx context.Context, st *store.Store, cfg ServeConfig) error {
 	if _, err := s.Pass(ctx); err != nil {
 		return err
 	}
-	ticker := time.NewTicker(BeatInterval)
+	ticker := time.NewTicker(s.cfg.Tick)
 	defer ticker.Stop()
 	for {
+		// A child's exit is the trigger (#4095): the pass it wakes closes
+		// that child and takes the next ready work into its slot.
 		select {
 		case <-ctx.Done():
 			return s.Stop(context.WithoutCancel(ctx), "signal")
 		case <-ticker.C:
-			if _, err := s.Pass(ctx); err != nil {
-				if errors.Is(err, ErrSeatHeld) || errors.Is(err, ErrUnregistered) {
-					_ = s.Stop(context.WithoutCancel(ctx), err.Error())
-					return err
-				}
-				fmt.Fprintf(s.cfg.Out, "SERVE %s pass: %v\n", cfg.Friend, err)
+		case <-s.wake:
+		}
+		if _, err := s.Pass(ctx); err != nil {
+			if errors.Is(err, ErrSeatHeld) || errors.Is(err, ErrUnregistered) {
+				_ = s.Stop(context.WithoutCancel(ctx), err.Error())
+				return err
 			}
+			fmt.Fprintf(s.cfg.Out, "SERVE %s pass: %v\n", cfg.Friend, err)
 		}
 	}
 }
@@ -476,12 +552,38 @@ func (s *Server) start(ctx context.Context, c task.Claim) error {
 	}
 	ch.brief = filepath.Join(ch.dir, "brief.md")
 	ch.out = filepath.Join(ch.dir, "out.log")
+	ch.model = s.model(ch.kind)
 	if err := s.writeBrief(ctx, ch, fields); err != nil {
 		return err
 	}
+	return s.launch(ctx, ch)
+}
+
+// model is the model cfg.Models names for kind ("" when none does).
+func (s *Server) model(kind string) string {
+	if m := s.cfg.Models[kind]; m != "" {
+		return m
+	}
+	if k, _ := brief.CardKind(kind); s.cfg.Models[k] != "" {
+		return s.cfg.Models[k]
+	}
+	return s.cfg.Models["*"]
+}
+
+// launch starts the harness for a child whose dir and brief are written,
+// registers it and sends the start-ack beat. Its exit wakes the loop.
+func (s *Server) launch(ctx context.Context, ch *child) error {
+	c := ch.claim
+	if ch.model == "" {
+		for _, a := range s.cfg.Dispatch {
+			if strings.Contains(a, TokenModel) {
+				return fmt.Errorf("no model for kind %s: pass --model %s=<model>", ch.kind, ch.kind)
+			}
+		}
+	}
 	argv := make([]string, len(s.cfg.Dispatch))
 	replacer := strings.NewReplacer(TokenBrief, ch.brief, TokenOut, ch.out, TokenDir, ch.dir,
-		TokenSprint, c.Sprint, TokenID, c.ID)
+		TokenSprint, c.Sprint, TokenID, c.ID, TokenModel, ch.model, TokenKind, ch.kind)
 	for i, a := range s.cfg.Dispatch {
 		argv[i] = replacer.Replace(a)
 	}
@@ -505,7 +607,10 @@ func (s *Server) start(ctx context.Context, c task.Claim) error {
 		ServeEnvFriend+"="+s.cfg.Friend, ServeEnvSprint+"="+c.Sprint, ServeEnvID+"="+c.ID,
 		ServeEnvAttempt+"="+strconv.Itoa(c.Attempt), ServeEnvToken+"="+c.Token,
 		ServeEnvKind+"="+ch.kind, ServeEnvHead+"="+ch.head, ServeEnvBrief+"="+ch.brief,
-		ServeEnvOut+"="+ch.out, ServeEnvDir+"="+ch.dir)
+		ServeEnvOut+"="+ch.out, ServeEnvDir+"="+ch.dir, ServeEnvModel+"="+ch.model)
+	if ch.card {
+		cmd.Env = append(cmd.Env, ServeEnvCard+"="+c.ID)
+	}
 	cmd.Env = append(cmd.Env, s.cfg.Env...)
 	cmd.Env = nogh.PathFirst(cmd.Env, shimDir)
 	ownGroup(cmd)
@@ -519,11 +624,15 @@ func (s *Server) start(ctx context.Context, c task.Claim) error {
 		ch.waitErr = cmd.Wait()
 		_ = outFile.Close()
 		close(ch.exited)
+		select {
+		case s.wake <- struct{}{}:
+		default:
+		}
 	}()
 	s.mu.Lock()
 	s.children[ch.key()] = ch
 	s.mu.Unlock()
-	s.receipt(ctx, "start", &c, fmt.Sprintf("pid=%d brief=%s argv=%s", cmd.Process.Pid, ch.briefSrc, argv[0]))
+	s.childReceipt(ctx, "start", ch, fmt.Sprintf("pid=%d brief=%s argv=%s", cmd.Process.Pid, ch.briefSrc, argv[0]))
 	s.beatLease(ctx, ch)
 	return nil
 }
@@ -597,6 +706,10 @@ func (s *Server) beatLeases(ctx context.Context) {
 }
 
 func (s *Server) beatLease(ctx context.Context, c *child) {
+	if c.card {
+		s.beatCard(ctx, c)
+		return
+	}
 	status, err := task.Beat(ctx, s.st, task.BeatRequest{
 		Sprint: c.claim.Sprint, ID: c.claim.ID, Token: c.claim.Token, Actor: s.cfg.Actor,
 	})
@@ -639,6 +752,10 @@ func (s *Server) reap(ctx context.Context) int {
 // 0 and wrote one, `blocked: <reason>` otherwise.
 func (s *Server) close(ctx context.Context, c *child) {
 	rc, reason := exitReason(c.cmd, c.waitErr)
+	if c.card {
+		s.closeCard(ctx, c, rc, reason)
+		return
+	}
 	output := readTail(c.out)
 	line := TypedLine(output)
 	secs := int(s.now().Sub(c.started).Seconds())
@@ -695,12 +812,38 @@ func (s *Server) done(ctx context.Context, c task.Claim, kind, head, evidence, v
 
 // receipt appends one entry to friend:<f>:log and prints its line.
 func (s *Server) receipt(ctx context.Context, kind string, c *task.Claim, detail string) {
+	var values []any
+	label := ""
+	if c != nil {
+		values = []any{"sprint", c.Sprint, "id", c.ID, "attempt", strconv.Itoa(c.Attempt)}
+		label = c.Sprint + "/" + c.ID + " attempt=" + strconv.Itoa(c.Attempt)
+	}
+	s.emit(ctx, kind, label, values, detail)
+}
+
+// cardReceipt is a receipt about card id: "card", id on the entry and
+// card:<id> on the line.
+func (s *Server) cardReceipt(ctx context.Context, kind, id, detail string) {
+	s.emit(ctx, kind, "card:"+id, []any{"card", id}, detail)
+}
+
+// childReceipt is a receipt about a child, card or sprint task.
+func (s *Server) childReceipt(ctx context.Context, kind string, c *child, detail string) {
+	if c.card {
+		s.cardReceipt(ctx, kind, c.claim.ID, detail)
+		return
+	}
+	s.receipt(ctx, kind, &c.claim, detail)
+}
+
+// emit appends one entry to friend:<f>:log and prints its SERVE line.
+func (s *Server) emit(ctx context.Context, kind, label string, more []any, detail string) {
 	at := strconv.FormatInt(s.now().UnixMilli(), 10)
 	values := []any{"kind", kind, "friend", s.cfg.Friend, "session", s.cfg.Session, "at", at}
+	values = append(values, more...)
 	line := "SERVE " + s.cfg.Friend + " " + kind
-	if c != nil {
-		values = append(values, "sprint", c.Sprint, "id", c.ID, "attempt", strconv.Itoa(c.Attempt))
-		line += " " + c.Sprint + "/" + c.ID + " attempt=" + strconv.Itoa(c.Attempt)
+	if label != "" {
+		line += " " + label
 	}
 	if detail != "" {
 		values = append(values, "detail", detail)
