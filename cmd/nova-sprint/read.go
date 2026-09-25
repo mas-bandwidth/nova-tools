@@ -5,6 +5,7 @@
 // registry.go; main.go is untouched.
 //
 //	nova-sprint read brief  --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>]
+//	nova-sprint read brief  --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis <addr>]
 //	nova-sprint read post   --repo <r> --n <n> --line <typed line> [--no-github] [--owner <o>] [--redis <addr>]
 //	nova-sprint read digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>]
 //	nova-sprint read carry  --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]
@@ -12,7 +13,9 @@
 // <r> is owner/name or name: every subverb keys the PR record pr:<name>:<n>
 // by the bare name (internal/nsprint/prkey), the key pr record writes.
 //
-// brief writes the read brief; post stores the typed line and, until #3595
+// brief writes the read brief; with --id it reads the read task
+// (task:<id>, or s:<S>:task:<id> with --sprint) for the PR and the exact
+// head, so a friend holding a read task needs nothing but its id; post stores the typed line and, until #3595
 // lands, mirrors it as one PR comment (REST) unless --no-github. digest
 // records the diff identity of the head a line is typed at (diff_sha256 on
 // the unit record; the reader runs it at read time). carry compares that
@@ -53,7 +56,7 @@ func init() {
 	})
 }
 
-const readUsage = "want brief --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>], post --repo <r> --n <n> --line <typed line> [--no-github] [--owner <o>] [--redis <addr>], digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>] or carry --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]"
+const readUsage = "want brief --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>], brief --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis <addr>], post --repo <r> --n <n> --line <typed line> [--no-github] [--owner <o>] [--redis <addr>], digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>] or carry --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]"
 
 func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -72,11 +75,18 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	sprint := fs.String("sprint", "", "")
 	head := fs.String("head", "", "")
 	baseRef := fs.String("base-ref", "", "")
+	taskID := fs.String("id", "", "")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return refuse(errOut, "read "+sub, readUsage)
 	}
 	if *redisAddr == "" {
 		*redisAddr = os.Getenv("NOVA_REDIS_ADDR")
+	}
+	if *taskID != "" {
+		if sub != "brief" || *repo != "" || *n != "" || *outDir == "" || *typed != "" || *noGitHub || *head != "" || *baseRef != "" || *redisAddr == "" {
+			return refuse(errOut, "read "+sub, "--id is brief only: want brief --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis <addr>] (or NOVA_SPRINT_REDIS)")
+		}
+		return runReadBriefTask(ctx, *redisAddr, *sprint, *taskID, *mirror, *outDir, out, errOut)
 	}
 	// --repo is owner/name or name (internal/nsprint/prkey): the record,
 	// the ci hash and the mirror take the bare name; an owner in --repo is
@@ -138,6 +148,26 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return read.Post(ctx, st.Client(), *repo, *n, *typed, poster, out, errOut)
 	}
 	return runReadCarry(ctx, st, sub, land.ID{Repo: *repo, N: num}, *sprint, *mirror, *head, *baseRef, out, errOut)
+}
+
+// runReadBriefTask is `read brief --id`: the task hash names the PR and the
+// head (read.TargetOf), then the brief is Brief's at that head.
+func runReadBriefTask(ctx context.Context, addr, sprint, id, mirror, outDir string, out, errOut io.Writer) int {
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		return refuse(errOut, "read brief", err.Error())
+	}
+	defer func() { _ = st.Close() }()
+	fields, err := read.TaskFields(ctx, st.Client(), sprint, id)
+	if err != nil {
+		fmt.Fprintf(errOut, "nova-sprint read brief: %v\n", err)
+		return 2
+	}
+	if len(fields) == 0 {
+		fmt.Fprintf(errOut, "READ BRIEF REFUSED task=%s why=MISSING %s; name the sprint with --sprint <S> for a sprint task\n", id, strings.Join(read.TaskKeys(sprint, id), " and "))
+		return 1
+	}
+	return read.BriefTask(ctx, st.Client(), id, fields, mirror, outDir, out, errOut)
 }
 
 // runReadCarry is digest and carry over the unit record (#3630).

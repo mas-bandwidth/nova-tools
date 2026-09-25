@@ -3771,7 +3771,7 @@ posted lines, the file list and the files outside PATHS, and `<dir>/diff.patch`,
 then prints one receipt:
 
 ```
-READ BRIEF repo=nova-tools n=7 head=b7628a80 base_sha=1a1ad594 files=1 outside_paths=0 lines=1 ci=2 out=<dir>/brief.md github_calls=0
+READ BRIEF repo=nova-tools n=7 head=b7628a80 base_sha=1a1ad594 files=1 outside_paths=0 lines=1 ci=2 out=<dir>/brief.md diff=<dir>/diff.patch github_calls=0
 ```
 
 A record with no head, a record with no base_sha, a mirror without the head
@@ -3779,6 +3779,21 @@ yet, and a missing mirror are each one `READ BRIEF REFUSED repo= n= why=`
 line naming the remedy (exit 1); a head the mirror's `refs/pull/<n>/head`
 has moved past is reported as `mirror_head=` and as a `HEAD MOVED` line in the
 brief, and the record head is what is read.
+
+`read brief --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis
+<addr>]` is the same brief for a read task, so a friend holding one needs
+nothing but its id. It reads the task hash (`task:<id>`, and
+`s:<S>:task:<id>` with `--sprint`, in one pipeline), which names the PR by
+its `repo` and `pr` fields or by `ref` (the PR URL the first read pushes, or
+`<repo>#<n>`), and the head the task was queued at; the brief reads that head
+(its diff and its CI) even when the record has moved on, and the receipt adds
+`record_head=` then and `task=<id>` always. A task that is not a read (kind
+`read` or `review`), names no PR or has no head is one `READ BRIEF REFUSED
+task=<id> why=` line (exit 1). `friend serve` briefs a taken read task the
+same way: when the task's title does not render through `brief render`, the
+child's `brief.md` is this read brief with `diff.patch` beside it (start
+receipt `brief=read`), and only a read the mirror cannot brief yet falls back
+to the task record (`brief=record`).
 
 `read post --repo <r> --n <n> --line "<typed line>" [--no-github] [--owner
 <o>] [--redis <addr>]` stores the line: the first word is one of SCORE, HOLD,
