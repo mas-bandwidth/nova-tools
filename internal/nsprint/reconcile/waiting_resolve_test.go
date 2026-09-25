@@ -132,11 +132,9 @@ func TestWaitingResolvesWhenDepsLand(t *testing.T) {
 		t.Fatalf("second pass: routed %d err %v out %q", counts.Routed, err, out.String())
 	}
 
-	// D lands: C is released on the next pass.
-	if _, err := ws.Move(ctx, c, "D", "merging", "test", "pr"); err != nil {
-		t.Fatal(err)
-	}
-	// landed needs the merge sha (#3778): the one move with the lander's sha
+	// D lands: C is released on the next pass. landed needs the merge sha
+	// (#3778): the one move with the lander's sha, working -> landed (a
+	// primary with no copy never enters merging by hand, #3929)
 	if _, err := taskcard.Land(ctx, c, "D", "test", "0123abcd", "merged"); err != nil {
 		t.Fatal(err)
 	}

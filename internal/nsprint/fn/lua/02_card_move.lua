@@ -726,7 +726,9 @@ NS.card = { move = card_move, create = card_create, purge = card_purge }
 --   working -> waiting                             a durable wait (a why)
 --   done/ok -> merging | landed                    the PR of a closed task (a why)
 -- landed needs the merge sha; a done that does not come from working needs
--- a why, and so does working -> ready.
+-- a why, and so does working -> ready. A task no friend holds (a primary)
+-- enters working or merging only when the table-moves code names its copy
+-- (TK.unread): card deal cuts it, a copy's card end returns it.
 -- A take (-> working) writes lease_until = now + TK.LEASE; the child renews
 -- it with ns_tcard_beat every 60 s; ns_tcard_expire moves a working task
 -- whose lease lapsed back to ready (why=lease lapsed), so a friend's working
@@ -965,6 +967,23 @@ function TK.legacy(id, S, cur, nxt, front, at, prio)
   return h, clear
 end
 
+-- TK.unread(to, friend, o): the refusal when a friendless task (a primary)
+-- would enter working or merging and the table-moves code names no copy
+-- (o.copy nil): a primary advances only when a copy returns (rowan-new
+-- specs/table-moves.md, ruling 2026-09-25 2:52 PM), so neither a harvest's
+-- PR-open walk nor a hand task move takes it there unread. A friend take
+-- (o.as, or a friend holding it) keeps its own path, and so does a step of
+-- the one-call walk to landed at a merge (o.landing with the merge sha,
+-- 03_task_event.lua), which never rests in working.
+function TK.unread(to, friend, o)
+  if o.landing and TK.str(o.sha) ~= '' then return nil end
+  if (to == 'working' or to == 'merging') and friend == '' and o.copy == nil then
+    if to == 'working' then return 'NOCOPY a primary enters working only as card deal cuts its copy' end
+    return 'NOCOPY a primary enters merging only as a read copy\'s card end'
+  end
+  return nil
+end
+
 -- TK.edge: nil when cur -> nxt is on the graph, else the refusal.
 function TK.edge(id, cur, nxt, ok, o)
   local from, to = cur.where, nxt.where
@@ -992,6 +1011,8 @@ function TK.edge(id, cur, nxt, ok, o)
   if from == 'waiting' and to == 'working' and TK.str(o.copy) == '' then
     return 'OFFGRAPH waiting -> working is card deal (it cuts a copy)'
   end
+  local unread = TK.unread(to, nxt.friend, o)
+  if unread then return unread end
   if o.copy == nil then
     if TK.str(cur.copy) ~= '' and to ~= 'done' and to ~= 'landed' then
       return 'LIVECOPY task:' .. id .. ' moves when its copy ' .. cur.copy .. ' returns (card end, card cancel)'
@@ -2673,7 +2694,7 @@ redis.register_function({ function_name = 'ns_cm_fsck', flags = { 'no-writes' },
 redis.register_function('ns_cm_repair', function(keys, args) return TM.fsck(true) end)
 
 NS.task = { move = TK.move, create = TK.create, place = TK.place, read = TK.read, stream_of = TK.stream_of,
-  ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF,
+  ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF, unread = TK.unread,
   -- set(id, state, o): the move to the where a fine state names (cancelled is
   -- done/fail), writing that state: the sprint store's transitions.
   -- renew(id, at): a live holder's beat renews the task's lease.
