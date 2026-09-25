@@ -59,8 +59,9 @@ The bench configures it through the environment the launcher runs in:
 The harness runs in the job dir with NOVA_CARD, NOVA_CARD_BRANCH,
 NOVA_CARD_JOB and NOVA_CARD_OUT set; what it writes under NOVA_CARD_OUT is
 copied to the results dir before the end record, and the job dir is deleted.
-Exit 0 is DONE/done; any other exit is FAILED crash; the clock running out
-is FAILED timeout.
+Exit 0 is DONE/done; any other exit is FAILED crash, or FAILED refused with
+the refusal line as the card's why when the harness's program printed a
+NATIVE REFUSED line (#3194); the clock running out is FAILED timeout.
 
 exit codes: 0 the end was recorded (any outcome), 1 configuration missing,
 2 could not run, 3 fenced, 4 not dealt to this bench, 6 Redis unavailable.

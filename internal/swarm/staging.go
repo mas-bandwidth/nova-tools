@@ -30,15 +30,24 @@ type StagingIdentity struct {
 	Email string
 }
 
+// PoolIdentityRemedy is the one remedy every pool identity refusal names
+// (nova-tools #3193). The pool identity is bench configuration: the fleet
+// converge in rowan-tools writes <pool>/identity.tsv (its pool_identity task),
+// so a bench refusing for it is an unconverged bench, never a hand-written
+// file. The card wrapper carries the refusal line, this remedy included, onto
+// the card record as its why.
+const PoolIdentityRemedy = "remedy: make -C fleet converge (rowan-tools) writes the pool identity.tsv"
+
 // LoadPoolIdentity reads the pool's identity.tsv: a header
 // `owner\tname\temail` plus the pool's identity row. A pool with no identity
 // row is refused: launching a job under nobody's name is how a commit ends up
-// carrying whatever the bench's git config held.
+// carrying whatever the bench's git config held. Every refusal ends with
+// PoolIdentityRemedy.
 func LoadPoolIdentity(poolDir string) (StagingIdentity, error) {
 	path := filepath.Join(poolDir, "identity.tsv")
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return StagingIdentity{}, fmt.Errorf("pool %s has no identity row in identity.tsv: %v; refusing to launch under nobody's name", poolDir, err)
+		return StagingIdentity{}, fmt.Errorf("pool %s has no identity row in identity.tsv: %v; refusing to launch under nobody's name; %s", poolDir, err, PoolIdentityRemedy)
 	}
 	var id StagingIdentity
 	header := true
@@ -53,17 +62,17 @@ func LoadPoolIdentity(poolDir string) (StagingIdentity, error) {
 		}
 		header = false
 		if len(fields) != 3 {
-			return StagingIdentity{}, fmt.Errorf("pool %s identity.tsv line %d: wants owner, name and email tab-separated", poolDir, i+1)
+			return StagingIdentity{}, fmt.Errorf("pool %s identity.tsv line %d: wants owner, name and email tab-separated; %s", poolDir, i+1, PoolIdentityRemedy)
 		}
 		owner, name, email := strings.TrimSpace(fields[0]), strings.TrimSpace(fields[1]), strings.TrimSpace(fields[2])
 		if owner == "" || name == "" || email == "" {
-			return StagingIdentity{}, fmt.Errorf("pool %s identity.tsv line %d: owner, name and email are all required", poolDir, i+1)
+			return StagingIdentity{}, fmt.Errorf("pool %s identity.tsv line %d: owner, name and email are all required; %s", poolDir, i+1, PoolIdentityRemedy)
 		}
 		id = StagingIdentity{Owner: owner, Name: name, Email: email}
 		break
 	}
 	if id.Owner == "" {
-		return StagingIdentity{}, fmt.Errorf("pool %s has no identity row in identity.tsv; refusing to launch under nobody's name", poolDir)
+		return StagingIdentity{}, fmt.Errorf("pool %s has no identity row in identity.tsv; refusing to launch under nobody's name; %s", poolDir, PoolIdentityRemedy)
 	}
 	return id, nil
 }

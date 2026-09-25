@@ -237,6 +237,10 @@ func TestNativeRefusesMissingPoolIdentityBeforeHarness(t *testing.T) {
 	if !strings.Contains(stderr.String(), "refusing to launch under nobody's name") {
 		t.Fatalf("stderr does not contain expected refusal message:\n%s", stderr.String())
 	}
+	// #3193: the refusal names identity.tsv and the one remedy, the fleet converge.
+	if line := stderr.String(); !strings.Contains(line, "identity.tsv") || !strings.Contains(line, "make -C fleet converge") {
+		t.Fatalf("the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
+	}
 
 	// Verify harness was never started: neither native.log nor harness-output.log was created.
 	nativeLog := filepath.Join(slot, "native.log")
@@ -321,6 +325,10 @@ func TestNativeRefusesMalformedPoolIdentityBeforeHarness(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "refusing to launch under nobody's name") {
 		t.Fatalf("stderr does not contain expected refusal message:\n%s", stderr.String())
+	}
+	// #3193: the refusal names identity.tsv and the one remedy, the fleet converge.
+	if line := stderr.String(); !strings.Contains(line, "identity.tsv") || !strings.Contains(line, "make -C fleet converge") {
+		t.Fatalf("the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
 	}
 
 	// Verify harness was never started: neither native.log nor harness-output.log was created.
