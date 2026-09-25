@@ -9,6 +9,17 @@ package reconcile
 // one Redis Function call of route_duty.lua with a receipt, fenced on the
 // reconciler lease and idempotent under s:<S>:routed, so a second pass pushes
 // nothing more. Every pass is bounded pipelined reads plus one call per move.
+//
+// Two further legs read the pr:<repo>:<n> record (#3579, #3580; the record
+// `pr record|lines` writes) for every task in the sprint stream's working and
+// merging sets: an open PR whose head no counting friend line covers gets
+// exactly one read task on the least-loaded live reader (never the author,
+// who is the builder task's owner, not the branch name), the old head's read
+// cancelled `superseded by <head>` or carried when the diff is identical;
+// a HOLD at head with no open fix task gets exactly one fix task to the
+// author (a recut to the coordinator when the swarm built it; close over
+// recut on the third held head). The record's read_task/fix_task fields are
+// the idempotency and the receipt, so a second pass pushes nothing.
 
 import (
 	"context"
@@ -19,6 +30,8 @@ import (
 	"strings"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // DefaultBar is the read score a PR needs to move to merging (Glenn
@@ -50,8 +63,9 @@ type RouteDuty struct {
 // RouteResult is what one pass moved, in receipt order.
 type RouteResult struct {
 	Reads   []string // task ids pushed
-	Fixes   []string
+	Fixes   []string // fix, recut and close tasks pushed
 	Merging []string
+	Carried []string       // read tasks carried to a new head (identical diff)
 	Skips   map[string]int // why -> count, for the pass line
 }
 
@@ -65,8 +79,8 @@ func (d *RouteDuty) Run(ctx context.Context, l *Lease) (Counts, error) {
 		d.groups, d.done = map[string]bool{}, map[string]bool{}
 	}
 	res, err := d.Pass(ctx, l.Token())
-	c := Counts{Reads: len(res.Reads), Fixes: len(res.Fixes), Merging: len(res.Merging)}
-	c.Routed = c.Reads + c.Fixes + c.Merging
+	c := Counts{Reads: len(res.Reads), Fixes: len(res.Fixes), Merging: len(res.Merging), Carried: len(res.Carried)}
+	c.Routed = c.Reads + c.Fixes + c.Merging + c.Carried
 	return c, err
 }
 
@@ -84,6 +98,10 @@ func (d *RouteDuty) Pass(ctx context.Context, token string) (RouteResult, error)
 	readers, err := d.liveReaders(ctx)
 	if err != nil {
 		return res, fmt.Errorf("route: readers: %w", err)
+	}
+	coordinator, err := d.coordinator(ctx)
+	if err != nil {
+		return res, fmt.Errorf("route: coordinator: %w", err)
 	}
 	var errs []string
 	for _, s := range sprints {
@@ -104,6 +122,13 @@ func (d *RouteDuty) Pass(ctx context.Context, token string) (RouteResult, error)
 			if err != nil {
 				errs = append(errs, err.Error())
 			}
+		}
+		err = d.prLegs(ctx, token, s, stream, readers, coordinator, &res)
+		if errors.Is(err, ErrFenced) {
+			return res, err
+		}
+		if err != nil {
+			errs = append(errs, err.Error())
 		}
 	}
 	if len(errs) > 0 {
@@ -369,6 +394,240 @@ func (d *RouteDuty) merging(ctx context.Context, token, S, stream string, _ []st
 		}
 	}
 	return nil
+}
+
+// coordinator is the first friend (name order) whose friend:<f>:roles holds
+// coordinator; with no roster, rowan when registered; else "". It is where a
+// swarm-built PR's recut and a close-over-recut go.
+func (d *RouteDuty) coordinator(ctx context.Context) (string, error) {
+	names, err := d.Client.SMembers(ctx, "friends").Result()
+	if err != nil {
+		return "", err
+	}
+	sort.Strings(names)
+	pipe := d.Client.Pipeline()
+	roles := make([]*redis.StringCmd, len(names))
+	for i, f := range names {
+		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return "", err
+	}
+	fallback := ""
+	for i, f := range names {
+		if f == "rowan" {
+			fallback = f
+		}
+		for _, r := range strings.Split(roles[i].Val(), ",") {
+			if strings.TrimSpace(r) == "coordinator" {
+				return f, nil
+			}
+		}
+	}
+	return fallback, nil
+}
+
+// prRef reads a task's PR fields (pr as 123, #123, <repo>#123 or a pulls
+// URL; repo; ref as <owner/repo>#<n>) into the pr:<repo>:<n> record's repo
+// and number.
+func prRef(pr, repo, ref string) (string, int, bool) {
+	pr, repo, ref = strings.TrimSpace(pr), strings.TrimSpace(repo), strings.TrimSpace(ref)
+	num := ""
+	if i := strings.LastIndex(pr, "/pull/"); i >= 0 {
+		parts := strings.Split(strings.Trim(pr[:i], "/"), "/")
+		if len(parts) >= 2 {
+			repo = parts[len(parts)-2] + "/" + parts[len(parts)-1]
+		}
+		num = strings.Trim(pr[i+len("/pull/"):], "/")
+	} else if left, right, ok := strings.Cut(pr, "#"); ok {
+		if left != "" {
+			repo = left
+		}
+		num = right
+	} else {
+		num = pr
+	}
+	if left, right, ok := strings.Cut(ref, "#"); ok {
+		if repo == "" || !strings.Contains(repo, "/") {
+			if strings.HasSuffix(left, "/"+repo) || repo == "" {
+				repo = left
+			}
+		}
+		if num == "" {
+			num = right
+		}
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil || n <= 0 || repo == "" {
+		return "", 0, false
+	}
+	return repo, n, true
+}
+
+type prCand struct {
+	repo string
+	n    int
+}
+
+// prCandidates is every PR of the stream's working and merging tasks, in
+// two pipelined round trips, each once, sorted.
+func (d *RouteDuty) prCandidates(ctx context.Context, stream string) ([]prCand, error) {
+	pipe := d.Client.Pipeline()
+	working := pipe.ZRange(ctx, "ws:"+stream+":working", 0, -1)
+	merging := pipe.ZRange(ctx, "ws:"+stream+":merging", 0, -1)
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	ids := append(working.Val(), merging.Val()...)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	pipe = d.Client.Pipeline()
+	rows := make([]*redis.SliceCmd, len(ids))
+	for i, id := range ids {
+		rows[i] = pipe.HMGet(ctx, "task:"+id, "pr", "repo", "ref")
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	seen := map[prCand]bool{}
+	var out []prCand
+	for _, r := range rows {
+		v := r.Val()
+		repo, n, ok := prRef(str(v, 0), str(v, 1), str(v, 2))
+		if !ok {
+			continue
+		}
+		c := prCand{repo, n}
+		if !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].repo != out[j].repo {
+			return out[i].repo < out[j].repo
+		}
+		return out[i].n < out[j].n
+	})
+	return out, nil
+}
+
+// prLegs runs ns_route_pr_read and ns_route_pr_fix over the stream's PR
+// records: one pipelined read of the records, then one function call per
+// decision still open for this instance. A head read at head, routed or
+// held with a fix task is final for the instance; a new head is a new key.
+func (d *RouteDuty) prLegs(ctx context.Context, token, S, stream string, readers []string, coordinator string, res *RouteResult) error {
+	cands, err := d.prCandidates(ctx, stream)
+	if err != nil {
+		return fmt.Errorf("%s: pr candidates: %w", S, err)
+	}
+	if len(cands) == 0 {
+		return nil
+	}
+	pipe := d.Client.Pipeline()
+	rows := make([]*redis.SliceCmd, len(cands))
+	for i, c := range cands {
+		rows[i] = pipe.HMGet(ctx, "pr:"+c.repo+":"+strconv.Itoa(c.n), "head", "state", "reads")
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("%s: pr records: %w", S, err)
+	}
+	for i, c := range cands {
+		v := rows[i].Val()
+		head, state, reads := str(v, 0), str(v, 1), str(v, 2)
+		if head == "" || (state != "" && state != "open") {
+			continue
+		}
+		n := strconv.Itoa(c.n)
+		rkey := "prread/" + c.repo + "/" + n + "/" + head
+		if !d.done[rkey] {
+			if len(readers) == 0 {
+				res.Skips["no-reader"]++
+			} else {
+				args := []any{token, S, c.repo, n, stream, d.actor()}
+				for _, r := range readers {
+					args = append(args, r)
+				}
+				reply, err := d.Client.FCall(ctx, "ns_route_pr_read", nil, args...).StringSlice()
+				if err != nil {
+					return fmt.Errorf("%s: ns_route_pr_read %s#%s: %w", S, c.repo, n, err)
+				}
+				switch word(reply, 0) {
+				case "FENCED":
+					return ErrFenced
+				case "CREATED":
+					res.Reads = append(res.Reads, word(reply, 1))
+					d.done[rkey] = true
+				case "CARRIED":
+					res.Carried = append(res.Carried, word(reply, 1))
+					d.done[rkey] = true
+				case "DUP", "EXISTS":
+					d.done[rkey] = true
+				case "SKIP":
+					res.Skips[word(reply, 1)]++
+					if word(reply, 1) == "read-at-head" {
+						d.done[rkey] = true
+					}
+				default:
+					return fmt.Errorf("%s: ns_route_pr_read %s#%s: %v", S, c.repo, n, reply)
+				}
+			}
+		}
+		fkey := "prfix/" + c.repo + "/" + n + "/" + head
+		if d.done[fkey] || !heldAt(reads, head) {
+			continue
+		}
+		reply, err := d.Client.FCall(ctx, "ns_route_pr_fix", nil, token, S, c.repo, n, stream, d.actor(), coordinator).StringSlice()
+		if err != nil {
+			return fmt.Errorf("%s: ns_route_pr_fix %s#%s: %w", S, c.repo, n, err)
+		}
+		switch word(reply, 0) {
+		case "FENCED":
+			return ErrFenced
+		case "FIX", "RECUT", "CLOSE":
+			res.Fixes = append(res.Fixes, word(reply, 1))
+			d.done[fkey] = true
+		case "DUP", "EXISTS":
+			d.done[fkey] = true
+		case "SKIP":
+			res.Skips[word(reply, 1)]++
+		default:
+			return fmt.Errorf("%s: ns_route_pr_fix %s#%s: %v", S, c.repo, n, reply)
+		}
+	}
+	return nil
+}
+
+// heldAt is the Go prefilter for the fix leg: some HOLD or DISPOSITION
+// verdict=HOLD line names this head. The function re-reads the lines with
+// the author and the last-line-wins rule; this only spares a call. A
+// DISPOSITION line goes through typedrec.ParseDisposition, the one typed
+// parser (#2506), whose HOLD is lenient: a sloppily typed HOLD still holds.
+func heldAt(reads, head string) bool {
+	head = strings.ToLower(head)
+	for _, l := range strings.Split(reads, "\n") {
+		h, hold := "", false
+		if c, ok := typedrec.ParseDisposition(l); ok {
+			h = strings.TrimRight(c.Head, ":,;")
+			hold = strings.TrimRight(c.Verdict, ":,;") == "HOLD"
+		} else {
+			f := strings.Fields(l)
+			if len(f) == 0 || f[0] != "HOLD" {
+				continue
+			}
+			hold = true
+			for _, w := range f[1:] {
+				if k, v, ok := strings.Cut(w, "="); ok && k == "head" {
+					h = strings.ToLower(strings.TrimRight(v, ":,;"))
+				}
+			}
+		}
+		if hold && len(h) >= 7 && strings.HasPrefix(head, h) {
+			return true
+		}
+	}
+	return false
 }
 
 func word(reply []string, i int) string {

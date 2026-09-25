@@ -25,7 +25,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "friend",
-		Summary: "hello, bye, wake and roles for a friend; report a friend state, show friends, or run one ladder sweep",
+		Summary: "hello, bye, serve, wake and roles for a friend; report a friend state, show friends, or run one ladder sweep",
 		Run:     runFriend,
 	})
 	register(Verb{
@@ -37,14 +37,21 @@ func init() {
 
 func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "friend", "want hello, bye, wake, roles, report, show, sweep, down or up")
+		return refuse(errOut, "friend", "want hello, bye, serve, wake, roles, report, show, sweep, down or up")
 	}
 	switch args[0] {
 	case "hello":
 		return runFriendHello(ctx, args[1:], out, errOut)
 	case "bye":
 		return runFriendBye(ctx, args[1:], out, errOut)
+	case "serve":
+		return runFriendServe(ctx, args[1:], out, errOut, false)
 	case "wake":
+		// `friend wake --as <f>` is one serve pass on the seat (#2938);
+		// `friend wake <f>` routes a wake through the reconciler's list.
+		if hasAsFlag(args[1:]) {
+			return runFriendServe(ctx, args[1:], out, errOut, true)
+		}
 		return runFriendWake(ctx, args[1:], out, errOut)
 	case "roles":
 		return runFriendRoles(ctx, args[1:], out, errOut)
@@ -59,7 +66,7 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	case "up":
 		return runFriendDown(ctx, false, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, wake, roles, report, show, sweep, down or up", args[0]))
+		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, serve, wake, roles, report, show, sweep, down or up", args[0]))
 	}
 }
 
