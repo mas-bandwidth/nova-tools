@@ -1,0 +1,4 @@
+=== RUN   TestGatePresent
+--- PASS: TestGatePresent (0.01s)
+PASS
+ok      github.com/mas-bandwidth/nova-tools/internal/nsprint/card   0.023s
