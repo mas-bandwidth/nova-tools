@@ -79,8 +79,10 @@ func TestHarvestPROpenedMovesTasksToMerging(t *testing.T) {
 		t.Fatalf("after harvest: %v", err)
 	}
 	logLen := c.XLen(ctx, "ws:log").Val()
-	if logLen != 2 {
-		t.Fatalf("ws:log %d, want the two moves", logLen)
+	// the one move walks the graph (#3778): the working task one step, the
+	// ready one two (ready -> working -> merging), one receipt per step
+	if logLen != 3 {
+		t.Fatalf("ws:log %d, want the three steps", logLen)
 	}
 	if r := call(); r != "PR|77" || c.XLen(ctx, "ws:log").Val() != logLen {
 		t.Fatalf("repeat: %q, ws:log %d -> %d", r, logLen, c.XLen(ctx, "ws:log").Val())

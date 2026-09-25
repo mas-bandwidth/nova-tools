@@ -142,8 +142,8 @@ func TestEveryOperationIsOneRoundTripUnderOneSecond(t *testing.T) {
 	})
 	step("rename", func() string {
 		n, err := ws.Rename(ctx, c, s(4), "swarm: renamed", "test")
-		if err != nil || n != 95 {
-			t.Fatalf("rename %d %v, want 95 members", n, err)
+		if err != nil || n != 100 {
+			t.Fatalf("rename %d %v, want 100 members (done included)", n, err)
 		}
 		return fmt.Sprint(n)
 	})
@@ -188,7 +188,8 @@ func TestEveryOperationIsOneRoundTripUnderOneSecond(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if r.Moved != 950 || r.Same != 50 || len(r.Refused) != 0 {
+		// landed tasks refuse done/fail (a merge stands); the done ones are the same
+		if r.Moved != 850 || r.Same != 50 || len(r.Refused) != 100 {
 			t.Fatalf("move_many all %+v", r)
 		}
 		return fmt.Sprintf("moved=%d same=%d", r.Moved, r.Same)
@@ -200,7 +201,9 @@ func TestMoveGraph(t *testing.T) {
 	_, c := wstest.Start(t)
 	ids := wstest.Fixture(t, c, 20, 1)
 	ctx := context.Background()
-	// t00000 waiting, t00008 ready, t00012 working, t00015 merging, t00017 landed, t00019 closed
+	// t00000 waiting, t00008 ready, t00012 working, t00015 merging, t00017 landed, t00019 closed (done/fail)
+	// The graph is the task card's (#3778): landed needs the merge sha, which
+	// ws.Move does not carry; parked returns to waiting or ready.
 	for _, tc := range []struct {
 		id, to, want string
 	}{
@@ -208,11 +211,11 @@ func TestMoveGraph(t *testing.T) {
 		{"t00000", "ready", "SAME"},
 		{"t00000", "working", "MOVED"},
 		{"t00000", "merging", "MOVED"},
-		{"t00000", "landed", "MOVED"},
+		{"t00000", "landed", "REFUSED"},
 		{"t00001", "working", "REFUSED"},
-		{"t00012", "ready", "REFUSED"},
+		{"t00012", "waiting", "REFUSED"},
 		{"t00008", "parked", "MOVED"},
-		{"t00008", "ready", "REFUSED"},
+		{"t00008", "ready", "MOVED"},
 		{"t00008", "waiting", "MOVED"},
 		{"t00019", "parked", "REFUSED"},
 		{"t00019", "waiting", "REFUSED"},
@@ -252,24 +255,24 @@ func TestMoveRefusesABrokenLink(t *testing.T) {
 	ctx := context.Background()
 	s := wstest.StreamName(0)
 	// t00000 is in waiting; its record is made to say ready (set -> card broken)
-	c.HSet(ctx, "task:t00000", "state", "ready")
+	c.HSet(ctx, "task:t00000", "where", "ready")
 	// t00001 is in waiting and also in ready, the target (two places)
 	c.ZAdd(ctx, ws.Key(s, "ready"), redis.Z{Score: float64(wstest.Created(1)), Member: "t00001"})
 	// t00003 is in waiting and also in landed, a set neither named nor the target
 	c.ZAdd(ctx, ws.Key(s, "landed"), redis.Z{Score: float64(wstest.Created(3)), Member: "t00003"})
-	// t00019 is closed (in no set) but sits in parked
+	// t00019 is done but also sits in parked
 	c.ZAdd(ctx, ws.Key(s, "parked"), redis.Z{Score: float64(wstest.Created(19)), Member: "t00019"})
 	for _, tc := range []struct{ id, to, want string }{
-		{"t00000", "working", "task t00000 says ready but is not in ws:s0: work:ready"},
-		{"t00001", "ready", "task t00001 says waiting but is also in ws:s0: work:ready"},
-		{"t00003", "ready", "task t00003 says waiting but is also in ws:s0: work:landed"},
-		{"t00003", "closed", "task t00003 says waiting but is also in ws:s0: work:landed"},
-		{"t00019", "parked", "task t00019 says closed but is also in ws:s0: work:parked"},
+		{"t00000", "working", "DRIFT unlinked ws:s0: work:ready task:t00000"},
+		{"t00001", "ready", "DRIFT twice ws:s0: work:ready task:t00001"},
+		{"t00003", "ready", "DRIFT twice ws:s0: work:landed task:t00003"},
+		{"t00003", "closed", "DRIFT twice ws:s0: work:landed task:t00003"},
+		{"t00019", "closed", "DRIFT twice ws:s0: work:parked task:t00019"},
 	} {
 		before, _ := c.Dump(ctx, "task:"+tc.id).Result()
 		_, err := ws.Move(ctx, c, tc.id, tc.to, "test", "broken")
 		var r *ws.Refused
-		if !errors.As(err, &r) || r.Why != tc.want {
+		if !errors.As(err, &r) || !strings.HasPrefix(r.Why, tc.want) {
 			t.Fatalf("%s -> %s: %v, want REFUSED %s", tc.id, tc.to, err, tc.want)
 		}
 		if after, _ := c.Dump(ctx, "task:"+tc.id).Result(); after != before {
@@ -361,8 +364,9 @@ func legacy(t *testing.T, c *redis.Client, n int) (ids []string, want map[string
 		case 1:
 			state, wsState = "working", "working"
 			pipe.SAdd(ctx, ix+"working", id)
+			fields = append(fields, "leased_at", time.Now().UTC().Format(time.RFC3339))
 		case 2:
-			state, wsState = "closed", "closed"
+			state, wsState = "closed", "done"
 			pipe.SAdd(ctx, ix+"closed", id)
 		case 3:
 			state, wsState = "waiting", "waiting"
@@ -375,6 +379,7 @@ func legacy(t *testing.T, c *redis.Client, n int) (ids []string, want map[string
 			// that crashed between SMOVE and HSET): the index wins
 			state, wsState = "open", "working"
 			pipe.SAdd(ctx, ix+"working", id)
+			fields = append(fields, "leased_at", time.Now().UTC().Format(time.RFC3339))
 		}
 		fields = append(fields, "state", state)
 		pipe.HSet(ctx, "task:"+id, fields...)
@@ -428,16 +433,16 @@ func TestMigrateBuildsTheSetsAndIsIdempotent(t *testing.T) {
 	}
 	check(t, c, ids)
 	for id, st := range want {
-		got, _ := c.HGet(ctx, "task:"+id, "state").Result()
+		got, _ := c.HGet(ctx, "task:"+id, "where").Result()
 		if got != st {
-			t.Errorf("%s: state %q, want %q", id, got, st)
+			t.Errorf("%s: where %q, want %q", id, got, st)
 		}
 	}
 	if st, _ := c.HGet(ctx, "task:L0001", "stream").Result(); st != wstest.StreamName(1) {
 		t.Fatalf("title-derived stream %q", st)
 	}
-	if fq, _ := c.HGet(ctx, "task:L0000", "fq_state").Result(); fq != "open" {
-		t.Fatalf("the friend-queue state is not kept in fq_state: %q", fq)
+	if fq, _ := c.HGet(ctx, "task:L0000", "state").Result(); fq != "open" {
+		t.Fatalf("the friend-queue state of a ready task is not open: %q", fq)
 	}
 	// every set's score is created_at (ws.Check above); the RFC 3339 form parses
 	if sc, _ := c.ZScore(ctx, ws.Key(wstest.StreamName(0), "ready"), "L0000").Result(); sc != 1790000000000 {
@@ -476,22 +481,22 @@ func TestCheckpointWritesEverySet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Rows != 950 || r.Streams != 10 {
-		t.Fatalf("checkpoint %+v, want 950 rows over 10 streams", r)
+	if r.Rows != 1000 || r.Streams != 10 {
+		t.Fatalf("checkpoint %+v, want 1000 rows (done included) over 10 streams", r)
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
-	if len(lines) != 952 {
-		t.Fatalf("%d lines, want 2 header + 950 rows", len(lines))
+	if len(lines) != 1002 {
+		t.Fatalf("%d lines, want 2 header + 1000 rows", len(lines))
 	}
 	if !strings.HasPrefix(lines[2], wstest.StreamName(0)+"\tworking\t1700000000120\tt00120\t1012\t") {
 		t.Fatalf("first row %q", lines[2])
 	}
 	got, _ := c.Get(ctx, ws.CheckpointKey).Result()
-	if got != "utc=2023-11-14T22:13:20Z path="+path+" rows=950" {
+	if got != "utc=2023-11-14T22:13:20Z path="+path+" rows=1000" {
 		t.Fatalf("receipt %q", got)
 	}
 }

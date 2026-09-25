@@ -20,20 +20,15 @@
 --
 -- ONE PLACE: before any write each id must be in ws:<stream>:ready, the set
 -- its record names, and in none of the stream's other sets; a mismatch is a
--- refusal by name and nothing is written for that id. The ws set, the
--- friend set and the record's state and owner change in the same call, the
--- score stays the card's created_at. The slots are re-read inside the call,
--- so two passes racing never fill a friend past its slots. Every call is
--- fenced on lease:reconciler.
+-- refusal by name and nothing is written for that id. Every write is the
+-- one move, NS.task.move (lua/02_card_move.lua, #3778): the ws set, the
+-- friend set, the record's pointer and owner and the ws:log receipt change
+-- in that one call, the score stays the card's created_at. The slots are
+-- re-read inside the call, so two passes racing never fill a friend past its
+-- slots. Every call is fenced on lease:reconciler.
 local DF = {
   STATES = { 'waiting', 'ready', 'working', 'merging', 'landed', 'parked' },
-  LOG_MAX = '200000',
 }
-
-function DF.now()
-  local t = redis.call('TIME')
-  return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
-end
 
 function DF.fenced(token)
   return token == nil or token == '' or redis.call('HGET', 'lease:reconciler', 'token') ~= token
@@ -54,15 +49,19 @@ function DF.slots(f)
 end
 
 -- DF.ready checks the double link of one id that must be ready. It returns
--- the stream and the score (the card's age), or nil and the refusal.
+-- the stream and the score (the card's age), or nil and the refusal. Ready
+-- is the record's where (a record from before the where field: its state
+-- read through NS.task.where_of).
 function DF.ready(id)
-  local f = redis.call('HMGET', 'task:' .. id, 'stream', 'state')
-  local stream, state = f[1], f[2]
-  if not stream or stream == '' then
+  local p = NS.task.read(id)
+  local stream = p and p.stream or ''
+  if stream == '' then
     return nil, 'no task ' .. id .. ' with a stream'
   end
-  if state ~= 'ready' then
-    return nil, 'task ' .. id .. ' is ' .. tostring(state) .. ', not ready'
+  local where = p.where
+  if not p.placed then where = NS.task.where_of[p.state] or p.state end
+  if where ~= 'ready' then
+    return nil, 'task ' .. id .. ' is ' .. tostring(where) .. ', not ready'
   end
   local age = redis.call('ZSCORE', DF.key(stream, 'ready'), id)
   if not age then
@@ -74,11 +73,6 @@ function DF.ready(id)
     end
   end
   return stream, age
-end
-
-function DF.log(id, stream, from, to, by, why, at)
-  redis.call('XADD', 'ws:log', 'MAXLEN', '~', DF.LOG_MAX, '*', 'id', id, 'stream', stream,
-    'from', from, 'to', to, 'by', by or '', 'why', why or '', 'at', tostring(at))
 end
 
 function DF.reply(head, refused)
@@ -109,25 +103,25 @@ local function deal_friend(keys, args)
   if open < 0 then
     open = 0
   end
-  local now, took, refused = DF.now(), 0, {}
+  local took, refused = 0, {}
   for i = 5, #args do
     local id = args[i]
     local stream, age = DF.ready(id)
-    local owner = redis.call('HGET', 'task:' .. id, 'owner') or ''
+    local p = NS.task.read(id)
+    local owner = p and p.friend or ''
     if took >= open then
       stream, age = nil, 'full'
     elseif stream and owner ~= '' and owner ~= f then
       stream, age = nil, 'task ' .. id .. ' is owned by ' .. owner
     end
+    if stream then
+      local err = NS.task.move(id, 'working', { by = by, why = why, friend = f, as = f })
+      if err then stream, age = nil, err end
+    end
     if not stream then
       refused[#refused + 1] = id
       refused[#refused + 1] = age
     else
-      redis.call('ZREM', DF.key(stream, 'ready'), id)
-      redis.call('ZADD', DF.key(stream, 'working'), age, id)
-      redis.call('ZADD', fk, age, id)
-      redis.call('HSET', 'task:' .. id, 'state', 'working', 'state_at', tostring(now), 'owner', f)
-      DF.log(id, stream, 'ready', 'working', by, why, now)
       took = took + 1
     end
   end
@@ -141,18 +135,18 @@ local function deal_return(keys, args)
   if DF.fenced(token) then
     return { 'FENCED' }
   end
-  local now, moved, refused = DF.now(), 0, {}
+  local moved, refused = 0, {}
   for i = 4, #args do
     local id = args[i]
     local stream, age = DF.ready(id)
+    if stream then
+      local err = NS.task.move(id, 'waiting', { by = by, why = why })
+      if err then stream, age = nil, err end
+    end
     if not stream then
       refused[#refused + 1] = id
       refused[#refused + 1] = age
     else
-      redis.call('ZREM', DF.key(stream, 'ready'), id)
-      redis.call('ZADD', DF.key(stream, 'waiting'), age, id)
-      redis.call('HSET', 'task:' .. id, 'state', 'waiting', 'state_at', tostring(now), 'why', why or '')
-      DF.log(id, stream, 'ready', 'waiting', by, why, now)
       moved = moved + 1
     end
   end
