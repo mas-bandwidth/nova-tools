@@ -66,6 +66,11 @@ type Batcher struct {
 
 	Merge MergeChecker     // nil: no pre-check (the gate reports CONFLICT)
 	Now   func() time.Time // nil: time.Now
+
+	// Red batches (§6, redbatch.go).
+	RoundsMax int            // 0: DefaultRoundsMax attribution rounds before survivors plan alone
+	Closure   ClosureChecker // nil: every failing test is inside the selection closure (no rerun)
+	Owner     OwnerFunc      // nil: rowan owns every flaky test
 }
 
 // PlannedBatch is one batch ns_batch_plan wrote.
@@ -504,7 +509,8 @@ func (b *Batcher) Plan(ctx context.Context) (PlanReport, error) {
 				}
 			}
 
-			u.alone = h["alone"] == "1" || twoConflictDrops(h["conflict_drops"], now)
+			u.alone = h["alone"] == "1" || twoConflictDrops(h["conflict_drops"], now) ||
+				(h["red_alone"] == "1" && h["red_head"] == u.head) // §6.1 rounds bound
 			maxFiles := b.MaxFiles
 			if maxFiles <= 0 {
 				maxFiles = DefaultMaxFiles
