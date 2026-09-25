@@ -42,6 +42,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/metrics"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 )
 
 // SSH states on the bench row (#2756 2.2 `bench:<b>:beat` ssh: ok, refused,
@@ -138,7 +139,10 @@ type Sprint struct {
 	Name         string
 	Share        int  // weight against the other open sprints; 0 reads as 1
 	Backpressure bool // s:<S>:backpressure ON (or missing under a closed policy)
-	Pool         []Card
+	// Pitstop is s:<S>:pitstop present (#3371): the sprint deals nothing
+	// until `nova-sprint pitstop clear` lifts it.
+	Pitstop bool
+	Pool    []Card
 	// Waiting is the queued cards in s:<S>:waiting: an unmet DEPENDS-ON when
 	// the last gate ran (#3066). Ready re-tests them every pass.
 	Waiting []Card
@@ -162,8 +166,9 @@ type Batch struct {
 
 // Plan is the pure deal: for each eligible bench, min(free, eligible) cards
 // split across the open sprints by share, highest priority first within each
-// sprint. A card is planned to at most one bench. hold is how long a refused
-// bench is skipped. Plan never writes.
+// sprint. A card is planned to at most one bench; a pit-stopped sprint
+// (#3371) plans nothing. hold is how long a refused bench is skipped. Plan
+// never writes.
 func Plan(in Input, hold time.Duration) []Batch {
 	taken := map[string]bool{}
 	benches := append([]Bench(nil), in.Benches...)
@@ -188,6 +193,9 @@ func Plan(in Input, hold time.Duration) []Batch {
 		cands := make([][]Card, len(in.Sprints))
 		total := 0
 		for i, s := range in.Sprints {
+			if s.Pitstop {
+				continue
+			}
 			for _, c := range pools[i] {
 				if taken[key(c)] || (c.Bench != "" && c.Bench != b.Name) || contains(c.Avoid, b.Name) || !b.runs(c.Leg) {
 					continue
@@ -613,13 +621,17 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			living:   pipe.ZCard(ctx, "bench:"+b+":living"),
 		}
 	}
-	type sprintCmds struct{ meta, policy, bp *redis.MapStringStringCmd }
+	type sprintCmds struct {
+		meta, policy, bp *redis.MapStringStringCmd
+		stop             *redis.IntCmd
+	}
 	sc := make([]sprintCmds, len(sprintNames))
 	for i, s := range sprintNames {
 		sc[i] = sprintCmds{
 			meta:   pipe.HGetAll(ctx, "s:"+s),
 			policy: pipe.HGetAll(ctx, "s:"+s+":policy"),
 			bp:     pipe.HGetAll(ctx, "s:"+s+":backpressure"),
+			stop:   pipe.Exists(ctx, pitstop.Key(s)),
 		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
@@ -772,7 +784,8 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			// (fail-open) is OFF, "closed" is ON.
 			on = policy["backpressure_missing"] == "closed"
 		}
-		in.Sprints = append(in.Sprints, Sprint{Name: sprintNames[i], Share: shareN, Backpressure: on, Pool: bySprint[i], Waiting: waitBySprint[i]})
+		in.Sprints = append(in.Sprints, Sprint{Name: sprintNames[i], Share: shareN, Backpressure: on,
+			Pitstop: sc[i].stop.Val() > 0, Pool: bySprint[i], Waiting: waitBySprint[i]})
 	}
 	return in, nil
 }
