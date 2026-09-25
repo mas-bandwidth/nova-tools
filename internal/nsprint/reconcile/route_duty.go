@@ -30,6 +30,8 @@ import (
 	"strings"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // DefaultBar is the read score a PR needs to move to merging (Glenn
@@ -599,23 +601,25 @@ func (d *RouteDuty) prLegs(ctx context.Context, token, S, stream string, readers
 
 // heldAt is the Go prefilter for the fix leg: some HOLD or DISPOSITION
 // verdict=HOLD line names this head. The function re-reads the lines with
-// the author and the last-line-wins rule; this only spares a call.
+// the author and the last-line-wins rule; this only spares a call. A
+// DISPOSITION line goes through typedrec.ParseDisposition, the one typed
+// parser (#2506), whose HOLD is lenient: a sloppily typed HOLD still holds.
 func heldAt(reads, head string) bool {
 	head = strings.ToLower(head)
 	for _, l := range strings.Split(reads, "\n") {
-		f := strings.Fields(l)
-		if len(f) == 0 || (f[0] != "HOLD" && f[0] != "DISPOSITION") {
-			continue
-		}
-		h, hold := "", f[0] == "HOLD"
-		for _, w := range f[1:] {
-			if k, v, ok := strings.Cut(w, "="); ok {
-				v = strings.ToLower(strings.TrimRight(v, ":,;"))
-				switch k {
-				case "head":
-					h = v
-				case "verdict":
-					hold = hold || v == "hold"
+		h, hold := "", false
+		if c, ok := typedrec.ParseDisposition(l); ok {
+			h = strings.TrimRight(c.Head, ":,;")
+			hold = strings.TrimRight(c.Verdict, ":,;") == "HOLD"
+		} else {
+			f := strings.Fields(l)
+			if len(f) == 0 || f[0] != "HOLD" {
+				continue
+			}
+			hold = true
+			for _, w := range f[1:] {
+				if k, v, ok := strings.Cut(w, "="); ok && k == "head" {
+					h = strings.ToLower(strings.TrimRight(v, ":,;"))
 				}
 			}
 		}

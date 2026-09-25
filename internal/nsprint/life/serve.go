@@ -28,6 +28,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/brief"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -608,11 +609,19 @@ func LogKey(friend string) string { return "friend:" + friend + ":log" }
 // LockKey is the seat lock of a friend.
 func LockKey(friend string) string { return "friend:" + friend + ":serve" }
 
-// typedWords are the first words of the lines a child may end on.
-var typedWords = map[string]bool{
-	"SCORE": true, "DISPOSITION": true, "HOLD": true, "REPAIR": true, "DONE": true,
-	"BLOCKED": true, "ABSTAIN": true, "SPEC": true, "SPEC-WRITTEN": true, "CLOSE": true,
-}
+// typedWords are the first words of the lines a child may end on. The
+// contract's own words (DONE, ABSTAIN, BLOCKED and DISPOSITION) come from
+// typedrec, the one typed parser (#2506), so they have one source; the rest
+// are the review and spec words that are not RESULT or DISPOSITION records.
+var typedWords = func() map[string]bool {
+	w := map[string]bool{
+		"SCORE": true, "HOLD": true, "REPAIR": true, "SPEC": true, "SPEC-WRITTEN": true, "CLOSE": true,
+	}
+	for _, s := range typedrec.Contract.StatusWords() {
+		w[s] = true
+	}
+	return w
+}()
 
 // TypedLine is the last line of output whose first word is a typed word, or
 // "" when the child wrote none. A harness's own trailer (a PASS, a cost
@@ -630,9 +639,12 @@ func TypedLine(output string) string {
 }
 
 // VerdictOf reads a review's typed line into ns_task_done's verdict and
-// score: SCORE ... score=N[/10] is APPROVE N; DISPOSITION carries verdict=
-// and score=; HOLD is HOLD with its score or 0; any other typed word is
-// itself with score 0.
+// score: SCORE ... score=N[/10] is APPROVE N; a DISPOSITION line goes through
+// typedrec.ParseDisposition, the one typed parser, and carries its verdict=
+// with score=; HOLD is HOLD with its score or 0; any other typed word
+// (including a DISPOSITION that names no verdict) is itself with score 0.
+// Whether an APPROVE counts toward landing is the lander's reading
+// (land/stream ReadAt), not this one.
 func VerdictOf(line string) (verdict, score string) {
 	f := strings.Fields(line)
 	if len(f) == 0 {
@@ -648,14 +660,12 @@ func VerdictOf(line string) (verdict, score string) {
 	if _, err := strconv.Atoi(score); err != nil {
 		score = "0"
 	}
+	if c, ok := typedrec.ParseDisposition(line); ok {
+		return c.Verdict, score
+	}
 	switch f[0] {
 	case "SCORE":
 		return "APPROVE", score
-	case "DISPOSITION":
-		if v := strings.ToUpper(kv["verdict"]); v != "" {
-			return v, score
-		}
-		return "DISPOSITION", score
 	case "HOLD":
 		return "HOLD", score
 	default:
