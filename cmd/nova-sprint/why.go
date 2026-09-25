@@ -120,6 +120,9 @@ func runWhy(ctx context.Context, args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(out, "why %s: %v\n", pos[0], err)
 		return 1
 	}
+	if storeDown(errOut, "why", err) {
+		return 6
+	}
 	if err != nil {
 		return refuse77(errOut, "why", "read: "+err.Error(), usage)
 	}
@@ -208,6 +211,9 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 			fmt.Fprintf(out, "land status %s: %v\n", pos[0], err)
 			return 1
 		}
+		if storeDown(errOut, "land status", err) {
+			return 6
+		}
 		if err != nil {
 			return refuse77(errOut, "land status", "read: "+err.Error(), usage)
 		}
@@ -218,6 +224,9 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return 0
 	}
 	snap, err := land.LoadStatus(ctx, st.Client(), sprint)
+	if storeDown(errOut, "land status", err) {
+		return 6
+	}
 	if err != nil {
 		return refuse77(errOut, "land status", "read: "+err.Error(), usage)
 	}

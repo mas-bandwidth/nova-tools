@@ -55,6 +55,9 @@ func runDealStatus(ctx context.Context, args []string, out, errOut io.Writer) in
 	defer st.Close()
 
 	lines, err := deal.Status(ctx, st.Client(), *sprint, *bench)
+	if storeDown(errOut, "deal status", err) {
+		return 6
+	}
 	if err != nil {
 		return refuse(errOut, "deal status", err.Error())
 	}
