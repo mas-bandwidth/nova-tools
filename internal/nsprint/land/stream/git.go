@@ -31,6 +31,10 @@ type Build struct {
 	TestTimeout time.Duration
 	Author      string // "Name <email>" for the merge commits
 	Log         io.Writer
+	// NoTest runs no batch test here: the batch is tested by the CI request
+	// a bench claims (nova-tools#3899), so every merged member is kept and
+	// nothing is bisected on this seat.
+	NoTest bool
 }
 
 // Conflict is a member whose merge conflicted: the build stops there.
@@ -113,6 +117,9 @@ func (b Build) Run(ctx context.Context, members []Member) (Result, error) {
 		return res, err
 	}
 	res.TestCmd = b.testCmd()
+	if b.NoTest {
+		res.TestCmd = CIBatch
+	}
 
 	// Fetch every member's PR head in one call and check it is the head the
 	// record (and so the read) names.
@@ -157,6 +164,12 @@ func (b Build) Run(ctx context.Context, members []Member) (Result, error) {
 	if len(todo) == 0 {
 		res.Head = res.BaseSHA
 		return res, nil
+	}
+	if b.NoTest {
+		b.logf("TEST ci batch=%d: the batch test is the CI request a bench claims, none runs here", len(todo))
+		res.Kept = todo
+		res.Head, err = b.git(ctx, "rev-parse", "HEAD")
+		return res, err
 	}
 	res.Tests++
 	green, line, err := b.test(ctx)
@@ -248,6 +261,11 @@ func (b Build) merge(ctx context.Context, m Member) ([]string, error) {
 	}
 	return files, nil
 }
+
+// CIBatch is the test word of a build that ran no batch test: the stream
+// head is tested by our own CI on a bench (nova-sprint ci request), and the
+// lander waits on ci:<repo>:<head>.
+const CIBatch = "ci"
 
 // testCmd is the declared batch test: cfg:land:test:<repo>, else make check
 // when the Makefile has a check target, else go test ./...
