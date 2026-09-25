@@ -598,3 +598,101 @@ func presenceExampleFromCLI(t *testing.T, cli string) (cmdLine string, want []st
 
 // errStoreDown is what a store that is not answering looks like to the verb.
 var errStoreDown = errors.New("dial tcp: connection refused")
+
+// TestPresenceReadsFriendRowHash is #3447's first half: on the fleet store
+// friend:<name> is the friend row, a HASH with no TTL written every second by
+// the row loop (at, up, ready, working, width, done, slots). presence reads it
+// as that row: its up field says up or down and its at dates the reading. A
+// row with up=1 and a fresh at is up, never "AWAY 1s"; a fresh row with up=0 is
+// down with no age (the row does not say since when); a row whose at has gone
+// stale is a silent row loop, down and dated by that at.
+func TestPresenceReadsFriendRowHash(t *testing.T) {
+	st := presence.NewFakeStore(beatAt)
+	st.AddMembers(presence.FriendsSet, "stella", "johnny", "emma", "rowan")
+	stamp := func(ago time.Duration) string { return beatAt.Add(-ago).Format(presence.Stamp) }
+	st.SetHash("friend:stella", 0, "at", stamp(time.Second), "up", "1", "ready", "0", "working", "1", "width", "15", "done", "5", "slots", "32")
+	st.SetHash("friend:johnny", 0, "at", stamp(time.Second), "up", "0", "ready", "2", "working", "0", "width", "0", "done", "3")
+	st.SetHash("friend:emma", 0, "at", stamp(40*time.Second), "up", "1", "ready", "1", "working", "4", "width", "4", "done", "0")
+	for _, n := range []string{"stella", "johnny", "emma"} {
+		st.SetString("friend:"+n+":last", stamp(time.Second))
+	}
+
+	var out, errb bytes.Buffer
+	if code := cmdPresence([]string{"--store", "store.invalid:6380"}, &out, &errb, fakeStoreClock{st}, fakeOpener(st)); code != 0 {
+		t.Fatalf("presence exited %d: %s", code, errb.String())
+	}
+	if want := "friends: emma down 40s (last 09:40Z) · johnny down · stella up 1s width=15\n"; out.String() != want {
+		t.Fatalf("line =\n\t%q\nwant\n\t%q", out.String(), want)
+	}
+	if st.Sets != 0 {
+		t.Fatalf("writes = %d; presence is a read", st.Sets)
+	}
+}
+
+// TestBeatRefusesNonStringFriendKey is #3447's second half: beat never writes
+// into a friend:<name> it does not own. The friend row (a hash carrying the up
+// field) has one writer, the row loop, and any other type is somebody else's
+// key: beat exits 2 naming the type and leaves the key exactly as it was. A
+// plain string (a beat older than #2673) is the beat's own and is replaced.
+func TestBeatRefusesNonStringFriendKey(t *testing.T) {
+	rowAt := beatAt.Add(-time.Second).Format(presence.Stamp)
+	t.Run("the friend row", func(t *testing.T) {
+		st := presence.NewFakeStore(beatAt)
+		st.SetHash("friend:stella", 0, "at", rowAt, "up", "1", "ready", "4", "working", "1", "width", "1")
+		var out, errb bytes.Buffer
+		code := cmdBeat([]string{"--as", "stella", "--store", "store.invalid:6380", "--once", "--width", "8"},
+			&out, &errb, fakeStoreClock{st}, fakeOpener(st))
+		if code != 2 {
+			t.Fatalf("exit %d; want 2 (stderr %q)", code, errb.String())
+		}
+		if !strings.Contains(errb.String(), "friend:stella is a hash") || !strings.Contains(errb.String(), "friend row") {
+			t.Fatalf("refusal = %q; want it to name the type and the row", errb.String())
+		}
+		h := st.Hash("friend:stella")
+		if h["at"] != rowAt || h["width"] != "1" || h["ready"] != "4" {
+			t.Fatalf("friend:stella = %v; the refused beat changed the row", h)
+		}
+		if got := st.TTL("friend:stella"); got != 0 {
+			t.Fatalf("ttl = %s; the refused beat put an expiry on the row", got)
+		}
+		if st.Sets != 0 || st.String("friend:stella:last") != "" {
+			t.Fatalf("writes = %d, :last = %q; a refused beat writes nothing", st.Sets, st.String("friend:stella:last"))
+		}
+
+		// The loop stops on the refusal instead of retrying it forever.
+		errb.Reset()
+		err := beatLoop(context.Background(), st, "stella", presence.DefaultEvery, presence.DefaultTTL, fakeStoreClock{st}, &errb, presence.Side{}, 5)
+		var kt *presence.KeyTypeError
+		if !errors.As(err, &kt) || kt.Type != "hash" {
+			t.Fatalf("beatLoop = %v; want the KeyTypeError naming hash", err)
+		}
+		if st.Sets != 0 {
+			t.Fatalf("writes = %d; want none", st.Sets)
+		}
+	})
+	t.Run("another type", func(t *testing.T) {
+		st := presence.NewFakeStore(beatAt)
+		st.AddMembers("friend:johnny", "x")
+		var out, errb bytes.Buffer
+		code := cmdBeat([]string{"--as", "johnny", "--store", "store.invalid:6380", "--once"},
+			&out, &errb, fakeStoreClock{st}, fakeOpener(st))
+		if code != 2 || !strings.Contains(errb.String(), "friend:johnny is a set") {
+			t.Fatalf("exit %d, stderr %q; want 2 naming the set", code, errb.String())
+		}
+		if st.Sets != 0 {
+			t.Fatalf("writes = %d; want none", st.Sets)
+		}
+	})
+	t.Run("a legacy string is the beat's own", func(t *testing.T) {
+		st := presence.NewFakeStore(beatAt)
+		st.SetString("friend:johnny", rowAt)
+		var out, errb bytes.Buffer
+		if code := cmdBeat([]string{"--as", "johnny", "--store", "store.invalid:6380", "--once"},
+			&out, &errb, fakeStoreClock{st}, fakeOpener(st)); code != 0 {
+			t.Fatalf("exit %d: %s", code, errb.String())
+		}
+		if h := st.Hash("friend:johnny"); h["at"] != beatAt.Format(presence.Stamp) {
+			t.Fatalf("friend:johnny = %v; want the beat hash in place of the string", h)
+		}
+	})
+}
