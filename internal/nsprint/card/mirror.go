@@ -1,7 +1,9 @@
 package card
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -43,4 +45,22 @@ func hasMirror(fullName string) bool {
 	}
 	fi, err := os.Stat(filepath.Join(dir, "objects"))
 	return err == nil && fi.IsDir()
+}
+
+// MirrorBranchSHA is the tip of branch in this host's mirror of owner/name,
+// read with git (no forge call): the base-sha a card cut on this host names.
+func MirrorBranchSHA(fullName, branch string) (string, error) {
+	dir := mirrorPath(fullName)
+	if dir == "" || !hasMirror(fullName) {
+		return "", &privateRepoError{Name: fullName}
+	}
+	out, err := exec.Command("git", "--git-dir", dir, "rev-parse", "--verify", "refs/heads/"+branch+"^{commit}").Output()
+	if err != nil {
+		return "", fmt.Errorf("mirror %s has no branch %s: %v", dir, branch, err)
+	}
+	sha := strings.TrimSpace(string(out))
+	if !shaRE.MatchString(sha) {
+		return "", fmt.Errorf("mirror %s branch %s is %q, not a sha", dir, branch, sha)
+	}
+	return sha, nil
 }
