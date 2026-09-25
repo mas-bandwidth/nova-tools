@@ -4361,3 +4361,8 @@ ONE PLACE (nova-tools#3692). Glenn: "cards are not allowed to disappear." A card
 - `nova-sprint card fsck --sprint <S> --redis <addr> [--repair]` walks both directions (every card in exactly one place per dimension at its created_at score, every set member pointing back, the places summing to the roster) and prints one `CARD FSCK` line; exit 1 names `--repair`.
 - `nova-sprint bench reindex --sprint <S> --redis <addr>` is the one-time rebuild for a sprint whose cards predate the model: it adopts them from the sprint's state indexes and fills every view.
 - `nova-sprint card ls --unplaced --sprint <S> --redis <addr>` lists the null cards.
+
+### `nova-sprint conform check --all`
+
+`nova-sprint conform check --all [--redis <addr>]` checks whole-fleet bench conformance (#2921): reads registered benches from `benches`, `fleet:standard`, and each bench's `bench:<b>:conform` record in one pipeline, verifying `ok=1`, matching standard digest, and fresh timestamp (< 180s). Exits 0 if all benches conform, 1 on drift, missing record, or stale state.
+
