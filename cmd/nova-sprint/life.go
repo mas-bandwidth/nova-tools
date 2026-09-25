@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -28,6 +29,11 @@ func init() {
 		Name:    "friend",
 		Summary: "hello, bye, serve, wake, row and roles for a friend; report a friend state, show friends, or run one ladder sweep",
 		Run:     runFriend,
+	})
+	register(Verb{
+		Name:    "life",
+		Summary: "append a friend lifecycle event (beat, deliver, turn-start, ...) or declare a proven wake mode",
+		Run:     runLife,
 	})
 	register(Verb{
 		Name:    "bench",
@@ -481,28 +487,186 @@ func runPresenceLoop(ctx context.Context, st *store.Store, p life.Presence, spri
 	defer stop()
 	ticker := time.NewTicker(life.BeatInterval)
 	defer ticker.Stop()
+	steps := livePresenceSteps(st, p, sprint)
 	for {
 		select {
 		case <-signalCtx.Done():
 			return 0
 		case <-ticker.C:
-			if err := life.Beat(signalCtx, st, p); err != nil {
-				fmt.Fprintf(errOut, "friend %s beat: %v\n", p.Friend, err)
-				return 3
+			if code, done := presenceCycle(signalCtx, p.Friend, steps, out, errOut); done {
+				return code
 			}
-			if _, err := life.PollWake(signalCtx, st, p.Friend); err != nil {
-				fmt.Fprintf(errOut, "friend %s wake: %v\n", p.Friend, err)
-				continue
-			}
-			// p.Friend is the initiator: hello refused any --as != NOVA_FRIEND.
-			claims, err := task.TakeAvailable(signalCtx, st, p.Friend, sprint, "", 0, p.Friend, "")
-			if err != nil {
-				fmt.Fprintf(errOut, "friend %s take: %v\n", p.Friend, err)
-				continue
-			}
-			printLifeClaims(out, claims)
 		}
 	}
+}
+
+// presenceSteps are the calls of one presence cycle. Production binds them
+// to the store (livePresenceSteps); a test injects the clock and observes
+// the order.
+type presenceSteps struct {
+	now   func() time.Time
+	beat  func(context.Context) error
+	event func(context.Context, time.Time) error
+	poll  func(context.Context) error
+	take  func(context.Context) ([]task.Claim, error)
+}
+
+func livePresenceSteps(st *store.Store, p life.Presence, sprint string) presenceSteps {
+	return presenceSteps{
+		now:  time.Now,
+		beat: func(ctx context.Context) error { return life.Beat(ctx, st, p) },
+		// The process beat as a lifecycle event (#3153). p.Friend is the
+		// initiator: hello refused any --as != NOVA_FRIEND.
+		event: func(ctx context.Context, at time.Time) error {
+			_, err := life.AppendEvent(ctx, st, p.Friend, life.EventBeat, "", at, p.Friend)
+			return err
+		},
+		poll: func(ctx context.Context) error {
+			_, err := life.PollWake(ctx, st, p.Friend)
+			return err
+		},
+		take: func(ctx context.Context) ([]task.Claim, error) {
+			return task.TakeAvailable(ctx, st, p.Friend, sprint, "", 0, p.Friend, "")
+		},
+	}
+}
+
+// presenceCycle is one tick: the process beat, then its beat event on
+// friend:<f>:events at the cycle clock's UTC ms, then the wake poll and the
+// take. A failed beat or event append ends the loop (exit 3) before any poll
+// or take, so a loop that cannot record its beat never keeps a beat-only
+// liveness. done reports that the loop must return code.
+func presenceCycle(ctx context.Context, friend string, s presenceSteps, out, errOut io.Writer) (code int, done bool) {
+	if err := s.beat(ctx); err != nil {
+		fmt.Fprintf(errOut, "friend %s beat: %v\n", friend, err)
+		return 3, true
+	}
+	if err := s.event(ctx, s.now().UTC()); err != nil {
+		fmt.Fprintf(errOut, "friend %s beat event: %v\n", friend, err)
+		return 3, true
+	}
+	if err := s.poll(ctx); err != nil {
+		fmt.Fprintf(errOut, "friend %s wake: %v\n", friend, err)
+		return 0, false
+	}
+	claims, err := s.take(ctx)
+	if err != nil {
+		fmt.Fprintf(errOut, "friend %s take: %v\n", friend, err)
+		return 0, false
+	}
+	printLifeClaims(out, claims)
+	return 0, false
+}
+
+// runLife is the #3153 lifecycle verb: `life event` appends one event to
+// friend:<f>:events through ns_friend_event, and `life wake-mode` declares
+// scheduled-model-turn only on a firing receipt ns_friend_wakemode re-reads.
+func runLife(ctx context.Context, args []string, out, errOut io.Writer) int {
+	if len(args) == 0 {
+		return refuse(errOut, "life", "want event or wake-mode")
+	}
+	switch args[0] {
+	case "event":
+		return runLifeEvent(ctx, args[1:], out, errOut)
+	case "wake-mode":
+		return runLifeWakeMode(ctx, args[1:], out, errOut)
+	default:
+		return refuse(errOut, "life", fmt.Sprintf("unknown subverb %s; want event or wake-mode", args[0]))
+	}
+}
+
+// runLifeEvent: `life event --as <f> --kind <k> [--cause <id>]`. The seat
+// check (NOVA_FRIEND == --as) comes before any dial, as hello's does.
+func runLifeEvent(ctx context.Context, args []string, out, errOut io.Writer) int {
+	const verb = "life event"
+	fs, addr := lifeFlags(verb)
+	as := fs.String("as", "", "friend whose event this is")
+	kind := fs.String("kind", "", "beat, deliver, turn-start, turn-end, turn-error or usage-limit")
+	cause := fs.String("cause", "", "for turn-start: the deliver event id that started the turn")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	if fs.NArg() != 0 {
+		return refuse(errOut, verb, "takes flags, not positional arguments")
+	}
+	if *as == "" {
+		return refuse(errOut, verb, "--as is required")
+	}
+	initiator := os.Getenv(seatEnv)
+	if initiator == "" {
+		return refuse(errOut, verb, "want NOVA_FRIEND")
+	}
+	if *as != initiator {
+		return refuse(errOut, verb, fmt.Sprintf("want --as equal to NOVA_FRIEND (NOVA_FRIEND=%s, --as %s)", initiator, *as))
+	}
+	if *kind == "" {
+		return refuse(errOut, verb, "--kind is required")
+	}
+	if !life.ValidEventKind(*kind) {
+		return refuse(errOut, verb, fmt.Sprintf("--kind %s is not one of %s", *kind, strings.Join(life.EventKinds, ", ")))
+	}
+	if *cause != "" && *kind != life.EventTurnStart {
+		return refuse(errOut, verb, "--cause is only for --kind turn-start")
+	}
+	st, err := openLifeStore(ctx, lifeAddr(*addr))
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	defer st.Close()
+	id, err := life.AppendEvent(ctx, st, *as, *kind, *cause, time.Now(), initiator)
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	line := fmt.Sprintf("EVENT friend=%s kind=%s id=%s", *as, *kind, id)
+	if *cause != "" {
+		line += " cause=" + *cause
+	}
+	fmt.Fprintln(out, line)
+	return 0
+}
+
+// runLifeWakeMode: `life wake-mode --as <f> --set scheduled-model-turn`.
+// Exit 1 when the events hold no firing receipt: the call was well formed
+// and the bus said no.
+func runLifeWakeMode(ctx context.Context, args []string, out, errOut io.Writer) int {
+	const verb = "life wake-mode"
+	fs, addr := lifeFlags(verb)
+	as := fs.String("as", "", "friend whose wake mode this is")
+	set := fs.String("set", "", "the wake mode to declare: scheduled-model-turn")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	if fs.NArg() != 0 {
+		return refuse(errOut, verb, "takes flags, not positional arguments")
+	}
+	if *as == "" {
+		return refuse(errOut, verb, "--as is required")
+	}
+	if *set == "" {
+		return refuse(errOut, verb, "--set is required")
+	}
+	if *set != life.WakeModeScheduled {
+		return refuse(errOut, verb, fmt.Sprintf("--set %s is not %s", *set, life.WakeModeScheduled))
+	}
+	actor := os.Getenv(seatEnv)
+	if actor == "" {
+		actor = *as
+	}
+	st, err := openLifeStore(ctx, lifeAddr(*addr))
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	defer st.Close()
+	res, err := life.DeclareWakeMode(ctx, st, *as, time.Now(), actor, "")
+	if errors.Is(err, life.ErrNoReceipt) {
+		fmt.Fprintf(errOut, "nova-sprint life wake-mode: REFUSED friend=%s no firing receipt: no deliver followed by a turn-start with its cause within 120s in the last 20 min\n", *as)
+		return 1
+	}
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	fmt.Fprintf(out, "WAKE-MODE friend=%s mode=%s deliver=%s turn=%s lag_ms=%d\n", *as, life.WakeModeScheduled, res.Deliver, res.Turn, res.LagMS)
+	return 0
 }
 
 func printLifeClaims(out io.Writer, claims []task.Claim) {

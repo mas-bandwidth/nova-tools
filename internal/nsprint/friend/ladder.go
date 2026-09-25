@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -49,6 +51,8 @@ type SweepResult struct {
 	Idem  string
 	Steps []Step
 	Moves []life.Move
+	// Life is each ApplyLife that wrote (#3153).
+	Life []ApplyResult
 }
 
 type reading struct {
@@ -58,11 +62,20 @@ type reading struct {
 	slots  int
 	leased int
 	open   int
+	// life: the life classifier applies to this friend (#3153): its wake
+	// mode is declared (a firing receipt proved the deliver and turn
+	// producers), or its stored state is the classifier's own.
+	life bool
 }
 
-// Sweep observes every registered UP friend once, applies the ladder through
-// ns_friend_state, then runs the redistribute tick, which moves the work of
-// every out-of-credits, away, down, or idle-at-rung-3 friend in one call.
+// Sweep first applies the life classifier (ApplyLife, #3153) to every friend
+// it covers, then observes every registered UP friend once, applies the
+// ladder through ns_friend_state, then runs the redistribute tick, which
+// moves the work of every out-of-credits, away, down, wake-missed, or
+// idle-at-rung-3 friend in one call. The classifier covers a friend whose
+// wake mode is declared or whose state it already owns: until the turn
+// hooks that write turn-start are installed on a friend's bench, its beats
+// alone would read OFFLINE-MODEL and block its work.
 func (l *Ladder) Sweep(ctx context.Context) (SweepResult, error) {
 	if l == nil || l.Store == nil {
 		return SweepResult{}, fmt.Errorf("friend sweep: nil store")
@@ -83,6 +96,19 @@ func (l *Ladder) Sweep(ctx context.Context) (SweepResult, error) {
 		return SweepResult{}, err
 	}
 	res := SweepResult{Idem: idem}
+	now := time.Now()
+	for _, r := range readings {
+		if !r.life {
+			continue
+		}
+		applied, err := ApplyLife(ctx, l.Store, r.friend, now, nil)
+		if err != nil {
+			return res, err
+		}
+		if applied.Status == "OK" {
+			res.Life = append(res.Life, applied)
+		}
+	}
 	for _, r := range readings {
 		if !r.up {
 			continue // presence: the redistribute tick marks down
@@ -171,6 +197,8 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 		desired  *redis.SliceCmd
 		starting *redis.IntCmd
 		living   *redis.IntCmd
+		wakemode *redis.IntCmd
+		idem     *redis.SliceCmd
 		open     []*redis.IntCmd
 	}
 	pipe := client.Pipeline()
@@ -181,6 +209,8 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 			desired:  pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "paused"),
 			starting: pipe.ZCard(ctx, "friend:"+f+":starting"),
 			living:   pipe.ZCard(ctx, "friend:"+f+":living"),
+			wakemode: pipe.Exists(ctx, WakeModeKey(f)),
+			idem:     pipe.HMGet(ctx, StateKey(f), "idem"),
 		}
 		for _, s := range sprints {
 			c.open = append(c.open, pipe.ZCard(ctx, "s:"+s+":open:"+f))
@@ -204,6 +234,11 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 			r.paused = vals[1] == "1"
 		}
 		r.leased = int(c.starting.Val() + c.living.Val())
+		idemVal := ""
+		if v := c.idem.Val(); len(v) == 1 {
+			idemVal, _ = v[0].(string)
+		}
+		r.life = c.wakemode.Val() == 1 || strings.HasPrefix(idemVal, "life:"+f+":")
 		for _, o := range c.open {
 			r.open += int(o.Val())
 		}

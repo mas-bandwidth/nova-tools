@@ -166,6 +166,9 @@ func runFriendSweep(ctx context.Context, args []string, out, errOut io.Writer) i
 		Actor:  *as,
 	}
 	res, err := l.Sweep(ctx)
+	for _, a := range res.Life {
+		fmt.Fprintln(out, a.Line())
+	}
 	for _, s := range res.Steps {
 		fmt.Fprintln(out, s.Line())
 	}

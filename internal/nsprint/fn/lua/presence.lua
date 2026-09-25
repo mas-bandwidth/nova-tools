@@ -22,6 +22,10 @@
 --                                    no TTL, and friend:<f>:last (#3440)
 --   machine:<m>:ceiling         hash with slots, shared with capacity friend
 --   cap:log                     presence-change stream
+--   friend:<f>:events           lifecycle events (#3153): beat, deliver,
+--                                    turn-start [cause], turn-end, turn-error,
+--                                    usage-limit; written only by
+--                                    ns_friend_event, MAXLEN ~ 100000
 
 -- The whole file is one block: none of its names is shared, and the files
 -- are concatenated into one chunk whose main function allows 200 locals.
@@ -345,6 +349,47 @@ local function bench_release(keys, args)
   return { 'DOWN' }
 end
 
+-- friend_event appends one lifecycle event to friend:<f>:events (#3153), the
+-- one writer of that stream. args = friend, kind, cause ('' when none),
+-- at_ms (the producer's UTC ms), actor. kind is one of the six below; cause
+-- is only for turn-start. actor ~= friend is refused: shape validation for
+-- defence in depth; the seat check (NOVA_FRIEND == --as) is the CLI's.
+-- Returns OK <stream id> or INVALID <reason>.
+local PL_EVENT_KINDS = { ['beat'] = true, ['deliver'] = true, ['turn-start'] = true,
+  ['turn-end'] = true, ['turn-error'] = true, ['usage-limit'] = true }
+
+local function friend_event(keys, args)
+  local friend, kind, cause, at_ms, actor = args[1], args[2], args[3] or '', args[4], args[5]
+  if not friend or friend == '' then
+    return { 'INVALID', 'friend is required' }
+  end
+  if redis.call('SISMEMBER', 'friends', friend) == 0 then
+    return { 'INVALID', 'unknown friend ' .. friend }
+  end
+  if actor ~= friend then
+    return { 'INVALID', 'actor ' .. tostring(actor) .. ' is not friend ' .. friend }
+  end
+  if not kind or not PL_EVENT_KINDS[kind] then
+    return { 'INVALID', 'unknown kind ' .. tostring(kind) }
+  end
+  if cause ~= '' and kind ~= 'turn-start' then
+    return { 'INVALID', 'cause is only for turn-start' }
+  end
+  local at = tonumber(at_ms or '')
+  if not at or at < 0 then
+    return { 'INVALID', 'at_ms must be a number' }
+  end
+  local id
+  if cause ~= '' then
+    id = redis.call('XADD', 'friend:' .. friend .. ':events', 'MAXLEN', '~', 100000, '*',
+      'kind', kind, 'at', tostring(math.floor(at)), 'cause', cause)
+  else
+    id = redis.call('XADD', 'friend:' .. friend .. ':events', 'MAXLEN', '~', 100000, '*',
+      'kind', kind, 'at', tostring(math.floor(at)))
+  end
+  return { 'OK', id }
+end
+
 redis.register_function('ns_friend_hello', friend_hello)
 redis.register_function('ns_friend_beat', friend_beat)
 redis.register_function('ns_friend_bye', friend_bye)
@@ -353,4 +398,5 @@ redis.register_function('ns_friend_poll_wake', friend_poll_wake)
 redis.register_function('ns_friend_row', friend_row)
 redis.register_function('ns_bench_beat', bench_beat)
 redis.register_function('ns_bench_release', bench_release)
+redis.register_function('ns_friend_event', friend_event)
 end
