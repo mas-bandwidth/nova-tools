@@ -8,8 +8,9 @@
 // pipeline; the CI verdict at head (ci:<repo>:<head>, #3597) in a second,
 // because its key needs the head; the diff is `git -C <mirror> diff
 // <base_sha>..<head>` against the bench mirror that mirror-refresh keeps at
-// refs/pull/*/head. Post appends the typed line to the record's lines list
-// in one MULTI and, until #3595 retires PR comments, mirrors it as one REST
+// refs/pull/*/head. Post stores the typed line through the line store
+// (internal/nsprint/line: one ns_line_post call, gates measured) and, until
+// the readers of PR comments read the store (#3595), mirrors it as one REST
 // comment unless told not to.
 package read
 
@@ -28,11 +29,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"text/template"
 	"time"
 
+	linestore "github.com/mas-bandwidth/nova-tools/internal/nsprint/line"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/spec"
@@ -315,7 +316,8 @@ func short(sha string) string {
 }
 
 // Kinds are the typed lines a read may post; the first word of the line.
-var Kinds = []string{"SCORE", "HOLD", "REPAIR", "SPEC", "SPEC-WRITTEN", "CLOSE", "JEV-DIFF"}
+// The line store owns the list.
+var Kinds = linestore.Kinds
 
 var (
 	whoRx  = regexp.MustCompile(`(^|\s)who=\S+`)
@@ -399,94 +401,105 @@ func (p Poster) Comment(ctx context.Context, repo, n, body string) (int64, error
 	return v.ID, nil
 }
 
-// Post appends the typed line to pr:<repo>:<n>:lines and stamps the record
-// (last_line, last_line_at) in one MULTI, or for an event line (EventKinds)
-// in one library call that also moves its tasks, then mirrors it as one
-// comment when poster is not nil. Exit 0 posted, 1 refused, 2 could not run. The Redis
-// write is the record; a comment that fails after it is reported as such.
+// MeasureScope is the scope gate of a line at head, measured in mirror: the
+// files `git diff <base_sha>..<head>` touches against the record's PATHS.
+// Unmeasured (Word "") when mirror is "", the record has no paths or
+// base_sha, or the mirror lacks either commit: no evidence is not a no.
+// A typed head prefix is the record's head when it matches.
+func MeasureScope(ctx context.Context, c *redis.Client, repo, n, head, mirror string) linestore.Scope {
+	if mirror == "" {
+		return linestore.Scope{}
+	}
+	v, err := c.HMGet(ctx, Key(repo, n), "head", "base_sha", "paths").Result()
+	if err != nil || len(v) != 3 {
+		return linestore.Scope{}
+	}
+	rhead, _ := v[0].(string)
+	baseSHA, _ := v[1].(string)
+	paths, _ := v[2].(string)
+	if strings.HasPrefix(rhead, head) {
+		head = rhead
+	}
+	if baseSHA == "" || strings.TrimSpace(paths) == "" {
+		return linestore.Scope{}
+	}
+	d, err := MirrorDiff(ctx, mirror, n, baseSHA, head)
+	if err != nil {
+		return linestore.Scope{}
+	}
+	if out := OutsidePaths(paths, d.Files); len(out) > 0 {
+		return linestore.Scope{Word: "no", Outside: out}
+	}
+	return linestore.Scope{Word: "ok"}
+}
+
+// Post stores the typed line through the one line store (internal/nsprint/line,
+// nova-tools #3595) with the scope gate unmeasured, then mirrors it as one
+// comment when poster is not nil. PostMeasured is Post with the mirror the
+// scope gate is measured in.
 func Post(ctx context.Context, c *redis.Client, repo, n, line string, poster *Poster, stdout, stderr io.Writer) int {
-	if err := CheckLine(line); err != nil {
+	return PostMeasured(ctx, c, repo, n, line, "", poster, stdout, stderr)
+}
+
+// PostMeasured stores the typed line in one call (ns_line_post): the record
+// pr:<repo>:<n>:line:<head>:<who>:<kind>, the lines list, reads and
+// last_line on the record, with the gates measured (ci and base from Redis,
+// scope from mirror; "" leaves scope unmeasured). A typed gate that
+// disagrees with a measured one is refused and nothing is written. Exit 0
+// posted, 1 refused, 2 could not run. The Redis write is the record; a
+// comment that fails after it is reported as such.
+func PostMeasured(ctx context.Context, c *redis.Client, repo, n, text, mirror string, poster *Poster, stdout, stderr io.Writer) int {
+	if err := CheckLine(text); err != nil {
 		fmt.Fprintf(stderr, "READ POST REFUSED repo=%s n=%s why=%v\n", repo, n, err)
 		return 1
 	}
-	if strings.Fields(line)[0] == "SPEC" {
-		return postSpec(ctx, c, repo, n, line, poster, stdout, stderr)
+	if strings.Fields(text)[0] == "SPEC" { // a spec issue has no head: the spec store (#3370)
+		return postSpec(ctx, c, repo, n, text, poster, stdout, stderr)
 	}
-	head, err := c.HGet(ctx, Key(repo, n), "head").Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
+	parsed, err := linestore.Parse(text)
+	if err != nil {
+		fmt.Fprintf(stderr, "READ POST REFUSED repo=%s n=%s why=%v\n", repo, n, err)
+		return 1
+	}
+	p, err := linestore.Post(ctx, c, repo, n, text, MeasureScope(ctx, c, repo, n, parsed.Head, mirror))
+	if err != nil {
 		fmt.Fprintf(stderr, "nova-sprint read post: %v\n", err)
 		return 2
 	}
-	if head == "" {
+	switch p.Status {
+	case "MISSING":
 		fmt.Fprintf(stderr, "READ POST REFUSED repo=%s n=%s why=%s has no head; the record is written when the PR is opened or imported\n", repo, n, Key(repo, n))
 		return 1
-	}
-	now := strconv.FormatInt(time.Now().Unix(), 10)
-	kind := strings.Fields(line)[0]
-	var lines int64
-	moves := ""
-	if EventKinds[kind] {
-		ev, err := postEvent(ctx, c, repo, n, line, now)
-		if err != nil {
-			fmt.Fprintf(stderr, "nova-sprint read post: %v\n", err)
-			return 2
-		}
-		lines = ev.Lines
-		moves = fmt.Sprintf(" tasks_moved=%d", ev.Moved)
-		for _, s := range ev.Skipped {
-			fmt.Fprintf(stderr, "READ POST SKIPPED repo=%s n=%s %s\n", repo, n, strings.ReplaceAll(s, "\n", " "))
-		}
-	} else {
-		tx := c.TxPipeline()
-		rp := tx.RPush(ctx, LinesKey(repo, n), line)
-		tx.HSet(ctx, Key(repo, n), "last_line", strings.SplitN(line, "\n", 2)[0], "last_line_at", now)
-		if _, err := tx.Exec(ctx); err != nil {
-			fmt.Fprintf(stderr, "nova-sprint read post: %v\n", err)
-			return 2
-		}
-		lines = rp.Val()
-	}
-	if poster == nil {
-		fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=0%s\n", repo, n, kind, lines, moves)
-		return 0
-	}
-	id, err := poster.Comment(ctx, repo, n, line)
-	if err != nil {
-		fmt.Fprintf(stderr, "READ POST REFUSED repo=%s n=%s kind=%s lines=%d redis=ok github=%v; the line is in Redis, re-run with --no-github or fix the token\n", repo, n, kind, lines, err)
+	case "REFUSED":
+		fmt.Fprintf(stderr, "READ POST REFUSED repo=%s n=%s kind=%s why=%s; nothing stored\n", repo, n, parsed.Kind, p.Why)
 		return 1
 	}
-	fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=1 comment=%d%s\n", repo, n, kind, lines, id, moves)
+	kind := parsed.Kind
+	gates := fmt.Sprintf(" gates=%s measured=%s", orDash(p.Gates), orDash(p.Measured))
+	moves := ""
+	if EventKinds[kind] {
+		moves = fmt.Sprintf(" tasks_moved=%d", p.Moved)
+		for _, s := range p.Skipped {
+			fmt.Fprintf(stderr, "READ POST SKIPPED repo=%s n=%s %s\n", repo, n, strings.ReplaceAll(s, "\n", " "))
+		}
+	}
+	if poster == nil {
+		fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=0%s%s\n", repo, n, kind, p.Lines, moves, gates)
+		return 0
+	}
+	id, err := poster.Comment(ctx, repo, n, text)
+	if err != nil {
+		fmt.Fprintf(stderr, "READ POST REFUSED repo=%s n=%s kind=%s lines=%d redis=ok github=%v; the line is in Redis, re-run with --no-github or fix the token\n", repo, n, kind, p.Lines, err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=1 comment=%d%s%s\n", repo, n, kind, p.Lines, id, moves, gates)
 	return 0
 }
 
 // EventKinds are the typed lines whose post is an event for the sprint's
 // tasks (nova-tools#3779): a CLOSE by a person lands every task naming the
 // PR or an issue its record closes; a SCORE moves the PR's read task
-// read-<n>-<head8> working -> merging. Their post is one library call,
-// ns_read_post (internal/nsprint/fn/lua/03_task_event.lua): the line and the
-// move together or neither.
+// read-<n>-<head8> working -> merging. ns_line_post makes the move in the
+// same call as the line (NS.tev.event, internal/nsprint/fn/lua/03_task_event.lua):
+// the line and the move together or neither; read post reports tasks_moved.
 var EventKinds = map[string]bool{"CLOSE": true, "SCORE": true}
-
-// FunctionReadPost is the library function that posts an event line.
-const FunctionReadPost = "ns_read_post"
-
-type event struct {
-	Lines   int64
-	Moved   int
-	Skipped []string
-}
-
-func postEvent(ctx context.Context, c *redis.Client, repo, n, line, now string) (event, error) {
-	var ev event
-	res, err := c.FCall(ctx, FunctionReadPost, nil, prkey.Name(repo), n, line, now).StringSlice()
-	if err != nil {
-		return ev, fmt.Errorf("%s: %w (a store whose library predates it: nova-sprint fn load)", FunctionReadPost, err)
-	}
-	if len(res) < 6 || res[0] != "OK" {
-		return ev, fmt.Errorf("%s: %s", FunctionReadPost, strings.Join(res, " "))
-	}
-	ev.Lines, _ = strconv.ParseInt(res[1], 10, 64)
-	ev.Moved, _ = strconv.Atoi(res[3])
-	ev.Skipped = res[6:]
-	return ev, nil
-}
