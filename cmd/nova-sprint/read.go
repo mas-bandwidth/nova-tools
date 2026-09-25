@@ -6,7 +6,7 @@
 //
 //	nova-sprint read brief  --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>]
 //	nova-sprint read brief  --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis <addr>]
-//	nova-sprint read post   --repo <r> --n <n> --line <typed line> [--no-github] [--owner <o>] [--redis <addr>]
+//	nova-sprint read post   --repo <r> --n <n> --line <typed line> [--mirror <dir>] [--no-github] [--owner <o>] [--redis <addr>]
 //	nova-sprint read digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>]
 //	nova-sprint read carry  --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]
 //
@@ -15,8 +15,12 @@
 //
 // brief writes the read brief; with --id it reads the read task
 // (task:<id>, or s:<S>:task:<id> with --sprint) for the PR and the exact
-// head, so a friend holding a read task needs nothing but its id; post stores the typed line and, until #3595
-// lands, mirrors it as one PR comment (REST) unless --no-github. digest
+// head, so a friend holding a read task needs nothing but its id; post
+// stores the typed line through the line store (internal/nsprint/line,
+// #3595: one call, the ci and base gates measured from Redis and the scope
+// gate from the mirror diff against PATHS, a typed gate that disagrees
+// refused) and mirrors it as one PR comment (REST) unless --no-github,
+// until the comment readers read the store. digest
 // records the diff identity of the head a line is typed at (diff_sha256 on
 // the unit record; the reader runs it at read time). carry compares that
 // with the unit's head now, read from the mirror (default
@@ -56,7 +60,7 @@ func init() {
 	})
 }
 
-const readUsage = "want brief --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>], brief --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis <addr>], post --repo <r> --n <n> --line <typed line> [--no-github] [--owner <o>] [--redis <addr>], digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>] or carry --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]"
+const readUsage = "want brief --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>], brief --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis <addr>], post --repo <r> --n <n> --line <typed line> [--mirror <dir>] [--no-github] [--owner <o>] [--redis <addr>], digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>] or carry --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]"
 
 func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -114,8 +118,8 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 			return refuse(errOut, "read brief", "want --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>]")
 		}
 	case "post":
-		if *typed == "" || *outDir != "" || *mirror != "" {
-			return refuse(errOut, "read post", "want --repo <r> --n <n> --line <typed line> [--no-github] [--owner <o>] [--redis <addr>]")
+		if *typed == "" || *outDir != "" {
+			return refuse(errOut, "read post", "want --repo <r> --n <n> --line <typed line> [--mirror <dir>] [--no-github] [--owner <o>] [--redis <addr>]")
 		}
 	case "digest", "carry":
 		if *typed != "" || *outDir != "" || *noGitHub || (sub == "carry" && *head != "") {
@@ -145,7 +149,7 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 			}
 			poster = &read.Poster{BaseURL: os.Getenv("GITHUB_API_URL"), Owner: *owner, Token: token}
 		}
-		return read.Post(ctx, st.Client(), *repo, *n, *typed, poster, out, errOut)
+		return read.PostMeasured(ctx, st.Client(), *repo, *n, *typed, readMirror(*mirror, *repo), poster, out, errOut)
 	}
 	return runReadCarry(ctx, st, sub, land.ID{Repo: *repo, N: num}, *sprint, *mirror, *head, *baseRef, out, errOut)
 }
