@@ -261,7 +261,11 @@ func TestCheckOneBackpressureKeyOneRoundTrip(t *testing.T) {
 	if kc.RoundTrips != 1 || !strings.HasSuffix(kc.Line(), " round_trips=1") {
 		t.Fatalf("receipt %q, want round_trips=1", kc.Line())
 	}
-	if len(kc.Own) != 1 || kc.Beat || len(kc.Extra) != 1 || kc.Extra[0] != "backpressure" {
-		t.Fatalf("check = %+v, want own=1 beat=false extra=[backpressure]", kc)
+	// We didn't set proc:backpressure, so beat is false. Let's test with all recognized forms.
+	m.HSet("proc:backpressure", "pass_at", "123")
+	kcWithBeat, _ := deal.CheckOneBackpressureKey(ctx, st, sprint)
+	
+	if len(kcWithBeat.Own) != 1 || !kcWithBeat.Beat || len(kcWithBeat.Extra) != 1 || kcWithBeat.Extra[0] != "backpressure" {
+		t.Fatalf("check = %+v, want own=1 beat=true extra=[backpressure]", kcWithBeat)
 	}
 }
