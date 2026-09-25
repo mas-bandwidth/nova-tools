@@ -30,6 +30,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/redis/go-redis/v9"
@@ -86,8 +87,9 @@ var Defaults = map[string][]Check{
 }
 
 // reservedSuffixes are the ci:<repo>:<sha>:<suffix> keys the ci card family
-// owns (ci.lua, civerdict); a check may not take one of their names.
-var reservedSuffixes = map[string]bool{"gids": true, "waiting": true, "runners": true, "tip": true}
+// owns (ci.lua, civerdict) and the GitHub leg (gh, ci_github.lua); a check
+// may not take one of their names.
+var reservedSuffixes = map[string]bool{"gids": true, "waiting": true, "runners": true, "tip": true, webhook.Suffix: true}
 
 var checkRx = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,40}$`)
 
@@ -640,24 +642,29 @@ type Row struct {
 	Bench  string
 }
 
-// Rows is the request record and its receipts, read in two pipelined round
-// trips (the record names the checks; then every receipt at once).
+// Rows is the request record, its receipts and the GitHub leg, read in two
+// pipelined round trips (the record and ci:<repo>:<sha>:gh; then every
+// receipt the record names at once).
 type Rows struct {
 	Key    string
 	Found  bool
 	Fields map[string]string
 	Rows   []Row
+	GH     webhook.Record // the GitHub leg; GH.Found false when no event came
 }
 
 // ReadRows reads one head's request record and receipts.
 func ReadRows(ctx context.Context, st *store.Store, repo, sha string) (Rows, error) {
 	key := RecordKey(repo, sha)
 	client := st.Client()
-	fields, err := client.HGetAll(ctx, key).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
+	first := client.Pipeline()
+	recCmd := first.HGetAll(ctx, key)
+	ghCmd := first.HGetAll(ctx, webhook.Key(repo, sha))
+	if _, err := first.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return Rows{}, fmt.Errorf("HGETALL %s: %w", key, err)
 	}
-	rows := Rows{Key: key, Found: len(fields) > 0, Fields: fields}
+	fields := recCmd.Val()
+	rows := Rows{Key: key, Found: len(fields) > 0, Fields: fields, GH: webhook.Parse(ghCmd.Val())}
 	if !rows.Found {
 		return rows, nil
 	}
@@ -698,11 +705,13 @@ func (r Rows) Summary() string {
 	return r.Fields["ci"]
 }
 
-// WriteRows prints the record line and one row per check. Exit 0 with a
-// record (whatever its word), 5 MISSING without one.
+// WriteRows prints the record line and one row per check, then the GitHub
+// leg when an event wrote it. Exit 0 with a record (whatever its word), 5
+// MISSING without one (the GitHub leg is still printed).
 func WriteRows(w io.Writer, r Rows) int {
 	if !r.Found {
 		fmt.Fprintf(w, "%s MISSING\n", r.Key)
+		writeGH(w, r)
 		return ExitMissing
 	}
 	f := r.Fields
@@ -718,5 +727,23 @@ func WriteRows(w io.Writer, r Rows) int {
 		}
 		fmt.Fprintf(w, "  %s %s rc=%s wall_ms=%s bench=%s log=%s\n", row.Check, row.State, row.RC, row.WallMS, row.Bench, row.Log)
 	}
+	writeGH(w, r)
 	return ExitOK
+}
+
+// writeGH prints ci:<repo>:<sha>:gh: the fold, then one row per check or
+// workflow GitHub reported.
+func writeGH(w io.Writer, r Rows) {
+	g := r.GH
+	if !g.Found {
+		return
+	}
+	fail := g.Fail
+	if fail == "" {
+		fail = "-"
+	}
+	fmt.Fprintf(w, "%s:%s %s fail=%s at=%s\n", r.Key, webhook.Suffix, g.Word, fail, g.At)
+	for _, run := range g.Runs {
+		fmt.Fprintf(w, "  %s:%s %s id=%s at=%s\n", run.Kind, run.Name, run.Word, run.ID, run.At)
+	}
 }

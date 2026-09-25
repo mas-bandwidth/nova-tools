@@ -5,46 +5,38 @@
 // the failing check; the hold clears on green.
 //
 //	nova-sprint dev-red status --repo <r> --base <b> --redis <addr>
-//	nova-sprint dev-red check  --repo <r> --base <b> --redis <addr> [--sprint <S>] [--to <friend>] [--forge]
+//	nova-sprint dev-red check  --repo <r> --base <b> --redis <addr> [--sprint <S>] [--to <friend>]
 //	nova-sprint dev-red watch|unwatch --repo <r> --base <b> --redis <addr>
 //
 // status prints RED <check> <sha> task=<id> or GREEN <base> and exits 0
 // either way (the row is the answer; 6 is no Redis). check runs one duty
 // pass over that base now and prints its DEVRED receipt. watch adds the
 // base to devred:bases, the set the reconciler's dev-red duty walks every
-// pass (internal/nsprint/reconcile). The duty reads the CI record
-// ci:<repo>:<sha> first, the gated receipt second, and the forge (one
-// `gh api` check-runs read per base per minute) last, until #3597 writes
-// the record on every push.
+// pass (internal/nsprint/reconcile). The duty reads only Redis: the CI
+// record ci:<repo>:<sha>, the GitHub leg ci:<repo>:<sha>:gh that
+// `nova-sprint ci github` writes from the webhook stream (#3597), then the
+// gated receipt. It never reads GitHub.
 package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // devRedTo is the coordinator's queue the fix task goes to; NOVA_DEVRED_TO
 // overrides it.
 const devRedTo = "rowan"
-
-// devRedOwner is the forge owner of every repo the fleet lands;
-// NOVA_GH_OWNER overrides it.
-const devRedOwner = "mas-bandwidth"
 
 func init() {
 	register(Verb{
@@ -53,7 +45,7 @@ func init() {
 		Run:     runDevRed,
 	})
 	registerReconcileDuty("dev-red", func(st *store.Store) (reconcileDuty, error) {
-		return devRedDuty(st, nil, "", devRedEnv("NOVA_DEVRED_TO", devRedTo), true), nil
+		return devRedDuty(st, nil, "", devRedEnv("NOVA_DEVRED_TO", devRedTo)), nil
 	})
 }
 
@@ -66,9 +58,8 @@ func devRedEnv(name, def string) string {
 
 // devRedDuty builds the duty over a store: the push goes through
 // task.Push (kind fix, front of the queue) into the sprint given or, when
-// sprint is "", the first of sprint:order; the forge seam is on when forge
-// is true.
-func devRedDuty(st *store.Store, bases []land.RepoBase, sprint, to string, forge bool) *reconcile.DevRed {
+// sprint is "", the first of sprint:order.
+func devRedDuty(st *store.Store, bases []land.RepoBase, sprint, to string) *reconcile.DevRed {
 	d := &reconcile.DevRed{
 		Client: st.Client(), Bases: bases, To: to,
 		Push: func(ctx context.Context, t reconcile.FixTask) (string, error) {
@@ -91,9 +82,6 @@ func devRedDuty(st *store.Store, bases []land.RepoBase, sprint, to string, forge
 			return "", fmt.Errorf("task push %s: %s", t.ID, res)
 		},
 	}
-	if forge {
-		d.Forge = devRedForge
-	}
 	return d
 }
 
@@ -113,51 +101,6 @@ func devRedSprint(ctx context.Context, c *redis.Client, given string) (string, e
 	return names[0], nil
 }
 
-// devRedForge reads one commit's check runs by REST (`gh api`), the one
-// forge read the duty makes per base per minute until #3597 writes the
-// record. Any check with a failing conclusion is FAIL naming that check;
-// every check completed and successful is OK; anything else (in progress,
-// none yet) is no evidence.
-func devRedForge(ctx context.Context, repo, sha string) (reconcile.CIState, error) {
-	owner := devRedEnv("NOVA_GH_OWNER", devRedOwner)
-	full := repo
-	if !strings.Contains(repo, "/") {
-		full = owner + "/" + repo
-	}
-	args := []string{"api", fmt.Sprintf("repos/%s/commits/%s/check-runs?per_page=100", full, sha),
-		"--jq", "[.check_runs[] | {name: .name, status: .status, conclusion: .conclusion}]"}
-	testguard.RefuseHosts("gh", args...)
-	out, err := exec.CommandContext(ctx, "gh", args...).Output()
-	if err != nil {
-		return reconcile.CIState{}, fmt.Errorf("gh api check-runs: %w", err)
-	}
-	var runs []struct{ Name, Status, Conclusion string }
-	if err := json.Unmarshal(out, &runs); err != nil {
-		return reconcile.CIState{}, fmt.Errorf("gh api check-runs: %w", err)
-	}
-	return devRedFromRuns(runs), nil
-}
-
-func devRedFromRuns(runs []struct{ Name, Status, Conclusion string }) reconcile.CIState {
-	if len(runs) == 0 {
-		return reconcile.CIState{}
-	}
-	done := true
-	for _, r := range runs {
-		switch r.Conclusion {
-		case "failure", "timed_out", "cancelled", "action_required", "startup_failure":
-			return reconcile.CIState{Verdict: "FAIL", Check: r.Name}
-		}
-		if r.Status != "completed" {
-			done = false
-		}
-	}
-	if done {
-		return reconcile.CIState{Verdict: civerdict.OK}
-	}
-	return reconcile.CIState{}
-}
-
 func runDevRed(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
 		return refuse(errOut, "dev-red", "want status, check, watch or unwatch, each with --repo <r> --base <b> --redis <addr>")
@@ -175,7 +118,6 @@ func runDevRed(ctx context.Context, args []string, out, errOut io.Writer) int {
 	base := fs.String("base", "dev", "")
 	sprint := fs.String("sprint", "", "")
 	to := fs.String("to", devRedEnv("NOVA_DEVRED_TO", devRedTo), "")
-	forge := fs.Bool("forge", false, "")
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, name, err.Error())
 	}
@@ -218,7 +160,7 @@ func runDevRed(ctx context.Context, args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(out, "%s %s changed=%d\n", strings.ToUpper(sub), member, n)
 		return 0
 	}
-	d := devRedDuty(st, []land.RepoBase{rb}, *sprint, *to, *forge)
+	d := devRedDuty(st, []land.RepoBase{rb}, *sprint, *to)
 	outs, err := d.Pass(ctx)
 	if err != nil {
 		fmt.Fprintf(errOut, "nova-sprint %s: %v\n", name, err)
