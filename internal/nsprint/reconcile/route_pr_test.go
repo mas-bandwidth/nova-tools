@@ -370,3 +370,33 @@ func TestIdenticalDiffCarriesTheRead(t *testing.T) {
 		t.Fatalf("third pass %s; want nothing", c.Line())
 	}
 }
+
+// TestHoldRouterPolicySkipsPRFixLeg (#3833): when s:<S>:policy has fix_to
+// and release_reader, the hold router owns hold-to-fix for that sprint.
+// The route duty's PR fix leg skips creating task:fix-* so only one fix task
+// writer exists.
+func TestHoldRouterPolicySkipsPRFixLeg(t *testing.T) {
+	f := newPRFixture(t, "ctl-3833p")
+	f.c.HSet(f.ctx, "s:"+f.S+":policy", "fix_to", "rowan", "release_reader", "stella")
+	hold := "HOLD who=emma head=" + headA + " gates=scope:fail reason=touches-a-path-outside-PATHS"
+	f.addPR(t, "build-3833", "stella", "3833", headA, "SCORE who=jev head="+headA+" score=8/10", hold)
+
+	res, err := f.duty.Pass(f.ctx, f.l.Token())
+	if err != nil {
+		t.Fatalf("route pass: %v", err)
+	}
+	if len(res.Fixes) != 0 {
+		t.Fatalf("fixes=%v; want 0 when hold router owns the sprint", res.Fixes)
+	}
+	if res.Skips["hold-router"] != 1 {
+		t.Fatalf("skips=%v, want skips[hold-router]=1", res.Skips)
+	}
+	id := "fix-3833-" + headA[:8]
+	if f.c.Exists(f.ctx, "task:"+id).Val() != 0 {
+		t.Fatalf("task:%s exists; want none cut by route duty", id)
+	}
+	rec := f.record(t, "3833")
+	if rec["fix_task"] != "" {
+		t.Fatalf("record fix_task = %q; want empty", rec["fix_task"])
+	}
+}

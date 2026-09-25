@@ -526,6 +526,10 @@ do
   local function route_pr_fix(keys, args)
     local token, S, repo, pr, stream, actor, coordinator = args[1], args[2], args[3], args[4], args[5], args[6], args[7] or ''
     if fenced(token) then return { 'FENCED' } end
+    local pol = redis.call('HMGET', 's:' .. S .. ':policy', 'fix_to', 'release_reader')
+    if (pol[1] or '') ~= '' and (pol[2] or '') ~= '' then
+      return { 'SKIP', 'hold-router' }
+    end
     local rec, why = pr_record(repo, pr)
     if not rec then
       return { 'SKIP', why }

@@ -7,8 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/disposition"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
@@ -121,6 +124,57 @@ func TestReconcileRoutesHoldToFix(t *testing.T) {
 	}
 	if ids := e.fixIDs(); len(ids) != 1 {
 		t.Fatalf("fix tasks after reconcile: %v", ids)
+	}
+}
+
+// TestReconcileHoldSingleFixTask is nova-tools #3833: a sprint with
+// fix_to/release_reader and a HOLD at head present both as a pr:: line and as a
+// hold event gets exactly one fix task after reconcile --once (counting
+// task:fix-* and s::task:fix-*).
+func TestReconcileHoldSingleFixTask(t *testing.T) {
+	const S, pr = "control-3833s", 39
+	ctx, c, addr, _ := routeFixture(t, S)
+	e := &holdEnv{t: t, c: c, addr: addr, S: S}
+	e.friends("stella", "johnny", "rowan")
+	e.policy("rowan", "stella")
+	e.unit(pr, headA, "johnny")
+	e.mustIngest(pr, typed("stella", headA, "HOLD", 5, substance), "RECORD hold")
+
+	c.HSet(ctx, "task:build-39", "stream", "nova-sprint", "state", "working", "owner", "johnny",
+		"pr", "mas-bandwidth/nova-tools#39", "kind", "build", "branch", "codex/39-anything")
+	c.ZAdd(ctx, "ws:nova-sprint:working", redis.Z{Score: 1, Member: "build-39"})
+	c.HSet(ctx, prkey.Key("mas-bandwidth/nova-tools", pr), "repo", "mas-bandwidth/nova-tools", "n", "39",
+		"head", headA, "base", "dev", "stream", "nova-sprint", "task", "build-39", "state", "open", "ci", "green",
+		"reads", typed("stella", headA, "HOLD", 5, substance))
+
+	remote := consumePRReadRemote
+	consumePRReadRemote = func(context.Context, string) (map[int]string, error) { return map[int]string{}, nil }
+	t.Cleanup(func() { consumePRReadRemote = remote })
+
+	o := reconcileOnce(t, addr)
+	if line := dutyLine(t, o, "route"); !strings.Contains(line, "fixes=0") {
+		t.Fatalf("route duty receipt %q, want fixes=0", line)
+	}
+	taskFixKeys, err := c.Keys(ctx, "task:fix-*").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sprintFixKeys, err := c.Keys(ctx, "s:"+S+":task:fix-*").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total := len(taskFixKeys) + len(sprintFixKeys); total != 1 {
+		t.Fatalf("fix tasks: task:fix-*=%v, s::task:fix-*=%v, want exactly one", taskFixKeys, sprintFixKeys)
+	}
+	if len(taskFixKeys) != 0 {
+		t.Fatalf("the route duty made a second fix task for the same HOLD: %v", taskFixKeys)
+	}
+	fix := disposition.FixID("39", "stella", headA)
+	if len(sprintFixKeys) != 1 || sprintFixKeys[0] != "s:"+S+":task:"+fix {
+		t.Fatalf("sprint fix tasks: %v, want [%s]", sprintFixKeys, "s:"+S+":task:"+fix)
+	}
+	if q := e.queue("rowan"); len(q) != 1 || q[0] != fix {
+		t.Fatalf("fix_to queue %v, want [%s]", q, fix)
 	}
 }
 

@@ -588,6 +588,10 @@ func (d *RouteDuty) prCandidates(ctx context.Context, stream string) ([]prCand, 
 // records: one pipelined read of the records, then one function call per
 // decision still open for this instance. A head read at head, routed or
 // held with a fix task is final for the instance; a new head is a new key.
+// A sprint whose s:<S>:policy has fix_to and release_reader is the hold
+// router's (consume.HoldRoute under lease:route:<S>, #3799, #3833): its HOLDs
+// are skipped here (skip hold-router) so a HOLD makes one fix task, never
+// one from each router.
 func (d *RouteDuty) prLegs(ctx context.Context, token, S, stream string, readers []string, coordinator string, res *RouteResult) error {
 	cands, err := d.prCandidates(ctx, stream)
 	if err != nil {
@@ -596,6 +600,11 @@ func (d *RouteDuty) prLegs(ctx context.Context, token, S, stream string, readers
 	if len(cands) == 0 {
 		return nil
 	}
+	pol, err := d.Client.HMGet(ctx, "s:"+S+":policy", "fix_to", "release_reader").Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("%s: policy: %w", S, err)
+	}
+	holdRouter := str(pol, 0) != "" && str(pol, 1) != ""
 	pipe := d.Client.Pipeline()
 	rows := make([]*redis.SliceCmd, len(cands))
 	for i, c := range cands {
@@ -647,6 +656,11 @@ func (d *RouteDuty) prLegs(ctx context.Context, token, S, stream string, readers
 		}
 		fkey := "prfix/" + c.repo + "/" + n + "/" + head
 		if d.done[fkey] || !heldAt(reads, head) {
+			continue
+		}
+		if holdRouter {
+			res.Skips["hold-router"]++
+			d.done[fkey] = true
 			continue
 		}
 		reply, err := d.Client.FCall(ctx, "ns_route_pr_fix", nil, token, S, c.repo, n, stream, d.actor(), coordinator).StringSlice()
