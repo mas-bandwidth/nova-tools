@@ -235,6 +235,14 @@ func Render(rec Record, d Diff, mirror, outDir string) ([]byte, error) {
 // <out>/diff.patch, print one receipt. Exit 0 written, 1 refused with the
 // remedy named, 2 could not run.
 func Brief(ctx context.Context, c *redis.Client, repo, n, mirror, outDir string, stdout, stderr io.Writer) int {
+	return brief(ctx, c, repo, n, "", "", mirror, outDir, stdout, stderr)
+}
+
+// brief is Brief at an exact head: head "" reads the record's head; a read
+// task's head is the head it was queued at, so when the record has moved
+// on the brief still reads the task's head (its CI and its diff) and the
+// receipt names the record's head. id is the task, "" when there is none.
+func brief(ctx context.Context, c *redis.Client, repo, n, head, id, mirror, outDir string, stdout, stderr io.Writer) int {
 	if mirror == "" {
 		mirror = DefaultMirror(repo)
 	}
@@ -246,6 +254,15 @@ func Brief(ctx context.Context, c *redis.Client, repo, n, mirror, outDir string,
 		}
 		fmt.Fprintf(stderr, "nova-sprint read brief: %v\n", err)
 		return 2
+	}
+	recordHead := ""
+	if head != "" && head != rec.Head {
+		ci, err := c.HGetAll(ctx, CIKey(repo, head)).Result()
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-sprint read brief: read %s: %v\n", CIKey(repo, head), err)
+			return 2
+		}
+		recordHead, rec.Head, rec.CI = rec.Head, head, ci
 	}
 	if rec.BaseSHA == "" {
 		fmt.Fprintf(stderr, "READ BRIEF REFUSED repo=%s n=%s why=record has no base_sha; the card names it (BASE/base-sha) and harvest writes it\n", repo, n)
@@ -278,8 +295,14 @@ func Brief(ctx context.Context, c *redis.Client, repo, n, mirror, outDir string,
 	if d.MirrorHead != "" && d.MirrorHead != rec.Head {
 		moved = " mirror_head=" + short(d.MirrorHead)
 	}
-	fmt.Fprintf(stdout, "READ BRIEF repo=%s n=%s head=%s base_sha=%s files=%d outside_paths=%d lines=%d ci=%d out=%s github_calls=0%s\n",
-		repo, n, short(rec.Head), short(rec.BaseSHA), len(d.Files), len(OutsidePaths(rec.Paths, d.Files)), len(rec.Lines), len(rec.CI), briefPath, moved)
+	if recordHead != "" {
+		moved += " record_head=" + short(recordHead)
+	}
+	if id != "" {
+		moved += " task=" + id
+	}
+	fmt.Fprintf(stdout, "READ BRIEF repo=%s n=%s head=%s base_sha=%s files=%d outside_paths=%d lines=%d ci=%d out=%s diff=%s github_calls=0%s\n",
+		repo, n, short(rec.Head), short(rec.BaseSHA), len(d.Files), len(OutsidePaths(rec.Paths, d.Files)), len(rec.Lines), len(rec.CI), briefPath, filepath.Join(outDir, "diff.patch"), moved)
 	return 0
 }
 
