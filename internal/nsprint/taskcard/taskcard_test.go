@@ -295,6 +295,44 @@ func TestLeaseLapsedGoesBackToReady(t *testing.T) {
 	clean(t, c, "expire")
 }
 
+// TestLeaseLapsedSwarmGoesBackToReady is #4074: ns_deal_swarm parks a
+// swarm-dealt task in friend:swarm:cards:working, but swarm is not a member
+// of the friends set, so expire's default sweep (no friend named) must
+// still visit it, or a task the swarm takes and then drops (its child dies
+// mid-lease) is never reclaimed.
+func TestLeaseLapsedSwarmGoesBackToReady(t *testing.T) {
+	c := start(t)
+	ctx := context.Background()
+	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "s1", Stream: stream, Sprint: sprint}); err != nil {
+		t.Fatal(err)
+	}
+	// ns_deal_swarm takes an unowned ready card for the swarm (as=swarm),
+	// into friend:swarm:cards:working, lease_until = now + 3m.
+	if ids, err := taskcard.Take(ctx, c, "swarm", 1, "reconciler", "s1"); err != nil || len(ids) != 1 {
+		t.Fatalf("take %v %v", ids, err)
+	}
+	if n := c.ZCard(ctx, taskcard.FriendKey("swarm", "working")).Val(); n != 1 {
+		t.Fatalf("swarm working %d, want 1", n)
+	}
+	// swarm's child died: its lease is in the past.
+	c.HSet(ctx, "task:s1", "lease_until", time.Now().Add(-time.Minute).UnixMilli())
+	// The default sweep (no friend named, as the reconciler's task-lease
+	// duty calls it) must still reach s1 even though "swarm" is never in
+	// SMEMBERS friends.
+	ids, err := taskcard.Expire(ctx, c, "reconciler")
+	if err != nil || len(ids) != 1 || ids[0] != "s1" {
+		t.Fatalf("expire %v %v, want [s1]", ids, err)
+	}
+	if n := c.ZCard(ctx, taskcard.FriendKey("swarm", "working")).Val(); n != 0 {
+		t.Fatalf("swarm working %d, want 0", n)
+	}
+	h := c.HGetAll(ctx, "task:s1").Val()
+	if h["where"] != "ready" || h["why"] != "lease lapsed" || h["lease_until"] != "" {
+		t.Fatalf("expired record %v", h)
+	}
+	clean(t, c, "expire swarm")
+}
+
 // TestLandStreamLandsEveryMergingMember is the lander's step (Glenn 08:50 ET):
 // every member of ws:<stream>:merging moves to landed at the merge sha in one
 // call, and the reply names each member's PR and origin for the CLOSE line.
