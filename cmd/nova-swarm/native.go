@@ -1854,6 +1854,9 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 		"ended":   end.UTC().Format(time.RFC3339),
 		"end":     dash(endWord),
 		"rc":      rcCol, "provider": provider, "model": model,
+		// The upstream is read from the config this run was handed (issue #3151): for
+		// openrouter the one provider its model pins with fallbacks off, else unpinned.
+		"upstream": swarm.Upstream(readConfigFile(cfg.configFile), provider, model),
 	}
 	for _, c := range swarm.TokenColumns {
 		row[c] = dash(usage.Values[c])
@@ -2255,7 +2258,7 @@ func modelProviderMissingAuth(raw []byte, authPath, provider string) bool {
 		return false
 	}
 	entry, named := providers[provider]
-	if !named || keylessProvider(entry) {
+	if !named || keylessProvider(entry) || envKeySet(entry) {
 		return false
 	}
 	if authPath == "" {
@@ -2291,6 +2294,35 @@ func keylessProvider(v any) bool {
 	}
 	_, hasKey := opts["apiKey"]
 	return !hasKey
+}
+
+// envKeySet reports whether a provider entry names its key by environment variable,
+// options.apiKey "{env:NAME}", and NAME is set here: the harness inherits this environment,
+// so there is no auth file for the key to be absent from (the card run's OpenRouter config,
+// issue #3151, names OPENROUTER_API_KEY this way).
+func envKeySet(v any) bool {
+	m, _ := v.(map[string]any)
+	opts, _ := m["options"].(map[string]any)
+	key, _ := opts["apiKey"].(string)
+	name, ok := strings.CutPrefix(key, "{env:")
+	if !ok || !strings.HasSuffix(name, "}") {
+		return false
+	}
+	name = strings.TrimSuffix(name, "}")
+	return name != "" && os.Getenv(name) != ""
+}
+
+// readConfigFile is the --config file's bytes, or nil when none was named or it cannot be
+// read (the upstream is then unpinned, which is what an unread pin is).
+func readConfigFile(path string) []byte {
+	if path == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // providerLoopback reads the carried config and returns the loopback host:port the model's

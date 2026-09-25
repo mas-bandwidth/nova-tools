@@ -12,6 +12,7 @@ package swarm
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,7 +21,7 @@ import (
 	"time"
 )
 
-// CardUsageColumns are the fourteen columns of one card's usage.tsv, in this order. The
+// CardUsageColumns are the fifteen columns of one card's usage.tsv, in this order. The
 // order is the contract between the native run that writes it and the batch that sums it.
 //
 // `end` JOINED THEM WITH SPEC-SWARM RULE 13d (issue #1545). The word was being computed by
@@ -38,9 +39,79 @@ import (
 // index"), `internal/pulse`'s `parseProgressUsage` and `status`'s own index. A file written
 // before this change has thirteen columns and no `end`, and every one of those readers
 // answers the empty string for it, which is what an absence is.
+//
+// `upstream` (issue #3151) is the provider that SERVED the calls, appended last so every
+// reader that maps by header keeps working: the provider itself for a direct provider, and
+// for openrouter the one upstream the job config pinned with fallbacks off (Upstream). An
+// openrouter row without it is refused by the writer, because $ per token through
+// OpenRouter is the upstream's price and a row that cannot name it cannot be folded.
 var CardUsageColumns = []string{
 	"job", "attempt", "started", "ended", "end", "rc", "provider", "model",
-	"tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "usd",
+	"tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "usd", "upstream",
+}
+
+// OpenRouterProvider is the harness provider id of OpenRouter, the one provider that routes
+// a call to another provider.
+const OpenRouterProvider = "openrouter"
+
+// Unpinned is the upstream of an openrouter call whose request pinned no provider: OpenRouter
+// chose, and nothing on this side knows which.
+const Unpinned = "unpinned"
+
+// Upstream is the provider that served a call made through provider for model under the
+// harness config raw (opencode.json). A direct provider serves its own calls. For openrouter
+// it is the single provider the model's options pin with allow_fallbacks false, the only
+// provider OpenRouter may then use; anything else is Unpinned.
+func Upstream(raw []byte, provider, model string) string {
+	if provider != OpenRouterProvider {
+		return provider
+	}
+	var cfg struct {
+		Provider map[string]struct {
+			Models map[string]struct {
+				Options struct {
+					Provider *struct {
+						Order          []string `json:"order"`
+						AllowFallbacks *bool    `json:"allow_fallbacks"`
+					} `json:"provider"`
+				} `json:"options"`
+			} `json:"models"`
+		} `json:"provider"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &cfg) != nil {
+		return Unpinned
+	}
+	pin := cfg.Provider[provider].Models[model].Options.Provider
+	if pin == nil || pin.AllowFallbacks == nil || *pin.AllowFallbacks || len(pin.Order) != 1 || strings.TrimSpace(pin.Order[0]) == "" {
+		return Unpinned
+	}
+	return strings.TrimSpace(pin.Order[0])
+}
+
+// usageRowCells is the row's values in CardUsageColumns order, scrubbed to one line each, or
+// the refusal of an openrouter row that names no upstream. A direct provider's empty upstream
+// is the provider itself.
+func usageRowCells(row UsageRow) ([]string, error) {
+	provider := strings.TrimSpace(row["provider"])
+	upstream := strings.TrimSpace(row["upstream"])
+	if upstream == "" || upstream == Dash {
+		if provider == OpenRouterProvider {
+			return nil, fmt.Errorf("usage row for job %s: provider openrouter with no upstream; the row names the provider that served it (issue #3151)", strings.TrimSpace(row["job"]))
+		}
+		upstream = provider
+	}
+	values := make([]string, 0, len(CardUsageColumns))
+	for _, c := range CardUsageColumns {
+		v := strings.TrimSpace(row[c])
+		if c == "upstream" {
+			v = upstream
+		}
+		if v == "" {
+			v = Dash
+		}
+		values = append(values, strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(v))
+	}
+	return values, nil
 }
 
 // cardMessagesSQL is the one statement this reader runs against the harness's own store: the
@@ -255,17 +326,11 @@ func foldCardMessages(rows [][]string) (ProviderUsage, string) {
 // fields follow the same tab- and newline-scrubbing law as the pool's usage file, so the row
 // is always one row.
 func WriteCardUsage(path string, row UsageRow) error {
-	var head, values []string
-	for _, c := range CardUsageColumns {
-		v := strings.TrimSpace(row[c])
-		if v == "" {
-			v = Dash
-		}
-		v = strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(v)
-		head = append(head, c)
-		values = append(values, v)
+	values, err := usageRowCells(row)
+	if err != nil {
+		return err
 	}
-	body := strings.Join(head, "\t") + "\n" + strings.Join(values, "\t") + "\n"
+	body := strings.Join(CardUsageColumns, "\t") + "\n" + strings.Join(values, "\t") + "\n"
 	return writeAtomic(path, []byte(body), 0o644)
 }
 
@@ -275,20 +340,15 @@ func WriteCardUsage(path string, row UsageRow) error {
 // launch, and a reader folds them. A field the provider did not report stays a dash, never a
 // zero, exactly as in the single-row writer.
 func AppendCardUsage(path string, row UsageRow) error {
+	values, err := usageRowCells(row)
+	if err != nil {
+		return err
+	}
 	_, statErr := os.Stat(path)
 	var b strings.Builder
 	if statErr != nil {
 		b.WriteString(strings.Join(CardUsageColumns, "\t"))
 		b.WriteByte('\n')
-	}
-	values := make([]string, 0, len(CardUsageColumns))
-	for _, c := range CardUsageColumns {
-		v := strings.TrimSpace(row[c])
-		if v == "" {
-			v = Dash
-		}
-		v = strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(v)
-		values = append(values, v)
 	}
 	b.WriteString(strings.Join(values, "\t"))
 	b.WriteByte('\n')

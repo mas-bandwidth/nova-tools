@@ -25,7 +25,8 @@ package card
 //     nova-secrets exec); the other three and the bench Redis password are
 //     dropped; an empty key is refused. Names only: no value is ever logged;
 //  5. writes the START line to <out>/harness.log, runs nova-swarm native
-//     with the declared harness and budgets in a slot under
+//     with the declared harness and budgets (and, for an OpenRouter route,
+//     --config naming the route's pinned upstream provider, #3151) in a slot under
 //     <home>/rowan-working/tmp, stdout and stderr to <out>/native.out and
 //     native.err, then the END line with rc and wall;
 //  6. copies the card's RESULT.md up to <out>/RESULT.md, moves the slot
@@ -71,6 +72,12 @@ var ProviderKeys = map[string]string{
 	"deepseek":   "DEEPSEEK_API_KEY",
 	"inception":  "INCEPTION_API_KEY",
 }
+
+// PinConfigName is the harness config an OpenRouter card run writes in its job
+// dir and hands native with --config: the route's pinned provider (#3151). It
+// is not named opencode.json, so no harness picks it up from a working
+// directory by accident.
+const PinConfigName = "openrouter-pin.json"
 
 // RunnerEnv names the nova-swarm binary Run executes; unset, it is
 // <home>/.local/bin/nova-swarm, where the bench standard installs it.
@@ -341,12 +348,27 @@ func Run(ctx context.Context, st *store.Store, cfg RunConfig) RunReport {
 		return refuse("native.err: " + err.Error())
 	}
 	defer nativeErr.Close()
-	cmd := exec.Command(runner, "native",
+	args := []string{"native",
 		"--harness", cfg.HarnessBin, "--model", model,
 		"--card", cardPath, "--label", cfg.Label, "--slot", slot, "--root", root,
 		"--deadline", cfg.Deadline, "--tokens", cfg.Tokens,
 		"--slots-store", filepath.Join(cfg.Home, "nova-bench", "slots"), "--owner", cfg.Seat,
-		"--results-root", filepath.Join(cfg.OutDir, "native"))
+		"--results-root", filepath.Join(cfg.OutDir, "native")}
+	// An OpenRouter route pins its upstream provider (#3151): the harness config
+	// carries the route's provider block, so every request names the one
+	// provider with fallbacks off, and native's usage row records it.
+	if row.Via == route.ViaOpenRouter {
+		pinned, ok := row.HarnessConfig()
+		if !ok {
+			return refuse("openrouter route " + row.Route + " has no pin (routes.yaml pin:)")
+		}
+		pinPath := filepath.Join(cfg.JobDir, PinConfigName)
+		if err := os.WriteFile(pinPath, pinned, 0o600); err != nil {
+			return refuse("pin config: " + err.Error())
+		}
+		args = append(args, "--config", pinPath)
+	}
+	cmd := exec.Command(runner, args...)
 	cmd.Dir = cfg.JobDir
 	cmd.Env = env
 	cmd.Stdout, cmd.Stderr = nativeOut, nativeErr
