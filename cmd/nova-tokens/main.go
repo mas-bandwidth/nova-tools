@@ -51,9 +51,9 @@ usage:
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
   nova-tokens report  --ledger <file.tsv> --month <YYYY-MM> [--by model|repo|day] [--max <n>]
   nova-tokens report  --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
-                      [--password-env <NAME>]
+                      [--user <name>] [--password-env <NAME>]
   nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
-                      [--password-env <NAME>]
+                      [--user <name>] [--password-env <NAME>]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
   nova-tokens sum     --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
   nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--max <n>]
@@ -1038,6 +1038,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	monthFlag := fs.String("month", "", "")
 	byFlag := fs.String("by", "model", "")
 	redisAddr := fs.String("redis", "", "")
+	redisUser := fs.String("user", "", "")
 	passwordEnv := fs.String("password-env", "", "")
 	var sf sourceFlags
 	sf.declare(fs, true)
@@ -1051,7 +1052,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		if *ledger != "" {
 			return (&refusals{token: "REPORT", list: []string{"--redis and --ledger are two sources for one report; name one"}}).print(stderr)
 		}
-		return cmdReportStore(*redisAddr, *passwordEnv, *monthFlag, *byFlag, *max, stdout, stderr)
+		return cmdReportStore(*redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stdout, stderr)
 	}
 	if *ledger != "" || *monthFlag != "" {
 		return cmdReportLedger(*ledger, *monthFlag, *byFlag, *max, stdout, stderr)

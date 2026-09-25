@@ -2767,15 +2767,19 @@ over those hashes -- every one of the five types apart, a dash where no row repo
 and equal to the folded day TSVs to the token. The day files stay the record.
 
 ```
-nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-tokens ledger --out ./days --month 2026-09 --redis <host:port> --password-env NOVA_REDIS_BENCH_PASSWORD
-nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-tokens report --redis <host:port> --month 2026-09 --by tuple --password-env NOVA_REDIS_BENCH_PASSWORD
+nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-tokens ledger --out ./days --month 2026-09 --redis <host:port> --user bench --password-env NOVA_REDIS_BENCH_PASSWORD
+nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-tokens report --redis <host:port> --month 2026-09 --by tuple --user bench --password-env NOVA_REDIS_BENCH_PASSWORD
 ```
 
 `tokens:ledger:<YYYY-MM-DD>` is a hash: each field is `["<card>","<model>","<repo>"]`, each
 value `{"provider","tokens","rough","sources"}` with `tokens` the five types in order and
 `null` for a type no source reported. Re-indexing a day replaces its hash in one MULTI/EXEC;
-a month reads its calendar days' keys in one pipelined round trip. The password is never a
-flag, and no variable is read unless `--password-env` names it.
+a month reads its calendar days' keys in one pipelined round trip. The fleet Redis has its
+default user off, so both verbs dial as an ACL user (#3461), the same seat as nova-sprint:
+`--user <name>`, else `NOVA_SPRINT_REDIS_USER`. The password is never a flag: it is the
+variable `--password-env` names, else for a user `NOVA_SPRINT_REDIS_PASSWORD_ENV`'s, else
+`NOVA_REDIS_BENCH_PASSWORD`; a user whose variable is empty is refused before any dial. With
+no user, no variable is read unless `--password-env` names it.
 
 ## nova-play
 
