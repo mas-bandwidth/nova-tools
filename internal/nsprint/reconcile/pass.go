@@ -66,8 +66,14 @@ type PassResult struct {
 
 // Loop runs passes under one lease.
 type Loop struct {
-	Lease    *Lease
-	Duties   []Duty
+	Lease  *Lease
+	Duties []Duty
+	// Names are the duties' names in Duties order, for the duties a pass
+	// did not start (#3805); a missing name is "duty <i>".
+	Names []string
+	// Margin is the lease time a duty must have left to start
+	// (Lease.WriteMargin when zero, #3805).
+	Margin   time.Duration
 	Interval time.Duration // DefaultInterval when zero; must be below the lease TTL
 	Passes   int           // stop after this many recorded passes; 0 runs until ctx ends
 	// AfterPass, when set, is called after every recorded pass.
@@ -82,7 +88,10 @@ type Loop struct {
 // and counts to proc:reconciler in one fenced call that also renews the lease.
 // A duty error that is not a fence is recorded and does not stop the loop. A
 // lease fenced while a duty ran (the heartbeat, #3737) stops the pass after
-// that duty.
+// that duty. No duty starts with less than Margin of the lease left (#3805):
+// below it the pass renews first (as the deal pass does, #3706), and if the
+// renewal did not land it records the duties it did not start in err
+// (LEASE-MARGIN) and writes its record inside the lease.
 //
 // The pass is timed on the lease clock (#3322), the clock its bench sessions
 // are bounded by, so took_ms and the session bound are one measurement: a
@@ -96,6 +105,21 @@ func (lp *Loop) Pass(ctx context.Context) (PassResult, error) {
 	var res PassResult
 	var errs []string
 	for i, duty := range lp.Duties {
+		if lp.Lease.Remaining() < lp.Lease.WriteMargin(lp.Margin) {
+			if err := lp.Lease.Renew(ctx); errors.Is(err, ErrFenced) {
+				return PassResult{}, err
+			}
+		}
+		if err := lp.Lease.Bounded(lp.Margin); errors.Is(err, ErrFenced) {
+			return PassResult{}, err
+		} else if err != nil {
+			left := make([]string, 0, len(lp.Duties)-i)
+			for j := i; j < len(lp.Duties); j++ {
+				left = append(left, lp.name(j))
+			}
+			errs = append(errs, fmt.Sprintf("duties not started %s: %v", strings.Join(left, ","), err))
+			break
+		}
 		c, err := duty(ctx, lp.Lease)
 		if errors.Is(err, ErrFenced) {
 			// A duty's own fenced write was refused: the lease is lost for
@@ -130,6 +154,13 @@ func (lp *Loop) Pass(ctx context.Context) (PassResult, error) {
 		return PassResult{}, fmt.Errorf("reconcile pass: pass_at %q: %w", reply[1], err)
 	}
 	return res, nil
+}
+
+func (lp *Loop) name(i int) string {
+	if i < len(lp.Names) && lp.Names[i] != "" {
+		return lp.Names[i]
+	}
+	return fmt.Sprintf("duty %d", i)
 }
 
 // Run passes every Interval until ctx ends (nil), the lease is fenced
