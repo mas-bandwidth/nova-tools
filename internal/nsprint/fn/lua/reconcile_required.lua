@@ -43,7 +43,8 @@ local function rr_receipt(S, kind, id, from, to, attempt, token_sha, actor, reas
 end
 
 -- Every card state write here is NS.card (02_card_move.lua): the reclaim
--- moves are working -> working, a requeue is working -> ready.
+-- moves are working -> working, a requeue is working -> ready, a timeout is
+-- working -> done/fail.
 local CARD = NS.card
 
 -- Requeue under a new attempt: the old token is fenced (cleared), the
@@ -158,6 +159,56 @@ redis.register_function('ns_card_required', function(keys, args)
     identity .. ' ' .. evidence)
   redis.call('HSET', 's:' .. S .. ':idem', idem, r)
   return rr_reply(0, 'ORPHAN', attempt, r)
+end)
+
+-- ns_card_required_timeout: age out a reconcile-required card that no
+-- evidence resolved (nova-tools #3803: probe-nova-card-570c7852 sat 12 h in
+-- reconcile-required on a bench that gave none). Past max_ms since
+-- required_at (Redis TIME) the card ends through the one move, working ->
+-- done/fail, state ended, outcome FAILED, reason reconcile-timeout, with a
+-- why naming the window; it is never requeued (the child may have left an
+-- effect) and never enters the bench's ended set (there is nothing to
+-- harvest). A card with no required_at gets one stamped now (NOTHING): its
+-- window runs from its first sighting, never from an absent time.
+-- args: sprint, label, reconciler token, max_ms
+redis.register_function('ns_card_required_timeout', function(keys, args)
+  local S, label, rtoken = args[1], args[2] or '', args[3] or ''
+  local max_ms = tonumber(args[4] or '')
+  if rr_fenced(rtoken) then return rr_reply(3, 'FENCED', '', '') end
+  if label == '' or not max_ms or max_ms <= 0 then return rr_reply(1, 'USAGE', '', '') end
+  local card = 's:' .. S .. ':card:' .. label
+  local state = rr_get(card, 'state')
+  if state == '' then return rr_reply(5, 'NOTFOUND', '', '') end
+  local attempt = rr_get(card, 'attempt')
+  local identity = rr_get(card, 'identity')
+  local idem = 'required:' .. identity .. ':timeout'
+  local prev = rr_get('s:' .. S .. ':idem', idem)
+  if prev ~= '' then return rr_reply(0, 'OK', attempt, prev) end
+  if state ~= 'reconcile-required' then return rr_reply(2, 'STATE', attempt, '') end
+  local now = rr_now()
+  local since = tonumber(rr_get(card, 'required_at'))
+  if not since then
+    redis.call('HSET', card, 'required_at', tostring(now))
+    return rr_reply(0, 'NOTHING', attempt, '')
+  end
+  if now - since < max_ms then return rr_reply(0, 'NOTHING', attempt, '') end
+  local bench = rr_get(card, 'bench')
+  local why = 'reconcile-required ' .. tostring(math.floor((now - since) / 1000)) .. ' s (since '
+    .. tostring(since) .. ') past max_required_s ' .. tostring(math.floor(max_ms / 1000))
+    .. ' with no evidence from bench ' .. bench .. '; ended, not requeued'
+  if CARD.move(card, 'done', { state = 'ended', ok = 'fail', by = 'reconciler', why = 'reconcile-timeout',
+      fields = { 'token', '', 'outcome', 'FAILED', 'reason', 'reconcile-timeout', 'why', why,
+        'why_at', tostring(now), 'ended_at', tostring(now) } }) then
+    return rr_reply(2, 'STATE', attempt, '')
+  end
+  local member = S .. '/' .. label .. '/' .. attempt
+  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
+  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
+  local r = rr_receipt(S, 'card', label, 'reconcile-required', 'ended', attempt,
+    rr_get(card, 'token_sha'), 'reconciler', 'reconcile-timeout', why, idem, now)
+  redis.call('HSET', card, 'end_receipt', r)
+  redis.call('HSET', 's:' .. S .. ':idem', idem, r)
+  return rr_reply(0, 'TIMEOUT', attempt, r)
 end)
 
 -- The pending index: every pending:* idem key, scored by its begin time
