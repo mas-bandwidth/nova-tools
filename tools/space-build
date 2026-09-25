@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# space-build: space publishes the declared nova build for every bench platform, so the fleet tools role
+# (fleet/tools.yml, rowan-tools #316) can converge the Macs as well as the Linux benches. One verb, run from the
+# coordinator; the work happens on space over one ssh.
+#
+#   space-build [--dry-run] [--host <space>] [--version <v>] [--commit <sha40>] [--platform <p>[,<p>...]]
+#               [--repo-url <url>]
+#   space-build --print-version
+#
+#   --version   default: nova_build in fleet/group_vars/all.yml (the declared build). Shape v<x>.<y>.<z>-dev.<sha8>.
+#   --commit    default: the full sha of <sha8>, resolved in $NOVA_TOOLS_MIRROR (~/nova-bench/mirror/nova-tools.git);
+#               it must start with the version's <sha8>.
+#   --platform  default: linux-amd64,darwin-arm64,darwin-amd64 (every bench platform in the fleet today: the Linux
+#               benches, the Studio, and the Intel iMac Pros superman and batman).
+#   --repo-url  default: https://github.com/mas-bandwidth/nova-tools.git (from GitHub, never from the house).
+#
+# On space, in order; any failure publishes nothing:
+#  1. a platform whose ~/nova-bench/release/<v>/<p>/SHA256SUMS already verifies is OK and not rebuilt;
+#  2. --dry-run stops here with one WOULD line per platform still to build;
+#  3. ~/nova-bench/space-build/src/nova-tools fetches the commit and the v* tags FROM GITHUB (the space mirror is
+#     only an object alternate, so the fetch is quick and the history is whole: the module pseudo-version in the
+#     binaries comes from the nearest tag, and a shallow checkout would stamp a different one) and checks it out;
+#  4. the Go toolchain is the one the build already on space (~/nova-bench/build/<v>/) was made with, read from
+#     that binary (`go version <file>`), passed as GOTOOLCHAIN;
+#  5. every cmd/nova-* is compiled for every platform into ~/nova-bench/space-build/out/<v>/<p>/ with the recipe
+#     the build on space was made with (CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=<v>"), and a
+#     SHA256SUMS is written per platform;
+#  6. every file is checked for its platform's binary header (ELF x86-64 / aarch64, Mach-O arm64 / x86-64): the
+#     2026-09-23 build labelled darwin-arm64 that was not is the case this refuses;
+#  7. THE IDENTICAL-DIGEST RULE: the linux-amd64 build must have the same file names and the same sha256, file for
+#     file, as the build already on space; otherwise the checkout or toolchain is not the declared build and nothing
+#     is published;
+#  8. each platform directory is renamed into ~/nova-bench/release/<v>/<p>/ (never over an existing one) and its
+#     SHA256SUMS verified there; the emptied out/<v> directory is removed with rmdir (this verb has no rm).
+#
+# Lines: OK <p> | WOULD <p> | IDENTICAL linux-amd64 files=<n> | PUBLISHED <p> files=<n> sums=<sha256 of SHA256SUMS>
+# | SPACE BUILD OK <v> commit=<sha> platforms=<list>, or SPACE BUILD REFUSED: <why>.
+# Exit 0 done, 1 a refusal or a failed step, 2 usage.
+set -uo pipefail
+
+usage() { sed -n '6,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+bad() { printf 'SPACE BUILD REFUSED: %s\n' "$*" >&2; exit 2; }
+
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+declared_version() { sed -n 's/^nova_build: "\(.*\)"$/\1/p' "$HERE/fleet/group_vars/all.yml" | head -1; }
+
+HOST=space VERSION='' COMMIT='' PLATFORMS=linux-amd64,darwin-arm64,darwin-amd64 DRY=0
+URL=https://github.com/mas-bandwidth/nova-tools.git
+MIRROR=${NOVA_TOOLS_MIRROR:-$HOME/nova-bench/mirror/nova-tools.git}
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--dry-run) DRY=1; shift ;;
+		--host) HOST=${2:-}; shift 2 || usage ;;
+		--version) VERSION=${2:-}; shift 2 || usage ;;
+		--commit) COMMIT=${2:-}; shift 2 || usage ;;
+		--platform) PLATFORMS=${2:-}; shift 2 || usage ;;
+		--repo-url) URL=${2:-}; shift 2 || usage ;;
+		--print-version) declared_version; exit 0 ;;
+		-h|--help) usage ;;
+		*) usage ;;
+	esac
+done
+
+[ -n "$VERSION" ] || VERSION=$(declared_version)
+[[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-dev\.([0-9a-f]{8})$ ]] || bad "version '$VERSION' is not v<x>.<y>.<z>-dev.<sha8>"
+SHA8=${BASH_REMATCH[1]}
+if [ -z "$COMMIT" ]; then
+	COMMIT=$(git -C "$MIRROR" rev-parse --verify --quiet "$SHA8^{commit}" 2>/dev/null) ||
+		bad "cannot resolve $SHA8 in $MIRROR (remedy: --commit <full sha>, or refresh the mirror)"
+fi
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || bad "commit '$COMMIT' is not a full 40-hex sha"
+[ "${COMMIT:0:8}" = "$SHA8" ] || bad "commit $COMMIT is not the version's sha $SHA8"
+[[ "$HOST" =~ ^[A-Za-z0-9._-]+$ ]] || bad "host '$HOST'"
+[[ "$URL" =~ ^[A-Za-z0-9._:/@+-]+$ ]] || bad "repo url '$URL'"
+IFS=, read -r -a PLATS <<< "$PLATFORMS"
+[ "${#PLATS[@]}" -gt 0 ] || bad "no platform"
+for p in "${PLATS[@]}"; do
+	case "$p" in linux-amd64|linux-arm64|darwin-arm64|darwin-amd64) ;; *) bad "platform '$p' (linux-amd64, linux-arm64, darwin-arm64, darwin-amd64)" ;; esac
+done
+
+# the remote half: bash -s on space, the validated values as positional arguments
+ssh -o BatchMode=yes -o ConnectTimeout=15 "$HOST" bash -s -- "$VERSION" "$COMMIT" "$PLATFORMS" "$URL" "$DRY" <<'REMOTE'
+set -uo pipefail
+V=$1 COMMIT=$2 PLATFORMS=$3 URL=$4 DRY=$5
+say() { printf '%s\n' "$*"; }
+refuse() { printf 'SPACE BUILD REFUSED: %s\n' "$*"; exit 1; }
+case "${HOME:-}" in /?*/?*) ;; *) refuse "bad HOME '${HOME:-}' on $(hostname)" ;; esac
+BENCH=$HOME/nova-bench
+WORK=$BENCH/space-build
+PUB=$BENCH/release/$V
+REF=$BENCH/build/$V
+MIRROR=$BENCH/mirror/nova-tools.git
+sum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum -- "$1" | awk '{print $1}'; else shasum -a 256 -- "$1" | awk '{print $1}'; fi; }
+verify_dir() { (cd "$1" && [ -f SHA256SUMS ] && { if command -v sha256sum >/dev/null 2>&1; then sha256sum -c --quiet SHA256SUMS; else shasum -a 256 -c --quiet SHA256SUMS; fi; }) >/dev/null 2>&1; }
+IFS=, read -r -a PLATS <<< "$PLATFORMS"
+
+# 1-2. what is already published, and what is still to build
+todo=()
+for p in "${PLATS[@]}"; do
+	if [ -e "$PUB/$p" ]; then
+		verify_dir "$PUB/$p" || refuse "$PUB/$p already holds files that do not verify against their SHA256SUMS (never overwritten; remedy: move it aside by hand and rerun)"
+		say "OK $p $PUB/$p sums=$(sum "$PUB/$p/SHA256SUMS")"
+	else
+		todo+=("$p")
+	fi
+done
+if [ "${#todo[@]}" -eq 0 ]; then say "SPACE BUILD OK $V commit=$COMMIT platforms=$PLATFORMS built=none"; exit 0; fi
+if [ "$DRY" = 1 ]; then
+	for p in "${todo[@]}"; do say "WOULD $p build $V at $COMMIT from $URL into $PUB/$p"; done
+	exit 0
+fi
+[ -d "$REF" ] || refuse "no build of $V on space at $REF to hold the linux-amd64 digest to (the identical-digest rule has no reference)"
+command -v go >/dev/null 2>&1 || refuse "no go on PATH on $(hostname)"
+
+# 3. the declared commit from GitHub, whole history (objects borrowed from the mirror)
+SRC=$WORK/src/nova-tools
+mkdir -p "$WORK/src" || refuse "cannot make $WORK/src"
+[ -d "$SRC/.git" ] || git init -q "$SRC" || refuse "git init $SRC"
+[ ! -f "$SRC/.git/shallow" ] || refuse "$SRC is a shallow repository (the pseudo-version needs whole history)"
+if [ -d "$MIRROR/objects" ] && [ ! -f "$MIRROR/shallow" ]; then
+	printf '%s\n' "$MIRROR/objects" > "$SRC/.git/objects/info/alternates"
+fi
+git -C "$SRC" fetch -q --no-tags "$URL" "$COMMIT" '+refs/tags/v*:refs/tags/v*' || refuse "fetch $COMMIT from $URL"
+git -C "$SRC" -c advice.detachedHead=false checkout -q --force --detach "$COMMIT" || refuse "checkout $COMMIT"
+[ "$(git -C "$SRC" rev-parse HEAD)" = "$COMMIT" ] || refuse "checkout is not $COMMIT"
+[ -z "$(git -C "$SRC" status --porcelain)" ] || refuse "$SRC is not clean at $COMMIT"
+
+# 4. the toolchain the build on space was made with
+tc=
+for f in "$REF"/nova-*; do [ -f "$f" ] && { tc=$(go version -- "$f" 2>/dev/null | awk '{print $2}'); break; }; done
+if [ -n "$tc" ]; then
+	[[ "$tc" =~ ^go[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || refuse "toolchain '$tc' read from $REF"
+	export GOTOOLCHAIN=$tc
+fi
+
+# 5. build every platform still to build: every cmd/nova-* with the recipe the build on space was made with
+#    (CGO off, -trimpath, the version stamp; measured 2026-09-24: this reproduces ~/nova-bench/build/<v> byte for
+#    byte, where nova-update release build's -s -w does not)
+OUT=$WORK/out
+[ ! -e "$OUT/$V" ] || refuse "$OUT/$V is left from an earlier run (remedy: move it aside by hand and rerun)"
+todo_csv=$(IFS=,; printf '%s' "${todo[*]}")
+log=$WORK/build-$V.log
+: > "$log" 2>/dev/null || { mkdir -p "$WORK" && : > "$log"; } || refuse "cannot write $log"
+tools=()
+for c in "$SRC"/cmd/nova-*/; do [ -d "$c" ] && tools+=("$(basename "$c")"); done
+[ "${#tools[@]}" -gt 0 ] || refuse "no cmd/nova-* in $SRC at $COMMIT"
+for p in "${todo[@]}"; do
+	d=$OUT/$V/$p
+	mkdir -p "$d" || refuse "cannot make $d"
+	for t in "${tools[@]}"; do
+		(cd "$SRC" && env -u GOFLAGS CGO_ENABLED=0 GOOS="${p%-*}" GOARCH="${p#*-}" \
+			go build -trimpath -ldflags "-X main.version=$V" -o "$d/$t" "./cmd/$t") >> "$log" 2>&1 ||
+			{ tail -5 "$log"; refuse "go build $t for $p failed (log $log; output left in $OUT/$V)"; }
+	done
+	(cd "$d" && for f in nova-*; do printf '%s  %s\n' "$(sum "$f")" "$f"; done > SHA256SUMS) || refuse "SHA256SUMS for $p"
+done
+say "BUILT $V platforms=$todo_csv tools=${#tools[@]} toolchain=${tc:-default} log=$log"
+
+# 6. every file carries its platform's binary header
+header_ok() { # <platform> <file>
+	local h; h=$(od -An -tx1 -N20 -- "$2" 2>/dev/null | tr -d ' \n')
+	case "$1" in
+		linux-amd64) [ "${h:0:8}" = 7f454c46 ] && [ "${h:36:4}" = 3e00 ] ;;
+		linux-arm64) [ "${h:0:8}" = 7f454c46 ] && [ "${h:36:4}" = b700 ] ;;
+		darwin-arm64) [ "${h:0:16}" = cffaedfe0c000001 ] ;;
+		darwin-amd64) [ "${h:0:16}" = cffaedfe07000001 ] ;;
+		*) return 1 ;;
+	esac
+}
+want_header() { case "$1" in linux-amd64) echo "an ELF x86-64";; linux-arm64) echo "an ELF aarch64";; darwin-arm64) echo "a Mach-O arm64";; darwin-amd64) echo "a Mach-O x86-64";; esac; }
+for p in "${todo[@]}"; do
+	d=$OUT/$V/$p; n=0
+	[ -d "$d" ] || refuse "the build wrote no $d"
+	verify_dir "$d" || refuse "$d does not verify against its own SHA256SUMS"
+	for f in "$d"/nova-*; do
+		[ -f "$f" ] || continue
+		header_ok "$p" "$f" || refuse "$p file ${f##*/} is not $(want_header "$p") binary (built output left in $OUT/$V)"
+		n=$((n + 1))
+	done
+	[ "$n" -gt 0 ] || refuse "$d holds no nova-* file"
+done
+
+# 7. the identical-digest rule, on the linux-amd64 build
+if [ -d "$OUT/$V/linux-amd64" ]; then
+	ref_names=$(cd "$REF" && for f in nova-*; do [ -f "$f" ] && echo "$f"; done)
+	new_names=$(cd "$OUT/$V/linux-amd64" && for f in nova-*; do [ -f "$f" ] && echo "$f"; done)
+	[ "$ref_names" = "$new_names" ] || refuse "linux-amd64 file names are not identical to $REF (built: $(printf '%s ' $new_names); on space: $(printf '%s ' $ref_names))"
+	n=0
+	for f in $new_names; do
+		[ "$(sum "$OUT/$V/linux-amd64/$f")" = "$(sum "$REF/$f")" ] || refuse "linux-amd64 $f is not identical to $REF/$f (sha256 differs: not the declared build; output left in $OUT/$V)"
+		n=$((n + 1))
+	done
+	say "IDENTICAL linux-amd64 files=$n reference=$REF"
+else
+	# linux-amd64 was not rebuilt: it is already published, and it was held to the reference when it was
+	[ -d "$PUB/linux-amd64" ] || refuse "no linux-amd64 build in this run or in $PUB to hold the digest rule to (remedy: include linux-amd64 in --platform)"
+	say "IDENTICAL linux-amd64 published-earlier=$PUB/linux-amd64"
+fi
+
+# 8. publish: one rename per platform, never over an existing directory
+mkdir -p "$PUB" || refuse "cannot make $PUB"
+for p in "${todo[@]}"; do
+	[ ! -e "$PUB/$p" ] || refuse "$PUB/$p appeared during the build (not overwritten)"
+	mv -- "$OUT/$V/$p" "$PUB/$p" || refuse "rename into $PUB/$p"
+	verify_dir "$PUB/$p" || refuse "$PUB/$p does not verify after the rename"
+	n=0; for f in "$PUB/$p"/nova-*; do [ -f "$f" ] && n=$((n + 1)); done
+	say "PUBLISHED $p files=$n sums=$(sum "$PUB/$p/SHA256SUMS") dir=$PUB/$p"
+done
+rmdir -- "$OUT/$V" 2>/dev/null || true
+say "SPACE BUILD OK $V commit=$COMMIT platforms=$PLATFORMS built=$todo_csv"
+REMOTE
+rc=$?
+[ "$rc" -eq 255 ] && { echo "SPACE BUILD REFUSED: ssh $HOST failed" >&2; exit 1; }
+exit "$rc"
