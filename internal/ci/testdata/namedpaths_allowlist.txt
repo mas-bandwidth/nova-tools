@@ -67,7 +67,6 @@ docs/bus internal/bus/git.go's failure narrative: a bus directory pointed inside
 docs/bus/from-bo/x.md the path that same narrative says git reports from the repository root
 docs/history SPEC.md's `--allow docs/history` example for subdirectory enumeration
 internal/decide/entry.go internal/swarm/lintbase.go's class-9 story: the PATHS entry card-nx-f19 named that did not exist at its base
-internal/secrets/recovery_key_test.go internal/pulse/harveststale.go's #2547 story: the file a card was refused on 2026-09-22 as undeclared, never written
 internal/secretsanta/ SPEC-RELEASE.md's example of what prefix matching on `internal/secrets` would also catch
 internal/swarm/pull SPEC-WORKLANG's example test subject `test:internal/swarm/pull@HEAD`: the pull subverb as a package, pinned to a revision not a path
 
@@ -116,3 +115,17 @@ cmd/nova-pulse/testdata/card-contract-2608/ deleted by #3801 (card cut in nova-s
 cmd/nova-pulse/testdata/templates deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 cmd/nova-pulse/testdata deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 cmd/nova-pulse/testdata/templates/fix.md deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
+internal/pulse deleted by #3835; the line naming it is history
+internal/pulse/cut.go deleted by #3835; the line naming it is history
+internal/pulse/cut_template.go deleted by #3835; the line naming it is history
+internal/pulse/cut_test.go deleted by #3835; the line naming it is history
+internal/pulse/cutkind.go deleted by #3835; the line naming it is history
+internal/pulse/gate.go deleted by #3835; the line naming it is history
+internal/pulse/harvest.go deleted by #3835; the line naming it is history
+internal/pulse/harvest_working.go deleted by #3835; the line naming it is history
+internal/pulse/harvestbench.go deleted by #3835; the line naming it is history
+internal/pulse/harveststale.go deleted by #3835; the line naming it is history
+internal/pulse/harveststale_test.go deleted by #3835; the line naming it is history
+internal/pulse/manager.go deleted by #3835; the line naming it is history
+internal/pulse/recut.go deleted by #3835; the line naming it is history
+internal/pulse/statushtmlrows.go deleted by #3835; the line naming it is history

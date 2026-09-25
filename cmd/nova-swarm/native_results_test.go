@@ -9,15 +9,12 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
 // TestControlCardResultsSurviveSweep is issue #2632. A control card's RESULT.md,
 // usage.tsv and report are published under
 // <results-root>/<label>/<runID>/<attempt>/, which is not the job directory.
-// --sweep-now leaves that directory intact and the job directory gone. nova-pulse
-// status reads the spend from the results root, not from the job that was deleted.
+// --sweep-now leaves that directory intact and the job directory gone.
 func TestControlCardResultsSurviveSweep(t *testing.T) {
 	windowsIsNotABench(t)
 	t.Run("sweep-now", func(t *testing.T) {
@@ -79,26 +76,6 @@ func controlCardSurvivesSweep(t *testing.T, sweepNow bool) {
 	}
 	if !strings.Contains(string(usage), label) {
 		t.Fatalf("usage.tsv does not name the card:\n%s", usage)
-	}
-
-	bench := filepath.Join(root, "width-only")
-	if err := os.MkdirAll(bench, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	var sout, serr bytes.Buffer
-	code := pulse.Status(pulse.StatusInput{
-		Queue:       t.TempDir(),
-		Roots:       bench,
-		ResultsRoot: resultsRoot,
-		Stdout:      &sout,
-		Stderr:      &serr,
-		Now:         func() time.Time { return time.Now().UTC() },
-	})
-	if code != 0 {
-		t.Fatalf("nova-pulse status exits 0, got %d\n%s%s", code, sout.String(), serr.String())
-	}
-	if !strings.Contains(sout.String(), "STATUS RATE ") || strings.Contains(sout.String(), "usd_per_card=-") {
-		t.Fatalf("status did not read the results root (the bench root has no usage):\n%s%s", sout.String(), serr.String())
 	}
 }
 

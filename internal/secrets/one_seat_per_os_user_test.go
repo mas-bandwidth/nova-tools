@@ -61,7 +61,7 @@ func oneSeatBenchHome(t *testing.T, seatFiles ...string) (home, bin string) {
 	localBin := filepath.Join(home, ".local", "bin")
 	for _, name := range []string{
 		"nova-board", "nova-bus", "nova-check", "nova-fuse",
-		"nova-memory", "nova-merge", "nova-pulse", "nova-review",
+		"nova-memory", "nova-merge", "nova-review",
 		"nova-sandbox", "nova-secrets", "nova-self-talk", "nova-swarm",
 		"nova-tokens", "nova-update", "nova-version", "nova-wake",
 	} {

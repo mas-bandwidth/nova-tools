@@ -193,3 +193,17 @@ func dialRedis(ctx context.Context, d Dial) (Store, error) { return Open(ctx, d)
 
 // osGetenv is the shipped environment, named so the default is visible beside the seam.
 var osGetenv = func(name string) string { return os.Getenv(name) }
+
+func streamOr(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return Stream
+	}
+	return s
+}
+
+func timeoutOr(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 10 * time.Second
+	}
+	return d
+}

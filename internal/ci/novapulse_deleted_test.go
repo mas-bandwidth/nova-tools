@@ -19,9 +19,9 @@ var novaPulseRun = regexp.MustCompile(`(Command(Context)?\(|\.String\()[^\n]*"no
 // script installs or checks it, and docs/CLI.md's section says where its verbs went.
 func TestTheNovaPulseCommandIsDeleted(t *testing.T) {
 	root := repoRoot(t)
-	for _, gone := range []string{"cmd/nova-pulse", "tools/nova-pulse-run.sh"} {
+	for _, gone := range []string{"cmd/nova-pulse", "internal/pulse", "tools/nova-pulse-run.sh"} {
 		if _, err := os.Stat(filepath.Join(root, gone)); err == nil {
-			t.Errorf("%s still exists; nova-pulse is deleted (#3801)", gone)
+			t.Errorf("%s still exists; nova-pulse is deleted (#3801, #3835)", gone)
 		}
 	}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -31,7 +31,7 @@ func TestTheNovaPulseCommandIsDeleted(t *testing.T) {
 		rel, _ := filepath.Rel(root, path)
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if rel == ".git" || rel == "internal/pulse" || strings.HasSuffix(rel, "/testdata") || rel == "testdata" {
+			if rel == ".git" || strings.HasSuffix(rel, "/testdata") || rel == "testdata" {
 				return filepath.SkipDir
 			}
 			return nil

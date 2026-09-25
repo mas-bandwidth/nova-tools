@@ -46,11 +46,6 @@ type allowlistEntry struct {
 // less the two part=B entries, which part B deleted, leaving 21.
 var specAllowlist = []allowlistEntry{
 	// Card header (SPEC-CARD)
-	{file: "internal/pulse/cut_template.go", fn: "ValidateCardV2", record: "SPEC-CARD"},
-	{file: "internal/pulse/cut_template.go", fn: "ApplyDependsOn", record: "SPEC-CARD"},
-	{file: "internal/pulse/harvest.go", fn: "isV2CardContent", record: "SPEC-CARD"},
-	{file: "internal/pulse/manager.go", fn: "attemptOf", record: "SPEC-CARD"},
-	{file: "internal/pulse/harvestguard.go", fn: "cardRepo", record: "SPEC-CARD"},
 	{file: "internal/swarm/lintheader.go", fn: "cardKeyCheck", record: "SPEC-CARD"},
 	{file: "internal/swarm/lintheader.go", fn: "cardTypedKeys", record: "SPEC-CARD"},
 	{file: "internal/nsprint/card/lint.go", fn: "requiredKeys", record: "SPEC-CARD"},
@@ -106,6 +101,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "task done status DONE, the ns task-done function's reply word, not a RESULT field"},
 	{file: "internal/nsprint/land/eval_records.go", fn: "ParseInboundObjection", record: "objection", since: "362dde93",
 		reason: "first word of an inbound comment/review or PR body (HOLD, BLOCKED), the lander's B2 objection record (#3139), not RESULT line 2"},
+	{file: "internal/swarm/stage.go", fn: "ReadCardBase", record: "SPEC-CARD", since: "5778de35",
+		reason: "the card's REPO header line for native repo staging (#3711), not a RESULT field"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
@@ -679,8 +676,8 @@ func TestOneTypedParser(t *testing.T) {
 				partB++
 			}
 		}
-		if len(specAllowlist) != 18 || partB != 0 {
-			t.Errorf("spec allowlist: %d entries, %d part=B; want 18 and 0", len(specAllowlist), partB)
+		if len(specAllowlist) != 13 || partB != 0 {
+			t.Errorf("spec allowlist: %d entries, %d part=B; want 13 and 0", len(specAllowlist), partB)
 		}
 		// Every drift entry names the commit that added it and why it stays.
 		for _, a := range driftAllowlist {

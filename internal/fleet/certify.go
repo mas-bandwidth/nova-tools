@@ -758,7 +758,7 @@ func (in CertifyInput) event(c Certificate) {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	l := log.New(Clock(clock), log.ProcessGUID, "nova-pulse")
+	l := log.New(Clock(clock), log.ProcessGUID, "fleet")
 	l.Verb = "certify"
 	l.Event = "certify"
 	l.Bench = c.Machine
