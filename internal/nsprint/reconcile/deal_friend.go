@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -54,6 +55,10 @@ type FriendDeal struct {
 	Actor string
 	// Out receives the DEAL receipt lines; nil discards them.
 	Out io.Writer
+
+	// The names the last pass read (#3831): the next pass queues its reads
+	// of these in its first round, so an unchanged store is one round trip.
+	streams, friends, benches, ready []string
 }
 
 // FriendDealResult is what one pass moved.
@@ -98,13 +103,67 @@ type dealFriend struct {
 	open int
 }
 
-// Pass reads, plans and moves: three pipelined reads, then one call per
-// friend dealt and at most one return call.
+// friendCmds is one friend's reads.
+type friendCmds struct {
+	at, desired *redis.StringCmd
+	slots       *redis.StringCmd
+	down        *redis.IntCmd
+	working     *redis.IntCmd
+}
+
+// dealSets is round 2's reads: every ready set, every friend's beat and
+// slots, every bench's state and role.
+type dealSets struct {
+	ready        []*redis.StringSliceCmd
+	fc           []friendCmds
+	bstate, role []*redis.StringCmd
+}
+
+func queueDealSets(ctx context.Context, p redis.Pipeliner, streams, fs, bs []string) dealSets {
+	var d dealSets
+	d.ready = make([]*redis.StringSliceCmd, len(streams))
+	for i, s := range streams {
+		d.ready[i] = p.ZRange(ctx, "ws:"+s+":ready", 0, -1)
+	}
+	d.fc = make([]friendCmds, len(fs))
+	for i, f := range fs {
+		d.fc[i] = friendCmds{
+			at:      p.HGet(ctx, "friend:"+f, "at"),
+			slots:   p.Get(ctx, "friend:"+f+":slots"),
+			desired: p.HGet(ctx, "friend:"+f+":desired", "slots"),
+			down:    p.Exists(ctx, "friend:"+f+":down"),
+			working: p.ZCard(ctx, "friend:"+f+":cards:working"),
+		}
+	}
+	d.bstate = make([]*redis.StringCmd, len(bs))
+	d.role = make([]*redis.StringCmd, len(bs))
+	for i, b := range bs {
+		d.bstate[i] = p.HGet(ctx, "bench:"+b+":state", "state")
+		d.role[i] = p.HGet(ctx, benchrole.Key(b), benchrole.Field)
+	}
+	return d
+}
+
+func queueCardFields(ctx context.Context, p redis.Pipeliner, ids []string) []*redis.SliceCmd {
+	fields := make([]*redis.SliceCmd, len(ids))
+	for i, id := range ids {
+		fields[i] = p.HMGet(ctx, "task:"+id, "who", "kind", "owner", "author")
+	}
+	return fields
+}
+
+// Pass reads, plans and moves. The reads are three dependent rounds (the
+// indexes; the sets, friends and benches they name; the ready cards'
+// fields), sent as ONE pipeline over the names the last pass read (#3831):
+// a round whose names changed is read again, one more round trip each. The
+// moves are one pipeline: one ns_deal_friend call per friend dealt and at
+// most one ns_deal_return call.
 func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, error) {
 	res := FriendDealResult{Took: map[string][]string{}}
 	c := d.Client
 
-	// Round 1: the clock, the streams in order, the consumers, the policy.
+	// Round 1: the clock, the streams in order, the consumers, the policy;
+	// rounds 2 and 3 over the last pass's names, in the same pipeline.
 	p1 := c.Pipeline()
 	clock := p1.Time(ctx)
 	order := p1.ZRange(ctx, "ws:order", 0, -1)
@@ -113,6 +172,8 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 	readers := p1.SMembers(ctx, "readers")
 	benches := p1.SMembers(ctx, "benches")
 	kinds := p1.HGetAll(ctx, "cfg:deal:kind")
+	sets := queueDealSets(ctx, p1, d.streams, d.friends, d.benches)
+	fields := queueCardFields(ctx, p1, d.ready)
 	if _, err := p1.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return res, fmt.Errorf("deal: read: %w", err)
 	}
@@ -123,78 +184,64 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 	bs := benches.Val()
 	sort.Strings(bs)
 
-	// Round 2: every ready set, every friend's beat and slots, every bench's state.
-	p2 := c.Pipeline()
-	ready := make([]*redis.StringSliceCmd, len(streams))
-	for i, s := range streams {
-		ready[i] = p2.ZRange(ctx, "ws:"+s+":ready", 0, -1)
-	}
-	type friendCmds struct {
-		at, desired *redis.StringCmd
-		slots       *redis.StringCmd
-		down        *redis.IntCmd
-		working     *redis.IntCmd
-	}
-	fc := make([]friendCmds, len(fs))
-	for i, f := range fs {
-		fc[i] = friendCmds{
-			at:      p2.HGet(ctx, "friend:"+f, "at"),
-			slots:   p2.Get(ctx, "friend:"+f+":slots"),
-			desired: p2.HGet(ctx, "friend:"+f+":desired", "slots"),
-			down:    p2.Exists(ctx, "friend:"+f+":down"),
-			working: p2.ZCard(ctx, "friend:"+f+":cards:working"),
+	// Round 2 again when the names changed.
+	if !slices.Equal(streams, d.streams) || !slices.Equal(fs, d.friends) || !slices.Equal(bs, d.benches) {
+		p2 := c.Pipeline()
+		sets = queueDealSets(ctx, p2, streams, fs, bs)
+		if _, err := p2.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return res, fmt.Errorf("deal: read sets: %w", err)
 		}
-	}
-	bstate := make([]*redis.StringCmd, len(bs))
-	brole := make([]*redis.StringCmd, len(bs))
-	for i, b := range bs {
-		bstate[i] = p2.HGet(ctx, "bench:"+b+":state", "state")
-		brole[i] = p2.HGet(ctx, benchrole.Key(b), benchrole.Field)
-	}
-	if _, err := p2.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return res, fmt.Errorf("deal: read sets: %w", err)
+		d.streams, d.friends, d.benches = streams, fs, bs
 	}
 	live := map[string]bool{"swarm": true}
 	var open []*dealFriend
 	for i, f := range fs {
-		if fc[i].down.Val() > 0 || !beatLive(fc[i].at.Val(), now) {
+		fc := sets.fc[i]
+		if fc.down.Val() > 0 || !beatLive(fc.at.Val(), now) {
 			continue
 		}
 		live[f] = true
-		slots, err := strconv.Atoi(fc[i].slots.Val())
+		slots, err := strconv.Atoi(fc.slots.Val())
 		if err != nil {
-			if slots, err = strconv.Atoi(fc[i].desired.Val()); err != nil {
+			if slots, err = strconv.Atoi(fc.desired.Val()); err != nil {
 				continue
 			}
 		}
-		if n := slots - int(fc[i].working.Val()); n > 0 {
+		if n := slots - int(fc.working.Val()); n > 0 {
 			open = append(open, &dealFriend{name: f, open: n})
 		}
 	}
 	for i, b := range bs {
 		// #3634: a friends bench is no swarm consumer.
-		if bstate[i].Val() == "UP" && brole[i].Val() != benchrole.Friends {
+		if sets.bstate[i].Val() == "UP" && sets.role[i].Val() != benchrole.Friends {
 			live[b] = true
 		}
 	}
 
-	// Round 3: the fields the plan reads on every ready card.
+	// Round 3: the fields the plan reads on every ready card; again when
+	// the ready cards changed.
 	var cards []dealCard
+	var ids []string
 	for i, s := range streams {
-		for _, id := range ready[i].Val() {
+		for _, id := range sets.ready[i].Val() {
 			cards = append(cards, dealCard{id: id, stream: s})
+			ids = append(ids, id)
+		}
+	}
+	if !slices.Equal(ids, d.ready) {
+		d.ready = ids
+		if len(cards) == 0 {
+			return res, nil
+		}
+		p3 := c.Pipeline()
+		fields = queueCardFields(ctx, p3, ids)
+		if _, err := p3.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			d.ready = nil
+			return res, fmt.Errorf("deal: read cards: %w", err)
 		}
 	}
 	if len(cards) == 0 {
 		return res, nil
-	}
-	p3 := c.Pipeline()
-	fields := make([]*redis.SliceCmd, len(cards))
-	for i, k := range cards {
-		fields[i] = p3.HMGet(ctx, "task:"+k.id, "who", "kind", "owner", "author")
-	}
-	if _, err := p3.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return res, fmt.Errorf("deal: read cards: %w", err)
 	}
 	for i := range cards {
 		v := fields[i].Val()
@@ -249,14 +296,36 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 		}
 	}
 
-	// The moves: one call per friend, at most one return call.
-	var errs []string
-	for _, f := range sortedKeys(plan) {
+	// The moves, in one pipeline: one call per friend, at most one return
+	// call.
+	dealt := sortedKeys(plan)
+	if len(dealt) == 0 && len(back) == 0 {
+		return res, nil
+	}
+	pm := c.Pipeline()
+	calls := make([]*redis.Cmd, len(dealt))
+	for i, f := range dealt {
 		args := []any{token, f, d.actor(), "deal"}
 		for _, id := range plan[f] {
 			args = append(args, id)
 		}
-		reply, err := c.FCall(ctx, "ns_deal_friend", nil, args...).Slice()
+		calls[i] = pm.FCall(ctx, "ns_deal_friend", nil, args...)
+	}
+	var ret *redis.Cmd
+	if len(back) > 0 {
+		args := []any{token, d.actor(), NoConsumer}
+		for _, id := range back {
+			args = append(args, id)
+		}
+		ret = pm.FCall(ctx, "ns_deal_return", nil, args...)
+	}
+	// Each call's own error is read from its command below.
+	_, _ = pm.Exec(ctx)
+	// Dealt cards leave ready: the next pass reads their sets again.
+	d.ready = nil
+	var errs []string
+	for i, f := range dealt {
+		reply, err := calls[i].Slice()
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("ns_deal_friend %s: %v", f, err))
 			continue
@@ -283,12 +352,8 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 		}
 		res.Lines = append(res.Lines, line)
 	}
-	if len(back) > 0 {
-		args := []any{token, d.actor(), NoConsumer}
-		for _, id := range back {
-			args = append(args, id)
-		}
-		reply, err := c.FCall(ctx, "ns_deal_return", nil, args...).Slice()
+	if ret != nil {
+		reply, err := ret.Slice()
 		switch {
 		case err != nil:
 			errs = append(errs, fmt.Sprintf("ns_deal_return: %v", err))

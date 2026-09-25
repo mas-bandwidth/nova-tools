@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -57,6 +58,8 @@ type DoneAlready struct {
 	Every  time.Duration
 	// Git bounds each git call; zero is 10 s.
 	Git time.Duration
+
+	known []string // the sprint index as the last pass read it
 }
 
 // DoneAlreadyOutcome is one card's result in one pass.
@@ -118,20 +121,15 @@ type doneAlreadyCard struct {
 
 // Pass runs the leg over every open sprint with the fence token.
 func (d *DoneAlready) Pass(ctx context.Context, token string) ([]DoneAlreadyOutcome, error) {
-	sprints, err := openSprints(ctx, d.Client)
+	queues, err := d.queued(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("done-already: %w", err)
 	}
 	var out []DoneAlreadyOutcome
 	var errs []string
-	for _, s := range sprints {
-		cards, err := d.queued(ctx, s)
-		if err != nil {
-			errs = append(errs, err.Error())
-			continue
-		}
-		for _, c := range cards {
-			o, err := d.one(ctx, token, s, c)
+	for _, q := range queues {
+		for _, c := range q.cards {
+			o, err := d.one(ctx, token, q.sprint, c)
 			if errors.Is(err, ErrFenced) {
 				return out, err
 			}
@@ -148,27 +146,87 @@ func (d *DoneAlready) Pass(ctx context.Context, token string) ([]DoneAlreadyOutc
 	return out, nil
 }
 
-// queued reads the sprint's queue and each card's fields in two round trips.
-func (d *DoneAlready) queued(ctx context.Context, s string) ([]doneAlreadyCard, error) {
-	labels, err := d.Client.ZRange(ctx, DoneAlreadyKey(s), 0, doneAlreadyBatch-1).Result()
-	if err != nil || len(labels) == 0 {
-		return nil, err
+// doneAlreadyQueue is one open sprint's queued cards.
+type doneAlreadyQueue struct {
+	sprint string
+	cards  []doneAlreadyCard
+}
+
+// doneAlreadyRow is one sprint's status and queue head, read together.
+type doneAlreadyRow struct {
+	status *redis.StringCmd
+	queue  *redis.StringSliceCmd
+}
+
+// queued reads every open sprint's queue, in sprint name order, and each
+// queued card's fields. An idle pass is ONE round trip (#3831): the sprint
+// index and each sprint's status and queue, for the sprints the last pass
+// found in the index, in one pipeline; a sprint new to the index costs one
+// more round trip, once, and queued cards one more for their fields.
+func (d *DoneAlready) queued(ctx context.Context) ([]doneAlreadyQueue, error) {
+	rows := map[string]doneAlreadyRow{}
+	read := func(pipe redis.Pipeliner, names []string) {
+		for _, s := range names {
+			rows[s] = doneAlreadyRow{
+				status: pipe.HGet(ctx, "s:"+s, "status"),
+				queue:  pipe.ZRange(ctx, DoneAlreadyKey(s), 0, doneAlreadyBatch-1),
+			}
+		}
 	}
 	pipe := d.Client.Pipeline()
-	cmds := make([]*redis.SliceCmd, len(labels))
-	for i, l := range labels {
-		cmds[i] = pipe.HMGet(ctx, "s:"+s+":card:"+l, "result_line2", "origin", "repo", "base", "bench")
+	members := pipe.SMembers(ctx, "sprints")
+	read(pipe, d.known)
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	names := members.Val()
+	sort.Strings(names)
+	var fresh []string
+	for _, s := range names {
+		if _, ok := rows[s]; !ok {
+			fresh = append(fresh, s)
+		}
+	}
+	if len(fresh) > 0 {
+		pipe := d.Client.Pipeline()
+		read(pipe, fresh)
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return nil, err
+		}
+	}
+	d.known = names
+	var queues []doneAlreadyQueue
+	var cmds [][]*redis.SliceCmd
+	pipe = d.Client.Pipeline()
+	for _, s := range names {
+		r := rows[s]
+		labels := r.queue.Val()
+		if r.status.Val() != "open" || len(labels) == 0 {
+			continue
+		}
+		q := doneAlreadyQueue{sprint: s, cards: make([]doneAlreadyCard, len(labels))}
+		cs := make([]*redis.SliceCmd, len(labels))
+		for i, l := range labels {
+			q.cards[i].label = l
+			cs[i] = pipe.HMGet(ctx, "s:"+s+":card:"+l, "result_line2", "origin", "repo", "base", "bench")
+		}
+		queues = append(queues, q)
+		cmds = append(cmds, cs)
+	}
+	if len(queues) == 0 {
+		return nil, nil
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return nil, err
 	}
-	cards := make([]doneAlreadyCard, len(labels))
-	for i, l := range labels {
-		v := cmds[i].Val()
-		str := func(j int) string { x, _ := v[j].(string); return x }
-		cards[i] = doneAlreadyCard{label: l, line2: str(0), origin: str(1), repo: str(2), base: str(3), bench: str(4)}
+	for qi, q := range queues {
+		for i := range q.cards {
+			v := cmds[qi][i].Val()
+			str := func(j int) string { x, _ := v[j].(string); return x }
+			q.cards[i].line2, q.cards[i].origin, q.cards[i].repo, q.cards[i].base, q.cards[i].bench = str(0), str(1), str(2), str(3), str(4)
+		}
 	}
-	return cards, nil
+	return queues, nil
 }
 
 func (d *DoneAlready) one(ctx context.Context, token, s string, c doneAlreadyCard) (DoneAlreadyOutcome, error) {

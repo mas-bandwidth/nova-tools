@@ -8,7 +8,7 @@ package reconcile
 // makes the three moves from records alone (no GitHub call): each move is
 // one Redis Function call of route_duty.lua with a receipt, fenced on the
 // reconciler lease and idempotent under s:<S>:routed, so a second pass pushes
-// nothing more. Every pass is bounded pipelined reads plus one call per move.
+// nothing more.
 //
 // Two further legs read the pr:<repo>:<n> record (#3579, #3580; the record
 // `pr record|lines` writes) for every task in the sprint stream's working and
@@ -21,24 +21,25 @@ package reconcile
 // recut on the third held head). The record's read_task/fix_task fields are
 // the idempotency and the receipt, so a second pass pushes nothing.
 //
-// Bounded by the reconciler lease (#3805): no sprint, leg or move starts
-// with less than the write margin of the lease left; the pass returns what
-// it moved and an error wrapping ErrLeaseMargin naming where it stopped and
-// how many sprints it did not start, which proc:reconciler err records.
+// One round trip a pass (#3831): the pass is ONE ns_route_sweep call, which
+// reads every open sprint's harvested cards, hold events, units and stream
+// PRs and calls each leg's function in the order this duty called them. The
+// duty made one call per harvested card per sprint every pass (420 round
+// trips at the fleet's counts, SKIPs included), past a one second pass on a
+// store 83 ms away.
+//
+// Bounded by the reconciler lease (#3805): the sweep does not start with
+// less than the write margin of the lease left; the pass then returns an
+// error wrapping ErrLeaseMargin, which proc:reconciler err records.
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
-
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // DefaultBar is the read score a PR needs to move to merging (Glenn
@@ -54,8 +55,8 @@ const RouteGroup = "route"
 // its own name, and the group held 258 of them).
 const DefaultConsumerMaxIdle = time.Hour
 
-// consumerSweepEvery bounds the sweep to one XINFO CONSUMERS per stream per
-// minute per instance, plus one when the instance first meets the stream.
+// consumerSweepEvery bounds the consumer sweep to one XINFO CONSUMERS per
+// stream per minute per instance, plus one on the instance's first pass.
 const consumerSweepEvery = time.Minute
 
 // RouteDuty is the reconciler's route duty. Its Run is a Duty.
@@ -74,12 +75,8 @@ type RouteDuty struct {
 	ConsumerMaxIdle time.Duration
 
 	instance string
-	lease    *Lease // the pass's bound, set by Run; nil under Pass alone
-	groups   map[string]bool
-	swept    map[string]time.Time // stream -> last consumer sweep
-	// done holds the labels and units whose move is final for this instance
-	// (created, duplicate, existing) so a pass calls no function for them.
-	done map[string]bool
+	lease    *Lease    // the pass's bound, set by Run; nil under Pass alone
+	swept    time.Time // this instance's last consumer sweep
 }
 
 // RouteResult is what one pass moved, in receipt order.
@@ -98,8 +95,7 @@ func (d *RouteDuty) Run(ctx context.Context, l *Lease) (Counts, error) {
 	}
 	if d.instance != l.Instance() {
 		d.instance = l.Instance()
-		d.groups, d.done = map[string]bool{}, map[string]bool{}
-		d.swept = map[string]time.Time{}
+		d.swept = time.Time{}
 	}
 	d.lease = l
 	res, err := d.Pass(ctx, l.Token())
@@ -109,82 +105,65 @@ func (d *RouteDuty) Run(ctx context.Context, l *Lease) (Counts, error) {
 	return c, err
 }
 
-// Pass runs the three legs over every open sprint with the given fence
-// token and returns what moved.
+// RouteSweepFunction is the one call a route pass makes (route_duty.lua).
+const RouteSweepFunction = "ns_route_sweep"
+
+// Pass runs the legs over every open sprint with the given fence token, in
+// one ns_route_sweep call (#3831), and returns what moved. It starts nothing
+// with less than the write margin of the lease left (#3805).
 func (d *RouteDuty) Pass(ctx context.Context, token string) (RouteResult, error) {
 	res := RouteResult{Skips: map[string]int{}}
-	if d.groups == nil {
-		d.groups, d.done = map[string]bool{}, map[string]bool{}
+	if err := d.bounded(); errors.Is(err, ErrFenced) {
+		return res, err
+	} else if err != nil {
+		return res, fmt.Errorf("route: sweep not started, no open sprint routed this pass: %w", err)
 	}
-	if d.swept == nil {
-		d.swept = map[string]time.Time{}
+	// The consumer sweep (#3808) rides the call when the instance first
+	// meets the streams and then once a minute.
+	idle := int64(0)
+	if now := time.Now(); d.swept.IsZero() || now.Sub(d.swept) >= consumerSweepEvery {
+		bar := d.ConsumerMaxIdle
+		if bar <= 0 {
+			bar = DefaultConsumerMaxIdle
+		}
+		idle = max(bar.Milliseconds(), 1)
+		d.swept = now
 	}
-	sprints, err := openSprints(ctx, d.Client)
+	args := []any{token, d.actor(), strconv.Itoa(d.bar()), "reconciler-" + d.instance, idle}
+	for _, r := range d.Readers {
+		args = append(args, r)
+	}
+	reply, err := d.Client.FCall(ctx, RouteSweepFunction, nil, args...).StringSlice()
 	if err != nil {
-		return res, fmt.Errorf("route: %w", err)
+		return res, fmt.Errorf("route: %s: %w", RouteSweepFunction, err)
 	}
-	readers, err := d.liveReaders(ctx)
-	if err != nil {
-		return res, fmt.Errorf("route: readers: %w", err)
+	switch word(reply, 0) {
+	case "FENCED":
+		return res, ErrFenced
+	case "OK":
+	default:
+		return res, fmt.Errorf("route: %s: %v", RouteSweepFunction, reply)
 	}
-	coordinator, err := d.coordinator(ctx)
-	if err != nil {
-		return res, fmt.Errorf("route: coordinator: %w", err)
-	}
-	var errs []string
-	stopped := func(err error, where string, left int) (RouteResult, error) {
-		prior := ""
-		if len(errs) > 0 {
-			prior = strings.Join(errs, "; ") + "; "
+	for i := 1; i+1 < len(reply); i += 2 {
+		v := reply[i+1]
+		switch reply[i] {
+		case "R":
+			res.Reads = append(res.Reads, v)
+		case "C":
+			res.Carried = append(res.Carried, v)
+		case "F":
+			res.Fixes = append(res.Fixes, v)
+		case "M":
+			res.Merging = append(res.Merging, v)
+		case "S":
+			res.Skips[v]++
 		}
-		return res, fmt.Errorf("route: %sstopped %s, %d of %d sprint(s) not started: %w", prior, where, left, len(sprints), err)
-	}
-	for i, s := range sprints {
-		if err := d.bounded(); errors.Is(err, ErrFenced) {
-			return res, err
-		} else if err != nil {
-			return stopped(err, "before "+s, len(sprints)-i)
-		}
-		stream, err := d.Client.HGet(ctx, "s:"+s, "stream").Result()
-		if err != nil && !errors.Is(err, redis.Nil) {
-			return res, fmt.Errorf("route: %s: %w", s, err)
-		}
-		if stream == "" {
-			stream = s
-		}
-		for j, leg := range []func(context.Context, string, string, string, []string, *RouteResult) error{
-			d.reads, d.fixes, d.merging,
-		} {
-			err := leg(ctx, token, s, stream, readers, &res)
-			if errors.Is(err, ErrFenced) {
-				return res, err
-			}
-			if errors.Is(err, ErrLeaseMargin) {
-				return stopped(err, "in "+s+" "+[]string{"reads", "fixes", "merging"}[j], len(sprints)-i-1)
-			}
-			if err != nil {
-				errs = append(errs, err.Error())
-			}
-		}
-		err = d.prLegs(ctx, token, s, stream, readers, coordinator, &res)
-		if errors.Is(err, ErrFenced) {
-			return res, err
-		}
-		if errors.Is(err, ErrLeaseMargin) {
-			return stopped(err, "in "+s+" pr", len(sprints)-i-1)
-		}
-		if err != nil {
-			errs = append(errs, err.Error())
-		}
-	}
-	if len(errs) > 0 {
-		return res, fmt.Errorf("route: %s", strings.Join(errs, "; "))
 	}
 	return res, nil
 }
 
-// bounded is the lease bound before a move (Lease.Bounded; nil without a
-// lease).
+// bounded is the lease bound before the sweep (Lease.Bounded; nil without
+// a lease).
 func (d *RouteDuty) bounded() error { return d.lease.Bounded(0) }
 
 func (d *RouteDuty) actor() string {
@@ -199,540 +178,6 @@ func (d *RouteDuty) bar() int {
 		return d.Bar
 	}
 	return DefaultBar
-}
-
-// openSprints is every member of `sprints` whose s:<S> status is open, in
-// name order, read in one pipeline.
-func openSprints(ctx context.Context, c *redis.Client) ([]string, error) {
-	names, err := c.SMembers(ctx, "sprints").Result()
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(names)
-	pipe := c.Pipeline()
-	cmds := make([]*redis.StringCmd, len(names))
-	for i, s := range names {
-		cmds[i] = pipe.HGet(ctx, "s:"+s, "status")
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, err
-	}
-	var open []string
-	for i, s := range names {
-		if cmds[i].Val() == "open" {
-			open = append(open, s)
-		}
-	}
-	return open, nil
-}
-
-// liveReaders is the reading friends with a live beat, in name order.
-func (d *RouteDuty) liveReaders(ctx context.Context) ([]string, error) {
-	names := d.Readers
-	if len(names) == 0 {
-		pipe := d.Client.Pipeline()
-		readers := pipe.SMembers(ctx, "readers")
-		friends := pipe.SMembers(ctx, "friends")
-		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-			return nil, err
-		}
-		names = readers.Val()
-		if len(names) == 0 {
-			names = friends.Val()
-		}
-	}
-	if len(names) == 0 {
-		return nil, nil
-	}
-	pipe := d.Client.Pipeline()
-	member := make([]*redis.BoolCmd, len(names))
-	beat := make([]*redis.IntCmd, len(names))
-	for i, f := range names {
-		member[i] = pipe.SIsMember(ctx, "friends", f)
-		beat[i] = pipe.Exists(ctx, "friend:"+f+":beat")
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, err
-	}
-	var live []string
-	for i, f := range names {
-		if member[i].Val() && beat[i].Val() == 1 && f != "jev" {
-			live = append(live, f)
-		}
-	}
-	sort.Strings(live)
-	return live, nil
-}
-
-// reads: every harvested card of the sprint not yet final for this instance
-// is offered to ns_route_read with the live readers. The function holds the
-// guards (PR record, JEV line at head, idempotency) and the choice.
-func (d *RouteDuty) reads(ctx context.Context, token, S, stream string, readers []string, res *RouteResult) error {
-	labels, err := d.Client.SMembers(ctx, "s:"+S+":idx:card:harvested").Result()
-	if err != nil {
-		return fmt.Errorf("%s: harvested: %w", S, err)
-	}
-	sort.Strings(labels)
-	if len(readers) == 0 && len(labels) > 0 {
-		res.Skips["no-reader"] += len(labels)
-		return nil
-	}
-	for _, label := range labels {
-		key := "read/" + S + "/" + label
-		if d.done[key] {
-			continue
-		}
-		if err := d.bounded(); err != nil {
-			return err
-		}
-		args := []any{token, S, label, stream, d.actor()}
-		for _, r := range readers {
-			args = append(args, r)
-		}
-		reply, err := d.Client.FCall(ctx, "ns_route_read", nil, args...).StringSlice()
-		if err != nil {
-			return fmt.Errorf("%s: ns_route_read %s: %w", S, label, err)
-		}
-		switch word(reply, 0) {
-		case "FENCED":
-			return ErrFenced
-		case "CREATED":
-			res.Reads = append(res.Reads, word(reply, 1))
-			d.done[key] = true
-		case "DUP", "EXISTS":
-			d.done[key] = true
-		case "SKIP":
-			res.Skips[word(reply, 1)]++
-		default:
-			return fmt.Errorf("%s: ns_route_read %s: %v", S, label, reply)
-		}
-	}
-	return nil
-}
-
-// fixes: the sprint's hold events under the route group. A pending entry a
-// dead instance left is claimed first; every entry is acknowledged by the
-// function (a hold) or here (a note or repair, which route nothing).
-func (d *RouteDuty) fixes(ctx context.Context, token, S, stream string, _ []string, res *RouteResult) error {
-	ev := "s:" + S + ":hold:events"
-	consumer := "reconciler-" + d.instance
-	if !d.groups[ev] {
-		err := d.Client.XGroupCreateMkStream(ctx, ev, RouteGroup, "0").Err()
-		if err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
-			return fmt.Errorf("%s: group: %w", S, err)
-		}
-		// One consumer per instance, created once (#3808).
-		if err := d.Client.XGroupCreateConsumer(ctx, ev, RouteGroup, consumer).Err(); err != nil {
-			return fmt.Errorf("%s: consumer: %w", S, err)
-		}
-		d.groups[ev] = true
-	}
-	var msgs []redis.XMessage
-	claimed, _, err := d.Client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
-		Stream: ev, Group: RouteGroup, Consumer: consumer, MinIdle: 0, Start: "0-0", Count: DefaultEventCount,
-	}).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return fmt.Errorf("%s: claim: %w", S, err)
-	}
-	msgs = append(msgs, claimed...)
-	read, err := d.Client.XReadGroup(ctx, &redis.XReadGroupArgs{
-		Group: RouteGroup, Consumer: consumer, Streams: []string{ev, ">"}, Count: DefaultEventCount, Block: -1,
-	}).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return fmt.Errorf("%s: read: %w", S, err)
-	}
-	for _, r := range read {
-		msgs = append(msgs, r.Messages...)
-	}
-	var ack []string
-	for _, m := range msgs {
-		get := func(k string) string { s, _ := m.Values[k].(string); return s }
-		if get("type") != "hold" {
-			ack = append(ack, m.ID)
-			continue
-		}
-		if err := d.bounded(); err != nil {
-			// Unacked entries stay pending and are claimed next pass.
-			if len(ack) > 0 {
-				_ = d.Client.XAck(ctx, ev, RouteGroup, ack...).Err()
-			}
-			return err
-		}
-		reply, err := d.Client.FCall(ctx, "ns_route_fix", nil,
-			token, S, m.ID, get("unit"), get("repo"), get("pr"), get("who"), get("head"), stream, d.actor()).StringSlice()
-		if err != nil {
-			return fmt.Errorf("%s: ns_route_fix %s: %w", S, m.ID, err)
-		}
-		switch word(reply, 0) {
-		case "FENCED":
-			return ErrFenced
-		case "CREATED":
-			res.Fixes = append(res.Fixes, word(reply, 1))
-		case "SKIP":
-			res.Skips[word(reply, 1)]++
-		case "DUP", "EXISTS":
-		default:
-			return fmt.Errorf("%s: ns_route_fix %s: %v", S, m.ID, reply)
-		}
-	}
-	if len(ack) > 0 {
-		if err := d.Client.XAck(ctx, ev, RouteGroup, ack...).Err(); err != nil {
-			return fmt.Errorf("%s: ack: %w", S, err)
-		}
-	}
-	return d.sweepConsumers(ctx, S, ev, consumer)
-}
-
-// sweepConsumers deletes every consumer of the route group on ev, other than
-// this instance's, idle past ConsumerMaxIdle with nothing pending (a dead
-// instance's pending entries are claimed above first, so none is dropped).
-// It runs when the instance first meets ev and then once a minute.
-func (d *RouteDuty) sweepConsumers(ctx context.Context, S, ev, consumer string) error {
-	now := time.Now()
-	if at, ok := d.swept[ev]; ok && now.Sub(at) < consumerSweepEvery {
-		return nil
-	}
-	max := d.ConsumerMaxIdle
-	if max <= 0 {
-		max = DefaultConsumerMaxIdle
-	}
-	cs, err := d.Client.XInfoConsumers(ctx, ev, RouteGroup).Result()
-	if err != nil {
-		return fmt.Errorf("%s: consumers: %w", S, err)
-	}
-	pipe := d.Client.Pipeline()
-	n := 0
-	for _, c := range cs {
-		if c.Name == consumer || c.Pending > 0 || c.Idle < max {
-			continue
-		}
-		pipe.XGroupDelConsumer(ctx, ev, RouteGroup, c.Name)
-		n++
-	}
-	if n > 0 {
-		if _, err := pipe.Exec(ctx); err != nil {
-			return fmt.Errorf("%s: sweep consumers: %w", S, err)
-		}
-	}
-	d.swept[ev] = now
-	return nil
-}
-
-// merging: the sprint's units are read in one pipeline (head, state, pr,
-// holds) and only a unit that may be ready (open, with a PR, no open hold,
-// CI receipts at head) is offered to ns_route_merging, which re-checks every
-// guard in the call.
-func (d *RouteDuty) merging(ctx context.Context, token, S, stream string, _ []string, res *RouteResult) error {
-	units, err := d.Client.SMembers(ctx, "s:"+S+":units").Result()
-	if err != nil {
-		return fmt.Errorf("%s: units: %w", S, err)
-	}
-	sort.Strings(units)
-	var pending []string
-	for _, u := range units {
-		if !d.done["merging/"+S+"/"+u] {
-			pending = append(pending, u)
-		}
-	}
-	if len(pending) == 0 {
-		return nil
-	}
-	pipe := d.Client.Pipeline()
-	rows := make([]*redis.SliceCmd, len(pending))
-	for i, u := range pending {
-		rows[i] = pipe.HMGet(ctx, "s:"+S+":u:"+u, "head", "state", "repo", "pr", "holds_open")
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return fmt.Errorf("%s: units: %w", S, err)
-	}
-	type cand struct{ unit, key string }
-	var cands []cand
-	pipe = d.Client.Pipeline()
-	var gids []*redis.IntCmd
-	for i, u := range pending {
-		v := rows[i].Val()
-		head, state, repo, pr, holds := str(v, 0), str(v, 1), str(v, 2), str(v, 3), str(v, 4)
-		if head == "" || pr == "" || state == "landed" || state == "landing" || state == "dropped" {
-			continue
-		}
-		if n, _ := strconv.Atoi(holds); n > 0 {
-			res.Skips["holds-open"]++
-			continue
-		}
-		cands = append(cands, cand{u, "merging/" + S + "/" + u})
-		gids = append(gids, pipe.SCard(ctx, "ci:"+repo+":"+head+":gids"))
-	}
-	if len(cands) == 0 {
-		return nil
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return fmt.Errorf("%s: ci: %w", S, err)
-	}
-	for i, c := range cands {
-		if gids[i].Val() == 0 {
-			res.Skips["no-ci"]++
-			continue
-		}
-		if err := d.bounded(); err != nil {
-			return err
-		}
-		reply, err := d.Client.FCall(ctx, "ns_route_merging", nil,
-			token, S, c.unit, strconv.Itoa(d.bar()), stream, d.actor()).StringSlice()
-		if err != nil {
-			return fmt.Errorf("%s: ns_route_merging %s: %w", S, c.unit, err)
-		}
-		switch word(reply, 0) {
-		case "FENCED":
-			return ErrFenced
-		case "MERGING":
-			res.Merging = append(res.Merging, word(reply, 1))
-			d.done[c.key] = true
-		case "DUP":
-			d.done[c.key] = true
-		case "SKIP":
-			res.Skips[word(reply, 1)]++
-		default:
-			return fmt.Errorf("%s: ns_route_merging %s: %v", S, c.unit, reply)
-		}
-	}
-	return nil
-}
-
-// coordinator is the first friend (name order) whose friend:<f>:roles holds
-// coordinator; with no roster, rowan when registered; else "". It is where a
-// swarm-built PR's recut and a close-over-recut go.
-func (d *RouteDuty) coordinator(ctx context.Context) (string, error) {
-	names, err := d.Client.SMembers(ctx, "friends").Result()
-	if err != nil {
-		return "", err
-	}
-	sort.Strings(names)
-	pipe := d.Client.Pipeline()
-	roles := make([]*redis.StringCmd, len(names))
-	for i, f := range names {
-		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return "", err
-	}
-	fallback := ""
-	for i, f := range names {
-		if f == "rowan" {
-			fallback = f
-		}
-		for _, r := range strings.Split(roles[i].Val(), ",") {
-			if strings.TrimSpace(r) == "coordinator" {
-				return f, nil
-			}
-		}
-	}
-	return fallback, nil
-}
-
-// prRef reads a task's PR fields (pr as 123, #123, <repo>#123 or a pulls
-// URL; repo; ref as <owner/repo>#<n>) into the pr:<repo>:<n> record's repo
-// and number.
-func prRef(pr, repo, ref string) (string, int, bool) {
-	pr, repo, ref = strings.TrimSpace(pr), strings.TrimSpace(repo), strings.TrimSpace(ref)
-	num := ""
-	if i := strings.LastIndex(pr, "/pull/"); i >= 0 {
-		parts := strings.Split(strings.Trim(pr[:i], "/"), "/")
-		if len(parts) >= 2 {
-			repo = parts[len(parts)-2] + "/" + parts[len(parts)-1]
-		}
-		num = strings.Trim(pr[i+len("/pull/"):], "/")
-	} else if left, right, ok := strings.Cut(pr, "#"); ok {
-		if left != "" {
-			repo = left
-		}
-		num = right
-	} else {
-		num = pr
-	}
-	if left, right, ok := strings.Cut(ref, "#"); ok {
-		if repo == "" || !strings.Contains(repo, "/") {
-			if strings.HasSuffix(left, "/"+repo) || repo == "" {
-				repo = left
-			}
-		}
-		if num == "" {
-			num = right
-		}
-	}
-	n, err := strconv.Atoi(num)
-	if err != nil || n <= 0 || repo == "" {
-		return "", 0, false
-	}
-	return repo, n, true
-}
-
-type prCand struct {
-	repo string
-	n    int
-}
-
-// prCandidates is every PR of the stream's working and merging tasks, in
-// two pipelined round trips, each once, sorted.
-func (d *RouteDuty) prCandidates(ctx context.Context, stream string) ([]prCand, error) {
-	pipe := d.Client.Pipeline()
-	working := pipe.ZRange(ctx, "ws:"+stream+":working", 0, -1)
-	merging := pipe.ZRange(ctx, "ws:"+stream+":merging", 0, -1)
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, err
-	}
-	ids := append(working.Val(), merging.Val()...)
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	pipe = d.Client.Pipeline()
-	rows := make([]*redis.SliceCmd, len(ids))
-	for i, id := range ids {
-		rows[i] = pipe.HMGet(ctx, "task:"+id, "pr", "repo", "ref")
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, err
-	}
-	seen := map[prCand]bool{}
-	var out []prCand
-	for _, r := range rows {
-		v := r.Val()
-		repo, n, ok := prRef(str(v, 0), str(v, 1), str(v, 2))
-		if !ok {
-			continue
-		}
-		c := prCand{repo, n}
-		if !seen[c] {
-			seen[c] = true
-			out = append(out, c)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].repo != out[j].repo {
-			return out[i].repo < out[j].repo
-		}
-		return out[i].n < out[j].n
-	})
-	return out, nil
-}
-
-// prLegs runs ns_route_pr_read and ns_route_pr_fix over the stream's PR
-// records: one pipelined read of the records, then one function call per
-// decision still open for this instance. A head read at head, routed or
-// held with a fix task is final for the instance; a new head is a new key.
-func (d *RouteDuty) prLegs(ctx context.Context, token, S, stream string, readers []string, coordinator string, res *RouteResult) error {
-	cands, err := d.prCandidates(ctx, stream)
-	if err != nil {
-		return fmt.Errorf("%s: pr candidates: %w", S, err)
-	}
-	if len(cands) == 0 {
-		return nil
-	}
-	pipe := d.Client.Pipeline()
-	rows := make([]*redis.SliceCmd, len(cands))
-	for i, c := range cands {
-		rows[i] = pipe.HMGet(ctx, prkey.Key(c.repo, c.n), "head", "state", "reads")
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return fmt.Errorf("%s: pr records: %w", S, err)
-	}
-	for i, c := range cands {
-		v := rows[i].Val()
-		head, state, reads := str(v, 0), str(v, 1), str(v, 2)
-		if head == "" || (state != "" && state != "open") {
-			continue
-		}
-		if err := d.bounded(); err != nil {
-			return err
-		}
-		n := strconv.Itoa(c.n)
-		rkey := "prread/" + c.repo + "/" + n + "/" + head
-		if !d.done[rkey] {
-			if len(readers) == 0 {
-				res.Skips["no-reader"]++
-			} else {
-				args := []any{token, S, c.repo, n, stream, d.actor()}
-				for _, r := range readers {
-					args = append(args, r)
-				}
-				reply, err := d.Client.FCall(ctx, "ns_route_pr_read", nil, args...).StringSlice()
-				if err != nil {
-					return fmt.Errorf("%s: ns_route_pr_read %s#%s: %w", S, c.repo, n, err)
-				}
-				switch word(reply, 0) {
-				case "FENCED":
-					return ErrFenced
-				case "CREATED":
-					res.Reads = append(res.Reads, word(reply, 1))
-					d.done[rkey] = true
-				case "CARRIED":
-					res.Carried = append(res.Carried, word(reply, 1))
-					d.done[rkey] = true
-				case "DUP", "EXISTS":
-					d.done[rkey] = true
-				case "SKIP":
-					res.Skips[word(reply, 1)]++
-					if word(reply, 1) == "read-at-head" {
-						d.done[rkey] = true
-					}
-				default:
-					return fmt.Errorf("%s: ns_route_pr_read %s#%s: %v", S, c.repo, n, reply)
-				}
-			}
-		}
-		fkey := "prfix/" + c.repo + "/" + n + "/" + head
-		if d.done[fkey] || !heldAt(reads, head) {
-			continue
-		}
-		reply, err := d.Client.FCall(ctx, "ns_route_pr_fix", nil, token, S, c.repo, n, stream, d.actor(), coordinator).StringSlice()
-		if err != nil {
-			return fmt.Errorf("%s: ns_route_pr_fix %s#%s: %w", S, c.repo, n, err)
-		}
-		switch word(reply, 0) {
-		case "FENCED":
-			return ErrFenced
-		case "FIX", "RECUT", "CLOSE":
-			res.Fixes = append(res.Fixes, word(reply, 1))
-			d.done[fkey] = true
-		case "DUP", "EXISTS":
-			d.done[fkey] = true
-		case "SKIP":
-			res.Skips[word(reply, 1)]++
-		default:
-			return fmt.Errorf("%s: ns_route_pr_fix %s#%s: %v", S, c.repo, n, reply)
-		}
-	}
-	return nil
-}
-
-// heldAt is the Go prefilter for the fix leg: some HOLD or DISPOSITION
-// verdict=HOLD line names this head. The function re-reads the lines with
-// the author and the last-line-wins rule; this only spares a call. A
-// DISPOSITION line goes through typedrec.ParseDisposition, the one typed
-// parser (#2506), whose HOLD is lenient: a sloppily typed HOLD still holds.
-func heldAt(reads, head string) bool {
-	head = strings.ToLower(head)
-	for _, l := range strings.Split(reads, "\n") {
-		h, hold := "", false
-		if c, ok := typedrec.ParseDisposition(l); ok {
-			h = strings.TrimRight(c.Head, ":,;")
-			hold = strings.TrimRight(c.Verdict, ":,;") == "HOLD"
-		} else {
-			f := strings.Fields(l)
-			if len(f) == 0 || f[0] != "HOLD" {
-				continue
-			}
-			hold = true
-			for _, w := range f[1:] {
-				if k, v, ok := strings.Cut(w, "="); ok && k == "head" {
-					h = strings.ToLower(strings.TrimRight(v, ":,;"))
-				}
-			}
-		}
-		if hold && len(h) >= 7 && strings.HasPrefix(head, h) {
-			return true
-		}
-	}
-	return false
 }
 
 func word(reply []string, i int) string {

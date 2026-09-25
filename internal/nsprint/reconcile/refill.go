@@ -23,6 +23,13 @@ package reconcile
 // beat has a TTL and writes no event, so the duty reads the registered beats'
 // presence in one pipelined round each pass.
 //
+// One round trip a pass (nova-tools #3831): the fleet step, the registry,
+// the bench states and the group read over every followed stream go in one
+// pipeline, over the streams and benches the last pass found; a stream or
+// bench new to the registry costs one more round trip, once. The deal pass
+// reads through a names memo (deal.ReadMemo), so a sweep with nothing new
+// is one more round trip, not five.
+//
 // Capacity is global: the deal reads free as desired minus leased over every
 // open sprint, and ns_card_deal re-checks it inside the function, so two
 // sprints sharing one bench, or two passes racing, never lease above desired
@@ -49,6 +56,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -150,6 +158,10 @@ type Refill struct {
 	// WriteMargin is the lease time kept back from the bench sessions for the
 	// pass's fenced writes (#3322); DefaultWriteMargin when zero.
 	WriteMargin time.Duration
+	// Prelude, when set, queues commands that run first in the pass's one
+	// round trip (the fleet step, #3831) and returns the check of their
+	// answers, which Run returns once the pass's reads are kept.
+	Prelude func(ctx context.Context, pipe redis.Pipeliner) func() error
 
 	mu        sync.Mutex
 	instance  string              // the lease instance the state below belongs to
@@ -160,6 +172,9 @@ type Refill struct {
 	unacked   map[string][]string // stream -> deal (and no-wake) ids read, not yet acked
 	routeIDs  map[string][]string // stream -> route ids read, not yet routed and acked
 	firstPass bool
+	streams   []string // the streams the last pass read, each with its group
+	benches   []string // the registered benches as the last pass read them
+	memo      *deal.ReadMemo
 }
 
 // Run is one refill: read the wakes, deal when woken or when the sweep is
@@ -176,17 +191,53 @@ func (r *Refill) Run(ctx context.Context, l *Lease) (Counts, error) {
 		r.instance = l.Instance()
 		r.groups, r.up, r.unacked, r.routeIDs = map[string]bool{}, nil, map[string][]string{}, map[string][]string{}
 		r.lastDeal, r.retry, r.firstPass = time.Time{}, false, true
+		r.streams, r.benches, r.memo = nil, nil, nil
 	}
 	consumer := r.consumer(l)
 
-	streams, benches, err := r.registry(ctx)
-	if err != nil {
-		return Counts{}, fmt.Errorf("refill: %w", err)
+	// The pass's one round trip (#3831): the prelude, the registry, the
+	// bench states and the group read over the streams the last pass read,
+	// in one pipeline. A stream or bench new to the registry costs one more
+	// round trip, the pass it appears.
+	pipe := r.Client.Pipeline()
+	var prelude func() error
+	if r.Prelude != nil {
+		prelude = r.Prelude(ctx, pipe)
 	}
+	reg := r.queueRegistry(ctx, pipe)
+	states := make(map[string]*redis.StringCmd, len(r.benches))
+	for _, b := range r.benches {
+		states[b] = pipe.HGet(ctx, "bench:"+b+":state", "state")
+	}
+	var early []string
+	var earlyRead *redis.XStreamSliceCmd
+	if !r.firstPass && r.Block <= 0 && len(r.streams) > 0 {
+		early = r.streams
+		earlyRead = r.queueRead(ctx, pipe, early, consumer, -1)
+	}
+	// Each command's answer is read on its own: the entries the group read
+	// delivered are kept before anything can return, and the prelude's own
+	// error is returned last.
+	_, _ = pipe.Exec(ctx)
+	var w Wake
+	if earlyRead != nil {
+		if err := r.classify(earlyRead, &w); err != nil {
+			if strings.HasPrefix(err.Error(), "NOGROUP") {
+				// A stream lost its group: ensure every group again.
+				r.groups, r.streams = map[string]bool{}, nil
+			}
+			return Counts{}, fmt.Errorf("refill: read: %w", err)
+		}
+	}
+	for _, cmd := range []redis.Cmder{reg.sprints, reg.benches} {
+		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
+			return Counts{}, fmt.Errorf("refill: %w", err)
+		}
+	}
+	streams, benches := reg.result()
 	if err := r.ensureGroups(ctx, streams); err != nil {
 		return Counts{}, fmt.Errorf("refill: %w", err)
 	}
-	var w Wake
 	if r.firstPass {
 		w.Restart = true
 		n, err := r.claim(ctx, streams, consumer)
@@ -202,17 +253,32 @@ func (r *Refill) Run(ctx context.Context, l *Lease) (Counts, error) {
 	if !r.lastDeal.IsZero() && r.now().Sub(r.lastDeal) >= r.sweep() {
 		w.Sweep = true
 	}
-	returned, err := r.benchReturns(ctx, benches)
-	if err != nil {
-		return Counts{}, fmt.Errorf("refill: bench beats: %w", err)
+	var returned []string
+	if slices.Equal(benches, r.benches) {
+		returned = r.returns(benches, func(b string) string { return states[b].Val() })
+	} else {
+		var err error
+		if returned, err = r.benchReturns(ctx, benches); err != nil {
+			return Counts{}, fmt.Errorf("refill: bench beats: %w", err)
+		}
 	}
+	r.benches = benches
 	w.Benches = returned
-	block := time.Duration(-1)
-	if r.Block > 0 && !w.Dealing() && w.RouteReplay == 0 {
-		block = r.Block
+	if rest := without(streams, early); len(rest) > 0 {
+		block := time.Duration(-1)
+		if r.Block > 0 && !w.Dealing() && w.RouteReplay == 0 {
+			block = r.Block
+		}
+		if err := r.read(ctx, rest, consumer, block, &w); err != nil {
+			return Counts{}, fmt.Errorf("refill: read: %w", err)
+		}
 	}
-	if err := r.read(ctx, streams, consumer, block, &w); err != nil {
-		return Counts{}, fmt.Errorf("refill: read: %w", err)
+	r.streams = streams
+	if prelude != nil {
+		// The events read are kept for the next pass's ack.
+		if err := prelude(); err != nil {
+			return Counts{}, err
+		}
 	}
 
 	var c Counts
@@ -314,7 +380,12 @@ func (r *Refill) pass(l *Lease) *deal.Pass {
 	}
 	fns := &DealFunctions{Client: r.Client, Actor: r.actor()}
 	if p.Source == nil {
-		p.Source = deal.RedisSource{Client: r.Client}
+		// The memo makes a deal read one round trip while the store's
+		// names hold (#3831).
+		if r.memo == nil {
+			r.memo = &deal.ReadMemo{}
+		}
+		p.Source = deal.RedisSource{Client: r.Client, Memo: r.memo}
 	}
 	if p.Reserver == nil {
 		p.Reserver = fns
@@ -331,35 +402,65 @@ func (r *Refill) pass(l *Lease) *deal.Pass {
 	return &p
 }
 
-// registry reads the streams to follow (cap:log, then every open sprint's
-// log in sprint order) and the registered benches, in one round.
-func (r *Refill) registry(ctx context.Context) ([]string, []string, error) {
-	pipe := r.Client.Pipeline()
-	sprints := pipe.SMembers(ctx, "sprints")
-	benches := pipe.SMembers(ctx, "benches")
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, nil, err
-	}
-	names := sprints.Val()
+// registryRead is the registry's two reads, queued in a pipeline.
+type registryRead struct {
+	sprints, benches *redis.StringSliceCmd
+}
+
+// queueRegistry queues the registry reads: the streams to follow (cap:log,
+// then every sprint's log in sprint order) and the registered benches.
+func (r *Refill) queueRegistry(ctx context.Context, pipe redis.Pipeliner) registryRead {
+	return registryRead{sprints: pipe.SMembers(ctx, "sprints"), benches: pipe.SMembers(ctx, "benches")}
+}
+
+func (g registryRead) result() ([]string, []string) {
+	names := g.sprints.Val()
 	sort.Strings(names)
 	streams := []string{CapLog}
 	for _, s := range names {
 		streams = append(streams, "s:"+s+":log")
 	}
-	b := benches.Val()
+	b := g.benches.Val()
 	sort.Strings(b)
-	return streams, b, nil
+	return streams, b
 }
 
-// ensureGroups creates the group on a stream this instance has not seen,
-// at the stream's end: what came before is covered by the restart sweep.
-func (r *Refill) ensureGroups(ctx context.Context, streams []string) error {
-	for _, s := range streams {
-		if r.groups[s] {
-			continue
+// without is xs less every member of ys, in xs order.
+func without(xs, ys []string) []string {
+	skip := make(map[string]bool, len(ys))
+	for _, y := range ys {
+		skip[y] = true
+	}
+	var out []string
+	for _, x := range xs {
+		if !skip[x] {
+			out = append(out, x)
 		}
-		err := r.Client.XGroupCreateMkStream(ctx, s, Group, "$").Err()
-		if err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
+	}
+	return out
+}
+
+// ensureGroups creates the group on every stream this instance has not
+// seen, at the stream's end: what came before is covered by the restart
+// sweep. One pipeline for all of them (#3831).
+func (r *Refill) ensureGroups(ctx context.Context, streams []string) error {
+	var fresh []string
+	for _, s := range streams {
+		if !r.groups[s] {
+			fresh = append(fresh, s)
+		}
+	}
+	if len(fresh) == 0 {
+		return nil
+	}
+	pipe := r.Client.Pipeline()
+	cmds := make([]*redis.StatusCmd, len(fresh))
+	for i, s := range fresh {
+		cmds[i] = pipe.XGroupCreateMkStream(ctx, s, Group, "$")
+	}
+	_, _ = pipe.Exec(ctx)
+	for i, s := range fresh {
+		if err := cmds[i].Err(); err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
 			return fmt.Errorf("group %s on %s: %w", Group, s, err)
 		}
 		r.groups[s] = true
@@ -369,15 +470,22 @@ func (r *Refill) ensureGroups(ctx context.Context, streams []string) error {
 
 // claim takes every entry pending in the group (any consumer's: a dead
 // instance's wakes) into this consumer, to be acknowledged by the restart
-// sweep's deal.
+// sweep's deal. Every stream's first page is one pipeline (#3831); a
+// stream with more pages is walked on its own.
 func (r *Refill) claim(ctx context.Context, streams []string, consumer string) (int, error) {
+	args := func(s, start string) *redis.XAutoClaimArgs {
+		return &redis.XAutoClaimArgs{Stream: s, Group: Group, Consumer: consumer, MinIdle: 0, Start: start, Count: DefaultEventCount}
+	}
+	pipe := r.Client.Pipeline()
+	first := make([]*redis.XAutoClaimCmd, len(streams))
+	for i, s := range streams {
+		first[i] = pipe.XAutoClaim(ctx, args(s, "0-0"))
+	}
+	_, _ = pipe.Exec(ctx)
 	n := 0
-	for _, s := range streams {
-		start := "0-0"
+	for i, s := range streams {
+		msgs, next, err := first[i].Result()
 		for {
-			msgs, next, err := r.Client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
-				Stream: s, Group: Group, Consumer: consumer, MinIdle: 0, Start: start, Count: DefaultEventCount,
-			}).Result()
 			if err != nil && !errors.Is(err, redis.Nil) {
 				return n, fmt.Errorf("%s: %w", s, err)
 			}
@@ -388,7 +496,7 @@ func (r *Refill) claim(ctx context.Context, streams []string, consumer string) (
 			if next == "" || next == "0-0" {
 				break
 			}
-			start = next
+			msgs, next, err = r.Client.XAutoClaim(ctx, args(s, next)).Result()
 		}
 	}
 	return n, nil
@@ -403,36 +511,52 @@ func (r *Refill) benchReturns(ctx context.Context, benches []string) ([]string, 
 		return nil, nil
 	}
 	pipe := r.Client.Pipeline()
-	cmds := make([]*redis.StringCmd, len(benches))
-	for i, b := range benches {
-		cmds[i] = pipe.HGet(ctx, "bench:"+b+":state", "state")
+	cmds := make(map[string]*redis.StringCmd, len(benches))
+	for _, b := range benches {
+		cmds[b] = pipe.HGet(ctx, "bench:"+b+":state", "state")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
+	return r.returns(benches, func(b string) string { return cmds[b].Val() }), nil
+}
+
+// returns names the benches whose state (read by state) is UP and was not
+// at the last pass, and records this pass's presence.
+func (r *Refill) returns(benches []string, state func(string) string) []string {
 	up := make(map[string]bool, len(benches))
 	var returned []string
-	for i, b := range benches {
-		up[b] = cmds[i].Val() == "UP"
+	for _, b := range benches {
+		up[b] = state(b) == "UP"
 		if up[b] && r.up != nil && !r.up[b] {
 			returned = append(returned, b)
 		}
 	}
 	r.up = up
-	return returned, nil
+	return returned
 }
 
 // read takes this consumer's new events on every stream in one call and
 // classifies them into w. block < 0 never waits.
 func (r *Refill) read(ctx context.Context, streams []string, consumer string, block time.Duration, w *Wake) error {
+	return r.classify(r.queueRead(ctx, r.Client, streams, consumer, block), w)
+}
+
+// queueRead queues (or, on a client, sends) the group read over streams.
+func (r *Refill) queueRead(ctx context.Context, c redis.Cmdable, streams []string, consumer string, block time.Duration) *redis.XStreamSliceCmd {
 	args := make([]string, 0, 2*len(streams))
 	args = append(args, streams...)
 	for range streams {
 		args = append(args, ">")
 	}
-	res, err := r.Client.XReadGroup(ctx, &redis.XReadGroupArgs{
+	return c.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group: Group, Consumer: consumer, Streams: args, Count: DefaultEventCount, Block: block,
-	}).Result()
+	})
+}
+
+// classify keeps every entry a group read returned and counts its wakes.
+func (r *Refill) classify(cmd *redis.XStreamSliceCmd, w *Wake) error {
+	res, err := cmd.Result()
 	if errors.Is(err, redis.Nil) {
 		return nil
 	}

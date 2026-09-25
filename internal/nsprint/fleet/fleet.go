@@ -195,13 +195,25 @@ func Read(ctx context.Context, client *redis.Client, bench string) ([]StateRow, 
 
 // Step advances the fleet state machine by one pass for all benches (or the specified benches).
 func Step(ctx context.Context, client *redis.Client, benches ...string) error {
+	return StepResult(StepCmd(ctx, client, benches...))
+}
+
+// StepCmd queues one Step call on c: a pipeline, so the reconciler's refill
+// sends the step in the same round trip as its reads (nova-tools #3831).
+// StepResult reads its answer once the pipeline ran.
+func StepCmd(ctx context.Context, c redis.Cmdable, benches ...string) *redis.Cmd {
 	var args []any
 	for _, b := range benches {
 		if b != "" {
 			args = append(args, b)
 		}
 	}
-	reply, err := client.FCall(ctx, FunctionStep, nil, args...).StringSlice()
+	return c.FCall(ctx, FunctionStep, nil, args...)
+}
+
+// StepResult is a Step call's answer: nil on OK.
+func StepResult(cmd *redis.Cmd) error {
+	reply, err := cmd.StringSlice()
 	if err != nil {
 		return fmt.Errorf("fleet step: %w", err)
 	}
