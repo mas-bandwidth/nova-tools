@@ -23,7 +23,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "task",
-		Summary: "push, take, beat, done, cancel, list, width, move, close, front, depends, resolve, fill, counts, owners and rebalance tasks; cancel|block|unblock|move|front --ids @file|--stream <s>|--set <key> and sweep --friend <f> on the ws index",
+		Summary: "push, take, beat, done, cancel, list, width, move, close, front, depends, resolve, fill, counts, owners and rebalance tasks; cancel|block|unblock|move|front --ids @file|--stream <s>|--set <key> and sweep --friend <f> on the ws index; the task card verbs (--actor): push, take, beat, done, land, cancel, block, unblock, front, move, expire, ls, fsck, migrate",
 		Run:     runTask,
 	})
 }
@@ -69,6 +69,10 @@ func refuseSeat(errOut io.Writer, verb, initiator string, err error) int {
 func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
 		return refuse(errOut, "task", "want push, take, beat, done, cancel, list, width, "+queueSubs)
+	}
+	if isTaskCard(args[0], args[1:]) {
+		// #3778: the task card verbs (task_card.go).
+		return runTaskCard(ctx, args[0], args[1:], out, errOut)
 	}
 	if isTaskBatch(args[0], args[1:]) {
 		// #3661: the batch verbs on the ws index (task_batch.go).

@@ -57,7 +57,7 @@ func SprintFixture() [][]string {
 			for k := int64(0); k < counts[j]; k++ {
 				id := fmt.Sprintf("t%d-%s-%d", i+1, state, k)
 				cmds = append(cmds, []string{"ZADD", "ws:" + s.Name + ":" + state, strconv.FormatInt(k+1, 10), id})
-				cmds = append(cmds, []string{"HSET", "task:" + id, "stream", s.Name, "state", state, "title", "task " + id, "owner", "rowan"})
+				cmds = append(cmds, []string{"HSET", "task:" + id, "stream", s.Name, "state", state, "title", "task " + id})
 			}
 		}
 	}
@@ -95,7 +95,8 @@ func SprintFixture() [][]string {
 		[]string{"HSET", "bench:hulk", "dealer_queue", "7", "dealer_at", at(-2 * time.Second)}, // a fresh dealer count wins: 7
 		[]string{"HSET", "bench:studio", "host", "studio", "queue", "9", "working", "9", "load1", "3.00", "at", at(-1 * time.Second)},
 	)
-	// Friends: rowan up (done 14, 10 at the last clear), johnny down flag,
+	// Friends (their hashes: presence; the counts are the card sets below):
+	// rowan up (done 14, 10 at the last clear), johnny down flag,
 	// emma up, stella's beat 30 s old; the friends SET also names ghost,
 	// who has no row.
 	cmds = append(cmds,
@@ -107,5 +108,17 @@ func SprintFixture() [][]string {
 		[]string{"HSET", "friend:stella", "at", at(-30 * time.Second), "up", "1", "ready", "0", "working", "1", "done", "5"},
 		[]string{"HSET", DoneBaseKey, "rowan", "10"},
 	)
+	// The friend rows are the friend's card sets (#3778): ZCARD of
+	// friend:<f>:cards:ready and :working, done is :done + :merging + :landed.
+	for _, f := range []struct {
+		name                 string
+		ready, working, done int
+	}{{"rowan", 0, 12, 14}, {"johnny", 2, 0, 3}, {"emma", 1, 4, 0}, {"stella", 0, 1, 5}} {
+		for w, n := range map[string]int{"ready": f.ready, "working": f.working, "done": f.done} {
+			for k := 0; k < n; k++ {
+				cmds = append(cmds, []string{"ZADD", FriendCardsKey(f.name, w), strconv.Itoa(k + 1), fmt.Sprintf("fx-%s-%s-%d", f.name, w, k)})
+			}
+		}
+	}
 	return cmds
 }

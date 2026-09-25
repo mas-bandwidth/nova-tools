@@ -22,7 +22,9 @@
 //	ws:log                  XRANGE over the last hour: the landed rate for the ETA
 //	ws:done0                HGETALL: each friend's done count at the last `table clear`
 //	benches                 SMEMBERS, the bench list; bench:<b> HGETALL per member
-//	friends                 SMEMBERS when no roster is given; friend:<f> HMGET
+//	friends                 SMEMBERS when no roster is given; friend:<f> HMGET at up
+//	friend:<f>:cards:<w>    ZCARD for ready, working, done, merging, landed: the
+//	                        friend row (#3778: done is done + merging + landed)
 //	friend:<f>:down         EXISTS (a string or a hash; either means down)
 //	s:<S>:pitstop           EXISTS, with the legacy sprint:<S>:pitstop
 //
@@ -50,7 +52,7 @@ var WSStates = []string{"waiting", "ready", "working", "merging", "landed"}
 
 // DoneBaseKey holds each friend's done count at the last `table clear`
 // (#3637): the friend block shows done minus this, so a clear zeroes the
-// column without touching the index sets friend-row counts.
+// column without moving a card out of the friend's sets.
 const DoneBaseKey = "ws:done0"
 
 // SprintConfig is what the whole table is told; everything else is read.
@@ -162,9 +164,13 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		roster = r.friends
 	}
 	rows := make([]*redis.SliceCmd, len(roster))
+	cards := make([][]*redis.IntCmd, len(roster))
 	downs := make([]*redis.IntCmd, len(roster))
 	for i, f := range roster {
-		rows[i] = pipe.HMGet(ctx, "friend:"+f, "at", "up", "ready", "working", "done")
+		rows[i] = pipe.HMGet(ctx, "friend:"+f, "at", "up")
+		for _, w := range FriendCardWheres {
+			cards[i] = append(cards[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
+		}
 		downs[i] = pipe.Exists(ctx, "friend:"+f+":down")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
@@ -231,15 +237,42 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 	for i, f := range roster {
 		row := FriendRow{Name: f}
-		if got, err := rows[i].Result(); err == nil && len(got) == 5 {
-			row.At, row.Up, row.Ready, row.Working, row.Done = pipeValue(got[0]), pipeValue(got[1]), pipeValue(got[2]), pipeValue(got[3]), pipeValue(got[4])
+		if got, err := rows[i].Result(); err == nil && len(got) == 2 {
+			row.At, row.Up = pipeValue(got[0]), pipeValue(got[1])
 		}
+		row.Ready, row.Working, row.Done = friendCounts(cards[i])
 		if downs[i].Val() > 0 {
 			row.Down = "down"
 		}
 		snap.Friends = append(snap.Friends, row)
 	}
 	return snap, false, nil
+}
+
+// FriendCardWheres are the friend card sets the friend row counts: ready,
+// working, then done, merging and landed (the done column: work the friend
+// finished, merged or not).
+var FriendCardWheres = []string{"ready", "working", "done", "merging", "landed"}
+
+// FriendCardsKey is a friend's set of tasks and cards at one where, the one
+// the one move (fn/lua/02_card_move.lua) keeps.
+func FriendCardsKey(friend, where string) string { return "friend:" + friend + ":cards:" + where }
+
+// friendCounts is the row's ready, working and done cells from its ZCARDs;
+// a failed read is "" (printed -), never a guess.
+func friendCounts(z []*redis.IntCmd) (ready, working, done string) {
+	cell := func(cmds ...*redis.IntCmd) string {
+		var n int64
+		for _, c := range cmds {
+			v, err := c.Result()
+			if err != nil {
+				return ""
+			}
+			n += v
+		}
+		return strconv.FormatInt(n, 10)
+	}
+	return cell(z[0]), cell(z[1]), cell(z[2], z[3], z[4])
 }
 
 // logWindowMax bounds the hour of ws:log one tick reads; a sprint moving more

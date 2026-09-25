@@ -1,10 +1,11 @@
 // clear.go: `nova-sprint table clear` (#3637). Zeroes the table's landed and
 // done columns in under a second and leaves waiting untouched: every member of
-// every ws:<s>:landed set moves to closed (in no set, task:<id> state=closed,
-// one ws:log entry each, the any->closed move of the ws index, #3662),
-// and each friend's current done count is stored in ws:done0 so the friend
-// block counts from zero. working and merging are live task states on the ws
-// index, not counters, so a clear never moves them.
+// every ws:<s>:landed set moves to done/ok through the one task move
+// (ns_tcard_move, fn/lua/02_card_move.lua, #3778: landed -> done/ok; the card
+// stays, in ws:<s>:done, which the stream table does not print), and each
+// friend's current done count (ZCARD of its done, merging and landed card
+// sets) is stored in ws:done0 so the friend block counts from zero. working
+// and merging are live places, not counters, so a clear never moves them.
 //
 // Round trips: the stream and friend lists, the landed members and done
 // counts, the landed tasks' fields (the checkpoint), then ONE MULTI/EXEC that
@@ -64,9 +65,11 @@ func PlanClear(ctx context.Context, client redis.UniversalClient, friends []stri
 	for i, s := range p.Streams {
 		landed[i] = pipe.ZRangeWithScores(ctx, "ws:"+s+":landed", 0, -1)
 	}
-	done := make([]*redis.StringCmd, len(p.Friends))
+	done := make([][]*redis.IntCmd, len(p.Friends))
 	for i, f := range p.Friends {
-		done[i] = pipe.HGet(ctx, "friend:"+f, "done")
+		for _, w := range FriendCardWheres[2:] {
+			done[i] = append(done[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
+		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, fmt.Errorf("read landed sets: %w", err)
@@ -85,8 +88,15 @@ func PlanClear(ctx context.Context, client redis.UniversalClient, friends []stri
 		}
 	}
 	for i, f := range p.Friends {
-		if v, err := done[i].Result(); err == nil && v != "" && strings.Trim(v, "0123456789") == "" {
-			p.Done[f] = v
+		var n int64
+		ok := true
+		for _, c := range done[i] {
+			v, err := c.Result()
+			ok = ok && err == nil
+			n += v
+		}
+		if ok {
+			p.Done[f] = strconv.FormatInt(n, 10)
 		}
 	}
 	if len(ids) == 0 {
@@ -142,29 +152,19 @@ func (p *ClearPlan) Checkpoint() string {
 	return b.String()
 }
 
-// Apply moves every planned landed member to closed and stores the done
-// base, in one MULTI/EXEC. receipt is stored as ws:checkpoint. A member that
-// left its landed set since the plan is still closed (its hash says so and
-// the ZREM is a no-op).
+// Apply moves every planned landed member to done/ok through the one task
+// move and stores the done base, in one MULTI/EXEC. receipt is stored as
+// ws:checkpoint. A member the move refuses (it left landed since the plan,
+// or its record is gone) stays where it is and is named in the error.
 func (p *ClearPlan) Apply(ctx context.Context, client redis.UniversalClient, by, why, receipt string) error {
-	ms := strconv.FormatInt(p.At.UnixMilli(), 10)
-	_, err := client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+	var moves []*redis.Cmd
+	var ids []string
+	cmds, err := client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		for _, s := range p.Streams {
-			zs := p.Landed[s]
-			if len(zs) == 0 {
-				continue
-			}
-			members := make([]any, len(zs))
-			for i, z := range zs {
-				members[i] = z.Member
-			}
-			pipe.ZRem(ctx, "ws:"+s+":landed", members...)
-			for _, z := range zs {
+			for _, z := range p.Landed[s] {
 				id := fmt.Sprint(z.Member)
-				if _, ok := p.Tasks[id]; ok {
-					pipe.HSet(ctx, "task:"+id, "state", "closed", "state_at", ms)
-				}
-				pipe.XAdd(ctx, &redis.XAddArgs{Stream: "ws:log", Values: []any{"id", id, "stream", s, "from", "landed", "to", "closed", "by", by, "why", why, "at", ms}})
+				ids = append(ids, id)
+				moves = append(moves, pipe.FCall(ctx, clearMoveFn, nil, id, "done", by, why, "ok", "ok"))
 			}
 		}
 		if len(p.Done) > 0 {
@@ -181,7 +181,24 @@ func (p *ClearPlan) Apply(ctx context.Context, client redis.UniversalClient, by,
 		}
 		return nil
 	})
-	return err
+	_ = cmds
+	if err != nil && !isReplyError(err) {
+		return err
+	}
+	var refused []string
+	for i, m := range moves {
+		v, merr := m.Result()
+		if s, _ := v.(string); merr != nil || strings.HasPrefix(s, "REFUSED") {
+			refused = append(refused, fmt.Sprintf("%s: %v%v", ids[i], s, merr))
+		}
+	}
+	if len(refused) > 0 {
+		return fmt.Errorf("%d landed tasks not cleared: %s", len(refused), strings.Join(refused, "; "))
+	}
+	return nil
 }
+
+// clearMoveFn is the one task move (fn/lua/02_card_move.lua).
+const clearMoveFn = "ns_tcard_move"
 
 func tsvCell(v string) string { return strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(v) }
