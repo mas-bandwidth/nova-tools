@@ -342,7 +342,13 @@ func main() {
 		_ = os.MkdirAll(filepath.Dir(path), 0o755)
 		writeRecorded(path, []byte("not a database\x00"), 0o000)
 	}
-	if _, ok := directive(prompt, "FAKE-BACKGROUND"); ok {
+	// The `FAKE-BACKGROUND` prefix also matches `FAKE-BACKGROUND-SLEEP` (directive is a
+	// prefix match), so both handlers fired for the one -SLEEP card: the second write
+	// truncated background.pid and, when the deadline killed the harness between its
+	// truncate and its write, left the file empty for the reader (issue #3749). A bare
+	// `FAKE-BACKGROUND` is the rule-11 violation; a `-SLEEP` remainder is its bounded
+	// sibling below and must not double-fire here.
+	if arg, ok := directive(prompt, "FAKE-BACKGROUND"); ok && !strings.HasPrefix(arg, "-SLEEP") {
 		child := exec.Command(os.Args[0], "--background-child")
 		child.Env = append(os.Environ(), "FAKE_BACKGROUND_CHILD=1")
 		_ = child.Start()
