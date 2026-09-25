@@ -3273,7 +3273,6 @@ usage:
                  [--nova-bus <path>] [--attempts <n>] [--timeout <duration>] [--max-bytes <n>] [--now <stamp>]
   nova-work asks (--units <file> | --bus <dir> --as <name>) [--owner <friend>] [--max <n>] [--max-notes <n>]
                  [--max-bytes <n>] [--now <stamp>]
-  nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] [--bench <name>] [--log <path>] (--once | --deadline <duration>)
   nova-work push --stream <kind> --lane <red|green|small|next> --card <file> (--redis <addr> | --dir <root>) [--priority <n>] [--needs <id>[,<id>...]]
   nova-work verification --sexp <path> --repo <dir> (--check | --write) [--timeout <duration>]
 
@@ -3303,7 +3302,6 @@ verbs:
   nova-work next           the ONE unit this mind does next: ready, owned, admitted, routed
   nova-work ask            delivers ONE unit to the FRIEND who owns it, as a bus note
   nova-work asks           the open asks, oldest first, with their age and their deadline
-  nova-work events         bridges the events, not ticks (cards:done stream + gh fallback poll)
   nova-work verification   runs the suite at HEAD, lists STALE and PROPOSE criteria, --write rewrites :verification
 
 THE MACHINERY ROUTES TO FRIENDS (Glenn, 2026-09-18). A bench pulls cards; a friend pulls
@@ -3416,27 +3414,6 @@ that call did not answer is read alone by REST.
 --write-status (implies --evaluate) then rewrites :status "open" to "landed" for each unit
 whose criteria all hold, one SET WROTE line per unit, and changes no other byte.
 
-events publishes the family's three event channels from two sources: a card's end on
-the cards:done stream (consumer group events) becomes card-done, and a poll of gh every
---gh-poll becomes pr-checks-done on a changed check-suite conclusion and dev-moved on a
-changed base head. Only an ok or a fail entry is a card's end (or an entry with no event
-field, written before the field existed); every other transition on the stream -- queued,
-a turn, a decide event -- is acked and not re-announced. The poll is the fallback
-heartbeat until the forge pushes a webhook; a quiet poll publishes nothing. Without
---repo only the stream is bridged.
-
---once reads the stream and polls the forge once, then exits. The loop form requires
---deadline and returns when it is reached.
-
-Every event events publishes is also written as one structured JSON line (SPEC-LOGS.md
-Part 2): the same five labels on every line -- source=nova-work, verb=events, bench, the
-event kind (start, card-done, pr-checks-done, dev-moved, done) and level -- plus the
-fixed fields ts, guid, card, pr, msg, dur_ms and err. The line goes to stderr, which
-under systemd is the unit's journal and so a source Alloy already reads, or to the file
---log names, which Alloy tails on every bench. A secret value never reaches the line:
-the emitter redacts anything credential-shaped before it leaves the process. The stdout
-EVENTS OK line is unchanged; the JSON line is written beside it, never instead of it.
-
 flags:
   --graph <file>  the node graph, as JSON: {"nodes":[{"id":"a","needs":["b"]}, ...]}
                   Required on both graph verbs; there is no default and no discovery.
@@ -3520,11 +3497,6 @@ flags:
   --now <stamp>   ask and asks: the instant deadlines and ages are measured against;
                   the default is this run's clock and an unparsable one is a refusal
                   rather than a silent fall back to it.
-  --bench <name>  events: the fleet name of this machine, the bench label on every
-                  structured line. Without it, $NOVA_BENCH, else the short hostname.
-  --log <path>    events: append the structured JSON lines to this file instead of
-                  stderr. The file is the one Alloy tails; a path that cannot be opened
-                  is refused naming --log, never a silent run with no log.
 
 exit codes: 0 ran and passed; 1 set check read the file whole and found something wrong
 with its content, one SET line per finding; 2 could not run (bad invocation, an
@@ -3538,7 +3510,6 @@ example:
   nova-work set check --file ./work-set.lisp --ready
   nova-work next --file ./units.lisp --for rowan-child --lanes ./lanes.tsv --no-jev --take
   nova-work attempt record --file ./units.lisp --unit certify:verb --by rowan-child --outcome ok --proof 8a132e77 --pr 1369
-  nova-work events --redis 127.0.0.1:6379 --once
 ```
 
 The session verbs `session start`, `session status` and `session stop` speak the socket protocol; `SESSION OK` is one shape printed by all three alike. A missing `--session` (the socket has no default path) or a socket nothing answers is one `WORK REFUSED` line on stderr, exit 2, ending `run: nova-work help`. The session's own refusals — `FAIL`, `RACED`, `REFUSED` — reach stderr and exit 1. The graph and plan verbs read the JSON dependency graph and the bounded `.work` plan as data: `plan check` and `plan expand` require a plan path and default to 65,536 bytes, 64 levels of nesting and 4,096 atoms (`--max-bytes`, `--max-depth`, `--max-nodes`); unknown kinds, absent dependencies and dependency cycles refuse. `plan expand` writes card directories for explicit `:node` entries and does not launch them; existing cards are left unchanged when expanding again. `dependencies --graph <file>` reads the graph and `--node <id> --needs <id,id>` writes dependency edges; `ready` prints whether each requested node's dependencies are terminal and accepted without acquiring a lease or reserving a slot. `set check` reads the other top form of the same language — `(work-set "id" … :units ((unit …)))`, the one a coordinator writes by hand — through that same bounded reader, and validates its content: a duplicate id, a `:needs` naming a unit nobody defined, a cycle, an `:owner` no `--minds` registry names, a `:lane` no `--lanes` file names, a `:deadline` that is not an instant. Every rule runs over every unit in one pass and each finding is one `SET` line, so a defective set costs one run rather than one run per defect. The two exit codes stay apart: exit 2 is a file that could not be read at all, exit 1 is a file read whole whose content is wrong, and the `SET OK units=… ready=… blocked=… owned=…` summary prints either way. `--ready` adds the mechanical ready set — a unit is done when it says so (`:done`, or a `:status` of closed, done, landed or merged) or when `--done` names it, and ready when it is not done and every need is done — so what can be pulled is derived from the language rather than maintained by hand. `nova-work help` also describes `clip`, which commits and harvests a worker's result before resetting its worktree; use that mutating workflow only with the intended worktree, branch, base and harvest destination.

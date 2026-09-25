@@ -31,20 +31,12 @@
 // exit 2 could not run -- a missing flag, an unreadable graph or plan, a :deps cycle, an
 // unknown node, a refusal.
 //
-// nova-work is also the work layer's event bridge. This binary's shipped verb, events,
-// turns the cards:done stream and the gh fallback poll into the pub/sub messages the
-// merge layer reacts to (docs/SPEC-JOBS.md, "Events, not ticks"). It makes no model call
-// and writes no record: every message is a signal, and git stays the record. It announces
-// a card's END only: every other transition on cards:done (queued, a turn, a decide
-// event, ...) is acked and not re-announced, because the fold reads the stream itself.
-//
 // The card-result record is the fold of cards:done (internal/events, `nova-pulse fold`).
 // The record and results verbs that wrote it into the card_results table are retired
 // with that table (nova-tools #2623).
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -53,10 +45,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/workclient"
@@ -178,7 +167,6 @@ usage:
                  [--nova-bus <path>] [--attempts <n>] [--timeout <duration>] [--max-bytes <n>] [--now <stamp>]
   nova-work asks (--units <file> | --bus <dir> --as <name>) [--owner <friend>] [--max <n>] [--max-notes <n>]
                  [--max-bytes <n>] [--now <stamp>]
-  nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] [--bench <name>] [--log <path>] (--once | --deadline <duration>)
   nova-work push --stream <kind> --lane <red|green|small|next> --card <file> (--redis <addr> | --dir <root>) [--priority <n>] [--needs <id>[,<id>...]]
   nova-work verification --sexp <path> --repo <dir> (--check | --write) [--timeout <duration>]
 
@@ -208,7 +196,6 @@ verbs:
   nova-work next           the ONE unit this mind does next: ready, owned, admitted, routed
   nova-work ask            delivers ONE unit to the FRIEND who owns it, as a bus note
   nova-work asks           the open asks, oldest first, with their age and their deadline
-  nova-work events         bridges the events, not ticks (cards:done stream + gh fallback poll)
   nova-work verification   runs the suite at HEAD, lists STALE and PROPOSE criteria, --write rewrites :verification
 
 THE MACHINERY ROUTES TO FRIENDS (Glenn, 2026-09-18). A bench pulls cards; a friend pulls
@@ -321,27 +308,6 @@ that call did not answer is read alone by REST.
 --write-status (implies --evaluate) then rewrites :status "open" to "landed" for each unit
 whose criteria all hold, one SET WROTE line per unit, and changes no other byte.
 
-events publishes the family's three event channels from two sources: a card's end on
-the cards:done stream (consumer group events) becomes card-done, and a poll of gh every
---gh-poll becomes pr-checks-done on a changed check-suite conclusion and dev-moved on a
-changed base head. Only an ok or a fail entry is a card's end (or an entry with no event
-field, written before the field existed); every other transition on the stream -- queued,
-a turn, a decide event -- is acked and not re-announced. The poll is the fallback
-heartbeat until the forge pushes a webhook; a quiet poll publishes nothing. Without
---repo only the stream is bridged.
-
---once reads the stream and polls the forge once, then exits. The loop form requires
---deadline and returns when it is reached.
-
-Every event events publishes is also written as one structured JSON line (SPEC-LOGS.md
-Part 2): the same five labels on every line -- source=nova-work, verb=events, bench, the
-event kind (start, card-done, pr-checks-done, dev-moved, done) and level -- plus the
-fixed fields ts, guid, card, pr, msg, dur_ms and err. The line goes to stderr, which
-under systemd is the unit's journal and so a source Alloy already reads, or to the file
---log names, which Alloy tails on every bench. A secret value never reaches the line:
-the emitter redacts anything credential-shaped before it leaves the process. The stdout
-EVENTS OK line is unchanged; the JSON line is written beside it, never instead of it.
-
 flags:
   --graph <file>  the node graph, as JSON: {"nodes":[{"id":"a","needs":["b"]}, ...]}
                   Required on both graph verbs; there is no default and no discovery.
@@ -425,11 +391,6 @@ flags:
   --now <stamp>   ask and asks: the instant deadlines and ages are measured against;
                   the default is this run's clock and an unparsable one is a refusal
                   rather than a silent fall back to it.
-  --bench <name>  events: the fleet name of this machine, the bench label on every
-                  structured line. Without it, $NOVA_BENCH, else the short hostname.
-  --log <path>    events: append the structured JSON lines to this file instead of
-                  stderr. The file is the one Alloy tails; a path that cannot be opened
-                  is refused naming --log, never a silent run with no log.
 
 exit codes: 0 ran and passed; 1 set check read the file whole and found something wrong
 with its content, one SET line per finding; 2 could not run (bad invocation, an
@@ -443,10 +404,7 @@ example:
   nova-work set check --file ./work-set.lisp --ready
   nova-work next --file ./units.lisp --for rowan-child --lanes ./lanes.tsv --no-jev --take
   nova-work attempt record --file ./units.lisp --unit certify:verb --by rowan-child --outcome ok --proof 8a132e77 --pr 1369
-  nova-work events --redis 127.0.0.1:6379 --once
 `
-
-// deps is the seam the tests replace: the store and consumer factories and the clock.
 
 // refused is what could not run at all costs: ONE line on stderr naming what was wrong
 // and the door to the usage, exit 2 -- the client spec's own remedy spelling.
@@ -478,25 +436,18 @@ var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
 	"dogfood":      cmdDogfood,
 }
 
-// Deps is everything this binary reaches outside itself, injected so the tests drive a
-// miniredis and a fake forge, and reach no network.
+// Deps is everything this binary reaches outside itself, injected so the tests
+// reach no network: the verification verb's two reaches outside the process (the
+// acceptance suite run and the checkout's HEAD; nil is the real one) and the clock.
 type Deps struct {
 	Now   func() time.Time
-	Dial  func(addr string) *redis.Client
-	Forge func(repo, base string, timeout time.Duration) ci.Forge
-	// Suite and Head are the verification verb's two reaches outside the process:
-	// the acceptance suite run and the checkout's HEAD. Nil is the real one.
 	Suite suiteRun
 	Head  headRead
 }
 
 func production() Deps {
 	return Deps{
-		Now:  func() time.Time { return time.Now().UTC() },
-		Dial: func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
-		Forge: func(repo, base string, timeout time.Duration) ci.Forge {
-			return ci.NewGHForge(repo, base, timeout)
-		},
+		Now: func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -525,7 +476,7 @@ const absorbDecision = "absorb is not scheduled (the decision record of nova-too
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, production(), version)) }
 
 // run takes the version stamp (a string, for the version verb's tests) and the injected
-// Deps (for the events verb's tests) as trailing options, so the socket
+// Deps (for the verification verb's tests) as trailing options, so the socket
 // client's stamp and every outside edge reach the one entry point.
 func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	stamp := version
@@ -555,9 +506,6 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	// taken here; every other accept line falls through to the socket verb table.
 	if args[0] == "accept" && jobs.NamesGraphFlag(args[1:]) {
 		return cmdAccept(args[1:], stdout, stderr)
-	}
-	if args[0] == "events" {
-		return cmdEvents(args[1:], stdout, stderr, deps)
 	}
 	if args[0] == "verification" {
 		return cmdVerification(args[1:], stdout, stderr, deps)
@@ -1307,145 +1255,4 @@ func printReplyLines(reply workclient.Reply, stdout, stderr io.Writer) int {
 		}
 	}
 	return code
-}
-
-// cmdEvents is the events verb. Its flags are parsed with flag's usage dump discarded, so
-// a bad value is one refusal line and not a banner.
-func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
-	fs := flag.NewFlagSet("events", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	addr := fs.String("redis", "", "")
-	repo := fs.String("repo", "", "")
-	base := fs.String("base", "dev", "")
-	ghPoll := fs.String("gh-poll", "60s", "")
-	deadline := fs.String("deadline", "", "")
-	consumer := fs.String("consumer", "", "")
-	bench := fs.String("bench", "", "")
-	logPath := fs.String("log", "", "")
-	once := fs.Bool("once", false, "")
-	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
-			return printVerbHelp(stderr, "events")
-		}
-		fmt.Fprintf(stderr, "nova-work events: %s; run: nova-work help\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
-		return 2
-	}
-	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "nova-work events: takes no positional arguments, got %d; run: nova-work help\n", fs.NArg())
-		return 2
-	}
-	if *addr == "" {
-		fmt.Fprintf(stderr, "nova-work events: --redis is required; it wants the address of the pub/sub instance; run: nova-work help\n")
-		return 2
-	}
-	poll, err := time.ParseDuration(*ghPoll)
-	if err != nil || poll <= 0 {
-		fmt.Fprintf(stderr, "nova-work events: --gh-poll is a positive duration such as 60s, got %q; run: nova-work help\n", oneline.Escape(*ghPoll))
-		return 2
-	}
-	var bound time.Duration
-	if *deadline != "" {
-		if bound, err = time.ParseDuration(*deadline); err != nil || bound <= 0 {
-			fmt.Fprintf(stderr, "nova-work events: --deadline is a positive duration, got %q; run: nova-work help\n", oneline.Escape(*deadline))
-			return 2
-		}
-	}
-	if !*once && bound <= 0 {
-		fmt.Fprintf(stderr, "nova-work events: the loop form requires --deadline; a loop with no deadline is a process nobody can tell from a stuck one; run: nova-work help\n")
-		return 2
-	}
-
-	// The structured sink of SPEC-LOGS.md Part 2. Its default is stderr, which under
-	// systemd is the unit's journal and so a source Alloy already reads without a new
-	// agent; --log names the file Alloy tails instead, for a bench whose supervisor is
-	// not systemd. A path that cannot be opened is a refusal here and not a silent run
-	// with no log: a bench whose lines never reach Loki must say why, at the start.
-	events := stderr
-	if *logPath != "" {
-		f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			fmt.Fprintf(stderr, "nova-work events: --log %s cannot be opened for append: %s; run: nova-work help\n",
-				oneline.Field(*logPath), oneline.Err(err))
-			return 2
-		}
-		defer f.Close()
-		events = f
-	}
-
-	rdb := deps.Dial(*addr)
-	defer rdb.Close()
-
-	var forge ci.Forge
-	if *repo != "" {
-		forge = deps.Forge(*repo, *base, poll)
-	}
-	p := ci.NewProducer(rdb, forge, *consumer, stderr)
-	p.Events = events
-	p.Bench = benchName(*bench)
-	if deps.Now != nil {
-		p.Clock = deps.Now
-	}
-
-	started := time.Now()
-	p.Announce(ci.EventStart, fmt.Sprintf("events: bridging %s with gh-poll %s",
-		oneline.Field(ci.StreamCardsDone), oneline.Field(poll.String())), 0, nil)
-
-	ctx := context.Background()
-	if bound > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, bound)
-		defer cancel()
-	}
-
-	if *once {
-		cards, err := p.PublishCardsDone(ctx)
-		if err != nil {
-			fmt.Fprintf(stderr, "nova-work events: %s\n", oneline.Err(err))
-			p.Announce(ci.EventRefuse, "events: the stream could not be read", time.Since(started), err)
-			return 1
-		}
-		polls := 0
-		if forge != nil {
-			polls, err = p.PollOnce(ctx)
-			if err != nil {
-				fmt.Fprintf(stderr, "nova-work events: %s\n", oneline.Err(err))
-				p.Announce(ci.EventRefuse, "events: the forge could not be polled", time.Since(started), err)
-				return 1
-			}
-		}
-		fmt.Fprintf(stdout, "EVENTS OK once=true card-done=%d published=%d\n", cards, polls)
-		p.Announce(ci.EventDone, fmt.Sprintf("events: one pass, card-done %d, published %d", cards, polls), time.Since(started), nil)
-		return 0
-	}
-	if err := p.Run(ctx, poll); err != nil && err != context.DeadlineExceeded {
-		fmt.Fprintf(stderr, "nova-work events: %s\n", oneline.Err(err))
-		p.Announce(ci.EventRefuse, "events: the bridge stopped before its deadline", time.Since(started), err)
-		return 1
-	}
-	fmt.Fprintf(stdout, "EVENTS OK once=false deadline=%s\n", oneline.Field(bound.String()))
-	p.Announce(ci.EventDone, fmt.Sprintf("events: the bridge reached its deadline %s",
-		oneline.Field(bound.String())), time.Since(started), nil)
-	return 0
-}
-
-// benchName is the bench label on every structured line: the flag when given, else
-// $NOVA_BENCH, else the short hostname. It is the fleet's name for this machine, which is
-// what a LogQL query selects on, and it is read here rather than in internal/ci so a test
-// of the producer injects it and never reads the environment.
-func benchName(flagValue string) string {
-	if s := strings.TrimSpace(flagValue); s != "" {
-		return s
-	}
-	if s := strings.TrimSpace(os.Getenv("NOVA_BENCH")); s != "" {
-		return s
-	}
-	h, err := os.Hostname()
-	if err != nil {
-		return ""
-	}
-	if i := strings.Index(h, "."); i > 0 {
-		h = h[:i]
-	}
-	return strings.TrimSpace(h)
 }

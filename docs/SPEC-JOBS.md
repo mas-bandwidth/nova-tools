@@ -166,36 +166,11 @@ a cadence.
 
 ### Events, not ticks
 
-The four events above cross the process boundary on local Redis pub/sub, so no merge-path
-verb waits for a tick. The bridge is two verbs and one internal edge:
-
-- `nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>]
-  [--gh-poll 60s] (--once | --deadline <duration>)` is the producer. It reads the
-  `cards:done` stream with the consumer group `events` and republishes each entry as
-  `card-done`. Because GitHub webhooks are not wired here yet, it also polls `gh` every
-  `--gh-poll` for check-suite completions on open `rowan/*` pull requests and for the base
-  branch's head, publishing `pr-checks-done {number, head, conclusion}` and
-  `dev-moved {sha}` **only on change**. The poll is the fallback heartbeat the principle
-  allows; a webhook later replaces it without moving the line between producer and
-  reactor. A quiet poll publishes nothing.
-- `nova-merge react --redis <addr> [--lane <dir>] (--once | --deadline <seconds>)` is the
-  subscriber. On `pr-checks-done` success and not in the skip set (`enqueue:skip`, a Redis
-  set) and not under `enqueue:hold` (a TTL'd key), it enqueues the PR once. On `dev-moved`
-  it lists the `rowan/*` pull requests the move made DIRTY and publishes
-  `rebase-wanted {number, head}`, which the rebase verb consumes. On `card-done` it
-  publishes nothing, because the recorder and the harvester read the stream directly. The
-  reactor holds no timer: it blocks on the subscription and returns once at its deadline,
-  so an idle reactor makes no model call and no subprocess poll.
-
-The gh edge is an interface with a fake; the bus is a real Redis addressed by `--redis`
-and, under test, miniredis. Every loop has a `--deadline`. One action prints one line, in
-the same grammar the sweep verb already prints.
-
-**Red tests.** `producer-publishes-card-done-from-the-stream`;
-`producer-publishes-pr-checks-done-only-on-change`;
-`producer-publishes-dev-moved-only-on-change`; `reactor-enqueues-a-green-pr`;
-`reactor-skips-the-skip-set`; `reactor-holds-on-the-hold-key`;
-`reactor-publishes-rebase-wanted-for-dirty-prs`; `reactor-card-done-publishes-nothing`.
+The pub/sub bridge that once carried the four events across the process boundary is
+gone (nova-tools#3881): `nova-work events` published `card-done`, `pr-checks-done` and
+`dev-moved` to channels no binary subscribed to, and the reactor it fed was linked into
+nothing. A card's end is the `cards:done` stream, which the fold reads itself; a waiter
+reads the Redis state it needs directly rather than a republished copy of it.
 
 ## 9. Resource vectors, writes and no barriers (Amendment 1, 2026-09-18)
 
@@ -331,7 +306,7 @@ number is read from `usage.tsv` and the queue — never from a report body.
 
 ## Tests this spec demands
 
-The spec names its red tests explicitly, one per behaviour, so the enumeration below is the spec's own (44 lines). The present ones run against temp dirs (`t.TempDir`), fake clocks, fake runners and fake forges; the ci events tests run against miniredis plus a fake forge; the jobs admission tests are in-memory and deterministic. Nothing reaches a network or a real secret, and each test is written to be seen red before green.
+The spec names its red tests explicitly, one per behaviour, so the enumeration below is the spec's own (44 lines). The present ones run against temp dirs (`t.TempDir`), fake clocks, fake runners and fake forges; the jobs admission tests are in-memory and deterministic. Nothing reaches a network or a real secret, and each test is written to be seen red before green.
 
 1. `TestLaunchReadsTheReadySetNotTheQueue` — launch reads the ready set and nothing else; a card whose need is an open PR is never on a slot.
 2. `TestANeedsCycleRefusesAtSeed` — a `:deps` cycle is refused at seed (validator rule 3), so the graph can never deadlock.
@@ -349,14 +324,14 @@ The spec names its red tests explicitly, one per behaviour, so the enumeration b
 14. `TestAnIdleSlotAsksOnAnEventNotAPoll` — an idle slot asks the coordinator for work on an event, never by polling its empty queue.
 15. `TestWatchReturnsOncePerChange` — a watch returns once per change, one line per event, and does not replay on quiet polls.
 16. `TestQuietTimeMakesNoModelCall` — quiet time makes no model call and no subprocess poll.
-17. `TestProducerPublishesCardDoneFromTheStream` — the producer republishes each `cards:done` stream entry as `card-done`.
-18. `TestProducerPublishesPRChecksDoneOnlyOnChange` — the producer publishes `pr-checks-done` only on change.
-19. `TestProducerPublishesDevMovedOnlyOnChange` — the producer publishes `dev-moved {sha}` only on change.
-20. `TestReactorEnqueuesGreenPR` — the reactor enqueues a PR once on a successful `pr-checks-done`.
-21. `TestReactorSkipsTheQueuesSkipSet` — the reactor skips the `enqueue:skip` set.
-22. `TestReactorHoldsOnTheLanesHold` — the reactor holds on the `enqueue:hold` key.
-23. `TestReactorPublishesRebaseWantedForDirtyPRs` — on `dev-moved` the reactor publishes `rebase-wanted` for each PR the move made DIRTY.
-24. `TestReactorCardDonePublishesNothing` — on `card-done` the reactor publishes nothing.
+17. Removed with the event bridge (nova-tools#3881): the producer republished each `cards:done` entry as `card-done`.
+18. Removed with the event bridge (nova-tools#3881): the producer published `pr-checks-done` only on change.
+19. Removed with the event bridge (nova-tools#3881): the producer published `dev-moved` only on change.
+20. Removed with the event bridge (nova-tools#3881): the reactor enqueued a PR on a successful `pr-checks-done`.
+21. Removed with the event bridge (nova-tools#3881): the reactor skipped the skip set.
+22. Removed with the event bridge (nova-tools#3881): the reactor held on the hold key.
+23. Removed with the event bridge (nova-tools#3881): the reactor published `rebase-wanted` for each DIRTY PR.
+24. Removed with the event bridge (nova-tools#3881): the reactor published nothing on `card-done`.
 25. `TestJobsAdmission/jobs-admission-is-atomic-no-partial-grant` — admission takes the whole vector or none of it, never a partial grant.
 26. `TestJobsAdmission/jobs-a-nested-grant-draws-from-its-parent` — a nested grant draws from its parent's reservation, not from the machine.
 27. `TestJobsAdmission/jobs-double-reservation-is-a-refusal-not-a-wait` — a second reservation for one capacity is a refusal, not a wait.

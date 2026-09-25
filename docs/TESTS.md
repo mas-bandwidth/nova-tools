@@ -1038,29 +1038,7 @@ rather than a drift: `WORK REFUSED:` is what the client spec gives an invocation
 that could not run at all, and `nova-work <verb>:` is what a verb that ran and read
 its input says about the input. `cmd/nova-work/firstrun_test.go` executes this
 block as well as the one above; until 2026-09-19 it executed neither refusal, and
-what that cost is written below.
-
-### The event bridge
-
-`nova-work events` publishes the pub/sub messages `nova-merge react` subscribes to
-(docs/SPEC-JOBS.md, "Events, not ticks"). It makes no model call and writes no
-record: the bus is a signal, git is the record.
-
-It has no `$` line above because it cannot have one. The relay needs a local Redis
-(`--redis <addr>`), and naming the repository with `--repo` switches ON a
-`gh pr list` fallback that reaches the forge — without `--repo` only the stream is
-bridged. `cmd/nova-work/events_log_test.go` drives it against a miniredis and a
-fake forge, and the usage banner's `example:` block runs it without `--repo`. That
-is where a line needing a running service belongs: every `$` line in this file is
-one a stranger can type on a fresh bench.
-
-This description used to head a SECOND `## nova-work` section further down this
-file. Because `onboarding.Section` reads the first match of a name, no test ever
-executed it, and it drifted into a refusal sentence the binary had stopped printing
-(`nova-work: no verb given`) and an `events` line carrying `--repo`. Both
-reproduced as DEFECT on space and on hulk in the 2026-09-18 two-bench run while
-every test in this repository was green. `internal/ci/onboarding_test.go` now
-refuses a repeated `## ` heading here.
+what that cost is written in docs/SPEC-CI.md under `one section`.
 
 ## nova-ci
 
