@@ -15,6 +15,9 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 )
 
 const (
@@ -304,3 +307,58 @@ func TestLandVerbsRefuseUsage(t *testing.T) {
 		t.Fatalf("new record without head: %d %s", code, errOut)
 	}
 }
+
+// When a stream lander pushes a stream branch head it requests CI automatically (#3717).
+func TestLandStreamAutoRequestsCI(t *testing.T) {
+	addr := testutil.Start(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	url, bare, heads := lsFixture(t)
+	gh := newFakeGitHub(t)
+	prev := landStreamToken
+	landStreamToken = func() (string, error) { return "test-token", nil }
+	t.Cleanup(func() { landStreamToken = prev })
+
+	// One member in merging, score 10
+	n := 1
+	id := "t1"
+	c.ZAdd(ctx, "ws:"+lsStream+":merging", redis.Z{Score: 100, Member: id})
+	c.HSet(ctx, "task:"+id, "stream", lsStream, "state", "merging", "pr", fmt.Sprint(n))
+	if code, out, errOut := runSprint("pr", "record", "--redis", addr, "--repo", lsRepo, "--n", fmt.Sprint(n),
+		"--head", heads[n], "--base", "dev", "--stream", lsStream, "--task", id); code != 0 || !strings.Contains(out, "created=true") {
+		t.Fatalf("pr record: %d %s %s", code, out, errOut)
+	}
+	line := fmt.Sprintf("SCORE who=rowan head=%s score=10/10 gates=ci:ok,base:ok,scope:ok", heads[n])
+	if code, out, errOut := runSprint("pr", "lines", "--redis", addr, "--repo", lsRepo, "--n", fmt.Sprint(n), "--add", line); code != 0 || !strings.Contains(out, "lines=1 added=SCORE") {
+		t.Fatalf("pr lines: %d %s %s", code, out, errOut)
+	}
+
+	work := filepath.Join(t.TempDir(), "clone")
+	code, out, errOut := runSprint("land", "stream", "--redis", addr, "--repo", lsRepo, "--stream", lsStream,
+		"--remote", url, "--mirror", "none", "--workdir", work, "--api", gh.srv.URL, "--test", "true")
+	if code != 0 {
+		t.Fatalf("land stream: %d\n%s\n%s", code, out, errOut)
+	}
+
+	streamHead := lsGit(t, bare, "rev-parse", "refs/heads/stream/"+lsSlug)
+	if streamHead == "" {
+		t.Fatal("stream branch not pushed")
+	}
+
+	// ci:pool holds stream head (#3717).
+	score, err := c.ZScore(ctx, "ci:pool", "nova-tools:"+streamHead).Result()
+	if err != nil || score <= 0 {
+		t.Fatalf("ci:pool does not hold nova-tools:%s: score=%f err=%v", streamHead, score, err)
+	}
+
+	// The CI record is pending.
+	rec := c.HGetAll(ctx, "ci:nova-tools:"+streamHead).Val()
+	if rec["ci"] != "pending" || rec["repo"] != "nova-tools" || rec["sha"] != streamHead || rec["pr"] != "900" {
+		t.Fatalf("ci record = %v, want ci=pending repo=nova-tools sha=%s pr=900", rec, streamHead)
+	}
+}
+

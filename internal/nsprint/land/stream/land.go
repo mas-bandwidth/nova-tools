@@ -11,6 +11,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
@@ -168,6 +171,7 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 			l.State = "pushed"
 			rep.State = l.State
 			rep.ParkedMoved, _ = SaveBuilt(ctx, c, l, o.By)
+			requestCI(ctx, c, o.Repo, res.Head, 0)
 			return rep, err
 		}
 		rep.PR = n
@@ -176,10 +180,22 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	l.State = "open"
 	rep.State = l.State
 	rep.ParkedMoved, err = SaveBuilt(ctx, c, l, o.By)
+	requestCI(ctx, c, o.Repo, res.Head, rep.PR)
 	if err == nil {
 		removeWorkdir(o.Workdir)
 	}
 	return rep, err
+}
+
+func requestCI(ctx context.Context, c Client, repo, sha string, pr int) {
+	if rc, ok := c.(*redis.Client); ok {
+		st := store.New(rc)
+		_, _ = ci.Request(ctx, st, ci.RequestRequest{
+			Repo: prkey.Name(repo),
+			SHA:  sha,
+			PR:   pr,
+		})
+	}
 }
 
 // removeWorkdir deletes the scratch clone under its own parent (never the

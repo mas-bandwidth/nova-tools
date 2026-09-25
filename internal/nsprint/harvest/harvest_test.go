@@ -252,6 +252,14 @@ func TestControl13OneBenchDownOthersFinish(t *testing.T) {
 			rec["base_sha"] != "09fbedc9" || rec["state"] != "open" || rec["branch"] != "nova/"+sprint+"/"+label+"-a1" {
 			t.Fatalf("%s = %v; want head, base, base_sha, label, sprint, branch and state=open", harvest.RecordKey("nova-tools", n), rec)
 		}
+		// Every harvested card's head is requested in ci:pool and pending (#3717).
+		ciKey := "ci:nova-tools:" + sha(label)
+		if s := c.HGet(ctx, ciKey, "ci").Val(); s != "pending" {
+			t.Fatalf("%s ci status = %q, want pending", ciKey, s)
+		}
+		if _, err := c.ZScore(ctx, "ci:pool", "nova-tools:"+sha(label)).Result(); err != nil {
+			t.Fatalf("ci:pool missing nova-tools:%s: %v", sha(label), err)
+		}
 	}
 	for _, label := range []string{"ctl-down-card1", "ci-3011-deadbeef", "ctl-a-failed"} {
 		if s := c.HGet(ctx, "s:"+sprint+":card:"+label, "state").Val(); s != "ended" {
@@ -323,3 +331,59 @@ func TestHarvestLeaseHeldElsewhere(t *testing.T) {
 		t.Fatalf("state %s, want ended", s)
 	}
 }
+
+// A harvested fixture card leaves ci:pool holding its head and the record pending (#3717).
+func TestHarvestLeavesCIPoolHoldingHeadAndPending(t *testing.T) {
+	c := startRedis(t)
+	st := store.New(c)
+	ctx := context.Background()
+
+	const bench = "ctl-a"
+	c.HSet(ctx, "bench:"+bench+":beat", "host", bench+".tailnet", "user", "nova")
+	c.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1")
+
+	label := "card-fix-3717"
+	head := sha(label)
+	seedEnded(t, c, bench, label, "model", "DONE", head)
+
+	forge := newForge()
+	forge.heads["nova/"+sprint+"/"+label+"-a1"] = head
+	pusher := &fixturePusher{pushes: map[string]int{}}
+
+	opt := harvest.Options{Sprint: sprint, Benches: []string{bench}, Clock: time.Minute,
+		Instance: "run-3717", Forge: forge, Pusher: pusher}
+
+	res := harvest.Run(ctx, st, opt)
+	if len(res) != 1 || res[0].Err != nil || len(res[0].Cards) != 1 {
+		t.Fatalf("harvest: %+v", res)
+	}
+
+	// 1. The card is harvested.
+	h := c.HGetAll(ctx, "s:"+sprint+":card:"+label).Val()
+	if h["state"] != "harvested" || h["head"] != head || h["pr"] == "" {
+		t.Fatalf("card state = %v, want harvested with pr and head", h)
+	}
+
+	// 2. ci:pool holds its head.
+	score, err := c.ZScore(ctx, "ci:pool", "nova-tools:"+head).Result()
+	if err != nil || score <= 0 {
+		t.Fatalf("ci:pool does not hold nova-tools:%s: score=%f err=%v", head, score, err)
+	}
+
+	// 3. The CI record is pending.
+	rec := c.HGetAll(ctx, "ci:nova-tools:"+head).Val()
+	if rec["ci"] != "pending" || rec["repo"] != "nova-tools" || rec["sha"] != head || rec["pr"] != h["pr"] {
+		t.Fatalf("ci record = %v, want ci=pending repo=nova-tools sha=%s pr=%s", rec, head, h["pr"])
+	}
+
+	// 4. Idempotent: a second pass leaves the record pending and ci:pool intact.
+	opt.Instance = "run-3717-second"
+	res2 := harvest.Run(ctx, st, opt)
+	if len(res2) != 1 || res2[0].Err != nil || len(res2[0].Cards) != 0 {
+		t.Fatalf("second pass: %+v", res2)
+	}
+	if rec2 := c.HGet(ctx, "ci:nova-tools:"+head, "ci").Val(); rec2 != "pending" {
+		t.Fatalf("ci after second pass = %q, want pending", rec2)
+	}
+}
+

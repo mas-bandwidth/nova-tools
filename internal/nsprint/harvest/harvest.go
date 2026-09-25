@@ -64,6 +64,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
@@ -814,6 +815,11 @@ func receipt(ctx context.Context, st *store.Store, opt Options, l lease, c Card,
 		return res, fmt.Errorf("%s: harvested refused %s", c.Label, status)
 	}
 	res.PR, res.Head, res.URL = pr.Number, pr.Head, pr.URL
+	_, _ = ci.Request(ctx, st, ci.RequestRequest{
+		Repo: prkey.Name(c.Repo),
+		SHA:  pr.Head,
+		PR:   pr.Number,
+	})
 	return res, nil
 }
 
