@@ -14,7 +14,7 @@ ROUTE: jev=opus conf=0.90 floor=0.65 why=kind-fix-with-red-test-starts-at-opus e
 STEP 1. Clone the repository into the job directory and confirm the pinned base.
 
 ```
-[ -d repo ] || git clone -q https://github.com/mas-bandwidth/nova-tools.git repo
+[ -d repo ] || git clone -q --depth 50 --single-branch -b dev --reference ~/nova-bench/mirror/nova-tools.git https://github.com/mas-bandwidth/nova-tools.git repo
 cd repo
 git fetch -q origin dev
 git checkout -q 1af36d0eb0393557664aca861a50686d22193837
