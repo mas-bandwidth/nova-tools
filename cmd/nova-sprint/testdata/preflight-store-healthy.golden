@@ -1,0 +1,11 @@
+GREEN 7.1 redis: standalone, AOF on, nova_sprint at the binary's version, proc:acl-test ok Ns ago
+GREEN 7.2 state-files: 5 state sources name no state file (policy, card, bench-launcher, friend-harness, friend-session); 1 interim keys have no second writer (bench-row)
+GREEN 7.3 leases-vs-beats: 4 consumers, leased 8, living beats 8, no reservation past 60s and no beat past 120s
+GREEN 7.7 reconciler: instance r1, lease renewed Ns ago, last pass Ns ago (limit 20s)
+GREEN 7.9 policy: s:ctl:policy sets all 7 fields
+GREEN 7.10 receipts: 1 sprints, 1 indexed ids, each at its latest receipt
+GREEN 7.11 supply: 1 ready tasks and 1 pool cards each have an eligible consumer
+GREEN 7.13 guards: 1 queued cards lint clean
+GREEN 7.15 machine-ceiling: 2 machines: m1 12/16, m2 4/16
+GREEN 7.26 ttl: 30 keys held, TTLs only on fn.TTLAllow keys (lease:reconciler)
+GREEN 7.27 under-load: no capacity change since s:ctl opened

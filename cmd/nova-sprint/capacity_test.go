@@ -30,7 +30,7 @@ func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 	client.HSet(ctx, "bench:b:desired", "slots", 8, "machine", "m", "paused", 0)
 
 	ceiling := func() preflight.Line {
-		for _, line := range preflight.StoreChecks(ctx, client, preflight.Options{}) {
+		for _, line := range preflight.Run(ctx, client, preflight.Options{}) {
 			if line.Name == "machine-ceiling" {
 				return line
 			}

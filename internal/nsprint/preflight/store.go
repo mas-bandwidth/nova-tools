@@ -1,90 +1,45 @@
-// Package preflight holds the nova-sprint preflight checks (#2756 section 7).
-// Each check prints one line, GREEN or RED with its number, and any RED
-// exits 1. This file is the store checks (#2947): Redis and the function
-// library (7.1), state files (7.2), leases against beats (7.3), the
-// reconciler lease (7.7), states against their receipts (7.10) and width per
-// machine (7.15). Every age is measured from Redis server time (2.1 rule 3),
-// and every multi-key read is one pipelined exchange.
 package preflight
 
+// The store checks (#2947 rev 3) over one snapshot: Redis and the function
+// library (7.1), state files and second writers (7.2), leases against beats
+// (7.3), the reconciler (7.7), the policy (7.9), states against their
+// receipts (7.10), supply (7.11), card guards (7.13), width per machine
+// (7.15), TTLs (7.26) and capacity changed under load (7.27). Nothing here
+// reads a file or talks to Redis: preflight.go's snapshot is the only input.
+
 import (
-	"context"
-	"errors"
 	"fmt"
-	"os"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/redis/go-redis/v9"
 )
 
-// Windows from #2756: a starting reservation is released at 60 s (the start
-// window), a living lease is stale at 120 s (2x the 60 s beat), the
-// reconciler lease has a 6 s TTL and passes at least every 20 s, and a
-// retired file touched inside 10 minutes means something still writes it.
-const (
-	StartWindow    = 60 * time.Second
-	BeatStale      = 120 * time.Second
-	ReconcilerTTL  = 6 * time.Second
-	ReconcilerPass = 20 * time.Second
-	RetiredWindow  = 10 * time.Minute
-)
-
-// Line is one preflight check's result.
-type Line struct {
-	N    string // the #2756 section 7 number, for example "7.3"
-	Name string
-	Red  bool
-	Why  string
-}
-
-func (l Line) String() string {
-	state := "GREEN"
-	if l.Red {
-		state = "RED"
+func (s *snapshot) checks() []Line {
+	lines := []Line{
+		s.checkRedis(),
+		s.checkStateFiles(StateSources, InterimKeys),
+		s.checkLeases(),
+		s.checkReconciler(),
+		s.checkPolicy(),
+		s.checkReceipts(),
+		s.checkSupply(),
+		s.checkGuards(),
+		s.checkCeiling(),
+		s.checkTTL(),
+		s.checkUnderLoad(),
 	}
-	return fmt.Sprintf("%s %s %s: %s", state, l.N, l.Name, l.Why)
-}
-
-// ExitCode is 1 when any line is RED, else 0.
-func ExitCode(lines []Line) int {
-	for _, l := range lines {
-		if l.Red {
-			return 1
+	// A read that failed is no evidence: every line that needed it is RED.
+	if len(s.readErr) > 0 {
+		for i := 1; i < len(lines); i++ {
+			lines[i] = Line{N: lines[i].N, Name: lines[i].Name, Red: true, Why: "cannot read: " + limit(s.readErr, 3)}
 		}
 	}
-	return 0
-}
-
-// Options names the sprint and the config files preflight reads for state
-// file names. Files are read, never written.
-type Options struct {
-	Sprint         string   // empty means every sprint in the sprints set
-	PolicyFile     string   // the etc/ policy file the sprint opens from
-	UnitEnv        []string // unit environment files (launchd plist, systemd env)
-	LauncherConfig string
-	Retired        []string // retired state files; touched inside RetiredWindow is RED
-	Now            func() time.Time
-}
-
-// StoreChecks runs the store checks in section order.
-func StoreChecks(ctx context.Context, c *redis.Client, o Options) []Line {
-	lines := []Line{checkRedis(ctx, c), checkStateFiles(ctx, c, o), checkLeases(ctx, c), checkReconciler(ctx, c)}
-	sprints, err := sprintsFor(ctx, c, o.Sprint)
-	if err != nil {
-		lines = append(lines, redLine("7.10", "receipts", err))
-	} else {
-		lines = append(lines, checkReceipts(ctx, c, sprints...))
-	}
-	return append(lines, checkCeiling(ctx, c))
-}
-
-func redLine(n, name string, err error) Line {
-	return Line{N: n, Name: name, Red: true, Why: "redis: " + err.Error()}
+	return lines
 }
 
 func verdict(n, name string, reds []string, green string) Line {
@@ -101,185 +56,208 @@ func limit(items []string, n int) string {
 	return strings.Join(items[:n], "; ") + fmt.Sprintf("; +%d more", len(items)-n)
 }
 
-func sprintsFor(ctx context.Context, c *redis.Client, sprint string) ([]string, error) {
-	if sprint != "" {
-		return []string{sprint}, nil
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
 	}
-	names, err := c.SMembers(ctx, "sprints").Result()
-	sort.Strings(names)
-	return names, err
+	sort.Strings(out)
+	return out
 }
 
-// stamp reads a Redis time as seconds, or milliseconds when it is that large.
-func stamp(v float64) time.Time {
-	if v > 1e12 {
-		return time.UnixMilli(int64(v))
-	}
-	sec := int64(v)
-	return time.Unix(sec, int64((v-float64(sec))*1e9))
-}
-
-func parseStamp(s string) (time.Time, bool) {
-	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	if err != nil || v <= 0 {
-		return time.Time{}, false
-	}
-	return stamp(v), true
-}
-
-func wholeSecs(d time.Duration) string {
-	return fmt.Sprintf("%ds", int64(d.Round(time.Second)/time.Second))
-}
-
-// 7.1: reachable, standalone, AOF on, nova_sprint loaded at the binary's
-// version. The ACL half of 7.1 is the deployment test of #2937.
-func checkRedis(ctx context.Context, c *redis.Client) Line {
+// 7.1: standalone, AOF on, nova_sprint loaded at the binary's version, and
+// the ACL deployment test's receipt (#2937) ok at the binary's library.
+func (s *snapshot) checkRedis() Line {
 	const n, name = "7.1", "redis"
-	if err := c.Ping(ctx).Err(); err != nil {
-		return Line{N: n, Name: name, Red: true, Why: "unreachable: " + err.Error()}
-	}
-	pipe := c.Pipeline()
-	server := pipe.Info(ctx, "server")
-	persistence := pipe.Info(ctx, "persistence")
-	libs := pipe.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: fn.Library, WithCode: true})
-	_, _ = pipe.Exec(ctx)
-	for _, err := range []error{server.Err(), persistence.Err(), libs.Err()} {
+	for _, err := range []error{s.infoErr, s.libErr} {
 		if isNoPerm(err) {
-			return needsSeat(n, name, c, err)
+			return needsSeat(n, name, s.seat, err)
 		}
 	}
 	var reds []string
-	if info, err := server.Result(); err != nil {
-		reds = append(reds, "cannot read INFO server: "+err.Error())
-	} else if mode := infoField(info, "redis_mode"); mode != "standalone" {
-		reds = append(reds, fmt.Sprintf("redis_mode %q, not the standalone fleet instance", mode))
-	}
-	if info, err := persistence.Result(); err != nil {
-		reds = append(reds, "cannot read INFO persistence: "+err.Error())
-	} else if infoField(info, "aof_enabled") != "1" {
-		reds = append(reds, "AOF off")
+	if s.infoErr != nil {
+		reds = append(reds, "cannot read INFO: "+firstLine(s.infoErr.Error()))
+	} else {
+		if mode := s.info["redis_mode"]; mode != "standalone" {
+			reds = append(reds, fmt.Sprintf("redis_mode %q, not the standalone fleet instance", mode))
+		}
+		if s.info["aof_enabled"] != "1" {
+			reds = append(reds, "AOF off")
+		}
 	}
 	want, err := fn.Source()
 	if err != nil {
 		reds = append(reds, "the binary's library does not build: "+err.Error())
 	}
-	if got, lerr := libs.Result(); lerr != nil {
-		reds = append(reds, "cannot list functions: "+lerr.Error())
-	} else if lib, ok := library(got, fn.Library); !ok {
+	if s.libErr != nil {
+		reds = append(reds, "cannot list functions: "+firstLine(s.libErr.Error()))
+	} else if lib, ok := library(s.libs, fn.Library); !ok {
 		reds = append(reds, "library "+fn.Library+" not loaded")
 	} else if err == nil && strings.TrimSpace(lib.Code) != strings.TrimSpace(want) {
 		reds = append(reds, "library "+fn.Library+" is not the binary's version")
 	}
-	return verdict(n, name, reds, "standalone, AOF on, "+fn.Library+" at the binary's version")
-}
-
-func library(libs []redis.Library, name string) (redis.Library, bool) {
-	for _, l := range libs {
-		if l.Name == name {
-			return l, true
+	acl := s.acl
+	green := "standalone, AOF on, " + fn.Library + " at the binary's version"
+	switch {
+	case len(acl) == 0:
+		reds = append(reds, "proc:acl-test missing (the ACL deployment test writes it, #2937)")
+	case acl["result"] != "ok":
+		reds = append(reds, fmt.Sprintf("proc:acl-test result %q, not ok", acl["result"]))
+	case err == nil && acl["library_sha"] != fn.Sum(want):
+		reds = append(reds, fmt.Sprintf("proc:acl-test library_sha %q is not the binary's %s", acl["library_sha"], fn.Sum(want)))
+	default:
+		if at, ok := parseStamp(acl["at"]); ok {
+			green += ", proc:acl-test ok " + wholeSecs(s.now.Sub(at)) + " ago"
+		} else {
+			reds = append(reds, "proc:acl-test has no at")
 		}
 	}
-	return redis.Library{}, false
+	return verdict(n, name, reds, green)
 }
 
-func infoField(info, field string) string {
-	for _, line := range strings.Split(info, "\n") {
-		if k, v, ok := strings.Cut(strings.TrimSpace(line), ":"); ok && k == field {
-			return v
+// fieldRef is one field a state source names: the key, the field and its value.
+type fieldRef struct{ key, field, value string }
+
+// StateSource is one row of 7.2's first table: a place the tool is
+// configured from, which must never name a state file.
+type StateSource struct {
+	Name   string
+	fields func(s *snapshot) []fieldRef
+}
+
+// InterimKey is one row of 7.2's second table: a key a bash interim writer
+// still writes beside its Go writer. judge returns one reason per key written
+// by the interim writer inside the window.
+type InterimKey struct {
+	Name  string
+	judge func(s *snapshot, window time.Duration) []string
+}
+
+// cardWorkFields are a card's own description of its work: they may name any
+// file the work touches (a card may edit a TSV it names), so 7.2 does not
+// read them as configuration.
+var cardWorkFields = map[string]bool{"paths": true, "done_when": true, "task": true, "test": true,
+	"origin": true, "depends_on": true, "depends_on_typed": true}
+
+// StateSources is 7.2's first table (#2947 rev 3): every field it reads, and
+// nothing outside it. A test removes one row to prove that row alone catches
+// its case.
+var StateSources = []StateSource{
+	{Name: "policy", fields: func(s *snapshot) []fieldRef {
+		var out []fieldRef
+		for _, st := range s.sprints {
+			for _, f := range sortedKeys(st.policy) {
+				out = append(out, fieldRef{"s:" + st.name + ":policy", f, st.policy[f]})
+			}
 		}
-	}
-	return ""
+		return out
+	}},
+	{Name: "card", fields: func(s *snapshot) []fieldRef {
+		var out []fieldRef
+		for _, st := range s.sprints {
+			for _, label := range st.idx["card:queued"] {
+				rec := st.cards[label]
+				for _, f := range sortedKeys(rec) {
+					if !cardWorkFields[f] {
+						out = append(out, fieldRef{"s:" + st.name + ":card:" + label, f, rec[f]})
+					}
+				}
+			}
+		}
+		return out
+	}},
+	{Name: "bench-launcher", fields: beatField("bench", "launcher")},
+	{Name: "friend-harness", fields: beatField("friend", "harness")},
+	{Name: "friend-session", fields: beatField("friend", "session")},
 }
 
-// 7.2: a state file named anywhere the tool is configured from, or a retired
-// state file still being written.
-func checkStateFiles(ctx context.Context, c *redis.Client, o Options) Line {
+// beatField reads one field of every <kind>:<n>:beat, as presence.lua writes it.
+func beatField(kind, field string) func(s *snapshot) []fieldRef {
+	return func(s *snapshot) []fieldRef {
+		var out []fieldRef
+		for _, k := range s.consumers {
+			if k.kind == kind {
+				if v, ok := k.beat[field]; ok {
+					out = append(out, fieldRef{k.key(":beat"), field, v})
+				}
+			}
+		}
+		return out
+	}
+}
+
+// benchRowCounts are the fields bash bench-row writes on bench:<b> and
+// presence.lua's bench beat never does (it leaves counts to the card views).
+var benchRowCounts = []string{"ready", "ok", "fail"}
+
+// InterimKeys is 7.2's second table. Rev 3 named four rows; three of them
+// (q:<f>, q:<f>:front and friend:<f>) are written today by the library itself
+// (friend_queue.lua and route_duty.lua XADD the queues, presence.lua's
+// friend_row HSETs the row, #3440) in the same shape the bash wrote, so a
+// fresh entry there is the Go path's own write and no evidence of a second
+// writer. bench:<b> still tells the two apart: bash bench-row sets a TTL and
+// the count fields, presence.lua writes host, load1, ncpu and at with neither.
+var InterimKeys = []InterimKey{
+	{Name: "bench-row", judge: func(s *snapshot, window time.Duration) []string {
+		var out []string
+		for _, k := range s.consumers {
+			if k.kind != "bench" || len(k.row) == 0 {
+				continue
+			}
+			at, ok := parseStamp(k.row["at"])
+			if !ok || s.now.Sub(at) > window {
+				continue
+			}
+			var shape []string
+			if d := s.pttl[k.key("")]; d > 0 {
+				shape = append(shape, "a TTL")
+			}
+			for _, f := range benchRowCounts {
+				if _, has := k.row[f]; has {
+					shape = append(shape, "field "+f)
+					break
+				}
+			}
+			if len(shape) > 0 {
+				out = append(out, fmt.Sprintf("%s written %s ago in bash bench-row's shape (%s) beside presence.lua (two writers)",
+					k.key(""), wholeSecs(s.now.Sub(at)), strings.Join(shape, ", ")))
+			}
+		}
+		return out
+	}},
+}
+
+func rowNames[T any](rows []T, name func(T) string) string {
+	var out []string
+	for _, r := range rows {
+		out = append(out, name(r))
+	}
+	return strings.Join(out, ", ")
+}
+
+// 7.2: a state file named in any StateSources field, or an InterimKeys key
+// written by its interim writer inside interim_window_s.
+func (s *snapshot) checkStateFiles(sources []StateSource, interim []InterimKey) Line {
 	const n, name = "7.2", "state-files"
-	now := time.Now
-	if o.Now != nil {
-		now = o.Now
-	}
 	var reds []string
-	sources := 0
-	for _, f := range append(append([]string{o.PolicyFile}, o.UnitEnv...), o.LauncherConfig) {
-		if f == "" {
-			continue
-		}
-		sources++
-		body, err := os.ReadFile(f)
-		if err != nil {
-			reds = append(reds, "cannot read "+f+": "+err.Error())
-			continue
-		}
-		for _, p := range stateFiles(string(body)) {
-			reds = append(reds, f+" names "+p)
-		}
-	}
-	for _, f := range o.Retired {
-		sources++
-		st, err := os.Stat(f)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			reds = append(reds, "cannot stat retired "+f+": "+err.Error())
-			continue
-		}
-		if age := now().Sub(st.ModTime()); age < RetiredWindow {
-			reds = append(reds, fmt.Sprintf("retired %s modified %s ago", f, wholeSecs(age)))
-		}
-	}
-	sprints, err := sprintsFor(ctx, c, o.Sprint)
-	if err != nil {
-		return redLine(n, name, err)
-	}
-	pipe := c.Pipeline()
-	policies := make([]*redis.MapStringStringCmd, len(sprints))
-	queued := make([]*redis.StringSliceCmd, len(sprints))
-	for i, s := range sprints {
-		policies[i] = pipe.HGetAll(ctx, "s:"+s+":policy")
-		queued[i] = pipe.SMembers(ctx, "s:"+s+":idx:card:queued")
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return redLine(n, name, err)
-	}
-	type cardRef struct{ sprint, label string }
-	var cards []cardRef
-	for i, s := range sprints {
-		policy := policies[i].Val()
-		sources++
-		fields := make([]string, 0, len(policy))
-		for k := range policy {
-			fields = append(fields, k)
-		}
-		sort.Strings(fields)
-		for _, k := range fields {
-			for _, p := range stateFiles(policy[k]) {
-				reds = append(reds, fmt.Sprintf("policy s:%s:policy %s names %s", s, k, p))
-			}
-		}
-		labels := queued[i].Val()
-		sort.Strings(labels)
-		for _, l := range labels {
-			cards = append(cards, cardRef{s, l})
-		}
-	}
-	if len(cards) > 0 {
-		pipe = c.Pipeline()
-		results := make([]*redis.StringCmd, len(cards))
-		for i, cr := range cards {
-			results[i] = pipe.HGet(ctx, "s:"+cr.sprint+":card:"+cr.label, "results")
-		}
-		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-			return redLine(n, name, err)
-		}
-		for i, cr := range cards {
-			for _, p := range stateFiles(results[i].Val()) {
-				reds = append(reds, fmt.Sprintf("card %s results names %s", cr.label, p))
+	for _, src := range sources {
+		for _, f := range src.fields(s) {
+			for _, p := range append(stateFiles(f.field), stateFiles(f.value)...) {
+				reds = append(reds, fmt.Sprintf("%s %s names %s", f.key, f.field, p))
 			}
 		}
 	}
-	return verdict(n, name, reds, fmt.Sprintf("%d sources and %d queued cards name no state file", sources, len(cards)))
+	note := ""
+	if window, ok := s.window("interim_window_s"); ok {
+		for _, row := range interim {
+			reds = append(reds, row.judge(s, window)...)
+		}
+	} else {
+		note = ", interim writers unjudged: interim_window_s unset (7.9)"
+	}
+	return verdict(n, name, reds, fmt.Sprintf("%d state sources name no state file (%s); %d interim keys have no second writer (%s)%s",
+		len(sources), rowNames(sources, func(r StateSource) string { return r.Name }),
+		len(interim), rowNames(interim, func(r InterimKey) string { return r.Name }), note))
 }
 
 // stateFiles returns the path-like tokens in text that name a file the tool
@@ -319,96 +297,67 @@ func isStateFile(tok string) bool {
 	return strings.Contains(lower, "backpressure")
 }
 
-type consumer struct{ kind, name string }
-
-func consumers(ctx context.Context, c *redis.Client) ([]consumer, error) {
-	pipe := c.Pipeline()
-	friends := pipe.SMembers(ctx, "friends")
-	benches := pipe.SMembers(ctx, "benches")
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, err
-	}
-	var out []consumer
-	for _, set := range []struct {
-		kind  string
-		names []string
-	}{{"bench", benches.Val()}, {"friend", friends.Val()}} {
-		sort.Strings(set.names)
-		for _, name := range set.names {
-			out = append(out, consumer{set.kind, name})
-		}
-	}
-	return out, nil
-}
-
 // 7.3: leased is not equal to living beats past the start window (Johnny 10).
-func checkLeases(ctx context.Context, c *redis.Client) Line {
+func (s *snapshot) checkLeases() Line {
 	const n, name = "7.3", "leases-vs-beats"
-	now, err := c.Time(ctx).Result()
-	if err != nil {
-		return redLine(n, name, err)
+	start, startOK := s.window("start_window_s")
+	stale, staleOK := s.window("beat_stale_s")
+	var reds, unset []string
+	if !startOK {
+		unset = append(unset, "start_window_s")
 	}
-	cs, err := consumers(ctx, c)
-	if err != nil {
-		return redLine(n, name, err)
+	if !staleOK {
+		unset = append(unset, "beat_stale_s")
 	}
-	pipe := c.Pipeline()
-	starting := make([]*redis.ZSliceCmd, len(cs))
-	living := make([]*redis.ZSliceCmd, len(cs))
-	for i, k := range cs {
-		starting[i] = pipe.ZRangeWithScores(ctx, k.kind+":"+k.name+":starting", 0, -1)
-		living[i] = pipe.ZRangeWithScores(ctx, k.kind+":"+k.name+":living", 0, -1)
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return redLine(n, name, err)
-	}
-	var reds []string
 	leased, beats := 0, 0
-	for i, k := range cs {
-		late, stale := 0, 0
-		for _, z := range starting[i].Val() {
-			if now.Sub(stamp(z.Score)) > StartWindow {
+	for _, k := range s.consumers {
+		late, old := 0, 0
+		for _, z := range k.starting {
+			if startOK && s.now.Sub(stamp(z.Score)) > start {
 				late++
 			}
 		}
-		for _, z := range living[i].Val() {
-			if now.Sub(stamp(z.Score)) > BeatStale {
-				stale++
+		for _, z := range k.living {
+			if staleOK && s.now.Sub(stamp(z.Score)) > stale {
+				old++
 			}
 		}
-		leased += len(starting[i].Val()) + len(living[i].Val())
-		beats += len(living[i].Val()) - stale
+		n := len(k.starting) + len(k.living)
+		leased += n
+		beats += len(k.living) - old
 		var why []string
 		if late > 0 {
-			why = append(why, fmt.Sprintf("%d starting past %s", late, wholeSecs(StartWindow)))
+			why = append(why, fmt.Sprintf("%d starting past %s", late, wholeSecs(start)))
 		}
-		if stale > 0 {
-			why = append(why, fmt.Sprintf("%d living beat past %s", stale, wholeSecs(BeatStale)))
+		if old > 0 {
+			why = append(why, fmt.Sprintf("%d living beat past %s", old, wholeSecs(stale)))
 		}
 		if len(why) > 0 {
 			reds = append(reds, fmt.Sprintf("%s %s %s (leased %d, living beats %d)", k.kind, k.name,
-				strings.Join(why, ", "), len(starting[i].Val())+len(living[i].Val()), len(living[i].Val())-stale))
+				strings.Join(why, ", "), n, len(k.living)-old))
 		}
 	}
-	return verdict(n, name, reds, fmt.Sprintf("%d consumers, leased %d, living beats %d, no reservation past %s and no beat past %s",
-		len(cs), leased, beats, wholeSecs(StartWindow), wholeSecs(BeatStale)))
+	green := fmt.Sprintf("%d consumers, leased %d, living beats %d", len(s.consumers), leased, beats)
+	if startOK && staleOK {
+		green += fmt.Sprintf(", no reservation past %s and no beat past %s", wholeSecs(start), wholeSecs(stale))
+	} else {
+		green += "; unjudged: " + strings.Join(unset, ", ") + " unset (7.9)"
+	}
+	return verdict(n, name, reds, green)
 }
 
-// 7.7: the reconciler lease is missing or stale, or its last pass is old. A
-// second instance is refused by the lease itself (#2726); the store shows
-// only the holder.
-func checkReconciler(ctx context.Context, c *redis.Client) Line {
+// 7.7: the reconciler lease is missing or not renewed within a pass, or its
+// last pass is older than reconciler_pass_s. A second instance is refused by
+// the lease itself (#2726); the store shows only the holder.
+func (s *snapshot) checkReconciler() Line {
 	const n, name = "7.7", "reconciler"
-	pipe := c.Pipeline()
-	lease := pipe.HGetAll(ctx, "lease:reconciler")
-	proc := pipe.HGetAll(ctx, "proc:reconciler")
-	clock := pipe.Time(ctx)
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return redLine(n, name, err)
+	pass, ok := s.window("reconciler_pass_s")
+	if !ok {
+		return Line{N: n, Name: name, Why: "unjudged: reconciler_pass_s unset (7.9)"}
 	}
-	now := clock.Val()
 	var reds []string
-	l := lease.Val()
+	l := s.lease
+	leaseAge := "?"
 	if len(l) == 0 {
 		reds = append(reds, "lease:reconciler missing")
 	} else {
@@ -417,100 +366,194 @@ func checkReconciler(ctx context.Context, c *redis.Client) Line {
 		}
 		if at, ok := parseStamp(l["at"]); !ok {
 			reds = append(reds, "lease:reconciler has no at")
-		} else if age := now.Sub(at); age > ReconcilerTTL {
-			reds = append(reds, fmt.Sprintf("lease:reconciler stale (renewed %s ago, ttl %s)", wholeSecs(age), wholeSecs(ReconcilerTTL)))
+		} else if age := s.now.Sub(at); age > pass {
+			reds = append(reds, fmt.Sprintf("lease:reconciler stale (renewed %s ago, limit %s)", wholeSecs(age), wholeSecs(pass)))
+		} else {
+			leaseAge = wholeSecs(age)
 		}
 	}
-	passAt, ok := parseStamp(proc.Val()["pass_at"])
-	if !ok {
+	passAge := "?"
+	if passAt, ok := parseStamp(s.proc["pass_at"]); !ok {
 		reds = append(reds, "proc:reconciler has no pass_at")
-	} else if age := now.Sub(passAt); age > ReconcilerPass {
-		reds = append(reds, fmt.Sprintf("last pass %s ago (limit %s)", wholeSecs(age), wholeSecs(ReconcilerPass)))
+	} else if age := s.now.Sub(passAt); age > pass {
+		reds = append(reds, fmt.Sprintf("last pass %s ago (limit %s)", wholeSecs(age), wholeSecs(pass)))
+	} else {
+		passAge = wholeSecs(age)
 	}
-	return verdict(n, name, reds, fmt.Sprintf("instance %s on %s, last pass %s ago", l["instance"], l["host"], wholeSecs(now.Sub(passAt))))
+	return verdict(n, name, reds, fmt.Sprintf("instance %s, lease renewed %s ago, last pass %s ago (limit %s)",
+		l["instance"], leaseAge, passAge, wholeSecs(pass)))
+}
+
+// 7.9: every checked sprint's policy sets the brakes and the windows. A
+// missing field is RED and never defaults.
+func (s *snapshot) checkPolicy() Line {
+	const n, name = "7.9", "policy"
+	if len(s.sprints) == 0 {
+		return Line{N: n, Name: name, Red: true, Why: "no sprint to check: sprints is empty and no --sprint"}
+	}
+	var reds, names []string
+	for _, st := range s.sprints {
+		names = append(names, "s:"+st.name+":policy")
+		var missing []string
+		for _, f := range PolicyFields {
+			if strings.TrimSpace(st.policy[f]) == "" {
+				missing = append(missing, f)
+			}
+		}
+		if len(missing) > 0 {
+			reds = append(reds, fmt.Sprintf("s:%s:policy missing %s", st.name, strings.Join(missing, ", ")))
+		}
+	}
+	return verdict(n, name, reds, fmt.Sprintf("%s sets all %d fields", strings.Join(names, ", "), len(PolicyFields)))
 }
 
 // 7.10: an id in an index set whose latest receipt names a different state.
-func checkReceipts(ctx context.Context, c *redis.Client, sprints ...string) Line {
+// The index keys come from fn.IndexStates; nothing is SCANned.
+func (s *snapshot) checkReceipts() Line {
 	const n, name = "7.10", "receipts"
 	var reds []string
 	ids := 0
-	for _, s := range sprints {
-		prefix := "s:" + s + ":idx:"
-		var keys []string
-		iter := c.Scan(ctx, 0, prefix+"*", 1000).Iterator()
-		for iter.Next(ctx) {
-			keys = append(keys, iter.Val())
-		}
-		if err := iter.Err(); err != nil {
-			return redLine(n, name, err)
-		}
-		sort.Strings(keys)
-		pipe := c.Pipeline()
-		members := make([]*redis.StringSliceCmd, len(keys))
-		for i, k := range keys {
-			members[i] = pipe.SMembers(ctx, k)
-		}
-		log := pipe.XRevRange(ctx, "s:"+s+":log", "+", "-")
-		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-			return redLine(n, name, err)
-		}
+	for _, st := range s.sprints {
 		latest := map[string]string{}
-		for _, m := range log.Val() {
+		for _, m := range st.log {
 			key := fmt.Sprint(m.Values["kind"]) + " " + fmt.Sprint(m.Values["id"])
 			if _, seen := latest[key]; !seen {
 				latest[key] = fmt.Sprint(m.Values["to"])
 			}
 		}
-		for i, k := range keys {
-			kind, state, ok := strings.Cut(strings.TrimPrefix(k, prefix), ":")
-			if !ok {
-				continue
-			}
-			list := members[i].Val()
-			sort.Strings(list)
-			for _, id := range list {
-				ids++
-				got, seen := latest[kind+" "+id]
-				if !seen {
-					got = "none"
-				}
-				if got != state {
-					reds = append(reds, fmt.Sprintf("%s %s %s, receipt %s", kind, id, state, got))
+		for _, kind := range fn.IndexKinds {
+			for _, state := range fn.IndexStates[kind] {
+				for _, id := range st.idx[kind+":"+state] {
+					ids++
+					got, seen := latest[kind+" "+id]
+					if !seen {
+						got = "none"
+					}
+					if got != state {
+						reds = append(reds, fmt.Sprintf("%s %s %s, receipt %s", kind, id, state, got))
+					}
 				}
 			}
 		}
 	}
-	return verdict(n, name, reds, fmt.Sprintf("%d sprints, %d indexed ids, each at its latest receipt", len(sprints), ids))
+	return verdict(n, name, reds, fmt.Sprintf("%d sprints, %d indexed ids, each at its latest receipt", len(s.sprints), ids))
+}
+
+func paused(k *consumer) bool { return k.desired["paused"] == "1" }
+
+func hasRole(k *consumer, role string) bool {
+	for _, r := range strings.Split(k.roles["roles"], ",") {
+		if strings.TrimSpace(r) == role {
+			return true
+		}
+	}
+	return false
+}
+
+// 7.11: a ready task or pool card that no registered, unpaused consumer may
+// take. A task's kind picks the role the way redistribute_assign.lua does (a
+// read or review needs may-hold, any other kind builder or coordinator) once
+// any friend has a roles hash; a pool card needs an unpaused bench, the one
+// it is pinned to when it names one.
+func (s *snapshot) checkSupply() Line {
+	const n, name = "7.11", "supply"
+	rolesSet := false
+	for _, k := range s.consumers {
+		if k.kind == "friend" && len(k.roles) > 0 {
+			rolesSet = true
+		}
+	}
+	var reds []string
+	tasks, cards := 0, 0
+	for _, st := range s.sprints {
+		for _, id := range st.ready {
+			tasks++
+			kind := st.tasks[id]["kind"]
+			if kind == "" {
+				kind = "work"
+			}
+			need := []string{"builder", "coordinator"}
+			if kind == "read" || kind == "review" {
+				need = []string{"may-hold"}
+			}
+			found := false
+			for _, k := range s.consumers {
+				if k.kind != "friend" || paused(k) {
+					continue
+				}
+				if !rolesSet {
+					found = true
+					break
+				}
+				for _, r := range need {
+					if hasRole(k, r) {
+						found = true
+					}
+				}
+			}
+			if !found {
+				why := "no unpaused friend"
+				if rolesSet {
+					why = "no unpaused friend has the " + strings.Join(need, " or ") + " role"
+				}
+				reds = append(reds, fmt.Sprintf("task %s (kind %s) has no eligible consumer: %s", id, kind, why))
+			}
+		}
+		for _, label := range st.pool {
+			cards++
+			pin := st.cards[label]["bench"]
+			if pin == "_pool" {
+				pin = ""
+			}
+			found := false
+			for _, k := range s.consumers {
+				if k.kind == "bench" && !paused(k) && (pin == "" || pin == k.name) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				why := "no unpaused bench"
+				if pin != "" {
+					why = "bench " + pin + " is not registered or is paused"
+				}
+				reds = append(reds, fmt.Sprintf("card %s has no eligible consumer: %s", label, why))
+			}
+		}
+	}
+	return verdict(n, name, reds, fmt.Sprintf("%d ready tasks and %d pool cards each have an eligible consumer", tasks, cards))
+}
+
+// 7.13: every queued card passes card.Lint, the same header rules push held
+// it to.
+func (s *snapshot) checkGuards() Line {
+	const n, name = "7.13", "guards"
+	var reds []string
+	queued := 0
+	for _, st := range s.sprints {
+		for _, label := range st.idx["card:queued"] {
+			queued++
+			rec := st.cards[label]
+			if len(rec) == 0 {
+				reds = append(reds, fmt.Sprintf("card %s is queued with no record s:%s:card:%s", label, st.name, label))
+				continue
+			}
+			if err := card.Lint(rec); err != nil {
+				reds = append(reds, fmt.Sprintf("card %s: %v", label, err))
+			}
+		}
+	}
+	return verdict(n, name, reds, fmt.Sprintf("%d queued cards lint clean", queued))
 }
 
 // 7.15: width per machine (2.4).
-func checkCeiling(ctx context.Context, c *redis.Client) Line {
+func (s *snapshot) checkCeiling() Line {
 	const n, name = "7.15", "machine-ceiling"
-	cs, err := consumers(ctx, c)
-	if err != nil {
-		return redLine(n, name, err)
-	}
-	pipe := c.Pipeline()
-	desired := make([]*redis.SliceCmd, len(cs))
-	beat := make([]*redis.StringCmd, len(cs))
-	interim := make([]*redis.IntCmd, len(cs))
-	for i, k := range cs {
-		desired[i] = pipe.HMGet(ctx, k.kind+":"+k.name+":desired", "slots", "machine")
-		beat[i] = pipe.HGet(ctx, k.kind+":"+k.name+":beat", "host")
-		if k.kind == "friend" {
-			interim[i] = pipe.Exists(ctx, "friend:"+k.name+":slots")
-		}
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return redLine(n, name, err)
-	}
 	var reds []string
 	sum := map[string]int{}
-	for i, k := range cs {
-		v := desired[i].Val()
-		slots, machine := str(v, 0), str(v, 1)
-		if interim[i] != nil && interim[i].Val() > 0 {
+	for _, k := range s.consumers {
+		slots, machine := k.desired["slots"], k.desired["machine"]
+		if k.slotsKey {
 			reds = append(reds, fmt.Sprintf("friend:%s:slots exists beside friend:%s:desired (two writers)", k.name, k.name))
 		}
 		if machine == "" {
@@ -525,7 +568,7 @@ func checkCeiling(ctx context.Context, c *redis.Client) Line {
 			reds = append(reds, fmt.Sprintf("%s %s desired slots %q is not a number", k.kind, k.name, slots))
 		}
 		sum[machine] += width
-		if host := beat[i].Val(); host != "" && host != machine {
+		if host := k.beat["host"]; host != "" && host != machine {
 			reds = append(reds, fmt.Sprintf("%s %s beats on %s, desired %s", k.kind, k.name, host, machine))
 		}
 	}
@@ -534,22 +577,15 @@ func checkCeiling(ctx context.Context, c *redis.Client) Line {
 		machines = append(machines, m)
 	}
 	sort.Strings(machines)
-	pipe = c.Pipeline()
-	ceilings := make([]*redis.StringCmd, len(machines))
-	for i, m := range machines {
-		ceilings[i] = pipe.HGet(ctx, "machine:"+m+":ceiling", "slots")
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return redLine(n, name, err)
-	}
 	var green []string
-	for i, m := range machines {
-		ceiling, err := strconv.Atoi(ceilings[i].Val())
+	for _, m := range machines {
+		v := s.ceilings[m]
+		ceiling, err := strconv.Atoi(v)
 		switch {
-		case ceilings[i].Val() == "":
+		case v == "":
 			reds = append(reds, m+" has no ceiling")
 		case err != nil:
-			reds = append(reds, fmt.Sprintf("%s ceiling %q is not a number", m, ceilings[i].Val()))
+			reds = append(reds, fmt.Sprintf("%s ceiling %q is not a number", m, v))
 		case sum[m] > ceiling:
 			reds = append(reds, fmt.Sprintf("%s %d/%d over its ceiling", m, sum[m], ceiling))
 		default:
@@ -562,9 +598,78 @@ func checkCeiling(ctx context.Context, c *redis.Client) Line {
 	return verdict(n, name, reds, fmt.Sprintf("%d machines: %s", len(machines), strings.Join(green, ", ")))
 }
 
-func str(v []any, i int) string {
-	if i < len(v) && v[i] != nil {
-		return fmt.Sprint(v[i])
+// interimKey reports a key 7.2's InterimKeys judge (bench:<b>), which 7.26
+// leaves alone: bash bench-row sets EXPIRE 5 there, and one fault turns one
+// line RED.
+func (s *snapshot) interimKey(key string) bool {
+	for _, k := range s.consumers {
+		if k.kind == "bench" && key == k.key("") {
+			return true
+		}
 	}
-	return ""
+	return false
+}
+
+// 7.26: a key the snapshot read carries a TTL and is not in fn.TTLAllow.
+func (s *snapshot) checkTTL() Line {
+	const n, name = "7.26", "ttl"
+	keys := make([]string, 0, len(s.pttl))
+	for k := range s.pttl {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var reds, allowed []string
+	held := 0
+	for _, k := range keys {
+		d := s.pttl[k]
+		if d != -2 { // PTTL -2: the key does not exist
+			held++
+		}
+		if d <= 0 || s.interimKey(k) {
+			continue
+		}
+		if fn.TTLAllowed(k) {
+			allowed = append(allowed, k)
+			continue
+		}
+		reds = append(reds, fmt.Sprintf("%s has a TTL (%s left); only fn.TTLAllow keys expire", k, wholeSecs(d)))
+	}
+	if len(allowed) == 0 {
+		allowed = []string{"none"}
+	}
+	return verdict(n, name, reds, fmt.Sprintf("%d keys held, TTLs only on fn.TTLAllow keys (%s)", held, strings.Join(allowed, ", ")))
+}
+
+// 7.27: an open sprint's capacity changed after it opened (a cap:log entry
+// whose kind starts "capacity ", as capacity.lua writes it, at after
+// s:<S>.opened_at).
+func (s *snapshot) checkUnderLoad() Line {
+	const n, name = "7.27", "under-load"
+	var reds, open []string
+	for _, st := range s.sprints {
+		if !st.open() {
+			continue
+		}
+		opened, ok := parseStamp(st.meta["opened_at"])
+		if !ok {
+			reds = append(reds, fmt.Sprintf("s:%s is open with no opened_at", st.name))
+			continue
+		}
+		open = append(open, "s:"+st.name)
+		for _, m := range s.capLog {
+			kind := fmt.Sprint(m.Values["kind"])
+			if !strings.HasPrefix(kind, "capacity ") {
+				continue
+			}
+			at, ok := parseStamp(fmt.Sprint(m.Values["at"]))
+			if ok && at.After(opened) {
+				reds = append(reds, fmt.Sprintf("%s %v on %v %s ago, after s:%s opened", kind, m.Values["target"], m.Values["machine"],
+					wholeSecs(s.now.Sub(at)), st.name))
+			}
+		}
+	}
+	if len(open) == 0 {
+		return verdict(n, name, reds, "no open sprint checked")
+	}
+	return verdict(n, name, reds, "no capacity change since "+strings.Join(open, ", ")+" opened")
 }
