@@ -10,7 +10,7 @@ import (
 // The #3530 fixture: a whole-table keyspace of 10 streams, 6 benches and 4
 // friends, every stamp relative to SprintFixtureNow so the golden holds at
 // that instant. It exercises every rule the render applies: two all-zero
-// streams hidden, ready counted as waiting, landed moves in and out of the
+// streams hidden, ready in its own column, landed moves in and out of the
 // ETA's hour, a bench outside the benches SET (studio) not shown, a friend with a down flag, a friend whose beat is
 // stale, a friend with no row, and a done base from a clear. Host rows are
 // each bench's own keys (#2389): its card views and its beat; the bash
