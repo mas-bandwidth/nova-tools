@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
@@ -120,6 +121,12 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 		}
 		if err == nil && reply == "NOBENCH" {
 			out[i] = refused(named(files[i].Name, unregisteredBench(ctx, client, doc.Bench)))
+			continue
+		}
+		if err == nil && strings.HasPrefix(reply, "ROLE ") {
+			// #3634: the BENCH: pin names a friends bench; one REFUSED line, exit 1.
+			re := benchrole.Refused(doc.Bench, strings.TrimPrefix(reply, "ROLE "), "no swarm card is dealt to a friends bench; "+named(files[i].Name, "drop the BENCH: line or name a fleet bench"))
+			out[i] = VerbResult{Code: re.ExitCode(), Stderr: oneline.Escape(re.Error()) + "\n"}
 			continue
 		}
 		out[i] = pushResult(sprint, doc.Label, reply, err)

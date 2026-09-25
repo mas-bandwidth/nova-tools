@@ -14,6 +14,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/capacity"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
@@ -82,8 +83,18 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	// #3349: --legs go,schema declares a bench's CI legs on its desired hash
 	// (omitted keeps them), so ci cut finds a bench that carries the leg.
 	legsFlag := fs.String("legs", "", "")
+	// #3634: --role friends|fleet is the bench registry's role column
+	// (omitted keeps it; a bench with none reads as fleet).
+	roleFlag := fs.String("role", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity "+kind, err.Error())
+	}
+	role, err := benchrole.ParseFlag(*roleFlag)
+	if err != nil {
+		return refuse(errOut, "capacity "+kind, err.Error())
+	}
+	if role != "" && kind != capacity.KindBench {
+		return refuse(errOut, "capacity "+kind, "--role is a bench flag")
 	}
 	legs := ""
 	if *legsFlag != "" {
@@ -132,7 +143,7 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	var result capacity.Result
 	if kind == capacity.KindBench {
 		result, err = capacity.SetBenchWith(ctx, st, name, resolved, slots, *actor, *idem,
-			capacity.DesiredOpts{Legs: legs})
+			capacity.DesiredOpts{Legs: legs, Role: role})
 	} else {
 		result, err = capacity.SetFriendWith(ctx, st, name, resolved, slots, *actor, *idem,
 			capacity.DesiredOpts{Paused: *paused, Register: *register})
@@ -149,6 +160,9 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	legsNote := ""
 	if legs != "" {
 		legsNote = " legs=" + legs
+	}
+	if role != "" {
+		legsNote += " role=" + role
 	}
 	_, _ = fmt.Fprintf(out, "%s %s %s machine=%s slots=%d desired=%d/%d%s trips=%d\n",
 		status, kind, name, resolved, result.Slots, result.Sum, result.Ceiling, legsNote, trips.N())
@@ -517,6 +531,11 @@ func existingMachine(ctx context.Context, st *store.Store, kind, name string) st
 // refuseCapacity turns a ceiling refusal into the exact exit 2 line and any
 // other error into the ordinary refusal.
 func refuseCapacity(errOut io.Writer, verb string, err error) int {
+	var roleErr *benchrole.Error
+	if errors.As(err, &roleErr) {
+		fmt.Fprintln(errOut, roleErr.Error())
+		return roleErr.ExitCode()
+	}
 	var ceilingErr *capacity.CeilingError
 	if errors.As(err, &ceilingErr) {
 		fmt.Fprintln(errOut, ceilingErr.Error())

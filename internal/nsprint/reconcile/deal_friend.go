@@ -36,6 +36,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -145,8 +146,10 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 		}
 	}
 	bstate := make([]*redis.StringCmd, len(bs))
+	brole := make([]*redis.StringCmd, len(bs))
 	for i, b := range bs {
 		bstate[i] = p2.HGet(ctx, "bench:"+b+":state", "state")
+		brole[i] = p2.HGet(ctx, benchrole.Key(b), benchrole.Field)
 	}
 	if _, err := p2.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return res, fmt.Errorf("deal: read sets: %w", err)
@@ -169,7 +172,8 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 		}
 	}
 	for i, b := range bs {
-		if bstate[i].Val() == "UP" {
+		// #3634: a friends bench is no swarm consumer.
+		if bstate[i].Val() == "UP" && brole[i].Val() != benchrole.Friends {
 			live[b] = true
 		}
 	}

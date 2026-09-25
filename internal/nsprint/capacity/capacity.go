@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
 )
@@ -352,6 +353,10 @@ type DesiredOpts struct {
 	// Legs (#3349) is a bench's declared CI legs, the ninth arg, already
 	// normalized by NormalizeLegs; "" keeps the stored list.
 	Legs string
+	// Role (#3634) is a bench's registry role, the tenth arg: benchrole.Friends
+	// or benchrole.Fleet; "" keeps the stored role. Legs on a bench whose role
+	// is or becomes friends is refused with a *benchrole.Error.
+	Role string
 }
 
 // NormalizeLegs turns a --legs value ("go,schema" or "go schema") into the
@@ -412,14 +417,17 @@ func setDesiredWith(ctx context.Context, st *store.Store, kind, name, machine st
 		return Result{}, &CeilingError{Machine: machine, Sum: plan.Sum, Ceiling: plan.Ceiling}
 	}
 	fargs := []any{kind, name, strconv.Itoa(slots), machine, actor, idem}
-	if opts.Paused != "" || opts.Register || opts.Legs != "" {
+	if opts.Paused != "" || opts.Register || opts.Legs != "" || opts.Role != "" {
 		register := "0"
 		if opts.Register {
 			register = "1"
 		}
 		fargs = append(fargs, opts.Paused, register)
-		if opts.Legs != "" {
+		if opts.Legs != "" || opts.Role != "" {
 			fargs = append(fargs, opts.Legs)
+		}
+		if opts.Role != "" {
+			fargs = append(fargs, opts.Role)
 		}
 	}
 	reply, err := st.Client().FCall(ctx, FunctionDesired, nil, fargs...).Result()
@@ -495,6 +503,12 @@ func parseDesiredReply(reply any, kind, name, machine string, slots int) (Result
 		return Result{}, fmt.Errorf("capacity %s %s: %w", kind, name, ErrUnregistered)
 	case "NAME-IS-LOGIN":
 		return Result{}, &NameIsLoginError{Name: name}
+	case "ROLE":
+		role := benchrole.Friends
+		if len(values) > 1 {
+			role = fmt.Sprint(values[1])
+		}
+		return Result{}, benchrole.Refused(name, role, "no CI legs on a friends bench (capacity bench --legs is the CI runner registration)")
 	case "CEILING":
 		result := Result{Status: status, Machine: machine, Slots: slots}
 		if len(values) > 2 {

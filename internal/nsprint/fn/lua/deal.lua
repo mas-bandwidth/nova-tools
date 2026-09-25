@@ -147,9 +147,11 @@ end
 -- or token_sha does not match that shape, is skipped. A queued, pooled card
 -- of an open sprint whose attempt would exceed cfg:deal max_attempts is not
 -- dealt: deal_cap moves it to done/fail (#3700) and it takes no slot.
--- The bench guard (registered, UP, not paused, free > 0) is checked once;
--- free caps the batch. Returns FENCED, NONE <why>, or DEALT followed by
--- S, label, attempt, token for each dealt card.
+-- The bench guard (registered, UP, not paused, not role friends, free > 0)
+-- is checked once; free caps the batch. A bench whose registry role is
+-- friends (#3634: the Studio hosts friends, the fleet runs swarms) is dealt
+-- no swarm card: NONE role=friends. Returns FENCED, NONE <why>, or DEALT
+-- followed by S, label, attempt, token for each dealt card.
 local function card_deal(keys, args)
   local bench, token, actor, idem = args[1], args[2], args[3], args[4]
   local fenced = deal_fence(token)
@@ -174,7 +176,10 @@ local function card_deal(keys, args)
   if bstate ~= 'up' then
     return { 'NONE', bstate }
   end
-  local desired = redis.call('HMGET', 'bench:' .. bench .. ':desired', 'slots', 'paused', 'legs')
+  local desired = redis.call('HMGET', 'bench:' .. bench .. ':desired', 'slots', 'paused', 'legs', 'role')
+  if desired[4] == 'friends' then
+    return { 'NONE', 'role=friends' }
+  end
   if desired[2] == '1' or desired[2] == 'true' then
     return { 'NONE', 'paused' }
   end
