@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -31,7 +32,7 @@ const (
 )
 
 // Kinds are the typed lines; the first word of the line.
-var Kinds = []string{"SCORE", "HOLD", "REPAIR", "SPEC", "SPEC-WRITTEN", "CLOSE", "JEV-DIFF"}
+var Kinds = []string{"SCORE", "HOLD", "DISPOSITION", "REPAIR", "SPEC", "SPEC-WRITTEN", "CLOSE", "JEV-DIFF"}
 
 // ErrMalformed wraps every parse refusal.
 var ErrMalformed = errors.New("malformed typed line")
@@ -203,11 +204,30 @@ func post(ctx context.Context, c redis.Cmdable, mode, repo, n, text string, scop
 // expands), oldest first, through ns_line_list: one read-only call. It
 // returns the full head and the records, each a field map.
 func List(ctx context.Context, c redis.Cmdable, repo, n, head string) (string, []map[string]string, error) {
+	cmd, err := ListCmd(ctx, c, repo, n, head)
+	if err != nil {
+		return "", nil, err
+	}
+	return ParseList(cmd)
+}
+
+// ListCmd queues ns_line_list on c, a client or a pipeline, so a reader of
+// many PRs lists them all in the pipeline that reads their records: one round
+// trip. ParseList reads the reply once the pipeline has run.
+func ListCmd(ctx context.Context, c redis.Cmdable, repo, n, head string) (*redis.Cmd, error) {
 	_, name, err := prkey.Split(repo)
 	if err != nil || !nRx.MatchString(n) {
-		return "", nil, fmt.Errorf("line list: want a repo name and a PR number, got %q %q", repo, n)
+		return nil, fmt.Errorf("line list: want a repo name and a PR number, got %q %q", repo, n)
 	}
-	v, err := c.FCallRO(ctx, FunctionList, nil, name, n, strings.ToLower(head)).Slice()
+	return c.FCallRO(ctx, FunctionList, nil, name, n, strings.ToLower(head)), nil
+}
+
+// ErrNoHead is ParseList's error for a PR with no record or no head.
+var ErrNoHead = errors.New("no head")
+
+// ParseList reads one ns_line_list reply: the full head and the records.
+func ParseList(cmd *redis.Cmd) (string, []map[string]string, error) {
+	v, err := cmd.Slice()
 	if err != nil {
 		return "", nil, fmt.Errorf("%s: %w", FunctionList, err)
 	}
@@ -215,7 +235,7 @@ func List(ctx context.Context, c redis.Cmdable, repo, n, head string) (string, [
 		return "", nil, fmt.Errorf("%s: unexpected reply %v", FunctionList, v)
 	}
 	if fmt.Sprint(v[0]) == "MISSING" {
-		return "", nil, fmt.Errorf("MISSING %v: no head; the record is written when the PR is opened or imported", v[1])
+		return "", nil, fmt.Errorf("%w: MISSING %v: the record is written when the PR is opened or imported", ErrNoHead, v[1])
 	}
 	full := fmt.Sprint(v[1])
 	var out []map[string]string
@@ -228,6 +248,74 @@ func List(ctx context.Context, c redis.Cmdable, repo, n, head string) (string, [
 		out = append(out, m)
 	}
 	return full, out, nil
+}
+
+// ReadKinds are the kinds that are a read of a PR: a score, a hold, or a
+// disposition (APPROVE or HOLD). The other kinds are lines, never reads.
+var ReadKinds = map[string]bool{"SCORE": true, "HOLD": true, "DISPOSITION": true}
+
+// IsJev says who is Jev: Jev's lines are stored and never count as a read.
+func IsJev(who string) bool { return strings.HasPrefix(strings.ToLower(who), "jev") }
+
+// Read is one reader's current read of a PR at one head: the newest read
+// line that reader stored there.
+type Read struct {
+	Who, Kind, Head string
+	Score           int // -1 when the line has none
+	At              int64
+	Text            string // the whole typed line
+}
+
+// First is the read's typed first line, the line ReadAt parses.
+func (r Read) First() string {
+	first, _, _ := strings.Cut(r.Text, "\n")
+	return first
+}
+
+// Current folds the line records at one head (List's records) into the one
+// current read per reader: per who the newest read-kind record wins (a tie
+// in at folds HOLD last: a hold never loses a tie), Jev is left out, and the
+// reads come back oldest first. The store keys a record by who and kind, so
+// a reader's SCORE and HOLD at one head are two records and this picks one.
+func Current(recs []map[string]string) []Read {
+	best := map[string]Read{}
+	for _, m := range recs {
+		who, kind := m["who"], m["kind"]
+		if who == "" || IsJev(who) || !ReadKinds[kind] {
+			continue
+		}
+		at, _ := strconv.ParseInt(m["at"], 10, 64)
+		score := -1
+		if v, err := strconv.Atoi(m["score"]); err == nil {
+			score = v
+		}
+		r := Read{Who: who, Kind: kind, Head: m["head"], Score: score, At: at, Text: m["text"]}
+		b, ok := best[who]
+		if !ok || r.At > b.At || (r.At == b.At && r.Kind == "HOLD") {
+			best[who] = r
+		}
+	}
+	out := make([]Read, 0, len(best))
+	for _, r := range best {
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].At != out[j].At {
+			return out[i].At < out[j].At
+		}
+		return out[i].Who < out[j].Who
+	})
+	return out
+}
+
+// Firsts is the typed first lines of reads, in order: the lines ReadAt and
+// the lander read.
+func Firsts(reads []Read) []string {
+	out := make([]string, len(reads))
+	for i, r := range reads {
+		out[i] = r.First()
+	}
+	return out
 }
 
 // Comment is one GitHub issue comment as `gh api .../issues/<n>/comments`

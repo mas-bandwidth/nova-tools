@@ -12,14 +12,18 @@
 --   pr:<name>:<n>:line:<head>               zset: <who>:<kind> by at (ms), the
 --       lines at one head oldest first (ns_line_list)
 --   pr:<name>:<n>:lines                     list: every typed line, the per-PR log
---       the read brief reads
---   pr:<name>:<n>                           reads (first lines, newline-joined:
---       the stream lander's ReadAt), last_line, last_line_at
--- and, for a posted CLOSE or SCORE, the task move the line is an event for
--- (NS.tev.event, 03_task_event.lua, nova-tools #3779): the line and the move
--- together or neither. An import moves nothing.
+--       the read brief and the route duty read
+--   pr:<name>:<n>                           last_line, last_line_at
 -- Everything sits under the PR record's key, so the grant that lets a reader
 -- post a line covers every key this writes.
+--
+-- The line records are the one read record (nova-tools #3874): the stream
+-- lander, lander --shadow and nova-review reads read the records at the
+-- head (ns_line_list), never a copy. The PR record has no reads field.
+--
+-- A posted CLOSE or SCORE line is also the event it names (NS.tev.event,
+-- 03_task_event.lua): a person's CLOSE lands the tasks naming the PR, a
+-- SCORE moves the PR's read task to merging, in this same call.
 --
 -- The gates measured here, never typed: ci from ci:<name>:<head> field ci
 -- (green ok, red red, pending pending; the record's ci when ci_sha is the
@@ -68,7 +72,7 @@ do
   -- text (the whole typed line), source ('' or comment:<id>).
   -- Reply: MISSING <record> | REFUSED <why> | EXISTS <line key> |
   -- POSTED <line key> <full head> <gates> <measured> <lines in the log>
-  -- <tasks moved> <same> <skipped> <note>... (the notes 'id: why' per skip).
+  -- <moved> <same> <skipped> [note...] (the event's task moves; 0 on import).
   local function line_post(keys, args)
     local mode, repo, n, head, who, kind = args[1] or '', args[2] or '', args[3] or '',
       string.lower(args[4] or ''), string.lower(args[5] or ''), args[6] or ''
@@ -136,10 +140,6 @@ do
       count = redis.call('LLEN', rk .. ':lines')
     else
       count = redis.call('RPUSH', rk .. ':lines', text)
-      local old = redis.call('HGET', rk, 'reads') or ''
-      local reads = first
-      if old ~= '' then reads = old .. '\n' .. first end
-      redis.call('HSET', rk, 'reads', reads)
     end
     redis.call('HSET', rk, 'last_line', first, 'last_line_at', tostring(math.floor(at / 1000)))
     local ev = { moved = 0, same = 0, skipped = 0, notes = {} }

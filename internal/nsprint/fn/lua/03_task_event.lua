@@ -8,8 +8,8 @@
 --   the stream lander merges a stream PR (ns_land_member, one call per member)
 --       the CLOSE typed line on the member's pr record, and every task naming
 --       the member PR or an issue its body closes -> landed
---   a person posts a CLOSE line (ns_read_post)                -> the same landing
---   a reader posts a SCORE line (ns_read_post)
+--   a person posts a CLOSE line (ns_line_post, line.lua)     -> the same landing
+--   a reader posts a SCORE line (ns_line_post, line.lua)
 --       the PR's read task read-<n>-<head8> working -> merging (the read is done)
 --
 -- The tasks an event names come from the ref index (01_task_ref.lua): one
@@ -20,7 +20,7 @@
 -- one receipt per step. An event edge the graph takes in steps (ready ->
 -- working -> merging when the work's PR opens; ready, parked or waiting ->
 -- ... -> landed at a merge) is walked step by step, each step on the graph.
--- Exports NS.tev for harvest.lua.
+-- Exports NS.tev for harvest.lua and line.lua (TE.event).
 
 local TE = {
   TR = NS.tref,
@@ -114,28 +114,22 @@ function TE.prkey(repo, n)
   return 'pr:' .. TE.TR.bare(repo) .. ':' .. n
 end
 
--- TE.line(key, line) adds one typed line to the pr record's two line stores,
--- the reads field the lander reads and the :lines list read post and the
--- read brief use, once. Returns 1 when it was new.
+-- TE.line(key, line) adds one typed line to the pr record's line log
+-- (pr:<repo>:<n>:lines, the log read post, the read brief and the route duty
+-- read), once. Returns 1 when it was new. A read is a line record written by
+-- ns_line_post (line.lua, nova-tools#3874); the record carries no reads field.
 function TE.line(key, line)
-  local reads = redis.call('HGET', key, 'reads') or ''
-  local added = 0
-  if ('\n' .. reads .. '\n'):find('\n' .. line .. '\n', 1, true) == nil then
-    if reads ~= '' then reads = reads .. '\n' end
-    redis.call('HSET', key, 'reads', reads .. line)
-    added = 1
+  if redis.call('LPOS', key .. ':lines', line) then
+    return 0
   end
-  if not redis.call('LPOS', key .. ':lines', line) then
-    redis.call('RPUSH', key .. ':lines', line)
-    added = 1
-  end
-  return added
+  redis.call('RPUSH', key .. ':lines', line)
+  return 1
 end
 
 -- ns_land_member(repo, slug, merge_sha, n, task, line, by, why, closes)
 -- One member of a merged stream landing, fenced by the landing: land:<repo>:
 -- <slug> must be merged at merge_sha (STALE otherwise, nothing written). It
--- writes the CLOSE line on pr:<repo>:<n> (both line stores, once), stores the
+-- writes the CLOSE line on pr:<repo>:<n> (the line log, once), stores the
 -- issues the member closes (closes: numbers space-joined, '-' none, ''
 -- unknown: the record's closes field stands), and moves every task naming the
 -- member PR or one of those issues, and the member's own task, to landed with
