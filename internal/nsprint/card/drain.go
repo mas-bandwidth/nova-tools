@@ -50,52 +50,12 @@ func keyPaused(sprint string) string         { return "s:" + sprint + ":paused" 
 func keyParked(sprint, member string) string { return "s:" + sprint + ":parked:" + member }
 func keyDrainImported(sprint string) string  { return "s:" + sprint + ":drain:imported" }
 
-// resumeScript takes the member out of the paused set and moves each parked
-// card that is still queued into the pool. A parked label whose card is gone
-// or no longer queued (landed, cancelled) leaves the parked set and is not
-// pooled.
-// keys: paused, parked, pool, log; args: member, sprint
-var resumeScript = redis.NewScript(`
-local paused, parked, pool, log = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
-local member, sprint = ARGV[1], ARGV[2]
-local was = redis.call('SREM', paused, member)
-local moved, dropped = 0, 0
-local labels = redis.call('SMEMBERS', parked)
-for _, label in ipairs(labels) do
-  redis.call('SREM', parked, label)
-  local card = 's:' .. sprint .. ':card:' .. label
-  if string.match(label, '^[A-Za-z0-9][A-Za-z0-9._-]*$') ~= nil and redis.call('HGET', card, 'state') == 'queued' then
-    local priority = redis.call('HGET', card, 'priority')
-    if type(priority) ~= 'string' or priority == '' then
-      priority = '0'
-    end
-    redis.call('ZADD', pool, priority, label)
-    local t = redis.call('TIME')
-    redis.call('XADD', log, '*',
-      'kind', 'card', 'id', label, 'from', 'queued', 'to', 'queued',
-      'place', 'pool', 'actor', 'resume', 'reason', 'resume ' .. member, 'at', t[1])
-    moved = moved + 1
-  else
-    dropped = dropped + 1
-  end
-end
-return {was, moved, dropped}
-`)
-
-// receiptScript writes the one import receipt for a card. The fence is the
-// label in s:<S>:drain:imported: a re-run after a crash between the receipt
-// and the file removal finds it and writes nothing.
-// keys: imported, log; args: label, payload_sha, file, place
-var receiptScript = redis.NewScript(`
-if redis.call('HSETNX', KEYS[1], ARGV[1], ARGV[2]) == 0 then
-  return 0
-end
-local t = redis.call('TIME')
-redis.call('XADD', KEYS[2], '*',
-  'kind', 'card', 'id', ARGV[1], 'actor', 'drain-import', 'reason', 'import',
-  'file', ARGV[3], 'place', ARGV[4], 'payload_sha', ARGV[2], 'at', t[1])
-return 1
-`)
+// Drain's two atomic steps are Functions of the nova_sprint library
+// (card_pool.lua), called with FCALL, never EVAL/EVALSHA (#3419): the card
+// package sends no ad-hoc script on any path.
+//
+//	ns_card_resume          keys: paused, parked, pool, log; args: member, sprint
+//	ns_card_import_receipt  keys: imported, log; args: label, payload_sha, file, place
 
 type drainTally struct {
 	out                                 strings.Builder
@@ -132,7 +92,7 @@ func Drain(ctx context.Context, client *redis.Client, sprint string, opts DrainO
 	var d drainTally
 
 	for _, member := range opts.Resume {
-		vals, err := resumeScript.Run(ctx, client,
+		vals, err := client.FCall(ctx, "ns_card_resume",
 			[]string{keyPaused(sprint), keyParked(sprint, member), keyPool(sprint), keyLog(sprint)},
 			member, sprint).Int64Slice()
 		if err != nil || len(vals) != 3 {
@@ -206,7 +166,7 @@ func importDir(ctx context.Context, client *redis.Client, sprint, dir string, d 
 			continue
 		}
 		sum := sha256.Sum256(body)
-		wrote, err := receiptScript.Run(ctx, client,
+		wrote, err := client.FCall(ctx, "ns_card_import_receipt",
 			[]string{keyDrainImported(sprint), keyLog(sprint)},
 			label, hex.EncodeToString(sum[:]), name, place).Int64()
 		if err != nil {

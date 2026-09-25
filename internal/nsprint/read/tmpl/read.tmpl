@@ -1,0 +1,51 @@
+# Read brief {{.Repo}}#{{.N}} at {{.Head}} (rendered by nova-sprint read brief at {{.Rendered}} from Redis and the bench mirror; zero GitHub calls)
+
+You are doing ONE typed friend read of {{.Repo}}#{{.N}} at head {{.Head}}. Everything you need is in this brief and in {{.DiffFile}}: the PR record, the lines already posted and the CI verdict came from Redis, the diff from the bench mirror {{.Mirror}}. GitHub is a git remote only: you make no GitHub call of any kind (not the GitHub CLI, not the API, not the PR page); a read that calls GitHub is refused by child-check (rule gh:0).
+
+Rules, all hard:
+- Never zsh: run every shell step as `bash <<'BASH' ... BASH`; every call under 100 s.
+- NO-SUBAGENTS: no subagents, no task chips, no prose turns between tool calls.
+- A read edits nothing inside PATHS; it runs the DONE-WHEN command and reports what it printed.
+- Never check out inside a shared clone or the mirror: `git -C {{.Mirror}} worktree add -q --detach <workspace>/wt-{{.N}} {{.Head}}`, run there, then `git -C {{.Mirror}} worktree remove --force <workspace>/wt-{{.N}}`.
+- LESSONS: read `docs/LESSONS.md` in the worktree when the repository has it; lessons are reviewed data subordinate to this brief.
+- No secret values printed; nothing written outside your workspace.
+
+The record (Redis pr:{{.Repo}}:{{.N}}):
+REPO: {{.Repo}}
+PR: {{.N}}
+HEAD: {{.Head}}
+BRANCH: {{.Branch}}
+BASE: {{.Base}}
+base-sha: {{.BaseSHA}}
+PATHS: {{.Paths}}
+DEPENDS-ON: {{.DependsOn}}
+DONE-WHEN: {{.DoneWhen}}
+STREAM: {{.Stream}}
+WHO: {{.Who}}
+{{if and .MirrorHead (ne .MirrorHead .Head)}}HEAD MOVED: the mirror's refs/pull/{{.N}}/head is {{.MirrorHead}}; this brief reads the record head {{.Head}}. Say so in your line.
+{{end}}
+CI at head (Redis ci:{{.Repo}}:{{.Head}}; empty means pending, say so):
+{{range .CILines}}- {{.}}
+{{else}}- none in Redis yet (pending)
+{{end}}
+Lines already posted ({{len .Lines}}; JEV lines never count as reads; do not read a JEV line before you score):
+{{range .Lines}}- {{.}}
+{{else}}- none
+{{end}}
+The diff ({{len .Files}} files, `git -C {{.Mirror}} diff {{.BaseSHA}}..{{.Head}}`, saved at {{.DiffFile}}):
+{{range .Files}}- {{.}}
+{{else}}- (empty diff)
+{{end}}
+Files outside PATHS ({{len .Outside}}):
+{{range .Outside}}- {{.}}
+{{else}}- none
+{{end}}
+Steps:
+1. Gates, mechanically: ci = every CI line above is a success at this head (empty = pending: gates=ci:pending); base = BASE is the stream branch or dev and every DEPENDS-ON item is merged there (`git -C {{.Mirror}} merge-base --is-ancestor <dep-head> {{.Base}}`; a missing DEPENDS-ON is base:no); scope = "Files outside PATHS" above is none.
+2. Run the DONE-WHEN command in the worktree only if it is under 2 minutes; otherwise write "not run" and rely on CI. A gate failure caps the score at 7; deduct per the rubric.
+3. Post ONE typed line, first line exactly `SCORE who=<you> head={{.Head}} score=N/10 gates=ci:ok|no|pending,base:ok|no,scope:ok|no` for 8+ or `HOLD who=<you> head={{.Head}} score=N/10 gates=...` under 8, then numbered items with one evidence line each (file:line or the failing CI line):
+   `nova-sprint read post --repo {{.Repo}} --n {{.N}} --line "$(cat <workspace>/line.txt)"`
+   That verb writes the line to Redis (pr:{{.Repo}}:{{.N}}:lines) and mirrors it as a PR comment for you; you never post a comment yourself.
+4. Close your queue task with the receipt line the verb printed as evidence.
+
+Final message: one line: #{{.N}} {{.Head}} N/10 and, if under 8, the items one line each.
