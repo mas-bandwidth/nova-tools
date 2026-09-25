@@ -1,6 +1,7 @@
 // Command nova-redis is the Layer 2 binary of docs/SPEC-REDIS.md, the owner of
 // the local instance: `serve` launches it bound to loopback and the tailnet,
-// with auth from nova-secrets and persistence off (serve.go, #2281). It also
+// with auth from nova-secrets and the fleet store's rules: AOF on, no eviction,
+// no TTL policy, the store in --dir (serve.go, #2281, #3879). It also
 // carries the scratch verbs: `spill` writes a value under an owner
 // prefix with a required TTL, and `recall` reads it back and refuses a missing
 // or expired key. A write with no owner or no TTL is refused before the
@@ -47,7 +48,7 @@ const (
 const usage = `nova-redis — owns the local Redis instance and its scratch verbs (docs/SPEC-REDIS.md)
 
 usage:
-  nova-redis serve  --bind <addr>[,<addr>...] --port <port>
+  nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>
   nova-redis spill  --addr <host:port> --owner <owner> --name <name> --ttl <duration> --value <text>
   nova-redis recall --addr <host:port> --owner <owner> --name <name>
   nova-redis version
@@ -62,12 +63,14 @@ Auth is read from NOVA_REDIS_PASSWORD, never from an argument.
 serve runs redis-server in the foreground, bound only to loopback and tailnet
 addresses (100.64.0.0/10, fd7a:115c:a1e0::/48); --bind has no default and a
 wildcard, public or LAN address is refused (exit 2). The password reaches
-redis-server on stdin, never in an argument; persistence is off (no RDB, no
-AOF) and every launch gets a fresh empty dir, so a restart is a clean slate.
+redis-server on stdin, never in an argument. The store lives in --dir (absolute,
+no default): AOF on, fsynced every second, no eviction, no TTL policy, so a
+restart on the same --dir keeps every key. A bench runs it as
+nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve
+--bind 127.0.0.1,100.101.102.103 --port 6379 --dir /var/lib/nova-redis
 
 example:
   nova-redis version
-  nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve --bind 127.0.0.1,100.101.102.103 --port 6379
   nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi
   nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note
 `
@@ -81,11 +84,9 @@ type deps struct {
 	getenv func(string) string
 
 	// The serve seams: the environment handed to the child, where the
-	// instance program is found, the root its fresh working dir is made
-	// under, and the launch itself.
+	// instance program is found, and the launch itself.
 	environ  func() []string
 	lookPath func(string) (string, error)
-	tempRoot func() string
 	launch   func(ctx context.Context, spec launchSpec, stdout, stderr io.Writer) error
 }
 
@@ -98,7 +99,6 @@ func realDeps() deps {
 		getenv:   os.Getenv,
 		environ:  os.Environ,
 		lookPath: exec.LookPath,
-		tempRoot: os.TempDir,
 		launch:   launchRedis,
 	}
 }

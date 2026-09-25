@@ -11,7 +11,7 @@ import (
 // and locks, nova-go budgets and plan state, each with a file fallback, and a
 // `nova-redis` binary owning the instance (status, spill/recall scratch with
 // TTL and owner prefixes, presence, check) bound to localhost and the tailnet
-// with auth from nova-secrets and persistence off. Git stays the record; a
+// with auth from nova-secrets and the AOF on. Git stays the record; a
 // missing file or a section missing one of the named contract terms is a bug.
 func TestNovaRedisSpecFirstSlice(t *testing.T) {
 	t.Parallel()

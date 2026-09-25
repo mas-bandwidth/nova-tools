@@ -10,7 +10,7 @@ import (
 
 // TestIssue2281BehavioursAreProvedInNovaRedis ties behaviours 22-25 of
 // docs/SPEC-REDIS.md "Tests this spec demands" (bind, auth, persistence,
-// restart; nova-tools #2281) to the tests that prove them: each name the spec
+// restart; nova-tools #2281, the store's rules #3879) to the tests that prove them: each name the spec
 // lists must be declared as a test in cmd/nova-redis, where `serve` lives, so
 // the spec cannot claim a proof the tree does not carry.
 func TestIssue2281BehavioursAreProvedInNovaRedis(t *testing.T) {
@@ -35,8 +35,8 @@ func TestIssue2281BehavioursAreProvedInNovaRedis(t *testing.T) {
 	for n, name := range map[int]string{
 		22: "TestBoundToLocalhostAndTailnetOnly",
 		23: "TestAuthFromNovaSecretsNeverAPlaintextArgument",
-		24: "TestPersistenceOffNoRDBNoAOF",
-		25: "TestRestartIsACleanSlate",
+		24: "TestPersistenceIsAOFWithNoEviction",
+		25: "TestRestartOnTheSameDirKeepsTheStore",
 	} {
 		item := regexp.MustCompile(`(?m)^\d+\. ` + "`" + name + "`")
 		if !item.Match(spec) {
