@@ -206,7 +206,7 @@ func printHarvest(out io.Writer, sprint string, results []harvest.BenchResult) i
 				sprint, c.Label, c.PR, c.Head, c.Via, r.Bench)
 		}
 		for _, f := range r.Failed {
-			_, _ = fmt.Fprintf(out, "HARVEST-FAILED %s %s bench=%s err=%s detail=%s\n", sprint, f.Label, r.Bench, f.Code, oneline.Escape(f.Err.Error()))
+			_, _ = fmt.Fprintf(out, "HARVEST-FAILED %s %s bench=%s err=%s detail=%s%s\n", sprint, f.Label, r.Bench, f.Code, oneline.Escape(f.Err.Error()), harvestFails(f))
 			if code == 0 {
 				code = 1
 			}
@@ -231,4 +231,17 @@ func printHarvest(out io.Writer, sprint string, results []harvest.BenchResult) i
 		_, _ = fmt.Fprintln(out, line)
 	}
 	return code
+}
+
+// harvestFails is the HARVEST-FAILED line's tail (#3712): the card's failed
+// passes so far, and card=done/fail on the pass that reached the cap.
+func harvestFails(f harvest.CardFailure) string {
+	if f.Fails == 0 {
+		return ""
+	}
+	tail := fmt.Sprintf(" fails=%d", f.Fails)
+	if f.Moved {
+		tail += " card=done/fail"
+	}
+	return tail
 }

@@ -277,14 +277,16 @@ end)
 -- ns_card_header: the card's DONE-WHEN: line, written once at push
 -- (card.Push pipelines it after ns_card_push) so harvest's PR body carries
 -- it without the card file; the STREAM: line is the record's own stream
--- field, which CARD.create writes. keys: card. args: payload_sha, done_when.
+-- field, which CARD.create writes. keys: card. args: payload_sha, done_when
+-- [, task]: task is the card's TASK: line (#3712, the PR title), written the
+-- same way when the card carries one.
 -- The write is refused when the card is not stored (NOTFOUND) or is stored
 -- from another payload (CONFLICT: the push before it was a label conflict and
 -- wrote nothing). The field is HSETNX: a repeat push with the same payload
 -- writes nothing and returns OK.
 redis.register_function('ns_card_header', function(keys, args)
   local card = keys[1]
-  local payload, done_when = args[1] or '', args[2] or ''
+  local payload, done_when, task_line = args[1] or '', args[2] or '', args[3] or ''
   if type(card) ~= 'string' or card == '' or payload == '' then
     return 'USAGE'
   end
@@ -296,5 +298,8 @@ redis.register_function('ns_card_header', function(keys, args)
     return 'CONFLICT'
   end
   redis.call('HSETNX', card, 'done_when', done_when)
+  if task_line ~= '' then
+    redis.call('HSETNX', card, 'task', task_line)
+  end
   return 'OK'
 end)

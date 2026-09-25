@@ -254,7 +254,9 @@ var branchCellRE = regexp.MustCompile(`(?i)^BRANCH\s+\S*?cell-([A-Za-z0-9+#]+)-(
 // PathsFrom says which it is and the caller prints that.
 func InferCard(pr PR) Card {
 	result := pr.Body
-	if i := strings.Index(result, "RESULT"); i >= 0 {
+	if i := resultLineStart(result); i >= 0 {
+		result = result[i:]
+	} else if i := strings.Index(result, "RESULT"); i >= 0 {
 		result = result[i:]
 	}
 	c := Card{PathsFrom: "none", SymbolFrom: "none", Result: result}
@@ -595,6 +597,20 @@ func isCell(pr PR, card Card) bool {
 		}
 	}
 	return false
+}
+
+// resultLineStart is the offset of the first line that starts with RESULT
+// (the hasResultLine rule), or -1. A typed line above it that merely names
+// RESULT (a DONE-WHEN sentence, a PATHS entry, #3712) is not the RESULT.
+func resultLineStart(body string) int {
+	off := 0
+	for _, line := range strings.SplitAfter(body, "\n") {
+		if strings.HasPrefix(strings.TrimLeft(strings.TrimSpace(line), "\"'`"), "RESULT") {
+			return off + len(line) - len(strings.TrimLeft(line, " \t"))
+		}
+		off += len(line)
+	}
+	return -1
 }
 
 // hasResultLine reports whether any line of the body starts with RESULT (a
