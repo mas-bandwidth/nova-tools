@@ -100,6 +100,7 @@ type cardDoc struct {
 	Priority       string // PRIORITY: <integer>, the card's score in the pool ZSET; absent is 0
 	Bench          string // BENCH: <name>, the one bench the dealer may deal this card to; absent is any bench
 	Est            string // EST: <minutes>, the card's est field (#3653); "" is absent or not a number of minutes
+	Test           string // TEST: <package> <TestName>, the card's test field the wrapper runs at end (#3689); "" is absent
 	Payload        string
 }
 
@@ -176,6 +177,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		Priority:       priority,
 		Bench:          bench,
 		Est:            parseEst(header["EST"]),
+		Test:           strings.TrimSpace(header["TEST"]),
 		Payload:        hex.EncodeToString(sum[:]),
 	}, nil
 }

@@ -16,10 +16,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// runCardPool runs card push, release and bench-side stop; runCard (card_run.go) routes them here.
+// runCardPool runs card push, release, show and bench-side stop; runCard (card_run.go) routes them here.
 func runCardPool(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, "card", "needs push, release or stop")
+		return refuse(stderr, "card", "needs push, release, show or stop")
 	}
 	switch args[0] {
 	case "push":
@@ -28,8 +28,10 @@ func runCardPool(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return cmdCardRelease(ctx, args[1:], stdout, stderr)
 	case "stop":
 		return cmdCardStop(ctx, args[1:], os.Stdin, stdout, stderr)
+	case "show":
+		return cmdCardShow(ctx, args[1:], stdout, stderr)
 	default:
-		return refuse(stderr, "card", "unknown subcommand "+args[0]+"; it wants push, release or stop")
+		return refuse(stderr, "card", "unknown subcommand "+args[0]+"; it wants push, release, show or stop")
 	}
 }
 
@@ -136,5 +138,47 @@ func cmdCardStop(ctx context.Context, args []string, stdin io.Reader, stdout, st
 	if err := launch.StopCommand(ctx, stdin, stdout, stderr, *grace, launch.OSGroupManager{}, nil); err != nil {
 		return refuse(stderr, "card stop", err.Error())
 	}
+	return 0
+}
+
+// cmdCardShow prints one card's Redis record (#3689, Glenn 2026-09-24 11:55
+// PM: "it should be in REDIS, not on files"): the card hash (never its token)
+// and its current attempt's result hash -- the wrapper-written RESULT fields,
+// the model's two lines and note, the check run, outcome, wall, commit and the
+// provider facts -- one `card.<field> <value>` or `result.<field> <value>` line
+// each, sorted, values on one line, then one receipt line. One FCALL
+// (ns_card_show). Exit 0 shown, 1 no such card, 2 usage, 6 Redis.
+func cmdCardShow(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("card show", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	sprint := fs.String("sprint", "", "")
+	label := fs.String("label", "", "")
+	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	if err := fs.Parse(args); err != nil || *sprint == "" || *label == "" || *addr == "" || fs.NArg() > 0 {
+		fmt.Fprintln(stderr, "nova-sprint card: show wants --sprint <S> --label <label> and --redis <addr> (or NOVA_SPRINT_REDIS); run: nova-sprint help")
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	st, err := store.Open(ctx, *addr)
+	if err != nil {
+		fmt.Fprintf(stdout, "REFUSED card show %s/%s redis=down remedy=%s\n", *sprint, *label, oneline.Field("check --redis or NOVA_SPRINT_REDIS"))
+		return 6
+	}
+	defer st.Close()
+	cardFields, resultFields, err := card.ShowRecord(ctx, st.Client(), *sprint, *label)
+	if err != nil {
+		fmt.Fprintf(stdout, "REFUSED card show %s/%s why=%s\n", *sprint, *label, oneline.Field(err.Error()))
+		return 6
+	}
+	if len(cardFields) == 0 {
+		fmt.Fprintf(stdout, "REFUSED card show %s/%s why=%s\n", *sprint, *label, oneline.Field("no such card: s:"+*sprint+":card:"+*label+" is empty"))
+		return 1
+	}
+	for _, line := range card.ShowLines(cardFields, resultFields) {
+		fmt.Fprintln(stdout, line)
+	}
+	fmt.Fprintf(stdout, "SHOWN card %s/%s state=%s attempt=%s outcome=%s valid=%s fields=%d\n", *sprint, *label,
+		orDash(cardFields["state"]), orDash(cardFields["attempt"]), orDash(cardFields["outcome"]), orDash(resultFields["valid"]), len(cardFields)+len(resultFields))
 	return 0
 }

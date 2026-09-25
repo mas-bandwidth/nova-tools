@@ -65,7 +65,7 @@ func PushWith(ctx context.Context, client *redis.Client, sprint string, body []b
 	}
 	reply, err := client.FCall(ctx, "ns_card_push", keys,
 		doc.Label, doc.Payload, doc.Priority, doc.Base, doc.BaseSHA, doc.Paths, doc.Repo, doc.Kind,
-		doc.DependsOn, doc.Type, doc.TypedDependsOn, boolString(ready), doc.Route, doc.Bench, doc.Est,
+		doc.DependsOn, doc.Type, doc.TypedDependsOn, boolString(ready), doc.Route, doc.Bench, doc.Est, doc.Test,
 	).Text()
 	if err != nil {
 		return refused(err.Error())

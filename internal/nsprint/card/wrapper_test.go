@@ -99,11 +99,29 @@ func fakeNative(mode, out string) int {
 		fmt.Println("fake native:", err)
 		return 9
 	}
-	if err := os.WriteFile(filepath.Join(job, "RESULT.md"), []byte("RESULT: "+os.Getenv("NOVA_CARD")+" sha=000000000000\nfixed; tests pass\n"), 0o644); err != nil {
+	body := "RESULT: " + os.Getenv("NOVA_CARD") + " sha=000000000000\nfixed; tests pass\n"
+	switch mode {
+	case "native-two":
+		// #3689: the model's whole contract, two lines and a note.
+		body = "RESULT: " + os.Getenv("NOVA_CARD") + " sha=000000000000\nDONE\nthe retry path is still owed\n"
+	case "native-wrongbranch":
+		// #3689: the quack cards' shape, the BRANCH the card told the model.
+		body = "RESULT: " + os.Getenv("NOVA_CARD") + " sha=000000000000\nDONE\nBRANCH: rowan/" + parts[1] + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(job, "RESULT.md"), []byte(body), 0o644); err != nil {
 		fmt.Println("fake native:", err)
 		return 9
 	}
-	if mode == "native" {
+	if mode != "native" && mode != "native-nohandoff" {
+		// The bench harness's START line (rowan-tools' nova-card-harness):
+		// names only, never a key's value.
+		start := "2026-09-24T23:59:00Z START " + os.Getenv("NOVA_CARD") + " bench=wrap-bench tier=flash route=opencode-flash model=opencode/kimi-k3 key=OPENCODE_API_KEY sha=0123456789ab\n"
+		if err := os.WriteFile(filepath.Join(out, "harness.log"), []byte(start), 0o644); err != nil {
+			fmt.Println("fake native:", err)
+			return 9
+		}
+	}
+	if mode != "native-nohandoff" {
 		if _, err := swarm.HandOffCardOut(job, out); err != nil {
 			fmt.Println("fake native hand-off:", err)
 			return 9

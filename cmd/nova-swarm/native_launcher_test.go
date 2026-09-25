@@ -71,10 +71,10 @@ func TestNativeLaunchGoesThroughTheOneLauncher(t *testing.T) {
 	}
 }
 
-// TestNativeLaunchCarriesTheResultFormat is nova-tools#3651: a typed card's
-// launch prompt is the card text followed by the RESULT-FORMAT paragraph, so the
-// worker is told the grammar card end validates. RED WITHOUT swarm.CardPrompt:
-// the prompt was the card text alone.
+// TestNativeLaunchCarriesTheResultFormat is nova-tools#3651, and #3689: a typed
+// card's launch prompt is the card text followed by the RESULT-FORMAT paragraph,
+// now the two-line contract (the wrapper writes every other field). RED WITHOUT
+// swarm.CardPrompt: the prompt was the card text alone.
 func TestNativeLaunchCarriesTheResultFormat(t *testing.T) {
 	card := "RESULT: c1 sha=0123456789ab nova-tools fix: a card\nKIND: fix\n"
 	argv, err := nativeLaunchArgv("/bin/true", nativeRunConfig{model: "fake/fake-model", label: "fmt-lbl", card: []byte(card)}, "fake")
@@ -82,7 +82,7 @@ func TestNativeLaunchCarriesTheResultFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 	prompt := argv[len(argv)-1]
-	if !strings.HasPrefix(prompt, card) || !strings.Contains(prompt, "RESULT-FORMAT") || !strings.Contains(prompt, "## Left owed") {
+	if !strings.HasPrefix(prompt, card) || !strings.Contains(prompt, "RESULT-FORMAT") || !strings.Contains(prompt, "`BLOCKED <why>`") || strings.Contains(prompt, "BRANCH:") {
 		t.Fatalf("the launch prompt does not carry the RESULT-FORMAT paragraph after the card:\n%s", prompt)
 	}
 }

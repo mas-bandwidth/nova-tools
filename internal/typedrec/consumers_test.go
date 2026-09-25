@@ -718,7 +718,7 @@ func TestRecordResultEnforcesCardKindAndLine1(t *testing.T) {
 // failingRecorder is a Redis ledger whose result record fails.
 type failingRecorder struct{ *card.RedisLedger }
 
-func (failingRecorder) Result(context.Context, typedrec.Result, string) (int, error) {
+func (failingRecorder) Result(context.Context, typedrec.Result, string, ...card.Fact) (int, error) {
 	return card.WrapperExitRedis, errors.New("record failed")
 }
 
