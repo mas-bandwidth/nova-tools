@@ -115,7 +115,7 @@ func TestTableTickMakesNoRestCall(t *testing.T) {
 	if n := ft.n.Load(); n != 0 {
 		t.Fatalf("ten ticks made %d HTTP calls, want 0", n)
 	}
-	allowed := map[string]bool{"ZRANGE": true, "ZCARD": true, "SMEMBERS": true, "EXISTS": true, "XRANGE": true, "HGETALL": true, "HMGET": true, "EVAL": true, "EVALSHA": true}
+	allowed := map[string]bool{"ZRANGE": true, "ZCARD": true, "SMEMBERS": true, "EXISTS": true, "XRANGE": true, "HGETALL": true, "HGET": true, "HMGET": true, "ZCOUNT": true, "EVAL": true, "EVALSHA": true}
 	names, _ := log.reset()
 	if len(names) == 0 {
 		t.Fatal("no commands logged")
