@@ -66,6 +66,9 @@ usage:
         [--run <owner>/<repo>@<sha> ...]   the hosted checks on one head; --entry-interval, floor 30s
         [--lock <path> ...]     an advisory lock released; probed non-blocking, never held
         --forge-interval <duration>   the third clock, for --pr, --owned-prs and --ref; floor 30s
+  nova-wake watch --store <host:port> [--user <acl user>] --state <file> --max <duration>
+        --on-deadline <word> --pr <owner>/<repo>#<n> ...
+        blocks on ev:github (XREAD BLOCK) for the --pr named: no gh, no git fetch, no interval
   nova-wake probe --bus <dir> --line <name> --state <file>
         [--silent-after <d>] [--answer-within <d>]   default 5m and 2m, the family's numbers
         [--rest <file>]     lines that have declared a rest: <name> <note id> <stamp>
@@ -739,6 +742,8 @@ func cmdWatch(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 		toOnly       = fs.Bool("to-only", false, "")
 		forgeEvery   = fs.String("forge-interval", "", "")
 		notMine      = fs.String("not-mine", "", "")
+		store        = fs.String("store", "", "")
+		storeUser    = fs.String("user", presence.DefaultUser, "")
 		entries      repeated
 		reports      repeated
 		lines        repeated
@@ -758,6 +763,10 @@ func cmdWatch(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 	fs.Var(&locks, "lock", "")
 	if !parseFlags(fs, args, stderr) {
 		return 2
+	}
+	if *store != "" {
+		// #3876: the PR's news is already on ev:github; block there, poll nothing.
+		return cmdWatchStore(fs, verb, *store, *storeUser, *state, *maxDur, *onDeadline, prs, stdout, stderr, clock)
 	}
 
 	var p problems
