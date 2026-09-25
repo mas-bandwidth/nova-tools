@@ -2,8 +2,10 @@ package table_test
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -162,17 +164,95 @@ func pad(v string, n int) string {
 	return v
 }
 
-func TestFormatLandedAgesOut(t *testing.T) {
-	now := time.Date(2026, 9, 23, 19, 26, 17, 0, time.UTC)
-	for raw, want := range map[string]string{
-		"": "landed: ?",
-		"193/666 landed 28% (a 1/2) eta=~21h at=2026-09-23T19:25:17Z": "landed: 193/666 28% -> ~21h",
-		"193/666 landed 28% (a 1/2) eta=~21h at=2026-09-23T19:20:00Z": "landed: ?",
-		"193/666 landed 28% (a 1/2) at=2026-09-23T19:25:17Z":          "landed: 193/666 28% -> ?",
-		"garbage": "landed: ?",
-	} {
-		if got := table.FormatLanded(raw, now); got != want {
-			t.Errorf("FormatLanded(%q) = %q, want %q", raw, got, want)
+// argLog is a go-redis hook that records every command's full args (name
+// first), so a test can assert on the exact keys a read touches.
+type argLog struct {
+	mu   sync.Mutex
+	cmds [][]string
+}
+
+func (l *argLog) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (l *argLog) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		l.record(cmd)
+		return next(ctx, cmd)
+	}
+}
+
+func (l *argLog) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, c := range cmds {
+			l.record(c)
+		}
+		return next(ctx, cmds)
+	}
+}
+
+func (l *argLog) record(cmd redis.Cmder) {
+	args := cmd.Args()
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = fmt.Sprint(a)
+	}
+	l.mu.Lock()
+	l.cmds = append(l.cmds, out)
+	l.mu.Unlock()
+}
+
+func (l *argLog) commands() [][]string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([][]string(nil), l.cmds...)
+}
+
+func (l *argLog) commandsNamed(name string) [][]string {
+	var out [][]string
+	for _, c := range l.commands() {
+		if len(c) > 0 && strings.EqualFold(c[0], name) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// TestLiveNoBlockedLandedLines (DONE-WHEN of #3424): the live layout dropped
+// the blocked: and landed: lines at 7:05 PM. The live golden has no such line,
+// and ReadLive no longer sends ZCARD q:blocked nor reads the landed key in the
+// xy MGET (the tick is still the SCAN walk plus one pipeline).
+func TestLiveNoBlockedLandedLines(t *testing.T) {
+	t.Parallel()
+	golden := table.Golden2674()
+	for _, line := range strings.Split(golden, "\n") {
+		if strings.HasPrefix(line, "blocked:") || strings.HasPrefix(line, "landed:") {
+			t.Fatalf("the live golden still has a %q line:\n%s", line, golden)
+		}
+	}
+	cfg, now := table.Fixture2674Config(), table.Fixture2674Now()
+	client := liveStore(t, withCardViews(table.Fixture2674(), now))
+	log := &argLog{}
+	client.AddHook(log)
+	snap, err := table.ReadLive(context.Background(), client, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := snap.RenderLive(now); strings.Contains(out, "blocked:") || strings.Contains(out, "landed:") {
+		t.Fatalf("RenderLive still prints a blocked:/landed: line:\n%s", out)
+	}
+	for _, cmd := range log.commands() {
+		if len(cmd) > 1 && strings.EqualFold(cmd[0], "ZCARD") && cmd[1] == "q:blocked" {
+			t.Fatalf("ReadLive still sends ZCARD q:blocked: %v", cmd)
+		}
+	}
+	mgets := log.commandsNamed("MGET")
+	if len(mgets) != 1 {
+		t.Fatalf("MGET count = %d, want the one xy MGET", len(mgets))
+	}
+	for _, cmd := range mgets {
+		for _, a := range cmd[1:] {
+			if strings.Contains(a, ":landed") {
+				t.Fatalf("ReadLive still reads the landed key in the MGET: %v", cmd)
+			}
 		}
 	}
 }
@@ -219,7 +299,7 @@ func TestTableShowsStaleBenchRowNotAbsent(t *testing.T) {
 // TABLE *** PIT STOP *** <why> since <at> while it is set, SPRINT TABLE when
 // it is unset; a key of another type there still reads as a stop. The HGETALL
 // rides the one pipeline, so the tick is still the SCAN walk plus one
-// pipeline with its one xy/landed MGET; only line 1 changes, and a failed
+// pipeline with its one xy MGET; only line 1 changes, and a failed
 // tick keeps the last good title.
 func TestLiveTitlePitstop(t *testing.T) {
 	cfg, now := table.Fixture2674Config(), table.Fixture2674Now()
@@ -262,7 +342,7 @@ func TestLiveTitlePitstop(t *testing.T) {
 				}
 			}
 			if mgets != 1 {
-				t.Fatalf("MGET count = %d, want the one xy/landed MGET: %v", mgets, names)
+				t.Fatalf("MGET count = %d, want the one xy MGET: %v", mgets, names)
 			}
 			failed := table.FailedLive(cfg, snap).RenderLive(now)
 			if first := failed[:strings.Index(failed, "\n")]; first != c.title {

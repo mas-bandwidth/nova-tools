@@ -72,7 +72,11 @@ func mergingSeed(now time.Time) [][]string {
 }
 
 // landingSeed is one open landing of 12 members, 6 minutes old, whose stream
-// PR's ci is pending, and a merged one that prints nothing.
+// PR's ci is pending, plus a merged one: land:<repo>:<slug> data the live
+// table read as LAND lines before Glenn 2026-09-25 3:50 PM ET called them
+// clutter (#3900, #3973); it now stays in Redis for `nova-sprint stream
+// status --repo <owner/repo>` alone, so the table's own render never
+// touches these keys.
 func landingSeed(now time.Time) [][]string {
 	const repo = "mas-bandwidth/nova-tools"
 	var members []string
@@ -90,12 +94,13 @@ func landingSeed(now time.Time) [][]string {
 	}
 }
 
-// TestMergingCellShowsReadUnreadAndLandLines (DONE-WHEN of #3900): a stream
-// with 12 read and 7 unread cards in merging prints 12/7, and an open landing
-// prints LAND stream=<s> members=12 head=<sha8> ci=pending age=6m; a merged
-// landing prints nothing. The steady tick is still one pipeline with no KEYS
-// and no SCAN.
-func TestMergingCellShowsReadUnreadAndLandLines(t *testing.T) {
+// TestMergingCellShowsReadUnread (DONE-WHEN of #3900): a stream with 12 read
+// and 7 unread cards in merging prints 12/7. The steady tick is still one
+// pipeline with no KEYS and no SCAN, and the render prints no LAND line even
+// though land:<repo>:<slug> data is present in Redis (Glenn 2026-09-25 3:50
+// PM ET, nova-tools#3973/#3900: "It is cluttered" — the facts are
+// `nova-sprint stream status --repo <owner/repo>` instead).
+func TestMergingCellShowsReadUnread(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
@@ -132,12 +137,8 @@ func TestMergingCellShowsReadUnreadAndLandLines(t *testing.T) {
 	if !strings.Contains(out, "\ntotal                          |       0 |     0 |       0 |       0 |    12/7 |      0\n") {
 		t.Fatalf("total row does not carry 12/7:\n%s", out)
 	}
-	land := `LAND stream="nova-sprint + merge + bus" members=12 head=01234567 ci=pending age=6m` + "\n"
-	if !strings.Contains(out, land) {
-		t.Fatalf("no line %q in\n%s", land, out)
-	}
-	if n := strings.Count(out, "LAND "); n != 1 {
-		t.Fatalf("%d LAND lines, want 1 (the merged landing prints nothing):\n%s", n, out)
+	if strings.Contains(out, "LAND ") {
+		t.Fatalf("the live table printed a LAND line (#3973 removed them; land:<repo>:<slug> data is present but stream status alone reads it):\n%s", out)
 	}
 	// The reading column is always there (#3929); with no reading set it is
 	// 0 and the split still comes from the records.
@@ -188,26 +189,5 @@ func TestReadingSetIsTheSameSplitsOtherSource(t *testing.T) {
 	}
 	if out := snap.Render(now); !strings.Contains(out, "| reading | merging |") || snap.ReadSource != table.ReadFromSet {
 		t.Fatalf("the split went back to the records with an empty set (ReadSource %q):\n%s", snap.ReadSource, out)
-	}
-}
-
-// TestLandLineShapes: no stream PR yet prints ci=-, a stopped landing names
-// its state, and the age reads in seconds, minutes, then hours.
-func TestLandLineShapes(t *testing.T) {
-	now := table.SprintFixtureNow()
-	for _, c := range []struct {
-		row  table.LandRow
-		want string
-	}{
-		{table.LandRow{Streams: "harvest", State: "conflict", Head: "abc", Members: 3, At: now.Add(-45 * time.Second).UnixMilli()},
-			"LAND stream=harvest members=3 head=abc ci=- age=45s state=conflict"},
-		{table.LandRow{Streams: "a,b", State: "open", Head: "0123456789", PR: "7", CI: "red", Members: 2, At: now.Add(-125 * time.Minute).UnixMilli()},
-			"LAND stream=a,b members=2 head=01234567 ci=red age=2h05m"},
-		{table.LandRow{Slug: "s", State: "pushed", Members: 1},
-			"LAND stream=s members=1 head=- ci=- age=- state=pushed"},
-	} {
-		if got := c.row.LandLine(now); got != c.want {
-			t.Fatalf("LandLine = %q, want %q", got, c.want)
-		}
 	}
 }

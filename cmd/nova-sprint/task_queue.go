@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/redis/go-redis/v9"
@@ -182,7 +183,7 @@ func runTaskQueueSub(ctx context.Context, sub string, args []string, out, errOut
 
 // runFriendDown is `friend down|up --as <actor> <f> [--reason r]`: the one
 // writer of friend:<f>:down (#3206 PR A). Down refuses push and take, and
-// rebalance moves the friend's ready work off on its next pass.
+// the friend's cards are rebalanced at once (#4145): one REBALANCE line.
 func runFriendDown(ctx context.Context, on bool, args []string, out, errOut io.Writer) int {
 	verb := "friend up"
 	if on {
@@ -212,8 +213,20 @@ func runFriendDown(ctx context.Context, on bool, args []string, out, errOut io.W
 		return refuse(errOut, verb, err.Error())
 	}
 	_, _ = fmt.Fprintf(out, "FRIEND %s %s\n", r.Status, fs.Arg(0))
-	if r.Status == "DOWN" || r.Status == "UP" || r.Status == "SAME" {
-		return 0
+	if r.Status != "DOWN" && r.Status != "UP" && r.Status != "SAME" {
+		return 2
 	}
-	return 2
+	// #4145: the status change rebalances the friend's cards now, by the
+	// reconciler deal duty's own rebalance, and prints its REBALANCE line.
+	rb, err := reconcile.RebalanceFriend(ctx, st.Client(), fs.Arg(0), *actor)
+	if rb.Line != "" {
+		_, _ = fmt.Fprintln(out, rb.Line)
+	}
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	if rb.Reason != "" {
+		return 2
+	}
+	return 0
 }

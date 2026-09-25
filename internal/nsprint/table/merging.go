@@ -1,17 +1,20 @@
 // merging.go: why a stream is not landing (nova-tools#3900). Glenn watched
 // merging sit at 19 cards while 7 had no read on the record and the batch
-// test was dead, and the table could not say so. Two things fix that:
+// test was dead, and the table could not say so. The fix: the merging cell
+// prints <read>/<unread>: read are the cards the stream lander would take
+// (land stream: a pr:<name>:<n> record open at its head, in this stream,
+// with a typed SCORE or APPROVE line at head of at least cfg:land
+// min_score[:<repo>] (default 8) and no HOLD at head), unread the rest of
+// ws:<s>:merging.
 //
-//   - the merging cell prints <read>/<unread>: read are the cards the stream
-//     lander would take (land stream: a pr:<name>:<n> record open at its head,
-//     in this stream, with a typed SCORE or APPROVE line at head of at least
-//     cfg:land min_score[:<repo>] (default 8) and no HOLD at head), unread the
-//     rest of ws:<s>:merging;
-//   - one LAND line per open landing, from land:<repo>:<slug> and its stream
-//     PR's record: stream, members, head, ci=green|red|pending, age.
+// The table used to also print one LAND line per open landing, from
+// land:<repo>:<slug> and its stream PR's record (#3900, #3973). Glenn
+// 2026-09-25 3:50 PM ET: "It is cluttered" — the live table no longer prints
+// them; the same facts are `nova-sprint stream status --repo <owner/repo>`
+// (cmd/nova-sprint/stream_life.go), reading land:<repo>:<slug> on its own.
 //
-// Both come from ONE read-only script in the tick's own pipeline, so the
-// table stays one round trip a tick and reads Redis only.
+// The split comes from ONE read-only script in the tick's own pipeline, so
+// the table stays one round trip a tick and reads Redis only.
 //
 // The reading column (rowan-new specs/table-moves.md, Glenn 2026-09-25 1:25 PM:
 // waiting, working, reading, merging, landed; nova-tools#3929 builds the
@@ -23,19 +26,17 @@ package table
 
 import (
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	landstream "github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 )
 
-// DefaultLandRepos are the repos whose landings the table lists when
-// SprintConfig.LandRepos is empty; the first also names the repo of a bare
-// PR number on a card with no repo field.
-var DefaultLandRepos = []string{prkey.DefaultOwner + "/nova-tools", prkey.DefaultOwner + "/rowan-tools"}
+// defaultMergingRepo names the repo of a bare PR number on a card with no
+// repo field (a fallback for the merging split alone; #3900 used to also
+// list this repo's open landings as LAND lines, removed 2026-09-25).
+const defaultMergingRepo = prkey.DefaultOwner + "/nova-tools"
 
 // Read sources for the merging split (SprintSnapshot.ReadSource).
 const (
@@ -48,14 +49,12 @@ const (
 )
 
 // detailScript reads, for each stream named, every card of ws:<s>:merging
-// with its PR record's head, state, stream and reads; cfg:land; and, for each
-// repo named, every land:<repo>:<slug> of land:<repo>:streams with its stream
-// PR's ci. Sent as EVAL_RO, so Redis refuses a write; no KEYS, no SCAN:
-// every key comes from a set member.
+// with its PR record's head, state, stream and reads, plus cfg:land. Sent as
+// EVAL_RO, so Redis refuses a write; no KEYS, no SCAN: every key comes from a
+// set member.
 //
-// ARGV: default repo name, #streams, streams..., #repos, repos (owner/name)...
-// Reply: {cfg:land flat, per stream {id, name, n, head, state, stream, reads}...,
-// per repo {slug, streams, state, head, members, pr, at, ci}...}.
+// ARGV: default repo name, #streams, streams...
+// Reply: {cfg:land flat, per stream {id, name, n, head, state, stream, reads}...}.
 const detailScript = `local function s(v) if v == false or v == nil then return '' end return tostring(v) end
 local function base(r) return string.match(r, '([^/]+)$') or r end
 local function prref(f, repo)
@@ -91,56 +90,24 @@ for i = 1, ns do
   end
   streams[i] = rows
 end
-local nr = tonumber(ARGV[3 + ns])
-local lands = {}
-for i = 1, nr do
-  local repo = ARGV[3 + ns + i]
-  local rows = {}
-  for _, slug in ipairs(redis.call('SMEMBERS', 'land:' .. repo .. ':streams')) do
-    local l = redis.call('HMGET', 'land:' .. repo .. ':' .. slug, 'streams', 'state', 'head', 'members', 'pr', 'at')
-    local ci = ''
-    if s(l[5]) ~= '' then ci = s(redis.call('HGET', 'pr:' .. base(repo) .. ':' .. s(l[5]), 'ci')) end
-    for _, v in ipairs({slug, s(l[1]), s(l[2]), s(l[3]), s(l[4]), s(l[5]), s(l[6]), ci}) do table.insert(rows, v) end
-  end
-  lands[i] = rows
-end
-return {redis.call('HGETALL', 'cfg:land'), streams, lands}`
-
-// LandRow is one open landing: land:<repo>:<slug> and its stream PR's ci.
-type LandRow struct {
-	Repo, Slug, Streams, State, Head, PR, CI string
-	Members                                  int
-	At                                       int64 // ms; 0 when the hash has none
-}
+return {redis.call('HGETALL', 'cfg:land'), streams}`
 
 // detailArgs is the script's ARGV for the streams whose merging split is
-// computed from records and the repos whose landings are listed.
-func detailArgs(streams, repos []string) []any {
-	args := []any{prkey.Name(repos[0]), strconv.Itoa(len(streams))}
+// computed from records.
+func detailArgs(streams []string) []any {
+	args := []any{prkey.Name(defaultMergingRepo), strconv.Itoa(len(streams))}
 	for _, s := range streams {
 		args = append(args, s)
-	}
-	args = append(args, strconv.Itoa(len(repos)))
-	for _, r := range repos {
-		args = append(args, r)
 	}
 	return args
 }
 
-// landRepos is the configured repos, else DefaultLandRepos.
-func landRepos(cfg SprintConfig) []string {
-	if len(cfg.LandRepos) > 0 {
-		return cfg.LandRepos
-	}
-	return DefaultLandRepos
-}
-
 // applyDetail folds the script's reply into the snapshot: each stream's read
-// count (the cards of merging the lander would take) and the open landings.
-// A reply of the wrong shape leaves MergingRead at -1 (unknown), never a guess.
-func applyDetail(snap *SprintSnapshot, reply any, streams, repos []string) {
+// count, the cards of merging the lander would take. A reply of the wrong
+// shape leaves MergingRead at -1 (unknown), never a guess.
+func applyDetail(snap *SprintSnapshot, reply any, streams []string) {
 	top, ok := reply.([]any)
-	if !ok || len(top) != 3 {
+	if !ok || len(top) != 2 {
 		return
 	}
 	cfg := map[string]string{}
@@ -177,28 +144,6 @@ func applyDetail(snap *SprintSnapshot, reply any, streams, repos []string) {
 		}
 		snap.Streams[j].MergingRead = read
 	}
-	perRepo, _ := top[2].([]any)
-	for i, repo := range repos {
-		if i >= len(perRepo) {
-			break
-		}
-		rows, _ := perRepo[i].([]any)
-		var open []LandRow
-		for k := 0; k+7 < len(rows); k += 8 {
-			f := make([]string, 8)
-			for x := range f {
-				f[x] = pipeValue(rows[k+x])
-			}
-			row := LandRow{Repo: repo, Slug: f[0], Streams: f[1], State: f[2], Head: f[3], Members: len(strings.Fields(f[4])), PR: f[5], CI: f[7]}
-			row.At, _ = strconv.ParseInt(f[6], 10, 64)
-			if landingOpen(row.State) {
-				open = append(open, row)
-			}
-		}
-		// Repos in the configured order, slugs sorted within a repo.
-		sort.Slice(open, func(a, b int) bool { return open[a].Slug < open[b].Slug })
-		snap.Landings = append(snap.Landings, open...)
-	}
 }
 
 // minScore is cfg:land min_score:<owner/name>, else min_score, else 8: the
@@ -233,16 +178,6 @@ func landable(s, n, head, state, recStream, reads string, min int) bool {
 	return r.Held == "" && r.Score >= 0 && r.Score >= min
 }
 
-// landingOpen is a landing still on its way: built, pushed, open, or stopped
-// on a conflict or a red base. merged is done; empty and dry-run never were.
-func landingOpen(state string) bool {
-	switch state {
-	case "merged", "landed", "empty", "dry-run", "":
-		return false
-	}
-	return true
-}
-
 // ReadSplit is the one function behind the merging cell and the reading
 // column: the stream's cards past working split by read. Read are the cards
 // whose read lets them land, unread the rest. Before #3929 (ReadFromRecords)
@@ -268,51 +203,4 @@ func (s *SprintSnapshot) mergingCell(r StreamRow) string {
 		return strconv.FormatInt(r.Merging, 10)
 	}
 	return fmt.Sprintf("%d/%d", read, unread)
-}
-
-// LandLine is one open landing as the table prints it:
-// LAND stream=<s> members=<n> head=<sha8> ci=green|red|pending age=<d>
-// [state=<s> when not open]. ci is - while the landing has no stream PR.
-func (l LandRow) LandLine(now time.Time) string {
-	streams := l.Streams
-	if streams == "" {
-		streams = l.Slug
-	}
-	if strings.ContainsAny(streams, " =\t") {
-		streams = strconv.Quote(streams)
-	}
-	head := l.Head
-	if len(head) > 8 {
-		head = head[:8]
-	}
-	ci := "-"
-	if l.PR != "" {
-		ci = l.CI
-		if ci == "" {
-			ci = "pending"
-		}
-	}
-	line := fmt.Sprintf("LAND stream=%s members=%d head=%s ci=%s age=%s", streams, l.Members, orDash(head), ci, landAge(l.At, now))
-	if l.State != "open" {
-		line += " state=" + l.State
-	}
-	return line
-}
-
-// landAge is how long ago at (ms) was: 45s, 6m, 2h05m; - when unknown.
-func landAge(at int64, now time.Time) string {
-	if at <= 0 {
-		return "-"
-	}
-	d := now.Sub(time.UnixMilli(at))
-	if d < 0 {
-		d = 0
-	}
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	}
-	return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
 }

@@ -5,15 +5,24 @@
 //
 //	friend serve --as <f> [--width <n>] [--dispatch "<argv>" | -- <argv...>] [--dir <root>]
 //	             [--sprint <s>] [--host <h>] [--harness <h>] [--session <s>] [--login <alias>]...
-//	             [--once] [--redis <addr>]
+//	             [--model <kind>=<model>]... [--once] [--redis <addr>]
 //	friend wake --as <f> [the same flags]     one serve pass: take, dispatch, watch, release
 //
 // The dispatch argv is the seat's own declaration: `--dispatch` or the argv
 // after `--`, else the `dispatch` field of the cfg:friend:<f> hash
 // (space-separated argv, no argument may contain a space, as fleet loops
-// are spelled). In every argument @brief, @out, @dir, @sprint and @id are
-// replaced per task, and the child also gets them as NOVA_TASK_* in its
-// environment with NOVA_TASK_TOKEN, NOVA_TASK_KIND and NOVA_TASK_HEAD.
+// are spelled). In every argument @brief, @out, @dir, @sprint, @id, @kind
+// and @model are replaced per task, and the child also gets them as
+// NOVA_TASK_* in its environment with NOVA_TASK_TOKEN and NOVA_TASK_HEAD.
+//
+// Each pass takes cards from friend:<f>:cards:ready first (#4095), then
+// sprint tasks, up to the free width; a child's exit wakes the loop, so the
+// slot it frees is filled in the same pass. --model build=opus-5.5 (one per
+// kind: build, fix, read, rebase; * for the rest) names the model @model
+// becomes for that kind and the card brief's co-author line, e.g.
+//
+//	friend serve --as rowan --width 32 --model build=opus-5.5 --model read=fable-5.1 \
+//	    --dispatch "claude -p --model @model @brief"
 //
 // Each --login alias is bound to the seat in friends:login once on start,
 // through ns_friend_hello (#3797), so typed lines signed who=<alias> resolve
@@ -60,6 +69,8 @@ func runFriendServe(ctx context.Context, args []string, out, errOut io.Writer, o
 	onceFlag := fs.Bool("once", false, "one pass, then release the seat")
 	var logins loginFlags
 	fs.Var(&logins, "login", "a login alias bound to this seat on start (repeatable; #3797)")
+	var models loginFlags
+	fs.Var(&models, "model", "<kind>=<model>: the model @model names for that kind (repeatable; #4095)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -69,6 +80,14 @@ func runFriendServe(ctx context.Context, args []string, out, errOut io.Writer, o
 	}
 	if *dispatch != "" && len(argv) > 0 {
 		return refuse(errOut, verb, "give the harness as --dispatch \"<argv>\" or after --, not both")
+	}
+	byKind := map[string]string{}
+	for _, m := range models {
+		kind, model, ok := strings.Cut(m, "=")
+		if !ok || strings.TrimSpace(kind) == "" || strings.TrimSpace(model) == "" || strings.ContainsAny(model, " \t") {
+			return refuse(errOut, verb, fmt.Sprintf("--model %q: want <kind>=<model>, e.g. build=opus-5.5", m))
+		}
+		byKind[strings.TrimSpace(kind)] = strings.TrimSpace(model)
 	}
 	if *width < 0 {
 		return refuse(errOut, verb, "--width must be at least 1, or 0 to read friend:<f>:desired")
@@ -136,7 +155,7 @@ func runFriendServe(ctx context.Context, args []string, out, errOut io.Writer, o
 	cfg := life.ServeConfig{
 		Friend: *as, Session: *session, Host: *host, Harness: *harness, Sprint: *sprint,
 		Width: *width, Dispatch: argv, Dir: *dir, Actor: initiator, Out: out,
-		Logins: logins,
+		Logins: logins, Models: byKind,
 	}
 	if once || *onceFlag {
 		res, err := life.ServeOnce(ctx, st, cfg)

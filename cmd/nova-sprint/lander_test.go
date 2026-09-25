@@ -100,13 +100,11 @@ func TestLanderVerbServesMetrics(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
 	const S, repo = "control-2720land", "nova-tools"
-	pipe := c.TxPipeline()
-	pipe.HSet(ctx, "s:"+S+":pr:"+repo+":11", "head", "aaaa1111", "mergeable", "MERGEABLE")
-	pipe.HSet(ctx, "s:"+S+":pr:"+repo+":12", "head", "bbbb2222", "mergeable", "mergeable")
-	pipe.HSet(ctx, "s:"+S+":pr:"+repo+":13", "head", "cccc3333", "mergeable", "")
-	if _, err := pipe.Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
+	seedLanderUnits(t, c, S, repo, []landerUnit{
+		{n: 11, head: "aaaa1111", mergeable: "MERGEABLE", mergeableHead: "aaaa1111"},
+		{n: 12, head: "bbbb2222", mergeable: "mergeable", mergeableHead: "bbbb2222"},
+		{n: 13, head: "cccc3333", mergeable: "", mergeableHead: "cccc3333"},
+	})
 
 	fakes := &landerFakes{verdicts: []land.Verdict{
 		{Step: "test", Package: "internal/pulse", Test: "TestFlake"},

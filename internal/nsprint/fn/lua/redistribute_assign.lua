@@ -29,7 +29,12 @@
 -- actor, idem. The role roster is read from Redis in this call. The same
 -- rd_route the tick uses moves each open task; every moved title carries
 -- `[moved from <f>: <reason>]`. f's leases are closed only when f is out of
--- credits or has no beat (the tick's rule), never for an up friend. With
+-- credits or has no beat (the tick's rule), never for an up friend. A down
+-- f (friend:<f>:down, or no beat) also has its card queue emptied (#4145):
+-- every card in friend:<f>:cards:ready and every lapsed lease in
+-- friend:<f>:cards:working moves by NS.deal_friend.rebalance; when that
+-- ready set is not empty and nothing moved the reply is { 'REFUSED',
+-- reason }, never a silent moved=0. With
 -- --to, a task the named friend cannot receive stays on f (KEPT). Reply:
 -- { 'OK', { f, state, moved, leases, released, unrouted, kept }, events }
 -- where events are four values each: MOVED id to marker, DEDUP id friend
@@ -39,6 +44,7 @@ local fs_clear = NS.friend.fs_clear
 local RD = NS.redistribute
 local RD_OUT = RD.RD_OUT
 local FR = NS.friend_roles
+local DF = NS.deal_friend
 local fr_actor, fr_has_role, fr_roster = FR.fr_actor, FR.fr_has_role, FR.fr_roster
 local rd_author, rd_caplog, rd_close_leases, rd_csv = RD.rd_author, RD.rd_caplog, RD.rd_close_leases, RD.rd_csv
 local rd_dedup, rd_free, rd_log, rd_mark = RD.rd_dedup, RD.rd_free, RD.rd_log, RD.rd_mark
@@ -233,6 +239,36 @@ local function redistribute_from(keys, args)
     rd_close_leases(ctx)
   end
   rd_move_open(ctx)
+  -- #4145: a down friend's cards (friend:<f>:down, or no beat) leave its
+  -- queue too: every ready card and every lapsed lease, by the deal's one
+  -- rebalance (deal_friend.lua), to the up friends or the stream's ready
+  -- set. A kinds filter keeps the hand move to the sprint queues above.
+  if not kinds and (not up or redis.call('EXISTS', 'friend:' .. f .. ':down') == 1) then
+    local targets = {}
+    if to ~= '' then
+      targets = { to }
+    else
+      for _, g in ipairs(redis.call('SMEMBERS', 'friends')) do
+        if g ~= f and rd_free(g, sprints) ~= nil then targets[#targets + 1] = g end
+      end
+      table.sort(targets)
+    end
+    local moves, refused, nready = DF.rebalance(f, targets, actor)
+    if nready > 0 and #moves == 0 then
+      local r = DF.rebalance_reply(f, moves, refused, nready)
+      return { 'REFUSED', r[2] }
+    end
+    for i = 1, #moves, 2 do
+      local ev = ctx.events
+      ev[#ev + 1], ev[#ev + 1], ev[#ev + 1], ev[#ev + 1] = 'MOVED', moves[i], moves[i + 1], ctx.marker
+      if moves[i + 1] == 'ready' then
+        ctx.unrouted = ctx.unrouted + 1
+      else
+        ctx.moved = ctx.moved + 1
+        ctx.woken[moves[i + 1]] = true
+      end
+    end
+  end
   ra_wake(ctx.woken, at, actor, idem, 'redistributed')
   rd_caplog('redistribute', f, reason .. ' moved=' .. ctx.moved .. ' kept=' .. ctx.kept, actor, idem, at)
   return { 'OK', { f, state, tostring(ctx.moved), tostring(ctx.leases), tostring(ctx.released),

@@ -243,3 +243,71 @@ func TestWhoAdmits(t *testing.T) {
 		}
 	}
 }
+
+// stubDealFriend reloads the library with ns_deal_friend replaced by a stub
+// that takes nothing and refuses the ids it is handed with the given whys,
+// in order (Lua body returning the reply table; args[5] is the first id).
+func (f *dealFixture) stubDealFriend(t *testing.T, reply string) {
+	t.Helper()
+	src, err := fn.Source()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const orig = "redis.register_function('ns_deal_friend', deal_friend)"
+	if !strings.Contains(src, orig) {
+		t.Fatalf("library source has no %q to stub", orig)
+	}
+	src = strings.Replace(src, orig, "redis.register_function('ns_deal_friend', function(keys, args) return "+reply+" end)", 1)
+	must(t, f.c.FunctionLoadReplace(f.ctx, src).Err())
+}
+
+// TestDealReceiptNamesEveryRefusal (#4096, Glenn 2026-09-25: "Nothing is
+// allowed to error out without saying why"): ns_deal_friend refuses both
+// cards dealt to rowan, and the DEAL line names each refused id with the
+// Lua's reason verbatim after refused=<n>, in the reply's order.
+func TestDealReceiptNamesEveryRefusal(t *testing.T) {
+	f := newDealFixture(t)
+	const s = "nova-sprint"
+	must(t, f.c.ZAdd(f.ctx, "ws:order", redis.Z{Score: 1, Member: s}).Err())
+	f.friend(t, "rowan", 2, true)
+	f.ready(t, "build-a", s, 1)
+	f.ready(t, "build-b", s, 2)
+	f.stubDealFriend(t, "{'DEALT', 0, 2, 2, args[5], 'full', args[6], 'task ' .. args[6] .. ' is owned by emma'}")
+
+	res, err := (&reconcile.FriendDeal{Client: f.c}).Pass(f.ctx, f.l.Token())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "DEAL rowan took=0 open=2 from=" + s + " refused=2 build-a:full build-b:task build-b is owned by emma"
+	if strings.Join(res.Lines, "\n") != want {
+		t.Fatalf("receipts %q, want %q", res.Lines, want)
+	}
+}
+
+// TestDealReceiptSilentRefusalAndCap: a refusal with an empty why prints
+// <id>:no-reason, and a batch of more than 12 refusals prints 12 pairs then
+// +N more.
+func TestDealReceiptSilentRefusalAndCap(t *testing.T) {
+	f := newDealFixture(t)
+	const s = "nova-sprint"
+	must(t, f.c.ZAdd(f.ctx, "ws:order", redis.Z{Score: 1, Member: s}).Err())
+	f.friend(t, "rowan", 15, true)
+	for i := 0; i < 15; i++ {
+		f.ready(t, fmt.Sprintf("c%02d", i), s, int64(i))
+	}
+	f.stubDealFriend(t, "(function() local r = {'DEALT', 0, 15, 15, args[5], ''}"+
+		" for i = 6, #args do r[#r+1] = args[i]; r[#r+1] = 'full' end return r end)()")
+
+	res, err := (&reconcile.FriendDeal{Client: f.c}).Pass(f.ctx, f.l.Token())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "DEAL rowan took=0 open=15 from=" + s + " refused=15 c00:no-reason"
+	for i := 1; i < 12; i++ {
+		want += fmt.Sprintf(" c%02d:full", i)
+	}
+	want += " +3 more"
+	if strings.Join(res.Lines, "\n") != want {
+		t.Fatalf("receipts %q, want %q", res.Lines, want)
+	}
+}

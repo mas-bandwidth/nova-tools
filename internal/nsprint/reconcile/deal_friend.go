@@ -5,6 +5,10 @@ package reconcile
 // morning of 2026-09-25; Glenn (09:50 AM ET): "the distribution of unblocked
 // cards to friends (or swarms) must be automatic."
 //
+// A friend status change is handled first in the same pass (#4145,
+// rebalance.go): a friend gone down has its ready cards and lapsed leases
+// moved off its queue by ns_friend_rebalance, one REBALANCE line each.
+//
 // Every pass, under the reconciler lease, the duty reads every friend's open
 // slots (friend:<f>:slots, else friend:<f>:desired slots, minus ZCARD
 // friend:<f>:cards:working) for each friend whose row friend:<f> carries a
@@ -23,7 +27,9 @@ package reconcile
 // Ready must be READY: a card whose WHO admits no live consumer (no live
 // friend, no UP bench, not the swarm) goes back to waiting with why=no-consumer
 // in one ns_deal_return call. Receipts: one `DEAL <friend> took=<k> open=<n>
-// from=<streams>` line per friend dealt, one `DEAL waiting returned=<n>
+// from=<streams>` line per friend dealt (then `refused=<n>` and each refused
+// id as <id>:<why>, at most 12 pairs then +N more, when ns_deal_friend
+// refused any, #4096), one `DEAL waiting returned=<n>
 // why=no-consumer ids=<ids>` line when cards went back.
 
 import (
@@ -46,6 +52,14 @@ const FriendLive = 90 * time.Second
 
 // NoConsumer is the why a card returned to waiting carries on its record.
 const NoConsumer = "no-consumer"
+
+// NoReason stands in a DEAL receipt for a refusal whose why came back empty,
+// so a silent refusal is itself visible (#4096).
+const NoReason = "no-reason"
+
+// RefusedShown caps the id:why pairs one DEAL line names; the rest are
+// counted as +N more, so a huge batch cannot flood the log.
+const RefusedShown = 12
 
 // FriendDeal is the reconciler's friend deal duty. Its Run is a Duty.
 type FriendDeal struct {
@@ -104,6 +118,19 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 	res := FriendDealResult{Took: map[string][]string{}}
 	c := d.Client
 
+	// Round 0 (#4145): a friend status change rebalances that friend's
+	// cards first, so the cards it sends back to ready are dealt below.
+	var rbErr error
+	rb, err := d.rebalance(ctx, token)
+	for _, r := range rb {
+		res.Lines = append(res.Lines, r.Line)
+	}
+	if errors.Is(err, ErrFenced) {
+		return res, err
+	} else if err != nil {
+		rbErr = err
+	}
+
 	// Round 1: the clock, the streams in order, the consumers, the policy.
 	p1 := c.Pipeline()
 	clock := p1.Time(ctx)
@@ -117,7 +144,11 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 		return res, fmt.Errorf("deal: read: %w", err)
 	}
 	now := clock.Val()
-	streams := streamOrder(order.Val(), names.Val())
+	// A stream a pit stop holds is not dealt from.
+	streams, err := unheld(ctx, c, streamOrder(order.Val(), names.Val()))
+	if err != nil {
+		return res, fmt.Errorf("deal: %w", err)
+	}
 	fs := friends.Val()
 	sort.Strings(fs)
 	bs := benches.Val()
@@ -186,7 +217,7 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 		}
 	}
 	if len(cards) == 0 {
-		return res, nil
+		return res, rbErr
 	}
 	p3 := c.Pipeline()
 	fields := make([]*redis.SliceCmd, len(cards))
@@ -251,6 +282,9 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 
 	// The moves: one call per friend, at most one return call.
 	var errs []string
+	if rbErr != nil {
+		errs = append(errs, rbErr.Error())
+	}
 	for _, f := range sortedKeys(plan) {
 		args := []any{token, f, d.actor(), "deal"}
 		for _, id := range plan[f] {
@@ -269,8 +303,17 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 			continue
 		}
 		refused := map[string]string{}
-		for i := 4; i+1 < len(reply); i += 2 {
-			refused[fmt.Sprint(reply[i])] = fmt.Sprint(reply[i+1])
+		var pairs []string // id:why in the reply's order, for the receipt
+		for i := 4; i < len(reply); i += 2 {
+			id, why := fmt.Sprint(reply[i]), ""
+			if i+1 < len(reply) && reply[i+1] != nil {
+				why = fmt.Sprint(reply[i+1])
+			}
+			if strings.TrimSpace(why) == "" {
+				why = NoReason
+			}
+			refused[id] = why
+			pairs = append(pairs, id+":"+why)
 		}
 		for _, id := range plan[f] {
 			if _, no := refused[id]; !no {
@@ -278,8 +321,8 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 			}
 		}
 		line := fmt.Sprintf("DEAL %s took=%v open=%v from=%s", f, reply[1], reply[2], strings.Join(from[f], ","))
-		if len(refused) > 0 {
-			line += fmt.Sprintf(" refused=%d", len(refused))
+		if len(pairs) > 0 {
+			line += fmt.Sprintf(" refused=%d", len(pairs)) + refusedPairs(pairs)
 		}
 		res.Lines = append(res.Lines, line)
 	}
@@ -311,6 +354,21 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 		}
 	}
 	return res, joinErrs(errs)
+}
+
+// refusedPairs is the receipt's tail after refused=<n>: each refused id as
+// <id>:<why>, the why verbatim, space separated, at most RefusedShown pairs
+// and then +N more.
+func refusedPairs(pairs []string) string {
+	shown := pairs
+	if len(shown) > RefusedShown {
+		shown = shown[:RefusedShown]
+	}
+	out := " " + strings.Join(shown, " ")
+	if n := len(pairs) - len(shown); n > 0 {
+		out += fmt.Sprintf(" +%d more", n)
+	}
+	return out
 }
 
 func (d *FriendDeal) actor() string {

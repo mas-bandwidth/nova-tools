@@ -57,6 +57,9 @@ func TestFriendServeUsageRefusalsOpenNoStore(t *testing.T) {
 	if got := refused("emma", "friend", "serve", "--as", "emma", "--width", "-1", "--redis", dead); !strings.Contains(got, "--width") {
 		t.Fatalf("bad width: %s", got)
 	}
+	if got := refused("emma", "friend", "serve", "--as", "emma", "--model", "build", "--redis", dead); !strings.Contains(got, "<kind>=<model>") {
+		t.Fatalf("bad --model: %s", got)
+	}
 }
 
 // TestFriendServeVerb drives the seat through the CLI against a throwaway
