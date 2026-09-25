@@ -37,7 +37,7 @@ func init() {
 	})
 	register(Verb{
 		Name:    "bench",
-		Summary: "beat, release, or reset one bench; reindex a sprint's card views once",
+		Summary: "beat, release, or reset one bench; reindex a sprint's card views once; ls the registry with each bench's role",
 		Run:     runBench,
 	})
 }
@@ -85,7 +85,7 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 
 func runBench(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "bench", "want beat, release, reset or reindex")
+		return refuse(errOut, "bench", "want beat, release, reset, reindex or ls")
 	}
 	switch args[0] {
 	case "beat":
@@ -96,8 +96,10 @@ func runBench(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runBenchReset(ctx, args[1:], out, errOut)
 	case "reindex":
 		return runBenchReindex(ctx, args[1:], out, errOut)
+	case "ls":
+		return runBenchLs(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "bench", fmt.Sprintf("unknown subverb %s; want beat, release, reset or reindex", args[0]))
+		return refuse(errOut, "bench", fmt.Sprintf("unknown subverb %s; want beat, release, reset, reindex or ls", args[0]))
 	}
 }
 

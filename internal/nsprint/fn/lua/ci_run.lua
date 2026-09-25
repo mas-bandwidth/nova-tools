@@ -190,7 +190,7 @@ do
     return { 'CREATED', 'pending' }
   end
 
-  -- ns_ci_claim bench token lease_ms [mirrors] -> IDLE [capped], or CLAIMED
+  -- ns_ci_claim bench token lease_ms [mirrors] -> REFUSED role=friends, IDLE [capped], or CLAIMED
   -- field value ... capped <members>. Takes the oldest claimable request
   -- (score <= now). A member whose record is gone or already summarised is
   -- dropped from the pool on the way; one whose next attempt would pass the
@@ -199,8 +199,14 @@ do
   -- ci:nomirror:<bench>, and a head of a repo still in that set (with no
   -- request url to clone from instead) is skipped for this bench, left in
   -- the pool for the others: one SISMEMBER per candidate.
+  -- A bench whose registry role is friends (#3634: "Studio is for friends.
+  -- Fleet is for CI and swarms.") claims nothing: REFUSED role=friends, no
+  -- write.
   local function ci_claim(keys, args)
     local bench, token, lease_ms = args[1], args[2], tonumber(args[3])
+    if cr_hget('bench:' .. bench .. ':desired', 'role') == 'friends' then
+      return { 'REFUSED', 'role=friends' }
+    end
     local nomirror = 'ci:nomirror:' .. bench
     for _, repo in ipairs(cr_split(args[4] or '')) do
       redis.call('SREM', nomirror, repo)

@@ -106,14 +106,19 @@ end
 -- the stored value, '0' or '1' sets it) and register ('1' is accepted and
 -- implied: since #2934 every write adds the name to its registry; no beat is
 -- written) and (#3349, optional ninth) legs: a bench's CI legs, comma
--- separated, '' keeps the stored list; a friend has none. The same slots,
--- machine, paused and legs as stored return SAME and write nothing.
+-- separated, '' keeps the stored list; a friend has none. (#3634, optional
+-- tenth) role: a bench's registry role, friends or fleet, '' keeps the stored
+-- one (absent reads as fleet). A friends bench declares no CI legs: legs on a
+-- bench whose role is or becomes friends returns ROLE friends and writes
+-- nothing. The same slots, machine, paused, legs and role as stored return
+-- SAME and write nothing.
 local function capacity_desired(keys, args)
   local kind, name = args[1], args[2]
   local slots, machine = tonumber(args[3]), args[4]
   local actor, idem = args[5], args[6]
   local set_paused = args[7] or ''
   local set_legs = args[9] or ''
+  local set_role = args[10] or ''
 
   if kind ~= 'friend' and kind ~= 'bench' then
     return { 'INVALID', machine, '0', '0' }
@@ -130,6 +135,16 @@ local function capacity_desired(keys, args)
   if set_paused ~= '' and set_paused ~= '0' and set_paused ~= '1' then
     return { 'INVALID', machine, '0', '0' }
   end
+  if set_role ~= '' and (kind ~= 'bench' or (set_role ~= 'friends' and set_role ~= 'fleet')) then
+    return { 'INVALID', machine, '0', '0' }
+  end
+  local role = set_role
+  if kind == 'bench' and role == '' then
+    role = redis.call('HGET', desired_key(kind, name), 'role') or ''
+  end
+  if role == 'friends' and set_legs ~= '' then
+    return { 'ROLE', 'friends' }
+  end
   if not slots or slots < 0 then
     return { 'INVALID', machine, '0', '0' }
   end
@@ -145,14 +160,15 @@ local function capacity_desired(keys, args)
   end
 
   local key = desired_key(kind, name)
-  local stored = redis.call('HMGET', key, 'slots', 'machine', 'paused', 'legs')
+  local stored = redis.call('HMGET', key, 'slots', 'machine', 'paused', 'legs', 'role')
   local want_paused = set_paused
   if want_paused == '' then
     want_paused = stored[3] or '0'
   end
   local same_legs = set_legs == '' or stored[4] == set_legs
+  local same_role = set_role == '' or stored[5] == set_role
   if stored[1] == tostring(slots) and stored[2] == machine and (stored[3] or '0') == want_paused and
-      same_legs and redis.call('SISMEMBER', registry_set(kind), name) == 1 then
+      same_legs and same_role and redis.call('SISMEMBER', registry_set(kind), name) == 1 then
     return { 'SAME', machine, tostring(sum), tostring(ceiling) }
   end
 
@@ -163,6 +179,9 @@ local function capacity_desired(keys, args)
   end
   redis.call('SADD', registry_set(kind), name)
   write_desired(kind, name, slots, machine, actor, idem, at, legacy, set_paused, set_legs)
+  if set_role ~= '' then
+    redis.call('HSET', key, 'role', set_role)
+  end
   if kind == 'friend' then
     redis.call('DEL', 'friend:' .. name .. ':slots')
   end
