@@ -52,7 +52,7 @@ func fakeHarness(mode string) int {
 		if code := fakeNative(mode, out); code != 0 {
 			return code
 		}
-	} else if err := os.WriteFile(filepath.Join(out, "RESULT.md"), []byte("RESULT: "+os.Getenv("NOVA_CARD")+" sha=000000000000\n"), 0o644); err != nil {
+	} else if err := os.WriteFile(filepath.Join(out, "RESULT.md"), []byte("RESULT: "+os.Getenv("NOVA_CARD")+" sha=000000000000\n"+saidLine2[mode]), 0o644); err != nil {
 		fmt.Println("fake harness:", err)
 		return 9
 	}
@@ -85,6 +85,14 @@ func fakeHarness(mode string) int {
 		return 3
 	}
 	return 0
+}
+
+// saidLine2 is the model's line 2 the said-* modes write under line 1 (the
+// quack-0925d no-commit cards: DONE and nothing committed).
+var saidLine2 = map[string]string{
+	"said-done":    "DONE\n",
+	"said-abstain": "ABSTAIN out of scope\n",
+	"said-blocked": "BLOCKED deps missing\n",
 }
 
 // fakeNative is today's native route (quack test, 2026-09-24): the card runs in
