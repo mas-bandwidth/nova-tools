@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/fenced"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
@@ -171,13 +172,27 @@ func (f *landFix) refresh() {
 	f.git(f.mirror, "fetch", "-q", "--prune", "origin")
 }
 
+// prKey is PR n's unit record, pr:<name>:<n>, where the lander keeps an
+// offered stream PR (nova-tools #4079).
+func (f *landFix) prKey(n int) string { return prkey.Key(f.repo, n) }
+
+// prHash is the lander's view of PR n: its unit record's land_* fields under
+// their names without the prefix (land_head keeps its name).
 func (f *landFix) prHash(n int) map[string]string {
 	f.t.Helper()
-	v, err := f.c.HGetAll(f.ctx, fmt.Sprintf("s:%s:pr:%s:%d", f.sprint, f.repo, n)).Result()
+	v, err := f.c.HGetAll(f.ctx, f.prKey(n)).Result()
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	return v
+	out := map[string]string{}
+	for k, x := range v {
+		if name, ok := strings.CutPrefix(k, "land_"); ok && k != "land_head" {
+			out[name] = x
+		} else if k == "land_head" {
+			out[k] = x
+		}
+	}
+	return out
 }
 
 func (f *landFix) queued(n int) bool {
@@ -678,7 +693,7 @@ func landLapse(t *testing.T, hold bool) {
 	}
 	snap := strings.Join([]string{
 		f.hashLines(fmt.Sprintf("s:%s:land:run:%s", f.sprint, rb.Run)),
-		f.hashLines(fmt.Sprintf("s:%s:pr:%s:71", f.sprint, f.repo)),
+		f.hashLines(f.prKey(71)),
 		f.c.Get(f.ctx, enqKey).Val(),
 		f.refs(),
 	}, "\n--\n")
@@ -696,7 +711,7 @@ func landLapse(t *testing.T, hold bool) {
 	}
 	after := strings.Join([]string{
 		f.hashLines(fmt.Sprintf("s:%s:land:run:%s", f.sprint, rb.Run)),
-		f.hashLines(fmt.Sprintf("s:%s:pr:%s:71", f.sprint, f.repo)),
+		f.hashLines(f.prKey(71)),
 		f.c.Get(f.ctx, enqKey).Val(),
 		f.refs(),
 	}, "\n--\n")
@@ -780,5 +795,127 @@ func TestLandFenceArmIsMonotonic(t *testing.T) {
 		if f.keyspace() != ks || f.refs() != refs {
 			t.Fatalf("fence %q: the pass wrote", c.msg)
 		}
+	}
+}
+
+// TestLandStreamPRLivesOnUnitRecord (nova-tools #4079): an offered stream PR
+// is kept on its unit record pr:<name>:<n>, the record pr record writes; the
+// lander writes only land_* fields there (and repo, n, kind, slug when the
+// record has none), writes no sprint-scoped PR record, and a pr record after
+// the offer still makes a new record (open, pending).
+func TestLandStreamPRLivesOnUnitRecord(t *testing.T) {
+	f := newLandFix(t)
+	h := f.pr(91, f.base0, "u.txt", "u\n")
+	f.ci(h, "OK")
+	f.offer(91, 1, "s91")
+	u := f.c.HGetAll(f.ctx, "pr:widget:91").Val()
+	for k, want := range map[string]string{"repo": f.repo, "n": "91", "kind": "stream", "slug": "s91",
+		"land_sprint": f.sprint, "land_stream": "s91", "land_base": "dev", "land_state": "landable",
+		"land_created_at": "2026-09-23T20:01:00Z", "land_body_first": "s91", "land_offered_by": "tester"} {
+		if u[k] != want {
+			t.Fatalf("pr:widget:91 %s=%q, want %q (%v)", k, u[k], want, u)
+		}
+	}
+	for _, k := range []string{"state", "head", "base", "stream", "merge_sha"} {
+		if _, ok := u[k]; ok {
+			t.Fatalf("the offer wrote the record's own %s: %v", k, u)
+		}
+	}
+	code, out, errOut := runSprint("pr", "record", "--redis", f.addr, "--repo", f.repo, "--n", "91",
+		"--head", h, "--base", "dev", "--stream", "stream: s91")
+	if code != 0 || !strings.Contains(out, "state=open created=true") {
+		t.Fatalf("pr record after the offer: code=%d out=%q err=%q", code, out, errOut)
+	}
+	wantField(t, f.pass(), "pushed=1")
+	f.refresh()
+	wantField(t, f.pass(), "landed=1")
+	u = f.c.HGetAll(f.ctx, "pr:widget:91").Val()
+	if u["land_state"] != "landed" || u["land_merge_sha"] == "" || u["stream"] != "stream: s91" || u["head"] != h ||
+		u["state"] != "open" || u["ci"] == "" {
+		t.Fatalf("pr:widget:91 after landing = %v", u)
+	}
+	if n := f.c.Exists(f.ctx, fmt.Sprintf("s:%s:pr:%s:91", f.sprint, f.repo)).Val(); n != 0 {
+		t.Fatal("the lander wrote the retired sprint-scoped PR record")
+	}
+	code, out, _ = runSprint("land", "offer", "acme/widget#91", "--sprint", "s-next", "--stream", "s91",
+		"--base", "dev", "--created", "2026-09-23T20:01:00Z", "--body-first", "s91", "--as", "tester",
+		"--redis", f.addr)
+	if code != 0 || !strings.HasPrefix(out, "LAND LANDED acme/widget#91") {
+		t.Fatalf("offer of a landed PR in the next sprint: code=%d out=%q", code, out)
+	}
+}
+
+// TestLandMigrateMovesOfferedStreamPRs (nova-tools #4079): land migrate moves
+// each queued (and landed) stream PR's pre-#4079 sprint-scoped record onto its
+// unit record once; land list and land run then read the unit record, and a
+// second migrate moves nothing.
+func TestLandMigrateMovesOfferedStreamPRs(t *testing.T) {
+	f := newLandFix(t)
+	h := f.pr(81, f.base0, "m.txt", "m\n")
+	f.ci(h, "OK")
+	old := func(n int) string { return fmt.Sprintf("s:%s:pr:%s:%d", f.sprint, f.repo, n) }
+	queue := fmt.Sprintf("s:%s:land:queue:%s:%s", f.sprint, f.repo, f.base)
+	created := f.created.Add(time.Minute)
+	pipe := f.c.TxPipeline()
+	pipe.SAdd(f.ctx, "s:"+f.sprint+":land:queues", f.repo+":"+f.base)
+	pipe.ZAdd(f.ctx, queue, redis.Z{Score: float64(created.Unix()), Member: "81"})
+	pipe.ZAdd(f.ctx, queue, redis.Z{Score: float64(created.Unix() + 60), Member: "82"})
+	pipe.HSet(f.ctx, old(81), "stream", "s81", "base", "dev", "created_at", created.Format(time.RFC3339),
+		"body_first", "s81", "offered_by", "tester", "state", "landable", "skip_reason", "ci:PENDING", "drop_reason", "")
+	pipe.ZAdd(f.ctx, "s:"+f.sprint+":land:landed", redis.Z{Score: 1, Member: f.repo + "#80"})
+	pipe.HSet(f.ctx, old(80), "stream", "s80", "base", "dev", "state", "landed", "merge_sha", "abc1234", "land_head", "def5678")
+	pipe.HSet(f.ctx, "pr:widget:80", "head", "def5678", "state", "merged", "stream", "stream: s80")
+	if _, err := pipe.Exec(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	oldBefore := f.hashLines(old(81))
+
+	code, out, errOut := runSprint("land", "migrate", "--sprint", f.sprint, "--redis", f.addr)
+	if code != 0 || out != "LAND MIGRATE sprint="+f.sprint+" moved=2 kept=0 missing=1\n" {
+		t.Fatalf("land migrate: code=%d out=%q err=%q", code, out, errOut)
+	}
+	u := f.c.HGetAll(f.ctx, "pr:widget:81").Val()
+	for k, want := range map[string]string{"land_sprint": f.sprint, "land_stream": "s81", "land_state": "landable",
+		"land_skip_reason": "ci:PENDING", "land_body_first": "s81", "repo": f.repo, "n": "81", "kind": "stream", "slug": "s81"} {
+		if u[k] != want {
+			t.Fatalf("pr:widget:81 %s=%q, want %q (%v)", k, u[k], want, u)
+		}
+	}
+	if l := f.c.HGetAll(f.ctx, "pr:widget:80").Val(); l["land_state"] != "landed" || l["land_merge_sha"] != "abc1234" ||
+		l["land_head"] != "def5678" || l["state"] != "merged" || l["stream"] != "stream: s80" || l["slug"] != "s80" {
+		t.Fatalf("pr:widget:80 after migrate = %v", l)
+	}
+	if f.hashLines(old(81)) != oldBefore {
+		t.Fatal("migrate changed the old record")
+	}
+	code, out, errOut = runSprint("land", "list", "--sprint", f.sprint, "--redis", f.addr)
+	if code != 0 || !strings.HasPrefix(out, "acme/widget#81 2026-09-23T20:01:00Z s81 landable ci:PENDING\n") {
+		t.Fatalf("land list after migrate: code=%d out=%q err=%q", code, out, errOut)
+	}
+	// Written after the move, the old record is never read again.
+	if err := f.c.HSet(f.ctx, old(81), "state", "dropped", "body_first", "HOLD").Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = runSprint("land", "migrate", "--sprint", f.sprint, "--redis", f.addr)
+	if code != 0 || out != "LAND MIGRATE sprint="+f.sprint+" moved=0 kept=2 missing=1\n" {
+		t.Fatalf("second land migrate: code=%d out=%q", code, out)
+	}
+	code, out, _ = runSprint("land", "offer", "acme/widget#80", "--sprint", f.sprint, "--stream", "s80",
+		"--base", "dev", "--created", "2026-09-23T20:00:00Z", "--body-first", "s80", "--as", "tester", "--redis", f.addr)
+	if code != 0 || out != "LAND LANDED acme/widget#80 base=dev abc1234\n" {
+		t.Fatalf("offer of a migrated landed PR: code=%d out=%q", code, out)
+	}
+	// #80's landing and #82 are seeded, not real: out of the pass's way (the
+	// pass checks every landed PR against the mirror).
+	f.c.ZRem(f.ctx, queue, "82")
+	f.c.ZRem(f.ctx, "s:"+f.sprint+":land:landed", f.repo+"#80")
+	wantField(t, f.pass(), "pushed=1")
+	f.refresh()
+	wantField(t, f.pass(), "landed=1")
+	if got := f.prHash(81); got["state"] != "landed" || f.queued(81) {
+		t.Fatalf("#81 after landing = %v", got)
+	}
+	if code, _, _ := runSprint("land", "migrate", "--redis", f.addr); code != 2 {
+		t.Fatalf("land migrate without --sprint: exit %d, want 2", code)
 	}
 }

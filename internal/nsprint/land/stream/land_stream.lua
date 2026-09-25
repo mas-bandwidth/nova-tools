@@ -118,13 +118,18 @@ end
 if op == 'record' then
   local k = prkey(p.repo, p.n)
   local f = p.fields or {}
-  local exists = redis.call('EXISTS', k) == 1
+  -- A record is new until it has a head: the fenced lander's offer
+  -- (land_take.lua, #4079) may have made it with only its land_* fields and
+  -- repo, n, kind, slug, and a new record still starts open, pending, with a
+  -- CI request. reads is kept if a typed line came first.
+  local exists = redis.call('HEXISTS', k, 'head') == 1
   if not exists then
     if (f.head or '') == '' or (f.base or '') == '' or (f.stream or '') == '' then
       return {'REFUSED', 'no record ' .. k .. ': a new record needs --head, --base and --stream'}
     end
     redis.call('HSET', k, 'repo', p.repo, 'n', p.n, 'state', 'open', 'ci', 'pending',
-      'mergeable', '', 'reads', '', 'created_at', p.now)
+      'mergeable', '', 'created_at', p.now)
+    redis.call('HSETNX', k, 'reads', '')
     ci_request(p.repo, f.head, p.n, p.now)
   end
   local old = redis.call('HGET', k, 'head')

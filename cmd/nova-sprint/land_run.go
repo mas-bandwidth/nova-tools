@@ -6,6 +6,13 @@
 //	nova-sprint land offer <owner/name>#<n> --sprint <S> --stream <slug> --base <branch>
 //	    --created <RFC 3339> --body-first "<line>" --as <friend> [--withdraw] [--redis <addr>]
 //	nova-sprint land list --sprint <S> [--repo <owner/name>] [--base <branch>] [--redis <addr>]
+//	nova-sprint land migrate --sprint <S> [--redis <addr>]
+//
+// An offered stream PR lives on its unit record pr:<name>:<n> (the record pr
+// record writes) as the lander's land_* fields (nova-tools #4079). migrate is
+// the one-time move of a sprint's stream PRs offered before that: one
+// ns_land_migrate call, LAND MIGRATE sprint=<S> moved= kept= missing=; a
+// second run moves nothing.
 //
 // run: one line per pass, LAND run=<id> repo= base= gen= offered= skipped=
 // pushed= landed= fenced=; a second seat on a held (repo, base) prints
@@ -327,5 +334,34 @@ func runLandList(ctx context.Context, args []string, out, errOut io.Writer) int 
 	for _, l := range lines {
 		fmt.Fprintln(out, l)
 	}
+	return 0
+}
+
+func runLandMigrate(ctx context.Context, args []string, out, errOut io.Writer) int {
+	const verb = "land migrate"
+	fs := taskFlags(verb)
+	sprint := fs.String("sprint", "", "")
+	redisAddr := fs.String("redis", "", "")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	if *sprint == "" || fs.NArg() > 0 {
+		return refuse(errOut, verb, "want land migrate --sprint <S>")
+	}
+	addr := landRedis(*redisAddr)
+	if addr == "" {
+		return refuse(errOut, verb, "want --redis <addr> (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
+	}
+	st, client, code := landOpen(ctx, verb, addr, errOut)
+	if code != 0 {
+		return code
+	}
+	defer st.Close()
+	res, err := client.FCall(ctx, "ns_land_migrate", nil, *sprint).StringSlice()
+	if err != nil || len(res) < 4 {
+		fmt.Fprintf(errOut, "nova-sprint %s: %v %v\n", verb, err, res)
+		return 1
+	}
+	fmt.Fprintf(out, "LAND MIGRATE sprint=%s moved=%s kept=%s missing=%s\n", *sprint, res[1], res[2], res[3])
 	return 0
 }

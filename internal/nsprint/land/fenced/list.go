@@ -7,12 +7,18 @@ import (
 	"strings"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 )
 
 // List is `land list`, read only: one line per offered stream PR, oldest
 // first within each queue, `<repo>#<n> <created_at> <stream> <state>
 // <skip_reason or ->`. Three pipelined round trips: the queue index, the
-// queues, the PR hashes. repo and base filter when set.
+// queues, the PR records. repo and base filter when set.
+//
+// Each PR is read from its unit record pr:<name>:<n> (prkey.KeyText, the
+// record `pr record` writes): the lander's land_* fields, written by
+// internal/nsprint/fn/lua/land_take.lua (nova-tools #4079), and nothing else.
 func List(ctx context.Context, c redis.Cmdable, sprint, repo, base string) ([]string, error) {
 	rows, err := c.SMembers(ctx, "s:"+sprint+":land:queues").Result()
 	if err != nil {
@@ -47,7 +53,7 @@ func List(ctx context.Context, c redis.Cmdable, sprint, repo, base string) ([]st
 		r := row[:strings.LastIndex(row, ":")]
 		for _, n := range qs[i].Val() {
 			items = append(items, item{r, n})
-			hs = append(hs, pipe.HMGet(ctx, "s:"+sprint+":pr:"+r+":"+n, "created_at", "stream", "state", "skip_reason"))
+			hs = append(hs, pipe.HMGet(ctx, prkey.KeyText(r, n), listFields...))
 		}
 	}
 	if len(items) > 0 {
@@ -71,6 +77,11 @@ func List(ctx context.Context, c redis.Cmdable, sprint, repo, base string) ([]st
 	}
 	return lines, nil
 }
+
+// listFields are the unit record's fields `land list` prints, in its order:
+// created_at, stream (the offer's slug), state and skip_reason as the
+// lander keeps them.
+var listFields = []string{"land_created_at", "land_stream", "land_state", "land_skip_reason"}
 
 // StreamsLanded is `land status`'s streams line: x is the size of
 // s:<S>:land:landed and y is x plus every queue's size (one pipeline after
