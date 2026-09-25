@@ -20,9 +20,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -37,7 +40,7 @@ const (
 	beatAsHint = `--as <name> is the friend whose window this is, spelled as the bus roster spells it; the key it writes is friend:<name> and there is no flag that beats for somebody else`
 	rosterHint = `the roster is the friends SET in the store when no flag names one; otherwise --friends <a,b,c>, --participants <file> (the bus participants.json) or --bus <dir> (its checkout, whose participants.json is read), exactly one`
 	ttlHint    = `--ttl <duration> is how long one beat keeps the friend up, and it must be longer than --every or the key lapses between beats and a friend who is here reads as AWAY; the default is three beats, 90s for a 30s cadence`
-	widthHint  = `--width <n> is how many children are in use now, a whole number written to the width field of friend:<name> with the beat's TTL; zero is a real count, and leaving --width off writes no field and is not a failure`
+	widthHint  = `--width <n> is how many children are in use now (or a file holding that number), a whole number written to the width field of friend:<name> with the beat's TTL; zero is a real count, and leaving --width off writes no field and is not a failure`
 )
 
 // storeOpener is the seam the tests enter through: the live verbs dial Redis,
@@ -97,14 +100,22 @@ func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open sto
 	// does not read a clock to invent one. Empty, including a flag of only
 	// spaces, is the flag not passed: no field, and not a failure.
 	var widthN int64
+	var widthFile string
 	side := presence.Side{Window: strings.TrimSpace(*window)}
 	if raw := strings.TrimSpace(*width); raw != "" {
-		n, err := strconv.ParseUint(raw, 10, 63)
-		if err != nil {
-			p.add("--width "+*width+" is not a count of children", "  "+widthHint+"\n")
-		} else {
+		if n, err := strconv.ParseUint(raw, 10, 63); err == nil {
 			widthN = int64(n)
 			side.Width = &widthN
+		} else if data, err := os.ReadFile(raw); err == nil {
+			widthFile = raw
+			if n, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 63); err == nil {
+				widthN = int64(n)
+				side.Width = &widthN
+			} else {
+				p.add("--width "+*width+" is a file that does not hold a count of children", "  "+widthHint+"\n")
+			}
+		} else {
+			p.add("--width "+*width+" is not a count of children and cannot be read as a file", "  "+widthHint+"\n")
 		}
 	}
 	if !p.any() {
@@ -143,7 +154,7 @@ func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open sto
 		return 0
 	}
 
-	if err := beatLoop(ctx, st, name, period, lifetime, clock, stderr, side, 0); err != nil {
+	if err := beatLoop(ctx, st, name, period, lifetime, clock, stderr, side, widthFile, 0); err != nil {
 		return refuse(stderr, " beat", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	return 0
@@ -161,10 +172,32 @@ func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open sto
 // and will not pass, so the loop returns it and the verb exits 2 naming it.
 //
 // rounds is the tests' door and no flag's: a caller's "stop after n" is --once.
-func beatLoop(ctx context.Context, st presence.Store, name string, period, ttl time.Duration, clock wake.Clock, stderr io.Writer, side presence.Side, rounds int) error {
+func beatLoop(ctx context.Context, st presence.Store, name string, period, ttl time.Duration, clock wake.Clock, stderr io.Writer, side presence.Side, widthFile string, rounds int) error {
 	var failing string
+	var sigs chan os.Signal
+	if widthFile != "" {
+		sigs = make(chan os.Signal, 1)
+		signal.Notify(sigs, syscall.SIGUSR1)
+		defer signal.Stop(sigs)
+		
+		go func() {
+			for range sigs {
+				if data, err := os.ReadFile(widthFile); err == nil {
+					if n, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 63); err == nil {
+						atomic.StoreInt64(side.Width, int64(n))
+					}
+				}
+			}
+		}()
+	}
+
 	for i := 0; rounds <= 0 || i < rounds; i++ {
-		err := presence.BeatSide(ctx, st, name, clock.Now(), ttl, side)
+		currentSide := side
+		if side.Width != nil {
+			val := atomic.LoadInt64(side.Width)
+			currentSide.Width = &val
+		}
+		err := presence.BeatSide(ctx, st, name, clock.Now(), ttl, currentSide)
 		var kt *presence.KeyTypeError
 		if errors.As(err, &kt) {
 			return err

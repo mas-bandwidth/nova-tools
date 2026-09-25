@@ -399,7 +399,7 @@ func TestTheLoopKeepsBeatingThroughAStoreThatBlinked(t *testing.T) {
 		return nil
 	}
 	var errb bytes.Buffer
-	beatLoop(context.Background(), st, "johnny", presence.DefaultEvery, presence.DefaultTTL, fakeStoreClock{st}, &errb, presence.Side{}, 6)
+	beatLoop(context.Background(), st, "johnny", presence.DefaultEvery, presence.DefaultTTL, fakeStoreClock{st}, &errb, presence.Side{}, "", 6)
 
 	if got := st.Sets; got != 2 {
 		t.Fatalf("writes = %d; want 2 (the two beats the store took)", got)
@@ -661,7 +661,7 @@ func TestBeatRefusesNonStringFriendKey(t *testing.T) {
 
 		// The loop stops on the refusal instead of retrying it forever.
 		errb.Reset()
-		err := beatLoop(context.Background(), st, "stella", presence.DefaultEvery, presence.DefaultTTL, fakeStoreClock{st}, &errb, presence.Side{}, 5)
+		err := beatLoop(context.Background(), st, "stella", presence.DefaultEvery, presence.DefaultTTL, fakeStoreClock{st}, &errb, presence.Side{}, "", 5)
 		var kt *presence.KeyTypeError
 		if !errors.As(err, &kt) || kt.Type != "hash" {
 			t.Fatalf("beatLoop = %v; want the KeyTypeError naming hash", err)
