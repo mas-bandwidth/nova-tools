@@ -312,6 +312,16 @@ func (g groupLoop) start(ctx context.Context) error {
 	if err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
 		return fmt.Errorf("%s: group: %w", g.group, err)
 	}
+
+	consumers, err := client.XInfoConsumers(ctx, g.logKey(), g.group).Result()
+	if err == nil {
+		for _, c := range consumers {
+			if c.Pending == 0 && c.Idle > time.Hour {
+				client.XGroupDelConsumer(ctx, g.logKey(), g.group, c.Name)
+			}
+		}
+	}
+
 	start := "0-0"
 	for {
 		_, next, err := client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
