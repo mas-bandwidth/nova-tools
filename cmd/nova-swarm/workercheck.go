@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -25,6 +26,18 @@ func (d workerDrift) String() string {
 	return "WORKER DRIFT " + d.field + ": " + d.why
 }
 
+// workerHelpFlag reports whether an argument is one of the spellings package flag answers
+// as a help request. Every other verb here hands such an argument to flag's ErrHelp; `worker`
+// parses its own flags, so it recognizes the same spellings and answers the same sentinel
+// rather than calling `--help` an unknown flag (#3525).
+func workerHelpFlag(arg string) bool {
+	switch arg {
+	case "-h", "--h", "-help", "--help":
+		return true
+	}
+	return false
+}
+
 // cmdWorker is the `worker` verb. Its one subcommand, `check`, validates a description
 // BEFORE any launch: the loader's own field errors, then everything the loader does not ask
 // -- whether the harness can be run, whether both harness placeholders are present, whether
@@ -32,6 +45,9 @@ func (d workerDrift) String() string {
 // and whether the optional class and budget fields hold. A description with no drift prints
 // one WORKER OK line, exit 0; one with drifts prints them, exit 2, and starts nothing.
 func cmdWorker(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && workerHelpFlag(args[0]) {
+		return refuse(stderr, " worker", flag.ErrHelp.Error())
+	}
 	if len(args) == 0 || args[0] != "check" {
 		return refuse(stderr, " worker", "the only worker subcommand is `check <description.json> [--env] [--max <n>]`")
 	}
@@ -39,6 +55,8 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 	path, requireEnv, max := "", false, bounded.Default
 	for i := 0; i < len(rest); i++ {
 		switch {
+		case workerHelpFlag(rest[i]):
+			return refuse(stderr, " worker", flag.ErrHelp.Error())
 		case rest[i] == "--env":
 			requireEnv = true
 		case rest[i] == "--max":
