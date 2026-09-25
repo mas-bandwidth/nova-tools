@@ -115,6 +115,9 @@ type Config struct {
 	Budget time.Duration
 	// Now is the clock the budget is read on; nil means time.Now.
 	Now func() time.Time
+	// Err, when set, gets every REFUSED line as well as out (#3700): the
+	// dealer keeps stdout, and a session log on the bench keeps stderr.
+	Err io.Writer
 	// start is the process seam for deterministic deadline tests.
 	start func(string, Line, time.Time) (int, string, error)
 }
@@ -138,7 +141,8 @@ type Result struct {
 //	LAUNCHED <sprint>/<label>/<attempt> pid=<pid>
 //	REFUSED line=<n> <why>
 //
-// and then LAUNCH started=<n> refused=<m> ms=<batch time> over=<bool>. A
+// (each REFUSED line to cfg.Err as well, when set) and then LAUNCH
+// started=<n> refused=<m> ms=<batch time> over=<bool>. A
 // malformed line, a second line for an attempt already in this batch, a
 // wrapper that would not start, or a line reached after the budget is
 // refused; the rest of the batch still launches. over=true means the
@@ -165,6 +169,14 @@ func Launch(in io.Reader, out io.Writer, cfg Config) (Result, error) {
 	if start == nil {
 		start = startDetached
 	}
+	refused := func(format string, args ...any) {
+		res.Refused++
+		line := fmt.Sprintf(format, args...)
+		fmt.Fprint(out, line)
+		if cfg.Err != nil {
+			fmt.Fprint(cfg.Err, line)
+		}
+	}
 	seen := map[string]bool{}
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 0, 512), maxLine)
@@ -178,33 +190,28 @@ func Launch(in io.Reader, out io.Writer, cfg Config) (Result, error) {
 		l, err := ParseLine(text)
 		if err != nil {
 			// The line may hold a token; its content is never echoed.
-			res.Refused++
-			fmt.Fprintf(out, "REFUSED line=%d malformed: %s\n", n, err)
+			refused("REFUSED line=%d malformed: %s\n", n, err)
 			continue
 		}
 		if seen[l.Card()] {
-			res.Refused++
-			fmt.Fprintf(out, "REFUSED line=%d duplicate %s: one attempt is launched once\n", n, l.Card())
+			refused("REFUSED line=%d duplicate %s: one attempt is launched once\n", n, l.Card())
 			continue
 		}
 		seen[l.Card()] = true
 		current := now()
 		spent := current.Sub(began)
 		if !current.Before(deadline) {
-			res.Refused++
-			fmt.Fprintf(out, "REFUSED line=%d timeout %s: batch at %dms is at or past the %dms launch budget\n",
+			refused("REFUSED line=%d timeout %s: batch at %dms is at or past the %dms launch budget\n",
 				n, l.Card(), spent.Milliseconds(), budget.Milliseconds())
 			continue
 		}
 		pid, ack, err := start(cfg.Wrapper, l, deadline)
 		if err != nil {
-			res.Refused++
-			fmt.Fprintf(out, "REFUSED line=%d start %s: %s\n", n, l.Card(), oneline.Err(err))
+			refused("REFUSED line=%d start %s: %s\n", n, l.Card(), oneline.Err(err))
 			continue
 		}
 		if ack != "LAUNCHED" {
-			res.Refused++
-			fmt.Fprintf(out, "REFUSED line=%d wrapper %s: %s\n", n, l.Card(), oneline.Escape(ack))
+			refused("REFUSED line=%d wrapper %s: %s\n", n, l.Card(), oneline.Escape(ack))
 			continue
 		}
 		res.Started++

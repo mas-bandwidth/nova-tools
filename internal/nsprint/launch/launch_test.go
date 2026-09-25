@@ -535,3 +535,33 @@ func TestLaunchOverrunsWithNothingRefused(t *testing.T) {
 		t.Errorf("output %q lacks the overrun summary", out.String())
 	}
 }
+
+// TestLaunchEchoesRefusalsToStderr is nova-tools #3700 part 3: every REFUSED
+// line goes to Config.Err as well as out, so a session log on the bench
+// shows why a card did not start; a LAUNCHED line stays on out only.
+func TestLaunchEchoesRefusalsToStderr(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := fixtureLines(2)
+	in := lines[0].String() + "\n" + lines[1].String() + "\n"
+	start := func(_ string, l Line, _ time.Time) (int, string, error) {
+		if l == lines[1] {
+			return 0, "REFUSED card launched NOPERM on ws:*", nil
+		}
+		return 7, "LAUNCHED", nil
+	}
+	var out, errOut strings.Builder
+	res, err := Launch(strings.NewReader(in), &out, Config{Wrapper: exe, Err: &errOut, start: start})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "REFUSED line=2 wrapper " + lines[1].Card() + ": REFUSED card launched NOPERM on ws:*\n"
+	if res.Refused != 1 || res.Started != 1 || !strings.Contains(out.String(), want) {
+		t.Fatalf("Launch = %+v, out %q, want the refusal %q", res, out.String(), want)
+	}
+	if errOut.String() != want {
+		t.Fatalf("stderr %q, want exactly the REFUSED line %q", errOut.String(), want)
+	}
+}

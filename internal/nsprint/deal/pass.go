@@ -338,6 +338,14 @@ type Row interface {
 	SSH(ctx context.Context, fence, bench, state, why string) error
 }
 
+// CardWhy writes a refusal line on each named card (#3700): why[i] is
+// res[i]'s line, empty for a card with none. The card record's why is the
+// launcher's REFUSED line for that card, so `card show` names the refusal
+// without a bench. Fenced like Row.
+type CardWhy interface {
+	CardWhy(ctx context.Context, fence string, res []Reservation, why []string) error
+}
+
 // Source reads the pass's Input in one consistent round.
 type Source interface {
 	Read(ctx context.Context) (Input, error)
@@ -361,6 +369,8 @@ type Pass struct {
 	// Metrics receives the pool left, the leases held and one session
 	// latency per bench after every pass (nx-g61); nil exports nothing.
 	Metrics *metrics.Set
+	// Why writes each refused card's refusal line (#3700); nil writes none.
+	Why CardWhy
 }
 
 // BenchResult is what happened on one bench in one pass.
@@ -372,6 +382,10 @@ type BenchResult struct {
 	SSH      string
 	Why      string
 	Returned int // reservations returned to the pool after a refusal
+	// CardWhy is each Dealt reservation's refusal line (same index), empty
+	// for a card that launched: its own REFUSED line from `card launch
+	// --stdin`, or Why for every card when the batch never ran (#3700).
+	CardWhy []string
 }
 
 // Result is one pass.
@@ -471,6 +485,11 @@ func (p *Pass) Run(ctx context.Context) (Result, error) {
 			if err := p.Row.SSH(ctx, token, b.Name, br.SSH, br.Why); err != nil {
 				return res, fmt.Errorf("deal: row %s: %w", b.Name, err)
 			}
+			if p.Why != nil && anyWhy(br.CardWhy) {
+				if err := p.Why.CardWhy(ctx, token, br.Dealt, br.CardWhy); err != nil {
+					return res, fmt.Errorf("deal: why %s: %w", b.Name, err)
+				}
+			}
 			if br.SSH == SSHRefused || br.SSH == SSHTimeout {
 				// Nothing ran on the bench: the reservations go back to the
 				// pool and this pass deals them elsewhere.
@@ -531,11 +550,48 @@ func (p *Pass) launch(ctx context.Context, l Launcher, b Batch, res []Reservatio
 		var se *SessionError
 		if errors.As(err, &se) {
 			br.SSH, br.Why = se.State, se.Error()
+			br.Why, br.CardWhy = refusalWhys(se, br.Why, len(res))
 		} else {
 			br.SSH, br.Why = SSHError, err.Error()
 		}
 	}
 	return br
+}
+
+// refusalWhys reads a failed session's stdout (#3700): the row's why is the
+// first REFUSED line `card launch --stdin` printed, verbatim, else the
+// session's own why; each card's why is its own REFUSED line, or, when the
+// verb printed no per-line answer at all (the batch never ran: ssh refused,
+// the launcher could not start), the row's why.
+func refusalWhys(se *SessionError, why string, n int) (string, []string) {
+	refused, ran := Refusals(se.Stdout)
+	first := 0
+	for line := range refused {
+		if first == 0 || line < first {
+			first = line
+		}
+	}
+	if first > 0 {
+		why = refused[first]
+	}
+	cards := make([]string, n)
+	for i := range cards {
+		if l, ok := refused[i+1]; ok {
+			cards[i] = l
+		} else if !ran {
+			cards[i] = why
+		}
+	}
+	return why, cards
+}
+
+func anyWhy(why []string) bool {
+	for _, w := range why {
+		if w != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // apply folds one bench's outcome into the input for the next round: dealt
