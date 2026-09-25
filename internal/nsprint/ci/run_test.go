@@ -105,7 +105,16 @@ func TestCIRequestRunStatusIsRedWithTheFailingCheck(t *testing.T) {
 		t.Fatalf("pool has %d members, want 1", n)
 	}
 
+	// Attempt 1 is red below the cap (cfg:ci max_attempts, default 2): the
+	// head goes back to the pool for one flake retry, still pending.
 	res, out, err := f.run(t, "b1")
+	if err != nil || !res.Claimed || res.Summary != ci.SummaryRetry {
+		t.Fatalf("first run = %+v, %v; want retry\n%s", res, err, out)
+	}
+	if rec := f.client.HGetAll(f.ctx, ci.RecordKey(runRepo, f.sha)).Val(); rec["ci"] != ci.SummaryPending || rec["last"] != "red" {
+		t.Fatalf("record after a red attempt below the cap: %v", rec)
+	}
+	res, out, err = f.run(t, "b1")
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, out)
 	}
@@ -136,7 +145,7 @@ func TestCIRequestRunStatusIsRedWithTheFailingCheck(t *testing.T) {
 	if code := ci.WriteRows(&status, rows); code != 0 {
 		t.Fatalf("status exit %d:\n%s", code, status.String())
 	}
-	if !strings.Contains(status.String(), " red bench=b1 attempt=1 pr=7") ||
+	if !strings.Contains(status.String(), " red bench=b1 attempt=2 pr=7") ||
 		!strings.Contains(status.String(), "  fail red rc=1 ") || !strings.Contains(status.String(), "  head green rc=0 ") {
 		t.Fatalf("status:\n%s", status.String())
 	}
@@ -152,8 +161,8 @@ func TestCIRequestRunStatusIsRedWithTheFailingCheck(t *testing.T) {
 		}
 	}
 
-	// A second run of the same sha does nothing: the pool is empty, no
-	// receipt changes, the record keeps attempt 1.
+	// Another run of the same sha does nothing: the pool is empty, no
+	// receipt changes, the record keeps attempt 2.
 	before := f.client.HGetAll(f.ctx, ci.ReceiptKey(runRepo, f.sha, "fail")).Val()
 	res2, out2, err := f.run(t, "b2")
 	if err != nil || res2.Claimed {
@@ -162,8 +171,8 @@ func TestCIRequestRunStatusIsRedWithTheFailingCheck(t *testing.T) {
 	if after := f.client.HGetAll(f.ctx, ci.ReceiptKey(runRepo, f.sha, "fail")).Val(); after["at"] != before["at"] || after["bench"] != "b1" {
 		t.Fatalf("second run touched the receipt: %v -> %v", before, after)
 	}
-	if a := f.client.HGet(f.ctx, ci.RecordKey(runRepo, f.sha), "attempt").Val(); a != "1" {
-		t.Fatalf("attempt=%s after the idle run, want 1", a)
+	if a := f.client.HGet(f.ctx, ci.RecordKey(runRepo, f.sha), "attempt").Val(); a != "2" {
+		t.Fatalf("attempt=%s after the idle run, want 2", a)
 	}
 }
 
@@ -239,8 +248,10 @@ func TestCICompareFetchesOnceAndNamesTheDiffer(t *testing.T) {
 	if r, err := ci.Request(f.ctx, f.st, ci.RequestRequest{Repo: runRepo, SHA: f.sha, URL: f.url}); err != nil || r.Status != "CREATED" {
 		t.Fatalf("request = %v, %v", r, err)
 	}
-	if _, out, err := f.run(t, "b1"); err != nil {
-		t.Fatalf("run: %v\n%s", err, out)
+	for i := 0; i < 2; i++ { // red, then red again at the cap
+		if _, out, err := f.run(t, "b1"); err != nil {
+			t.Fatalf("run: %v\n%s", err, out)
+		}
 	}
 	var calls atomic.Int64
 	var path string
