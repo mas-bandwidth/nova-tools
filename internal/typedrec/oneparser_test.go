@@ -122,6 +122,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the sprint table's own \"RED <n>\" error rows in a Render() body (#3253), not a RESULT RED field"},
 	{file: "internal/prereview/card.go", fn: "ParseTaskCard", record: "SPEC-CARD", since: "d76c1c4d",
 		reason: "the card's PATHS header in a Redis task hash title, like prereview.go ParseCard, read before any RESULT exists"},
+	{file: "internal/jev/jev.go", fn: "fields", record: "PR-body", since: "04c639c1",
+		reason: "the PR body's typed PATHS: line Jev's lint pass checks (#3631), like nsprint/file/file.go requiredKeys, not a RESULT parse"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
