@@ -7,7 +7,18 @@
 -- checks that lease, so two workers for one bench can never both harvest.
 -- The PR idempotency key is pr:<repo>:<branch> in s:<S>:idem; a re-run reads
 -- it back and never opens a second PR. The harvested transition requires the
--- PR head, read back by REST, to equal the card's pushed_sha.
+-- PR head to equal the card's pushed_sha.
+--
+-- The PR record pr:<repo>:<n> (a hash: head, base, base_sha, stream, label,
+-- sprint, branch, state, at) is written once by ns_harvest_pr, in the same
+-- call as the reservation, from the head a REST response verified. It is what
+-- the lander and a later harvest pass read: after it exists neither needs
+-- GitHub for the head. One writer, written once, no TTL. The card model
+-- (rowan-new specs/ws-index.md, "The card model") puts pr and head on the
+-- card record too: the same call writes the card's pr and head fields, so
+-- card -> PR (pr, head) and PR -> card (label, sprint) are one double link,
+-- written together or not at all; ns_card_harvested writes the same pr and
+-- head again with the receipt.
 do
   -- Every card state write here is NS.card (02_card_move.lua): harvested is
   -- done -> done (the outcome kept), a refusal is any -> done/fail.
@@ -80,8 +91,11 @@ do
 
   -- ns_harvest_due S bench limit (read only)
   -- The bench's ended(DONE) cards with a commit, oldest label order, as rows
-  -- of 10: label repo base attempt pushed_sha identity results branch pr_idem
-  -- harvest_step.
+  -- of 14: label repo base attempt pushed_sha identity results branch pr_idem
+  -- harvest_step base_sha stream done_when rec_head. stream and done_when are
+  -- the card's STREAM: and DONE-WHEN: lines (ns_card_header), for the PR
+  -- body; rec_head is the head of the PR record pr:<repo>:<pr_idem>, or ''
+  -- when the idem key names no PR or the record is not written yet.
   -- A ci card (kind script) and a card with no pushed_sha have nothing to
   -- harvest; ok-to-friend classifies them (3.2). The bench's host and user
   -- from its beat come first so the worker needs no second read.
@@ -110,7 +124,7 @@ do
       for _, label in ipairs(labels) do
         local key = 's:' .. S .. ':card:' .. label
         local f = redis.call('HMGET', key, 'state', 'outcome', 'kind', 'bench', 'repo', 'base',
-          'attempt', 'pushed_sha', 'identity', 'results', 'harvest_step')
+          'attempt', 'pushed_sha', 'identity', 'results', 'harvest_step', 'base_sha', 'stream', 'done_when')
         local state, outcome, kind, cbench = f[1] or '', f[2] or '', f[3] or '', f[4] or ''
         local pushed = f[8] or ''
         local repo, attempt = f[5] or '', f[7] or ''
@@ -131,8 +145,17 @@ do
           out[#out + 1] = f[9] or ''
           out[#out + 1] = f[10] or ''
           out[#out + 1] = branch
-          out[#out + 1] = hv_hget('s:' .. S .. ':idem', 'pr:' .. repo .. ':' .. branch)
+          local idem_pr = hv_hget('s:' .. S .. ':idem', 'pr:' .. repo .. ':' .. branch)
+          out[#out + 1] = idem_pr
           out[#out + 1] = f[11] or ''
+          out[#out + 1] = f[12] or ''
+          out[#out + 1] = f[13] or ''
+          out[#out + 1] = f[14] or ''
+          if idem_pr ~= '' then
+            out[#out + 1] = hv_hget('pr:' .. repo .. ':' .. idem_pr, 'head')
+          else
+            out[#out + 1] = ''
+          end
           rows = rows + 1
         end
       end
@@ -176,18 +199,22 @@ do
     return 'OK|' .. step
   end)
 
-  -- ns_harvest_pr S bench instance token label repo branch pr
+  -- ns_harvest_pr S bench instance token label repo branch pr [head]
   -- The reservation comes after the PR (#2932 rule 1): the caller passes only
   -- a number GitHub returned whose head.ref and head.sha a REST response
   -- verified. HSETNX pr:<repo>:<branch>; when the key then names this PR the
-  -- card moves to published in the same call. A key that already names
-  -- another PR is returned unchanged and nothing is written (the caller
-  -- reports it and opens nothing). A card with no harvest_step (never pushed)
-  -- or one past published is refused (STEP), and a fenced caller writes
-  -- nothing.
+  -- card moves to published in the same call with its pr and head fields,
+  -- and the PR record pr:<repo>:<pr> is written once (head, base, base_sha,
+  -- stream, label, sprint, branch, state=open, at) from that verified head,
+  -- which must be the card's pushed_sha (HEAD otherwise, nothing written; an
+  -- absent head argument is the pushed_sha itself). A key that already names another PR
+  -- is returned unchanged and nothing is written (the caller reports it and
+  -- opens nothing). A card with no harvest_step (never pushed) or one past
+  -- published is refused (STEP), and a fenced caller writes nothing.
   redis.register_function('ns_harvest_pr', function(keys, args)
     local S, bench, instance, token = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
     local label, repo, branch, pr = args[5] or '', args[6] or '', args[7] or '', args[8] or ''
+    local head = args[9] or ''
     if S == '' or label == '' or repo == '' or branch == '' or not string.match(pr, '^[1-9][0-9]*$') then
       return 'USAGE|'
     end
@@ -195,8 +222,10 @@ do
       return 'FENCED|'
     end
     local key = 's:' .. S .. ':card:' .. label
-    local f = redis.call('HMGET', key, 'state', 'bench', 'attempt', 'repo', 'harvest_step')
+    local f = redis.call('HMGET', key, 'state', 'bench', 'attempt', 'repo', 'harvest_step',
+      'pushed_sha', 'base', 'base_sha', 'stream')
     local state, cbench, attempt, crepo, cur = f[1] or '', f[2] or '', f[3] or '', f[4] or '', f[5] or ''
+    local pushed = f[6] or ''
     if state == '' then return 'NOTFOUND|' end
     if cbench ~= bench or crepo ~= repo or hv_branch(S, label, attempt) ~= branch then
       return 'CONFLICT|'
@@ -204,13 +233,22 @@ do
     if cur ~= 'pushed' and cur ~= 'intent' and cur ~= 'published' then
       return 'STEP|' .. cur
     end
+    if head == '' then head = pushed end
+    if head ~= pushed or pushed == '' or pushed == '-' then return 'HEAD|' .. pushed end
     local idem = 's:' .. S .. ':idem'
     local ikey = 'pr:' .. repo .. ':' .. branch
     redis.call('HSETNX', idem, ikey, pr)
     local stored = hv_hget(idem, ikey)
-    if stored == pr and cur ~= 'published' then
+    if stored == pr then
       local at = hv_now_ms()
-      redis.call('HSET', key, 'harvest_step', 'published', 'harvest_step_at', at)
+      if cur ~= 'published' then
+        redis.call('HSET', key, 'harvest_step', 'published', 'harvest_step_at', at, 'pr', pr, 'head', head)
+      end
+      local rkey = 'pr:' .. repo .. ':' .. pr
+      if redis.call('EXISTS', rkey) == 0 then
+        redis.call('HSET', rkey, 'head', head, 'base', f[7] or '', 'base_sha', f[8] or '',
+          'stream', f[9] or '', 'label', label, 'sprint', S, 'branch', branch, 'state', 'open', 'at', at)
+      end
     end
     return 'PR|' .. stored
   end)

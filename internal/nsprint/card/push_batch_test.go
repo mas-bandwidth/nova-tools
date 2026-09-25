@@ -183,7 +183,7 @@ func TestDealLegFilterReadsPushedLeg(t *testing.T) {
 
 // TestCardPushBatchIsOnePipeline is the DONE-WHEN of #3266: pushing 12 cards
 // with a loaded library sends no FUNCTION command and exactly one round trip,
-// one pipeline holding the 12 FCALLs.
+// one pipeline holding the 12 cards' FCALLs (push and header for each).
 func TestCardPushBatchIsOnePipeline(t *testing.T) {
 	ctx := context.Background()
 	client := newRedis(t)
@@ -211,12 +211,17 @@ func TestCardPushBatchIsOnePipeline(t *testing.T) {
 	if len(rec.singles) != 0 || len(rec.pipes) != 1 {
 		t.Fatalf("card push of 12 made %d single calls and %d pipelines, want 0 and 1: singles %v pipes %v", len(rec.singles), len(rec.pipes), rec.singles, rec.pipes)
 	}
-	if got := rec.pipes[0]; len(got) != 12 || got[0] != "fcall" || got[11] != "fcall" {
-		t.Fatalf("pipeline %v, want 12 fcall", got)
+	// Two FCALLs per card in the one pipeline: ns_card_push, then
+	// ns_card_header (the DONE-WHEN line, #2932).
+	if got := rec.pipes[0]; len(got) != 24 || got[0] != "fcall" || got[23] != "fcall" {
+		t.Fatalf("pipeline %v, want 24 fcall (push and header per card)", got)
 	}
 	for i := range files {
 		if leg := client.HGet(ctx, keyCard(fmt.Sprintf("batch-%02d", i)), "leg").Val(); leg != "go" {
 			t.Fatalf("batch-%02d leg %q, want go", i, leg)
+		}
+		if dw := client.HGet(ctx, keyCard(fmt.Sprintf("batch-%02d", i)), "done_when").Val(); dw == "" {
+			t.Fatalf("batch-%02d has no done_when; the header FCALL did not write it", i)
 		}
 	}
 }

@@ -88,6 +88,7 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 	}
 	pipe := client.Pipeline()
 	cmds := make([]*redis.Cmd, len(docs))
+	headers := make([]*redis.Cmd, len(docs))
 	for i, doc := range docs {
 		keys := []string{
 			keyCard(sprint, doc.Label),
@@ -103,6 +104,11 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 			doc.DependsOn, doc.Type, doc.TypedDependsOn, boolString(ready[i]), doc.Route, doc.Bench, doc.Est, doc.Test,
 			doc.Stream, doc.Origin, doc.Leg,
 		)
+		// Then, in the same pipeline, ns_card_header writes the card's
+		// DONE-WHEN line (harvest's PR body, #2932) only when the card is
+		// stored from this payload; after EXISTS it writes nothing, after
+		// CONFLICT it refuses.
+		headers[i] = pipe.FCall(ctx, "ns_card_header", keys[:1], doc.Payload, doc.DoneWhen)
 	}
 	_, _ = pipe.Exec(ctx) // each reply is read, with its own error, below
 	out := make([]VerbResult, len(docs))
@@ -116,6 +122,12 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 			continue
 		}
 		out[i] = pushResult(sprint, doc.Label, reply, err)
+		// The header reply counts only for a card this push stored.
+		if err == nil && strings.HasPrefix(reply, "OK place=") && out[i].Code == exitOK {
+			if h, herr := headers[i].Text(); herr != nil || h != "OK" {
+				out[i] = refused(named(files[i].Name, fmt.Sprintf("card header reply %q %v", h, herr)))
+			}
+		}
 	}
 	return out
 }

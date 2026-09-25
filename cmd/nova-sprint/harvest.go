@@ -1,7 +1,8 @@
 // `nova-sprint card harvest` (#2932, spec #2756 4.3): one worker per bench,
 // every bench in parallel, each under its own clock; push the card's branch
-// from its bench, find or open the PR under pr:<repo>:<branch>, read the head
-// back by REST, then harvested.
+// from its bench, find or open the PR under pr:<repo>:<branch>, write the PR
+// record pr:<repo>:<n> and read the head back from it, then harvested. The
+// reconciler runs the same pass as its harvest duty (consume.go).
 //
 // The card verb may already be registered by card_run.go (#2928); this file
 // then wraps it and adds the harvest subverb, so neither file edits the other.
