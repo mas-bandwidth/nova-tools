@@ -70,7 +70,9 @@ func TestRoutePitstopDispatchesNothing(t *testing.T) {
 
 	// The lease is taken (the router is up) and many ticks pass held.
 	rtUntil(t, "the route lease", func() bool { return client.Exists(ctx, LeaseKey(S)).Val() == 1 })
-	time.Sleep(200 * time.Millisecond)
+	// The held tick's own receipt is the event to wait for, never a fixed
+	// sleep (internal/ci TestNoFixedWaitsOnTheCIPath).
+	rtUntil(t, "the PITSTOP idle line", func() bool { return out.count("PITSTOP idle") >= 1 })
 	if n := a.passes.Load() + b.passes.Load(); n != 0 {
 		t.Fatalf("held: rules passed %d times, want 0", n)
 	}
