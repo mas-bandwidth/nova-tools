@@ -2456,11 +2456,18 @@ func TestRemoveAuthCopyNamesACopyItCannotRemove(t *testing.T) {
 	mustContain(t, "the cleanup's NOTE", errOut.String(), "could not be removed")
 }
 
-
+// fastDeadline hands the run a deadline that fires the moment the job's own capture
+// (<job>/harness-output.log) holds watchFor, so a card whose fake provider never answers
+// is ended by the run's real deadline path without the test waiting out a clock. The
+// ticker is the poll interval, not a bound: nothing fails when it elapses.
 func fastDeadline(t *testing.T, jobDir, watchFor string) {
+	t.Helper()
 	realDeadline := nativeDeadline
-	t.Cleanup(func() { nativeDeadline = realDeadline })
-	
+	quit := make(chan struct{})
+	t.Cleanup(func() {
+		close(quit)
+		nativeDeadline = realDeadline
+	})
 	nativeDeadline = func(time.Duration) (<-chan time.Time, func() bool) {
 		fire := make(chan time.Time)
 		go func() {
@@ -2471,87 +2478,79 @@ func fastDeadline(t *testing.T, jobDir, watchFor string) {
 					close(fire)
 					return
 				}
-				<-tick.C
+				select {
+				case <-quit:
+					return
+				case <-tick.C:
+				}
 			}
 		}()
 		return fire, func() bool { return true }
 	}
 }
 
+// TestNativeWallDiagnostics is #3785's DONE-WHEN for `nova-swarm native`: a card whose
+// provider request is still open when the run's deadline ends it prints one REQ line per
+// provider request on stdout (native.out under card run, harness.log under a batch) and
+// carries wall_provider=<why> on its NATIVE line, naming the last request's state: no
+// first byte, streaming stalled, or model busy after the request was done. The run goes
+// through run() with the flags card run passes, and its exit code is checked, so a run
+// refused before the harness starts cannot pass for a wall.
 func TestNativeWallDiagnostics(t *testing.T) {
-	fixture := t.TempDir()
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
-	wall := nativeSandbox(t)
-
-	t.Run("no first byte", func(t *testing.T) {
-		jobDir := filepath.Join(fixture, "jobs", "test-no-fb")
-		defer os.RemoveAll(jobDir)
-
-		stderr := new(bytes.Buffer)
-		fastDeadline(t, jobDir, "NOVA-TIMELINE REQ BEGIN")
-		card := []byte("FAKE-REQ HANG\n")
-		cfg := nativeRunConfig{
-			binary:   bin,
-			sandbox:  wall,
-			model:    "test/model",
-			label:    "test-no-fb",
-			card:     card,
-			slotDir:  fixture,
-			root:     fixture,
-			deadline: 30 * time.Second,
-		}
-
-		res, _ := nativeRun(cfg, stderr)
-		if res.wWhy == "" || !strings.Contains(res.wWhy, "no first byte after") {
-			t.Fatalf("expected 'no first byte' why, got %q", res.wWhy)
-		}
-	})
-
-	t.Run("streaming stalled", func(t *testing.T) {
-		jobDir := filepath.Join(fixture, "jobs", "test-stall")
-		defer os.RemoveAll(jobDir)
-
-		stderr := new(bytes.Buffer)
-		fastDeadline(t, jobDir, "NOVA-TIMELINE REQ FIRST-BYTE")
-		card := []byte("FAKE-REQ STALL\n")
-		cfg := nativeRunConfig{
-			binary:   bin,
-			sandbox:  wall,
-			model:    "test/model",
-			label:    "test-stall",
-			card:     card,
-			slotDir:  fixture,
-			root:     fixture,
-			deadline: 30 * time.Second,
-		}
-
-		res, _ := nativeRun(cfg, stderr)
-		if res.wWhy == "" || !strings.Contains(res.wWhy, "streaming stalled") {
-			t.Fatalf("expected 'streaming stalled' why, got %q", res.wWhy)
-		}
-	})
-	
-	t.Run("model busy", func(t *testing.T) {
-		jobDir := filepath.Join(fixture, "jobs", "test-busy")
-		defer os.RemoveAll(jobDir)
-
-		stderr := new(bytes.Buffer)
-		fastDeadline(t, jobDir, "NOVA-TIMELINE REQ END")
-		card := []byte("FAKE-REQ BUSY\n")
-		cfg := nativeRunConfig{
-			binary:   bin,
-			sandbox:  wall,
-			model:    "test/model",
-			label:    "test-busy",
-			card:     card,
-			slotDir:  fixture,
-			root:     fixture,
-			deadline: 30 * time.Second,
-		}
-
-		res, _ := nativeRun(cfg, stderr)
-		if res.wWhy == "" || !strings.Contains(res.wWhy, "model busy") {
-			t.Fatalf("expected 'model busy' why, got %q", res.wWhy)
-		}
-	})
+	for _, tc := range []struct {
+		name, directive, fireOn string
+		req, why                string
+	}{
+		{"no first byte", "HANG", "NOVA-TIMELINE REQ BEGIN",
+			" first_byte_ms=none done_ms=none http=none tokens_in=0 tokens_out=0\n", "no first byte after "},
+		{"streaming stalled", "STALL", "NOVA-TIMELINE REQ FIRST-BYTE",
+			" done_ms=none http=none tokens_in=0 tokens_out=0\n", "streaming stalled at "},
+		{"model busy", "BUSY", "NOVA-TIMELINE REQ END",
+			" http=200 tokens_in=10 tokens_out=20\n", "model busy after done"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, slot := aSlot(t)
+			label := "wall-" + strings.ToLower(tc.directive)
+			cardPath := filepath.Join(root, "card.md")
+			if err := os.WriteFile(cardPath, []byte("FAKE-REQ "+tc.directive+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			fastDeadline(t, filepath.Join(slot, "jobs", label), tc.fireOn)
+			args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1",
+				"--harness", bin, "--model", "fake/fake-model", "--label", label, "--card", cardPath,
+				"--slot", slot, "--root", root, "--deadline", "10m", "--no-wall"}
+			var stdout, stderr bytes.Buffer
+			code := -1
+			returned := make(chan struct{})
+			go func() {
+				defer close(returned)
+				code = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+			}()
+			// A safety net for a run whose deadline never fires (the fake provider sleeps
+			// 200 s); the green run returns in milliseconds after the marker.
+			select {
+			case <-returned:
+			case <-time.After(60 * time.Second):
+				t.Fatalf("the run did not return after its deadline fired:\n%s", stderr.String())
+			}
+			out := stdout.String()
+			if code != 1 {
+				t.Fatalf("native exit = %d, want 1 (the deadline ended the card):\nstdout:\n%s\nstderr:\n%s", code, out, stderr.String())
+			}
+			if !strings.HasPrefix(out, "REQ provider=fake model=test sent=") || !strings.Contains(out, tc.req) {
+				t.Errorf("stdout lacks the REQ line ending %q:\n%s", tc.req, out)
+			}
+			var native string
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(line, "NATIVE ") {
+					native = line
+				}
+			}
+			if !strings.Contains(native, " wall_provider="+oneline.Field(tc.why)) {
+				t.Errorf("NATIVE line lacks wall_provider=%s:\n%s", oneline.Field(tc.why), native)
+			}
+		})
+	}
 }

@@ -53,6 +53,7 @@ type TimelineRow struct {
 	InputTokens  string // empty when the harness reported none
 	OutputTokens string
 }
+
 // TimelineReq is one observed provider request.
 type TimelineReq struct {
 	Provider  string
@@ -64,7 +65,6 @@ type TimelineReq struct {
 	TokensIn  string
 	TokensOut string
 }
-
 
 // phaseOrder is the fixed order the profile line and its summary print their phases.
 var phaseOrder = []string{"clone", "deps", "read", "edit", "test", "retry", "result"}
@@ -136,7 +136,7 @@ func (t *Timeline) observe(line string) {
 	kind = strings.ToLower(kind)
 	verb = strings.ToUpper(verb)
 	now := time.Now()
-		switch verb {
+	switch verb {
 	case "BEGIN":
 		if kind == "req" {
 			t.reqs = append(t.reqs, TimelineReq{
