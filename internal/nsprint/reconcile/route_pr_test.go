@@ -370,3 +370,38 @@ func TestIdenticalDiffCarriesTheRead(t *testing.T) {
 		t.Fatalf("third pass %s; want nothing", c.Line())
 	}
 }
+
+func TestHoldEventWithPRLineGetsOneFixTask(t *testing.T) {
+	f := newPRFixture(t, "ctl-3833")
+	f.c.HSet(f.ctx, "s:ctl-3833:policy", "fix_to", "stella", "release_reader", "emma")
+
+	hold := "HOLD who=emma head=" + headA + " gates=scope:fail reason=touches-a-path-outside-PATHS"
+	f.addPR(t, "build-3572", "stella", "3572", headA, "SCORE who=jev head="+headA+" score=8/10", hold)
+
+	// Add hold event for route_fix to act on.
+	f.c.XAdd(f.ctx, &redis.XAddArgs{
+		Stream: "s:ctl-3833:hold:events",
+		Values: map[string]interface{}{
+			"type": "hold",
+			"unit": "unit-3572",
+			"repo": "nova-tools",
+			"pr":   "3572",
+			"who":  "emma",
+			"head": headA,
+		},
+	})
+	f.c.HSet(f.ctx, "s:ctl-3833:u:unit-3572", "head", headA, "author", "stella", "state", "working")
+	f.c.HSet(f.ctx, "s:ctl-3833:hold:unit-3572:emma", "head", headA, "reason", "touches-a-path-outside-PATHS", "kind", "hold")
+
+	c := f.run(t)
+	if c.Fixes != 1 {
+		t.Fatalf("first pass counts %s; want fixes=1", c.Line())
+	}
+
+	tasksGlobal, _ := f.c.Keys(f.ctx, "task:fix-*").Result()
+	tasksSprint, _ := f.c.Keys(f.ctx, "s:ctl-3833:task:fix-*").Result()
+
+	if len(tasksGlobal)+len(tasksSprint) != 1 {
+		t.Fatalf("found %d global fix tasks and %d sprint fix tasks; want exactly 1 fix task total", len(tasksGlobal), len(tasksSprint))
+	}
+}
