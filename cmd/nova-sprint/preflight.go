@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
 	"github.com/redis/go-redis/v9"
 )
@@ -106,6 +107,12 @@ func cmdPreflight(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	} else {
 		in = f.Input()
 	}
+	// #3048: 7.18 reads the friend wake registry the way `friend wake-health` does.
+	if w, err := gatherWake(ctx, client); err != nil {
+		fmt.Fprintf(stderr, "preflight: wake gather: %v\n", err)
+	} else {
+		in.Wake, in.Loaded.Wake = w, true
+	}
 	fleetLines := preflight.FleetChecks(ctx, in)
 	for _, l := range fleetLines {
 		fmt.Fprintln(stdout, l)
@@ -126,4 +133,20 @@ func preflightFleet(ctx context.Context, c *redis.Client, sprint string, std pre
 		fmt.Fprintln(stdout, l)
 	}
 	return code
+}
+
+// gatherWake is 7.18's input: the registry read and gate of `friend
+// wake-health --all` (life.ReadWake, WakeSnapshot.Rows).
+func gatherWake(ctx context.Context, c redis.Cmdable) (preflight.WakeInput, error) {
+	snap, err := life.ReadWake(ctx, c)
+	if err != nil {
+		return preflight.WakeInput{}, err
+	}
+	in := preflight.WakeInput{DeclPresent: snap.DeclPresent, Friends: len(snap.Friends)}
+	for _, r := range snap.Rows() {
+		if r.Named {
+			in.Named = append(in.Named, preflight.WakeNamed{Friend: r.Friend, Why: r.Why})
+		}
+	}
+	return in, nil
 }

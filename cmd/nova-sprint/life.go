@@ -27,7 +27,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "friend",
-		Summary: "hello, bye, serve, wake, row and roles for a friend; report a friend state, show friends, or run one ladder sweep",
+		Summary: "hello, bye, serve, wake, row and roles for a friend; report a friend state, show friends, or run one ladder sweep; declare the wake registry from the fleet file; wake-health [--repair]",
 		Run:     runFriend,
 	})
 	register(Verb{
@@ -44,7 +44,7 @@ func init() {
 
 func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "friend", "want hello, bye, serve, wake, row, roles, report, show, sweep, down or up")
+		return refuse(errOut, "friend", "want hello, bye, serve, wake, row, roles, report, show, sweep, down, up, declare or wake-health")
 	}
 	switch args[0] {
 	case "hello":
@@ -74,8 +74,12 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runFriendDown(ctx, true, args[1:], out, errOut)
 	case "up":
 		return runFriendDown(ctx, false, args[1:], out, errOut)
+	case "declare":
+		return runFriendDeclare(ctx, args[1:], out, errOut)
+	case "wake-health":
+		return runFriendWakeHealth(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, serve, wake, row, roles, report, show, sweep, down or up", args[0]))
+		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, serve, wake, row, roles, report, show, sweep, down, up, declare or wake-health", args[0]))
 	}
 }
 
@@ -326,13 +330,24 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	defer ticker.Stop()
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// #3048: every WakeRepairEvery-th beat repairs the friends declared on
+	// this host; no new unit, no tokens.
+	wakeOn := *host
+	if wakeOn == "" {
+		wakeOn, _ = os.Hostname()
+	}
+	beats := 0
 	return benchBeatLoop(signalCtx, ticker.C, life.BeatInterval, *bench, errOut,
 		func(ctx context.Context) (life.BenchResult, error) {
 			req.Facts, req.RowAt = life.MeasureBench(*root), time.Now()
 			if measureLoad {
 				req.Load1 = life.Load1Now()
 			}
-			return life.BenchBeat(ctx, st, req)
+			res, err := life.BenchBeat(ctx, st, req)
+			if beats++; err == nil && res.Accepted && beats%life.WakeRepairEvery == 0 {
+				benchWakeRepair(ctx, st, wakeOn, *session, errOut)
+			}
+			return res, err
 		})
 }
 
@@ -705,4 +720,175 @@ func (l *loginFlags) String() string { return strings.Join(*l, ",") }
 func (l *loginFlags) Set(v string) error {
 	*l = append(*l, v)
 	return nil
+}
+
+// newWakeHost is the supervisor and git seam the repair tick uses; controls
+// replace it with a fake.
+var newWakeHost = func() life.WakeHost { return life.ExecWakeHost{} }
+
+// benchWakeRepair is the repair tick `bench beat` runs every 10th beat: the
+// friends declared on this host, through the one bench connection.
+func benchWakeRepair(ctx context.Context, st *store.Store, host, session string, errOut io.Writer) {
+	res, err := life.RepairWake(ctx, st, newWakeHost(), life.RepairRequest{Host: host, Session: session, Actor: "bench"})
+	if err != nil {
+		fmt.Fprintf(errOut, "bench wake repair on %s: %v\n", host, err)
+		return
+	}
+	for f, holder := range res.Held {
+		fmt.Fprintf(errOut, "bench wake repair on %s: %s held by %s\n", host, f, holder)
+	}
+}
+
+// runFriendDeclare is `friend declare --from <fleet/group_vars/all.yml>
+// [--check] [--redis]` (#3048 rev 3). Exit 0 declared or unchanged, 1 a
+// store error, 2 usage, an invalid entry or a dirty file, 3 stale or conflict.
+func runFriendDeclare(ctx context.Context, args []string, out, errOut io.Writer) int {
+	const verb = "friend declare"
+	fs, addr := lifeFlags(verb)
+	from := fs.String("from", "", "the committed fleet group_vars file holding friends:")
+	check := fs.Bool("check", false, "print the diff against Redis and write nothing")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	if fs.NArg() != 0 || *from == "" {
+		return refuse(errOut, verb, "want --from <fleet/group_vars/all.yml> [--check]")
+	}
+	src, err := life.ReadDeclSource(ctx, *from)
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	st, err := openLifeStore(ctx, lifeAddr(*addr))
+	if err != nil {
+		fmt.Fprintf(errOut, "FRIEND DECLARE REFUSED: %v\n", err)
+		return 1
+	}
+	defer st.Close()
+	rev8 := func(r string) string {
+		if len(r) > 8 {
+			return r[:8]
+		}
+		if r == "" {
+			return "-"
+		}
+		return r
+	}
+	if *check {
+		c, err := life.CheckDecl(ctx, st, src)
+		if err != nil {
+			fmt.Fprintf(errOut, "FRIEND DECLARE REFUSED: %v\n", err)
+			return 1
+		}
+		for _, n := range c.Add {
+			fmt.Fprintf(out, "+ %s\n", n)
+		}
+		for _, n := range c.Change {
+			fmt.Fprintf(out, "~ %s\n", n)
+		}
+		for _, n := range c.Remove {
+			fmt.Fprintf(out, "- %s\n", n)
+		}
+		fmt.Fprintf(out, "check registry=%s file=%s add=%d change=%d remove=%d\n",
+			rev8(c.Rev), rev8(src.Rev), len(c.Add), len(c.Change), len(c.Remove))
+		return 0
+	}
+	res, err := life.Declare(ctx, st, src)
+	switch {
+	case errors.Is(err, life.ErrDeclStale), errors.Is(err, life.ErrDeclConflict):
+		fmt.Fprintf(errOut, "%v; declare from a checkout at or past the registry's rev\n", err)
+		return 3
+	case err != nil:
+		fmt.Fprintf(errOut, "FRIEND DECLARE REFUSED: %v\n", err)
+		return 1
+	case res.Unchanged:
+		fmt.Fprintf(out, "unchanged %s\n", rev8(res.Rev))
+		return 0
+	}
+	fmt.Fprintf(out, "declared %d unit=%d human=%d removed=%d rev=%s\n", res.N, res.Unit, res.Human, res.Removed, rev8(res.Rev))
+	return 0
+}
+
+// runFriendWakeHealth is `friend wake-health [--as <f> | --all] [--repair
+// [--host <h>]]`. Without --repair it reads Redis only and touches no host.
+// With it, it first runs the repair tick for the friends declared on this
+// host (a named friend declared elsewhere is refused, exit 1). Either way it
+// prints one row per friend and exits 1 when the gate names any friend:
+// down, undeclared, or a wake cell older than 30 s (`wake: ?`).
+func runFriendWakeHealth(ctx context.Context, args []string, out, errOut io.Writer) int {
+	const verb = "friend wake-health"
+	fs, addr := lifeFlags(verb)
+	as := fs.String("as", "", "one friend")
+	all := fs.Bool("all", false, "every registered or declared friend")
+	repair := fs.Bool("repair", false, "run the repair tick for the friends declared on this host first")
+	host := fs.String("host", "", "this host (default the hostname); only with --repair")
+	session := fs.String("session", "", "the repairer's lock identity (default a fresh one)")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	if fs.NArg() != 0 || (*as == "") == !*all {
+		return refuse(errOut, verb, "want exactly one of --as <f> or --all")
+	}
+	if *host != "" && !*repair {
+		return refuse(errOut, verb, "--host is read only with --repair")
+	}
+	st, err := openLifeStore(ctx, lifeAddr(*addr))
+	if err != nil {
+		fmt.Fprintf(errOut, "WAKE REFUSED: %v\n", err)
+		return 1
+	}
+	defer st.Close()
+	if *repair {
+		if *host == "" {
+			if *host, err = os.Hostname(); err != nil {
+				return refuse(errOut, verb, err.Error())
+			}
+		}
+		if *session == "" {
+			if *session, err = newLifeSession(); err != nil {
+				return refuse(errOut, verb, err.Error())
+			}
+		}
+		res, err := life.RepairWake(ctx, st, newWakeHost(), life.RepairRequest{Host: *host, Only: *as, Session: *session, Actor: "wake-health"})
+		if err != nil {
+			fmt.Fprintf(errOut, "WAKE REFUSED: %v\n", err)
+			return 1
+		}
+		for f, holder := range res.Held {
+			fmt.Fprintf(out, "%s wake: repair held by %s\n", f, holder)
+		}
+		fmt.Fprintf(out, "REPAIRED host=%s checked=%d held=%d\n", *host, len(res.Checked), len(res.Held))
+	}
+	snap, err := life.ReadWake(ctx, st.Client())
+	if err != nil {
+		fmt.Fprintf(errOut, "WAKE REFUSED: %v\n", err)
+		return 1
+	}
+	rows := snap.Rows()
+	if *as != "" {
+		var one []life.WakeRow
+		for _, r := range rows {
+			if r.Friend == *as {
+				one = append(one, r)
+			}
+		}
+		if len(one) == 0 {
+			one = []life.WakeRow{{Friend: *as, Row: "wake: undeclared", Named: true, Why: life.StateUndeclared}}
+		}
+		rows = one
+	}
+	var named []string
+	for _, r := range rows {
+		fmt.Fprintf(out, "%s %s\n", r.Friend, r.Row)
+		if r.Named {
+			named = append(named, r.Friend)
+		}
+	}
+	summary := fmt.Sprintf("WAKE friends=%d named=%d", len(rows), len(named))
+	if len(named) > 0 {
+		summary += " " + strings.Join(named, ",")
+	}
+	fmt.Fprintln(out, summary)
+	if len(named) > 0 {
+		return 1
+	}
+	return 0
 }

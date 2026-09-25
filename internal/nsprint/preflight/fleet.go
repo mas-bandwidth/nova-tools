@@ -4,7 +4,7 @@
 // This file holds the fleet checks (#2948): 7.4 the batch launcher, 7.5 bench
 // beats, 7.6 one dry batch per bench over one session, 7.8 harvest leases and
 // consumer groups, 7.12 table --check, 7.14 the GitHub REST budget, 7.16 two
-// schedulers and 7.17 orphan effects. The store checks (7.1, 7.2, 7.3, 7.7,
+// schedulers, 7.17 orphan effects and 7.18 friend wake paths. The store checks (7.1, 7.2, 7.3, 7.7,
 // 7.10, 7.15) are #2947's.
 //
 // Every check reads a FleetInput the verb gathers from Redis, the workflow
@@ -174,6 +174,7 @@ type Loaded struct {
 	LandReady   bool // the land-ready receipts
 	Orphans     bool // the cards in orphan-effect
 	EndedDone   bool // the cards in ended(DONE)
+	Wake        bool // the friend wake registry and every friend's wake cell
 }
 
 // need is one collection a check reads and whether it was loaded.
@@ -220,6 +221,21 @@ type FleetInput struct {
 	Orphans     []OrphanCard
 	OrphanGrace time.Duration
 	EndedDone   []EndedCard
+
+	Wake WakeInput
+}
+
+// WakeInput is the friend wake registry as `friend wake-health` reads it
+// (internal/nsprint/life ReadWake and Rows).
+type WakeInput struct {
+	DeclPresent bool        // friends:decl exists
+	Friends     int         // friends read (registered or declared)
+	Named       []WakeNamed // every friend the gate names
+}
+
+// WakeNamed is one friend 7.18 names and why: down, undeclared or stale.
+type WakeNamed struct {
+	Friend, Why string
 }
 
 // FleetChecks runs every fleet check and returns the lines in check order.
@@ -233,7 +249,24 @@ func FleetChecks(ctx context.Context, in FleetInput) []FleetLine {
 		CheckRESTBudget(in),
 		CheckTwoSchedulers(in),
 		CheckOrphanEffects(in),
+		CheckFriendWake(in),
 	}
+}
+
+// CheckFriendWake is 7.18 (#3048): every friend has a declared wake path that
+// its host's repair tick holds up. RED when friends:decl is absent, a friend
+// has no wakepath (undeclared), or any wake cell is down or older than 30 s.
+func CheckFriendWake(in FleetInput) FleetLine {
+	reds := unread(need{"friend wake paths", in.Loaded.Wake})
+	if in.Loaded.Wake {
+		if !in.Wake.DeclPresent {
+			reds = append(reds, "friends:decl absent (MISSING): run nova-sprint friend declare from the fleet converge")
+		}
+		for _, n := range in.Wake.Named {
+			reds = append(reds, n.Friend+" "+n.Why)
+		}
+	}
+	return line("7.18", "friend wake paths", reds, fmt.Sprintf("%d friends, none down, undeclared or stale", in.Wake.Friends))
 }
 
 func line(check, name string, reds []string, green string) FleetLine {

@@ -99,7 +99,7 @@ func (perCardLauncher) LaunchBatch(ctx context.Context, bench string, cards []st
 // allLoaded is a fleet whose every collection snapshot was read.
 func allLoaded() Loaded {
 	return Loaded{Benches: true, Consumers: true, Profiles: true, Workflows: true,
-		ReviewReady: true, LandReady: true, Orphans: true, EndedDone: true}
+		ReviewReady: true, LandReady: true, Orphans: true, EndedDone: true, Wake: true}
 }
 
 func upBench(name string, desired int) BenchState {
@@ -330,6 +330,7 @@ func TestPreflightFleetChecksInOrder(t *testing.T) {
 		TableFileAge: time.Second, TableFilePresent: true,
 		REST:        RESTBudget{Known: true, Remaining: 4000, CallsPerPass: 1, Cadence: 10 * time.Second},
 		OrphanGrace: 5 * time.Minute,
+		Wake:        WakeInput{DeclPresent: true, Friends: 2},
 	}
 	lines := FleetChecks(ctx, green)
 	var got []string
@@ -339,7 +340,7 @@ func TestPreflightFleetChecksInOrder(t *testing.T) {
 			t.Errorf("green fleet has a red line: %s", l)
 		}
 	}
-	if strings.Join(got, " ") != "7.4 7.5 7.6 7.8 7.12 7.14 7.16 7.17" {
+	if strings.Join(got, " ") != "7.4 7.5 7.6 7.8 7.12 7.14 7.16 7.17 7.18" {
 		t.Fatalf("checks = %v", got)
 	}
 	if FleetRed(lines) {
@@ -449,6 +450,7 @@ func TestPreflightUnreadInputRefuses(t *testing.T) {
 			CheckHarvestAndConsumers(FleetInput{}),
 			CheckTwoSchedulers(FleetInput{}),
 			CheckOrphanEffects(FleetInput{}),
+			CheckFriendWake(FleetInput{}),
 		} {
 			if !l.Red || !strings.Contains(l.String(), "unread (MISSING)") {
 				t.Errorf("an unread input must be red and say unread: %s", l)
@@ -470,6 +472,7 @@ func TestPreflightUnreadInputRefuses(t *testing.T) {
 		TableFilePresent: true,
 		REST:             RESTBudget{Known: true, Remaining: 4000, CallsPerPass: 1, Cadence: 10 * time.Second},
 		OrphanGrace:      5 * time.Minute,
+		Wake:             WakeInput{DeclPresent: true, Friends: 2},
 	}
 	cases := []struct {
 		unset  func(*Loaded)
@@ -484,6 +487,7 @@ func TestPreflightUnreadInputRefuses(t *testing.T) {
 		{func(l *Loaded) { l.LandReady = false }, []string{"7.16"}, "land-ready receipts"},
 		{func(l *Loaded) { l.Orphans = false }, []string{"7.17"}, "orphan-effect cards"},
 		{func(l *Loaded) { l.EndedDone = false }, []string{"7.17"}, "ended(DONE) cards"},
+		{func(l *Loaded) { l.Wake = false }, []string{"7.18"}, "friend wake paths"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+" unread", func(t *testing.T) {
