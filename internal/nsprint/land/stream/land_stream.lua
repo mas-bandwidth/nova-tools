@@ -18,9 +18,15 @@
 --   line    {repo,n,now,line}                 append one typed line to reads
 --   built   {repo,slug,now,by,land{...},stream_pr{n,fields{...}}?,parked[{task,stream,n,why}],
 --            commit_closes[{n,closes}] (each kept member's commit-message closes, on its record)}
---   landed  {repo,slug,now,by,merge_sha,why,members[{task,stream,n,close}],pr}
+--   landed  {repo,slug,now,by,merge_sha,why,members[{task,stream,n,close}],pr,
+--            release{key,train,landed}? (a landing into the release branch)}
 --
--- landed marks the landing and the records merged; it moves no task. Each
+-- landed marks the landing and the records merged and, for a landing into
+-- the release branch, writes the release in the same call (#4050): version
+-- v<x>.<y>.<z>-dev.<merge sha8> (the train of the version already stored,
+-- else release.train) and commit <merge sha>, so every landing names the
+-- release the reconciler's deploy duty converges the fleet to; a re-run is
+-- ALREADY and never writes an older landing over a newer one. Each
 -- member's tasks move to landed, with the CLOSE line on its record, in the
 -- nova_sprint library's ns_land_member (one call per member, fenced by this
 -- landing's merged state; nova-tools#3779), the same move every event makes.
@@ -208,6 +214,14 @@ if op == 'landed' then
     redis.call('HSET', sk, 'state', 'merged', 'merge_sha', p.merge_sha, 'updated_at', p.now)
   end
   wslog(lk, redis.call('HGET', lk, 'streams') or '', 'merging', 'landed', p.by, p.why, p.now)
+  if p.release then
+    local cur = redis.call('HGET', p.release.key, 'version') or ''
+    local train = string.match(cur, '^(v%d+%.%d+%.%d+)%-dev%.%x+$') or p.release.train
+    local version = train .. '-dev.' .. string.sub(p.merge_sha, 1, 8)
+    redis.call('HSET', p.release.key, 'version', version, 'commit', p.merge_sha,
+      'landed', p.release.landed, 'landed_at', p.now)
+    return {'OK', version}
+  end
   return {'OK'}
 end
 

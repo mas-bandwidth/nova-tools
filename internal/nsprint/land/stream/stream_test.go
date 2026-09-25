@@ -461,3 +461,48 @@ func TestUnionCloses(t *testing.T) {
 		}
 	}
 }
+
+// TestLandedWritesTheRelease (#4050): the landed call of a nova-tools landing
+// into dev writes fleet:release version v<train>-dev.<merge sha8> and commit,
+// the train carried from the version already stored; a re-run writes
+// nothing, and a landing into another base names no release.
+func TestLandedWritesTheRelease(t *testing.T) {
+	c := newRedis(t)
+	ctx := context.Background()
+	c.HSet(ctx, "fleet:release", "version", "v0.17.0-dev.11111111", "commit", "1111111"+strings.Repeat("0", 33))
+	land := func(slug, base, sha string) (bool, string) {
+		t.Helper()
+		l := Landing{Repo: repo, Slug: slug, Streams: strm, Base: base, BaseSHA: strings.Repeat("b", 40),
+			Branch: "stream/" + slug, Head: strings.Repeat("c", 40), PR: 900, State: "open"}
+		if _, err := SaveBuilt(ctx, c, l, "rowan"); err != nil {
+			t.Fatal(err)
+		}
+		already, rel, err := saveLanded(ctx, c, l, "rowan", sha)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return already, rel
+	}
+	sha := "abcdef01" + strings.Repeat("2", 32)
+	if already, rel := land("a", "dev", sha); already || rel != "v0.17.0-dev.abcdef01" {
+		t.Fatalf("landed into dev: already=%t release=%q", already, rel)
+	}
+	got := c.HGetAll(ctx, "fleet:release").Val()
+	if got["version"] != "v0.17.0-dev.abcdef01" || got["commit"] != sha || got["landed"] != "nova-tools#900" {
+		t.Fatalf("fleet:release = %v", got)
+	}
+	l, _, _ := LoadLanding(ctx, c, repo, "a")
+	if already, rel, err := saveLanded(ctx, c, l, "rowan", strings.Repeat("9", 40)); err != nil || !already || rel != "" {
+		t.Fatalf("re-run: already=%t release=%q %v", already, rel, err)
+	}
+	if already, rel := land("b", "main", strings.Repeat("9", 40)); already || rel != "" {
+		t.Fatalf("landed into main: already=%t release=%q", already, rel)
+	}
+	if v := c.HGet(ctx, "fleet:release", "commit").Val(); v != sha {
+		t.Fatalf("commit after a re-run and a main landing = %q", v)
+	}
+	c.Del(ctx, "fleet:release")
+	if _, rel := land("c", "dev", sha); rel != "v0.16.0-dev.abcdef01" {
+		t.Fatalf("first landing with no release stored: %q", rel)
+	}
+}

@@ -46,6 +46,10 @@ func (f *fakeBench) Run(ctx context.Context, argv []string) (string, error) {
 			return "FLEET COMPILE REFUSED: checkout\n", errors.New("exit status 1")
 		}
 		return "BUILT " + testV + " gomodcache=/home/u/nova-bench/space-build/go/mod\nFLEET COMPILE OK " + testV + " go=/home/u/nova-bench/space-build/go\n", nil
+	case argv[0] == "ssh" && strings.HasPrefix(argv[7], "cat "+ReleaseRoot+"/"+testV+"/"):
+		// The release manifest on the builder: more tools than the four
+		// defaults, and a file that is not a tool.
+		return testManifest, nil
 	case argv[0] == "ssh":
 		b := argv[6]
 		if f.sshFail[b] {
@@ -94,9 +98,20 @@ func (f *fakeBench) builds() [][]string {
 	return out
 }
 
+// testManifest is a release manifest: five nova-* tools and a README.
+var testManifest = strings.Repeat("a", 64) + "  nova-card\n" + strings.Repeat("b", 64) + "  nova-merge\n" +
+	strings.Repeat("c", 64) + "  nova-sprint\n" + strings.Repeat("d", 64) + "  nova-swarm\n" +
+	strings.Repeat("e", 64) + "  nova-wake\n" + strings.Repeat("f", 64) + "  README\n"
+
+// manifestTools are the tools testManifest lists, sorted.
+var manifestTools = []string{"nova-card", "nova-merge", "nova-sprint", "nova-swarm", "nova-wake"}
+
 func (f *fakeBench) byFirst(prog string) [][]string {
 	var out [][]string
 	for _, c := range f.calls {
+		if prog == "ssh" && c[0] == "ssh" && strings.HasPrefix(c[7], "cat ") {
+			continue // the manifest read, not an install
+		}
 		if c[0] == prog && !isBuild(c) {
 			out = append(out, c)
 		}
@@ -182,7 +197,7 @@ func TestFleetBuildDeploysEveryBenchFromRedisConfig(t *testing.T) {
 		if !strings.HasPrefix(s, "bash -c 'set -e; ") || !strings.Contains(s, src) {
 			t.Errorf("%s script %q does not rsync from %q under bash", b, s, src)
 		}
-		for _, tool := range DefaultTools {
+		for _, tool := range manifestTools {
 			if !strings.Contains(s, "--include="+tool) || !strings.Contains(s, " "+tool) {
 				t.Errorf("%s script does not install %s: %q", b, tool, s)
 			}
@@ -196,7 +211,10 @@ func TestFleetBuildDeploysEveryBenchFromRedisConfig(t *testing.T) {
 	if len(rs) != 1 || rs[0][len(rs[0])-2] != "space:nova-bench/release/"+testV+"/darwin-arm64/" {
 		t.Fatalf("local rsync = %q, want one from space's darwin-arm64", rs)
 	}
-	for _, tool := range DefaultTools {
+	if got := mr.HGet(ConfigKey, "tools"); got != strings.Join(manifestTools, ",") {
+		t.Errorf("fleet:release tools = %q, want the manifest's %v", got, manifestTools)
+	}
+	for _, tool := range manifestTools {
 		b, err := os.ReadFile(filepath.Join(f.home, BinDir, tool))
 		if err != nil || string(b) != testV {
 			t.Errorf("local %s = %q, %v; want the release renamed into place", tool, b, err)
