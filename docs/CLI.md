@@ -3999,3 +3999,37 @@ ONE PLACE (nova-tools#3692). Glenn: "cards are not allowed to disappear." A card
 - `nova-sprint card fsck --sprint <S> --redis <addr> [--repair]` walks both directions (every card in exactly one place per dimension at its created_at score, every set member pointing back, the places summing to the roster) and prints one `CARD FSCK` line; exit 1 names `--repair`.
 - `nova-sprint bench reindex --sprint <S> --redis <addr>` is the one-time rebuild for a sprint whose cards predate the model: it adopts them from the sprint's state indexes and fills every view.
 - `nova-sprint card ls --unplaced --sprint <S> --redis <addr>` lists the null cards.
+
+### `nova-sprint digest`
+
+`nova-sprint digest --redis <host:port> --since <RFC3339 UTC> [--until <RFC3339 UTC>] [--repo <owner/name>]...` prints what landed, which holds were routed and which reads were scored in the window `[since, until)` (nova-tools#3158). It reads three Redis sources and nothing else: `ws:log` (every move receipt), `land:<repo>:events` (the unit lander's `LANDED` events) and the `pr:<name>:<n>` records (the stream PR's `merge_sha`, the typed lines in `reads`). No GitHub, no model, no SCAN: `ws:log` is read by id range with `COUNT 1000` pages, the event streams are each `--repo` plus every repo a landing in the window names, and the PR records are the ones the window's receipts name, so a digest is two round trips plus one per further page. `--until` defaults to now; an entry at `since` is in, one at `until` is out.
+
+- `landed` lines: a stream landing (the `land:<repo>:<slug>` receipt to `landed`) with its PR, merge sha, members and the tasks landed with it; a unit-lander batch (`LANDED` event) with its base, batch and train head; the tasks a person's `CLOSE` line landed.
+- `hold` lines: a hold routed to its answerer (a `route pr fix|close|recut` task created), the holder from the record's `HOLD` line at that head, `state=answered` once the holder has a later `SCORE` on the record, else `open` (`?` with no record or no HOLD line).
+- `read` lines: a read scored (`read: SCORE by <who> at <head8>`), the score from the reader's `SCORE` line at that head (`?` when the record has none).
+- A stream that lost entries of the window prints `<key> TRIMMED source <stream> max-deleted=<id>` (an XDEL at or after since) or `first=<id>` (trimmed off the front past since) right after the section header, and that section never prints `none`. A section with no facts prints `<key> none`.
+
+First run, on the fixture of `internal/nsprint/digest/testdata/digest`:
+
+```text
+nova-sprint digest --redis 127.0.0.1:6379 --since 2026-09-23T00:00:00Z --until 2026-09-23T04:20:00Z
+digest since=2026-09-23T00:00:00.000Z until=2026-09-23T04:20:00.000Z repos=mas-bandwidth/nova-tools
+landed:
+landed at=2026-09-23T00:00:00.000Z repo=nova-tools pr=3901 merge_sha=b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0 members=2 tasks=2 by=rowan
+landed at=2026-09-23T00:00:05.000Z close=rowan-tools#410 by=glenn tasks=1
+landed at=2026-09-23T00:00:07.000Z repo=nova-tools base=dev batch=b7 train_head=7777777777777777777777777777777777777777
+holds:
+hold at=2026-09-23T00:00:03.000Z repo=nova-tools pr=3850 head=cccccccc holder=emma route=fix state=answered
+hold at=2026-09-23T00:00:06.000Z repo=rowan-tools pr=411 head=eeeeeeee holder=johnny route=close state=open
+reads:
+read at=2026-09-23T00:00:04.000Z repo=nova-tools pr=3850 head=dddddddd who=stella score=9
+```
+
+The first stumble is a missing `--redis`; every refusal is one line on stderr, exit 2, before any read:
+
+```text
+nova-sprint digest --since 2026-09-23T00:00:00Z
+nova-sprint digest: wants --redis <host:port>; run: nova-sprint help
+```
+
+The other refusals name their remedy the same way: `wants --since <RFC3339 UTC>`, `wants --until <RFC3339 UTC>`, `since must be before until`, `takes flags, not positional arguments`, a `--repo` that is not `<owner>/<name>` (the parser's `invalid value` line), and `redis <addr>: <error>` when the store cannot be reached. A read that fails after that exits 1.
