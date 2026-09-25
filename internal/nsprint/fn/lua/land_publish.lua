@@ -42,7 +42,9 @@ redis.register_function('ns_tip', function(keys, args)
   if string.match(lease_val or '', '^([^:]+):') ~= writer[1] then return 'STALE' end
   local t = redis.call('TIME')
   local now = string.format('%.0f', tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000))
-  redis.call('HSET', pre .. ':tip', 'sha', sha, 'at', now, 'by', by)
+  -- batch is the landed batch whose train_head the tip is (ns_land); a tip read
+  -- from the remote names none (8.4).
+  redis.call('HSET', pre .. ':tip', 'sha', sha, 'at', now, 'by', by, 'batch', '')
   redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
     'event', 'TIP', 'repo', repo, 'base', base, 'sha', sha, 'by', by, 'at', now)
   return 'OK'

@@ -265,6 +265,10 @@ func TestL4(t *testing.T) {
 	if fz, _ := f2.client.HGet(f2.ctx, land.FreezeKey(f2.repo, f2.base), "reason").Result(); !strings.HasPrefix(fz, "base-red internal/base.TestTip") {
 		t.Fatalf("freeze reason %q, want base-red (lines %v)", fz, rep.Lines)
 	}
+	// source red: ns_land_intent refuses publishing under it and land thaw lifts it (B11).
+	if src, _ := f2.client.HGet(f2.ctx, land.FreezeKey(f2.repo, f2.base), "source").Result(); src != "red" {
+		t.Fatalf("freeze source %q, want red", src)
+	}
 	for _, x := range u2 {
 		if st := unitField(t, f2, x, "state"); st != "landable" {
 			t.Fatalf("base red: %s state %q, want landable (not the member's fault)", x, st)

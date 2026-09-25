@@ -55,6 +55,12 @@ func SweepReclaim(ctx context.Context, c *redis.Client, repo, base string) ([]Re
 	if err != nil {
 		return nil, fmt.Errorf("sweep reclaim zrange: %w", err)
 	}
+	// Tip gates are off the chain; their index is bounded (§8.4, B11).
+	tipIDs, err := c.ZRange(ctx, TipGatesKey(repo, base), 0, -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("sweep reclaim tip gates: %w", err)
+	}
+	batchIDs = append(batchIDs, tipIDs...)
 	// The attribution gates of a red batch (§6.1) live outside the chain, under its split record.
 	gates, err := SplitGates(ctx, c, repo, base)
 	if err != nil {
@@ -287,8 +293,8 @@ func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, at
 
 	// 2. Read batch info
 	bkey := BatchKey(repo, base, batchID)
-	bvals, err := w.cfg.Client.HMGet(ctx, bkey, "from_tip", "members", "class", "created_at", "input_id", "paths").Result()
-	if err != nil || len(bvals) < 6 {
+	bvals, err := w.cfg.Client.HMGet(ctx, bkey, "from_tip", "members", "class", "created_at", "input_id", "paths", "kind", "revert_head", "revert_parent").Result()
+	if err != nil || len(bvals) < 9 {
 		if err == nil {
 			err = fmt.Errorf("short reply (%d fields)", len(bvals))
 		}
@@ -299,6 +305,10 @@ func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, at
 	class, _ := bvals[2].(string)
 	createdAt, _ := bvals[3].(string)
 	planInputID, _ := bvals[4].(string)
+	batchKind, _ := bvals[6].(string)
+	revertHead, _ := bvals[7].(string)
+	revertParent, _ := bvals[8].(string)
+	isRevert := batchKind == "revert"
 
 	var memberHeads []string
 	var changedFiles []string
@@ -331,7 +341,8 @@ func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, at
 		requiredSetID, _ = pvals[1].(string)
 		runnerID, _ = pvals[2].(string)
 	}
-	if policyID != "" || requiredSetID != "" || runnerID != "" {
+	// A revert train (§8.4) has no members but is a train, not a tip gate: no gid receipt.
+	if !isRevert && (policyID != "" || requiredSetID != "" || runnerID != "") {
 		kind := "full"
 		head := fromTip
 		if len(memberHeads) == 1 {
@@ -365,14 +376,23 @@ func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, at
 	// 3. Build deterministic train (spec 5.3)
 	trainHead := fromTip
 	trainTree := ""
-	if len(memberHeads) > 0 {
-		tr, err := BuildTrain(ctx, TrainParams{
-			GitDir:    w.cfg.MirrorDir,
-			FromTip:   fromTip,
-			Members:   memberHeads,
-			BatchID:   batchID,
-			CreatedAt: createdAt,
-		})
+	if len(memberHeads) > 0 || isRevert {
+		var tr *TrainResult
+		var err error
+		if isRevert {
+			tr, err = BuildRevert(ctx, RevertParams{
+				GitDir: w.cfg.MirrorDir, FromTip: fromTip, RevertHead: revertHead,
+				RevertParent: revertParent, BatchID: batchID, CreatedAt: createdAt,
+			})
+		} else {
+			tr, err = BuildTrain(ctx, TrainParams{
+				GitDir:    w.cfg.MirrorDir,
+				FromTip:   fromTip,
+				Members:   memberHeads,
+				BatchID:   batchID,
+				CreatedAt: createdAt,
+			})
+		}
 		if err != nil {
 			var conflictErr *MergeConflictError
 			if errors.As(err, &conflictErr) {

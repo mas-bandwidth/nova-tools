@@ -157,9 +157,14 @@ function RB.void_from(S, repo, base, batch_id)
   return behind
 end
 
+-- A red freeze is source red, so ns_land_intent refuses every batch but the revert train while
+-- it stands and ns_thaw (land thaw) lifts it (8.4, B11). A standing freeze (tip or hand) is left
+-- as it is: its source drives the tip tick's revert train and its thaw.
 function RB.freeze(repo, base, reason, now)
-  redis.call('HSET', RB.key(repo, base, 'freeze'), 'reason', reason,
-    'remedy', 'fix the base, then thaw land:' .. repo .. ':' .. base .. ':freeze', 'at', now)
+  local k = RB.key(repo, base, 'freeze')
+  if redis.call('EXISTS', k) == 1 then return end
+  redis.call('HSET', k, 'source', 'red', 'reason', reason,
+    'remedy', 'fix the base, then nova-sprint land thaw ' .. repo .. ' ' .. base, 'at', now)
   RB.event(repo, 'event', 'FROZEN', 'repo', repo, 'base', base, 'reason', reason, 'at', now)
 end
 

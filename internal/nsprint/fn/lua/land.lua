@@ -883,7 +883,7 @@ redis.register_function('ns_gate_receipt', function(keys, args)
   local failing, flaky_rerun, core_s = args[14], args[15], args[16]
 
   local bkey = 'land:' .. repo .. ':' .. base .. ':batch:' .. batch_id
-  local b = redis.call('HMGET', bkey, 'attempt', 'token', 'state', 'entry_id', 'from_tip', 'class', 'members', 'slot')
+  local b = redis.call('HMGET', bkey, 'attempt', 'token', 'state', 'entry_id', 'from_tip', 'class', 'members', 'slot', 'kind')
   if not b[1] then return 'NOTFOUND' end
   if b[1] ~= tostring(attempt) or b[2] ~= tostring(token) then return 'STALE' end
 
@@ -925,7 +925,9 @@ redis.register_function('ns_gate_receipt', function(keys, args)
   -- gate with no from_tip writes none either.
   local class, members, from_tip = b[6] or '', b[7] or '', b[5] or ''
   local kind, head = nil, ''
-  if class == 'full' and from_tip ~= '' then
+  -- A revert train (8.4, B11) is also a full batch with no members: it is a
+  -- train, never a tip gate, so its kind field keeps it out.
+  if class == 'full' and from_tip ~= '' and b[9] ~= 'revert' then
     if members == '' then
       kind, head = 'tip', from_tip
     elseif not string.find(members, ',') then
@@ -1121,6 +1123,13 @@ redis.register_function('ns_land_intent', function(keys, args)
     return { 'REFUSED', 'lease gen mismatch' }
   end
 
+  -- 1b. A frozen base publishes only its revert train (8.4, L21): ns_freeze by
+  -- hand or a red tip receipt through ns_tip_tick. Gating continues.
+  local frozen = redis.call('HGET', 'land:' .. repo .. ':' .. base .. ':freeze', 'source')
+  if frozen and redis.call('HGET', 'land:' .. repo .. ':' .. base .. ':batch:' .. batch_id, 'kind') ~= 'revert' then
+    return { 'REFUSED', 'frozen ' .. frozen }
+  end
+
   -- 2. No unresolved pub:* on this base
   local active_pub = redis.call('GET', 'land:' .. repo .. ':' .. base .. ':pub:active')
   if active_pub and active_pub ~= '' and active_pub ~= batch_id then
@@ -1301,7 +1310,10 @@ redis.register_function('ns_land', function(keys, args)
     redis.call('ZREM', 's:' .. S .. ':landable:' .. repo .. ':' .. base, m.unit)
   end
 
-  redis.call('HSET', 'land:' .. repo .. ':' .. base .. ':tip', 'sha', train_head, 'at', tostring(now), 'by', 'publisher')
+  redis.call('HSET', 'land:' .. repo .. ':' .. base .. ':tip', 'sha', train_head, 'at', tostring(now), 'by', 'publisher', 'batch', batch_id)
+  -- The landed tips in order (8.4): what ns_tip_tick gates back to the last green tip.
+  redis.call('ZADD', 'land:' .. repo .. ':' .. base .. ':landed', tonumber(now), batch_id)
+  redis.call('ZREMRANGEBYRANK', 'land:' .. repo .. ':' .. base .. ':landed', 0, -257)
   redis.call('ZREM', 'land:' .. repo .. ':' .. base .. ':chain', batch_id)
   redis.call('DEL', 'land:' .. repo .. ':' .. base .. ':pub:' .. batch_id)
   redis.call('DEL', 'land:' .. repo .. ':' .. base .. ':pub:active')
@@ -1318,8 +1330,9 @@ redis.register_function('ns_land', function(keys, args)
   return 'OK'
 end)
 
--- NS.land hands land_red.lua (red batches, 6.1) the fence, the clock and the one void, so a red
--- split writes a batch and its members exactly as ns_chain_void does.
+-- NS.land hands the later files (their own do-blocks) the fence, the clock and the one void:
+-- land_red.lua (red batches, 6.1) so a red split writes a batch and its members exactly as
+-- ns_chain_void does, and land_tip.lua when it plans a revert train (8.4, B11).
 NS.land = { now_ms = land_now_ms, lease_refusal = land_lease_refusal, batch_void = land_batch_void }
 
 end

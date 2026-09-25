@@ -81,6 +81,7 @@ var refusalTable = []Refusal{
 	row("head-mismatch", `head mismatch on (\S+)`, remedyWhy1, "head mismatch on gh/o/r/1"),
 	row("hold", `hold on (\S+)`, remedyWhy1, "hold on gh/o/r/1"),
 	row("policy-mismatch", `policy mismatch`, "nova-sprint land preflight", "policy mismatch"),
+	row("frozen", `frozen (\S+)`, remedyStatus, "frozen tip"),
 	row("inbound-stale", `inbound-stale(?: since \S+)?`, remedyStatus, "inbound-stale since 1727200000"),
 	// the publisher (publish.go)
 	row("stale", `stale`, remedyStatus, "stale"),

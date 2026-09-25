@@ -43,13 +43,18 @@
 //	land:<repo>:receipt:<batch>:<attempt> hash write-once: bench, worker, token, from_tip, train_head,
 //	                                      train_tree, input_id, selection, steps, verdict (GREEN,
 //	                                      RED, ERROR, CONFLICT), failing, flaky_rerun, core_s, at
-//	land:<repo>:<base>:tip         hash   sha, at, by (publisher or fetch)
+//	land:<repo>:<base>:tip         hash   sha, at, by (publisher or fetch), batch (the landed batch)
 //	land:<repo>:<base>:lease       string publisher lease <gen>:<token> (SET NX PX 6000, renewed every 2s)
 //	land:<repo>:<base>:writer      hash   gen, owner (old-loop or nova-sprint), since, by
 //	land:<repo>:<base>:pub:<batch> hash   state (intent, pushed, verified, dead), from_tip, train_head,
 //	                                      train_tree, gen, policy_id, rec_seq_cut, at per state
 //	landed:<repo>:<unit>:<head>    string SET NX: <merge_sha> <batch> <receipt>
-//	land:<repo>:<base>:freeze      hash   reason, remedy, at
+//	land:<repo>:<base>:freeze      hash   source (tip, hand or red), reason, remedy, at; red_tip, culprit,
+//	                                      revert when a red tip froze it (8.4); ns_land_intent refuses
+//	                                      every batch but the revert train while it exists
+//	land:<repo>:<base>:landed      zset   landed batch ids by landing ms, the newest 256 (ns_land)
+//	land:<repo>:<base>:tipgates    zset   tip gate batches tip-<sha> by queue ms, the newest 64
+//	land:<repo>:<base>:tipgreen    hash   sha, batch, score, at of the newest green tip (ns_tip_tick)
 //	land:<repo>:events             stream MAXLEN ~100k: one entry per transition
 //	friend:<f>:state               hash   state (up|underfull|idle|out-of-credits|down|away), since
 //
