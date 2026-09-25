@@ -142,6 +142,7 @@ type Posted struct {
 	Lines    int      // lines in the PR's log after the post
 	Why      string   // REFUSED
 	Moved    int      // tasks the line moved (a posted CLOSE or SCORE, nova-tools #3779)
+	Cut      int      // copies the SCORE cut: a fix copy, fresh reads (#4094)
 	Same     int      // tasks already where the event puts them
 	Skipped  []string // "<id>: <why>" per task the move refused
 	Line     Line
@@ -188,7 +189,8 @@ func post(ctx context.Context, c redis.Cmdable, mode, repo, n, text string, scop
 		p.Lines, _ = strconv.Atoi(res[5])
 		p.Moved, _ = strconv.Atoi(res[6])
 		p.Same, _ = strconv.Atoi(res[7])
-		p.Skipped = res[9:]
+		p.Cut, _ = strconv.Atoi(res[9])
+		p.Skipped = res[10:]
 	case p.Status == "REFUSED" && len(res) == 2:
 		p.Why = res[1]
 	case (p.Status == "MISSING" || p.Status == "EXISTS") && len(res) == 2:

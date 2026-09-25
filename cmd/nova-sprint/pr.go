@@ -16,7 +16,12 @@
 // the PR's body closes (- for none), which the lander lands with it. pr lines appends one typed line
 // (SCORE who=<w> head=<sha> score=N/10 ..., DISPOSITION ..., HOLD ...) to reads.
 // --branch-gone marks the PR's head branch gone (branch_gone), one of the
-// three records pr reap (pr_reap.go) closes a PR on.
+// three records pr reap (pr_reap.go) closes a PR on. A --head is the PR's
+// head move (#4094, #4097): every primary of the PR in reading at another
+// head has its live fix copy ended ok, its open read copies retired and
+// fresh read copies cut at the new head (one ns_cm_head call; a line
+// PR REHEAD task=<id> reads=<copies> each; a refusal is a PR REHEAD
+// REFUSED line on stderr and the record still exits 0).
 // One Lua call each, one receipt line. Exit 0 written, 2 refused, 6 no Redis.
 package main
 
@@ -30,6 +35,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -130,6 +136,20 @@ func runPRRecord(ctx context.Context, args []string, out, errOut io.Writer) int 
 	fmt.Fprintf(out, "PR RECORD %s head=%s base=%s stream=%s ci=%s mergeable=%s state=%s created=%t\n",
 		stream.PRKey(*repo, *n), orDash(stream.Short(r.Head)), orDash(r.Base), oneline.Field(orDash(r.Stream)),
 		orDash(r.CI), orDash(r.Mergeable), orDash(r.State), r.Created)
+	if f.Head == "" {
+		return 0
+	}
+	recut, err := taskcard.Rehead(ctx, st.Client(), *repo, *n, "pr record")
+	if err != nil {
+		// the record is written (exit 0); the refusal is named, and the
+		// deal pass's reading duty re-heads on its next tick
+		fmt.Fprintf(errOut, "PR REHEAD REFUSED %s why=%s; the record is written, the deal pass re-cuts the reads\n",
+			stream.PRKey(*repo, *n), oneline.Field(err.Error()))
+		return 0
+	}
+	for _, x := range recut {
+		fmt.Fprintf(out, "PR REHEAD task=%s reads=%s\n", x.Primary, orDash(strings.Join(x.Copies, ",")))
+	}
 	return 0
 }
 

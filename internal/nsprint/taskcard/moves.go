@@ -10,8 +10,13 @@
 //	       the copy -> <consumer>:cards:ready
 //	Work   copy ready -> working, k = min(free, |ready|), free = slots - |working|
 //	End    copy working -> ok|fail and, in the same call, the primary's move
-//	       (reading | landed | done | waiting for a work copy; merging |
-//	       working + a fix copy | reading for a read copy)
+//	       (reading, its read copies cut | landed | done | waiting for a work
+//	       copy; merging | reading + a fix copy | reading for a read copy;
+//	       reading + fresh read copies for a fix copy's new head)
+//	Rehead a PR's new head: its reading primaries' open copies retire and
+//	       fresh read copies are cut (pr record --head)
+//	EnsureReads the reading column's duty on each deal pass: a moved head
+//	       re-headed, a reading primary with no live copy given its reads
 //	Cancel a copy given back, or a primary cancelled with its live copy
 //	Beat   a working copy's lease; Expire returns lapsed copies as fails
 //	FsckMoves both links both ways
@@ -43,6 +48,8 @@ const (
 	FnFsckMove = "ns_cm_fsck"
 	FnRepair   = "ns_cm_repair"
 	FnAssign   = "ns_cm_assign"
+	FnHead     = "ns_cm_head"
+	FnReads    = "ns_cm_reads"
 )
 
 // Cols are a consumer's four sets, in table order.
@@ -212,8 +219,9 @@ type EndRequest struct {
 	By     string
 }
 
-// Ended is one copy returned: the primary's move and the next copy (a fix
-// copy cut on the author's consumer), if any.
+// Ended is one copy returned: the primary's move and the next copies, comma
+// joined (the read copies a move into reading cut, a fix copy cut on the
+// author's queue, fresh reads at a fix's new head), if any.
 type Ended struct {
 	Copy, Primary, From, To, Next string
 }
@@ -340,6 +348,51 @@ func ExpireCopies(ctx context.Context, c redis.Cmdable, by string, consumers ...
 		return nil, err
 	}
 	return parseEnded(FnExpireCp, "EXPIRED", out, 2)
+}
+
+// Recut is one primary whose read copies were cut: by a head move
+// (Rehead, EnsureReads) or because it held none (EnsureReads).
+type Recut struct {
+	Primary string
+	Copies  []string
+}
+
+func parseRecut(fn, head string, out []string) ([]Recut, error) {
+	if len(out) < 2 || out[0] != head || (len(out)-2)%2 != 0 {
+		return nil, fmt.Errorf("%s: unexpected reply %v", fn, out)
+	}
+	var r []Recut
+	for i := 2; i+1 < len(out); i += 2 {
+		x := Recut{Primary: out[i]}
+		if out[i+1] != "" {
+			x.Copies = strings.Split(out[i+1], ",")
+		}
+		r = append(r, x)
+	}
+	return r, nil
+}
+
+// Rehead is pr record --head's event (#4094): every primary of repo#n in
+// reading at another head than the PR record's has its live fix copy ended
+// ok (the new head is its result), its open read copies retired, and fresh
+// read copies cut at the new head; one call.
+func Rehead(ctx context.Context, c redis.Cmdable, repo string, n int, by string) ([]Recut, error) {
+	out, err := fcall(ctx, c, FnHead, repo, n, by)
+	if err != nil {
+		return nil, err
+	}
+	return parseRecut(FnHead, "REHEAD", out)
+}
+
+// EnsureReads is the reading column's duty (#4094 DONE-WHEN 4), one call
+// per deal pass: a reading primary whose PR head moved is re-headed, and
+// one with no live copy has its read copies cut.
+func EnsureReads(ctx context.Context, c redis.Cmdable, by string) ([]Recut, error) {
+	out, err := fcall(ctx, c, FnReads, by)
+	if err != nil {
+		return nil, err
+	}
+	return parseRecut(FnReads, "READS", out)
 }
 
 // MovesFsck is ns_cm_fsck's (or ns_cm_repair's) reply.

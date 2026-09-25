@@ -478,7 +478,7 @@ func PostMeasured(ctx context.Context, c *redis.Client, repo, n, text, mirror st
 	gates := fmt.Sprintf(" gates=%s measured=%s", orDash(p.Gates), orDash(p.Measured))
 	moves := ""
 	if EventKinds[kind] {
-		moves = fmt.Sprintf(" tasks_moved=%d", p.Moved)
+		moves = fmt.Sprintf(" tasks_moved=%d copies_cut=%d", p.Moved, p.Cut)
 		for _, s := range p.Skipped {
 			fmt.Fprintf(stderr, "READ POST SKIPPED repo=%s n=%s %s\n", repo, n, strings.ReplaceAll(s, "\n", " "))
 		}
@@ -501,5 +501,8 @@ func PostMeasured(ctx context.Context, c *redis.Client, repo, n, text, mirror st
 // PR or an issue its record closes; a SCORE moves the PR's read task
 // read-<n>-<head8> working -> merging. ns_line_post makes the move in the
 // same call as the line (NS.tev.event, internal/nsprint/fn/lua/03_task_event.lua):
-// the line and the move together or neither; read post reports tasks_moved.
+// the line and the move together or neither; read post reports tasks_moved
+// and, since #4094/#4097, copies_cut: the SCORE also ends the reader's read
+// copy of every primary of the PR in reading (8+ at the record head moves the
+// primary to merging; under 8 cuts one fix copy on the author's queue).
 var EventKinds = map[string]bool{"CLOSE": true, "SCORE": true}

@@ -68,7 +68,8 @@ do
   -- text (the whole typed line), source ('' or comment:<id>).
   -- Reply: MISSING <record> | REFUSED <why> | EXISTS <line key> |
   -- POSTED <line key> <full head> <gates> <measured> <lines in the log>
-  -- <tasks moved> <same> <skipped> <note>... (the notes 'id: why' per skip).
+  -- <tasks moved> <same> <skipped> <cut> <note>... (the notes 'id: why' per skip;
+  -- cut is the copies the SCORE cut, #4094).
   local function line_post(keys, args)
     local mode, repo, n, head, who, kind = args[1] or '', args[2] or '', args[3] or '',
       string.lower(args[4] or ''), string.lower(args[5] or ''), args[6] or ''
@@ -145,7 +146,7 @@ do
     local ev = { moved = 0, same = 0, skipped = 0, notes = {} }
     if mode ~= 'import' then ev = NS.tev.event(repo, n, rk, first) end
     local reply = { 'POSTED', lk, head, gates, mnames, tostring(count),
-      tostring(ev.moved), tostring(ev.same), tostring(ev.skipped) }
+      tostring(ev.moved), tostring(ev.same), tostring(ev.skipped), tostring(ev.cut or 0) }
     for _, note in ipairs(ev.notes) do reply[#reply + 1] = note end
     return reply
   end

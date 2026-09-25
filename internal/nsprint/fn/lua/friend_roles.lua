@@ -54,7 +54,9 @@ local function friend_roles(keys, args)
   end
   local wanted, normalized = {}, {}
   for _, role in ipairs(fr_csv(roles_csv)) do
-    if role ~= 'may-hold' and role ~= 'builder' and role ~= 'coordinator' then
+    -- reader: the friend reads (a primary entering reading cuts its read
+    -- copy on a reader with open slots, #4094)
+    if role ~= 'may-hold' and role ~= 'builder' and role ~= 'coordinator' and role ~= 'reader' then
       return { 'BADROLE', role }
     end
     if not wanted[role] then wanted[role], normalized[#normalized + 1] = true, role end

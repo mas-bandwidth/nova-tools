@@ -97,8 +97,9 @@ func TestRolesRefusalNamesBadValue(t *testing.T) {
 	if code != 1 || !strings.Contains(errOut, "UNKNOWN missing") {
 		t.Fatalf("unknown exit %d stderr %q", code, errOut)
 	}
-	code, _, errOut = runRoles(t, "a", addr, "--set", "b", "--roles", "reader")
-	if code != 1 || !strings.Contains(errOut, "BADROLE reader") {
+	// (reader is a role since #4094: the reading column's friend readers)
+	code, _, errOut = runRoles(t, "a", addr, "--set", "b", "--roles", "overseer")
+	if code != 1 || !strings.Contains(errOut, "BADROLE overseer") {
 		t.Fatalf("bad role exit %d stderr %q", code, errOut)
 	}
 }
