@@ -4022,6 +4022,15 @@ shape holds refuses with the whole remedy verb: `open first: nova-cairn open
 
 ## nova-sprint
 
+```
+nova-sprint table --redis <addr> [--sprint <name>] [--once | --loop]
+nova-sprint table --check --redis <addr>
+nova-sprint table --layout live [--redis <addr>] [--sprint <name>] [--friends <a,b,...>] [--once | --loop [<seconds>]] [--out <file>] [--lock <key>]
+nova-sprint table clear --checkpoint <file> [--redis <addr>] [--friends <a,b,...>] [--by <name>]
+nova-sprint table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...> [--xy-file <file>]
+nova-sprint refresh -- <command> [arg...]
+```
+
 Renders the sprint table from Redis. The wide table is written nowhere
 (#3326): `table --redis <addr>` makes one `FCALL_RO ns_snapshot` per render
 over the `s:<S>:*`, `bench:*` and `friend:*` keys and prints the table to
