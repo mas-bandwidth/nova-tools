@@ -4008,14 +4008,13 @@ shape holds refuses with the whole remedy verb: `open first: nova-cairn open
 
 ## nova-sprint
 
-Renders the sprint table from Redis and writes it nowhere (#3326).
-`table --redis <addr>` makes one `FCALL_RO ns_snapshot` per render over the
-`s:<S>:*`, `bench:*` and `friend:*` keys and prints the table to standard
-output; `--once` renders one, `--loop` one per second, and `--sprint <name>`
-shows a control sprint. There is no published file, no `--out`, no
+Renders the sprint table from Redis. The wide table is written nowhere
+(#3326): `table --redis <addr>` makes one `FCALL_RO ns_snapshot` per render
+over the `s:<S>:*`, `bench:*` and `friend:*` keys and prints the table to
+standard output; `--once` renders one, `--loop` one per second, and
+`--sprint <name>` shows a control sprint. The wide table has no `--out`, no
 `--fixture` and no `--refresh pending`: a reader runs the verb and reads
-stdout, and a restarted unit re-renders from Redis on its next tick, so
-there is no last table to keep. `table --check --redis <addr>` renders the
+stdout, and a restarted unit re-renders from Redis on its next tick. `table --check --redis <addr>` renders the
 fixture keyspace on a throwaway server and compares it byte for byte.
 `refresh -- <command>` runs that command in its own session (POSIX setsid) and
 returns without waiting, so `launchctl kickstart -k` of the loop unit does not
@@ -4023,30 +4022,57 @@ kill it. The unit plist `fleet/templates/nova-loop.plist.j2`, which
 `fleet/loops.yml` renders for every loop, sets `AbandonProcessGroup` so launchd
 itself signals only the unit's pid.
 
-`table --layout live --redis <addr> --sprint <name> --friends <a,b,...>` is
-Glenn's live sprint table, ported from rowan-tools `bin/sprint-table-redis`
-(#2674). It reads only the keys that script reads (`friend:<f>` and
-`friend:<f>:down`, `sprint:<name>:xy` and `:landed`, `ZCARD q:blocked`, and
-every `bench:*` hash found by SCAN) in one pipeline after the SCAN, and prints
-the same bytes. Like every table mode it is written nowhere (#3326): `--loop`
-prints a table once a second; a failed read keeps the last good friend rows
-and adds a `stale:` line.
-`table --compare <file>` (same flags) waits for the file's next publish,
-renders from Redis, and prints `MATCH` or a unified diff and exits 1.
+`table --layout live [--redis <addr>] [--sprint <name>] [--friends <a,b,...>]
+[--once | --loop [<seconds>]] [--out <file>]` is the whole sprint table Glenn
+watches (#3530): the headline (`SPRINT TABLE *** PIT STOP ***` while
+`s:<name>:pitstop` or `sprint:<name>:pitstop` exists), the
+`<left>/<y> left, <z>% done -> ~<eta>m` line, the streams block, the friend
+block and the host block, one blank line between them. The streams are the
+rows of `ws:order` (the ws index, #3662) with
+the ZCARDs of their `waiting` (plus `ready`), `working`, `merging` and
+`landed` sets; rows with all zeros are hidden. y is every task in those sets,
+left is y minus landed, and the ETA is left over the moves to `landed` in the
+last hour of `ws:log` (at least one an hour). The hosts are the `benches` SET
+(`bench:<b>` hashes; a beat older than 60 s is no row), the friends the
+`--friends` roster or else the `friends` SET sorted, status `up` or `down`,
+done less the count stored at the last `table clear`. Every tick is ONE
+pipeline (a second one only on the tick a set's membership changed), never
+KEYS or SCAN, zero GitHub. `--redis` defaults to `NOVA_SPRINT_REDIS`, then
+`NOVA_REDIS_ADDR`; `--sprint` to `NOVA_SPRINT`. `--loop 1` renders once a
+second until SIGTERM; with `--out <file>` it is the table's one writer: it
+takes the Redis lock `lock:nova-sprint-table` (`--lock <key>` names another),
+refuses with exit 3 when another writer holds it, and publishes each tick by
+writing a temp file beside `<file>` and renaming it; stdout gets one `TABLE
+loop` line. A tick whose read fails publishes the last good rows and a
+`stale:` line.
+
+`table clear --checkpoint <file> [--redis <addr>] [--friends <a,b,...>]
+[--by <name>]` (#3637) zeroes the landed and done columns in under a second:
+it writes the checkpoint (every landed task with its fields, every friend's
+done count) and prints `CHECKPOINT`, then in one MULTI/EXEC moves every
+`ws:<s>:landed` member to closed (`task:<id>` state, one `ws:log` entry
+each), stores the done counts in `ws:done0` and the receipt in
+`ws:checkpoint`, and prints `CLEARED ... ms=<n>`. Waiting, ready, working and
+merging are untouched.
+
+`table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...>`
+renders the #2674 port of rowan-tools `bin/sprint-table-redis` (the keys
+that script reads, the bytes it prints), waits for the file's next publish,
+and prints `MATCH` or a unified diff and exits 1.
 
 ### First run
 
 Run the three lines in an empty directory. They are the three file-shaped
-first tries, and each is refused with the whole verb, because the table is
-read from Redis and written nowhere; the directory stays empty. With a server,
+first tries, and each is refused with the whole verb, because the wide table
+is read from Redis and written nowhere; the directory stays empty. With a server,
 `nova-sprint table --redis 127.0.0.1:6379 --once` prints the table.
 
 ```text
 $ nova-sprint table --once --out sprint-table.txt
-! nova-sprint table: flag provided but not defined: -out; the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; run: nova-sprint help
+! nova-sprint table: --friends, --xy-file, --out and --lock belong to --layout live; the wide table is written nowhere (#3326); run: nova-sprint help
 
 $ nova-sprint table --once
-! nova-sprint table: --redis <addr> is required; the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; run: nova-sprint help
+! nova-sprint table: --redis <addr> is required; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
 
 $ nova-sprint table --check
 ! nova-sprint table: --check needs --redis <addr>, a throwaway server for the fixture keyspace; run: nova-sprint help
@@ -4054,7 +4080,7 @@ $ nova-sprint table --check
 
 What a first run gets wrong, and what each one wants:
 
-- **`--out`, `--fixture` or `--refresh pending`.** These were the file cut, deleted by #3326; each is now an unknown flag. Read the table from stdout.
+- **`--out`, `--fixture` or `--refresh pending`.** These were the file cut, deleted by #3326; `--fixture` and `--refresh` are unknown flags, and `--out` belongs to `--layout live` (#3530), the one published table. Read the wide table from stdout.
 - **`nova-sprint table` without `--redis`.** It wants the server address. There is no default address and no default loop.
 - **`--check` without `--redis`.** It wants a throwaway server; it seeds nothing, so load the fixture keyspace first.
 
