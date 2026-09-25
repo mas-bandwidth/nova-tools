@@ -71,7 +71,7 @@ func TestRoutesTierLabelPicksTheSpread(t *testing.T) {
 			"dsflash deepseek/deepseek-flash",
 		},
 		"pro": {
-			"ormimo26pro openrouter/xiaomi/mimo-v2.6-pro",
+			"orkimi3 openrouter/moonshotai/kimi-k3",
 			"dspro deepseek/deepseek-v4-pro",
 			"ocqwenplus opencode/qwen3.6-plus",
 		},
