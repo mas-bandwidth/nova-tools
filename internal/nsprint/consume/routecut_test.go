@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 )
 
 // TestRouteAdoptionCutsOnce is nova-tools #3496 item 2: the ok-to-friend rule
@@ -37,14 +38,17 @@ func TestRouteAdoptionCutsOnce(t *testing.T) {
 	head := strings.Repeat("6", 40)
 	harvestCard(t, client, sprint, label, pr, head)
 
-	ciKey := "s:" + sprint + ":card:ci-106-" + head[:8]
+	// The ci card label names the (head, tested base tip) pair (#3148).
+	tip := strings.Repeat("b", 40)
+	ciLabel := ci.Label(pr, head, tip)
+	ciKey := "s:" + sprint + ":card:" + ciLabel
 	cuts := func() int {
 		t.Helper()
 		entries, err := client.XRange(ctx, "s:"+sprint+":log", "-", "+").Result()
 		must(t, err)
 		n := 0
 		for _, e := range entries {
-			if e.Values["kind"] == "ci cut" && e.Values["id"] == "ci-106-"+head[:8] {
+			if e.Values["kind"] == "ci cut" && e.Values["id"] == ciLabel {
 				n++
 			}
 		}
@@ -72,7 +76,6 @@ func TestRouteAdoptionCutsOnce(t *testing.T) {
 	}
 
 	// Tip recorded: one cut, one read, the card review-ready.
-	tip := strings.Repeat("b", 40)
 	must(t, client.HSet(ctx, civerdict.TipKey(ctlRepo, "dev"), "sha", tip).Err())
 	if _, err := ok.Pass(ctx); err != nil {
 		t.Fatalf("pass with the tip recorded: %v", err)
