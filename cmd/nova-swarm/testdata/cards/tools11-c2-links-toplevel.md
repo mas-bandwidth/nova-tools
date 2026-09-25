@@ -14,7 +14,7 @@ ROUTE: jev=flash why=- eligible=rules (16:11:02Z `ROUTE unit=tools11-c2-links-to
 STEP 1. Enter the repository and confirm the pinned base.
 
 ```
-[ -d repo ] || git clone -q https://github.com/mas-bandwidth/nova-tools.git repo
+[ -d repo ] || git clone -q --depth 50 --single-branch -b dev --reference ~/nova-bench/mirror/nova-tools.git https://github.com/mas-bandwidth/nova-tools.git repo
 cd repo
 git fetch -q origin dev
 git checkout -q 702b0133267140c98d5a856b6766949556cc4f19

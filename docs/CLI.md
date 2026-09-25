@@ -4065,6 +4065,33 @@ renders the #2674 port of rowan-tools `bin/sprint-table-redis` (the keys
 that script reads, the bytes it prints), waits for the file's next publish,
 and prints `MATCH` or a unified diff and exits 1.
 
+### Merged-tree guards, dev-red and read carry (#3629, #3630)
+
+`internal/nsprint/land/guard` is the merged-tree guard suite: a library any
+lander calls with a repository path before the batch test of a stream
+branch, one PASS/FAIL row per guard with the offending file (`lua-locals`,
+`lua-crossfile`, `one-parser`, `catalog`, `named-paths`, `tracked-files`).
+Each row is an interaction that was green per PR and red on the merged
+tree; the next one is a row in the registry, not a hunt.
+
+`dev-red status|check|watch|unwatch --repo <r> --base <b> --redis <addr>`:
+the reconciler's dev-red duty walks `devred:bases` every pass; while the
+base tip's CI record (`ci:<repo>:<sha>`, the gated receipt, or one `gh api`
+check-runs read per base per minute until #3597) is red it writes
+`land:<repo>:<base>:red` (the key a lander reads through `land.RedBlocked`
+before merging a stream into that base) and pushes ONE fix task to the
+coordinator's queue naming the failing check; green clears it. `status`
+prints `RED <check> <sha> task=<id>` or `GREEN <repo>/<base>`.
+
+`read digest --repo <r> --n <n>` records the diff identity of the head a
+typed line is taken at (`diff_sha256` on the unit record; the reader runs
+it at read time). `read carry --repo <r> --n <n>` compares it with the
+unit's head now from the bench mirror and, when `git diff base...head` is
+byte-identical after the base merge is normalised, copies every typed line
+to the new head as a record with a `carried_from` receipt (`CARRIED`, exit
+0); a changed diff is `REFUSED changed=<files>` (exit 1) and a re-read is
+the one remedy. The lander counts a carried read as a read.
+
 ### First run
 
 Run the three lines in an empty directory. They are the three file-shaped
@@ -4094,6 +4121,52 @@ There is **no `quickstart` verb**. A one-word first run would have to invent a f
 **The Redis verbs need the `nova_sprint` function library on the server** (#3196). `nova-sprint fn load --redis <addr>` installs the library embedded in the binary with `FUNCTION LOAD REPLACE` and prints `LOADED nova_sprint sha=<sha>`; when the server already holds that exact source it loads nothing and prints `UNCHANGED nova_sprint sha=<sha>`, so a converge runs it every pass. `nova-sprint fn check --redis <addr>` changes nothing and prints `OK nova_sprint sha=<sha> ping=PONG` (exit 0), or `MISSING`, `STALE loaded=<sha> want=<sha>` or `NOPING` (exit 1): that exit is the bench-conform line for the fleet Redis. On `MISSING` or `STALE` it does not call `ns_ping` (`ping=skipped`), since the server's `ns_ping` is then not the embedded one and may write. The address authenticates the way every other `--redis` verb does.
 
 `nova-sprint backpressure check --sprint <name> [--redis <addr>]` (#3276) refuses a second backpressure source of truth beside `s:<S>:backpressure`. It reads the named keys only (the sprint's hash, the `proc:backpressure` beat and the legacy global `backpressure` hash) with one EXISTS pipeline, never SCAN or KEYS, and prints one receipt: `BACKPRESSURE CHECK OK sprint=<S> own=<0|1> beat=<0|1> legacy=0 round_trips=1` (exit 0), or `BACKPRESSURE CHECK REFUSED ... legacy=<keys> round_trips=1 remedy=...` (exit 1); usage or an unreachable store exits 2.
+### read
+
+A friend read makes zero GitHub calls (#3599, umbrella #3594: GitHub is a
+git remote only). `read brief --repo <r> --n <n> --out <dir> [--mirror <dir>]
+[--redis <addr>]` reads the PR record `pr:<repo>:<n>` (head, base, base_sha,
+paths, done_when, stream, depends_on, branch, who) and the typed lines already
+posted (the list `pr:<repo>:<n>:lines`) in one pipeline, the CI hash at head
+(`ci:<repo>:<head>`, #3597) in one HGETALL, and takes the diff from the bench
+mirror with `git -C ~/nova-bench/mirror/<repo>.git diff <base_sha>..<head>`
+(the rowan-tools `mirror-refresh` loop keeps `refs/pull/*/head` there; the
+verb never fetches). It writes `<dir>/brief.md`, the read brief rendered
+from `internal/nsprint/read/tmpl/read.tmpl` with the record, the CI lines, the
+posted lines, the file list and the files outside PATHS, and `<dir>/diff.patch`,
+then prints one receipt:
+
+```
+READ BRIEF repo=nova-tools n=7 head=b7628a80 base_sha=1a1ad594 files=1 outside_paths=0 lines=1 ci=2 out=<dir>/brief.md github_calls=0
+```
+
+A record with no head, a record with no base_sha, a mirror without the head
+yet, and a missing mirror are each one `READ BRIEF REFUSED repo= n= why=`
+line naming the remedy (exit 1); a head the mirror's `refs/pull/<n>/head`
+has moved past is reported as `mirror_head=` and as a `HEAD MOVED` line in the
+brief, and the record head is what is read.
+
+`read post --repo <r> --n <n> --line "<typed line>" [--no-github] [--owner
+<o>] [--redis <addr>]` stores the line: the first word is one of SCORE, HOLD,
+REPAIR, SPEC, SPEC-WRITTEN, CLOSE or JEV-DIFF and the first line carries
+`who=<name>` and `head=<sha>`, or the line is refused. It RPUSHes the line
+onto `pr:<repo>:<n>:lines` and stamps `last_line` and `last_line_at` on the
+record in one MULTI, then, until #3595 retires PR comments, mirrors it as one
+REST comment (`POST /repos/<owner>/<repo>/issues/<n>/comments`, the token from
+`GH_TOKEN` or `GITHUB_TOKEN`, the base URL from `GITHUB_API_URL`). `--no-github`
+is Redis only (the tests count HTTP calls: 0 with it, exactly 1 without). A
+comment that fails after the Redis write is `READ POST REFUSED ... redis=ok
+github=<why>` (exit 1): the line is in Redis, which is the record.
+
+```
+READ POST repo=nova-tools n=7 kind=SCORE lines=2 github_calls=1 comment=4242
+```
+
+Every brief this repository ships (the nova-sprint brief templates, the read
+template, the `nova-swarm template` cards and the swarm's card fixtures) is
+scanned by `internal/ci` (TestNoGhInAnyBrief, #3600): a `gh ` invocation, a
+GraphQL mention, or a GitHub clone without the bench mirror as `--reference`
+is a red run.
 
 ### lesson
 
