@@ -339,7 +339,8 @@ func cardKeys(sprint, label string) []string {
 }
 
 func fcall(ctx context.Context, st *store.Store, name string, keys []string, args ...any) (fnReply, error) {
-	if err := fn.Load(ctx, st.Client()); err != nil {
+	err := fn.Load(ctx, st.Client())
+	if err != nil && !strings.Contains(err.Error(), "NOPERM") {
 		return fnReply{}, err
 	}
 	raw, err := st.Client().FCall(ctx, name, keys, args...).Text()

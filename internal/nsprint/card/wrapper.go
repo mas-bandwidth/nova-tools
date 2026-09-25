@@ -45,7 +45,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/redis/go-redis/v9"
 )
 
 // Wrapper exit codes. They follow the card verb's codes where one exists.
@@ -356,23 +355,6 @@ func claimNonce() (string, error) {
 // claim's only lifetime, so it has no TTL of its own. Replies code|STATUS
 // with the card verb codes: 0 claimed (or this nonce's own retry), 2 not
 // dealt, 3 fenced, 4 another wrapper holds the attempt, 5 no card.
-var claimScript = redis.NewScript(`
-local k = KEYS[1]
-local state = redis.call('HGET', k, 'state')
-if not state then return '5|NOTFOUND' end
-local token = redis.call('HGET', k, 'token')
-if ARGV[1] == '' or not token or token ~= ARGV[1] then return '3|FENCED' end
-local tsha = redis.call('HGET', k, 'token_sha') or ''
-local mine = tsha .. ':' .. ARGV[2]
-local held = redis.call('HGET', k, 'claim')
-if held == mine then return '0|OK' end
-if state ~= 'dealt' then return '2|STATE' end
-if held and string.sub(held, 1, #tsha + 1) == tsha .. ':' then return '4|CONFLICT' end
-local t = redis.call('TIME')
-local at = string.format('%.0f', tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000))
-redis.call('HSET', k, 'claim', mine, 'claim_at', at)
-return '0|OK'
-`)
 
 // Claim is the attempt claim through claimScript: one writer (the attempt's
 // wrapper), Redis TIME for claim_at, no TTL beyond the attempt's lease.
@@ -381,19 +363,17 @@ func (l *RedisLedger) Claim(ctx context.Context, nonce string) (int, error) {
 	if l.Store == nil || l.Store.Client() == nil || !validSprintLabel(l.Sprint, l.Label) || l.Token == "" || nonce == "" {
 		return usage(verb, l.Label).Code, nil
 	}
-	raw, err := claimScript.Run(ctx, l.Store.Client(), []string{CardKey(l.Sprint, l.Label)}, l.Token, nonce).Text()
+	reply, err := fcall(ctx, l.Store, "ns_card_claim", cardKeys(l.Sprint, l.Label), l.Sprint, l.Label, l.Token, nonce)
 	if err != nil {
 		if res, down := redisDown(verb, l.Label, err); down {
 			return res.Code, nil
 		}
 		return 0, err
 	}
-	codeText, _, _ := strings.Cut(raw, "|")
-	code, err := strconv.Atoi(codeText)
-	if err != nil {
-		return 0, fmt.Errorf("card claim reply %q", raw)
+	if reply.Code != 0 {
+		return reply.Code, fmt.Errorf("card claim reply %q", reply.Status)
 	}
-	return code, nil
+	return reply.Code, nil
 }
 
 // finish is step 6 and 7: copy out, record, end, delete.

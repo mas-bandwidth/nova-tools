@@ -3,6 +3,8 @@ package card_test
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"os"
 	"path/filepath"
 	"strings"
@@ -580,4 +582,48 @@ func (r *racer) Beat(ctx context.Context) (int, error) { return r.inner.Beat(ctx
 
 func (r *racer) End(ctx context.Context, end card.WrapperEnd) (int, error) {
 	return r.inner.End(ctx, end)
+}
+func TestClaimIsALibraryFunction(t *testing.T) {
+	ctx := context.Background()
+	_, adminClient := newSprint(t)
+	addr := adminClient.Options().Addr
+
+	// Create a user with only +fcall and access to keys
+	err := adminClient.Do(ctx, "ACL", "SETUSER", "fcaller", "on", ">pw", "+fcall", "~*", "+@hash", "+@connection", "+time").Err()
+	if err != nil {
+		t.Fatalf("ACL SETUSER: %v", err)
+	}
+
+	// Connect as fcaller
+	fn.Load(ctx, adminClient)
+	client := redis.NewClient(&redis.Options{Addr: addr, Username: "fcaller", Password: "pw"})
+	t.Cleanup(func() { _ = client.Close() })
+
+	st := store.New(client)
+
+	// Create a dealt card
+	id := card.Identity{Sprint: "control-fcall", Label: "card-fcall", BaseSHA: "0000", Bench: "bench-1", Attempt: 1}
+	token := attemptToken(1, "tok")
+	seedCard(t, ctx, adminClient, id, "dealt", token)
+
+	ledger := &card.RedisLedger{
+		Store:  st,
+		Sprint: id.Sprint,
+		Label:  id.Label,
+		Token:  token,
+	}
+
+	code, err := ledger.Claim(ctx, "nonce-123")
+	if err != nil {
+		t.Fatalf("Claim failed: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("Claim code %d, want 0", code)
+	}
+
+	// Verify it was claimed
+	hash := hashOf(t, ctx, adminClient, id.Sprint, id.Label)
+	if hash["claim"] == "" {
+		t.Fatalf("claim not written")
+	}
 }

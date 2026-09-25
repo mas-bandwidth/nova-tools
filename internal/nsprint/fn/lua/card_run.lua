@@ -250,3 +250,22 @@ redis.register_function('ns_card_end', function(keys, args)
   redis.call('HSET', idem_key, idem, receipt)
   return reply(0, 'OK', attempt, receipt)
 end)
+redis.register_function('ns_card_claim', function(keys, args)
+  local sprint, label, token, nonce = args[1], args[2], args[3] or '', args[4] or ''
+  if not card_keys_ok(keys, sprint, label) then return reply(4, 'CONFLICT', '', '') end
+  local k = keys[1]
+  local state = hget(k, 'state')
+  if state == '' then return reply(5, 'NOTFOUND', '', '') end
+  local attempt = hget(k, 'attempt')
+  local stored_token = hget(k, 'token')
+  if token == '' or stored_token == '' or stored_token ~= token then return reply(3, 'FENCED', attempt, '') end
+  local tsha = hget(k, 'token_sha')
+  local mine = tsha .. ':' .. nonce
+  local held = hget(k, 'claim')
+  if held == mine then return reply(0, 'OK', attempt, '') end
+  if state ~= 'dealt' then return reply(2, 'STATE', attempt, '') end
+  if held ~= '' and string.sub(held, 1, #tsha + 1) == tsha .. ':' then return reply(4, 'CONFLICT', attempt, '') end
+  local at = now_ms()
+  redis.call('HSET', k, 'claim', mine, 'claim_at', at)
+  return reply(0, 'OK', attempt, '')
+end)
