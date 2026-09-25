@@ -8,6 +8,7 @@
 // ci-github consumer of ev:github writes ci:<repo>:<sha>:gh from the webhook
 // deliveries, so nothing polls GitHub for a check state. status --repo --sha
 // prints that record's rows and the GitHub leg, from Redis only.
+// parity (#3041) is the sprint's measurement from Redis alone: no GitHub poll.
 package main
 
 import (
@@ -251,10 +252,12 @@ func runCIStatus(ctx context.Context, args []string, out, errOut io.Writer) int 
 	return 0
 }
 
-// runCIParity is #3041 (#2756 10.8.1): every head of a sprint PR that
-// Actions passed (completed workflow_run entries on ev:github) must be OK on
-// ci:<repo>:<head>:<gid>. It prints PARITY FAIL <head> per miss, then PARITY n/m,
-// and exits 1 on a miss or under --min heads (the gate is n/n, n >= 20).
+// runCIParity is #3041 (#2756 10.8.1): over the sprint's window (s:<S>
+// opened_at..closed_at), every head of a sprint PR that Actions passed
+// (completed workflow_run entries on ev:github) must be green on our record
+// ci:<repo>:<sha>. Redis alone, no GitHub poll. It prints PARITY FAIL <head>
+// with its remedy per miss, then PARITY n/m sprint=<S>, and exits 1 on a miss
+// or under --min heads (the gate is n/n, n >= 20).
 func runCIParity(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci parity")
 	redisAddr := fs.String("redis", "", "")
