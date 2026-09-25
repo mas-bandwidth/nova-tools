@@ -52,13 +52,11 @@ func TestReadCopyDealtToBenchRendersALintedCard(t *testing.T) {
 	}
 	head := strings.Repeat("cd", 20)
 	c.HSet(ctx, "pr:nova-tools:3950", "head", head, "base", "dev")
-	if _, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{d[0].Copy}, OK: true, Repo: "nova-tools", PR: "3950",
-		Head: head, By: "f"}); err != nil {
-		t.Fatal(err)
-	}
-	// CI OK at the head moves it to reading (no reader enrolled: no copy yet)
-	if e, err := taskcard.CIEnd(ctx, c, "nova-tools", head, "OK", "", "ci"); err != nil || len(e) != 1 || e[0].To != "reading" {
-		t.Fatalf("ci OK %v %v", e, err)
+	// the work copy's ok with a PR moves the primary to reading (no reader
+	// enrolled: no read copy yet, the deal cuts it)
+	if e, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{d[0].Copy}, OK: true, Repo: "nova-tools", PR: "3950",
+		Head: head, By: "f"}); err != nil || len(e) != 1 || e[0].To != "reading" || e[0].Next != "" {
+		t.Fatalf("end ok with a PR %v %v", e, err)
 	}
 	r, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: bench, N: 1, By: "reconciler"})
 	if err != nil || len(r) != 1 {

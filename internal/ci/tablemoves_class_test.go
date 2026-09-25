@@ -31,6 +31,7 @@ import (
 // predate the rule, per file: they only go down.
 var legacyLedgerWriters = map[string]int{
 	"bench_reset.lua":        2,
+	"card_ghost.lua":         2, // #3925 (landed on dev beside the rule): the closed sprint's lease reap
 	"card_run.lua":           4,
 	"ci.lua":                 2,
 	"deal.lua":               2,

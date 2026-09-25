@@ -88,8 +88,7 @@ var Defaults = map[string][]Check{
 
 // reservedSuffixes are the ci:<repo>:<sha>:<suffix> keys the ci card family
 // owns (ci.lua, civerdict); a check may not take one of their names.
-// cards is the table moves' set of primaries waiting on the head (#3929).
-var reservedSuffixes = map[string]bool{"gids": true, "waiting": true, "runners": true, "tip": true, "cards": true}
+var reservedSuffixes = map[string]bool{"gids": true, "waiting": true, "runners": true, "tip": true}
 
 var checkRx = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,40}$`)
 

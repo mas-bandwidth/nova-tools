@@ -11,7 +11,6 @@
 //	card work  --as <consumer> (--fill | --n <k> | --ids @file|a,b)
 //	card end   (--id <copy> | --ids @file|a,b) (--ok [--pr <repo>#<n> --head <sha>] [--done-already <sha>] |
 //	           --score <N>/10 [--gates <g>] [--finding <text>] [--reader <who>] | --fail <why>) [--token <t>] [result flags]
-//	card ci    --repo <repo> --head <sha> (--ok | --fail <why>)   a head's CI word, by hand
 //	card assign --id <primary> --to <consumer> [--revoke] [--why <why>]
 //	card beat  --as <consumer> (--id <copy> | --ids ...)
 //	card land  --stream <s> --sha <merge sha>
@@ -45,7 +44,7 @@ import (
 
 // cardMoveVerbs are the table move subverbs no other card form has.
 var cardMoveVerbs = map[string]bool{"deal": true, "work": true, "land": true, "cancel": true, "expire": true,
-	"table": true, "consumers": true, "render": true, "ci": true, "assign": true}
+	"table": true, "consumers": true, "render": true, "assign": true}
 
 // isCardMove says whether a card call is a table move. end and beat are
 // the move form with --id, --ids or --as (the bench attempt form names a
@@ -84,7 +83,7 @@ func isCardMove(sub string, args []string) bool {
 type moveCmd struct {
 	redis, actor, to, as, stream, ids, id, why, sha *string
 	pr, head, doneAlready, score, gates, finding    *string
-	reader, fail, add, rm, token, repo              *string
+	reader, fail, add, rm, token                    *string
 	n                                               *int
 	fill, ok, repair, revoke                        *bool
 	result                                          map[string]*string
@@ -119,7 +118,6 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	m.add = fs.String("add", "", "")
 	m.rm = fs.String("rm", "", "")
 	m.token = fs.String("token", "", "")
-	m.repo = fs.String("repo", "", "")
 	m.revoke = fs.Bool("revoke", false, "")
 	m.n = fs.Int("n", 0, "")
 	m.fill = fs.Bool("fill", false, "")
@@ -239,10 +237,6 @@ func (m *moveCmd) usage(sub string, ids []string) string {
 		if len(ids) != 1 {
 			return "render wants --id <copy>"
 		}
-	case "ci":
-		if *m.repo == "" || *m.head == "" || *m.ok == (*m.fail != "") {
-			return "ci wants --repo <repo> --head <sha> and one of --ok and --fail <why>"
-		}
 	case "assign":
 		if len(ids) != 1 || *m.to == "" {
 			return "assign wants --id <primary> --to bench:<b>|friend:<f> [--revoke]"
@@ -338,20 +332,6 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 			fmt.Fprintf(out, "ENDED %s primary=%s from=%s to=%s next=%s\n", x.Copy, x.Primary, x.From, x.To, dash(x.Next))
 		}
 		fmt.Fprintf(out, "CARD END n=%d ms=%d\n", len(e), ms())
-		return 0
-	case "ci":
-		final, why := "OK", ""
-		if *m.fail != "" {
-			final, why = "FAIL", *m.fail
-		}
-		e, err := taskcard.CIEnd(ctx, c, *m.repo, *m.head, final, why, *m.actor)
-		if err != nil {
-			return refused(err, "head="+*m.head)
-		}
-		for _, x := range e {
-			fmt.Fprintf(out, "CI %s to=%s copy=%s\n", x.Primary, x.To, dash(x.Next))
-		}
-		fmt.Fprintf(out, "CARD CI repo=%s head=%s final=%s n=%d ms=%d\n", *m.repo, *m.head, final, len(e), ms())
 		return 0
 	case "assign":
 		to, err := consumerArg(*m.to)

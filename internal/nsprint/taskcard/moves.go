@@ -42,7 +42,6 @@ const (
 	FnExpireCp = "ns_cm_expire"
 	FnFsckMove = "ns_cm_fsck"
 	FnRepair   = "ns_cm_repair"
-	FnCI       = "ns_cm_ci"
 	FnAssign   = "ns_cm_assign"
 )
 
@@ -269,25 +268,6 @@ func parseEnded(fn, head string, out []string, width int) ([]Ended, error) {
 		default:
 			e = append(e, Ended{Copy: out[i], To: out[i+1]})
 		}
-	}
-	return e, nil
-}
-
-// CIEnd hands a head's CI word (OK or FAIL) to every primary waiting on
-// it: the same step ns_ci_end and the ci run's verdict take in their own
-// call (card ci by hand). Ended.Copy is the primary, To its where, Next the
-// copy cut (a read copy on OK, a fix copy on FAIL).
-func CIEnd(ctx context.Context, c redis.Cmdable, repo, head, final, why, by string) ([]Ended, error) {
-	out, err := fcall(ctx, c, FnCI, repo, head, final, why, by)
-	if err != nil {
-		return nil, err
-	}
-	if len(out) < 2 || out[0] != "CI" || (len(out)-2)%3 != 0 {
-		return nil, fmt.Errorf("%s: unexpected reply %v", FnCI, out)
-	}
-	var e []Ended
-	for i := 2; i+2 < len(out); i += 3 {
-		e = append(e, Ended{Copy: out[i], Primary: out[i], To: out[i+1], Next: out[i+2]})
 	}
 	return e, nil
 }

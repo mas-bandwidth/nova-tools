@@ -717,7 +717,7 @@ NS.card = { move = card_move, create = card_create, purge = card_purge }
 --   working -> merging | done | landed             done (with a PR / not), a merge
 --   working -> ready                              the lease lapsed (a why)
 --   working -> waiting                             card end --fail: retry (a why)
---   working -> reading                             card end --ok with a PR (a read copy is dealt next)
+--   working -> reading                             card end --ok with a PR (its read copy cut in the same call)
 --   reading -> merging | working | waiting         a read's score: 8+ | under 8 (a fix copy) | no author
 --   reading -> done | landed                       cancel, a merge
 --   merging -> landed | done                       a merge, a PR closed unmerged
@@ -1772,14 +1772,22 @@ redis.register_function({ function_name = 'ns_tcard_fsck', flags = { 'no-writes'
 -- retired, so the consumer's ok and fail sets are its done count. card end
 -- RETURNS the copy in the same call: the result is written onto the
 -- primary, its copy pointer is cleared, and the primary moves:
---   work|fix ok with a PR -> reading (author = the consumer), ok with a
---   done-already sha -> landed, ok with neither -> done/ok, fail -> waiting
---   with the why (done/fail after TM.RETRIES);
+--   work|fix ok with a PR -> reading (author = the consumer) and a READ
+--   copy cut for the best reader in the same call (reading with no copy
+--   when no reader has room: the deal cuts it), ok with a done-already sha
+--   -> landed, ok with neither -> done/ok, fail -> waiting with the why
+--   (done/fail after TM.RETRIES);
 --   read with --score N: the SCORE line goes on the PR record pr:<name>:<n>
 --   and N >= TM.PASS -> merging, under it -> working with the finding as
 --   the why and a FIX copy cut on the author's consumer (hold-to-fix), or
 --   -> waiting when there is no author; read --fail -> reading, copy cleared,
 --   dealt to another reader.
+-- A copy's end is the ONLY event that moves a primary (Glenn 2026-09-25
+-- 2:52 PM, rowan-new specs/table-moves.md). CI gates the READ copy, never
+-- the primary: a read ends with a passing score only at a head whose CI is
+-- OK (TM.ci_final; pending or red is refused, and a red head is a score
+-- under TM.PASS with the failure as the finding). No CI verdict, duty or
+-- hand verb moves a primary.
 -- A primary with a live copy is never cut again; a copy with no primary
 -- cannot be made; card fsck (TM.fsck) proves both links both ways. TM is the
 -- only writer of the consumer sets and of the copy and primary pointers.
@@ -1892,12 +1900,14 @@ end
 -- TM.may: nil when consumer c (its desired d) may take primary id's leg,
 -- else why not. A work copy honours the primary's WHO, a read copy its
 -- read_who, the readers set when it has members, and never the author;
--- tiers and kinds declared on <c>:desired filter both.
-function TM.may(c, d, id, leg)
+-- tiers and kinds declared on <c>:desired filter both. author, when given,
+-- is the author a card end is about to write (the record does not name it
+-- yet).
+function TM.may(c, d, id, leg, author)
   local f = redis.call('HMGET', 'task:' .. id, 'who', 'read_who', 'author', 'tier', 'kind')
   local tier, kind = TK.str(f[4]), TK.str(f[5])
   if leg == 'read' then
-    local author = TK.str(f[3])
+    author = TK.str(author) ~= '' and author or TK.str(f[3])
     if author ~= '' and (author == c or select(2, TM.parse(c)) == (select(2, TM.parse(author)) or author)) then
       return 'AUTHOR ' .. c .. ' wrote task:' .. id .. '; a read is never the author\'s'
     end
@@ -2143,7 +2153,7 @@ function TM.finish(id, o)
   for _, v in ipairs(f) do pf[#pf + 1] = v end
   local cf = {}
   local to, pok, why, sha, fix = nil, nil, TK.str(o.why), TK.str(o.sha), nil
-  local line, ci
+  local line, cut_read
   if leg == 'read' then
     if o.outcome == 'fail' then
       to = 'reading'
@@ -2168,6 +2178,15 @@ function TM.finish(id, o)
       pf[#pf + 1] = c
       cf = { 'score', tostring(score) }
       if score >= TM.PASS then
+        -- CI gates the read copy (#3093): a passing read is at a head whose
+        -- CI is OK; the primary never takes a CI word by itself
+        local final, cwhy = TM.ci_final(pr[2], pr[3], head)
+        if final == '' then
+          return 'CIPENDING ' .. string.sub(head, 1, 12) .. ' has no CI verdict yet; a read passes only at a head CI calls OK'
+        elseif final ~= 'OK' then
+          return 'CIRED ' .. string.sub(head, 1, 12) .. ' CI is ' .. final .. (cwhy ~= '' and (' (' .. cwhy .. ')') or '') ..
+            '; end the read under ' .. TM.PASS .. ' with the failure as its --finding'
+        end
         to = 'merging'
         if why == '' then why = 'read ' .. score .. '/10' end
       else
@@ -2202,11 +2221,10 @@ function TM.finish(id, o)
       end
       pf[#pf + 1] = 'author'
       pf[#pf + 1] = c
-      -- #3093: reading only at a CI OK for this exact head; pending waits in
-      -- working with no copy, a FAIL cuts a fix copy for the author
-      to = 'working'
-      ci = { repo = repo, head = get.head }
-      ci.final, ci.why = TM.ci_final(repo, pr, get.head)
+      -- the build copy's ok is what moves the primary to reading; its read
+      -- copy is cut in this same call (CI gates that read, not this move)
+      to, cut_read = 'reading', true
+      if why == '' then why = 'ok pr ' .. TM.bare(repo) .. '#' .. pr .. ' head ' .. string.sub(get.head, 1, 12) end
     else
       to, pok = 'done', 'ok'
     end
@@ -2232,14 +2250,15 @@ function TM.finish(id, o)
   TM.retire(id, c, w, outcome, why, cf, o.by, r[5])
   local nxt = ''
   local err
-  if ci and (ci.final == 'OK' or ci.final == 'FAIL') then
-    err, to, nxt = TM.ci_move(pid, ci.final, ci.why, o.by, pf)
-  elseif ci then
-    pf[#pf + 1] = 'wait_ci'
-    pf[#pf + 1] = TM.bare(ci.repo) .. ':' .. ci.head
-    mo.why = 'ci pending at ' .. string.sub(ci.head, 1, 12)
-    err = TK.move(pid, 'working', mo)
-    if not err then redis.call('SADD', TM.ci_set(ci.repo, ci.head), pid) end
+  if cut_read then
+    -- never the author: the consumer whose copy just ended
+    local reader = TM.pick_reader(pid, c)
+    if reader then
+      err, nxt = TM.cut(reader, pid, 'read', { by = o.by, why = why, to = 'reading', fields = pf })
+    else
+      mo.why = why .. '; no reader has room'
+      err = TK.move(pid, 'reading', mo)
+    end
   elseif fix then
     err, nxt = TM.cut(fix, pid, 'fix', { by = o.by, why = why, fields = pf, to = 'working', extra = { 'finding', why } })
   else
@@ -2253,12 +2272,6 @@ end
 -- TM.bare: the bare repository name of owner/name or name (prkey.Name).
 function TM.bare(repo)
   return string.match(TK.str(repo), '([^/]+)$') or ''
-end
-
--- TM.ci_set: the primaries waiting on CI at one head (#3093), a SET beside
--- the head's CI record (ci:<repo>:<sha>, internal/nsprint/ci).
-function TM.ci_set(repo, head)
-  return 'ci:' .. TM.bare(repo) .. ':' .. head .. ':cards'
 end
 
 -- TM.ci_final: the CI word for a PR head: FAIL when the PR record names
@@ -2294,7 +2307,7 @@ end
 -- TM.pick_reader: the enrolled consumer (the consumers SET) that may read
 -- primary id, is live, not down, not paused, with the most room (slots -
 -- working - ready; by id on a tie); nil when none has room.
-function TM.pick_reader(id)
+function TM.pick_reader(id, author)
   local best, room = nil, 0
   local cs = redis.call('SMEMBERS', 'consumers')
   table.sort(cs)
@@ -2302,67 +2315,13 @@ function TM.pick_reader(id)
     if TM.parse(c) then
       local d = TM.desired(c)
       if d.slots and not d.paused and redis.call('EXISTS', c .. ':down') == 0 and TM.live(c) and
-          not TM.may(c, d, id, 'read') then
+          not TM.may(c, d, id, 'read', author) then
         local r = d.slots - redis.call('ZCARD', TM.key(c, 'working')) - redis.call('ZCARD', TM.key(c, 'ready'))
         if r > room then best, room = c, r end
       end
     end
   end
   return best
-end
-
--- TM.ci_move: a working primary with no copy takes its head's CI word (the
--- one path for the end of a work copy and for a CI end): OK -> reading with
--- a read copy cut for the best reader in the same call (reading with none
--- when no reader has room: the deal duty cuts it); FAIL (a red check, a
--- head change) -> working with the failure as why and exactly one fix copy
--- on the author's consumer (waiting when there is no author). fields are
--- more primary fields. Returns err, where, the copy cut.
-function TM.ci_move(id, final, why, by, fields)
-  local f = { 'wait_ci', '', 'ci', final }
-  for _, v in ipairs(fields or {}) do f[#f + 1] = v end
-  if final == 'OK' then
-    local reader = TM.pick_reader(id)
-    if reader then
-      local err, cid = TM.cut(reader, id, 'read', { by = by, why = 'ci OK', to = 'reading', fields = f })
-      return err, 'reading', cid
-    end
-    return TK.move(id, 'reading', { by = by, why = 'ci OK; no reader has room', copy = '', fields = f }), 'reading', ''
-  end
-  why = 'ci red: ' .. (TK.str(why) ~= '' and why or 'FAIL')
-  local author = TK.str(redis.call('HGET', 'task:' .. id, 'author'))
-  for i = 1, #f - 1, 2 do
-    if f[i] == 'author' then author = f[i + 1] end
-  end
-  if TM.parse(author) then
-    local err, cid = TM.cut(author, id, 'fix', { by = by, why = why, to = 'working', fields = f, extra = { 'finding', why } })
-    return err, 'working', cid
-  end
-  return TK.move(id, 'waiting', { by = by, why = why, copy = '', fields = f }), 'waiting', ''
-end
-
--- TM.ci(repo, head, final, why, by): a head's CI ended (ns_ci_end, the ci
--- run's verdict, or card ci by hand): every primary waiting on it takes
--- the word (TM.ci_move). A member that moved on is dropped. Returns the
--- moves: id, where, copy per primary.
-function TM.ci(repo, head, final, why, by)
-  local out = {}
-  if final ~= 'OK' and final ~= 'FAIL' then return out end
-  local set = TM.ci_set(repo, head)
-  local want = TM.bare(repo) .. ':' .. head
-  for _, id in ipairs(redis.call('SMEMBERS', set)) do
-    redis.call('SREM', set, id)
-    local p = TK.read(id)
-    if p and p.where == 'working' and p.copy == '' and TK.str(redis.call('HGET', 'task:' .. id, 'wait_ci')) == want then
-      local err, to, cid = TM.ci_move(id, final, why, by)
-      if not err then
-        out[#out + 1] = id
-        out[#out + 1] = to
-        out[#out + 1] = cid or ''
-      end
-    end
-  end
-  return out
 end
 
 -- TM.assign(c, id, revoke, by, why): the primary's copy goes to consumer c
@@ -2640,11 +2599,10 @@ function TM.fsck(write)
                 end
               end
             end
-          elseif w == 'working' and friend == '' and not (TK.str(redis.call('HGET', 'task:' .. id, 'wait_ci')) ~= '' and
-              redis.call('SISMEMBER', 'ci:' .. redis.call('HGET', 'task:' .. id, 'wait_ci') .. ':cards', id) == 1) then
-            -- (reading with no copy waits for its read deal; working with no
-            -- copy waits for CI at its head, in ci:<repo>:<head>:cards)
-            note('bare task:' .. id .. ' is working with no copy, no friend and no CI wait')
+          elseif w == 'working' and friend == '' then
+            -- (reading with no copy waits for its read deal; a working
+            -- primary is always its copy's: nothing waits on CI there)
+            note('bare task:' .. id .. ' is working with no copy and no friend')
             if write and not TK.move(id, 'waiting', { by = 'fsck', why = 'fsck: working with no copy', copy = '' }) then
               fixed = fixed + 1
             end
@@ -2703,16 +2661,6 @@ redis.register_function('ns_cm_beat', function(keys, args) return TM.beat(args[1
 -- ns_cm_expire(by, consumer...) -> EXPIRED n, then per copy: id, where.
 redis.register_function('ns_cm_expire', function(keys, args) return TM.expire(TK.str(args[1]), TM.ids(args, 2)) end)
 
--- ns_cm_ci(repo, head, OK|FAIL, why, by) -> CI n, then per primary: id,
--- where, copy. The hook ns_ci_end and the ci run's verdict call as
--- NS.moves.ci; card ci is it by hand.
-redis.register_function('ns_cm_ci', function(keys, args)
-  local out = TM.ci(TK.str(args[1]), TK.str(args[2]), args[3], TK.str(args[4]), TK.str(args[5]))
-  local reply = { 'CI', tostring(#out / 3) }
-  for _, v in ipairs(out) do reply[#reply + 1] = v end
-  return reply
-end)
-
 -- ns_cm_assign(consumer, id, revoke, by, why) -> ASSIGNED id copy revoked |
 -- REFUSED <why>.
 redis.register_function('ns_cm_assign', function(keys, args)
@@ -2723,10 +2671,6 @@ end)
 redis.register_function({ function_name = 'ns_cm_fsck', flags = { 'no-writes' },
   callback = function(keys, args) return TM.fsck(false) end })
 redis.register_function('ns_cm_repair', function(keys, args) return TM.fsck(true) end)
-
--- NS.moves: what a later file calls (ci.lua's ns_ci_end and ci_run.lua's
--- verdict hand a head's CI word to the primaries waiting on it).
-NS.moves = { ci = TM.ci }
 
 NS.task = { move = TK.move, create = TK.create, place = TK.place, read = TK.read, stream_of = TK.stream_of,
   ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF,

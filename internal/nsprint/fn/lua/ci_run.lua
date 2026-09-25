@@ -132,10 +132,6 @@ do
     redis.call('HSET', key, 'ci', word, 'final', final, 'why', why, 'ended_at', tostring(now),
       'lease_until', '0', 'token', '')
     redis.call('ZREM', 'ci:pool', repo .. ':' .. sha)
-    -- the table moves (#3929, #3093): a primary waiting on this head takes
-    -- the verdict in this same call (OK: reading and a read copy; FAIL: a
-    -- fix copy for its author)
-    NS.moves.ci(repo, sha, final, why, 'ci')
     local pr = cr_hget(key, 'pr')
     if pr ~= '' then
       -- The one PR record key, pr:<name>:<n> with the bare repository name

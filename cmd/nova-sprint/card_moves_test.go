@@ -85,8 +85,10 @@ func TestCardMovesCLI(t *testing.T) {
 	endOK := []string{"card", "end", "--id", "c0~1", "--ok", "--pr", "nova-tools#77", "--head", h, "--line1", "RESULT: c0",
 		"--base", "dev", "--base-sha", strings.Repeat("1", 40), "--paths", "a.go"}
 	code, out, _ = runCLI(endOK...)
-	if code != 0 || !strings.HasPrefix(out, "ENDED c0~1 primary=c0 from=working to=working next=-\nCARD END n=1 ms=") {
-		t.Fatalf("end ok (CI pending) = %d %q", code, out)
+	// the work copy's ok with a PR moves the primary to reading (no reader
+	// enrolled: the read deal cuts its copy)
+	if code != 0 || !strings.HasPrefix(out, "ENDED c0~1 primary=c0 from=working to=reading next=-\nCARD END n=1 ms=") {
+		t.Fatalf("end ok with a PR = %d %q", code, out)
 	}
 	code, out, _ = runCLI(endOK...)
 	if code != 0 || !strings.HasPrefix(out, "ALREADY c0~1 primary=c0 ended=ok\n") {
@@ -112,10 +114,13 @@ func TestCardMovesCLI(t *testing.T) {
 	}
 	fsck("end")
 	// the read: a friend reader through task take / task done's copy form,
-	// the score through card end
-	code, out, _ = runCLI("card", "ci", "--repo", "nova-tools", "--head", h, "--ok")
-	if code != 0 || !strings.HasPrefix(out, "CI c0 to=reading copy=-\nCARD CI repo=nova-tools head="+h+" final=OK n=1 ms=") {
-		t.Fatalf("ci = %d %q", code, out)
+	// the score through card end. There is no card ci: no hand verb moves a
+	// primary on a CI word.
+	if code, out, _ = runCLI("card", "ci", "--repo", "nova-tools", "--head", h, "--ok"); code == 0 || strings.Contains(out, "CARD CI") {
+		t.Fatalf("card ci = %d %q, want a refusal (the verb is gone)", code, out)
+	}
+	if w := c.HGet(ctx, "task:c0", "where").Val(); w != "reading" {
+		t.Fatalf("c0 is %s after card ci, want reading", w)
 	}
 	code, out, _ = runCLI("card", "deal", "--to", "friend:emma", "--n", "1")
 	if code != 0 || !strings.HasPrefix(out, "CARD DEAL to=friend:emma n=1 copies=c0~2 ms=") {
@@ -129,6 +134,15 @@ func TestCardMovesCLI(t *testing.T) {
 	if code != 0 || !strings.HasPrefix(out, "TASK take n=1 ids=c0~2 ms=") {
 		t.Fatalf("task take of a copy = %d %q", code, out)
 	}
+	// CI gates the read copy: a passing score waits for CI OK at the head
+	code, out, _ = runCLI("card", "end", "--id", "c0~2", "--score", "9/10", "--gates", "ci:green,base:ok,scope:ok")
+	if code != 1 || !strings.Contains(out, "why=\"CIPENDING") {
+		t.Fatalf("read end before CI = %d %q", code, out)
+	}
+	if w := c.HGet(ctx, "task:c0", "where").Val(); w != "reading" {
+		t.Fatalf("c0 is %s after a refused read end, want reading", w)
+	}
+	c.HSet(ctx, "ci:nova-tools:"+h, "final", "OK", "ci", "green")
 	code, out, _ = runCLI("card", "end", "--id", "c0~2", "--score", "9/10", "--gates", "ci:green,base:ok,scope:ok")
 	if code != 0 || !strings.HasPrefix(out, "ENDED c0~2 primary=c0 from=reading to=merging next=-\n") {
 		t.Fatalf("read end = %d %q", code, out)

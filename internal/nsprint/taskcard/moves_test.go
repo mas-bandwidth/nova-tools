@@ -78,6 +78,26 @@ func wantWS(t *testing.T, c *redis.Client, when string, want map[string]int64) {
 	}
 }
 
+// wsSnapshot is every primary of mvStream with its where and copy, and
+// every consumer set: what a move would change.
+func wsSnapshot(t *testing.T, c *redis.Client) string {
+	t.Helper()
+	ctx := context.Background()
+	var b strings.Builder
+	for _, w := range []string{"waiting", "ready", "working", "reading", "merging", "landed", "done", "parked"} {
+		for _, id := range c.ZRange(ctx, taskcard.StreamKey(mvStream, w), 0, -1).Val() {
+			f := c.HMGet(ctx, taskcard.Key(id), "where", "copy").Val()
+			fmt.Fprintf(&b, "%s:%s=%v/%v ", w, id, f[0], f[1])
+		}
+	}
+	for _, k := range c.SMembers(ctx, taskcard.ConsumersKey).Val() {
+		for _, col := range taskcard.Cols {
+			fmt.Fprintf(&b, "%s:%s=%v ", k, col, c.ZRange(ctx, k+":cards:"+col, 0, -1).Val())
+		}
+	}
+	return b.String()
+}
+
 func wantCells(t *testing.T, got taskcard.Cells, when string, ready, working, ok, fail int64) {
 	t.Helper()
 	if got.Ready != ready || got.Working != working || got.OK != ok || got.Fail != fail {
@@ -168,14 +188,19 @@ func tableMoves(t *testing.T, consumer, reader string) {
 	cleanMoves(t, c, "work")
 
 	// card end --ok --pr on 4 (each its own PR), --fail on 2 (one call).
+	// The build copy's ok is what moves its primary working -> reading, and
+	// the read copy is cut for the reader in that same call (never the
+	// author); CI has not run on any head yet.
+	var reads []taskcard.Dealt
 	for i := 0; i < 4; i++ {
 		recordPR(c, 5000+i, head(i))
 		e, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{w.IDs[i]}, OK: true, Repo: "nova-tools",
 			PR: fmt.Sprint(5000 + i), Head: head(i), By: "rowan",
 			Fields: []string{"line1", "RESULT: ok", "line2", "DONE", "branch", "rowan/x", "commit", head(i)[:12]}})
-		if err != nil || len(e) != 1 || e[0].To != "working" {
-			t.Fatalf("end ok %d (CI pending: stays working): %v %v", i, e, err)
+		if err != nil || len(e) != 1 || e[0].To != "reading" || e[0].Next == "" {
+			t.Fatalf("end ok %d (the copy's ok: reading and a read copy): %v %v", i, e, err)
 		}
+		reads = append(reads, taskcard.Dealt{Primary: PrimaryOf(w.IDs[i]), Copy: e[0].Next})
 	}
 	e, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: w.IDs[4:6], Why: "red at head", By: "rowan"})
 	if err != nil || len(e) != 2 || e[0].To != "waiting" {
@@ -186,13 +211,13 @@ func tableMoves(t *testing.T, consumer, reader string) {
 	if cells.Done() != 6 || cells.OKPct() != 67 || !strings.Contains(cells.Line(), "done=6 ok=4 fail=2 ok%=67") {
 		t.Fatalf("derived cells: %s", cells.Line())
 	}
-	// CI pending: the four stay working with no copy, no read copy is cut
-	wantWS(t, c, "end", map[string]int64{"waiting": 12, "working": 8, "reading": 0})
-	wantCells(t, cellsOf(t, c, rd), "ci pending", 0, 0, 0, 0)
-	// The primary carries the result; the copy is in no ready/working set.
+	wantWS(t, c, "end", map[string]int64{"waiting": 12, "working": 4, "reading": 4})
+	wantCells(t, cellsOf(t, c, rd), "end", 4, 0, 0, 0)
+	// The primary carries the result and names its read copy; the build
+	// copy is in no ready/working set.
 	p0 := c.HGetAll(ctx, taskcard.Key(PrimaryOf(w.IDs[0]))).Val()
-	if p0["where"] != "working" || p0["copy"] != "" || p0["pr"] != "5000" || p0["head"] != head(0) || p0["line1"] != "RESULT: ok" ||
-		p0["line2"] != "DONE" || p0["author"] != consumer || p0["last_copy"] != w.IDs[0] {
+	if p0["where"] != "reading" || p0["copy"] != reads[0].Copy || p0["pr"] != "5000" || p0["head"] != head(0) ||
+		p0["line1"] != "RESULT: ok" || p0["line2"] != "DONE" || p0["author"] != consumer || p0["last_copy"] != w.IDs[0] {
 		t.Fatalf("returned primary %v", p0)
 	}
 	for _, id := range w.IDs[:6] {
@@ -205,14 +230,30 @@ func tableMoves(t *testing.T, consumer, reader string) {
 	if f := c.HGetAll(ctx, taskcard.Key(PrimaryOf(w.IDs[4]))).Val(); f["why"] != "red at head" || f["attempts"] != "1" || f["copy"] != "" {
 		t.Fatalf("failed primary %v", f)
 	}
+	if got := c.HGetAll(ctx, taskcard.Key(reads[0].Copy)).Val(); got["leg"] != "read" || got["kind"] != "read" || got["head"] != head(0) ||
+		got["consumer"] != reader {
+		t.Fatalf("read copy %v", got)
+	}
+	// never the author
+	if _, err := taskcard.Assign(ctx, c, k, reads[0].Primary, true, "rowan", "x"); !isRefusedWith(err, "AUTHOR") {
+		t.Fatalf("read moved to its author: %v", err)
+	}
 	cleanMoves(t, c, "end")
-
-	// TestControl52 (#3093): CI at the exact head. Green on three heads:
-	// each verdict call moves its primary to reading and cuts ONE read copy
-	// for the reader in that same call (never the author). Red on the
-	// fourth: no read copy, the primary stays working with the failure as
-	// why and exactly one fix copy on the author's consumer.
-	var reads []taskcard.Dealt
+	if _, err := taskcard.Work(ctx, c, rd, "rowan", 0, true); err != nil {
+		t.Fatal(err)
+	}
+	cleanMoves(t, c, "work reads")
+	if _, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{reads[0].Copy}, OK: true, By: "rowan"}); !isRefusedWith(err, "SCORE") {
+		t.Fatalf("a read ended without a score: %v", err)
+	}
+	// CI gates the read copy (#3093), never the primary: a passing score at
+	// a head with no CI verdict is refused and nothing moves
+	if _, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{reads[0].Copy}, OK: true, Score: 9, By: "rowan"}); !isRefusedWith(err, "CIPENDING") {
+		t.Fatalf("a read passed before CI: %v", err)
+	}
+	// CI green on three heads, red on the fourth: each verdict (three calls:
+	// request, claim, receipt) moves no primary and cuts no copy.
+	before := wsSnapshot(t, c)
 	for i := 0; i < 4; i++ {
 		rc := "0"
 		if i == 3 {
@@ -223,39 +264,30 @@ func tableMoves(t *testing.T, consumer, reader string) {
 		if n := countCalls(c) - calls; n != 3 {
 			t.Fatalf("ci %d took %d calls (request, claim, receipt), want 3", i, n)
 		}
-		p := c.HGetAll(ctx, taskcard.Key(PrimaryOf(w.IDs[i]))).Val()
-		if i < 3 {
-			if p["where"] != "reading" || p["copy"] == "" || p["wait_ci"] != "" {
-				t.Fatalf("ci OK %d: primary %v", i, p)
-			}
-			reads = append(reads, taskcard.Dealt{Primary: PrimaryOf(w.IDs[i]), Copy: p["copy"]})
-			continue
-		}
-		fix := c.HGetAll(ctx, taskcard.Key(p["copy"])).Val()
-		if p["where"] != "working" || !strings.HasPrefix(p["why"], "ci red: unit: ") || fix["leg"] != "fix" || fix["consumer"] != consumer {
-			t.Fatalf("ci FAIL: primary %v fix %v", p, fix)
+		if p := c.HGetAll(ctx, taskcard.Key(reads[i].Primary)).Val(); p["where"] != "reading" || p["copy"] != reads[i].Copy {
+			t.Fatalf("ci %d moved its primary: %v", i, p)
 		}
 	}
-	wantCells(t, cellsOf(t, c, rd), "ci", 3, 0, 0, 0)
-	wantCells(t, cellsOf(t, c, k), "ci fix", 5, 0, 4, 2)
-	if got := c.HGetAll(ctx, taskcard.Key(reads[0].Copy)).Val(); got["leg"] != "read" || got["kind"] != "read" || got["head"] != head(0) ||
-		got["consumer"] != reader {
-		t.Fatalf("read copy %v", got)
+	if after := wsSnapshot(t, c); after != before {
+		t.Fatalf("a CI verdict moved cards:\nbefore %s\nafter  %s", before, after)
 	}
-	// never the author
-	if _, err := taskcard.Assign(ctx, c, k, reads[0].Primary, true, "rowan", "x"); !isRefusedWith(err, "AUTHOR") {
-		t.Fatalf("read moved to its author: %v", err)
-	}
-	wantWS(t, c, "ci", map[string]int64{"reading": 3, "working": 5})
+	wantCells(t, cellsOf(t, c, rd), "ci", 0, 4, 0, 0)
 	cleanMoves(t, c, "ci")
-	if _, err := taskcard.Work(ctx, c, rd, "rowan", 0, true); err != nil {
-		t.Fatal(err)
+	// a red head: a passing score is refused; the read ends under 8 with the
+	// failure as its finding, which cuts the author's fix copy
+	if _, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{reads[3].Copy}, OK: true, Score: 9, By: "rowan"}); !isRefusedWith(err, "CIRED") {
+		t.Fatalf("a read passed at a red head: %v", err)
 	}
-	cleanMoves(t, c, "work reads")
-	if _, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{reads[0].Copy}, OK: true, By: "rowan"}); !isRefusedWith(err, "SCORE") {
-		t.Fatalf("a read ended without a score: %v", err)
+	e, err = taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{reads[3].Copy}, OK: true, Score: 3,
+		Finding: "ci red: unit", By: "rowan"})
+	if err != nil || e[0].To != "working" || e[0].Next == "" {
+		t.Fatalf("score 3 at a red head: %v %v", e, err)
 	}
-	// score 9 -> merging, with the SCORE line on the PR record
+	if p, fix := c.HGetAll(ctx, taskcard.Key(reads[3].Primary)).Val(), c.HGetAll(ctx, taskcard.Key(e[0].Next)).Val(); p["where"] != "working" ||
+		p["why"] != "ci red: unit" || fix["leg"] != "fix" || fix["consumer"] != consumer {
+		t.Fatalf("ci red read: primary %v fix %v", p, fix)
+	}
+	// score 9 at a green head -> merging, with the SCORE line on the PR record
 	e, err = taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{reads[0].Copy}, OK: true, Score: 9,
 		Gates: "ci:green,base:ok,scope:ok", By: "rowan"})
 	if err != nil || e[0].To != "merging" {
@@ -285,7 +317,7 @@ func tableMoves(t *testing.T, consumer, reader string) {
 		t.Fatal(err)
 	}
 	wantWS(t, c, "reads", map[string]int64{"reading": 0, "merging": 2, "working": 6})
-	wantCells(t, cellsOf(t, c, rd), "reads", 0, 0, 3, 0)
+	wantCells(t, cellsOf(t, c, rd), "reads", 0, 0, 4, 0)
 	wantCells(t, cellsOf(t, c, k), "reads", 6, 0, 4, 2)
 	cleanMoves(t, c, "reads")
 
@@ -300,6 +332,107 @@ func tableMoves(t *testing.T, consumer, reader string) {
 	}
 	wantWS(t, c, "land", map[string]int64{"merging": 0, "landed": 2})
 	cleanMoves(t, c, "land")
+}
+
+// TestCIVerdictNeverMovesAPrimary (Glenn 2026-09-25 2:52 PM: "a consumer
+// copy reaching ok is the ONLY event that advances a primary"): our own
+// CI's verdict, green or red, at the head of a primary that is working (its
+// build copy live, its PR open) or reading (its read copy live) moves no
+// primary, cuts no copy and touches no consumer set; card end of the copy
+// is what moves it.
+func TestCIVerdictNeverMovesAPrimary(t *testing.T) {
+	c := start(t)
+	ctx := context.Background()
+	k, rd := mustConsumer(t, "bench:b"), mustConsumer(t, "friend:reader")
+	c.SAdd(ctx, "benches", "b")
+	c.SAdd(ctx, "friends", "reader")
+	for _, x := range []taskcard.Consumer{k, rd} {
+		c.HSet(ctx, x.DesiredKey(), "slots", "2")
+		if err := taskcard.Enroll(ctx, c, x, true); err != nil {
+			t.Fatal(err)
+		}
+		c.HSet(ctx, x.BeatKey(), "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
+	}
+	c.HSet(ctx, "cfg:ci", "max_attempts", "1")
+	ids := pushPrimaries(t, c, 2)
+	if _, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: k, N: 2, By: "rowan"}); err != nil {
+		t.Fatal(err)
+	}
+	w, err := taskcard.Work(ctx, c, k, "rowan", 0, true)
+	if err != nil || len(w.IDs) != 2 {
+		t.Fatalf("work %+v %v", w, err)
+	}
+	// p00 returns ok with its PR: reading, its read copy cut. p01's PR is
+	// open at head(1) while its build copy is still working.
+	for i := 0; i < 2; i++ {
+		recordPR(c, 6000+i, head(i))
+	}
+	e, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{w.IDs[0]}, OK: true, Repo: "nova-tools", PR: "6000",
+		Head: head(0), By: "rowan"})
+	if err != nil || e[0].To != "reading" || e[0].Next == "" {
+		t.Fatalf("end ok: %v %v", e, err)
+	}
+	c.HSet(ctx, taskcard.Key(ids[1]), "repo", "nova-tools", "pr", "6001", "head", head(1))
+	cleanMoves(t, c, "before ci")
+	// green at the reading primary's head, red at the working one's, then
+	// the other way round at each one's next head
+	for _, v := range []struct {
+		i    int
+		head string
+		rc   string
+	}{{0, head(0), "0"}, {1, head(1), "1"}, {0, head(10), "1"}, {1, head(11), "0"}} {
+		recordPR(c, 6000+v.i, v.head)
+		c.HSet(ctx, taskcard.Key(ids[v.i]), "head", v.head)
+		before := wsSnapshot(t, c)
+		ciVerdict(t, c, 6000+v.i, v.head, v.rc)
+		if after := wsSnapshot(t, c); after != before {
+			t.Fatalf("ci rc=%s at %s's head moved cards:\nbefore %s\nafter  %s", v.rc, ids[v.i], before, after)
+		}
+	}
+	for i, want := range []string{"reading", "working"} {
+		if got := c.HGet(ctx, taskcard.Key(ids[i]), "where").Val(); got != want {
+			t.Fatalf("%s is %s after CI, want %s", ids[i], got, want)
+		}
+	}
+	cleanMoves(t, c, "after ci")
+}
+
+// TestEndOKCutsNoReadForItsAuthor: the build copy's ok moves its primary
+// to reading and cuts the read copy in the same call, never on the author,
+// even when the author is the only enrolled consumer with room (the record
+// names the author only once the end writes it); the ws:log move names the
+// PR and head.
+func TestEndOKCutsNoReadForItsAuthor(t *testing.T) {
+	c := start(t)
+	ctx := context.Background()
+	k := mustConsumer(t, "friend:f")
+	c.SAdd(ctx, "friends", "f")
+	c.HSet(ctx, k.DesiredKey(), "slots", "4")
+	if err := taskcard.Enroll(ctx, c, k, true); err != nil {
+		t.Fatal(err)
+	}
+	c.HSet(ctx, k.BeatKey(), "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
+	ids := pushPrimaries(t, c, 1)
+	if _, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: k, N: 1, By: "rowan"}); err != nil {
+		t.Fatal(err)
+	}
+	w, err := taskcard.Work(ctx, c, k, "rowan", 0, true)
+	if err != nil || len(w.IDs) != 1 {
+		t.Fatalf("work %+v %v", w, err)
+	}
+	recordPR(c, 7000, head(0))
+	e, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: w.IDs, OK: true, Repo: "nova-tools", PR: "7000", Head: head(0), By: "f"})
+	if err != nil || e[0].To != "reading" || e[0].Next != "" {
+		t.Fatalf("end ok: %v %v (want reading and no read copy: the only consumer is the author)", e, err)
+	}
+	p := c.HGetAll(ctx, taskcard.Key(ids[0])).Val()
+	if p["where"] != "reading" || p["copy"] != "" || p["author"] != k.String() || !strings.HasPrefix(p["why"], "ok pr nova-tools#7000 head "+head(0)[:12]) {
+		t.Fatalf("primary %v", p)
+	}
+	if n := c.ZCard(ctx, k.Key("ready")).Val(); n != 0 {
+		t.Fatalf("the author holds %d ready copies, want none", n)
+	}
+	cleanMoves(t, c, "end ok")
 }
 
 // recordPR writes the PR record pr:nova-tools:<n> a card end checks (#3488).
