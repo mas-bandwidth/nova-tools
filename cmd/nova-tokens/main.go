@@ -55,7 +55,7 @@ usage:
   nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
                       [--password-env <NAME>]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
-                      --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
+  nova-tokens sum     --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
   nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--max <n>]
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
