@@ -212,7 +212,7 @@ func cmdReportStore(addr, passwordEnv, month, by string, max int, stdout, stderr
 		return 1
 	}
 	defer store.Close()
-	totals, err := store.LedgerReport(context.Background(), month, by)
+	totals, indexed, missing, err := store.LedgerReport(context.Background(), month, by)
 	if err != nil {
 		fmt.Fprintf(stderr, "REPORT FAILED store=redis err=%s\n", oneline.Err(err))
 		return 1
@@ -247,6 +247,10 @@ func cmdReportStore(addr, passwordEnv, month, by string, max int, stdout, stderr
 	if max != 0 && len(totals) > max {
 		fmt.Fprintf(stdout, "REPORT MORE shown=%d of=%d; raise --max (0 = all)\n", max, len(totals))
 	}
-	fmt.Fprintf(stdout, "REPORT OK month=%s source=redis groups=%d rows=%d\n", oneline.Field(month), len(totals), rows)
+	if indexed == 0 {
+		fmt.Fprintf(stdout, "REPORT NO month=%s source=redis indexed=0\n", oneline.Field(month))
+		return 1
+	}
+	fmt.Fprintf(stdout, "REPORT OK month=%s source=redis groups=%d rows=%d indexed=%d missing=%d\n", oneline.Field(month), len(totals), rows, indexed, missing)
 	return 0
 }
