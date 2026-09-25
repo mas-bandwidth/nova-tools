@@ -466,6 +466,14 @@ local function card_create(id, fields, o)
   return card_move(id, 'waiting', { by = o.by, why = 'push' })
 end
 
+-- cm_lease_member(m, w): m is a lease member of a working set, <S>/<id>/<attempt>
+-- (the one lease ledger, #3998; NS.moves.hold) or the bench form
+-- <S>/<label>/<sha>/<attempt>. A path-shaped junk id (/private/...) starts
+-- with a slash and never matches.
+local function cm_lease_member(m, w)
+  return w == 'working' and string.match(m, '^[^/]+/.+/%d+$') ~= nil
+end
+
 -- cm_evict(k, m, stream, w, by): remove a table-set member that is not a
 -- record, with its one ws:log receipt (id, stream, from = the set's where,
 -- to '', set, by, why MEMBER-NOT-A-CARD, at). The one remover of such a
@@ -579,7 +587,9 @@ local function card_fsck(S, write)
   -- MEMBER-NOT-A-CARD, removed with its ws:log receipt (#4054).
   local function sweep(k, stream, w)
     for _, id in ipairs(redis.call('ZRANGE', k, 0, -1)) do
-      if string.sub(id, 1, #prefix) == prefix and not (want[k] and want[k][id]) then
+      -- a friend-queue lease member <S>/<id>/<attempt> in a working set
+      -- (the one lease ledger, #3998) is not a card and not a stray
+      if not cm_lease_member(id, w) and string.sub(id, 1, #prefix) == prefix and not (want[k] and want[k][id]) then
         local card = cm_record(id) ~= nil
         if card then note('stray ' .. k .. ' ' .. id) else note('MEMBER-NOT-A-CARD ' .. k .. ' ' .. id) end
         if write then
@@ -699,7 +709,11 @@ local function card_members(write, by)
       sets = sets + 1
       for _, m in ipairs(got) do
         members = members + 1
-        if not cm_record(m) then
+        -- a friend-queue lease member <S>/<id>/<attempt> in a working set is
+        -- the one lease ledger's (#3998), not a card: never a violation here
+        if cm_lease_member(m, e.w) then
+          -- the one lease ledger's member, kept
+        elseif not cm_record(m) then
           bad = bad + 1
           if #lines < 50 then lines[#lines + 1] = 'MEMBER-NOT-A-CARD ' .. e.k .. ' ' .. m end
           if write then
