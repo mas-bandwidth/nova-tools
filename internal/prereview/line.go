@@ -297,10 +297,14 @@ func (d Disposition) Line() string {
 	if model == "" {
 		model = "none"
 	}
-	return fmt.Sprintf("JEV head=%s verdict=%s score=%s conf=%s rubric=%s base=%s checks=%s model=%s cost=%s explain=%s",
+	pathsFrom := ""
+	if d.PathsFrom != "" && d.PathsFrom != "none" {
+		pathsFrom = fmt.Sprintf(" paths_from=%s", oneline.Field(d.PathsFrom))
+	}
+	return fmt.Sprintf("JEV head=%s verdict=%s score=%s conf=%s rubric=%s base=%s checks=%s%s model=%s cost=%s explain=%s",
 		oneline.Field(d.Head), oneline.Field(string(d.Verdict)), score,
 		conf, oneline.Field(rubric), oneline.Field(base),
-		oneline.Field(d.Checks), oneline.Field(model), d.costField(), reasonField(d.Explain))
+		oneline.Field(d.Checks), pathsFrom, oneline.Field(model), d.costField(), reasonField(d.Explain))
 }
 
 // reasonField renders the one free-text field on the line.
