@@ -2468,6 +2468,12 @@ end
 -- its id and the primary's new where.
 function TM.expire(by, consumers)
   if #consumers == 0 then consumers = TM.roster() end
+  -- only bench:<b> and friend:<f>: any other word is no key to read
+  local named = {}
+  for _, c in ipairs(consumers) do
+    if TM.parse(c) then named[#named + 1] = c end
+  end
+  consumers = named
   local now = cm_now()
   local out = { 'EXPIRED', '0' }
   for _, c in ipairs(consumers) do
