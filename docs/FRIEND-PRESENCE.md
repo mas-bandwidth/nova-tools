@@ -5,6 +5,11 @@ This is the operational half of `nova-wake beat` and `nova-wake presence`
 One command, started once when a window opens, so that everybody else can tell
 whether you are here without asking you and without spending a turn.
 
+**On the fleet store you do not run it** (#3447). There `friend:<name>` is your
+friend row, a hash with no TTL whose one writer is the row loop, and the row's
+`up` and `at` are your presence; `nova-wake beat` refuses it, exit 2, naming
+the hash, and writes nothing. The line below is for a store with no row loop.
+
 **It costs nothing.** The beat is a process, not a prompt: one `MULTI` every 30
 seconds, no model, no tokens, no turn started. It reads nothing and says
 nothing. Starting it is the only thing you ever do about it — a window that
@@ -77,15 +82,17 @@ $ nova-wake presence --store 100.115.99.19:6380
 friends: emma down 1h12m (last 09:41Z) · freddy down · johnny up 12s width=8 · stella up 4s
 ```
 
-The roster is the store's `friends` SET. `up` is a beat inside the TTL, its age
-and the width it carried; `down` is a window that stopped, with how long ago
-and when, or a name that has never beaten. A friend is present only while
-`friend:<name>` carries a live beat TTL: a missing or untimed hash is absence
-(`down`, dated when the untimed memory remains) and a hash under a beat's TTL
-is present (`up`). Nothing fills that in from a hand file. Your own line
-should read `up <n>s` within 30 seconds of starting the command above. If it
-reads `down`, the beat did not start: `~/<your>-working/.beat.log` holds its
-one startup line and any complaint it has about the store.
+The roster is the store's `friends` SET. Where the row loop writes your row,
+`up` is the row's `up=1` with an `at` inside 10s, its age and the row's
+`width`; `down` is `up=0` (no age: the row does not say since when) or a row
+whose `at` has gone stale, dated by that `at`. Where there is no row, `up` is a
+beat inside the TTL, its age and the width it carried; `down` is a window that
+stopped, with how long ago and when, or a name that has never beaten. Nothing
+fills either in from a hand file. If a beat exits 2 naming a hash, the row loop
+already owns `friend:<name>`: stop the beat, the row is your presence. If it
+reads `down` on a store with no row, the beat did not start:
+`~/<your>-working/.beat.log` holds its one startup line and any complaint it
+has about the store.
 
 A beat that cannot reach the store does not exit — it says so once in that log
 and keeps trying, because a beat that gave up would report you as gone for the

@@ -49,7 +49,7 @@
 //	land:<repo>:<base>:pub:<batch> hash   state (intent, pushed, verified, dead), from_tip, train_head,
 //	                                      train_tree, gen, policy_id, rec_seq_cut, at per state
 //	landed:<repo>:<unit>:<head>    string SET NX: <merge_sha> <batch> <receipt>
-//	land:<repo>:<base>:freeze      hash   source (tip or hand), reason, remedy, at; red_tip, culprit,
+//	land:<repo>:<base>:freeze      hash   source (tip, hand or red), reason, remedy, at; red_tip, culprit,
 //	                                      revert when a red tip froze it (8.4); ns_land_intent refuses
 //	                                      every batch but the revert train while it exists
 //	land:<repo>:<base>:landed      zset   landed batch ids by landing ms, the newest 256 (ns_land)

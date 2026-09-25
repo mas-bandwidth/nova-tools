@@ -274,11 +274,13 @@ func unitReads(ctx context.Context, c *redis.Client, sprint, unit string) ([]uni
 	return out, nil
 }
 
-// countApprovals counts typed APPROVEs at head scoring >= landBar; JEV never counts.
+// countApprovals counts typed APPROVEs (and SCORE lines, recorded as
+// APPROVE) at head scoring >= landBar; JEV and the author (kind self,
+// written by ns_ingest_disposition) never count (#3612).
 func countApprovals(reads []unitRead, head string, landBar int) int {
 	n := 0
 	for _, r := range reads {
-		if strings.EqualFold(r.who, "jev") {
+		if strings.EqualFold(r.who, "jev") || r.read["kind"] == "self" {
 			continue
 		}
 		if r.read["head"] == head && r.read["verdict"] == "APPROVE" {

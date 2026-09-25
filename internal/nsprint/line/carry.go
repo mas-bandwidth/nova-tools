@@ -68,22 +68,11 @@ func short(sha string) string {
 // the base ref that dir resolves ("" is the unit's base field). Four round
 // trips: the unit and the friends set, the reads, the writes, in pipelines.
 func Carry(ctx context.Context, c *redis.Client, sprint string, id land.ID, dir, baseRef string) (Result, error) {
-	unit, err := land.ResolvePR(ctx, c, sprint, id)
+	unit, u, friends, err := loadUnit(ctx, c, sprint, id)
 	if err != nil {
-		return Result{}, err
+		return Result{Unit: unit}, err
 	}
 	res := Result{Unit: unit}
-	ukey := land.UnitKey(sprint, unit)
-	pipe := c.Pipeline()
-	uCmd := pipe.HGetAll(ctx, ukey)
-	friendsCmd := pipe.SMembers(ctx, "friends")
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return res, fmt.Errorf("read %s: %w", ukey, err)
-	}
-	u := uCmd.Val()
-	if len(u) == 0 {
-		return res, fmt.Errorf("%w: MISSING %s", land.ErrNoRecord, ukey)
-	}
 	head := u["head"]
 	old, stored, ok := recorded(u)
 	if !ok {
@@ -97,13 +86,77 @@ func Carry(ctx context.Context, c *redis.Client, sprint string, id land.ID, dir,
 		res.Outcome = Nothing
 		return res, nil
 	}
-	if baseRef == "" {
-		baseRef = u["base"]
+	return carryTo(ctx, c, sprint, id, unit, u, friends, dir, baseRef, old, stored, head)
+}
+
+// CarryHead is the carry the pr-to-read head-change path runs on a `pr head`
+// event from -> to (nova-tools #3806): the event names both heads, so the
+// unit's head field is not consulted. The digest at from is the one recorded
+// at read time when it was recorded at from; otherwise the wrapper computes
+// it from dir, so a read taken without `read digest` still carries. The
+// reads typed at from move to to when the diffs are identical; a changed
+// diff is Refused naming the files, and the caller queues the re-reads.
+func CarryHead(ctx context.Context, c *redis.Client, sprint string, id land.ID, dir, baseRef, from, to string) (Result, error) {
+	unit, u, friends, err := loadUnit(ctx, c, sprint, id)
+	if err != nil {
+		return Result{Unit: unit}, err
 	}
-	if baseRef == "" {
-		baseRef = "dev"
+	res := Result{Unit: unit, From: from, To: to}
+	if from == "" || to == "" || from == to {
+		res.Outcome = Nothing
+		return res, nil
 	}
-	now, err := DiffDigest(ctx, dir, baseRef, head)
+	old, stored, ok := recorded(u)
+	if !ok || old != from {
+		stored, err = DiffDigest(ctx, dir, base(u, baseRef), from)
+		if err != nil {
+			return res, fmt.Errorf("digest at old head %s: %w", short(from), err)
+		}
+	}
+	return carryTo(ctx, c, sprint, id, unit, u, friends, dir, baseRef, from, stored, to)
+}
+
+// loadUnit resolves PR id to its unit and reads the unit record and the
+// friends set in one pipeline.
+func loadUnit(ctx context.Context, c *redis.Client, sprint string, id land.ID) (string, map[string]string, []string, error) {
+	unit, err := land.ResolvePR(ctx, c, sprint, id)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	ukey := land.UnitKey(sprint, unit)
+	pipe := c.Pipeline()
+	uCmd := pipe.HGetAll(ctx, ukey)
+	friendsCmd := pipe.SMembers(ctx, "friends")
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return unit, nil, nil, fmt.Errorf("read %s: %w", ukey, err)
+	}
+	u := uCmd.Val()
+	if len(u) == 0 {
+		return unit, nil, nil, fmt.Errorf("%w: MISSING %s", land.ErrNoRecord, ukey)
+	}
+	friends := friendsCmd.Val()
+	sort.Strings(friends)
+	return unit, u, friends, nil
+}
+
+// base is the base ref a diff is read against: the flag, else the unit's
+// base field, else dev.
+func base(u map[string]string, baseRef string) string {
+	if baseRef != "" {
+		return baseRef
+	}
+	if u["base"] != "" {
+		return u["base"]
+	}
+	return "dev"
+}
+
+// carryTo compares the digest at old (stored) with the diff at head and,
+// when identical, moves every typed line at old to head with a carried_from
+// receipt, the disp rows with them, and the digest to head.
+func carryTo(ctx context.Context, c *redis.Client, sprint string, id land.ID, unit string, u map[string]string, friends []string, dir, baseRef, old string, stored Digest, head string) (Result, error) {
+	res := Result{Unit: unit, From: old, To: head}
+	now, err := DiffDigest(ctx, dir, base(u, baseRef), head)
 	if err != nil {
 		return res, err
 	}
@@ -115,9 +168,7 @@ func Carry(ctx context.Context, c *redis.Client, sprint string, id land.ID, dir,
 		}
 		return res, nil
 	}
-	friends := friendsCmd.Val()
-	sort.Strings(friends)
-	pipe = c.Pipeline()
+	pipe := c.Pipeline()
 	readCmds := make([]*redis.MapStringStringCmd, len(friends))
 	for i, f := range friends {
 		readCmds[i] = pipe.HGetAll(ctx, land.ReadKey(sprint, unit, f))
@@ -141,7 +192,9 @@ func Carry(ctx context.Context, c *redis.Client, sprint string, id land.ID, dir,
 			pipe.HSet(ctx, dispKey, f+"@"+head, v)
 		}
 	}
-	pipe.HSet(ctx, ukey, FieldHead, head)
+	if err := Record(ctx, pipe, land.UnitKey(sprint, unit), head, now); err != nil {
+		return res, err
+	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return res, fmt.Errorf("carry on %s: %w", unit, err)
 	}

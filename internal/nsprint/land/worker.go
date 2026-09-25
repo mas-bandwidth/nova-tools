@@ -61,6 +61,12 @@ func SweepReclaim(ctx context.Context, c *redis.Client, repo, base string) ([]Re
 		return nil, fmt.Errorf("sweep reclaim tip gates: %w", err)
 	}
 	batchIDs = append(batchIDs, tipIDs...)
+	// The attribution gates of a red batch (§6.1) live outside the chain, under its split record.
+	gates, err := SplitGates(ctx, c, repo, base)
+	if err != nil {
+		return nil, fmt.Errorf("sweep reclaim splits: %w", err)
+	}
+	batchIDs = append(batchIDs, gates...)
 
 	var requeued []RequeuedBatch
 	for _, bID := range batchIDs {

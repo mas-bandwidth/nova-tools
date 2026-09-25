@@ -7,6 +7,18 @@
 //	nova-sprint lander --redis <addr> --sprint <S> --repo <repo> --batch <name>
 //	    --gate <prog> --bisect <prog> --land <prog> --file <prog>
 //	    [--metrics-addr <host:port>] <n> [<n> ...]
+//	nova-sprint lander --shadow --redis <addr> --repo <repo> <n> [<n> ...]
+//
+// --shadow (nova-tools#3613) is the parity mode: no programs, no batch, no
+// writes. It reads each member's one PR record pr:<name>:<n>
+// (internal/nsprint/prkey: head, state, ci, mergeable, typed read lines) and
+// the score floor from cfg:land in one pipelined round trip each, and prints
+// one line per member, the first gate that stops it:
+//
+//	SHADOW <repo>#<n> head=<h8> verdict=<LAND|WAIT-CI|NO-READ|HOLD|CONFLICT|NO-RECORD> why=<gate>
+//
+// then one LANDER shadow receipt. A member with no record is a NO-RECORD
+// line, never a refusal of the batch.
 //
 // Each member's head and mergeable word are read from its record
 // s:<S>:pr:<repo>:<n> (head, mergeable; an empty word is UNKNOWN), never from
@@ -38,13 +50,15 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
 func init() {
 	register(Verb{
 		Name:    "lander",
-		Summary: "lander --redis <addr> --sprint <S> --repo <r> --batch <name> --gate/--bisect/--land/--file <prog> [--metrics-addr <host:port>] <n>...: one gate-retry lane pass (exit 1 pass error)",
+		Summary: "lander --redis <addr> --sprint <S> --repo <r> --batch <name> --gate/--bisect/--land/--file <prog> [--metrics-addr <host:port>] <n>...: one gate-retry lane pass (exit 1 pass error); lander --shadow --redis <addr> --repo <r> <n>...: one verdict line per member, no programs, no writes",
 		Run:     runLander,
 	})
 }
@@ -77,6 +91,7 @@ func runLander(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs.StringVar(&progs.Land, "land", "", "")
 	fs.StringVar(&progs.File, "file", "", "")
 	metricsAddr := fs.String("metrics-addr", "", "")
+	shadow := fs.Bool("shadow", false, "")
 	var nums []string
 	for len(args) > 0 {
 		if !strings.HasPrefix(args[0], "-") {
@@ -88,6 +103,9 @@ func runLander(ctx context.Context, args []string, out, errOut io.Writer) int {
 			return refuse(errOut, "lander", err.Error())
 		}
 		args = fs.Args()
+	}
+	if *shadow {
+		return runLanderShadow(ctx, *redisAddr, *repo, nums, out, errOut)
 	}
 	if *redisAddr == "" || *sprint == "" || *repo == "" || *batchName == "" {
 		return refuse(errOut, "lander", "needs --redis <addr> --sprint <S> --repo <repo> --batch <name>")
@@ -153,6 +171,89 @@ func runLander(ctx context.Context, args []string, out, errOut io.Writer) int {
 		*batchName, *repo, res.Landed, res.Runs, res.Retries, len(res.Kept),
 		orDash(strings.Join(dropped, ",")), orDash(res.Class), orDash(res.FlakyKey), res.Filed)
 	return 0
+}
+
+// runLanderShadow is `lander --shadow`: verdicts from the records only. It
+// builds no lane, runs no program and sends Redis nothing but reads.
+func runLanderShadow(ctx context.Context, redisAddr, repo string, nums []string, out, errOut io.Writer) int {
+	if redisAddr == "" || repo == "" {
+		return refuse(errOut, "lander", "--shadow needs --redis <addr> --repo <repo>")
+	}
+	if _, _, err := prkey.Split(repo); err != nil {
+		return refuse(errOut, "lander", err.Error())
+	}
+	if len(nums) == 0 {
+		return refuse(errOut, "lander", "names no member: give the PR numbers of the batch")
+	}
+	numbers := make([]int, 0, len(nums))
+	for _, s := range nums {
+		n, err := strconv.Atoi(strings.TrimPrefix(s, "#"))
+		if err != nil || n <= 0 {
+			return refuse(errOut, "lander", "member "+strconv.Quote(s)+" is not a PR number")
+		}
+		numbers = append(numbers, n)
+	}
+	st, err := store.Open(ctx, redisAddr)
+	if err != nil {
+		fmt.Fprintf(errOut, "nova-sprint lander: %v\n", err)
+		return 6
+	}
+	defer st.Close()
+	c := st.Client()
+	cfg, err := stream.LoadConfig(ctx, c, prkey.Name(repo))
+	if err != nil {
+		fmt.Fprintf(errOut, "nova-sprint lander: shadow: %v\n", err)
+		return 6
+	}
+	recs, err := stream.LoadPRs(ctx, c, repo, numbers)
+	if err != nil {
+		fmt.Fprintf(errOut, "nova-sprint lander: shadow: %v\n", err)
+		return 6
+	}
+	counts := map[string]int{}
+	for _, r := range recs {
+		verdict, why := shadowVerdict(r, cfg.MinScore)
+		counts[verdict]++
+		fmt.Fprintf(out, "SHADOW %s#%d head=%s verdict=%s why=%s\n", prkey.Name(repo), r.N, orDash(stream.Short(r.Head)), verdict, why)
+	}
+	fmt.Fprintf(out, "LANDER shadow repo=%s members=%d land=%d wait-ci=%d no-read=%d hold=%d conflict=%d no-record=%d\n",
+		prkey.Name(repo), len(recs), counts["LAND"], counts["WAIT-CI"], counts["NO-READ"], counts["HOLD"], counts["CONFLICT"], counts["NO-RECORD"])
+	return 0
+}
+
+// shadowVerdict is the first gate a member's record stops at, in the order
+// the stream lander checks them (stream.Members) plus the two it leaves to
+// the merge: the record, its head, its state, a hold at head, a mergeable
+// word that says no, a read at head at or over the floor (jev never counts),
+// then ci green. LAND names the read that carries it.
+func shadowVerdict(r stream.PR, minScore int) (verdict, why string) {
+	if !r.Exists {
+		return "NO-RECORD", "no-record"
+	}
+	if strings.TrimSpace(r.Head) == "" {
+		return "NO-RECORD", "no-head"
+	}
+	if r.State != "" && r.State != "open" {
+		return "HOLD", "state:" + r.State
+	}
+	read := stream.ReadAt(r.Reads, r.Head)
+	if read.Held != "" {
+		return "HOLD", "hold:" + read.Held
+	}
+	switch strings.ToLower(strings.TrimSpace(r.Mergeable)) {
+	case "false", "no", "conflicting", "dirty":
+		return "CONFLICT", "mergeable:" + strings.ToLower(strings.TrimSpace(r.Mergeable))
+	}
+	if read.Score < 0 {
+		return "NO-READ", "no-read-at-head"
+	}
+	if read.Score < minScore {
+		return "NO-READ", fmt.Sprintf("score:%d<%d", read.Score, minScore)
+	}
+	if ci := strings.ToLower(strings.TrimSpace(r.CI)); ci != "green" {
+		return "WAIT-CI", "ci:" + orDash(ci)
+	}
+	return "LAND", fmt.Sprintf("read:%s=%d,ci:green", read.Who, read.Score)
 }
 
 func orDash(s string) string {

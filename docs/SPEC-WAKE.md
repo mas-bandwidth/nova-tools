@@ -3250,22 +3250,36 @@ nova-wake presence --store <host:port> [--bus <dir> | --participants <file> | --
 friends: emma down 1h12m (last 09:41Z) · freddy down · johnny up 12s width=8 · stella up 4s
 ```
 
-One pipeline over every friend's hash (`HMGET at width window`, `PTTL`, and
+One pipeline over every friend's hash (`HMGET at width window up`, `PTTL`, and
 `GET` of `:last`), whatever the roster's length. A friend is `up` or `down`
-and nothing else. `up` is a beat inside the TTL with its age and the width it
-carried; `down` is the hash lapsed, with the age and clock time of the last
-beat, or a friend who has never beaten, with nothing after it. **The hash's
-live TTL is the presence and its `at` only dates it**: a value this build
-cannot parse reads `up` with no age rather than down.
+and nothing else.
 
-**A friend is present only while that beat is alive** (#2675). `friend:<name>`
-is also the hash the sprint table's row loop writes with no TTL, so the evidence
-is the TTL a beat gives the hash (`PTTL` > 0), not the hash's existence. A
-missing or untimed hash is absent — `down`, dated when `friend:<name>:last`
-remains — and a hash under a live beat TTL is present (`up`). The untimed key
-does not make them present, and nothing here reads a hand-written presence
-override. A friend who declines instrumentation is absent for exactly that
-reason: no beat.
+**`friend:<name>` has one schema and one writer** (#3447). The schema is the
+friend row: a HASH with no TTL, fields `at` (RFC3339 UTC), `up` (1|0),
+`ready`, `working`, `width`, `done` and `slots`. Its one writer is the
+per-friend row loop (rowan-tools `friend-row`, one pass a second), which sets
+`up=1` while the friend's harness or its seat beat is alive. `presence` reads
+that row: `up=1` with an `at` no older than 10s (the sprint table's own
+`RowStale`) is `up`, with the age of `at` and the row's `width`; `up=0` on a
+fresh row is `down` with no age, because the row does not say since when; a
+row whose `at` is older than 10s is a silent row loop, `down` with the age and
+clock time of its last write. A TTL on the row means nothing.
+
+**The beat is never a second writer of the row.** `beat` checks the key under
+`WATCH` before its `MULTI`: where `friend:<name>` is the row (a hash carrying
+`up`), or a key of any type but a string or the beat's own hash, it writes
+nothing and exits 2 naming the type (`friend:stella is a hash holding the friend
+row ...`), and its loop stops on that refusal instead of retrying it. A plain
+string there is a beat older than #2673 and is replaced in the same `MULTI`.
+Where no row loop runs — a test store, a bench without the loop — the beat's
+own hash is the presence: `up` is a beat inside the TTL with its age and the
+width it carried, `down` is the hash lapsed, with the age and clock time of the
+last beat, or a friend who has never beaten, with nothing after it. **That
+hash's live TTL is the presence and its `at` only dates it**: a value this
+build cannot parse reads `up` with no age rather than down. The untimed
+`friend:<name>:last` dates a `down` and never makes a friend present, and
+nothing here reads a hand-written presence override (#2675). A friend who
+declines instrumentation is absent for exactly that reason.
 
 **The roster is the store's `friends` SET, never a copy.** One `SMEMBERS
 friends`, sorted, minus Glenn and Rowan; no scan of `friend:*`. `--bus <dir>`
