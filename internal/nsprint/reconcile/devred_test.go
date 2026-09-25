@@ -12,6 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
 )
 
 const (
@@ -105,25 +106,28 @@ func TestDevRedPushesOneTaskOnceAndHolds(t *testing.T) {
 	}
 }
 
-// TestDevRedForgeReadIsBudgeted: with no Redis record, the forge is read
-// once per ForgeEvery per base, and its FAIL holds the base.
-func TestDevRedForgeReadIsBudgeted(t *testing.T) {
+// TestDevRedReadsTheGitHubLeg: with no plain record, the GitHub leg
+// ci:<repo>:<sha>:gh the webhook consumer writes (#3597) is the evidence: red
+// holds the base naming the failing check, once across passes, and nothing is
+// read from GitHub.
+func TestDevRedReadsTheGitHubLeg(t *testing.T) {
 	ctx, c, p, d := devredFixture(t)
 	c.HSet(ctx, civerdict.TipKey("nova-tools", "dev"), "sha", redSHA)
-	reads := 0
-	d.Forge = func(_ context.Context, repo, sha string) (reconcile.CIState, error) {
-		reads++
-		return reconcile.CIState{Verdict: "FAIL", Check: "lint"}, nil
-	}
-	d.ForgeEvery = time.Hour
+	c.HSet(ctx, webhook.Key("mas-bandwidth/nova-tools", redSHA), "gh", "red", "gh_fail", "check:lint",
+		"check:lint", "red 9 2026-09-25T12:00:00Z")
 	for i := 0; i < 4; i++ {
 		outs, err := d.Pass(ctx)
 		if err != nil || outs[0].Err != nil {
 			t.Fatal(err, outs)
 		}
 	}
-	if reads != 1 || len(p.tasks) != 1 || p.tasks[0].Check != "lint" {
-		t.Fatalf("forge reads %d, tasks %d (%+v); want 1 and 1", reads, len(p.tasks), p.tasks)
+	if len(p.tasks) != 1 || p.tasks[0].Check != "lint" {
+		t.Fatalf("tasks %d (%+v); want 1 naming lint", len(p.tasks), p.tasks)
+	}
+	c.HSet(ctx, webhook.Key("nova-tools", redSHA), "gh", "pending")
+	outs, err := d.Pass(ctx)
+	if err != nil || outs[0].Action == "CLEARED" {
+		t.Fatalf("pending is no evidence, the hold stays: %v %s", err, outs[0].Line())
 	}
 }
 

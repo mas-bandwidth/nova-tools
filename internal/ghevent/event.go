@@ -16,7 +16,11 @@
 //
 // Every entry has the fields repo, kind, number, head, action, at, sender,
 // comment_id. kind is the X-GitHub-Event header, which is not in the JSON
-// body. Three kinds add their own fields, always all of them, empty included:
+// body. Four kinds add their own fields, always all of them, empty included:
+// pull_request adds state (open or closed), merged (1, 0, or empty when the
+// payload has no merged flag) and merge_sha (merge_commit_sha once merged,
+// else empty), which the ingest consumer (internal/nsprint/ghingest, #2657)
+// needs to tell a merge from a close without asking GitHub;
 // issues adds labels (a JSON array of the issue's label names after the
 // change), body, state and state_reason; workflow_run adds run_id, workflow,
 // status and conclusion; check_run adds check (check_run.name), check_run_id
@@ -79,6 +83,12 @@ type Entry struct {
 	// workflow_run and check_run.
 	Status     string
 	Conclusion string
+
+	// pull_request only: GitHub's state (open, closed), merged ("1", "0",
+	// "" when the payload has no flag) and the merge commit once merged.
+	PRState  string
+	Merged   string
+	MergeSHA string
 }
 
 // Decode reads one delivery. event is the X-GitHub-Event header.
@@ -114,6 +124,14 @@ func Decode(event string, payload []byte) (Entry, error) {
 		e.Number = firstID(p.PullRequest.Number, p.Number)
 		e.Head = strings.TrimSpace(p.PullRequest.Head.SHA)
 		e.At = pullAt(p.PullRequest)
+		e.PRState = strings.TrimSpace(p.PullRequest.State)
+		if m := p.PullRequest.Merged; m != nil {
+			e.Merged = "0"
+			if *m {
+				e.Merged = "1"
+				e.MergeSHA = strp(p.PullRequest.MergeCommitSHA)
+			}
+		}
 	case "issue_comment":
 		if p.Comment == nil {
 			return Entry{}, errMissing("comment")
@@ -226,7 +244,7 @@ func Publish(ctx context.Context, rdb *redis.Client, e Entry) (string, error) {
 }
 
 // Fields is the stream entry's key set for e: the eight common fields, plus
-// the issues, workflow_run or check_run fields for those kinds.
+// the pull_request, issues, workflow_run or check_run fields for those kinds.
 func Fields(e Entry) (map[string]interface{}, error) {
 	v := map[string]interface{}{
 		"repo":       e.Repo,
@@ -239,6 +257,10 @@ func Fields(e Entry) (map[string]interface{}, error) {
 		"comment_id": e.CommentID,
 	}
 	switch e.Kind {
+	case "pull_request":
+		v["state"] = e.PRState
+		v["merged"] = e.Merged
+		v["merge_sha"] = e.MergeSHA
 	case "issues":
 		labels := e.Labels
 		if labels == nil {
@@ -476,10 +498,13 @@ type userLogin struct {
 }
 
 type pullRequest struct {
-	Number    int64   `json:"number"`
-	UpdatedAt *string `json:"updated_at"`
-	CreatedAt *string `json:"created_at"`
-	Head      struct {
+	Number         int64   `json:"number"`
+	UpdatedAt      *string `json:"updated_at"`
+	CreatedAt      *string `json:"created_at"`
+	State          string  `json:"state"`
+	Merged         *bool   `json:"merged"`
+	MergeCommitSHA *string `json:"merge_commit_sha"`
+	Head           struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
 }

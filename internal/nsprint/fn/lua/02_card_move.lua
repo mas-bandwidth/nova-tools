@@ -386,6 +386,19 @@ local function card_move(id, to, o)
   return nil
 end
 
+-- The cards of one GitHub issue, issue:<name>:<n>:cards: a ZSET of card ids
+-- scored by created_at, written by card_create from the card's origin
+-- (owner/name#n, name#n or https://github.com/owner/name/issues/n), so the
+-- ingest consumer of ev:github (github.lua, #2657) finds the card an issue
+-- event names in one read, never a scan. nil when the origin names no issue.
+local function cm_issue_key(origin)
+  if type(origin) ~= 'string' then return nil end
+  local name, n = string.match(origin, '/([%w._-]+)/issues/(%d+)/?$')
+  if not name then name, n = string.match(origin, '([%w._-]+)#(%d+)$') end
+  if not name then return nil end
+  return 'issue:' .. name .. ':' .. n .. ':cards'
+end
+
 -- card_create(id, fields, o): a new record and its first move, '' ->
 -- waiting. fields are its HSET pairs (never a pointer field); o.bench,
 -- o.stream and o.owner are its dimensions. Returns nil or the refusal. The
@@ -417,6 +430,10 @@ local function card_create(id, fields, o)
   redis.call('HSET', unpack(h))
   redis.call('ZADD', 'sprint:' .. S .. ':cards', created, id)
   redis.call('SADD', cm_idx(S, 'queued'), label)
+  for i = 1, #fields, 2 do
+    local ik = fields[i] == 'origin' and cm_issue_key(fields[i + 1])
+    if ik then redis.call('ZADD', ik, created, id) end
+  end
   return card_move(id, 'waiting', { by = o.by, why = 'push' })
 end
 
@@ -636,4 +653,4 @@ redis.register_function({ function_name = 'ns_card_counts', flags = { 'no-writes
     return out
   end })
 
-NS.card = { move = card_move, create = card_create }
+NS.card = { move = card_move, create = card_create, issue_key = cm_issue_key }

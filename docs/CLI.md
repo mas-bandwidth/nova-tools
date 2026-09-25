@@ -4088,12 +4088,37 @@ tree; the next one is a row in the registry, not a hunt.
 
 `dev-red status|check|watch|unwatch --repo <r> --base <b> --redis <addr>`:
 the reconciler's dev-red duty walks `devred:bases` every pass; while the
-base tip's CI record (`ci:<repo>:<sha>`, the gated receipt, or one `gh api`
-check-runs read per base per minute until #3597) is red it writes
+base tip's CI record (`ci:<repo>:<sha>`, the GitHub leg `ci:<repo>:<sha>:gh`,
+or the gated receipt; Redis only, never GitHub) is red it writes
 `land:<repo>:<base>:red` (the key a lander reads through `land.RedBlocked`
 before merging a stream into that base) and pushes ONE fix task to the
 coordinator's queue naming the failing check; green clears it. `status`
 prints `RED <check> <sha> task=<id>` or `GREEN <repo>/<base>`.
+
+`ci github --redis <addr> [--consumer <seat>] [--once]` (#3597) is the
+GitHub leg of CI in Redis: the `ci-github` consumer group of `ev:github`
+turns each `check_run` and `workflow_run` delivery the webhook receiver
+appended into one field of `ci:<repo>:<sha>:gh` (`check:<name>` or
+`wf:<name>` = `<word> <id> <at>`, newest attempt wins) and refolds `gh`
+(red if any is red, pending if any is pending, else green) and `gh_fail`,
+writing and acking in one `ns_ci_github` call. `ci status --repo --sha`
+prints the leg under our own record. Nothing in nova-sprint reads a check
+state from GitHub or asks it to rerun one; a rerun is `ci request --again`.
+
+`github ingest --redis <addr> --lander <login>[,<login>] [--sprint <S>]
+[--consumer <seat>] [--once]` (#2657) is the one inbound path from GitHub
+into our records besides import: the `ingest` consumer group of `ev:github`
+updates the PR record `pr:<name>:<n>` from each `pull_request` delivery
+(head, with `ci=pending` on a new head; state open, closed or merged with
+`merge_sha`, the lander's `parked` and `landed` standing; a PR with no
+record is not ours and is only acked), and lands every card of an issue
+(`issue:<name>:<n>:cards`, written at card create from the card's origin;
+`--sprint` backfills that sprint's cards once at start) through the one
+card move when an `issues closed` delivery was sent by a `--lander` login
+as completed. Any other close is one entry on `gh:findings` and no card
+moves. Each entry is one `ns_gh_pr` or `ns_gh_issue_closed` call that
+writes and acks; it prints `INGEST applied= kept= unknown= landed=
+findings= skipped= reclaimed=`.
 
 `read digest --repo <r> --n <n>` records the diff identity of the head a
 typed line is taken at (`diff_sha256` on the unit record; the reader runs

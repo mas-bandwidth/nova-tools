@@ -107,6 +107,11 @@ func TestPullRequestCheckRunAndDispositionEachBecomeOneEntry(t *testing.T) {
 				"at":         "2026-09-22T16:45:01Z",
 				"sender":     "octocat",
 				"comment_id": "",
+				// pull_request adds state, merged and merge_sha (#2657); the
+				// fixture carries none of them, so all three are empty.
+				"state":     "",
+				"merged":    "",
+				"merge_sha": "",
 			},
 		},
 		{
@@ -532,5 +537,34 @@ func TestCheckRunEntryCarriesNameIDStatus(t *testing.T) {
 				t.Errorf("Fields has %d keys, want the 8 common and check, check_run_id, status, conclusion: %v", len(v), v)
 			}
 		})
+	}
+}
+
+// TestPullRequestCloseCarriesMergedAndMergeSHA is the ingest consumer's need
+// (#2657): a closed pull_request says whether it merged and at which commit,
+// so the PR record's state is read off the entry and never asked of GitHub.
+func TestPullRequestCloseCarriesMergedAndMergeSHA(t *testing.T) {
+	t.Parallel()
+	body := func(merged string) string {
+		return `{"action":"closed","number":9,"pull_request":{"number":9,"state":"closed","merged":` + merged +
+			`,"merge_commit_sha":"3333333333333333333333333333333333333333","updated_at":"2026-09-25T10:00:00Z",
+			"head":{"sha":"4444444444444444444444444444444444444444"}},
+			"repository":{"full_name":"mas-bandwidth/nova-tools"},"sender":{"login":"rowan"}}`
+	}
+	for _, tc := range []struct{ merged, wantMerged, wantSHA string }{
+		{"true", "1", "3333333333333333333333333333333333333333"},
+		{"false", "0", ""},
+	} {
+		e, err := Decode("pull_request", []byte(body(tc.merged)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, err := Fields(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v["state"] != "closed" || v["merged"] != tc.wantMerged || v["merge_sha"] != tc.wantSHA || len(v) != 11 {
+			t.Fatalf("merged=%s: fields %v, want state=closed merged=%s merge_sha=%q and 11 keys", tc.merged, v, tc.wantMerged, tc.wantSHA)
+		}
 	}
 }
