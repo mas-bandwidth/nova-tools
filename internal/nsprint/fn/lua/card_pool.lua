@@ -35,7 +35,9 @@ end
 --       ws:<stream>:<where> view) and origin (its ORIGIN: line, the GitHub
 --       issue it came from; #3692): args 16, 17, 18; leg (arg 19: its
 --       LEG: line, the one leg a bench profile must carry for the deal's
---       leg filter, nova-tools#3255; empty or absent: any bench, not stored).
+--       leg filter, nova-tools#3255; empty or absent: any bench, not stored);
+--       who (arg 20: WHO: line, nova-tools#3596; empty or absent: any);
+--       depends_why (arg 21: WHY from DEPENDS-ON, #3596; empty or absent: not stored).
 -- The record is created with no place and moved to waiting by NS.card, then
 -- to ready when place is pool (the waiting -> ready move of a card whose
 -- dependencies are already met); the state index is NS.card's.
@@ -63,6 +65,10 @@ redis.register_function('ns_card_push', function(keys, args)
   -- leg (#3255): the one leg a bench profile must carry (deal leg filter),
   -- a record field CARD.create stores with the rest.
   local leg = args[19]
+  -- who (#3596): the card's WHO: line; empty or absent means "any".
+  local who = args[20]
+  -- depends_why (#3596): the WHY from DEPENDS-ON.
+  local depends_why = args[21]
   if type(depends_on) ~= 'string' then
     depends_on = ''
   end
@@ -129,6 +135,15 @@ redis.register_function('ns_card_push', function(keys, args)
   if origin ~= '' then
     table.insert(fields, 'origin')
     table.insert(fields, origin)
+  end
+  -- who (#3596): always stored; "any" when empty or absent.
+  if type(who) ~= 'string' or who == '' then who = 'any' end
+  table.insert(fields, 'who')
+  table.insert(fields, who)
+  -- depends_why (#3596): stored when present.
+  if type(depends_why) == 'string' and depends_why ~= '' then
+    table.insert(fields, 'depends_why')
+    table.insert(fields, depends_why)
   end
   local err = CARD.create(card, fields, { bench = bench, stream = stream, by = 'card-push' })
   if not err and place == 'pool' then

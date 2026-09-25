@@ -104,7 +104,7 @@ func RenderCut(ctx context.Context, src IssueSource, in CutInput) (CutCard, erro
 	if err != nil {
 		return CutCard{}, fmt.Errorf("%s#%d: %v", in.Repo, in.Issue, err)
 	}
-	if _, _, err := parseDepends(label, depends); err != nil {
+	if _, _, _, err := parseDepends(label, depends); err != nil {
 		return CutCard{}, fmt.Errorf("%s#%d: %v", in.Repo, in.Issue, err)
 	}
 	if why == "" {

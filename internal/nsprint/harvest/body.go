@@ -119,45 +119,10 @@ func ChangedPaths(rangePaths []string, rec Record) string {
 	return or(oneLineField(rec.Result["w_paths"]), "unknown")
 }
 
-// Body is the PR body built from the record alone. rangePaths are the paths
-// changed in base_sha..pushed_sha (nil when git could not say).
+// Body is the PR body built from the record alone (#3596): one line pointing
+// at the card id. The card record in Redis holds WHO, STREAM, DEPENDS-ON,
+// PATHS, DONE-WHEN, BASE, base-sha, EST; the lander, readers and gate read
+// them from there.
 func Body(sprint, bench string, c Card, rec Record, rangePaths []string) string {
-	card, res := rec.Card, rec.Result
-	var b strings.Builder
-	line := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
-	base := or(card["base"], c.Base)
-	changed := ChangedPaths(rangePaths, rec)
-	line("BASE: %s", or(base, "-"))
-	line("base-sha: %s", or(card["base_sha"], "-"))
-	line("PATHS: %s", DeclaredPaths(rec))
-	line("CHANGED: %s", changed)
-	line("DEPENDS-ON: %s", or(oneLineField(card["depends_on"]), "none"))
-	line("DONE-WHEN: %s", or(oneLineField(card["done_when"]), "-"))
-	line("STREAM: %s", or(oneLineField(card["stream"]), "none"))
-	line("%s", originLine(or(card["repo"], c.Repo), card["origin"]))
-	line("")
-	line("SELF-CHECK: %s (%s)", or(res["w_check"], "not-run"), or(oneLineField(card["test"]), "none"))
-	line("")
-	// The model's two lines: line 1 as the result record parsed it (the
-	// card's contract line), line 2 as the wrapper recorded it.
-	line("%s", or(oneLineField(res["line1"]), "RESULT: "+c.Label))
-	line("%s", or(oneLineField(res["w_line2"]), "-"))
-	if note := strings.TrimSpace(res["w_note"]); note != "" {
-		line("")
-		line("%s", note)
-	}
-	line("")
-	line("sprint: %s", sprint)
-	line("card: %s", c.Label)
-	line("identity: %s", or(c.Identity, card["identity"]))
-	line("attempt: %s", or(c.Attempt, card["attempt"]))
-	line("bench: %s", or(bench, card["bench"]))
-	line("tier: %s route: %s model: %s", or(res["w_tier"], "-"), or(res["w_route"], "-"), or(res["w_model"], "-"))
-	line("wall_ms: %s", or(res["w_wall_ms"], "-"))
-	line("pushed_sha: %s", or(c.PushedSHA, card["pushed_sha"]))
-	line("results: %s", or(c.Results, card["results"]))
-	line("files: %s", changed)
-	line("")
-	line("%s", ClaudeLine)
-	return b.String()
+	return "card: " + sprint + "/" + c.Label + "\n"
 }

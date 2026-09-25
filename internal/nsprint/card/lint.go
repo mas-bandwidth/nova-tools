@@ -98,6 +98,7 @@ type cardDoc struct {
 	DependsOn      string // comma-separated ids, empty when the card depends on nothing
 	Deps           []dependency
 	TypedDependsOn string
+	DependsWhy     string // WHY from the DEPENDS-ON line (#3596)
 	Repo           string // owner/name
 	Kind           string
 	Type           string // optional TYPE: line, the Jev work type (code, docs, spec, ...); not KIND
@@ -107,8 +108,9 @@ type cardDoc struct {
 	Est            string // EST: <minutes>, the card's est field (#3653); "" is absent or not a number of minutes
 	Test           string // TEST: <package> <TestName>, the card's test field the wrapper runs at end (#3689); "" is absent
 	Stream         string // STREAM: <name>, the work stream whose ws:<stream>:<where> view holds the card (#3692); "" is none
+	Who            string // WHO: <who>, the card's who field; "" is any (#3596)
 	Origin         string // ORIGIN: <url>, the GitHub issue the card came from (#3692); "" is absent
-	DoneWhen       string // DONE-WHEN: the sentence a test can fail; required, carried into the PR body (#2932)
+	DoneWhen       string // DONE-WHEN: the sentence a test can fail; required, carried into the card record (#2932)
 	Task           string // TASK: <sentence>, the PR title's sentence when present (#3712); "" is absent
 	Leg            string // LEG: <leg>, the toolchain a bench profile must carry (deal Bench.runs); absent is any bench
 	Payload        string
@@ -142,7 +144,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	if !shaRE.MatchString(baseSHA) {
 		return cardDoc{}, errors.New("base-sha is not 40 lowercase hex")
 	}
-	depends, deps, err := parseDepends(label, header["DEPENDS-ON"])
+	depends, deps, dependsWhy, err := parseDepends(label, header["DEPENDS-ON"])
 	if err != nil {
 		return cardDoc{}, err
 	}
@@ -165,9 +167,12 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	if err != nil {
 		return cardDoc{}, err
 	}
-	stream, origin := strings.TrimSpace(header["STREAM"]), strings.TrimSpace(header["ORIGIN"])
-	if strings.ContainsAny(stream, "\r\n\t") || strings.ContainsAny(origin, "\r\n\t") {
-		return cardDoc{}, fmt.Errorf("STREAM: and ORIGIN: are one line each")
+	stream, who, origin := strings.TrimSpace(header["STREAM"]), strings.TrimSpace(header["WHO"]), strings.TrimSpace(header["ORIGIN"])
+	if strings.ContainsAny(stream, "\r\n\t") || strings.ContainsAny(who, "\r\n\t") || strings.ContainsAny(origin, "\r\n\t") {
+		return cardDoc{}, fmt.Errorf("STREAM:, WHO: and ORIGIN: are one line each")
+	}
+	if who == "" {
+		who = "any"
 	}
 	// The repo is read by swarm.ReadCardBase, the one reader staging uses too
 	// (nova-tools#3711), so a card is admitted with the repo it is staged from.
@@ -191,6 +196,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		DependsOn:      depends,
 		Deps:           deps,
 		TypedDependsOn: typedDependencies(deps),
+		DependsWhy:     dependsWhy,
 		Repo:           repo,
 		Kind:           kind,
 		Type:           header["TYPE"],
@@ -200,6 +206,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		Est:            parseEst(header["EST"]),
 		Test:           strings.TrimSpace(header["TEST"]),
 		Stream:         stream,
+		Who:            who,
 		Origin:         origin,
 		DoneWhen:       header["DONE-WHEN"],
 		Task:           strings.TrimSpace(header["TASK"]),
@@ -378,26 +385,36 @@ func contractLabel(line string) string {
 
 // parseDepends accepts the one DEPENDS-ON vocabulary and assigns every entry
 // a type before it reaches Redis. An unprefixed entry is a same-sprint card id.
-func parseDepends(label, value string) (string, []dependency, error) {
-	if value == "none" || value == "-" {
-		return "", nil, nil
+// It also extracts the WHY from a parenthetical (WHY: ...) (#3596).
+func parseDepends(label, value string) (string, []dependency, string, error) {
+	why := ""
+	value = parenRE.ReplaceAllStringFunc(value, func(p string) string {
+		inner := strings.TrimSpace(p[1 : len(p)-1])
+		if w, ok := strings.CutPrefix(inner, "WHY:"); ok && why == "" {
+			why = strings.TrimSpace(w)
+		}
+		return ""
+	})
+	value = strings.TrimSpace(value)
+	if value == "none" || value == "-" || value == "" {
+		return "", nil, why, nil
 	}
 	var deps []dependency
 	seen := map[string]bool{}
 	for _, part := range strings.Split(value, ",") {
 		entry := strings.TrimSpace(part)
 		if entry == "" {
-			return "", nil, errors.New("DEPENDS-ON has an empty entry")
+			return "", nil, "", errors.New("DEPENDS-ON has an empty entry")
 		}
 		if entry == "none" || entry == "-" {
-			return "", nil, errors.New("DEPENDS-ON: none and - must stand alone")
+			return "", nil, "", errors.New("DEPENDS-ON: none and - must stand alone")
 		}
 		dep, err := parseDependency(entry)
 		if err != nil {
-			return "", nil, err
+			return "", nil, "", err
 		}
 		if dep.Kind == dependencyCard && dep.Value == label {
-			return "", nil, errors.New("DEPENDS-ON names this card")
+			return "", nil, "", errors.New("DEPENDS-ON names this card")
 		}
 		if seen[dep.Typed()] {
 			continue
@@ -406,7 +423,7 @@ func parseDepends(label, value string) (string, []dependency, error) {
 		deps = append(deps, dep)
 	}
 	if len(deps) == 0 {
-		return "", nil, errors.New("DEPENDS-ON names no card")
+		return "", nil, "", errors.New("DEPENDS-ON names no card")
 	}
 	entries := make([]string, len(deps))
 	for i, dep := range deps {
@@ -417,7 +434,7 @@ func parseDepends(label, value string) (string, []dependency, error) {
 			entries[i] = "task:" + dep.Value
 		}
 	}
-	return strings.Join(entries, ","), deps, nil
+	return strings.Join(entries, ","), deps, why, nil
 }
 
 func parseDependency(entry string) (dependency, error) {

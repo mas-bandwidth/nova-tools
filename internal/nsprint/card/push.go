@@ -105,11 +105,12 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 			keyIdx(sprint, "queued"),
 		}
 		// Arguments 14-18 are bench, est, test, stream and origin (#3650,
-		// #3653, #3689, #3692); 19 is leg (#3255).
+		// #3653, #3689, #3692); 19 is leg (#3255); 20 is who, 21 is
+		// depends_why (#3596).
 		cmds[i] = pipe.FCall(ctx, "ns_card_push", keys,
 			doc.Label, doc.Payload, doc.Priority, doc.Base, doc.BaseSHA, doc.Paths, doc.Repo, doc.Kind,
 			doc.DependsOn, doc.Type, doc.TypedDependsOn, boolString(ready[i]), doc.Route, doc.Bench, doc.Est, doc.Test,
-			doc.Stream, doc.Origin, doc.Leg,
+			doc.Stream, doc.Origin, doc.Leg, doc.Who, doc.DependsWhy,
 		)
 		// Then, in the same pipeline, ns_card_header writes the card's
 		// DONE-WHEN line (harvest's PR body, #2932) and its TASK line (the

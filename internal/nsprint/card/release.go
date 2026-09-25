@@ -142,7 +142,7 @@ func releasableCards(ctx context.Context, client *redis.Client, sprint string, r
 
 func parseStoredDependencies(label, raw, typed string) ([]dependency, error) {
 	if typed == "" {
-		_, deps, err := parseDepends(label, raw)
+		_, deps, _, err := parseDepends(label, raw)
 		return deps, err
 	}
 	var deps []dependency
