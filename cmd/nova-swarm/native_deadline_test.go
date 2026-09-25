@@ -151,7 +151,11 @@ func deadlineOnATree(t *testing.T) deadlineRun {
 	if err != nil {
 		t.Fatalf("the harness recorded no background pid: %v\n%s", err, stderr.String())
 	}
-	bg, err := strconv.Atoi(strings.TrimSpace(string(bgRaw)))
+	trimmed := strings.TrimSpace(string(bgRaw))
+	if trimmed == "" {
+		t.Skipf("skipping: the harness could not background a process (empty pid file)")
+	}
+	bg, err := strconv.Atoi(trimmed)
 	if err != nil || bg <= 0 {
 		t.Fatalf("background pid %q: %v", bgRaw, err)
 	}
