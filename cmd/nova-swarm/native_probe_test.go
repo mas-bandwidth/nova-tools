@@ -71,10 +71,11 @@ exit 0
 		t.Fatal(err)
 	}
 
+	// The probe card names no REPO: (nova-tools#3711 stages a named repo from the bench
+	// mirror before the child starts); this test is about the wall, not staging.
 	cardPath := filepath.Join(root, "probe-card.md")
 	cardText := `RESULT: dogfood-check-probe sha=ce8631be62c6
 KIND: probe
-REPO: mas-bandwidth/nova-tools
 BASE: dev
 base-sha: ce8631be62c652826c504f6536a018ab33f27a9d
 PATHS: RESULT.md

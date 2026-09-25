@@ -37,10 +37,10 @@ import (
 // nothing on stdout and sleeps, the shape of a session stuck in key
 // exchange after the banner, which no ConnectTimeout bounds (#3322); with
 // `hang-noisy` it first prints a login profile's noise on stdout, which is
-// not the launch verb's voice. Every
-// other accepted session appends one line to sessions.log and its stdin to
-// launched, then holds the session for a second, as a slow remote verb
-// would. It lives in t.TempDir(), so testguard sees a fake.
+// not the launch verb's voice. Every other accepted session appends one line
+// to sessions.log and its stdin to launched, then holds the session for a
+// second (or for the seconds in the bench's `sleep` file, #3706), as a slow
+// remote verb would. It lives in t.TempDir(), so testguard sees a fake.
 const fixtureSSHD = `#!/bin/bash
 set -u
 FIX=%q
@@ -94,7 +94,9 @@ if [ -e "$dir/dropafter-timedout" ]; then
   echo "Connection timed out" >&2
   exit 255
 fi
-sleep 1
+secs=1
+[ -e "$dir/sleep" ] && secs=$(cat "$dir/sleep")
+sleep "$secs"
 exit 0
 `
 

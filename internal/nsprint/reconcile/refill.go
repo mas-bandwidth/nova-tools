@@ -325,6 +325,9 @@ func (r *Refill) pass(l *Lease) *deal.Pass {
 	if p.Gate == nil {
 		p.Gate = fns
 	}
+	if p.Why == nil {
+		p.Why = fns
+	}
 	return &p
 }
 
@@ -553,12 +556,28 @@ func (f LeaseFence) Token(context.Context) (string, error) {
 	return f.L.token, nil
 }
 
-// DealFunctions is the deal pass's Reserver, Row and Gate over the
+// Renew implements deal.Renewer (#3706): the deal pass renews the lease
+// before it opens each bench session, so the session's lease bound is the
+// full TTL less the write margin, not what the duties before it left. A lease
+// another instance holds is deal.ErrFenced as well as ErrFenced.
+func (f LeaseFence) Renew(ctx context.Context) error {
+	if f.L == nil {
+		return fmt.Errorf("no reconciler lease: %w", deal.ErrFenced)
+	}
+	err := f.L.Renew(ctx)
+	if errors.Is(err, ErrFenced) {
+		return fmt.Errorf("%w: %w", deal.ErrFenced, err)
+	}
+	return err
+}
+
+// DealFunctions is the deal pass's Reserver, Row, Gate and CardWhy over the
 // nova_sprint functions of deal.lua (#3063): one ns_card_deal call per bench,
 // one ns_bench_ssh per bench row that ran, one ns_card_deal_fail per bench
 // whose session failed before anything ran (the row and the batch's return
-// in one call, #3322), one ns_card_gate per sprint. Each checks the fence
-// token inside the function.
+// in one call, #3322), one ns_card_why per bench with refused cards (#3700),
+// one ns_card_gate per sprint. Each checks the fence token inside the
+// function.
 type DealFunctions struct {
 	Client *redis.Client
 	Actor  string
@@ -568,6 +587,7 @@ var (
 	_ deal.Reserver = (*DealFunctions)(nil)
 	_ deal.Row      = (*DealFunctions)(nil)
 	_ deal.Gate     = (*DealFunctions)(nil)
+	_ deal.CardWhy  = (*DealFunctions)(nil)
 )
 
 // Reserve reads each card's attempt in one pipelined round, mints
@@ -654,6 +674,21 @@ func (d *DealFunctions) Fail(ctx context.Context, fence, bench, state, why strin
 	returned, _ := strconv.Atoi(reply[2])
 	timeouts, _ := strconv.Atoi(reply[3])
 	return deal.Failed{Returned: returned, Timeouts: timeouts, State: reply[4], Hold: reply[5] == "1"}, nil
+}
+
+// CardWhy writes each refused card's refusal line in one ns_card_why call
+// (#3700); a card no longer at the reservation's attempt is skipped.
+func (d *DealFunctions) CardWhy(ctx context.Context, fence string, res []deal.Reservation, why []string) error {
+	args := []any{fence}
+	for i, r := range res {
+		if i < len(why) && why[i] != "" {
+			args = append(args, r.Card.Sprint, r.Card.Label, strconv.Itoa(r.Attempt), why[i])
+		}
+	}
+	if len(args) == 1 {
+		return nil
+	}
+	return d.call(ctx, "ns_card_why", "WHY", args...)
 }
 
 // Gate writes one sprint's DEPENDS-ON moves in one ns_card_gate call.

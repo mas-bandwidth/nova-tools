@@ -183,7 +183,11 @@ func cmdCardShow(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	for _, line := range card.ShowLines(cardFields, resultFields) {
 		fmt.Fprintln(stdout, line)
 	}
-	fmt.Fprintf(stdout, "SHOWN card %s/%s state=%s attempt=%s outcome=%s valid=%s fields=%d\n", *sprint, *label,
-		orDash(cardFields["state"]), orDash(cardFields["attempt"]), orDash(cardFields["outcome"]), orDash(resultFields["valid"]), len(cardFields)+len(resultFields))
+	// The receipt names attempt, retries, reason and why (#3700), so a card
+	// the dealer keeps redealing shows why in one line; why is last and
+	// verbatim (escaped onto the line), the refusal as the bench printed it.
+	fmt.Fprintf(stdout, "SHOWN card %s/%s state=%s attempt=%s outcome=%s valid=%s retries=%s reason=%s fields=%d why=%s\n", *sprint, *label,
+		orDash(cardFields["state"]), orDash(cardFields["attempt"]), orDash(cardFields["outcome"]), orDash(resultFields["valid"]),
+		orDash(cardFields["retries"]), orDash(cardFields["reason"]), len(cardFields)+len(resultFields), oneline.Escape(orDash(cardFields["why"])))
 	return 0
 }
