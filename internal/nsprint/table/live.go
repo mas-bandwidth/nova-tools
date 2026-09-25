@@ -14,6 +14,7 @@
 //	q:blocked             ZCARD, the one blocked count     (friend-queue, #3219)
 //	bench:*               SCAN COUNT 1000, then HGETALL    (bench-row, card-dealer)
 //	bench:<b>:cards:<w>   ZCARD, w = ready working done ok fail (the card move, #3692)
+//	ci:nomirror:<b>       SMEMBERS, the repos the bench has no mirror of (ns_ci_release, #3724)
 //
 // A host row's ready, working, done, ok and fail are the ZCARDs of its card
 // views, read in the same pipeline (nova-tools#3692, ONE PLACE: every card is
@@ -21,6 +22,10 @@
 // bench-row's queue, working, done, ok and fail fields are no longer read: it
 // counted job dirs, and cards that had ended printed as "-". host, at and
 // load1 still come from the bench's own hash.
+//
+// A host row ends " | nomirror=<repos>" while ci:nomirror:<b> is non-empty
+// (#3804): every CI claim of those repos skips the bench until its mirror
+// exists, so the defect is on the row; "?" when the set could not be read.
 //
 // Bench keys are found by SCAN, as the bash does (a cursor walk; the bench
 // ACL user has no KEYS and no EVAL_RO); every value is then read in ONE
@@ -68,7 +73,14 @@ type FriendRow struct {
 type BenchRow struct {
 	Key    string // the key suffix, bench:<Key>
 	Fields map[string]string
+	// NoMirror is ci:nomirror:<Key>, sorted and comma-joined: "" when the
+	// set is empty, "?" when it could not be read (#3804).
+	NoMirror string
 }
+
+// NoMirrorKey is ci:nomirror:<bench>, written only by the ci_run.lua
+// functions (internal/nsprint/ci names the same key).
+func NoMirrorKey(bench string) string { return "ci:nomirror:" + bench }
 
 // LiveSnapshot is one read of the live keyspace.
 type LiveSnapshot struct {
@@ -129,12 +141,14 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 	blocked := pipe.ZCard(ctx, "q:blocked")
 	hashes := make([]*redis.MapStringStringCmd, len(benchKeys))
 	cards := make([][]*redis.IntCmd, len(benchKeys))
+	nomirror := make([]*redis.StringSliceCmd, len(benchKeys))
 	for i, key := range benchKeys {
 		hashes[i] = pipe.HGetAll(ctx, key)
 		if name := strings.TrimPrefix(key, "bench:"); name != "pool" && !strings.Contains(name, ":") {
 			for _, w := range benchCardCells {
 				cards[i] = append(cards[i], pipe.ZCard(ctx, key+":cards:"+w))
 			}
+			nomirror[i] = pipe.SMembers(ctx, NoMirrorKey(name))
 		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
@@ -183,7 +197,7 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 			fields[f] = sanitize(v)
 		}
 		cardCells(fields, cards[i])
-		snap.Benches = append(snap.Benches, BenchRow{Key: strings.TrimPrefix(key, "bench:"), Fields: fields})
+		snap.Benches = append(snap.Benches, BenchRow{Key: strings.TrimPrefix(key, "bench:"), Fields: fields, NoMirror: noMirrorCell(nomirror[i])})
 	}
 	if snap.XY == "" && cfg.XYFile != "" {
 		snap.XYFileLine, snap.XYFileMod, snap.XYFileOK = readXYFile(cfg.XYFile)
@@ -216,6 +230,31 @@ func cardCells(fields map[string]string, cmds []*redis.IntCmd) {
 		}
 		fields[field] = strconv.FormatInt(cmds[j].Val(), 10)
 	}
+}
+
+// noMirrorCell is the host row's nomirror value: the set's members sorted and
+// comma-joined, "" when empty, "?" when the SMEMBERS errored.
+func noMirrorCell(cmd *redis.StringSliceCmd) string {
+	if cmd == nil {
+		return ""
+	}
+	repos, err := cmd.Result()
+	if err != nil {
+		return "?"
+	}
+	sort.Strings(repos)
+	for i, r := range repos {
+		repos[i] = sanitize(r)
+	}
+	return strings.Join(repos, ",")
+}
+
+// noMirrorSuffix ends a host row: " | nomirror=<repos>" or nothing.
+func (row BenchRow) noMirrorSuffix() string {
+	if row.NoMirror == "" {
+		return ""
+	}
+	return " | nomirror=" + row.NoMirror
 }
 
 // FailedLive is the tick whose read failed: the friend, xy and landed values
@@ -264,7 +303,7 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 			continue
 		}
 		if s.benchRowStale(row.Fields, now) {
-			fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", c.host, "stale", "?", "?", "?", "?", "?", "?")
+			fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s%s\n", c.host, "stale", "?", "?", "?", "?", "?", "?", row.noMirrorSuffix())
 			continue
 		}
 		for cell := range c.unread {
@@ -276,8 +315,8 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 		} else if c.done > 0 {
 			pct = strconv.FormatInt(100*c.ok/c.done, 10) + "%"
 		}
-		fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", c.host, c.queue,
-			c.num("working", c.working), c.num("done", c.done), c.num("ok", c.ok), c.num("fail", c.fail), pct, c.load)
+		fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s%s\n", c.host, c.queue,
+			c.num("working", c.working), c.num("done", c.done), c.num("ok", c.ok), c.num("fail", c.fail), pct, c.load, row.noMirrorSuffix())
 		qn, _ := strconv.ParseInt(c.queue, 10, 64)
 		tq, tw, td, to, tf = tq+qn, tw+c.working, td+c.done, to+c.ok, tf+c.fail
 	}
