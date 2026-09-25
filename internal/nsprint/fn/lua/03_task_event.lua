@@ -13,24 +13,23 @@
 --       the PR's read task read-<n>-<head8> working -> merging (the read is done)
 --
 -- The tasks an event names come from the ref index (01_task_ref.lua): one
--- SMEMBERS per ref, never a scan. Every move goes through TE.move, the task
--- side of the one move: the id must be in the ws set its record names and in
--- no other set of its stream (else the task is skipped by name and nothing is
--- written), the set changes with the record's state in the same call, the
--- score (the task's age) is kept, and ws:log gets one receipt.
---
--- TE.move writes the same keys as ws.lua's ns_ws_move with the two event
--- edges that graph lacks (any live state -> landed by a merge; waiting,
--- ready, working -> merging when the work's PR opens). It folds into the card
--- model's one writer (02_card_move.lua) when tasks become cards there.
+-- SMEMBERS per ref, never a scan. Every move goes through the one task move
+-- (NS.task.move, 02_card_move.lua, nova-tools #3778): the record and its sets
+-- change together or the task is skipped by name with the move's refusal
+-- and nothing is written; the score (the task's age) is kept and ws:log gets
+-- one receipt per step. An event edge the graph takes in steps (ready ->
+-- working -> merging when the work's PR opens; ready, parked or waiting ->
+-- ... -> landed at a merge) is walked step by step, each step on the graph.
 -- Exports NS.tev for harvest.lua.
 
 local TE = {
   TR = NS.tref,
-  STATES = { 'waiting', 'ready', 'working', 'merging', 'landed', 'parked' },
-  FROM = {
-    merging = { waiting = true, ready = true, working = true },
-    landed = { waiting = true, ready = true, working = true, merging = true, parked = true },
+  -- the steps from each where to the event's where
+  PATH = {
+    merging = { waiting = { 'ready', 'working', 'merging' }, ready = { 'working', 'merging' },
+      working = { 'merging' } },
+    landed = { waiting = { 'ready', 'working', 'landed' }, ready = { 'working', 'landed' },
+      working = { 'landed' }, merging = { 'landed' }, parked = { 'ready', 'working', 'landed' } },
   },
 }
 
@@ -39,35 +38,32 @@ function TE.now()
   return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 end
 
--- TE.move(id, to, by, why) -> 'MOVED' | 'SAME' | 'SKIP', and for SKIP why.
-function TE.move(id, to, by, why)
-  local f = redis.call('HMGET', 'task:' .. id, 'stream', 'state')
-  local stream, from = f[1] or '', f[2] or ''
-  if stream == '' then return 'SKIP', 'no stream' end
+-- TE.move(id, to, by, why, sha) -> 'MOVED' | 'SAME' | 'SKIP', and for SKIP
+-- why. sha is the merge a landing is at.
+function TE.move(id, to, by, why, sha)
+  local p = NS.task.read(id)
+  if not p then return 'SKIP', 'no task' end
+  if p.stream == '' then return 'SKIP', 'no stream' end
+  local from = p.where
+  if not p.placed then from = NS.task.where_of[p.state] or p.state end
   if from == to then return 'SAME' end
-  if not TE.FROM[to][from] then return 'SKIP', from .. '->' .. to .. ' is not an event move' end
-  local score = redis.call('ZSCORE', 'ws:' .. stream .. ':' .. from, id)
-  if not score then return 'SKIP', 'says ' .. from .. ' but is not in ws:' .. stream .. ':' .. from end
-  for _, st in ipairs(TE.STATES) do
-    if st ~= from and redis.call('ZSCORE', 'ws:' .. stream .. ':' .. st, id) then
-      return 'SKIP', 'says ' .. from .. ' but is also in ws:' .. stream .. ':' .. st
-    end
+  local path = TE.PATH[to][from]
+  if not path then return 'SKIP', from .. '->' .. to .. ' is not an event move' end
+  local err = NS.task.check(id, path[1], { by = by, why = why, sha = sha })
+  if err then return 'SKIP', err end
+  for _, step in ipairs(path) do
+    err = NS.task.move(id, step, { by = by, why = why, sha = sha })
+    if err then return 'SKIP', err end
   end
-  local now = TE.now()
-  redis.call('ZREM', 'ws:' .. stream .. ':' .. from, id)
-  redis.call('ZADD', 'ws:' .. stream .. ':' .. to, score, id)
-  redis.call('HSET', 'task:' .. id, 'state', to, 'state_at', tostring(now), 'why', why or '')
-  redis.call('XADD', 'ws:log', 'MAXLEN', '~', '200000', '*', 'id', id, 'stream', stream,
-    'from', from, 'to', to, 'by', by or '', 'why', why or '', 'at', tostring(now))
   return 'MOVED'
 end
 
--- TE.apply(ids, to, by, why) -> {moved, same, skipped, notes}: notes are
--- 'id: why' for each skipped id.
-function TE.apply(ids, to, by, why)
+-- TE.apply(ids, to, by, why, sha) -> {moved, same, skipped, notes}: notes
+-- are 'id: why' for each skipped id.
+function TE.apply(ids, to, by, why, sha)
   local r = { moved = 0, same = 0, skipped = 0, notes = {} }
   for _, id in ipairs(ids) do
-    local status, note = TE.move(id, to, by, why)
+    local status, note = TE.move(id, to, by, why, sha)
     if status == 'MOVED' then
       r.moved = r.moved + 1
     elseif status == 'SAME' then
@@ -95,9 +91,10 @@ function TE.opened(refs, by, why)
   return TE.apply(TE.TR.ids(refs), 'merging', by, why)
 end
 
--- TE.landed(refs, extra, by, why): a merge landed the work these refs name;
--- the tasks (and the extra ids, indexed first) move to landed.
-function TE.landed(refs, extra, by, why)
+-- TE.landed(refs, extra, by, why, sha): a merge (at sha) landed the work
+-- these refs name; the tasks (and the extra ids, indexed first) move to
+-- landed.
+function TE.landed(refs, extra, by, why, sha)
   for _, id in ipairs(extra or {}) do TE.TR.index(id) end
   local ids = TE.TR.ids(refs)
   local seen = {}
@@ -108,7 +105,7 @@ function TE.landed(refs, extra, by, why)
       ids[#ids + 1] = id
     end
   end
-  local r = TE.apply(ids, 'landed', by, why)
+  local r = TE.apply(ids, 'landed', by, why, sha)
   r.matched = #ids
   return r
 end
@@ -164,7 +161,7 @@ redis.register_function('ns_land_member', function(keys, args)
       closes = redis.call('HGET', key, 'closes') or ''
     end
   end
-  local r = TE.landed(TE.refs(repo, n, closes), { task }, by, why)
+  local r = TE.landed(TE.refs(repo, n, closes), { task }, by, why, sha)
   local out = { 'OK', tostring(r.moved), tostring(r.same), tostring(r.skipped), tostring(r.matched), tostring(added) }
   for _, note in ipairs(r.notes) do out[#out + 1] = note end
   return out
@@ -194,7 +191,9 @@ redis.register_function('ns_read_post', function(keys, args)
     local with, sha = string.match(first, 'with (%S+#%d+) %((%x+)%)')
     local why = 'landed: CLOSE by ' .. who .. ' on ' .. TE.TR.bare(repo) .. '#' .. n
     if with then why = 'landed with ' .. with .. ' (' .. sha .. ')' end
-    r = TE.landed(TE.refs(repo, n, redis.call('HGET', key, 'closes') or ''), {}, who, why)
+    -- the landing's merge: the line's sha, else the CLOSE line itself
+    r = TE.landed(TE.refs(repo, n, redis.call('HGET', key, 'closes') or ''), {}, who, why,
+      sha or ('close:' .. who .. ':' .. head))
   elseif kind == 'SCORE' and #head >= 8 then
     local id = 'read-' .. n .. '-' .. string.sub(head, 1, 8)
     if redis.call('HGET', 'task:' .. id, 'state') == 'working' then

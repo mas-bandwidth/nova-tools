@@ -1,22 +1,12 @@
 -- The batch task verbs on the ws index (nova-tools #3661, sweep #3647; part
--- of #3662). The keys and invariants are rowan-new specs/ws-index.md:
---   task:<id>              HASH  stream, state, order, owner, front, ...
---   ws:<stream>:<state>    ZSET  one per state (waiting ready working merging
---                                landed parked); a task id is in exactly the
---                                one its task:<id> stream/state fields name,
---                                and a closed task is in none
---   ws:names               SET   the stream names
---   ws:log                 STREAM one receipt per moved row
--- This file is self-contained: it reads no NS field and no other file's
--- local. Its move primitive (TB.apply) repeats the key writes of #3662's
--- ns_ws_move on purpose until a follow-up folds the two.
---
--- Friend-queue compatibility, until bash friend-queue and the current table
--- are retired: every move also keeps the legacy per-owner index sets
--- sprint:<S>:idx:<owner>:open|working|closed|leased, the one global q:blocked
--- ZSET (waiting and parked are "blocked" there), and the owner's ready
--- streams q:<owner> and q:<owner>:front (a row leaving ready loses its entry;
--- a row entering ready gets one, on :front when front=1).
+-- of #3662). A task is a task card (02_card_move.lua, NS.task, nova-tools
+-- #3778): task:<id> with the pointer where (waiting ready working merging
+-- landed done parked, or '' in no set), stream and friend; its views are
+-- ws:<stream>:<where> and friend:<friend>:cards:<where>, scored by the
+-- task's created_at. Every row moves through NS.task.move, the one writer
+-- of the pointer, the views, ws:log and the friend-queue shapes
+-- (sprint:<S>:idx:<owner>:*, q:<owner>, q:blocked); this file writes none
+-- of them. cancel is done/fail; the verbs' 'closed' is done.
 --
 -- ns_task_batch(verb, S, by, why, param, source, source_value, id...)
 --   verb   cancel | block | unblock | front | move-stream | move-state |
@@ -30,6 +20,8 @@
 -- Every row is checked before any is written, so a refusal changes nothing:
 --   {'REFUSED', <first bad id or key>, <why>}
 --   {'OK', <n moved>, <stream or *>}
+-- move-stream and front keep every score (the task's age); front writes
+-- front=1 and order 0 and requeues the ready entry on q:<owner>:front.
 --
 -- ns_task_sweep(S, by, friend): ready must be READY (#3647). For each id in
 -- the friend's ready index (sprint:<S>:idx:<friend>:open) whose ws state is
@@ -42,15 +34,10 @@
 
 local TB = {}
 
-TB.STATES = { 'waiting', 'ready', 'working', 'merging', 'landed', 'parked' }
+-- The verbs' 'closed' is the card's done (done/fail: a cancel).
+TB.KNOWN = { waiting = true, ready = true, working = true, merging = true, landed = true, parked = true,
+  closed = true, done = true }
 TB.ORDERED = { waiting = true, ready = true, parked = true }
-TB.KNOWN = { waiting = true, ready = true, working = true, merging = true, landed = true, parked = true, closed = true }
--- The spec's graph: waiting->ready->working->merging->landed, parked->waiting;
--- any->parked and any->closed are in TB.allowed.
-TB.NEXT = { waiting = 'ready', ready = 'working', working = 'merging', merging = 'landed', parked = 'waiting' }
--- The legacy friend-queue index set of each ws state; waiting and parked are
--- in q:blocked instead.
-TB.LEGACY = { ready = 'open', working = 'working', merging = 'closed', landed = 'closed', closed = 'closed' }
 -- The states a --stream source selects, per verb.
 TB.SOURCES = {
   cancel = { 'waiting', 'ready', 'parked' },
@@ -61,7 +48,6 @@ TB.SOURCES = {
   ['move-state'] = { 'waiting', 'ready', 'parked' },
   ['move-friend'] = { 'waiting', 'ready', 'parked' },
 }
-TB.FIELDS = { 'stream', 'state', 'order', 'owner', 'front', 'queue', 'xid', 'kind', 'head', 'ref', 'pr', 'repo', 'sprint' }
 
 function TB.now()
   local t = redis.call('TIME')
@@ -83,218 +69,87 @@ function TB.str(v)
   return tostring(v)
 end
 
-function TB.allowed(from, to)
-  if from == 'closed' or from == to then
-    return false
-  end
-  if to == 'closed' or to == 'parked' then
-    return true
-  end
-  return TB.NEXT[from] == to
-end
-
--- TB.read returns the row's fields and its score in the ZSET its fields name,
--- or nil and why the row cannot move (no hash or stream, an unknown state, or
--- not in the ZSET its fields name: the invariant is already broken).
+-- TB.read returns the row (id, stream, state = its where, owner, and the
+-- fields sweep reads), or nil and why it cannot move (no record or stream).
 function TB.read(id)
-  local v = redis.call('HMGET', 'task:' .. id, unpack(TB.FIELDS))
-  local t = { id = id }
-  for i, f in ipairs(TB.FIELDS) do
-    t[f] = TB.str(v[i])
-  end
-  if t.stream == '' then
+  local p = NS.task.read(id)
+  if not p or p.stream == '' then
     return nil, 'no-stream'
   end
-  if not TB.KNOWN[t.state] then
-    return nil, 'state-' .. (t.state == '' and 'none' or t.state)
-  end
-  if t.state ~= 'closed' then
-    local s = redis.call('ZSCORE', 'ws:' .. t.stream .. ':' .. t.state, id)
-    if not s then
-      return nil, 'not-in-ws-' .. t.state
-    end
-    t.score = tonumber(s)
+  local t = { id = id, stream = p.stream, owner = p.friend, kind = p.kind, ref = p.ref, pr = p.pr, sprint = p.sprint }
+  local x = redis.call('HMGET', 'task:' .. id, 'head', 'repo')
+  t.head, t.repo = TB.str(x[1]), TB.str(x[2])
+  t.state = p.where
+  if not p.placed then
+    t.state = ({ open = 'ready', closed = 'done', cancelled = 'done', blocked = 'waiting' })[p.state] or p.state
   end
   return t
 end
 
--- TB.target returns the state a verb moves the row to, or nil and why not.
-function TB.target(verb, param, t)
-  local st = t.state
-  if st == 'closed' then
+-- TB.target returns the where a verb moves the row to and the move's
+-- options, or nil and why not. Every move is checked by NS.task.check
+-- before any row is written.
+function TB.target(ctx, t, why)
+  local verb, param, st = ctx.verb, ctx.param, t.state
+  local o = { by = ctx.by, why = why, sprint = ctx.S }
+  if st == 'done' then
     return nil, 'closed'
   end
   if verb == 'cancel' then
-    return 'closed'
+    o.ok, o.fields = 'fail', { 'evidence', why }
+    return 'done', o
   elseif verb == 'block' then
     if st == 'ready' or st == 'waiting' then
-      return 'waiting'
+      o.fields = { 'blocked_on', ctx.on or '', 'blocked_reason', why, 'blocked_at', tostring(ctx.now) }
+      return 'waiting', o
     end
   elseif verb == 'unblock' then
     if st == 'waiting' then
-      return 'ready'
+      return 'ready', o
     end
   elseif verb == 'move-state' then
-    if TB.allowed(st, param) then
-      return param
+    if param == 'closed' or param == 'done' then
+      o.ok, o.fields = 'fail', { 'evidence', why }
+      return 'done', o
     end
-    return nil, st .. '-to-' .. param
+    if st == param then
+      return nil, st .. '-to-' .. param
+    end
+    return param, o
   elseif verb == 'move-stream' then
     if t.stream == param then
       return nil, 'same-stream'
     end
-    return st
+    o.stream = param
+    return st, o
   elseif verb == 'move-friend' then
     if t.owner == param then
       return nil, 'same-friend'
     end
     if TB.ORDERED[st] then
-      return st
+      o.friend = param
+      return st, o
     end
   elseif verb == 'front' then
     if TB.ORDERED[st] then
-      return st
+      o.front, o.fields = '1', { 'order', '0' }
+      return st, o
     end
   end
   return nil, verb .. '-from-' .. st
 end
 
--- TB.unqueue deletes the id's entries from the owner's two ready streams. The
--- streams carry no id index, so each owner's streams are read once per call.
-function TB.unqueue(ctx, owner, id)
-  local cache = ctx.queued[owner]
-  if not cache then
-    cache = {}
-    for _, key in ipairs({ 'q:' .. owner .. ':front', 'q:' .. owner }) do
-      for _, e in ipairs(redis.call('XRANGE', key, '-', '+')) do
-        local kv = e[2]
-        for i = 1, #kv, 2 do
-          if kv[i] == 'id' then
-            local list = cache[kv[i + 1]] or {}
-            list[#list + 1] = { key, e[1] }
-            cache[kv[i + 1]] = list
-          end
-        end
-      end
-    end
-    ctx.queued[owner] = cache
+-- TB.apply moves one checked row through the one task move.
+function TB.apply(ctx, t)
+  local err = NS.task.move(t.id, t.to, t.o)
+  if err then
+    return err
   end
-  for _, e in ipairs(cache[id] or {}) do
-    redis.call('XDEL', e[1], e[2])
+  if ctx.verb == 'unblock' then
+    redis.call('HDEL', 'task:' .. t.id, 'blocked_on', 'blocked_reason', 'blocked_at')
   end
-  cache[id] = nil
-end
-
--- TB.legacy keeps the friend-queue shapes consistent with one move.
-function TB.legacy(ctx, t, to, owner, front)
-  local id, old = t.id, t.owner
-  local ix = 'sprint:' .. ctx.S .. ':idx:'
-  local requeue = to == 'ready' and (t.state ~= 'ready' or owner ~= old or ctx.verb == 'front')
-  if old ~= '' then
-    redis.call('SREM', ix .. old .. ':open', id)
-    redis.call('SREM', ix .. old .. ':working', id)
-    if t.state == 'working' and t.xid ~= '' then
-      if t.queue ~= '' then
-        redis.pcall('XACK', t.queue, old, t.xid)
-      end
-      redis.call('SREM', ix .. old .. ':leased', t.xid)
-    end
-    if t.state == 'ready' and (to ~= 'ready' or requeue) then
-      TB.unqueue(ctx, old, id)
-    end
-  end
-  if owner ~= '' then
-    local set = TB.LEGACY[to]
-    if set then
-      redis.call('SADD', ix .. owner .. ':' .. set, id)
-    end
-    if set ~= 'closed' then
-      redis.call('SREM', ix .. owner .. ':closed', id)
-    end
-    if requeue then
-      local q = 'q:' .. owner
-      if front == '1' then
-        q = q .. ':front'
-      end
-      redis.call('XADD', q, '*', 'id', id)
-    end
-  end
-  if to == 'waiting' or to == 'parked' then
-    redis.call('ZADD', 'q:blocked', 'NX', ctx.now, id)
-  else
-    redis.call('ZREM', 'q:blocked', id)
-  end
-end
-
--- TB.apply moves one checked row to state `to`, keeping every invariant.
--- score is the ordered-state score the caller chose (nil keeps the row's
--- order); why is this row's receipt reason.
-function TB.apply(ctx, t, to, score, why)
-  local id = t.id
-  local stream, owner, front = t.stream, t.owner, t.front
-  if ctx.verb == 'move-stream' then
-    stream = ctx.param
-  elseif ctx.verb == 'move-friend' then
-    owner = ctx.param
-  end
-  local now = tostring(ctx.now)
-  local hset = { 'state', to, 'stream', stream, 'state_at', now }
-  if t.state ~= 'closed' then
-    redis.call('ZREM', 'ws:' .. t.stream .. ':' .. t.state, id)
-  end
-  if to ~= 'closed' then
-    if ctx.verb == 'front' then
-      score, front = 0, '1'
-      hset[#hset + 1] = 'front'
-      hset[#hset + 1] = '1'
-    end
-    if TB.ORDERED[to] then
-      if score == nil then
-        score = tonumber(t.order) or (TB.ORDERED[t.state] and t.score) or 0
-      end
-      hset[#hset + 1] = 'order'
-      hset[#hset + 1] = tostring(score)
-    elseif to ~= t.state then
-      score = ctx.now
-    else
-      score = t.score
-    end
-    redis.call('ZADD', 'ws:' .. stream .. ':' .. to, score, id)
-  end
-  if owner ~= t.owner then
-    hset[#hset + 1] = 'owner'
-    hset[#hset + 1] = owner
-  end
-  if to == 'closed' then
-    for _, kv in ipairs({ { 'cancelled', '1' }, { 'done_at', now }, { 'evidence', why } }) do
-      hset[#hset + 1] = kv[1]
-      hset[#hset + 1] = kv[2]
-    end
-  elseif to == 'waiting' and t.state ~= 'parked' and (ctx.verb == 'block' or ctx.verb == 'sweep') then
-    for _, kv in ipairs({ { 'blocked_on', ctx.on or '' }, { 'blocked_reason', why }, { 'blocked_at', now } }) do
-      hset[#hset + 1] = kv[1]
-      hset[#hset + 1] = kv[2]
-    end
-  end
-  redis.call('HSET', 'task:' .. id, unpack(hset))
-  if to == 'ready' and ctx.verb == 'unblock' then
-    redis.call('HDEL', 'task:' .. id, 'blocked_on', 'blocked_reason', 'blocked_at')
-  end
-  if t.state == 'working' and to ~= 'working' then
-    redis.call('HDEL', 'task:' .. id, 'queue', 'xid', 'leased_at')
-  end
-  TB.legacy(ctx, t, to, owner, front)
-  local log = { 'id', id, 'stream', stream, 'from', t.state, 'to', to, 'by', ctx.by, 'why', why, 'at', now, 'verb', ctx.verb }
-  if stream ~= t.stream then
-    log[#log + 1] = 'from_stream'
-    log[#log + 1] = t.stream
-  end
-  if owner ~= t.owner then
-    log[#log + 1] = 'owner'
-    log[#log + 1] = owner
-  end
-  redis.call('XADD', 'ws:log', 'MAXLEN', '~', '100000', '*', unpack(log))
-  ctx.streams[stream] = true
+  ctx.streams[t.o.stream or t.stream] = true
+  return nil
 end
 
 -- TB.stream_of names the one stream every moved row is in, or '*'.
@@ -340,19 +195,6 @@ function TB.members(verb, source, value, args)
   return ids
 end
 
--- TB.tail is the highest order score in a stream's ordered sets, so rows moved
--- into it queue after its own work, never ahead of it.
-function TB.tail(stream)
-  local top = 0
-  for st in pairs(TB.ORDERED) do
-    local r = redis.call('ZRANGE', 'ws:' .. stream .. ':' .. st, -1, -1, 'WITHSCORES')
-    if r[2] and tonumber(r[2]) > top then
-      top = tonumber(r[2])
-    end
-  end
-  return top
-end
-
 function TB.batch(keys, args)
   local verb, S, by, why, param = args[1], args[2], args[3], args[4], args[5]
   if not TB.SOURCES[verb] then
@@ -374,6 +216,13 @@ function TB.batch(keys, args)
   if not ids then
     return refusal
   end
+  local ctx = { verb = verb, S = S, by = by, param = param, now = TB.now(), streams = {} }
+  if verb == 'block' then
+    ctx.on = param
+  end
+  if why == nil or why == '' then
+    why = verb
+  end
   local rows, seen = {}, {}
   for _, id in ipairs(ids) do
     if not seen[id] then
@@ -382,50 +231,29 @@ function TB.batch(keys, args)
       if not t then
         return { 'REFUSED', id, bad }
       end
-      local to
-      to, bad = TB.target(verb, param, t)
+      local to, o = TB.target(ctx, t, why)
       if not to then
+        return { 'REFUSED', id, o }
+      end
+      bad = NS.task.check(id, to, o)
+      if bad then
         return { 'REFUSED', id, bad }
       end
-      t.to = to
-      t.rank = #rows + 1
+      t.to, t.o = to, o
       rows[#rows + 1] = t
     end
   end
-  local ctx = { verb = verb, S = S, by = by, param = param, now = TB.now(), queued = {}, streams = {} }
-  if verb == 'block' then
-    ctx.on = param
-  end
-  if why == nil or why == '' then
-    why = verb
-  end
-  if verb == 'move-stream' then
-    -- Keep the rows' relative order: sort by their order, then queue them
-    -- after the destination's tail.
-    table.sort(rows, function(a, b)
-      local x = tonumber(a.order) or a.score or 0
-      local y = tonumber(b.order) or b.score or 0
-      if x ~= y then
-        return x < y
-      end
-      return a.rank < b.rank
-    end)
-    local base = TB.tail(param)
-    for i, t in ipairs(rows) do
-      local score
-      if TB.ORDERED[t.to] then
-        score = base + i
-      end
-      TB.apply(ctx, t, t.to, score, why)
-    end
-    return { 'OK', #rows, param }
-  end
   for _, t in ipairs(rows) do
-    TB.apply(ctx, t, t.to, nil, why)
+    local err = TB.apply(ctx, t)
+    if err then
+      return { 'REFUSED', t.id, err }
+    end
   end
   local fallback = '-'
   if args[6] == 'stream' then
     fallback = args[7]
+  elseif verb == 'move-stream' then
+    fallback = param
   end
   return { 'OK', #rows, TB.stream_of(ctx, fallback) }
 end
@@ -470,7 +298,7 @@ function TB.sweep(keys, args)
   if TB.str(S) == '' or TB.str(by) == '' or TB.str(friend) == '' then
     return { 'REFUSED', 'sweep', 'want-sprint-by-and-friend' }
   end
-  local ctx = { verb = 'sweep', S = S, by = by, param = '', now = TB.now(), queued = {}, streams = {} }
+  local ctx = { verb = 'sweep', S = S, by = by, param = '', now = TB.now(), streams = {} }
   local cancelled, waiting, skipped = 0, 0, 0
   local pitstop = {}
   local ids = redis.call('SMEMBERS', 'sprint:' .. S .. ':idx:' .. friend .. ':open')
@@ -489,11 +317,22 @@ function TB.sweep(keys, args)
         head = TB.pr_head(t)
       end
       if TB.moved(t.head, head) then
-        TB.apply(ctx, t, 'closed', nil, 'sweep: head moved ' .. t.head .. ' -> ' .. head)
-        cancelled = cancelled + 1
+        local why = 'sweep: head moved ' .. t.head .. ' -> ' .. head
+        t.to, t.o = 'done', { by = by, why = why, ok = 'fail', sprint = S, fields = { 'evidence', why } }
+        if TB.apply(ctx, t) then
+          skipped = skipped + 1
+        else
+          cancelled = cancelled + 1
+        end
       elseif pitstop[sprint] then
-        TB.apply(ctx, t, 'waiting', nil, 'sweep: pitstop ' .. sprint)
-        waiting = waiting + 1
+        local why = 'sweep: pitstop ' .. sprint
+        t.to, t.o = 'waiting', { by = by, why = why, sprint = S,
+          fields = { 'blocked_on', '', 'blocked_reason', why, 'blocked_at', tostring(ctx.now) } }
+        if TB.apply(ctx, t) then
+          skipped = skipped + 1
+        else
+          waiting = waiting + 1
+        end
       end
     end
   end

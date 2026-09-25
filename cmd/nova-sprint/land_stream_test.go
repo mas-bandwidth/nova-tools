@@ -313,7 +313,9 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if cl := c.HGet(ctx, "pr:nova-tools:1", "closes").Val(); cl != "101" {
 		t.Fatalf("#1 closes %q, want 101 from its body", cl)
 	}
-	if log, _ := c.XLen(ctx, "ws:log").Result(); log != 7 { // park, the landing, five lands
+	// park, the landing, five lands walked step by step through the one move
+	// (#3778: a ready member goes ready -> working -> landed, one receipt each)
+	if log, _ := c.XLen(ctx, "ws:log").Result(); log != 10 {
 		t.Fatalf("ws:log %d", log)
 	}
 	// The table reads the sets: the stream's landed cell is 2 (merging is
