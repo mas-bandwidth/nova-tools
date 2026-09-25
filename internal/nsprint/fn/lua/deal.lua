@@ -86,7 +86,7 @@ end
 -- shape (32 lowercase hex after the attempt, a 12 lowercase hex sha), the
 -- same match ns_task_take runs on its token before any write, not just the
 -- <attempt>. prefix. A card whose attempt moved, that is no longer queued and
--- pooled, whose sprint is not open, that is pinned to another bench, whose
+-- pooled, whose sprint is not open or is pit-stopped, that is pinned to another bench, whose
 -- leg the bench does not run, whose tier backpressure holds, or whose token
 -- or token_sha does not match that shape, is skipped.
 -- The bench guard (registered, UP, not paused, free > 0) is checked once;
@@ -136,7 +136,9 @@ local function card_deal(keys, args)
     end
     local S, label, attempt, ctoken, csha = args[i], args[i + 1], tonumber(args[i + 2]), args[i + 3], args[i + 4]
     if open[S] == nil then
-      open[S] = redis.call('HGET', 's:' .. S, 'status') == 'open'
+      -- A pit-stopped sprint (s:<S>:pitstop, pitstop.lua) deals nothing.
+      open[S] = redis.call('HGET', 's:' .. S, 'status') == 'open' and
+        redis.call('EXISTS', 's:' .. S .. ':pitstop') == 0
       bp[S] = deal_backpressure(S)
     end
     local ck = 's:' .. S .. ':card:' .. label
