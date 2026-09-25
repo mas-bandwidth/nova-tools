@@ -142,8 +142,9 @@ func checkRedis(ctx context.Context, c *redis.Client) Line {
 	server := pipe.Info(ctx, "server")
 	persistence := pipe.Info(ctx, "persistence")
 	libs := pipe.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: fn.Library, WithCode: true})
+	redisTime := pipe.Time(ctx)
 	_, _ = pipe.Exec(ctx)
-	for _, err := range []error{server.Err(), persistence.Err(), libs.Err()} {
+	for _, err := range []error{server.Err(), persistence.Err(), libs.Err(), redisTime.Err()} {
 		if isNoPerm(err) {
 			return needsSeat(n, name, c, err)
 		}
