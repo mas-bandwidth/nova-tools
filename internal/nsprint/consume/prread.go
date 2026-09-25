@@ -28,7 +28,15 @@ const (
 	FunctionReadsShortDeleteEnded = "ns_reads_short_delete_ended"
 	FunctionReadsShortDeleteLeft  = "ns_reads_short_delete_left"
 	FunctionPRPass                = "ns_pr_pass"
+	FunctionPRFirstRead           = "ns_pr_first_read"
 )
+
+// HarvestAuthor is the seat `nova-sprint harvest` opens card PRs as; it is
+// never a reader of them. s:<S>:policy harvest_author overrides it.
+const HarvestAuthor = "rowan"
+
+// DefaultOwner is the GitHub owner of a repo named without one.
+const DefaultOwner = "mas-bandwidth"
 
 // Remote is the ls-remote seam for checking heads on git remotes.
 type Remote func(ctx context.Context, repo string) (map[int]string, error)
@@ -410,7 +418,19 @@ func (p *PRRead) Pass(ctx context.Context) (int, error) {
 	sort.Strings(friendsList)
 
 	for _, e := range events {
-		if e.prev == "" || e.prev == e.head {
+		if e.prev == "" {
+			// The first head of a PR: a card PR gets its first reads (#3739).
+			queued, err := p.firstRead(ctx, policy, e)
+			if err != nil {
+				passErr = err
+				return 0, passErr
+			}
+			if queued {
+				nProcessed++
+			}
+			continue
+		}
+		if e.prev == e.head {
 			// Not a head change, ack
 			_ = client.HSet(ctx, "s:"+p.Sprint+":idem", "pr-to-read:"+e.id, "NOOP").Err()
 			_ = client.XAck(ctx, "s:"+p.Sprint+":log", RulePRToRead, e.id).Err()
@@ -485,6 +505,30 @@ func (p *PRRead) Pass(ctx context.Context) (int, error) {
 			return 0, passErr
 		}
 		nProcessed++
+	}
+
+	// 3b. Retry the card PRs still short of readers (#3739): the pending set
+	// is an index, read in order of event time, never a scan.
+	pendingMembers, err := client.ZRange(ctx, "s:"+p.Sprint+":reads:pending", 0, 99).Result()
+	if err != nil {
+		passErr = fmt.Errorf("pr-to-read: reads pending: %w", err)
+		return 0, passErr
+	}
+	for _, m := range pendingMembers {
+		at := strings.LastIndex(m, "@")
+		hash := strings.LastIndex(m, "#")
+		if at < 0 || hash < 0 || hash > at {
+			_ = client.ZRem(ctx, "s:"+p.Sprint+":reads:pending", m).Err()
+			continue
+		}
+		queued, err := p.firstRead(ctx, policy, headEvent{repo: m[:hash], pr: m[hash+1 : at], head: m[at+1:]})
+		if err != nil {
+			passErr = err
+			return 0, passErr
+		}
+		if queued {
+			nProcessed++
+		}
 	}
 
 	// 4. Move cards review-ready -> land-ready
@@ -685,6 +729,97 @@ type headEvent struct {
 	head   string
 	prev   string
 	source string
+	at     string
+}
+
+// prURL is the PR's web URL, the ref a read task carries.
+func prURL(policy map[string]string, repo, pr string) string {
+	if !strings.Contains(repo, "/") {
+		owner := policy["owner"]
+		if owner == "" {
+			owner = DefaultOwner
+		}
+		repo = owner + "/" + repo
+	}
+	return "https://github.com/" + repo + "/pull/" + pr
+}
+
+// firstRead queues the first reads of a card PR at its first head (#3739):
+// RequiredReads(policy, card) read tasks on the least-loaded UP friends that
+// are not an author of the PR and not jev, in one ns_pr_first_read call. A
+// PR no card produced is acked as a NOOP, as before. e.id empty is a retry
+// of a s:<S>:reads:pending member. It reports whether a read was queued.
+func (p *PRRead) firstRead(ctx context.Context, policy map[string]string, e headEvent) (bool, error) {
+	client := p.Store.Client()
+	S := p.Sprint
+	pipe := client.Pipeline()
+	labelCmd := pipe.HGet(ctx, "s:"+S+":prcard", e.repo+"#"+e.pr)
+	authorCmd := pipe.HGet(ctx, fmt.Sprintf("s:%s:pr:%s:%s", S, e.repo, e.pr), "author")
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return false, fmt.Errorf("pr-to-read: first read %s#%s: %w", e.repo, e.pr, err)
+	}
+	label := labelCmd.Val()
+	if label == "" {
+		if e.id == "" {
+			return false, client.ZRem(ctx, "s:"+S+":reads:pending", e.repo+"#"+e.pr+"@"+e.head).Err()
+		}
+		_ = client.HSet(ctx, "s:"+S+":idem", "pr-to-read:"+e.id, "NOOP").Err()
+		return false, client.XAck(ctx, "s:"+S+":log", RulePRToRead, e.id).Err()
+	}
+	card, err := client.HGetAll(ctx, "s:"+S+":card:"+label).Result()
+	if err != nil {
+		return false, fmt.Errorf("pr-to-read: first read card %s: %w", label, err)
+	}
+	need := RequiredReads(policy, card)
+	harvestAuthor := policy["harvest_author"]
+	if harvestAuthor == "" {
+		harvestAuthor = HarvestAuthor
+	}
+	authors := []string{harvestAuthor}
+	for _, a := range []string{authorCmd.Val(), card["author"]} {
+		if a != "" && a != harvestAuthor {
+			authors = append(authors, a)
+		}
+	}
+	stream := card["stream"]
+	if stream == "" {
+		stream = "-"
+	}
+	eventAt := e.at
+	if eventAt == "" && e.id != "" {
+		eventAt = strings.SplitN(e.id, "-", 2)[0]
+	}
+	reply, err := client.FCall(ctx, FunctionPRFirstRead, nil,
+		S, p.Instance, e.id, e.repo, e.pr, e.head, label, stream,
+		strconv.Itoa(need), strings.Join(authors, " "), p.Actor, eventAt,
+		prURL(policy, e.repo, e.pr)).Slice()
+	if err != nil {
+		return false, fmt.Errorf("pr-to-read: first read %s#%s: %w", e.repo, e.pr, err)
+	}
+	if err := checkLeaseReply(reply); err != nil {
+		return false, err
+	}
+	if len(reply) < 4 {
+		return false, nil
+	}
+	status := fmt.Sprint(reply[0])
+	queued := false
+	for i := 4; i+1 < len(reply); i += 2 {
+		fmt.Fprintf(p.out(), "READ QUEUED n=%s head=%s to=%s\n", e.pr, head8(e.head), reply[i])
+		queued = true
+	}
+	if status == "PENDING" && fmt.Sprint(reply[3]) == "1" {
+		fmt.Fprintf(p.out(), "READ-PENDING n=%s need=%s have=%s\n", e.pr, reply[1], reply[2])
+	}
+	return queued, nil
+}
+
+// strValue is a stream field as text, "" when absent.
+func strValue(v any) string {
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprint(v)
 }
 
 func (p *PRRead) readHeadEvents(ctx context.Context) ([]headEvent, error) {
@@ -725,6 +860,7 @@ func (p *PRRead) readHeadEvents(ctx context.Context) ([]headEvent, error) {
 					head:   fmt.Sprint(msg.Values["head"]),
 					prev:   fmt.Sprint(msg.Values["prev"]),
 					source: fmt.Sprint(msg.Values["source"]),
+					at:     strValue(msg.Values["at"]),
 				})
 			} else {
 				// Ack non-head events
