@@ -84,7 +84,7 @@ type Result struct {
 // ExitCode maps a status word to the verb's exit code.
 func (r Result) ExitCode() int {
 	switch r.Status {
-	case "CREATED", "EXISTS", "ENDED", "RERUN", "APPROVE", "HOLD", "NOPOLICY", "ALREADY":
+	case "CREATED", "EXISTS", "ENDED", "RERUN", "APPROVE", "HOLD", "NOPOLICY", "ALREADY", "RECEIPT", "RELEASED", "CLAIMED", "IDLE":
 		return ExitOK
 	case "FENCED":
 		return ExitFenced

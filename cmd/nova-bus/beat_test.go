@@ -1,14 +1,16 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 // THE BEAT NEVER BLOCKS SEND (#488, #459).
 //
-// `wait` writes its lane's BEAT on every poll tick so that a line which is merely waiting
-// still reads awake to `nova-wake awake`. That file is the WAITER'S OWN machinery, and
+// `wait` wrote its lane's BEAT on every poll tick until #3144 (presence is Redis only now),
+// and a BEAT an older wait left may still be in a checkout. That file is the WAITER'S OWN machinery, and
 // every friend on the bus hit the day it stopped being treated as such: a wait that
 // returned inside one --beat left BEAT modified and uncommitted, and the next `send` ran
 // checkoutReady and refused over "changes that are not this note" -- naming a file the
@@ -32,10 +34,9 @@ func mustBeClean(t *testing.T, checkout, after string) {
 	}
 }
 
-// A wait records its own beat; it does not leave it lying in the working tree. The beat is
-// written every tick and committed every tick -- the PUSH is the part bounded by --beat,
-// because the push is the only part that costs somebody's server -- so a wait that returns
-// after one tick or after a hundred hands the next verb a clean checkout either way.
+// A wait leaves the working tree clean, and since #3144 it does so by writing no beat at all:
+// presence is friend:<name> in Redis, and the bus carries notes, never beats. A wait that
+// returns after one tick or after a hundred hands the next verb a clean checkout either way.
 func TestWaitLeavesCheckoutClean(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
@@ -50,10 +51,13 @@ func TestWaitLeavesCheckoutClean(t *testing.T) {
 		mustContain(t, "stdout", "WAIT TIMEOUT")
 
 	mustBeClean(t, checkout, "wait")
-	// And the beat is RECORDED, not merely absent: a wait that wrote no beat at all would
-	// also pass the cleanliness assertion and would have broken presence instead.
-	if out := gitIn(t, checkout, "log", "--format=%s", "-1"); !strings.Contains(out, "beat ada") {
-		t.Fatalf("the wait's beat is not committed; the last commit is %q", strings.TrimSpace(out))
+	// And clean WITHOUT a beat commit: the last commit is not `beat ada`, and no BEAT file
+	// exists in the tree.
+	if out := gitIn(t, checkout, "log", "--format=%s", "-1"); strings.Contains(out, "beat ada") {
+		t.Fatalf("the wait committed a beat; the last commit is %q", strings.TrimSpace(out))
+	}
+	if _, err := os.Stat(filepath.Join(checkout, "from-ada", "BEAT")); !os.IsNotExist(err) {
+		t.Fatalf("the wait wrote from-ada/BEAT: %v", err)
 	}
 }
 

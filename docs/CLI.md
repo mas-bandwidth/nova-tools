@@ -1183,10 +1183,12 @@ friend's last beat, `awake` inside `--window` (default 300s), `asleep` past it,
 `--max` (default 50) and one `AWAKE OK` verdict (docs/SPEC-WORK.md, **Presence**,
 source `bus-cursor`). A `from-<name>/BEAT` file is also read, from its own
 content, and a beat whose stamp is newer than the cursor reads `source=bus-beat`.
-The beat carries a `until=<stamp>` lease written by `wait` on entry, every poll
-tick and exit (`--beat-lease`, default 10m); a beat whose lease is still in the
+A BEAT carries a `until=<stamp>` lease; a beat whose lease is still in the
 future reads `awake` `source=bus-beat` even when its stamp and cursor are both
-past `--window` — a line whose manager process is alive between two `wait` calls:
+past `--window`. Since #3144 `wait` writes no BEAT (the bus carries notes, never
+beats; `--beat` and `--beat-lease` are accepted and ignored with one
+`WAIT NOTE`), so this source reads only a BEAT an older wait left, and live
+presence is `awake --store`, the hash `nova-wake beat` writes:
 
 ```
 $ nova-wake awake --bus ./bus
@@ -1199,45 +1201,47 @@ AWAKE OK friends=4 awake=2 asleep=1 unknown=1 window=300
 
 And two that cost nothing at all. `nova-wake beat --as <name> --store <host:port>`
 is the process a friend's window starts once at startup and forgets: every
-`--every` (default 30s) it writes `friend:<name> = <RFC3339 utc>` with a
-`--ttl` (default 90s) on the fleet store, and `friend:<name>:last` with no TTL
-beside it. It reads nothing, prints one line and then nothing, and **no model
-runs on either side** — the cost of presence has to be zero or the heartbeat is
-the first thing dropped under load. A window that exits, runs out of credit or
-is killed simply stops writing, and the key lapses within the TTL: there is no
-shutdown hook to forget to run, which is the whole point.
+`--every` (default 30s) it writes the hash `friend:<name>` (field
+`at = <RFC3339 utc>`) and gives it a `--ttl` (default 90s) on the fleet store,
+with `friend:<name>:last` and no TTL beside it, all in one `MULTI`. It reads
+nothing, prints one line and then nothing, and **no model runs on either
+side** — the cost of presence has to be zero or the heartbeat is the first
+thing dropped under load. A window that exits, runs out of credit or is killed
+simply stops writing, and the hash lapses within the TTL: there is no shutdown
+hook to forget to run, which is the whole point. Presence is Redis only: the
+git bus carries notes and never beats (#3144).
 
 Two flags sit beside that and change nothing when they are left off.
-`--window <time>` is the cap's reset time, stored as passed on
-`friend:<name>:window` — the beat does not read a clock to invent one — and
-`--width <n>` is how many children are in use now, on `friend:<name>:width`.
-Zero is a real count. A missing flag writes no key and does not fail the beat.
-Both keys carry the beat's TTL.
+`--window <time>` is the cap's reset time, stored as passed in the `window`
+field — the beat does not read a clock to invent one — and `--width <n>` is
+how many children are in use now, in the `width` field (#2673). Zero is a real
+count. A missing flag writes no field and does not fail the beat. Both lapse
+with the hash. A friend whose width changes re-runs `beat` with the new number.
 
-`nova-wake presence --store <host:port> --bus <dir>` reads those keys back and
+`nova-wake presence --store <host:port>` reads the `friends` SET (one
+`SMEMBERS`, never a scan) and then every member's hash in one pipeline, and
 prints one line for the swarm table:
 
 ```
-$ nova-wake presence --store 100.115.99.19:6380 --bus ./bus
-friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · freddy none
+$ nova-wake presence --store 100.115.99.19:6380
+friends: emma down 1h12m (last 09:41Z) · freddy down · johnny up 12s width=8 · stella up 4s
 ```
 
-`up` is a beat inside the TTL, with the age of it; `AWAY` is the key lapsed,
-with the age of the last beat and its clock time, both from the untimed key;
-`none` is a friend who has never beaten. A friend is present only while
-`friend:<name>` itself is alive: a missing key is absent (`none`, or `AWAY`
-when only `friend:<name>:last` remains), and a live key is present (`up`).
-The untimed key is not presence, and this verb reads no hand-written override.
-When `friend:<name>:window` or
-`friend:<name>:width` is present, that friend's phrase also carries
-`window=<time>` and `width=<n>`; a key that is absent adds nothing. `AWAY` is the only word in capitals
-because it is the only one that changes what the reader does next. The roster is the bus's —
-`--bus <dir>` reads its `participants.json`, `--participants <file>` names that
-file directly and `--friends <a,b,c>` names them by hand — minus Glenn and
-Rowan, and there is no built-in list, because a copy of a roster is the thing
-that goes stale. A store that cannot be read is a refusal and exit 2, never an
-empty line: four friends reported away is a fact, and four friends not reported
-at all reads as good news.
+A friend is `up` or `down` and nothing else. `up` is a beat inside the TTL,
+with the age of it and the `width=<n>` (and `window=<time>`) that beat carried;
+`down` is a hash that lapsed, with the age of the last beat and its clock time
+from the untimed key, or a friend who has never beaten, with nothing after it.
+`friend:<name>` is also the hash the sprint table's row loop writes, with no
+TTL, so presence is not the hash's existence but its TTL: a friend is up only
+while `friend:<name>` carries a live expiry, which only a beat gives it. The
+untimed key is not presence, and this verb reads no hand-written override. The
+roster is the store's `friends` SET, sorted, minus Glenn and Rowan; `--bus
+<dir>` (its `participants.json`), `--participants <file>` or
+`--friends <a,b,c>` names one instead, and there is no built-in list, because a
+copy of a roster is the thing that goes stale. A store that cannot be read, or
+an empty `friends` SET, is a refusal and exit 2, never an empty line: four
+friends reported down is a fact, and four friends not reported at all reads as
+good news.
 
 The password is never a flag, a file this tool opens or a word in its output.
 It reaches `beat` as `NOVA_REDIS_BENCH_PASSWORD` through
@@ -1248,8 +1252,9 @@ line each friend adds to their own window is in
 [docs/FRIEND-PRESENCE.md](FRIEND-PRESENCE.md).
 
 This is the measured half of `awake`: `awake` reads presence out of the bus
-checkout, which is a git commit per beat and lags by a fetch, and `presence`
-reads it out of the store, which is a `SET` per beat and lags by nothing. Both
+checkout, which is a git commit per cursor move and lags by a fetch, and
+`presence` reads it out of the store, which is one `MULTI` per beat and lags by
+nothing. Both
 report; neither decides. Issue #2610.
 
 ### First run
@@ -4008,14 +4013,13 @@ shape holds refuses with the whole remedy verb: `open first: nova-cairn open
 
 ## nova-sprint
 
-Renders the sprint table from Redis and writes it nowhere (#3326).
-`table --redis <addr>` makes one `FCALL_RO ns_snapshot` per render over the
-`s:<S>:*`, `bench:*` and `friend:*` keys and prints the table to standard
-output; `--once` renders one, `--loop` one per second, and `--sprint <name>`
-shows a control sprint. There is no published file, no `--out`, no
+Renders the sprint table from Redis. The wide table is written nowhere
+(#3326): `table --redis <addr>` makes one `FCALL_RO ns_snapshot` per render
+over the `s:<S>:*`, `bench:*` and `friend:*` keys and prints the table to
+standard output; `--once` renders one, `--loop` one per second, and
+`--sprint <name>` shows a control sprint. The wide table has no `--out`, no
 `--fixture` and no `--refresh pending`: a reader runs the verb and reads
-stdout, and a restarted unit re-renders from Redis on its next tick, so
-there is no last table to keep. `table --check --redis <addr>` renders the
+stdout, and a restarted unit re-renders from Redis on its next tick. `table --check --redis <addr>` renders the
 fixture keyspace on a throwaway server and compares it byte for byte.
 `refresh -- <command>` runs that command in its own session (POSIX setsid) and
 returns without waiting, so `launchctl kickstart -k` of the loop unit does not
@@ -4023,30 +4027,84 @@ kill it. The unit plist `fleet/templates/nova-loop.plist.j2`, which
 `fleet/loops.yml` renders for every loop, sets `AbandonProcessGroup` so launchd
 itself signals only the unit's pid.
 
-`table --layout live --redis <addr> --sprint <name> --friends <a,b,...>` is
-Glenn's live sprint table, ported from rowan-tools `bin/sprint-table-redis`
-(#2674). It reads only the keys that script reads (`friend:<f>` and
-`friend:<f>:down`, `sprint:<name>:xy` and `:landed`, `ZCARD q:blocked`, and
-every `bench:*` hash found by SCAN) in one pipeline after the SCAN, and prints
-the same bytes. Like every table mode it is written nowhere (#3326): `--loop`
-prints a table once a second; a failed read keeps the last good friend rows
-and adds a `stale:` line.
-`table --compare <file>` (same flags) waits for the file's next publish,
-renders from Redis, and prints `MATCH` or a unified diff and exits 1.
+`table --layout live [--redis <addr>] [--sprint <name>] [--friends <a,b,...>]
+[--once | --loop [<seconds>]] [--out <file>]` is the whole sprint table Glenn
+watches (#3530): the headline (`SPRINT TABLE *** PIT STOP ***` while
+`s:<name>:pitstop` or `sprint:<name>:pitstop` exists), the
+`<left>/<y> left, <z>% done -> ~<eta>m` line, the streams block, the friend
+block and the host block, one blank line between them. The streams are the
+rows of `ws:order` (the ws index, #3662) with
+the ZCARDs of their `waiting` (plus `ready`), `working`, `merging` and
+`landed` sets; rows with all zeros are hidden. y is every task in those sets,
+left is y minus landed, and the ETA is left over the moves to `landed` in the
+last hour of `ws:log` (at least one an hour). The hosts are the `benches` SET
+(`bench:<b>` hashes; a beat older than 60 s is no row), the friends the
+`--friends` roster or else the `friends` SET sorted, status `up` or `down`,
+done less the count stored at the last `table clear`. Every tick is ONE
+pipeline (a second one only on the tick a set's membership changed), never
+KEYS or SCAN, zero GitHub. `--redis` defaults to `NOVA_SPRINT_REDIS`, then
+`NOVA_REDIS_ADDR`; `--sprint` to `NOVA_SPRINT`. `--loop 1` renders once a
+second until SIGTERM; with `--out <file>` it is the table's one writer: it
+takes the Redis lock `lock:nova-sprint-table` (`--lock <key>` names another),
+refuses with exit 3 when another writer holds it, and publishes each tick by
+writing a temp file beside `<file>` and renaming it; stdout gets one `TABLE
+loop` line. A tick whose read fails publishes the last good rows and a
+`stale:` line.
+
+`table clear --checkpoint <file> [--redis <addr>] [--friends <a,b,...>]
+[--by <name>]` (#3637) zeroes the landed and done columns in under a second:
+it writes the checkpoint (every landed task with its fields, every friend's
+done count) and prints `CHECKPOINT`, then in one MULTI/EXEC moves every
+`ws:<s>:landed` member to closed (`task:<id>` state, one `ws:log` entry
+each), stores the done counts in `ws:done0` and the receipt in
+`ws:checkpoint`, and prints `CLEARED ... ms=<n>`. Waiting, ready, working and
+merging are untouched.
+
+`table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...>`
+renders the #2674 port of rowan-tools `bin/sprint-table-redis` (the keys
+that script reads, the bytes it prints), waits for the file's next publish,
+and prints `MATCH` or a unified diff and exits 1.
+
+### Merged-tree guards, dev-red and read carry (#3629, #3630)
+
+`internal/nsprint/land/guard` is the merged-tree guard suite: a library any
+lander calls with a repository path before the batch test of a stream
+branch, one PASS/FAIL row per guard with the offending file (`lua-locals`,
+`lua-crossfile`, `one-parser`, `catalog`, `named-paths`, `tracked-files`).
+Each row is an interaction that was green per PR and red on the merged
+tree; the next one is a row in the registry, not a hunt.
+
+`dev-red status|check|watch|unwatch --repo <r> --base <b> --redis <addr>`:
+the reconciler's dev-red duty walks `devred:bases` every pass; while the
+base tip's CI record (`ci:<repo>:<sha>`, the gated receipt, or one `gh api`
+check-runs read per base per minute until #3597) is red it writes
+`land:<repo>:<base>:red` (the key a lander reads through `land.RedBlocked`
+before merging a stream into that base) and pushes ONE fix task to the
+coordinator's queue naming the failing check; green clears it. `status`
+prints `RED <check> <sha> task=<id>` or `GREEN <repo>/<base>`.
+
+`read digest --repo <r> --n <n>` records the diff identity of the head a
+typed line is taken at (`diff_sha256` on the unit record; the reader runs
+it at read time). `read carry --repo <r> --n <n>` compares it with the
+unit's head now from the bench mirror and, when `git diff base...head` is
+byte-identical after the base merge is normalised, copies every typed line
+to the new head as a record with a `carried_from` receipt (`CARRIED`, exit
+0); a changed diff is `REFUSED changed=<files>` (exit 1) and a re-read is
+the one remedy. The lander counts a carried read as a read.
 
 ### First run
 
 Run the three lines in an empty directory. They are the three file-shaped
-first tries, and each is refused with the whole verb, because the table is
-read from Redis and written nowhere; the directory stays empty. With a server,
+first tries, and each is refused with the whole verb, because the wide table
+is read from Redis and written nowhere; the directory stays empty. With a server,
 `nova-sprint table --redis 127.0.0.1:6379 --once` prints the table.
 
 ```text
 $ nova-sprint table --once --out sprint-table.txt
-! nova-sprint table: flag provided but not defined: -out; the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; run: nova-sprint help
+! nova-sprint table: --friends, --xy-file, --out and --lock belong to --layout live; the wide table is written nowhere (#3326); run: nova-sprint help
 
 $ nova-sprint table --once
-! nova-sprint table: --redis <addr> is required; the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; run: nova-sprint help
+! nova-sprint table: --redis <addr> is required; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
 
 $ nova-sprint table --check
 ! nova-sprint table: --check needs --redis <addr>, a throwaway server for the fixture keyspace; run: nova-sprint help
@@ -4054,13 +4112,61 @@ $ nova-sprint table --check
 
 What a first run gets wrong, and what each one wants:
 
-- **`--out`, `--fixture` or `--refresh pending`.** These were the file cut, deleted by #3326; each is now an unknown flag. Read the table from stdout.
+- **`--out`, `--fixture` or `--refresh pending`.** These were the file cut, deleted by #3326; `--fixture` and `--refresh` are unknown flags, and `--out` belongs to `--layout live` (#3530), the one published table. Read the wide table from stdout.
 - **`nova-sprint table` without `--redis`.** It wants the server address. There is no default address and no default loop.
 - **`--check` without `--redis`.** It wants a throwaway server; it seeds nothing, so load the fixture keyspace first.
 
 There is **no `quickstart` verb**. A one-word first run would have to invent a fixture path or publish a table nobody named. The three lines above are the first run, in an empty directory that already holds `table.txt`.
 
 **The Redis verbs need the `nova_sprint` function library on the server** (#3196). `nova-sprint fn load --redis <addr>` installs the library embedded in the binary with `FUNCTION LOAD REPLACE` and prints `LOADED nova_sprint sha=<sha>`; when the server already holds that exact source it loads nothing and prints `UNCHANGED nova_sprint sha=<sha>`, so a converge runs it every pass. `nova-sprint fn check --redis <addr>` changes nothing and prints `OK nova_sprint sha=<sha> ping=PONG` (exit 0), or `MISSING`, `STALE loaded=<sha> want=<sha>` or `NOPING` (exit 1): that exit is the bench-conform line for the fleet Redis. On `MISSING` or `STALE` it does not call `ns_ping` (`ping=skipped`), since the server's `ns_ping` is then not the embedded one and may write. The address authenticates the way every other `--redis` verb does.
+
+`nova-sprint backpressure check --sprint <name> [--redis <addr>]` (#3276) refuses a second backpressure source of truth beside `s:<S>:backpressure`. It reads the named keys only (the sprint's hash, the `proc:backpressure` beat and the legacy global `backpressure` hash) with one EXISTS pipeline, never SCAN or KEYS, and prints one receipt: `BACKPRESSURE CHECK OK sprint=<S> own=<0|1> beat=<0|1> legacy=0 round_trips=1` (exit 0), or `BACKPRESSURE CHECK REFUSED ... legacy=<keys> round_trips=1 remedy=...` (exit 1); usage or an unreachable store exits 2.
+### read
+
+A friend read makes zero GitHub calls (#3599, umbrella #3594: GitHub is a
+git remote only). `read brief --repo <r> --n <n> --out <dir> [--mirror <dir>]
+[--redis <addr>]` reads the PR record `pr:<repo>:<n>` (head, base, base_sha,
+paths, done_when, stream, depends_on, branch, who) and the typed lines already
+posted (the list `pr:<repo>:<n>:lines`) in one pipeline, the CI hash at head
+(`ci:<repo>:<head>`, #3597) in one HGETALL, and takes the diff from the bench
+mirror with `git -C ~/nova-bench/mirror/<repo>.git diff <base_sha>..<head>`
+(the rowan-tools `mirror-refresh` loop keeps `refs/pull/*/head` there; the
+verb never fetches). It writes `<dir>/brief.md`, the read brief rendered
+from `internal/nsprint/read/tmpl/read.tmpl` with the record, the CI lines, the
+posted lines, the file list and the files outside PATHS, and `<dir>/diff.patch`,
+then prints one receipt:
+
+```
+READ BRIEF repo=nova-tools n=7 head=b7628a80 base_sha=1a1ad594 files=1 outside_paths=0 lines=1 ci=2 out=<dir>/brief.md github_calls=0
+```
+
+A record with no head, a record with no base_sha, a mirror without the head
+yet, and a missing mirror are each one `READ BRIEF REFUSED repo= n= why=`
+line naming the remedy (exit 1); a head the mirror's `refs/pull/<n>/head`
+has moved past is reported as `mirror_head=` and as a `HEAD MOVED` line in the
+brief, and the record head is what is read.
+
+`read post --repo <r> --n <n> --line "<typed line>" [--no-github] [--owner
+<o>] [--redis <addr>]` stores the line: the first word is one of SCORE, HOLD,
+REPAIR, SPEC, SPEC-WRITTEN, CLOSE or JEV-DIFF and the first line carries
+`who=<name>` and `head=<sha>`, or the line is refused. It RPUSHes the line
+onto `pr:<repo>:<n>:lines` and stamps `last_line` and `last_line_at` on the
+record in one MULTI, then, until #3595 retires PR comments, mirrors it as one
+REST comment (`POST /repos/<owner>/<repo>/issues/<n>/comments`, the token from
+`GH_TOKEN` or `GITHUB_TOKEN`, the base URL from `GITHUB_API_URL`). `--no-github`
+is Redis only (the tests count HTTP calls: 0 with it, exactly 1 without). A
+comment that fails after the Redis write is `READ POST REFUSED ... redis=ok
+github=<why>` (exit 1): the line is in Redis, which is the record.
+
+```
+READ POST repo=nova-tools n=7 kind=SCORE lines=2 github_calls=1 comment=4242
+```
+
+Every brief this repository ships (the nova-sprint brief templates, the read
+template, the `nova-swarm template` cards and the swarm's card fixtures) is
+scanned by `internal/ci` (TestNoGhInAnyBrief, #3600): a `gh ` invocation, a
+GraphQL mention, or a GitHub clone without the bench mirror as `--reference`
+is a red run.
 
 ### lesson
 
@@ -4124,6 +4230,18 @@ nova-sprint xy --evaluate-out cmd/nova-sprint/testdata/evaluate.txt --calibratio
 **Reading it.** `26/42` is `SET DONE done=26` over `SET OK units=42`. `61%` is the tool's `percent=`, not a recomputation. `~3h` is two open `fix` tasks on different owners, one depending on the other, each charged the calibrated 90 minutes rather than the stored 120. `evaluate.txt` also has a criterion `holds=yes`; that is not the count. `set.sexp` marks three receipts done or landed; that is not the count either.
 
 **What a first run gets wrong.** Leaving the flags off is one refusal that names each missing source. Pointing `--set` at a sexp full of `:status "done"` and reading those marks as x is the old count; this line will not do it. Omitting `--store` when the live sprint verb has to be run is a refusal, not a guessed Redis address. A `nova-pulse sprint status` that prints a fraction and no open row is a refusal: that fraction is the sprint store's own x/y, and eta reads the verbose rows.
+
+### pitstop
+
+`nova-sprint pitstop set|clear|status --sprint <S> [--why <text>] [--by <who>] [--force] [--redis <addr>]`
+
+The sprint's pit stop is one Redis hash, `s:<S>:pitstop` {by, why, at}, never a bus note (#3371). While it exists the deal pass plans nothing from the sprint and `ns_card_deal` refuses its cards; any other reader (the feed, the table) reads the same key through `pitstop.Read`. `set` refuses to overwrite a stop without `--force` and refuses a sprint with no `s:<S>` status; `clear` refuses when none is set; `status` prints one line. `--by` defaults to `NOVA_FRIEND`. Set and clear are one FCALL each (`ns_pitstop_set`, `ns_pitstop_clear`) and write one receipt to `s:<S>:log`. Exit 0 done, 1 refused with the remedy named, 2 usage.
+
+```text
+nova-sprint pitstop set --sprint nova-sprint-0924 --by rowan --why "Glenn 8:00 PM: rest tonight"
+# prints
+PITSTOP SET sprint=nova-sprint-0924 by=rowan at=1790000000000 why="Glenn 8:00 PM: rest tonight"
+```
 
 ### cost import
 

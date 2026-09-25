@@ -208,7 +208,7 @@ func parseUnitRead(who string, m map[string]string) (Read, int64, bool) {
 	if len(m) == 0 {
 		return Read{}, 0, false
 	}
-	r := Read{Friend: who, Head: m["head"], Verdict: strings.ToUpper(strings.TrimSpace(m["verdict"]))}
+	r := Read{Friend: who, Head: m["head"], Verdict: strings.ToUpper(strings.TrimSpace(m["verdict"])), CarriedFrom: m["carried_from"]}
 	if n, err := strconv.Atoi(m["score"]); err == nil {
 		r.Score, r.HasScore = n, true
 	}

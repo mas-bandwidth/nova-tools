@@ -112,12 +112,9 @@ func TestWaitRepairStaleLockAndDirtyBeat(t *testing.T) {
 	if _, err := os.Lstat(lock); !os.IsNotExist(err) {
 		t.Fatalf("stale index.lock still present: %v", err)
 	}
-	beat, err := os.ReadFile(filepath.Join(checkout, "from-ada", "BEAT"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(beat), "STALE GARBAGE") {
-		t.Fatalf("BEAT was not regenerated:\n%s", beat)
+	// Discarded, not regenerated (#3144: no wait writes a BEAT): the fixture holds none.
+	if beat, err := os.ReadFile(filepath.Join(checkout, "from-ada", "BEAT")); !os.IsNotExist(err) {
+		t.Fatalf("BEAT was not discarded (%v):\n%s", err, beat)
 	}
 	if !gitAncestor(t, checkout, tip, "HEAD") {
 		t.Fatalf("the fast-forward did not land %s; HEAD is %s", tip, headOf(t, checkout))
@@ -179,7 +176,8 @@ func TestWaitRepairFreshLockLeftAlone(t *testing.T) {
 	}
 }
 
-// Case 3: a dirty BEAT is discarded and regenerated. One WAIT REPAIR line, naming it.
+// Case 3: a dirty BEAT an older wait left is discarded, and not regenerated (#3144: no wait
+// writes a BEAT). One WAIT REPAIR line, naming it.
 func TestWaitRepairDirtyBeat(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
@@ -198,12 +196,11 @@ func TestWaitRepairDirtyBeat(t *testing.T) {
 	if strings.Contains(lines[0], "index.lock") {
 		t.Fatalf("claimed a lock repair this run did not do: %s", lines[0])
 	}
-	beat, err := os.ReadFile(filepath.Join(checkout, "from-ada", "BEAT"))
-	if err != nil {
-		t.Fatal(err)
+	if beat, err := os.ReadFile(filepath.Join(checkout, "from-ada", "BEAT")); !os.IsNotExist(err) {
+		t.Fatalf("BEAT was not discarded, or was regenerated (%v):\n%s", err, beat)
 	}
-	if strings.Contains(string(beat), "STALE GARBAGE") || !strings.Contains(string(beat), "until=") {
-		t.Fatalf("BEAT was not regenerated:\n%s", beat)
+	if out := strings.TrimSpace(gitIn(t, checkout, "log", "--format=%H", "--", "from-ada/BEAT")); out != "" {
+		t.Fatalf("the repair committed a BEAT: %s", out)
 	}
 }
 

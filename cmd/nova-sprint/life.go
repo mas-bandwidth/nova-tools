@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -249,6 +250,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	session := fs.String("session", "", "fenced owner session identity")
 	live := fs.String("live", "", "comma separated card identities")
 	once := fs.Bool("once", false, "write one beat and return without the 1 s loop")
+	root := fs.String("root", "", "the bench root whose harness, mirrors and free disk the beat carries (default ~/"+life.DefaultRoot+")")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "bench beat", err.Error())
 	}
@@ -257,6 +259,13 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	}
 	if *bench == "" {
 		return refuse(errOut, "bench beat", "--bench is required")
+	}
+	if *root == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return refuse(errOut, "bench beat", "no home for the default --root: "+err.Error())
+		}
+		*root = filepath.Join(home, life.DefaultRoot)
 	}
 	if *session == "" {
 		var err error
@@ -274,7 +283,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	req := life.BenchRequest{
 		Bench: *bench, Host: *host, User: *user, Load1: *load1, SSH: *ssh,
 		Probe: *probe, Launcher: *launcher, Why: *why, Session: *session,
-		Live: splitLive(*live), Actor: "bench",
+		Live: splitLive(*live), Actor: "bench", Facts: life.MeasureBench(*root),
 	}
 	res, err := life.BenchBeat(ctx, st, req)
 	if err != nil {
@@ -297,6 +306,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 		case <-signalCtx.Done():
 			return 0
 		case <-ticker.C:
+			req.Facts = life.MeasureBench(*root)
 			beat, err := life.BenchBeat(signalCtx, st, req)
 			if err != nil {
 				fmt.Fprintf(errOut, "bench %s beat: %v\n", *bench, err)

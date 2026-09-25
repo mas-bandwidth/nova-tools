@@ -86,7 +86,7 @@ end
 -- shape (32 lowercase hex after the attempt, a 12 lowercase hex sha), the
 -- same match ns_task_take runs on its token before any write, not just the
 -- <attempt>. prefix. A card whose attempt moved, that is no longer queued and
--- pooled, whose sprint is not open, that is pinned to another bench, whose
+-- pooled, whose sprint is not open or is pit-stopped, that is pinned to another bench, whose
 -- leg the bench does not run, whose tier backpressure holds, or whose token
 -- or token_sha does not match that shape, is skipped.
 -- The bench guard (registered, UP, not paused, free > 0) is checked once;
@@ -136,7 +136,9 @@ local function card_deal(keys, args)
     end
     local S, label, attempt, ctoken, csha = args[i], args[i + 1], tonumber(args[i + 2]), args[i + 3], args[i + 4]
     if open[S] == nil then
-      open[S] = redis.call('HGET', 's:' .. S, 'status') == 'open'
+      -- A pit-stopped sprint (s:<S>:pitstop, pitstop.lua) deals nothing.
+      open[S] = redis.call('HGET', 's:' .. S, 'status') == 'open' and
+        redis.call('EXISTS', 's:' .. S .. ':pitstop') == 0
       bp[S] = deal_backpressure(S)
     end
     local ck = 's:' .. S .. ':card:' .. label
@@ -305,3 +307,36 @@ redis.register_function('ns_card_deal', card_deal)
 redis.register_function('ns_card_gate', card_gate)
 redis.register_function('ns_card_undeal', card_undeal)
 redis.register_function('ns_bench_ssh', bench_ssh)
+
+-- ns_deal_status_list(S) is `deal status` list mode (#3605): one row per
+-- member of benches, sorted by name, each {bench, beat exists, desired slots,
+-- desired paused, starting, living, sprint queue, ssh state, ssh at}. Read
+-- only (no-writes, called with FCALL_RO), so the bench seat, which may FCALL
+-- but never EVAL, runs it. Its callers line for rowan-tools redis-acl-gen:
+-- ns_deal_status_list internal/nsprint/deal/status.go ns-bench ns-coordinator
+redis.register_function{
+  function_name = 'ns_deal_status_list',
+  flags = { 'no-writes' },
+  callback = function(keys, args)
+    local S = args[1]
+    local benches = redis.call('SMEMBERS', 'benches')
+    table.sort(benches)
+    local res = {}
+    for _, b in ipairs(benches) do
+      local des = redis.call('HMGET', 'bench:' .. b .. ':desired', 'slots', 'paused', 'legs')
+      local ssh = redis.call('HMGET', 'bench:' .. b .. ':ssh', 'state', 'at')
+      res[#res + 1] = {
+        b,
+        redis.call('EXISTS', 'bench:' .. b .. ':beat'),
+        des[1] or '0',
+        des[2] or '',
+        redis.call('ZCARD', 'bench:' .. b .. ':starting'),
+        redis.call('ZCARD', 'bench:' .. b .. ':living'),
+        redis.call('ZCARD', 's:' .. S .. ':bench:' .. b .. ':queue'),
+        ssh[1] or '',
+        ssh[2] or '',
+      }
+    end
+    return res
+  end,
+}

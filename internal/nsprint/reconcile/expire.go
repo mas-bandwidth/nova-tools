@@ -9,7 +9,9 @@ package reconcile
 //
 //  1. one pipeline of reads: each sprint's policy, its dealt, launched,
 //     running, reconcile-required and ended cards with the fields the sweep
-//     needs (SORT ... GET), its pending idem index, and every bench's beat;
+//     needs (FCALL_RO ns_expire_read, one per index: SORT is @dangerous and the
+//     coordinator ACL refuses it, #3620), its pending idem index, and every
+//     bench's beat;
 //  2. one pipeline of transitions: ns_card_reclaim, ns_card_retry and
 //     ns_idem_ambiguous for each candidate, and one ns_expire_stamp per sprint;
 //  3. evidence for the reconcile-required cards read in step 1: one Prober
@@ -33,7 +35,6 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 )
@@ -95,7 +96,7 @@ func (e *Expire) Run(ctx context.Context, l *Lease) (Counts, error) {
 		return Counts{}, err
 	}
 	if !e.loaded {
-		if err := fn.Load(ctx, e.Client); err != nil {
+		if err := fn.LoadMissing(ctx, e.Client); err != nil {
 			return Counts{}, err
 		}
 		e.loaded = true
@@ -177,23 +178,30 @@ var (
 
 type sprintRead struct {
 	policy                               *redis.MapStringStringCmd
-	dealt, launched, running, req, ended *redis.StringSliceCmd
+	dealt, launched, running, req, ended *redis.Cmd
 	pending                              *redis.ZSliceCmd
 }
 
-// sortGet reads every member of a card index with the named hash fields in
-// one command: SORT <idx> BY nosort GET # GET s:<S>:card:*-><field> ...
-func sortGet(ctx context.Context, pipe redis.Pipeliner, sprint, state string, fields []string) *redis.StringSliceCmd {
-	get := []string{"#"}
+// ExpireReadFunction is the library function that reads one card index with
+// the named hash fields of each member (reconcile_required.lua).
+const ExpireReadFunction = "ns_expire_read"
+
+// indexRead reads every member of a card index with the named hash fields in
+// one read-only call: FCALL_RO ns_expire_read 0 <S> <state> <field>... It
+// replaces SORT <idx> BY nosort GET # GET s:<S>:card:*-><field> (#3620): the
+// verb needs no @dangerous command, and the reply keeps SORT GET's shape.
+func indexRead(ctx context.Context, pipe redis.Pipeliner, sprint, state string, fields []string) *redis.Cmd {
+	args := make([]any, 0, len(fields)+2)
+	args = append(args, sprint, state)
 	for _, f := range fields {
-		get = append(get, card.CardKey(sprint, "*")+"->"+f)
+		args = append(args, f)
 	}
-	return pipe.Sort(ctx, card.IdxKey(sprint, state), &redis.Sort{By: "nosort", Get: get})
+	return pipe.FCallRo(ctx, ExpireReadFunction, nil, args...)
 }
 
-// rowsOf splits a SORT GET reply into label -> field map.
-func rowsOf(cmd *redis.StringSliceCmd, fields []string) []map[string]string {
-	vals := cmd.Val()
+// rowsOf splits an ns_expire_read reply into label -> field map.
+func rowsOf(cmd *redis.Cmd, fields []string) []map[string]string {
+	vals, _ := cmd.StringSlice()
 	width := len(fields) + 1
 	out := make([]map[string]string, 0, len(vals)/width)
 	for i := 0; i+width <= len(vals); i += width {
@@ -220,11 +228,11 @@ func (e *Expire) sweep(ctx context.Context, l *Lease, due, benches []string, now
 	for i, s := range due {
 		reads[i] = sprintRead{
 			policy:   pipe.HGetAll(ctx, PolicyKey(s)),
-			dealt:    sortGet(ctx, pipe, s, "dealt", dealtFields),
-			launched: sortGet(ctx, pipe, s, "launched", liveFields),
-			running:  sortGet(ctx, pipe, s, "running", liveFields),
-			req:      sortGet(ctx, pipe, s, "reconcile-required", requiredFields),
-			ended:    sortGet(ctx, pipe, s, "ended", endedFields),
+			dealt:    indexRead(ctx, pipe, s, "dealt", dealtFields),
+			launched: indexRead(ctx, pipe, s, "launched", liveFields),
+			running:  indexRead(ctx, pipe, s, "running", liveFields),
+			req:      indexRead(ctx, pipe, s, "reconcile-required", requiredFields),
+			ended:    indexRead(ctx, pipe, s, "ended", endedFields),
 			pending:  pipe.ZRangeWithScores(ctx, PendingIndexKey(s), 0, -1),
 		}
 	}
@@ -252,7 +260,7 @@ func (e *Expire) sweep(ctx context.Context, l *Lease, due, benches []string, now
 				add("reclaim", s, h["label"], token, start, beat)
 			}
 		}
-		for _, cmd := range []*redis.StringSliceCmd{r.launched, r.running} {
+		for _, cmd := range []*redis.Cmd{r.launched, r.running} {
 			for _, h := range rowsOf(cmd, liveFields) {
 				last, err := strconv.ParseInt(h["beat_at"], 10, 64)
 				if err != nil {

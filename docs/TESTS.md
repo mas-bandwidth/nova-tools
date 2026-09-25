@@ -1109,7 +1109,7 @@ the stream first (`.github/workflows/ci.yml`).
 ## nova-sprint
 
 Run by `cmd/nova-sprint/firstrun_test.go` in an empty directory, which must
-still be empty afterwards: the table is read from Redis and written nowhere
+still be empty afterwards: the wide table is read from Redis and written nowhere
 (#3326), so none of these lines needs a server and none writes a file.
 
 `nova-sprint xy` fixtures are in the same `cmd/nova-sprint/testdata/`. `evaluate.txt` is nova-work `set check --evaluate` stdout (`SET DONE done=26` beside a single `holds=yes`). `calibration.txt` is `nova-pulse sprint calibration` (`SUGGEST fix 90m`). `open.tsv` is two open fix tasks, one depending on the other, stored estimates 120. `set.sexp` hand-marks receipts done and landed. `status-verbose.txt` is `nova-pulse sprint status --verbose` as the producer prints it: a fraction, then C/O/W rows with `kind=` and `depends=`, no `TASK` lines. `cmd/nova-sprint/xy_test.go` runs the docs/CLI.md xy example from the repo root (`26/42 61% -> ~3h`) and checks that a different evaluate stdout changes x and y, that swapping the hand-marked receipt does not, that the producer rows are the open tasks, and that kind calibration and a cross-lane dependency change the eta.
@@ -1118,17 +1118,18 @@ still be empty afterwards: the table is read from Redis and written nowhere
 
 ```text
 $ nova-sprint table --once --out sprint-table.txt
-! nova-sprint table: flag provided but not defined: -out; the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; run: nova-sprint help
+! nova-sprint table: --friends, --xy-file, --out and --lock belong to --layout live; the wide table is written nowhere (#3326); run: nova-sprint help
 
 $ nova-sprint table --once
-! nova-sprint table: --redis <addr> is required; the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; run: nova-sprint help
+! nova-sprint table: --redis <addr> is required; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
 
 $ nova-sprint table --check
 ! nova-sprint table: --check needs --redis <addr>, a throwaway server for the fixture keyspace; run: nova-sprint help
 ```
 
-The first is the deleted file cut: `--out` (like `--fixture` and `--refresh`)
-is an unknown flag. The second and third name the server the table is read
+The first is the deleted file cut: the wide table refuses `--out`, which
+publishes only the whole table of `--layout live` (#3530), as `--fixture` and
+`--refresh` are unknown flags. The second and third name the server the table is read
 from. `TestTableWritesNoFile` renders from a throwaway server twice (a second
 start) and checks the directory stays empty.
 

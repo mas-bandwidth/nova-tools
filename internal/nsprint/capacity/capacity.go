@@ -106,16 +106,23 @@ func Evaluate(ctx context.Context, r Reader, machine, kind, name string, slots i
 	if slots < 0 {
 		return Plan{}, fmt.Errorf("capacity: slots must be nonnegative")
 	}
-	ceiling, ok, err := r.Ceiling(ctx, machine)
+	var ceiling int
+	var ok bool
+	var consumers []Consumer
+	var err error
+	if snap, one := r.(snapshotReader); one {
+		ceiling, ok, consumers, err = snap.Snapshot(ctx, machine)
+	} else {
+		ceiling, ok, err = r.Ceiling(ctx, machine)
+		if err == nil && ok {
+			consumers, err = r.Consumers(ctx)
+		}
+	}
 	if err != nil {
 		return Plan{}, err
 	}
 	if !ok {
 		return Plan{}, fmt.Errorf("capacity: machine %s has no ceiling; run capacity machine %s <n>", machine, machine)
-	}
-	consumers, err := r.Consumers(ctx)
-	if err != nil {
-		return Plan{}, err
 	}
 	sum := 0
 	counted := false
@@ -157,8 +164,44 @@ func (r RedisReader) Ceiling(ctx context.Context, machine string) (int, bool, er
 	return slots, true, nil
 }
 
+// snapshotReader is a Reader that reads the ceiling and every consumer in one
+// round trip; Evaluate prefers it (#3265).
+type snapshotReader interface {
+	Snapshot(ctx context.Context, machine string) (int, bool, []Consumer, error)
+}
+
+// Snapshot reads machine:<m>:ceiling slots and every consumer's desired hash
+// (ns_capacity_consumers) in one pipeline: one round trip for any number of
+// friends and benches (#3265; it was 2 + F + B serial reads).
+func (r RedisReader) Snapshot(ctx context.Context, machine string) (int, bool, []Consumer, error) {
+	if r.Store == nil {
+		return 0, false, nil, fmt.Errorf("capacity: nil store")
+	}
+	pipe := r.Store.Client().Pipeline()
+	ceilingCmd := pipe.HGet(ctx, MachineCeilingKey(machine), "slots")
+	consumersCmd := pipe.FCall(ctx, "ns_capacity_consumers", nil)
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return 0, false, nil, fmt.Errorf("capacity: read machine %s and consumers: %w", machine, err)
+	}
+	if err := consumersCmd.Err(); err != nil {
+		return 0, false, nil, fmt.Errorf("capacity: read consumers: %w", err)
+	}
+	consumers, err := parseConsumers(consumersCmd.Val())
+	if err != nil {
+		return 0, false, nil, err
+	}
+	ceiling, err := ceilingCmd.Int()
+	if err == redis.Nil {
+		return 0, false, consumers, nil
+	}
+	if err != nil {
+		return 0, false, nil, fmt.Errorf("capacity: read machine %s ceiling: %w", machine, err)
+	}
+	return ceiling, true, consumers, nil
+}
+
 // Consumers reads the friends and benches registries and the desired hash of
-// each.
+// each in one round trip (the ns_capacity_consumers function).
 func (r RedisReader) Consumers(ctx context.Context) ([]Consumer, error) {
 	if r.Store == nil {
 		return nil, fmt.Errorf("capacity: nil store")
@@ -168,9 +211,15 @@ func (r RedisReader) Consumers(ctx context.Context) ([]Consumer, error) {
 	if _, err := pipe.Exec(ctx); err != nil {
 		return nil, fmt.Errorf("capacity: read consumers: %w", err)
 	}
-	values, ok := cmd.Val().([]any)
+	return parseConsumers(cmd.Val())
+}
+
+// parseConsumers reads the flat kind, name, slots, machine reply of
+// ns_capacity_consumers.
+func parseConsumers(reply any) ([]Consumer, error) {
+	values, ok := reply.([]any)
 	if !ok || len(values)%4 != 0 {
-		return nil, fmt.Errorf("capacity: consumers reply %T length %d", cmd.Val(), len(values))
+		return nil, fmt.Errorf("capacity: consumers reply %T length %d", reply, len(values))
 	}
 	out := make([]Consumer, 0, len(values)/4)
 	for i := 0; i < len(values); i += 4 {
@@ -195,29 +244,6 @@ func DesiredKey(kind, name string) string {
 // MachineCeilingKey is the ceiling hash key of one machine (spec 2.2).
 func MachineCeilingKey(machine string) string {
 	return "machine:" + machine + ":ceiling"
-}
-
-func readDesired(ctx context.Context, client *redis.Client, kind, name string) (Consumer, error) {
-	values, err := client.HMGet(ctx, DesiredKey(kind, name), "slots", "machine").Result()
-	if err != nil {
-		return Consumer{}, fmt.Errorf("capacity: read %s %s desired: %w", kind, name, err)
-	}
-	c := Consumer{Kind: kind, Name: name}
-	if len(values) > 0 {
-		if text, ok := values[0].(string); ok && text != "" {
-			slots, err := strconv.Atoi(text)
-			if err != nil {
-				return Consumer{}, fmt.Errorf("capacity: %s %s slots %q: %w", kind, name, text, err)
-			}
-			c.Slots = slots
-		}
-	}
-	if len(values) > 1 {
-		if text, ok := values[1].(string); ok {
-			c.Machine = text
-		}
-	}
-	return c, nil
 }
 
 // Result is the outcome of one accepted capacity write.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -268,6 +269,11 @@ func TestReconcileOnceSurfacesDutyErrors(t *testing.T) {
 	want := "duty ctl-broken: deal: reserve control-00003321: ns_card_deal: boom"
 	if !strings.Contains(errOut.String(), want) {
 		t.Fatalf("stderr %q, want the duty name and error %q", errOut.String(), want)
+	}
+	// #3620: every loop line carries its UTC time first.
+	stamped := regexp.MustCompile(`(?m)^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z nova-sprint reconcile: duty ctl-broken: `)
+	if !stamped.MatchString(errOut.String()) {
+		t.Fatalf("stderr %q, want the duty line led by its UTC timestamp", errOut.String())
 	}
 	if !strings.Contains(out.String(), "RELEASED reconcile") {
 		t.Fatalf("stdout %q, want the lease released before the failure exit", out.String())

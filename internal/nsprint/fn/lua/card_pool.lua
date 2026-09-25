@@ -207,3 +207,51 @@ redis.register_function('ns_card_land', function(keys, args)
     'at', now_s())
   return 'OK'
 end)
+
+-- ns_card_resume is drain's resume step (#3035), a Function since #3419: the
+-- card package sends no EVAL/EVALSHA on any path. It takes the member out of
+-- the paused set and moves each parked card that is still queued into the
+-- pool at its own priority. A parked label whose card is gone or no longer
+-- queued (landed, cancelled) leaves the parked set and is not pooled.
+-- keys: paused, parked, pool, log; args: member, sprint
+-- Returns {was_paused, moved, dropped}.
+redis.register_function('ns_card_resume', function(keys, args)
+  local paused, parked, pool, log = keys[1], keys[2], keys[3], keys[4]
+  local member, sprint = args[1], args[2]
+  local was = redis.call('SREM', paused, member)
+  local moved, dropped = 0, 0
+  for _, label in ipairs(redis.call('SMEMBERS', parked)) do
+    redis.call('SREM', parked, label)
+    local card = 's:' .. sprint .. ':card:' .. label
+    if safe_id(label) and redis.call('HGET', card, 'state') == 'queued' then
+      local priority = redis.call('HGET', card, 'priority')
+      if type(priority) ~= 'string' or priority == '' then
+        priority = '0'
+      end
+      redis.call('ZADD', pool, priority, label)
+      redis.call('XADD', log, '*',
+        'kind', 'card', 'id', label, 'from', 'queued', 'to', 'queued',
+        'place', 'pool', 'actor', 'resume', 'reason', 'resume ' .. member, 'at', now_s())
+      moved = moved + 1
+    else
+      dropped = dropped + 1
+    end
+  end
+  return { was, moved, dropped }
+end)
+
+-- ns_card_import_receipt writes drain's one import receipt for a card (#3035),
+-- a Function since #3419. The fence is the label in s:<S>:drain:imported: a
+-- re-run after a crash between the receipt and the file removal finds it and
+-- writes nothing.
+-- keys: imported, log; args: label, payload_sha, file, place
+-- Returns 1 when it wrote the receipt, 0 when the fence already held it.
+redis.register_function('ns_card_import_receipt', function(keys, args)
+  if redis.call('HSETNX', keys[1], args[1], args[2]) == 0 then
+    return 0
+  end
+  redis.call('XADD', keys[2], '*',
+    'kind', 'card', 'id', args[1], 'actor', 'drain-import', 'reason', 'import',
+    'file', args[3], 'place', args[4], 'payload_sha', args[2], 'at', now_s())
+  return 1
+end)

@@ -49,14 +49,14 @@ func TestIssue1517WaitWithNoBeatWritesNoBeat(t *testing.T) {
 		t.Fatalf("wait --no-beat committed a BEAT: %s", after)
 	}
 
-	// THE CONTROL: the default still beats, so the guard reached the flag and not the
-	// default path.
+	// THE CONTROL, flipped by #3144: the default writes no BEAT either. The bus carries
+	// notes, never beats; presence is friend:<name> in Redis.
 	control := poll().mustCode(t, 0).mustContain(t, "stdout", "WAIT TIMEOUT")
-	if _, err := os.Stat(beat); err != nil {
-		t.Fatalf("the control wait (no --no-beat) did not write from-ada/BEAT: %v", err)
+	if _, err := os.Stat(beat); !os.IsNotExist(err) {
+		t.Fatalf("the control wait (no --no-beat) wrote from-ada/BEAT: %v", err)
 	}
-	if after := beatCommits(); after == "" {
-		t.Fatalf("the control wait (no --no-beat) committed no BEAT:\n%s", control.stdout)
+	if after := beatCommits(); after != "" {
+		t.Fatalf("the control wait (no --no-beat) committed a BEAT: %s\n%s", after, control.stdout)
 	}
 
 	// THE SAME CALL OTHERWISE: the exit code and the terminal WAIT line's cursor are the

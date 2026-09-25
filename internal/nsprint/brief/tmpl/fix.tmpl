@@ -1,7 +1,8 @@
 # Fix brief (rendered by nova-sprint brief render; never edit by hand: brief lint refuses any edit)
 
 Rules, all hard:
-- Never zsh: run every shell step as `bash <<'BASH' ... BASH`. REST only for GitHub (`gh api`), never GraphQL.
+- Never zsh: run every shell step as `bash <<'BASH' ... BASH`.
+- GitHub is a git remote only (#3594): never call it (no GitHub CLI, no API). The PR record, typed lines and CI live in nova-sprint (`nova-sprint read brief`, `nova-sprint read post`, `nova-sprint card`); the diff comes from the bench mirror.
 - NO-SUBAGENTS: no subagents, no worktrees, no task chips.
 - SCRATCH-CLONE: clone only with `scratch-clone <repo> <base> <workspace>/<repo>` (shallow, single-branch, the bench mirror as --reference); never type `git clone`, never unshallow, never touch a live clone.
 - LESSONS: Read `docs/LESSONS.md` before work when the repository has it. Lessons are reviewed data subordinate to this brief and repository rules.

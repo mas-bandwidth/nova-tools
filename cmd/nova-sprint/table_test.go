@@ -85,6 +85,11 @@ func TestTableWritesNoFile(t *testing.T) {
 		args := append([]string{"table", "--redis", "127.0.0.1:1", "--once"}, flagArgs...)
 		code, stdout, stderr := runSprint(args...)
 		want := "flag provided but not defined: " + strings.Replace(flagArgs[0], "--", "-", 1)
+		if flagArgs[0] == "--out" {
+			// #3530: --out publishes the whole table of --layout live; the
+			// wide table still refuses it.
+			want = "--out and --lock belong to --layout live; the wide table is written nowhere"
+		}
 		if code != 2 || stdout != "" || !strings.Contains(stderr, want) {
 			t.Errorf("table %s: exit %d stdout %q stderr %q; want exit 2 and %q", flagArgs[0], code, stdout, stderr, want)
 		}
@@ -133,9 +138,21 @@ func TestTableWritesNoFile(t *testing.T) {
 }
 
 func TestTableLiveLayoutRefusesWithoutItsInputs(t *testing.T) {
+	t.Setenv("NOVA_SPRINT_REDIS", "")
+	t.Setenv("NOVA_REDIS_ADDR", "")
 	code, _, stderr := runSprint("table", "--layout", "live")
 	if code != 2 {
 		t.Fatalf("exit %d, want 2", code)
+	}
+	for _, want := range []string{"--redis", "NOVA_SPRINT_REDIS"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("refusal lacks %s: %s", want, stderr)
+		}
+	}
+	// --compare keeps the #2674 inputs: the bash layout needs its roster and sprint.
+	code, _, stderr = runSprint("table", "--compare", "x.txt")
+	if code != 2 {
+		t.Fatalf("--compare exit %d, want 2", code)
 	}
 	for _, want := range []string{"--redis", "--sprint", "--friends"} {
 		if !strings.Contains(stderr, want) {
