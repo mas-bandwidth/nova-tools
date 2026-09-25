@@ -533,6 +533,11 @@ func (d *LandDuty) landStream(ctx context.Context, repo, s, slug string, gh *str
 	if err != nil {
 		line.Err = err.Error()
 	}
+	// A member task the one move refused stays where it was: the receipt
+	// names it (land stream prints the same refusals).
+	if len(rep.Merge.Skipped) > 0 {
+		line.Err = strings.TrimPrefix(line.Err+"; ", "; ") + "moves refused: " + strings.Join(rep.Merge.Skipped, "; ")
+	}
 	line.Parked = rep.Build.Build.Parked
 	for _, p := range line.Parked {
 		files, ok := strings.CutPrefix(p.Why, "conflict:")

@@ -140,17 +140,23 @@ type ldFixture struct {
 	d     *reconcile.LandDuty
 }
 
-// seedMember puts task t<n> in ws:<s>:merging at age at, with a pr record at
-// its head; lines are its typed lines, stored through `pr lines` (the
-// record's reads field) or, with viaReadPost, through `read post` (the
-// record's lines list).
+// seedMember puts task t<n> at merging with age at (ms after cardEpoch), in
+// the task card shape (nova-tools #3778): the record's where pointer, and its
+// two views, ws:<s>:merging and friend:<owner>:cards:merging, both scored by
+// created_at, so the landing's one move finds the double link it checks. It
+// has a pr record at its head; lines are its typed lines, stored through `pr
+// lines` (the record's reads field) or, with viaReadPost, through `read
+// post` (the record's lines list).
 func (fx *ldFixture) seedMember(t *testing.T, s string, n int, at float64, owner string, viaReadPost bool, lines ...string) {
 	t.Helper()
 	ctx, c := fx.ctx, fx.c
 	id := fmt.Sprintf("t%d", n)
-	c.ZAdd(ctx, "ws:"+s+":merging", redis.Z{Score: at, Member: id})
-	c.HSet(ctx, "task:"+id, "stream", s, "state", "merging", "where", "merging", "pr", fmt.Sprintf("%s#%d", ldRepo, n),
-		"created_at", fmt.Sprint(int64(at)), "owner", owner)
+	created := cardEpoch + int64(at)
+	for _, k := range []string{"ws:" + s + ":merging", "friend:" + owner + ":cards:merging"} {
+		c.ZAdd(ctx, k, redis.Z{Score: float64(created), Member: id})
+	}
+	c.HSet(ctx, "task:"+id, "stream", s, "state", "merging", "where", "merging", "where_ok", "-",
+		"pr", fmt.Sprintf("%s#%d", ldRepo, n), "created_at", fmt.Sprint(created), "owner", owner, "friend", owner)
 	if _, err := stream.Record(ctx, c, ldRepo, n, stream.RecordFields{Head: fx.heads[n], Base: "dev", Stream: s, Task: id}); err != nil {
 		t.Fatal(err)
 	}
@@ -363,6 +369,18 @@ func TestLandDutyOneWorkerPerRepoAndNextTickMerges(t *testing.T) {
 	}
 	if n, _ := c.ZCard(ctx, "ws:"+ldAlpha+":merging").Result(); n != 1 {
 		t.Errorf("alpha merging holds %d, want only the unread #6", n)
+	}
+	// Each member moved through the one move: its pointer and both views.
+	for n := 1; n <= 5; n++ {
+		id := fmt.Sprintf("t%d", n)
+		if w, _ := c.HGet(ctx, "task:"+id, "where").Result(); w != "landed" {
+			t.Errorf("task:%s where=%q, want landed", id, w)
+		}
+		for _, k := range []string{"ws:" + ldAlpha + ":landed", "friend:rowan:cards:landed"} {
+			if _, err := c.ZScore(ctx, k, id).Result(); err != nil {
+				t.Errorf("%s not in %s: %v", id, k, err)
+			}
+		}
 	}
 	if held := fx.d.Stop(ctx); len(held) != 0 {
 		t.Errorf("released after stop: %v", held)
