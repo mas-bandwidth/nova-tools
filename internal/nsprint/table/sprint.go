@@ -8,7 +8,7 @@
 //
 //	<left>/<y> left, <z>% done -> ~<eta>m
 //
-//	stream | waiting | working | merging | landed   (rows in ws:order, all-zero rows hidden, total)
+//	stream | waiting | ready | working | merging | landed   (rows in ws:order, all-zero rows hidden, total)
 //
 //	friend | ready | working | done | status        (status up|down)
 //
@@ -305,7 +305,7 @@ func FailedSprint(cfg SprintConfig, last *SprintSnapshot) *SprintSnapshot {
 	return &snap
 }
 
-const streamRule = "-------------------------------+---------+---------+---------+-------\n"
+const streamRule = "-------------------------------+---------+-------+---------+---------+-------\n"
 
 // XY is the headline's numbers: y is every task in the streams of ws:order,
 // left is y minus landed, eta is left over the landed rate of the last hour
@@ -343,19 +343,20 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 	left, y, pct, eta := s.XY()
 	fmt.Fprintf(&b, "%d/%d left, %d%% done -> ~%dm\n\n", left, y, pct, eta)
 
-	fmt.Fprintf(&b, "%-30s | %7s | %7s | %7s | %6s\n", "stream", "waiting", "working", "merging", "landed")
+	fmt.Fprintf(&b, "%-30s | %7s | %5s | %7s | %7s | %6s\n", "stream", "waiting", "ready", "working", "merging", "landed")
 	b.WriteString(streamRule)
-	var tw, tk, tm, tl int64
+	var tw, tr, tk, tm, tl int64
 	for _, r := range s.Streams {
 		if r.Total() == 0 {
 			continue
 		}
-		// waiting counts ready too: both are work nobody has started.
-		fmt.Fprintf(&b, "%-30s | %7d | %7d | %7d | %6d\n", r.Name, r.Waiting+r.Ready, r.Working, r.Merging, r.Landed)
-		tw, tk, tm, tl = tw+r.Waiting+r.Ready, tk+r.Working, tm+r.Merging, tl+r.Landed
+		// Every cell is one set's ZCARD; ready is its own column, never
+		// folded into waiting (a card is in exactly one set).
+		fmt.Fprintf(&b, "%-30s | %7d | %5d | %7d | %7d | %6d\n", r.Name, r.Waiting, r.Ready, r.Working, r.Merging, r.Landed)
+		tw, tr, tk, tm, tl = tw+r.Waiting, tr+r.Ready, tk+r.Working, tm+r.Merging, tl+r.Landed
 	}
 	b.WriteString(streamRule)
-	fmt.Fprintf(&b, "%-30s | %7d | %7d | %7d | %6d\n\n", "total", tw, tk, tm, tl)
+	fmt.Fprintf(&b, "%-30s | %7d | %5d | %7d | %7d | %6d\n\n", "total", tw, tr, tk, tm, tl)
 
 	fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %-10s\n", "friend", "ready", "working", "done", "status")
 	b.WriteString(liveFriendRule)

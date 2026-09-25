@@ -3629,8 +3629,8 @@ watches (#3530): the headline (`SPRINT TABLE *** PIT STOP ***` while
 `<left>/<y> left, <z>% done -> ~<eta>m` line, the streams block, the friend
 block and the host block, one blank line between them. The streams are the
 rows of `ws:order` (the ws index, #3662) with
-the ZCARDs of their `waiting` (plus `ready`), `working`, `merging` and
-`landed` sets; rows with all zeros are hidden. y is every task in those sets,
+the ZCARDs of their `waiting`, `ready`, `working`, `merging` and
+`landed` sets, one column each (nothing folded); rows with all zeros are hidden. y is every task in those sets,
 left is y minus landed, and the ETA is left over the moves to `landed` in the
 last hour of `ws:log` (at least one an hour). The hosts are the `benches` SET
 (each bench's own keys, #2389: ready and working are the ZCARDs of
