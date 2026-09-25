@@ -11,7 +11,7 @@
 //
 //	pr:<name>:<n>          hash  repo, n, head, base, base_sha, state (open|parked|landed|merged|closed),
 //	                             ci (pending|green|red), mergeable (true|false|""), stream, task, kind,
-//	                             reads (typed SCORE/DISPOSITION/HOLD lines, newline-joined;
+//	                             reads (typed SCORE/DISPOSITION/HOLD lines and Jev's JEV line, newline-joined;
 //	                             the lander also reads pr:<name>:<n>:lines, read post's list),
 //	                             created_at, updated_at; closes (issues the body closes, "-" none);
 //	                             park, landed_with, close, closed_at on moves
@@ -19,7 +19,8 @@
 //	                             tasks (ids, same order), parked (<n>:<why> ...), pr, state
 //	                             (conflict|base-red|empty|pushed|open|merged), tests, at, workdir
 //	land:<repo>:streams    set   every slug with a land hash
-//	cfg:land               hash  min_score, min_score:<repo>, remote:<repo>
+//	cfg:land               hash  min_score, min_score:<repo>, remote:<repo>, jev (off|gate|require),
+//	                             jev_passes (the JEV passes that gate, comma list)
 //	cfg:land:test:<repo>   string the repo's batch test command (bash -c)
 //
 // Every write goes through land_stream.lua (one EVAL, atomic) or, for a
@@ -41,6 +42,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/jev"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
@@ -433,16 +435,30 @@ func prNumber(field, repo string) (int, bool) {
 }
 
 // Members is ws:<stream>:merging intersected with the repo's pr records that
-// carry a read at head >= minScore and no hold at head, oldest pr_ready_at
-// first, for each stream in the order given. Three pipelined round trips.
+// carry a read at head >= minScore, no hold at head and no failing JEV line
+// at head, oldest pr_ready_at first, for each stream in the order given.
+// Three pipelined round trips.
+//
+// The JEV line (internal/jev, nova-tools#3631) is Jev's mechanical passes
+// over the PR, never a read: cfg:land jev is off, gate (the default: a
+// gating pass that failed at head skips the PR as jev:<passes>) or require
+// (a PR Jev has not passed at head skips as no-jev-at-head too), and
+// cfg:land jev_passes names the passes that gate (empty: every pass).
 func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string, minScore int) ([]Member, []Skip, error) {
 	pipe := c.Pipeline()
 	zs := make([]*redis.ZSliceCmd, len(streams))
 	for i, s := range streams {
 		zs[i] = pipe.ZRangeWithScores(ctx, WSKey(s, "merging"), 0, -1)
 	}
+	jevCfg := pipe.HMGet(ctx, "cfg:land", "jev", "jev_passes")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, nil, err
+	}
+	jevMode, jevGating := jev.ModeGate, map[string]bool(nil)
+	if v := jevCfg.Val(); len(v) == 2 {
+		s0, _ := v[0].(string)
+		s1, _ := v[1].(string)
+		jevMode, jevGating = jev.ParseMode(s0), jev.ParseGating(s1)
 	}
 	type cand struct {
 		task, stream string
@@ -496,6 +512,7 @@ func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string
 		r := byN[n]
 		why := ""
 		read := ReadAt(r.Reads, r.Head)
+		jevWhy := jev.Skip(r.Reads, r.Head, jevMode, jevGating)
 		switch {
 		case !r.Exists:
 			why = "no-record"
@@ -507,6 +524,8 @@ func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string
 			why = "no-head"
 		case read.Held != "":
 			why = "hold:" + read.Held
+		case jevWhy != "":
+			why = jevWhy
 		case read.Score < 0:
 			why = "no-read-at-head"
 		case read.Score < minScore:
