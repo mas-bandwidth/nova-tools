@@ -18,7 +18,10 @@ package reconcile
 //     call per bench, never a forge read (an unreachable bench gives no
 //     evidence, so its cards stay reconcile-required);
 //  4. one pipeline of resolutions: ns_card_required for each card with an
-//     effect or with proven absence.
+//     effect or with proven absence, and ns_card_required_timeout for each
+//     card no evidence resolved that has sat in reconcile-required past
+//     cfg:reconcile max_required_s (default 3600): it ends done/fail, reason
+//     reconcile-timeout, never requeued (nova-tools #3803).
 //
 // Every function checks the reconciler fence before it writes; a FENCED
 // answer anywhere stops the duty with ErrFenced.
@@ -49,6 +52,7 @@ type Suspect struct {
 	JobDir   string
 	Branch   string // the attempt branch, read with git ls-remote
 	Repo     string // owner/name
+	Since    string // required_at: Redis TIME ms the card entered reconcile-required
 }
 
 // Key is the Prober's answer key for this card: <sprint>/<label>.
@@ -61,6 +65,23 @@ func (s Suspect) Key() string { return s.Sprint + "/" + s.Label }
 // is not negative evidence). A card missing from the map has none either.
 type Prober interface {
 	Probe(ctx context.Context, b deal.Bench, cards []Suspect) (map[string]Evidence, error)
+}
+
+// ConfigKey is cfg:reconcile, the reconciler's fleet-wide config hash. Its
+// max_required_s field is the reconcile-required window: past it a card no
+// evidence resolved ends done/fail (reason reconcile-timeout). An absent,
+// non-numeric or non-positive value reads as DefaultMaxRequired.
+const ConfigKey = "cfg:reconcile"
+
+// DefaultMaxRequired is max_required_s's default.
+const DefaultMaxRequired = time.Hour
+
+// MaxRequired parses a max_required_s value (seconds).
+func MaxRequired(v string) time.Duration {
+	if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil && n > 0 {
+		return time.Duration(n) * time.Second
+	}
+	return DefaultMaxRequired
 }
 
 // ExpireStampField is the proc:reconciler field of sprint S's last sweep.
@@ -172,7 +193,7 @@ func (e *Expire) gateRows(ctx context.Context, pipe redis.Pipeliner, sprints []s
 var (
 	dealtFields    = []string{"dealt_at"}
 	liveFields     = []string{"beat_at", "launched_at"}
-	requiredFields = []string{"bench", "attempt", "identity", "jobdir", "branch", "repo"}
+	requiredFields = []string{"bench", "attempt", "identity", "jobdir", "branch", "repo", "required_at"}
 	endedFields    = []string{"outcome", "reason", "exit", "pushed_sha", "retries"}
 )
 
@@ -236,6 +257,7 @@ func (e *Expire) sweep(ctx context.Context, l *Lease, due, benches []string, now
 			pending:  pipe.ZRangeWithScores(ctx, PendingIndexKey(s), 0, -1),
 		}
 	}
+	cfg := pipe.HMGet(ctx, ConfigKey, "max_required_s")
 	beats := make(map[string]*redis.SliceCmd, len(benches))
 	for _, b := range benches {
 		beats[b] = pipe.HMGet(ctx, "bench:"+b+":beat", "host", "user")
@@ -285,7 +307,7 @@ func (e *Expire) sweep(ctx context.Context, l *Lease, due, benches []string, now
 		add("stamp", token, s)
 		for _, h := range rowsOf(r.req, requiredFields) {
 			suspects = append(suspects, Suspect{Sprint: s, Label: h["label"], Bench: h["bench"], Attempt: h["attempt"],
-				Identity: h["identity"], JobDir: h["jobdir"], Branch: h["branch"], Repo: h["repo"]})
+				Identity: h["identity"], JobDir: h["jobdir"], Branch: h["branch"], Repo: h["repo"], Since: h["required_at"]})
 		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !anyReply(ts) {
@@ -315,36 +337,51 @@ func (e *Expire) sweep(ctx context.Context, l *Lease, due, benches []string, now
 	// Step 3: evidence, one Prober call per bench, in parallel.
 	evidence := e.probe(ctx, beats, suspects)
 
-	// Step 4: one pipeline of resolutions.
-	if len(evidence) > 0 {
+	// Step 4: one pipeline of resolutions: evidence first, then the window
+	// for every card evidence did not resolve. A card with no required_at
+	// goes to the function too, which stamps one (its window starts now).
+	maxReq := DefaultMaxRequired
+	if v := cfg.Val(); len(v) > 0 {
+		if s, ok := v[0].(string); ok {
+			maxReq = MaxRequired(s)
+		}
+	}
+	{
 		pipe = e.Client.Pipeline()
 		var rs []transition
 		for _, s := range suspects {
 			ev, ok := evidence[s.Key()]
-			if !ok {
+			switch {
+			case ok && ev.Effect() && ev.Absent:
+				errs = append(errs, fmt.Sprintf("required %s: %v", s.Key(), ErrEvidence))
+				continue
+			case ok && ev.Effect():
+				rs = append(rs, transition{kind: "required", cmd: pipe.FCall(ctx, "ns_card_required", nil, s.Sprint, s.Label, token, "effect", ev.String())})
+				continue
+			case ok && ev.Absent:
+				rs = append(rs, transition{kind: "required", cmd: pipe.FCall(ctx, "ns_card_required", nil, s.Sprint, s.Label, token, "absent", "")})
 				continue
 			}
-			switch {
-			case ev.Effect() && ev.Absent:
-				errs = append(errs, fmt.Sprintf("required %s: %v", s.Key(), ErrEvidence))
-			case ev.Effect():
-				rs = append(rs, transition{kind: "required", cmd: pipe.FCall(ctx, "ns_card_required", nil, s.Sprint, s.Label, token, "effect", ev.String())})
-			case ev.Absent:
-				rs = append(rs, transition{kind: "required", cmd: pipe.FCall(ctx, "ns_card_required", nil, s.Sprint, s.Label, token, "absent", "")})
+			if at, err := strconv.ParseInt(s.Since, 10, 64); err == nil && now-at < maxReq.Milliseconds() {
+				continue
 			}
+			rs = append(rs, transition{kind: "timeout", cmd: pipe.FCall(ctx, "ns_card_required_timeout", nil, s.Sprint, s.Label, token, maxReq.Milliseconds())})
 		}
 		if len(rs) > 0 {
 			if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !anyReply(rs) {
 				return c, fmt.Errorf("expire resolutions: %w", err)
 			}
 			for _, t := range rs {
-				code, _, err := reply(t.cmd)
+				code, status, err := reply(t.cmd)
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("required: %v", err))
+					errs = append(errs, fmt.Sprintf("%s: %v", t.kind, err))
 					continue
 				}
 				if code == 3 {
-					return c, fmt.Errorf("expire required: %w", ErrFenced)
+					return c, fmt.Errorf("expire %s: %w", t.kind, ErrFenced)
+				}
+				if t.kind == "timeout" && status == "TIMEOUT" {
+					c.Expired++
 				}
 			}
 		}

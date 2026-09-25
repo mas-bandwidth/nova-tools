@@ -14,13 +14,13 @@ import (
 func init() {
 	register(Verb{
 		Name:    "card",
-		Summary: "push, release, stop, run, show, launched, beat, and end one card attempt; fsck and ls --unplaced the card model",
+		Summary: "cut, push, release, stop, run, show, launched, beat, and end one card attempt; fsck and ls --unplaced the card model",
 		Run:     runCard,
 	})
 }
 
 func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) > 0 && (args[0] == "push" || args[0] == "release" || args[0] == "stop" || args[0] == "show" ||
+	if len(args) > 0 && (args[0] == "cut" || args[0] == "push" || args[0] == "release" || args[0] == "stop" || args[0] == "show" ||
 		args[0] == "fsck" || args[0] == "ls") {
 		return runCardPool(ctx, args, stdout, stderr)
 	}
@@ -28,12 +28,12 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runCardRun(ctx, args[1:], stdout, stderr)
 	}
 	if len(args) == 0 {
-		return cardUsage(stderr, "", "wants push, release, stop, show, run, launched, beat, or end")
+		return cardUsage(stderr, "", "wants cut, push, release, stop, show, run, launched, beat, or end")
 	}
 	sub := args[0]
 	want, ok := cardWant(sub)
 	if !ok {
-		return cardUsage(stderr, "unknown verb "+sub, "wants push, release, stop, show, run, launched, beat, or end")
+		return cardUsage(stderr, "unknown verb "+sub, "wants cut, push, release, stop, show, run, launched, beat, or end")
 	}
 	flags, pos, err := parseCardArgs(args[1:])
 	if err != nil {
@@ -82,7 +82,7 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			Outcome: flags["outcome"], Reason: flags["reason"], ResultsDir: flags["results"],
 		})
 	default:
-		return cardUsage(stderr, "unknown verb "+sub, "wants push, release, stop, show, run, launched, beat, or end")
+		return cardUsage(stderr, "unknown verb "+sub, "wants cut, push, release, stop, show, run, launched, beat, or end")
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-sprint card: %s; run: nova-sprint help\n", oneline.Escape(err.Error()))

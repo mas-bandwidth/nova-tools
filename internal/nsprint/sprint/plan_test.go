@@ -466,3 +466,64 @@ func TestPlanControls(t *testing.T) {
 		}
 	})
 }
+
+// TestPlanHoldPolicyKeys (#3798): fix_to and release_reader are optional, come
+// as a pair, name registered friends, and are stored by ns_sprint_plan; the
+// function refuses an unregistered friend even when Go validation passed.
+func TestPlanHoldPolicyKeys(t *testing.T) {
+	const head = "#nova-sprint-plan v1\npolicy\tbackpressure_missing\tclosed\npolicy\tci_reruns\t1\n" +
+		"policy\treaders\t1\npolicy\tabsent_after\t60m\nbench\ta\tm1\t6\n"
+	for _, c := range []struct{ tail, want string }{
+		{"policy\tfix_to\tx\n", "PLAN-REFUSED line 7: policy release_reader is missing; fix_to and release_reader appear together or not at all"},
+		{"policy\trelease_reader\tx\n", "PLAN-REFUSED line 7: policy fix_to is missing; fix_to and release_reader appear together or not at all"},
+		{"policy\tfix_to\tx:y\npolicy\trelease_reader\ty\n", `PLAN-REFUSED line 7: policy fix_to "x:y" is not a friend name`},
+	} {
+		_, findings := ParsePlan([]byte(head + c.tail))
+		if len(findings) == 0 || findings[0].String() != c.want {
+			t.Fatalf("%q: findings %v; want %s", c.tail, findings, c.want)
+		}
+	}
+
+	addr, client := planRedis(t)
+	planFixture(t, client)
+	ctx := context.Background()
+	st, _ := seat(t, addr, "", "")
+	apply := func(a Applier, s, body string) run {
+		var out, errOut bytes.Buffer
+		code := a.Apply(ctx, s, []byte(body), &out, &errOut)
+		return run{code, out.String(), errOut.String()}
+	}
+	a := Applier{Store: st, User: "default"}
+	if r := apply(a, "hp-1", head+"policy\tfix_to\tx\npolicy\trelease_reader\tz\n"); r.code != 1 ||
+		r.errOut != "PLAN-REFUSED line 8: policy release_reader z is not in friends (a plan never registers a name)\n" {
+		t.Fatalf("unregistered reader: %+v", r)
+	}
+	if n := client.Exists(ctx, "s:hp-1:policy", "s:hp-1:plan").Val(); n != 0 {
+		t.Fatalf("a refused plan wrote %d keys", n)
+	}
+	if r := apply(a, "hp-1", head+"policy\tfix_to\tx\npolicy\trelease_reader\ty\n"); r.code != 0 {
+		t.Fatalf("apply: %+v", r)
+	}
+	if got := client.HMGet(ctx, "s:hp-1:policy", "fix_to", "release_reader").Val(); got[0] != "x" || got[1] != "y" {
+		t.Fatalf("stored hold policy %v; want x, y", got)
+	}
+	if r := showPlan(t, st, "hp-1"); !strings.Contains(r.out, "policy fix_to plan=x store=x\npolicy release_reader plan=y store=y\n") {
+		t.Fatalf("show: %+v", r)
+	}
+	client.HSet(ctx, "s:hp-1:policy", "release_reader", "x")
+	if r := showPlan(t, st, "hp-1"); r.code != 1 || !strings.Contains(r.out, "DRIFT policy release_reader plan=y store=x\n") {
+		t.Fatalf("show after drift: %+v", r)
+	}
+
+	// The function checks the friends itself: a friend dropped between Go
+	// validation and the FCALL is refused before any write.
+	a.afterValidate = func(ctx context.Context) { client.SRem(ctx, "friends", "y") }
+	before := dumpAll(t, client)
+	if r := apply(a, "hp-2", head+"policy\tfix_to\tx\npolicy\trelease_reader\ty\n"); r.code != 1 || r.errOut != "PLAN-REFUSED check: UNREGISTERED friend:y\n" {
+		t.Fatalf("race: %+v", r)
+	}
+	delete(before, "friends")
+	after := dumpAll(t, client)
+	delete(after, "friends")
+	sameDump(t, "refused hold policy", before, after)
+}

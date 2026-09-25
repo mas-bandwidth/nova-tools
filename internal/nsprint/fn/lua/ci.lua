@@ -207,10 +207,14 @@ end
 -- verdict OK), rerun and dispose are done/fail -> ready on the new bench.
 local CARD = NS.card
 
--- A leg list is the desired hash's `legs` field, space or comma separated.
--- A bench that declares no legs carries none: no evidence is not a leg.
+-- A leg list is the desired hash's `legs` field, space or comma separated,
+-- written by `capacity bench --legs` (#3349). THE ONE RULE for an empty or
+-- absent list, the same in deal.lua's deal_runs: the bench runs every leg
+-- (one bench standard: every bench runs any card). A bench that declares a
+-- list carries only the legs it names.
 local function ci_carries(bench, leg)
   local legs = ci_hget('bench:' .. bench .. ':desired', 'legs')
+  if legs == '' then return true end
   for l in string.gmatch(legs, '[^%s,]+') do
     if l == leg then return true end
   end

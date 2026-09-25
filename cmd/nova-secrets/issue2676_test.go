@@ -5,10 +5,10 @@ package main
 // through nova-secrets exec (Emma hers; Rowan wrote rowan=8 and johnny=6 from
 // statements; Johnny's own attempt hung without the seat exec). The fix's
 // nova-secrets leg: exec refuses to be the vehicle for that hand-write and
-// names the friend's own tool on the refusal line, so the column is never a
-// redis-cli line through this exec. The beat verb itself is nova-wake's
-// (#2673); the table's working column reading only that key is the table's
-// leg. sops and redis-cli are fakes on disk, so no test opens a real store or
+// names the column's one writer on the refusal line, so the column is never a
+// redis-cli line through this exec. Since #3447 that writer is the friend row
+// loop and nova-wake beat refuses the row, so the line names the row loop and
+// the queue, never the beat (#3807). sops and redis-cli are fakes on disk, so no test opens a real store or
 // touches a real Redis.
 
 import (
@@ -110,10 +110,16 @@ func TestIssue2676(t *testing.T) {
 	if len(lines) != 1 || !strings.HasPrefix(lines[0], "SECRETS EXEC FAIL") {
 		t.Fatalf("the refusal is one SECRETS EXEC FAIL line, got %d lines:\n%s", len(lines), errOut)
 	}
-	for _, want := range []string{"friend:emma:width", "nova-wake beat --width", "#2673"} {
+	// Since #3447 the working column is the friend row's, written by the row
+	// loop; nova-wake beat refuses the row, so the refusal names the row loop
+	// and never the beat (nova-tools #3807).
+	for _, want := range []string{"friend:emma:width", "friend row", "rowan-tools friend-row", "#3447"} {
 		if !strings.Contains(lines[0], want) {
-			t.Errorf("the refusal must name %s (the friend's own tool, nova-tools#2673):\n%s", want, lines[0])
+			t.Errorf("the refusal must name %s (the friend row loop, nova-tools#3807):\n%s", want, lines[0])
 		}
+	}
+	if strings.Contains(lines[0], "nova-wake beat") {
+		t.Errorf("the refusal must not send anyone to nova-wake beat, which refuses the friend row since #3447 (nova-tools#3807):\n%s", lines[0])
 	}
 
 	// A read of the same key still runs: the table's working column reads

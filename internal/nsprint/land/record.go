@@ -87,7 +87,9 @@ func parseHolds(m map[string]string) ([]Hold, error) {
 // s:<S>:read:<unit>:<who> record. CarriedFrom is the head the line was
 // typed at when `read carry` (nova-tools #3630) moved it to Head across an
 // identical-diff head move; "" for a line typed at Head itself. A carried
-// read counts as a read: the lander compares Head, never CarriedFrom.
+// read counts as a read: the lander compares Head, never CarriedFrom, and
+// `why` prints carried_from=<h8> on it (#3612). A read rubric SCORE line is
+// recorded with Verdict APPROVE, so it counts like one (#3612).
 type Read struct {
 	Friend      string
 	Head        string

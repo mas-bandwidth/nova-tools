@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -136,6 +137,11 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	}
 	l := Landing{Repo: o.Repo, Slug: slug, Streams: strings.Join(o.Streams, ","), Base: o.Base, BaseSHA: res.BaseSHA,
 		Branch: rep.Branch, Head: res.Head, Members: res.Kept, Parked: res.Parked, Tests: res.Tests, Workdir: o.Workdir}
+	if len(res.Kept) > 0 && res.Conflict == nil && !res.BaseRed {
+		// The issues each kept member's commits close, while the clone is
+		// here: land merge closes them with the ones its body closes.
+		l.CommitCloses = b.CommitCloses(ctx, res.BaseSHA, res.Kept)
+	}
 	switch {
 	case res.Conflict != nil:
 		// Stop: Rowan resolves in the kept workdir. Nothing moves.
@@ -274,15 +280,26 @@ type MergeReport struct {
 	MergeSHA string
 	Moved    int
 	Missing  int
+	Lines    int
+	Skipped  []string
+	Unread   []int // members whose closes stayed unknown (no record, no read)
 	Already  bool
 	Closed   []int
 	Unclosed []int
+	// IssuesClosed and IssuesUnclosed are the issues the members' bodies
+	// close that the lander closed by REST, or could not (budget, error).
+	IssuesClosed   []int
+	IssuesUnclosed []int
 }
 
 // Merge merges the stream PR when its record says ci=green and mergeable at
-// the landing's head, moves every member merging -> landed with its CLOSE
-// receipt in one Lua call, then comments and closes each member (budgeted;
-// a re-run closes the rest).
+// the landing's head and marks the landing merged; then, per member in one
+// fenced Lua call each, writes its CLOSE line on its record and moves every
+// task naming it or an issue it closes to landed (nova-tools#3779); then
+// closes the issues each member's body closes (GitHub does not on a merge
+// into dev) and comments on and closes each member (budgeted; a re-run
+// closes the rest and repeats the per-member step, which moves nothing
+// twice).
 func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 	var rep MergeReport
 	slug, err := Slug(o.Streams...)
@@ -297,6 +314,11 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 		return rep, &Refusal{Why: "no landing " + LandKey(o.Repo, slug), Remedy: "nova-sprint land stream --repo " + o.Repo + " --stream <s>"}
 	}
 	rep.Landing = l
+	// The member step is a library function: refuse before GitHub merges
+	// anything when the store's library predates it.
+	if err := c.FCall(ctx, FunctionLandMember, nil).Err(); err != nil && !errors.Is(err, redis.Nil) {
+		return rep, &Refusal{Why: FunctionLandMember + ": " + err.Error(), Remedy: "nova-sprint fn load"}
+	}
 	if l.State == "merged" {
 		rep.Already, rep.MergeSHA = true, l.MergeSHA
 	} else {
@@ -328,12 +350,11 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 			return rep, err
 		}
 		rep.MergeSHA = sha
-		rep.Moved, rep.Missing, rep.Already, err = SaveLanded(ctx, c, l, o.By, sha)
+		rep.Already, err = SaveLanded(ctx, c, l, o.By, sha)
 		if err != nil {
 			return rep, err
 		}
 	}
-	// Close the members: CLOSE comment, then state=closed, each budgeted.
 	var ns []int
 	for _, m := range l.Members {
 		ns = append(ns, m.N)
@@ -342,9 +363,78 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 	if err != nil {
 		return rep, err
 	}
-	line := CloseLine(o.By, l.Branch, l.Head, o.Repo, l.PR)
-	var closeErr error
+	// The issues each member closes: its commit messages' (recorded by land
+	// stream) and its body's: the record's closes, else the body (one REST
+	// read; a failed read leaves them unknown and a re-run reads again).
+	closes := map[int]string{}
 	for _, r := range recs {
+		if !r.Exists {
+			continue
+		}
+		body := r.Closes
+		if body == "" && o.GH != nil {
+			if b, err := o.GH.PRBody(ctx, o.Repo, r.N); err == nil {
+				body = ParseCloses(b)
+			}
+		}
+		if body == "" {
+			// Unknown until a run reads it: nothing is recorded for it.
+			rep.Unread = append(rep.Unread, r.N)
+			continue
+		}
+		if u := UnionCloses(body, r.CommitCloses); u != r.Closes {
+			closes[r.N] = u
+		}
+	}
+	landed, err := LandMembers(ctx, c, l, o.By, rep.MergeSHA, closes)
+	if err != nil {
+		return rep, err
+	}
+	rep.Moved, rep.Missing, rep.Lines, rep.Skipped = landed.Moved, landed.Missing, landed.Lines, landed.Skipped
+	// Close the issues each member closes: GitHub does not on a merge into
+	// dev (not the default branch). One comment naming the merge sha, then
+	// state=closed; an issue closed on an earlier run is not closed again.
+	var closeErr error
+	issuesDone := map[int][]int{}
+	for i, r := range recs {
+		cl := closes[r.N]
+		if cl == "" {
+			cl = r.Closes
+		}
+		already := map[string]bool{}
+		for _, x := range strings.Fields(r.IssuesClosed) {
+			already[x] = true
+		}
+		for _, x := range strings.Fields(cl) {
+			issue, err := strconv.Atoi(x)
+			if err != nil || issue <= 0 || already[x] {
+				continue
+			}
+			if closeErr != nil || o.GH == nil {
+				rep.IssuesUnclosed = append(rep.IssuesUnclosed, issue)
+				continue
+			}
+			line := IssueCloseLine(l.Members[i].Head, l.Branch, l.Head, o.Repo, l.PR, rep.MergeSHA, r.N)
+			if err := o.GH.Comment(ctx, o.Repo, issue, line); err != nil {
+				closeErr = err
+				rep.IssuesUnclosed = append(rep.IssuesUnclosed, issue)
+				continue
+			}
+			if err := o.GH.CloseIssue(ctx, o.Repo, issue); err != nil {
+				closeErr = err
+				rep.IssuesUnclosed = append(rep.IssuesUnclosed, issue)
+				continue
+			}
+			rep.IssuesClosed = append(rep.IssuesClosed, issue)
+			issuesDone[r.N] = append(issuesDone[r.N], issue)
+		}
+	}
+	if err := MarkIssuesClosed(ctx, c, o.Repo, issuesDone, recs); err != nil {
+		return rep, err
+	}
+	// Close the members: the CLOSE line as the comment, then state=closed,
+	// each budgeted.
+	for i, r := range recs {
 		if r.ClosedAt != "" {
 			continue
 		}
@@ -352,6 +442,7 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 			rep.Unclosed = append(rep.Unclosed, r.N)
 			continue
 		}
+		line := CloseLine(l.Members[i].Head, l.Branch, l.Head, o.Repo, l.PR, rep.MergeSHA)
 		if err := o.GH.Comment(ctx, o.Repo, r.N, line); err != nil {
 			closeErr = err
 			rep.Unclosed = append(rep.Unclosed, r.N)

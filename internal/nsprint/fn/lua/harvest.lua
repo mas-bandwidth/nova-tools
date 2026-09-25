@@ -24,6 +24,8 @@ do
   -- Every card state write here is NS.card (02_card_move.lua): harvested is
   -- done -> done (the outcome kept), a refusal is any -> done/fail.
   local CARD = NS.card
+  -- A PR opening is an event for the sprint's tasks too (03_task_event.lua).
+  local TEV = NS.tev
 
   local function hv_now_ms()
     local t = redis.call('TIME')
@@ -253,7 +255,9 @@ do
   -- absent head argument is the pushed_sha itself). A key that already names another PR
   -- is returned unchanged and nothing is written (the caller reports it and
   -- opens nothing). A card with no harvest_step (never pushed) or one past
-  -- published is refused (STEP), and a fenced caller writes nothing.
+  -- published is refused (STEP), and a fenced caller writes nothing. The
+  -- same call moves every sprint task naming the PR or the card's origin
+  -- issue to merging (NS.tev, nova-tools#3779).
   redis.register_function('ns_harvest_pr', function(keys, args)
     local S, bench, instance, token = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
     local label, repo, branch, pr = args[5] or '', args[6] or '', args[7] or '', args[8] or ''
@@ -266,7 +270,7 @@ do
     end
     local key = 's:' .. S .. ':card:' .. label
     local f = redis.call('HMGET', key, 'state', 'bench', 'attempt', 'repo', 'harvest_step',
-      'pushed_sha', 'base', 'base_sha', 'stream')
+      'pushed_sha', 'base', 'base_sha', 'stream', 'origin')
     local state, cbench, attempt, crepo, cur = f[1] or '', f[2] or '', f[3] or '', f[4] or '', f[5] or ''
     local pushed = f[6] or ''
     if state == '' then return 'NOTFOUND|' end
@@ -287,11 +291,24 @@ do
       if cur ~= 'published' then
         redis.call('HSET', key, 'harvest_step', 'published', 'harvest_step_at', at, 'pr', pr, 'head', head)
       end
+      -- The card's origin issue: the PR body closes it when it is in the
+      -- PR's repository (harvest/body.go originLine), so the record carries
+      -- it as closes for the lander; either way a task naming it names this
+      -- work.
+      local orepo, onum = TEV.TR.parse(f[10] or '', '')
+      local closes = '-'
+      if orepo and orepo == TEV.TR.bare(repo) then closes = onum end
       local rkey = hv_prkey(repo, pr)
       if redis.call('EXISTS', rkey) == 0 then
         redis.call('HSET', rkey, 'head', head, 'base', f[7] or '', 'base_sha', f[8] or '',
-          'stream', f[9] or '', 'label', label, 'sprint', S, 'branch', branch, 'state', 'open', 'at', at)
+          'stream', f[9] or '', 'label', label, 'sprint', S, 'branch', branch, 'state', 'open', 'at', at,
+          'closes', closes)
       end
+      -- Every sprint task naming this PR or the card's origin moves to
+      -- merging in this same fenced call (a repeat finds them there: SAME).
+      local refs = TEV.refs(repo, pr, '')
+      if orepo then refs[#refs + 1] = orepo .. '#' .. tonumber(onum) end
+      TEV.opened(refs, 'harvest', 'PR opened: ' .. TEV.TR.bare(repo) .. '#' .. pr .. ' (' .. label .. ')')
     end
     return 'PR|' .. stored
   end)

@@ -21,8 +21,14 @@
 //	ws:<s>:<state>          ZCARD for waiting, ready, working, merging, landed
 //	ws:log                  XRANGE over the last hour: the landed rate for the ETA
 //	ws:done0                HGETALL: each friend's done count at the last `table clear`
-//	benches                 SMEMBERS, the bench list; bench:<b> HGETALL per member
-//	friends                 SMEMBERS when no roster is given; friend:<f> HMGET
+//	benches                 SMEMBERS, the bench list; per member (#2389, each
+//	                        bench's own keys, never a bash-written row):
+//	bench:<b>:cards:<w>     ZCARD for w = ready, working (the card views, #3692)
+//	bench:<b>:beat          HMGET load1 at (the bench's own `bench beat` loop)
+//	friends                 SMEMBERS when no roster is given; friend:<f> HMGET at, up
+//	friend:<f>:cards:<w>    ZCARD for ready, working, done: the friend's cells are
+//	                        the sizes of the sets its tasks move through (the card
+//	                        model, rowan-new specs/ws-index.md; nova-tools#3779)
 //	friend:<f>:down         EXISTS (a string or a hash; either means down)
 //	s:<S>:pitstop           EXISTS, with the legacy sprint:<S>:pitstop
 //
@@ -47,6 +53,13 @@ import (
 
 // WSStates are the five per-stream sets the table counts, in reply order.
 var WSStates = []string{"waiting", "ready", "working", "merging", "landed"}
+
+// FriendWheres are the three friend:<f>:cards:<where> sets the friend block
+// counts, in column order.
+var FriendWheres = []string{"ready", "working", "done"}
+
+// FriendCardsKey is one friend's set of task ids at where.
+func FriendCardsKey(friend, where string) string { return "friend:" + friend + ":cards:" + where }
 
 // DoneBaseKey holds each friend's done count at the last `table clear`
 // (#3637): the friend block shows done minus this, so a clear zeroes the
@@ -84,7 +97,7 @@ type SprintSnapshot struct {
 	Pitstop    bool
 	Streams    []StreamRow
 	LandedHour int64 // ws:log moves to landed in the hour before the read
-	Benches    []BenchRow
+	Hosts      []HostRow
 	Friends    []FriendRow
 	DoneBase   map[string]string
 	// RoundTrips is how many pipelines the read took: 1 in steady state.
@@ -95,6 +108,21 @@ type SprintSnapshot struct {
 	Stale    bool
 	LastGood time.Time
 }
+
+// HostRow is one bench of the host block, read from the keys the bench's own
+// work writes (#2389): Ready and Working are the ZCARDs of its card views,
+// Load its beat's load1. Down says the beat is gone (its TTL is 3 beat
+// intervals) or older than hostBeatStale: the row still shows its cards.
+type HostRow struct {
+	Name           string
+	Ready, Working int64
+	Load           string
+	Down           bool
+}
+
+// hostBeatStale is how old a beat's own at may be before the row prints
+// down, for a beat key that outlived its TTL.
+const hostBeatStale = 60 * time.Second
 
 // SprintReader reads the whole table, keeping set membership across ticks.
 type SprintReader struct {
@@ -153,18 +181,30 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			counts[i] = append(counts[i], pipe.ZCard(ctx, "ws:"+s+":"+state))
 		}
 	}
-	hashes := make([]*redis.MapStringStringCmd, len(r.benches))
+	type hostCmds struct {
+		ready, working *redis.IntCmd
+		beat           *redis.SliceCmd
+	}
+	hosts := make([]hostCmds, len(r.benches))
 	for i, b := range r.benches {
-		hashes[i] = pipe.HGetAll(ctx, "bench:"+b)
+		hosts[i] = hostCmds{
+			ready:   pipe.ZCard(ctx, "bench:"+b+":cards:ready"),
+			working: pipe.ZCard(ctx, "bench:"+b+":cards:working"),
+			beat:    pipe.HMGet(ctx, "bench:"+b+":beat", "load1", "at"),
+		}
 	}
 	roster := cfg.Friends
 	if len(roster) == 0 {
 		roster = r.friends
 	}
 	rows := make([]*redis.SliceCmd, len(roster))
+	cells := make([][]*redis.IntCmd, len(roster))
 	downs := make([]*redis.IntCmd, len(roster))
 	for i, f := range roster {
-		rows[i] = pipe.HMGet(ctx, "friend:"+f, "at", "up", "ready", "working", "done")
+		rows[i] = pipe.HMGet(ctx, "friend:"+f, "at", "up")
+		for _, w := range FriendWheres {
+			cells[i] = append(cells[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
+		}
 		downs[i] = pipe.Exists(ctx, "friend:"+f+":down")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
@@ -219,20 +259,28 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		snap.Streams = append(snap.Streams, row)
 	}
 	for i, b := range r.benches {
-		h, err := hashes[i].Result()
-		if err != nil || len(h) == 0 {
-			continue
+		row := HostRow{Name: b, Ready: hosts[i].ready.Val(), Working: hosts[i].working.Val(), Load: "-", Down: true}
+		if got, err := hosts[i].beat.Result(); err == nil && len(got) == 2 {
+			load, at := sanitize(pipeValue(got[0])), pipeValue(got[1])
+			if atMS, err := strconv.ParseInt(at, 10, 64); err == nil && now.UnixMilli()-atMS <= hostBeatStale.Milliseconds() {
+				row.Down = false
+				if load != "" {
+					row.Load = load
+				}
+			}
 		}
-		fields := make(map[string]string, len(h))
-		for f, v := range h {
-			fields[f] = sanitize(v)
-		}
-		snap.Benches = append(snap.Benches, BenchRow{Key: b, Fields: fields})
+		snap.Hosts = append(snap.Hosts, row)
 	}
 	for i, f := range roster {
 		row := FriendRow{Name: f}
-		if got, err := rows[i].Result(); err == nil && len(got) == 5 {
-			row.At, row.Up, row.Ready, row.Working, row.Done = pipeValue(got[0]), pipeValue(got[1]), pipeValue(got[2]), pipeValue(got[3]), pipeValue(got[4])
+		if got, err := rows[i].Result(); err == nil && len(got) == 2 {
+			row.At, row.Up = pipeValue(got[0]), pipeValue(got[1])
+		}
+		counts := []*string{&row.Ready, &row.Working, &row.Done}
+		for j, c := range cells[i] {
+			if n, err := c.Result(); err == nil {
+				*counts[j] = strconv.FormatInt(n, 10)
+			}
 		}
 		if downs[i].Val() > 0 {
 			row.Down = "down"
@@ -327,16 +375,15 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 	fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", "host", "ready", "working", "done", "ok", "fail", "ok%", "load")
 	b.WriteString(liveBenchRule)
 	var hq, hw int64
-	for _, row := range s.Benches {
-		c, show := row.cells(now)
-		if !show || !row.beatWithin60(now) {
-			continue
+	for _, row := range s.Hosts {
+		load := row.Load
+		if row.Down {
+			load = "down"
 		}
 		// done/ok/fail are the swarm's counts, dashed while no swarm sprint
 		// runs (sprint-table-redis HOST_COUNTS=0, Glenn 2026-09-22 7:00 PM).
-		fmt.Fprintf(&b, "%-10s | %5s | %7d | %5s | %5s | %5s | %4s | %6s\n", c.host, c.queue, c.working, "-", "-", "-", "-", c.load)
-		qn, _ := strconv.ParseInt(c.queue, 10, 64)
-		hq, hw = hq+qn, hw+c.working
+		fmt.Fprintf(&b, "%-10s | %5d | %7d | %5s | %5s | %5s | %4s | %6s\n", row.Name, row.Ready, row.Working, "-", "-", "-", "-", load)
+		hq, hw = hq+row.Ready, hw+row.Working
 	}
 	b.WriteString(liveBenchRule)
 	fmt.Fprintf(&b, "%-10s | %5d | %7d | %5s | %5s | %5s | %4s |\n", "total", hq, hw, "-", "-", "-", "-")

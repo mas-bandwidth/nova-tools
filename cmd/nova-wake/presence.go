@@ -4,7 +4,8 @@ package main
 // starts and forgets: it writes one hash with a TTL every 30 seconds (its
 // stamp, and its child count when --width is passed, #2673) and spends nothing
 // else, so presence costs no tokens and is never the thing dropped under load.
-// `presence` is the read: one line, up or down per friend, for the swarm table
+// `presence` is the read: one line, up or down per friend, from the friend
+// row's up and at where the row loop writes one (#3447), for the swarm table
 // and for anyone about to hand a friend work. Presence is Redis only; the git
 // bus carries notes and never beats (#3144).
 //
@@ -14,6 +15,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -53,7 +55,8 @@ func dialStore(ctx context.Context, addr, user string) (presence.Store, func() e
 
 // cmdBeat is the friend's own process: HSET friend:<name> at <utc> [width <n>]
 // plus PEXPIRE <ttl>, in one MULTI, every --every, for as long as the window
-// lives. A friend whose width changes re-runs beat with the new number. It ends when the window does, and
+// lives, where no row loop writes the friend row. On the row, or on a key of
+// any other type, it writes nothing and exits 2 naming the type (#3447). A friend whose width changes re-runs beat with the new number. It ends when the window does, and
 // that ending IS the signal: no shutdown hook, no goodbye note, nothing to
 // forget to run.
 func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open storeOpener) int {
@@ -140,7 +143,9 @@ func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open sto
 		return 0
 	}
 
-	beatLoop(ctx, st, name, period, lifetime, clock, stderr, side, 0)
+	if err := beatLoop(ctx, st, name, period, lifetime, clock, stderr, side, 0); err != nil {
+		return refuse(stderr, " beat", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
 	return 0
 }
 
@@ -151,11 +156,19 @@ func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open sto
 // says so again only when the answer changes -- a line every 30 seconds in a
 // friend's window would be the next thing anybody turned off.
 //
+// The one error it does stop on is the key refusal (#3447): friend:<name> is
+// the friend row or another type the beat does not own. That is not a blink
+// and will not pass, so the loop returns it and the verb exits 2 naming it.
+//
 // rounds is the tests' door and no flag's: a caller's "stop after n" is --once.
-func beatLoop(ctx context.Context, st presence.Store, name string, period, ttl time.Duration, clock wake.Clock, stderr io.Writer, side presence.Side, rounds int) {
+func beatLoop(ctx context.Context, st presence.Store, name string, period, ttl time.Duration, clock wake.Clock, stderr io.Writer, side presence.Side, rounds int) error {
 	var failing string
 	for i := 0; rounds <= 0 || i < rounds; i++ {
 		err := presence.BeatSide(ctx, st, name, clock.Now(), ttl, side)
+		var kt *presence.KeyTypeError
+		if errors.As(err, &kt) {
+			return err
+		}
 		switch {
 		case err != nil && err.Error() != failing:
 			failing = err.Error()
@@ -167,6 +180,7 @@ func beatLoop(ctx context.Context, st presence.Store, name string, period, ttl t
 		}
 		clock.Sleep(period)
 	}
+	return nil
 }
 
 // cmdPresence is the read: one line naming every friend and whether they are
