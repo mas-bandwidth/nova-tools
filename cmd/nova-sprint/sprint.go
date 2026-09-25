@@ -51,6 +51,7 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 	redisAddr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	name := fs.String("sprint", "", "")
 	from := fs.String("from", "", "")
+	carry := fs.String("carry", "", "")
 	nowUnix := fs.Int64("now", 0, "")
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, verb, err.Error())
