@@ -1495,18 +1495,14 @@ type inboxOpts struct {
 	// changes nothing; it is kept so callers that pass it keep working. It is `wait`'s
 	// only; `inbox` leaves it false.
 	quietBeats bool
-	// me is the reader resolved against the roster, carried so `wait` can write their beat
-	// without resolving the roster twice; beat is how often a wait pushes its BEAT file as
-	// its own commit; and lease is how far into the future each BEAT's until= promises the
-	// line is alive, so a manager cycle between two waits still reads awake. These are `wait`'s
-	// only; `inbox` leaves them zero.
-	me    bus.Participant
-	beat  time.Duration
-	lease time.Duration
-	// noBeat is `wait --no-beat`: no entry beat, no tick beat, no beat commit. It is a
-	// READ-ONLY poll for a process that runs BESIDE a line rather than AS the line, so
-	// the line's own harness keeps its BEAT to itself and the two writers never collide
-	// on from-<name>/BEAT (#1517). `inbox` leaves it false.
+	// me is the reader resolved against the roster, carried so `wait` can name its lane's
+	// files without resolving the roster twice. It is `wait`'s only; `inbox` leaves it zero.
+	me bus.Participant
+	// noBeat is `wait --no-beat`: this wait does not own the lane's BEAT. Since #3144 no
+	// wait writes a BEAT or makes a beat commit -- presence is friend:<name> in Redis --
+	// so what the flag still decides is whether a dirty BEAT an older wait left behind is
+	// this wait's to discard (a process BESIDE a line never discards the line's, #1517).
+	// `inbox` leaves it false.
 	noBeat bool
 	// onNote is `wait --on-note`: on a note arrival exit 0 with the note, on an empty
 	// tick print WAIT TIMEOUT and the rearm line so the harness can re-arm. Prints no
@@ -2944,9 +2940,9 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	until := f.fs.String("until", "", "an absolute deadline as an RFC 3339 UTC instant (e.g. 2026-09-18T18:00:00Z); the wait ends at that moment or at --timeout, whichever comes first")
 	idleExit := f.fs.Int("idle-exit", 0, "exit with this code instead of 0 when the wait times out, so a harness that cannot loop can branch on the code without parsing anything; 1 and 2 are refused, they are this tool's own")
 	interval := f.fs.Duration("interval", defaultWaitInterval, "how long between polls")
-	beat := f.fs.Duration("beat", defaultBeatInterval, "how often to push your BEAT liveness file as its own commit")
-	beatLease := f.fs.Duration("beat-lease", defaultBeatLease, "how far into the future each BEAT's until= promises the line is alive, so a manager cycle between waits still reads awake")
-	noBeat := f.fs.Bool("no-beat", false, "write and push no BEAT at all: a read-only poll for a process that runs beside a line rather than as it, so it does not fight the line's own harness for from-<name>/BEAT; cannot be given with --beat or --beat-lease")
+	beat := f.fs.Duration("beat", defaultBeatInterval, "retired (#3144) and ignored with one WAIT NOTE: the bus carries notes, never beats; presence is friend:<name> in Redis, written by nova-wake beat")
+	beatLease := f.fs.Duration("beat-lease", defaultBeatLease, "retired (#3144) and ignored with one WAIT NOTE, as --beat")
+	noBeat := f.fs.Bool("no-beat", false, "this wait does not own the lane's BEAT, so it never discards one an older wait left: a read-only poll for a process that runs beside a line rather than as it; no wait writes a BEAT since #3144; cannot be given with --beat or --beat-lease")
 	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
 	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
 	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
@@ -3125,6 +3121,13 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprint(stderr, "nova-bus wait: --beat-lease must be a positive duration like 10m\n")
 		return 2
 	}
+	// THE BUS CARRIES NOTES, NEVER BEATS (#3144). On 2026-09-23, 393 of 500 bus commits
+	// were `beat <friend>`: every clone pulled them and every bus monitor woke on them.
+	// Presence is friend:<name> in Redis, written by `nova-wake beat`. --beat and
+	// --beat-lease stay parseable so a caller's argv does not break, and say so once.
+	if f.set("beat") || f.set("beat-lease") {
+		fmt.Fprint(stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored: the bus carries notes, never beats; presence is friend:<name> in Redis, written by nova-wake beat --as <name> --store <host:port> (nova-tools #3144)\n")
+	}
 	// A wait always runs git, so the root check is unconditional -- see the same check, and
 	// the same reason for the order it is in, in cmdInbox.
 	if err := bus.IsRepoRoot(*busDir); err != nil {
@@ -3151,7 +3154,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
-		me: me, beat: *beat, lease: *beatLease, noBeat: *noBeat,
+		me: me, noBeat: *noBeat,
 		diagnostics: *diagnostics,
 		quietBeats:  *quietBeats,
 		maxCommits:  *maxCommits,
@@ -3216,25 +3219,17 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	} else if cleared {
 		repairs.add("index.lock")
 	}
-	beatDiscarded := false
+	// A dirty BEAT is what a wait from before #3144, killed mid-tick, left behind. No wait
+	// writes one now, so the repair is the discard alone: the file goes back to what the
+	// bus holds, and nothing is regenerated.
 	if !o.noBeat {
-		var err error
-		beatDiscarded, err = discardDirtyOwnedBeat(o)
+		discarded, err := discardDirtyOwnedBeat(o)
 		if err != nil {
 			repairs.flush(stdout)
 			fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.Err(err))
 			return 1
 		}
-	}
-	// THE ENTRY BEAT, written before the first poll, so a line that is about to wait
-	// already reads awake the moment its call begins, lease and all. --no-beat turns it
-	// off with the rest of the beat: a process running BESIDE a line does not beat for it.
-	// When the beat was dirty on the way in, this write is the regeneration, and the
-	// repair is claimed only if the write landed.
-	if !o.noBeat {
-		if err := bus.WriteBeat(*busDir, me.Lane, held.Commit, now, now.Add(*beatLease)); err != nil {
-			fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
-		} else if beatDiscarded {
+		if discarded {
 			repairs.add(bus.BeatPath(me.Lane))
 		}
 	}
@@ -3340,18 +3335,13 @@ const maxIdleExit = 125
 // the round trip is what the number should be chosen for.
 const defaultWaitInterval = 10 * time.Second
 
-// defaultBeatInterval is how often a wait pushes its BEAT file as its own commit when the
-// reader names no --beat. It is Glenn's "a beat a minute" from docs/SPEC-WORK.md:
-// presence is a beat a minute, and no beat for five minutes is asleep. Sixty seconds is
-// the beat the whole Presence design is built on.
-const defaultBeatInterval = 60 * time.Second
-
-// defaultBeatLease is how far into the future a BEAT's until= promises the line is alive
-// when `wait` writes it on entry, every tick and on exit. It is longer than --window
-// (five minutes in SPEC-WORK's Presence) so that a manager cycle between two waits -- the
-// wait returns with a note and the harness works it before issuing the next -- reads awake
-// throughout, rather than ageing past --window into "asleep" while the process is alive.
-const defaultBeatLease = 10 * time.Minute
+// defaultBeatInterval and defaultBeatLease are the defaults of the retired --beat and
+// --beat-lease (#3144): a wait no longer writes or pushes a BEAT, and the flags are parsed
+// only so a caller's argv keeps working.
+const (
+	defaultBeatInterval = 60 * time.Second
+	defaultBeatLease    = 10 * time.Minute
+)
 
 // maxWaitTimeout is as long as `wait` will block, and it is a fact about HARNESSES rather
 // than about buses; see the refusal above.
@@ -3371,15 +3361,6 @@ type waitBlockedHook func(busDir string)
 
 var testWaitBlockedHook atomic.Pointer[waitBlockedHook]
 
-// writeBeatLease writes the lane's BEAT carrying until=now+lease, so a line whose manager
-// process is alive but between waits still reads awake to `nova-wake awake`. It is called
-// on entry, every tick and on exit; the stamp and until come from the same Now so the
-// lease's length is exact.
-func writeBeatLease(o inboxOpts, cursor string) error {
-	now := time.Now()
-	return bus.WriteBeat(o.busDir, o.me.Lane, cursor, now, now.Add(o.lease))
-}
-
 // waitLoop is the clock: poll, and either return what arrived or sleep and poll again
 // until the deadline. It is apart from the flags so that what it does is readable without
 // them.
@@ -3396,76 +3377,14 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 	horizon := now.Add(timeout)
 	polls := 0
 	cursor := ""
-	lastBeat := start
-	// The cursor this call starts from, so the beat the first tick writes carries the
-	// commit the line is standing at rather than a dash: the entry beat in cmdWait already
-	// wrote that cursor, and a tick that overwrote it with "-" would take presence
-	// backwards for the sake of a file it rewrites a moment later.
+	// The cursor this call starts from, for the WAIT TIMEOUT line when nothing moves it.
 	if held, err := bus.ReadCursor(o.busDir, o.me.Lane); err == nil {
 		cursor = held.Commit
 	}
-	// The beat write: one line into the working tree, cheap, every tick. --no-beat makes
-	// it a no-op, so a read-only poll touches no file and no commit.
-	writeBeat := func() {
-		if o.noBeat {
-			return
-		}
-		if err := writeBeatLease(o, cursor); err != nil {
-			fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
-		}
-	}
-	// THE BEAT A WAIT LEAVES BEHIND (#488). landBeat commits the lane's BEAT and pushes it
-	// on its own as "beat <name>" -- WHEN THERE IS ONE TO LAND.
-	//
-	// The bug it closes: the beat was written to the working tree on every tick and
-	// committed only once per --beat, so a wait that returned inside one --beat -- which is
-	// every wait that returns because a note arrived -- handed the next verb a checkout
-	// holding a modified BEAT, and the friend's `send` refused with "the bus's checkout
-	// holds changes that are not this note", naming a file they had never touched. Every
-	// friend on the bus hit it in one day. So every exit lands the beat, and a wait leaves
-	// the checkout clean.
-	//
-	// THE DIRTY CHECK IS THE WHOLE OF WHY THIS IS NOT ONE MORE COMMIT PER WAIT. The beat is
-	// written BEFORE the poll, so a poll that advances the cursor folds BEAT into its own
-	// cursor commit -- advanceCursorTo has always named the beat among its paths -- and
-	// there is then nothing left over to commit on the way out. A beat already on the bus
-	// is not committed twice, an advance's cursor commit stays the HEAD it was, and the
-	// push stays bounded by --beat rather than becoming one per tick.
-	//
-	// IT IS PUSHED AND NOT MERELY COMMITTED. A beat commit left unpushed leaves this
-	// checkout AHEAD of the bus, and FetchAndFastForward -- which is the poll, and which
-	// will not rebase a bench's own commits during a read -- has nothing to fast-forward
-	// onto while a checkout is ahead. The NEXT wait would then poll a bus it cannot see,
-	// for its whole timeout, silently. A wait leaves the checkout clean AND level.
-	//
-	// A push that cannot land is still possible, and that is the other half of #488: send,
-	// receipt and inbox --advance take an uncommitted BEAT of the caller's own line, and an
-	// unpushed commit of the caller's own beat, as their own machinery and carry it out
-	// with the note rather than refusing over it.
-	landBeat := func() {
-		if o.noBeat {
-			return
-		}
-		// A beat commit on a checkout that is still behind the bus is a divergence, not
-		// a landing. The poll that could not fast-forward — a dirty file this wait does
-		// not own, a lock it was not allowed to remove — has already said why. Committing
-		// here would move HEAD and the next tick would be worse than this one.
-		if behind, err := bus.BehindRemote(o.busDir, o.remote, o.branch); err == nil && behind {
-			return
-		}
-		dirty, err := bus.PathDirty(o.busDir, bus.BeatPath(o.me.Lane))
-		if err != nil {
-			fmt.Fprintf(stderr, "WAIT NOTE beat push failed: %s\n", oneline.Err(err))
-			return
-		}
-		if !dirty {
-			return
-		}
-		if _, err := commit(o.busDir, o.me, []string{bus.BeatPath(o.me.Lane)},
-			bus.WithTrailer("beat "+o.me.Slug(), bus.TrailerBeat), o.remote, o.branch, o.attempts, false); err != nil {
-			fmt.Fprintf(stderr, "WAIT NOTE beat push failed: %s\n", oneline.Err(err))
-		}
-	}
+	// NO BEAT IS WRITTEN OR PUSHED HERE (#3144). Until 2026-09-24 every tick rewrote
+	// from-<lane>/BEAT and every --beat pushed it as its own `beat <name>` commit: 79% of
+	// the bus's commits, pulled by every clone. Presence is friend:<name> in Redis, written
+	// by `nova-wake beat`; a wait leaves the checkout exactly as its polls left it.
 	for {
 		polls++
 		elapsed := time.Since(start).Round(time.Millisecond)
@@ -3486,13 +3405,6 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 		if o.onNote {
 			keep = func(r inboxReading) bool { return len(onNoteWakes(r)) > 0 }
 		}
-		// THE BEAT, written before the poll. A waiting line's cursor does not move --
-		// there was nothing to read, so nothing was recorded -- and a line whose cursor
-		// does not move reads asleep to `nova-wake awake`. The BEAT is the file that moves
-		// anyway. Writing it HERE rather than after the poll is what lets a poll that
-		// advances the cursor carry the beat out inside its own cursor commit; see
-		// landBeat.
-		writeBeat()
 		code, r, lines, skipped := waitPoll(o, polls == 1, pollNow, keep, stdout, stderr, repairs)
 		if r.Cursor != "" {
 			cursor = r.Cursor
@@ -3501,18 +3413,9 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 			// The listing this poll had already printed, if it printed one, under the
 			// refusal that is on stderr: a reader who was shown their inbox has been shown
 			// it, whatever happened after.
-			landBeat()
 			fmt.Fprint(stdout, lines)
 			fmt.Fprintf(stdout, "WAIT DONE reason=signal rearm=required next=%s\n", next)
 			return code
-		}
-		// At most once per --beat the BEAT is committed and pushed on its own as "beat
-		// <name>", so the line's liveness lands on the bus even while it is simply waiting.
-		// The write is to the working tree on every tick; the push is the only part
-		// bounded, because it is the only part that costs somebody's server.
-		if time.Since(lastBeat) >= o.beat {
-			lastBeat = time.Now()
-			landBeat()
 		}
 		if skipped {
 			// The cursor moved over heard notes without returning, so the timeout line at
@@ -3529,7 +3432,6 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 				// notes. No listing, no INBOX OPEN frame, no carrying count.
 				fmt.Fprint(stdout, lines)
 				fmt.Fprintf(stdout, "WAIT DONE reason=new rearm=required next=%s\n", next)
-				landBeat()
 				return 0
 			}
 			// Why this wait is not waiting, when the answer is not "a note arrived": the
@@ -3542,7 +3444,6 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 			fmt.Fprintf(stdout, "WAIT OK new=%d after=%s polls=%d\n", r.New, oneline.Field(elapsed.String()), polls)
 			fmt.Fprint(stdout, lines)
 			fmt.Fprintf(stdout, "WAIT DONE reason=new rearm=required next=%s\n", next)
-			landBeat()
 			return 0
 		}
 		// A line drawn in the future that does NOT cover the whole wait is no reason to
@@ -3573,14 +3474,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 	// A TIMEOUT IS NOT AN ERROR. Nothing arrived, and nothing was written -- no cursor
 	// moves on a wait that found nothing, because there is nothing to record having read --
 	// and the caller's move is to issue the next wait. Exit 0, with the counts that say the
-	// tool was awake the whole time. The exit beat extends the lease over the gap to the
-	// next wait exactly as the entry and tick beats do -- the last tick wrote it, moments
-	// ago and with the same lease -- and it is LANDED here for the reason every exit lands
-	// one: the next verb in the friend's sequence gets a clean, level checkout. It is not
-	// rewritten first: a fresh line written on top of a beat this poll has just pushed
-	// would be one more commit for a stamp a fraction of a second newer, and the push is
-	// bounded by --beat.
-	landBeat()
+	// tool was awake the whole time.
 	// ONE LINE A HARNESS CAN GREP, and -- with --idle-exit -- one code it does not have to
 	// grep for at all. The code is named ON the line as well, because an exit code that
 	// appears nowhere in the transcript is a number somebody reads a bug into: a harness
@@ -3619,21 +3513,9 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	if rec.LockCleared {
 		repairs.add("index.lock")
 	}
-	beat := bus.BeatPath(o.me.Lane)
+	// A BEAT the fast-forward had to discard is an older wait's leftover (#3144): the
+	// discard is the whole repair, and nothing is written back.
 	for _, p := range rec.Discarded {
-		if !o.noBeat && p == beat {
-			// The fast-forward needed a clean BEAT. Write it back, and claim the repair
-			// only when that write landed — a discard that did not regenerate is not the
-			// repair the line names.
-			cur := ""
-			if held, rerr := bus.ReadCursor(o.busDir, o.me.Lane); rerr == nil {
-				cur = held.Commit
-			}
-			if werr := writeBeatLease(o, cur); werr != nil {
-				fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(werr))
-				continue
-			}
-		}
 		repairs.add(p)
 	}
 	repairs.flush(stdout)

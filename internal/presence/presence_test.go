@@ -12,18 +12,53 @@ import (
 // the clock is the fake store's and a day passes in a function call.
 var at = time.Date(2026, 9, 22, 9, 41, 0, 0, time.UTC)
 
-func TestBeatWritesThePresenceKeyAndItsUntimedMemory(t *testing.T) {
+func TestBeatWritesThePresenceHashAndItsUntimedMemory(t *testing.T) {
 	st := NewFakeStore(at)
 	if err := Beat(context.Background(), st, "Johnny", at, DefaultTTL); err != nil {
 		t.Fatalf("beat: %v", err)
 	}
-	vals, err := st.MGet(context.Background(), "friend:johnny", "friend:johnny:last")
-	if err != nil {
-		t.Fatalf("mget: %v", err)
-	}
 	want := "2026-09-22T09:41:00Z"
-	if vals[0] != want || vals[1] != want {
-		t.Fatalf("keys = %q, %q; want both %q (the name is normalized and the value is RFC3339 utc)", vals[0], vals[1], want)
+	h := st.Hash("friend:johnny")
+	if h[FieldAt] != want || st.String("friend:johnny:last") != want {
+		t.Fatalf("friend:johnny = %v, :last = %q; want at and :last both %q (the name is normalized and the value is RFC3339 utc)", h, st.String("friend:johnny:last"), want)
+	}
+	if _, ok := h[FieldWidth]; ok {
+		t.Fatalf("friend:johnny = %v; a beat with no width writes no width field", h)
+	}
+	if got := st.TTL("friend:johnny"); got != DefaultTTL {
+		t.Fatalf("friend:johnny ttl = %s; want %s", got, DefaultTTL)
+	}
+	if st.Sets != 1 {
+		t.Fatalf("writes = %d; one beat is one write", st.Sets)
+	}
+}
+
+// TestBeatSideWritesWidthIntoTheHashWithTheTTL is #2673: the child count is a
+// field of the beat's own hash, written with it and lapsing with it.
+func TestBeatSideWritesWidthIntoTheHashWithTheTTL(t *testing.T) {
+	st := NewFakeStore(at)
+	eight := int64(8)
+	if err := BeatSide(context.Background(), st, "emma", at, DefaultTTL, Side{Width: &eight}); err != nil {
+		t.Fatalf("beat: %v", err)
+	}
+	h := st.Hash("friend:emma")
+	if h[FieldWidth] != "8" || h[FieldAt] != "2026-09-22T09:41:00Z" {
+		t.Fatalf("friend:emma = %v; want at and width=8", h)
+	}
+	if got := st.TTL("friend:emma"); got != DefaultTTL {
+		t.Fatalf("ttl = %s; want %s", got, DefaultTTL)
+	}
+	sts := mustRead(t, st, []string{"emma"})
+	if got := sts[0].Phrase(at); got != "emma up 0s width=8" {
+		t.Fatalf("phrase = %q", got)
+	}
+	st.Advance(DefaultTTL)
+	if h := st.Hash("friend:emma"); h != nil {
+		t.Fatalf("past the ttl friend:emma = %v; want it gone, width and all", h)
+	}
+	sts = mustRead(t, st, []string{"emma"})
+	if got := sts[0].Phrase(st.Now()); got != "emma down 1m (last 09:41Z)" {
+		t.Fatalf("phrase = %q; a down friend carries no width", got)
 	}
 }
 
@@ -51,12 +86,12 @@ func TestTheTTLIsWhatMakesAFriendAway(t *testing.T) {
 	if sts[0].State != Away {
 		t.Fatalf("past the ttl: state = %v; want Away", sts[0].State)
 	}
-	if got := sts[0].Phrase(st.Now()); got != "emma AWAY 1m (last 09:41Z)" {
-		t.Fatalf("phrase = %q; want %q", got, "emma AWAY 1m (last 09:41Z)")
+	if got := sts[0].Phrase(st.Now()); got != "emma down 1m (last 09:41Z)" {
+		t.Fatalf("phrase = %q; want %q", got, "emma down 1m (last 09:41Z)")
 	}
 }
 
-func TestTheLineSaysUpAwayAndNone(t *testing.T) {
+func TestTheLineSaysUpOrDown(t *testing.T) {
 	st := NewFakeStore(at)
 	ctx := context.Background()
 	// Emma's window died an hour and twelve minutes ago; johnny and stella
@@ -74,7 +109,7 @@ func TestTheLineSaysUpAwayAndNone(t *testing.T) {
 
 	sts := mustRead(t, st, []string{"johnny", "stella", "emma", "freddy"})
 	got := Line(sts, st.Now())
-	want := "friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · freddy none"
+	want := "friends: johnny up 12s · stella up 4s · emma down 1h12m (last 09:41Z) · freddy down"
 	if got != want {
 		t.Fatalf("line =\n\t%q\nwant\n\t%q", got, want)
 	}
@@ -103,20 +138,26 @@ func TestAMissingBeatKeyIsAbsentAndALiveKeyIsPresent(t *testing.T) {
 	ctx := context.Background()
 
 	sts := mustRead(t, st, []string{"stella"})
-	if vals, err := st.MGet(ctx, Key("stella")); err != nil || vals[0] != "" {
-		t.Fatalf("beat key before any write = %q, %v; want it missing", vals, err)
+	if h := st.Hash(Key("stella")); h != nil {
+		t.Fatalf("beat hash before any write = %v; want it missing", h)
 	}
 	if sts[0].Present() {
 		t.Fatal("a missing beat key is present; want absent")
 	}
-	if got := sts[0].Phrase(at); got != "stella none" {
-		t.Fatalf("missing key phrase = %q; want %q", got, "stella none")
+	if got := sts[0].Phrase(at); got != "stella down" {
+		t.Fatalf("missing key phrase = %q; want %q", got, "stella down")
+	}
+
+	// A table row -- the same hash with counts in it and no TTL -- is not a
+	// friend who is here: only a beat's expiry is.
+	st.SetHash(Key("stella"), 0, "at", at.UTC().Format(Stamp), "up", "1", "working", "3")
+	sts = mustRead(t, st, []string{"stella"})
+	if sts[0].Present() {
+		t.Fatal("a hash with no TTL is present; want absent (it is the table's row, not a beat)")
 	}
 
 	// :last alone is the memory of a beat, not a friend who is here.
-	if err := st.Set(ctx, LastKey("stella"), at.UTC().Format(Stamp), 0); err != nil {
-		t.Fatalf("set last: %v", err)
-	}
+	st.SetString(LastKey("stella"), at.UTC().Format(Stamp))
 	sts = mustRead(t, st, []string{"stella"})
 	if sts[0].Present() {
 		t.Fatal("friend:stella:last with no beat key is present; want absent")
@@ -138,8 +179,8 @@ func TestAMissingBeatKeyIsAbsentAndALiveKeyIsPresent(t *testing.T) {
 
 	st.Advance(DefaultTTL)
 	sts = mustRead(t, st, []string{"stella"})
-	if vals, err := st.MGet(ctx, Key("stella"), LastKey("stella")); err != nil || vals[0] != "" || vals[1] == "" {
-		t.Fatalf("after the ttl, keys = %q, %v; want the beat key missing and :last kept", vals, err)
+	if h, last := st.Hash(Key("stella")), st.String(LastKey("stella")); h != nil || last == "" {
+		t.Fatalf("after the ttl, hash = %v, last = %q; want the beat hash missing and :last kept", h, last)
 	}
 	if sts[0].Present() {
 		t.Fatal("an expired beat key is present; want absent")
@@ -147,12 +188,10 @@ func TestAMissingBeatKeyIsAbsentAndALiveKeyIsPresent(t *testing.T) {
 }
 
 func TestAKeyWhoseValueIsNotAStampIsStillPresence(t *testing.T) {
-	// The key's EXISTENCE is the presence; its value only dates it. A
+	// The hash's live TTL is the presence; its at field only dates it. A
 	// friend running an older beat must not read as away.
 	st := NewFakeStore(at)
-	if err := st.Set(context.Background(), Key("alex"), "here", DefaultTTL); err != nil {
-		t.Fatalf("set: %v", err)
-	}
+	st.SetHash(Key("alex"), DefaultTTL, FieldAt, "here")
 	sts := mustRead(t, st, []string{"alex"})
 	if got := sts[0].Phrase(at); got != "alex up" {
 		t.Fatalf("phrase = %q; want %q", got, "alex up")
@@ -219,6 +258,21 @@ func TestARosterOfNobodyIsARefusalAndNotAnEmptyLine(t *testing.T) {
 	}
 	if _, err := ParticipantNames([]byte(`not json`)); err == nil {
 		t.Fatal("a participants file that is not json returned a roster")
+	}
+}
+
+func TestFriendsIsTheRegistrySetSortedMinusGlennAndRowan(t *testing.T) {
+	st := NewFakeStore(at)
+	if _, err := Friends(context.Background(), st); err == nil {
+		t.Fatal("an empty friends set returned a roster; an empty line reads as good news")
+	}
+	st.AddMembers(FriendsSet, "stella", "Emma", "rowan", "glenn", "johnny")
+	names, err := Friends(context.Background(), st)
+	if err != nil {
+		t.Fatalf("friends: %v", err)
+	}
+	if got := strings.Join(names, " "); got != "emma johnny stella" {
+		t.Fatalf("roster = %q; want %q", got, "emma johnny stella")
 	}
 }
 
