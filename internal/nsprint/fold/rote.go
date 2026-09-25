@@ -11,11 +11,19 @@ package fold
 //     class, what, mech, at).
 //   - the control-verb receipts on cap:log and s:<S>:log (#2756 4.6, 4.11):
 //     an entry with a verb field and an actor is that mind running a verb.
+//   - the moves on ws:log (#2620): an entry with a by field is that mind
+//     moving a task by a verb; its verb field names the verb, or move-<to>.
 //
 // A mind's rote share is notes / (notes + verb receipts). Its top class is the
 // class it noted most; the NEXT line is the top class across every mind, the
 // next mechanism to build. The fold prints the same lines for the sprint's
 // window (opened_at to closed_at), so each fold names the next mechanism.
+//
+// Each fold also keeps its rote as rote:fold:<S> (HASH) and adds <S> to
+// rote:folds (ZSET scored by the window's end in ms), and prints TREND lines
+// against the fold before it (#2620): the share then and now, per mind and in
+// total, and the class the previous fold named NEXT with its mechanism, so two
+// consecutive folds show the share falling and the mechanism that did it.
 
 import (
 	"context"
@@ -38,6 +46,15 @@ import (
 const (
 	RoteLog = "rote:log"
 	CapLog  = "cap:log"
+	WsLog   = "ws:log"
+)
+
+// RoteFolds is every folded sprint's rote record by the end of its window
+// (score, ms); rote:fold:<S> is the record: mind:<m> = "<verbs> <notes>",
+// class:<c> = n across minds, next and next_mech, end.
+const (
+	RoteFolds      = "rote:folds"
+	RoteFoldPrefix = "rote:fold:"
 )
 
 // NoteSummary is the `note` verb's line on nova-sprint help.
@@ -133,7 +150,7 @@ func (w Window) ids() (string, string) {
 	return start, end
 }
 
-// ReadRote reads rote:log and cap:log in the window, and each extra stream (a
+// ReadRote reads rote:log, cap:log and ws:log in the window, and each extra stream (a
 // sprint's own log, already bounded by the sprint) whole, 1,000 entries a
 // round trip, and counts them per mind.
 func ReadRote(ctx context.Context, client *redis.Client, w Window, extra ...string) (Rote, error) {
@@ -151,9 +168,9 @@ func ReadRote(ctx context.Context, client *redis.Client, w Window, extra ...stri
 		return a
 	}
 	start, end := w.ids()
-	for i, stream := range append([]string{RoteLog, CapLog}, extra...) {
+	for i, stream := range append([]string{RoteLog, CapLog, WsLog}, extra...) {
 		from, to := start, end
-		if i >= 2 {
+		if i >= 3 {
 			from, to = "-", "+"
 		}
 		for {
@@ -180,13 +197,20 @@ func ReadRote(ctx context.Context, client *redis.Client, w Window, extra ...stri
 					}
 					continue
 				}
-				if v("verb") == "" || v("actor") == "" {
+				verb, actor := v("verb"), v("actor")
+				if stream == WsLog {
+					actor = v("by")
+					if verb == "" {
+						verb = "move-" + v("to")
+					}
+				}
+				if verb == "" || actor == "" {
 					continue // a transition receipt, not a control verb
 				}
-				a := get(v("actor"))
-				c := a.verbs[v("verb")]
+				a := get(actor)
+				c := a.verbs[verb]
 				if c == nil {
-					c = &Count{Name: v("verb")}
+					c = &Count{Name: verb}
 					a.verbs[c.Name] = c
 				}
 				c.N++
@@ -288,7 +312,8 @@ func PrintRote(out io.Writer, prefix string, r Rote) {
 }
 
 // foldRote prints the sprint's rote section: the notes and the control-verb
-// receipts between opened_at and closed_at, and the sprint's own log.
+// receipts between opened_at and closed_at, and the sprint's own log, then the
+// trend against the fold before it.
 func foldRote(ctx context.Context, client *redis.Client, sprint string, head map[string]string, out io.Writer) error {
 	var w Window
 	for _, f := range []struct {
@@ -303,10 +328,156 @@ func foldRote(ctx context.Context, client *redis.Client, sprint string, head map
 			*f.to = t
 		}
 	}
+	if w.Until.IsZero() {
+		w.Until = time.Now()
+	}
+	_, err := FoldRote(ctx, client, sprint, w, out)
+	return err
+}
+
+// FoldRote is the fold's rote section for one sprint's window (w.Until set):
+// it prints the rote, keeps it as rote:fold:<sprint> on rote:folds, and prints
+// the TREND lines against the record before it by window end. A re-run writes
+// the same record and prints the same lines.
+func FoldRote(ctx context.Context, client *redis.Client, sprint string, w Window, out io.Writer) (Rote, error) {
+	if w.Until.IsZero() {
+		return Rote{}, fmt.Errorf("the rote record of %s needs the window's end", sprint)
+	}
 	r, err := ReadRote(ctx, client, w, "s:"+sprint+":log")
 	if err != nil {
-		return err
+		return Rote{}, err
 	}
-	PrintRote(out, "FOLD ROTE sprint="+sprint, r)
-	return nil
+	prefix := "FOLD ROTE sprint=" + sprint
+	PrintRote(out, prefix, r)
+
+	end := w.Until.UnixMilli()
+	prevs, err := client.ZRevRangeByScore(ctx, RoteFolds, &redis.ZRangeBy{
+		Max: "(" + strconv.FormatInt(end, 10), Min: "-inf", Count: 1}).Result()
+	if err != nil {
+		return r, fmt.Errorf("read %s: %w", RoteFolds, err)
+	}
+	pipe := client.Pipeline()
+	var prevCmd *redis.MapStringStringCmd
+	if len(prevs) > 0 {
+		prevCmd = pipe.HGetAll(ctx, RoteFoldPrefix+prevs[0])
+	}
+	pipe.HSet(ctx, RoteFoldPrefix+sprint, roteFields(r, end))
+	pipe.ZAdd(ctx, RoteFolds, redis.Z{Score: float64(end), Member: sprint})
+	if _, err := pipe.Exec(ctx); err != nil {
+		return r, fmt.Errorf("keep the rote record of %s: %w", sprint, err)
+	}
+	if prevCmd == nil {
+		t := r.total()
+		fmt.Fprintf(out, "%s TREND prev=- now=%s dir=-\n", prefix, t.Share())
+		return r, nil
+	}
+	printTrend(out, prefix, prevs[0], readFold(prevCmd.Val()), r)
+	return r, nil
+}
+
+// total is every mind's verbs and notes summed.
+func (r Rote) total() Mind {
+	var t Mind
+	for _, m := range r.Minds {
+		t.VerbN += m.VerbN
+		t.NoteN += m.NoteN
+	}
+	return t
+}
+
+// classes is each class's notes across minds.
+func (r Rote) classes() map[string]int {
+	c := map[string]int{}
+	for _, m := range r.Minds {
+		for _, n := range m.Notes {
+			c[n.Name] += n.N
+		}
+	}
+	return c
+}
+
+// roteFields is rote:fold:<S>: mind:<m> = "<verbs> <notes>", class:<c> = n,
+// next, next_mech and end (ms).
+func roteFields(r Rote, end int64) []string {
+	f := []string{"end", strconv.FormatInt(end, 10), "next", r.Next.Name, "next_mech", r.Next.Mech}
+	for _, m := range r.Minds {
+		f = append(f, "mind:"+m.Name, strconv.Itoa(m.VerbN)+" "+strconv.Itoa(m.NoteN))
+	}
+	for c, n := range r.classes() {
+		f = append(f, "class:"+c, strconv.Itoa(n))
+	}
+	return f
+}
+
+// readFold is the Rote a rote:fold:<S> record holds: each mind's counts and
+// the NEXT class with its count and mechanism.
+func readFold(h map[string]string) Rote {
+	var r Rote
+	for k, v := range h {
+		if name, ok := strings.CutPrefix(k, "mind:"); ok {
+			vs, ns, _ := strings.Cut(v, " ")
+			vn, _ := strconv.Atoi(vs)
+			nn, _ := strconv.Atoi(ns)
+			r.Minds = append(r.Minds, Mind{Name: name, VerbN: vn, NoteN: nn})
+		}
+	}
+	sort.Slice(r.Minds, func(i, j int) bool { return r.Minds[i].Name < r.Minds[j].Name })
+	if next := h["next"]; next != "" {
+		n, _ := strconv.Atoi(h["class:"+next])
+		r.Next = Count{Name: next, N: n, Mech: h["next_mech"]}
+	}
+	return r
+}
+
+// shareDir is falling, rising or flat for the share then (a) and now (b),
+// or - when either counted nothing.
+func shareDir(a, b Mind) string {
+	ta, tb := a.VerbN+a.NoteN, b.VerbN+b.NoteN
+	if ta == 0 || tb == 0 {
+		return "-"
+	}
+	return countDir(a.NoteN*tb, b.NoteN*ta)
+}
+
+func countDir(was, now int) string {
+	switch {
+	case now < was:
+		return "falling"
+	case now > was:
+		return "rising"
+	}
+	return "flat"
+}
+
+// printTrend prints the total share then and now, each mind's, and the class
+// the previous fold named NEXT: its count then and now and its mechanism, so a
+// falling class names the mechanism that did it.
+func printTrend(out io.Writer, prefix, prevName string, prev, now Rote) {
+	p := oneline.Field(prevName)
+	pt, nt := prev.total(), now.total()
+	fmt.Fprintf(out, "%s TREND prev=%s was=%s now=%s dir=%s\n", prefix, p, pt.Share(), nt.Share(), shareDir(pt, nt))
+	minds := map[string][2]Mind{}
+	for _, m := range prev.Minds {
+		x := minds[m.Name]
+		x[0] = m
+		minds[m.Name] = x
+	}
+	for _, m := range now.Minds {
+		x := minds[m.Name]
+		x[1] = m
+		minds[m.Name] = x
+	}
+	names := make([]string, 0, len(minds))
+	for name := range minds {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		x := minds[name]
+		fmt.Fprintf(out, "%s TREND mind=%s prev=%s was=%s now=%s dir=%s\n", prefix, oneline.Field(name), p, x[0].Share(), x[1].Share(), shareDir(x[0], x[1]))
+	}
+	if prev.Next.Name != "" {
+		n := now.classes()[prev.Next.Name]
+		fmt.Fprintf(out, "%s TREND class=%s prev=%s was=%d now=%d dir=%s mech=%s\n", prefix, oneline.Field(prev.Next.Name), p, prev.Next.N, n, countDir(prev.Next.N, n), dash(prev.Next.Mech))
+	}
 }
