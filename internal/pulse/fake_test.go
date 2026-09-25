@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // The fakes every test in this package puts in front of PATH.
@@ -46,7 +48,7 @@ type fakeSpec struct {
 // fakeTools are the names the shared bin directory answers to: every program nova-pulse
 // starts. A name with no spec in the test's directory exits 97 and says so, which is how a
 // test proves the fake ran and the real tool did not.
-var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm", "nova-merge"}
+var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm", "nova-merge", "systemctl"}
 
 var (
 	fakeRoot    string // the one directory outside t.TempDir(), owned by TestMain
@@ -81,6 +83,7 @@ func fakeBins(t *testing.T) string {
 			return
 		}
 		cmd := exec.Command("go", "build", "-o", build, "./testdata/fakebin")
+		cmd.Env = goenv.Clean(os.Environ())
 		if raw, err := cmd.CombinedOutput(); err != nil {
 			fakeBinErr = fmt.Errorf("building the fake: %v\n%s", err, raw)
 			return
@@ -127,6 +130,35 @@ func fakePATH(t *testing.T) string {
 	specs := filepath.Join(t.TempDir(), "fakes")
 	if err := os.MkdirAll(specs, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("NOVA_PULSE_FAKE_DIR", specs)
+	return specs
+}
+
+// fakePATHFor puts ONLY the named fakes in front of PATH, so every other tool this package
+// starts is the REAL one. It exists for the destination tests, which need a real git: the
+// thing under test is what a worker can do to a real clone (`git remote set-url origin`),
+// and a fake git cannot be made to do it. Everything else still wants fakePATH.
+func fakePATHFor(t *testing.T, names ...string) string {
+	t.Helper()
+	src := fakeBins(t)
+	home := t.TempDir()
+	bin := filepath.Join(home, "bin")
+	specs := filepath.Join(home, "fakes")
+	for _, d := range []string{bin, specs} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range names {
+		raw, err := os.ReadFile(filepath.Join(src, name+exeSuffix()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(bin, name+exeSuffix()), raw, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("NOVA_PULSE_FAKE_DIR", specs)

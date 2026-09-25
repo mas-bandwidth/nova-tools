@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -180,6 +181,70 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 	}
 	if len(got) > len(want) {
 		t.Errorf("the tool prints %d event lines and the transcript shows %d; the first missing is %q", len(got), len(want), got[len(want)])
+	}
+}
+
+// The `### First run` block of docs/TESTS.md is EXECUTED, not shape-matched:
+// every command is run in one sitting, in order, against a COPY of the fixture
+// in t.TempDir() (a first run WRITES), and each step's whole output is compared
+// line for line -- same number of lines, same lines, same order -- with the
+// block written under it. TestTheTranscriptIsWhatTheToolPrints above compares
+// only the event shape and stays; this is the whole promise.
+//
+// NOTHING IS NORMALISED, and that is a property of this transcript rather than a
+// shortcut: the `at=` stamps are driven from run()'s injected clock
+// (firstRunStamp, the instant the document was produced at) and the fixture is
+// deterministic, so every value on every line reproduces. onboarding.Execute is
+// told so by being handed no Norm, and it says as much under any line that
+// disagrees.
+//
+// The transcript's paths (`./out`, `./repos.tsv`, `./transcripts`, `./bus`) are
+// written from the copied fixture's root, where a reader typing them stands, so
+// the test moves there rather than rewriting them -- a rewritten path is no
+// longer the line the document promised.
+func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.FirstRun(string(raw), "nova-tokens")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := onboarding.Steps("nova-tokens", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("the `### First run` block holds no nova-tokens command; this test would pass by running nothing")
+	}
+	// A first run is three commands: fold writes the day, check reads it back,
+	// sum reads it a month at a time. A transcript that lost one still matches
+	// line for line and is still short of the run a reader is promised.
+	if len(steps) != 3 {
+		t.Errorf("the `### First run` block runs %d commands, want 3", len(steps))
+	}
+	// The fold WRITES, so it runs against a copy of the fixture in t.TempDir()
+	// and the test moves into it; the documented paths are relative to here.
+	fixtureIn(t)
+	for _, p := range onboarding.Execute(steps, runDocumented(t)) {
+		t.Error(p)
+	}
+}
+
+// runDocumented calls this binary's own entry point with the documented
+// arguments and the clock the transcript was produced under. nova-tokens takes
+// no stdin, so a step that names a `< path` is reported rather than quietly run
+// without it.
+func runDocumented(t *testing.T) onboarding.Runner {
+	t.Helper()
+	return func(s onboarding.Step) (onboarding.Result, error) {
+		if s.Stdin != "" {
+			return onboarding.Result{}, fmt.Errorf("the documented command reads from %q, and nova-tokens takes no stdin", s.Stdin)
+		}
+		var out, errb bytes.Buffer
+		code := run(s.Args, &out, &errb, firstRunStamp)
+		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 	}
 }
 

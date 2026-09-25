@@ -27,8 +27,8 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 		t.Fatalf("the first run could not take the lock: %v", err)
 	}
 
-	start := time.Now()
-	if _, err := LockCheckout(clone, 200*time.Millisecond); err == nil {
+	clk := newLockStepClock()
+	if _, err := lockCheckoutAt(clone, 200*time.Millisecond, clk); err == nil {
 		t.Fatal("two runs took one checkout's lock at once; they would write one OPEN list between them")
 	} else {
 		for _, want := range []string{"another nova-bus is already running on this checkout", LockName, "run this again when that one has finished"} {
@@ -41,9 +41,10 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 		}
 	}
 	// It WAITED before refusing, rather than refusing the instant it found the lock held:
-	// the run it is waiting for is usually a fetch away from finishing.
-	if waited := time.Since(start); waited < 150*time.Millisecond {
-		t.Fatalf("the second run gave up after %s of a 200ms budget", waited)
+	// the run it is waiting for is usually a fetch away from finishing. The clock is the
+	// test's, so the 200ms budget is measured in virtual time and costs no wall time.
+	if waited := clk.waited(); waited < 150*time.Millisecond {
+		t.Fatalf("the second run gave up after %s of virtual time of a 200ms budget", waited)
 	}
 
 	// The other way: once the first lets go, the second takes it.
@@ -145,17 +146,18 @@ func TestLockFileNonBlockingAndHolderStamping(t *testing.T) {
 		t.Fatalf("holder = %q, want %q", holder, wantPID)
 	}
 
-	// Second LockFile with wait=0 must fail immediately with ErrLockHeld
-	start := time.Now()
-	_, err2 := LockFile(lockPath, 0)
+	// Second LockFile with wait=0 must fail immediately with ErrLockHeld, and must not
+	// consult the clock at all: the fake records whether it slept.
+	clk := newLockStepClock()
+	_, err2 := lockFile(lockPath, 0, tryLockFile, clk)
 	if err2 == nil {
 		t.Fatal("second LockFile with wait=0 succeeded, want ErrLockHeld")
 	}
 	if !errors.Is(err2, ErrLockHeld) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrLockHeld)", err2)
 	}
-	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
-		t.Fatalf("LockFile with wait=0 took %v, want near-immediate return", elapsed)
+	if waited := clk.waited(); waited != 0 {
+		t.Fatalf("LockFile with wait=0 waited %v, want near-immediate return", waited)
 	}
 
 	// Release first lock, second should succeed

@@ -1,0 +1,15 @@
+# The listings of the SHARED temp directory this repository still permits, one
+# `file:function` per line, each with its reason. A test that lists
+# os.TempDir() reads a directory every other job on the same self-hosted runner
+# writes to: a sibling's entry appearing mid-test reddens the run for something it
+# did not do. The rule is to give the tool a temp root option defaulting to
+# os.TempDir(), pass t.TempDir() from the test, and read that directory instead.
+#
+# This list is checked in BOTH directions by sharedtemp_class_test.go -- an
+# unlisted finding is a red run, and a listed entry that no longer names one is
+# also a red run -- so it can only ever shrink.
+#
+# It is EMPTY, and that is the point: the one offender the rule found when it
+# landed (internal/review/mutate_test.go's
+# TestMutateRemovesItsWorktreeOnBothPaths, red four times in one night -- #1341
+# twice, #1345, #1360) was fixed rather than listed.

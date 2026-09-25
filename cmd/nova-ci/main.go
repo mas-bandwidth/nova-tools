@@ -5,6 +5,11 @@
 // each. It exists because a slow test must surface the moment it happens:
 // nova-secrets sat at 120 seconds unnoticed until an alarm like this one.
 //
+// Its second verb, failed, reads the other end of the same run: it asks a forge
+// for the failing jobs of one run and prints the failing tests -- job, package,
+// test, file and line, then the test's own words -- so a coordinator reads eight
+// lines instead of four megabytes of log.
+//
 // Every path and every budget comes from a flag. There are no guessed paths; a
 // budget of zero or less is refused rather than read as unlimited.
 package main
@@ -30,14 +35,22 @@ usage:
                       print one CI-SLOW line per package whose total elapsed
                       time is over --budget (default 60); exit 2 when any
                       package is over, 0 when none is.
+  nova-ci failed --repo <owner/name> (--run <id> | --pr <n> | --branch <name>)
+                      read the failing jobs of one run through gh and print the
+                      failing tests -- job, package, test, file and line, then
+                      the test's own words -- instead of the whole log; exit 1
+                      when the run said anything red, 0 when it said nothing.
+                      Run ` + "`nova-ci failed --help`" + ` for its flags.
 
-exit codes: 0 inside budget, 2 a package is over budget or the invocation
-            could not run (bad flag, unreadable stdin).
+exit codes: 0 inside budget and nothing red, 1 failed found something red,
+            2 a package is over budget or the invocation could not run (bad
+            flag, unreadable stdin, gh could not answer).
 
 example:
   nova-ci help
   nova-ci version
   nova-ci slowtests --budget 60
+  nova-ci failed --help
 `
 
 // refuse prints this tool's one-line refusal, escaped, and names the door.
@@ -54,13 +67,15 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; slowtests is the verb this tool exists for")
+		return refuse(stderr, "", "no verb given; the verbs are slowtests (a package over its time budget) and failed (a run's failing tests)")
 	}
 	switch args[0] {
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "slowtests":
 		return cmdSlowtests(args[1:], stdin, stdout, stderr)
+	case "failed":
+		return cmdFailed(args[1:], stdout, stderr, ghForge)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

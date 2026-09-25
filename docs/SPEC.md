@@ -123,7 +123,7 @@ SELFTALK OK files=<n> claims=<n> standing=0 installations=0 dated=<n>
 SELFTALK FAIL <file>: STANDING: <claim>
 SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>
 SELFTALK FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> shown=<n>
-SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n>
+SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n> body_bytes=<n>
 SEND FAIL <path or (stdin)>: <reason>
 INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> ...
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
@@ -239,11 +239,12 @@ seconds or more; the CI budget test refuses any `_test.go` line carrying such
 a literal under ten seconds, except a fake documented with
 `// wall-ok: <reason>`.
 
-**Every binary says which build it is.** `<tool> version` (and `--version`)
-prints ONE line, four tokens, exit 0, on stdout:
+**Every binary says which build it is, in ONE shape.** `<tool> version` (and
+`--version`) prints ONE line, exit 0, on stdout: four mandatory tokens, and then
+any number of `key=value` extras.
 
 ```
-<tool> <build identity> <goos>/<goarch> <go version>
+<tool> <build identity> <goos>/<goarch> <go version> [key=value ...]
 ```
 
 The identity in field two is the release's `-ldflags "-X main.version=<tag>"`
@@ -251,16 +252,27 @@ stamp when there is one, the module version the toolchain recorded when there
 is not, then `<utc revision time>-<12 hex of the revision>[-dirty]` from the vcs
 stamp, and the word `devel` for a build with none of those. **It is never a
 dotted number this repo made up**: a version string nobody can trace invites
-the comparison it cannot support. Eleven binaries share the resolution order in
-`internal/buildinfo`. `nova-wake` and `nova-sandbox` retain their existing
-resolvers: their VCS fallback reports the revision alone, without the
-revision time or dirty marker. Release-stamped and installed-module versions
-retain the same identity across all thirteen; the release assertion handles
-the sandbox output separately. `nova-merge` adds a fifth field,
-`build=<12 hex>`, the sha256 of its own file on disk, which is a different fact and its own section's;
-`nova-sandbox` answers with its `SANDBOX VERSION` line, which carries the
-backend and the platform a sandbox is judged by. The verb takes no flags and
-no arguments — a second output shape is a second thing to agree about — and
+the comparison it cannot support. Every binary under `cmd/` takes its resolution
+order, its line and its extras from `internal/buildinfo`, and `buildinfo.Parse`
+is the ONE reader of that line: writer and reader are one pair, so a tool that
+adds a fact cannot break a consumer that never heard of it.
+
+**An extra is a named fact, never a loose token.** `nova-merge` says
+`build=<12 hex>`, the sha256 of its own file on disk, which rule 16 of its lane
+needs; `nova-sandbox` says `backend=<name> platform=<os>`, the two facts a
+sandbox is judged by. A reader takes the identity from field two and asks for an
+extra BY NAME, so a tool that adds a second extra cannot move the first, and a
+reader that has heard of neither still reads the four tokens. **A second line
+shape is what this paragraph forbids**: a hand-rolled fifth token and a
+`SANDBOX VERSION …` line of its own made `nova-version snapshot --bin
+~/.local/bin` refuse an entire install, exit 2 (#1297, 2026-09-18) — because each
+reader had been written against the tokens it happened to know, and the same
+week `nova-version report` called every one of our own tools UNKNOWN for asking
+them a question they do not answer (#1264, SPEC-UPDATE.md rule 4b). `internal/ci`'s
+`TestEveryToolPrintsTheOneVersionLine` runs every built `cmd/nova-*` through the
+real reader, walking `cmd/` rather than holding a list, so a binary added
+tomorrow is held to the grammar on the day it appears. The verb takes no flags
+and no arguments — a second output shape is a second thing to agree about — and
 refuses at exit 2 with one line when it is given any.
 
 **A line is bounded as well as single.** `internal/oneline`'s `Escape` and
@@ -310,12 +322,18 @@ binary's own grammar and exit table, and governs where it says more than this.
 
 ## nova-check
 
-Six record-layer checks in one binary, each a wall: a record passes or it
+Eight record-layer checks in one binary, each a wall: a record passes or it
 does not. Each subcommand below states its own contract — what it asserts,
-what makes it say NO, and what it deliberately does not check.
+what makes it say NO, and what it deliberately does not check. Six of them are
+checks over one line's own self repo. The other two are the same shape pointed
+somewhere else: `dogfood` is a check over the record the family keeps about its
+own tools, and `hygiene` is a check over a BRANCH — the four mechanical
+questions the accept gate asks of every card's range, put behind a door a
+person can knock on before asking a friend for a read. Each is a ledger written
+in advance, read back, and held to.
 
 Verbs: `quickstart`, `attest`, `links`, `kernel`, `nocode`, `floors`,
-`corpus`, plus `version` and `help`. `nova-check version` is the Conventions'
+`corpus`, `hygiene`, `dogfood`, plus `version` and `help`. `nova-check version` is the Conventions'
 build line, exit 0; before it existed the same words were
 `nova-check: unknown subcommand "version"`, exit 2, and a green from this tool
 named no build.
@@ -1369,6 +1387,312 @@ has gone missing.
 **Three: an indented example is illustration** — which is the point — so a
 four-column table indented after a blank line is not checked. Indented rows
 *abutting* the table above them are named instead, per the list above.
+
+---
+
+### hygiene — is this branch's range clean, before anybody reads it
+
+```
+nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"[,...] [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
+```
+
+**Why it exists.** The accept gate asks four mechanical questions of every
+card's range (SPEC-TOOLWORK.md §3): is every commit the pool's own and none of
+them a merge (`identity`), does every changed path match one of the card's
+declared globs (`out-of-path`), was anything added that does not belong in a
+repository (`stray-file`), and does any added line have the SHAPE of a key
+(`secret`). None of the four reads prose and none needs a model. They are one
+package with one entry point, `internal/hygiene.Check`, and this verb is the
+third of its three callers — `nova-pulse accept` at harvest and `nova-merge
+batch` on every member are the other two. One implementation, three callers, so
+the lane and the harvest cannot disagree about what clean means: a second copy
+of these rules is a second definition, and the day the two drift is the day a
+branch passes one and fails the other with nobody able to say which is right.
+
+It is here rather than in `nova-pulse` because the person who wants the answer
+is usually not a gate. It is the thing to type before asking a friend to read
+something, and it decides nothing: it prints what is wrong and exits.
+
+**It never guesses an identity.** `--identity` is required and repeatable with
+commas, `Name <email>`; there is no default and no falling back to the
+repository's own config, because a range checked against nobody would admit
+anybody. `--paths` may be ABSENT, which is a different fact from "the paths
+matched" and is printed as such: `out-of-path` is skipped and the line says
+`paths=-`. A friend's own branch has no card and no declared paths, and a line
+that simply left the field out would read as a bound that held. When `--paths`
+IS given it is validated the same way `cut` validates a card's `PATHS:` line —
+at most eight globs, no `..`, nothing absolute, and nothing that matches every
+file there is.
+
+**Exit codes**, as the Conventions give them: **0** clean, **1** findings,
+**2** could not run. The third is the one that matters most here. A bad ref, a
+directory that is not a working copy, an empty identity set, a `PATHS:` glob
+that bounds nothing, a git that could not be run — every one of them is a
+refusal, never a clean answer, because a check that could not run has found
+nothing and reporting that as clean is the one answer this tool must not be
+able to give.
+
+```
+HYGIENE FINDING reason=<identity|out-of-path|stray-file|secret> at=<sha12>|<path>|<path>:<line>: <why>
+HYGIENE MORE kind=finding shown=<n> total=<t> nova-check hygiene --repo <dir> … --max 0
+HYGIENE OK base=<ref> head=<ref> paths=<glob,…|-> findings=0
+HYGIENE NO base=<ref> head=<ref> paths=<glob,…|-> findings=<n>
+nova-check hygiene: <what was wrong>; run: nova-check help
+```
+
+The listing is capped at `--max` (default 20, `0` for all) and counted, like
+every listing in this binary, and the MORE line carries the command that prints
+the rest. `OK` goes to stdout, `NO` and the refusal to stderr, and the findings
+list to stdout in both cases — a caller that wants the verdict alone reads the
+last line.
+
+**What it deliberately does not do.** It never opens `RESULT.md` or any other
+prose a worker wrote: this is a check over a diff, not a reading of a report.
+It never prints matched secret text — only the path, the line and the shape's
+NAME — because a finding travels into a gate's stdout, a PR body, a harvest log
+and whatever a coordinator pastes into a chat, and a finding that quotes the
+key has copied the key into every one of those places. And it decides nothing:
+it returns findings and exits, and what a finding COSTS is the caller's rule,
+not this verb's.
+
+**The subject repo does not get a vote on what git shows this check.** That is
+not a detail, it is the whole reason this verb can be trusted on a range
+somebody else wrote. The bench's global and system git config are blanked, and
+so is the subject's own influence over the diff: the prefixes are passed
+explicitly, so `diff.noprefix` in the checked repo cannot hide every finding by
+dropping the `a/` and `b/` a parser reads file names from; the diff is forced
+textual with `--text --no-textconv`, so a `-diff` attribute — committed, in
+`.git/info/attributes`, or named by a local `core.attributesFile` — cannot turn
+a file holding a key into "Binary files differ"; paths are read with
+`core.quotePath=false` and unquoted besides, so one non-ASCII byte in a name
+does not skip that file; and blob ids are read in full, because an abbreviation
+is ambiguous sooner or later. Object replacement is switched off with
+`--no-replace-objects`: `git replace <head> <base>` writes a ref under the job
+clone's own `.git` -- never a commit in the range -- and every later read of the
+range would otherwise be shown the base's objects and report the range clean.
+The conflict-marker check reads the added lines
+of that same diff rather than asking `git diff --check`, which honours a
+`-diff` attribute whatever `--text` says. A check whose subject can choose what
+it is shown is not a check.
+
+---
+
+### dogfood — has anybody but the author run it
+
+```
+nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
+nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>
+nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
+```
+
+**Why it exists.** Glenn, 2026-09-18: *a tool is not finished until it is
+tested, dogfooded by a non-author on real work with the edges filed, the
+feedback applied, documented and released.* Six of those seven states leave
+evidence somebody else can read — a test run, an issue, a doc, a tag. One does
+not. Whether a **non-author** has ever run the thing was carried in nobody's
+hand but the last speaker's, which is the same shape as `corpus`: the record
+and the evidence about the record were the same sentence. So the claim becomes
+a file. The verbs come from the command reference, the runs come from
+receipts, and `gate` is the exit code a release lane calls.
+
+**The verbs come from the binaries first and the reference second.** `--tools
+<dir>` asks each built `nova-*` binary for its own `help` and reads the verb
+list out of it; that is authoritative for that tool, and `--cli` fills in the
+tools the directory does not hold. At least one source is required. This is the
+first lesson of this verb's own dogfood pass (2026-09-18, by a non-author): the
+reference had gone stale against two verbs that exist — `nova-work ask` and
+`asks` — and both receipts for them were stranded against a document rather than
+against the tool.
+
+**The reference is read in every shape it uses**, which is the second lesson and
+the larger one: `nova-sandbox` and `nova-work` contributed **zero** of the 77
+rows, not because nobody had run them but because one is documented as prose
+with a worked transcript and the other by pasting its own indented help block.
+*A tool can go un-dogfooded forever by being documented in a shape the
+extractor does not read, and nothing says so.* So a declaration is any of:
+
+- a command line inside a fenced block, at any indentation, with or without a
+  `$` prompt and `VAR=value` prefixes. The verb is the leading lowercase bare
+  words, at most two — `nova-fuse lift quarantine` and `nova-fuse lift lockdown`
+  are the two verbs they are, `nova-check links --dir <dir>` stops at the first
+  flag. A pasted help block puts its description in a second column, so two or
+  more spaces end the command: `nova-work ask            delivers ONE unit` is
+  the verb `ask`, `nova-work plan check --file <p>` is the verb `plan check`.
+- a `### <verb>` heading under a `## nova-<tool>` section — one word, and the
+  heading must be that word alone or that word before a separator, so `### cut`
+  and `### serve: the process outside a session` are verbs while `### native and
+  batch` and `### The seven verbs` are prose.
+- a synopsis line with no verb at all — `nova-decide --questions <file>` —
+  which declares that tool's **bare invocation**. It is a unit like any other,
+  prints as `verb=-`, and `--verb -` names it: a tool that takes no verb is
+  still a tool somebody has to have run.
+
+A `## nova-*` section that yields no unit at all is a red test in this package
+(`TestEveryToolSectionOfTheRealReferenceYieldsAVerb`), because that silence is
+exactly what hid two tools from the gate.
+
+The tool comes from the line and not from the section heading: a reference shows
+one tool's verb inside another's section, and a verb belongs to the tool that
+runs it. Headings are the exception — a heading has no tool in it, so it takes
+its section's. A binary's help speaks for that binary only, so another tool's
+line in its `example:` block declares nothing.
+
+**A receipt is one JSON line** — `tool`, `verb`, `by`, `at` (RFC3339, UTC),
+`ok`, `notes`, `issue` — in its own file under `--receipts`, written to a
+temporary name in that directory and renamed into place. The directory is the
+append-only log and each file is one atomic entry, so two benches recording at
+once cannot interleave halves of two records. Every field is stated: `record`
+refuses a blank one with the line that says what the flag wants, and the
+verdict is `--ok` or `--not-ok` and never a default, because an `ok=` that came
+from the absence of a flag is a record of what somebody forgot to type.
+
+**`record` checks the spelling against the same list the ledger will read it
+against**, and refuses a `--tool`/`--verb` pair nothing declares, naming the
+nearest verb that is declared — a verb written INSIDE a declared one wins
+(`--verb ledger` for `dogfood ledger`), then the nearest by edit distance within
+half the spelling, and nothing at all rather than a guess. It had the flag and
+used it for nothing on 2026-09-18, and every one of that bench's nine receipts
+was accepted in silence and discovered later as a count.
+
+**Asserts** (`ledger`, exit 0 — it reports rather than gates): one
+`DOGFOOD tool=… verb=… by=<who|nobody> at=… ok=<yes|no|-> issue=<n|->` row per
+verb the reference declares, in the reference's order, then
+`DOGFOOD OK verbs=<n> dogfooded=<n> by-nonauthor=<n> open-edges=<n> unfiled=<n>`. The row
+shows the receipt that speaks best for the verb — a non-author's pass first,
+then a non-author's run, then the author's own, latest first inside each rank —
+and the counts come from all of them, not from the row. **Every row prints**:
+this is the one listing here that `--fail-max` does not cap, because a ledger
+that elided rows would hide exactly the verbs nobody has run. The summary line
+is the bounded read of the same thing.
+
+**An author dogfooding their own verb is recorded and does not count.**
+Authorship comes from `--authors <file>` (`<tool> <verb> = <who wrote it>`, one
+per line, exact) or, second-best, from `--repo <dir>`: for each verb, the
+author of the first commit that introduced the verb's word under
+`cmd/<tool>`. Names compare trimmed and case-insensitively and nothing else — a
+receipt that spells a name differently is a receipt with a different name, and
+the ledger says who it has rather than guessing who it meant. A verb neither
+source places has **no** author, so every receipt for it counts: the gate can
+be wrong by asking for one more pass, never by passing a verb nobody ran.
+
+**An edge is what the run found, not only what it failed at.** A receipt
+records an edge when the verb did not do what the run needed (`--not-ok`) **or**
+when its notes name one in the shape the family writes them — `Edge:` or
+`Edges:` before the finding. `unfiled=` counts the open edges carrying no issue
+number, because an edge nobody has filed is one nobody else can act on.
+Feedback filed is not feedback applied, and the ledger is the half that can see
+the difference.
+
+**An edge is ANSWERED, not outlived (dogfood round 5, edge 2).** It used to be
+cleared by "somebody runs the verb again, later, and records neither" —
+*anybody*. So on a bench where two people dogfood the same verb, one of them
+finding something and the other happening to run it afterwards and finding
+nothing put the first one's finding out of the gate's sight: `open-edges=0`, no
+issue filed, and the ledger row showing that second person's `ok=yes` over it. A
+pass is evidence about the passer's run, not an answer to somebody else's. Two
+things close a finding, and each is somebody taking responsibility for it:
+
+- **a receipt that names it** — `dogfood record --closes <id>` — which anybody
+  may write, and which is how a fixer says this run answers that finding;
+- **the person who found it** running the verb again, later, and finding
+  nothing. They are the one who knows what they were looking at.
+
+A `--closes` naming an id nothing carries closes nothing and leaves the edge
+open: a typo must never read as a close, so the shape is refused where it is
+written and the match is made where the findings are. The id is a **fact of the
+receipt's content** — the same eight hex characters that end the receipt's
+filename, so a reader with an id off the gate's line can find the file it came
+from — and the gate prints it as `receipt=<id>` beside the finding's author,
+with both ways to close it. `ledger`'s per-verb row carries `open=<n>`, always,
+zero or not: the row shows the receipt that speaks best for the verb, so it is
+the very line that printed a pass over an open finding, and it now cannot.
+
+This is the dogfood pass's fifth edge and the sharpest: every receipt of that
+pass was written `--ok`, because the verbs *did* work, and six of them carried
+"Edges: (1) … (2) …" in the notes. The ledger read `open-edges=0` over a bench
+that had just found a dozen things. Counting only the verdict was counting the
+half a dogfooder is least likely to use.
+
+**Says NO (exit 1) when:**
+
+- a receipt cannot be read — unparseable, an unknown field, or a blank in a
+  required one. Each is one `DOGFOOD FAIL <file>:<line>: <reason>` line, capped
+  by `--fail-max` with the MORE line that names the flag, and **no ledger is
+  printed at all**: a ledger read from records it could not parse would
+  understate the truth in the one direction that lets a tool ship.
+- `gate` finds an open edge, always, with or without `--require-all`.
+- `gate --require-all` finds a verb no non-author has run and passed. Each
+  finding is one `DOGFOOD GATE FAIL tool=… verb=…: <why>` line, capped the same
+  way, then `DOGFOOD GATE FAIL verbs=<n> findings=<n> shown=<n>`. A green gate
+  is one line: `DOGFOOD GATE OK verbs=<n> by-nonauthor=<n> open-edges=<n>
+  unfiled=<n> require-all=<yes|no>`.
+
+**Refuses (exit 2) when** neither `--cli` nor `--tools` is given, on any of the
+three; `--receipts` is missing or is not a directory; `--tool`, `--verb`,
+`--by` or `--notes` is missing, the verdict is neither or both, or the verb is
+one the list does not declare (`record`); the sources named declare no verbs at
+all; an `--authors` line has no `=`, an empty side, or maps one verb twice; or a
+subprocess read runs past `--git-timeout` or `--tools-timeout`. A binary that
+cannot answer `help` is one `DOGFOOD NOTE` and a fallback to the reference for
+that tool, never a dead run: a half-built directory costs that tool's rows, not
+the ledger.
+
+**A receipt naming a verb the list does not declare is named, one line each, by
+`ledger` AND by `gate`:** the file it lives in, the tool and verb it claimed,
+who wrote it, and the nearest declared verb. The count line follows, capped like
+every other listing here. It stays a `DOGFOOD NOTE` rather than a failure —
+the disagreement is about the documentation, not about the tool — but it is
+never again a bare number: the pass of 2026-09-18 was told `receipts=9 name a
+verb docs/CLI.md does not declare` and nothing else, so nine real runs were
+invisible and unspellable. And `gate`, the line a release lane actually calls,
+printed none of it at all: a lane could pass or fail without ever learning that
+every receipt it read had been discarded.
+
+**Deliberately does not check:** *whether the run was any good.* `notes` is
+prose and nobody grades it; a receipt says somebody ran the verb on real work
+and what happened, and the judgment that it was real work is the dogfooder's,
+made in the open under their own name. Nor does it check that the issue a
+receipt names exists, is open, or is about this verb (that is `gh`'s to know,
+and this tool reaches no network); nor that the person is who they say they
+are (the receipts live in a repository, and git's authorship is the record that
+answers that); nor that a verb's tests pass, which is a different wall in a
+different lane.
+
+### convergence — are we converging
+
+```
+nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h>
+      [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>]
+      [--state <file>] [--by <name>] [--json] [--timeout <n>]
+```
+
+**Why it exists.** Glenn, 2026-09-15: *convergence is the health metric* — the
+contraction ratio per stream, every tick. Rowan answered *are we converging?* by
+hand on 2026-09-18: six windows read out of six different places, an hour of it,
+and an answer that was a paragraph nobody could diff against the next one. It is
+the same shape as `corpus` and `dogfood` one level up — the records existed, and
+the reading of them lived in one person's head, so the reading becomes a line.
+
+**Seven streams, each from a real source through a seam.** `LANDING` is gate
+rounds per integration batch, `CLASSES` the class-test index entries, `SCRIPTS`
+what is left in `bin`, `PRS` the open queue, `EDGES` the dogfood edges nobody has
+filed, `FLEET` the machines off the one build and `LEDGER` the pit-stop rows not
+yet PASS. Each prints `now`, `before`, the ratio `now/before` and a trend in that
+stream's own direction of travel; the verdict line counts them, and the exit code
+is 1 only when one stream has widened on two consecutive ticks — which is why the
+streak lives in `--state` and nowhere else.
+
+**A stream whose source was not named is ABSENT, never zero.** That is the whole
+discipline of this verb: a number nobody measured, printed as a number, is worse
+than the hour of reading it replaced.
+
+The full rules, the refusals and the red tests are in
+[SPEC-CHECK.md](SPEC-CHECK.md), which this section does not restate.
+
+**Deliberately does not check:** *whether a trend is anybody's fault.* It reads
+records and prints ratios; why a stream widened is a person's to say. Nor does it
+write: not to the forge, not to `--repo-dir`, not to `--bin`. The only file it
+writes is `--state`, and that holds one number per stream.
 
 ---
 
@@ -2452,9 +2776,11 @@ nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open 
       [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
       [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
+      [--until <instant>] [--idle-exit <n>]
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
       [--quiet-beats]
+      [--max-commits <n>]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
 nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
@@ -2528,7 +2854,7 @@ SEND NOTE <what a tolerance did to this draft>
 SEND NOTE this note answers nothing (no Re: line); if it is a reply, name the note: Re: <id>
 SEND NOTE Re: subject matched <n> notes; closed the newest <id>; name the id to be exact
 DRAFT NOTE <what --re resolved, on stderr, because draft's stdout is a file>
-SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n>
+SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n> body_bytes=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
@@ -2539,24 +2865,27 @@ INBOX UNREADABLE path=<path>: <reason>
 INBOX UNREADABLE count=<n> unchanged=<true|false> first=<path>
 INBOX UNADDRESSED path=<path>: <reason>
 INBOX SWITCH your switch-day line is the date <date>, which hides every note dated <date-1> or earlier; draw it at an instant, once: <command>
-INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
-INBOX HEARD id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
-INBOX RECEIPT id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
+INBOX NOTE id=<id|-> from=<name> [host=<host> ]addr=<to|cc> at=<stamp|-> path=<path>: <subject>
+INBOX HEARD id=<id|-> from=<name> [host=<host> ]addr=<to|cc> at=<stamp|-> path=<path>: <subject>
+INBOX RECEIPT id=<id|-> from=<name> [host=<host> ]addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> heard=<n> unaddressed=<n> unreadable=<n>
 INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>
 INBOX FAIL <path>: <reason>
 INBOX REFUSED: <reason>
-WAIT as=<name> timeout=<d> interval=<d> cursor=<sha|->
+INBOX WALK commits=<n>/<total> notes=<n> elapsed=<d>                   (progress: stderr only, never stdout)
+INBOX WALK bounded commits=<n> remedy="raise --max-commits or close --before <instant>"   (progress: stderr only, never stdout)
+WAIT as=<name> timeout=<d> interval=<d> cursor=<sha|->[ until=<instant|-> idle-exit=<n>]   (the pair only with --until or --idle-exit)
 WAIT NOTE <why this wait is not waiting>
 WAIT POLL fetch: <reason one poll could not fetch, which was not fatal>
 WAIT OK new=<n> after=<d> polls=<n>
-WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
+WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->[ idle-exit=<n>]                            (the field only with --idle-exit)
 WAIT REFUSED: <reason>
 RECEIPT ALREADY note=<id or path> lane=<lane>
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
 RECEIPT FAIL <name or path>: <reason>
 RECEIPT REFUSED: <reason>
-CLOSE OK closed=<n> kept=<n> commit=<sha8|->
+CLOSE OK closed=<n> kept=<n>[ receipts=<n>] commit=<sha8|->     (receipts= on a writing close; a dry run has none to count)
+CLOSE NOTE <path> was written and could not be taken back: <reason>
 CLOSE FAIL <name or path>: <reason>
 CLOSE REFUSED: <reason>
 BUS SCOPE mode=<full|since> cursor=<sha|-> changed=<n>
@@ -2569,6 +2898,35 @@ NAMES NAME name="<x>" lane=<lane|-> aliases="<a>";"<b>"
 NAMES GROUP name="<x>" members="<a>";"<b>"
 NAMES OK participants=<n> groups=<n> senders=<n>
 ```
+
+**The two streams, and why the split is a contract.** `stdout` is the PROTOCOL
+stream: every line a listing verb writes on it begins with one of the documented
+prefixes above, and consumers parse it line by line. `stderr` carries refusals,
+failures and **progress** — what the program is doing while it is doing it —
+and nothing on it is protocol.
+
+Glenn's rule has two halves, and until 2026-09-18 only the first was written
+down: *a program that takes longer than 0.1 s says what it is doing, on stderr,
+AND a progress line never enters a protocol stream a consumer parses.* The
+since-walk's `INBOX WALK commits=<n>/<total> notes=<n> elapsed=<s>` obeyed the
+first half and was still read as protocol: `nova-wake` reads this program's two
+streams together, so that an `INBOX REFUSED` is never lost, and its classifier's
+default case *prints*. The progress line was relayed to a window as
+`WAKE BUS LINE INBOX WALK …`, counted as a change in the world, and ended a poll
+before the mail the watcher was waiting for came down. The same line had broken
+this program's own continuation tests hours earlier.
+
+So **`INBOX WALK` is a progress prefix, it appears on `stderr` only, and it
+appears on `stdout` never** — on any verb. The prefixes are a registry,
+`internal/bus.ProgressPrefixes`, that both the program and every consumer read:
+the program's own test refuses a progress prefix on stdout and holds every other
+stdout line to the grammar above, and a consumer drops a progress line before it
+classifies anything. A new progress line is then one entry in one registry and is
+safe in every consumer at once. The framed payloads are the documented exception
+to "every stdout line is a prefixed line": the bytes between
+`SEND DRAFT id=<id>` and `SEND DRAFT END`, and between
+`INBOX BODY id=<id> bytes=<n>` and `INBOX BODY END`, are a person's prose. The
+frame is protocol; what it carries is not.
 
 `draft` prints a **skeleton and nothing else** on stdout -- no `OK` line under it --
 because its stdout is a FILE: `nova-bus draft ... > draft.md` has to produce a
@@ -2810,6 +3168,7 @@ line but `Date` and `Id`.
 
 ```
 From: Ada (day shift, the west host, the shared account)
+Host: west
 To: Bo
 Cc: Dana
 Date: Wed Sep  9 12:34:56 UTC 2026
@@ -2819,16 +3178,36 @@ Kind: note
 Subject: Yes, on the merge queue too
 ```
 
-That is the order `send` writes, `Kind` included: `From`, `To`, `Cc`, `Date`,
-`Id`, `Re`…, `Kind`, `Subject`. `Cc`, `Re` and `Kind` are written only when the
-note has them.
+That is the order `send` writes, `Kind` included: `From`, `Host`, `To`, `Cc`,
+`Date`, `Id`, `Re`…, `Kind`, `Subject`. `Host`, `Cc`, `Re` and `Kind` are
+written only when the note has them.
 
 The header is every line before the first blank line, and each line is
-`Key: value`. The keys are exactly `From`, `To`, `Cc`, `Date`, `Id`, `Re`,
-`Subject`, `Kind`; **an unknown key is a refusal**, because a note whose
+`Key: value`. The keys are exactly `From`, `Host`, `To`, `Cc`, `Date`, `Id`,
+`Re`, `Subject`, `Kind`; **an unknown key is a refusal**, because a note whose
 `Sbuject:` line was accepted as prose has no subject and a note whose `Rf:` line
 was accepted has no thread. `Re` may repeat; nothing else may. `Kind` is
 `receipt` or `note` and is the only override of the receipt heuristic.
+
+**`Host` is which MACHINE posted, and it is optional.** One name can post from
+two places — the keeper on the Studio and the bud on the Air both post as
+`Rowan` — and until this line existed they were told apart by a `[bud air]` in
+the subject, which spent the subject on routing. `send --host <name>` and
+`reply --host <name>` write it; `<bus>/.nova-bus/defaults` may carry a
+`host=<name>` line, read when the flag is absent, so a bench sets it once. A
+host is one word of lower-case letters, digits, `-`, `.` and `_`, at most 40
+characters, because it is printed as one space-separated `host=` field on an
+inbox line. A draft that carries its own `Host:` line keeps it; a `--host` that
+names a DIFFERENT machine is a refusal, the same shape as `--as` against a
+`From` line that names somebody else.
+
+**A note with no `Host` line is unchanged, byte for byte.** Nothing writes the
+line unless it is asked for, `inbox` prints no `host=` field where there is none,
+and the OPEN cache keeps the eight fields it has always had on a bus whose notes
+carry no host. The host is **not** in the id's preimage (`nova-bus id v1` is
+unchanged): the id says a note is the same note — same sender, same second, same
+recipients, same subject, same body — and which machine typed it is a fact about
+the posting, so every id already on every bus is still the id it was.
 
 **Two parse tolerances**, for the two shapes a bus people also read in a
 browser actually writes, both enumerated here and pinned by tests:
@@ -2839,6 +3218,17 @@ browser actually writes, both enumerated here and pinned by tests:
    person opens to;
 2. **bullets** on the header lines — `- From:`, `- To:`. A leading `- ` is
    dropped before the key is read.
+
+**A relayed note is attributed by its OUTER `From:` line, and a `From:` line in
+a body is data.** A note that forwards or echoes another may carry the original
+inside it, and that original can itself open with `From:` lines. The sender is
+the **first** `From:` line of the header — the relayer — and every later `From:`
+line, inside the header region or after the blank line, is prose that routes
+nothing: the covenant rule stated above applies here as everywhere. So the
+listing's `from=`, the open list's `from` field, a receipt's `To:`, and the
+`--as` a send is judged by all name that outer sender, never a quoted author
+inside the body. A second `From:` line *inside the header* is still a header
+problem and is refused; it is not a second attribution.
 
 A note whose first line is prose still fails, and should: there is no honest way
 to tell a `From` line from a sentence that happens to hold a colon. The refusal
@@ -2854,7 +3244,7 @@ names its own repair:
 | what is on the line | what the refusal says |
 |---|---|
 | a key in markdown bold — `**To**: Ada` | headers are plain `Key: value`, not markdown bold; and it writes out `To:` |
-| a key nobody knows — `Branch: main` | unknown header key, **and the eight keys there are** |
+| a key nobody knows — `Branch: main` | unknown header key, **and the nine keys there are** |
 | a body sentence where the header goes, with a colon somewhere in it or none at all | the header ends at the first blank line; put a blank line after the last header |
 
 A key is taken for a sentence when it holds a space or runs past twenty
@@ -4167,9 +4557,11 @@ catalogue is what would make the other choice available later.
 
 ```
 nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
+      [--until <instant>] [--idle-exit <n>]
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
       [--quiet-beats]
+      [--max-commits <n>]
 ```
 
 **The failure it closes is not a failure of the bus.** A line reading this bus
@@ -4227,6 +4619,33 @@ WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
 the caller issues the next one; nothing is written to the bus by a wait that
 found nothing, because there is nothing to record having read.
 
+**`--until` and `--idle-exit` are for a harness that cannot loop.** `--until
+<instant>` is an absolute deadline beside `--timeout`, an RFC 3339 UTC instant,
+and the wait ends at whichever of the two comes first: a caller whose own limit
+is a MOMENT rather than a duration does not have to work out how long is left.
+`--idle-exit <n>` is the exit code a TIMEOUT returns instead of 0, so a harness
+can branch on the code without parsing anything; 1 and 2 are refused, because
+they are this tool's own — a refusal, and an invocation that could not run — and
+a harness that got one back could not tell a quiet bus from a broken one. A
+caller that passes NEITHER sees exactly the lines it saw before the two flags
+existed, byte for byte: the pair is added to the opening line, and `idle-exit=`
+to the timeout line, only for the caller that asked.
+
+**A harness that cannot loop — OpenCode's, and every harness like it — runs this
+exact sequence and nothing else.** Once, to clear the backlog: `nova-bus inbox
+--bus ~/bus --as Freddy --receipt-max-words 40 --advance --remote origin --branch
+main`. Then one wait per turn: `nova-bus wait --bus ~/bus --as Freddy
+--receipt-max-words 40 --timeout 25m --until 2026-09-18T18:00:00Z --idle-exit 3
+--advance --remote origin --branch main`.
+Exit 0 is a note: the listing is on stdout, answer it, then issue the same wait
+again. Exit 3 is the one line `WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
+idle-exit=3` and nothing came: issue the same wait again, or stop if your own
+deadline has passed. Exit 1 is a refusal and exit 2 is an invocation that could
+not run, both with the reason on stderr, and neither is re-armed until somebody
+has read it. The harness keeps no clock and runs no loop of its own: every call
+ends by itself, at the note or at the deadline, and the `WAIT DONE ...
+next=<command>` line is the command to issue again.
+
 **`wait` returns once and must be re-armed.** Every return is one read, ended
 by one terminal `WAIT DONE reason=<new|timeout|signal> rearm=required next=<command>`
 line that hands back the exact command to issue again to keep listening. A
@@ -4281,11 +4700,13 @@ wake cost the waiting window a turn. A wake is a note addressed to the reader, f
 another line, and nothing else. `--quiet-beats` stays accepted so callers that pass
 it keep working; it changes nothing.
 
-Exit codes are `inbox`'s: **0** with notes and **0** on a timeout, **1** for the
-refusals `inbox` already has — a cursor that is no longer on this history, a
+Exit codes are `inbox`'s: **0** with notes and **0** on a timeout — or the code
+`--idle-exit <n>` names, when the caller asked for one — **1** for the refusals
+`inbox` already has: a cursor that is no longer on this history, a
 `--legacy-before` that would move a reader's line earlier, a first `--advance`
 over a history nobody has said what to do with, another run on this checkout —
-and **2** for an invocation that could not run.
+and **2** for an invocation that could not run. `--idle-exit` never changes
+those last two, which is why it will not take them.
 
 ### check — full, or since
 
@@ -4630,8 +5051,8 @@ than trusted. And its transport is git: what it cannot do is make anybody pull.
 
 ## nova-update and nova-version
 
-[SPEC-UPDATE.md](docs/SPEC-UPDATE.md) defines the shared inventory reader, optional
-updates and reporting. [Prepared delivery](docs/SPEC-BUS-DELIVERY.md) keeps one
+[SPEC-UPDATE.md](SPEC-UPDATE.md) defines the shared inventory reader, optional
+updates and reporting. [Prepared delivery](SPEC-BUS-DELIVERY.md) keeps one
 identity across retries. UPDATE/APPLY/REPORT are the primary tokens. TOOL, UNKNOWN,
 CHANGED, MORE, SENT, NOTE, BEFORE, RUN, AFTER, STALE, NEWER and DIFFERENT are
 informational second tokens; OK/FAIL are final verdicts, REFUSED is an invocation
@@ -4671,11 +5092,26 @@ in both the MORE line and the closing line.
 
 ### WAITS ON: nothing
 
-`nova-check` is the one tool of the seven with no clock, no subprocess, no
-network and no lock. There is no `--timeout`, no interval, no poll, no `gh`
-and no `git`: it waits only on the filesystem, and every verb measured
-returned **under 0.30 s** — inside the two-minute rule by two orders of
-magnitude, so it is the one that can be run between edits.
+The six record-layer checks over one line's own self repo are the tool measured
+here, and they have no clock, no subprocess, no network and no lock. There is
+no `--timeout`, no interval, no poll, no `gh` and no `git` on that path: they
+wait only on the filesystem, and every verb measured returned **under 0.30 s** —
+inside the two-minute rule by two orders of magnitude, so this is the tool that
+can be run between edits.
+
+`hygiene` is the other exception and it is stated rather than papered over: it
+reads a range out of a real repository, so it runs `git` as a subprocess and
+takes a `--timeout` (default 120 s) for it. It touches no network and takes no
+lock. Its cost is the size of the range, not of the repository.
+
+`dogfood` (2026-09-18) is the exception, and it is stated rather than papered
+over: `record` reads the clock, because a receipt is a dated record; `ledger`
+and `gate` run one `git log` per verb **only when `--repo` is given**, under
+`--git-timeout` (60 s); and all three run one `help` per binary **only when
+`--tools` is given**, under `--tools-timeout` (60 s). With `--authors`, or with neither, the verb waits
+only on the filesystem like the six. The card's measurement stands for the six;
+`dogfood --repo` over a 71-verb reference is the one invocation of this binary
+that can take seconds, and it says so on stderr while it does.
 
 ### Red tests
 
@@ -4769,3 +5205,385 @@ trusted.
 - `inbox` at the largest carried state returns the SCOPE, LEGACY, OPEN, remedy and OK lines and not the carried list, so the coordinator read is bounded by the state's counts and not its length;
 - a wait's poll is one git fetch and a quiet poll prints nothing, so an idle tick costs zero tokens;
 - the uncapped `check --full` is the missing bound, and `--fail-max` is the flag that closes it.
+
+## Tests this spec demands
+
+These are the umbrella **Conventions** (docs/SPEC.md lines 1-321), promised once and met through the shared packages `internal/oneline`, `internal/bounded` and `internal/buildinfo`. Their tests are pure unit tests over bytes and strings — no network, no temp dirs, no fakes — plus one CI class test that walks the real `cmd/nova-*` binaries, and per-binary acceptance tests that run the built tools against `t.TempDir()` boxes and injected clocks; each is proven able to fail before it is trusted.
+
+1. `repo-a-1` `TestExitCodes` — the three-purpose exit table: 0 the check ran and passed, 1 the check ran and **failed** (that is the check working), 2 could not run (missing flag, unreadable input, bad invocation).
+2. `repo-a-2` `TestNoDefaultBoxRefusesToGuess` — there are no default directories and no default files; every path comes from a flag or a named argument.
+3. `repo-a-3` `TestNoFilesRefused` — a missing flag or an empty file list is a refusal (exit 2) with `refusing to guess`, never a fallback to cwd, `$HOME`, or a hardcoded location.
+4. `repo-a-4` `TestKernelRefusesNonPositiveBudget` — a budget of zero or less is refused, not treated as "unlimited".
+5. `repo-a-5` `TestNothingIsSkippedByDefault` / `TestNoBasenameIsBanneredByDefault` — `nova-self-talk`'s skip list and rule-document list both default to empty; no basename is special to this tool.
+6. `repo-a-6` `TestScanCapsFindingsAndCountsTheDated` — `OK` lines to stdout; `FAIL` lines and refusals to stderr (except `SELFTALK FAIL files=...`, the summary count line, which goes to stdout).
+7. `repo-a-7` `TestEscapeEveryControlCharacter` — control characters are escaped `\xNN` below U+0080, `\uNNNN` above, lower-case hex; a newline in a name arrives as `\x0a`.
+8. `repo-a-8` `TestEscapeEveryControlCharacter` — U+2028 and U+2029 (line/paragraph separators) are escaped like any line break.
+9. `repo-a-9` `TestEveryBidiControlIsEscapedAndNoOtherFormatCharacterIs` — bidi controls U+202A-U+202E and U+2066-U+2069 are escaped.
+10. `repo-a-10` `TestEscapeEveryControlCharacter` — a byte that is not valid UTF-8 is escaped `\xNN` by its value.
+11. `repo-a-11` `TestEveryBidiControlIsEscapedAndNoOtherFormatCharacterIs` — the zero-width joiner passes through (not a bidi control); no other format character is escaped.
+12. `repo-a-12` `TestEscapeEveryControlCharacter` — printable text including non-ASCII is untouched, and nothing is ever shortened to nothing.
+13. `repo-a-13` `TestQuoteIsPasteableAndStillOneLine` — `%q` quoting is one line but a DIFFERENT escape form (`\n` vs `\x0a`), and it is injective where `Escape` is not.
+14. `repo-a-14` `TestFieldIsOneTokenHoldingNoEquals` — a `key=value` field value escapes every whitespace character and every `=` as `\x20`/`\x3d`, so a scanner counts exactly the fields the tool wrote.
+15. `repo-a-15` `TestFieldAgreesWithEscapeOnEverythingEscapeTouches` — a positional `<path>`/`<file>` slot is escaped for one line only and keeps its spaces and colons.
+16. `repo-a-16` `TestEscapeEveryControlCharacter` — the free-text tail is never scanned for fields: after the closing `: ` a reason may say `lockdown=clear`.
+17. `repo-a-17` `TestCapPrintsMaxLinesThenOneMoreLine` — a listing has a ceiling (`--fail-max`/`--max` defaulting to 20).
+18. `repo-a-18` `TestCapPrintsMaxLinesThenOneMoreLine` — a cap is a prefix, never a sample (item lines keep the verb's own order).
+19. `repo-a-19` `TestMaxZeroPrintsEverythingAndNoMoreLine` — `0` means all; no MORE line is printed.
+20. `repo-a-20` `TestRefusesANegativeCeiling` — a negative ceiling is refused.
+21. `repo-a-21` `TestNoMoreLineWhenNothingWasElided` — one MORE line stands for the rest, naming `kind`, `shown`, `total` and the remedy; below the ceiling there is no MORE line at all.
+22. `repo-a-22` `TestGroupCapsEachKindSoOneCannotBuryAnother` — the cap is per KIND where a verb runs several checks into one stream.
+23. `repo-a-23` `TestLinksCapsFindingsAndAlwaysPrintsTheCount` — the count line prints on failure as well as success (count is the truth about the state, never about the output).
+24. `repo-a-24` `TestDatedClaimIsReportedAndExitsZero` — a dated self-talk claim is counted, not quoted: `SELFTALK DATED n=<k> files=<n>`, one line however many there are.
+25. `repo-a-25` `TestEvalListsMissesOnlyAndCapsThem` — a passing eval row is counted not quoted: `EVAL HIT` is gone, `hits=` in the summary is what it said.
+26. `repo-a-26` `TestIssue1451EveryMissingFlagRefusalNamesTheDoor` — an unusable invocation costs ONE line, `<tool>[ <verb>]: <what was wrong>; run: <tool> help`, never the usage banner; `<tool> help` prints it on stdout, exit 0.
+27. `repo-a-27` `TestNoTestAssertsAWallClockBoundUnderTenSeconds` — no test asserts a literal wall-clock bound under ten seconds; the CI budget test refuses any such `_test.go` line except a `// wall-ok:` fake.
+28. `repo-a-28` `TestEveryToolPrintsTheOneVersionLine` — `<tool> version`/`--version` prints ONE line, exit 0, on stdout: four mandatory tokens then any number of `key=value` extras.
+29. `repo-a-29` `TestResolveOrder` / `TestTheFloorIsAWordAndNotANumber` — the field-two identity resolves ldflags stamp -> module version -> vcs `<utc time>-<12 hex>[-dirty]` -> `devel`; never a repo-made dotted number.
+30. `repo-a-30` `TestParseTakesEveryToolsLineApart` — every `cmd/` binary takes its line from `internal/buildinfo`, and `buildinfo.Parse` is the ONE reader of that line.
+31. `repo-a-31` `TestParseRefusesWhatIsNotAVersionLine` / `TestLineRefusesAnExtraThatIsNotKeyValue` — an extra is a named fact, never a loose token; a second line shape is forbidden.
+32. `repo-a-32` `TestVersionRefusesFlagsAndArguments` — the `version` verb takes no flags and no arguments, and refuses at exit 2 with one line when it is given any.
+33. `repo-a-33` `TestCapLeavesAnythingUnderTheCeilingAlone` — free-text tails are capped at 500 bytes (`oneline.TailBytes`) for a subject, a quoted sentence or a finding's detail.
+34. `repo-a-34` `TestGitErrorCapsTheEmbeddedOutput` — the `git` output an error carries is capped at 1 KB.
+35. `repo-a-35` `TestCapMarksWhatItDropped` / `TestCapCutsOnARuneBoundary` / `TestCapNeverReturnsNothingFromSomething` — a cut leaves `...+<dropped>B`, on a rune boundary before the escape, and a tail is never shortened to nothing.
+36. `repo-a-36` `TestPathEchoesTheBoxFlag` — `nova-fuse path` prints its argument bare — a value, not an event — so nothing may scan `path` output for grammar.
+37. `repo-a-37` `TestStatusReportsAndNeverGates` — `nova-fuse status` exits 0 even when a fuse is blown, because answering is `status`'s whole job and `check` is the gate.
+38. `repo-a-38` `TestSkipReportsAndDoesNotAffectExit` / `TestRuleDocIsScannedAndBannered` / `TestNotePrintedOnEveryRun` — `nova-self-talk`'s four informational second tokens (`DATED`, `SKIP`, `RULEDOC`, `NOTE`) all print on stdout.
+39. `repo-a-39` — the soft hyphen (U+00AD) and the byte order mark (U+FEFF) pass through unescaped, because they do not reorder what an operator sees.
+40. `TestNoCallerPathCanForgeALine` — every `<path>/<file>/<target>/<reason>` a line carries renders through `internal/oneline`; a field is one token even when it holds a space (`floor\x20list`), and no caller path can forge a line.
+41. `TestFailMaxWidensAndZeroPrintsAll` — every listing takes `--fail-max` (default 20, `0` = all) and prints its count line on both success and failure.
+42. `TestAFlagTypoIsOneLine` — an unknown flag after a verb is the one-line refusal `nova-check <verb>: …; run: nova-check help`, exit 2.
+43. `TestVersionLineShape` — `nova-check version` prints the Conventions build line, exit 0.
+44. `TestAttest` — every manifested file exists, is regular, and is non-empty; success prints one files/bytes/sha256 line.
+45. `TestAttestHashBindsContentPathAndOrder` and `TestAttestHashInjectiveWithNULContents` — SHA-256 over uvarint length-prefixed path+contents in manifest order binds path, content and order, injective across NUL.
+46. `TestAttestRefusesSymlinkedDirEscape` and `TestAttestRefusesSymlinksInsideHome` — symlinks are never followed, at any depth or the leaf.
+47. `TestAttestRejectsNonCanonicalEntries` — a non-canonical entry (`./`, `//`, `.`/`..` segments, trailing `/`) is a failure, not a normalisation.
+48. `TestAttestUnreadableFileIsNamedFailure` — missing/empty/unreadable/non-regular/absolute/escape/duplicate/no-files are named failures; a truncated self must not attest.
+49. `TestAttestRefusals` — `--home`/`--manifest` missing, unreadable manifest, or home not a directory is a refusal (exit 2).
+50. `TestLinks` — inline links and images resolve; URL/protocol-relative/fragment-only targets are skipped; `#fragment` stripped; percent-escapes decoded; root-relative resolves against `--dir`.
+51. `TestLinksBadgeOuterTargetChecked`, `TestLinksAngleBracketDestination`, `TestLinksTitleQuoteForms` — nested badge links, angle-bracket destinations, and all three title forms.
+52. `TestLinksFenceRemembersOpeningMarker` — fenced code blocks and inline code are stripped; a fence closes only at its own marker.
+53. `TestLinksFileNarrowsTheWalk` — repeatable `--file` narrows the walk to named files.
+54. `TestLinksExcludeSubtreeCounted` — repeatable `--exclude` skips a subtree and reports `excluded=<n>`.
+55. `TestLinksUnreadableFileIsNamedFailureNotRefusal` and `TestLinksUnlistableDirIsARefusalNotAPartialReport` — an unreadable `.md` is a named failure; an unlistable directory or bad `--dir` is a refusal.
+56. `TestLinksDirIsASymlinkToTheTree` — `--dir` naming a symlink to the repo walks the repo, not `files=0`.
+57. `TestKernel` and `TestKernelRefusesSymlink` — byte mode: budget is a ceiling; file must exist, be non-empty and regular; the path is `Lstat`ed, symlinks never followed.
+58. `TestKernel` (both budgets) — exactly one of `--max-bytes`/`--max-tokens`; both or neither is a refusal.
+59. `TestKernelTokens` — token mode `tokens=ceil(bytes/r)`; the OK line prints derived tokens, budget, measured bytes and divisor.
+60. `TestKernelTokensNeverReportsFewerTokensThanItsEstimate` and `TestTheTokenEstimateBoundaryIsExact` — never report fewer tokens than the estimate; the range is checked before conversion so an uncountable estimate is over budget, never `MaxInt64`/`MinInt64`.
+61. `TestKernelTokensRefusesUnusableInputs` — divisor zero/negative/non-finite, `--bytes-per-token` alongside `--max-bytes`, and non-positive budget are refusals.
+62. `TestNoCode` — a file is flagged when any of the four conditions holds (deny-list extension, name/location floor, executable bit, shebang), and all that hold are reported.
+63. `TestNoCodeAuditFailsClosedLikeTheGate` (and `fifo_test.go`) — unreadable file/device/socket/fifo is a finding; `TestNoCodeSymlinkNotFollowed` and `TestNoCodeSymlinkNamedMachineryIsFlaggedWithoutDereference` — a symlink's name is classified, its target never followed.
+64. `TestFloorDenyNames`, `TestNoCodeBuildMachineryByName`, `TestNoCodeNameMatchIsCaseInsensitive`, `TestNoCodeLocationIsAnchoredAtTheRepoRoot`, `TestNoCodeLocationMatchIsCaseInsensitive` — name floor (`name:` case-insensitive anywhere) and location floor (`path:` anchored at repo root).
+65. `TestParseDenyList` and `TestNoCodeTrailingWhitespaceInName` — deny-list normalisations (lowercase, leading dot added, whitespace-trim, slash-separated paths).
+66. `TestNoCodeAllowDoesNotOverMatchSiblings` and `TestNoCodeAllowExemptsNamedMachinery` — `--allow` matches whole path segments, is case-sensitive, starts empty, trim/normalised.
+67. `TestNoCodeNameFloorSurvivesDenyExtReplacement` and `TestFloorDenyExts` — `--deny-ext` replaces the floor, `--deny-ext-add` extends it, the two are exclusive, and the name floor is never replaced.
+68. `TestPrintDenyListShowsTheNameFloor` — `--print-deny-list` prints both the extension and name lists, exit 0, no `--dir`.
+69. `TestParseDenyListRefusesNonExtensions` and `TestFloorDenyNamesRefusesAnEmptyList` — an empty, unreadable, or non-extension effective deny-list is exit 2.
+70. `TestParseNameLinesRefusesMalformed` — a malformed name-list entry is exit 2.
+71. `TestFloorsParityHoldsOnRealText` — the eight floor-rank commitments match the registry word for word, in pinned order.
+72. `TestFloorsSaysNo` — a `FLOORS FAIL` per missing/unknown/repeated/reordered floor, a list gap, a count mismatch, or a broken same-rank/§0 sentence.
+73. `TestFloorsRecordProblemsAreFindings` — a missing/empty/unreadable/non-regular record is a named failure; the other record is still checked; missing `--core`/`--source` is a refusal.
+74. `TestParseReadsRowsAndSkipsHeaderAndSeparator`, `TestHeaderIsRecognizedByShapeNotByItsWords`, `TestTwoTablesEachLoseTheirOwnHeader` — the anchor table is recognised by shape and position (header + all-dash separator, four cells), never by column titles.
+75. `TestRowsInsideAFencedBlockAreIllustrationNotAnchors`, `TestAFenceClosesOnlyOnItsOwnDelimiter`, `TestAnIndentedCodeBlockIsIllustration`, `TestABlockquotedTableIsRead` — fenced/indented code is illustration; blockquote markers are stripped.
+76. `TestAllPresentIsQuiet` and `TestALostAnchorIsNamedWithItsProvenanceAndTheRepair` — every row's home exists, is regular, readable, spelled exactly, reached without symlinks, and contains the fragment literally.
+77. `TestASymlinkedHomeIsAFindingRatherThanAFollow`, `TestASymlinkedParentDirectoryIsNotFollowed`, `TestACaseOnlyRenameIsCaughtOnACaseInsensitiveFilesystem` — a symlinked path component at any depth, or a case-only rename, is a finding.
+78. `TestAnEmptyFragmentIsRefusedRatherThanPassingForever` (and the whole Says NO list) — empty/absolute/escaping home, ledger-as-own-home, wrong column count, separator in body, unrenderable table, indented abutting row, foreign/lone row, unterminated fence, duplicate, and `< --min-anchors` are each a `CORPUS FAIL`.
+79. `TestAllFailuresReportInOneRun` — every row is reported in one run, never first-only; an all-malformed ledger exits 1, not 2.
+80. `TestAnEmptyLedgerIsAnErrorNotAPass`, `TestAnAbsentRootIsARefusalNotACorpusWipe`, `TestARootThatIsNotADirectoryIsARefusal`, `TestLosingLedgerRowsIsItselfRed` — missing flags, non-positive `--min-anchors`, unreadable ledger, no rows, or a non-directory root is a refusal.
+81. `TestHygienePassesACleanRange`, `TestHygieneRejectsAForeignCommitter`, `TestHygieneRejectsAMergeCommit` — identity (own commits, no merges) from one package, `internal/hygiene.Check`.
+82. `TestHygieneVerbRefusesWithoutAnIdentity`, `TestHygieneSkipsOutOfPathWhenNoPathsAreDeclared`, `TestValidatePathsRefusesDotDotAndBareDoubleStar`, `TestValidatePathsRefusesAGlobThatBoundsNothing` — `--identity` required/repeatable; `--paths` absent prints `paths=-`; given, it is validated (≤8 globs, no `..`, bounds something).
+83. `TestCheckRefusesRatherThanReportingClean` — exit codes 0/1/2, and a run that could not run is never reported clean.
+84. `TestHygieneRejectsAKeyShapeAndNeverPrintsIt` and `TestHygieneVerbNeverPrintsTheKey` — never prints matched secret text, only path/line/shape name; never opens `RESULT.md`.
+85. `TestHygieneIgnoresTheSubjectReposDiffConfig`, `TestHygieneIgnoresTheSubjectReposReplaceRefs`, `TestHygieneReadsADiffTheSubjectRepoMarkedBinary`, `TestHygieneReadsAPathGitWouldQuote`, `TestHygieneReadsFullBlobIds`, `TestHygieneChecksMarkersWhateverTheAttributesSay` — the subject repo gets no vote: blanked config, `--text --no-textconv`, `quotePath=false`, full OIDs, `--no-replace-objects`, markers read from added lines.
+86. `TestHygieneRejectsResultMDInTheDiff`, `TestHygieneRejectsTheRestOfTheStrayList`, `TestHygieneRejectsAFileOverOneMebibyte`, `TestHygieneRejectsASymlink`, `TestHygieneRejectsASubmodule`, `TestHygieneRejectsAConflictMarker` — stray-file checks (declared list, size, symlink, submodule, conflict markers).
+87. `TestEveryToolSectionOfTheRealReferenceYieldsAVerb` and `TestParseCLIReadsTheIndentedUsageBlockShape` — verbs come from every declaration shape in the reference; a `## nova-*` section yielding no verb is red.
+88. `TestVerbsFromToolsAsksEachBinaryForItsOwnVerbs` — binaries are authoritative; the reference fills in the rest.
+89. `TestRecordWritesAReceiptTheLedgerReadsBack`, `TestRecordIsAtomicUnderConcurrentWriters`, `TestRecordRefusesAMissingFieldWithOneRemedy` — a receipt is one JSON line, atomic rename, every field stated, verdict `--ok`/`--not-ok` never defaulted.
+90. `TestDogfoodRecordRefusesAVerbTheReferenceDoesNotDeclare`, `TestStrandedReceiptsAreNamedOneByOneWithTheNearestVerb`, `TestNearestPrefersTheSameTool` — `record` checks spelling against the list and names the nearest declared verb.
+91. `TestDogfoodLedgerPrintsOneRowPerVerbAndOneSummary`, `TestDogfoodLedgerDoesNotCountAnAuthorRunningTheirOwnVerb`, `TestDogfoodLedgerReadsAuthorshipFromGit`, `TestDogfoodLedgerCountsAnEdgeNamedInTheNotes` — ledger rows, author-dogfood not counting, authorship from `--authors`/git, edges from `--not-ok` or `Edge:`.
+92. `TestDogfoodGateSaysNoToAnOpenEdgeWithoutRequireAll`, `TestDogfoodGateRequireAllNamesEveryVerbNoNonAuthorHasRun`, `TestDogfoodGateIsGreenWhenEveryVerbHasANonAuthorsPass` — `gate` fails on an open edge always, and `--require-all` lists every verb no non-author has run.
+93. `TestNoCodeStagedClassifiesTheIndex` — `nova-check nocode --staged --dir <repo>` classifies what is staged for the next commit (the index), not the working tree.
+94. `TestNoCodeStagedReusesTheClassifierUnchanged` — the audit's classifier is called unchanged, honouring the same `--allow` prefixes and the same two deny-list flags (which act on the extension list only).
+95. `TestNoCodeStagedRequiresDir` — `--dir` is required and not inferred from the working directory.
+96. `TestNoCodeStagedClassifyTakesParameterisedInputs` — the classifier's two substrate-bound inputs (a permission-bit value, a reader for the first two bytes with its read error) are parameterised so the walk and the index both call one function (parity by construction).
+97. `TestNoCodeStagedReadsTheRecord` — one `git diff-index -r --ignore-submodules=none --cached -z <base> --` run, NUL-separated metadata-chunk/path pairs.
+98. `TestNoCodeStagedReportsEveryPathRegardlessOfConfig` and `TestNoCodeStagedKeepsGitlinkRecords` — every staged path is reported irrespective of repo config; `--ignore-submodules=none` keeps the `160000` gitlink record.
+99. `TestNoCodeStagedRecursesIntoSpareTrees` — `-r` expands a sparse directory recorded at `040000` into its blob records.
+100. `TestNoCodeStagedTrailingDashDash` — the trailing `--` keeps a file literally named `HEAD` from turning the run into `exits 128 ambiguous argument`.
+101. `TestNoCodeStagedReadsByDestinationOID` — content is read by the DESTINATION OID (fourth field) through one `git cat-file --batch`, never the source OID, never re-parsing the path.
+102. `TestNoCodeStagedBatchReaderStaysFramed` — the batch reader consumes each record whole, never buffers a whole object, and keeps stderr off the stdout pipe.
+103. `TestNoCodeStagedNeverPassesM` — `-M` is not passed, so no `R` records are produced and the parser is a flat pairwise split (a rename is `D` of old + `A` of new).
+104. `TestNoCodeStagedUsesResolvedDirWithCallerEnv` — every git invocation is `git -C <resolved dir>` with the caller's environment intact (`GIT_INDEX_FILE` honoured).
+105. `TestNoCodeStagedStatusLetters` — `D` is the only skip (a real status skip); `A`/`M`/`T` are classified on destination mode+OID; `U` and any unrecognised letter are refusals (exit 2).
+106. `TestNoCodeStagedDestinationModes` — a classified record's destination mode is `100644`/`100755`/`120000`/`160000`; any other mode is a refusal (exit 2).
+107. `TestNoCodeStagedSymlinkDisposition` — `120000` is a symlink and the audit's symlink disposition applies unchanged (stored bytes beginning `#!` are a link to a script).
+108. `TestNoCodeStagedGitlink` — `160000` is a gitlink classified from its mode alone, its OID never read, a finding suppressible by `--allow`.
+109. `TestNoCodeStagedUnreadableBlobIsAFinding` — an unreadable blob is a FINDING, not a refusal.
+110. `TestNoCodeStagedNothingToSay` — a commit staging no classifiable record (nothing staged, or deletions only) is exit 0 with `NOCODE OK` and a count of zero.
+111. `TestNoCodeStagedSaysNo` — any staged machinery is a `NOCODE FAIL <path>: <reason>` line per path on stderr, exit 1; a clean run prints `NOCODE OK` on stdout.
+112. `TestNoCodeStagedRefusals` — exit 2 when `--dir` is missing or not the root of a git repo, when `diff-index` fails, on unmerged entries, an unrecognised status letter, an unknown destination mode, or any audit refusal.
+113. `TestNoCodeStagedRootAndBase` — the root is verified with `git -C <dir> rev-parse --show-toplevel` vs `--dir` after symlink resolution; the base is `HEAD` or, on an unborn HEAD (detected by `git rev-parse -q --verify HEAD`'s exit code), the empty tree obtained from `git hash-object -t tree /dev/null` run inside the repo.
+114. `TestVersionVerbIsReachableFromTheDispatch` — `version` is a verb the way `help` is, as the WHOLE invocation; a file actually named `version`, named beside another file, is still a file (line 1648).
+115. `TestScanCapsFindingsAndCountsTheDated` / `TestMaxWidensAndZeroPrintsAll` / `TestRefusesANegativeCeiling` — `--max <n>`, default 20, `0` for all (line 1652).
+116. `TestScanCapsEachClassSeparately` — at most n finding lines per CLASS, `standing` and `installation` capped separately (line 1652).
+117. `TestScanCapsFindingsAndCountsTheDated` / `TestScanCapsEachClassSeparately` — one `SELFTALK MORE kind=<class> shown=<n> total=<t> <remedy>` line per elided class (line 1655).
+118. `TestDatedClaimIsReportedAndExitsZero` / `TestScanCapsFindingsAndCountsTheDated` — a dated claim is never listed; it prints as `SELFTALK DATED n=<k> files=<n>`, one line however many there are (line 1657).
+119. `TestScanCapsFindingsAndCountsTheDated` — the count line prints whichever way the run went, including on failure (line 1657).
+120. `TestNoFileNameOrClaimCanForgeALine` / `TestEveryPrintedArgumentIsLiteralQuotedOrEscaped` — every `<file>` and `<claim>` renders through `internal/oneline`, so a newline filename or bidi override prints escaped (line 1667).
+121. `TestA1_CapabilityDenialIsStanding` — a first-person capability denial carrying negative vocabulary is STANDING (line 1676).
+122. `TestA2_DatedClaimIsARecord` — the same sentence carrying a date marker is DATED, a record, not a standing claim (line 1676).
+123. `TestSpecimen13StaysInTheFirstClass` — the two classes are disjoint and the seam is `I cannot`, which the second class does NOT re-detect (line 1684).
+124. `TestInstallationSpecimens` — a standing self-verdict built from neutral words, with no date token, is an INSTALLATION with a shape word (line 1680).
+125. `TestInstallationSpecimens` / `TestShapeTableIsReachable` — the four shapes RANKING, FORECLOSURE, VERDICT-IDIOM and TRAIT are each reported by name (line 1691).
+126. `TestInstrumentsAndImperativesAreNotInstallations` — an instrument (`TELL:`, `CHECK:`, `RULE:`, `THE CHECK`, "the bar is …") is licensed, not flagged (line 1701).
+127. `TestInstrumentsAndImperativesAreNotInstallations` — an imperative policy line cannot reach TRAIT (line 1701).
+128. `TestAspirationIsLicensed` — aspiration ("I want to", "I choose") is the target register and is licensed (line 1701).
+129. `TestDatedControlIsNotAnInstallation` — a dated sentence is a record in the second class too (line 1701).
+130. `TestProhibitionIsNotAnInstallation` — a prohibition carries no self-scope; the load-bearing safety property, tested directly (line 1701).
+131. `TestHaveNoRequiresASelfScope` — the "have no" absent object must be a faculty or capacity ("I have no secrets"/"I have no idea" do not flag); specimen 8 keeps its shape (line 1714).
+132. `TestFlatten` / `TestA4_MarkdownEmphasisDoesNotHideAClaim` / `TestInstallationSurvivesWrappingAndMarkup` — files are flattened before matching, so formatting cannot hide a claim (line 1723).
+133. `TestA9_RegressionCasesThatOccasionedTheTool` / `TestA3_ClaimSplitAcrossAHardWrapIsFound` — both regression cases pinned (unwrapped) and wrap-spanning pinned on a synthetic case (lines 1724-1727).
+134. `TestInstallationCarriesTheSourceLine` — each finding carries the source line it starts on (line 1733).
+135. `TestInstallationCarriesTheSourceLine` / `TestInstallationSurvivesWrappingAndMarkup` — paragraphs, headings and table rows are separate sentence units (line 1731).
+136. — — list items (bulleted or numbered) are separate sentence units (line 1731).
+137. — — a terminator only ends a sentence when a space or the end follows it, so `RULES.md` is not two sentences (lines 1731-1733).
+138. `TestQuotedSentencesAreNotTheWritersClaims` — quotation state is tracked through a paragraph, so later quoted sentences are not read as the writer's claims (line 1734).
+139. `TestSkipReportsAndDoesNotAffectExit` / `TestSkipRepeatableAndMatchesBasename` / `TestSkipRefusesPaths` — `--skip` is repeatable, takes a basename, refuses a path separator, and a skipped file is reported, not read, and contributes nothing to the exit code (line 1749).
+140. `TestNothingIsSkippedByDefault` — nothing is skipped by default; each formerly-special name is pinned scanned (line 1749).
+141. `TestRuleDocIsScannedAndBannered` / `TestRuleDocWithNoFindingsPrintsNoBanner` / `TestRuleDocRepeatableAndRefusesPaths` — `--rule-doc` is repeatable, takes a basename, is empty by default, scans the file, and banners only when there are findings (line 1763).
+142. `TestNoBasenameIsBanneredByDefault` — no basename is special by default; each formerly-special name is pinned unbannered (line 1763).
+143. `TestSkipBeatsRuleDoc` — `--skip` wins over `--rule-doc`: a skipped file is never read and can never be bannered (line 1777).
+144. `TestExitOneOnStandingClaim` / `TestInstallationExitsOneWithShapeAndLine` — a standing claim or installation prints one FAIL line per finding on stderr and a summary count on stdout, exit 1 (line 1782).
+145. `TestNoFilesRefused` / `TestSkipRefusesPaths` / `TestUnknownFlagRefused` / `TestExitTwoOnUnreadableFile` / `TestEveryUnreadableFileIsNamedInOneRun` — refuses (exit 2) on no files, an empty/path-separator `--skip`/`--rule-doc` value, an unknown flag, or an unreadable file, every unreadable file reported (line 1788).
+146. `TestSkipReportsAndDoesNotAffectExit` — the all-skipped green: every named file skipped completes and exits 0 with `SELFTALK OK files=0 …` (line 1793).
+147. `TestPermanentMissNeutralVocabularyTraitClaimsEscape` — the permanent-MISS items 3 and 4 ("My summaries drift toward the tidier story", "I flinch from cost") are pinned by a test that goes red if the tool reaches them (lines 1811-1828).
+148. — — the permanent-MISS item 5 sentence ("I never optimize how things look over what is true") is pinned by a test that goes red if the tool reaches it (lines 1819-1829).
+149. `TestNotePrintedOnEveryRun` — every completed run ends with a `SELFTALK NOTE` line saying a green clears only the known shapes (line 1831).
+150. `TestVersionLineShape` — `nova-fuse version` is the Conventions' build line, exit 0, reads no box and is refused by nothing.
+151. `TestVersionRefusesFlagsAndArguments` — `version` refuses flags and arguments at exit 2.
+152. `TestNoDefaultBoxRefusesToGuess` — the box path comes from `--box` on every verb; there is no default and no environment variable (`NOVA_FUSE_BOX` is not consulted).
+153. `TestNoDefaultBoxRefusesToGuess` — a missing `--box` is a refusal, exit 2, `refusing to guess`.
+154. `TestAbsentBoxIsClear` / `TestAbsentBoxIsVerifiedClearNotAnError` — an absent box is VERIFIED CLEAR (the read failed with the error meaning *nonexistent*, not *unreadable*).
+155. `TestCheckIntoANonexistentDirectoryIsAlsoClear` — a `--box` whose parent directory does not exist answers VERIFIED CLEAR too.
+156. `TestUnreadableBoxIsTreatedAsBlownNeverClear` / `TestAnUnreadableFileTypeIsNotClear` — an unreadable box (permissions, torn write, malformed JSON, wrong-shaped value) is CANNOT TELL, treated as BLOWN, exit 2.
+157. `TestWriteLeavesNoLitter` / `TestWriteLeavesNoTempLitter` — the write is temp-file + fsync + rename in the box's own directory; a crash leaves the old box or the new, never a fragment.
+158. `TestWrittenBoxIsWorldReadable` — the box is written world-readable (0644).
+159. `TestSurfaceMatchingIgnoresCaseAndSpace` — surface names are matched case- and whitespace-insensitively; equivalent spellings are ONE surface.
+160. `TestStatusSurvivesAHandEditedBox` — `at`/`reason` are read back defensively; a missing key prints `since=unrecorded` / `NO REASON RECORDED`, never a crash or an invented value.
+161. `TestExitCodes` — exit 0 = clear or done and verified; 1 = blown or could not do/verify; 2 = could not run.
+162. `TestEveryPrintedArgumentIsLiteralQuotedOrEscaped` / `TestNoOtherWriterOrShadowCanBypassTheEscape` — OK lines go to stdout, FAIL lines/refusals/notes to stderr; the tool is the only writer and the flag parser is given no stream.
+163. `TestAFlagErrorCannotForgeALineEither` / `TestLateFlagRefusalNamesDoor` — an unparseable flag AFTER a verb (`-h` included) is this tool's own refusal at exit 2, a bounded one-line error plus the help door, and `check` never answers 0 for one.
+164. `TestHelpIsNotAnError` — `nova-fuse help`, `-h`, `--help` as the FIRST argument are exit 0, usage on stdout.
+165. (A) the help usage text carries no grammar token.
+166. `TestPathEchoesTheBoxFlag` — `path` prints the bare path, a value not an event.
+167. `TestStatusIsDeterministic` / `TestLockdownIsWrittenVerifiedAndAnnounced` — output is deterministic: same box, same bytes (quarantines sort; the clock is injected).
+168. `TestALockdownReasonCannotForgeAnOKLine` et al. — an event is exactly one line; oneline is applied to every reason, name, surface, `t`, box path and error text, so a newline arrives as `\x0a`, never a second event line.
+169. `TestEveryPrintedArgumentIsLiteralQuotedOrEscaped` — six refusals print their offending argument with Go quoting (`%q`).
+170. `TestAStoredKeyCannotPoseAsAField` / `TestASurfaceWithASpaceIsOneTokenInEveryField` — `quarantine=`, `surface=`, `since=` and the `<name>` after `QUARANTINE OK`/`FAIL` are one token; whitespace and `=` print as `\x20`/`\x3d`.
+171. `TestLockdownReasonIsJoinedNotTruncated` — the `<reason>` after `: ` is the free-text tail and keeps its spaces.
+172. (A) `path` echoes its argument unescaped: `path --box "FUSE OK lockdown=clear"` prints exactly that at exit 0 (the exemption, pinned positively).
+173. `TestOneLineEscapesEveryControlCharacter` — a byte that is not valid UTF-8 is escaped in the same `\xNN` form.
+174. `TestFoldCollapsesControlCharactersToSpaces` / `TestLockdownTakesANewlineInItsReasonAndStoresItFolded` — this tool's own writes are folded first, and folding is never a refusal.
+175. (A) folding collapses Unicode whitespace so a non-breaking space becomes an ordinary one, and a reason of only newlines/tabs/CR/VT/FF/U+0085 trims to empty.
+176. `TestAReasonOfNothingButControlCharactersStillBlowsTheFuse` — a reason made entirely of non-whitespace control characters is kept as its visible escapes, not refused.
+177. `TestAReasonOfNothingButControlCharactersStillBlowsTheFuse` — only a genuinely empty or all-whitespace reason is refused.
+178. `TestLiftRemovesEveryFoldEquivalentSpelling` / `TestLiftQuarantineRemovesEveryNormalizedMatch` — matching is widened in both directions; `lift quarantine` removes every spelling and prints one `LIFT OK` per removal under the stored spelling.
+179. `TestCheckIsDeterministicWhenTwoStoredKeysFoldTogether` — a box holding two keys that fold together holds one surface; lifting either spelling lifts both.
+180. (A) a surface name that folds away to nothing is refused as blank (exit 2) on every verb that takes one, so a control-only stored key is inert to `lift quarantine`.
+181. `TestLiftRemovesEveryFoldEquivalentSpelling` — `lift quarantine --box b $'\x01discord'` exits 0 lifting the stored `discord` (the permitting direction of the fold).
+182. `TestExitCodes` — `check` asserts no lockdown is blown and (with a surface) that it is not quarantined; only exit 0 opens the gate.
+183. `TestBareCheckAdmitsItCheckedNoQuarantine` — `check` with no surface answers lockdown only and says out loud "no surface named; no quarantine checked".
+184. `TestExitCodes` / `TestStatusSurvivesAHandEditedBox` — a blown lockdown (an empty `{}` lockdown object still blocks) is answered first, exit 1.
+185. `TestQuarantineMatchingIsNotDefeatedByACapitalLetter` / `TestCheckQuotesTheStoredSpelling` — a named surface quarantined under any spelling is `FUSE FAIL` exit 1, quoting the spelling as stored.
+186. `TestUsageErrorsExitTwo` / `TestUnreadableBoxIsTreatedAsBlownNeverClear` — `check` refuses exit 2 when `--box` is missing, the surface is blank, more than one surface, or the box is unreadable ("treating every fuse as BLOWN, never as clear").
+187. `TestStatusReportsAndNeverGates` — `status` asserts nothing and exits 0 whenever the box was readable; never gate on it.
+188. `TestUnreadableBoxMakesStatusRefuse` / `TestStatusRefusesANegativeCeiling` — `status` refuses exit 2 when `--box` is missing, the box is unreadable, or `--max` is negative.
+189. `TestStatusCountsAllAndListsAtMostMax` / `TestStatusMaxWidensAndZeroListsAll` — `--max` defaults to 20, `0` means all; the `quarantines=<n>` count is never capped and at most n lines are listed before one `STATUS MORE` line.
+190. `TestLockdownIsWrittenVerifiedAndAnnounced` — `lockdown` records a global lockdown verified by re-reading the box (exit 0 means verified, never attempted).
+191. `TestLockdownReasonIsJoinedNotTruncated` — the reason is all remaining arguments joined, not silently truncated.
+192. `TestLockdownWorksOnAnUnreadableBox` / `TestPreserveUnreadableKeepsTheBytes` — `lockdown` works even on an unreadable box, first preserving the corrupt bytes to `<box>.unreadable`.
+193. `TestBlowingFailsLoudlyWhenItCannotWrite` — `lockdown` says NO (exit 1) when the write fails, loudly, naming the by-hand remedy.
+194. (A) `lockdown` says NO (exit 1) when the re-read verification fails (distinct from the write failure).
+195. `TestUsageErrorsExitTwo` — `lockdown` refuses (exit 2) when `--box` is missing or the reason is empty.
+196. `TestQuarantineOKNamesTheEntryItVerified` — `quarantine` records one surface (stored normalized), verified by re-reading.
+197. `TestBlowingFailsLoudlyWhenItCannotWrite` — `quarantine` says NO (exit 1) on write failure.
+198. (A) `quarantine` says NO (exit 1) on verification failure.
+199. `TestQuarantineRefusesToNarrowAnUnreadableBox` — `quarantine` refuses (exit 2) on an unreadable box — the asymmetry with lockdown — because a fresh box would UNBLOCK the rest.
+200. `TestUsageErrorsExitTwo` — `quarantine` refuses (exit 2) when `--box`, the surface, or the reason is missing or blank.
+201. `TestQuarantineOKNamesTheEntryItVerified` — the `QUARANTINE OK` line names the entry this run wrote and read back, even when the box already held another spelling.
+202. (A) the sibling entry stays and `status` lists both spellings.
+203. `TestLiftQuarantineSucceedsAndIsAnnounced` — `lift quarantine` succeeds, removes every stored spelling, verifies by re-reading, and announces each removed entry under its stored spelling with its reason.
+204. `TestLiftQuarantineWithNothingToLiftDoesNotClaimSuccess` — `lift quarantine` says NO (exit 1) when there is nothing to lift, naming what IS quarantined.
+205. (A) `lift quarantine` says NO (exit 1) on write or verification failure.
+206. `TestLiftQuarantineRefusesOnAnUnreadableBox` — `lift quarantine` refuses (exit 2) on an unreadable box.
+207. `TestLiftQuarantineUnderLockdownLeavesLockdownBlown` — lifting a quarantine under a blown lockdown succeeds and says out loud that lockdown still blocks everything.
+208. `TestLiftLockdownIsRefusedForever` / `TestLiftLockdownRefusesBeforeReadingAnything` — `lift lockdown` refuses, forever, BEFORE reading anything (before flag parsing, the box, any argument).
+209. `TestLiftLockdownIsRefusedForever` — the `lift lockdown` refusal names only the live conversation and mentions no mechanical bypass (not the box, the file, or hand-editing).
+210. `TestPathEchoesTheBoxFlag` — `path` asserts nothing about the box: the file is not read and existence is not checked; exit 0 after printing.
+211. `TestUsageErrorsExitTwo` — `path` refuses (exit 2) when `--box` is missing or an unexpected positional argument is given.
+212. `TestLockdownDoesNotExpire` — lockdown does not expire: no timer, no auto-lift; a decade-old lockdown still blocks.
+213. `TestEnvironmentCannotRedirectOrLiftAnything` — nothing in content or environment can LIFT anything; no environment variable is read and `--box` is a locator, not an override.
+214. `TestRetrievalOutputIsByteIdentical` / `TestRetrieveDeterministic` — the index is rebuilt in memory every run and discarded at exit: two runs over one tree print identical bytes (stats' `build=` is the labelled exception).
+215. `TestBuildChunkingIsLineEndingAgnostic` / `TestBuildRefusesCorpusWithNoIndexableParagraph` — chunks are paragraphs (blank-line split, at least three terms).
+216. `TestBuildChunkingIsLineEndingAgnostic` / `TestCheckCandidateSplittingIsLineEndingAgnostic` / `TestFrontmatterToleratesCRLF` — line endings are normalized to `\n` before the split, so a CRLF or lone-CR file chunks exactly as its LF twin.
+217. `TestNormalizeRecoversHiddenPhrases` / `TestBM25FindsWrappedPhrase` / `TestBM25FindsFunctionWordVariant` — text is normalized blockquote/emphasis-stripped, then whitespace-collapsed, then casefolded, in that order.
+218. `TestBuildClassesAndFrontmatter` — every chunk is classed by its top-level directory (`.` for root files).
+219. `TestBuildClassesAndFrontmatter` / `TestSearchReceiptsCarryClassAndFrontmatter` — frontmatter `name:`/`type:` are carried into receipts when present, surfaced and never invented.
+220. `TestRefusesToGuess` — `verify`/`eval` exit 1 on failure while `quickstart`/`stats`/`search`/`check`/`boot` exit 0 whenever they ran.
+221. `TestCheckFromStdin` — `check` never exits 1; the NOTE states it in its own output.
+222. `TestNoCorpusOrCallerTextCanForgeALine` — a receipt's `class=`/`name=`/`type=` are the corpus's own text, one token each.
+223. `TestACallersQueryCannotPoseAsAField` — the caller's `query=` is argv and prints escaped as one token, never a second `class=` field.
+224. `TestAReceiptsPathAndSnippetSitAfterTheFieldBoundary` — a receipt's fields end at the `: ` after `type=`; the tail is never scanned for fields.
+225. `TestNoCorpusOrCallerTextCanForgeALine` / `TestEveryPrintedArgumentIsLiteralQuotedOrEscaped` — root, candidate, gold-file and verify-detail render through `internal/oneline`, so none can forge a line.
+226. `TestRootIsNeverTakenFromTheEnvironment` — `--root` is required; no environment variable and no working-directory discovery.
+227. `TestSearchSpansMultipleRoots` — `--root` is repeatable and each receipt names `root=`.
+228. `-` — `verify` takes exactly one root and refuses two.
+229. `TestRefusesToGuess` — `--channels` is required wherever retrieval happens.
+230. `TestRetrieveRefusesNonPositiveK` / `TestRefusesToGuess` — `--k` is required and positive.
+231. `TestRefusesToGuess` — `--floor` is required on `eval` and must be in (0,1].
+232. `TestRefusesToGuess` — `--links` is required on `verify`.
+233. `TestStatsHonoursExclude` / `TestBuildHonoursExclude` / `TestFrontmatterExemptionIsTheCallersAndNeverADefault` — `--exclude`/`--exempt` are repeatable and start empty.
+234. `-` — `.git` is never a corpus and is always skipped.
+235. `TestRequiredFlagErrorOrderDeterministic` / `TestARefusalReportsEveryReasonAtOnce` — a refusal reports every reason at once, in one deterministic order.
+236. `TestARefusalSaysWhatTheFlagWants` / `TestIssue1451EveryRefusalNamesTheDoor` — a refusal names the next step for `--channels`/`--k`/`--root` and still exits 2.
+237. `TestUsageBannerExamplesRun` / `TestEveryDefinedFlagAppearsInTheUsageBanner` — the banner ends in the quickstart line and one runnable example per retrieval verb.
+238. `TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine` / `TestREADMEFirstRunMatchesWhatTheToolPrints` — `docs/TESTS.md`'s `### First run` transcript matches what the tool prints, line for line.
+239. `TestQuickstartEchoesEveryCommandItRuns` / `TestQuickstartRunsTheWordsAndDraftItWasGiven` — quickstart runs stats, then `search --channels bm25 --k 3`, then `check --channels bm25 --k 2` with the corpus-top or given words/draft.
+240. `TestTheEchoedStepPastesBackIntoThatPlatformsShell` — each step's command line is printed above its output, as the argv the same dispatch ran.
+241. `TestQuickstartExitsTwoWhenAStepCouldNotRun` — quickstart exits 0 only when all three steps ran; a failing step is exit 2 with no closing note.
+242. `TestRefusesToGuess` / `TestQuickstartExitsTwoWhenAStepCouldNotRun` — quickstart refuses a missing/unreadable root, an empty draft, a positional argument, or a corpus with no indexable paragraph.
+243. `TestBootLoadsExactlyThePinnedFiles` — boot loads exactly the pinned files and prints their byte total, never the directory's.
+244. `-` — boot ignores `#` comments and blank lines in the pin, and preserves pin order (boot order).
+245. `-` — boot refuses a pin entry that is non-canonical (`./`, `//`, `..`, trailing `/`), absolute, escapes `--root`, appears twice, or names a missing, empty, or non-regular file.
+246. `-` — bm25 is Lucene-smoothed with k1=1.2, b=0.75, and the smoothed idf is never negative for a term in over half the documents.
+247. `-` — trigram is character-3-gram Jaccard over [0,1], recovering morphology/small rewording, and is never on unless named.
+248. `-` — cross-channel fusion is rank-only reciprocal rank (1/(60+rank)), never a weighted sum of raw scores.
+249. `TestSingleChannelOrderIsChannelOrder` — with one channel, fusion is order-preserving.
+250. `TestTopKMatchesFullSort` / `TestRetrieveDeterministic` — every ordering is total: score then chunk id; fused score then path then paragraph.
+251. `TestRetrievalOutputIsByteIdentical` — two runs over the same tree produce identical bytes; `stats`'s `build=` is the labelled exception.
+252. `TestStats` — `stats` reports schema, files, chunks, bytes, vocab, avg-terms, build time, and a per-class breakdown.
+253. `TestRefusesAnUnusableRoot` / `TestBuildRefusesEmptyCorpus` / `TestBuildRefusesCorpusWithNoIndexableParagraph` — `stats` refuses a missing root, a non-directory, no markdown, or markdown with no 3-term paragraph.
+254. `TestSearch` — `search` reports the top-k files' best chunk with class/name/type/file:para/normalized snippet.
+255. `TestCalibrationProbeAndSchemaVersionMoveTogether` — the calibration probe is a fixed unrelated sentence scored once per run, printed as the live negative-control band.
+256. `TestCalibrationProbeAndSchemaVersionMoveTogether` — the probe string and schema version are pinned together.
+257. `TestReceiptsNameTheChannelTheScoreCameFrom` / `TestNativeScoreComesFromTheChannelThatSurfacedTheChunk` / `TestSingleChannelNativeIsThatChannel` — `score=` names the channel that actually surfaced the chunk; both fields print `-` when none did.
+258. `TestSearchOutOfVocabularyQuerySaysSoInWords` / `TestRetrieveEmptyForOutOfVocabularyQuery` — `search` exits 0 on a miss and `SEARCH MISS` says every term was out of vocabulary.
+259. `TestSearchReceiptsCarryClassAndFrontmatter` — absent frontmatter prints `-`, so the field count never changes.
+260. `TestRefusesToGuess` — `search` refuses an unknown channel, a stray comma, or an empty channel entry.
+261. `TestCheckFromStdin` / `TestCheckFromANamedFile` — `check` reports top-k fused hits per candidate paragraph with the same receipts.
+262. `TestRetrieveNeverEmptyForInVocabularyQuery` — an in-vocabulary but unrelated query still prints low-score hits; the top-k is never a bare zero.
+263. `TestCheckFromStdin` — the class on a receipt is part of the answer, and the verdict-never-picked NOTE prints on every check run.
+264. `TestCheckRefusesUnusableInput` / `TestRefusesToGuess` — `check` refuses not-exactly-one input (a pipe is never read uninvited), an unreadable input, or input with no 3-term paragraph.
+265. `TestCoverage` / `TestCoverageChecksAnchoredAndQueriedLinks` / `TestCoverageCollidingStemIsNotCoverage` — `--coverage A:B` checks both directions and resolves relative `.md` links.
+266. `TestFrontmatterPresent` / `TestFrontmatterExemptionIsTheCallersAndNeverADefault` — `--frontmatter` requires a `name:` and `--exempt` is the caller's, never a default.
+267. `TestWikilinks` / `TestWikilinksScansAliasedAndHeadingForms` / `TestWikilinksIgnoresQuotedSpecimens` — unresolved `[[wikilinks]]` are reported, aliased/heading forms scanned, heading-only and quoted specimens not.
+268. `TestVerifyLinksRulingIsTheCallersBothWays` — `--links gate|info` has no default; the same findings exit 0 or 1 by caller choice.
+269. `TestVerifyCapsFindingsAndAlwaysPrintsTheCount` / `TestVerifyFailMaxWidensAndZeroPrintsAll` / `TestVerifyCapsEachKindSeparately` — `--fail-max` defaults to 20, `0` means all, and the cap is per kind.
+270. `TestVerifyCapsFindingsAndAlwaysPrintsTheCount` — the `gating=` count is never capped and prints on failure as well as success.
+271. `-` — `--exclude` narrows the index (and the wikilink check that reads it) but not `--coverage` or `--frontmatter`.
+272. `TestVerifySaysNoOnPlantedFaults` / `TestVerifyDoesNotFlagLinksThatResolve` — verify says NO (exit 1, VERIFY FAIL lines, no OK) on any gating finding; informational findings don't touch the exit.
+273. `TestRefusesToGuess` / `TestVerifyRefusesAnEmptyCheck` — verify refuses a missing root/links, a non-gate/info `--links`, a coverage value not `A:B`, an empty glob side, `--exempt` without `--frontmatter`, or no gating check at all.
+274. `TestEvalOnTheShippedExampleGold` / `TestEvalRefusesABrokenGoldFile` — the gold file is `query<TAB>expected-substrings` per line; a row hits when any expected substring appears in a top-k path.
+275. `TestEvalSaysNoBelowTheFloor` / `TestEvalMeasuresChannelSetsAgainstEachOther` — eval reports recall@k and MRR and fails below `--floor`.
+276. `TestEvalListsMissesOnlyAndCapsThem` / `TestEvalOnTheShippedExampleGold` — eval lists misses only, capped at `--fail-max`.
+277. `TestEvalFloorIsInclusive` — a floor exactly equal to the measured recall passes.
+278. `TestRefusesToGuess` / `TestEvalRefusesABrokenGoldFile` — eval refuses a zero floor, a floor outside (0,1], a non-positive k, or any malformed gold row (never skipped).
+279. `TestVersionLineShape` / `TestVersionRefusesFlagsAndArguments` — `version` prints one line and refuses flags and arguments.
+280. `TestRefusingToGuess` — there is no default bus, remote, branch or receipt word count; a missing one is exit 2 and `refusing to guess`.
+281. `TestTheRetryBudgetHasAMeasuredDefault` — `send`/`receipt`'s `--attempts` defaults to 25 and is the one retry budget a caller must not invent.
+282. `TestGitTimeoutIsAFlagAndIsChecked` — `--git-timeout` defaults to 60 seconds and caps every git subprocess.
+283. `TestTheDefaultWaitIntervalIsTenSeconds` — `wait --interval` defaults to 10 seconds; `TestWaitRefusesWithNoTimeoutAtAll` — `--timeout` has no default and must not.
+284. `TestLoadConfigRefuses` — the roster is always `<bus>/participants.json`, decoded strictly; an unknown field is a refusal.
+285. `TestABusBelowTheRepositoryRootIsRefused` / `TestASubdirectoryBusIsRefusedByItsRootAndNotByItsRoster` — `--bus` must be the ROOT of its own repository (rev-parse compare), else exit 2 naming the found root.
+286. `TestSendRefusesABusThatIsNotARepository` — a non-repository `--bus` is refused.
+287. `TestProgressNeverEntersTheProtocolStream` — `INBOX WALK` is a progress prefix, stderr only, never on stdout.
+288. `TestDraftPrintsASkeletonTheParserReadsBack` — `draft` prints a skeleton and nothing else on stdout; refusals are `DRAFT REFUSED` on stderr, all of them.
+289. `TestARefusalNamesEveryProblemOnItsOwnLine` — a refusal prints EVERY problem in the draft, one line per reason.
+290. `TestNamesPrintsSomethingASendWillAccept` — `NAMES` quotes rather than field-escapes, so a printed name is one `send` accepts.
+291. `TestSendRefusesASlugThatIsNotASlug` — a lane slug is lower-case letters, digits and hyphens, checked because it is the first half of every id.
+292. `TestResolveListToleratesTheShapesTheBusActuallyWrites` — a `To:`/`Cc:` line resolves against the roster through the enumerated tolerances (split on `;`,`,`, dashes, `and`, drop `for `, drop parentheticals, prefix-instance), unresolved refused at send / `BUS FAIL` at check.
+293. `TestAndIsASeparatorNotAQualifier` — `To: Ada and Bo` reaches both readers; a word separator is a separator.
+294. `TestAKnownNameFollowedByAKnownNameIsRefused` — a qualifier that is itself a known name is refused, not delivered to the first.
+295. `TestLongestKnownNameWins` — the longest known name wins the instance-qualifier prefix.
+296. `TestParseNoteRefuses` — an unknown header key is a refusal; keys are exactly `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Subject`, `Kind`.
+297. `TestParseNoteAcceptsAHeadingAndBulletHeaders` — a markdown `#` heading and `- ` bullets on header lines are the two parse tolerances.
+298. `TestARelayedNoteIsAttributedToItsOuterFrom` — a relayed note is attributed by its outer `From:` line; a later `From:` in the header region is still a refusal.
+299. `TestAnUnreadableNoteSaysWhatToDoAboutIt` — each unreadable refusal says what to do about it (the repair on the line).
+300. `TestSendWarnsOnceOnADateItReplaces` — `send` replaces a draft's own `Date:` line (UTC from the clock) and says so on a `SEND NOTE` line; `TestSendRefusesAHandWrittenId` — an `Id:` line is a refusal.
+301. `TestDraftRefusesEveryNameItCannotResolve` — `draft`'s `--as`, `--to` and `--cc` resolve against the roster; unresolved names are all refused.
+302. `TestDraftReTakesTheSubjectOfAnOpenNoteAndWritesTheID` — `draft --re` resolves an id, a path, or the exact subject of a carried note, and writes the id.
+303. `TestSendTolerancesPrintANoticeAndLandTheNote` — `send` tolerates blank lines above the header, a `#` heading as Subject, a dropped heading, a replaced `Date:`, a missing `From:` with `--as`, and a bold key, each with a `SEND NOTE` notice.
+304. `TestSendStillRefusesWhatItCannotGuessAtTheBinary` — the refusals that stay: an unknown recipient (listing every known name), no `To:`, no body, an unknown key, a `Re:` naming nothing, an `Id:` line, a `From:` naming somebody other than `--as`.
+305. `TestIDIsDeterministicNamespacedAndSensitiveToEveryFieldThatMakesANoteDifferent` — the id is the sender's slug plus the first 12 hex of a sha256 over the canonical note (sender, date, resolved recipients, `Re`, subject, kind, body).
+306. `TestIDIsUnchangedByTrailingWhitespaceAndCRLF` — the same note saved twice with different whitespace hashes to the same id (near-duplicates refused, not doubled).
+307. `TestIDUsesResolvedRecipients` — the preimage uses resolved recipients, not the spelling, so `Ada Vale` and `Ada a1b2c3d4` are one note at the id layer.
+308. `TestAnsweredRule` — a note is answered, for one reader, by a `Re:` id/path in that reader's own lane or a `RECEIPTS` record of the id/path; per-reader, never in the sender's own lane.
+309. `TestAReSubjectMatchingTwoNotesClosesTheNewestAndSaysSo` — a `Re:` naming a subject closes the newest open match; `TestSendSaysWhenADraftThatLooksLikeAReplyAnswersNothing` — a reply-shaped draft naming nothing is told so and sent as written.
+310. `TestIsReceipt` — a note is a receipt by `Kind:`, else by the heuristic (under `--receipt-max-words` words, one of the heard/received/ack/noted family, no question mark); `Kind:` overrides.
+311. `TestReceiptMarksHeardAndInboxHonoursIt` — `receipt` appends one RFC 3339 UTC line to `from-<me>/RECEIPTS`; `TestReceiptRefuses` — receipting your own note is refused; the same note twice is `RECEIPT ALREADY`.
+312. `TestReceiptMaxWordsDefaultsFromBusFileThenEnv` — the receipt threshold comes from the flag, else `.nova-bus/defaults`, else `NOVA_BUS_RECEIPT_MAX_WORDS`, refusing only when none supplies one.
+313. `TestInboxSeparatesNotesFromReceiptsAndPutsNotesFirst` — `inbox` lists three groups newest-first (notes, heard-not-answered, bare receipts); `TestInboxShowsWhatWasHeardButNotAnswered` — heard is not answered, counted out of `open=`.
+314. `TestUnreadableNotesAreNamedAndNotSilent` — an unreadable note is named every run as `INBOX UNREADABLE`; `TestANoteAddressedToNobodyIsNamed` — a note resolving to no reader is `INBOX UNADDRESSED`, never silent.
+315. `TestSendRefusesABranchAheadOfTheRemoteWithSomebodyElsesWork` — after fetch, a branch ahead with somebody ELSE's work (no `Nova-Bus:` trailer) is refused; an unpushed commit of our own is carried.
+316. `TestPushBackoffGrowsIsJitteredAndIsCapped` — the retry wait is 50ms/attempt plus up to 200ms jitter, capped at one second; `TestPushGivesUpInsideTheBudgetAndSaysTheNoteIsNotOnTheBus` — out of attempts is exit 1 saying the note is NOT pushed.
+317. `TestUnionLinesKeepsBothSidesAndDoublesNothing` — a conflict in `RECEIPTS`/`INDEX` settles as a union; `TestTwoBenchesOfOneReaderSettleTheCursor` — `CURSOR` further-read wins; `TestTwoBenchesOfOneLaneSettleTheCatalogue` — `INDEX` union; `TestAConflictOnANoteIsRefusedAndTheAbortIsClean` — an add/add on one note path is refused and handed to a person.
+318. `TestEnsureMergeAttributes` — the first send writes `from-*/INDEX merge=union` and `from-*/RECEIPTS merge=union` to `.gitattributes`; the tool's own resolution runs regardless.
+319. `TestAnAbortThatFailsIsRefusedWithTheRecovery` — the rebase abort is checked and a checkout still mid-rebase is its own refusal; `TestNoRefusalRecommendsABarePush` — a recovery names `git pull --rebase && git push`.
+320. `TestAGitThatHangsIsKilledAndNamed` — every git subprocess runs under a timeout and a hung one is killed and named.
+321. `TestASecondInvocationOnOneCheckoutRefuses` — one nova-bus runs on one checkout at a time (flock on `<git dir>/nova-bus.lock`).
+322. `TestRemoteAndBranchThatCouldBeOptionsAreRefused` — `--remote`/`--branch` are checked against a conservative charset and may not begin with `-`.
+323. `TestSendNoPushCommitsAndSaysTheNoteIsNotOnTheBus` — `--no-push` commits without pushing, printing `pushed=false`.
+324. `TestInboxParsesOnlyWhatIsNewSinceTheCursor` — `inbox` parses exactly the new note files and no other; 10,000 notes plus one new is exactly one parse (also with `--open`, and closing an open entry).
+325. `TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder` — `OPEN v2` is one eight-field line per entry; `TestAnOpenListWrittenBeforeV2IsRefusedAtTheRead` — a missing `OPEN v2` line is `INBOX REFUSED` naming `--full --advance`.
+326. `TestCursorRoundTripsAndRefusesWhatIsNotACommit` — the cursor is sha first, stamp second, then `open=`/`legacy=` read by prefix; contents required to be 7–64 hex; an unknown token is refused.
+327. `TestACursorThatIsNotAnAncestorIsRefused` — a cursor naming a commit not an ancestor of HEAD is `INBOX REFUSED`/`BUS REFUSED` naming `--full`; `TestACursorWhoseOpenListWentMissingIsRefused` — a cursor claiming `open=<n>` with no `OPEN` beside it is refused naming `--full --advance`.
+328. `TestAReplyBehindTheCursorReShowsTheNoteAndAFullReadSettlesIt` — `answered` is built from the change set alone; a reply fallen behind the cursor re-shows the note and a `--full` read settles it; `TestAnOpenNoteWhoseFileVanishedIsCarriedUntilAFullRead` — a deleted note stays on the list until a full read.
+329. `TestAnUnreadableFileIsCarriedAndReChecked` — an unreadable file is carried, re-checked every run, one parse for itself.
+330. `TestInboxWithoutAdvanceWritesNothing` — `inbox` without `--advance` writes nothing at all; `--advance` is opt-in and takes the push flags.
+331. `TestSendAppendsToTheIndexAndCheckAgrees` — the `INDEX` catalogue is appended by `send` in the note's own commit; `TestIndexLineIsFiveFieldsAndCannotBeForged` — a line is five oneline-escaped fields, `-` for absent.
+332. `TestALaneStateFileIsReplacedByRenameAndLeavesNoPartialFile` — `CURSOR`/`OPEN`/`INDEX` are written by rename over a `.tmp` in the same directory; `TestAStrandedTemporaryIsIgnoredByTheLaneWalk` — the lane walk steps over the four `.tmp` names.
+333. `TestAnOpenListThatEmptiesIsRemovedFromTheBus` — an empty open list is removed, so "no `OPEN`" and "nothing open" are one state.
+334. `TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList` — `--legacy-before` leaves notes dated before the line off the open list, not carried and not listed; `TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne` — the line lives in the cursor as `legacy=` exactly as typed.
+335. `TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed` — unreadable files dated behind the line are counted on `INBOX LEGACY unreadable=`.
+336. `TestLegacyNowCannotBeGivenWithTheOtherAnswers` — `--legacy-now` equals `--legacy-before <this run's instant>` and cannot be given with `--legacy-before` or `--carry-history` (exit 2).
+337. `TestAFirstAdvanceOverOldNotesIsRefused` — the FIRST `--advance` on a lane with no cursor is refused (exit 1) when old notes would be carried and no line/`--carry-history` is given, naming the count and the `--legacy-now` command; `TestTheTwoAnswersToTheFirstAdvanceCannotBothBeGiven` — `--carry-history` cannot be given with the legacy flags.
+338. `TestAForwardDrawnDateLineSaysSoAndNamesTheCommandThatFixesIt` — a cursor whose switch-day line is a bare DATE at today or later prints `INBOX SWITCH` once, after `INBOX SCOPE`; `TestTheSwitchDayNoteFiresOnAForwardDateAndNothingElse` — it fires on a forward date and not on an instant or a date behind today; the same line comes out of `check --as`.
+339. `TestWaitReturnsWhenANoteArrivesDuringTheWait` — `wait` blocks, fetches every `--interval`, and returns the moment the inbox lists something new; `TestWaitTimesOutQuietlyAndCountsItsPolls` — a timeout is one `WAIT TIMEOUT` line and exit 0.
+340. `TestWaitUntilIsAnAbsoluteDeadlineAndTheEarlierOneWins` / `TestWaitIdleExitGivesATimeoutItsOwnCode` — `--until` is an absolute deadline and `--idle-exit <n>` gives a timeout its own code (1 and 2 refused).
+341. `TestWaitRefusesOnTheFirstPollWhenTheFetchFails` — a fetch failing on the first poll is a refusal; a later one is `WAIT POLL fetch:` and the wait goes on; `TestWaitRefusesATimeoutLongerThanAToolCall` — a timeout above the 60m harness ceiling is refused.
+342. `TestWaitReturnsAtOnceWhenTheCursorsLineHidesTheWholeWait` — a switch-day line hiding every moment the call could see prints `WAIT NOTE` (holding the instant instead) and returns at once; `TestWaitQuietBeatsSleepsThroughABeatCommit` — a beat is never a wake; `TestWaitEndsWithRearmLine` — every return ends with one `WAIT DONE … next=<command>`.
+343. `TestCheckRefusesToGuessItsBaseline` — `check` with none of `--full`/`--as`/`--since` is exit 2 `refusing to guess`; `TestCheckSinceChecksOnlyWhatChanged` — `--as`/`--since` check only the changed lane files, `Re:` and id from the catalogue.
+344. `TestCheckPassesACleanBus` / `TestCheckReportsEveryFailureNotTheFirst` — `check` asserts parse, header, lane, id well-formedness/uniqueness, `Re:` resolution, receipt lines, lane ownership, state-file parses, and lane contents, reporting every finding in one run.
+345. `TestALanesReadmeIsNotANote` — a lane may hold exactly one non-note file, `README.md`; dotfiles are tolerated; any other stray (a `NOTES.md`) is a finding.
+346. `TestCheckFullAgainstTheIndex` — under `--full` the catalogue is held to the notes in both directions: a forged/dangling `INDEX` line is `BUS FAIL`, a note with no `INDEX` line is `BUS WARN`; `TestRebuildLaneIndexFromTheNotes` — `--rebuild-index` rewrites every lane's catalogue.
+347. `TestLegacyBeforeWarnsOnOldNotesAndStillFailsOnNew` — `check --legacy-before` forgives a header finding dated before the line as `BUS WARN` and still fails everything on/after it; `TestTheHeaderFindingsAreInsideTheLegacyTolerance` — the tolerance covers a note's HEADER; `TestTheLegacyToleranceStillFailsOnWhatIsNotAHeader` — wrong lane, malformed/duplicate id, broken receipt, unowned lane and strays fail at any date.
+348. `TestLegacyToleranceNeedsADateItCanRead` — a note whose date cannot be read at all is never tolerated; `TestTheLegacyLineReadsTheDayAtTheFrontOfAFilename` — the wider `YYYY-MM-DD`-at-front read is used by the tolerance and the open list only.
+349. `TestANoteWithAnIDIsStillAnswerableByPath` — a note without an `Id:` is addressed by path everywhere, and a note WITH an id is still answerable by its path.
+350. `TestSendRefusesAWrongBranchOrADirtyCheckout` — `send` refuses a wrong branch or a dirty checkout (write drafts elsewhere); the `.nova-bus/` per-clone state is not such a change.
+351. `TestADivergedCheckoutIsRefusedAndLosesNothing` — a diverged checkout (for `wait`/`reply`) is a refusal naming the recovery, never a merge or rebase.
+352. `TestCheckFullCapsEachKindAtFailMax` — `check --full` takes a per-kind cap `--fail-max <n>` (default 20, `0` means all), so the loud kind cannot eat the quiet one.
+353. `TestCheckFullAggregatesRepeatedRemediesIntoSingleFindingLine` — a finding whose remedy is identical across `count>=2` notes prints one `BUS FINDING kind=<kind> count=<n> first=<path> warn=<true|false> remedy=…` line per shape.
+354. `TestCheckFullPrintsBusMoreNamingTheFlagThatLiftsTheCap` — one `BUS MORE kind=<kind> shown=<n> total=<t> …` line per capped kind names the flag that lifts the cap.
+355. `TestBusSummaryCountsAreTheTruthEvenWhenOutputIsCapped` — `BUS SUMMARY mode=<full|since> notes=<n> findings=<f> warn=<w> fail=<x> complete=<true|false> next=<token|->` prints on failure as well as success; the counting is never capped, the listing is.
+356. `TestCheckFullContinuationWithAfterResumesOnTheSameSnapshot` — a full check that exceeds the caps is paged with `--after <token>` (the read half's snapshot token and scan order), and the next run resumes on the same snapshot.
+357. `TestQuickstartWalksTheRootOnceAndSharesThePathList` — a `quickstart` of one tree walks the root once and hands the same path list to `links` and `nocode` (docs/SPEC.md:5041).
+358. `TestEachVerbKeepsItsOwnWalkWhenRunAlone` — `links`, `nocode`, `attest`, `floors` and `corpus` each keep their own walk when run as their own verb (docs/SPEC.md:5000).
+359. `TestLinksCapsFindingsAndAlwaysPrintsTheCount` / `TestNoCodeCapsFindingsAndAlwaysPrintsTheCount` — a first run prints 20 finding lines per kind, one MORE line and one FAIL/count line (docs/SPEC.md:5005).
+360. `TestFailMaxWidensAndZeroPrintsAll` — `--fail-max <n>` raises the ceiling and `--fail-max 0` prints every finding, with no MORE line when nothing is elided (docs/SPEC.md:5009).
+361. `TestLinksCapsFindingsAndAlwaysPrintsTheCount` — the `shown=<n>`/`total=<t>` pair prints in both the MORE line and the closing line (docs/SPEC.md:5010).
+362. `TestQuickstartInheritsTheCaps` — quickstart passes the cap and its own ceiling (including 0) down to both checks (docs/SPEC.md:5005,5042).
+363. `TestRecordChecksWaitOnTheFilesystemAlone` — the six record-layer checks have no shell out: no `--timeout`, no poll, no `gh`, no `git` on that path (docs/SPEC.md:5016).
+364. `TestHygieneRunsGitUnderTimeoutDefaultingTo120s` — `hygiene` runs `git` as a subprocess and takes a `--timeout` (default 120 s) (docs/SPEC.md:5022).
+365. `TestDogfoodRecordWritesTheClockTimestamp` — `dogfood record` reads the clock: a receipt is a dated record bearing an `at` timestamp (docs/SPEC.md:5028).
+366. `TestDogfoodRunsGitLogOnlyWithRepoUnderGitTimeout` — `ledger` and `gate` run one `git log` per verb only when `--repo` is given, under `--git-timeout` (60 s) (docs/SPEC.md:5028).
+367. `TestDogfoodRunsHelpOnlyWithToolsUnderToolsTimeout` — all three verbs run one `help` per binary only when `--tools` is given, under `--tools-timeout` (60 s) (docs/SPEC.md:5030).
+368. `TestDogfoodRepoWarnsOnStderrItCanTakeSeconds` — `dogfood --repo` over a 71-verb reference says on stderr that it can take seconds while it runs (docs/SPEC.md:5033).
+369. `TestWaitRefusesOnTheFirstPollWhenTheFetchFails` — a wait's poll is a git fetch, so a failed fetch is refused (docs/SPEC.md:5055).
+370. `TestInboxParsesOnlyWhatIsNewSinceTheCursor` — `check --full` re-walks the whole history; `check --as` reads from the cursor and pays only for what changed (docs/SPEC.md:5067).
+371. `TestInboxParsesOnlyWhatIsNewSinceTheCursor` / `TestInboxOpenIsOneLine` — `inbox` at the largest carried state returns the SCOPE, LEGACY, OPEN, remedy and OK lines, not the carried list (docs/SPEC.md:5125).
+372. `TestInboxParsesOnlyWhatIsNewSinceTheCursor` — the carried list prints only behind `--open`, capped at `--open-max`, never on the default read (docs/SPEC.md:5091).
+373. `TestCheckFullCapsPerKindWithFailMax` — the missing bound: a per-kind cap `--fail-max <n>` (default 20, 0 = all) with one BUS FINDING per shape, one BUS MORE per capped kind, a BUS SUMMARY whose counts are the truth, paged with `--after` (docs/SPEC.md:5101).
+374. `TestTheDefaultWaitIntervalIsTenSeconds` — `waitLoop` polls immediately then every `--interval`, default 10 s (docs/SPEC.md:5111).
+375. `TestWaitRefusesATimeoutLongerThanAToolCall` — the wait ceiling is `maxWaitTimeout = 60 * time.Minute`: a longer timeout is refused (docs/SPEC.md:5111).
+376. `TestWaitRefusesAnIntervalBelowTheFloor` — the wait floor is 100 ms: an `--interval` shorter than that is refused (docs/SPEC.md:5111).
+377. `TestWaitTimesOutQuietlyAndCountsItsPolls` — a quiet poll prints nothing: an idle tick costs one fetch and zero lines (docs/SPEC.md:5112).

@@ -8,12 +8,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -25,7 +30,13 @@ func main() {
 	// test 11 was a RACE against a child that was already dying, and under three parallel
 	// benches it lost and the violation went unseen.
 	if os.Getenv("FAKE_BACKGROUND_CHILD") == "1" {
-		time.Sleep(60 * time.Second)
+		secs := 60
+		if v := os.Getenv("FAKE_BACKGROUND_CHILD_SECONDS"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				secs = n
+			}
+		}
+		time.Sleep(time.Duration(secs) * time.Second)
 		return
 	}
 	if len(os.Args) < 2 {
@@ -76,6 +87,13 @@ func main() {
 	}
 	// FAKE-LAUNCHES records one line per real invocation, before any directive can exit,
 	// so a test can prove how many times the machinery retried a task.
+	// FAKE-DROP-CAPTURE unlinks the harness log the parent already opened. The
+	// parent still holds the descriptor, so the child can run, but the path is
+	// gone when the run tries to publish the report. That is a required capture
+	// that cannot be copied.
+	if _, ok := directive(prompt, "FAKE-DROP-CAPTURE"); ok && job != "" {
+		_ = os.Remove(filepath.Join(job, "harness-output.log"))
+	}
 	if _, ok := directive(prompt, "FAKE-LAUNCHES"); ok && job != "" {
 		record(filepath.Join(job, "launches"))
 		if f, err := os.OpenFile(filepath.Join(job, "launches"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
@@ -97,8 +115,15 @@ func main() {
 
 	// FAKE-SAY is the harness's own words on its own stderr -- a provider's `401
 	// unauthorized`, the one diagnosis a failed job has.
+	// It writes `said` once the words are on the pipe, so a test can wait for the thing
+	// itself -- a harness that has spoken -- instead of for a clock. Before that file
+	// exists the run has captured nothing from this child at all, and everything the run
+	// decides from its capture is still undecided.
 	if said, ok := directive(prompt, "FAKE-SAY"); ok {
 		fmt.Fprintln(os.Stderr, "fake harness:", said)
+		if job != "" {
+			_ = os.WriteFile(filepath.Join(job, "said"), []byte("said\n"), 0o644)
+		}
 	}
 	// FAKE-TOUCH and FAKE-CAT are THE WALL'S OWN QUESTIONS, asked from inside the job:
 	// can this worker create a file at a path the dispatcher did not name, and can it read
@@ -154,6 +179,35 @@ func main() {
 		}
 		writeRecorded(filepath.Join(job, "cache-record"), []byte(b.String()), 0o644)
 	}
+	// FAKE-GIT-COMMIT creates a git repository inside the job directory and commits a file,
+	// recording the resulting commit's author and committer into <job>/commit-identity.
+	// This proves that the pool identity reached the harness child and was not displaced
+	// by misleading bench gitconfig or dropped at the supervisor/native boundary.
+	if _, ok := directive(prompt, "FAKE-GIT-COMMIT"); ok && job != "" {
+		repo := filepath.Join(job, "worker-repo")
+		_ = os.MkdirAll(repo, 0o755)
+		runGit := func(args ...string) ([]byte, error) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = repo
+			return cmd.CombinedOutput()
+		}
+		if _, err := runGit("init", "-q"); err != nil {
+			writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git init failed: "+err.Error()+"\n"), 0o644)
+		} else {
+			_ = os.WriteFile(filepath.Join(repo, "work.txt"), []byte("work\n"), 0o644)
+			if out, err := runGit("add", "work.txt"); err != nil {
+				writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git add failed: "+err.Error()+"\n"+string(out)), 0o644)
+			} else if out, err := runGit("commit", "-q", "-m", "worker commit"); err != nil {
+				writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git commit failed: "+err.Error()+"\n"+string(out)), 0o644)
+			} else {
+				if out, err := runGit("log", "-1", "--format=%an <%ae> %cn <%ce>"); err == nil {
+					writeRecorded(filepath.Join(job, "commit-identity"), out, 0o644)
+				} else {
+					writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git log failed: "+err.Error()+"\n"+string(out)), 0o644)
+				}
+			}
+		}
+	}
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {
 			fmt.Printf("fake harness: read of /etc/somewhere: permission denied (refused)\n")
@@ -203,6 +257,26 @@ func main() {
 	// the retry kept the task and harvested the second attempt's result. FAKE-5XX always
 	// fails, so a test can prove the third fast failure is filed `end=provider`. Both are
 	// checked before FAKE-5XX by their longer names, since `directive` matches a prefix.
+	// A read that died after the request may have been accepted. The line is the
+	// harness's own timeout words. The machinery must record unknown and not launch again.
+	if _, ok := directive(prompt, "FAKE-LOST-RESPONSE"); ok {
+		fmt.Fprintln(os.Stderr, "SSE read timed out")
+		os.Exit(1)
+	}
+	// FAKE-PROVIDER-READ posts once to the baseURL in the job config, which the
+	// run has pointed at its own proxy. A body that contains "ok" is success.
+	// A failed read is tried once more, the way a harness retries a dropped
+	// socket, and then this process stays up: the measured harness did not
+	// exit when its socket stalled, so the run has to end it.
+	if _, ok := directive(prompt, "FAKE-PROVIDER-READ"); ok {
+		if err := readProvider(modelFromArgs(os.Args[1:])); err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness: provider read failed")
+			time.Sleep(time.Hour)
+			os.Exit(1)
+		}
+		publish(job, prompt, 0, notesRead(job, prompt))
+		os.Exit(0)
+	}
 	if _, ok := directive(prompt, "FAKE-5XX-FIRST"); ok {
 		if launchCount(job) <= 1 {
 			fmt.Fprintln(os.Stderr, "Unexpected server error: the provider answered 503; ref=err_fake_first")
@@ -253,6 +327,19 @@ func main() {
 				[]byte(strconv.Itoa(child.Process.Pid)+"\n"), 0o644)
 		}
 	}
+	// FAKE-BACKGROUND-SLEEP is FAKE-BACKGROUND with a caller-chosen bound (issue #779): the
+	// deadline-kill test needs a grandchild that is clearly still alive when the deadline
+	// fires but does not leave a 60 s corpse behind, and a short sleep keeps the red case
+	// from waiting a full minute on the child the kill was supposed to reap.
+	if n, ok := number(prompt, "FAKE-BACKGROUND-SLEEP"); ok {
+		child := exec.Command(os.Args[0], "--background-child")
+		child.Env = append(os.Environ(), "FAKE_BACKGROUND_CHILD=1", "FAKE_BACKGROUND_CHILD_SECONDS="+strconv.Itoa(n))
+		_ = child.Start()
+		if child.Process != nil && job != "" {
+			_ = os.WriteFile(filepath.Join(job, "background.pid"),
+				[]byte(strconv.Itoa(child.Process.Pid)+"\n"), 0o644)
+		}
+	}
 	// The other half of rule 11: a worker that forks and WAITS for its child leaves nothing
 	// alive in its group, and is no violation at all.
 	if _, ok := directive(prompt, "FAKE-FOREGROUND-CHILD"); ok && os.Getenv("FAKE_FOREGROUND_CHILD") != "1" {
@@ -262,6 +349,34 @@ func main() {
 	}
 	if os.Getenv("FAKE_FOREGROUND_CHILD") == "1" {
 		return
+	}
+	// FAKE-IGNORE-TERM is THE HARD-CASE CHILD (issue #779): a harness that declines the
+	// polite SIGTERM and keeps running. The deadline must still kill it -- the wall is a
+	// SIGKILL of the whole group, never a negotiation -- so a run whose deadline is its only
+	// stop does not hang on a stubborn harness. It is installed before FAKE-SLEEP so the
+	// sleep happens with the signal already ignored.
+	if _, ok := directive(prompt, "FAKE-IGNORE-TERM"); ok {
+		signal.Ignore(syscall.SIGTERM)
+	}
+	// FAKE-NOTE-ON-TERM is THE POLITE CHILD, and the one observable that tells a TERM from
+	// a KILL from outside the process: on SIGTERM it writes `termed` into its own job
+	// directory and stops. A group ended with swarm.Reap -- terminate, wait, kill -- leaves
+	// the file behind; a group ended with a bare KillGroup cannot, because SIGKILL is not a
+	// signal any process gets to handle. It is what a harness flushing its turn and its
+	// usage row looks like to a test.
+	// It writes `term-armed` the moment the handler is installed, so a test can wait for
+	// the thing itself -- an armed handler -- instead of for a clock. Before that file
+	// exists a TERM would be the default disposition and would kill the process outright,
+	// which is exactly the race a wall-clock test would lose under load.
+	if _, ok := directive(prompt, "FAKE-NOTE-ON-TERM"); ok && job != "" {
+		termed := make(chan os.Signal, 1)
+		signal.Notify(termed, syscall.SIGTERM)
+		go func() {
+			<-termed
+			_ = os.WriteFile(filepath.Join(job, "termed"), []byte("term\n"), 0o644)
+			os.Exit(0)
+		}()
+		_ = os.WriteFile(filepath.Join(job, "term-armed"), []byte("armed\n"), 0o644)
 	}
 	if d, ok := duration(prompt, "FAKE-SLEEP"); ok {
 		time.Sleep(d)
@@ -289,6 +404,44 @@ func main() {
 		fmt.Printf("\x1b[33;1m!\x1b[0m  permission requested: external_directory (%s); auto-rejecting\n", path)
 		fmt.Fprintln(os.Stderr, "Error: The user rejected permission to use this specific tool call.")
 		os.Exit(0)
+	}
+	// FAKE-EXEC-REFUSED is THE GATE THAT NEVER RAN (issue #1465), in the shell's own words.
+	// A Go card inside the wall ran `go test` and the wall refused to execute the toolchain:
+	// the shell printed one line, the card wrote an honest RESULT.md saying the gate could
+	// not be built or run, and the process exited 0. The run then read `NATIVE OK rc=0
+	// harness=ok` and a commit nobody had compiled was green. The directive takes the path
+	// the wall refused, and prints the step the card had reached beside it, so the fixture
+	// writes the real shape and nothing is inferred.
+	if path, ok := directive(prompt, "FAKE-EXEC-REFUSED"); ok {
+		if path == "" {
+			path = "/nowhere/bin/go"
+		}
+		fmt.Println("STEP 3 run the gate")
+		fmt.Printf("/usr/bin/bash: line 1: %s: Permission denied\n", path)
+	}
+	// FAKE-DENY-AND-RECOVER is STELLA'S P2 WITNESS (PR #1478 comment 5737662335): a plain
+	// shell REDIRECTION to a path the card may not write prints the very same words as a
+	// refused exec -- `/bin/bash: <path>: Permission denied` -- and then the card carries on
+	// and exits 0, having attempted no program at all. She measured it with
+	// `: > "$1"; printf "RECOVERED\n"` against a non-writable directory. Nothing in the text
+	// says which operation was denied, which is the whole of P2.
+	if path, ok := directive(prompt, "FAKE-DENY-AND-RECOVER"); ok {
+		if path == "" {
+			path = "/nowhere/out.txt"
+		}
+		fmt.Println("STEP 3 write the report")
+		fmt.Printf("/bin/bash: %s: Permission denied\n", path)
+		fmt.Println("RECOVERED")
+	}
+	// FAKE-REWRITE-CAPTURE is JOHNNY'S #1478 WITNESS (the #1892 class): a card that printed a
+	// denial and then REPLACES its own capture's name -- unlink, and a clean file in its place
+	// -- inside the job directory it may write. The parent's descriptor still holds the real
+	// bytes; the path now holds none of them. A verdict read from the path after exit would
+	// see a clean run.
+	if _, ok := directive(prompt, "FAKE-REWRITE-CAPTURE"); ok && job != "" {
+		out := filepath.Join(job, "harness-output.log")
+		_ = os.Remove(out)
+		_ = os.WriteFile(out, []byte("STEP 3 run the gate\nok\n"), 0o644)
 	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
@@ -543,6 +696,89 @@ func emitTimeline() {
 		time.Sleep(2 * time.Millisecond)
 		fmt.Println(s[1])
 	}
+}
+
+// readProvider posts to the model's baseURL. It tries twice. The second try is
+// how a harness retries a dropped socket; the proxy must not open a second
+// upstream request after a silent body. The error text is fixed so a stall
+// cannot be classified as a launch failure by words this process invented.
+func readProvider(model string) error {
+	var last error
+	for i := 0; i < 2; i++ {
+		last = readProviderOnce(model)
+		if last == nil {
+			return nil
+		}
+	}
+	return last
+}
+
+func readProviderOnce(model string) error {
+	base, err := providerBaseURL(model)
+	if err != nil {
+		return err
+	}
+	if job := os.Getenv("NOVA_SWARM_JOB"); job != "" {
+		f, openErr := os.OpenFile(filepath.Join(job, "provider-url"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if openErr == nil {
+			fmt.Fprintln(f, base)
+			f.Close()
+		}
+	}
+	req, err := http.NewRequest(http.MethodPost, base, strings.NewReader(`{"input":"card"}`))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Transport: &http.Transport{Proxy: nil, DisableCompression: true}}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "ok") {
+		return fmt.Errorf("provider read failed")
+	}
+	return nil
+}
+
+func providerBaseURL(model string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".config", "opencode", "opencode.json"))
+	if err != nil {
+		return "", err
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return "", err
+	}
+	provider := model
+	if i := strings.IndexByte(model, '/'); i >= 0 {
+		provider = model[:i]
+	}
+	providers, _ := cfg["provider"].(map[string]any)
+	entry, _ := providers[provider].(map[string]any)
+	opts, _ := entry["options"].(map[string]any)
+	base, _ := opts["baseURL"].(string)
+	if base == "" {
+		return "", fmt.Errorf("no baseURL")
+	}
+	return base, nil
+}
+
+func modelFromArgs(args []string) string {
+	for i, a := range args {
+		if a == "--model" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(a, "--model=") {
+			return strings.TrimPrefix(a, "--model=")
+		}
+	}
+	return ""
 }
 
 // checkInvocation is what a real harness requires of its argv: its own subcommand, the

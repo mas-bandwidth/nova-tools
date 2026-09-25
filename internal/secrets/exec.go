@@ -31,23 +31,28 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		return 125, fmt.Errorf("command not found: %s", cmdArgs[0])
 	}
 
+	var missing []string
 	if storeDir == "" {
-		return 125, fmt.Errorf("missing --store <dir>")
+		missing = append(missing, "--store <dir>")
 	}
 	if asName == "" {
-		return 125, fmt.Errorf("missing --as <name>")
+		missing = append(missing, "--as <name>")
+	}
+	if keyPath == "" {
+		missing = append(missing, "--key <path>")
+	}
+	if sopsPath == "" {
+		missing = append(missing, "--sops <path>")
+	}
+	if onlyArg == "" {
+		missing = append(missing, "--only <names|all>")
+	}
+	if len(missing) > 0 {
+		return 125, fmt.Errorf("missing required flags: %s; example: nova-secrets exec --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN -- gh api user",
+			strings.Join(missing, ", "))
 	}
 	if !IsValidAsName(asName) {
 		return 125, fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
-	}
-	if keyPath == "" {
-		return 125, fmt.Errorf("missing --key <path>")
-	}
-	if sopsPath == "" {
-		return 125, fmt.Errorf("missing --sops <path>")
-	}
-	if onlyArg == "" {
-		return 125, fmt.Errorf("missing --only <names|all>")
 	}
 
 	// 1. Store filesystem checks

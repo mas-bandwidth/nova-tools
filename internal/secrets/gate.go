@@ -9,14 +9,25 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
+// GateInput is one call of the gate: the store, the two refs, and -- optionally -- the
+// fleet's machines registry, the only thing that can vouch for a seat nobody has seen before.
+type GateInput struct {
+	StoreDir     string
+	Base         string
+	Head         string
+	MachinesPath string // the fleet machines registry; "" leaves the recipient rule dormant
+}
+
 // RunGate is the seat-rule gate as a verb: the store's shell gate, called by the
 // workflow. It diffs --base..--head with git (no GitHub) and either prints
-// "GATE APPROVE files=<n>" at exit 0 or "GATE REFUSE rule=<n> file=<f>: <why>"
-// at exit 2.
-func RunGate(storeDir, base, head string) (string, int) {
+// "GATE APPROVE files=<n> machines=<registry|->" at exit 0 or
+// "GATE REFUSE rule=<n> file=<f>: <why>" at exit 2.
+func RunGate(in GateInput) (string, int) {
+	storeDir, base, head := in.StoreDir, in.Base, in.Head
 	if storeDir == "" {
 		return "SECRETS REFUSED: missing --store <dir>", 2
 	}
@@ -27,12 +38,20 @@ func RunGate(storeDir, base, head string) (string, int) {
 		return "SECRETS REFUSED: missing --head <git ref>", 2
 	}
 
+	// The registry is read FIRST and read WHOLE, before any judgement leans on it: half a
+	// registry is the half that lets a recipient through, so unreadable or malformed is a
+	// refusal here and never a rule that quietly did not run.
+	fleetSeats, err := gateFleetSeats(in.MachinesPath)
+	if err != nil {
+		return gateRefuse(0, in.MachinesPath, err.Error()), 2
+	}
+
 	changed, err := gitChangedFiles(storeDir, base, head)
 	if err != nil {
 		return gateRefuse(0, "", err.Error()), 2
 	}
 	if len(changed) == 0 {
-		return "GATE APPROVE files=0", 0
+		return gateApprove(0, in.MachinesPath), 0
 	}
 
 	// 3. No other file changes except README.md.
@@ -71,6 +90,12 @@ func RunGate(storeDir, base, head string) (string, int) {
 	// 1. Every changed .sops.yaml rule: exactly two age recipients, one the
 	// declared recovery key, and a path_regex naming exactly one seat file.
 	if containsString(changed, ".sops.yaml") {
+		// The recipients the store already had. A key here is not a grant this pull request
+		// makes, so resealing a seat or editing its rule asks the registry nothing.
+		baseKeys, err := gateRecipientsAt(storeDir, base)
+		if err != nil {
+			return gateRefuse(0, ".sops.yaml", err.Error()), 2
+		}
 		for i := range cfg.CreationRules {
 			rule := cfg.CreationRules[i]
 			ruleNum := i + 1
@@ -84,15 +109,49 @@ func RunGate(storeDir, base, head string) (string, int) {
 			if err != nil {
 				return gateRefuse(ruleNum, ".sops.yaml", fmt.Sprintf("path_regex %q is not a valid regular expression", rule.PathRegex)), 2
 			}
-			named := 0
+			named, seatFile := 0, ""
 			for _, hf := range headFiles {
 				if isSeatYAML(hf) && re.MatchString(hf) {
 					named++
+					seatFile = hf
 				}
 			}
 			if named != 1 {
 				return gateRefuse(ruleNum, ".sops.yaml", fmt.Sprintf("path_regex names %d seat files; expected exactly one", named)), 2
 			}
+
+			// 4. A recipient key this pull request introduces is a GRANT, and the review that
+			// used to catch it is gone (Glenn 2026-09-18: a seat is set up with no second
+			// human). The fleet's machines registry stands in its place: the new key is
+			// permitted only when a machine in the registry carries this file's seat, so the
+			// question "whose key is this, and does that machine exist?" has a mechanical
+			// answer. With no --machines the rule is dormant and the APPROVE line says so.
+			if fleetSeats != nil {
+				seat := strings.TrimSuffix(seatFile, ".yaml")
+				for _, key := range rule.Recipients {
+					if key == recoveryKey || baseKeys[key] {
+						continue
+					}
+					if !fleetSeats[seat] {
+						return gateRefuse(ruleNum, seatFile, fmt.Sprintf(
+							"rule adds a recipient no seat file rule named before, and no machine in %s carries the seat %s; add the machine's row (its seat column must read %s) or drop the rule",
+							oneline.Field(in.MachinesPath), oneline.Field(seat), oneline.Field(seat))), 2
+					}
+				}
+			}
+		}
+	}
+
+	// 5. Keep what exists. A seat file in the store at the base must still be in the store at
+	// the head: removing one is how a seat would lose its credentials in a pull request whose
+	// subject says it is adding one, and it is never part of adding a seat.
+	baseFiles, err := gitTreeFiles(storeDir, base)
+	if err != nil {
+		return gateRefuse(0, "", "unable to list the base tree: "+oneline.Escape(err.Error())), 2
+	}
+	for _, bf := range baseFiles {
+		if isSeatYAML(bf) && !containsString(headFiles, bf) {
+			return gateRefuse(0, bf, "the seat file is in the store at the base and gone at the head; a seat is never removed here"), 2
 		}
 	}
 
@@ -118,7 +177,58 @@ func RunGate(storeDir, base, head string) (string, int) {
 		}
 	}
 
-	return fmt.Sprintf("GATE APPROVE files=%d", len(changed)), 0
+	return gateApprove(len(changed), in.MachinesPath), 0
+}
+
+// gateApprove formats the one approval line. It carries the registry it read, or `-`, so an
+// APPROVE is never mistaken for the fleet having vouched for a seat when no fleet was asked.
+func gateApprove(files int, machinesPath string) string {
+	registry := "-"
+	if machinesPath != "" {
+		registry = oneline.Field(machinesPath)
+	}
+	return fmt.Sprintf("GATE APPROVE files=%d machines=%s", files, registry)
+}
+
+// gateFleetSeats reads the machines registry whole and returns the set of seats the fleet
+// carries. A path of "" returns a nil set: the recipient rule is dormant, not satisfied.
+func gateFleetSeats(machinesPath string) (map[string]bool, error) {
+	if machinesPath == "" {
+		return nil, nil
+	}
+	reg, err := fleet.ReadRegistry(machinesPath)
+	if err != nil {
+		return nil, fmt.Errorf("the machines registry does not read: %s", err.Error())
+	}
+	seats := map[string]bool{}
+	for _, m := range reg.Machines() {
+		// A machine with no seat writes `-`, which the registry reads as "". That is an
+		// answer, not a seat name, and it vouches for nothing.
+		if m.Seat != "" {
+			seats[m.Seat] = true
+		}
+	}
+	return seats, nil
+}
+
+// gateRecipientsAt returns every age recipient any creation rule names at ref. A store with
+// no .sops.yaml there -- the first seat of all -- has none, which is not an error.
+func gateRecipientsAt(storeDir, ref string) (map[string]bool, error) {
+	keys := map[string]bool{}
+	data, err := gitShowFile(storeDir, ref, ".sops.yaml")
+	if err != nil {
+		return keys, nil
+	}
+	cfg, err := parseSopsConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("unreadable at %s: %s", oneline.Field(ref), oneline.Escape(err.Error()))
+	}
+	for i := range cfg.CreationRules {
+		for _, k := range cfg.CreationRules[i].Recipients {
+			keys[k] = true
+		}
+	}
+	return keys, nil
 }
 
 // gateRefuse formats one refusal line: GATE REFUSE rule=<n> file=<f>: <why>.

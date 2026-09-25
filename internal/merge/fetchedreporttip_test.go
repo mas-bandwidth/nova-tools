@@ -22,6 +22,7 @@ func reportTipLab(t *testing.T) (lane, tip, fetchHeadPath, trackingRef string) {
 	seed := filepath.Join(root, "seed")
 	lane = filepath.Join(root, "lane")
 	tipGit(t, root, "init", "-q", "--bare", remote)
+	quietRepo(t, remote)
 	if err := os.MkdirAll(seed, 0o755); err != nil {
 		t.Fatal(err)
 	}

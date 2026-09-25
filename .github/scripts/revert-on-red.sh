@@ -8,8 +8,9 @@
 #   * the parent commit's ci run was not green  -> the red predates this push
 #   * main has moved past this commit           -> the newer run decides
 # Otherwise it reverts the push, pushes to main, and if the ruleset refuses
-# the push, opens a revert/<sha> PR with auto-merge; either way it posts ONE
-# comment on the merged pull request, naming the revert.
+# the push, opens a revert/<sha> PR and LEAVES IT OPEN with a notice -- this
+# script enables no auto-merge and lands nothing on its own; either way it
+# posts ONE comment on the merged pull request, naming the revert.
 # Env: GITHUB_REPOSITORY, GITHUB_TOKEN, HEAD_SHA, RUN_ID.
 set -euo pipefail
 : "${GITHUB_REPOSITORY:?}" "${GITHUB_TOKEN:?}" "${HEAD_SHA:?}" "${RUN_ID:?}"
@@ -85,7 +86,7 @@ if git push origin HEAD:main >"$push_log" 2>&1; then
   echo "pushed revert $(short "$new_sha") to main"
 else
   cat "$push_log"
-  echo "direct push refused by the ruleset; opening a revert PR with auto-merge"
+  echo "direct push refused by the ruleset; opening a revert PR for somebody to land"
   branch="revert/$(short "$head_sha")"
   git branch -f "$branch" HEAD
   git push origin "$branch" || git push -f origin "$branch"
@@ -95,9 +96,13 @@ else
   fi
   pr_number="$(gh pr view "$branch" --json number --jq .number)"
   echo "revert PR #$pr_number open on $branch"
-  if ! gh pr merge "$pr_number" --auto --merge; then
-    notice "could not enable auto-merge on #$pr_number; to verify: the ruleset must let the github-actions app auto-merge."
-  fi
+  # IT IS LEFT OPEN, DELIBERATELY. This used to enable auto-merge on the revert, which is
+  # not an enqueue at all: it is a standing instruction the forge executes later with
+  # nobody in the room. On 2026-09-18 twenty-seven open pull requests were carrying one and
+  # four of them walked into the dev merge queue on their own (Glenn: nothing reaches the
+  # dev merge queue but a batch). CI lands nothing by itself; a person or a batch lands
+  # this, and the notice says so loudly enough to act on.
+  notice "revert PR #$pr_number is OPEN on $branch and lands nothing by itself: main is red until somebody lands it -- nova-merge land --repo $repo --pr $pr_number, or merge it by hand."
 fi
 
 # --- ONE comment on the merged PR (found by the commit's PR association) ---

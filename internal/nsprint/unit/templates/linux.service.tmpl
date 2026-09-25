@@ -1,0 +1,11 @@
+[Unit]
+Description=nova-sprint {{.Name}}
+After=network.target
+
+[Service]
+ExecStart={{.ExecStart}}
+Restart=always
+KillMode=process
+
+[Install]
+WantedBy=default.target

@@ -302,21 +302,25 @@ func TestExhaustedReplaceReturnsTheRenameErrorAndLeavesStateParseable(t *testing
 		t.Fatal(err)
 	}
 
-	start := time.Now()
+	// The bound runs on an injected clock: Now stands still until Sleep moves it, so the
+	// retry reaches the end of replaceWriteWindow in as many polls as it would in real time
+	// and not one wall-clock millisecond. The assertions are against that clock.
+	start := time.Date(2026, 9, 18, 2, 45, 0, 0, time.UTC)
+	nowFn, sleepFn, at := waitClock(start)
 	st := &State{Version: Version, Repo: "o/n", Base: "main", LaneBranch: "l",
 		PRs: []*Entry{}, Branches: []*Entry{}, Gates: []Gate{}}
-	err = st.SaveTo(lane)
-	elapsed := time.Since(start)
+	err = st.saveToWait(lane, nowFn, sleepFn)
+	elapsed := at.Sub(start)
 
 	if err == nil {
 		t.Fatal("a sustained replace refusal must surface the rename error to the caller, not smooth it over with success")
 	}
 	// The bound is replaceWriteWindow; the rename OS call sits between the deadline
 	// check and the return, so an overshoot of up to one final poll (replaceWritePollMax)
-	// plus a small allowance for test-host scheduling is the contract, not the loop
-	// spinning or bailing at a fraction of the bound.
-	if elapsed > replaceWriteWindow+replaceWritePollMax+500*time.Millisecond {
-		t.Errorf("the bounded retry must not run past the bound (one final poll + test-host allowance): %v > %v+%v+500ms", elapsed, replaceWriteWindow, replaceWritePollMax)
+	// is the injected clock's contract, not the loop spinning or bailing at a fraction of
+	// the bound.
+	if elapsed > replaceWriteWindow+replaceWritePollMax {
+		t.Errorf("the bounded retry must not run past the bound (one final poll): %v > %v+%v", elapsed, replaceWriteWindow, replaceWritePollMax)
 	}
 	if elapsed < replaceWriteWindow/2 {
 		t.Errorf("the bounded retry must run the bound, not bail early: only %v of %v", elapsed, replaceWriteWindow)

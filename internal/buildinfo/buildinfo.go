@@ -23,15 +23,19 @@
 // no version string at all: it invites the comparison it cannot support. NOTHING HERE
 // EVER INVENTS A DOTTED NUMBER.
 //
-// ONE LINE, FOUR TOKENS. Every field of Line goes through oneline.Field, so what is
-// printed is four whitespace-separated tokens whatever the -X held -- and the -X value is
-// the one field in the whole line that comes from outside the toolchain.
+// ONE LINE, FOUR TOKENS AND THEN NAMED EXTRAS. Every field of Line goes through
+// oneline.Field, so what is printed is whitespace-separated tokens whatever the -X held
+// -- and the -X value is the one field in the whole line that comes from outside the
+// toolchain. A tool with more to say says it as `key=value` after the fourth token, and
+// Parse, here, is the one reader of the whole shape: writer and reader are one pair, so a
+// tool that adds a fact cannot break a consumer that has never heard of it (#1297).
 package buildinfo
 
 import (
 	"fmt"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -116,11 +120,81 @@ func Resolve(stamped string, info *debug.BuildInfo, ok bool) string {
 // which tool wrote the line. Every field is rendered through oneline.Field, including the
 // tool's own name, because a helper that escapes three of four fields is a helper whose
 // guarantee has to be re-checked at every call site.
-func Line(tool, stamped string) string {
-	return fmt.Sprintf("%s %s %s/%s %s",
+//
+// A tool with one more true thing to say about itself says it as an EXTRA: a `key=value`
+// token after the fourth -- `build=<12 hex>` from nova-merge, `backend=` and `platform=`
+// from nova-sandbox. Extras are part of the grammar rather than exceptions to it. On
+// 2026-09-18 nova-merge's hand-rolled fifth token made `nova-version snapshot` refuse an
+// entire install (#1297), because each reader had been written against the four tokens it
+// happened to know. So the writer takes extras HERE, where Parse is guaranteed to read
+// them back, and REFUSES one that is not key=value: a writer looser than its reader is a
+// refusal deferred to whoever runs the snapshot.
+func Line(tool, stamped string, extras ...string) string {
+	line := fmt.Sprintf("%s %s %s/%s %s",
 		oneline.Field(tool),
 		oneline.Field(Version(stamped)),
 		oneline.Field(runtime.GOOS),
 		oneline.Field(runtime.GOARCH),
 		oneline.Field(runtime.Version()))
+	for _, e := range extras {
+		key, value, found := strings.Cut(e, "=")
+		if !found || key == "" || value == "" {
+			panic("buildinfo.Line: extra " + strconv.Quote(e) + " is not key=value; the extras of a version line are named facts, never loose tokens")
+		}
+		line += " " + oneline.Field(key) + "=" + oneline.Field(value)
+	}
+	return line
+}
+
+// Fields is one version line taken apart. It is what every READER of a version line in
+// this tree gets, so that "what a version line is" is answered in one place rather than
+// once per consumer: nova-version's snapshot and its report both ask Parse, and a tool
+// that adds an extra tomorrow is already legible to both.
+type Fields struct {
+	Tool      string   // field one: the binary's own name for itself
+	Version   string   // field two: the build identity, the one field a comparison reads
+	Platform  string   // field three: <goos>/<goarch>
+	GoVersion string   // field four: the toolchain that built it
+	Extras    []string // every key=value token after the fourth, in the order printed
+}
+
+// Extra is the value of one named extra. A reader asks for the fact it wants BY NAME and
+// never holds a position, so a tool that adds a second extra cannot move the first.
+func (f Fields) Extra(key string) (string, bool) {
+	for _, e := range f.Extras {
+		if k, v, found := strings.Cut(e, "="); found && k == key {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// Parse reads the first line of what a `version` verb printed and reports whether it is a
+// version line at all. The grammar, stated once for the whole tree:
+//
+//	<tool> <build identity> <goos>/<goarch> <go version> [key=value ...]
+//
+// It is deliberately strict about the four mandatory tokens -- a caller uses ok to tell
+// "this binary is broken" from "this binary is old", and a parser that accepts a usage
+// refusal can tell neither -- and deliberately open about what follows, because the hurt
+// it exists to end was a reader taking one tool's extra fact for a broken build.
+func Parse(s string) (Fields, bool) {
+	line, _, _ := strings.Cut(s, "\n")
+	tokens := strings.Fields(strings.TrimSuffix(line, "\r"))
+	if len(tokens) < 4 {
+		return Fields{}, false
+	}
+	goos, goarch, found := strings.Cut(tokens[2], "/")
+	if !found || goos == "" || goarch == "" {
+		return Fields{}, false
+	}
+	f := Fields{Tool: tokens[0], Version: tokens[1], Platform: tokens[2], GoVersion: tokens[3]}
+	for _, e := range tokens[4:] {
+		key, value, found := strings.Cut(e, "=")
+		if !found || key == "" || value == "" {
+			return Fields{}, false
+		}
+		f.Extras = append(f.Extras, e)
+	}
+	return f, true
 }
