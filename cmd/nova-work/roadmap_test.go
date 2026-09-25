@@ -32,13 +32,13 @@ func TestRoadmapXY(t *testing.T) {
 		t.Errorf("print failed, code %d", code)
 	}
 	out := buf.String()
-	
+
 	// "features verified/total" -> how many features have verified == total?
 	// E01-F01 is 1/2. E01-F02 is 2/2. E02-F01 is 0/1. So 1 feature is fully verified. Total features: 3. So 1/3 features verified.
 	// criteria verified/total -> 1 + 2 + 0 = 3 verified. Total criteria: 2 + 2 + 1 = 5. So 3/5 criteria verified.
 	// We'll see. Let's just output for now and inspect.
 	t.Logf("empty filter:\n%s", out)
-	
+
 	buf.Reset()
 	code = printRoadmapXY(&buf, features, "E01") // epic rollup
 	if code != 0 {
@@ -55,7 +55,7 @@ func TestRoadmapXY(t *testing.T) {
  )))`
 	path2 := t.TempDir() + "/nova-work2.sexp"
 	os.WriteFile(path2, []byte(sexp2), 0644)
-	
+
 	features2, err := readRoadmapByFeature(path2)
 	// either read fails, or print fails, or print gives 0/2.
 	if err == nil {

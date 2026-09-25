@@ -12,10 +12,10 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
-	"flag"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
@@ -81,7 +81,7 @@ func readRoadmapByFeature(path string) ([]roadmapByFeature, error) {
 		id, _ := plistString(entry.List, "feature")
 		verified, vOk := plistInt(entry.List, "verified")
 		total, tOk := plistInt(entry.List, "total")
-		
+
 		criteriaForm, hasCriteria := plistAny(entry.List, "criteria")
 		if hasCriteria && criteriaForm.Kind == worklang.List {
 			calcTotal := int64(len(criteriaForm.List))
@@ -132,7 +132,7 @@ func printRoadmapXY(w io.Writer, features []roadmapByFeature, filter string) int
 				return 0
 			}
 		}
-		
+
 		// Check for epic rollup
 		var epicFeats []roadmapByFeature
 		for _, f := range features {
@@ -144,7 +144,7 @@ func printRoadmapXY(w io.Writer, features []roadmapByFeature, filter string) int
 			fmt.Fprintf(w, "%s\n", oneline.Escape(formatRollupLine(filter, epicFeats)))
 			return 0
 		}
-		
+
 		fmt.Fprintf(w, "QUERY FAIL xy=%s: no such feature in :by-feature (held=%d)\n",
 			oneline.Field(filter), len(features))
 		return 1
