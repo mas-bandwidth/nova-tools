@@ -11,8 +11,8 @@ import (
 
 // The bench fakes: an `ssh` and an `scp` on PATH that record their argv and work against a
 // directory on this machine standing in for the bench's disk. The fake ssh runs the command
-// it was given through a shell, exactly as a real one hands its joined arguments to the
-// remote shell, so `test -f`, a glob and a redirect behave here as they do there. The fake
+// line internal/benchsh sends on its stdin through a shell, as bash on the bench reads it,
+// so `test -f`, a glob and a redirect behave here as they do there. The fake
 // scp strips the `host:` and copies one named file, and fails when that file is not there --
 // which is the whole reason the pull is scp per file rather than one filtered rsync.
 //
@@ -46,13 +46,15 @@ func fakeBenchBin(t *testing.T, dir string, f benchFake) (sshLog, scpLog string)
 	appear := ""
 	if f.appearAfter > 0 {
 		counter := filepath.Join(dir, "asks")
-		appear = "case \"$*\" in *\"test -f " + f.appearPath + "\"*)\n" +
+		appear = "case \"$script\" in *\"test -f " + f.appearPath + "\"*)\n" +
 			"  n=$(cat \"" + counter + "\" 2>/dev/null || echo 0); n=$((n+1)); echo \"$n\" > \"" + counter + "\"\n" +
 			"  if [ \"$n\" -ge " + strconv.Itoa(f.appearAfter) + " ]; then mkdir -p \"$(dirname \"" + f.appearPath + "\")\"; printf '%s' '" + f.appearBody + "' > \"" + f.appearPath + "\"; fi\n" +
 			"  ;;\nesac\n"
 	}
-	ssh := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"" + sshLog + "\"\n" + fail + appear +
-		"shift\nsh -c \"$*\"\n"
+	// internal/benchsh (#3350): the remote command is `bash -s --` and the command line is
+	// the script on stdin; the fake logs argv and that line, and runs the line.
+	ssh := "#!/bin/sh\nscript=$(cat)\nprintf '%s %s\\n' \"$*\" \"$script\" >> \"" + sshLog + "\"\n" + fail + appear +
+		"sh -c \"$script\"\n"
 	scp := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"" + scpLog + "\"\n" + fail +
 		"src=\"${1#*:}\"; dst=\"$2\"\n" +
 		"[ -f \"$src\" ] || exit 1\n" +

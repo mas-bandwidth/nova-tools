@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/benchsh"
 )
 
 // fixtureSSHD is a fake `ssh` that stands in for a bench's sshd configured
@@ -38,7 +40,8 @@ import (
 // exchange after the banner, which no ConnectTimeout bounds (#3322); with
 // `hang-noisy` it first prints a login profile's noise on stdout, which is
 // not the launch verb's voice. Every other accepted session appends one line
-// to sessions.log and its stdin to launched, then holds the session for a
+// to sessions.log, the benchsh line to benchsh and the rest of its stdin to
+// launched, then holds the session for a
 // second (or for the seconds in the bench's `sleep` file, #3706), as a slow
 // remote verb would. It lives in t.TempDir(), so testguard sees a fake.
 const fixtureSSHD = `#!/bin/bash
@@ -77,6 +80,10 @@ done
 [ -z "$slot" ] && refuse
 trap 'rmdir "$slot"' EXIT
 echo "open $*" >> "$dir/sessions.log"
+# internal/benchsh: the remote command is bash -s --, and the first stdin
+# line is the one bash -s reads (exec bash -c <script>); the batch follows.
+IFS= read -r first
+printf '%%s\n' "$first" >> "$dir/benchsh"
 cat >> "$dir/launched"
 if [ -e "$dir/dropafter" ]; then
   echo "Connection closed by 127.0.0.1 port 22" >&2
@@ -515,6 +522,12 @@ func TestControl12FiftyCardsOneSession(t *testing.T) {
 		}
 		if refused := f.lines("ctl-a", "refused.log"); len(refused) != 0 {
 			t.Fatalf("fixture sshd refused %d sessions", len(refused))
+		}
+		if sessions[0] != "open bash -s --" {
+			t.Fatalf("session %q: the remote command is not internal/benchsh's bash -s -- (#3350)", sessions[0])
+		}
+		if first := f.lines("ctl-a", "benchsh"); len(first) != 1 || first[0] != strings.TrimSuffix(benchsh.InputLine(DefaultRemote), "\n") {
+			t.Fatalf("benchsh line %q, want the one line that execs DefaultRemote on the batch (#3350)", first)
 		}
 		launched := f.lines("ctl-a", "launched")
 		if len(launched) != 50 {

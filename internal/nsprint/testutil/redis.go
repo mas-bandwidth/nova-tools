@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -45,13 +46,38 @@ func Absent(t *testing.T, cause error) {
 // anywhere" and exits). The ephemeral port is taken here, the way the controls
 // used to, and handed to redis-server as --port. That is a free loopback port,
 // not a dial to a bench.
+//
+// Between FreePort closing the port and redis-server binding it, a parallel
+// test can take the same port. The loser logs "Address already in use" and
+// exits, while its readiness PING is answered by the winner, so two tests
+// would share one store (#4027: two harvest subtests' benches fenced each
+// other's lease). So the answer counts only from this test's own server --
+// INFO's process_id is its pid, or under NOAUTH its log says it is listening
+// -- and a server that lost the bind is started again on a new port.
 func Start(t *testing.T, extra ...string) string {
 	t.Helper()
 	bin := Program(t)
-	port := FreePort(t)
+	const tries = 8
+	for i := 1; ; i++ {
+		addr, lostBind := startOnce(t, bin, FreePort(t), extra)
+		if !lostBind {
+			return addr
+		}
+		if i == tries {
+			t.Fatalf("throwaway redis lost the bind on %d free ports in a row (last %s)", tries, addr)
+		}
+	}
+}
+
+// startOnce starts one redis-server on port and waits for it. It returns the
+// address and whether the server exited because another process holds the
+// port; any other failure is fatal.
+func startOnce(t *testing.T, bin, port string, extra []string) (string, bool) {
+	t.Helper()
 	addr := net.JoinHostPort("127.0.0.1", port)
 	dir := t.TempDir()
-	logf, err := os.Create(filepath.Join(dir, "redis.log"))
+	logPath := filepath.Join(dir, "redis.log")
+	logf, err := os.Create(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,26 +88,48 @@ func Start(t *testing.T, extra ...string) string {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("redis-server did not start: %v", err)
 	}
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
 	t.Cleanup(func() {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-		}
+		_ = cmd.Process.Kill()
+		<-exited
 	})
 	client := redis.NewClient(&redis.Options{Addr: addr})
-	t.Cleanup(func() { _ = client.Close() })
+	defer client.Close()
+	pid := "process_id:" + strconv.Itoa(cmd.Process.Pid) + "\r\n"
 	deadline := time.Now().Add(30 * time.Second)
 	var pingErr error
 	for {
+		select {
+		case <-exited:
+			body, _ := os.ReadFile(logPath)
+			if strings.Contains(string(body), "Address already in use") {
+				return addr, true
+			}
+			t.Fatalf("throwaway redis on %s exited: %s", addr, body)
+		default:
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		pingErr = client.Ping(ctx).Err()
-		cancel()
-		if pingErr == nil || strings.Contains(pingErr.Error(), "NOAUTH") {
-			return addr
+		switch {
+		case pingErr == nil:
+			if info, err := client.Info(ctx, "server").Result(); err == nil && strings.Contains(info, pid) {
+				cancel()
+				return addr, false
+			}
+		case strings.Contains(pingErr.Error(), "NOAUTH"):
+			if body, _ := os.ReadFile(logPath); strings.Contains(string(body), "Ready to accept connections") {
+				cancel()
+				return addr, false
+			}
 		}
+		cancel()
 		if time.Now().After(deadline) {
-			body, _ := os.ReadFile(filepath.Join(dir, "redis.log"))
-			t.Fatalf("throwaway redis did not start: %v\n%s", pingErr, body)
+			body, _ := os.ReadFile(logPath)
+			t.Fatalf("throwaway redis did not start on %s (last ping %v; answered by another server?)\n%s", addr, pingErr, body)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
