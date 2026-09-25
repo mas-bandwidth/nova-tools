@@ -197,6 +197,20 @@ func (d *DevRed) one(ctx context.Context, rb land.RepoBase) Outcome {
 	o.State = st
 	switch st.Verdict {
 	case "FAIL":
+		// Baseline the failures per bench.
+		gids, _ := c.SMembers(ctx, civerdict.GIDsKey(rb.Repo, sha)).Result()
+		for _, gid := range gids {
+			rec, _ := civerdict.Read(ctx, c, rb.Repo, sha, gid)
+			if civerdict.Of(rec) == "FAIL" {
+				bench := rec["bench"]
+				pkg := rec["pkg"]
+				test := rec["test"]
+				if bench != "" && pkg != "" && test != "" {
+					c.HSet(ctx, "ci:baseline:"+rb.Repo+":"+rb.Base+":"+bench, pkg+":"+test, "1")
+				}
+			}
+		}
+
 		if red["sha"] == sha {
 			o.Action, o.Task = "HOLDING", red["task"]
 			return o
@@ -226,6 +240,17 @@ func (d *DevRed) one(ctx context.Context, rb land.RepoBase) Outcome {
 			o.Action = "GREEN"
 			return o
 		}
+
+		// Clear baselines across all benches
+		keys, _ := c.Keys(ctx, "ci:baseline:"+rb.Repo+":"+rb.Base+":*").Result()
+		if len(keys) > 0 {
+			var args []string
+			for _, k := range keys {
+				args = append(args, k)
+			}
+			c.Del(ctx, args...)
+		}
+
 		if err := c.Del(ctx, land.RedKey(rb.Repo, rb.Base)).Err(); err != nil {
 			o.Err = err
 			return o

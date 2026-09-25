@@ -1,0 +1,36 @@
+--- internal/nsprint/reconcile/devred.go
++++ internal/nsprint/reconcile/devred.go
+@@ -197,6 +197,20 @@
+ 	o.State = st
+ 	switch st.Verdict {
+ 	case "FAIL":
++		// Baseline the failures per bench.
++		gids, _ := c.SMembers(ctx, civerdict.GIDsKey(rb.Repo, sha)).Result()
++		for _, gid := range gids {
++			rec, _ := civerdict.Read(ctx, c, rb.Repo, sha, gid)
++			if civerdict.Of(rec) == "FAIL" {
++				bench := rec["bench"]
++				pkg := rec["pkg"]
++				test := rec["test"]
++				if bench != "" && pkg != "" && test != "" {
++					c.HSet(ctx, "ci:baseline:"+rb.Repo+":"+rb.Base+":"+bench, pkg+":"+test, "1")
++				}
++			}
++		}
++
+ 		if red["sha"] == sha {
+ 			o.Action, o.Task = "HOLDING", red["task"]
+ 			return o
+@@ -207,6 +221,12 @@
+ 			return o
+ 		}
++
++		// Clear baselines across all benches
++		keys, _ := c.Keys(ctx, "ci:baseline:"+rb.Repo+":"+rb.Base+":*").Result()
++		if len(keys) > 0 {
++			c.Del(ctx, keys...)
++		}
++
+ 		if err := c.Del(ctx, land.RedKey(rb.Repo, rb.Base)).Err(); err != nil {
+ 			o.Err = err
+ 			return o
