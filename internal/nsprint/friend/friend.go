@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
@@ -38,13 +39,32 @@ const (
 	StateOutOfCredits = "out-of-credits"
 	StateDown         = "down"
 	StateAway         = "away"
+	// StateOfflineModel and StateWakeMissed come from the life classifier
+	// (#3153, ApplyLife): beats with no model turn, and a delivered wake no
+	// caused turn-start answered within 120 s. Both block new work; the
+	// redistribute tick moves a wake-missed friend's work and a beat never
+	// clears it.
+	StateOfflineModel = "offline-model"
+	StateWakeMissed   = "wake-missed"
 )
+
+// StateStale is ns_friend_state's answer when the stored state moved since
+// the classifier read it; nothing was written.
+const StateStale = "STALE"
 
 // StateKey is the one key ns_friend_state writes for friend f.
 func StateKey(f string) string { return "friend:" + f + ":state" }
 
 // WakePathKey is the declared wake path of friend f.
 func WakePathKey(f string) string { return "friend:" + f + ":wakepath" }
+
+// EventsKey is friend f's lifecycle stream (#3153); its one writer is
+// ns_friend_event.
+func EventsKey(f string) string { return life.EventsKey(f) }
+
+// WakeModeKey is friend f's declared wake mode (#3153); its one writer is
+// ns_friend_wakemode.
+func WakeModeKey(f string) string { return life.WakeModeKey(f) }
 
 // ReportRequest is `friend report`: a state the friend (or its harness
 // keeper) reports about itself. State is StateOutOfCredits (Until optional:
@@ -56,6 +76,11 @@ type ReportRequest struct {
 	Reason string
 	Actor  string
 	Idem   string
+	// IfState and IfIdem are the state (StateUp when absent) and idem (""
+	// when absent) the classifier read; ReportIf passes them as
+	// ns_friend_state args 7-8 and the writer re-checks them atomically.
+	IfState string
+	IfIdem  string
 }
 
 // Report writes a reported state through ns_friend_state. The reconciler's
@@ -79,6 +104,26 @@ func Report(ctx context.Context, st *store.Store, req ReportRequest) error {
 	}
 	_, err := call(ctx, st, req.Friend, req.State, untilMS, req.Reason, req.Actor, req.Idem)
 	return err
+}
+
+// ReportIf is the life classifier's write (#3153): State is clear, down,
+// out-of-credits, offline-model or wake-missed, written through
+// ns_friend_state only if the stored state and idem still equal IfState and
+// IfIdem, and only over a state the classifier may overwrite. It returns the
+// Function's answer: OK <state> <rung> <action>, DUP, HELD <state> or STALE
+// <state> <idem>.
+func ReportIf(ctx context.Context, st *store.Store, req ReportRequest) ([]string, error) {
+	if st == nil || req.Friend == "" {
+		return nil, fmt.Errorf("friend report-if: store and friend are required")
+	}
+	if req.IfState == "" {
+		return nil, fmt.Errorf("friend report-if %s: IfState is required", req.Friend)
+	}
+	untilMS := ""
+	if !req.Until.IsZero() {
+		untilMS = strconv.FormatInt(req.Until.UnixMilli(), 10)
+	}
+	return call(ctx, st, req.Friend, req.State, untilMS, req.Reason, req.Actor, req.Idem, req.IfState, req.IfIdem)
 }
 
 // Observation is one reconciler reading of an UP friend: State is
@@ -149,8 +194,8 @@ func Observe(ctx context.Context, st *store.Store, obs Observation, actor, idem 
 	return step, nil
 }
 
-// call runs ns_friend_state and returns its reply as strings; OK, HELD and
-// DUP are answers, anything else is an error.
+// call runs ns_friend_state and returns its reply as strings; OK, HELD, DUP
+// and STALE are answers, anything else is an error.
 func call(ctx context.Context, st *store.Store, f string, args ...string) ([]string, error) {
 	argv := make([]any, 0, len(args)+1)
 	argv = append(argv, f)
@@ -170,7 +215,7 @@ func call(ctx context.Context, st *store.Store, f string, args ...string) ([]str
 		values[i] = fmt.Sprint(v)
 	}
 	switch values[0] {
-	case "OK", "HELD", "DUP":
+	case "OK", "HELD", "DUP", StateStale:
 		return values, nil
 	}
 	return nil, fmt.Errorf("friend state %s: %s", f, values[0])

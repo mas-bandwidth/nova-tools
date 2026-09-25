@@ -8,7 +8,9 @@
 -- reached from outside only as ns_friend_state (and from the redistribute
 -- tick in the same library). internal/nsprint/friend's TestControl43OneWriter
 -- fails on a write to the key from any other file. Fields:
---   state   out-of-credits | away | down | idle | underfull (absent = up)
+--   state   out-of-credits | away | down | idle | underfull | offline-model |
+--           wake-missed (absent = up); the last two come from the life
+--           classifier (#3153, actor life, idem life:<f>:...)
 --   since   when this state began (server ms); kept across rung changes
 --   until   out-of-credits reset or end of an away (ms, or '')
 --   rung    ladder step 0-3 (5.5); lives in the store, so a restarted
@@ -31,6 +33,10 @@
 -- friend:<f>:wakepath (hash; kind unit|human, unit, host, notify,
 -- declared_at) is written by ns_friend_wakepath from `capacity friend <f> --as <actor>
 -- --wake` (config, etc/friends.conf).
+--
+-- friend:<f>:wakemode (hash; mode, deliver, turn, lag_ms, actor, declared_at;
+-- #3153) is written only by ns_friend_wakemode, which re-reads the firing
+-- receipt from friend:<f>:events itself. Absent = active-turn/tool-return.
 
 local FS_OUT = 'out-of-credits'
 local FS_AWAY = 'away'
@@ -38,10 +44,16 @@ local FS_DOWN = 'down'
 local FS_IDLE = 'idle'
 local FS_UNDER = 'underfull'
 local FS_OUTBOX = 'friend:outbox'
+local FS_OFFLINE = 'offline-model'
+local FS_WAKE_MISSED = 'wake-missed'
+local FS_LIFE = 'life'
 local FS_WAKE_TTL_MS = 600000
--- Held states belong to the report and the redistribute tick; the ladder's
--- observation never overwrites them.
-local FS_HELD = { [FS_OUT] = true, [FS_AWAY] = true, [FS_DOWN] = true }
+local FS_RECEIPT_MS = 120000
+-- Held states belong to the report, the life classifier and the redistribute
+-- tick; the ladder's observation never overwrites them, and each blocks new
+-- work (fs_blocks).
+local FS_HELD = { [FS_OUT] = true, [FS_AWAY] = true, [FS_DOWN] = true,
+  [FS_OFFLINE] = true, [FS_WAKE_MISSED] = true }
 
 local function fs_now_ms()
   local t = redis.call('TIME')
@@ -136,6 +148,42 @@ local function fs_rung_action(f, rung, open, actor, idem, at)
   return ''
 end
 
+-- fs_entry_wake is the one wake sent when the life classifier first enters
+-- offline-model: the rung-2 unit wake path (friend:<f>:wake and a kind=wake
+-- on the outbox). A delivery that no caused turn-start answers within 120 s
+-- becomes wake-missed on the classifier's next tick.
+local function fs_entry_wake(f, actor, idem, at)
+  local wake = 'friend:' .. f .. ':wake'
+  redis.call('LPUSH', wake, tostring(at) .. ':offline-model')
+  redis.call('LTRIM', wake, 0, 0)
+  redis.call('PEXPIRE', wake, FS_WAKE_TTL_MS)
+  fs_outbox(f, 'wake', 2, '', 0, 'offline-model', actor, idem, at)
+  return 'wake'
+end
+
+-- fs_life_check is the atomic re-check of a classifier write (actor life):
+-- args 7-8 are the state (or up) and idem (or '') the caller read. A
+-- difference answers STALE; a report (present, not idle/underfull, idem not
+-- life:) answers HELD; either way nothing is written. nil means go on.
+local function fs_life_check(key, state, args)
+  if args[7] == nil or args[8] == nil then
+    return { 'INVALID' }
+  end
+  if state ~= 'clear' and state ~= FS_OUT and state ~= FS_DOWN and
+      state ~= FS_OFFLINE and state ~= FS_WAKE_MISSED then
+    return { 'INVALID' }
+  end
+  local cur = redis.call('HMGET', key, 'state', 'idem')
+  local stored, sidem = cur[1] or 'up', cur[2] or ''
+  if stored ~= args[7] or sidem ~= args[8] then
+    return { 'STALE', stored, sidem }
+  end
+  if cur[1] and cur[1] ~= FS_IDLE and cur[1] ~= FS_UNDER and string.sub(sidem, 1, 5) ~= 'life:' then
+    return { 'HELD', cur[1] }
+  end
+  return nil
+end
+
 -- fs_observe is one ladder step from the reconciler's observation.
 -- obs is idle, underfull or up (nothing to climb: the ladder is cleared).
 local function fs_observe(f, obs, open, living, policy_ticks, actor, idem, at)
@@ -182,10 +230,13 @@ end
 
 -- ns_friend_state: args = friend, state, until (unix ms or ''), reason,
 -- actor, idem, then for a ladder observation (state idle, underfull or up):
--- open, living, policy ticks. state out-of-credits, away and down are
--- reports; clear removes any state. Returns OK state rung action, HELD state
--- (an observation while a report holds), DUP state rung (the idem was the
--- last applied call), INVALID or NOTFOUND.
+-- open, living, policy ticks. state out-of-credits, away, down,
+-- offline-model and wake-missed are reports; clear removes any state. For
+-- actor life (the #3153 classifier) args 7-8 are required: the state and idem
+-- it read, re-checked here (fs_life_check). Returns OK state rung action,
+-- HELD state (an observation or classifier write while a report holds), DUP
+-- state rung (the idem was the last applied call), STALE state idem (the
+-- stored state moved since the classifier read it), INVALID or NOTFOUND.
 local function fs_friend_state(keys, args)
   local friend, state, until_ms, reason = args[1], args[2], args[3] or '', args[4] or ''
   local actor, idem = args[5], args[6] or ''
@@ -205,14 +256,29 @@ local function fs_friend_state(keys, args)
       return { 'DUP', last[2] or '', last[3] or '0' }
     end
   end
+  if actor == FS_LIFE then
+    local answer = fs_life_check(key, state, args)
+    if answer then
+      return answer
+    end
+  end
   local at = fs_now_ms()
   if state == 'clear' then
     fs_clear(friend, reason, actor, idem, at)
     return { 'OK', 'up', '0', '' }
   end
-  if state == FS_OUT or state == FS_DOWN then
+  if state == FS_OUT or state == FS_DOWN or state == FS_WAKE_MISSED then
     fs_set(friend, state, until_ms, reason, 0, 0, 0, actor, idem, at, false)
     return { 'OK', state, '0', '' }
+  end
+  if state == FS_OFFLINE then
+    local was = redis.call('HGET', key, 'state')
+    fs_set(friend, state, until_ms, reason, 0, 0, 0, actor, idem, at, false)
+    local action = ''
+    if was ~= FS_OFFLINE then
+      action = fs_entry_wake(friend, actor, idem, at)
+    end
+    return { 'OK', state, '0', action }
   end
   if state == FS_AWAY then
     if until_ms == '' then
@@ -269,12 +335,61 @@ local function fs_friend_wakepath(keys, args)
   return { 'OK', kind }
 end
 
+-- fs_event reads one entry of friend:<f>:events as a field table, or nil.
+local function fs_event(f, id)
+  local r = redis.pcall('XRANGE', 'friend:' .. f .. ':events', id, id)
+  if type(r) ~= 'table' or r.err or #r == 0 then
+    return nil
+  end
+  local h, fields = {}, r[1][2]
+  for i = 1, #fields, 2 do
+    h[fields[i]] = fields[i + 1]
+  end
+  return h
+end
+
+-- ns_friend_wakemode: args = friend, deliver id D, turn-start id T, actor,
+-- idem. Declares scheduled-model-turn only on a firing receipt it re-reads
+-- itself: D is a deliver, T a turn-start with cause D, and 0 <= T.at - D.at
+-- <= 120000 ms. Returns OK mode lag_ms, REFUSED why, INVALID or NOTFOUND.
+local function fs_friend_wakemode(keys, args)
+  local friend, did, tid, actor, idem = args[1], args[2], args[3], args[4] or '', args[5] or ''
+  if not friend or friend == '' or not did or did == '' or not tid or tid == '' then
+    return { 'INVALID' }
+  end
+  if redis.call('SISMEMBER', 'friends', friend) == 0 then
+    return { 'NOTFOUND' }
+  end
+  local d, t = fs_event(friend, did), fs_event(friend, tid)
+  if not d or not t then
+    return { 'REFUSED', 'no such event' }
+  end
+  if d.kind ~= 'deliver' or t.kind ~= 'turn-start' then
+    return { 'REFUSED', 'want a deliver and a turn-start' }
+  end
+  if t.cause ~= did then
+    return { 'REFUSED', 'turn-start cause is not the deliver' }
+  end
+  local lag = (tonumber(t.at or '') or -1) - (tonumber(d.at or '') or 0)
+  if lag < 0 or lag > FS_RECEIPT_MS then
+    return { 'REFUSED', 'lag ' .. tostring(lag) .. ' ms is outside 0..120000' }
+  end
+  local at = fs_now_ms()
+  local key = 'friend:' .. friend .. ':wakemode'
+  redis.call('DEL', key)
+  redis.call('HSET', key, 'mode', 'scheduled-model-turn', 'deliver', did, 'turn', tid,
+    'lag_ms', tostring(lag), 'actor', actor, 'declared_at', tostring(at))
+  fs_caplog('friend-wakemode', friend, 'scheduled-model-turn ' .. did .. ' ' .. tid, actor, idem, at)
+  return { 'OK', 'scheduled-model-turn', tostring(lag) }
+end
+
 redis.register_function('ns_friend_state', fs_friend_state)
 redis.register_function('ns_friend_wakepath', fs_friend_wakepath)
+redis.register_function('ns_friend_wakemode', fs_friend_wakemode)
 
 -- The cross-file surface (loader.go: every file is its own do-block, and NS
 -- is the one chunk-level local). redistribute*.lua sort after this file.
 NS.friend = {
-  FS_AWAY = FS_AWAY, FS_IDLE = FS_IDLE, FS_UNDER = FS_UNDER,
+  FS_AWAY = FS_AWAY, FS_IDLE = FS_IDLE, FS_UNDER = FS_UNDER, FS_WAKE_MISSED = FS_WAKE_MISSED,
   fs_blocks = fs_blocks, fs_set = fs_set, fs_clear = fs_clear,
 }
