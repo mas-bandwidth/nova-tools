@@ -340,9 +340,14 @@ func cloneURL(header map[string]string) string {
 
 type privateRepoError struct{ Name string }
 
-func (e *privateRepoError) Error() string { return "private repo " + e.Name }
+func (e *privateRepoError) Error() string {
+	return "private repo " + e.Name + ": no mirror at " + mirrorPath(e.Name) + "; run mirror-refresh on this host"
+}
 
-// probeRepo refuses a repository an unauthenticated request cannot read.
+// probeRepo refuses a repository this host cannot show exists. A local bare
+// mirror (~/nova-bench/mirror/<repo>.git, or $NOVA_MIRROR_ROOT) is checked
+// first and is enough: private repos answer an anonymous request with 404.
+// Without a mirror, the repository must be readable without a login.
 // 404, 401, and 403 are private. A redirect is private too: it is not the
 // repository, and following it can land on a login page that returns 200.
 // Anything else that is not 200 is a probe failure, which is also a refusal:
@@ -354,6 +359,9 @@ func probeRepo(ctx context.Context, cloneURL string) (string, error) {
 	probeURL, name, err := repoProbeURL(cloneURL)
 	if err != nil {
 		return "", err
+	}
+	if hasMirror(name) {
+		return name, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, probeURL, nil)
 	if err != nil {
