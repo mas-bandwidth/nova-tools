@@ -69,6 +69,9 @@ type FriendRow struct {
 	Name                         string
 	At, Up, Ready, Working, Done string
 	Down                         string
+	// Stale is the whole table's count of the friend's working set members
+	// with no live child (#3892): "" on the bash layout, "?" unread.
+	Stale string
 }
 
 // BenchRow is one bench:<b> hash, values already sanitized the way the bash's

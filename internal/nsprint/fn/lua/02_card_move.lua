@@ -727,8 +727,9 @@ NS.card = { move = card_move, create = card_create, purge = card_purge }
 -- a why, and so does working -> ready.
 -- A take (-> working) writes lease_until = now + TK.LEASE; the child renews
 -- it with ns_tcard_beat every 60 s; ns_tcard_expire moves a working task
--- whose lease lapsed back to ready (why=lease lapsed), so a friend's working
--- column (ZCARD friend:<f>:cards:working) never counts a task nobody holds
+-- whose lease lapsed back to ready (why=lease lapsed) and unlinks from the
+-- working set an id whose record is not that friend's working task (TK.reap,
+-- #3892), so a friend's working set never holds a task nobody holds
 -- (Glenn 08:15 AM: rowan working=65 with two children alive). A same-where call re-places the task: a new stream (any where), a
 -- new friend or the front flag (waiting, ready, parked).
 -- A Redis Function cannot call another, so later files reach it as NS.task:
@@ -1595,23 +1596,48 @@ redis.register_function('ns_tcard_beat', function(keys, args)
   return 'BEAT ' .. tostring(at + TK.LEASE)
 end)
 
--- ns_tcard_expire(by[, friend...]) -> EXPIRED n then the ids: every working
--- task of the named friends (else every member of friends) whose lease
--- lapsed goes back to ready, why=lease lapsed. O(the working sets).
-redis.register_function('ns_tcard_expire', function(keys, args)
-  local by = args[1] or ''
-  local friends = {}
-  for i = 2, #args do friends[#friends + 1] = args[i] end
-  if #friends == 0 then friends = redis.call('SMEMBERS', 'friends') end
-  local now = cm_now()
-  local out = { 'EXPIRED', '0' }
-  for _, f in ipairs(friends) do
-    for _, id in ipairs(redis.call('ZRANGE', 'friend:' .. f .. ':cards:working', 0, -1)) do
-      if not TK.card_id(id) then
-        local p = TK.read(id)
-        local lease = p and tonumber(p.lease_until)
-        if p and not lease then lease = TK.last_beat(p) + TK.LEASE end
-        if p and p.state ~= 'reconcile-required' and lease < now then
+-- TK.stray: why the link of task id in friend f's working set is stray, or
+-- nil when the record says it is f's and working (a record that predates
+-- the where field: where its facts imply, TK.derive). A finished task left
+-- in the set (Glenn 2026-09-25 4:40 PM ET: "The friends table must be
+-- accurate each second. It must not lie."; emma showed 17 working with 5
+-- live children and 11 finished cards) is stray, and so is an id
+-- with no record.
+function TK.stray(id, f)
+  local p = TK.read(id)
+  if not p then return 'no record', nil end
+  local w = p.where
+  if not p.placed then w = TK.derive(id, p) or '' end
+  if w ~= 'working' then return 'record is ' .. (w == '' and 'null' or w), p end
+  if p.friend ~= f then return "record is " .. (p.friend == '' and 'nobody' or p.friend) .. "'s", p end
+  return nil, p
+end
+
+-- TK.reap(f, by, now) sweeps friend f's working set (#3892): a task whose
+-- record is not f's and working leaves the set (its own views are linked,
+-- score created_at, so the record is still in exactly its places) with one
+-- ws:log receipt, to=unlinked; a working task whose lease lapsed goes back
+-- to ready through TK.move, why=lease lapsed (the lease rule). A card id
+-- (s:<S>:card:) is the card move's: card fsck and the expire duty own it.
+-- Returns the ids moved to ready and the ids unlinked.
+function TK.reap(f, by, now)
+  local fk = 'friend:' .. f .. ':cards:working'
+  local expired, unlinked = {}, {}
+  for _, id in ipairs(redis.call('ZRANGE', fk, 0, -1)) do
+    if not TK.card_id(id) then
+      local why, p = TK.stray(id, f)
+      if why then
+        if p and p.placed and TK.IS[p.where] then
+          for _, k in ipairs(TK.views(p)) do redis.call('ZADD', k, 'NX', p.created or cm_now(), id) end
+        end
+        redis.call('ZREM', fk, id)
+        redis.call('XADD', 'ws:log', 'MAXLEN', '~', TK.LOG_MAX, '*', 'id', id, 'stream', p and p.stream or '',
+          'from', 'working', 'to', 'unlinked', 'by', by, 'why', 'stray ' .. fk .. ': ' .. why, 'at', tostring(now))
+        unlinked[#unlinked + 1] = id
+      else
+        local lease = tonumber(p.lease_until)
+        if not lease then lease = TK.last_beat(p) + TK.LEASE end
+        if p.state ~= 'reconcile-required' and lease < now then
           -- a sprint store claim is fenced too: its old token's done and
           -- beat refuse FENCED, and its lease leaves the friend's slots
           local c = redis.call('HMGET', 'task:' .. id, 'token', 'attempt', 'sprint')
@@ -1623,13 +1649,33 @@ redis.register_function('ns_tcard_expire', function(keys, args)
               redis.call('ZREM', 'friend:' .. f .. ':starting', identity)
               redis.call('ZREM', 'friend:' .. f .. ':living', identity)
             end
-            out[#out + 1] = id
+            expired[#expired + 1] = id
           end
         end
       end
     end
   end
-  out[2] = tostring(#out - 2)
+  return expired, unlinked
+end
+
+-- ns_tcard_expire(by[, friend...]) -> EXPIRED n m, then the n ids moved
+-- back to ready, then the m ids unlinked: TK.reap over each named friend's
+-- working set (else every member of friends). O(the working sets).
+redis.register_function('ns_tcard_expire', function(keys, args)
+  local by = args[1] or ''
+  local friends = {}
+  for i = 2, #args do friends[#friends + 1] = args[i] end
+  if #friends == 0 then friends = redis.call('SMEMBERS', 'friends') end
+  local now = cm_now()
+  local expired, unlinked = {}, {}
+  for _, f in ipairs(friends) do
+    local e, u = TK.reap(f, by, now)
+    for _, id in ipairs(e) do expired[#expired + 1] = id end
+    for _, id in ipairs(u) do unlinked[#unlinked + 1] = id end
+  end
+  local out = { 'EXPIRED', tostring(#expired), tostring(#unlinked) }
+  for _, id in ipairs(expired) do out[#out + 1] = id end
+  for _, id in ipairs(unlinked) do out[#out + 1] = id end
   return out
 end)
 

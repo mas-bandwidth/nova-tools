@@ -143,6 +143,9 @@ func TestTableLoopTakesSeconds(t *testing.T) {
 }
 
 // TestTableLiveOnceOut: one render to --out, by rename, is the whole table.
+// The verb reads at the wall clock, hours after the fixture's beats, so no
+// friend has a live child: rowan's 12 working cards print working 0 and
+// stale=12 (#3892), and its row is down.
 func TestTableLiveOnceOut(t *testing.T) {
 	addr, _ := wholeTableRedis(t)
 	out := filepath.Join(t.TempDir(), "TABLE.txt")
@@ -151,7 +154,7 @@ func TestTableLiveOnceOut(t *testing.T) {
 		t.Fatalf("exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
 	b, err := os.ReadFile(out)
-	if err != nil || !strings.Contains(string(b), "\nrowan      |     0 |      12 |     4 | ") || !strings.Contains(string(b), "\nstream                         | waiting | ready | working | reading | merging | landed\n") {
+	if err != nil || !strings.Contains(string(b), "\nrowan      |     0 |       0 |     4 | down stale=12") || !strings.Contains(string(b), "\nstream                         | waiting | ready | working | reading | merging | landed\n") {
 		t.Fatalf("published table:\n%s (%v)", b, err)
 	}
 }

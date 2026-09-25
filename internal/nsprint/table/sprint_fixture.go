@@ -12,7 +12,8 @@ import (
 // that instant. It exercises every rule the render applies: two all-zero
 // streams hidden, ready and reading in their own columns, landed moves in and out of the
 // ETA's hour, a bench outside the benches SET (studio) not shown, a friend with a down flag, a friend whose beat is
-// stale, a friend with no row, and a done base from a clear. Host rows are
+// stale, a friend with no row, a done base from a clear, and a friend whose
+// working set holds cards with no live child (#3892). Host rows are
 // each bench's own keys (#2389): its card views and its beat; the bash
 // bench-row hash beside them disagrees on every cell and is never read.
 
@@ -146,6 +147,30 @@ func SprintFixture() [][]string {
 		{"stella", [3]int{0, 1, 5}},
 	} {
 		cmds = append(cmds, FriendCards(f.name, f.counts)...)
+	}
+	// The working column counts live children only (#3892): each working
+	// card's record and beat. rowan's 12 are 2 beating, 4 with a beat 10
+	// minutes old, 3 never beaten and 3 finished cards left in the set, so
+	// the row prints working 2 and stale=10; emma's and stella's all beat.
+	for _, f := range []struct {
+		name string
+		n    int
+	}{{"rowan", 12}, {"emma", 4}, {"stella", 1}} {
+		for k := 0; k < f.n; k++ {
+			id := fmt.Sprintf("task:%s-working-%d", f.name, k)
+			rec := []string{"HSET", id, "where", "working", "friend", f.name, "owner", f.name}
+			switch {
+			case f.name != "rowan" || k < 2:
+				rec = append(rec, "beat_at", ms(-10*time.Second))
+			case k < 6:
+				rec = append(rec, "beat_at", ms(-10*time.Minute))
+			case k < 9:
+			default:
+				rec = append(rec, "beat_at", ms(-10*time.Minute))
+				rec[3] = "done"
+			}
+			cmds = append(cmds, rec)
+		}
 	}
 	return cmds
 }
