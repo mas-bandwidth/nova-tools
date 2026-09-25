@@ -78,6 +78,12 @@ func TestEveryNamedRepoPathExists(t *testing.T) {
 	for _, rel := range files {
 		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
+			if os.IsNotExist(err) {
+				// A file another test wrote and removed while this walk ran
+				// (TestPausePointThreadDirected's probe source, seen on hulk
+				// and vision 2026-09-25): not a named path of the tree.
+				continue
+			}
 			t.Fatal(err)
 		}
 		for line, text := range strings.Split(string(raw), "\n") {

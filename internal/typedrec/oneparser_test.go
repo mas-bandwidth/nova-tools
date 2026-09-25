@@ -652,6 +652,9 @@ func TestOneTypedParser(t *testing.T) {
 
 			hits, err := pc.scanFile(p, rel)
 			if err != nil {
+				if os.IsNotExist(err) {
+					return nil // written and removed by a parallel test's probe build
+				}
 				return err
 			}
 
