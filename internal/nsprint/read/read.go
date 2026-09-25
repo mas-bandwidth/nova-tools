@@ -35,6 +35,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/spec"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -318,6 +319,10 @@ func CheckLine(line string) error {
 	if !whoRx.MatchString(first) {
 		return errors.New("line has no who=<name>")
 	}
+	if tok[0] == "SPEC" { // a spec issue has no head; its line carries rev= and score= (#3370)
+		_, err := spec.ParseLine(first)
+		return err
+	}
 	if !headRx.MatchString(first) {
 		return errors.New("line has no head=<sha> (7 to 40 hex)")
 	}
@@ -379,6 +384,9 @@ func Post(ctx context.Context, c *redis.Client, repo, n, line string, poster *Po
 	if err := CheckLine(line); err != nil {
 		fmt.Fprintf(stderr, "READ POST REFUSED repo=%s n=%s why=%v\n", repo, n, err)
 		return 1
+	}
+	if strings.Fields(line)[0] == "SPEC" {
+		return postSpec(ctx, c, repo, n, line, poster, stdout, stderr)
 	}
 	head, err := c.HGet(ctx, Key(repo, n), "head").Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
