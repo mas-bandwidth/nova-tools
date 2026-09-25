@@ -1251,6 +1251,33 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// The request may have been accepted and the response was lost. That is
 	// not a delivered card and not an ordinary failure the coordinator may retry.
 	verdict, why := nativeVerdictWhy(res)
+
+	for _, req := range res.reqs {
+		fb := "none"
+		if !req.FirstByte.IsZero() {
+			fb = strconv.FormatInt(req.FirstByte.Sub(req.Sent).Milliseconds(), 10)
+		}
+		done := "none"
+		if !req.Done.IsZero() {
+			done = strconv.FormatInt(req.Done.Sub(req.Sent).Milliseconds(), 10)
+		}
+		httpCode := req.HTTPCode
+		if httpCode == "" {
+			httpCode = "none"
+		}
+		in := req.TokensIn
+		if in == "" {
+			in = "0"
+		}
+		out := req.TokensOut
+		if out == "" {
+			out = "0"
+		}
+		fmt.Fprintf(stdout, "REQ provider=%s model=%s sent=%s first_byte_ms=%s done_ms=%s http=%s tokens_in=%s tokens_out=%s\n",
+			oneline.Field(req.Provider), oneline.Field(req.Model), oneline.Field(req.Sent.UTC().Format(time.RFC3339Nano)),
+			oneline.Field(fb), oneline.Field(done), oneline.Field(httpCode), oneline.Field(in), oneline.Field(out))
+	}
+
 	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
 	//
@@ -1266,6 +1293,13 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
 		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
 		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped))
+	// THE LAST PROVIDER REQUEST'S STATE (issue #3785): a card the run ended while a
+	// request was observed carries wall_provider=<no first byte after N s | streaming
+	// stalled at M s | model busy after done>, so a wall is attributable to the
+	// provider, the sandbox or the model from this line alone.
+	if res.wWhy != "" {
+		fmt.Fprintf(stdout, " wall_provider=%s", oneline.Field(res.wWhy))
+	}
 	if why != "" {
 		fmt.Fprintf(stdout, " why=%s", oneline.Field(why))
 	}
