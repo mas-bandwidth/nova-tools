@@ -340,6 +340,12 @@ func recordEnd(ctx context.Context, rec ResultRecorder, e endRecord) (res typedr
 		{"w_commit", e.end.Commit}, {"w_pushed_sha", e.end.PushedSHA}, {"w_branch", branch},
 		{"w_why", oneField(e.why)},
 	}
+	if present {
+		// The model's two lines, whatever the card's kind (#3919): ns_card_end
+		// copies them onto the card record.
+		m := typedrec.SplitModel(raw, cf.Kind)
+		facts = append(facts, Fact{"w_line1", oneField(m.Line1)}, Fact{"w_line2", oneField(m.Line2)})
+	}
 	pf := ProviderFacts(filepath.Join(e.job, "out", "harness.log"), filepath.Join(e.job, "harness.log"))
 	for _, k := range []string{"tier", "route", "model", "key", "card_sha"} {
 		facts = append(facts, Fact{"w_" + k, pf[k]})
@@ -372,7 +378,7 @@ func recordEnd(ctx context.Context, rec ResultRecorder, e endRecord) (res typedr
 			note = note[:typedrec.MaxNoteBytes]
 		}
 		facts = append(facts,
-			Fact{"w_synth", "1"}, Fact{"w_line2", oneField(m.Line2)}, Fact{"w_note", note},
+			Fact{"w_synth", "1"}, Fact{"w_note", note},
 			Fact{"w_check", check.Check}, Fact{"w_check_cmd", oneField(check.Cmd)},
 			Fact{"w_check_ms", strconv.FormatInt(check.Wall.Milliseconds(), 10)},
 			Fact{"w_check_tail", check.Tail}, Fact{"w_paths", strings.Join(paths, " ")})
