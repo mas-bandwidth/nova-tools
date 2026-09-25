@@ -230,7 +230,7 @@ markers until a test in this tree can carry each promise.
 
 ## Tests this spec demands
 
-The logging primitive (`internal/log`) and the two wired emitters (`nova-work events`, `nova-pulse launch`) already run through injected clocks and guids against `bytes.Buffer` sinks, `miniredis`, a fake forge and `t.TempDir` paths — no network, no real `/proc`, no live Loki, and each was seen red first. The remaining emitters, the config and the slice tests are not written.
+The logging primitive (`internal/log`) and the wired emitter (`nova-pulse launch`) already run through injected clocks and guids against `bytes.Buffer` sinks and `t.TempDir` paths — no network, no real `/proc`, no live Loki, and each was seen red first. The remaining emitters, the config and the slice tests are not written.
 
 1. `TestLineCarriesTheSpecFieldsAndNoMore` — one JSON object per state change, one line, and the object's keys are the spec's fifteen-field table exactly (ts, level, source, bench, verb, job, card, pr, run, slot, guid, event, msg, dur_ms, err), no key missing, none invented.
 2. `TestLineWritesAbsentIdsAsEmptyNotOmitted` — an id that is not this event's scope is `""` (or `0` for pr) and the key is still written, so `| json` never guesses.
@@ -240,15 +240,15 @@ The logging primitive (`internal/log`) and the two wired emitters (`nova-work ev
 6. `TestRedactRemovesEverySecretShape` / `TestWriteRedactsEveryVariableField` — a secret VALUE is never logged; the field may name the secret, never its value, and the leak is caught inside the emitter before the line leaves the process, whatever field carried it.
 7. `TestRedactLeavesTheFieldsWeQueryWithAlone` — a git sha, a card id, a PR number and an ordinary sentence survive redaction.
 8. `TestWriteKeepsTheFixedVocabulary` — redaction never renames the writer's own vocabulary (ts, level, source, event).
-9. `TestEmitterWritesOneLinePerCardDone` (and `TestEmitterWritesChecksDoneAndDevMoved`) — every event the bus carries is also emitted as one structured line, the same kind vocabulary (`card-done`, `pr-checks-done`, `dev-moved`), one name two places.
-10. `TestEmitterIsSilentWhenTheBusIs` — a quiet poll publishes nothing and so emits nothing.
-11. `TestEmitterWritesNothingWithoutASink` — no sink means no lines: the emitter is additive, never a replacement.
-12. `TestEmitterRedactsASecretShapedValue` — a secret-shaped value off the stream never reaches the log.
-13. `TestEventsLogWritesTheFileWithTheLabels` — `--log` writes the file Alloy tails, every line carrying `source`/`verb`/`bench`/`event` plus the fixed fields, one JSON object per line.
-14. `TestEventsLogLeavesTheStdoutLineAlone` — the stdout event line is unchanged; the JSON line is written BESIDE it, never instead of it.
-15. `TestEventsRefusesALogPathItCannotOpen` — a `--log` path that cannot be opened is a refusal naming `--log` (exit 2), not a silent run with no log.
-16. `TestEventsWithoutALogWritesToStderr` — with no `--log` the lines go to stderr, which on a bench is the unit's journal (the source Alloy already reads).
-17. `TestEventsLogNeverCarriesASecret` — a secret-shaped card id off the stream never reaches the log file.
+9. Removed with the event bridge (nova-tools#3881): the `nova-work events` emitter this item tested is gone.
+10. Removed with the event bridge (nova-tools#3881): the `nova-work events` emitter this item tested is gone.
+11. Removed with the event bridge (nova-tools#3881): the `nova-work events` emitter this item tested is gone.
+12. Removed with the event bridge (nova-tools#3881): the `nova-work events` emitter this item tested is gone.
+13. Removed with the event bridge (nova-tools#3881): the `nova-work events` emitter this item tested is gone.
+14. Removed with the event bridge (nova-tools#3881): the `nova-work events` emitter this item tested is gone.
+15. Removed with the event bridge (nova-tools#3881): the `nova-work events` emitter this item tested is gone.
+16. Removed with the event bridge (nova-tools#3881): the `nova-work events` emitter this item tested is gone.
+17. Removed with the event bridge (nova-tools#3881): the `nova-work events` emitter this item tested is gone.
 18. `TestLaunchWritesTheJSONLineBesideTheStdoutLine` — the launch verb writes the `start`/`done` spine beside the `PULSE OK` stdout line, source `nova-pulse`, verb `launch`.
 19. `TestLaunchRefusalAndRetryEmitEvents` (ABSENT) — the launch verb emits `refuse` with the reason in `msg` when it declines (under-slots, bad runner, bad swarm), and `retry` on a provider start failure.
 20. `TestHygienePassEmitsStartActionDoneSpine` (ABSENT) — hygiene emits `start`, one event per action (`delete`/`keep` with the path and the rule that decided it), then `done` with `dur_ms`.

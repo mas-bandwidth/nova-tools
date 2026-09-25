@@ -413,9 +413,8 @@ reviewers.
 `nova-merge batch` is the local landing gate: it builds the combined branch and
 runs the repository's build, vet, Go and Lisp checks without pushing. After the
 batch passes its required review and checks, `queue` records holds, skips and
-ordering. `rebase` cuts bounded repair cards. Teams that already use Redis can
-connect `nova-work events` to `nova-merge react`; the ordinary merge lane does not
-require Redis or a resident loop.
+ordering. `rebase` cuts bounded repair cards. The merge lane does not require
+Redis or a resident loop.
 
 **It worked if** it refused to land something whose checks had not passed, and
 told you exactly which condition was missing.

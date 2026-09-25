@@ -68,16 +68,11 @@ var workAudit = audit.Config{
 		// sender and watch nothing be recorded; it prints nothing.
 		`"errors"`,
 		// time parses ask's --deadline and --now and formats the stamps ask and asks
-		// print, and it is the events verb's duration parsing and injected clock; every
-		// one of those goes out through an oneline field.
+		// print; every one of those goes out through an oneline field.
 		`"time"`,
-		// The events verb's other edges. context is CancelFunc plumbing for the deadline
-		// and writes nothing; the redis client and internal/ci are read and published
-		// through their own APIs, and this package prints only the escaped lines below,
-		// so none of them writes past oneline.
+		// context is deadline and cancel plumbing for the socket, next, push and set
+		// check paths, and writes nothing.
 		`"context"`,
-		`"github.com/redis/go-redis/v9"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
 		// encoding/json reads set check's --minds registry, which is written in one of
 		// the two JSON shapes a registry of minds already has. It decodes bytes into
 		// names and prints nothing: every name it yields reaches stdout only through an
