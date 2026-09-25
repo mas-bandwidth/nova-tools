@@ -138,3 +138,85 @@ func TestFriendServeVerb(t *testing.T) {
 		t.Fatalf("no receipts on friend:emma:log")
 	}
 }
+
+// TestFriendServeLogin is #3797's DONE-WHEN on a throwaway server: before
+// the seat starts, typed hold and read lines signed who=rowan-claude are
+// REFUSED unknown-who; `friend serve --as rowan --login rowan-claude` writes
+// friends:login through ns_friend_hello on start (one friend-login receipt)
+// and the same lines then record against rowan. A clashing alias refuses
+// with exit 1, writes nothing and leaves the seat free.
+func TestFriendServeLogin(t *testing.T) {
+	ctx := context.Background()
+	e := newHoldEnv(t, "s-serve-login")
+	e.friends("stella")
+	e.register("rowan", 2)
+	e.policy("rowan", "stella")
+	if err := e.c.HSet(ctx, cfgFriendKey("rowan"), "dispatch", os.Args[0]+" -test.run=^TestHelperServeDispatch$").Err(); err != nil {
+		t.Fatal(err)
+	}
+	e.unit(3286, "b2d830d36bef4d7d907b461e7a176c6009996d9d", "johnny")
+	e.unit(2804, "5c22281227787713632a1cd01f90ba9a2be61277", "johnny")
+	hold := strings.Replace(fixture(t, "5802800953.md"), "who=stella", "who=rowan-claude", 1)
+	read := strings.Replace(fixture(t, "5802733875.md"), "who=stella", "who=rowan-claude", 1)
+	if hold == fixture(t, "5802800953.md") || read == fixture(t, "5802733875.md") {
+		t.Fatal("fixtures no longer carry who=stella")
+	}
+	for pr, b := range map[int]string{3286: hold, 2804: read} {
+		if code, out, _ := e.ingest(pr, b); code != 2 || !strings.HasPrefix(out, "REFUSED unknown-who") {
+			t.Fatalf("#%d before serve: exit %d %q, want REFUSED unknown-who", pr, code, out)
+		}
+	}
+
+	serve := func(extra ...string) (int, string, string) {
+		t.Helper()
+		t.Setenv(seatEnv, "rowan")
+		args := append([]string{"friend", "serve", "--as", "rowan", "--once", "--host", "ctl",
+			"--dir", t.TempDir()}, extra...)
+		return e.run(args...)
+	}
+	if code, out, errOut := serve("--login", "stella"); code != 1 || !strings.Contains(errOut, "REFUSED login LOGIN-IS-FRIEND stella") {
+		t.Fatalf("serve --login stella: exit %d %s%s, want 1 LOGIN-IS-FRIEND", code, out, errOut)
+	}
+	if n := e.c.Exists(ctx, "friends:login", life.LockKey("rowan"), "friend:rowan:beat").Val(); n != 0 {
+		t.Fatalf("a refused login left %d of friends:login, the seat lock, the beat", n)
+	}
+
+	if code, out, errOut := serve("--login", "rowan-claude"); code != 0 || !strings.Contains(out, "SERVE rowan once taken=0") {
+		t.Fatalf("serve --login rowan-claude: exit %d %s%s", code, out, errOut)
+	}
+	if got := e.c.HGetAll(ctx, "friends:login").Val(); len(got) != 1 || got["rowan-claude"] != "rowan" {
+		t.Fatalf("friends:login = %v, want rowan-claude=rowan", got)
+	}
+	logins := 0
+	for _, m := range e.c.XRange(ctx, "cap:log", "-", "+").Val() {
+		if m.Values["kind"] == "friend-login" && m.Values["subject"] == "rowan" {
+			logins++
+		}
+	}
+	if logins != 1 {
+		t.Fatalf("cap:log friend-login receipts = %d, want 1", logins)
+	}
+	if e.c.Exists(ctx, life.LockKey("rowan")).Val() != 0 {
+		t.Fatalf("seat lock held after the one-shot pass")
+	}
+
+	e.mustIngest(3286, hold, "RECORD hold")
+	e.mustIngest(2804, read, "RECORD read")
+	if r := e.c.HGetAll(ctx, "s:"+e.S+":read:"+unitOf(2804)+":rowan").Val(); r["verdict"] != "APPROVE" {
+		t.Fatalf("read by rowan-claude = %v, want APPROVE on rowan's key", r)
+	}
+
+	// A second start with the same alias is a no-op renewal: exit 0, no new receipt.
+	if code, _, errOut := serve("--login", "rowan-claude"); code != 0 {
+		t.Fatalf("second serve --login rowan-claude: exit %d %s", code, errOut)
+	}
+	n := 0
+	for _, m := range e.c.XRange(ctx, "cap:log", "-", "+").Val() {
+		if m.Values["kind"] == "friend-login" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("friend-login receipts after a repeat start = %d, want 1", n)
+	}
+}
