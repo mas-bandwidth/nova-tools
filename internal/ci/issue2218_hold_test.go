@@ -390,13 +390,14 @@ func TestIssue2218HelpBannerLineLedByAnotherToolIsCounted(t *testing.T) {
 		t.Errorf("HelpBannerExamples = %v; want exactly the %d lines of the block", help, len(want))
 	}
 
-	// The real banner: every nova-redis line under the nova-secrets line is counted.
+	// The real banner: every nova-redis line of the block is counted. Its
+	// nova-secrets line moved into the banner's prose when serve took --dir
+	// (#3879); the led-by-another-tool rule is the fixture above.
 	repo, err := HelpBannerExamples(repoRoot(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, w := range []string{
-		"example: nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve --bind 127.0.0.1,100.101.102.103 --port 6379",
 		"example: nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi",
 		"example: nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note",
 	} {

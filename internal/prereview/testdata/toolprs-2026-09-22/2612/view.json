@@ -1,0 +1,45 @@
+{
+  "number": 2612,
+  "title": "presence: gofmt redis_test.go (Stella HOLD 5784011772, lintgofmt)",
+  "body": "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>",
+  "headRefOid": "8eafd2362d944c338e39a37030f8a053d43ae4e8",
+  "baseRefName": "dev",
+  "files": [
+    {
+      "path": "cmd/nova-wake/audit_test.go"
+    },
+    {
+      "path": "cmd/nova-wake/main.go"
+    },
+    {
+      "path": "cmd/nova-wake/presence.go"
+    },
+    {
+      "path": "cmd/nova-wake/presence_test.go"
+    },
+    {
+      "path": "docs/CLI.md"
+    },
+    {
+      "path": "docs/FRIEND-PRESENCE.md"
+    },
+    {
+      "path": "docs/SPEC-WAKE.md"
+    },
+    {
+      "path": "internal/presence/fake.go"
+    },
+    {
+      "path": "internal/presence/presence.go"
+    },
+    {
+      "path": "internal/presence/presence_test.go"
+    },
+    {
+      "path": "internal/presence/redis.go"
+    },
+    {
+      "path": "internal/presence/redis_test.go"
+    }
+  ]
+}

@@ -232,6 +232,10 @@ func PollWake(ctx context.Context, st *store.Store, friend string) (string, erro
 	}
 }
 
+// BatchLauncher is the one launcher a bench runs cards through. Every beat
+// names it (preflight 7.4, #3191): a request with no Launcher publishes this.
+const BatchLauncher = "nova-sprint card launch"
+
 // BenchRequest is one bench beat. Live is the set of card identities renewed
 // with the beat. Session is the fenced owner identity of the one-second loop.
 type BenchRequest struct {
@@ -280,6 +284,10 @@ func BenchBeat(ctx context.Context, st *store.Store, req BenchRequest) (BenchRes
 	if build == "" {
 		build = buildinfo.Line("nova-sprint", "")
 	}
+	launcher := req.Launcher
+	if launcher == "" {
+		launcher = BatchLauncher
+	}
 	ttl := req.TTL
 	if ttl <= 0 {
 		ttl = BenchBeatTTL
@@ -293,7 +301,7 @@ func BenchBeat(ctx context.Context, st *store.Store, req BenchRequest) (BenchRes
 	}
 	reply, err := st.Client().FCall(ctx, FunctionBenchBeat, nil,
 		req.Bench, req.Host, req.User, req.Load1, req.SSH, req.Probe,
-		req.Launcher, strings.Join(req.Live, liveSeparator), req.Why,
+		launcher, strings.Join(req.Live, liveSeparator), req.Why,
 		req.Session, req.Actor, req.Idem, build,
 		req.Facts.Harness, req.Facts.Mirrors, req.Facts.DiskGiB, ttl.Milliseconds(),
 		rowAt, ncpu).Result()

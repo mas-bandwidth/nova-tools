@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
@@ -67,7 +68,7 @@ func TestRoutePRToReadCutsCI(t *testing.T) {
 	}
 	// The cut writes the ci card only (#3139 rev 7 3.7): PENDING lives on
 	// s:<S>:card:<label>, and no ci: key exists until the card ends.
-	card, err := client.HMGet(ctx, "s:"+S+":card:ci-7-"+head[:8], "verdict", "base", "base_sha").Result()
+	card, err := client.HMGet(ctx, "s:"+S+":card:"+ci.Label(7, head, tip), "verdict", "base", "base_sha").Result()
 	if err != nil {
 		t.Fatal(err)
 	}

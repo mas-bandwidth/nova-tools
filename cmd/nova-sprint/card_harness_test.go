@@ -18,7 +18,7 @@ import (
 
 func cardRunEnv(extra map[string]string) func(string) string {
 	env := map[string]string{
-		"HOME": "/home/bench", "NOVA_BENCH_SEAT": "seat", "NOVA_CARD_BENCH": "bench-a", "NOVA_CARD_DEADLINE": "20m",
+		"HOME": "/home/bench", "NOVA_CARD_BENCH": "bench-a", "NOVA_CARD_DEADLINE": "20m",
 		"NOVA_CARD_HARNESS_BIN": "/opt/harness/opencode", "NOVA_CARD_TOKENS": "200000", "NOVA_CARD_REDIS": "127.0.0.1:1",
 		"NOVA_CARD_OUT": "/jobs/s/l/1/out", "NOVA_CARD_JOB": "/jobs/s/l/1",
 	}

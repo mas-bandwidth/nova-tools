@@ -831,6 +831,7 @@ OUTCOME unit=row-card-9 kind=row-test rung=pro result=green outcome=ok
 
 ```
 nova-decide review --repo <owner/name> --pr <n> [--card <file>]
+                   [--task <id> --store <host:port>]
                    [--post|--dry-run] [--ledger file|redis|file,redis]
                    [--store <host:port> [--user <acl user>] [--password-env NOVA_REDIS_BENCH_PASSWORD]]
                    [--ledger-path <jsonl>] [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
@@ -857,11 +858,13 @@ The five checks, and what each is for:
 | check | ok when | the case it exists for |
 |---|---|---|
 | `donewhen` | line 2 of the RESULT is the bare word `DONE` (a blank line under RESULT is skipped); with no RESULT line, every Go test the body's `DONE-WHEN:` names is added by the diff (a named test the diff does not add is `missing`: it may be on the base) | a RESULT that has to qualify DONE has not finished |
-| `selfcheck` | the added test exercises generated code **and** carries none of the self-check tells; `missing` on a pull request that is not a conformance cell, and fixtures under `testdata/` are not read (#2621) | schema#1507 landed on a 10/10 with `check(true, ...)` as its only assertion |
+| `selfcheck` | the added test exercises generated code **and** carries none of the self-check tells; `missing` on a pull request that is not a conformance cell, and fixtures under `testdata/` and pages under `docs/` are not read: they quote the tells because they are the specimens (#2621) | schema#1507 landed on a 10/10 with `check(true, ...)` as its only assertion |
 | `paths` | every changed file is inside the card's `PATHS` globs; with no card, the body's `PATHS:` line is the bound (`dir/` means `dir/**`, a bare file name matches anywhere), and there only product code outside it fails -- a test-only file outside is the reader's one-point deduction, not a gate (#2536) | schema#1569 added a whole stub crate beside its one test file |
 | `claims` | every file the RESULT's `files:` line names is in the diff | a RESULT written from intent rather than from the diff |
 | `base` | off unless `--checks` names it: the read rubric's base gate. The pull request targets a trunk (`dev`, `main`, `fixed-table-form`) and is mergeable; a stacked base or a conflict is `base:fail`, an unread one `missing` (#2536) | 17 of the 397 friend-read heads of 2026-09-24 conflicted with trunk at the time of the read |
 | `ci` | off unless `--checks` names it. When it is on, `ci-ok` on the pull request's exact head is success. A red or missing `ci-ok` is `ci:fail` and the explain names the failing jobs. A run whose `head_sha` is not this head does not count (#2704) | nova-tools #2519 at `907546af` scored PASS 8 while `ci-ok` and shards 1/4 and 2/4 on space and studio were red; #2522 at `8359db4f` is the pass |
+
+**Tool-PR mode: the score is the lowest file group's (#2621).** One question over a whole tool pull request scored its size (Spearman -0.64 against diff bytes over the eight of the 2026-09-22 dry pass, confidence 0.00 on every one over 33 KB). So the question is asked once per changed-file group -- the files of one directory, `testdata/` left out, coarsened to the first two path segments past eight groups, and a group past the 64 KiB diff cap split into parts of whole files -- and the pull request's score is the lowest answer; the score evidence line names how many groups were asked and which was lowest, and the cost is all of the calls. A pull request with one group (every conformance cell) is asked the one question over the same state as before. `--record` writes one fixture per group (`<repo>-<n>-g<k>.json`) and `--replay` reads them back.
 
 **Gates cap the score (#2536).** When `ci` or `base` is enabled and answers fail, the score on the line is capped at 7, the read rubric's rule that a gate failure is never an 8; the ledger keeps the raw answer.
 
@@ -880,6 +883,8 @@ JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 conf=0.
 
 **With no card,** `PATHS` is inferred from the pull request's own `cell: <lang>/<row>` line and the line says so (`paths_from=pr-body-cell` in the ledger, and the posted comment says it in words). The inference comes from the cell's *identity*, never from the list of files the diff happens to touch — a bound read off the diff would pass by construction, and the row would then say a check ran that decided nothing.
 
+**With `--task <id>`,** the card is read from the Redis task hash `task:<id>` (`HGET task:<id> title`). The title is parsed for `PATHS:`, `DONE-WHEN:`, and `RESULT:` keys. The line reports `paths_from=task` and `card=task:<id>`. `--task` and `--card` are mutually exclusive. `--task` requires `--store <host:port>`. `--task` cannot be used with `--batch`.
+
 **One question, one call, one price.** `ScoreLevels` is ten levels in a fixed order: Jev is order-sensitive, so the same ten shuffled are a different question and a score from one ordering cannot be compared with one from another. A test pins the ordering by hash. The raw provider answer travels into the ledger beside the 1-10 that was printed, so that if the provider ever answers in level *indexes* rather than in the numbering the levels carry, both numbers are on the record and somebody can tell.
 
 **Confidence, rubric version, and base gate on every line.** `conf=` is the provider's reported confidence (or `-` when unscored). `rubric=` is the 8-character sha256 prefix of `ScoreLevels` (`816c4381`), pinning which question levels produced the score. `base=ok|behind|conflict` is the base gate, derived from GitHub PR mergeability (`mergeable`, `mergeStateStatus`) or `git merge-tree` / `git merge-base`.
@@ -894,8 +899,10 @@ Exit **0** when every pull request PASSed, **3** when any did not — a BOUNCE i
 
 ```
 nova-decide classify --question <q> --evidence <file|-> --pointer <id>
-                     [--version 1] [--decider rules] [--floor 0.65] [--rules <tsv>]
+                     [--version 1] [--decider rules[,jev|local]] [--floor 0.65] [--rules <tsv>]
                      [--tamper <file>] [--escalate-to <name>] [--log <path>] [--private]
+                     [--key-env <name>] [--base-url <url>] [--usage <tsv>]
+                     [--record <dir>] [--replay <dir>]
 ```
 
 The generic door onto the question table (`docs/SPEC-DECIDE.md` D3). It exists **beside** the `--decide` flags on the tools that own the acts, and the reason runs both ways: a verb alone can be skipped, and a flag alone hides the question inside one tool where nobody else can ask or test it. So a shell script, a fixture, or a person with a text file and a question can ask anything nova-tools asks.
@@ -910,6 +917,8 @@ CLASSIFY question=harvest/v1 answer=unknown conf=- floor=0.65 decider=none stop=
 **The chain.** `rules` is always consulted first whether or not you name it, because a question a table can answer is a call not worth making. A **stopping** member ends the walk before the floor is looked at, at any confidence: a first decider's stop is not undone by a later one's permission. Below the floor the answer is kept as `below=` and the walk goes on; when the chain is exhausted the answer is `unknown`, and `why=` says which nothing it was — `no-decider`, `below-floor`, `tamper`. `skipped=` names every decider the walk could not get an answer out of, as bounded `<decider>=<reason>` tokens and never a provider's own error text: without it a chain with no provider and a chain whose provider failed print the same words, and a failure behind a later success disappears from both the line and the row. `--floor` is a confidence: -1, 1.1, NaN and +Inf are refused as `bad-floor` at exit 2 before anything is asked.
 
 **What never happens.** The evidence is redacted, bounded and framed between two markers carrying a nonce drawn fresh per call, every evidence line behind a `| ` so it cannot forge a marker; the instructions are constants and no byte of evidence is interpolated into them. A text addressed to a classifier is screened *before* any call and answers with the question's tamper answer at `tamper=yes`. `--private` evidence never reaches a decider that leaves the machine — the question falls through to the next one instead. An answer outside the question's closed set is a provider error at exit 2 and never a decision. `--log` writes a row carrying a **hash and a size** of the evidence, never its text.
+
+**Asking Jev.** `--decider rules,jev` (or `rules,local`) asks the provider after the table, through the client the verb opens from `--key-env` (default `JEV_API_KEY`; the key is read from that variable, never from argv or a file) and `--base-url`, the same way `route` and `review` open theirs. A provider call is accounted for or not made: without both `--log` and `--usage` the verb refuses `no-accounting` at exit 2 before any key is read, and with no key in the variable it refuses `no-key`, naming the variable. Every call made writes one row of the fleet's usage TSV to `--usage` (provider `typesafe`, the call's tokens), before any refusal; a classification that made no call — `--decider rules`, or `--private` evidence that skipped `jev` as `jev=private-evidence` — writes none. `--record <dir>` writes the provider's answer to `<dir>/<question>-v<n>-<pointer>.json`, and `--replay <dir>` answers from that file with no key and no call, so a test of a classify caller runs offline; a missing fixture is skipped as a provider error and the answer is `unknown`.
 
 ### log — the escalation log
 
@@ -1927,35 +1936,18 @@ BATCH ROUTE <model>@<auth-profile> cap=<n> peak=<n> held-back=<n>
 
 Measured 2026-09-17: above roughly 30–40 concurrent requests on one Muse contributor-free key the tail latency goes to infinity — hulk and vision returned zero results in thirteen minutes at load 0.5–2.0 — while `deepseek-flash` on the same bench in the same second answered in 11 s. A launcher with no cap turns a free tier's queue into spend.
 
-**`native` takes a bench slot lease, and refuses a launch it cannot lease (#1546).**
-`--slots-store <dir>` and `--owner <name>` are **required**. The run takes exactly one
-lease before any job directory is made, holds it for the deadline plus two minutes of
-grace, and releases it on every exit path, a failed run included. A take that grants
-nothing prints one `SLOTS REFUSED owner=… want=1 held=… share=… free=… holders=…` line and
-exits 2, having started nothing.
+**`native` takes no bench slot lease (#3877).** A bench's capacity is one number,
+`bench:<b>:desired` in Redis, and the one place a card is admitted or refused against it
+is the dealer: a card beyond it stays queued and nothing is written on the bench. `native`
+reads no slot store and writes none, so a bench with no `~/nova-bench/slots` runs a dealt
+card. The file ledger it used to lease from (#1546, #2033) was a second answer to the same
+question: on 2026-09-25 it refused seven dealt cards on batman with
+`SLOTS REFUSED owner=swarm-batman want=4 held=16 share=16` while Redis said the bench had
+room. `--slots-store` and `--owner` are still accepted, so a caller built before #3877 is
+not refused on an unknown flag, and they are read by nothing.
 
-**Capacity is refused at admission, not braked afterwards (#2033).** Card kinds carry a
-weight charged against the store's share at take, before the harness starts: a schema or
-fix-red card weighs 4 (it spawns make/cargo/dotnet); a read card weighs 1. A schema card
-on a share that fits only a read prints `SLOTS REFUSED … want=4` and starts nothing. A
-live-until lease whose pid is gone lists as `stranded=1` with its label so a manager can
-re-queue it. The load reading that used to fire at `CAPACITY cores=… load=… allowed=…`
-after the bench was already at load 172 is not the ceiling. Asked without either flag it prints one line and exits 2:
-
-```
-NATIVE REFUSED reason=no_slots_store: pass --slots-store <dir> --owner <name> (one seat: nova-swarm slots init --store <dir> --owner <name> --capacity 1 --share 1)
-```
-
-There is no default store, no owner guessed from the host or the label, no `shares.tsv`
-created on the way past, and no flag that turns it off — a launch that took no lease is one
-the bench cannot see, cannot count and cannot refuse. A bench's store is made once, by
-hand: `nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>`,
-which creates and never updates.
-
-`batch` without a `--runner` of its own runs every card through `native`, so it takes the
-same two flags and **refuses the whole batch with the same line before any card runs**. A
-batch with its own `--runner` launches no `native` and is not held to this. The store path
-is resolved on the machine that runs the card, which for a bench row is the bench.
+`batch` without a `--runner` of its own still asks for the two flags and refuses the
+whole batch without them; the store is no longer leased from by the `native` it launches.
 
 **The release is by identity.** `native` and `run` keep the lease ids `TakeSlotLeases`
 granted them and give back exactly those, pid-fenced. Releasing by owner and label would
@@ -3896,6 +3888,20 @@ nova-sprint pitstop clear --sprint nova-sprint-0924 --by rowan --scope nova-work
 PITSTOP NARROW sprint=nova-sprint-0924 by=rowan at=1790000060000 lifted="nova-work" was_by=rowan was_at=1790000000000 was_why="Glenn 8:00 PM: rest tonight"
 ```
 
+### adopt
+
+`nova-sprint adopt receipt --verb <verb> --pov <coordinator|bench|reader|friend> --state <state> [--gap <repo>#<n>] [--hand <text>] [--note <text>] [--as <who>] [--redis <addr>]`
+`nova-sprint adopt matrix [--md | --tsv] [--redis <addr>]`
+`nova-sprint adopt status [--redis <addr>]`
+
+Adoption receipts per verb per point of view live in Redis, not in a hand-kept table (#3186, the matrix slice). A verb's record is one hash, `adopt:<verb>` {who, at, pov, state, gap, hand, note, receipts, and one `pov:<pov>` field per POV that wrote}, indexed by age in the ZSET `adopt:verbs`; every accepted receipt is also appended to `adopt:<verb>:receipts`. `--state` is one of adopted, adopted-gaps, in-flight, unexercised, blocked, hack; adopted-gaps, blocked and hack must name the issue holding the gap (`--gap`, or a gap already on the record), else `ADOPT REFUSED reason=no-gap` and nothing is written. The same seat, POV and body again prints `ADOPT UNCHANGED` and writes nothing. `--as` defaults to `NOVA_FRIEND`. `matrix` prints one `ADOPT ROW` per verb, oldest first, and `ADOPT MATRIX verbs=<n> adopted <x>/<y> <z>%`; `--md` prints the hacks-to-verbs table (hand step, verb, state, who, when in ET, pov with the POVs that hold a receipt, gap). `status` prints the x/y line: x the verbs whose latest receipt is adopted or adopted-gaps, y every verb with a receipt, `adopted 0/0 -` when there are none. receipt is one FCALL (`ns_adopt_receipt`), matrix and status one FCALL_RO (`ns_adopt_matrix`); each first loads the library when the store has none. Exit 0 done, 1 refused with the remedy named, 2 usage.
+
+```text
+nova-sprint adopt receipt --as rowan --verb "nova-sprint land stream" --pov coordinator --state in-flight --gap nova-tools#3975 --hand "stream branch built by hand"
+# prints
+ADOPT RECEIPT verb="nova-sprint land stream" who=rowan pov=coordinator state=in-flight gap=nova-tools#3975 at=1790000000000 receipts=1
+```
+
 ### cost import
 
 `nova-sprint cost import --provider <anthropic|openrouter|oc> --file <export.csv> --redis <addr>`
@@ -3970,6 +3976,10 @@ Recover by rerunning the command, or clear a held record with an operator receip
 
 The bench-side command is `nova-sprint card stop --stdin --grace <duration>`. Its input is one `<sprint> <label> <attempt>` per line. It prints `STOPPED`, `GONE`, or `ALIVE` for the exact `nova-card <sprint>/<label>/<attempt>` process group, one line per card and nothing else on stdout; the `STOP stopped= gone= alive=` summary goes to stderr. It exits 0 whenever the protocol completed, ALIVE included (the reset holds on ALIVE); a non-zero exit means the session failed and the reset holds with `why=ssh:...`. A beat error that is not a takeover holds the record with `why=beat:...`.
 
+### `nova-sprint fleet build`
+
+`nova-sprint fleet build [--redis <addr>] [--bench <b>[,<b>...]] [--build-cmd <path>] [--dry-run]` is the fleet deploy (nova-tools #3310), with its whole plan in Redis: the `fleet:release` hash holds `version` (`v<x>.<y>.<z>-dev.<sha8>`), `commit` (the full sha of that `<sha8>`), `builder` (the bench that builds), `self` (this machine's bench name), an optional `tools` list (default `nova-sprint,nova-swarm,nova-card,nova-wake`) and `platform:<bench>` (`<goos>-<goarch>`) for every bench and for `self`; the `benches` set names where to install. One pipeline reads both, and a gap is refused (`FLEET BUILD REFUSED: <why> (<remedy>)`, exit 1) before any child starts. The run: the builder builds the release once for the distinct platforms (`space-build --host <builder> --version <v> --commit <sha> --platform <list>`, which skips a platform already built); every bench, in one ssh session each and all at once, rsyncs its platform's tools from `<builder>:nova-bench/release/<v>/<platform>/` (the builder from its own disk) into `~/.local/bin.new`, renames each into `~/.local/bin` and prints its `nova-sprint version` line; this machine does the same locally. Each target prints `OK|MISMATCH|FAIL <bench> platform=<p>: <detail>`; a target whose version line names the release gets its receipt in one pipeline, `bench:<b>` fields `build`, `build_sha`, `build_at`, and a failed or mismatched one keeps its old receipt. Last, the new nova-sprint here runs `fn deploy --redis <addr>`, so the store's function library is this release's. The final line is `FLEET BUILD OK version=<v> commit=<sha12> benches=<n> fn=ok` (exit 0) or `FLEET BUILD FAIL ... at=build|install|fn ok=<n> failed=<list>` (exit 1). `--dry-run` prints `WOULD BUILD`/`WOULD INSTALL` lines and starts nothing. `nova-sprint fleet build set [--redis <addr>] <key>=<value>...` validates and writes `fleet:release` fields in one HSET. The loops that run the old binaries are not restarted by this verb.
+
 ### `nova-sprint friend serve`
 
 `nova-sprint friend serve --as <f> [--width <n>] [--dispatch "<argv>" | -- <argv...>] [--dir <root>] [--sprint <s>] [--host <h>] [--harness <h>] [--session <s>] [--login <alias>]... [--once] [--redis <addr>]` is the loop unit on a friend's seat (nova-tools #2938): a friend who is not awake in a session still works her queue, at zero model tokens. Every second it beats (`ns_friend_serve_beat`, one call: the seat lock `friend:<f>:serve`, the presence hash `friend:<f>:beat` under a 5 s TTL, and the untimed `friend:<f>:last`), takes ready tasks from the friend's queue up to the free width (`task take`'s one pipeline plus one call), writes each task's brief (`brief render`, else the task record when render refuses the kind), starts the friend's own harness by exec and watches the child, beating its task lease every 60 s. When the child exits 0 having written a typed line (`SCORE`, `DISPOSITION`, `HOLD`, `DONE`, `BLOCKED`, `ABSTAIN`, `REPAIR`, `SPEC`, `SPEC-WRITTEN`, `CLOSE`; the last such line on stdout wins) the task is closed with that line as its evidence, a read with its verdict and score at the task's head; any other exit closes it with `blocked: exit=<rc> ...` naming the last line it wrote. A task is in working only while its child lives: a serve stopped by a signal kills its children and gives their tasks back (`task cancel`). Every event is one entry on `friend:<f>:log` and one `SERVE <f> <kind> ...` line on stdout. On start, after its first beat, each `--login` alias is bound to the seat in `friends:login` through `ns_friend_hello` (one call, the only writer of that hash; nova-tools #3797), so typed hold and read lines signed `who=<alias>` resolve to the friend instead of `REFUSED unknown-who`; a clashing alias (`LOGIN-TAKEN`, `LOGIN-IS-FRIEND`, `NAME-IS-LOGIN`) prints `FRIEND SERVE <f> REFUSED login <words>`, releases the seat and exits 1.
@@ -3993,3 +4003,37 @@ ONE PLACE (nova-tools#3692). Glenn: "cards are not allowed to disappear." A card
 - `nova-sprint card fsck --sprint <S> --redis <addr> [--repair]` walks both directions (every card in exactly one place per dimension at its created_at score, every set member pointing back, the places summing to the roster) and prints one `CARD FSCK` line; exit 1 names `--repair`.
 - `nova-sprint bench reindex --sprint <S> --redis <addr>` is the one-time rebuild for a sprint whose cards predate the model: it adopts them from the sprint's state indexes and fills every view.
 - `nova-sprint card ls --unplaced --sprint <S> --redis <addr>` lists the null cards.
+
+### `nova-sprint digest`
+
+`nova-sprint digest --redis <host:port> --since <RFC3339 UTC> [--until <RFC3339 UTC>] [--repo <owner/name>]...` prints what landed, which holds were routed and which reads were scored in the window `[since, until)` (nova-tools#3158). It reads three Redis sources and nothing else: `ws:log` (every move receipt), `land:<repo>:events` (the unit lander's `LANDED` events) and the `pr:<name>:<n>` records (the stream PR's `merge_sha`, the typed lines in `reads`). No GitHub, no model, no SCAN: `ws:log` is read by id range with `COUNT 1000` pages, the event streams are each `--repo` plus every repo a landing in the window names, and the PR records are the ones the window's receipts name, so a digest is two round trips plus one per further page. `--until` defaults to now; an entry at `since` is in, one at `until` is out.
+
+- `landed` lines: a stream landing (the `land:<repo>:<slug>` receipt to `landed`) with its PR, merge sha, members and the tasks landed with it; a unit-lander batch (`LANDED` event) with its base, batch and train head; the tasks a person's `CLOSE` line landed.
+- `hold` lines: a hold routed to its answerer (a `route pr fix|close|recut` task created), the holder from the record's `HOLD` line at that head, `state=answered` once the holder has a later `SCORE` on the record, else `open` (`?` with no record or no HOLD line).
+- `read` lines: a read scored (`read: SCORE by <who> at <head8>`), the score from the reader's `SCORE` line at that head (`?` when the record has none).
+- A stream that lost entries of the window prints `<key> TRIMMED source <stream> max-deleted=<id>` (an XDEL at or after since) or `first=<id>` (trimmed off the front past since) right after the section header, and that section never prints `none`. A section with no facts prints `<key> none`.
+
+First run, on the fixture of `internal/nsprint/digest/testdata/digest`:
+
+```text
+nova-sprint digest --redis 127.0.0.1:6379 --since 2026-09-23T00:00:00Z --until 2026-09-23T04:20:00Z
+digest since=2026-09-23T00:00:00.000Z until=2026-09-23T04:20:00.000Z repos=mas-bandwidth/nova-tools
+landed:
+landed at=2026-09-23T00:00:00.000Z repo=nova-tools pr=3901 merge_sha=b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0 members=2 tasks=2 by=rowan
+landed at=2026-09-23T00:00:05.000Z close=rowan-tools#410 by=glenn tasks=1
+landed at=2026-09-23T00:00:07.000Z repo=nova-tools base=dev batch=b7 train_head=7777777777777777777777777777777777777777
+holds:
+hold at=2026-09-23T00:00:03.000Z repo=nova-tools pr=3850 head=cccccccc holder=emma route=fix state=answered
+hold at=2026-09-23T00:00:06.000Z repo=rowan-tools pr=411 head=eeeeeeee holder=johnny route=close state=open
+reads:
+read at=2026-09-23T00:00:04.000Z repo=nova-tools pr=3850 head=dddddddd who=stella score=9
+```
+
+The first stumble is a missing `--redis`; every refusal is one line on stderr, exit 2, before any read:
+
+```text
+nova-sprint digest --since 2026-09-23T00:00:00Z
+nova-sprint digest: wants --redis <host:port>; run: nova-sprint help
+```
+
+The other refusals name their remedy the same way: `wants --since <RFC3339 UTC>`, `wants --until <RFC3339 UTC>`, `since must be before until`, `takes flags, not positional arguments`, a `--repo` that is not `<owner>/<name>` (the parser's `invalid value` line), and `redis <addr>: <error>` when the store cannot be reached. A read that fails after that exits 1.

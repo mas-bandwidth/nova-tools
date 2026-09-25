@@ -182,3 +182,83 @@ func TestRouteDutyStopsAtLeaseMargin(t *testing.T) {
 		t.Fatalf("route with the lease renewed: %+v %v; want one read", c, err)
 	}
 }
+
+// TestPreDutyRenewalFailureSkipsLaterDuties is nova-tools #3838 (DONE-WHEN):
+// a renewal seam that fails (non-FENCED, e.g. Redis slow or unreachable) when
+// the pre-duty renewal is attempted shows the later duties not started,
+// proc:reconciler err naming them (LEASE-MARGIN), and the pass took under the
+// TTL on the lease clock while the pass record lands.
+func TestPreDutyRenewalFailureSkipsLaterDuties(t *testing.T) {
+	ctx := context.Background()
+	const bases, step = 8, 800 * time.Millisecond
+
+	st, c := controlRedis(t)
+	l, clk := fakeLease(t, ctx, st)
+	calls, late1Ran, late2Ran := 0, false, false
+	d := slowDevRed(t, ctx, c, bases, func(context.Context, string, string) (reconcile.CIState, error) {
+		calls++
+		clk.Advance(step)
+		return reconcile.CIState{}, nil
+	})
+	late1 := func(context.Context, *reconcile.Lease) (reconcile.Counts, error) {
+		late1Ran = true
+		return reconcile.Counts{}, nil
+	}
+	late2 := func(context.Context, *reconcile.Lease) (reconcile.Counts, error) {
+		late2Ran = true
+		return reconcile.Counts{}, nil
+	}
+
+	// Renewal seam fails with a non-FENCED error (e.g. Redis slow or unreachable).
+	renewalAttempts := 0
+	l.RenewSeam = func(context.Context) error {
+		renewalAttempts++
+		return errors.New("connection timed out: redis unreachable")
+	}
+
+	lp := &reconcile.Loop{
+		Lease:  l,
+		Duties: []reconcile.Duty{d.Run, late1, late2},
+		Names:  []string{"dev-red", "late1", "late2"},
+	}
+	res, err := lp.Pass(ctx)
+	if err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+
+	// dev-red stopped at 5.6s (0.4s left, below the 1s write margin).
+	// Before late1, pre-duty renewal was attempted and failed via the seam.
+	// Both late1 and late2 must not start.
+	if calls != 7 {
+		t.Fatalf("forge reads %d (want 7)", calls)
+	}
+	if late1Ran || late2Ran {
+		t.Fatalf("late duties ran (late1=%v, late2=%v); want both skipped", late1Ran, late2Ran)
+	}
+	if renewalAttempts != 1 {
+		t.Fatalf("renewal attempts = %d; want 1 pre-duty renewal attempt", renewalAttempts)
+	}
+	if res.Took >= boundTTL || res.Took != 7*step {
+		t.Fatalf("pass took %s on the lease clock; want %s, inside the %s lease", res.Took, 7*step, boundTTL)
+	}
+
+	wantErr := "duties not started late1,late2: LEASE-MARGIN: 400ms of the lease left, below the 1s write margin"
+	if !strings.Contains(res.Err, wantErr) {
+		t.Fatalf("pass err %q, want it to contain %q", res.Err, wantErr)
+	}
+	wantDevRedErr := "duty 0: dev-red: 1 of 8 base(s) not started: LEASE-MARGIN: 400ms of the lease left, below the 1s write margin"
+	if !strings.Contains(res.Err, wantDevRedErr) {
+		t.Fatalf("pass err %q, want it to contain %q", res.Err, wantDevRedErr)
+	}
+
+	// Pass record must land in proc:reconciler inside the lease.
+	if got := procField(t, ctx, c, "err"); got != res.Err {
+		t.Fatalf("proc:reconciler err %q, want the pass's %q", got, res.Err)
+	}
+	if got := procField(t, ctx, c, "took_ms"); got != "5600" {
+		t.Fatalf("proc:reconciler took_ms %q, want 5600", got)
+	}
+	if l.Fenced() {
+		t.Fatal("the lease was fenced; the pass record must land inside the lease")
+	}
+}

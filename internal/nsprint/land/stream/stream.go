@@ -203,11 +203,15 @@ type RecordFields struct {
 	Head, Base, BaseSHA, Stream, CI, Mergeable, State, Task, Kind string
 	// Closes is the issues the PR's body closes (space-joined, "-" none).
 	Closes string
+	// BranchGone marks the PR's head branch gone (branch_gone): pr reap
+	// (internal/nsprint/reap) closes such a PR.
+	BranchGone string
 }
 
 func (f RecordFields) m() map[string]string {
 	return map[string]string{"head": f.Head, "base": f.Base, "base_sha": f.BaseSHA, "stream": f.Stream,
-		"ci": f.CI, "mergeable": f.Mergeable, "state": f.State, "task": f.Task, "kind": f.Kind, "closes": f.Closes}
+		"ci": f.CI, "mergeable": f.Mergeable, "state": f.State, "task": f.Task, "kind": f.Kind, "closes": f.Closes,
+		"branch_gone": f.BranchGone}
 }
 
 // RecordResult is the record after the write.

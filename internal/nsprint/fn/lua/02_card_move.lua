@@ -645,4 +645,34 @@ redis.register_function({ function_name = 'ns_card_counts', flags = { 'no-writes
     return out
   end })
 
-NS.card = { move = card_move, create = card_create }
+-- card_purge(S): the one place a card record is deleted, and only for a
+-- control sprint (control-<id>), whose whole run nova-sprint drain --control
+-- tears down (#3442). A real sprint's cards never disappear: any other S is
+-- refused before a write. Each card on the roster leaves every view its
+-- pointer names and its state index (shared views such as bench:_pool:* or
+-- ws:<stream>:* keep every other member), then its record and result records
+-- go; last the roster and the moves stream. Returns the cards purged, or nil
+-- and the refusal.
+local function card_purge(S)
+  if type(S) ~= 'string' or not string.match(S, '^control%-[a-z0-9-]+$') then
+    return nil, 'purge ' .. tostring(S) .. ': only a control-<id> sprint is torn down'
+  end
+  local all = 'sprint:' .. S .. ':cards'
+  local n = 0
+  for _, id in ipairs(redis.call('ZRANGE', all, 0, -1)) do
+    local IS, label = cm_split(id)
+    local p = IS == S and cm_read(id) or nil
+    if p then
+      for _, e in ipairs(cm_views(S, label, id, p)) do cm_rem(e) end
+      if p.state then redis.call('SREM', cm_idx(S, p.state), label) end
+      local attempts = tonumber(redis.call('HGET', id, 'attempt')) or 0
+      for a = 1, attempts do redis.call('DEL', id .. ':result:a' .. a) end
+      redis.call('DEL', id, id .. ':receipt', id .. ':lines', id .. ':rejected')
+      n = n + 1
+    end
+  end
+  redis.call('DEL', all, 'sprint:' .. S .. ':moves')
+  return n
+end
+
+NS.card = { move = card_move, create = card_create, purge = card_purge }

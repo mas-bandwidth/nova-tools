@@ -11,6 +11,7 @@
 --   ci:<repo>:<sha>          hash: the request record; ci = pending, green or red
 --                            (repo, sha, pr, url, checks, cmd:<name>, requested_at,
 --                            attempt, bench, token, lease_until, claimed_at, ended_at;
+--                            infra = the releases after a bench killed a check;
 --                            final = OK or FAIL and why once it ends; last = the word
 --                            of an attempt that was retried)
 --   ci:<repo>:<sha>:<check>  hash: one receipt per check (rc, wall_ms, log, bench,
@@ -162,7 +163,7 @@ do
       end
       local at = cr_now_ms()
       redis.call('HSET', key, 'ci', 'pending', 'attempt', '0', 'bench', '', 'token', '', 'lease_until', '0',
-        'claimed_at', '0', 'ended_at', '0', 'final', '', 'why', '', 'last', '', 'blocked', '',
+        'claimed_at', '0', 'ended_at', '0', 'final', '', 'why', '', 'last', '', 'blocked', '', 'infra', '0',
         'reset_at', tostring(at))
       redis.call('ZADD', 'ci:pool', at, repo .. ':' .. sha)
       return { 'RESET', 'pending' }
@@ -291,14 +292,18 @@ do
     return { 'RECEIPT', 'red', tally }
   end
 
-  -- ns_ci_release repo sha token reason [nomirror] -> RELEASED, FENCED or
+  -- ns_ci_release repo sha token reason [1|infra] -> RELEASED [rerun|counted], FENCED or
   -- NOTFOUND. A bench that could not run the checks (the clone failed) has
   -- no evidence about the head: the request goes back to the pool now, for
   -- another bench, with the reason on the record. Attempts are counted here
   -- and capped at the next claim (ci_claim). nomirror 1 is a bench defect
   -- (the bench holds no mirror of the repo), not a try at the head: the
   -- attempt is given back and the bench goes into ci:nomirror:<bench> for
-  -- the repo, so its claims skip the repo until its mirror exists.
+  -- the repo, so its claims skip the repo until its mirror exists. infra
+  -- (#2958) is a check the bench killed (`signal: terminated` and no FAIL):
+  -- the record's infra count goes up by one and, while it is at most
+  -- max_attempts, the attempt is given back (RELEASED rerun); past that it
+  -- counts (RELEASED counted), so a head that kills itself still hits the cap.
   local function ci_release(keys, args)
     local repo, sha, token, reason = args[1], args[2], args[3], args[4]
     local key = 'ci:' .. repo .. ':' .. sha
@@ -311,8 +316,19 @@ do
       redis.call('SADD', 'ci:nomirror:' .. cr_hget(key, 'bench'), repo)
       redis.call('HSET', key, 'attempt', tostring(attempt))
     end
+    local detail = nil
+    if args[5] == 'infra' then
+      detail = 'counted'
+      if redis.call('HINCRBY', key, 'infra', 1) <= cr_max_attempts() then
+        local attempt = (tonumber(cr_hget(key, 'attempt')) or 1) - 1
+        if attempt < 0 then attempt = 0 end
+        redis.call('HSET', key, 'attempt', tostring(attempt))
+        detail = 'rerun'
+      end
+    end
     redis.call('HSET', key, 'bench', '', 'token', '', 'lease_until', '0', 'blocked', reason)
     redis.call('ZADD', 'ci:pool', now, repo .. ':' .. sha)
+    if detail then return { 'RELEASED', detail } end
     return { 'RELEASED' }
   end
 

@@ -2,6 +2,11 @@ package friend_test
 
 import (
 	"context"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -226,44 +231,146 @@ func TestControl43(t *testing.T) {
 	t.Log(line)
 }
 
-// TestControl43OneWriter: ns_friend_state is the only writer of
-// friend:<f>:state. Every other Lua file may read the key; a write to it
-// (HSET, HDEL, DEL, ...), directly or through a local bound to the key, fails
-// here, so a second writer cannot land.
+// TestControl43OneWriter: each friend key has one writer. friend:<f>:state
+// is written only in friend.lua (ns_friend_state and its helpers),
+// friend:<f>:wakemode only in friend.lua (ns_friend_wakemode) and
+// friend:<f>:events only in presence.lua (ns_friend_event); no Go source
+// writes any of the three; every XADD to the events stream is capped.
 func TestControl43OneWriter(t *testing.T) {
 	source, err := fn.Source()
 	fsMust(t, err)
 	sections := strings.Split(source, "\n-- lua/")
-	writes := regexp.MustCompile(`redis\.call\('(HSET|HSETNX|HDEL|DEL|UNLINK|HINCRBY|HINCRBYFLOAT|EXPIRE|PEXPIRE|SET|RENAME|HMSET)',\s*([^,)]+)`)
-	binds := regexp.MustCompile(`local\s+(\w+)\s*=\s*(?:'friend:'\s*\.\.\s*\w+\s*\.\.\s*':state'|fs_key\()`)
-	checked := 0
-	for _, sec := range sections[1:] {
-		name := sec[:strings.Index(sec, "\n")]
-		// A local bound to the key is tracked within its top-level function.
-		stateVars := map[string]bool{}
-		for i, line := range strings.Split(sec, "\n") {
-			if strings.HasPrefix(line, "local function ") || strings.HasPrefix(line, "function ") {
-				stateVars = map[string]bool{}
+	t.Run("lua", func(t *testing.T) {
+		writes := regexp.MustCompile(`redis\.call\('(HSET|HSETNX|HDEL|DEL|UNLINK|HINCRBY|HINCRBYFLOAT|EXPIRE|PEXPIRE|SET|RENAME|HMSET|XADD|XTRIM|XDEL)',\s*([^,)]+)`)
+		owner := map[string]string{"state": "friend.lua", "wakemode": "friend.lua", "events": "presence.lua"}
+		binds := regexp.MustCompile(`local\s+(\w+)\s*=\s*(?:'friend:'\s*\.\.\s*\w+\s*\.\.\s*':(state|wakemode|events)'|(fs_key)\()`)
+		checked := map[string]int{}
+		for _, sec := range sections[1:] {
+			name := sec[:strings.Index(sec, "\n")]
+			// A local bound to a key is tracked within its top-level function.
+			vars := map[string]string{}
+			for i, line := range strings.Split(sec, "\n") {
+				if strings.HasPrefix(line, "local function ") || strings.HasPrefix(line, "function ") {
+					vars = map[string]string{}
+				}
+				if m := binds.FindStringSubmatch(line); m != nil {
+					if m[3] != "" {
+						vars[m[1]] = "state"
+					} else {
+						vars[m[1]] = m[2]
+					}
+				}
+				m := writes.FindStringSubmatch(line)
+				if m == nil {
+					continue
+				}
+				target := strings.TrimSpace(m[2])
+				key := vars[target]
+				for k := range owner {
+					if strings.Contains(target, "'friend:'") && strings.Contains(target, "':"+k+"'") {
+						key = k
+					}
+				}
+				if key == "" {
+					continue
+				}
+				checked[key]++
+				if name != owner[key] {
+					t.Errorf("lua/%s line %d writes friend:<f>:%s (%s) outside %s", name, i, key, strings.TrimSpace(line), owner[key])
+				}
 			}
-			if m := binds.FindStringSubmatch(line); m != nil {
-				stateVars[m[1]] = true
+		}
+		for k := range owner {
+			if checked[k] == 0 {
+				t.Errorf("found no write to friend:<f>:%s at all; the rule is reading the wrong source", k)
 			}
-			m := writes.FindStringSubmatch(line)
-			if m == nil {
-				continue
+		}
+	})
+	t.Run("go_sources", func(t *testing.T) {
+		root := fsRepoRoot(t)
+		call := regexp.MustCompile(`\.(HSet|HSetNX|HDel|Del|Unlink|Set|Expire|PExpire|XAdd)\(`)
+		marker := regexp.MustCompile(`(^|\W)(friend\.)?(StateKey|EventsKey|WakeModeKey)\(|:(state|events|wakemode)"`)
+		scanned := 0
+		for _, dir := range []string{"internal/nsprint", "cmd/nova-sprint"} {
+			err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+				if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+					return err
+				}
+				body, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				scanned++
+				text := string(body)
+				for _, loc := range call.FindAllStringIndex(text, -1) {
+					args := fsCallArgs(text[loc[1]:])
+					if marker.MatchString(args) {
+						rel, _ := filepath.Rel(root, path)
+						t.Errorf("%s writes a one-writer friend key from Go: %s%s)", rel, text[loc[0]:loc[1]], args)
+					}
+				}
+				return nil
+			})
+			fsMust(t, err)
+		}
+		if scanned == 0 {
+			t.Fatal("scanned no Go source; the rule is reading the wrong tree")
+		}
+	})
+	t.Run("events_maxlen", func(t *testing.T) {
+		xadd := regexp.MustCompile(`redis\.call\('XADD',\s*'friend:'\s*\.\.\s*\w+\s*\.\.\s*':events'(.*)`)
+		found := 0
+		for _, sec := range sections[1:] {
+			name := sec[:strings.Index(sec, "\n")]
+			for i, line := range strings.Split(sec, "\n") {
+				m := xadd.FindStringSubmatch(line)
+				if m == nil {
+					continue
+				}
+				found++
+				if !strings.Contains(m[1], "'MAXLEN', '~', 100000") {
+					t.Errorf("lua/%s line %d appends to friend:<f>:events without MAXLEN ~ 100000: %s", name, i, strings.TrimSpace(line))
+				}
 			}
-			target := strings.TrimSpace(m[2])
-			if !strings.Contains(target, "':state'") && !stateVars[target] {
-				continue
-			}
-			checked++
-			if name != "friend.lua" {
-				t.Errorf("lua/%s line %d writes friend:<f>:state (%s) outside ns_friend_state", name, i, strings.TrimSpace(line))
+		}
+		if found == 0 {
+			t.Fatal("found no XADD to friend:<f>:events; the rule is reading the wrong source")
+		}
+	})
+}
+
+// fsCallArgs is the argument text of a call whose "(" was just consumed, up
+// to its matching ")".
+func fsCallArgs(rest string) string {
+	depth := 1
+	for i, r := range rest {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return rest[:i]
 			}
 		}
 	}
-	if checked == 0 {
-		t.Fatal("found no write to friend:<f>:state at all; the rule is reading the wrong source")
+	return rest
+}
+
+// fsRepoRoot is the module root (the directory holding go.mod).
+func fsRepoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	fsMust(t, err)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("no go.mod above the test directory")
+		}
+		dir = parent
 	}
 }
 
@@ -515,4 +622,262 @@ func mustAtoi(t *testing.T, s string) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// fsFCall runs one Function and returns its reply as strings; a Redis error
+// is fatal.
+func fsFCall(t *testing.T, client *redis.Client, fn string, args ...any) []string {
+	t.Helper()
+	reply, err := client.FCall(context.Background(), fn, nil, args...).Slice()
+	if err != nil {
+		t.Fatalf("%s %v: %v", fn, args, err)
+	}
+	out := make([]string, len(reply))
+	for i, v := range reply {
+		out[i] = fmt.Sprint(v)
+	}
+	return out
+}
+
+// fsEvent appends one event through ns_friend_event as f itself.
+func fsEvent(t *testing.T, client *redis.Client, f, kind, cause string, at int64) string {
+	t.Helper()
+	got := fsFCall(t, client, life.FunctionEvent, f, kind, cause, strconv.FormatInt(at, 10), f)
+	if len(got) != 2 || got[0] != "OK" {
+		t.Fatalf("event %s %s: %v", f, kind, got)
+	}
+	return got[1]
+}
+
+func fsCapLog(t *testing.T, client *redis.Client) []redis.XMessage {
+	t.Helper()
+	msgs, err := client.XRange(context.Background(), "cap:log", "-", "+").Result()
+	fsMust(t, err)
+	return msgs
+}
+
+// TestFriendStateAcceptsLifeStates: ns_friend_state accepts offline-model and
+// wake-missed on the report branch, still refuses an unknown state, and
+// both hold against the ladder's idle observation.
+func TestFriendStateAcceptsLifeStates(t *testing.T) {
+	st, client := fsRedis(t)
+	ctx := context.Background()
+	fsFriends(t, client, "ada", "stella", "johnny", "rowan")
+	for _, state := range []string{friend.StateOfflineModel, friend.StateWakeMissed} {
+		got := fsFCall(t, client, friend.FunctionState, "ada", state, "", "test", "keeper", "i-"+state)
+		if got[0] != "OK" || got[1] != state {
+			t.Fatalf("%s: %v", state, got)
+		}
+		if fsState(client, "ada")["state"] != state {
+			t.Fatalf("stored %v, want %s", fsState(client, "ada"), state)
+		}
+		step, err := friend.Observe(ctx, st, friend.Observation{Friend: "ada", State: friend.StateIdle, Open: 1, Ticks: 1}, "reconciler", "obs-"+state)
+		fsMust(t, err)
+		if step.Status != "HELD" || step.State != state {
+			t.Fatalf("idle observation over %s: %+v, want HELD", state, step)
+		}
+	}
+	if got := fsFCall(t, client, friend.FunctionState, "ada", "sleeping", "", "test", "keeper", "i-sleep"); got[0] != "INVALID" {
+		t.Fatalf("sleeping: %v, want INVALID", got)
+	}
+}
+
+// TestFriendStateIfMatch: a classifier write (actor life) is applied only
+// when the stored state and idem still equal what it read, and only over a
+// state it may overwrite; otherwise STALE or HELD and nothing is written.
+func TestFriendStateIfMatch(t *testing.T) {
+	st, client := fsRedis(t)
+	ctx := context.Background()
+	fsFriends(t, client, "ada", "stella", "johnny", "rowan")
+	life1 := "life:ada:e1:offline-model"
+	if got := fsFCall(t, client, friend.FunctionState, "ada", friend.StateOfflineModel, "", "r", friend.ActorLife, life1, "up", ""); got[0] != "OK" {
+		t.Fatalf("offline-model: %v", got)
+	}
+	until := time.Now().Add(time.Hour)
+	fsMust(t, friend.Report(ctx, st, friend.ReportRequest{Friend: "ada", State: friend.StateAway, Until: until, Actor: "ada", Idem: "away-1"}))
+	away := fsState(client, "ada")
+	logLen := len(fsCapLog(t, client))
+	outLen := client.XLen(ctx, friend.OutboxKey).Val()
+
+	got := fsFCall(t, client, friend.FunctionState, "ada", "clear", "", "r", friend.ActorLife, "life:ada:e2:clear", friend.StateOfflineModel, life1)
+	if !reflect.DeepEqual(got, []string{"STALE", friend.StateAway, "away-1"}) {
+		t.Fatalf("clear over a newer away: %v", got)
+	}
+	got = fsFCall(t, client, friend.FunctionState, "ada", "clear", "", "r", friend.ActorLife, "life:ada:e3:clear", friend.StateAway, "away-1")
+	if !reflect.DeepEqual(got, []string{"HELD", friend.StateAway}) {
+		t.Fatalf("matching clear over a report: %v", got)
+	}
+	if now := fsState(client, "ada"); !reflect.DeepEqual(now, away) {
+		t.Fatalf("away changed: %v -> %v", away, now)
+	}
+	if len(fsCapLog(t, client)) != logLen {
+		t.Fatal("a refused classifier write reached cap:log")
+	}
+
+	// Back at the classifier's own offline-model: a matching clear applies.
+	fsMust(t, friend.Report(ctx, st, friend.ReportRequest{Friend: "ada", State: "clear", Actor: "ada", Idem: "back-1"}))
+	if got := fsFCall(t, client, friend.FunctionState, "ada", friend.StateOfflineModel, "", "r", friend.ActorLife, life1, "up", ""); got[0] != "OK" {
+		t.Fatalf("offline-model again: %v", got)
+	}
+	got = fsFCall(t, client, friend.FunctionState, "ada", "clear", "", "r", friend.ActorLife, "life:ada:e4:clear", friend.StateOfflineModel, life1)
+	if got[0] != "OK" || got[1] != "up" || client.Exists(ctx, friend.StateKey("ada")).Val() != 0 {
+		t.Fatalf("matching clear of its own state: %v %v", got, fsState(client, "ada"))
+	}
+
+	// A write over an away the classifier did not see: STALE, no wake.
+	fsMust(t, friend.Report(ctx, st, friend.ReportRequest{Friend: "ada", State: friend.StateAway, Until: until, Actor: "ada", Idem: "away-2"}))
+	outLen = client.XLen(ctx, friend.OutboxKey).Val()
+	got = fsFCall(t, client, friend.FunctionState, "ada", friend.StateOfflineModel, "", "r", friend.ActorLife, "life:ada:e5:offline-model", "up", "")
+	if got[0] != "STALE" || fsState(client, "ada")["state"] != friend.StateAway {
+		t.Fatalf("offline-model over an unseen away: %v %v", got, fsState(client, "ada"))
+	}
+	if client.XLen(ctx, friend.OutboxKey).Val() != outLen {
+		t.Fatal("a STALE write appended a wake")
+	}
+	// The classifier has no unconditional path.
+	if got := fsFCall(t, client, friend.FunctionState, "ada", "clear", "", "r", friend.ActorLife, "life:ada:e6:clear"); got[0] != "INVALID" {
+		t.Fatalf("actor life without args 7-8: %v, want INVALID", got)
+	}
+}
+
+func fsMoveOf(moves []life.Move, f string) *life.Move {
+	for i := range moves {
+		if moves[i].Friend == f {
+			return &moves[i]
+		}
+	}
+	return nil
+}
+
+// TestWakeMissedRedistributesSameTick: a silent friend (no beat) in
+// wake-missed has its open task moved by the next redistribute call, with
+// the wake-missed marker.
+func TestWakeMissedRedistributesSameTick(t *testing.T) {
+	st, client := fsRedis(t)
+	ctx := context.Background()
+	fsFriends(t, client, "ada", "stella", "johnny", "rowan")
+	fsPush(t, st, "ada", "build-1", task.KindWork, 0, "")
+	fsMust(t, client.Del(ctx, "friend:ada:beat").Err())
+	fsFCall(t, client, friend.FunctionState, "ada", friend.StateWakeMissed, "", "r", friend.ActorLife, "life:ada:d1:wake-missed", "up", "")
+	moves, err := life.Redistribute(ctx, st, fsRoster, "reconciler", "t1")
+	fsMust(t, err)
+	if m := fsMoveOf(moves, "ada"); m == nil || m.Moved != 1 {
+		t.Fatalf("moves %+v, want ada's one task moved", moves)
+	}
+	if fsOpen(client, "ada") != 0 {
+		t.Fatal("the task stayed on ada")
+	}
+	title := client.HGet(ctx, "s:"+fsSprint+":task:build-1", "title").Val()
+	if !strings.Contains(title, "[moved from ada: wake-missed]") {
+		t.Fatalf("title %q lacks the wake-missed marker", title)
+	}
+}
+
+// TestWakeMissedSurvivesBeat: a friend that still beats (shell alive, model
+// gone) in wake-missed has its work moved and stays wake-missed; a beat
+// never clears it as it clears down.
+func TestWakeMissedSurvivesBeat(t *testing.T) {
+	st, client := fsRedis(t)
+	ctx := context.Background()
+	fsFriends(t, client, "ada", "stella", "johnny", "rowan")
+	fsPush(t, st, "ada", "build-1", task.KindWork, 0, "")
+	fsFCall(t, client, friend.FunctionState, "ada", friend.StateWakeMissed, "", "r", friend.ActorLife, "life:ada:d1:wake-missed", "up", "")
+	for tick := 1; tick <= 2; tick++ {
+		moves, err := life.Redistribute(ctx, st, fsRoster, "reconciler", "t"+strconv.Itoa(tick))
+		fsMust(t, err)
+		if tick == 1 {
+			if m := fsMoveOf(moves, "ada"); m == nil || m.Moved != 1 {
+				t.Fatalf("tick 1 moves %+v", moves)
+			}
+		}
+		if got := fsState(client, "ada")["state"]; got != friend.StateWakeMissed {
+			t.Fatalf("tick %d: state %q, want wake-missed", tick, got)
+		}
+	}
+	for _, m := range fsCapLog(t, client) {
+		if m.Values["kind"] == "friend-state-clear" && strings.Contains(fmt.Sprint(m.Values["reason"]), "down: beat returned") {
+			t.Fatalf("a beat cleared wake-missed: %v", m.Values)
+		}
+	}
+}
+
+// TestFriendEventOneWriter: ns_friend_event appends the six kinds and
+// refuses an unknown kind, a cause off turn-start, an unknown friend and an
+// actor that is not the friend (shape validation, not authentication).
+func TestFriendEventOneWriter(t *testing.T) {
+	_, client := fsRedis(t)
+	ctx := context.Background()
+	fsFriends(t, client, "ada", "bo", "stella", "johnny", "rowan")
+	at := int64(1790000000000)
+	id := fsEvent(t, client, "ada", life.EventDeliver, "", at)
+	entry, err := client.XRange(ctx, friend.EventsKey("ada"), id, id).Result()
+	fsMust(t, err)
+	if len(entry) != 1 || entry[0].Values["kind"] != "deliver" || entry[0].Values["at"] != strconv.FormatInt(at, 10) {
+		t.Fatalf("deliver entry %v", entry)
+	}
+	tid := fsEvent(t, client, "ada", life.EventTurnStart, id, at+1000)
+	entry, err = client.XRange(ctx, friend.EventsKey("ada"), tid, tid).Result()
+	fsMust(t, err)
+	if len(entry) != 1 || entry[0].Values["cause"] != id {
+		t.Fatalf("turn-start entry %v, want cause %s", entry, id)
+	}
+	before := client.XLen(ctx, friend.EventsKey("ada")).Val()
+	for _, bad := range [][]any{
+		{"ada", "sleeping", "", at, "ada"},
+		{"ada", life.EventBeat, id, at, "ada"},
+		{"zed", life.EventBeat, "", at, "zed"},
+		{"ada", life.EventBeat, "", at, "bo"},
+		{"ada", life.EventDeliver, "", at, "bo"},
+	} {
+		if got := fsFCall(t, client, life.FunctionEvent, bad...); got[0] != "INVALID" {
+			t.Fatalf("%v: %v, want INVALID", bad, got)
+		}
+	}
+	if after := client.XLen(ctx, friend.EventsKey("ada")).Val(); after != before {
+		t.Fatalf("a refused event was appended: %d -> %d", before, after)
+	}
+	if client.Exists(ctx, friend.EventsKey("zed")).Val() != 0 {
+		t.Fatal("an unknown friend got a stream")
+	}
+}
+
+// TestFriendWakeModeRechecksReceipt: ns_friend_wakemode re-reads the pair it
+// is given; a late, wrongly caused or wrong-kind pair is REFUSED and writes
+// nothing, a real receipt declares scheduled-model-turn.
+func TestFriendWakeModeRechecksReceipt(t *testing.T) {
+	_, client := fsRedis(t)
+	ctx := context.Background()
+	fsFriends(t, client, "ada", "stella", "johnny", "rowan")
+	at := int64(1790000000000)
+	beat := fsEvent(t, client, "ada", life.EventBeat, "", at)
+	d := fsEvent(t, client, "ada", life.EventDeliver, "", at+1000)
+	other := fsEvent(t, client, "ada", life.EventDeliver, "", at+2000)
+	late := fsEvent(t, client, "ada", life.EventTurnStart, d, at+1000+121000)
+	wrong := fsEvent(t, client, "ada", life.EventTurnStart, other, at+1000+30000)
+	good := fsEvent(t, client, "ada", life.EventTurnStart, d, at+1000+60000)
+	for _, pair := range [][2]string{{d, late}, {d, wrong}, {d, beat}, {beat, good}, {d, "1-1"}} {
+		if got := fsFCall(t, client, life.FunctionWakeMode, "ada", pair[0], pair[1], "ada", ""); got[0] != "REFUSED" {
+			t.Fatalf("%v: %v, want REFUSED", pair, got)
+		}
+	}
+	if client.Exists(ctx, friend.WakeModeKey("ada")).Val() != 0 {
+		t.Fatal("a refused pair wrote a wake mode")
+	}
+	got := fsFCall(t, client, life.FunctionWakeMode, "ada", d, good, "ada", "")
+	if !reflect.DeepEqual(got, []string{"OK", life.WakeModeScheduled, "60000"}) {
+		t.Fatalf("real receipt: %v", got)
+	}
+	h := client.HGetAll(ctx, friend.WakeModeKey("ada")).Val()
+	if h["mode"] != life.WakeModeScheduled || h["lag_ms"] != "60000" || h["deliver"] != d || h["turn"] != good {
+		t.Fatalf("wakemode %v", h)
+	}
+	n := 0
+	for _, m := range fsCapLog(t, client) {
+		if m.Values["kind"] == "friend-wakemode" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d friend-wakemode receipts, want 1", n)
+	}
 }

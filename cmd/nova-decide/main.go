@@ -72,7 +72,7 @@ usage:
   nova-decide log --log <path> --summary [--registry <path>]
 
   nova-decide review --repo <owner/name> --pr <n> [--card <file>]
-                     [--post|--dry-run] [--ledger file|redis|file,redis] [--store <host:port>]
+                     [--task <id>] [--post|--dry-run] [--ledger file|redis|file,redis] [--store <host:port>]
                      [--user <user>] [--password-env <NAME>] [--ledger-path <jsonl>]
                      [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
                      [--base-url <url>] [--key-env <name>] [--gh <path>] [--stream <name>]
@@ -91,8 +91,10 @@ usage:
                      --dry-run is the default; --post is the only write.)
 
   nova-decide classify --question <q> --evidence <file|-> --pointer <id>
-                       [--version 1] [--decider rules] [--floor <f>] [--rules <tsv>] [--tamper <file>]
+                       [--version 1] [--decider rules[,jev|local]] [--floor <f>] [--rules <tsv>] [--tamper <file>]
                        [--escalate-to <name>] [--log <path>] [--private]
+                       [--key-env <name>] [--base-url <url>] [--usage <tsv>] [--record <dir>] [--replay <dir>]
+                       (jev or local need --log and --usage; the key comes from --key-env only)
 
   nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped [--of-time <RFC3339>]
                      (what HAPPENED to a unit a decision routed; the kind and

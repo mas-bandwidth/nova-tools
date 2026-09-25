@@ -60,10 +60,11 @@ The second delivery is the binary that owns one local instance. Its verbs:
 - `serve` launches the instance in the foreground under the rules of the next
   section: `--bind` names loopback and tailnet addresses only and has no
   default, the password comes from nova-secrets and reaches `redis-server` on
-  stdin, and persistence is off with a fresh working directory per launch.
+  stdin, and the store lives in `--dir` (no default) under the fleet store's
+  rules: AOF on, no eviction, no TTL policy (nova-tools #3879).
 - `status` reports whether the instance is reachable, what it is bound to, the
   owner and key counts, and the two safety facts — auth is required and
-  **persistence** is off.
+  **persistence** is on (the AOF).
 - `spill` writes a scratch value under an **owner prefix** and a required
   **TTL**; `recall` reads it back and refuses a missing or expired key. The
   key form is `<owner>:<name>`, and a write with no owner or no TTL is
@@ -79,10 +80,9 @@ The second delivery is the binary that owns one local instance. Its verbs:
 
 The first run is bound to **localhost** and the **tailnet** only, never a
 public interface, with auth taken from **nova-secrets** at run time (no
-plaintext on the bench and no secret in an argument). Persistence is off: no
-RDB and no AOF, so a restart is a clean slate by construction and the record
-in git is provably untouched. If a value must survive a restart, it does not
-belong in Redis.
+plaintext on the bench and no secret in an argument). Persistence is on: the
+instance is the fleet's sprint store (cards, sets, leases), and a card is not
+allowed to disappear, so a restart on the same `--dir` replays every key.
 
 `serve` is where these are enforced (nova-tools #2281). The tailnet is the
 Tailscale ranges, `100.64.0.0/10` and `fd7a:115c:a1e0::/48`; a wildcard,
@@ -90,22 +90,29 @@ public or LAN address, or a hostname, is refused before anything starts. The
 password is read from `NOVA_REDIS_PASSWORD`, which `nova-secrets exec` fills;
 it is written into the config `redis-server` reads on stdin (`redis-server -`),
 dropped from the child's environment, and never written to a file. The config
-carries `save ""` and `appendonly no`, and each launch gets a fresh, empty
-working directory, so even a persistence file an earlier run left behind is
-never replayed.
+is the fleet store's rules, one config owned by `nova-redis` (#3879; the
+rowan-tools `nova-redis.conf.j2` template carried them before): `dir` is `--dir`, absolute, created 0700 when missing and never
+defaulted; `appendonly yes` with `appendfsync everysec`, so a crash loses at
+most one second; `save 60 1`, an RDB snapshot as the second copy;
+`maxmemory-policy noeviction`, so a full instance refuses a write rather than
+drop a key; and no TTL policy, so store keys do not expire. A SIGTERM to
+`serve` is a clean stop: `redis-server` fsyncs the AOF, saves and exits 0.
 
 ## Rules
 
 1. **Git stays the record; nothing in Redis is the only copy of anything.**
-2. Every ephemeral key carries an owner prefix and a TTL; an unbounded key is
-   a bug.
+2. Every ephemeral (scratch) key carries an owner prefix and a TTL; an
+   unbounded scratch key is a bug. Store keys (the sprint's cards and sets)
+   carry no TTL: the store has no TTL policy.
 3. Every Layer 1 use has a file fallback with the same contract, tested by
    killing the instance and reading through it.
 4. Auth comes from nova-secrets; the instance is never bound beyond localhost
    and the tailnet.
-5. Persistence is off; a restart is a clean slate.
-6. No test in this tool opens a network socket to a provider or to Redis; the
-   tests use fakes and the file fallback.
+5. Persistence is on (AOF, no eviction); a restart on the same `--dir` keeps
+   every key.
+6. No test in this tool opens a network socket to a provider or to a fleet
+   Redis; the tests use fakes, the file fallback, and, for the restart, a
+   throwaway `redis-server` on loopback in the test's temp dir.
 
 ## Tests
 
@@ -115,7 +122,7 @@ the owner prefix and TTL, the bind and auth and persistence rules, and the
 record rule — is missing. Later slices add: the fallback round-trip per use
 (write through Redis, kill it, read the file); `spill`/`recall` with a TTL that
 expires; `presence` ageing out a heartbeat; and `check` refusing an instance
-bound beyond localhost and the tailnet or with persistence on.
+bound beyond localhost and the tailnet or with persistence off.
 
 ## Tests this spec demands
 
@@ -144,9 +151,9 @@ These tests run against a miniredis fake standing in for the instance (already i
 21. `TestVersionAndHelpArePresent` — `version` and `help` are the two verbs every binary in this family carries (L72).
 22. `TestBoundToLocalhostAndTailnetOnly` — bound to localhost and the tailnet only, never a public interface (L76–77).
 23. `TestAuthFromNovaSecretsNeverAPlaintextArgument` — auth taken from nova-secrets at run time: no plaintext on the bench and no secret in an argument (L77–79).
-24. `TestPersistenceOffNoRDBNoAOF` — persistence is off: no RDB and no AOF (L79–80).
-25. `TestRestartIsACleanSlate` — a restart is a clean slate (L80–81).
+24. `TestPersistenceIsAOFWithNoEviction` — the config is the fleet store's rules: AOF on, fsync every second, RDB every 60 s, no eviction, `--dir` required and absolute.
+25. `TestRestartOnTheSameDirKeepsTheStore` — a key written through `serve --dir <d>` is intact after a stop and a restart on the same `--dir`, with no TTL, and preflight 7.1 reads GREEN against that instance.
 26. `TestNothingInRedisIsTheOnlyCopy` — Git stays the record; nothing in Redis is the only copy of anything (L85).
 27. `TestEveryEphemeralKeyCarriesOwnerAndTTL` — every ephemeral key carries an owner prefix and a TTL; an unbounded key is a bug (L86–87).
 28. `TestNoTestOpensANetworkSocket` — no test opens a network socket to a provider or to Redis; tests use fakes and the file fallback (L93–94).
-29. `TestCheckRefusesAnUnboundOrPersistentInstance` — `check` refuses an instance bound beyond localhost and the tailnet or with persistence on (L104).
+29. `TestCheckRefusesAnUnboundOrUnpersistedInstance` — `check` refuses an instance bound beyond localhost and the tailnet or with persistence off (L104).

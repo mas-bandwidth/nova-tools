@@ -43,6 +43,9 @@ type Options struct {
 	Author      string
 	Log         io.Writer
 	GH          *GitHub
+	// NoTest skips the batch test (and cfg:land:test): the stream head is
+	// tested by the CI request nova-sprint land makes (nova-tools#3899).
+	NoTest bool
 }
 
 // Report is what one land stream run did.
@@ -96,6 +99,9 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	if test == "" {
 		test = cfg.Test
 	}
+	if o.NoTest {
+		test = CIBatch
+	}
 	rep.TestCmd = test
 	if o.DryRun {
 		rep.State = "dry-run"
@@ -125,7 +131,7 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	}
 	rep.Workdir = o.Workdir
 	b := Build{Repo: o.Repo, Remote: remote, Mirror: o.Mirror, Base: o.Base, Branch: rep.Branch, Workdir: o.Workdir,
-		Test: test, TestTimeout: o.TestTimeout, Author: o.Author, Log: o.Log}
+		Test: test, TestTimeout: o.TestTimeout, NoTest: o.NoTest, Author: o.Author, Log: o.Log}
 	res, err := b.Run(ctx, rep.Members)
 	rep.Build = res
 	rep.TestCmd = res.TestCmd
@@ -214,7 +220,11 @@ func PRBody(l Landing, test string) string {
 			fmt.Fprintf(&b, "- #%d %s\n", p.N, p.Why)
 		}
 	}
-	fmt.Fprintf(&b, "\nBatch test: `%s` green at %s (%d runs).\n", test, short(l.Head), l.Tests)
+	if test == CIBatch {
+		fmt.Fprintf(&b, "\nBatch test: our own CI at %s (a CI request a bench claims; none ran on the lander's seat).\n", short(l.Head))
+	} else {
+		fmt.Fprintf(&b, "\nBatch test: `%s` green at %s (%d runs).\n", test, short(l.Head), l.Tests)
+	}
 	b.WriteString("\nOpened by nova-sprint land stream. Each member closes with a CLOSE line when this merges (nova-sprint land merge).\n")
 	return b.String()
 }

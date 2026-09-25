@@ -29,7 +29,8 @@ usage:
   nova-secrets help
 
 flags:
-  --store <dir>        git working copy of the secrets store
+  --store <dir>        git working copy of the secrets store; check and exec also need it on a
+                       named branch with an upstream tracking ref (see: nova-secrets check --help)
   --as <name>          seat name selecting <store>/<name>.yaml
   --key <path>         path to age private key identity file (mode 0600)
   --sops <path>        path to sops executable
@@ -63,6 +64,52 @@ example:
   nova-secrets placed --machine mini
   nova-secrets seat add --store ./secrets --as air --pub age1… --from rowan --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
 `
+
+// storeUpstreamHelp is the store prerequisite check and exec enforce (SPEC-SECRETS
+// invariant 8), printed by both verbs' own help so a caller learns it before the
+// refusal does (nova-tools#3550).
+const storeUpstreamHelp = `store prerequisite:
+  --store must be a git working copy on a named branch (not a detached HEAD) with an
+  upstream tracking ref: branch.<name>.remote and branch.<name>.merge in .git/config,
+  and HEAD must equal that remote-tracking ref. Everything is read from .git as files;
+  no network call is made.
+
+  why: the working copy must be the store, not a memory of it. HEAD behind its ref is
+  a value a rotation replaced; HEAD ahead of it is a local edit nobody reviewed. Both
+  are refused, and neither can be told apart without an upstream to compare against.
+
+  next, when it is refused:
+    no upstream on a store with a remote:
+      git -C <store> switch <the branch that tracks the remote>
+      git -C <store> branch --set-upstream-to=<remote>/<branch>   (the remote branch exists)
+    a local/offline store with no remote, given a local bare one:
+      git init --bare <dir> && git -C <store> remote add origin <dir> && git -C <store> push -u origin <branch>
+    HEAD behind or ahead of its ref:
+      git -C <store> pull --ff-only
+`
+
+const checkUsage = `nova-secrets check: verify the store and this seat's file and key, printing no value
+
+usage:
+  nova-secrets check --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
+
+exit: 0 green (one OK line with head=<short sha>), 1 red (one line per failure),
+2 refused (one SECRETS REFUSED line naming the remedy)
+
+` + storeUpstreamHelp
+
+const execUsage = `nova-secrets exec: run a command with only the named keys from this seat's file in its environment
+
+usage:
+  nova-secrets exec --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
+
+exit: the command's own code; 125 when exec itself fails (one SECRETS EXEC FAIL line
+naming the remedy) and the command never runs
+
+` + storeUpstreamHelp
+
+// isHelpArg is the spelling of a verb's own help request.
+func isHelpArg(a string) bool { return a == "--help" || a == "-h" || a == "help" }
 
 // version is empty in ordinary builds and is filled only by a release stamp.
 var version string
@@ -229,6 +276,11 @@ func cmdVersion(args []string, stdout, stderr io.Writer) int {
 }
 
 func runExecCLI(args []string) {
+	if len(args) > 0 && isHelpArg(args[0]) {
+		fmt.Print(execUsage)
+		os.Exit(0)
+	}
+
 	// Find '--' delimiter
 	delimiterIdx := -1
 	for i, arg := range args {
@@ -342,6 +394,11 @@ func runNamesCLI(args []string) {
 }
 
 func runCheckCLI(args []string) {
+	if len(args) > 0 && isHelpArg(args[0]) {
+		fmt.Print(checkUsage)
+		os.Exit(0)
+	}
+
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 

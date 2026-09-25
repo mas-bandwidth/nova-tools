@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/prereview"
+	"github.com/redis/go-redis/v9"
 )
 
 // The `review` verb's tests. They dial NOTHING: gh is a script this test writes,
@@ -90,7 +95,7 @@ func TestReviewDryRunPrintsTheLineAndPostsNothing(t *testing.T) {
 		t.Fatalf("exit=%d stderr=%s stdout=%s (a BOUNCE exits 3)", code, errb.String(), out.String())
 	}
 	line := out.String()
-	if !strings.Contains(line, "JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 conf=0.21 rubric=816c4381 base=ok checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-ok,base:off-missing,score:6 model=jev-latest cost=$- explain=") {
+	if !strings.Contains(line, "JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 conf=0.21 rubric=816c4381 base=ok checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-ok,base:off-missing,score:6 paths_from=pr-body-cell model=jev-latest cost=$- explain=") {
 		t.Fatalf("stdout = %q", line)
 	}
 	if !strings.Contains(line, "checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-ok,base:off-missing,score:6") {
@@ -395,4 +400,169 @@ esac
 			}
 		})
 	}
+}
+
+// TestReviewTaskHash verifies that review --task reads card bounds from a Redis
+// task hash (nova-tools #3392).
+func TestReviewTaskHash(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake gh is a shell script")
+	}
+
+	t.Run("Success", func(t *testing.T) {
+		mr := miniredis.RunT(t)
+		// Set up task hash with PATHS that match the PR files
+		mr.HSet("task:task-101", "title", "PATHS: cmd/nova-decide/**, internal/prereview/**\nDONE-WHEN: go test ./cmd/nova-decide/ -run TestReviewTaskHash -v")
+
+		dir := t.TempDir()
+		viewJSON := fmt.Sprintf(`{"number":101,"headRefOid":"8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3","title":"t","body":"DONE\n","files":[{"path":"cmd/nova-decide/review.go"},{"path":"internal/prereview/prereview.go"}],"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}`)
+		viewFile := filepath.Join(dir, "view.json")
+		if err := os.WriteFile(viewFile, []byte(viewJSON), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		diffContent := `diff --git a/cmd/nova-decide/review.go b/cmd/nova-decide/review.go
+--- a/cmd/nova-decide/review.go
++++ b/cmd/nova-decide/review.go
+@@ -1,3 +1,4 @@
++// test change
+ package main
+`
+		diffFile := filepath.Join(dir, "101.diff")
+		if err := os.WriteFile(diffFile, []byte(diffContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		ghScript := filepath.Join(dir, "gh")
+		script := fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  pr)
+    case "$2" in
+      view) cat %q ;;
+      diff) cat %q ;;
+      comment) exit 0 ;;
+      *) echo "unexpected pr $*" >&2; exit 2 ;;
+    esac
+    ;;
+  api)
+    printf '{"total_count":1,"check_runs":[{"name":"ci-ok","status":"completed","conclusion":"success","head_sha":"8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3","started_at":"2026-09-22T00:00:00Z","completed_at":"2026-09-22T00:00:01Z"}]}'
+    ;;
+  *) echo "unexpected $*" >&2; exit 2 ;;
+esac
+`, viewFile, diffFile)
+		if err := os.WriteFile(ghScript, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		ledger := filepath.Join(dir, "ledger.jsonl")
+		var out, errb bytes.Buffer
+
+		// Swap in a task reader that uses miniredis
+		origReader := prereview.TaskCardReader
+		prereview.TaskCardReader = func(ctx context.Context, addr, taskID string) (prereview.Card, error) {
+			rdb := redis.NewClient(&redis.Options{Addr: addr})
+			defer rdb.Close()
+			title, err := rdb.HGet(ctx, "task:"+taskID, "title").Result()
+			if err != nil {
+				return prereview.Card{}, err
+			}
+			return prereview.ParseTaskCard(taskID, title), nil
+		}
+		defer func() { prereview.TaskCardReader = origReader }()
+
+		code := run([]string{"review", "--repo", "mas-bandwidth/nova-tools", "--pr", "101",
+			"--task", "task-101", "--store", mr.Addr(),
+			"--no-jev", "--gh", ghScript, "--ledger-path", ledger}, &out, &errb)
+
+		line := out.String()
+		if !strings.Contains(line, "paths:ok") {
+			t.Errorf("stdout missing paths:ok: %s\nstderr: %s", line, errb.String())
+		}
+		if !strings.Contains(line, "paths_from=task") {
+			t.Errorf("stdout missing paths_from=task: %s", line)
+		}
+		// Should exit 3 due to donewhen:missing (no RESULT line) or similar, not 2
+		if code == 2 {
+			t.Fatalf("exit=2 (refusal), want 0 or 3; stderr=%s", errb.String())
+		}
+	})
+
+	t.Run("PathViolation", func(t *testing.T) {
+		mr := miniredis.RunT(t)
+		// Set up task hash with PATHS that don't match the PR files
+		mr.HSet("task:task-102", "title", "PATHS: cmd/foo/**\nDONE-WHEN: go test ./cmd/foo/ -v")
+
+		dir := t.TempDir()
+		viewJSON := fmt.Sprintf(`{"number":102,"headRefOid":"8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3","title":"t","body":"DONE\n","files":[{"path":"internal/bar/bar.go"}],"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}`)
+		viewFile := filepath.Join(dir, "view.json")
+		if err := os.WriteFile(viewFile, []byte(viewJSON), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		diffContent := `diff --git a/internal/bar/bar.go b/internal/bar/bar.go
+--- a/internal/bar/bar.go
++++ b/internal/bar/bar.go
+@@ -1,3 +1,4 @@
++// test change
+ package bar
+`
+		diffFile := filepath.Join(dir, "102.diff")
+		if err := os.WriteFile(diffFile, []byte(diffContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		ghScript := filepath.Join(dir, "gh")
+		script := fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  pr)
+    case "$2" in
+      view) cat %q ;;
+      diff) cat %q ;;
+      comment) exit 0 ;;
+      *) echo "unexpected pr $*" >&2; exit 2 ;;
+    esac
+    ;;
+  api)
+    printf '{"total_count":1,"check_runs":[{"name":"ci-ok","status":"completed","conclusion":"success","head_sha":"8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3","started_at":"2026-09-22T00:00:00Z","completed_at":"2026-09-22T00:00:01Z"}]}'
+    ;;
+  *) echo "unexpected $*" >&2; exit 2 ;;
+esac
+`, viewFile, diffFile)
+		if err := os.WriteFile(ghScript, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		ledger := filepath.Join(dir, "ledger.jsonl")
+		var out, errb bytes.Buffer
+
+		origReader := prereview.TaskCardReader
+		prereview.TaskCardReader = func(ctx context.Context, addr, taskID string) (prereview.Card, error) {
+			rdb := redis.NewClient(&redis.Options{Addr: addr})
+			defer rdb.Close()
+			title, err := rdb.HGet(ctx, "task:"+taskID, "title").Result()
+			if err != nil {
+				return prereview.Card{}, err
+			}
+			return prereview.ParseTaskCard(taskID, title), nil
+		}
+		defer func() { prereview.TaskCardReader = origReader }()
+
+		code := run([]string{"review", "--repo", "mas-bandwidth/nova-tools", "--pr", "102",
+			"--task", "task-102", "--store", mr.Addr(),
+			"--no-jev", "--gh", ghScript, "--ledger-path", ledger}, &out, &errb)
+
+		line := out.String()
+		if !strings.Contains(line, "paths:fail") {
+			t.Errorf("stdout missing paths:fail: %s\nstderr: %s", line, errb.String())
+		}
+		if code != 3 {
+			t.Fatalf("exit=%d, want 3 (BOUNCE/HOLD/UNSURE); stdout=%s stderr=%s", code, out.String(), errb.String())
+		}
+	})
+
+	t.Run("FlagExclusions", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		code := run([]string{"review", "--repo", "mas-bandwidth/nova-tools", "--pr", "1",
+			"--card", "some-card.md", "--task", "task-1"}, &out, &errb)
+		if code != 2 {
+			t.Fatalf("exit=%d, want 2; stderr=%s", code, errb.String())
+		}
+		if !strings.Contains(errb.String(), "cannot specify both --card and --task") {
+			t.Fatalf("refusal does not name the conflict: %s", errb.String())
+		}
+	})
 }

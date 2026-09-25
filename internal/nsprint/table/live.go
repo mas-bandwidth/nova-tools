@@ -11,7 +11,8 @@
 //	friend:<f>:down       GET, a set value prints "down"   (out-of-credits)
 //	sprint:<S>:xy         the sprint line                  (sprint-xy)
 //	sprint:<S>:landed     the landed line                  (sprint-landed)
-//	sprint:<S>:pitstop    set: the title reads *** PIT STOP *** (#3423)
+//	s:<S>:pitstop         HGETALL, the pitstop verb's hash: the title reads
+//	                      *** PIT STOP *** <why> since <at> (#3423, #3887)
 //	q:blocked             ZCARD, the one blocked count     (friend-queue, #3219)
 //	bench:*               SCAN COUNT 1000, then HGETALL    (bench-row, card-dealer)
 //	bench:<b>:cards:<w>   ZCARD, w = ready working done ok fail (the card move, #3692)
@@ -48,12 +49,14 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 )
 
 // LiveConfig names what the bash hard-codes; nothing here is compiled in.
 type LiveConfig struct {
 	Friends  []string      // the roster, in display order
-	Sprint   string        // sprint:<Sprint>:xy, :landed and :pitstop
+	Sprint   string        // sprint:<Sprint>:xy and :landed, and the pit stop (pitstop.Key)
 	XYFile   string        // SPRINT-XY.txt fallback while the xy key is missing (until #2679)
 	RowStale time.Duration // a friend row older than this prints "stale" (bash ROW_STALE_S=10)
 	// BenchStale: a host row whose own at is older than this prints "stale";
@@ -91,7 +94,11 @@ type LiveSnapshot struct {
 	Friends []FriendRow
 	XY      string // "" when the key is missing
 	Landed  string // "" when the key is missing
-	Pitstop bool   // sprint:<S>:pitstop holds a value: the title says so (#3423)
+	// Pitstop is s:<S>:pitstop, the one key `nova-sprint pitstop set|clear`
+	// writes (#3887): while it exists the title says PIT STOP with its why
+	// and at. A key of another type there (the 09-23 string) still stops the
+	// dealer, so it shows too, By wrongtype, until the verb repairs it.
+	Pitstop pitstop.Stop
 	Blocked string // "" when the count did not come back
 	Benches []BenchRow
 	// Pool is the pool line's count: the ZCARD of bench:_pool:cards:ready
@@ -146,8 +153,12 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		fc[i].downReason = pipe.HGet(ctx, "friend:"+name+":down", "reason")
 		fc[i].downExists = pipe.Exists(ctx, "friend:"+name+":down")
 	}
-	// The pit stop rides the xy/landed MGET: no extra command (#3423).
-	mget := pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy", "sprint:"+cfg.Sprint+":landed", "sprint:"+cfg.Sprint+":pitstop")
+	mget := pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy", "sprint:"+cfg.Sprint+":landed")
+	// The pit stop is the verb's hash, read in the same pipeline (#3887).
+	var pit *redis.MapStringStringCmd
+	if cfg.Sprint != "" {
+		pit = pipe.HGetAll(ctx, pitstop.Key(cfg.Sprint))
+	}
 	blocked := pipe.ZCard(ctx, "q:blocked")
 	poolView := pipe.ZCard(ctx, PoolViewKey)
 	var roster *redis.IntCmd
@@ -172,10 +183,10 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 	// The friend block is all-or-nothing, as in the bash: a failed MGET
 	// means the connection is not answering.
 	vals, err := mget.Result()
-	if err != nil || len(vals) != 3 {
-		return nil, fmt.Errorf("mget xy/landed/pitstop: %v", err)
+	if err != nil || len(vals) != 2 {
+		return nil, fmt.Errorf("mget xy/landed: %v", err)
 	}
-	snap := &LiveSnapshot{Config: cfg, XY: pipeValue(vals[0]), Landed: pipeValue(vals[1]), Pitstop: pipeValue(vals[2]) != ""}
+	snap := &LiveSnapshot{Config: cfg, XY: pipeValue(vals[0]), Landed: pipeValue(vals[1]), Pitstop: readPitstop(cfg.Sprint, pit)}
 	for i, name := range cfg.Friends {
 		row := FriendRow{Name: name}
 		if got, err := fc[i].row.Result(); err == nil && len(got) == 5 {
@@ -219,6 +230,55 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		snap.XYFileLine, snap.XYFileMod, snap.XYFileOK = readXYFile(cfg.XYFile)
 	}
 	return snap, nil
+}
+
+// readPitstop is the stop from the pipelined HGETALL: the hash as the verb
+// wrote it, or a stop by "wrongtype" when another type holds the key (the
+// HGETALL answered WRONGTYPE), or none.
+func readPitstop(sprint string, cmd *redis.MapStringStringCmd) pitstop.Stop {
+	if cmd == nil {
+		return pitstop.Stop{Sprint: sprint}
+	}
+	h, err := cmd.Result()
+	if err != nil {
+		if strings.HasPrefix(err.Error(), "WRONGTYPE") {
+			return pitstop.Stop{Sprint: sprint, Set: true, By: "wrongtype"}
+		}
+		return pitstop.Stop{Sprint: sprint}
+	}
+	return pitstop.FromHash(sprint, h)
+}
+
+// pitstopTitle is line 1 while a stop is set: SPRINT TABLE *** PIT STOP ***
+// then the why and since <at> (UTC, as pitstop status prints it), and the
+// streams a scoped stop holds or an all stop has lifted.
+func pitstopTitle(p pitstop.Stop) string {
+	var b strings.Builder
+	b.WriteString("SPRINT TABLE *** PIT STOP ***")
+	if p.By == "wrongtype" {
+		b.WriteString(" (s:" + p.Sprint + ":pitstop is not a hash; nova-sprint pitstop clear repairs it)")
+		return b.String()
+	}
+	if why := strings.TrimSpace(flatten(p.Why)); why != "" {
+		b.WriteString(" " + why)
+	}
+	if p.At > 0 {
+		b.WriteString(" since " + time.UnixMilli(p.At).UTC().Format("2006-01-02T15:04:05Z"))
+	}
+	if p.Streams != nil {
+		b.WriteString(" streams=" + quoteJoin(p.Streams))
+	} else if len(p.Lifted) > 0 {
+		b.WriteString(" lifted=" + quoteJoin(p.Lifted))
+	}
+	return b.String()
+}
+
+func quoteJoin(xs []string) string {
+	q := make([]string, len(xs))
+	for i, x := range xs {
+		q[i] = strconv.Quote(flatten(x))
+	}
+	return strings.Join(q, ",")
 }
 
 // PoolViewKey is the undealt pool, the card move's bench view for cards with
@@ -313,8 +373,8 @@ const liveFriendRule = "-----------+-------+---------+-------+------------\n"
 // RenderLive prints the bash layout at now.
 func (s *LiveSnapshot) RenderLive(now time.Time) string {
 	var b strings.Builder
-	if s.Pitstop {
-		b.WriteString("SPRINT TABLE *** PIT STOP ***\n")
+	if s.Pitstop.Set {
+		b.WriteString(pitstopTitle(s.Pitstop) + "\n")
 	} else {
 		b.WriteString("SPRINT TABLE\n")
 	}

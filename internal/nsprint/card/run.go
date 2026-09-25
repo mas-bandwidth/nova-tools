@@ -100,11 +100,10 @@ type RunConfig struct {
 
 	OutDir string // NOVA_CARD_OUT: harness.log, native.out, native.err, native/, RESULT.md
 	JobDir string // NOVA_CARD_JOB: card.md is written here
-	Home   string // the bench user's home: slots under <Home>/rowan-working/tmp, the slots store at <Home>/nova-bench/slots
+	Home   string // the bench user's home: slots under <Home>/rowan-working/tmp
 
 	Runner     string // the nova-swarm binary; "" is <Home>/.local/bin/nova-swarm
 	HarnessBin string // NOVA_CARD_HARNESS_BIN, native --harness
-	Seat       string // NOVA_BENCH_SEAT, native --owner
 	Deadline   string // NOVA_CARD_DEADLINE, native --deadline, passed as declared
 	Tokens     string // NOVA_CARD_TOKENS, native --tokens, passed as declared
 
@@ -165,14 +164,12 @@ func RunConfigFromEnv(getenv func(string) string) (RunConfig, []string) {
 		Home:       getenv("HOME"),
 		Runner:     getenv(RunnerEnv),
 		HarnessBin: getenv("NOVA_CARD_HARNESS_BIN"),
-		Seat:       getenv("NOVA_BENCH_SEAT"),
 		Deadline:   getenv("NOVA_CARD_DEADLINE"),
 		Tokens:     getenv("NOVA_CARD_TOKENS"),
 	}
 	var missing []string
 	for _, kv := range []struct{ name, val string }{
 		{"HOME", cfg.Home},
-		{"NOVA_BENCH_SEAT", cfg.Seat},
 		{"NOVA_CARD_BENCH", cfg.Bench},
 		{"NOVA_CARD_DEADLINE", cfg.Deadline},
 		{"NOVA_CARD_HARNESS_BIN", cfg.HarnessBin},
@@ -200,7 +197,7 @@ func (c RunConfig) check() error {
 			missing = append(missing, p.name+" (absolute path)")
 		}
 	}
-	for _, p := range []struct{ name, val string }{{"harness bin", c.HarnessBin}, {"seat", c.Seat}, {"deadline", c.Deadline}, {"tokens", c.Tokens}} {
+	for _, p := range []struct{ name, val string }{{"harness bin", c.HarnessBin}, {"deadline", c.Deadline}, {"tokens", c.Tokens}} {
 		if p.val == "" {
 			missing = append(missing, p.name)
 		}
@@ -345,7 +342,8 @@ func Run(ctx context.Context, st *store.Store, cfg RunConfig) RunReport {
 		"--harness", cfg.HarnessBin, "--model", model,
 		"--card", cardPath, "--label", cfg.Label, "--slot", slot, "--root", root,
 		"--deadline", cfg.Deadline, "--tokens", cfg.Tokens,
-		"--slots-store", filepath.Join(cfg.Home, "nova-bench", "slots"), "--owner", cfg.Seat,
+		// No --slots-store, no --owner (nova-tools#3877): the dealer admitted this card
+		// against bench:<b>:desired in Redis, and that is the one slot ledger.
 		"--results-root", filepath.Join(cfg.OutDir, "native"))
 	cmd.Dir = cfg.JobDir
 	cmd.Env = env

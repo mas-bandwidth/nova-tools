@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
 	"github.com/redis/go-redis/v9"
 )
@@ -28,6 +30,10 @@ func init() {
 // fleetLibrary reads the loaded function library for --fleet; a test swaps
 // it for a Redis without FUNCTION LIST.
 var fleetLibrary = preflight.ReadLibrary
+
+// preflightProcs is 7.26's process snapshot (#3899); a test swaps it, since
+// the go test running this package's tests is itself a go test.
+var preflightProcs = preflight.ListProcs
 
 type repeated []string
 
@@ -86,6 +92,9 @@ func cmdPreflight(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Sprint: *sprint, PolicyFile: *policy, UnitEnv: unitEnv,
 		LauncherConfig: *launcher, Retired: retired,
 	})
+	// #3899: batch tests never run in the coordinator's session.
+	procs, perr := preflightProcs(ctx)
+	lines = append(lines, preflight.CheckLocalBatchTests(procs, perr, os.Getpid()))
 	for _, l := range lines {
 		fmt.Fprintln(stdout, l)
 	}
@@ -97,6 +106,12 @@ func cmdPreflight(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		fmt.Fprintf(stderr, "preflight: fleet gather: %v\n", err)
 	} else {
 		in = f.Input()
+	}
+	// #3048: 7.18 reads the friend wake registry the way `friend wake-health` does.
+	if w, err := gatherWake(ctx, client); err != nil {
+		fmt.Fprintf(stderr, "preflight: wake gather: %v\n", err)
+	} else {
+		in.Wake, in.Loaded.Wake = w, true
 	}
 	fleetLines := preflight.FleetChecks(ctx, in)
 	for _, l := range fleetLines {
@@ -118,4 +133,20 @@ func preflightFleet(ctx context.Context, c *redis.Client, sprint string, std pre
 		fmt.Fprintln(stdout, l)
 	}
 	return code
+}
+
+// gatherWake is 7.18's input: the registry read and gate of `friend
+// wake-health --all` (life.ReadWake, WakeSnapshot.Rows).
+func gatherWake(ctx context.Context, c redis.Cmdable) (preflight.WakeInput, error) {
+	snap, err := life.ReadWake(ctx, c)
+	if err != nil {
+		return preflight.WakeInput{}, err
+	}
+	in := preflight.WakeInput{DeclPresent: snap.DeclPresent, Friends: len(snap.Friends)}
+	for _, r := range snap.Rows() {
+		if r.Named {
+			in.Named = append(in.Named, preflight.WakeNamed{Friend: r.Friend, Why: r.Why})
+		}
+	}
+	return in, nil
 }

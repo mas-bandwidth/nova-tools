@@ -108,6 +108,20 @@ var driftAllowlist = []allowlistEntry{
 		reason: "first word of an inbound comment/review or PR body (HOLD, BLOCKED), the lander's B2 objection record (#3139), not RESULT line 2"},
 	{file: "internal/swarm/stage.go", fn: "ReadCardBase", record: "SPEC-CARD", since: "5778de35",
 		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists, like sparse.go cardPATHS"},
+	{file: "internal/nsprint/card/cut.go", fn: "cutKeys", record: "Issue-body", since: "dd8168a7",
+		reason: "the issue-body card keys a cut reads (#3623), like nsprint/file/file.go requiredKeys, not a RESULT parse"},
+	{file: "internal/nsprint/card/cut.go", fn: "RenderCut", record: "SPEC-CARD", since: "dd8168a7",
+		reason: "renders the cut card's KIND/REPO/PATHS header lines and checks the issue's PATHS key (#3623), a card writer, not a RESULT parse"},
+	{file: "internal/nsprint/card/quack.go", fn: "QuackCard", record: "SPEC-CARD", since: "4e9f4d70",
+		reason: "renders the quack probe card's KIND/REPO/PATHS header lines (#3648), a card writer, not a RESULT parse"},
+	{file: "internal/nsprint/digest/digest.go", fn: "holder", record: "DISPOSITION", since: "9b97df0c",
+		reason: "the kind of a read line (SCORE, DISPOSITION) in the land event log (#3158), a friend read record, not RESULT line 2"},
+	{file: "internal/nsprint/reap/reap.go", fn: "Run", record: "reap-verdict", since: "3257009a",
+		reason: "the reap package's own Done verdict const (\"DONE\") in a switch (#3156), not a RESULT status word"},
+	{file: "internal/nsprint/table/check.go", fn: "tableCells", record: "sprint-table", since: "19c5dfb9",
+		reason: "the sprint table's own \"RED <n>\" error rows in a Render() body (#3253), not a RESULT RED field"},
+	{file: "internal/prereview/card.go", fn: "ParseTaskCard", record: "SPEC-CARD", since: "d76c1c4d",
+		reason: "the card's PATHS header in a Redis task hash title, like prereview.go ParseCard, read before any RESULT exists"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)

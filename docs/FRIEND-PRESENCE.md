@@ -105,3 +105,39 @@ model has stopped while its loop runs still reads `up`. Output is what says you
 are reading, and the swarm table's bus line is the one that sees it. The
 heartbeat answers one question only — is this friend's window here — and that
 is the question that was being guessed.
+
+## Wake paths (#3048)
+
+A beat says a window is here; a wake path says it can be woken. Every friend
+declares one in the fleet's `friends:` block (rowan-tools group_vars): `wake:
+unit` (a supervised wake server on a host, its bus clone, optionally a bus
+keeper and its checkout, each with the remote and branch it is held to) or
+`wake: human` with a `notify` channel. The fleet converge is the one writer:
+`nova-sprint friend declare --from <group_vars file>` reads the block at a
+committed revision and writes the registry in one Redis Function call,
+`ns_friend_declare` (internal/nsprint/fn/lua/friend_declare.lua). Any seat may
+run `--check`, which only reads. A checkout that does not descend from the
+stored revision is refused `stale` (exit 3), and two declarers that read the
+same revision cannot both write (the loser gets `CONFLICT`, exit 3).
+
+Each bench repairs the friends declared on its host every 10th `bench beat`
+(10 s): it bootstraps an unloaded wake or keeper unit (twice at most), fetches
+each clone's declared remote and branch and fast-forwards it to exactly the
+fetched id, and holds the beat to its TTL. A loaded unit whose beat is stale
+gets no repair; it is reported down. `nova-sprint friend wake-health --all`
+reads it all from Redis and exits 1 when any friend is down, undeclared, or
+has no wake cell from the last 30 s (`wake: ?`); preflight 7.18 is RED on the
+same friends and when `friends:decl` is absent.
+
+| key | type | fields | writer |
+| --- | --- | --- | --- |
+| `friends:decl` | hash | rev (fleet commit), digest (sha256 of the `friends:` block at rev), path, at | `ns_friend_declare` (compare-and-set on rev) |
+| `friend:<f>:wakepath` | hash | mode (unit or human; also as kind), host, harness, unit, unit_file, bus, bus_remote, bus_branch, wake_on_note, keeper_unit, keeper_file, keeper_bus, keeper_remote, keeper_branch, notify, decl (sha256 of the entry), rev, at | `ns_friend_declare` (same call) |
+| `friends:declared` | set | names; each add or remove is a cap:log `friend-declared` / `friend-undeclared` receipt carrying rev | `ns_friend_declare` (same call) |
+| `friend:<f>:wakehealth` | hash | state (ok, repaired or down), row, findings, behind (`?` when a fetch failed), fetched_bus, fetched_keeper, beat (live or stale), attempts, at | the repair tick on the declared host only |
+| `friend:<f>:wakerepair` | string, PX 30000 | the repairing session (one repairer per friend) | `ns_friend_wakelock` / `ns_friend_wakeunlock` |
+| `friend:<f>:beat` | hash, TTL 5 s | harness, host, session, at | presence.lua (read only here) |
+| `cap:log` | stream | `wake-repair` per repair call, `wake-down` per transition into down, `friend-declared`, `friend-undeclared` | the functions above |
+
+No key has a TTL except the lock and the beat. `friend:<f>:wake`, the 600 s
+wake list, is a different key.

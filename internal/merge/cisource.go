@@ -13,37 +13,73 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 )
 
-// The injectable CI source. GH.Checks reads one commit's verdict record,
-// ci:<owner/repo>:<head>:<gid>, through internal/civerdict -- the same HASH, key and
-// "verdict" field nova-sprint's land reads. A record that carries a verdict is
-// the answer: OK is green, FAIL is red, anything else is pending.
+// The injectable CI source. GH.Checks reads a commit's CI verdict from Redis
+// and never from GitHub (#2924; THE BOUNDARY, Glenn 2026-09-25: CI verdicts
+// arrive by webhook into Redis or from our own runners, never by polling).
+// RedisCISource reads three records, first answer wins:
 //
-// A MISSING RECORD IS NOT A VERDICT (no-evidence-is-not-negative-evidence).
-// When the key is absent, carries no verdict, or cannot be read (WRONGTYPE,
-// NOPERM, a store that is down), GH.Checks falls back to GitHub's check-runs
-// at the head and marks the evidence Source "from-github". ErrCIMissing is
-// only the answer when BOTH say nothing: no verdict record and no check-run.
-// (#2924 made the record the only source and the lander landed nothing for
-// an afternoon because nothing wrote records for its integration heads.)
+//  1. the ci card verdict receipt ci:<owner/repo>:<head>:<gid>, through
+//     internal/civerdict, the same HASH and "verdict" field nova-sprint's land reads;
+//  2. our own CI's request record ci:<owner/repo>:<head> (ci_run.lua): its
+//     "ci" word, green, red or pending, the word nova-sprint land waits on;
+//  3. the GitHub leg ci:<owner/repo>:<head>:gh: its "gh" fold, green, red or
+//     pending, written only from GitHub's webhook deliveries (#3888).
+//
+// A MISSING RECORD IS NOT A VERDICT (no-evidence-is-not-negative-evidence):
+// when none of the three says anything the answer is ErrCIMissing, which
+// stops the entry (UNKNOWN) and never marks it red. An unreadable record
+// (WRONGTYPE, NOPERM, a store that is down) is an error, the same stop. The
+// forge's check-runs are never read: the afternoon #2924's first cut landed
+// nothing was a missing writer for integration heads, and the writer is the
+// fix (the ci request and the GitHub leg), not a poll.
 
-// ErrCIMissing is the answer when neither the verdict record nor the forge's
-// check-runs say anything about a commit. It is never the answer to an absent
-// record alone.
+// ErrCIMissing is the answer when no CI record in Redis says anything about a
+// commit. A green check-run on GitHub does not change it.
 var ErrCIMissing = errors.New("ci: MISSING")
 
-// Where a Checks value's evidence came from.
-const (
-	CIFromRedis  = "redis"
-	CIFromGitHub = "from-github"
-)
+// CIFromRedis is the only Source GH.Checks reports.
+const CIFromRedis = "redis"
 
 // CISource answers one commit's CI verdict. Read returns the verdict word
-// stored for a commit and whether the record said anything at all (ok false:
-// absent, or present without a verdict). An error is an unreadable record;
-// GH.Checks treats it exactly like an absent one. Injection is by
-// WithCISource, and the production implementation is RedisCISource.
+// for a commit (OK, FAIL..., or anything else for pending) and whether any
+// record said anything at all (ok false: every record absent or without a
+// word). An error is an unreadable record. Injection is by WithCISource, and
+// the production implementation is RedisCISource.
 type CISource interface {
 	Read(repo, sha string) (value string, ok bool, err error)
+}
+
+// Where the two nova-sprint CI records live and the word each carries.
+const (
+	ciRequestField = "ci" // on ci:<repo>:<sha>: green, red or pending
+	ciGHSuffix     = "gh" // ci:<repo>:<sha>:gh
+	ciGHField      = "gh" // on ci:<repo>:<sha>:gh: green, red or pending
+)
+
+// CIRequestKey is our own CI's request record for a commit: ci:<owner/repo>:<sha>.
+func CIRequestKey(repo, sha string) string {
+	return "ci:" + strings.TrimSpace(repo) + ":" + strings.TrimSpace(sha)
+}
+
+// CIGitHubKey is the GitHub leg for a commit, folded from webhook deliveries:
+// ci:<owner/repo>:<sha>:gh.
+func CIGitHubKey(repo, sha string) string {
+	return CIRequestKey(repo, sha) + ":" + ciGHSuffix
+}
+
+// legWord maps a green|red|pending word from the request record or the GitHub
+// leg onto the verdict vocabulary ciState reads. why names the red.
+func legWord(word, why string) string {
+	switch strings.ToLower(strings.TrimSpace(word)) {
+	case "green":
+		return civerdict.OK
+	case "red":
+		return strings.TrimSpace("FAIL " + why)
+	case "":
+		return ""
+	default:
+		return "pending"
+	}
 }
 
 // CIKey is where a commit's verdict record lives: ci:<owner/repo>:<head>:<gid>.
@@ -68,14 +104,14 @@ func ciState(value string) string {
 // ciReadTimeout bounds one Redis read so a hung server cannot hang a pass.
 const ciReadTimeout = 5 * time.Second
 
-// RedisCISource is the production CISource: reads through civerdict.ReadHead.
+// RedisCISource is the production CISource: the receipt through
+// civerdict.ReadHead, then the request record and the GitHub leg in one pipeline.
 type RedisCISource struct {
 	Client redis.UniversalClient
 }
 
-// Read fetches the commit's verdict record through civerdict.ReadHead. A nil client, a
-// missing key or a record without a verdict reads as ok false; a transport or
-// ACL error is returned, and GH.Checks falls back to the forge on it.
+// Read answers from the first record that carries a word. A nil client or no
+// word anywhere reads as ok false; a transport, type or ACL error is returned.
 func (r *RedisCISource) Read(repo, sha string) (string, bool, error) {
 	if r == nil || r.Client == nil {
 		return "", false, nil
@@ -86,8 +122,27 @@ func (r *RedisCISource) Read(repo, sha string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	v := civerdict.Of(fields)
-	return v, v != "", nil
+	if v := civerdict.Of(fields); v != "" {
+		return v, true, nil
+	}
+	pipe := r.Client.Pipeline()
+	req := pipe.HMGet(ctx, CIRequestKey(repo, sha), ciRequestField, "why")
+	gh := pipe.HMGet(ctx, CIGitHubKey(repo, sha), ciGHField, "gh_fail")
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return "", false, err
+	}
+	for _, cmd := range []*redis.SliceCmd{req, gh} {
+		vals := cmd.Val()
+		if len(vals) < 2 {
+			continue
+		}
+		word, _ := vals[0].(string)
+		why, _ := vals[1].(string)
+		if v := legWord(word, why); v != "" {
+			return v, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // RedisFromEnv builds the production source from the same NOVA_REDIS_* settings

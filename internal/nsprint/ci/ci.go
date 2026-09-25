@@ -50,9 +50,13 @@ var (
 	repoRx   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
 )
 
-// Label is the one ci card label per PR head (10.2 item 1).
-func Label(pr int, head string) string {
-	return fmt.Sprintf("ci-%d-%s", pr, head[:8])
+// Label is the one ci card label per PR head and tested base tip (10.2 item
+// 1, nova-tools #3148): ci-<pr>-<head8>-<base8>. Each (head, base) pair is
+// its own ci unit, so a head whose base tip moved is cut again at the new
+// tip; the card keeps the full ci_head and base_sha, and a label whose full
+// pair differs (an 8-hex prefix clash) is CONFLICT at cut.
+func Label(pr int, head, base string) string {
+	return fmt.Sprintf("ci-%d-%s-%s", pr, head[:8], base[:8])
 }
 
 // WaitingKey is the waiting tasks set for one head: ci:<repo>:<head>:waiting.
@@ -121,8 +125,9 @@ func validate(sprint, repo, head string) error {
 	return nil
 }
 
-// Cut cuts ci-<pr>-<sha8> into the sprint's pool at the front tier and sets
-// the card PENDING in the same call.
+// Cut cuts ci-<pr>-<head8>-<base8> into the sprint's pool at the front tier
+// and sets the card PENDING in the same call. The same pair again is EXISTS;
+// a clash at the label is CONFLICT (exit 4) and writes nothing.
 func Cut(ctx context.Context, st *store.Store, req CutRequest) (Result, error) {
 	if err := validate(req.Sprint, req.Repo, req.Head); err != nil {
 		return Result{}, err
@@ -139,7 +144,7 @@ func Cut(ctx context.Context, st *store.Store, req CutRequest) (Result, error) {
 	if req.Leg == "" {
 		req.Leg = "go"
 	}
-	label := Label(req.PR, req.Head)
+	label := Label(req.PR, req.Head, req.Base)
 	if req.Idem == "" {
 		req.Idem = "ci-cut:" + req.Sprint + "/" + label
 	}

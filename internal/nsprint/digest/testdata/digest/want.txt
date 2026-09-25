@@ -1,0 +1,10 @@
+digest since=2026-09-23T00:00:00.000Z until=2026-09-23T04:20:00.000Z repos=mas-bandwidth/nova-tools
+landed:
+landed at=2026-09-23T00:00:00.000Z repo=nova-tools pr=3901 merge_sha=b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0 members=2 tasks=2 by=rowan
+landed at=2026-09-23T00:00:05.000Z close=rowan-tools#410 by=glenn tasks=1
+landed at=2026-09-23T00:00:07.000Z repo=nova-tools base=dev batch=b7 train_head=7777777777777777777777777777777777777777
+holds:
+hold at=2026-09-23T00:00:03.000Z repo=nova-tools pr=3850 head=cccccccc holder=emma route=fix state=answered
+hold at=2026-09-23T00:00:06.000Z repo=rowan-tools pr=411 head=eeeeeeee holder=johnny route=close state=open
+reads:
+read at=2026-09-23T00:00:04.000Z repo=nova-tools pr=3850 head=dddddddd who=stella score=9

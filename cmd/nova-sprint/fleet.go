@@ -16,7 +16,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "fleet",
-		Summary: "fleet state, is-up, hold, release, and config",
+		Summary: "fleet state, is-up, hold, release, config, and build (the deploy)",
 		Run:     runFleet,
 	})
 }
@@ -49,7 +49,7 @@ func unreachable(stderr io.Writer, verb, what string) int {
 
 func runFleet(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "fleet", "wants state, is-up, hold, release, or config")
+		return refuse(errOut, "fleet", "wants state, is-up, hold, release, config, or build")
 	}
 	switch args[0] {
 	case "state":
@@ -62,8 +62,10 @@ func runFleet(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runFleetRelease(ctx, args[1:], out, errOut)
 	case "config":
 		return runFleetConfig(ctx, args[1:], out, errOut)
+	case "build":
+		return runFleetBuild(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "fleet", fmt.Sprintf("unknown subverb %s; want state, is-up, hold, release, or config", args[0]))
+		return refuse(errOut, "fleet", fmt.Sprintf("unknown subverb %s; want state, is-up, hold, release, config, or build", args[0]))
 	}
 }
 

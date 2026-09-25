@@ -788,7 +788,7 @@ func TestL31d(t *testing.T) {
 		if err != nil || res.Status != "CREATED" {
 			t.Fatalf("ci cut: %v, %v", res, err)
 		}
-		label := ci.Label(101, headH)
+		label := ci.Label(101, headH, tipSHA)
 
 		key := "s:" + f.sprint + ":card:" + label
 		vals, err := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
@@ -883,7 +883,7 @@ func TestL31d(t *testing.T) {
 			t.Fatalf("cut wrote ci: key: %v", rec)
 		}
 
-		label := ci.Label(102, headH2)
+		label := ci.Label(102, headH2, tipSHA)
 		key := "s:" + f.sprint + ":card:" + label
 		vals, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
 		attempt := vals[1].(string)
@@ -1117,7 +1117,7 @@ func TestL31d(t *testing.T) {
 		headH := "eeee111122223333444455556666777788889999"
 		tipSHA := "1111111111111111111111111111111111111111"
 		ci.Cut(f.ctx, st, ci.CutRequest{Sprint: f.sprint, Repo: f.repo, PR: 105, Head: headH, Base: tipSHA, BaseRef: f.base, Actor: "ctl"})
-		label := ci.Label(105, headH)
+		label := ci.Label(105, headH, tipSHA)
 
 		key := "s:" + f.sprint + ":card:" + label
 		vals, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
@@ -1174,7 +1174,7 @@ func TestL31d(t *testing.T) {
 		headH := "ffff111122223333444455556666777788889999"
 		tipSHA := "1111111111111111111111111111111111111111"
 		ci.Cut(f.ctx, st, ci.CutRequest{Sprint: f.sprint, Repo: f.repo, PR: 106, Head: headH, Base: tipSHA, BaseRef: f.base, Actor: "ctl"})
-		label := ci.Label(106, headH)
+		label := ci.Label(106, headH, tipSHA)
 
 		key := "s:" + f.sprint + ":card:" + label
 		vals, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
@@ -1247,7 +1247,7 @@ func TestL31d(t *testing.T) {
 		headH := "1212121212121212121212121212121212121212"
 		tipSHA := "1111111111111111111111111111111111111111"
 		ci.Cut(f.ctx, st, ci.CutRequest{Sprint: f.sprint, Repo: f.repo, PR: 107, Head: headH, Base: tipSHA, BaseRef: "other-branch", Actor: "ctl"})
-		label := ci.Label(107, headH)
+		label := ci.Label(107, headH, tipSHA)
 
 		key := "s:" + f.sprint + ":card:" + label
 		vals, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
@@ -1300,7 +1300,7 @@ func TestL31d(t *testing.T) {
 		headH := "5656565656565656565656565656565656565656"
 		tipSHA := "1111111111111111111111111111111111111111"
 		ci.Cut(f.ctx, st, ci.CutRequest{Sprint: f.sprint, Repo: f.repo, PR: 109, Head: headH, Base: tipSHA, BaseRef: f.base, Actor: "ctl"})
-		label := ci.Label(109, headH)
+		label := ci.Label(109, headH, tipSHA)
 
 		key := "s:" + f.sprint + ":card:" + label
 		vals, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()

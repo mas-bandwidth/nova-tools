@@ -22,8 +22,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/prereview"
 )
 
-// runReview is the Jev FIRST PASS over a pull request (nova-tools #2565).
-//
 // It fetches the diff and the card, runs four mechanical checks in Go with no
 // model, asks Jev ONE question for a 1-10 score, prints one typed DISPOSITION
 // line and appends the verdict to a ledger. It never lands anything: the
@@ -38,10 +36,11 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	pr := fs.Int("pr", 0, "the pull request number")
 	batch := fs.String("batch", "", "a file of pull request numbers, one a line; # and blank lines skipped")
 	cardPath := fs.String("card", "", "the card file; when absent PATHS and SYMBOL are inferred from the pull request body")
+	taskID := fs.String("task", "", "the Redis task ID to load card bounds and DONE-WHEN from (e.g. read-3384-d358cbd0)")
+	store := fs.String("store", os.Getenv("NOVA_REDIS_ADDR"), "the Redis server address (host:port), for --task or --ledger redis (env NOVA_REDIS_ADDR)")
 	post := fs.Bool("post", false, "post the typed line on the pull request as a comment")
 	dryRun := fs.Bool("dry-run", false, "print the typed line and post nothing (the default)")
 	ledger := fs.String("ledger", "file", "where the verdict is written: file | redis | file,redis (redis is one kind=jev entry on cards:done per JEV line)")
-	store := fs.String("store", os.Getenv("NOVA_REDIS_ADDR"), "the fleet Redis host:port, for --ledger redis (env NOVA_REDIS_ADDR)")
 	var storeUser string
 	fs.StringVar(&storeUser, "user", "", "the Redis ACL user, for --ledger redis")
 	fs.StringVar(&storeUser, "store-user", "", "alias for --user")
@@ -96,6 +95,18 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	}
 	if *batch != "" && *cardPath != "" {
 		return refuse(stderr, "REVIEW", "bad-arguments", "--card names one card and --batch is many pull requests; give --card with --pr")
+	}
+	// --task and --card are mutually exclusive (nova-tools #3392).
+	if strings.TrimSpace(*taskID) != "" && strings.TrimSpace(*cardPath) != "" {
+		return refuse(stderr, "REVIEW", "bad-arguments", "cannot specify both --card and --task")
+	}
+	// --task requires --store (nova-tools #3392).
+	if strings.TrimSpace(*taskID) != "" && strings.TrimSpace(*store) == "" {
+		return refuse(stderr, "REVIEW", "bad-arguments", "--task requires --store")
+	}
+	// --task cannot be used with --batch (nova-tools #3392).
+	if strings.TrimSpace(*taskID) != "" && strings.TrimSpace(*batch) != "" {
+		return refuse(stderr, "REVIEW", "bad-arguments", "--task cannot be used with --batch")
 	}
 	toFile, toRedis, err := ledgerSinks(*ledger)
 	if err != nil {
@@ -176,7 +187,7 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	}
 	held := 0
 	for _, n := range numbers {
-		d, err := reviewOne(src, *repo, n, *cardPath, asker, usage, tune, prompt, skip, *record, posting, stdout, stderr)
+		d, err := reviewOne(src, *repo, n, *cardPath, *taskID, *store, asker, usage, tune, prompt, skip, *record, posting, stdout, stderr)
 		if err == errSkipped {
 			continue
 		}
@@ -324,7 +335,7 @@ func reviewTargets(pr int, batch string) ([]int, error) {
 }
 
 // reviewOne is the pass over one pull request.
-func reviewOne(gh prSource, repo string, n int, cardPath string, asker prereview.Asker, usage *decide.Usage, tune prereview.Tuning, prompt jevcalib.Prompt, skip map[string]bool, record string, posting bool, stdout, stderr io.Writer) (prereview.Disposition, error) {
+func reviewOne(gh prSource, repo string, n int, cardPath string, taskID string, storeAddr string, asker prereview.Asker, usage *decide.Usage, tune prereview.Tuning, prompt jevcalib.Prompt, skip map[string]bool, record string, posting bool, stdout, stderr io.Writer) (prereview.Disposition, error) {
 	pr, err := gh.pullRequest(repo, n)
 	if err != nil {
 		return prereview.Disposition{}, err
@@ -348,6 +359,14 @@ func reviewOne(gh prSource, repo string, n int, cardPath string, asker prereview
 			card.Paths, card.PathsFrom = inferred.Paths, inferred.PathsFrom
 		}
 	}
+	if strings.TrimSpace(taskID) != "" {
+		ctx := context.Background()
+		taskCard, err := prereview.TaskCardReader(ctx, storeAddr, taskID)
+		if err != nil {
+			return prereview.Disposition{}, fmt.Errorf("--task: %w", err)
+		}
+		card = taskCard
+	}
 	checks := prereview.Mechanical(pr, card)
 	base := pr.Base
 	if base == "" {
@@ -361,25 +380,34 @@ func reviewOne(gh prSource, repo string, n int, cardPath string, asker prereview
 		PathsFrom: card.PathsFrom, SymbolFrom: card.SymbolFrom, CardPath: card.Path,
 		At: time.Now().UTC().Format(time.RFC3339),
 	}
+	var groups prereview.GroupScore
 	if asker != nil && tune.Enabled["score"] {
 		*usage = decide.Usage{}
-		raw, conf, err := prereview.ScoreWith(context.Background(), asker, prompt.Question(), pr, card)
+		ask := asker
+		if record != "" {
+			// One fixture per call: per pull request, or per file group in
+			// tool-PR mode (#2621), so the pass replays rather than repays.
+			ask = prereview.RecordingAsker{Inner: asker, Dir: record, Repo: repo, Failed: func(err error) {
+				fmt.Fprintf(stderr, "REVIEW RECORD FAILED pr=%d reason=%s\n", n, oneline.Err(err))
+			}}
+		}
+		g, err := prereview.ScoreGroups(context.Background(), ask, prompt.Question(), pr, card)
 		d.InTokens, d.OutTokens, d.UsageKnown = usage.InputTokens, usage.OutputTokens, usage.Known()
 		if err != nil {
 			d.Reason = "score unavailable (" + oneline.Err(err) + "); " + d.Reason
 		} else {
-			d.RawScore, d.Conf, d.Score, d.Scored = raw, conf, tune.GateCap(checks, prereview.ScoreFromAnswer(raw)), true
-			if record != "" {
-				if err := prereview.RecordFixture(record, repo, n, raw, conf); err != nil {
-					fmt.Fprintf(stderr, "REVIEW RECORD FAILED pr=%d reason=%s\n", n, oneline.Err(err))
-				}
-			}
+			d.RawScore, d.Conf, d.Score, d.Scored = g.Raw, g.Conf, tune.GateCap(checks, prereview.ScoreFromAnswer(g.Raw)), true
+			groups = g
 		}
 	}
 	d.Verdict, d.Explain = tune.Decide(checks, d.Score, d.Scored)
 	d.Checks = tune.ChecksField(checks, d.Score, d.Scored)
 	if d.Scored {
-		d.Evidence = append(d.Evidence, fmt.Sprintf("score: %d -- raw %.2f, confidence %.2f, one %s question (prompt %s) over the body and the diff", d.Score, d.RawScore, d.Conf, tune.Model, prompt.Sha8))
+		over := "one " + tune.Model + " question (prompt " + prompt.Sha8 + ") over the body and the diff"
+		if groups.Groups > 1 {
+			over = fmt.Sprintf("the lowest of %d %s questions (prompt %s), one per changed-file group, lowest %s", groups.Groups, tune.Model, prompt.Sha8, oneline.Field(groups.Lowest))
+		}
+		d.Evidence = append(d.Evidence, fmt.Sprintf("score: %d -- raw %.2f, confidence %.2f, %s", d.Score, d.RawScore, d.Conf, over))
 	} else {
 		d.Evidence = append(d.Evidence, "score: - -- "+scoreWhy(asker, tune, d.Reason))
 	}

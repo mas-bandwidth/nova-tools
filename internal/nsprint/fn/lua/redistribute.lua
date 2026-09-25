@@ -18,7 +18,8 @@
 --                      ladder (friend.lua).
 --
 -- ns_friend_redistribute is one atomic call over every registered friend:
---   * out-of-credits, away, or idle at rung 3: every open task on f's queues
+--   * out-of-credits, away, wake-missed (beat or not), or idle at rung 3:
+--     every open task on f's queues
 --     and every lease f holds is moved in this same call.
 --   * presence expired with open work or leases: the first tick writes
 --     state=down and moves nothing; the next tick that still finds no beat
@@ -40,6 +41,10 @@
 -- Free width = desired slots - leased - open tasks queued, over open sprints.
 
 local FS_AWAY, FS_IDLE, FS_UNDER = NS.friend.FS_AWAY, NS.friend.FS_IDLE, NS.friend.FS_UNDER
+-- wake-missed (#3153) is a down state for moving work that a beat never
+-- clears: the shell beats while the model is gone. Only the life
+-- classifier's conditional clear ends it.
+local RD_WAKE_MISSED = NS.friend.FS_WAKE_MISSED
 local fs_blocks, fs_set, fs_clear = NS.friend.fs_blocks, NS.friend.fs_set, NS.friend.fs_clear
 local fr_has_role, fr_roster = NS.friend_roles.fr_has_role, NS.friend_roles.fr_roster
 
@@ -478,6 +483,8 @@ local function friend_redistribute(keys, args)
       else
         why = 'away'
       end
+    elseif state == RD_WAKE_MISSED then
+      why = 'wake-missed'
     elseif state == RD_DOWN then
       if up then
         fs_clear(f, 'down: beat returned', actor, idem, at)

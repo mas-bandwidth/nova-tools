@@ -1,12 +1,14 @@
 package main
 
 // serve_test.go holds the bind, auth and persistence slice of
-// docs/SPEC-REDIS.md (nova-tools #2281, behaviours 22, 23, 24 and 25 of "Tests
-// this spec demands") against the PRODUCTION path: every test drives run(),
-// the same function main() calls. The launch seam is faked: it records the
-// argv, environment and stdin config `serve` hands to redis-server, and for
-// the restart test it stands a fresh miniredis up per launch. Nothing here
-// starts a redis-server or opens a socket beyond miniredis on loopback.
+// docs/SPEC-REDIS.md (nova-tools #2281 and #3879, behaviours 22, 23, 24 and
+// 25 of "Tests this spec demands") against the PRODUCTION path: every test
+// drives run(), the same function main() calls. The launch seam is faked for
+// 22-24: it records the argv, environment and stdin config `serve` hands to
+// redis-server. The restart test (25, #3879) runs the real launch against a
+// throwaway redis-server on loopback in the test's temp dir, found through
+// internal/nsprint/testutil, which skips on a laptop without the binary and
+// fails under NOVA_CI=1.
 
 import (
 	"bytes"
@@ -18,7 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/redis/go-redis/v9"
 )
@@ -29,7 +33,7 @@ const fakeRedisServer = "/opt/fake/bin/redis-server"
 type serveHarness struct {
 	t        *testing.T
 	env      map[string]string
-	tempRoot string
+	dir      string
 	launches []launchSpec
 	onLaunch func(launchSpec) error
 	d        deps
@@ -37,7 +41,7 @@ type serveHarness struct {
 
 func newServeHarness(t *testing.T, password string) *serveHarness {
 	t.Helper()
-	h := &serveHarness{t: t, env: map[string]string{}, tempRoot: t.TempDir()}
+	h := &serveHarness{t: t, env: map[string]string{}, dir: filepath.Join(t.TempDir(), "store")}
 	if password != "" {
 		h.env[PasswordEnv] = password
 	}
@@ -62,7 +66,6 @@ func newServeHarness(t *testing.T, password string) *serveHarness {
 			}
 			return fakeRedisServer, nil
 		},
-		tempRoot: func() string { return h.tempRoot },
 		launch: func(_ context.Context, spec launchSpec, _, _ io.Writer) error {
 			h.launches = append(h.launches, spec)
 			if h.onLaunch != nil {
@@ -183,7 +186,7 @@ func TestBoundToLocalhostAndTailnetOnly(t *testing.T) {
 		"127.0.0.1,100.101.102.103",
 	} {
 		h := newServeHarness(t, "pw-from-nova-secrets")
-		code, out, errb := h.run("serve", "--bind", bind, "--port", "6379")
+		code, out, errb := h.run("serve", "--bind", bind, "--port", "6379", "--dir", h.dir)
 		if code != 0 || len(h.launches) != 1 {
 			t.Errorf("--bind %s: exit %d launches %d, want 0 and 1; stderr=%q", bind, code, len(h.launches), errb)
 			continue
@@ -220,7 +223,7 @@ func TestBoundToLocalhostAndTailnetOnly(t *testing.T) {
 		{"empty", ""},
 	} {
 		h := newServeHarness(t, "pw-from-nova-secrets")
-		code, _, errb := h.run("serve", "--bind", tc.bind, "--port", "6379")
+		code, _, errb := h.run("serve", "--bind", tc.bind, "--port", "6379", "--dir", h.dir)
 		if code != 2 || len(h.launches) != 0 {
 			t.Errorf("%s (--bind %q): exit %d launches %d, want 2 and 0 (a public bind is refused, never launched)", tc.name, tc.bind, code, len(h.launches))
 		}
@@ -230,7 +233,7 @@ func TestBoundToLocalhostAndTailnetOnly(t *testing.T) {
 	}
 
 	h := newServeHarness(t, "pw-from-nova-secrets")
-	code, _, errb := h.run("serve", "--port", "6379")
+	code, _, errb := h.run("serve", "--port", "6379", "--dir", h.dir)
 	if code != 2 || len(h.launches) != 0 || !strings.Contains(errb, "--bind is required") {
 		t.Errorf("no --bind: exit %d launches %d stderr %q; want 2, 0 and a refusal naming --bind (never a default)", code, len(h.launches), errb)
 	}
@@ -245,7 +248,7 @@ func TestAuthFromNovaSecretsNeverAPlaintextArgument(t *testing.T) {
 	const pw = `n0va-s3cret "quoted" \back value`
 	secret := secrets.NewSecret(pw)
 	h := newServeHarness(t, pw)
-	code, out, errb := h.run("serve", "--bind", "127.0.0.1,100.100.1.2", "--port", "6380")
+	code, out, errb := h.run("serve", "--bind", "127.0.0.1,100.100.1.2", "--port", "6380", "--dir", h.dir)
 	if code != 0 || len(h.launches) != 1 {
 		t.Fatalf("serve with the secret in the environment: exit %d launches %d stderr %q", code, len(h.launches), errb)
 	}
@@ -278,7 +281,7 @@ func TestAuthFromNovaSecretsNeverAPlaintextArgument(t *testing.T) {
 	if !strings.Contains(out, " auth=on ") {
 		t.Errorf("stdout does not report auth=on: %q", out)
 	}
-	err := filepath.Walk(h.tempRoot, func(p string, fi os.FileInfo, err error) error {
+	err := filepath.Walk(h.dir, func(p string, fi os.FileInfo, err error) error {
 		if err != nil || fi.IsDir() {
 			return err
 		}
@@ -296,7 +299,7 @@ func TestAuthFromNovaSecretsNeverAPlaintextArgument(t *testing.T) {
 	}
 
 	h = newServeHarness(t, "")
-	code, _, errb = h.run("serve", "--bind", "127.0.0.1", "--port", "6379")
+	code, _, errb = h.run("serve", "--bind", "127.0.0.1", "--port", "6379", "--dir", h.dir)
 	if code != 2 || len(h.launches) != 0 || !strings.Contains(errb, "nova-secrets exec") {
 		t.Errorf("no secret: exit %d launches %d stderr %q; want 2, 0 and a refusal naming nova-secrets exec", code, len(h.launches), errb)
 	}
@@ -310,97 +313,171 @@ func TestAuthFromNovaSecretsNeverAPlaintextArgument(t *testing.T) {
 	}
 }
 
-// TestPersistenceOffNoRDBNoAOF: the config serve hands redis-server turns off
-// both persistence engines -- `save ""` (no RDB snapshot points) and
-// `appendonly no` (no AOF) -- and says nothing that turns either back on.
-func TestPersistenceOffNoRDBNoAOF(t *testing.T) {
+// TestPersistenceIsAOFWithNoEviction: the config serve hands redis-server is
+// the fleet store's rules (nova-tools #3879; the rowan-tools
+// nova-redis.conf.j2 template it replaces): the AOF on and fsynced every
+// second, an RDB snapshot every 60 s after any write as the second copy, and
+// no eviction, so a full instance refuses a write rather than drop a card.
+// Nothing sets a TTL policy: no volatile-* eviction, no dump file named
+// elsewhere, no include that could turn any of it back.
+func TestPersistenceIsAOFWithNoEviction(t *testing.T) {
 	h := newServeHarness(t, "pw-from-nova-secrets")
-	code, out, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6379")
+	code, out, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6379", "--dir", h.dir)
 	if code != 0 || len(h.launches) != 1 {
 		t.Fatalf("serve: exit %d launches %d stderr %q", code, len(h.launches), errb)
 	}
 	cfg := config(t, h.launches[0].Config)
-	if got := only(t, cfg, "save"); len(got) != 1 || got[0] != "" {
-		t.Errorf("save %q, want the single empty argument (no RDB snapshot points)", got)
-	}
-	if got := only(t, cfg, "appendonly"); len(got) != 1 || got[0] != "no" {
-		t.Errorf("appendonly %q, want no (no AOF)", got)
+	for directive, want := range map[string]string{
+		"appendonly":                "yes",
+		"appendfsync":               "everysec",
+		"save":                      "60 1",
+		"maxmemory-policy":          "noeviction",
+		"notify-keyspace-events":    "Ex",
+		"latency-monitor-threshold": "100",
+		"dir":                       h.dir,
+	} {
+		if got := strings.Join(only(t, cfg, directive), " "); got != want {
+			t.Errorf("%s %q, want %q (the fleet store's rule)", directive, got, want)
+		}
 	}
 	for _, d := range []string{"appendfilename", "appenddirname", "dbfilename", "include", "rdb-del-sync-files"} {
 		if _, ok := cfg[d]; ok {
-			t.Errorf("config carries %q; persistence off means no file for a restart to load", d)
+			t.Errorf("config carries %q; the store's files live under --dir by their default names", d)
 		}
 	}
-	if !strings.Contains(out, " persistence=off ") {
-		t.Errorf("stdout does not report persistence=off: %q", out)
+	if !strings.Contains(out, " persistence=aof ") || !strings.Contains(out, " dir="+h.dir+" ") {
+		t.Errorf("stdout does not report persistence=aof and the --dir: %q", out)
+	}
+
+	for _, tc := range []struct{ name, dir, why string }{
+		{"relative", "store", "absolute"},
+		{"a file", filepath.Join(h.dir, "file"), "not a directory"},
+	} {
+		if tc.name == "a file" {
+			if err := os.WriteFile(tc.dir, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		h := newServeHarness(t, "pw-from-nova-secrets")
+		code, _, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6379", "--dir", tc.dir)
+		if code != 2 || len(h.launches) != 0 || !strings.Contains(errb, tc.why) {
+			t.Errorf("--dir %s: exit %d launches %d stderr %q; want 2, 0 and a refusal saying %q", tc.name, code, len(h.launches), errb, tc.why)
+		}
+	}
+	h = newServeHarness(t, "pw-from-nova-secrets")
+	code, _, errb = h.run("serve", "--bind", "127.0.0.1", "--port", "6379")
+	if code != 2 || len(h.launches) != 0 || !strings.Contains(errb, "--dir is required") {
+		t.Errorf("no --dir: exit %d launches %d stderr %q; want 2, 0 and a refusal naming --dir (a store never lands in a guessed dir)", code, len(h.launches), errb)
 	}
 }
 
-// TestRestartIsACleanSlate: every launch gets its own fresh, empty working
-// directory, so a restart has no RDB or AOF to replay even if an earlier run
-// left one behind. The fake launch stands a new miniredis up per launch and,
-// the way redis-server does, replays a dump.rdb or appendonly.aof it finds in
-// its dir; a key spilled into the first instance is gone from the second.
-func TestRestartIsACleanSlate(t *testing.T) {
+// TestRestartOnTheSameDirKeepsTheStore is #3879's DONE-WHEN on the production
+// path: run() starts a real, throwaway redis-server on loopback through the
+// real launch with --dir <d>, a card key and the nova_sprint library are
+// written, serve is stopped the way a signal stops it (SIGTERM to the child)
+// and started again on the same --dir, and the key is back intact with no TTL,
+// and preflight 7.1 reads GREEN against that instance.
+func TestRestartOnTheSameDirKeepsTheStore(t *testing.T) {
 	const pw = "pw-from-nova-secrets"
+	program := testutil.Program(t)
 	h := newServeHarness(t, pw)
-	var instances []*miniredis.Miniredis
-	h.onLaunch = func(spec launchSpec) error {
-		cfg := config(t, spec.Config)
-		dir := only(t, cfg, "dir")[0]
-		if dir != spec.Dir {
-			t.Errorf("config dir %q is not the launch dir %q", dir, spec.Dir)
+	h.d.lookPath = func(string) (string, error) { return program, nil }
+	port := testutil.FreePort(t)
+	addr := "127.0.0.1:" + port
+	const key = "s:T:card:x"
+	want := map[string]string{"origin": "nova-tools#3879", "where": "waiting", "stream": "redis"}
+
+	// One serve run: start it, hand the test a client once PING answers,
+	// and return the stop that SIGTERMs the child and waits for serve's exit.
+	serve := func(label string) (*redis.Client, func()) {
+		t.Helper()
+		ctx, cancel := context.WithCancel(context.Background())
+		h.d.launch = func(_ context.Context, spec launchSpec, stdout, stderr io.Writer) error {
+			return launchRedis(ctx, spec, stdout, stderr)
 		}
-		mr := miniredis.RunT(t)
-		mr.RequireAuth(only(t, cfg, "requirepass")[0])
-		for _, f := range []string{"dump.rdb", "appendonly.aof"} {
-			if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
-				if err := mr.Set("replayed:"+f, "a restart loaded a persistence file"); err != nil {
-					t.Fatal(err)
+		var out, errb bytes.Buffer
+		done := make(chan int, 1)
+		d := h.d
+		go func() {
+			done <- run([]string{"serve", "--bind", "127.0.0.1", "--port", port, "--dir", h.dir}, &out, &errb, d)
+		}()
+		c := redis.NewClient(&redis.Options{Addr: addr, Password: pw})
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			pctx, pcancel := context.WithTimeout(context.Background(), 30*time.Second)
+			err := c.Ping(pctx).Err()
+			pcancel()
+			if err == nil {
+				break
+			}
+			select {
+			case code := <-done:
+				cancel()
+				t.Fatalf("%s: serve exited %d before the instance answered: %v\nstdout %s\nstderr %s", label, code, err, out.String(), errb.String())
+			default:
+			}
+			if time.Now().After(deadline) {
+				cancel()
+				t.Fatalf("%s: the instance did not answer PING: %v", label, err)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		stopped := false
+		stop := func() {
+			if stopped {
+				return
+			}
+			stopped = true
+			_ = c.Close()
+			cancel()
+			select {
+			case code := <-done:
+				if code != 0 || !strings.Contains(out.String(), "SERVE STOP ") {
+					t.Errorf("%s: serve exit %d on SIGTERM, want 0 and SERVE STOP; stdout %q stderr %q", label, code, out.String(), errb.String())
 				}
+			case <-time.After(30 * time.Second):
+				t.Fatalf("%s: serve did not exit after SIGTERM", label)
 			}
 		}
-		instances = append(instances, mr)
-		return nil
+		t.Cleanup(stop)
+		return c, stop
 	}
 
-	if code, _, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6379"); code != 0 {
-		t.Fatalf("first serve: exit %d stderr %q", code, errb)
+	ctx := context.Background()
+	c, stop := serve("first")
+	if err := c.HSet(ctx, key, want).Err(); err != nil {
+		t.Fatal(err)
 	}
-	first := instances[0]
-	if code, out, errb := h.run("spill", "--addr", first.Addr(), "--owner", "rowan", "--name", "note", "--ttl", "10m", "--value", "hi"); code != 0 {
-		t.Fatalf("spill into the first instance: exit %d stdout %q stderr %q", code, out, errb)
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatalf("load %s: %v", fn.Library, err)
 	}
-	if !first.Exists("rowan:note") {
-		t.Fatal("the spill did not land in the first instance; this test would prove nothing")
-	}
-	// As if the first instance had written persistence files after all.
-	for _, f := range []string{"dump.rdb", "appendonly.aof"} {
-		if err := os.WriteFile(filepath.Join(h.launches[0].Dir, f), []byte("REDIS0011"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	first.Close()
+	stop()
 
-	if code, _, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6379"); code != 0 {
-		t.Fatalf("restart: exit %d stderr %q", code, errb)
-	}
-	if h.launches[1].Dir == h.launches[0].Dir {
-		t.Fatalf("the restart reused the first run's dir %s; it must start from a fresh one", h.launches[0].Dir)
-	}
-	entries, err := os.ReadDir(h.launches[1].Dir)
+	c, stop = serve("restart")
+	defer stop()
+	got, err := c.HGetAll(ctx, key).Result()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 0 {
-		t.Errorf("the restart's dir %s holds %d entries at launch; want none", h.launches[1].Dir, len(entries))
+	if len(got) != len(want) {
+		t.Fatalf("after restart on the same --dir %s = %v, want %v intact", key, got, want)
 	}
-	second := instances[1]
-	if keys := second.Keys(); len(keys) != 0 {
-		t.Errorf("the restarted instance holds %q; a restart is a clean slate", keys)
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("after restart %s %s = %q, want %q", key, k, got[k], v)
+		}
 	}
-	code, out, _ := h.run("recall", "--addr", second.Addr(), "--owner", "rowan", "--name", "note")
-	if code != 1 || !strings.HasPrefix(out, "RECALL MISSING key=rowan:note") {
-		t.Errorf("recall after restart: exit %d stdout %q; want 1 and RECALL MISSING", code, out)
+	if ttl, err := c.TTL(ctx, key).Result(); err != nil || ttl != -1 {
+		t.Errorf("TTL %s = %v (err %v), want -1: the store sets no TTL", key, ttl, err)
+	}
+	var line *preflight.Line
+	lines := preflight.StoreChecks(ctx, c, preflight.Options{Sprint: "T"})
+	for i := range lines {
+		if lines[i].N == "7.1" {
+			line = &lines[i]
+		}
+	}
+	if line == nil || line.Red {
+		t.Fatalf("preflight 7.1 against the restarted instance: %v, want GREEN", line)
 	}
 }

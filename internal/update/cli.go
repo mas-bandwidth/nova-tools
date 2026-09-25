@@ -29,11 +29,11 @@ type Environment struct {
 	Client *http.Client
 }
 type options struct {
-	file, host, snapshot, as, to, bus, remote, branch, target, adopt string
-	max                                                              int
-	timeout, budget                                                  time.Duration
-	kinds                                                            kindFlags
-	draft, send                                                      bool
+	file, host, snapshot, as, to, bus, remote, branch, target, adopt, store string
+	max                                                                     int
+	timeout, budget                                                         time.Duration
+	kinds                                                                   kindFlags
+	draft, send                                                             bool
 }
 type kindFlags []string
 
@@ -67,6 +67,7 @@ func refusal(w io.Writer, token string, err error) int {
 const updateVerbs = `nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update report --store <host:port> [--timeout <d>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
 ` + release.Verbs + `
@@ -243,6 +244,9 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		for flagName, p := range map[string]*string{"as": &o.as, "to": &o.to, "bus": &o.bus, "remote": &o.remote, "branch": &o.branch} {
 			f.StringVar(p, flagName, "", flagName)
 		}
+		if name == "nova-update" {
+			f.StringVar(&o.store, "store", "", "fleet Redis host:port: read the bench beats")
+		}
 	}
 	if err := f.Parse(interspersed(f, args)); err != nil {
 		// `<tool> <verb> --help` is a reasonable question, and the flag
@@ -255,6 +259,17 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 			return 0
 		}
 		return refusal(errs, token, fmt.Errorf("%s (run %s help)", err, name))
+	}
+	// --store is the fleet read (#3880): every bench's nova-sprint build from
+	// its beat, so it takes no manifest, snapshot or note and never runs ssh.
+	if o.store != "" {
+		if o.file != "" || o.snapshot != "" || o.draft || o.send || o.host != "" || len(f.Args()) != 0 {
+			return refusal(errs, token, fmt.Errorf("--store reads the bench beats and takes no --file, --snapshot, --host, --draft or --send (run report --file without --store for this box)"))
+		}
+		if o.timeout <= 0 {
+			return refusal(errs, token, fmt.Errorf("invalid bound (use a positive --timeout)"))
+		}
+		return fleetReport(o.store, o.timeout, env.Now(), out, errs)
 	}
 	missing := []string{}
 	if o.file == "" {

@@ -177,13 +177,13 @@ func completedRuns(ctx context.Context, st *store.Store, start string, prs map[s
 	}
 }
 
-// labelPR reads the PR number out of ci-<pr>-<sha8>.
+// labelPR reads the PR number out of ci-<pr>-<head8>-<base8>.
 func labelPR(label string) (int, bool) {
 	rest, ok := strings.CutPrefix(label, "ci-")
 	if !ok {
 		return 0, false
 	}
-	i := strings.LastIndex(rest, "-")
+	i := strings.Index(rest, "-")
 	if i <= 0 {
 		return 0, false
 	}

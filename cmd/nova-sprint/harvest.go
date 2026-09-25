@@ -210,8 +210,8 @@ func printHarvest(out io.Writer, sprint string, results []harvest.BenchResult) i
 	code := 0
 	for _, r := range results {
 		for _, c := range r.Cards {
-			_, _ = fmt.Fprintf(out, "HARVESTED %s %s pr=%d head=%s via=%s bench=%s\n",
-				sprint, c.Label, c.PR, c.Head, c.Via, r.Bench)
+			_, _ = fmt.Fprintf(out, "HARVESTED %s %s pr=%d head=%s via=%s ci=%s bench=%s\n",
+				sprint, c.Label, c.PR, c.Head, c.Via, c.CI, r.Bench)
 		}
 		for _, f := range r.Failed {
 			_, _ = fmt.Fprintf(out, "HARVEST-FAILED %s %s bench=%s err=%s detail=%s%s\n", sprint, f.Label, r.Bench, f.Code, oneline.Escape(f.Err.Error()), harvestFails(f))

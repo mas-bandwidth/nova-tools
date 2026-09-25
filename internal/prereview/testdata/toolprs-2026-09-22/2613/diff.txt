@@ -1,0 +1,3006 @@
+diff --git a/cmd/nova-pulse/commit.go b/cmd/nova-pulse/commit.go
+new file mode 100644
+index 000000000..252ad917d
+--- /dev/null
++++ b/cmd/nova-pulse/commit.go
+@@ -0,0 +1,76 @@
++package main
++
++// `nova-pulse commit` is the harvest's mechanical pre-step, in Go (nova-tools #2549).
++//
++// It runs ON a bench, over its own job directories, and commits every DONE card's work on
++// `rowan/<label>` so that `nova-pulse harvest --bench` -- which pushes git and nothing else
++// -- has something to push. It replaces `bin/harvest-priority`'s `$commit_step`, 5.8 KB of
++// bash in a single-quoted string piped into `ssh <bench> bash -s`.
++//
++// IT IS ITS OWN VERB AND NOT A FIRST STEP OF `harvest --bench`, on purpose: `harvest
++// --bench` runs on the COORDINATOR and reaches a bench only through the BenchShell seam and
++// a fetched ref -- it never has the job's working tree, which is precisely what this step
++// has to stage, commit and rebase. Folding it in would mean shipping the working-tree work
++// back over the seam, which is the arrangement that broke.
++
++import (
++	"fmt"
++	"io"
++	"strings"
++
++	"github.com/mas-bandwidth/nova-tools/internal/pulse"
++)
++
++func cmdCommit(args []string, stdout, stderr io.Writer) int {
++	f := newFlags("commit")
++	root := f.fs.String("root", "", "")
++	bench := f.fs.String("bench", "", "")
++	base := f.fs.String("base", pulse.DefaultBase, "")
++	draftOnly := f.fs.String("draft-only", "", "")
++	max := f.fs.Int("max", 0, "")
++	dryRun := f.fs.Bool("dry-run", false, "")
++	var cards benchFlag
++	f.fs.Var(&cards, "cards", "")
++	var mirrors benchFlag
++	f.fs.Var(&mirrors, "mirror", "")
++
++	if !f.parse(args, stderr) {
++		return 2
++	}
++	f.want(*root, "root", "the swarm root on this machine whose job directories this folds")
++	if *max < 0 {
++		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
++	}
++	if f.refused(stderr) {
++		return 2
++	}
++	return pulse.Commit(pulse.CommitInput{
++		Root:      *root,
++		Bench:     *bench,
++		Cards:     []string(cards),
++		Mirrors:   parseMirrors([]string(mirrors)),
++		DraftOnly: *draftOnly,
++		Base:      *base,
++		Max:       *max,
++		DryRun:    *dryRun,
++		Stdout:    stdout,
++		Stderr:    stderr,
++	})
++}
++
++// parseMirrors reads `--mirror [<owner>/<name>=]<dir>` the way `--clone` is read: a bare
++// directory is the mirror for any repository, and a bound one wins for its own.
++func parseMirrors(vals []string) map[string]string {
++	out := map[string]string{}
++	for _, v := range vals {
++		name, dir, ok := strings.Cut(v, "=")
++		if !ok {
++			if _, taken := out[""]; !taken {
++				out[""] = strings.TrimSpace(v)
++			}
++			continue
++		}
++		out[strings.TrimSpace(name)] = strings.TrimSpace(dir)
++	}
++	return out
++}
+diff --git a/cmd/nova-pulse/commit_test.go b/cmd/nova-pulse/commit_test.go
+new file mode 100644
+index 000000000..17b10d75d
+--- /dev/null
++++ b/cmd/nova-pulse/commit_test.go
+@@ -0,0 +1,142 @@
++package main
++
++import (
++	"bytes"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++)
++
++// TestCommitVerb drives `nova-pulse commit` end to end over a real job directory, because
++// the thing it replaces -- bin/harvest-priority's $commit_step -- could only ever be tried
++// on the fleet, and that is how it stranded 24 DONE cells and then every bench for seven
++// hours (nova-tools #2549).
++
++func vgit(t *testing.T, dir string, args ...string) string {
++	t.Helper()
++	full := append([]string{"-C", dir, "-c", "user.name=Fixture", "-c", "user.email=f@example.invalid",
++		"-c", "commit.gpgsign=false", "-c", "init.defaultBranch=dev"}, args...)
++	cmd := exec.Command("git", full...)
++	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
++	out, err := cmd.CombinedOutput()
++	if err != nil {
++		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
++	}
++	return strings.TrimSpace(string(out))
++}
++
++func vwrite(t *testing.T, path, body string) {
++	t.Helper()
++	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
++		t.Fatal(err)
++	}
++}
++
++// commitVerbFixture lays down a swarm root holding two jobs: one DONE and one DONEish.
++func commitVerbFixture(t *testing.T) (root, cards, mirror string) {
++	t.Helper()
++	tmp := t.TempDir()
++	mirror = filepath.Join(tmp, "mirror")
++	root = filepath.Join(tmp, "swarm")
++	cards = filepath.Join(tmp, "cards")
++	if err := os.MkdirAll(mirror, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	vgit(t, mirror, "init", "-q")
++	vgit(t, mirror, "checkout", "-q", "-B", "dev")
++	vwrite(t, filepath.Join(mirror, "internal/pulse/work.go"), "package x // base\n")
++	vgit(t, mirror, "add", "-A")
++	vgit(t, mirror, "commit", "-q", "-m", "base")
++
++	for _, tc := range []struct{ label, line2 string }{{"fix-a", "DONE (both runs green)"}, {"fix-b", "DONEish"}} {
++		job := filepath.Join(root, "slot-"+tc.label, "jobs", tc.label)
++		if err := os.MkdirAll(job, 0o755); err != nil {
++			t.Fatal(err)
++		}
++		vgit(t, tmp, "clone", "-q", mirror, filepath.Join(job, "repo"))
++		vwrite(t, filepath.Join(job, "repo", "internal/pulse/work.go"), "package x // "+tc.label+"\n")
++		vwrite(t, filepath.Join(job, "RESULT.md"),
++			"RESULT "+tc.label+" -- the card's line 1\n"+tc.line2+"\nREPO mas-bandwidth/nova-tools\n")
++		vwrite(t, filepath.Join(cards, tc.label+".md"),
++			"RESULT "+tc.label+"\nBASE: dev\nPATHS: internal/pulse/work.go\n")
++	}
++	return root, cards, mirror
++}
++
++func TestCommitVerb(t *testing.T) {
++	root, cards, mirror := commitVerbFixture(t)
++	var out, errb bytes.Buffer
++	code := run([]string{"commit", "--root", root, "--bench", "studio",
++		"--cards", cards, "--mirror", mirror, "--max", "0"}, &out, &errb, time.Now().UTC())
++	if code != 0 {
++		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, out.String(), errb.String())
++	}
++	got := out.String()
++	// EVERY VERDICT IS PRINTED. The bash's driver dropped every SKIP line -- 0 SKIP
++	// lines in the whole log against 12,784 REFUSED, while the pass reported skipped=96
++	// every time (#2549) -- so both a commit and a skip must be on stdout by name.
++	for _, want := range []string{
++		"COMMIT COMMITTED bench=studio label=fix-a branch=rowan/fix-a",
++		"COMMIT SKIP bench=studio label=fix-b reason=not-done",
++		"COMMIT BENCH OK bench=studio jobs=2 committed=1 skipped=1 refused=0",
++	} {
++		if !strings.Contains(got, want) {
++			t.Errorf("stdout does not carry %q\n---\n%s", want, got)
++		}
++	}
++	// The DONE card's branch carries exactly the card's declared path.
++	repo := filepath.Join(root, "slot-fix-a", "jobs", "fix-a", "repo")
++	if b := vgit(t, repo, "rev-parse", "--abbrev-ref", "HEAD"); b != "rowan/fix-a" {
++		t.Errorf("branch = %q, want rowan/fix-a", b)
++	}
++	if d := vgit(t, repo, "diff", "--name-only", "dev..HEAD"); d != "internal/pulse/work.go" {
++		t.Errorf("diff = %q, want internal/pulse/work.go", d)
++	}
++	// The DONEish card was not touched at all.
++	other := filepath.Join(root, "slot-fix-b", "jobs", "fix-b", "repo")
++	if b := vgit(t, other, "rev-parse", "--abbrev-ref", "HEAD"); b != "dev" {
++		t.Errorf("the DONEish job's branch = %q, want dev untouched", b)
++	}
++}
++
++func TestCommitVerbDryRunChangesNothing(t *testing.T) {
++	root, cards, mirror := commitVerbFixture(t)
++	var out, errb bytes.Buffer
++	if code := run([]string{"commit", "--root", root, "--cards", cards, "--mirror", mirror, "--dry-run"},
++		&out, &errb, time.Now().UTC()); code != 0 {
++		t.Fatalf("exit = %d, want 0: %s", code, errb.String())
++	}
++	if !strings.Contains(out.String(), "dry-run=yes") {
++		t.Errorf("the summary does not say it was a rehearsal:\n%s", out.String())
++	}
++	repo := filepath.Join(root, "slot-fix-a", "jobs", "fix-a", "repo")
++	if b := vgit(t, repo, "rev-parse", "--abbrev-ref", "HEAD"); b != "dev" {
++		t.Errorf("a dry run changed the branch to %q", b)
++	}
++}
++
++func TestCommitVerbRefusesWithoutRoot(t *testing.T) {
++	var out, errb bytes.Buffer
++	if code := run([]string{"commit"}, &out, &errb, time.Now().UTC()); code != 2 {
++		t.Fatalf("exit = %d, want 2", code)
++	}
++	if !strings.Contains(errb.String(), "root") {
++		t.Errorf("the refusal does not name --root: %q", errb.String())
++	}
++}
++
++func TestCommitVerbIsInTheUsage(t *testing.T) {
++	var out, errb bytes.Buffer
++	if code := run([]string{"help"}, &out, &errb, time.Now().UTC()); code != 0 {
++		t.Fatalf("help exit = %d", code)
++	}
++	if !strings.Contains(out.String(), "nova-pulse commit  --root") {
++		t.Error("the commit verb has no synopsis in the usage")
++	}
++}
+diff --git a/cmd/nova-pulse/examplelines_test.go b/cmd/nova-pulse/examplelines_test.go
+index e2c705be1..2eb70340b 100644
+--- a/cmd/nova-pulse/examplelines_test.go
++++ b/cmd/nova-pulse/examplelines_test.go
+@@ -116,6 +116,12 @@ var leftOwedExampleLines = map[string]string{
+ 	// why: survey runs tools/bench-standard.sh over ssh on every bench in
+ 	// ./fleet.tsv; the file does not exist and no test may reach a machine.
+ 	"nova-pulse fleet survey --benches ./fleet.tsv": "survey runs tools/bench-standard.sh over ssh on every bench in ./fleet.tsv; the file does not exist and no test may reach a machine",
++	// why: the line acts on the real $HOME's swarm root. Running it would check
++	// out branches in, and commit to, the caller's own live job clones, and the
++	// --draft-only list it names is the file that keeps friend-owned cards from
++	// being committed at all -- a missing one is a refusal on purpose, and a
++	// fixture cannot stand behind a stranger's working directory.
++	"nova-pulse commit --root \"$HOME/rowan-working/tmp\" --bench studio --cards \"$HOME/rowan-working/tmp/cards\" --mirror mas-bandwidth/nova-tools=\"$HOME/nova-bench/mirror/nova-tools.git\" --draft-only \"$HOME/rowan-working/queue/DRAFT-ONLY\"": "the line commits in the real $HOME's live job clones and names a DRAFT-ONLY list a stranger does not have; the verb is covered end to end by TestCommitVerb against a fixture swarm root instead",
+ }
+ 
+ // exampleBlockLines returns every command under an `example:` heading in a
+diff --git a/cmd/nova-pulse/main.go b/cmd/nova-pulse/main.go
+index 3441941b0..8148c0c96 100644
+--- a/cmd/nova-pulse/main.go
++++ b/cmd/nova-pulse/main.go
+@@ -28,6 +28,7 @@ nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#
+ nova-pulse cut     --kind read|fix|replay|spec|guard --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
+ nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
+ nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
++nova-pulse commit  --root <swarm root> [--bench <name>] [--cards <dir>]... [--mirror [<o/n>=]<dir>]... [--draft-only <file>] [--base <branch>] [--max <n>] [--dry-run]
+ nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+ nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
+ nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
+@@ -88,6 +89,30 @@ example:
+ in this repo is a fixture the size of a first run, and every line above is run
+ against it by the tests.
+ 
++commit is the harvest's mechanical pre-step, run ON a bench over its own job
++directories: for every <root>/*card-*/jobs/<label> whose RESULT.md line 2 begins
++with the word DONE and whose repo/ is a git repository, it sets the card's own
++files aside (RESULT.md notes.txt REPORT.md usage.tsv harness-output.log
++repo.bundle -- moved into the job directory, never committed and never deleted),
++checks out rowan/<label>, stages the CARD'S declared PATHS (with no card, the
++whole tree and a printed WARN), commits RESULT.md line 1, drops the scratch the
++card added in a follow-up commit, rebases onto the target the card names at its
++live tip when it has moved, and writes the BASE, BRANCH and prior lines the
++RESULT.md is missing. It prints ONE LINE PER VERDICT -- COMMITTED, SKIP, REFUSED,
++BRANCH-ONLY, SCRATCH-MOVED, SCRATCH-DROPPED, REBASED, REBASE-CONFLICT, BASE-LINE,
++BRANCH-LINE, PRIOR-LINE, REPORT-FOLDED -- and a COMMIT BENCH line with the counts.
++Two refusals are fences and not judgements: a changed file over 1 MB is refused by
++name, and so is a changed path that leaves the repository tree or carries the
++shape of a credential, printing the path and the shape and none of the content.
++--draft-only is a file of label prefixes, one per line, whose cards are drafts and
++are never committed. --dry-run changes nothing. It replaces bin/harvest-priority's
++$commit_step (nova-tools #2549), which was 5.8 KB of bash in a single-quoted
++string piped into ssh, broke three times in twelve hours and stranded DONE work
++silently each time.
++
++example:
++  nova-pulse commit --root "$HOME/rowan-working/tmp" --bench studio --cards "$HOME/rowan-working/tmp/cards" --mirror mas-bandwidth/nova-tools="$HOME/nova-bench/mirror/nova-tools.git" --draft-only "$HOME/rowan-working/queue/DRAFT-ONLY"
++
+ manager is the manager tier: a bounded controller, no model call. Each cycle is
+ wait, notes, harvest, triage, merge, refill and one MANAGER line; an unknown
+ policy key is a refusal; --hours 0 runs one cycle and the shift ends SHIFT END.
+@@ -291,6 +316,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
+ 			return cmdCutKind(rest, stdout, stderr)
+ 		}
+ 		return cmdCut(rest, stdout, stderr)
++	case "commit":
++		return cmdCommit(rest, stdout, stderr)
+ 	case "harvest":
+ 		return cmdHarvest(rest, stdout, stderr, now)
+ 	case "beat":
+diff --git a/docs/CLI.md b/docs/CLI.md
+index 6d1741ce1..7cc6b363e 100644
+--- a/docs/CLI.md
++++ b/docs/CLI.md
+@@ -2245,6 +2245,79 @@ refusal, because it is far more likely a typo than a fleet fact. The example reg
+ `internal/fleet/testdata/machines.tsv`, and the fleet's own lives at
+ `queue/control/machines.tsv`.
+ 
++### commit
++
++```
++nova-pulse commit --root <swarm root> [--bench <name>] [--cards <dir>]... [--mirror [<o/n>=]<dir>]... [--draft-only <file>] [--base <branch>] [--max <n>] [--dry-run]
++```
++
++`commit` is the harvest's **mechanical pre-step**, and it replaces
++`~/rowan-working/bin/harvest-priority`'s `$commit_step` (issue #2549): 5.8 KB of bash in a
++single-quoted string piped into `ssh <bench> bash -s`, which broke three times in twelve
++hours and stranded finished work silently each time — an unmatched glob under the Macs'
++zsh login shell (24 DONE cells never committed, no log line), a `case ... DONE\(*` that
++did not parse on the remote bash (no bench committed for seven hours), and a patch that
++broke the file itself. There was no test.
++
++**It is its own verb and not a first step of `harvest --bench`**, because the two run in
++different places. `commit` runs ON a bench, over that bench's own job directories and
++working trees. `harvest --bench` runs on the coordinator and reaches a bench only through
++the shell seam and a fetched ref; it never has the working tree this step has to stage,
++commit and rebase. Folding one into the other would mean shipping working-tree work back
++over the seam, which is the arrangement that broke.
++
++For every `<root>/<slot>/jobs/<label>` whose `RESULT.md` **line 2 begins with the word
++`DONE`** and whose `repo/` is a git repository, it:
++
++- **sets the card's own files aside** — `RESULT.md`, `notes.txt`, `REPORT.md`,
++  `usage.tsv`, `harness-output.log`, `repo.bundle` found in the working tree are MOVED to
++  `<job>/scratch-from-repo/`. Never committed, never deleted: refusing a whole job over
++  one of these left 88 DONE cells unharvested on 2026-09-21.
++- **checks out `rowan/<label>`** (`card-00-` stripped), held against the same branch rule
++  every push in this tool is held against — no trunk, no escape from the prefix.
++- **stages the CARD's declared `PATHS` and nothing else** (cards v2 A4, #2522). With no
++  card for the label there is nothing to stage by, so the whole tree is staged and a
++  `WARN` line says so; refusing there is how DONE work goes unharvested.
++- **commits `RESULT.md` line 1**, on one line, capped at 200 bytes.
++- **drops the scratch the card added** — `notes.txt`, `notes/`, `.nova-sandbox-tmp/`,
++  `*.class *.o *.obj *.pyc *.exe`, `a.out` added between the card's `sha=` and `HEAD` — in
++  a follow-up commit, so the branch carries the work and nothing else.
++- **rebases onto the target the card names**, fetched from `--mirror` at its live tip,
++  when the target has moved under the card. A replay that conflicts is aborted and printed
++  as `REBASE-CONFLICT`: that is author work, and the card is recut.
++- **writes the `BASE`, `BRANCH` and `prior:` lines** the `RESULT.md` is missing. WRITE,
++  not substitute: the bash used `sed "s#^BRANCH[: ].*#...#"`, which changes nothing when
++  the line is absent and exits 0, so `BRANCH-LINE report-nova-tools-2537-r1 -> ...` was
++  printed 94 times, once per pass, and never once took.
++- **folds `REPORT.md`** (at most 1500 bytes) into the `RESULT.md` the PR body is built
++  from.
++
++**Two refusals are fences and not judgements.** A changed file over 1 MB refuses the job
++and names the file. And the exfiltration fence (#2609): a changed path that leaves the
++repository tree (`../`, absolute, `~`) or carries the shape of a credential (`.ssh/`,
++`*.key`, `*.pem`, `id_*`, `auth.json`, `.env`, `nova-secrets/`) is refused with the path
++AND the shape printed; a staged file whose CONTENT matches a key shape is refused the same
++way, the index is reset, and neither ever prints a byte of what it matched.
++
++**Every verdict is one line.** `COMMITTED`, `SKIP`, `REFUSED`, `BRANCH-ONLY`,
++`SCRATCH-MOVED`, `SCRATCH-DROPPED`, `REBASED`, `REBASE-CONFLICT`, `BASE-LINE`,
++`BRANCH-LINE`, `PRIOR-LINE`, `REPORT-FOLDED`, `WARN`, `NOTE`, `DRY-RUN`, and a closing
++`COMMIT BENCH OK|RED bench=<n> jobs=<n> committed=<n> skipped=<n> refused=<n>
++rebased=<n> failed=<n> dry-run=<yes|no>`. The bash's driver grepped
++`^HARVEST (JOB|NO-COMMIT|REFUSED|BENCH)` and dropped every `SKIP`: the log holds 0 SKIP
++lines against 12,784 REFUSED while each studio pass reported `skipped=96`, so roughly 96
++verdicts per bench per pass went in the bin. Here the summary carries the counts as well,
++so a narrow grep downstream loses a line and never a fact.
++
++`--draft-only <file>` is a list of label prefixes, one per line, `#` a comment, whose
++cards are drafts and are never committed (Glenn 2026-09-21: friends build the tooling).
++The bash carried nine of them inline in the shell string. `--dry-run` prints and changes
++nothing. A `read-*` card commits nothing by rule.
++
++```
++nova-pulse commit --root "$HOME/rowan-working/tmp" --bench studio --cards "$HOME/rowan-working/tmp/cards" --mirror mas-bandwidth/nova-tools="$HOME/nova-bench/mirror/nova-tools.git" --draft-only "$HOME/rowan-working/queue/DRAFT-ONLY"
++```
++
+ ### harvest
+ 
+ ```
+diff --git a/internal/ci/testdata/benchname_allowlist.txt b/internal/ci/testdata/benchname_allowlist.txt
+index 8e956c825..854889619 100644
+--- a/internal/ci/testdata/benchname_allowlist.txt
++++ b/internal/ci/testdata/benchname_allowlist.txt
+@@ -28,3 +28,8 @@ internal/pulse/fillstore.go:StoreCapacity.Capacity the pulse.Capacity the fleet
+ cmd/nova-pulse/power.go:powerOnlineCount the Mac power verbs exist FOR the CI runner hosts: nova-pulse wake and sleep are how batman and superman are woken for the merge group and let sleep again (the fleet runs on solar). A runner host is the RIGHT answer here, so a bench guard would refuse the verb's whole purpose; they place no card and no load, only a magic packet and a runner-list read
+ cmd/nova-pulse/power.go:powerBusyCount the same verbs, asking GitHub whether that runner host's runners are busy before letting it sleep
+ cmd/nova-pulse/power.go:powerWakeFail formats one WAKE FAIL line for those verbs and touches no machine
++
++# `commit` (nova-tools #2549) runs ON a bench, over that bench's own job directories. It
++# opens no connection at all -- no ssh, no BenchShell, no registry to ask -- so the bench
++# name it takes is a LABEL for the verdict lines and never a machine it reaches.
++internal/pulse/harvestcommiteffect.go:insertBench puts `bench=<name>` on one already-formatted verdict line and touches nothing; `commit` is run ON the bench, reaches no machine, and the name is the operator's word for the log
+diff --git a/internal/pulse/harvestcommit.go b/internal/pulse/harvestcommit.go
+new file mode 100644
+index 000000000..76f1142ff
+--- /dev/null
++++ b/internal/pulse/harvestcommit.go
+@@ -0,0 +1,537 @@
++package pulse
++
++// THE HARVEST COMMIT STEP'S DECISION HALF (nova-tools #2549).
++//
++// `~/rowan-working/bin/harvest-priority` carried this as 5.8 KB of bash inside a
++// single-quoted string inside an `ssh <bench> bash -s`, run on every UP bench every pass.
++// In twelve hours it broke three times and stranded work silently each time:
++//
++//   - 2026-09-21: the Macs' login shell is zsh, which aborts on an unmatched glob. 24 DONE
++//     cells on superman and batman were never committed and not one log line said so.
++//   - 2026-09-22 02:05Z: a `case ... DONE\(*` inside the single-quoted string did not parse
++//     on the remote bash. NO bench committed for seven hours, nothing landed overnight, the
++//     canary failed, and the only trace was one `syntax error: unexpected end of file` per
++//     bench per pass.
++//   - 09:50 Eastern: the patch for that broke the file itself.
++//
++// Each fix was a bash edit inside a bash string inside an ssh, and there was no test.
++//
++// THE SPLIT IS THE POINT. Everything that is a JUDGEMENT about a job directory lives here,
++// as one pure function over a value: no `os`, no `exec`, no git, no filesystem. Everything
++// that TOUCHES git lives in harvestcommiteffect.go and never re-decides. A rule you can
++// state is a rule you can put a table row against, which is what the bash could not have.
++//
++// EVERY VERDICT IS PRINTED (the second fact on #2549). The bash's driver greps only
++// `^HARVEST (JOB|NO-COMMIT|REFUSED|BENCH)` and drops every `HARVEST SKIP` line: the log
++// holds 0 SKIP lines against 12,784 REFUSED while the studio pass reports `skipped=96`
++// every time, so ~96 verdicts per bench per pass went in the bin. Here a plan ALWAYS names
++// an action and a reason, the verb prints one line per plan, and the summary line carries
++// the counts, so a narrow grep downstream loses a line and never a fact.
++
++import (
++	"fmt"
++	"path"
++	"regexp"
++	"strings"
++	"unicode"
++	"unicode/utf8"
++
++	"github.com/mas-bandwidth/nova-tools/internal/oneline"
++)
++
++// CommitAction is what the step will do with one job directory. There are four, and they
++// are the four verdicts the verb prints: a skip and a refusal are both DECISIONS with a
++// reason, never silence.
++type CommitAction int
++
++const (
++	// CommitSkip: this job is not this step's to commit, and nothing is touched.
++	CommitSkip CommitAction = iota
++	// CommitRefuse: this job WOULD be committed and must not be. The plan names the
++	// offending path, and for the exfiltration fence the shape it matched.
++	CommitRefuse
++	// CommitBranchOnly: the work is already committed; only the branch name is wrong.
++	CommitBranchOnly
++	// CommitCommit: stage the plan's paths and commit them on the plan's branch.
++	CommitCommit
++)
++
++func (a CommitAction) String() string {
++	switch a {
++	case CommitSkip:
++		return "SKIP"
++	case CommitRefuse:
++		return "REFUSED"
++	case CommitBranchOnly:
++		return "BRANCH-ONLY"
++	case CommitCommit:
++		return "COMMIT"
++	}
++	return "UNKNOWN"
++}
++
++// The reasons, one per rule. They are the `reason=` token on the printed line and the name
++// of the table row that pins the rule, so a line in a bench log leads to a test by name.
++const (
++	CommitWhyNotDone      = "not-done"      // R1
++	CommitWhyReadCard     = "read-card"     // R2
++	CommitWhyDraftOnly    = "draft-only"    // R3
++	CommitWhyNoRepo       = "no-repo"       // R4
++	CommitWhyNoResult     = "no-result"     // R5
++	CommitWhyOutsideTree  = "outside-tree"  // R6, #2609
++	CommitWhySecretPath   = "secret-path"   // R7, #2609
++	CommitWhyTooBig       = "too-big"       // R8
++	CommitWhyNothingToDo  = "nothing-to-do" // R9
++	CommitWhyBadBranch    = "bad-branch"    // R10
++	CommitWhyWorkIsCommit = "work"          // the ordinary commit
++)
++
++// commitMaxFileBytes is the size a single changed file may not exceed. The bash's bound,
++// kept: a card that changed a file bigger than this is a card that did something other
++// than the work, and harvest leaves it uncommitted for a person.
++const commitMaxFileBytes = 1 << 20 // 1 MiB
++
++// commitMessageMax is the commit subject's cap, in bytes. The bash used `cut -c1-200`.
++const commitMessageMax = 200
++
++// commitReportFold is how much of a card's REPORT.md is folded into its RESULT.md.
++const commitReportFold = 1500
++
++// cardScratchNames are the card's OWN files, written beside the work by the harness. When
++// one is in the repository's working tree it is the worker having written in the wrong
++// directory, and it is SET ASIDE inside the job directory rather than committed or deleted:
++// on 2026-09-21 refusing the whole job over one of these left 88 DONE cells unharvested.
++var cardScratchNames = []string{
++	"RESULT.md", "notes.txt", "REPORT.md", "usage.tsv", "harness-output.log", "repo.bundle",
++}
++
++// cardAddedScratch matches a path the CARD ADDED that is scratch rather than work: it is
++// dropped in a follow-up commit after the card's own commit, so the branch carries the work
++// and nothing else. It is deliberately the bash's list and no wider.
++var cardAddedScratch = regexp.MustCompile(`(^|/)notes\.txt$|^notes/|^\.nova-sandbox-tmp/|\.(class|o|obj|pyc|exe)$|(^|/)a\.out$`)
++
++// baseSHAInLine1 reads the `sha=<hex>` a card's RESULT line 1 carries: the commit the card
++// was cut at, which is what the scratch drop measures `--diff-filter=A` from.
++var baseSHAInLine1 = regexp.MustCompile(`\bsha=([0-9a-f]{7,40})\b`)
++
++// recutLabel reads `recut-<repo>-<number>-...`: a recut card carries the PR it recuts, and
++// the `prior:` line says which one at which sha.
++var recutLabel = regexp.MustCompile(`^recut-(nova-tools|schema)-([0-9]+)(?:-|$)`)
++
++// ChangedFile is one entry of `git status --porcelain` in the card's repository: the
++// repo-relative path as git spells it, and its size on disk (0 for a deletion).
++type ChangedFile struct {
++	Path string
++	Size int64
++}
++
++// CommitJob is everything the decision is allowed to see. It is a VALUE: the caller reads
++// the job directory once (harvestcommiteffect.go) and hands the facts over, so this
++// function can be table-tested with no filesystem, no git and no bench.
++type CommitJob struct {
++	// Label is the job directory's name. `card-00-` is the cutter's prefix and is not
++	// part of the branch name; it is stripped here, once.
++	Label string
++
++	// Line1 and Line2 are the RESULT.md's first two lines as written. Line1 is the
++	// commit message; Line2 is the verdict.
++	Line1 string
++	Line2 string
++	// HasResult is false when the job wrote no RESULT.md at all -- a crash, not a skip.
++	HasResult bool
++	// HasRepo is whether `repo/.git` is there. A job with no repository committed
++	// nothing and is not this step's business.
++	HasRepo bool
++
++	// Changed is `git status --porcelain` in repo/, with each path's size.
++	Changed []ChangedFile
++
++	// ResultBranch, ResultBase, ResultRepo are the RESULT.md's BRANCH, BASE and REPO
++	// lines, empty when the line is absent. HasBaseLine and HasBranchLine say whether
++	// the LINE existed at all, which is the difference the bash could not see: its
++	// `sed s#^BRANCH[: ].*#...#` substitutes nothing when the line is absent and exits
++	// 0, so `BRANCH-LINE report-nova-tools-2537-r1 -> ...` was printed 94 times, once
++	// per pass, and never once took.
++	ResultBranch    string
++	ResultBase      string
++	ResultRepo      string
++	HasBaseLine     bool
++	HasBranchLine   bool
++	HasPriorLine    bool
++	HasClaimLine    bool
++	HasReportToFold bool
++
++	// CardBase is the BASE the CARD names, which beats the RESULT.md's: the card is
++	// what the pulse cut, the RESULT.md is what a worker wrote, and only one of the two
++	// is evidence (docs/SPEC-SWARM.md: everything a worker writes is data).
++	CardBase string
++
++	// CardPaths is the card's own PATHS declaration and CardFound whether a card was
++	// found for this label at all. With a card, ONLY its declared paths are staged
++	// (cards v2 A4, #2522). Without one the whole tree is staged and the plan carries
++	// a WARN saying so, because refusing here is how DONE work goes unharvested.
++	CardPaths []string
++	CardFound bool
++
++	// DraftOnly is the label-prefix list read from a file (--draft-only). The bash
++	// carried nine `fix-nova-tools-<n>-*` prefixes inline, which is a rule nobody could
++	// change without editing a shell string inside an ssh.
++	DraftOnly []string
++
++	// FallbackBase is the target a card that names none is rebased onto.
++	FallbackBase string
++}
++
++// CommitPlan is the decision: one action, one reason, and everything the effect half needs
++// to carry it out without deciding anything again.
++type CommitPlan struct {
++	Label  string // the label with `card-00-` stripped: the branch's and the log's name
++	Action CommitAction
++	Why    string
++	Detail string
++
++	// Path and Shape are set on a refusal: the offending file, and for the
++	// exfiltration fence (#2609) the shape its PATH matched. No content is ever
++	// carried here, and none is ever printed.
++	Path  string
++	Shape string
++
++	Branch  string // rowan/<label>, always under the prefix
++	Base    string // the target the card names, or the fallback
++	Repo    string // owner/name off the RESULT.md's REPO line, when it named one
++	Message string // RESULT.md line 1, one line, capped
++
++	// SetAside are the card's own files found in the working tree: moved into the job
++	// directory before staging, never committed and never deleted.
++	SetAside []string
++	// Stage is what `git add` is given. StageAll is the no-card fallback, and Warn is
++	// the line that says so out loud.
++	Stage    []string
++	StageAll bool
++	Warn     string
++
++	// BaseSHA is the `sha=` on RESULT line 1: where the card was cut. The scratch drop
++	// measures added paths from it.
++	BaseSHA string
++	// PriorPR is the PR a `recut-*` card recuts, 0 for anything else.
++	PriorPR   int
++	PriorRepo string
++
++	// WriteBase, WriteBranch and WritePrior say which RESULT.md lines the effect must
++	// WRITE (append when absent, rewrite in place when present and different). The bash
++	// could only substitute, which is why the report-* cards never got a BRANCH line.
++	WriteBase   bool
++	WriteBranch bool
++	WritePrior  bool
++	FoldReport  bool
++}
++
++// CommitDecision is the whole judgement, from a value to a plan. It reaches nothing.
++//
++// The order is not arbitrary. The two fences come before the work rules, because a job
++// that must not be committed must not be committed for the FIRST reason it fails, and a
++// path that carries a key is a worse fact about a card than a path that is large.
++func CommitDecision(job CommitJob) CommitPlan {
++	label := strings.TrimPrefix(strings.TrimSpace(job.Label), "card-00-")
++	p := CommitPlan{Label: label, Repo: strings.TrimSpace(job.ResultRepo)}
++
++	skip := func(why, detail string) CommitPlan {
++		p.Action, p.Why, p.Detail = CommitSkip, why, detail
++		return p
++	}
++	refuse := func(why, detail, offending, shape string) CommitPlan {
++		p.Action, p.Why, p.Detail = CommitRefuse, why, detail
++		p.Path, p.Shape = offending, shape
++		return p
++	}
++
++	// R2. A read card reviews somebody else's work and has nothing of its own to commit.
++	if strings.HasPrefix(label, "read-") {
++		return skip(CommitWhyReadCard, "a read card reviews and commits nothing")
++	}
++	// R3. DRAFT-ONLY, from a file rather than from nine prefixes buried in a shell
++	// string (Glenn 2026-09-21: friends build the tooling; the swarm card is a draft).
++	if pre := matchDraftOnly(job.DraftOnly, label); pre != "" {
++		return skip(CommitWhyDraftOnly, fmt.Sprintf("prefix=%s (friends build the tooling; the swarm card is a draft, not committed or harvested)", field(pre)))
++	}
++	// R5. No RESULT.md at all is a crash, not a verdict, and it is named as one.
++	if !job.HasResult {
++		return skip(CommitWhyNoResult, "the job wrote no RESULT.md; nothing here says the work finished")
++	}
++	// R1. THE DONE PREFIX, which is the rule the bash got wrong twice. Its test was
++	// `[ "$(sed -n 2p RESULT.md | tr -d '[:space:]')" = DONE ]`, which strips the spaces
++	// out of `DONE (both runs green)` and then fails to match it; the `case ... DONE\(*`
++	// written to fix that did not parse on the remote bash and stopped every bench for
++	// seven hours. `DONE` is a WORD here: the line begins with it and what follows is
++	// not another word character. `DONE (both green)` is DONE. `DONEish` is not.
++	if !commitLineIsDone(job.Line2) {
++		return skip(CommitWhyNotDone, fmt.Sprintf("line2=%s (only a DONE prefix counts; `DONE (both runs green)` is DONE, `DONEish` is not)", field(oneShort(job.Line2, 40))))
++	}
++	// R4.
++	if !job.HasRepo {
++		return skip(CommitWhyNoRepo, "repo/.git is not there; this job committed nothing")
++	}
++
++	// R10. The branch, before anything is planned against it.
++	branch, err := commitBranchName(label, job.ResultBranch)
++	if err != nil {
++		return refuse(CommitWhyBadBranch, oneShort(err.Error(), 160), "", "")
++	}
++	p.Branch = branch
++
++	// R6 and R7: THE EXFILTRATION FENCE (#2609). A PR is a connected destination, and a
++	// card runs with the launcher's environment on the same host as the seat's secrets.
++	// A commit that ADDS a path from outside the repository tree, or a path whose SHAPE
++	// is a credential's, is refused with the path and the shape named -- never dropped
++	// silently, because a silent drop is a fence nobody can audit. The CONTENT scan is
++	// the effect half's, against the staged bytes (harvestcommiteffect.go); this is the
++	// half that can be decided from a name.
++	for _, f := range job.Changed {
++		if outsideRepoTree(f.Path) {
++			return refuse(CommitWhyOutsideTree, "a changed path leaves the repository tree; nothing was committed",
++				f.Path, "outside-tree")
++		}
++		if shape := secretPathShape(f.Path); shape != "" {
++			return refuse(CommitWhySecretPath, "a changed path has the shape of a credential; nothing was committed",
++				f.Path, shape)
++		}
++	}
++	// R8. One file over 1 MB refuses the whole job, and names the file.
++	for _, f := range job.Changed {
++		if f.Size > commitMaxFileBytes {
++			return refuse(CommitWhyTooBig,
++				fmt.Sprintf("size=%dB over %dB; left uncommitted", f.Size, commitMaxFileBytes), f.Path, "")
++		}
++	}
++
++	// The card's own files in the working tree: set aside, not committed, not deleted.
++	var work []ChangedFile
++	for _, f := range job.Changed {
++		if isCardScratch(f.Path) {
++			p.SetAside = append(p.SetAside, f.Path)
++			continue
++		}
++		work = append(work, f)
++	}
++
++	p.Message = commitMessage(job.Line1)
++	p.BaseSHA = commitBaseSHA(job.Line1)
++	p.Base = commitBase(job, label)
++	if m := recutLabel.FindStringSubmatch(label); m != nil {
++		p.PriorRepo, p.PriorPR = m[1], atoiSafe(m[2])
++		p.WritePrior = !job.HasPriorLine && p.PriorPR > 0
++	}
++	// The RESULT.md lines the effect must WRITE. `WriteBranch` is true when the line is
++	// absent OR names something else: the bash could only do the second, so a card
++	// without the line kept "succeeding" at writing it 94 times over.
++	p.WriteBranch = !job.HasBranchLine || strings.TrimSpace(job.ResultBranch) != branch
++	p.WriteBase = p.Base != "" && (!job.HasBaseLine || strings.TrimSpace(job.ResultBase) != p.Base)
++	p.FoldReport = job.HasReportToFold && !job.HasClaimLine
++
++	// R9. Nothing in the tree: the work is already committed and at most the branch
++	// name is wrong. The bash's `elif` arm, named.
++	if len(work) == 0 {
++		p.Action, p.Why = CommitBranchOnly, CommitWhyNothingToDo
++		p.Detail = "the working tree carries no card work; the branch is set and the RESULT lines are written"
++		return p
++	}
++
++	p.Action, p.Why = CommitCommit, CommitWhyWorkIsCommit
++	// A4 (#2522): with a card, stage the card's DECLARED PATHS and nothing else. The
++	// bash staged `-A` always, which is the rule this whole family exists to enforce.
++	// Without a card there is nothing to stage BY, and refusing would strand DONE work,
++	// so the whole tree is staged and the plan says WARN out loud.
++	if job.CardFound && len(job.CardPaths) > 0 {
++		p.Stage = append([]string(nil), job.CardPaths...)
++	} else {
++		p.StageAll = true
++		p.Warn = "no card found for this label, so the whole tree is staged (cards v2 A4 wants the card's PATHS; a card that names its own paths is the fix)"
++	}
++	return p
++}
++
++// commitLineIsDone is R1, on its own so the table row points at one function. `DONE` must
++// be the first WORD of the line: `DONE`, `DONE (both runs green)`, `DONE -- green` are all
++// DONE, and `DONEish`, `DONE_LATER`, `NEARLY DONE` are not.
++func commitLineIsDone(line string) bool {
++	s := strings.TrimSpace(line)
++	rest, ok := strings.CutPrefix(s, "DONE")
++	if !ok {
++		return false
++	}
++	if rest == "" {
++		return true
++	}
++	r := []rune(rest)[0]
++	return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_')
++}
++
++// commitBranchName is R10: `rowan/<label>`, or the RESULT.md's BRANCH line put under the
++// prefix when it names one. It is held against the same mustBranchPrefix every push in
++// this package is held against, so a card cannot name a trunk or escape the prefix.
++func commitBranchName(label, resultBranch string) (string, error) {
++	b := strings.TrimSpace(resultBranch)
++	// A RESULT.md that names a trunk is refused rather than quietly prefixed into
++	// `rowan/main`: everything a worker writes is data (docs/SPEC-SWARM.md), and a card
++	// that believes it is working on main is a card whose branch nobody should guess at.
++	if b == "main" || b == "master" || b == "dev" {
++		return "", fmt.Errorf("the RESULT.md names branch %s; harvest commits no trunk and guesses no replacement for one", oneline.Quote(b))
++	}
++	switch {
++	case b == "":
++		b = DefaultBranchPrefix + label
++	case !strings.HasPrefix(b, DefaultBranchPrefix):
++		b = DefaultBranchPrefix + b
++	}
++	if strings.TrimSpace(label) == "" && strings.TrimSpace(resultBranch) == "" {
++		return "", fmt.Errorf("the job directory has no label, so there is no branch to commit on")
++	}
++	if strings.ContainsAny(b, " \t\n:~^?*[\\") || strings.Contains(b, "..") {
++		return "", fmt.Errorf("branch %s is not a git branch name", oneline.Quote(b))
++	}
++	if err := mustBranchPrefix(b); err != nil {
++		return "", err
++	}
++	return b, nil
++}
++
++// commitMessage is the commit subject: RESULT.md line 1, forced onto one line and capped.
++func commitMessage(line1 string) string {
++	s := strings.TrimSpace(strings.Join(strings.Fields(line1), " "))
++	if s == "" {
++		return "harvest: a card's work, committed by nova-pulse commit"
++	}
++	if len(s) <= commitMessageMax {
++		return s
++	}
++	cut := s[:commitMessageMax]
++	for len(cut) > 0 && !utf8.ValidString(cut) {
++		cut = cut[:len(cut)-1]
++	}
++	return cut
++}
++
++func commitBaseSHA(line1 string) string {
++	if m := baseSHAInLine1.FindStringSubmatch(line1); m != nil {
++		return m[1]
++	}
++	return ""
++}
++
++// commitBase is the target the branch is measured and rebased against: the card's BASE
++// when it named one, else the RESULT.md's, else the caller's fallback. A `report-*` card
++// writes no code and is rebased onto nothing, which is the bash's own `case` arm.
++func commitBase(job CommitJob, label string) string {
++	if strings.HasPrefix(label, "report-") {
++		return ""
++	}
++	for _, cand := range []string{job.CardBase, job.ResultBase, job.FallbackBase} {
++		if b := harvestTargetName(cand); b != "" {
++			return b
++		}
++	}
++	return DefaultBase
++}
++
++func matchDraftOnly(list []string, label string) string {
++	for _, pre := range list {
++		pre = strings.TrimSpace(pre)
++		if pre == "" || strings.HasPrefix(pre, "#") {
++			continue
++		}
++		p := strings.TrimSuffix(pre, "*")
++		if p != "" && strings.HasPrefix(label, p) {
++			return pre
++		}
++	}
++	return ""
++}
++
++func isCardScratch(p string) bool {
++	for _, n := range cardScratchNames {
++		if p == n {
++			return true
++		}
++	}
++	return false
++}
++
++// outsideRepoTree is the first half of the fence (#2609): a path git reports that does not
++// stay inside the repository. An absolute path, a `..` segment, or a leading `~` are each
++// a way for a card to name a file the repository does not own.
++func outsideRepoTree(p string) bool {
++	q := strings.ReplaceAll(strings.TrimSpace(p), `\`, "/")
++	if q == "" {
++		return false
++	}
++	if strings.HasPrefix(q, "/") || strings.HasPrefix(q, "~") {
++		return true
++	}
++	if len(q) > 1 && q[1] == ':' { // a Windows drive letter
++		return true
++	}
++	for _, seg := range strings.Split(q, "/") {
++		if seg == ".." {
++			return true
++		}
++	}
++	return false
++}
++
++// secretPathShape is the second half of the fence (#2609): the SHAPE of a credential's
++// path, from the issue's own list. It returns the shape's name, which the refusal prints
++// beside the path. It never opens the file -- the content scan is the effect half's, and
++// neither ever prints a byte of what it read.
++func secretPathShape(p string) string {
++	q := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(p), `\`, "/"))
++	if q == "" {
++		return ""
++	}
++	base := path.Base(q)
++	segs := strings.Split(q, "/")
++	for _, s := range segs {
++		switch s {
++		case ".ssh":
++			return "ssh-dir"
++		case "nova-secrets", ".gnupg", ".aws", ".netrc":
++			return "secrets-dir"
++		}
++	}
++	if strings.Contains(q, "nova-bench/secrets") {
++		return "secrets-dir"
++	}
++	switch {
++	case strings.HasSuffix(base, ".key"), strings.HasSuffix(base, ".keyfile"):
++		return "key-file"
++	case strings.HasSuffix(base, ".pem"):
++		return "pem-file"
++	case strings.HasSuffix(base, ".p12"), strings.HasSuffix(base, ".pfx"):
++		return "pkcs12-file"
++	case base == "auth.json", base == ".netrc", base == "credentials":
++		return "auth-file"
++	case base == ".env" || strings.HasPrefix(base, ".env."):
++		return "dotenv"
++	case strings.HasPrefix(base, "id_") && !strings.HasSuffix(base, ".pub"):
++		return "ssh-private-key"
++	}
++	return ""
++}
++
++func atoiSafe(s string) int {
++	n := 0
++	for _, r := range s {
++		if r < '0' || r > '9' {
++			return 0
++		}
++		n = n*10 + int(r-'0')
++	}
++	return n
++}
++
++func oneShort(s string, n int) string {
++	s = strings.Join(strings.Fields(s), " ")
++	if len(s) > n {
++		s = s[:n] + "..."
++	}
++	return s
++}
+diff --git a/internal/pulse/harvestcommit_test.go b/internal/pulse/harvestcommit_test.go
+new file mode 100644
+index 000000000..60932d057
+--- /dev/null
++++ b/internal/pulse/harvestcommit_test.go
+@@ -0,0 +1,317 @@
++package pulse
++
++import (
++	"strings"
++	"testing"
++)
++
++// TestCommitDecision is ONE ROW PER RULE of the commit step (nova-tools #2549). The bash it
++// replaces had no test at all, which is why the same rule broke three times in twelve
++// hours: the whole step was a single-quoted string inside an ssh, and the only way to try a
++// change was to run it on the fleet.
++//
++// The row NAMES are the `reason=` tokens the verb prints, so a line in a bench log leads
++// straight to the row that pins it.
++func TestCommitDecision(t *testing.T) {
++	const done = "DONE (both runs green)"
++	goFile := ChangedFile{Path: "internal/pulse/harvestcommit.go", Size: 4096}
++
++	cases := []struct {
++		name   string
++		job    CommitJob
++		action CommitAction
++		why    string
++		check  func(t *testing.T, p CommitPlan)
++	}{{
++		// R1. The rule the bash got wrong twice. Its test stripped the whitespace
++		// out of line 2 and compared to `DONE`, so `DONE (both runs green)` never
++		// matched; the `case ... DONE\(*` written to fix that did not parse on the
++		// remote bash and stopped every bench for seven hours.
++		name:   "not-done/a verdict that is not DONE",
++		job:    CommitJob{Label: "card-00-fix-1", HasResult: true, HasRepo: true, Line2: "ABSTAIN out-of-scope"},
++		action: CommitSkip, why: CommitWhyNotDone,
++	}, {
++		name:   "not-done/DONEish is not DONE",
++		job:    CommitJob{Label: "card-00-fix-1", HasResult: true, HasRepo: true, Line2: "DONEish"},
++		action: CommitSkip, why: CommitWhyNotDone,
++	}, {
++		name: "work/DONE with a suffix IS DONE",
++		job: CommitJob{Label: "card-00-fix-1", HasResult: true, HasRepo: true,
++			Line1: "RESULT fix-1 sha=abcdef1234 -- the work", Line2: done,
++			Changed: []ChangedFile{goFile}},
++		action: CommitCommit, why: CommitWhyWorkIsCommit,
++		check: func(t *testing.T, p CommitPlan) {
++			if p.Branch != "rowan/fix-1" {
++				t.Errorf("branch = %q, want rowan/fix-1", p.Branch)
++			}
++			if p.Message != "RESULT fix-1 sha=abcdef1234 -- the work" {
++				t.Errorf("message = %q, want RESULT.md line 1", p.Message)
++			}
++			if p.BaseSHA != "abcdef1234" {
++				t.Errorf("BaseSHA = %q, want abcdef1234 off line 1", p.BaseSHA)
++			}
++		},
++	}, {
++		// R2.
++		name:   "read-card/a read card commits nothing",
++		job:    CommitJob{Label: "card-00-read-nova-tools-2537", HasResult: true, HasRepo: true, Line2: done},
++		action: CommitSkip, why: CommitWhyReadCard,
++	}, {
++		// R3. From a FILE now, not nine prefixes inside a shell string inside an ssh.
++		name: "draft-only/a friend-owned tooling card is a draft",
++		job: CommitJob{Label: "card-00-fix-nova-tools-2454-r1", HasResult: true, HasRepo: true, Line2: done,
++			DraftOnly: []string{"# friends build the tooling", "fix-nova-tools-2454-*"}},
++		action: CommitSkip, why: CommitWhyDraftOnly,
++	}, {
++		// R4.
++		name:   "no-repo/the job holds no git repository",
++		job:    CommitJob{Label: "card-00-fix-1", HasResult: true, HasRepo: false, Line2: done},
++		action: CommitSkip, why: CommitWhyNoRepo,
++	}, {
++		// R5. A crash is named, not silently counted as a skip.
++		name:   "no-result/the job wrote no RESULT.md",
++		job:    CommitJob{Label: "card-00-fix-1", HasRepo: true},
++		action: CommitSkip, why: CommitWhyNoResult,
++	}, {
++		// R6. The exfiltration fence's first half (#2609).
++		name: "outside-tree/a changed path leaves the repository",
++		job: CommitJob{Label: "card-00-fix-1", HasResult: true, HasRepo: true, Line2: done,
++			Changed: []ChangedFile{goFile, {Path: "../../.ssh/id_ed25519", Size: 400}}},
++		action: CommitRefuse, why: CommitWhyOutsideTree,
++		check: func(t *testing.T, p CommitPlan) {
++			if p.Path != "../../.ssh/id_ed25519" || p.Shape != "outside-tree" {
++				t.Errorf("path/shape = %q/%q, want the offending path named", p.Path, p.Shape)
++			}
++		},
++	}, {
++		// R7. The second half: a path with a credential's SHAPE.
++		name: "secret-path/a changed path is shaped like a key",
++		job: CommitJob{Label: "card-00-fix-1", HasResult: true, HasRepo: true, Line2: done,
++			Changed: []ChangedFile{goFile, {Path: "infra/deploy.key", Size: 1700}}},
++		action: CommitRefuse, why: CommitWhySecretPath,
++		check: func(t *testing.T, p CommitPlan) {
++			if p.Path != "infra/deploy.key" || p.Shape != "key-file" {
++				t.Errorf("path/shape = %q/%q, want infra/deploy.key/key-file", p.Path, p.Shape)
++			}
++		},
++	}, {
++		// R8.
++		name: "too-big/one changed file over 1 MB refuses the job by name",
++		job: CommitJob{Label: "card-00-fix-1", HasResult: true, HasRepo: true, Line2: done,
++			Changed: []ChangedFile{goFile, {Path: "testdata/dump.bin", Size: commitMaxFileBytes + 1}}},
++		action: CommitRefuse, why: CommitWhyTooBig,
++		check: func(t *testing.T, p CommitPlan) {
++			if p.Path != "testdata/dump.bin" {
++				t.Errorf("path = %q, want the file named", p.Path)
++			}
++			if !strings.Contains(p.Detail, "left uncommitted") {
++				t.Errorf("detail = %q, want it to say the work is left uncommitted", p.Detail)
++			}
++		},
++	}, {
++		// R9. Set aside AND commit: refusing the whole job over one of these left 88
++		// DONE cells unharvested on 2026-09-21.
++		name: "work/the card's own files are set aside, not committed",
++		job: CommitJob{Label: "card-00-fix-1", HasResult: true, HasRepo: true, Line2: done,
++			Changed: []ChangedFile{goFile, {Path: "RESULT.md", Size: 900}, {Path: "usage.tsv", Size: 240}}},
++		action: CommitCommit, why: CommitWhyWorkIsCommit,
++		check: func(t *testing.T, p CommitPlan) {
++			if got := strings.Join(p.SetAside, ","); got != "RESULT.md,usage.tsv" {
++				t.Errorf("SetAside = %q, want RESULT.md,usage.tsv", got)
++			}
++		},
++	}, {
++		// R10. A4 (#2522): with a card, its declared PATHS and nothing else.
++		name: "work/a card stages its declared PATHS and nothing else",
++		job: CommitJob{Label: "card-00-fix-1", HasResult: true, HasRepo: true, Line2: done,
++			Changed:   []ChangedFile{goFile},
++			CardFound: true, CardPaths: []string{"internal/pulse/harvestcommit.go"}},
++		action: CommitCommit, why: CommitWhyWorkIsCommit,
++		check: func(t *testing.T, p CommitPlan) {
++			if p.StageAll {
++				t.Error("StageAll is set although the card declared PATHS")
++			}
++			if got := strings.Join(p.Stage, ","); got != "internal/pulse/harvestcommit.go" {
++				t.Errorf("Stage = %q, want the card's PATHS", got)
++			}
++			if p.Warn != "" {
++				t.Errorf("Warn = %q, want none when a card was found", p.Warn)
++			}
++		},
++	}, {
++		// R11. No card is a WARN and not a refusal: refusing here is how DONE work
++		// goes unharvested, and a silent `-A` is how A4 was broken all along.
++		name: "work/no card stages the whole tree and says so",
++		job: CommitJob{Label: "card-00-fix-1", HasResult: true, HasRepo: true, Line2: done,
++			Changed: []ChangedFile{goFile}},
++		action: CommitCommit, why: CommitWhyWorkIsCommit,
++		check: func(t *testing.T, p CommitPlan) {
++			if !p.StageAll || p.Warn == "" {
++				t.Errorf("StageAll=%v Warn=%q, want the whole tree staged with a printed WARN", p.StageAll, p.Warn)
++			}
++		},
++	}, {
++		// R12.
++		name: "nothing-to-do/a clean tree only needs its branch",
++		job: CommitJob{Label: "card-00-fix-1", HasResult: true, HasRepo: true, Line2: done,
++			Line1: "RESULT fix-1 -- the work"},
++		action: CommitBranchOnly, why: CommitWhyNothingToDo,
++	}, {
++		// R13.
++		name: "work/a BRANCH line off the prefix is put under it",
++		job: CommitJob{Label: "card-00-fix-1", HasResult: true, HasRepo: true, Line2: done,
++			ResultBranch: "spec/fix-1", HasBranchLine: true, Changed: []ChangedFile{goFile}},
++		action: CommitCommit, why: CommitWhyWorkIsCommit,
++		check: func(t *testing.T, p CommitPlan) {
++			if p.Branch != "rowan/spec/fix-1" {
++				t.Errorf("branch = %q, want rowan/spec/fix-1", p.Branch)
++			}
++		},
++	}, {
++		// R14. THE BRANCH LINE THAT NEVER TOOK (#2549). A report-* card had no BRANCH
++		// line at all, and `sed "s#^BRANCH[: ].*#...#"` substitutes nothing when the
++		// line is absent and exits 0: the verdict was printed 94 times and never took.
++		name: "work/an absent BRANCH line is WRITTEN, not substituted",
++		job: CommitJob{Label: "card-00-report-nova-tools-2537-r1", HasResult: true, HasRepo: true,
++			Line2: done, Changed: []ChangedFile{goFile}},
++		action: CommitCommit, why: CommitWhyWorkIsCommit,
++		check: func(t *testing.T, p CommitPlan) {
++			if !p.WriteBranch {
++				t.Error("WriteBranch is false although the RESULT.md has no BRANCH line")
++			}
++			if p.Base != "" {
++				t.Errorf("Base = %q, want none: a report card is rebased onto nothing", p.Base)
++			}
++		},
++	}, {
++		// R15.
++		name: "work/a recut card carries the PR it recuts",
++		job: CommitJob{Label: "card-00-recut-nova-tools-2498-r2", HasResult: true, HasRepo: true,
++			Line2: done, Changed: []ChangedFile{goFile}},
++		action: CommitCommit, why: CommitWhyWorkIsCommit,
++		check: func(t *testing.T, p CommitPlan) {
++			if p.PriorPR != 2498 || p.PriorRepo != "nova-tools" || !p.WritePrior {
++				t.Errorf("prior = %s#%d write=%v, want nova-tools#2498 written", p.PriorRepo, p.PriorPR, p.WritePrior)
++			}
++		},
++	}, {
++		// R16. The card's BASE beats the RESULT.md's: one is what the pulse cut, the
++		// other is what a worker wrote, and only one of the two is evidence.
++		name: "work/the card's BASE wins and the RESULT line is written to match",
++		job: CommitJob{Label: "card-00-fix-1", HasResult: true, HasRepo: true, Line2: done,
++			Changed: []ChangedFile{goFile}, CardFound: true, CardBase: "fixed-table-form",
++			ResultBase: "dev", HasBaseLine: true, FallbackBase: "dev"},
++		action: CommitCommit, why: CommitWhyWorkIsCommit,
++		check: func(t *testing.T, p CommitPlan) {
++			if p.Base != "fixed-table-form" || !p.WriteBase {
++				t.Errorf("base = %q write=%v, want fixed-table-form written over the RESULT's dev", p.Base, p.WriteBase)
++			}
++		},
++	}}
++
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			p := CommitDecision(tc.job)
++			if p.Action != tc.action || p.Why != tc.why {
++				t.Fatalf("action/why = %s/%s, want %s/%s (detail: %s)", p.Action, p.Why, tc.action, tc.why, p.Detail)
++			}
++			if p.Why == "" {
++				t.Error("every plan names a reason; this one names none")
++			}
++			if strings.HasPrefix(p.Label, "card-00-") {
++				t.Errorf("label = %q, want the cutter's card-00- prefix stripped", p.Label)
++			}
++			if tc.check != nil {
++				tc.check(t, p)
++			}
++		})
++	}
++}
++
++// TestCommitDoneIsAWord pins R1 on its own, because it is the rule that cost seven hours of
++// the fleet: `DONE` is the first WORD of line 2 and not a substring of it.
++func TestCommitDoneIsAWord(t *testing.T) {
++	for _, s := range []string{"DONE", "DONE (both runs green)", " DONE ", "DONE -- green", "DONE(green)"} {
++		if !commitLineIsDone(s) {
++			t.Errorf("%q is DONE and was read as not DONE", s)
++		}
++	}
++	for _, s := range []string{"DONEish", "DONE_LATER", "NEARLY DONE", "ABSTAIN", "BLOCKED head=x", "", "done"} {
++		if commitLineIsDone(s) {
++			t.Errorf("%q is not DONE and was read as DONE", s)
++		}
++	}
++}
++
++// TestCommitSecretPathShapes walks #2609's own list: every shape in the issue is recognised
++// and named, and an ordinary repository path is not.
++func TestCommitSecretPathShapes(t *testing.T) {
++	want := map[string]string{
++		".ssh/id_rsa":                      "ssh-dir",
++		"infra/id_ed25519":                 "ssh-private-key",
++		"deploy.key":                       "key-file",
++		"certs/server.pem":                 "pem-file",
++		"auth.json":                        "auth-file",
++		".env":                             "dotenv",
++		".env.production":                  "dotenv",
++		"nova-secrets/x.age":               "secrets-dir",
++		"infra/nova-bench/secrets/key.txt": "secrets-dir",
++	}
++	for p, shape := range want {
++		if got := secretPathShape(p); got != shape {
++			t.Errorf("secretPathShape(%q) = %q, want %q", p, got, shape)
++		}
++	}
++	for _, p := range []string{"internal/pulse/harvestcommit.go", "docs/CLI.md", "testdata/id_map.json.pub", "README.md"} {
++		if got := secretPathShape(p); got != "" {
++			t.Errorf("secretPathShape(%q) = %q, want no shape", p, got)
++		}
++	}
++	for _, p := range []string{"/etc/passwd", "../outside.txt", "a/../../b", "~/.ssh/config"} {
++		if !outsideRepoTree(p) {
++			t.Errorf("outsideRepoTree(%q) = false, want true", p)
++		}
++	}
++	for _, p := range []string{"internal/pulse/x.go", "a/b/c.txt", "./docs/CLI.md"} {
++		if outsideRepoTree(p) {
++			t.Errorf("outsideRepoTree(%q) = true, want false", p)
++		}
++	}
++}
++
++// TestCommitBranchNameStaysUnderThePrefix: the branch is held against the same rule every
++// push in this package is held against (Stella's ruling on #1824).
++func TestCommitBranchNameStaysUnderThePrefix(t *testing.T) {
++	for _, tc := range []struct{ label, result, want string }{
++		{"fix-1", "", "rowan/fix-1"},
++		{"fix-1", "rowan/other", "rowan/other"},
++		{"fix-1", "other", "rowan/other"},
++	} {
++		got, err := commitBranchName(tc.label, tc.result)
++		if err != nil || got != tc.want {
++			t.Errorf("commitBranchName(%q,%q) = %q,%v; want %q", tc.label, tc.result, got, err, tc.want)
++		}
++	}
++	for _, bad := range []string{"main", "master"} {
++		if _, err := commitBranchName("x", bad); err == nil {
++			t.Errorf("commitBranchName with BRANCH %q was allowed; harvest never commits a trunk", bad)
++		}
++	}
++	if _, err := commitBranchName("x", "rowan/a b"); err == nil {
++		t.Error("a branch name with a space was allowed")
++	}
++}
++
++// TestCommitMessageIsLineOneCapped: the subject is RESULT.md line 1, on one line, capped.
++func TestCommitMessageIsLineOneCapped(t *testing.T) {
++	long := "RESULT x " + strings.Repeat("a", 400)
++	if got := commitMessage(long); len(got) > commitMessageMax {
++		t.Errorf("message is %d bytes, over the %d cap", len(got), commitMessageMax)
++	}
++	if got := commitMessage("RESULT x\nsecond line"); strings.Contains(got, "\n") {
++		t.Errorf("message = %q, want one line", got)
++	}
++	if got := commitMessage("   "); got == "" {
++		t.Error("an empty line 1 must still produce a commit subject")
++	}
++}
+diff --git a/internal/pulse/harvestcommiteffect.go b/internal/pulse/harvestcommiteffect.go
+new file mode 100644
+index 000000000..3a939730e
+--- /dev/null
++++ b/internal/pulse/harvestcommiteffect.go
+@@ -0,0 +1,744 @@
++package pulse
++
++// THE HARVEST COMMIT STEP'S EFFECT HALF (nova-tools #2549).
++//
++// harvestcommit.go decides; this file acts, and it NEVER re-decides. It reads one job
++// directory into a CommitJob (ReadCommitJob), hands it to CommitDecision, and applies the
++// plan that comes back: set the card's own files aside, stage the card's declared paths,
++// commit line 1 of the RESULT.md, drop the scratch the card added, rebase onto the target
++// at its live tip when it moved, and write the BASE/BRANCH/prior lines the RESULT.md is
++// missing.
++//
++// EVERY STEP PRINTS ONE LINE. CommitResult.Lines carries them in order, and the verb
++// prints them; a step that did nothing produces no line and a step that failed produces a
++// line saying so. The bash printed `BRANCH-LINE ... -> ...` 94 times for a line that was
++// never written, because `sed "s#^BRANCH[: ].*#...#"` substitutes nothing when the line is
++// absent and exits 0. Here the line is WRITTEN -- appended when absent, rewritten in place
++// when present and different -- and the verdict is printed from what the write returned.
++//
++// git is a child process; a bench is not. Nothing in this file opens a connection: the
++// rebase target is fetched from a LOCAL mirror path the caller names, which is what the
++// bash did (`$HOME/nova-bench/mirror/<repo>.git`) and what lets the whole thing be tested
++// against real repositories under t.TempDir().
++
++import (
++	"fmt"
++	"io"
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++
++	"github.com/mas-bandwidth/nova-tools/internal/keyshape"
++	"github.com/mas-bandwidth/nova-tools/internal/oneline"
++)
++
++// commitAuthor is who the step commits as. The card's own work, recorded by the harvest.
++var commitAuthor = []string{"-c", "user.name=Rowan", "-c", "user.email=rowan@mas-bandwidth.com"}
++
++// CommitResult is what one job's apply did: the verdict lines in the order they happened,
++// the branch and the sha when there is one, and whether anything was actually committed.
++type CommitResult struct {
++	Label     string
++	Branch    string
++	SHA       string
++	Committed bool
++	Rebased   bool
++	Lines     []string
++}
++
++func (r *CommitResult) line(format string, a ...any) {
++	r.Lines = append(r.Lines, fmt.Sprintf(format, a...))
++}
++
++// CommitEnv is the little the effect needs that is not a decision: where the mirror of each
++// repository is (the rebase target is fetched from it), and whether this is a rehearsal.
++type CommitEnv struct {
++	// Mirrors maps `<owner>/<name>` or a bare repo name to a local mirror directory; a
++	// "" key is the mirror for any repository. An empty map means no rebase is
++	// attempted and the step says so rather than rebasing onto a guess.
++	Mirrors map[string]string
++	// DryRun prints what would happen and changes nothing.
++	DryRun bool
++}
++
++func (e CommitEnv) mirror(repo string) string {
++	if e.Mirrors == nil {
++		return ""
++	}
++	name := strings.TrimSpace(repo)
++	if i := strings.LastIndex(name, "/"); i >= 0 {
++		name = name[i+1:]
++	}
++	for _, k := range []string{strings.TrimSpace(repo), name, ""} {
++		if d, ok := e.Mirrors[k]; ok && strings.TrimSpace(d) != "" {
++			return d
++		}
++	}
++	return ""
++}
++
++// ApplyCommitPlan carries out one plan against one job directory. A skip and a refusal do
++// nothing at all but name themselves; only CommitCommit and CommitBranchOnly touch git.
++func ApplyCommitPlan(jobDir string, p CommitPlan, env CommitEnv) (CommitResult, error) {
++	r := CommitResult{Label: p.Label, Branch: p.Branch}
++	repo := filepath.Join(jobDir, "repo")
++	result := filepath.Join(jobDir, "RESULT.md")
++
++	switch p.Action {
++	case CommitSkip:
++		r.line("SKIP label=%s reason=%s %s", field(p.Label), p.Why, p.Detail)
++		return r, nil
++	case CommitRefuse:
++		r.line("REFUSED label=%s reason=%s path=%s shape=%s %s",
++			field(p.Label), p.Why, field(p.Path), field(p.Shape), p.Detail)
++		return r, nil
++	}
++
++	if env.DryRun {
++		r.line("DRY-RUN label=%s branch=%s action=%s stage=%s set-aside=%s",
++			field(p.Label), field(p.Branch), p.Action, field(stageSummary(p)), field(strings.Join(p.SetAside, ",")))
++		return r, nil
++	}
++
++	// The card's own files leave the working tree before anything is staged. They are
++	// MOVED into the job directory, never deleted: a refusal here left 88 DONE cells
++	// unharvested on 2026-09-21, and a delete would destroy the only copy of a report.
++	if len(p.SetAside) > 0 {
++		moved, err := setAsideCardScratch(jobDir, repo, p.SetAside)
++		if len(moved) > 0 {
++			r.line("SCRATCH-MOVED label=%s files=%s (the card's own files set aside in the job directory; the rest is committed)",
++				field(p.Label), field(strings.Join(moved, ",")))
++		}
++		if err != nil {
++			r.line("NOTE label=%s set-aside: %s", field(p.Label), oneline.Err(err))
++		}
++	}
++
++	if out, err := gitIn(repo, append(append([]string{}, commitAuthor...), "checkout", "-q", "-B", p.Branch)...); err != nil {
++		r.line("FAILED label=%s step=checkout branch=%s: %s", field(p.Label), field(p.Branch), oneline.Cap(out, 160))
++		return r, fmt.Errorf("checkout -B %s: %w", p.Branch, err)
++	}
++
++	if p.Action == CommitCommit {
++		if err := stageAndCommit(&r, repo, p); err != nil {
++			return r, err
++		}
++	} else {
++		r.line("BRANCH-ONLY label=%s branch=%s (the work was already committed; the branch now names it)",
++			field(p.Label), field(p.Branch))
++	}
++
++	// The scratch the CARD ADDED, dropped in a follow-up commit so the branch carries
++	// the work and nothing else.
++	dropCardScratch(&r, repo, p)
++
++	// The rebase onto the target at its LIVE tip. A target that moved under a finished
++	// card is the whole of the stale-base refusal pile (#2547); rebasing here is what
++	// stops those PRs being opened at all.
++	rebaseOntoTarget(&r, repo, p, env)
++
++	if sha, err := gitIn(repo, "rev-parse", "--short", "HEAD"); err == nil {
++		r.SHA = strings.TrimSpace(sha)
++	}
++
++	// The RESULT.md lines, WRITTEN. This is the half the bash could not do.
++	writeResultLines(&r, result, p)
++	foldReport(&r, jobDir, result, p)
++	return r, nil
++}
++
++func stageSummary(p CommitPlan) string {
++	if p.StageAll {
++		return "-A"
++	}
++	return strings.Join(p.Stage, ",")
++}
++
++// stageAndCommit stages exactly what the plan named, runs the CONTENT half of the
++// exfiltration fence over what is staged, and commits.
++func stageAndCommit(r *CommitResult, repo string, p CommitPlan) error {
++	args := []string{"add", "--"}
++	if p.StageAll {
++		args = []string{"add", "-A"}
++		r.line("WARN label=%s %s", field(p.Label), p.Warn)
++	} else {
++		args = append(args, p.Stage...)
++	}
++	if out, err := gitIn(repo, args...); err != nil {
++		// A declared path the card did not in fact change is not a reason to lose
++		// the rest of the work: git names it, the line says so, and the commit is
++		// attempted with what did stage.
++		r.line("NOTE label=%s step=add: %s", field(p.Label), oneline.Cap(out, 160))
++	}
++	staged, err := stagedPaths(repo)
++	if err != nil {
++		r.line("FAILED label=%s step=staged-list: %s", field(p.Label), oneline.Err(err))
++		return err
++	}
++	if len(staged) == 0 {
++		r.line("SKIP label=%s reason=nothing-staged (the plan's paths matched nothing in the working tree)", field(p.Label))
++		return nil
++	}
++	// THE CONTENT FENCE (#2609). The path fence is the decision's; this is the bytes.
++	// It runs BEFORE the commit and on what is STAGED, which is exactly what a push
++	// would carry. A hit resets the index and commits nothing, and prints the path and
++	// the shape and not one byte of what it matched.
++	if f, ok := stagedSecret(repo, staged); ok {
++		_, _ = gitIn(repo, "reset", "-q")
++		r.line("REFUSED label=%s reason=secret-shape path=%s shape=%s line=%d (a staged file carries the form of a credential; nothing was committed and nothing was printed of it)",
++			field(p.Label), field(f.Path), field(f.Shape), f.Line)
++		return nil
++	}
++	args = append(append([]string{}, commitAuthor...), "commit", "-q", "-m", p.Message)
++	if out, err := gitIn(repo, args...); err != nil {
++		r.line("FAILED label=%s step=commit: %s", field(p.Label), oneline.Cap(out, 160))
++		return fmt.Errorf("commit: %w", err)
++	}
++	sha, _ := gitIn(repo, "rev-parse", "--short", "HEAD")
++	r.Committed, r.SHA = true, strings.TrimSpace(sha)
++	r.line("COMMITTED label=%s branch=%s sha=%s files=%d", field(p.Label), field(p.Branch), field(r.SHA), len(staged))
++	return nil
++}
++
++func stagedPaths(repo string) ([]string, error) {
++	out, err := gitIn(repo, "diff", "--cached", "--name-only", "--no-renames")
++	if err != nil {
++		return nil, fmt.Errorf("%s: %s", oneline.Err(err), oneline.Cap(out, 160))
++	}
++	var paths []string
++	for _, l := range strings.Split(out, "\n") {
++		if l = strings.TrimSpace(l); l != "" {
++			paths = append(paths, l)
++		}
++	}
++	return paths, nil
++}
++
++// stagedSecret scans each staged file that is still on disk. A file that is not there is a
++// deletion and carries nothing.
++func stagedSecret(repo string, staged []string) (keyshape.Finding, bool) {
++	env := os.Environ()
++	for _, p := range staged {
++		findings, err := keyshape.ScanFile(filepath.Join(repo, p), env)
++		if err != nil {
++			// A file the scan could not read is NOT a clean file. The fence fails
++			// closed, the same way the harvest's does (#1838).
++			return keyshape.Finding{Shape: "unreadable", Path: p}, true
++		}
++		if len(findings) > 0 {
++			f := findings[0]
++			f.Path = p
++			return f, true
++		}
++	}
++	return keyshape.Finding{}, false
++}
++
++// setAsideCardScratch moves the card's own files out of the repository and into
++// <jobDir>/scratch-from-repo/. It never overwrites and never deletes.
++func setAsideCardScratch(jobDir, repo string, names []string) ([]string, error) {
++	dir := filepath.Join(jobDir, "scratch-from-repo")
++	if err := os.MkdirAll(dir, 0o755); err != nil {
++		return nil, err
++	}
++	var moved []string
++	var firstErr error
++	for _, n := range names {
++		src := filepath.Join(repo, n)
++		if _, err := os.Lstat(src); err != nil {
++			continue
++		}
++		dst := filepath.Join(dir, n)
++		for i := 1; ; i++ {
++			if _, err := os.Lstat(dst); os.IsNotExist(err) {
++				break
++			}
++			if i > 100 {
++				break
++			}
++			dst = filepath.Join(dir, fmt.Sprintf("%s.%d", n, i))
++		}
++		if err := os.Rename(src, dst); err != nil {
++			if firstErr == nil {
++				firstErr = err
++			}
++			continue
++		}
++		moved = append(moved, n)
++	}
++	return moved, firstErr
++}
++
++// dropCardScratch removes, in a FOLLOW-UP commit, every path the card ADDED between its
++// base and HEAD that is scratch rather than work.
++func dropCardScratch(r *CommitResult, repo string, p CommitPlan) {
++	base := p.BaseSHA
++	if base == "" {
++		return
++	}
++	if _, err := gitIn(repo, "cat-file", "-e", base+"^{commit}"); err != nil {
++		return
++	}
++	out, err := gitIn(repo, "diff", "--name-only", "--diff-filter=A", "--no-renames", base, "HEAD")
++	if err != nil {
++		return
++	}
++	var scratch []string
++	for _, l := range strings.Split(out, "\n") {
++		if l = strings.TrimSpace(l); l != "" && cardAddedScratch.MatchString(l) {
++			scratch = append(scratch, l)
++		}
++	}
++	if len(scratch) == 0 {
++		return
++	}
++	sort.Strings(scratch)
++	for _, f := range scratch {
++		_, _ = gitIn(repo, "rm", "-q", "-f", "--", f)
++	}
++	args := append(append([]string{}, commitAuthor...), "commit", "-q", "-m", "harvest: drop card scratch outside PATHS")
++	if out, err := gitIn(repo, args...); err != nil {
++		r.line("NOTE label=%s step=scratch-drop: %s", field(p.Label), oneline.Cap(out, 160))
++		return
++	}
++	r.line("SCRATCH-DROPPED label=%s files=%s", field(p.Label), field(strings.Join(scratch, ",")))
++}
++
++// rebaseOntoTarget fetches the card's target from the local mirror and rebases onto it when
++// the target has moved past the branch. A conflict aborts and prints REBASE-CONFLICT: that
++// is author work, and the card is recut rather than resolved here.
++func rebaseOntoTarget(r *CommitResult, repo string, p CommitPlan, env CommitEnv) {
++	if p.Base == "" {
++		return
++	}
++	mirror := env.mirror(p.Repo)
++	if mirror == "" {
++		r.line("NOTE label=%s rebase: no mirror for %s, so the target was not fetched and no rebase was attempted",
++			field(p.Label), field(p.Repo))
++		return
++	}
++	if out, err := gitIn(repo, "status", "--porcelain"); err == nil && strings.TrimSpace(out) != "" {
++		r.line("NOTE label=%s rebase: the working tree is not clean, so no rebase was attempted", field(p.Label))
++		return
++	}
++	if out, err := gitIn(repo, "fetch", "-q", "--no-tags", mirror, "refs/heads/"+p.Base); err != nil {
++		r.line("NOTE label=%s rebase: fetching %s from %s: %s",
++			field(p.Label), field(p.Base), field(mirror), oneline.Cap(out, 160))
++		return
++	}
++	if _, err := gitIn(repo, "merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD"); err == nil {
++		return // the branch already sits on the target's tip
++	}
++	tip, _ := gitIn(repo, "rev-parse", "--short", "FETCH_HEAD")
++	args := append(append([]string{}, commitAuthor...), "rebase", "-q", "FETCH_HEAD")
++	if _, err := gitIn(repo, args...); err != nil {
++		_, _ = gitIn(repo, "rebase", "--abort")
++		r.line("REBASE-CONFLICT label=%s base=%s@%s (the target moved under the card and the replay conflicts; this is author work: recut)",
++			field(p.Label), field(p.Base), field(strings.TrimSpace(tip)))
++		return
++	}
++	r.Rebased = true
++	r.line("REBASED label=%s base=%s@%s (the target moved under the card)",
++		field(p.Label), field(p.Base), field(strings.TrimSpace(tip)))
++}
++
++// writeResultLines writes the BASE, BRANCH and prior lines into the RESULT.md. WRITE, not
++// substitute: `sed "s#^BRANCH[: ].*#...#"` changes nothing when the line is absent and
++// exits 0, so every report-* card was told its BRANCH line had been written, 94 times, and
++// not one of them ever had one (#2549).
++func writeResultLines(r *CommitResult, result string, p CommitPlan) {
++	if p.WriteBase && p.Base != "" {
++		switch changed, err := ensureResultLine(result, "BASE", p.Base); {
++		case err != nil:
++			r.line("NOTE label=%s BASE line: %s", field(p.Label), oneline.Err(err))
++		case changed:
++			r.line("BASE-LINE label=%s base=%s (the branch the card sits on)", field(p.Label), field(p.Base))
++		}
++	}
++	if p.WriteBranch && p.Branch != "" {
++		switch changed, err := ensureResultLine(result, "BRANCH", p.Branch); {
++		case err != nil:
++			r.line("NOTE label=%s BRANCH line: %s", field(p.Label), oneline.Err(err))
++		case changed:
++			r.line("BRANCH-LINE label=%s branch=%s", field(p.Label), field(p.Branch))
++		}
++	}
++	if p.WritePrior && p.PriorPR > 0 {
++		v := fmt.Sprintf("#%d", p.PriorPR)
++		switch changed, err := ensureResultLine(result, "prior:", v); {
++		case err != nil:
++			r.line("NOTE label=%s prior line: %s", field(p.Label), oneline.Err(err))
++		case changed:
++			r.line("PRIOR-LINE label=%s prior=%s repo=%s", field(p.Label), field(v), field(p.PriorRepo))
++		}
++	}
++}
++
++// ensureResultLine is the write. It reports whether the FILE CHANGED, which is the fact the
++// verdict line is printed from -- never whether a substitution command exited 0.
++func ensureResultLine(path, name, value string) (bool, error) {
++	raw, err := os.ReadFile(path)
++	if err != nil {
++		return false, err
++	}
++	text := string(raw)
++	nl := "\n"
++	lines := strings.Split(strings.TrimSuffix(text, nl), nl)
++	want := name + " " + value
++	if strings.HasSuffix(name, ":") {
++		want = name + " " + value
++	}
++	for i, l := range lines {
++		t := strings.TrimSpace(l)
++		rest, ok := strings.CutPrefix(t, name)
++		if !ok {
++			continue
++		}
++		if !strings.HasSuffix(name, ":") {
++			if rest != "" && rest[0] != ' ' && rest[0] != '\t' && rest[0] != ':' {
++				continue
++			}
++		}
++		if t == want {
++			return false, nil
++		}
++		lines[i] = want
++		return true, os.WriteFile(path, []byte(strings.Join(lines, nl)+nl), 0o644)
++	}
++	out := strings.TrimSuffix(text, nl)
++	if out != "" {
++		out += nl
++	}
++	out += want + nl
++	return true, os.WriteFile(path, []byte(out), 0o644)
++}
++
++// foldReport appends at most commitReportFold bytes of the card's REPORT.md to its
++// RESULT.md, so the PR body the harvest builds carries the card's own report.
++func foldReport(r *CommitResult, jobDir, result string, p CommitPlan) {
++	if !p.FoldReport {
++		return
++	}
++	src := commitReportPath(jobDir)
++	if src == "" {
++		return
++	}
++	raw, err := os.ReadFile(src)
++	if err != nil {
++		return
++	}
++	if len(raw) > commitReportFold {
++		raw = raw[:commitReportFold]
++	}
++	f, err := os.OpenFile(result, os.O_APPEND|os.O_WRONLY, 0o644)
++	if err != nil {
++		r.line("NOTE label=%s report fold: %s", field(p.Label), oneline.Err(err))
++		return
++	}
++	defer f.Close()
++	fmt.Fprintf(f, "\n--- REPORT (the card, at most %d bytes) ---\n%s\n", commitReportFold, raw)
++	r.line("REPORT-FOLDED label=%s bytes=%d", field(p.Label), len(raw))
++}
++
++// commitReportPath is where a card's REPORT.md may be: beside the RESULT.md, beside the
++// `jobs/` directory, or in the slot above it. The first that exists.
++func commitReportPath(jobDir string) string {
++	for _, c := range []string{
++		filepath.Join(jobDir, "REPORT.md"),
++		filepath.Join(jobDir, "..", "REPORT.md"),
++		filepath.Join(jobDir, "..", "..", "REPORT.md"),
++	} {
++		if st, err := os.Stat(c); err == nil && !st.IsDir() {
++			return c
++		}
++	}
++	return ""
++}
++
++// ReadCommitJob reads ONE job directory into the value CommitDecision judges. It is the
++// only place the filesystem is read, and it decides nothing: every rule is in
++// harvestcommit.go, against what this returns.
++func ReadCommitJob(jobDir string, cfg CommitScan) (CommitJob, error) {
++	job := CommitJob{
++		Label:        filepath.Base(jobDir),
++		DraftOnly:    cfg.DraftOnly,
++		FallbackBase: cfg.Base,
++	}
++	repo := filepath.Join(jobDir, "repo")
++	if st, err := os.Stat(filepath.Join(repo, ".git")); err == nil && (st.IsDir() || st.Mode().IsRegular()) {
++		job.HasRepo = true
++	}
++	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
++	if err == nil {
++		job.HasResult = true
++		lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
++		if len(lines) > 0 {
++			job.Line1 = lines[0]
++		}
++		if len(lines) > 1 {
++			job.Line2 = lines[1]
++		}
++		job.ResultBranch = resultField(lines, "BRANCH")
++		job.ResultBase = resultField(lines, "BASE")
++		job.ResultRepo = strings.TrimPrefix(resultField(lines, "REPO"), "github.com/")
++		job.HasBranchLine = job.ResultBranch != ""
++		job.HasBaseLine = job.ResultBase != ""
++		job.HasPriorLine = resultField(lines, "prior:") != "" || hasLinePrefix(lines, "prior:")
++		job.HasClaimLine = hasLinePrefix(lines, "CLAIM:")
++	} else if !os.IsNotExist(err) {
++		return job, err
++	}
++	job.HasReportToFold = commitReportPath(jobDir) != ""
++	if job.HasRepo {
++		changed, err := readChangedFiles(repo)
++		if err != nil {
++			return job, err
++		}
++		job.Changed = changed
++	}
++	label := strings.TrimPrefix(job.Label, "card-00-")
++	if card := commitCardPath(cfg.Cards, job.Label, label); card != "" {
++		if raw, err := os.ReadFile(card); err == nil {
++			job.CardFound = true
++			if globs, declared := parsePATHS(string(raw)); declared {
++				job.CardPaths = globs
++			}
++			// THE CARD'S BASE WINS over the RESULT.md's (the bash's `rr2=card`
++			// arm): the card is what the pulse cut, the RESULT.md is what a
++			// worker wrote, and only one of those two is evidence. The RESULT
++			// line is then WRITTEN to match, which is what BASE-LINE reports.
++			job.CardBase = harvestTargetName(cardField(string(raw), "BASE"))
++		}
++	}
++	return job, nil
++}
++
++func hasLinePrefix(lines []string, prefix string) bool {
++	for _, l := range lines {
++		if strings.HasPrefix(strings.TrimSpace(l), prefix) {
++			return true
++		}
++	}
++	return false
++}
++
++func cardField(text, name string) string {
++	for _, l := range strings.Split(text, "\n") {
++		t := strings.TrimSpace(l)
++		if rest, ok := strings.CutPrefix(t, name+":"); ok {
++			return strings.TrimSpace(rest)
++		}
++		if rest, ok := strings.CutPrefix(t, name+" "); ok {
++			return strings.TrimSpace(rest)
++		}
++	}
++	return ""
++}
++
++// commitCardPath finds the card for a label under the cards directories the caller named.
++// The bash looked in exactly one place under exactly one name; a label that had been cut
++// with a different prefix simply had no card and was staged `-A` with nobody the wiser.
++func commitCardPath(dirs []string, names ...string) string {
++	for _, d := range dirs {
++		if strings.TrimSpace(d) == "" {
++			continue
++		}
++		for _, n := range names {
++			for _, c := range []string{n + ".md", "card-00-" + n + ".md"} {
++				p := filepath.Join(d, c)
++				if st, err := os.Stat(p); err == nil && !st.IsDir() {
++					return p
++				}
++			}
++		}
++	}
++	return ""
++}
++
++// readChangedFiles is `git status --porcelain -z` in the card's repository, with each
++// path's size. `-z` is not a detail: a path with a space, a quote or a newline in it is
++// exactly what broke the bash's `awk '{print $2}'`, and a rename prints two paths.
++func readChangedFiles(repo string) ([]ChangedFile, error) {
++	out, err := gitIn(repo, "status", "--porcelain", "-z", "--untracked-files=all")
++	if err != nil {
++		return nil, fmt.Errorf("git status in %s: %s", field(repo), oneline.Err(err))
++	}
++	var files []ChangedFile
++	seen := map[string]bool{}
++	fields := strings.Split(out, "\x00")
++	for i := 0; i < len(fields); i++ {
++		e := fields[i]
++		if len(e) < 4 {
++			continue
++		}
++		xy, p := e[:2], e[3:]
++		if xy[0] == 'R' || xy[1] == 'R' {
++			// `R  <new>\0<old>`: the NEW name is on this entry and the old one is
++			// the next field. Both are changed paths.
++			if i+1 < len(fields) && fields[i+1] != "" {
++				files = appendChanged(files, seen, repo, fields[i+1])
++				i++
++			}
++		}
++		files = appendChanged(files, seen, repo, p)
++	}
++	sort.Slice(files, func(a, b int) bool { return files[a].Path < files[b].Path })
++	return files, nil
++}
++
++func appendChanged(files []ChangedFile, seen map[string]bool, repo, p string) []ChangedFile {
++	p = strings.TrimSpace(p)
++	p = strings.TrimSuffix(p, "/")
++	if p == "" || seen[p] {
++		return files
++	}
++	seen[p] = true
++	var size int64
++	if st, err := os.Lstat(filepath.Join(repo, p)); err == nil && st.Mode().IsRegular() {
++		size = st.Size()
++	}
++	return append(files, ChangedFile{Path: p, Size: size})
++}
++
++// CommitScan is what a walk of a root needs: where the cards are, the fallback target, and
++// the DRAFT-ONLY prefixes.
++type CommitScan struct {
++	Cards     []string
++	Base      string
++	DraftOnly []string
++}
++
++// CommitJobDirs is every job directory under a root, in a stable order:
++// `<root>/<slot>/jobs/<label>`, which is the shape `harvest --bench`'s own listing walks.
++//
++// TWO NARROWINGS OF THE BASH ARE GONE, both of them silent. It globbed `*card-*` over the
++// slot names, so a slot cut under any other name was not looked at and nothing said so;
++// the slot is identified here by HAVING a `jobs/` directory, which is a fact rather than a
++// naming convention. And it took `ls -d $d/jobs/* | head -1`, so a slot holding two jobs
++// lost one of them with no line about it. Every job under every slot, or a reason.
++func CommitJobDirs(root string) ([]string, error) {
++	slots, err := os.ReadDir(root)
++	if err != nil {
++		return nil, err
++	}
++	var out []string
++	for _, s := range slots {
++		if !s.IsDir() {
++			continue
++		}
++		jobs, err := os.ReadDir(filepath.Join(root, s.Name(), "jobs"))
++		if err != nil {
++			continue
++		}
++		for _, j := range jobs {
++			if j.IsDir() {
++				out = append(out, filepath.Join(root, s.Name(), "jobs", j.Name()))
++			}
++		}
++	}
++	sort.Strings(out)
++	return out, nil
++}
++
++// ReadDraftOnly reads the DRAFT-ONLY label prefixes from a file, one per line, `#` a
++// comment. The bash carried nine of them inline in a single-quoted shell string inside an
++// ssh, which is a policy nobody could change without risking the whole step.
++func ReadDraftOnly(path string) ([]string, error) {
++	if strings.TrimSpace(path) == "" {
++		return nil, nil
++	}
++	raw, err := os.ReadFile(path)
++	if err != nil {
++		return nil, err
++	}
++	var out []string
++	for _, l := range strings.Split(string(raw), "\n") {
++		l = strings.TrimSpace(l)
++		if l == "" || strings.HasPrefix(l, "#") {
++			continue
++		}
++		out = append(out, l)
++	}
++	return out, nil
++}
++
++// CommitInput is the `nova-pulse commit` verb, held apart from flag parsing.
++type CommitInput struct {
++	Root      string
++	Bench     string
++	Cards     []string
++	Mirrors   map[string]string
++	DraftOnly string
++	Base      string
++	Max       int
++	DryRun    bool
++	Stdout    io.Writer
++	Stderr    io.Writer
++}
++
++// Commit is the verb: walk the root, decide each job, apply each plan, print EVERY verdict
++// one line at a time, and finish with the counts. It is what the coordinator's
++// `printf '%s\n' "$commit_step" | ssh <bench> bash -s` did, in one binary with a test.
++func Commit(in CommitInput) int {
++	if strings.TrimSpace(in.Root) == "" {
++		return refusal(in.Stderr, "COMMIT", fmt.Errorf("missing --root; name the swarm root whose job directories this folds"))
++	}
++	draft, err := ReadDraftOnly(in.DraftOnly)
++	if err != nil {
++		return refusal(in.Stderr, "COMMIT", fmt.Errorf("--draft-only %s: %s", field(in.DraftOnly), oneline.Err(err)))
++	}
++	dirs, err := CommitJobDirs(in.Root)
++	if err != nil {
++		return refusal(in.Stderr, "COMMIT", fmt.Errorf("--root %s could not be read: %s", field(in.Root), oneline.Err(err)))
++	}
++	cfg := CommitScan{Cards: in.Cards, Base: in.Base, DraftOnly: draft}
++	env := CommitEnv{Mirrors: in.Mirrors, DryRun: in.DryRun}
++	lines := bound(in.Stdout, in.Max)
++
++	var committed, skipped, refused, rebased, failed int
++	for _, dir := range dirs {
++		job, err := ReadCommitJob(dir, cfg)
++		if err != nil {
++			failed++
++			lines.Line(fmt.Sprintf("COMMIT FAILED bench=%s label=%s reason=unreadable-job %s",
++				field(in.Bench), field(filepath.Base(dir)), oneline.Err(err)))
++			continue
++		}
++		plan := CommitDecision(job)
++		res, applyErr := ApplyCommitPlan(dir, plan, env)
++		for _, l := range res.Lines {
++			lines.Line("COMMIT " + insertBench(l, in.Bench))
++		}
++		switch {
++		case applyErr != nil:
++			failed++
++		case plan.Action == CommitSkip:
++			skipped++
++		case plan.Action == CommitRefuse:
++			refused++
++		case res.Committed:
++			committed++
++		}
++		if res.Rebased {
++			rebased++
++		}
++	}
++	lines.More()
++	fmt.Fprintf(in.Stdout, "COMMIT BENCH %s bench=%s jobs=%d committed=%d skipped=%d refused=%d rebased=%d failed=%d dry-run=%s\n",
++		okOrRed(failed), field(in.Bench), len(dirs), committed, skipped, refused, rebased, failed, yesNo(in.DryRun))
++	if failed > 0 {
++		return 1
++	}
++	return 0
++}
++
++// insertBench puts `bench=<name>` after the verdict token, so every line carries the bench
++// the way the harvest's lines do.
++func insertBench(line, bench string) string {
++	tok, rest, ok := strings.Cut(line, " ")
++	if !ok {
++		return line
++	}
++	return tok + " bench=" + field(bench) + " " + rest
++}
+diff --git a/internal/pulse/harvestcommiteffect_test.go b/internal/pulse/harvestcommiteffect_test.go
+new file mode 100644
+index 000000000..ef136a548
+--- /dev/null
++++ b/internal/pulse/harvestcommiteffect_test.go
+@@ -0,0 +1,551 @@
++package pulse
++
++import (
++	"bytes"
++	"fmt"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++// THE CONTROLS FOR THE COMMIT STEP (nova-tools #2549), against REAL git repositories under
++// t.TempDir(). The bash this replaces had no test, and the way it broke each time was that
++// nobody could run it anywhere but the fleet.
++//
++// The POSITIVE control is TestApplyCommitPlanFixtureJob: a fixture job directory goes in,
++// and a branch whose two-dot diff against the base is EXACTLY the card's PATHS comes out.
++// The NEGATIVE controls are beside it, one per fence.
++
++// commitStepFixture is one job directory: a mirror repository, a clone of it as the card's
++// repo/, a RESULT.md and a card.
++type commitStepFixture struct {
++	t      *testing.T
++	root   string // the swarm root: <root>/<slot>/jobs/<label>
++	mirror string // the local "mirror" the rebase target is fetched from
++	jobDir string
++	repo   string
++	cards  string
++	base   string // the sha the card was cut at
++	label  string
++}
++
++func cgit(t *testing.T, dir string, args ...string) string {
++	t.Helper()
++	full := append([]string{"-C", dir,
++		"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
++		"-c", "commit.gpgsign=false", "-c", "init.defaultBranch=dev"}, args...)
++	cmd := exec.Command("git", full...)
++	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
++		"GIT_AUTHOR_DATE=2026-09-22T12:00:00Z", "GIT_COMMITTER_DATE=2026-09-22T12:00:00Z")
++	out, err := cmd.CombinedOutput()
++	if err != nil {
++		t.Fatalf("git %s in %s: %v: %s", strings.Join(args, " "), dir, err, out)
++	}
++	return strings.TrimSpace(string(out))
++}
++
++func cwrite(t *testing.T, path, body string) {
++	t.Helper()
++	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
++		t.Fatal(err)
++	}
++}
++
++// newCommitFixture lays down the mirror, the job directory and the card. `paths` is what
++// the card declares; the working tree carries a change to each of them.
++func newCommitFixture(t *testing.T, label, line2 string, paths []string) *commitStepFixture {
++	t.Helper()
++	tmp := t.TempDir()
++	f := &commitStepFixture{t: t, label: label,
++		root:   filepath.Join(tmp, "swarm"),
++		mirror: filepath.Join(tmp, "mirror"),
++		cards:  filepath.Join(tmp, "cards"),
++	}
++	// The mirror: one commit on dev, carrying every declared path.
++	if err := os.MkdirAll(f.mirror, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	cgit(t, f.mirror, "init", "-q")
++	cgit(t, f.mirror, "checkout", "-q", "-B", "dev")
++	cwrite(t, filepath.Join(f.mirror, "README.md"), "the fixture repository\n")
++	for _, p := range paths {
++		cwrite(t, filepath.Join(f.mirror, p), "package x // base\n")
++	}
++	cgit(t, f.mirror, "add", "-A")
++	cgit(t, f.mirror, "commit", "-q", "-m", "base")
++	f.base = cgit(t, f.mirror, "rev-parse", "HEAD")
++
++	f.jobDir = filepath.Join(f.root, "slot-"+label, "jobs", label)
++	f.repo = filepath.Join(f.jobDir, "repo")
++	if err := os.MkdirAll(f.jobDir, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	cgit(t, tmp, "clone", "-q", f.mirror, f.repo)
++	cgit(t, f.repo, "checkout", "-q", "dev")
++
++	short := strings.TrimSpace(cgit(t, f.repo, "rev-parse", "--short=12", "HEAD"))
++	cwrite(t, filepath.Join(f.jobDir, "RESULT.md"), fmt.Sprintf(
++		"RESULT %s sha=%s -- the card's own line 1\n%s\nSCHEMA: v2\nREPO mas-bandwidth/nova-tools\nPATHS %s\n",
++		label, short, line2, strings.Join(paths, " ")))
++	cwrite(t, filepath.Join(f.cards, label+".md"), fmt.Sprintf(
++		"RESULT %s sha=%s -- the card\nKIND: fix\nBASE: dev\nPATHS: %s\n",
++		label, short, strings.Join(paths, " ")))
++	return f
++}
++
++// change writes a card's own work into the working tree.
++func (f *commitStepFixture) change(rel, body string) {
++	f.t.Helper()
++	cwrite(f.t, filepath.Join(f.repo, rel), body)
++}
++
++func (f *commitStepFixture) scan() CommitScan {
++	return CommitScan{Cards: []string{f.cards}, Base: "dev"}
++}
++
++func (f *commitStepFixture) env() CommitEnv {
++	return CommitEnv{Mirrors: map[string]string{"": f.mirror}}
++}
++
++// apply is the whole step over this fixture: read, decide, act.
++func (f *commitStepFixture) apply() (CommitPlan, CommitResult) {
++	f.t.Helper()
++	job, err := ReadCommitJob(f.jobDir, f.scan())
++	if err != nil {
++		f.t.Fatalf("ReadCommitJob: %v", err)
++	}
++	plan := CommitDecision(job)
++	res, err := ApplyCommitPlan(f.jobDir, plan, f.env())
++	if err != nil {
++		f.t.Fatalf("ApplyCommitPlan: %v (lines: %s)", err, strings.Join(res.Lines, " | "))
++	}
++	return plan, res
++}
++
++// diffAgainstBase is `git diff --name-only <base>..HEAD` in the card's repo.
++func (f *commitStepFixture) diffAgainstBase(base string) []string {
++	f.t.Helper()
++	out := cgit(f.t, f.repo, "diff", "--name-only", "--no-renames", base+"..HEAD")
++	var names []string
++	for _, l := range strings.Split(out, "\n") {
++		if l = strings.TrimSpace(l); l != "" {
++			names = append(names, l)
++		}
++	}
++	return names
++}
++
++func hasVerdict(lines []string, token string) bool {
++	for _, l := range lines {
++		if strings.HasPrefix(l, token+" ") || l == token {
++			return true
++		}
++	}
++	return false
++}
++
++func verdictLine(lines []string, token string) string {
++	for _, l := range lines {
++		if strings.HasPrefix(l, token+" ") {
++			return l
++		}
++	}
++	return ""
++}
++
++// TestApplyCommitPlanFixtureJob IS THE POSITIVE CONTROL. A fixture job goes in; a branch
++// carrying exactly the card's declared PATHS comes out, and the stray notes.txt the card
++// left in the working tree is not in it.
++func TestApplyCommitPlanFixtureJob(t *testing.T) {
++	paths := []string{"internal/pulse/work.go"}
++	f := newCommitFixture(t, "fix-1", "DONE (both runs green)", paths)
++	f.change("internal/pulse/work.go", "package x // the card's work\n")
++	// Two strays the branch must not carry, for two different reasons: `notes.txt` is
++	// the card's OWN scratch and is set aside, and `stray/extra.go` is an ordinary file
++	// the card never declared, which the A4 staging rule simply does not stage.
++	f.change("notes.txt", "scratch the card left behind\n")
++	f.change("stray/extra.go", "package stray // undeclared\n")
++
++	plan, res := f.apply()
++	if plan.Action != CommitCommit {
++		t.Fatalf("action = %s, want COMMIT (%s)", plan.Action, plan.Detail)
++	}
++	if !res.Committed {
++		t.Fatalf("nothing was committed; lines: %s", strings.Join(res.Lines, " | "))
++	}
++	if got := cgit(t, f.repo, "rev-parse", "--abbrev-ref", "HEAD"); got != "rowan/fix-1" {
++		t.Errorf("branch = %q, want rowan/fix-1", got)
++	}
++	if got := cgit(t, f.repo, "log", "-1", "--pretty=%s"); !strings.HasPrefix(got, "RESULT fix-1 sha=") {
++		t.Errorf("commit subject = %q, want RESULT.md line 1", got)
++	}
++	if got := strings.Join(f.diffAgainstBase(f.base), ","); got != strings.Join(paths, ",") {
++		t.Errorf("two-dot diff = %q, want EXACTLY the card's PATHS %q", got, strings.Join(paths, ","))
++	}
++	if !hasVerdict(res.Lines, "COMMITTED") {
++		t.Errorf("no COMMITTED verdict line; got: %s", strings.Join(res.Lines, " | "))
++	}
++	// The BRANCH line was absent from the RESULT.md and must have been WRITTEN, which
++	// is the fact `sed "s#^BRANCH[: ].*#...#"` could never establish (#2549).
++	if !hasVerdict(res.Lines, "BRANCH-LINE") {
++		t.Errorf("no BRANCH-LINE verdict; got: %s", strings.Join(res.Lines, " | "))
++	}
++	raw, err := os.ReadFile(filepath.Join(f.jobDir, "RESULT.md"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !strings.Contains(string(raw), "\nBRANCH rowan/fix-1\n") {
++		t.Errorf("the RESULT.md has no BRANCH line after the step:\n%s", raw)
++	}
++	if !strings.Contains(string(raw), "\nBASE dev\n") {
++		t.Errorf("the RESULT.md has no BASE line after the step:\n%s", raw)
++	}
++	// Nothing was DELETED. The card's own notes.txt is set aside inside the job
++	// directory and the undeclared file is still in the working tree, untracked.
++	if _, err := os.Stat(filepath.Join(f.jobDir, "scratch-from-repo", "notes.txt")); err != nil {
++		t.Errorf("the card's notes.txt was not set aside in the job directory: %v", err)
++	}
++	if _, err := os.Stat(filepath.Join(f.repo, "stray/extra.go")); err != nil {
++		t.Errorf("the undeclared file was removed from the working tree: %v", err)
++	}
++}
++
++// TestApplyCommitPlanRebasesOntoAMovedTarget: the target moved under a finished card, which
++// is the whole of the stale-base refusal pile. The branch is replayed onto the live tip and
++// its two-dot diff is STILL exactly the card's PATHS.
++func TestApplyCommitPlanRebasesOntoAMovedTarget(t *testing.T) {
++	paths := []string{"internal/pulse/work.go"}
++	f := newCommitFixture(t, "fix-2", "DONE", paths)
++	f.change("internal/pulse/work.go", "package x // the card's work\n")
++
++	// dev moves one commit ahead in the mirror, in a file the card never touched.
++	cwrite(t, filepath.Join(f.mirror, "docs/LATER.md"), "a later landing\n")
++	cgit(t, f.mirror, "add", "-A")
++	cgit(t, f.mirror, "commit", "-q", "-m", "a later landing on dev")
++	moved := cgit(t, f.mirror, "rev-parse", "HEAD")
++
++	_, res := f.apply()
++	if !res.Rebased {
++		t.Fatalf("the branch was not rebased onto the moved target; lines: %s", strings.Join(res.Lines, " | "))
++	}
++	if !hasVerdict(res.Lines, "REBASED") {
++		t.Errorf("no REBASED verdict line; got: %s", strings.Join(res.Lines, " | "))
++	}
++	if got := strings.Join(f.diffAgainstBase(moved), ","); got != strings.Join(paths, ",") {
++		t.Errorf("two-dot diff against the MOVED target = %q, want exactly %q", got, strings.Join(paths, ","))
++	}
++}
++
++// TestApplyCommitPlanRebaseConflictIsPrintedAndAborted: a replay that conflicts is author
++// work. It aborts, prints REBASE-CONFLICT and leaves the branch where it was.
++func TestApplyCommitPlanRebaseConflictIsPrintedAndAborted(t *testing.T) {
++	paths := []string{"internal/pulse/work.go"}
++	f := newCommitFixture(t, "fix-3", "DONE", paths)
++	f.change("internal/pulse/work.go", "package x // the card's work\n")
++
++	cwrite(t, filepath.Join(f.mirror, "internal/pulse/work.go"), "package x // somebody else got there first\n")
++	cgit(t, f.mirror, "add", "-A")
++	cgit(t, f.mirror, "commit", "-q", "-m", "a conflicting landing on dev")
++
++	_, res := f.apply()
++	if !hasVerdict(res.Lines, "REBASE-CONFLICT") {
++		t.Fatalf("no REBASE-CONFLICT verdict; got: %s", strings.Join(res.Lines, " | "))
++	}
++	if res.Rebased {
++		t.Error("Rebased is true although the replay conflicted")
++	}
++	if out := cgit(t, f.repo, "status", "--porcelain"); strings.Contains(out, "UU ") {
++		t.Errorf("the rebase was not aborted; the tree is left in conflict:\n%s", out)
++	}
++	if got := cgit(t, f.repo, "rev-parse", "--abbrev-ref", "HEAD"); got != "rowan/fix-3" {
++		t.Errorf("branch = %q after an aborted rebase, want rowan/fix-3", got)
++	}
++}
++
++// TestApplyCommitPlanSkipsDONEish IS A NEGATIVE CONTROL: the prefix rule, on a real job.
++// `DONEish` produces a SKIP line, no branch and no commit.
++func TestApplyCommitPlanSkipsDONEish(t *testing.T) {
++	f := newCommitFixture(t, "fix-4", "DONEish", []string{"internal/pulse/work.go"})
++	f.change("internal/pulse/work.go", "package x // the card's work\n")
++
++	plan, res := f.apply()
++	if plan.Action != CommitSkip || plan.Why != CommitWhyNotDone {
++		t.Fatalf("action/why = %s/%s, want SKIP/not-done", plan.Action, plan.Why)
++	}
++	if !hasVerdict(res.Lines, "SKIP") {
++		t.Errorf("no SKIP verdict line; got: %s", strings.Join(res.Lines, " | "))
++	}
++	if out := cgit(t, f.repo, "branch", "--list", "rowan/fix-4"); strings.TrimSpace(out) != "" {
++		t.Errorf("a branch was cut for a DONEish card: %q", out)
++	}
++	if got := cgit(t, f.repo, "rev-parse", "HEAD"); got != f.base {
++		t.Errorf("HEAD moved for a DONEish card: %q", got)
++	}
++}
++
++// TestApplyCommitPlanRefusesAFileOverAMegabyte IS A NEGATIVE CONTROL: 1.1 MB, refused and
++// named, nothing committed.
++func TestApplyCommitPlanRefusesAFileOverAMegabyte(t *testing.T) {
++	f := newCommitFixture(t, "fix-5", "DONE", []string{"internal/pulse/work.go"})
++	f.change("internal/pulse/work.go", "package x // the card's work\n")
++	f.change("testdata/dump.bin", string(bytes.Repeat([]byte("x"), 1_100_000)))
++
++	plan, res := f.apply()
++	if plan.Action != CommitRefuse || plan.Why != CommitWhyTooBig {
++		t.Fatalf("action/why = %s/%s, want REFUSED/too-big", plan.Action, plan.Why)
++	}
++	line := verdictLine(res.Lines, "REFUSED")
++	if !strings.Contains(line, "testdata/dump.bin") {
++		t.Errorf("the refusal does not name the file: %q", line)
++	}
++	if got := cgit(t, f.repo, "rev-parse", "HEAD"); got != f.base {
++		t.Error("something was committed although the job was refused")
++	}
++}
++
++// TestApplyCommitPlanRefusesAKeyFile IS A NEGATIVE CONTROL for the exfiltration fence
++// (#2609), both halves: the PATH shape, decided without opening the file, and the CONTENT
++// shape, caught on the staged bytes with an ordinary path. Neither prints what it matched.
++func TestApplyCommitPlanRefusesAKeyFile(t *testing.T) {
++	t.Run("by path shape", func(t *testing.T) {
++		f := newCommitFixture(t, "fix-6", "DONE", []string{"internal/pulse/work.go"})
++		f.change("internal/pulse/work.go", "package x // the card's work\n")
++		f.change("infra/deploy.key", "AGE-SECRET-KEY-1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ\n")
++
++		plan, res := f.apply()
++		if plan.Action != CommitRefuse || plan.Why != CommitWhySecretPath {
++			t.Fatalf("action/why = %s/%s, want REFUSED/secret-path", plan.Action, plan.Why)
++		}
++		line := verdictLine(res.Lines, "REFUSED")
++		if !strings.Contains(line, "infra/deploy.key") || !strings.Contains(line, "key-file") {
++			t.Errorf("the refusal must name the path and the shape: %q", line)
++		}
++		if strings.Contains(line, "AGE-SECRET-KEY") {
++			t.Errorf("the refusal printed the matched text: %q", line)
++		}
++		if got := cgit(t, f.repo, "rev-parse", "HEAD"); got != f.base {
++			t.Error("something was committed although a credential-shaped path was changed")
++		}
++	})
++
++	t.Run("by content shape under an ordinary path", func(t *testing.T) {
++		paths := []string{"internal/pulse/work.go"}
++		f := newCommitFixture(t, "fix-7", "DONE", paths)
++		f.change("internal/pulse/work.go",
++			"package x\n\nconst leaked = \"AGE-SECRET-KEY-1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ\"\n")
++
++		plan, res := f.apply()
++		if plan.Action != CommitCommit {
++			t.Fatalf("action = %s, want the DECISION to allow it: the path is ordinary", plan.Action)
++		}
++		if res.Committed {
++			t.Fatalf("the commit went through although a staged file carries a key shape; lines: %s",
++				strings.Join(res.Lines, " | "))
++		}
++		line := verdictLine(res.Lines, "REFUSED")
++		if !strings.Contains(line, "secret-shape") || !strings.Contains(line, "age-secret-key") {
++			t.Errorf("the refusal must name the shape: %q", line)
++		}
++		if strings.Contains(line, "AGE-SECRET-KEY-1Q") {
++			t.Errorf("the refusal printed the matched text: %q", line)
++		}
++		if out := cgit(t, f.repo, "diff", "--cached", "--name-only"); strings.TrimSpace(out) != "" {
++			t.Errorf("the index was left staged after a refusal: %q", out)
++		}
++	})
++}
++
++// TestApplyCommitPlanDropsCardScratch IS A NEGATIVE CONTROL for the follow-up commit: the
++// card itself committed a notes.txt and a build artefact, and the branch must not carry
++// them. The two-dot diff against the base ends as exactly the card's PATHS.
++func TestApplyCommitPlanDropsCardScratch(t *testing.T) {
++	paths := []string{"internal/pulse/work.go"}
++	f := newCommitFixture(t, "fix-8", "DONE", paths)
++	// The card's OWN earlier commit, carrying scratch beside the work.
++	f.change("internal/pulse/work.go", "package x // the card's work\n")
++	f.change("notes.txt", "the card's own notes\n")
++	f.change("build/out.o", "an object file\n")
++	cgit(t, f.repo, "checkout", "-q", "-B", "rowan/fix-8")
++	cgit(t, f.repo, "add", "-A")
++	cgit(t, f.repo, "commit", "-q", "-m", "the card's own commit, scratch and all")
++
++	plan, res := f.apply()
++	if plan.Action != CommitBranchOnly {
++		t.Fatalf("action = %s, want BRANCH-ONLY: the work is already committed", plan.Action)
++	}
++	if !hasVerdict(res.Lines, "SCRATCH-DROPPED") {
++		t.Fatalf("no SCRATCH-DROPPED verdict; got: %s", strings.Join(res.Lines, " | "))
++	}
++	line := verdictLine(res.Lines, "SCRATCH-DROPPED")
++	if !strings.Contains(line, "notes.txt") || !strings.Contains(line, "build/out.o") {
++		t.Errorf("the drop line does not name what it dropped: %q", line)
++	}
++	if got := strings.Join(f.diffAgainstBase(f.base), ","); got != strings.Join(paths, ",") {
++		t.Errorf("two-dot diff = %q, want exactly the card's PATHS %q after the drop", got, strings.Join(paths, ","))
++	}
++}
++
++// TestApplyCommitPlanSetsCardScratchAside: the card's own files in the working tree are
++// MOVED into the job directory, never committed and never deleted. Refusing the whole job
++// over one of these left 88 DONE cells unharvested on 2026-09-21.
++func TestApplyCommitPlanSetsCardScratchAside(t *testing.T) {
++	paths := []string{"internal/pulse/work.go"}
++	f := newCommitFixture(t, "fix-9", "DONE", paths)
++	f.change("internal/pulse/work.go", "package x // the card's work\n")
++	f.change("RESULT.md", "a RESULT.md the worker wrote in the wrong directory\n")
++	f.change("usage.tsv", "tokens\t100\n")
++
++	_, res := f.apply()
++	if !hasVerdict(res.Lines, "SCRATCH-MOVED") {
++		t.Fatalf("no SCRATCH-MOVED verdict; got: %s", strings.Join(res.Lines, " | "))
++	}
++	for _, n := range []string{"RESULT.md", "usage.tsv"} {
++		if _, err := os.Stat(filepath.Join(f.repo, n)); err == nil {
++			t.Errorf("%s is still in the repository", n)
++		}
++		aside := filepath.Join(f.jobDir, "scratch-from-repo", n)
++		if _, err := os.Stat(aside); err != nil {
++			t.Errorf("%s was not set aside in the job directory: %v", n, err)
++		}
++	}
++	// The job's OWN RESULT.md, one level up, is untouched: the one that moved is the
++	// stray copy inside repo/.
++	raw, err := os.ReadFile(filepath.Join(f.jobDir, "RESULT.md"))
++	if err != nil || !strings.HasPrefix(string(raw), "RESULT fix-9 ") {
++		t.Errorf("the job's own RESULT.md was disturbed: %v %q", err, string(raw))
++	}
++	if got := strings.Join(f.diffAgainstBase(f.base), ","); got != strings.Join(paths, ",") {
++		t.Errorf("two-dot diff = %q, want exactly %q", got, strings.Join(paths, ","))
++	}
++}
++
++// TestApplyCommitPlanDraftOnlyFromAFile: the nine prefixes that lived inside a
++// single-quoted shell string inside an ssh are a FILE, and a card matching one is skipped.
++func TestApplyCommitPlanDraftOnlyFromAFile(t *testing.T) {
++	f := newCommitFixture(t, "fix-nova-tools-2454-r1", "DONE", []string{"internal/pulse/work.go"})
++	f.change("internal/pulse/work.go", "package x // the card's work\n")
++	list := filepath.Join(t.TempDir(), "DRAFT-ONLY")
++	cwrite(t, list, "# Glenn 2026-09-21: friends build the tooling\nfix-nova-tools-2454-*\nfix-nova-tools-2416-*\n")
++
++	draft, err := ReadDraftOnly(list)
++	if err != nil {
++		t.Fatal(err)
++	}
++	cfg := f.scan()
++	cfg.DraftOnly = draft
++	job, err := ReadCommitJob(f.jobDir, cfg)
++	if err != nil {
++		t.Fatal(err)
++	}
++	plan := CommitDecision(job)
++	if plan.Action != CommitSkip || plan.Why != CommitWhyDraftOnly {
++		t.Fatalf("action/why = %s/%s, want SKIP/draft-only", plan.Action, plan.Why)
++	}
++}
++
++// TestApplyCommitPlanDryRunChangesNothing: a rehearsal prints and touches nothing.
++func TestApplyCommitPlanDryRunChangesNothing(t *testing.T) {
++	f := newCommitFixture(t, "fix-10", "DONE", []string{"internal/pulse/work.go"})
++	f.change("internal/pulse/work.go", "package x // the card's work\n")
++
++	job, err := ReadCommitJob(f.jobDir, f.scan())
++	if err != nil {
++		t.Fatal(err)
++	}
++	env := f.env()
++	env.DryRun = true
++	res, err := ApplyCommitPlan(f.jobDir, CommitDecision(job), env)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !hasVerdict(res.Lines, "DRY-RUN") {
++		t.Errorf("no DRY-RUN line; got: %s", strings.Join(res.Lines, " | "))
++	}
++	if got := cgit(t, f.repo, "rev-parse", "HEAD"); got != f.base {
++		t.Error("a dry run moved HEAD")
++	}
++	if got := cgit(t, f.repo, "rev-parse", "--abbrev-ref", "HEAD"); got != "dev" {
++		t.Errorf("a dry run changed the branch to %q", got)
++	}
++}
++
++// TestReadChangedFilesHandlesAPathWithASpace: `git status --porcelain | awk '{print $2}'`
++// loses the tail of a path with a space in it, which is one of the ways the bash silently
++// staged or refused the wrong thing. `-z` and no awk.
++func TestReadChangedFilesHandlesAPathWithASpace(t *testing.T) {
++	f := newCommitFixture(t, "fix-11", "DONE", []string{"internal/pulse/work.go"})
++	f.change("docs/a file with spaces.md", "hello\n")
++
++	files, err := readChangedFiles(f.repo)
++	if err != nil {
++		t.Fatal(err)
++	}
++	found := false
++	for _, c := range files {
++		if c.Path == "docs/a file with spaces.md" {
++			found = true
++		}
++	}
++	if !found {
++		t.Errorf("the path with spaces was not read whole: %+v", files)
++	}
++}
++
++// TestEnsureResultLineWritesAnAbsentLine is the unit under the BRANCH-LINE fix (#2549):
++// `sed "s#^BRANCH[: ].*#...#"` substitutes NOTHING when the line is absent and exits 0, so
++// the verdict was printed 94 times, once per pass, and never once took.
++func TestEnsureResultLineWritesAnAbsentLine(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "RESULT.md")
++	cwrite(t, path, "RESULT report-nova-tools-2537-r1 -- a report card\nDONE\nREPO mas-bandwidth/nova-tools\n")
++
++	changed, err := ensureResultLine(path, "BRANCH", "rowan/report-nova-tools-2537-r1")
++	if err != nil || !changed {
++		t.Fatalf("ensureResultLine on an absent line = %v,%v; want it written", changed, err)
++	}
++	raw, _ := os.ReadFile(path)
++	if !strings.Contains(string(raw), "\nBRANCH rowan/report-nova-tools-2537-r1\n") {
++		t.Fatalf("the line was not written:\n%s", raw)
++	}
++	// A second call is a no-op and reports so: the verdict is printed from the WRITE,
++	// never from an exit status.
++	changed, err = ensureResultLine(path, "BRANCH", "rowan/report-nova-tools-2537-r1")
++	if err != nil || changed {
++		t.Fatalf("a second call = %v,%v; want no change", changed, err)
++	}
++	// A line that is there and names something else is rewritten IN PLACE.
++	changed, err = ensureResultLine(path, "BRANCH", "rowan/other")
++	if err != nil || !changed {
++		t.Fatalf("rewriting a present line = %v,%v; want it changed", changed, err)
++	}
++	raw, _ = os.ReadFile(path)
++	if strings.Count(string(raw), "BRANCH ") != 1 {
++		t.Fatalf("the rewrite left two BRANCH lines:\n%s", raw)
++	}
++}
++
++// TestCommitJobDirsTakesEveryJobUnderASlot: the bash took `ls -d $d/jobs/* | head -1`, so a
++// slot holding two jobs lost one of them with no line saying so.
++func TestCommitJobDirsTakesEveryJobUnderASlot(t *testing.T) {
++	root := t.TempDir()
++	for _, j := range []string{"card-00-a", "card-00-b"} {
++		if err := os.MkdirAll(filepath.Join(root, "slot-card-x", "jobs", j), 0o755); err != nil {
++			t.Fatal(err)
++		}
++	}
++	// A directory with no `jobs/` under it is not a slot and is passed over.
++	if err := os.MkdirAll(filepath.Join(root, "not-a-slot", "data"), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	dirs, err := CommitJobDirs(root)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(dirs) != 2 {
++		t.Fatalf("job dirs = %v, want BOTH jobs under the slot (the bash took only the first)", dirs)
++	}
++}
+diff --git a/internal/pulse/harveststale.go b/internal/pulse/harveststale.go
+index c12a8d3ff..61c1e7b15 100644
+--- a/internal/pulse/harveststale.go
++++ b/internal/pulse/harveststale.go
+@@ -3,10 +3,12 @@ package pulse
+ import (
+ 	"fmt"
+ 	"os"
+-	"path"
+ 	"path/filepath"
+ 	"strings"
++	"unicode"
+ 
++	// Aliased: `hygiene` is already a type in this package (hygiene.go:94).
++	pathglob "github.com/mas-bandwidth/nova-tools/internal/hygiene"
+ 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+ )
+ 
+@@ -31,19 +33,46 @@ func staleBaseRefusal(dir, destURL, target, head string, globs []string, declare
+ 	if strings.TrimSpace(head) == "" {
+ 		head = "HEAD"
+ 	}
++	// MISSING IS ITS OWN VERDICT (#2547). A target nobody could read proves
++	// nothing about the branch, and a refusal shaped like a DIFFER over an empty
++	// ref reads, to every script downstream, as "the diff was walked and it was
++	// bad". It says MISSING, and it carries no `files=` list, because there is no
++	// offender list to carry.
+ 	oid, err := pinAuthorizedTarget(dir, destURL, target)
+ 	if err != nil {
+-		return fmt.Errorf("stale-base unread: %s", oneline.Err(err))
++		return fmt.Errorf("stale-base MISSING target=%s: the authorized destination's target could not be fetched or pinned, so no diff was walked: %s",
++			field(target), oneline.Err(err))
+ 	}
+ 	bad, rng, err := staleBaseOffenders(dir, oid, head, globs, declared)
+ 	if err != nil {
+-		return fmt.Errorf("stale-base unread: %s", oneline.Err(err))
++		return fmt.Errorf("stale-base MISSING range=%s: the diff could not be read, so no verdict was reached: %s",
++			field(rng), oneline.Err(err))
+ 	}
+ 	if len(bad) == 0 {
+ 		return nil
+ 	}
+-	return fmt.Errorf("stale-base files=%s range=%s: git diff against the current target contains paths the card did not declare; rebase onto the current target before harvest",
+-		field(joinOffenders(bad)), field(rng))
++	// THE REFUSAL PRINTS BOTH SIDES OF THE COMPARISON (#2547). `files=` alone sent
++	// a reader to the branch to guess: on 2026-09-22 the offender list WAS the
++	// card's own PATHS line, and nothing in the message said what the walk had
++	// understood the declaration to be. `declared=` is the globs as parsed, so a
++	// PATHS line the parser read as one unsplit glob is visible in the refusal
++	// itself rather than after an hour of detective work.
++	return fmt.Errorf("stale-base files=%s declared=%s range=%s: %d path(s) in `git diff --name-only %s` match no declared PATHS glob (they are the files= list); rebase onto the current target before harvest",
++		field(joinOffenders(bad)), field(declaredSummary(globs, declared)), field(rng), len(bad), rng)
++}
++
++// declaredSummary is what the walk judged against, for the refusal line. An
++// absent PATHS line and a `PATHS: none` are different facts and are named
++// differently: the first means the card declared nothing, the second means the
++// card declared that it changes nothing.
++func declaredSummary(globs []string, declared bool) string {
++	if !declared {
++		return "no-PATHS-line"
++	}
++	if len(globs) == 0 {
++		return "none"
++	}
++	return joinOffenders(globs)
+ }
+ 
+ func pinAuthorizedTarget(dir, destURL, target string) (string, error) {
+@@ -190,9 +219,8 @@ func parsePATHS(text string) (globs []string, declared bool) {
+ 		if rest == "" || rest == "none" {
+ 			return nil, true
+ 		}
+-		for _, g := range strings.Split(rest, ",") {
+-			g = strings.TrimSpace(g)
+-			if g != "" && g != "none" {
++		for _, g := range splitDeclared(rest) {
++			if g != "none" {
+ 				globs = append(globs, g)
+ 			}
+ 		}
+@@ -201,6 +229,30 @@ func parsePATHS(text string) (globs []string, declared bool) {
+ 	return nil, false
+ }
+ 
++// splitDeclared cuts a PATHS: value into entries on COMMAS AND WHITESPACE BOTH
++// (#2547).
++//
++// `docs/WORKER-CARDS.md` and `internal/swarm/lintheader.go` spell the line
++// `PATHS: <glob>[, <glob>...]`, and splitting on commas alone is what that
++// grammar says. The cutter in the field writes the entries separated by spaces —
++// `PATHS: docs/EVAL-MERGE-QUEUE.md internal/docs/eval_merge_queue_test.go` — and
++// on 2026-09-22 that turned the whole line into ONE glob, which contains a space
++// and therefore matches no path in any repository. Every declared file then came
++// back as an offender, and fourteen finished cards were refused every pass with
++// a `files=` list identical to their own PATHS line.
++//
++// Reading both separators is not a widening of the guard. A repository path with
++// a space in it cannot be expressed by either grammar, so the only diffs the old
++// split could ever have cleared are diffs this one clears too; what it can no
++// longer do is silently judge a whole line as one unmatchable glob. The rule
++// that a card's bound is validated (`hygiene.ValidatePaths`, at `cut`) is
++// unchanged and lives where it always did.
++func splitDeclared(rest string) []string {
++	return strings.FieldsFunc(rest, func(r rune) bool {
++		return r == ',' || unicode.IsSpace(r)
++	})
++}
++
+ func declaredCovers(globs []string, p string) bool {
+ 	p = strings.ReplaceAll(p, `\`, `/`)
+ 	for _, g := range globs {
+@@ -211,31 +263,43 @@ func declaredCovers(globs []string, p string) bool {
+ 	return false
+ }
+ 
++// matchDeclared answers whether ONE declared PATHS entry covers one
++// repo-relative path.
++//
++// THE GLOB HALF IS `hygiene.MatchGlob` (imported as `pathglob`, because this
++// package already has a type of that name) AND NOT A SECOND COPY OF IT. This file
++// carried its own `**`-aware matcher, character for character the one in
++// `internal/hygiene/glob.go`, which is the arrangement that comment warns
++// against in so many words: "a second matcher would be a second definition".
++// `internal/pulse` sits above `internal/hygiene` (internal/hygiene/kinds.txt),
++// so the call is the right way round. The S7 wall, `cut`'s validation and this
++// refusal now answer from one matcher.
++//
++// THE DIRECTORY HALF IS NEW (#2547). A card that writes `PATHS: internal/secrets`
++// means the directory, and on 2026-09-22 `internal/secrets/recovery_key_test.go`
++// was refused as undeclared against exactly that line. The spec's own spelling
++// for a directory is `internal/secrets/**` (`hygiene.MatchGlob`: "`a/**` matches
++// `a/b` and `a/b/c`; it also matches `a` itself, which is what a card naming a
++// directory means by it"), and nothing in `docs/SPEC-TOOLWORK.md` §4 rule 4 or
++// `docs/WORKER-CARDS.md` gives a meaning to a bare directory name or to a
++// trailing slash. So both are read here as the directory they name.
++//
++// The prefix rule is confined to a WILDCARD-FREE entry, and it cannot widen a
++// bound: no repository holds both a file at `a/b` and a file under `a/b/`, so an
++// entry that is a strict path prefix of a changed path could only ever have been
++// meant as a directory. An entry carrying a wildcard is left entirely to
++// hygiene.MatchGlob, whose `**` already spans segments.
+ func matchDeclared(glob, p string) bool {
+-	return matchDeclaredSegs(strings.Split(glob, "/"), strings.Split(p, "/"))
+-}
+-
+-func matchDeclaredSegs(pat, segs []string) bool {
+-	for len(pat) > 0 {
+-		if pat[0] == "**" {
+-			if len(pat) == 1 {
+-				return true
+-			}
+-			for i := 0; i <= len(segs); i++ {
+-				if matchDeclaredSegs(pat[1:], segs[i:]) {
+-					return true
+-				}
+-			}
+-			return false
+-		}
+-		if len(segs) == 0 {
+-			return false
+-		}
+-		ok, err := path.Match(pat[0], segs[0])
+-		if err != nil || !ok {
+-			return false
+-		}
+-		pat, segs = pat[1:], segs[1:]
++	glob = strings.ReplaceAll(strings.TrimSpace(glob), `\`, `/`)
++	glob = strings.TrimSuffix(glob, "/")
++	if glob == "" {
++		return false
++	}
++	if pathglob.MatchGlob(glob, p) {
++		return true
++	}
++	if strings.ContainsAny(glob, "*?[") {
++		return false
+ 	}
+-	return len(segs) == 0
++	return strings.HasPrefix(p, glob+"/")
+ }
+diff --git a/internal/pulse/harveststale_test.go b/internal/pulse/harveststale_test.go
+index 7020ac15a..8c04c8e91 100644
+--- a/internal/pulse/harveststale_test.go
++++ b/internal/pulse/harveststale_test.go
+@@ -324,3 +324,251 @@ func TestHarvestTargetBranchRejectsAPresentInvalidTarget(t *testing.T) {
+ 		t.Fatalf("BASE main = %q, %v, want main", got, err)
+ 	}
+ }
++
++// ---------------------------------------------------------------------------
++// Issue #2547: the stale-base refusal is a FALSE POSITIVE when the branch's
++// first parent IS the pinned target tip and the two-dot diff is exactly the
++// card's declared PATHS. Fourteen finished cards were refused every pass on
++// 2026-09-22 with a range whose left side (af6a9fcc) was the live dev tip and a
++// `files=` list that was, character for character, the card's own PATHS line.
++//
++// The fixtures below are real git repositories under t.TempDir(): a bare
++// destination holding `dev`, a clone, a branch cut from `dev`'s tip that
++// changes exactly the declared paths, and the pin `refs/harvest/target/dev`
++// that `staleBaseRefusal` fetches for itself. Nothing is faked, because the
++// defect was in what the declared globs MEAN, not in what git said.
++
++// staleFixture is one fixture repository: a bare destination with `dev`, and a
++// clone holding the card branch. destURL and clone are what `staleBaseRefusal`
++// is called with.
++type staleFixture struct {
++	destURL string
++	clone   string
++	branch  string
++}
++
++// newStaleFixture builds the true case: `base` files exist on `dev`, the branch
++// is cut from `dev`'s CURRENT tip, and it changes exactly `changed`.
++func newStaleFixture(t *testing.T, base, changed []string) staleFixture {
++	t.Helper()
++	dir := t.TempDir()
++	dest := filepath.Join(dir, "dest.git")
++	realGit(t, "init", "--bare", "-b", "dev", dest)
++	clone := filepath.Join(dir, "clone")
++	realGit(t, "init", "-b", "dev", clone)
++	writeFixtureFiles(t, clone, base, "the target")
++	commitFixture(t, clone, "the target")
++	realGit(t, "-C", clone, "push", dest, "HEAD:dev")
++	branch := "rowan/card-2547"
++	realGit(t, "-C", clone, "checkout", "-q", "-b", branch)
++	writeFixtureFiles(t, clone, changed, "the card")
++	commitFixture(t, clone, "the card")
++	return staleFixture{destURL: dest, clone: clone, branch: branch}
++}
++
++// advanceTarget lands `landed` on the destination's `dev` AFTER the branch was
++// cut, which is the real stale base of issue #2032: the two-dot diff against the
++// current target shows those files as deletions, and a PR would revert them.
++func advanceTarget(t *testing.T, f staleFixture, landed []string) {
++	t.Helper()
++	realGit(t, "-C", f.clone, "checkout", "-q", "dev")
++	writeFixtureFiles(t, f.clone, landed, "landed after the cut")
++	commitFixture(t, f.clone, "landed after the cut")
++	realGit(t, "-C", f.clone, "push", f.destURL, "HEAD:dev")
++	realGit(t, "-C", f.clone, "checkout", "-q", f.branch)
++}
++
++func writeFixtureFiles(t *testing.T, repo string, paths []string, body string) {
++	t.Helper()
++	for _, p := range paths {
++		full := filepath.Join(repo, filepath.FromSlash(p))
++		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
++			t.Fatal(err)
++		}
++		if err := os.WriteFile(full, []byte("// "+body+" "+p+"\n"), 0o644); err != nil {
++			t.Fatal(err)
++		}
++	}
++}
++
++func commitFixture(t *testing.T, repo, msg string) {
++	t.Helper()
++	realGit(t, "-C", repo, "add", "-A")
++	realGit(t, "-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
++		"commit", "-q", "-m", msg)
++}
++
++// TestStaleBaseAcceptsBranchWhoseParentIsTargetTip is the card's RED-WHEN, as a
++// table. Every row's branch is cut from the pinned target tip and its two-dot
++// diff is exactly the row's declared paths; every row must be accepted. The rows
++// are the PATHS spellings the fleet actually cut on 2026-09-22.
++func TestStaleBaseAcceptsBranchWhoseParentIsTargetTip(t *testing.T) {
++	for _, tc := range []struct {
++		name    string
++		base    []string // files already on the target
++		changed []string // what the card branch changes
++		paths   string   // the card's PATHS: value, verbatim
++	}{
++		{
++			// The spec's own spelling, `PATHS: <glob>[, <glob>...]`. This row
++			// passed before the fix and is here so the table proves the others
++			// are about the SPELLING and not about the walk.
++			name:    "comma separated",
++			base:    []string{"internal/pulse/harveststale.go"},
++			changed: []string{"internal/pulse/harveststale.go", "internal/pulse/harveststale_test.go"},
++			paths:   "internal/pulse/harveststale.go, internal/pulse/harveststale_test.go",
++		},
++		{
++			// LIVE, hulk 2026-09-22, card-tools-47-evaluate-github-merge-queue:
++			//   stale-base files=docs/EVAL-MERGE-QUEUE.md,internal/docs/eval_merge_queue_test.go
++			//   range=af6a9fccf33199b4edfc586ab3c7f0c5e1a2d71d..refs/harvest/rowan/tools-47-evaluate-github-merge-queue
++			// The card's own PATHS line names exactly those two files, separated
++			// by a SPACE, and af6a9fcc was the live dev tip. The value was split
++			// on commas only, so the whole line became one glob that matches no
++			// path at all and every declared file was reported as an offender.
++			name:    "space separated, the shape cards v2 cuts",
++			base:    []string{"docs/EVAL-MERGE-QUEUE.md"},
++			changed: []string{"docs/EVAL-MERGE-QUEUE.md", "internal/docs/eval_merge_queue_test.go"},
++			paths:   "docs/EVAL-MERGE-QUEUE.md internal/docs/eval_merge_queue_test.go",
++		},
++		{
++			// LIVE, superman 2026-09-22, card-tools22-spec2-TestRecoveryKeyLives...:
++			//   stale-base files=internal/secrets/recovery_key_test.go
++			// The card declares `PATHS: internal/secrets` -- a DIRECTORY -- and a
++			// file inside it was called undeclared (the A2 report's second shape).
++			name:    "a directory entry covers the files inside it",
++			base:    []string{"internal/secrets/seat.go"},
++			changed: []string{"internal/secrets/recovery_key_test.go"},
++			paths:   "internal/secrets",
++		},
++		{
++			name:    "a directory entry with a trailing slash",
++			base:    []string{"internal/secrets/seat.go"},
++			changed: []string{"internal/secrets/recovery_key_test.go"},
++			paths:   "internal/secrets/",
++		},
++		{
++			// `sign/**` is the spelling docs/SPEC-TOOLWORK.md §4 rule 4 and
++			// hygiene.ValidatePaths bless for a directory; it must keep working.
++			name:    "the spec's ** spelling for a directory",
++			base:    []string{"internal/secrets/seat.go"},
++			changed: []string{"internal/secrets/recovery_key_test.go"},
++			paths:   "internal/secrets/**",
++		},
++		{
++			name:    "a segment glob",
++			base:    []string{"internal/swarm/providers.go"},
++			changed: []string{"internal/swarm/providers.go", "internal/swarm/providers_test.go"},
++			paths:   "internal/swarm/*.go",
++		},
++		{
++			// Mixed, because a hand-edited card carries both separators.
++			name:    "commas and spaces in one line",
++			base:    []string{"internal/swarm/templates.go"},
++			changed: []string{"internal/swarm/templates.go", "internal/swarm/templatesunattended_test.go"},
++			paths:   "internal/swarm/templates.go,  internal/swarm/templatesunattended_test.go",
++		},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			f := newStaleFixture(t, tc.base, tc.changed)
++			globs, declared := parsePATHS("PATHS: " + tc.paths)
++			if !declared {
++				t.Fatalf("parsePATHS did not read %q as a declaration", tc.paths)
++			}
++			if err := staleBaseRefusal(f.clone, f.destURL, "dev", f.branch, globs, declared); err != nil {
++				t.Fatalf("a branch cut from the pinned target tip whose two-dot diff is exactly its declared PATHS was refused: %v\ndeclared=%q globs=%q changed=%v",
++					err, tc.paths, globs, tc.changed)
++			}
++		})
++	}
++}
++
++// TestStaleBaseStillRefusesAnOlderBase is the control that bites: the same
++// spellings, but the branch is cut from an OLDER base and a later landing sits
++// on the current target. Every row must still refuse, and the refusal must name
++// the LANDED file and only it -- issue #2032 is why this check exists.
++func TestStaleBaseStillRefusesAnOlderBase(t *testing.T) {
++	for _, tc := range []struct {
++		name  string
++		paths string
++	}{
++		{"comma separated", "internal/pulse/harveststale.go, internal/pulse/harveststale_test.go"},
++		{"space separated", "internal/pulse/harveststale.go internal/pulse/harveststale_test.go"},
++		{"a directory entry", "internal/pulse"},
++		{"a directory entry with a trailing slash", "internal/pulse/"},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			f := newStaleFixture(t,
++				[]string{"internal/pulse/harveststale.go"},
++				[]string{"internal/pulse/harveststale.go", "internal/pulse/harveststale_test.go"})
++			advanceTarget(t, f, []string{"later/merged.go"})
++			globs, declared := parsePATHS("PATHS: " + tc.paths)
++			err := staleBaseRefusal(f.clone, f.destURL, "dev", f.branch, globs, declared)
++			if err == nil {
++				t.Fatalf("a branch cut from an older base was accepted; opening it as a PR reverts later/merged.go (#2032)")
++			}
++			msg := err.Error()
++			if !strings.Contains(msg, "later/merged.go") {
++				t.Fatalf("the refusal must NAME the file it saw; got %q", msg)
++			}
++			if strings.Contains(msg, "files=internal/pulse/harveststale.go") {
++				t.Fatalf("a declared path was reported as an offender: %q", msg)
++			}
++			if !strings.Contains(msg, "declared=") {
++				t.Fatalf("the refusal must print the declared globs it judged against, so a mis-read PATHS line is visible: %q", msg)
++			}
++		})
++	}
++}
++
++// TestStaleBaseSaysMISSINGWhenTheTargetCannotBeRead: no evidence is not negative
++// evidence. A destination with no `dev` cannot be compared against, and the
++// verdict must say so in those words rather than read as a DIFFER.
++//
++// The assertion anchors on the VERDICT and not on a substring: written as
++// strings.Contains(msg, "MISSING") it passed on the unfixed code, because
++// t.TempDir() names the directory after the test and the fetch error quotes that
++// path. A check that its own positive control cannot fail is not a check.
++func TestStaleBaseSaysMISSINGWhenTheTargetCannotBeRead(t *testing.T) {
++	dir := t.TempDir()
++	dest := filepath.Join(dir, "empty.git")
++	realGit(t, "init", "--bare", "-b", "main", dest)
++	clone := filepath.Join(dir, "clone")
++	realGit(t, "init", "-b", "dev", clone)
++	writeFixtureFiles(t, clone, []string{"a.go"}, "a")
++	commitFixture(t, clone, "a")
++	err := staleBaseRefusal(clone, dest, "dev", "HEAD", []string{"a.go"}, true)
++	if err == nil {
++		t.Fatal("an unreadable target must refuse, never clear")
++	}
++	if !strings.HasPrefix(err.Error(), "stale-base MISSING ") {
++		t.Fatalf("an unreadable pinned target must open its verdict with `stale-base MISSING `, got %q", err)
++	}
++	if strings.Contains(err.Error(), "files=") {
++		t.Fatalf("a target nobody could read must not read as a DIFFER over an offender list: %q", err)
++	}
++}
++
++// TestStaleBaseComparesAPinnedOIDNotAMovingRef: the left side of the range the
++// refusal prints is the OID the fetch pinned, not `origin/dev` or any other ref
++// that can move under the check. The live refusals printed
++// af6a9fccf33199b4edfc586ab3c7f0c5e1a2d71d, which is that pin.
++func TestStaleBaseComparesAPinnedOIDNotAMovingRef(t *testing.T) {
++	f := newStaleFixture(t,
++		[]string{"internal/pulse/harveststale.go"},
++		[]string{"internal/pulse/harveststale.go", "stray/extra.go"})
++	// A cached, WRONG origin/dev in the clone: if the walk read this instead of
++	// the pin, the range would name it.
++	realGit(t, "-C", f.clone, "update-ref", "refs/remotes/origin/dev", f.branch)
++	want := strings.TrimSpace(realGit(t, "-C", f.clone, "rev-parse", "dev"))
++	err := staleBaseRefusal(f.clone, f.destURL, "dev", f.branch, []string{"internal/pulse/harveststale.go"}, true)
++	if err == nil {
++		t.Fatal("stray/extra.go is undeclared; the walk must refuse")
++	}
++	if !strings.Contains(err.Error(), "range="+want+"..") {
++		t.Fatalf("the range must open at the pinned target OID %s, got %q", want, err)
++	}
++	if !strings.Contains(err.Error(), "stray/extra.go") {
++		t.Fatalf("the refusal must name the offending path, got %q", err)
++	}
++}

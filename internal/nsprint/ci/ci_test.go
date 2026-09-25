@@ -66,7 +66,7 @@ func (f *fixture) cut() string {
 	if err != nil || r.Status != "CREATED" {
 		f.t.Fatalf("cut = %v, %v; want CREATED", r, err)
 	}
-	return ci.Label(pr, head)
+	return ci.Label(pr, head, base)
 }
 
 // deal stands in for the dealer (#2756 5.3, not in this slice): it gives the
@@ -504,5 +504,37 @@ func TestCutRefusesARunnerOnlyLeg(t *testing.T) {
 	}
 	if r.Status != "CREATED" {
 		t.Fatalf("cut on a bench with no legs field = %v; want CREATED (empty legs runs every leg)", r)
+	}
+}
+
+// TestCiCutKeepsRunnerRow is nova-tools #3496 item 1: a runner-only row that
+// lands on the head before the cut is still there after the cut and after
+// the card's end writes the verdict. The cut writes only the card (#3139 rev
+// 7 3.7) and the rows live at ci:<repo>:<head>:<gid>:runners, apart from the
+// write-once receipt, so neither the cut nor the end erases them.
+func TestCiCutKeepsRunnerRow(t *testing.T) {
+	f := newFixture(t, "ctl-a")
+	gid, err := civerdict.Expected(f.ctx, f.client, repo, "dev", base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runners := civerdict.RunnersKey(repo, head, gid)
+	const row = `{"status":"completed","conclusion":"success"}`
+	if err := f.client.HSet(f.ctx, runners, "runner:windows", row).Err(); err != nil {
+		t.Fatal(err)
+	}
+	label := f.cut()
+	if got, _ := f.client.HGet(f.ctx, runners, "runner:windows").Result(); got != row {
+		t.Fatalf("runner:windows after the cut = %q, want %q kept", got, row)
+	}
+	token, identity := f.deal(label, "ctl-a")
+	if r := f.end(label, token, identity, "DONE", "done", "OK", "", ""); r.Status != "ENDED" && r.ExitCode() != ci.ExitOK {
+		t.Fatalf("end = %v, want OK", r)
+	}
+	if got, _ := f.client.HGet(f.ctx, runners, "runner:windows").Result(); got != row {
+		t.Fatalf("runner:windows after the end = %q, want %q kept", got, row)
+	}
+	if v := civerdict.Of(f.record()); v != "OK" {
+		t.Fatalf("verdict after the end = %q, want OK beside the runner row", v)
 	}
 }

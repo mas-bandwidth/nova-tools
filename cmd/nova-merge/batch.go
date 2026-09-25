@@ -850,9 +850,14 @@ func getReviewersSHA(path string) (string, error) {
 // and drops one carrying an unreleased HOLD or a pending comment.
 func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Time) (keep, dropped []int, code int) {
 	var rs *merge.ReviewerSet
+	var presence map[string]merge.FriendState
 	if !in.noRequireHolds {
 		var err error
 		rs, err = merge.LoadReviewers(in.reviewersFile)
+		if err != nil {
+			return nil, nil, batchRefused(stderr, fmt.Errorf("reviewer file %s could not be read: %w", in.reviewersFile, err))
+		}
+		presence, err = merge.LoadPresence(in.reviewersFile)
 		if err != nil {
 			return nil, nil, batchRefused(stderr, fmt.Errorf("reviewer file %s could not be read: %w", in.reviewersFile, err))
 		}
@@ -909,7 +914,11 @@ func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Ti
 			vs = append(vs, forgeVs...)
 		}
 
-		holds := merge.UnliftedHolds(vs, pr.HeadOID, merge.ReaderAuthor(pr, rs), rs)
+		holds, released := merge.UnliftedHoldsWithPresence(vs, pr.HeadOID, merge.ReaderAuthor(pr, rs), rs, presence, deps.Now(), merge.DefaultAbsentAfter)
+		for _, r := range released {
+			fmt.Fprintf(stderr, "RELEASED carried hold by %s (absent since %s) on %s's read at %s\n",
+				oneline.Field(r.Holder), oneline.Field(r.Since.UTC().Format(time.RFC3339)), oneline.Field(r.Reader), oneline.Field(merge.Short(r.Head)))
+		}
 		if len(holds) > 0 {
 			dropped = append(dropped, n)
 			in.holdsCount++
