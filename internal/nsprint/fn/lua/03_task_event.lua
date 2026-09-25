@@ -167,22 +167,14 @@ redis.register_function('ns_land_member', function(keys, args)
   return out
 end)
 
--- ns_read_post(repo, n, line, now_s): a typed line posted on a PR, and the
--- move it is an event for, in one call. The line is appended to
--- pr:<repo>:<n>:lines and the record's last_line/last_line_at are stamped
--- (the record must have a head: NOHEAD otherwise, nothing written). A CLOSE
--- line by a person (who not jev*) lands every task naming the PR or an issue
--- in the record's closes, why the line's "with <repo>#<n> (<sha>)" when it
--- has one; a SCORE line moves the read task read-<n>-<head8> working ->
--- merging.
---   {'OK', lines, kind, moved, same, skipped, note...} | {'NOHEAD', key}
-redis.register_function('ns_read_post', function(keys, args)
-  local repo, n, line, now = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
-  local key = TE.prkey(repo, n)
-  if (redis.call('HGET', key, 'head') or '') == '' then return { 'NOHEAD', key } end
-  local lines = redis.call('RPUSH', key .. ':lines', line)
-  local first = string.match(line, '^[^\n]*')
-  redis.call('HSET', key, 'last_line', first, 'last_line_at', now)
+-- TE.event(repo, n, key, first) -> TE.apply's counts: the move a typed line
+-- (first: its first line) posted on pr:<repo>:<n> (key) is an event for. A
+-- CLOSE line by a person (who not jev*) lands every task naming the PR or an
+-- issue in the record's closes, why the line's "with <repo>#<n> (<sha>)"
+-- when it has one; a SCORE line moves the read task read-<n>-<head8> working
+-- -> merging. Any other line moves nothing. The caller writes the line in the
+-- same call (ns_read_post; ns_line_post, line.lua, nova-tools #3595).
+function TE.event(repo, n, key, first)
   local kind = string.match(first, '^(%S+)') or ''
   local who = string.match(first, 'who=([^%s:;,]+)') or ''
   local head = string.match(first, 'head=(%x+)') or ''
@@ -200,6 +192,24 @@ redis.register_function('ns_read_post', function(keys, args)
       r = TE.apply({ id }, 'merging', who, 'read: SCORE by ' .. who .. ' at ' .. string.sub(head, 1, 8))
     end
   end
+  return r
+end
+
+-- ns_read_post(repo, n, line, now_s): a typed line posted on a PR, and the
+-- move it is an event for (TE.event), in one call. The line is appended to
+-- pr:<repo>:<n>:lines and the record's last_line/last_line_at are stamped
+-- (the record must have a head: NOHEAD otherwise, nothing written). read
+-- post writes through ns_line_post (line.lua), which makes the same move.
+--   {'OK', lines, kind, moved, same, skipped, note...} | {'NOHEAD', key}
+redis.register_function('ns_read_post', function(keys, args)
+  local repo, n, line, now = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
+  local key = TE.prkey(repo, n)
+  if (redis.call('HGET', key, 'head') or '') == '' then return { 'NOHEAD', key } end
+  local lines = redis.call('RPUSH', key .. ':lines', line)
+  local first = string.match(line, '^[^\n]*')
+  redis.call('HSET', key, 'last_line', first, 'last_line_at', now)
+  local kind = string.match(first, '^(%S+)') or ''
+  local r = TE.event(repo, n, key, first)
   local out = { 'OK', tostring(lines), kind, tostring(r.moved), tostring(r.same), tostring(r.skipped) }
   for _, note in ipairs(r.notes) do out[#out + 1] = note end
   return out
