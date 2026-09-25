@@ -62,6 +62,8 @@ var wakeAudit = audit.Config{
 		// variable fields are a duration and two counts.
 		`"os/signal"`,
 		`"syscall"`,
+		// sync/atomic, for friend width update via signal (#2673).
+		`"sync/atomic"`,
 		// path/filepath, for the awake verb's from-<name>/BEAT read, which joins a
 		// lane path the same way cursorTime does. It reads a path that os.ReadFile could
 		// take as an already-joined string, and writes nothing, so it is here like the
