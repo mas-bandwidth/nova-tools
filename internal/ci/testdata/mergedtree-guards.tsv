@@ -1,0 +1,8 @@
+# package	test_name	description
+internal/nsprint/fn/lua	TestLibraryLocalsUnderLimit	Lua chunk locals under limit
+internal/nsprint/fn/lua	TestNoBareCrossFileLuaNames	no bare cross-file Lua names
+internal/check	TestAllInScopeVerbsHaveCompleteConcreteMappings	committed map matches the tree (catalog rows)
+internal/secrets	TestStoreParsers	one typed parser (allow list)
+internal/swarm	TestNoEventLineOfThisFamilyHasAMarkForItsSecondWord	event-line second-word marks
+cmd/nova-bus	TestTheRefusalTableIsAccountedForBelow	the refusal table walk
+internal/nsprint/fn/lua	TestFunctionLibraryPing	the function library loads and every registered function answers ping

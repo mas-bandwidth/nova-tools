@@ -1001,6 +1001,27 @@ jobs:
           t="$(dirname "$GITHUB_WORKSPACE")/fleet-probe-$RUNNER_NAME.txt"; echo ok > "$t" && rm -f "$t"
           echo "PROBE OK runner=$RUNNER_NAME slot=${{ matrix.slot }}"
 
+  stream-branch:
+    # A merged-tree guard suite that runs only on the stream branch.
+    if: github.ref == 'refs/heads/stream'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: run merged-tree guards
+        run: go test ./internal/ci/ -run '^TestMergedTreeGuards$' -v
+      - name: check dev-red status
+        run: |
+          status=$(go run ./cmd/nova-sprint dev-red status || echo "RED")
+          if [ "$status" = "RED" ]; then
+            echo "Stream landings refused: dev-red status is RED"
+            exit 1
+          fi
+          echo "Stream landings permitted: dev-red status is $status"
+
+
   ci-ok:
     # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
     # in a branch ruleset. It aggregates EXACTLY the jobs of this file and nothing else —
