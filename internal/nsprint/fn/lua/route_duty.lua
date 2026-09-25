@@ -348,16 +348,19 @@ do
     return who ~= '' and who ~= author and string.sub(who, 1, 3) ~= 'jev' and string.sub(who, 1, 4) ~= 'cold'
   end
 
-  -- pr_lines reads the record's typed lines (newline-joined `reads`) and
-  -- returns, for the head: read (a counting SCORE/DISPOSITION/HOLD line at
+  -- pr_lines reads the PR's typed lines (the first line of each entry of the
+  -- line log pr:<name>:<n>:lines that ns_line_post writes with the line
+  -- record, nova-tools#3874; the record has no reads field) and returns, for
+  -- the head: read (a counting SCORE/DISPOSITION/HOLD line at
   -- head), hold (the last counting HOLD line at head, per who the last line
   -- wins, so a later SCORE by the same who releases), and heads, the number
   -- of distinct heads a counting who has held (this head included when held).
-  local function pr_lines(reads, head, author)
+  local function pr_lines(key, head, author)
     local lhead = string.lower(head)
     local read, hold, holder = false, nil, nil
     local at_head, held_heads = {}, {}
-    for line in string.gmatch(reads or '', '[^\n]+') do
+    for _, entry in ipairs(redis.call('LRANGE', key .. ':lines', 0, -1)) do
+      local line = string.match(entry, '^[^\n]*')
       local words = {}
       for w in string.gmatch(line, '%S+') do words[#words + 1] = w end
       local kind = words[1] or ''
@@ -398,8 +401,8 @@ do
   -- pr:<name>:<n> with the bare repository name (internal/nsprint/prkey).
   local function pr_record(repo, pr)
     local key = 'pr:' .. (string.match(repo, '([^/]+)$') or repo) .. ':' .. pr
-    local r = redis.call('HMGET', key, 'head', 'state', 'reads', 'task', 'kind',
-      'read_task', 'read_task_head', 'fix_task', 'fix_task_head', 'diff_sha256', 'stream')
+    local r = redis.call('HMGET', key, 'head', 'state', 'stream', 'task', 'kind',
+      'read_task', 'read_task_head', 'fix_task', 'fix_task_head', 'diff_sha256')
     if not r[1] or r[1] == '' then
       return nil, 'no-pr-record'
     end
@@ -409,9 +412,9 @@ do
     if r[5] == 'stream' then
       return nil, 'stream-pr'
     end
-    return { key = key, head = r[1], reads = r[3] or '', task = r[4] or '', read_task = r[6] or '',
+    return { key = key, head = r[1], task = r[4] or '', read_task = r[6] or '',
       read_task_head = r[7] or '', fix_task = r[8] or '', fix_task_head = r[9] or '',
-      diff = r[10] or '', stream = r[11] or '' }
+      diff = r[10] or '', stream = r[3] or '' }
   end
 
   -- task_open is true when the task card is where a reader can still take
@@ -450,7 +453,7 @@ do
     local head = rec.head
     if rec.stream ~= '' then stream = rec.stream end
     local author = pr_author(repo, pr, rec.task)
-    local read = pr_lines(rec.reads, head, author)
+    local read = pr_lines(rec.key, head, author)
     if read then
       return { 'SKIP', 'read-at-head' }
     end
@@ -528,7 +531,7 @@ do
     local head = rec.head
     if rec.stream ~= '' then stream = rec.stream end
     local author = pr_author(repo, pr, rec.task)
-    local _, hold, holder, heads = pr_lines(rec.reads, head, author)
+    local _, hold, holder, heads = pr_lines(rec.key, head, author)
     if not hold then
       return { 'SKIP', 'no-hold' }
     end

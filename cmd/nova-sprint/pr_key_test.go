@@ -5,8 +5,9 @@ package main
 // pr:rowan-tools:375, so READ POST REFUSED a record PR RECORD had just
 // created. Both verbs now key the record through internal/nsprint/prkey:
 // either spelling on either verb hits pr:<name>:<n>, and no owner-form key
-// is ever written. Since #3595 read post writes through the line store, so
-// its line is on the record's reads before pr lines adds the SCORE.
+// is ever written. Since #3595 read post writes through the line store, and
+// since #3874 so does pr lines: both lines are line records and log entries,
+// and the record has no reads field.
 
 import (
 	"context"
@@ -56,11 +57,16 @@ func TestPRRecordThenReadPostHitOneKeyOnBothSpellings(t *testing.T) {
 		if got := c.HGet(ctx, key, "head").Val(); got != head {
 			t.Fatalf("%v: %s head %q", spell, key, got)
 		}
-		if got := c.LLen(ctx, key+":lines").Val(); got != 1 {
-			t.Fatalf("%v: %s:lines has %d", spell, key, got)
+		if got := c.LRange(ctx, key+":lines", 0, -1).Val(); len(got) != 2 || got[0] != typed || got[1] != "SCORE who=emma head="+head+" score=9/10" {
+			t.Fatalf("%v: %s:lines %q", spell, key, got)
 		}
-		if got := c.HGet(ctx, key, "reads").Val(); got != typed+"\nSCORE who=emma head="+head+" score=9/10" {
-			t.Fatalf("%v: %s reads %q", spell, key, got)
+		if c.HExists(ctx, key, "reads").Val() {
+			t.Fatalf("%v: %s has a reads field", spell, key)
+		}
+		for _, lk := range []string{key + ":line:" + head + ":rowan:HOLD", key + ":line:" + head + ":emma:SCORE"} {
+			if c.Exists(ctx, lk).Val() != 1 {
+				t.Fatalf("%v: no line record %s", spell, lk)
+			}
 		}
 	}
 	if keys := c.Keys(ctx, "pr:mas-bandwidth/*").Val(); len(keys) != 0 {

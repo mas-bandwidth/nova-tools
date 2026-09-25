@@ -442,7 +442,7 @@ the day it was learned.
 ## The verbs
 
 ```
-nova-merge read     --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>] [--redis <addr>]
+nova-merge read     --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>] [--redis <addr> [--score <0..10>]]
 nova-merge gate     --lane <dir> (--pr <n>|--branch <name>) --head <sha> --base-sha <sha> --merge <sha> --verdict green|red --summary <path>
 nova-merge fold     --branches <file> --onto <base> --out <branch> --lane <dir>
 nova-merge fold     --close-folded --pr <n>

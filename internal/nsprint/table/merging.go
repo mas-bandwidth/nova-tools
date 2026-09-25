@@ -48,7 +48,8 @@ const (
 )
 
 // detailScript reads, for each stream named, every card of ws:<s>:merging
-// with its PR record's head, state, stream and reads; cfg:land; and, for each
+// with its PR record's head, state, stream and reads (the first lines of the
+// line records at the head, nova-tools #3874); cfg:land; and, for each
 // repo named, every land:<repo>:<slug> of land:<repo>:streams with its stream
 // PR's ci. Sent as EVAL_RO, so Redis refuses a write; no KEYS, no SCAN:
 // every key comes from a set member.
@@ -83,7 +84,18 @@ for i = 1, ns do
     local name, n = prref(s(t[1]), repo)
     local r = {false, false, false, false}
     if name then
-      r = redis.call('HMGET', 'pr:' .. name .. ':' .. n, 'head', 'state', 'stream', 'reads')
+      local pk = 'pr:' .. name .. ':' .. n
+      r = redis.call('HMGET', pk, 'head', 'state', 'stream')
+      -- the reads: the first lines of the line records at the head (the one
+      -- read record, ns_line_post; nova-tools #3874), oldest first
+      local reads = {}
+      if r[1] then
+        for _, m in ipairs(redis.call('ZRANGE', pk .. ':line:' .. r[1], 0, -1)) do
+          local tx = redis.call('HGET', pk .. ':line:' .. r[1] .. ':' .. m, 'text')
+          if tx then reads[#reads + 1] = string.match(tx, '^[^\n]*') end
+        end
+      end
+      r[4] = table.concat(reads, '\n')
     else
       name, n = '', ''
     end

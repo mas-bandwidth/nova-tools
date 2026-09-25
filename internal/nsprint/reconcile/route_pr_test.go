@@ -78,7 +78,10 @@ func (f *prFixture) addPR(t *testing.T, task, owner, n, head string, lines ...st
 		"pr", prRepo+"#"+n, "kind", "build", "branch", "codex/"+n+"-anything")
 	pipe.ZAdd(f.ctx, "ws:"+prStream+":working", redis.Z{Score: 1, Member: task})
 	pipe.HSet(f.ctx, prkey.KeyText(prRepo, n), "repo", prRepo, "n", n, "head", head, "base", "dev",
-		"stream", prStream, "task", task, "state", "open", "ci", "green", "reads", strings.Join(lines, "\n"))
+		"stream", prStream, "task", task, "state", "open", "ci", "green")
+	for _, l := range lines {
+		pipe.RPush(f.ctx, prkey.KeyText(prRepo, n)+":lines", l)
+	}
 	if _, err := pipe.Exec(f.ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +264,7 @@ func TestEveryUnreadHeadGetsOneRead(t *testing.T) {
 		t.Fatalf("q:emma has %d entries after the second pass, want still 2", f.qlen("emma"))
 	}
 	// A counting read at head (emma's SCORE) ends the need: no further task.
-	f.c.HSet(f.ctx, prkey.Key(prRepo, 3542), "reads", "SCORE who=emma head="+headA+" score=8/10")
+	f.c.RPush(f.ctx, prkey.Key(prRepo, 3542)+":lines", "SCORE who=emma head="+headA+" score=8/10")
 	if c := f.run(t); c.Reads != 0 {
 		t.Fatalf("a read at head still pushed: %s", c.Line())
 	}

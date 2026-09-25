@@ -627,17 +627,22 @@ func (d *RouteDuty) prLegs(ctx context.Context, token, S, stream string, readers
 	if len(cands) == 0 {
 		return nil
 	}
+	// The record and its line log (pr:<name>:<n>:lines, written with each
+	// line record by ns_line_post; the record has no reads field,
+	// nova-tools#3874) in one round trip.
 	pipe := d.Client.Pipeline()
 	rows := make([]*redis.SliceCmd, len(cands))
+	logs := make([]*redis.StringSliceCmd, len(cands))
 	for i, c := range cands {
-		rows[i] = pipe.HMGet(ctx, prkey.Key(c.repo, c.n), "head", "state", "reads")
+		rows[i] = pipe.HMGet(ctx, prkey.Key(c.repo, c.n), "head", "state")
+		logs[i] = pipe.LRange(ctx, prkey.Key(c.repo, c.n)+":lines", 0, -1)
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("%s: pr records: %w", S, err)
 	}
 	for i, c := range cands {
 		v := rows[i].Val()
-		head, state, reads := str(v, 0), str(v, 1), str(v, 2)
+		head, state, reads := str(v, 0), str(v, 1), firstLines(logs[i].Val())
 		if head == "" || (state != "" && state != "open") {
 			continue
 		}
@@ -709,6 +714,15 @@ func (d *RouteDuty) prLegs(ctx context.Context, token, S, stream string, readers
 // the author and the last-line-wins rule; this only spares a call. A
 // DISPOSITION line goes through typedrec.ParseDisposition, the one typed
 // parser (#2506), whose HOLD is lenient: a sloppily typed HOLD still holds.
+// firstLines joins the first line of each log entry: the typed lines.
+func firstLines(entries []string) string {
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i], _, _ = strings.Cut(e, "\n")
+	}
+	return strings.Join(out, "\n")
+}
+
 func heldAt(reads, head string) bool {
 	head = strings.ToLower(head)
 	for _, l := range strings.Split(reads, "\n") {

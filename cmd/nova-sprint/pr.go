@@ -13,8 +13,10 @@
 // write the same record read and ci read. A new record needs
 // --head, --base and --stream; a new head resets ci to pending and mergeable
 // to unknown unless the same call names them; --closes records the issues
-// the PR's body closes (- for none), which the lander lands with it. pr lines appends one typed line
-// (SCORE who=<w> head=<sha> score=N/10 ..., DISPOSITION ..., HOLD ...) to reads.
+// the PR's body closes (- for none), which the lander lands with it. pr lines stores one typed
+// line (SCORE who=<w> head=<sha> score=N/10 ..., DISPOSITION ..., HOLD ...) through the one line
+// store, ns_line_post (internal/nsprint/line; nova-tools#3874): a line record keyed by head, who
+// and kind, and the PR's line log; lines= is the log's length. The record has no reads field.
 // --branch-gone marks the PR's head branch gone (branch_gone), one of the
 // three records pr reap (pr_reap.go) closes a PR on.
 // One Lua call each, one receipt line. Exit 0 written, 2 refused, 6 no Redis.

@@ -305,9 +305,14 @@ func TestLandStreamEndToEnd(t *testing.T) {
 		t.Fatalf("#1 issues_closed %q", ic)
 	}
 	for _, n := range []int{1, 3} {
-		reads := strings.Split(c.HGet(ctx, "pr:nova-tools:"+fmt.Sprint(n), "reads").Val(), "\n")
-		if reads[len(reads)-1] != closeLine(n) {
-			t.Fatalf("#%d reads %q, want the CLOSE line last", n, reads)
+		// The CLOSE is the last entry of the PR's line log; the record has
+		// no reads field (nova-tools#3874).
+		log := c.LRange(ctx, "pr:nova-tools:"+fmt.Sprint(n)+":lines", 0, -1).Val()
+		if len(log) == 0 || log[len(log)-1] != closeLine(n) {
+			t.Fatalf("#%d line log %q, want the CLOSE line last", n, log)
+		}
+		if c.HExists(ctx, "pr:nova-tools:"+fmt.Sprint(n), "reads").Val() {
+			t.Fatalf("#%d has a reads field", n)
 		}
 	}
 	if cl := c.HGet(ctx, "pr:nova-tools:1", "closes").Val(); cl != "101" {
@@ -336,11 +341,15 @@ func TestLandStreamEndToEnd(t *testing.T) {
 }
 
 func TestLandStreamConflictStops(t *testing.T) {
-	mr := miniredis.RunT(t)
-	addr := mr.Addr()
+	// A real redis-server with the library: a typed line is one ns_line_post
+	// and the lander lists reads with ns_line_list (nova-tools#3874).
+	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	src, bare := filepath.Join(root, "src"), filepath.Join(root, "remote.git")
 	_ = os.MkdirAll(src, 0o755)
