@@ -2076,6 +2076,39 @@ business. Read-time conditionals are not duplicates: `#+sbcl (defun f …)` besi
 has four such pairs), so a definition whose preceding non-blank line opens with
 `#+` or `#-` is skipped.
 
+### `busacl` — the friend seat reaches the bus and nothing else
+
+**The rule.** The bus in Redis (nova-tools #3865, rowan-new specs/bus-redis.md)
+is reached through one grant, `bus.SeatRules` (`internal/nsprint/bus/bus.go`),
+whose only key pattern is `~bus:*`. Every key `internal/nsprint/fn/lua/bus.lua`
+names is under `bus:`; every bus verb (post, post to all, read, pending, ack,
+reply lookup, ls, tail) runs on a throwaway redis-server as a user holding
+exactly `bus.SeatRules`; and that user is NOPERM on a key outside `bus:*`
+(`s:*`, `friend:*`, `sprint:*`) and on any other library function.
+**The hurt.** 2026-09-25, Glenn: friends talked to Rowan by committing notes to
+a git repo that Rowan polled every 45 s; three pushes were rejected in a row
+while Emma committed, and scores sent as notes never reached the record. The
+bus moved to Redis streams, and the fleet's seats have been NOPERM live more
+than once when a library file touched a key root its seat lacked (the 3eae40c0
+`cfg:ci` claim failure, 2026-09-25 05:26Z). A grant that is too narrow breaks
+every friend's post; one that is too wide hands a friend's window the sprint
+store. This test pins both edges on the nova-tools side; the fleet copy is
+the fleet ACL control in rowan-tools (its bus ACL test beside the redis play).
+**The test.** `TestBusFriendSeatReachesOnlyBus`
+(`internal/ci/busacl_class_test.go`).
+**Its allowlist.** None. A second key pattern in `bus.SeatRules`, or a key root
+other than `bus:` in `bus.lua`, fails.
+**Its remedy line.** `bus.SeatRules key grants [...]; want exactly ~bus:*`,
+`bus.lua names the key root <root>:, outside bus:*`, `<verb> as the friend
+seat: <error>` (the grant lacks a command the verb sends: add it to
+`bus.SeatRules` and to the fleet rules), and `friend seat ran <command>: <err>;
+want NOPERM` (the grant reaches past `bus:*`).
+**Its narrowings.** The key-root half is textual: it reads `'<root>:'` literals
+in `bus.lua`, so a key built without a literal root is not seen (the live half
+still runs it). The live half runs the verbs' package, not the CLI, and checks
+the grant nova-tools declares, not the one the fleet store has loaded; the
+fleet side is rowan-tools' to hold.
+
 ### Tests this spec demands
 
 This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.
