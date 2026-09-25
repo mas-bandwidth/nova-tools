@@ -13,6 +13,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -469,6 +470,17 @@ func TestRestartOnTheSameDirKeepsTheStore(t *testing.T) {
 	}
 	if ttl, err := c.TTL(ctx, key).Result(); err != nil || ttl != -1 {
 		t.Errorf("TTL %s = %v (err %v), want -1: the store sets no TTL", key, ttl, err)
+	}
+	// preflight 7.1 (#2947 rev3) also reads the ACL deployment test's receipt
+	// (#2937), which nothing in serve writes; this throwaway instance never
+	// runs that test, so write its receipt here the way store_test.go's
+	// TestPreflightRedisAndLibrary does, at the binary's own library.
+	source, err := fn.Source()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.HSet(ctx, "proc:acl-test", "result", "ok", "library_sha", fn.Sum(source), "at", fmt.Sprint(time.Now().Unix())).Err(); err != nil {
+		t.Fatal(err)
 	}
 	var line *preflight.Line
 	lines := preflight.Run(ctx, c, preflight.Options{Sprint: "T"})
