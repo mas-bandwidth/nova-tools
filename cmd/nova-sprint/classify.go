@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
 func init() {
@@ -36,7 +35,7 @@ func runClassify(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if *consumer == "" {
 		*consumer = "classify-" + strconv.Itoa(os.Getpid())
 	}
-	st, err := store.Open(ctx, *addr)
+	st, err := openReached(ctx, *addr)
 	if err != nil {
 		fmt.Fprintf(errOut, "nova-sprint classify: %v\n", err)
 		return 6

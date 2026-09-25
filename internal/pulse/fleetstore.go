@@ -40,9 +40,10 @@ type StoreOptions struct {
 	Timeout time.Duration
 }
 
-// DialStore opens the fleet store and proves the connection once. A refusal names the
-// address and the ACL user, because "connection refused" against an instance nobody can
-// name is the one error a bench cannot act on; it never names the password or its value.
+// DialStore names the fleet store and sends nothing (#3277): the caller's first command
+// dials and authenticates, so no verb pays a PING round trip before its first batch. The
+// timeouts bound that first command. A refusal here (no address) names the flag; it never
+// names the password or its value.
 func DialStore(ctx context.Context, o StoreOptions) (*redis.Client, error) {
 	addr := strings.TrimSpace(o.Addr)
 	if addr == "" {
@@ -74,14 +75,5 @@ func DialStore(ctx context.Context, o StoreOptions) (*redis.Client, error) {
 		opts.Username = user
 		opts.Password = pw
 	}
-	rdb := redis.NewClient(opts)
-
-	pctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	if err := rdb.Ping(pctx).Err(); err != nil {
-		_ = rdb.Close()
-		return nil, fmt.Errorf("fleet store %s as %s: %w (the password comes from $%s, through nova-secrets exec --only %s)",
-			addr, user, err, env, env)
-	}
-	return rdb, nil
+	return redis.NewClient(opts), nil
 }

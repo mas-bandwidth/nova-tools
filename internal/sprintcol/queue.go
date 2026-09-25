@@ -215,19 +215,15 @@ type Redis struct {
 	rdb *redis.Client
 }
 
-// Open dials addr (host:port) and checks the connection once. An empty
-// address is refused: this column does not guess a host.
+// Open names addr (host:port) and sends nothing; the first read dials and
+// reports an unreachable store (#3277). An empty address is refused: this
+// column does not guess a host.
 func Open(addr string) (*Redis, error) {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
 		return nil, fmt.Errorf("store address is empty; the queue column reads the dealer's index and does not guess a host")
 	}
-	rdb := redis.NewClient(&redis.Options{Addr: addr})
-	if err := rdb.Ping(context.Background()).Err(); err != nil {
-		_ = rdb.Close()
-		return nil, fmt.Errorf("store at %s: %w", addr, err)
-	}
-	return &Redis{rdb: rdb}, nil
+	return &Redis{rdb: redis.NewClient(&redis.Options{Addr: addr})}, nil
 }
 
 // Close releases the connection pool.

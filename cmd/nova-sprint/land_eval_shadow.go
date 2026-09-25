@@ -89,6 +89,9 @@ func runLandEvalShadow(ctx context.Context, addr string, in io.Reader, out, errO
 		cmds[i] = pipe.HMGet(ctx, prkey.Key(p.repo, p.n), "head", "state", "close")
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
+		if storeDown(errOut, "land eval", err) {
+			return 6
+		}
 		return refuse(errOut, "land eval", "read PR records: "+err.Error())
 	}
 

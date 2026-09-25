@@ -242,6 +242,12 @@ var dialJevStream = func(ctx context.Context, d events.Dial) (events.Emitter, fu
 	if err != nil {
 		return nil, nil, err
 	}
+	// Open sends nothing (#3277); review reaches the store before it spends a
+	// model call, so a ledger it cannot write is refused at start.
+	if err := s.Reach(ctx); err != nil {
+		_ = s.Close()
+		return nil, nil, err
+	}
 	return s, s.Close, nil
 }
 

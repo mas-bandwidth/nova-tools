@@ -148,7 +148,7 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	st, err := store.Open(ctx, *redisAddr)
+	st, err := openReached(ctx, *redisAddr)
 	if err != nil {
 		fmt.Fprintf(errOut, "nova-sprint reconcile: %v\n", err)
 		return 6
