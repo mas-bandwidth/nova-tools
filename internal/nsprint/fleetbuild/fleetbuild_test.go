@@ -41,11 +41,11 @@ func (f *fakeBench) Run(ctx context.Context, argv []string) (string, error) {
 	f.mu.Unlock()
 	bin := filepath.Join(f.home, BinDir)
 	switch {
-	case argv[0] == DefaultBuildCmd:
+	case isBuild(argv):
 		if f.failBuild {
-			return "SPACE BUILD REFUSED: checkout\n", errors.New("exit status 1")
+			return "FLEET COMPILE REFUSED: checkout\n", errors.New("exit status 1")
 		}
-		return "SPACE BUILD OK " + testV + "\n", nil
+		return "BUILT " + testV + " gomodcache=/home/u/nova-bench/space-build/go/mod\nFLEET COMPILE OK " + testV + " go=/home/u/nova-bench/space-build/go\n", nil
 	case argv[0] == "ssh":
 		b := argv[6]
 		if f.sshFail[b] {
@@ -79,10 +79,25 @@ func (f *fakeBench) Run(ctx context.Context, argv []string) (string, error) {
 	return "", errors.New("unexpected")
 }
 
+// isBuild is the build child: the compile verb over ssh, or a legacy command.
+func isBuild(argv []string) bool {
+	return argv[0] == LegacyBuildCmd || (argv[0] == "ssh" && len(argv) > 9 && argv[9] == "build" && argv[10] == "compile")
+}
+
+func (f *fakeBench) builds() [][]string {
+	var out [][]string
+	for _, c := range f.calls {
+		if isBuild(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func (f *fakeBench) byFirst(prog string) [][]string {
 	var out [][]string
 	for _, c := range f.calls {
-		if c[0] == prog {
+		if c[0] == prog && !isBuild(c) {
 			out = append(out, c)
 		}
 	}
@@ -137,8 +152,9 @@ func TestFleetBuildDeploysEveryBenchFromRedisConfig(t *testing.T) {
 		t.Fatalf("result not OK: %+v\n%s", r, out)
 	}
 
-	builds := f.byFirst(DefaultBuildCmd)
-	want := []string{DefaultBuildCmd, "--host", "space", "--version", testV, "--commit", testC,
+	builds := f.builds()
+	want := []string{"ssh", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "space",
+		".local/bin/nova-sprint", "fleet", "build", "compile", "--version", testV, "--commit", testC,
 		"--platform", "darwin-amd64,darwin-arm64,linux-amd64"}
 	if len(builds) != 1 || !reflect.DeepEqual(builds[0], want) {
 		t.Fatalf("build calls = %q, want exactly %q", builds, want)
@@ -327,5 +343,36 @@ func TestFleetBuildRefusesIncompleteConfig(t *testing.T) {
 	cfg, _ := ReadConfig(ctx, c)
 	if got := fmt.Sprint(cfg.Tools); got != "[nova-sprint nova-card]" {
 		t.Errorf("tools = %s", got)
+	}
+}
+
+// TestFleetBuildReceiptNamesTheBuildCache (#4080): the BUILD OK line carries
+// the compile verb's last line, which names the build's own Go directory.
+func TestFleetBuildReceiptNamesTheBuildCache(t *testing.T) {
+	_, c := seed(t)
+	f := &fakeBench{t: t, home: t.TempDir()}
+	r, out := deploy(t, c, f)
+	if !r.OK() || !strings.Contains(out, "BUILD OK builder=space version="+testV+" platforms=darwin-amd64,darwin-arm64,linux-amd64: FLEET COMPILE OK "+testV+" go=/home/u/nova-bench/space-build/go\n") {
+		t.Fatalf("BUILD OK line does not name the build's Go directory:\n%s", out)
+	}
+}
+
+// TestFleetBuildLegacyBuildCmd keeps --build-cmd: a named command gets
+// space-build's argv on this machine, not the ssh compile.
+func TestFleetBuildLegacyBuildCmd(t *testing.T) {
+	_, c := seed(t)
+	cfg, err := ReadConfig(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := MakePlan(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &Deployer{BuildCmd: LegacyBuildCmd}
+	want := []string{LegacyBuildCmd, "--host", "space", "--version", testV, "--commit", testC,
+		"--platform", "darwin-amd64,darwin-arm64,linux-amd64"}
+	if got := d.BuildArgv(p); !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy argv = %q, want %q", got, want)
 	}
 }

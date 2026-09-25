@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleetbuild"
 )
 
 type verbFakeBench struct {
@@ -27,6 +29,8 @@ func (f *verbFakeBench) Run(ctx context.Context, argv []string) (string, error) 
 	switch {
 	case argv[0] == "space-build":
 		return "SPACE BUILD OK\n", nil
+	case argv[0] == "ssh" && strings.Contains(strings.Join(argv, " "), " fleet build compile "):
+		return "FLEET COMPILE OK " + v + " go=/home/u/nova-bench/space-build/go\n", nil
 	case argv[0] == "ssh":
 		return "nova-sprint " + v + " linux/amd64 go1.25.1\n", nil
 	case argv[0] == "rsync":
@@ -86,7 +90,7 @@ func TestFleetBuildVerbSetDryRunAndDeploy(t *testing.T) {
 		t.Fatal("set studio platform")
 	}
 	code, out, errOut := run("--dry-run")
-	if code != 0 || !strings.Contains(out, "WOULD BUILD space-build --host space") ||
+	if code != 0 || !strings.Contains(out, "WOULD BUILD ssh -n -o BatchMode=yes -o ConnectTimeout=15 space .local/bin/nova-sprint fleet build compile --version v0.16.0-dev.c8178673 --commit c8178673f5e19ffbfe841e11826e611b74b6900d --platform darwin-arm64,linux-amd64\n") ||
 		!strings.Contains(out, "WOULD INSTALL hulk platform=linux-amd64 from=space:nova-bench/release/v0.16.0-dev.c8178673/linux-amd64/") ||
 		!strings.Contains(out, "FLEET BUILD DRY-RUN version=v0.16.0-dev.c8178673 commit=c8178673f5e1 targets=3") || len(f.calls) != 0 {
 		t.Fatalf("dry-run: code=%d calls=%v out=%q err=%q", code, f.calls, out, errOut)
@@ -100,5 +104,60 @@ func TestFleetBuildVerbSetDryRunAndDeploy(t *testing.T) {
 	}
 	if code, _, _ := run("extra"); code != 2 {
 		t.Errorf("positional argument: code=%d, want 2", code)
+	}
+}
+
+// TestFleetBuildCompileExecGivesGoItsOwnCaches (#4080) runs the production
+// compile seam against a fake go on PATH: the child sees the build's own
+// GOMODCACHE, GOCACHE and GOTOOLCHAIN over whatever the caller exported (the
+// bench user's caches), and GOFLAGS is dropped by goenv.Clean.
+func TestFleetBuildCompileExecGivesGoItsOwnCaches(t *testing.T) {
+	bin := t.TempDir()
+	fake := "#!/bin/sh\nenv | grep -E '^(GOMODCACHE|GOCACHE|GOTOOLCHAIN|GOFLAGS|GOOS|GOARCH|CGO_ENABLED)=' | sort\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GOMODCACHE", "/home/u/go/pkg/mod")
+	t.Setenv("GOCACHE", "/home/u/.cache/go-build")
+	t.Setenv("GOTOOLCHAIN", "auto")
+	t.Setenv("GOFLAGS", "-json")
+	out, err := fleetCompileExec(context.Background(), t.TempDir(), fleetbuild.BuildEnv("/home/u", "go1.27.1", "linux-amd64"), []string{"go", "build"})
+	want := "CGO_ENABLED=0\nGOARCH=amd64\nGOCACHE=/home/u/nova-bench/space-build/go/build\n" +
+		"GOMODCACHE=/home/u/nova-bench/space-build/go/mod\nGOOS=linux\nGOTOOLCHAIN=go1.27.1\n"
+	if err != nil || out != want {
+		t.Fatalf("child env: err=%v\n got %q\nwant %q", err, out, want)
+	}
+}
+
+// TestFleetBuildCompileVerb: usage is exit 2, a bad value is refused (exit 1)
+// before any child, and --dry-run names the build's Go directory.
+func TestFleetBuildCompileVerb(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home", "u")
+	oldExec, oldHome := fleetCompileExec, fleetBuildHome
+	var calls int
+	fleetCompileExec = func(context.Context, string, []string, []string) (string, error) {
+		calls++
+		return "", errors.New("no child in this test")
+	}
+	fleetBuildHome = func() (string, error) { return home, nil }
+	t.Cleanup(func() { fleetCompileExec, fleetBuildHome = oldExec, oldHome })
+	run := func(args ...string) (int, string, string) {
+		var out, errOut bytes.Buffer
+		code := runFleet(context.Background(), append([]string{"build", "compile"}, args...), &out, &errOut)
+		return code, out.String(), errOut.String()
+	}
+	if code, _, _ := run(); code != 2 {
+		t.Errorf("no flags: code=%d, want 2", code)
+	}
+	if code, _, errOut := run("--version", "v1", "--commit", "c8178673f5e19ffbfe841e11826e611b74b6900d"); code != 1 || !strings.HasPrefix(errOut, "FLEET COMPILE REFUSED: version") {
+		t.Errorf("bad version: code=%d %q", code, errOut)
+	}
+	code, out, errOut := run("--version", "v0.16.0-dev.c8178673", "--commit", "c8178673f5e19ffbfe841e11826e611b74b6900d", "--platform", "linux-amd64", "--dry-run")
+	if code != 0 || !strings.Contains(out, "WOULD linux-amd64 build v0.16.0-dev.c8178673") || !strings.Contains(out, "go="+filepath.Join(home, "nova-bench", "space-build", "go")) {
+		t.Errorf("dry-run: code=%d out=%q err=%q", code, out, errOut)
+	}
+	if calls != 0 {
+		t.Errorf("started %d children", calls)
 	}
 }
