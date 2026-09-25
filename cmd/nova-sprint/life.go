@@ -257,7 +257,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	load1 := fs.String("load1", "", "one minute load")
 	ssh := fs.String("ssh", "", "ssh endpoint")
 	probe := fs.String("probe", "", "probe endpoint")
-	launcher := fs.String("launcher", "", "launcher identity")
+	launcher := fs.String("launcher", life.BatchLauncher, "launcher identity the beat names (preflight 7.4)")
 	why := fs.String("why", "", "why the bench is live")
 	session := fs.String("session", "", "fenced owner session identity")
 	live := fs.String("live", "", "comma separated card identities")
