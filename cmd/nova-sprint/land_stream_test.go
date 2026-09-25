@@ -325,7 +325,7 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := snap.Render(time.Now()); !strings.Contains(got, fmt.Sprintf("%-30s | %7d | %5d | %7d | %7d | %7s | %6d\n", lsStream, 0, 0, 1, 0, "0/0", 2)) {
+	if got := snap.Render(time.Now()); !strings.Contains(got, fmt.Sprintf("%-30s | %7d | %5d | %7d | %6d | %7d | %7s | %6d\n", lsStream, 0, 0, 1, 0, 0, "0/0", 2)) {
 		t.Fatalf("table:\n%s", got)
 	}
 	// A re-run is ALREADY and closes nothing twice.

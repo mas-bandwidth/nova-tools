@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	landstream "github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
@@ -49,12 +50,17 @@ const (
 )
 
 // detailScript reads, for each stream named, every card of ws:<s>:merging
-// with its PR record's head, state, stream and reads, plus cfg:land. Sent as
-// EVAL_RO, so Redis refuses a write; no KEYS, no SCAN: every key comes from a
-// set member.
+// with its PR record's head, state, stream and reads; cfg:land; for each
+// repo named, every land:<repo>:<slug> of land:<repo>:streams with its stream
+// PR's ci; and cfg:review max_age with, for each review stream named, every
+// card of ws:<s>:review and its review_at (#4072). Sent as EVAL_RO, so Redis
+// refuses a write; no KEYS, no SCAN: every key comes from a set member.
 //
-// ARGV: default repo name, #streams, streams...
-// Reply: {cfg:land flat, per stream {id, name, n, head, state, stream, reads}...}.
+// ARGV: default repo name, #streams, streams..., #repos, repos (owner/name)...,
+// #review streams, review streams...
+// Reply: {cfg:land flat, per stream {id, name, n, head, state, stream, reads}...,
+// per repo {slug, streams, state, head, members, pr, at, ci}..., {max_age,
+// per review stream {id, review_at}...}}.
 const detailScript = `local function s(v) if v == false or v == nil then return '' end return tostring(v) end
 local function base(r) return string.match(r, '([^/]+)$') or r end
 local function prref(f, repo)
@@ -90,26 +96,164 @@ for i = 1, ns do
   end
   streams[i] = rows
 end
-return {redis.call('HGETALL', 'cfg:land'), streams}`
+local nr = tonumber(ARGV[3 + ns])
+local lands = {}
+for i = 1, nr do
+  local repo = ARGV[3 + ns + i]
+  local rows = {}
+  for _, slug in ipairs(redis.call('SMEMBERS', 'land:' .. repo .. ':streams')) do
+    local l = redis.call('HMGET', 'land:' .. repo .. ':' .. slug, 'streams', 'state', 'head', 'members', 'pr', 'at')
+    local ci = ''
+    if s(l[5]) ~= '' then ci = s(redis.call('HGET', 'pr:' .. base(repo) .. ':' .. s(l[5]), 'ci')) end
+    for _, v in ipairs({slug, s(l[1]), s(l[2]), s(l[3]), s(l[4]), s(l[5]), s(l[6]), ci}) do table.insert(rows, v) end
+  end
+  lands[i] = rows
+end
+local nv = tonumber(ARGV[4 + ns + nr]) or 0
+local reviews = {}
+for i = 1, nv do
+  local rows = {}
+  for _, id in ipairs(redis.call('ZRANGE', 'ws:' .. ARGV[4 + ns + nr + i] .. ':review', 0, -1)) do
+    table.insert(rows, id)
+    table.insert(rows, s(redis.call('HGET', 'task:' .. id, 'review_at')))
+  end
+  reviews[i] = rows
+end
+return {redis.call('HGETALL', 'cfg:land'), streams, lands, {s(redis.call('HGET', 'cfg:review', 'max_age')), reviews}}`
+
+// LandRow is one open landing: land:<repo>:<slug> and its stream PR's ci.
+type LandRow struct {
+	Repo, Slug, Streams, State, Head, PR, CI string
+	Members                                  int
+	At                                       int64 // ms; 0 when the hash has none
+}
 
 // detailArgs is the script's ARGV for the streams whose merging split is
-// computed from records.
-func detailArgs(streams []string) []any {
-	args := []any{prkey.Name(defaultMergingRepo), strconv.Itoa(len(streams))}
+// computed from records, the repos whose landings are listed and the
+// streams whose review cards are aged.
+func detailArgs(streams, repos, review []string) []any {
+	first := defaultMergingRepo
+	if len(repos) > 0 {
+		first = repos[0]
+	}
+	args := []any{prkey.Name(first), strconv.Itoa(len(streams))}
 	for _, s := range streams {
+		args = append(args, s)
+	}
+	args = append(args, strconv.Itoa(len(repos)))
+	for _, r := range repos {
+		args = append(args, r)
+	}
+	args = append(args, strconv.Itoa(len(review)))
+	for _, s := range review {
 		args = append(args, s)
 	}
 	return args
 }
 
-// applyDetail folds the script's reply into the snapshot: each stream's read
-// count, the cards of merging the lander would take. A reply of the wrong
-// shape leaves MergingRead at -1 (unknown), never a guess.
-func applyDetail(snap *SprintSnapshot, reply any, streams []string) {
+// DefaultReviewMaxAge is how long a card may wait in review for its verdict
+// when cfg:review has no max_age (seconds): past it the stream prints a
+// REVIEW line (#4072).
+const DefaultReviewMaxAge = time.Hour
+
+// ReviewBound is one stream's cards in review past max_age (#4072): how
+// many, and the oldest with its age (-1: a card with no review_at, whose
+// age cannot be shown to hold).
+type ReviewBound struct {
+	Stream, Oldest string
+	Over           int
+	Age            time.Duration
+	Max            time.Duration
+}
+
+// Line is the bound as the table prints it:
+// REVIEW stream=<s> over=<n> oldest=<id> age=<d> max=<d>.
+func (r ReviewBound) Line() string {
+	stream := r.Stream
+	if strings.ContainsAny(stream, " =\t") {
+		stream = strconv.Quote(stream)
+	}
+	age := "-"
+	if r.Age >= 0 {
+		age = durText(r.Age)
+	}
+	return fmt.Sprintf("REVIEW stream=%s over=%d oldest=%s age=%s max=%s", stream, r.Over, r.Oldest, age, durText(r.Max))
+}
+
+// durText is a duration the way landAge prints one: 45s, 6m, 2h05m.
+func durText(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+// reviewBounds folds the script's review reply into one ReviewBound per
+// stream with a card past max_age at now, in stream order.
+func reviewBounds(reply any, streams []string, now time.Time) []ReviewBound {
 	top, ok := reply.([]any)
 	if !ok || len(top) != 2 {
+		return nil
+	}
+	max := DefaultReviewMaxAge
+	if n, err := strconv.ParseInt(strings.TrimSpace(pipeValue(top[0])), 10, 64); err == nil && n > 0 {
+		max = time.Duration(n) * time.Second
+	}
+	per, _ := top[1].([]any)
+	var out []ReviewBound
+	for i, s := range streams {
+		if i >= len(per) {
+			break
+		}
+		rows, _ := per[i].([]any)
+		b := ReviewBound{Stream: s, Max: max}
+		for k := 0; k+1 < len(rows); k += 2 {
+			id := pipeValue(rows[k])
+			age := time.Duration(-1)
+			if at, err := strconv.ParseInt(pipeValue(rows[k+1]), 10, 64); err == nil && at > 0 {
+				age = max0(now.Sub(time.UnixMilli(at)))
+			}
+			if age >= 0 && age <= max {
+				continue
+			}
+			b.Over++
+			if b.Oldest == "" || (b.Age >= 0 && (age < 0 || age > b.Age)) {
+				b.Oldest, b.Age = id, age
+			}
+		}
+		if b.Over > 0 {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+func max0(d time.Duration) time.Duration {
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+// landRepos is the repos whose open landings the detail script lists. The
+// live table prints no LAND line since #4088 (Glenn 2026-09-25 3:50 PM ET:
+// "It is cluttered"; the facts are `nova-sprint stream status`), so the
+// script is asked for none and Landings stays empty.
+func landRepos(cfg SprintConfig) []string { return nil }
+
+// applyDetail folds the script's reply into the snapshot: each stream's read
+// count (the cards of merging the lander would take), the open landings and
+// the review bounds at now. A reply of the wrong shape leaves MergingRead at
+// -1 (unknown), never a guess.
+func applyDetail(snap *SprintSnapshot, reply any, streams, repos, review []string, now time.Time) {
+	top, ok := reply.([]any)
+	if !ok || len(top) != 4 {
 		return
 	}
+	snap.Reviews = reviewBounds(top[3], review, now)
 	cfg := map[string]string{}
 	if flat, ok := top[0].([]any); ok {
 		for i := 0; i+1 < len(flat); i += 2 {
