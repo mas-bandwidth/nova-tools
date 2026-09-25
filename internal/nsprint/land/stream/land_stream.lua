@@ -3,7 +3,7 @@
 -- library), so every write the landing makes is one atomic call. ARGV[1] is
 -- the op, ARGV[2] a JSON payload of strings. Keys (rowan-new specs/ws-index.md and the
 -- pr record contract):
---   pr:<repo>:<n>            hash  repo, n, head, base, base_sha, state, ci, mergeable,
+--   pr:<name>:<n>            hash  repo, n, head, base, base_sha, state, ci, mergeable,
 --                                  stream, task, kind, reads (typed lines, newline-joined),
 --                                  created_at, updated_at; park, landed_with, close on moves
 --   land:<repo>:<slug>       hash  the stream landing: streams, slug, base, base_sha, branch,
@@ -21,7 +21,9 @@
 local op = ARGV[1]
 local p = cjson.decode(ARGV[2])
 
-local function prkey(repo, n) return 'pr:' .. repo .. ':' .. n end
+-- prkey mirrors internal/nsprint/prkey.Key: the bare repository name, so
+-- owner/name and name hit one record.
+local function prkey(repo, n) return 'pr:' .. (string.match(repo, '([^/]+)$') or repo) .. ':' .. n end
 local function landkey(repo, slug) return 'land:' .. repo .. ':' .. slug end
 
 local function hset(key, fields)

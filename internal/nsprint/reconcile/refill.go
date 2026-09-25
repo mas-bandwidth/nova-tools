@@ -573,9 +573,11 @@ func (f LeaseFence) Renew(ctx context.Context) error {
 
 // DealFunctions is the deal pass's Reserver, Row, Gate and CardWhy over the
 // nova_sprint functions of deal.lua (#3063): one ns_card_deal call per bench,
-// one ns_card_undeal per returned batch, one ns_bench_ssh per bench row, one
-// ns_card_why per bench with refused cards (#3700), one ns_card_gate per
-// sprint. Each checks the fence token inside the function.
+// one ns_bench_ssh per bench row that ran, one ns_card_deal_fail per bench
+// whose session failed before anything ran (the row and the batch's return
+// in one call, #3322), one ns_card_why per bench with refused cards (#3700),
+// one ns_card_gate per sprint. Each checks the fence token inside the
+// function.
 type DealFunctions struct {
 	Client *redis.Client
 	Actor  string
@@ -649,6 +651,29 @@ func (d *DealFunctions) Unreserve(ctx context.Context, fence, bench string, res 
 // SSH writes the bench's ssh cell, bench:<b>:ssh.
 func (d *DealFunctions) SSH(ctx context.Context, fence, bench, state, why string) error {
 	return d.call(ctx, "ns_bench_ssh", "OK", bench, fence, state, why)
+}
+
+// Fail writes the bench's ssh cell and returns its batch dealt -> queued in
+// one ns_card_deal_fail call, which also counts the bench's consecutive
+// timeouts; at cfg:fleet ssh_fail_after the fleet duty holds it (#3322).
+func (d *DealFunctions) Fail(ctx context.Context, fence, bench, state, why string, res []deal.Reservation) (deal.Failed, error) {
+	args := []any{bench, fence, state, why, d.actor(), ""}
+	for _, r := range res {
+		args = append(args, r.Card.Sprint, r.Card.Label, strconv.Itoa(r.Attempt))
+	}
+	reply, err := d.Client.FCall(ctx, "ns_card_deal_fail", nil, args...).StringSlice()
+	if err != nil {
+		return deal.Failed{}, fmt.Errorf("ns_card_deal_fail: %w", err)
+	}
+	if len(reply) > 0 && reply[0] == "FENCED" {
+		return deal.Failed{}, deal.ErrFenced
+	}
+	if len(reply) < 6 || reply[0] != "FAILED" {
+		return deal.Failed{}, fmt.Errorf("ns_card_deal_fail: %v", reply)
+	}
+	returned, _ := strconv.Atoi(reply[2])
+	timeouts, _ := strconv.Atoi(reply[3])
+	return deal.Failed{Returned: returned, Timeouts: timeouts, State: reply[4], Hold: reply[5] == "1"}, nil
 }
 
 // CardWhy writes each refused card's refusal line in one ns_card_why call

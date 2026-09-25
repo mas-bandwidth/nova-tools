@@ -71,7 +71,7 @@ func TestReadUsageRefusalsOpenNoStore(t *testing.T) {
 		{"read"},
 		{"read", "brief"},
 		{"read", "brief", "--repo", "nova-tools", "--n", "3", "--redis", mr.Addr()},
-		{"read", "brief", "--repo", "mas-bandwidth/nova-tools", "--n", "3", "--out", "d", "--redis", mr.Addr()},
+		{"read", "brief", "--repo", "mas-bandwidth/nova-tools/x", "--n", "3", "--out", "d", "--redis", mr.Addr()},
 		{"read", "brief", "--repo", "nova-tools", "--n", "x", "--out", "d", "--redis", mr.Addr()},
 		{"read", "brief", "--repo", "nova-tools", "--n", "3", "--out", "d"},
 		{"read", "post", "--repo", "nova-tools", "--n", "3", "--redis", mr.Addr()},

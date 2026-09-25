@@ -109,6 +109,7 @@ type cardDoc struct {
 	Stream         string // STREAM: <name>, the work stream whose ws:<stream>:<where> view holds the card (#3692); "" is none
 	Origin         string // ORIGIN: <url>, the GitHub issue the card came from (#3692); "" is absent
 	DoneWhen       string // DONE-WHEN: the sentence a test can fail; required, carried into the PR body (#2932)
+	Task           string // TASK: <sentence>, the PR title's sentence when present (#3712); "" is absent
 	Leg            string // LEG: <leg>, the toolchain a bench profile must carry (deal Bench.runs); absent is any bench
 	Payload        string
 }
@@ -201,6 +202,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		Stream:         stream,
 		Origin:         origin,
 		DoneWhen:       header["DONE-WHEN"],
+		Task:           strings.TrimSpace(header["TASK"]),
 		Leg:            leg,
 		Payload:        hex.EncodeToString(sum[:]),
 	}, nil

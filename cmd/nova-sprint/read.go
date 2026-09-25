@@ -9,6 +9,9 @@
 //	nova-sprint read digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>]
 //	nova-sprint read carry  --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]
 //
+// <r> is owner/name or name: every subverb keys the PR record pr:<name>:<n>
+// by the bare name (internal/nsprint/prkey), the key pr record writes.
+//
 // brief writes the read brief; post stores the typed line and, until #3595
 // lands, mirrors it as one PR comment (REST) unless --no-github. digest
 // records the diff identity of the head a line is typed at (diff_sha256 on
@@ -27,6 +30,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -36,6 +40,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/line"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
@@ -73,9 +78,22 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if *redisAddr == "" {
 		*redisAddr = os.Getenv("NOVA_REDIS_ADDR")
 	}
-	if *repo == "" || strings.ContainsAny(*repo, "/: \t") || *redisAddr == "" {
-		return refuse(errOut, "read "+sub, "needs --repo <name> (no owner, no slash), --n <number> and --redis <addr> (or NOVA_SPRINT_REDIS); "+readUsage)
+	// --repo is owner/name or name (internal/nsprint/prkey): the record,
+	// the ci hash and the mirror take the bare name; an owner in --repo is
+	// the comment mirror's owner and must agree with an explicit --owner.
+	repoOwner, repoName, rerr := prkey.Split(*repo)
+	if *repo == "" || rerr != nil || *redisAddr == "" {
+		return refuse(errOut, "read "+sub, "needs --repo <owner/name|name>, --n <number> and --redis <addr> (or NOVA_SPRINT_REDIS); "+readUsage)
 	}
+	if strings.Contains(*repo, "/") {
+		ownerSet := false
+		fs.Visit(func(f *flag.Flag) { ownerSet = ownerSet || f.Name == "owner" })
+		if ownerSet && *owner != repoOwner {
+			return refuse(errOut, "read "+sub, "--repo "+*repo+" names owner "+repoOwner+" but --owner is "+*owner+"; pass one")
+		}
+		*owner = repoOwner
+	}
+	*repo = repoName
 	num, err := strconv.Atoi(*n)
 	if err != nil || num <= 0 {
 		return refuse(errOut, "read "+sub, "--n wants a positive PR number, got "+strconv.Quote(*n))

@@ -67,6 +67,7 @@ const (
 	FunctionStep      = "ns_harvest_step"
 	FunctionHarvested = "ns_card_harvested"
 	FunctionRefuse    = "ns_harvest_refuse"
+	FunctionFail      = "ns_harvest_fail"
 )
 
 // The durable harvest steps (card hash field harvest_step).
@@ -115,6 +116,9 @@ const (
 	DefaultLeaseTTL = 6 * time.Second
 	DefaultRenew    = 2 * time.Second
 	DefaultLimit    = 256
+	// DefaultFailCap is how many failed passes an ended(DONE) card gets
+	// before ns_harvest_fail moves it to done/fail (#3712).
+	DefaultFailCap = 3
 )
 
 // ErrLeaseHeld: another worker holds lease:harvest:<b>; this one does nothing.
@@ -201,6 +205,9 @@ type Options struct {
 	// nil means DefaultReadback. Sleep waits (nil: a timer on ctx).
 	Readback []time.Duration
 	Sleep    func(ctx context.Context, d time.Duration) error
+	// FailCap is the failed passes a card gets before it moves to done/fail;
+	// 0 means DefaultFailCap.
+	FailCap int
 }
 
 // CardResult is one harvested card. Via is record (the idem key and its PR
@@ -220,6 +227,10 @@ type CardFailure struct {
 	Label string
 	Code  string // an err= code above
 	Err   error
+	// Fails is the card's failed passes so far (harvest_fails), and Moved
+	// says this one reached FailCap and moved the card to done/fail.
+	Fails int
+	Moved bool
 }
 
 // BenchResult is one bench's pass.
@@ -249,6 +260,9 @@ func Run(ctx context.Context, st *store.Store, opt Options) []BenchResult {
 	}
 	if opt.Actor == "" {
 		opt.Actor = "card-harvest"
+	}
+	if opt.FailCap <= 0 {
+		opt.FailCap = DefaultFailCap
 	}
 	out := make([]BenchResult, len(opt.Benches))
 	var wg sync.WaitGroup
@@ -429,7 +443,11 @@ func harvestBench(ctx context.Context, st *store.Store, opt Options, l lease) ([
 			if errors.As(err, &ce) {
 				code = ce.code
 			}
-			failed = append(failed, CardFailure{Label: c.Label, Code: code, Err: err})
+			f := CardFailure{Label: c.Label, Code: code, Err: err}
+			if ferr := countFail(ctx, st, opt, l, &f); ferr != nil {
+				return done, append(failed, f), ferr
+			}
+			failed = append(failed, f)
 			continue
 		}
 		done = append(done, r)
@@ -510,8 +528,21 @@ func harvestCard(ctx context.Context, st *store.Store, opt Options, l lease, inf
 		return CardResult{}, fail(CodeNoCommit, c.Label, "pushed_sha %q: a card that committed nothing is not harvested", c.PushedSHA)
 	}
 
-	// a. Push (idempotent to the same sha), then the durable pushed step.
-	if err := opt.Pusher.Push(ctx, info, c); err != nil {
+	// The card record: the body is written from it alone (#3712).
+	rec, err := ReadRecord(ctx, st, opt.Sprint, c.Label, c.Attempt)
+	if err != nil {
+		return CardResult{}, err
+	}
+
+	// a. Push (idempotent to the same sha), then the durable pushed step. A
+	// RangePusher also reads the paths base_sha..pushed_sha changed.
+	var rangePaths []string
+	if rp, ok := opt.Pusher.(RangePusher); ok {
+		rangePaths, err = rp.PushRange(ctx, info, c, rec.Card["base_sha"])
+	} else {
+		err = opt.Pusher.Push(ctx, info, c)
+	}
+	if err != nil {
 		if errors.Is(err, ErrBranchMoved) {
 			return CardResult{}, fail(CodeBranchMoved, c.Label, "push %s: %w", c.Branch, err)
 		}
@@ -544,7 +575,7 @@ func harvestCard(ctx context.Context, st *store.Store, opt Options, l lease, inf
 					c.Repo, c.Branch, n, short(c.RecHead), short(c.PushedSHA))
 			}
 			res.Via = "record"
-			return receipt(ctx, st, opt, l, c, res, PR{Number: n, Head: c.RecHead, Ref: c.Branch})
+			return receipt(ctx, st, opt, l, c, res, PR{Number: n, Head: c.RecHead, Ref: c.Branch}, "")
 		}
 		pr, err := opt.Forge.ReadPR(ctx, c.Repo, n)
 		if err != nil {
@@ -555,7 +586,7 @@ func harvestCard(ctx context.Context, st *store.Store, opt Options, l lease, inf
 				c.Repo, c.Branch, n, pr.Ref, short(pr.Head), c.Branch, short(c.PushedSHA))
 		}
 		res.Via = "idem"
-		return receipt(ctx, st, opt, l, c, res, pr)
+		return receipt(ctx, st, opt, l, c, res, pr, "")
 	}
 
 	// c. Look up before creating.
@@ -565,7 +596,7 @@ func harvestCard(ctx context.Context, st *store.Store, opt Options, l lease, inf
 	}
 	if len(prs) > 0 {
 		res.Via = "rest"
-		return found(ctx, st, opt, l, c, res, prs)
+		return found(ctx, st, opt, l, c, res, prs, "")
 	}
 
 	// d. None: intent, then one create.
@@ -575,13 +606,14 @@ func harvestCard(ctx context.Context, st *store.Store, opt Options, l lease, inf
 	if err := fault(opt, FaultAfterIntent); err != nil {
 		return res, err
 	}
-	pr, cerr := opt.Forge.OpenPR(ctx, c.Repo, c.Branch, c.Base, prTitle(opt.Sprint, c), prBody(opt.Sprint, c))
+	body := Body(opt.Sprint, l.bench, c, rec, rangePaths)
+	pr, cerr := opt.Forge.OpenPR(ctx, c.Repo, c.Branch, c.Base, Title(opt.Sprint, c, rec), body)
 	if err := fault(opt, FaultAfterCreate); err != nil {
 		return res, err
 	}
 	if cerr == nil {
 		res.Via = "opened"
-		return publish(ctx, st, opt, l, c, res, pr)
+		return publish(ctx, st, opt, l, c, res, pr, body)
 	}
 	if !errors.Is(cerr, ErrAmbiguous) {
 		return res, fail(CodeCreateFailed, c.Label, "open PR: %w", cerr)
@@ -599,13 +631,14 @@ func harvestCard(ctx context.Context, st *store.Store, opt Options, l lease, inf
 			continue
 		}
 		res.Via = "readback"
-		return found(ctx, st, opt, l, c, res, prs)
+		return found(ctx, st, opt, l, c, res, prs, body)
 	}
 	return res, fail(CodeCreateAmbiguous, c.Label, "create reply %v and %d readbacks found no PR; the card stays at intent, the next pass looks up first", cerr, len(waits))
 }
 
-// found is step c on a lookup that returned PRs.
-func found(ctx context.Context, st *store.Store, opt Options, l lease, c Card, res CardResult, prs []PR) (CardResult, error) {
+// found is step c on a lookup that returned PRs. body is the body this pass
+// POSTed ("" when it opened nothing).
+func found(ctx context.Context, st *store.Store, opt Options, l lease, c Card, res CardResult, prs []PR, body string) (CardResult, error) {
 	if len(prs) > 1 {
 		nums := make([]string, len(prs))
 		for i, p := range prs {
@@ -617,12 +650,13 @@ func found(ctx context.Context, st *store.Store, opt Options, l lease, c Card, r
 	if pr.State == "closed" && !pr.Merged {
 		return res, fail(CodePRClosed, c.Label, "PR %d on %s is closed and not merged; no reopen, no second PR", pr.Number, c.Branch)
 	}
-	return publish(ctx, st, opt, l, c, res, pr)
+	return publish(ctx, st, opt, l, c, res, pr, body)
 }
 
 // publish verifies a PR GitHub returned, reserves it (published) with its
-// record, reads the record back from Redis and writes the receipt.
-func publish(ctx context.Context, st *store.Store, opt Options, l lease, c Card, res CardResult, pr PR) (CardResult, error) {
+// record, reads the record back from Redis and writes the receipt. body is
+// the body this pass POSTed ("" when it opened nothing).
+func publish(ctx context.Context, st *store.Store, opt Options, l lease, c Card, res CardResult, pr PR, body string) (CardResult, error) {
 	if !verified(pr, c) {
 		return res, fail(CodePRMismatch, c.Label, "PR %d head %s %s is not %s %s", pr.Number, pr.Ref, short(pr.Head), c.Branch, short(c.PushedSHA))
 	}
@@ -645,14 +679,16 @@ func publish(ctx context.Context, st *store.Store, opt Options, l lease, c Card,
 	if head != c.PushedSHA || branch != c.Branch {
 		return res, fail(CodePRMismatch, c.Label, "record %s head %s %s is not %s %s", RecordKey(c.Repo, pr.Number), branch, short(head), c.Branch, short(c.PushedSHA))
 	}
-	return receipt(ctx, st, opt, l, c, res, PR{Number: pr.Number, Head: head, Ref: branch, URL: pr.URL})
+	return receipt(ctx, st, opt, l, c, res, PR{Number: pr.Number, Head: head, Ref: branch, URL: pr.URL}, body)
 }
 
 // receipt is step e: ns_card_harvested with the head as the PR record holds
-// it (or, for an idem key from before the record existed, as REST read it).
-func receipt(ctx context.Context, st *store.Store, opt Options, l lease, c Card, res CardResult, pr PR) (CardResult, error) {
+// it (or, for an idem key from before the record existed, as REST read it),
+// and the body this pass opened the PR with (stored as pr_body, #3712; ""
+// stores none: a PR found open was opened by an earlier pass).
+func receipt(ctx context.Context, st *store.Store, opt Options, l lease, c Card, res CardResult, pr PR, body string) (CardResult, error) {
 	reply, err := st.Client().FCall(ctx, FunctionHarvested, nil, opt.Sprint, c.Label, l.bench,
-		l.instance, l.token, strconv.Itoa(pr.Number), pr.Head, opt.Actor).Text()
+		l.instance, l.token, strconv.Itoa(pr.Number), pr.Head, opt.Actor, body).Text()
 	if err != nil {
 		return res, fmt.Errorf("%s: harvested: %w", c.Label, err)
 	}
@@ -692,21 +728,27 @@ func short(s string) string {
 	return s
 }
 
-func prTitle(sprint string, c Card) string {
-	return fmt.Sprintf("%s: nova-sprint %s card %s attempt %s", c.Label, sprint, c.Label, c.Attempt)
-}
-
-// prBody is the PR body: the card's BASE, base-sha, STREAM and DONE-WHEN
-// lines as the card carried them (each on its own line, the shape a reader
-// and the lander expect), then the harvest's own lines. A card with no
-// STREAM line writes STREAM: none.
-func prBody(sprint string, c Card) string {
-	stream := c.Stream
-	if stream == "" {
-		stream = "none"
+// countFail is ns_harvest_fail for one failed card: it counts the pass and,
+// at FailCap, moves the card to done/fail (reason harvest, the err line as
+// why). Only a fenced lease is returned as an error; any other refusal
+// leaves f as it is (the pass line already names the failure).
+func countFail(ctx context.Context, st *store.Store, opt Options, l lease, f *CardFailure) error {
+	reply, err := st.Client().FCall(ctx, FunctionFail, nil, opt.Sprint, f.Label, l.bench, l.instance, l.token,
+		f.Code, oneLine(f.Err.Error()), opt.FailCap).Text()
+	if err != nil {
+		return nil
 	}
-	return fmt.Sprintf("nova-sprint harvest (#2932)\n\nBASE: %s\nbase-sha: %s\nSTREAM: %s\nDONE-WHEN: %s\n\nsprint: %s\ncard: %s\nidentity: %s\npushed_sha: %s\nresults: %s\n",
-		c.Base, c.BaseSHA, stream, c.DoneWhen, sprint, c.Label, c.Identity, c.PushedSHA, c.Results)
+	status, value, _ := strings.Cut(reply, "|")
+	switch status {
+	case "COUNT":
+		f.Fails, _ = strconv.Atoi(value)
+	case "FAILED":
+		f.Fails, _ = strconv.Atoi(value)
+		f.Moved = true
+	case "FENCED":
+		return ErrFenced
+	}
+	return nil
 }
 
 // dueCols is ns_harvest_due's row: label repo base attempt pushed_sha

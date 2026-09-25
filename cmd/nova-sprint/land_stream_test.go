@@ -300,7 +300,7 @@ func TestLandVerbsRefuseUsage(t *testing.T) {
 	}
 	// A new record without head/base/stream is refused by the script.
 	mr := miniredis.RunT(t)
-	if code, _, errOut := runSprint("pr", "record", "--redis", mr.Addr(), "--repo", lsRepo, "--n", "5", "--ci", "green"); code != 2 || !strings.Contains(errOut, "REFUSED no record pr:"+lsRepo+":5") {
+	if code, _, errOut := runSprint("pr", "record", "--redis", mr.Addr(), "--repo", lsRepo, "--n", "5", "--ci", "green"); code != 2 || !strings.Contains(errOut, "REFUSED no record pr:nova-tools:5") {
 		t.Fatalf("new record without head: %d %s", code, errOut)
 	}
 }

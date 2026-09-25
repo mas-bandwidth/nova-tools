@@ -105,10 +105,11 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 			doc.Stream, doc.Origin, doc.Leg,
 		)
 		// Then, in the same pipeline, ns_card_header writes the card's
-		// DONE-WHEN line (harvest's PR body, #2932) only when the card is
+		// DONE-WHEN line (harvest's PR body, #2932) and its TASK line (the
+		// PR title, #3712) only when the card is
 		// stored from this payload; after EXISTS it writes nothing, after
 		// CONFLICT it refuses.
-		headers[i] = pipe.FCall(ctx, "ns_card_header", keys[:1], doc.Payload, doc.DoneWhen)
+		headers[i] = pipe.FCall(ctx, "ns_card_header", keys[:1], doc.Payload, doc.DoneWhen, doc.Task)
 	}
 	_, _ = pipe.Exec(ctx) // each reply is read, with its own error, below
 	out := make([]VerbResult, len(docs))

@@ -152,6 +152,17 @@ func (f *zshForge) ReadPR(_ context.Context, _ string, n int) (harvest.PR, error
 // forge reads a PR head from what the harvest really pushed.
 var origins sync.Map
 
+// originOf is the fixture's push URL for a card: the bare origin of its
+// branch (the fake GitHub), never the forge (#3712 pushes to the card repo's
+// URL, not to the clone's origin).
+func originOf(c harvest.Card) string {
+	v, ok := origins.Load(c.Branch)
+	if !ok {
+		return ""
+	}
+	return v.(string)
+}
+
 func pushedHead(branch string) string {
 	v, ok := origins.Load(branch)
 	if !ok {
@@ -265,7 +276,7 @@ func (z *zshBench) pass(faultAt string) harvest.BenchResult {
 		Sprint: z.sprint, Benches: []string{z.bench}, Clock: time.Minute,
 		Instance: fmt.Sprintf("pass-%d", z.passes),
 		Forge:    z.forge,
-		Pusher:   harvest.SSHPusher{SSH: z.ssh},
+		Pusher:   harvest.SSHPusher{SSH: z.ssh, Remote: originOf},
 		Sleep: func(_ context.Context, d time.Duration) error {
 			z.sleeps = append(z.sleeps, d)
 			return nil

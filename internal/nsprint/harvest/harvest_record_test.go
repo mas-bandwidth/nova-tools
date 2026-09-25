@@ -37,7 +37,7 @@ func TestHarvestTwoBenchesRecordAndBody(t *testing.T) {
 	run := func(instance string) []harvest.BenchResult {
 		return harvest.Run(ctx, alpha.st, harvest.Options{
 			Sprint: alpha.sprint, Benches: benches, Clock: time.Minute, Instance: instance,
-			Forge: forge, Pusher: harvest.SSHPusher{SSH: alpha.ssh},
+			Forge: forge, Pusher: harvest.SSHPusher{SSH: alpha.ssh, Remote: originOf},
 		})
 	}
 	pushes := func(branch string) int {
@@ -92,7 +92,8 @@ func TestHarvestTwoBenchesRecordAndBody(t *testing.T) {
 
 	t.Run("body-carries-stream-and-done-when", func(t *testing.T) {
 		for _, z := range []*zshBench{alpha, bravo} {
-			body := forge.bodies[z.branch]
+			// The typed body starts with BASE: (#3712): read it as lines.
+			body := "\n" + forge.bodies[z.branch]
 			for _, want := range []string{
 				"\nBASE: dev\n", "\nbase-sha: 09fbedc9\n", "\nSTREAM: nova-sprint\n",
 				"\nDONE-WHEN: the branch " + z.branch + " is on origin and one PR names it\n",

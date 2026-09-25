@@ -28,8 +28,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -41,12 +43,19 @@ const (
 	FunctionRelease = "ns_ci_release"
 )
 
-// Summary words on the request record's ci field.
+// Summary words on the request record's ci field. SummaryRetry is only a
+// receipt reply: the attempt was red below cfg:ci max_attempts, so the head
+// went back to the pool still pending (ci_run.lua).
 const (
 	SummaryPending = "pending"
 	SummaryGreen   = "green"
 	SummaryRed     = "red"
+	SummaryRetry   = "retry"
 )
+
+// MaxAttemptsKey holds max_attempts, the claims one head may take before it
+// ends FAIL (default 2 in ci_run.lua: one run plus one retry for flake).
+const MaxAttemptsKey = "cfg:ci"
 
 // PoolKey is the ZSET the benches pull requests from.
 const PoolKey = "ci:pool"
@@ -91,8 +100,9 @@ func ReceiptKey(repo, sha, check string) string { return RecordKey(repo, sha) + 
 // ConfigKey is where a repo declares its checks.
 func ConfigKey(repo string) string { return "cfg:ci:" + repo }
 
-// PRKey is the PR record the summary is copied to when its head is the sha.
-func PRKey(repo string, pr int) string { return "pr:" + repo + ":" + strconv.Itoa(pr) }
+// PRKey is the PR record the summary is copied to when its head is the sha:
+// the one PR record key, pr:<name>:<n> (internal/nsprint/prkey).
+func PRKey(repo string, pr int) string { return prkey.Key(repo, pr) }
 
 // CheckName validates a check name against the key grammar and the reserved
 // suffixes.
@@ -109,16 +119,20 @@ func CheckName(name string) error {
 // RequestRequest asks for the checks of one head. Checks empty means every
 // declared check; each named one must be declared. PR is optional; URL is the
 // clone url the runner uses (empty: the runner's default for the repo).
+// Again resets an existing record to attempt 0 and puts it back in the pool
+// (the explicit retry after a capped FAIL).
 type RequestRequest struct {
 	Repo   string
 	SHA    string
 	PR     int
 	URL    string
 	Checks []string
+	Again  bool
 }
 
 // Request writes ci:<repo>:<sha> and adds it to the pool, once. EXISTS on a
-// second request for the head, REFUSED when a check is not declared.
+// second request for the head (RESET with Again), REFUSED when a check is not
+// declared.
 func Request(ctx context.Context, st *store.Store, req RequestRequest) (Result, error) {
 	if !repoRx.MatchString(req.Repo) {
 		return Result{}, fmt.Errorf("repo %q is not a repository name", req.Repo)
@@ -135,14 +149,20 @@ func Request(ctx context.Context, st *store.Store, req RequestRequest) (Result, 
 	if req.PR > 0 {
 		pr = strconv.Itoa(req.PR)
 	}
-	args := []string{req.Repo, req.SHA, pr, req.URL, strings.Join(req.Checks, ",")}
+	again := ""
+	if req.Again {
+		again = "1"
+	}
+	args := []string{req.Repo, req.SHA, pr, req.URL, strings.Join(req.Checks, ","), again}
 	for _, c := range Defaults[req.Repo] {
 		args = append(args, c.Name, c.Argv)
 	}
 	return call(ctx, st, FunctionRequest, args...)
 }
 
-// Claimed is one request a bench holds under a lease.
+// Claimed is one request a bench holds under a lease. Capped names the
+// <repo>:<sha> members the claim ended FAIL on the way because their next
+// attempt would pass cfg:ci max_attempts (set with or without a claim).
 type Claimed struct {
 	Repo    string
 	SHA     string
@@ -151,11 +171,15 @@ type Claimed struct {
 	Attempt int
 	Token   string
 	Checks  []Check
+	Capped  []string
 }
 
 // Claim takes the oldest claimable request for the bench; ok is false when
 // the pool has none. The token fences every later write of this attempt.
-func Claim(ctx context.Context, st *store.Store, bench string, lease time.Duration) (Claimed, bool, error) {
+// mirrors names the repos the bench holds a mirror of now (Mirrors): they
+// leave ci:nomirror:<bench>, and a head of a repo still in that set is left
+// for another bench (ci_run.lua).
+func Claim(ctx context.Context, st *store.Store, bench string, lease time.Duration, mirrors []string) (Claimed, bool, error) {
 	if bench == "" {
 		return Claimed{}, false, errors.New("claim needs a bench name")
 	}
@@ -163,7 +187,8 @@ func Claim(ctx context.Context, st *store.Store, bench string, lease time.Durati
 	if err != nil {
 		return Claimed{}, false, err
 	}
-	raw, err := st.Client().FCall(ctx, FunctionClaim, nil, bench, token, strconv.FormatInt(lease.Milliseconds(), 10)).Result()
+	raw, err := st.Client().FCall(ctx, FunctionClaim, nil, bench, token, strconv.FormatInt(lease.Milliseconds(), 10),
+		strings.Join(mirrors, ",")).Result()
 	if err != nil {
 		return Claimed{}, false, fmt.Errorf("%s: %w", FunctionClaim, err)
 	}
@@ -172,13 +197,18 @@ func Claim(ctx context.Context, st *store.Store, bench string, lease time.Durati
 		return Claimed{}, false, fmt.Errorf("%s: reply %T", FunctionClaim, raw)
 	}
 	if fmt.Sprint(parts[0]) != "CLAIMED" {
-		return Claimed{}, false, nil
+		var idle Claimed
+		if len(parts) > 1 {
+			idle.Capped = splitList(fmt.Sprint(parts[1]))
+		}
+		return idle, false, nil
 	}
 	fields := map[string]string{}
 	for i := 1; i+1 < len(parts); i += 2 {
 		fields[fmt.Sprint(parts[i])] = fmt.Sprint(parts[i+1])
 	}
-	c := Claimed{Repo: fields["repo"], SHA: fields["sha"], PR: fields["pr"], URL: fields["url"], Token: fields["token"]}
+	c := Claimed{Repo: fields["repo"], SHA: fields["sha"], PR: fields["pr"], URL: fields["url"], Token: fields["token"],
+		Capped: splitList(fields["capped"])}
 	c.Attempt, _ = strconv.Atoi(fields["attempt"])
 	for _, name := range strings.Split(fields["checks"], ",") {
 		if name != "" {
@@ -188,7 +218,8 @@ func Claim(ctx context.Context, st *store.Store, bench string, lease time.Durati
 	return c, true, nil
 }
 
-// ReceiptRecord is what one finished check writes.
+// ReceiptRecord is what one finished check writes. Fail is the log's first
+// FAIL line when RC is not 0 (the why a capped FAIL names).
 type ReceiptRecord struct {
 	Repo, SHA, Check, Token string
 	RC                      int
@@ -196,6 +227,7 @@ type ReceiptRecord struct {
 	Log                     string
 	Bench                   string
 	Lease                   time.Duration
+	Fail                    string
 }
 
 // ReceiptResult is one receipt's reply: RECEIPT with the summary so far
@@ -211,7 +243,7 @@ type ReceiptResult struct {
 // FENCED when the token is not the live attempt's.
 func WriteReceipt(ctx context.Context, st *store.Store, r ReceiptRecord) (ReceiptResult, error) {
 	words, err := st.Client().FCall(ctx, FunctionReceipt, nil, r.Repo, r.SHA, r.Check, r.Token, strconv.Itoa(r.RC),
-		strconv.FormatInt(r.WallMS, 10), r.Log, r.Bench, strconv.FormatInt(r.Lease.Milliseconds(), 10)).StringSlice()
+		strconv.FormatInt(r.WallMS, 10), r.Log, r.Bench, strconv.FormatInt(r.Lease.Milliseconds(), 10), r.Fail).StringSlice()
 	if err != nil {
 		return ReceiptResult{}, fmt.Errorf("%s: %w", FunctionReceipt, err)
 	}
@@ -230,18 +262,42 @@ func WriteReceipt(ctx context.Context, st *store.Store, r ReceiptRecord) (Receip
 
 // Release hands a claimed request back to the pool with no evidence written:
 // the bench could not run the checks (its clone failed), which says nothing
-// about the head.
-func Release(ctx context.Context, st *store.Store, repo, sha, token, reason string) (Result, error) {
-	return call(ctx, st, FunctionRelease, repo, sha, token, reason)
+// about the head. noMirror marks a bench defect (no mirror of the repo): the
+// attempt is not counted and the bench's claims skip the repo until its
+// mirror exists.
+func Release(ctx context.Context, st *store.Store, repo, sha, token, reason string, noMirror bool) (Result, error) {
+	flag := ""
+	if noMirror {
+		flag = "1"
+	}
+	return call(ctx, st, FunctionRelease, repo, sha, token, reason, flag)
+}
+
+// Mirrors is the repos with a bare mirror at <root>/<repo>.git, from one
+// directory read; nil when root is empty or unreadable.
+func Mirrors(root string) []string {
+	if root == "" {
+		return nil
+	}
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range ents {
+		if name, ok := strings.CutSuffix(e.Name(), ".git"); ok && e.IsDir() && repoRx.MatchString(name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // RunOptions is one `ci run --bench <b>` pass.
 type RunOptions struct {
 	Bench       string
-	Scratch     string // the clone lives under here for the run, then is removed
-	ResultsRoot string // logs land at <ResultsRoot>/ci/<repo>/<sha>/<check>.log
-	MirrorRoot  string // <MirrorRoot>/<repo>.git is the clone's --reference when present
-	URLFor      func(repo string) string
+	Scratch     string        // the clone lives under here for the run, then is removed
+	ResultsRoot string        // logs land at <ResultsRoot>/ci/<repo>/<sha>/<check>.log
+	MirrorRoot  string        // <MirrorRoot>/<repo>.git is the bench mirror the head is staged from
 	Lease       time.Duration // claim lease; each receipt renews it
 	Timeout     time.Duration // per check
 	Out         io.Writer     // one line per step; nil discards
@@ -256,16 +312,19 @@ type RunResult struct {
 	Attempt int
 	Summary string // green, red; empty when nothing was claimed or the run was released
 	Blocked string // the release reason when the clone failed
+	Clone   Staged // where the clone came from and what it took
 	StoreMS int64  // ms spent in the Redis calls (claim, receipts, release)
 	Checks  []CheckResult
 }
 
-// CheckResult is one check as it ran.
+// CheckResult is one check as it ran; Fail is the log's first FAIL line
+// when RC is not 0.
 type CheckResult struct {
 	Name   string
 	RC     int
 	WallMS int64
 	Log    string
+	Fail   string
 }
 
 // ErrBlocked is Run's answer when the clone failed and the request was
@@ -301,18 +360,25 @@ func Run(ctx context.Context, st *store.Store, opt RunOptions) (RunResult, error
 		out = io.Discard
 	}
 	began := time.Now()
-	c, ok, err := Claim(ctx, st, opt.Bench, opt.Lease)
+	c, ok, err := Claim(ctx, st, opt.Bench, opt.Lease, Mirrors(opt.MirrorRoot))
 	res.StoreMS += time.Since(began).Milliseconds()
+	for _, m := range c.Capped {
+		fmt.Fprintf(out, "CAPPED %s FAIL attempts over cfg:ci max_attempts; why on the record; ci request --again resets\n", m)
+	}
 	if err != nil || !ok {
 		return res, err
 	}
 	res.Claimed, res.Repo, res.SHA, res.Attempt = true, c.Repo, c.SHA, c.Attempt
 	fmt.Fprintf(out, "CLAIMED %s@%s attempt=%d checks=%d\n", c.Repo, c.SHA[:8], c.Attempt, len(c.Checks))
-
-	url := c.URL
-	if url == "" && opt.URLFor != nil {
-		url = opt.URLFor(c.Repo)
+	// Every check runs without the seat's Redis and secrets variables
+	// (env.go); the names dropped print once per claim, never a value.
+	env, dropped := checkEnviron()
+	scrubbedNames := "-"
+	if len(dropped) > 0 {
+		scrubbedNames = strings.Join(dropped, ",")
 	}
+	fmt.Fprintf(out, "ENV scrubbed=%s\n", scrubbedNames)
+
 	dir := filepath.Join(opt.Scratch, fmt.Sprintf("%s-%s-a%d", c.Repo, c.SHA[:8], c.Attempt))
 	logDir := filepath.Join(opt.ResultsRoot, "ci", c.Repo, c.SHA)
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
@@ -328,11 +394,18 @@ func Run(ctx context.Context, st *store.Store, opt RunOptions) (RunResult, error
 		return res, err
 	}
 	defer func() { _ = safepath.RemoveUnder(opt.Scratch, dir) }()
-	if cloneLog, err := clone(ctx, opt, url, c.Repo, c.SHA, dir); err != nil {
-		reason := "clone: " + err.Error()
-		_ = os.WriteFile(filepath.Join(logDir, "clone.log"), cloneLog, 0o644)
+	sg := stage(ctx, opt, c, dir)
+	res.Clone = sg
+	fetched := "no"
+	if sg.Fetched {
+		fetched = "yes"
+	}
+	fmt.Fprintf(out, "CLONE from=%s sha=%s fetched=%s ms=%d\n", sg.From, c.SHA[:8], fetched, sg.MS)
+	if sg.Err != nil {
+		reason := sg.Err.Error()
+		_ = os.WriteFile(filepath.Join(logDir, "clone.log"), sg.Log, 0o644)
 		t := time.Now()
-		r, rerr := Release(ctx, st, c.Repo, c.SHA, c.Token, reason)
+		r, rerr := Release(ctx, st, c.Repo, c.SHA, c.Token, reason, sg.NoMirror)
 		res.StoreMS += time.Since(t).Milliseconds()
 		if rerr != nil {
 			return res, rerr
@@ -343,11 +416,11 @@ func Run(ctx context.Context, st *store.Store, opt RunOptions) (RunResult, error
 	}
 
 	for _, ch := range c.Checks {
-		cr := runCheck(ctx, opt, dir, logDir, ch)
+		cr := runCheck(ctx, opt, dir, logDir, env, ch)
 		res.Checks = append(res.Checks, cr)
 		t := time.Now()
 		r, err := WriteReceipt(ctx, st, ReceiptRecord{Repo: c.Repo, SHA: c.SHA, Check: ch.Name, Token: c.Token,
-			RC: cr.RC, WallMS: cr.WallMS, Log: cr.Log, Bench: opt.Bench, Lease: opt.Lease})
+			RC: cr.RC, WallMS: cr.WallMS, Log: cr.Log, Bench: opt.Bench, Lease: opt.Lease, Fail: cr.Fail})
 		res.StoreMS += time.Since(t).Milliseconds()
 		if err != nil {
 			return res, err
@@ -362,45 +435,101 @@ func Run(ctx context.Context, st *store.Store, opt RunOptions) (RunResult, error
 	return res, nil
 }
 
-// clone makes the scratch clone at the sha: a shallow single-branch clone
-// borrowing the bench mirror's objects when the mirror is there, then a
-// fetch of the exact sha and a detached checkout of it.
-func clone(ctx context.Context, opt RunOptions, url, repo, sha, dir string) ([]byte, error) {
-	if url == "" {
-		return nil, fmt.Errorf("no clone url for %s (request --url or cfg)", repo)
-	}
-	args := []string{"clone", "-q", "--no-checkout", "--depth", "50", "--single-branch"}
-	if opt.MirrorRoot != "" {
-		if mirror := filepath.Join(opt.MirrorRoot, repo+".git"); isDir(mirror) {
-			args = append(args, "--reference-if-able", mirror)
-		}
-	}
-	args = append(args, url, dir)
-	var log []byte
-	steps := [][]string{
-		args,
-		{"-C", dir, "fetch", "-q", "--depth", "50", "origin", sha},
-		{"-C", dir, "checkout", "-q", "--detach", sha},
-	}
-	for _, s := range steps {
-		cmd := exec.CommandContext(ctx, opt.Git, s...)
+// Staged is how one claim's clone was made: From is mirror (the bench
+// mirror), url (the request's --url, for a repo with no mirror) or none;
+// Fetched is true when the sha was not in the mirror and the mirror fetched
+// its own origin once. Err set means the head is released with Err as the
+// why; NoMirror marks the bench defect that does not count as an attempt.
+type Staged struct {
+	From     string
+	Fetched  bool
+	MS       int64
+	NoMirror bool
+	Log      []byte
+	Err      error
+}
+
+// MirrorFetchRefspec is the one fetch a mirror takes when a claimed sha is
+// not in it: every branch of its own origin (the https url mirror-refresh
+// keeps, no key), pruned.
+const MirrorFetchRefspec = "+refs/heads/*:refs/heads/*"
+
+// stage makes the scratch clone at the claimed sha, never from the forge's
+// ssh url (2026-09-25: space and vision released every head with Permission
+// denied (publickey), 128 and 111 times). With a mirror at
+// <MirrorRoot>/<repo>.git: the sha must be in it, else the mirror fetches its
+// origin once and the sha must be in it then; the clone is the card staging
+// convention (swarm.MirrorCloneArgs) and a detached checkout of the sha. With
+// no mirror, the request's url when it names one; else the bench defect.
+func stage(ctx context.Context, opt RunOptions, c Claimed, dir string) Staged {
+	began := time.Now()
+	sg := Staged{From: "none"}
+	git := func(args ...string) error {
+		cmd := exec.CommandContext(ctx, opt.Git, args...)
 		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 		b, err := cmd.CombinedOutput()
-		log = append(log, b...)
+		sg.Log = append(sg.Log, b...)
 		if err != nil {
-			return log, fmt.Errorf("git %s: %v: %s", s[len(s)-1], err, strings.TrimSpace(string(b)))
+			return fmt.Errorf("git %s: %v: %s", args[len(args)-1], err, strings.TrimSpace(string(b)))
+		}
+		return nil
+	}
+	mirror := ""
+	if opt.MirrorRoot != "" {
+		mirror = filepath.Join(opt.MirrorRoot, c.Repo+".git")
+	}
+	switch {
+	case mirror != "" && isDir(mirror):
+		sg.From = "mirror"
+		has := func() bool {
+			return exec.CommandContext(ctx, opt.Git, "-C", mirror, "cat-file", "-e", c.SHA+"^{commit}").Run() == nil
+		}
+		if !has() {
+			sg.Fetched = true
+			_ = git("-C", mirror, "fetch", "-q", "origin", "--prune", MirrorFetchRefspec)
+			if !has() {
+				sg.Err = errors.New("sha not in mirror after fetch")
+				break
+			}
+		}
+		if err := git(swarm.MirrorCloneArgs(mirror, dir, true)...); err != nil {
+			sg.Err = fmt.Errorf("clone: %w", err)
+			break
+		}
+		if err := git("-C", dir, "checkout", "-q", "--detach", c.SHA); err != nil {
+			sg.Err = fmt.Errorf("clone: %w", err)
+		}
+	case c.URL != "":
+		sg.From = "url"
+		for _, s := range [][]string{
+			{"clone", "-q", "--no-checkout", "--depth", "50", "--single-branch", c.URL, dir},
+			{"-C", dir, "fetch", "-q", "--depth", "50", "origin", c.SHA},
+			{"-C", dir, "checkout", "-q", "--detach", c.SHA},
+		} {
+			if err := git(s...); err != nil {
+				sg.Err = fmt.Errorf("clone: %w", err)
+				break
+			}
+		}
+	default:
+		sg.NoMirror = true
+		if mirror == "" {
+			sg.Err = errors.New("no mirror root (ci run --mirror-root); run mirror-refresh")
+		} else {
+			sg.Err = fmt.Errorf("no mirror at %s; run mirror-refresh", mirror)
 		}
 	}
-	return log, nil
+	sg.MS = time.Since(began).Milliseconds()
+	return sg
 }
 
 // maxLog caps one check's kept log; the tail is what names the failure.
 const maxLog = 4 << 20
 
-// runCheck runs one declared argv in the clone with the log at
-// <logDir>/<name>.log. An argv that cannot start is rc 127 with the error in
+// runCheck runs one declared argv in the clone, in env (the scrubbed
+// environment, env.go), with the log at <logDir>/<name>.log. An argv that cannot start is rc 127 with the error in
 // the log; a timeout is rc 124.
-func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, ch Check) CheckResult {
+func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, env []string, ch Check) CheckResult {
 	logPath := filepath.Join(logDir, ch.Name+".log")
 	cr := CheckResult{Name: ch.Name, Log: logPath}
 	argv := strings.Fields(ch.Argv)
@@ -413,7 +542,7 @@ func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, ch Check)
 		cctx, cancel := context.WithTimeout(ctx, opt.Timeout)
 		cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "CI=1")
+		cmd.Env = env
 		b, err := cmd.CombinedOutput()
 		cancel()
 		body = b
@@ -434,6 +563,9 @@ func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, ch Check)
 		}
 	}
 	cr.WallMS = time.Since(began).Milliseconds()
+	if cr.RC != 0 {
+		cr.Fail = FirstFail(body)
+	}
 	if len(body) > maxLog {
 		body = append([]byte("ci: log truncated to its last 4 MiB\n"), body[len(body)-maxLog:]...)
 	}
@@ -441,6 +573,48 @@ func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, ch Check)
 		cr.Log = "unwritable:" + logPath
 	}
 	return cr
+}
+
+// FirstFail is the line a capped FAIL's why quotes: the first `--- FAIL`
+// line, else the first line starting FAIL, else the last non-empty line,
+// trimmed to one line of at most 200 bytes.
+func FirstFail(body []byte) string {
+	lines := strings.Split(string(body), "\n")
+	pick := ""
+	for _, prefix := range []string{"--- FAIL", "FAIL"} {
+		for _, l := range lines {
+			if strings.HasPrefix(strings.TrimSpace(l), prefix) {
+				pick = l
+				break
+			}
+		}
+		if pick != "" {
+			break
+		}
+	}
+	if pick == "" {
+		for i := len(lines) - 1; i >= 0; i-- {
+			if strings.TrimSpace(lines[i]) != "" {
+				pick = lines[i]
+				break
+			}
+		}
+	}
+	pick = strings.Join(strings.Fields(pick), " ")
+	if len(pick) > 200 {
+		pick = pick[:200]
+	}
+	return pick
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func isDir(p string) bool {

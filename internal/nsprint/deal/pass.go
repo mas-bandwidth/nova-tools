@@ -37,6 +37,17 @@
 // its own session ends. A pass over N benches takes the slowest bench, not
 // the sum.
 //
+// THE SECOND HURT (#3322, the 2026-09-23 live smoke). A wedged sshd held its
+// session past the reconciler lease, the pass wrote no row, and 200
+// reservations sat in `starting` on benches that ran nothing. So every session
+// is bounded (the lease bound in the reconciler, the hard deadline in ssh.go,
+// which kills the ssh process group), each bench's row is written the moment
+// its session ends and not after the slowest bench, and a refused or timed-out
+// bench's row and the return of its batch are ONE call (Row.Fail, the
+// ns_card_deal companion ns_card_deal_fail), which also counts the bench's
+// consecutive timeouts on its row; at cfg:fleet ssh_fail_after (default 3) of
+// them the fleet duty marks the bench PROBING at its next step and holds it.
+//
 // THE SEAMS. The pass holds no state. It reads through Source, presents the
 // reconciler's fencing token (Fence, #2726) on every write, writes only
 // through Reserver and Row, and reaches benches only through ssh.go. The
@@ -75,8 +86,13 @@ const (
 const TierPriority = "priority"
 
 // ReasonSSHRefused is the receipt reason on a reservation returned to the pool
-// because its bench's sshd refused the batch session before anything ran.
-const ReasonSSHRefused = "ssh-refused"
+// because its bench's sshd refused the batch session before anything ran;
+// ReasonSSHTimeout when the session was cut before anything ran. Row.Fail
+// writes `ssh-<state>` itself; these name the two values it can write.
+const (
+	ReasonSSHRefused = "ssh-refused"
+	ReasonSSHTimeout = "ssh-timeout"
+)
 
 // DefaultRefusedHold is how long a bench whose sshd refused is skipped before
 // the pass tries it again. One sweep (#2756 5.2: a full sweep every 10 s).
@@ -378,7 +394,24 @@ type Reserver interface {
 // Row records the outcome of the pass's ssh session on the bench row: ok,
 // refused, timeout or error, with why. The pass is the only writer.
 type Row interface {
+	// SSH writes the row for a session that ran (ok, or error: the batch
+	// stays dealt).
 	SSH(ctx context.Context, fence, bench, state, why string) error
+	// Fail writes the row for a session that failed before anything ran
+	// (refused or timeout) AND returns its reservations to the pool, in ONE
+	// fenced call (#3322): the row can never be written without the return,
+	// nor the return without the row. It reports the bench's consecutive
+	// timeouts and whether they reached cfg:fleet ssh_fail_after, at which
+	// the fleet duty holds the bench (PROBING) at its next step.
+	Fail(ctx context.Context, fence, bench, state, why string, res []Reservation) (Failed, error)
+}
+
+// Failed is what Row.Fail did.
+type Failed struct {
+	Returned int    // reservations returned to the pool
+	Timeouts int    // the bench's consecutive ssh timeouts after this call
+	State    string // the bench's fleet state as the call read it (UP, PROBING, ...)
+	Hold     bool   // the timeouts reached ssh_fail_after: the fleet duty holds the bench next
 }
 
 // CardWhy writes a refusal line on each named card (#3700): why[i] is
@@ -430,7 +463,12 @@ type BenchResult struct {
 	Sessions int // ssh sessions opened; never more than 1
 	SSH      string
 	Why      string
-	Returned int // reservations returned to the pool after a refusal
+	Returned int // reservations returned to the pool after a refusal or timeout
+	Timeouts int // the bench's consecutive ssh timeouts after this pass
+	// Held is true when this pass's failure brought the bench's consecutive
+	// timeouts to cfg:fleet ssh_fail_after: the fleet duty marks it PROBING
+	// at its next step, and this pass plans it nothing more.
+	Held bool
 	// Took is the bench's worker, reserve to row, on the wall clock (#3706).
 	Took time.Duration
 	// CardWhy is each Dealt reservation's refusal line (same index), empty
@@ -596,26 +634,26 @@ func (p *Pass) bench(ctx context.Context, token string, l Launcher, renew *renew
 }
 
 // record writes one bench's row when its own session ends, then each
-// refused card's refusal line (#3700); a refused or timed-out session
-// (nothing ran on the bench) also returns its batch to the pool.
+// refused card's refusal line (#3700). A refused or timed-out session
+// (nothing ran on the bench) is Row.Fail: its row and the return of its batch
+// are ONE call (#3322); anything else is Row.SSH.
 func (p *Pass) record(ctx context.Context, token string, br BenchResult) (BenchResult, error) {
-	if err := p.Row.SSH(ctx, token, br.Bench, br.SSH, br.Why); err != nil {
-		return br, fmt.Errorf("deal: row %s: %w", br.Bench, err)
+	if br.SSH != SSHRefused && br.SSH != SSHTimeout {
+		if err := p.Row.SSH(ctx, token, br.Bench, br.SSH, br.Why); err != nil {
+			return br, fmt.Errorf("deal: row %s: %w", br.Bench, err)
+		}
+	} else {
+		f, err := p.Row.Fail(ctx, token, br.Bench, br.SSH, br.Why, br.Dealt)
+		if err != nil {
+			return br, fmt.Errorf("deal: row %s: %w", br.Bench, err)
+		}
+		br.Returned, br.Timeouts, br.Held = f.Returned, f.Timeouts, f.Hold
 	}
 	if p.Why != nil && anyWhy(br.CardWhy) {
 		if err := p.Why.CardWhy(ctx, token, br.Dealt, br.CardWhy); err != nil {
 			return br, fmt.Errorf("deal: why %s: %w", br.Bench, err)
 		}
 	}
-	if br.SSH != SSHRefused && br.SSH != SSHTimeout {
-		return br, nil
-	}
-	if len(br.Dealt) > 0 {
-		if err := p.Reserver.Unreserve(ctx, token, br.Bench, br.Dealt, ReasonSSHRefused); err != nil {
-			return br, fmt.Errorf("deal: unreserve %s: %w", br.Bench, err)
-		}
-	}
-	br.Returned = len(br.Dealt)
 	return br, nil
 }
 
@@ -751,7 +789,8 @@ func anyWhy(why []string) bool {
 }
 
 // apply folds one bench's outcome into the input for the next round: dealt
-// cards leave the pools, the bench's lease grows, a refusal marks the bench.
+// cards leave the pools, the bench's lease grows, a refusal marks the bench,
+// and a bench whose timeouts reached the hold is no longer up.
 func apply(in Input, br BenchResult) Input {
 	gone := map[string]bool{}
 	returned := br.SSH == SSHRefused || br.SSH == SSHTimeout
@@ -766,6 +805,9 @@ func apply(in Input, br BenchResult) Input {
 		}
 		if returned {
 			in.Benches[i].SSH, in.Benches[i].SSHAt = br.SSH, in.Now
+			if br.Held {
+				in.Benches[i].Up = false
+			}
 		} else {
 			in.Benches[i].Leased += len(br.Dealt)
 		}

@@ -226,6 +226,7 @@ func runFleetConfig(ctx context.Context, args []string, out, errOut io.Writer) i
 	redisAddr := fs.String("redis", "", "")
 	downAfter := fs.Int("down-after", 0, "")
 	upAfter := fs.Int("up-after", 0, "")
+	sshFailAfter := fs.Int("ssh-fail-after", 0, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fleet config", err.Error())
 	}
@@ -235,12 +236,15 @@ func runFleetConfig(ctx context.Context, args []string, out, errOut io.Writer) i
 
 	downSet := false
 	upSet := false
+	sshSet := false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "down-after" {
+		switch f.Name {
+		case "down-after":
 			downSet = true
-		}
-		if f.Name == "up-after" {
+		case "up-after":
 			upSet = true
+		case "ssh-fail-after":
+			sshSet = true
 		}
 	})
 	if downSet && *downAfter < 1 {
@@ -248,6 +252,9 @@ func runFleetConfig(ctx context.Context, args []string, out, errOut io.Writer) i
 	}
 	if upSet && *upAfter < 1 {
 		return refuse(errOut, "fleet config", "--up-after must be >= 1")
+	}
+	if sshSet && *sshFailAfter < 1 {
+		return refuse(errOut, "fleet config", "--ssh-fail-after must be >= 1")
 	}
 
 	st, err := openFleetStore(ctx, *redisAddr)
@@ -272,6 +279,15 @@ func runFleetConfig(ctx context.Context, args []string, out, errOut io.Writer) i
 			return refuse(errOut, "fleet config", err.Error())
 		}
 	}
-	fmt.Fprintf(out, "down_after=%d up_after=%d\n", curDown, curUp)
+	if sshSet {
+		if err := fleet.SetSessionFailAfter(ctx, st.Client(), *sshFailAfter); err != nil {
+			return refuse(errOut, "fleet config", err.Error())
+		}
+	}
+	curSSH, err := fleet.SessionFailAfter(ctx, st.Client())
+	if err != nil {
+		return refuse(errOut, "fleet config", err.Error())
+	}
+	fmt.Fprintf(out, "down_after=%d up_after=%d ssh_fail_after=%d\n", curDown, curUp, curSSH)
 	return 0
 }

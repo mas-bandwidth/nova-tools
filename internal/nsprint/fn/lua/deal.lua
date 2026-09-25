@@ -11,6 +11,13 @@
 -- one call per returned batch. ns_bench_ssh writes the dealer's ssh cell;
 -- ns_card_why writes the launcher's refusal line on each refused card
 -- (#3700).
+-- ns_card_deal_fail is ns_card_deal's companion for a session that failed
+-- before anything ran (#3322): ONE call writes the ssh cell, returns the
+-- batch to the pool and counts the bench's consecutive timeouts on the cell.
+-- At cfg:fleet ssh_fail_after (default 3) of them the fleet duty
+-- (ns_fleet_step, fleet.lua, the one writer of bench:<b>:state) marks the
+-- bench PROBING at its next step and holds it out of the deal until its beats
+-- earn UP again; this file only reports that the count is there.
 -- ns_card_gate is one call per sprint per pass for the DEPENDS-ON gate
 -- (#3066): pool <-> waiting.
 --
@@ -226,42 +233,28 @@ local function card_deal(keys, args)
   return out
 end
 
--- ns_card_undeal(bench, token, reason, actor, idem, then per card: S, label,
--- attempt)
--- Returns dealt reservations that never reached the bench to queued (#2756
--- 3.2 dealt -> queued; reason ssh-refused from the deal pass, spawn-timeout
--- from the reconciler): the card token is cleared so a late child with it is
--- refused, retries+1, the reason on the card, the slot freed, the card back
--- in the pool with the priority it was dealt at, a pin kept, one receipt per
--- card and one cap:log slot-freed event per call. A card that is not dealt on
--- this bench under exactly this attempt is skipped, so a repeat writes
--- nothing. Returns FENCED or UNDEALT <n>.
-local function card_undeal(keys, args)
-  local bench, token, reason, actor, idem = args[1], args[2], args[3], args[4], args[5]
-  local fenced = deal_fence(token)
-  if fenced then
-    return fenced
-  end
-  if (#args - 5) % 3 ~= 0 then
-    return redis.error_reply('ns_card_undeal: cards are S, label, attempt')
-  end
-  if reason == nil or reason == '' then
-    return redis.error_reply('ns_card_undeal: reason is required')
-  end
-  local at = deal_now_ms()
+-- deal_undeal returns the dealt reservations named in args from `first` (S,
+-- label, attempt triples) to ready on bench: NS.card moves the card (#3695:
+-- the one writer of card state; the pool is a view of `where` and the deal
+-- priority is the record's priority field) dealt -> queued with the token
+-- cleared so a late child with it is refused, retries+1 and the reason on
+-- the card, a pin kept as its bench; then the slot is freed, one receipt per
+-- card and one cap:log slot-freed event per call. A card that is not dealt
+-- on this bench under exactly this attempt, or one the move refuses (drift:
+-- the move is its first write, so it writes nothing), is skipped, so a
+-- repeat writes nothing. Returns the count returned.
+local function deal_undeal(bench, reason, actor, idem, args, first, at)
   local n = 0
-  for i = 6, #args, 3 do
+  for i = first, #args, 3 do
     local S, label, attempt = args[i], args[i + 1], args[i + 2]
     local ck = 's:' .. S .. ':card:' .. label
     local c = redis.call('HMGET', ck, 'state', 'bench', 'attempt', 'token_sha', 'pin', 'retries', 'priority')
-    -- A card NS.card refuses to move (drift) is skipped like a stale one:
-    -- the move is its first write, so it writes nothing.
+    local pin = c[5] or ''
     local qk = 's:' .. S .. ':bench:' .. bench .. ':queue'
     if c[1] == 'dealt' and c[2] == bench and c[3] == attempt and
-        not CARD.move(ck, 'ready', { state = 'queued', bench = c[5] or '', by = actor, why = reason,
+        not CARD.move(ck, 'ready', { state = 'queued', bench = pin, by = actor, why = reason,
           priority = tonumber(redis.call('ZSCORE', qk, label) or c[7]) or 0,
           fields = { 'token', '', 'reason', reason, 'retries', tostring((tonumber(c[6]) or 0) + 1) } }) then
-      local pin = c[5] or ''
       redis.call('ZREM', 'bench:' .. bench .. ':starting', S .. '/' .. label .. '/' .. attempt)
       if pin ~= bench then
         redis.call('ZREM', qk, label)
@@ -275,6 +268,27 @@ local function card_undeal(keys, args)
       'kind', 'slot-freed', 'target', 'bench:' .. bench, 'slots', tostring(n),
       'reason', reason, 'actor', actor or '', 'idem', idem or '', 'at', tostring(at))
   end
+  return n
+end
+
+-- ns_card_undeal(bench, token, reason, actor, idem, then per card: S, label,
+-- attempt)
+-- Returns dealt reservations that never reached the bench to queued (#2756
+-- 3.2 dealt -> queued; reason ssh-refused from the deal pass, spawn-timeout
+-- from the reconciler), as deal_undeal does. Returns FENCED or UNDEALT <n>.
+local function card_undeal(keys, args)
+  local bench, token, reason, actor, idem = args[1], args[2], args[3], args[4], args[5]
+  local fenced = deal_fence(token)
+  if fenced then
+    return fenced
+  end
+  if (#args - 5) % 3 ~= 0 then
+    return redis.error_reply('ns_card_undeal: cards are S, label, attempt')
+  end
+  if reason == nil or reason == '' then
+    return redis.error_reply('ns_card_undeal: reason is required')
+  end
+  local n = deal_undeal(bench, reason, actor, idem, args, 6, deal_now_ms())
   return { 'UNDEALT', tostring(n) }
 end
 
@@ -295,9 +309,73 @@ local function bench_ssh(keys, args)
     return redis.error_reply('ns_bench_ssh: bench ' .. tostring(bench) .. ' is not registered')
   end
   local at = deal_now_ms()
+  local timeouts = redis.call('HGET', 'bench:' .. bench .. ':ssh', 'timeouts') or '0'
+  if state == 'ok' then
+    timeouts = '0'
+  end
   why = string.gsub(string.sub(why or '', 1, DEAL_WHY_CAP), '[\r\n]', ' ')
-  redis.call('HSET', 'bench:' .. bench .. ':ssh', 'state', state, 'why', why, 'at', tostring(at))
+  redis.call('HSET', 'bench:' .. bench .. ':ssh', 'state', state, 'why', why, 'at', tostring(at),
+    'timeouts', timeouts)
   return { 'OK', tostring(at) }
+end
+
+-- ns_card_deal_fail(bench, token, state, why, actor, idem, then per card: S,
+-- label, attempt)
+-- ns_card_deal's companion for a bench whose session failed before anything
+-- ran (nova-tools #3322: refused, or timeout when the ssh child was killed
+-- at its deadline with no start line from the remote verb). ONE fenced call:
+-- the ssh cell bench:<b>:ssh {state, why, at, timeouts} is written, the
+-- batch is returned to the pool (deal_undeal, reason ssh-<state>), and a
+-- timeout adds one to the bench's consecutive timeouts (a refusal keeps the
+-- count, an ok row clears it). hold is 1 when the timeouts since the fleet
+-- duty last held the bench (bench:<b>:state ssh_held, fleet.lua's) reach
+-- cfg:fleet ssh_fail_after (default 3): ns_fleet_step flips the bench UP ->
+-- PROBING at its next step, so the caller plans it nothing more this pass.
+-- Every call is one bench-ssh receipt on cap:log (the flip's fleet-state
+-- receipt is the step's). state is refused or timeout. Returns FENCED or
+-- FAILED <at> <undealt> <timeouts> <bench state> <hold>.
+local function card_deal_fail(keys, args)
+  local bench, token, state, why, actor, idem = args[1], args[2], args[3], args[4], args[5], args[6]
+  local fenced = deal_fence(token)
+  if fenced then
+    return fenced
+  end
+  if state ~= 'refused' and state ~= 'timeout' then
+    return redis.error_reply('ns_card_deal_fail: state must be refused or timeout')
+  end
+  if (#args - 6) % 3 ~= 0 then
+    return redis.error_reply('ns_card_deal_fail: cards are S, label, attempt')
+  end
+  if redis.call('SISMEMBER', 'benches', bench) == 0 then
+    return redis.error_reply('ns_card_deal_fail: bench ' .. tostring(bench) .. ' is not registered')
+  end
+  local at = deal_now_ms()
+  why = string.gsub(string.sub(why or '', 1, DEAL_WHY_CAP), '[\r\n]', ' ')
+  local ssh_key = 'bench:' .. bench .. ':ssh'
+  local timeouts = tonumber(redis.call('HGET', ssh_key, 'timeouts')) or 0
+  if state == 'timeout' then
+    timeouts = timeouts + 1
+  end
+  redis.call('HSET', ssh_key, 'state', state, 'why', why or '', 'at', tostring(at), 'timeouts', tostring(timeouts))
+  local n = deal_undeal(bench, 'ssh-' .. state, actor, idem, args, 7, at)
+  local fail_after = tonumber(redis.call('HGET', 'cfg:fleet', 'ssh_fail_after')) or 3
+  if fail_after < 1 then
+    fail_after = 1
+  end
+  local bs = redis.call('HMGET', 'bench:' .. bench .. ':state', 'state', 'ssh_held')
+  local bstate, held = bs[1] or '', tonumber(bs[2]) or 0
+  if timeouts < held then
+    held = 0
+  end
+  local hold = '0'
+  if state == 'timeout' and timeouts - held >= fail_after then
+    hold = '1'
+  end
+  redis.call('XADD', 'cap:log', 'MAXLEN', '~', '100000', '*',
+    'kind', 'bench-ssh', 'subject', bench, 'state', state, 'why', why or '',
+    'timeouts', tostring(timeouts), 'returned', tostring(n), 'bench_state', bstate, 'hold', hold,
+    'actor', actor or '', 'idem', idem or '', 'at', tostring(at))
+  return { 'FAILED', tostring(at), tostring(n), tostring(timeouts), bstate, hold }
 end
 
 -- ns_card_gate(token, S, actor, idem, then per card: label, verb, why)
@@ -388,6 +466,7 @@ redis.register_function('ns_card_deal', card_deal)
 redis.register_function('ns_card_why', card_why)
 redis.register_function('ns_card_gate', card_gate)
 redis.register_function('ns_card_undeal', card_undeal)
+redis.register_function('ns_card_deal_fail', card_deal_fail)
 redis.register_function('ns_bench_ssh', bench_ssh)
 
 -- ns_deal_status_list(S) is `deal status` list mode (#3605): one row per
