@@ -240,7 +240,13 @@ func From(ctx context.Context, st *store.Store, req FromRequest) (FromResult, er
 		return FromResult{}, fmt.Errorf("redistribute %s: unexpected reply %T", req.From, reply)
 	}
 	if status := fmt.Sprint(values[0]); status != "OK" {
-		return FromResult{}, fmt.Errorf("redistribute %s: %s", req.From, status)
+		// REFUSED carries its reason (#4145): a down friend's queue that
+		// would not move is never a silent moved=0.
+		words := make([]string, len(values))
+		for i, v := range values {
+			words[i] = fmt.Sprint(v)
+		}
+		return FromResult{}, fmt.Errorf("redistribute %s: %s", req.From, strings.Join(words, " "))
 	}
 	if len(values) != 3 {
 		return FromResult{}, fmt.Errorf("redistribute %s: reply of %d values", req.From, len(values))
