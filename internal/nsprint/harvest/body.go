@@ -10,7 +10,8 @@ package harvest
 //
 //	BASE: / base-sha: / PATHS: (the card's, verbatim: prereview's paths
 //	check bounds the changed files by it) / CHANGED: (base_sha..pushed_sha)
-//	/ DEPENDS-ON: / DONE-WHEN: / STREAM:
+//	/ DEPENDS-ON: / DONE-WHEN: / STREAM: / WHO: (the card's WHO, any when
+//	it names none; #3488, #3929)
 //	Closes #<n> (origin an issue of the card's repo) or ORIGIN: <origin>
 //	SELF-CHECK: <w_check> (<TEST>)      prereview's selfcheck on a non-cell PR
 //	RESULT line 1 / line 2 / note       prereview's donewhen reads line 2
@@ -134,6 +135,7 @@ func Body(sprint, bench string, c Card, rec Record, rangePaths []string) string 
 	line("DEPENDS-ON: %s", or(oneLineField(card["depends_on"]), "none"))
 	line("DONE-WHEN: %s", or(oneLineField(card["done_when"]), "-"))
 	line("STREAM: %s", or(oneLineField(card["stream"]), "none"))
+	line("WHO: %s", or(oneLineField(card["who"]), "any"))
 	line("%s", originLine(or(card["repo"], c.Repo), card["origin"]))
 	line("")
 	line("SELF-CHECK: %s (%s)", or(res["w_check"], "not-run"), or(oneLineField(card["test"]), "none"))

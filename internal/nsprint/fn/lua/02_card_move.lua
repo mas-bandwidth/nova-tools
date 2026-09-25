@@ -712,9 +712,14 @@ NS.card = { move = card_move, create = card_create, purge = card_purge }
 -- graph (TK.GRAPH):
 --   '' -> waiting | ready                          push
 --   waiting -> ready | parked | done               unblock, park, cancel
+--   waiting -> working                             card deal (a copy is cut)
 --   ready -> waiting | working | parked | done     block, take, park, cancel
 --   working -> merging | done | landed             done (with a PR / not), a merge
 --   working -> ready                              the lease lapsed (a why)
+--   working -> waiting                             card end --fail: retry (a why)
+--   working -> reading                             card end --ok with a PR (a read copy is dealt next)
+--   reading -> merging | working | waiting         a read's score: 8+ | under 8 (a fix copy) | no author
+--   reading -> done | landed                       cancel, a merge
 --   merging -> landed | done                       a merge, a PR closed unmerged
 --   parked -> waiting | ready | done               unpark, cancel
 --   landed -> done (ok only)                       table clear
@@ -739,21 +744,23 @@ NS.card = { move = card_move, create = card_create, purge = card_purge }
 -- sprint ready queue score; default from priority and front), fields (more
 -- HSET pairs, never a pointer field). info: from, to, xid (the ready entry).
 local TK = {
-  WHERE = { 'waiting', 'ready', 'working', 'merging', 'landed', 'done', 'parked' },
-  IS = { waiting = true, ready = true, working = true, merging = true, landed = true, done = true, parked = true },
-  STATE = { waiting = 'waiting', ready = 'open', working = 'working', merging = 'merging', landed = 'landed',
-    done = 'closed', parked = 'parked' },
+  WHERE = { 'waiting', 'ready', 'working', 'reading', 'merging', 'landed', 'done', 'parked' },
+  IS = { waiting = true, ready = true, working = true, reading = true, merging = true, landed = true, done = true,
+    parked = true },
+  STATE = { waiting = 'waiting', ready = 'open', working = 'working', reading = 'reading', merging = 'merging',
+    landed = 'landed', done = 'closed', parked = 'parked' },
   -- the where of every fine state a task record carries (the sprint store's
   -- words, #3206, and friend-queue's); cancelled is done/fail
   WHERE_OF = { open = 'ready', ready = 'ready', claimed = 'working', working = 'working', waiting = 'waiting',
-    blocked = 'waiting', ['waiting-ci'] = 'waiting', closed = 'done', cancelled = 'done', merging = 'merging', landed = 'landed',
-    parked = 'parked', ['reconcile-required'] = 'waiting' },
-  IDX = { ready = 'open', working = 'working', merging = 'closed', landed = 'closed', done = 'closed' },
+    blocked = 'waiting', ['waiting-ci'] = 'waiting', closed = 'done', cancelled = 'done', reading = 'reading',
+    merging = 'merging', landed = 'landed', parked = 'parked', ['reconcile-required'] = 'waiting' },
+  IDX = { ready = 'open', working = 'working', reading = 'closed', merging = 'closed', landed = 'closed', done = 'closed' },
   GRAPH = {
     [''] = { waiting = true, ready = true },
-    waiting = { ready = true, parked = true, done = true },
+    waiting = { ready = true, parked = true, done = true, working = true },
     ready = { waiting = true, working = true, parked = true, done = true },
-    working = { merging = true, done = true, landed = true, ready = true, waiting = true },
+    working = { merging = true, done = true, landed = true, ready = true, waiting = true, reading = true },
+    reading = { merging = true, working = true, waiting = true, done = true, landed = true },
     merging = { landed = true, done = true },
     parked = { waiting = true, ready = true, done = true },
     landed = { done = true },
@@ -762,10 +769,10 @@ local TK = {
   REPLACE = { waiting = true, ready = true, parked = true },
   POINTER = { where = true, where_ok = true, where_at = true, state = true, state_at = true, stream = true,
     friend = true, owner = true, created_at = true, sprint = true, queue = true, xid = true, cancelled = true,
-    lease_until = true },
+    lease_until = true, copy = true, primary = true },
   FIELDS = { 'where', 'where_ok', 'stream', 'friend', 'owner', 'created_at', 'sprint', 'state', 'title',
     'queue', 'xid', 'front', 'cancelled', 'pr', 'kind', 'ref', 'lease_until', 'beat_at', 'leased_at', 'where_at',
-    'priority', 'dest', 'claimed_at', 'token' },
+    'priority', 'dest', 'claimed_at', 'token', 'copy', 'attempts' },
   LOG_MAX = '200000',
   -- a take's lease: three missed 60 s beats
   LEASE = 180000,
@@ -818,6 +825,12 @@ end
 
 function TK.card_id(id)
   return string.match(id, '^s:[-a-z0-9]+:card:') ~= nil
+end
+
+-- TK.copy_id: a consumer copy's id, <primary id>~<n> (table moves, below);
+-- its record is task:<copy id> and only TM moves it.
+function TK.copy_id(id)
+  return type(id) == 'string' and string.match(id, '^%S+~%d+$') ~= nil
 end
 
 -- TK.read: the record's pointer and legacy fields; nil when there is no
@@ -973,8 +986,28 @@ function TK.edge(id, cur, nxt, ok, o)
       return 'WHY ' .. from .. ' -> done needs a why'
     end
   end
-  if from == 'working' and (to == 'ready' or to == 'waiting') and TK.str(o.why) == '' then
-    return 'WHY working -> ' .. to .. ' needs a why'
+  if from == 'working' and to == 'ready' and TK.str(o.why) == '' then return 'WHY working -> ready needs a why' end
+  if from == 'working' and to == 'waiting' and TK.str(o.why) == '' then return 'WHY working -> waiting needs a why' end
+  -- a primary enters and leaves working through its copy (table moves)
+  if from == 'waiting' and to == 'working' and TK.str(o.copy) == '' then
+    return 'OFFGRAPH waiting -> working is card deal (it cuts a copy)'
+  end
+  if o.copy == nil then
+    if TK.str(cur.copy) ~= '' and to ~= 'done' and to ~= 'landed' then
+      return 'LIVECOPY task:' .. id .. ' moves when its copy ' .. cur.copy .. ' returns (card end, card cancel)'
+    end
+    -- (a sprint-store transition, NS.task.set, names its fine state: a
+    -- friend-held task with no copy goes back to waiting that way, #3907)
+    if from == 'working' and to == 'waiting' and TK.str(o.state) == '' then
+      return 'OFFGRAPH working -> waiting is card end --fail'
+    end
+    if to == 'reading' then return 'OFFGRAPH ' .. from .. ' -> reading is card end --ok --pr' end
+    if from == 'reading' and to ~= 'done' and to ~= 'landed' then
+      return 'OFFGRAPH reading -> ' .. to .. ' is a read copy\'s card end'
+    end
+  end
+  if from == 'reading' and to == 'working' and TK.str(o.copy) == '' then
+    return 'OFFGRAPH reading -> working cuts a fix copy'
   end
   if from == 'done' and (cur.ok ~= 'ok' or TK.str(o.why) == '') then
     return 'OFFGRAPH done/' .. cur.ok .. ' -> ' .. to .. ' (only done/ok, with a why)'
@@ -995,6 +1028,7 @@ function TK.move(id, to, o)
   o = o or {}
   if type(id) ~= 'string' or id == '' or string.find(id, '%s') then return 'BADID ' .. TK.str(id) end
   if TK.card_id(id) then return 'BADID ' .. id .. ' is a card: ns_card_move' end
+  if TK.copy_id(id) then return 'BADID ' .. id .. ' is a consumer copy: card work|end|cancel' end
   if not TK.IS[to] then return 'WHERE ' .. TK.str(to) end
   local fields = o.fields or {}
   for i = 1, #fields, 2 do
@@ -1035,7 +1069,7 @@ function TK.move(id, to, o)
   end
   if o.dry then return nil end
   if cur.where == to and nxt.stream == cur.stream and nxt.friend == cur.friend and front ~= '1' and ok == cur.ok and
-      state == cur.state then
+      state == cur.state and (o.copy == nil or o.copy == cur.copy) then
     if #fields > 0 then redis.call('HSET', 'task:' .. id, unpack(fields)) end
     return nil, { from = to, to = to, same = true }
   end
@@ -1085,7 +1119,9 @@ function TK.move(id, to, o)
   if cur.sprint == '' and S ~= '' then put('sprint', S) end
   if TK.str(o.why) ~= '' then put('why', o.why) end
   if TK.str(o.front) ~= '' then put('front', o.front) end
-  if to == 'working' and cur.where ~= 'working' then
+  if o.copy ~= nil and o.copy ~= cur.copy then put('copy', o.copy) end
+  -- a primary dealt through a copy holds no lease: its copy does
+  if to == 'working' and cur.where ~= 'working' and o.copy == nil then
     put('leased_at', tostring(at))
     put('lease_until', tostring(at + TK.LEASE))
   end
@@ -1136,6 +1172,7 @@ function TK.create(id, fields, o)
   o = o or {}
   if type(id) ~= 'string' or id == '' or string.find(id, '%s') then return 'BADID ' .. TK.str(id) end
   if TK.card_id(id) then return 'BADID ' .. id .. ' is a card: card push' end
+  if TK.copy_id(id) then return 'BADID ' .. id .. ' has the copy form <id>~<n>' end
   if redis.call('EXISTS', 'task:' .. id) == 1 then return 'EXISTS task:' .. id end
   local title = ''
   for i = 1, #fields, 2 do
@@ -1431,7 +1468,7 @@ function TK.fsck(S)
     local rows = redis.call('ZRANGE', k, 0, -1, 'WITHSCORES')
     for i = 1, #rows, 2 do
       local id = rows[i]
-      if not TK.card_id(id) then
+      if not TK.card_id(id) and not TK.copy_id(id) then
         want(id)
         local p = rec(id)
         if not p then
@@ -1551,12 +1588,17 @@ redis.register_function('ns_tcard_take', function(keys, args)
   local ids = {}
   for i = 4, #args do ids[#ids + 1] = args[i] end
   local named = #ids > 0
-  if not named then ids = redis.call('ZRANGE', 'friend:' .. as .. ':cards:ready', 0, n - 1) end
+  if not named then ids = redis.call('ZRANGE', 'friend:' .. as .. ':cards:ready', 0, -1) end
   local out = { 'TAKEN', '0' }
   for _, id in ipairs(ids) do
-    local err = TK.move(id, 'working', { by = by, why = 'take', as = as })
-    if err and named then return { 'REFUSED', err } end
-    if not err then out[#out + 1] = id end
+    if not named and #out - 2 >= n then break end
+    -- a consumer copy is card work's (the friend harness's task take works
+    -- copies first, then takes friend-queue tasks)
+    if named or not TK.copy_id(id) then
+      local err = TK.move(id, 'working', { by = by, why = 'take', as = as })
+      if err and named then return { 'REFUSED', err } end
+      if not err then out[#out + 1] = id end
+    end
   end
   out[2] = tostring(#out - 2)
   return out
@@ -1604,7 +1646,7 @@ redis.register_function('ns_tcard_expire', function(keys, args)
   local out = { 'EXPIRED', '0' }
   for _, f in ipairs(friends) do
     for _, id in ipairs(redis.call('ZRANGE', 'friend:' .. f .. ':cards:working', 0, -1)) do
-      if not TK.card_id(id) then
+      if not TK.card_id(id) and not TK.copy_id(id) then
         local p = TK.read(id)
         local lease = p and tonumber(p.lease_until)
         if p and not lease then lease = TK.last_beat(p) + TK.LEASE end
@@ -1703,6 +1745,988 @@ end)
 -- ns_tcard_fsck(S): TK.fsck, read-only.
 redis.register_function({ function_name = 'ns_tcard_fsck', flags = { 'no-writes' },
   callback = function(keys, args) return TK.fsck(args[1] or '') end })
+
+-- ===========================================================================
+-- Table moves (nova-tools #3929; rowan-new specs/table-moves.md). Glenn
+-- 2026-09-25 12:35 PM ET: "design a set of verbs in nova-sprint so that
+-- moving cards across the host table is natural and easy, and stays
+-- internally consistent." 12:45 PM: "the card in the stream table set is the
+-- primary one -- the created friend cards, or swarm cards come from it -- and
+-- RETURN TO IT when done." 12:55 PM: "this code is the same, whether the
+-- consumer card is on a friend, or on the swarm." 1:25 PM: waiting -> working
+-- -> reading -> merging -> landed.
+--
+-- The PRIMARY is the task card above (task:<id>, in ws:<stream>:<where>); it
+-- never leaves its stream. A CONSUMER is <kind>:<name> (bench:hetzner,
+-- friend:emma), one shape for both kinds: its sets are <consumer>:cards:
+-- ready | working | ok | fail and its capacity is the slots field of
+-- <consumer>:desired. Nothing below branches on the kind; WHO names a
+-- consumer by id or name, and 'swarm' names every bench.
+--
+-- card deal CUTS a COPY of a primary onto a consumer: the copy's record
+-- task:<primary>~<n> names its primary (primary) and consumer, the primary
+-- names its live copy (copy), and the primary moves waiting -> working (a
+-- WORK copy) or stays reading (a READ copy). The copy walks ready ->
+-- working (card work) -> ok | fail (card end, card cancel, a lapsed lease),
+-- scored by the primary's created_at while live and by ended_at once
+-- retired, so the consumer's ok and fail sets are its done count. card end
+-- RETURNS the copy in the same call: the result is written onto the
+-- primary, its copy pointer is cleared, and the primary moves:
+--   work|fix ok with a PR -> reading (author = the consumer), ok with a
+--   done-already sha -> landed, ok with neither -> done/ok, fail -> waiting
+--   with the why (done/fail after TM.RETRIES);
+--   read with --score N: the SCORE line goes on the PR record pr:<name>:<n>
+--   and N >= TM.PASS -> merging, under it -> working with the finding as
+--   the why and a FIX copy cut on the author's consumer (hold-to-fix), or
+--   -> waiting when there is no author; read --fail -> reading, copy cleared,
+--   dealt to another reader.
+-- A primary with a live copy is never cut again; a copy with no primary
+-- cannot be made; card fsck (TM.fsck) proves both links both ways. TM is the
+-- only writer of the consumer sets and of the copy and primary pointers.
+local TM = {
+  COLS = { 'ready', 'working', 'ok', 'fail' },
+  LIVE = { ready = true, working = true },
+  -- a working copy's lease: three missed 60 s beats
+  LEASE = 180000,
+  -- failed work copies before the primary is done/fail
+  RETRIES = 3,
+  -- the read score that moves a primary to merging
+  PASS = 8,
+  -- a consumer beat this recent is live
+  LIVE_MS = 90000,
+  -- the primary's fields a copy carries for its consumer's brief
+  CARRY = { 'kind', 'ref', 'origin', 'title', 'repo', 'pr', 'head', 'base', 'base_sha', 'paths', 'done_when', 'tier',
+    'route', 'stream' },
+  -- a card end's result fields (written onto the primary and the copy)
+  RESULT = { line1 = true, line2 = true, check = true, paths = true, branch = true, commit = true, pr = true,
+    repo = true, head = true, base = true, base_sha = true, model = true, route = true, wall = true, evidence = true,
+    gates = true, finding = true, tier = true, key = true },
+}
+
+-- TM.parse: kind, name of a consumer id; nil when it is not one.
+function TM.parse(c)
+  if type(c) ~= 'string' then return nil end
+  local kind, name = string.match(c, '^(%l+):([A-Za-z0-9][A-Za-z0-9._-]*)$')
+  if kind ~= 'bench' and kind ~= 'friend' then return nil end
+  return kind, name
+end
+
+function TM.key(c, col) return c .. ':cards:' .. col end
+
+-- TM.set: the name list of a comma or space separated field, as a set; nil
+-- when the field is empty (no restriction).
+function TM.set(v)
+  v = TK.str(v)
+  if v == '' then return nil end
+  local s = {}
+  for n in string.gmatch(v, '[^%s,]+') do s[n] = true end
+  return s
+end
+
+-- TM.desired: the consumer's declared capacity and filters, one HMGET.
+function TM.desired(c)
+  local d = redis.call('HMGET', c .. ':desired', 'slots', 'paused', 'tiers', 'kinds')
+  return { slots = tonumber(d[1]), paused = TK.str(d[2]) == '1', tiers = TM.set(d[3]), kinds = TM.set(d[4]) }
+end
+
+-- TM.names: whether c is named in the name set s (by id, by name, or as
+-- 'swarm' for a bench).
+function TM.names(s, c)
+  local kind, name = TM.parse(c)
+  return s[c] or s[name] or (kind == 'bench' and s['swarm']) or false
+end
+
+-- TM.admits: the WHO form (any | only a,b | except a,b) admits consumer c.
+function TM.admits(who, c)
+  who = TK.str(who)
+  local mode, rest = string.match(who, '^%s*(%a+)%s*(.-)%s*$')
+  if not mode or mode == 'any' then return true end
+  local s = TM.set(rest) or {}
+  if mode == 'only' then return TM.names(s, c) end
+  if mode == 'except' then return not TM.names(s, c) end
+  return false
+end
+
+-- TM.streams: every stream, in ws:order rank order, then unranked by name.
+function TM.streams()
+  local out, seen = {}, {}
+  for _, s in ipairs(redis.call('ZRANGE', 'ws:order', 0, -1)) do
+    if not seen[s] then
+      seen[s] = true
+      out[#out + 1] = s
+    end
+  end
+  local rest = redis.call('SMEMBERS', 'ws:names')
+  table.sort(rest)
+  for _, s in ipairs(rest) do
+    if not seen[s] then
+      seen[s] = true
+      out[#out + 1] = s
+    end
+  end
+  return out
+end
+
+function TM.log(id, stream, from, to, by, why, c)
+  redis.call('XADD', 'ws:log', 'MAXLEN', '~', TK.LOG_MAX, '*', 'id', id, 'stream', TK.str(stream), 'from', from, 'to', to,
+    'by', TK.str(by), 'why', TK.str(why), 'consumer', c, 'at', tostring(cm_now()))
+end
+
+-- TM.leg: the copy a primary is ready for: 'work' (waiting with no open
+-- DEPENDS-ON, or ready) or 'read' (reading with no live copy); else nil and
+-- why not.
+function TM.leg(id, p)
+  if not p then return nil, 'NOTASK task:' .. id end
+  if p.copy ~= '' then return nil, 'LIVECOPY task:' .. id .. ' has live copy ' .. p.copy end
+  if p.friend ~= '' then return nil, 'OWNED task:' .. id .. ' is ' .. p.friend .. "'s friend-queue task, not a primary" end
+  if p.where == 'reading' then return 'read' end
+  if p.where == 'ready' then return 'work' end
+  if p.where == 'waiting' or not p.placed then
+    local dep = TK.str(redis.call('HGET', 'task:' .. id, 'blocked_on'))
+    if dep ~= '' and dep ~= '-' and dep ~= 'none' then return nil, 'DEPENDS task:' .. id .. ' waits on ' .. dep end
+    if p.where == 'waiting' then return 'work' end
+  end
+  return nil, 'WHERE task:' .. id .. ' is ' .. (p.where == '' and 'null' or p.where) .. ', not waiting or reading'
+end
+
+-- TM.may: nil when consumer c (its desired d) may take primary id's leg,
+-- else why not. A work copy honours the primary's WHO, a read copy its
+-- read_who, the readers set when it has members, and never the author;
+-- tiers and kinds declared on <c>:desired filter both.
+function TM.may(c, d, id, leg)
+  local f = redis.call('HMGET', 'task:' .. id, 'who', 'read_who', 'author', 'tier', 'kind')
+  local tier, kind = TK.str(f[4]), TK.str(f[5])
+  if leg == 'read' then
+    local author = TK.str(f[3])
+    if author ~= '' and (author == c or select(2, TM.parse(c)) == (select(2, TM.parse(author)) or author)) then
+      return 'AUTHOR ' .. c .. ' wrote task:' .. id .. '; a read is never the author\'s'
+    end
+    if not TM.admits(f[2], c) then return 'WHO task:' .. id .. ' read_who is ' .. TK.str(f[2]) end
+    local readers = redis.call('SMEMBERS', 'readers')
+    if #readers > 0 then
+      local s = {}
+      for _, r in ipairs(readers) do s[r] = true end
+      if not TM.names(s, c) then return 'READER ' .. c .. ' is not in readers' end
+    end
+    tier, kind = 'pro', 'read'
+  elseif not TM.admits(f[1], c) then
+    return 'WHO task:' .. id .. ' is ' .. TK.str(f[1])
+  end
+  if d.tiers and tier ~= '' and not d.tiers[tier] then return 'TIER ' .. c .. ' takes no ' .. tier .. ' card' end
+  if d.kinds and kind ~= '' and not d.kinds[kind] then return 'KIND ' .. c .. ' takes no ' .. kind .. ' card' end
+  return nil
+end
+
+-- TM.cut(c, id, leg, o): the copy of primary id for consumer c, in one
+-- place: the primary's move (o.to: working for a work or fix copy, reading
+-- for a read copy) names the copy, and the copy is created in c's ready set.
+-- o.fields are more primary fields (a card end's result, cutting a fix), o.
+-- extra more copy fields (the finding). o.dry checks the primary's move
+-- only. Returns nil and the copy id, or the refusal.
+function TM.cut(c, id, leg, o)
+  local n = (tonumber(redis.call('HGET', 'task:' .. id, 'copies')) or 0) + 1
+  local cid = id .. '~' .. n
+  if redis.call('EXISTS', 'task:' .. cid) == 1 then return 'DRIFT task:' .. cid .. ' exists; run nova-sprint card fsck' end
+  local to = o.to or (leg == 'read' and 'reading' or 'working')
+  local fields = { 'copies', tostring(n) }
+  for _, v in ipairs(o.fields or {}) do fields[#fields + 1] = v end
+  local err = TK.move(id, to, { by = o.by, why = o.why or (leg .. ' copy to ' .. c), copy = cid, fields = fields,
+    dry = o.dry })
+  if err or o.dry then return err end
+  local p = redis.call('HMGET', 'task:' .. id, 'created_at', 'stream', unpack(TM.CARRY))
+  local created, at = TK.ms(p[1]) or cm_now(), cm_now()
+  local h = { 'task:' .. cid, 'card', 'copy', 'leg', leg, 'primary', id, 'consumer', c, 'where', 'ready',
+    'where_at', tostring(at), 'cut_at', tostring(at), 'created_at', string.format('%.0f', created) }
+  for i, f in ipairs(TM.CARRY) do
+    local v = TK.str(p[i + 2])
+    if v ~= '' then
+      h[#h + 1] = f
+      h[#h + 1] = v
+    end
+  end
+  if leg == 'read' then
+    h[#h + 1] = 'kind'
+    h[#h + 1] = 'read'
+    h[#h + 1] = 'tier'
+    h[#h + 1] = 'pro'
+    h[#h + 1] = 'route'
+    h[#h + 1] = 'read'
+  elseif leg == 'fix' then
+    h[#h + 1] = 'kind'
+    h[#h + 1] = 'fix'
+  end
+  for _, v in ipairs(o.extra or {}) do h[#h + 1] = v end
+  redis.call('HSET', unpack(h))
+  redis.call('ZADD', TM.key(c, 'ready'), created, cid)
+  TM.log(cid, p[2], '', c .. ':ready', o.by, leg .. ' copy of ' .. id, c)
+  return nil, cid
+end
+
+-- TM.deal(c, by, k, stream, ids): named primaries (all or nothing), else
+-- the k oldest primaries c may take, read legs first (they finish work in
+-- flight), then work legs in stream rank order. Returns the reply.
+function TM.deal(c, by, k, stream, ids)
+  if not TM.parse(c) then return { 'REFUSED', 'CONSUMER ' .. TK.str(c) .. ' is not bench:<b> or friend:<f>' } end
+  local d = TM.desired(c)
+  local out = { 'DEALT', '0' }
+  local function cut(id, leg)
+    local err, cid = TM.cut(c, id, leg, { by = by })
+    if err then return err end
+    out[#out + 1] = id
+    out[#out + 1] = cid
+    return nil
+  end
+  if #ids > 0 then
+    local legs, seen = {}, {}
+    for i, id in ipairs(ids) do
+      if seen[id] then return { 'REFUSED', 'TWICE ' .. id .. ' is named twice' } end
+      seen[id] = true
+      if TK.copy_id(id) then return { 'REFUSED', 'COPY ' .. id .. ' is a copy; deal its primary' } end
+      local leg, why = TM.leg(id, TK.read(id))
+      why = why or TM.may(c, d, id, leg) or TM.cut(c, id, leg, { by = by, dry = true })
+      if why then return { 'REFUSED', why } end
+      legs[i] = leg
+    end
+    for i, id in ipairs(ids) do
+      local err = cut(id, legs[i])
+      if err then return { 'REFUSED', 'DRIFT-AFTER ' .. err } end
+    end
+  else
+    local streams = TM.streams()
+    if stream ~= '' then streams = { stream } end
+    local function pass(wheres, want)
+      for _, s in ipairs(streams) do
+        local rows = {}
+        for _, w in ipairs(wheres) do
+          local r = redis.call('ZRANGE', 'ws:' .. s .. ':' .. w, 0, -1, 'WITHSCORES')
+          for i = 1, #r, 2 do rows[#rows + 1] = { r[i], tonumber(r[i + 1]) or 0 } end
+        end
+        table.sort(rows, function(a, b) return a[2] < b[2] or (a[2] == b[2] and a[1] < b[1]) end)
+        for _, row in ipairs(rows) do
+          if (#out - 2) / 2 >= k then return end
+          local id = row[1]
+          if not TK.card_id(id) and not TK.copy_id(id) then
+            local leg = TM.leg(id, TK.read(id))
+            if leg == want and not TM.may(c, d, id, leg) and not TM.cut(c, id, leg, { by = by, dry = true }) then
+              cut(id, leg)
+            end
+          end
+        end
+      end
+    end
+    pass({ 'reading' }, 'read')
+    pass({ 'ready', 'waiting' }, 'work')
+  end
+  out[2] = tostring((#out - 2) / 2)
+  return out
+end
+
+-- TM.work(c, by, k, fill, ids): consumer ready -> working, k = min(free,
+-- |ready copies|) (fill; else also at most k), free = slots - |working|;
+-- named copies all or nothing. Each starts a lease its holder renews with
+-- card beat, and a token its end may present (a stale one is FENCED).
+-- Returns the reply WORKED n free, then per copy its id and token.
+function TM.work(c, by, k, fill, ids)
+  if not TM.parse(c) then return { 'REFUSED', 'CONSUMER ' .. TK.str(c) .. ' is not bench:<b> or friend:<f>' } end
+  local d = TM.desired(c)
+  if not d.slots then return { 'REFUSED', 'SLOTS ' .. c .. ':desired has no slots; run nova-sprint capacity' } end
+  local free = d.slots - redis.call('ZCARD', TM.key(c, 'working'))
+  local take = {}
+  if #ids > 0 then
+    local seen = {}
+    for _, id in ipairs(ids) do
+      if seen[id] then return { 'REFUSED', 'TWICE ' .. id .. ' is named twice' } end
+      seen[id] = true
+      if not TK.copy_id(id) or not redis.call('ZSCORE', TM.key(c, 'ready'), id) then
+        return { 'REFUSED', 'NOTREADY ' .. id .. ' is not a copy in ' .. TM.key(c, 'ready') }
+      end
+      take[#take + 1] = id
+    end
+    if #take > free then return { 'REFUSED', 'FULL ' .. c .. ' has ' .. free .. ' free of ' .. d.slots .. ' slots' } end
+  else
+    local n = free
+    if not fill and k < n then n = k end
+    if n > 0 then
+      for _, id in ipairs(redis.call('ZRANGE', TM.key(c, 'ready'), 0, -1)) do
+        if #take >= n then break end
+        if TK.copy_id(id) then take[#take + 1] = id end
+      end
+    end
+  end
+  local at = cm_now()
+  local out = { 'WORKED', tostring(#take), tostring(free - #take) }
+  for _, id in ipairs(take) do
+    local r = redis.call('HMGET', 'task:' .. id, 'consumer', 'where', 'created_at', 'stream')
+    if r[1] ~= c or r[2] ~= 'ready' then return { 'REFUSED', 'DRIFT task:' .. id .. ' is ' .. TK.str(r[1]) .. ':' .. TK.str(r[2]) } end
+    redis.call('ZREM', TM.key(c, 'ready'), id)
+    redis.call('ZADD', TM.key(c, 'working'), TK.ms(r[3]) or at, id)
+    local token = id .. '@' .. tostring(at)
+    redis.call('HSET', 'task:' .. id, 'where', 'working', 'where_at', tostring(at), 'leased_at', tostring(at),
+      'lease_until', tostring(at + TM.LEASE), 'token', token)
+    TM.log(id, r[4], c .. ':ready', c .. ':working', by, 'work', c)
+    out[#out + 1] = id
+    out[#out + 1] = token
+  end
+  return out
+end
+
+-- TM.pr_line: one typed line onto the PR record's two line stores (reads,
+-- the lander's; :lines, read post's), once (the same store as
+-- 03_task_event.lua's TE.line).
+function TM.pr_line(repo, pr, line)
+  repo = string.match(TK.str(repo), '([^/]+)$') or ''
+  if repo == '' or TK.str(pr) == '' or TK.str(pr) == '0' then return nil end
+  local key = 'pr:' .. repo .. ':' .. pr
+  local reads = TK.str(redis.call('HGET', key, 'reads'))
+  if ('\n' .. reads .. '\n'):find('\n' .. line .. '\n', 1, true) == nil then
+    if reads ~= '' then reads = reads .. '\n' end
+    redis.call('HSET', key, 'reads', reads .. line)
+  end
+  if not redis.call('LPOS', key .. ':lines', line) then redis.call('RPUSH', key .. ':lines', line) end
+  return key
+end
+
+-- TM.retire: copy id leaves c's live set w for its ok|fail set, scored by
+-- ended_at, with the result on its record.
+function TM.retire(id, c, w, outcome, why, fields, by, stream)
+  local at = cm_now()
+  redis.call('ZREM', TM.key(c, w), id)
+  redis.call('ZADD', TM.key(c, outcome), at, id)
+  local h = { 'task:' .. id, 'where', outcome, 'where_at', tostring(at), 'ended_at', tostring(at), 'outcome', outcome,
+    'why', TK.str(why) }
+  for _, v in ipairs(fields or {}) do h[#h + 1] = v end
+  redis.call('HSET', unpack(h))
+  redis.call('HDEL', 'task:' .. id, 'lease_until')
+  TM.log(id, stream, c .. ':' .. w, c .. ':' .. outcome, by, why, c)
+end
+
+-- TM.finish(id, o): card end of copy id. o.outcome ok|fail, o.why, o.fields
+-- (result k v pairs; pr and repo name the PR), o.sha (done-already), o.score
+-- and o.reader (a read), o.by, o.dry, o.keep (a cancel's give-back: the
+-- primary returns without counting an attempt). Returns nil and {copy,
+-- primary, from, to, next} or the refusal; with o.dry nil when it would end.
+function TM.finish(id, o)
+  if not TK.copy_id(id) then return 'NOTCOPY ' .. TK.str(id) .. ' is not a consumer copy (<id>~<n>)' end
+  local r = redis.call('HMGET', 'task:' .. id, 'primary', 'consumer', 'where', 'leg', 'stream', 'end_sig', 'token',
+    'lease_until', 'base')
+  local pid, c, w, leg = r[1], TK.str(r[2]), TK.str(r[3]), TK.str(r[4])
+  if not pid then return 'NOCOPY task:' .. id end
+  -- #3488: a repeat end with the same evidence is ALREADY (no second move);
+  -- other evidence on an ended copy is a CONFLICT; a stale token or lease
+  -- is FENCED
+  local sig = TM.sig(o)
+  if not TM.LIVE[w] then
+    if TK.str(r[6]) == sig then return nil, { copy = id, primary = pid, from = w, to = 'already', next = '', already = true } end
+    return 'CONFLICT copy ' .. id .. ' ended ' .. w .. ' with other evidence (' .. TK.str(r[6]) .. ')'
+  end
+  if TK.str(o.token) ~= '' then
+    if TK.str(r[7]) ~= o.token then return 'FENCED copy ' .. id .. ' token is not ' .. o.token end
+    if (tonumber(r[8]) or 0) < cm_now() then return 'FENCED copy ' .. id .. ' lease lapsed' end
+  end
+  if w == 'ready' and o.outcome ~= 'fail' then return 'READY copy ' .. id .. ' is ready: card work it first' end
+  if not redis.call('ZSCORE', TM.key(c, w), id) then
+    return 'DRIFT unlinked ' .. TM.key(c, w) .. ' ' .. id .. '; run nova-sprint card fsck --repair'
+  end
+  local p = TK.read(pid)
+  if not p then return 'DRIFT copy ' .. id .. ' names no primary task:' .. pid end
+  if p.copy ~= id then return 'DRIFT task:' .. pid .. ' names copy ' .. (p.copy == '' and '-' or p.copy) .. ', not ' .. id end
+  local want = 'working'
+  if leg == 'read' then want = 'reading' end
+  if p.where ~= want then return 'DRIFT task:' .. pid .. ' is ' .. p.where .. '; its ' .. leg .. ' copy wants ' .. want end
+  local f = o.fields or {}
+  local get = {}
+  for i = 1, #f - 1, 2 do
+    if not TM.RESULT[f[i]] then return 'FIELD ' .. TK.str(f[i]) .. ' is not a result field' end
+    get[f[i]] = f[i + 1]
+  end
+  local pf = { 'last_copy', id }
+  for _, v in ipairs(f) do pf[#pf + 1] = v end
+  local cf = {}
+  local to, pok, why, sha, fix = nil, nil, TK.str(o.why), TK.str(o.sha), nil
+  local line, ci
+  if leg == 'read' then
+    if o.outcome == 'fail' then
+      to = 'reading'
+      if why == '' then why = 'read failed' end
+    else
+      local score = tonumber(o.score)
+      if not score or score < 1 or score > 10 or score ~= math.floor(score) then
+        return 'SCORE a read copy ends with --score N/10, N 1-10 (or --fail <why>)'
+      end
+      local pr = redis.call('HMGET', 'task:' .. pid, 'head', 'repo', 'pr', 'author')
+      local head = TK.str(get.head)
+      if head == '' then head = TK.str(pr[1]) end
+      local reader = TK.str(o.reader)
+      if reader == '' then reader = select(2, TM.parse(c)) end
+      line = 'SCORE who=' .. reader .. ' head=' .. head .. ' score=' .. score .. '/10'
+      if TK.str(get.gates) ~= '' then line = line .. ' gates=' .. get.gates end
+      if TK.str(get.finding) ~= '' then line = line .. ': ' .. string.gsub(get.finding, '[\r\n]+', ' ') end
+      line = { line = line, repo = pr[2], pr = pr[3] }
+      pf[#pf + 1] = 'score'
+      pf[#pf + 1] = tostring(score)
+      pf[#pf + 1] = 'read_by'
+      pf[#pf + 1] = c
+      cf = { 'score', tostring(score) }
+      if score >= TM.PASS then
+        to = 'merging'
+        if why == '' then why = 'read ' .. score .. '/10' end
+      else
+        why = TK.str(get.finding)
+        if why == '' then why = 'read ' .. score .. '/10' end
+        local author = TK.str(pr[4])
+        if TM.parse(author) then
+          to, fix = 'working', author
+        else
+          to = 'waiting'
+        end
+      end
+    end
+  elseif o.outcome == 'ok' then
+    local pr = TK.str(get.pr)
+    if sha ~= '' then
+      to = 'landed'
+      if why == '' then why = 'done-already ' .. sha end
+    elseif pr ~= '' and pr ~= '0' then
+      if TK.str(get.head) == '' then return 'HEAD an ok with a PR names its --head' end
+      local repo = TK.str(get.repo)
+      if repo == '' then repo = TK.str(redis.call('HGET', 'task:' .. pid, 'repo')) end
+      if repo == '' then return 'REPO an ok with a PR names its repo (--pr <repo>#<n>)' end
+      -- #3488: the PR record's head is --head and its base the card's base
+      local pk = 'pr:' .. TM.bare(repo) .. ':' .. pr
+      local rec = redis.call('HMGET', pk, 'head', 'base')
+      if not rec[1] then return 'NOPR ' .. pk .. ' has no record; record the PR first (nova-sprint pr record)' end
+      if rec[1] ~= get.head then return 'PRHEAD ' .. pk .. ' head is ' .. rec[1] .. ', not --head ' .. get.head end
+      local base = TK.str(r[9])
+      if base ~= '' and TK.str(rec[2]) ~= '' and rec[2] ~= base then
+        return 'PRBASE ' .. pk .. ' base is ' .. rec[2] .. ', not the card base ' .. base
+      end
+      pf[#pf + 1] = 'author'
+      pf[#pf + 1] = c
+      -- #3093: reading only at a CI OK for this exact head; pending waits in
+      -- working with no copy, a FAIL cuts a fix copy for the author
+      to = 'working'
+      ci = { repo = repo, head = get.head }
+      ci.final, ci.why = TM.ci_final(repo, pr, get.head)
+    else
+      to, pok = 'done', 'ok'
+    end
+  else
+    local n = tonumber(p.attempts) or 0
+    if not o.keep then n = n + 1 end
+    pf[#pf + 1] = 'attempts'
+    pf[#pf + 1] = tostring(n)
+    if why == '' then why = 'fail' end
+    to = 'waiting'
+    if n >= TM.RETRIES then to, pok = 'done', 'fail' end
+  end
+  local mo = { by = o.by, why = why, ok = pok, copy = '', fields = pf, dry = o.dry }
+  if sha ~= '' then mo.sha = sha end
+  if o.dry then
+    if fix then return TM.cut(fix, pid, 'fix', { by = o.by, why = why, fields = pf, to = 'working', dry = true }) end
+    return TK.move(pid, to, mo)
+  end
+  local outcome = o.outcome
+  for _, v in ipairs(f) do cf[#cf + 1] = v end
+  cf[#cf + 1] = 'end_sig'
+  cf[#cf + 1] = sig
+  TM.retire(id, c, w, outcome, why, cf, o.by, r[5])
+  local nxt = ''
+  local err
+  if ci and (ci.final == 'OK' or ci.final == 'FAIL') then
+    err, to, nxt = TM.ci_move(pid, ci.final, ci.why, o.by, pf)
+  elseif ci then
+    pf[#pf + 1] = 'wait_ci'
+    pf[#pf + 1] = TM.bare(ci.repo) .. ':' .. ci.head
+    mo.why = 'ci pending at ' .. string.sub(ci.head, 1, 12)
+    err = TK.move(pid, 'working', mo)
+    if not err then redis.call('SADD', TM.ci_set(ci.repo, ci.head), pid) end
+  elseif fix then
+    err, nxt = TM.cut(fix, pid, 'fix', { by = o.by, why = why, fields = pf, to = 'working', extra = { 'finding', why } })
+  else
+    err = TK.move(pid, to, mo)
+  end
+  if err then return 'DRIFT-AFTER ' .. err end
+  if line then TM.pr_line(line.repo, line.pr, line.line) end
+  return nil, { copy = id, primary = pid, from = p.where, to = to, next = nxt or '' }
+end
+
+-- TM.bare: the bare repository name of owner/name or name (prkey.Name).
+function TM.bare(repo)
+  return string.match(TK.str(repo), '([^/]+)$') or ''
+end
+
+-- TM.ci_set: the primaries waiting on CI at one head (#3093), a SET beside
+-- the head's CI record (ci:<repo>:<sha>, internal/nsprint/ci).
+function TM.ci_set(repo, head)
+  return 'ci:' .. TM.bare(repo) .. ':' .. head .. ':cards'
+end
+
+-- TM.ci_final: the CI word for a PR head: FAIL when the PR record names
+-- another head (a head change), else the request record's final (ci
+-- run, #3597) or the ci cards' verdicts at the head (ci.lua): OK, FAIL, or
+-- '' while pending. Returns the word and why.
+function TM.ci_final(repo, pr, head)
+  local bare = TM.bare(repo)
+  local now = TK.str(redis.call('HGET', 'pr:' .. bare .. ':' .. TK.str(pr), 'head'))
+  if now ~= '' and now ~= head then return 'FAIL', 'head moved to ' .. string.sub(now, 1, 12) end
+  for _, r in ipairs({ bare, TK.str(repo) }) do
+    local f = redis.call('HMGET', 'ci:' .. r .. ':' .. head, 'final', 'why')
+    if TK.str(f[1]) == 'OK' or TK.str(f[1]) == 'FAIL' then return f[1], TK.str(f[2]) end
+  end
+  local word = ''
+  for _, gid in ipairs(redis.call('SMEMBERS', 'ci:' .. TK.str(repo) .. ':' .. head .. ':gids')) do
+    local v = TK.str(redis.call('HGET', 'ci:' .. TK.str(repo) .. ':' .. head .. ':' .. gid, 'verdict'))
+    if v == 'FAIL' then return 'FAIL', 'ci card verdict FAIL' end
+    if v == 'OK' then word = 'OK' end
+  end
+  return word, ''
+end
+
+-- TM.live: the consumer's beat (its bench beat, or its friend row) is
+-- within TM.LIVE_MS.
+function TM.live(c)
+  local key = c
+  if TM.parse(c) == 'bench' then key = c .. ':beat' end
+  local at = TK.ms(redis.call('HGET', key, 'at'))
+  return at ~= nil and math.abs(cm_now() - at) < TM.LIVE_MS
+end
+
+-- TM.pick_reader: the enrolled consumer (the consumers SET) that may read
+-- primary id, is live, not down, not paused, with the most room (slots -
+-- working - ready; by id on a tie); nil when none has room.
+function TM.pick_reader(id)
+  local best, room = nil, 0
+  local cs = redis.call('SMEMBERS', 'consumers')
+  table.sort(cs)
+  for _, c in ipairs(cs) do
+    if TM.parse(c) then
+      local d = TM.desired(c)
+      if d.slots and not d.paused and redis.call('EXISTS', c .. ':down') == 0 and TM.live(c) and
+          not TM.may(c, d, id, 'read') then
+        local r = d.slots - redis.call('ZCARD', TM.key(c, 'working')) - redis.call('ZCARD', TM.key(c, 'ready'))
+        if r > room then best, room = c, r end
+      end
+    end
+  end
+  return best
+end
+
+-- TM.ci_move: a working primary with no copy takes its head's CI word (the
+-- one path for the end of a work copy and for a CI end): OK -> reading with
+-- a read copy cut for the best reader in the same call (reading with none
+-- when no reader has room: the deal duty cuts it); FAIL (a red check, a
+-- head change) -> working with the failure as why and exactly one fix copy
+-- on the author's consumer (waiting when there is no author). fields are
+-- more primary fields. Returns err, where, the copy cut.
+function TM.ci_move(id, final, why, by, fields)
+  local f = { 'wait_ci', '', 'ci', final }
+  for _, v in ipairs(fields or {}) do f[#f + 1] = v end
+  if final == 'OK' then
+    local reader = TM.pick_reader(id)
+    if reader then
+      local err, cid = TM.cut(reader, id, 'read', { by = by, why = 'ci OK', to = 'reading', fields = f })
+      return err, 'reading', cid
+    end
+    return TK.move(id, 'reading', { by = by, why = 'ci OK; no reader has room', copy = '', fields = f }), 'reading', ''
+  end
+  why = 'ci red: ' .. (TK.str(why) ~= '' and why or 'FAIL')
+  local author = TK.str(redis.call('HGET', 'task:' .. id, 'author'))
+  for i = 1, #f - 1, 2 do
+    if f[i] == 'author' then author = f[i + 1] end
+  end
+  if TM.parse(author) then
+    local err, cid = TM.cut(author, id, 'fix', { by = by, why = why, to = 'working', fields = f, extra = { 'finding', why } })
+    return err, 'working', cid
+  end
+  return TK.move(id, 'waiting', { by = by, why = why, copy = '', fields = f }), 'waiting', ''
+end
+
+-- TM.ci(repo, head, final, why, by): a head's CI ended (ns_ci_end, the ci
+-- run's verdict, or card ci by hand): every primary waiting on it takes
+-- the word (TM.ci_move). A member that moved on is dropped. Returns the
+-- moves: id, where, copy per primary.
+function TM.ci(repo, head, final, why, by)
+  local out = {}
+  if final ~= 'OK' and final ~= 'FAIL' then return out end
+  local set = TM.ci_set(repo, head)
+  local want = TM.bare(repo) .. ':' .. head
+  for _, id in ipairs(redis.call('SMEMBERS', set)) do
+    redis.call('SREM', set, id)
+    local p = TK.read(id)
+    if p and p.where == 'working' and p.copy == '' and TK.str(redis.call('HGET', 'task:' .. id, 'wait_ci')) == want then
+      local err, to, cid = TM.ci_move(id, final, why, by)
+      if not err then
+        out[#out + 1] = id
+        out[#out + 1] = to
+        out[#out + 1] = cid or ''
+      end
+    end
+  end
+  return out
+end
+
+-- TM.assign(c, id, revoke, by, why): the primary's copy goes to consumer c
+-- (#2940). A primary with a live copy is refused unless revoke: then, in
+-- this one call, the live copy is given back (retired to fail, so its
+-- holder's end or beat is refused: the fence; the slot frees) and a new
+-- copy is cut on c.
+function TM.assign(c, id, revoke, by, why)
+  if not TM.parse(c) then return { 'REFUSED', 'CONSUMER ' .. TK.str(c) .. ' is not bench:<b> or friend:<f>' } end
+  local p = TK.read(id)
+  if not p then return { 'REFUSED', 'NOTASK task:' .. id } end
+  local d = TM.desired(c)
+  local old = p.copy
+  if old ~= '' then
+    if not revoke then
+      return { 'REFUSED', 'LIVECOPY task:' .. id .. ' has live copy ' .. old .. '; assign --revoke moves it' }
+    end
+    local leg = TK.str(redis.call('HGET', 'task:' .. old, 'leg'))
+    if leg ~= 'read' then leg = 'work' end
+    local err = TM.may(c, d, id, leg) or TM.finish(old, { outcome = 'fail', keep = true, why = 'revoked: ' .. TK.str(why),
+      by = by, dry = true })
+    if err then return { 'REFUSED', err } end
+    err = TM.finish(old, { outcome = 'fail', keep = true, why = 'revoked: ' .. TK.str(why), by = by })
+    if err then return { 'REFUSED', err } end
+    p = TK.read(id)
+  end
+  local leg, err = TM.leg(id, p)
+  err = err or TM.may(c, d, id, leg)
+  if not err then
+    local cid
+    err, cid = TM.cut(c, id, leg, { by = by, why = 'assign ' .. c })
+    if not err then return { 'ASSIGNED', id, cid, old } end
+  end
+  if old ~= '' then return { 'REFUSED', 'DRIFT-AFTER ' .. err } end
+  return { 'REFUSED', err }
+end
+
+-- TM.sig: an end's evidence, compared on a repeat end (#3488).
+function TM.sig(o)
+  local f, get = o.fields or {}, {}
+  for i = 1, #f - 1, 2 do get[f[i]] = f[i + 1] end
+  return table.concat({ TK.str(o.outcome), TK.str(get.repo), TK.str(get.pr), TK.str(get.head), TK.str(o.sha),
+    TK.str(o.score), TK.str(o.why) }, '|')
+end
+
+-- TM.ends: TM.finish over ids, every one checked before any is written.
+function TM.ends(ids, o)
+  local seen = {}
+  for _, id in ipairs(ids) do
+    if seen[id] then return { 'REFUSED', 'TWICE ' .. id .. ' is named twice' } end
+    seen[id] = true
+    o.dry = true
+    local err = TM.finish(id, o)
+    o.dry = nil
+    if err then return { 'REFUSED', err } end
+  end
+  local out = { 'ENDED', tostring(#ids) }
+  for _, id in ipairs(ids) do
+    local err, info = TM.finish(id, o)
+    if info and info.already then info.to = 'already' end
+    if err then return { 'REFUSED', err } end
+    for _, v in ipairs({ info.copy, info.primary, info.from, info.to, info.next }) do out[#out + 1] = v end
+  end
+  return out
+end
+
+-- TM.cancel(by, why, ids): a copy is given back (copy -> fail, its primary
+-- returns: waiting for a work or fix copy, reading for a read copy, no
+-- attempt counted); a primary is cancelled (done/fail with the why) and its
+-- live copy, if any, retired to fail. All checked before any is written.
+function TM.cancel(by, why, ids)
+  if TK.str(why) == '' then return { 'REFUSED', 'WHY card cancel needs a why' } end
+  local out = { 'CANCELLED', tostring(#ids) }
+  for pass = 1, 2 do
+    local dry = pass == 1
+    for _, id in ipairs(ids) do
+      local err, to, cp = nil, nil, ''
+      if TK.copy_id(id) then
+        local info
+        err, info = TM.finish(id, { outcome = 'fail', why = 'cancel: ' .. why, by = by, keep = true, dry = dry })
+        if info then to = info.to end
+      else
+        local p = TK.read(id)
+        if not p then
+          err = 'NOTASK task:' .. id
+        else
+          cp = p.copy
+          local r = cp ~= '' and redis.call('HMGET', 'task:' .. cp, 'consumer', 'where', 'stream') or {}
+          if cp ~= '' and not (r[1] and TM.LIVE[TK.str(r[2])] and redis.call('ZSCORE', TM.key(r[1], r[2]), cp)) then
+            err = 'DRIFT task:' .. id .. ' names copy ' .. cp .. ' that is not live; run nova-sprint card fsck --repair'
+          end
+          err = err or TK.move(id, 'done', { by = by, why = why, ok = 'fail', copy = '', dry = dry })
+          if not err and not dry and cp ~= '' then TM.retire(cp, r[1], r[2], 'fail', 'cancel: ' .. why, {}, by, r[3]) end
+          to = 'done'
+        end
+      end
+      if err then
+        if dry then return { 'REFUSED', err } end
+        return { 'REFUSED', 'DRIFT-AFTER ' .. err }
+      end
+      if not dry then
+        out[#out + 1] = id
+        out[#out + 1] = to or ''
+      end
+    end
+  end
+  return out
+end
+
+-- TM.beat(c, ids): the holder renews its working copies' leases. Named
+-- copies all or nothing. Returns BEAT n lease_until.
+function TM.beat(c, ids)
+  local at = cm_now()
+  for _, id in ipairs(ids) do
+    if not TK.copy_id(id) or not redis.call('ZSCORE', TM.key(c, 'working'), id) then
+      return { 'REFUSED', 'NOTWORKING ' .. TK.str(id) .. ' is not in ' .. TM.key(c, 'working') }
+    end
+  end
+  for _, id in ipairs(ids) do
+    redis.call('HSET', 'task:' .. id, 'lease_until', tostring(at + TM.LEASE), 'beat_at', tostring(at))
+  end
+  return { 'BEAT', tostring(#ids), tostring(at + TM.LEASE) }
+end
+
+-- TM.roster: every consumer: the consumers set, and bench:<b> for each of
+-- benches, friend:<f> for each of friends.
+function TM.roster()
+  local out, seen = {}, {}
+  local function add(c)
+    if TM.parse(c) and not seen[c] then
+      seen[c] = true
+      out[#out + 1] = c
+    end
+  end
+  for _, c in ipairs(redis.call('SMEMBERS', 'consumers')) do add(c) end
+  for _, b in ipairs(redis.call('SMEMBERS', 'benches')) do add('bench:' .. b) end
+  for _, f in ipairs(redis.call('SMEMBERS', 'friends')) do add('friend:' .. f) end
+  table.sort(out)
+  return out
+end
+
+-- TM.expire(by, consumers): every working copy whose lease lapsed returns to
+-- its primary as a fail (why=lease lapsed). Returns EXPIRED n, then per copy
+-- its id and the primary's new where.
+function TM.expire(by, consumers)
+  if #consumers == 0 then consumers = TM.roster() end
+  local now = cm_now()
+  local out = { 'EXPIRED', '0' }
+  for _, c in ipairs(consumers) do
+    -- a consumer whose beat is older than a lease holds no ready copy: each
+    -- goes back to its primary (no attempt counted)
+    local key = c
+    if TM.parse(c) == 'bench' then key = c .. ':beat' end
+    local at = TK.ms(redis.call('HGET', key, 'at'))
+    if at and now - at > TM.LEASE then
+      for _, id in ipairs(redis.call('ZRANGE', TM.key(c, 'ready'), 0, -1)) do
+        if TK.copy_id(id) then
+          local err, info = TM.finish(id, { outcome = 'fail', why = 'consumer down', keep = true, by = by })
+          if not err then
+            out[#out + 1] = id
+            out[#out + 1] = info.to
+          end
+        end
+      end
+    end
+    for _, id in ipairs(redis.call('ZRANGE', TM.key(c, 'working'), 0, -1)) do
+      if TK.copy_id(id) then
+        local lease = tonumber(redis.call('HGET', 'task:' .. id, 'lease_until')) or 0
+        if lease < now then
+          local err, info = TM.finish(id, { outcome = 'fail', why = 'lease lapsed', by = by })
+          if not err then
+            out[#out + 1] = id
+            out[#out + 1] = info.to
+          end
+        end
+      end
+    end
+  end
+  out[2] = tostring((#out - 2) / 2)
+  return out
+end
+
+-- TM.fsck(write): both links both ways, over every consumer's four sets and
+-- every stream's primaries. A copy in a consumer set has a record naming
+-- that consumer and set, scored by created_at while live and ended_at once
+-- retired, in no other of its consumer's sets; a live copy's primary names
+-- it and is working (reading for a read copy); a primary naming a copy is
+-- where that copy wants it and the copy is live in its set; a working
+-- primary with no copy and no friend is drift. write repairs: a
+-- stray is removed, a missing link added, a score reset, a copy whose
+-- primary lost it retired to fail, a primary whose copy is lost returned
+-- (working -> waiting, reading keeps its where). Returns FSCK consumers
+-- live retired primaries drift fixed, then up to 100 lines.
+function TM.fsck(write)
+  local drift, fixed, lines = 0, 0, {}
+  local function note(s)
+    drift = drift + 1
+    if #lines < 100 then lines[#lines + 1] = s end
+  end
+  local live, retired, seen = 0, 0, {}
+  local consumers = TM.roster()
+  for _, c in ipairs(consumers) do
+    for _, col in ipairs(TM.COLS) do
+      local k = TM.key(c, col)
+      local rows = redis.call('ZRANGE', k, 0, -1, 'WITHSCORES')
+      for i = 1, #rows, 2 do
+        local id = rows[i]
+        if TK.copy_id(id) then
+          local r = redis.call('HMGET', 'task:' .. id, 'primary', 'consumer', 'where', 'created_at', 'ended_at', 'leg')
+          if not r[1] then
+            note('gone ' .. k .. ' ' .. id)
+            if write then
+              redis.call('ZREM', k, id)
+              fixed = fixed + 1
+            end
+          elseif r[2] ~= c or r[3] ~= col or seen[id] then
+            note('stray ' .. k .. ' ' .. id .. ' (record: ' .. TK.str(r[2]) .. ':' .. TK.str(r[3]) .. ')')
+            if write then
+              redis.call('ZREM', k, id)
+              fixed = fixed + 1
+            end
+          else
+            seen[id] = true
+            local want = TK.ms(r[4])
+            if not TM.LIVE[col] then want = tonumber(r[5]) end
+            if want and tonumber(rows[i + 1]) ~= want then
+              note('score ' .. k .. ' ' .. id)
+              if write then
+                redis.call('ZADD', k, want, id)
+                fixed = fixed + 1
+              end
+            end
+            if TM.LIVE[col] then
+              live = live + 1
+              local p = TK.read(r[1])
+              local pw = 'working'
+              if r[6] == 'read' then pw = 'reading' end
+              if not p or p.copy ~= id or p.where ~= pw then
+                note('orphan ' .. id .. ' (primary task:' .. r[1] .. ' ' .. (p and (p.where .. ' copy=' .. p.copy) or 'gone') .. ')')
+                if write then
+                  TM.retire(id, c, col, 'fail', 'fsck: its primary does not name it', {}, 'fsck', '')
+                  fixed = fixed + 1
+                end
+              end
+            else
+              retired = retired + 1
+            end
+          end
+        end
+      end
+    end
+  end
+  local primaries = 0
+  for _, s in ipairs(TM.streams()) do
+    for _, w in ipairs(TK.WHERE) do
+      for _, id in ipairs(redis.call('ZRANGE', 'ws:' .. s .. ':' .. w, 0, -1)) do
+        if not TK.card_id(id) and not TK.copy_id(id) then
+          local f = redis.call('HMGET', 'task:' .. id, 'copy', 'friend', 'owner')
+          local cp, friend = TK.str(f[1]), TK.str(f[2])
+          if friend == '' then friend = TK.str(f[3]) end
+          if cp ~= '' then
+            primaries = primaries + 1
+            local r = redis.call('HMGET', 'task:' .. cp, 'primary', 'consumer', 'where', 'leg')
+            local pw = 'working'
+            if r[4] == 'read' then pw = 'reading' end
+            local ok = r[1] == id and TM.parse(r[2]) and TM.LIVE[TK.str(r[3])] and
+              redis.call('ZSCORE', TM.key(r[2], r[3]), cp) and w == pw
+            if not ok then
+              note('lost task:' .. id .. ' (' .. w .. ') names copy ' .. cp .. ' (' .. TK.str(r[2]) .. ':' .. TK.str(r[3]) .. ')')
+              if write then
+                local to = w
+                if w == 'working' then to = 'waiting' end
+                if not TK.move(id, to, { by = 'fsck', why = 'fsck: copy ' .. cp .. ' lost', copy = '' }) then
+                  fixed = fixed + 1
+                end
+              end
+            end
+          elseif w == 'working' and friend == '' and not (TK.str(redis.call('HGET', 'task:' .. id, 'wait_ci')) ~= '' and
+              redis.call('SISMEMBER', 'ci:' .. redis.call('HGET', 'task:' .. id, 'wait_ci') .. ':cards', id) == 1) then
+            -- (reading with no copy waits for its read deal; working with no
+            -- copy waits for CI at its head, in ci:<repo>:<head>:cards)
+            note('bare task:' .. id .. ' is working with no copy, no friend and no CI wait')
+            if write and not TK.move(id, 'waiting', { by = 'fsck', why = 'fsck: working with no copy', copy = '' }) then
+              fixed = fixed + 1
+            end
+          end
+        end
+      end
+    end
+  end
+  local out = { 'FSCK', tostring(#consumers), tostring(live), tostring(retired), tostring(primaries), tostring(drift),
+    tostring(fixed) }
+  for _, l in ipairs(lines) do out[#out + 1] = l end
+  return out
+end
+
+-- TM.ids: args from i on, as a list.
+function TM.ids(args, i)
+  local ids = {}
+  for j = i, #args do ids[#ids + 1] = args[j] end
+  return ids
+end
+
+-- ns_cm_deal(consumer, by, k, stream, id...) -> DEALT n, then per copy the
+-- primary and copy ids | REFUSED <why>.
+redis.register_function('ns_cm_deal', function(keys, args)
+  return TM.deal(args[1], TK.str(args[2]), tonumber(args[3]) or 0, TK.str(args[4]), TM.ids(args, 5))
+end)
+
+-- ns_cm_work(consumer, by, k|fill, id...) -> WORKED n free, then the ids |
+-- REFUSED <why>.
+redis.register_function('ns_cm_work', function(keys, args)
+  return TM.work(args[1], TK.str(args[2]), tonumber(args[3]) or 0, args[3] == 'fill', TM.ids(args, 4))
+end)
+
+-- ns_cm_end(by, ok|fail, why, sha, score, reader, token, nfields, k, v...,
+-- id...) -> ENDED n, then per copy: copy, primary, from, to (already: the
+-- same end again, nothing moved), next copy | REFUSED <why> (CONFLICT,
+-- FENCED, ...).
+redis.register_function('ns_cm_end', function(keys, args)
+  local outcome = args[2]
+  if outcome ~= 'ok' and outcome ~= 'fail' then return { 'REFUSED', 'OUTCOME ok or fail' } end
+  local nf = tonumber(args[8]) or 0
+  local fields = {}
+  for j = 9, 8 + nf * 2 do fields[#fields + 1] = args[j] end
+  return TM.ends(TM.ids(args, 9 + nf * 2), { outcome = outcome, why = args[3], sha = args[4],
+    score = TK.str(args[5]) ~= '' and args[5] or nil, reader = args[6], token = args[7], by = args[1], fields = fields })
+end)
+
+-- ns_cm_cancel(by, why, id...) -> CANCELLED n, then per id: id, where.
+redis.register_function('ns_cm_cancel', function(keys, args)
+  return TM.cancel(TK.str(args[1]), args[2], TM.ids(args, 3))
+end)
+
+-- ns_cm_beat(consumer, id...) -> BEAT n lease_until | REFUSED <why>.
+redis.register_function('ns_cm_beat', function(keys, args) return TM.beat(args[1], TM.ids(args, 2)) end)
+
+-- ns_cm_expire(by, consumer...) -> EXPIRED n, then per copy: id, where.
+redis.register_function('ns_cm_expire', function(keys, args) return TM.expire(TK.str(args[1]), TM.ids(args, 2)) end)
+
+-- ns_cm_ci(repo, head, OK|FAIL, why, by) -> CI n, then per primary: id,
+-- where, copy. The hook ns_ci_end and the ci run's verdict call as
+-- NS.moves.ci; card ci is it by hand.
+redis.register_function('ns_cm_ci', function(keys, args)
+  local out = TM.ci(TK.str(args[1]), TK.str(args[2]), args[3], TK.str(args[4]), TK.str(args[5]))
+  local reply = { 'CI', tostring(#out / 3) }
+  for _, v in ipairs(out) do reply[#reply + 1] = v end
+  return reply
+end)
+
+-- ns_cm_assign(consumer, id, revoke, by, why) -> ASSIGNED id copy revoked |
+-- REFUSED <why>.
+redis.register_function('ns_cm_assign', function(keys, args)
+  return TM.assign(args[1], TK.str(args[2]), args[3] == '1', TK.str(args[4]), TK.str(args[5]))
+end)
+
+-- ns_cm_fsck() read-only; ns_cm_repair() the same walk, repairing.
+redis.register_function({ function_name = 'ns_cm_fsck', flags = { 'no-writes' },
+  callback = function(keys, args) return TM.fsck(false) end })
+redis.register_function('ns_cm_repair', function(keys, args) return TM.fsck(true) end)
+
+-- NS.moves: what a later file calls (ci.lua's ns_ci_end and ci_run.lua's
+-- verdict hand a head's CI word to the primaries waiting on it).
+NS.moves = { ci = TM.ci }
 
 NS.task = { move = TK.move, create = TK.create, place = TK.place, read = TK.read, stream_of = TK.stream_of,
   ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF,

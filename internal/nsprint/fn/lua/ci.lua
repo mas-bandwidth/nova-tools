@@ -416,6 +416,9 @@ local function ci_end(keys, args)
     'pkg', pkg, 'test', test, 'wall_s', tostring(wall_s or ''), 'flaky', flaky)
 
   ci_settle_waiting(repo, head, final, pkg, actor, at)
+  -- the table moves (#3929, #3093): a primary waiting on this head takes the
+  -- word in this same call (OK: reading and a read copy; FAIL: a fix copy)
+  NS.moves.ci(repo, head, final, 'pkg=' .. tostring(pkg), actor)
 
   local should_write = false
   if final == 'OK' and (prev == '' or disp == '1') then

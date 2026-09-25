@@ -1,0 +1,178 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// TestCardMoveDispatch: the table moves own deal, work, land, cancel,
+// expire, table, consumers and render; end and beat are theirs with --id,
+// --ids or --as and the bench attempt form's with a label and --token; fsck
+// is theirs with no --sprint.
+func TestCardMoveDispatch(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"deal", "--to", "bench:b", "--n", "3"}, true},
+		{[]string{"work", "--as", "friend:f", "--fill"}, true},
+		{[]string{"end", "--id", "p~1", "--ok"}, true},
+		{[]string{"end", "lbl", "--sprint", "s", "--token", "t"}, false},
+		{[]string{"beat", "--as", "bench:b", "--id", "p~1"}, true},
+		{[]string{"beat", "lbl", "--sprint", "s", "--token", "t"}, false},
+		{[]string{"fsck"}, true},
+		{[]string{"fsck", "--sprint", "s"}, false},
+		{[]string{"push", "--sprint", "s"}, false},
+		{[]string{"land", "--stream", "s", "--sha", "x"}, true},
+	} {
+		if got := isCardMove(tc.args[0], tc.args[1:]); got != tc.want {
+			t.Errorf("isCardMove(%v) = %v, want %v", tc.args, got, tc.want)
+		}
+	}
+}
+
+// TestCardMovesCLI walks the verbs top to bottom (push -> deal -> work ->
+// end -> read -> land) through the nova-sprint card verb, one receipt line
+// each, with card fsck clean after every step, and task take/done working
+// a friend's copies.
+func TestCardMovesCLI(t *testing.T) {
+	addr, c := sprintRedis(t)
+	t.Setenv("NOVA_SPRINT_REDIS", addr)
+	t.Setenv("NOVA_REDIS_ADDR", "")
+	t.Setenv("NOVA_FRIEND", "")
+	ctx := context.Background()
+	const s = "swarm: cards"
+	c.HSet(ctx, "bench:b:desired", "slots", "2")
+	c.HSet(ctx, "friend:emma:desired", "slots", "2")
+	for i := 0; i < 3; i++ {
+		code, out, errOut := runTaskCLI("push", "--actor", "rowan", "--id", fmt.Sprintf("c%d", i), "--stream", s, "--waiting",
+			"--kind", "build", "--repo", "mas-bandwidth/nova-tools", "--title", "t")
+		if code != 0 {
+			t.Fatalf("push %d %q %q", code, out, errOut)
+		}
+	}
+	fsck := func(when string) {
+		t.Helper()
+		code, out, errOut := runCLI("card", "fsck")
+		if code != 0 || !regexp.MustCompile(`^CARD FSCK consumers=\d+ live=\d+ retired=\d+ primaries=\d+ drift=0 fixed=0 ms=\d+\n$`).MatchString(out) {
+			t.Fatalf("%s: card fsck = %d %q %q", when, code, out, errOut)
+		}
+	}
+	code, out, errOut := runCLI("card", "deal", "--to", "bench:b", "--n", "2", "--actor", "rowan")
+	if code != 0 || !strings.HasPrefix(out, "CARD DEAL to=bench:b n=2 copies=c0~1,c1~1 ms=") {
+		t.Fatalf("deal = %d %q %q", code, out, errOut)
+	}
+	fsck("deal")
+	code, out, _ = runCLI("card", "deal", "--to", "bench:b", "--ids", "c0")
+	if code != 1 || !strings.Contains(out, "CARD DEAL REFUSED to=bench:b why=\"LIVECOPY task:c0 has live copy c0~1\"") {
+		t.Fatalf("second deal = %d %q", code, out)
+	}
+	code, out, _ = runCLI("card", "work", "--as", "bench:b", "--fill")
+	if code != 0 || !strings.HasPrefix(out, "CARD WORK as=bench:b n=2 free=0 ids=c0~1,c1~1 ms=") {
+		t.Fatalf("work = %d %q", code, out)
+	}
+	code, out, _ = runCLI("card", "beat", "--as", "bench:b", "--ids", "c0~1,c1~1")
+	if code != 0 || !strings.HasPrefix(out, "CARD BEAT as=bench:b n=2 lease_until=") {
+		t.Fatalf("beat = %d %q", code, out)
+	}
+	h := strings.Repeat("e", 40)
+	c.HSet(ctx, "pr:nova-tools:77", "head", h, "base", "dev")
+	endOK := []string{"card", "end", "--id", "c0~1", "--ok", "--pr", "nova-tools#77", "--head", h, "--line1", "RESULT: c0",
+		"--base", "dev", "--base-sha", strings.Repeat("1", 40), "--paths", "a.go"}
+	code, out, _ = runCLI(endOK...)
+	if code != 0 || !strings.HasPrefix(out, "ENDED c0~1 primary=c0 from=working to=working next=-\nCARD END n=1 ms=") {
+		t.Fatalf("end ok (CI pending) = %d %q", code, out)
+	}
+	code, out, _ = runCLI(endOK...)
+	if code != 0 || !strings.HasPrefix(out, "ALREADY c0~1 primary=c0 ended=ok\n") {
+		t.Fatalf("repeat end = %d %q", code, out)
+	}
+	if code, out, _ = runCLI("card", "end", "--id", "c0~1", "--fail", "other"); code != 4 || !strings.Contains(out, "why=\"CONFLICT") {
+		t.Fatalf("conflicting end = %d %q", code, out)
+	}
+	if code, out, _ = runCLI("card", "end", "--id", "c1~1", "--fail", "x", "--token", "stale"); code != 3 || !strings.Contains(out, "why=\"FENCED") {
+		t.Fatalf("fenced end = %d %q", code, out)
+	}
+	ids := filepath.Join(t.TempDir(), "ids")
+	if err := os.WriteFile(ids, []byte("c1~1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = runCLI("card", "end", "--ids", "@"+ids, "--fail", "red at head")
+	if code != 0 || !strings.HasPrefix(out, "ENDED c1~1 primary=c1 from=working to=waiting next=-\n") {
+		t.Fatalf("end fail = %d %q", code, out)
+	}
+	code, out, _ = runCLI("card", "table", "--as", "bench:b")
+	if code != 0 || !strings.HasPrefix(out, "CELLS bench:b ready=0 working=0 done=2 ok=1 fail=1 ok%=50\n") {
+		t.Fatalf("table = %d %q", code, out)
+	}
+	fsck("end")
+	// the read: a friend reader through task take / task done's copy form,
+	// the score through card end
+	code, out, _ = runCLI("card", "ci", "--repo", "nova-tools", "--head", h, "--ok")
+	if code != 0 || !strings.HasPrefix(out, "CI c0 to=reading copy=-\nCARD CI repo=nova-tools head="+h+" final=OK n=1 ms=") {
+		t.Fatalf("ci = %d %q", code, out)
+	}
+	code, out, _ = runCLI("card", "deal", "--to", "friend:emma", "--n", "1")
+	if code != 0 || !strings.HasPrefix(out, "CARD DEAL to=friend:emma n=1 copies=c0~2 ms=") {
+		t.Fatalf("read deal = %d %q", code, out)
+	}
+	code, out, _ = runCLI("card", "render", "--id", "c0~2")
+	if code != 0 || !strings.Contains(out, "\nKIND: read\n") || !strings.Contains(out, "card end --id c0~2 --score N/10") {
+		t.Fatalf("render = %d %q", code, out)
+	}
+	code, out, _ = runTaskCLI("take", "--actor", "emma")
+	if code != 0 || !strings.HasPrefix(out, "TASK take n=1 ids=c0~2 ms=") {
+		t.Fatalf("task take of a copy = %d %q", code, out)
+	}
+	code, out, _ = runCLI("card", "end", "--id", "c0~2", "--score", "9/10", "--gates", "ci:green,base:ok,scope:ok")
+	if code != 0 || !strings.HasPrefix(out, "ENDED c0~2 primary=c0 from=reading to=merging next=-\n") {
+		t.Fatalf("read end = %d %q", code, out)
+	}
+	if got := c.HGet(ctx, "pr:nova-tools:77", "reads").Val(); got != "SCORE who=emma head="+h+" score=9/10 gates=ci:green,base:ok,scope:ok" {
+		t.Fatalf("SCORE line %q", got)
+	}
+	fsck("read")
+	code, out, _ = runCLI("card", "land", "--stream", s, "--sha", "abc12345")
+	if code != 0 || !strings.Contains(out, "LANDED c0 ") || !strings.Contains(out, "CARD LAND stream=\"swarm: cards\" sha=abc12345 n=1 refused=0") {
+		t.Fatalf("land = %d %q", code, out)
+	}
+	// task done of a friend's work copy is card end
+	code, out, _ = runCLI("card", "deal", "--to", "friend:emma", "--ids", "c2")
+	if code != 0 {
+		t.Fatalf("deal c2 = %d %q", code, out)
+	}
+	if code, out, _ = runTaskCLI("take", "--actor", "emma"); code != 0 || !strings.Contains(out, "ids=c2~1") {
+		t.Fatalf("take c2 = %d %q", code, out)
+	}
+	code, out, _ = runTaskCLI("done", "--actor", "emma", "--id", "c2~1", "--evidence", "report written")
+	if code != 0 || !strings.HasPrefix(out, "TASK done id=c2~1 from=working to=ok primary=c2 primary_to=done ms=") {
+		t.Fatalf("task done of a copy = %d %q", code, out)
+	}
+	fsck("task done")
+	code, out, _ = runCLI("card", "assign", "--id", "c1", "--to", "friend:emma")
+	if code != 0 || !strings.HasPrefix(out, "CARD ASSIGN id=c1 to=friend:emma copy=c1~2 revoked=- ms=") {
+		t.Fatalf("assign = %d %q", code, out)
+	}
+	if code, out, _ = runCLI("card", "assign", "--id", "c1", "--to", "bench:b"); code != 1 || !strings.Contains(out, "LIVECOPY") {
+		t.Fatalf("assign of a live card without --revoke = %d %q", code, out)
+	}
+	code, out, _ = runCLI("card", "assign", "--id", "c1", "--to", "bench:b", "--revoke", "--why", "rebalance")
+	if code != 0 || !strings.HasPrefix(out, "CARD ASSIGN id=c1 to=bench:b copy=c1~3 revoked=c1~2 ms=") {
+		t.Fatalf("assign --revoke = %d %q", code, out)
+	}
+	fsck("assign")
+	code, out, _ = runCLI("card", "cancel", "--id", "c1", "--why", "superseded")
+	if code != 0 || !strings.HasPrefix(out, "CANCELLED c1 to=done\nCARD CANCEL n=1 ms=") {
+		t.Fatalf("cancel = %d %q", code, out)
+	}
+	fsck("cancel")
+	// usage is exit 2
+	if code, _, errOut := runCLI("card", "work", "--as", "bench:b"); code != 2 || !strings.Contains(errOut, "--fill") {
+		t.Fatalf("usage = %d %q", code, errOut)
+	}
+}
