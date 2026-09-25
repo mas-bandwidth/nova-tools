@@ -83,7 +83,8 @@ func TestHarvestTypedBodyFromRecord(t *testing.T) {
 			want: []string{
 				"BASE: dev",
 				"base-sha: ac1dfd2e00000000000000000000000000000000",
-				"PATHS: internal/quack/batman.go internal/quack/batman_test.go",
+				"PATHS: internal/quack/**",
+				"CHANGED: internal/quack/batman.go internal/quack/batman_test.go",
 				"DEPENDS-ON: none",
 				"DONE-WHEN: go test ./internal/quack -run TestQuackBatman passes at head",
 				"STREAM: swarm: cards",
@@ -122,6 +123,7 @@ func TestHarvestTypedBodyFromRecord(t *testing.T) {
 				"BASE: dev",
 				"base-sha: ac1dfd2e00000000000000000000000000000000",
 				"PATHS: internal/quack/**",
+				"CHANGED: internal/quack/batman.go internal/quack/batman_test.go",
 				"DEPENDS-ON: s00-0100-quack-setup",
 				"DONE-WHEN: go test ./internal/quack -run TestQuackBatman passes at head",
 				"STREAM: swarm: cards",
@@ -140,7 +142,8 @@ func TestHarvestTypedBodyFromRecord(t *testing.T) {
 			want: []string{
 				"BASE: dev",
 				"base-sha: ac1dfd2e00000000000000000000000000000000",
-				"PATHS: internal/quack/batman.go internal/quack/batman_test.go",
+				"PATHS: internal/quack/**",
+				"CHANGED: internal/quack/batman.go internal/quack/batman_test.go",
 				"DEPENDS-ON: none",
 				"DONE-WHEN: -",
 				"STREAM: swarm: cards",
@@ -180,6 +183,21 @@ func TestHarvestTypedBodyFromRecord(t *testing.T) {
 		if got.Result != prereview.Yes {
 			t.Fatalf("%s = %s (%s), want yes on the typed body", name, got.Result, got.Reason)
 		}
+	}
+	if !strings.Contains(checks.Paths.Reason, "internal/quack/**") {
+		t.Fatalf("paths check bounded by %q, want the card's declared PATHS internal/quack/**", checks.Paths.Reason)
+	}
+	// The scope gate stays meaningful: a card that wrote outside its declared
+	// PATHS fails the paths check; CHANGED names the file, PATHS does not
+	// widen to cover it.
+	outside := append(append([]string(nil), rangePaths...), "cmd/nova-sprint/main.go")
+	opr := pr
+	opr.Body, opr.Files = harvest.Body("quack-0925b", "batman", c, rec, outside), outside
+	if !strings.Contains(opr.Body, "\nPATHS: internal/quack/**\nCHANGED: internal/quack/batman.go internal/quack/batman_test.go cmd/nova-sprint/main.go\n") {
+		t.Fatalf("outside body lacks the declared PATHS and the CHANGED line:\n%s", opr.Body)
+	}
+	if got := prereview.Mechanical(opr, prereview.InferCard(opr)).Paths; got.Result != prereview.No || !strings.Contains(got.Reason, "cmd/nova-sprint/main.go") {
+		t.Fatalf("paths with a file outside PATHS = %s (%s), want no naming cmd/nova-sprint/main.go", got.Result, got.Reason)
 	}
 	// A DONE-WHEN that names RESULT does not move the RESULT the checks read.
 	rec.Card["done_when"] = "the RESULT line 2 is DONE and TestQuackBatman passes"
@@ -265,6 +283,13 @@ func TestHarvestPushesToRepoURLAndReadsRangePaths(t *testing.T) {
 	if want := []string{"internal/quack/batman.go", "internal/quack/old.go"}; !reflect.DeepEqual(paths, want) {
 		t.Fatalf("range paths = %v, want %v (base..pushed_sha, not the last commit)", paths, want)
 	}
+	// The body states the card's declared PATHS and, on its own line, the
+	// range git read.
+	_, rec := quackRecord()
+	body := harvest.Body("quack-0925b", "superman", c, rec, paths)
+	if !strings.Contains(body, "\nPATHS: internal/quack/**\nCHANGED: internal/quack/batman.go internal/quack/old.go\n") {
+		t.Fatalf("body lacks PATHS (declared) then CHANGED (the range):\n%s", body)
+	}
 	// Again: already at the sha, the paths still come back; a base not in the
 	// clone gives no paths and the push still stands.
 	if again, err := p.PushRange(context.Background(), harvest.BenchInfo{Name: "superman", Host: "superman.fixture"}, c, base); err != nil || len(again) != 2 {
@@ -337,7 +362,7 @@ func TestHarvestOpensTypedPRAndRecordsIt(t *testing.T) {
 	}
 	h := c.HGetAll(ctx, "s:"+sprint+":card:"+label).Val()
 	body := forge.bodies[branch]
-	for _, want := range []string{"BASE: dev\n", "base-sha: 09fbedc9\n", "PATHS: internal/quack/batman.go\n", "DEPENDS-ON: none\n",
+	for _, want := range []string{"BASE: dev\n", "base-sha: 09fbedc9\n", "PATHS: internal/quack/**\nCHANGED: internal/quack/batman.go\n", "DEPENDS-ON: none\n",
 		"DONE-WHEN: go test ./internal/quack -run TestQuackBatman passes at head\n", "STREAM: swarm: cards\n",
 		"SELF-CHECK: pass (./internal/quack TestQuackBatman)\n"} {
 		if !strings.Contains(body, want) {

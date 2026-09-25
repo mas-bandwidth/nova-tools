@@ -8,7 +8,9 @@ package harvest
 // the harvest clone, so nova-decide review's mechanical checks (internal/prereview)
 // and the lander read typed lines:
 //
-//	BASE: / base-sha: / PATHS: / DEPENDS-ON: / DONE-WHEN: / STREAM:
+//	BASE: / base-sha: / PATHS: (the card's, verbatim: prereview's paths
+//	check bounds the changed files by it) / CHANGED: (base_sha..pushed_sha)
+//	/ DEPENDS-ON: / DONE-WHEN: / STREAM:
 //	Closes #<n> (origin an issue of the card's repo) or ORIGIN: <origin>
 //	SELF-CHECK: <w_check> (<TEST>)      prereview's selfcheck on a non-cell PR
 //	RESULT line 1 / line 2 / note       prereview's donewhen reads line 2
@@ -100,13 +102,21 @@ func oneLineField(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// BodyPaths is the PATHS the body states: the paths git reports for the
-// commit range when it answered, else the card's own PATHS.
-func BodyPaths(rangePaths []string, rec Record) string {
+// DeclaredPaths is the body's PATHS line: the card's declared PATHS from the
+// record, verbatim (what the card was allowed to touch), so a card that wrote
+// outside them fails nova-decide review's paths check instead of hiding it.
+func DeclaredPaths(rec Record) string {
+	return or(rec.Card["paths"], "none")
+}
+
+// ChangedPaths is the body's CHANGED line: the paths base_sha..pushed_sha
+// changed as git in the harvest clone reported them, else the wrapper's own
+// w_paths (the same range, read at card end), else unknown.
+func ChangedPaths(rangePaths []string, rec Record) string {
 	if len(rangePaths) > 0 {
 		return strings.Join(rangePaths, " ")
 	}
-	return or(oneLineField(rec.Card["paths"]), "none")
+	return or(oneLineField(rec.Result["w_paths"]), "unknown")
 }
 
 // Body is the PR body built from the record alone. rangePaths are the paths
@@ -116,10 +126,11 @@ func Body(sprint, bench string, c Card, rec Record, rangePaths []string) string 
 	var b strings.Builder
 	line := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
 	base := or(card["base"], c.Base)
-	paths := BodyPaths(rangePaths, rec)
+	changed := ChangedPaths(rangePaths, rec)
 	line("BASE: %s", or(base, "-"))
 	line("base-sha: %s", or(card["base_sha"], "-"))
-	line("PATHS: %s", paths)
+	line("PATHS: %s", DeclaredPaths(rec))
+	line("CHANGED: %s", changed)
 	line("DEPENDS-ON: %s", or(oneLineField(card["depends_on"]), "none"))
 	line("DONE-WHEN: %s", or(oneLineField(card["done_when"]), "-"))
 	line("STREAM: %s", or(oneLineField(card["stream"]), "none"))
@@ -145,7 +156,7 @@ func Body(sprint, bench string, c Card, rec Record, rangePaths []string) string 
 	line("wall_ms: %s", or(res["w_wall_ms"], "-"))
 	line("pushed_sha: %s", or(c.PushedSHA, card["pushed_sha"]))
 	line("results: %s", or(c.Results, card["results"]))
-	line("files: %s", paths)
+	line("files: %s", changed)
 	line("")
 	line("%s", ClaudeLine)
 	return b.String()
