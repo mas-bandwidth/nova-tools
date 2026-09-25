@@ -54,6 +54,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
 )
@@ -138,17 +139,18 @@ type Card struct {
 	// done_when (the card's base-sha, STREAM and DONE-WHEN lines), carried
 	// into the PR body and the PR record.
 	BaseSHA, Stream, DoneWhen string
-	// RecHead is the head in the PR record pr:<repo>:<IdemPR>, or "" when
+	// RecHead is the head in the PR record pr:<name>:<IdemPR>, or "" when
 	// there is no idem PR or no record yet.
 	RecHead string
 }
 
-// RecordKey is the PR record pr:<repo>:<n>, the hash ns_harvest_pr writes once
+// RecordKey is the PR record pr:<name>:<n> (prkey.Key: the bare repository
+// name, whether repo is owner/name or name), the hash ns_harvest_pr writes once
 // (head, base, base_sha, stream, label, sprint, branch, state, at) for the
 // lander and for every later pass: the head lives here, not on GitHub. The
 // same call writes pr and head on the card record (the card model of
 // rowan-new specs/ws-index.md), so the card and its PR point at each other.
-func RecordKey(repo string, n int) string { return "pr:" + repo + ":" + strconv.Itoa(n) }
+func RecordKey(repo string, n int) string { return prkey.Key(repo, n) }
 
 // BenchInfo names the bench the worker pushes from; host and user come from
 // the bench's own beat (bench:<b>:beat), never assumed.
