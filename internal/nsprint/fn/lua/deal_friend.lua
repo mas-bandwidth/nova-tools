@@ -8,6 +8,10 @@
 --     -> DEALT took open refused, then (id, why) per refused id | FENCED
 --   ns_deal_return(token, by, why, id...)
 --     -> RETURNED moved refused, then (id, why) per refused id | FENCED
+--   ns_friend_rebalance(token, friend, by, stale, target...)   (#4145)
+--     -> REBALANCED moved refused, then (id, dest) per move, then (id, why)
+--        per refused id | REFUSED reason, then (id, why) per refused id |
+--        UP | FENCED
 --
 -- Keys (rowan-new specs/ws-index.md, "Tasks are cards"):
 --   task:<id>                    HASH stream state created_at owner why ...
@@ -153,6 +157,145 @@ local function deal_return(keys, args)
   return DF.reply({ 'RETURNED', moved, #refused / 2 }, refused)
 end
 
+-- DF.admits is the deal duty's WhoAdmits (internal/nsprint/reconcile): WHO
+-- is any | only a,b | except a,b (the #3409 form), empty is any, names
+-- compare case insensitively, an unreadable WHO admits no one.
+function DF.admits(who, g)
+  local w = string.lower(string.match(who or '', '^%s*(.-)%s*$'))
+  if w == '' or w == 'any' then return true end
+  local mode, list = string.match(w, '^(%S+)%s+(.*)$')
+  if not mode then mode, list = w, '' end
+  local c = string.lower(g)
+  local found = false
+  for n in string.gmatch(list, '[^,]+') do
+    if string.match(n, '^%s*(.-)%s*$') == c then found = true end
+  end
+  if mode == 'only' then return found end
+  if mode == 'except' then return not found end
+  return false
+end
+
+-- DF.open is g's open slots for a moved card: its slots minus its working
+-- and ready sets (a queue is never filled past its slots); nil when g has
+-- no slots or is down.
+function DF.open(g)
+  if redis.call('EXISTS', 'friend:' .. g .. ':down') == 1 then return nil end
+  local slots = DF.slots(g)
+  if not slots then return nil end
+  return slots - redis.call('ZCARD', 'friend:' .. g .. ':cards:working') -
+    redis.call('ZCARD', 'friend:' .. g .. ':cards:ready')
+end
+
+-- DF.rebalance moves a down friend f's cards (nova-tools #4145): every id in
+-- friend:<f>:cards:ready, oldest first, and every id in
+-- friend:<f>:cards:working whose lease_until has passed. Each goes to ready
+-- on the queue of the target (a name in targets, the friends the caller
+-- judged up) with the most open slots that the deal's rules admit (WHO; a
+-- read never to its author and only to a member of `readers` when that set
+-- is not empty), names breaking ties in the order given; with no such target
+-- it goes back to its stream's ready set, unowned, why=no-consumer, where
+-- the deal duty deals it or returns it to waiting. Every move is the one
+-- move, NS.task.move. It returns the moves (id, dest; dest `ready` for the
+-- stream's set), the refusals (id, why) and the size of f's ready set.
+function DF.rebalance(f, targets, by)
+  local now = redis.call('TIME')
+  now = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+  local readers = {}
+  local nreaders = 0
+  for _, r in ipairs(redis.call('SMEMBERS', 'readers')) do
+    readers[r] = true
+    nreaders = nreaders + 1
+  end
+  local open = {}
+  for _, g in ipairs(targets) do
+    if g ~= f and open[g] == nil then open[g] = DF.open(g) or false end
+  end
+  local moves, refused = {}, {}
+  local function one(id, why)
+    local p = NS.task.read(id)
+    if not p then
+      refused[#refused + 1] = id
+      refused[#refused + 1] = 'no task ' .. id
+      return
+    end
+    local rec = redis.call('HMGET', 'task:' .. id, 'who', 'author')
+    local who, author = rec[1] or '', rec[2] or ''
+    local best, best_open = nil, 0
+    for _, g in ipairs(targets) do
+      local n = open[g]
+      if n and n > best_open and DF.admits(who, g) and
+          (p.kind ~= 'read' or (g ~= author and (nreaders == 0 or readers[g]))) then
+        best, best_open = g, n
+      end
+    end
+    local err
+    if best then
+      err = NS.task.move(id, 'ready', { friend = best, by = by, why = why })
+    elseif p.stream == '' then
+      err = 'no stream and no friend with open slots: nowhere but ' .. f .. "'s queue"
+    else
+      err = NS.task.move(id, 'ready', { friend = '', by = by, why = 'no-consumer' })
+    end
+    if err then
+      refused[#refused + 1] = id
+      refused[#refused + 1] = err
+      return
+    end
+    if best then open[best] = open[best] - 1 end
+    moves[#moves + 1] = id
+    moves[#moves + 1] = best or 'ready'
+  end
+  local ready = redis.call('ZRANGE', 'friend:' .. f .. ':cards:ready', 0, -1)
+  for _, id in ipairs(ready) do
+    one(id, 'rebalance: ' .. f .. ' down')
+  end
+  for _, id in ipairs(redis.call('ZRANGE', 'friend:' .. f .. ':cards:working', 0, -1)) do
+    local lease = tonumber(redis.call('HGET', 'task:' .. id, 'lease_until') or '')
+    if lease and lease < now then
+      one(id, 'lease lapsed: ' .. f .. ' down')
+    end
+  end
+  return moves, refused, #ready
+end
+
+-- DF.rebalance_reply is ns_friend_rebalance's reply: REFUSED with the reason
+-- when f's ready set was not empty and nothing moved (moved=0 is never
+-- silent), else REBALANCED.
+function DF.rebalance_reply(f, moves, refused, nready)
+  if nready > 0 and #moves == 0 then
+    local reason = f .. ' is down with ' .. nready .. ' ready and none moved'
+    if #refused > 0 then reason = reason .. ': ' .. refused[2] end
+    return DF.reply({ 'REFUSED', reason }, refused)
+  end
+  local out = { 'REBALANCED', #moves / 2, #refused / 2 }
+  for _, v in ipairs(moves) do out[#out + 1] = v end
+  return DF.reply(out, refused)
+end
+
+-- ns_friend_rebalance: the reconciler's deal duty calls it in the pass that
+-- sees friend f change status, and `nova-sprint friend down|up` right after
+-- it writes friend:<f>:down. f is down when friend:<f>:down exists or stale
+-- is '1' (the caller saw f's beat older than the down window); an up friend
+-- keeps its queue (UP) and the next deal fills it. token is the reconciler
+-- lease's (fenced); the verb, which holds no lease, passes ''.
+local function friend_rebalance(keys, args)
+  local token, f, by, stale = args[1], args[2], args[3], args[4]
+  if token ~= '' and DF.fenced(token) then
+    return { 'FENCED' }
+  end
+  if not f or f == '' then
+    return { 'REFUSED', 'no friend' }
+  end
+  if stale ~= '1' and redis.call('EXISTS', 'friend:' .. f .. ':down') == 0 then
+    return { 'UP' }
+  end
+  local targets = {}
+  for i = 5, #args do targets[#targets + 1] = args[i] end
+  local moves, refused, nready = DF.rebalance(f, targets, by)
+  return DF.rebalance_reply(f, moves, refused, nready)
+end
+
 redis.register_function('ns_deal_friend', deal_friend)
 redis.register_function('ns_deal_return', deal_return)
+redis.register_function('ns_friend_rebalance', friend_rebalance)
 NS.deal_friend = DF

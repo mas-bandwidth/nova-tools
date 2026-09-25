@@ -5,6 +5,10 @@ package reconcile
 // morning of 2026-09-25; Glenn (09:50 AM ET): "the distribution of unblocked
 // cards to friends (or swarms) must be automatic."
 //
+// A friend status change is handled first in the same pass (#4145,
+// rebalance.go): a friend gone down has its ready cards and lapsed leases
+// moved off its queue by ns_friend_rebalance, one REBALANCE line each.
+//
 // Every pass, under the reconciler lease, the duty reads every friend's open
 // slots (friend:<f>:slots, else friend:<f>:desired slots, minus ZCARD
 // friend:<f>:cards:working) for each friend whose row friend:<f> carries a
@@ -104,6 +108,19 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 	res := FriendDealResult{Took: map[string][]string{}}
 	c := d.Client
 
+	// Round 0 (#4145): a friend status change rebalances that friend's
+	// cards first, so the cards it sends back to ready are dealt below.
+	var rbErr error
+	rb, err := d.rebalance(ctx, token)
+	for _, r := range rb {
+		res.Lines = append(res.Lines, r.Line)
+	}
+	if errors.Is(err, ErrFenced) {
+		return res, err
+	} else if err != nil {
+		rbErr = err
+	}
+
 	// Round 1: the clock, the streams in order, the consumers, the policy.
 	p1 := c.Pipeline()
 	clock := p1.Time(ctx)
@@ -186,7 +203,7 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 		}
 	}
 	if len(cards) == 0 {
-		return res, nil
+		return res, rbErr
 	}
 	p3 := c.Pipeline()
 	fields := make([]*redis.SliceCmd, len(cards))
@@ -251,6 +268,9 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 
 	// The moves: one call per friend, at most one return call.
 	var errs []string
+	if rbErr != nil {
+		errs = append(errs, rbErr.Error())
+	}
 	for _, f := range sortedKeys(plan) {
 		args := []any{token, f, d.actor(), "deal"}
 		for _, id := range plan[f] {
