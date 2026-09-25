@@ -5,8 +5,12 @@
 // one HGETALL. --scope (repeatable; set and clear) names streams: set
 // --scope <stream>... stops only those (default all); clear --scope
 // <stream>... narrows a stop by those, the last scoped stream going lifts it
-// whole. Every subverb prints one line: exit 0 done, 1 refused with the
-// remedy named, 2 usage (or Redis unreachable).
+// whole. A key of another type at s:<S>:pitstop (the 09-23 string) is ours
+// (#3887): set replaces it without --force and clear lifts it, each naming it
+// replaced_by/was_by=wrongtype:<type>; status prints it with the remedy, never
+// WRONGTYPE. The live table reads this one key. Every subverb prints one
+// line: exit 0 done, 1 refused with the remedy named, 2 usage (or Redis
+// unreachable).
 package main
 
 import (
@@ -91,6 +95,13 @@ func runPitstop(ctx context.Context, args []string, out, errOut io.Writer) int {
 	switch sub {
 	case "status":
 		stop, err := pitstop.Read(ctx, c, *sprint)
+		if err != nil && strings.HasPrefix(err.Error(), "WRONGTYPE") {
+			typ, _ := c.Type(ctx, pitstop.Key(*sprint)).Result()
+			val, _ := c.Get(ctx, pitstop.Key(*sprint)).Result()
+			fmt.Fprintf(out, "PITSTOP sprint=%s set by=wrongtype:%s why=%s; remedy: nova-sprint pitstop clear --sprint %s (or set) repairs it\n",
+				S, oneline.Field(typ), oneline.Quote(val), S)
+			return 0
+		}
 		if err != nil {
 			return refuse(errOut, name, err.Error())
 		}

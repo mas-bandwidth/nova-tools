@@ -17,6 +17,13 @@
 -- Each call is the check and the write in one step, with its receipt on
 -- s:<S>:log in the shape deal.lua writes (kind, id, from, to, attempt,
 -- token_sha, actor, reason, evidence, idem, at).
+--
+-- A key of another type at s:<S>:pitstop (the 09-23 string) is ours, never a
+-- WRONGTYPE refusal (#3887): it stops the sprint like a hash does (deal.lua
+-- asks EXISTS, in_scope says every stream), set replaces it without --force
+-- and clear lifts it whole, each reporting it as the prior stop with by
+-- wrongtype:<type> (why is the string's value) and the receipt's evidence
+-- naming repaired wrongtype=<type>.
 
 local function pitstop_now_ms()
   local t = redis.call('TIME')
@@ -30,13 +37,31 @@ local function pitstop_receipt(S, kind, from_state, to_state, by, why, evidence,
     'evidence', evidence or '', 'idem', idem or '', 'at', tostring(at))
 end
 
+-- pitstop_wrongtype(key): nil when key is a hash or absent; else its type
+-- and (for a string) its value, the stop as the 09-23 writer left it.
+local function pitstop_wrongtype(key)
+  local t = redis.call('TYPE', key)['ok']
+  if t == 'none' or t == 'hash' then
+    return nil
+  end
+  local v = ''
+  if t == 'string' then
+    v = redis.call('GET', key)
+  end
+  return t, v
+end
+
 -- NS.pitstop.in_scope(S, stream): true while s:<S>:pitstop stops the stream
--- (one EXISTS and at most two field reads; false when no stop is set).
+-- (one TYPE and at most two field reads; false when no stop is set; a key of
+-- another type stops every stream).
 NS.pitstop = {}
 function NS.pitstop.in_scope(S, stream)
   local key = 's:' .. S .. ':pitstop'
-  if redis.call('EXISTS', key) == 0 then
+  local t = redis.call('TYPE', key)['ok']
+  if t == 'none' then
     return false
+  elseif t ~= 'hash' then
+    return true
   end
   if redis.call('HGET', key, 'scope') == 'streams' then
     return redis.call('HEXISTS', key, 'stream:' .. stream) == 1
@@ -48,7 +73,8 @@ end
 -- Sets the stop: with no stream it is scope=all, with streams scope=streams
 -- over exactly those. A sprint with no status is UNKNOWN; an existing stop is
 -- REFUSED (with its by, why, at) unless force is '1', which replaces it whole
--- and names the replaced stop in the receipt's evidence. Returns UNKNOWN,
+-- and names the replaced stop in the receipt's evidence; a key of another
+-- type is replaced without force (by wrongtype:<type>). Returns UNKNOWN,
 -- REFUSED <by> <why> <at>, or SET <at> <replaced by> <replaced why>
 -- (both empty when nothing was replaced).
 local function pitstop_set(keys, args)
@@ -63,9 +89,13 @@ local function pitstop_set(keys, args)
     return { 'UNKNOWN', S }
   end
   local key = 's:' .. S .. ':pitstop'
-  local cur = redis.call('HMGET', key, 'by', 'why', 'at')
-  local had = redis.call('EXISTS', key) == 1
-  if had and force ~= '1' then
+  local wrong, wrongval = pitstop_wrongtype(key)
+  local cur, had = { 'wrongtype:' .. (wrong or ''), wrongval, '' }, wrong ~= nil
+  if not wrong then
+    cur = redis.call('HMGET', key, 'by', 'why', 'at')
+    had = redis.call('EXISTS', key) == 1
+  end
+  if had and force ~= '1' and not wrong then
     return { 'REFUSED', cur[1] or '', cur[2] or '', cur[3] or '' }
   end
   local at = pitstop_now_ms()
@@ -73,6 +103,9 @@ local function pitstop_set(keys, args)
   if had then
     from_state = 'set'
     evidence = 'replaced by=' .. (cur[1] or '') .. ' at=' .. (cur[3] or '') .. ' why=' .. (cur[2] or '')
+  end
+  if wrong then
+    evidence = 'repaired wrongtype=' .. wrong .. ' ' .. evidence
   end
   local fields, scope = { 'by', by, 'why', why, 'at', tostring(at), 'scope', 'all' }, 'all'
   if #args > 5 then
@@ -105,7 +138,9 @@ end
 -- lifted:<stream>; under scope=streams each stream:<stream> goes, and the
 -- last one going deletes the stop (CLEARED). A named stream already out of
 -- scope refuses the whole call with nothing written: NOTIN <stream>. A narrow
--- that leaves a stop is NARROWED <at> <was by> <was why> <was at>.
+-- that leaves a stop is NARROWED <at> <was by> <was why> <was at>. A key of
+-- another type is lifted whole, streams or not: CLEARED with was by
+-- wrongtype:<type>.
 local function pitstop_clear(keys, args)
   local S, by, idem = args[1], args[2], args[3]
   if not S or S == '' then
@@ -118,9 +153,16 @@ local function pitstop_clear(keys, args)
   if redis.call('EXISTS', key) == 0 then
     return { 'NONE' }
   end
+  local wrong, wrongval = pitstop_wrongtype(key)
+  local at = pitstop_now_ms()
+  if wrong then
+    redis.call('DEL', key)
+    pitstop_receipt(S, 'pitstop clear', 'set', 'none', by, wrongval,
+      'repaired wrongtype=' .. wrong .. ' was by=wrongtype:' .. wrong .. ' at=', idem, at)
+    return { 'CLEARED', tostring(at), 'wrongtype:' .. wrong, wrongval, '' }
+  end
   local cur = redis.call('HMGET', key, 'by', 'why', 'at')
   local was = { cur[1] or '', cur[2] or '', cur[3] or '' }
-  local at = pitstop_now_ms()
   if #args <= 3 then
     redis.call('DEL', key)
     pitstop_receipt(S, 'pitstop clear', 'set', 'none', by, was[2],

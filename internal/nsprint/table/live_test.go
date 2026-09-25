@@ -214,26 +214,31 @@ func TestTableShowsStaleBenchRowNotAbsent(t *testing.T) {
 	}
 }
 
-// TestLiveTitlePitstop (DONE-WHEN of #3423): the live layout's title reads
-// sprint:<S>:pitstop as the bash of record does (GET; any value set prints
-// the pit stop): SPRINT TABLE *** PIT STOP *** while it is set, SPRINT TABLE
-// when it is unset or empty. The key rides the existing xy/landed MGET, so
-// the tick is still the SCAN walk plus one pipeline, with the same commands;
-// only line 1 changes, and a failed tick keeps the last good title.
+// TestLiveTitlePitstop (DONE-WHEN of #3423, the key moved by #3887): the
+// live layout's title reads s:<S>:pitstop, the pitstop verb's hash: SPRINT
+// TABLE *** PIT STOP *** <why> since <at> while it is set, SPRINT TABLE when
+// it is unset; a key of another type there still reads as a stop. The HGETALL
+// rides the one pipeline, so the tick is still the SCAN walk plus one
+// pipeline with its one xy/landed MGET; only line 1 changes, and a failed
+// tick keeps the last good title.
 func TestLiveTitlePitstop(t *testing.T) {
 	cfg, now := table.Fixture2674Config(), table.Fixture2674Now()
 	golden := table.Golden2674()
 	rest := golden[strings.Index(golden, "\n"):]
-	pitKey := "sprint:" + cfg.Sprint + ":pitstop"
+	pitKey := "s:" + cfg.Sprint + ":pitstop"
 	for _, c := range []struct {
 		name  string
 		extra [][]string
 		title string
 	}{
 		{"unset", nil, "SPRINT TABLE"},
-		{"empty", [][]string{{"SET", pitKey, ""}}, "SPRINT TABLE"},
-		{"set", [][]string{{"SET", pitKey, "Glenn: rest tonight"}}, "SPRINT TABLE *** PIT STOP ***"},
-		{"other-sprint", [][]string{{"SET", "sprint:other:pitstop", "x"}}, "SPRINT TABLE"},
+		{"set", [][]string{{"HSET", pitKey, "by", "rowan", "why", "Glenn: rest\ntonight", "at", "1790000000000", "scope", "all"}},
+			"SPRINT TABLE *** PIT STOP *** Glenn: rest tonight since 2026-09-21T14:13:20Z"},
+		{"lifted", [][]string{{"HSET", pitKey, "by", "rowan", "why", "fixes", "at", "1790000000000", "scope", "all", "lifted:nova-work", "1"}},
+			`SPRINT TABLE *** PIT STOP *** fixes since 2026-09-21T14:13:20Z lifted="nova-work"`},
+		{"wrongtype", [][]string{{"SET", pitKey, "Glenn: rest tonight"}},
+			"SPRINT TABLE *** PIT STOP *** (" + pitKey + " is not a hash; nova-sprint pitstop clear repairs it)"},
+		{"other-sprint", [][]string{{"HSET", "s:other:pitstop", "by", "x"}}, "SPRINT TABLE"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			client := liveStore(t, withCardViews(append(table.Fixture2674(), c.extra...), now))
@@ -257,7 +262,7 @@ func TestLiveTitlePitstop(t *testing.T) {
 				}
 			}
 			if mgets != 1 {
-				t.Fatalf("MGET count = %d, want the one xy/landed/pitstop MGET: %v", mgets, names)
+				t.Fatalf("MGET count = %d, want the one xy/landed MGET: %v", mgets, names)
 			}
 			failed := table.FailedLive(cfg, snap).RenderLive(now)
 			if first := failed[:strings.Index(failed, "\n")]; first != c.title {
