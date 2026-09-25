@@ -607,7 +607,7 @@ func TestStoreCICut(t *testing.T) {
 	if !strings.Contains(out, fmt.Sprintf("ADOPT %s#7@%s cut=1", c33Short, head[:12])) || strings.Contains(out, "WAIT") {
 		t.Fatalf("tip set: pass printed %q, want ADOPT cut=1 at the same head", out)
 	}
-	card, err := f.client.HMGet(f.ctx, "s:"+c33Sprint+":card:ci-7-"+head[:8], "state", "verdict", "base", "base_sha").Result()
+	card, err := f.client.HMGet(f.ctx, "s:"+c33Sprint+":card:"+ci.Label(7, head, tip), "state", "verdict", "base", "base_sha").Result()
 	must(t, err)
 	if card[0] != "queued" || card[1] != "PENDING" || card[2] != "dev" || card[3] != tip {
 		t.Fatalf("ci card state/verdict/base/base_sha = %v, want queued PENDING dev %s", card, tip)
@@ -695,7 +695,7 @@ func TestRunnerRowThenCIEndWritesVerdict(t *testing.T) {
 	if err != nil || res.Status != "CREATED" {
 		t.Fatalf("ci cut: %v %v", res, err)
 	}
-	label := ci.Label(7, c33Head)
+	label := ci.Label(7, c33Head, c33Head)
 	card := "s:" + c33Sprint + ":card:" + label
 	vals, err := f.client.HMGet(f.ctx, card, "attempt", "base_sha").Result()
 	must(t, err)
