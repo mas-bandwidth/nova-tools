@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -69,14 +70,7 @@ func (g *GitHub) do(ctx context.Context, method, path string, body any, out any)
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := strings.TrimSpace(string(b))
-		var e struct {
-			Message string `json:"message"`
-		}
-		if json.Unmarshal(b, &e) == nil && e.Message != "" {
-			msg = e.Message
-		}
-		return resp.StatusCode, fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode, msg)
+		return resp.StatusCode, newAPIError(method, path, resp.StatusCode, b)
 	}
 	if out != nil && len(b) > 0 {
 		if err := json.Unmarshal(b, out); err != nil {
@@ -86,7 +80,121 @@ func (g *GitHub) do(ctx context.Context, method, path string, body any, out any)
 	return resp.StatusCode, nil
 }
 
-// OpenPR opens head -> base and returns its number.
+// APIError is a non-2xx reply from the GitHub API. Its text carries
+// GitHub's message and every errors[] entry, so nothing errors out without
+// saying why.
+type APIError struct {
+	Method, Path string
+	Status       int
+	Message      string
+	Errors       []string // errors[].message, or its code and field when the message is empty
+}
+
+func (e *APIError) Error() string {
+	why := e.Message
+	for _, m := range e.Errors {
+		if why == "" {
+			why = m
+		} else {
+			why += ": " + m
+		}
+	}
+	return fmt.Sprintf("%s %s: HTTP %d: %s", e.Method, e.Path, e.Status, why)
+}
+
+// newAPIError reads GitHub's error body: message and errors[] (each a
+// message, or resource, field and code). A body that is not that JSON is
+// kept whole.
+func newAPIError(method, path string, status int, b []byte) *APIError {
+	e := &APIError{Method: method, Path: path, Status: status}
+	var reply struct {
+		Message string            `json:"message"`
+		Errors  []json.RawMessage `json:"errors"`
+	}
+	if json.Unmarshal(b, &reply) != nil {
+		e.Message = strings.TrimSpace(string(b))
+		return e
+	}
+	e.Message = strings.TrimSpace(reply.Message)
+	for _, raw := range reply.Errors {
+		var one struct {
+			Resource string `json:"resource"`
+			Field    string `json:"field"`
+			Code     string `json:"code"`
+			Message  string `json:"message"`
+		}
+		if json.Unmarshal(raw, &one) != nil {
+			var s string // GitHub sometimes sends errors as plain strings
+			if json.Unmarshal(raw, &s) == nil && strings.TrimSpace(s) != "" {
+				e.Errors = append(e.Errors, strings.TrimSpace(s))
+			}
+			continue
+		}
+		if m := strings.TrimSpace(one.Message); m != "" {
+			e.Errors = append(e.Errors, m)
+			continue
+		}
+		var parts []string
+		if one.Resource != "" {
+			parts = append(parts, "resource="+one.Resource)
+		}
+		if one.Field != "" {
+			parts = append(parts, "field="+one.Field)
+		}
+		if one.Code != "" {
+			parts = append(parts, "code="+one.Code)
+		}
+		if len(parts) > 0 {
+			e.Errors = append(e.Errors, strings.Join(parts, " "))
+		}
+	}
+	if e.Message == "" && len(e.Errors) == 0 {
+		e.Message = strings.TrimSpace(string(b))
+	}
+	return e
+}
+
+// prExists reports whether err is GitHub's 422 "A pull request already
+// exists" for the head.
+func prExists(err error) bool {
+	var e *APIError
+	if !errors.As(err, &e) || e.Status != http.StatusUnprocessableEntity {
+		return false
+	}
+	for _, m := range append([]string{e.Message}, e.Errors...) {
+		if strings.HasPrefix(strings.TrimSpace(m), "A pull request already exists") {
+			return true
+		}
+	}
+	return false
+}
+
+// OpenPRFor returns the number of the open PR whose head is branch (owner
+// taken from repo unless branch is owner:branch), or 0 when none is open.
+func (g *GitHub) OpenPRFor(ctx context.Context, repo, branch string) (int, error) {
+	head := branch
+	if !strings.Contains(head, ":") {
+		owner, _, _ := strings.Cut(repo, "/")
+		head = owner + ":" + branch
+	}
+	var out []struct {
+		Number int `json:"number"`
+	}
+	q := url.Values{"head": {head}, "state": {"open"}}
+	if _, err := g.do(ctx, http.MethodGet, "/repos/"+repo+"/pulls?"+q.Encode(), nil, &out); err != nil {
+		return 0, err
+	}
+	for _, p := range out {
+		if p.Number > 0 {
+			return p.Number, nil
+		}
+	}
+	return 0, nil
+}
+
+// OpenPR opens head -> base and returns its number. When GitHub answers 422
+// "A pull request already exists", the open PR on head is adopted: the
+// branch already carries the new head, so it is the stream PR.
 func (g *GitHub) OpenPR(ctx context.Context, repo, head, base, title, body string) (int, error) {
 	var out struct {
 		Number int `json:"number"`
@@ -94,7 +202,17 @@ func (g *GitHub) OpenPR(ctx context.Context, repo, head, base, title, body strin
 	_, err := g.do(ctx, http.MethodPost, "/repos/"+repo+"/pulls",
 		map[string]string{"title": title, "head": head, "base": base, "body": body}, &out)
 	if err != nil {
-		return 0, err
+		if !prExists(err) {
+			return 0, err
+		}
+		n, lerr := g.OpenPRFor(ctx, repo, head)
+		if lerr != nil {
+			return 0, fmt.Errorf("%v; adopting the open PR: %v", err, lerr)
+		}
+		if n <= 0 {
+			return 0, fmt.Errorf("%v; no open PR with head %s to adopt", err, head)
+		}
+		return n, nil
 	}
 	if out.Number <= 0 {
 		return 0, fmt.Errorf("POST /repos/%s/pulls: no number in the reply", repo)
