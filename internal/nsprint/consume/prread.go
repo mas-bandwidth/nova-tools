@@ -1034,7 +1034,7 @@ func (p *PRRead) carry(ctx context.Context, e headEvent, prNum int) map[string]b
 		fmt.Fprintf(p.out(), "CARRY SKIPPED %s why=no mirror of %s\n", id, e.repo)
 		return nil
 	}
-	res, err := line.CarryHead(ctx, p.Store.Client(), p.Sprint, id, dir, "", e.prev, e.head)
+	res, err := line.CarryHead(ctx, p.Store.Client(), p.Sprint, p.Instance, id, dir, "", e.prev, e.head)
 	if err != nil {
 		fmt.Fprintf(p.out(), "CARRY SKIPPED %s why=%s\n", id, oneLine(err.Error()))
 		return nil

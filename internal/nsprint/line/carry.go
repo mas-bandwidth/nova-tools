@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
+	"encoding/json"
 
 	"github.com/redis/go-redis/v9"
 
@@ -67,7 +67,7 @@ func short(sha string) string {
 // dir is where the new head's diff is read (the bench mirror); baseRef is
 // the base ref that dir resolves ("" is the unit's base field). Four round
 // trips: the unit and the friends set, the reads, the writes, in pipelines.
-func Carry(ctx context.Context, c *redis.Client, sprint string, id land.ID, dir, baseRef string) (Result, error) {
+func Carry(ctx context.Context, c *redis.Client, sprint, instance string, id land.ID, dir, baseRef string) (Result, error) {
 	unit, u, friends, err := loadUnit(ctx, c, sprint, id)
 	if err != nil {
 		return Result{Unit: unit}, err
@@ -86,7 +86,7 @@ func Carry(ctx context.Context, c *redis.Client, sprint string, id land.ID, dir,
 		res.Outcome = Nothing
 		return res, nil
 	}
-	return carryTo(ctx, c, sprint, id, unit, u, friends, dir, baseRef, old, stored, head)
+	return carryTo(ctx, c, sprint, instance, id, unit, u, friends, dir, baseRef, old, stored, head)
 }
 
 // CarryHead is the carry the pr-to-read head-change path runs on a `pr head`
@@ -96,7 +96,7 @@ func Carry(ctx context.Context, c *redis.Client, sprint string, id land.ID, dir,
 // it from dir, so a read taken without `read digest` still carries. The
 // reads typed at from move to to when the diffs are identical; a changed
 // diff is Refused naming the files, and the caller queues the re-reads.
-func CarryHead(ctx context.Context, c *redis.Client, sprint string, id land.ID, dir, baseRef, from, to string) (Result, error) {
+func CarryHead(ctx context.Context, c *redis.Client, sprint, instance string, id land.ID, dir, baseRef, from, to string) (Result, error) {
 	unit, u, friends, err := loadUnit(ctx, c, sprint, id)
 	if err != nil {
 		return Result{Unit: unit}, err
@@ -113,7 +113,7 @@ func CarryHead(ctx context.Context, c *redis.Client, sprint string, id land.ID, 
 			return res, fmt.Errorf("digest at old head %s: %w", short(from), err)
 		}
 	}
-	return carryTo(ctx, c, sprint, id, unit, u, friends, dir, baseRef, from, stored, to)
+	return carryTo(ctx, c, sprint, instance, id, unit, u, friends, dir, baseRef, from, stored, to)
 }
 
 // loadUnit resolves PR id to its unit and reads the unit record and the
@@ -154,7 +154,7 @@ func base(u map[string]string, baseRef string) string {
 // carryTo compares the digest at old (stored) with the diff at head and,
 // when identical, moves every typed line at old to head with a carried_from
 // receipt, the disp rows with them, and the digest to head.
-func carryTo(ctx context.Context, c *redis.Client, sprint string, id land.ID, unit string, u map[string]string, friends []string, dir, baseRef, old string, stored Digest, head string) (Result, error) {
+func carryTo(ctx context.Context, c *redis.Client, sprint, instance string, id land.ID, unit string, u map[string]string, friends []string, dir, baseRef, old string, stored Digest, head string) (Result, error) {
 	res := Result{Unit: unit, From: old, To: head}
 	now, err := DiffDigest(ctx, dir, base(u, baseRef), head)
 	if err != nil {
@@ -168,35 +168,32 @@ func carryTo(ctx context.Context, c *redis.Client, sprint string, id land.ID, un
 		}
 		return res, nil
 	}
-	pipe := c.Pipeline()
-	readCmds := make([]*redis.MapStringStringCmd, len(friends))
-	for i, f := range friends {
-		readCmds[i] = pipe.HGetAll(ctx, land.ReadKey(sprint, unit, f))
-	}
-	dispKey := fmt.Sprintf("s:%s:disp:%s:%d", sprint, id.Repo, id.N)
-	dispCmd := pipe.HGetAll(ctx, dispKey)
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return res, fmt.Errorf("read reads of %s: %w", unit, err)
-	}
-	disp := dispCmd.Val()
-	at := strconv.FormatInt(time.Now().UnixMilli(), 10)
-	pipe = c.Pipeline()
-	for i, f := range friends {
-		r := readCmds[i].Val()
-		if len(r) == 0 || r["head"] != old || r["verdict"] == "" {
-			continue
-		}
-		res.Who = append(res.Who, f)
-		pipe.HSet(ctx, land.ReadKey(sprint, unit, f), "head", head, FieldCarriedFrom, old, FieldCarriedAt, at)
-		if v, ok := disp[f+"@"+old]; ok {
-			pipe.HSet(ctx, dispKey, f+"@"+head, v)
-		}
-	}
-	if err := Record(ctx, pipe, land.UnitKey(sprint, unit), head, now); err != nil {
+	filesJSON, err := json.Marshal(now.Files)
+	if err != nil {
 		return res, err
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return res, fmt.Errorf("carry on %s: %w", unit, err)
+	args := []any{
+		sprint, instance, unit, id.Repo, id.N, old, head,
+		now.SHA256, string(filesJSON), len(friends),
+	}
+	for _, f := range friends {
+		args = append(args, f)
+	}
+	reply, err := c.FCall(ctx, "ns_read_carry", nil, args...).Slice()
+	if err != nil {
+		return res, fmt.Errorf("ns_read_carry on %s: %w", unit, err)
+	}
+	if len(reply) > 0 {
+		if s, ok := reply[0].(string); ok && s == "LEASE" {
+			return res, fmt.Errorf("lease held by %s", reply[1])
+		}
+	}
+	if len(reply) > 1 {
+		for i := 1; i < len(reply); i++ {
+			if f, ok := reply[i].(string); ok {
+				res.Who = append(res.Who, f)
+			}
+		}
 	}
 	if len(res.Who) == 0 {
 		res.Outcome = Nothing

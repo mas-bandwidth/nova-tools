@@ -85,6 +85,7 @@ func mergeStore(t *testing.T, f mergeFixture, head string) (context.Context, *re
 	c := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
 	t.Cleanup(func() { _ = c.Close() })
 	c.SAdd(ctx, "friends", "emma", "johnny")
+	c.HSet(ctx, "lease:route:"+mergeS, "instance", "tester")
 	c.HSet(ctx, land.UnitKey(mergeS, mergeUnit), "repo", mergeRepo, "base", "dev", "head", head, "pr", "3612",
 		"branch", "feature", "author", "johnny")
 	c.Set(ctx, land.PRUnitKey(mergeS, mergeRepo, 3612), mergeUnit, 0)
@@ -126,7 +127,7 @@ func TestReadCarriesAcrossIdenticalDiffMerge(t *testing.T) {
 		t.Fatalf("before the carry: %q", got)
 	}
 	id := land.ID{Repo: mergeRepo, N: 3612}
-	res, err := line.Carry(ctx, c, mergeS, id, f.dir, "")
+	res, err := line.Carry(ctx, c, mergeS, "tester", id, f.dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +150,7 @@ func TestReadDoesNotCarryAcrossChangedDiff(t *testing.T) {
 	f := newMergeFixture(t)
 	ctx, c := mergeStore(t, f, f.c)
 	id := land.ID{Repo: mergeRepo, N: 3612}
-	res, err := line.Carry(ctx, c, mergeS, id, f.dir, "")
+	res, err := line.Carry(ctx, c, mergeS, "tester", id, f.dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}

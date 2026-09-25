@@ -320,11 +320,51 @@ do
     return { 'OK' }
   end
 
+
+  -- ns_read_carry(S, instance, unit, repo, pr, old_head, new_head, digest_sha, digest_files, carried_count, ...friends)
+  local function read_carry(keys, args)
+    local S, instance = args[1], args[2]
+    local holder = check_lease(S, instance)
+    if holder then
+      return { 'LEASE', holder }
+    end
+    local unit, repo, pr, old_head, new_head = args[3], args[4], args[5], args[6], args[7]
+    local digest_sha, digest_files = args[8], args[9]
+    local carried_count = tonumber(args[10]) or 0
+    local at = tostring(now_ms())
+    local carried = {}
+    local dispKey = 's:' .. S .. ':disp:' .. repo .. ':' .. pr
+    for i = 1, carried_count do
+      local f = args[10 + i]
+      local rkey = 's:' .. S .. ':read:' .. unit .. ':' .. f
+      local r = redis.call('HMGET', rkey, 'head', 'verdict')
+      local rhead, verdict = r[1], r[2]
+      if rhead == old_head and verdict and verdict ~= '' then
+        redis.call('HSET', rkey, 'head', new_head, 'carried_from', old_head, 'carried_at', at)
+        local disp = redis.call('HGET', dispKey, f .. '@' .. old_head)
+        if disp then
+          redis.call('HSET', dispKey, f .. '@' .. new_head, disp)
+        end
+        carried[#carried + 1] = f
+      end
+    end
+    if #carried > 0 then
+      redis.call('HSET', 's:' .. S .. ':u:' .. unit, 'diff_sha256', digest_sha, 'diff_head', new_head, 'diff_files', digest_files)
+    end
+    local reply = { 'OK' }
+    for _, f in ipairs(carried) do
+      reply[#reply + 1] = f
+    end
+    return reply
+  end
+
   redis.register_function('ns_pr_head', pr_head)
+
   redis.register_function('ns_pr_head_change', pr_head_change)
   redis.register_function('ns_pr_first_read', pr_first_read)
   redis.register_function('ns_pr_evaluate', pr_evaluate)
   redis.register_function('ns_reads_short_delete_ended', reads_short_delete_ended)
   redis.register_function('ns_reads_short_delete_left', reads_short_delete_left)
   redis.register_function('ns_pr_pass', pr_pass)
+  redis.register_function('ns_read_carry', read_carry)
 end
