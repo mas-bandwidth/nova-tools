@@ -33,14 +33,15 @@ import (
 
 // The library functions (fn/lua/02_card_move.lua).
 const (
-	FnMove   = "ns_tcard_move"
-	FnPush   = "ns_tcard_push"
-	FnTake   = "ns_tcard_take"
-	FnDone   = "ns_tcard_done"
-	FnBeat   = "ns_tcard_beat"
-	FnExpire = "ns_tcard_expire"
-	FnPlace  = "ns_tcard_place"
-	FnFsck   = "ns_tcard_fsck"
+	FnMove       = "ns_tcard_move"
+	FnPush       = "ns_tcard_push"
+	FnTake       = "ns_tcard_take"
+	FnDone       = "ns_tcard_done"
+	FnBeat       = "ns_tcard_beat"
+	FnExpire     = "ns_tcard_expire"
+	FnPlace      = "ns_tcard_place"
+	FnLandStream = "ns_tcard_land_stream"
+	FnFsck       = "ns_tcard_fsck"
 )
 
 // Wheres are the sets a task can be in, in the fsck reply's order.
@@ -386,5 +387,47 @@ func Fsck(ctx context.Context, c redis.Cmdable, sprint string) (FsckResult, erro
 	r.Unplaced = num(out[4+len(Wheres)])
 	r.Drift = num(out[5+len(Wheres)])
 	r.Lines = out[n:]
+	return r, nil
+}
+
+// Member is one task a stream merge landed: its id, its PR or issue
+// (repo#n) and origin (the URL it came from), what the lander closes with
+// the CLOSE line.
+type Member struct {
+	ID, Ref, Origin string
+}
+
+// StreamLanding is ns_tcard_land_stream's reply: the members moved to landed
+// and the ones the move refused (id -> why), which stay where they are.
+type StreamLanding struct {
+	Landed  []Member
+	Refused map[string]string
+}
+
+// LandStream is the stream lander's step (Glenn 2026-09-25 08:50 ET): every
+// member of ws:<stream>:merging moves to landed at the merge sha, in one
+// call, oldest first. The caller closes each Landed member's PR and origin
+// issue with the CLOSE line; nothing here calls GitHub.
+func LandStream(ctx context.Context, c redis.Cmdable, stream, sha, by, why string) (StreamLanding, error) {
+	reply, err := c.FCall(ctx, FnLandStream, nil, stream, sha, by, why).Result()
+	if err != nil {
+		return StreamLanding{}, fmt.Errorf("%s: %w", FnLandStream, err)
+	}
+	out, err := list(reply)
+	if err != nil || len(out) < 3 || out[0] != "LANDED" {
+		return StreamLanding{}, fmt.Errorf("%s: unexpected reply %v %v", FnLandStream, out, err)
+	}
+	n, _ := strconv.Atoi(out[1])
+	m, _ := strconv.Atoi(out[2])
+	if len(out) != 3+3*n+2*m {
+		return StreamLanding{}, fmt.Errorf("%s: reply of %d cells for %d landed, %d refused", FnLandStream, len(out), n, m)
+	}
+	r := StreamLanding{Refused: map[string]string{}}
+	for i := 0; i < n; i++ {
+		r.Landed = append(r.Landed, Member{ID: out[3+3*i], Ref: out[4+3*i], Origin: out[5+3*i]})
+	}
+	for i := 0; i < m; i++ {
+		r.Refused[out[3+3*n+2*i]] = out[4+3*n+2*i]
+	}
 	return r, nil
 }

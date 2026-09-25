@@ -1496,6 +1496,38 @@ redis.register_function('ns_tcard_place', function(keys, args)
   return out
 end)
 
+-- ns_tcard_land_stream(stream, sha, by, why) -> LANDED n refused, then per
+-- landed member: id, repo#pr (its ref or pr), origin; then per refused
+-- member: id, why. The stream lander's merge (Glenn 08:50 AM ET: merging ->
+-- landed at the one merge sha, then the lander closes each member's PR and
+-- origin issue with the CLOSE line): every member of ws:<stream>:merging
+-- moves to landed through the one move, oldest first.
+redis.register_function('ns_tcard_land_stream', function(keys, args)
+  local stream, sha, by, why = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
+  if why == '' then why = 'stream merged ' .. sha end
+  local landed, refused = {}, {}
+  for _, id in ipairs(redis.call('ZRANGE', 'ws:' .. stream .. ':merging', 0, -1)) do
+    if not TK.card_id(id) then
+      local err = TK.move(id, 'landed', { by = by, why = why, sha = sha })
+      if err then
+        refused[#refused + 1] = id
+        refused[#refused + 1] = err
+      else
+        local f = redis.call('HMGET', 'task:' .. id, 'ref', 'repo', 'pr', 'origin')
+        local ref = TK.str(f[1])
+        if TK.str(f[3]) ~= '' and TK.str(f[3]) ~= '0' then ref = TK.str(f[2]) .. '#' .. TK.str(f[3]) end
+        landed[#landed + 1] = id
+        landed[#landed + 1] = ref
+        landed[#landed + 1] = TK.str(f[4])
+      end
+    end
+  end
+  local out = { 'LANDED', tostring(#landed / 3), tostring(#refused / 2) }
+  for _, v in ipairs(landed) do out[#out + 1] = v end
+  for _, v in ipairs(refused) do out[#out + 1] = v end
+  return out
+end)
+
 -- ns_tcard_fsck(S): TK.fsck, read-only.
 redis.register_function({ function_name = 'ns_tcard_fsck', flags = { 'no-writes' },
   callback = function(keys, args) return TK.fsck(args[1] or '') end })

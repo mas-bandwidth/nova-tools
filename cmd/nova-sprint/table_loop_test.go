@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -35,9 +35,9 @@ func (l *lockedBuffer) String() string {
 func wholeTableRedis(t *testing.T) (string, *redis.Client) {
 	t.Helper()
 	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	// a throwaway redis-server with the library: table clear moves through
+	// the one task move (ns_tcard_move, #3778)
+	addr, client := wstest.Start(t)
 	for _, cmd := range table.SprintFixture() {
 		args := make([]any, len(cmd))
 		for i, v := range cmd {
@@ -47,7 +47,7 @@ func wholeTableRedis(t *testing.T) (string, *redis.Client) {
 			t.Fatalf("seed %v: %v", cmd, err)
 		}
 	}
-	return mr.Addr(), client
+	return addr, client
 }
 
 // TestControl3530LoopPublishesOneWriter: `table --layout live --loop 1 --out

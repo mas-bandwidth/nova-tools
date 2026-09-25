@@ -39,7 +39,7 @@ usage:
   nova-sprint task take    --actor <f> [--id <id>] [--n <k>]
   nova-sprint task beat    --actor <f> --id <id>
   nova-sprint task done    --actor <a> --id <id> --evidence <text> [--pr <n>]
-  nova-sprint task land    --actor <a> --id <id> --sha <merge sha8>
+  nova-sprint task land    --actor <a> (--id <id> | --stream <s>) --sha <merge sha8>
   nova-sprint task cancel  --actor <a> --id <id> --why <text>
   nova-sprint task block   --actor <a> --id <id> (--on <conditions> | --why <text>)
   nova-sprint task unblock --actor <a> --id <id>
@@ -54,7 +54,9 @@ every verb also takes --redis <addr> (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR) a
 (the legacy idx sets' sprint; else FRIEND_QUEUE_SPRINT, else the first of sprint:order).
 
 done moves working -> merging when the task names a PR (its pr field or --pr), else -> done.
-land moves merging (or working) -> landed at the merge sha. take starts a lease the child
+land moves merging (or working) -> landed at the merge sha; land --stream moves every
+member of ws:<s>:merging and prints LANDED <id> ref=<repo#n> origin=<url> per member (the
+lander closes those PRs and issues with the CLOSE line). take starts a lease the child
 renews with beat every 60 s; expire moves a working task whose lease lapsed back to ready.
 fsck prints one line per drift and exits 1 when there is any.
 `
@@ -195,8 +197,13 @@ func (c *cardCmd) missing(sub string) string {
 	}
 	var checks []string
 	switch sub {
-	case "push", "done", "land", "cancel", "block", "unblock", "front", "move", "beat":
+	case "push", "done", "cancel", "block", "unblock", "front", "move", "beat":
 		checks = append(checks, need(c.actor, "actor"), need(c.id, "id"))
+	case "land":
+		checks = append(checks, need(c.actor, "actor"))
+		if (*c.id == "") == (*c.stream == "") {
+			checks = append(checks, "want exactly one of --id <id> and --stream <s>")
+		}
 	case "take", "expire":
 		checks = append(checks, need(c.actor, "actor"))
 	case "migrate":
@@ -294,7 +301,31 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 	case "done":
 		return moved(taskcard.Done(ctx, cl, *c.id, *c.actor, *c.evidence, *c.pr))
 	case "land":
-		return moved(taskcard.Land(ctx, cl, *c.id, *c.actor, *c.sha, *c.why))
+		if *c.stream == "" {
+			return moved(taskcard.Land(ctx, cl, *c.id, *c.actor, *c.sha, *c.why))
+		}
+		// the stream lander's step: every merging member, one call; the
+		// lines name what the lander closes with the CLOSE line
+		r, err := taskcard.LandStream(ctx, cl, *c.stream, *c.sha, *c.actor, *c.why)
+		if err != nil {
+			return refuse(errOut, c.verb, err.Error())
+		}
+		for _, m := range r.Landed {
+			_, _ = fmt.Fprintf(out, "LANDED %s ref=%s origin=%s\n", m.ID, quoteField(m.Ref), quoteField(m.Origin))
+		}
+		ids := make([]string, 0, len(r.Refused))
+		for id := range r.Refused {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			_, _ = fmt.Fprintf(out, "REFUSED %s why=%s\n", id, quoteField(r.Refused[id]))
+		}
+		_, _ = fmt.Fprintf(out, "TASK land stream=%s sha=%s n=%d refused=%d ms=%d\n", quoteField(*c.stream), *c.sha, len(r.Landed), len(r.Refused), ms())
+		if len(r.Refused) > 0 {
+			return 1
+		}
+		return 0
 	case "cancel":
 		return moved(taskcard.Cancel(ctx, cl, *c.id, *c.actor, *c.why))
 	case "block":

@@ -66,7 +66,9 @@ func PlanClear(ctx context.Context, client redis.UniversalClient, friends []stri
 		landed[i] = pipe.ZRangeWithScores(ctx, "ws:"+s+":landed", 0, -1)
 	}
 	done := make([][]*redis.IntCmd, len(p.Friends))
+	rowed := make([]*redis.IntCmd, len(p.Friends))
 	for i, f := range p.Friends {
+		rowed[i] = pipe.Exists(ctx, "friend:"+f)
 		for _, w := range FriendCardWheres[2:] {
 			done[i] = append(done[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
 		}
@@ -88,8 +90,9 @@ func PlanClear(ctx context.Context, client redis.UniversalClient, friends []stri
 		}
 	}
 	for i, f := range p.Friends {
+		// a friend with no row (friend:<f>) has no done count to keep
 		var n int64
-		ok := true
+		ok := rowed[i].Val() > 0
 		for _, c := range done[i] {
 			v, err := c.Result()
 			ok = ok && err == nil

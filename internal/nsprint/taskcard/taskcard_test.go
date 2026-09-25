@@ -2,6 +2,7 @@ package taskcard_test
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -292,4 +293,38 @@ func TestLeaseLapsedGoesBackToReady(t *testing.T) {
 		t.Fatalf("expired record %v", h)
 	}
 	clean(t, c, "expire")
+}
+
+// TestLandStreamLandsEveryMergingMember is the lander's step (Glenn 08:50 ET):
+// every member of ws:<stream>:merging moves to landed at the merge sha in one
+// call, and the reply names each member's PR and origin for the CLOSE line.
+func TestLandStreamLandsEveryMergingMember(t *testing.T) {
+	c := start(t)
+	ctx := context.Background()
+	for i, id := range []string{"m1", "m2", "m3"} {
+		if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: id, Stream: stream, Friend: "rowan", Sprint: sprint,
+			Repo: "mas-bandwidth/nova-tools", PR: strconv.Itoa(3800 + i), Origin: "issue:" + id}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := taskcard.Take(ctx, c, "rowan", 1, "rowan", id); err != nil {
+			t.Fatal(err)
+		}
+		if id != "m3" {
+			if _, err := taskcard.Done(ctx, c, id, "rowan", "pr", ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	r, err := taskcard.LandStream(ctx, c, stream, "abcdef12", "lander", "")
+	if err != nil || len(r.Landed) != 2 || len(r.Refused) != 0 ||
+		r.Landed[0] != (taskcard.Member{ID: "m1", Ref: "mas-bandwidth/nova-tools#3800", Origin: "issue:m1"}) {
+		t.Fatalf("land stream %+v %v", r, err)
+	}
+	if n := c.ZCard(ctx, taskcard.StreamKey(stream, "landed")).Val(); n != 2 || c.ZCard(ctx, taskcard.StreamKey(stream, "merging")).Val() != 0 {
+		t.Fatalf("landed %d", n)
+	}
+	if w := c.HGet(ctx, "task:m3", "where").Val(); w != "working" {
+		t.Fatalf("m3 (not merging) moved to %s", w)
+	}
+	clean(t, c, "land stream")
 }
