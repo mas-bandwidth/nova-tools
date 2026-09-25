@@ -348,3 +348,70 @@ func TestLanderShadowNoRecordIsALine(t *testing.T) {
 		t.Fatalf("stderr %q, want nothing: a missing record is a line, not a refusal", errOut.String())
 	}
 }
+
+// TestLanderShadowRecordAppendsStream (nova-tools#3821): lander --shadow --record
+// appends each SHADOW verdict to land:<repo>:shadow (fields repo, n, head, verdict, why, at)
+// in one pipeline, writing nothing else.
+func TestLanderShadowRecordAppendsStream(t *testing.T) {
+	addr := startThrowawayRedis(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	shadowFixture(t, c)
+	if err := c.HSet(ctx, "cfg:land", "min_score", "8").Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeKeys, err := c.Keys(ctx, "*").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	code := runLander(ctx, []string{"--shadow", "--record", "--redis", addr, "--repo", "mas-bandwidth/nova-tools", "1", "2", "3", "4", "5", "6"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("lander --shadow --record exit %d: %s", code, errOut.String())
+	}
+
+	// Verify only land:nova-tools:shadow was created
+	afterKeys, err := c.Keys(ctx, "*").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterKeys) != len(beforeKeys)+1 {
+		t.Fatalf("expected 1 new key, got before=%d after=%d", len(beforeKeys), len(afterKeys))
+	}
+
+	msgs, err := c.XRange(ctx, "land:nova-tools:shadow", "-", "+").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 6 {
+		t.Fatalf("expected 6 messages in stream, got %d", len(msgs))
+	}
+
+	for i, m := range msgs {
+		repo := m.Values["repo"]
+		if repo != "nova-tools" {
+			t.Errorf("msg %d repo=%v, want nova-tools", i, repo)
+		}
+		if _, ok := m.Values["n"]; !ok {
+			t.Errorf("msg %d missing field n", i)
+		}
+		if _, ok := m.Values["head"]; !ok {
+			t.Errorf("msg %d missing field head", i)
+		}
+		if _, ok := m.Values["verdict"]; !ok {
+			t.Errorf("msg %d missing field verdict", i)
+		}
+		if _, ok := m.Values["why"]; !ok {
+			t.Errorf("msg %d missing field why", i)
+		}
+		atVal, ok := m.Values["at"].(string)
+		if !ok || atVal == "" {
+			t.Errorf("msg %d missing or invalid field at: %v", i, m.Values["at"])
+		} else if _, err := time.Parse(time.RFC3339, atVal); err != nil {
+			t.Errorf("msg %d at timestamp not RFC3339: %v", i, err)
+		}
+	}
+}

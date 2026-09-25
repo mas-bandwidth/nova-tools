@@ -45,6 +45,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -58,7 +59,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "lander",
-		Summary: "lander --redis <addr> --sprint <S> --repo <r> --batch <name> --gate/--bisect/--land/--file <prog> [--metrics-addr <host:port>] <n>...: one gate-retry lane pass (exit 1 pass error); lander --shadow --redis <addr> --repo <r> <n>...: one verdict line per member, no programs, no writes",
+		Summary: "lander --redis <addr> --sprint <S> --repo <r> --batch <name> --gate/--bisect/--land/--file <prog> [--metrics-addr <host:port>] <n>...: one gate-retry lane pass (exit 1 pass error); lander --shadow [--record] --redis <addr> --repo <r> <n>...: one verdict line per member, no programs",
 		Run:     runLander,
 	})
 }
@@ -92,6 +93,7 @@ func runLander(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs.StringVar(&progs.File, "file", "", "")
 	metricsAddr := fs.String("metrics-addr", "", "")
 	shadow := fs.Bool("shadow", false, "")
+	record := fs.Bool("record", false, "")
 	var nums []string
 	for len(args) > 0 {
 		if !strings.HasPrefix(args[0], "-") {
@@ -104,8 +106,11 @@ func runLander(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 		args = fs.Args()
 	}
+	if *record && !*shadow {
+		return refuse(errOut, "lander", "--record is a --shadow flag")
+	}
 	if *shadow {
-		return runLanderShadow(ctx, *redisAddr, *repo, nums, out, errOut)
+		return runLanderShadow(ctx, *redisAddr, *repo, nums, *record, out, errOut)
 	}
 	if *redisAddr == "" || *sprint == "" || *repo == "" || *batchName == "" {
 		return refuse(errOut, "lander", "needs --redis <addr> --sprint <S> --repo <repo> --batch <name>")
@@ -175,7 +180,7 @@ func runLander(ctx context.Context, args []string, out, errOut io.Writer) int {
 
 // runLanderShadow is `lander --shadow`: verdicts from the records only. It
 // builds no lane, runs no program and sends Redis nothing but reads.
-func runLanderShadow(ctx context.Context, redisAddr, repo string, nums []string, out, errOut io.Writer) int {
+func runLanderShadow(ctx context.Context, redisAddr, repo string, nums []string, record bool, out, errOut io.Writer) int {
 	if redisAddr == "" || repo == "" {
 		return refuse(errOut, "lander", "--shadow needs --redis <addr> --repo <repo>")
 	}
@@ -210,14 +215,46 @@ func runLanderShadow(ctx context.Context, redisAddr, repo string, nums []string,
 		fmt.Fprintf(errOut, "nova-sprint lander: shadow: %v\n", err)
 		return 6
 	}
+	type memberVerdict struct {
+		r       stream.PR
+		verdict string
+		why     string
+	}
+	verdicts := make([]memberVerdict, len(recs))
 	counts := map[string]int{}
-	for _, r := range recs {
+	for i, r := range recs {
 		verdict, why := shadowVerdict(r, cfg.MinScore)
 		counts[verdict]++
+		verdicts[i] = memberVerdict{r: r, verdict: verdict, why: why}
 		fmt.Fprintf(out, "SHADOW %s#%d head=%s verdict=%s why=%s\n", prkey.Name(repo), r.N, orDash(stream.Short(r.Head)), verdict, why)
 	}
 	fmt.Fprintf(out, "LANDER shadow repo=%s members=%d land=%d wait-ci=%d no-read=%d hold=%d conflict=%d no-record=%d\n",
 		prkey.Name(repo), len(recs), counts["LAND"], counts["WAIT-CI"], counts["NO-READ"], counts["HOLD"], counts["CONFLICT"], counts["NO-RECORD"])
+
+	if record && len(verdicts) > 0 {
+		pipe := c.Pipeline()
+		at := time.Now().UTC().Format(time.RFC3339)
+		streamKey := "land:" + prkey.Name(repo) + ":shadow"
+		for _, v := range verdicts {
+			pipe.XAdd(ctx, &redis.XAddArgs{
+				Stream: streamKey,
+				MaxLen: 10000,
+				Approx: true,
+				Values: []string{
+					"repo", prkey.Name(repo),
+					"n", strconv.Itoa(v.r.N),
+					"head", orDash(stream.Short(v.r.Head)),
+					"verdict", v.verdict,
+					"why", v.why,
+					"at", at,
+				},
+			})
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			fmt.Fprintf(errOut, "nova-sprint lander: shadow record: %v\n", err)
+			return 6
+		}
+	}
 	return 0
 }
 

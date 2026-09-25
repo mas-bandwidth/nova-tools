@@ -3,12 +3,15 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -29,9 +32,10 @@ type shadowPR struct {
 	verdicts               []string
 }
 
-// runLandEvalShadow is land eval --shadow (nova-tools#3800): it reads the
-// SHADOW lines nova-sprint lander --shadow printed over a window (stdin) and
-// compares each verdict with what the hand lander did, read from the PR
+// runLandEvalShadow is land eval --shadow (nova-tools#3800, #3821): it reads
+// the SHADOW lines nova-sprint lander --shadow printed over a window (stdin or
+// with --since <dur> from land:<repo>:shadow with XRANGE when no pipe is given)
+// and compares each verdict with what the hand lander did, read from the PR
 // record pr:<name>:<n> (its close field is the CLOSE receipt, state parked
 // is a PARKED move) in one pipeline. A line agrees when shadow LAND and hand
 // landed coincide (both or neither); a line whose head is not the record's
@@ -39,37 +43,118 @@ type shadowPR struct {
 // one receipt, and writes nothing.
 //
 //	nova-sprint lander --shadow --redis <addr> --repo <r> <n>... | nova-sprint land eval --shadow --redis <addr>
-func runLandEvalShadow(ctx context.Context, addr string, in io.Reader, out, errOut io.Writer) int {
+func runLandEvalShadow(ctx context.Context, addr, repo string, since time.Duration, in io.Reader, out, errOut io.Writer) int {
 	byKey := map[string]*shadowPR{}
 	var order []*shadowPR
 	lines, skipped := 0, 0
-	sc := bufio.NewScanner(in)
-	sc.Buffer(make([]byte, 64*1024), 1024*1024)
-	for sc.Scan() {
-		repo, n, head, verdict, ok := parseShadowLine(sc.Text())
-		if !ok {
-			if strings.TrimSpace(sc.Text()) != "" {
-				skipped++
+
+	var st *store.Store
+	var err error
+
+	if since > 0 && !hasPipeInput(in) {
+		st, err = store.Open(ctx, addr)
+		if err != nil {
+			fmt.Fprintf(errOut, "nova-sprint land eval: connect redis: %v\n", err)
+			return 6
+		}
+		defer st.Close()
+		c := st.Client()
+
+		var streamKeys []string
+		if repo != "" {
+			if _, _, err := prkey.Split(repo); err != nil {
+				return refuse(errOut, "land eval", err.Error())
 			}
-			continue
+			streamKeys = []string{"land:" + prkey.Name(repo) + ":shadow"}
+		} else {
+			found, err := c.Keys(ctx, "land:*:shadow").Result()
+			if err != nil {
+				fmt.Fprintf(errOut, "nova-sprint land eval: %v\n", err)
+				return 6
+			}
+			sort.Strings(found)
+			streamKeys = found
 		}
-		lines++
-		k := prkey.Key(repo, n)
-		p := byKey[k]
-		if p == nil {
-			p = &shadowPR{repo: prkey.Name(repo), n: n}
-			byKey[k] = p
-			order = append(order, p)
+		if len(streamKeys) == 0 {
+			return refuse(errOut, "land eval", "no shadow stream found; run nova-sprint lander --shadow --record first")
 		}
-		p.heads = append(p.heads, head)
-		p.verdicts = append(p.verdicts, verdict)
+
+		ms := time.Now().Add(-since).UnixMilli()
+		start := "-"
+		if ms > 0 {
+			start = strconv.FormatInt(ms, 10) + "-0"
+		}
+		for _, sk := range streamKeys {
+			msgs, err := c.XRange(ctx, sk, start, "+").Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				fmt.Fprintf(errOut, "nova-sprint land eval: xrange %s: %v\n", sk, err)
+				return 6
+			}
+			for _, m := range msgs {
+				r := strVal(m.Values, "repo")
+				if r == "" {
+					r = strings.TrimSuffix(strings.TrimPrefix(sk, "land:"), ":shadow")
+				}
+				n, err := strconv.Atoi(strVal(m.Values, "n"))
+				if err != nil || n <= 0 {
+					continue
+				}
+				head := strVal(m.Values, "head")
+				verdict := strVal(m.Values, "verdict")
+				if verdict == "" {
+					continue
+				}
+				lines++
+				k := prkey.Key(r, n)
+				p := byKey[k]
+				if p == nil {
+					p = &shadowPR{repo: prkey.Name(r), n: n}
+					byKey[k] = p
+					order = append(order, p)
+				}
+				p.heads = append(p.heads, head)
+				p.verdicts = append(p.verdicts, verdict)
+			}
+		}
+		if lines == 0 {
+			return refuse(errOut, "land eval", "no SHADOW lines in stream; run nova-sprint lander --shadow --record first")
+		}
+	} else {
+		sc := bufio.NewScanner(in)
+		sc.Buffer(make([]byte, 64*1024), 1024*1024)
+		for sc.Scan() {
+			repo, n, head, verdict, ok := parseShadowLine(sc.Text())
+			if !ok {
+				if strings.TrimSpace(sc.Text()) != "" {
+					skipped++
+				}
+				continue
+			}
+			lines++
+			k := prkey.Key(repo, n)
+			p := byKey[k]
+			if p == nil {
+				p = &shadowPR{repo: prkey.Name(repo), n: n}
+				byKey[k] = p
+				order = append(order, p)
+			}
+			p.heads = append(p.heads, head)
+			p.verdicts = append(p.verdicts, verdict)
+		}
+		if err := sc.Err(); err != nil {
+			return refuse(errOut, "land eval", "read SHADOW lines: "+err.Error())
+		}
+		if lines == 0 {
+			return refuse(errOut, "land eval", "no SHADOW lines on stdin; pipe nova-sprint lander --shadow into land eval --shadow")
+		}
+		st, err = store.Open(ctx, addr)
+		if err != nil {
+			fmt.Fprintf(errOut, "nova-sprint land eval: connect redis: %v\n", err)
+			return 6
+		}
+		defer st.Close()
 	}
-	if err := sc.Err(); err != nil {
-		return refuse(errOut, "land eval", "read SHADOW lines: "+err.Error())
-	}
-	if lines == 0 {
-		return refuse(errOut, "land eval", "no SHADOW lines on stdin; pipe nova-sprint lander --shadow into land eval --shadow")
-	}
+
 	sort.Slice(order, func(i, j int) bool {
 		if order[i].repo != order[j].repo {
 			return order[i].repo < order[j].repo
@@ -77,12 +162,6 @@ func runLandEvalShadow(ctx context.Context, addr string, in io.Reader, out, errO
 		return order[i].n < order[j].n
 	})
 
-	st, err := store.Open(ctx, addr)
-	if err != nil {
-		fmt.Fprintf(errOut, "nova-sprint land eval: connect redis: %v\n", err)
-		return 6
-	}
-	defer st.Close()
 	pipe := st.Client().Pipeline()
 	cmds := make([]*redis.SliceCmd, len(order))
 	for i, p := range order {
@@ -170,4 +249,35 @@ func landEvalInput() io.Reader {
 		return landEvalStdin
 	}
 	return os.Stdin
+}
+
+func hasPipeInput(in io.Reader) bool {
+	if in == nil {
+		return false
+	}
+	if landEvalStdin != nil {
+		return true
+	}
+	if f, ok := in.(*os.File); ok {
+		fi, err := f.Stat()
+		if err != nil {
+			return false
+		}
+		if flag.Lookup("test.v") != nil {
+			return false
+		}
+		return (fi.Mode() & os.ModeCharDevice) == 0
+	}
+	return true
+}
+
+func strVal(vals map[string]interface{}, key string) string {
+	if vals == nil {
+		return ""
+	}
+	v, ok := vals[key]
+	if !ok || v == nil {
+		return ""
+	}
+	return fmt.Sprint(v)
 }
