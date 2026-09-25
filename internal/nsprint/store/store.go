@@ -34,17 +34,36 @@ const (
 )
 
 func authFromEnv() (user, password string, err error) {
-	user = os.Getenv(UserEnv)
+	return Auth("", "")
+}
+
+// Auth is the one fleet Redis seat every tool dials with (nova-sprint here, nova-tokens
+// ledger/report through --user and --password-env, #3461). user is the ACL user, else
+// UserEnv; passwordEnv names the variable holding its password, else PasswordEnvEnv, else
+// DefaultPasswordEnv. With no user the connection is the default user's: a password is read
+// only when passwordEnv names its variable, so a throwaway test Redis needs nothing. A user
+// whose password variable is empty is refused with the remedy, never dialed as default.
+func Auth(user, passwordEnv string) (string, string, error) {
+	named := "--user " + user
 	if user == "" {
-		return "", "", nil
+		user = os.Getenv(UserEnv)
+		named = UserEnv + "=" + user
 	}
-	name := os.Getenv(PasswordEnvEnv)
-	if name == "" {
-		name = DefaultPasswordEnv
+	if user == "" {
+		if passwordEnv == "" {
+			return "", "", nil
+		}
+		return "", os.Getenv(passwordEnv), nil
 	}
-	password = os.Getenv(name)
+	if passwordEnv == "" {
+		passwordEnv = os.Getenv(PasswordEnvEnv)
+	}
+	if passwordEnv == "" {
+		passwordEnv = DefaultPasswordEnv
+	}
+	password := os.Getenv(passwordEnv)
 	if password == "" {
-		return "", "", fmt.Errorf("%s=%s but %s is empty; run under nova-secrets exec --only %s", UserEnv, user, name, name)
+		return "", "", fmt.Errorf("%s but %s is empty; run under nova-secrets exec --only %s", named, passwordEnv, passwordEnv)
 	}
 	return user, password, nil
 }

@@ -183,9 +183,11 @@ type RedisLedger struct {
 // NewRedisLedger wraps a client the caller opened.
 func NewRedisLedger(rdb *redis.Client) *RedisLedger { return &RedisLedger{rdb: rdb} }
 
-// DialLedger opens a client on addr (host:port) with the given password ("" for none).
-func DialLedger(addr, password string) *RedisLedger {
-	return NewRedisLedger(redis.NewClient(&redis.Options{Addr: addr, Password: password}))
+// DialLedger opens a client on addr (host:port) as the ACL user with its password ("" for
+// the default user, "" for no password). The fleet Redis has its default user off, so a
+// seat's password without its user is WRONGPASS (#3461).
+func DialLedger(addr, user, password string) *RedisLedger {
+	return NewRedisLedger(redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password}))
 }
 
 // Ping is one PING, so a verb names an unreachable store before it reads any file.
