@@ -62,8 +62,8 @@ func TestPlanVerb(t *testing.T) {
 func TestPlanHoldPolicy(t *testing.T) {
 	e := newHoldEnv(t, "hold-3798")
 	e.friends("rowan", "stella")
-	if code, _, errOut := e.run("hold", "route", "--once", "--sprint", e.S); code != 2 || !strings.Contains(errOut, "fix_to and release_reader") {
-		t.Fatalf("route before the plan: code=%d err=%q; want the ErrNoPolicy refusal", code, errOut)
+	if code, _, errOut := e.run("hold", "route", "--once", "--sprint", e.S); code != 1 || !strings.Contains(errOut, "fix_to and release_reader") || !strings.Contains(errOut, "remedy: nova-sprint plan apply with policy fix_to and policy release_reader") {
+		t.Fatalf("route before the plan: code=%d err=%q; want the ErrNoPolicy refusal (exit 1 with the remedy, #3814)", code, errOut)
 	}
 	file := filepath.Join(t.TempDir(), "plan.tsv")
 	body := "#nova-sprint-plan v1\npolicy\tbackpressure_missing\topen\npolicy\tci_reruns\t0\n" +
