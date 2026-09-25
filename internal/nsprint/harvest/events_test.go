@@ -14,9 +14,12 @@ import (
 
 // TestHarvestPROpenedMovesTasksToMerging (nova-tools#3779): the harvest
 // that opens a card's PR moves, in the same fenced ns_harvest_pr call, every
-// sprint task naming the PR or the card's origin issue to merging; a task
-// naming another issue stays; the record carries the issue the body closes;
-// a repeat moves nothing; the ws sets agree with every record throughout.
+// friend-held task naming the PR or the card's origin issue to merging; a
+// task naming another issue stays; a primary (no friend, no copy) naming the
+// origin issue is skipped with nothing written, since only a copy's end
+// advances a primary (rowan-new specs/table-moves.md, 2026-09-25); the record
+// carries the issue the body closes; a repeat moves nothing; the ws sets
+// agree with every record throughout.
 func TestHarvestPROpenedMovesTasksToMerging(t *testing.T) {
 	c := startRedis(t)
 	ctx := context.Background()
@@ -35,15 +38,20 @@ func TestHarvestPROpenedMovesTasksToMerging(t *testing.T) {
 	c.HSet(ctx, "lease:harvest:"+bench, "instance", "worker-1", "token", "tok")
 	c.SAdd(ctx, "ws:names", cards)
 	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: cards})
-	tasks := []struct{ id, state, field, value string }{
-		{"build-500-thing", "working", "ref", "nova-tools#500"},                                    // names the origin issue
-		{"fix-77-review", "ready", "pr", "https://forge.invalid/mas-bandwidth/nova-tools/pull/77"}, // names the PR
-		{"build-501-other", "working", "ref", "nova-tools#501"},                                    // names another issue
+	tasks := []struct{ id, state, friend, field, value string }{
+		{"build-500-thing", "working", "emma", "ref", "nova-tools#500"},                                    // names the origin issue
+		{"fix-77-review", "ready", "emma", "pr", "https://forge.invalid/mas-bandwidth/nova-tools/pull/77"}, // names the PR
+		{"build-501-other", "working", "emma", "ref", "nova-tools#501"},                                    // names another issue
+		{"build-500-primary", "waiting", "", "ref", "nova-tools#500"},                                      // a primary: no copy
+		{"build-500-held", "working", "", "ref", "nova-tools#500"},                                         // a primary in working
 	}
 	var ids []string
 	for i, tk := range tasks {
 		age := float64(1000 + i)
 		c.HSet(ctx, "task:"+tk.id, "stream", cards, "state", tk.state, "created_at", fmt.Sprint(age), tk.field, tk.value)
+		if tk.friend != "" {
+			c.HSet(ctx, "task:"+tk.id, "friend", tk.friend, "owner", tk.friend)
+		}
 		c.ZAdd(ctx, ws.Key(cards, tk.state), redis.Z{Score: age, Member: tk.id})
 		if err := c.FCall(ctx, "ns_task_refs", nil, tk.id).Err(); err != nil {
 			t.Fatal(err)
@@ -64,13 +72,23 @@ func TestHarvestPROpenedMovesTasksToMerging(t *testing.T) {
 	if r := call(); r != "PR|77" {
 		t.Fatalf("ns_harvest_pr = %q", r)
 	}
-	for id, want := range map[string]string{"build-500-thing": "merging", "fix-77-review": "merging", "build-501-other": "working"} {
+	for id, want := range map[string]string{"build-500-thing": "merging", "fix-77-review": "merging", "build-501-other": "working",
+		"build-500-primary": "waiting", "build-500-held": "working"} {
 		if got := c.HGet(ctx, "task:"+id, "state").Val(); got != want {
 			t.Fatalf("%s is %s after the PR opened, want %s", id, got, want)
 		}
 	}
 	if why := c.HGet(ctx, "task:build-500-thing", "why").Val(); why != "PR opened: nova-tools#77 ("+label+")" {
 		t.Fatalf("why %q", why)
+	}
+	// the primaries are skipped before any step writes: no where, no why
+	for _, id := range []string{"build-500-primary", "build-500-held"} {
+		if w := c.HGet(ctx, "task:"+id, "where").Val(); w != "" {
+			t.Fatalf("%s: a skipped primary was written (where=%q)", id, w)
+		}
+		if why := c.HGet(ctx, "task:"+id, "why").Val(); why != "" {
+			t.Fatalf("%s: a skipped primary took a why %q", id, why)
+		}
 	}
 	if cl := c.HGet(ctx, "pr:nova-tools:77", "closes").Val(); cl != "500" {
 		t.Fatalf("record closes %q, want the origin issue 500", cl)

@@ -71,8 +71,8 @@ func TestFriendWorkingCountsLiveBeatsOnly(t *testing.T) {
 				if row.Working != want || row.Stale != stale {
 					t.Fatalf("emma working=%s stale=%s, want working=%s stale=%s:\n%s", row.Working, row.Stale, want, stale, got)
 				}
-				line := "emma       |     0 | " + strings.Repeat(" ", 7-len(want)) + want + " |     0 | up stale=" + stale + "\n"
-				total := "total      |     0 | " + strings.Repeat(" ", 7-len(want)) + want + " |     0 | stale=" + stale + "\n"
+				line := "emma       |     0 | " + strings.Repeat(" ", 7-len(want)) + want + " |     0 |     0 |     0 |    - | up stale=" + stale + "\n"
+				total := "total      |     0 | " + strings.Repeat(" ", 7-len(want)) + want + " |     0 |     0 |     0 |    - | stale=" + stale + "\n"
 				if !strings.Contains(got, line) || !strings.Contains(got, total) {
 					t.Fatalf("rendered friend block lacks %q and %q:\n%s", line, total, got)
 				}
@@ -108,7 +108,7 @@ func TestFriendWorkingUnreadIsNotZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := snap.Render(now)
-	if row := snap.Friends[0]; row.Working != "?" || row.Stale != "?" || !strings.Contains(got, "total      |     0 |       ? |     0 | stale=?\n") {
+	if row := snap.Friends[0]; row.Working != "?" || row.Stale != "?" || !strings.Contains(got, "total      |     0 |       ? |     0 |     0 |     0 |    - | stale=?\n") {
 		t.Fatalf("unread working set: working=%q stale=%q\n%s", row.Working, row.Stale, got)
 	}
 }

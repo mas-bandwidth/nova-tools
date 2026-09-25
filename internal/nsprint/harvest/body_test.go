@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/file"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/harvest"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/prereview"
@@ -88,6 +89,7 @@ func TestHarvestTypedBodyFromRecord(t *testing.T) {
 				"DEPENDS-ON: none",
 				"DONE-WHEN: go test ./internal/quack -run TestQuackBatman passes at head",
 				"STREAM: swarm: cards",
+				"WHO: any",
 				"Closes #3690",
 				"",
 				"SELF-CHECK: pass (./internal/quack TestQuackBatman)",
@@ -127,6 +129,7 @@ func TestHarvestTypedBodyFromRecord(t *testing.T) {
 				"DEPENDS-ON: s00-0100-quack-setup",
 				"DONE-WHEN: go test ./internal/quack -run TestQuackBatman passes at head",
 				"STREAM: swarm: cards",
+				"WHO: any",
 				"ORIGIN: " + forge + "/mas-bandwidth/rowan-tools/issues/12",
 			},
 		},
@@ -147,6 +150,7 @@ func TestHarvestTypedBodyFromRecord(t *testing.T) {
 				"DEPENDS-ON: none",
 				"DONE-WHEN: -",
 				"STREAM: swarm: cards",
+				"WHO: any",
 				"ORIGIN: none",
 				"",
 				"SELF-CHECK: not-run (./internal/quack TestQuackBatman)",
@@ -168,6 +172,16 @@ func TestHarvestTypedBodyFromRecord(t *testing.T) {
 			}
 			if !strings.HasSuffix(body, harvest.ClaudeLine+"\n") {
 				t.Fatalf("body does not end with the Claude Code line:\n%s", body)
+			}
+			// #3488: WHO, STREAM, DEPENDS-ON and DONE-WHEN ride in the body,
+			// which passes the posted-body rule harvest checks before the create
+			for _, key := range []string{"\nWHO: ", "\nSTREAM: ", "\nDEPENDS-ON: ", "\nDONE-WHEN: "} {
+				if !strings.Contains(body, key) {
+					t.Fatalf("body lacks %q:\n%s", key, body)
+				}
+			}
+			if lint := file.LintBody([]byte(body)); len(lint) > 0 {
+				t.Fatalf("body fails file.LintBody: %v", lint)
 			}
 		})
 	}

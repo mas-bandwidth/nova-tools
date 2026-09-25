@@ -29,6 +29,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/redis/go-redis/v9"
 )
 
 const taskCardUsage = `nova-sprint task: the task card verbs (#3778), one Redis Function call each
@@ -54,6 +55,9 @@ every verb also takes --redis <addr> (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR) a
 (the legacy idx sets' sprint; else FRIEND_QUEUE_SPRINT, else the first of sprint:order).
 
 done moves working -> merging when the task names a PR (its pr field or --pr), else -> done.
+take, done, beat and cancel are card work, end, beat and cancel for a friend's consumer copies
+(<primary>~<n>, #3929): take works the friend's ready copies first, then takes friend-queue
+tasks; done of a copy returns it to its primary (--pr <n> --head <sha>: the primary is reading).
 land moves merging (or working) -> landed at the merge sha; land --stream moves every
 member of ws:<s>:merging and prints LANDED <id> ref=<repo#n> origin=<url> per member (the
 lander closes those PRs and issues with the CLOSE line). take starts a lease the child
@@ -285,20 +289,58 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if *c.id != "" {
 			ids = []string{*c.id}
 		}
-		got, err := taskcard.Take(ctx, cl, *c.actor, *c.n, *c.actor, ids...)
-		if err != nil {
-			return refused(err)
+		// task take is card work for a friend harness (#3929): the friend's
+		// ready copies first (card work --as friend:<f>), then friend-queue
+		// tasks for what is left of --n.
+		var got []string
+		if *c.id == "" || taskcard.IsCopy(*c.id) {
+			w, err := taskcard.Work(ctx, cl, taskcard.Consumer{Kind: "friend", Name: *c.actor}, *c.actor, *c.n, false, ids...)
+			if err != nil {
+				// a friend with no declared slots holds no copies: the friend queue only
+				if why, ok := taskcard.IsRefused(err); !ok || *c.id != "" || !strings.HasPrefix(why, "SLOTS") {
+					return refused(err)
+				}
+			}
+			got = w.IDs
+		}
+		if len(got) < *c.n && (*c.id == "" || !taskcard.IsCopy(*c.id)) {
+			more, err := taskcard.Take(ctx, cl, *c.actor, *c.n-len(got), *c.actor, ids...)
+			if err != nil {
+				return refused(err)
+			}
+			got = append(got, more...)
 		}
 		_, _ = fmt.Fprintf(out, "TASK take n=%d ids=%s ms=%d\n", len(got), strings.Join(got, ","), ms())
 		return 0
 	case "beat":
-		until, err := taskcard.Beat(ctx, cl, *c.id, *c.actor)
+		beat := taskcard.Beat
+		if taskcard.IsCopy(*c.id) { // card beat --as friend:<f> (#3929)
+			beat = func(ctx context.Context, cl redis.Cmdable, id, as string) (int64, error) {
+				return taskcard.BeatCopies(ctx, cl, taskcard.Consumer{Kind: "friend", Name: as}, id)
+			}
+		}
+		until, err := beat(ctx, cl, *c.id, *c.actor)
 		if err != nil {
 			return refused(err)
 		}
 		_, _ = fmt.Fprintf(out, "TASK beat id=%s lease_until=%d ms=%d\n", *c.id, until, ms())
 		return 0
 	case "done":
+		if taskcard.IsCopy(*c.id) {
+			// task done of a copy is card end (#3929): the copy returns to its
+			// primary (ok; with --pr <n> --head <sha> the primary moves to reading).
+			r := taskcard.EndRequest{IDs: []string{*c.id}, OK: true, PR: *c.pr, Head: *c.head, By: *c.actor,
+				Fields: []string{"evidence", *c.evidence}}
+			if *c.pr != "" {
+				r.Repo = cl.HGet(ctx, taskcard.Key(*c.id), "repo").Val()
+			}
+			e, err := taskcard.End(ctx, cl, r)
+			if err != nil {
+				return refused(err)
+			}
+			_, _ = fmt.Fprintf(out, "TASK done id=%s from=working to=ok primary=%s primary_to=%s ms=%d\n", *c.id, e[0].Primary, e[0].To, ms())
+			return 0
+		}
 		return moved(taskcard.Done(ctx, cl, *c.id, *c.actor, *c.evidence, *c.pr))
 	case "land":
 		if *c.stream == "" {
@@ -327,6 +369,14 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		}
 		return 0
 	case "cancel":
+		if taskcard.IsCopy(*c.id) { // a copy given back is card cancel (#3929)
+			e, err := taskcard.CancelCards(ctx, cl, *c.actor, *c.why, *c.id)
+			if err != nil {
+				return refused(err)
+			}
+			_, _ = fmt.Fprintf(out, "TASK cancel id=%s from=working to=fail primary_to=%s ms=%d\n", *c.id, e[0].To, ms())
+			return 0
+		}
 		return moved(taskcard.Cancel(ctx, cl, *c.id, *c.actor, *c.why))
 	case "block":
 		why := *c.why

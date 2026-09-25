@@ -19,7 +19,9 @@
 -- and nothing is written; the score (the task's age) is kept and ws:log gets
 -- one receipt per step. An event edge the graph takes in steps (ready ->
 -- working -> merging when the work's PR opens; ready, parked or waiting ->
--- ... -> landed at a merge) is walked step by step, each step on the graph.
+-- ... -> landed at a merge) is walked step by step, each step on the graph;
+-- a primary (no friend) is skipped before the first step when the walk
+-- passes working or merging, since only a copy's end advances it.
 -- Exports NS.tev for harvest.lua.
 
 local TE = {
@@ -49,10 +51,18 @@ function TE.move(id, to, by, why, sha)
   if from == to then return 'SAME' end
   local path = TE.PATH[to][from]
   if not path then return 'SKIP', from .. '->' .. to .. ' is not an event move' end
-  local err = NS.task.check(id, path[1], { by = by, why = why, sha = sha })
+  -- the walk to landed at a merge passes working in this one call and never
+  -- rests there (o.landing); any other walk skips a primary (no friend)
+  -- whose path enters working or merging, before the first step writes
+  local landing = to == 'landed' and type(sha) == 'string' and sha ~= ''
+  local err = NS.task.check(id, path[1], { by = by, why = why, sha = sha, landing = landing })
   if err then return 'SKIP', err end
   for _, step in ipairs(path) do
-    err = NS.task.move(id, step, { by = by, why = why, sha = sha })
+    err = NS.task.unread(step, p.friend, { sha = sha, landing = landing })
+    if err then return 'SKIP', err end
+  end
+  for _, step in ipairs(path) do
+    err = NS.task.move(id, step, { by = by, why = why, sha = sha, landing = landing })
     if err then return 'SKIP', err end
   end
   return 'MOVED'

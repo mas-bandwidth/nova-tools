@@ -68,6 +68,7 @@ const BenchBeatInterval = time.Second
 type FriendRow struct {
 	Name                         string
 	At, Up, Ready, Working, Done string
+	OK, Fail                     string // friend:<f>:cards:ok|fail ZCARDs: its copies ended (#3929)
 	Down                         string
 	// Stale is the whole table's count of the friend's working set members
 	// with no live child (#3892): "" on the bash layout, "?" unread.
