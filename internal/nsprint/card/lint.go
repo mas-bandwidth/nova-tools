@@ -108,6 +108,7 @@ type cardDoc struct {
 	Stream         string // STREAM: <name>, the work stream whose ws:<stream>:<where> view holds the card (#3692); "" is none
 	Origin         string // ORIGIN: <url>, the GitHub issue the card came from (#3692); "" is absent
 	DoneWhen       string // DONE-WHEN: the sentence a test can fail; required, carried into the PR body (#2932)
+	Leg            string // LEG: <leg>, the toolchain a bench profile must carry (deal Bench.runs); absent is any bench
 	Payload        string
 }
 
@@ -152,6 +153,11 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	if err != nil {
 		return cardDoc{}, err
 	}
+	legValue, legDeclared := header["LEG"]
+	leg, err := parseLeg(legValue, legDeclared)
+	if err != nil {
+		return cardDoc{}, err
+	}
 	benchValue, benchDeclared := header["BENCH"]
 	bench, err := parseBench(benchValue, benchDeclared)
 	if err != nil {
@@ -192,6 +198,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		Stream:         stream,
 		Origin:         origin,
 		DoneWhen:       header["DONE-WHEN"],
+		Leg:            leg,
 		Payload:        hex.EncodeToString(sum[:]),
 	}, nil
 }
@@ -267,6 +274,30 @@ func parseEst(value string) string {
 		n *= 60
 	}
 	return strconv.FormatFloat(n, 'f', -1, 64)
+}
+
+// legRE is one leg as a bench profile names it (bench:<b>:desired legs, the
+// deal's Bench.Legs): lower case, no separators.
+var legRE = regexp.MustCompile(`^[a-z0-9][a-z0-9+._-]*$`)
+
+// parseLeg accepts LEG: <leg>, stored lower case as the card's leg field: the
+// deal deals the card only to a bench whose profile carries that leg (or to a
+// bench with no profile). An absent line is any bench. An empty LEG: line, or
+// more than one leg, is refused: the dealer matches exactly one leg, and a
+// dropped leg would deal a C or Rust card to a bench without the toolchain
+// (nova-tools#3255).
+func parseLeg(value string, declared bool) (string, error) {
+	if !declared {
+		return "", nil
+	}
+	leg := strings.ToLower(strings.TrimSpace(value))
+	if leg == "" {
+		return "", errors.New("LEG: names no leg; name the one leg a bench must carry (go, rust, sbcl, ...) or drop the LEG: line")
+	}
+	if !legRE.MatchString(leg) {
+		return "", fmt.Errorf("LEG: %q is not one leg; the dealer matches exactly one leg per card", value)
+	}
+	return leg, nil
 }
 
 // parseHeader reads the contract line and the contiguous KEY: value block

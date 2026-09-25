@@ -32,7 +32,9 @@ end
 --       (the card's EST: line in minutes, #3653; empty or absent: not stored),
 --       test (the card's TEST: line, #3689), stream (its STREAM: line: its
 --       ws:<stream>:<where> view) and origin (its ORIGIN: line, the GitHub
---       issue it came from; #3692): args 16, 17, 18.
+--       issue it came from; #3692): args 16, 17, 18; leg (arg 19: its
+--       LEG: line, the one leg a bench profile must carry for the deal's
+--       leg filter, nova-tools#3255; empty or absent: any bench, not stored).
 -- The record is created with no place and moved to waiting by NS.card, then
 -- to ready when place is pool (the waiting -> ready move of a card whose
 -- dependencies are already met); the state index is NS.card's.
@@ -57,6 +59,9 @@ redis.register_function('ns_card_push', function(keys, args)
   if not S or card ~= 's:' .. S .. ':card:' .. tostring(label) then
     return redis.error_reply('ns_card_push: key ' .. tostring(card) .. ' is not s:<S>:card:<label>')
   end
+  -- leg (#3255): the one leg a bench profile must carry (deal leg filter),
+  -- a record field CARD.create stores with the rest.
+  local leg = args[19]
   if type(depends_on) ~= 'string' then
     depends_on = ''
   end
@@ -110,6 +115,10 @@ redis.register_function('ns_card_push', function(keys, args)
   if type(test) == 'string' and test ~= '' then
     table.insert(fields, 'test')
     table.insert(fields, test)
+  end
+  if type(leg) == 'string' and leg ~= '' then
+    table.insert(fields, 'leg')
+    table.insert(fields, leg)
   end
   if origin ~= '' then
     table.insert(fields, 'origin')

@@ -19,12 +19,7 @@ func keyIdx(sprint, state string) string   { return "s:" + sprint + ":idx:card:"
 func keyTask(sprint, id string) string     { return "s:" + sprint + ":task:" + id }
 func keyStream(sprint, slug string) string { return "s:" + sprint + ":stream:" + slug }
 
-// Push lints the card, then writes it into the pool or the waiting set.
-// Exit 2: a missing required line, a KIND that is not a RESULT or runner kind
-// (kinds.go), a private repository, or Redis did not
-// accept the write. A card, task or stream dependency with no record in the
-// sprint is refused, naming the record. A dependency that is not landed goes to
-// waiting, not the pool.
+// Push is PushWith under no options.
 func Push(ctx context.Context, client *redis.Client, sprint string, body []byte) VerbResult {
 	return PushWith(ctx, client, sprint, body, PushOptions{})
 }
@@ -37,64 +32,128 @@ type PushOptions struct {
 	MapKind bool
 }
 
-// PushWith is Push under opts.
+// PushWith is PushBatch of one card under opts: its one result.
 func PushWith(ctx context.Context, client *redis.Client, sprint string, body []byte, opts PushOptions) VerbResult {
+	return PushBatch(ctx, client, sprint, []CardFile{{Body: body}}, opts)[0]
+}
+
+// CardFile is one card body for PushBatch. Name (a file path) prefixes a
+// refusal so the operator knows which card of the batch it was; "" does not.
+type CardFile struct {
+	Name string
+	Body []byte
+}
+
+// PushBatch lints every card, then writes each into the pool or the waiting
+// set. It makes at most two Redis round trips for any number of cards (spec
+// #2756 section 4, nova-tools#3266): one pipeline reads every card's local
+// DEPENDS-ON records, one pipeline sends every card's FCALL ns_card_push. It
+// never loads the function library: the fleet's library is the deploy's job
+// (#3551), and a missing function is refused with the remedy nova-sprint fn
+// load.
+//
+// A missing required line, a KIND that is not a RESULT or runner kind
+// (kinds.go), a private repository, a card, task or stream dependency with no
+// record (neither in the sprint nor pushed earlier in this batch), or a dead
+// task dependency refuses the whole batch before any write: the result is
+// that one refusal. Otherwise the results are one per card, in order: exit 0
+// wrote or found the same card, exit 4 a label whose payload differs, exit 2 a
+// BENCH: not in the benches set or Redis did not accept that card's write. A
+// dependency that is not landed goes to waiting, not the pool.
+func PushBatch(ctx context.Context, client *redis.Client, sprint string, files []CardFile, opts PushOptions) []VerbResult {
 	if !sprintRE.MatchString(sprint) {
-		return refused("sprint name must match [a-z0-9-]{1,40}")
+		return []VerbResult{refused("sprint name must match [a-z0-9-]{1,40}")}
 	}
-	if opts.MapKind {
-		body, _, _ = MapKind(body)
+	if client == nil {
+		return []VerbResult{refused("redis client is required")}
 	}
-	doc, err := lint(ctx, body)
+	if len(files) == 0 {
+		return []VerbResult{refused("no card to push")}
+	}
+	docs := make([]cardDoc, len(files))
+	for i, f := range files {
+		body := f.Body
+		if opts.MapKind {
+			body, _, _ = MapKind(body)
+		}
+		doc, err := lint(ctx, body)
+		if err != nil {
+			return []VerbResult{refused(named(f.Name, err.Error()))}
+		}
+		docs[i] = doc
+	}
+	ready, i, err := batchDependenciesReady(ctx, client, sprint, docs)
 	if err != nil {
-		return refused(err.Error())
+		return []VerbResult{refused(named(files[i].Name, err.Error()))}
 	}
-	if err := ensure(ctx, client); err != nil {
-		return refused(err.Error())
-	}
-	ready, err := dependenciesReadyAtPush(ctx, client, sprint, doc.Deps)
-	if err != nil {
-		return refused(err.Error())
-	}
-	keys := []string{
-		keyCard(sprint, doc.Label),
-		keyPool(sprint),
-		keyWaiting(sprint),
-		keyLog(sprint),
-		keyIdx(sprint, "queued"),
-	}
-	// One pipeline: the push (CARD.create writes stream and origin with the
-	// record), then ns_card_header writes the card's DONE-WHEN line
-	// (harvest's PR body, #2932) only when the card is stored from this
-	// payload; after EXISTS it writes nothing, after CONFLICT it refuses.
 	pipe := client.Pipeline()
-	pushCmd := pipe.FCall(ctx, "ns_card_push", keys,
-		doc.Label, doc.Payload, doc.Priority, doc.Base, doc.BaseSHA, doc.Paths, doc.Repo, doc.Kind,
-		doc.DependsOn, doc.Type, doc.TypedDependsOn, boolString(ready), doc.Route, doc.Bench, doc.Est, doc.Test,
-		doc.Stream, doc.Origin,
-	)
-	headerCmd := pipe.FCall(ctx, "ns_card_header", keys[:1], doc.Payload, doc.DoneWhen)
-	_, _ = pipe.Exec(ctx)
-	reply, err := pushCmd.Text()
+	cmds := make([]*redis.Cmd, len(docs))
+	headers := make([]*redis.Cmd, len(docs))
+	for i, doc := range docs {
+		keys := []string{
+			keyCard(sprint, doc.Label),
+			keyPool(sprint),
+			keyWaiting(sprint),
+			keyLog(sprint),
+			keyIdx(sprint, "queued"),
+		}
+		// Arguments 14-18 are bench, est, test, stream and origin (#3650,
+		// #3653, #3689, #3692); 19 is leg (#3255).
+		cmds[i] = pipe.FCall(ctx, "ns_card_push", keys,
+			doc.Label, doc.Payload, doc.Priority, doc.Base, doc.BaseSHA, doc.Paths, doc.Repo, doc.Kind,
+			doc.DependsOn, doc.Type, doc.TypedDependsOn, boolString(ready[i]), doc.Route, doc.Bench, doc.Est, doc.Test,
+			doc.Stream, doc.Origin, doc.Leg,
+		)
+		// Then, in the same pipeline, ns_card_header writes the card's
+		// DONE-WHEN line (harvest's PR body, #2932) only when the card is
+		// stored from this payload; after EXISTS it writes nothing, after
+		// CONFLICT it refuses.
+		headers[i] = pipe.FCall(ctx, "ns_card_header", keys[:1], doc.Payload, doc.DoneWhen)
+	}
+	_, _ = pipe.Exec(ctx) // each reply is read, with its own error, below
+	out := make([]VerbResult, len(docs))
+	for i, doc := range docs {
+		reply, err := cmds[i].Text()
+		if err != nil && functionMissing(err) {
+			return []VerbResult{refused(fmt.Sprintf("ns_card_push is not loaded in %s; card push never loads it: run nova-sprint fn load as the library's owner (%v)", fn.Library, err))}
+		}
+		if err == nil && reply == "NOBENCH" {
+			out[i] = refused(named(files[i].Name, unregisteredBench(ctx, client, doc.Bench)))
+			continue
+		}
+		out[i] = pushResult(sprint, doc.Label, reply, err)
+		// The header reply counts only for a card this push stored.
+		if err == nil && strings.HasPrefix(reply, "OK place=") && out[i].Code == exitOK {
+			if h, herr := headers[i].Text(); herr != nil || h != "OK" {
+				out[i] = refused(named(files[i].Name, fmt.Sprintf("card header reply %q %v", h, herr)))
+			}
+		}
+	}
+	return out
+}
+
+func named(name, reason string) string {
+	if name == "" {
+		return reason
+	}
+	return name + ": " + reason
+}
+
+func pushResult(sprint, label, reply string, err error) VerbResult {
 	if err != nil {
 		return refused(err.Error())
 	}
 	switch reply {
 	case "EXISTS":
-		return VerbResult{Code: exitOK, Stdout: pushLine(sprint, doc.Label, "exists")}
+		return VerbResult{Code: exitOK, Stdout: pushLine(sprint, label, "exists")}
 	case "CONFLICT":
 		return VerbResult{Code: exitConflict, Stderr: oneline.Escape("label conflict") + "\n"}
-	case "NOBENCH":
-		return refused(unregisteredBench(ctx, client, doc.Bench))
 	}
 	place, ok := strings.CutPrefix(reply, "OK place=")
 	if !ok || (place != "pool" && place != "waiting") {
 		return refused(fmt.Sprintf("card push reply %q", reply))
 	}
-	if h, err := headerCmd.Text(); err != nil || h != "OK" {
-		return refused(fmt.Sprintf("card header reply %q %v", h, err))
-	}
-	return VerbResult{Code: exitOK, Stdout: pushLine(sprint, doc.Label, place)}
+	return VerbResult{Code: exitOK, Stdout: pushLine(sprint, label, place)}
 }
 
 // unregisteredBench is the refusal for a BENCH: line naming a bench that is not
@@ -113,9 +172,34 @@ func unregisteredBench(ctx context.Context, client *redis.Client, bench string) 
 	return fmt.Sprintf("BENCH: %s is not a registered bench (not in the benches set; registered: %s); name a registered bench or drop the BENCH: line", bench, registered)
 }
 
-func dependenciesReadyAtPush(ctx context.Context, client *redis.Client, sprint string, deps []dependency) (bool, error) {
-	ready := true
+// batchDependenciesReady resolves every card's DEPENDS-ON in one pipeline. A
+// card dependency with no record in the sprint that an earlier card of this
+// batch pushes counts as present and not ready: that card is queued, not
+// landed, which is what a push one at a time would have read. On error it
+// returns the index of the card refused.
+func batchDependenciesReady(ctx context.Context, client *redis.Client, sprint string, docs []cardDoc) ([]bool, int, error) {
 	pipe := client.Pipeline()
+	reads := make([][]*redis.MapStringStringCmd, len(docs))
+	for i, doc := range docs {
+		reads[i] = queueDependencyReads(ctx, pipe, sprint, doc.Deps)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return nil, 0, fmt.Errorf("read DEPENDS-ON: %w", err)
+	}
+	ready := make([]bool, len(docs))
+	earlier := map[string]bool{}
+	for i, doc := range docs {
+		ok, err := dependenciesReady(sprint, doc.Deps, reads[i], earlier)
+		if err != nil {
+			return nil, i, err
+		}
+		ready[i] = ok
+		earlier[doc.Label] = true
+	}
+	return ready, 0, nil
+}
+
+func queueDependencyReads(ctx context.Context, pipe redis.Pipeliner, sprint string, deps []dependency) []*redis.MapStringStringCmd {
 	reads := make([]*redis.MapStringStringCmd, len(deps))
 	for i, dep := range deps {
 		switch dep.Kind {
@@ -125,19 +209,24 @@ func dependenciesReadyAtPush(ctx context.Context, client *redis.Client, sprint s
 			reads[i] = pipe.HGetAll(ctx, keyTask(sprint, dep.Value))
 		case dependencyStream:
 			reads[i] = pipe.HGetAll(ctx, keyStream(sprint, dep.Value))
-		case dependencyGitHub:
-			ready = false // the forge is read once by release, never once per push
 		}
 	}
-	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
-		return false, fmt.Errorf("read DEPENDS-ON: %w", err)
-	}
+	return reads
+}
+
+func dependenciesReady(sprint string, deps []dependency, reads []*redis.MapStringStringCmd, earlier map[string]bool) (bool, error) {
+	ready := true
 	for i, dep := range deps {
 		if dep.Kind == dependencyGitHub {
+			ready = false // the forge is read once by release, never once per push
 			continue
 		}
 		fields := reads[i].Val()
 		if len(fields) == 0 {
+			if dep.Kind == dependencyCard && earlier[dep.Value] {
+				ready = false
+				continue
+			}
 			return false, missingDependency(sprint, dep)
 		}
 		if dep.Kind == dependencyTask && deadTaskState(fields["state"]) {
