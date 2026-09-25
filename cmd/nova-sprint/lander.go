@@ -172,18 +172,34 @@ type memberRecord struct {
 // only what the sprint knows.
 func loadMembers(ctx context.Context, c *redis.Client, sprint, repo string, numbers []int) ([]memberRecord, error) {
 	pipe := c.Pipeline()
-	cmds := make([]*redis.StringCmd, len(numbers))
+	unitCmds := make([]*redis.StringCmd, len(numbers))
 	for i, n := range numbers {
-		cmds[i] = pipe.HGet(ctx, land.ID{Repo: repo, N: n}.Key(sprint), "head")
+		unitCmds[i] = pipe.Get(ctx, land.PRUnitKey(sprint, repo, n))
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
+
+	pipe = c.Pipeline()
+	headCmds := make([]*redis.StringCmd, len(numbers))
+	for i := range numbers {
+		unit, err := unitCmds[i].Result()
+		if err == nil && strings.TrimSpace(unit) != "" {
+			headCmds[i] = pipe.HGet(ctx, land.UnitKey(sprint, strings.TrimSpace(unit)), "head")
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+
 	out := make([]memberRecord, len(numbers))
 	for i, n := range numbers {
-		head, err := cmds[i].Result()
+		if headCmds[i] == nil {
+			return nil, fmt.Errorf("%s#%d has no head in %s (no unit record)", repo, n, sprint)
+		}
+		head, err := headCmds[i].Result()
 		if errors.Is(err, redis.Nil) || (err == nil && strings.TrimSpace(head) == "") {
-			return nil, fmt.Errorf("%s#%d has no head in %s", repo, n, land.ID{Repo: repo, N: n}.Key(sprint))
+			return nil, fmt.Errorf("%s#%d has no head in %s", repo, n, sprint)
 		}
 		if err != nil {
 			return nil, err
@@ -193,16 +209,21 @@ func loadMembers(ctx context.Context, c *redis.Client, sprint, repo string, numb
 	return out, nil
 }
 
-// recordForge answers a member's mergeable word from its record, the field
-// ns_pr_eval writes (the record contract in internal/nsprint/land). An absent
-// or empty word is UNKNOWN, which the lane re-polls and then drops.
 type recordForge struct {
 	c      *redis.Client
 	sprint string
 }
 
 func (f recordForge) Mergeable(ctx context.Context, repo string, number int) (string, error) {
-	v, err := f.c.HGet(ctx, land.ID{Repo: repo, N: number}.Key(f.sprint), "mergeable").Result()
+	unit, err := f.c.Get(ctx, land.PRUnitKey(f.sprint, repo, number)).Result()
+	if errors.Is(err, redis.Nil) || (err == nil && strings.TrimSpace(unit) == "") {
+		return "UNKNOWN", nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	v, err := f.c.HGet(ctx, land.UnitKey(f.sprint, strings.TrimSpace(unit)), "mergeable").Result()
 	if errors.Is(err, redis.Nil) {
 		return "UNKNOWN", nil
 	}
@@ -215,7 +236,6 @@ func (f recordForge) Mergeable(ctx context.Context, repo string, number int) (st
 	}
 	return v, nil
 }
-
 // redisFlaky is the flaky hash flaky:<repo>:<pkg>.<test> (first_seen,
 // lanes_hit, issue, last_at) with Memory's contract: the first hit claims the
 // key with HSETNX first_seen, files, and publishes the issue; a failed file

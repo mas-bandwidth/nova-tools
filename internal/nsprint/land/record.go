@@ -18,7 +18,6 @@ type ID struct {
 func (id ID) String() string { return id.Repo + "#" + strconv.Itoa(id.N) }
 
 // Key is the PR hash key in sprint s.
-func (id ID) Key(s string) string { return fmt.Sprintf("s:%s:pr:%s:%d", s, id.Repo, id.N) }
 
 // ParseID reads <repo>#<n>. A bare number is refused: a PR number without
 // its repo names two PRs.
