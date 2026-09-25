@@ -4242,14 +4242,19 @@ nova-sprint xy --evaluate-out cmd/nova-sprint/testdata/evaluate.txt --calibratio
 
 ### pitstop
 
-`nova-sprint pitstop set|clear|status --sprint <S> [--why <text>] [--by <who>] [--force] [--redis <addr>]`
+`nova-sprint pitstop set|clear|status --sprint <S> [--scope all|<stream>]... [--why <text>] [--by <who>] [--force] [--redis <addr>]`
 
 The sprint's pit stop is one Redis hash, `s:<S>:pitstop` {by, why, at}, never a bus note (#3371). While it exists the deal pass plans nothing from the sprint and `ns_card_deal` refuses its cards; any other reader (the feed, the table) reads the same key through `pitstop.Read`. `set` refuses to overwrite a stop without `--force` and refuses a sprint with no `s:<S>` status; `clear` refuses when none is set; `status` prints one line. `--by` defaults to `NOVA_FRIEND`. Set and clear are one FCALL each (`ns_pitstop_set`, `ns_pitstop_clear`) and write one receipt to `s:<S>:log`. Exit 0 done, 1 refused with the remedy named, 2 usage.
+
+`--scope` (repeatable) names streams. `set` with none (or `--scope all`) stops every stream; `set --scope <stream>...` stops only those. `clear --scope <stream>...` narrows the stop by exactly those streams: an all-scope stop lifts them (`lifted:<stream>` fields) and keeps every other stream stopped, a named-scope stop drops them and lifts itself whole when the last one goes; a stream the stop does not hold refuses the clear with nothing written. `pitstop.Stop.InScope(stream)` in Go and `NS.pitstop.in_scope(S, stream)` in the function library answer whether a stream is stopped. The deal pass still stops the whole sprint while any stop exists.
 
 ```text
 nova-sprint pitstop set --sprint nova-sprint-0924 --by rowan --why "Glenn 8:00 PM: rest tonight"
 # prints
-PITSTOP SET sprint=nova-sprint-0924 by=rowan at=1790000000000 why="Glenn 8:00 PM: rest tonight"
+PITSTOP SET sprint=nova-sprint-0924 by=rowan at=1790000000000 scope=all why="Glenn 8:00 PM: rest tonight"
+nova-sprint pitstop clear --sprint nova-sprint-0924 --by rowan --scope nova-work
+# prints
+PITSTOP NARROW sprint=nova-sprint-0924 by=rowan at=1790000060000 lifted="nova-work" was_by=rowan was_at=1790000000000 was_why="Glenn 8:00 PM: rest tonight"
 ```
 
 ### cost import
