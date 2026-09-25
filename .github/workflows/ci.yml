@@ -1576,10 +1576,19 @@ jobs:
     # any failing case, so the exit code is the product here. It is in the CL
     # tier, but no longer inside two minutes: the 579-case suite alone takes
     # 62-110 s, and the cap is lispCeiling in internal/ci/ci_budget_test.go.
-    # It runs on BOTH self-hosted platforms — the Linux space runners and the
-    # Intel macOS runners (batman, superman; off the Studio, nova-tools#3634) — because a failure that is really about SBCL or the
-    # platform (journal fsync differs between Darwin and Linux) must be caught
-    # on each. It only starts when the path filter above saw lisp/ or
+    # It runs on the Linux space runners because a failure that is really
+    # about SBCL or the platform (journal fsync differs between Darwin and
+    # Linux) must be caught somewhere that is not just Linux — but the macOS
+    # leg does not come back as darwin-x64 (nova-tools#3634 moved it off the
+    # Studio onto the Intel Macs batman/superman, 47992e058, and every run
+    # since has failed there: TestE02F06PinCommonLispImplementationGo
+    # requires the platform to be in the pinned table, docs/SPEC-WORK.md:312-321,
+    # which is darwin-arm64 and linux-x64 only — darwin-x64 is not pinned and
+    # per Glenn stays unpinned — and a-flooding-resolver-is-refused-and-its-
+    # output-is-never-drained's 3 s bound is missed on a loaded Intel iMac).
+    # The macOS leg returns here as darwin-arm64 once an arm64 CI bench
+    # exists; the Studio is for friends, not CI, so it is not the fallback.
+    # It only starts when the path filter above saw lisp/ or
     # docs/SPEC-WORK.md move, so a Go-only change never waits on the SBCL
     # runners, and it is fork-guarded transitively: the filter job above is the
     # guarded entry point, so a fork never reaches the SBCL machines.
@@ -1590,7 +1599,6 @@ jobs:
       matrix:
         entry:
           - {os: linux, arch: x64, group: space}
-          - {os: macOS, arch: X64, group: darwin-x64} # off the Studio (nova-tools#3634, 2026-09-24); an older SBCL on an iMac is a bench defect for the bench standard, not a reason to use the Studio
     name: lisp (${{ matrix.entry.group }})
     # Labels are carried per entry as single-string variables: runs-on expressions
     # must resolve to a string, not to an array.
