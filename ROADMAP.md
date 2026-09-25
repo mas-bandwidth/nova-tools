@@ -241,7 +241,8 @@ Prerequisites: none.
 
 Source sections: The data; Hostile data and limits.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): tests/acceptance/slice-01-reader.lisp: forbidden-token-boundary-before-interning, line-comments-accepted, comment-inside-form, comment-text-is-text, quote-in-comment-is-text, semicolon-in-string-is-literal, reader-eof-sentinel-is-not-payload, malformed-trailing-unclosed-form, malformed-trailing-unclosed-list, dispatch-byte-offset-utf8, eof-byte-offset-utf8, trailing-byte-offset-utf8, unterminated-string-start-byte, forbidden-after-unicode-comment, utf8-byte-offsets; hostile-data.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): tests/acceptance/slice-01-reader.lisp: forbidden-token-boundary-before-interning, line-comments-accepted, comment-inside-form, comment-text-is-text, quote-in-comment-is-text, semicolon-in-string-is-literal, reader-eof-sentinel-is-not-payload, malformed-trailing-unclosed-form, malformed-trailing-unclosed-list, dispatch-byte-offset-utf8, eof-byte-offset-utf8, trailing-byte-offset-utf8, unterminated-string-start-byte, forbidden-after-unicode-comment, utf8-byte-offsets; hostile-data.
+
 
 **E01-F02 — Uniform read bounds and schema validation**
 
@@ -252,6 +253,7 @@ Prerequisites: E01-F01.
 - [ ] Preserve unknown keys and refuse unknown node types
 
 Source sections: The data; Hostile data and limits.
+
 
 **E01-F03 — Stable node identity and canonical containment**
 
@@ -264,7 +266,8 @@ Prerequisites: E01-F02.
 
 Source sections: The data; Engine and representation; Recursive structure within a repository (SPEC-WORK.md@9488a19; merged by PR319@9c120a3b).
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): indexes-and-counters; reconstruction-after-close-and-revive; settle-keeps-id-and-evidence.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): indexes-and-counters; reconstruction-after-close-and-revive; settle-keeps-id-and-evidence.
+
 
 **E01-F04 — Typed work kinds and acceptance schema**
 
@@ -277,6 +280,7 @@ Prerequisites: E01-F03.
 
 Source sections: The data; Recursive structure within a repository (SPEC-WORK.md@9488a19; merged by PR319@9c120a3b).
 
+
 **E01-F05 — Canonical encoding and semantic round trip**
 
 Prerequisites: E01-F01, E01-F04.
@@ -287,7 +291,7 @@ Prerequisites: E01-F01, E01-F04.
 
 Source sections: Format determinism; Full data round trip.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): supported-subset-format-determinism; absent-empty-and-null-are-three-spellings; wire-integers-are-strings.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): supported-subset-format-determinism; absent-empty-and-null-are-three-spellings; wire-integers-are-strings.
 
 </details>
 
@@ -318,7 +322,8 @@ Prerequisites: E01-F03.
 
 Source sections: The execution model; The root is COW; Engine and representation.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): working-is-a-view; cow-root-partition; session-server-daemon-and-session-start; session-status.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): working-is-a-view; cow-root-partition; session-server-daemon-and-session-start; session-status.
+
 
 **E02-F02 — Single coordinator ownership record**
 
@@ -331,7 +336,8 @@ Prerequisites: E02-F01.
 
 Source sections: The execution model; One coordinator, one live reader/writer.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): ownership-record-round-trips; resume-needs-the-journal-lock; resume-refuses-a-copied-journal.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): ownership-record-round-trips; resume-needs-the-journal-lock; resume-refuses-a-copied-journal.
+
 
 **E02-F03 — Journal and endpoint locking**
 
@@ -343,7 +349,8 @@ Prerequisites: E02-F02.
 
 Source sections: The execution model.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): resume-needs-the-journal-lock.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): resume-needs-the-journal-lock.
+
 
 **E02-F04 — Lease expiry, reconfirmation and self-fencing**
 
@@ -355,7 +362,8 @@ Prerequisites: E02-F02, E02-F03.
 
 Source sections: The execution model; Single writer.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): fenced-export-can-finish; session-status.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): fenced-export-can-finish; session-status.
+
 
 **E02-F05 — Handoff, stop and successor recovery**
 
@@ -367,7 +375,8 @@ Prerequisites: E02-F04, E06-F03.
 
 Source sections: The execution model; Checkpoints, undo and redo.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): session-stop; handoff-successor-takes-next-generation; session-export-writes-the-request-bundle; session-replay-bundle-intake.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): session-stop; handoff-successor-takes-next-generation; session-export-writes-the-request-bundle; session-replay-bundle-intake.
+
 
 **E02-F06 — Runtime packaging and first-run installation**
 
@@ -379,7 +388,8 @@ Prerequisites: E02-F01, E08-F02.
 
 Source sections: Engine and representation; The execution model.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): protocol-version-negotiated-or-refused.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): protocol-version-negotiated-or-refused.
+
 
 **E02-F07 — Execution leases and worker ownership**
 
@@ -392,7 +402,7 @@ Prerequisites: E02-F04.
 
 Source sections: The data; The execution model; Operational lessons the pilot must exercise.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): no-shadow-lease-across-holders; accepted-creates-one-lease-or-binds; branch-and-window-required; delegated-to-a-sleeper-then-recovered; move-keeps-the-lease; a-retry-does-not-overwrite-its-attempt; correct-is-a-linked-segment.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): no-shadow-lease-across-holders; accepted-creates-one-lease-or-binds; branch-and-window-required; delegated-to-a-sleeper-then-recovered; move-keeps-the-lease; a-retry-does-not-overwrite-its-attempt; correct-is-a-linked-segment.
 
 </details>
 
@@ -421,7 +431,8 @@ Prerequisites: E01-F05, E02-F04.
 
 Source sections: The data; The verbs; Retry/protocol.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): journal-records-before-it-applies; two-event-candidate-is-all-or-none; durable-journal-multi-event-envelope-never-partly-publishes; durable-journal-changed-payload-refuses; dedup-refuses-past-its-bound.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): journal-records-before-it-applies; two-event-candidate-is-all-or-none; durable-journal-multi-event-envelope-never-partly-publishes; durable-journal-changed-payload-refuses; dedup-refuses-past-its-bound.
+
 
 **E03-F02 — Structure verbs and decomposition**
 
@@ -433,7 +444,8 @@ Prerequisites: E03-F01.
 
 Source sections: The data; The verbs; Inventory before implementation.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): new-verbs-have-a-kind-and-a-field-order; add-field-order-is-complete; every-field-has-an-owning-verb; inventory-expansion-and-contraction.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): new-verbs-have-a-kind-and-a-field-order; add-field-order-is-complete; every-field-has-an-owning-verb; inventory-expansion-and-contraction.
+
 
 **E03-F03 — Scope, baseline and dependency changes**
 
@@ -445,7 +457,8 @@ Prerequisites: E03-F02.
 
 Source sections: Counting; The data; Operational lessons the pilot must exercise.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): shared-prerequisite-owned-once.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): shared-prerequisite-owned-once.
+
 
 **E03-F04 — State correction and completion transitions**
 
@@ -458,7 +471,8 @@ Prerequisites: E03-F03, E05-F01.
 
 Source sections: The data; The validator; Required coordinator operations; Recursive structure within a repository (SPEC-WORK.md@9488a19; merged by PR319@9c120a3b).
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): correct-is-a-linked-segment; regression-opens-repair-work; reopen-revives; stop-is-a-hold-not-a-cancel; containers-settle-with-their-members; completed-view-mutation.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): correct-is-a-linked-segment; regression-opens-repair-work; reopen-revives; stop-is-a-hold-not-a-cancel; containers-settle-with-their-members; completed-view-mutation.
+
 
 **E03-F05 — Reversible undo and redo plans**
 
@@ -470,7 +484,7 @@ Prerequisites: E03-F04, E06-F03.
 
 Source sections: Checkpoints, undo and redo; Undo/redo.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): undo-appends-and-preserves; redo-refuses-a-stale-plan; edit-undo-preserves-later-work; undo-refuses-an-external-effect; undo-names-its-reversible-set.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): undo-appends-and-preserves; redo-refuses-a-stale-plan; edit-undo-preserves-later-work; undo-refuses-an-external-effect; undo-names-its-reversible-set.
 
 </details>
 
@@ -500,7 +514,8 @@ Prerequisites: E03-F01, E01-F03.
 
 Source sections: Counting; Counts are read directly.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): open-count-is-read-not-computed; cow-root-partition; indexes-and-counters; findings-across-c-and-o.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): open-count-is-read-not-computed; cow-root-partition; indexes-and-counters; findings-across-c-and-o.
+
 
 **E04-F02 — Roadmap percent and cell progress**
 
@@ -512,7 +527,8 @@ Prerequisites: E04-F01, E07-F01.
 
 Source sections: Counting; A cell is a reference, not another state store.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): percent-axis-on-a-matrix.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): percent-axis-on-a-matrix.
+
 
 **E04-F03 — Scope movement and branch counts**
 
@@ -524,7 +540,8 @@ Prerequisites: E03-F03, E04-F01.
 
 Source sections: Counting.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): cow-root-partition; revive-appends-and-counts-latest; closed-rows-carry-revived-and-settles; activity-and-state-are-two-counts.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): cow-root-partition; revive-appends-and-counts-latest; closed-rows-carry-revived-and-settles; activity-and-state-are-two-counts.
+
 
 **E04-F04 — Stable resident indexes and bounded access**
 
@@ -537,7 +554,8 @@ Prerequisites: E04-F01, E01-F03.
 
 Source sections: The data; Counting; Queries — the contract; W is an eagerly maintained working index.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): indexes-and-counters; reverse-dependency-index-is-bounded; ready-names-the-blocker-and-the-resolver; ready-needs-every-dependency-settled; materialized-working-set; working-is-a-view; history-grows-startup-does-not.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): indexes-and-counters; reverse-dependency-index-is-bounded; ready-names-the-blocker-and-the-resolver; ready-needs-every-dependency-settled; materialized-working-set; working-is-a-view; history-grows-startup-does-not.
+
 
 **E04-F05 — Historical indexed queries and coverage honesty**
 
@@ -549,7 +567,8 @@ Prerequisites: E04-F04, E06-F02.
 
 Source sections: The execution model — retention; Queries — the contract; Old history.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): closed-paged-without-full-load; absent-day-is-not-a-gap; missing-segment-is-a-gap; as-of-refuses-unavailable-partition; closed-row-with-archive-absent; rule-2-unavailable-is-not-green.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): closed-paged-without-full-load; absent-day-is-not-a-gap; missing-segment-is-a-gap; as-of-refuses-unavailable-partition; closed-row-with-archive-absent; rule-2-unavailable-is-not-green.
+
 
 **E04-F06 — As-of reconstruction over O**
 
@@ -561,7 +580,7 @@ Prerequisites: E04-F04, E03-F01.
 
 Source sections: Queries — the contract; The execution model — retention; Counting.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): as-of-reconstructs-settle-revive-settle; cursor-pinned-across-a-new-settle; default-window-opens-two-days; rule-2-unavailable-is-not-green.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): as-of-reconstructs-settle-revive-settle; cursor-pinned-across-a-new-settle; default-window-opens-two-days; rule-2-unavailable-is-not-green.
 
 </details>
 
@@ -591,7 +610,8 @@ Prerequisites: E01-F04, E03-F01.
 
 Source sections: The data; The validator.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): verify-job-criterion-reads-the-revision; verify-resolver-identity-is-the-command; a-removed-or-corrected-need-is-unmet; regression-opens-repair-work.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): verify-job-criterion-reads-the-revision; verify-resolver-identity-is-the-command; a-removed-or-corrected-need-is-unmet; regression-opens-repair-work.
+
 
 **E05-F02 — Verification and stale evidence reporting**
 
@@ -603,7 +623,8 @@ Prerequisites: E05-F01.
 
 Source sections: The validator; Evidence and the imported starting point.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): a-done-need-is-unverified-without-complete-proof; verify-stale-evidence-needs-no-fetch; stale-evidence-does-not-unmeet-a-need; a-done-need-on-unverified-evidence-admits-nothing; an-attested-only-need-is-met-by-its-attestation-and-by-nothing-less; merged-is-not-distributed.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): a-done-need-is-unverified-without-complete-proof; verify-stale-evidence-needs-no-fetch; stale-evidence-does-not-unmeet-a-need; a-done-need-on-unverified-evidence-admits-nothing; an-attested-only-need-is-met-by-its-attestation-and-by-nothing-less; merged-is-not-distributed.
+
 
 **E05-F03 — Reviews, findings and attestations**
 
@@ -616,7 +637,8 @@ Prerequisites: E05-F01.
 
 Source sections: Operational lessons the pilot must exercise; The data; Efficiency policy (SPEC-WORK.md@685b7c2).
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): review-cycles-stay-visible; an-attested-only-need-is-met-by-its-attestation-and-by-nothing-less; reconcile-preserves-contradiction; regression-opens-repair-work; reuse-only-valid-review.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): review-cycles-stay-visible; an-attested-only-need-is-met-by-its-attestation-and-by-nothing-less; reconcile-preserves-contradiction; regression-opens-repair-work; reuse-only-valid-review.
+
 
 **E05-F04 — Dependency and release gates**
 
@@ -628,7 +650,8 @@ Prerequisites: E05-F02, E04-F04.
 
 Source sections: The validator; A cell is a reference, not another state store.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): parent-green-needs-dependencies; merged-is-not-distributed.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): parent-green-needs-dependencies; merged-is-not-distributed.
+
 
 **E05-F05 — Independent proof and mutation regression checks**
 
@@ -640,7 +663,8 @@ Prerequisites: E05-F02.
 
 Source sections: Independent oracle and retained evidence; Roadmap proof.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): a-broken-assertion-must-fail; roadmap-proof.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): a-broken-assertion-must-fail; roadmap-proof.
+
 
 **E05-F06 — Evidence resolvers and verification cache**
 
@@ -652,7 +676,7 @@ Prerequisites: E05-F01.
 
 Source sections: The validator; The resident session; Required test suites.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): verify-resolver-identity-is-the-command; verify-offline-refuses-a-fetch-budget; verify-negatives-and-unreachable; verify-cache-holds-raw-resolutions; verify-keeps-cached-evidence-rows.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): verify-resolver-identity-is-the-command; verify-offline-refuses-a-fetch-budget; verify-negatives-and-unreachable; verify-cache-holds-raw-resolutions; verify-keeps-cached-evidence-rows.
 
 </details>
 
@@ -682,7 +706,8 @@ Prerequisites: E01-F05, E03-F01.
 
 Source sections: Checkpoints, undo and redo; The resident session.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): journal-records-before-it-applies; crash-after-append-recovers-the-reply-once; savepoint-cut-never-splits-an-envelope; a-savepoint-is-not-a-shared-backup; savepoint-write-failure-keeps-the-previous; compaction-keeps-the-last-copy.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): journal-records-before-it-applies; crash-after-append-recovers-the-reply-once; savepoint-cut-never-splits-an-envelope; a-savepoint-is-not-a-shared-backup; savepoint-write-failure-keeps-the-previous; compaction-keeps-the-last-copy.
+
 
 **E06-F02 — Bounded C partitions and historical indexes**
 
@@ -694,7 +719,8 @@ Prerequisites: E06-F01, E03-F04.
 
 Source sections: The execution model — retention; The data; Old history; Resident-window correction (proposed SPEC-WORK.md@a0cfcf5).
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): days-merge-by-revision-never-concatenate; busy-day-many-segments; one-revision-publishes-together; closed-paged-without-full-load; page-budget-is-not-max; default-window-opens-two-days.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): days-merge-by-revision-never-concatenate; busy-day-many-segments; one-revision-publishes-together; closed-paged-without-full-load; page-budget-is-not-max; default-window-opens-two-days.
+
 
 **E06-F03 — Clip, commit and recovery replay**
 
@@ -706,7 +732,8 @@ Prerequisites: E06-F02, E02-F04.
 
 Source sections: The execution model — retention; Checkpoints, undo and redo.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): one-revision-publishes-together; index-replayed-after-crash; overlay-is-bounded-and-rebuilt.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): one-revision-publishes-together; index-replayed-after-crash; overlay-is-bounded-and-rebuilt.
+
 
 **E06-F04 — Isolated restore and compare**
 
@@ -718,7 +745,8 @@ Prerequisites: E06-F03.
 
 Source sections: Checkpoints, undo and redo; Recovery.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): restore-is-isolated-and-dispatches-nothing; copied-journal-grants-nothing; state-load-is-isolated; savepoint-write-failure-keeps-the-previous.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): restore-is-isolated-and-dispatches-nothing; copied-journal-grants-nothing; state-load-is-isolated; savepoint-write-failure-keeps-the-previous.
+
 
 **E06-F05 — Lossless export and schema migration**
 
@@ -730,7 +758,7 @@ Prerequisites: E06-F03, E01-F05.
 
 Source sections: Lossless migration and round-trip release gates; Schema evolution; Old history.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): old-history; schema-evolution; source-inventory; moving-source.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): old-history; schema-evolution; source-inventory; moving-source.
 
 </details>
 
@@ -762,7 +790,8 @@ Prerequisites: E01-F04, E03-F03.
 
 Source sections: The data; A cell is a reference, not another state store; Recursive structure within a repository (SPEC-WORK.md@9488a19; merged by PR319@9c120a3b).
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): roadmap-has-one-creator; render-view-over-a-stored-selection; cell-moves-no-required-set; move-updates-every-roadmap-scope; roadmap-outlives-its-work; roadmap-opened-after-the-window; axisless-history.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): roadmap-has-one-creator; render-view-over-a-stored-selection; cell-moves-no-required-set; move-updates-every-roadmap-scope; roadmap-outlives-its-work; roadmap-opened-after-the-window; axisless-history.
+
 
 **E07-F02 — Completion-only projection renderer**
 
@@ -774,7 +803,8 @@ Prerequisites: E05-F02, E07-F01.
 
 Source sections: Roadmap as a view; the Schema pilot; What the current prototype proves, and does not.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): roadmap-proof; a-broken-assertion-must-fail; chat-and-file-render-are-byte-identical; render-refuses-a-target-outside-its-roots.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): roadmap-proof; a-broken-assertion-must-fail; chat-and-file-render-are-byte-identical; render-refuses-a-target-outside-its-roots.
+
 
 **E07-F03 — Generated ROADMAP drift checks**
 
@@ -786,7 +816,8 @@ Prerequisites: E07-F02, E06-F03.
 
 Source sections: The failures it closes; Roadmap as a view; the Schema pilot; Roadmap proof.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): render-artifact-is-bounded; roadmap-proof; chat-and-file-render-are-byte-identical; move-updates-every-roadmap-scope.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): render-artifact-is-bounded; roadmap-proof; chat-and-file-render-are-byte-identical; move-updates-every-roadmap-scope.
+
 
 **E07-F04 — Fixed Tables imported baseline inventory**
 
@@ -798,7 +829,8 @@ Prerequisites: E06-F05, E07-F01.
 
 Source sections: Evidence and the imported starting point; Inventory before implementation.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): moving-source.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): moving-source.
+
 
 **E07-F05 — Pilot retrospective and scope evolution**
 
@@ -809,6 +841,7 @@ Prerequisites: E07-F04, E05-F05.
 - [ ] Feed findings into NEXT-TOOLS and production specs before implementation
 
 Source sections: Retrospective required before production implementation; Operational lessons the pilot must exercise.
+
 
 **E07-F06 — Private-node projection filtering**
 
@@ -848,6 +881,7 @@ Prerequisites: E03-F01.
 
 Source sections: The verbs; Learn verbs without carrying the manual in context.
 
+
 **E08-F02 — Client transport and asynchronous operations**
 
 Prerequisites: E08-F01, E02-F04.
@@ -864,7 +898,8 @@ Prerequisites: E08-F01, E02-F04.
 
 Source sections: The verbs; Async operations; Retry/protocol; Batch-friendly transport and explicit atomicity; Response correlation (SPEC-WORK.md@7db3b95); Efficiency policy (SPEC-WORK.md@685b7c2).
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): wire-is-length-prefixed-utf8-json; status-answers-while-io-runs; cancel-is-a-request-not-an-erasure; disconnect-is-not-a-rollback; lost-reply-then-reopen; durable-journal-append-plus-lost-reply-recovers-once; state-export-is-one-long-operation; clip-is-one-long-operation; batches-and-pipelines; materialized-working-set; pipeline-replies-are-correlated; batch-with-bounds-and-urgency.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): wire-is-length-prefixed-utf8-json; status-answers-while-io-runs; cancel-is-a-request-not-an-erasure; disconnect-is-not-a-rollback; lost-reply-then-reopen; durable-journal-append-plus-lost-reply-recovers-once; state-export-is-one-long-operation; clip-is-one-long-operation; batches-and-pipelines; materialized-working-set; pipeline-replies-are-correlated; batch-with-bounds-and-urgency.
+
 
 **E08-F03 — Friends, CONFIG and ACTIVE indexes**
 
@@ -878,9 +913,10 @@ Prerequisites: E04-F04, E03-F04.
 - [x] bounds-are-not-prompts: refuse automatic dispatch when an adapter cannot enforce the configured execution limit; distinguish wait deadline from observed stop or unresolved outcome
 - [x] fleet-is-static-config: hold the fleet as `:machine` records in CONFIG with stable id, owner, connection-profile reference, roles, limits, permits, exclusions and dated declared facts, all instance data; list it and recommend members for a workload kind from declared facts, never a lease; refuse a record without owner or id, a held connection profile, a credential, an unknown owner or role, and a choice of a member for a workload it excludes
 
-Source sections: Friends and assignments are resident indexes too; CONFIG and ACTIVE are different sections; Efficiency policy (SPEC-WORK.md@685b7c2); The fleet (spec/nova-work [PR #339](https://github.com/mas-bandwidth/nova-tools/pull/339)).
+Source sections: Friends and assignments are resident indexes too; CONFIG and ACTIVE are different sections; Efficiency policy (SPEC-WORK.md@685b7c2); The fleet (spec/nova-work PR 339).
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): fleet-is-static-config; probe-records-observed-active-and-touches-no-config; four-capability-groups-and-three-fields; roles-are-configured-not-inferred; reserved-role-is-not-spent-on-routine-work; bounds-are-not-prompts.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): fleet-is-static-config; probe-records-observed-active-and-touches-no-config; four-capability-groups-and-three-fields; roles-are-configured-not-inferred; reserved-role-is-not-spent-on-routine-work; bounds-are-not-prompts.
+
 
 **E08-F04 — Availability, offers and assignment reconciliation**
 
@@ -896,7 +932,8 @@ Prerequisites: E08-F03, E02-F04.
 
 Source sections: Observed availability; Friends and assignments are resident indexes too; Efficiency policy (SPEC-WORK.md@685b7c2); Presence: who is awake and who is asleep.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): explicit-rest-is-not-pinged; silence-is-a-ping-not-a-verdict; four-facts-four-verbs; dispatch-ack-and-ownership-are-three; return-reconciles-before-dispatch; hold-survives-a-crash; quiet-until-actionable; regression-and-recovery.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): explicit-rest-is-not-pinged; silence-is-a-ping-not-a-verdict; four-facts-four-verbs; dispatch-ack-and-ownership-are-three; return-reconciles-before-dispatch; hold-survives-a-crash; quiet-until-actionable; regression-and-recovery.
+
 
 **E08-F05 — Bounded config/pricing exchange and model suitability**
 
@@ -910,7 +947,7 @@ Prerequisites: E08-F03.
 
 Source sections: Efficient friend config exchange and token pricing; Model knowledge informs scheduling; Swarms, models and friend participation: decision required; Efficiency policy (SPEC-WORK.md@685b7c2).
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): unchanged-config-is-one-bounded-answer; an-invalid-delta-leaves-the-old-config; a-partial-manifest-is-refused; route-config-lists-key-by-path-never-value; no-credential-in-a-member; pricing-is-pinned-by-revision; requested-model-is-not-observed-model; policy-round-trip-and-replay; packet-and-route-gates.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): unchanged-config-is-one-bounded-answer; an-invalid-delta-leaves-the-old-config; a-partial-manifest-is-refused; route-config-lists-key-by-path-never-value; no-credential-in-a-member; pricing-is-pinned-by-revision; requested-model-is-not-observed-model; policy-round-trip-and-replay; packet-and-route-gates.
 
 </details>
 
@@ -939,7 +976,8 @@ Prerequisites: E06-F05.
 
 Source sections: Public issue correspondence survives intake; Source inventory; Archive completeness.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): archive-completeness.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): archive-completeness; internal/ghcapture/adapter_test.go: TestStableIdentityRevisionAndURL, TestBodyCommentsLabelsRelationshipsAndPagination.
+
 
 **E09-F02 — Link mode and correspondence reconciliation**
 
@@ -951,7 +989,8 @@ Prerequisites: E09-F01, E03-F01.
 
 Source sections: Public issue correspondence survives intake.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): read-only-intake; hostile-data.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): read-only-intake; hostile-data.
+
 
 **E09-F03 — Lossless resumable initial migration**
 
@@ -963,7 +1002,8 @@ Prerequisites: E09-F01, E06-F03.
 
 Source sections: Initial migration: preserve first, reconcile, then choose absorption; Import replay; Moving source.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): source-inventory; moving-source.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): source-inventory; moving-source.
+
 
 **E09-F04 — Explicit absorb operation and deletion gate**
 
@@ -975,6 +1015,7 @@ Prerequisites: E09-F03, E05-F05.
 
 Source sections: Link versus absorb; Archive completeness; Lossless migration and round-trip release gates.
 
+
 **E09-F05 — External adapter and side-effect safety**
 
 Prerequisites: E09-F02.
@@ -985,7 +1026,7 @@ Prerequisites: E09-F02.
 
 Source sections: Public issue correspondence survives intake; Link versus absorb; Undo/redo.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): merged-is-not-distributed; disconnect-is-not-a-rollback; reply-retired-only-under-verified-coverage; cancel-is-a-request-not-an-erasure.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): merged-is-not-distributed; disconnect-is-not-a-rollback; reply-retired-only-under-verified-coverage; cancel-is-a-request-not-an-erasure.
 
 </details>
 
@@ -1016,7 +1057,8 @@ Prerequisites: E08-F02, E03-F01.
 
 Source sections: Fast failure diagnosis.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): cancel-is-a-request-not-an-erasure; disconnect-is-not-a-rollback; lost-reply-then-reopen; torn-tail-is-diagnosed-not-truncated.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): cancel-is-a-request-not-an-erasure; disconnect-is-not-a-rollback; lost-reply-then-reopen; torn-tail-is-diagnosed-not-truncated.
+
 
 **E10-F02 — Cost, usage and rate accounting**
 
@@ -1031,7 +1073,8 @@ Prerequisites: E08-F05, E03-F04.
 
 Source sections: Cost; Model knowledge informs scheduling; Retrospective required before production implementation; Efficiency policy (SPEC-WORK.md@685b7c2); Efficiency: lessons absorbed 2026-09-15.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): unknown-price-is-not-zero; local-tokens-cost-zero-api; subscription-is-not-free-reference-cost; pricing-is-pinned-by-revision; cost-joins-include-the-coordinator; complete-cost-lineage; cache-aware-context-choice; gas-town-efficiency-accounting.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): unknown-price-is-not-zero; local-tokens-cost-zero-api; subscription-is-not-free-reference-cost; pricing-is-pinned-by-revision; cost-joins-include-the-coordinator; complete-cost-lineage; cache-aware-context-choice; gas-town-efficiency-accounting.
+
 
 **E10-F03 — Generated, golden, property and fault suites**
 
@@ -1044,7 +1087,8 @@ Prerequisites: E01-F05, E05-F05, E06-F04.
 
 Source sections: Required test suites; Staged verification and release.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): hostile-data; full-round-trip; indexes-and-counters; roadmap-proof; single-writer; durable-journal-pre-append-failure-writes-nothing; durable-journal-partial-write-refuses-without-truncation; torn-tail-is-diagnosed-not-truncated; crash-after-append-recovers-the-reply-once; savepoint-write-failure-keeps-the-previous; one-revision-publishes-together.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): hostile-data; full-round-trip; indexes-and-counters; roadmap-proof; single-writer; durable-journal-pre-append-failure-writes-nothing; durable-journal-partial-write-refuses-without-truncation; torn-tail-is-diagnosed-not-truncated; crash-after-append-recovers-the-reply-once; savepoint-write-failure-keeps-the-previous; one-revision-publishes-together.
+
 
 **E10-F04 — Process-level recovery and two-writer verification**
 
@@ -1055,6 +1099,7 @@ Prerequisites: E02-F05, E06-F04, E09-F03.
 - [ ] Run the authorized read-only real-repository pilot and disposable import, then publish a reconciliation disposition
 
 Source sections: Required test suites; Staged verification and release.
+
 
 **E10-F05 — Measured Fixed Tables go/no-go gate**
 
@@ -1068,7 +1113,8 @@ Prerequisites: E07-F05, E10-F02, E10-F03.
 
 Source sections: The measurement that decides; Agreement and lock gate; Efficiency policy (SPEC-WORK.md@685b7c2); Efficiency: lessons absorbed 2026-09-15.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): evidence-before-adoption; efficiency-lessons-gate.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): evidence-before-adoption; efficiency-lessons-gate.
+
 
 **E10-F07 — Validator and repair modes**
 
@@ -1080,7 +1126,8 @@ Prerequisites: E01-F04, E03-F01.
 
 Source sections: The validator; The data; Required test suites.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): referential-integrity-refuses-a-cycle; rule-2-unavailable-is-not-green; coordination-tree-integrity-refuses; cow-root-partition; cell-moves-no-required-set; no-shadow-lease-across-holders; rule-18-finds-the-latest-row-not-the-history; container-cascade-journal-rejection-and-retry-stability.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): referential-integrity-refuses-a-cycle; rule-2-unavailable-is-not-green; coordination-tree-integrity-refuses; cow-root-partition; cell-moves-no-required-set; no-shadow-lease-across-holders; rule-18-finds-the-latest-row-not-the-history; container-cascade-journal-rejection-and-retry-stability.
+
 
 **E10-F08 — Output grammar and bounded results**
 
@@ -1092,7 +1139,7 @@ Prerequisites: E08-F01, E10-F01.
 
 Source sections: Output grammar; The verbs; Required test suites.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): the-cli-thin-client; an-excluded-choice-is-refused-not-empty; notes-refuse-missing-source-or-date; clip-is-one-long-operation; render-artifact-is-bounded; closed-paged-without-full-load; page-budget-is-not-max; busy-day-many-segments.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): the-cli-thin-client; an-excluded-choice-is-refused-not-empty; notes-refuse-missing-source-or-date; clip-is-one-long-operation; render-artifact-is-bounded; closed-paged-without-full-load; page-budget-is-not-max; busy-day-many-segments.
 
 </details>
 
@@ -1125,7 +1172,8 @@ Prerequisites: E01-F01, E03-F01, E08-F01.
 
 Source sections: Delegation; The data; Output grammar.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): notes-refuse-missing-source-or-date; notes-id-is-content-digest; notes-writer-is-scoped; notes-bounds-refuse; notes-supersede-is-one-envelope; notes-weaker-kind-cannot-supersede.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): notes-refuse-missing-source-or-date; notes-id-is-content-digest; notes-writer-is-scoped; notes-bounds-refuse; notes-supersede-is-one-envelope; notes-weaker-kind-cannot-supersede.
+
 
 **E11-F02 — The current goal across models and harnesses**
 
@@ -1139,7 +1187,8 @@ Prerequisites: E11-F01, E03-F02, E08-F01.
 
 Source sections: The current goal; Delegation; Acceptance replays.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): goal-crosses-harness; goal-stale-update-refuses; goal-stop-is-a-request-not-evidence; goal-update-writes-only-existing-kinds; goal-expect-is-required.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): goal-crosses-harness; goal-stale-update-refuses; goal-stop-is-a-request-not-evidence; goal-update-writes-only-existing-kinds; goal-expect-is-required.
+
 
 **E11-F03 — Admission gates 1 to 3: notes read, packet bounded, route eligible**
 
@@ -1154,7 +1203,8 @@ Prerequisites: E11-F01, E08-F04, E10-F02.
 
 Source sections: Delegation; Admission and result gates; Efficiency: lessons absorbed 2026-09-15.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): applicable-before-route; applicable-cap-never-hides-a-deny; applicable-unknown-is-not-eligible; applicable-snapshot-is-planning-only; narrative-does-not-filter; delegation-admission-gates.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): applicable-before-route; applicable-cap-never-hides-a-deny; applicable-unknown-is-not-eligible; applicable-snapshot-is-planning-only; narrative-does-not-filter; delegation-admission-gates.
+
 
 **E11-F04 — Execution and result gates 4 to 6: real bounds, receipts by machinery, integration**
 
@@ -1166,7 +1216,8 @@ Prerequisites: E11-F03, E08-F05, E05-F02.
 
 Source sections: Delegation; Admission and result gates; Presence: who is awake and who is asleep; Assignment and execution control.
 
-Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh` (336/336): delegation-result-gates; receipt-at-exact-head.
+Verified criteria evidence at dev `bfad27aa`, suite `lisp/nova-work/run-tests.sh` (591/591): delegation-result-gates; receipt-at-exact-head.
+
 
 **E11-F05 — Decision packets**
 
@@ -1177,6 +1228,7 @@ Prerequisites: E11-F04, E08-F02.
 - [ ] no-receipt-of-receipt: a worker returns one structured result; a verdict is keyed (reader, sha) and a gate (base, head, integration) in one durable home; an independent review is not re-routed through the coordinator; a receipt of a receipt is refused as a duplicate
 
 Source sections: Delegation; Efficiency: lessons absorbed 2026-09-15.
+
 
 **E11-F06 — The envelope up and escalation: the no survives the hop**
 

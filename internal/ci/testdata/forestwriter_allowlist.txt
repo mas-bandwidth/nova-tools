@@ -19,3 +19,4 @@ internal/tokens/opencode.go:copyFile # the opencode usage database copy the fold
 internal/tokens/package.go:AtomicNoReplaceRename # the token package marker, linked no-replace
 internal/tokens/package.go:StageMarker # the token package marker's staged temp file
 internal/worklang/expand.go:ExpandDirWithSink # plan expand's cards under --out, job storage; a forest --out is refused by the verb
+cmd/nova-work/roadmap_check.go:cmdRoadmapCheck # the ROADMAP.md update

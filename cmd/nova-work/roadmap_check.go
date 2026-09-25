@@ -155,19 +155,24 @@ func extractMarkdown(form worklang.Form) string {
 	return out.String()
 }
 
-func cmdRoadmapCheck(args []string, stdout, stderr io.Writer) int {
-	limits := worklang.Limits{MaxBytes: 1 << 20, MaxDepth: 64, MaxNodes: 1 << 14}
+func readRoadmapSexp() (*worklang.Form, error) {
 	path := "docs/roadmaps/nova-work.sexp"
 	data, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Fprintf(stderr, "ROADMAP FAIL: %v\n", err)
-		return 2
+		return nil, err
 	}
+	limits := worklang.Limits{MaxBytes: 1 << 20, MaxDepth: 64, MaxNodes: 1 << 14}
 	form, err := worklang.Read(path, data, limits)
+	return &form, err
+}
+
+func cmdRoadmapCheck(args []string, stdout, stderr io.Writer) int {
+	formPtr, err := readRoadmapSexp()
 	if err != nil {
 		fmt.Fprintf(stderr, "ROADMAP FAIL: %v\n", err)
 		return 2
 	}
+	form := *formPtr
 
 	md := extractMarkdown(form)
 
