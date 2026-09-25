@@ -308,6 +308,14 @@ func Run(ctx context.Context, st *store.Store, opt RunOptions) (RunResult, error
 	}
 	res.Claimed, res.Repo, res.SHA, res.Attempt = true, c.Repo, c.SHA, c.Attempt
 	fmt.Fprintf(out, "CLAIMED %s@%s attempt=%d checks=%d\n", c.Repo, c.SHA[:8], c.Attempt, len(c.Checks))
+	// Every check runs without the seat's Redis and secrets variables
+	// (env.go); the names dropped print once per claim, never a value.
+	env, dropped := checkEnviron()
+	scrubbedNames := "-"
+	if len(dropped) > 0 {
+		scrubbedNames = strings.Join(dropped, ",")
+	}
+	fmt.Fprintf(out, "ENV scrubbed=%s\n", scrubbedNames)
 
 	url := c.URL
 	if url == "" && opt.URLFor != nil {
@@ -343,7 +351,7 @@ func Run(ctx context.Context, st *store.Store, opt RunOptions) (RunResult, error
 	}
 
 	for _, ch := range c.Checks {
-		cr := runCheck(ctx, opt, dir, logDir, ch)
+		cr := runCheck(ctx, opt, dir, logDir, env, ch)
 		res.Checks = append(res.Checks, cr)
 		t := time.Now()
 		r, err := WriteReceipt(ctx, st, ReceiptRecord{Repo: c.Repo, SHA: c.SHA, Check: ch.Name, Token: c.Token,
@@ -397,10 +405,10 @@ func clone(ctx context.Context, opt RunOptions, url, repo, sha, dir string) ([]b
 // maxLog caps one check's kept log; the tail is what names the failure.
 const maxLog = 4 << 20
 
-// runCheck runs one declared argv in the clone with the log at
-// <logDir>/<name>.log. An argv that cannot start is rc 127 with the error in
+// runCheck runs one declared argv in the clone, in env (the scrubbed
+// environment, env.go), with the log at <logDir>/<name>.log. An argv that cannot start is rc 127 with the error in
 // the log; a timeout is rc 124.
-func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, ch Check) CheckResult {
+func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, env []string, ch Check) CheckResult {
 	logPath := filepath.Join(logDir, ch.Name+".log")
 	cr := CheckResult{Name: ch.Name, Log: logPath}
 	argv := strings.Fields(ch.Argv)
@@ -413,7 +421,7 @@ func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, ch Check)
 		cctx, cancel := context.WithTimeout(ctx, opt.Timeout)
 		cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "CI=1")
+		cmd.Env = env
 		b, err := cmd.CombinedOutput()
 		cancel()
 		body = b
