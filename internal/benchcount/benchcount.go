@@ -28,6 +28,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -214,22 +215,38 @@ func (f *Fold) Pass(ctx context.Context, rdb *redis.Client, entries []Entry) err
 	return Write(ctx, rdb, f.Counts())
 }
 
-// Write sets landed, useful and usd_per_useful on bench:<host>. It does not
-// delete the key, expire it, or write the fields bench-row owns.
+// Write sets landed, useful and usd_per_useful on bench:<host>. Every host is
+// one HSET in one pipeline, so the whole write is one round trip however many
+// benches there are (nova-tools #3271). It does not delete the key, expire it,
+// or write the fields bench-row owns.
 func Write(ctx context.Context, rdb *redis.Client, counts map[string]Counts) error {
-	for host, c := range counts {
-		if host == "" {
-			continue
+	hosts := make([]string, 0, len(counts))
+	for host := range counts {
+		if host != "" {
+			hosts = append(hosts, host)
 		}
-		if err := rdb.HSet(ctx, BenchPrefix+host,
+	}
+	if len(hosts) == 0 {
+		return nil
+	}
+	sort.Strings(hosts)
+	pipe := rdb.Pipeline()
+	cmds := make([]*redis.IntCmd, len(hosts))
+	for i, host := range hosts {
+		c := counts[host]
+		cmds[i] = pipe.HSet(ctx, BenchPrefix+host,
 			FieldLanded, strconv.Itoa(c.Landed),
 			FieldUseful, strconv.Itoa(c.Useful),
 			FieldUSDPerUseful, c.CostPerUseful(),
-		).Err(); err != nil {
-			return fmt.Errorf("bench %s: %w", host, err)
+		)
+	}
+	_, execErr := pipe.Exec(ctx)
+	for i, cmd := range cmds {
+		if err := cmd.Err(); err != nil {
+			return fmt.Errorf("bench %s: %w", hosts[i], err)
 		}
 	}
-	return nil
+	return execErr
 }
 
 // ReadStream reads the whole fixture stream in id order. XRANGE, not a GitHub poll.

@@ -3,6 +3,7 @@ package benchcount_test
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -389,4 +390,63 @@ func (h *hgetCount) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 
 func (h *hgetCount) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return next
+}
+
+// TestWriteElevenHostsIsOneRoundTrip is #3271's DONE-WHEN: eleven bench rows
+// are one pipeline, not eleven HSETs. A lone command or a second pipeline fails.
+func TestWriteElevenHostsIsOneRoundTrip(t *testing.T) {
+	rdb := start(t)
+	ctx := context.Background()
+	counts := map[string]benchcount.Counts{}
+	hosts := []string{"hulk", "space", "vision", "thor", "loki", "wanda", "stark", "banner", "strange", "superman", "batman"}
+	for i, h := range hosts {
+		counts[h] = benchcount.Counts{Landed: i, Useful: i, USD: float64(i)}
+	}
+	// Dial and handshake before counting, so only Write's own trips count.
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		t.Fatal(err)
+	}
+	trips := &roundTrips{}
+	rdb.AddHook(trips)
+	if err := benchcount.Write(ctx, rdb, counts); err != nil {
+		t.Fatal(err)
+	}
+	if trips.n != 1 {
+		t.Fatalf("Write of %d hosts took %d round trips, want 1", len(hosts), trips.n)
+	}
+	for i, h := range hosts {
+		cost := "-"
+		if i > 0 {
+			cost = "1.000000"
+		}
+		n := strconv.Itoa(i)
+		assertHash(t, ctx, rdb, h, n, n, cost)
+	}
+
+	trips.n = 0
+	if err := benchcount.Write(ctx, rdb, map[string]benchcount.Counts{"": {Landed: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if trips.n != 0 {
+		t.Fatalf("Write with no host took %d round trips, want 0", trips.n)
+	}
+}
+
+// roundTrips counts one per lone command and one per pipeline.
+type roundTrips struct{ n int }
+
+func (h *roundTrips) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *roundTrips) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		h.n++
+		return next(ctx, cmd)
+	}
+}
+
+func (h *roundTrips) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		h.n++
+		return next(ctx, cmds)
+	}
 }
