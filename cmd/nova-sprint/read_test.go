@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
@@ -51,13 +52,17 @@ func readFixture(t *testing.T) (mirror, addr, head string) {
 	mirror = filepath.Join(t.TempDir(), "nova-tools.git")
 	readGit(t, work, "clone", "-q", "--bare", work, mirror)
 	readGit(t, mirror, "update-ref", "refs/pull/3/head", head)
-	mr := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	// A real store with the library loaded: read post is one ns_read_post call.
+	addr = testutil.Start(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
+	if err := fn.Load(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
 	if err := c.HSet(context.Background(), read.Key("nova-tools", "3"), "head", head, "base", "dev", "base_sha", base, "paths", "a.txt", "done_when", "true", "stream", "s").Err(); err != nil {
 		t.Fatal(err)
 	}
-	return mirror, mr.Addr(), head
+	return mirror, addr, head
 }
 
 // TestReadUsageRefusalsOpenNoStore: every usage error is exit 2 on stderr
@@ -140,5 +145,9 @@ func TestReadPostVerbNoGitHub(t *testing.T) {
 	lines, _ := c.LRange(context.Background(), read.LinesKey("nova-tools", "3"), 0, -1).Result()
 	if len(lines) != 1 || lines[0] != typed {
 		t.Fatalf("lines %q", lines)
+	}
+	// The same call wrote the lander's field: a HOLD holds the member (#4049).
+	if reads := c.HGet(context.Background(), read.Key("nova-tools", "3"), "reads").Val(); reads != typed {
+		t.Fatalf("reads %q, want the HOLD line", reads)
 	}
 }

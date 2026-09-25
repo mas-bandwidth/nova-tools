@@ -2076,6 +2076,42 @@ business. Read-time conditionals are not duplicates: `#+sbcl (defun f …)` besi
 has four such pairs), so a definition whose preceding non-blank line opens with
 `#+` or `#-` is skipped.
 
+### `typedlines` — typed lines are read from one place
+
+**The rule.** A PR record's typed lines (SCORE, HOLD, REPAIR, CLOSE, ...) are
+read from ONE place, the record's `reads` field, which `read post`'s one
+library call (`ns_read_post`) appends to in the same call that appends the
+`pr:<name>:<n>:lines` log. Any non-test Go or Lua file under `cmd/` or
+`internal/` that names the log (`LinesKey`, a `:lines` key literal) or the
+`last_line` stamp and is not on the allowlist is a second reader.
+**The hurt.** nova-tools #4049. `read post` wrote the log and `last_line`
+while the stream lander's member selection read `reads`, so every SCORE was
+invisible to `stream open --dry-run` (`no-read-at-head`) until Rowan copied the
+log into the field by hand: 56 records before stream k, 17 more before the
+fleet, redis and nova-work streams. The lineup's probe read was a third reader
+of the log.
+**The test.** `TestNoSecondReaderOfTypedLines`
+(`internal/ci/typedlines_class_test.go`), with the behaviour it guards held by
+`TestReadPostScoreIsAStreamMemberAtOnce` (`cmd/nova-sprint`): a SCORE posted
+with `read post` is the member's read to `stream open --dry-run` at once, and a
+HOLD holds it.
+**Its allowlist.** `typedLineLogAllow`, each entry with its why:
+`internal/nsprint/fn/lua/03_task_event.lua` (the one writer),
+`internal/nsprint/read/read.go` (defines `LinesKey`; the read brief prints the
+log and decides nothing), `internal/nsprint/fn/lua/unblock_spec.lua` (a SPEC
+line on a spec issue's record, counted in its receipt) and
+`internal/nsprint/fn/lua/02_card_move.lua` (a card's own `:lines` key, deleted
+with the card). An entry whose file no longer names the log fails, so the list
+cannot hide a new reader.
+**Its remedy line.** `<file> names the typed-line log or last_line (...): a
+second reader of typed lines, the #4049 defect ... — read the pr record's reads
+field, which ns_read_post writes in the same call, or add the file to
+typedLineLogAllow with why it decides nothing`.
+**Its narrowings.** Test files are not read (fixtures seed the log). Lua `--`
+comments are cut and Go comments are not in the AST, so prose may name the log.
+When #3874's read record (PR #3989) lands, it is the one place and the rule
+moves with it: the allowlist and the `reads` positive check name the record.
+
 ### Tests this spec demands
 
 This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.

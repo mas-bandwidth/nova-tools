@@ -290,6 +290,10 @@ func TestReadPostStoresLineAndMirrorsOneComment(t *testing.T) {
 	rec, err := c.HGetAll(context.Background(), read.Key("nova-tools", "7")).Result()
 	if err != nil || !strings.HasPrefix(rec["last_line"], "SCORE who=rowan head="+head) || rec["last_line_at"] == "" {
 		t.Fatalf("record %v (%v)", rec, err)
+	}	// The same call appended the typed first line to the reads field the
+	// stream lander reads (#4049); the body stays in the lines log only.
+	if want := strings.SplitN(typed, "\n", 2)[0]; rec["reads"] != want {
+		t.Fatalf("reads %q, want %q", rec["reads"], want)
 	}
 }
 

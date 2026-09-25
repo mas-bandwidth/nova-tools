@@ -8,9 +8,10 @@
 // pipeline; the CI verdict at head (ci:<repo>:<head>, #3597) in a second,
 // because its key needs the head; the diff is `git -C <mirror> diff
 // <base_sha>..<head>` against the bench mirror that mirror-refresh keeps at
-// refs/pull/*/head. Post appends the typed line to the record's lines list
-// in one MULTI and, until #3595 retires PR comments, mirrors it as one REST
-// comment unless told not to.
+// refs/pull/*/head. Post stores the typed line in one library call
+// (ns_read_post): the record's lines log and its reads field, the one place
+// the stream lander reads typed lines from (#4049), and, until #3595 retires
+// PR comments, mirrors it as one REST comment unless told not to.
 package read
 
 import (
@@ -376,10 +377,12 @@ func (p Poster) Comment(ctx context.Context, repo, n, body string) (int64, error
 	return v.ID, nil
 }
 
-// Post appends the typed line to pr:<repo>:<n>:lines and stamps the record
-// (last_line, last_line_at) in one MULTI, or for an event line (EventKinds)
-// in one library call that also moves its tasks, then mirrors it as one
-// comment when poster is not nil. Exit 0 posted, 1 refused, 2 could not run. The Redis
+// Post stores the typed line in one library call, ns_read_post: it appends
+// the line to pr:<repo>:<n>:lines, its first line to the record's reads
+// field (the field the stream lander's ReadAt reads, so a SCORE is a member's
+// read the moment it is posted, #4049) and stamps last_line, last_line_at;
+// for an event line (EventKinds) the same call moves its tasks. Then it
+// mirrors the line as one comment when poster is not nil. Exit 0 posted, 1 refused, 2 could not run. The Redis
 // write is the record; a comment that fails after it is reported as such.
 func Post(ctx context.Context, c *redis.Client, repo, n, line string, poster *Poster, stdout, stderr io.Writer) int {
 	if err := CheckLine(line); err != nil {
@@ -400,28 +403,18 @@ func Post(ctx context.Context, c *redis.Client, repo, n, line string, poster *Po
 	}
 	now := strconv.FormatInt(time.Now().Unix(), 10)
 	kind := strings.Fields(line)[0]
-	var lines int64
+	ev, err := postLine(ctx, c, repo, n, line, now)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-sprint read post: %v\n", err)
+		return 2
+	}
+	lines := ev.Lines
 	moves := ""
 	if EventKinds[kind] {
-		ev, err := postEvent(ctx, c, repo, n, line, now)
-		if err != nil {
-			fmt.Fprintf(stderr, "nova-sprint read post: %v\n", err)
-			return 2
-		}
-		lines = ev.Lines
 		moves = fmt.Sprintf(" tasks_moved=%d", ev.Moved)
 		for _, s := range ev.Skipped {
 			fmt.Fprintf(stderr, "READ POST SKIPPED repo=%s n=%s %s\n", repo, n, strings.ReplaceAll(s, "\n", " "))
 		}
-	} else {
-		tx := c.TxPipeline()
-		rp := tx.RPush(ctx, LinesKey(repo, n), line)
-		tx.HSet(ctx, Key(repo, n), "last_line", strings.SplitN(line, "\n", 2)[0], "last_line_at", now)
-		if _, err := tx.Exec(ctx); err != nil {
-			fmt.Fprintf(stderr, "nova-sprint read post: %v\n", err)
-			return 2
-		}
-		lines = rp.Val()
 	}
 	if poster == nil {
 		fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=0%s\n", repo, n, kind, lines, moves)
@@ -439,12 +432,12 @@ func Post(ctx context.Context, c *redis.Client, repo, n, line string, poster *Po
 // EventKinds are the typed lines whose post is an event for the sprint's
 // tasks (nova-tools#3779): a CLOSE by a person lands every task naming the
 // PR or an issue its record closes; a SCORE moves the PR's read task
-// read-<n>-<head8> working -> merging. Their post is one library call,
+// read-<n>-<head8> working -> merging. Every post is one library call,
 // ns_read_post (internal/nsprint/fn/lua/03_task_event.lua): the line and the
 // move together or neither.
 var EventKinds = map[string]bool{"CLOSE": true, "SCORE": true}
 
-// FunctionReadPost is the library function that posts an event line.
+// FunctionReadPost is the library function that posts a typed line.
 const FunctionReadPost = "ns_read_post"
 
 type event struct {
@@ -453,7 +446,7 @@ type event struct {
 	Skipped []string
 }
 
-func postEvent(ctx context.Context, c *redis.Client, repo, n, line, now string) (event, error) {
+func postLine(ctx context.Context, c *redis.Client, repo, n, line, now string) (event, error) {
 	var ev event
 	res, err := c.FCall(ctx, FunctionReadPost, nil, prkey.Name(repo), n, line, now).StringSlice()
 	if err != nil {
