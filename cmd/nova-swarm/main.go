@@ -1251,6 +1251,36 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// The request may have been accepted and the response was lost. That is
 	// not a delivered card and not an ordinary failure the coordinator may retry.
 	verdict, why := nativeVerdictWhy(res)
+
+	for _, req := range res.reqs {
+		fb := "none"
+		if !req.FirstByte.IsZero() {
+			fb = strconv.FormatInt(req.FirstByte.Sub(req.Sent).Milliseconds(), 10)
+		}
+		done := "none"
+		if !req.Done.IsZero() {
+			done = strconv.FormatInt(req.Done.Sub(req.Sent).Milliseconds(), 10)
+		}
+		httpCode := req.HTTPCode
+		if httpCode == "" {
+			httpCode = "none"
+		}
+		in := req.TokensIn
+		if in == "" {
+			in = "0"
+		}
+		out := req.TokensOut
+		if out == "" {
+			out = "0"
+		}
+		fmt.Fprintf(stdout, "REQ provider=%s model=%s sent=%s first_byte_ms=%s done_ms=%s http=%s tokens_in=%s tokens_out=%s\n",
+			req.Provider, req.Model, req.Sent.UTC().Format(time.RFC3339Nano), fb, done, httpCode, in, out)
+	}
+
+	wWhySuffix := ""
+	if res.wWhy != "" {
+		wWhySuffix = fmt.Sprintf(" wall_provider=%q", res.wWhy)
+	}
 	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
 	//
@@ -1262,10 +1292,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// this field are independent: budget= and stopped= are carried by an INCOMPLETE line
 	// too, because #1844's own sentence is that "every other field is byte-for-byte the
 	// same, so a reader that parses fields still reads them all".
-	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s%s",
+	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s%s%s",
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
 		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
-		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped))
+		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped), wWhySuffix)
 	if why != "" {
 		fmt.Fprintf(stdout, " why=%s", oneline.Field(why))
 	}
@@ -1340,7 +1370,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
-	return nativeProcessExit(res.rc)
+return nativeProcessExit(res.rc)
 }
 
 // nativeEventTimeout bounds the card-end emit. It is short on purpose: the card is already

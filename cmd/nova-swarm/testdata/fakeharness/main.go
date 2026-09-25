@@ -131,6 +131,27 @@ func main() {
 	// as one line each -- `ok` or the operating system's own refusal -- and the CONTENTS of
 	// a file are never printed, only its length, because the file the test points this at
 	// is a key file (SPEC-SANDBOX.md rule 6).
+	if v, ok := directive(prompt, "FAKE-REQ"); ok {
+		if v == "HANG" {
+			fmt.Printf("NOVA-TIMELINE REQ BEGIN provider=fake model=test\n")
+			time.Sleep(200 * time.Second)
+		} else if v == "STALL" {
+			fmt.Printf("NOVA-TIMELINE REQ BEGIN provider=fake model=test\n")
+			fmt.Printf("NOVA-TIMELINE REQ FIRST-BYTE\n")
+			time.Sleep(200 * time.Second)
+		} else if v == "BUSY" {
+			fmt.Printf("NOVA-TIMELINE REQ BEGIN provider=fake model=test\n")
+			fmt.Printf("NOVA-TIMELINE REQ FIRST-BYTE\n")
+			fmt.Printf("NOVA-TIMELINE REQ END http=200 in=10 out=20\n")
+			time.Sleep(200 * time.Second)
+		} else if v == "OK" {
+			fmt.Printf("NOVA-TIMELINE REQ BEGIN provider=fake model=test\n")
+			time.Sleep(10 * time.Millisecond)
+			fmt.Printf("NOVA-TIMELINE REQ FIRST-BYTE\n")
+			time.Sleep(10 * time.Millisecond)
+			fmt.Printf("NOVA-TIMELINE REQ END http=200 in=10 out=20\n")
+		}
+	}
 	if path, ok := directive(prompt, "FAKE-TOUCH"); ok && path != "" {
 		if err := os.WriteFile(path, []byte("a worker wrote here\n"), 0o644); err != nil {
 			fmt.Printf("fake harness: touch %s: %v\n", path, err)

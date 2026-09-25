@@ -2455,3 +2455,103 @@ func TestRemoveAuthCopyNamesACopyItCannotRemove(t *testing.T) {
 	}
 	mustContain(t, "the cleanup's NOTE", errOut.String(), "could not be removed")
 }
+
+
+func fastDeadline(t *testing.T, jobDir, watchFor string) {
+	realDeadline := nativeDeadline
+	t.Cleanup(func() { nativeDeadline = realDeadline })
+	
+	nativeDeadline = func(time.Duration) (<-chan time.Time, func() bool) {
+		fire := make(chan time.Time)
+		go func() {
+			tick := time.NewTicker(5 * time.Millisecond)
+			defer tick.Stop()
+			for {
+				if raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log")); err == nil && strings.Contains(string(raw), watchFor) {
+					close(fire)
+					return
+				}
+				<-tick.C
+			}
+		}()
+		return fire, func() bool { return true }
+	}
+}
+
+func TestNativeWallDiagnostics(t *testing.T) {
+	fixture := t.TempDir()
+	bin := nativeHarness(t)
+	wall := nativeSandbox(t)
+
+	t.Run("no first byte", func(t *testing.T) {
+		jobDir := filepath.Join(fixture, "jobs", "test-no-fb")
+		defer os.RemoveAll(jobDir)
+
+		stderr := new(bytes.Buffer)
+		fastDeadline(t, jobDir, "NOVA-TIMELINE REQ BEGIN")
+		card := []byte("FAKE-REQ HANG\n")
+		cfg := nativeRunConfig{
+			binary:   bin,
+			sandbox:  wall,
+			model:    "test/model",
+			label:    "test-no-fb",
+			card:     card,
+			slotDir:  fixture,
+			root:     fixture,
+			deadline: 30 * time.Second,
+		}
+
+		res, _ := nativeRun(cfg, stderr)
+		if res.wWhy == "" || !strings.Contains(res.wWhy, "no first byte after") {
+			t.Fatalf("expected 'no first byte' why, got %q", res.wWhy)
+		}
+	})
+
+	t.Run("streaming stalled", func(t *testing.T) {
+		jobDir := filepath.Join(fixture, "jobs", "test-stall")
+		defer os.RemoveAll(jobDir)
+
+		stderr := new(bytes.Buffer)
+		fastDeadline(t, jobDir, "NOVA-TIMELINE REQ FIRST-BYTE")
+		card := []byte("FAKE-REQ STALL\n")
+		cfg := nativeRunConfig{
+			binary:   bin,
+			sandbox:  wall,
+			model:    "test/model",
+			label:    "test-stall",
+			card:     card,
+			slotDir:  fixture,
+			root:     fixture,
+			deadline: 30 * time.Second,
+		}
+
+		res, _ := nativeRun(cfg, stderr)
+		if res.wWhy == "" || !strings.Contains(res.wWhy, "streaming stalled") {
+			t.Fatalf("expected 'streaming stalled' why, got %q", res.wWhy)
+		}
+	})
+	
+	t.Run("model busy", func(t *testing.T) {
+		jobDir := filepath.Join(fixture, "jobs", "test-busy")
+		defer os.RemoveAll(jobDir)
+
+		stderr := new(bytes.Buffer)
+		fastDeadline(t, jobDir, "NOVA-TIMELINE REQ END")
+		card := []byte("FAKE-REQ BUSY\n")
+		cfg := nativeRunConfig{
+			binary:   bin,
+			sandbox:  wall,
+			model:    "test/model",
+			label:    "test-busy",
+			card:     card,
+			slotDir:  fixture,
+			root:     fixture,
+			deadline: 30 * time.Second,
+		}
+
+		res, _ := nativeRun(cfg, stderr)
+		if res.wWhy == "" || !strings.Contains(res.wWhy, "model busy") {
+			t.Fatalf("expected 'model busy' why, got %q", res.wWhy)
+		}
+	})
+}

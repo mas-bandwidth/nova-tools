@@ -172,6 +172,8 @@ type nativeRunResult struct {
 	// -- tokens_in, tokens_out, usd, provider, model -- rather than a second reading of
 	// the provider store that could disagree with the file (nova-tools #2563 item 1).
 	usage swarm.UsageRow
+	wWhy         string
+	reqs         []swarm.TimelineReq
 }
 
 // THE ONE SEAM IN THE IDLE PATH, AND WHY IT HAD TO EXIST.
@@ -1113,6 +1115,20 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// The PROMPT-DEFECT line the card budget owes, carried out to the caller to print after
 	// the NATIVE OK line.
 	res.defect = sampler.Defect()
+	
+	res.reqs = timeline.Reqs()
+	if res.rc == -1 && len(res.reqs) > 0 {
+		last := res.reqs[len(res.reqs)-1]
+		if last.Done.IsZero() {
+			if last.FirstByte.IsZero() {
+				res.wWhy = fmt.Sprintf("no first byte after %.0f s", time.Since(last.Sent).Seconds())
+			} else {
+				res.wWhy = fmt.Sprintf("streaming stalled at %.0f s", time.Since(last.FirstByte).Seconds())
+			}
+		} else {
+			res.wWhy = "model busy after done"
+		}
+	}
 	log.Close()
 	harnessOut.Close()
 	// Issue #591: whether the harness left any record of itself is decided here -- AFTER both

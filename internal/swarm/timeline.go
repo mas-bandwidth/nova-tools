@@ -53,6 +53,18 @@ type TimelineRow struct {
 	InputTokens  string // empty when the harness reported none
 	OutputTokens string
 }
+// TimelineReq is one observed provider request.
+type TimelineReq struct {
+	Provider  string
+	Model     string
+	Sent      time.Time
+	FirstByte time.Time
+	Done      time.Time
+	HTTPCode  string
+	TokensIn  string
+	TokensOut string
+}
+
 
 // phaseOrder is the fixed order the profile line and its summary print their phases.
 var phaseOrder = []string{"clone", "deps", "read", "edit", "test", "retry", "result"}
@@ -65,6 +77,7 @@ type Timeline struct {
 	mu   sync.Mutex
 	buf  []byte
 	rows []TimelineRow
+	reqs []TimelineReq
 	open *timelineSpan
 }
 
@@ -123,8 +136,16 @@ func (t *Timeline) observe(line string) {
 	kind = strings.ToLower(kind)
 	verb = strings.ToUpper(verb)
 	now := time.Now()
-	switch verb {
+		switch verb {
 	case "BEGIN":
+		if kind == "req" {
+			t.reqs = append(t.reqs, TimelineReq{
+				Provider: metaValue(meta, "provider"),
+				Model:    metaValue(meta, "model"),
+				Sent:     now,
+			})
+			return
+		}
 		if t.open != nil {
 			t.close(now, "", "", "")
 		}
@@ -132,7 +153,23 @@ func (t *Timeline) observe(line string) {
 		sp.name = metaValue(meta, "name")
 		sp.cmd = cmdValue(meta)
 		t.open = sp
+	case "FIRST-BYTE":
+		if kind == "req" {
+			if len(t.reqs) > 0 {
+				t.reqs[len(t.reqs)-1].FirstByte = now
+			}
+			return
+		}
 	case "END":
+		if kind == "req" {
+			if len(t.reqs) > 0 {
+				t.reqs[len(t.reqs)-1].Done = now
+				t.reqs[len(t.reqs)-1].HTTPCode = metaValue(meta, "http")
+				t.reqs[len(t.reqs)-1].TokensIn = metaValue(meta, "in")
+				t.reqs[len(t.reqs)-1].TokensOut = metaValue(meta, "out")
+			}
+			return
+		}
 		if t.open == nil {
 			return
 		}
@@ -428,4 +465,13 @@ func phaseOfTool(tool string, sawBuild *bool) string {
 		return "edit"
 	}
 	return ""
+}
+
+// Reqs returns a copy of the provider requests observed so far.
+func (t *Timeline) Reqs() []TimelineReq {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]TimelineReq, len(t.reqs))
+	copy(out, t.reqs)
+	return out
 }
