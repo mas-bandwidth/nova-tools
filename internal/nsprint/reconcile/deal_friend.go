@@ -117,7 +117,11 @@ func (d *FriendDeal) Pass(ctx context.Context, token string) (FriendDealResult, 
 		return res, fmt.Errorf("deal: read: %w", err)
 	}
 	now := clock.Val()
-	streams := streamOrder(order.Val(), names.Val())
+	// A stream a pit stop holds is not dealt from.
+	streams, err := unheld(ctx, c, streamOrder(order.Val(), names.Val()))
+	if err != nil {
+		return res, fmt.Errorf("deal: %w", err)
+	}
 	fs := friends.Val()
 	sort.Strings(fs)
 	bs := benches.Val()

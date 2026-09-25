@@ -52,6 +52,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -424,6 +425,14 @@ func (d *LandDuty) land(ctx context.Context, repo string) ([]LandLine, error) {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
 		}
+		// The worker runs off the reconciler tick, for minutes: it reads the
+		// pit stop afresh before every stream, so a stop set mid-pass builds,
+		// pushes and merges nothing more.
+		if free, err := d.unheld(ctx, s); err != nil {
+			return out, err
+		} else if !free {
+			continue
+		}
 		slug, err := stream.Slug(s)
 		if err != nil {
 			continue
@@ -470,6 +479,18 @@ func (d *LandDuty) land(ctx context.Context, repo string) ([]LandLine, error) {
 		out = append(out, d.landStream(ctx, repo, s, slug, gh, line))
 	}
 	return out, nil
+}
+
+// unheld is whether no pit stop holds the stream now: a fresh
+// pitstop.HeldOpen read (the worker's context outlives the pass that started
+// it, so the pass's holds are stale here).
+func (d *LandDuty) unheld(ctx context.Context, s string) (bool, error) {
+	hs, err := pitstop.HeldOpen(ctx, d.Client)
+	if err != nil {
+		return false, fmt.Errorf("pitstop: %w", err)
+	}
+	_, held := hs.Stream(s)
+	return !held, nil
 }
 
 func (d *LandDuty) base() string {

@@ -247,6 +247,10 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("waiting-resolve: ws:order: %w", err)
 	}
+	// A stream a pit stop holds keeps its waiting tasks where they are.
+	if streams, err = unheld(ctx, c, streams); err != nil {
+		return nil, fmt.Errorf("waiting-resolve: %w", err)
+	}
 	if len(streams) == 0 {
 		return nil, nil
 	}

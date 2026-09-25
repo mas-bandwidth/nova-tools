@@ -205,6 +205,10 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 		Duties:  named.wrap(duties, names),
 		Names:   names,
 		OnError: func(err error) { fmt.Fprintf(errOut, "%s nova-sprint reconcile: pass: %v\n", logStamp(), err) },
+		// The pit stop gates every duty (Glenn 2026-09-25 5:50 PM ET); the
+		// stream-aware ones honour a stream-scoped stop themselves.
+		Out:          out,
+		StreamScoped: reconcileStreamScoped,
 		// Per-duty receipts (#3199): every pass under --once, so the probe
 		// says what each duty did; in the loop only a duty that moved
 		// something or failed, so an idle second prints nothing.
@@ -248,6 +252,12 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	return 0
 }
 
+// reconcileStreamScoped are the duties that skip a pit-stopped stream
+// themselves (internal/nsprint/reconcile unheld): the friend deal,
+// waiting-resolve and the land worker. Every other duty stops for a
+// scope=all stop only.
+var reconcileStreamScoped = map[string]bool{"deal": true, "waiting-resolve": true, "land": true}
+
 // reconcileStopWait bounds how long the verb waits on its way out for the
 // duties' own work to record itself (each harvest pass's line and release).
 var reconcileStopWait = 5 * time.Second
@@ -267,12 +277,17 @@ func stopDuties(out io.Writer, stops []stoppableDuty) {
 
 // report prints one `DUTY <name> <counts> err=<text>` line per duty of the
 // pass just recorded, in duty order; all of them when all is set, else only
-// the duties that moved something or errored.
+// the duties that moved something or errored. A duty the pit stop held did
+// not run and prints no line.
 func (n *namedDuties) report(out io.Writer, all bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	for _, name := range n.names {
-		c, e := n.counts[name], n.last[name]
+		c, ran := n.counts[name]
+		e := n.last[name]
+		if !ran {
+			continue // held by the pit stop: the PITSTOP idle line says so
+		}
 		if !all && c.Zero() && e == "" {
 			continue
 		}
