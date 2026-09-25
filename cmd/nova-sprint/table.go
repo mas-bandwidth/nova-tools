@@ -34,6 +34,7 @@ type tableOpts struct {
 	redis   string
 	sprint  string
 	check   bool
+	live    bool
 	loop    bool
 	every   time.Duration // --loop <seconds>; 1 s when --loop has no number
 	out     string
@@ -57,6 +58,7 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&opts.redis, "redis", "", "")
 	fs.StringVar(&opts.sprint, "sprint", "", "")
 	fs.BoolVar(&opts.check, "check", false, "")
+	fs.BoolVar(&opts.live, "live", false, "")
 	fs.Var(&loopValue{on: &opts.loop, every: &opts.every}, "loop", "")
 	fs.StringVar(&opts.out, "out", "", "")
 	fs.StringVar(&opts.lockKey, "lock", "", "")
@@ -80,6 +82,15 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 		return tableRefuse(stderr, "--friends, --xy-file and --lock belong to --layout live; the wide table takes --out <file>")
 	}
 	if opts.check {
+		if opts.live {
+			if opts.loop || opts.once {
+				return tableRefuse(stderr, "--check --live takes --redis <addr>, --out <file> and [--sprint <name>]")
+			}
+			if opts.out == "" {
+				return tableRefuse(stderr, "--check --live needs --out <file>")
+			}
+			return cmdTableCheckLive(opts.redis, opts.out, opts.sprint, stdout, stderr)
+		}
 		if opts.loop || opts.once || opts.sprint != "" || opts.out != "" {
 			return tableRefuse(stderr, "--check takes only --redis <addr>")
 		}
@@ -172,6 +183,10 @@ func cmdTableCheck(addr string, stdout, stderr io.Writer) int {
 		return tableRefuse(stderr, err.Error())
 	}
 	defer st.Close()
+	// An empty store is seeded with the fixture; a live fleet is refused (#3253).
+	if _, err := table.PrepareCheck(ctx, st.Client()); err != nil {
+		return tableRefuse(stderr, err.Error())
+	}
 	snap, err := table.Read(ctx, st.Client())
 	if err != nil {
 		return tableRefuse(stderr, err.Error())
@@ -187,6 +202,28 @@ func cmdTableCheck(addr string, stdout, stderr io.Writer) int {
 	if body != table.DefectGolden() {
 		return tableRefuse(stderr, "--check: rendered output is not the fixture output")
 	}
+	return 0
+}
+
+// cmdTableCheckLive is --check --live (#3253): the --out file is younger
+// than table.LiveWindow and every cell equals a direct read in the same
+// second; the receipt is one line.
+func cmdTableCheckLive(addr, out, sprint string, stdout, stderr io.Writer) int {
+	if addr == "" {
+		return tableRefuse(stderr, "--check --live needs --redis <addr>")
+	}
+	ctx := context.Background()
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		return tableRefuse(stderr, err.Error())
+	}
+	defer st.Close()
+	receipt, err := table.CheckLive(ctx, st.Client(), out, sprint, time.Now())
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-sprint table %s\n", oneline.Escape(err.Error()))
+		return 1
+	}
+	fmt.Fprintln(stdout, receipt)
 	return 0
 }
 

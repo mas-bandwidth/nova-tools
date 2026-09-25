@@ -85,6 +85,30 @@ func TestWorkerCheckAMissingHarnessNamesTheField(t *testing.T) {
 	}
 }
 
+// `worker check --help` is a help request, not an unknown flag: it answers the same
+// `flag: help requested` refusal every other verb hands back, at exit 2 (#3525).
+func TestWorkerHelpMatchesOtherVerbs(t *testing.T) {
+	var otherOut, otherErr bytes.Buffer
+	if code := run([]string{"status", "--help"}, strings.NewReader(""), &otherOut, &otherErr, time.Now().UTC()); code != 2 {
+		t.Fatalf("status --help: exit %d, want 2", code)
+	}
+	var out, errb bytes.Buffer
+	code := run([]string{"worker", "check", "--help"}, strings.NewReader(""), &out, &errb, time.Now().UTC())
+	if code != 2 {
+		t.Fatalf("worker check --help: exit %d, want 2\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	if out.Len() != 0 {
+		t.Errorf("worker check --help: a refusal belongs on stderr, got stdout %q", out.String())
+	}
+	want := strings.Replace(otherErr.String(), "nova-swarm status:", "nova-swarm worker:", 1)
+	if got := errb.String(); got != want {
+		t.Errorf("worker check --help: got %q, want the shape every other verb gives, %q", got, want)
+	}
+	if strings.Contains(errb.String(), "unknown flag") {
+		t.Errorf("worker check --help: --help is a help request, not an unknown flag: %q", errb.String())
+	}
+}
+
 // A secret the environment does not hold is named by its variable, and no value leaks.
 func TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue(t *testing.T) {
 	const name = "NOVA_CARD8385_ABSENT_SECRET"

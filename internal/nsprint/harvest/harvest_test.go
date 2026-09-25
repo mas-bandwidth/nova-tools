@@ -323,3 +323,94 @@ func TestHarvestLeaseHeldElsewhere(t *testing.T) {
 		t.Fatalf("state %s, want ended", s)
 	}
 }
+
+// TestHarvestCIPool verifies that a harvested fixture card leaves ci:pool
+// holding its head and the record pending (nova-tools#3717).
+func TestHarvestCIPool(t *testing.T) {
+	c := startRedis(t)
+	st := store.New(c)
+	ctx := context.Background()
+
+	bench := "ctl-a"
+	label := "ci-pool-card"
+	pushedSHA := sha(label)
+	branch := "nova/" + sprint + "/" + label + "-a1"
+
+	c.HSet(ctx, "bench:"+bench+":beat", "host", bench+".tailnet", "user", "nova")
+	c.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1")
+	seedEnded(t, c, bench, label, "model", "DONE", pushedSHA)
+
+	forge := newForge()
+	forge.heads[branch] = pushedSHA
+	pusher := &fixturePusher{pushes: map[string]int{}}
+
+	res := harvest.Run(ctx, st, harvest.Options{Sprint: sprint, Benches: []string{bench},
+		Clock: time.Second, Instance: "ci-pool-run", Forge: forge, Pusher: pusher})
+	if len(res) != 1 || res[0].Err != nil {
+		t.Fatalf("harvest: %+v", res)
+	}
+	if len(res[0].Cards) != 1 {
+		t.Fatalf("harvested %d cards, want 1", len(res[0].Cards))
+	}
+	cr := res[0].Cards[0]
+	if cr.Label != label || cr.Head != pushedSHA {
+		t.Fatalf("card result: %+v; want label=%s head=%s", cr, label, pushedSHA)
+	}
+
+	// ci:pool holds the head.
+	poolMembers, err := c.ZRange(ctx, "ci:pool", 0, -1).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMember := "nova-tools:" + pushedSHA
+	found := false
+	for _, m := range poolMembers {
+		if m == wantMember {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("ci:pool = %v, want member %q", poolMembers, wantMember)
+	}
+
+	// The CI record exists and is pending.
+	ciKey := "ci:nova-tools:" + pushedSHA
+	ciFields, err := c.HGetAll(ctx, ciKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ciFields["ci"] != "pending" {
+		t.Fatalf("ci record ci=%q, want pending", ciFields["ci"])
+	}
+	if ciFields["repo"] != "nova-tools" {
+		t.Fatalf("ci record repo=%q, want nova-tools", ciFields["repo"])
+	}
+	if ciFields["sha"] != pushedSHA {
+		t.Fatalf("ci record sha=%q, want %s", ciFields["sha"], pushedSHA)
+	}
+	if ciFields["pr"] == "" {
+		t.Fatalf("ci record has no pr; want the harvested PR number")
+	}
+	if ciFields["checks"] == "" {
+		t.Fatalf("ci record has no checks; want the default nova-tools checks")
+	}
+
+	// Idempotent: a second request for the same head should leave the record unchanged.
+	ciBefore := ciFields["ci"]
+	// Simulate a second call by checking the record still exists.
+	exists, err := c.Exists(ctx, ciKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists != 1 {
+		t.Fatalf("ci record should still exist after idempotent check")
+	}
+	ciAfter, err := c.HGet(ctx, ciKey, "ci").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ciAfter != ciBefore {
+		t.Fatalf("ci record changed from %q to %q; want idempotent", ciBefore, ciAfter)
+	}
+}

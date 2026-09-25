@@ -52,6 +52,22 @@ do
     return 'nova/' .. S .. '/' .. label .. '-a' .. attempt
   end
 
+  -- cr_split: 'a,b,c' -> {'a','b','c'}; empty items dropped.
+  local function cr_split(s)
+    local out = {}
+    for item in string.gmatch(s or '', '[^,]+') do
+      if item ~= '' then out[#out + 1] = item end
+    end
+    return out
+  end
+
+  -- cr_hget: HGET that returns '' on nil.
+  local function cr_hget(key, field)
+    local v = redis.call('HGET', key, field)
+    if not v then return '' end
+    return tostring(v)
+  end
+
   local function hv_lease_ok(bench, instance, token)
     local key = 'lease:harvest:' .. bench
     return instance ~= '' and token ~= ''
@@ -375,6 +391,36 @@ do
     redis.call('XADD', 's:' .. S .. ':log', '*',
       'kind', 'pr head', 'repo', repo, 'pr', pr, 'head', head,
       'prev', '', 'source', 'harvest', 'at', at)
+    -- The CI request for this head, idempotent on the sha (nova-tools#3717):
+    -- if ci:<repo>:<head> already exists, nothing is written; otherwise the
+    -- record is created with ci=pending and the member is added to ci:pool.
+    local ci_key = 'ci:' .. repo .. ':' .. head
+    if redis.call('EXISTS', ci_key) == 0 then
+      local declared = redis.call('HGET', 'cfg:ci:' .. repo, 'checks')
+      if declared == '' then
+        -- defaults from internal/nsprint/ci/run.go Defaults
+        if repo == 'nova-tools' then
+          redis.call('HSET', 'cfg:ci:' .. repo, 'checks', 'go-build,go-vet,go-test-cmd,go-test-internal,internal-ci',
+            'cmd:go-build', 'go build ./...', 'cmd:go-vet', 'go vet ./...',
+            'cmd:go-test-cmd', 'go test -count=1 ./cmd/...', 'cmd:go-test-internal', 'go test -count=1 ./internal/...',
+            'cmd:internal-ci', 'go test -count=1 ./internal/ci/...')
+        elseif repo == 'rowan-tools' then
+          redis.call('HSET', 'cfg:ci:' .. repo, 'checks', 'shellcheck,bats',
+            'cmd:shellcheck', 'shellcheck -S warning bin', 'cmd:bats', 'bats tests')
+        end
+      end
+      redis.call('HSET', ci_key, 'repo', repo, 'sha', head, 'pr', pr, 'url', '',
+        'checks', redis.call('HGET', 'cfg:ci:' .. repo, 'checks') or 'go-build,go-vet,go-test-cmd,go-test-internal,internal-ci',
+        'requested_at', tostring(at), 'ci', 'pending',
+        'attempt', '0', 'bench', '', 'token', '', 'lease_until', '0', 'claimed_at', '0', 'ended_at', '0')
+      local checks = redis.call('HGET', 'cfg:ci:' .. repo, 'checks')
+      if checks == '' then checks = 'go-build,go-vet,go-test-cmd,go-test-internal,internal-ci' end
+      for _, name in ipairs(cr_split(checks)) do
+        local cmd = redis.call('HGET', 'cfg:ci:' .. repo, 'cmd:' .. name)
+        if cmd ~= '' then redis.call('HSET', ci_key, 'cmd:' .. name, cmd) end
+      end
+      redis.call('ZADD', 'ci:pool', at, repo .. ':' .. head)
+    end
     return 'OK|' .. receipt
   end)
 

@@ -10,7 +10,7 @@ import (
 // The #3530 fixture: a whole-table keyspace of 10 streams, 6 benches and 4
 // friends, every stamp relative to SprintFixtureNow so the golden holds at
 // that instant. It exercises every rule the render applies: two all-zero
-// streams hidden, ready in its own column, landed moves in and out of the
+// streams hidden, ready and reading in their own columns, landed moves in and out of the
 // ETA's hour, a bench outside the benches SET (studio) not shown, a friend with a down flag, a friend whose beat is
 // stale, a friend with no row, and a done base from a clear. Host rows are
 // each bench's own keys (#2389): its card views and its beat; the bash
@@ -31,18 +31,24 @@ func SprintFixtureConfig() SprintConfig {
 }
 
 // SprintFixtureStreams are the fixture's streams in rank order with their
-// waiting, ready, working, merging and landed counts.
-var SprintFixtureStreams = []StreamRow{
-	{"swarm: cards", 150, 5, 6, 0, 0},
-	{"nova-sprint + merge + bus", 310, 6, 0, 1, 2},
-	{"nova sprint migration", 14, 0, 0, 0, 0},
-	{"fleet, ci, secrets, jev", 0, 0, 2, 0, 1},
-	{"redis: store + bus", 81, 0, 0, 0, 0},
-	{"nova-work", 0, 0, 0, 0, 0},
-	{"landing: streams + lander", 3, 0, 0, 2, 0},
-	{"docs", 0, 0, 0, 0, 0},
-	{"rowan-tools", 1, 0, 0, 0, 3},
-	{"harvest", 0, 4, 0, 0, 0},
+// waiting, ready, working, reading, merging and landed counts.
+var SprintFixtureStreams = []FixtureStream{
+	{"swarm: cards", 150, 5, 6, 0, 0, 0},
+	{"nova-sprint + merge + bus", 310, 6, 0, 2, 1, 2},
+	{"nova sprint migration", 14, 0, 0, 0, 0, 0},
+	{"fleet, ci, secrets, jev", 0, 0, 2, 1, 0, 1},
+	{"redis: store + bus", 81, 0, 0, 0, 0, 0},
+	{"nova-work", 0, 0, 0, 0, 0, 0},
+	{"landing: streams + lander", 3, 0, 0, 0, 2, 0},
+	{"docs", 0, 0, 0, 0, 0, 0},
+	{"rowan-tools", 1, 0, 0, 0, 0, 3},
+	{"harvest", 0, 4, 0, 0, 0, 0},
+}
+
+// FixtureStream is one fixture stream's six set sizes, in WSStates order.
+type FixtureStream struct {
+	Name                                              string
+	Waiting, Ready, Working, Reading, Merging, Landed int64
 }
 
 // SprintFixture is the keyspace as Redis commands.
@@ -53,7 +59,7 @@ func SprintFixture() [][]string {
 	var cmds [][]string
 	for i, s := range SprintFixtureStreams {
 		cmds = append(cmds, []string{"ZADD", "ws:order", strconv.Itoa(i + 1), s.Name})
-		counts := []int64{s.Waiting, s.Ready, s.Working, s.Merging, s.Landed}
+		counts := []int64{s.Waiting, s.Ready, s.Working, s.Reading, s.Merging, s.Landed}
 		for j, state := range WSStates {
 			for k := int64(0); k < counts[j]; k++ {
 				id := fmt.Sprintf("t%d-%s-%d", i+1, state, k)
@@ -79,20 +85,23 @@ func SprintFixture() [][]string {
 	}
 	cmds = append(cmds, []string{"SET", "s:fix:pitstop", "fixture"})
 	// Benches: six in the SET; studio has a fresh beat and cards but is not
-	// in it. Each bench's ready and working are its card views, its load its
+	// in it. Each bench's ready and working are its card views, its ok and
+	// fail its ended cards since s:fix opened (#3894; every bench also has
+	// one ok card from before the open, which never counts), its load its
 	// beat; the bash hash bench:<b> says 9/9/9.99 and must not show.
+	cmds = append(cmds, []string{"HSET", "s:fix", "status", "open", "opened_at", ms(-3 * time.Hour)})
 	for _, b := range []struct {
-		name           string
-		ready, working int
-		load           string
+		name                     string
+		ready, working, ok, fail int
+		load                     string
 	}{
-		{"batman", 0, 0, "0.89"},
-		{"hetzner", 2, 3, "0.19"},
-		{"hulk", 7, 0, "0.40"},
-		{"space", 1, 4, "1.04"},
-		{"superman", 0, 1, "1.02"},
-		{"vision", 0, 0, "0.72"},
-		{"studio", 9, 9, "3.00"},
+		{"batman", 0, 0, 0, 0, "0.89"},
+		{"hetzner", 2, 3, 3, 1, "0.19"},
+		{"hulk", 7, 0, 2, 0, "0.40"},
+		{"space", 1, 4, 1, 2, "1.04"},
+		{"superman", 0, 1, 0, 1, "1.02"},
+		{"vision", 0, 0, 0, 0, "0.72"},
+		{"studio", 9, 9, 9, 9, "3.00"},
 	} {
 		if b.name != "studio" {
 			cmds = append(cmds, []string{"SADD", "benches", b.name})
@@ -105,6 +114,13 @@ func SprintFixture() [][]string {
 		for k := 0; k < b.working; k++ {
 			cmds = append(cmds, []string{"ZADD", "bench:" + b.name + ":cards:working", strconv.Itoa(k + 1), fmt.Sprintf("card:%s-w%d", b.name, k)})
 		}
+		for k := 0; k < b.ok; k++ {
+			cmds = append(cmds, []string{"ZADD", "bench:" + b.name + ":cards:ok", ms(-time.Duration(k+1) * time.Minute), fmt.Sprintf("card:%s-ok%d", b.name, k)})
+		}
+		for k := 0; k < b.fail; k++ {
+			cmds = append(cmds, []string{"ZADD", "bench:" + b.name + ":cards:fail", ms(-time.Duration(k+1) * time.Minute), fmt.Sprintf("card:%s-fail%d", b.name, k)})
+		}
+		cmds = append(cmds, []string{"ZADD", "bench:" + b.name + ":cards:ok", ms(-4 * time.Hour), "card:" + b.name + "-before-open"})
 	}
 	// Friends: rowan up (done 14, 10 at the last clear), johnny down flag,
 	// emma up, stella's beat 30 s old; the friends SET also names ghost,
@@ -135,12 +151,15 @@ func SprintFixture() [][]string {
 }
 
 // FriendCards is n[i] task ids in friend:<name>:cards:<FriendWheres[i]>, as
-// ZADD commands scored by age.
+// ZADD commands scored by age: created_at from two hours before the fixture's
+// now, after s:fix opened (#3894), so the done column counts every one.
 func FriendCards(name string, n [3]int) [][]string {
 	var cmds [][]string
+	start := SprintFixtureNow().Add(-2 * time.Hour)
 	for i, w := range FriendWheres {
 		for k := 0; k < n[i]; k++ {
-			cmds = append(cmds, []string{"ZADD", FriendCardsKey(name, w), strconv.Itoa(k + 1), fmt.Sprintf("%s-%s-%d", name, w, k)})
+			score := strconv.FormatInt(start.Add(time.Duration(k+1)*time.Second).UnixMilli(), 10)
+			cmds = append(cmds, []string{"ZADD", FriendCardsKey(name, w), score, fmt.Sprintf("%s-%s-%d", name, w, k)})
 		}
 	}
 	return cmds

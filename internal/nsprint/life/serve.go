@@ -27,6 +27,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nogh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/brief"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -134,6 +135,9 @@ type ServeConfig struct {
 	Actor string
 	// Env is appended to the child's environment after the ServeEnv* values.
 	Env []string
+	// Mirror is the git mirror a read task's diff comes from; empty is the
+	// bench mirror of the task's repo (~/nova-bench/mirror/<repo>.git).
+	Mirror string
 	// Out receives one line per event; nil discards.
 	Out io.Writer
 	// Logins are `--login` aliases (#3797): written to friends:login once on
@@ -526,8 +530,11 @@ func (s *Server) start(ctx context.Context, c task.Claim) error {
 
 // writeBrief renders the task's brief through the one producer (brief.Render)
 // and, when render refuses the record (a kind without a template, a title
-// without PATHS), writes the record itself so the child is still pointed at
-// the work; the receipt says which.
+// without PATHS), gives a read task the read brief from Redis and the mirror
+// (read.BriefTask: the PR record, lines and CI, and the diff saved beside the
+// brief, zero GitHub calls, nova-tools#3599); anything else, or a read the
+// mirror cannot brief yet, gets the record itself so the child is still
+// pointed at the work; the receipt says which.
 func (s *Server) writeBrief(ctx context.Context, ch *child, fields map[string]string) error {
 	var stdout, stderr bytes.Buffer
 	if code := brief.Render(ctx, s.st, ch.claim.Sprint+"/"+ch.claim.ID, ch.brief, &stdout, &stderr); code == 0 {
@@ -535,6 +542,23 @@ func (s *Server) writeBrief(ctx context.Context, ch *child, fields map[string]st
 		return nil
 	} else if code == 2 {
 		return fmt.Errorf("brief render: %s", strings.TrimSpace(stderr.String()))
+	}
+	if isReview(ch.kind) && filepath.Base(ch.brief) == "brief.md" {
+		var rout, rerr bytes.Buffer
+		rf := fields
+		if rf["kind"] == "" {
+			rf = make(map[string]string, len(fields)+1)
+			for k, v := range fields {
+				rf[k] = v
+			}
+			rf["kind"] = ch.kind
+		}
+		if read.BriefTask(ctx, s.st.Client(), ch.claim.ID, rf, s.cfg.Mirror, filepath.Dir(ch.brief), &rout, &rerr) == 0 {
+			ch.briefSrc = "read"
+			return nil
+		}
+		stderr.Reset()
+		stderr.WriteString(strings.TrimSpace(rerr.String()))
 	}
 	ch.briefSrc = "record"
 	var b strings.Builder
