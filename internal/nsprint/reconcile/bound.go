@@ -100,8 +100,10 @@ func (s *boundSession) Run(ctx context.Context, stdin []byte) error {
 	preExec := errors.As(err, &se) && (se.State == deal.SSHTimeout || se.State == deal.SSHRefused)
 	switch {
 	case preExec && se.State == deal.SSHTimeout:
-		// The sshd accepted and never finished the banner or key exchange.
-		why := fmt.Sprintf("sshd sent no banner inside the lease budget %s (lease deadline less %s): %s",
+		// The sshd accepted and never finished the banner or key exchange,
+		// or the ssh child was killed at the budget with no start line back
+		// from the remote verb (ssh.go, #3322).
+		why := fmt.Sprintf("no start line inside the lease budget %s (lease deadline less %s): %s",
 			budget.Round(time.Millisecond), s.d.margin(), firstLine(se.Stderr))
 		out := s.wedged(why)
 		out.Exit = se.Exit

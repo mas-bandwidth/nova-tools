@@ -29,9 +29,17 @@ const DefaultRemote = "exec bash -lc 'exec nova-sprint card launch --stdin'"
 // row reads refused or timeout inside it, well within the 10 s of control 12.
 const DefaultConnectTimeout = 5 * time.Second
 
-// DefaultRunTimeout bounds the whole session. The launch verb returns within
-// 5 s (#2931); a session still open after this is an error, not a card.
+// DefaultRunTimeout is the session's hard deadline. The launch verb returns
+// within 5 s (#2931); an ssh child still running at the deadline (or when the
+// lease bound cuts its context first, #3322) is killed with its whole process
+// group, and the row reads timeout when no start line came back from the
+// remote verb, error when one did.
 const DefaultRunTimeout = 30 * time.Second
+
+// DefaultKillGrace is how long Run waits for the killed child's pipes to
+// close before it gives up on them: a grandchild that kept stderr open after
+// the group kill missed it cannot hold the pass.
+const DefaultKillGrace = 2 * time.Second
 
 // Session is one ssh session to a bench carrying one batch on stdin.
 type Session interface {
@@ -160,12 +168,20 @@ func (s *remoteSession) Run(ctx context.Context, stdin []byte) error {
 		s.bench.Target(), command,
 	}
 	testguard.RefuseHosts(program, args...)
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, run)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Stdin = bytes.NewReader(stdin)
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	// The hard deadline: when the context ends (the run timeout, or the lease
+	// bound cutting it first) the child's whole process group is killed, and
+	// the pipes are given DefaultKillGrace before Wait stops waiting on them.
+	ownGroup(cmd)
+	cmd.Cancel = func() error { return killGroup(cmd) }
+	cmd.WaitDelay = DefaultKillGrace
 	err := cmd.Run()
 	if err == nil {
 		return nil
@@ -176,9 +192,45 @@ func (s *remoteSession) Run(ctx context.Context, stdin []byte) error {
 		exit = ee.ExitCode()
 	}
 	if ctx.Err() != nil {
-		return &SessionError{Bench: s.bench.Name, State: SSHError, Exit: exit, Stderr: "session exceeded " + run.String() + "; " + stderr.String()}
+		// Killed at the deadline. The remote verb prints one line per card
+		// it starts (LAUNCHED, REFUSED, and its LAUNCH summary), so a
+		// session with no such line on stdout never reached it: timeout,
+		// and the batch goes back to the pool (a late child presenting the
+		// cleared token is refused). Other output is not evidence: the
+		// login shell's profile prints whatever it likes before the verb
+		// runs. A line the verb wrote means the batch may be launching:
+		// error, and the batch stays dealt for the start-ack rule (#2756
+		// 3.2).
+		took := time.Since(start).Round(time.Millisecond)
+		if !LaunchAcked(stdout.String()) {
+			return &SessionError{Bench: s.bench.Name, State: SSHTimeout, Exit: exit,
+				Stderr: fmt.Sprintf("ssh killed at the deadline after %s with no start line from the remote verb (%d bytes of other output); %s", took, stdout.Len(), firstLine(stderr.String()))}
+		}
+		return &SessionError{Bench: s.bench.Name, State: SSHError, Exit: exit,
+			Stderr: fmt.Sprintf("ssh killed at the deadline after %s after the remote verb acked a start; %s", took, firstLine(stderr.String()))}
 	}
 	return &SessionError{Bench: s.bench.Name, State: Classify(exit, stderr.String()), Exit: exit, Stderr: stderr.String()}
+}
+
+// launchAckPrefixes are the lines `card launch --stdin` writes on stdout
+// (internal/nsprint/launch): one per card started or refused, and the batch
+// summary. Any one of them is the remote verb's own voice; nothing else on
+// stdout (a login profile's banner, a motd) is.
+var launchAckPrefixes = []string{"LAUNCHED ", "REFUSED ", "LAUNCH "}
+
+// LaunchAcked reports whether the remote verb wrote at least one of its
+// lines to stdout: the batch reached `card launch --stdin`. A session killed
+// at its deadline without one never started a card (#3322).
+func LaunchAcked(stdout string) bool {
+	for _, line := range strings.Split(stdout, "\n") {
+		line = strings.TrimSpace(line)
+		for _, p := range launchAckPrefixes {
+			if strings.HasPrefix(line, p) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // preExec are OpenSSH client messages that mean the session never reached the

@@ -1,10 +1,21 @@
 -- Fleet presence and state machine (#2046 rev 3).
 --
 -- Global keys:
---   bench:<b>:state   hash (state, since, misses, oks, build, reason, at), no TTL
+--   bench:<b>:state   hash (state, since, misses, oks, build, reason, at,
+--                     ssh_held: the ssh timeouts count the step last held
+--                     the bench at, #3322), no TTL
 --   bench:<b>:hold    hash (by, why, at), no TTL
---   cfg:fleet         hash (down_after, up_after, at), no TTL
+--   cfg:fleet         hash (down_after, up_after, ssh_fail_after, at), no TTL
 --   cap:log           stream for fleet-state changes
+--
+-- The ssh hold (#3322): the deal pass counts a bench's consecutive ssh
+-- timeouts on its own cell, bench:<b>:ssh timeouts (deal.lua, its one
+-- writer; an ok session clears it). This file, the one writer of
+-- bench:<b>:state, reads that count at every step: an UP bench with
+-- ssh_fail_after (default 3) timeouts since it was last held goes PROBING
+-- with the reason on it, ns_card_deal refuses it, and up_after beats earn UP
+-- again; ssh_held remembers the count the hold was taken at, so one hold is
+-- one flip and the next needs ssh_fail_after fresh timeouts.
 
 local function fl_now_ms()
   local t = redis.call('TIME')
@@ -17,12 +28,14 @@ local function fl_caplog(kind, subject, reason, actor, idem, at)
     'actor', actor or '', 'idem', idem or '', 'at', tostring(at))
 end
 
--- ns_fleet_config([down_after, up_after])
--- Reads or updates cfg:fleet. Refuses N < 1 with error.
+-- ns_fleet_config([down_after, up_after, ssh_fail_after])
+-- Reads or updates cfg:fleet. Refuses N < 1 with error. Returns OK
+-- <down_after> <up_after> <ssh_fail_after>.
 local function fleet_config(keys, args)
-  local cur = redis.call('HMGET', 'cfg:fleet', 'down_after', 'up_after')
+  local cur = redis.call('HMGET', 'cfg:fleet', 'down_after', 'up_after', 'ssh_fail_after')
   local down_after = tonumber(cur[1]) or 30
   local up_after = tonumber(cur[2]) or 10
+  local ssh_fail_after = tonumber(cur[3]) or 3
   local changed = false
 
   if args[1] and args[1] ~= '' then
@@ -43,15 +56,25 @@ local function fleet_config(keys, args)
     changed = true
   end
 
+  if args[3] and args[3] ~= '' then
+    local f = tonumber(args[3])
+    if not f or f < 1 then
+      return redis.error_reply('ssh_fail_after must be >= 1')
+    end
+    ssh_fail_after = f
+    changed = true
+  end
+
   if changed then
     local at = fl_now_ms()
     redis.call('HSET', 'cfg:fleet',
       'down_after', tostring(down_after),
       'up_after', tostring(up_after),
+      'ssh_fail_after', tostring(ssh_fail_after),
       'at', tostring(at))
   end
 
-  return { 'OK', tostring(down_after), tostring(up_after) }
+  return { 'OK', tostring(down_after), tostring(up_after), tostring(ssh_fail_after) }
 end
 
 -- ns_fleet_hold(bench, why, by)
@@ -159,12 +182,30 @@ local function fleet_read(keys, args)
   return out
 end
 
+-- fl_ssh_hold reads whether an UP bench's consecutive ssh timeouts (its
+-- bench:<b>:ssh cell, the deal pass's) since it was last held reach
+-- ssh_fail_after. It returns the reason to hold it with and the count to
+-- remember, or nil.
+local function fl_ssh_hold(b, ssh_fail_after, cur_held)
+  local ssh = redis.call('HMGET', 'bench:' .. b .. ':ssh', 'timeouts', 'why')
+  local timeouts = tonumber(ssh[1]) or 0
+  local held = cur_held
+  if timeouts < held then
+    held = 0
+  end
+  if timeouts - held < ssh_fail_after then
+    return nil, held
+  end
+  return 'ssh timeout ' .. tostring(timeouts) .. ' of ' .. tostring(ssh_fail_after) .. ': ' .. (ssh[2] or ''), timeouts
+end
+
 -- ns_fleet_step([bench...])
 -- Evaluates UP/DOWN/PROBING/HELD for all benches (or passed benches).
 local function fleet_step(keys, args)
-  local cfg = redis.call('HMGET', 'cfg:fleet', 'down_after', 'up_after')
+  local cfg = redis.call('HMGET', 'cfg:fleet', 'down_after', 'up_after', 'ssh_fail_after')
   local down_after = tonumber(cfg[1]) or 30
   local up_after = tonumber(cfg[2]) or 10
+  local ssh_fail_after = tonumber(cfg[3]) or 3
   local at = fl_now_ms()
 
   local benches = {}
@@ -186,13 +227,14 @@ local function fleet_step(keys, args)
       beat_build = redis.call('HGET', 'bench:' .. b .. ':beat', 'build') or ''
     end
 
-    local cur = redis.call('HMGET', 'bench:' .. b .. ':state', 'state', 'since', 'misses', 'oks', 'build', 'reason')
+    local cur = redis.call('HMGET', 'bench:' .. b .. ':state', 'state', 'since', 'misses', 'oks', 'build', 'reason', 'ssh_held')
     local cur_state = cur[1]
     local cur_since = cur[2]
     local cur_misses = tonumber(cur[3]) or 0
     local cur_oks = tonumber(cur[4]) or 0
     local cur_build = cur[5] or ''
     local cur_reason = cur[6] or ''
+    local ssh_held = tonumber(cur[7]) or 0
 
     local new_state, new_oks, new_misses, new_since, new_build, new_reason
 
@@ -247,12 +289,24 @@ local function fleet_step(keys, args)
       end
     elseif cur_state == 'UP' then
       if has_beat then
-        new_state = 'UP'
-        new_misses = 0
-        new_oks = cur_oks + 1
-        new_since = (cur_since and cur_since ~= '') and cur_since or tostring(at)
+        local hold_why, held = fl_ssh_hold(b, ssh_fail_after, ssh_held)
+        ssh_held = held
         new_build = beat_build ~= '' and beat_build or cur_build
-        new_reason = cur_reason
+        if hold_why then
+          -- The deal pass's ssh timeouts reached ssh_fail_after (#3322):
+          -- hold the bench out of the deal until up_after beats earn UP.
+          new_state = 'PROBING'
+          new_misses = 0
+          new_oks = 0
+          new_since = tostring(at)
+          new_reason = hold_why
+        else
+          new_state = 'UP'
+          new_misses = 0
+          new_oks = cur_oks + 1
+          new_since = (cur_since and cur_since ~= '') and cur_since or tostring(at)
+          new_reason = cur_reason
+        end
       else
         new_misses = cur_misses + 1
         new_oks = cur_oks
@@ -285,6 +339,7 @@ local function fleet_step(keys, args)
       'oks', tostring(new_oks),
       'build', new_build,
       'reason', new_reason,
+      'ssh_held', tostring(ssh_held),
       'at', tostring(at))
 
     if cur_state and cur_state ~= '' and cur_state ~= new_state then
