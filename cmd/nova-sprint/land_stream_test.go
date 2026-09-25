@@ -316,12 +316,13 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if log, _ := c.XLen(ctx, "ws:log").Result(); log != 7 { // park, the landing, five lands
 		t.Fatalf("ws:log %d", log)
 	}
-	// The table reads the sets: the stream's landed cell is 2.
+	// The table reads the sets: the stream's landed cell is 2 (merging is
+	// <read>/<unread> from the records, no reading set, #3900).
 	snap, err := table.NewSprintReader(c, table.SprintConfig{Friends: []string{"rowan"}}).Read(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := snap.Render(time.Now()); !strings.Contains(got, fmt.Sprintf("%-30s | %7d | %5d | %7d | %7d | %7d | %6d\n", lsStream, 0, 0, 1, 0, 0, 2)) {
+	if got := snap.Render(time.Now()); !strings.Contains(got, fmt.Sprintf("%-30s | %7d | %5d | %7d | %7d | %7s | %6d\n", lsStream, 0, 0, 1, 0, "0/0", 2)) {
 		t.Fatalf("table:\n%s", got)
 	}
 	// A re-run is ALREADY and closes nothing twice.

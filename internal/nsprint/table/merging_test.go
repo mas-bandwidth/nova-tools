@@ -125,11 +125,11 @@ func TestMergingCellShowsReadUnreadAndLandLines(t *testing.T) {
 		t.Fatalf("ReadSplit = %d/%d ok=%v, want 12/7", read, unread, ok)
 	}
 	out := snap.Render(now)
-	row := fmt.Sprintf("%-30s | %7d | %5d | %7d | %7s | %6d\n", mergeStream, 0, 0, 0, "12/7", 0)
+	row := fmt.Sprintf("%-30s | %7d | %5d | %7d | %7d | %7s | %6d\n", mergeStream, 0, 0, 0, 0, "12/7", 0)
 	if !strings.Contains(out, row) {
 		t.Fatalf("no merging row %q in\n%s", row, out)
 	}
-	if !strings.Contains(out, "\ntotal                          |       0 |     0 |       0 |    12/7 |      0\n") {
+	if !strings.Contains(out, "\ntotal                          |       0 |     0 |       0 |       0 |    12/7 |      0\n") {
 		t.Fatalf("total row does not carry 12/7:\n%s", out)
 	}
 	land := `LAND stream="nova-sprint + merge + bus" members=12 head=01234567 ci=pending age=6m` + "\n"
@@ -139,15 +139,17 @@ func TestMergingCellShowsReadUnreadAndLandLines(t *testing.T) {
 	if n := strings.Count(out, "LAND "); n != 1 {
 		t.Fatalf("%d LAND lines, want 1 (the merged landing prints nothing):\n%s", n, out)
 	}
-	if strings.Contains(out, "reading") {
-		t.Fatalf("no reading set yet, but a reading column:\n%s", out)
+	// The reading column is always there (#3929); with no reading set it is
+	// 0 and the split still comes from the records.
+	if snap.ReadSource != table.ReadFromRecords {
+		t.Fatalf("no reading set yet, but ReadSource = %q, want %q", snap.ReadSource, table.ReadFromRecords)
 	}
 }
 
 // TestReadingSetIsTheSameSplitsOtherSource (#3900 x #3929): once a
 // ws:<s>:reading set holds cards, ReadSplit answers from the sets (reading =
-// unread, merging = read) and the table prints reading as its own column,
-// and keeps it on a later tick when the set is empty again.
+// unread, merging = read, merging no longer <read>/<unread>), and keeps that
+// source on a later tick when the set is empty again.
 func TestReadingSetIsTheSameSplitsOtherSource(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -184,8 +186,8 @@ func TestReadingSetIsTheSameSplitsOtherSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out := snap.Render(now); !strings.Contains(out, "| reading | merging |") {
-		t.Fatalf("the reading column went away with an empty set:\n%s", out)
+	if out := snap.Render(now); !strings.Contains(out, "| reading | merging |") || snap.ReadSource != table.ReadFromSet {
+		t.Fatalf("the split went back to the records with an empty set (ReadSource %q):\n%s", snap.ReadSource, out)
 	}
 }
 
