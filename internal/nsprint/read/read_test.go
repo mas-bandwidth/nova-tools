@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
@@ -86,11 +86,15 @@ func seedRecord(t *testing.T, c *redis.Client, base, head string) {
 	}
 }
 
+// client is a throwaway redis-server with the nova_sprint library loaded: a
+// SCORE or CLOSE post is one library call (ns_read_post).
 func client(t *testing.T) *redis.Client {
 	t.Helper()
-	mr := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	c := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})
 	t.Cleanup(func() { _ = c.Close() })
+	if err := fn.Load(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
 	return c
 }
 

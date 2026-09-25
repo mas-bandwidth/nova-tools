@@ -3,15 +3,17 @@
 // Redis. Members of one work stream land oldest first onto one stream branch
 // off the base, the batch is tested once, a red batch is bisected to the one
 // member that turns it red and that member is parked, ONE stream PR goes to
-// the base, and on green CI it merges and every member moves from merging to
-// landed in one Lua call.
+// the base, and on green CI it merges: every task naming a member PR or an
+// issue it closes moves to landed with the member's CLOSE line on its record,
+// one fenced nova_sprint call per member (ns_land_member, nova-tools#3779).
 //
 // Keys (specs/ws-index.md in rowan-new for the ws sets; the rest here):
 //
 //	pr:<name>:<n>          hash  repo, n, head, base, base_sha, state (open|parked|landed|merged|closed),
 //	                             ci (pending|green|red), mergeable (true|false|""), stream, task, kind,
 //	                             reads (typed SCORE/DISPOSITION/HOLD lines, newline-joined),
-//	                             created_at, updated_at; park, landed_with, close, closed_at on moves
+//	                             created_at, updated_at; closes (issues the body closes, "-" none);
+//	                             park, landed_with, close, closed_at on moves
 //	land:<repo>:<slug>     hash  streams, slug, base, base_sha, branch, head, members (<n>@<head> ...),
 //	                             tasks (ids, same order), parked (<n>:<why> ...), pr, state
 //	                             (conflict|base-red|empty|pushed|open|merged), tests, at, workdir
@@ -19,8 +21,9 @@
 //	cfg:land               hash  min_score, min_score:<repo>, remote:<repo>
 //	cfg:land:test:<repo>   string the repo's batch test command (bash -c)
 //
-// Every write goes through land_stream.lua (one EVAL, atomic). Reads are
-// pipelined: one round trip per batch, never a SCAN.
+// Every write goes through land_stream.lua (one EVAL, atomic) or, for a
+// member's task moves, the nova_sprint library. Reads are pipelined: one
+// round trip per batch, never a SCAN.
 package stream
 
 import (
@@ -29,6 +32,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -114,13 +118,21 @@ type PR struct {
 	Kind      string
 	Reads     []string
 	ClosedAt  string
-	Exists    bool
+	// Closes is the issues the PR's body closes, space-joined; "-" for
+	// none, "" when nobody has recorded them (the lander reads the body).
+	Closes string
+	// CommitCloses is the issues its commit messages close (land stream).
+	CommitCloses string
+	// IssuesClosed is the issues the lander has closed for this PR.
+	IssuesClosed string
+	Exists       bool
 }
 
 func prFrom(repo string, n int, m map[string]string) PR {
 	p := PR{Repo: repo, N: n, Exists: len(m) > 0,
 		Head: m["head"], Base: m["base"], BaseSHA: m["base_sha"], State: m["state"], CI: m["ci"],
-		Mergeable: m["mergeable"], Stream: m["stream"], Task: m["task"], Kind: m["kind"], ClosedAt: m["closed_at"]}
+		Mergeable: m["mergeable"], Stream: m["stream"], Task: m["task"], Kind: m["kind"], ClosedAt: m["closed_at"],
+		Closes: m["closes"], CommitCloses: m["commit_closes"], IssuesClosed: m["issues_closed"]}
 	for _, l := range strings.Split(m["reads"], "\n") {
 		if l = strings.TrimSpace(l); l != "" {
 			p.Reads = append(p.Reads, l)
@@ -189,11 +201,13 @@ func (e *RefusedError) Error() string { return "REFUSED " + e.Why }
 // RecordFields are the settable fields of a pr record; empty means unchanged.
 type RecordFields struct {
 	Head, Base, BaseSHA, Stream, CI, Mergeable, State, Task, Kind string
+	// Closes is the issues the PR's body closes (space-joined, "-" none).
+	Closes string
 }
 
 func (f RecordFields) m() map[string]string {
 	return map[string]string{"head": f.Head, "base": f.Base, "base_sha": f.BaseSHA, "stream": f.Stream,
-		"ci": f.CI, "mergeable": f.Mergeable, "state": f.State, "task": f.Task, "kind": f.Kind}
+		"ci": f.CI, "mergeable": f.Mergeable, "state": f.State, "task": f.Task, "kind": f.Kind, "closes": f.Closes}
 }
 
 // RecordResult is the record after the write.
@@ -524,6 +538,9 @@ type Landing struct {
 	Workdir                                          string
 	At                                               string
 	MergeSHA                                         string
+	// CommitCloses is, per kept member, the issues its commit messages
+	// close; SaveBuilt stores it on the member's record (commit_closes).
+	CommitCloses map[int]string
 }
 
 func (l Landing) fields() map[string]string {
@@ -632,6 +649,13 @@ func SaveBuilt(ctx context.Context, c redis.Scripter, l Landing, by string) (int
 	if parked == nil {
 		payload["parked"] = []any{}
 	}
+	commits := []any{}
+	for _, m := range l.Members {
+		if cl, ok := l.CommitCloses[m.N]; ok {
+			commits = append(commits, map[string]string{"n": strconv.Itoa(m.N), "closes": cl})
+		}
+	}
+	payload["commit_closes"] = commits
 	if l.PR > 0 {
 		payload["stream_pr"] = map[string]any{"n": strconv.Itoa(l.PR), "fields": map[string]string{
 			"repo": l.Repo, "n": strconv.Itoa(l.PR), "head": l.Head, "base": l.Base, "base_sha": l.BaseSHA,
@@ -646,19 +670,32 @@ func SaveBuilt(ctx context.Context, c redis.Scripter, l Landing, by string) (int
 	return n, nil
 }
 
-// CloseLine is the member close receipt.
-func CloseLine(by, branch, head, repo string, pr int) string {
-	return fmt.Sprintf("CLOSE who=%s: in %s at %s; landed with %s#%d", by, branch, short(head), repo, pr)
+// LanderWho is the who= of the lander's own typed lines.
+const LanderWho = "lander"
+
+// CloseLine is a member's CLOSE typed line (nova-tools#3779): on its pr
+// record, as its GitHub comment and in its close field. head is the member's
+// head; branch and streamHead the stream branch it landed in; repo#pr the
+// stream PR and mergeSHA its merge commit.
+func CloseLine(head, branch, streamHead, repo string, pr int, mergeSHA string) string {
+	return fmt.Sprintf("CLOSE who=%s head=%s landed: in %s at %s with %s (%s)", LanderWho, short(head), branch, short(streamHead), LandedWith(repo, pr), short(mergeSHA))
 }
 
-// SaveLanded moves every member of the landing from merging to landed with
-// its CLOSE receipt, marks the land hash and the stream PR merged and logs
-// the landing, in one Lua call. already is true when it was merged before.
-func SaveLanded(ctx context.Context, c redis.Scripter, l Landing, by, mergeSHA string) (moved, missing int, already bool, err error) {
+// LandedWith is repo#pr with the bare repository name, as the CLOSE line
+// and every landed task's why name the stream PR.
+func LandedWith(repo string, pr int) string {
+	return fmt.Sprintf("%s#%d", prkey.Name(repo), pr)
+}
+
+// SaveLanded marks the land hash and the stream PR merged, stamps every
+// member record landed with its CLOSE line and logs the landing, in one Lua
+// call; it moves no task (LandMembers does, per member). already is true
+// when it was merged before.
+func SaveLanded(ctx context.Context, c redis.Scripter, l Landing, by, mergeSHA string) (already bool, err error) {
 	members := make([]map[string]string, 0, len(l.Members))
 	for _, m := range l.Members {
 		members = append(members, map[string]string{"task": m.Task, "stream": m.Stream, "n": strconv.Itoa(m.N),
-			"close": CloseLine(by, l.Branch, l.Head, l.Repo, l.PR)})
+			"close": CloseLine(m.Head, l.Branch, l.Head, l.Repo, l.PR, mergeSHA)})
 	}
 	var mem any = members
 	if len(members) == 0 {
@@ -668,14 +705,133 @@ func SaveLanded(ctx context.Context, c redis.Scripter, l Landing, by, mergeSHA s
 	res, err := eval(ctx, c, "landed", map[string]any{"repo": l.Repo, "slug": l.Slug, "now": now(), "by": by,
 		"merge_sha": mergeSHA, "pr": strconv.Itoa(l.PR), "why": why, "members": mem})
 	if err != nil {
-		return 0, 0, false, err
+		return false, err
 	}
-	if res[0] == "ALREADY" {
-		return 0, 0, true, nil
+	return res[0] == "ALREADY", nil
+}
+
+// FunctionLandMember is the nova_sprint library function that lands one
+// member (internal/nsprint/fn/lua/03_task_event.lua).
+const FunctionLandMember = "ns_land_member"
+
+// Landed is what LandMembers moved.
+type Landed struct {
+	Moved   int      // tasks moved to landed
+	Missing int      // members no task names
+	Lines   int      // CLOSE lines added to member records
+	Skipped []string // "id: why" for tasks the move refused
+}
+
+// LandMembers runs ns_land_member for every member of a merged landing in
+// one pipeline (one fenced Lua call per member): the CLOSE line on its
+// record, and every task naming the member PR or an issue it closes moved to
+// landed with why "landed with <repo>#<pr> (<merge sha8>)". closes maps a
+// member to the issues its body closes ("-" none); a member missing from it
+// keeps its record's closes field. A re-run adds and moves nothing twice.
+func LandMembers(ctx context.Context, c redis.Cmdable, l Landing, by, mergeSHA string, closes map[int]string) (Landed, error) {
+	var out Landed
+	if len(l.Members) == 0 {
+		return out, nil
 	}
-	moved, _ = strconv.Atoi(res[1])
-	missing, _ = strconv.Atoi(res[2])
-	return moved, missing, false, nil
+	why := fmt.Sprintf("landed with %s (%s)", LandedWith(l.Repo, l.PR), short(mergeSHA))
+	pipe := c.Pipeline()
+	cmds := make([]*redis.Cmd, len(l.Members))
+	for i, m := range l.Members {
+		cmds[i] = pipe.FCall(ctx, FunctionLandMember, nil, l.Repo, l.Slug, mergeSHA, strconv.Itoa(m.N), m.Task,
+			CloseLine(m.Head, l.Branch, l.Head, l.Repo, l.PR, mergeSHA), by, why, closes[m.N])
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return out, fmt.Errorf("%s: %w", FunctionLandMember, err)
+	}
+	for i, m := range l.Members {
+		res, err := cmds[i].StringSlice()
+		if err != nil {
+			return out, fmt.Errorf("%s #%d: %w", FunctionLandMember, m.N, err)
+		}
+		if len(res) < 6 || res[0] != "OK" {
+			return out, fmt.Errorf("%s #%d: %s", FunctionLandMember, m.N, strings.Join(res, " "))
+		}
+		moved, _ := strconv.Atoi(res[1])
+		matched, _ := strconv.Atoi(res[4])
+		lines, _ := strconv.Atoi(res[5])
+		out.Moved += moved
+		out.Lines += lines
+		if matched == 0 {
+			out.Missing++
+		}
+		out.Skipped = append(out.Skipped, res[6:]...)
+	}
+	return out, nil
+}
+
+// closesRx is GitHub's closing keywords on a same-repository issue.
+var closesRx = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#([0-9]+)\b`)
+
+// UnionCloses joins two closes values (numbers space-joined, "-" none, ""
+// unknown): the numbers of both, each once, in order; "-" when both say
+// none; "" when a is unknown and b names none.
+func UnionCloses(a, b string) string {
+	var out []string
+	seen := map[string]bool{}
+	for _, x := range append(strings.Fields(a), strings.Fields(b)...) {
+		if x != "-" && !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	switch {
+	case len(out) > 0:
+		return strings.Join(out, " ")
+	case a == "":
+		return ""
+	}
+	return "-"
+}
+
+// ParseCloses is the issues a PR body closes, space-joined in order, each
+// once; "-" when it closes none.
+func ParseCloses(body string) string {
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range closesRx.FindAllStringSubmatch(body, -1) {
+		if !seen[m[1]] {
+			seen[m[1]] = true
+			out = append(out, m[1])
+		}
+	}
+	if len(out) == 0 {
+		return "-"
+	}
+	return strings.Join(out, " ")
+}
+
+// IssueCloseLine is the comment the lander closes an issue with: the
+// member's CLOSE line (which names the merge sha) and the member that closes
+// it.
+func IssueCloseLine(head, branch, streamHead, repo string, pr int, mergeSHA string, member int) string {
+	return fmt.Sprintf("%s; closes this via %s", CloseLine(head, branch, streamHead, repo, pr, mergeSHA), LandedWith(repo, member))
+}
+
+// MarkIssuesClosed adds the issues whose close went through to each member
+// record's issues_closed, so a re-run closes none twice.
+func MarkIssuesClosed(ctx context.Context, c redis.Cmdable, repo string, closed map[int][]int, recs []PR) error {
+	if len(closed) == 0 {
+		return nil
+	}
+	pipe := c.Pipeline()
+	for _, r := range recs {
+		is := closed[r.N]
+		if len(is) == 0 {
+			continue
+		}
+		all := strings.Fields(r.IssuesClosed)
+		for _, i := range is {
+			all = append(all, strconv.Itoa(i))
+		}
+		pipe.HSet(ctx, PRKey(repo, r.N), "issues_closed", strings.Join(all, " "))
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 // MarkClosed stamps closed_at on member records whose close went through.
