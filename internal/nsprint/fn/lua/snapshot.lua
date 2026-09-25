@@ -20,6 +20,8 @@
 local MAX_SPRINTS = 4
 local MAX_BENCHES = 64
 local MAX_FRIENDS = 16
+local MAX_MACHINES = 16
+local MAX_CI_CARDS = 64
 local LIVING_FRESH_MS = 120000
 
 local function zcard(k) return tonumber(redis.call('ZCARD', k)) end
@@ -121,6 +123,166 @@ local function append_procs(out, now, benches)
   end
 end
 
+-- The section 6 machine, ci, clock and process lines (#3045). They share one
+-- server instant with the rows above when ns_snapshot is asked for them by
+-- passing the literal arg `lines`: the renderer calls FCALL_RO ns_snapshot
+-- <sprint> lines, and the function reads server TIME once and answers every
+-- line from that instant, never a pipeline of separate reads.
+
+local function consumer_machine(bucket, name)
+  return redis.call('HGET', bucket .. ':' .. name .. ':desired', 'machine')
+end
+
+local function desired_sum_on(m, benches, friends)
+  local sum = 0
+  for _, name in ipairs(benches) do
+    if consumer_machine('bench', name) == m then
+      sum = sum + (tonumber(redis.call('HGET', 'bench:' .. name .. ':desired', 'slots')) or 0)
+    end
+  end
+  for _, name in ipairs(friends) do
+    if consumer_machine('friend', name) == m then
+      sum = sum + (tonumber(redis.call('HGET', 'friend:' .. name .. ':desired', 'slots')) or 0)
+    end
+  end
+  return sum
+end
+
+local function living_sum_on(m, benches, friends, now_ms)
+  local sum = 0
+  for _, name in ipairs(benches) do
+    if consumer_machine('bench', name) == m then
+      sum = sum + redis.call('ZCOUNT', 'bench:' .. name .. ':living', now_ms - LIVING_FRESH_MS, '+inf')
+    end
+  end
+  for _, name in ipairs(friends) do
+    if consumer_machine('friend', name) == m then
+      sum = sum + redis.call('ZCOUNT', 'friend:' .. name .. ':living', now_ms - LIVING_FRESH_MS, '+inf')
+    end
+  end
+  return sum
+end
+
+-- append_procs_lines renders the process lines of section 6 for the lines cut:
+-- reconciler, router (the consumers), backpressure and one harvest worker per
+-- bench. A stale reconciler pass reads state `?` with its age; a harvest pass
+-- whose start item is older than 60 s is a red line.
+local function append_procs_lines(out, now, benches)
+  local procs = { 'reconciler', 'router', 'backpressure' }
+  for _, bench in ipairs(benches) do
+    procs[#procs + 1] = 'harvest:' .. bench
+  end
+  table.sort(procs)
+  for _, p in ipairs(procs) do
+    local key = 'proc:' .. p
+    local pass = tonumber(redis.call('HGET', key, 'pass_at'))
+    local state, age, why, red = 'down', -1, '', 0
+    if pass then
+      age = math.max(0, now - math.floor(pass / 1000))
+      if age <= 20 then
+        state = 'up'
+      else
+        state = '?'
+      end
+    else
+      why = 'missing: pass'
+    end
+    if string.sub(p, 1, 8) == 'harvest:' then
+      local start_at = tonumber(redis.call('HGET', key, 'start_at'))
+      if start_at then
+        local start_age = math.max(0, now - math.floor(start_at / 1000))
+        if start_age > 60 then
+          red = 1
+          why = 'start ' .. tostring(start_age) .. 's'
+        end
+      end
+    end
+    out[#out + 1] = 'proc'
+    out[#out + 1] = p
+    out[#out + 1] = state
+    out[#out + 1] = tostring(age)
+    out[#out + 1] = why
+    out[#out + 1] = tostring(red)
+  end
+end
+
+-- snapshot_lines answers the machine, ci, clock and process lines as one flat
+-- tagged list. Records:
+--
+--   machine <name> <ceiling> <desired-sum> <living-sum> <load1>
+--   ci      <cut> <running> <PENDING> <OK> <FAIL> <FLAKY> <MISSING-at-head>
+--           <blocked-no-alternate-bench> <oldest-age>
+--   clock   <sprint> <oldest-age> <breach>
+--   proc    <name> <state> <age> <why> <red>
+local function snapshot_lines(now, now_ms)
+  if scard('machines') > MAX_MACHINES or scard('ci:cards') > MAX_CI_CARDS then
+    return { 'time', tostring(now), 'error', 'snapshot: bound exceeded' }
+  end
+
+  local machines = redis.call('SMEMBERS', 'machines')
+  local benches = redis.call('SMEMBERS', 'benches')
+  local friends = redis.call('SMEMBERS', 'friends')
+  local sprints = redis.call('SMEMBERS', 'sprints')
+  table.sort(machines)
+  table.sort(benches)
+  table.sort(friends)
+  table.sort(sprints)
+
+  local out = { 'time', tostring(now) }
+
+  for _, m in ipairs(machines) do
+    local ceiling = tonumber(redis.call('HGET', 'machine:' .. m .. ':ceiling', 'slots')) or 0
+    local load1 = redis.call('HGET', 'machine:' .. m .. ':ceiling', 'load1')
+    out[#out + 1] = 'machine'
+    out[#out + 1] = m
+    out[#out + 1] = tostring(ceiling)
+    out[#out + 1] = tostring(desired_sum_on(m, benches, friends))
+    out[#out + 1] = tostring(living_sum_on(m, benches, friends, now_ms))
+    out[#out + 1] = load1 or '?'
+  end
+
+  local ci_states = { 'cut', 'running', 'PENDING', 'OK', 'FAIL', 'FLAKY',
+    'MISSING-at-head', 'blocked-no-alternate-bench' }
+  local counts = {}
+  for _, s in ipairs(ci_states) do counts[s] = 0 end
+  local oldest_at = nil
+  for _, id in ipairs(redis.call('SMEMBERS', 'ci:cards')) do
+    local key = 'ci:' .. id
+    local st = redis.call('HGET', key, 'state')
+    if counts[st] then counts[st] = counts[st] + 1 end
+    local at = tonumber(redis.call('HGET', key, 'at'))
+    if at and (not oldest_at or at < oldest_at) then oldest_at = at end
+  end
+  out[#out + 1] = 'ci'
+  for _, s in ipairs(ci_states) do out[#out + 1] = tostring(counts[s]) end
+  if oldest_at then
+    out[#out + 1] = tostring(math.max(0, now - math.floor(oldest_at / 1000)))
+  else
+    out[#out + 1] = '-1'
+  end
+
+  for _, sp in ipairs(sprints) do
+    local status = redis.call('HGET', 's:' .. sp, 'status')
+    if status == 'open' or status == 'paused' then
+      local min = redis.call('ZRANGE', 's:' .. sp .. ':clock', 0, 0, 'WITHSCORES')
+      local age = -1
+      if #min >= 2 then
+        age = math.max(0, now - math.floor(tonumber(min[2]) / 1000))
+      end
+      local limit = tonumber(redis.call('HGET', 's:' .. sp, 'clock')) or 0
+      local breach = 0
+      if age >= 0 and limit > 0 and age > limit then breach = 1 end
+      out[#out + 1] = 'clock'
+      out[#out + 1] = sp
+      out[#out + 1] = tostring(age)
+      out[#out + 1] = tostring(breach)
+    end
+  end
+
+  append_procs_lines(out, now, benches)
+  return out
+end
+
 redis.register_function{
   function_name = 'ns_snapshot',
   flags = { 'no-writes' },
@@ -128,6 +290,9 @@ redis.register_function{
     local t = redis.call('TIME')
     local now = tonumber(t[1])
     local now_ms = now * 1000 + math.floor(tonumber(t[2]) / 1000)
+    if (args[2] or '') == 'lines' then
+      return snapshot_lines(now, now_ms)
+    end
     local out = { 'time', tostring(now) }
 
     -- Bounds first: a registry larger than its bound is an error, and the
