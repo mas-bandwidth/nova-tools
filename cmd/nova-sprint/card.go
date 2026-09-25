@@ -39,8 +39,9 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	sprint := fs.String("sprint", "", "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	stdin := fs.Bool("stdin", false, "")
+	mapKind := fs.Bool("map-kind", false, "")
 	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" {
-		return refuse(stderr, "card", "push needs --sprint <name>, --redis <addr>, and one card file (or --stdin)")
+		return refuse(stderr, "card", "push needs --sprint <name>, --redis <addr>, and one card file (or --stdin); --map-kind pushes a classification KIND as its RESULT kind")
 	}
 	if *stdin && fs.NArg() > 0 {
 		return refuse(stderr, "card", "push reads --stdin or card files, not both")
@@ -71,7 +72,7 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		bodies = append(bodies, body)
 	}
 	for _, body := range bodies {
-		res := card.Push(ctx, client, *sprint, body)
+		res := card.PushWith(ctx, client, *sprint, body, card.PushOptions{MapKind: *mapKind})
 		if wrote := writeCardResult(stdout, stderr, res); wrote != 0 {
 			return wrote
 		}
