@@ -84,6 +84,11 @@ func cmdSetCheck(args []string, stdout, stderr io.Writer) int {
 	if strings.TrimSpace(*file) == "" {
 		return refuse(stderr, " set check", "--file is required; refusing to guess")
 	}
+	// --write-status on the forest is the kernel's (#3340): refused before the
+	// criteria cost a forge call.
+	if *writeStatusFlag && isForestPath(*file) {
+		return forestRefused(stderr, " set check", *file)
+	}
 	data, err := os.ReadFile(*file)
 	if err != nil {
 		return refuse(stderr, " set check", oneline.Err(err))
