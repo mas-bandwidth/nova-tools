@@ -1188,7 +1188,8 @@ future reads `awake` `source=bus-beat` even when its stamp and cursor are both
 past `--window`. Since #3144 `wait` writes no BEAT (the bus carries notes, never
 beats; `--beat` and `--beat-lease` are accepted and ignored with one
 `WAIT NOTE`), so this source reads only a BEAT an older wait left, and live
-presence is `awake --store`, the hash `nova-wake beat` writes:
+presence is `awake --store`, read from the store the way `presence` below
+reads it:
 
 ```
 $ nova-wake awake --bus ./bus
@@ -1209,7 +1210,10 @@ side** — the cost of presence has to be zero or the heartbeat is the first
 thing dropped under load. A window that exits, runs out of credit or is killed
 simply stops writing, and the hash lapses within the TTL: there is no shutdown
 hook to forget to run, which is the whole point. Presence is Redis only: the
-git bus carries notes and never beats (#3144).
+git bus carries notes and never beats (#3144). That is the beat on a store with
+no row loop. On the fleet store `friend:<name>` is the friend row and
+`nova-wake beat` refuses it (#3447): it writes nothing, exits 2 naming the
+hash, and its loop stops, because the row has one writer.
 
 Two flags sit beside that and change nothing when they are left off.
 `--window <time>` is the cap's reset time, stored as passed in the `window`
@@ -1227,14 +1231,19 @@ $ nova-wake presence --store 100.115.99.19:6380
 friends: emma down 1h12m (last 09:41Z) · freddy down · johnny up 12s width=8 · stella up 4s
 ```
 
-A friend is `up` or `down` and nothing else. `up` is a beat inside the TTL,
-with the age of it and the `width=<n>` (and `window=<time>`) that beat carried;
-`down` is a hash that lapsed, with the age of the last beat and its clock time
-from the untimed key, or a friend who has never beaten, with nothing after it.
-`friend:<name>` is also the hash the sprint table's row loop writes, with no
-TTL, so presence is not the hash's existence but its TTL: a friend is up only
-while `friend:<name>` carries a live expiry, which only a beat gives it. The
-untimed key is not presence, and this verb reads no hand-written override. The
+A friend is `up` or `down` and nothing else. On the fleet store the presence
+is the friend row (#3447): `friend:<name>` is a hash with no TTL whose one
+writer is the row loop (rowan-tools `friend-row`, one pass a second), and the
+row's `up` and `at` decide. `up=1` with an `at` no older than 10s is `up`, with
+the age of `at` and the row's `width=<n>`; `up=0` is `down` with no age,
+because the row does not say since when; a row whose `at` is older than 10s is
+a silent row loop, `down` with the age and clock time of its last write. A TTL
+on the row means nothing. Where no row loop runs, the beat's own hash is the
+presence: `up` is a beat inside the TTL, with the age of it and the
+`width=<n>` (and `window=<time>`) that beat carried; `down` is a hash that
+lapsed, with the age of the last beat and its clock time from the untimed key,
+or a friend who has never beaten, with nothing after it. The untimed key is
+not presence, and this verb reads no hand-written override. The
 roster is the store's `friends` SET, sorted, minus Glenn and Rowan; `--bus
 <dir>` (its `participants.json`), `--participants <file>` or
 `--friends <a,b,c>` names one instead, and there is no built-in list, because a
