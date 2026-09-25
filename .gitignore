@@ -10,6 +10,10 @@ tending/
 # it would become a nocode finding the day this repo gates itself.
 /nova-check
 /nova-check.exe
+/nova-play
+/nova-play.exe
+/nova-sandbox
+/nova-sandbox.exe
 
 # A repo-root bin/ is where a local `go build -o bin/<tool> ./cmd/<tool>` lands,
 # and one of those executables was tracked for a while: a 4.9 MB Mach-O arm64
@@ -25,3 +29,6 @@ tending/
 
 # Test scratch: internal/bus's TestMain writes throwaway hermetic gitconfigs under TMPDIR.
 /.tmp/
+
+# a card's TMPDIR lives beside the clone, never in it (79 junk files reached dev on 2026-09-18)
+scratch/

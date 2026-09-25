@@ -25,6 +25,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // ---------------------------------------------------------------- the binaries
@@ -72,6 +74,7 @@ func buildTreeBinaries(t *testing.T) string {
 		for _, pkg := range []string{"./cmd/nova-bus", "./cmd/nova-update"} {
 			build := exec.Command("go", "build", "-o", filepath.Join(dir, exeName(filepath.Base(pkg))), pkg)
 			build.Dir = filepath.Join("..", "..")
+			build.Env = goenv.Clean(os.Environ())
 			if out, err := build.CombinedOutput(); err != nil {
 				joinBuildErr = fmt.Errorf("go build %s: %v\n%s", pkg, err, out)
 				return

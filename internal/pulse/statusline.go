@@ -9,7 +9,8 @@ package pulse
 // and pays for every line it reads in a context it then carries for hours. So `status
 // --oneline` is the same day in ONE line under StatusLineMax bytes: width per bench, the
 // pool, whether work is stopped, the reds and the merges of the day, the cards done and
-// failed, the day's spend, and the pit-stop note when one is open. A fresh window needs
+// failed, card failures and gateway deaths as separate columns, the day's spend, and the
+// pit-stop note when one is open. A fresh window needs
 // this line and POLICY, and never the transcript.
 //
 // Every number comes from a file under --queue or a usage.tsv under --roots. Nothing here
@@ -70,13 +71,15 @@ func statusOneLine(in StatusInput, day string) string {
 		pitstop = oneline.Field(s)
 	}
 
-	head := fmt.Sprintf("STATUS %s stop=%s pool=%d cards=%d/%d reds=%d merges=%d spend=%s",
+	cardFail, gateway := failureColumns(loadUsageFiles(statusUsageRoots(in)))
+	head := fmt.Sprintf("STATUS %s stop=%s pool=%d cards=%d/%d card_fail=%d gateway=%d reds=%d merges=%d spend=%s",
 		day, stop,
 		countCards(in.Queue, "pending"),
 		countCards(in.Queue, "done"), countCards(in.Queue, "failed"),
+		cardFail, gateway,
 		countDay(in.Queue, "REDS", day, "MAIN-RED"),
 		countDay(in.Queue, "MERGED", day, ""),
-		usd(spendOfDay(roots, day)))
+		usd(spendOfDay(statusUsageRoots(in), day)))
 
 	// The benches, widest information first: a bench that does not fit is counted, never
 	// silently dropped -- the same law as every listing here (internal/bounded).

@@ -1,0 +1,81 @@
+2026-09-18T16:20:26.2067599Z ok  	github.com/mas-bandwidth/nova-tools/cmd/nova-decide	0.053s
+2026-09-18T16:20:26.3125432Z ./cmd/nova-fuse: never measured on windows, dealt across 4 slots
+2026-09-18T16:20:27.3008345Z go test -short -count=1 -timeout 300s -run "^(TestAFailFileErrorStaysOnOneLine|TestAQuarantineReasonCannotForgeAnOKLine|TestAStoredKeyCannotPoseAsAField|TestAbsentBoxIsClear|TestBareCheckAdmitsItCheckedNoQuarantine|TestCheckQuotesTheStoredSpelling|TestHelpIsNotAnError|TestLiftLockdownIsRefusedForever|TestLiftQuarantineSucceedsAndIsAnnounced|TestLockdownDoesNotExpire|TestLockdownWorksOnAnUnreadableBox|TestPathEchoesTheBoxFlag|TestQuarantineRefusesToNarrowAnUnreadableBox|TestStatusMaxWidensAndZeroListsAll|TestStatusSurvivesAHandEditedBox|TestUnreadableBoxIsTreatedAsBlownNeverClear|TestVersionIdentityIsTheStampWhenThereIsOne|TestVersionVerbIsReachableFromTheDispatch)$" ./cmd/nova-fuse
+2026-09-18T16:20:28.3607972Z ok  	github.com/mas-bandwidth/nova-tools/cmd/nova-fuse	0.538s
+2026-09-18T16:20:28.4119027Z ./cmd/nova-memory: never measured on windows, dealt across 4 slots
+2026-09-18T16:20:29.4832988Z go test -short -count=1 -timeout 300s -run "^(TestACallersQueryCannotPoseAsAField|TestARefusalSaysWhatTheFlagWants|TestCheckFromANamedFile|TestEvalListsMissesOnlyAndCapsThem|TestEvalSaysNoBelowTheFloor|TestNoOtherWriterOrShadowCanBypassTheEscape|TestQuickstartRunsWithDashLeadingWords|TestRefusesAnUnusableRoot|TestRootIsNeverTakenFromTheEnvironment|TestSearchSpansMultipleRoots|TestUsageBannerExamplesRun|TestVerifyFailMaxWidensAndZeroPrintsAll|TestVerifyRefusesAnEmptyCheck|TestVersionLineShape)$" ./cmd/nova-memory
+2026-09-18T16:20:30.5510391Z ok  	github.com/mas-bandwidth/nova-tools/cmd/nova-memory	0.520s
+2026-09-18T16:20:30.6266132Z ./cmd/nova-merge: 203.9s measured, dealt across 4 slots
+2026-09-18T16:20:47.9089991Z go test -short -count=1 -timeout 300s -run "^(TestABaseMovedToAnAncestorOfTheMergeIsRacedToo|TestADefaultBranchRenameKeepsBlocks|TestAFlagIsRefusedOffTheVerbThatOwnsIt|TestAGateNamesAMergeObjectNoCloneHolds|TestALeaseThatLandedAndABaseThatMovedAfterItIsMergeFail|TestAPacketIsHandedOverCorrectlyWhileAFlushRuns|TestAPassWhoseOwnStateWriteIsRefusedIsNotSilent|TestAReadFromAnotherMachineReachesTheCoordinatorsNextPass|TestARecordWhosePathNamesNoEntryStopsThePass|TestARefusedInitLeavesNothingBehindAndRetriesTheSame|TestAStaleApproveIsKeptCountedAndAuthorizesNothing|TestATieBetweenAGreenAndARedFoldsRedLast|TestAddSaysWhatNeedsReadNoMeansAndChecksTheNumber|TestAnInvalidHostedRedIsRefusedAtLoad|TestBatchRefusesANameThatIsNotOnePathElement|TestClassifyBelowFloorLeavesToday|TestDryRunReportsAndExitsZeroWhateverTheLaneHolds|TestEveryOtherVerbRefusesADirectoryThatIsNotALane|TestExplicitHostedRedIsTheArmItStates|TestInitRepoIsAnOwnerAndAName|TestLandRefusesAPullRequestThatIsNotOpen|TestLandTakesABatchOKReceiptFromAFile|TestOnATwoPreconditionHostBothPreconditionsAreSupplied|TestPacketSaysWhyAnEntryWasSkipped|TestQueueAuditDryRunWritesNothing|TestQueueAuditRefusesWithoutARepository|TestQueuePoisonDetectorParksOnOwnChangeOnly|TestQueueSweepStaleRedBound|TestReactRefusesMissingRedis|TestRebaseCutsOneCardPerDirtyUnmarkedPR|TestSimulateRefusesAnEntriesFileThatIsNotNumbers|TestStatusNamesTheRecordsTheFoldRefused|TestSweepDequeuesOnlyUnmergeableEntries|TestSweepSkipsDirtyAndNonRowanPRs|TestTheFirstRunPushesTheLaneBranchToTheRepository|TestTheLoopEndsOnItsOwnAndStepsAsideForANewerBinary|TestTheUsageBannerSaysThatTheFirstRunPushes|TestVersionLineHoldsWhateverTheStampContains|TestWaitFailingCheckPrintsRedWithCheckName)$" ./cmd/nova-merge
+2026-09-18T16:21:21.5453436Z ok  	github.com/mas-bandwidth/nova-tools/cmd/nova-merge	32.412s
+2026-09-18T16:21:21.7277120Z ./cmd/nova-post: never measured on windows, dealt across 4 slots
+2026-09-18T16:21:23.1410196Z go test -short -count=1 -timeout 300s -run "^(TestApprovalForAnotherHashIsRefused|TestDigestForFixtureDayMatchesGolden|TestStaleApprovalIsRefused)$" ./cmd/nova-post
+2026-09-18T16:21:23.9604450Z ok  	github.com/mas-bandwidth/nova-tools/cmd/nova-post	0.050s
+2026-09-18T16:21:24.1923605Z ./cmd/nova-pulse: 4.1s measured, runs whole in one slot
+2026-09-18T16:21:24.2386859Z ./cmd/nova-review: 38.6s measured, runs whole in one slot
+2026-09-18T16:21:24.2842253Z ./cmd/nova-sandbox: 0.3s measured, runs whole in one slot
+2026-09-18T16:21:24.3062390Z go test -short -count=1 -timeout 300s -run "" ./cmd/nova-sandbox
+2026-09-18T16:21:26.7443911Z --- FAIL: TestDenialsInsideTheAllowedSetAreNotReported (0.00s)
+2026-09-18T16:21:26.7445681Z     denied_test.go:73: a denial inside the write set was reported as one to fix: {Path:/Volumes/nova-j1/work/inside.txt Op:read PID:4212}
+2026-09-18T16:21:26.7448466Z     denied_test.go:77: 5 denials outside the allowed set, want 4: [{/opt read 4210} {/Users/me/go/pkg/mod/github.com/x@v1.2.3/a.go read 4211} {/Users/me/notes/out.txt write 4212} {/Users/someone-else/thing read 4099} {/Volumes/nova-j1/work/inside.txt read 4212}]
+2026-09-18T16:21:26.7450428Z --- FAIL: TestTheDeniedLineNamesThePathTheOpAndTheRemedy (0.00s)
+2026-09-18T16:21:26.7451693Z     denied_test.go:90: the denied line for a directory does not name the directory as the remedy:
+2026-09-18T16:21:26.7452850Z         SANDBOX DENIED path=/Users/me/notes/out.txt op=write remedy="--write \\Users\\me\\notes"
+2026-09-18T16:21:26.7453520Z         SANDBOX DENIED path=/opt op=read remedy="--read \\"
+2026-09-18T16:21:26.7454383Z     denied_test.go:94: the denied line for a file does not name its directory as the remedy:
+2026-09-18T16:21:26.7455209Z         SANDBOX DENIED path=/Users/me/notes/out.txt op=write remedy="--write \\Users\\me\\notes"
+2026-09-18T16:21:26.7455855Z         SANDBOX DENIED path=/opt op=read remedy="--read \\"
+2026-09-18T16:21:26.7456278Z --- FAIL: TestRunNamesEveryBadFlagAtOnce (0.00s)
+2026-09-18T16:21:26.7457146Z     run_test.go:222: a run with five problems does not report reason=bad_size; a first run must not be sequenced into as many runs as it has mistakes:
+2026-09-18T16:21:26.7458456Z         SANDBOX REFUSED reason=no_name: --name wants one short name out of letters, digits, - _ and . : it becomes the volume nova-<n> and the directory under /Volumes
+2026-09-18T16:21:26.7461292Z         SANDBOX REFUSED reason=size_unenforceable: --size cannot be enforced on windows: NTFS quotas are per user per volume, a directory quota is FSRM (a server role) and a per-run quota is a VHDX that needs administrator rights this tool does not take. Two remedies: run under --place wsb, whose whole disk is discarded, or name a --scratch on a volume you have already sized
+2026-09-18T16:21:26.7463932Z         SANDBOX REFUSED reason=bad_scratch: --scratch is required on windows: it is the existing absolute path the per-run directory <scratch>\nova-<n> is made under, and there is no default -- not %TEMP%, not %USERPROFILE%. Name one: --scratch C:\nova
+2026-09-18T16:21:26.7465223Z         SANDBOX REFUSED reason=bad_timeout: --timeout wants a positive Go duration: --timeout 30m
+2026-09-18T16:21:26.7466662Z         SANDBOX REFUSED reason=no_container: --container is darwin's APFS container reference; windows makes no volume, so there is no container to name. The place is --scratch
+2026-09-18T16:21:26.7468676Z         SANDBOX REFUSED reason=no_command: no --; the command comes after it: run: nova-sandbox run --name <n> --scratch <C:\nova> [--timeout <30m>] [--memory <4g>] [--cpu <50>] [--read <dir>]... -- <command> <args...>
+2026-09-18T16:21:26.7470061Z         run: nova-sandbox run --name <n> --scratch <C:\nova> [--timeout <30m>] [--memory <4g>] [--cpu <50>] [--read <dir>]... -- <command> <args...>
+2026-09-18T16:21:26.7471191Z     run_test.go:226: the refusal carries no remedy line:
+2026-09-18T16:21:26.7473090Z         SANDBOX REFUSED reason=no_name: --name wants one short name out of letters, digits, - _ and . : it becomes the volume nova-<n> and the directory under /Volumes
+2026-09-18T16:21:26.7477177Z         SANDBOX REFUSED reason=size_unenforceable: --size cannot be enforced on windows: NTFS quotas are per user per volume, a directory quota is FSRM (a server role) and a per-run quota is a VHDX that needs administrator rights this tool does not take. Two remedies: run under --place wsb, whose whole disk is discarded, or name a --scratch on a volume you have already sized
+2026-09-18T16:21:26.7479856Z         SANDBOX REFUSED reason=bad_scratch: --scratch is required on windows: it is the existing absolute path the per-run directory <scratch>\nova-<n> is made under, and there is no default -- not %TEMP%, not %USERPROFILE%. Name one: --scratch C:\nova
+2026-09-18T16:21:26.7481238Z         SANDBOX REFUSED reason=bad_timeout: --timeout wants a positive Go duration: --timeout 30m
+2026-09-18T16:21:26.7482429Z         SANDBOX REFUSED reason=no_container: --container is darwin's APFS container reference; windows makes no volume, so there is no container to name. The place is --scratch
+2026-09-18T16:21:26.7484233Z         SANDBOX REFUSED reason=no_command: no --; the command comes after it: run: nova-sandbox run --name <n> --scratch <C:\nova> [--timeout <30m>] [--memory <4g>] [--cpu <50>] [--read <dir>]... -- <command> <args...>
+2026-09-18T16:21:26.7485590Z         run: nova-sandbox run --name <n> --scratch <C:\nova> [--timeout <30m>] [--memory <4g>] [--cpu <50>] [--read <dir>]... -- <command> <args...>
+2026-09-18T16:21:26.7486281Z --- FAIL: TestAFailedRunIsToldWhatTheWallDenied (0.01s)
+2026-09-18T16:21:26.7486827Z     run_test.go:526: a failed run did not say what the wall denied:
+2026-09-18T16:21:26.7487351Z         SANDBOX STEP name=container state=start
+2026-09-18T16:21:26.7487791Z         SANDBOX STEP name=container state=done ms=0
+2026-09-18T16:21:26.7488209Z         SANDBOX STEP name=look state=start
+2026-09-18T16:21:26.7489091Z         SANDBOX STEP name=look state=done ms=0
+2026-09-18T16:21:26.7489554Z         SANDBOX STEP name=create state=start
+2026-09-18T16:21:26.7489971Z         SANDBOX STEP name=create state=done ms=0
+2026-09-18T16:21:26.7491959Z         SANDBOX OK backend=none abi=- read=0 write=1 net=nopromise cwd=C:\Users\runneradmin\AppData\Local\Temp\TestAFailedRunIsToldWhatTheWallDenied1613034735\001\work cwdb64=QzpcVXNlcnNccnVubmVyYWRtaW5cQXBwRGF0YVxMb2NhbFxUZW1wXFRlc3RBRmFpbGVkUnVuSXNUb2xkV2hhdFRoZVdhbGxEZW5pZWQxNjEzMDM0NzM1XDAwMVx3b3Jr ancestors=8 cmd=cmd.exe gpu=none
+2026-09-18T16:21:26.7494523Z         SANDBOX STEP name=denials state=start
+2026-09-18T16:21:26.7495238Z         SANDBOX STEP name=denials state=done ms=0
+2026-09-18T16:21:26.7495935Z         SANDBOX DENIED path=/opt op=read remedy="--read \\"
+2026-09-18T16:21:26.7496396Z         SANDBOX STEP name=delete state=start
+2026-09-18T16:21:26.7496849Z         SANDBOX STEP name=delete state=done ms=0
+2026-09-18T16:21:26.7497300Z         SANDBOX DONE name=j1 exit=2 wall=0.004 freed=4096
+2026-09-18T16:21:26.7497773Z --- FAIL: TestWindowsALeakExitsThreeAndNamesTheOneCommand (0.01s)
+2026-09-18T16:21:26.7498642Z     runwin_test.go:514: the leak line does not carry the ONE command that removes it -- rmdir /s /q, not `rm -rf`, and not a sentence:
+2026-09-18T16:21:26.7499357Z         SANDBOX STEP name=look state=start
+2026-09-18T16:21:26.7499767Z         SANDBOX STEP name=look state=done ms=0
+2026-09-18T16:21:26.7500165Z         SANDBOX STEP name=create state=start
+2026-09-18T16:21:26.7500833Z         SANDBOX STEP name=create state=done ms=0
+2026-09-18T16:21:26.7501286Z         SANDBOX STEP name=job state=start
+2026-09-18T16:21:26.7501680Z         SANDBOX STEP name=job state=done ms=0
+2026-09-18T16:21:26.7503929Z         SANDBOX OK backend=none abi=- read=0 write=1 net=nopromise cwd=C:\Users\runneradmin\AppData\Local\Temp\TestWindowsALeakExitsThreeAndNamesTheOneCommand1354504069\001\nova-j1\work cwdb64=QzpcVXNlcnNccnVubmVyYWRtaW5cQXBwRGF0YVxMb2NhbFxUZW1wXFRlc3RXaW5kb3dzQUxlYWtFeGl0c1RocmVlQW5kTmFtZXNUaGVPbmVDb21tYW5kMTM1NDUwNDA2OVwwMDFcbm92YS1qMVx3b3Jr ancestors=9 cmd=cmd.exe gpu=none
+2026-09-18T16:21:26.7505739Z         SANDBOX STEP name=kill state=start
+2026-09-18T16:21:26.7506138Z         SANDBOX STEP name=kill state=done ms=0
+2026-09-18T16:21:26.7506739Z         SANDBOX STEP name=delete state=start
+2026-09-18T16:21:26.7507160Z         SANDBOX STEP name=delete state=done ms=0
+2026-09-18T16:21:26.7507634Z         SANDBOX DONE name=j1 exit=0 wall=0.004 freed=0
+2026-09-18T16:21:26.7509605Z         SANDBOX LEAK name=j1 volume=C:\Users\runneradmin\AppData\Local\Temp\TestWindowsALeakExitsThreeAndNamesTheOneCommand1354504069\001\nova-j1 remedy="rmdir /s /q C:\\Users\\runneradmin\\AppData\\Local\\Temp\\TestWindowsALeakExitsThreeAndNamesTheOneCommand1354504069\\001\\nova-j1"
+2026-09-18T16:21:26.7512447Z         SANDBOX NOTE the scratch could not be removed after 10s of retries: ERROR_SHARING_VIOLATION. A running .exe inside it cannot be removed and cannot be replaced in place -- NTFS raises a sharing violation and there is no replace-the-inode trick -- so something in the job outlived the close, or Defender still holds a handle
+2026-09-18T16:21:26.7513734Z FAIL
+2026-09-18T16:21:26.7514078Z FAIL	github.com/mas-bandwidth/nova-tools/cmd/nova-sandbox	0.540s
+2026-09-18T16:21:26.7514469Z FAIL
+2026-09-18T16:21:26.8085547Z make: *** [Makefile:127: test-pr] Error 1
+2026-09-18T16:21:26.8170817Z ##[error]Process completed with exit code 2.
+2026-09-18T16:21:26.8462481Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

@@ -28,6 +28,7 @@ var messageBusAudit = audit.Config{
 		"main.go|count|f.verb":            "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|count|name":              "a required flag's name, a literal at every call site in this file",
 		"main.go|receiptMaxWords|f.verb":  "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|host|f.verb":             "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|openBus|verb":            "the verb's own name, a literal at every call site in this file",
 		"main.go|printOpenEntries|token":  "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
 		"main.go|printBodyItem|kind":      "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned immediately above the site",
@@ -52,7 +53,7 @@ var messageBusAudit = audit.Config{
 			"oneline.Escape, so the one-line guarantee is made once over the finished sentence rather than twice over its parts. The value itself is a " +
 			"switch-day line that has been through bus.NewLegacyLine, so it is a UTC date or an RFC 3339 instant and nothing else.",
 		"main.go|hiddenReason|at": "the same sentence, and a time this code formatted itself with bus.LegacyInstantLayout; two sites in the one call.",
-		"main.go|cmdDraft|name":   "a reply-only flag's name, one of the five literals in replyOnlyFlags (reply.go), which this loop walks",
+		"draft.go|cmdDraft|name":  "a reply-only flag's name, one of the five literals in replyOnlyFlags (reply.go), which this loop walks",
 		"reply.go|cmdDraftReply|offTheListingReason(c, t, target, me, legacy, hasCursor, replyTargetName(target))": "not an event line's argument but a SENTENCE this package built, the way hiddenReason's is: " +
 			"every value inside it went through oneline.Field at the site that wrote it, and the sentence is one line by construction. The one-line " +
 			"guarantee is made once over the finished sentence rather than twice over its parts. TestTargetNotOnTheOpenListIsItsOwnRefusal is the " +
@@ -60,12 +61,18 @@ var messageBusAudit = audit.Config{
 		"reply.go|cmdDraftReply|note": "one DRAFT NOTE sentence out of the finite, enumerated set in docs/SPEC-BUS-REPLY.md, built above this loop: every value in " +
 			"one is a literal or has been through oneline.Field or oneline.Quote at the site that wrote it. TestReplyReceiptStaysOneLineAtSixHundredOpenNotes " +
 			"holds the count and TestReplySubjectMatchingTwoNotesTakesTheNewestAndSaysSo holds the text.",
-		"main.go|cmdDraft|skeleton": "the skeleton itself, printed to stdout VERBATIM because it is a FILE and not an event line: a header of " +
+		"draft.go|cmdDraft|skeleton": "the skeleton itself, printed to stdout VERBATIM because it is a FILE and not an event line: a header of " +
 			"several lines that a person redirects into a draft, and an escape would fold it into one unusable line -- the same mistake " +
 			"as the escaped rebase transcript below. Every value in it has been checked before this line runs: From is the roster's own " +
 			"spelling, To, Cc and every Re resolved against the roster and the bus, and --subject passed bus.OneLine, which refuses a " +
 			"line break or a control character. Nothing unresolved reaches here: an unresolved anything is a DRAFT REFUSED on stderr and " +
 			"this line never runs. TestDraftPrintsASkeletonTheParserReadsBack is the behavioural test for this site.",
+		"draft.go|writeDraftOut|skeleton": "the skeleton itself, written to the draft file outside the bus; content is checked before this runs",
+		"main.go|printSendDraft|note": "the shaped note itself, printed to stdout VERBATIM because it is the thing `send --dry-run` " +
+			"frames and a caller pipes to a file: escaping it would fold the very bytes the verb promises to carry. Every value in it " +
+			"has been checked before this line runs -- the header is the same Render the commit writes, from a note that passed the " +
+			"send preflight -- and the count on the SEND DRAFT line above is what frames it. TestSendDryRunPrintsTheShapedNoteAndWritesNothing " +
+			"is the behavioural test for this site.",
 		"main.go|cmdPrepare|artifactJSON": "the prepared artifact itself, printed to stdout VERBATIM because it is a machine-readable JSON " +
 			"object and not an event line: a self-contained artifact that a caller saves, and an escape would fold it or escape its quotes. " +
 			"Every value in it has been checked before this line runs. TestPrepareDecidingTests is the behavioural test for this site.",
@@ -81,7 +88,17 @@ var messageBusAudit = audit.Config{
 		// bidi controls among them) and the quote and backslash, so it is one line whatever
 		// the value holds. quoteList is this package's own wrapper over it and its body is
 		// walked by the same classifier.
-		"oneline.Quote", "quoteList", "cappedList",
+		// hostField is this package's wrapper over oneline.Field for the one OPTIONAL field
+		// on an inbox line: it returns "host=<escaped name> " when the note named a machine
+		// and the empty string when it did not, so the token cannot be built at the call
+		// site without an if. Its body is walked by the same classifier, which is where the
+		// oneline.Field is read.
+		//
+		// decideSuffix builds the typed-decision suffix on an INBOX NOTE line: every text
+		// field (kind, wake, owner, ref) goes through oneline.Field inside it and the three
+		// numbers use numeric verbs, so its result is safe to interpolate raw. It exists so
+		// the two INBOX NOTE sites cannot drift apart (#1617).
+		"oneline.Quote", "quoteList", "cappedList", "hostField", "decideSuffix",
 	},
 	Imports: []string{
 		// version.go's resolution order, which now lives once in internal/buildinfo
@@ -107,6 +124,22 @@ var messageBusAudit = audit.Config{
 		// pointer a test installs and waitLoop invokes, holds no writer, and reaches no
 		// stream -- the hook prints nothing, it only closes a channel.
 		`"bytes"`, `"encoding/base64"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"sync/atomic"`, `"time"`,
+		// sync is walkProgress's: a Mutex and a WaitGroup make the since-walk's
+		// once-a-second ticker and its closing line write one stderr line each rather
+		// than interleave mid-line. It holds no writer of its own and reaches no stream;
+		// every byte still goes through fmt.Fprintf at the emit site, where the elapsed
+		// duration is rendered through oneline.Field like every other line here.
+		`"sync"`,
+
+		// context carries the Decide call's cancellation only; it holds no writer.
+		`"context"`,
+		// regexp is redactSK's pattern and replacement: it returns a string that reaches
+		// the provider as the request body, never a stream this package prints to.
+		`"regexp"`,
+		// decide is --decide's provider client, whose Decide returns typed answers; the
+		// only bytes it touches are the HTTP request body, and every value this package
+		// prints from an answer goes through oneline.Field or is numeric.
+		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
 		// publish makes, and errors.New for one refusal's own text. It holds no writer at

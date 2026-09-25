@@ -3,7 +3,6 @@ package main
 import (
 	"strings"
 	"testing"
-	"time"
 )
 
 // THE SEQUENCE A FRIEND ACTUALLY RUNS, end to end, in the order they run it: wait for
@@ -39,13 +38,13 @@ func TestFriendSequenceWaitSendReceiptInbox(t *testing.T) {
 	// A note from another line, pushed while the wait is running: the event a wait is for.
 	other := bench(t, bare)
 	note(t, other, "bo-444444444444", "the pit stop")
-	pushed := make(chan error, 1)
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		pushed <- push(other)
-	}()
+	// At the sync point rather than after a sleep, and with a deadline that is not a race:
+	// this test is about the checkout being clean after each verb, and a wait that timed
+	// out because a 200ms sleep lost to a slow first poll would fail it for the one reason
+	// it is not about.
+	pushed := pushAtSyncPoint(t, checkout, other)
 
-	invoke(t, "", waitFlags(checkout, "Ada", "10s")...).
+	invoke(t, "", waitFlags(checkout, "Ada", "30s")...).
 		mustCode(t, 0).
 		mustContain(t, "stdout", "WAIT OK new=1").
 		mustContain(t, "stdout", "WAIT DONE reason=new")

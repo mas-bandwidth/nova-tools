@@ -697,7 +697,7 @@
     (check-equal 2 (open-leaf-count k) "open leaf count after bug reopen")
     (check-equal :o (node-branch (kernel-state k) "root/f/b1") "bug moved back to O")))
 
-(deftest "protocol-version-negotiated-or-refused" "docs/SPEC-WORK.md:5162"
+(deftest "protocol-version-negotiated-or-refused" "docs/SPEC-WORK.md:5765-5767"
     "expected=unsupported-version-refused-with-supported-list;no-request-before-handshake;oversized-frame-refused-with-one-framed-error"
   ;; A client offering an unsupported version is refused with the supported
   ;; list named and the connection closed (SPEC-WORK.md:2682-2685).
@@ -733,7 +733,64 @@
         "the real frame at the bound is admitted")
     (let ((line (protocol-framed-error sess "frame exceeds max-frame-bytes")))
       (ok (search "request=null" line) "one framed error carries a null id")
-      (ok (protocol-session-closed-p sess) "the connection is closed after it"))))
+      (ok (protocol-session-closed-p sess) "the connection is closed after it")))
+  ;; The real exchange: the client's first frame is the length-prefixed UTF-8
+  ;; JSON object {"op": "hello", "protocol": ["1"], "client": ...} and the
+  ;; session answers with the one version it will speak or refuses, naming what
+  ;; it supports, and closes (SPEC-WORK.md:2662-2666, :2682-2685, :2705-2708).
+  (let* ((sess (make-protocol-session :supported '("1") :max-frame-bytes 1024))
+         (hello (wire-frame
+                 "{\"op\": \"hello\", \"protocol\": [\"1\"], \"client\": \"build-x\"}")))
+    (multiple-value-bind (response version refusal) (protocol-hello-frame sess hello)
+      (check-string= "1" version "the session speaks the one version it supports")
+      (ok (null refusal) "a supported hello is not refused")
+      (ok (protocol-session-handshaken-p sess) "the handshake finishes")
+      (ok (not (protocol-session-closed-p sess)) "the connection stays open")
+      (multiple-value-bind (text complete) (wire-unframe response)
+        (ok complete "the answer is one complete framed message")
+        (ok (search "\"protocol\": \"1\"" text)
+            "the answer carries the version: ~A" text)
+        (let ((object (wire-object-decode text)))
+          (check-string= "hello-ok" (wire-field object "op")
+                        "the answer names the hello exchange")
+          (check-equal 1 (wire-field object "protocol") "the version decoded")
+          (ok (stringp (wire-field object "session"))
+              "the answer names the session build")))))
+  ;; An unsupported version is refused with the supported list named, and the
+  ;; connection is closed. A request after it is not admitted.
+  (let* ((sess (make-protocol-session :supported '("1") :max-frame-bytes 1024))
+         (hello (wire-frame
+                 "{\"op\": \"hello\", \"protocol\": [\"2\"], \"client\": \"build-x\"}")))
+    (multiple-value-bind (response version refusal) (protocol-hello-frame sess hello)
+      (ok (null version) "an unsupported version is not spoken")
+      (ok (stringp refusal) "the refusal carries a reason")
+      (ok (protocol-session-closed-p sess) "the connection is closed")
+      (multiple-value-bind (text complete) (wire-unframe response)
+        (ok complete "the refusal is one complete framed message")
+        (ok (search "\"supported\": [\"1\"]" text)
+            "the refusal names the supported list: ~A" text)
+        (let ((object (wire-object-decode text)))
+          (check-string= "hello-refused" (wire-field object "op")
+                        "the refusal names the exchange")))
+      (multiple-value-bind (admitted why) (protocol-admit sess "req-1")
+        (ok (null admitted) "no request is admitted after the refusal")
+        (ok (stringp why) "with a reason"))))
+  ;; A frame past --max-frame-bytes is refused with one framed error before the
+  ;; close, never truncated (SPEC-WORK.md:2663-2665).
+  (let* ((sess (make-protocol-session :supported '("1") :max-frame-bytes 16))
+         (hello (wire-frame
+                 "{\"op\": \"hello\", \"protocol\": [\"1\"], \"client\": \"build-x\"}")))
+    (ok (> (length hello) 16) "the hello frame is past the bound")
+    (multiple-value-bind (response version refusal) (protocol-hello-frame sess hello)
+      (ok (null version) "an oversized frame speaks no version")
+      (ok (stringp refusal) "the refusal carries a reason")
+      (ok (protocol-session-closed-p sess) "the connection is closed")
+      (multiple-value-bind (text complete) (wire-unframe response)
+        (ok complete "the refusal is one framed error")
+        (let ((object (wire-object-decode text)))
+          (check-string= "hello-refused" (wire-field object "op") "one framed error")
+          (ok (search "max-frame-bytes" (wire-field object "reason"))
+              "the error names the bound: ~A" (wire-field object "reason")))))))
 
 (deftest "pipeline-replies-are-correlated" "docs/SPEC-WORK.md:5165"
     "expected=every-response-reaches-only-its-request;operation-id-distinct;same-id-in-flight-refused;unknown-duplicate-missing-close-and-reconcile;batches"

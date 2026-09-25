@@ -48,15 +48,6 @@ changed_dirs=$(git diff --name-only "$base" HEAD -- '*.go' | xargs -r -n1 dirnam
 want=""
 for d in $changed_dirs; do want="$want ./$d"; done
 
-# internal/ci holds the class tests that read the workflow and script files as
-# text; it scans the tree rather than importing what it guards, so no *.go diff
-# can name it as a dependent. A cmd/nova-swarm edit (PR #1073) left an
-# internal/ci class test red and no shard was selected to run it, so the branch
-# sat for two hours. Select it on every run, not only when the diff touches
-# .github/: a change that can move the workflow's law always pays for the
-# package that holds it.
-want="$want ./internal/ci"
-
 # dependents: every package in the tree that imports a changed one.
 while read -r pkg deps; do
   p="./${pkg#github.com/mas-bandwidth/nova-tools/}"
@@ -66,6 +57,31 @@ while read -r pkg deps; do
     case " $want " in *" $dp "*) want="$want $p"; break ;; esac
   done
 done < <(go list -f '{{.ImportPath}}{{range .Deps}} {{.}}{{end}}' ./cmd/... ./internal/...)
+
+# THE TWO CLASS-TEST PACKAGES ARE ADDED AFTER THE DEPENDENTS, not before. Added
+# before, they dragged their own importers (cmd/nova-ci, cmd/nova-merge,
+# cmd/nova-work) into every PR's shards although the change touched none of
+# them: all 95 PR runs read on 2026-09-23 carried those five packages, and
+# cmd/nova-merge is the slowest package on the Macs (342 s). When a change
+# does touch internal/ci or internal/docs, the diff names them above and the
+# loop still selects their importers, so no change loses a dependent (#2795).
+
+# internal/ci holds the class tests that read the workflow and script files as
+# text; it scans the tree rather than importing what it guards, so no *.go diff
+# can name it as a dependent. A cmd/nova-swarm edit (PR #1073) left an
+# internal/ci class test red and no shard was selected to run it, so the branch
+# sat for two hours. Select it on every run, not only when the diff touches
+# .github/: a change that can move the workflow's law always pays for the
+# package that holds it.
+want="$want ./internal/ci"
+
+# internal/docs holds the front page's contract: AGENTS.md must name every class
+# rule indexed in docs/SPEC-CI.md. It, too, reads the tree as text instead of
+# importing what it guards, so a docs-only change can break its class test
+# (#1504) without naming a dependent in the import graph. Select it on every run
+# for the same reason: the red surfaces in an integration batch instead of on
+# the PR that broke it (#1364, #1409).
+want="$want ./internal/docs"
 
 for pkg in "${all[@]}"; do
   case " $want " in *" $pkg "*) printf '%s\n' "$pkg" ;; esac

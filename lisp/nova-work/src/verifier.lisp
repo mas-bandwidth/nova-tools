@@ -201,11 +201,15 @@ resolver set accepts a fact only where its resolver identity is named there."
 ;;; The session, the evidence and the verb
 ;;; ------------------------------------------------------------------
 
+(declaim (ftype function persist-verification-cache))
+
 (defstruct (verification-session
             (:constructor make-verification-session
-                (&key cache resolvers offline max-fetch fetch-timeout source-revision)))
+                (&key cache cache-path resolvers offline max-fetch fetch-timeout source-revision)))
   ;; the session's one cache, named by `session start --cache` (:1320-1325)
   cache
+  ;; the path `session start --cache` named, where a fetched fact is persisted
+  cache-path
   ;; the operator's resolvers, one per scheme this session may fetch (:1251-1253)
   resolvers
   ;; `verify --offline`: derive from cached facts, fetch nothing (:1291-1292)
@@ -340,6 +344,8 @@ under `--offline` is refused (SPEC-WORK.md:1289-1292, :1320-1325)."
                           (string-downcase (symbol-name verdict)) at)
                   rows)))))
     (setf rows (nreverse rows))
+    (when (plusp fetched)
+      (persist-verification-cache session))
     (let* ((emitted (reduce #'+ rows :key #'length :initial-value 0))
            (head (if (zerop unverified) "OK" "FAIL"))
            (line (format nil "VERIFY ~A pointers=~D verified=~D unverified=~D stale=~D fetched=~D cached=~D pushed=- emitted=~D"

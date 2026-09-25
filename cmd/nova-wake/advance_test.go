@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
 
@@ -31,14 +32,6 @@ var (
 	busBinary  []byte
 	busVersion string
 	busBuild   error
-
-	// The recording wrapper is built ONCE for the package and copied into each
-	// test's own directory, for the reason main_test.go gives about the fakes:
-	// a `go build` per test was six of them in this file alone, and the
-	// two-minute rule is a rule.
-	recordOnce  sync.Once
-	recordBin   []byte
-	recordBuild error
 )
 
 // realBus builds nova-bus from this tree once for the package, installs it into
@@ -62,7 +55,9 @@ func realBus(t *testing.T) {
 		// checkout receives mail" these tests are what says so.
 		stamp := buildVersion()
 		build := []string{"build", "-ldflags", "-X main.version=" + stamp, "-o", out, "../nova-bus"}
-		if raw, err := exec.Command("go", build...).CombinedOutput(); err != nil {
+		buildCmd := exec.Command("go", build...)
+		buildCmd.Env = goenv.Clean(os.Environ())
+		if raw, err := buildCmd.CombinedOutput(); err != nil {
 			busBuild = fmt.Errorf("building nova-bus from this tree: %v\n%s", err, raw)
 			return
 		}
@@ -113,26 +108,7 @@ func realBus(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		shim += ".exe"
 	}
-	recordOnce.Do(func() {
-		out := filepath.Join(t.TempDir(), "recordbus")
-		if runtime.GOOS == "windows" {
-			out += ".exe"
-		}
-		if raw, err := exec.Command("go", "build", "-o", out, "./testdata/recordbus").CombinedOutput(); err != nil {
-			recordBuild = fmt.Errorf("building the recording nova-bus: %v\n%s", err, raw)
-			return
-		}
-		raw, err := os.ReadFile(out)
-		if err != nil {
-			recordBuild = err
-			return
-		}
-		recordBin = raw
-	})
-	if recordBuild != nil {
-		t.Fatal(recordBuild)
-	}
-	if err := os.WriteFile(shim, recordBin, 0o755); err != nil {
+	if err := os.WriteFile(shim, fakeBins["recordbus"], 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("NOVA_WAKE_REAL_BUS", real)

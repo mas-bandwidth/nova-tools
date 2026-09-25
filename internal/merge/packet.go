@@ -86,6 +86,14 @@ func (p *Pass) Packet(who string, only string, all bool) int {
 			holdList.Line(fmt.Sprintf("PACKET HOLD who=%s head=%s: %s",
 				oneline.Field(h.Who), oneline.Field(Short(h.Head)), oneline.Cap(h.Note, oneline.TailBytes)))
 		}
+		// The typed classification only ANNOTATES the packet: when it is set, one
+		// advisory line names what the decide route answered for this entry's public
+		// packet state, and nothing here merges, pushes or approves (rule 7).
+		if p.PacketAnnotate != nil {
+			if line := p.PacketAnnotate(e, c, len(holds)); line != "" {
+				fmt.Fprintln(p.Stdout, line)
+			}
+		}
 	}
 	holdList.More()
 	fmt.Fprintf(p.Stdout, "PACKET OK entries=%d holds=%d\n", blocks, total)

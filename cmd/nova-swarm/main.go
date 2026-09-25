@@ -21,6 +21,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -32,6 +33,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/lanes"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -40,32 +43,54 @@ const usage = `nova-swarm: a pool of one-task workers, with the ways a swarm fai
 
 usage:
   nova-swarm version    print this build identity (--version also accepted)
+  nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
-  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
+                       (without --runner, each card runs through nova-swarm native, and --slots-store <dir> --owner <name> are required)
+  nova-swarm pull      --queue <dir> --clone <dir> --harvest <dir> --batch <n> --runner <cmd> [--kind <k>] [--repo <r>] [--base <rev>]
+  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--slots-store <dir> --owner <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
   nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand)
-  nova-swarm status    --pool <dir> [--max <n>]
+  nova-swarm status    --pool <dir> [--slots-store <dir> --owner <name>] [--max <n>]
   nova-swarm stop      --pool <dir>
   nova-swarm requeue   --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--max-input <bytes>]
   nova-swarm verdict   --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
-   nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]]
+   nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>] [--usage <file>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]]
   nova-swarm result    --pool <dir> --id <job>
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--max <n>]
-  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup
-  nova-swarm cost      --pool <dir> [--since <stamp>] [--max <n>]
+  nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --rules
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
+  nova-swarm cost      --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
   nova-swarm note      --pool <dir> --task <id> --text <text>
   nova-swarm finalize  --pool <dir> --task <id>
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+  nova-swarm pull      --bench <dir> --worker <name> [--steal <dir>[,<dir>...] --capacity <n>] [--last-steal <stamp>]
+   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now]
+   nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
+   nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
    nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
-   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]
-   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
+   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
+   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
+   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
+                       (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
+                        --force frees it anyway and can oversubscribe the bench: an operator's act,
+                        never a card's and never a manager's default)
    nova-swarm slots list --store <dir>
+   nova-swarm worker    check <description.json> [--env] [--max <n>]
+   nova-swarm pull      --bench <dir> --worker <name> --cores <n> --load1 <n> --free-gb <n> --memfree-gb <n> [--running <n>]
+   nova-swarm pull-lanes --queue <dir> [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]]
+   nova-swarm pull     --stream <kind> --bench <name> (--redis <addr> | --dir <dir>) [--lane <lane>] [--wait <duration>]
+   nova-swarm pull      --bench <name> --slots <n> --seat <seat> [--store <dir>] [--harvest <dir>] [--image <image>] [--runner <cmd>] [--once]
+   nova-swarm pull      --store <dir> --owner <o> --for <duration>
+
+PULL TAKES ONE CARD BY RENAME. nova-swarm pull lists a bench's queue/ directory
+and takes one card by rename(<name>.card, taken/<worker>-<name>.card), atomic within
+the directory, so two workers cannot take one card; it drains its own taken/ before
+it reaches for another bench, and an idle worker steals from the fullest bench on the
+mirror's five-minute timer, never emptying the victim below its own capacity line.
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a dispatcher
 that exited with tasks pending and nothing running, a reclaim with no usage file
@@ -120,6 +145,12 @@ is invocation-scoped, so a later recovery run needs the flag again.
 stop stops new admissions and drains workers already running; it does not kill or
 cancel them, including a retry that already started.
 
+pull-lanes drains queue/lanes/{red,green,small,next}/ in that order: red (fixes to a
+red bench or a red PR), then green (small, already-approved PRs), then small
+(the shortest step budget), then next. Ordering inside a lane is source order; a
+tie the rule cannot break is asked of Jev as one typed decision in 400 ms behind
+the 0.9 floor, and a refusal keeps source order.
+
 example:
   nova-swarm template --name read-pr
   nova-swarm quickstart --pool ./pool
@@ -134,7 +165,14 @@ func refuse(stderr io.Writer, where, what string) int {
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
+	args := os.Args[1:]
+	// Before a launch verb starts a card, refuse a nova-swarm whose PATH copy is not the
+	// built one (doctor.go). The check is at the process boundary because it reads the real
+	// PATH and the real home; the dispatcher below is what the tests drive with fakes.
+	if code, stop := preflightDoctor(args, os.Stderr); stop {
+		os.Exit(code)
+	}
+	os.Exit(run(args, os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
@@ -148,6 +186,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return 0
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
+	case "doctor":
+		return cmdDoctor(rest, stdout, stderr)
 	case "add":
 		return cmdAdd(rest, stdin, stdout, stderr, now)
 	case "batch":
@@ -155,6 +195,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "run":
 		return cmdRun(rest, stdout, stderr, now)
 	case "supervise":
+		injectedSupervisor() // test-only, swarmtest build: a supervisor that never identifies (#2984)
 		return cmdSupervise(rest, stdout, stderr, now)
 	case "status":
 		return cmdStatus(rest, stdout, stderr, now)
@@ -186,16 +227,24 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdQuickstart(rest, stdout, stderr)
 	case "native":
 		return cmdNative(rest, stdout, stderr)
+	case "route":
+		return cmdRoute(rest, stdout, stderr)
 	case "bench":
 		return cmdBench(rest, stdout, stderr)
+	case "reap":
+		return cmdReap(rest, stdout, stderr, now)
 	case "slots":
 		return cmdSlots(rest, stdout, stderr)
 	case "publish":
 		return cmdPublish(rest, stdout, stderr)
-	case "pull":
-		return cmdPull(rest, stdout, stderr)
+	case "pull-lanes":
+		return cmdPullLanes(rest, stdout, stderr)
 	case "profile":
 		return cmdProfile(rest, stdout, stderr)
+	case "pull":
+		return cmdPull(rest, stdout, stderr, now)
+	case "worker":
+		return cmdWorker(rest, stdout, stderr)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
 }
@@ -376,6 +425,7 @@ func cmdAdd(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.T
 	template := f.fs.String("template", "", "")
 	deadline := f.fs.String("deadline", "", "")
 	maxInput := f.fs.Int("max-input", 0, "")
+	workerFile := f.fs.String("worker", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -411,6 +461,22 @@ func cmdAdd(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.T
 		}
 		text = wrapped
 	}
+	// THE PUBLIC-CLASS GATE (CARD-8390): with --worker naming a public-class
+	// worker, a card cloning an unlisted repo is refused with CARD REFUSED and
+	// never queued, so a free/contributor model never sees private source.
+	if *workerFile != "" {
+		w, problems := swarm.LoadWorker(*workerFile)
+		if len(problems) > 0 {
+			for _, problem := range problems {
+				fmt.Fprintf(stderr, "nova-swarm add: %s\n", oneline.Err(problem))
+			}
+			return 2
+		}
+		if repo, refused := swarm.CheckPublicCard(w, string(text), *pool); refused {
+			fmt.Fprintln(stderr, swarm.PublicRefusalLine(repo, w.Name))
+			return 1
+		}
+	}
 	sc := swarm.Sidecar{
 		ID: swarm.NewID(now, *label), Label: *label, Template: *template, Files: *files,
 		Tokens: budget, Unmetered: unmetered, Deadline: *deadline, MaxInput: window, RC: -1,
@@ -445,15 +511,59 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	id := f.fs.String("id", "", "")
 	root := f.fs.String("root", "", "")
 	idle := f.fs.Int("idle", 300, "")
+	// THE FREE TIER THAT QUEUES FOREVER (nova-tools#917). --max-inflight caps how many of
+	// this batch's cards run against ONE provider/model/key at a time, and --stall-after
+	// ends a card that has produced no first token in that many seconds. Both default to
+	// zero, which is off, which is the behaviour every existing caller has today.
+	maxInflight := f.fs.Int("max-inflight", 0, "")
+	stallAfter := f.fs.Int("stall-after", 0, "")
 	benches := f.fs.String("benches", "", "")
 	bench := f.fs.String("bench", "", "")
 	then := f.fs.String("then", "", "")
+	// The card form's own three: the harness a runnerless batch runs native with (#636),
+	// its auth file, and the slot range it allocates from (#618).
+	harness := f.fs.String("harness", "", "")
+	auth := f.fs.String("auth", "", "")
 	slots := f.fs.String("slots", "", "")
+	// THE BENCH SLOT LEASE (nova-tools#1546): the store each card's own `nova-swarm
+	// native` takes its one lease from, and the owner whose share that lease counts
+	// against. REQUIRED of any batch without a --runner of its own, because every such
+	// card launches native, and native refuses without them. The path is resolved on the
+	// machine that runs the card, which for a bench row is the bench.
+	slotsStore := f.fs.String("slots-store", "", "")
+	slotOwner := f.fs.String("owner", "", "")
+	// THE ROUTE (Glenn 2026-09-19). With --route the model a card is dispatched
+	// with is the ladder's answer rather than the string the fill script wrote
+	// in the TSV, and the TSV's model is the fallback. --route-log and
+	// --route-usage are REQUIRED with it: accounting is not optional, and a
+	// call nobody can account for is not made (SPEC-DECIDE).
+	route := f.fs.Bool("route", false, "")
+	// H4 (#1625): routing is the launcher's default, so --route is kept only
+	// for callers that spell it out, and --no-route --reason is the one way
+	// out. Neither flag is required.
+	noRoute := f.fs.Bool("no-route", false, "")
+	routeReason := f.fs.String("reason", "", "")
+	routeRegistry := f.fs.String("route-registry", "", "")
+	routeFloor := f.fs.Float64("route-floor", swarm.DefaultRouteFloor, "")
+	routeLog := f.fs.String("route-log", "", "")
+	routeUsage := f.fs.String("route-usage", "", "")
+	routeKeyEnv := f.fs.String("route-key-env", decide.DefaultKeyEnv, "")
+	routeBaseURL := f.fs.String("route-base-url", decide.DefaultBaseURL, "")
+	workerFile := f.fs.String("worker", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
+	// H4 (#1625): routing is the launcher's default; the only way out is an
+	// explicit --no-route carrying the --reason that opens it, so a launch
+	// cannot forget the route the way a sentence in a brief can.
+	routeOn := *route || !*noRoute
+	if *noRoute && strings.TrimSpace(*routeReason) == "" {
+		f.add("--no-route needs --reason <text>: a skipped route is a fact in the log, so the reason that opens the skip is not optional")
+	}
 	if *cards != "" {
-		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, *then, *slots, stdout, stderr)
+		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *maxInflight, *stallAfter, *benches, *bench, *then, *harness, *auth, *slots, *slotsStore, *slotOwner, *workerFile, *tokens,
+			routeFlags{on: routeOn, reason: *routeReason, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
+				usage: *routeUsage, keyEnv: *routeKeyEnv, baseURL: *routeBaseURL}, stdout, stderr)
 	}
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	f.want(*tasks, "tasks", "a directory holding one task file per job")
@@ -494,6 +604,38 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "BATCH REFUSED: %s holds no regular file; a batch of no tasks is a typo\n", oneline.Field(*tasks))
 		return 1
 	}
+	// THE PUBLIC-CLASS GATE (CARD-8390) on the queueing half: with --worker
+	// naming a public-class worker, a card cloning an unlisted repo is refused
+	// with CARD REFUSED and nothing is queued.
+	var gateWorker swarm.Worker
+	gatePublic := false
+	if *workerFile != "" {
+		w, problems := swarm.LoadWorker(*workerFile)
+		if len(problems) > 0 {
+			for _, problem := range problems {
+				fmt.Fprintf(stderr, "nova-swarm batch: %s\n", oneline.Err(problem))
+			}
+			return 2
+		}
+		gateWorker, gatePublic = w, w.IsPublic()
+	}
+	if gatePublic {
+		for _, q := range all {
+			text := q.text
+			if *template != "" {
+				wrapped, err := swarm.WrapTemplate(*template, *files, text)
+				if err != nil {
+					fmt.Fprintf(stderr, "nova-swarm batch: %s\n", oneline.Err(err))
+					return 2
+				}
+				text = wrapped
+			}
+			if repo, refused := swarm.CheckPublicCard(gateWorker, string(text), *pool); refused {
+				fmt.Fprintln(stderr, swarm.PublicRefusalLine(repo, gateWorker.Name))
+				return 1
+			}
+		}
+	}
 	batchID := swarm.NewID(now, *label)
 	for i, q := range all {
 		text := q.text
@@ -524,12 +666,77 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 // TSV. It has no pool and no admission queue: it starts one runner process per card, waits
 // until they all end or the batch's deadline, and folds every card's RESULT.md into one
 // bounded packet.
-func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench string, then string, slots string, stdout, stderr io.Writer) int {
+// routeFlags is the --route family, held together so the batch verb's own
+// signature stays readable.
+type routeFlags struct {
+	on bool
+	// reason is the --reason that opens an explicit --no-route. It is empty
+	// whenever the launcher routes.
+	reason   string
+	registry string
+	floor    float64
+	log      string
+	usage    string
+	keyEnv   string
+	baseURL  string
+}
+
+// routeInput builds the batch's route seam, or refuses with the one line that
+// says what is missing. nil with no refusal means --route was not asked for.
+//
+// The key is read from the environment the caller names and NEVER from argv or
+// a file, and it is never printed: an absent key is not a refusal, it is the
+// fallback -- the rules answer, no call is made, and every card keeps today's
+// model, so the loop runs on a bench with no API at all.
+func routeInput(f *flags, r routeFlags, stderr io.Writer) *swarm.RouteInput {
+	if !r.on {
+		if strings.TrimSpace(r.reason) == "" {
+			return nil
+		}
+		// An explicit --no-route --reason still needs the log home for its
+		// skipped row, so the reason is a fact in the log and not an absence.
+		return &swarm.RouteInput{Floor: r.floor, Log: r.log, Usage: r.usage}
+	}
+	if err := decide.ValidFloor(r.floor); err != nil {
+		f.add(fmt.Sprintf("--route-floor %s is not a confidence; it wants a number between 0 and 1, such as --route-floor 0.9",
+			oneline.Field(strconv.FormatFloat(r.floor, 'g', -1, 64))))
+		return nil
+	}
+	// H4 (#1625): a missing accounting home is not a refusal. The rules answer,
+	// no call is made, and the receipt says why=no-accounting; the one way out
+	// of the route is --no-route --reason.
+	in := &swarm.RouteInput{Floor: r.floor, Log: r.log, Usage: r.usage}
+	reg, err := decide.LoadRegistry(r.registry)
+	if err != nil {
+		f.add(fmt.Sprintf("--route-registry: %s", oneline.Err(err)))
+		return nil
+	}
+	in.Registry = reg
+	client, err := decide.New(r.baseURL, r.keyEnv)
+	if err != nil {
+		// No key is no call. It is said once, by the name of the variable and
+		// never by its value, and the batch runs on today's models.
+		fmt.Fprintf(stderr, "BATCH NOTE route: %s; the ladder answers by its rules alone and every card keeps today's model\n", oneline.Err(err))
+		return in
+	}
+	in.Decide = client.Decide
+	return in
+}
+
+func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, maxInflight, stallAfter int, benches, bench, then, harness, auth, slots, slotsStore, slotOwner, workerFile, tokens string, route routeFlags, stdout, stderr io.Writer) int {
 	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
+	// THE BUDGET WORD (SPEC-SWARM rule 13d, issue #1545), read by the SAME f.tokens that
+	// reads `add`'s and `batch --tasks`'s, so a missing word, a non-number and a zero are
+	// refused in the same sentence wherever a caller meets them. What is CARRIED is the
+	// word as typed: rule 13d puts it "verbatim into every `native` argv", and `native` is
+	// the verb that decides what it means.
+	f.tokens(tokens)
 	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
 	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
-	if bench == "" {
-		f.want(runner, "runner", "the command to start once per card, given label slot model card-path root as arguments")
+	// #636: --runner is one of two ways to run a local card; --harness (or a `local` row in
+	// --benches) runs it through this binary's own `native`, so neither alone is required.
+	if bench == "" && runner == "" && harness == "" && benches == "" {
+		f.add("--runner or --harness is required: --runner <cmd> starts once per card with label slot model card-path root, and --harness <path> runs each card through this binary's own `nova-swarm native`; refusing to guess")
 	}
 	if bench != "" {
 		f.want(benches, "benches", "a table of one bench per row: name host root cores harness auth wall")
@@ -547,16 +754,35 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int
 	if idle < 1 {
 		f.add(fmt.Sprintf("--idle wants a whole number of seconds, got %d; a card whose log has not grown this long is killed", idle))
 	}
+	routed := routeInput(f, route, stderr)
 	if f.refused(stderr) {
 		return 2
 	}
+	var w swarm.Worker
+	if strings.TrimSpace(workerFile) != "" {
+		loaded, problems := swarm.LoadWorker(workerFile)
+		if len(problems) > 0 {
+			for _, problem := range problems {
+				fmt.Fprintf(stderr, "nova-swarm batch: %s\n", oneline.Err(problem))
+			}
+			return 2
+		}
+		w = loaded
+	}
 	return swarm.Batch(swarm.BatchInput{
 		ID: id, Deadline: time.Duration(seconds) * time.Second,
-		Idle:  time.Duration(idle) * time.Second,
-		Cards: cards, Root: root, Runner: runner,
-		Slots:   slots,
+		Idle:        time.Duration(idle) * time.Second,
+		MaxInflight: maxInflight,
+		StallAfter:  time.Duration(stallAfter) * time.Second,
+		Cards:       cards, Root: root, Runner: runner,
 		Benches: benches, Bench: bench, Then: then,
-		Stdout: stdout, Stderr: stderr,
+		Harness: harness, Auth: auth, Slots: slots,
+		SlotsStore: slotsStore, SlotOwner: slotOwner,
+		Tokens:    tokens,
+		Route:     routed,
+		RouteSkip: route.reason,
+		Worker:    w,
+		Stdout:    stdout, Stderr: stderr,
 	})
 }
 
@@ -576,11 +802,21 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// ONE loud workaround, which a person types and no environment variable can produce.
 	sandboxPath := f.fs.String("sandbox", "", "")
 	noSandbox := f.fs.Bool("no-sandbox", false, "")
+	// THE BENCH SLOT LEASE (docs/SPEC-SWARM.md, "Bench slot leases"): --slots-store names
+	// the store and --owner whose share the one lease per task counts against. Without a
+	// store the launcher is unchanged.
+	slotsStore := f.fs.String("slots-store", "", "")
+	owner := f.fs.String("owner", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	if *noSandbox && *sandboxPath != "" {
 		f.add("--no-sandbox and --sandbox together: one asks for no wall at all and the other names the wall to use; pass at most one")
+	}
+	if *slotsStore != "" {
+		f.want(*owner, "owner", "whose bench slot share the leases count against; it is required with --slots-store")
+	} else if *owner != "" {
+		f.add("--owner wants --slots-store: without a store there is no bench share for an owner to hold")
 	}
 	f.wantMax(*max)
 	if *backoff < 1 {
@@ -685,6 +921,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 		NoAutoRetry:   *noAutoRetry,
 		Stdout:        stdout, Stderr: stderr, Now: func() time.Time { return time.Now().UTC() },
 		Supervisor: self, WorkerFile: *worker, Sandbox: wall, NoSandbox: *noSandbox,
+		SlotsStore: *slotsStore, SlotOwner: *owner,
 	})
 }
 
@@ -749,11 +986,14 @@ func cmdSupervise(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "nova-swarm supervise: task %s is not running in %s\n", oneline.Field(*task), oneline.Field(*pool))
 		return 2
 	}
+	term, stopTerm := superviseTerm()
+	defer stopTerm()
 	return swarm.Supervise(swarm.SuperviseInput{
 		Pool: p, Task: *task, Slot: *slot, Nonce: *nonce, Worker: w, Sidecar: sc, Key: key,
 		Sandbox:       *sandboxPath,
 		UsageInterval: usageInterval.d,
 		Stdout:        stdout, Stderr: stderr, Now: func() time.Time { return time.Now().UTC() },
+		Term: term,
 	})
 }
 
@@ -761,11 +1001,18 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("status")
 	pool := f.fs.String("pool", "", "")
 	max := maxFlag(f.fs)
+	slotsStore := f.fs.String("slots-store", "", "")
+	owner := f.fs.String("owner", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.wantMax(*max)
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
+	if *slotsStore != "" {
+		f.want(*owner, "owner", "whose bench slot share to report; it is required with --slots-store")
+	} else if *owner != "" {
+		f.add("--owner wants --slots-store: without a store there is no bench share to report")
+	}
 	if f.refused(stderr) {
 		return 2
 	}
@@ -797,6 +1044,14 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	quarantined += len(bad)
+	if *slotsStore != "" {
+		held, share, serr := swarm.SlotHoldings(*slotsStore, *owner, now)
+		if serr != nil {
+			fmt.Fprintf(stderr, "nova-swarm status: the slot store could not be read: %s\n", oneline.Err(serr))
+			return 2
+		}
+		fmt.Fprintf(stdout, "STATUS SLOTS owner=%s held=%d share=%d\n", oneline.Field(*owner), held, share)
+	}
 	fmt.Fprintf(stdout, "STATUS OK pending=%d running=%d done=%d failed=%d slots=%d/%d quarantined=%d\n",
 		counts[swarm.Pending], counts[swarm.Running], counts[swarm.Done], counts[swarm.Failed],
 		len(numbers), len(numbers), quarantined)
@@ -834,6 +1089,68 @@ func forWord(sc swarm.Sidecar, now time.Time) string {
 		return "-"
 	}
 	return now.Sub(started).Round(time.Second).String()
+}
+
+// cmdPullLanes drains the priority lanes of a queue in the order docs/SPEC-JOBS.md
+// section 5 names: red, then green, then small, then next. --decide asks one
+// typed decision behind --floor for an ordering the rule cannot break; a refusal
+// keeps source order. The verb is pull-lanes because dev already owns pull for
+// the affinity pull of section 4 (cmd/nova-swarm/pull.go).
+func cmdPullLanes(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("pull-lanes")
+	queue := f.fs.String("queue", "", "")
+	decideFlag := f.fs.Bool("decide", false, "")
+	floor := f.fs.Float64("floor", swarm.DefaultPullFloor, "")
+	keyEnv := f.fs.String("key-env", "", "")
+	baseURL := f.fs.String("base-url", "", "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*queue, "queue", "the queue directory holding queue/lanes/{red,green,small,next}")
+	if *decideFlag && (*floor < 0 || *floor > 1) {
+		f.add(fmt.Sprintf("--floor is a confidence between 0 and 1, got %s; 0.9 is how a caller says a suggestion must be sure before it orders a lane", oneline.Field(strconv.FormatFloat(*floor, 'g', -1, 64))))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	var score lanes.Scorer
+	if *decideFlag {
+		client, err := decide.New(*baseURL, *keyEnv)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm pull-lanes: %s\n", oneline.Err(err))
+			return 2
+		}
+		score = pullScorer(client)
+	}
+	return swarm.PullLanes(swarm.PullLanesInput{Queue: *queue, Score: score, Floor: *floor, Stdout: stdout, Stderr: stderr})
+}
+
+// pullScorer is the one typed decision: a choice among the tied cards, under the
+// section's 400 ms budget. A below-floor answer is a suggestion, and the lane's
+// source order is the fallback.
+func pullScorer(client *decide.Client) lanes.Scorer {
+	return func(ctx context.Context, state string, options []string) (string, float64, error) {
+		choices := make(map[string]string, len(options))
+		for _, o := range options {
+			choices[o] = o
+		}
+		ctx, cancel := context.WithTimeout(ctx, 400*time.Millisecond)
+		defer cancel()
+		answers, _, err := client.Decide(ctx, state, map[string]decide.Question{
+			"first": {
+				Instructions: "Which card should this lane drain first? Answer with the card's id.",
+				Choice:       choices,
+			},
+		})
+		if err != nil {
+			return "", 0, err
+		}
+		a, ok := answers["first"]
+		if !ok {
+			return "", 0, nil
+		}
+		return a.Choice, a.Confidence, nil
+	}
 }
 
 func cmdStop(args []string, stdout, stderr io.Writer) int {
@@ -1001,6 +1318,7 @@ func cmdTriage(args []string, stdout, stderr io.Writer, now time.Time) int {
 	floor := f.fs.Float64("floor", swarm.DefaultDecideFloor, "")
 	keyEnv := f.fs.String("key-env", "", "")
 	baseURL := f.fs.String("base-url", "", "")
+	usage := f.fs.String("usage", "", "")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -1033,7 +1351,8 @@ func cmdTriage(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Pool: p, Batch: *batch, Since: *since, All: *all, NoState: *noState, Max: *max,
 		Owed:   owedList,
 		Decide: *decide, Floor: *floor, KeyEnv: *keyEnv, BaseURL: *baseURL,
-		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
+		UsagePath: *usage,
+		Stdout:    stdout, Stderr: stderr, Now: func() time.Time { return now },
 	})
 }
 
@@ -1167,6 +1486,8 @@ func cmdCost(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("cost")
 	pool := f.fs.String("pool", "", "")
 	since := f.fs.String("since", "", "")
+	by := f.fs.String("by", "", "")
+	summaryOnly := f.fs.Bool("summary-only", false, "")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -1180,7 +1501,7 @@ func cmdCost(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return 2
 	}
-	return swarm.Cost(p, *since, *max, stdout, stderr)
+	return swarm.Cost(p, *since, *max, *by, *summaryOnly, stdout, stderr)
 }
 
 // cmdProfile folds the per-turn timelines a glob names into a card's minutes per phase. It
@@ -1361,6 +1682,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	slot := f.fs.String("slot", "", "")
 	root := f.fs.String("root", "", "")
 	deadline := f.fs.String("deadline", "", "")
+	// --idle is the bound on STILLNESS, which is not the bound on LENGTH. A card is idle
+	// only when NEITHER its own output NOR its process tree has moved for this long, so a
+	// `go test` printing nothing for minutes is not a dead card (issue #593). The default is
+	// `batch --idle`'s own 300s, and 0 turns the watch off.
+	idle := f.fs.String("idle", swarm.DefaultNativeIdle.String(), "")
 	label := f.fs.String("label", "", "")
 	auth := f.fs.String("auth", "", "")
 	config := f.fs.String("config", "", "")
@@ -1368,6 +1694,25 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	sandbox := f.fs.String("sandbox", "", "")
 	noWall := f.fs.Bool("no-wall", false, "")
 	noSharedCaches := f.fs.Bool("no-shared-caches", false, "")
+	// --results-root is where RESULT.md, usage.tsv and the report are published
+	// (issue #2632). Empty derives <root>/results from the root this run was
+	// already given. --sweep-now deletes the job directory after that publish,
+	// which is the control for a bench sweep that used to delete the results
+	// with the working directory.
+	resultsRootFlag := f.fs.String("results-root", "", "")
+	sweepNow := f.fs.Bool("sweep-now", false, "")
+	// THE BENCH SLOT LEASE (nova-tools#1546). --slots-store names the store and --owner
+	// whose share the one lease per run counts against. BOTH ARE REQUIRED: see
+	// swarm.NoSlotsStoreRefusal for why there is no optional mode and no default.
+	slotsStore := f.fs.String("slots-store", "", "")
+	slotOwner := f.fs.String("owner", "", "")
+	// THE BUDGET (SPEC-SWARM rule 13d, issue #1545). "`native` takes `--tokens <n>` or
+	// `--tokens unmetered`; without it the verb is exit 2 naming the flag, and `0` is
+	// refused, exactly as on `add`." It is read by the SAME f.tokens that reads `add`'s,
+	// `batch --tasks`'s and `requeue`'s, so the three verbs refuse a missing word, a
+	// non-number and a zero in the same sentence: a card launched by `native` and a job
+	// launched by `run` can spend the same key, so they answer to the same rule.
+	tokensWord := f.fs.String("tokens", "", "")
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
@@ -1413,7 +1758,31 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	f.want(*slot, "slot", "the slot directory this run executes in")
 	f.want(*root, "root", "the configured root the slot directory must sit under")
 	f.want(*deadline, "deadline", "the wall duration that kills the child (e.g. 60s, 5m)")
+	// THE WORD, READ WITH EVERY OTHER FLAG AND REFUSED WITH THEM (rule 13d). It sits in
+	// the collector so a caller who left out the budget AND the deadline is told both in
+	// one run; and it sits HERE, above every line below that touches the disk -- the slot
+	// store's lease take, and nativeRun's own job directory, data home and temp directory
+	// -- because 13d refuses "before any directory is made".
+	budgetTokens, budgetUnmetered := f.tokens(*tokensWord)
 	if f.refused(stderr) {
+		return 2
+	}
+	// A LAUNCH WITHOUT A LEASE IS REFUSED (docs/SPEC-SWARM.md, "Bench slot leases";
+	// nova-tools#1546, and Johnny's hold on PR #1562). The first cut made the store
+	// OPTIONAL, so `native` without it ran exactly as before and took nothing -- which
+	// leaves the hole the issue was filed for wide open, because a launch that took no
+	// lease is a launch the bench cannot see, cannot count and cannot refuse. There is
+	// therefore NO default store, no store invented under --root or --slot, no owner
+	// guessed from the host or the label, no shares.tsv created on the way past, and no
+	// flag that turns this off. A bench that has no store yet makes one, once, by hand:
+	// `nova-swarm slots init`, which the remedy below names in full.
+	//
+	// It is ONE line, and it is deliberately not folded into the refusal collector above:
+	// the collector names every missing flag at once, and this is not a missing flag among
+	// others but the single sentence a caller needs to fix a launch that is otherwise
+	// complete.
+	if *slotsStore == "" || *slotOwner == "" {
+		fmt.Fprintln(stderr, swarm.NoSlotsStoreRefusal)
 		return 2
 	}
 	// CARD-8349: a card budget below the harness's MEASURED startup cost is
@@ -1431,6 +1800,18 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-swarm native: --deadline wants a positive duration: %s\n", oneline.Err(err))
 		return 2
 	}
+	idleDur := swarm.DefaultNativeIdle
+	if *idle != "" {
+		v, ierr := time.ParseDuration(*idle)
+		if ierr != nil || v < 0 {
+			fmt.Fprintf(stderr, "nova-swarm native: --idle wants a duration such as 5m, or 0 for no watch: %s\n", oneline.Field(*idle))
+			return 2
+		}
+		idleDur = v
+	}
+	if idleDur > d {
+		idleDur = d
+	}
 	cardRaw, err := os.ReadFile(*cardPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-swarm native: --card wants a readable file: %s\n", oneline.Err(err))
@@ -1442,7 +1823,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	effectiveModel := *model
 	if workerGiven && effectiveModel == "" {
-		effectiveModel = w.Provider + "/" + w.Model
+		if strings.Contains(w.Model, "/") {
+			effectiveModel = w.Model
+		} else {
+			effectiveModel = w.Provider + "/" + w.Model
+		}
 	}
 	cfg := nativeRunConfig{
 		binary:         *harness,
@@ -1454,23 +1839,133 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		authFile:       *auth,
 		configFile:     *config,
 		deadline:       d,
+		idle:           idleDur,
 		repos:          repos,
 		recipients:     recipients,
 		sandbox:        *sandbox,
 		noWall:         *noWall,
 		noSharedCaches: *noSharedCaches,
+		resultsRoot:    resultsRootOf(*resultsRootFlag, *root),
+		tokens:         budgetTokens,
+		unmetered:      budgetUnmetered,
 	}
 	if workerGiven {
 		cfg.worker = &w
 	}
+	// THE BENCH SLOT LEASE (nova-tools#1546). native takes ONE lease before the run
+	// starts and holds it for the run's deadline plus two minutes of grace, the same
+	// shape the dispatcher uses (internal/swarm/run.go). The lease is charged at the
+	// card kind's admission weight (#2033): a schema card that would overflow the
+	// remaining share is refused here, before any job directory is made. A take that
+	// grants nothing is a refusal, not a run, and no worker starts. The lease is released on every exit path,
+	// including a run that fails: the release is DEFERRED here, above every remaining
+	// return, so there is no exit from this function that leaves a seat held.
+	//
+	// IT RELEASES BY IDENTITY, not by owner and label (Stella's hold on PR #1562). The
+	// first cut handed `ReleaseSlotLeases(store, owner, label, false)` to the defer, and
+	// that removes EVERY lease matching the owner and the label -- so two native runs
+	// sharing a bench and a card name each gave away the other's live seat, and a run that
+	// refused before it started (a missing harness, say) deleted a lease it never took.
+	// `leaseIDs` is exactly what this invocation was granted and exactly what it hands back.
+	leasePID := os.Getpid()
+	dur := d + 2*time.Minute
+	kind := swarm.CardKindFromText(string(cardRaw))
+	weight := swarm.SlotAdmissionWeight(kind)
+	leaseIDs, held, share, free, holders, granted, lerr := swarm.TakeSlotLeasesKind(*slotsStore, *slotOwner, 1, kind, dur, lbl, time.Now().UTC(), leasePID)
+	if lerr != nil {
+		fmt.Fprintf(stderr, "nova-swarm native: the slot store could not be read: %s\n", oneline.Err(lerr))
+		return 2
+	}
+	if !granted {
+		if holders == "" {
+			holders = "-"
+		}
+		fmt.Fprintf(stderr, "SLOTS REFUSED owner=%s want=%d held=%d share=%d free=%d holders=%s\n",
+			oneline.Field(*slotOwner), weight, held, share, free, oneline.Escape(holders))
+		return 2
+	}
+	defer func() {
+		if _, err := swarm.ReleaseSlotLeasesByID(*slotsStore, leaseIDs, leasePID); err != nil {
+			fmt.Fprintf(stderr, "nova-swarm native: releasing the slot lease: %s\n", oneline.Err(err))
+		}
+	}()
 	res, code := nativeRun(cfg, stderr)
+	if code != 0 && !res.lost && !res.unrecorded {
+		return code
+	}
+	// OK IS A VERDICT, NOT A PUNCTUATION MARK (nova-tools #1844). This line said
+	// `NATIVE OK` for every run that reached it, including a run that produced NOTHING:
+	// card tools12c18 on vision came back rc=1 on both attempts, zero tokens, zero
+	// dollars, no RESULT.md and no repo -- and the launcher's one log line read
+	// `vision tools12c18 attempt=1 wall=159s NATIVE OK label=tools12c18 job=...`. A fill
+	// loop or a manager counting in-flight cards by that line counts a card that never
+	// ran as delivered. So the word is earned: the harness has to have answered and the
+	// run has to have left the one artefact a card exists to produce. When it has not,
+	// the line is `NATIVE INCOMPLETE` and carries `why=` naming which of the three it
+	// failed -- every other field is byte-for-byte the same, so a reader that parses
+	// fields still reads them all.
+	// The request may have been accepted and the response was lost. That is
+	// not a delivered card and not an ordinary failure the coordinator may retry.
+	verdict, why := nativeVerdictWhy(res)
+	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
+	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
+	//
+	// AND SO IS budget= (rule 13d: "`NATIVE OK` always carries `budget=`"). It sits
+	// immediately after harness= and ahead of every optional tail, where the output
+	// grammar puts it (docs/SPEC-SWARM.md, "Output grammar", the NATIVE OK line), so the
+	// fixed part of the line stays one fixed part. It is the JOB's figure -- the sum over
+	// every launch at the final read -- and never a launch's row. The VERDICT above and
+	// this field are independent: budget= is carried by INCOMPLETE too, because #1844's
+	// own sentence is that "every other field is byte-for-byte the same".
+	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s",
+		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
+		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
+		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated))
+	if why != "" {
+		fmt.Fprintf(stdout, " why=%s", oneline.Field(why))
+	}
+	fmt.Fprintln(stdout)
+	// THE WALL REPORT (issue #918): a run the fence stopped with no result ends `wall`,
+	// and the line names the path and the commits so the harvester pushes the work.
+	if res.wallReport != "" {
+		fmt.Fprintln(stdout, oneline.Escape(res.wallReport))
+	}
+	// THE REPORT LINE A WALL DEATH OWES (issue #644's follow-up): the path the wall refused,
+	// the step the card reached, and the commits it left on its branch so a harvester can
+	// still push the work. Printed only when the wall stopped a card with no result, which is
+	// the one shape nativeRun sets res.wall for.
+	if (res.wallRefusal != swarm.WallRefusal{}) {
+		branch, commits, _ := swarm.WallCommits(filepath.Join(res.job, "repo"))
+		fmt.Fprintln(stdout, swarm.WallLine(cfg.label, res.wallRefusal, branch, commits))
+	}
+	// THE END THE WATCH GAVE THE CARD, in the words of what it actually saw. A card the
+	// wall stopped says so; a card that simply went still says THAT, on a line that is
+	// deliberately not a WALL line -- `js-under-20-bytes` died in a provider stall and was
+	// reported as a wall death at a path it had already worked past sixteen steps earlier.
+	if res.idled {
+		if res.idleEnd.Refused {
+			fmt.Fprintln(stdout, swarm.WallRefusedLine(cfg.label, res.idleEnd.Kind, res.idleEnd.Path, res.idleEnd.Step))
+		} else {
+			fmt.Fprintln(stdout, swarm.CardIdleLine(cfg.label, res.idleEnd))
+		}
+		if res.blockedPath != "" {
+			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
+		}
+	}
+	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST (issue #2632). --sweep-now
+	// is the control: it deletes the job directory the way the bench sweep does,
+	// and only when publishNativeResults named the directory it landed in. A
+	// publish that did not land leaves the job, which is then the only copy.
+	if *sweepNow {
+		if res.resultsDir == "" {
+			fmt.Fprintf(stderr, "NATIVE NOTE: --sweep-now left %s in place: its results were not published\n", oneline.Field(res.job))
+		} else if err := sweepNativeJob(res.root, res.job); err != nil {
+			fmt.Fprintf(stderr, "NATIVE NOTE: the job directory %s could not be removed: %s\n", oneline.Field(res.job), oneline.Escape(err.Error()))
+		}
+	}
 	if code != 0 {
 		return code
 	}
-	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
-	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
-	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s\n",
-		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState))
 	if res.rc != 0 {
 		if res.rc > 0 {
 			return res.rc
@@ -1481,6 +1976,42 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 }
 
 // ------------------------------------------------------------------------------- helpers
+
+// cmdReap frees the finished slots under a swarm root (issue #1048): for every slot whose job
+// published a RESULT.md or whose newest harness log is older than --older, the slot's data/,
+// tmp/ and jobs/*/scratch are removed, while RESULT.md, usage.tsv and the logs are kept. It
+// is the verb an operator runs over hulk and vision when the runners have filled a bench.
+func cmdReap(args []string, stdout, stderr io.Writer, now time.Time) int {
+	f := newFlags("reap")
+	root := f.fs.String("root", "", "")
+	olderRaw := f.fs.String("older", swarm.DefaultReapOlder.String(), "")
+	dryRun := f.fs.Bool("dry-run", false, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*root, "root", "the swarm root whose finished slots are reaped; a slot is <root>/<n>")
+	older := swarm.DefaultReapOlder
+	if *olderRaw != "" {
+		d, err := time.ParseDuration(*olderRaw)
+		if err != nil || d < 0 {
+			f.add(fmt.Sprintf("--older wants a duration such as 1h or 30m, got %q", *olderRaw))
+		} else {
+			older = d
+		}
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	slots, freed, err := swarm.ReapSlots(swarm.ReapInput{
+		Root: *root, Older: older, DryRun: *dryRun, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "REAP REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
+	fmt.Fprintf(stdout, "REAP OK slots=%d freed=%d\n", slots, freed)
+	return 0
+}
 
 func readTask(path string, useStdin bool, stdin io.Reader) ([]byte, error) {
 	if useStdin {
@@ -1503,6 +2034,64 @@ func readTask(path string, useStdin bool, stdin io.Reader) ([]byte, error) {
 	return raw, nil
 }
 
+// nativeVerdictWhy is the word on the NATIVE line and the why= that follows it.
+// A lost provider body is unknown-acceptance, not a delivered card and not an
+// ordinary failure the coordinator may retry. The other three whys are the
+// ones a run earns when the harness did not answer with a result.
+func nativeVerdictWhy(res nativeRunResult) (verdict, why string) {
+	if res.lost {
+		return "INCOMPLETE", "unknown-acceptance"
+	}
+	switch harnessState := orElse(res.harness, "silent"); {
+	case harnessState == "silent":
+		return "INCOMPLETE", "harness-silent"
+	case !nativeLeftAResult(res.job):
+		return "INCOMPLETE", "no-result"
+	case res.rc != 0:
+		return "INCOMPLETE", "rc"
+	}
+	return "OK", ""
+}
+
+// resultsRootOf is the directory native publishes into. A named --results-root
+// wins. Otherwise it is <root>/results, derived from the root the run was given,
+// not a path invented beside it.
+func resultsRootOf(flag, root string) string {
+	if strings.TrimSpace(flag) != "" {
+		return flag
+	}
+	if strings.TrimSpace(root) == "" {
+		return ""
+	}
+	return filepath.Join(root, "results")
+}
+
+// nativeLeftAResult reports whether the run left the one artefact a card exists to produce:
+// RESULT.md in its job directory, or in the clone the card worked in. A card that abstains
+// still writes one (it says ABSTAIN on line 2); a run that produced nothing writes none.
+//
+// A REPORT THE MACHINERY WROTE IS NOT THE CARD'S (issue #2548). A card that ended its last
+// turn with a question publishes nothing, and the run now writes `RESULT: ASKED <question>`
+// for it so the question is not lost. That file is evidence of an ABSENCE, and counting it
+// here would turn the verdict this run already prints -- `INCOMPLETE why=no-result` -- into
+// `NATIVE OK` for a card that did nothing but ask, which is the very fault #1844 made this
+// word earn itself. The verdict is therefore unchanged by the report, and the report is
+// where the question goes.
+func nativeLeftAResult(job string) bool {
+	if strings.TrimSpace(job) == "" {
+		return false
+	}
+	for _, p := range []string{
+		filepath.Join(job, "RESULT.md"),
+		filepath.Join(job, "repo", "RESULT.md"),
+	} {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && !swarm.AskedReport(p) {
+			return true
+		}
+	}
+	return false
+}
+
 func dash(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return "-"
@@ -1523,10 +2112,21 @@ func fenceSuffix(path string) string {
 	return " fence=rejected path=" + oneline.Field(path)
 }
 
+// termSuffix names the one clean ending a manager brings: ` reason=terminated`, so a
+// coordinator reading the NATIVE OK line knows the run was stopped from outside and never
+// reads a silent exit as a spent failure (issue #779). The token is a literal put through
+// oneline.Field like every other tail, so it cannot carry anything past the escape.
+func termSuffix(terminated bool) string {
+	if terminated {
+		return " reason=" + oneline.Field("terminated")
+	}
+	return ""
+}
+
 // usageSuffix renders the usage status the NATIVE OK line carries: the empty string when a
 // store answered, otherwise ` usage=none reason=<r> path=<looked>` with the looked path put
 // through oneline.Field inside itself before returning, so the tail it adds is one safe token.
-// The reason is the literal one of no-rows, no-store or no-sqlite3 the reader reported.
+// The reason is the literal one of no-rows, no-store, no-sqlite3 or query-failed the reader reported.
 func usageSuffix(reason, path string) string {
 	if reason == "" {
 		return ""

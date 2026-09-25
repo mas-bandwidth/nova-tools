@@ -11,6 +11,23 @@ import (
 	"time"
 )
 
+// lockStepClock is the lock's clock in the tests: Now stands still until Sleep moves it,
+// so the bounded wait reaches its deadline in as many polls as it would in real time and
+// not one wall-clock millisecond. Production's clock is realLockClock.
+type lockStepClock struct {
+	start time.Time
+	now   time.Time
+}
+
+func newLockStepClock() *lockStepClock {
+	at := time.Unix(1_700_000_000, 0)
+	return &lockStepClock{start: at, now: at}
+}
+
+func (c *lockStepClock) Now() time.Time        { return c.now }
+func (c *lockStepClock) Sleep(d time.Duration) { c.now = c.now.Add(d) }
+func (c *lockStepClock) waited() time.Duration { return c.now.Sub(c.start) }
+
 // TestLockFileTransientCollisionRecoversWhenWaitBudgetAllows verifies that when tryLockFile
 // encounters a transient collision during lock release/handover, lockFile waits out the window
 // and successfully acquires the lock.
@@ -28,8 +45,8 @@ func TestLockFileTransientCollisionRecoversWhenWaitBudgetAllows(t *testing.T) {
 		return true, false, nil
 	}
 
-	start := time.Now()
-	release, err := lockFile(lockPath, 500*time.Millisecond, try)
+	clk := newLockStepClock()
+	release, err := lockFile(lockPath, 500*time.Millisecond, try, clk)
 	if err != nil {
 		t.Fatalf("lockFile failed to recover from transient collision: %v", err)
 	}
@@ -38,8 +55,8 @@ func TestLockFileTransientCollisionRecoversWhenWaitBudgetAllows(t *testing.T) {
 	if p := atomic.LoadInt32(&polls); p < 3 {
 		t.Fatalf("lockFile acquired lock after %d polls, want at least 3", p)
 	}
-	if elapsed := time.Since(start); elapsed < 30*time.Millisecond {
-		t.Fatalf("lockFile returned in %v, expected to wait for transient collision to clear", elapsed)
+	if waited := clk.waited(); waited < 30*time.Millisecond {
+		t.Fatalf("lockFile gave up after %v of virtual time, expected to wait for transient collision to clear", waited)
 	}
 
 	// Verify lock holder was stamped
@@ -64,16 +81,16 @@ func TestLockFilePersistentCollisionPreservesActualErrorAndDoesNotFalselyAssertL
 		return false, true, errAccessDenied
 	}
 
-	start := time.Now()
-	release, err := lockFile(lockPath, 60*time.Millisecond, try)
+	clk := newLockStepClock()
+	release, err := lockFile(lockPath, 60*time.Millisecond, try, clk)
 	if err == nil {
 		release()
 		t.Fatal("lockFile succeeded despite permanent collision, want error")
 	}
 
-	// Must have waited out the budget
-	if elapsed := time.Since(start); elapsed < 50*time.Millisecond {
-		t.Fatalf("lockFile aborted early after %v, want at least 50ms budget", elapsed)
+	// Must have waited out the budget, in virtual time the fake advanced.
+	if waited := clk.waited(); waited < 50*time.Millisecond {
+		t.Fatalf("lockFile aborted early after %v of virtual time, want at least 50ms budget", waited)
 	}
 	if p := atomic.LoadInt32(&polls); p < 2 {
 		t.Fatalf("lockFile polled %d times, want multiple retries over budget", p)
@@ -107,8 +124,8 @@ func TestLockFileImmediateNonblockingRejectsCollisionImmediately(t *testing.T) {
 		return false, true, errAccessDenied
 	}
 
-	start := time.Now()
-	_, err := lockFile(lockPath, 0, try)
+	clk := newLockStepClock()
+	_, err := lockFile(lockPath, 0, try, clk)
 	if err == nil {
 		t.Fatal("lockFile with wait=0 succeeded on collision, want error")
 	}
@@ -116,8 +133,8 @@ func TestLockFileImmediateNonblockingRejectsCollisionImmediately(t *testing.T) {
 	if got := atomic.LoadInt32(&attempts); got != 1 {
 		t.Fatalf("lockFile with wait=0 called try %d times, want exactly 1 attempt", got)
 	}
-	if elapsed := time.Since(start); elapsed > 30*time.Second {
-		t.Fatalf("lockFile with wait=0 took %v, want near-immediate return", elapsed)
+	if waited := clk.waited(); waited != 0 {
+		t.Fatalf("lockFile with wait=0 waited %v, want an immediate return", waited)
 	}
 
 	// Real error preserved, not ErrLockHeld
@@ -142,8 +159,8 @@ func TestLockFileImmediateNonblockingCleanContentionReturnsLockHeld(t *testing.T
 		return false, true, nil // clean contention
 	}
 
-	start := time.Now()
-	_, err := lockFile(lockPath, 0, try)
+	clk := newLockStepClock()
+	_, err := lockFile(lockPath, 0, try, clk)
 	if err == nil {
 		t.Fatal("lockFile with wait=0 succeeded on clean contention, want ErrLockHeld")
 	}
@@ -151,8 +168,8 @@ func TestLockFileImmediateNonblockingCleanContentionReturnsLockHeld(t *testing.T
 	if got := atomic.LoadInt32(&attempts); got != 1 {
 		t.Fatalf("lockFile with wait=0 called try %d times, want exactly 1 attempt", got)
 	}
-	if elapsed := time.Since(start); elapsed > 30*time.Second {
-		t.Fatalf("lockFile with wait=0 took %v, want near-immediate return", elapsed)
+	if waited := clk.waited(); waited != 0 {
+		t.Fatalf("lockFile with wait=0 waited %v, want an immediate return", waited)
 	}
 
 	if !errors.Is(err, ErrLockHeld) {
@@ -173,7 +190,7 @@ func TestLockFileNegativeControlMissingParentFailsAtOpen(t *testing.T) {
 		return true, false, nil
 	}
 
-	_, err := lockFile(lockPath, 50*time.Millisecond, try)
+	_, err := lockFile(lockPath, 50*time.Millisecond, try, newLockStepClock())
 	if err == nil {
 		t.Fatal("lockFile on missing directory succeeded, want error")
 	}

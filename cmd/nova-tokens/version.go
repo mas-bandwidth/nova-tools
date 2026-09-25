@@ -65,7 +65,7 @@ func resolveVersion(stamped string, info *debug.BuildInfo, ok bool) string {
 // and this verb exists to end an argument rather than to start one.
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
-		fmt.Fprintf(stderr, "nova-tokens version: takes no flags and no arguments, got %d\n", len(args))
+		fmt.Fprintf(stderr, "nova-tokens version: takes no flags and no arguments, got %d; run: nova-tokens help\n", len(args))
 		return 2
 	}
 	fmt.Fprintf(stdout, "nova-tokens %s %s/%s %s\n",

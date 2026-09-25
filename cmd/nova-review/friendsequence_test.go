@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 )
 
@@ -147,6 +148,7 @@ func buildNovaMerge(t *testing.T, dir string) string {
 		bin += ".exe"
 	}
 	cmd := exec.Command("go", "build", "-o", bin, "github.com/mas-bandwidth/nova-tools/cmd/nova-merge")
+	cmd.Env = goenv.Clean(os.Environ())
 	if raw, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("building nova-merge: %v\n%s", err, raw)
 	}

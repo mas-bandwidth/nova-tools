@@ -27,15 +27,30 @@ func runCheck(t *testing.T, args ...string) (exit int, stdout, stderr string) {
 	return exit, out.String(), errb.String()
 }
 
+// exampleDogfood is the fixture the dogfood verb's banner example runs
+// against: a command reference the size of a first run, and the receipts two
+// friends left against it.
+const exampleDogfood = "testdata/example-dogfood"
+
 // localize points an example or transcript command at the fixture, so what is
-// under test is the command's SHAPE and not the reader's directory layout.
+// under test is the command's SHAPE and not the reader's directory layout. The
+// banner shows a reader the paths they would type from the repository root
+// (./self, ./docs/CLI.md); here those become the fixtures that ship with the
+// tool, so the example is run rather than read.
 func localize(args []string) []string {
 	out := append([]string(nil), args...)
 	for i, a := range out {
-		if a == "./self" {
+		switch {
+		case a == "./self":
 			out[i] = exampleSelf
-		} else if rest, ok := strings.CutPrefix(a, "./self/"); ok {
-			out[i] = filepath.Join(exampleSelf, rest)
+		case a == "./docs/CLI.md":
+			out[i] = filepath.Join(exampleDogfood, "CLI.md")
+		case a == "./dogfood-receipts":
+			out[i] = filepath.Join(exampleDogfood, "receipts")
+		default:
+			if rest, ok := strings.CutPrefix(a, "./self/"); ok {
+				out[i] = filepath.Join(exampleSelf, rest)
+			}
 		}
 	}
 	return out
@@ -86,6 +101,34 @@ func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
 	}
 	if !strings.Contains(usage, "nova-check quickstart --dir <dir>") {
 		t.Error("the usage block does not list the quickstart verb")
+	}
+}
+
+// The seed has kept SEED-CORE.md and SEED.md under docs/ since nova#141. The
+// banner's floors line and kernel example used to point a first-time reader at
+// the root-level paths the seed no longer keeps; both must name docs/.
+func TestHelpNamesTheSeedFilesUnderDocs(t *testing.T) {
+	exit, stdout, stderr := runCheck(t, "help")
+	if exit != 0 {
+		t.Fatalf("`nova-check help` must exit 0, got %d; stderr: %s", exit, stderr)
+	}
+	for _, gone := range []string{
+		"--core <SEED-CORE.md>",
+		"--source <SEED.md>",
+		"./self/SEED-CORE.md",
+	} {
+		if strings.Contains(stdout, gone) {
+			t.Errorf("the help still names %q, a root-level seed path the seed has not kept since nova#141", gone)
+		}
+	}
+	for _, want := range []string{
+		"--core <docs/SEED-CORE.md>",
+		"--source <docs/SEED.md>",
+		"./self/docs/SEED-CORE.md",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the help does not name %q, the docs/ path the seed keeps", want)
+		}
 	}
 }
 
@@ -183,14 +226,32 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 	}
 }
 
-// (c) The README's `### First run` transcript, checked against the tool. The
-// commands in it are run here against the fixture, and every transcript line
-// must match a line the tool actually printed — the event prefix and the field
-// names, in order. Numbers, paths and tails are a run's own business and are
-// deliberately NOT compared: pinning those would make the README a fixture
-// instead of a document.
-func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+// The `### First run` block of docs/TESTS.md is EXECUTED: every documented
+// command is run, in order, and its whole output is compared with the block
+// written under it -- same number of lines, same lines, same order.
+//
+// WHAT THIS REPLACES. The old test collected the SHAPES a command printed into
+// a `printed map[string]bool`, with the numbers, paths and tails deliberately
+// NOT compared. Under that comparison `LINKS OK files=4 links=3 excluded=0`
+// and `LINKS OK files=0 links=0 excluded=0` are the same line -- a quickstart
+// that had stopped finding the fixture's files would read as green -- and a
+// dropped line removes a lookup rather than an assertion.
+//
+// NOTHING IS NORMALISED. The fixture is on disk and every count on every line
+// is of it, so all of them reproduce; onboarding.Execute is handed no Norm and
+// says so under any line that disagrees.
+//
+// The fixture is typed as written. The documented `./self` is what a reader
+// types and what the tool PRINTS BACK on `dir=`, so the fixture is copied to
+// that name in a directory of the test's own rather than the path being
+// rewritten, which is what the old `localize` did and why it could not have
+// compared the line the document promised.
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := filepath.Abs(exampleSelf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,39 +259,62 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var printed map[string]bool
-	seen := map[string]int{}
-	for _, line := range lines {
-		if cmd, ok := strings.CutPrefix(line, "$ nova-check "); ok {
-			exit, stdout, stderr := runCheck(t, localize(strings.Fields(cmd))...)
-			if exit == 2 {
-				t.Fatalf("the README command %q does not run: exit 2, stderr: %s", line, stderr)
-			}
-			printed = map[string]bool{}
-			for _, out := range strings.Split(stdout, "\n") {
-				if s := onboarding.Shape(out); s != "" {
-					printed[s] = true
-				}
-			}
-			continue
-		}
-		s := onboarding.Shape(line)
-		if s == "" {
-			continue
-		}
-		if printed == nil {
-			t.Fatalf("transcript line before any command: %q", line)
-		}
-		if !printed[s] {
-			t.Errorf("README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
-		}
-		seen[strings.Join(strings.Fields(s)[:2], " ")]++
+	steps, err := onboarding.Steps("nova-check", lines)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for prefix, want := range map[string]int{
-		"QUICKSTART OK": 2, "LINKS OK": 1, "NOCODE OK": 1, "KERNEL OK": 1,
-	} {
-		if seen[prefix] != want {
-			t.Errorf("README First run shows %d %s lines, want %d", seen[prefix], prefix, want)
+	if len(steps) == 0 {
+		t.Fatal("the `### First run` block holds no nova-check command; this test would pass by running nothing")
+	}
+
+	dir := t.TempDir()
+	copyTree(t, fixture, filepath.Join(dir, "self"))
+	t.Chdir(dir)
+	for _, p := range onboarding.Execute(steps, runDocumented) {
+		t.Error(p)
+	}
+}
+
+// runDocumented calls this binary's own entry point with the documented
+// arguments. nova-check reads nothing on stdin.
+func runDocumented(s onboarding.Step) (onboarding.Result, error) {
+	if s.Stdin != "" {
+		return onboarding.Result{}, errReadsNothing
+	}
+	var out, errb bytes.Buffer
+	code := run(s.Args, &out, &errb)
+	return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+}
+
+type readsNothing struct{}
+
+func (readsNothing) Error() string {
+	return "nova-check reads no stdin; a `< path` in its transcript is the document's bug"
+}
+
+var errReadsNothing = readsNothing{}
+
+// copyTree copies the fixture to where the transcript says it is.
+func copyTree(t *testing.T, from, to string) {
+	t.Helper()
+	entries, err := os.ReadDir(from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			copyTree(t, filepath.Join(from, e.Name()), filepath.Join(to, e.Name()))
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(from, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(to, e.Name()), body, 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

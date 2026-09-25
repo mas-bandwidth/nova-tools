@@ -18,7 +18,10 @@ func addPoolCard(t *testing.T, root, label, state, id, contract, result string) 
 		t.Fatal(err)
 	}
 	cardPath := filepath.Join(cardDir, label+".md")
-	if err := os.WriteFile(cardPath, []byte(contract+"\nSTEP 1. go\n"), 0o644); err != nil {
+	// The card names its own repository: a harvest checks the RESULT.md's REPO line
+	// against the card before it pushes anywhere, because a RESULT is a report and not
+	// an instruction (issue #1824). Every card these tests fold is for owner/repo.
+	if err := os.WriteFile(cardPath, []byte(contract+"\nREPO owner/repo\nSTEP 1. go\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	pool := filepath.Join(root, "pool")
@@ -53,18 +56,18 @@ func TestHarvestReadsPoolLayout(t *testing.T) {
 
 	addPoolCard(t, root, "X", "done", "20260917T010500Z-x-aaaaaa",
 		"RESULT X sha=xxx",
-		"RESULT X sha=xxx\nDONE\nBRANCH bx\nREPO owner/repo\n")
+		"RESULT X sha=xxx\nDONE\nBRANCH rowan/bx\nREPO owner/repo\n")
 	// A task in failed/ whose RESULT.md exists with a first line equal to the
 	// card's RESULT line is harvested as a result, not a failure.
 	addPoolCard(t, root, "Y", "failed", "20260917T010600Z-y-bbbbbb",
 		"RESULT Y sha=yyy",
-		"RESULT Y sha=yyy\nDONE\nBRANCH by\nREPO owner/repo\n")
+		"RESULT Y sha=yyy\nDONE\nBRANCH rowan/by\nREPO owner/repo\n")
 
 	out, _ := runHarvest(t, root)
-	if !strings.Contains(out, "HARVEST PR repo=owner/repo pr=77 label=X branch=bx") {
+	if !strings.Contains(out, "HARVEST PR repo=owner/repo pr=77 label=X branch=rowan/bx") {
 		t.Fatalf("pool card X must be harvested from pool/reports, got:\n%s", out)
 	}
-	if !strings.Contains(out, "HARVEST PR repo=owner/repo pr=77 label=Y branch=by") {
+	if !strings.Contains(out, "HARVEST PR repo=owner/repo pr=77 label=Y branch=rowan/by") {
 		t.Fatalf("pool card Y in failed/ with a RESULT must be harvested as a result, got:\n%s", out)
 	}
 	if !strings.Contains(out, "pushed=2") {

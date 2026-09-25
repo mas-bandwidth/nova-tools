@@ -963,7 +963,10 @@ func TestPacketFetchesBaseFromGitHubNotLaneRemote(t *testing.T) {
 func TestLaneRefusalNamesRemedy(t *testing.T) {
 	plain := t.TempDir()
 	var out, errb bytes.Buffer
-	if code := run([]string{"packet", "--lane", plain, "--branch", "feature", "--who", "emma", "--out", "p.md"}, &out, &errb); code != 2 {
+	// --out is named inside the temp dir even though this run refuses before it
+	// writes: the class rule reads the call, not the exit code, and a refusal that
+	// stops writing today is one flag away from not refusing tomorrow.
+	if code := run([]string{"packet", "--lane", plain, "--branch", "feature", "--who", "emma", "--out", filepath.Join(plain, "p.md")}, &out, &errb); code != 2 {
 		t.Fatalf("plain checkout code=%d, want 2", code)
 	}
 	want := "a lane is a directory made by nova-merge init --lane <dir> --repo <owner/name> --base <branch> --lane-branch <name>"

@@ -32,7 +32,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // DefaultCardDeadline is how long a card may run before the reaper collects it: the batch
@@ -80,6 +82,17 @@ type WiringInput struct {
 	Now      func() time.Time
 	Config   func() Config // the tick's configuration, re-read by run.go each tick
 	Log      io.Writer     // where each verb's one line goes; nil is <queue>/pulse.log
+
+	// Decide turns on the triage decide pass after each harvest (card 8371):
+	// a finished task whose needs_human is at or above DecideFloor goes to
+	// <queue>/HUMAN instead of being retried, and a provider_error above the
+	// floor is requeued once. DecideDo is the test seam; nil builds the Jev
+	// client from DecideBaseURL and DecideKeyEnv.
+	Decide        bool
+	DecideFloor   float64
+	DecideKeyEnv  string
+	DecideBaseURL string
+	DecideDo      swarm.DecideFunc
 
 	Runs      RunSource
 	PRs       PRSource
@@ -241,7 +254,33 @@ func (w *Wiring) Harvest(tick int) (int, []Undecided, error) {
 			}
 		}
 	}
+	// The decide pass is AFTER the harvest and reads the pools' finished tasks:
+	// a needs_human goes to HUMAN instead of a retry (card 8371).
+	if w.in.Decide {
+		pools := make([]string, 0, len(w.roots))
+		for _, root := range w.roots {
+			pools = append(pools, filepath.Join(root, "pool"))
+		}
+		human, retried := DecideHarvest(DecideInput{Queue: w.in.Queue, Pools: pools, Do: w.decideSeam(), Floor: w.in.DecideFloor, Now: w.in.Now})
+		if human > 0 || retried > 0 {
+			w.log(fmt.Sprintf("HARVEST DECIDE human=%d retried=%d", human, retried))
+		}
+	}
 	return done, undecided, nil
+}
+
+// decideSeam is the typed-decision seam: the test's fake when set, else the
+// Jev client built from the configured endpoint and key variable.
+func (w *Wiring) decideSeam() swarm.DecideFunc {
+	if w.in.DecideDo != nil {
+		return w.in.DecideDo
+	}
+	client, err := decide.New(w.in.DecideBaseURL, w.in.DecideKeyEnv)
+	if err != nil {
+		w.log("HARVEST NOTE the decide pass is off: " + oneline.Err(err))
+		return nil
+	}
+	return client.Decide
 }
 
 // ----------------------------------------------------------------------------- 3. sweep

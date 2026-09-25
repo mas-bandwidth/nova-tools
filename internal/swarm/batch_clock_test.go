@@ -98,6 +98,35 @@ func runBatchClock(in BatchInput, clk *manualClock, drive func()) (int, string, 
 	return code, out.String(), errb.String()
 }
 
+// fakeTreeSampler provides deterministic per-card CPU activity snapshots.
+// As cards are polled, each process pid is assigned an index (0, 1, ...),
+// matching the order cards are defined in the batch.
+type fakeTreeSampler struct {
+	mu         sync.Mutex
+	pids       []int
+	cpuForCard func(cardIndex int, pid int) (uint64, bool)
+}
+
+func (s *fakeTreeSampler) TreeCPU(pid int) (uint64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx := -1
+	for i, p := range s.pids {
+		if p == pid {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		idx = len(s.pids)
+		s.pids = append(s.pids, pid)
+	}
+	if s.cpuForCard != nil {
+		return s.cpuForCard(idx, pid)
+	}
+	return 0, false
+}
+
 // waitForFile waits, against a thirty-second real bound and never an assertion,
 // until path exists. The runner is a real process and this is a readiness wait on
 // its work, not a claim about the machine.
