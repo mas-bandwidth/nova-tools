@@ -145,11 +145,18 @@ func (r *RedisCISource) Read(repo, sha string) (string, bool, error) {
 	return "", false, nil
 }
 
+// ErrNoRedisAddr is the refusal when neither NOVA_REDIS_HOST nor REDIS_ADDR
+// names a Redis server, so the lander does not silently read localhost.
+var ErrNoRedisAddr = errors.New("ci: NOVA_REDIS_HOST and REDIS_ADDR are both unset; set one to name the fleet Redis")
+
 // RedisFromEnv builds the production source from the same NOVA_REDIS_* settings
 // used by the lander. REDIS_ADDR remains a compatibility override for local
 // callers. It needs no main.go wiring because NewGH calls it.
 func RedisFromEnv() CISource {
 	addr := redisAddrFromEnv()
+	if addr == "" {
+		return &noRedisSource{}
+	}
 	db := 0
 	if v := strings.TrimSpace(os.Getenv("REDIS_DB")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -164,13 +171,24 @@ func RedisFromEnv() CISource {
 	})}
 }
 
+// noRedisSource is a CISource that refuses every read by name when the
+// lander's env did not name a Redis server.
+type noRedisSource struct{}
+
+func (n *noRedisSource) Read(repo, sha string) (string, bool, error) {
+	return "", false, ErrNoRedisAddr
+}
+
 func redisAddrFromEnv() string {
 	if addr := strings.TrimSpace(os.Getenv("REDIS_ADDR")); addr != "" {
 		return addr
 	}
-	host := envOr("NOVA_REDIS_HOST", "localhost")
-	port := envOr("NOVA_REDIS_PORT", "6379")
-	return host + ":" + port
+	host := os.Getenv("NOVA_REDIS_HOST")
+	if strings.TrimSpace(host) != "" {
+		port := envOr("NOVA_REDIS_PORT", "6379")
+		return host + ":" + port
+	}
+	return ""
 }
 
 func envOr(name, fallback string) string {

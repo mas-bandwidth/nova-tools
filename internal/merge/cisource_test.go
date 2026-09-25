@@ -189,12 +189,17 @@ func TestLanderReadsCIFromRedisNeverCheckRuns(t *testing.T) {
 func TestChecksMapsTheRecordWord(t *testing.T) {
 	const repo, sha = "owner/repo", "deadbeef"
 
-	t.Run("production address has safe local default", func(t *testing.T) {
+	t.Run("production address refuses when NOVA_REDIS_HOST and REDIS_ADDR are both unset", func(t *testing.T) {
 		t.Setenv("REDIS_ADDR", "")
 		t.Setenv("NOVA_REDIS_HOST", "")
 		t.Setenv("NOVA_REDIS_PORT", "")
-		if got := redisAddrFromEnv(); got != "localhost:6379" {
-			t.Fatalf("redisAddrFromEnv() = %q, want localhost:6379", got)
+		if got := redisAddrFromEnv(); got != "" {
+			t.Fatalf("redisAddrFromEnv() = %q, want empty (refused)", got)
+		}
+		src := RedisFromEnv()
+		_, ok, err := src.Read("owner/repo", "abc123")
+		if !errors.Is(err, ErrNoRedisAddr) || ok {
+			t.Fatalf("RedisFromEnv().Read = %v, %v; want ErrNoRedisAddr and false", err, ok)
 		}
 	})
 
@@ -290,6 +295,58 @@ func TestRedisCISourceReadsTheReceiptLandReads(t *testing.T) {
 		v, ok, err := src.Read(repo, sha)
 		if err != nil || !ok || v != "FAIL go-test: FAIL TestY" {
 			t.Fatalf("Read = %q %v %v; want the request record's red", v, ok, err)
+		}
+	})
+}
+
+// TestCIVerdictFromRecordLaw is #3444's DONE-WHEN: one law, either the record
+// path prints ci: from-redis when the fleet Redis is named and the bench user
+// can read ci:<repo>:<sha>, or an unset NOVA_REDIS_HOST/REDIS_ADDR is refused
+// by name instead of silently reading localhost.
+func TestCIVerdictFromRecordLaw(t *testing.T) {
+	const repo, sha = "mas-bandwidth/nova-tools", "abc123"
+
+	t.Run("unset NOVA_REDIS_HOST and REDIS_ADDR is refused by name", func(t *testing.T) {
+		t.Setenv("REDIS_ADDR", "")
+		t.Setenv("NOVA_REDIS_HOST", "")
+		t.Setenv("NOVA_REDIS_PORT", "")
+		t.Setenv("REDIS_DB", "")
+
+		src := RedisFromEnv()
+		_, ok, err := src.Read(repo, sha)
+		if !errors.Is(err, ErrNoRedisAddr) {
+			t.Fatalf("RedisFromEnv().Read = %v; want ErrNoRedisAddr (refused by name, not silently reading localhost)", err)
+		}
+		if ok {
+			t.Fatal("RedisFromEnv().Read ok=true; want false on refusal")
+		}
+	})
+
+	t.Run("named fleet Redis with readable ci record prints ci: from-redis", func(t *testing.T) {
+		mr := miniredis.RunT(t)
+		t.Setenv("REDIS_ADDR", mr.Addr())
+		t.Setenv("NOVA_REDIS_HOST", "")
+		t.Setenv("NOVA_REDIS_PORT", "")
+
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		t.Cleanup(func() { _ = client.Close() })
+
+		// Write a green CI record that the bench user can read.
+		mr.HSet(CIRequestKey(repo, sha), "ci", "green", "final", "OK")
+
+		runner := &ciFakeRunner{out: ghGreen}
+		c, err := NewGH(repo, time.Second, runner, WithCISource(&RedisCISource{Client: client})).Checks(sha)
+		if err != nil {
+			t.Fatalf("Checks = %v; want nil (ci: from-redis)", err)
+		}
+		if c.Source != CIFromRedis {
+			t.Fatalf("Checks.Source = %q; want %q (ci: from-redis)", c.Source, CIFromRedis)
+		}
+		if c.Verdict() != "GREEN" {
+			t.Fatalf("Checks.Verdict = %q; want GREEN", c.Verdict())
+		}
+		if runner.calls != 0 {
+			t.Fatalf("Checks asked GitHub %d time(s); CI must come from Redis only", runner.calls)
 		}
 	})
 }
