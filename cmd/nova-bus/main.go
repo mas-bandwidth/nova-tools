@@ -3080,3 +3080,4 @@ func commit(busDir string, who bus.Participant, paths []string, message, remote,
 	}
 	return bus.CommitAndPush(busDir, id, paths, message, remote, branch, attempts)
 }
+// build-3144-presence-beats
