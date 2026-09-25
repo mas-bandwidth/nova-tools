@@ -40,13 +40,17 @@ type FriendRowResult struct {
 	Ready, Working, Waiting, Done int
 	Slots                         string // "" when friend:<f>:desired has no whole-number slots
 	At                            string
+	ClearedDown                   string // value of friend:<f>:down cleared by seat beat, or ""
+	ClearedBeatAt                 string // RFC 3339 UTC stamp of the seat beat that cleared down, or ""
 }
 
 // FriendRow writes friend:<f>, the friend's sprint-table row, in one Redis
 // Function call (ns_friend_row): the counts are the SCARDs of the friend-queue
 // index sets sprint:<S>:idx:<f>:open|working|waiting|closed, up is the seat's
 // own beat, and the whole row is one HSET with one at (#3281). It replaces
-// the bash row loop rowan-tools bin/friend-row.
+// the bash row loop rowan-tools bin/friend-row. When friend:<f>:beat at is
+// newer than friend:<f>:down, ns_friend_row clears the down key and returns
+// ClearedDown and ClearedBeatAt (#3824).
 func FriendRow(ctx context.Context, st *store.Store, req FriendRowRequest) (FriendRowResult, error) {
 	friend := strings.ToLower(strings.TrimSpace(req.Friend))
 	if st == nil || friend == "" || req.Sprint == "" {
@@ -72,9 +76,18 @@ func FriendRow(ctx context.Context, st *store.Store, req FriendRowRequest) (Frie
 		v, _ := strconv.Atoi(fmt.Sprint(values[i]))
 		return v
 	}
-	return FriendRowResult{
+	res := FriendRowResult{
 		Friend: friend, Up: fmt.Sprint(values[1]) == "1",
 		Ready: n(2), Working: n(3), Waiting: n(4), Done: n(5),
 		Slots: fmt.Sprint(values[6]), At: stamp,
-	}, nil
+	}
+	if len(values) > 7 {
+		res.ClearedDown = fmt.Sprint(values[7])
+	}
+	if len(values) > 8 && res.ClearedDown != "" {
+		if ms, err := strconv.ParseInt(fmt.Sprint(values[8]), 10, 64); err == nil {
+			res.ClearedBeatAt = time.UnixMilli(ms).UTC().Format("2006-01-02T15:04:05Z")
+		}
+	}
+	return res, nil
 }

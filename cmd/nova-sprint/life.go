@@ -411,6 +411,10 @@ func runFriendRow(ctx context.Context, args []string, out, errOut io.Writer) int
 	if err != nil {
 		return refuse(errOut, "friend row", err.Error())
 	}
+	if res.ClearedDown != "" {
+		fmt.Fprintf(out, "UP %s %s (down since %s cleared by seat beat)\n",
+			res.Friend, res.ClearedBeatAt, res.ClearedDown)
+	}
 	up := 0
 	if res.Up {
 		up = 1
@@ -434,16 +438,21 @@ func runFriendRow(ctx context.Context, args []string, out, errOut io.Writer) int
 			if now.Before(next) {
 				continue
 			}
-			if _, err := pass(signalCtx); err != nil {
+			r, err := pass(signalCtx)
+			if err != nil {
 				if signalCtx.Err() != nil {
 					return 0
 				}
 				backoff = benchBeatBackoff(backoff, life.BeatInterval)
 				next = now.Add(backoff)
-				fmt.Fprintf(errOut, "friend %s row: %v; retry in %s\n", res.Friend, err, backoff)
+				fmt.Fprintf(errOut, "friend %s row: %v; retry in %s\n", *as, err, backoff)
 				continue
 			}
 			backoff, next = 0, time.Time{}
+			if r.ClearedDown != "" {
+				fmt.Fprintf(out, "UP %s %s (down since %s cleared by seat beat)\n",
+					r.Friend, r.ClearedBeatAt, r.ClearedDown)
+			}
 		}
 	}
 }
