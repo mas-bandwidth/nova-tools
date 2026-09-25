@@ -21,7 +21,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/prereview"
 )
-//
+
 // It fetches the diff and the card, runs four mechanical checks in Go with no
 // model, asks Jev ONE question for a 1-10 score, prints one typed DISPOSITION
 // line and appends the verdict to a ledger. It never lands anything: the

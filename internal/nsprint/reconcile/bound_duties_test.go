@@ -262,4 +262,3 @@ func TestPreDutyRenewalFailureSkipsLaterDuties(t *testing.T) {
 		t.Fatal("the lease was fenced; the pass record must land inside the lease")
 	}
 }
-
