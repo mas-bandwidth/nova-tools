@@ -14,7 +14,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "drain",
-		Summary: "put parked work back: resume named benches/friends, import retired queue dirs once, release waiting cards",
+		Summary: "put parked work back: resume named benches/friends, import retired queue dirs once, release waiting cards; --control <id> tears a control run down",
 		Run:     runDrain,
 	})
 }
@@ -28,16 +28,20 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 // runDrain is `nova-sprint drain --sprint <S> [--resume bench:<b>|friend:<f>]...
 // [--queue-dir <dir>]...` (#3035). Every item prints one DRAIN OK or DRAIN
 // REFUSED line on stdout; exit 2 when anything was refused.
+// `nova-sprint drain --control control-<id>` (#3442) instead removes every
+// key that control run left in the store, in one call, and prints one
+// DRAIN DONE control=<id> line.
 func runDrain(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("drain", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	sprint := fs.String("sprint", "", "")
+	control := fs.String("control", "", "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	var resume, dirs multiFlag
 	fs.Var(&resume, "resume", "")
 	fs.Var(&dirs, "queue-dir", "")
-	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || fs.NArg() > 0 {
-		return refuse(stderr, "drain", "needs --sprint <name> and --redis <addr>; --resume bench:<b>|friend:<f> and --queue-dir <dir> repeat")
+	if err := fs.Parse(args); err != nil || (*sprint == "" && *control == "") || *addr == "" || fs.NArg() > 0 {
+		return refuse(stderr, "drain", "needs (--sprint <name> | --control <id>) and --redis <addr>; --resume bench:<b>|friend:<f> and --queue-dir <dir> repeat")
 	}
 	// Each queue-dir card is linted, and lint probes the card's repository
 	// (30 s per probe), so the bound is the whole import, not one call.
@@ -48,7 +52,7 @@ func runDrain(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		return code
 	}
 	defer client.Close()
-	res := card.Drain(ctx, client, *sprint, card.DrainOptions{Resume: resume, QueueDirs: dirs})
+	res := card.Drain(ctx, client, *sprint, card.DrainOptions{Resume: resume, QueueDirs: dirs, Control: *control})
 	if _, err := io.WriteString(stdout, res.Stdout); err != nil {
 		return refuse(stderr, "drain", err.Error())
 	}
