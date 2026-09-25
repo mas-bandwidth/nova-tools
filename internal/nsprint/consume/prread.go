@@ -149,14 +149,37 @@ func (p *PRRead) out() io.Writer {
 	return io.Discard
 }
 
-// Start creates the consumer group pr-to-read on s:<S>:log and reclaims
-// pending entries.
+// Start joins the consumer group pr-to-read on s:<S>:log (join) and
+// reclaims pending entries.
 func (p *PRRead) Start(ctx context.Context) error {
 	if err := p.check(); err != nil {
 		return err
 	}
+	if err := p.join(ctx); err != nil {
+		return err
+	}
 	g := groupLoop{store: p.Store, sprint: p.Sprint, group: RulePRToRead, consumer: p.Consumer}
 	return g.start(ctx)
+}
+
+// join creates the group pr-to-read on s:<S>:log when the log has none
+// (MKSTREAM), at 0: a sprint whose log predates the group has its entries
+// read from the beginning once, so a `pr head` written before anyone
+// joined still queues its first read (quack-0925d: six PRs, no reads). On
+// an empty log 0 is the same as $. It prints `PRREAD JOINED sprint=<S>
+// from=0` once, on the call that created the group; a group already there
+// (BUSYGROUP) is nothing.
+func (p *PRRead) join(ctx context.Context) error {
+	err := p.Store.Client().XGroupCreateMkStream(ctx, "s:"+p.Sprint+":log", RulePRToRead, "0").Err()
+	switch {
+	case err == nil:
+		fmt.Fprintf(p.out(), "PRREAD JOINED sprint=%s from=0\n", p.Sprint)
+		return nil
+	case strings.HasPrefix(err.Error(), "BUSYGROUP"):
+		return nil
+	default:
+		return fmt.Errorf("%s: group: %w", RulePRToRead, err)
+	}
 }
 
 func checkLeaseReply(reply []any) error {
@@ -873,13 +896,19 @@ func (p *PRRead) readHeadEvents(ctx context.Context) ([]headEvent, error) {
 
 // Once runs pr-to-read under lease:route:<S> for a single pass.
 func (p *PRRead) Once(ctx context.Context) error {
+	_, err := p.OnceN(ctx)
+	return err
+}
+
+// OnceN is Once, returning the pass's count of moves.
+func (p *PRRead) OnceN(ctx context.Context) (int, error) {
 	if p == nil || p.Store == nil || p.Sprint == "" {
-		return errors.New("pr-to-read: store and sprint are required")
+		return 0, errors.New("pr-to-read: store and sprint are required")
 	}
 	if p.Instance == "" {
 		inst, err := NewInstance()
 		if err != nil {
-			return err
+			return 0, err
 		}
 		p.Instance = inst
 	}
@@ -896,7 +925,7 @@ func (p *PRRead) Once(ctx context.Context) error {
 	defer func() { p.Block = origBlock }()
 	token, err := randomHex(16)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	host, _ := os.Hostname()
 	ttl := 6 * time.Second
@@ -906,7 +935,7 @@ func (p *PRRead) Once(ctx context.Context) error {
 	reply, err := client.FCall(ctx, FunctionRouteLeaseTake, nil, p.Sprint, p.Instance, token, host,
 		strconv.FormatInt(ttl.Milliseconds(), 10)).Slice()
 	if err != nil {
-		return fmt.Errorf("pr-to-read: take %s: %w", LeaseKey(p.Sprint), err)
+		return 0, fmt.Errorf("pr-to-read: take %s: %w", LeaseKey(p.Sprint), err)
 	}
 	if len(reply) > 0 && reply[0] == "HELD" {
 		held := &LeaseHeldError{Sprint: p.Sprint}
@@ -916,7 +945,7 @@ func (p *PRRead) Once(ctx context.Context) error {
 		if len(reply) > 2 {
 			held.At = fmt.Sprint(reply[2])
 		}
-		return held
+		return 0, held
 	}
 
 	renewCtx, stopRenew := context.WithCancel(ctx)
@@ -945,8 +974,7 @@ func (p *PRRead) Once(ctx context.Context) error {
 	}()
 
 	if err := p.Start(ctx); err != nil {
-		return err
+		return 0, err
 	}
-	_, err = p.Pass(ctx)
-	return err
+	return p.Pass(ctx)
 }

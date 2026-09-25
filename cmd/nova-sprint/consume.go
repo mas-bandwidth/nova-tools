@@ -11,9 +11,10 @@
 // lease:harvest:<b> and clock, off the reconciler's goroutine. Each writes its
 // own proc line (proc:ok-to-friend, proc:harvest:<b>).
 //
-// pr-to-read and hold-to-fix (#2941) are not built on dev: their verbs refuse
-// and name the issue, and `consume list` says so. Each becomes one case here
-// when its handler lands.
+// pr-to-read passes every open sprint's log too (prReadDuty), each under its
+// own lease:route:<S>, joining a sprint opened after the reconciler started
+// on the next pass. hold-to-fix (#3092) is not built on dev: its verb
+// refuses and names the issue, and `consume list` says so.
 package main
 
 import (
@@ -76,7 +77,14 @@ func init() {
 		forge, pusher := consumeHarvestSeams()
 		return &harvestDuty{st: st, forge: forge, pusher: pusher, busy: map[string]bool{}, log: consumeHarvestLog}, nil
 	})
+	registerReconcileDuty(groupPRToRead, func(st *store.Store) (reconcileDuty, error) {
+		return &prReadDuty{st: st, out: consumePRReadOut}, nil
+	})
 }
+
+// consumePRReadOut receives the pr-to-read duty's receipt lines (PRREAD
+// JOINED, READ QUEUED): the reconciler's stdout, its log.
+var consumePRReadOut io.Writer = os.Stdout
 
 // Exit 0 every pass finished (an event left pending for want of readers is
 // not a failure; its line says PENDING); 1 a pass failed; 2 usage or a
@@ -89,7 +97,7 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if group == "list" {
 		fmt.Fprintf(out, "%s duty=reconcile verb=consume proc=proc:%s\n", consume.GroupOkFriend, consume.GroupOkFriend)
 		fmt.Fprintf(out, "%s duty=reconcile verb=consume proc=proc:harvest:<bench>\n", groupHarvest)
-		fmt.Fprintf(out, "%s duty=route verb=consume-once proc=proc:%s\n", groupPRToRead, groupPRToRead)
+		fmt.Fprintf(out, "%s duty=reconcile,route verb=consume-once proc=proc:%s\n", groupPRToRead, groupPRToRead)
 		for _, g := range []string{groupHoldToFix} {
 			fmt.Fprintf(out, "%s not-built=%s\n", g, consumeNotBuilt[g])
 		}
@@ -353,6 +361,84 @@ func (d *okFriendDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.C
 		return counts, fmt.Errorf("ok-to-friend: %s", strings.Join(errs, "; "))
 	}
 	return counts, nil
+}
+
+// prReadDuty is pr-to-read as a reconcile duty: every pass, every open
+// sprint in `sprints` (read again each pass, so a sprint opened after the
+// reconciler started is joined on the next pass) gets one pr-to-read pass
+// under its own lease:route:<S> (consume.PRReadSprints), as consumer
+// reconciler-<instance>. A sprint a `nova-sprint route --sprint <S>` process
+// serves is held by it and skipped. The passes run off the reconciler's
+// goroutine, one at a time, since a pass may run git ls-remote; Run reports
+// what the last finished pass moved and its error.
+type prReadDuty struct {
+	st  *store.Store
+	out io.Writer
+
+	mu      sync.Mutex
+	all     *consume.PRReadSprints
+	busy    bool
+	moved   int
+	lastErr error
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+}
+
+func (d *prReadDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	counts, err := reconcile.Counts{Routed: d.moved}, d.lastErr
+	d.moved, d.lastErr = 0, nil
+	if d.busy || l.Fenced() {
+		return counts, err
+	}
+	if d.ctx == nil {
+		d.ctx, d.cancel = context.WithCancel(ctx)
+	}
+	if d.ctx.Err() != nil {
+		return counts, err
+	}
+	instance := "reconciler-" + l.Instance()
+	if d.all == nil || d.all.Instance != instance {
+		d.all = &consume.PRReadSprints{Store: d.st, Instance: instance, Actor: "reconciler",
+			Remote: consumePRReadRemote, Out: d.out}
+	}
+	all, wctx := d.all, d.ctx
+	d.busy = true
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		n, perr := all.Pass(wctx)
+		d.mu.Lock()
+		d.moved += n
+		if perr != nil {
+			d.lastErr = perr
+		}
+		d.busy = false
+		d.mu.Unlock()
+	}()
+	return counts, err
+}
+
+// Stop cancels the pass in flight and waits for it until ctx ends; the pass
+// gives back its lease:route:<S> on the way (PRRead.OnceN).
+func (d *prReadDuty) Stop(ctx context.Context) []string {
+	d.mu.Lock()
+	if d.cancel != nil {
+		d.cancel()
+	}
+	d.mu.Unlock()
+	waited := make(chan struct{})
+	go func() {
+		d.wg.Wait()
+		close(waited)
+	}()
+	select {
+	case <-waited:
+	case <-ctx.Done():
+	}
+	return nil
 }
 
 // harvestDuty is harvest as a reconcile duty: every pass, each registered
