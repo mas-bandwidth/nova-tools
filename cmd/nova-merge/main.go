@@ -49,12 +49,14 @@ usage:
   nova-merge fold       --close-folded --pr <n>
   nova-merge classify   --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
   nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>] [--sibling <name>=<url>@<ref>]
+  nova-merge receipt    --repo <owner>/<name> --pr <n> [--timeout <seconds>]
+  nova-merge receipt    --repo <owner>/<name> --pr <n> [--timeout <seconds>]
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
 
 The per-PR lander role is retired (stream is the unit): init, quickstart, add,
 add-branch, run, status, dry-run, packet, stop, queue, wait, sweep, simulate, rebase,
-react, land, integrate, stack and receipt are gone. What stays is the evidence a stream
+react, land, integrate and stack are gone. What stays is the evidence a stream
 lands on: read records a typed verdict at a head, gate records a local gate's verdict
 for a merge, classify asks one typed question about a failed merge-group run, batch
 merges N heads onto a base and runs the tests, and fold folds branches onto a base into
@@ -237,6 +239,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdClassify(rest, stdout, stderr, deps)
 	case "batch":
 		return cmdBatch(rest, stdout, stderr, deps)
+	case "receipt":
+		return cmdReceipt(rest, stdout, stderr, deps)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
 }
@@ -252,11 +256,11 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 		}
 		return false
 	}
-	// `batch` names the repository it clones outright; the lane verbs (read, gate,
+	// `batch` and `receipt` name the repository outright; the lane verbs (read, gate,
 	// classify) read the repository, the base and the lane branch from the lane's state,
 	// written once when the lane was made.
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
-		if name == "repo" && verb == "batch" {
+		if name == "repo" && (verb == "batch" || verb == "receipt") {
 			continue
 		}
 		if has(name) {

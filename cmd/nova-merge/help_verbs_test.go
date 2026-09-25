@@ -9,13 +9,13 @@ import (
 
 // keptVerbs is what nova-merge is after the per-PR lander role was retired (stream is
 // the unit): the evidence a stream lands on, and nothing that lands one PR at a time.
-var keptVerbs = []string{"batch", "classify", "fold", "gate", "read"}
+var keptVerbs = []string{"batch", "classify", "fold", "gate", "read", "receipt"}
 
 // retiredVerbs left with the lander role. Each is an unknown subcommand now, so a stale
 // script that still calls one stops on its first line rather than half-running.
 var retiredVerbs = []string{
 	"stack", "wait", "rebase", "run", "stop", "status", "dry-run", "packet", "integrate",
-	"simulate", "queue", "react", "sweep", "receipt", "land", "init", "quickstart", "add",
+	"simulate", "queue", "react", "sweep", "land", "init", "quickstart", "add",
 	"add-branch",
 }
 
