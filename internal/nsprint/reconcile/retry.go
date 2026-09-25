@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
@@ -78,7 +79,8 @@ func Retry(ctx context.Context, st *store.Store, req RetryRequest) (Result, erro
 // (outcome, reason, exit, pushed_sha, retries): true when ns_card_retry would
 // requeue it. The function re-checks every guard in its own call.
 func Retryable(h map[string]string, retryMax int) bool {
-	if h["outcome"] != "FAILED" || h["pushed_sha"] != "" {
+	// "-" is the wrapper's no-commit mark on every non-DONE end: no effect.
+	if h["outcome"] != "FAILED" || (h["pushed_sha"] != "" && h["pushed_sha"] != card.NoCommit) {
 		return false
 	}
 	if h["reason"] != "idle-killed" && (h["reason"] != "crash" || h["exit"] != "-1") {

@@ -153,3 +153,35 @@ func TestParsePolicyDefaults(t *testing.T) {
 		t.Fatalf("parsed: %+v", p)
 	}
 }
+
+// TestRetryAfterWrapperNoCommitEnd: the card wrapper ends every non-DONE
+// attempt with pushed_sha "-" (card.NoCommit, finish in card/wrapper.go), so
+// a harness SIGKILLed before any effect reaches the ended index as FAILED
+// crash exit -1 pushed_sha "-". That card is fed back once, exactly as one
+// with no pushed_sha field: "-" is no commit, not an effect. A real sha stays
+// NOTHING (TestRetryNeverOnEffectOrFinding). #2930 probe step 2 (queued
+// retry:crash a1) needs this.
+func TestRetryAfterWrapperNoCommitEnd(t *testing.T) {
+	ctx := context.Background()
+	st, client := newSprint(t)
+	const sprint = "retry-2930e0f1"
+	seedEnded(t, ctx, client, sprint, "killed", 1, "reason", "crash", "exit", "-1", "pushed_sha", card.NoCommit)
+	seedEnded(t, ctx, client, sprint, "idle", 1, "pushed_sha", card.NoCommit)
+	for _, c := range []struct{ label, reason string }{{"killed", "retry:crash"}, {"idle", "retry:idle-killed"}} {
+		if !reconcile.Retryable(hashOf(t, ctx, client, sprint, c.label), 1) {
+			t.Errorf("%s: Retryable false for pushed_sha %q, want true", c.label, card.NoCommit)
+		}
+		res, err := reconcile.Retry(ctx, st, reconcile.RetryRequest{Sprint: sprint, Label: c.label, Fence: fence, RetryMax: 1})
+		if err != nil || res.Code != 0 || res.Status != "QUEUED" || res.Receipt == "" {
+			t.Errorf("%s: %+v %v, want QUEUED", c.label, res, err)
+			continue
+		}
+		h := hashOf(t, ctx, client, sprint, c.label)
+		if h["state"] != "queued" || h["reason"] != c.reason || h["retry_of"] != "1" || !inPool(t, ctx, client, sprint, c.label) {
+			t.Errorf("%s after retry: %v", c.label, h)
+		}
+		if got := receiptsTo(t, ctx, client, sprint, c.label, "queued"); got != 1 {
+			t.Errorf("%s: queued receipts = %d, want 1", c.label, got)
+		}
+	}
+}
