@@ -68,12 +68,10 @@ func TestDigestFlagsRefuseBeforeReading(t *testing.T) {
 	if n := atomic.LoadInt64(accepts); n != 0 {
 		t.Fatalf("a usage refusal dialed Redis %d times", n)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	closed := ln.Addr().String()
-	_ = ln.Close()
+	// Port 1, not a released ephemeral port: a parallel package's FreePort
+	// can be handed the released one and its redis-server bind it while the
+	// verb's PING retries, so the verb reads an empty store and exits 0.
+	closed := "127.0.0.1:1"
 	code, stdout, stderr := runSprint("digest", "--redis", closed, "--since", digestSince)
 	if code != 2 || stdout != "" || !strings.HasPrefix(stderr, pre+"redis "+closed+": ") || !strings.HasSuffix(stderr, post) || strings.Count(stderr, "\n") != 1 {
 		t.Fatalf("closed port: exit %d stdout %q stderr %q", code, stdout, stderr)
