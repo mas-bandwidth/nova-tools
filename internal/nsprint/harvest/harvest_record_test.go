@@ -183,3 +183,60 @@ func TestHarvestTwoBenchesRecordAndBody(t *testing.T) {
 		c.Del(ctx, "lease:harvest:"+alpha.bench)
 	})
 }
+
+// TestHarvestRecordKeyDropsTheOwner is #3740: a card's repo is owner/name
+// (mas-bandwidth/nova-tools), and ns_harvest_pr wrote the PR record under
+// pr:mas-bandwidth/nova-tools:<n>, where read post (prkey, pr:<name>:<n>)
+// never looks. The record is pr:nova-tools:<n>, the owner form is never
+// written, ns_harvest_due reads the head back from the bare key, and the idem
+// field pr:<repo>:<branch> (another record) keeps the card's repo.
+func TestHarvestRecordKeyDropsTheOwner(t *testing.T) {
+	c := startRedis(t)
+	ctx := context.Background()
+	const (
+		bench = "owner-bench"
+		label = "card-owner"
+		repo  = "mas-bandwidth/nova-tools"
+		n     = 3726
+	)
+	head := sha(label)
+	branch := "nova/" + sprint + "/" + label + "-a1"
+	key := "s:" + sprint + ":card:" + label
+	if err := c.HSet(ctx, key, "kind", "model", "repo", repo, "base", "dev", "base_sha", "09fbedc9",
+		"state", "ended", "outcome", "DONE", "reason", "done", "bench", bench, "attempt", "1",
+		"identity", sprint+"/"+label+"/09fbedc9/"+bench+"/1", "pushed_sha", head,
+		"harvest_step", harvest.StepPushed, "stream", "nova-sprint").Err(); err != nil {
+		t.Fatal(err)
+	}
+	c.SAdd(ctx, "s:"+sprint+":idx:card:ended", label)
+	c.SAdd(ctx, "s:"+sprint+":bench:"+bench+":ended", label)
+	c.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1")
+
+	if got, want := harvest.RecordKey(repo, n), "pr:nova-tools:3726"; got != want {
+		t.Fatalf("RecordKey(%s, %d) = %s, want %s", repo, n, got, want)
+	}
+	if r := c.FCall(ctx, harvest.FunctionLease, nil, bench, "holder", "tok", 60000).Val(); r != "TAKEN" {
+		t.Fatalf("lease = %v", r)
+	}
+	if r := c.FCall(ctx, harvest.FunctionPR, nil, sprint, bench, "holder", "tok", label, repo, branch, fmt.Sprint(n), head).Val(); r != "PR|3726" {
+		t.Fatalf("ns_harvest_pr = %v, want PR|3726", r)
+	}
+	if rec := c.HGetAll(ctx, "pr:nova-tools:3726").Val(); rec["head"] != head || rec["label"] != label || rec["state"] != "open" {
+		t.Fatalf("pr:nova-tools:3726 = %v; want head %s, label %s, open", rec, head, label)
+	}
+	if c.Exists(ctx, "pr:mas-bandwidth/nova-tools:3726").Val() != 0 {
+		t.Fatal("ns_harvest_pr wrote the owner-form key pr:mas-bandwidth/nova-tools:3726")
+	}
+	if got := c.HGet(ctx, "s:"+sprint+":idem", "pr:"+repo+":"+branch).Val(); got != "3726" {
+		t.Fatalf("idem pr:%s:%s = %q, want 3726 (the idem field keeps the card repo)", repo, branch, got)
+	}
+	// ns_harvest_due: OK host user, then one row of 14 whose 9th field is the
+	// idem PR and whose 14th is rec_head, read from the bare record key.
+	due, err := c.FCall(ctx, harvest.FunctionDue, nil, sprint, bench, 16).StringSlice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 3+14 || due[0] != "OK" || due[3] != label || due[3+8] != "3726" || due[3+13] != head {
+		t.Fatalf("ns_harvest_due = %q; want one row, idem PR 3726, rec_head %s from pr:nova-tools:3726", due, head)
+	}
+}

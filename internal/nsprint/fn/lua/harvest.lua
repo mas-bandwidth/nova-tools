@@ -9,8 +9,9 @@
 -- it back and never opens a second PR. The harvested transition requires the
 -- PR head to equal the card's pushed_sha.
 --
--- The PR record pr:<repo>:<n> (a hash: head, base, base_sha, stream, label,
--- sprint, branch, state, at) is written once by ns_harvest_pr, in the same
+-- The PR record pr:<name>:<n> (the bare repository name, internal/nsprint/
+-- prkey; a hash: head, base, base_sha, stream, label, sprint, branch, state,
+-- at) is written once by ns_harvest_pr, in the same
 -- call as the reservation, from the head a REST response verified. It is what
 -- the lander and a later harvest pass read: after it exists neither needs
 -- GitHub for the head. One writer, written once, no TTL. The card model
@@ -33,6 +34,16 @@ do
     local v = redis.call('HGET', key, field)
     if not v then return '' end
     return tostring(v)
+  end
+
+  -- hv_prkey is the one PR record key, pr:<name>:<n> with the bare
+  -- repository name (internal/nsprint/prkey, Key; land_stream.lua and
+  -- route_duty.lua strip the owner the same way). A card's repo is
+  -- owner/name (mas-bandwidth/nova-tools); the record never is (#3740). The
+  -- idem field pr:<repo>:<branch> in s:<S>:idem is another record and keeps
+  -- the card's repo as it is.
+  local function hv_prkey(repo, n)
+    return 'pr:' .. (string.match(repo, '([^/]+)$') or repo) .. ':' .. n
   end
 
   local function hv_branch(S, label, attempt)
@@ -126,7 +137,7 @@ do
   -- of 14: label repo base attempt pushed_sha identity results branch pr_idem
   -- harvest_step base_sha stream done_when rec_head. stream and done_when are
   -- the card's STREAM: and DONE-WHEN: lines (ns_card_header), for the PR
-  -- body; rec_head is the head of the PR record pr:<repo>:<pr_idem>, or ''
+  -- body; rec_head is the head of the PR record pr:<name>:<pr_idem>, or ''
   -- when the idem key names no PR or the record is not written yet.
   -- A ci card (kind script) and a card with no pushed_sha have nothing to
   -- harvest; ok-to-friend classifies them (3.2). The bench's host and user
@@ -184,7 +195,7 @@ do
           out[#out + 1] = f[13] or ''
           out[#out + 1] = f[14] or ''
           if idem_pr ~= '' then
-            out[#out + 1] = hv_hget('pr:' .. repo .. ':' .. idem_pr, 'head')
+            out[#out + 1] = hv_hget(hv_prkey(repo, idem_pr), 'head')
           else
             out[#out + 1] = ''
           end
@@ -236,7 +247,7 @@ do
   -- a number GitHub returned whose head.ref and head.sha a REST response
   -- verified. HSETNX pr:<repo>:<branch>; when the key then names this PR the
   -- card moves to published in the same call with its pr and head fields,
-  -- and the PR record pr:<repo>:<pr> is written once (head, base, base_sha,
+  -- and the PR record pr:<name>:<pr> is written once (head, base, base_sha,
   -- stream, label, sprint, branch, state=open, at) from that verified head,
   -- which must be the card's pushed_sha (HEAD otherwise, nothing written; an
   -- absent head argument is the pushed_sha itself). A key that already names another PR
@@ -276,7 +287,7 @@ do
       if cur ~= 'published' then
         redis.call('HSET', key, 'harvest_step', 'published', 'harvest_step_at', at, 'pr', pr, 'head', head)
       end
-      local rkey = 'pr:' .. repo .. ':' .. pr
+      local rkey = hv_prkey(repo, pr)
       if redis.call('EXISTS', rkey) == 0 then
         redis.call('HSET', rkey, 'head', head, 'base', f[7] or '', 'base_sha', f[8] or '',
           'stream', f[9] or '', 'label', label, 'sprint', S, 'branch', branch, 'state', 'open', 'at', at)

@@ -133,7 +133,9 @@ do
     redis.call('ZREM', 'ci:pool', repo .. ':' .. sha)
     local pr = cr_hget(key, 'pr')
     if pr ~= '' then
-      local pr_key = 'pr:' .. repo .. ':' .. pr
+      -- The one PR record key, pr:<name>:<n> with the bare repository name
+      -- (internal/nsprint/prkey): an owner in repo is stripped (#3740).
+      local pr_key = 'pr:' .. (string.match(repo, '([^/]+)$') or repo) .. ':' .. pr
       if cr_hget(pr_key, 'head') == sha then
         redis.call('HSET', pr_key, 'ci', word, 'ci_sha', sha, 'ci_at', tostring(now), 'ci_why', why)
       end
