@@ -32,12 +32,16 @@ func init() {
 const redisCLIWants = "wants [--seat <name>] [--redis <host:port>] -- <redis command...>, for example: nova-sprint redis-cli --seat studio --redis 127.0.0.1:6380 -- ZCARD sprint:S:cards"
 
 func cmdRedisCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	i := indexOf(args, "--")
-	if i < 0 || i == len(args)-1 {
-		return refuse(stderr, "redis-cli", "no command after --; "+redisCLIWants)
-	}
 	fs := verbflag.New("redis-cli")
 	addr := fs.String("redis", os.Getenv("NOVA_REDIS_ADDR"), "")
+	i := indexOf(args, "--")
+	if i < 0 || i == len(args)-1 {
+		// -h before the "--" still answers (verbflag); anything else is refused.
+		if err := fs.Parse(args); err != nil {
+			return refuse(stderr, "redis-cli", redisCLIWants)
+		}
+		return refuse(stderr, "redis-cli", "no command after --; "+redisCLIWants)
+	}
 	if err := fs.Parse(args[:i]); err != nil || fs.NArg() > 0 {
 		return refuse(stderr, "redis-cli", redisCLIWants)
 	}
