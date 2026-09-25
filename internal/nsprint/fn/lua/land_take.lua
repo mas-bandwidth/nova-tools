@@ -5,12 +5,21 @@
 -- functions are the only writers of the keys below; the Go side
 -- (internal/nsprint/land/fenced) does the git work and calls them.
 --
+-- An offered stream PR lives on its unit record, pr:<name>:<n> (the record
+-- `pr record` and the stream lander write, keyed by the bare repository name
+-- as internal/nsprint/prkey.Key; nova-tools #4079). The lander owns only its
+-- land_* fields there and never writes the record's own state, head, base,
+-- stream or merge_sha; offer fills repo, n, kind=stream and slug only when
+-- the record has none.
+--
 --   s:<S>:land:queue:<repo>:<base>   zset  <n> -> the stream PR's created_at (unix s)
 --   s:<S>:land:queues                set   <repo>:<base>, the index (never SCANned)
---   s:<S>:pr:<repo>:<n>              hash  stream, base, created_at, body_first, offered_by,
---                                          state (landable, landing, landed, dropped),
---                                          skip_reason, lane, lane_at, lane_gen, land_head,
---                                          merge_sha, pushed_at, push_run, landed_at, drop_reason
+--   pr:<name>:<n>                    hash  land_sprint, land_stream (the offer's slug), land_base,
+--                                          land_created_at, land_body_first, land_offered_by,
+--                                          land_state (landable, landing, landed, dropped),
+--                                          land_skip_reason, land_lane, land_lane_at, land_lane_gen,
+--                                          land_head, land_merge_sha, land_pushed_at, land_push_run,
+--                                          land_landed_at, land_drop_reason
 --   s:<S>:land:run:<id>              hash  repo, base, runner, gen, state (taken, pushed,
 --                                          landed, dropped), members, skipped, merge_shas,
 --                                          open, taken_at, pushed_at, landed_at, reason, at
@@ -20,6 +29,10 @@
 --   s:<S>:land:writer:<repo>:<base>  hash  lease {gen, runner, run, at}, PEXPIRE 120000
 --   land:gen                         string one counter for every sprint, no TTL
 --   s:<S>:land:enq:<repo>:<n>:<head> string the gen that owns the claim on that head
+--
+-- A stream PR offered before #4079 is moved onto its unit record once by
+-- nova-sprint land migrate (land_migrate.lua); nothing here reads the old
+-- sprint-scoped record.
 --
 -- Facts read here (never written): ci:<repo>:<head>:gids and
 -- ci:<repo>:<head>:<gid> verdict (every gid OK, none is MISSING), and the
@@ -35,7 +48,9 @@ local function now_ms()
 end
 
 local function k_queue(S, R, B) return 's:' .. S .. ':land:queue:' .. R .. ':' .. B end
-local function k_pr(S, R, n) return 's:' .. S .. ':pr:' .. R .. ':' .. n end
+-- k_pr is the unit record, pr:<name>:<n>: it mirrors internal/nsprint/prkey.Key
+-- (the bare repository name), so owner/name here and `pr record`'s name meet.
+local function k_pr(R, n) return 'pr:' .. (string.match(R, '([^/]+)$') or R) .. ':' .. n end
 local function k_run(S, id) return 's:' .. S .. ':land:run:' .. id end
 local function k_writer(S, R, B) return 's:' .. S .. ':land:writer:' .. R .. ':' .. B end
 local function k_enq(S, R, n, H) return 's:' .. S .. ':land:enq:' .. R .. ':' .. n .. ':' .. H end
@@ -87,7 +102,7 @@ local function hold_reason(S, R, n, H)
 end
 
 local function body_reason(S, R, n)
-  local w = body_word(redis.call('HGET', k_pr(S, R, n), 'body_first'))
+  local w = body_word(redis.call('HGET', k_pr(R, n), 'land_body_first'))
   if w == 'HOLD' or w == 'BLOCKED' then
     return 'body:' .. w
   end
@@ -114,35 +129,45 @@ local function lease_ok(S, R, B, runner, gen)
 end
 
 -- ns_land_offer S R B n stream created_unix created_at body_first as withdraw
+-- The offer's fields go on the unit record pr:<name>:<n> as land_*; repo, n,
+-- kind and slug are set only when the record has none (HSETNX), so a record
+-- `pr record` or the stream lander made keeps its own.
 local function offer(keys, args)
   local S, R, B, n = args[1], args[2], args[3], args[4]
   local stream, created, created_at, body, as, withdraw = args[5], args[6], args[7], args[8], args[9], args[10]
   if not S or S == '' or not R or R == '' or not B or B == '' or not n or n == '' then
     return redis.error_reply('ns_land_offer: sprint, repo, base and n are required')
   end
-  local pkey, qkey = k_pr(S, R, n), k_queue(S, R, B)
-  local state = redis.call('HGET', pkey, 'state') or ''
+  local pkey, qkey = k_pr(R, n), k_queue(S, R, B)
+  local state = redis.call('HGET', pkey, 'land_state') or ''
   if withdraw == '1' then
     redis.call('ZREM', qkey, n)
     local lh = redis.call('HGET', pkey, 'land_head') or ''
     if lh ~= '' then
       redis.call('DEL', k_enq(S, R, n, lh))
     end
-    redis.call('HSET', pkey, 'state', 'dropped', 'drop_reason', 'withdrawn', 'offered_by', as or '')
+    redis.call('HSET', pkey, 'land_state', 'dropped', 'land_drop_reason', 'withdrawn', 'land_offered_by', as or '')
     return { 'WITHDRAWN', state }
   end
   if state == 'landed' then
-    return { 'LANDED', redis.call('HGET', pkey, 'merge_sha') or '' }
+    return { 'LANDED', redis.call('HGET', pkey, 'land_merge_sha') or '' }
   end
   if not tonumber(created) then
     return redis.error_reply('ns_land_offer: created must be unix seconds')
   end
   redis.call('ZADD', qkey, 'NX', created, n)
   redis.call('SADD', 's:' .. S .. ':land:queues', R .. ':' .. B)
-  redis.call('HSET', pkey, 'stream', stream or '', 'base', B, 'created_at', created_at or '',
-    'body_first', body or '', 'offered_by', as or '', 'drop_reason', '')
+  redis.call('HSETNX', pkey, 'repo', R)
+  redis.call('HSETNX', pkey, 'n', n)
+  redis.call('HSETNX', pkey, 'kind', 'stream')
+  if (stream or '') ~= '' then
+    redis.call('HSETNX', pkey, 'slug', stream)
+  end
+  redis.call('HSET', pkey, 'land_sprint', S, 'land_stream', stream or '', 'land_base', B,
+    'land_created_at', created_at or '', 'land_body_first', body or '', 'land_offered_by', as or '',
+    'land_drop_reason', '')
   if state ~= 'landing' then
-    redis.call('HSET', pkey, 'state', 'landable')
+    redis.call('HSET', pkey, 'land_state', 'landable')
   end
   return { 'OFFERED', redis.call('ZSCORE', qkey, n) }
 end
@@ -207,9 +232,9 @@ local function take(keys, args)
   redis.call('PEXPIRE', wkey, LEASE_MS)
   local out = { 'OK', tostring(gen), fresh, run }
   for _, n in ipairs(ns) do
-    local pkey = k_pr(S, R, n)
-    redis.call('HSET', pkey, 'lane', runner, 'lane_at', tostring(at), 'lane_gen', tostring(gen))
-    local p = redis.call('HMGET', pkey, 'body_first', 'stream', 'state')
+    local pkey = k_pr(R, n)
+    redis.call('HSET', pkey, 'land_lane', runner, 'land_lane_at', tostring(at), 'land_lane_gen', tostring(gen))
+    local p = redis.call('HMGET', pkey, 'land_body_first', 'land_stream', 'land_state')
     out[#out + 1] = n
     out[#out + 1] = p[1] or ''
     out[#out + 1] = p[2] or ''
@@ -259,13 +284,13 @@ local function facts(keys, args)
 end
 
 -- ns_land_enq_claim S R B n H runner gen: the claim on <n>@<H> before its
--- push. FENCED unless the lease is live at gen and lane_gen is gen; CI, HOLD
+-- push. FENCED unless the lease is live at gen and land_lane_gen is gen; CI, HOLD
 -- or BODY (with the reason) when a fact failed since the read; then OK
 -- (claim set), DUP (this gen's own retry), TAKEOVER (a smaller gen's
 -- unexecuted claim, now this gen's) or FENCED (a larger gen owns it).
 local function enq_claim(keys, args)
   local S, R, B, n, H, runner, gen = args[1], args[2], args[3], args[4], args[5], args[6], args[7]
-  if not lease_ok(S, R, B, runner, gen) or redis.call('HGET', k_pr(S, R, n), 'lane_gen') ~= tostring(gen) then
+  if not lease_ok(S, R, B, runner, gen) or redis.call('HGET', k_pr(R, n), 'land_lane_gen') ~= tostring(gen) then
     return { 'FENCED' }
   end
   local r = ci_reason(R, H)
@@ -292,8 +317,8 @@ local function enq_claim(keys, args)
 end
 
 -- ns_land_mark S R B n gen run kind a1 a2: FENCED and no write unless gen is
--- the run's gen (and, with n, the PR's lane_gen). kinds:
---   skip    a1=reason a2=H   skip_reason and land_head; the PR stays offered
+-- the run's gen (and, with n, the PR's land_lane_gen). kinds:
+--   skip    a1=reason a2=H   land_skip_reason and land_head; the PR stays offered
 --   skips   a1=list          the run's skipped field (#n:<reason> ...), this pass's
 --   landing a1=H a2=M        an accepted push (needs the live lease at gen)
 --   landed  a1=H a2=M        the mirror's base has M with second parent H
@@ -306,14 +331,14 @@ local function mark(keys, args)
   end
   local pkey = ''
   if n and n ~= '' then
-    pkey = k_pr(S, R, n)
-    if redis.call('HGET', pkey, 'lane_gen') ~= tostring(gen) then
+    pkey = k_pr(R, n)
+    if redis.call('HGET', pkey, 'land_lane_gen') ~= tostring(gen) then
       return { 'FENCED' }
     end
   end
   local at = tostring(now_ms())
   if kind == 'skip' then
-    redis.call('HSET', pkey, 'skip_reason', a1 or '', 'land_head', a2 or '')
+    redis.call('HSET', pkey, 'land_skip_reason', a1 or '', 'land_head', a2 or '')
     return { 'OK' }
   end
   if kind == 'skips' then
@@ -324,8 +349,8 @@ local function mark(keys, args)
     if not lease_ok(S, R, B, '', gen) then
       return { 'FENCED' }
     end
-    redis.call('HSET', pkey, 'state', 'landing', 'land_head', a1, 'merge_sha', a2, 'pushed_at', at,
-      'push_run', run, 'skip_reason', '')
+    redis.call('HSET', pkey, 'land_state', 'landing', 'land_head', a1, 'land_merge_sha', a2, 'land_pushed_at', at,
+      'land_push_run', run, 'land_skip_reason', '')
     append(rkey, 'members', '#' .. n .. '@' .. a1)
     append(rkey, 'merge_shas', a2)
     redis.call('HINCRBY', rkey, 'open', 1)
@@ -334,10 +359,11 @@ local function mark(keys, args)
     return { 'OK' }
   end
   if kind == 'landed' then
-    redis.call('HSET', pkey, 'state', 'landed', 'land_head', a1, 'merge_sha', a2, 'landed_at', at, 'skip_reason', '')
+    redis.call('HSET', pkey, 'land_state', 'landed', 'land_head', a1, 'land_merge_sha', a2, 'land_landed_at', at,
+      'land_skip_reason', '')
     redis.call('ZREM', k_queue(S, R, B), n)
     redis.call('ZADD', 's:' .. S .. ':land:landed', at, R .. '#' .. n)
-    local prun = redis.call('HGET', pkey, 'push_run') or ''
+    local prun = redis.call('HGET', pkey, 'land_push_run') or ''
     if prun ~= '' then
       local pk = k_run(S, prun)
       if redis.call('HGET', pk, 'state') == 'pushed' and redis.call('HINCRBY', pk, 'open', -1) <= 0 then
