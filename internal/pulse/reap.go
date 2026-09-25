@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -56,6 +57,7 @@ type ProcessTable interface {
 	List() ([]Proc, error)
 	Alive(pid int) bool
 	Kill(pid int) error
+	Term(pid int) error
 }
 
 // ReapInput is the reap verb's input, held apart from flag parsing.
@@ -367,7 +369,7 @@ func (o OSProcs) List() ([]Proc, error) {
 		if err != nil {
 			continue
 		}
-		age, ok := parseETime(fields[1])
+		age, ok := ParseETime(fields[1])
 		if !ok {
 			continue
 		}
@@ -386,8 +388,16 @@ func (o OSProcs) Kill(pid int) error {
 	return p.Kill()
 }
 
-// parseETime reads ps's elapsed time: [[dd-]hh:]mm:ss.
-func parseETime(s string) (time.Duration, bool) {
+func (o OSProcs) Term(pid int) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return p.Signal(syscall.SIGTERM)
+}
+
+// ParseETime reads ps's elapsed time: [[dd-]hh:]mm:ss.
+func ParseETime(s string) (time.Duration, bool) {
 	days := 0
 	if d, rest, ok := strings.Cut(s, "-"); ok {
 		n, err := strconv.Atoi(d)
