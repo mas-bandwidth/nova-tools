@@ -1,6 +1,7 @@
 // Package fleetbuild is `nova-sprint fleet build` (#3310): one release, built
 // once on the builder, installed on every bench and on this machine, from the
-// fleet Redis rather than from a script's hardcoded lists.
+// fleet Redis rather than from a script's hardcoded lists. The build itself is
+// Compile (compile.go), run on the builder with its own Go caches (#4080).
 //
 // Redis holds the whole plan:
 //
@@ -48,8 +49,12 @@ const (
 	// BinDir and StageDir are relative to each machine's home.
 	BinDir   = ".local/bin"
 	StageDir = ".local/bin.new"
-	// DefaultBuildCmd builds <V> at <commit> on the builder for the named platforms.
-	DefaultBuildCmd = "space-build"
+	// LegacyBuildCmd is rowan-tools' space-build script, the build before
+	// #4080: run here as `<cmd> --host <builder> --version <v> --commit <sha>
+	// --platform <list>` when --build-cmd names it (or any other command). With
+	// no build command the build is CompileArgv: this package's Compile, run on
+	// the builder by its own nova-sprint, with the build's own Go caches.
+	LegacyBuildCmd = "space-build"
 	// BenchTimeout bounds one bench's install; BuildTimeout the build.
 	BenchTimeout = 80 * time.Second
 	BuildTimeout = 20 * time.Minute
@@ -247,13 +252,23 @@ type Deployer struct {
 	Out      io.Writer
 }
 
-// BuildArgv is the one build command.
+// BuildArgv is the one build command: CompileArgv, or BuildCmd with
+// space-build's argv when one is named.
 func (d *Deployer) BuildArgv(p Plan) []string {
-	cmd := d.BuildCmd
-	if cmd == "" {
-		cmd = DefaultBuildCmd
+	if d.BuildCmd == "" {
+		return CompileArgv(p)
 	}
-	return []string{cmd, "--host", p.Builder, "--version", p.Version, "--commit", p.Commit,
+	return []string{d.BuildCmd, "--host", p.Builder, "--version", p.Version, "--commit", p.Commit,
+		"--platform", strings.Join(p.BuildPlatforms, ",")}
+}
+
+// CompileArgv runs `nova-sprint fleet build compile` on the builder in one ssh
+// session, with the nova-sprint the last fleet build installed there. Every
+// value is validated by MakePlan, so the remote command line holds no shell
+// metacharacter; the remote shell starts in the builder's home.
+func CompileArgv(p Plan) []string {
+	return []string{"ssh", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", p.Builder,
+		BinDir + "/nova-sprint", "fleet", "build", "compile", "--version", p.Version, "--commit", p.Commit,
 		"--platform", strings.Join(p.BuildPlatforms, ",")}
 }
 

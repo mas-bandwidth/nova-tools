@@ -7,6 +7,12 @@
 //
 //	fleet build [--redis <addr>] [--bench <b>[,<b>...]] [--build-cmd <path>] [--dry-run]
 //	fleet build set [--redis <addr>] <key>=<value>...
+//	fleet build compile --version <v> --commit <sha40> [--platform <p>[,<p>...]] [--repo-url <url>] [--dry-run]
+//
+// compile (#4080) is the builder half, run on the builder by fleet build over
+// ssh: it builds and publishes the release with its own GOMODCACHE, GOCACHE and
+// toolchain under ~/nova-bench/space-build/go/, so it never shares a Go cache
+// with a CI runner on the same machine (internal/nsprint/fleetbuild/compile.go).
 //
 // Exit 0 every target installed and fn deploy answered; 1 a refusal (the
 // line names the remedy) or a failed target; 2 usage; 5 Redis unreachable.
@@ -22,6 +28,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleetbuild"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
@@ -41,6 +48,16 @@ func (execRunner) Run(ctx context.Context, argv []string) (string, error) {
 	return string(out), err
 }
 
+// fleetCompileExec is the compile seam tests replace: a local git or go child
+// in dir, its environment goenv.Clean plus the build's own Go variables.
+var fleetCompileExec fleetbuild.Exec = func(ctx context.Context, dir string, extra []string, argv []string) (string, error) {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = dir
+	cmd.Env = append(goenv.Clean(os.Environ()), extra...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
 func buildRefused(errOut io.Writer, err error) int {
 	fmt.Fprintf(errOut, "FLEET BUILD REFUSED: %s\n", oneline.Escape(strings.TrimPrefix(err.Error(), fleetbuild.ErrRefused.Error()+": ")))
 	return 1
@@ -50,12 +67,15 @@ func runFleetBuild(ctx context.Context, args []string, out, errOut io.Writer) in
 	if len(args) > 0 && args[0] == "set" {
 		return runFleetBuildSet(ctx, args[1:], out, errOut)
 	}
+	if len(args) > 0 && args[0] == "compile" {
+		return runFleetBuildCompile(ctx, args[1:], out, errOut)
+	}
 	fs := flag.NewFlagSet("fleet build", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	redisAddr := fs.String("redis", "", "")
 	benches := fs.String("bench", "", "")
-	buildCmd := fs.String("build-cmd", fleetbuild.DefaultBuildCmd, "")
+	buildCmd := fs.String("build-cmd", "", "")
 	dry := fs.Bool("dry-run", false, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fleet build", err.Error())
@@ -153,5 +173,41 @@ func runFleetBuildSet(ctx context.Context, args []string, out, errOut io.Writer)
 		return unreachable(errOut, "fleet build set", err.Error())
 	}
 	fmt.Fprintf(out, "FLEET RELEASE SET fields=%d\n", n)
+	return 0
+}
+
+// runFleetBuildCompile is the builder half: exit 0 built (or nothing to
+// build), 1 refused with the remedy named, 2 usage.
+func runFleetBuildCompile(ctx context.Context, args []string, out, errOut io.Writer) int {
+	fs := flag.NewFlagSet("fleet build compile", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	version := fs.String("version", "", "")
+	commit := fs.String("commit", "", "")
+	platforms := fs.String("platform", fleetbuild.DefaultPlatforms, "")
+	repoURL := fs.String("repo-url", fleetbuild.DefaultRepoURL, "")
+	dry := fs.Bool("dry-run", false, "")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, "fleet build compile", err.Error())
+	}
+	if fs.NArg() != 0 || *version == "" || *commit == "" {
+		return refuse(errOut, "fleet build compile", "wants --version <v> --commit <sha40> [--platform <p>[,<p>...]] [--repo-url <url>] [--dry-run]")
+	}
+	home, err := fleetBuildHome()
+	if err != nil {
+		home = ""
+	}
+	var plats []string
+	for _, p := range strings.Split(*platforms, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			plats = append(plats, p)
+		}
+	}
+	c := &fleetbuild.Compile{Home: home, Version: *version, Commit: *commit, Platforms: plats,
+		RepoURL: *repoURL, DryRun: *dry, Exec: fleetCompileExec, Out: out}
+	if err := c.Run(ctx); err != nil {
+		fmt.Fprintf(errOut, "FLEET COMPILE REFUSED: %s\n", oneline.Escape(strings.TrimPrefix(err.Error(), fleetbuild.ErrRefused.Error()+": ")))
+		return 1
+	}
 	return 0
 }

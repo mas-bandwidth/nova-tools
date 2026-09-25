@@ -216,12 +216,20 @@ jobs:
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
           # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
           # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
+          # while the release build beside it switched toolchains in the same caches): the toolchain line,
+          # else the go line, which is the toolchain a go.mod without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
           for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
             [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
       - name: cache go build and module cache
         if: runner.environment == 'github-hosted'
@@ -364,12 +372,20 @@ jobs:
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
           # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
           # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
+          # while the release build beside it switched toolchains in the same caches): the toolchain line,
+          # else the go line, which is the toolchain a go.mod without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
           for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
             [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
       - id: list
         shell: bash
@@ -689,12 +705,20 @@ jobs:
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
           # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
           # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
+          # while the release build beside it switched toolchains in the same caches): the toolchain line,
+          # else the go line, which is the toolchain a go.mod without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
           for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
             [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
       - name: take this runner's share of the machine, not all of it
         if: matrix.entry.packages != ''
@@ -827,12 +851,20 @@ jobs:
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
           # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
           # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
+          # while the release build beside it switched toolchains in the same caches): the toolchain line,
+          # else the go line, which is the toolchain a go.mod without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
           for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
             [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
       - name: the queue and lease package, with -race
         # make test-race carries the -race flag (Makefile: the one entry); PKGS
@@ -1476,12 +1508,20 @@ jobs:
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
           # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
           # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
+          # while the release build beside it switched toolchains in the same caches): the toolchain line,
+          # else the go line, which is the toolchain a go.mod without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
           for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
             [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
       - name: friend sequences
         run: make test-e2e
@@ -1731,7 +1771,14 @@ jobs:
           # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
           # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
           # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
-          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
+          # while the release build beside it switched toolchains in the same caches): the toolchain line,
+          # else the go line, which is the toolchain a go.mod without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
           for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
             [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
@@ -1740,6 +1787,7 @@ jobs:
           command -v go >/dev/null 2>&1 || { echo "PROBE FAIL runner=$RUNNER_NAME no Go on PATH"; exit 1; }
           command -v sbcl >/dev/null 2>&1 || { echo "PROBE FAIL runner=$RUNNER_NAME no sbcl on PATH"; exit 1; }
           go version; sbcl --version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
       - name: the network probe, inside nova-sandbox
         # rule R: nothing enters the loop untested, and the probe itself is no
         # exception. #893 is the cost of forgetting it — a probe on the host
