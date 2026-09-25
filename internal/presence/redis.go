@@ -170,19 +170,43 @@ func (r *Redis) Close() error {
 	return r.rdb.Close()
 }
 
-// WriteBeat is one MULTI/EXEC: HSET key fields..., PEXPIRE key ttl, SET
-// lastKey stamp with no expiry. A friend:<name> left as a plain string by a
-// beat older than #2673 answers WRONGTYPE to the HSET; that key is this
-// writer's own, so it is deleted and the beat is written once more.
+// WriteBeat is one MULTI/EXEC under WATCH key: HSET key fields..., PEXPIRE key
+// ttl, SET lastKey stamp with no expiry. Before it, TYPE key (and HEXISTS key
+// up for a hash) decides whether the key is the beat's to write: absent, the
+// beat's own hash, or a plain string left by a beat older than #2673 (deleted
+// in the same MULTI). The friend row, or a key of any other type, answers a
+// *KeyTypeError and nothing is written (#3447). The WATCH makes the check and
+// the write one step: a row loop that creates the row in between fails the
+// EXEC, and the beat checks again.
 func (r *Redis) WriteBeat(ctx context.Context, key string, fields []string, ttl time.Duration, lastKey, stamp string) error {
 	if len(fields) == 0 || len(fields)%2 != 0 {
 		return fmt.Errorf("beat fields must be field, value pairs")
 	}
-	write := func() error {
-		_, err := r.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
-			args := make([]interface{}, len(fields))
-			for i, f := range fields {
-				args[i] = f
+	args := make([]interface{}, len(fields))
+	for i, f := range fields {
+		args[i] = f
+	}
+	write := func(tx *redis.Tx) error {
+		typ, err := tx.Type(ctx, key).Result()
+		if err != nil {
+			return err
+		}
+		switch typ {
+		case "none", "string":
+		case "hash":
+			row, err := tx.HExists(ctx, key, FieldUp).Result()
+			if err != nil {
+				return err
+			}
+			if row {
+				return &KeyTypeError{Key: key, Type: typ, Row: true}
+			}
+		default:
+			return &KeyTypeError{Key: key, Type: typ}
+		}
+		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			if typ == "string" {
+				p.Del(ctx, key)
 			}
 			p.HSet(ctx, key, args...)
 			p.PExpire(ctx, key, ttl)
@@ -191,19 +215,19 @@ func (r *Redis) WriteBeat(ctx context.Context, key string, fields []string, ttl 
 		})
 		return err
 	}
-	err := write()
-	if err != nil && strings.Contains(err.Error(), "WRONGTYPE") {
-		if derr := r.rdb.Del(ctx, key).Err(); derr != nil {
-			return derr
+	var err error
+	for try := 0; try < 3; try++ {
+		if err = r.rdb.Watch(ctx, write, key); !errors.Is(err, redis.TxFailedErr) {
+			return err
 		}
-		err = write()
 	}
 	return err
 }
 
-// ReadBeats is one pipeline: per key HMGET key at width window, PTTL key and
-// GET key:last. An absent key or field answers "". A key that is not a hash
-// (a beat older than #2673) reads its TTL and no fields.
+// ReadBeats is one pipeline: per key HMGET key at width window up, PTTL key
+// and GET key:last. An absent key or field answers "". A key that is not a
+// hash (a beat older than #2673) reads its TTL and no fields. A hash with the
+// up field is the friend row (Reading.Row).
 func (r *Redis) ReadBeats(ctx context.Context, keys []string) ([]Reading, error) {
 	if len(keys) == 0 {
 		return nil, nil
@@ -217,7 +241,7 @@ func (r *Redis) ReadBeats(ctx context.Context, keys []string) ([]Reading, error)
 	p := r.rdb.Pipeline()
 	for i, k := range keys {
 		cs[i] = cmds{
-			fields: p.HMGet(ctx, k, FieldAt, FieldWidth, FieldWindow),
+			fields: p.HMGet(ctx, k, FieldAt, FieldWidth, FieldWindow, FieldUp),
 			ttl:    p.PTTL(ctx, k),
 			last:   p.Get(ctx, k+LastSuffix),
 		}
@@ -242,7 +266,10 @@ func (r *Redis) ReadBeats(ctx context.Context, keys []string) ([]Reading, error)
 				}
 				return ""
 			}
-			out[i].At, out[i].Width, out[i].Window = str(0), str(1), str(2)
+			out[i].At, out[i].Width, out[i].Window, out[i].Up = str(0), str(1), str(2), str(3)
+			if len(vals) > 3 && vals[3] != nil {
+				out[i].Row = true
+			}
 		} else if !strings.Contains(err.Error(), "WRONGTYPE") {
 			return nil, err
 		}
