@@ -324,3 +324,18 @@ func (b Build) Push(ctx context.Context) error {
 	_, err := b.git(ctx, "push", "-q", "--force", "origin", "HEAD:refs/heads/"+b.Branch)
 	return err
 }
+
+// CommitCloses is, per member, the issues its commit messages close
+// (base..member, GitHub's closing keywords; ParseCloses's form, "-" none).
+// Run leaves the clone and every member's refs/land/pr/<n> for it.
+func (b Build) CommitCloses(ctx context.Context, base string, members []Member) map[int]string {
+	out := map[int]string{}
+	for _, m := range members {
+		msgs, err := b.git(ctx, "log", "--format=%B", base+"..refs/land/pr/"+strconv.Itoa(m.N))
+		if err != nil {
+			continue
+		}
+		out[m.N] = ParseCloses(msgs)
+	}
+	return out
+}

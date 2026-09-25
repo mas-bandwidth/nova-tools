@@ -106,6 +106,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "task done status DONE, the ns task-done function's reply word, not a RESULT field"},
 	{file: "internal/nsprint/land/eval_records.go", fn: "ParseInboundObjection", record: "objection", since: "362dde93",
 		reason: "first word of an inbound comment/review or PR body (HOLD, BLOCKED), the lander's B2 objection record (#3139), not RESULT line 2"},
+	{file: "internal/swarm/stage.go", fn: "ReadCardBase", record: "SPEC-CARD", since: "5778de35",
+		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists, like sparse.go cardPATHS"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)

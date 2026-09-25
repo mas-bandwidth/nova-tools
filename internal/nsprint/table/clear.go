@@ -2,8 +2,8 @@
 // done columns in under a second and leaves waiting untouched: every member of
 // every ws:<s>:landed set moves to closed (in no set, task:<id> state=closed,
 // one ws:log entry each, the any->closed move of the ws index, #3662),
-// and each friend's current done count is stored in ws:done0 so the friend
-// block counts from zero. working and merging are live task states on the ws
+// and each friend's current done count (ZCARD friend:<f>:cards:done) is
+// stored in ws:done0 so the friend block counts from zero. working and merging are live task states on the ws
 // index, not counters, so a clear never moves them.
 //
 // Round trips: the stream and friend lists, the landed members and done
@@ -64,9 +64,9 @@ func PlanClear(ctx context.Context, client redis.UniversalClient, friends []stri
 	for i, s := range p.Streams {
 		landed[i] = pipe.ZRangeWithScores(ctx, "ws:"+s+":landed", 0, -1)
 	}
-	done := make([]*redis.StringCmd, len(p.Friends))
+	done := make([]*redis.IntCmd, len(p.Friends))
 	for i, f := range p.Friends {
-		done[i] = pipe.HGet(ctx, "friend:"+f, "done")
+		done[i] = pipe.ZCard(ctx, FriendCardsKey(f, "done"))
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, fmt.Errorf("read landed sets: %w", err)
@@ -85,8 +85,8 @@ func PlanClear(ctx context.Context, client redis.UniversalClient, friends []stri
 		}
 	}
 	for i, f := range p.Friends {
-		if v, err := done[i].Result(); err == nil && v != "" && strings.Trim(v, "0123456789") == "" {
-			p.Done[f] = v
+		if v, err := done[i].Result(); err == nil {
+			p.Done[f] = strconv.FormatInt(v, 10)
 		}
 	}
 	if len(ids) == 0 {

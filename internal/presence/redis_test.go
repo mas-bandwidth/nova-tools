@@ -2,6 +2,7 @@ package presence
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -243,11 +244,12 @@ func TestAgainstRedisBeatWritesWidthAndTTL(t *testing.T) {
 	}
 }
 
-// TestAgainstRedisATableRowIsNotPresenceAndABeatOnItIs: friend:<name> is also
-// the sprint table's row hash, written with no TTL. That row alone reads
-// down; a beat on the same hash keeps the row's fields and gives it the TTL
-// that reads up; and the beat lapsing takes the hash with it.
-func TestAgainstRedisATableRowIsNotPresenceAndABeatOnItIs(t *testing.T) {
+// TestAgainstRedisTheFriendRowIsPresenceAndBeatRefusesIt is #3447 on a real
+// store: friend:<name> is the friend row, a hash with no TTL. Its up and at
+// read up, with no beat; a beat on it answers a KeyTypeError naming the hash
+// and leaves the row exactly as it was, no field written and no TTL given; and
+// a key of another type is refused the same way, never deleted.
+func TestAgainstRedisTheFriendRowIsPresenceAndBeatRefusesIt(t *testing.T) {
 	mr := miniredis.RunT(t)
 	ctx := context.Background()
 	st, err := Open(ctx, mr.Addr(), DefaultUser)
@@ -256,31 +258,48 @@ func TestAgainstRedisATableRowIsNotPresenceAndABeatOnItIs(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	now := time.Date(2026, 9, 22, 9, 41, 0, 0, time.UTC)
+	rowAt := now.Add(-time.Second).Format(Stamp)
 
-	mr.HSet("friend:stella", "at", now.Format(Stamp), "up", "1", "ready", "4")
+	mr.HSet("friend:stella", "at", rowAt, "up", "1", "ready", "4", "width", "15")
 	sts, err := Read(ctx, st, []string{"stella"}, now)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if sts[0].Present() {
-		t.Fatal("a table row with no TTL is present; want down")
-	}
-	if err := Beat(ctx, st, "stella", now, DefaultTTL); err != nil {
-		t.Fatalf("beat on the row: %v", err)
-	}
-	if got := mr.HGet("friend:stella", "ready"); got != "4" {
-		t.Fatalf("the beat clobbered the row: ready = %q", got)
-	}
-	sts, err = Read(ctx, st, []string{"stella"}, now)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
 	if !sts[0].Present() {
-		t.Fatal("a beat on the row is not present; want up")
+		t.Fatal("a row with up=1 and a fresh at reads down; want up")
 	}
-	mr.FastForward(DefaultTTL + time.Second)
-	if mr.Exists("friend:stella") {
-		t.Fatal("friend:stella outlived its beat")
+	if got := sts[0].Phrase(now); got != "stella up 1s width=15" {
+		t.Fatalf("phrase = %q", got)
+	}
+
+	eight := int64(8)
+	err = BeatSide(ctx, st, "stella", now, DefaultTTL, Side{Width: &eight})
+	var kt *KeyTypeError
+	if !errors.As(err, &kt) || kt.Type != "hash" || !kt.Row {
+		t.Fatalf("beat on the row = %v; want a KeyTypeError for the row", err)
+	}
+	if got := mr.HGet("friend:stella", "at"); got != rowAt {
+		t.Fatalf("the refused beat wrote at = %q", got)
+	}
+	if got := mr.HGet("friend:stella", "width"); got != "15" {
+		t.Fatalf("the refused beat wrote width = %q", got)
+	}
+	if ttl := mr.TTL("friend:stella"); ttl != 0 {
+		t.Fatalf("the refused beat gave the row a TTL of %s", ttl)
+	}
+	if mr.Exists("friend:stella:last") {
+		t.Fatal("the refused beat wrote :last")
+	}
+
+	if _, err := mr.SAdd("friend:johnny", "x"); err != nil {
+		t.Fatal(err)
+	}
+	err = Beat(ctx, st, "johnny", now, DefaultTTL)
+	if !errors.As(err, &kt) || kt.Type != "set" || !strings.Contains(err.Error(), "friend:johnny is a set") {
+		t.Fatalf("beat on a set = %v; want a KeyTypeError naming the set", err)
+	}
+	if !mr.Exists("friend:johnny") {
+		t.Fatal("the refused beat deleted a key it does not own")
 	}
 }
 

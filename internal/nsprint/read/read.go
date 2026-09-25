@@ -372,8 +372,9 @@ func (p Poster) Comment(ctx context.Context, repo, n, body string) (int64, error
 }
 
 // Post appends the typed line to pr:<repo>:<n>:lines and stamps the record
-// (last_line, last_line_at) in one MULTI, then mirrors it as one comment when
-// poster is not nil. Exit 0 posted, 1 refused, 2 could not run. The Redis
+// (last_line, last_line_at) in one MULTI, or for an event line (EventKinds)
+// in one library call that also moves its tasks, then mirrors it as one
+// comment when poster is not nil. Exit 0 posted, 1 refused, 2 could not run. The Redis
 // write is the record; a comment that fails after it is reported as such.
 func Post(ctx context.Context, c *redis.Client, repo, n, line string, poster *Poster, stdout, stderr io.Writer) int {
 	if err := CheckLine(line); err != nil {
@@ -390,23 +391,71 @@ func Post(ctx context.Context, c *redis.Client, repo, n, line string, poster *Po
 		return 1
 	}
 	now := strconv.FormatInt(time.Now().Unix(), 10)
-	tx := c.TxPipeline()
-	rp := tx.RPush(ctx, LinesKey(repo, n), line)
-	tx.HSet(ctx, Key(repo, n), "last_line", strings.SplitN(line, "\n", 2)[0], "last_line_at", now)
-	if _, err := tx.Exec(ctx); err != nil {
-		fmt.Fprintf(stderr, "nova-sprint read post: %v\n", err)
-		return 2
-	}
 	kind := strings.Fields(line)[0]
+	var lines int64
+	moves := ""
+	if EventKinds[kind] {
+		ev, err := postEvent(ctx, c, repo, n, line, now)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-sprint read post: %v\n", err)
+			return 2
+		}
+		lines = ev.Lines
+		moves = fmt.Sprintf(" tasks_moved=%d", ev.Moved)
+		for _, s := range ev.Skipped {
+			fmt.Fprintf(stderr, "READ POST SKIPPED repo=%s n=%s %s\n", repo, n, strings.ReplaceAll(s, "\n", " "))
+		}
+	} else {
+		tx := c.TxPipeline()
+		rp := tx.RPush(ctx, LinesKey(repo, n), line)
+		tx.HSet(ctx, Key(repo, n), "last_line", strings.SplitN(line, "\n", 2)[0], "last_line_at", now)
+		if _, err := tx.Exec(ctx); err != nil {
+			fmt.Fprintf(stderr, "nova-sprint read post: %v\n", err)
+			return 2
+		}
+		lines = rp.Val()
+	}
 	if poster == nil {
-		fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=0\n", repo, n, kind, rp.Val())
+		fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=0%s\n", repo, n, kind, lines, moves)
 		return 0
 	}
 	id, err := poster.Comment(ctx, repo, n, line)
 	if err != nil {
-		fmt.Fprintf(stderr, "READ POST REFUSED repo=%s n=%s kind=%s lines=%d redis=ok github=%v; the line is in Redis, re-run with --no-github or fix the token\n", repo, n, kind, rp.Val(), err)
+		fmt.Fprintf(stderr, "READ POST REFUSED repo=%s n=%s kind=%s lines=%d redis=ok github=%v; the line is in Redis, re-run with --no-github or fix the token\n", repo, n, kind, lines, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=1 comment=%d\n", repo, n, kind, rp.Val(), id)
+	fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=1 comment=%d%s\n", repo, n, kind, lines, id, moves)
 	return 0
+}
+
+// EventKinds are the typed lines whose post is an event for the sprint's
+// tasks (nova-tools#3779): a CLOSE by a person lands every task naming the
+// PR or an issue its record closes; a SCORE moves the PR's read task
+// read-<n>-<head8> working -> merging. Their post is one library call,
+// ns_read_post (internal/nsprint/fn/lua/03_task_event.lua): the line and the
+// move together or neither.
+var EventKinds = map[string]bool{"CLOSE": true, "SCORE": true}
+
+// FunctionReadPost is the library function that posts an event line.
+const FunctionReadPost = "ns_read_post"
+
+type event struct {
+	Lines   int64
+	Moved   int
+	Skipped []string
+}
+
+func postEvent(ctx context.Context, c *redis.Client, repo, n, line, now string) (event, error) {
+	var ev event
+	res, err := c.FCall(ctx, FunctionReadPost, nil, prkey.Name(repo), n, line, now).StringSlice()
+	if err != nil {
+		return ev, fmt.Errorf("%s: %w (a store whose library predates it: nova-sprint fn load)", FunctionReadPost, err)
+	}
+	if len(res) < 6 || res[0] != "OK" {
+		return ev, fmt.Errorf("%s: %s", FunctionReadPost, strings.Join(res, " "))
+	}
+	ev.Lines, _ = strconv.ParseInt(res[1], 10, 64)
+	ev.Moved, _ = strconv.Atoi(res[3])
+	ev.Skipped = res[6:]
+	return ev, nil
 }

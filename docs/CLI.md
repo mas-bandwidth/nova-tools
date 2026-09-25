@@ -1188,7 +1188,8 @@ future reads `awake` `source=bus-beat` even when its stamp and cursor are both
 past `--window`. Since #3144 `wait` writes no BEAT (the bus carries notes, never
 beats; `--beat` and `--beat-lease` are accepted and ignored with one
 `WAIT NOTE`), so this source reads only a BEAT an older wait left, and live
-presence is `awake --store`, the hash `nova-wake beat` writes:
+presence is `awake --store`, read from the store the way `presence` below
+reads it:
 
 ```
 $ nova-wake awake --bus ./bus
@@ -1209,7 +1210,10 @@ side** — the cost of presence has to be zero or the heartbeat is the first
 thing dropped under load. A window that exits, runs out of credit or is killed
 simply stops writing, and the hash lapses within the TTL: there is no shutdown
 hook to forget to run, which is the whole point. Presence is Redis only: the
-git bus carries notes and never beats (#3144).
+git bus carries notes and never beats (#3144). That is the beat on a store with
+no row loop. On the fleet store `friend:<name>` is the friend row and
+`nova-wake beat` refuses it (#3447): it writes nothing, exits 2 naming the
+hash, and its loop stops, because the row has one writer.
 
 Two flags sit beside that and change nothing when they are left off.
 `--window <time>` is the cap's reset time, stored as passed in the `window`
@@ -1227,14 +1231,19 @@ $ nova-wake presence --store 100.115.99.19:6380
 friends: emma down 1h12m (last 09:41Z) · freddy down · johnny up 12s width=8 · stella up 4s
 ```
 
-A friend is `up` or `down` and nothing else. `up` is a beat inside the TTL,
-with the age of it and the `width=<n>` (and `window=<time>`) that beat carried;
-`down` is a hash that lapsed, with the age of the last beat and its clock time
-from the untimed key, or a friend who has never beaten, with nothing after it.
-`friend:<name>` is also the hash the sprint table's row loop writes, with no
-TTL, so presence is not the hash's existence but its TTL: a friend is up only
-while `friend:<name>` carries a live expiry, which only a beat gives it. The
-untimed key is not presence, and this verb reads no hand-written override. The
+A friend is `up` or `down` and nothing else. On the fleet store the presence
+is the friend row (#3447): `friend:<name>` is a hash with no TTL whose one
+writer is the row loop (rowan-tools `friend-row`, one pass a second), and the
+row's `up` and `at` decide. `up=1` with an `at` no older than 10s is `up`, with
+the age of `at` and the row's `width=<n>`; `up=0` is `down` with no age,
+because the row does not say since when; a row whose `at` is older than 10s is
+a silent row loop, `down` with the age and clock time of its last write. A TTL
+on the row means nothing. Where no row loop runs, the beat's own hash is the
+presence: `up` is a beat inside the TTL, with the age of it and the
+`width=<n>` (and `window=<time>`) that beat carried; `down` is a hash that
+lapsed, with the age of the last beat and its clock time from the untimed key,
+or a friend who has never beaten, with nothing after it. The untimed key is
+not presence, and this verb reads no hand-written override. The
 roster is the store's `friends` SET, sorted, minus Glenn and Rowan; `--bus
 <dir>` (its `participants.json`), `--participants <file>` or
 `--friends <a,b,c>` names one instead, and there is no built-in list, because a
@@ -4038,7 +4047,10 @@ the ZCARDs of their `waiting` (plus `ready`), `working`, `merging` and
 `landed` sets; rows with all zeros are hidden. y is every task in those sets,
 left is y minus landed, and the ETA is left over the moves to `landed` in the
 last hour of `ws:log` (at least one an hour). The hosts are the `benches` SET
-(`bench:<b>` hashes; a beat older than 60 s is no row), the friends the
+(each bench's own keys, #2389: ready and working are the ZCARDs of
+`bench:<b>:cards:ready` and `:working`, load is `bench:<b>:beat` load1 from
+the bench's own `bench beat` loop; a bench whose beat is gone or older than
+60 s still shows its cards with load `down`), the friends the
 `--friends` roster or else the `friends` SET sorted, status `up` or `down`,
 done less the count stored at the last `table clear`. Every tick is ONE
 pipeline (a second one only on the tick a set's membership changed), never
@@ -4328,13 +4340,19 @@ The bench-side command is `nova-sprint card stop --stdin --grace <duration>`. It
 
 ### `nova-sprint friend serve`
 
-`nova-sprint friend serve --as <f> [--width <n>] [--dispatch "<argv>" | -- <argv...>] [--dir <root>] [--sprint <s>] [--host <h>] [--harness <h>] [--session <s>] [--once] [--redis <addr>]` is the loop unit on a friend's seat (nova-tools #2938): a friend who is not awake in a session still works her queue, at zero model tokens. Every second it beats (`ns_friend_serve_beat`, one call: the seat lock `friend:<f>:serve`, the presence hashes `friend:<f>:beat` and `friend:<f>` with `at`, `width` = children in use and `cap` = the seat's width, all under a 5 s TTL, and the untimed `friend:<f>:last`), takes ready tasks from the friend's queue up to the free width (`task take`'s one pipeline plus one call), writes each task's brief (`brief render`, else the task record when render refuses the kind), starts the friend's own harness by exec and watches the child, beating its task lease every 60 s. When the child exits 0 having written a typed line (`SCORE`, `DISPOSITION`, `HOLD`, `DONE`, `BLOCKED`, `ABSTAIN`, `REPAIR`, `SPEC`, `SPEC-WRITTEN`, `CLOSE`; the last such line on stdout wins) the task is closed with that line as its evidence, a read with its verdict and score at the task's head; any other exit closes it with `blocked: exit=<rc> ...` naming the last line it wrote. A task is in working only while its child lives: a serve stopped by a signal kills its children and gives their tasks back (`task cancel`). Every event is one entry on `friend:<f>:log` and one `SERVE <f> <kind> ...` line on stdout.
+`nova-sprint friend serve --as <f> [--width <n>] [--dispatch "<argv>" | -- <argv...>] [--dir <root>] [--sprint <s>] [--host <h>] [--harness <h>] [--session <s>] [--login <alias>]... [--once] [--redis <addr>]` is the loop unit on a friend's seat (nova-tools #2938): a friend who is not awake in a session still works her queue, at zero model tokens. Every second it beats (`ns_friend_serve_beat`, one call: the seat lock `friend:<f>:serve`, the presence hashes `friend:<f>:beat` and `friend:<f>` with `at`, `width` = children in use and `cap` = the seat's width, all under a 5 s TTL, and the untimed `friend:<f>:last`), takes ready tasks from the friend's queue up to the free width (`task take`'s one pipeline plus one call), writes each task's brief (`brief render`, else the task record when render refuses the kind), starts the friend's own harness by exec and watches the child, beating its task lease every 60 s. When the child exits 0 having written a typed line (`SCORE`, `DISPOSITION`, `HOLD`, `DONE`, `BLOCKED`, `ABSTAIN`, `REPAIR`, `SPEC`, `SPEC-WRITTEN`, `CLOSE`; the last such line on stdout wins) the task is closed with that line as its evidence, a read with its verdict and score at the task's head; any other exit closes it with `blocked: exit=<rc> ...` naming the last line it wrote. A task is in working only while its child lives: a serve stopped by a signal kills its children and gives their tasks back (`task cancel`). Every event is one entry on `friend:<f>:log` and one `SERVE <f> <kind> ...` line on stdout. On start, after its first beat, each `--login` alias is bound to the seat in `friends:login` through `ns_friend_hello` (one call, the only writer of that hash; nova-tools #3797), so typed hold and read lines signed `who=<alias>` resolve to the friend instead of `REFUSED unknown-who`; a clashing alias (`LOGIN-TAKEN`, `LOGIN-IS-FRIEND`, `NAME-IS-LOGIN`) prints `FRIEND SERVE <f> REFUSED login <words>`, releases the seat and exits 1.
 
 The harness argv is the seat's declaration: `--dispatch` or the argv after `--`, else the `dispatch` field of the `cfg:friend:<f>` hash (space separated, no argument may contain a space, as the fleet loops table is spelled). In every argument `@brief`, `@out`, `@dir`, `@sprint` and `@id` are replaced per task; the child also gets `NOVA_FRIEND`, `NOVA_TASK_SPRINT`, `NOVA_TASK_ID`, `NOVA_TASK_ATTEMPT`, `NOVA_TASK_TOKEN`, `NOVA_TASK_KIND`, `NOVA_TASK_HEAD`, `NOVA_TASK_BRIEF`, `NOVA_TASK_OUT` and `NOVA_TASK_DIR` in its environment. A Claude seat declares `claude -p @brief`; Emma's seat declares her Antigravity dispatcher. `--width 0` (the default) reads `friend:<f>:desired`; `--dir` defaults to `~/nova-bench/serve/<f>`, holding `<sprint>/<id>-<attempt>/brief.md` and `out.log`.
 
 `nova-sprint friend wake --as <f> [the same flags]` (and `friend serve --once`) is one pass: beat, take, dispatch, watch the children it started until they close, release the seat. `friend wake <f>` without `--as` is unchanged: it routes one wake through the reconciler's list.
 
 Exit 0 served; 1 refused with the remedy named (`seat-held holder=<session>`: a second serve on the seat while the first holds the lock; `no-dispatch`; `no-width`; `unregistered`); 2 usage, including `--as` not equal to `NOVA_FRIEND`.
+
+### Cutting a card from an issue: `nova-sprint card cut`
+
+`nova-sprint card cut --sprint <S> --repo <owner/name> --issue <n> [--spec <n>] [--index <dir>] [--stream <name>] [--base <branch>] [--redis <addr>]` (nova-tools#3623) is the cut `nova-pulse cut` did, as one Redis write: it reads the issue over REST (`gh api`, the caller's `GH_CONFIG_DIR`), renders the card in the card-push shape (`KIND`, `TASK`, `REPO`, `BASE`, `base-sha`, `PATHS`, `DEPENDS-ON`, `WHY`, `DONE-WHEN`, `WHO`, `STREAM`, `EST`, `ORIGIN`, then the issue quoted line by line), stores the exact bytes at `s:<S>:body:sha256:<sha>` and pushes the card as `card push` does, so the record `s:<S>:card:<name>-<n>` lands in waiting (an unmet dependency) or ready. The first line of each key anywhere in the issue body is read; `--stream` and `--base` override, `WHO` defaults to `any`, and an issue with no `base-sha` gets the branch tip. `DEPENDS-ON` is rewritten into the card vocabulary (`#n` and `name#n` become `owner/name#n`; a `(WHY: ...)` becomes the `WHY:` line). `--index` names a context index directory (`internal/ctxindex`) and inlines the CONTEXT block for the spec IDs the issue (and the `--spec` issue) names. No file and no queue directory is written. A recut of the same issue is `place=exists`.
+
+One receipt: `CARD CUT <S>/<repo>#<n> label=... place=pool|waiting|exists stream=... contexts=<k> origin=<url>`. Exit 0 cut; 1 refused with `REFUSED card cut ... why=...` (no `STREAM` and no `--stream`, a `DEPENDS-ON` that is not a card id, owner/repo#n, stream/<slug> or task:<id>, no `PATHS` or `DONE-WHEN`, or a missing index, each before any write; or the push's own refusal); 2 usage.
 
 ### The card model: `nova-sprint card fsck`, `card ls --unplaced`, `bench reindex`
 

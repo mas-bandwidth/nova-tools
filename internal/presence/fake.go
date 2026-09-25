@@ -90,7 +90,8 @@ func (f *FakeStore) hash(key string) (fakeHash, bool) {
 }
 
 // WriteBeat is HSET key fields..., PEXPIRE key ttl and SET lastKey stamp, all
-// or nothing.
+// or nothing; the friend row (a hash with the up field) or a set at key is
+// refused with a *KeyTypeError and nothing is written, as the real store does.
 func (f *FakeStore) WriteBeat(ctx context.Context, key string, fields []string, ttl time.Duration, lastKey, stamp string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -103,10 +104,20 @@ func (f *FakeStore) WriteBeat(ctx context.Context, key string, fields []string, 
 	if ttl <= 0 {
 		return fmt.Errorf("non-positive ttl")
 	}
+	if _, ok := f.sets[key]; ok {
+		return &KeyTypeError{Key: key, Type: "set"}
+	}
 	h, ok := f.hash(key)
-	if !ok {
+	if ok {
+		if _, row := h.fields[FieldUp]; row {
+			return &KeyTypeError{Key: key, Type: "hash", Row: true}
+		}
+	} else {
 		h = fakeHash{fields: map[string]string{}}
 	}
+	// A plain string at key is a beat older than #2673: the beat's own,
+	// replaced in the same write.
+	delete(f.strings, key)
 	for i := 0; i < len(fields); i += 2 {
 		h.fields[fields[i]] = fields[i+1]
 	}
@@ -117,8 +128,9 @@ func (f *FakeStore) WriteBeat(ctx context.Context, key string, fields []string, 
 	return nil
 }
 
-// ReadBeats answers one Reading per key: the three fields, whether a TTL is
-// running on the hash, and the untimed :last string.
+// ReadBeats answers one Reading per key: the three fields, the row's up field
+// and whether the hash carries it, whether a TTL is running on the hash, and
+// the untimed :last string.
 func (f *FakeStore) ReadBeats(ctx context.Context, keys []string) ([]Reading, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -128,7 +140,8 @@ func (f *FakeStore) ReadBeats(ctx context.Context, keys []string) ([]Reading, er
 	out := make([]Reading, len(keys))
 	for i, k := range keys {
 		if h, ok := f.hash(k); ok {
-			out[i] = Reading{At: h.fields[FieldAt], Width: h.fields[FieldWidth], Window: h.fields[FieldWindow], Live: !h.until.IsZero()}
+			up, row := h.fields[FieldUp]
+			out[i] = Reading{At: h.fields[FieldAt], Width: h.fields[FieldWidth], Window: h.fields[FieldWindow], Up: up, Row: row, Live: !h.until.IsZero()}
 		}
 		out[i].Last = f.strings[k+LastSuffix]
 	}

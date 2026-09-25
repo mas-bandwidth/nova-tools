@@ -346,7 +346,7 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 		t.Fatalf("ws:checkpoint=%q", v)
 	}
 	// a counter that restarts below its base (a new sprint's index sets) shows as is
-	seedCommands(t, client, [][]string{{"HSET", "friend:rowan", "done", "3"}})
+	seedCommands(t, client, [][]string{{"ZREMRANGEBYRANK", table.FriendCardsKey("rowan", "done"), "0", "10"}})
 	again, _ := r.Read(ctx, now)
 	if got := again.Render(now); !strings.Contains(got, "\nrowan      |     0 |      12 |     3 | up        \n") {
 		t.Fatalf("restarted counter:\n%s", got)

@@ -12,9 +12,15 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 const (
@@ -37,7 +43,8 @@ func lsGit(t *testing.T, dir string, args ...string) string {
 }
 
 // lsFixture is a bare repo with dev and refs/pull/<n>/head: 1 and 3 add a
-// file each (green), 2 adds red.txt (red under the fixture test).
+// file each (green; 3's commit message closes #7), 2 adds red.txt (red
+// under the fixture test).
 func lsFixture(t *testing.T) (url string, bare string, heads map[int]string) {
 	t.Helper()
 	root := t.TempDir()
@@ -59,7 +66,11 @@ func lsFixture(t *testing.T) (url string, bare string, heads map[int]string) {
 			t.Fatal(err)
 		}
 		lsGit(t, src, "add", ".")
-		lsGit(t, src, "commit", "-q", "-m", file)
+		msg := file
+		if n == 3 {
+			msg += "\n\nCloses #7" // a commit message closes an issue too
+		}
+		lsGit(t, src, "commit", "-q", "-m", msg)
 		heads[n] = lsGit(t, src, "rev-parse", "HEAD")
 		lsGit(t, src, "checkout", "-q", "dev")
 	}
@@ -70,7 +81,8 @@ func lsFixture(t *testing.T) (url string, bare string, heads map[int]string) {
 	return "file://" + bare, bare, heads
 }
 
-// fakeGitHub records every REST call and answers the four the lander makes.
+// fakeGitHub records every REST call and answers the five the lander makes
+// (a member's body closes issue 10<n>).
 type fakeGitHub struct {
 	mu    sync.Mutex
 	calls []string
@@ -96,6 +108,9 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 			_, _ = w.Write([]byte(`{}`))
 		case r.Method == http.MethodPatch:
 			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/"+lsRepo+"/pulls/"):
+			n := strings.TrimPrefix(r.URL.Path, "/repos/"+lsRepo+"/pulls/")
+			_, _ = w.Write([]byte(`{"number":` + n + `,"body":"STREAM: x\n\nCloses #10` + n + `"}`))
 		default:
 			http.Error(w, `{"message":"unexpected"}`, http.StatusNotFound)
 		}
@@ -110,23 +125,44 @@ func (g *fakeGitHub) Calls() []string {
 	return append([]string(nil), g.calls...)
 }
 
+// TestLandStreamEndToEnd, and the DONE-WHEN of nova-tools#3779 for the
+// lander: the merge of a two-member stream (fake forge) lands both member
+// tasks and the tasks naming the issues they close, writes the CLOSE line on
+// both member records, and the table prints landed 2 for the stream; the ws
+// sets agree with every task record after each step.
 func TestLandStreamEndToEnd(t *testing.T) {
-	mr := miniredis.RunT(t)
-	addr := mr.Addr()
+	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
 	url, bare, heads := lsFixture(t)
 	gh := newFakeGitHub(t)
 	prev := landStreamToken
 	landStreamToken = func() (string, error) { return "test-token", nil }
 	t.Cleanup(func() { landStreamToken = prev })
 
-	// Three members in merging, pr_ready_at 3 < 1 < 2: order is #3, #1, #2.
+	// Three members in merging, aged 3 < 1 < 2: order is #3, #1, #2. The
+	// issues #101 and #103 (closed by #1's body and #3's record) have their
+	// own tasks in another stream.
+	const swarm = "swarm: cards"
+	for i, s := range []string{lsStream, swarm} {
+		c.SAdd(ctx, "ws:names", s)
+		c.ZAdd(ctx, "ws:order", redis.Z{Score: float64(i + 1), Member: s})
+	}
+	ids := []string{"t1", "t2", "t3", "build-101-one", "build-103-three", "build-7-seven"}
+	for id, at := range map[string]float64{"build-101-one": 50, "build-103-three": 60, "build-7-seven": 70} {
+		st := map[string]string{"build-101-one": "working", "build-103-three": "waiting", "build-7-seven": "ready"}[id]
+		c.ZAdd(ctx, "ws:"+swarm+":"+st, redis.Z{Score: at, Member: id})
+		c.HSet(ctx, "task:"+id, "stream", swarm, "state", st, "created_at", fmt.Sprint(at), "ref", "nova-tools#"+strings.Split(id, "-")[1])
+		c.FCall(ctx, "ns_task_refs", nil, id)
+	}
 	for n, at := range map[int]float64{1: 200, 2: 300, 3: 100} {
 		id := fmt.Sprintf("t%d", n)
 		c.ZAdd(ctx, "ws:"+lsStream+":merging", redis.Z{Score: at, Member: id})
-		c.HSet(ctx, "task:"+id, "stream", lsStream, "state", "merging", "pr", fmt.Sprint(n))
+		c.HSet(ctx, "task:"+id, "stream", lsStream, "state", "merging", "pr", fmt.Sprint(n), "created_at", fmt.Sprint(at))
 		if code, out, errOut := runSprint("pr", "record", "--redis", addr, "--repo", lsRepo, "--n", fmt.Sprint(n),
 			"--head", heads[n], "--base", "dev", "--stream", lsStream, "--task", id); code != 0 || !strings.Contains(out, "created=true") {
 			t.Fatalf("pr record: %d %s %s", code, out, errOut)
@@ -136,6 +172,16 @@ func TestLandStreamEndToEnd(t *testing.T) {
 			t.Fatalf("pr lines: %d %s %s", code, out, errOut)
 		}
 	}
+	if code, out, errOut := runSprint("pr", "record", "--redis", addr, "--repo", lsRepo, "--n", "3", "--closes", "103"); code != 0 {
+		t.Fatalf("pr record --closes: %d %s %s", code, out, errOut)
+	}
+	fsck := func(step string) {
+		t.Helper()
+		if err := ws.Check(ctx, c, ids); err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+	}
+	fsck("seed")
 	c.Set(ctx, "cfg:land:test:"+lsRepo, "test ! -e red.txt", 0)
 
 	// Dry run: the order from Redis alone, no clone, no GitHub.
@@ -182,6 +228,7 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if ok, _ := c.ZScore(ctx, "ws:"+lsStream+":working", "t2").Result(); ok == 0 {
 		t.Fatal("t2 not in working")
 	}
+	fsck("land stream")
 
 	// Status reads the landing and the stream PR record: ci pending.
 	code, out, _ = runSprint("land", "status", "--redis", addr, "--repo", lsRepo)
@@ -198,12 +245,14 @@ func TestLandStreamEndToEnd(t *testing.T) {
 		t.Fatalf("a refused merge called GitHub: %v", gh.Calls())
 	}
 
-	// CI green and mergeable: merge, move #3 and #1 to landed in one call, close them.
+	// CI green and mergeable: merge; #3 and #1 land with their CLOSE lines,
+	// and so do the tasks of the issues they close; then they are closed.
 	if code, out, errOut := runSprint("pr", "record", "--redis", addr, "--repo", lsRepo, "--n", "900", "--ci", "green", "--mergeable", "true"); code != 0 {
 		t.Fatalf("pr record ci: %d %s %s", code, out, errOut)
 	}
 	code, out, errOut = runSprint("land", "merge", "--redis", addr, "--repo", lsRepo, "--stream", lsStream, "--api", gh.srv.URL)
-	if code != 0 || !strings.Contains(out, "LAND MERGE repo="+lsRepo+" stream="+lsSlug+" pr=#900") || !strings.Contains(out, "members=2 moved=2 missing=0 already=false closed=#3,#1 unclosed=- rest_calls=5") {
+	if code != 0 || !strings.Contains(out, "LAND MERGE repo="+lsRepo+" stream="+lsSlug+" pr=#900") ||
+		!strings.Contains(out, "members=2 moved=5 missing=0 already=false closed=#3,#1 unclosed=- rest_calls=12 close_lines=2 skipped=0 closes_unread=- issues_closed=#103,#7,#101 issues_unclosed=-") {
 		t.Fatalf("merge: %d\n%s\n%s", code, out, errOut)
 	}
 	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":landed").Result(); n != 2 {
@@ -212,21 +261,75 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":merging").Result(); n != 0 {
 		t.Fatalf("merging %d", n)
 	}
+	if n, _ := c.ZCard(ctx, "ws:"+swarm+":landed").Result(); n != 3 {
+		t.Fatalf("the closed issues' tasks: %s landed %d, want 3", swarm, n)
+	}
+	for _, id := range []string{"t1", "t3", "build-101-one", "build-103-three", "build-7-seven"} {
+		if why := c.HGet(ctx, "task:"+id, "why").Val(); why != "landed with nova-tools#900 (dddddddd)" {
+			t.Fatalf("%s why %q", id, why)
+		}
+	}
+	fsck("land merge")
 	calls = gh.Calls()
 	head := lsGit(t, bare, "rev-parse", "refs/heads/stream/"+lsSlug)
-	wantClose := fmt.Sprintf("CLOSE who=rowan: in stream/%s at %s; landed with %s#900", lsSlug, head[:8], lsRepo)
-	if !strings.HasPrefix(calls[1], "PUT /repos/"+lsRepo+"/pulls/900/merge "+head) ||
-		calls[2] != "POST /repos/"+lsRepo+"/issues/3/comments "+wantClose || calls[3] != "PATCH /repos/"+lsRepo+"/pulls/3 closed" {
+	closeLine := func(n int) string {
+		return fmt.Sprintf("CLOSE who=lander head=%s landed: in stream/%s at %s with nova-tools#900 (dddddddd)", heads[n][:8], lsSlug, head[:8])
+	}
+	// GitHub closes no issue on a merge into dev: the lander closes the
+	// issues the members close (#3's record: 103, its commit: 7; #1's body:
+	// 101), one line naming the merge sha each, then the members.
+	want := []string{
+		"POST /repos/" + lsRepo + "/pulls stream/" + lsSlug,
+		"PUT /repos/" + lsRepo + "/pulls/900/merge " + head,
+		"GET /repos/" + lsRepo + "/pulls/1 ",
+		"POST /repos/" + lsRepo + "/issues/103/comments " + closeLine(3) + "; closes this via nova-tools#3",
+		"PATCH /repos/" + lsRepo + "/issues/103 closed",
+		"POST /repos/" + lsRepo + "/issues/7/comments " + closeLine(3) + "; closes this via nova-tools#3",
+		"PATCH /repos/" + lsRepo + "/issues/7 closed",
+		"POST /repos/" + lsRepo + "/issues/101/comments " + closeLine(1) + "; closes this via nova-tools#1",
+		"PATCH /repos/" + lsRepo + "/issues/101 closed",
+		"POST /repos/" + lsRepo + "/issues/3/comments " + closeLine(3),
+		"PATCH /repos/" + lsRepo + "/pulls/3 closed",
+		"POST /repos/" + lsRepo + "/issues/1/comments " + closeLine(1),
+		"PATCH /repos/" + lsRepo + "/pulls/1 closed",
+	}
+	if len(calls) != len(want) {
 		t.Fatalf("REST calls:\n%s", strings.Join(calls, "\n"))
 	}
-	if log, _ := c.XLen(ctx, "ws:log").Result(); log != 4 { // park, two lands, the landing
+	for i, w := range want {
+		if !strings.HasPrefix(calls[i], w) || (i > 1 && calls[i] != w) {
+			t.Fatalf("REST call %d = %q, want %q; all:\n%s", i, calls[i], w, strings.Join(calls, "\n"))
+		}
+	}
+	if ic := c.HGet(ctx, "pr:nova-tools:1", "issues_closed").Val(); ic != "101" {
+		t.Fatalf("#1 issues_closed %q", ic)
+	}
+	for _, n := range []int{1, 3} {
+		reads := strings.Split(c.HGet(ctx, "pr:nova-tools:"+fmt.Sprint(n), "reads").Val(), "\n")
+		if reads[len(reads)-1] != closeLine(n) {
+			t.Fatalf("#%d reads %q, want the CLOSE line last", n, reads)
+		}
+	}
+	if cl := c.HGet(ctx, "pr:nova-tools:1", "closes").Val(); cl != "101" {
+		t.Fatalf("#1 closes %q, want 101 from its body", cl)
+	}
+	if log, _ := c.XLen(ctx, "ws:log").Result(); log != 7 { // park, the landing, five lands
 		t.Fatalf("ws:log %d", log)
+	}
+	// The table reads the sets: the stream's landed cell is 2.
+	snap, err := table.NewSprintReader(c, table.SprintConfig{Friends: []string{"rowan"}}).Read(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snap.Render(time.Now()); !strings.Contains(got, fmt.Sprintf("%-30s | %7d | %7d | %7d | %6d\n", lsStream, 0, 1, 0, 2)) {
+		t.Fatalf("table:\n%s", got)
 	}
 	// A re-run is ALREADY and closes nothing twice.
 	code, out, _ = runSprint("land", "merge", "--redis", addr, "--repo", lsRepo, "--stream", lsStream, "--api", gh.srv.URL)
-	if code != 0 || !strings.Contains(out, "already=true closed=- unclosed=- rest_calls=0") {
+	if code != 0 || !strings.Contains(out, "moved=0 missing=0 already=true closed=- unclosed=- rest_calls=0 close_lines=0 skipped=0 closes_unread=- issues_closed=- issues_unclosed=-") {
 		t.Fatalf("re-run: %d\n%s", code, out)
 	}
+	fsck("re-run")
 }
 
 func TestLandStreamConflictStops(t *testing.T) {

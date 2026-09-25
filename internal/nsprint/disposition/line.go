@@ -1,7 +1,11 @@
 // Package disposition is the one strict parser for typed review lines
 // (nova-tools #3092 rev 7): `DISPOSITION who=<f> head=<sha40>
 // verdict=<APPROVE|HOLD> score=<k>` and `REPAIR who=<f> head=<sha40>
-// ready=<true|false>`, each with an optional `:` inline tail. `hold ingest`
+// ready=<true|false>`, and the read rubric's `SCORE who=<f> head=<sha40>
+// score=<k>[/10]` and `HOLD who=<f> head=<sha40> [score=<k>]` (#3612), each
+// with an optional `:` inline tail. A SCORE line is an APPROVE at its score
+// (the land bar decides whether it counts); a HOLD line is a HOLD and never
+// counts as a read. `hold ingest`
 // and the hold router share it, and so does `task done --body-file` on a
 // review task. Records are keyed by the #3139 unit contract
 // (s:<S>:u:<unit>, resolved through s:<S>:prunit:<repo>:<n>); the retired PR
@@ -26,6 +30,10 @@ type Type string
 const (
 	TypeDisposition Type = "DISPOSITION"
 	TypeRepair      Type = "REPAIR"
+	// TypeScore and TypeHold are the read rubric's lines (#3612): the
+	// verdict is the type, so they carry no verdict= key.
+	TypeScore Type = "SCORE"
+	TypeHold  Type = "HOLD"
 )
 
 // Outcome says what a parsed comment makes.
@@ -45,10 +53,11 @@ type Line struct {
 	Type    Type
 	Who     string
 	Head    string
-	Verdict string // APPROVE | HOLD (DISPOSITION)
-	Score   int    // 1-10 (DISPOSITION)
-	Kind    string // explicit kind= (DISPOSITION, optional)
-	Scope   string // scope= (DISPOSITION, optional)
+	Verdict string // APPROVE | HOLD (DISPOSITION; APPROVE for SCORE, HOLD for HOLD)
+	Score   int    // 1-10 (DISPOSITION, SCORE; optional on HOLD, 0 when absent)
+	Kind    string // explicit kind= (DISPOSITION, HOLD, optional)
+	Scope   string // scope= (DISPOSITION, SCORE, HOLD, optional)
+	Gates   string // gates= (SCORE, HOLD, optional), kept as typed
 	Ready   bool   // REPAIR
 	Tail    string // the inline tail after the first bare value ending in ':'
 	Reason  string // tail + "\n" + the body after the typed line, trimmed
@@ -66,12 +75,15 @@ var (
 	keyToken   = regexp.MustCompile(`^[a-z_]+$`)
 	dispKeys   = map[string]bool{"who": true, "head": true, "verdict": true, "score": true, "kind": true, "scope": true}
 	repairKeys = map[string]bool{"who": true, "head": true, "ready": true}
+	scoreKeys  = map[string]bool{"who": true, "head": true, "score": true, "gates": true, "scope": true}
+	holdKeys   = map[string]bool{"who": true, "head": true, "score": true, "gates": true, "kind": true, "scope": true}
 	holdKinds  = map[string]bool{"substance": true, "scope": true, "control": true, "ci": true, "order": true}
 )
 
 // Parse reads the first non-empty line of body after dropping fenced blocks
 // and `>` quotes (merge.StripQuotedAndCode). Only a line starting exactly with
-// `DISPOSITION ` or `REPAIR ` is typed; anything else is NORECORD prose.
+// `DISPOSITION `, `REPAIR `, `SCORE ` or `HOLD ` is typed; anything else is
+// NORECORD prose.
 func Parse(body string) Result {
 	clean := merge.StripQuotedAndCode(body)
 	lines := strings.Split(clean, "\n")
@@ -92,6 +104,10 @@ func Parse(body string) Result {
 		typ = TypeDisposition
 	case strings.HasPrefix(typed, "REPAIR "):
 		typ = TypeRepair
+	case strings.HasPrefix(typed, "SCORE "):
+		typ = TypeScore
+	case strings.HasPrefix(typed, "HOLD "):
+		typ = TypeHold
 	default:
 		return Result{Outcome: NoRecord, Why: "prose"}
 	}
@@ -107,10 +123,8 @@ func Parse(body string) Result {
 	}
 	reason := strings.TrimSpace(strings.TrimSpace(tail) + "\n" + strings.TrimSpace(rest))
 	ln := Line{Type: typ, Tail: strings.TrimSpace(tail), Reason: reason}
-	allowed := dispKeys
-	if typ == TypeRepair {
-		allowed = repairKeys
-	}
+	allowed := map[Type]map[string]bool{TypeDisposition: dispKeys, TypeRepair: repairKeys,
+		TypeScore: scoreKeys, TypeHold: holdKeys}[typ]
 	for k := range fields {
 		if !allowed[k] {
 			return Result{Outcome: Refused, Why: "unknown-key " + k}
@@ -144,20 +158,32 @@ func Parse(body string) Result {
 		}
 		return Result{Outcome: Record, Line: ln}
 	}
-	verdict, ok := fields["verdict"]
-	if !ok {
-		return Result{Outcome: Refused, Why: "missing verdict"}
+	var verdict string
+	switch typ {
+	case TypeScore:
+		verdict = "APPROVE"
+	case TypeHold:
+		verdict = "HOLD"
+	default:
+		v, ok := fields["verdict"]
+		if !ok {
+			return Result{Outcome: Refused, Why: "missing verdict"}
+		}
+		verdict = v
 	}
 	scoreText, ok := fields["score"]
-	if !ok {
+	if !ok && typ != TypeHold {
 		return Result{Outcome: Refused, Why: "missing score"}
 	}
-	scoreText = strings.TrimSuffix(scoreText, "/10")
-	score, err := strconv.Atoi(scoreText)
-	if err != nil || score < 1 || score > 10 {
-		return Result{Outcome: Refused, Why: "score not 1-10"}
+	score := 0
+	if ok {
+		n, err := strconv.Atoi(strings.TrimSuffix(scoreText, "/10"))
+		if err != nil || n < 1 || n > 10 {
+			return Result{Outcome: Refused, Why: "score not 1-10"}
+		}
+		score = n
 	}
-	ln.Verdict, ln.Score = verdict, score
+	ln.Verdict, ln.Score, ln.Gates = verdict, score, fields["gates"]
 	if k, ok := fields["kind"]; ok {
 		if !holdKinds[k] {
 			return Result{Outcome: Refused, Why: "unknown kind " + k}

@@ -31,6 +31,7 @@ const (
 	FunctionPollWake     = "ns_friend_poll_wake"
 	FunctionBenchBeat    = "ns_bench_beat"
 	FunctionBenchRelease = "ns_bench_release"
+	FunctionFriendRow    = "ns_friend_row"
 )
 
 // BeatInterval is the one-second presence cadence of #2756 v5.
@@ -252,6 +253,11 @@ type BenchRequest struct {
 	// Facts are the bench's own measurements (#3646), refreshed every beat;
 	// MeasureBench fills them.
 	Facts Facts
+	// RowAt, when set, also writes the host table row bench:<Bench> (host,
+	// load1, ncpu, at) in the same call (#3440); NCPU is its ncpu and Load1
+	// its load (Load1Now measures it).
+	RowAt time.Time
+	NCPU  int
 }
 
 // BenchResult is one bench beat. Accepted is false when another live session
@@ -278,11 +284,19 @@ func BenchBeat(ctx context.Context, st *store.Store, req BenchRequest) (BenchRes
 	if ttl <= 0 {
 		ttl = BenchBeatTTL
 	}
+	rowAt, ncpu := "", ""
+	if !req.RowAt.IsZero() {
+		rowAt = RowStamp(req.RowAt)
+		if req.NCPU > 0 {
+			ncpu = strconv.Itoa(req.NCPU)
+		}
+	}
 	reply, err := st.Client().FCall(ctx, FunctionBenchBeat, nil,
 		req.Bench, req.Host, req.User, req.Load1, req.SSH, req.Probe,
 		req.Launcher, strings.Join(req.Live, liveSeparator), req.Why,
 		req.Session, req.Actor, req.Idem, build,
-		req.Facts.Harness, req.Facts.Mirrors, req.Facts.DiskGiB, ttl.Milliseconds()).Result()
+		req.Facts.Harness, req.Facts.Mirrors, req.Facts.DiskGiB, ttl.Milliseconds(),
+		rowAt, ncpu).Result()
 	if err != nil {
 		return BenchResult{}, fmt.Errorf("bench beat %s: %w", req.Bench, err)
 	}
