@@ -1,0 +1,3 @@
+package table
+
+func Init() {}
