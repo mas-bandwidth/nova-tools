@@ -91,9 +91,15 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 		}
 		return runSprintOpen(ctx, st, *name, *from, plan, now, out, errOut)
 	case "close":
-		status, err := sprint.SetClosed(ctx, st, *name, now)
+		status, refused, err := sprint.SetClosed(ctx, st, *name, now)
 		if err != nil {
 			return refuse(errOut, verb, err.Error())
+		}
+		if refused != "" {
+			// #3571: a name never opened, or a sprint already closed, is
+			// refused so status=closed exit 0 always means it was open.
+			fmt.Fprintln(out, refused)
+			return 1
 		}
 		fmt.Fprintln(out, sprint.Line(*name, status))
 		return 0
@@ -260,12 +266,26 @@ func runSprintOpen(ctx context.Context, st *store.Store, name, from string, plan
 		fmt.Fprintf(errOut, "nova-sprint sprint open: %v\n", err)
 		return 6
 	}
+	if existing.RegistryRefused != "" {
+		// #3570: the seat's ACL refuses the friends registry read. Refuse
+		// before anything is written: ns_task_push re-reads friends inside
+		// the function under the same ACL, so going on would leave the sprint
+		// opening with its pushes refused.
+		fmt.Fprintf(out, "OWNERS %s unchecked: the friends registry read was refused by ACL (%s); remedy: open from a seat whose ACL grants SCARD and SISMEMBER on friends\n",
+			name, existing.RegistryRefused)
+		return 1
+	}
 	notMember := false
 	for _, t := range plan.tasks {
-		if !existing.Member[t.To] {
-			fmt.Fprintf(out, "OWNER %s %s not in friends\n", t.ID, t.To)
-			notMember = true
+		if existing.Member[t.To] {
+			continue
 		}
+		notMember = true
+		if existing.Friends == 0 {
+			fmt.Fprintf(out, "OWNER %s %s not in friends: no friends registered yet (friends is empty on this store)\n", t.ID, t.To)
+			continue
+		}
+		fmt.Fprintf(out, "OWNER %s %s not in friends\n", t.ID, t.To)
 	}
 	if notMember {
 		return 1

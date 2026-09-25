@@ -75,7 +75,11 @@ func TestSprintOpenLetsTaskTakeClaim(t *testing.T) {
 	}
 
 	step(s+" status=closed", "sprint", "close", "--redis", addr, "--sprint", s)
-	step(s+" status=closed", "sprint", "close", "--redis", addr, "--sprint", s)
+	// #3571: a second close is refused, so status=closed exit 0 means open.
+	if code, out, errOut := runSprint("sprint", "close", "--redis", addr, "--sprint", s); code != 1 ||
+		!strings.HasPrefix(out, "REFUSED "+s+" already closed (closed_at ") {
+		t.Fatalf("second close: code=%d out=%q stderr=%q; want exit 1 REFUSED already closed", code, out, errOut)
+	}
 	if ok, _ := client.SIsMember(ctx, "sprints", s).Result(); ok {
 		t.Fatalf("sprints still holds %s after close", s)
 	}
@@ -412,7 +416,9 @@ func TestControl20(t *testing.T) {
 
 	expect(t, 0, s+" status=closed\n", "sprint", "close", "--redis", addr, "--sprint", s, "--now", fxNow)
 	closedAt := hget(t, c, "s:"+s, "closed_at")
-	expect(t, 0, s+" status=closed\n", "sprint", "close", "--redis", addr, "--sprint", s, "--now", fxLater)
+	// #3571: the second close is refused and writes nothing.
+	expect(t, 1, "REFUSED "+s+" already closed (closed_at "+closedAt+"); nothing written; there is no reopen\n",
+		"sprint", "close", "--redis", addr, "--sprint", s, "--now", fxLater)
 	if got := hget(t, c, "s:"+s, "closed_at"); closedAt == "" || got != closedAt {
 		t.Fatalf("closed_at %q -> %q; want one stamp", closedAt, got)
 	}

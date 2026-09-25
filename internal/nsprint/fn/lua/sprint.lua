@@ -1,4 +1,4 @@
--- Sprint open and status (#2939 rev 6). No shebang: loader.go prepends the
+-- Sprint open, close and status (#2939 rev 6, close #3571). No shebang: loader.go prepends the
 -- single library header. ns_sprint_begin and ns_sprint_open re-make the
 -- existing-sprint decision atomically, so a close or a second open with
 -- another file that lands between the verb's read and its write still wins;
@@ -74,6 +74,27 @@ local function sprint_open(keys, args)
   return { 'RESUMED' }
 end
 
+-- sprint_close: args S, clock (ms). An open or opening sprint gets
+-- status=closed, closed_at stamped once and S removed from sprints. A name
+-- with no s:<S> status is ABSENT, and one past open (closed, folded) is
+-- ALREADY with its status and closed_at; both write nothing, so an exit-0 close is evidence the sprint
+-- existed and was open (#3571).
+local function sprint_close(keys, args)
+  local S, at = args[1], args[2]
+  local key = 's:' .. S
+  local cur = redis.call('HMGET', key, 'status', 'closed_at')
+  if not cur[1] then
+    return { 'ABSENT' }
+  end
+  if cur[1] ~= 'open' and cur[1] ~= 'opening' then
+    return { 'ALREADY', cur[1], cur[2] or '' }
+  end
+  redis.call('HSET', key, 'status', 'closed')
+  redis.call('HSETNX', key, 'closed_at', at)
+  redis.call('SREM', 'sprints', S)
+  return { 'CLOSED' }
+end
+
 -- The task indexes that count toward y: every one but cancelled. The card
 -- states are the ones the snapshot reads (append_pipeline in snapshot.lua).
 local TASK_Y = { 'open', 'claimed', 'working', 'waiting', 'waiting-ci', 'parked',
@@ -124,5 +145,6 @@ end
 
 redis.register_function('ns_sprint_begin', sprint_begin)
 redis.register_function('ns_sprint_open', sprint_open)
+redis.register_function('ns_sprint_close', sprint_close)
 redis.register_function{ function_name = 'ns_sprint_status', callback = sprint_status,
   flags = { 'no-writes' } }
