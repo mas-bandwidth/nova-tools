@@ -100,10 +100,14 @@ func TestLanderVerbServesMetrics(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
 	const S, repo = "control-2720land", "nova-tools"
+	u := func(n string) string { return "gh/mas-bandwidth/nova-tools/" + n }
 	pipe := c.TxPipeline()
-	pipe.HSet(ctx, "s:"+S+":pr:"+repo+":11", "head", "aaaa1111", "mergeable", "MERGEABLE")
-	pipe.HSet(ctx, "s:"+S+":pr:"+repo+":12", "head", "bbbb2222", "mergeable", "mergeable")
-	pipe.HSet(ctx, "s:"+S+":pr:"+repo+":13", "head", "cccc3333", "mergeable", "")
+	pipe.HSet(ctx, land.UnitKey(S, u("11")), "repo", repo, "head", "aaaa1111", "mergeable", "MERGEABLE", "pr", "11")
+	pipe.HSet(ctx, land.UnitKey(S, u("12")), "repo", repo, "head", "bbbb2222", "mergeable", "mergeable", "pr", "12")
+	pipe.HSet(ctx, land.UnitKey(S, u("13")), "repo", repo, "head", "cccc3333", "mergeable", "", "pr", "13")
+	pipe.Set(ctx, land.PRUnitKey(S, repo, 11), u("11"), 0)
+	pipe.Set(ctx, land.PRUnitKey(S, repo, 12), u("12"), 0)
+	pipe.Set(ctx, land.PRUnitKey(S, repo, 13), u("13"), 0)
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +176,48 @@ func TestLanderRefusesAMemberWithNoRecord(t *testing.T) {
 	}
 	if len(fakes.gated) != 0 {
 		t.Fatalf("gate ran %v on a batch the sprint does not know", fakes.gated)
+	}
+}
+
+// TestLanderLoadsMembersFromUnitRecords (nova-tools#3611): the lander loads
+// each member's head from its unit record s:<S>:u:<unit>, resolved through
+// s:<S>:prunit:<repo>:<n>, never the retired s:<S>:pr:<repo>:<n>. The
+// owner/name --repo form resolves to the same unit records, and a member with
+// no unit record still refuses before any gate runs.
+func TestLanderLoadsMembersFromUnitRecords(t *testing.T) {
+	addr := startThrowawayRedis(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	const S, repo = "control-3611", "nova-tools"
+	u := func(n string) string { return "gh/mas-bandwidth/nova-tools/" + n }
+	pipe := c.TxPipeline()
+	pipe.HSet(ctx, land.UnitKey(S, u("11")), "repo", repo, "head", "aaaa1111", "mergeable", "MERGEABLE", "pr", "11")
+	pipe.HSet(ctx, land.UnitKey(S, u("12")), "repo", repo, "head", "bbbb2222", "mergeable", "MERGEABLE", "pr", "12")
+	pipe.Set(ctx, land.PRUnitKey(S, repo, 11), u("11"), 0)
+	pipe.Set(ctx, land.PRUnitKey(S, repo, 12), u("12"), 0)
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	recs, err := loadMembers(ctx, c, S, repo, []int{11, 12})
+	if err != nil {
+		t.Fatalf("loadMembers: %v", err)
+	}
+	if len(recs) != 2 || recs[0].head != "aaaa1111" || recs[1].head != "bbbb2222" {
+		t.Fatalf("members %v; want heads aaaa1111, bbbb2222 from the unit records", recs)
+	}
+
+	recs, err = loadMembers(ctx, c, S, "mas-bandwidth/nova-tools", []int{11})
+	if err != nil {
+		t.Fatalf("loadMembers owner/name: %v", err)
+	}
+	if len(recs) != 1 || recs[0].head != "aaaa1111" {
+		t.Fatalf("members %v; want head aaaa1111 from the owner/name repo", recs)
+	}
+
+	if _, err := loadMembers(ctx, c, S, repo, []int{99}); err == nil || !strings.Contains(err.Error(), "nova-tools#99 has no head") {
+		t.Fatalf("missing member err %v; want the missing head named", err)
 	}
 }
 

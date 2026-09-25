@@ -199,6 +199,25 @@ func TestWhyRefusesAnUnknownPR(t *testing.T) {
 	}
 }
 
+// TestWhyReadsUnitRecordsOnly (nova-tools#3611): `why <repo>#<n>` answers
+// from the unit records alone. A decoy retired s:<S>:pr:<repo>:<n> record
+// with a different head and mergeable word is never read: the unit's head
+// and mergeable win and neither decoy value appears.
+func TestWhyReadsUnitRecordsOnly(t *testing.T) {
+	mr := control35(t)
+	const decoy = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	mr.HSet("s:"+c35Sprint+":pr:nova-tools:3200", "head", decoy, "mergeable", "CONFLICTING")
+	out := why(t, mr)
+	mustLine(t, out, "unit "+c35Unit+" nova-tools#3200")
+	mustLine(t, out, "ci OK@4139b79f")
+	if strings.Contains(out, "deadbeef") {
+		t.Fatalf("why read the retired PR record head:\n%s", out)
+	}
+	if strings.Contains(out, "CONFLICTING") {
+		t.Fatalf("why read the retired PR record mergeable:\n%s", out)
+	}
+}
+
 func TestLandStatus(t *testing.T) {
 	mr := control35(t)
 	s := "s:" + c35Sprint + ":"

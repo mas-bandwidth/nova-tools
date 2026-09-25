@@ -20,9 +20,11 @@
 // then one LANDER shadow receipt. A member with no record is a NO-RECORD
 // line, never a refusal of the batch.
 //
-// Each member's head and mergeable word are read from its record
-// s:<S>:pr:<repo>:<n> (head, mergeable; an empty word is UNKNOWN), never from
-// GitHub. The flaky hash is flaky:<repo>:<pkg>.<test> in the same Redis. The
+// Each member's head and mergeable word are read from its unit record
+// s:<S>:u:<unit>, resolved through s:<S>:prunit:<repo>:<n> (head, mergeable;
+// an empty word is UNKNOWN), never from GitHub and never the retired
+// s:<S>:pr:<repo>:<n>. The flaky hash is flaky:<repo>:<pkg>.<test> in the
+// same Redis. The
 // four programs are the host-touching seams, each handed its arguments on the
 // command line (members as <n>@<head>):
 //
@@ -268,23 +270,42 @@ type memberRecord struct {
 	head string
 }
 
-// loadMembers reads every member's head from its record in one pipelined
-// round trip. A member with no record or no head is a refusal: the lane gates
-// only what the sprint knows.
+// loadMembers reads every member's head from its unit record s:<S>:u:<unit>,
+// resolved through s:<S>:prunit:<repo>:<n>, in two pipelined round trips. A
+// member with no unit or no head is a refusal: the lane gates only what the
+// sprint knows.
 func loadMembers(ctx context.Context, c *redis.Client, sprint, repo string, numbers []int) ([]memberRecord, error) {
+	name := prkey.Name(repo)
 	pipe := c.Pipeline()
-	cmds := make([]*redis.StringCmd, len(numbers))
+	unitCmds := make([]*redis.StringCmd, len(numbers))
 	for i, n := range numbers {
-		cmds[i] = pipe.HGet(ctx, land.ID{Repo: repo, N: n}.Key(sprint), "head")
+		unitCmds[i] = pipe.Get(ctx, land.PRUnitKey(sprint, name, n))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	headCmds := make([]*redis.StringCmd, len(numbers))
+	units := make([]string, len(numbers))
+	pipe = c.Pipeline()
+	for i, n := range numbers {
+		unit, err := unitCmds[i].Result()
+		if errors.Is(err, redis.Nil) || strings.TrimSpace(unit) == "" {
+			return nil, fmt.Errorf("%s#%d has no head in %s", name, n, land.PRUnitKey(sprint, name, n))
+		}
+		if err != nil {
+			return nil, err
+		}
+		units[i] = strings.TrimSpace(unit)
+		headCmds[i] = pipe.HGet(ctx, land.UnitKey(sprint, units[i]), "head")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
 	out := make([]memberRecord, len(numbers))
 	for i, n := range numbers {
-		head, err := cmds[i].Result()
+		head, err := headCmds[i].Result()
 		if errors.Is(err, redis.Nil) || (err == nil && strings.TrimSpace(head) == "") {
-			return nil, fmt.Errorf("%s#%d has no head in %s", repo, n, land.ID{Repo: repo, N: n}.Key(sprint))
+			return nil, fmt.Errorf("%s#%d has no head in %s", name, n, land.UnitKey(sprint, units[i]))
 		}
 		if err != nil {
 			return nil, err
@@ -294,8 +315,9 @@ func loadMembers(ctx context.Context, c *redis.Client, sprint, repo string, numb
 	return out, nil
 }
 
-// recordForge answers a member's mergeable word from its record, the field
-// ns_pr_eval writes (the record contract in internal/nsprint/land). An absent
+// recordForge answers a member's mergeable word from its unit record, the
+// field ns_unit_mergeable writes (the record contract in
+// internal/nsprint/land), resolved through s:<S>:prunit:<repo>:<n>. An absent
 // or empty word is UNKNOWN, which the lane re-polls and then drops.
 type recordForge struct {
 	c      *redis.Client
@@ -303,7 +325,14 @@ type recordForge struct {
 }
 
 func (f recordForge) Mergeable(ctx context.Context, repo string, number int) (string, error) {
-	v, err := f.c.HGet(ctx, land.ID{Repo: repo, N: number}.Key(f.sprint), "mergeable").Result()
+	unit, err := f.c.Get(ctx, land.PRUnitKey(f.sprint, prkey.Name(repo), number)).Result()
+	if errors.Is(err, redis.Nil) || strings.TrimSpace(unit) == "" {
+		return "UNKNOWN", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	v, err := f.c.HGet(ctx, land.UnitKey(f.sprint, strings.TrimSpace(unit)), "mergeable").Result()
 	if errors.Is(err, redis.Nil) {
 		return "UNKNOWN", nil
 	}
