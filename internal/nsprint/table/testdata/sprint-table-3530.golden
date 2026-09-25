@@ -1,36 +1,32 @@
 SPRINT TABLE *** PIT STOP ***
 
-588/594 left, 1% done -> ~11760m
+592/598 left, 1% done -> ~11840m
 
-stream                         | waiting | ready | working | reading | merging | landed
--------------------------------+---------+-------+---------+---------+---------+-------
-swarm: cards                   |     150 |     5 |       6 |       0 |       0 |      0
-nova-sprint + merge + bus      |     310 |     6 |       0 |       2 |       1 |      2
-nova sprint migration          |      14 |     0 |       0 |       0 |       0 |      0
-fleet, ci, secrets, jev        |       0 |     0 |       2 |       1 |       0 |      1
-redis: store + bus             |      81 |     0 |       0 |       0 |       0 |      0
-landing: streams + lander      |       3 |     0 |       0 |       0 |       2 |      0
-rowan-tools                    |       1 |     0 |       0 |       0 |       0 |      3
-harvest                        |       0 |     4 |       0 |       0 |       0 |      0
--------------------------------+---------+-------+---------+---------+---------+-------
-total                          |     559 |    15 |       8 |       3 |       3 |      6
+stream                         | waiting | ready | working | review | reading | merging | landed
+-------------------------------+---------+-------+---------+--------+---------+---------+-------
+swarm: cards                   |     150 |     5 |       6 |      3 |       0 |       0 |      0
+nova-sprint + merge + bus      |     310 |     6 |       0 |      0 |       2 |       1 |      2
+nova sprint migration          |      14 |     0 |       0 |      0 |       0 |       0 |      0
+fleet, ci, secrets, jev        |       0 |     0 |       2 |      1 |       1 |       0 |      1
+redis: store + bus             |      81 |     0 |       0 |      0 |       0 |       0 |      0
+landing: streams + lander      |       3 |     0 |       0 |      0 |       0 |       2 |      0
+rowan-tools                    |       1 |     0 |       0 |      0 |       0 |       0 |      3
+harvest                        |       0 |     4 |       0 |      0 |       0 |       0 |      0
+-------------------------------+---------+-------+---------+--------+---------+---------+-------
+total                          |     559 |    15 |       8 |      4 |       3 |       3 |      6
+REVIEW stream="swarm: cards" over=2 oldest=t1-review-0 age=3h00m max=2h00m
 
-friend     | ready | working |  done |    ok |  fail |  ok% | status    
------------+-------+---------+-------+-------+-------+------+------------
-rowan      |     0 |      12 |     4 |     0 |     0 |    - | up        
-johnny     |     2 |       0 |     3 |     0 |     0 |    - | down      
-emma       |     1 |       4 |     4 |     3 |     1 |  75% | up        
-stella     |     0 |       1 |     5 |     0 |     0 |    - | down      
------------+-------+---------+-------+-------+-------+------+------------
-total      |     3 |      17 |    16 |     3 |     1 |  75% |
-
-host       | ready | working |  done |    ok |  fail |  ok% | status    
------------+-------+---------+-------+-------+-------+------+------------
-batman     |     0 |       0 |     0 |     0 |     0 |    - | 0.89      
-hetzner    |     2 |       3 |     4 |     3 |     1 |  75% | 0.19      
-hulk       |     7 |       0 |     2 |     2 |     0 | 100% | 0.40      
-space      |     1 |       4 |     3 |     1 |     2 |  33% | 1.04      
-superman   |     0 |       1 |     1 |     0 |     1 |   0% | 1.02      
-vision     |     0 |       0 |     0 |     0 |     0 |    - | 0.72      
------------+-------+---------+-------+-------+-------+------+------------
-total      |    10 |       8 |    10 |     6 |     4 |  60% |
+consumer             | ready | working |  done |    ok |  fail |  ok% | status | load
+---------------------+-------+---------+-------+-------+-------+------+--------+------
+friend:rowan         |     0 |      12 |    14 |    10 |     4 |  71% | up     | -
+friend:johnny        |     2 |       0 |     3 |     3 |     0 | 100% | down   | -
+friend:emma          |     1 |       4 |     5 |     4 |     1 |  80% | up     | -
+friend:stella        |     0 |       1 |     5 |     5 |     0 | 100% | down   | -
+bench:batman         |     0 |       0 |     1 |     1 |     0 | 100% | up     | 0.89
+bench:hetzner        |     2 |       3 |     5 |     4 |     1 |  80% | up     | 0.19
+bench:hulk           |     7 |       0 |     3 |     3 |     0 | 100% | up     | 0.40
+bench:space          |     1 |       4 |     4 |     2 |     2 |  50% | up     | 1.04
+bench:superman       |     0 |       1 |     2 |     1 |     1 |  50% | up     | 1.02
+bench:vision         |     0 |       0 |     1 |     1 |     0 | 100% | up     | 0.72
+---------------------+-------+---------+-------+-------+-------+------+--------+------
+total                |    13 |      25 |    43 |    34 |     9 |  79% |

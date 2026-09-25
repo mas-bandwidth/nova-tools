@@ -11,6 +11,7 @@
 //	card work  --as <consumer> (--fill | --n <k> | --ids @file|a,b)
 //	card end   (--id <copy> | --ids @file|a,b) (--ok [--pr <repo>#<n> --head <sha>] [--done-already <sha>] |
 //	           --score <N>/10 [--gates <g>] [--finding <text>] [--reader <who>] | --fail <why>) [--token <t>] [result flags]
+//	           (a --fail moves the primary to review, #4072; --exit <rc> is its evidence; see review.go)
 //	card assign --id <primary> --to <consumer> [--revoke] [--why <why>]
 //	card beat  --as <consumer> (--id <copy> | --ids ...)
 //	card land  --stream <s> --sha <merge sha>
@@ -27,7 +28,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -39,6 +39,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -92,12 +93,11 @@ type moveCmd struct {
 
 // resultFlags are card end's result fields (written onto the primary).
 var resultFlags = []string{"line1", "line2", "check", "paths", "branch", "commit", "base", "base-sha", "model", "route",
-	"wall", "evidence", "tier", "key"}
+	"wall", "evidence", "tier", "key", "exit"}
 
 func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.Writer) int {
 	verb := "card " + sub
-	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New(verb)
 	m := &moveCmd{result: map[string]*string{}}
 	m.redis = fs.String("redis", "", "")
 	m.actor = fs.String("actor", "", "")

@@ -125,11 +125,11 @@ func TestMergingCellShowsReadUnreadAndLandLines(t *testing.T) {
 		t.Fatalf("ReadSplit = %d/%d ok=%v, want 12/7", read, unread, ok)
 	}
 	out := snap.Render(now)
-	row := fmt.Sprintf("%-30s | %7d | %5d | %7d | %7d | %7s | %6d\n", mergeStream, 0, 0, 0, 0, "12/7", 0)
+	row := fmt.Sprintf("%-30s | %7d | %5d | %7d | %6d | %7d | %7s | %6d\n", mergeStream, 0, 0, 0, 0, 0, "12/7", 0)
 	if !strings.Contains(out, row) {
 		t.Fatalf("no merging row %q in\n%s", row, out)
 	}
-	if !strings.Contains(out, "\ntotal                          |       0 |     0 |       0 |       0 |    12/7 |      0\n") {
+	if !strings.Contains(out, "\ntotal                          |       0 |     0 |       0 |      0 |       0 |    12/7 |      0\n") {
 		t.Fatalf("total row does not carry 12/7:\n%s", out)
 	}
 	land := `LAND stream="nova-sprint + merge + bus" members=12 head=01234567 ci=pending age=6m` + "\n"
@@ -173,8 +173,8 @@ func TestReadingSetIsTheSameSplitsOtherSource(t *testing.T) {
 	}
 	out := snap.Render(now)
 	for _, want := range []string{
-		"stream                         | waiting | ready | working | reading | merging | landed\n",
-		fmt.Sprintf("%-30s | %7d | %5d | %7d | %7d | %7d | %6d\n", mergeStream, 1, 0, 0, 3, 19, 0),
+		"stream                         | waiting | ready | working | review | reading | merging | landed\n",
+		fmt.Sprintf("%-30s | %7d | %5d | %7d | %6d | %7d | %7d | %6d\n", mergeStream, 1, 0, 0, 0, 3, 19, 0),
 		"23/23 left, 0% done",
 	} {
 		if !strings.Contains(out, want) {

@@ -719,8 +719,11 @@ NS.card = { move = card_move, create = card_create, purge = card_purge }
 --   ready -> waiting | working | parked | done     block, take, park, cancel
 --   working -> merging | done | landed             done (with a PR / not), a merge
 --   working -> ready                              the lease lapsed (a why)
---   working -> waiting                             card end --fail: retry (a why)
+--   working -> waiting                             a copy given back (card cancel, assign --revoke; a why)
 --   working -> reading                             card end --ok with a PR (its read copy cut in the same call)
+--   working | reading -> review                    a copy's fail (#4072; o.review, TM only)
+--   review -> waiting | ready | landed             review post --verdict recut | redeal | drop (o.verdict)
+--   review -> working | reading                    review post --verdict reassign:<consumer> (a copy cut)
 --   reading -> merging | working | waiting         a read's score: 8+ | under 8 (a fix copy) | no author
 --   reading -> done | landed                       cancel, a merge
 --   merging -> landed | done                       a merge, a PR closed unmerged
@@ -749,23 +752,25 @@ NS.card = { move = card_move, create = card_create, purge = card_purge }
 -- sprint ready queue score; default from priority and front), fields (more
 -- HSET pairs, never a pointer field). info: from, to, xid (the ready entry).
 local TK = {
-  WHERE = { 'waiting', 'ready', 'working', 'reading', 'merging', 'landed', 'done', 'parked' },
-  IS = { waiting = true, ready = true, working = true, reading = true, merging = true, landed = true, done = true,
-    parked = true },
-  STATE = { waiting = 'waiting', ready = 'open', working = 'working', reading = 'reading', merging = 'merging',
-    landed = 'landed', done = 'closed', parked = 'parked' },
+  WHERE = { 'waiting', 'ready', 'working', 'review', 'reading', 'merging', 'landed', 'done', 'parked' },
+  IS = { waiting = true, ready = true, working = true, review = true, reading = true, merging = true, landed = true,
+    done = true, parked = true },
+  STATE = { waiting = 'waiting', ready = 'open', working = 'working', review = 'review', reading = 'reading',
+    merging = 'merging', landed = 'landed', done = 'closed', parked = 'parked' },
   -- the where of every fine state a task record carries (the sprint store's
   -- words, #3206, and friend-queue's); cancelled is done/fail
   WHERE_OF = { open = 'ready', ready = 'ready', claimed = 'working', working = 'working', waiting = 'waiting',
     blocked = 'waiting', ['waiting-ci'] = 'waiting', closed = 'done', cancelled = 'done', reading = 'reading',
-    merging = 'merging', landed = 'landed', parked = 'parked', ['reconcile-required'] = 'waiting' },
+    merging = 'merging', landed = 'landed', parked = 'parked', ['reconcile-required'] = 'waiting', review = 'review' },
   IDX = { ready = 'open', working = 'working', reading = 'closed', merging = 'closed', landed = 'closed', done = 'closed' },
   GRAPH = {
     [''] = { waiting = true, ready = true },
     waiting = { ready = true, parked = true, done = true, working = true },
     ready = { waiting = true, working = true, parked = true, done = true },
-    working = { merging = true, done = true, landed = true, ready = true, waiting = true, reading = true },
-    reading = { merging = true, working = true, waiting = true, done = true, landed = true },
+    working = { merging = true, done = true, landed = true, ready = true, waiting = true, reading = true, review = true },
+    reading = { merging = true, working = true, waiting = true, done = true, landed = true, review = true },
+    -- the only way out of review is a typed verdict (TM.review, #4072)
+    review = { waiting = true, ready = true, working = true, reading = true, landed = true },
     merging = { landed = true, done = true },
     parked = { waiting = true, ready = true, done = true },
     landed = { done = true },
@@ -990,6 +995,14 @@ end
 -- TK.edge: nil when cur -> nxt is on the graph, else the refusal.
 function TK.edge(id, cur, nxt, ok, o)
   local from, to = cur.where, nxt.where
+  -- review (#4072): a copy's fail enters it (o.review, TM.finish), and a
+  -- typed verdict (o.verdict, TM.review) is the only way out
+  if from == 'review' and to ~= 'review' and not o.verdict then
+    return 'REVIEW task:' .. id .. ' leaves review only by nova-sprint review post --verdict recut|redeal|reassign:<consumer>|drop'
+  end
+  if to == 'review' and from ~= 'review' and not o.review then
+    return 'OFFGRAPH ' .. (from == '' and 'null' or from) .. ' -> review is a copy\'s fail (card end --fail)'
+  end
   if from == to then
     if nxt.friend ~= cur.friend and not TK.REPLACE[to] then
       return 'OFFGRAPH a ' .. to .. ' task keeps its friend'
@@ -1000,7 +1013,9 @@ function TK.edge(id, cur, nxt, ok, o)
     if from == '' then return 'OFFGRAPH a new task starts in waiting or ready' end
     return 'OFFGRAPH ' .. from .. ' -> ' .. to
   end
-  if to == 'landed' and TK.str(o.sha) == '' then return 'SHA landed needs the merge sha' end
+  if to == 'landed' and TK.str(o.sha) == '' and not (from == 'review' and o.verdict == 'drop') then
+    return 'SHA landed needs the merge sha'
+  end
   if to == 'done' then
     if ok ~= 'ok' and ok ~= 'fail' then return 'OUTCOME done needs ok or fail' end
     if from == 'landed' and ok ~= 'ok' then return 'OFFGRAPH landed -> done/fail' end
@@ -1155,7 +1170,7 @@ function TK.move(id, to, o)
   end
   if to == 'landed' and cur.where ~= 'landed' then
     put('landed_at', tostring(at))
-    put('merge_sha', o.sha)
+    if TK.str(o.sha) ~= '' then put('merge_sha', o.sha) end
   end
   for _, v in ipairs(lh) do h[#h + 1] = v end
   for i = 1, #fields do h[#h + 1] = fields[i] end
@@ -1454,7 +1469,8 @@ end
 -- the roster sprint:<S>:tasks with a where is in exactly its views, its
 -- state mirrors where, and its legacy idx set (sprint:<S>:idx:<friend>:*)
 -- agrees; a roster record with no where field is unplaced. Returns FSCK S
--- tasks null waiting ready working merging landed done parked unplaced drift,
+-- tasks null, then one count per TK.WHERE (waiting ready working review
+-- reading merging landed done parked), unplaced drift,
 -- then up to 100 drift lines.
 function TK.fsck(S)
   local drift, lines = 0, {}
@@ -1804,8 +1820,20 @@ redis.register_function({ function_name = 'ns_tcard_fsck', flags = { 'no-writes'
 --   read with --score N: the SCORE line goes on the PR record pr:<name>:<n>
 --   and N >= TM.PASS -> merging, under it -> working with the finding as
 --   the why and a FIX copy cut on the author's consumer (hold-to-fix), or
---   -> waiting when there is no author; read --fail -> reading, copy cleared,
---   dealt to another reader.
+--   -> waiting when there is no author.
+-- A FAIL goes to review (nova-tools #4072, Glenn 2026-09-25 2:45 PM: "whenever
+-- a card fails in either friend or swarms, this triggers intelligence
+-- review"): a work, fix or read copy's fail (a crash, a wall, a refusal,
+-- SLOTS REFUSED, a child's non-zero exit, a lapsed lease) and a second read
+-- under TM.PASS (the author's copy then counts as a fail) move the primary
+-- to review with the evidence on its record (TM.evidence) and the mechanical
+-- first pass (REVIEW-JEV: the shape, the same-shape counts, a suggested
+-- verdict, never a verdict). A copy given back (card cancel, assign
+-- --revoke, a down consumer's ready copies: o.keep) is not a fail: its
+-- primary returns to waiting (reading for a read copy). The only way out of
+-- review is TM.review, a typed verdict: recut -> waiting, redeal -> ready,
+-- reassign:<consumer> -> a copy cut on that consumer, drop -> landed with
+-- outcome=dropped. Its REVIEW line is carried to the next copy.
 -- A copy's end is the ONLY event that moves a primary (Glenn 2026-09-25
 -- 2:52 PM, rowan-new specs/table-moves.md). CI gates the READ copy, never
 -- the primary: a read ends with a passing score only at a head whose CI is
@@ -1820,19 +1848,20 @@ local TM = {
   LIVE = { ready = true, working = true },
   -- a working copy's lease: three missed 60 s beats
   LEASE = 180000,
-  -- failed work copies before the primary is done/fail
-  RETRIES = 3,
   -- the read score that moves a primary to merging
   PASS = 8,
   -- a consumer beat this recent is live
   LIVE_MS = 90000,
   -- the primary's fields a copy carries for its consumer's brief
   CARRY = { 'kind', 'ref', 'origin', 'title', 'repo', 'pr', 'head', 'base', 'base_sha', 'paths', 'done_when', 'tier',
-    'route', 'stream' },
+    'route', 'stream', 'review' },
   -- a card end's result fields (written onto the primary and the copy)
   RESULT = { line1 = true, line2 = true, check = true, paths = true, branch = true, commit = true, pr = true,
     repo = true, head = true, base = true, base_sha = true, model = true, route = true, wall = true, evidence = true,
-    gates = true, finding = true, tier = true, key = true },
+    gates = true, finding = true, tier = true, key = true, exit = true },
+  -- the verdicts out of review and where each moves the primary (reassign
+  -- cuts a copy: working, or reading for a read)
+  VERDICTS = { recut = 'waiting', redeal = 'ready', drop = 'landed', reassign = '' },
 }
 
 -- TM.parse: kind, name of a consumer id; nil when it is not one.
@@ -1965,7 +1994,7 @@ function TM.cut(c, id, leg, o)
   local fields = { 'copies', tostring(n) }
   for _, v in ipairs(o.fields or {}) do fields[#fields + 1] = v end
   local err = TK.move(id, to, { by = o.by, why = o.why or (leg .. ' copy to ' .. c), copy = cid, fields = fields,
-    dry = o.dry })
+    dry = o.dry, verdict = o.verdict })
   if err or o.dry then return err end
   local p = redis.call('HMGET', 'task:' .. id, 'created_at', 'stream', unpack(TM.CARRY))
   local created, at = TK.ms(p[1]) or cm_now(), cm_now()
@@ -2177,11 +2206,16 @@ function TM.finish(id, o)
   for _, v in ipairs(f) do pf[#pf + 1] = v end
   local cf = {}
   local to, pok, why, sha, fix = nil, nil, TK.str(o.why), TK.str(o.sha), nil
-  local line, cut_read
+  local line, cut_read, review
   if leg == 'read' then
     if o.outcome == 'fail' then
-      to = 'reading'
-      if why == '' then why = 'read failed' end
+      if o.keep then
+        to = 'reading'
+        if why == '' then why = 'read given back' end
+      else
+        to, review = 'review', { consumer = c, copy = id }
+        if why == '' then why = 'read failed' end
+      end
     else
       local score = tonumber(o.score)
       if not score or score < 1 or score > 10 or score ~= math.floor(score) then
@@ -2217,7 +2251,15 @@ function TM.finish(id, o)
         why = TK.str(get.finding)
         if why == '' then why = 'read ' .. score .. '/10' end
         local author = TK.str(pr[4])
-        if TM.parse(author) then
+        -- a second read under TM.PASS is the author's fail (#4072)
+        local low = (tonumber(redis.call('HGET', 'task:' .. pid, 'low_reads')) or 0) + 1
+        pf[#pf + 1] = 'low_reads'
+        pf[#pf + 1] = tostring(low)
+        if low >= 2 then
+          to = 'review'
+          review = { consumer = author ~= '' and author or c, copy = TK.str(redis.call('HGET', 'task:' .. pid, 'last_copy')),
+            shape = 'read-under-8-twice', read = tostring(score), demote = TM.parse(author) ~= nil }
+        elseif TM.parse(author) then
           to, fix = 'working', author
         else
           to = 'waiting'
@@ -2258,10 +2300,11 @@ function TM.finish(id, o)
     pf[#pf + 1] = 'attempts'
     pf[#pf + 1] = tostring(n)
     if why == '' then why = 'fail' end
+    -- a fail goes to review (#4072); a copy given back returns its primary
     to = 'waiting'
-    if n >= TM.RETRIES then to, pok = 'done', 'fail' end
+    if not o.keep then to, review = 'review', { consumer = c, copy = id } end
   end
-  local mo = { by = o.by, why = why, ok = pok, copy = '', fields = pf, dry = o.dry }
+  local mo = { by = o.by, why = why, ok = pok, copy = '', fields = pf, dry = o.dry, review = review ~= nil }
   if sha ~= '' then mo.sha = sha end
   if o.dry then
     if fix then return TM.cut(fix, pid, 'fix', { by = o.by, why = why, fields = pf, to = 'working', dry = true }) end
@@ -2272,6 +2315,12 @@ function TM.finish(id, o)
   cf[#cf + 1] = 'end_sig'
   cf[#cf + 1] = sig
   TM.retire(id, c, w, outcome, why, cf, o.by, r[5])
+  if review then
+    -- the evidence and the first pass go onto the primary with its move
+    -- (mo.fields is pf); the author's copy of a twice-failed read is a fail
+    for _, v in ipairs(TM.evidence(pid, review, leg, why)) do pf[#pf + 1] = v end
+    if review.demote then TM.demote(review.copy, 'read under ' .. TM.PASS .. ' twice: ' .. why, o.by, r[5]) end
+  end
   local nxt = ''
   local err
   if cut_read then
@@ -2291,6 +2340,112 @@ function TM.finish(id, o)
   if err then return 'DRIFT-AFTER ' .. err end
   if line then TM.pr_line(line.repo, line.pr, line.line) end
   return nil, { copy = id, primary = pid, from = p.where, to = to, next = nxt or '' }
+end
+
+-- TM.shape: the failure shape of an end's evidence (#4072): the one word
+-- the same-shape counts are kept by.
+function TM.shape(why, exit, leg)
+  if why == 'lease lapsed' then return 'lease-lapsed' end
+  if exit ~= '' and exit ~= '0' then return 'exit-' .. exit end
+  if leg == 'read' then return 'read-fail' end
+  local w = string.lower(string.match(why, '^%s*([%w_.-]+)') or '')
+  if w == '' then return 'fail' end
+  return w
+end
+
+-- TM.evidence(pid, rv, leg, why): the review fields of primary pid, read
+-- from the failed copy's record (rv.copy: its end's model, exit, typed
+-- lines and wall) and the primary's PR and read, with the mechanical first
+-- pass: the shape, its count for this card (task:<pid>:shapes) and for
+-- this consumer (<consumer>:shapes), and a suggested verdict on a
+-- REVIEW-JEV line. A suggestion is never a verdict: only TM.review moves.
+function TM.evidence(pid, rv, leg, why)
+  local cp = redis.call('HMGET', 'task:' .. rv.copy, 'model', 'exit', 'line1', 'line2', 'wall', 'leg')
+  local pr = redis.call('HMGET', 'task:' .. pid, 'repo', 'pr', 'score')
+  local line = TK.str(cp[4])
+  if line == '' then line = TK.str(cp[3]) end
+  local exit = TK.str(cp[2])
+  local rleg = TK.str(cp[6])
+  if rleg == '' then rleg = leg end
+  local shape = rv.shape or TM.shape(why, exit, leg)
+  local nc = redis.call('HINCRBY', 'task:' .. pid .. ':shapes', shape, 1)
+  local nk = redis.call('HINCRBY', rv.consumer .. ':shapes', shape, 1)
+  local suggest = 'redeal'
+  if shape == 'read-under-8-twice' or nc >= 3 then
+    suggest = 'recut'
+  elseif nc >= 2 and nk >= 2 then
+    suggest = 'reassign'
+  end
+  local prref = ''
+  if TK.str(pr[2]) ~= '' and TK.str(pr[2]) ~= '0' then prref = TM.bare(pr[1]) .. '#' .. pr[2] end
+  local jev = 'REVIEW-JEV id=' .. pid .. ' consumer=' .. rv.consumer .. ' shape=' .. shape .. ' same_card=' .. nc ..
+    ' same_consumer=' .. nk .. ' suggest=' .. suggest
+  return { 'review_at', tostring(cm_now()), 'review_copy', rv.copy, 'review_consumer', rv.consumer, 'review_leg', rleg,
+    'review_model', TK.str(cp[1]), 'review_exit', exit, 'review_line', line, 'review_wall', TK.str(cp[5]),
+    'review_why', why, 'review_pr', prref, 'review_read', rv.read or TK.str(pr[3]), 'review_shape', shape,
+    'same_shape', tostring(nc), 'same_shape_consumer', tostring(nk), 'review_jev', jev }
+end
+
+-- TM.demote: a retired copy that ended ok moves to its consumer's fail set
+-- (same score, its ended_at): the author's copy whose PR read under TM.PASS
+-- twice (#4071: a friend's copy is ok only when its PR reads 8+).
+function TM.demote(id, why, by, stream)
+  local c = TK.str(redis.call('HGET', 'task:' .. id, 'consumer'))
+  local score = TM.parse(c) and redis.call('ZSCORE', TM.key(c, 'ok'), id)
+  if not score then return end
+  redis.call('ZREM', TM.key(c, 'ok'), id)
+  redis.call('ZADD', TM.key(c, 'fail'), score, id)
+  redis.call('HSET', 'task:' .. id, 'where', 'fail', 'outcome', 'fail', 'why', why)
+  TM.log(id, stream, c .. ':ok', c .. ':fail', by, why, c)
+end
+
+-- TM.review(by, id, verdict, why): the one way out of review (#4072), a
+-- typed verdict with a why: recut -> waiting, redeal -> ready, drop ->
+-- landed (outcome=dropped), reassign:<consumer> -> a copy cut on that
+-- consumer (a work copy, or a read copy when the failed copy was a read).
+-- Its REVIEW line goes on the record, and TM.CARRY takes it to the next
+-- copy. Returns REVIEWED id verdict where copy | REFUSED why.
+function TM.review(by, id, verdict, why)
+  verdict, why = TK.str(verdict), TK.str(why)
+  local v, target = string.match(verdict, '^(%a+):?(.*)$')
+  if not v or not TM.VERDICTS[v] or (v ~= 'reassign' and target ~= '') then
+    return { 'REFUSED', 'VERDICT ' .. verdict .. ' is not recut|redeal|reassign:<consumer>|drop' }
+  end
+  if v == 'reassign' and not TM.parse(target) then
+    return { 'REFUSED', 'VERDICT reassign names its consumer: reassign:bench:<b>|friend:<f>' }
+  end
+  if why == '' then return { 'REFUSED', 'WHY a review verdict needs a why' } end
+  if type(id) ~= 'string' or id == '' or TK.copy_id(id) then
+    return { 'REFUSED', 'COPY ' .. TK.str(id) .. ' is not a primary; review post names the primary' }
+  end
+  local p = TK.read(id)
+  if not p then return { 'REFUSED', 'NOTASK task:' .. id } end
+  if p.where ~= 'review' then
+    return { 'REFUSED', 'NOTREVIEW task:' .. id .. ' is ' .. (p.where == '' and 'null' or p.where) .. ', not review' }
+  end
+  local line = 'REVIEW verdict=' .. verdict .. ' by=' .. TK.str(by) .. ': ' .. string.gsub(why, '[\r\n]+', ' ')
+  local fields = { 'review', line, 'review_verdict', v, 'reviewed_by', TK.str(by), 'reviewed_at', tostring(cm_now()) }
+  local mwhy = 'review ' .. v .. ': ' .. why
+  if v == 'reassign' then
+    local d = TM.desired(target)
+    if not d.slots then return { 'REFUSED', 'SLOTS ' .. target .. ':desired has no slots' } end
+    local leg = 'work'
+    if TK.str(redis.call('HGET', 'task:' .. id, 'review_leg')) == 'read' then leg = 'read' end
+    local err = TM.may(target, d, id, leg) or TM.cut(target, id, leg, { by = by, why = mwhy, fields = fields,
+      verdict = v, dry = true })
+    if err then return { 'REFUSED', err } end
+    local cid
+    err, cid = TM.cut(target, id, leg, { by = by, why = mwhy, fields = fields, verdict = v })
+    if err then return { 'REFUSED', 'DRIFT-AFTER ' .. err } end
+    return { 'REVIEWED', id, v, leg == 'read' and 'reading' or 'working', cid }
+  end
+  if v == 'drop' then
+    fields[#fields + 1] = 'outcome'
+    fields[#fields + 1] = 'dropped'
+  end
+  local err = TK.move(id, TM.VERDICTS[v], { by = by, why = mwhy, copy = '', verdict = v, fields = fields })
+  if err then return { 'REFUSED', err } end
+  return { 'REVIEWED', id, v, TM.VERDICTS[v], '' }
 end
 
 -- TM.bare: the bare repository name of owner/name or name (prkey.Name).
@@ -2689,6 +2844,12 @@ redis.register_function('ns_cm_expire', function(keys, args) return TM.expire(TK
 -- REFUSED <why>.
 redis.register_function('ns_cm_assign', function(keys, args)
   return TM.assign(args[1], TK.str(args[2]), args[3] == '1', TK.str(args[4]), TK.str(args[5]))
+end)
+
+-- ns_cm_review(by, id, verdict, why) -> REVIEWED id verdict where copy |
+-- REFUSED <why> (#4072: the only way out of review).
+redis.register_function('ns_cm_review', function(keys, args)
+  return TM.review(TK.str(args[1]), args[2], args[3], args[4])
 end)
 
 -- ns_cm_fsck() read-only; ns_cm_repair() the same walk, repairing.

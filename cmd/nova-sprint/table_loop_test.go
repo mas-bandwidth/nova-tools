@@ -58,7 +58,7 @@ func TestControl3530LoopPublishesOneWriter(t *testing.T) {
 	addr, client := wholeTableRedis(t)
 	dir := t.TempDir()
 	out := filepath.Join(dir, "TABLE.txt")
-	cfg := table.SprintConfig{Sprint: "fix", Friends: []string{"rowan", "johnny", "emma", "stella"}, RowStale: 10 * time.Second}
+	cfg := table.SprintConfig{Sprint: "fix", Friends: []string{"rowan", "johnny", "emma", "stella"}}
 	opts := tableOpts{layout: "live", loop: true, every: 100 * time.Millisecond, out: out}
 	ctx, cancel := context.WithCancel(context.Background())
 	var stdout, stderr lockedBuffer
@@ -71,7 +71,7 @@ func TestControl3530LoopPublishesOneWriter(t *testing.T) {
 		body = b
 		return err == nil && len(b) > 0
 	})
-	if !strings.HasPrefix(string(body), "SPRINT TABLE *** PIT STOP ***\n\n588/594 left, 1% done -> ~") {
+	if !strings.HasPrefix(string(body), "SPRINT TABLE *** PIT STOP ***\n\n592/598 left, 1% done -> ~") {
 		t.Fatalf("published table:\n%s\nstderr: %s", body, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "TABLE loop out="+out) {
@@ -151,7 +151,8 @@ func TestTableLiveOnceOut(t *testing.T) {
 		t.Fatalf("exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
 	b, err := os.ReadFile(out)
-	if err != nil || !strings.Contains(string(b), "\nrowan      |     0 |      12 |     4 | ") || !strings.Contains(string(b), "\nstream                         | waiting | ready | working | reading | merging | landed\n") {
+	if err != nil || !strings.Contains(string(b), "\nfriend:rowan         |     0 |      12 |    14 |    10 |     4 |  71% | ") ||
+		!strings.Contains(string(b), "\nstream                         | waiting | ready | working | review | reading | merging | landed\n") {
 		t.Fatalf("published table:\n%s (%v)", b, err)
 	}
 }

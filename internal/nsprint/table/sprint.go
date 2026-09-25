@@ -8,67 +8,54 @@
 //
 //	<left>/<y> left, <z>% done -> ~<eta>m
 //
-//	stream | waiting | ready | working | reading | merging | landed   (rows in ws:order, all-zero rows hidden, total)
+//	stream | waiting | ready | working | review | reading | merging | landed   (rows in ws:order, all-zero rows hidden, total)
 //	LAND stream=<s> members=<n> head=<sha8> ci=<word> age=<d>   (one per open landing, #3900)
+//	REVIEW stream=<s> over=<n> oldest=<id> age=<d> max=<d>     (a stream with cards in review past cfg:review max_age, #4072)
 //
-// reading is ZCARD ws:<s>:reading (#3929). merging prints <read>/<unread>
-// (merging.go, #3900) until a ws:<s>:reading set exists; from then on the
-// unread cards are the reading column and merging is the read cards alone:
-// the same ReadSplit, its other source.
+//	consumer | ready | working | done | ok | fail | ok% | status | load   (one row per consumer, total)
 //
-//	friend | ready | working | done | ok | fail | ok% | status   (status up|down)
+// review is ZCARD ws:<s>:review (#4072): a card whose consumer copy failed,
+// waiting for its typed verdict (nova-sprint review post); it is left, never
+// done. reading is ZCARD ws:<s>:reading (#3929). merging prints
+// <read>/<unread> (merging.go, #3900) until a ws:<s>:reading set exists; from
+// then on the unread cards are the reading column and merging is the read
+// cards alone: the same ReadSplit, its other source.
 //
-//	host   | ready | working | done | ok | fail | ok% | status   (status: load, or down)
-//
-// The friend and host blocks are one consumer block rendered twice
-// (nova-tools #3929, Glenn 12:55 PM ET: one consumer abstraction): every
-// cell is a ZCARD of <consumer>:cards:<col>, done = ok + fail and ok% =
-// ok/done are derived, never stored (a friend's done also adds its
-// friend-queue tasks' done, merging and landed sets while those remain, and
-// a friend's done-work cells count only the current sprint's cards, #3883).
+// The consumer table is ONE table (#4071, Glenn 2026-09-25 2:40 PM: "friends
+// can fuck up cards too"): a row per consumer, friends and benches alike,
+// named <kind>:<name> (friend:emma, bench:hetzner) so the kind shows. Every
+// cell is one ZCARD of <kind>:<name>:cards:<set> for set = ready, working,
+// ok, fail; done = ok + fail and ok% = ok / done are derived, never stored,
+// with no sprint window and no base from a clear. status is up when the
+// consumer's own beat (<kind>:<name>:beat at, ms) is under a minute old and
+// <kind>:<name>:down does not exist, else down (the row still shows its
+// cards); load is the beat's load1 (a bench's; - when the beat has none).
+// The old friend:<f> row hash and bench:<b> hash are never read.
 //
 // Keys, every one read in ONE pipelined round trip per tick (a second round
 // trip only on the tick a membership set changed; never KEYS, never SCAN):
 //
 //	ws:order                ZRANGE, the streams in rank order (the ws index, #3662)
-//	ws:<s>:<state>          ZCARD for waiting, ready, working, reading, merging, landed
+//	ws:<s>:<state>          ZCARD for waiting, ready, working, review, reading, merging, landed
 //	EVAL_RO detailScript    read only: ws:<s>:merging with each card's pr:<name>:<n>
-//	                        head/state/stream/reads, cfg:land, and every
-//	                        land:<repo>:<slug> of land:<repo>:streams with its PR's ci
+//	                        head/state/stream/reads, cfg:land, every
+//	                        land:<repo>:<slug> of land:<repo>:streams with its PR's
+//	                        ci, and cfg:review max_age with every ws:<s>:review
+//	                        card's review_at
 //	ws:log                  XRANGE over the last hour: the landed rate for the ETA
-//	ws:done0                HGETALL: each friend's done count at the last `table clear`
-//	benches                 SMEMBERS, the bench list; per member (#2389, each
-//	                        bench's own keys, never a bash-written row):
-//	bench:<b>:cards:<w>     ZCARD for w = ready, working (the card views, #3692)
-//	bench:<b>:cards:ok|fail ZCOUNT from the current sprint's start (every score is
-//	                        the card's created_at; the done column's scope below),
-//	                        all of the set with no sprint: done = ok + fail,
-//	                        ok% = ok / done (#3894)
-//	bench:<b>:beat          HMGET load1 at (the bench's own `bench beat` loop)
-//	friends                 SMEMBERS when no roster is given; friend:<f> HMGET at, up
-//	friend:<f>:cards:<w>    ZCARD for ready, working; ZCOUNT for ok, fail from the
-//	                        current sprint's start (#3883, #3929): the friend's cells are
-//	                        the sizes of the sets its tasks move through (the card
-//	                        model, rowan-new specs/ws-index.md; nova-tools#3779);
-//	                        done adds merging and landed (#3778: finished work
-//	                        whose PR is merging or merged)
-//	friend:<f>:cards:<d>    ZCOUNT from the current sprint's start to +inf for
-//	                        d = done, merging, landed: done counts only this
-//	                        sprint's cards (#3883); ZCARD beside each for the
-//	                        done base of a `table clear`
-//	sprint:order            ZRANGE -1 -1 when no sprint is named: the newest
-//	                        sprint opened is the current one
-//	s:<S>                   HGET opened_at, the current sprint's start (ms)
-//	sprint:<S>:cards        ZRANGE 0 0 WITHSCORES: the oldest card's created_at,
-//	                        the start of a sprint with no opened_at
-//	friend:<f>:down         EXISTS (a string or a hash; either means down)
+//	friends, benches,       SMEMBERS: the consumers (friends the --friends roster
+//	consumers               when given; then the benches; then any other
+//	                        enrolled consumer), each once
+//	<c>:cards:<set>         ZCARD for set = ready, working, ok, fail
+//	<c>:beat                HMGET load1 at
+//	<c>:down                EXISTS (a string or a hash; either means down)
 //	s:<S>:pitstop           EXISTS, with the legacy sprint:<S>:pitstop
 //
-// The membership of ws:order, benches and friends, and the current sprint
-// with its start, are kept from the previous tick, so the tick's one pipeline
-// reads the sets and every member's values together; a tick that finds a set
-// or the sprint's start changed reads again at once with the new ones, so a
-// row is never rendered from last second's membership or scope.
+// The membership of ws:order, friends, benches and consumers is kept from
+// the previous tick, so the tick's one pipeline reads the sets and every
+// member's values together; a tick that finds a set changed reads again at
+// once with the new ones, so a row is never rendered from last second's
+// membership.
 package table
 
 import (
@@ -84,37 +71,25 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// WSStates are the six per-stream sets the table counts, in reply order.
-// reading sits between working and merging (Glenn 2026-09-25: "split merging
-// into separate reading | merging columns"): a card whose PR is being read.
-var WSStates = []string{"waiting", "ready", "working", "reading", "merging", "landed"}
+// WSStates are the seven per-stream sets the table counts, in reply order.
+// review sits between working and reading (#4072: a failed card waits there
+// for its verdict); reading between working and merging (Glenn 2026-09-25:
+// "split merging into separate reading | merging columns"): a card whose PR
+// is being read.
+var WSStates = []string{"waiting", "ready", "working", "review", "reading", "merging", "landed"}
 
-// FriendWheres are the three friend:<f>:cards:<where> sets the friend block
-// counts, in column order.
-var FriendWheres = []string{"ready", "working", "done"}
-
-// FriendDoneWheres are the sets the done column adds up (#3778): a friend's
-// finished task sits in done, or in merging and landed when it named a PR.
-var FriendDoneWheres = []string{"done", "merging", "landed"}
-
-// FriendCardsKey is one friend's set of task ids at where.
-func FriendCardsKey(friend, where string) string { return "friend:" + friend + ":cards:" + where }
-
-// DoneBaseKey holds each friend's done count at the last `table clear`
-// (#3637): the friend block shows done minus this, so a clear zeroes the
-// column without touching the index sets friend-row counts.
-const DoneBaseKey = "ws:done0"
+// ConsumerSets are the four <kind>:<name>:cards:<set> sets a consumer row
+// counts, in column order (done = ok + fail is derived).
+var ConsumerSets = []string{"ready", "working", "ok", "fail"}
 
 // SprintConfig is what the whole table is told; everything else is read.
 type SprintConfig struct {
 	// Sprint names the pit stop keys s:<Sprint>:pitstop and
 	// sprint:<Sprint>:pitstop; empty reads no pit stop.
 	Sprint string
-	// Friends is the roster in display order; empty reads the friends SET,
+	// Friends is the friend rows' order; empty reads the friends SET,
 	// sorted by name.
 	Friends []string
-	// RowStale: a friend row whose at is older than this is down.
-	RowStale time.Duration
 	// LockKey/LockToken, when set, refresh the writer's lock in the tick's
 	// own pipeline (see AcquireLock); the read reports LockLost when it is gone.
 	LockKey, LockToken string
@@ -130,18 +105,18 @@ type SprintConfig struct {
 	ReadingSet bool
 }
 
-// StreamRow is one stream's six counts, in WSStates order.
+// StreamRow is one stream's seven counts, in WSStates order.
 type StreamRow struct {
-	Name                                              string
-	Waiting, Ready, Working, Reading, Merging, Landed int64
+	Name                                                      string
+	Waiting, Ready, Working, Review, Reading, Merging, Landed int64
 	// MergingRead is how many cards of merging the lander would take (a
 	// read at head >= cfg:land, no hold), from the PR records; -1 unknown.
 	MergingRead int64
 }
 
-// Total is every task in the stream's six sets.
+// Total is every task in the stream's seven sets.
 func (r StreamRow) Total() int64 {
-	return r.Waiting + r.Ready + r.Working + r.Reading + r.Merging + r.Landed
+	return r.Waiting + r.Ready + r.Working + r.Review + r.Reading + r.Merging + r.Landed
 }
 
 // SprintSnapshot is one tick's read.
@@ -150,25 +125,13 @@ type SprintSnapshot struct {
 	Pitstop    bool
 	Streams    []StreamRow
 	LandedHour int64 // ws:log moves to landed in the hour before the read
-	Hosts      []HostRow
-	Friends    []FriendRow
-	DoneBase   map[string]string
-	// DoneAll is each friend's ZCARD friend:<f>:cards:done, every card it
-	// ever finished: the measure a `table clear` base (DoneBase) is taken in.
-	DoneAll map[string]int64
-	// DoneSprint is the sprint the done column is scoped to (#3883): the
-	// named sprint, else the newest of sprint:order; empty when there is none.
-	DoneSprint string
-	// DoneSince is the ZCOUNT min of the done column: the sprint's start in
-	// ms, or -inf when no sprint start is known (every card counts).
-	DoneSince string
-	// DoneFrom names where DoneSince came from: "opened_at" (s:<S> opened_at,
-	// written by sprint open), "oldest card" (a sprint with no opened_at is
-	// open since the created_at of the first member of sprint:<S>:cards), or
-	// empty for -inf.
-	DoneFrom string
+	// Consumers are the consumer table's rows, in display order (#4071).
+	Consumers []ConsumerRow
 	// Landings are the open landings, one LAND line each (#3900).
 	Landings []LandRow
+	// Reviews are the streams with a card in review past cfg:review
+	// max_age, one REVIEW line each (#4072).
+	Reviews []ReviewBound
 	// ReadSource is where ReadSplit reads: ReadFromRecords or ReadFromSet.
 	ReadSource string
 	// RoundTrips is how many pipelines the read took: 1 in steady state.
@@ -180,25 +143,35 @@ type SprintSnapshot struct {
 	LastGood time.Time
 }
 
-// HostRow is one bench of the host block, read from the keys the bench's own
-// work writes (#2389): Ready and Working are the ZCARDs of its card views,
-// Load its beat's load1. Down says the beat is gone (its TTL is 3 beat
-// intervals) or older than hostBeatStale: the row still shows its cards.
-// OK and Fail are the cards that ended on the bench this sprint (#3894), the
-// sizes of bench:<b>:cards:ok|fail from the sprint's start; Unread says
-// one of those two counts did not come back, so done, ok, fail and ok% print
-// "?", never a false 0.
-type HostRow struct {
-	Name           string
-	Ready, Working int64
-	OK, Fail       int64
-	Unread         bool
-	Load           string
-	Down           bool
+// Consumer is one consumer of copies: <Kind>:<Name>, bench or friend.
+type Consumer struct{ Kind, Name string }
+
+// ID is the consumer's key prefix and row name, <kind>:<name>.
+func (c Consumer) ID() string { return c.Kind + ":" + c.Name }
+
+// parseConsumer reads bench:<b> or friend:<f>.
+func parseConsumer(s string) (Consumer, bool) {
+	kind, name, ok := strings.Cut(s, ":")
+	if !ok || name == "" || strings.ContainsAny(name, ": \t") || (kind != "bench" && kind != "friend") {
+		return Consumer{}, false
+	}
+	return Consumer{Kind: kind, Name: name}, true
 }
 
-// Done is every card that ended on the bench: ok plus fail.
-func (r HostRow) Done() int64 { return r.OK + r.Fail }
+// ConsumerRow is one row of the consumer table (#4071): the four ZCARDs of
+// <kind>:<name>:cards:ready|working|ok|fail, Unread per cell when its ZCARD
+// did not come back (it prints "?", never a false 0), Up from the beat and
+// the down key, Load from the beat ("-" when it has none).
+type ConsumerRow struct {
+	Consumer
+	Ready, Working, OK, Fail int64
+	Unread                   [4]bool
+	Up                       bool
+	Load                     string
+}
+
+// Done is every copy that ended on the consumer: ok plus fail.
+func (r ConsumerRow) Done() int64 { return r.OK + r.Fail }
 
 // okPct is ok over done as a whole percent, "-" while nothing is done.
 func okPct(ok, done int64) string {
@@ -208,20 +181,17 @@ func okPct(ok, done int64) string {
 	return strconv.FormatInt(100*ok/done, 10) + "%"
 }
 
-// hostBeatStale is how old a beat's own at may be before the row prints
-// down, for a beat key that outlived its TTL.
+// hostBeatStale is how old a consumer beat's own at may be before its row
+// prints down, for a beat key that outlived its TTL (a machine's load in
+// lines.go reads the same bound).
 const hostBeatStale = 60 * time.Second
 
 // SprintReader reads the whole table, keeping set membership across ticks.
 type SprintReader struct {
-	Client  redis.UniversalClient
-	Config  SprintConfig
-	streams []string
-	benches []string
-	friends []string
-	// sprint, since and from are the done column's scope from the last tick.
-	sprint, since, from string
-	primed              bool
+	Client                               redis.UniversalClient
+	Config                               SprintConfig
+	streams, benches, friends, consumers []string
+	primed                               bool
 	// sawReading is set on the first tick a reading set was non-empty: the
 	// split stays ReadFromSet from then on, so the merging cell never flaps.
 	sawReading bool
@@ -235,9 +205,9 @@ func NewSprintReader(client redis.UniversalClient, cfg SprintConfig) *SprintRead
 
 // Read is one tick at now.
 func (r *SprintReader) Read(ctx context.Context, now time.Time) (*SprintSnapshot, error) {
-	// Four: a first tick can learn the sets, then the newest sprint, then
-	// that sprint's start before its values are read in one pipeline.
-	for trips := 1; trips <= 4; trips++ {
+	// Three: a first tick learns the sets, a set that changes under it is
+	// read once more.
+	for trips := 1; trips <= 3; trips++ {
 		snap, changed, err := r.readOnce(ctx, now)
 		if err != nil {
 			return nil, err
@@ -247,7 +217,37 @@ func (r *SprintReader) Read(ctx context.Context, now time.Time) (*SprintSnapshot
 			return snap, nil
 		}
 	}
-	return nil, errors.New("membership changed on four reads in a row")
+	return nil, errors.New("membership changed on three reads in a row")
+}
+
+// roster is the consumer rows in display order: the friends (the configured
+// order, else the friends SET sorted), then the benches, then any other
+// member of the consumers SET, each once.
+func (r *SprintReader) roster() []Consumer {
+	friends := r.Config.Friends
+	if len(friends) == 0 {
+		friends = r.friends
+	}
+	var out []Consumer
+	seen := map[string]bool{}
+	add := func(c Consumer) {
+		if !seen[c.ID()] {
+			seen[c.ID()] = true
+			out = append(out, c)
+		}
+	}
+	for _, f := range friends {
+		add(Consumer{Kind: "friend", Name: f})
+	}
+	for _, b := range r.benches {
+		add(Consumer{Kind: "bench", Name: b})
+	}
+	for _, s := range r.consumers {
+		if c, ok := parseConsumer(s); ok {
+			add(c)
+		}
+	}
+	return out
 }
 
 func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnapshot, bool, error) {
@@ -255,6 +255,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	pipe := r.Client.Pipeline()
 	order := pipe.ZRange(ctx, "ws:order", 0, -1)
 	benchSet := pipe.SMembers(ctx, "benches")
+	consumerSet := pipe.SMembers(ctx, "consumers")
 	var friendSet *redis.StringSliceCmd
 	if len(cfg.Friends) == 0 {
 		friendSet = pipe.SMembers(ctx, "friends")
@@ -265,25 +266,6 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 	hourAgo := now.Add(-time.Hour).UnixMilli()
 	log := pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(hourAgo, 10), "+", logWindowMax)
-	base := pipe.HGetAll(ctx, DoneBaseKey)
-	var newest *redis.StringSliceCmd
-	if cfg.Sprint == "" {
-		newest = pipe.ZRange(ctx, "sprint:order", -1, -1)
-	}
-	scope := cfg.Sprint
-	if scope == "" {
-		scope = r.sprint
-	}
-	var opened *redis.StringCmd
-	var oldest *redis.ZSliceCmd
-	if scope != "" {
-		opened = pipe.HGet(ctx, "s:"+scope, "opened_at")
-		oldest = pipe.ZRangeWithScores(ctx, "sprint:"+scope+":cards", 0, 0)
-	}
-	since := r.since
-	if since == "" {
-		since = "-inf"
-	}
 	var lock *redis.Cmd
 	if cfg.LockKey != "" {
 		lock = pipe.Eval(ctx, lockRefreshScript, []string{cfg.LockKey}, cfg.LockToken, lockTTL(cfg).Milliseconds())
@@ -300,44 +282,20 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		fromRecords = r.streams
 	}
 	repos := landRepos(cfg)
-	detail := pipe.EvalRO(ctx, detailScript, nil, detailArgs(fromRecords, repos)...)
-	type hostCmds struct {
-		ready, working, ok, fail *redis.IntCmd
-		beat                     *redis.SliceCmd
+	detail := pipe.EvalRO(ctx, detailScript, nil, detailArgs(fromRecords, repos, r.streams)...)
+	type consumerCmds struct {
+		cells [4]*redis.IntCmd
+		beat  *redis.SliceCmd
+		down  *redis.IntCmd
 	}
-	hosts := make([]hostCmds, len(r.benches))
-	for i, b := range r.benches {
-		hosts[i] = hostCmds{
-			ready:   pipe.ZCard(ctx, "bench:"+b+":cards:ready"),
-			working: pipe.ZCard(ctx, "bench:"+b+":cards:working"),
-			ok:      pipe.ZCount(ctx, "bench:"+b+":cards:ok", since, "+inf"),
-			fail:    pipe.ZCount(ctx, "bench:"+b+":cards:fail", since, "+inf"),
-			beat:    pipe.HMGet(ctx, "bench:"+b+":beat", "load1", "at"),
+	roster := r.roster()
+	cmds := make([]consumerCmds, len(roster))
+	for i, c := range roster {
+		for j, set := range ConsumerSets {
+			cmds[i].cells[j] = pipe.ZCard(ctx, c.ID()+":cards:"+set)
 		}
-	}
-	roster := cfg.Friends
-	if len(roster) == 0 {
-		roster = r.friends
-	}
-	rows := make([]*redis.SliceCmd, len(roster))
-	cells := make([][]*redis.IntCmd, len(roster))
-	doneAll := make([][]*redis.IntCmd, len(roster))
-	downs := make([]*redis.IntCmd, len(roster))
-	for i, f := range roster {
-		rows[i] = pipe.HMGet(ctx, "friend:"+f, "at", "up")
-		for _, w := range FriendWheres[:2] {
-			cells[i] = append(cells[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
-		}
-		for _, w := range []string{"ok", "fail"} {
-			// A copy's ok or fail is done work: only this sprint's count (#3883).
-			cells[i] = append(cells[i], pipe.ZCount(ctx, FriendCardsKey(f, w), since, "+inf"))
-		}
-		for _, w := range FriendDoneWheres {
-			// Only this sprint's cards: every set is scored by created_at (#3883).
-			cells[i] = append(cells[i], pipe.ZCount(ctx, FriendCardsKey(f, w), since, "+inf"))
-			doneAll[i] = append(doneAll[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
-		}
-		downs[i] = pipe.Exists(ctx, "friend:"+f+":down")
+		cmds[i].beat = pipe.HMGet(ctx, c.ID()+":beat", "load1", "at")
+		cmds[i].down = pipe.Exists(ctx, c.ID()+":down")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, false, fmt.Errorf("pipeline: %w", err)
@@ -348,39 +306,25 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, false, fmt.Errorf("zrange ws:order: %w", err)
 	}
-	gotBenches, _ := benchSet.Result()
-	sort.Strings(gotBenches)
+	sorted := func(c *redis.StringSliceCmd) []string {
+		got, _ := c.Result()
+		sort.Strings(got)
+		return got
+	}
+	gotBenches, gotConsumers := sorted(benchSet), sorted(consumerSet)
 	var gotFriends []string
 	if friendSet != nil {
-		gotFriends, _ = friendSet.Result()
-		sort.Strings(gotFriends)
+		gotFriends = sorted(friendSet)
 	}
-	gotSprint := cfg.Sprint
-	if newest != nil {
-		gotSprint = ""
-		if names, err := newest.Result(); err == nil && len(names) == 1 {
-			gotSprint = names[0]
-		}
-	}
-	gotSince, gotFrom := doneScope(opened, oldest)
 	changed := !r.primed || !slices.Equal(gotOrder, r.streams) || !slices.Equal(gotBenches, r.benches) ||
-		(friendSet != nil && !slices.Equal(gotFriends, r.friends)) ||
-		gotSprint != scope || gotSince != since
+		!slices.Equal(gotConsumers, r.consumers) || (friendSet != nil && !slices.Equal(gotFriends, r.friends))
 	r.primed = true
 	if changed {
-		r.streams, r.benches, r.friends = gotOrder, gotBenches, gotFriends
-		r.sprint = gotSprint
-		// The start read is of scope; a new sprint's start is read next trip.
-		r.since, r.from = gotSince, gotFrom
-		if gotSprint != scope {
-			r.since, r.from = "-inf", ""
-		}
+		r.streams, r.benches, r.consumers, r.friends = gotOrder, gotBenches, gotConsumers, gotFriends
 		return nil, true, nil
 	}
-	r.from = gotFrom
 
-	snap := &SprintSnapshot{Config: cfg, DoneBase: map[string]string{}, DoneAll: map[string]int64{},
-		DoneSprint: scope, DoneSince: since, DoneFrom: r.from}
+	snap := &SprintSnapshot{Config: cfg}
 	if pit != nil && pit.Val() > 0 {
 		snap.Pitstop = true
 	}
@@ -391,9 +335,6 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			}
 		}
 	}
-	if h, err := base.Result(); err == nil {
-		snap.DoneBase = h
-	}
 	if lock != nil {
 		if n, err := lock.Int64(); err != nil || n == 0 {
 			snap.LockLost = true
@@ -401,7 +342,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 	for i, s := range r.streams {
 		row := StreamRow{Name: s, MergingRead: -1}
-		cells := []*int64{&row.Waiting, &row.Ready, &row.Working, &row.Reading, &row.Merging, &row.Landed}
+		cells := []*int64{&row.Waiting, &row.Ready, &row.Working, &row.Review, &row.Reading, &row.Merging, &row.Landed}
 		for j, c := range counts[i] {
 			*cells[j] = c.Val()
 		}
@@ -415,82 +356,29 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		snap.ReadSource = ReadFromSet
 	}
 	if v, err := detail.Result(); err == nil {
-		applyDetail(snap, v, fromRecords, repos)
+		applyDetail(snap, v, fromRecords, repos, r.streams, now)
 	}
-	for i, b := range r.benches {
-		row := HostRow{Name: b, Ready: hosts[i].ready.Val(), Working: hosts[i].working.Val(), Load: "-", Down: true}
-		ok, okErr := hosts[i].ok.Result()
-		fail, failErr := hosts[i].fail.Result()
-		row.OK, row.Fail, row.Unread = ok, fail, okErr != nil || failErr != nil
-		if got, err := hosts[i].beat.Result(); err == nil && len(got) == 2 {
-			load, at := sanitize(pipeValue(got[0])), pipeValue(got[1])
-			if atMS, err := strconv.ParseInt(at, 10, 64); err == nil && now.UnixMilli()-atMS <= hostBeatStale.Milliseconds() {
-				row.Down = false
-				if load != "" {
-					row.Load = load
-				}
+	for i, c := range roster {
+		row := ConsumerRow{Consumer: c, Load: "-"}
+		cells := []*int64{&row.Ready, &row.Working, &row.OK, &row.Fail}
+		for j, cmd := range cmds[i].cells {
+			n, err := cmd.Result()
+			*cells[j], row.Unread[j] = n, err != nil
+		}
+		if got, err := cmds[i].beat.Result(); err == nil && len(got) == 2 {
+			if load := sanitize(pipeValue(got[0])); load != "" {
+				row.Load = load
+			}
+			if atMS, err := strconv.ParseInt(pipeValue(got[1]), 10, 64); err == nil && now.UnixMilli()-atMS <= hostBeatStale.Milliseconds() {
+				row.Up = true
 			}
 		}
-		snap.Hosts = append(snap.Hosts, row)
-	}
-	for i, f := range roster {
-		row := FriendRow{Name: f}
-		if got, err := rows[i].Result(); err == nil && len(got) == 2 {
-			row.At, row.Up = pipeValue(got[0]), pipeValue(got[1])
+		if n, err := cmds[i].down.Result(); err != nil || n > 0 {
+			row.Up = false
 		}
-		counts := []*string{&row.Ready, &row.Working, &row.OK, &row.Fail}
-		var done int64
-		doneOK := true
-		for j, c := range cells[i] {
-			n, err := c.Result()
-			if j < 4 {
-				if err == nil {
-					*counts[j] = strconv.FormatInt(n, 10)
-				}
-				continue
-			}
-			doneOK = doneOK && err == nil
-			done += n
-		}
-		if doneOK {
-			row.Done = strconv.FormatInt(done, 10) // done + merging + landed (#3778)
-		}
-		var all int64
-		allOK := true
-		for _, c := range doneAll[i] {
-			n, err := c.Result()
-			allOK = allOK && err == nil
-			all += n
-		}
-		if allOK {
-			snap.DoneAll[f] = all // done + merging + landed, the base `table clear` stores
-		}
-		if downs[i].Val() > 0 {
-			row.Down = "down"
-		}
-		snap.Friends = append(snap.Friends, row)
+		snap.Consumers = append(snap.Consumers, row)
 	}
 	return snap, false, nil
-}
-
-// doneScope is the done column's ZCOUNT min from one tick's reads of the
-// sprint's start: opened_at (written once by sprint open), else the oldest
-// card's created_at (the score of the first member of sprint:<S>:cards),
-// else -inf. from names which one it is.
-func doneScope(opened *redis.StringCmd, oldest *redis.ZSliceCmd) (since, from string) {
-	if opened != nil {
-		if v, err := opened.Result(); err == nil {
-			if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
-				return strconv.FormatInt(ms, 10), "opened_at"
-			}
-		}
-	}
-	if oldest != nil {
-		if zs, err := oldest.Result(); err == nil && len(zs) == 1 {
-			return strconv.FormatInt(int64(zs[0].Score), 10), "oldest card"
-		}
-	}
-	return "-inf", ""
 }
 
 // logWindowMax bounds the hour of ws:log one tick reads; a sprint moving more
@@ -508,11 +396,12 @@ func FailedSprint(cfg SprintConfig, last *SprintSnapshot) *SprintSnapshot {
 	return &snap
 }
 
-const streamRule = "-------------------------------+---------+-------+---------+---------+---------+-------\n"
+const streamRule = "-------------------------------+---------+-------+---------+--------+---------+---------+-------\n"
 
 // XY is the headline's numbers: y is every task in the streams of ws:order,
-// left is y minus landed (a card in reading or merging is not done), eta is left over the landed rate of the last hour
-// (at least 1 an hour, so a stall shows as a big number, never infinity).
+// left is y minus landed (a card in review, reading or merging is not done),
+// eta is left over the landed rate of the last hour (at least 1 an hour, so
+// a stall shows as a big number, never infinity).
 func (s *SprintSnapshot) XY() (left, y, pct, eta int64) {
 	var landed int64
 	for _, r := range s.Streams {
@@ -547,102 +436,60 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 	fmt.Fprintf(&b, "%d/%d left, %d%% done -> ~%dm\n\n", left, y, pct, eta)
 
 	s.renderStreams(&b, now)
-
-	friends := make([]ConsumerLine, len(s.Friends))
-	for i, row := range s.Friends {
-		status := "down"
-		if friendState(row, now, s.Config.RowStale) == "up" {
-			status = "up"
-		}
-		// a friend's done adds its friend-queue tasks' done sets to its copies' ok + fail
-		ok, fail := digitsOnly(row.OK), digitsOnly(row.Fail)
-		done := orDash(s.friendDone(row))
-		if done != "-" {
-			done = strconv.FormatInt(digitsOnly(done)+ok+fail, 10)
-		}
-		friends[i] = ConsumerLine{Name: row.Name, Ready: orDash(row.Ready), Working: orDash(row.Working), Done: done,
-			OK: ok, Fail: fail, Status: status}
-	}
-	writeConsumerBlock(&b, "friend", friends)
-	b.WriteString("\n")
-	hosts := make([]ConsumerLine, len(s.Hosts))
-	for i, row := range s.Hosts {
-		status := row.Load
-		if row.Down {
-			status = "down"
-		}
-		// done, ok, fail and ok% are the bench's ended cards this sprint
-		// (#3894): done = ok + fail, ok% = ok / done; "?" when unread.
-		hosts[i] = ConsumerLine{Name: row.Name, Ready: strconv.FormatInt(row.Ready, 10), Working: strconv.FormatInt(row.Working, 10),
-			Done: strconv.FormatInt(row.Done(), 10), OK: row.OK, Fail: row.Fail, Unread: row.Unread, Status: status}
-	}
-	writeConsumerBlock(&b, "host", hosts)
+	writeConsumerTable(&b, s.Consumers)
 	if s.Stale {
 		fmt.Fprintf(&b, "stale: %ds (Redis did not answer; rows are the last good read)\n", now.Unix()-s.LastGood.Unix())
 	}
 	return b.String()
 }
 
-// ConsumerLine is one row of a consumer block (a friend or a host): the
-// cells as read, done as printed, and the status column. Unread says the
-// ok or fail count did not come back: done, ok, fail and ok% print "?",
-// never a false 0 (#3894).
-type ConsumerLine struct {
-	Name, Ready, Working, Done string
-	OK, Fail                   int64
-	Unread                     bool
-	Status                     string
-}
+// consumerRule is the consumer table's rule line.
+const consumerRule = "---------------------+-------+---------+-------+-------+-------+------+--------+------\n"
 
-// consumerRule is the consumer block's rule line.
-const consumerRule = "-----------+-------+---------+-------+-------+-------+------+------------\n"
-
-// writeConsumerBlock is the one renderer of the friend and host blocks
-// (#3929): name | ready | working | done | ok | fail | ok% | status, then a
-// total row whose ok% is derived from the totals.
-func writeConsumerBlock(b *strings.Builder, title string, rows []ConsumerLine) {
-	fmt.Fprintf(b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %-10s\n", title, "ready", "working", "done", "ok", "fail", "ok%", "status")
+// writeConsumerTable is the one consumer table (#4071): consumer | ready |
+// working | done | ok | fail | ok% | status | load, then a total row whose
+// ok% is derived from the totals. A cell whose ZCARD did not come back
+// prints "?" (and so do done and ok% when ok or fail is one), never a false 0.
+func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
+	fmt.Fprintf(b, "%-20s | %5s | %7s | %5s | %5s | %5s | %4s | %-6s | %s\n", "consumer", "ready", "working", "done", "ok", "fail",
+		"ok%", "status", "load")
 	b.WriteString(consumerRule)
-	var q, w, d, ok, fail int64
-	unread := false
+	var tot [4]int64
+	var unread [4]bool
 	for _, r := range rows {
-		done, okc, failc, pct := r.Done, strconv.FormatInt(r.OK, 10), strconv.FormatInt(r.Fail, 10), okPct(r.OK, r.OK+r.Fail)
-		if r.Unread {
-			done, okc, failc, pct = "?", "?", "?", "?"
-			unread = true
+		cell := [4]string{}
+		for j, n := range []int64{r.Ready, r.Working, r.OK, r.Fail} {
+			cell[j] = strconv.FormatInt(n, 10)
+			if r.Unread[j] {
+				cell[j] = "?"
+				unread[j] = true
+			}
+			tot[j] += n
 		}
-		fmt.Fprintf(b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %-10s\n", r.Name, r.Ready, r.Working, done, okc, failc, pct, r.Status)
-		q, w, d, ok, fail = q+digitsOnly(r.Ready), w+digitsOnly(r.Working), d+digitsOnly(r.Done), ok+r.OK, fail+r.Fail
+		done, pct := strconv.FormatInt(r.Done(), 10), okPct(r.OK, r.Done())
+		if r.Unread[2] || r.Unread[3] {
+			done, pct = "?", "?"
+		}
+		status := "down"
+		if r.Up {
+			status = "up"
+		}
+		fmt.Fprintf(b, "%-20s | %5s | %7s | %5s | %5s | %5s | %4s | %-6s | %s\n", r.ID(), cell[0], cell[1], done, cell[2], cell[3],
+			pct, status, r.Load)
 	}
 	b.WriteString(consumerRule)
-	td, tok, tfail, tpct := strconv.FormatInt(d, 10), strconv.FormatInt(ok, 10), strconv.FormatInt(fail, 10), okPct(ok, ok+fail)
-	if unread {
-		td, tok, tfail, tpct = "?", "?", "?", "?"
+	cell := [4]string{}
+	for j := range tot {
+		cell[j] = strconv.FormatInt(tot[j], 10)
+		if unread[j] {
+			cell[j] = "?"
+		}
 	}
-	fmt.Fprintf(b, "%-10s | %5d | %7d | %5s | %5s | %5s | %4s |\n", "total", q, w, td, tok, tfail, tpct)
-}
-
-// friendDone is the row's done count in the current sprint (#3883), and at
-// most the cards done since the last `table clear`: a clear stores each
-// friend's all-time count (DoneAll) as its base, so all-time minus base is
-// what finished since the clear, and the smaller of the two is what finished
-// since both the sprint opened and the clear. An all-time count below the base
-// means the set itself restarted, so the base no longer applies.
-func (s *SprintSnapshot) friendDone(row FriendRow) string {
-	done, base := row.Done, s.DoneBase[row.Name]
-	if done == "" || base == "" || strings.Trim(done, "0123456789") != "" || strings.Trim(base, "0123456789") != "" {
-		return done
+	done, pct := strconv.FormatInt(tot[2]+tot[3], 10), okPct(tot[2], tot[2]+tot[3])
+	if unread[2] || unread[3] {
+		done, pct = "?", "?"
 	}
-	d, _ := strconv.ParseInt(done, 10, 64)
-	b, _ := strconv.ParseInt(base, 10, 64)
-	all, ok := s.DoneAll[row.Name]
-	if !ok {
-		all = d
-	}
-	if all < b || d <= all-b {
-		return done
-	}
-	return strconv.FormatInt(all-b, 10)
+	fmt.Fprintf(b, "%-20s | %5s | %7s | %5s | %5s | %5s | %4s |\n", "total", cell[0], cell[1], done, cell[2], cell[3], pct)
 }
 
 // The writer's lock: one table writer per key, fleet-wide. AcquireLock takes
@@ -685,14 +532,16 @@ func ReleaseLock(ctx context.Context, client redis.UniversalClient, key, token s
 	return client.Eval(ctx, lockReleaseScript, []string{key}, token).Err()
 }
 
-// renderStreams is the stream block and its LAND lines. Every cell is one
-// set's ZCARD, ready and reading each their own column (a card is in exactly
-// one set), except the read split: merging prints <read>/<unread> from the
-// records until a reading set exists, then reading is the unread cards and
-// merging the read ones. Both come from ReadSplit.
+// renderStreams is the stream block, its LAND lines and its REVIEW lines.
+// Every cell is one set's ZCARD, ready, review and reading each their own
+// column (a card is in exactly one set), except the read split: merging
+// prints <read>/<unread> from the records until a reading set exists, then
+// reading is the unread cards and merging the read ones. Both come from
+// ReadSplit.
 func (s *SprintSnapshot) renderStreams(b *strings.Builder, now time.Time) {
 	sets := s.ReadSource == ReadFromSet
-	fmt.Fprintf(b, "%-30s | %7s | %5s | %7s | %7s | %7s | %6s\n", "stream", "waiting", "ready", "working", "reading", "merging", "landed")
+	fmt.Fprintf(b, "%-30s | %7s | %5s | %7s | %6s | %7s | %7s | %6s\n", "stream", "waiting", "ready", "working", "review", "reading",
+		"merging", "landed")
 	b.WriteString(streamRule)
 	var tot StreamRow
 	var tread, tunread int64
@@ -704,22 +553,28 @@ func (s *SprintSnapshot) renderStreams(b *strings.Builder, now time.Time) {
 		read, unread, ok := s.ReadSplit(r)
 		known = known && ok
 		tread, tunread = tread+read, tunread+unread
-		tot.Waiting, tot.Ready, tot.Working = tot.Waiting+r.Waiting, tot.Ready+r.Ready, tot.Working+r.Working
+		tot.Waiting, tot.Ready, tot.Working, tot.Review = tot.Waiting+r.Waiting, tot.Ready+r.Ready, tot.Working+r.Working, tot.Review+r.Review
 		tot.Reading, tot.Merging, tot.Landed = tot.Reading+r.Reading, tot.Merging+r.Merging, tot.Landed+r.Landed
 		merging := strconv.FormatInt(r.Merging, 10)
 		if !sets {
 			merging = s.mergingCell(r)
 		}
-		fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %7d | %7s | %6d\n", r.Name, r.Waiting, r.Ready, r.Working, r.Reading, merging, r.Landed)
+		fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %6d | %7d | %7s | %6d\n", r.Name, r.Waiting, r.Ready, r.Working, r.Review, r.Reading,
+			merging, r.Landed)
 	}
 	b.WriteString(streamRule)
 	merging := strconv.FormatInt(tot.Merging, 10)
 	if !sets && known {
 		merging = fmt.Sprintf("%d/%d", tread, tunread)
 	}
-	fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %7d | %7s | %6d\n", "total", tot.Waiting, tot.Ready, tot.Working, tot.Reading, merging, tot.Landed)
+	fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %6d | %7d | %7s | %6d\n", "total", tot.Waiting, tot.Ready, tot.Working, tot.Review,
+		tot.Reading, merging, tot.Landed)
 	for _, l := range s.Landings {
 		b.WriteString(l.LandLine(now))
+		b.WriteByte('\n')
+	}
+	for _, r := range s.Reviews {
+		b.WriteString(r.Line())
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')

@@ -48,7 +48,7 @@ func cmdTableLive(opts tableOpts, stdout, stderr io.Writer) int {
 	if len(problems) > 0 {
 		return tableRefuse(stderr, strings.Join(problems, "; "))
 	}
-	cfg := table.SprintConfig{Sprint: opts.sprint, Friends: splitRoster(opts.friends), RowStale: 10 * time.Second}
+	cfg := table.SprintConfig{Sprint: opts.sprint, Friends: splitRoster(opts.friends)}
 	if cfg.Sprint == "" {
 		cfg.Sprint = os.Getenv("NOVA_SPRINT")
 	}

@@ -59,7 +59,7 @@ var helpCases = [][]string{
 	{"pr", "record"}, {"pr", "lines"}, {"pr", "reap"},
 	{"preflight"}, {"quack"}, {"rank"},
 	{"read", "brief"}, {"read", "post"}, {"read", "digest"}, {"read", "carry"},
-	{"ready"}, {"reconcile"},
+	{"ready"}, {"reconcile"}, {"review", "post"},
 	{"result", "contract"}, {"result", "check"}, {"result", "show"}, {"result", "disposition"},
 	{"rote"}, {"route"}, {"routes"},
 	{"scope", "keep"}, {"scope", "park"}, {"scope", "unpark"}, {"scope", "ls"},

@@ -10,10 +10,12 @@
 //	       the copy -> <consumer>:cards:ready
 //	Work   copy ready -> working, k = min(free, |ready|), free = slots - |working|
 //	End    copy working -> ok|fail and, in the same call, the primary's move
-//	       (reading | landed | done | waiting for a work copy; merging |
-//	       working + a fix copy | reading for a read copy)
+//	       (reading | landed | done | review for a work copy; merging |
+//	       working + a fix copy | review for a read copy)
 //	Cancel a copy given back, or a primary cancelled with its live copy
 //	Beat   a working copy's lease; Expire returns lapsed copies as fails
+//	Review the one way out of review (#4072): a copy's fail moves its
+//	       primary to ws:<stream>:review; a typed verdict moves it on
 //	FsckMoves both links both ways
 //
 // The table reads only ZCARDs (ReadCells): done = ok + fail and ok% are
@@ -43,7 +45,12 @@ const (
 	FnFsckMove = "ns_cm_fsck"
 	FnRepair   = "ns_cm_repair"
 	FnAssign   = "ns_cm_assign"
+	FnReview   = "ns_cm_review"
 )
+
+// Verdicts are the typed ways out of review (#4072); reassign names its
+// consumer: reassign:<consumer>.
+var Verdicts = []string{"recut", "redeal", "reassign", "drop"}
 
 // Cols are a consumer's four sets, in table order.
 var Cols = []string{"ready", "working", "ok", "fail"}
@@ -189,8 +196,9 @@ func Work(ctx context.Context, c redis.Cmdable, as Consumer, by string, n int, f
 // card's base) returns a work copy's primary to working to wait for CI at
 // that head (#3093: OK moves it to reading with a read copy, FAIL cuts a fix
 // copy; a verdict already there applies at once); OK with DoneAlready (a
-// sha) moves it to landed; OK with neither to done/ok; a fail returns it to
-// waiting with Why. A read copy ends with Score (1-10) or a fail. The same
+// sha) moves it to landed; OK with neither to done/ok; a fail moves it to
+// review with Why and the evidence (#4072; Review is the way out). A read
+// copy ends with Score (1-10) or a fail. The same
 // end again is To "already" (nothing moves); other evidence on an ended
 // copy is a CONFLICT refusal; a Token that is not the copy's, or a lapsed
 // lease with it, is a FENCED refusal (#3488).
@@ -206,7 +214,7 @@ type EndRequest struct {
 	Gates       string
 	Finding     string
 	// Fields are more result fields, name then value: line1 line2 check
-	// paths branch commit base base_sha model route wall evidence tier key.
+	// paths branch commit base base_sha model route wall evidence tier key exit.
 	Fields []string
 	Token  string
 	By     string
@@ -293,6 +301,24 @@ func Assign(ctx context.Context, c redis.Cmdable, to Consumer, id string, revoke
 		return Assigned{}, fmt.Errorf("%s: unexpected reply %v", FnAssign, out)
 	}
 	return Assigned{Primary: out[1], Copy: out[2], Revoked: out[3]}, nil
+}
+
+// Reviewed is one review verdict applied: the primary's new where and, for
+// reassign, the copy cut on the named consumer.
+type Reviewed struct{ ID, Verdict, To, Copy string }
+
+// Review is `review post` (#4072): the one way out of review, one call.
+// verdict is recut, redeal, drop or reassign:<consumer>; why is required.
+// A primary not in review, an untyped verdict or no why is a *Refused.
+func Review(ctx context.Context, c redis.Cmdable, id, verdict, why, by string) (Reviewed, error) {
+	out, err := fcall(ctx, c, FnReview, by, id, verdict, why)
+	if err != nil {
+		return Reviewed{}, err
+	}
+	if len(out) != 5 || out[0] != "REVIEWED" {
+		return Reviewed{}, fmt.Errorf("%s: unexpected reply %v", FnReview, out)
+	}
+	return Reviewed{ID: out[1], Verdict: out[2], To: out[3], Copy: out[4]}, nil
 }
 
 // CancelCards is card cancel: a copy is given back (its primary returns,

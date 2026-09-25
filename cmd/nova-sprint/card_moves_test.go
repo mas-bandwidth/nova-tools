@@ -105,7 +105,7 @@ func TestCardMovesCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, out, _ = runCLI("card", "end", "--ids", "@"+ids, "--fail", "red at head")
-	if code != 0 || !strings.HasPrefix(out, "ENDED c1~1 primary=c1 from=working to=waiting next=-\n") {
+	if code != 0 || !strings.HasPrefix(out, "ENDED c1~1 primary=c1 from=working to=review next=-\n") {
 		t.Fatalf("end fail = %d %q", code, out)
 	}
 	code, out, _ = runCLI("card", "table", "--as", "bench:b")
@@ -168,6 +168,11 @@ func TestCardMovesCLI(t *testing.T) {
 		t.Fatalf("task done of a copy = %d %q", code, out)
 	}
 	fsck("task done")
+	// c1's fail put it in review (#4072): a typed verdict is the way out
+	code, out, _ = runSprint("review", "post", "--id", "c1", "--verdict", "redeal", "--why", "red at head was a flake")
+	if code != 0 || !strings.HasPrefix(out, "REVIEW POST id=c1 verdict=redeal to=ready copy=- ms=") {
+		t.Fatalf("review post = %d %q", code, out)
+	}
 	code, out, _ = runCLI("card", "assign", "--id", "c1", "--to", "friend:emma")
 	if code != 0 || !strings.HasPrefix(out, "CARD ASSIGN id=c1 to=friend:emma copy=c1~2 revoked=- ms=") {
 		t.Fatalf("assign = %d %q", code, out)
