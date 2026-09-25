@@ -184,6 +184,10 @@ func runHoldRoute(ctx context.Context, args []string, out, errOut io.Writer) int
 			fmt.Fprintln(out, l)
 		}
 		if err != nil {
+			if errors.Is(err, disposition.ErrNoPolicy) {
+				fmt.Fprintf(errOut, "REFUSED hold route: %s; remedy: nova-sprint plan apply with policy fix_to and policy release_reader\n", err.Error())
+				return 1
+			}
 			return refuse(errOut, "hold route", err.Error())
 		}
 		return 0
@@ -199,6 +203,7 @@ func runHoldRoute(ctx context.Context, args []string, out, errOut io.Writer) int
 	defer ticker.Stop()
 	for {
 		if code := tick(); code != 0 {
+			dropLease(ctx, c, token)
 			return code
 		}
 		select {
