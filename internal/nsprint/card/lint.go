@@ -209,9 +209,31 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 }
 
 // recordFields maps a stored card record's fields (ns_card_push and
-// ns_card_header) to the header keys push required of the card body.
-var recordFields = []struct{ field, key string }{
-	{"base", "BASE"}, {"base_sha", "base-sha"}, {"paths", "PATHS"}, {"done_when", "DONE-WHEN"},
+// ns_card_header) to the header keys push required of the card body. It is
+// built from requiredKeys, the one list of card header keys, dropping
+// DEPENDS-ON (push stores "none" as an empty depends_on and Lint does not
+// judge it).
+var recordFields = buildRecordFields()
+
+func buildRecordFields() []struct{ field, key string } {
+	fields := make([]struct{ field, key string }, 0, len(requiredKeys))
+	for _, key := range requiredKeys {
+		if key == "DEPENDS-ON" {
+			continue
+		}
+		fields = append(fields, struct{ field, key string }{
+			field: recordFieldOf(key),
+			key:   key,
+		})
+	}
+	return fields
+}
+
+// recordFieldOf is the Redis hash field a card header key is stored under:
+// the key lower-cased with hyphens as underscores (BASE -> base, base-sha ->
+// base_sha, DONE-WHEN -> done_when).
+func recordFieldOf(key string) string {
+	return strings.ToLower(strings.ReplaceAll(key, "-", "_"))
 }
 
 // Lint judges a stored card record, the HGETALL of s:<S>:card:<label>, the
