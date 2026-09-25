@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +32,17 @@ func TestHelperDispatch(t *testing.T) {
 			os.Getenv(life.ServeEnvFriend), os.Getenv(life.ServeEnvHead))
 	case "done":
 		fmt.Printf("DONE built %s brief=%s\n", os.Getenv(life.ServeEnvID), os.Getenv(life.ServeEnvBrief))
+	case "gh":
+		// A child that reaches for the GitHub CLI by name, as a model's shell would.
+		out, err := exec.Command("gh", "api", "user").CombinedOutput()
+		code := 0
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		} else if err != nil {
+			code = -1
+		}
+		fmt.Printf("DONE gh exit=%d %s\n", code, strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0])
 	case "die":
 		fmt.Println("boom: harness crashed before any line")
 		os.Exit(3)
@@ -375,5 +388,37 @@ func TestServeTypedLineAndVerdict(t *testing.T) {
 		if v != want[0] || s != want[1] {
 			t.Errorf("VerdictOf(%q) = %s %s, want %s %s", line, v, s, want[0], want[1])
 		}
+	}
+}
+
+// TestServeChildReachesNoGh is #3600's harness half: a friend child that runs
+// `gh api user` with a counting fake gh first on the seat's own PATH reaches
+// the refusing gh serve puts ahead of it, exits 2 naming #3594, and the fake's
+// counter (the token's call counter, standing in) is never written. The
+// control is one edit: drop the shim from the child's PATH in start and the
+// fake answers, exit=0 with one count.
+func TestServeChildReachesNoGh(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the refusing gh is a /bin/sh script")
+	}
+	st, client := seedSeat(t, 1)
+	ctx := context.Background()
+	pushWork(t, st, "w1")
+	fake := t.TempDir()
+	counter := filepath.Join(fake, "calls")
+	if err := os.WriteFile(filepath.Join(fake, "gh"), []byte("#!/bin/sh\necho call >> '"+counter+"'\necho fake gh answered\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := serveConfig(t, "sess-1", 1, "gh")
+	cfg.Env = append(cfg.Env, "PATH="+fake+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if res, err := life.ServeOnce(ctx, st, cfg); err != nil || res.Closed != 1 {
+		t.Fatalf("serve once: %+v, %v", res, err)
+	}
+	ev := client.HGet(ctx, task.Key("s1", "w1"), "evidence").Val()
+	if !strings.HasPrefix(ev, "DONE gh exit=2 ") || !strings.Contains(ev, "#3594") {
+		t.Fatalf("evidence %q, want DONE gh exit=2 with the #3594 refusal", ev)
+	}
+	if b, err := os.ReadFile(counter); err == nil {
+		t.Fatalf("the fake gh was called %d time(s): the child reached a real gh", strings.Count(string(b), "call"))
 	}
 }
