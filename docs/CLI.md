@@ -4038,7 +4038,10 @@ the ZCARDs of their `waiting` (plus `ready`), `working`, `merging` and
 `landed` sets; rows with all zeros are hidden. y is every task in those sets,
 left is y minus landed, and the ETA is left over the moves to `landed` in the
 last hour of `ws:log` (at least one an hour). The hosts are the `benches` SET
-(`bench:<b>` hashes; a beat older than 60 s is no row), the friends the
+(each bench's own keys, #2389: ready and working are the ZCARDs of
+`bench:<b>:cards:ready` and `:working`, load is `bench:<b>:beat` load1 from
+the bench's own `bench beat` loop; a bench whose beat is gone or older than
+60 s still shows its cards with load `down`), the friends the
 `--friends` roster or else the `friends` SET sorted, status `up` or `down`,
 done less the count stored at the last `table clear`. Every tick is ONE
 pipeline (a second one only on the tick a set's membership changed), never

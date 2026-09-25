@@ -402,19 +402,6 @@ func (c benchCells) num(cell string, v int64) string {
 	return strconv.FormatInt(v, 10)
 }
 
-// beatWithin60 is the bash of record's 60 s freshness on the bench's own beat
-// (an unparseable at counts as fresh, an at ahead of now does not). The whole
-// sprint table (sprint.go) still drops a host row that fails it; the live
-// table prints such a row "stale" instead (benchRowStale, #3372).
-func (row BenchRow) beatWithin60(now time.Time) bool {
-	at, ok := parseUTC(row.Fields["at"])
-	if !ok {
-		return true
-	}
-	age := now.Unix() - at.Unix()
-	return age >= 0 && age <= 60
-}
-
 // cells applies the bash's row rules: a hash whose own host field is not its
 // key is no row; the dealer's queue count wins while dealer_at is at most
 // 30 s old; a missing load prints "-". The beat's age is not a cell rule:
