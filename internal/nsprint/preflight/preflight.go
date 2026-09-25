@@ -111,7 +111,7 @@ type Options struct {
 var StoreNames = []struct{ N, Name string }{
 	{"7.1", "redis"}, {"7.2", "state-files"}, {"7.3", "leases-vs-beats"}, {"7.7", "reconciler"},
 	{"7.9", "policy"}, {"7.10", "receipts"}, {"7.11", "supply"}, {"7.13", "guards"},
-	{"7.15", "machine-ceiling"}, {"7.26", "ttl"}, {"7.27", "under-load"},
+	{"7.15", "machine-ceiling"}, {"7.27", "ttl"}, {"7.28", "under-load"},
 }
 
 // Run reads the snapshot and returns the store lines in section order.
