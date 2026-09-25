@@ -101,6 +101,9 @@ func queryVerb(args []string, stdout, stderr io.Writer) int {
 	// once the spec catches up.
 	xy := f.String("xy", "", "the :by-feature node id to read offline (refuses to guess)")
 	if err := f.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "query")
+		}
 		return refused(stderr, "query: "+err.Error())
 	}
 	if f.NArg() != 0 {

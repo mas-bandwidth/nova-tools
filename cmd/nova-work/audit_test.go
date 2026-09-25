@@ -18,6 +18,9 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 }
 
 var workAudit = audit.Config{
+	Exempt: map[string]string{
+		"help.go|printVerbHelp|line": "prints lines sliced out of the static usage const",
+	},
 	// oneline.Quote is the pasteable third rendering in that package: the resolver is
 	// a command a person can copy out of the READY row and type back in, and Field
 	// would render its space as \x20 and make it unpasteable.

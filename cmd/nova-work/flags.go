@@ -30,6 +30,10 @@ func newFlags(verb string) *flags {
 
 func (f *flags) parse(args []string, stderr io.Writer) bool {
 	if err := f.fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			printVerbHelp(stderr, f.verb)
+			return false
+		}
 		refuse(stderr, " "+f.verb, oneline.Cap(err.Error(), oneline.TailBytes))
 		return false
 	}
