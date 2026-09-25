@@ -54,6 +54,7 @@ func cmdPush(args []string, stdout, stderr io.Writer, now func() time.Time) int 
 	priority := fs.Int("priority", 0, "")
 	needs := fs.String("needs", "", "")
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp { return printVerbHelp(stderr, "push") }
 		return refuse(stderr, " push", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {

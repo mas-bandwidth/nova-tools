@@ -564,12 +564,18 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	}
 	switch verb {
 	case "help", "--help", "-h":
+		if len(rest) > 0 && (rest[0] == "--help" || rest[0] == "-h") {
+			return printVerbHelp(stderr, "help")
+		}
 		if len(rest) != 0 {
 			return refused(stderr, "help takes no arguments")
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
+		if len(rest) > 0 && (rest[0] == "--help" || rest[0] == "-h") {
+			return printVerbHelp(stderr, "version")
+		}
 		if len(rest) != 0 {
 			return refused(stderr, "version takes no arguments")
 		}
@@ -602,6 +608,9 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 		return sessionVerb(v, args, stdout, stderr)
 	}
 	if subs, ok := verbFamilies[verb]; ok {
+		if len(rest) > 0 && (rest[0] == "--help" || rest[0] == "-h") {
+			return printVerbHelp(stderr, verb)
+		}
 		if len(rest) == 0 {
 			return refused(stderr, verb+" needs one of "+orList(subs))
 		}
@@ -648,6 +657,7 @@ func cmdDependencies(args []string, stdout, stderr io.Writer) int {
 	node := fs.String("node", "", "the node to write a needs edge to")
 	needs := fs.String("needs", "", "comma-separated needs for --node")
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp { return printVerbHelp(stderr, "dependencies") }
 		return refuse(stderr, " dependencies", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -742,6 +752,7 @@ func cmdReady(args []string, stdout, stderr io.Writer) int {
 	graph := fs.String("graph", "", "the :deps graph file (required)")
 	node := fs.String("node", "", "one node to evaluate; default all nodes")
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp { return printVerbHelp(stderr, "ready") }
 		return refuse(stderr, " ready", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -816,6 +827,7 @@ func cmdPlan(args []string, stdout, stderr io.Writer) int {
 	maxDepth := fs.Int("max-depth", def.MaxDepth, "nesting depth ceiling")
 	maxNodes := fs.Int("max-nodes", def.MaxNodes, "atom ceiling")
 	if err := fs.Parse(args[1:]); err != nil {
+		if err == flag.ErrHelp { return printVerbHelp(stderr, "plan check") }
 		return refuse(stderr, " plan check", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -859,6 +871,7 @@ func cmdPlanExpand(args []string, stdout, stderr io.Writer) int {
 	maxDepth := fs.Int("max-depth", def.MaxDepth, "nesting depth ceiling")
 	maxNodes := fs.Int("max-nodes", def.MaxNodes, "atom ceiling")
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp { return printVerbHelp(stderr, "plan expand") }
 		return refuse(stderr, " plan expand", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -987,6 +1000,7 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if err := f.Parse(args); err != nil {
+		if err == flag.ErrHelp { return printVerbHelp(stderr, verb) }
 		return refused(stderr, verb+": "+err.Error())
 	}
 	if f.NArg() != 0 {
@@ -1282,6 +1296,7 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 	logPath := fs.String("log", "", "")
 	once := fs.Bool("once", false, "")
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp { return printVerbHelp(stderr, "events") }
 		fmt.Fprintf(stderr, "nova-work events: %s; run: nova-work help\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 2
 	}

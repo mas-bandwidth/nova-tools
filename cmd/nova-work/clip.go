@@ -25,6 +25,7 @@ func cmdClip(args []string, stdout, stderr io.Writer) int {
 	result := fs.String("result", "", "")
 	harvest := fs.String("harvest", "", "")
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp { return printVerbHelp(stderr, "clip") }
 		return refuse(stderr, " clip", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
