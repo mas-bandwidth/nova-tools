@@ -263,3 +263,50 @@ func drainReceipts(t *testing.T, ctx context.Context, client *redis.Client) map[
 	}
 	return out
 }
+
+func TestDrainControl(t *testing.T) {
+	ctx := context.Background()
+	client := newRedis(t)
+	const ctrl = "control-test-3442"
+
+	keysBefore, err := client.Keys(ctx, "*").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(keysBefore)
+
+	if err := client.HSet(ctx, "s:"+ctrl, "status", "open").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.HSet(ctx, "bench:"+ctrl+"-studio", "host", "h1", "at", "1").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SAdd(ctx, "benches", ctrl+"-studio").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.HSet(ctx, "machine:"+ctrl+"-host:ceiling", "slots", 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := card.RegisterKey(ctx, client, ctrl, "extra-control-key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(ctx, "extra-control-key", "val", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	res := card.Drain(ctx, client, "", card.DrainOptions{Control: ctrl})
+	if res.Code != 0 || res.Stderr != "" {
+		t.Fatalf("drain control: exit %d stdout %q stderr %q", res.Code, res.Stdout, res.Stderr)
+	}
+
+	keysAfter, err := client.Keys(ctx, "*").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(keysAfter)
+
+	if strings.Join(keysAfter, ",") != strings.Join(keysBefore, ",") {
+		t.Fatalf("keyspace after teardown != before:\nbefore: %v\nafter:  %v", keysBefore, keysAfter)
+	}
+}
+

@@ -42,6 +42,7 @@ import (
 type DrainOptions struct {
 	Resume    []string // members to resume: bench:<b> or friend:<f>
 	QueueDirs []string // retired fillloop queue dirs to import once
+	Control   string   // control ID to clean up
 }
 
 var memberRE = regexp.MustCompile(`^(bench|friend):[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -49,6 +50,14 @@ var memberRE = regexp.MustCompile(`^(bench|friend):[A-Za-z0-9][A-Za-z0-9._-]*$`)
 func keyPaused(sprint string) string         { return "s:" + sprint + ":paused" }
 func keyParked(sprint, member string) string { return "s:" + sprint + ":parked:" + member }
 func keyDrainImported(sprint string) string  { return "s:" + sprint + ":drain:imported" }
+
+// RegisterKey registers a key created during a control run under its control id.
+func RegisterKey(ctx context.Context, client *redis.Client, control, key string) error {
+	if control == "" || key == "" {
+		return nil
+	}
+	return client.SAdd(ctx, "control:"+control+":keys", key).Err()
+}
 
 // Drain's two atomic steps are Functions of the nova_sprint library
 // (card_pool.lua), called with FCALL, never EVAL/EVALSHA (#3419): the card
@@ -76,10 +85,94 @@ func (d *drainTally) refused(sprint, item, rest, reason string) {
 		oneline.Field(sprint), item, rest, oneline.Field(strings.TrimSpace(reason)))
 }
 
-// Drain runs resume, import, and release for one sprint. See DrainOptions.
+// Drain runs resume, import, and release for one sprint, or cleans up a control. See DrainOptions.
 func Drain(ctx context.Context, client *redis.Client, sprint string, opts DrainOptions) VerbResult {
-	if !sprintRE.MatchString(sprint) {
+	if sprint == "" && opts.Control == "" {
+		return refused("needs sprint or control")
+	}
+	if sprint != "" && !sprintRE.MatchString(sprint) {
 		return refused("sprint name must match [a-z0-9-]{1,40}")
+	}
+	if opts.Control != "" {
+		if !sprintRE.MatchString(opts.Control) {
+			return refused("control name must match [a-z0-9-]{1,40}")
+		}
+		if err := ensure(ctx, client); err != nil {
+			return refused(err.Error())
+		}
+		var d drainTally
+		keysSet := "control:" + opts.Control + ":keys"
+		regKeys, _ := client.SMembers(ctx, keysSet).Result()
+		seenKeys := map[string]bool{}
+		for _, k := range regKeys {
+			seenKeys[k] = true
+		}
+		patterns := []string{
+			"s:" + opts.Control + ":*",
+			"*:" + opts.Control + ":*",
+			"bench:*" + opts.Control + "*",
+			"machine:*" + opts.Control + "*",
+			"friend:*" + opts.Control + "*",
+			"*" + opts.Control + "*",
+		}
+		for _, pat := range patterns {
+			var cursor uint64
+			for {
+				page, next, err := client.Scan(ctx, cursor, pat, 1000).Result()
+				if err != nil {
+					break
+				}
+				for _, k := range page {
+					seenKeys[k] = true
+				}
+				cursor = next
+				if cursor == 0 {
+					break
+				}
+			}
+		}
+		benches, _ := client.SMembers(ctx, "benches").Result()
+		for _, b := range benches {
+			if strings.Contains(b, opts.Control) {
+				seenKeys["bench:"+b] = true
+				seenKeys["bench:"+b+":desired"] = true
+				seenKeys["bench:"+b+":working"] = true
+				seenKeys["bench:"+b+":queue"] = true
+				seenKeys["bench:"+b+":done"] = true
+				seenKeys["bench:"+b+":beat"] = true
+				_ = client.SRem(ctx, "benches", b).Err()
+			}
+		}
+		friends, _ := client.SMembers(ctx, "friends").Result()
+		for _, f := range friends {
+			if strings.Contains(f, opts.Control) {
+				seenKeys["friend:"+f] = true
+				seenKeys["friend:"+f+":desired"] = true
+				seenKeys["friend:"+f+":beat"] = true
+				seenKeys["friend:"+f+":queue"] = true
+				_ = client.SRem(ctx, "friends", f).Err()
+			}
+		}
+		seenKeys[keysSet] = true
+
+		var keysDel []string
+		for k := range seenKeys {
+			keysDel = append(keysDel, k)
+		}
+		var removed int
+		if len(keysDel) > 0 {
+			res, err := client.Del(ctx, keysDel...).Result()
+			if err == nil {
+				removed = int(res)
+			}
+		}
+		fmt.Fprintf(&d.out, "DRAIN DONE control=%s removed=%d refused=%d\n",
+			oneline.Field(opts.Control), removed, d.refuse)
+		code := exitOK
+		if d.refuse > 0 {
+			code = exitRefused
+		}
+		return VerbResult{Code: code, Stdout: d.out.String()}
 	}
 	for _, m := range opts.Resume {
 		if !memberRE.MatchString(m) {
