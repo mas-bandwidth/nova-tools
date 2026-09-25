@@ -98,6 +98,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "task take status BLOCKED, the ns task-take function's reply word, not a RESULT field"},
 	{file: "internal/nsprint/task/take.go", fn: "TakeAvailable", record: "task-take-status", since: "8904dd03",
 		reason: "batch task take status BLOCKED, the ns_task_take_n function's per-entry reply word, not a RESULT field"},
+	{file: "internal/nsprint/reconcile/devred.go", fn: "stateOf", record: "Redis-CI-verdict", since: "72a2ecf8",
+		reason: "the verdict field of a Redis CI hash (civerdict.Field: OK, FAIL, RED, FAILURE), a CI reply word, not RESULT line 2"},
 	{file: "internal/nsprint/disposition/line.go", fn: "Parse", record: "DISPOSITION", since: "73980a14",
 		reason: "first line of a typed DISPOSITION/REPAIR comment (#3092), a friend read record, not RESULT line 2"},
 	{file: "internal/nsprint/task/take.go", fn: "DoneTyped", record: "task-done-status", since: "50fbecdb",
