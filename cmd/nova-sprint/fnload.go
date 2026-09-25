@@ -184,6 +184,9 @@ func runFnDeploy(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if err != nil {
 		return fnDeployFailed(out, addr, "load", err)
 	}
+	if err := store.DeployACLs(ctx, st.Client()); err != nil {
+		return fnDeployFailed(out, addr, "deploy-acls", err)
+	}
 	return fnDeployReadBack(ctx, st.Client(), addr, sha, loaded, out)
 }
 
