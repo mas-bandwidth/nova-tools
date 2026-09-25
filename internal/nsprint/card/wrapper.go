@@ -19,7 +19,10 @@ package card
 //  5. kills the harness's group when the card clock runs out (FAILED timeout),
 //     when the card's wall cap runs out (FAILED wall, #3653: EST x 1.5
 //     minutes, recorded as wall_max_s on the card hash at launched) or a beat
-//     is fenced (FAILED other);
+//     is fenced (FAILED other); a harness that exits non-zero after its
+//     program printed a NATIVE REFUSED line ends FAILED refused, that line the
+//     end's why on the card record and its w_why fact (#3194), never a bare
+//     crash;
 //  6. copies <job>/out and harness.log into the results directory, writes
 //     the card's record to Redis (#3689, wrapper_result.go: the typed RESULT
 //     fields synthesized from facts around the model's two lines, the card's
@@ -49,8 +52,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
@@ -110,7 +115,7 @@ type WrapperCard struct {
 // WrapperEnd is the exit class the wrapper hands to the ledger.
 type WrapperEnd struct {
 	Outcome    string // DONE, FAILED (the wrapper never infers ABSTAIN or BLOCKED)
-	Reason     string // done, crash, timeout, wall, other
+	Reason     string // done, crash, timeout, wall, refused, other
 	Exit       int    // the harness exit code; -1 when it was killed
 	ResultsDir string
 	// PushedSHA is the commit step's commit on the card branch, or "-"
@@ -120,6 +125,9 @@ type WrapperEnd struct {
 	Commit string
 	// WallMax is the attempt's wall cap (#3653); wrapper.line names it.
 	WallMax time.Duration
+	// Why is the end's one-line evidence, written to the card's why by card
+	// end: for FAILED refused, the refusal line (#3194). Empty is no evidence.
+	Why string
 }
 
 // WrapperLedger is the Redis side of one attempt. Every method returns the
@@ -274,7 +282,13 @@ type WrapperConfig struct {
 	Attempt int
 	Bench   string
 
-	Harness     string // absolute path of the harness program
+	// Harness is the absolute path of the harness program, exec'd in the job
+	// dir; or, with no program, InProcess is the Go harness (run.go, #3681)
+	// called in this process with Store, the wrapper's own connection.
+	// Exactly one of the two.
+	Harness     string
+	InProcess   *RunConfig
+	Store       *store.Store
 	JobsRoot    string // job dirs live at <JobsRoot>/<S>/<label>/<attempt>
 	ResultsRoot string // results live at <ResultsRoot>/<identity>
 	Clock       time.Duration
@@ -338,8 +352,13 @@ func (c WrapperConfig) check() error {
 	if !benchRE.MatchString(c.Bench) {
 		missing = append(missing, "bench")
 	}
-	if !filepath.IsAbs(c.Harness) {
-		missing = append(missing, "harness (absolute path)")
+	switch {
+	case c.InProcess != nil && c.Harness != "":
+		missing = append(missing, "one harness: a program or in-process, not both")
+	case c.InProcess != nil && (c.Store == nil || c.Store.Client() == nil):
+		missing = append(missing, "store (the in-process harness reads the card as the bench)")
+	case c.InProcess == nil && !filepath.IsAbs(c.Harness):
+		missing = append(missing, "harness (absolute path, or in-process)")
 	}
 	if !filepath.IsAbs(c.JobsRoot) {
 		missing = append(missing, "jobs root (absolute path)")
@@ -465,24 +484,38 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 		return finish(ctx, cfg, ledger, &rep, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1, WallMax: wallMax}, "job dir: "+err.Error(), cleanup)
 	}
 
-	// 3. The harness, in its own group, token-free.
+	// 3. The harness, in its own group, token-free: the program cfg.Harness
+	// names, or the Go harness in-process (#3681), whose runner is the group.
 	log, err := os.Create(filepath.Join(job, "harness.log"))
 	if err != nil {
 		cleanup()
 		return refuse(WrapperExitCouldNot, "harness log: "+err.Error())
 	}
-	cmd := exec.Command(cfg.Harness)
-	cmd.Dir = job
-	cmd.Stdout, cmd.Stderr = log, log
-	cmd.Env = harnessEnv(os.Environ(), cfg, job, results)
-	harnessGroup(cmd)
-	if err := cmd.Start(); err != nil {
+	var proc harnessProc
+	if cfg.InProcess != nil {
+		rc := *cfg.InProcess
+		rc.Sprint, rc.Label, rc.Attempt, rc.Bench = cfg.Sprint, cfg.Label, cfg.Attempt, cfg.Bench
+		rc.JobDir, rc.OutDir = job, filepath.Join(job, "out")
+		base := rc.Env
+		if base == nil {
+			base = os.Environ()
+		}
+		rc.Env = harnessEnv(base, cfg, job, results)
+		proc = &inprocHarness{ctx: ctx, st: cfg.Store, cfg: rc, log: log}
+	} else {
+		cmd := exec.Command(cfg.Harness)
+		cmd.Dir = job
+		cmd.Stdout, cmd.Stderr = log, log
+		cmd.Env = harnessEnv(os.Environ(), cfg, job, results)
+		harnessGroup(cmd)
+		proc = &execHarness{cmd: cmd}
+	}
+	if err := proc.start(); err != nil {
 		log.Close()
 		// The card is launched and the harness never ran: a crash, recorded.
 		return finish(ctx, cfg, ledger, &rep, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1, WallMax: wallMax}, "harness start: "+err.Error(), cleanup)
 	}
-	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
+	exited := proc.exited()
 	// The wall cap runs from the harness start, whatever the beats say.
 	wall := wallAfter(wallMax)
 
@@ -500,41 +533,50 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	}
 	clock := after(cfg.Clock)
 	ticks, stop := tick(every)
-	var waitErr error
+	var exit harnessExit
 	done := false
 	if !beat() {
-		killGroup(cmd)
-		waitErr, done = <-exited, true
+		proc.kill()
+		exit, done = <-exited, true
 		end.Reason = "other"
 	}
 	for !done {
 		select {
-		case waitErr = <-exited:
+		case exit = <-exited:
 			done = true
-			end = classify(waitErr)
+			end = classify(exit)
 		case <-clock:
-			killGroup(cmd)
-			waitErr, done = <-exited, true
+			proc.kill()
+			exit, done = <-exited, true
 			end = WrapperEnd{Outcome: "FAILED", Reason: "timeout", Exit: -1}
 			why = "card clock " + cfg.Clock.String() + " ran out"
 		case <-wall:
 			// The harness's whole group goes; out/ is copied for the read.
-			killGroup(cmd)
-			waitErr, done = <-exited, true
+			proc.kill()
+			exit, done = <-exited, true
 			end = WrapperEnd{Outcome: "FAILED", Reason: "wall", Exit: -1}
 			why = fmt.Sprintf("card wall %s ran out (EST x %.1f, wall_max_s=%d)", wallMax, WallFactor, int64(wallMax/time.Second))
 		case <-ticks:
 			if !beat() {
-				killGroup(cmd)
-				waitErr, done = <-exited, true
+				proc.kill()
+				exit, done = <-exited, true
 				end = WrapperEnd{Outcome: "FAILED", Reason: "other", Exit: -1}
 			}
 		}
 	}
 	stop()
-	_ = waitErr
+	_ = exit
 	log.Close()
 	end.WallMax = wallMax
+	// A harness that ended non-zero on its own after its program refused the
+	// card (#3194) is FAILED refused, with the refusal line as the evidence:
+	// a card the bench could not start (no pool identity.tsv, #3193) must
+	// read as refused on the card record, never as a crash nobody can read.
+	if end.Outcome == "FAILED" && end.Reason == "crash" && end.Exit > 0 {
+		if line, ok := NativeRefusal(job); ok {
+			end.Reason, end.Why, why = "refused", line, line
+		}
+	}
 	// A fenced beat ends here too: the ledger writes end.record before its
 	// end call, which is then fenced, and the record stays for the reconciler.
 	return finish(ctx, cfg, ledger, &rep, job, results, began, now, end, why, cleanup)
@@ -671,19 +713,145 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 	return *rep
 }
 
+// NativeRefusedMark is what `nova-swarm native` prints when it refuses a card
+// before the card runs: `NATIVE REFUSED: <reason>` on its stderr, exit 2.
+const NativeRefusedMark = "NATIVE REFUSED"
+
+// refusalSources are the files, relative to the job dir, that NativeRefusal
+// reads, in order: the harness's own output, then what the bench harness
+// keeps of native's stderr and stdout and its own log under the out dir.
+var refusalSources = []string{"harness.log", "out/native.err", "out/native.out", "out/harness.log"}
+
+// refusalTail is how much of each source's end NativeRefusal reads.
+const refusalTail = 64 << 10
+
+// NativeRefusal finds the refusal line a harness's program printed: the first
+// line in refusalSources carrying NativeRefusedMark, from the mark on (a
+// leading log stamp is dropped). ok is false when no source holds one.
+func NativeRefusal(job string) (line string, ok bool) {
+	for _, rel := range refusalSources {
+		if line, ok := refusalIn(filepath.Join(job, filepath.FromSlash(rel))); ok {
+			return line, true
+		}
+	}
+	return "", false
+}
+
+func refusalIn(path string) (string, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	if size := info.Size(); size > refusalTail {
+		if _, err := f.Seek(size-refusalTail, io.SeekStart); err != nil {
+			return "", false
+		}
+	}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 4096), refusalTail+1)
+	for sc.Scan() {
+		if i := strings.Index(sc.Text(), NativeRefusedMark); i >= 0 {
+			return strings.TrimSpace(sc.Text()[i:]), true
+		}
+	}
+	return "", false
+}
+
 // classify maps the harness's exit to an outcome and a reason from the 3.3
 // table. Exit 0 is DONE; any other exit, or a signal the wrapper did not
-// send, is FAILED crash. The wrapper does not read the harness's RESULT line
+// send, is FAILED crash (RunWrapper then reads a refusal line, if any, to
+// make a non-zero exit FAILED refused). The wrapper does not read the harness's RESULT line
 // to decide; it copies it into wrapper.line for the reader.
-func classify(err error) WrapperEnd {
-	if err == nil {
+func classify(exit harnessExit) WrapperEnd {
+	if exit.err == nil && exit.code == 0 {
 		return WrapperEnd{Outcome: "DONE", Reason: "done", Exit: 0}
 	}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		return WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: ee.ExitCode()}
+	return WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: exit.code}
+}
+
+// harnessProc is one attempt's harness as the wrapper drives it: started
+// once, waited on through exited, and killed with its whole group.
+type harnessProc interface {
+	start() error
+	exited() <-chan harnessExit
+	kill()
+}
+
+// harnessExit is how a harness ended: its exit code (-1 killed or never
+// ran) and the wait error, if any.
+type harnessExit struct {
+	code int
+	err  error
+}
+
+// execHarness is the program cfg.Harness names, in its own process group.
+type execHarness struct {
+	cmd  *exec.Cmd
+	done chan harnessExit
+}
+
+func (h *execHarness) start() error {
+	if err := h.cmd.Start(); err != nil {
+		return err
 	}
-	return WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1}
+	h.done = make(chan harnessExit, 1)
+	go func() {
+		err := h.cmd.Wait()
+		h.done <- harnessExit{code: exitCode(err), err: err}
+	}()
+	return nil
+}
+
+func (h *execHarness) exited() <-chan harnessExit { return h.done }
+func (h *execHarness) kill()                      { killGroup(h.cmd) }
+
+// inprocHarness is the Go harness (Run, #3681) in this process. Its runner
+// is the process group the wrapper kills; a kill before the runner has
+// started stops it the moment it does.
+type inprocHarness struct {
+	ctx  context.Context
+	st   *store.Store
+	cfg  RunConfig
+	log  *os.File // the job's harness.log: the run's receipt line goes there
+	done chan harnessExit
+
+	mu     sync.Mutex
+	cmd    *exec.Cmd
+	killed bool
+}
+
+func (h *inprocHarness) start() error {
+	h.cfg.Proc = func(c *exec.Cmd) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.cmd = c
+		if h.killed {
+			killGroup(c)
+		}
+	}
+	h.done = make(chan harnessExit, 1)
+	go func() {
+		rep := Run(h.ctx, h.st, h.cfg)
+		fmt.Fprintln(h.log, rep.Line())
+		h.done <- harnessExit{code: rep.Code}
+	}()
+	return nil
+}
+
+func (h *inprocHarness) exited() <-chan harnessExit { return h.done }
+
+func (h *inprocHarness) kill() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.killed = true
+	if h.cmd != nil {
+		killGroup(h.cmd)
+	}
 }
 
 // harnessEnv is the wrapper's environment minus anything naming a token,
@@ -757,8 +925,8 @@ func copyFile(src, dst string) error {
 // writeWrapperLine records what end.record has no field for: the wall and the
 // harness's RESULT line (line 1 of out/RESULT.md, if it wrote one).
 func writeWrapperLine(results string, cfg WrapperConfig, end WrapperEnd, beats int, wall time.Duration) {
-	line := fmt.Sprintf("WRAPPER card=%s outcome=%s reason=%s exit=%d beats=%d wall_ms=%d wall_max_s=%d commit=%s result=%s\n",
-		cfg.card(), end.Outcome, end.Reason, end.Exit, beats, wall.Milliseconds(), int64(end.WallMax/time.Second), strconv.Quote(end.Commit), strconv.Quote(resultLine(results)))
+	line := fmt.Sprintf("WRAPPER card=%s outcome=%s reason=%s exit=%d beats=%d wall_ms=%d wall_max_s=%d commit=%s result=%s why=%s\n",
+		cfg.card(), end.Outcome, end.Reason, end.Exit, beats, wall.Milliseconds(), int64(end.WallMax/time.Second), strconv.Quote(end.Commit), strconv.Quote(resultLine(results)), strconv.Quote(end.Why))
 	_ = os.WriteFile(filepath.Join(results, "wrapper.line"), []byte(line), 0o644)
 }
 

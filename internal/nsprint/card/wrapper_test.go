@@ -31,6 +31,9 @@ func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeHarnessEnv); mode != "" {
 		os.Exit(fakeHarness(mode))
 	}
+	if os.Getenv(fakeRunnerEnv) != "" {
+		os.Exit(fakeRunner())
+	}
 	os.Exit(m.Run())
 }
 
@@ -40,6 +43,9 @@ func TestMain(m *testing.M) {
 func fakeHarness(mode string) int {
 	for _, kv := range os.Environ() {
 		fmt.Println(kv)
+	}
+	if mode == "refuse" || mode == "refuse-identity" {
+		return fakeRefusal(mode)
 	}
 	out := os.Getenv("NOVA_CARD_OUT")
 	if strings.HasPrefix(mode, "native") {

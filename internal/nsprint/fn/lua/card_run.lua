@@ -37,7 +37,9 @@ end
 
 local function reason_ok(outcome, reason)
   if outcome == 'DONE' and reason == 'done' then return true end
-  if reason == 'crash' or reason == 'timeout' or reason == 'wall' or reason == 'idle-killed' or reason == 'tests-red' then
+  -- refused (#3194): the harness's own program refused the card before it ran
+  -- (a NATIVE REFUSED line); the card's why carries that line.
+  if reason == 'crash' or reason == 'timeout' or reason == 'wall' or reason == 'idle-killed' or reason == 'tests-red' or reason == 'refused' then
     return outcome == 'FAILED'
   end
   if reason == 'env' or reason == 'base-moved' or reason == 'deps' or reason == 'spec' or reason == 'access' then
@@ -226,6 +228,11 @@ redis.register_function('ns_card_end', function(keys, args)
   local record_exit = args[11] or ''
   local claim_outcome = args[12] or ''
   local claim_reason = args[13] or ''
+  -- why (#3194) is the wrapper's evidence for the end, one line: for FAILED
+  -- refused it is the refusal line the harness's program printed. It is
+  -- written to the card's why only when given, so an end without evidence
+  -- never blanks a why another writer left.
+  local why = string.sub((string.gsub(args[14] or '', '[\r\n]', ' ')), 1, 1024)
   if mode ~= 'token' and mode ~= 'record' then return reply(2, 'STATE', '', '') end
   if not results_absolute(results) then return reply(1, 'USAGE', '', '') end
   if not card_keys_ok(keys, sprint, label) then return reply(4, 'CONFLICT', '', '') end
@@ -296,9 +303,18 @@ redis.register_function('ns_card_end', function(keys, args)
   -- DONE with a typed result that is not invalid is ok; any other end is fail.
   local ok = 'fail'
   if record_outcome == 'DONE' and hget(card_key .. ':result:a' .. attempt, 'valid') ~= '0' then ok = 'ok' end
+  local end_fields = { 'outcome', record_outcome, 'reason', record_reason, 'exit', record_exit,
+    'pushed_sha', record_pushed, 'results', results, 'ended_at', at }
+  -- The end's evidence (#3194) rides the one move, so a refused card's why is
+  -- written with its done/fail and never apart from it.
+  if why ~= '' then
+    end_fields[#end_fields + 1] = 'why'
+    end_fields[#end_fields + 1] = why
+    end_fields[#end_fields + 1] = 'why_at'
+    end_fields[#end_fields + 1] = at
+  end
   if CARD.move(card_key, 'done', { state = 'ended', ok = ok, by = actor, why = record_reason,
-      fields = { 'outcome', record_outcome, 'reason', record_reason, 'exit', record_exit,
-        'pushed_sha', record_pushed, 'results', results, 'ended_at', at } }) then
+      fields = end_fields }) then
     return reply(2, 'STATE', attempt, '')
   end
   redis.call('ZREM', 'bench:' .. bench .. ':starting', member)

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,21 +42,36 @@ func runCardPool(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	}
 }
 
+// cmdCardPush pushes every card named (files, every regular file of --dir in
+// name order, or --stdin) in one batch: one pipeline of FCALL ns_card_push
+// after one pipeline of dependency reads, however many cards (#3266). It
+// never loads the function library (nova-sprint fn load is the owner's).
 func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("card push", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	sprint := fs.String("sprint", "", "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	stdin := fs.Bool("stdin", false, "")
+	dir := fs.String("dir", "", "")
 	mapKind := fs.Bool("map-kind", false, "")
 	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" {
-		return refuse(stderr, "card", "push needs --sprint <name>, --redis <addr>, and one card file (or --stdin); --map-kind pushes a classification KIND as its RESULT kind")
+		return refuse(stderr, "card", "push needs --sprint <name>, --redis <addr>, and card files (or --dir <cards/>, or --stdin); --map-kind pushes a classification KIND as its RESULT kind")
 	}
-	if *stdin && fs.NArg() > 0 {
-		return refuse(stderr, "card", "push reads --stdin or card files, not both")
+	sources := 0
+	for _, on := range []bool{*stdin, *dir != "", fs.NArg() > 0} {
+		if on {
+			sources++
+		}
 	}
-	if !*stdin && fs.NArg() == 0 {
-		return refuse(stderr, "card", "push needs a card file, or --stdin")
+	if sources > 1 {
+		return refuse(stderr, "card", "push reads card files, --dir or --stdin, one of them")
+	}
+	if sources == 0 {
+		return refuse(stderr, "card", "push needs card files, --dir <cards/>, or --stdin")
+	}
+	files, err := readCardFiles(*stdin, *dir, fs.Args())
+	if err != nil {
+		return refuse(stderr, "card", err.Error())
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -63,28 +80,49 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return code
 	}
 	defer client.Close()
-	bodies := [][]byte{}
-	if *stdin {
+	first := 0
+	for _, res := range card.PushBatch(ctx, client, *sprint, files, card.PushOptions{MapKind: *mapKind}) {
+		if wrote := writeCardResult(stdout, stderr, res); wrote != 0 && first == 0 {
+			first = wrote
+		}
+	}
+	return first
+}
+
+// readCardFiles reads the batch: stdin, every regular non-dot file of dir in
+// name order, or the named files.
+func readCardFiles(stdin bool, dir string, paths []string) ([]card.CardFile, error) {
+	if stdin {
 		body, err := io.ReadAll(os.Stdin)
 		if err != nil {
-			return refuse(stderr, "card", "cannot read stdin: "+err.Error())
+			return nil, fmt.Errorf("cannot read stdin: %v", err)
 		}
-		bodies = append(bodies, body)
+		return []card.CardFile{{Name: "stdin", Body: body}}, nil
 	}
-	for _, path := range fs.Args() {
+	if dir != "" {
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, fmt.Errorf("cannot read --dir %s: %v", dir, err)
+		}
+		for _, e := range ents {
+			if e.Type().IsRegular() && !strings.HasPrefix(e.Name(), ".") {
+				paths = append(paths, filepath.Join(dir, e.Name()))
+			}
+		}
+		if len(paths) == 0 {
+			return nil, fmt.Errorf("--dir %s holds no card file", dir)
+		}
+		sort.Strings(paths)
+	}
+	files := make([]card.CardFile, 0, len(paths))
+	for _, path := range paths {
 		body, err := os.ReadFile(path)
 		if err != nil {
-			return refuse(stderr, "card", "cannot read "+path+": "+err.Error())
+			return nil, fmt.Errorf("cannot read %s: %v", path, err)
 		}
-		bodies = append(bodies, body)
+		files = append(files, card.CardFile{Name: path, Body: body})
 	}
-	for _, body := range bodies {
-		res := card.PushWith(ctx, client, *sprint, body, card.PushOptions{MapKind: *mapKind})
-		if wrote := writeCardResult(stdout, stderr, res); wrote != 0 {
-			return wrote
-		}
-	}
-	return 0
+	return files, nil
 }
 
 func cmdCardRelease(ctx context.Context, args []string, stdout, stderr io.Writer) int {
