@@ -5,7 +5,7 @@
 // task:* (Migrate's one SCAN page per call is the exception the spec names).
 //
 // Keys: ws:names (SET), ws:order (ZSET rank), ws:<stream>:<state> (ZSET per
-// state in States), task:<id> (HASH: stream, state, order, ...), ws:log
+// state in States), task:<id> (HASH: stream, state, created_at, ...; every set scores a task by its created_at ms), ws:log
 // (STREAM, one entry per move), ws:checkpoint (STRING, the last checkpoint
 // receipt).
 package ws

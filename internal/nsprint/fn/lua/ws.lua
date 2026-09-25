@@ -5,13 +5,14 @@
 -- Keys:
 --   ws:names                 SET  of stream names (display strings, e.g. "swarm: cards")
 --   ws:order                 ZSET stream -> rank (1 = top priority)
---   ws:<stream>:waiting      ZSET id -> order within the stream (lower first)
---   ws:<stream>:ready        ZSET id -> order (dealable now)
---   ws:<stream>:working      ZSET id -> started_at ms
---   ws:<stream>:merging      ZSET id -> pr_ready_at ms
---   ws:<stream>:landed       ZSET id -> landed_at ms
---   ws:<stream>:parked       ZSET id -> original waiting order (unpark restores it)
---   task:<id>                HASH stream, state, order, parked_from, state_at, ...
+--   ws:<stream>:<state>      ZSET id -> the task's created_at ms, for every state
+--                            (waiting, ready, working, merging, landed, parked)
+--   task:<id>                HASH stream, state, created_at, parked_from, state_at, ...
+--
+-- Every set's score is the task's age (created_at in ms, Glenn 2026-09-25
+-- 12:22 AM: "the sorted order should be in order of age of the card,
+-- uniformly"): a ZRANGE reads oldest first in any set, and a move never
+-- changes the score.
 --   ws:log                   STREAM one entry per move: id stream from to by why at
 --
 -- Invariant: a task id is in exactly one ws:<stream>:<state> set, the one its
@@ -26,13 +27,43 @@
 local W = {
   STATES = { 'waiting', 'ready', 'working', 'merging', 'landed', 'parked' },
   NEXT = { waiting = 'ready', ready = 'working', working = 'merging', merging = 'landed' },
-  ORDERED = { waiting = true, ready = true, parked = true },
   KNOWN = { waiting = true, ready = true, working = true, merging = true, landed = true,
     parked = true, closed = true },
   -- States only ws writes (friend-queue never did): a hash in one is ws's.
   WS_ONLY = { ready = true, merging = true, landed = true, parked = true },
   LOG_MAX = '200000',
 }
+
+-- W.days: days from 1970-01-01 to y-m-d (the proleptic Gregorian calendar).
+function W.days(y, m, d)
+  if m <= 2 then
+    y = y - 1
+  end
+  local era = math.floor(y / 400)
+  local yoe = y - era * 400
+  local mp = (m + 9) % 12
+  local doy = math.floor((153 * mp + 2) / 5) + d - 1
+  local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
+  return era * 146097 + doe - 719468
+end
+
+-- W.created_ms reads a created_at field as epoch ms: a number is ms already;
+-- friend-queue wrote "YYYY-MM-DDTHH:MM:SSZ" (UTC). nil for anything else.
+function W.created_ms(v)
+  if not v or v == '' then
+    return nil
+  end
+  local n = tonumber(v)
+  if n then
+    return n
+  end
+  local y, mo, d, h, mi, se = string.match(v, '^(%d%d%d%d)-(%d%d)-(%d%d)T(%d%d):(%d%d):(%d%d)')
+  if not y then
+    return nil
+  end
+  return ((W.days(tonumber(y), tonumber(mo), tonumber(d)) * 24 + tonumber(h)) * 60 + tonumber(mi)) * 60000 +
+    tonumber(se) * 1000
+end
 
 function W.key(stream, state)
   return 'ws:' .. stream .. ':' .. state
@@ -82,8 +113,8 @@ function W.move_one(id, to, by, why, now)
   if not W.KNOWN[to] then
     return 'REFUSED', 'unknown state ' .. tostring(to)
   end
-  local f = redis.call('HMGET', 'task:' .. id, 'stream', 'state', 'order')
-  local stream, from, ord = f[1], f[2], tonumber(f[3])
+  local f = redis.call('HMGET', 'task:' .. id, 'stream', 'state', 'created_at')
+  local stream, from = f[1], f[2]
   if not stream and not from then
     return 'REFUSED', 'no task ' .. id
   end
@@ -99,24 +130,25 @@ function W.move_one(id, to, by, why, now)
   if not W.allowed(from, to) then
     return 'REFUSED', 'task ' .. id .. ' ' .. from .. '->' .. to .. ' is not an allowed move'
   end
-  if not ord and W.ORDERED[from] then
-    ord = tonumber(redis.call('ZSCORE', W.key(stream, from), id))
+  local fields = { 'state', to, 'state_at', tostring(now) }
+  -- The score is the task's age: created_at, else the score it already has,
+  -- else now (written back as created_at so every later move keeps it).
+  local age = W.created_ms(f[3])
+  if not age and from ~= 'closed' then
+    age = tonumber(redis.call('ZSCORE', W.key(stream, from), id))
+  end
+  if not age then
+    age = now
+  end
+  if not f[3] or f[3] == '' then
+    fields[#fields + 1] = 'created_at'
+    fields[#fields + 1] = tostring(age)
   end
   if from ~= 'closed' then
     redis.call('ZREM', W.key(stream, from), id)
   end
-  local fields = { 'state', to, 'state_at', tostring(now) }
   if to ~= 'closed' then
-    local score = now
-    if W.ORDERED[to] then
-      if not ord then
-        ord = now
-        fields[#fields + 1] = 'order'
-        fields[#fields + 1] = tostring(ord)
-      end
-      score = ord
-    end
-    redis.call('ZADD', W.key(stream, to), score, id)
+    redis.call('ZADD', W.key(stream, to), age, id)
   end
   if to == 'parked' then
     fields[#fields + 1] = 'parked_from'
@@ -167,8 +199,8 @@ local function ws_move_many(keys, args)
   return out
 end
 
--- W.park moves one stream's waiting and ready sets into parked (scores kept:
--- the parked score is the task's order) and returns how many it parked.
+-- W.park moves one stream's waiting and ready sets into parked (scores, the
+-- tasks' created_at, kept) and returns how many it parked.
 function W.park(stream, by, why, now)
   local wk, rk, pk = W.key(stream, 'waiting'), W.key(stream, 'ready'), W.key(stream, 'parked')
   local n = 0
@@ -201,7 +233,7 @@ end
 
 -- ns_ws_unpark_stream(stream, by, why) -> UNPARKED n | REFUSED why. The
 -- inverse of park: each task returns to the set it was parked from (its
--- parked_from field; waiting when absent) at its parked score.
+-- parked_from field; waiting when absent) with its score, its created_at.
 local function ws_unpark_stream(keys, args)
   local stream, by, why = args[1], args[2], args[3]
   if not W.known(stream) then
@@ -416,8 +448,8 @@ end
 -- W.migrate_one places one task hash; returns 'placed', 'same', 'nostream'
 -- or 'skipped'.
 function W.migrate_one(id, sprint, by, now)
-  local f = redis.call('HMGET', 'task:' .. id, 'stream', 'title', 'state', 'owner', 'order',
-    'cancelled', 'ws_migrated_at', 'leased_at', 'created_at')
+  local f = redis.call('HMGET', 'task:' .. id, 'stream', 'title', 'state', 'owner', 'created_at',
+    'cancelled', 'ws_migrated_at')
   local stream = W.derive(f[1], f[2])
   if not stream then
     return 'nostream'
@@ -443,14 +475,10 @@ function W.migrate_one(id, sprint, by, now)
   end
   local fields = {}
   if state ~= 'closed' and not redis.call('ZSCORE', target, id) then
-    local score = tonumber(f[5])
-    if not W.ORDERED[state] then
-      score = tonumber(f[8])
-    end
-    score = score or tonumber(redis.call('ZSCORE', 'q:waiting', id)) or tonumber(f[9]) or now
+    local score = W.created_ms(f[5]) or tonumber(redis.call('ZSCORE', 'q:waiting', id)) or now
     redis.call('ZADD', target, score, id)
-    if W.ORDERED[state] and not tonumber(f[5]) then
-      fields[#fields + 1] = 'order'
+    if not f[5] or f[5] == '' then
+      fields[#fields + 1] = 'created_at'
       fields[#fields + 1] = tostring(score)
     end
     changed = true

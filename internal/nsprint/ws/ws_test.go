@@ -129,8 +129,8 @@ func TestEveryOperationIsOneRoundTripUnderOneSecond(t *testing.T) {
 	if got := counts(t, c)[s(2)]; got.Waiting != 40 || got.Ready != 20 || got.Parked != 0 {
 		t.Fatalf("unpark did not restore waiting/ready: %+v", got)
 	}
-	if score, err := c.ZScore(ctx, ws.Key(s(2), "ready"), "t00082").Result(); err != nil || score != 1008 {
-		t.Fatalf("unpark lost the order score: %v %v, want 1008", score, err)
+	if score, err := c.ZScore(ctx, ws.Key(s(2), "ready"), "t00082").Result(); err != nil || score != float64(wstest.Created(82)) {
+		t.Fatalf("unpark lost the created_at score: %v %v, want %d", score, err, wstest.Created(82))
 	}
 	step("park", func() string {
 		n, err := ws.ParkStream(ctx, c, s(0), "test", "pause")
@@ -286,7 +286,16 @@ func legacy(t *testing.T, c *redis.Client, n int) (ids []string, want map[string
 		id := fmt.Sprintf("L%04d", i)
 		owner := fmt.Sprintf("f%d", i%4)
 		stream := wstest.StreamName(i % 10)
-		fields := []any{"owner", owner, "created_at", fmt.Sprint(5000 + i)}
+		// created_at as friend-queue wrote it (RFC 3339 UTC), as epoch ms, or
+		// absent (migrate writes the score it chose back as created_at)
+		fields := []any{"owner", owner}
+		switch {
+		case i%7 == 0:
+			fields = append(fields, "created_at", time.Unix(1790000000+int64(i), 0).UTC().Format(time.RFC3339))
+		case i%11 == 0:
+		default:
+			fields = append(fields, "created_at", fmt.Sprint(5000+i))
+		}
 		switch {
 		case i%5 == 4:
 			fields = append(fields, "title", "no stream here")
@@ -382,6 +391,10 @@ func TestMigrateBuildsTheSetsAndIsIdempotent(t *testing.T) {
 	if fq, _ := c.HGet(ctx, "task:L0000", "fq_state").Result(); fq != "open" {
 		t.Fatalf("the friend-queue state is not kept in fq_state: %q", fq)
 	}
+	// every set's score is created_at (ws.Check above); the RFC 3339 form parses
+	if sc, _ := c.ZScore(ctx, ws.Key(wstest.StreamName(0), "ready"), "L0000").Result(); sc != 1790000000000 {
+		t.Fatalf("L0000 scores %.0f, want its created_at 1790000000000", sc)
+	}
 	if n, _ := c.SCard(ctx, "ws:names").Result(); n != 8 {
 		t.Fatalf("ws:names %d, want 8 (streams 4 and 9 are the no-stream ids)", n)
 	}
@@ -426,7 +439,7 @@ func TestCheckpointWritesEverySet(t *testing.T) {
 	if len(lines) != 952 {
 		t.Fatalf("%d lines, want 2 header + 950 rows", len(lines))
 	}
-	if !strings.HasPrefix(lines[2], wstest.StreamName(0)+"\tworking\t1012\tt00120\t1012\t") {
+	if !strings.HasPrefix(lines[2], wstest.StreamName(0)+"\tworking\t1700000000120\tt00120\t1012\t") {
 		t.Fatalf("first row %q", lines[2])
 	}
 	got, _ := c.Get(ctx, ws.CheckpointKey).Result()

@@ -49,8 +49,12 @@ func Mix(j int) string {
 	return "closed"
 }
 
+// Created is fixture task i's created_at in ms, its score in every set.
+func Created(i int) int64 { return 1700000000000 + int64(i) }
+
 // Fixture writes n tasks t00000.. round-robin across streams streams, in the
-// ws shape (hash + the one set), in one pipeline, and returns the ids.
+// ws shape (hash + the one set scored by created_at), in one pipeline, and
+// returns the ids.
 func Fixture(t *testing.T, c *redis.Client, n, streams int) []string {
 	t.Helper()
 	ctx := context.Background()
@@ -65,8 +69,8 @@ func Fixture(t *testing.T, c *redis.Client, n, streams int) []string {
 		ids[i] = id
 		stream, j := StreamName(i%streams), i/streams
 		state := Mix(j)
-		score := float64(1000 + j)
-		pipe.HSet(ctx, "task:"+id, "stream", stream, "state", state, "order", fmt.Sprint(1000+j),
+		score := float64(Created(i))
+		pipe.HSet(ctx, "task:"+id, "stream", stream, "state", state, "order", fmt.Sprint(1000+j), "created_at", fmt.Sprint(Created(i)),
 			"title", fmt.Sprintf("STREAM: %s | task %d", stream, i), "owner", "f1", "kind", "code")
 		if state != "closed" {
 			pipe.ZAdd(ctx, "ws:"+stream+":"+state, redis.Z{Score: score, Member: id})

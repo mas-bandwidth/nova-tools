@@ -65,7 +65,7 @@ func TestWSVerbsOnAThousandTasks(t *testing.T) {
 	} {
 		args := append(append([]string{}, tc.args...), "--redis", addr)
 		if tc.args[1] == "rename" || tc.args[1] == "order" {
-			args = append(append([]string{tc.args[0], tc.args[1], "--redis", addr}), tc.args[2:]...)
+			args = append([]string{tc.args[0], tc.args[1], "--redis", addr}, tc.args[2:]...)
 		}
 		code, stdout, stderr := runSprint(args...)
 		lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
