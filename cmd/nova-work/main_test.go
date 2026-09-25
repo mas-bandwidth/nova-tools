@@ -21,6 +21,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
 
 // sessionOKLine is the spec's own SESSION OK grammar line (docs/SPEC-WORK.md,
@@ -936,5 +937,125 @@ func TestAReplyPastTheWiresBoundIsRefusedAtTwoAndNamedAsSuch(t *testing.T) {
 	}
 	if !strings.Contains(line, "past the wire's bound") {
 		t.Fatalf("overlong reply refusal = %q, want it naming the bound", line)
+	}
+}
+
+// TestExtractMarkdownMinimal verifies that extractMarkdown produces markdown
+// from a minimal sexp form with one epic and one feature.
+func TestExtractMarkdownMinimal(t *testing.T) {
+	form := worklang.Form{
+		Kind: worklang.List,
+		List: []worklang.Form{
+			{Kind: worklang.Keyword, Value: "verification"},
+			{Kind: worklang.List, List: []worklang.Form{
+				{Kind: worklang.Keyword, Value: "revision"},
+				{Kind: worklang.String, Value: "abc123"},
+				{Kind: worklang.Keyword, Value: "suite"},
+				{Kind: worklang.String, Value: "lisp/nova-work/run-tests.sh"},
+				{Kind: worklang.Keyword, Value: "suite-result"},
+				{Kind: worklang.String, Value: "NOVA-WORK SLICE1 total=3 pass=3 fail=0"},
+				{Kind: worklang.Keyword, Value: "by-feature"},
+				{Kind: worklang.List, List: []worklang.Form{
+					{Kind: worklang.List, List: []worklang.Form{
+						{Kind: worklang.Keyword, Value: "feature"},
+						{Kind: worklang.String, Value: "E01-F01"},
+						{Kind: worklang.Keyword, Value: "verified"},
+						{Kind: worklang.Integer, Int: 3},
+						{Kind: worklang.Keyword, Value: "total"},
+						{Kind: worklang.Integer, Int: 3},
+						{Kind: worklang.Keyword, Value: "criteria"},
+						{Kind: worklang.List, List: []worklang.Form{
+							{Kind: worklang.List, List: []worklang.Form{
+								{Kind: worklang.Keyword, Value: "state"},
+								{Kind: worklang.String, Value: "verified"},
+								{Kind: worklang.Keyword, Value: "text"},
+								{Kind: worklang.String, Value: "accept only lists"},
+							}},
+						}},
+					}},
+				}},
+			}},
+			{Kind: worklang.Keyword, Value: "epics"},
+			{Kind: worklang.List, List: []worklang.Form{
+				{Kind: worklang.List, List: []worklang.Form{
+					{Kind: worklang.Keyword, Value: "id"},
+					{Kind: worklang.String, Value: "E01"},
+					{Kind: worklang.Keyword, Value: "title"},
+					{Kind: worklang.String, Value: "Canonical work data"},
+					{Kind: worklang.Keyword, Value: "features"},
+					{Kind: worklang.List, List: []worklang.Form{
+						{Kind: worklang.List, List: []worklang.Form{
+							{Kind: worklang.Keyword, Value: "id"},
+							{Kind: worklang.String, Value: "E01-F01"},
+							{Kind: worklang.Keyword, Value: "title"},
+							{Kind: worklang.String, Value: "Restricted Lisp reader"},
+						}},
+					}},
+				}},
+			}},
+		},
+	}
+
+	md, err := extractMarkdown(form)
+	if err != nil {
+		t.Fatalf("extractMarkdown: %v", err)
+	}
+
+	if !strings.Contains(md, "E01-F01") {
+		t.Errorf("markdown missing feature id E01-F01:\n%s", md)
+	}
+	if !strings.Contains(md, "Restricted Lisp reader") {
+		t.Errorf("markdown missing feature title:\n%s", md)
+	}
+	if !strings.Contains(md, "3/3") {
+		t.Errorf("markdown missing criteria count 3/3:\n%s", md)
+	}
+	if !strings.Contains(md, "[x]") {
+		t.Errorf("markdown missing checked box for verified criterion:\n%s", md)
+	}
+}
+
+// TestExtractMarkdownMissingVerification rejects a form without verification.
+func TestExtractMarkdownMissingVerification(t *testing.T) {
+	form := worklang.Form{
+		Kind: worklang.List,
+		List: []worklang.Form{
+			{Kind: worklang.Keyword, Value: "epics"},
+			{Kind: worklang.List},
+		},
+	}
+	_, err := extractMarkdown(form)
+	if err == nil {
+		t.Fatal("extractMarkdown: got nil, want error for missing verification")
+	}
+	if !strings.Contains(err.Error(), "missing verification") {
+		t.Fatalf("extractMarkdown error = %q, want 'missing verification'", err)
+	}
+}
+
+// TestExtractMarkdownMissingEpics rejects a form without epics.
+func TestExtractMarkdownMissingEpics(t *testing.T) {
+	form := worklang.Form{
+		Kind: worklang.List,
+		List: []worklang.Form{
+			{Kind: worklang.Keyword, Value: "verification"},
+			{Kind: worklang.List, List: []worklang.Form{
+				{Kind: worklang.Keyword, Value: "revision"},
+				{Kind: worklang.String, Value: "abc"},
+				{Kind: worklang.Keyword, Value: "suite"},
+				{Kind: worklang.String, Value: "test"},
+				{Kind: worklang.Keyword, Value: "suite-result"},
+				{Kind: worklang.String, Value: "NOVA-WORK SLICE1 total=1 pass=1 fail=0"},
+				{Kind: worklang.Keyword, Value: "by-feature"},
+				{Kind: worklang.List},
+			}},
+		},
+	}
+	_, err := extractMarkdown(form)
+	if err == nil {
+		t.Fatal("extractMarkdown: got nil, want error for missing epics")
+	}
+	if !strings.Contains(err.Error(), "missing epics") {
+		t.Fatalf("extractMarkdown error = %q, want 'missing epics'", err)
 	}
 }
