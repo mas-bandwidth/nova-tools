@@ -46,6 +46,61 @@ local function wslog(id, stream, from, to, by, why, at)
     'by', by, 'why', why, 'at', at)
 end
 
+-- ci_request: creates ci:<repo>:<head> and adds it to ci:pool, idempotent
+-- on the sha (nova-tools#3717). Returns without writing when the record
+-- already exists.
+local function ci_request(repo, head, pr, now)
+  local ci_key = 'ci:' .. repo .. ':' .. head
+  if redis.call('EXISTS', ci_key) == 1 then return end
+  local cfg_key = 'cfg:ci:' .. repo
+  local checks = redis.call('HGET', cfg_key, 'checks')
+  if not checks or checks == '' then
+    if repo == 'nova-tools' then
+      redis.call('HSET', cfg_key,
+        'checks', 'go-build,go-vet,go-test-cmd,go-test-internal,internal-ci',
+        'cmd:go-build', 'go build ./...',
+        'cmd:go-vet', 'go vet ./...',
+        'cmd:go-test-cmd', 'go test -count=1 ./cmd/...',
+        'cmd:go-test-internal', 'go test -count=1 ./internal/...',
+        'cmd:internal-ci', 'go test -count=1 ./internal/ci/...')
+    elseif repo == 'rowan-tools' then
+      redis.call('HSET', cfg_key,
+        'checks', 'shellcheck,bats',
+        'cmd:shellcheck', 'shellcheck -S warning bin',
+        'cmd:bats', 'bats tests')
+    end
+    checks = redis.call('HGET', cfg_key, 'checks')
+  end
+  if not checks or checks == '' then return end
+  local pr_str = ''
+  if pr then pr_str = tostring(pr) end
+  local now_str = tostring(now or 0)
+  local argv = {
+    ci_key,
+    'repo', repo,
+    'sha', head,
+    'pr', pr_str,
+    'url', '',
+    'checks', checks,
+    'requested_at', now_str,
+    'ci', 'pending',
+    'attempt', '0',
+    'bench', '',
+    'token', '',
+    'lease_until', '0',
+    'claimed_at', '0',
+    'ended_at', '0',
+  }
+  redis.call('HSET', argv[1], argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8], argv[9], argv[10], argv[11], argv[12], argv[13], argv[14], argv[15], argv[16], argv[17], argv[18], argv[19], argv[20], argv[21], argv[22], argv[23], argv[24], argv[25], argv[26])
+  for name in string.gmatch(checks, '[^,]+') do
+    if name ~= '' then
+      local cmd = redis.call('HGET', cfg_key, 'cmd:' .. name)
+      if cmd and cmd ~= '' then redis.call('HSET', ci_key, 'cmd:' .. name, cmd) end
+    end
+  end
+  redis.call('ZADD', 'ci:pool', tonumber(now_str) or 0, repo .. ':' .. head)
+end
+
 -- move one task between two ws sets of its stream; returns 1 when it was in
 -- `from`. The score is the task's age and a move keeps it (ws-index).
 local function move(id, stream, from, to, by, why, at)
@@ -70,12 +125,14 @@ if op == 'record' then
     end
     redis.call('HSET', k, 'repo', p.repo, 'n', p.n, 'state', 'open', 'ci', 'pending',
       'mergeable', '', 'reads', '', 'created_at', p.now)
+    ci_request(p.repo, f.head, p.n, p.now)
   end
   local old = redis.call('HGET', k, 'head')
   if (f.head or '') ~= '' and old and old ~= '' and old ~= f.head then
     -- a new head: CI and mergeable were for the old one
     if (f.ci or '') == '' then f.ci = 'pending' end
     if (f.mergeable or '') == '' then redis.call('HSET', k, 'mergeable', '') end
+    ci_request(p.repo, f.head, p.n, p.now)
   end
   local set = {}
   for key, v in pairs(f) do if v ~= '' then set[key] = v end end
@@ -120,6 +177,10 @@ if op == 'built' then
   redis.call('SADD', 'land:' .. p.repo .. ':streams', p.slug)
   if p.stream_pr and (p.stream_pr.n or '') ~= '' then
     hset(prkey(p.repo, p.stream_pr.n), p.stream_pr.fields)
+    local sp_head = (p.stream_pr.fields or {}).head or ''
+    if sp_head ~= '' then
+      ci_request(p.repo, sp_head, p.stream_pr.n, p.now)
+    end
   end
   return {'OK', tostring(moved), tostring(#(p.parked or {}))}
 end
