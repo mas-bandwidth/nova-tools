@@ -80,19 +80,26 @@ func (denyHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 
 func (denyHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
+		// Redis refuses each denied command on its own and runs the rest of
+		// the pipeline, so the hook does too.
 		var first error
+		var rest []redis.Cmder
 		for _, cmd := range cmds {
 			if denied(cmd) {
 				cmd.SetErr(noperm(cmd))
 				if first == nil {
 					first = cmd.Err()
 				}
+				continue
+			}
+			rest = append(rest, cmd)
+		}
+		if len(rest) > 0 {
+			if err := next(ctx, rest); err != nil {
+				return err
 			}
 		}
-		if first != nil {
-			return first
-		}
-		return next(ctx, cmds)
+		return first
 	}
 }
 
@@ -116,7 +123,7 @@ func TestPreflightInfoNeedsPreflightUser(t *testing.T) {
 	defer c.Close()
 	c.AddHook(denyHook{})
 
-	l := checkRedis(ctx, c)
+	l := readSnapshot(ctx, c, "control-00003320").checkRedis()
 	if !l.Red || l.N != "7.1" {
 		t.Fatalf("7.1 as the bench seat must be RED: %s", l)
 	}
@@ -127,12 +134,12 @@ func TestPreflightInfoNeedsPreflightUser(t *testing.T) {
 		t.Fatalf("7.1 repeats the raw refusals: %s", l)
 	}
 
-	lines := StoreChecks(ctx, c, Options{Sprint: "control-00003320"})
+	lines := Run(ctx, c, Options{Sprint: "control-00003320"})
 	var got []string
 	for _, line := range lines {
 		got = append(got, line.N)
 	}
-	if strings.Join(got, " ") != "7.1 7.2 7.3 7.7 7.10 7.15" {
+	if strings.Join(got, " ") != storeOrder {
 		t.Fatalf("a NOPERM 7.1 must not stop the other checks: %v", got)
 	}
 	for _, line := range lines {
