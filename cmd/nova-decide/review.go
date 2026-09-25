@@ -361,25 +361,34 @@ func reviewOne(gh prSource, repo string, n int, cardPath string, asker prereview
 		PathsFrom: card.PathsFrom, SymbolFrom: card.SymbolFrom, CardPath: card.Path,
 		At: time.Now().UTC().Format(time.RFC3339),
 	}
+	var groups prereview.GroupScore
 	if asker != nil && tune.Enabled["score"] {
 		*usage = decide.Usage{}
-		raw, conf, err := prereview.ScoreWith(context.Background(), asker, prompt.Question(), pr, card)
+		ask := asker
+		if record != "" {
+			// One fixture per call: per pull request, or per file group in
+			// tool-PR mode (#2621), so the pass replays rather than repays.
+			ask = prereview.RecordingAsker{Inner: asker, Dir: record, Repo: repo, Failed: func(err error) {
+				fmt.Fprintf(stderr, "REVIEW RECORD FAILED pr=%d reason=%s\n", n, oneline.Err(err))
+			}}
+		}
+		g, err := prereview.ScoreGroups(context.Background(), ask, prompt.Question(), pr, card)
 		d.InTokens, d.OutTokens, d.UsageKnown = usage.InputTokens, usage.OutputTokens, usage.Known()
 		if err != nil {
 			d.Reason = "score unavailable (" + oneline.Err(err) + "); " + d.Reason
 		} else {
-			d.RawScore, d.Conf, d.Score, d.Scored = raw, conf, tune.GateCap(checks, prereview.ScoreFromAnswer(raw)), true
-			if record != "" {
-				if err := prereview.RecordFixture(record, repo, n, raw, conf); err != nil {
-					fmt.Fprintf(stderr, "REVIEW RECORD FAILED pr=%d reason=%s\n", n, oneline.Err(err))
-				}
-			}
+			d.RawScore, d.Conf, d.Score, d.Scored = g.Raw, g.Conf, tune.GateCap(checks, prereview.ScoreFromAnswer(g.Raw)), true
+			groups = g
 		}
 	}
 	d.Verdict, d.Explain = tune.Decide(checks, d.Score, d.Scored)
 	d.Checks = tune.ChecksField(checks, d.Score, d.Scored)
 	if d.Scored {
-		d.Evidence = append(d.Evidence, fmt.Sprintf("score: %d -- raw %.2f, confidence %.2f, one %s question (prompt %s) over the body and the diff", d.Score, d.RawScore, d.Conf, tune.Model, prompt.Sha8))
+		over := "one " + tune.Model + " question (prompt " + prompt.Sha8 + ") over the body and the diff"
+		if groups.Groups > 1 {
+			over = fmt.Sprintf("the lowest of %d %s questions (prompt %s), one per changed-file group, lowest %s", groups.Groups, tune.Model, prompt.Sha8, oneline.Field(groups.Lowest))
+		}
+		d.Evidence = append(d.Evidence, fmt.Sprintf("score: %d -- raw %.2f, confidence %.2f, %s", d.Score, d.RawScore, d.Conf, over))
 	} else {
 		d.Evidence = append(d.Evidence, "score: - -- "+scoreWhy(asker, tune, d.Reason))
 	}

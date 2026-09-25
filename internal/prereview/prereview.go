@@ -605,7 +605,7 @@ func isCell(pr PR, card Card) bool {
 func resultLineStart(body string) int {
 	off := 0
 	for _, line := range strings.SplitAfter(body, "\n") {
-		if strings.HasPrefix(strings.TrimLeft(strings.TrimSpace(line), "\"'`"), "RESULT") {
+		if isResultLine(line) {
 			return off + len(line) - len(strings.TrimLeft(line, " \t"))
 		}
 		off += len(line)
@@ -617,9 +617,20 @@ func resultLineStart(body string) int {
 // leading quote or backtick allowed: harvest has written both).
 func hasResultLine(body string) bool {
 	for _, line := range strings.Split(body, "\n") {
-		if strings.HasPrefix(strings.TrimLeft(strings.TrimSpace(line), "\"'`"), "RESULT") {
+		if isResultLine(line) {
 			return true
 		}
 	}
 	return false
+}
+
+// isResultLine: the line starts with RESULT. A line indented by a tab or four
+// spaces is a markdown code block QUOTING a RESULT -- #2614's hand-written body
+// shows the ASKED shape as `    RESULT: ASKED <the question>` -- and a
+// friend's prose body is no RESULT, not a malformed one (#2621).
+func isResultLine(line string) bool {
+	if strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "    ") {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimLeft(strings.TrimSpace(line), "\"'`"), "RESULT")
 }

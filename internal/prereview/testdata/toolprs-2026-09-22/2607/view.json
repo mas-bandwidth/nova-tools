@@ -1,0 +1,15 @@
+{
+  "number": 2607,
+  "title": "swarm: CI-NET fix — the header-block fixtures spell base-repo with example.com, not github.com",
+  "body": "CI-NET refused internal/swarm/lintheaderkeys_test.go lines 37 and 89 for a\nliteral github.com host. Both are the base-repo: value of a card-header\nfixture, used only as text, never dialed. cmd/nova-pulse/cut_validated_test.go\nand cmd/nova-pulse/fleet_verbs_test.go already spell fixture repo URLs on\nexample.com, so the two base-repo lines here now follow the same convention:\nhttps://example.com/mas-bandwidth/nova-tools.git.\n\ngo build ./... && go vet ./... && go test ./... are green for the whole\nmodule.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>",
+  "headRefOid": "fb99dc97cf9918254473e7529db3c2cfa331a80f",
+  "baseRefName": "dev",
+  "files": [
+    {
+      "path": "internal/swarm/lintheader.go"
+    },
+    {
+      "path": "internal/swarm/lintheaderkeys_test.go"
+    }
+  ]
+}

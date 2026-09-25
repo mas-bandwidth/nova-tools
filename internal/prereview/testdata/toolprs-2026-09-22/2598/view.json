@@ -1,0 +1,15 @@
+{
+  "number": 2598,
+  "title": "pulse: stale-base is a false positive when PATHS is space-separated or names a directory (#2547)",
+  "body": "14 finished cards on the Linux and mac benches were refused every harvest pass\nwith a `files=` list that was, character for character, their own PATHS line,\nagainst a range whose left side was the live dev tip. Two causes, both in what\nthe declared globs MEAN and neither in the walk:\n\n  - `parsePATHS` split the PATHS: value on commas ONLY, and the cutter writes\n    the entries separated by spaces. The whole line became one glob holding a\n    space, which matches no path in any repository, so every declared file came\n    back as an offender. Both separators are now read.\n  - a PATHS entry naming a DIRECTORY (`internal/secrets`) did not cover a file\n    inside it. A wildcard-free entry that is a strict path prefix of a changed\n    path is now the directory it names, and so is one written with a trailing\n    slash. `internal/secrets/**`, the spec's own spelling, is unchanged.\n\nThe glob half of the matcher is now `hygiene.MatchGlob` rather than the\ncharacter-for-character copy of it this file carried; internal/pulse sits above\ninternal/hygiene, so the call is the right way round.\n\nTwo things the issue also asks for. The refusal prints `declared=` beside\n`files=`, so a PATHS line the parser read as one unsplit glob is visible in the\nrefusal itself. A target that could not be fetched or pinned is now its own\n`stale-base MISSING` verdict carrying no offender list, instead of a\nDIFFER-shaped refusal built over an empty ref.\n\nThe guard is not weakened: the same table asserts that a branch cut from an\nOLDER base still refuses under every one of these spellings, and names the\nlanded file and only it (#2032).\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+  "headRefOid": "23a5c42283e194c07e138d0e66006d1e151b49fb",
+  "baseRefName": "dev",
+  "files": [
+    {
+      "path": "internal/pulse/harveststale.go"
+    },
+    {
+      "path": "internal/pulse/harveststale_test.go"
+    }
+  ]
+}

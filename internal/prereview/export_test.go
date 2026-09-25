@@ -9,3 +9,10 @@ func Pathish(tok string) bool {
 func ClaimsCheck(pr PR, card Card) Check {
 	return claimsCheck(pr, card)
 }
+
+// FirstTell exposes the unexported firstTell: the tell's sentence, and whether
+// one fired.
+func FirstTell(added string) (string, bool) {
+	t, ok := firstTell(added)
+	return t.says, ok
+}
