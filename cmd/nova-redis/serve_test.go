@@ -471,7 +471,7 @@ func TestRestartOnTheSameDirKeepsTheStore(t *testing.T) {
 		t.Errorf("TTL %s = %v (err %v), want -1: the store sets no TTL", key, ttl, err)
 	}
 	var line *preflight.Line
-	lines := preflight.StoreChecks(ctx, c, preflight.Options{Sprint: "T"})
+	lines := preflight.Run(ctx, c, preflight.Options{Sprint: "T"})
 	for i := range lines {
 		if lines[i].N == "7.1" {
 			line = &lines[i]
