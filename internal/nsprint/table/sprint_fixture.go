@@ -135,6 +135,11 @@ func SprintFixture() [][]string {
 		[]string{"HSET", "friend:emma", "at", at(-2 * time.Second), "up", "1"},
 		[]string{"HSET", "friend:stella", "at", at(-30 * time.Second), "up", "1"},
 		[]string{"HSET", DoneBaseKey, "rowan", "10"},
+		// emma's ended copies this sprint (#3929): 3 ok, 1 fail; one ok copy
+		// from before s:fix opened never counts (#3883)
+		[]string{"ZADD", FriendCardsKey("emma", "ok"), ms(-time.Minute), "e~1", ms(-2 * time.Minute), "e~2", ms(-3 * time.Minute), "e~3",
+			ms(-4 * time.Hour), "e~before-open"},
+		[]string{"ZADD", FriendCardsKey("emma", "fail"), ms(-time.Minute), "e~4"},
 	)
 	for _, f := range []struct {
 		name   string

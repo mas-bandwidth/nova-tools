@@ -71,6 +71,7 @@ const BenchBeatInterval = time.Second
 type FriendRow struct {
 	Name                         string
 	At, Up, Ready, Working, Done string
+	OK, Fail                     string // friend:<f>:cards:ok|fail ZCARDs: its copies ended (#3929)
 	Down                         string
 }
 

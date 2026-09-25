@@ -21,7 +21,7 @@ func friendDoneCell(t *testing.T, snap *table.SprintSnapshot, now time.Time, fri
 	t.Helper()
 	for _, line := range strings.Split(snap.Render(now), "\n") {
 		cells := strings.Split(line, "|")
-		if len(cells) == 5 && strings.TrimSpace(cells[0]) == friend {
+		if len(cells) >= 5 && strings.TrimSpace(cells[0]) == friend {
 			return strings.TrimSpace(cells[3])
 		}
 	}

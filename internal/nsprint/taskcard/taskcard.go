@@ -3,7 +3,7 @@
 // and "Tasks are cards"). A task is one record, task:<id>, never deleted,
 // whose pointer `where` names the one set it is in (or none):
 //
-//	where      "" | waiting | ready | working | merging | landed | done | parked
+//	where      "" | waiting | ready | working | reading | merging | landed | done | parked
 //	where_ok   ok | fail once done (landed is ok), - before
 //	stream     ws:<stream>:<where> holds the id while it has a stream
 //	friend     friend:<friend>:cards:<where> holds the id while a friend has it
@@ -16,7 +16,9 @@
 //
 // The graph: "" -> waiting|ready (push); waiting -> ready|parked|done;
 // ready -> waiting|working|parked|done; working -> merging|done|landed|ready
-// (ready: the lease lapsed); merging -> landed|done; parked ->
+// (ready: the lease lapsed); a primary's copy moves (moves.go): waiting ->
+// working (card deal), working -> reading|waiting (card end), reading ->
+// merging|working|waiting (a read's score); merging -> landed|done; parked ->
 // waiting|ready|done; landed -> done/ok (table clear). landed needs the
 // merge sha; a done that is not from working needs a why.
 package taskcard
@@ -45,7 +47,7 @@ const (
 )
 
 // Wheres are the sets a task can be in, in the fsck reply's order.
-var Wheres = []string{"waiting", "ready", "working", "merging", "landed", "done", "parked"}
+var Wheres = []string{"waiting", "ready", "working", "reading", "merging", "landed", "done", "parked"}
 
 // Key is a task's record.
 func Key(id string) string { return "task:" + id }
@@ -184,6 +186,9 @@ type PushRequest struct {
 	Head, PR, Repo, DependsOn         string
 	Front                             bool
 	By, Why                           string
+	// Fields are more record fields, name then value (never a pointer
+	// field): base, base_sha, paths, done_when, who, tier ... (#3911).
+	Fields []string
 }
 
 // PushResult is where the task was placed and its ready entry (q:<friend>).
@@ -218,6 +223,7 @@ func Push(ctx context.Context, c redis.Cmdable, r PushRequest) (PushResult, erro
 			o.Fields = append(o.Fields, kv[0], kv[1])
 		}
 	}
+	o.Fields = append(o.Fields, r.Fields...)
 	front := "0"
 	if r.Front {
 		front = "1"
