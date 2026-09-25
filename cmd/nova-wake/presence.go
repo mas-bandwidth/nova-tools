@@ -1,8 +1,9 @@
 package main
 
 // The friend heartbeat of #2610. `beat` is the process a friend's window
-// starts and forgets: it writes one hash with a TTL every 30 seconds (its
-// stamp, and its child count when --width is passed, #2673) and spends nothing
+// starts and forgets: it writes one hash every 30 seconds (its stamp, the
+// window it promises as stale_ms, and its child count when --width is passed,
+// #2673), never with a TTL (#3878), and spends nothing
 // else, so presence costs no tokens and is never the thing dropped under load.
 // `presence` is the read: one line, up or down per friend, from the friend
 // row's up and at where the row loop writes one (#3447), for the swarm table
@@ -36,8 +37,8 @@ const (
 	storeHint  = `--store <host:port> is the fleet Redis the heartbeat lives on, the same address the other verbs spell --redis; the password is never a flag -- it reaches this process as NOVA_REDIS_BENCH_PASSWORD through nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD`
 	beatAsHint = `--as <name> is the friend whose window this is, spelled as the bus roster spells it; the key it writes is friend:<name> and there is no flag that beats for somebody else`
 	rosterHint = `the roster is the friends SET in the store when no flag names one; otherwise --friends <a,b,c>, --participants <file> (the bus participants.json) or --bus <dir> (its checkout, whose participants.json is read), exactly one`
-	ttlHint    = `--ttl <duration> is how long one beat keeps the friend up, and it must be longer than --every or the key lapses between beats and a friend who is here reads as AWAY; the default is three beats, 90s for a 30s cadence`
-	widthHint  = `--width <n> is how many children are in use now, a whole number written to the width field of friend:<name> with the beat's TTL; zero is a real count, and leaving --width off writes no field and is not a failure`
+	ttlHint    = `--ttl <duration> is how long one beat keeps the friend up (written as stale_ms; the key never expires), and it must be longer than --every or the beat goes stale between beats and a friend who is here reads as AWAY; the default is three beats, 90s for a 30s cadence`
+	widthHint  = `--width <n> is how many children are in use now, a whole number written to the width field of friend:<name> with the beat; zero is a real count, and leaving --width off writes no field and is not a failure`
 )
 
 // storeOpener is the seam the tests enter through: the live verbs dial Redis,
@@ -53,12 +54,13 @@ func dialStore(ctx context.Context, addr, user string) (presence.Store, func() e
 	return r, r.Close, nil
 }
 
-// cmdBeat is the friend's own process: HSET friend:<name> at <utc> [width <n>]
-// plus PEXPIRE <ttl>, in one MULTI, every --every, for as long as the window
-// lives, where no row loop writes the friend row. On the row, or on a key of
+// cmdBeat is the friend's own process: HSET friend:<name> at <utc> stale_ms
+// <ttl> [width <n>], in one MULTI with no expiry (#3878), every --every, for
+// as long as the window lives, where no row loop writes the friend row. On
+// the row, or on a key of
 // any other type, it writes nothing and exits 2 naming the type (#3447). A friend whose width changes re-runs beat with the new number. It ends when the window does, and
 // that ending IS the signal: no shutdown hook, no goodbye note, nothing to
-// forget to run.
+// forget to run: the at stops moving and every reader reads the friend down.
 func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open storeOpener) int {
 	fs := flag.NewFlagSet("beat", flag.ContinueOnError)
 	var (

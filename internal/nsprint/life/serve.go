@@ -39,8 +39,9 @@ const (
 	FunctionServeRelease = "ns_friend_serve_release"
 )
 
-// ServeLockTTL is the seat lock's and both presence hashes' TTL: five beats at
-// BeatInterval, the same window presence.lua gives a friend beat.
+// ServeLockTTL is the seat lock's TTL (a lease) and both presence hashes'
+// stale_ms (#3878: they carry no TTL): five beats at BeatInterval, the same
+// window presence.lua gives a friend beat.
 const ServeLockTTL = 5 * time.Second
 
 // TaskBeatEvery is how often serve beats each live child's task lease

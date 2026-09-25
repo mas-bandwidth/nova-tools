@@ -62,15 +62,19 @@ func TestBeatOnceWritesTheFriendsKey(t *testing.T) {
 	if at != "2026-09-22T09:41:00Z" || last != at {
 		t.Fatalf("at = %q, last = %q; want the beat and its memory", at, last)
 	}
-	if got := st.TTL("friend:johnny"); got != presence.DefaultTTL {
-		t.Fatalf("friend:johnny ttl = %s; want %s", got, presence.DefaultTTL)
+	if got := st.TTL("friend:johnny"); got != 0 {
+		t.Fatalf("friend:johnny ttl = %s; want none (#3878)", got)
+	}
+	if got := st.Hash("friend:johnny")[presence.FieldStale]; got != "90000" {
+		t.Fatalf("friend:johnny stale_ms = %q; want the --ttl window, 90000", got)
 	}
 }
 
 // TestBeatWidthWritesTheHashAndPresencePrintsUpOrDown is #2673's DONE-WHEN
 // through the verbs: `beat --width 8` puts width beside at in friend:<name>
-// with the beat's TTL, `presence` over the friends SET prints the friend up
-// with that width, and once the beat has lapsed the same line prints down.
+// with the beat, `presence` over the friends SET prints the friend up with
+// that width, and once the beat's at is past its window the same line prints
+// down (#3878: the key is still there).
 func TestBeatWidthWritesTheHashAndPresencePrintsUpOrDown(t *testing.T) {
 	st := presence.NewFakeStore(beatAt)
 	st.AddMembers(presence.FriendsSet, "emma", "stella", "rowan")
@@ -85,8 +89,8 @@ func TestBeatWidthWritesTheHashAndPresencePrintsUpOrDown(t *testing.T) {
 	if h := st.Hash("friend:emma"); h["width"] != "8" || h["at"] != "2026-09-22T09:41:00Z" {
 		t.Fatalf("friend:emma = %v; want at and width=8", h)
 	}
-	if got := st.TTL("friend:emma"); got != presence.DefaultTTL {
-		t.Fatalf("ttl = %s; want %s", got, presence.DefaultTTL)
+	if got := st.TTL("friend:emma"); got != 0 {
+		t.Fatalf("ttl = %s; want none (#3878)", got)
 	}
 
 	// Stella's width changes: she re-runs beat with the new number.
@@ -103,7 +107,7 @@ func TestBeatWidthWritesTheHashAndPresencePrintsUpOrDown(t *testing.T) {
 		t.Fatalf("line =\n\t%q\nwant\n\t%q", out.String(), want)
 	}
 
-	// Emma's beat stops; 31s later her 90s TTL has run out and she is down.
+	// Emma's beat stops; 31s later her 90s window has run out and she is down.
 	clock.Sleep(31 * time.Second)
 	out.Reset()
 	if code := cmdPresence([]string{"--store", "store.invalid:6380"}, &out, &errb, clock, fakeOpener(st)); code != 0 {

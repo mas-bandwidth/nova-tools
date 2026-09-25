@@ -7,7 +7,8 @@
 -- Keys: friends:decl (hash rev, digest, path, at), friend:<f>:wakepath (hash:
 -- the entry's fields plus kind (= mode, the ladder in friend.lua reads it),
 -- decl, rev, at), friends:declared (set), friend:<f>:wakerepair (the one
--- repairer's lock, PX), cap:log (friend-declared / friend-undeclared receipts).
+-- repairer's lock, PX), cap:log (friend-declared / friend-undeclared receipts,
+-- never trimmed, #3878).
 
 local function fd_now_ms()
   local t = redis.call('TIME')
@@ -15,7 +16,7 @@ local function fd_now_ms()
 end
 
 local function fd_receipt(kind, subject, reason, at)
-  redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
+  redis.call('XADD', 'cap:log', '*', -- never trimmed (#3878)
     'kind', kind, 'subject', subject, 'reason', reason,
     'actor', 'friend-declare', 'idem', '', 'at', tostring(at))
 end

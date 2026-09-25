@@ -27,7 +27,7 @@ end
 -- A released global friend slot wakes the capacity reconciler. This event is
 -- written in the same Function call as the task transition and its receipt.
 local function slot_freed(S, id, friend, attempt, at)
-  redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
+  redis.call('XADD', 'cap:log', '*',
     'kind', 'slot-freed', 'consumer', 'friend:' .. friend,
     'sprint', S, 'id', id, 'attempt', tostring(attempt), 'at', tostring(at))
 end

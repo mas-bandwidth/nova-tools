@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
@@ -378,7 +379,7 @@ type GraphQLBudget struct {
 type LineupInput struct {
 	Now           time.Time // Redis server time
 	BenchesLoaded bool      // the registry and beats were read
-	Up            []string  // registered benches with a beat, sorted
+	Up            []string  // registered benches with a live beat, sorted
 	Conform       map[string]ConformRecord
 	// ConformRun is this run's marker when the run published conform; a
 	// record whose run field is not this marker was not republished by this
@@ -437,10 +438,10 @@ func GatherLineup(ctx context.Context, c *redis.Client, sprint string) (LineupIn
 	names := reg.Val()
 	sort.Strings(names)
 	p = c.Pipeline()
-	beats := make([]*redis.IntCmd, len(names))
+	beats := make([]*beat.Cmd, len(names))
 	recs := make([]*redis.MapStringStringCmd, len(names))
 	for i, b := range names {
-		beats[i] = p.Exists(ctx, "bench:"+b+":beat")
+		beats[i] = beat.Read(ctx, p, beat.BenchKey(b))
 		recs[i] = p.HGetAll(ctx, conformKey(b))
 	}
 	var landed *redis.BoolSliceCmd
@@ -459,7 +460,7 @@ func GatherLineup(ctx context.Context, c *redis.Client, sprint string) (LineupIn
 		}
 	}
 	for i, b := range names {
-		if beats[i].Val() == 0 {
+		if !beats[i].Live(in.Now) {
 			continue
 		}
 		in.Up = append(in.Up, b)

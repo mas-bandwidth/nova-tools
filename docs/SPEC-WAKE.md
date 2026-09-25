@@ -3211,8 +3211,10 @@ nova-wake beat --as <name> --store <host:port> [--every 30s] [--ttl 90s]
 ```
 
 which every `--every` writes, in one `MULTI`, the hash `friend:<name>` with field
-`at` = the current time in RFC3339 UTC and `PEXPIRE <ttl>`, and
-`friend:<name>:last` = the same stamp with no expiry (#2673). It
+`at` = the current time in RFC3339 UTC and `stale_ms` = the `--ttl` window, and
+`friend:<name>:last` = the same stamp, neither with an expiry (#2673; keys do
+not expire, #3878: a reader reads the friend down once `at` is older than
+`stale_ms`). It
 reads nothing, watches nothing, and starts no turn: **a heartbeat that spends a
 token is a heartbeat somebody turns off**, which is why this is not a source of
 `watch` and never wakes anybody. `--once` writes one beat and returns, for a

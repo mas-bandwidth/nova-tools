@@ -8,12 +8,13 @@ import (
 	"time"
 )
 
-// FakeStore is the store the tests beat against: hashes, strings and sets with
-// real expiry, driven by a clock the test moves. It is strict where the real
-// one is -- a hash whose TTL has passed is gone, a read of a key nobody wrote
-// answers "", a hash with no TTL is not live, and a store told to fail fails --
-// because a lenient fake would let a heartbeat that never expires look correct
-// here and report a friend who left as up.
+// FakeStore is the store the tests beat against: hashes, strings and sets,
+// with real expiry for a hash a test writes with a TTL (a beat from before
+// #3878), driven by a clock the test moves. It is strict where the real one is
+// -- a hash whose TTL has passed is gone, a read of a key nobody wrote answers
+// "", a beat never carries a TTL, and a store told to fail fails -- because a
+// lenient fake would let a beat that never goes stale look correct here and
+// report a friend who left as up.
 type FakeStore struct {
 	mu      sync.Mutex
 	now     time.Time
@@ -62,8 +63,8 @@ func NewFakeStore(now time.Time) *FakeStore {
 	}
 }
 
-// Now is the fake's clock, and Advance moves it. Hashes expire against it, so
-// `Advance(91 * time.Second)` is a friend's window that went away.
+// Now is the fake's clock, and Advance moves it. A beat's at ages against it,
+// so `Advance(91 * time.Second)` is a friend's window that went away.
 func (f *FakeStore) Now() time.Time {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -89,10 +90,10 @@ func (f *FakeStore) hash(key string) (fakeHash, bool) {
 	return h, true
 }
 
-// WriteBeat is HSET key fields..., PEXPIRE key ttl and SET lastKey stamp, all
-// or nothing; the friend row (a hash with the up field) or a set at key is
+// WriteBeat is HSET key fields..., PERSIST key and SET lastKey stamp, all or
+// nothing; the friend row (a hash with the up field) or a set at key is
 // refused with a *KeyTypeError and nothing is written, as the real store does.
-func (f *FakeStore) WriteBeat(ctx context.Context, key string, fields []string, ttl time.Duration, lastKey, stamp string) error {
+func (f *FakeStore) WriteBeat(ctx context.Context, key string, fields []string, lastKey, stamp string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.fail(); err != nil {
@@ -100,9 +101,6 @@ func (f *FakeStore) WriteBeat(ctx context.Context, key string, fields []string, 
 	}
 	if len(fields) == 0 || len(fields)%2 != 0 {
 		return fmt.Errorf("beat fields must be field, value pairs")
-	}
-	if ttl <= 0 {
-		return fmt.Errorf("non-positive ttl")
 	}
 	if _, ok := f.sets[key]; ok {
 		return &KeyTypeError{Key: key, Type: "set"}
@@ -121,7 +119,7 @@ func (f *FakeStore) WriteBeat(ctx context.Context, key string, fields []string, 
 	for i := 0; i < len(fields); i += 2 {
 		h.fields[fields[i]] = fields[i+1]
 	}
-	h.until = f.now.Add(ttl)
+	h.until = time.Time{}
 	f.hashes[key] = h
 	f.strings[lastKey] = stamp
 	f.Sets++
@@ -129,8 +127,8 @@ func (f *FakeStore) WriteBeat(ctx context.Context, key string, fields []string, 
 }
 
 // ReadBeats answers one Reading per key: the three fields, the row's up field
-// and whether the hash carries it, whether a TTL is running on the hash, and
-// the untimed :last string.
+// and whether the hash carries it, the beat's stale_ms, whether a TTL is
+// running on the hash, and the untimed :last string.
 func (f *FakeStore) ReadBeats(ctx context.Context, keys []string) ([]Reading, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -141,7 +139,7 @@ func (f *FakeStore) ReadBeats(ctx context.Context, keys []string) ([]Reading, er
 	for i, k := range keys {
 		if h, ok := f.hash(k); ok {
 			up, row := h.fields[FieldUp]
-			out[i] = Reading{At: h.fields[FieldAt], Width: h.fields[FieldWidth], Window: h.fields[FieldWindow], Up: up, Row: row, Live: !h.until.IsZero()}
+			out[i] = Reading{At: h.fields[FieldAt], Width: h.fields[FieldWidth], Window: h.fields[FieldWindow], Up: up, Row: row, Stale: h.fields[FieldStale], Live: !h.until.IsZero()}
 		}
 		out[i].Last = f.strings[k+LastSuffix]
 	}

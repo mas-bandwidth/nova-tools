@@ -9,12 +9,16 @@
 --                      per seat: a second serve on the seat reads BUSY and
 --                      refuses; a stalled serve frees the seat within the TTL.
 --   friend:<f>:beat    the #2756 v5 presence hash (harness, host, session,
---                      at), PX FS_BEAT_MS: what ns_task_take reads as up.
+--                      at, stale_ms), no TTL (#3878): what ns_task_take reads
+--                      as up while TIME - at < stale_ms (NS.beat).
 --   friend:<f>         the friend row (#3447, one writer, untouched by serve),
 --                      or on a non-row store the #2673 presence hash (at,
---                      width, cap, host, serve) PX FS_BEAT_MS.
+--                      width, cap, host, serve, stale_ms), no TTL (#3878): a
+--                      reader judges its at against stale_ms, never the key's
+--                      existence.
 --   friend:<f>:last    the untimed memory of the last beat (#2673).
---   cap:log            friend-up / friend-down receipts, as presence.lua.
+--   cap:log            friend-up / friend-down receipts, as presence.lua,
+--                      never trimmed (#3878).
 -- friend:<f>:log, the serve's own receipt stream, is written by the Go loop
 -- (one XADD per event) and never by these functions.
 
@@ -27,7 +31,7 @@ local function fs_now_ms()
 end
 
 local function fs_caplog(kind, subject, reason, actor, at)
-  redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
+  redis.call('XADD', 'cap:log', '*',
     'kind', kind, 'subject', subject, 'reason', reason or '',
     'actor', actor or '', 'idem', '', 'at', tostring(at))
 end
@@ -50,8 +54,9 @@ end
 
 -- serve_beat: args friend, session, stamp (RFC 3339 UTC from the caller's
 -- clock; Redis Lua has no date formatter), width (children in use), cap (the
--- seat's width), harness, host, actor. It takes or renews the seat lock and
--- writes both presence hashes with their TTLs and the untimed :last.
+-- seat's width), harness, host, actor. It takes or renews the seat lock (a
+-- lease, PX FS_LOCK_MS) and writes both presence hashes, each stamped with
+-- its stale_ms and neither with a TTL (#3878), and the untimed :last.
 -- BUSY names the session that holds the seat; UNREGISTERED is a name not in
 -- the friends SET (nova-sprint capacity friend registers one).
 local function serve_beat(keys, args)
@@ -69,23 +74,26 @@ local function serve_beat(keys, args)
     return { 'UNREGISTERED' }
   end
   local beat_key = 'friend:' .. friend .. ':beat'
+  local at = fs_now_ms()
+  local was_up = NS.beat.up(beat_key, at)
+  -- A stopped beat keeps its hash (#3878); its session holds the seat only
+  -- while the beat is live.
   local beat_session = redis.call('HGET', beat_key, 'session')
-  if beat_session and beat_session ~= session then
+  if beat_session and beat_session ~= session and was_up == 1 then
     return { 'BUSY', beat_session }
   end
-  local at = fs_now_ms()
-  local was_up = redis.call('EXISTS', beat_key)
   redis.call('SET', lock, session, 'PX', FS_LOCK_MS)
   redis.call('HSET', beat_key,
     'harness', harness or '', 'host', host or '', 'session', session,
-    'at', tostring(at))
-  redis.call('PEXPIRE', beat_key, FS_BEAT_MS)
+    'at', tostring(at), NS.beat.STALE, tostring(FS_BEAT_MS))
+  redis.call('PERSIST', beat_key)
   local row = 'friend:' .. friend
   if not fs_is_row(row) then
     fs_row_hash(row)
     redis.call('HSET', row, 'at', stamp or '', 'width', width or '0',
-      'cap', cap or '0', 'host', host or '', 'serve', session)
-    redis.call('PEXPIRE', row, FS_BEAT_MS)
+      'cap', cap or '0', 'host', host or '', 'serve', session,
+      NS.beat.STALE, tostring(FS_BEAT_MS))
+    redis.call('PERSIST', row)
     redis.call('SET', row .. ':last', stamp or '')
   end
   if was_up == 0 then
@@ -95,10 +103,9 @@ local function serve_beat(keys, args)
 end
 
 -- serve_release: the seat's bye. Only the serving session releases; another
--- session's lock or beat is BUSY. It clears the lock and presence hash(es)
--- (the beat lapsing would take them anyway; the friend row is preserved) and
--- logs friend-down when the friend was up. Registration and queued work stay
--- for the next serve.
+-- session's live lock or beat is BUSY. It clears the lock and presence
+-- hash(es) (the friend row is preserved) and logs friend-down when the
+-- friend was up. Registration and queued work stay for the next serve.
 local function serve_release(keys, args)
   local friend, session, actor = args[1], args[2], args[3]
   if not friend or friend == '' or not session or session == '' then
@@ -110,12 +117,12 @@ local function serve_release(keys, args)
     return { 'BUSY', holder }
   end
   local beat_key = 'friend:' .. friend .. ':beat'
+  local at = fs_now_ms()
+  local was_up = NS.beat.up(beat_key, at)
   local beat_session = redis.call('HGET', beat_key, 'session')
-  if beat_session and beat_session ~= session then
+  if beat_session and beat_session ~= session and was_up == 1 then
     return { 'BUSY', beat_session }
   end
-  local was_up = redis.call('EXISTS', beat_key)
-  local at = fs_now_ms()
   local row = 'friend:' .. friend
   if fs_is_row(row) then
     redis.call('DEL', lock, beat_key)

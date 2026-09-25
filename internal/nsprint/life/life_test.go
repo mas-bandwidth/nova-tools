@@ -2,6 +2,7 @@ package life_test
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -203,9 +204,10 @@ func TestBenchBeatSingleInstance(t *testing.T) {
 	}
 }
 
-// TestBenchBeatKeyHasTTL (#3372): every bench beat writes bench:<b>:beat,
-// :owner and :live with a TTL of 3 x the beat interval (BenchBeatTTL), so a
-// dead loop's row leaves the store on its own; an explicit TTL is honoured.
+// TestBenchBeatKeyHasTTL (#3372, #3878): every bench beat writes the leases
+// :owner and :live with a TTL of 3 x the beat interval (BenchBeatTTL), and
+// bench:<b>:beat with no TTL and that window as stale_ms, so a dead loop's
+// beat reads down and stays in the store; an explicit TTL is honoured.
 func TestBenchBeatKeyHasTTL(t *testing.T) {
 	st, client, _ := controlRedis(t)
 	ctx := context.Background()
@@ -227,7 +229,13 @@ func TestBenchBeatKeyHasTTL(t *testing.T) {
 		if err != nil || !res.Accepted {
 			t.Fatalf("%s beat: %+v %v", tc.bench, res, err)
 		}
-		for _, key := range []string{"bench:" + tc.bench + ":beat", "bench:" + tc.bench + ":owner", "bench:" + tc.bench + ":live"} {
+		if ttl := client.PTTL(ctx, "bench:"+tc.bench+":beat").Val(); ttl != -1 {
+			t.Fatalf("bench:%s:beat PTTL %s, want -1 (#3878)", tc.bench, ttl)
+		}
+		if got := client.HGet(ctx, "bench:"+tc.bench+":beat", "stale_ms").Val(); got != strconv.FormatInt(tc.want.Milliseconds(), 10) {
+			t.Fatalf("bench:%s:beat stale_ms %q, want %d", tc.bench, got, tc.want.Milliseconds())
+		}
+		for _, key := range []string{"bench:" + tc.bench + ":owner", "bench:" + tc.bench + ":live"} {
 			ttl, err := client.PTTL(ctx, key).Result()
 			if err != nil {
 				t.Fatal(err)

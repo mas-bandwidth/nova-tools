@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
 )
@@ -260,9 +261,10 @@ func Rebalance(ctx context.Context, st *store.Store, req RebalanceRequest) ([]Re
 	}
 
 	pipe = client.Pipeline()
+	clock := pipe.Time(ctx)
 	type fcmds struct {
 		slots *redis.StringCmd
-		beat  *redis.IntCmd
+		beat  *beat.Cmd
 		down  *redis.IntCmd
 		open  *redis.StringSliceCmd
 	}
@@ -270,7 +272,7 @@ func Rebalance(ctx context.Context, st *store.Store, req RebalanceRequest) ([]Re
 	for i, f := range names {
 		cmds[i] = fcmds{
 			slots: pipe.HGet(ctx, "friend:"+f+":desired", "slots"),
-			beat:  pipe.Exists(ctx, "friend:"+f+":beat"),
+			beat:  beat.Read(ctx, pipe, beat.FriendKey(f)),
 			down:  pipe.Exists(ctx, "friend:"+f+":down"),
 			open:  pipe.ZRange(ctx, "s:"+S+":open:"+f, 0, -1),
 		}
@@ -300,7 +302,7 @@ func Rebalance(ctx context.Context, st *store.Store, req RebalanceRequest) ([]Re
 		rf := RebalanceFriend{
 			Name: f,
 			Down: isDown,
-			Up:   slots > 0 && cmds[i].beat.Val() == 1 && !isDown,
+			Up:   slots > 0 && cmds[i].beat.Live(clock.Val()) && !isDown,
 		}
 		for _, id := range cmds[i].open.Val() {
 			v := hashes[id].Val()

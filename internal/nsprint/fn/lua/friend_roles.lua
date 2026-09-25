@@ -76,7 +76,7 @@ local function friend_roles(keys, args)
   local t = redis.call('TIME')
   local at = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
   redis.call('HSET', key, 'roles', new, 'at', tostring(at), 'by', actor)
-  redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
+  redis.call('XADD', 'cap:log', '*',
     'kind', 'friend-roles', 'subject', target, 'old', old, 'new', new,
     'actor', actor, 'bootstrap', bootstrap and '1' or '0', 'idem', idem or '', 'at', tostring(at))
   return { 'OK', target, new, bootstrap and '1' or '0' }

@@ -37,6 +37,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
@@ -245,18 +246,19 @@ func (d *RouteDuty) liveReaders(ctx context.Context) ([]string, error) {
 		return nil, nil
 	}
 	pipe := d.Client.Pipeline()
+	clock := pipe.Time(ctx)
 	member := make([]*redis.BoolCmd, len(names))
-	beat := make([]*redis.IntCmd, len(names))
+	beats := make([]*beat.Cmd, len(names))
 	for i, f := range names {
 		member[i] = pipe.SIsMember(ctx, "friends", f)
-		beat[i] = pipe.Exists(ctx, "friend:"+f+":beat")
+		beats[i] = beat.Read(ctx, pipe, beat.FriendKey(f))
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
 	var live []string
 	for i, f := range names {
-		if member[i].Val() && beat[i].Val() == 1 && f != "jev" {
+		if member[i].Val() && beats[i].Live(clock.Val()) && f != "jev" {
 			live = append(live, f)
 		}
 	}

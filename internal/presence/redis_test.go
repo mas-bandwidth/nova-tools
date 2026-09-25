@@ -8,11 +8,12 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 // The fake store proves the logic; this file proves the commands the logic is
-// made of are the ones a Redis actually honours -- HSET plus PEXPIRE in one
-// MULTI, and a pipeline of HMGET, PTTL and GET whose absent keys come back
+// made of are the ones a Redis actually honours -- HSET plus PERSIST in one
+// MULTI (#3878), and a pipeline of HMGET, PTTL and GET whose absent keys come back
 // empty -- against miniredis, whose clock the test moves instead of waiting.
 
 func TestAgainstRedisTheKeyExpiresAndTheMemoryDoesNot(t *testing.T) {
@@ -229,8 +230,11 @@ func TestAgainstRedisBeatWritesWidthAndTTL(t *testing.T) {
 	if got := mr.HGet("friend:emma", "at"); got != "2026-09-22T09:41:00Z" {
 		t.Fatalf("friend:emma at = %q", got)
 	}
-	if got := mr.TTL("friend:emma"); got != DefaultTTL {
-		t.Fatalf("friend:emma ttl = %s; want %s", got, DefaultTTL)
+	if got := mr.TTL("friend:emma"); got != 0 {
+		t.Fatalf("friend:emma ttl = %s; want none (#3878)", got)
+	}
+	if got := mr.HGet("friend:emma", FieldStale); got != "90000" {
+		t.Fatalf("friend:emma stale_ms = %q; want 90000", got)
 	}
 	if got := mr.TTL(LastKey("emma")); got != 0 {
 		t.Fatalf(":last ttl = %s; want none", got)
@@ -352,5 +356,52 @@ func TestAgainstRedisFriendsReadsTheSet(t *testing.T) {
 	}
 	if got := strings.Join(names, ","); got != "emma,stella" {
 		t.Fatalf("roster = %q; want emma,stella", got)
+	}
+}
+
+// TestAgainstRedisKeysDoNotExpire is nova-tools #3878's DONE-WHEN for
+// `nova-wake beat`: after one beat PTTL friend:<x> answers -1 (a beat that
+// finds an older beat's TTL on the hash removes it), and `presence` reads the
+// friend down, dated, once the beat's at is older than its window -- with the
+// hash still in the store.
+func TestAgainstRedisKeysDoNotExpire(t *testing.T) {
+	mr := miniredis.RunT(t)
+	ctx := context.Background()
+	st, err := Open(ctx, mr.Addr(), DefaultUser)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+
+	now := time.Date(2026, 9, 25, 9, 14, 0, 0, time.UTC)
+	// An older binary's beat: the hash with a TTL.
+	mr.HSet("friend:emma", FieldAt, now.Add(-30*time.Second).Format(Stamp))
+	mr.SetTTL("friend:emma", DefaultTTL)
+	if err := Beat(ctx, st, "emma", now, DefaultTTL); err != nil {
+		t.Fatalf("beat: %v", err)
+	}
+	if got := c.PTTL(ctx, "friend:emma").Val(); got != -1 {
+		t.Fatalf("PTTL friend:emma = %v; want -1", got)
+	}
+	up, err := Read(ctx, st, []string{"emma"}, now.Add(DefaultTTL-time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Line(up, now.Add(DefaultTTL-time.Second)); got != "friends: emma up 1m" {
+		t.Fatalf("inside the window: %q", got)
+	}
+	mr.FastForward(time.Hour)
+	later := now.Add(DefaultTTL)
+	down, err := Read(ctx, st, []string{"emma"}, later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Line(down, later); got != "friends: emma down 1m (last 09:14Z)" {
+		t.Fatalf("once at is older than the window: %q", got)
+	}
+	if !mr.Exists("friend:emma") {
+		t.Fatal("friend:emma is gone; a beat never expires (#3878)")
 	}
 }

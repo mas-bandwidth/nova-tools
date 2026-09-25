@@ -7,14 +7,17 @@ package state
 // What it reads is what the store's own writers put there, and nothing else:
 //
 //	benches              set of registered bench names (ns_bench_register)
-//	bench:<b>:beat       hash (at ms, load1, ...), PEXPIRE 3 s (ns_bench_beat)
+//	bench:<b>:beat       hash (at ms, stale_ms, load1, ...), no TTL (ns_bench_beat, #3878)
 //	bench:<b>:desired    hash (slots, paused, ...)          (capacity)
 //
-// The key and its remaining TTL are the state; `at` only dates the write, and
-// load1 rides beside it as a fact. The store's own TIME is the clock, so a
-// reader's skew can never turn a live key into an expired one. Two pipelined
-// round trips, whatever the fleet's size: TIME + SMEMBERS, then HGETALL, PTTL
-// and HGET per bench. No SCAN, no KEYS.
+// The beat's at and the window it promised (stale_ms) are the state: the key
+// never expires (#3878), so a bench that stops beating keeps its hash and
+// reads DOWN once at + stale_ms has passed. A beat with no stale_ms (written
+// before #3878) is judged by its remaining TTL as before. load1 rides beside
+// it as a fact. The store's own TIME is the clock, so a reader's skew can
+// never turn a live key into an expired one. Two pipelined round trips,
+// whatever the fleet's size: TIME + SMEMBERS, then HGETALL, PTTL and HGET per
+// bench. No SCAN, no KEYS.
 
 import (
 	"context"
@@ -79,7 +82,11 @@ func ReadRedis(ctx context.Context, c *redis.Client) ([]Bench, time.Time, error)
 			b.Load = load
 		}
 		if len(beat) > 0 {
-			b.Key = keyFrom(beat["at"], cs[i].ttl.Val(), now)
+			if k := keyStamped(beat["at"], beat["stale_ms"]); k != nil {
+				b.Key = k
+			} else {
+				b.Key = keyFrom(beat["at"], cs[i].ttl.Val(), now)
+			}
 		}
 		if b.Key != nil {
 			p := cs[i].paused.Val()
@@ -88,6 +95,18 @@ func ReadRedis(ctx context.Context, c *redis.Client) ([]Bench, time.Time, error)
 		out = append(out, b)
 	}
 	return out, now, nil
+}
+
+// keyStamped is one heartbeat write as its writer stamped it (#3878): written
+// at `at` (ms), standing for stale_ms. It is nil unless both parse and the
+// window is positive; the caller then falls back to keyFrom.
+func keyStamped(at, stale string) *Key {
+	a, errA := strconv.ParseInt(at, 10, 64)
+	s, errS := strconv.ParseInt(stale, 10, 64)
+	if errA != nil || errS != nil || s <= 0 {
+		return nil
+	}
+	return &Key{Written: time.UnixMilli(a), TTL: time.Duration(s) * time.Millisecond}
 }
 
 // keyFrom rebuilds one heartbeat write from what the store says of it: the key

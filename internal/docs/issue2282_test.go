@@ -19,8 +19,10 @@ import (
 //
 // The spec (docs/SPEC-REDIS.md:68-69):
 //
-//	"presence lists the live lines seen by heartbeat keys that expire on their
-//	 own, so a crashed line ages out without anyone writing a tombstone."
+//	"presence lists the live lines seen by heartbeat keys whose at is inside
+//	 the window each beat promises (stale_ms). The keys never expire
+//	 (nova-tools #3878, keys do not expire), so a crashed line ages out, read
+//	 down and dated, without anyone writing a tombstone."
 //
 // And (docs/SPEC-REDIS.md:103-104):
 //
@@ -31,11 +33,11 @@ import (
 //  2. Live: every friend whose presence.Beat landed inside the TTL is read Up
 //     by presence.Read and listed live on presence.Line.
 //  3. Missing: a friend that never beat is read Never, not Up.
-//  4. Expired: a friend that stops beating ages out to Away once the TTL
+//  4. Expired: a friend that stops beating ages out to Away once the window
 //     passes, while a friend still beating stays Up.
-//  5. No tombstone: ageing out writes nothing. The expired presence key is
-//     simply gone, and the only key left for that friend is the untimed
-//     memory Beat itself wrote, unchanged since the last beat.
+//  5. No tombstone: ageing out writes nothing. The presence key never
+//     expires (#3878): it stays exactly as the last beat wrote it, beside the
+//     untimed memory Beat itself wrote, both unchanged since the last beat.
 func TestIssue2282(t *testing.T) {
 	t.Parallel()
 
@@ -44,8 +46,9 @@ func TestIssue2282(t *testing.T) {
 		t.Fatalf("docs/SPEC-REDIS.md: %v", err)
 	}
 	for _, want := range []string{
-		"presence` lists the live lines seen by heartbeat keys that expire",
-		"crashed line ages out without anyone writing a tombstone",
+		"presence` lists the live lines seen by heartbeat keys whose `at` is inside",
+		"The keys never expire",
+		"without anyone writing a tombstone",
 		"presence` ageing out a heartbeat",
 	} {
 		if !strings.Contains(string(body), want) {
@@ -129,10 +132,11 @@ func TestIssue2282(t *testing.T) {
 		}
 
 		// No tombstone: nothing was written when emma aged out. Her
-		// presence key is gone, and the keys left under her name are
-		// exactly the untimed memory Beat wrote at t0, byte for byte.
-		if mr.Exists(presence.Key("emma")) {
-			t.Errorf("%s survived its ttl", presence.Key("emma"))
+		// presence key never expires (#3878) and still holds the beat
+		// of t0; the keys under her name are that hash and the untimed
+		// memory Beat wrote at t0, byte for byte.
+		if got := mr.HGet(presence.Key("emma"), presence.FieldAt); got != t0.Format(presence.Stamp) {
+			t.Errorf("%s at = %q after ageing out; want the last beat %q, kept", presence.Key("emma"), got, t0.Format(presence.Stamp))
 		}
 		var emmaKeys []string
 		for _, k := range mr.Keys() {
@@ -141,14 +145,14 @@ func TestIssue2282(t *testing.T) {
 			}
 		}
 		sort.Strings(emmaKeys)
-		if len(emmaKeys) != 1 || emmaKeys[0] != presence.LastKey("emma") {
-			t.Errorf("keys left for emma after ageing out: %v; want only %s (no tombstone)", emmaKeys, presence.LastKey("emma"))
+		if len(emmaKeys) != 2 || emmaKeys[0] != presence.Key("emma") || emmaKeys[1] != presence.LastKey("emma") {
+			t.Errorf("keys left for emma after ageing out: %v; want %s and %s (no tombstone)", emmaKeys, presence.Key("emma"), presence.LastKey("emma"))
 		}
 		if v, _ := mr.Get(presence.LastKey("emma")); v != t0.Format(presence.Stamp) {
 			t.Errorf("%s = %q after ageing out; want the last beat %q untouched", presence.LastKey("emma"), v, t0.Format(presence.Stamp))
 		}
-		if got := len(mr.Keys()); got != 2*len(live)-1 {
-			t.Errorf("store holds %d keys after emma aged out; want %d (two per live friend, one memory for emma, no tombstone)", got, 2*len(live)-1)
+		if got := len(mr.Keys()); got != 2*len(live) {
+			t.Errorf("store holds %d keys after emma aged out; want %d (two per friend who ever beat, no tombstone)", got, 2*len(live))
 		}
 	})
 }

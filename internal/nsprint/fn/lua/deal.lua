@@ -270,7 +270,7 @@ local function deal_undeal(bench, reason, actor, idem, args, first, at)
     end
   end
   if n > 0 then
-    redis.call('XADD', 'cap:log', 'MAXLEN', '~', '100000', '*',
+    redis.call('XADD', 'cap:log', '*',
       'kind', 'slot-freed', 'target', 'bench:' .. bench, 'slots', tostring(n),
       'reason', reason, 'actor', actor or '', 'idem', idem or '', 'at', tostring(at))
   end
@@ -377,7 +377,7 @@ local function card_deal_fail(keys, args)
   if state == 'timeout' and timeouts - held >= fail_after then
     hold = '1'
   end
-  redis.call('XADD', 'cap:log', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'cap:log', '*',
     'kind', 'bench-ssh', 'subject', bench, 'state', state, 'why', why or '',
     'timeouts', tostring(timeouts), 'returned', tostring(n), 'bench_state', bstate, 'hold', hold,
     'actor', actor or '', 'idem', idem or '', 'at', tostring(at))
@@ -494,7 +494,7 @@ redis.register_function{
       local ssh = redis.call('HMGET', 'bench:' .. b .. ':ssh', 'state', 'at')
       res[#res + 1] = {
         b,
-        redis.call('EXISTS', 'bench:' .. b .. ':beat'),
+        NS.beat.up('bench:' .. b .. ':beat'),
         des[1] or '0',
         des[2] or '',
         redis.call('ZCARD', 'bench:' .. b .. ':starting'),

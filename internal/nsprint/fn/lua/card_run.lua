@@ -528,7 +528,7 @@ redis.register_function('ns_card_result', function(keys, args)
   if valid ~= '1' and attempt == v_attempt and hget(card_key, 'where') == 'done' and hget(card_key, 'where_ok') == 'ok' then
     local refused = CARD.move(card_key, 'done', { ok = 'fail', by = 'card-result', why = 'result ' .. field .. ' ' .. defect })
     if refused then
-      local r = redis.call('XADD', 'sprint:' .. sprint .. ':moves', 'MAXLEN', '~', '100000', '*',
+      local r = redis.call('XADD', 'sprint:' .. sprint .. ':moves', '*',
         'id', card_key, 'stream', hget(card_key, 'stream'), 'from', 'done/ok', 'to', 'REFUSED',
         'by', 'card-result', 'why', refused, 'at', at)
       return reply(2, 'MOVE', attempt, r)

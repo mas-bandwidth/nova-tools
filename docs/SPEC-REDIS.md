@@ -70,8 +70,10 @@ The second delivery is the binary that owns one local instance. Its verbs:
   key form is `<owner>:<name>`, and a write with no owner or no TTL is
   refused. Scratch is scratch: nothing spilled is a record, and recall is
   allowed to miss.
-- `presence` lists the live lines seen by heartbeat keys that expire on their
-  own, so a crashed line ages out without anyone writing a tombstone.
+- `presence` lists the live lines seen by heartbeat keys whose `at` is inside
+  the window each beat promises (`stale_ms`). The keys never expire
+  (nova-tools #3878, keys do not expire), so a crashed line ages out, read
+  down and dated, without anyone writing a tombstone.
 - `check` prints one line and earns its exit code, the Conventions' check:
   instance reachable, bound where this spec allows, auth on.
 - `version` and `help`, the two every binary in this family carries.
@@ -146,7 +148,7 @@ These tests run against a miniredis fake standing in for the instance (already i
 16. `TestSpillRefusedWithoutOwner` — a write with no owner is refused (L65–66).
 17. `TestSpillRefusedWithoutTTL` — a write with no TTL is refused (L65–66).
 18. `TestRecallIsAllowedToMiss` — scratch is scratch: recall is allowed to miss (L66–67).
-19. `TestPresenceListsLiveLinesAndAgesOutHeartbeats` — `presence` lists the live lines seen by heartbeat keys that expire on their own, so a crashed line ages out without a tombstone (L68–69, L103–104).
+19. `TestPresenceListsLiveLinesAndAgesOutHeartbeats` — `presence` lists the live lines seen by heartbeat keys whose `at` is inside their window, so a crashed line ages out, read down, without a tombstone (L68–69, L103–104).
 20. `TestCheckPrintsOneLineAndEarnsItsExitCode` — `check` prints one line and earns its exit code: reachable, bound where the spec allows, auth on (L70–71).
 21. `TestVersionAndHelpArePresent` — `version` and `help` are the two verbs every binary in this family carries (L72).
 22. `TestBoundToLocalhostAndTailnetOnly` — bound to localhost and the tailnet only, never a public interface (L76–77).
