@@ -4065,6 +4065,33 @@ renders the #2674 port of rowan-tools `bin/sprint-table-redis` (the keys
 that script reads, the bytes it prints), waits for the file's next publish,
 and prints `MATCH` or a unified diff and exits 1.
 
+### Merged-tree guards, dev-red and read carry (#3629, #3630)
+
+`internal/nsprint/land/guard` is the merged-tree guard suite: a library any
+lander calls with a repository path before the batch test of a stream
+branch, one PASS/FAIL row per guard with the offending file (`lua-locals`,
+`lua-crossfile`, `one-parser`, `catalog`, `named-paths`, `tracked-files`).
+Each row is an interaction that was green per PR and red on the merged
+tree; the next one is a row in the registry, not a hunt.
+
+`dev-red status|check|watch|unwatch --repo <r> --base <b> --redis <addr>`:
+the reconciler's dev-red duty walks `devred:bases` every pass; while the
+base tip's CI record (`ci:<repo>:<sha>`, the gated receipt, or one `gh api`
+check-runs read per base per minute until #3597) is red it writes
+`land:<repo>:<base>:red` (the key a lander reads through `land.RedBlocked`
+before merging a stream into that base) and pushes ONE fix task to the
+coordinator's queue naming the failing check; green clears it. `status`
+prints `RED <check> <sha> task=<id>` or `GREEN <repo>/<base>`.
+
+`read digest --repo <r> --n <n>` records the diff identity of the head a
+typed line is taken at (`diff_sha256` on the unit record; the reader runs
+it at read time). `read carry --repo <r> --n <n>` compares it with the
+unit's head now from the bench mirror and, when `git diff base...head` is
+byte-identical after the base merge is normalised, copies every typed line
+to the new head as a record with a `carried_from` receipt (`CARRIED`, exit
+0); a changed diff is `REFUSED changed=<files>` (exit 1) and a re-read is
+the one remedy. The lander counts a carried read as a read.
+
 ### First run
 
 Run the three lines in an empty directory. They are the three file-shaped
