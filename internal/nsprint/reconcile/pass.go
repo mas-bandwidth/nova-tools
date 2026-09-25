@@ -26,6 +26,10 @@ type Counts struct {
 	Fixes   int // fix tasks pushed to an author's queue
 	Merging int // tasks moved to merging
 	Carried int // read tasks carried to a new head with an identical diff (#3580)
+	// No ghost cards (#3925): leases the expire duty reaped (ns_lease_reap)
+	// and drift the fsck duty repaired plus closed-sprint cards it retired.
+	Reaped   int
+	Repaired int
 }
 
 func (c *Counts) add(o Counts) {
@@ -38,6 +42,8 @@ func (c *Counts) add(o Counts) {
 	c.Fixes += o.Fixes
 	c.Merging += o.Merging
 	c.Carried += o.Carried
+	c.Reaped += o.Reaped
+	c.Repaired += o.Repaired
 }
 
 // Zero is true when the pass moved nothing.
@@ -45,8 +51,8 @@ func (c Counts) Zero() bool { return c == Counts{} }
 
 // Line is the counts as receipt words, in a fixed order.
 func (c Counts) Line() string {
-	return fmt.Sprintf("dealt=%d routed=%d expired=%d retried=%d ambiguous=%d reads=%d fixes=%d merging=%d carried=%d",
-		c.Dealt, c.Routed, c.Expired, c.Retried, c.Ambiguous, c.Reads, c.Fixes, c.Merging, c.Carried)
+	return fmt.Sprintf("dealt=%d routed=%d expired=%d retried=%d ambiguous=%d reads=%d fixes=%d merging=%d carried=%d reaped=%d repaired=%d",
+		c.Dealt, c.Routed, c.Expired, c.Retried, c.Ambiguous, c.Reads, c.Fixes, c.Merging, c.Carried, c.Reaped, c.Repaired)
 }
 
 // Duty is one reconciler duty (spec 5.2): deal (#2743), refill (#2935),
