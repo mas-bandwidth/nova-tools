@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os/exec"
@@ -34,6 +33,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/capacity"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -83,8 +83,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] != "unused" {
 		return refuse(stderr, "verbs takes one sub-verb, unused: verbs unused --store <host:port> --tools <dir> --repo <clone> --receipts <dir> [--days 14], or verbs unused --check --store <host:port> --repo <clone>")
 	}
-	fs := flag.NewFlagSet("verbs unused", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("verbs unused")
 	addr := fs.String("store", "", "")
 	tools := fs.String("tools", "", "")
 	repo := fs.String("repo", "", "")

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/launch"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 )
@@ -55,8 +55,7 @@ var cardCutSource card.IssueSource = card.GHIssues{}
 // DONE-WHEN before any write. One receipt line; exit 0 cut, 1 refused with
 // the remedy named, 2 usage.
 func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("card cut", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("card cut")
 	sprint := fs.String("sprint", "", "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	repo := fs.String("repo", "", "")
@@ -103,8 +102,7 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 // after one pipeline of dependency reads, however many cards (#3266). It
 // never loads the function library (nova-sprint fn load is the owner's).
 func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("card push", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("card push")
 	sprint := fs.String("sprint", "", "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	stdin := fs.Bool("stdin", false, "")
@@ -182,8 +180,7 @@ func readCardFiles(stdin bool, dir string, paths []string) ([]card.CardFile, err
 }
 
 func cmdCardRelease(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("card release", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("card release")
 	sprint := fs.String("sprint", "", "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || fs.NArg() > 0 {
@@ -219,8 +216,7 @@ func writeCardResult(stdout, stderr io.Writer, res card.VerbResult) int {
 }
 
 func cmdCardStop(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("card stop", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("card stop")
 	fromStdin := fs.Bool("stdin", false, "")
 	grace := fs.Duration("grace", launch.DefaultStopGrace, "")
 	if err := fs.Parse(args); err != nil {
@@ -248,8 +244,7 @@ func cmdCardStop(ctx context.Context, args []string, stdin io.Reader, stdout, st
 // each, sorted, values on one line, then one receipt line. One FCALL
 // (ns_card_show). Exit 0 shown, 1 no such card, 2 usage, 6 Redis.
 func cmdCardShow(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("card show", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("card show")
 	sprint := fs.String("sprint", "", "")
 	label := fs.String("label", "", "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")

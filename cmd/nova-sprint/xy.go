@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintline"
 )
@@ -28,9 +28,7 @@ func init() {
 }
 
 func cmdXY(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("xy", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("xy")
 	set := fs.String("set", "", "work-set sexp passed to nova-work; its :status is not a count")
 	evaluateOut := fs.String("evaluate-out", "", "stdout of nova-work set check --evaluate")
 	calibrationOut := fs.String("calibration-out", "", "SUGGEST <kind> <minutes> lines: the sprint calibration")

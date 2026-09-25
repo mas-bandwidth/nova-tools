@@ -3604,6 +3604,14 @@ shape holds refuses with the whole remedy verb: `open first: nova-cairn open
 
 ## nova-sprint
 
+**Help** (#3254). `-h`, `-help` or `--help` on any verb or subverb prints
+`usage: nova-sprint <verb> [<subverb>] [flags]`, every flag that verb takes
+(one `--name <type>` per line, no defaults, since a default can come from the
+environment) and the exit codes on standard output, and exits 2 without
+dialling Redis. A mistyped flag stays the verb's one-line refusal on standard
+error. `file -h` prints its own usage text (exit 2); the batch `task` verbs
+(`cancel`, `move`, `front`, `block`, `unblock`, `sweep`) print theirs and exit 0.
+
 Renders the sprint table from Redis. `table --redis <addr>` makes one
 `FCALL_RO ns_snapshot` per render over the `s:<S>:*`, `bench:*` and
 `friend:*` keys and prints the table to standard output; `--once` renders one,

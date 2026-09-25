@@ -13,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/brief"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
 func init() {
@@ -27,6 +28,7 @@ func runBrief(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
 		return refuse(errOut, "brief", "want render --task <sprint>/<id> [--out <file>] or lint <file> [--task <sprint>/<id>]")
 	}
+	verbflag.HelpIfAsked(args[1:], "brief "+args[0], "task", "out", "redis")
 	flags, rest, err := briefArgs(args[1:])
 	if err != nil {
 		return refuse(errOut, "brief "+args[0], err.Error())

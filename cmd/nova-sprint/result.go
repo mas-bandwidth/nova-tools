@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
@@ -40,8 +40,7 @@ func runResult(ctx context.Context, args []string, out, errOut io.Writer) int {
 }
 
 func runResultContract(args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("result contract", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("result contract")
 	_ = fs.Bool("markdown", false, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "result contract", err.Error())
@@ -51,8 +50,7 @@ func runResultContract(args []string, out, errOut io.Writer) int {
 }
 
 func runResultCheck(args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("result check", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("result check")
 	kind := fs.String("kind", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "result check", err.Error())
@@ -88,8 +86,7 @@ func runResultCheck(args []string, out, errOut io.Writer) int {
 }
 
 func runResultShow(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("result show", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("result show")
 	sprint := fs.String("sprint", "", "")
 	redisAddr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	if err := fs.Parse(args); err != nil {
@@ -176,6 +173,7 @@ func runResultShow(ctx context.Context, args []string, out, errOut io.Writer) in
 }
 
 func runResultDisposition(args []string, out, errOut io.Writer) int {
+	verbflag.HelpIfAsked(args, "result disposition")
 	if len(args) == 0 {
 		return refuse(errOut, "result disposition", "wants a file path or - for stdin")
 	}

@@ -11,7 +11,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -50,9 +50,7 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 		return cmdTableClear(args[1:], stdout, stderr)
 	}
 	args = joinLoopSeconds(args)
-	fs := flag.NewFlagSet("table", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("table")
 	var opts tableOpts
 	fs.BoolVar(&opts.once, "once", false, "")
 	fs.StringVar(&opts.redis, "redis", "", "")
