@@ -24,7 +24,7 @@ func TestSpreadRoutesAreValid(t *testing.T) {
 	}
 	want := map[string]string{
 		"flash": "deepseek:dsflash opencode:ocglmflash openrouter:orqwen38 mercury:mercury",
-		"pro":   "deepseek:dspro opencode:ocqwenplus openrouter:ormimo26pro",
+		"pro":   "deepseek:dspro opencode:ocqwenplus openrouter:orkimi3",
 	}
 	for tier, w := range want {
 		var got []string
@@ -72,7 +72,7 @@ func TestSpreadPickCoversEveryProvider(t *testing.T) {
 		want string
 	}{
 		{"flash", 8, "mercury:mercury openrouter:orqwen38 opencode:ocglmflash deepseek:dsflash mercury:mercury openrouter:orqwen38 opencode:ocglmflash deepseek:dsflash"},
-		{"pro", 6, "openrouter:ormimo26pro deepseek:dspro opencode:ocqwenplus deepseek:dspro opencode:ocqwenplus openrouter:ormimo26pro"},
+		{"pro", 6, "openrouter:orkimi3 deepseek:dspro opencode:ocqwenplus deepseek:dspro opencode:ocqwenplus openrouter:orkimi3"},
 	} {
 		var got []string
 		providers := map[string]bool{}
@@ -155,5 +155,45 @@ spread:
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: %v, want an error naming %q", name, err, tc.want)
 		}
+	}
+}
+
+// #3742: mimo-v2.6-pro walled 3 of 3 one-line quack cards, so ormimo26pro is
+// dropped as a dead route and OpenRouter's pro slot is kimi-k3 (orkimi3) for
+// a measured A/B. The quack labels that walled pick orkimi3, and the embedded
+// table with ormimo26pro back in the openrouter pro row does not parse.
+func TestProSpreadOpenRouterSlotIsKimiNotDeadMimo(t *testing.T) {
+	tab, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := tab.rows[tab.byRoute["ormimo26pro"]]
+	if row.State != Dropped || row.Flag != FlagDead {
+		t.Fatalf("ormimo26pro is %s flag %q, want dropped and dead", row.State, row.Flag)
+	}
+	assertRefused(t, tab, Card{Rung: "pro", Route: "ormimo26pro"}, "dead")
+	for _, label := range []string{"s00-0302-quack-hulk-pro", "s00-0601-quack-vision-pro"} {
+		r, s, err := tab.Pick("pro", label)
+		if err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+		if s.Provider == "openrouter" && r.Route != "orkimi3" {
+			t.Errorf("%s hashes to openrouter and picked %s, want orkimi3", label, r.Route)
+		}
+		if r.Route == "ormimo26pro" {
+			t.Errorf("%s picked the dead ormimo26pro", label)
+		}
+	}
+	for _, s := range tab.Spread("pro") {
+		if s.Provider == "openrouter" && (s.Routes[0] != "orkimi3" || strings.Contains(strings.Join(s.Routes, " "), "ormimo26pro")) {
+			t.Errorf("pro openrouter spread row = %v, want orkimi3 first and no ormimo26pro", s.Routes)
+		}
+	}
+	back := strings.Replace(string(routesYAML), "routes: [orkimi3, ormimopro, orglm53]", "routes: [ormimo26pro, ormimopro, orglm53, orkimi3]", 1)
+	if back == string(routesYAML) {
+		t.Fatal("the pro openrouter spread row moved; this test cannot bite")
+	}
+	if _, err := Parse([]byte(back)); err == nil || !strings.Contains(err.Error(), "ormimo26pro, which is dropped") {
+		t.Errorf("a spread naming ormimo26pro parsed: %v", err)
 	}
 }
