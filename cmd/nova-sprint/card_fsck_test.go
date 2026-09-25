@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
@@ -62,5 +63,34 @@ func TestCardFsckAndBenchReindexVerbs(t *testing.T) {
 	}
 	if code, _, _ := run(cmdCardFsck, "--redis", addr); code != 2 {
 		t.Fatalf("fsck without --sprint exits %d, want 2", code)
+	}
+}
+
+// TestCardFsckReportsNoMirror (#3804): card fsck prints one NOMIRROR line per
+// registered bench whose ci:nomirror:<bench> set is non-empty and counts the
+// benches in its receipt; a bench defect is not card drift, so the exit is 0.
+func TestCardFsckReportsNoMirror(t *testing.T) {
+	ctx := context.Background()
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	const sprint = "nomirror-3804"
+	var out, errOut bytes.Buffer
+	if code := cmdCardFsck(ctx, []string{"--sprint", sprint, "--redis", addr}, &out, &errOut); code != 0 ||
+		strings.Contains(out.String(), "NOMIRROR") || !strings.HasSuffix(out.String(), " nomirror=0\n") {
+		t.Fatalf("fsck with no marks: %d %q %q", code, out.String(), errOut.String())
+	}
+	client.SAdd(ctx, "benches", "hulk", "space", "studio")
+	client.SAdd(ctx, ci.NoMirrorKey("space"), "rowan-tools", "nova-tools")
+	client.SAdd(ctx, ci.NoMirrorKey("hulk"), "nova-tools")
+	out.Reset()
+	errOut.Reset()
+	code := cmdCardFsck(ctx, []string{"--sprint", sprint, "--redis", addr}, &out, &errOut)
+	want := "NOMIRROR bench=hulk repos=nova-tools\nNOMIRROR bench=space repos=nova-tools,rowan-tools\nCARD FSCK sprint=" + sprint
+	if code != 0 || !strings.HasPrefix(out.String(), want) || !strings.HasSuffix(out.String(), " drift=0 fixed=0 nomirror=2\n") {
+		t.Fatalf("fsck with marks: %d %q %q", code, out.String(), errOut.String())
 	}
 }

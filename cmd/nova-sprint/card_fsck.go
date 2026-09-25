@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/redis/go-redis/v9"
 )
 
 // ONE PLACE (nova-tools#3692): card fsck, card ls --unplaced and bench
@@ -62,12 +66,36 @@ func runFsck(ctx context.Context, addr, sprint string, repair bool, verb, remedy
 	for _, l := range rep.Lines {
 		fmt.Fprintf(stderr, "DRIFT %s\n", oneline.Escape(l))
 	}
-	fmt.Fprintln(stdout, rep.Line(verb))
+	nomirror := fsckNoMirror(ctx, client, stdout, stderr)
+	fmt.Fprintln(stdout, rep.Line(verb)+" nomirror="+nomirror)
 	if !rep.Clean() {
 		fmt.Fprintf(stderr, "nova-sprint card: %d drift left; run: nova-sprint %s\n", rep.Drift-rep.Fixed, remedy)
 		return 1
 	}
 	return 0
+}
+
+// fsckNoMirror prints one NOMIRROR line per registered bench whose
+// ci:nomirror:<bench> set is non-empty (#3804: a bench that lacks a repo's
+// mirror is skipped by every CI claim of that repo, so it must be visible)
+// and returns the receipt's nomirror count: the benches named, or "?" when
+// the sets could not be read. It is a bench defect, not card drift: it
+// never changes the exit code.
+func fsckNoMirror(ctx context.Context, client redis.UniversalClient, stdout, stderr io.Writer) string {
+	marked, err := ci.NoMirror(ctx, client)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-sprint card: ci:nomirror not read: %s\n", oneline.Escape(err.Error()))
+		return "?"
+	}
+	benches := make([]string, 0, len(marked))
+	for b := range marked {
+		benches = append(benches, b)
+	}
+	sort.Strings(benches)
+	for _, b := range benches {
+		fmt.Fprintf(stdout, "NOMIRROR bench=%s repos=%s\n", b, strings.Join(marked[b], ","))
+	}
+	return strconv.Itoa(len(benches))
 }
 
 // cmdCardLs: card ls --unplaced --sprint <S> --redis <addr>: the null cards
