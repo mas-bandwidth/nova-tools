@@ -13,33 +13,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
-const probeSource = `package main
-
-import (
-	"os"
-	"path/filepath"
-	"sync"
-
-	swarm "github.com/mas-bandwidth/nova-tools/internal/swarm"
-)
-
-func main() {
-	dir := os.Getenv("PROBE_DIR")
-	if dir == "" {
-		os.Exit(1)
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		swarm.CheckPausePoint("test-pause")
-		_ = os.WriteFile(filepath.Join(dir, "after.txt"), []byte("written after resume\n"), 0o644)
-	}()
-	wg.Wait()
-}
-`
-
 func findRepoRoot() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -67,17 +40,8 @@ func TestPausePointThreadDirected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	probeDir := filepath.Join(repoRoot, "internal", "swarm", "testprobe")
-	if err := os.MkdirAll(probeDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(probeDir)
-
-	probeSrc := filepath.Join(probeDir, "main.go")
-	if err := os.WriteFile(probeSrc, []byte(probeSource), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
+	// The probe is committed at internal/swarm/testprobe (build tag
+	// swarmtest); the test never writes into the repository tree.
 	binFile := filepath.Join(dir, "probe_bin")
 	cmd := exec.Command("go", "build", "-tags", "swarmtest", "-o", binFile, "./internal/swarm/testprobe")
 	cmd.Dir = repoRoot

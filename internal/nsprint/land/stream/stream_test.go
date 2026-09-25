@@ -191,6 +191,50 @@ func TestMembersOrderAndFilters(t *testing.T) {
 	}
 }
 
+// TestMembersSkipsFailingJevLine: a JEV mech line that failed at head keeps
+// a PR with a friend's 10 out of the batch; a passing one, one at an old
+// head, or none lets it through; cfg:land jev turns the gate off or to
+// require, and jev_passes narrows the passes that gate (nova-tools#3631).
+func TestMembersSkipsFailingJevLine(t *testing.T) {
+	c := newRedis(t)
+	ctx := context.Background()
+	h := func(n int) string { return fmt.Sprintf("%07d%s", n, strings.Repeat("b", 33)) }
+	jevLine := func(head, gate, lint, scope, base string) string {
+		return "JEV who=jev pass=mech head=" + head + " gate=" + gate + " lint=" + lint + " scope=" + scope + " base=" + base + " why=x"
+	}
+	seed(t, c, 1, h(1), 100, jevLine(h(1), "fail", "ok", "fail", "ok"), score("rowan", h(1), 10))
+	seed(t, c, 2, h(2), 200, jevLine(h(2), "ok", "ok", "ok", "ok"), score("rowan", h(2), 10))
+	seed(t, c, 3, h(3), 300, jevLine("ffffffff", "fail", "fail", "ok", "ok"), score("rowan", h(3), 10))
+	seed(t, c, 4, h(4), 400, score("rowan", h(4), 10))
+	seed(t, c, 5, h(5), 500, jevLine(h(5), "fail", "fail", "ok", "fail"), jevLine(h(5), "ok", "ok", "ok", "ok"), score("rowan", h(5), 10))
+	seed(t, c, 6, h(6), 600, jevLine(h(6), "fail", "fail", "ok", "ok"))
+	check := func(label, wantMembers string, wantSkips map[int]string) {
+		t.Helper()
+		ms, skips, err := Members(ctx, c, repo, []string{strm}, 8)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []int
+		for _, m := range ms {
+			got = append(got, m.N)
+		}
+		why := map[int]string{}
+		for _, s := range skips {
+			why[s.N] = s.Why
+		}
+		if fmt.Sprint(got) != wantMembers || fmt.Sprint(why) != fmt.Sprint(wantSkips) {
+			t.Fatalf("%s: members %v skips %v, want %s %v", label, got, why, wantMembers, wantSkips)
+		}
+	}
+	check("gate", "[2 3 4 5]", map[int]string{1: "jev:scope", 6: "jev:lint"})
+	c.HSet(ctx, "cfg:land", "jev", "require")
+	check("require", "[2 5]", map[int]string{1: "jev:scope", 3: "no-jev-at-head", 4: "no-jev-at-head", 6: "jev:lint"})
+	c.HSet(ctx, "cfg:land", "jev", "gate", "jev_passes", "lint,base")
+	check("scope off", "[1 2 3 4 5]", map[int]string{6: "jev:lint"})
+	c.HSet(ctx, "cfg:land", "jev", "off")
+	check("off", "[1 2 3 4 5]", map[int]string{6: "no-read-at-head"})
+}
+
 func TestSaveBuiltParksAndLandMembersLands(t *testing.T) {
 	c := newRedis(t)
 	ctx := context.Background()
@@ -415,5 +459,50 @@ func TestUnionCloses(t *testing.T) {
 		if got := UnionCloses(c[0], c[1]); got != c[2] {
 			t.Errorf("UnionCloses(%q, %q) = %q, want %q", c[0], c[1], got, c[2])
 		}
+	}
+}
+
+// TestLandedWritesTheRelease (#4050): the landed call of a nova-tools landing
+// into dev writes fleet:release version v<train>-dev.<merge sha8> and commit,
+// the train carried from the version already stored; a re-run writes
+// nothing, and a landing into another base names no release.
+func TestLandedWritesTheRelease(t *testing.T) {
+	c := newRedis(t)
+	ctx := context.Background()
+	c.HSet(ctx, "fleet:release", "version", "v0.17.0-dev.11111111", "commit", "1111111"+strings.Repeat("0", 33))
+	land := func(slug, base, sha string) (bool, string) {
+		t.Helper()
+		l := Landing{Repo: repo, Slug: slug, Streams: strm, Base: base, BaseSHA: strings.Repeat("b", 40),
+			Branch: "stream/" + slug, Head: strings.Repeat("c", 40), PR: 900, State: "open"}
+		if _, err := SaveBuilt(ctx, c, l, "rowan"); err != nil {
+			t.Fatal(err)
+		}
+		already, rel, err := saveLanded(ctx, c, l, "rowan", sha)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return already, rel
+	}
+	sha := "abcdef01" + strings.Repeat("2", 32)
+	if already, rel := land("a", "dev", sha); already || rel != "v0.17.0-dev.abcdef01" {
+		t.Fatalf("landed into dev: already=%t release=%q", already, rel)
+	}
+	got := c.HGetAll(ctx, "fleet:release").Val()
+	if got["version"] != "v0.17.0-dev.abcdef01" || got["commit"] != sha || got["landed"] != "nova-tools#900" {
+		t.Fatalf("fleet:release = %v", got)
+	}
+	l, _, _ := LoadLanding(ctx, c, repo, "a")
+	if already, rel, err := saveLanded(ctx, c, l, "rowan", strings.Repeat("9", 40)); err != nil || !already || rel != "" {
+		t.Fatalf("re-run: already=%t release=%q %v", already, rel, err)
+	}
+	if already, rel := land("b", "main", strings.Repeat("9", 40)); already || rel != "" {
+		t.Fatalf("landed into main: already=%t release=%q", already, rel)
+	}
+	if v := c.HGet(ctx, "fleet:release", "commit").Val(); v != sha {
+		t.Fatalf("commit after a re-run and a main landing = %q", v)
+	}
+	c.Del(ctx, "fleet:release")
+	if _, rel := land("c", "dev", sha); rel != "v0.16.0-dev.abcdef01" {
+		t.Fatalf("first landing with no release stored: %q", rel)
 	}
 }

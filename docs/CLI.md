@@ -3722,12 +3722,22 @@ tree; the next one is a row in the registry, not a hunt.
 
 `dev-red status|check|watch|unwatch --repo <r> --base <b> --redis <addr>`:
 the reconciler's dev-red duty walks `devred:bases` every pass; while the
-base tip's CI record (`ci:<repo>:<sha>`, the gated receipt, or one `gh api`
-check-runs read per base per minute until #3597) is red it writes
+base tip's CI record (`ci:<repo>:<sha>`, the GitHub leg `ci:<repo>:<sha>:gh`,
+or the gated receipt; Redis only, never GitHub) is red it writes
 `land:<repo>:<base>:red` (the key a lander reads through `land.RedBlocked`
 before merging a stream into that base) and pushes ONE fix task to the
 coordinator's queue naming the failing check; green clears it. `status`
 prints `RED <check> <sha> task=<id>` or `GREEN <repo>/<base>`.
+
+`ci github --redis <addr> [--consumer <seat>] [--once]` (#3597) is the
+GitHub leg of CI in Redis: the `ci-github` consumer group of `ev:github`
+turns each `check_run` and `workflow_run` delivery the webhook receiver
+appended into one field of `ci:<repo>:<sha>:gh` (`check:<name>` or
+`wf:<name>` = `<word> <id> <at>`, newest attempt wins) and refolds `gh`
+(red if any is red, pending if any is pending, else green) and `gh_fail`,
+writing and acking in one `ns_ci_github` call. `ci status --repo --sha`
+prints the leg under our own record. Nothing in nova-sprint reads a check
+state from GitHub or asks it to rerun one; a rerun is `ci request --again`.
 
 `read digest --repo <r> --n <n>` records the diff identity of the head a
 typed line is taken at (`diff_sha256` on the unit record; the reader runs
@@ -3834,6 +3844,46 @@ template, the `nova-swarm template` cards and the swarm's card fixtures) is
 scanned by `internal/ci` (TestNoGhInAnyBrief, #3600): a `gh ` invocation, a
 GraphQL mention, or a GitHub clone without the bench mirror as `--reference`
 is a red run.
+
+### jev
+
+Jev runs the mechanical passes first, on every PR, before any friend read
+(#3631). `jev mech --repo <r> --n <n> --body-file <f> [--mirror <dir>]
+[--redis <addr>]` reads the PR record `pr:<repo>:<n>` (head, base, base_sha,
+paths, reads) in one HMGET, the changed files `<base_sha>..<head>` from the
+bench mirror (default `~/nova-bench/mirror/<repo>.git`; the verb never
+fetches) and the PR body from the file, runs three passes (`internal/jev`)
+and appends ONE typed line to the record's `reads`:
+
+- lint: every typed body line present, once, in its one form: `BASE:` (one
+  branch), `base-sha:` (7-40 hex), `PATHS:` (parses), `DEPENDS-ON:` (`none`
+  or `owner/name#n[, ...]`, an optional `(WHY: ...)` after), `DONE-WHEN:`,
+  `STREAM:`, and `Closes #<n>` (or `ORIGIN:`). The refusal names the line.
+- scope: every changed file inside the body's PATHS (else the record's).
+- base: the PR targets dev or main, the base the body names, cut from the
+  record's base_sha.
+
+```
+JEV who=jev pass=mech head=<sha> gate=ok|fail lint=ok scope=ok base=ok why=-
+```
+
+A pass with nothing to decide on (no mirror, the head not in the mirror yet,
+no base) is `missing`, which is not `fail`. The line is never a read:
+`stream.ReadAt` skips every `who=jev*` line and it carries no SCORE,
+DISPOSITION or HOLD word. The stream lander reads it as a gate: `cfg:land jev`
+is `gate` (the default: a gating pass that failed at head skips the PR as
+`jev:<passes>`), `require` (a PR with no JEV line at head also skips, as
+`no-jev-at-head`) or `off`; `cfg:land jev_passes` names the passes that gate
+(empty: all), so a pass whose precision falls is turned off by config. The
+same line already last at head is not appended again (`JEV SAME`).
+
+```
+JEV RECORDED pr:nova-tools:7 head=b7628a80 gate=ok lint=ok scope=ok base=ok
+```
+
+Exit 0 recorded with gate=ok; 1 recorded with gate=fail (`why=` and
+`remedy=` on the receipt), or refused (no record, no Redis: `JEV REFUSED`
+on stderr); 2 usage, before Redis is touched.
 
 ### spec
 
@@ -4046,7 +4096,11 @@ The bench-side command is `nova-sprint card stop --stdin --grace <duration>`. It
 
 ### `nova-sprint fleet build`
 
-`nova-sprint fleet build [--redis <addr>] [--bench <b>[,<b>...]] [--build-cmd <path>] [--dry-run]` is the fleet deploy (nova-tools #3310), with its whole plan in Redis: the `fleet:release` hash holds `version` (`v<x>.<y>.<z>-dev.<sha8>`), `commit` (the full sha of that `<sha8>`), `builder` (the bench that builds), `self` (this machine's bench name), an optional `tools` list (default `nova-sprint,nova-swarm,nova-card,nova-wake`) and `platform:<bench>` (`<goos>-<goarch>`) for every bench and for `self`; the `benches` set names where to install. One pipeline reads both, and a gap is refused (`FLEET BUILD REFUSED: <why> (<remedy>)`, exit 1) before any child starts. The run: the builder builds the release once for the distinct platforms (`space-build --host <builder> --version <v> --commit <sha> --platform <list>`, which skips a platform already built); every bench, in one ssh session each and all at once, rsyncs its platform's tools from `<builder>:nova-bench/release/<v>/<platform>/` (the builder from its own disk) into `~/.local/bin.new`, renames each into `~/.local/bin` and prints its `nova-sprint version` line; this machine does the same locally. Each target prints `OK|MISMATCH|FAIL <bench> platform=<p>: <detail>`; a target whose version line names the release gets its receipt in one pipeline, `bench:<b>` fields `build`, `build_sha`, `build_at`, and a failed or mismatched one keeps its old receipt. Last, the new nova-sprint here runs `fn deploy --redis <addr>`, so the store's function library is this release's. The final line is `FLEET BUILD OK version=<v> commit=<sha12> benches=<n> fn=ok` (exit 0) or `FLEET BUILD FAIL ... at=build|install|fn ok=<n> failed=<list>` (exit 1). `--dry-run` prints `WOULD BUILD`/`WOULD INSTALL` lines and starts nothing. `nova-sprint fleet build set [--redis <addr>] <key>=<value>...` validates and writes `fleet:release` fields in one HSET. The loops that run the old binaries are not restarted by this verb.
+`nova-sprint fleet build [--redis <addr>] [--bench <b>[,<b>...]] [--build-cmd <path>] [--machines <file>] [--dry-run]` is the fleet deploy (nova-tools #3310), with its whole plan in Redis: the `fleet:release` hash holds `version` (`v<x>.<y>.<z>-dev.<sha8>`), `commit` (the full sha of that `<sha8>`), `builder` (the bench that builds), `self` (this machine's bench name), an optional `tools` list (default `nova-sprint,nova-swarm,nova-card,nova-wake`) and `platform:<bench>` (`<goos>-<goarch>`) for every bench and for `self`; the `benches` set names where to install. One pipeline reads both, and a gap is refused (`FLEET BUILD REFUSED: <why> (<remedy>)`, exit 1) before any child starts. The run: the builder builds the release once for the distinct platforms, in one ssh session running the nova-sprint the last fleet build installed there (`ssh -n <builder> .local/bin/nova-sprint fleet build compile --version <v> --commit <sha> --platform <list>`, which skips a platform already built; `--build-cmd <path>` runs that command locally with rowan-tools' space-build argv `--host <builder> --version <v> --commit <sha> --platform <list>` instead), and the `BUILD OK` line carries its last line; every bench, in one ssh session each and all at once, rsyncs its platform's tools from `<builder>:nova-bench/release/<v>/<platform>/` (the builder from its own disk) into `~/.local/bin.new`, renames each into `~/.local/bin` and prints its `nova-sprint version` line; this machine does the same locally. Each target prints `OK|MISMATCH|FAIL <bench> platform=<p>: <detail>`; a target whose version line names the release gets its receipt in one pipeline, `bench:<b>` fields `build`, `build_sha`, `build_at`, and a failed or mismatched one keeps its old receipt. Last, the new nova-sprint here runs `fn deploy --redis <addr>`, so the store's function library is this release's. The final line is `FLEET BUILD OK version=<v> commit=<sha12> benches=<n> fn=ok` (exit 0) or `FLEET BUILD FAIL ... at=build|install|fn ok=<n> failed=<list>` (exit 1). `--dry-run` prints `WOULD BUILD`/`WOULD INSTALL` lines and starts nothing. `nova-sprint fleet build set [--redis <addr>] <key>=<value>...` validates and writes `fleet:release` fields in one HSET. `nova-sprint fleet build compile --version <v> --commit <sha40> [--platform <p>[,<p>...]] [--repo-url <url>] [--dry-run]` is the builder half (nova-tools #4080; internal/nsprint/fleetbuild/compile.go), space-build's steps in Go: a platform already published under `~/nova-bench/release/<v>/<p>/` whose SHA256SUMS verifies prints `OK <p>` and is not rebuilt; the commit and the v* tags are fetched from GitHub into `~/nova-bench/space-build/src/nova-tools` (the mirror only an object alternate); a missing linux-amd64 reference at `~/nova-bench/build/<v>` is built first (`REFERENCE BUILT ...`); every cmd/nova-* is built per platform with `CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=<v>"` under the reference's toolchain, headers checked, the linux-amd64 build held file for file to the reference's sha256 (`IDENTICAL`), and each platform renamed into the release root (`PUBLISHED`). Every go child runs with the build's OWN Go state, `GOMODCACHE=~/nova-bench/space-build/go/mod`, `GOCACHE=~/nova-bench/space-build/go/build` and `GOTOOLCHAIN=<the reference's toolchain>` (a downloaded toolchain lands in that module cache), on top of the sanitized environment, so it never shares a cache or a toolchain extraction with a CI runner on the same machine; `BUILT <v> platforms=<list> tools=<n> toolchain=<go> gomodcache=<dir> gocache=<dir> log=<file>` is the receipt, and the last line is `FLEET COMPILE OK <v> commit=<sha> platforms=<list> built=<list>|none [go=<dir>]` (exit 0) or `FLEET COMPILE REFUSED: <why> (<remedy>)` (exit 1); 2 is usage. The loops that run the old binaries are not restarted by this verb.
+
+Since nova-tools #4050 nothing in the plan is typed. `land merge` of nova-tools into dev writes `fleet:release` `version` (`v<x>.<y>.<z>-dev.<merge sha8>`, the train of the version already stored, else `v0.16.0`), `commit` (the merge sha) and `landed` in the same Lua call that marks the landing merged, and its receipt ends `release=<version>`. Before each plan, `builder`, `self` and `platform:<bench>` converge (one HSET of what changed, `CONVERGED k=v ...`; `WOULD CONVERGE` under `--dry-run`): `builder` is the one machine of the machines registry (`--machines <file>`, else `$NOVA_FLEET_MACHINES`) whose roles carry `services`, `self` the one carrying `coordination`, and each bench's platform is `bench:<b>:desired platform`, else the registry's os/arch, else the platform of the version line its beat names. After the build the release manifest (`SHA256SUMS` in the builder's `<v>/<platform>/`) names the tools: every `nova-*` the build produced is installed and recorded as `fleet:release tools` (`MANIFEST tools=<n> <list>`; a manifest without nova-sprint is `MANIFEST FAIL`). `--build-cmd` defaults to `$NOVA_FLEET_BUILD_CMD`, else none, which is the compile verb on the builder. `--redis` goes anywhere on the line, `set`'s pairs included.
+
+`nova-sprint fleet build duty [--redis <addr>] [--machines <file>] [--dry-run]` is one pass of the reconciler's `fleet-deploy` duty, which `nova-sprint reconcile` runs every pass: it converges `fleet:release`, reads every registered bench's beat (`bench:<b>:beat build`, a bench with no live beat is quiet, never drift) and, when a beating bench names another version than `fleet:release version`, claims the deploy of that version (`SET fleet:release:deploy <version> NX`, held for the build's bound, so a running deploy is never started twice and a failed one is retried after it) and starts `nova-sprint fleet build --bench <drifting benches>` in its own session, its output in `~/nova-bench/logs/fleet-build-<version>.log` (`FLEET DEPLOY START version=<v> commit=<sha12> benches=<list>`). `--dry-run` prints `FLEET DEPLOY WOULD INSTALL <bench> beat=<version> want=<version>` per drifting bench and `FLEET DEPLOY DRY-RUN ...`, and starts nothing; a pass with nothing to do prints `FLEET DEPLOY IDLE version=<v> why=current|noplan ...`.
 
 ### `nova-sprint friend serve`
 
