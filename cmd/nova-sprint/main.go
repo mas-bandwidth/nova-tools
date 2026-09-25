@@ -41,6 +41,8 @@ whole table. Without --out it writes no file: there is no --fixture or
 --refresh pending, and a restart re-renders from Redis.
 Load the function library first with
 nova-sprint fn load --redis <addr> (fn check exits 1 while it is missing or stale).
+fn load and fn check read FUNCTION LIST, so they run as the coordinator seat
+(NOVA_SPRINT_REDIS_USER=coordinator); the bench seat is refused it (#3320).
 Control sprints are hidden unless named with --sprint.
 --layout live is Glenn's sprint table, the Go port of rowan-tools
 bin/sprint-table-redis (#2674): the same keys (friend:<f>, friend:<f>:down,
