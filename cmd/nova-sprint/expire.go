@@ -11,14 +11,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
-	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/benchsh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 func init() {
@@ -39,7 +37,7 @@ var expireProber = func() reconcile.Prober { return sshProber{} }
 // the forge's API. Any failure of the session is no evidence for the whole
 // bench; a card whose line is missing or unreadable has none either.
 type sshProber struct {
-	Program string // default "ssh"
+	Program string // default "ssh" (benchsh.Program)
 	// Remote renders a card's repo (owner/name) as the git remote the bench
 	// reads; default git@github.com:<repo>.git.
 	Remote func(repo string) string
@@ -54,13 +52,9 @@ const probeScript = `while read -r s l dir id remote branch; do
   printf '%s %s dir=%s pid=%s ls=%s sha=%s\n' "$s" "$l" "$d" "$p" "$ls" "$sha"
 done`
 
-// Probe implements reconcile.Prober. It is this file's host seam and calls
-// testguard.RefuseHosts before the child starts.
+// Probe implements reconcile.Prober. It is this file's host seam, through
+// internal/benchsh (which calls testguard.RefuseHosts before the child starts).
 func (p sshProber) Probe(ctx context.Context, b deal.Bench, cards []reconcile.Suspect) (map[string]reconcile.Evidence, error) {
-	program := p.Program
-	if program == "" {
-		program = "ssh"
-	}
 	remote := p.Remote
 	if remote == nil {
 		remote = func(repo string) string { return "git@github.com:" + repo + ".git" }
@@ -76,14 +70,13 @@ func (p sshProber) Probe(ctx context.Context, b deal.Bench, cards []reconcile.Su
 	if in.Len() == 0 {
 		return nil, nil
 	}
-	args := []string{
-		"-o", "BatchMode=yes",
-		"-o", "ConnectTimeout=" + strconv.Itoa(int(deal.DefaultConnectTimeout.Seconds())),
-		b.Target(), "exec bash -c " + shellQuote(probeScript),
+	// benchsh: `bash -s --` reads only the line that execs bash on probeScript,
+	// and probeScript reads the batch as the rest of stdin.
+	t := benchsh.Target{Host: b.Target(), SSH: p.Program, ConnectTimeout: deal.DefaultConnectTimeout}
+	cmd, err := benchsh.Command(ctx, t, probeScript, &in)
+	if err != nil {
+		return nil, fmt.Errorf("expire probe: bench %s: %w", b.Name, err)
 	}
-	testguard.RefuseHosts(program, args...)
-	cmd := exec.CommandContext(ctx, program, args...)
-	cmd.Stdin = &in
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("expire probe: bench %s: %w", b.Name, err)
@@ -140,9 +133,4 @@ func hasBlank(fields []string) bool {
 		}
 	}
 	return false
-}
-
-// shellQuote single-quotes s for the remote shell.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }

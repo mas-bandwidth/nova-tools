@@ -14,9 +14,9 @@ import (
 
 // ci_benchrunner.go is the machine behind TestCIOneBenchRunner (#2932, the
 // control for #3291): internal/benchsh is the one way this tree runs a script
-// on a bench (`ssh <user@host> bash -s -- <quoted args>`, script on stdin), and
-// every other ssh exec site is a row of testdata/bench-runners.allow with its
-// shape and retiring issue. The list may only shrink.
+// on a bench (`ssh <user@host> bash -s -- <quoted args>`, script on stdin).
+// #3350 moved the last other ssh exec site onto it and removed the allow list:
+// any site the rule finds outside internal/benchsh fails the test.
 //
 // A SITE is a function (go/ast, every non-test .go file under cmd/ and
 // internal/ outside internal/benchsh and internal/testguard) that calls
@@ -39,9 +39,6 @@ import (
 // the same function, or a string it returns that a caller in the same file
 // puts there -- is not a site: git runs only its own git-upload-pack over it.
 
-// BenchRunnerAllowPath is the allow file, relative to internal/ci.
-const BenchRunnerAllowPath = "testdata/bench-runners.allow"
-
 // benchRunnerSkipDirs are read against themselves: the runner and the guard.
 var benchRunnerSkipDirs = []string{"internal/benchsh/", "internal/testguard/"}
 
@@ -53,7 +50,7 @@ type BenchRunnerSite struct {
 	Line int
 }
 
-// Key is the allow row key: `<file> <func>` (lines move; the key does not).
+// Key is the site's name: `<file> <func>` (lines move; the key does not).
 func (s BenchRunnerSite) Key() string { return s.File + " " + s.Func }
 
 // FindBenchRunners walks cmd/ and internal/ under root.
