@@ -2,12 +2,17 @@
 // parent has landed.
 //
 // Push refuses, before any write, a card missing BASE, base-sha, PATHS,
-// DEPENDS-ON, or DONE-WHEN, and a card whose repository is private. A
+// DEPENDS-ON, or DONE-WHEN, a card whose KIND is not a RESULT kind or a
+// runner kind (kinds.go), and a card whose repository is private. A
 // redirect is private: the page it names can be a login form that returns
 // 200, and that page is not the repository. A card whose dependency is not
 // landed is stored in the waiting set. Release moves that card into the pool
 // only after the dependency is landed, and leaves every other waiting card
 // where it is.
+//
+// A card may name its bench with BENCH: <name>. Push refuses a name that is
+// not in the benches set; the stored card carries it as its bench pin, and the
+// dealer deals the card only to that bench (nova-tools#3650).
 package card
 
 import (
@@ -93,6 +98,8 @@ type cardDoc struct {
 	Type           string // optional TYPE: line, the Jev work type (code, docs, spec, ...); not KIND
 	Route          string // ROUTE: pro|flash, the routes.yaml tier the bench harness picks its model from; absent is flash
 	Priority       string // PRIORITY: <integer>, the card's score in the pool ZSET; absent is 0
+	Bench          string // BENCH: <name>, the one bench the dealer may deal this card to; absent is any bench
+	Est            string // EST: <minutes>, the card's est field (#3653); "" is absent or not a number of minutes
 	Payload        string
 }
 
@@ -137,13 +144,21 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	if err != nil {
 		return cardDoc{}, err
 	}
+	benchValue, benchDeclared := header["BENCH"]
+	bench, err := parseBench(benchValue, benchDeclared)
+	if err != nil {
+		return cardDoc{}, err
+	}
 	repo, err := probeRepo(ctx, cloneURL(header))
 	if err != nil {
 		return cardDoc{}, err
 	}
 	kind := header["KIND"]
+	if err := checkKind(kind); err != nil {
+		return cardDoc{}, err
+	}
 	if kind == "" {
-		kind = "model"
+		kind = KindModel
 	}
 	sum := sha256.Sum256(body)
 	return cardDoc{
@@ -159,6 +174,8 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		Type:           header["TYPE"],
 		Route:          route,
 		Priority:       priority,
+		Bench:          bench,
+		Est:            parseEst(header["EST"]),
 		Payload:        hex.EncodeToString(sum[:]),
 	}, nil
 }
@@ -197,9 +214,71 @@ func parsePriority(value string) (string, error) {
 	return strconv.FormatInt(n, 10), nil
 }
 
+// parseBench accepts BENCH: <name>, a bench id. An absent line is any bench;
+// an empty BENCH: line or a name that is not an id is refused. Whether the
+// name is registered (in the benches set) is checked by ns_card_push, in the
+// same call that stores the card.
+func parseBench(value string, declared bool) (string, error) {
+	if !declared {
+		return "", nil
+	}
+	if !idRE.MatchString(value) {
+		return "", fmt.Errorf("BENCH: %q is not a bench name; name one registered bench or drop the BENCH: line", value)
+	}
+	return value, nil
+}
+
+// estRE is an EST: line the wrapper can enforce (#3653): a positive number
+// of minutes, or of hours with an h suffix.
+var estRE = regexp.MustCompile(`^(?i)([0-9]+(?:\.[0-9]+)?)\s*(m|min|mins|minutes?|h|hr|hrs|hours?)?$`)
+
+// parseEst is the card's EST: line as minutes for the card hash's est field,
+// which the wrapper's wall cap reads (EST x 1.5, #3653). An absent line, or
+// one that is prose rather than a number of minutes (EST: S, EST: 1 read,
+// ~15 min), is "" and not stored: the wrapper then uses cfg:card
+// wall_max_min, or 30. It never refuses the card: EST was free text before
+// the wrapper read it.
+func parseEst(value string) string {
+	m := estRE.FindStringSubmatch(strings.TrimSpace(value))
+	if m == nil {
+		return ""
+	}
+	n, err := strconv.ParseFloat(m[1], 64)
+	if err != nil || n <= 0 {
+		return ""
+	}
+	if u := strings.ToLower(m[2]); u != "" && u[0] == 'h' {
+		n *= 60
+	}
+	return strconv.FormatFloat(n, 'f', -1, 64)
+}
+
 // parseHeader reads the contract line and the contiguous KEY: value block
 // under it. A second line with the same key is returned, not dropped.
 func parseHeader(body []byte) (label string, header map[string]string, dups []string) {
+	label, entries := scanHeader(body)
+	header = map[string]string{}
+	for _, e := range entries {
+		if _, seen := header[e.key]; seen {
+			dups = append(dups, e.key)
+			continue
+		}
+		header[e.key] = e.value
+	}
+	return label, header, dups
+}
+
+// headerLine is one KEY: value line of the header block and its index in the
+// body split on "\n" (a CRLF body splits to the same indices).
+type headerLine struct {
+	key, value string
+	index      int
+}
+
+// scanHeader is the one header walk: parseHeader reads it and MapKind
+// (kinds.go) rewrites the KIND line it finds, so both agree on which line is
+// the card's KIND.
+func scanHeader(body []byte) (label string, entries []headerLine) {
 	text := strings.ReplaceAll(string(body), "\r\n", "\n")
 	lines := strings.Split(text, "\n")
 	start := 0
@@ -207,9 +286,9 @@ func parseHeader(body []byte) (label string, header map[string]string, dups []st
 		label = contractLabel(lines[0])
 		start = 1
 	}
-	header = map[string]string{}
 	ended := false
-	for _, line := range lines[start:] {
+	for i := start; i < len(lines); i++ {
+		line := lines[i]
 		if strings.TrimSpace(line) == "" && !ended {
 			continue
 		}
@@ -221,14 +300,9 @@ func parseHeader(body []byte) (label string, header map[string]string, dups []st
 		if ended {
 			continue
 		}
-		key, value := m[1], strings.TrimSpace(m[2])
-		if _, seen := header[key]; seen {
-			dups = append(dups, key)
-			continue
-		}
-		header[key] = value
+		entries = append(entries, headerLine{key: m[1], value: strings.TrimSpace(m[2]), index: i})
 	}
-	return label, header, dups
+	return label, entries
 }
 
 func isContract(line string) bool {
@@ -340,9 +414,14 @@ func cloneURL(header map[string]string) string {
 
 type privateRepoError struct{ Name string }
 
-func (e *privateRepoError) Error() string { return "private repo " + e.Name }
+func (e *privateRepoError) Error() string {
+	return "private repo " + e.Name + ": no mirror at " + mirrorPath(e.Name) + "; run mirror-refresh on this host"
+}
 
-// probeRepo refuses a repository an unauthenticated request cannot read.
+// probeRepo refuses a repository this host cannot show exists. A local bare
+// mirror (~/nova-bench/mirror/<repo>.git, or $NOVA_MIRROR_ROOT) is checked
+// first and is enough: private repos answer an anonymous request with 404.
+// Without a mirror, the repository must be readable without a login.
 // 404, 401, and 403 are private. A redirect is private too: it is not the
 // repository, and following it can land on a login page that returns 200.
 // Anything else that is not 200 is a probe failure, which is also a refusal:
@@ -354,6 +433,9 @@ func probeRepo(ctx context.Context, cloneURL string) (string, error) {
 	probeURL, name, err := repoProbeURL(cloneURL)
 	if err != nil {
 		return "", err
+	}
+	if hasMirror(name) {
+		return name, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, probeURL, nil)
 	if err != nil {

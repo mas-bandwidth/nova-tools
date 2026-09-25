@@ -11,6 +11,10 @@ package card
 //   - Card scratch (ScratchFiles) is left out of the commit, wherever it sits.
 //   - A changed file over MaxCommitFile means no commit: pushed_sha "-" and
 //     the wrapper line says OVERSIZE <file>.
+//   - A native run (nova-swarm native) clones in its own job directory, not
+//     under out; with NOVA_CARD_OUT in its environment it hands that repo and
+//     the card's RESULT.md to out (swarm.HandOffCardOut), so this step has one
+//     place to look whichever runner the bench used.
 //   - No out/repo, or nothing to commit, is pushed_sha "-" (NO-COMMIT): the
 //     card's friend read is the report rule (#3036), never harvest.
 //   - There is no rebase and no mirror refresh: a moved base is the lander's

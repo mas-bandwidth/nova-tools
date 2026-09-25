@@ -70,3 +70,19 @@ func TestNativeLaunchGoesThroughTheOneLauncher(t *testing.T) {
 		})
 	}
 }
+
+// TestNativeLaunchCarriesTheResultFormat is nova-tools#3651: a typed card's
+// launch prompt is the card text followed by the RESULT-FORMAT paragraph, so the
+// worker is told the grammar card end validates. RED WITHOUT swarm.CardPrompt:
+// the prompt was the card text alone.
+func TestNativeLaunchCarriesTheResultFormat(t *testing.T) {
+	card := "RESULT: c1 sha=0123456789ab nova-tools fix: a card\nKIND: fix\n"
+	argv, err := nativeLaunchArgv("/bin/true", nativeRunConfig{model: "fake/fake-model", label: "fmt-lbl", card: []byte(card)}, "fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := argv[len(argv)-1]
+	if !strings.HasPrefix(prompt, card) || !strings.Contains(prompt, "RESULT-FORMAT") || !strings.Contains(prompt, "## Left owed") {
+		t.Fatalf("the launch prompt does not carry the RESULT-FORMAT paragraph after the card:\n%s", prompt)
+	}
+}

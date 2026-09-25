@@ -77,7 +77,7 @@ type Card struct {
 	Priority float64  // the pool score; lower deals first, front items are negative
 	Leg      string   // empty: any bench
 	Tier     string   // TierPriority or anything else (bulk)
-	Bench    string   // pinned by `card push --bench`; empty: any bench
+	Bench    string   // the card hash's bench pin, from the card's BENCH: line at card push (#3650); empty: any bench
 	Avoid    []string // benches already failed by classification
 	// DependsOn is the card's DEPENDS-ON entries (card ids in its sprint or
 	// <owner>/<repo>#<n>); `-`, `none` or empty waits for nothing (#3066).
