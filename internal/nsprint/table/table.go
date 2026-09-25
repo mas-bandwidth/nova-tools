@@ -10,12 +10,18 @@ import (
 	"strings"
 )
 
-// Bounds of the snapshot (6.3). A registry larger than its bound makes the
-// function return `snapshot: bound exceeded`.
+// Bounds of the snapshot (6.3), the same numbers as ns_snapshot's. A
+// registry larger than its bound makes the function return one error line
+// that names it (#3893):
+// `snapshot: bound exceeded: bound=<name> value=<n> limit=<n> remedy=<flag>`.
+// MaxSprints bounds the registry of every sprint ever made (closed ones stay
+// in it); MaxOpenSprints bounds the open sprints whose rows are read.
 const (
-	MaxSprints = 4
-	MaxBenches = 64
-	MaxFriends = 16
+	MaxSprints     = 1024
+	MaxOpenSprints = 16
+	MaxBenches     = 64
+	MaxFriends     = 16
+	BoundRemedy    = "--layout live"
 )
 
 // Row is one bench or friend. Benches and friends are rows of one shape

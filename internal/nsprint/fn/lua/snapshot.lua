@@ -4,7 +4,9 @@
 -- The function runs atomically and reads the server clock itself, so the
 -- table is one instant: a pipeline of reads is not one consistent instant.
 -- It is read-only (no-writes) and bounded: it uses no SCAN, KEYS or XLEN and
--- refuses a registry larger than its bound with `snapshot: bound exceeded`.
+-- refuses a registry larger than its bound with one line that names it:
+-- `snapshot: bound exceeded: bound=<name> value=<n> limit=<n> remedy=<flag>`
+-- (#3893).
 --
 -- Rows are returned as a flat tagged list so the Go side decodes with no
 -- nested map ambiguity. Every value is a string.
@@ -17,9 +19,16 @@
 --            land-ready landed pool waiting backpressure orphan reconcile
 --   proc     name up age why
 
-local MAX_SPRINTS = 4
+-- `sprints` is the registry of every sprint ever made (a closed sprint stays
+-- in it), so its bound is the registry's: one HGET of status per member. The
+-- rows the snapshot reads grow with the open sprints, bounded apart (#3893:
+-- a bound of 4 on the registry refused the fleet at 9 sprints, 4 of them
+-- closed). At every bound the read stays under a millisecond of server time.
+local MAX_SPRINTS = 1024
+local MAX_OPEN_SPRINTS = 16
 local MAX_BENCHES = 64
 local MAX_FRIENDS = 16
+local BOUND_REMEDY = '--layout live'
 local LIVING_FRESH_MS = 120000
 
 local function zcard(k) return tonumber(redis.call('ZCARD', k)) end
@@ -127,6 +136,12 @@ local function append_procs(out, now, benches)
   end
 end
 
+local function bound_exceeded(now, name, value, limit)
+  return { 'time', tostring(now), 'error', 'snapshot: bound exceeded: bound=' .. name
+    .. ' value=' .. tostring(value) .. ' limit=' .. tostring(limit)
+    .. ' remedy=' .. BOUND_REMEDY }
+end
+
 redis.register_function{
   function_name = 'ns_snapshot',
   flags = { 'no-writes' },
@@ -137,10 +152,12 @@ redis.register_function{
     local out = { 'time', tostring(now) }
 
     -- Bounds first: a registry larger than its bound is an error, and the
-    -- bound is checked before any member is read (6.3).
-    if scard('sprints') > MAX_SPRINTS or scard('benches') > MAX_BENCHES
-      or scard('friends') > MAX_FRIENDS then
-      return { 'time', tostring(now), 'error', 'snapshot: bound exceeded' }
+    -- bound is checked before any member is read (6.3). The refusal names
+    -- the bound, its value, its limit and the flag that renders anyway.
+    for _, b in ipairs({ { 'sprints', MAX_SPRINTS }, { 'benches', MAX_BENCHES },
+      { 'friends', MAX_FRIENDS } }) do
+      local n = scard(b[1])
+      if n > b[2] then return bound_exceeded(now, b[1], n, b[2]) end
     end
 
     local requested = args[1] or ''
@@ -152,6 +169,9 @@ redis.register_function{
       if (status == 'open' or status == 'paused') and (not control or requested == sp) then
         sprints[#sprints + 1] = sp
       end
+    end
+    if #sprints > MAX_OPEN_SPRINTS then
+      return bound_exceeded(now, 'open_sprints', #sprints, MAX_OPEN_SPRINTS)
     end
     local benches = redis.call('SMEMBERS', 'benches')
     local friends = redis.call('SMEMBERS', 'friends')
