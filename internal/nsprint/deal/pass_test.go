@@ -33,8 +33,8 @@ import (
 // accepted unconditionally, with no connect-phase proof, before this fix).
 // Every other accepted session appends one line to
 // sessions.log and its stdin to launched, then holds the session for a
-// second, as a slow remote verb would. It lives in t.TempDir(), so testguard
-// sees a fake.
+// second (or for the seconds in the bench's `sleep` file, #3706), as a slow
+// remote verb would. It lives in t.TempDir(), so testguard sees a fake.
 const fixtureSSHD = `#!/bin/bash
 set -u
 FIX=%q
@@ -78,7 +78,9 @@ if [ -e "$dir/dropafter-timedout" ]; then
   echo "Connection timed out" >&2
   exit 255
 fi
-sleep 1
+secs=1
+[ -e "$dir/sleep" ] && secs=$(cat "$dir/sleep")
+sleep "$secs"
 exit 0
 `
 
