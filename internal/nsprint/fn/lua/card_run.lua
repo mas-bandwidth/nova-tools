@@ -294,6 +294,9 @@ end)
 
 -- The six typed-record card kinds (typedrec.Kinds). A card hash kind outside
 -- this set (model, script) is a runner kind and sets no RESULT expectation.
+-- card push refuses any other KIND before the card is stored, naming this set
+-- (internal/nsprint/card/kinds.go, nova-tools#3651); its KindMap maps a
+-- classification kind (go-verb, spec, ...) to one of these at cut time.
 local RESULT_KINDS = { ['fix'] = true, ['recut'] = true, ['port'] = true,
   ['docs-guard'] = true, ['report'] = true, ['read'] = true }
 

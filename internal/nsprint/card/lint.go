@@ -2,7 +2,8 @@
 // parent has landed.
 //
 // Push refuses, before any write, a card missing BASE, base-sha, PATHS,
-// DEPENDS-ON, or DONE-WHEN, and a card whose repository is private. A
+// DEPENDS-ON, or DONE-WHEN, a card whose KIND is not a RESULT kind or a
+// runner kind (kinds.go), and a card whose repository is private. A
 // redirect is private: the page it names can be a login form that returns
 // 200, and that page is not the repository. A card whose dependency is not
 // landed is stored in the waiting set. Release moves that card into the pool
@@ -142,8 +143,11 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		return cardDoc{}, err
 	}
 	kind := header["KIND"]
+	if err := checkKind(kind); err != nil {
+		return cardDoc{}, err
+	}
 	if kind == "" {
-		kind = "model"
+		kind = KindModel
 	}
 	sum := sha256.Sum256(body)
 	return cardDoc{
@@ -200,6 +204,29 @@ func parsePriority(value string) (string, error) {
 // parseHeader reads the contract line and the contiguous KEY: value block
 // under it. A second line with the same key is returned, not dropped.
 func parseHeader(body []byte) (label string, header map[string]string, dups []string) {
+	label, entries := scanHeader(body)
+	header = map[string]string{}
+	for _, e := range entries {
+		if _, seen := header[e.key]; seen {
+			dups = append(dups, e.key)
+			continue
+		}
+		header[e.key] = e.value
+	}
+	return label, header, dups
+}
+
+// headerLine is one KEY: value line of the header block and its index in the
+// body split on "\n" (a CRLF body splits to the same indices).
+type headerLine struct {
+	key, value string
+	index      int
+}
+
+// scanHeader is the one header walk: parseHeader reads it and MapKind
+// (kinds.go) rewrites the KIND line it finds, so both agree on which line is
+// the card's KIND.
+func scanHeader(body []byte) (label string, entries []headerLine) {
 	text := strings.ReplaceAll(string(body), "\r\n", "\n")
 	lines := strings.Split(text, "\n")
 	start := 0
@@ -207,9 +234,9 @@ func parseHeader(body []byte) (label string, header map[string]string, dups []st
 		label = contractLabel(lines[0])
 		start = 1
 	}
-	header = map[string]string{}
 	ended := false
-	for _, line := range lines[start:] {
+	for i := start; i < len(lines); i++ {
+		line := lines[i]
 		if strings.TrimSpace(line) == "" && !ended {
 			continue
 		}
@@ -221,14 +248,9 @@ func parseHeader(body []byte) (label string, header map[string]string, dups []st
 		if ended {
 			continue
 		}
-		key, value := m[1], strings.TrimSpace(m[2])
-		if _, seen := header[key]; seen {
-			dups = append(dups, key)
-			continue
-		}
-		header[key] = value
+		entries = append(entries, headerLine{key: m[1], value: strings.TrimSpace(m[2]), index: i})
 	}
-	return label, header, dups
+	return label, entries
 }
 
 func isContract(line string) bool {
