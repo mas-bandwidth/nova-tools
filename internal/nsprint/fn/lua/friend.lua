@@ -16,7 +16,7 @@
 --   rung    ladder step 0-3 (5.5); lives in the store, so a restarted
 --           reconciler continues at the rung it left (Stella's HOLD7 on #3058)
 --   ticks   sweeps observed at this rung
---   living  leases seen by the last observation; a rise is a take, and a
+--   leased  leases seen by the last observation; a rise is a take, and a
 --           take at any rung resets the rung to 0
 --   reason, at, idem (the last applied call; a replay is answered, not applied)
 --
@@ -86,7 +86,7 @@ end
 
 -- fs_set writes one state. since is kept while the state is unchanged, and
 -- across idle <-> underfull within one episode (keep_since).
-local function fs_set(f, state, until_ms, reason, rung, ticks, living, actor, idem, at, keep_since)
+local function fs_set(f, state, until_ms, reason, rung, ticks, leased, actor, idem, at, keep_since)
   local key = fs_key(f)
   local cur = redis.call('HMGET', key, 'state', 'since')
   local since = cur[2]
@@ -94,7 +94,7 @@ local function fs_set(f, state, until_ms, reason, rung, ticks, living, actor, id
     since = tostring(at)
   end
   redis.call('HSET', key, 'state', state, 'since', since, 'until', until_ms or '',
-    'rung', tostring(rung or 0), 'ticks', tostring(ticks or 0), 'living', tostring(living or 0),
+    'rung', tostring(rung or 0), 'ticks', tostring(ticks or 0), 'leased', tostring(leased or 0),
     'reason', reason or '', 'at', tostring(at), 'idem', idem or '')
   if cur[1] ~= state then
     fs_caplog('friend-state', f, state .. ' ' .. (reason or ''), actor, idem, at)
@@ -186,9 +186,9 @@ end
 
 -- fs_observe is one ladder step from the reconciler's observation.
 -- obs is idle, underfull or up (nothing to climb: the ladder is cleared).
-local function fs_observe(f, obs, open, living, policy_ticks, actor, idem, at)
+local function fs_observe(f, obs, open, leased, policy_ticks, actor, idem, at)
   local key = fs_key(f)
-  local cur = redis.call('HMGET', key, 'state', 'rung', 'ticks', 'living')
+  local cur = redis.call('HMGET', key, 'state', 'rung', 'ticks', 'leased')
   local state = cur[1]
   if state and FS_HELD[state] then
     return { 'HELD', state, '0', '' }
@@ -200,11 +200,11 @@ local function fs_observe(f, obs, open, living, policy_ticks, actor, idem, at)
     return { 'OK', 'up', '0', '' }
   end
   local rung, ticks = 0, 0
-  local prev_living = tonumber(cur[4] or '') or 0
+  local prev_leased = tonumber(cur[4] or '') or 0
   local keep = state == FS_IDLE or state == FS_UNDER
   if keep then
     rung, ticks = tonumber(cur[2]) or 0, tonumber(cur[3]) or 0
-    if living > prev_living then
+    if leased > prev_leased then
       -- a take: the rung resets and a new episode begins
       rung, ticks, keep = 0, 0, false
       fs_clear(f, 'take at rung ' .. (cur[2] or '0'), actor, idem, at)
@@ -223,14 +223,14 @@ local function fs_observe(f, obs, open, living, policy_ticks, actor, idem, at)
     rung, ticks = rung + 1, 0
     action = fs_rung_action(f, rung, open, actor, idem, at)
   end
-  local reason = obs .. ': open ' .. tostring(open) .. ' living ' .. tostring(living)
-  fs_set(f, obs, '', reason, rung, ticks, living, actor, idem, at, keep)
+  local reason = obs .. ': open ' .. tostring(open) .. ' leased ' .. tostring(leased)
+  fs_set(f, obs, '', reason, rung, ticks, leased, actor, idem, at, keep)
   return { 'OK', obs, tostring(rung), action }
 end
 
 -- ns_friend_state: args = friend, state, until (unix ms or ''), reason,
 -- actor, idem, then for a ladder observation (state idle, underfull or up):
--- open, living, policy ticks. state out-of-credits, away, down,
+-- open, leased, policy ticks. state out-of-credits, away, down,
 -- offline-model and wake-missed are reports; clear removes any state. For
 -- actor life (the #3153 classifier) args 7-8 are required: the state and idem
 -- it read, re-checked here (fs_life_check). Returns OK state rung action,
@@ -288,11 +288,11 @@ local function fs_friend_state(keys, args)
     return { 'OK', state, '0', '' }
   end
   if state == FS_IDLE or state == FS_UNDER or state == 'up' then
-    local open, living, ticks = tonumber(args[7] or ''), tonumber(args[8] or ''), tonumber(args[9] or '')
-    if not open or not living or not ticks or ticks < 1 then
+    local open, leased, ticks = tonumber(args[7] or ''), tonumber(args[8] or ''), tonumber(args[9] or '')
+    if not open or not leased or not ticks or ticks < 1 then
       return { 'INVALID' }
     end
-    return fs_observe(friend, state, open, living, ticks, actor, idem, at)
+    return fs_observe(friend, state, open, leased, ticks, actor, idem, at)
   end
   return { 'INVALID' }
 end

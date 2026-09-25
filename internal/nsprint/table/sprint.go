@@ -21,9 +21,17 @@
 // live table prints none of them by default; the same facts are
 // `nova-sprint stream status --repo <owner/repo>` (cmd/nova-sprint/stream_life.go).
 //
-//	friend | ready | working | done | status        (status up|down)
+//	friend | ready | working | done | ok | fail | ok% | status   (status up|down, stale=<n>)
 //
-//	host | ready | working | done | ok | fail | ok% | load
+//	host   | ready | working | done | ok | fail | ok% | status   (status: load, or down)
+//
+// The friend and host blocks are one consumer block rendered twice
+// (nova-tools #3929, Glenn 12:55 PM ET: one consumer abstraction): every
+// cell is a ZCARD of <consumer>:cards:<col>, done = ok + fail and ok% =
+// ok/done are derived, never stored (a friend's done also adds its
+// friend-queue tasks' done, merging and landed sets while those remain, and
+// a friend's done-work cells count only the current sprint's cards, #3883).
+// A friend's working is its live children (#3892); stale=<n> is the rest.
 //
 // Keys, every one read in ONE pipelined round trip per tick (a second round
 // trip only on the tick a membership set changed; never KEYS, never SCAN):
@@ -43,8 +51,9 @@
 //	                        ok% = ok / done (#3894)
 //	bench:<b>:beat          HMGET load1 at (the bench's own `bench beat` loop)
 //	friends                 SMEMBERS when no roster is given; friend:<f> HMGET at, up
-//	friend:<f>:cards:ready  ZCARD: the friend's cells are the sizes of the sets
-//	                        its tasks move through (the card model, rowan-new
+//	friend:<f>:cards:<w>    ZCARD for ready; ZCOUNT for ok, fail from the current
+//	                        sprint's start (#3883, #3929): the friend's cells are
+//	                        the sizes of the sets its tasks move through (the card model, rowan-new
 //	                        specs/ws-index.md; nova-tools#3779); done adds merging
 //	                        and landed (#3778: finished work whose PR is merging
 //	                        or merged)
@@ -325,6 +334,10 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	for i, f := range roster {
 		rows[i] = pipe.HMGet(ctx, "friend:"+f, "at", "up")
 		cells[i] = append(cells[i], pipe.ZCard(ctx, FriendCardsKey(f, "ready")))
+		for _, w := range []string{"ok", "fail"} {
+			// A copy's ok or fail is done work: only this sprint's count (#3883).
+			cells[i] = append(cells[i], pipe.ZCount(ctx, FriendCardsKey(f, w), since, "+inf"))
+		}
 		for _, w := range FriendDoneWheres {
 			// Only this sprint's cards: every set is scored by created_at (#3883).
 			cells[i] = append(cells[i], pipe.ZCount(ctx, FriendCardsKey(f, w), since, "+inf"))
@@ -432,13 +445,14 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		if got, err := rows[i].Result(); err == nil && len(got) == 2 {
 			row.At, row.Up = pipeValue(got[0]), pipeValue(got[1])
 		}
+		counts := []*string{&row.Ready, &row.OK, &row.Fail}
 		var done int64
 		doneOK := true
 		for j, c := range cells[i] {
 			n, err := c.Result()
-			if j == 0 {
+			if j < 3 {
 				if err == nil {
-					row.Ready = strconv.FormatInt(n, 10)
+					*counts[j] = strconv.FormatInt(n, 10)
 				}
 				continue
 			}
@@ -541,13 +555,11 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 
 	s.renderStreams(&b)
 
-	fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %-10s\n", "friend", "ready", "working", "done", "status")
-	b.WriteString(liveFriendRule)
-	var fq, fw, fd, fs int64
+	friends := make([]ConsumerLine, len(s.Friends))
+	var fstale int64
 	staleUnread := false
-	for _, row := range s.Friends {
-		q, w, d := orDash(row.Ready), orDash(row.Working), orDash(s.friendDone(row))
-		fq, fw, fd, fs = fq+digitsOnly(q), fw+digitsOnly(w), fd+digitsOnly(d), fs+digitsOnly(row.Stale)
+	for i, row := range s.Friends {
+		fstale += digitsOnly(row.Stale)
 		staleUnread = staleUnread || row.Stale == "?"
 		status := "down"
 		if friendState(row, now, s.Config.RowStale) == "up" {
@@ -557,50 +569,92 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 		if row.Stale != "" && row.Stale != "0" {
 			status += " stale=" + row.Stale
 		}
-		fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %-10s\n", row.Name, q, w, d, status)
+		// a friend's done adds its friend-queue tasks' done sets to its copies' ok + fail
+		ok, fail := digitsOnly(row.OK), digitsOnly(row.Fail)
+		done := orDash(s.friendDone(row))
+		if done != "-" {
+			done = strconv.FormatInt(digitsOnly(done)+ok+fail, 10)
+		}
+		friends[i] = ConsumerLine{Name: row.Name, Ready: orDash(row.Ready), Working: orDash(row.Working), Done: done,
+			OK: ok, Fail: fail, Status: status}
 	}
-	b.WriteString(liveFriendRule)
-	tw := strconv.FormatInt(fw, 10)
-	if staleUnread {
-		tw = "?"
+	// The friend total's status is the stale sum (#3892): stale=? when any
+	// working set could not be read, so the total never prints a false 0.
+	totalStale := ""
+	switch {
+	case staleUnread:
+		totalStale = "stale=?"
+	case fstale > 0:
+		totalStale = "stale=" + strconv.FormatInt(fstale, 10)
 	}
-	fmt.Fprintf(&b, "%-10s | %5d | %7s | %5d |", "total", fq, tw, fd)
-	if staleUnread {
-		b.WriteString(" stale=?")
-	} else if fs > 0 {
-		fmt.Fprintf(&b, " stale=%d", fs)
-	}
-	b.WriteString("\n\n")
-
-	fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", "host", "ready", "working", "done", "ok", "fail", "ok%", "load")
-	b.WriteString(liveBenchRule)
-	var hq, hw, hok, hfail int64
-	unread := false
-	for _, row := range s.Hosts {
-		load := row.Load
+	writeConsumerBlock(&b, "friend", friends, totalStale)
+	b.WriteString("\n")
+	hosts := make([]ConsumerLine, len(s.Hosts))
+	for i, row := range s.Hosts {
+		status := row.Load
 		if row.Down {
-			load = "down"
+			status = "down"
 		}
 		// done, ok, fail and ok% are the bench's ended cards this sprint
-		// (#3894): done = ok + fail, ok% = ok / done.
-		done, ok, fail, pct := strconv.FormatInt(row.Done(), 10), strconv.FormatInt(row.OK, 10), strconv.FormatInt(row.Fail, 10), okPct(row.OK, row.Done())
-		if row.Unread {
-			done, ok, fail, pct = "?", "?", "?", "?"
-			unread = true
-		}
-		fmt.Fprintf(&b, "%-10s | %5d | %7d | %5s | %5s | %5s | %4s | %6s\n", row.Name, row.Ready, row.Working, done, ok, fail, pct, load)
-		hq, hw, hok, hfail = hq+row.Ready, hw+row.Working, hok+row.OK, hfail+row.Fail
+		// (#3894): done = ok + fail, ok% = ok / done; "?" when unread.
+		hosts[i] = ConsumerLine{Name: row.Name, Ready: strconv.FormatInt(row.Ready, 10), Working: strconv.FormatInt(row.Working, 10),
+			Done: strconv.FormatInt(row.Done(), 10), OK: row.OK, Fail: row.Fail, Unread: row.Unread, Status: status}
 	}
-	b.WriteString(liveBenchRule)
-	td, tok, tfail, tpct := strconv.FormatInt(hok+hfail, 10), strconv.FormatInt(hok, 10), strconv.FormatInt(hfail, 10), okPct(hok, hok+hfail)
-	if unread {
-		td, tok, tfail, tpct = "?", "?", "?", "?"
-	}
-	fmt.Fprintf(&b, "%-10s | %5d | %7d | %5s | %5s | %5s | %4s |\n", "total", hq, hw, td, tok, tfail, tpct)
+	writeConsumerBlock(&b, "host", hosts, "")
 	if s.Stale {
 		fmt.Fprintf(&b, "stale: %ds (Redis did not answer; rows are the last good read)\n", now.Unix()-s.LastGood.Unix())
 	}
 	return b.String()
+}
+
+// ConsumerLine is one row of a consumer block (a friend or a host): the
+// cells as read, done as printed, and the status column. Unread says the
+// ok or fail count did not come back: done, ok, fail and ok% print "?",
+// never a false 0 (#3894).
+type ConsumerLine struct {
+	Name, Ready, Working, Done string
+	OK, Fail                   int64
+	Unread                     bool
+	Status                     string
+}
+
+// consumerRule is the consumer block's rule line.
+const consumerRule = "-----------+-------+---------+-------+-------+-------+------+------------\n"
+
+// writeConsumerBlock is the one renderer of the friend and host blocks
+// (#3929): name | ready | working | done | ok | fail | ok% | status, then a
+// total row whose ok% is derived from the totals and whose status is
+// totalStatus (the friend block's stale sum, #3892). A working cell of "?"
+// (an unread set) makes the total working "?" too, never a false number.
+func writeConsumerBlock(b *strings.Builder, title string, rows []ConsumerLine, totalStatus string) {
+	fmt.Fprintf(b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %-10s\n", title, "ready", "working", "done", "ok", "fail", "ok%", "status")
+	b.WriteString(consumerRule)
+	var q, w, d, ok, fail int64
+	unread, workingUnread := false, false
+	for _, r := range rows {
+		workingUnread = workingUnread || r.Working == "?"
+		done, okc, failc, pct := r.Done, strconv.FormatInt(r.OK, 10), strconv.FormatInt(r.Fail, 10), okPct(r.OK, r.OK+r.Fail)
+		if r.Unread {
+			done, okc, failc, pct = "?", "?", "?", "?"
+			unread = true
+		}
+		fmt.Fprintf(b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %-10s\n", r.Name, r.Ready, r.Working, done, okc, failc, pct, r.Status)
+		q, w, d, ok, fail = q+digitsOnly(r.Ready), w+digitsOnly(r.Working), d+digitsOnly(r.Done), ok+r.OK, fail+r.Fail
+	}
+	b.WriteString(consumerRule)
+	td, tok, tfail, tpct := strconv.FormatInt(d, 10), strconv.FormatInt(ok, 10), strconv.FormatInt(fail, 10), okPct(ok, ok+fail)
+	if unread {
+		td, tok, tfail, tpct = "?", "?", "?", "?"
+	}
+	tw := strconv.FormatInt(w, 10)
+	if workingUnread {
+		tw = "?"
+	}
+	fmt.Fprintf(b, "%-10s | %5d | %7s | %5s | %5s | %5s | %4s |", "total", q, tw, td, tok, tfail, tpct)
+	if totalStatus != "" {
+		b.WriteString(" " + totalStatus)
+	}
+	b.WriteString("\n")
 }
 
 // friendDone is the row's done count in the current sprint (#3883), and at

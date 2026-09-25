@@ -183,9 +183,9 @@ local function card_deal(keys, args)
   if desired[2] == '1' or desired[2] == 'true' then
     return { 'NONE', 'paused' }
   end
-  local starting_key = 'bench:' .. bench .. ':starting'
-  local free = (tonumber(desired[1]) or 0) -
-    redis.call('ZCARD', starting_key) - redis.call('ZCARD', 'bench:' .. bench .. ':living')
+  -- the bench's width in use is its one working set (#3998): its dealt,
+  -- launched and running sprint cards and its working copies
+  local free = (tonumber(desired[1]) or 0) - NS.moves.held('bench:' .. bench)
   if free <= 0 then
     return { 'NONE', 'full' }
   end
@@ -226,7 +226,6 @@ local function card_deal(keys, args)
           fields = { 'attempt', tostring(attempt), 'token', ctoken, 'token_sha', csha, 'pin', pin,
             'identity', S .. '/' .. label .. '/' .. string.sub(c[6] or '', 1, 8) .. '/' .. bench .. '/' .. attempt,
             'dealt_at', tostring(at) } }) then
-      redis.call('ZADD', starting_key, at, S .. '/' .. label .. '/' .. attempt)
       redis.call('ZADD', 's:' .. S .. ':bench:' .. bench .. ':queue', score, label)
       deal_receipt(S, 'card deal', label, 'queued', 'dealt', attempt, csha, actor, '', idem, at)
       out[#out + 1] = S
@@ -261,7 +260,6 @@ local function deal_undeal(bench, reason, actor, idem, args, first, at)
         not CARD.move(ck, 'ready', { state = 'queued', bench = pin, by = actor, why = reason,
           priority = tonumber(redis.call('ZSCORE', qk, label) or c[7]) or 0,
           fields = { 'token', '', 'reason', reason, 'retries', tostring((tonumber(c[6]) or 0) + 1) } }) then
-      redis.call('ZREM', 'bench:' .. bench .. ':starting', S .. '/' .. label .. '/' .. attempt)
       if pin ~= bench then
         redis.call('ZREM', qk, label)
       end
@@ -477,7 +475,8 @@ redis.register_function('ns_bench_ssh', bench_ssh)
 
 -- ns_deal_status_list(S) is `deal status` list mode (#3605): one row per
 -- member of benches, sorted by name, each {bench, beat exists, desired slots,
--- desired paused, starting, living, sprint queue, ssh state, ssh at}. Read
+-- desired paused, ready, working, sprint queue, ssh state, ssh at}: ready
+-- and working are ZCARDs of bench:<b>:cards:ready|working (#3998). Read
 -- only (no-writes, called with FCALL_RO), so the bench seat, which may FCALL
 -- but never EVAL, runs it. Its callers line for rowan-tools redis-acl-gen:
 -- ns_deal_status_list internal/nsprint/deal/status.go ns-bench ns-coordinator
@@ -497,8 +496,8 @@ redis.register_function{
         redis.call('EXISTS', 'bench:' .. b .. ':beat'),
         des[1] or '0',
         des[2] or '',
-        redis.call('ZCARD', 'bench:' .. b .. ':starting'),
-        redis.call('ZCARD', 'bench:' .. b .. ':living'),
+        redis.call('ZCARD', 'bench:' .. b .. ':cards:ready'),
+        redis.call('ZCARD', 'bench:' .. b .. ':cards:working'),
         redis.call('ZCARD', 's:' .. S .. ':bench:' .. b .. ':queue'),
         ssh[1] or '',
         ssh[2] or '',

@@ -15,10 +15,10 @@ import (
 // store's views (s:<S>:idx:task:<state>, s:<S>:open:<f>, s:<S>:ready) or a
 // retired s:<S>:task:<id> record (one task store since the 2026-09-25 09:35
 // ruling; only task migrate's fold, in 02_card_move.lua, touches one), or a
-// pointer
-// field of a task:<id> record, directly or through a local bound to such a
-// key; the stream registry (ws:names, ws:order) and ws:log receipts are not
-// task sets. A second writer fails here, so it cannot land.
+// pointer field of a task:<id> record, directly or through a local bound to
+// such a key (nor a copy's or primary's link, copy, primary and reads: the
+// table moves, #3929, #4094); the stream registry (ws:names, ws:order) and ws:log
+// receipts are not task sets. A second writer fails here, so it cannot land.
 func TestTaskCardOneWriter(t *testing.T) {
 	source, err := Source()
 	if err != nil {
@@ -32,7 +32,7 @@ func TestTaskCardOneWriter(t *testing.T) {
 		`'s:'\s*\.\.\s*\w+\s*\.\.\s*':(idx:task:|open:|ready'|task:))`)
 	binds := regexp.MustCompile(`local\s+(\w+)\s*=\s*'s(print)?:'\s*\.\.\s*\w+\s*\.\.\s*':(idx:|open:|ready')`)
 	tbinds := regexp.MustCompile(`local\s+(\w+)\s*=\s*(\w+\s+and\s+\()?'task:'\s*\.\.`)
-	pointer := regexp.MustCompile(`'(where|where_ok|where_at|state|state_at|stream|friend|owner|created_at|queue|xid|lease_until|cancelled)'`)
+	pointer := regexp.MustCompile(`'(where|where_ok|where_at|state|state_at|stream|friend|owner|created_at|queue|xid|lease_until|cancelled|copy|primary|reads)'`)
 	checked := 0
 	for _, sec := range sections[1:] {
 		name := sec[:strings.Index(sec, "\n")]

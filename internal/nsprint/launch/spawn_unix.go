@@ -26,6 +26,12 @@ import (
 //
 // The line is under PIPE_BUF, so the write completes without a reader.
 func startDetached(wrapper string, l Line, deadline time.Time) (int, string, error) {
+	return startDetachedArgs(wrapper, []string{WrapperName, l.Card()}, l.String(), deadline)
+}
+
+// startDetachedArgs is startDetached for any argv and one stdin line (a
+// sprint card's launch line, or a copy's <copy> <token>, #3998).
+func startDetachedArgs(wrapper string, args []string, stdinLine string, deadline time.Time) (int, string, error) {
 	if !deadline.After(time.Now()) {
 		return 0, "", fmt.Errorf("wrapper acknowledgement timed out")
 	}
@@ -41,7 +47,7 @@ func startDetached(wrapper string, l Line, deadline time.Time) (int, string, err
 	}
 	cmd := &exec.Cmd{
 		Path:  wrapper,
-		Args:  []string{WrapperName, l.Card()},
+		Args:  args,
 		Stdin: r,
 		Env: append(os.Environ(),
 			LaunchAckFDEnv+"=3",
@@ -59,7 +65,7 @@ func startDetached(wrapper string, l Line, deadline time.Time) (int, string, err
 	}
 	r.Close()
 	ackW.Close()
-	_, werr := io.WriteString(w, l.String()+"\n")
+	_, werr := io.WriteString(w, stdinLine+"\n")
 	cerr := w.Close()
 	pid := cmd.Process.Pid
 	release := true

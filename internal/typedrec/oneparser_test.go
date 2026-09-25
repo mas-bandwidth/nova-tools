@@ -84,6 +84,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "first word of a nova-swarm native verdict line (BLOCKED, RED), an event record, not RESULT line 2"},
 	{file: "internal/nsprint/life/serve_cards.go", fn: "failLine", record: "typed-line", since: "84310288",
 		reason: "first word of the child's last typed line (BLOCKED, ABSTAIN): friend serve's fail signal for a card (#4095), an event line, not RESULT line 2"},
+	{file: "internal/nsprint/life/serve_copy.go", fn: "endCopy", record: "typed-line", since: "51b0ae73",
+		reason: "first word of the child's last typed line (DONE, SCORE, BLOCKED): friend serve's end of a consumer copy (#3998), an event line, not RESULT line 2"},
 	{file: "internal/swarm/sparse.go", fn: "cardPATHS", record: "SPEC-CARD", since: "dd08d6e3",
 		reason: "the card's PATHS header for the sparse checkout, read before any RESULT exists"},
 	{file: "internal/nsprint/brief/lint.go", fn: "briefPaths", record: "brief", since: "1db79631",

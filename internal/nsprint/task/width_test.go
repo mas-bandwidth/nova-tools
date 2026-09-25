@@ -33,8 +33,8 @@ func TestGetWidthOnePipeline(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
 	c.HSet(ctx, "friend:f:desired", "slots", 4)
-	c.ZAdd(ctx, "friend:f:starting", redis.Z{Member: "a"})
-	c.ZAdd(ctx, "friend:f:living", redis.Z{Member: "b"})
+	c.ZAdd(ctx, "friend:f:cards:working", redis.Z{Member: "a"})
+	c.ZAdd(ctx, "friend:f:cards:working", redis.Z{Member: "b"})
 	h := &widthTripHook{}
 	c.AddHook(h)
 	w, err := task.GetWidth(ctx, store.New(c), "f")

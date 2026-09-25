@@ -95,8 +95,9 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 	for i, doc := range docs {
 		// The body the wrapper runs (card run reads BodyKey(sprint,
 		// payload_sha), nova-tools#4101): stored by every push path, in the
-		// same pipeline, once (SETNX; the sha names the bytes).
-		pipe.SetNX(ctx, BodyKey(sprint, doc.Payload), bodies[i], 0)
+		// same pipeline, once (SETNX; the sha names the bytes), with the
+		// retired pusher's 7-day TTL (#3809).
+		pipe.SetNX(ctx, BodyKey(sprint, doc.Payload), bodies[i], BodyTTL)
 		keys := []string{
 			keyCard(sprint, doc.Label),
 			keyPool(sprint),

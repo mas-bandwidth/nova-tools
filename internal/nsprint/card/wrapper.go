@@ -313,6 +313,9 @@ type WrapperConfig struct {
 	// CheckTimeout bounds the wrapper's run of the card's TEST line at end
 	// (#3689); zero is DefaultCheckTimeout.
 	CheckTimeout time.Duration
+	// Copy is a consumer copy's id (#3998): the ledger is a CopyLedger and
+	// the in-process harness renders the card from task:<copy>.
+	Copy string
 }
 
 // WrapperReport is what one run did; the command prints Line.
@@ -501,6 +504,7 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	if cfg.InProcess != nil {
 		rc := *cfg.InProcess
 		rc.Sprint, rc.Label, rc.Attempt, rc.Bench = cfg.Sprint, cfg.Label, cfg.Attempt, cfg.Bench
+		rc.CopyID = cfg.Copy
 		rc.JobDir, rc.OutDir = job, filepath.Join(job, "out")
 		base := rc.Env
 		if base == nil {

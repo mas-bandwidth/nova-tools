@@ -57,8 +57,6 @@ local function rr_requeue(S, label, card, bench, member, from, reason, evidence,
   local refused = CARD.move(card, 'ready', { state = 'queued', by = 'reconciler', why = reason,
     fields = { 'token', '', 'retries', tostring(retries + 1), 'reason', reason, 'requeued_at', tostring(at) } })
   if refused then return rr_reply(2, 'STATE', attempt, '') end
-  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
   redis.call('ZREM', 's:' .. S .. ':bench:' .. bench .. ':queue', label)
   local r = rr_receipt(S, 'card', label, from, 'queued', attempt, token_sha,
     'reconciler', reason, evidence, idem, at)
@@ -113,8 +111,6 @@ redis.register_function('ns_card_reclaim', function(keys, args)
         fields = { 'token', '', 'reason', 'beat-lost', 'required_at', tostring(now) } }) then
       return rr_reply(2, 'STATE', attempt, '')
     end
-    redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-    redis.call('ZREM', 'bench:' .. bench .. ':living', member)
     local r = rr_receipt(S, 'card', label, state, 'reconcile-required', attempt, token_sha,
       'reconciler', 'beat-lost', identity, idem, now)
     redis.call('HSET', 's:' .. S .. ':idem', idem, r)
@@ -201,9 +197,6 @@ redis.register_function('ns_card_required_timeout', function(keys, args)
         'why_at', tostring(now), 'ended_at', tostring(now) } }) then
     return rr_reply(2, 'STATE', attempt, '')
   end
-  local member = S .. '/' .. label .. '/' .. attempt
-  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
   local r = rr_receipt(S, 'card', label, 'reconcile-required', 'ended', attempt,
     rr_get(card, 'token_sha'), 'reconciler', 'reconcile-timeout', why, idem, now)
   redis.call('HSET', card, 'end_receipt', r)

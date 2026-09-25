@@ -357,8 +357,8 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 	got := after.Render(now)
 	for _, want := range []string{
 		"\n588/588 left, 0% done -> ~11760m\n",
-		"\nrowan      |     0 |       2 |     0 | up stale=10\n", // working is live children only (#3892)
-		"\nstella     |     0 |       1 |     0 | down      \n",
+		"\nrowan      |     0 |       2 |     0 |     0 |     0 |    - | up stale=10\n", // working is live children only (#3892)
+		"\nstella     |     0 |       1 |     0 |     0 |     0 |    - | down      \n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("after clear lacks %q:\n%s", want, got)
@@ -383,7 +383,7 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 	// a counter that restarts below its base (a new sprint's index sets) shows as is
 	seedCommands(t, client, [][]string{{"ZREMRANGEBYRANK", table.FriendCardsKey("rowan", "done"), "0", "10"}})
 	again, _ := r.Read(ctx, now)
-	if got := again.Render(now); !strings.Contains(got, "\nrowan      |     0 |       2 |     3 | up stale=10\n") {
+	if got := again.Render(now); !strings.Contains(got, "\nrowan      |     0 |       2 |     3 |     0 |     0 |    - | up stale=10\n") {
 		t.Fatalf("restarted counter:\n%s", got)
 	}
 }

@@ -154,7 +154,7 @@ type CIBench struct {
 	Up      bool
 	Paused  bool
 	Slots   int // bench:<b>:desired slots
-	Leased  int // starting + living over every sprint, ci cards included
+	Leased  int // ZCARD bench:<b>:cards:working over every sprint, ci cards included (#3998)
 	Cores   int // measured cores of the bench's machine (machine:<m>:ceiling)
 	CILive  int // ci cards starting or living on the bench
 	CIProcs int // sum of ci_procs over those

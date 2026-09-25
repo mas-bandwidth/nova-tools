@@ -8,31 +8,22 @@ import (
 )
 
 // Width is the slot accounting of one friend (spec 2.2, 4.2). Leased is
-// ZCARD(starting) + ZCARD(living); Free is desired minus leased. starting and
-// living are global to the consumer, so their ZCARDs already sum over every
-// open sprint.
+// ZCARD friend:<f>:cards:working, the one lease ledger (#3998): taken
+// tasks, task cards and copies, global to the consumer, so it already sums
+// over every open sprint; Free is desired minus leased.
 type Width struct {
-	Desired  int
-	Starting int
-	Living   int
-	Leased   int
-	Free     int
+	Desired int
+	Leased  int
+	Free    int
 }
 
 // WidthFrom is the pure accounting, so it can be tested without a store.
-func WidthFrom(desired, starting, living int) Width {
-	leased := starting + living
-	return Width{
-		Desired:  desired,
-		Starting: starting,
-		Living:   living,
-		Leased:   leased,
-		Free:     desired - leased,
-	}
+func WidthFrom(desired, leased int) Width {
+	return Width{Desired: desired, Leased: leased, Free: desired - leased}
 }
 
-// GetWidth reads a friend's desired slots and the ZCARDs of its starting and
-// living identities, and returns the accounting. It is read only: task width
+// GetWidth reads a friend's desired slots and the ZCARD of its working set,
+// and returns the accounting. It is read only: task width
 // without n never writes, and with n it is capacity friend <f> <n> (one
 // writer, the capacity function).
 func GetWidth(ctx context.Context, st *store.Store, as string) (Width, error) {
@@ -45,8 +36,7 @@ func GetWidth(ctx context.Context, st *store.Store, as string) (Width, error) {
 	client := st.Client()
 	pipe := client.Pipeline()
 	desiredCmd := pipe.HGet(ctx, "friend:"+as+":desired", "slots")
-	startingCmd := pipe.ZCard(ctx, "friend:"+as+":starting")
-	livingCmd := pipe.ZCard(ctx, "friend:"+as+":living")
+	workingCmd := pipe.ZCard(ctx, "friend:"+as+":cards:working")
 	if _, err := pipe.Exec(ctx); err != nil {
 		return Width{}, fmt.Errorf("width: friend %s has no desired slots: %w", as, err)
 	}
@@ -54,5 +44,5 @@ func GetWidth(ctx context.Context, st *store.Store, as string) (Width, error) {
 	if err != nil {
 		return Width{}, fmt.Errorf("width: friend %s has no desired slots: %w", as, err)
 	}
-	return WidthFrom(desired, int(startingCmd.Val()), int(livingCmd.Val())), nil
+	return WidthFrom(desired, int(workingCmd.Val())), nil
 }

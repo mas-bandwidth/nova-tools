@@ -10,7 +10,7 @@
 // over every open sprint), take the highest-priority eligible cards from the
 // open sprints' pools by sprint share and priority, filtered by leg against
 // the bench profile and by backpressure; reserve them in ONE call per bench
-// (queued to dealt, attempt, token, bench:<b>:starting), fenced by the
+// (queued to dealt, attempt, token, bench:<b>:cards:working), fenced by the
 // reconciler's lease token; then open EXACTLY ONE ssh session per bench that
 // carries the bench's whole batch to `card launch --stdin`, which starts every
 // card detached and returns. Uptake is one pass, never a ramp.
@@ -39,7 +39,7 @@
 //
 // THE SECOND HURT (#3322, the 2026-09-23 live smoke). A wedged sshd held its
 // session past the reconciler lease, the pass wrote no row, and 200
-// reservations sat in `starting` on benches that ran nothing. So every session
+// reservations sat dealt on benches that ran nothing. So every session
 // is bounded (the lease bound in the reconciler, the hard deadline in ssh.go,
 // which kills the ssh process group), each bench's row is written the moment
 // its session ends and not after the slowest bench, and a refused or timed-out
@@ -140,12 +140,16 @@ type Bench struct {
 	Paused bool
 	Legs   []string // the bench profile; empty runs every leg
 	Slots  int      // bench:<b>:desired slots
-	Leased int      // ZCARD starting + ZCARD living, over every sprint
+	Leased int      // ZCARD bench:<b>:cards:working, the one lease ledger (#3998)
 	SSH    string   // the pass's last ssh state for this bench
 	SSHAt  time.Time
 	// Role is the registry role column (#3634): benchrole.Friends is dealt
 	// no swarm card; empty or benchrole.Fleet is the fleet.
 	Role string
+	// Enrolled is bench:<b> in consumers (#3998): its harness takes
+	// consumer copies itself (card work --fill at each session start), so
+	// this pass deals it no sprint card and its sets keep one writer.
+	Enrolled bool
 }
 
 // Free is desired minus leased, never negative.
@@ -287,7 +291,7 @@ func contains(items []string, want string) bool {
 }
 
 func eligible(b Bench, now time.Time, hold time.Duration) bool {
-	if !b.Up || b.Paused || b.Role == benchrole.Friends || b.Free() == 0 {
+	if !b.Up || b.Paused || b.Enrolled || b.Role == benchrole.Friends || b.Free() == 0 {
 		return false
 	}
 	if b.SSH == SSHRefused || b.SSH == SSHTimeout {
@@ -383,7 +387,7 @@ type Renewer interface {
 // lease:reconciler inside the function and return ErrFenced on a mismatch.
 type Reserver interface {
 	// Reserve moves the cards queued -> dealt on bench in one call: attempt+1,
-	// a new token, bench:<b>:starting, one receipt each. A card no longer
+	// a new token, bench:<b>:cards:working, one receipt each. A card no longer
 	// queued is skipped, so the result may be shorter than cards.
 	Reserve(ctx context.Context, fence, bench string, cards []Card) ([]Reservation, error)
 	// Unreserve returns dealt reservations that were never sent to the bench
@@ -859,17 +863,16 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	type benchCmds struct {
 		desired, beat, ssh *redis.MapStringStringCmd
 		state              *redis.StringCmd
-		starting, living   *redis.IntCmd
+		working            *redis.IntCmd
 	}
 	bc := make([]benchCmds, len(names))
 	for i, b := range names {
 		bc[i] = benchCmds{
-			desired:  pipe.HGetAll(ctx, "bench:"+b+":desired"),
-			beat:     pipe.HGetAll(ctx, "bench:"+b+":beat"),
-			state:    pipe.HGet(ctx, "bench:"+b+":state", "state"),
-			ssh:      pipe.HGetAll(ctx, RowKey(b)),
-			starting: pipe.ZCard(ctx, "bench:"+b+":starting"),
-			living:   pipe.ZCard(ctx, "bench:"+b+":living"),
+			desired: pipe.HGetAll(ctx, "bench:"+b+":desired"),
+			beat:    pipe.HGetAll(ctx, "bench:"+b+":beat"),
+			state:   pipe.HGet(ctx, "bench:"+b+":state", "state"),
+			ssh:     pipe.HGetAll(ctx, RowKey(b)),
+			working: pipe.ZCard(ctx, "bench:"+b+":cards:working"),
 		}
 	}
 	type sprintCmds struct {
@@ -899,7 +902,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			Paused: d["paused"] == "1" || d["paused"] == "true",
 			Legs:   splitList(d["legs"]),
 			Slots:  slots,
-			Leased: int(bc[i].starting.Val() + bc[i].living.Val()),
+			Leased: int(bc[i].working.Val()),
 			SSH:    ssh["state"],
 			Role:   d[benchrole.Field],
 		}
@@ -907,6 +910,20 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			b.SSHAt = time.UnixMilli(ms)
 		}
 		in.Benches = append(in.Benches, b)
+	}
+	// Enrollment (#3998) in its own pipeline: a seat whose ACL cannot read
+	// consumers yet deals as before (not enrolled), never fails the pass.
+	if len(names) > 0 {
+		pipe = c.Pipeline()
+		enrolled := make([]*redis.BoolCmd, len(names))
+		for i, b := range names {
+			enrolled[i] = pipe.SIsMember(ctx, "consumers", "bench:"+b)
+		}
+		if _, err := pipe.Exec(ctx); err == nil {
+			for i := range in.Benches {
+				in.Benches[i].Enrolled = enrolled[i].Val()
+			}
+		}
 	}
 	pipe = c.Pipeline()
 	pools := make([]*redis.ZSliceCmd, len(sprintNames))

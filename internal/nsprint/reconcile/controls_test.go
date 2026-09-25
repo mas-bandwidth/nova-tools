@@ -67,8 +67,10 @@ func TestControl23NoSecondLaunch(t *testing.T) {
 		t.Fatalf("beat-lost hash: %+v", h)
 	}
 	member := fmt.Sprintf("%s/%s/1", sprint, label)
-	if zHas(t, ctx, client, card.BenchLivingKey(bench), member) {
-		t.Fatal("beat-lost left the slot leased")
+	// reconcile-required is where=working: the card keeps its slot in the
+	// bench's one working set (#3998) until the reconciler resolves it
+	if !zHas(t, ctx, client, card.BenchWorkingKey(bench), card.CardKey(sprint, label)) {
+		t.Fatal("beat-lost card left the bench's working set before it was resolved")
 	}
 	if inPool(t, ctx, client, sprint, label) {
 		t.Fatal("beat-lost requeued the card")
@@ -147,7 +149,7 @@ func TestControl23NoSecondLaunch(t *testing.T) {
 	if h["state"] != "queued" || h["reason"] != "spawn-timeout" || h["retries"] != "1" || h["token"] != "" || !inPool(t, ctx, client, sprint, lost) {
 		t.Fatalf("spawn-timeout hash: %+v pool=%v", h, inPool(t, ctx, client, sprint, lost))
 	}
-	if zHas(t, ctx, client, card.BenchStartingKey(bench), sprint+"/"+lost+"/1") {
+	if zHas(t, ctx, client, card.BenchWorkingKey(bench), card.CardKey(sprint, lost)) {
 		t.Fatal("spawn-timeout left the reservation")
 	}
 
@@ -1125,7 +1127,6 @@ func seedDealt(t *testing.T, ctx context.Context, client *redis.Client, id card.
 		"dealt_at": fmt.Sprint(now.UnixMilli()),
 	}).Err())
 	must(t, client.SAdd(ctx, card.IdxKey(id.Sprint, "dealt"), id.Label).Err())
-	must(t, client.ZAdd(ctx, card.BenchStartingKey(id.Bench), redis.Z{Score: float64(now.UnixMilli()), Member: fmt.Sprintf("%s/%s/%d", id.Sprint, id.Label, id.Attempt)}).Err())
 }
 
 func attemptToken(attempt int) string {

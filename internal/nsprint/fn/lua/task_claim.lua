@@ -219,8 +219,7 @@ local function task_take(keys, args)
   if desired <= 0 then
     return { 'FULL' }
   end
-  local leased = redis.call('ZCARD', 'friend:' .. friend .. ':starting') +
-    redis.call('ZCARD', 'friend:' .. friend .. ':living')
+  local leased = NS.moves.held('friend:' .. friend)
   if leased >= desired then
     return { 'FULL' }
   end
@@ -237,7 +236,7 @@ local function task_take(keys, args)
   if err then
     return { 'REFUSED', err }
   end
-  redis.call('ZADD', 'friend:' .. friend .. ':starting', at, S .. '/' .. id .. '/' .. attempt)
+  NS.moves.hold('friend:' .. friend, S .. '/' .. id .. '/' .. attempt, at)
   receipt(S, 'task take', id, 'open', 'claimed', attempt, token_sha, actor, friend, '', '', idem, at)
   return { 'CLAIMED', S, id, tostring(attempt), token,
     redis.call('HGET', key, 'kind') or '', redis.call('HGET', key, 'ref') or '',
@@ -331,8 +330,7 @@ local function task_done(keys, args)
     return { 'REFUSED', err }
   end
   local identity = S .. '/' .. id .. '/' .. attempt
-  redis.call('ZREM', 'friend:' .. friend .. ':starting', identity)
-  redis.call('ZREM', 'friend:' .. friend .. ':living', identity)
+  NS.moves.drop('friend:' .. friend, identity)
   redis.call('SADD', 's:' .. S .. ':done:' .. friend, id)
   if is_review(kind) and not record then
     HD.write_disp(S, redis.call('HGET', key, 'repo'), redis.call('HGET', key, 'pr'),

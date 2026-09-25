@@ -243,17 +243,16 @@ redis.register_function('ns_card_beat', function(keys, args)
   local bench = hget(card_key, 'bench')
   if bench == '' then return reply(2, 'STATE', attempt, '') end
   local at = now_ms()
-  local member = sprint .. '/' .. label .. '/' .. attempt
   local from = state
+  -- the card is in bench:<b>:cards:working from its deal to its end: the
+  -- one lease ledger (#3998); a beat moves nothing
   if state == 'launched' then
     if CARD.move(card_key, 'working', { state = 'running', fields = { 'beat_at', at }, by = 'card-beat', why = 'beat' }) then
       return reply(2, 'STATE', attempt, '')
     end
-    redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
   else
     redis.call('HSET', card_key, 'beat_at', at)
   end
-  redis.call('ZADD', 'bench:' .. bench .. ':living', at, member)
   local idem = 'beat:' .. hget(card_key, 'identity') .. ':' .. at
   local receipt = xadd(log_key, label, from, 'running', attempt, hget(card_key, 'token_sha'), 'card-beat', 'beat', '-', idem, at)
   return reply(0, 'OK', attempt, receipt)
@@ -341,7 +340,6 @@ redis.register_function('ns_card_end', function(keys, args)
   if not allowed then return reply(2, 'STATE', attempt, '') end
 
   local at = now_ms()
-  local member = sprint .. '/' .. label .. '/' .. attempt
   local actor = 'card-resolve'
   if mode == 'token' then actor = 'card-end' end
   -- DONE with a typed result that is not invalid is ok; ABSTAIN is abstain
@@ -366,8 +364,6 @@ redis.register_function('ns_card_end', function(keys, args)
       fields = end_fields }) then
     return reply(2, 'STATE', attempt, '')
   end
-  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
   redis.call('SADD', 's:' .. sprint .. ':bench:' .. bench .. ':ended', label)
   if record_outcome == 'ABSTAIN' and done_already_sha(hget(res_key, 'w_line2')) then
     redis.call('ZADD', 's:' .. sprint .. ':done-already', at, label)

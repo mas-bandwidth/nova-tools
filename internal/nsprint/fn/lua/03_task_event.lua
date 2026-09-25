@@ -11,6 +11,10 @@
 --   a person posts a CLOSE line (ns_read_post)                -> the same landing
 --   a reader posts a SCORE line (ns_read_post)
 --       the PR's read task read-<n>-<head8> working -> merging (the read is done)
+--       and, for each primary of the PR in reading, the reader's read copy
+--       ends through the one finish (NS.tm.score, 02_card_move.lua): 8+ at
+--       the record head moves the PRIMARY to merging, under 8 cuts one fix
+--       copy on the author's queue (#4094, #4097)
 --
 -- The tasks an event names come from the ref index (01_task_ref.lua): one
 -- SMEMBERS per ref, never a scan. Every move goes through the one task move
@@ -19,7 +23,9 @@
 -- and nothing is written; the score (the task's age) is kept and ws:log gets
 -- one receipt per step. An event edge the graph takes in steps (ready ->
 -- working -> merging when the work's PR opens; ready, parked or waiting ->
--- ... -> landed at a merge) is walked step by step, each step on the graph.
+-- ... -> landed at a merge) is walked step by step, each step on the graph;
+-- a primary (no friend) is skipped before the first step when the walk
+-- passes working or merging, since only a copy's end advances it.
 -- Exports NS.tev for harvest.lua.
 
 local TE = {
@@ -49,10 +55,18 @@ function TE.move(id, to, by, why, sha)
   if from == to then return 'SAME' end
   local path = TE.PATH[to][from]
   if not path then return 'SKIP', from .. '->' .. to .. ' is not an event move' end
-  local err = NS.task.check(id, path[1], { by = by, why = why, sha = sha })
+  -- the walk to landed at a merge passes working in this one call and never
+  -- rests there (o.landing); any other walk skips a primary (no friend)
+  -- whose path enters working or merging, before the first step writes
+  local landing = to == 'landed' and type(sha) == 'string' and sha ~= ''
+  local err = NS.task.check(id, path[1], { by = by, why = why, sha = sha, landing = landing })
   if err then return 'SKIP', err end
   for _, step in ipairs(path) do
-    err = NS.task.move(id, step, { by = by, why = why, sha = sha })
+    err = NS.task.unread(step, p.friend, { sha = sha, landing = landing })
+    if err then return 'SKIP', err end
+  end
+  for _, step in ipairs(path) do
+    err = NS.task.move(id, step, { by = by, why = why, sha = sha, landing = landing })
     if err then return 'SKIP', err end
   end
   return 'MOVED'
@@ -178,7 +192,7 @@ function TE.event(repo, n, key, first)
   local kind = string.match(first, '^(%S+)') or ''
   local who = string.match(first, 'who=([^%s:;,]+)') or ''
   local head = string.match(first, 'head=(%x+)') or ''
-  local r = { moved = 0, same = 0, skipped = 0, notes = {} }
+  local r = { moved = 0, same = 0, skipped = 0, cut = 0, notes = {} }
   if kind == 'CLOSE' and who ~= '' and string.sub(who, 1, 3) ~= 'jev' then
     local with, sha = string.match(first, 'with (%S+#%d+) %((%x+)%)')
     local why = 'landed: CLOSE by ' .. who .. ' on ' .. TE.TR.bare(repo) .. '#' .. n
@@ -191,6 +205,16 @@ function TE.event(repo, n, key, first)
     if redis.call('HGET', 'task:' .. id, 'state') == 'working' then
       r = TE.apply({ id }, 'merging', who, 'read: SCORE by ' .. who .. ' at ' .. string.sub(head, 1, 8))
     end
+    -- The reader's read copy of every primary of the PR in reading ends
+    -- through the one finish (NS.tm.score, 02_card_move.lua, #4094, #4097):
+    -- 8+ at the record head moves the primary to merging, under 8 cuts one
+    -- fix copy. The line store (ns_line_post) and ns_read_post both come here.
+    local s = NS.tm.score(repo, n, first, who)
+    r.moved, r.cut = r.moved + s.moved, s.cut
+    for _, note in ipairs(s.notes) do
+      r.skipped = r.skipped + 1
+      r.notes[#r.notes + 1] = note
+    end
   end
   return r
 end
@@ -200,7 +224,7 @@ end
 -- pr:<repo>:<n>:lines and the record's last_line/last_line_at are stamped
 -- (the record must have a head: NOHEAD otherwise, nothing written). read
 -- post writes through ns_line_post (line.lua), which makes the same move.
---   {'OK', lines, kind, moved, same, skipped, note...} | {'NOHEAD', key}
+--   {'OK', lines, kind, moved, same, skipped, cut, note...} | {'NOHEAD', key}
 redis.register_function('ns_read_post', function(keys, args)
   local repo, n, line, now = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
   local key = TE.prkey(repo, n)
@@ -210,7 +234,7 @@ redis.register_function('ns_read_post', function(keys, args)
   redis.call('HSET', key, 'last_line', first, 'last_line_at', now)
   local kind = string.match(first, '^(%S+)') or ''
   local r = TE.event(repo, n, key, first)
-  local out = { 'OK', tostring(lines), kind, tostring(r.moved), tostring(r.same), tostring(r.skipped) }
+  local out = { 'OK', tostring(lines), kind, tostring(r.moved), tostring(r.same), tostring(r.skipped), tostring(r.cut or 0) }
   for _, note in ipairs(r.notes) do out[#out + 1] = note end
   return out
 end)

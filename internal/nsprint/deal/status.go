@@ -59,7 +59,7 @@ func toStr(v any) string {
 	return ""
 }
 
-func formatBenchLine(name, verdict string, free, starting, living, queue int, sshState, sshAtStr string, nowMs int64) string {
+func formatBenchLine(name, verdict string, free, ready, working, queue int, sshState, sshAtStr string, nowMs int64) string {
 	ssh := "-"
 	sshAge := "-"
 	if sshState != "" {
@@ -72,8 +72,8 @@ func formatBenchLine(name, verdict string, free, starting, living, queue int, ss
 			sshAge = strconv.FormatInt(diffSec, 10)
 		}
 	}
-	return fmt.Sprintf("bench %s verdict=%s free=%d starting=%d living=%d queue=%d ssh=%s ssh_age=%s",
-		name, verdict, free, starting, living, queue, ssh, sshAge)
+	return fmt.Sprintf("bench %s verdict=%s free=%d ready=%d working=%d queue=%d ssh=%s ssh_age=%s",
+		name, verdict, free, ready, working, queue, ssh, sshAge)
 }
 
 func formatSprintLine(sprint string, pool, waiting, dealt int64, logMsgs []redis.XMessage, nowMs int64) string {
@@ -116,8 +116,8 @@ func Status(ctx context.Context, c *redis.Client, sprint, bench string) ([]strin
 		isMemberCmd  *redis.BoolCmd
 		beatCmd      *redis.IntCmd
 		desiredCmd   *redis.SliceCmd
-		startingCmd  *redis.IntCmd
-		livingCmd    *redis.IntCmd
+		readyCmd     *redis.IntCmd
+		workingCmd   *redis.IntCmd
 		queueCmd     *redis.IntCmd
 		sshCmd       *redis.SliceCmd
 	)
@@ -130,8 +130,8 @@ func Status(ctx context.Context, c *redis.Client, sprint, bench string) ([]strin
 		isMemberCmd = pipe.SIsMember(ctx, "benches", bench)
 		beatCmd = pipe.Exists(ctx, "bench:"+bench+":beat")
 		desiredCmd = pipe.HMGet(ctx, "bench:"+bench+":desired", "slots", "paused", "legs")
-		startingCmd = pipe.ZCard(ctx, "bench:"+bench+":starting")
-		livingCmd = pipe.ZCard(ctx, "bench:"+bench+":living")
+		readyCmd = pipe.ZCard(ctx, "bench:"+bench+":cards:ready")
+		workingCmd = pipe.ZCard(ctx, "bench:"+bench+":cards:working")
 		queueCmd = pipe.ZCard(ctx, "s:"+sprint+":bench:"+bench+":queue")
 		sshCmd = pipe.HMGet(ctx, "bench:"+bench+":ssh", "state", "at")
 	}
@@ -167,18 +167,18 @@ func Status(ctx context.Context, c *redis.Client, sprint, bench string) ([]strin
 				slots := toInt(row[2])
 				pausedStr := toStr(row[3])
 				paused := pausedStr == "1" || pausedStr == "true"
-				starting := toInt(row[4])
-				living := toInt(row[5])
+				ready := toInt(row[4])
+				working := toInt(row[5])
 				queue := toInt(row[6])
 				sshState := toStr(row[7])
 				sshAt := toStr(row[8])
 
-				free := slots - starting - living
+				free := slots - working
 				if free < 0 {
 					free = 0
 				}
 				verdict := evalVerdict(true, beatExists, paused, free)
-				line := formatBenchLine(bName, verdict, free, starting, living, queue, sshState, sshAt, nowMs)
+				line := formatBenchLine(bName, verdict, free, ready, working, queue, sshState, sshAt, nowMs)
 				lines = append(lines, line)
 			}
 		}
@@ -193,8 +193,8 @@ func Status(ctx context.Context, c *redis.Client, sprint, bench string) ([]strin
 			pStr := toStr(desiredVals[1])
 			paused = pStr == "1" || pStr == "true"
 		}
-		starting := int(startingCmd.Val())
-		living := int(livingCmd.Val())
+		ready := int(readyCmd.Val())
+		working := int(workingCmd.Val())
 		queue := int(queueCmd.Val())
 		sshVals := sshCmd.Val()
 		sshState := ""
@@ -204,12 +204,12 @@ func Status(ctx context.Context, c *redis.Client, sprint, bench string) ([]strin
 			sshAt = toStr(sshVals[1])
 		}
 
-		free := slots - starting - living
+		free := slots - working
 		if free < 0 {
 			free = 0
 		}
 		verdict := evalVerdict(isMember, beatExists, paused, free)
-		line := formatBenchLine(bench, verdict, free, starting, living, queue, sshState, sshAt, nowMs)
+		line := formatBenchLine(bench, verdict, free, ready, working, queue, sshState, sshAt, nowMs)
 		lines = append(lines, line)
 	}
 

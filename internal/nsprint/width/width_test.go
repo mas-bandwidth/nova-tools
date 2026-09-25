@@ -323,7 +323,7 @@ func TestWidthControls(t *testing.T) {
 		nowMs := timeVal.UnixMilli()
 
 		// 2 working (living members with beat inside 60s)
-		client.ZAdd(ctx, "friend:A:living",
+		client.ZAdd(ctx, "friend:A:cards:working",
 			redis.Z{Score: float64(nowMs), Member: sprint + "/live1/1"},
 			redis.Z{Score: float64(nowMs), Member: sprint + "/live2/1"},
 		)
@@ -622,7 +622,7 @@ func TestWidthControls(t *testing.T) {
 		client.SRem(ctx, "s:"+sprint+":done:B", "task-closed")
 
 		// Case 2: B holds working task for same (repo, PR, head)
-		client.ZAdd(ctx, "friend:B:living", redis.Z{Score: float64(nowMs), Member: sprint + "/task-working/1"})
+		client.ZAdd(ctx, "friend:B:cards:working", redis.Z{Score: float64(nowMs), Member: sprint + "/task-working/1"})
 		client.HSet(ctx, "task:task-working",
 			"state", "working", "kind", "work", "repo", repo, "pr", pr, "head", head)
 
@@ -638,7 +638,7 @@ func TestWidthControls(t *testing.T) {
 			t.Fatalf("working dedup failed: task moved to B: %v", openB)
 		}
 
-		client.Del(ctx, "friend:B:living")
+		client.Del(ctx, "friend:B:cards:working")
 
 		// Case 3: Read task is never moved
 		client.HSet(ctx, "task:task-move", "kind", "read")
@@ -686,7 +686,7 @@ func TestWidthControls(t *testing.T) {
 		}
 		nowMs := timeVal.UnixMilli()
 
-		client.ZAdd(ctx, "friend:r1:living",
+		client.ZAdd(ctx, "friend:r1:cards:working",
 			redis.Z{Score: float64(nowMs), Member: sprint + "/r-live1/1"},
 			redis.Z{Score: float64(nowMs), Member: sprint + "/r-live2/1"},
 		)
@@ -762,7 +762,7 @@ func TestWidthControls(t *testing.T) {
 		client.HSet(ctx, "friend:w1:desired", "slots", "4")
 		client.HSet(ctx, "friend:free1:desired", "slots", "8")
 		for i := 1; i <= 4; i++ {
-			client.ZAdd(ctx, "friend:w1:living", redis.Z{Score: float64(nowMs), Member: fmt.Sprintf("m%d", i)})
+			client.ZAdd(ctx, "friend:w1:cards:working", redis.Z{Score: float64(nowMs), Member: fmt.Sprintf("m%d", i)})
 		}
 
 		lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c8"})
@@ -795,7 +795,7 @@ func TestWidthControls(t *testing.T) {
 			At:     nowMs - 4000,
 		}
 		line := staleFS.Line(nowMs)
-		want := "WIDTH stale_friend slots=? starting=? living=? leased=? working=? deficit=? eligible=? idle=? peak=?@? at=?"
+		want := "WIDTH stale_friend slots=? leased=? working=? deficit=? eligible=? idle=? peak=?@? at=?"
 		if line != want {
 			t.Errorf("stale line = %q; want %q", line, want)
 		}
@@ -819,8 +819,8 @@ func TestWidthControls(t *testing.T) {
 		client.SAdd(ctx, "friends", "f1")
 		client.HSet(ctx, "friend:f1:desired", "slots", "10")
 		client.HSet(ctx, "friend:f1:beat", "at", "1")
-		client.ZAdd(ctx, "friend:f1:starting", redis.Z{Score: 1, Member: "start1"})
-		client.ZAdd(ctx, "friend:f1:living", redis.Z{Score: float64(time.Now().UnixMilli()), Member: "live1"})
+		client.ZAdd(ctx, "friend:f1:cards:working", redis.Z{Score: 1, Member: "start1"})
+		client.ZAdd(ctx, "friend:f1:cards:working", redis.Z{Score: float64(time.Now().UnixMilli()), Member: "live1"})
 		client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: 1, Member: "t1"})
 		client.HSet(ctx, "task:t1", "state", "open")
 
@@ -856,7 +856,7 @@ func TestWidthControls(t *testing.T) {
 			t.Fatal(err)
 		}
 		fs1, _, _ := ReadFillstate(ctx, st, "f1")
-		if fs1.Slots != gw1.Desired || fs1.Starting != gw1.Starting || fs1.Living != gw1.Living || fs1.Leased != gw1.Leased || fs1.Deficit != gw1.Free {
+		if fs1.Slots != gw1.Desired || fs1.Leased != gw1.Leased || fs1.Deficit != gw1.Free {
 			t.Fatalf("f1 fillstate %+v != GetWidth %+v", fs1, gw1)
 		}
 
@@ -877,8 +877,8 @@ func TestWidthControls(t *testing.T) {
 			client8.SAdd(ctx, "friends", f)
 			client8.HSet(ctx, "friend:"+f+":desired", "slots", strconv.Itoa(i*2))
 			client8.HSet(ctx, "friend:"+f+":beat", "at", "1")
-			client8.ZAdd(ctx, "friend:"+f+":starting", redis.Z{Score: 1, Member: "start_" + f})
-			client8.ZAdd(ctx, "friend:"+f+":living", redis.Z{Score: float64(time.Now().UnixMilli()), Member: "live_" + f})
+			client8.ZAdd(ctx, "friend:"+f+":cards:working", redis.Z{Score: 1, Member: "start_" + f})
+			client8.ZAdd(ctx, "friend:"+f+":cards:working", redis.Z{Score: float64(time.Now().UnixMilli()), Member: "live_" + f})
 			client8.ZAdd(ctx, "s:"+sprint+":open:"+f, redis.Z{Score: 1, Member: "task_" + f})
 			client8.HSet(ctx, "task:task_"+f, "state", "open")
 		}
@@ -920,7 +920,7 @@ func TestWidthControls(t *testing.T) {
 				t.Fatal(err)
 			}
 			fs, _, _ := ReadFillstate(ctx, st8, f)
-			if fs.Slots != gw.Desired || fs.Starting != gw.Starting || fs.Living != gw.Living || fs.Leased != gw.Leased || fs.Deficit != gw.Free {
+			if fs.Slots != gw.Desired || fs.Leased != gw.Leased || fs.Deficit != gw.Free {
 				t.Fatalf("%s fillstate %+v != GetWidth %+v", f, fs, gw)
 			}
 		}
@@ -1122,7 +1122,7 @@ func TestWidthReadBoundFencedAtomic(t *testing.T) {
 	}
 	nowMs := timeVal.UnixMilli()
 
-	client.ZAdd(ctx, "friend:r1:living",
+	client.ZAdd(ctx, "friend:r1:cards:working",
 		redis.Z{Score: float64(nowMs), Member: sprint + "/r-live1/1"},
 		redis.Z{Score: float64(nowMs), Member: sprint + "/r-live2/1"},
 	)

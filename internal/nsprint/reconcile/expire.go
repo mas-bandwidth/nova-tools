@@ -33,10 +33,11 @@ package reconcile
 // answer anywhere stops the duty with ErrFenced.
 //
 // Once per LeaseReapEvery, whether a sprint is due or not, the pass runs one
-// fenced ns_lease_reap (#3925, card_ghost.lua): a bench:<b>:starting or
-// :living entry whose card record is gone, names another attempt or bench,
-// is past running, sits in a closed sprint, or has not beaten for LeaseStale
-// is dropped and the slot is free. The count is Counts.Reaped.
+// fenced ns_lease_reap (#3925, card_ghost.lua): a card in a bench's one
+// lease ledger, bench:<b>:cards:working (#3998), whose sprint is closed is
+// retired through the move and the slot is free. The count is
+// Counts.Reaped. A card with no beat for LeaseStale is the sweep's beat-lost
+// reclaim; a member no record accounts for is the fsck duty's repair.
 
 import (
 	"context"

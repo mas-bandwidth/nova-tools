@@ -12,12 +12,15 @@ package reconcile
 //  2. one pipeline: ns_card_repair per sprint (drift repaired from the
 //     record, every registered bench's views swept), then ns_sprint_retire
 //     per sprint that is not open (a sprint closed by any path: its cards
-//     not done move to done/fail through the one move);
+//     not done move to done/fail through the one move), then one
+//     ns_card_members_repair: every member of every ws, bench and friend
+//     set that is not the id of an existing record (MEMBER-NOT-A-CARD,
+//     nova-tools#4054) is removed with a ws:log receipt;
 //  3. the fenced ns_fsck_finding: proc:reconciler fsck_at, and a repair over
 //     0 is a finding there (a writer broke the invariant: a bug to fix).
 //
-// Counts.Repaired is fixed + retired, so the loop prints its DUTY line only
-// when the duty fixed something.
+// Counts.Repaired is fixed (the members removed included) + retired, so the
+// loop prints its DUTY line only when the duty fixed something.
 
 import (
 	"context"
@@ -30,6 +33,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 )
 
@@ -55,7 +59,9 @@ type FsckWalk struct {
 	Sprints int
 	Fixed   int
 	Retired int
-	Lines   []string
+	// NotACard is the members removed from the table sets (counted in Fixed).
+	NotACard int
+	Lines    []string
 }
 
 // Line is the finding text: fixed=<n> retired=<n> sprints=<n> then the
@@ -113,13 +119,24 @@ func FsckAll(ctx context.Context, c *redis.Client, token string) (FsckWalk, erro
 		}
 		rows = append(rows, r)
 	}
-	if len(rows) > 0 {
-		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !anyCmd(rows, func(r row) *redis.Cmd { return r.repair }) {
-			return FsckWalk{}, fmt.Errorf("fsck walk: %w", err)
-		}
+	members := pipe.FCall(ctx, "ns_card_members_repair", nil, "fsck-duty")
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && members.Err() != nil &&
+		!anyCmd(rows, func(r row) *redis.Cmd { return r.repair }) {
+		return FsckWalk{}, fmt.Errorf("fsck walk: %w", err)
 	}
 	w := FsckWalk{Sprints: len(rows)}
 	var errs []string
+	if mem, err := members.StringSlice(); err != nil {
+		errs = append(errs, fmt.Sprintf("members: %v", err))
+	} else if rep, err := card.ParseMembers("ns_card_members_repair", mem); err != nil {
+		errs = append(errs, err.Error())
+	} else {
+		w.NotACard = int(rep.Removed)
+		w.Fixed += w.NotACard
+		if rep.Bad > 0 {
+			w.Lines = append(w.Lines, rep.Lines...)
+		}
+	}
 	for _, r := range rows {
 		rep, err := r.repair.StringSlice()
 		switch {

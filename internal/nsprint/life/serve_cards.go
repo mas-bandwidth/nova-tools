@@ -63,7 +63,8 @@ func (s *Server) takeCards(ctx context.Context, n int) (taken, failed int, err e
 	}
 	var ids []string
 	for i, id := range ready {
-		if len(ids) < n && !sprintTask[i].Val() {
+		// A consumer copy (<id>~<n>, #3998) is takeCopies' through card work.
+		if len(ids) < n && !sprintTask[i].Val() && !taskcard.IsCopy(id) {
 			ids = append(ids, id)
 		}
 	}

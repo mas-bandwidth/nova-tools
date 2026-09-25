@@ -11,3 +11,7 @@ import (
 func startDetached(string, Line, time.Time) (int, string, error) {
 	return 0, "", errors.New("card launch needs POSIX setsid, which this OS does not have")
 }
+
+func startDetachedArgs(string, []string, string, time.Time) (int, string, error) {
+	return 0, "", errors.New("card launch needs POSIX setsid, which this OS does not have")
+}

@@ -20,7 +20,7 @@ const (
 )
 
 // StateWaiting is the task state of a build that holds ownership without a
-// child: not working (its identity left friend:<f>:living) and not ready (it
+// child: not working (its identity left friend:<f>:cards:working) and not ready (it
 // is on no open queue), so #3071's desired never counts it.
 const StateWaiting = "waiting"
 
@@ -82,7 +82,7 @@ func (s WaitStatus) ExitCode() int {
 
 // Wait moves a WORKING task to waiting on a typed key in one atomic Redis
 // Function call: the token check, the fenced token (the old child's beat and
-// done refuse FENCED), the living lease removed, the slot-freed event, the
+// done refuse FENCED), the lease removed from friend:<f>:cards:working, the slot-freed event, the
 // wake index and the one receipt.
 func Wait(ctx context.Context, st *store.Store, req WaitRequest) (WaitStatus, error) {
 	if st == nil {

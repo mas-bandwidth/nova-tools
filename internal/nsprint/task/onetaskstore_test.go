@@ -274,7 +274,7 @@ func TestOneTaskStoreControls(t *testing.T) {
 		fx.want("move of a down owner's lease", r, err, "MOVED")
 		// one store (#3778): the card names the friend whose queue it is on
 		if fx.state("m2") != "open" || fx.field("m2", "owner") != "b" || !contains(fx.queue("b"), "m2") ||
-			fx.client.ZCard(fx.ctx, "friend:a:starting").Val() != 0 {
+			fx.client.ZCard(fx.ctx, "friend:a:cards:working").Val() != 0 {
 			t.Fatal("down owner's lease did not reopen on b")
 		}
 		if got, _ := task.Done(fx.ctx, fx.st, task.DoneRequest{Sprint: fx.S, ID: "m2", Token: claim.Token, Evidence: "late"}); got != task.DoneFenced {

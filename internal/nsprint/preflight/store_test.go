@@ -209,16 +209,20 @@ func TestStateFileRelativeBEATIsRed(t *testing.T) {
 }
 
 // Control 1's preflight half (#2756 section 8) and check 7.3 (Johnny 10):
-// eight claims, one child beats.
+// eight claims, one child beats. The leases are members of the friend's one
+// working set (#3998), each judged by its own record.
 func TestPreflightLeasesNotEqualBeats(t *testing.T) {
 	ctx := context.Background()
+	stamp := func(d time.Duration) string { return fmt.Sprint(int64(ago(d))) }
 	seed := func(c *redis.Client, consumer string, startAge, beatAge time.Duration) {
 		kind, name, _ := strings.Cut(consumer, ":")
 		c.SAdd(ctx, kind+"s", name)
 		for i := 1; i <= 7; i++ {
-			c.ZAdd(ctx, consumer+":starting", redis.Z{Score: ago(startAge), Member: fmt.Sprintf("control-00000001/t%d/1", i)})
+			c.ZAdd(ctx, consumer+":cards:working", redis.Z{Score: ago(startAge), Member: fmt.Sprintf("control-00000001/t%d/1", i)})
+			c.HSet(ctx, fmt.Sprintf("task:t%d", i), "state", "claimed", "claimed_at", stamp(startAge))
 		}
-		c.ZAdd(ctx, consumer+":living", redis.Z{Score: ago(beatAge), Member: "control-00000001/t8/1"})
+		c.ZAdd(ctx, consumer+":cards:working", redis.Z{Score: ago(startAge), Member: "control-00000001/t8/1"})
+		c.HSet(ctx, "task:t8", "state", "working", "claimed_at", stamp(startAge), "beat_at", stamp(beatAge))
 	}
 	t.Run("at 10 s eight leases with one beat is a healthy deal", func(t *testing.T) {
 		_, c := fixture(t)
@@ -232,38 +236,50 @@ func TestPreflightLeasesNotEqualBeats(t *testing.T) {
 		_, c := fixture(t)
 		seed(c, "friend:ctl-a", 70*time.Second, 5*time.Second)
 		l := checkLeases(ctx, c)
-		if !l.Red || !strings.Contains(l.Why, "friend ctl-a") || !strings.Contains(l.Why, "7 starting past 60s") {
+		if !l.Red || !strings.Contains(l.Why, "friend ctl-a") || !strings.Contains(l.Why, "7 dealt or claimed past 60s") {
 			t.Fatalf("at 70 s: %s", l)
 		}
 		if ExitCode([]Line{l}) != 1 {
 			t.Fatal("a RED lease line must exit 1")
 		}
 	})
-	t.Run("after release starting 0 living 1 is green", func(t *testing.T) {
+	t.Run("after release the working set is empty and green", func(t *testing.T) {
 		mr, c := fixture(t)
 		seed(c, "friend:ctl-a", 70*time.Second, 5*time.Second)
-		mr.Del("friend:ctl-a:starting")
+		mr.Del("friend:ctl-a:cards:working")
 		l := checkLeases(ctx, c)
 		if l.Red {
 			t.Fatalf("after release: %s", l)
 		}
 	})
-	t.Run("a living lease whose beat is older than 120 s is red", func(t *testing.T) {
+	t.Run("a running sprint card whose beat is older than 120 s is red", func(t *testing.T) {
 		_, c := fixture(t)
 		c.SAdd(ctx, "benches", "ctl-b")
-		c.ZAdd(ctx, "bench:ctl-b:living", redis.Z{Score: ago(130 * time.Second), Member: "control-00000001/c1/1"})
-		c.ZAdd(ctx, "bench:ctl-b:living", redis.Z{Score: ago(30 * time.Second), Member: "control-00000001/c2/1"})
+		c.ZAdd(ctx, "bench:ctl-b:cards:working", redis.Z{Score: 1, Member: "s:control-00000001:card:c1"},
+			redis.Z{Score: 2, Member: "s:control-00000001:card:c2"})
+		c.HSet(ctx, "s:control-00000001:card:c1", "state", "running", "beat_at", stamp(130*time.Second))
+		c.HSet(ctx, "s:control-00000001:card:c2", "state", "running", "beat_at", stamp(30*time.Second))
 		l := checkLeases(ctx, c)
-		if !l.Red || !strings.Contains(l.Why, "bench ctl-b") || !strings.Contains(l.Why, "1 living beat past 120s") {
+		if !l.Red || !strings.Contains(l.Why, "bench ctl-b") || !strings.Contains(l.Why, "1 with no beat past 120s") {
 			t.Fatalf("stale bench beat: %s", l)
 		}
 	})
-	t.Run("millisecond scores read the same as seconds", func(t *testing.T) {
+	t.Run("a copy whose lease lapsed is red", func(t *testing.T) {
+		_, c := fixture(t)
+		c.SAdd(ctx, "benches", "ctl-b")
+		c.ZAdd(ctx, "bench:ctl-b:cards:working", redis.Z{Score: 1, Member: "p1~1"})
+		c.HSet(ctx, "task:p1~1", "lease_until", stamp(5*time.Second))
+		if l := checkLeases(ctx, c); !l.Red || !strings.Contains(l.Why, "lapsed lease") {
+			t.Fatalf("lapsed copy: %s", l)
+		}
+	})
+	t.Run("millisecond stamps read the same as seconds", func(t *testing.T) {
 		_, c := fixture(t)
 		c.SAdd(ctx, "friends", "ctl-a")
-		c.ZAdd(ctx, "friend:ctl-a:starting", redis.Z{Score: ago(70*time.Second) * 1000, Member: "control-00000001/t1/1"})
+		c.ZAdd(ctx, "friend:ctl-a:cards:working", redis.Z{Score: 1, Member: "control-00000001/t1/1"})
+		c.HSet(ctx, "task:t1", "state", "claimed", "claimed_at", fmt.Sprint(int64(ago(70*time.Second)*1000)))
 		if l := checkLeases(ctx, c); !l.Red {
-			t.Fatalf("ms score: %s", l)
+			t.Fatalf("ms stamp: %s", l)
 		}
 	})
 }

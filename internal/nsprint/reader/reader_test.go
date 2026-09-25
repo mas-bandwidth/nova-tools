@@ -19,7 +19,7 @@ const (
 func up(name string, load int) reader.Friend {
 	return reader.Friend{
 		Name: name, State: "up", MayHold: true,
-		Desired: 8, Starting: 0, Living: 1, Load: load,
+		Desired: 8, Leased: 1, Load: load,
 	}
 }
 
@@ -107,7 +107,7 @@ func TestControl44(t *testing.T) {
 		light.State = "idle"
 		noWidth := up("stella", 0)
 		noWidth.Desired = 1
-		noWidth.Living = 1
+		noWidth.Leased = 1
 		noHold := up("glenn", 0)
 		noHold.MayHold = false
 		req := base(3053, headA, []reader.Friend{busy, noWidth, noHold, light})

@@ -358,7 +358,6 @@ local function ci_end(keys, args)
   local at = ci_now_ms()
   local repo, pr, head = ci_hget(card_key, 'ci_repo'), ci_hget(card_key, 'ci_pr'), ci_hget(card_key, 'ci_head')
   local bench = ci_hget(card_key, 'bench')
-  local member = S .. '/' .. label .. '/' .. attempt
 
   local prev = ci_hget(card_key, 'prev')
   local disp = ci_hget(card_key, 'disp')
@@ -393,8 +392,6 @@ local function ci_end(keys, args)
   if outcome == 'DONE' and final == 'OK' then ok = 'ok' end
   local refused = CARD.move(card_key, 'done', { state = 'ended', ok = ok, by = actor, why = reason })
   if refused then return { 'STATE', attempt } end
-  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
   redis.call('SADD', 's:' .. S .. ':bench:' .. bench .. ':ended', label)
 
   local flaky = ''
