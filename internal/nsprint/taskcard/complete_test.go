@@ -190,6 +190,38 @@ func TestWaitingCardIsCompleteForFriendOrSwarm(t *testing.T) {
 	clean(t, c, "after the deal")
 }
 
+// TestPushFromIssueDependsOnLineLandsWaiting is the #3916 regression: a
+// push from --issue whose body carries a DEPENDS-ON line, with neither
+// --waiting nor --depends-on given (Where and DependsOn both empty on the
+// request), must still land in waiting with blocked_on set from the issue.
+// where was computed from r.DependsOn before fillSpec filled it from the
+// spec, so such a card landed in ready with blocked_on written anyway.
+func TestPushFromIssueDependsOnLineLandsWaiting(t *testing.T) {
+	mirror(t)
+	c := start(t)
+	ctx := context.Background()
+
+	text := strings.Replace(issueText(0, ""), "WHO: any", "WHO: any\nDEPENDS-ON: nova-tools#1", 1)
+	spec := taskcard.ParseIssue(text)
+	spec.Route = taskcard.RouteFriend
+	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "depends-3916", Sprint: sprint,
+		Ref: "mas-bandwidth/nova-tools#3916", Origin: "issue:mas-bandwidth/nova-tools#3916",
+		Title: "a waiting card is complete", By: "rowan", Spec: &spec}); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	rec, err := taskcard.Record(ctx, c, "depends-3916")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec["where"] != "waiting" {
+		t.Errorf("where = %q, want waiting", rec["where"])
+	}
+	if rec["blocked_on"] != "nova-tools#1" {
+		t.Errorf("blocked_on = %q, want nova-tools#1", rec["blocked_on"])
+	}
+	clean(t, c, "after the depends-on push")
+}
+
 // roundTrips counts the client's round trips: a command or a pipeline is one.
 type roundTrips struct{ n atomic.Int64 }
 

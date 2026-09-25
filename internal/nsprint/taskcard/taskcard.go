@@ -196,13 +196,6 @@ type PushResult struct {
 
 // Push creates the record and makes its first move, in one call.
 func Push(ctx context.Context, c redis.Cmdable, r PushRequest) (PushResult, error) {
-	where := r.Where
-	if where == "" {
-		where = "ready"
-		if r.DependsOn != "" {
-			where = "waiting"
-		}
-	}
 	why := r.Why
 	if why == "" {
 		why = "push"
@@ -212,6 +205,13 @@ func Push(ctx context.Context, c redis.Cmdable, r PushRequest) (PushResult, erro
 		var err error
 		if spec, err = r.fillSpec(); err != nil {
 			return PushResult{}, err
+		}
+	}
+	where := r.Where
+	if where == "" {
+		where = "ready"
+		if r.DependsOn != "" {
+			where = "waiting"
 		}
 	}
 	args := []any{r.ID, where, r.By, why}
