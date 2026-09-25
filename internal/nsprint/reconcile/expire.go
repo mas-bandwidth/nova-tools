@@ -103,6 +103,11 @@ type Expire struct {
 	mu      sync.Mutex
 	sprints []string // the sprint index as the last gate read it
 	loaded  bool
+	// next is each sprint's next sweep on the local clock, from the last
+	// gate (#3831): a sprint due by it has its sweep reads and its stamp
+	// sent in the gate's own pipeline, so an idle sweep is one round trip.
+	next    map[string]time.Time
+	benches []string // the bench index as the last gate read it
 
 	wmu     sync.Mutex
 	busy    map[string]bool // bench -> its evidence worker is in flight
@@ -193,8 +198,8 @@ func (e *Expire) Run(ctx context.Context, l *Lease) (Counts, error) {
 }
 
 func (e *Expire) run(ctx context.Context, l *Lease) (Counts, error) {
-	due, benches, now, err := e.gate(ctx)
-	if err != nil || len(due) == 0 {
+	g, err := e.gate(ctx, l)
+	if err != nil || len(g.due) == 0 {
 		return Counts{}, err
 	}
 	if !e.loaded {
@@ -203,25 +208,57 @@ func (e *Expire) run(ctx context.Context, l *Lease) (Counts, error) {
 		}
 		e.loaded = true
 	}
-	return e.sweep(ctx, l, due, benches, now)
+	return e.sweep(ctx, l, g)
+}
+
+// gated is one gate's answer: the sprints due, the bench index, Redis TIME
+// ms, and what the gate's pipeline already sent for the sprints it
+// predicted due: their step 1 reads, their stamps, the config and beats.
+type gated struct {
+	due, benches []string
+	now          int64
+	reads        map[string]sprintRead
+	stamps       map[string]*redis.Cmd
+	cfg          *redis.SliceCmd
+	beats        map[string]*redis.SliceCmd
 }
 
 // gate answers the sprints due for a sweep, the bench index and Redis TIME
 // ms. It is one pipeline (the sprint and bench indexes, TIME, and each known
 // sprint's expire_every_ms and expire_at); a sprint new to the index since
-// the last gate costs one more round trip, once.
-func (e *Expire) gate(ctx context.Context) ([]string, []string, int64, error) {
+// the last gate costs one more round trip, once. A sprint the last gate
+// said is due by now also has its step 1 reads and its stamp in that
+// pipeline (#3831), so its sweep needs no read round of its own.
+func (e *Expire) gate(ctx context.Context, l *Lease) (gated, error) {
+	var g gated
+	local := time.Now()
 	pipe := e.Client.Pipeline()
 	members := pipe.SMembers(ctx, "sprints")
 	benches := pipe.SMembers(ctx, "benches")
 	clock := pipe.Time(ctx)
 	rows := e.gateRows(ctx, pipe, e.sprints)
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, nil, 0, fmt.Errorf("expire gate: %w", err)
+	var predicted []string
+	if e.loaded {
+		for _, s := range e.sprints {
+			if at, ok := e.next[s]; ok && !local.Before(at) {
+				predicted = append(predicted, s)
+			}
+		}
+	}
+	if len(predicted) > 0 {
+		g.reads = e.queueReads(ctx, pipe, predicted)
+		g.cfg, g.beats = e.queueShared(ctx, pipe, e.benches)
+		g.stamps = map[string]*redis.Cmd{}
+		for _, s := range predicted {
+			g.stamps[s] = pipe.FCall(ctx, fnName("stamp"), nil, l.Token(), s)
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !anyCmd(g.stamps) {
+		return g, fmt.Errorf("expire gate: %w", err)
 	}
 	t, err := clock.Result()
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("expire gate: TIME: %w", err)
+		return g, fmt.Errorf("expire gate: TIME: %w", err)
 	}
 	now := t.UnixMilli()
 	current := members.Val()
@@ -236,27 +273,40 @@ func (e *Expire) gate(ctx context.Context) ([]string, []string, int64, error) {
 		pipe := e.Client.Pipeline()
 		more := e.gateRows(ctx, pipe, fresh)
 		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-			return nil, nil, 0, fmt.Errorf("expire gate: %w", err)
+			return g, fmt.Errorf("expire gate: %w", err)
 		}
 		for s, r := range more {
 			rows[s] = r
 		}
 	}
 	e.sprints = current
-	var due []string
+	next := make(map[string]time.Time, len(current))
 	for _, s := range current {
 		r := rows[s]
 		every := DefaultPolicy.ExpireEvery.Milliseconds()
 		if v, err := strconv.ParseInt(r.every.Val(), 10, 64); err == nil && v > 0 {
 			every = v
 		}
-		at, err := strconv.ParseInt(r.at.Val(), 10, 64)
-		if err == nil && now-at < every {
+		if _, sent := g.stamps[s]; sent {
+			// Stamped in this pipeline: the next sweep is one interval on.
+			next[s] = local.Add(time.Duration(every) * time.Millisecond)
+			g.due = append(g.due, s)
 			continue
 		}
-		due = append(due, s)
+		at, err := strconv.ParseInt(r.at.Val(), 10, 64)
+		if err == nil && now-at < every {
+			next[s] = local.Add(time.Duration(at+every-now) * time.Millisecond)
+			continue
+		}
+		// Due: this pass's sweep stamps it, so it is next due an interval
+		// on (the gate reads the stamp every pass: this only says when to
+		// send the sweep's reads with the gate).
+		next[s] = local.Add(time.Duration(every) * time.Millisecond)
+		g.due = append(g.due, s)
 	}
-	return due, benches.Val(), now, nil
+	e.next = next
+	g.benches, g.now = benches.Val(), now
+	return g, nil
 }
 
 func (e *Expire) gateRows(ctx context.Context, pipe redis.Pipeliner, sprints []string) map[string]gateRow {
@@ -268,6 +318,17 @@ func (e *Expire) gateRows(ctx context.Context, pipe redis.Pipeliner, sprints []s
 		}
 	}
 	return rows
+}
+
+// anyCmd reports whether some command of cmds answered (a pipeline error
+// that is per command, not a lost connection).
+func anyCmd(cmds map[string]*redis.Cmd) bool {
+	for _, c := range cmds {
+		if c.Err() == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // The fields step 1 reads per card index, after the label.
@@ -321,14 +382,11 @@ type transition struct {
 	cmd  *redis.Cmd
 }
 
-// sweep runs steps 1-4 over the due sprints.
-func (e *Expire) sweep(ctx context.Context, l *Lease, due, benches []string, now int64) (Counts, error) {
-	token := l.Token()
-	// Step 1: one pipeline of reads.
-	pipe := e.Client.Pipeline()
-	reads := make([]sprintRead, len(due))
-	for i, s := range due {
-		reads[i] = sprintRead{
+// queueReads queues step 1's reads of each sprint.
+func (e *Expire) queueReads(ctx context.Context, pipe redis.Pipeliner, sprints []string) map[string]sprintRead {
+	reads := make(map[string]sprintRead, len(sprints))
+	for _, s := range sprints {
+		reads[s] = sprintRead{
 			policy:   pipe.HGetAll(ctx, PolicyKey(s)),
 			dealt:    indexRead(ctx, pipe, s, "dealt", dealtFields),
 			launched: indexRead(ctx, pipe, s, "launched", liveFields),
@@ -338,24 +396,78 @@ func (e *Expire) sweep(ctx context.Context, l *Lease, due, benches []string, now
 			pending:  pipe.ZRangeWithScores(ctx, PendingIndexKey(s), 0, -1),
 		}
 	}
+	return reads
+}
+
+// queueShared queues step 1's reads every sprint shares: the config and
+// every bench's beat.
+func (e *Expire) queueShared(ctx context.Context, pipe redis.Pipeliner, benches []string) (*redis.SliceCmd, map[string]*redis.SliceCmd) {
 	cfg := pipe.HMGet(ctx, ConfigKey, "max_required_s")
 	beats := make(map[string]*redis.SliceCmd, len(benches))
 	for _, b := range benches {
 		beats[b] = pipe.HMGet(ctx, "bench:"+b+":beat", "host", "user")
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return Counts{}, fmt.Errorf("expire read: %w", err)
+	return cfg, beats
+}
+
+// sweep runs steps 1-4 over the due sprints. Step 1 reads only what the
+// gate's pipeline did not (#3831).
+func (e *Expire) sweep(ctx context.Context, l *Lease, g gated) (Counts, error) {
+	token := l.Token()
+	due, now := g.due, g.now
+	// Step 1: one pipeline of reads, for what the gate did not read.
+	reads := g.reads
+	if reads == nil {
+		reads = map[string]sprintRead{}
+	}
+	var missing []string
+	for _, s := range due {
+		if _, ok := reads[s]; !ok {
+			missing = append(missing, s)
+		}
+	}
+	cfg, beats := g.cfg, g.beats
+	sameBenches := slices.Equal(sortedCopy(g.benches), e.benches)
+	if len(missing) > 0 || cfg == nil || !sameBenches {
+		pipe := e.Client.Pipeline()
+		for s, r := range e.queueReads(ctx, pipe, missing) {
+			reads[s] = r
+		}
+		if cfg == nil || !sameBenches {
+			cfg, beats = e.queueShared(ctx, pipe, g.benches)
+		}
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return Counts{}, fmt.Errorf("expire read: %w", err)
+		}
+	}
+	e.benches = sortedCopy(g.benches)
+	var c Counts
+	var errs []string
+	for _, s := range due {
+		cmd, ok := g.stamps[s]
+		if !ok {
+			continue
+		}
+		code, _, err := reply(cmd)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("stamp: %v", err))
+			continue
+		}
+		if code == 3 {
+			return Counts{}, fmt.Errorf("expire stamp: %w", ErrFenced)
+		}
 	}
 
-	// Step 2: one pipeline of transitions.
-	pipe = e.Client.Pipeline()
+	// Step 2: one pipeline of transitions, sent only when there are any
+	// (a sprint the gate stamped needs no stamp here).
+	pipe := e.Client.Pipeline()
 	var ts []transition
 	add := func(kind string, args ...any) {
 		ts = append(ts, transition{kind: kind, cmd: pipe.FCall(ctx, fnName(kind), nil, args...)})
 	}
 	var suspects []Suspect
-	for i, s := range due {
-		r := reads[i]
+	for _, s := range due {
+		r := reads[s]
 		p := ParsePolicy(r.policy.Val())
 		start, beat := p.Start.Milliseconds(), p.Beat.Milliseconds()
 		for _, h := range rowsOf(r.dealt, dealtFields) {
@@ -385,17 +497,19 @@ func (e *Expire) sweep(ctx context.Context, l *Lease, due, benches []string, now
 				add("ambiguous", s, fmt.Sprint(z.Member), token, "", before)
 			}
 		}
-		add("stamp", token, s)
+		if _, stamped := g.stamps[s]; !stamped {
+			add("stamp", token, s)
+		}
 		for _, h := range rowsOf(r.req, requiredFields) {
 			suspects = append(suspects, Suspect{Sprint: s, Label: h["label"], Bench: h["bench"], Attempt: h["attempt"],
 				Identity: h["identity"], JobDir: h["jobdir"], Branch: h["branch"], Repo: h["repo"], Since: h["required_at"]})
 		}
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !anyReply(ts) {
-		return Counts{}, fmt.Errorf("expire transitions: %w", err)
+	if len(ts) > 0 {
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !anyReply(ts) {
+			return Counts{}, fmt.Errorf("expire transitions: %w", err)
+		}
 	}
-	var c Counts
-	var errs []string
 	for _, t := range ts {
 		code, status, err := reply(t.cmd)
 		if err != nil {
@@ -658,6 +772,12 @@ func (e *Expire) resolve(ctx context.Context, l *Lease, bench string, cards []Su
 // oneLine keeps a row's err on one line.
 func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+func sortedCopy(xs []string) []string {
+	out := slices.Clone(xs)
+	slices.Sort(out)
+	return out
 }
 
 func str(v []any, i int) string {

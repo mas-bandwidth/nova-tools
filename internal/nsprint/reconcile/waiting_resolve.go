@@ -29,7 +29,8 @@ package reconcile
 // stream per distinct blocked_on, so the ws:log entry's why names the
 // dependencies that released it; its score in ready is its created_at,
 // unchanged. Reads are pipelined rounds over the sets and the named records,
-// never a SCAN or KEYS. The duty prints one receipt line per stream with
+// never a SCAN or KEYS, sent as ONE pipeline over the names the last pass
+// read (#3831); a round whose names changed is read again. The duty prints one receipt line per stream with
 // waiting tasks when it moves something or what is still waiting changed:
 //
 //	RESOLVE stream=<s> ready=<k> still=<n> on=<unmet deps> unknown=<deps>
@@ -44,6 +45,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,6 +69,12 @@ type WaitingResolve struct {
 	Out io.Writer
 
 	last map[string]string // stream -> what its last printed line held waiting
+
+	// The names the last pass read (#3831): the next pass queues every
+	// round over these in its first pipeline, so an unchanged store is one
+	// round trip and a round whose names changed is one more.
+	streams, waiting, tasks, members []string
+	refs                             bool // the last pass named an owner/repo#n
 }
 
 // ResolveLine is one stream's receipt for one pass.
@@ -242,42 +250,65 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	}
 	c := d.Client
 
-	// Round 1: the streams, in rank order.
-	streams, err := c.ZRange(ctx, "ws:order", 0, -1).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("waiting-resolve: ws:order: %w", err)
+	// Every round in one pipeline over the last pass's names; a round whose
+	// names changed is read again below.
+	p := c.Pipeline()
+	orderCmd := p.ZRange(ctx, "ws:order", 0, -1)
+	waitCmds := wrQueueWaiting(ctx, p, d.streams)
+	boCmds := wrQueueBlocked(ctx, p, d.waiting)
+	taskCmds := wrQueueTasks(ctx, p, d.tasks)
+	var setCmds []*redis.StringSliceCmd
+	if d.refs {
+		setCmds = wrQueueSets(ctx, p, d.streams)
 	}
-	if len(streams) == 0 {
-		return nil, nil
+	memCmds := wrQueueMembers(ctx, p, d.members)
+	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("waiting-resolve: read: %w", err)
+	}
+	again := func(what string, queue func(redis.Pipeliner)) error {
+		p := c.Pipeline()
+		queue(p)
+		if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			d.streams, d.waiting, d.tasks, d.members, d.refs = nil, nil, nil, nil, false
+			return fmt.Errorf("waiting-resolve: %s: %w", what, err)
+		}
+		return nil
 	}
 
+	// Round 1: the streams, in rank order.
+	streams := orderCmd.Val()
+	if len(streams) == 0 {
+		d.streams, d.waiting, d.tasks, d.members, d.refs = nil, nil, nil, nil, false
+		return nil, nil
+	}
+	streamsMoved := !slices.Equal(streams, d.streams)
+
 	// Round 2: every stream's waiting set, oldest first.
-	pipe := c.Pipeline()
-	waitCmds := make([]*redis.StringSliceCmd, len(streams))
-	for i, s := range streams {
-		waitCmds[i] = pipe.ZRange(ctx, ws.Key(s, "waiting"), 0, -1)
+	if streamsMoved {
+		if err := again("waiting sets", func(p redis.Pipeliner) { waitCmds = wrQueueWaiting(ctx, p, streams) }); err != nil {
+			return nil, err
+		}
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("waiting-resolve: waiting sets: %w", err)
-	}
+	d.streams = streams
 	var waiters []*wrWaiter
+	var ids []string
 	for i, s := range streams {
 		for _, id := range waitCmds[i].Val() {
 			waiters = append(waiters, &wrWaiter{id: id, stream: s})
+			ids = append(ids, id)
 		}
 	}
 	if len(waiters) == 0 {
+		d.waiting, d.tasks, d.members, d.refs = nil, nil, nil, false
 		return nil, nil
 	}
 
 	// Round 3: each waiting task's blocked_on.
-	pipe = c.Pipeline()
-	boCmds := make([]*redis.StringCmd, len(waiters))
-	for i, w := range waiters {
-		boCmds[i] = pipe.HGet(ctx, "task:"+w.id, "blocked_on")
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("waiting-resolve: blocked_on: %w", err)
+	if !slices.Equal(ids, d.waiting) {
+		if err := again("blocked_on", func(p redis.Pipeliner) { boCmds = wrQueueBlocked(ctx, p, ids) }); err != nil {
+			return nil, err
+		}
+		d.waiting = ids
 	}
 	taskDeps, refDeps := map[string]wrStatus{}, map[string]wrStatus{}
 	for i, w := range waiters {
@@ -295,23 +326,23 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 
 	// Round 4: the task records named, and, when a repo#n is named, every
 	// ws set's members (the tasks that can name it).
-	pipe = c.Pipeline()
 	taskIDs := wrKeys(taskDeps)
-	taskCmds := make([]*redis.SliceCmd, len(taskIDs))
-	for i, id := range taskIDs {
-		taskCmds[i] = pipe.HMGet(ctx, "task:"+id, "state", "where", "where_ok")
-	}
-	var setCmds []*redis.StringSliceCmd
-	if len(refDeps) > 0 {
-		for _, s := range streams {
-			for _, st := range ws.States {
-				setCmds = append(setCmds, pipe.ZRange(ctx, ws.Key(s, st), 0, -1))
+	refs := len(refDeps) > 0
+	tasksMoved := !slices.Equal(taskIDs, d.tasks)
+	setsMoved := refs && (!d.refs || streamsMoved)
+	if tasksMoved || setsMoved {
+		if err := again("dependencies", func(p redis.Pipeliner) {
+			if tasksMoved {
+				taskCmds = wrQueueTasks(ctx, p, taskIDs)
 			}
+			if setsMoved {
+				setCmds = wrQueueSets(ctx, p, streams)
+			}
+		}); err != nil {
+			return nil, err
 		}
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("waiting-resolve: dependencies: %w", err)
-	}
+	d.tasks, d.refs = taskIDs, refs
 	for i, id := range taskIDs {
 		v := taskCmds[i].Val()
 		state, where, ok := wrStr(v, 0), wrStr(v, 1), wrStr(v, 2)
@@ -326,7 +357,9 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	}
 
 	// Round 5: the members' names (pr, ref, origin) and whether each landed.
-	if len(refDeps) > 0 {
+	if !refs {
+		d.members = nil
+	} else {
 		seen := map[string]bool{}
 		var members []string
 		for _, cmd := range setCmds {
@@ -337,15 +370,11 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 				}
 			}
 		}
-		pipe = c.Pipeline()
-		memCmds := make([]*redis.SliceCmd, len(members))
-		for i, m := range members {
-			memCmds[i] = pipe.HMGet(ctx, "task:"+m, "state", "where", "where_ok", "pr", "ref", "origin", "repo")
-		}
-		if len(members) > 0 {
-			if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-				return nil, fmt.Errorf("waiting-resolve: members: %w", err)
+		if !slices.Equal(members, d.members) {
+			if err := again("members", func(p redis.Pipeliner) { memCmds = wrQueueMembers(ctx, p, members) }); err != nil {
+				return nil, err
 			}
+			d.members = members
 		}
 		for i := range members {
 			v := memCmds[i].Val()
@@ -470,6 +499,50 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		return lines, fmt.Errorf("waiting-resolve: %s", strings.Join(errs, "; "))
 	}
 	return lines, nil
+}
+
+// The five read rounds, each queued on a pipeline over the names given.
+
+func wrQueueWaiting(ctx context.Context, p redis.Pipeliner, streams []string) []*redis.StringSliceCmd {
+	cmds := make([]*redis.StringSliceCmd, len(streams))
+	for i, s := range streams {
+		cmds[i] = p.ZRange(ctx, ws.Key(s, "waiting"), 0, -1)
+	}
+	return cmds
+}
+
+func wrQueueBlocked(ctx context.Context, p redis.Pipeliner, ids []string) []*redis.StringCmd {
+	cmds := make([]*redis.StringCmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = p.HGet(ctx, "task:"+id, "blocked_on")
+	}
+	return cmds
+}
+
+func wrQueueTasks(ctx context.Context, p redis.Pipeliner, ids []string) []*redis.SliceCmd {
+	cmds := make([]*redis.SliceCmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = p.HMGet(ctx, "task:"+id, "state", "where", "where_ok")
+	}
+	return cmds
+}
+
+func wrQueueSets(ctx context.Context, p redis.Pipeliner, streams []string) []*redis.StringSliceCmd {
+	var cmds []*redis.StringSliceCmd
+	for _, s := range streams {
+		for _, st := range ws.States {
+			cmds = append(cmds, p.ZRange(ctx, ws.Key(s, st), 0, -1))
+		}
+	}
+	return cmds
+}
+
+func wrQueueMembers(ctx context.Context, p redis.Pipeliner, members []string) []*redis.SliceCmd {
+	cmds := make([]*redis.SliceCmd, len(members))
+	for i, m := range members {
+		cmds[i] = p.HMGet(ctx, "task:"+m, "state", "where", "where_ok", "pr", "ref", "origin", "repo")
+	}
+	return cmds
 }
 
 // wrNames is every owner/repo#n a task's pr, ref and origin name.

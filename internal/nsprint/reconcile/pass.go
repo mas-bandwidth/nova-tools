@@ -12,6 +12,12 @@ import (
 // DefaultInterval is the pass cadence (#2726: a 1 s pass loop).
 const DefaultInterval = time.Second
 
+// PassBar is the time a whole pass must finish in (nova-tools #3831: every
+// duty one pipeline or one Redis Function call on an idle pass, so the pass
+// is about ten round trips). A pass at or over it names the duty that held
+// it: the verb prints every duty's DUTY line with its took_ms.
+const PassBar = time.Second
+
 // Counts is what one duty did in one pass; the pass sums them into
 // proc:reconciler (spec 5.1.2: dealt, routed, expired; #2930 rev 5: retried
 // and ambiguous from the expire duty). Each counts a distinct transition.

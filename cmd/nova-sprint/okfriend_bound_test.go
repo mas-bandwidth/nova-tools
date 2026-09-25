@@ -37,8 +37,9 @@ func (c *marginClock) advance(d time.Duration) {
 
 // TestOkFriendDutyStopsAtLeaseMargin is nova-tools #3805 for ok-to-friend:
 // with less than the write margin of the reconciler lease left the duty
-// starts no sprint (no group created, nothing read) and names the sprints it
-// left; with the lease renewed the same duty passes the sprint.
+// starts no sprint (no group created, nothing read) and says its pass did
+// not start (its one read, #3831); with the lease renewed the same duty
+// passes the sprint.
 func TestOkFriendDutyStopsAtLeaseMargin(t *testing.T) {
 	addr := startThrowawayRedis(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
@@ -59,14 +60,18 @@ func TestOkFriendDutyStopsAtLeaseMargin(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = l.Release(ctx) })
-	d := &okFriendDuty{st: st, started: map[string]bool{}}
+	d := &okFriendDuty{st: st}
+	groups := func() int {
+		gs, _ := c.XInfoGroups(ctx, "s:"+S+":log").Result()
+		return len(gs)
+	}
 
 	clk.advance(l.TTL() - 500*time.Millisecond)
 	_, err = d.Run(ctx, l)
-	if !errors.Is(err, reconcile.ErrLeaseMargin) || !strings.Contains(err.Error(), "1 of 1 sprint(s) not started ("+S+")") {
-		t.Fatalf("ok-to-friend at 500ms left: %v; want LEASE-MARGIN naming %s", err, S)
+	if !errors.Is(err, reconcile.ErrLeaseMargin) || !strings.Contains(err.Error(), "pass not started") {
+		t.Fatalf("ok-to-friend at 500ms left: %v; want LEASE-MARGIN, pass not started", err)
 	}
-	if c.Exists(ctx, "s:"+S+":log").Val() != 0 || len(d.started) != 0 {
+	if c.Exists(ctx, "s:"+S+":log").Val() != 0 {
 		t.Fatal("ok-to-friend started the sprint at the margin")
 	}
 
@@ -76,7 +81,7 @@ func TestOkFriendDutyStopsAtLeaseMargin(t *testing.T) {
 	if _, err := d.Run(ctx, l); err != nil {
 		t.Fatalf("ok-to-friend with the lease renewed: %v", err)
 	}
-	if len(d.started) != 1 {
-		t.Fatalf("started %v, want the sprint", d.started)
+	if groups() != 1 {
+		t.Fatalf("groups on s:%s:log: %d, want the sprint started", S, groups())
 	}
 }

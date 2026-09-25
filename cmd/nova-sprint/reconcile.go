@@ -7,8 +7,9 @@
 // file registered through registerReconcileDuty: ok-to-friend and harvest
 // (consume.go), expire (expire.go), route (route_duty.go, #3323: reads, fixes
 // and merging over every open sprint). After each pass a `DUTY <name>` line
-// says what each duty did (#3199: every duty under --once, a moving or
-// failing one in the loop).
+// says what each duty did and its took_ms (#3199: every duty under --once, a
+// moving or failing one in the loop; #3831: every duty, and a SLOW line
+// naming the duty that held it, when the pass took a second or more).
 //
 // --metrics-addr <host:port> serves /metrics (internal/metrics, nx-g61 #2720)
 // for as long as the verb runs: the deal pass exports the cards still pooled,
@@ -28,6 +29,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
@@ -74,6 +77,10 @@ func registerReconcileDuty(name string, build func(st *store.Store) (reconcileDu
 // forge map (CI-NET: no host in a test); nothing else in the loop changes.
 var reconcileSeams = func() (deal.Dialer, deal.PRs) { return deal.Remote{}, deal.GH{} }
 
+// reconcileSweep is the refill's deal sweep floor; zero is
+// reconcile.DefaultSweep. A test shortens it to measure a sweep pass.
+var reconcileSweep time.Duration
+
 // stoppableDuty is a duty with work of its own past its Run (the harvest
 // workers, #3737): Stop ends it before the verb exits, until ctx ends.
 type stoppableDuty interface {
@@ -86,17 +93,18 @@ type stoppableDuty interface {
 // the Stop of every duty with work of its own past its Run, for the way out.
 func productionDuties(st *store.Store, set *metrics.Set) (duties []reconcile.Duty, names []string, stops []stoppableDuty, err error) {
 	dialer, prs := reconcileSeams()
+	// The fleet step rides the refill's one round trip (#3831): it runs
+	// first in the pipeline, before the refill reads the bench states.
 	refill := &reconcile.Refill{
 		Client: st.Client(),
 		Deal:   &deal.Pass{Dialer: dialer, PRs: prs, Metrics: set},
+		Sweep:  reconcileSweep,
+		Prelude: func(ctx context.Context, pipe redis.Pipeliner) func() error {
+			cmd := fleet.StepCmd(ctx, pipe)
+			return func() error { return fleet.StepResult(cmd) }
+		},
 	}
-	fleetRefill := func(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
-		if err := fleet.Step(ctx, st.Client()); err != nil {
-			return reconcile.Counts{}, err
-		}
-		return refill.Run(ctx, l)
-	}
-	duties = []reconcile.Duty{fleetRefill}
+	duties = []reconcile.Duty{refill.Run}
 	names = []string{"refill"}
 	for _, b := range reconcileDuties {
 		d, err := b.Build(st)
@@ -207,8 +215,11 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 		OnError: func(err error) { fmt.Fprintf(errOut, "%s nova-sprint reconcile: pass: %v\n", logStamp(), err) },
 		// Per-duty receipts (#3199): every pass under --once, so the probe
 		// says what each duty did; in the loop only a duty that moved
-		// something or failed, so an idle second prints nothing.
-		AfterPass: func(reconcile.PassResult) { named.report(out, *once) },
+		// something or failed, so an idle second prints nothing, unless the
+		// pass took reconcile.PassBar or more: then every duty's line, with
+		// its took_ms, and one SLOW line naming the duty that held it
+		// (#3831).
+		AfterPass: func(res reconcile.PassResult) { named.report(out, *once, res) },
 	}
 	if *widthTicks > 0 {
 		fmt.Fprintf(out, "WIDTH on rebalance_ticks=%d\n", *widthTicks)
@@ -265,20 +276,34 @@ func stopDuties(out io.Writer, stops []stoppableDuty) {
 	}
 }
 
-// report prints one `DUTY <name> <counts> err=<text>` line per duty of the
-// pass just recorded, in duty order; all of them when all is set, else only
-// the duties that moved something or errored.
-func (n *namedDuties) report(out io.Writer, all bool) {
+// report prints one `DUTY <name> <counts> took_ms=<n> err=<text>` line per
+// duty of the pass just recorded, in duty order; all of them when all is set
+// or when the pass took reconcile.PassBar or more, else only the duties that
+// moved something or errored. A pass at or over the bar also prints
+// `SLOW pass took_ms=<n> duty=<name> duty_ms=<n>`, the duty that took
+// longest (#3831: any pass over 1000 names the duty that held it).
+func (n *namedDuties) report(out io.Writer, all bool, res reconcile.PassResult) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	slow := res.Took >= reconcile.PassBar
 	for _, name := range n.names {
 		c, e := n.counts[name], n.last[name]
-		if !all && c.Zero() && e == "" {
+		if !all && !slow && c.Zero() && e == "" {
 			continue
 		}
-		fmt.Fprintf(out, "DUTY %s %s err=%s\n", name, c.Line(), e)
+		fmt.Fprintf(out, "DUTY %s %s took_ms=%d err=%s\n", name, c.Line(), n.took[name].Milliseconds(), e)
+	}
+	if slow {
+		held := ""
+		for _, name := range n.names {
+			if held == "" || n.took[name] > n.took[held] {
+				held = name
+			}
+		}
+		fmt.Fprintf(out, "SLOW pass took_ms=%d duty=%s duty_ms=%d\n", res.Took.Milliseconds(), held, n.took[held].Milliseconds())
 	}
 	n.counts = map[string]reconcile.Counts{}
+	n.took = map[string]time.Duration{}
 }
 
 // namedDuties wraps each duty so its error reaches stderr under the duty's
@@ -291,6 +316,7 @@ type namedDuties struct {
 	mu     sync.Mutex
 	names  []string                    // duty names in pass order
 	counts map[string]reconcile.Counts // duty name -> its counts in the current pass
+	took   map[string]time.Duration    // duty name -> its wall time in the current pass
 	last   map[string]string           // duty name -> its last error text ("" when clean)
 	any    bool                        // any duty errored in any pass
 }
@@ -299,19 +325,21 @@ func (n *namedDuties) wrap(duties []reconcile.Duty, names []string) []reconcile.
 	n.names = names
 	n.last = map[string]string{}
 	n.counts = map[string]reconcile.Counts{}
+	n.took = map[string]time.Duration{}
 	out := make([]reconcile.Duty, len(duties))
 	for i, d := range duties {
 		d, name := d, names[i]
 		out[i] = func(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
+			began := time.Now()
 			c, err := d(ctx, l)
-			n.note(name, c, err)
+			n.note(name, c, time.Since(began), err)
 			return c, err
 		}
 	}
 	return out
 }
 
-func (n *namedDuties) note(name string, c reconcile.Counts, err error) {
+func (n *namedDuties) note(name string, c reconcile.Counts, took time.Duration, err error) {
 	if errors.Is(err, reconcile.ErrFenced) {
 		return
 	}
@@ -322,6 +350,7 @@ func (n *namedDuties) note(name string, c reconcile.Counts, err error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.counts[name] = c
+	n.took[name] = took
 	if err != nil {
 		n.any = true
 	}

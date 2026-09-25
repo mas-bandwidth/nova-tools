@@ -30,6 +30,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/harvest"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
@@ -71,7 +73,7 @@ func init() {
 		Run:     runConsume,
 	})
 	registerReconcileDuty(consume.GroupOkFriend, func(st *store.Store) (reconcileDuty, error) {
-		return &okFriendDuty{st: st, started: map[string]bool{}}, nil
+		return &okFriendDuty{st: st}, nil
 	})
 	registerReconcileDuty(groupHarvest, func(st *store.Store) (reconcileDuty, error) {
 		forge, pusher := consumeHarvestSeams()
@@ -326,51 +328,46 @@ func harvestPass(ctx context.Context, st *store.Store, only string, benchList []
 	return code
 }
 
-// okFriendDuty is ok-to-friend as a reconcile duty: every pass, each open
-// sprint's log once, without blocking, as consumer reconciler-<instance>. A
-// new lease instance reclaims what a killed one left pending (Start). No
-// sprint starts with less than the lease write margin left (#3805): the
-// duty returns what it routed and names the sprints it left.
+// okFriendDuty is ok-to-friend as a reconcile duty: every pass, every open
+// sprint's log once, without blocking, as consumer reconciler-<instance>, in
+// ONE round trip when no card event arrived (consume.OkFriendSprints,
+// #3831). A new lease instance reclaims what a killed one left pending
+// (OkFriend.Start, once per sprint). No sprint's handling starts with less
+// than the lease write margin left (#3805): the duty returns what it routed
+// and names the sprints it left.
 type okFriendDuty struct {
-	st      *store.Store
-	started map[string]bool // "<consumer>/<sprint>"
+	st  *store.Store
+	all *consume.OkFriendSprints
 }
 
 func (d *okFriendDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
 	var counts reconcile.Counts
-	sprints, err := consumeSprints(ctx, d.st, "")
-	if err != nil {
-		return counts, fmt.Errorf("ok-to-friend: %w", err)
-	}
 	consumer := "reconciler-" + l.Instance()
+	if d.all == nil || d.all.Consumer != consumer {
+		d.all = &consume.OkFriendSprints{Store: d.st, Consumer: consumer, Actor: "reconciler"}
+	}
+	results, err := d.all.Pass(ctx, func() error { return l.Bounded(0) })
 	var errs []string
-	for i, s := range sprints {
-		if err := l.Bounded(0); errors.Is(err, reconcile.ErrFenced) {
-			return counts, err
-		} else if err != nil {
-			prior := ""
-			if len(errs) > 0 {
-				prior = strings.Join(errs, "; ") + "; "
-			}
-			return counts, fmt.Errorf("ok-to-friend: %s%d of %d sprint(s) not started (%s): %w",
-				prior, len(sprints)-i, len(sprints), strings.Join(sprints[i:], ","), err)
-		}
-		o := &consume.OkFriend{Store: d.st, Sprint: s, Consumer: consumer, Actor: "reconciler", Block: -1}
-		if key := consumer + "/" + s; !d.started[key] {
-			if err := o.Start(ctx); err != nil {
-				errs = append(errs, fmt.Sprintf("%s: %v", s, err))
-				continue
-			}
-			d.started[key] = true
-		}
-		n, err := o.Pass(ctx)
-		counts.Routed += n
-		if err != nil && !pendingOnReaders(err) {
-			errs = append(errs, fmt.Sprintf("%s: %v", s, err))
+	for _, r := range results {
+		counts.Routed += r.N
+		if r.Err != nil && !pendingOnReaders(r.Err) {
+			errs = append(errs, fmt.Sprintf("%s: %v", r.Sprint, r.Err))
 		}
 	}
+	if errors.Is(err, reconcile.ErrFenced) {
+		return counts, err
+	}
+	prior := ""
 	if len(errs) > 0 {
-		return counts, fmt.Errorf("ok-to-friend: %s", strings.Join(errs, "; "))
+		prior = strings.Join(errs, "; ")
+	}
+	switch {
+	case err != nil && prior != "":
+		return counts, fmt.Errorf("ok-to-friend: %s; %w", prior, err)
+	case err != nil:
+		return counts, fmt.Errorf("ok-to-friend: %w", err)
+	case prior != "":
+		return counts, fmt.Errorf("ok-to-friend: %s", prior)
 	}
 	return counts, nil
 }
@@ -468,6 +465,7 @@ func (d *prReadDuty) Stop(ctx context.Context) []string {
 // dead instance until its TTL.
 type harvestDuty struct {
 	st     *store.Store
+	index  openIndex
 	forge  harvest.Forge
 	pusher harvest.Pusher
 	log    func(string)
@@ -481,18 +479,64 @@ type harvestDuty struct {
 }
 
 func (d *harvestDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
-	sprints, err := consumeSprints(ctx, d.st, "")
-	if err == nil && len(sprints) > 0 {
-		var benches []string
-		benches, err = consumeBenches(ctx, d.st, nil)
+	sprints, benches, err := d.index.read(ctx, d.st)
+	if err != nil {
+		return reconcile.Counts{}, fmt.Errorf("harvest: %w", err)
+	}
+	if len(sprints) > 0 {
 		for _, b := range benches {
 			d.start(ctx, l, "reconciler-"+l.Instance(), b, sprints)
 		}
 	}
-	if err != nil {
-		return reconcile.Counts{}, fmt.Errorf("harvest: %w", err)
-	}
 	return reconcile.Counts{}, nil
+}
+
+// openIndex reads the open sprints (name order) and the registered benches
+// in ONE round trip (#3831): the two index sets and the status of every
+// sprint the last read found, in one pipeline; a sprint new to the index
+// costs one more round trip, once.
+type openIndex struct {
+	known []string // `sprints` as the last read found it
+}
+
+func (x *openIndex) read(ctx context.Context, st *store.Store) (open, benches []string, err error) {
+	client := st.Client()
+	status := map[string]*redis.StringCmd{}
+	pipe := client.Pipeline()
+	members := pipe.SMembers(ctx, "sprints")
+	benchSet := pipe.SMembers(ctx, "benches")
+	for _, s := range x.known {
+		status[s] = pipe.HGet(ctx, "s:"+s, "status")
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, nil, fmt.Errorf("sprints: %w", err)
+	}
+	names := members.Val()
+	sort.Strings(names)
+	var fresh []string
+	for _, s := range names {
+		if _, ok := status[s]; !ok {
+			fresh = append(fresh, s)
+		}
+	}
+	if len(fresh) > 0 {
+		pipe := client.Pipeline()
+		for _, s := range fresh {
+			status[s] = pipe.HGet(ctx, "s:"+s, "status")
+		}
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return nil, nil, fmt.Errorf("sprint status: %w", err)
+		}
+	}
+	x.known = names
+	for _, s := range names {
+		if status[s].Val() == "open" {
+			open = append(open, s)
+		}
+	}
+	benches = benchSet.Val()
+	sort.Strings(benches)
+	return open, benches, nil
 }
 
 func (d *harvestDuty) start(ctx context.Context, l *reconcile.Lease, instance, bench string, sprints []string) {

@@ -157,8 +157,8 @@ func TestSlowDutyPassEndsInsideLease(t *testing.T) {
 }
 
 // TestRouteDutyStopsAtLeaseMargin (#3805): with less than the write margin
-// of the lease left the route duty makes no move and says what it left;
-// with the lease renewed the same pass makes the move.
+// of the lease left the route duty makes no move and says what it left (its
+// one sweep call, #3831); with the lease renewed the same pass makes the move.
 func TestRouteDutyStopsAtLeaseMargin(t *testing.T) {
 	f := newPRFixture(t, "control-3805")
 	_ = f.l.Release(f.ctx)
@@ -167,8 +167,8 @@ func TestRouteDutyStopsAtLeaseMargin(t *testing.T) {
 
 	clk.Advance(boundTTL - 500*time.Millisecond)
 	c, err := f.duty.Run(f.ctx, l)
-	if !errors.Is(err, reconcile.ErrLeaseMargin) || !strings.Contains(err.Error(), "1 of 1 sprint(s) not started") {
-		t.Fatalf("route at 500ms left: %v; want LEASE-MARGIN, 1 of 1 sprint(s) not started", err)
+	if !errors.Is(err, reconcile.ErrLeaseMargin) || !strings.Contains(err.Error(), "sweep not started") {
+		t.Fatalf("route at 500ms left: %v; want LEASE-MARGIN, sweep not started", err)
 	}
 	if c.Routed != 0 || f.qlen("emma")+f.qlen("stella") != 0 {
 		t.Fatalf("route at the margin moved %+v; want nothing", c)

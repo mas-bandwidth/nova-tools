@@ -81,6 +81,20 @@ type DevRed struct {
 	ForgeEvery time.Duration
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
+
+	// The bases and tips the last pass read (#3831): the next pass reads
+	// each known base's tip, red record and the CI record of its last tip
+	// in the same pipeline as the base index, one round trip in all.
+	known []land.RepoBase
+	tips  map[land.RepoBase]string
+}
+
+// devRedRead is one base's reads, queued in the pass's first pipeline.
+type devRedRead struct {
+	tip *redis.StringCmd
+	red *redis.MapStringStringCmd
+	rec *redis.MapStringStringCmd // the CI record of the last tip read; nil when none
+	sha string                    // that tip
 }
 
 // Outcome is one base's result in one pass, for the verb's receipt.
@@ -153,19 +167,60 @@ func (d *DevRed) pass(ctx context.Context, l *Lease) ([]Outcome, error) {
 	if d.Client == nil {
 		return nil, fmt.Errorf("dev-red: nil client")
 	}
-	bases := d.Bases
-	if len(bases) == 0 {
-		members, err := d.Client.SMembers(ctx, BasesKey).Result()
-		if err != nil && !errors.Is(err, redis.Nil) {
-			return nil, fmt.Errorf("dev-red: read %s: %w", BasesKey, err)
+	if d.tips == nil {
+		d.tips = map[land.RepoBase]string{}
+	}
+	pipe := d.Client.Pipeline()
+	var members *redis.StringSliceCmd
+	if len(d.Bases) == 0 {
+		members = pipe.SMembers(ctx, BasesKey)
+	}
+	pre := map[land.RepoBase]devRedRead{}
+	queue := func(pipe redis.Pipeliner, bases []land.RepoBase) {
+		for _, rb := range bases {
+			r := devRedRead{
+				tip: pipe.HGet(ctx, civerdict.TipKey(rb.Repo, rb.Base), "sha"),
+				red: pipe.HGetAll(ctx, land.RedKey(rb.Repo, rb.Base)),
+				sha: d.tips[rb],
+			}
+			if r.sha != "" {
+				r.rec = pipe.HGetAll(ctx, CIRecordKey(rb.Repo, r.sha))
+			}
+			pre[rb] = r
 		}
-		for _, m := range members {
+	}
+	known := d.known
+	if len(d.Bases) > 0 {
+		known = d.Bases
+	}
+	queue(pipe, known)
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("dev-red: read: %w", err)
+	}
+	bases := d.Bases
+	if members != nil {
+		for _, m := range members.Val() {
 			repo, base, ok := strings.Cut(m, "/")
 			if ok && repo != "" && base != "" {
 				bases = append(bases, land.RepoBase{Repo: repo, Base: base})
 			}
 		}
 	}
+	// A base new to the index: its reads, in one more round trip.
+	var fresh []land.RepoBase
+	for _, rb := range bases {
+		if _, ok := pre[rb]; !ok {
+			fresh = append(fresh, rb)
+		}
+	}
+	if len(fresh) > 0 {
+		pipe := d.Client.Pipeline()
+		queue(pipe, fresh)
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return nil, fmt.Errorf("dev-red: read: %w", err)
+		}
+	}
+	d.known = bases
 	outs := make([]Outcome, 0, len(bases))
 	for i, rb := range bases {
 		if err := l.Bounded(0); err != nil {
@@ -177,7 +232,7 @@ func (d *DevRed) pass(ctx context.Context, l *Lease) ([]Outcome, error) {
 			}
 			return outs, fmt.Errorf("dev-red: %d of %d base(s) not started: %w", len(bases)-i, len(bases), err)
 		}
-		outs = append(outs, d.one(ctx, rb, l))
+		outs = append(outs, d.one(ctx, rb, pre[rb], l))
 	}
 	return outs, nil
 }
@@ -189,25 +244,30 @@ func (d *DevRed) now() time.Time {
 	return time.Now()
 }
 
-// one is the duty for one base: tip, evidence, then hold, keep, or clear.
-func (d *DevRed) one(ctx context.Context, rb land.RepoBase, l *Lease) Outcome {
+// one is the duty for one base: tip, evidence, then hold, keep, or clear,
+// over the base's reads from the pass's pipeline.
+func (d *DevRed) one(ctx context.Context, rb land.RepoBase, r devRedRead, l *Lease) Outcome {
 	o := Outcome{Repo: rb.Repo, Base: rb.Base}
 	c := d.Client
-	pipe := c.Pipeline()
-	tipCmd := pipe.HGet(ctx, civerdict.TipKey(rb.Repo, rb.Base), "sha")
-	redCmd := pipe.HGetAll(ctx, land.RedKey(rb.Repo, rb.Base))
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		o.Err = err
-		return o
+	for _, err := range []error{r.tip.Err(), r.red.Err()} {
+		if err != nil && !errors.Is(err, redis.Nil) {
+			o.Err = err
+			return o
+		}
 	}
-	sha := strings.TrimSpace(tipCmd.Val())
-	red := redCmd.Val()
+	sha := strings.TrimSpace(r.tip.Val())
+	red := r.red.Val()
+	d.tips[rb] = sha
 	if sha == "" {
 		o.Action = "NOTIP"
 		return o
 	}
 	o.SHA = sha
-	st, err := d.evidence(ctx, rb, sha, l)
+	var rec map[string]string
+	if r.rec != nil && r.sha == sha && r.rec.Err() == nil {
+		rec = r.rec.Val()
+	}
+	st, err := d.evidence(ctx, rb, sha, rec, l)
 	if err != nil {
 		o.Err = err
 		return o
@@ -259,13 +319,17 @@ func (d *DevRed) one(ctx context.Context, rb land.RepoBase, l *Lease) Outcome {
 	return o
 }
 
-// evidence reads the commit's CI state: the plain record, the gated
-// receipt, then the budgeted forge read.
-func (d *DevRed) evidence(ctx context.Context, rb land.RepoBase, sha string, l *Lease) (CIState, error) {
+// evidence reads the commit's CI state: the plain record (rec, when the
+// pass's pipeline read it for this sha, else read here), the gated receipt,
+// then the budgeted forge read.
+func (d *DevRed) evidence(ctx context.Context, rb land.RepoBase, sha string, rec map[string]string, l *Lease) (CIState, error) {
 	c := d.Client
-	rec, err := c.HGetAll(ctx, CIRecordKey(rb.Repo, sha)).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return CIState{}, fmt.Errorf("read %s: %w", CIRecordKey(rb.Repo, sha), err)
+	if rec == nil {
+		var err error
+		rec, err = c.HGetAll(ctx, CIRecordKey(rb.Repo, sha)).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return CIState{}, fmt.Errorf("read %s: %w", CIRecordKey(rb.Repo, sha), err)
+		}
 	}
 	if st, ok := stateOf(rec); ok {
 		return st, nil

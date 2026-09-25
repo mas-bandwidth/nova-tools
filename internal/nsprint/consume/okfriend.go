@@ -305,14 +305,13 @@ func (o *OkFriend) handleBatch(ctx context.Context, msgs []redis.XMessage) (int,
 				return 0, err
 			}
 		}
-		kind, _ := m.Values["kind"].(string)
-		to, _ := m.Values["to"].(string)
-		label, _ := m.Values["id"].(string)
-		attempt, _ := m.Values["attempt"].(string)
-		if kind != "card" || (to != "ended" && to != "harvested") || label == "" {
+		if !okWanted(m) {
 			ignore = append(ignore, m.ID)
 			continue
 		}
+		to, _ := m.Values["to"].(string)
+		label, _ := m.Values["id"].(string)
+		attempt, _ := m.Values["attempt"].(string)
 		events = append(events, &okEvent{msg: m, to: to, label: label, attempt: attempt})
 	}
 	if len(ignore) > 0 {
@@ -361,6 +360,15 @@ func (o *OkFriend) handleBatch(ctx context.Context, msgs []redis.XMessage) (int,
 		handled++
 	}
 	return handled, deferred
+}
+
+// okWanted is true for the events this consumer handles: a card that
+// ended or was harvested. Every other event on the log is acked unhandled.
+func okWanted(m redis.XMessage) bool {
+	kind, _ := m.Values["kind"].(string)
+	to, _ := m.Values["to"].(string)
+	label, _ := m.Values["id"].(string)
+	return kind == "card" && (to == "ended" || to == "harvested") && label != ""
 }
 
 func (o *OkFriend) skip(ctx context.Context, e *okEvent, reason, unresolved string) error {

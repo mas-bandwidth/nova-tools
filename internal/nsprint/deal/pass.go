@@ -59,6 +59,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -814,6 +815,9 @@ type RedisSource struct {
 	// pool is read and each card's priority comes from its record. Kept so
 	// callers that set it still build; it bounds nothing.
 	PoolLimit int
+	// Memo, when set, carries the names this read found to the next read,
+	// which then reads every round in one pipeline (#3831).
+	Memo *ReadMemo
 }
 
 // Read implements Source.
@@ -821,6 +825,10 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	c := r.Client
 	if c == nil {
 		return Input{}, fmt.Errorf("deal: nil redis client")
+	}
+	m := r.Memo
+	if m == nil {
+		m = &ReadMemo{}
 	}
 	pipe := c.Pipeline()
 	clock := pipe.Time(ctx)
@@ -833,10 +841,25 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	// forgives; any other command's error (a lost connection, a NOPERM on the
 	// registries) fails the read as before.
 	maxSessions := pipe.HGet(ctx, MaxSessionsKey, "max_sessions")
+	// Rounds 2 to 5 over the names the last read found, in the same
+	// pipeline (#3831); a round whose names changed is read again below.
+	r2 := queueHashes(ctx, pipe, m.benches, m.sprints)
+	r3 := queuePools(ctx, pipe, m.live)
+	r4 := queueCards(ctx, pipe, m.cards)
+	r5 := queueDeps(ctx, pipe, m.deps)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		if err := roundErr(maxSessions, clock, benchNames, order, open); err != nil {
 			return Input{}, err
 		}
+	}
+	again := func(queue func(redis.Pipeliner)) error {
+		p := c.Pipeline()
+		queue(p)
+		if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			*m = ReadMemo{}
+			return err
+		}
+		return nil
 	}
 	in := Input{Now: clock.Val()}
 	if n, err := strconv.Atoi(maxSessions.Val()); err == nil && n > 0 && maxSessions.Err() == nil {
@@ -855,39 +878,14 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	names := benchNames.Val()
 	sort.Strings(names)
 
-	pipe = c.Pipeline()
-	type benchCmds struct {
-		desired, beat, ssh *redis.MapStringStringCmd
-		state              *redis.StringCmd
-		starting, living   *redis.IntCmd
-	}
-	bc := make([]benchCmds, len(names))
-	for i, b := range names {
-		bc[i] = benchCmds{
-			desired:  pipe.HGetAll(ctx, "bench:"+b+":desired"),
-			beat:     pipe.HGetAll(ctx, "bench:"+b+":beat"),
-			state:    pipe.HGet(ctx, "bench:"+b+":state", "state"),
-			ssh:      pipe.HGetAll(ctx, RowKey(b)),
-			starting: pipe.ZCard(ctx, "bench:"+b+":starting"),
-			living:   pipe.ZCard(ctx, "bench:"+b+":living"),
+	// Round 2: every bench and sprint hash.
+	if !slices.Equal(names, m.benches) || !slices.Equal(sprintNames, m.sprints) || r2.failed() {
+		if err := again(func(p redis.Pipeliner) { r2 = queueHashes(ctx, p, names, sprintNames) }); err != nil {
+			return Input{}, err
 		}
+		m.benches, m.sprints = names, sprintNames
 	}
-	type sprintCmds struct {
-		meta, policy, bp *redis.MapStringStringCmd
-		stop             *redis.IntCmd
-	}
-	sc := make([]sprintCmds, len(sprintNames))
-	for i, s := range sprintNames {
-		sc[i] = sprintCmds{
-			meta:   pipe.HGetAll(ctx, "s:"+s),
-			policy: pipe.HGetAll(ctx, "s:"+s+":policy"),
-			bp:     pipe.HGetAll(ctx, "s:"+s+":backpressure"),
-			stop:   pipe.Exists(ctx, pitstop.Key(s)),
-		}
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return Input{}, err
-	}
+	bc, sc := r2.benches, r2.sprints
 	for i, name := range names {
 		d, beat, ssh := bc[i].desired.Val(), bc[i].beat.Val(), bc[i].ssh.Val()
 		slots, _ := strconv.Atoi(d["slots"])
@@ -908,76 +906,78 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 		}
 		in.Benches = append(in.Benches, b)
 	}
-	pipe = c.Pipeline()
-	pools := make([]*redis.ZSliceCmd, len(sprintNames))
-	waits := make([]*redis.StringSliceCmd, len(sprintNames))
+
+	// Round 3: the open sprints' pools and waiting sets.
 	var live []int
+	var liveNames []string
 	for i, s := range sprintNames {
 		if sc[i].meta.Val()["status"] != "open" {
 			continue
 		}
 		live = append(live, i)
-		// The pool is scored by age (created_at, #3692), not priority, so
-		// the whole pool is read (O(n)) and the priority comes from each
-		// record.
-		pools[i] = pipe.ZRangeWithScores(ctx, "s:"+s+":pool", 0, -1)
-		waits[i] = pipe.SMembers(ctx, "s:"+s+":waiting")
+		liveNames = append(liveNames, s)
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return Input{}, err
-	}
-	pipe = c.Pipeline()
-	type cardCmd struct {
-		sprint  int
-		label   string
-		score   float64
-		waiting bool
-		cmd     *redis.SliceCmd
-	}
-	var cards []cardCmd
-	fields := []string{"state", "leg", "tier", "bench", "depends_on", "repo", "base", "wait_why", "priority", "avoid"}
-	for _, i := range live {
-		for _, z := range pools[i].Val() {
-			label, _ := z.Member.(string)
-			cards = append(cards, cardCmd{i, label, z.Score, false, pipe.HMGet(ctx, "s:"+sprintNames[i]+":card:"+label, fields...)})
-		}
-		labels := waits[i].Val()
-		sort.Strings(labels)
-		for _, label := range labels {
-			cards = append(cards, cardCmd{i, label, 0, true, pipe.HMGet(ctx, "s:"+sprintNames[i]+":card:"+label, fields...)})
-		}
-	}
-	if len(cards) > 0 {
-		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if !slices.Equal(liveNames, m.live) || r3.failed() {
+		if err := again(func(p redis.Pipeliner) { r3 = queuePools(ctx, p, liveNames) }); err != nil {
 			return Input{}, err
 		}
+		m.live = liveNames
+	}
+
+	// Round 4: every pooled and waiting card's record. The pool is scored
+	// by age (created_at, #3692), not priority, so the whole pool is read
+	// (O(n)) and the priority comes from each record.
+	var keys []memoCard
+	var scores []float64
+	var sprintOf []int
+	for j, i := range live {
+		for _, z := range r3.pools[j].Val() {
+			label, _ := z.Member.(string)
+			keys = append(keys, memoCard{sprint: sprintNames[i], label: label})
+			scores = append(scores, z.Score)
+			sprintOf = append(sprintOf, i)
+		}
+		labels := r3.waits[j].Val()
+		sort.Strings(labels)
+		for _, label := range labels {
+			keys = append(keys, memoCard{sprint: sprintNames[i], label: label, waiting: true})
+			scores = append(scores, 0)
+			sprintOf = append(sprintOf, i)
+		}
+	}
+	if !slices.Equal(keys, m.cards) || failedAny(r4) {
+		if len(keys) > 0 {
+			if err := again(func(p redis.Pipeliner) { r4 = queueCards(ctx, p, keys) }); err != nil {
+				return Input{}, err
+			}
+		} else {
+			r4 = nil
+		}
+		m.cards = keys
 	}
 	bySprint, waitBySprint := map[int][]Card{}, map[int][]Card{}
-	for _, cc := range cards {
-		v := cc.cmd.Val()
+	for k, key := range keys {
+		v := r4[k].Val()
 		if str(v, 0) != "queued" {
 			continue
 		}
 		card := Card{
-			Sprint: sprintNames[cc.sprint], Label: cc.label, Age: cc.score,
+			Sprint: key.sprint, Label: key.label, Age: scores[k],
 			Leg: str(v, 1), Tier: str(v, 2), Bench: str(v, 3),
 			DependsOn: splitDeps(str(v, 4)), Repo: str(v, 5), Base: str(v, 6), WaitWhy: str(v, 7),
 			Avoid: strings.Fields(str(v, 9)),
 		}
 		card.Priority, _ = strconv.ParseFloat(str(v, 8), 64)
-		if cc.waiting {
-			waitBySprint[cc.sprint] = append(waitBySprint[cc.sprint], card)
+		if key.waiting {
+			waitBySprint[sprintOf[k]] = append(waitBySprint[sprintOf[k]], card)
 			continue
 		}
-		bySprint[cc.sprint] = append(bySprint[cc.sprint], card)
+		bySprint[sprintOf[k]] = append(bySprint[sprintOf[k]], card)
 	}
-	// The cards named in DEPENDS-ON, one pipelined round (#3066).
-	type depCmd struct {
-		key string
-		cmd *redis.SliceCmd
-	}
-	var depCmds []depCmd
+
+	// Round 5: the cards named in DEPENDS-ON (#3066).
 	seenDep := map[string]bool{}
+	var deps []string
 	for _, group := range []map[int][]Card{bySprint, waitBySprint} {
 		for _, cs := range group {
 			for _, cd := range cs {
@@ -993,30 +993,31 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 						continue
 					}
 					seenDep[k] = true
-					depCmds = append(depCmds, depCmd{k, nil})
+					deps = append(deps, k)
 				}
 			}
 		}
 	}
-	if len(depCmds) > 0 {
-		sort.Slice(depCmds, func(a, b int) bool { return depCmds[a].key < depCmds[b].key })
-		pipe = c.Pipeline()
-		for i := range depCmds {
-			slash := strings.IndexByte(depCmds[i].key, '/')
-			S, label := depCmds[i].key[:slash], depCmds[i].key[slash+1:]
-			depCmds[i].cmd = pipe.HMGet(ctx, "s:"+S+":card:"+label, "state", "outcome", "repo", "base", "pr", "pushed_sha")
+	sort.Strings(deps)
+	if !slices.Equal(deps, m.deps) || failedAny(r5) {
+		if len(deps) > 0 {
+			if err := again(func(p redis.Pipeliner) { r5 = queueDeps(ctx, p, deps) }); err != nil {
+				return Input{}, err
+			}
+		} else {
+			r5 = nil
 		}
-		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-			return Input{}, err
-		}
+		m.deps = deps
+	}
+	if len(deps) > 0 {
 		in.Deps = map[string]DepCard{}
-		for _, d := range depCmds {
-			v := d.cmd.Val()
+		for k, key := range deps {
+			v := r5[k].Val()
 			if len(v) == 0 || v[0] == nil {
 				continue
 			}
 			pr, _ := strconv.Atoi(str(v, 4))
-			in.Deps[d.key] = DepCard{Found: true, State: str(v, 0), Outcome: str(v, 1), Repo: str(v, 2), Base: str(v, 3), PR: pr, PushedSHA: str(v, 5)}
+			in.Deps[key] = DepCard{Found: true, State: str(v, 0), Outcome: str(v, 1), Repo: str(v, 2), Base: str(v, 3), PR: pr, PushedSHA: str(v, 5)}
 		}
 	}
 	for _, i := range live {
@@ -1032,6 +1033,123 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			Pitstop: sc[i].stop.Val() > 0, Pool: bySprint[i], Waiting: waitBySprint[i]})
 	}
 	return in, nil
+}
+
+// ReadMemo keeps the names one RedisSource read found (nova-tools #3831):
+// the benches, the open sprints in order, the sprints whose status is open,
+// the pooled and waiting cards and the DEPENDS-ON cards. The next read sends
+// its reads of these in its first pipeline, so a store whose names did not
+// change is read in one round trip; a round whose names changed is read
+// again, one round trip more. Only names are kept: every value is read
+// fresh. A memo is one reader's (the reconciler's refill); it is not safe
+// for concurrent reads.
+type ReadMemo struct {
+	benches, sprints, live []string
+	cards                  []memoCard
+	deps                   []string
+}
+
+type memoCard struct {
+	sprint, label string
+	waiting       bool
+}
+
+type benchCmds struct {
+	desired, beat, ssh *redis.MapStringStringCmd
+	state              *redis.StringCmd
+	starting, living   *redis.IntCmd
+}
+
+type sprintCmds struct {
+	meta, policy, bp *redis.MapStringStringCmd
+	stop             *redis.IntCmd
+}
+
+type hashRound struct {
+	benches []benchCmds
+	sprints []sprintCmds
+}
+
+func (h hashRound) failed() bool {
+	for _, b := range h.benches {
+		if failedAny([]redis.Cmder{b.desired, b.beat, b.ssh, b.state, b.starting, b.living}) {
+			return true
+		}
+	}
+	for _, s := range h.sprints {
+		if failedAny([]redis.Cmder{s.meta, s.policy, s.bp, s.stop}) {
+			return true
+		}
+	}
+	return false
+}
+
+type poolRound struct {
+	pools []*redis.ZSliceCmd
+	waits []*redis.StringSliceCmd
+}
+
+func (p poolRound) failed() bool { return failedAny(p.pools) || failedAny(p.waits) }
+
+// failedAny is true when some command failed with anything but redis.Nil.
+func failedAny[C redis.Cmder](cmds []C) bool {
+	for _, c := range cmds {
+		if err := c.Err(); err != nil && !errors.Is(err, redis.Nil) {
+			return true
+		}
+	}
+	return false
+}
+
+func queueHashes(ctx context.Context, pipe redis.Pipeliner, benches, sprints []string) hashRound {
+	h := hashRound{benches: make([]benchCmds, len(benches)), sprints: make([]sprintCmds, len(sprints))}
+	for i, b := range benches {
+		h.benches[i] = benchCmds{
+			desired:  pipe.HGetAll(ctx, "bench:"+b+":desired"),
+			beat:     pipe.HGetAll(ctx, "bench:"+b+":beat"),
+			state:    pipe.HGet(ctx, "bench:"+b+":state", "state"),
+			ssh:      pipe.HGetAll(ctx, RowKey(b)),
+			starting: pipe.ZCard(ctx, "bench:"+b+":starting"),
+			living:   pipe.ZCard(ctx, "bench:"+b+":living"),
+		}
+	}
+	for i, s := range sprints {
+		h.sprints[i] = sprintCmds{
+			meta:   pipe.HGetAll(ctx, "s:"+s),
+			policy: pipe.HGetAll(ctx, "s:"+s+":policy"),
+			bp:     pipe.HGetAll(ctx, "s:"+s+":backpressure"),
+			stop:   pipe.Exists(ctx, pitstop.Key(s)),
+		}
+	}
+	return h
+}
+
+func queuePools(ctx context.Context, pipe redis.Pipeliner, live []string) poolRound {
+	p := poolRound{pools: make([]*redis.ZSliceCmd, len(live)), waits: make([]*redis.StringSliceCmd, len(live))}
+	for i, s := range live {
+		p.pools[i] = pipe.ZRangeWithScores(ctx, "s:"+s+":pool", 0, -1)
+		p.waits[i] = pipe.SMembers(ctx, "s:"+s+":waiting")
+	}
+	return p
+}
+
+var cardFields = []string{"state", "leg", "tier", "bench", "depends_on", "repo", "base", "wait_why", "priority", "avoid"}
+
+func queueCards(ctx context.Context, pipe redis.Pipeliner, cards []memoCard) []*redis.SliceCmd {
+	cmds := make([]*redis.SliceCmd, len(cards))
+	for i, k := range cards {
+		cmds[i] = pipe.HMGet(ctx, "s:"+k.sprint+":card:"+k.label, cardFields...)
+	}
+	return cmds
+}
+
+func queueDeps(ctx context.Context, pipe redis.Pipeliner, deps []string) []*redis.SliceCmd {
+	cmds := make([]*redis.SliceCmd, len(deps))
+	for i, k := range deps {
+		slash := strings.IndexByte(k, '/')
+		cmds[i] = pipe.HMGet(ctx, "s:"+k[:slash]+":card:"+k[slash+1:], "state", "outcome", "repo", "base", "pr", "pushed_sha")
+	}
+	return cmds
 }
 
 // roundErr is the first error, other than redis.Nil, of the round's
