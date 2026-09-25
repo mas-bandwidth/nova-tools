@@ -179,7 +179,7 @@ func beatLoop(ctx context.Context, st presence.Store, name string, period, ttl t
 		sigs = make(chan os.Signal, 1)
 		signal.Notify(sigs, syscall.SIGUSR1)
 		defer signal.Stop(sigs)
-		
+
 		go func() {
 			for range sigs {
 				if data, err := os.ReadFile(widthFile); err == nil {
