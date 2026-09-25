@@ -77,3 +77,137 @@ func TestLandEvalShadowNoLinesRefuses(t *testing.T) {
 		t.Fatalf("code=%d out=%q err=%q", code, out, errOut)
 	}
 }
+
+// TestLandEvalShadowSinceMatchesPipedRuns is #3821's DONE-WHEN:
+// on a throwaway server, two lander --shadow --record runs then land eval --shadow --since 1h
+// print the same per-PR agree/disagree counts as piping both runs' lines into land eval --shadow,
+// and lander --shadow without --record still writes nothing.
+func TestLandEvalShadowSinceMatchesPipedRuns(t *testing.T) {
+	addr := testutil.Start(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+
+	if err := c.HSet(ctx, "cfg:land", "min_score", "8").Err(); err != nil {
+		t.Fatal(err)
+	}
+	seedShadow(t, c, "nova-tools", map[int][]string{
+		101: {"head", "aaaa1111ffff", "state", "landed", "ci", "green", "mergeable", "true",
+			"reads", "SCORE who=emma head=aaaa1111 score=9/10",
+			"close", "CLOSE who=rowan: in stream/landing at 1234abcd; landed with nova-tools#900"},
+		102: {"head", "bbbb2222ffff", "state", "parked", "ci", "green", "mergeable", "false",
+			"reads", "SCORE who=emma head=bbbb2222 score=9/10",
+			"park", "PARKED nova-tools#102 conflict in stream/landing at 1234abcd"},
+		103: {"head", "cccc3333ffff", "state", "open", "ci", "pending", "mergeable", "true",
+			"reads", "SCORE who=stella head=cccc3333 score=8/10"},
+	})
+
+	// 1. Verify lander --shadow without --record still writes nothing
+	beforeKeys, err := c.Keys(ctx, "*").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	code0, _, err0 := runSprint("lander", "--shadow", "--redis", addr, "--repo", "nova-tools", "101", "102", "103", "104")
+	if code0 != 0 {
+		t.Fatalf("lander --shadow exit %d: %s", code0, err0)
+	}
+	afterKeys, err := c.Keys(ctx, "*").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterKeys) != len(beforeKeys) {
+		t.Fatalf("lander --shadow without --record wrote keys: before=%d, after=%d", len(beforeKeys), len(afterKeys))
+	}
+
+	// 2. Two lander --shadow --record runs
+	code1, out1, err1 := runSprint("lander", "--shadow", "--record", "--redis", addr, "--repo", "nova-tools", "101", "102", "103", "104")
+	if code1 != 0 {
+		t.Fatalf("lander --shadow --record run 1 exit %d: %s", code1, err1)
+	}
+	code2, out2, err2 := runSprint("lander", "--shadow", "--record", "--redis", addr, "--repo", "nova-tools", "101", "102", "103", "104")
+	if code2 != 0 {
+		t.Fatalf("lander --shadow --record run 2 exit %d: %s", code2, err2)
+	}
+
+	// Verify shadow stream was created and has 8 entries
+	streamLen, err := c.XLen(ctx, "land:nova-tools:shadow").Result()
+	if err != nil || streamLen != 8 {
+		t.Fatalf("stream len %d, err %v, want 8", streamLen, err)
+	}
+
+	// 3. land eval --shadow --since 1h (reads from Redis stream)
+	codeSince, outSince, errSince := runSprint("land", "eval", "--shadow", "--since", "1h", "--redis", addr)
+	if codeSince != 0 {
+		t.Fatalf("land eval --shadow --since 1h exit %d: %s", codeSince, errSince)
+	}
+
+	// Also verify --repo works with --since
+	codeSinceRepo, outSinceRepo, errSinceRepo := runSprint("land", "eval", "--shadow", "--since", "1h", "--repo", "nova-tools", "--redis", addr)
+	if codeSinceRepo != 0 {
+		t.Fatalf("land eval --shadow --since 1h --repo nova-tools exit %d: %s", codeSinceRepo, errSinceRepo)
+	}
+	if outSince != outSinceRepo {
+		t.Fatalf("outSince with vs without repo mismatch:\nwithout:\n%s\nwith:\n%s", outSince, outSinceRepo)
+	}
+
+	// 4. land eval --shadow with both runs piped
+	landEvalStdin = strings.NewReader(out1 + out2)
+	t.Cleanup(func() { landEvalStdin = nil })
+	codePipe, outPipe, errPipe := runSprint("land", "eval", "--shadow", "--redis", addr)
+	if codePipe != 0 {
+		t.Fatalf("land eval --shadow (piped) exit %d: %s", codePipe, errPipe)
+	}
+
+	// Compare per-PR lines
+	perPRLines := func(out string) []string {
+		var prLines []string
+		for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+			if strings.HasPrefix(l, "EVAL ") && !strings.HasPrefix(l, "EVAL shadow ") {
+				prLines = append(prLines, l)
+			}
+		}
+		return prLines
+	}
+	sincePRs := perPRLines(outSince)
+	pipePRs := perPRLines(outPipe)
+	if len(sincePRs) == 0 {
+		t.Fatalf("expected per-PR lines in outSince, got none:\n%s", outSince)
+	}
+	if strings.Join(sincePRs, "\n") != strings.Join(pipePRs, "\n") {
+		t.Fatalf("per-PR lines mismatch:\nsince 1h:\n%s\npiped:\n%s", strings.Join(sincePRs, "\n"), strings.Join(pipePRs, "\n"))
+	}
+}
+
+func TestLandEvalShadowFlags(t *testing.T) {
+	addr := testutil.Start(t)
+
+	// --since without --shadow refuses
+	code, _, errOut := runSprint("land", "eval", "--since", "1h", "--redis", addr)
+	if code != 2 || !strings.Contains(errOut, "--since is a --shadow flag") {
+		t.Fatalf("code=%d errOut=%q", code, errOut)
+	}
+
+	// --since with non-positive duration refuses
+	code, _, errOut = runSprint("land", "eval", "--shadow", "--since", "-1h", "--redis", addr)
+	if code != 2 || !strings.Contains(errOut, "--since: duration must be positive") {
+		t.Fatalf("code=%d errOut=%q", code, errOut)
+	}
+
+	// --since with invalid duration refuses
+	code, _, errOut = runSprint("land", "eval", "--shadow", "--since", "invalid", "--redis", addr)
+	if code != 2 || !strings.Contains(errOut, "--since:") {
+		t.Fatalf("code=%d errOut=%q", code, errOut)
+	}
+
+	// --since with empty redis stream refuses
+	code, _, errOut = runSprint("land", "eval", "--shadow", "--since", "1h", "--redis", addr)
+	if code != 2 || !strings.Contains(errOut, "no shadow stream found") {
+		t.Fatalf("code=%d errOut=%q", code, errOut)
+	}
+
+	// lander --record without --shadow refuses
+	code, _, errOut = runSprint("lander", "--record", "--redis", addr, "--repo", "nova-tools", "1")
+	if code != 2 || !strings.Contains(errOut, "--record is a --shadow flag") {
+		t.Fatalf("code=%d errOut=%q", code, errOut)
+	}
+}

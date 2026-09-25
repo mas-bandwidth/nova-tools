@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -22,6 +23,7 @@ func runLandEval(ctx context.Context, args []string, out, errOut io.Writer) int 
 	mirror := fs.String("mirror", "", "bench mirror of the repo (default ~/nova-bench/mirror/<repo>.git when present; \"none\": no mirror reads)")
 	consumer := fs.String("consumer", "eval", "consumer name in ev:github group land")
 	shadow := fs.Bool("shadow", false, "compare SHADOW lines on stdin (lander --shadow) with the hand lander's CLOSE records, per PR (#3800)")
+	since := fs.String("since", "", "duration window of shadow verdicts to evaluate from Redis stream (e.g. 1h)")
 
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "land eval", err.Error())
@@ -34,7 +36,22 @@ func runLandEval(ctx context.Context, args []string, out, errOut io.Writer) int 
 		if addr == "" {
 			addr = "127.0.0.1:6379"
 		}
-		return runLandEvalShadow(ctx, addr, landEvalInput(), out, errOut)
+		var sinceDur time.Duration
+		if *since != "" {
+			d, err := time.ParseDuration(*since)
+			if err != nil {
+				return refuse(errOut, "land eval", "--since: "+err.Error())
+			}
+			if d <= 0 {
+				return refuse(errOut, "land eval", "--since: duration must be positive")
+			}
+			sinceDur = d
+		}
+		return runLandEvalShadow(ctx, addr, *repo, sinceDur, landEvalInput(), out, errOut)
+	}
+
+	if *since != "" {
+		return refuse(errOut, "land eval", "--since is a --shadow flag")
 	}
 
 	if *repo == "" {
