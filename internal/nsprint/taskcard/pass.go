@@ -14,7 +14,9 @@ import (
 
 // The deal duty's pass (nova-tools #3929, the table moves; it supersedes
 // the friend-only deal of #3908 and is the one deal over every consumer,
-// Glenn 12:55 PM ET): lapsed copies return to their primaries, then every
+// Glenn 12:55 PM ET): lapsed copies return to their primaries, the reading
+// column is kept (EnsureReads: a moved head re-headed, a reading primary
+// with no live copy given its read copies; #4094), then every
 // enrolled consumer (the consumers SET) that is live, not down and not
 // paused, ranked by free slots (most first, then by id), is dealt what it
 // lacks and filled:
@@ -92,6 +94,13 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 	res.Expired = len(x)
 	for _, e := range x {
 		res.Lines = append(res.Lines, fmt.Sprintf("EXPIRED %s to=%s why=lease-lapsed", e.Copy, e.To))
+	}
+	reads, err := EnsureReads(ctx, c, by)
+	if err != nil {
+		return res, err
+	}
+	for _, r := range reads {
+		res.Lines = append(res.Lines, fmt.Sprintf("READS %s copies=%s", r.Primary, strings.Join(r.Copies, ",")))
 	}
 	roster, err := Roster(ctx, c)
 	if err != nil || len(roster) == 0 {

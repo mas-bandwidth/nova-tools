@@ -11,6 +11,10 @@
 --   a person posts a CLOSE line (ns_read_post)                -> the same landing
 --   a reader posts a SCORE line (ns_read_post)
 --       the PR's read task read-<n>-<head8> working -> merging (the read is done)
+--       and, for each primary of the PR in reading, the reader's read copy
+--       ends through the one finish (NS.tm.score, 02_card_move.lua): 8+ at
+--       the record head moves the PRIMARY to merging, under 8 cuts one fix
+--       copy on the author's queue (#4094, #4097)
 --
 -- The tasks an event names come from the ref index (01_task_ref.lua): one
 -- SMEMBERS per ref, never a scan. Every move goes through the one task move
@@ -184,8 +188,10 @@ end)
 -- line by a person (who not jev*) lands every task naming the PR or an issue
 -- in the record's closes, why the line's "with <repo>#<n> (<sha>)" when it
 -- has one; a SCORE line moves the read task read-<n>-<head8> working ->
--- merging.
---   {'OK', lines, kind, moved, same, skipped, note...} | {'NOHEAD', key}
+-- merging, and ends the reader's read copy of every primary of the PR in
+-- reading (NS.tm.score): 8+ at the record head moves the primary to
+-- merging (moved), under 8 cuts a fix copy (cut).
+--   {'OK', lines, kind, moved, same, skipped, cut, note...} | {'NOHEAD', key}
 redis.register_function('ns_read_post', function(keys, args)
   local repo, n, line, now = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
   local key = TE.prkey(repo, n)
@@ -197,6 +203,7 @@ redis.register_function('ns_read_post', function(keys, args)
   local who = string.match(first, 'who=([^%s:;,]+)') or ''
   local head = string.match(first, 'head=(%x+)') or ''
   local r = { moved = 0, same = 0, skipped = 0, notes = {} }
+  local cut = 0
   if kind == 'CLOSE' and who ~= '' and string.sub(who, 1, 3) ~= 'jev' then
     local with, sha = string.match(first, 'with (%S+#%d+) %((%x+)%)')
     local why = 'landed: CLOSE by ' .. who .. ' on ' .. TE.TR.bare(repo) .. '#' .. n
@@ -209,8 +216,14 @@ redis.register_function('ns_read_post', function(keys, args)
     if redis.call('HGET', 'task:' .. id, 'state') == 'working' then
       r = TE.apply({ id }, 'merging', who, 'read: SCORE by ' .. who .. ' at ' .. string.sub(head, 1, 8))
     end
+    local s = NS.tm.score(repo, n, first, who)
+    r.moved, cut = r.moved + s.moved, s.cut
+    for _, note in ipairs(s.notes) do
+      r.skipped = r.skipped + 1
+      r.notes[#r.notes + 1] = note
+    end
   end
-  local out = { 'OK', tostring(lines), kind, tostring(r.moved), tostring(r.same), tostring(r.skipped) }
+  local out = { 'OK', tostring(lines), kind, tostring(r.moved), tostring(r.same), tostring(r.skipped), tostring(cut) }
   for _, note in ipairs(r.notes) do out[#out + 1] = note end
   return out
 end)

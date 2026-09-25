@@ -432,7 +432,7 @@ func Post(ctx context.Context, c *redis.Client, repo, n, line string, poster *Po
 			return 2
 		}
 		lines = ev.Lines
-		moves = fmt.Sprintf(" tasks_moved=%d", ev.Moved)
+		moves = fmt.Sprintf(" tasks_moved=%d copies_cut=%d", ev.Moved, ev.Cut)
 		for _, s := range ev.Skipped {
 			fmt.Fprintf(stderr, "READ POST SKIPPED repo=%s n=%s %s\n", repo, n, strings.ReplaceAll(s, "\n", " "))
 		}
@@ -462,7 +462,10 @@ func Post(ctx context.Context, c *redis.Client, repo, n, line string, poster *Po
 // EventKinds are the typed lines whose post is an event for the sprint's
 // tasks (nova-tools#3779): a CLOSE by a person lands every task naming the
 // PR or an issue its record closes; a SCORE moves the PR's read task
-// read-<n>-<head8> working -> merging. Their post is one library call,
+// read-<n>-<head8> working -> merging, and ends the reader's read copy of
+// every primary of the PR in reading (#4094, #4097): 8+ at the record head
+// moves the primary to merging (tasks_moved), under 8 cuts one fix copy on
+// the author's queue (copies_cut). Their post is one library call,
 // ns_read_post (internal/nsprint/fn/lua/03_task_event.lua): the line and the
 // move together or neither.
 var EventKinds = map[string]bool{"CLOSE": true, "SCORE": true}
@@ -473,6 +476,7 @@ const FunctionReadPost = "ns_read_post"
 type event struct {
 	Lines   int64
 	Moved   int
+	Cut     int // the copies the post cut (a fix copy, fresh reads)
 	Skipped []string
 }
 
@@ -488,5 +492,12 @@ func postEvent(ctx context.Context, c *redis.Client, repo, n, line, now string) 
 	ev.Lines, _ = strconv.ParseInt(res[1], 10, 64)
 	ev.Moved, _ = strconv.Atoi(res[3])
 	ev.Skipped = res[6:]
+	// the cut count (#4094) follows skipped; a library that predates it
+	// replies with the notes there
+	if len(res) > 6 {
+		if k, err := strconv.Atoi(res[6]); err == nil {
+			ev.Cut, ev.Skipped = k, res[7:]
+		}
+	}
 	return ev, nil
 }
