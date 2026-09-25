@@ -16,6 +16,9 @@
 --   ci:<repo>:<sha>:<check>  hash: one receipt per check (rc, wall_ms, log, bench,
 --                            attempt, cmd, at, fail = the log's first FAIL line)
 --   ci:pool                  zset: <repo>:<sha> scored by the ms it is next claimable
+--   ci:nomirror:<bench>      set: the repos whose bench mirror this bench lacks (a
+--                            release with nomirror adds; a claim naming the repo in
+--                            its mirrors removes); the claim skips their heads
 --   pr:<repo>:<n>            hash: ci, ci_sha, ci_at are written when its head is the sha
 --
 -- The record key is the one the ci card verdict never used (ci.lua writes
@@ -184,13 +187,21 @@ do
     return { 'CREATED', 'pending' }
   end
 
-  -- ns_ci_claim bench token lease_ms -> IDLE [capped], or CLAIMED field
-  -- value ... capped <members>. Takes the oldest claimable request (score <=
-  -- now). A member whose record is gone or already summarised is dropped
-  -- from the pool on the way; one whose next attempt would pass the cap is
-  -- ended FAIL (cr_finalise) and named in capped.
+  -- ns_ci_claim bench token lease_ms [mirrors] -> IDLE [capped], or CLAIMED
+  -- field value ... capped <members>. Takes the oldest claimable request
+  -- (score <= now). A member whose record is gone or already summarised is
+  -- dropped from the pool on the way; one whose next attempt would pass the
+  -- cap is ended FAIL (cr_finalise) and named in capped. mirrors is the
+  -- comma list of repos the bench holds a mirror of now: each leaves
+  -- ci:nomirror:<bench>, and a head of a repo still in that set (with no
+  -- request url to clone from instead) is skipped for this bench, left in
+  -- the pool for the others: one SISMEMBER per candidate.
   local function ci_claim(keys, args)
     local bench, token, lease_ms = args[1], args[2], tonumber(args[3])
+    local nomirror = 'ci:nomirror:' .. bench
+    for _, repo in ipairs(cr_split(args[4] or '')) do
+      redis.call('SREM', nomirror, repo)
+    end
     local now = cr_now_ms()
     local max_attempts = cr_max_attempts()
     local capped = {}
@@ -199,7 +210,10 @@ do
       local key = 'ci:' .. member
       local state = cr_hget(key, 'ci')
       local attempt = (tonumber(cr_hget(key, 'attempt')) or 0) + 1
-      if state == 'pending' and attempt > max_attempts then
+      if state == 'pending' and cr_hget(key, 'url') == ''
+        and redis.call('SISMEMBER', nomirror, cr_hget(key, 'repo')) == 1 then
+        -- this bench cannot stage the repo; another bench takes the head
+      elseif state == 'pending' and attempt > max_attempts then
         cr_finalise(key, cr_hget(key, 'repo'), cr_hget(key, 'sha'), 'red', cr_why(key, attempt - 1), now)
         capped[#capped + 1] = member
       elseif state == 'pending' then
@@ -275,17 +289,26 @@ do
     return { 'RECEIPT', 'red', tally }
   end
 
-  -- ns_ci_release repo sha token reason -> RELEASED, FENCED or NOTFOUND.
-  -- A bench that could not run the checks (the clone failed) has no evidence
-  -- about the head: the request goes back to the pool now, for another bench,
-  -- with the reason on the record. Attempts are counted here and capped at
-  -- the next claim (ci_claim).
+  -- ns_ci_release repo sha token reason [nomirror] -> RELEASED, FENCED or
+  -- NOTFOUND. A bench that could not run the checks (the clone failed) has
+  -- no evidence about the head: the request goes back to the pool now, for
+  -- another bench, with the reason on the record. Attempts are counted here
+  -- and capped at the next claim (ci_claim). nomirror 1 is a bench defect
+  -- (the bench holds no mirror of the repo), not a try at the head: the
+  -- attempt is given back and the bench goes into ci:nomirror:<bench> for
+  -- the repo, so its claims skip the repo until its mirror exists.
   local function ci_release(keys, args)
     local repo, sha, token, reason = args[1], args[2], args[3], args[4]
     local key = 'ci:' .. repo .. ':' .. sha
     if redis.call('EXISTS', key) == 0 then return { 'NOTFOUND' } end
     if token == '' or cr_hget(key, 'token') ~= token then return { 'FENCED' } end
     local now = cr_now_ms()
+    if args[5] == '1' then
+      local attempt = (tonumber(cr_hget(key, 'attempt')) or 1) - 1
+      if attempt < 0 then attempt = 0 end
+      redis.call('SADD', 'ci:nomirror:' .. cr_hget(key, 'bench'), repo)
+      redis.call('HSET', key, 'attempt', tostring(attempt))
+    end
     redis.call('HSET', key, 'bench', '', 'token', '', 'lease_until', '0', 'blocked', reason)
     redis.call('ZADD', 'ci:pool', now, repo .. ':' .. sha)
     return { 'RELEASED' }
