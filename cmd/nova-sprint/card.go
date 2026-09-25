@@ -37,8 +37,10 @@ func runCardPool(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return cmdCardFsck(ctx, args[1:], stdout, stderr)
 	case "ls":
 		return cmdCardLs(ctx, args[1:], stdout, stderr)
+	case "render":
+		return cmdCardRender(ctx, args[1:], stdout, stderr)
 	default:
-		return refuse(stderr, "card", "unknown subcommand "+args[0]+"; it wants push, release, show, stop, fsck or ls")
+		return refuse(stderr, "card", "unknown subcommand "+args[0]+"; it wants push, release, show, stop, fsck, ls or render")
 	}
 }
 

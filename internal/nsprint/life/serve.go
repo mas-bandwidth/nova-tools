@@ -28,6 +28,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/brief"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
@@ -436,11 +437,20 @@ func (s *Server) start(ctx context.Context, c task.Claim) error {
 	return nil
 }
 
-// writeBrief renders the task's brief through the one producer (brief.Render)
-// and, when render refuses the record (a kind without a template, a title
-// without PATHS), writes the record itself so the child is still pointed at
-// the work; the receipt says which.
+// writeBrief writes the task's brief. A task pushed as a complete card
+// (task:<id> carries its route, nova-tools#3911) gets the friend brief
+// rendered from that record (taskcard.RenderBrief, the same record a bench's
+// card is rendered from). Otherwise it renders through the one producer
+// (brief.Render) and, when render refuses the record (a kind without a
+// template, a title without PATHS), writes the record itself so the child is
+// still pointed at the work; the receipt says which.
 func (s *Server) writeBrief(ctx context.Context, ch *child, fields map[string]string) error {
+	if rec, err := s.st.Client().HGetAll(ctx, taskcard.Key(ch.claim.ID)).Result(); err == nil && rec["route"] != "" {
+		if b, err := taskcard.RenderBrief(ch.claim.ID, rec); err == nil {
+			ch.briefSrc = "card"
+			return os.WriteFile(ch.brief, b, 0o644)
+		}
+	}
 	var stdout, stderr bytes.Buffer
 	if code := brief.Render(ctx, s.st, ch.claim.Sprint+"/"+ch.claim.ID, ch.brief, &stdout, &stderr); code == 0 {
 		ch.briefSrc = "render"

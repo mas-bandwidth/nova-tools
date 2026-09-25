@@ -118,6 +118,25 @@ func refused(reason string) VerbResult {
 	return VerbResult{Code: exitRefused, Stderr: oneline.Escape(reason) + "\n"}
 }
 
+// Lint is card push's header check with no write (nova-tools#3911): nil when
+// push would admit body's header, else the refusal push would print. A card
+// rendered from a task record (taskcard.RenderHeader) is held to it.
+func Lint(ctx context.Context, body []byte) error {
+	_, err := lint(ctx, body)
+	return err
+}
+
+// KeyValue reads one `KEY: value` line by the header's own rule (the key is a
+// word at column 0 then a colon), so the issue parser that fills a task
+// record (taskcard.ParseIssue) and card push read a line the same way.
+func KeyValue(line string) (key, value string, ok bool) {
+	m := keyRE.FindStringSubmatch(strings.TrimRight(line, "\r"))
+	if m == nil {
+		return "", "", false
+	}
+	return m[1], strings.TrimSpace(m[2]), true
+}
+
 func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	label, header, dups := parseHeader(body)
 	if len(dups) > 0 {

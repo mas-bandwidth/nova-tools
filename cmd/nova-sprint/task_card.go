@@ -36,6 +36,7 @@ const taskCardUsage = `nova-sprint task: the task card verbs (#3778), one Redis 
 usage:
   nova-sprint task push    --actor <a> --id <id> [--stream <s>] [--friend|--to <f>] [--waiting | --depends-on <c>]
                            [--kind <k>] [--ref <repo#n>] [--origin <url>] [--title <t>] [--head <sha>] [--pr <n>] [--repo <r>] [--front]
+                           [--issue <file|->] [--route pro|flash|friend] [--base <b>] [--base-sha <sha>] [--paths <p>]
   nova-sprint task take    --actor <f> [--id <id>] [--n <k>]
   nova-sprint task beat    --actor <f> --id <id>
   nova-sprint task done    --actor <a> --id <id> --evidence <text> [--pr <n>]
@@ -59,6 +60,11 @@ member of ws:<s>:merging and prints LANDED <id> ref=<repo#n> origin=<url> per me
 lander closes those PRs and issues with the CLOSE line). take starts a lease the child
 renews with beat every 60 s; expire moves a working task whose lease lapsed back to ready.
 fsck prints one line per drift and exits 1 when there is any.
+push --issue fills the card from the issue text (#3911): every KEY: line a card header
+carries (ROUTE WHO KIND TYPE REPO BASE base-sha PATHS TEST DEPENDS-ON DONE-WHEN EST PRIORITY
+SOURCE TASK STREAM ORIGIN) and the text as body; the flags override it. A pro or flash card
+lacking a field a swarm run needs is refused naming it. nova-sprint card render --id <id>
+prints the harness card from the record, --brief the friend brief.
 `
 
 // cardAlways are the card subverbs no other task form has.
@@ -111,6 +117,7 @@ type cardCmd struct {
 	kind, ref, origin, title, head, pr, repo, on    *string
 	evidence, sha, where, toFriend, toStream, toWhr *string
 	ok, truth                                       *string
+	issue, route, base, baseSHA, paths              *string
 	n, batch                                        *int
 	waiting, front, help                            *bool
 	friends                                         multiFlag
@@ -143,6 +150,11 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	c.toWhr = fs.String("to-where", "", "")
 	c.ok = fs.String("ok", "", "")
 	c.truth = fs.String("truth", "", "")
+	c.issue = fs.String("issue", "", "")
+	c.route = fs.String("route", "", "")
+	c.base = fs.String("base", "", "")
+	c.baseSHA = fs.String("base-sha", "", "")
+	c.paths = fs.String("paths", "", "")
 	c.n = fs.Int("n", 1, "")
 	c.batch = fs.Int("batch", 200, "")
 	c.waiting = fs.Bool("waiting", false, "")
@@ -271,10 +283,14 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 	o := taskcard.Opts{By: *c.actor, Why: *c.why, Sprint: *c.sprint}
 	switch sub {
 	case "push":
+		spec, err := c.spec()
+		if err != nil {
+			return refuse(errOut, c.verb, err.Error())
+		}
 		r, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: *c.id, Stream: *c.stream, Friend: *c.friend,
 			Sprint: *c.sprint, Kind: *c.kind, Ref: *c.ref, Origin: *c.origin, Title: *c.title, Head: *c.head,
 			PR: *c.pr, Repo: *c.repo, DependsOn: *c.on, Front: *c.front, By: *c.actor, Why: *c.why,
-			Where: map[bool]string{true: "waiting", false: ""}[*c.waiting]})
+			Where: map[bool]string{true: "waiting", false: ""}[*c.waiting], Spec: spec})
 		if err != nil {
 			return refused(err)
 		}
@@ -402,6 +418,37 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		return 0
 	}
 	return refuse(errOut, c.verb, "unknown card subverb "+sub)
+}
+
+// spec is push's card content (#3911): the --issue text through the one
+// parser, then the flags over it; nil when the push names neither.
+func (c *cardCmd) spec() (*taskcard.Spec, error) {
+	if *c.issue == "" && *c.route == "" && *c.base == "" && *c.baseSHA == "" && *c.paths == "" {
+		return nil, nil
+	}
+	var s taskcard.Spec
+	if *c.issue != "" {
+		var text []byte
+		var err error
+		if *c.issue == "-" {
+			text, err = io.ReadAll(os.Stdin)
+		} else {
+			text, err = os.ReadFile(*c.issue)
+		}
+		if err != nil {
+			return nil, err
+		}
+		s = taskcard.ParseIssue(string(text))
+	}
+	for _, kv := range []struct {
+		v   string
+		dst *string
+	}{{*c.route, &s.Route}, {*c.base, &s.Base}, {*c.baseSHA, &s.BaseSHA}, {*c.paths, &s.Paths}, {*c.repo, &s.Repo}} {
+		if kv.v != "" {
+			*kv.dst = kv.v
+		}
+	}
+	return &s, nil
 }
 
 // replace is front and move: the one move to the task's own where (front,
