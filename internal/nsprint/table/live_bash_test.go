@@ -180,13 +180,14 @@ func bashParity2674(t *testing.T) {
 			if c.diverge != "" {
 				// The one documented difference: IFS=$'\t' read collapses the
 				// empty dealer_queue/dealer_at fields, `at` lands in dq, the
-				// 60 s beat check is skipped and a dead bench prints forever.
+				// 60 s beat check is skipped and a dead bench prints forever with its
+				// numbers; Go prints it "stale" (#3372).
 				row := fmt.Sprintf("%-10s |", c.diverge)
 				if !strings.Contains(got, row) {
 					t.Fatalf("the bash no longer prints the dead bench %s (its defect is fixed?): drop this case\n%s", c.diverge, got)
 				}
-				if strings.Contains(goOut, row) {
-					t.Fatalf("Go printed the dead bench %s (beat 300 s old)\n%s", c.diverge, goOut)
+				if stale := fmt.Sprintf("%-10s | stale |", c.diverge); !strings.Contains(goOut, stale) {
+					t.Fatalf("Go did not print the dead bench %s (beat 300 s old) as stale (#3372)\n%s", c.diverge, goOut)
 				}
 				return
 			}

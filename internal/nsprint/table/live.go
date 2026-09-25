@@ -48,7 +48,13 @@ type LiveConfig struct {
 	Sprint   string        // sprint:<Sprint>:xy and sprint:<Sprint>:landed
 	XYFile   string        // SPRINT-XY.txt fallback while the xy key is missing (until #2679)
 	RowStale time.Duration // a friend row older than this prints "stale" (bash ROW_STALE_S=10)
+	// BenchStale: a host row whose own at is older than this prints "stale";
+	// zero is 2 x BenchBeatInterval (#3372). The bash of record used 60 s.
+	BenchStale time.Duration
 }
+
+// BenchBeatInterval is the cadence a bench writes its host row at.
+const BenchBeatInterval = time.Second
 
 // FriendRow is one friend:<f> hash plus its down flag, raw.
 type FriendRow struct {
@@ -257,6 +263,10 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 		if !show {
 			continue
 		}
+		if s.benchRowStale(row.Fields, now) {
+			fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", c.host, "stale", "?", "?", "?", "?", "?", "?")
+			continue
+		}
 		for cell := range c.unread {
 			unread[cell] = true
 		}
@@ -318,6 +328,23 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 	return b.String()
 }
 
+// benchRowStale is the host row's age rule (#3372): a row whose own at is
+// older than Config.BenchStale (2 beat intervals by default) prints "stale"
+// with no numbers and no share of the totals; it never vanishes and never
+// shows old numbers. An unparseable at shows the row; an at ahead of now is
+// clock skew and counts as fresh.
+func (s *LiveSnapshot) benchRowStale(f map[string]string, now time.Time) bool {
+	at, ok := parseUTC(f["at"])
+	if !ok {
+		return false
+	}
+	limit := s.Config.BenchStale
+	if limit <= 0 {
+		limit = 2 * BenchBeatInterval
+	}
+	return now.Sub(at) > limit
+}
+
 // benchCells is one bench row's cells, the rules the bash applies.
 type benchCells struct {
 	host, queue, load       string
@@ -335,19 +362,27 @@ func (c benchCells) num(cell string, v int64) string {
 	return strconv.FormatInt(v, 10)
 }
 
+// beatWithin60 is the bash of record's 60 s freshness on the bench's own beat
+// (an unparseable at counts as fresh, an at ahead of now does not). The whole
+// sprint table (sprint.go) still drops a host row that fails it; the live
+// table prints such a row "stale" instead (benchRowStale, #3372).
+func (row BenchRow) beatWithin60(now time.Time) bool {
+	at, ok := parseUTC(row.Fields["at"])
+	if !ok {
+		return true
+	}
+	age := now.Unix() - at.Unix()
+	return age >= 0 && age <= 60
+}
+
 // cells applies the bash's row rules: a hash whose own host field is not its
-// key is no row; a beat (at) older than 60 s is no row (an unparseable at
-// shows the row); the dealer's queue count wins while dealer_at is at most
-// 30 s old; a missing load prints "-".
+// key is no row; the dealer's queue count wins while dealer_at is at most
+// 30 s old; a missing load prints "-". The beat's age is not a cell rule:
+// an old row prints "stale" (benchRowStale, #3372) instead of vanishing.
 func (row BenchRow) cells(now time.Time) (benchCells, bool) {
 	f := row.Fields
 	if f["host"] != row.Key {
 		return benchCells{}, false
-	}
-	if at, ok := parseUTC(f["at"]); ok {
-		if age := now.Unix() - at.Unix(); age < 0 || age > 60 {
-			return benchCells{}, false
-		}
 	}
 	c := benchCells{host: f["host"], queue: strconv.FormatInt(awkInt(f["queue"]), 10), load: f["load1"]}
 	if dq, dat := f["dealer_queue"], f["dealer_at"]; dq != "" && dat != "" {

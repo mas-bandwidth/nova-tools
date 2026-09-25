@@ -32,8 +32,9 @@ func Golden2674() string { return golden2674 }
 
 // Golden2674Degraded is the bash's table on Fixture2674() plus
 // Fixture2674Degraded(): missing, stale and down friend rows, no xy or
-// landed key, an empty q:blocked, no bench:pool, a stale bench, a hostless hash, and fresh
-// and stale dealer counts.
+// landed key, an empty q:blocked, no bench:pool, a hostless hash, and fresh
+// and stale dealer counts. A stale bench is not here: the bash drops it and Go
+// prints it "stale" (#3372), so it lives in the dead-bench divergence case.
 func Golden2674Degraded() string { return golden2674Degraded }
 
 // Golden2674NoRedis is the bash's first tick when Redis does not answer.
@@ -57,9 +58,10 @@ func Fixture2674Now() time.Time {
 	panic("sprint-table-2674-live.snap has no captured= line")
 }
 
-// Fixture2674Config is the bash's roster and sprint (FRIENDS, XYKEY).
+// Fixture2674Config is the bash's roster and sprint (FRIENDS, XYKEY), its
+// friend staleness (ROW_STALE_S=10) and its 60 s bench beat freshness.
 func Fixture2674Config() LiveConfig {
-	return LiveConfig{Friends: []string{"rowan", "johnny", "emma", "stella"}, Sprint: "fixes-2026-09-22", RowStale: 10 * time.Second}
+	return LiveConfig{Friends: []string{"rowan", "johnny", "emma", "stella"}, Sprint: "fixes-2026-09-22", RowStale: 10 * time.Second, BenchStale: 60 * time.Second}
 }
 
 // Fixture2674 is the live snapshot as Redis commands, one per key, in file
@@ -86,12 +88,11 @@ func Fixture2674Degraded() [][]string {
 	c := Fixture2674Now()
 	at := func(d time.Duration) string { return c.Add(d).UTC().Format("2006-01-02T15:04:05Z") }
 	return [][]string{
-		{"DEL", "friend:emma", "friend:emma:down"},                              // no row at all: "-" cells, status ?
-		{"HSET", "friend:rowan", "at", at(-30 * time.Second), "up", "1"},        // beat 30 s old: stale, last counts kept
-		{"HSET", "friend:stella", "at", at(-1 * time.Second), "up", "0"},        // fresh, presence gone, no down flag: down
-		{"DEL", "sprint:fixes-2026-09-22:xy", "sprint:fixes-2026-09-22:landed"}, // no xy (fallback + stale line), landed ?
-		{"DEL", "q:blocked", "bench:pool"},                                      // blocked: 0
-		{"HSET", "bench:zz-stale", "host", "zz-stale", "queue", "4", "working", "2", "done", "9", "ok", "9", "fail", "0", "load1", "1.00", "at", at(-300 * time.Second), "dealer_queue", "1", "dealer_at", at(-2 * time.Second)}, // beat 300 s old: not a row
+		{"DEL", "friend:emma", "friend:emma:down"},                                            // no row at all: "-" cells, status ?
+		{"HSET", "friend:rowan", "at", at(-30 * time.Second), "up", "1"},                      // beat 30 s old: stale, last counts kept
+		{"HSET", "friend:stella", "at", at(-1 * time.Second), "up", "0"},                      // fresh, presence gone, no down flag: down
+		{"DEL", "sprint:fixes-2026-09-22:xy", "sprint:fixes-2026-09-22:landed"},               // no xy (fallback + stale line), landed ?
+		{"DEL", "q:blocked", "bench:pool"},                                                    // blocked: 0
 		{"HSET", "bench:zz-hostless", "dealer_queue", "3", "dealer_at", at(-2 * time.Second)}, // no host field: not a row
 		{"HSET", "bench:zz-dealer", "host", "zz-dealer", "queue", "5", "working", "1", "done", "10", "ok", "7", "fail", "3", "load1", "0.50", "at", at(-1 * time.Second), "dealer_queue", "11", "dealer_at", at(-2 * time.Second)}, // fresh dealer_queue wins: 11
 		{"HSET", "bench:zz-olddealer", "host", "zz-olddealer", "queue", "6", "working", "0", "done", "0", "ok", "0", "fail", "0", "at", at(-1 * time.Second), "dealer_queue", "12", "dealer_at", at(-120 * time.Second)},           // stale dealer_queue ignored: 6; no load1: -

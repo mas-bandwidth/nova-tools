@@ -7,7 +7,7 @@ package state
 // What it reads is what the store's own writers put there, and nothing else:
 //
 //	benches              set of registered bench names (ns_bench_register)
-//	bench:<b>:beat       hash (at ms, load1, ...), PEXPIRE 5 s (ns_bench_beat)
+//	bench:<b>:beat       hash (at ms, load1, ...), PEXPIRE 3 s (ns_bench_beat)
 //	bench:<b>:desired    hash (slots, paused, ...)          (capacity)
 //
 // The key and its remaining TTL are the state; `at` only dates the write, and

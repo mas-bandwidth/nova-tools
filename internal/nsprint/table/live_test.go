@@ -30,8 +30,9 @@ type case2674 struct {
 	noRedis bool       // Redis does not answer at all
 	golden  func() string
 	file    string
-	// diverge names a bench row the bash prints and Go must not (the bash's
-	// IFS-collapse defect); such a case has no golden.
+	// diverge names a bench row the bash prints with its numbers and Go
+	// prints "stale" (the bash's IFS-collapse defect; #3372); such a case has
+	// no golden.
 	diverge string
 }
 
@@ -172,6 +173,43 @@ func TestFormatLandedAgesOut(t *testing.T) {
 	} {
 		if got := table.FormatLanded(raw, now); got != want {
 			t.Errorf("FormatLanded(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+// TestTableShowsStaleBenchRowNotAbsent (#3372): with the default config a
+// host row whose own at is older than 2 beat intervals prints "stale" with no
+// numbers and no share of the totals; it never vanishes, however old. A row
+// within 2 intervals prints its numbers.
+func TestTableShowsStaleBenchRowNotAbsent(t *testing.T) {
+	now := time.Date(2026, 9, 24, 20, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) string { return now.Add(-d).Format("2006-01-02T15:04:05Z") }
+	row := func(host, stamp string) []string {
+		return []string{"HSET", "bench:" + host, "host", host, "queue", "2", "working", "3", "done", "10", "ok", "9", "fail", "1", "load1", "4.00", "at", stamp}
+	}
+	// The counts are the card views (#3692); withCardViews seeds them from
+	// the hash's queue, working, done, ok and fail.
+	client := liveStore(t, withCardViews([][]string{
+		row("fresh", at(1*time.Second)),
+		row("edge", at(2*time.Second)),
+		row("slow", at(3*time.Second)),
+		row("dead", at(10*time.Minute)),
+	}, now))
+	cfg := table.LiveConfig{Friends: []string{"rowan"}, Sprint: "s1"}
+	snap, err := table.ReadLive(context.Background(), client, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := snap.RenderLive(now)
+	for _, want := range []string{
+		"fresh      |     2 |       3 |    10 |     9 |     1 |  90% |   4.00\n",
+		"edge       |     2 |       3 |    10 |     9 |     1 |  90% |   4.00\n",
+		"slow       | stale |       ? |     ? |     ? |     ? |    ? |      ?\n",
+		"dead       | stale |       ? |     ? |     ? |     ? |    ? |      ?\n",
+		"total      |     4 |       6 |    20 |    18 |     2 |  90% |\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("table lacks %q:\n%s", want, got)
 		}
 	}
 }

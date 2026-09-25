@@ -10,9 +10,10 @@
 --   friend:<f>:beat             hash (harness, host, session, at), TTL 5 s
 --   friend:<f>:wake             list max 1, no TTL; stale values are discarded
 --   bench:<b>:beat              hash (host, user, load1, ssh, probe,
---                                    launcher, live, why, build, at), TTL 5 s
---   bench:<b>:live              set of card identities, TTL 5 s
---   bench:<b>:owner             fenced owner session, TTL 5 s (single
+--                                    launcher, live, why, build, at), TTL from
+--                                    the caller (3 x the beat interval, #3372)
+--   bench:<b>:live              set of card identities, same TTL
+--   bench:<b>:owner             fenced owner session, same TTL (single
 --                                    instance; a different session is BUSY)
 --   machine:<m>:ceiling         hash with slots, shared with capacity friend
 --   cap:log                     presence-change stream
@@ -197,6 +198,8 @@ end
 -- bench this call returns BUSY. When the owner key and beat have expired the
 -- bench is free, so a stalled process never wedges it (stale expiry recovery).
 -- Absence-to-presence logs bench-up. The live set is rewritten each beat.
+-- args[17] is the TTL in ms the caller's loop promises (3 x its interval,
+-- #3372); a missing or non-positive value keeps PL_BEAT_MS.
 local function bench_beat(keys, args)
   local bench = args[1]
   if not bench or bench == '' then
@@ -211,6 +214,10 @@ local function bench_beat(keys, args)
   -- harness versions present, git mirrors present, free GiB under its root.
   -- A caller that predates them passes nothing and they read as missing.
   local harness, mirrors, disk_gib = args[14], args[15], args[16]
+  local ttl = tonumber(args[17])
+  if not ttl or ttl <= 0 then
+    ttl = PL_BEAT_MS
+  end
   if not session or session == '' then
     session = actor or ''
   end
@@ -232,8 +239,8 @@ local function bench_beat(keys, args)
     'live', '0', 'why', why or '', 'build', build or '',
     'harness', harness or '', 'mirrors', mirrors or '', 'disk_gib', disk_gib or '',
     'at', tostring(at))
-  redis.call('PEXPIRE', 'bench:' .. bench .. ':beat', PL_BEAT_MS)
-  redis.call('SET', owner_key, session, 'PX', PL_BEAT_MS)
+  redis.call('PEXPIRE', 'bench:' .. bench .. ':beat', ttl)
+  redis.call('SET', owner_key, session, 'PX', ttl)
 
   local live_key = 'bench:' .. bench .. ':live'
   redis.call('DEL', live_key)
@@ -243,7 +250,7 @@ local function bench_beat(keys, args)
       redis.call('SADD', live_key, identity)
       live_count = live_count + 1
     end
-    redis.call('PEXPIRE', live_key, PL_BEAT_MS)
+    redis.call('PEXPIRE', live_key, ttl)
   end
   redis.call('HSET', 'bench:' .. bench .. ':beat', 'live', tostring(live_count))
   if first == 0 then

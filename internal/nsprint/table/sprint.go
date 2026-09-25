@@ -329,7 +329,7 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 	var hq, hw int64
 	for _, row := range s.Benches {
 		c, show := row.cells(now)
-		if !show {
+		if !show || !row.beatWithin60(now) {
 			continue
 		}
 		// done/ok/fail are the swarm's counts, dashed while no swarm sprint
