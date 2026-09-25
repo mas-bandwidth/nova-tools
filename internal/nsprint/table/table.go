@@ -60,12 +60,13 @@ type Proc struct {
 
 // Snapshot is one consistent instant.
 type Snapshot struct {
-	Time      int64
-	Benches   []Row
-	Friends   []Row
-	Pipelines []Pipeline
-	Procs     []Proc
-	Errors    []string
+	Time       int64
+	Benches    []Row
+	Friends    []Row
+	Pipelines  []Pipeline
+	Procs      []Proc
+	Errors     []string
+	Unreported []string
 }
 
 const (
@@ -103,6 +104,13 @@ func Parse(raw []any) (*Snapshot, error) {
 			}
 			i++
 			snap.Errors = append(snap.Errors, v)
+		case "unreported":
+			v, err := token(raw, i)
+			if err != nil {
+				return nil, err
+			}
+			i++
+			snap.Unreported = append(snap.Unreported, v)
 		case "bench", "friend":
 			row, err := parseRow(raw, i)
 			if err != nil {
@@ -261,6 +269,10 @@ func (s *Snapshot) Render() string {
 	}
 	for _, e := range s.Errors {
 		b.WriteString("RED " + e)
+		b.WriteByte('\n')
+	}
+	for _, u := range s.Unreported {
+		b.WriteString("unreported " + u)
 		b.WriteByte('\n')
 	}
 	return b.String()

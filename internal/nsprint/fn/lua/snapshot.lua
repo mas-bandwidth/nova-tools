@@ -188,6 +188,40 @@ redis.register_function{
       out[#out + 1] = 'error'
       out[#out + 1] = 'two writers: ' .. k
     end
+    local unreported = {}
+    for _, sp in ipairs(sprints) do
+      for _, friend in ipairs(friends) do
+        local starting = redis.call('ZRANGE', 'friend:' .. friend .. ':starting', 0, -1)
+        local living = redis.call('ZRANGE', 'friend:' .. friend .. ':living', 0, -1)
+        for _, member in ipairs(starting) do
+          local s, id, attempt = string.match(member, '([^/]+)/([^/]+)/(.+)')
+          if s == sp then
+            local state = redis.call('HGET', 's:' .. s .. ':task:' .. id, 'state')
+            if state ~= 'closed' then
+              unreported[id] = true
+            end
+          end
+        end
+        for _, member in ipairs(living) do
+          local s, id, attempt = string.match(member, '([^/]+)/([^/]+)/(.+)')
+          if s == sp then
+            local state = redis.call('HGET', 's:' .. s .. ':task:' .. id, 'state')
+            if state ~= 'closed' then
+              unreported[id] = true
+            end
+          end
+        end
+      end
+    end
+    local unreported_list = {}
+    for id, _ in pairs(unreported) do
+      unreported_list[#unreported_list + 1] = id
+    end
+    table.sort(unreported_list)
+    for _, id in ipairs(unreported_list) do
+      out[#out + 1] = 'unreported'
+      out[#out + 1] = id
+    end
     return out
   end,
 }

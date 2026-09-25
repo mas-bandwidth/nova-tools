@@ -26,6 +26,38 @@ func init() {
 		Summary: "file an issue (--title) or comment (--comment <n>) from --body-file by REST; lints before posting, reads back after (exit 1 differs); --push-to queues the build task",
 		Run:     cmdFile,
 	})
+	task.FileFollowUp = func(ctx context.Context, body string) error {
+		tmpDir, err := os.MkdirTemp("", "nova-followup-*")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(tmpDir)
+		bodyPath := filepath.Join(tmpDir, "followup.md")
+		if err := os.WriteFile(bodyPath, []byte(body), 0644); err != nil {
+			return err
+		}
+		var stdout, stderr io.Writer = io.Discard, io.Discard
+		deps := githubDeps()
+		code := file.Main(ctx, []string{
+			"--repo", "nova-tools",
+			"--title", "follow-up task",
+			"--body-file", bodyPath,
+		}, stdout, stderr, deps)
+		if code == 1 {
+			return errors.New("file posted but read-back differs")
+		}
+		if code != 0 {
+			return errors.New("file failed")
+		}
+		return nil
+	}
+}
+
+var githubDeps = func() file.Deps {
+	return file.Deps{
+		Token: githubToken,
+		Push:  pushFiledTask,
+	}
 }
 
 func cmdFile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -33,10 +65,7 @@ func cmdFile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		_, _ = io.WriteString(stdout, file.Usage)
 		return 0
 	}
-	return file.Main(ctx, args, stdout, stderr, file.Deps{
-		Token: githubToken,
-		Push:  pushFiledTask,
-	})
+	return file.Main(ctx, args, stdout, stderr, githubDeps())
 }
 
 // githubToken is GH_TOKEN, then GITHUB_TOKEN, then `gh auth token` (which

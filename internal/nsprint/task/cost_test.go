@@ -59,7 +59,7 @@ func TestControl55Cost(t *testing.T) {
 		t.Fatalf("take = %v, %v", ok, err)
 	}
 	done := task.DoneRequest{
-		Sprint: sprint, ID: id, Token: claim.Token, Evidence: "APPROVE 9/10 at " + head[:7],
+		Sprint: sprint, ID: id, Token: claim.Token, Evidence: "DONE: pass\nPR: https://github.com/mas-bandwidth/nova-tools/pull/55 at " + head[:7],
 		Verdict: "APPROVE", Score: "9", Head: head, Cost: &metered,
 	}
 
@@ -78,7 +78,7 @@ func TestControl55Cost(t *testing.T) {
 		t.Fatalf("done = %s, %v; want DONE", got, err)
 	}
 	evidence, _ := client.HGet(ctx, "s:"+sprint+":task:"+id, "evidence").Result()
-	if want := "APPROVE 9/10 at " + head[:7] + " | " + metered.Clause(); evidence != want {
+	if want := "DONE: pass\nPR: https://github.com/mas-bandwidth/nova-tools/pull/55 at " + head[:7] + " | " + metered.Clause(); evidence != want {
 		t.Fatalf("stored evidence = %q; want %q", evidence, want)
 	}
 	if got, found, err := task.ParseCost(evidence); err != nil || !found || got != metered {

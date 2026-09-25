@@ -99,7 +99,7 @@ func TestPushRefusesOverlappingBuildPaths(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("take build-disjoint: %v %v", ok, err)
 	}
-	if _, err := task.Done(ctx, st, task.DoneRequest{Sprint: sprint, ID: "build-disjoint", Token: claim.Token, Evidence: "PR"}); err != nil {
+	if _, err := task.Done(ctx, st, task.DoneRequest{Sprint: sprint, ID: "build-disjoint", Token: claim.Token, Evidence: "DONE: pass\nPR: https://github.com/mas-bandwidth/nova-tools/pull/1"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := push("build-after-close", "after close | PATHS: cmd/nova-sprint/table.go"); got.Status != task.PushCreated {

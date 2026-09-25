@@ -236,11 +236,14 @@ func Done(ctx context.Context, st *store.Store, req DoneRequest) (DoneStatus, er
 	if req.Sprint == "" || req.ID == "" {
 		return "", fmt.Errorf("task done: sprint and id are required")
 	}
+	if _, err := ParseEvidence(req.Evidence); err != nil {
+		return DoneInvalid, nil
+	}
 	if req.Cost != nil {
 		req.Evidence = WithCost(req.Evidence, *req.Cost)
 	}
 	if _, _, err := ParseCost(req.Evidence); err != nil {
-		return "", fmt.Errorf("task done %s: evidence cost: %w", req.ID, err)
+		return DoneInvalid, fmt.Errorf("task done %s: evidence cost: %w", req.ID, err)
 	}
 	reply, err := st.Client().FCall(ctx, FunctionDone, nil,
 		req.Sprint, req.ID, req.Token, req.Evidence, req.Verdict, req.Score,
@@ -253,7 +256,10 @@ func Done(ctx context.Context, st *store.Store, req DoneRequest) (DoneStatus, er
 		return "", fmt.Errorf("task done %s: %w", req.ID, err)
 	}
 	switch DoneStatus(status) {
-	case DoneClosed, DoneRepeat, DoneFenced, DoneConflict, DoneNoEvidence, DoneInvalid:
+	case DoneClosed, DoneRepeat:
+		_ = ProcessDoneEvidenceAndFollowUps(ctx, st, req.Sprint, req.ID, req.Evidence, DoneStatus(status))
+		return DoneStatus(status), nil
+	case DoneFenced, DoneConflict, DoneNoEvidence, DoneInvalid:
 		return DoneStatus(status), nil
 	default:
 		return "", fmt.Errorf("task done %s: unexpected status %q", req.ID, status)

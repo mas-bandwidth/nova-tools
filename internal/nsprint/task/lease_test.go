@@ -175,7 +175,7 @@ func TestControl02TakeNeverBeat(t *testing.T) {
 
 	// The old token is fenced: #2929's Done refuses with exit 3, unchanged.
 	done, err := task.Done(ctx, st, task.DoneRequest{
-		Sprint: sprint, ID: "never", Token: claim.Token, Evidence: "https://example.test/e",
+		Sprint: sprint, ID: "never", Token: claim.Token, Evidence: "DONE: pass\nPR: https://github.com/mas-bandwidth/nova-tools/pull/1",
 	})
 	if err != nil || done != task.DoneFenced || done.ExitCode() != 3 {
 		t.Fatalf("done with superseded token = %s, %v; want FENCED exit 3", done, err)
@@ -304,7 +304,7 @@ func TestTaskCancelExternal(t *testing.T) {
 		t.Fatalf("c1 unresolved evidence present = %v, %v; want true", unresolved, err)
 	}
 	done, err := task.Done(ctx, st, task.DoneRequest{
-		Sprint: sprint, ID: "c1", Token: claims["c1"].Token, Evidence: "https://example.test/e",
+		Sprint: sprint, ID: "c1", Token: claims["c1"].Token, Evidence: "DONE: pass\nPR: https://github.com/mas-bandwidth/nova-tools/pull/1",
 	})
 	if err != nil || done != task.DoneFenced || done.ExitCode() != 3 {
 		t.Fatalf("done with cancelled token = %s, %v; want FENCED exit 3", done, err)
