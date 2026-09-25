@@ -139,7 +139,7 @@ func TestHeldHeadWithoutFixTaskPushesOneFixToAuthor(t *testing.T) {
 	}
 	id := "fix-3572-" + headA[:8]
 	task := f.task(t, id)
-	if task["owner"] != "stella" || task["kind"] != "fix" || task["state"] != "ready" || task["head"] != headA {
+	if task["owner"] != "stella" || task["kind"] != "fix" || task["where"] != "ready" || task["head"] != headA {
 		t.Fatalf("task:%s = %v; want a ready fix task owned by stella at head", id, task)
 	}
 	if !strings.Contains(task["title"], hold) || !strings.Contains(task["title"], headA[:8]) || task["holder"] != "emma" {
@@ -238,7 +238,7 @@ func TestEveryUnreadHeadGetsOneRead(t *testing.T) {
 	}
 	id := "read-3542-" + headA[:8]
 	task := f.task(t, id)
-	if task["owner"] != "emma" || task["kind"] != "read" || task["state"] != "ready" || task["head"] != headA || task["author"] != "stella" {
+	if task["owner"] != "emma" || task["kind"] != "read" || task["where"] != "ready" || task["head"] != headA || task["author"] != "stella" {
 		t.Fatalf("task:%s = %v; want a ready read task on emma (least loaded, not the author)", id, task)
 	}
 	if f.qlen("stella") != 0 || f.qlen("emma") != 2 {
@@ -309,7 +309,7 @@ func TestNewHeadSupersedesOldRead(t *testing.T) {
 		t.Fatalf("after the head move %s; want reads=1 carried=0", c.Line())
 	}
 	got := f.task(t, old)
-	if got["state"] != "closed" || got["cancelled"] != "1" || got["evidence"] != "superseded by "+headB {
+	if got["where"] != "done" || got["where_ok"] != "fail" || got["cancelled"] != "1" || got["evidence"] != "superseded by "+headB {
 		t.Fatalf("old read task = %v; want closed, cancelled, superseded by the new head", got)
 	}
 	if f.c.ZScore(f.ctx, "ws:"+prStream+":ready", old).Err() == nil {
@@ -322,7 +322,7 @@ func TestNewHeadSupersedesOldRead(t *testing.T) {
 		t.Fatalf("q:%s has %d entries, want %d (old entry deleted, new one added)", owner, f.qlen(owner), before)
 	}
 	fresh := f.task(t, "read-3552-"+headB[:8])
-	if fresh["state"] != "ready" || fresh["head"] != headB {
+	if fresh["where"] != "ready" || fresh["head"] != headB {
 		t.Fatalf("new read task = %v", fresh)
 	}
 	if f.wsLogWhy("superseded by "+headB) != 1 {
@@ -354,7 +354,7 @@ func TestIdenticalDiffCarriesTheRead(t *testing.T) {
 		t.Fatalf("after a rebase with the same diff %s; want carried=1 reads=0", c.Line())
 	}
 	got := f.task(t, id)
-	if got["state"] != "ready" || got["head"] != headB || got["carried_from"] != headA {
+	if got["where"] != "ready" || got["head"] != headB || got["carried_from"] != headA {
 		t.Fatalf("carried task = %v; want ready at the new head with carried_from", got)
 	}
 	if f.c.Exists(f.ctx, "task:read-3556-"+headB[:8]).Val() != 0 {

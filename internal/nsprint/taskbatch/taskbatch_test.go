@@ -3,47 +3,40 @@ package taskbatch_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskbatch"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
 )
 
 const sprint = "sp"
 
-var states = []string{"waiting", "ready", "working", "merging", "landed", "parked"}
+// wheres are the sets a task card can be in (nova-tools #3778).
+var wheres = []string{"waiting", "ready", "working", "merging", "landed", "done", "parked"}
 
-// evalCaller runs fn/lua/task_batch.lua on miniredis, which has EVAL but no
-// FUNCTION/FCALL: the file is wrapped so its register_function calls fill a
-// table and the named function is called with the args. calls counts the
-// round trips.
+// evalCaller FCALLs the loaded nova_sprint library (task_batch.lua reaches
+// the one task move as NS.task, so the whole library is loaded on a
+// throwaway redis-server); calls counts the round trips.
 type evalCaller struct {
-	c      *redis.Client
-	script string
-	calls  int
+	c     *redis.Client
+	calls int
 }
 
 func newEval(t *testing.T, c *redis.Client) *evalCaller {
 	t.Helper()
-	src, err := os.ReadFile("../fn/lua/task_batch.lua")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := "local NS = {}\nlocal fns = {}\nredis.register_function = function(name, fn) fns[name] = fn end\ndo\n" +
-		string(src) + "\nend\nlocal a = {}\nfor i = 2, #ARGV do a[i - 1] = ARGV[i] end\nreturn fns[ARGV[1]](KEYS, a)\n"
-	return &evalCaller{c: c, script: script}
+	return &evalCaller{c: c}
 }
 
 func (e *evalCaller) call() taskbatch.Caller {
+	f := taskbatch.FCall(e.c)
 	return func(ctx context.Context, fn string, args []any) (any, error) {
 		e.calls++
-		return e.c.Eval(ctx, e.script, nil, append([]any{fn}, args...)...).Result()
+		return f(ctx, fn, args)
 	}
 }
 
@@ -53,44 +46,63 @@ type row struct {
 	extra                    []string
 }
 
-func newStore(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
+func newStore(t *testing.T) (string, *redis.Client) {
 	t.Helper()
-	m := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: m.Addr()})
-	t.Cleanup(func() { _ = c.Close() })
-	return m, c
+	return wstest.Start(t)
 }
 
-// seed writes rows in the ws shape plus the legacy friend-queue shape.
+// mirror is the friend-queue state a where is written as for one release.
+var mirror = map[string]string{"ready": "open", "done": "closed"}
+
+// seed writes rows in the task card shape (where, the stream and friend
+// sets scored by created_at = the row's order) plus the legacy friend-queue
+// shape (idx sets, the ready entry on q:<owner> with its queue and xid).
 func seed(t *testing.T, c *redis.Client, rows []row) {
 	t.Helper()
 	ctx := context.Background()
-	p := c.Pipeline()
 	for _, r := range rows {
-		p.SAdd(ctx, "ws:names", r.stream)
-		fields := []any{"stream", r.stream, "state", r.state, "order", r.order, "owner", r.owner, "kind", "fix"}
+		st := r.state
+		if m, ok := mirror[st]; ok {
+			st = m
+		}
+		created := 1700000000000 + int64(r.order)
+		rs := sprint
+		for i := 0; i+1 < len(r.extra); i += 2 {
+			if r.extra[i] == "sprint" {
+				rs = r.extra[i+1]
+			}
+		}
+		fields := []any{"stream", r.stream, "where", r.state, "where_ok", "-", "state", st, "order", r.order, "owner", r.owner,
+			"friend", r.owner, "kind", "fix", "created_at", created, "sprint", sprint}
 		for _, x := range r.extra {
 			fields = append(fields, x)
 		}
-		p.HSet(ctx, "task:"+r.id, fields...)
-		p.ZAdd(ctx, "ws:"+r.stream+":"+r.state, redis.Z{Score: float64(r.order), Member: r.id})
+		p := c.Pipeline()
+		p.SAdd(ctx, "ws:names", r.stream)
+		p.ZAdd(ctx, "ws:"+r.stream+":"+r.state, redis.Z{Score: float64(created), Member: r.id})
+		p.ZAdd(ctx, "friend:"+r.owner+":cards:"+r.state, redis.Z{Score: float64(created), Member: r.id})
 		switch r.state {
 		case "ready":
-			p.SAdd(ctx, "sprint:"+sprint+":idx:"+r.owner+":open", r.id)
-			p.XAdd(ctx, &redis.XAddArgs{Stream: "q:" + r.owner, Values: []any{"id", r.id}})
+			p.SAdd(ctx, "sprint:"+rs+":idx:"+r.owner+":open", r.id)
+			xid := c.XAdd(ctx, &redis.XAddArgs{Stream: "q:" + r.owner, Values: []any{"id", r.id}}).Val()
+			fields = append(fields, "queue", "q:"+r.owner, "xid", xid)
 		case "working":
-			p.SAdd(ctx, "sprint:"+sprint+":idx:"+r.owner+":working", r.id)
+			p.SAdd(ctx, "sprint:"+rs+":idx:"+r.owner+":working", r.id)
+		case "merging", "landed":
+			p.SAdd(ctx, "sprint:"+rs+":idx:"+r.owner+":closed", r.id)
 		case "waiting", "parked":
 			p.ZAdd(ctx, "q:blocked", redis.Z{Score: 1, Member: r.id})
 		}
-	}
-	if _, err := p.Exec(ctx); err != nil {
-		t.Fatal(err)
+		p.HSet(ctx, "task:"+r.id, fields...)
+		if _, err := p.Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
 // check is the spec's invariant for every id: in exactly the one ws ZSET its
-// stream/state fields name (none when closed), and the legacy shapes agree.
+// stream/where fields name, the friend set agrees, and the legacy shapes
+// agree (done: idx closed; ready: idx open; waiting/parked: q:blocked).
 func check(t *testing.T, c *redis.Client, ids []string) {
 	t.Helper()
 	ctx := context.Background()
@@ -98,60 +110,29 @@ func check(t *testing.T, c *redis.Client, ids []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := c.Pipeline()
-	hm := make([]*redis.SliceCmd, len(ids))
-	sc := make([][]*redis.FloatCmd, len(ids))
-	blocked := make([]*redis.FloatCmd, len(ids))
-	for i, id := range ids {
-		hm[i] = p.HMGet(ctx, "task:"+id, "stream", "state", "owner")
-		blocked[i] = p.ZScore(ctx, "q:blocked", id)
-		for _, s := range names {
-			for _, st := range states {
-				sc[i] = append(sc[i], p.ZScore(ctx, "ws:"+s+":"+st, id))
-			}
-		}
-	}
-	_, _ = p.Exec(ctx)
-	p2 := c.Pipeline()
-	open := make([]*redis.BoolCmd, len(ids))
-	closed := make([]*redis.BoolCmd, len(ids))
-	for i, id := range ids {
-		owner := fmt.Sprint(hm[i].Val()[2])
-		open[i] = p2.SIsMember(ctx, "sprint:"+sprint+":idx:"+owner+":open", id)
-		closed[i] = p2.SIsMember(ctx, "sprint:"+sprint+":idx:"+owner+":closed", id)
-	}
-	_, _ = p2.Exec(ctx)
-	for i, id := range ids {
-		v := hm[i].Val()
-		stream, state := fmt.Sprint(v[0]), fmt.Sprint(v[1])
+	for _, id := range ids {
+		v := c.HMGet(ctx, "task:"+id, "stream", "where", "owner", "sprint").Val()
+		stream, where, owner, rs := fmt.Sprint(v[0]), fmt.Sprint(v[1]), fmt.Sprint(v[2]), fmt.Sprint(v[3])
 		var in []string
-		k := 0
 		for _, s := range names {
-			for _, st := range states {
-				if sc[i][k].Err() == nil {
-					in = append(in, s+":"+st)
+			for _, w := range wheres {
+				if c.ZScore(ctx, "ws:"+s+":"+w, id).Err() == nil {
+					in = append(in, s+":"+w)
 				}
-				k++
 			}
 		}
-		if state == "closed" {
-			if len(in) != 0 {
-				t.Fatalf("%s closed but in %v", id, in)
-			}
-			if !closed[i].Val() || open[i].Val() || blocked[i].Err() == nil {
-				t.Fatalf("%s closed: legacy closed=%v open=%v blocked=%v", id, closed[i].Val(), open[i].Val(), blocked[i].Err() == nil)
-			}
-			continue
+		if len(in) != 1 || in[0] != stream+":"+where {
+			t.Fatalf("%s fields %s:%s but in %v", id, stream, where, in)
 		}
-		if len(in) != 1 || in[0] != stream+":"+state {
-			t.Fatalf("%s fields %s:%s but in %v", id, stream, state, in)
+		if c.ZScore(ctx, "friend:"+owner+":cards:"+where, id).Err() != nil {
+			t.Fatalf("%s not in friend:%s:cards:%s", id, owner, where)
 		}
-		isBlocked := blocked[i].Err() == nil
-		if (state == "waiting" || state == "parked") != isBlocked {
-			t.Fatalf("%s %s: q:blocked=%v", id, state, isBlocked)
-		}
-		if (state == "ready") != open[i].Val() {
-			t.Fatalf("%s %s: legacy open=%v", id, state, open[i].Val())
+		open := c.SIsMember(ctx, "sprint:"+rs+":idx:"+owner+":open", id).Val()
+		closed := c.SIsMember(ctx, "sprint:"+rs+":idx:"+owner+":closed", id).Val()
+		blocked := c.ZScore(ctx, "q:blocked", id).Err() == nil
+		if (where == "ready") != open || (where == "done" || where == "merging" || where == "landed") != closed ||
+			(where == "waiting" || where == "parked") != blocked {
+			t.Fatalf("%s %s: legacy open=%v closed=%v blocked=%v", id, where, open, closed, blocked)
 		}
 	}
 }
@@ -261,7 +242,7 @@ func TestBlockUnblockRoundTrip(t *testing.T) {
 	if err != nil || res.OK || res.ID != "d" || res.Why != "block-from-landed" {
 		t.Fatalf("block landed = %+v %v", res, err)
 	}
-	if st := c.HGet(ctx, "task:a", "state").Val(); st != "ready" {
+	if st := c.HGet(ctx, "task:a", "where").Val(); st != "ready" {
 		t.Fatalf("a refused batch moved a to %s", st)
 	}
 }
@@ -335,7 +316,7 @@ func TestMoveStateFriendAndFront(t *testing.T) {
 		check(t, c, ids(rows))
 		return res
 	}
-	if res := run(taskbatch.Request{Verb: taskbatch.MoveState, Param: "merging", IDs: []string{"r"}}); res.OK || res.ID != "r" || res.Why != "ready-to-merging" {
+	if res := run(taskbatch.Request{Verb: taskbatch.MoveState, Param: "merging", IDs: []string{"r"}}); res.OK || res.ID != "r" || !strings.HasPrefix(res.Why, "OFFGRAPH ready -> merging") {
 		t.Fatalf("graph refusal = %+v", res)
 	}
 	if res := run(taskbatch.Request{Verb: taskbatch.MoveState, Param: "ready", IDs: []string{"w"}}); !res.OK || res.N != 1 {
@@ -359,8 +340,11 @@ func TestMoveStateFriendAndFront(t *testing.T) {
 	if res := run(taskbatch.Request{Verb: taskbatch.Front, IDs: []string{"r"}}); !res.OK {
 		t.Fatalf("front = %+v", res)
 	}
-	if s := c.ZScore(ctx, "ws:s:ready", "r").Val(); s != 0 {
-		t.Fatalf("front score %v", s)
+	if s := c.ZScore(ctx, "ws:s:ready", "r").Val(); s != 1700000000007 {
+		t.Fatalf("front rescored r to %v; every score is the task's age", s)
+	}
+	if o := c.HGet(ctx, "task:r", "order").Val(); o != "0" {
+		t.Fatalf("front order %q", o)
 	}
 	if f := c.HGet(ctx, "task:r", "front").Val(); f != "1" {
 		t.Fatalf("front field %q", f)
@@ -392,7 +376,7 @@ func TestRefusalChangesNothingAndNamesFirstBadID(t *testing.T) {
 	// A row whose ZSET does not hold it is a broken invariant: refused.
 	c.ZRem(ctx, "ws:s:ready", "b")
 	res, _ = taskbatch.Batch(ctx, e.call(), taskbatch.Request{Verb: taskbatch.Cancel, Sprint: sprint, By: "rowan", IDs: []string{"a", "b"}})
-	if res.OK || res.ID != "b" || res.Why != "not-in-ws-ready" {
+	if res.OK || res.ID != "b" || !strings.HasPrefix(res.Why, "DRIFT unlinked ws:s:ready task:b") {
 		t.Fatalf("unindexed = %+v", res)
 	}
 	// --set takes a ZSET's members.
@@ -421,15 +405,21 @@ func TestSweepCancelsMovedHeadAndParksPitstop(t *testing.T) {
 	c.HSet(ctx, "pr:nova-tools:11", "head", "cccc999")
 	c.Set(ctx, "s:P:pitstop", "1", 0)
 	e := newEval(t, c)
+	// p1 and o1 are sprint P's (their record's sprint names their idx sets):
+	// one sweep per sprint.
 	res, err := taskbatch.Sweep(ctx, e.call(), taskbatch.SweepRequest{Sprint: sprint, By: "rowan", Friend: "f"})
-	if err != nil || !res.OK || res.N != 2 || res.Cancelled != 1 || res.Waiting != 1 || res.Stream != "*" {
+	if err != nil || !res.OK || res.N != 1 || res.Cancelled != 1 || res.Stream != "s" {
 		t.Fatalf("sweep = %+v %v", res, err)
 	}
+	res, err = taskbatch.Sweep(ctx, e.call(), taskbatch.SweepRequest{Sprint: "P", By: "rowan", Friend: "f"})
+	if err != nil || !res.OK || res.N != 1 || res.Waiting != 1 || res.Stream != "t" {
+		t.Fatalf("sweep P = %+v %v", res, err)
+	}
 	check(t, c, ids(rows))
-	want := map[string]string{"r1": "closed", "r2": "ready", "r3": "ready", "p1": "waiting", "o1": "ready"}
+	want := map[string]string{"r1": "done", "r2": "ready", "r3": "ready", "p1": "waiting", "o1": "ready"}
 	for id, st := range want {
-		if got := c.HGet(ctx, "task:"+id, "state").Val(); got != st {
-			t.Fatalf("%s state %s, want %s", id, got, st)
+		if got := c.HGet(ctx, "task:"+id, "where").Val(); got != st {
+			t.Fatalf("%s where %s, want %s", id, got, st)
 		}
 	}
 	if ev := c.HGet(ctx, "task:r1", "evidence").Val(); !strings.Contains(ev, "aaaa111 -> bbbb222") {
