@@ -105,6 +105,7 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 		return refuse(errOut, "capacity "+kind, err.Error())
 	}
 	defer st.Close()
+	trips := st.CountTrips()
 
 	resolved := *machine
 	if resolved == "" {
@@ -128,8 +129,10 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	if status == "" {
 		status = "SET"
 	}
-	_, _ = fmt.Fprintf(out, "%s %s %s machine=%s slots=%d desired=%d/%d\n",
-		status, kind, name, resolved, result.Slots, result.Sum, result.Ceiling)
+	// #3265: trips=<n> is the write's Redis round trips (one pipeline read
+	// of the ceiling and every consumer, one FCALL; one more without --machine).
+	_, _ = fmt.Fprintf(out, "%s %s %s machine=%s slots=%d desired=%d/%d trips=%d\n",
+		status, kind, name, resolved, result.Slots, result.Sum, result.Ceiling, trips.N())
 	return 0
 }
 
@@ -164,12 +167,13 @@ func runCapacityMachine(ctx context.Context, args []string, out, errOut io.Write
 		return refuse(errOut, "capacity machine", err.Error())
 	}
 	defer st.Close()
+	trips := st.CountTrips()
 	result, err := capacity.SetMachineBudget(ctx, st, machine, slots, *cores, *memGB, *cpuMilli, *memMB, *actor, *idem)
 	if err != nil {
 		return refuseCapacity(errOut, "capacity machine", err)
 	}
-	fmt.Fprintf(out, "SET machine %s slots=%d desired=%d/%d\n",
-		machine, result.Slots, result.Sum, result.Ceiling)
+	fmt.Fprintf(out, "SET machine %s slots=%d desired=%d/%d trips=%d\n",
+		machine, result.Slots, result.Sum, result.Ceiling, trips.N())
 	return 0
 }
 
