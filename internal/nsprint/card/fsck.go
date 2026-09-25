@@ -3,6 +3,7 @@ package card
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"github.com/redis/go-redis/v9"
@@ -37,6 +38,7 @@ type FsckReport struct {
 	Waiting, Ready, Working, Done, Parked, OK, Fail int64
 	Drift, Fixed                                    int64
 	Lines                                           []string // the first 50 drift lines
+	Nomirror                                        map[string][]string // bench -> repos with no mirror
 }
 
 // Line is the receipt: FSCK <S> cards=... drift=... fixed=....
@@ -77,8 +79,31 @@ func Fsck(ctx context.Context, client redis.UniversalClient, sprint string, repa
 		}
 		n[i] = v
 	}
-	return FsckReport{Sprint: reply[1], Cards: n[0], Null: n[1], Waiting: n[2], Ready: n[3], Working: n[4],
-		Done: n[5], Parked: n[6], OK: n[7], Fail: n[8], Drift: n[9], Fixed: n[10], Lines: reply[13:]}, nil
+	rep := FsckReport{Sprint: reply[1], Cards: n[0], Null: n[1], Waiting: n[2], Ready: n[3], Working: n[4],
+		Done: n[5], Parked: n[6], OK: n[7], Fail: n[8], Drift: n[9], Fixed: n[10], Lines: reply[13:]}
+
+	benches, err := client.SMembers(ctx, "benches").Result()
+	if err == nil {
+		pipe := client.Pipeline()
+		cmds := make(map[string]*redis.StringSliceCmd)
+		for _, b := range benches {
+			cmds[b] = pipe.SMembers(ctx, "ci:nomirror:"+b)
+		}
+		if len(cmds) > 0 {
+			if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+				// nomirror read failure is not fatal to fsck
+			}
+		}
+		rep.Nomirror = map[string][]string{}
+		for _, b := range benches {
+			if nm, err := cmds[b].Result(); err == nil && len(nm) > 0 {
+				sort.Strings(nm)
+				rep.Nomirror[b] = nm
+			}
+		}
+	}
+
+	return rep, nil
 }
 
 // Unplaced lists the sprint's null cards (where empty: created, in no table

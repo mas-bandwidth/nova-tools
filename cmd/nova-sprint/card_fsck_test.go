@@ -64,3 +64,31 @@ func TestCardFsckAndBenchReindexVerbs(t *testing.T) {
 		t.Fatalf("fsck without --sprint exits %d, want 2", code)
 	}
 }
+
+// TestCardFsckNomirror (#3804): card fsck reports nomirror sets on stderr.
+func TestCardFsckNomirror(t *testing.T) {
+	ctx := context.Background()
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	const sprint = "nomirror-3804"
+	client.SAdd(ctx, "benches", "b1", "b2")
+	client.SAdd(ctx, "ci:nomirror:b1", "nova-tools", "rowan-tools")
+	client.SAdd(ctx, "ci:nomirror:b2", "vision")
+
+	var out, errOut bytes.Buffer
+	code := cmdCardFsck(ctx, []string{"--sprint", sprint, "--redis", addr}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("fsck exit %d, want 0", code)
+	}
+	errStr := errOut.String()
+	if !strings.Contains(errStr, "NOMIRROR bench=b1") || !strings.Contains(errStr, "nova-tools") {
+		t.Fatalf("fsck stderr lacks b1 nomirror: %q", errStr)
+	}
+	if !strings.Contains(errStr, "NOMIRROR bench=b2") || !strings.Contains(errStr, "vision") {
+		t.Fatalf("fsck stderr lacks b2 nomirror: %q", errStr)
+	}
+}
