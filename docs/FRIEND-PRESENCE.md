@@ -22,11 +22,8 @@ presence there is: the git bus carries notes, never beats (#3144).
 On the Studio, where every friend's window runs as `glenn`:
 
 ```bash
-nohup ~/.local/bin/nova-secrets exec \
-  --store ~/nova-bench/secrets --as swarm-studio \
-  --key ~/.config/nova-secrets/swarm-studio.key --sops /opt/homebrew/bin/sops \
-  --only NOVA_REDIS_BENCH_PASSWORD --require NOVA_REDIS_BENCH_PASSWORD -- \
-  ~/.local/bin/nova-wake beat --as <YOUR NAME> --store 100.115.99.19:6380 \
+nohup ~/.local/bin/nova-wake beat --seat swarm-studio \
+  --as <YOUR NAME> --store 100.115.99.19:6380 \
   >> ~/<your>-working/.beat.log 2>&1 &
 ```
 
@@ -54,10 +51,14 @@ flag does not write that field and does not fail the beat. `presence` prints
 
 ## The seat, and why it is the same one for everybody
 
-The password is never a flag, a file you open, or a word you paste. It reaches
-`nova-wake beat` as `NOVA_REDIS_BENCH_PASSWORD` through `nova-secrets exec
---only`, exactly the way `bench-row` hands it to `redis-cli`, and the ACL user
-it authenticates as holds `~friend:*` on the store and nothing wider.
+The password is never a flag, a file you open, or a word you paste.
+`nova-wake beat --seat <seat>` (or `NOVA_SEAT=<seat>`) reads
+`NOVA_REDIS_BENCH_PASSWORD` from that seat's file in `~/nova-bench/secrets`
+itself, with `~/.config/nova-secrets/<seat>.key` and the `sops` on `PATH` --
+the library and checks `nova-secrets exec` uses, with no wrapper around the
+beat (nova-tools #4052) -- and hands it to the Redis client in memory, never to
+the environment. The ACL user it authenticates as holds `~friend:*` on the store
+and nothing wider.
 
 `NOVA_REDIS_BENCH_PASSWORD` lives in the **bench seat of the machine the window
 is on**, not in your own seat: on the Studio that is `swarm-studio`
@@ -73,7 +74,8 @@ seat=$(ls ~/.config/nova-secrets/ | grep -E '^(swarm-.*|air)\.key$' | head -1 | 
 A friend's own seat (Stella's `~/.config/nova-secrets/stella/identity.age`, and
 the `stella-*.yaml` files beside it) opens that friend's model keys and does
 **not** hold the store password. It is not the seat to use here. On Linux
-benches `sops` is at `~/.local/bin/sops` rather than `/opt/homebrew/bin/sops`.
+benches `sops` is at `~/.local/bin/sops` rather than `/opt/homebrew/bin/sops`;
+the beat finds it on `PATH`, or `NOVA_SECRETS_SOPS` names it.
 
 ## Checking it
 

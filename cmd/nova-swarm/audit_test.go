@@ -165,6 +165,12 @@ var swarmAudit = audit.Config{
 		// else in that package holds a writer: Emit goes to Redis, and Validate refuses a
 		// field with a control character in it before it ever reaches the store.
 		`"github.com/mas-bandwidth/nova-tools/internal/events"`,
+		// internal/seatcred is --seat / NOVA_SEAT (#4052): it takes the flag out
+		// of the arguments and resolves the seat's Redis login for the card-end
+		// writer, in memory. It writes nothing to any writer, and the one line
+		// this tool prints about it goes through oneline.Escape; it never carries
+		// a password.
+		`"github.com/mas-bandwidth/nova-tools/internal/seatcred"`,
 		// native.go (issue #296) needs these and none of them writes a stream, so
 		// none can write past the escape. context only gave CommandContext its deadline
 		// and holds no writer; crypto/sha256 and encoding/hex compute and hex-encode the

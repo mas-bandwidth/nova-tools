@@ -20,12 +20,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/events"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -90,6 +93,39 @@ func emitCardEnd(parent context.Context, opt events.WriterOptions, cfg nativeRun
 	w := events.OpenWriter(ctx, opt)
 	defer w.Close()
 	w.Send(ctx, e)
+}
+
+// seatEventLogin gives the card-end writer the seat's Redis login when a seat
+// was named with --seat or NOVA_SEAT (#4052): the user, and a lookup that
+// answers the password variable from the seat's file in memory, so the
+// password never enters this process's environment or the harness's. A seat
+// that cannot be read says so in one line and the writer falls back to the
+// environment, which for a bench without the password is silence, as before.
+func seatEventLogin(opt events.WriterOptions) events.WriterOptions {
+	c, ok, err := seatcred.Active()
+	if !ok {
+		return opt
+	}
+	if err != nil {
+		if opt.Log != nil {
+			fmt.Fprintln(opt.Log, oneline.Escape("EVENT STORE SEAT UNREADABLE "+err.Error()+"; this run emits from the environment only"))
+		}
+		return opt
+	}
+	pwName := opt.PasswordEnv
+	if pwName == "" {
+		pwName = events.DefaultPasswordEnv
+	}
+	opt.Username = c.User
+	opt.Lookup = func(name string) string {
+		if name == pwName {
+			v := ""
+			_ = c.Password.Use(func(pw string) error { v = pw; return nil })
+			return v
+		}
+		return os.Getenv(name)
+	}
+	return opt
 }
 
 // defaultCardEventTimeout is the bound when the caller named none.

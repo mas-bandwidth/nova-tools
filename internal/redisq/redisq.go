@@ -84,15 +84,12 @@ type Queue struct {
 	now func() time.Time
 }
 
-// Open dials the instance at addr (host:port) and proves the connection once.
+// Open names the instance at addr (host:port) and sends nothing: the first
+// command dials, so an unreachable instance fails the caller's first batch
+// rather than costing every call a PING round trip (#3277).
 func Open(addr string) (*Queue, error) {
 	rdb := redis.NewClient(&redis.Options{Addr: addr})
-	q := &Queue{rdb: rdb, now: func() time.Time { return time.Now().UTC() }}
-	if err := rdb.Ping(context.Background()).Err(); err != nil {
-		_ = rdb.Close()
-		return nil, fmt.Errorf("redis at %s: %w", addr, err)
-	}
-	return q, nil
+	return &Queue{rdb: rdb, now: func() time.Time { return time.Now().UTC() }}, nil
 }
 
 // Close releases the connection pool.

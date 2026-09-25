@@ -37,6 +37,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/events"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -126,6 +127,12 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
+	// --seat <name> (or NOVA_SEAT): the Redis login is read from that seat's
+	// file through nova-secrets' library, in this process (#4052).
+	args, err := seatcred.FromArgs(args, os.Getenv)
+	if err != nil {
+		return refuse(stderr, "", err.Error())
+	}
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; `status --pool <dir>` is the one that only looks")
 	}
@@ -1311,9 +1318,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// that directory still exists. The emit returns no error by construction
 	// (internal/events/writer.go) -- a store that is down costs one line on stderr and
 	// the exit code below is the run's own, untouched.
-	emitCardEnd(context.Background(), events.WriterOptions{
+	emitCardEnd(context.Background(), seatEventLogin(events.WriterOptions{
 		Addr: *eventsStore, Log: stderr, Timeout: nativeEventTimeout,
-	}, cfg, res, verdict, benchName())
+	}), cfg, res, verdict, benchName())
 	// THE CARD WRAPPER'S HAND-OFF (swarm cardout.go). Under nova-card the harness is
 	// handed NOVA_CARD_OUT, and the wrapper commits $NOVA_CARD_OUT/repo and reads
 	// $NOVA_CARD_OUT/RESULT.md; the card cloned into this job instead, in a slot the bench

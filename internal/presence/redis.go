@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -25,7 +26,11 @@ const PasswordEnv = "NOVA_REDIS_BENCH_PASSWORD"
 const DefaultUser = "bench"
 
 // Redis is the live store: a Store over one go-redis client.
-type Redis struct{ rdb *redis.Client }
+type Redis struct {
+	rdb    *redis.Client
+	addr   string
+	authed bool // dialed with a password (a seat's, #4052, or PasswordEnv's)
+}
 
 // Open dials addr as user, with the password from the environment when there is
 // one. A store with no ACL -- a test's miniredis, a local Redis -- is dialled
@@ -42,24 +47,48 @@ func Open(ctx context.Context, addr, user string) (*Redis, error) {
 		return nil, err
 	}
 	opts := &redis.Options{Addr: a}
-	if pw := os.Getenv(PasswordEnv); pw != "" {
-		if strings.TrimSpace(user) == "" {
-			user = DefaultUser
-		}
-		opts.Username, opts.Password = user, pw
+	u, pw, err := Login(user)
+	if err != nil {
+		return nil, err
 	}
-	rdb := redis.NewClient(opts)
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		_ = rdb.Close()
-		// The error carries the address and the diagnosis, never the
-		// credential: redis returns "NOAUTH"/"WRONGPASS" and go-redis
-		// does not echo the password back.
-		if os.Getenv(PasswordEnv) == "" && isAuthError(err) {
-			return nil, fmt.Errorf("store %s: %w; no %s in this environment -- run this under `nova-secrets exec --only %s`", a, err, PasswordEnv, PasswordEnv)
-		}
-		return nil, fmt.Errorf("store %s: %w", a, err)
+	if pw != "" {
+		opts.Username, opts.Password = u, pw
 	}
-	return &Redis{rdb: rdb}, nil
+	// No PING (#3277): the first command dials and authenticates, and its
+	// error comes back through fail with the same diagnosis.
+	return &Redis{rdb: redis.NewClient(opts), addr: a, authed: opts.Password != ""}, nil
+}
+
+// fail adds the remedy to a command's error when the store refused the login
+// and the client dialed with no password; any other error passes unchanged (a
+// dial error already names the address). It never carries the credential:
+// redis returns "NOAUTH"/"WRONGPASS" and go-redis does not echo the password.
+func (r *Redis) fail(err error) error {
+	if err == nil || r.authed || !isAuthError(err) {
+		return err
+	}
+	return fmt.Errorf("store %s: %w; no %s in this environment -- run this with --seat <name> (or under `nova-secrets exec --only %s`)", r.addr, err, PasswordEnv, PasswordEnv)
+}
+
+// Login is the user and password a client of the presence store dials with.
+// A seat given by --seat or NOVA_SEAT (nova-tools#4052) supplies both through
+// nova-secrets' library, and the password never enters the environment;
+// otherwise it is user (DefaultUser when blank) with PasswordEnv's value, and
+// an empty password means dial with no credentials at all.
+func Login(user string) (string, string, error) {
+	if c, ok, err := seatcred.Active(); ok {
+		if err != nil {
+			return "", "", err
+		}
+		pw := ""
+		_ = c.Password.Use(func(v string) error { pw = v; return nil })
+		return c.User, pw, nil
+	}
+	pw := os.Getenv(PasswordEnv)
+	if strings.TrimSpace(user) == "" {
+		user = DefaultUser
+	}
+	return user, pw, nil
 }
 
 // refusedAddr is the one refusal every bad --store gets, verbatim and with no
@@ -218,7 +247,7 @@ func (r *Redis) WriteBeat(ctx context.Context, key string, fields []string, ttl 
 	var err error
 	for try := 0; try < 3; try++ {
 		if err = r.rdb.Watch(ctx, write, key); !errors.Is(err, redis.TxFailedErr) {
-			return err
+			return r.fail(err)
 		}
 	}
 	return err
@@ -254,7 +283,7 @@ func (r *Redis) ReadBeats(ctx context.Context, keys []string) ([]Reading, error)
 	for i, c := range cs {
 		d, err := c.ttl.Result()
 		if err != nil {
-			return nil, err
+			return nil, r.fail(err)
 		}
 		out[i].Live = d > 0
 		if vals, err := c.fields.Result(); err == nil {
@@ -284,5 +313,6 @@ func (r *Redis) ReadBeats(ctx context.Context, keys []string) ([]Reading, error)
 
 // Members is SMEMBERS set.
 func (r *Redis) Members(ctx context.Context, set string) ([]string, error) {
-	return r.rdb.SMembers(ctx, set).Result()
+	m, err := r.rdb.SMembers(ctx, set).Result()
+	return m, r.fail(err)
 }
