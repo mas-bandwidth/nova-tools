@@ -14,13 +14,13 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/launch"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -54,9 +54,7 @@ func init() {
 // (launch.Result.Overran; the others still started), 2 when the batch could
 // not run.
 func runCardLaunch(_ context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("card launch", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("card launch")
 	stdin := fs.Bool("stdin", false, "")
 	wrapper := fs.String("wrapper", "", "")
 	if err := fs.Parse(args); err != nil {

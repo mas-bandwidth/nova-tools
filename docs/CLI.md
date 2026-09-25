@@ -3403,7 +3403,9 @@ combined with another -- and :subject "commit:<sha>" holds when the commit is re
 from the base; (:kind :merged ... :predicate :merged-at) holds only when the PR is merged.
 A subject pinned as pr:<o/r>#<n>@<sha> asks about that head only: a pin the PR's last
 head does not match was superseded and is not landed. The merge runs in one blobless
-bare repository per repo under --cache. The base is
+bare repository per repo under --cache, fetched --depth 50 and deepened (the depth
+doubled) only while the PR's window start or merge base lies past it; a window the
+clone could not reach is unknown, never no (#3404). The base is
 --base, else the set's :base, and one is required. Each evaluable criterion prints one
 SET EVAL line with holds=yes|no|unknown and a why=; a criterion gh or git could not
 answer is unknown and counts as not done. A unit is decided by its criteria when every
@@ -3603,6 +3605,14 @@ shape holds refuses with the whole remedy verb: `open first: nova-cairn open
 
 
 ## nova-sprint
+
+**Help** (#3254). `-h`, `-help` or `--help` on any verb or subverb prints
+`usage: nova-sprint <verb> [<subverb>] [flags]`, every flag that verb takes
+(one `--name <type>` per line, no defaults, since a default can come from the
+environment) and the exit codes on standard output, and exits 2 without
+dialling Redis. A mistyped flag stays the verb's one-line refusal on standard
+error. `file -h` prints its own usage text (exit 2); the batch `task` verbs
+(`cancel`, `move`, `front`, `block`, `unblock`, `sweep`) print theirs and exit 0.
 
 Renders the sprint table from Redis. `table --redis <addr>` makes one
 `FCALL_RO ns_snapshot` per render over the `s:<S>:*`, `bench:*` and

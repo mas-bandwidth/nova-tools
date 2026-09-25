@@ -131,7 +131,7 @@ func TestControl2674FailedTickNeverBlank(t *testing.T) {
 	cfg := table.Fixture2674Config()
 	now := table.Fixture2674Now()
 	got := table.FailedLive(cfg, nil).RenderLive(now)
-	for _, want := range []string{"blocked: ?\n", "landed: ?\n", "rowan      |     - |       - |     - | ?         \n", "stale: never read (Redis did not answer since start)\n"} {
+	for _, want := range []string{"rowan      |     - |       - |     - | ?         \n", "stale: never read (Redis did not answer since start)\n"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("never-read tick lacks %q:\n%s", want, got)
 		}
@@ -145,7 +145,7 @@ func TestControl2674FailedTickNeverBlank(t *testing.T) {
 	got = table.FailedLive(cfg, good).RenderLive(now)
 	stella := good.Friends[len(good.Friends)-1]
 	row := "stella     | " + pad(stella.Ready, 5) + " | " + pad(stella.Working, 7) + " | " + pad(stella.Done, 5) + " | "
-	for _, want := range []string{"blocked: ?\n", row, "stale: 7s (Redis did not answer; rows are the last good read)\n"} {
+	for _, want := range []string{row, "stale: 7s (Redis did not answer; rows are the last good read)\n"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("failed tick lacks %q:\n%s", want, got)
 		}

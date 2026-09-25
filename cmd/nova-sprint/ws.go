@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
@@ -46,9 +47,7 @@ type wsCmd struct {
 }
 
 func newWSCmd(name string, out, errOut io.Writer) *wsCmd {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New(name)
 	by := os.Getenv("USER")
 	if by == "" {
 		by = "nova-sprint"

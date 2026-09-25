@@ -23,6 +23,7 @@ package ci
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -86,14 +87,16 @@ func (p *Producer) PublishCardsDone(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("read %s as group %s: %w", StreamCardsDone, GroupEvents, err)
 	}
 	published := 0
+	var ids []string
+	type pendingPublish struct {
+		body string
+		card string
+	}
+	var toPublish []pendingPublish
 	for _, stream := range streams {
 		for _, msg := range stream.Messages {
+			ids = append(ids, msg.ID)
 			if !cardEnded(msg.Values) {
-				// Not a card that is done: acked, so the group's pending list does not
-				// grow with every transition, and not announced.
-				if err := p.RDB.XAck(ctx, StreamCardsDone, GroupEvents, msg.ID).Err(); err != nil {
-					return published, fmt.Errorf("ack %s: %w", msg.ID, err)
-				}
 				continue
 			}
 			card := valueString(msg.Values["card"])
@@ -101,15 +104,29 @@ func (p *Producer) PublishCardsDone(ctx context.Context) (int, error) {
 			if card == "" {
 				card = msg.ID
 			}
-			if err := publish(ctx, p.RDB, ChannelCardDone, CardDone{Card: card, Label: label}); err != nil {
-				return published, fmt.Errorf("publish %s: %w", ChannelCardDone, err)
+			body, err := json.Marshal(CardDone{Card: card, Label: label})
+			if err != nil {
+				return published, err
 			}
-			p.emit(ChannelCardDone, fmt.Sprintf("events: card %s finished", card), card, 0)
-			if err := p.RDB.XAck(ctx, StreamCardsDone, GroupEvents, msg.ID).Err(); err != nil {
-				return published, fmt.Errorf("ack %s: %w", msg.ID, err)
-			}
+			toPublish = append(toPublish, pendingPublish{body: string(body), card: card})
 			published++
 		}
+	}
+	if len(ids) == 0 {
+		return published, nil
+	}
+	_, err = p.RDB.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, pub := range toPublish {
+			pipe.Publish(ctx, ChannelCardDone, pub.body)
+		}
+		pipe.XAck(ctx, StreamCardsDone, GroupEvents, ids...)
+		return nil
+	})
+	if err != nil {
+		return published, fmt.Errorf("pipeline publish+ack: %w", err)
+	}
+	for _, pub := range toPublish {
+		p.emit(ChannelCardDone, fmt.Sprintf("events: card %s finished", pub.card), pub.card, 0)
 	}
 	return published, nil
 }

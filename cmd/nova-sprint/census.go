@@ -15,13 +15,13 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -34,9 +34,7 @@ func init() {
 }
 
 func runCensus(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("census", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("census")
 	redisAddr := fs.String("redis", "", "")
 	set := fs.String("set", "", "")
 	keysFrom := fs.String("keys-from", "", "")

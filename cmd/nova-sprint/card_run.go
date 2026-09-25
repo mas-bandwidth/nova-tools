@@ -8,6 +8,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -38,6 +39,7 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return cardUsage(stderr, "unknown verb "+sub, "wants cut, push, release, stop, show, run, launched, beat, or end")
 	}
+	verbflag.HelpIfAsked(args[1:], "card "+sub, cardFlagNames(sub)...)
 	flags, pos, err := parseCardArgs(args[1:])
 	if err != nil {
 		return cardUsage(stderr, err.Error(), want)

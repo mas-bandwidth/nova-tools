@@ -13,12 +13,12 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet/state"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
 func init() {
@@ -36,9 +36,7 @@ func init() {
 
 func runFleetVerb(verb string) func(context.Context, []string, io.Writer, io.Writer) int {
 	return func(ctx context.Context, args []string, out, errOut io.Writer) int {
-		fs := flag.NewFlagSet(verb, flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		fs.Usage = func() {}
+		fs := verbflag.New(verb)
 		redisAddr := fs.String("redis", "", "")
 		if err := fs.Parse(args); err != nil {
 			return refuse(errOut, verb, err.Error())

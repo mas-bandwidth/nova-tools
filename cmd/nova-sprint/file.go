@@ -31,7 +31,7 @@ func init() {
 func cmdFile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
 		_, _ = io.WriteString(stdout, file.Usage)
-		return 0
+		return 2
 	}
 	return file.Main(ctx, args, stdout, stderr, file.Deps{
 		Token: githubToken,

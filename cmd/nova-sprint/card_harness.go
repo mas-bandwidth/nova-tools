@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
 const cardRunWant = "run wants --sprint <S> --label <L> --attempt <a> [--redis <addr>] [--out <dir>] [--job <dir>]; the rest is the bench's card.env in the environment"
@@ -34,9 +34,7 @@ func runCardRun(ctx context.Context, args []string, stdout, stderr io.Writer) in
 }
 
 func runCardRunEnv(ctx context.Context, args []string, stdout, stderr io.Writer, getenv func(string) string) int {
-	fs := flag.NewFlagSet("card run", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("card run")
 	sprint := fs.String("sprint", "", "")
 	label := fs.String("label", "", "")
 	attempt := fs.String("attempt", "", "")

@@ -25,6 +25,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
 func init() {
@@ -110,9 +111,7 @@ func runBench(ctx context.Context, args []string, out, errOut io.Writer) int {
 // Redis endpoint from --redis, then NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR,
 // then the local test endpoint. A real production host is never hardcoded.
 func lifeFlags(name string) (*flag.FlagSet, *string) {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New(name)
 	addr := fs.String("redis", "", "redis address (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
 	return fs, addr
 }

@@ -15,7 +15,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleetbuild"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
@@ -50,9 +50,7 @@ func runFleetBuild(ctx context.Context, args []string, out, errOut io.Writer) in
 	if len(args) > 0 && args[0] == "set" {
 		return runFleetBuildSet(ctx, args[1:], out, errOut)
 	}
-	fs := flag.NewFlagSet("fleet build", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("fleet build")
 	redisAddr := fs.String("redis", "", "")
 	benches := fs.String("bench", "", "")
 	buildCmd := fs.String("build-cmd", fleetbuild.DefaultBuildCmd, "")
@@ -130,9 +128,7 @@ func runFleetBuild(ctx context.Context, args []string, out, errOut io.Writer) in
 }
 
 func runFleetBuildSet(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("fleet build set", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("fleet build set")
 	redisAddr := fs.String("redis", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fleet build set", err.Error())

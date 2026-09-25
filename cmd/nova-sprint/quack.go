@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -37,8 +37,7 @@ var quackNow = time.Now
 // where the hash sets none). Exit 0 every row PASS, 1 any FAIL or a refusal
 // with the remedy named, 2 usage.
 func runQuack(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("quack", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("quack")
 	benches := fs.String("benches", "", "")
 	tiers := fs.String("tiers", "pro,flash", "")
 	name := fs.String("sprint", "", "")
