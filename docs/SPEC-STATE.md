@@ -253,7 +253,7 @@ and the wake only says to read it. An empty minute costs a subprocess and no mod
 ### Where it lives, and the fallback
 
 One Redis lives on **space**, the 440 GB bench, bound to localhost and the tailnet with auth from
-nova-secrets and persistence off (SPEC-REDIS). A bench that cannot reach it **falls back to the
+nova-secrets and the AOF on, no eviction (SPEC-REDIS). A bench that cannot reach it **falls back to the
 directory queue it has today** — `queue/` taken by atomic `rename`, slot files on disk, the
 presence keys read from the bus — through the same contract, so an outage is a latency regression
 and never a lost card. Slice 1 runs this fallback beside the instance on one bench before any

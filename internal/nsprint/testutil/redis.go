@@ -47,22 +47,9 @@ func Absent(t *testing.T, cause error) {
 // not a dial to a bench.
 func Start(t *testing.T, extra ...string) string {
 	t.Helper()
-	bin, err := exec.LookPath("redis-server")
-	if err != nil {
-		Absent(t, err)
-	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("loopback port: %v", err)
-	}
-	addr := ln.Addr().String()
-	if err := ln.Close(); err != nil {
-		t.Fatal(err)
-	}
-	_, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		t.Fatal(err)
-	}
+	bin := Program(t)
+	port := FreePort(t)
+	addr := net.JoinHostPort("127.0.0.1", port)
 	dir := t.TempDir()
 	logf, err := os.Create(filepath.Join(dir, "redis.log"))
 	if err != nil {
@@ -98,4 +85,35 @@ func Start(t *testing.T, extra ...string) string {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// Program is the redis-server on PATH, or Absent's answer when there is none.
+// A test that launches the server through its own production path (nova-redis
+// serve) takes the program from here, so the missing-binary rule stays one.
+func Program(t *testing.T) string {
+	t.Helper()
+	bin, err := exec.LookPath("redis-server")
+	if err != nil {
+		Absent(t, err)
+	}
+	return bin
+}
+
+// FreePort takes a free loopback port and returns it as text. Redis treats
+// --port 0 as "do not listen", so the port is taken here and handed over.
+func FreePort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("loopback port: %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return port
 }
