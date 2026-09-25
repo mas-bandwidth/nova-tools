@@ -372,7 +372,7 @@ func TestRedistributeFromByKindAndTo(t *testing.T) {
 			t.Fatalf("%s moved with --kind work,fix: on %q", id, where[id])
 		}
 	}
-	if client.ZCard(ctx, "friend:emma:starting").Val() != 1 {
+	if client.ZCard(ctx, "friend:emma:cards:working").Val() != 1 {
 		t.Fatal("the lease of an UP friend was closed by a hand redistribute")
 	}
 
@@ -418,7 +418,7 @@ func TestRedistributeFromDownFriendClosesLeases(t *testing.T) {
 	if where["build-1"] != "johnny" || where["read-1"] == "johnny" || where["read-2"] == "rowan" {
 		t.Fatalf("placed %v", where)
 	}
-	if n := client.ZCard(ctx, "s:"+asSprint+":open:emma").Val() + client.ZCard(ctx, "friend:emma:starting").Val(); n != 0 {
+	if n := client.ZCard(ctx, "s:"+asSprint+":open:emma").Val() + client.ZCard(ctx, "friend:emma:cards:working").Val(); n != 0 {
 		t.Fatalf("emma still holds %d", n)
 	}
 	if title := client.HGet(ctx, "task:build-1", "title").Val(); !strings.HasSuffix(title, "[moved from emma: away]") {

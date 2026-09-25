@@ -127,7 +127,7 @@ func ReportIf(ctx context.Context, st *store.Store, req ReportRequest) ([]string
 }
 
 // Observation is one reconciler reading of an UP friend: State is
-// StateIdle (living 0, open > 0), StateUnderfull (0 < living < slots, open >
+// StateIdle (leased 0, open > 0), StateUnderfull (0 < leased < slots, open >
 // 0) or StateUp (nothing to climb; clears a ladder state). Ticks is the
 // policy's sweeps per rung for that state.
 type Observation struct {

@@ -80,7 +80,7 @@ func rdFixture(t *testing.T, st *store.Store, client *redis.Client, f string) ma
 		must(client.HSet(ctx, "friend:"+name+":roles", "roles", roles).Err())
 	}
 	must(client.HSet(ctx, "friend:fran:desired", "slots", "2").Err())
-	must(client.ZAdd(ctx, "friend:fran:living",
+	must(client.ZAdd(ctx, "friend:fran:cards:working",
 		redis.Z{Score: 9e12, Member: "other/x1/1"}, redis.Z{Score: 9e12, Member: "other/x2/1"}).Err())
 
 	prs := map[int]struct {
@@ -140,7 +140,7 @@ func rdCounts(t *testing.T, client *redis.Client, f string, open, leased int64) 
 	t.Helper()
 	ctx := context.Background()
 	gotOpen := client.ZCard(ctx, "s:"+rdSprint+":open:"+f).Val()
-	gotLeased := client.ZCard(ctx, "friend:"+f+":starting").Val() + client.ZCard(ctx, "friend:"+f+":living").Val()
+	gotLeased := client.ZCard(ctx, "friend:"+f+":cards:working").Val()
 	if gotOpen != open || gotLeased != leased {
 		t.Fatalf("%s: open %d leased %d, want open %d leased %d", f, gotOpen, gotLeased, open, leased)
 	}

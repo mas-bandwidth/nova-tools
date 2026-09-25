@@ -75,15 +75,14 @@ local function task_beat(keys, args)
   if state == 'claimed' then
     to_state(S, id, 'working', 'start-ack', actor, { 'started_at', tostring(at), 'beat_at', tostring(at) })
     NS.task.renew(id, at)
-    redis.call('ZREM', 'friend:' .. friend .. ':starting', identity)
-    redis.call('ZADD', 'friend:' .. friend .. ':living', at, identity)
+    NS.moves.hold('friend:' .. friend, identity, at)
     receipt(S, 'task beat', id, 'claimed', 'working', attempt, token_sha, actor, 'start-ack', '', idem, at)
     return { 'WORKING', S, id, tostring(attempt) }
   end
 
   redis.call('HSET', key, 'beat_at', tostring(at))
   NS.task.renew(id, at)
-  redis.call('ZADD', 'friend:' .. friend .. ':living', at, identity)
+  NS.moves.hold('friend:' .. friend, identity, at)
   receipt(S, 'task beat', id, 'working', 'working', attempt, token_sha, actor, '', '', idem, at)
   return { 'BEAT', S, id, tostring(attempt) }
 end
@@ -116,8 +115,7 @@ local function task_cancel(keys, args)
   local at = now_ms()
 
   redis.call('HSET', key, 'token', 'fenced')
-  redis.call('ZREM', 'friend:' .. friend .. ':starting', identity)
-  redis.call('ZREM', 'friend:' .. friend .. ':living', identity)
+  NS.moves.drop('friend:' .. friend, identity)
   slot_freed(S, id, friend, attempt, at)
 
   if effects == 'external' then
@@ -162,7 +160,7 @@ local function task_expire(keys, args)
     local friend = redis.call('HGET', key, 'owner') or ''
     local token_sha = redis.call('HGET', key, 'token_sha') or ''
     redis.call('HSET', key, 'token', 'fenced')
-    redis.call('ZREM', 'friend:' .. friend .. ':starting', S .. '/' .. id .. '/' .. attempt)
+    NS.moves.drop('friend:' .. friend, S .. '/' .. id .. '/' .. attempt)
     slot_freed(S, id, friend, attempt, at)
     requeue(S, id, 'spawn-timeout', actor)
     receipt(S, 'task expire', id, 'claimed', 'open', attempt, token_sha, actor, 'spawn-timeout', '', idem, at)
@@ -179,7 +177,7 @@ local function task_expire(keys, args)
     local token_sha = redis.call('HGET', key, 'token_sha') or ''
     local effects = redis.call('HGET', key, 'effects') or 'none'
     redis.call('HSET', key, 'token', 'fenced')
-    redis.call('ZREM', 'friend:' .. friend .. ':living', S .. '/' .. id .. '/' .. attempt)
+    NS.moves.drop('friend:' .. friend, S .. '/' .. id .. '/' .. attempt)
     slot_freed(S, id, friend, attempt, at)
 
     if effects == 'external' then

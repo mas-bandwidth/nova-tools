@@ -7,7 +7,8 @@
 //	sprint:order                ZRANGE -1 -1 when no sprint is named: the current sprint
 //	bench:<b>:desired           HMGET slots machine (written by capacity only)
 //	friend:<f>:desired          HMGET slots machine
-//	bench:<b>:living            ZCARD, the living children; friend:<f>:living the same
+//	bench:<b>:cards:working     ZCARD, the working children (the one lease ledger,
+//	                            #3998); friend:<f>:cards:working the same
 //	machine:<m>:ceiling         HGET slots, the machine's child ceiling
 //	bench:<m>:beat              HMGET load1 at: the machine's own beat (a
 //	                            friend-only machine beats with --presence-only)
@@ -209,12 +210,12 @@ func (r *LinesReader) readOnce(ctx context.Context, now time.Time) (*Lines, bool
 	benches := make([]desiredCmds, len(m.benches))
 	harvest := make([]*redis.StringCmd, len(m.benches))
 	for i, b := range m.benches {
-		benches[i] = desiredCmds{pipe.HMGet(ctx, "bench:"+b+":desired", "slots", "machine"), pipe.ZCard(ctx, "bench:"+b+":living")}
+		benches[i] = desiredCmds{pipe.HMGet(ctx, "bench:"+b+":desired", "slots", "machine"), pipe.ZCard(ctx, "bench:"+b+":cards:working")}
 		harvest[i] = pipe.HGet(ctx, "proc:harvest:"+b, "pass_at")
 	}
 	friends := make([]desiredCmds, len(m.friends))
 	for i, f := range m.friends {
-		friends[i] = desiredCmds{pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "machine"), pipe.ZCard(ctx, "friend:"+f+":living")}
+		friends[i] = desiredCmds{pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "machine"), pipe.ZCard(ctx, "friend:"+f+":cards:working")}
 	}
 	ceilings := make([]*redis.StringCmd, len(m.machines))
 	beats := make([]*redis.SliceCmd, len(m.machines))

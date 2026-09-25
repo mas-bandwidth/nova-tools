@@ -25,25 +25,27 @@ const (
 )
 
 // Row is one bench or friend. Benches and friends are rows of one shape
-// (6.4): name | up | desired | starting | living | stale | leased | queue |
-// done | why. Width is derived from starting+living and never stored (6.5).
+// (6.4): name | up | desired | ready | working | stale | leased | queue |
+// done | why, read from the consumer's sets (#3998): ready and leased are
+// ZCARDs of <consumer>:cards:ready|working, stale the working copies whose
+// lease lapsed, working the rest. Width is leased, never stored (6.5).
 type Row struct {
-	Name     string
-	Up       bool
-	Desired  int64
-	Missing  bool
-	Starting int64
-	Living   int64
-	Stale    int64
-	Leased   int64
-	Queue    int64
-	Done     int64
-	Why      string
+	Name    string
+	Up      bool
+	Desired int64
+	Missing bool
+	Ready   int64
+	Working int64
+	Stale   int64
+	Leased  int64
+	Queue   int64
+	Done    int64
+	Why     string
 }
 
 // Width includes stale leases until the reconciler releases them; it is
 // derived, never read from a sidecar key (6.5).
-func (r Row) Width() int64 { return r.Starting + r.Living + r.Stale }
+func (r Row) Width() int64 { return r.Working + r.Stale }
 
 // Pipeline is one sprint's counts (6.4).
 type Pipeline struct {
@@ -157,7 +159,7 @@ func parseRow(raw []any, i int) (Row, error) {
 	r.Name = vals[0]
 	r.Up = vals[1] == "1"
 	r.Missing = vals[3] == "1"
-	nums := []*int64{&r.Desired, &r.Starting, &r.Living, &r.Stale, &r.Leased, &r.Queue, &r.Done}
+	nums := []*int64{&r.Desired, &r.Ready, &r.Working, &r.Stale, &r.Leased, &r.Queue, &r.Done}
 	for k, field := range []int{2, 4, 5, 6, 7, 8, 9} {
 		n, err := count(vals[field])
 		if err != nil {
@@ -248,7 +250,7 @@ func token(raw []any, i int) (string, error) {
 // same snapshot always prints byte for byte the same table.
 func (s *Snapshot) Render() string {
 	var b strings.Builder
-	b.WriteString("name | up | desired | starting | living | stale | leased | queue | done | why\n")
+	b.WriteString("name | up | desired | ready | working | stale | leased | queue | done | why\n")
 	for _, r := range s.Benches {
 		b.WriteString(rowLine("bench", r))
 		b.WriteByte('\n')
@@ -283,8 +285,8 @@ func rowLine(kind string, r Row) string {
 	}
 	cells := []string{
 		kind + ":" + r.Name, up, desired,
-		strconv.FormatInt(r.Starting, 10),
-		strconv.FormatInt(r.Living, 10),
+		strconv.FormatInt(r.Ready, 10),
+		strconv.FormatInt(r.Working, 10),
 		strconv.FormatInt(r.Stale, 10),
 		strconv.FormatInt(r.Leased, 10),
 		strconv.FormatInt(r.Queue, 10),

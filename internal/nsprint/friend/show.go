@@ -13,18 +13,19 @@ import (
 
 // Row is `friend show`: one friend's state, rung and counts, read only.
 type Row struct {
-	Friend   string
-	Up       bool
-	State    string
-	Rung     int
-	Since    time.Time
-	Until    time.Time
-	Reason   string
-	Wake     WakePath
-	Starting int
-	Living   int
-	Open     int
-	Done     int
+	Friend string
+	Up     bool
+	State  string
+	Rung   int
+	Since  time.Time
+	Until  time.Time
+	Reason string
+	Wake   WakePath
+	// Working is ZCARD friend:<f>:cards:working, the one lease ledger
+	// (#3998): taken tasks, task cards and copies.
+	Working int
+	Open    int
+	Done    int
 }
 
 // Line prints the row. A human wake path at rung 2 or more is `waiting on
@@ -42,7 +43,7 @@ func (r Row) Line() string {
 	if !r.Until.IsZero() {
 		b.WriteString(" until=" + r.Until.UTC().Format(time.RFC3339))
 	}
-	fmt.Fprintf(&b, " wake=%s starting=%d living=%d open=%d done=%d oldest=?", r.Wake, r.Starting, r.Living, r.Open, r.Done)
+	fmt.Fprintf(&b, " wake=%s working=%d open=%d done=%d oldest=?", r.Wake, r.Working, r.Open, r.Done)
 	if r.Wake.Kind == "human" && r.Rung >= 2 && !r.Since.IsZero() {
 		b.WriteString(" | waiting on human since " + r.Since.UTC().Format(time.RFC3339))
 	}
@@ -83,20 +84,18 @@ func Show(ctx context.Context, st *store.Store, f string) ([]Row, error) {
 		byName[r.friend] = r
 	}
 	type cmds struct {
-		state    *redis.SliceCmd
-		wake     *redis.SliceCmd
-		starting *redis.IntCmd
-		living   *redis.IntCmd
-		done     []*redis.IntCmd
+		state   *redis.SliceCmd
+		wake    *redis.SliceCmd
+		working *redis.IntCmd
+		done    []*redis.IntCmd
 	}
 	pipe := client.Pipeline()
 	all := make([]cmds, len(friends))
 	for i, name := range friends {
 		c := cmds{
-			state:    pipe.HMGet(ctx, StateKey(name), "state", "rung", "since", "until", "reason"),
-			wake:     pipe.HMGet(ctx, WakePathKey(name), "kind", "unit", "host", "notify"),
-			starting: pipe.ZCard(ctx, "friend:"+name+":starting"),
-			living:   pipe.ZCard(ctx, "friend:"+name+":living"),
+			state:   pipe.HMGet(ctx, StateKey(name), "state", "rung", "since", "until", "reason"),
+			wake:    pipe.HMGet(ctx, WakePathKey(name), "kind", "unit", "host", "notify"),
+			working: pipe.ZCard(ctx, "friend:"+name+":cards:working"),
 		}
 		for _, s := range sprints {
 			c.done = append(c.done, pipe.SCard(ctx, "s:"+s+":done:"+name))
@@ -121,7 +120,7 @@ func Show(ctx context.Context, st *store.Store, f string) ([]Row, error) {
 		c := all[i]
 		sv, wv := c.state.Val(), c.wake.Val()
 		row := Row{Friend: name, Up: byName[name].up, State: StateUp, Open: byName[name].open,
-			Starting: int(c.starting.Val()), Living: int(c.living.Val())}
+			Working: int(c.working.Val())}
 		if s := str(sv[0]); s != "" {
 			row.State = s
 			row.Rung, _ = strconv.Atoi(str(sv[1]))

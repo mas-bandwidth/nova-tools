@@ -116,19 +116,20 @@ func seedSprint(t *testing.T, c *redis.Client, sprint string, order, n int) {
 }
 
 // childDone ends one dealt card the way a card transition function that frees
-// a slot does (spec 2.2 cap:log, 5.2 slot freed): out of bench:<b>:starting,
-// state done, its receipt on s:<S>:log and one slot-freed event on cap:log,
-// in one atomic call.
+// a slot does (spec 2.2 cap:log, 5.2 slot freed): out of the bench's one
+// working set (#3998: the card's id, s:<S>:card:<label>), state done, its
+// receipt on s:<S>:log and one slot-freed event on cap:log, in one atomic
+// call. member is <S>/<label>/<attempt>, as starting lists it.
 func childDone(t *testing.T, c *redis.Client, bench, member string) {
 	t.Helper()
 	ctx := context.Background()
 	parts := strings.Split(member, "/")
 	if len(parts) != 3 {
-		t.Fatalf("starting member %q is not <S>/<label>/<attempt>", member)
+		t.Fatalf("dealt member %q is not <S>/<label>/<attempt>", member)
 	}
 	S, label, attempt := parts[0], parts[1], parts[2]
 	pipe := c.TxPipeline()
-	pipe.ZRem(ctx, "bench:"+bench+":starting", member)
+	pipe.ZRem(ctx, "bench:"+bench+":cards:working", "s:"+S+":card:"+label)
 	pipe.HSet(ctx, "s:"+S+":card:"+label, "state", "done", "outcome", "DONE")
 	pipe.SMove(ctx, "s:"+S+":idx:card:dealt", "s:"+S+":idx:card:done", label)
 	pipe.ZRem(ctx, "s:"+S+":bench:"+bench+":queue", label)
@@ -142,26 +143,38 @@ func childDone(t *testing.T, c *redis.Client, bench, member string) {
 	}
 }
 
-// leased is ZCARD starting plus ZCARD living over every sprint (spec 2.2).
+// leased is ZCARD bench:<b>:cards:working, the one lease ledger (spec 2.2,
+// #3998), over every sprint.
 func leased(t *testing.T, c *redis.Client, bench string) int {
 	t.Helper()
-	ctx := context.Background()
-	s, err := c.ZCard(ctx, "bench:"+bench+":starting").Result()
+	n, err := c.ZCard(context.Background(), "bench:"+bench+":cards:working").Result()
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := c.ZCard(ctx, "bench:"+bench+":living").Result()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return int(s + l)
+	return int(n)
 }
 
+// starting lists the bench's dealt sprint cards as <S>/<label>/<attempt>:
+// the sprint card ids in its working set, each with its record's attempt.
 func starting(t *testing.T, c *redis.Client, bench string) []string {
 	t.Helper()
-	m, err := c.ZRange(context.Background(), "bench:"+bench+":starting", 0, -1).Result()
+	ctx := context.Background()
+	ids, err := c.ZRange(ctx, "bench:"+bench+":cards:working", 0, -1).Result()
 	if err != nil {
 		t.Fatal(err)
+	}
+	var m []string
+	for _, id := range ids {
+		rest, ok := strings.CutPrefix(id, "s:")
+		S, label, ok2 := strings.Cut(rest, ":card:")
+		if !ok || !ok2 {
+			continue
+		}
+		attempt, err := c.HGet(ctx, id, "attempt").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		m = append(m, S+"/"+label+"/"+attempt)
 	}
 	sort.Strings(m)
 	return m

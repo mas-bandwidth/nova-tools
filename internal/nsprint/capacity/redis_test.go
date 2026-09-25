@@ -62,14 +62,14 @@ func TestControl27RedisAtomicCeiling(t *testing.T) {
 		t.Fatalf("capacity receipts=%d want 4 successful writes only", count)
 	}
 
-	// A width edit is the capacity writer; the read includes both lease stages.
-	c.ZAdd(ctx, "friend:a:starting", redis.Z{Member: "one"})
-	c.ZAdd(ctx, "friend:a:living", redis.Z{Member: "two"})
+	// A width edit is the capacity writer; the read is the one lease ledger (#3998).
+	c.ZAdd(ctx, "friend:a:cards:working", redis.Z{Member: "one"})
+	c.ZAdd(ctx, "friend:a:cards:working", redis.Z{Member: "two"})
 	width, err := task.GetWidth(ctx, st, "a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if width.Desired != 32 || width.Starting != 1 || width.Living != 1 || width.Leased != 2 || width.Free != 30 {
+	if width.Desired != 32 || width.Leased != 2 || width.Free != 30 {
 		t.Fatalf("width=%+v", width)
 	}
 	if _, err := capacity.SetMachine(ctx, st, "ctl-machine", 64, 0, 0, "test", ""); err != nil {

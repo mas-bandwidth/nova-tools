@@ -150,8 +150,8 @@ func TestControl22ClosedNeverLive(t *testing.T) {
 
 // TestWidthAccounting checks the pure width arithmetic underlying task width.
 func TestWidthAccounting(t *testing.T) {
-	got := task.WidthFrom(32, 3, 5)
-	want := task.Width{Desired: 32, Starting: 3, Living: 5, Leased: 8, Free: 24}
+	got := task.WidthFrom(32, 8)
+	want := task.Width{Desired: 32, Leased: 8, Free: 24}
 	if got != want {
 		t.Fatalf("WidthFrom = %+v want %+v", got, want)
 	}

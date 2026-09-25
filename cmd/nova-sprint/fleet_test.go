@@ -129,12 +129,12 @@ func TestFleetDownKeepsLeases(t *testing.T) {
 
 	cardStarting := "card-starting"
 	identStarting := S + "/" + cardStarting + "/sha/1"
-	c.ZAdd(ctx, "bench:"+b+":starting", redis.Z{Score: 1000, Member: identStarting})
+	c.ZAdd(ctx, "bench:"+b+":cards:working", redis.Z{Score: 1000, Member: identStarting})
 	c.HSet(ctx, "s:"+S+":card:"+cardStarting, "state", "starting", "bench", b, "attempt", "1", "identity", identStarting)
 
 	cardLiving := "card-living"
 	identLiving := S + "/" + cardLiving + "/sha/1"
-	c.ZAdd(ctx, "bench:"+b+":living", redis.Z{Score: 1000, Member: identLiving})
+	c.ZAdd(ctx, "bench:"+b+":cards:working", redis.Z{Score: 1000, Member: identLiving})
 	c.HSet(ctx, "s:"+S+":card:"+cardLiving, "state", "living", "bench", b, "attempt", "1", "identity", identLiving)
 
 	cardEnded := "card-ended"
@@ -145,11 +145,11 @@ func TestFleetDownKeepsLeases(t *testing.T) {
 	c.Del(ctx, "bench:"+b+":beat")
 
 	// Capture dumps before passes
-	dumpStarting, err := c.Dump(ctx, "bench:"+b+":starting").Result()
+	dumpStarting, err := c.Dump(ctx, "bench:"+b+":cards:working").Result()
 	if err != nil {
 		t.Fatalf("dump starting before: %v", err)
 	}
-	dumpLiving, err := c.Dump(ctx, "bench:"+b+":living").Result()
+	dumpLiving, err := c.Dump(ctx, "bench:"+b+":cards:working").Result()
 	if err != nil {
 		t.Fatalf("dump living before: %v", err)
 	}
@@ -197,10 +197,10 @@ func TestFleetDownKeepsLeases(t *testing.T) {
 	}
 
 	// Compare dumps after passes
-	if got := c.Dump(ctx, "bench:"+b+":starting").Val(); got != dumpStarting {
+	if got := c.Dump(ctx, "bench:"+b+":cards:working").Val(); got != dumpStarting {
 		t.Fatalf("bench:%s:starting dump changed after down passes", b)
 	}
-	if got := c.Dump(ctx, "bench:"+b+":living").Val(); got != dumpLiving {
+	if got := c.Dump(ctx, "bench:"+b+":cards:working").Val(); got != dumpLiving {
 		t.Fatalf("bench:%s:living dump changed after down passes", b)
 	}
 	if got := c.Dump(ctx, "s:"+S+":card:"+cardStarting).Val(); got != dumpCardStarting {

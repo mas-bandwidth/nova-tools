@@ -195,8 +195,7 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 	type cmds struct {
 		beat     *redis.IntCmd
 		desired  *redis.SliceCmd
-		starting *redis.IntCmd
-		living   *redis.IntCmd
+		working  *redis.IntCmd
 		wakemode *redis.IntCmd
 		idem     *redis.SliceCmd
 		open     []*redis.IntCmd
@@ -207,8 +206,7 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 		c := cmds{
 			beat:     pipe.Exists(ctx, "friend:"+f+":beat"),
 			desired:  pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "paused"),
-			starting: pipe.ZCard(ctx, "friend:"+f+":starting"),
-			living:   pipe.ZCard(ctx, "friend:"+f+":living"),
+			working:  pipe.ZCard(ctx, "friend:"+f+":cards:working"),
 			wakemode: pipe.Exists(ctx, WakeModeKey(f)),
 			idem:     pipe.HMGet(ctx, StateKey(f), "idem"),
 		}
@@ -233,7 +231,7 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 			}
 			r.paused = vals[1] == "1"
 		}
-		r.leased = int(c.starting.Val() + c.living.Val())
+		r.leased = int(c.working.Val())
 		idemVal := ""
 		if v := c.idem.Val(); len(v) == 1 {
 			idemVal, _ = v[0].(string)

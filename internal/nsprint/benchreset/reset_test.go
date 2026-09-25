@@ -74,12 +74,8 @@ func seedResetCards(t *testing.T, c *redis.Client, states ...string) []Card {
 		pipe.HSet(ctx, ck, "state", state, "bench", bench, "attempt", attempt, "token", token, "token_sha", sha, "pin", bench, "priority", i, "retries", "7")
 		pipe.SAdd(ctx, "s:"+S+":idx:card:"+state, label)
 		pipe.ZAdd(ctx, "s:"+S+":bench:"+bench+":queue", redis.Z{Score: float64(i), Member: label})
-		member := card.Identity()
-		if state == "running" {
-			pipe.ZAdd(ctx, "bench:"+bench+":living", redis.Z{Score: 1, Member: member})
-		} else {
-			pipe.ZAdd(ctx, "bench:"+bench+":starting", redis.Z{Score: 1, Member: member})
-		}
+		// the card is in the bench's one working set (#3998) by its id
+		pipe.ZAdd(ctx, "bench:"+bench+":cards:working", redis.Z{Score: 1, Member: ck})
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatal(err)
@@ -123,7 +119,7 @@ func TestBenchResetRequeuesInFlight(t *testing.T) {
 				t.Fatalf("%s stale token reply=%v err=%v", card.Identity(), reply, err)
 			}
 		}
-		if c.ZCard(ctx, "bench:b-test:starting").Val() != 0 || c.ZCard(ctx, "bench:b-test:living").Val() != 0 {
+		if c.ZCard(ctx, "bench:b-test:cards:working").Val() != 0 {
 			t.Fatal("bench still leased")
 		}
 		if c.Exists(ctx, "bench:b-test:reset").Val() != 0 {

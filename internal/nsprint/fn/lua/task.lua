@@ -51,18 +51,18 @@ redis.register_function{ function_name = 'ns_task_live', callback = task_live,
 -- child merely to retain ownership". A WORKING task that is only waiting on
 -- CI, a read, a dependency or a human moves to `waiting` with a typed
 -- wait_on and wait_since: its child lease is closed (the identity leaves
--- friend:<f>:living and the stored token is fenced, so the old child's beat
+-- friend:<f>:cards:working, NS.moves.drop, and the stored token is fenced, so the old child's beat
 -- and done refuse FENCED), its slot is freed on cap:log, and the owner is
 -- kept. The event that satisfies wait_on puts it back open at the FRONT of the
 -- SAME owner's queue; a key that can no longer resolve goes to
 -- reconcile-required with an unresolved item. waiting is neither working
--- (not in living) nor ready_open (not in open:<f>), so #3071's desired never
+-- (not in cards:working) nor ready_open (not in open:<f>), so #3071's desired never
 -- counts it. Every lua/ file shares one chunk: this block declares exactly
 -- one chunk local, TW.
 --
 -- Keys: s:<S>:idx:task:waiting (ids), s:<S>:waiton:<key> (ids waiting on
 -- key, the wake index), friend:<f>:waiting (zset S/id -> wait_since, global
--- to the friend like living; the width tick prints its ZCARD beside working).
+-- to the friend like its working set; the width tick prints its ZCARD beside working).
 --
 -- wait_on keys:
 --   ci:<repo>:<head>   CI at head; resolved by the CI end event (ns_task_wake)
@@ -178,7 +178,7 @@ end
 
 -- ns_task_wait: working -> waiting (#3090). args = S, id, token, on, actor,
 -- idem. Only the current token of a WORKING task may wait; the call closes
--- the child lease (living, token fenced), frees the slot on cap:log, keeps
+-- the child lease (its working set, token fenced), frees the slot on cap:log, keeps
 -- the owner and indexes the task under its key, atomically, with one receipt.
 local function task_wait(keys, args)
   local S, id, token, on, actor, idem = args[1], args[2], args[3], args[4], args[5], args[6]
@@ -205,7 +205,7 @@ local function task_wait(keys, args)
     return { 'REFUSED', err }
   end
   redis.call('SADD', 's:' .. S .. ':waiton:' .. on, id)
-  redis.call('ZREM', 'friend:' .. f .. ':living', S .. '/' .. id .. '/' .. attempt)
+  NS.moves.drop('friend:' .. f, S .. '/' .. id .. '/' .. attempt)
   redis.call('ZADD', 'friend:' .. f .. ':waiting', at, S .. '/' .. id)
   redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
     'kind', 'slot-freed', 'consumer', 'friend:' .. f,

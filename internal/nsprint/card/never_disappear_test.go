@@ -455,7 +455,7 @@ func TestMoveRefusesDriftOnTheNewBenchBeforeAnyWrite(t *testing.T) {
 	if fmt.Sprint(after) != fmt.Sprint(before) {
 		t.Fatalf("a refused deal wrote the record:\nbefore %v\nafter  %v", before, after)
 	}
-	if !zHas(t, ctx, client, "s:"+ndSprint+":pool", "pr-a") || client.ZCard(ctx, card.BenchStartingKey(ndBench)).Val() != 0 ||
+	if !zHas(t, ctx, client, "s:"+ndSprint+":pool", "pr-a") || client.ZCard(ctx, card.BenchWorkingKey(ndBench)).Val() != 0 ||
 		client.XLen(ctx, card.LogKey(ndSprint)).Val() != logLen || client.ZCard(ctx, card.BenchCardsKey(ndBench, "working")).Val() != 0 {
 		t.Fatal("a refused deal wrote the pool, the starting set, the log or the bench view")
 	}

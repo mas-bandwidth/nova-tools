@@ -129,7 +129,7 @@ func TestTakeAvailableThreeQueuesFiveClaimsOnePipelineOneFCall(t *testing.T) {
 	if p := strings.Join(rec.pipelines[0], ","); !strings.Contains(p, "fcall_ro ns_task_take_view") {
 		t.Fatalf("pipeline %s does not carry the view", p)
 	}
-	if n, _ := client.ZCard(ctx, "friend:f1:starting").Result(); n != 5 {
+	if n, _ := client.ZCard(ctx, "friend:f1:cards:working").Result(); n != 5 {
 		t.Fatalf("starting=%d, want 5", n)
 	}
 	if st, _ := client.HGet(ctx, "task:c3", "state").Result(); st != "open" {
@@ -168,7 +168,7 @@ func TestTakeAvailableFullFriendOneTrip(t *testing.T) {
 	seedFriend(t, client, "f1", 1)
 	openSprint(client, "full", 1)
 	seedOpenTask(t, client, "full", "f1", "x", 1, "")
-	client.ZAdd(ctx, "friend:f1:living", redis.Z{Score: 1, Member: "full/y/1"})
+	client.ZAdd(ctx, "friend:f1:cards:working", redis.Z{Score: 1, Member: "full/y/1"})
 	rec := &recorder{}
 	client.AddHook(rec)
 	claims, err := task.TakeAvailable(ctx, st, "f1", "", "", 0, "f1", "")

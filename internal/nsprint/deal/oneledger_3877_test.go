@@ -28,8 +28,8 @@ func TestDealerIsTheOneSlotLedger(t *testing.T) {
 	if len(res) != 4 {
 		t.Fatalf("dealt %d, want 4: bench:batman:desired slots is the cap", len(res))
 	}
-	if got := zcard(t, c, "bench:batman:starting"); got != 4 {
-		t.Fatalf("bench:batman:starting holds %d, want 4", got)
+	if got := zcard(t, c, "bench:batman:cards:working"); got != 4 {
+		t.Fatalf("bench:batman:cards:working holds %d, want 4 (the one lease ledger, #3998)", got)
 	}
 	dealt := map[string]bool{}
 	for _, r := range res {

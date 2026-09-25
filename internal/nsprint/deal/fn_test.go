@@ -341,10 +341,10 @@ func TestDealFunctionsFencedAndAtomic(t *testing.T) {
 		if !errors.Is(staleErr, ErrFenced) || len(staleRes) != 0 {
 			t.Fatalf("stale dealer: %d reservations, err %v; want FENCED and none", len(staleRes), staleErr)
 		}
-		if n := zcard(t, c, "bench:ctl-b:starting"); n != 0 {
+		if n := zcard(t, c, "bench:ctl-b:cards:working"); n != 0 {
 			t.Fatalf("the stale token's bench holds %d reservations", n)
 		}
-		if n := zcard(t, c, "bench:ctl-a:starting"); n != 50 {
+		if n := zcard(t, c, "bench:ctl-a:cards:working"); n != 50 {
 			t.Fatalf("bench:ctl-a:starting = %d, want 50", n)
 		}
 		if n := zcard(t, c, "s:"+sprint+":pool"); n != 0 {
@@ -417,7 +417,7 @@ func TestDealFunctionsFencedAndAtomic(t *testing.T) {
 		if len(seen) != 50 {
 			t.Fatalf("%d cards dealt, want 50", len(seen))
 		}
-		if a, b := zcard(t, c, "bench:ctl-a:starting"), zcard(t, c, "bench:ctl-b:starting"); a+b != 50 {
+		if a, b := zcard(t, c, "bench:ctl-a:cards:working"), zcard(t, c, "bench:ctl-b:cards:working"); a+b != 50 {
 			t.Fatalf("starting ctl-a=%d ctl-b=%d, want 50 in total", a, b)
 		}
 		if n := len(logEntries(t, c, sprint, "card deal", "")); n != 50 {
@@ -428,7 +428,7 @@ func TestDealFunctionsFencedAndAtomic(t *testing.T) {
 	t.Run("free caps the call: desired minus starting plus living", func(t *testing.T) {
 		seedFleet(t, c, sprint, 50, map[string]int{"ctl-a": 10})
 		seedLease(t, c, "live-token")
-		c.ZAdd(ctx, "bench:ctl-a:living", redis.Z{Score: 1, Member: "other/x/1"}, redis.Z{Score: 1, Member: "other/y/1"})
+		c.ZAdd(ctx, "bench:ctl-a:cards:working", redis.Z{Score: 1, Member: "other/x/1"}, redis.Z{Score: 1, Member: "other/y/1"})
 		res, err := newFnStore(c).Reserve(ctx, "live-token", "ctl-a", poolCards(sprint, 50))
 		if err != nil {
 			t.Fatal(err)
@@ -548,7 +548,7 @@ func TestDealFunctionsFencedAndAtomic(t *testing.T) {
 		if err := st.Unreserve(ctx, "stale-token", "ctl-a", res, ReasonSSHRefused); !errors.Is(err, ErrFenced) {
 			t.Fatalf("stale undeal: %v, want FENCED", err)
 		}
-		if n := zcard(t, c, "bench:ctl-a:starting"); n != 3 {
+		if n := zcard(t, c, "bench:ctl-a:cards:working"); n != 3 {
 			t.Fatalf("a fenced undeal freed slots: starting %d", n)
 		}
 		capBefore, _ := c.XLen(ctx, "cap:log").Result()
@@ -580,7 +580,7 @@ func TestDealFunctionsFencedAndAtomic(t *testing.T) {
 				t.Fatalf("undeal receipt %v", v)
 			}
 		}
-		if n := zcard(t, c, "bench:ctl-a:starting"); n != 0 {
+		if n := zcard(t, c, "bench:ctl-a:cards:working"); n != 0 {
 			t.Fatalf("starting %d after undeal, want 0", n)
 		}
 		if q, d := scard(t, c, "s:"+sprint+":idx:card:queued"), scard(t, c, "s:"+sprint+":idx:card:dealt"); q != 3 || d != 0 {
@@ -694,7 +694,7 @@ func TestControl12FiftyCardsOneSessionOnRealFunctions(t *testing.T) {
 		if got, _ := c.HGet(ctx, RowKey("ctl-a"), "state").Result(); got != SSHOK {
 			t.Fatalf("row cell ssh: %q, want ok", got)
 		}
-		if n := zcard(t, c, "bench:ctl-a:starting"); n != 50 {
+		if n := zcard(t, c, "bench:ctl-a:cards:working"); n != 50 {
 			t.Fatalf("bench:ctl-a:starting = %d, want 50", n)
 		}
 	})
@@ -713,10 +713,10 @@ func TestControl12FiftyCardsOneSessionOnRealFunctions(t *testing.T) {
 		if got, _ := c.HGet(ctx, RowKey("ctl-a"), "state").Result(); got != SSHRefused {
 			t.Fatalf("wedged bench row ssh: %q, want refused", got)
 		}
-		if n := zcard(t, c, "bench:ctl-a:starting"); n != 0 {
+		if n := zcard(t, c, "bench:ctl-a:cards:working"); n != 0 {
 			t.Fatalf("%d reservations stayed on the wedged bench", n)
 		}
-		if n := zcard(t, c, "bench:ctl-b:starting"); n != 50 {
+		if n := zcard(t, c, "bench:ctl-b:cards:working"); n != 50 {
 			t.Fatalf("%d cards dealt to ctl-b, want 50", n)
 		}
 		if got := len(f.lines("ctl-b", "launched")); got != 50 {
@@ -819,7 +819,7 @@ func TestCardDealBenchWithoutLegsCardWithoutLeg(t *testing.T) {
 			if len(res) != tc.dealt {
 				t.Fatalf("dealt %d cards, want %d", len(res), tc.dealt)
 			}
-			if n := zcard(t, c, "bench:ctl-a:starting"); n != int64(tc.dealt) {
+			if n := zcard(t, c, "bench:ctl-a:cards:working"); n != int64(tc.dealt) {
 				t.Fatalf("bench:ctl-a:starting = %d, want %d", n, tc.dealt)
 			}
 		})
@@ -892,7 +892,7 @@ func TestDealFailOneCallHoldsBenchAfterThreeTimeouts(t *testing.T) {
 		if row["state"] != SSHTimeout || row["at"] == "" || row["timeouts"] != strconv.Itoa(i) || !strings.Contains(row["why"], "no start line") {
 			t.Fatalf("pass %d row = %v, want timeout, at, timeouts=%d, why naming the missing start line", i, row, i)
 		}
-		if n := zcard(t, c, "bench:ctl-hang:starting"); n != 0 {
+		if n := zcard(t, c, "bench:ctl-hang:cards:working"); n != 0 {
 			t.Fatalf("pass %d left %d reservations in starting", i, n)
 		}
 		if n := zcard(t, c, "s:"+sprint+":pool"); n != 6 {
@@ -1041,7 +1041,7 @@ func TestDealFailOneCallHoldsBenchAfterThreeTimeouts(t *testing.T) {
 		if n, _ := c.Exists(ctx, RowKey("ctl-c")).Result(); n != 0 {
 			t.Fatal("a fenced fail wrote the row")
 		}
-		if n := zcard(t, c, "bench:ctl-c:starting"); n != 2 {
+		if n := zcard(t, c, "bench:ctl-c:cards:working"); n != 2 {
 			t.Fatalf("a fenced fail returned reservations: starting = %d, want 2", n)
 		}
 	})

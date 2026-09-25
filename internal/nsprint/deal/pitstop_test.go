@@ -59,7 +59,7 @@ func TestPitstopDealPassPlansNothingUntilCleared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res2) != 0 || zcard(t, c, "bench:ctl-a:starting") != 0 {
+	if len(res2) != 0 || zcard(t, c, "bench:ctl-a:cards:working") != 0 {
 		t.Fatalf("ns_card_deal on a pit-stopped sprint reserved %+v", res2)
 	}
 	if n := len(logEntries(t, c, sprint, "card deal", "")); n != 0 {

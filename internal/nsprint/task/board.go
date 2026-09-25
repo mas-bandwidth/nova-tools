@@ -30,15 +30,15 @@ func (c Counts) String() string {
 	return fmt.Sprintf("%d %d %d", c.Working, c.Ready, c.Done)
 }
 
-// CountsFor reads one friend's counts in one pipeline: ZCARD starting and
-// living, ZCARD open:<f>, SCARD done:<f> and ZCARD friend:<f>:waiting.
+// CountsFor reads one friend's counts in one pipeline: ZCARD
+// friend:<f>:cards:working (the one lease ledger, #3998), ZCARD open:<f>,
+// SCARD done:<f> and ZCARD friend:<f>:waiting.
 func CountsFor(ctx context.Context, st *store.Store, sprint, as string) (Counts, error) {
 	if err := need("counts", "sprint", sprint, "as", as); err != nil {
 		return Counts{}, err
 	}
 	pipe := st.Client().Pipeline()
-	starting := pipe.ZCard(ctx, "friend:"+as+":starting")
-	living := pipe.ZCard(ctx, "friend:"+as+":living")
+	working := pipe.ZCard(ctx, "friend:"+as+":cards:working")
 	ready := pipe.ZCard(ctx, "s:"+sprint+":open:"+as)
 	done := pipe.SCard(ctx, "s:"+sprint+":done:"+as)
 	waiting := pipe.ZCard(ctx, "friend:"+as+":waiting")
@@ -46,7 +46,7 @@ func CountsFor(ctx context.Context, st *store.Store, sprint, as string) (Counts,
 		return Counts{}, fmt.Errorf("task counts %s: %w", as, err)
 	}
 	return Counts{
-		Working: starting.Val() + living.Val(),
+		Working: working.Val(),
 		Ready:   ready.Val(),
 		Done:    done.Val(),
 		Waiting: waiting.Val(),

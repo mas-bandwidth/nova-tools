@@ -1,7 +1,8 @@
 -- Bench retire (nova-tools#3645): take one bench out of the fleet in one
 -- call. Before any write it refuses while the bench holds a lease (a card in
--- its working set, a starting or living entry, or a harvest lease): those
--- are stopped by `nova-sprint bench reset` first. Then every card whose
+-- its working set, or a harvest lease; the old lease ledgers are gone since
+-- the table moves, 02_card_move.lua): those are stopped by
+-- `nova-sprint bench reset` first. Then every card whose
 -- pointer still names the bench moves through the one card move
 -- (02_card_move.lua, NS.card): a waiting, ready or parked card returns to the
 -- pool with its pin cleared, and a done card is re-pointed to the _retired
@@ -42,7 +43,8 @@ do
 
     -- Leases first, before any write.
     local held = {}
-    for _, k in ipairs({ pre .. ':cards:working', pre .. ':starting', pre .. ':living' }) do
+    do
+      local k = pre .. ':cards:working'
       local n = redis.call('ZCARD', k)
       if n > 0 then held[#held + 1] = k .. '=' .. n end
     end

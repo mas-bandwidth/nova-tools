@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -257,12 +258,16 @@ func resetID(given string) (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
+// readCards lists the bench's live sprint cards: the members of its one
+// working set, bench:<b>:cards:working (#3998), that are sprint card ids
+// (s:<S>:card:<label>) whose record is dealt, launched or running on this
+// bench. A consumer copy there is not a sprint card: its lease lapses and
+// card expire returns it.
 func readCards(ctx context.Context, c *redis.Client, bench string) (deal.Bench, []Card, error) {
 	pipe := c.Pipeline()
 	member := pipe.SIsMember(ctx, "benches", bench)
 	beat := pipe.HGetAll(ctx, "bench:"+bench+":beat")
-	starting := pipe.ZRange(ctx, "bench:"+bench+":starting", 0, -1)
-	living := pipe.ZRange(ctx, "bench:"+bench+":living", 0, -1)
+	working := pipe.ZRange(ctx, "bench:"+bench+":cards:working", 0, -1)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return deal.Bench{}, nil, err
 	}
@@ -270,28 +275,20 @@ func readCards(ctx context.Context, c *redis.Client, bench string) (deal.Bench, 
 		return deal.Bench{}, nil, fmt.Errorf("bench %s is not registered", bench)
 	}
 	b := deal.Bench{Name: bench, Host: beat.Val()["host"], User: beat.Val()["user"]}
-	seen := map[string]bool{}
+	var ids []string
 	var cards []Card
-	for _, identity := range append(starting.Val(), living.Val()...) {
-		if seen[identity] {
+	for _, id := range working.Val() {
+		m := sprintCardID.FindStringSubmatch(id)
+		if m == nil {
 			continue
 		}
-		seen[identity] = true
-		parts := strings.Split(identity, "/")
-		if len(parts) != 3 {
-			return b, nil, fmt.Errorf("invalid card identity %q", identity)
-		}
-		a, err := strconv.Atoi(parts[2])
-		if err != nil || a < 1 {
-			return b, nil, fmt.Errorf("invalid card identity %q", identity)
-		}
-		cards = append(cards, Card{Sprint: parts[0], Label: parts[1], Attempt: a})
+		ids = append(ids, id)
+		cards = append(cards, Card{Sprint: m[1], Label: m[2]})
 	}
-	sort.Slice(cards, func(i, j int) bool { return cards[i].Identity() < cards[j].Identity() })
 	pipe = c.Pipeline()
 	cmds := make([]*redis.SliceCmd, len(cards))
-	for i, card := range cards {
-		cmds[i] = pipe.HMGet(ctx, "s:"+card.Sprint+":card:"+card.Label, "state", "bench", "attempt")
+	for i := range cards {
+		cmds[i] = pipe.HMGet(ctx, ids[i], "state", "bench", "attempt")
 	}
 	if len(cards) > 0 {
 		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
@@ -305,17 +302,22 @@ func readCards(ctx context.Context, c *redis.Client, bench string) (deal.Bench, 
 			continue
 		}
 		state := asString(v[0])
-		if asString(v[1]) != bench || asString(v[2]) != strconv.Itoa(card.Attempt) {
+		a, err := strconv.Atoi(asString(v[2]))
+		if asString(v[1]) != bench || err != nil || a < 1 {
 			continue
 		}
 		if state != "dealt" && state != "launched" && state != "running" {
 			continue
 		}
-		card.State = state
+		card.State, card.Attempt = state, a
 		out = append(out, card)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Identity() < out[j].Identity() })
 	return b, out, nil
 }
+
+// sprintCardID is a sprint card's id in a bench set: s:<S>:card:<label>.
+var sprintCardID = regexp.MustCompile(`^s:([-a-z0-9]+):card:([A-Za-z0-9][A-Za-z0-9._-]*)$`)
 
 func asString(v any) string {
 	if v == nil {

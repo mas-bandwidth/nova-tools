@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -143,15 +142,14 @@ func (w *ghWorld) end(t *testing.T, s, l string) {
 }
 
 // liveSets are every bench and stream set a card of a closed sprint must
-// have left: each live place of the bench and _pool, the bench's leases, the
-// stream's live places and the dealer's lists.
+// have left: each live place of the bench and _pool (working is the bench's
+// one lease ledger, #3998), the stream's live places and the dealer's lists.
 func liveSets(s string) []string {
 	var keys []string
 	for _, b := range []string{ghBench, "_pool"} {
 		for _, p := range []string{"waiting", "ready", "working", "parked"} {
 			keys = append(keys, card.BenchCardsKey(b, p))
 		}
-		keys = append(keys, "bench:"+b+":starting", "bench:"+b+":living")
 	}
 	for _, p := range []string{"waiting", "ready", "working", "parked"} {
 		keys = append(keys, "ws:"+ghStream+":"+p)
@@ -205,14 +203,15 @@ func TestSprintCloseRetiresEveryCard(t *testing.T) {
 		w.push(t, s, l, "none", "pool")
 	}
 	w.push(t, s, "cf", "ce", "waiting")
-	w.deal(t, s, "ca", "cb", "cc", "cd") // working, four starting leases
-	w.launch(t, s, "ca", true)           // living
-	w.launch(t, s, "cb", true)           // living
-	w.launch(t, s, "cc", false)          // launched, still starting
+	w.deal(t, s, "ca", "cb", "cc", "cd") // working: four leases in the one ledger
+	w.launch(t, s, "ca", true)           // running
+	w.launch(t, s, "cb", true)           // running
+	w.launch(t, s, "cc", false)          // launched
 	w.end(t, s, "ca")                    // done/ok
 	fsckClean(t, w, s, "before close")
-	if n := w.c.ZCard(w.ctx, "bench:"+ghBench+":living").Val() + w.c.ZCard(w.ctx, "bench:"+ghBench+":starting").Val(); n != 3 {
-		t.Fatalf("leases before close = %d, want 3 (cb living, cc and cd starting)", n)
+	// the one lease ledger is the bench's cards:working (#3998)
+	if n := w.c.ZCard(w.ctx, card.BenchCardsKey(ghBench, "working")).Val(); n != 3 {
+		t.Fatalf("leases before close = %d, want 3 (cb, cc and cd working)", n)
 	}
 
 	status, retired, refused, err := sprintv.SetClosed(w.ctx, w.st, s, time.Now())
@@ -264,9 +263,10 @@ func TestSprintCloseRetiresEveryCard(t *testing.T) {
 	}
 }
 
-// TestNoGhostCards: the reaper frees the slots a closed sprint's lease, a
-// lease with no card and a lease with no beat for 90 s held, fenced, and
-// keeps the ones a card beat or its bench's beat carried; the fsck duty
+// TestNoGhostCards: the reaper frees the slot a closed sprint's card held in
+// the bench's one lease ledger (cards:working, #3998) by retiring it through
+// the move, fenced, and keeps the ones a card beat or its bench's beat
+// carried; the fsck duty
 // fixes injected ghosts over every sprint in one pass, retires a sprint
 // closed by another path, records the finding, and leaves the host table's
 // ZCARDs equal to the records.
@@ -296,10 +296,6 @@ func TestNoGhostCards(t *testing.T) {
 		// gx and gz last beat 100 s ago; gz's bench beat carries it below.
 		[]any{"HSET", card.CardKey(s, "gx"), "beat_at", stale},
 		[]any{"HSET", card.CardKey(s, "gz"), "beat_at", stale},
-		// a fleet-probe lease whose card never existed
-		[]any{"ZADD", "bench:" + ghBench + ":living", now, "gate-benches-20260924/fleet-probe-1/1"},
-		// a member in no card shape is not judged
-		[]any{"ZADD", "bench:" + ghBench + ":living", now, "odd-member"},
 	)
 	if res, err := life.BenchBeat(w.ctx, w.st, life.BenchRequest{
 		Bench: ghBench, Session: "beat-3925", Actor: "bench", Live: []string{s + "/gz/1"},
@@ -313,36 +309,39 @@ func TestNoGhostCards(t *testing.T) {
 		t.Fatalf("gx beat_at %s changed without a beat", h)
 	}
 
-	// Fenced: another token reaps nothing.
+	// Fenced: another token reaps nothing. The one lease ledger is the
+	// bench's cards:working (#3998): gx, gy, gz and quack's qa.
+	working := card.BenchCardsKey(ghBench, "working")
 	if _, err := reconcile.ReapLeases(w.ctx, w.c, "not-the-token", reconcile.LeaseStale); !errors.Is(err, reconcile.ErrFenced) {
 		t.Fatalf("reap with a stale token = %v, want ErrFenced", err)
 	}
-	if n := w.c.ZCard(w.ctx, "bench:"+ghBench+":living").Val(); n != 6 {
-		t.Fatalf("living after a fenced reap = %d, want 6", n)
+	if n := w.c.ZCard(w.ctx, working).Val(); n != 4 {
+		t.Fatalf("working after a fenced reap = %d, want 4", n)
 	}
 
+	// The reap frees the closed sprint's lease by retiring its card through
+	// the move; a live card's beat is the sweep's, never a dropped lease.
 	expire := &reconcile.Expire{Client: w.c}
 	c, err := expire.Run(w.ctx, w.lease)
 	if err != nil {
 		t.Fatalf("expire: %v", err)
 	}
-	if c.Reaped != 3 {
-		t.Fatalf("expire reaped %d, want 3 (gx no beat, the fleet probe, quack's qa); %s", c.Reaped, c.Line())
+	if c.Reaped != 1 {
+		t.Fatalf("expire reaped %d, want 1 (quack's qa); %s", c.Reaped, c.Line())
 	}
-	living, _ := w.c.ZRange(w.ctx, "bench:"+ghBench+":living", 0, -1).Result()
-	slices.Sort(living)
-	if want := []string{s + "/gy/1", s + "/gz/1", "odd-member"}; !slices.Equal(living, want) {
-		t.Fatalf("living after reap = %v, want %v", living, want)
+	if zHas(t, w.ctx, w.c, working, card.CardKey(q, "qa")) {
+		t.Fatal("quack's qa still holds a lease in the bench's working set")
 	}
-	free := 5 - w.c.ZCard(w.ctx, "bench:"+ghBench+":starting").Val() - w.c.ZCard(w.ctx, "bench:"+ghBench+":living").Val()
-	if free != 2 {
-		t.Fatalf("free after reap = %d, want 2 (5 slots - gy - gz - odd)", free)
+	for _, l := range []string{"gy", "gz"} {
+		if !zHas(t, w.ctx, w.c, working, card.CardKey(s, l)) {
+			t.Fatalf("%s lost its lease: its beat is live", l)
+		}
 	}
 	if h := hashOf(t, w.ctx, w.c, q, "qa"); h["where"] != "done" || h["where_ok"] != "fail" || h["state"] != "superseded" {
 		t.Fatalf("quack's qa after reap = %s/%s %s, want retired done/fail superseded", h["where"], h["where_ok"], h["state"])
 	}
-	if got := w.c.XRevRangeN(w.ctx, "cap:log", "+", "-", 1).Val(); len(got) != 1 || got[0].Values["reason"] != "lease-reap" || got[0].Values["slots"] != "3" {
-		t.Fatalf("cap:log last = %v, want one slot-freed lease-reap slots=3", got)
+	if got := w.c.XRevRangeN(w.ctx, "cap:log", "+", "-", 1).Val(); len(got) != 1 || got[0].Values["reason"] != "lease-reap" || got[0].Values["slots"] != "1" {
+		t.Fatalf("cap:log last = %v, want one slot-freed lease-reap slots=1", got)
 	}
 
 	// Ghosts the reaper does not touch: a closed sprint's done card and a

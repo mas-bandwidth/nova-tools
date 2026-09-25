@@ -217,15 +217,14 @@ end
 
 -- DEP.free_lease ends a claimed or working lease without closing the task:
 -- the token is fenced (the old done and beat refuse FENCED), the identity
--- leaves the owner's starting/living and the slot is freed on cap:log; the
--- caller's one move takes the task out of working.
+-- leaves the owner's working set (NS.moves.drop) and the slot is freed on
+-- cap:log; the caller's one move takes the task out of working.
 function DEP.free_lease(S, id, key, state, at)
   local attempt = tonumber(redis.call('HGET', key, 'attempt') or '0')
   local owner = redis.call('HGET', key, 'owner') or ''
   local identity = S .. '/' .. id .. '/' .. attempt
   redis.call('HSET', key, 'token', 'fenced')
-  redis.call('ZREM', 'friend:' .. owner .. ':starting', identity)
-  redis.call('ZREM', 'friend:' .. owner .. ':living', identity)
+  NS.moves.drop('friend:' .. owner, identity)
   redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
     'kind', 'slot-freed', 'consumer', 'friend:' .. owner,
     'sprint', S, 'id', id, 'attempt', tostring(attempt), 'at', tostring(at))

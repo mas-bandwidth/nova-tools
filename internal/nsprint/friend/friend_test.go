@@ -106,7 +106,7 @@ func fsOpen(client *redis.Client, f string) int64 {
 
 func fsLeased(client *redis.Client, f string) int64 {
 	ctx := context.Background()
-	return client.ZCard(ctx, "friend:"+f+":starting").Val() + client.ZCard(ctx, "friend:"+f+":living").Val()
+	return client.ZCard(ctx, "friend:"+f+":cards:working").Val()
 }
 
 func fsQueueOf(client *redis.Client, id string, names ...string) string {
@@ -223,7 +223,7 @@ func TestControl43(t *testing.T) {
 		t.Fatalf("show rows %v", rows)
 	}
 	line := rows[0].Line()
-	for _, want := range []string{"friend=emma", "state=out-of-credits", "until=", "open=0", "living=0", "wake=none"} {
+	for _, want := range []string{"friend=emma", "state=out-of-credits", "until=", "open=0", "working=0", "wake=none"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("show line %q lacks %q", line, want)
 		}
