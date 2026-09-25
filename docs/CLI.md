@@ -4095,3 +4095,7 @@ nova-sprint digest: wants --redis <host:port>; run: nova-sprint help
 ```
 
 The other refusals name their remedy the same way: `wants --since <RFC3339 UTC>`, `wants --until <RFC3339 UTC>`, `since must be before until`, `takes flags, not positional arguments`, a `--repo` that is not `<owner>/<name>` (the parser's `invalid value` line), and `redis <addr>: <error>` when the store cannot be reached. A read that fails after that exits 1.
+
+### `nova-sprint conform check --all`
+
+`nova-sprint conform check --all [--redis <addr>]` checks whole-fleet bench conformance (#2921): reads registered benches from `benches`, `fleet:standard`, and each bench's `bench:<b>:conform` record in one pipeline, verifying `ok=1`, matching standard digest, and fresh timestamp (< 180s). Exits 0 if all benches conform, 1 on drift, missing record, or stale state.
