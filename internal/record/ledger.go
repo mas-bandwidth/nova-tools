@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -184,9 +185,26 @@ type RedisLedger struct {
 func NewRedisLedger(rdb *redis.Client) *RedisLedger { return &RedisLedger{rdb: rdb} }
 
 // DialLedger opens a client on addr (host:port) with the given password ("" for none).
+// It silences go-redis's own logger first (#3463): a dial failure otherwise prints the
+// library's untyped, local-time "connection pool: failed to dial after 5 attempts" lines
+// to the process's stderr ahead of the verb's one typed FAILED line. The
+// error they carry is not lost: it is the error Ping returns, which the verb prints.
 func DialLedger(addr, password string) *RedisLedger {
+	silenceRedisLogger()
 	return NewRedisLedger(redis.NewClient(&redis.Options{Addr: addr, Password: password}))
 }
+
+// quietRedis is the discard logger for go-redis.
+type quietRedis struct{}
+
+func (quietRedis) Printf(context.Context, string, ...interface{}) {}
+
+// silenceRedisLoggerOnce makes the install once per process: redis.SetLogger writes a
+// package-level variable inside go-redis, and two dials in one process writing it again is
+// a data race (the same finding as nova-merge's #1609).
+var silenceRedisLoggerOnce sync.Once
+
+func silenceRedisLogger() { silenceRedisLoggerOnce.Do(func() { redis.SetLogger(quietRedis{}) }) }
 
 // Ping is one PING, so a verb names an unreachable store before it reads any file.
 func (s *RedisLedger) Ping(ctx context.Context) error { return s.rdb.Ping(ctx).Err() }

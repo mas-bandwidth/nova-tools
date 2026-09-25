@@ -263,7 +263,8 @@ func TestMainFlagsAndExitCodes(t *testing.T) {
 	work := workRepo(t)
 	var stdout, stderr bytes.Buffer
 	code := fold.Main(context.Background(), []string{fx.Sprint, "--store", mr.Addr(), "--work", work, "--as", "fold-test"}, &stdout, &stderr)
-	if code != 0 || !strings.Contains(stdout.String(), "FOLD RECORDED sprint="+fx.Sprint) {
+	// Folded, with no verbs flags: the verbs step did not run (#3160), exit 5.
+	if code != 5 || !strings.Contains(stdout.String(), "FOLD RECORDED sprint="+fx.Sprint) {
 		t.Fatalf("exit %d\nstdout %s\nstderr %s", code, stdout.String(), stderr.String())
 	}
 	stdout.Reset()
@@ -644,7 +645,7 @@ func TestMainJevEvalExitCodes(t *testing.T) {
 		candidate string
 		code      int
 		sha       string
-	}{{"p-regress", 3, "p-current"}, {"p-gates", 0, "p-gates"}} {
+	}{{"p-regress", 3, "p-current"}, {"p-gates", 5, "p-gates"}} { // 5: no verbs flags (#3160); 3 outranks it
 		mr, client, fx := seed(t)
 		client.HSet(context.Background(), "jev:prompt", "sha", "p-current")
 		var stdout, stderr bytes.Buffer
@@ -660,4 +661,110 @@ func TestMainJevEvalExitCodes(t *testing.T) {
 			t.Fatalf("candidate %s: the fold was not recorded\n%s", tc.candidate, stdout.String())
 		}
 	}
+}
+
+// verbsFixture is what the fold's verbs step reads (#3160): a binaries dir
+// whose nova-fix prints one verb, a nova-tools-shaped repo with two commits
+// (the first and the tip are returned), and an empty receipts dir.
+func verbsFixture(t *testing.T, broken bool) (tools, repo, receipts, first string) {
+	t.Helper()
+	tools, repo, receipts = t.TempDir(), t.TempDir(), t.TempDir()
+	script := "#!/bin/sh\nprintf '%s\\n' 'nova-fix links'\n"
+	if broken {
+		script = "#!/bin/sh\nexit 1\n"
+	}
+	if err := os.WriteFile(filepath.Join(tools, "nova-fix"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "init", "-q", "-b", "main")
+	for i, who := range []string{"Ada", "Bob"} {
+		if err := os.MkdirAll(filepath.Join(repo, "cmd", "nova-fix"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "package main\n\nvar verbs = []string{\"links\"}\n" + strings.Repeat("// more\n", i)
+		if err := os.WriteFile(filepath.Join(repo, "cmd", "nova-fix", "main.go"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, repo, "add", "-A")
+		git(t, repo, "-c", "user.name="+who, "-c", "user.email=x@example.invalid", "commit", "-q", "-m", who)
+		if i == 0 {
+			first = git(t, repo, "rev-parse", "HEAD")
+		}
+	}
+	return tools, repo, receipts, first
+}
+
+func TestFoldVerbs(t *testing.T) {
+	ctx := context.Background()
+	main := func(mr *miniredis.Miniredis, fx fixture, work string, extra ...string) (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		args := append([]string{fx.Sprint, "--store", mr.Addr(), "--work", work, "--as", "fold-test"}, extra...)
+		code := fold.Main(ctx, args, &stdout, &stderr)
+		return code, stdout.String(), stderr.String()
+	}
+	t.Run("fold_commits_then_verbs_fail", func(t *testing.T) {
+		mr, client, fx := seed(t)
+		tools, repo, receipts, first := verbsFixture(t, false)
+		// The previous fold listed the one verb at the older dev sha.
+		client.XAdd(ctx, &redis.XAddArgs{Stream: "verbs:unused:log", Values: []string{
+			"dev_sha", first, "count", "1", "verbs", `["nova-fix links"]`, "resolved", "{}", "prev", "0"}})
+		code, out, errOut := main(mr, fx, workRepo(t), "--tools", tools, "--repo", repo, "--receipts", receipts)
+		if code != 4 {
+			t.Fatalf("exit %d, want 4\nstdout %s\nstderr %s", code, out, errOut)
+		}
+		if !strings.Contains(out, "FOLD VERBS sprint="+fx.Sprint+" VERBS UNUSED NOT FALLING was=1 now=1\n") {
+			t.Fatalf("no FOLD VERBS NOT FALLING line:\n%s", out)
+		}
+		if st := client.HGet(ctx, "s:"+fx.Sprint, "status").Val(); st != "folded" || !strings.Contains(out, "FOLD RECORDED") {
+			t.Fatalf("status %q; the verbs step must follow a recorded fold\n%s", st, out)
+		}
+		if strings.Index(out, "FOLD RECORDED") > strings.Index(out, "FOLD VERBS") {
+			t.Fatalf("the verbs step ran before the fold was recorded:\n%s", out)
+		}
+	})
+	t.Run("fold_verbs_refused", func(t *testing.T) {
+		mr, client, fx := seed(t)
+		tools, repo, receipts, _ := verbsFixture(t, true)
+		code, out, errOut := main(mr, fx, workRepo(t), "--tools", tools, "--repo", repo, "--receipts", receipts)
+		if code != 5 || !strings.Contains(out, "FOLD VERBS sprint="+fx.Sprint+" nova-sprint verbs: inventory tool=nova-fix") {
+			t.Fatalf("exit %d, want 5\nstdout %s\nstderr %s", code, out, errOut)
+		}
+		if !strings.Contains(errOut, "run: nova-sprint verbs unused --store "+mr.Addr()+" --tools "+tools) {
+			t.Fatalf("stderr names no hand command: %s", errOut)
+		}
+		if st := client.HGet(ctx, "s:"+fx.Sprint, "status").Val(); st != "folded" {
+			t.Fatalf("status %q, want folded", st)
+		}
+	})
+	t.Run("fold_no_verbs_flags", func(t *testing.T) {
+		mr, _, fx := seed(t)
+		code, out, errOut := main(mr, fx, workRepo(t))
+		if code != 5 || !strings.Contains(out, "FOLD VERBS sprint="+fx.Sprint+" MISSING flags=--tools,--repo,--receipts\n") {
+			t.Fatalf("exit %d, want 5\nstdout %s\nstderr %s", code, out, errOut)
+		}
+	})
+	t.Run("fold_partial_flags_refused", func(t *testing.T) {
+		mr, client, fx := seed(t)
+		tools, _, _, _ := verbsFixture(t, false)
+		work := workRepo(t)
+		code, out, errOut := main(mr, fx, work, "--tools", tools)
+		if code != 2 || !strings.Contains(errOut, "run: nova-sprint help") {
+			t.Fatalf("exit %d, want 2\nstdout %s\nstderr %s", code, out, errOut)
+		}
+		if st := client.HGet(ctx, "s:"+fx.Sprint, "status").Val(); st != "closed" {
+			t.Fatalf("status %q; a refused fold commits nothing", st)
+		}
+		if n := len(strings.Fields(git(t, work, "log", "--format=%H"))); n != 1 {
+			t.Fatalf("nova-work has %d commits; a refused fold commits nothing", n)
+		}
+	})
+	t.Run("fold_done_no_verbs", func(t *testing.T) {
+		mr, client, fx := seed(t)
+		client.HSet(ctx, "s:"+fx.Sprint, "status", "folded", "fold_sha", "abc123")
+		tools, repo, receipts, _ := verbsFixture(t, false)
+		code, out, errOut := main(mr, fx, workRepo(t), "--tools", tools, "--repo", repo, "--receipts", receipts)
+		if code != 0 || !strings.Contains(out, "FOLD DONE") || strings.Contains(out, "FOLD VERBS") {
+			t.Fatalf("exit %d\nstdout %s\nstderr %s", code, out, errOut)
+		}
+	})
 }

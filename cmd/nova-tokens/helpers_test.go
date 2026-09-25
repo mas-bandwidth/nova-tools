@@ -217,9 +217,15 @@ func fakeSqlite3OnPath(t *testing.T, mode string) {
 
 // TestMain is the fake's other half: with the mode set in the environment this binary is
 // not a test run at all but the stub sqlite3 the run under test just executed.
+//
+// With asToolEnv set it is nova-tokens itself, on the process's real stdout and stderr, so
+// a test can see what a library writes to os.Stderr behind run's injected streams (#3463).
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeSqlite3Env); mode != "" {
 		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
+	}
+	if os.Getenv(asToolEnv) != "" {
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp))
 	}
 	os.Exit(m.Run())
 }
