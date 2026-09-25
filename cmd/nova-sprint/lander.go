@@ -8,9 +8,11 @@
 //	    --gate <prog> --bisect <prog> --land <prog> --file <prog>
 //	    [--metrics-addr <host:port>] <n> [<n> ...]
 //
-// Each member's head and mergeable word are read from its record
-// s:<S>:pr:<repo>:<n> (head, mergeable; an empty word is UNKNOWN), never from
-// GitHub. The flaky hash is flaky:<repo>:<pkg>.<test> in the same Redis. The
+// Each member resolves through s:<S>:prunit:<repo>:<n> to its unit record
+// s:<S>:u:<unit> (internal/nsprint/land, the one key contract `why` and
+// `land status` read; nova-tools#3611), whose head is the member's head and
+// whose mergeable word (ns_unit_mergeable, fenced on mergeable_head; an empty
+// or stale word is UNKNOWN) is the forge's answer, never read from GitHub. The flaky hash is flaky:<repo>:<pkg>.<test> in the same Redis. The
 // four programs are the host-touching seams, each handed its arguments on the
 // command line (members as <n>@<head>):
 //
@@ -128,16 +130,18 @@ func runLander(ctx context.Context, args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(out, "METRICS lander url=%s\n", srv.URL())
 	}
 
+	units := make(map[int]string, len(records))
 	gate, bisect, lander, filer := landerSeams(progs)
 	lane := land.Lane{
 		Gate: gate, Bisect: bisect, Land: lander, Filer: filer,
-		Forge:   recordForge{c: c, sprint: *sprint},
+		Forge:   recordForge{c: c, sprint: *sprint, units: units},
 		Store:   redisFlaky{c: c},
 		Clock:   landerClock,
 		Metrics: metrics.Default,
 	}
 	batch := land.Batch{Repo: *repo, Name: *batchName}
 	for _, r := range records {
+		units[r.n] = r.unit
 		batch.Members = append(batch.Members, land.Member{Number: r.n, Head: r.head})
 	}
 	res, err := lane.Run(ctx, batch)
@@ -164,56 +168,85 @@ func orDash(s string) string {
 
 type memberRecord struct {
 	n    int
+	unit string
 	head string
 }
 
-// loadMembers reads every member's head from its record in one pipelined
-// round trip. A member with no record or no head is a refusal: the lane gates
-// only what the sprint knows.
+// loadMembers resolves every member to its unit through
+// s:<S>:prunit:<repo>:<n> and reads the unit's head from s:<S>:u:<unit>, in
+// two pipelined round trips. A member with no unit or no head is a refusal:
+// the lane gates only what the sprint knows.
 func loadMembers(ctx context.Context, c *redis.Client, sprint, repo string, numbers []int) ([]memberRecord, error) {
 	pipe := c.Pipeline()
-	cmds := make([]*redis.StringCmd, len(numbers))
+	unitCmds := make([]*redis.StringCmd, len(numbers))
 	for i, n := range numbers {
-		cmds[i] = pipe.HGet(ctx, land.ID{Repo: repo, N: n}.Key(sprint), "head")
+		unitCmds[i] = pipe.Get(ctx, land.PRUnitKey(sprint, repo, n))
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
 	out := make([]memberRecord, len(numbers))
 	for i, n := range numbers {
-		head, err := cmds[i].Result()
-		if errors.Is(err, redis.Nil) || (err == nil && strings.TrimSpace(head) == "") {
-			return nil, fmt.Errorf("%s#%d has no head in %s", repo, n, land.ID{Repo: repo, N: n}.Key(sprint))
+		unit, err := unitCmds[i].Result()
+		if errors.Is(err, redis.Nil) || (err == nil && strings.TrimSpace(unit) == "") {
+			return nil, fmt.Errorf("%s#%d has no head: MISSING %s", repo, n, land.PRUnitKey(sprint, repo, n))
 		}
 		if err != nil {
 			return nil, err
 		}
-		out[i] = memberRecord{n: n, head: strings.TrimSpace(head)}
+		out[i] = memberRecord{n: n, unit: strings.TrimSpace(unit)}
+	}
+	pipe = c.Pipeline()
+	headCmds := make([]*redis.StringCmd, len(out))
+	for i, m := range out {
+		headCmds[i] = pipe.HGet(ctx, land.UnitKey(sprint, m.unit), "head")
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	for i, m := range out {
+		head, err := headCmds[i].Result()
+		if errors.Is(err, redis.Nil) || (err == nil && strings.TrimSpace(head) == "") {
+			return nil, fmt.Errorf("%s#%d has no head in %s", repo, m.n, land.UnitKey(sprint, m.unit))
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[i].head = strings.TrimSpace(head)
 	}
 	return out, nil
 }
 
-// recordForge answers a member's mergeable word from its record, the field
-// ns_pr_eval writes (the record contract in internal/nsprint/land). An absent
-// or empty word is UNKNOWN, which the lane re-polls and then drops.
+// recordForge answers a member's mergeable word from its unit record, the
+// field ns_unit_mergeable writes (land.lua, the one writer). The word counts
+// only at the unit's head (mergeable_head == head); an absent, empty or stale
+// word is UNKNOWN, which the lane re-polls and then drops.
 type recordForge struct {
 	c      *redis.Client
 	sprint string
+	units  map[int]string // PR number -> unit, from loadMembers
 }
 
 func (f recordForge) Mergeable(ctx context.Context, repo string, number int) (string, error) {
-	v, err := f.c.HGet(ctx, land.ID{Repo: repo, N: number}.Key(f.sprint), "mergeable").Result()
-	if errors.Is(err, redis.Nil) {
+	unit, ok := f.units[number]
+	if !ok {
 		return "UNKNOWN", nil
 	}
+	v, err := f.c.HMGet(ctx, land.UnitKey(f.sprint, unit), "head", "mergeable", "mergeable_head").Result()
 	if err != nil {
 		return "", err
 	}
-	v = strings.ToUpper(strings.TrimSpace(v))
-	if v == "" {
+	head, word, at := hmString(v[0]), strings.ToUpper(hmString(v[1])), hmString(v[2])
+	if word == "" || head == "" || at != head {
 		return "UNKNOWN", nil
 	}
-	return v, nil
+	return word, nil
+}
+
+// hmString is one HMGET value as trimmed text ("" for a missing field).
+func hmString(v any) string {
+	s, _ := v.(string)
+	return strings.TrimSpace(s)
 }
 
 // redisFlaky is the flaky hash flaky:<repo>:<pkg>.<test> (first_seen,
