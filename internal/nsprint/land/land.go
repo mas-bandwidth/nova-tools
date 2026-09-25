@@ -1,0 +1,3 @@
+package land
+
+func DoLand() {}
