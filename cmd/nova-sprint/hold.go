@@ -17,11 +17,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/disposition"
 )
 
@@ -165,21 +167,74 @@ func runHoldRoute(ctx context.Context, args []string, out, errOut io.Writer) int
 	}
 	c := holdClient(*addr)
 	defer func() { _ = c.Close() }()
+
+	instance, err := consume.NewInstance()
+	if err != nil {
+		return refuse(errOut, "hold route", err.Error())
+	}
 	token, err := leaseToken()
 	if err != nil {
 		return refuse(errOut, "hold route", err.Error())
 	}
+	host, _ := os.Hostname()
+	ttl := 6 * time.Second
+	renew := 2 * time.Second
+
+	reply, err := c.FCall(ctx, consume.FunctionRouteLeaseTake, nil, *sprint, instance, token, host,
+		strconv.FormatInt(ttl.Milliseconds(), 10)).Slice()
+	if err != nil {
+		return refuse(errOut, "hold route", fmt.Sprintf("take %s: %v", consume.LeaseKey(*sprint), err))
+	}
+	if len(reply) > 0 && reply[0] == "HELD" {
+		holder := ""
+		at := ""
+		if len(reply) > 1 {
+			holder = fmt.Sprint(reply[1])
+		}
+		if len(reply) > 2 {
+			at = fmt.Sprint(reply[2])
+		}
+		fmt.Fprintf(errOut, "nova-sprint hold route: REFUSED %s held by %s at %s; one router per sprint\n",
+			consume.LeaseKey(*sprint), holder, at)
+		return 1
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(renew)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-ticker.C:
+			}
+			reply, err := c.FCall(runCtx, consume.FunctionRouteLeaseRenew, nil, *sprint, instance, token,
+				strconv.FormatInt(ttl.Milliseconds(), 10)).Slice()
+			if runCtx.Err() != nil {
+				return
+			}
+			if err != nil || (len(reply) > 0 && reply[0] == "LOST") {
+				cancel()
+				return
+			}
+		}
+	}()
+
+	defer func() {
+		cancel()
+		wg.Wait()
+		_ = c.FCall(context.WithoutCancel(ctx), consume.FunctionRouteLeaseRelease, nil, *sprint, instance, token).Err()
+	}()
+
 	cfg := disposition.RouteConfig{Sprint: *sprint, Consumer: *consumer, ReclaimIdle: *reclaim, Actor: "hold-route"}
 	tick := func() int {
-		ok, err := holdLease(ctx, c, token)
-		if err != nil {
-			return refuse(errOut, "hold route", err.Error())
-		}
-		if !ok {
-			fmt.Fprintln(out, "HOLDROUTE lease held elsewhere")
-			return 0
-		}
-		lines, err := disposition.RouteOnce(ctx, c, cfg)
+		lines, err := disposition.RouteOnce(runCtx, c, cfg)
 		for _, l := range lines {
 			fmt.Fprintln(out, l)
 		}
@@ -189,11 +244,9 @@ func runHoldRoute(ctx context.Context, args []string, out, errOut io.Writer) int
 		return 0
 	}
 	if *once {
-		code := tick()
-		dropLease(ctx, c, token)
-		return code
+		return tick()
 	}
-	sig, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	sig, stop := signal.NotifyContext(runCtx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -203,7 +256,6 @@ func runHoldRoute(ctx context.Context, args []string, out, errOut io.Writer) int
 		}
 		select {
 		case <-sig.Done():
-			dropLease(ctx, c, token)
 			return 0
 		case <-ticker.C:
 		}
@@ -211,54 +263,11 @@ func runHoldRoute(ctx context.Context, args []string, out, errOut io.Writer) int
 }
 
 func leaseToken() (string, error) {
-	b := make([]byte, 8)
+	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
-}
-
-// holdRenewScript and holdReleaseScript are the token-checked lease moves
-// (the internal/redisq renewScript/releaseScript shape): the stored token must
-// be the caller's or the script is a no-op, so an expired owner can never
-// extend or delete a successor's lease.
-var holdRenewScript = redis.NewScript(`
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('PEXPIRE', KEYS[1], ARGV[2])
-end
-return 0
-`)
-
-var holdReleaseScript = redis.NewScript(`
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
-end
-return 0
-`)
-
-const holdLeaseTTL = 5 * time.Second
-
-// holdLease takes or renews lease:hold-route (TTL 5 s) for this token. The
-// renew is one atomic compare-token script, never GET then PEXPIRE.
-func holdLease(ctx context.Context, c *redis.Client, token string) (bool, error) {
-	ok, err := c.SetNX(ctx, disposition.LeaseKey, token, holdLeaseTTL).Result()
-	if err != nil {
-		return false, err
-	}
-	if ok {
-		return true, nil
-	}
-	n, err := holdRenewScript.Run(ctx, c, []string{disposition.LeaseKey}, token, holdLeaseTTL.Milliseconds()).Int64()
-	if err != nil {
-		return false, err
-	}
-	return n == 1, nil
-}
-
-// dropLease deletes lease:hold-route only while this token still holds it.
-func dropLease(ctx context.Context, c *redis.Client, token string) bool {
-	n, err := holdReleaseScript.Run(ctx, c, []string{disposition.LeaseKey}, token).Int64()
-	return err == nil && n == 1
 }
 
 func runHoldShow(ctx context.Context, args []string, out, errOut io.Writer) int {

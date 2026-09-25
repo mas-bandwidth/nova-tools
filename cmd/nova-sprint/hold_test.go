@@ -20,6 +20,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/disposition"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
@@ -928,39 +929,6 @@ func TestHoldRouteCrashReplay(t *testing.T) {
 	}
 	c.route("--reclaim-idle", "50")
 	after(t, c, eid)
-
-	// Hold 4 on #3473 at 90527217: lease:hold-route renew and release are
-	// token-checked in one script. An owner whose lease expired can neither
-	// extend nor delete its successor's lease.
-	ctx2 := context.Background()
-	lc := c.c
-	lc.Del(ctx2, disposition.LeaseKey)
-	if ok, err := holdLease(ctx2, lc, "stale"); err != nil || !ok {
-		t.Fatalf("first take: %v %v", ok, err)
-	}
-	lc.Del(ctx2, disposition.LeaseKey) // the stale owner's lease expires
-	if ok, err := holdLease(ctx2, lc, "next"); err != nil || !ok {
-		t.Fatalf("successor take: %v %v", ok, err)
-	}
-	lc.PExpire(ctx2, disposition.LeaseKey, 2*time.Second)
-	if ok, err := holdLease(ctx2, lc, "stale"); err != nil || ok {
-		t.Fatalf("stale renew: %v %v, want false", ok, err)
-	}
-	if ttl := lc.PTTL(ctx2, disposition.LeaseKey).Val(); ttl > 2*time.Second {
-		t.Fatalf("stale renew extended the successor's lease: pttl %v", ttl)
-	}
-	if dropLease(ctx2, lc, "stale") {
-		t.Fatalf("stale release reported a delete")
-	}
-	if v := lc.Get(ctx2, disposition.LeaseKey).Val(); v != "next" {
-		t.Fatalf("stale release touched the successor's lease: %q", v)
-	}
-	if ok, err := holdLease(ctx2, lc, "next"); err != nil || !ok {
-		t.Fatalf("owner renew: %v %v", ok, err)
-	}
-	if !dropLease(ctx2, lc, "next") || lc.Exists(ctx2, disposition.LeaseKey).Val() != 0 {
-		t.Fatalf("owner release did not delete")
-	}
 }
 
 func TestHoldReleaseHolderOnly(t *testing.T) {
@@ -1252,5 +1220,66 @@ func TestUnitMergeableWriter(t *testing.T) {
 	}
 	if q := e.queue("rowan"); len(q) != 1 || q[0] != task.ReviewID(holdRepo, 71, headB, "rowan") {
 		t.Fatalf("MERGEABLE ci note read: rowan %v", q)
+	}
+}
+
+// TestHoldRouteLeaseHeldRefused (#3832): with lease:route:<S> held by another
+// instance, nova-sprint hold route --once --sprint <S> routes nothing and exits
+// 1 REFUSED.
+func TestHoldRouteLeaseHeldRefused(t *testing.T) {
+	e := newHoldEnv(t, "hold-3832")
+	e.friends("rowan", "stella")
+	e.policy("rowan", "stella")
+	e.unit(50, headA, "johnny")
+	e.mustIngest(50, typed("stella", headA, "HOLD", 5, substance), "RECORD hold")
+
+	ctx := context.Background()
+	leaseKey := consume.LeaseKey(e.S)
+	if err := e.c.HSet(ctx, leaseKey, "instance", "other-router", "token", "tok123", "host", "box", "at", "1000").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.c.PExpire(ctx, leaseKey, 10*time.Second).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := e.run("hold", "route", "--once", "--sprint", e.S)
+	if code != 1 {
+		t.Fatalf("exit code %d, want 1; out=%q errOut=%q", code, out, errOut)
+	}
+	if out != "" {
+		t.Fatalf("stdout not empty (routes nothing): %q", out)
+	}
+	if !strings.Contains(errOut, "REFUSED") {
+		t.Fatalf("errOut %q does not contain REFUSED", errOut)
+	}
+	if !strings.Contains(errOut, leaseKey) {
+		t.Fatalf("errOut %q does not contain %s", errOut, leaseKey)
+	}
+	if !strings.Contains(errOut, "other-router") {
+		t.Fatalf("errOut %q does not name holder other-router", errOut)
+	}
+
+	// Verify nothing was routed: no fix tasks in rowan's queue.
+	if q := e.queue("rowan"); len(q) != 0 {
+		t.Fatalf("fix task created while lease held: %v", q)
+	}
+
+	// Now delete the foreign lease: hold route --once succeeds and routes the event.
+	if err := e.c.Del(ctx, leaseKey).Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut = e.run("hold", "route", "--once", "--sprint", e.S)
+	if code != 0 {
+		t.Fatalf("exit code %d, want 0; out=%q errOut=%q", code, out, errOut)
+	}
+	if !strings.Contains(out, "ROUTED") && !strings.Contains(out, "HOLDROUTE") {
+		t.Fatalf("stdout did not route: %q", out)
+	}
+	if q := e.queue("rowan"); len(q) != 1 {
+		t.Fatalf("fix task not created after lease freed: %v", q)
+	}
+	// Verify lease:route:<S> was released on clean exit.
+	if exists, _ := e.c.Exists(ctx, leaseKey).Result(); exists != 0 {
+		t.Fatalf("%s still exists after hold route --once exited", leaseKey)
 	}
 }
