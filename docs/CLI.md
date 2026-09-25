@@ -3886,6 +3886,20 @@ nova-sprint pitstop clear --sprint nova-sprint-0924 --by rowan --scope nova-work
 PITSTOP NARROW sprint=nova-sprint-0924 by=rowan at=1790000060000 lifted="nova-work" was_by=rowan was_at=1790000000000 was_why="Glenn 8:00 PM: rest tonight"
 ```
 
+### adopt
+
+`nova-sprint adopt receipt --verb <verb> --pov <coordinator|bench|reader|friend> --state <state> [--gap <repo>#<n>] [--hand <text>] [--note <text>] [--as <who>] [--redis <addr>]`
+`nova-sprint adopt matrix [--md | --tsv] [--redis <addr>]`
+`nova-sprint adopt status [--redis <addr>]`
+
+Adoption receipts per verb per point of view live in Redis, not in a hand-kept table (#3186, the matrix slice). A verb's record is one hash, `adopt:<verb>` {who, at, pov, state, gap, hand, note, receipts, and one `pov:<pov>` field per POV that wrote}, indexed by age in the ZSET `adopt:verbs`; every accepted receipt is also appended to `adopt:<verb>:receipts`. `--state` is one of adopted, adopted-gaps, in-flight, unexercised, blocked, hack; adopted-gaps, blocked and hack must name the issue holding the gap (`--gap`, or a gap already on the record), else `ADOPT REFUSED reason=no-gap` and nothing is written. The same seat, POV and body again prints `ADOPT UNCHANGED` and writes nothing. `--as` defaults to `NOVA_FRIEND`. `matrix` prints one `ADOPT ROW` per verb, oldest first, and `ADOPT MATRIX verbs=<n> adopted <x>/<y> <z>%`; `--md` prints the hacks-to-verbs table (hand step, verb, state, who, when in ET, pov with the POVs that hold a receipt, gap). `status` prints the x/y line: x the verbs whose latest receipt is adopted or adopted-gaps, y every verb with a receipt, `adopted 0/0 -` when there are none. receipt is one FCALL (`ns_adopt_receipt`), matrix and status one FCALL_RO (`ns_adopt_matrix`); each first loads the library when the store has none. Exit 0 done, 1 refused with the remedy named, 2 usage.
+
+```text
+nova-sprint adopt receipt --as rowan --verb "nova-sprint land stream" --pov coordinator --state in-flight --gap nova-tools#3975 --hand "stream branch built by hand"
+# prints
+ADOPT RECEIPT verb="nova-sprint land stream" who=rowan pov=coordinator state=in-flight gap=nova-tools#3975 at=1790000000000 receipts=1
+```
+
 ### cost import
 
 `nova-sprint cost import --provider <anthropic|openrouter|oc> --file <export.csv> --redis <addr>`
