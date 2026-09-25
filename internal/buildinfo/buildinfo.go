@@ -23,15 +23,19 @@
 // no version string at all: it invites the comparison it cannot support. NOTHING HERE
 // EVER INVENTS A DOTTED NUMBER.
 //
-// ONE LINE, FOUR TOKENS. Every field of Line goes through oneline.Field, so what is
-// printed is four whitespace-separated tokens whatever the -X held -- and the -X value is
-// the one field in the whole line that comes from outside the toolchain.
+// ONE LINE, FOUR TOKENS AND THEN NAMED EXTRAS. Every field of Line goes through
+// oneline.Field, so what is printed is whitespace-separated tokens whatever the -X held
+// -- and the -X value is the one field in the whole line that comes from outside the
+// toolchain. A tool with more to say says it as `key=value` after the fourth token, and
+// Parse, here, is the one reader of the whole shape: writer and reader are one pair, so a
+// tool that adds a fact cannot break a consumer that has never heard of it (#1297).
 package buildinfo
 
 import (
 	"fmt"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -116,11 +120,192 @@ func Resolve(stamped string, info *debug.BuildInfo, ok bool) string {
 // which tool wrote the line. Every field is rendered through oneline.Field, including the
 // tool's own name, because a helper that escapes three of four fields is a helper whose
 // guarantee has to be re-checked at every call site.
-func Line(tool, stamped string) string {
-	return fmt.Sprintf("%s %s %s/%s %s",
+//
+// A tool with one more true thing to say about itself says it as an EXTRA: a `key=value`
+// token after the fourth -- `build=<12 hex>` from nova-merge, `backend=` and `platform=`
+// from nova-sandbox. Extras are part of the grammar rather than exceptions to it. On
+// 2026-09-18 nova-merge's hand-rolled fifth token made `nova-version snapshot` refuse an
+// entire install (#1297), because each reader had been written against the four tokens it
+// happened to know. So the writer takes extras HERE, where Parse is guaranteed to read
+// them back, and REFUSES one that is not key=value: a writer looser than its reader is a
+// refusal deferred to whoever runs the snapshot.
+func Line(tool, stamped string, extras ...string) string {
+	line := fmt.Sprintf("%s %s %s/%s %s",
 		oneline.Field(tool),
 		oneline.Field(Version(stamped)),
 		oneline.Field(runtime.GOOS),
 		oneline.Field(runtime.GOARCH),
 		oneline.Field(runtime.Version()))
+	for _, e := range extras {
+		key, value, found := strings.Cut(e, "=")
+		if !found || key == "" || value == "" {
+			panic("buildinfo.Line: extra " + strconv.Quote(e) + " is not key=value; the extras of a version line are named facts, never loose tokens")
+		}
+		line += " " + oneline.Field(key) + "=" + oneline.Field(value)
+	}
+	return line
+}
+
+// Fields is one version line taken apart. It is what every READER of a version line in
+// this tree gets, so that "what a version line is" is answered in one place rather than
+// once per consumer: nova-version's snapshot and its report both ask Parse, and a tool
+// that adds an extra tomorrow is already legible to both.
+type Fields struct {
+	Tool      string   // field one: the binary's own name for itself
+	Version   string   // field two: the build identity, the one field a comparison reads
+	Platform  string   // field three: <goos>/<goarch>
+	GoVersion string   // field four: the toolchain that built it
+	Extras    []string // every key=value token after the fourth, in the order printed
+}
+
+// Extra is the value of one named extra. A reader asks for the fact it wants BY NAME and
+// never holds a position, so a tool that adds a second extra cannot move the first.
+func (f Fields) Extra(key string) (string, bool) {
+	for _, e := range f.Extras {
+		if k, v, found := strings.Cut(e, "="); found && k == key {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// Parse reads the first line of what a `version` verb printed and reports whether it is a
+// version line at all. The grammar, stated once for the whole tree:
+//
+//	<tool> <build identity> <goos>/<goarch> <go version> [key=value ...]
+//
+// It is deliberately strict about the four mandatory tokens -- a caller uses ok to tell
+// "this binary is broken" from "this binary is old", and a parser that accepts a usage
+// refusal can tell neither -- and deliberately open about what follows, because the hurt
+// it exists to end was a reader taking one tool's extra fact for a broken build.
+func Parse(s string) (Fields, bool) {
+	line, _, _ := strings.Cut(s, "\n")
+	tokens := strings.Fields(strings.TrimSuffix(line, "\r"))
+	if len(tokens) < 4 {
+		return Fields{}, false
+	}
+	goos, goarch, found := strings.Cut(tokens[2], "/")
+	if !found || goos == "" || goarch == "" {
+		return Fields{}, false
+	}
+	f := Fields{Tool: tokens[0], Version: tokens[1], Platform: tokens[2], GoVersion: tokens[3]}
+	for _, e := range tokens[4:] {
+		key, value, found := strings.Cut(e, "=")
+		if !found || key == "" || value == "" {
+			return Fields{}, false
+		}
+		f.Extras = append(f.Extras, e)
+	}
+	return f, true
+}
+
+// Source is the structured view of WHERE a binary was built from. The version line has
+// always carried an unstructured "the stamp this build reports"; Source is what the stamp
+// is verified against: every stamp read at the gate -- apply --sha's postflight, the
+// snapshot, `moved`'s per-revision readback -- also reads this four-field shape and
+// refuses a binary that names a different checkout, a different revision, a dirty tree,
+// or a different build host than the manifest recorded. A build from the wrong
+// repository that happens to carry the requested linker stamp cannot pass (#2291,
+// SPEC-VERSION item 6).
+//
+// All four fields are always written together, so the round-trip is unambiguous: a Source
+// the reader can extract is one the writer wrote whole. A version line that carries some
+// but not all of the four is read as "no source": a half-present source is a source the
+// reader cannot verify, and a silent disagreement is worse than a refusal.
+type Source struct {
+	// Repository is the checkout the build came from, e.g. "github.com/owner/repo". A
+	// build from a different repository cannot pass even if the linker stamp matches.
+	Repository string
+	// Revision is the full SHA the build was cut at, or its 12-hex prefix. Two builds
+	// of two adjacent commits already disagree on this field, and a binary that names
+	// the wrong revision is a different build.
+	Revision string
+	// Dirty is true when the source tree carried uncommitted changes at build time. A
+	// release binary whose tree was dirty at the build is not the commit it names, and
+	// this field is what a reader verifies it against.
+	Dirty bool
+	// BuildHost is the hostname the build ran on. Two hosts cutting the same commit
+	// produce the same stamp but different artifacts, and this field is what tells
+	// them apart.
+	BuildHost string
+}
+
+// Extras returns the Source as a slice of key=value tokens, the shape Line takes as its
+// variadic extras. The four tokens appear in a fixed order -- repo, revision, dirty,
+// build_host -- so the writer and the reader cannot disagree about which field is
+// which. Dirty is ALWAYS emitted (true OR false), because a Source the reader can
+// extract is one the writer wrote whole, and a missing dirty field is a Source the
+// reader is forced to refuse (#2291).
+func (s Source) Extras() []string {
+	return []string{
+		"repo=" + s.Repository,
+		"revision=" + s.Revision,
+		"dirty=" + strconv.FormatBool(s.Dirty),
+		"build_host=" + s.BuildHost,
+	}
+}
+
+// LineWithSource is the version line the build stamps into a binary, with Source
+// metadata attached. It is the writer `apply --sha` uses on every binary it builds, so
+// the postflight can read source back with FindSource and verify it against the manifest
+// the build recorded.
+//
+// The four mandatory tokens come first, the four source tokens follow in Extras() order,
+// and any extras the caller wants to add (a file digest, a backend label) come after.
+// Writer and reader are the one pair this package has always been, so a Source round-
+// trips through Line and Parse into itself: a tool that adds a fact cannot break a
+// consumer that has never heard of it, and a reader that has never seen the source
+// metadata reads the four tokens it knows and ignores the rest (#1297).
+func LineWithSource(tool, stamped string, src Source, extras ...string) string {
+	all := append(src.Extras(), extras...)
+	return Line(tool, stamped, all...)
+}
+
+// sourceKeys is the set of keys FindSource reads from Extras.
+var sourceKeys = map[string]bool{"repo": true, "revision": true, "dirty": true, "build_host": true}
+
+// FindSource returns the Source the fields carry, or false. The four source keys are
+// the only ones FindSource reads: anything else in the extras -- nova-merge's
+// `build=<hex>`, nova-sandbox's `backend=` -- is ignored. A version line that carries
+// none of the four is reported with ok=false: old binaries, foreign tools, and a `go
+// install` from a tag never had this, and "no Source" is the honest answer. A version
+// line that carries SOME but not ALL of the four is ALSO reported with ok=false: a
+// partial source is a source the reader cannot verify, and the gate must refuse it
+// rather than guess at the missing field (#2291, SPEC-VERSION item 6).
+//
+// A malformed dirty token (anything other than "true" or "false") is refused: a value
+// like `dirty=maybe` is not a clean source and must not be silently accepted as
+// dirty=false. Duplicate source keys are also refused: two `repo=` entries in the
+// same line are a contradiction the reader cannot resolve.
+func (f Fields) FindSource() (Source, bool) {
+	// Count source keys to detect duplicates.
+	counts := map[string]int{}
+	for _, e := range f.Extras {
+		if k, _, found := strings.Cut(e, "="); found && sourceKeys[k] {
+			counts[k]++
+			if counts[k] > 1 {
+				return Source{}, false
+			}
+		}
+	}
+
+	repo, hasRepo := f.Extra("repo")
+	rev, hasRev := f.Extra("revision")
+	dirty, hasDirty := f.Extra("dirty")
+	host, hasHost := f.Extra("build_host")
+	if !hasRepo && !hasRev && !hasDirty && !hasHost {
+		return Source{}, false
+	}
+	if !hasRepo || !hasRev || !hasDirty || !hasHost {
+		return Source{}, false
+	}
+	if dirty != "true" && dirty != "false" {
+		return Source{}, false
+	}
+	return Source{
+		Repository: repo,
+		Revision:   rev,
+		Dirty:      dirty == "true",
+		BuildHost:  host,
+	}, true
 }

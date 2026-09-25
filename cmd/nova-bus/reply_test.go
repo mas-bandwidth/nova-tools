@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // THE REPLY TRANSACTION, at the binary: one test per normative sentence of the reply
@@ -865,7 +866,9 @@ func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 func buildNovaBus(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	out, err := exec.Command("go", "build", "-o", dir+string(os.PathSeparator), ".").CombinedOutput()
+	build := exec.Command("go", "build", "-o", dir+string(os.PathSeparator), ".")
+	build.Env = goenv.Clean(os.Environ())
+	out, err := build.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}

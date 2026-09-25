@@ -57,6 +57,10 @@ Nothing in the package may make Redis the authority; the record is.
 
 The second delivery is the binary that owns one local instance. Its verbs:
 
+- `serve` launches the instance in the foreground under the rules of the next
+  section: `--bind` names loopback and tailnet addresses only and has no
+  default, the password comes from nova-secrets and reaches `redis-server` on
+  stdin, and persistence is off with a fresh working directory per launch.
 - `status` reports whether the instance is reachable, what it is bound to, the
   owner and key counts, and the two safety facts — auth is required and
   **persistence** is off.
@@ -80,6 +84,16 @@ RDB and no AOF, so a restart is a clean slate by construction and the record
 in git is provably untouched. If a value must survive a restart, it does not
 belong in Redis.
 
+`serve` is where these are enforced (nova-tools #2281). The tailnet is the
+Tailscale ranges, `100.64.0.0/10` and `fd7a:115c:a1e0::/48`; a wildcard,
+public or LAN address, or a hostname, is refused before anything starts. The
+password is read from `NOVA_REDIS_PASSWORD`, which `nova-secrets exec` fills;
+it is written into the config `redis-server` reads on stdin (`redis-server -`),
+dropped from the child's environment, and never written to a file. The config
+carries `save ""` and `appendonly no`, and each launch gets a fresh, empty
+working directory, so even a persistence file an earlier run left behind is
+never replayed.
+
 ## Rules
 
 1. **Git stays the record; nothing in Redis is the only copy of anything.**
@@ -102,3 +116,37 @@ record rule — is missing. Later slices add: the fallback round-trip per use
 (write through Redis, kill it, read the file); `spill`/`recall` with a TTL that
 expires; `presence` ageing out a heartbeat; and `check` refusing an instance
 bound beyond localhost and the tailnet or with persistence on.
+
+## Tests this spec demands
+
+These tests run against a miniredis fake standing in for the instance (already in the tree under `internal/redisq`, `internal/record`, `internal/ci`), with every fallback written into a `t.TempDir()`, no network socket anywhere, and each test proven able to fail by a mutation before it is trusted. The tree carries exactly one SPEC-REDIS test today — `TestNovaRedisSpecFirstSlice` in `internal/docs/redis_test.go:16` — and it asserts the *document* contains its contract terms (status, spill, recall, TTL, owner prefix, presence, check, localhost/tailnet, file fallback, the four uses), not that any software behaviour works; `internal/redisq` is the live-state half of `SPEC-STATE.md`, not this spec. There is no Layer 1 package, so behaviours 1–9 are ABSENT. The `nova-redis` binary's first slice (`cmd/nova-redis`, #2279) carries `spill`/`recall` with the owner and TTL gate and an injected clock, and `cmd/nova-redis/spill_test.go` proves 14, 16, 17 and 27 on its production path, and `serve` (#2281) with `cmd/nova-redis/serve_test.go` proves 22, 23, 24 and 25; the rest are ABSENT.
+
+1. `TestEphemeralCallNamesKeyOwnerAndFallback` — every ephemeral use names a key, an owner and a **file fallback** (L35–36).
+2. `TestEphemeralCallAdoptsInstanceWhenReachableElseFallback` — the same call adopts the local instance when reachable and degrades to the fallback when it is not (L36–38).
+3. `TestFallbackIsSameContractOverFile` — a fallback is the same contract over a file, so an outage is a latency regression and never a lost queue or a changed answer (L38–40).
+4. `TestWakeDoorbellFallsBackToReportAndEntryFiles` — the wake doorbell falls back to the report/entry files `nova-wake` already watches (L42–43).
+5. `TestSwarmSlotsAndLocksFallBackToLockFiles` — swarm slots and locks fall back to the lock files the swarm already takes (L44–45).
+6. `TestBudgetsFallBackToUsageRows` — budgets fall back to the usage rows the record carries (L46–48).
+7. `TestPlanStateFallsBackToPlanFile` — plan state falls back to the plan file on disk (L49–50).
+8. `TestFallbackRoundTripKillsInstanceAndReadsSameValue` — write through the instance, kill the instance, read the fallback, assert the same value (L52–53).
+9. `TestRegistryIsTheAuthorityRedisNeverIs` — nothing in the package may make Redis the authority; the record is (L54, L85).
+10. `TestStatusReportsReachableBoundCountsAuthAndPersistence` — `status` reports whether the instance is reachable, what it is bound to, the owner and key counts, auth required, and persistence off (L60–62).
+11. `TestSpillWritesUnderOwnerPrefixWithRequiredTTL` — `spill` writes a scratch value under an owner prefix and a required TTL (L63–64).
+12. `TestRecallReadsBackTheSpilledValue` — `recall` reads the spilled value back (L64).
+13. `TestRecallRefusesAMissingKey` — `recall` refuses a missing key (L64).
+14. `TestRecallRefusesAnExpiredKey` — `recall` refuses an expired key; a TTL that expires is unreachable (L64, L102–103).
+15. `TestKeyFormIsOwnerColonName` — the key form is `<owner>:<name>` (L65).
+16. `TestSpillRefusedWithoutOwner` — a write with no owner is refused (L65–66).
+17. `TestSpillRefusedWithoutTTL` — a write with no TTL is refused (L65–66).
+18. `TestRecallIsAllowedToMiss` — scratch is scratch: recall is allowed to miss (L66–67).
+19. `TestPresenceListsLiveLinesAndAgesOutHeartbeats` — `presence` lists the live lines seen by heartbeat keys that expire on their own, so a crashed line ages out without a tombstone (L68–69, L103–104).
+20. `TestCheckPrintsOneLineAndEarnsItsExitCode` — `check` prints one line and earns its exit code: reachable, bound where the spec allows, auth on (L70–71).
+21. `TestVersionAndHelpArePresent` — `version` and `help` are the two verbs every binary in this family carries (L72).
+22. `TestBoundToLocalhostAndTailnetOnly` — bound to localhost and the tailnet only, never a public interface (L76–77).
+23. `TestAuthFromNovaSecretsNeverAPlaintextArgument` — auth taken from nova-secrets at run time: no plaintext on the bench and no secret in an argument (L77–79).
+24. `TestPersistenceOffNoRDBNoAOF` — persistence is off: no RDB and no AOF (L79–80).
+25. `TestRestartIsACleanSlate` — a restart is a clean slate (L80–81).
+26. `TestNothingInRedisIsTheOnlyCopy` — Git stays the record; nothing in Redis is the only copy of anything (L85).
+27. `TestEveryEphemeralKeyCarriesOwnerAndTTL` — every ephemeral key carries an owner prefix and a TTL; an unbounded key is a bug (L86–87).
+28. `TestNoTestOpensANetworkSocket` — no test opens a network socket to a provider or to Redis; tests use fakes and the file fallback (L93–94).
+29. `TestCheckRefusesAnUnboundOrPersistentInstance` — `check` refuses an instance bound beyond localhost and the tailnet or with persistence on (L104).

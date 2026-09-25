@@ -1,0 +1,379 @@
+package life_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/redis/go-redis/v9"
+)
+
+// TestHelperDispatch is the fake harness: serve execs this test binary with
+// NOVA_SERVE_FAKE set and it behaves as that mode says. Without the variable
+// it is an empty test.
+func TestHelperDispatch(t *testing.T) {
+	mode := os.Getenv("NOVA_SERVE_FAKE")
+	if mode == "" {
+		return
+	}
+	switch mode {
+	case "score":
+		fmt.Printf("reading the diff...\nSCORE who=%s head=%s score=9/10\ncost=$0.01\n",
+			os.Getenv(life.ServeEnvFriend), os.Getenv(life.ServeEnvHead))
+	case "done":
+		fmt.Printf("DONE built %s brief=%s\n", os.Getenv(life.ServeEnvID), os.Getenv(life.ServeEnvBrief))
+	case "die":
+		fmt.Println("boom: harness crashed before any line")
+		os.Exit(3)
+	case "wait":
+		// The child polls for its release file (the test's event) up to
+		// NOVA_TEST_WAIT; a child never released is what a stop kills.
+		wait := 30 * time.Second
+		if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil {
+				wait = d
+			}
+		}
+		deadline := time.Now().Add(wait)
+		for {
+			if _, err := os.Stat(os.Getenv("NOVA_SERVE_GO")); err == nil {
+				fmt.Printf("DONE released %s\n", os.Getenv(life.ServeEnvID))
+				return
+			}
+			if time.Now().After(deadline) {
+				fmt.Println("never released")
+				os.Exit(4)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+}
+
+// fakeDispatch is this binary in one fake mode; goFile is the release file a
+// "wait" child polls for.
+func fakeDispatch(mode, goFile string) (argv, env []string) {
+	return []string{os.Args[0], "-test.run=^TestHelperDispatch$"},
+		[]string{"NOVA_SERVE_FAKE=" + mode, "NOVA_SERVE_GO=" + goFile}
+}
+
+const serveHead = "0123456789abcdef0123456789abcdef01234567"
+
+// seedSeat registers friend emma with slots desired, opens sprint s1 and
+// returns the store and client. No beat: the seat is down until serve beats.
+func seedSeat(t *testing.T, slots int) (*store.Store, *redis.Client) {
+	t.Helper()
+	st, client, _ := controlRedis(t)
+	ctx := context.Background()
+	if err := client.HSet(ctx, "s:s1", "status", "open").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SAdd(ctx, "friends", "emma").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.HSet(ctx, "friend:emma:desired", "slots", slots, "machine", "studio", "paused", 0, "at", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.HSet(ctx, "machine:studio:ceiling", "slots", slots).Err(); err != nil {
+		t.Fatal(err)
+	}
+	return st, client
+}
+
+func pushWork(t *testing.T, st *store.Store, id string) {
+	t.Helper()
+	if got, err := task.Push(context.Background(), st, task.PushRequest{
+		Sprint: "s1", ID: id, Kind: task.KindWork, Title: "build " + id,
+		Effects: task.EffectsNone, PayloadSHA: id, To: "emma",
+	}); err != nil || got != task.PushCreated {
+		t.Fatalf("push %s: %s, %v", id, got, err)
+	}
+}
+
+func serveConfig(t *testing.T, session string, width int, mode string) life.ServeConfig {
+	t.Helper()
+	dir := t.TempDir()
+	argv, env := fakeDispatch(mode, goFile(dir))
+	return life.ServeConfig{
+		Friend: "emma", Session: session, Host: "studio", Harness: "fake", Sprint: "s1",
+		Width: width, Dispatch: argv, Dir: dir, Env: env, Out: testWriter{t},
+	}
+}
+
+// goFile is the release file the "wait" children of a serve dir poll for.
+func goFile(dir string) string { return filepath.Join(dir, "go") }
+
+func release(t *testing.T, cfg life.ServeConfig) {
+	t.Helper()
+	if err := os.WriteFile(goFile(cfg.Dir), []byte("go\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type testWriter struct{ t *testing.T }
+
+func (w testWriter) Write(p []byte) (int, error) {
+	w.t.Log(strings.TrimRight(string(p), "\n"))
+	return len(p), nil
+}
+
+func logKinds(t *testing.T, client *redis.Client) []string {
+	t.Helper()
+	entries, err := client.XRange(context.Background(), life.LogKey("emma"), "-", "+").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := make([]string, 0, len(entries))
+	for _, e := range entries {
+		kinds = append(kinds, fmt.Sprint(e.Values["kind"]))
+	}
+	return kinds
+}
+
+// TestServeFakeDispatchScoreLineClosesTask: a read in emma's queue is taken by
+// her seat, dispatched to a fake harness that writes a SCORE line, and closed
+// with that line as its evidence, APPROVE 9, at the task's head; the seat's
+// receipts are on friend:emma:log and the seat is released after.
+func TestServeFakeDispatchScoreLineClosesTask(t *testing.T) {
+	st, client := seedSeat(t, 2)
+	ctx := context.Background()
+	// A read is pushed only against its PR record at the same head.
+	if err := client.HSet(ctx, "s:s1:pr:nova-tools:7", "head", serveHead).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := task.Push(ctx, st, task.PushRequest{
+		Sprint: "s1", ID: "r1", Kind: task.KindRead, Title: "read nova-tools#7",
+		Effects: task.EffectsNone, PayloadSHA: "r1", To: "emma",
+		Repo: "nova-tools", PR: 7, Head: serveHead,
+	}); err != nil || got != task.PushCreated {
+		t.Fatalf("push read: %s, %v", got, err)
+	}
+	res, err := life.ServeOnce(ctx, st, serveConfig(t, "sess-1", 1, "score"))
+	if err != nil {
+		t.Fatalf("serve once: %v", err)
+	}
+	if res.Taken != 1 || res.Closed != 1 || res.Live != 0 {
+		t.Fatalf("pass = %+v, want taken 1 closed 1 live 0", res)
+	}
+	h := client.HGetAll(ctx, task.Key("s1", "r1")).Val()
+	if h["state"] != "closed" || h["verdict"] != "APPROVE" || h["score"] != "9" {
+		t.Fatalf("task after serve: state=%s verdict=%s score=%s", h["state"], h["verdict"], h["score"])
+	}
+	if !strings.HasPrefix(h["evidence"], "SCORE who=emma head="+serveHead) {
+		t.Fatalf("evidence %q is not the child's SCORE line", h["evidence"])
+	}
+	if n := client.ZCard(ctx, "friend:emma:starting").Val() + client.ZCard(ctx, "friend:emma:living").Val(); n != 0 {
+		t.Fatalf("%d leases left after the close", n)
+	}
+	kinds := strings.Join(logKinds(t, client), " ")
+	for _, want := range []string{"serve-up", "take", "start", "exit", "done", "serve-down"} {
+		if !strings.Contains(kinds, want) {
+			t.Fatalf("friend:emma:log lacks %s: %s", want, kinds)
+		}
+	}
+	if client.Exists(ctx, life.LockKey("emma")).Val() != 0 {
+		t.Fatalf("seat lock still held after release")
+	}
+	if client.Exists(ctx, "friend:emma:beat").Val() != 0 {
+		t.Fatalf("beat still present after release")
+	}
+}
+
+// TestServeDyingDispatchLeavesBlockedEvidence: a harness that exits 3 with no
+// typed line closes its task with `blocked: exit=3 ...` naming the last line
+// it wrote, so the task never sits in working without a live child.
+func TestServeDyingDispatchLeavesBlockedEvidence(t *testing.T) {
+	st, client := seedSeat(t, 2)
+	ctx := context.Background()
+	pushWork(t, st, "w1")
+	res, err := life.ServeOnce(ctx, st, serveConfig(t, "sess-1", 1, "die"))
+	if err != nil {
+		t.Fatalf("serve once: %v", err)
+	}
+	if res.Taken != 1 || res.Closed != 1 {
+		t.Fatalf("pass = %+v, want taken 1 closed 1", res)
+	}
+	h := client.HGetAll(ctx, task.Key("s1", "w1")).Val()
+	if h["state"] != "closed" {
+		t.Fatalf("task state %q, want closed", h["state"])
+	}
+	if !strings.HasPrefix(h["evidence"], "blocked: exit=3") || !strings.Contains(h["evidence"], "boom") {
+		t.Fatalf("evidence %q, want blocked: exit=3 ... boom", h["evidence"])
+	}
+	if client.SIsMember(ctx, "s:s1:idx:task:working", "w1").Val() {
+		t.Fatalf("w1 still in the working index")
+	}
+}
+
+// TestServeWidthRespected: three ready tasks and a width of 1 run one child at
+// a time; every pass holds at most one lease and all three close.
+func TestServeWidthRespected(t *testing.T) {
+	st, client := seedSeat(t, 4)
+	ctx := context.Background()
+	for _, id := range []string{"w1", "w2", "w3"} {
+		pushWork(t, st, id)
+	}
+	cfg := serveConfig(t, "sess-1", 1, "wait")
+	s, err := life.NewServer(st, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Pass(ctx)
+	if err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	if res.Taken != 1 || res.Live != 1 {
+		t.Fatalf("first pass = %+v, want taken 1 live 1 at width 1", res)
+	}
+	// A second pass while the child lives takes nothing more at width 1.
+	if res, err := s.Pass(ctx); err != nil || res.Taken != 0 || res.Live != 1 {
+		t.Fatalf("second pass = %+v, %v; want taken 0 live 1", res, err)
+	}
+	release(t, cfg)
+	closed := 0
+	deadline := time.Now().Add(15 * time.Second)
+	for closed < 3 {
+		if time.Now().After(deadline) {
+			t.Fatalf("closed %d of 3 before the deadline", closed)
+		}
+		time.Sleep(100 * time.Millisecond)
+		res, err := s.Pass(ctx)
+		if err != nil {
+			t.Fatalf("pass: %v", err)
+		}
+		closed += res.Closed
+		if res.Live > 1 {
+			t.Fatalf("live %d over width 1", res.Live)
+		}
+		if n := client.ZCard(ctx, "friend:emma:starting").Val() + client.ZCard(ctx, "friend:emma:living").Val(); n > 1 {
+			t.Fatalf("%d leases held at width 1", n)
+		}
+	}
+	for _, id := range []string{"w1", "w2", "w3"} {
+		h := client.HGetAll(ctx, task.Key("s1", id)).Val()
+		if h["state"] != "closed" || !strings.HasPrefix(h["evidence"], "DONE released "+id) {
+			t.Fatalf("%s: state=%s evidence=%q", id, h["state"], h["evidence"])
+		}
+	}
+	if err := s.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestServeBeatHasTTLAndSecondSeatRefuses: one beat leaves friend:emma (the
+// #2673 hash with width) and friend:emma:beat under a TTL and friend:emma:last
+// untimed; a second serve on the seat is refused with the holder named until
+// the first releases.
+func TestServeBeatHasTTLAndSecondSeatRefuses(t *testing.T) {
+	st, client := seedSeat(t, 2)
+	ctx := context.Background()
+	a, err := life.NewServer(st, serveConfig(t, "sess-a", 2, "done"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Beat(ctx); err != nil {
+		t.Fatalf("first beat: %v", err)
+	}
+	for _, key := range []string{"friend:emma", "friend:emma:beat", life.LockKey("emma")} {
+		ttl := client.PTTL(ctx, key).Val()
+		if ttl <= 0 || ttl > life.ServeLockTTL {
+			t.Fatalf("%s PTTL %v, want within (0, %v]", key, ttl, life.ServeLockTTL)
+		}
+	}
+	if ttl := client.PTTL(ctx, "friend:emma:last").Val(); ttl != -1 {
+		t.Fatalf("friend:emma:last PTTL %v, want -1 (untimed)", ttl)
+	}
+	row := client.HGetAll(ctx, "friend:emma").Val()
+	if row["width"] != "0" || row["cap"] != "2" || row["serve"] != "sess-a" || row["at"] == "" {
+		t.Fatalf("friend:emma = %v", row)
+	}
+	if _, err := time.Parse(time.RFC3339, row["at"]); err != nil {
+		t.Fatalf("at %q is not RFC 3339: %v", row["at"], err)
+	}
+	b, err := life.NewServer(st, serveConfig(t, "sess-b", 2, "done"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = b.Beat(ctx)
+	var held *life.SeatHeldError
+	if !errors.Is(err, life.ErrSeatHeld) || !errors.As(err, &held) || held.Holder != "sess-a" {
+		t.Fatalf("second seat: %v, want ErrSeatHeld by sess-a", err)
+	}
+	if err := b.Release(ctx); !errors.Is(err, life.ErrSeatHeld) {
+		t.Fatalf("release by the other session: %v, want ErrSeatHeld", err)
+	}
+	if err := a.Release(ctx); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if err := b.Beat(ctx); err != nil {
+		t.Fatalf("beat after release: %v", err)
+	}
+	if err := b.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestServeStopGivesWorkBack: stopping a serve with a live child kills the
+// child and gives its task back to the queue, so the next serve retakes it.
+func TestServeStopGivesWorkBack(t *testing.T) {
+	st, client := seedSeat(t, 2)
+	ctx := context.Background()
+	pushWork(t, st, "w1")
+	s, err := life.NewServer(st, serveConfig(t, "sess-1", 1, "wait"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Pass(ctx)
+	if err != nil || res.Live != 1 {
+		t.Fatalf("pass = %+v, %v; want one live child", res, err)
+	}
+	if state := client.HGet(ctx, task.Key("s1", "w1"), "state").Val(); state != "working" {
+		t.Fatalf("state %q while the child lives, want working (start ack)", state)
+	}
+	if err := s.Stop(ctx, "test"); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if state := client.HGet(ctx, task.Key("s1", "w1"), "state").Val(); state != "open" {
+		t.Fatalf("state %q after stop, want open", state)
+	}
+	if n := client.ZCard(ctx, "friend:emma:living").Val(); n != 0 {
+		t.Fatalf("%d living leases after stop", n)
+	}
+	if client.Exists(ctx, life.LockKey("emma")).Val() != 0 {
+		t.Fatalf("seat lock held after stop")
+	}
+	if !strings.Contains(strings.Join(logKinds(t, client), " "), "cancel") {
+		t.Fatalf("no cancel receipt on friend:emma:log")
+	}
+}
+
+func TestServeTypedLineAndVerdict(t *testing.T) {
+	out := "thinking\nSCORE who=emma head=abc score=8/10\nPASS\n"
+	if got := life.TypedLine(out); got != "SCORE who=emma head=abc score=8/10" {
+		t.Fatalf("TypedLine = %q", got)
+	}
+	if got := life.TypedLine("prose only\n"); got != "" {
+		t.Fatalf("TypedLine of prose = %q", got)
+	}
+	cases := map[string][2]string{
+		"SCORE who=e head=h score=9/10":                 {"APPROVE", "9"},
+		"SCORE who=e head=h score=7":                    {"APPROVE", "7"},
+		"DISPOSITION who=e head=h verdict=hold score=3": {"HOLD", "3"},
+		"HOLD who=e head=h":                             {"HOLD", "0"},
+		"DONE built it":                                 {"DONE", "0"},
+		"BLOCKED why=no-mirror":                         {"BLOCKED", "0"},
+	}
+	for line, want := range cases {
+		v, s := life.VerdictOf(line)
+		if v != want[0] || s != want[1] {
+			t.Errorf("VerdictOf(%q) = %s %s, want %s %s", line, v, s, want[0], want[1])
+		}
+	}
+}

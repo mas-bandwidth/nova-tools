@@ -38,6 +38,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/presence"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
 
@@ -77,7 +78,16 @@ usage:
         [--receipt] [--on-note-idempotent] [--batch-max <n>] [--git-timeout <seconds>]
   nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
         [--on-note-idempotent]
-  nova-wake awake --bus <dir> [--window <seconds>] [--max <n>]
+  nova-wake awake --bus <dir> [--window <seconds>] [--max <n>] [--store <host:port> [--user <acl user>]]
+  nova-wake beat --as <name> --store <host:port>
+        [--every <duration>] [--ttl <duration>]   default 30s and 90s
+        [--window <time>]   the cap's reset time, the window field of friend:<name>, only when passed; this beat does not read a clock to invent one
+        [--width <n>]       how many children are in use now, the width field of friend:<name>, only when passed; zero is a count
+        [--once]            write one beat and return, for a check or a test
+        [--user <name>]     the store's ACL user; default bench
+  nova-wake presence --store <host:port>
+        [--bus <dir> | --participants <file> | --friends <a,b,c>]   the roster; default the store's friends SET
+        [--user <name>]
   nova-wake version
   nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
         [--reports <dir> ...] [--bus <dir> --as <name> --receipt-max-words <n>]
@@ -88,6 +98,19 @@ serve is a PROCESS OUTSIDE any session that starts a turn only when a note has
 landed. There is no third shape: a harness /loop, a scheduler prompt or a
 heartbeat that runs a model on an interval is not a wake, and this tool offers
 no verb for it.
+
+beat and presence are the one heartbeat that is NOT a wake and spends nothing:
+beat is a process a friend's window starts once and forgets, writing the hash
+friend:<name> (at = <utc>) with a TTL every --every and reading nothing, and
+presence prints one line saying who is up and who is down. When the caller
+passes them, the beat also writes the window field (the cap's reset time, as
+given -- not a clock this beat reads) and the width field (how many children
+are in use); a missing flag writes no field and does not fail the beat, and
+presence prints whichever of the two a live beat holds. Presence is Redis
+only: the bus carries notes, never beats. No model runs on either side, and
+a window that exits, runs out of credit or is killed simply stops writing until
+the key lapses. The password is never a flag: it reaches beat as
+NOVA_REDIS_BENCH_PASSWORD, through nova-secrets exec --only and no other way.
 
 serve FETCHES every --interval, which is why --remote and --branch are its own
 flags and not --receipt's, and its --on-note command is started as
@@ -113,6 +136,8 @@ work be handed over right now: 0 is PRESENT or ANSWERED, 1 is SILENT, PINGED,
 UNAVAILABLE, UNRECONCILED or RESTING, and only 2 means the call could not run.
 It says NO to an assignment, never to the line, and it never writes a cause:
 it has measured a silence and nothing else.
+
+  cp -R cmd/nova-wake/testdata/example-reports ./reports
 
 example:
   nova-wake quickstart --state ./wake.state --reports ./reports
@@ -218,8 +243,30 @@ func Version() string { return buildVersion() }
 // an answer. A flag given on the command line wins, and nothing here is
 // printed: reading the file is not a change to report.
 type wakeConfig struct {
-	path   string
-	values map[string]string
+	path    string
+	values  map[string]string
+	entries []configEntry
+}
+
+// configEntry is one key= line from the config file with its 1-based line
+// number, so a refusal can name the line a person has to fix.
+type configEntry struct {
+	key  string
+	line int
+}
+
+// wakeConfigKeys is every key either verb reads from the file: the union of
+// awake's bus, window and max and watch's state, on-deadline, bus, as and
+// receipt-max-words. A key outside this set is a typo or another tool's, and
+// a verb that reads the config refuses it instead of running on defaults.
+var wakeConfigKeys = map[string]bool{
+	"bus":               true,
+	"window":            true,
+	"max":               true,
+	"state":             true,
+	"on-deadline":       true,
+	"as":                true,
+	"receipt-max-words": true,
 }
 
 // configPath is the file a caller may set bus=, window=, max=, state= and as= in.
@@ -238,7 +285,7 @@ func loadWakeConfig() *wakeConfig {
 	if err != nil {
 		return cfg
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	for i, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -247,9 +294,26 @@ func loadWakeConfig() *wakeConfig {
 		if !ok {
 			continue
 		}
-		cfg.values[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		key := strings.TrimSpace(k)
+		cfg.values[key] = strings.TrimSpace(v)
+		cfg.entries = append(cfg.entries, configEntry{key: key, line: i + 1})
 	}
 	return cfg
+}
+
+// refuseUnknownConfigKeys refuses, one line per key in file order, every key
+// the file names that this tool does not read. It is a verb's job and not
+// loadWakeConfig's because help and version read the same file and a person
+// whose config is wrong is exactly the person who needs to read the help.
+func refuseUnknownConfigKeys(cfg *wakeConfig, stderr io.Writer) int {
+	code := 0
+	for _, e := range cfg.entries {
+		if wakeConfigKeys[e.key] {
+			continue
+		}
+		code = refuse(stderr, "", fmt.Sprintf("%s line %d: unknown key %q", oneline.Escape(cfg.path), e.line, e.key))
+	}
+	return code
 }
 
 // get is the value for key, empty when the file did not name it.
@@ -290,7 +354,11 @@ func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 	case "serve":
 		return cmdServe(args[1:], stdout, stderr, clock)
 	case "awake":
-		return cmdAwake(cfg, args[1:], stdout, stderr, clock)
+		return cmdAwake(cfg, args[1:], stdout, stderr, clock, dialStore)
+	case "beat":
+		return cmdBeat(args[1:], stdout, stderr, clock, dialStore)
+	case "presence":
+		return cmdPresence(args[1:], stdout, stderr, clock, dialStore)
 	case "version", "--version":
 		// The first question after a table misbehaves is which build each line
 		// is running, and a tool that cannot answer it costs a person the
@@ -340,20 +408,38 @@ const DefaultAwakeMax = 50
 // awakeRefused is the AWAKE REFUSED shape: the things that are wrong about the
 // world rather than the invocation, exactly as refused is for watch.
 func awakeRefused(stderr io.Writer, what string) int {
-	fmt.Fprintf(stderr, "AWAKE REFUSED %s\n", oneline.Escape(what))
+	fmt.Fprintf(stderr, "AWAKE REFUSED %s; run: nova-wake help\n", oneline.Escape(what))
 	return 2
 }
 
 // cmdAwake is the presence reader over bus cursors: for every lane from-<name>/
 // in the bus clone, the newest commit touching from-<name>/CURSOR is that
 // friend's last beat (docs/SPEC-WORK.md, Presence, source bus-cursor).
-func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wake.Clock) int {
+//
+// With --store it first reads the live heartbeat `nova-wake beat` writes
+// (#2610's friend:<name>, a TTL'd key renewed every beat and never deleted):
+// a key that is there is "I am here now" and reads awake with source=presence;
+// a key that has aged out says nothing, so the lane falls through to the bus
+// cursor and BEAT exactly as before (#2200: a crashed line ages out with no
+// tombstone, and awake reads the same signal the beat writes). One MGet for
+// the whole roster; the git cursor-commit reading is unchanged.
+func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wake.Clock, open storeOpener) int {
+	if code := refuseUnknownConfigKeys(cfg, stderr); code != 0 {
+		return code
+	}
 	fs := flag.NewFlagSet("awake", flag.ContinueOnError)
 	busDir := fs.String("bus", cfg.get("bus"), "")
 	window := fs.Int("window", cfg.cfgInt("window", DefaultAwakeWindow), "")
 	maxN := fs.Int("max", cfg.cfgInt("max", DefaultAwakeMax), "")
+	store := fs.String("store", "", "")
+	user := fs.String("user", presence.DefaultUser, "")
 	if !parseFlags(fs, args, stderr) {
 		return 2
+	}
+	if strings.TrimSpace(*store) != "" {
+		if _, err := presence.Addr(*store); err != nil {
+			return awakeRefused(stderr, oneline.Err(err))
+		}
 	}
 	if *busDir == "" {
 		return awakeRefused(stderr, "no --bus named; refusing to guess; set bus= in "+cfg.path+" as a second remedy")
@@ -376,6 +462,23 @@ func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 		return awakeRefused(stderr, oneline.Err(err))
 	}
 
+	live := map[string]presence.Status{}
+	if strings.TrimSpace(*store) != "" && len(names) > 0 {
+		ctx := context.Background()
+		st, closeStore, err := open(ctx, *store, *user)
+		if err != nil {
+			return awakeRefused(stderr, oneline.Err(err))
+		}
+		sts, err := presence.Read(ctx, st, names, clock.Now())
+		_ = closeStore()
+		if err != nil {
+			return awakeRefused(stderr, oneline.Err(err))
+		}
+		for _, s := range sts {
+			live[s.Name] = s
+		}
+	}
+
 	now := clock.Now().Unix()
 	var awake, asleep, unknown int
 	total := len(names)
@@ -385,7 +488,22 @@ func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 		source := "bus-cursor"
 		ct, haveCursor := cursorTime(*busDir, name)
 		bt, until, haveBeat := beatTime(*busDir, name)
+		ps, havePresence := live[presence.Normalize(name)]
 		switch {
+		case havePresence && ps.State == presence.Up:
+			// The friend's own beat key is there, inside its TTL: the live
+			// "I am here now". An aged-out key is absent, not a tombstone, and
+			// falls through to the bus below.
+			source = "presence"
+			if ps.Dated {
+				age := ps.Age
+				if age < 0 {
+					age = 0
+				}
+				ageText = strconv.FormatInt(int64(age/time.Second), 10)
+			}
+			state = "awake"
+			awake++
 		case haveBeat && until > 0 && until > now:
 			// The beat carries a lease that has not run out: the line is between two waits
 			// (or mid-wait), its cursor and beat stamp may both be old, but its manager
@@ -438,12 +556,32 @@ func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 // a directory a bus rather than a directory. The repository must be dir's OWN:
 // `git -C dir rev-parse` ascends to a parent repository, so a plain directory
 // under some other checkout would pass a discovery-only test.
+//
+// THE DIRECTORY ITSELF MUST BE THE WORK TREE ROOT, not merely live under some
+// unrelated repository. `git -C dir rev-parse --git-dir` walks UP to the nearest
+// ancestor with a .git, so a plain directory inside any checkout answered yes: on
+// a machine whose temp directory lives under a repo, `awake --bus <empty dir>`
+// treated the empty directory as a bus. A bus is its own repository.
 func isGitRepo(dir string) bool {
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		return false
 	}
-	cmd := exec.Command("git", "-C", dir, "rev-parse", "--git-dir")
-	return cmd.Run() == nil
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return false
+	}
+	top := strings.TrimSpace(string(out))
+	if resolved, err := filepath.EvalSymlinks(top); err == nil {
+		top = resolved
+	}
+	return top == abs
 }
 
 // laneNames is every from-<name>/ directory in the bus clone, sorted by name.
@@ -572,6 +710,9 @@ type polled struct {
 }
 
 func cmdWatch(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wake.Clock, quickstart bool) int {
+	if code := refuseUnknownConfigKeys(cfg, stderr); code != 0 {
+		return code
+	}
 	verb := "watch"
 	if quickstart {
 		verb = "quickstart"

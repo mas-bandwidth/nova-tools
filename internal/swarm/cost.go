@@ -20,7 +20,13 @@ import (
 //
 // A ZERO IS A MEASUREMENT AND A DASH IS AN ABSENCE. COST OK carries `dashes=` so a total
 // with an absence in it is never read as complete.
-func Cost(p *Pool, since string, max int, stdout, stderr io.Writer) int {
+func Cost(p *Pool, since string, max int, by string, summaryOnly bool, stdout, stderr io.Writer) int {
+	switch by {
+	case "", "model", "day", "repo":
+	default:
+		fmt.Fprintf(stderr, "COST REFUSED: --by wants model, day or repo, got %s\n", oneline.Field(by))
+		return 2
+	}
 	rows, err := p.ReadUsage()
 	if err != nil {
 		fmt.Fprintf(stderr, "COST REFUSED: the usage directory could not be read: %s\n", oneline.Escape(redactedReason(err)))
@@ -30,6 +36,7 @@ func Cost(p *Pool, since string, max int, stdout, stderr io.Writer) int {
 	list := bounded.Capped(stdout, max, "COST", "task", "nova-swarm cost --pool "+p.Dir+" --max 0")
 	totals := map[string]int{}
 	dashes := map[string]int{}
+	groups := map[string]*costGroup{}
 	knownUSD := 0.0
 	knownUSDCount := 0
 	usdMissing := 0
@@ -59,6 +66,12 @@ func Cost(p *Pool, since string, max int, stdout, stderr io.Writer) int {
 		} else {
 			usdMissing++
 		}
+		if by != "" {
+			addCostGroup(groups, row, by)
+		}
+		if summaryOnly {
+			continue
+		}
 		list.Line(fmt.Sprintf("COST TASK id=%s attempt=%s end=%s in=%s out=%s cache_write=%s cache_read=%s reasoning=%s usd=%s model=%s repo=%s",
 			oneline.Field(row["job"]), oneline.Field(dashOr(row["attempt"])), oneline.Field(dashOr(row["end"])),
 			oneline.Field(dashOr(row["tokens_in"])), oneline.Field(dashOr(row["tokens_out"])),
@@ -67,6 +80,9 @@ func Cost(p *Pool, since string, max int, stdout, stderr io.Writer) int {
 			oneline.Field(dashOr(row["model"])), oneline.Field(dashOr(row["repo"]))))
 	}
 	list.More()
+	if by != "" {
+		printCostGroups(stdout, by, groups)
+	}
 	// A zero is a measured value, while an all-unknown pool has no USD total. In a
 	// mixed pool `usd` remains the known subtotal for compatibility; `usd_missing`
 	// makes that partial coverage explicit and `known_usd` gives machine readers a
@@ -168,3 +184,79 @@ func RateLimited(log []byte) bool {
 }
 
 func isDigit(b byte) bool { return b >= '0' && b <= '9' }
+
+// costGroup is one `--by` bucket: the pooled sums of every task that shares its key.
+type costGroup struct {
+	tasks      int
+	sums       map[string]int
+	knownUSD   float64
+	usdMissing bool
+}
+
+// costGroupKey is the value a row contributes to the group: the model, the repo, or the
+// calendar day of the row's start. A field the row did not report is the dash, never an
+// empty key that would silently merge two absences.
+func costGroupKey(row UsageRow, by string) string {
+	switch by {
+	case "model":
+		return dashOr(row["model"])
+	case "repo":
+		return dashOr(row["repo"])
+	case "day":
+		started := strings.TrimSpace(row["started"])
+		if len(started) >= 10 {
+			return started[:10]
+		}
+		return dashOr(started)
+	}
+	return ""
+}
+
+// addCostGroup folds one row into its group. A token column the row did not report is an
+// absence and contributes nothing to the sum; a USD of `-` marks the whole group unknown.
+func addCostGroup(groups map[string]*costGroup, row UsageRow, by string) {
+	key := costGroupKey(row, by)
+	g := groups[key]
+	if g == nil {
+		g = &costGroup{sums: map[string]int{}}
+		groups[key] = g
+	}
+	g.tasks++
+	for _, c := range TokenColumns {
+		if n, ok := row.Int(c); ok {
+			g.sums[c] += n
+		}
+	}
+	if f, err := strconv.ParseFloat(strings.TrimSpace(row["usd"]), 64); err == nil {
+		g.knownUSD += f
+	} else {
+		g.usdMissing = true
+	}
+}
+
+// printCostGroups writes one `COST BY` line per group, most cache reads first, and the
+// value breaks ties so two runs over one pool print the same page.
+func printCostGroups(stdout io.Writer, by string, groups map[string]*costGroup) {
+	keys := make([]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		ci, cj := groups[keys[i]].sums["cache_read"], groups[keys[j]].sums["cache_read"]
+		if ci != cj {
+			return ci > cj
+		}
+		return keys[i] < keys[j]
+	})
+	for _, key := range keys {
+		g := groups[key]
+		usd := "-"
+		if !g.usdMissing {
+			usd = fmt.Sprintf("%.4f", g.knownUSD)
+		}
+		fmt.Fprintf(stdout, "COST BY %s=%s tasks=%d in=%d out=%d cache_write=%d cache_read=%d reasoning=%d usd=%s\n",
+			oneline.Field(by), oneline.Field(key),
+			g.tasks, g.sums["tokens_in"], g.sums["tokens_out"], g.sums["cache_write"],
+			g.sums["cache_read"], g.sums["reasoning"], usd)
+	}
+}

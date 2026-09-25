@@ -1,5 +1,5 @@
 // nova-ci runs the checks this repository's CI path makes on its own output.
-// Its first verb, slowtests, reads the newline-delimited `go test -json`
+// Its one verb, slowtests, reads the newline-delimited `go test -json`
 // TestEvents on stdin, sums the package-level elapsed time for each package,
 // and refuses (exit 2) every package whose total is over the budget, one line
 // each. It exists because a slow test must surface the moment it happens:
@@ -30,6 +30,10 @@ usage:
                       print one CI-SLOW line per package whose total elapsed
                       time is over --budget (default 60); exit 2 when any
                       package is over, 0 when none is.
+  nova-ci new-rule [--root <checkout>] <rule-name>
+                      scaffold a new class rule skeleton: class test, fixture, and makefile
+  nova-ci new-verb [--root <checkout>] <tool> <verb>
+                      scaffold a new CLI verb skeleton: command, test, fixture, and makefile
 
 exit codes: 0 inside budget, 2 a package is over budget or the invocation
             could not run (bad flag, unreadable stdin).
@@ -54,13 +58,17 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; slowtests is the verb this tool exists for")
+		return refuse(stderr, "", "no verb given; the verb is slowtests (a package over its time budget)")
 	}
 	switch args[0] {
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "slowtests":
 		return cmdSlowtests(args[1:], stdin, stdout, stderr)
+	case "new-rule":
+		return cmdNewRule(args[1:], stdout, stderr)
+	case "new-verb":
+		return cmdNewVerb(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

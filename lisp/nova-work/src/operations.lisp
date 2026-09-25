@@ -872,7 +872,17 @@ scoped exception is retained and the packet dispatches."
   "Read one operation's own record: no journal replay, no whole-queue drain and
 no wait on the I/O the operation is doing, so status answers while the mutation
 loop is busy (SPEC-WORK.md:2731, :2756)."
-  (let ((op (session-operation session id)))
+  (let* ((op (session-operation session id))
+         (registry (and op (getf (operation-spec op) :registry)))
+         (settled (and registry
+                       (not (member (operation-state op) '(:done :raced :failed)))
+                       (terminal-operation-state-p
+                        (registry-operation-state registry id)))))
+    ;; A clip's transport settles on its own worker; status reads the
+    ;; scheduler's record of it without waiting (SPEC-WORK.md:2744-2750).
+    (when settled
+      (clip-operation-observe op (registry-operation-state registry id)
+                              (registry-operation-result registry id)))
     (list :id id
           :op (and op (operation-op op))
           :state (if op (operation-state op) :none)
@@ -929,8 +939,11 @@ claims an uncertain external effect was cancelled (SPEC-WORK.md:2734-2738)."
 ;;; A clip names a local event boundary, fetches the upstream tip, refuses
 ;;; `CLIP RACED` when the tip is not the base, validates the resident O, writes
 ;;; one deterministic snapshot and commits and pushes it. The remote is a
-;;; protocol (a seam): the real implementation is the owned Git branch; the
-;;; in-process implementation below is what the kernel's replay drives.
+;;; protocol (a seam): the real implementation is a git repository
+;;; (GIT-CLIP-REMOTE, src/clip-git.lisp); the in-process implementation below
+;;; is what the kernel's replay drives. Either way the push runs on the
+;;; transport's own worker, launched by CLIP-REQUEST through the operation
+;;; scheduler, and is learned only through OPERATION-WAIT.
 ;;; ------------------------------------------------------------------
 
 (defclass in-process-clip-remote ()
@@ -988,16 +1001,27 @@ the same bytes (SPEC-WORK.md:2749-2754, :3980)."
 (defun clip-request (session &key (id "op-clip-1") (request "req-clip-1")
                                 (staged-bytes 0) remote base attempts
                                 (events (work-session-events session))
-                                (revision (length events)) path)
+                                (revision (length events)) path
+                                registry (author "-") stamp)
   "`clip` prints OPERATION OK id=<id> op=clip state=<queued|running> at once and
 exits; the transport continues. The boundary, revision and snapshot are pinned
 now, so a write admitted while the clip runs is pending for the next one. A full
-queue refuses rather than growing unbounded (SPEC-WORK.md:2740-2745, :2753)."
+queue refuses rather than growing unbounded (SPEC-WORK.md:2740-2745, :2753).
+
+\"The clip's transport is that shape and is not a second synchronous one\"
+(:2744-2750): the operation is accepted on the operation scheduler's REGISTRY
+-- durable before its id is printed -- and the transport (CLIP-LAUNCH-TRANSPORT,
+src/clip-git.lisp) is started on a worker thread of its own before this
+returns. Nothing here pushes; the push, and the CLIP OK / CLIP RACED / CLIP FAIL
+line it settles, happen on that worker, and the only way a caller learns of
+them is OPERATION-WAIT. With no REGISTRY the in-process implementation of the
+durable-accept seam is used, over the same scheduler."
   (let ((limits (work-session-limits session)))
     (when (>= (length (work-session-operations session)) (getf limits :queue))
       (return-from clip-request
         (values session nil "OPERATION FAIL: queue full")))
-    (let* ((base (or base (work-session-base session)
+    (let* ((registry (or registry (make-operation-registry)))
+           (base (or base (work-session-base session)
                      (and remote (clip-remote-tip remote))))
            (op (make-operation
                 :id id :op :clip :request request :state :queued
@@ -1008,69 +1032,102 @@ queue refuses rather than growing unbounded (SPEC-WORK.md:2740-2745, :2753)."
                             :commit (clip-commit events revision)
                             :attempts (or attempts 25)
                             :git-timeout (or (work-session-git-timeout session) 30)
-                            :path (or path (work-session-path session))))))
+                            :path (or path (work-session-path session))
+                            :registry registry))))
+      ;; Durable before it is printed (SPEC-WORK.md:2721-2730), then launched.
+      (operation-accept registry :id id :kind "clip" :request request
+                                 :author author :stamp stamp)
+      (clip-launch-transport registry op :stamp stamp)
       (values (session-add-operation session op) op
               (format nil "OPERATION OK id=~A op=clip state=queued" id)))))
 
-(defun operation-wait (session id &key race)
-  "`operation wait --id` is a bounded block over the operation's own result.
-When the transport settles it prints the CLIP OK line carrying operation=<id>
-and its pushed=; a base predicate that refused prints CLIP RACED. The wait is
-idempotent: a settled operation answers its recorded line
-(SPEC-WORK.md:2740-2745, :5930-5934)."
+(defun clip-git-timeout-duration (timeout)
+  "A --git-timeout as the duration a wait takes: a duration string as given, a
+bare number as that many seconds."
+  (cond ((stringp timeout) timeout)
+        ((realp timeout) (format nil "~Ds" (round timeout)))
+        (t "30s")))
+
+(defun clip-operation-observe (op state line)
+  "Record on the session's operation what the scheduler settled: a terminal
+STATE installs its LINE as the operation's result, so a later wait answers the
+recorded line. A wait that timed out changes nothing but the state -- the
+transport is still running (SPEC-WORK.md:2738-2740)."
+  (cond
+    ((terminal-operation-state-p state)
+     (setf (operation-state op)
+           (if (and (eq state :failed) (stringp line)
+                    (eql 0 (search "CLIP RACED" line)))
+               :raced
+               state)
+           (operation-result op) line))
+    ((eq state :timeout)
+     (setf (operation-state op) :running)))
+  line)
+
+(defun operation-wait (session id &key timeout)
+  "`operation wait --id` is a bounded block over the operation's own result, and
+it is the ONLY way the clip's outcome is learned (SPEC-WORK.md:2744-2750). It
+blocks on the scheduler's event cursor (DURABLE-OPERATION-WAIT) until the
+transport running on its own worker settles the operation, or until TIMEOUT
+(default the operation's --git-timeout) passes, which answers the NOTE line and
+leaves the transport running. It never pushes. When the transport settles it
+prints the CLIP OK line carrying operation=<id> and its pushed=; a base
+predicate that refused prints CLIP RACED. The wait is idempotent: a settled
+operation answers its recorded line (SPEC-WORK.md:2740-2745, :5930-5934)."
   (let ((op (session-operation session id)))
     (cond
       ((null op)
        (values session
                (format nil "OPERATION FAIL id=~A op=- state=-: no such operation" id)))
-      ((eq :done (operation-state op))
+      ((and (member (operation-state op) '(:done :raced :failed))
+            (operation-result op))
        (values session (operation-result op)))
       (t
        (let* ((spec (operation-spec op))
-              (remote (getf spec :remote))
-              (base (getf spec :base))
-              (tip (and remote (clip-remote-tip remote)))
-              (path (getf spec :path))
-              (boundary (getf spec :boundary))
-              (events (getf spec :events)))
-         (cond
-           ((or race (and remote (not (equal tip base))))
-            (setf (operation-state op) :raced
-                  (operation-result op) nil)
-            (values session
-                    (format nil "CLIP RACED session=~A operation=~A boundary=~A generation=1 expected=~A found=~A"
-                            path id boundary (clip-sha12 base) (clip-sha12 tip))))
-           ((and events (null boundary))
-            (setf (operation-state op) :failed)
-            (values session
-                    (format nil "CLIP FAIL session=~A operation=~A boundary=- events=~D base=~A pushed=- attempts=0: resident O invalid"
-                            path id (length events) base)))
-           (t
-            (let ((commit (getf spec :commit))
-                  (pushed (getf spec :revision)))
-              (unless (and remote (clip-remote-push remote base commit))
-                (setf (operation-state op) :failed)
-                (return-from operation-wait
-                  (values session
-                          (format nil "CLIP FAIL session=~A operation=~A boundary=~A events=~D base=~A pushed=- attempts=1: push refused"
-                                  path id boundary (length events) base))))
-              (setf (operation-state op) :done
-                    (operation-result op)
-                    (format nil "CLIP OK session=~A operation=~A boundary=~A events=~D base=~A commit=~A pushed=~D attempts=1 emitted=0"
-                            path id boundary (length events) base commit pushed))
-              (values session (operation-result op))))))))))
+              (registry (getf spec :registry)))
+         (if (null registry)
+             (values session
+                     (format nil "OPERATION FAIL id=~A op=~(~A~) state=~(~A~): no scheduler holds this operation"
+                             id (operation-op op) (operation-state op)))
+             (multiple-value-bind (rows state cursor note)
+                 (durable-operation-wait
+                  registry id
+                  :timeout (clip-git-timeout-duration
+                            (or timeout (getf spec :git-timeout)))
+                  :after 0)
+               (declare (ignore rows cursor))
+               (values session
+                       (clip-operation-observe
+                        op state
+                        (if (terminal-operation-state-p state)
+                            (registry-operation-result registry id)
+                            note))))))))))
 
-(defun session-stop (session &key race)
+(defun session-stop (session &key git-timeout)
   "`session stop` is the one caller that waits for its own clip, by the same
-`operation wait` inside its --git-timeout; it prints the CLIP OK first and then
-the SESSION OK (SPEC-WORK.md:2742-2745, :5480-5490)."
+`operation wait` inside its --git-timeout (SESSION-STOP-WAIT-FOR-CLIP,
+src/clip-git.lisp); it prints the CLIP OK first and then the SESSION OK
+(SPEC-WORK.md:2742-2750, :5480-5490, :6091-6095). A git timeout prints the
+wait's NOTE line in the clip's place and leaves the transport running: there is
+no second synchronous clip path for it to fall back on."
   (let* ((clip (find :clip (work-session-operations session) :key #'operation-op))
          (clip-line
            (when clip
-             (multiple-value-bind (settled line)
-                 (operation-wait session (operation-id clip) :race race)
-               (declare (ignore settled))
-               line)))
+             (let ((registry (getf (operation-spec clip) :registry))
+                   (timeout (clip-git-timeout-duration
+                             (or git-timeout (work-session-git-timeout session)))))
+               (cond
+                 ((and (member (operation-state clip) '(:done :raced :failed))
+                       (operation-result clip))
+                  (operation-result clip))
+                 ((null registry)
+                  (nth-value 1 (operation-wait session (operation-id clip))))
+                 (t
+                  (multiple-value-bind (line state)
+                      (session-stop-wait-for-clip registry (operation-id clip)
+                                                  :git-timeout timeout)
+                    (clip-operation-observe clip state line)))))))
          (session-line
            (format nil "SESSION OK session=~A owner=rowan generation=1 state=live events=~D pending=0 pushed=~D"
                    (work-session-path session)
@@ -1227,14 +1284,12 @@ as an unsupported input."
     ((and (>= (length text) 2)
           (char= (char text 0) #\[)
           (char= (char text (1- (length text))) #\]))
-     (let ((inner (string-trim '(#\Space #\Tab #\Newline #\Return)
-                               (subseq text 1 (1- (length text))))))
-       (if (string= inner "")
+     (let ((body (wire-trim (subseq text 1 (1- (length text))))))
+       (if (string= body "")
            '()
            (mapcar (lambda (element)
-                     (wire-decode-value
-                      (string-trim '(#\Space #\Tab #\Newline #\Return) element)))
-                   (wire-split-top-level inner #\,)))))
+                     (wire-decode-value (wire-trim element)))
+                   (wire-split-top-level body #\,)))))
     ((and (>= (length text) 2)
           (char= (char text 0) #\")
           (char= (char text (1- (length text))) #\"))
@@ -1724,147 +1779,23 @@ holder-only release: the coordinator never signs for a holder
   (equal actor holder))
 
 ;;; ------------------------------------------------------------------
-;;; `session replay` bundle intake (SPEC-WORK.md:2214-2218, :2240-2251)
+;;; `session replay` bundle intake --- MOVED to src/transport.lisp
 ;;; ------------------------------------------------------------------
 ;;;
-;;; A request bundle is the bus's durable unit: "a request bundle is a file a
-;;; note carries, and `session replay --from` is its intake, so no second
-;;; transport is invented here". The replay applies the bundle one request at a
-;;; time, validated fresh against the live O. `--as` names the coordinator
-;;; applying the bundle and is recorded in `:generation-owner`; the event's
-;;; `:by` stays the request's own author, because a replay moves a request and
-;;; never re-authors it. A request whose `--expect` is behind its node's own
-;;; accepted event refuses `stale` naming the current revision, but the bundle's
-;;; own earlier requests are exactly what its later ones saw and never stale
-;;; them. A retry of a recorded request is answered by the journal's dedup
-;;; predicate with the recorded disposition and applies no second event.
-
-(defstruct (request-bundle
-             (:constructor make-request-bundle (base clipped-revision requests)))
-  "The parsed intake of `session replay --from`: the commit the bundle was
-written at, the clipped revision its requests expect, and the ordered requests."
-  base clipped-revision requests)
-
-(defun read-request-bundle (text)
-  "Read one restricted s-expression request bundle. The bundle is
-`(:request-bundle :base <sha> :clipped-revision <n> :requests (<request> ...))`
-where each request is a plist carrying `:verb`, `:node`, `:by`, `:request`,
-`:expect` and the verb's own fields. A malformed or absent boundary refuses
-rather than being guessed."
-  (let ((form (read-restricted text)))
-    (unless (and (consp form) (eq (first form) :request-bundle))
-      (error 'unsupported-input :what "not a request bundle"))
-    (let ((clipped (getf (rest form) :clipped-revision +absent+))
-          (requests (getf (rest form) :requests +absent+)))
-      (unless (and (integerp clipped) (not (minusp clipped)))
-        (error 'unsupported-input
-               :what "request bundle needs a nonnegative :clipped-revision"))
-      (unless (listp requests)
-        (error 'unsupported-input :what "request bundle needs a :requests list"))
-      (dolist (request requests)
-        (unless (and (consp request) (keywordp (first request)))
-          (error 'unsupported-input :what "a bundle request is not a plist"))
-        (unless (getf request :request)
-          (error 'unsupported-input :what "a bundle request carries no :request id")))
-      (make-request-bundle (getf (rest form) :base +absent+) clipped requests))))
-
-(defun %bundle-request (request coordinator &key now)
-  "The kernel request a bundle entry becomes. `--expect` is the replay's own
-precondition and is not a kernel field, so it is removed; the replayer replaces
-`:generation-owner`; the bundle's `:by` is left alone."
-  (let ((req (copy-list request)))
-    (remf req :expect)
-    (setf (getf req :generation-owner) coordinator)
-    (let ((stamp (getf req :stamp)))
-      (cond
-        (stamp (unless (getf req :clock) (setf (getf req :clock) :given)))
-        (now (setf (getf req :stamp) now (getf req :clock) :given))
-        (t (setf (getf req :stamp) "1970-01-01T00:00:00Z"
-                 (getf req :clock) :tool))))
-    req))
-
-(defun %bundle-apply (session request coordinator &key now)
-  "Apply one bundle request through the session's single writer and answer a
-verdict line for it."
-  (multiple-value-bind (okp line code)
-      (wire-session-mutate session (%bundle-request request coordinator :now now))
-    (if okp
-        (values t (format nil "REPLAY OK request=~A node=~A"
-                          (getf request :request) (getf request :node))
-                0)
-        (values nil (format nil "REPLAY FAIL request=~A node=~A: ~A"
-                            (getf request :request) (getf request :node)
-                            (or (and (stringp line) line)
-                                (format nil "exit ~A" code)))
-                1))))
-
-(defun %replay-verdict (session request coordinator baseline &key now)
-  "Answer (values OK-P LINE EXIT) for one bundle request. A recorded id is
-answered by the journal's dedup predicate; a fresh request whose node has
-accepted an event of its own after the revision `--expect` names is refused
-`stale`; otherwise it is applied."
-  (let* ((kernel (wire-session-kernel session))
-         (node (getf request :node))
-         (rid (getf request :request))
-         (expect (getf request :expect)))
-    (multiple-value-bind (found recorded-digest recorded-line)
-        (journal-lookup (kernel-journal kernel) rid)
-      (declare (ignore recorded-digest recorded-line))
-      (cond
-        ((eq found :unavailable)
-         (values nil (format nil "REPLAY FAIL request=~A node=~A: dedup unavailable" rid node) 1))
-        (found
-         ;; The id and body are already recorded: the kernel's dedup predicate
-         ;; returns the recorded disposition and applies no second event.
-         (%bundle-apply session request coordinator :now now))
-        ((null expect)
-         (values nil (format nil "REPLAY FAIL request=~A node=~A: --expect is required on a bundle request"
-                             rid node)
-                 1))
-        ((not (and (integerp expect) (not (minusp expect))))
-         (values nil (format nil "REPLAY FAIL request=~A node=~A: --expect must be a nonnegative revision"
-                             rid node)
-                 1))
-        ((let ((latest (gethash node baseline)))
-           (and latest (> latest expect)))
-         (values nil (format nil "REPLAY FAIL request=~A node=~A expect=~D current=~D: stale"
-                             rid node expect (gethash node baseline))
-                 1))
-        (t
-         (%bundle-apply session request coordinator :now now))))))
-
-(defun session-replay (session bundle &key as max now)
-  "Apply BUNDLE one request at a time through the session's kernel, bounded by
-MAX (NIL or 0 means every request; a negative bound refuses). `--as` names the
-coordinator applying the bundle and is recorded in `:generation-owner`, while
-the event's `:by` stays the request's own author. Answer (values OK-P LINES
-EXIT): one verdict line per request, exit 0 only when every one applied."
-  (unless (and (stringp as) (plusp (length as)))
-    (error 'unsupported-input :what "session replay needs --as <name>"))
-  (when (and max (minusp max))
-    (error 'unsupported-input :what "session replay: a negative --max is refused"))
-  (let* ((kernel (wire-session-kernel session))
-         (baseline (make-hash-table :test #'equal))
-         (requests (request-bundle-requests bundle))
-         (selected (if (or (null max) (zerop max))
-                       requests
-                       (subseq requests 0 (min max (length requests)))))
-         (lines '())
-         (exit 0))
-    ;; The per-node accepted-revision baseline is read once, before the replay,
-    ;; so a bundle's own earlier requests never stale its later ones.
-    (dolist (record (state-history (kernel-state kernel)))
-      (dolist (form (getf record :events))
-        (let ((node (getf form :node))
-              (rev (getf form :rev)))
-          (when (and (stringp node) (integerp rev)
-                     (or (null (gethash node baseline))
-                         (> rev (gethash node baseline))))
-            (setf (gethash node baseline) rev)))))
-    (dolist (request selected)
-      (multiple-value-bind (okp line code)
-          (%replay-verdict session request as baseline :now now)
-        (declare (ignore okp))
-        (push line lines)
-        (when (plusp code) (setf exit 1))))
-    (values (zerop exit) (nreverse lines) exit)))
+;;; This file held a SECOND, older copy of the whole bundle-intake block:
+;;; the `request-bundle` struct and `read-request-bundle`, `%bundle-request`,
+;;; `%bundle-apply`, `%replay-verdict` and `session-replay` (nova-tools #1612).
+;;; `src/transport.lisp` defines all six and loads AFTER this file
+;;; (`nova-work.asd`), so transport's definitions are the ones that have been
+;;; running and this copy was dead -- a repair made here would have compiled,
+;;; loaded, passed the suite and changed nothing.
+;;;
+;;; The two had DIVERGED, which is what made it more than untidiness: this
+;;; copy's `make-request-bundle` took `(base clipped-revision requests)`
+;;; POSITIONALLY and transport's takes keywords, so SBCL reported
+;;; "redefinition of MAKE-REQUEST-BUNDLE clobbers structure constructor" -- a
+;;; full WARNING, which made `(asdf:load-system :nova-work)` FAIL outright. The
+;;; only reason the system loaded at all is that run-tests.sh muffled every
+;;; warning; see the runner's own note.
+;;;
+;;; Nothing is kept here: the live text is src/transport.lisp:1125 onward.

@@ -74,13 +74,12 @@
 ;;;; Durable Filesystem Journal and Replay Acceptance
 ;;;; ------------------------------------------------------------------
 
-(defvar *journal-test-counter* 0)
-
 (defun test-journal-path (name)
-  (let* ((base (uiop:default-temporary-directory))
-         (dir (merge-pathnames "nova-work-test-journals/" base)))
-    (ensure-directories-exist dir)
-    (format nil "~A~A-~D-~D.journal" (namestring dir) name (get-universal-time) (incf *journal-test-counter*))))
+  "A journal path under this run's own root (nova-work.tests harness). The old
+name -- `<tmpdir>/nova-work-test-journals/<name>-<universal-time>-<counter>` --
+was the same in two suites that started inside one second, and the second
+process found the journal's lock held by the first (nova-tools#1699)."
+  (test-temp-file name "journal"))
 
 (defun file-byte-count (path)
   (with-open-file (in path :direction :input :element-type '(unsigned-byte 8))
@@ -672,3 +671,90 @@
       (check-equal unwindowed early "the window did not narrow the named view")
       (ok (find "r/f/t" (getf early :rows) :key (lambda (r) (getf r :node)) :test #'equal)
           "the historical row is still in the table"))))
+
+;; E07-F04 (ROADMAP.md:757) — Include ordinary delivered capabilities beside
+;; versioning rows. SPEC-WORK.md:7782: "For Schema, ordinary scalar and
+;; container support must be visible beside version evolution, refusal behavior
+;; and interoperability." The imported baseline once held only the audit-family
+;; (versioning) rows; the survey appended the ordinary capability rows and
+;; preserved the versioning contract's individual rows for nested work
+;; (SPEC-WORK.md:7829-7830). The renderer must place an ordinary delivered
+;; capability row beside a versioning row in the one table, in their declared
+;; order, dropping or segregating neither class.
+(deftest "TestE07F04IncludeOrdinaryDeliveredCapabilitiesBeside" "docs/SPEC-WORK.md:7782,7829-7830"
+    "expected=ordinary-capability-rows-and-versioning-rows-rendered-interleaved;none-dropped;order-preserved"
+  (let* ((rows (list (make-roadmap-row :id "schema/fixed-tables/versioning/cpp"
+                                       :axis :versioning :kind :required
+                                       :state :open :evidence :full :status :current)
+                     (make-roadmap-row :id "schema/scalar/int-key"
+                                       :axis :scalar :kind :required
+                                       :state :open :evidence :full :status :current)
+                     (make-roadmap-row :id "schema/fixed-tables/versioning/struct"
+                                       :axis :versioning :kind :required
+                                       :state :open :evidence :full :status :current)
+                     (make-roadmap-row :id "schema/container/vector"
+                                       :axis :container :kind :required
+                                       :state :open :evidence :full :status :current)))
+         (rm (make-roadmap :id "schema" :axes '(:versioning :scalar :container)
+                           :rows rows :shared-prerequisites '()
+                           :discovered '() :closed '()))
+         (text (roadmap-render rm :chat)))
+    ;; Every row — versioning and ordinary delivered capability alike — is present.
+    (ok (search "schema/fixed-tables/versioning/cpp" text)
+        "the cpp versioning row is missing from the render")
+    (ok (search "schema/fixed-tables/versioning/struct" text)
+        "the struct versioning row is missing from the render")
+    (ok (search "schema/scalar/int-key" text)
+        "the ordinary scalar capability row is missing from the render")
+    (ok (search "schema/container/vector" text)
+        "the ordinary container capability row is missing from the render")
+    ;; Rendered beside one another in their declared interleaved order: a
+    ;; versioning row, an ordinary row, a versioning row, an ordinary row.
+    (flet ((line (id) (search id text)))
+      (ok (< (line "schema/fixed-tables/versioning/cpp")
+             (line "schema/scalar/int-key"))
+          "an ordinary capability row is not rendered beside the first versioning row")
+      (ok (< (line "schema/scalar/int-key")
+             (line "schema/fixed-tables/versioning/struct"))
+          "the ordinary capability row is not rendered between the versioning rows")
+      (ok (< (line "schema/fixed-tables/versioning/struct")
+             (line "schema/container/vector"))
+          "the second ordinary capability row is not rendered beside the second versioning row"))))
+
+;;; E01-F03-01 "Model one stable ID per node and one owning containment
+;;; parent" (docs/roadmaps/nova-work.sexp). The two contract lines are
+;;; docs/SPEC-WORK.md:864 (`:id` "stable, never reused, never carries display
+;;; text") and docs/SPEC-WORK.md:877-878 (`:children` is canonical containment:
+;;; "every node has at most one containment parent, the containment edges form
+;;; a forest"). This asserts the positive model the three refusal rules (rules
+;;; 1-3) only guard: a valid seed holds each id once and every node is owned by
+;;; exactly one containment parent.
+(deftest "TestE01F03ModelOneStableIDPer" "docs/SPEC-WORK.md:864,877-878"
+    "expected=one-stable-id-per-node;one-owning-containment-parent;forest"
+  (let ((state (make-seed-state *seed*)))
+    ;; One stable ID per node: the id set holds each id exactly once, and the
+    ;; five seeded ids are the five distinct nodes.
+    (let ((ids (state-node-ids state)))
+      (check-equal 5 (length ids) "five seeded nodes")
+      (check-equal (length ids) (length (remove-duplicates ids :test #'equal))
+                   "each node carries exactly one stable id"))
+    ;; One owning containment parent: a node names zero (root) or one parent,
+    ;; and a parent that is named must exist and own (list) that node.
+    (dolist (id (state-node-ids state))
+      (let ((parent (node-parent state id)))
+        (ok (or (null parent) (member parent (state-node-ids state) :test #'equal))
+            "~A names one existing containment parent or none" id)
+        (when parent
+          (ok (member id (node-children state parent) :test #'equal)
+              "~A is owned by its one containment parent ~A" id parent))))
+    ;; The forest: across every parent's :children list, each child is owned
+    ;; once — no node appears under a second containment parent.
+    (let ((owned '()))
+      (dolist (id (state-node-ids state))
+        (dolist (child (node-children state id))
+          (ok (not (member child owned :test #'equal))
+              "~A is not owned by a second containment parent" child)
+          (push child owned)))
+      (check-equal (length owned)
+                   (length (remove-duplicates owned :test #'equal))
+                   "each owned node has exactly one owning containment parent"))))

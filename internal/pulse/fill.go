@@ -1,8 +1,51 @@
 package pulse
 
 // Fill is fill-loop.sh's tick body as one verb (#1142): for each bench, read the bench's
-// capacity, cap it at FillCap, pop that many card-*.md from --ready in filename order, move
-// each to --launched and hand it to the launcher. One FILL line per tick, no model call.
+// capacity, cap it at FillCap, pop that many card-<n>.md from --ready in filename order,
+// move each to --launched and hand it to the launcher. One FILL line per tick, no model
+// call.
+//
+// A card may name a LANE (`LANE: <name>`), and a lane is a serial queue over one area of
+// the codebase: at most one live card per lane at a time. A ready card whose lane already
+// has a live card -- one under --launched, or one launched earlier in this tick -- is held
+// in order with a FILL HELD line and stays ready. A LANE the lanes file does not name is
+// refused with the remedy, once per card per lanes-file mtime: the refusal leaves a marker
+// in the markers directory, so a lane nobody has added does not reprint its refusal every
+// five minutes, and editing the lanes file makes every refusal speak again. A card with no
+// LANE is launched exactly as before.
+//
+// A launcher that fails is not a card that ran. The card goes back to --ready with a
+// `.failed-<n>` marker naming the attempt and the reason, its lane is released, and the
+// tick counts it under failed= rather than launched= -- the dogfood edge of 2026-09-18,
+// where an exit-7 launcher left a card under --launched holding its lane forever while the
+// tick read launched=1. The marker does NOT live in --ready (#2013): a ready directory
+// holds cards, so everything that counts it counts cards. Markers live in their own
+// directory beside it, they are taken when the card they belong to relaunches, and a
+// marker whose card has left the queue is reaped at the top of the tick -- one launcher
+// bug on the night of the 2026-09-20 load test left 1,275 of them lying in ready, and
+// every counter in the fleet read a queue that was empty as a queue that was full.
+//
+// WHOM it fills is not a list in this file either: with no bench named, the pool is every
+// machine in the registry that carries the `bench` role and a `certified=<YYYY-MM-DD>` note.
+// A bench certified tonight is filled tonight, by its row and not by a release.
+//
+// WHERE a card may go is not the caller's opinion: --machines names the machines registry
+// (internal/fleet), and a bench whose roles lack `bench` is refused BY NAME before any ssh
+// is opened -- exit 2, nothing launched. That is Glenn's lock of 2026-09-18: runner hosts
+// are CI-only, and a card on a machine serving the merge group's shards makes the shard
+// slow, the gate red and the queue stop. A row that is both runner and bench without the
+// dated allow-shared note is different (#2031): that bench is DISABLED with a named line
+// each tick, and every other bench deals. The guard is in three places on purpose: the
+// whole bench list is checked before the first tick, and then EVERY capacity read and EVERY
+// launch goes through a wrapper that asks the registry again -- so a bench name that arrives
+// by some other road later still cannot reach a runner host.
+//
+// THE SEAT COMES FROM THE ROW (#2014). The launcher's second argument is the bench's
+// nova-secrets seat from the machines registry, not `swarm-<bench>`. The Studio's seat is
+// `studio` and the Air's is `air`; inventing `swarm-studio` killed every card on the
+// strongest bench (SECRETS EXEC FAIL, exit 125) and bounced them back. A bench whose row
+// names no seat, or a seat that is not one plain name, is refused once by name at the loop
+// and dropped from the pool; a fill left with no seated bench refuses with exit 2.
 //
 // The two things that touch the world -- the capacity formula on a bench and the per-card
 // launch -- are injected seams (Capacity and CardLauncher), so a test drives the whole
@@ -10,30 +53,10 @@ package pulse
 // ssh connection or spawns a process.
 
 import (
-	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
-
-// FillCap is the most cards one bench may take in a tick: fill-loop.sh holds this reserve
-// back so a filling bench never eats the machine its own CI needs.
-const FillCap = 30
-
-// FillInterval is how often the loop ticks when --once is absent (fill-loop.sh's sleep 300).
-const FillInterval = 300 * time.Second
-
-// CardLauncher launches one card that Fill has already moved into --launched. It is the
-// per-card seam of the launch verb (internal/pulse/launch.go): one call, in order, one
-// card. The real one shells flash-native-bench.sh on the bench; tests inject a recorder.
-type CardLauncher interface {
-	Launch(bench, card string) error
-}
 
 // Capacity answers how many cards the named bench can take this tick -- card 9316's
 // formula, the min of core, disk and memory headroom. The real one runs it over ssh; tests
@@ -42,134 +65,50 @@ type Capacity interface {
 	Capacity(bench string) (int, error)
 }
 
-// FillInput is the fill verb apart from flag parsing, so a test drives one tick with fake
-// directories and stub seams.
-type FillInput struct {
-	Ready    string        // the queue/ready directory the card-*.md are popped from
-	Launched string        // the queue/launched directory they are moved into
-	Benches  []string      // the benches to fill, in order
-	Once     bool          // true runs exactly one tick and returns
-	Interval time.Duration // how long between ticks; 0 takes FillInterval
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Now      func() time.Time
-	Sleep    func(time.Duration)
-	Launcher CardLauncher
-	Capacity Capacity
+// marker is the path of one marker: <card>.<kind>-<key>. It is never a card-<n>.md, so a
+// glob over the queue steps past it -- and since #2013 it is not in the queue at all.
+func marker(dir, base, kind, key string) string {
+	return filepath.Join(dir, base+"."+kind+"-"+key)
 }
 
-// Fill holds the loop: one fillTick per bench set, one FILL line per tick, until killed --
-// or exactly one tick when --once is set. It returns 0, or 2 on a refusal that never
-// started.
-func Fill(in FillInput) int {
-	if in.Stdout == nil {
-		in.Stdout = io.Discard
-	}
-	if in.Stderr == nil {
-		in.Stderr = io.Discard
-	}
-	if in.Now == nil {
-		in.Now = func() time.Time { return time.Now().UTC() }
-	}
-	if in.Sleep == nil {
-		in.Sleep = time.Sleep
-	}
-	if in.Interval <= 0 {
-		in.Interval = FillInterval
-	}
-	for _, r := range []struct{ v, name, wants string }{
-		{in.Ready, "ready", "the directory holding the card-*.md ready to launch"},
-		{in.Launched, "launched", "the directory the launched cards are moved into"},
-	} {
-		if strings.TrimSpace(r.v) == "" {
-			return refusal(in.Stderr, "FILL", fmt.Errorf("missing --%s; refusing to guess (%s)", r.name, r.wants))
-		}
-	}
-	if in.Launcher == nil {
-		return refusal(in.Stderr, "FILL", fmt.Errorf("missing a launcher; refusing to guess (inject a pulse.CardLauncher)"))
-	}
-	if in.Capacity == nil {
-		return refusal(in.Stderr, "FILL", fmt.Errorf("missing a capacity reader; refusing to guess (inject a pulse.Capacity)"))
-	}
-	for _, dir := range []string{in.Ready, in.Launched} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return refusal(in.Stderr, "FILL", fmt.Errorf("cannot open %s: %s (name a writable directory)", oneline.Field(dir), oneline.Err(err)))
-		}
-	}
-
-	for tick := 1; ; tick++ {
-		line, err := fillTick(in, tick)
-		fmt.Fprintln(in.Stdout, line)
-		if err != nil {
-			fmt.Fprintf(in.Stderr, "FILL NOTE tick=%d: %s\n", tick, oneline.Err(err))
-		}
-		if in.Once {
-			break
-		}
-		in.Sleep(in.Interval)
-	}
-	return 0
+// launchedMarker is the path of a launched card's marker: <card>.launched, beside the card
+// under --launched. It is never a card-<n>.md, so every glob over the queue steps past it.
+func launchedMarker(dir, base string) string {
+	return filepath.Join(dir, base+".launched")
 }
 
-// fillTick is one turn: list ready once in filename order, then for each bench take up to
-// min(capacity, FillCap) cards and launch them. The move out of ready is the claim, so a
-// card another hand already took is skipped and never launched twice. It returns the one
-// FILL line and the first launcher error, if any.
-func fillTick(in FillInput, tick int) (string, error) {
-	cards := readyCards(in.Ready)
-	idx := 0
-	var firstErr error
-
-	parts := make([]string, 0, len(in.Benches))
-	for _, bench := range in.Benches {
-		want := 0
-		if n, err := in.Capacity.Capacity(bench); err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("capacity on %s: %w", field(bench), err)
-			}
-		} else {
-			want = n
-		}
-		if want > FillCap {
-			want = FillCap
-		}
-		if want < 0 {
-			want = 0
-		}
-
-		launched := 0
-		for want > 0 && idx < len(cards) {
-			card := cards[idx]
-			idx++
-			moved := filepath.Join(in.Launched, filepath.Base(card))
-			if err := os.Rename(card, moved); err != nil {
-				// Another tick or another hand took it first: the card is in exactly
-				// one place at every moment, and a card is never launched twice.
-				continue
-			}
-			if err := in.Launcher.Launch(bench, moved); err != nil && firstErr == nil {
-				firstErr = fmt.Errorf("launch %s on %s: %w", field(filepath.Base(moved)), field(bench), err)
-			}
-			launched++
-			want--
-		}
-		parts = append(parts, fmt.Sprintf("%s:launched=%d", oneline.Field(bench), launched))
+// readLaunchedMarker reads one launched marker into its key=value fields. A missing or
+// unreadable marker is an empty table, never a guess.
+func readLaunchedMarker(dir, base string) map[string]string {
+	out := map[string]string{}
+	raw, err := os.ReadFile(launchedMarker(dir, base))
+	if err != nil {
+		return out
 	}
-
-	var b strings.Builder
-	b.WriteString("FILL tick=")
-	b.WriteString(strconv.Itoa(tick))
-	for _, p := range parts {
-		b.WriteByte(' ')
-		b.WriteString(p)
+	for _, line := range strings.Split(string(raw), "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		if k = strings.TrimSpace(k); k != "" {
+			out[k] = strings.TrimSpace(v)
+		}
 	}
-	b.WriteString(" ready=")
-	b.WriteString(strconv.Itoa(len(readyCards(in.Ready))))
-	return b.String(), firstErr
+	return out
+}
+
+// isDir says whether a path is a directory that is there.
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // readyCards lists the ready card files in filename order, which is the order ls handed
 // fill-loop.sh. The move out of ready is the queue's claim; the glob is a snapshot.
+//
+// card-<n>.md is the one filename contract of the queue directories, and it is what every
+// verb that writes a card writes: `cut` wrote `<label>.md` until 2026-09-18, and a whole
+// directory of cut cards sat in --ready that this glob silently stepped over.
 func readyCards(dir string) []string {
 	cards, _ := filepath.Glob(filepath.Join(dir, "card-*.md"))
 	return cards // filepath.Glob returns lexical order

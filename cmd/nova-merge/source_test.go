@@ -39,16 +39,47 @@ func mainPackageSource(t *testing.T) map[string]string {
 	return out
 }
 
+// tempEnvAllowance is the ONE line in this package allowed to name a temp-directory
+// variable, and it is a SET rather than a read: `batch` hands every check it runs a temp
+// directory inside the batch's own working directory under --root, which is rule 13
+// carried into the subprocesses rather than an exception to it. A `go test` or an sbcl
+// suite that keys off the ambient one writes into /tmp instead, and two gates on one host
+// wrecked each other's state that way on 2026-09-18 (tools/ci/lisp-test.sh).
+//
+// The allowance is ONE EXACT LINE and it must match exactly once, so it cannot quietly
+// cover a second site written beside it; and nothing in this package may READ such a
+// variable, which is what the os.Getenv clause below holds.
+var tempEnvAllowance = struct{ file, line string }{
+	file: "batch.go",
+	line: `var batchTempVars = []string{"TMPDIR", "GOTMPDIR", "LISP_TEST_TMPROOT", "TMP", "TEMP"}`,
+}
+
 // Rule 13: nothing under /tmp, and the tool never matches a process by its own command
-// line. Every path this binary writes is under --lane, which a person gave it.
+// line. Every path this binary writes is under --lane or --root, which a person gave it.
 func TestTheBinaryReachesNoTmpAndNoProcessTable(t *testing.T) {
 	t.Parallel()
+	allowed := 0
 	for name, src := range mainPackageSource(t) {
-		for _, forbidden := range []string{`"/tmp`, "os.TempDir", "pgrep", `"ps"`, "/proc/", "TMPDIR"} {
-			if strings.Contains(src, forbidden) {
-				t.Errorf("%s carries %q; every path this tool writes is under --lane, and a loop that matches a process by its own command line matches itself (19 orphaned shells, 2026-09-09)", name, forbidden)
+		for _, line := range strings.Split(src, "\n") {
+			if !strings.Contains(line, "os.Getenv") {
+				continue
+			}
+			t.Errorf("%s reads the environment; every path this tool writes comes from a flag a person gave it, never from a variable the shell happened to carry", name)
+		}
+		for i, line := range strings.Split(src, "\n") {
+			if name == tempEnvAllowance.file && strings.TrimSpace(line) == tempEnvAllowance.line {
+				allowed++
+				continue
+			}
+			for _, forbidden := range []string{`"/tmp`, "os.TempDir", "pgrep", `"ps"`, "/proc/", "TMPDIR"} {
+				if strings.Contains(line, forbidden) {
+					t.Errorf("%s:%d carries %q; every path this tool writes is under --lane or --root, and a loop that matches a process by its own command line matches itself (19 orphaned shells, 2026-09-09)", name, i+1, forbidden)
+				}
 			}
 		}
+	}
+	if allowed != 1 {
+		t.Errorf("the temp-variable allowance matched %d lines of %s, want exactly one; a stale allowance is a claim nothing checks and it would cover the next site written in its place", allowed, tempEnvAllowance.file)
 	}
 }
 
@@ -66,8 +97,21 @@ type writeSite struct{ expr, what string }
 func TestTheBinaryWritesOnlyTheLanesOwnFiles(t *testing.T) {
 	t.Parallel()
 	allowed := map[string][]writeSite{
-		"verbs.go": {{`os.WriteFile(filepath.Join(lane, ".gitignore")`, "the lane branch's .gitignore, which init writes, under --lane"}},
-		"pass.go":  {{`os.WriteFile(path, []byte(deps.Now()`, "the lane's stop file, which the stop verb writes, under --lane"}},
+		"batch.go": {{`os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)`, "the test step's go test -json stream, created exclusively as test-<round>.jsonl under --root, beside the clone and not inside it (#2626)"}},
+		// The fold (#1142) resolves a conflict in a TEST file keep-both and one in a
+		// SOURCE file to the incoming side, and that resolved byte has to land in the
+		// fold's OWN scratch clone under --lane before it is tested. The lane proper
+		// still never edits an entry's content; this is the one write the spec names,
+		// and it writes only both sides of a conflict git itself produced. Since the
+		// keep-both became a hunk union (git merge-file --union) it takes two sites: an
+		// empty ancestor for an add/add conflict, a temp file in the scratch clone that
+		// is removed after the merge, and the resolved bytes, written by foldWriteUnder
+		// only after safepath.ResolvedUnder and a regular-file check, by an exclusive
+		// create that refuses a link planted after the check.
+		"fold.go": {
+			{`os.CreateTemp(g.Dir, ".fold-base-")`, "the keep-both's empty ancestor for an add/add conflict, a temp file in the fold's own scratch clone under --lane, removed after git merge-file (docs/SPEC-MERGE.md \"The fold (#1142)\")"},
+			{`os.OpenFile(resolved, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())`, "the fold's keep-both resolution in its own scratch clone under --lane, created exclusively at a path safepath.ResolvedUnder resolved (docs/SPEC-MERGE.md \"The fold (#1142)\")"},
+		},
 	}
 	used := map[string]int{}
 	for name, src := range mainPackageSource(t) {

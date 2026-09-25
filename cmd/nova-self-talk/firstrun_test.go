@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
@@ -130,56 +134,269 @@ func TestEveryUnreadableFileIsNamedInOneRun(t *testing.T) {
 	}
 }
 
-// (c) The README's `### First run` transcript, checked against the tool: every
-// transcript line must match a line the tool actually printed, by event prefix
-// and field names in order. The sentences quoted in it are the fixture's own
-// and are not compared — the tail after ": " is a run's business.
-func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+// (c) The `### First run` transcript of docs/TESTS.md is EXECUTED: every
+// documented command is run and its whole output is compared with the block
+// written under it -- same number of lines, same lines, same order.
+//
+// WHAT THIS REPLACES, AND WHY. The old test collected the SHAPES the command
+// printed into a `printed map[string]bool` and asked whether each documented
+// line was in it. A line the document DROPPED removed a lookup rather than an
+// assertion, so the second block -- which passes two files and quoted only the
+// first file's lines -- passed while showing TWO of the seven lines the tool
+// prints. That is issue #1639, found by the 2026-09-19 dogfood rerun on hulk,
+// reproduced on space and again here on the Studio, and it was invisible to the
+// test that claimed to check it.
+//
+// TWO STREAMS, AND THAT IS THE OTHER HALF OF #1639. The findings go to standard
+// error and the protocol lines to standard output, and the order a terminal
+// interleaves them in is NOT the same twice: the last finding arrived after the
+// NOTE line on one bench and before it on another (#1549). So the block is
+// written to #1570's convention -- a line opening `! ` is standard error --
+// and the two streams are compared apart: standard output whole, standard error
+// for the lines shown, in order. Reading this block as one stream cannot be
+// made to pass, and should not be.
+//
+// The documented paths are typed as written. `./pages` is a copy of the fixture
+// in a directory of the test's own, because the tool PRINTS THE PATH BACK on
+// every finding: a rewritten path is no longer the line the document promised,
+// which is what the old test's `localize` gave up.
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	doc := transcriptDoc(t)
+	lines, err := onboarding.FirstRun(doc, "nova-self-talk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := onboarding.Steps("nova-self-talk", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 2 {
+		t.Fatalf("the `### First run` block runs %d commands, want 2: one file, then the rule document beside it", len(steps))
+	}
+
+	dir := t.TempDir()
+	copyDir(t, examplePages, filepath.Join(dir, "pages"))
+	t.Chdir(dir)
+
+	for _, p := range onboarding.Execute(steps, runDocumented) {
+		t.Error(p)
+	}
+}
+
+// runDocumented calls this binary's own entry point with the documented
+// arguments, keeping the two streams apart.
+func runDocumented(s onboarding.Step) (onboarding.Result, error) {
+	if s.Stdin != "" {
+		return onboarding.Result{}, errReadsNothing
+	}
+	var out, errb bytes.Buffer
+	code := run(s.Args, &out, &errb)
+	return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+}
+
+type readsNothing struct{}
+
+func (readsNothing) Error() string {
+	return "nova-self-talk reads no stdin; a `< path` in its transcript is the document's bug"
+}
+
+var errReadsNothing = readsNothing{}
+
+// transcriptDoc is docs/TESTS.md, read BEFORE the test moves into its own
+// directory.
+func transcriptDoc(t *testing.T) string {
+	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines, err := onboarding.FirstRun(string(raw), "nova-self-talk")
+	return string(raw)
+}
+
+// copyDir copies the fixture pages to where the transcript says they are.
+func copyDir(t *testing.T, from, to string) {
+	t.Helper()
+	entries, err := os.ReadDir(from)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var printed map[string]bool
-	seen := map[string]int{}
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			copyDir(t, filepath.Join(from, e.Name()), filepath.Join(to, e.Name()))
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(from, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(to, e.Name()), body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestHelpExampleLinesRunAsPrinted: every line of this tool's `example:` block runs, as printed,
+// from the root of a checkout, after the setup line the banner carries above it. nova-tools #1455
+// measured 28 of 61 pasted example lines exiting 2 because the line names an input the reader has
+// not made; an example exiting 2 is a broken example (ONBOARDING point 1). This is the #1920 shape
+// (cmd/nova-tokens), and unlike TestUsageBannerExamplesRun it does NOT localize(): the lines run
+// verbatim through `sh -c` in an empty temp root, so dropping the setup line turns this test red.
+//
+// The banner is read AS SOURCE (the usage constant), the binary is built so the lines can be RUN
+// with it first on PATH and stdin closed, exactly as a stranger would. "Runs" is this repo's exit
+// law: 1 is an answer (both fixture pages carry findings), 2 is "could not run". No line here
+// pushes, publishes, contacts a forge, acts on a machine or needs a key, so none is skipped.
+func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
+	lines := exampleBlockLines(usage)
+	if len(lines) == 0 {
+		t.Fatal("the usage banner's `example:` block holds no line; this test would pass by running nothing")
+	}
+
+	setup := fixtureSetupLine(usage)
+	if setup == "" {
+		t.Fatalf("the usage banner has no fixture setup line above the block, so a stranger pasting it names\n"+
+			"inputs they have not made (nova-tools #1455: an example exiting 2 is a broken example).\n"+
+			"The missing line is:\n  %s", wantFixtureSetup)
+	}
+
+	bin := buildExampleBinary(t)
+
+	root := t.TempDir()
+	// The one path the setup line reads, at the path it names: the checkout shape and nothing else.
+	copyExampleTree(t, examplePages, filepath.Join(root, "cmd", "nova-self-talk", "testdata", "example-pages"))
+
+	if exit, out := runExampleLine(t, root, filepath.Dir(bin), setup); exit != 0 {
+		t.Fatalf("the fixture setup line exits %d, want 0:\n  %s\nits first output line: %s",
+			exit, setup, exampleFirstLine(out))
+	}
+
 	for _, line := range lines {
-		if cmd, ok := strings.CutPrefix(line, "$ nova-self-talk "); ok {
-			exit, stdout, stderr := runSelfTalk(t, localize(strings.Fields(cmd))...)
-			if exit == 2 {
-				t.Fatalf("the README command %q does not run: exit 2, stderr: %s", line, stderr)
-			}
-			printed = map[string]bool{}
-			for _, out := range strings.Split(stdout+"\n"+stderr, "\n") {
-				if s := onboarding.Shape(out); s != "" {
-					printed[s] = true
-				}
-			}
+		exit, out := runExampleLine(t, root, filepath.Dir(bin), line)
+		if exit == 2 {
+			t.Errorf("the example `%s` exits 2 (could not run) -- a line a stranger pastes must run as printed:\nfirst output line: %s",
+				line, exampleFirstLine(out))
 			continue
 		}
-		s := onboarding.Shape(line)
-		if s == "" {
+		if exit != 1 {
+			t.Errorf("the example `%s` exits %d, want 1: the fixture pages carry findings, so a line that stopped flagging them has drifted\nfirst output line: %s",
+				line, exit, exampleFirstLine(out))
+		}
+	}
+}
+
+// wantFixtureSetup is the line the class fix added above the block, named so a test that finds it
+// missing says which line a reader lost.
+const wantFixtureSetup = "cp -R cmd/nova-self-talk/testdata/example-pages ./pages"
+
+// exampleBlockLines returns every command under an `example:` heading in a usage banner, in
+// banner order. A line beginning with the tool's name under the heading is an example; a blank
+// line closes the block, so the prose after it is not swept up.
+func exampleBlockLines(usage string) []string {
+	var out []string
+	inBlock := false
+	for _, line := range strings.Split(usage, "\n") {
+		if line == "example:" {
+			inBlock = true
 			continue
 		}
-		if printed == nil {
-			t.Fatalf("transcript line before any command: %q", line)
+		if !inBlock {
+			continue
 		}
-		if !printed[s] {
-			t.Errorf("README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			inBlock = false
+			continue
 		}
-		seen[strings.Join(strings.Fields(s)[:2], " ")]++
-	}
-	for prefix, want := range map[string]int{
-		// Four FAIL lines: two findings and the count line in the first transcript, one
-		// finding in the second. The count line is one of them on purpose -- it is the
-		// line that was missing on a failing run, and a README that did not show it
-		// would be teaching the shape this change exists to fix.
-		"SELFTALK FAIL": 4, "SELFTALK DATED": 1, "SELFTALK NOTE": 1, "SELFTALK RULEDOC": 1,
-	} {
-		if seen[prefix] != want {
-			t.Errorf("README First run shows %d %s lines, want %d", seen[prefix], prefix, want)
+		if strings.HasPrefix(trimmed, "nova-self-talk ") {
+			out = append(out, trimmed)
 		}
 	}
+	return out
+}
+
+// fixtureSetupLine returns the setup line the block reads, or "" when the banner loses it. It
+// matches the line's shape rather than its exact text, so the printed line is what is run.
+func fixtureSetupLine(usage string) string {
+	for _, line := range strings.Split(usage, "\n") {
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "cp -R cmd/nova-self-talk/testdata/example-pages") {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// buildExampleBinary builds this command into a temp dir and returns its path; goenv.Clean keeps
+// the parent's GOFLAGS from reshaping the build (internal/goenv).
+func buildExampleBinary(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "nova-self-talk")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	cmd := exec.Command("go", "build", "-o", bin, ".")
+	cmd.Env = goenv.Clean(os.Environ())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building nova-self-talk: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// runExampleLine runs one line through `sh -c` with the built binary first on PATH, from dir,
+// with stdin closed. It returns the exit code and the combined output.
+func runExampleLine(t *testing.T, dir, binDir, line string) (int, string) {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", line)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Stdin = nil
+	var out strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &out
+	var exitErr *exec.ExitError
+	switch err := cmd.Run(); {
+	case err == nil:
+		return 0, out.String()
+	case errors.As(err, &exitErr):
+		return exitErr.ExitCode(), out.String()
+	default:
+		t.Fatalf("running %q: %v", line, err)
+		return 0, ""
+	}
+}
+
+// copyExampleTree copies src under dst. Every path it writes is inside the caller's t.TempDir()
+// (AGENTS.md rule 10).
+func copyExampleTree(t *testing.T, src, dst string) {
+	t.Helper()
+	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, raw, 0o644)
+	})
+	if err != nil {
+		t.Fatalf("copying the fixture %s: %v", src, err)
+	}
+}
+
+// exampleFirstLine is the first line of an output, which is where a refusal says what was wrong.
+func exampleFirstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }

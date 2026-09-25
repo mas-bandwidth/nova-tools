@@ -1,0 +1,167 @@
+# The examples a stranger can paste from our docs and from `help` output that are
+# not yet executed by a test through the comparator (SPEC-TOOLWORK §7 rule 7).
+#
+# Every $  line in a fenced block of README.md, docs/USAGE.md, docs/CLI.md and
+# docs/nova-swarm-quickstart.md, every example: line of a `help` banner pasted in
+# a fenced block of those docs, and every example: line of every tool's own
+# `help` banner under cmd/ (both listed as `example: <line>`), is either executed
+# by a test through the comparator (compared_examples.txt) or listed here.
+#
+# THE LIST ONLY SHRINKS. TestIssue2218 compares it with its copy at the change's
+# base: a row the change adds fails the class test on the PR that adds it, and an
+# entry that matches no real example is a stale entry and a red run. Remove an
+# entry by moving it to compared_examples.txt once a test executes it.
+
+$ HOME=/Users/me/pool/jobs/j1/home \
+$ go build -o ~/bin/nova-sandbox ./cmd/nova-sandbox      # or name it with --sandbox <path>
+$ mkdir -p /Users/me/pool/jobs/j1/home
+$ nova-board quickstart --dir ./board --stale 10m
+$ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
+$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
+$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
+$ nova-bus names --bus ./bus
+$ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
+$ nova-check convergence --repo mas-bandwidth/nova-tools \
+$ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
+$ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
+$ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
+$ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
+$ nova-check quickstart --dir ./self
+$ nova-decide --questions ./questions.json --state ./state.md --floor 0.9
+$ nova-decide classify --question harvest --evidence ./result.txt --pointer card-9
+$ nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
+$ nova-decide help --state ; echo "exit=$?"
+$ nova-decide log --log ./decide.jsonl --summary
+$ nova-decide outcome --log ~/rowan-working/queue/decide/route.jsonl --unit-id row-card-9 --result green
+$ nova-decide review --repo mas-bandwidth/schema --pr 1488 --dry-run
+$ nova-decide route --unit-id <id> --kind <kind> --files <n> --packages <n> \
+$ nova-decide route --unit-id card-41 --kind fix-with-red-test --files 3 --packages 1 --attempt "opus:failed:missed the cause" --no-jev
+$ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
+$ nova-decide route --unit-id sec --kind fleet-chore --files 1 --secrets --touches secrets --touches network --no-jev
+$ nova-decide route --unit-id t-1 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:timeout --no-jev ; echo "exit=$?"
+$ nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl ; echo "exit=$?"
+$ nova-decide route --unit-id thin --kind new-verb --no-jev ; echo "exit=$?"
+$ nova-decide route --unit-id u --kind rebase --files 2 --packages 1
+$ nova-decide tune --decisions internal/decide/testdata/reader-observations-2026-09-19.jsonl \
+$ nova-decide tune --propose-floors --log ./decide.jsonl --write ./registry.json
+$ nova-fuse check --box ./fuse-box.json a-forum
+$ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
+$ nova-fuse lift quarantine --box ./fuse-box.json a-forum
+$ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
+$ nova-fuse status --box ./fuse-box.json
+$ nova-memory check --root ./corpus --channels bm25 --k 2 -
+$ nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
+$ nova-memory quickstart --root ./corpus
+$ nova-memory search --root ./corpus --channels bm25 --k 3 glazing signal tide
+$ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
+$ nova-memory stats --root ./corpus
+$ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
+$ nova-play read --source story.txt
+$ nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
+$ nova-pulse fold --db ./ev.sqlite --report
+$ nova-sandbox check
+$ nova-sandbox reap
+$ nova-sandbox reap --dry-run
+$ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 50 -- cmd.exe /c "go build ./..."
+$ nova-sandbox run --name j1 --size 8g --out ./handoff \
+$ nova-sandbox run --name j1 --size 8g --timeout 30m --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
+$ nova-secrets exec --store ~/nova-bench/secrets --as swarm-hulk --only NOVA_REDIS_BENCH_PASSWORD -- \
+$ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
+$ nova-self-talk ./pages/journal.md
+$ nova-swarm quickstart --pool ./pool
+$ nova-swarm run --pool ./pool --workers 4 --hours 2 --worker ./worker.json
+$ nova-swarm status --pool ./pool --max 20
+$ nova-wake awake --bus ./bus
+$ nova-wake probe --here
+$ nova-wake quickstart --state ./wake.state --reports ./reports
+$ nova-wake serve --bus ./bus --as rowan --on-note ./wake-me --interval 60s \
+$ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
+$ printf 'The keeper climbed the last stair before dawn.\nThe lantern room held a brass fitting.\nBelow, the harbour was still asleep.\n' > story.txt
+example: nova-work dependencies --graph ./deps.json --node b
+example: nova-work dependencies --graph ./deps.json --node a --needs b
+example: nova-work ready --node a --graph ./deps.json
+example: nova-work plan check --file ./work.work --max-bytes 65536
+example: nova-work set check --file ./work-set.lisp --ready
+example: nova-work next --file ./units.lisp --for rowan-child --lanes ./lanes.tsv --no-jev --take
+example: nova-work attempt record --file ./units.lisp --unit certify:verb --by rowan-child --outcome ok --proof 8a132e77 --pr 1369
+example: nova-work events --redis 127.0.0.1:6379 --once
+example: go run cmd/nova-ci/timing.go --log internal/ci/timing/testdata/events.jsonl
+example: nova-board check --dir ./board --words windows
+example: nova-board list --dir ./board --stale 10m --list --max 3
+example: nova-board quickstart --dir ./board --stale 10m
+example: nova-bus check --bus ./bus --full
+example: nova-bus draft --bus ./bus --as Ada --to Bo --subject gate
+example: nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --open
+example: nova-bus names --bus ./bus
+example: nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --publish manual
+example: nova-cairn index --store ./cairns
+example: nova-cairn open --store ./cairns --session s1 --publish manual
+example: nova-cairn receipt --store ./cairns --session s1 --entry e1
+example: nova-card version
+example: nova-check attest --home ./self --manifest ./self/MANIFEST
+example: nova-check corpus --ledger ./self/corpus/anchors.md --root ./self --min-anchors 2
+example: nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
+example: nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
+example: nova-check quickstart --dir ./self
+example: nova-ci help
+example: nova-ci slowtests --budget 60
+example: nova-ci version
+example: nova-decide --questions ./questions.json --state ./state.md --floor 0.9
+example: nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
+example: nova-decide log --log ./decide.jsonl --summary
+example: nova-decide route --unit '{"id":"card-41","kind":"rebase","files":2,"packages":1}' --usage ./usage.tsv --log ./decide.jsonl --no-jev
+example: nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
+example: nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl
+example: nova-decide tune --decisions ./decisions.jsonl
+example: nova-fuse check --box ./fuse-box.json a-forum
+example: nova-fuse check --box ./fuse-box.json a-public-issue-tracker
+example: nova-fuse lift quarantine --box ./fuse-box.json a-forum
+example: nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
+example: nova-fuse status --box ./fuse-box.json
+example: nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
+example: nova-memory quickstart --root ./corpus
+example: nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
+example: nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
+example: nova-play read --source story.txt
+example: nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
+example: nova-play view story.txt
+example: nova-post help
+example: nova-post version
+example: nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note
+example: nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi
+example: nova-redis version
+example: nova-review --version
+example: nova-sandbox --read /Users/me/pool/ref/nova-tools@abc123 \
+example: nova-sandbox run --name card1 --size 8g --timeout 30m --go --out ./handoff \
+example: nova-secrets check --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
+example: nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-decide route --unit-id card-41 --kind rebase --no-jev --log ./decide.jsonl --store 127.0.0.1:6379
+example: nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve --bind 127.0.0.1,100.101.102.103 --port 6379
+example: nova-secrets exec --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
+example: nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen
+example: nova-secrets names --store ./secrets --as rowan
+example: nova-secrets place --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --machine mini --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
+example: nova-secrets placed --machine mini
+example: nova-secrets seat add --store ./secrets --as air --pub age1… --from rowan --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
+example: nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
+example: nova-self-talk ./pages/journal.md
+example: nova-sprint table --check --redis 127.0.0.1:6379
+example: nova-sprint table --redis 127.0.0.1:6379 --once
+example: nova-sprint table --redis 127.0.0.1:6379 --sprint control-a --once
+example: nova-swarm quickstart --pool ./pool
+example: nova-swarm status --pool ./pool --max 20
+example: nova-swarm template --name read-pr
+example: nova-test status --store cmd/nova-test/testdata/runs --since 2026-09-23T00:00:00Z --now 2026-09-23T10:30:00Z
+example: nova-test version
+example: nova-tokens check --out ./out
+example: nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
+example: nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
+example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
+example: nova-tokens sum --out ./out --month 2026-09
+example: nova-wake probe --here
+example: nova-wake quickstart --state ./wake.state --reports ./reports
+example: nova-wake watch --state ./wake.state --max 5s --on-deadline hold --interval 5s --reports ./reports --max-lines 0 --baseline
+example: nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports

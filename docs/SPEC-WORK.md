@@ -997,7 +997,9 @@ they are distinct kinds:
     (the tree it was read against), `:generation` (the node's, at the time of writing),
     `:attempt` (optional).
   - `:attempt` — `:model`, `:bench`, `:started`, `:ended`, `:result` (a pointer), `:usage` (a
-    pointer to a token record, #181), `:generation` (the task generation it answered).
+    `usage:<receipt-id>` pointer to a token record, #181; `receipt-id` is a 32-character
+    hexadecimal string naming the SPEC-TOKENS usage receipt, rule 32), `:generation` (the task
+    generation it answered).
   - `:correct` — a correction to a task: `:reason`; bumps the task's `:generation`
     (5653982211).
   - `:review-attest` — a reviewer's attestation that a result satisfies an `:attested`
@@ -1581,7 +1583,8 @@ these layouts. None of this relaxes the separate repository registration or acce
 
 **The move from O to C is an event, and the item's id, its history and its evidence move with
 it unchanged.** An item settles when its work has ended: a `:to :done` transition, a `:cancel`,
-a `:supersede` or the `:remove` of a `node remove`. The verb that writes that event writes one
+a `:supersede` or the `:remove` of a `node remove`. **An `event --kind cancel` settles the node
+into C with disposition `:cancelled`; it does not leave the node in O** (nova-tools #1594). The verb that writes that event writes one
 more in the same envelope — a **`:settle`** event carrying `:disposition` (`done`, `cancelled`,
 `superseded` or `removed`) and `:reason` — one journal record, all-or-none, one `OK` line, one
 request id, exactly as a structure verb's envelope already is. The `:settle` is the session's
@@ -2110,8 +2113,9 @@ transition log is not a counting row. Every other ask prints the counting row. A
 | `ready --node X` | the work that can actually be started under X, derived from dependencies, agreed scope, acceptance readiness, ownership, availability and resource limits; **every row that cannot proceed prints its exact reason and who can resolve it**, because waiting is not execution (replay `ready-names-the-blocker-and-the-resolver`) |
 | `fleet` / `fleet --for <workload-kind>` | the fleet of *The fleet* below: every live member with owner, roles, limits and dated declared facts; under `--for`, the members whose declared roles and permits admit the kind and whose exclusions do not — **a recommendation from declared facts, never a lease** (johnny-5b879930aae8) |
 | `routes` / `routes --class <card-class>` | the route registry of *Model routes* below: every live `:kind :route` member of the `routes` section of CONFIG with its provider, endpoint, key location as a path or env name, plan, cost per Mtok, capabilities, owner and its dated probe record with `benched-until=`; under `--class`, the projection's ordered route list for that card class, cheapest first, each admitted route carrying its passing probe — **a projection from declared facts and dated probe evidence, never a lease and never a second store** |
+| `reports --since <revision>` / `reports --node X --since <revision>` | **SPEC-AHEAD: #854.** the hand acts reported since that revision, by rule 10 of *The dependency gate and the hand report* below: one row per `:report` event with its act, subject, the verb it reached past and both of its times, and the counts `reports=`, `no-verb=` and `launched-unmet=` — **information, read by no rule, gate or exit** |
 
-**Dependencies between nodes (`:deps`, nova-tools #785).** A node carries `:deps` reference edges to other nodes — needed, not owned, not counted, the reference edge of *Containment and reference* above — and a node is **ready** only when every need is terminal accepted, that is, settled in C after having merged and gone green, and when no reverted need has left it `needs-broken`; a dependent whose need is an open PR is not ready, a need that merges and goes green makes it ready, a `:deps` cycle is refused by validator rule 3 before publication, a dependent is cut but held in the tree and never launched before ready, and a revert (`:revive`) of a need flags each dependent `needs-broken` and re-evaluates it rather than leaving it silently ready. This kernel slice covers the field, the `ready` reading and the revert flag only: it has no separate PR or evidence-record reference kind, no roadmap critical-path or width (ready-now versus blocked) view, no cost/estimate rollup along needs, and no held-in-tree launch gate — those remain the rest of #785. The replays are `ready-excludes-a-dependent-whose-need-is-open`, `ready-admits-a-dependent-once-its-need-is-merged-and-green`, `a-needs-cycle-refuses-at-seed` and `reverting-a-need-marks-dependents-needs-broken` (`lisp/nova-work/tests/replays-8681.lisp`).
+**Dependencies between nodes (`:deps`, nova-tools #785).** A node carries `:deps` reference edges to other nodes — needed, not owned, not counted, the reference edge of *Containment and reference* above — and a node is **ready** only when every need is terminal accepted — defined once, in rule 1 of *The dependency gate and the hand report* below, as settled in C with disposition `done` on verified evidence of the need's own acceptance, which is where a team writes *merged and green* — and when no reverted need has left it `needs-broken`; a dependent whose need is an open PR is not ready, a need that merges and goes green makes it ready, a `:deps` cycle is refused by validator rule 3 before publication, a dependent with an unmet need stays in the tree under its id and is refused by every admission verb until its needs are met — *unmet*, *met* and *admission verb* being that section's words — and a revert (`:revive`) of a need flags each dependent `needs-broken` and re-evaluates it rather than leaving it silently ready. This kernel slice covers the field, the `ready` reading, the revert flag and the refusal of `state --to doing` over an unmet need only (which it labels `rule 10`, a label rule 3 of that section retires), and it reads a need as terminal accepted once it is in C, whatever its disposition and whatever its evidence: the verified reading, the other admission verbs, the reasons a row prints and the edge rules are *The dependency gate and the hand report* below, ahead of their code. It has no roadmap critical-path or width (ready-now versus blocked) view and no cost/estimate rollup along needs — those remain the rest of #785. The replays are `ready-excludes-a-dependent-whose-need-is-open`, `ready-admits-a-dependent-once-its-need-is-merged-and-green`, `a-needs-cycle-refuses-at-seed` and `reverting-a-need-marks-dependents-needs-broken` (`lisp/nova-work/tests/replays-8681.lisp`).
 
 ### The worked acceptance: findings per repository across C and O *(Glenn's own query, 23:36Z)*
 
@@ -2301,13 +2305,13 @@ nova-work clip           --session <path> --as <name> --git-timeout <seconds> [-
 nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) [--max <n>]
 nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-timeout <seconds>) [--node <id>] [--max <n>]
 nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind> --branch <open|closed|root>
-                         (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet, routes)
+                         (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet, routes, reports)
                          [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>] [--for <workload-kind>] [--class <card-class>]
                          [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--page-budget <n>] [--max <n>] [--order <discovery|priority>]
                          (who and stale: --window <duration>, required; percent: --axis <member>, required on a matrix and refused on a zero- or one-axis roadmap;
                           ready: --order, optional, discovery by default; --order priority on any other ask is exit 2;
                           --branch closed and --branch root: --from and --to, required, and refused under --branch open;
-                          who, stale and handoffs: --branch open only, the other two exit 2;
+                          who, stale, handoffs and reports: --branch open only, the other two exit 2; reports: --since <revision>, required (SPEC-AHEAD: #854);
                           fleet: --for optional, --node names a machine id, and --for with --node on a member that excludes the kind is refused;
                            routes: --class optional, the card class whose ordered route list the projection emits, cheapest first; without it the whole registry is listed)
 nova-work render         --session <path> --view <roadmap-id> (--chat [--projection <id> | --row-axis <id> --column-axis <id> --fixed <axis-id>=<member-id> ...] | --projection <id> (--file | --check)) [--at <revision>]
@@ -2339,6 +2343,7 @@ nova-work evidence       --session <path> <write flags> --node <id> --pointer <p
 nova-work state          --session <path> <write flags> --node <id> --to <state> (--evidence <event-id> ... | --reason <text>) [--blocked-by <id>]
 nova-work correct        --session <path> <write flags> --node <id> --reason <text>
 nova-work event          --session <path> <write flags> --kind <baseline|discovery|defer|cancel|reopen|supersede> --node <id> --reason <text> [--member <id,...>] [--superseded-by <id>] [--evidence <pointer>] (baseline and discovery: --member, required, and --kind discovery on a :roadmap is exit 2 naming `axis --add`; supersede: --superseded-by, required; cancel: --evidence <pointer>, required, and a note: pointer IS admitted here, because it evidences a stopped worker and never a done; --member on any other kind is exit 2)
+nova-work report         --session <path> <write flags> --act <launched|stopped|other> --subject <node|machine|friend|route|offer|external>:<text> --what <text> --acted-at <stamp> --instead-of <text|-> --reason <text>   (SPEC-AHEAD: #854; records a hand act whose effect lies outside the tree and changes no tree state)
 nova-work version
 nova-work help
 ```
@@ -2446,6 +2451,21 @@ durability, not exclusivity. A request to take a node
 arrives at the coordinator from a friend as a mutation request with a stable request id and
 the friend's expected revision; the coordinator serializes it like any other (Stella, *One
 coordinator, one live reader/writer*).
+
+### The work-set verbs are not session verbs *(Rowan's child, 2026-09-18)*
+
+Three verbs of this binary address a FILE rather than a session, and they are listed here so that
+nobody looks for them on the wire: `nova-work set check`, `nova-work attempt record | list` and
+`nova-work next`. They read and write the `(work-set "<id>" ... :units (...))` form a coordinator
+writes by hand, under the bounded reader's three bounds, and they hold no session, take no
+`--session`, draw no revision and publish no snapshot. Their contract is `docs/SPEC-WORKLANG.md`
+(Amendment 1, and "The writer" beneath it); the one concurrency they have is a lock beside the
+document itself, because a work set is a person's file and the only race is two writers on it.
+
+The seam between them and this spec is the same as the seam between a plan and a session: a work
+set is what a coordinator writes before there is a session, and a session's data is what the engine
+keeps once there is one. Nothing in this section applies to them, and nothing in SPEC-WORKLANG
+applies to a session.
 
 ## The resident session *(Stella, from her amendment at 60b9027; governs the execution model where it says more than the section above)*
 
@@ -2626,7 +2646,7 @@ untouched, and the one older sentence the amendment replaces is the decisions-pe
 
 ## Rate and convergence, applied *(Rowan, on Glenn's word of 2026-09-15, #553)*
 
-The nine rules of [SPEC-PULSE.md](SPEC-PULSE.md)'s **Rate and convergence**, measured on
+The nine rules of SPEC-PULSE.md's **Rate and convergence**, measured on
 2026-09-15, hold for nova-work's resident session and never drift. For nova-work:
 
 - the resident session runs the same tick and pool floor over the tree (#500);
@@ -2850,7 +2870,9 @@ not tell whether an `event --kind cancel` had a compensating kind to append. It 
 transition table's `:cancelled`, `:superseded` and `:removed` are terminal and no `:reopen`
 reaches them, so an undo over one of them is refused rather than given a new kind that would
 make a terminal state reachable by a back door. The way on from a cancelled or removed item is
-new work with a `:dep` on the closed id, which is a record of the decision and not a rewind.
+new work that names the closed id in its `:links`, which is a record of the decision and not a
+rewind — a link and not a `:deps` edge, because an edge onto a cancelled id is one *The dependency
+gate and the hand report* below never admits.
 
 | verb | undo appends | refused, `not reversible here`, when |
 | --- | --- | --- |
@@ -2870,20 +2892,20 @@ new work with a `:dep` on the closed id, which is a record of the decision and n
 | `responsible` | `responsible --to` the preimage name | — |
 | `source` | `source --to` the preimage sha | — |
 | `take` | a `release` envelope | the lease has expired or another holder took it |
-| `release` | a `take` envelope restoring the preimage holder and deadline | the node has since been taken by another |
+| `release` | a `take` envelope restoring the preimage holder and deadline | the node has since been taken by another; or the node has an unmet need, `UNDO FAIL … unmet need <need-id> <reason>`, because that envelope is an admission (SPEC-AHEAD: #785) |
 | `offer` | a cancellation of the pending offer, releasing only its untouched reservation | the offer has been handed to transport — a claimed or in-flight send included — a receipt exists, or a successor changed its lineage; the way on is `decline`, a hold or a replacement offer |
 | `acknowledge`, `decline` | — | always: each records a verified receipt, and an acceptance may have created or bound a lease; a later decline, hold, release or reconciliation is a new act |
 | `execution pause`, `execution stop` | a reversal removing only this untouched hold and cancelling its unsent directives | any directive delivered or any target uncertain; the way on is `execution resume --action release-hold` after the control's outcomes reconcile, and no undo claims a worker restarted |
 | `execution resume` | a reversal restoring only the prior untouched hold and cancelling unsent resume directives | a resume delivered, or a running or unknown observation |
 | `execution correct` | a reversal, only before any correction directive leaves the coordinator and only while the old and new generation postimages and the retained instruction identity are unchanged | any delivery or any old- or new-generation uncertainty; a reapply of earlier instructions is a new generation with lineage, never a rewind |
 | `execution reconcile` | — | always: it records validated observations; a later reconciliation records a new set and keeps the earlier one, contradictions included |
-| `state --to <s>` | a `state --to` the preimage state, and where the original settled the item, the `event --kind reopen` envelope that writes its `:revive` | the preimage state is unreachable by the transition table |
+| `state --to <s>` | a `state --to` the preimage state, and where the original settled the item, the `event --kind reopen` envelope that writes its `:revive` | the preimage state is unreachable by the transition table; or the preimage state is `:doing` and the node has an unmet need, refused as the `release` row is (SPEC-AHEAD: #785) |
 | `event --kind baseline` | — | always: a baseline records what the set was at a moment |
 | `event --kind discovery` | a `node require --to false` for each member it added | a member has since closed |
 | `event --kind defer` | `event --kind reopen` | — |
 | `event --kind reopen` | the verb that closed it, against the preimage disposition | the preimage disposition is `cancelled`, `superseded` or `removed` |
 | `event --kind cancel`, `event --kind supersede` | — | always: both dispositions are terminal |
-| `heartbeat`, `attempt`, `evidence`, `attest`, `correct`, `observe` | — | always: each records that something happened, and the paragraph above already says an accepted receipt is a historical fact an undo may supersede and can never erase |
+| `heartbeat`, `attempt`, `evidence`, `attest`, `correct`, `observe`, `report` | — | always: each records that something happened, and the paragraph above already says an accepted receipt is a historical fact an undo may supersede and can never erase |
 | `friend` | the same verb in its preimage form | the preimage is a retirement whose identity has since been reused |
 | `model --register`, `model --rate` | the same verb naming the preimage route or rate | a pricing record — immutable by content identity, so an undo supersedes it and never rewrites it |
 | `model --evidence` | — | always: an observation |
@@ -2956,6 +2978,9 @@ not a second way in:
   the node and `:prioritise` in the log, a noun and a verb both.
 - **`session export --at <revision>`** — *filled by the #293 fold below* as `session export
   --state --at`, a second product beside the request bundle, with `state load` to read it.
+- **`estimate`** — *named by rule 11 of The dependency gate and the hand report below, and not
+  filled*: *every node carries an estimate* with who estimated it and when, and no verb of this
+  grammar writes one, so the field is unreachable by any recorded act.
 
 **And the reverse: no verb of this grammar lacks a noun any more.** The six `<MUTATION>` verbs
 draft 26 added had no `:event` kind and no subject; the kinds above give each one, and
@@ -4724,6 +4749,505 @@ bench or a clock:
 10. `packet-stop-and-hold-are-named` — against a fake control record with a STOP request and a live HOLD, the `PACKET OK` line names both and hides neither.
 11. `packet-is-bounded` — against a fake state far past the bound the packet is capped at `--max-bytes` with its true `bytes=` still printed, and a `--max-bytes` of zero is refused.
 
+## The dependency gate and the hand report *(Rowan; nova-tools #785 and #854 item 7; a draft for review, with no code yet)*
+
+Glenn, 2026-09-16, on #785: *"You cannot do complicated work without tracking dependencies."*
+*"When work is parallel, we do it in parallel by default. When work is serial and has
+dependencies, we are careful, and do not launch work until the dependencies are tested, ready and
+green."* *"This way dependency tracking is mechanical, not done in LLM context."* And from pit stop
+3, #854 item 7: *"Every hand action has a verb that writes to the tree."* The `:deps` paragraph of
+*Queries — the contract* above gives `ready` the right answer, and an answer stops nothing: the
+hurt of #828 C is work started past a dependency that only a person was remembering. This section
+says what refuses, and what is written down when something went round the refusal. **Every rule
+here is ahead of its code unless it says otherwise**, so each rule's first line is **SPEC-AHEAD**
+with its issue, and each rule's replay is appended at the end of the list in *Acceptance replays*
+below. Nothing already numbered is renumbered or rewritten: the validator's rules 1 to 19, the
+efficiency rules 1 to 10, the duty-tier rules 1 to 6, the fleet-allocation rules 1 to 6 and the
+model-route rules 1 to 4 stand. The line shapes the rules name are this amendment's additions to
+*Output grammar* — `REPORT` joins the first-token list — and are proposals like every rule here.
+
+**The words, fixed here and used one way below.** A **need** of a node is an id in that node's
+`:deps`, and the node is that need's **dependent**; the edge is the reference edge of *Containment
+and reference* above, and the gate reads **direct** needs only, because a need's own needs were
+its own gate. A need is **met** when it is *terminal accepted*, which rule 1 defines and no other
+sentence of this document defines again, and **unmet** otherwise; a node is **needs-met** when
+every one of its needs is met, so a node with no `:deps` is needs-met. **Launch is not a verb of
+this grammar and does not become one**: it is a launcher's act outside nova-work, the starting of
+a worker process for a node, and nova-work starts nothing — *none of them launches anything* in
+*Assignment and execution control*, *no worker launch happens inside it* in *The engine and its
+client*, *nothing here dispatches* in *Delegation*, all above — which this section leaves exactly
+as it is. What nova-work owns is **admission**: the **admission verbs** are the verbs that create
+a lease, an offer, an allocation or a task packet for a node, hand a lease on, or move a node to
+`:doing`, and rule 3 lists the ones this grammar has today. A node is **engaged** when it holds a
+live lease, a pending or accepted offer or a live allocation, when its state is `:doing` or
+`:review`, or when it carries an `:attempt` of its current generation or a report of a launch
+written since its newest `:correct` and followed by no report of a stop on that node, the `:report`
+event rules 8 and 9 define. **Four words are
+left alone**: a *hold* is the scheduling hold of `execution pause` and `execution stop`, and
+nothing here is called held; `held-by=` is SPEC-SWARM's name for the batch holding a slot lock,
+and no line here prints it; a *slot* is *Fleet allocation*'s one unit of a machine's declared
+`:concurrent` and nothing else; and this section never says STOP, because the goal's `stop=`, the
+scheduling hold and SPEC-SWARM's pool `stop` file are three different things and the gate is none
+of them.
+
+### The gate (#785)
+
+1. SPEC-AHEAD: #785
+   **Terminal accepted is the need's own acceptance, verified.** A need is terminal accepted when
+   two things are true: it is in C with disposition `done`; and every evidence event its standing
+   `:to :done` names qualifies its criterion by a raw fact the session's verification cache
+   already holds — the *verified* derivation of *Evidence is a pointer* above, made at read time
+   as every verdict is, with one comparison left out, the `:against`-versus-source-revision
+   comparison that makes an event *stale*. **Recorded is not verified.** A `:done` standing on a
+   pointer no resolver has established — never fetched, unreachable, of a scheme with no
+   resolver, or found-not-qualifying — leaves the need unmet with reason `need-unverified`, and
+   the way on is `verify --node <need-id>`; so an `evidence` event, which anybody can write,
+   admits nothing by being written. **The gate never fetches**, exactly as validator rule 17 does
+   not: it reads facts `verify` cached and nothing else. **Stale does not unmeet a need**:
+   staleness answers the *current verification* question of *The hierarchy, the table and the
+   roadmap's own record* below, the gate asks the *historical delivery* one, and a gate that read
+   staleness would re-block every dependent in a repository at every `source` bump. **Nothing
+   here names a forge, a branch or a job.** *Merged and green* is what a team writes into the
+   need's `:acceptance` — a `:merged` criterion and a `:job` criterion, each qualified only as
+   *Evidence is a pointer* says — and the gate demands no particular kind, so a need whose one
+   criterion is `:attested` is met when a `:review-attest` event of its current generation names
+   that criterion and the `:result` pointer it carries is a fact the cache holds. **What an
+   attested-only need protects is said plainly, because it is less than the other kinds**: it
+   refuses a need nobody attested, an attestation of an older generation and one whose result
+   no resolver has established; it does **not** refuse a caller who types a reviewer's name,
+   because `attest` takes `--as`, `--as` is caller text and the tool authenticates nobody. It is
+   the one kind of need a written event can meet, and a team that wants a gate no typed name can
+   open gives the need a `:merged`, `:job` or `:test` criterion, whose fact comes from a resolver
+   and from nobody's word. The tool reads no branch: green
+   is a fact about the one revision inside the pointer and never a standing property of a branch.
+   Three cases follow and are decided here. **A need that merged while its job failed** is unmet
+   either way it can arise: where the cache already held the failed fact, rule 17 refused its
+   `:to :done`, it is still in O and its reason is `need-open`; where it did not, the done
+   settled it and its reason is `need-unverified`; a failed run and a run nobody recorded are
+   told apart on the need's own `VERIFY ROW` lines and never by the gate. **A need whose job
+   succeeded and which has not merged** has no `:to :done`, is in O, and is unmet with reason
+   `need-open`. **A failed run followed by a successful re-run** is a new `run:` pointer and so a
+   new evidence event, and the need is met when the `:to :done` that stands names it: `event
+   --kind reopen`, `evidence`, `state --to done`, three recorded acts and no shortcut. Replays
+   `a-done-need-on-unverified-evidence-admits-nothing`, `stale-evidence-does-not-unmeet-a-need`,
+   `an-attested-only-need-is-met-by-its-attestation-and-by-nothing-less`.
+
+2. SPEC-AHEAD: #785
+   **Every unmet need has exactly one reason, and a row names the first.** The reason is decided
+   by where the need is, in this order, and these five tokens are the whole vocabulary:
+
+   | the need is | reason | the resolver the row names |
+   |---|---|---|
+   | in O, and its closed-index rows hold no `:revive` | `need-open` | the need's live holder, else its `responsible`, else `-` |
+   | in O, and its closed-index rows hold a `:revive`: it settled and was reopened | `need-reverted` | the same |
+   | in C, and the closed-index page that says how cannot be read | `need-unavailable` | `-` |
+   | in C with disposition `cancelled`, `superseded` or `removed` | `need-closed-unaccepted` | the **dependent's** `responsible`, else `-` |
+   | in C with disposition `done`, and short of rule 1 | `need-unverified` | the need's `responsible`, else `-` |
+
+   **A `removed` need can occur and is a closed need like the other two**: `node remove` refuses
+   a node that an existing edge names, but an edge added afterwards is admitted, because
+   validator rule 2 resolves a name against C's closed index and a removed node's row stays
+   there; so `dep --add <removed-id>` is written, prints `met=false`, and the need reads
+   `need-closed-unaccepted` for good. **A done need that is then `correct`ed is unmet**: the
+   correction bumps its generation, the evidence its `:to :done` names is of the older generation
+   and qualifies nothing, and its reason is `need-unverified` until it is reopened, evidenced and
+   done again at the new generation; its dependents read `needs-broken` by rule 5 where that rule
+   says so. **An unreadable page is never read as met**, for the reason validator rule 2
+   gives: *incomplete* and *invalid* are two answers, and neither is *green*. **A cancelled,
+   superseded or removed need is never met and never becomes met.** The way on is a recorded edit of the
+   edge by whoever answers for the dependent, which is why the row names that person: `dep
+   --remove` of the closed need, and for a superseded one `dep --add` of its `:superseded-by`
+   where the replacement delivers what the dependent needed. The tool never follows a supersede
+   by itself, because that would be the tool deciding what a replacement delivers. So new work
+   that only records a decision about a closed item names that item in its `:links` and not in
+   its `:deps`, and the sentence under *Mistakes are reversible* above that said `:dep` says
+   `:links` from this amendment on: a link is *not a dependency edge*, and an edge onto a
+   cancelled id is one this gate could never admit. **A need that
+   is a container** — a `:work-set`, an `:epic`, a `:feature` or a `:roadmap` — has no evidence of
+   its own and is met when it is in C with disposition `done` and every direct required member of
+   it is met by this same rule, read from the members' closed-index rows; the cost is one fold
+   over the container's subtree, cached per node under the key *Cost* gives every rollup and
+   invalidated as rollups are; it is the fold `remaining` already makes, it reads closed-index
+   rows and fetches nothing, and an uncached first read at the candidate gate is bounded by
+   that subtree under the session's `--max-nodes` and is no scan of O; and an
+   empty required set never settles, so an empty container is `need-open` for as long as it is
+   empty. A done container with a member short of rule 1 is `need-unverified`. **Where several
+   needs are unmet the row names the first in `:deps` order and counts them all**: the `ready`
+   row of *Output grammar* gains `need=<id|->`, `unmet=<n>` and `needs-broken=<true|false>`, its
+   `reason=` is one of the five tokens whenever `unmet=` is above zero, and the kernel slice's
+   built text `blocked by <id>` gives way to the token with `need=` beside it. A node's `state=`
+   is untouched by any of this: an unmet need is no state of the transition table, and
+   `:blocked` with its `:blocked-by` stays a person's recorded transition. Replays
+   `every-unmet-need-has-one-reason`, `a-container-need-is-met-with-its-members`,
+   `a-removed-or-corrected-need-is-unmet`.
+
+3. SPEC-AHEAD: #785
+   **Every admission verb refuses a node that is not needs-met, by one predicate, at exit 1, and
+   no flag buys a way past.** The verbs this grammar has today that have the effect the words
+   above name are these, and the list is meant to be complete: `take --node` in every form,
+   `--for <name>` included; `release --handed`; `reassign`; `offer`; `acknowledge --stage
+   accepted`; `take --machine`; `state --to doing`; `goal update --progress`, which writes that
+   same transition on the goal node; `task packet`; `execution reconcile`, which leaves a held
+   acceptance unconverted rather than refusing; and `undo` and `redo` wherever the compensating
+   envelope they append holds a `take` or a `state --to doing` — the undo of a `release`, the
+   undo of a `state` whose
+   preimage was `:doing`. **A later verb is caught by an instrument and not by a promise**: the
+   one generated schema file of *The engine and its client* names every verb's event kinds, and
+   its coverage test holds the closed list of admitting kinds — `:lease`, `:handoff`,
+   `:reassign`, `:offer`, `:acknowledge`, the allocation, `:packet`, and a `:transition` that can
+   carry `:to :doing` — and fails on any verb able to write one, in its own envelope or in one it
+   derives, whose entry carries none of three marks: `needs-gate: refuses`, the verb answers an
+   unmet need with its `FAIL` line and writes nothing; `needs-gate: withholds`, the verb is
+   admitted and records what it records but creates no lease, allocation or transition while a
+   need is unmet, which is `execution reconcile` and no other verb today — `refuses` would be
+   false of it, since a reconcile over an unmet need exits 0; or `needs-gate: exempt` with its
+   reason. **The mark is per verb and the gate is per form, so the entry names its gated
+   forms**: `needs-gate-forms` lists them by the flag that selects each — `--stage accepted` for
+   `acknowledge`, `--to doing` for `state`, `--handed` for `release`, `--progress` for `goal
+   update`, the compensating `take` and `state --to doing` for `undo` and `redo` — and a verb
+   whose every form is gated omits the list; a form not listed is ungated and the mark says
+   nothing of it, and the coverage test fails an entry whose admitting kind can be written by a
+   form the list leaves out.
+   **One of these is built**: the kernel slice refuses `state --to doing` over an unmet
+   need today and the others consult no `:deps`. **The needs check is a precondition of the
+   candidate gate and is no validator rule**: validator rule 10 is a table of edges, needs are no
+   part of it, and the whole walk at load and at every clip reads nothing of `:deps` but rule 2's
+   existence and rule 3's cycle. So a node that went `:doing` while its need was met, and whose
+   need is then reopened, leaves every load and every clip as green as it was, which is what
+   rule 5 requires; and the built slice's label, `rule 10`, on its refusal is a defect against
+   this sentence, because a rule number on the line is what would send the whole walk looking.
+   Each verb evaluates needs-met for the node it names inside the single writer, at the revision
+   the request is applied at, so there is no window between the check and the write, and
+   `--expect` means here what it means everywhere. **The order of refusals is fixed, so every
+   expected line can be written**: an invocation that cannot be read, exit 2; then the fence;
+   then a stale `--expect`; then a node the session does not hold, by that verb's existing line;
+   then a scheduling hold, by the hold's own rule below; then **needs-met**; and only then the
+   verb's other preconditions — a lease already held, no lease for a packet, an unknown or
+   mismatched offer, capacity, a missing edge of the transition table. So `task packet` over a
+   node with an unmet need and no lease prints the unmet need and not *no lease*, and `take
+   --machine` naming an offer that does not exist prints it too. **The refusal is exit 1** — the
+   verb ran and said no, *a refused take* in the exit table of *Output grammar* — **nothing is
+   written**, no lease, offer, reservation, allocation, W entry, transition, compensating
+   envelope or packet file, and the line is the verb's own `FAIL` line with one tail, `unmet
+   need <need-id> <reason>`, the need being the one rule 2 names: `LEASE FAIL node=<id>
+   unmet=<n>: unmet need <need-id> <reason>` for `take --node` and `release --handed`; `OFFER
+   FAIL node=<id> offer=<id>: unmet need <need-id> <reason>`; `ACKNOWLEDGE FAIL node=<id>
+   offer=<id> reply=<id>: unmet need <need-id> <reason>`; `ALLOC FAIL machine=<id> slots=<n|->
+   holder=<name|->: unmet need <need-id> <reason>`; `STATE FAIL node=<id>: unmet need <need-id>
+   <reason>`, with no rule number; `GOAL FAIL scope=<scope> goal=<id>: unmet need <need-id>
+   <reason>`; `UNDO FAIL request-of=<id> node=<id>: unmet need <need-id> <reason>`, and `REDO
+   FAIL` the same; and `PACKET FAIL node=<id>: unmet
+   need <need-id> <reason>; run: nova-work query --ask ready --branch open --node <id>`, which
+   is exit 1 by the exit table although that verb's older refusals print exit 2. `reassign` has
+   no line in *Output grammar* yet and carries the same tail when it gets one. **Refusing
+   `reassign` and `release --handed` has a cost, and it is accepted**: *Presence* sends a
+   coordinator to `reassign` when a holder sleeps, and over a `needs-broken` node that road is
+   shut until the need is met; the sleeper's claim ends at its lease's own deadline, and
+   `execution stop --node` is what reaches its worker. **An acceptance over an
+   unmet need is refused and not retained**: `acknowledge --stage accepted` can meet one only
+   where a need was reopened, or an edge added, between the offer and the reply; the offer stays
+   pending with its reservation, as an unanswered offer does, and the same verified receipt is
+   admitted under a fresh request once the node is needs-met, since nothing of it was written.
+   **Where a scheduling hold also covers the node, the hold's own rule answers first** — `offer`
+   refuses `held by control <id>`, and an acceptance is retained `:accepted-held` — because
+   lifting a hold is one act and meeting a need is work; and `execution reconcile`, the one verb
+   that rechecks a held acceptance, rechecks needs-met beside the generation, identity and
+   capacity it already rechecks, and converts nothing while a need is unmet. **An admission verb
+   naming a node the session does not hold** is refused by that verb's existing no-such-node
+   line, before any need is read. **The gate is the
+   dependency predicate and not the whole of `ready`**: every row `ready` prints `ready=true` is
+   needs-met, and the converse is false, since `ready` also folds agreed scope, acceptance
+   readiness, ownership, availability and resource limits, each of which its own verb already
+   refuses by its own line. `--dry-run` on an admission verb is how a caller asks without
+   writing: it prints the same refusal or the projected receipt and journals nothing. **No other
+   verb is gated**: `heartbeat`, `attempt`, `evidence`, `observe`, `state --to review` and `state
+   --to done` record what happened, and a record of what happened is never refused for a
+   dependency. **How the gate reaches a launcher is said plainly, because today it does not.**
+   SPEC-SWARM names three launchers — `nova-swarm run`, `nova-pulse launch` and a hand launch —
+   and none of them consults the tree: they admit by slot and by bench slot lease, and a card
+   carries no node id. **The gate is the tree's answer at its own admission verbs, and a launcher
+   must ask**: a launcher honours the gate when it starts a worker for a node only after an
+   admission verb for that node has printed `OK` to it, and starts nothing on a `FAIL`. Binding
+   the three launchers to that sentence — a card that names its node, a launcher that holds the
+   node's lease beside its bench slot lease — is an amendment to SPEC-SWARM and is owed there,
+   not claimed here. Replays `every-admission-verb-refuses-an-unmet-need`,
+   `ready-true-implies-needs-met-and-not-the-reverse`,
+   `a-reopened-need-under-a-doing-dependent-leaves-the-set-green`,
+   `a-verb-that-can-admit-declares-its-needs-gate`.
+
+4. SPEC-AHEAD: #785
+   **Needs-met is read, never stored, and no event releases a dependent.** Whether a need is met is
+   derived at read time from the tree, the closed index and the verification cache, cached like
+   every other derived value and written nowhere as authority, so there is no release event, no
+   stored list of waiting nodes and nothing to sweep. A dependent becomes needs-met at the first
+   read after whichever comes last of the three things that can meet a need: the need's settle, the
+   `verify` that caches the facts its evidence stands on, and a `dep --remove` of the unmet edge.
+   The observable is exact: after that command's `OK` line, **with no further command**, `query
+   --ask ready --branch open --node <dependent>` prints `unmet=0` on its row — and `ready=true` where nothing else `ready` folds stands in the way — and the journal holds no
+   event on the dependent. nova-work tells nobody: it *sends nothing and names no transport*, by
+   *Presence* above, so a launcher learns a node is needs-met by asking, as rule 3 says. Replay
+   `needs-met-is-read-not-released`.
+
+5. SPEC-AHEAD: #785
+   **`needs-broken` is a reading on work that went ahead of its gate; it is never a finding and
+   it stops no worker.** A node reads `needs-broken=true` when it has an unmet need **and** at
+   least one of three things is true — it is engaged, it is in C, or the reason of one of its
+   unmet needs is `need-reverted` — and `false` otherwise. **One
+   half of this is built**: the kernel slice raises the flag on every direct dependent of a need
+   whose `:revive` it applies and lowers it at the settle that leaves every need in C again, and
+   rule 1's verified half, the engaged half and the settled half are ahead of their code. It is
+   derived, as rule 4 says of needs-met, and it clears by itself at the first read after the
+   node is needs-met again. It is printed as `needs-broken=<true|false>` on the `ready` row and
+   on `DEP OK`, and counted as `needs-broken=<n>` on `check`'s `WORK OK` and `WORK FAIL` count
+   lines beside `expired=` and `stale=`. **It is a count and never a `WORK FAIL <id>` line**: a
+   red set refuses every mutation, and one reopened need must not stop a team, so `check` exits 0
+   over any number of them. **It stops nothing that runs**: the tree kills no worker, which is
+   W4 and *a stop is a scheduling hold plus directives*; what it does is refuse the next
+   admission verb on that node by rule 3, a `task packet` for it among them, while `heartbeat`,
+   `attempt` and `evidence` on it are recorded as before. A coordinator who wants the workers
+   stopped writes `execution stop --node`, a separate act that this reading never implies. **It
+   goes one edge and no further**: a dependent of a `needs-broken` node that is itself still
+   settled and met is not flagged. **It moves no count and reopens nothing**: whether a
+   dependent that already landed must be redone is a person's decision, recorded as `event --kind
+   reopen` on it, which then flags its own dependents by this rule. **A revert reaches the gate
+   as a recorded act and no other way**: `event --kind reopen` on the need writes its `:revive`
+   and the need is `need-reverted`; a revert made on a branch that nobody records is invisible to
+   a tool that reads no branch, and a need whose job fails at some later revision is the same
+   need, met, until a person records otherwise. Replay
+   `reverting-a-need-flags-an-engaged-dependent-and-kills-nothing`.
+
+6. SPEC-AHEAD: #785
+   **Moving an edge is a recorded act, and every way past a need is a recorded act.** `dep`
+   already writes a `:structure` event with an author and a required `--reason`, and this rule
+   adds what it decides and what it prints: `DEP OK … change=<add|remove> need=<id>
+   met=<true|false> unmet=<n> needs-broken=<true|false>`, the last two read after the change.
+   **`dep --add`** of an id that names nothing in O or C is refused by validator rule 2,
+   `dangling`, and an id that lives in another session's tree is that case and no other, since
+   `:deps` holds ids of this O; of the node's own id, or of an id that would close a cycle, it is
+   refused by rule 3, a node that needs itself being a cycle of length one as *The coordination
+   tree is one edge* above says of `:coordinator`; each is exit 1, `DEP FAIL node=<id>: rule <n>:
+   <reason>`, nothing written. A need under another repository work set of the same O is an
+   ordinary edge and is admitted, because rule 1 reads the need's own acceptance and asks
+   nothing about where it lives. **Work in another tree, and a pull request that is no node, get
+   a node and not a second kind of edge**: a `:task` of this O whose `:acceptance` names the
+   foreign facts, since an evidence pointer may name any repository, which answers #785's *and
+   to PRs or evidence records* with the kinds this document already has. **An edge added under
+   work is admitted and flagged**: `dep --add` of an unmet need onto a node that is engaged or
+   in C is written, because the dependency is true whether or not it is convenient, the line
+   prints `needs-broken=true`, and nothing is stopped or reopened, by rule 5; onto a node that is
+   neither it prints `needs-broken=false` and the node is simply not needs-met. **`dep --remove`
+   takes effect at once**, by rule 4, and **it is the override of a direct need**: the way to
+   admit a node past a need is to say on the record, with a name and a reason, that it does not
+   need it. **A container need has other recorded roads, and they are named rather than
+   denied**: the container is met when its direct required members are, so `node require --to
+   false` on its one unverified member, a `node move` of that member out of it, and the
+   member's `event --kind cancel` or `--kind supersede` each change what the container requires
+   and can meet the need with no `dep --remove`. Each is a scope event with an author and a
+   reason that moves a denominator in plain sight, by the delta table, which is the same
+   standing `dep --remove` has; none is gated, because gating scope edits for the sake of some
+   dependent would stop a team managing its own scope. **What there is not is an unrecorded
+   road or a flag**: no `--force`, and *Presence*'s `--anyway` answers a presence reading and
+   buys nothing past a need. **Remove, admit, add back** is
+   therefore not silent: it is three events with their authors, and from the third the node
+   reads `needs-broken=true` on every `ready` row and in every `check` count until the need is
+   met. What the tool cannot do is stop a named person removing an edge: `--as` is caller text
+   and the tool authenticates nobody, as *The verbs* says of every verb. Replay
+   `an-edge-added-under-work-flags-and-every-way-past-a-need-is-recorded`.
+
+### The hand report (#854 item 7)
+
+7. SPEC-AHEAD: #854
+   **A hand act is told apart by where its effect lives, and only one half of them is
+   reported.** A **hand act** is a change a person, or a person's script, makes to something the
+   work depends on by a road other than a verb of the tool that owns that thing. **Where the
+   effect is tree state** — a lease, an edge, a state, a criterion, a CONFIG member, anything
+   *The data* holds — the act is done by that field's typed verb, and where no verb owns the
+   field it is a **missing verb**, which goes in the one register *The verbs* keeps and is
+   unreachable until it exists; it is never reported, because a report that set tree state
+   would be the *generic set-field escape hatch* that section forbids. **Where the effect lies
+   outside the tree** — a process started or killed, a machine's service restarted, a queue
+   entry dropped, a file copied to a bench, a merge made through a forge's own page — the tree
+   cannot do the act and cannot undo it, and what it can hold is a record that it happened:
+   that is `report`, one verb. **The choice between one report verb and a typed verb per act is
+   made by that line and not by taste**: a typed verb per outside act would make nova-work
+   restart services and drop queue entries, and *The fleet* says it *schedules nothing,
+   dispatches nothing, leases nothing and runs nothing*; one report verb that could change
+   state would be the hatch. So the typed verbs change state and the one report verb changes
+   none. Rule 11 walks #854's own list through this line, act by act.
+
+8. SPEC-AHEAD: #854
+   **`report` records a hand act and changes nothing.** Its line in *The verbs*:
+
+   ```
+   nova-work report --session <path> <write flags> --act <launched|stopped|other> --subject <node|machine|friend|route|offer|external>:<text> --what <text> --acted-at <stamp> --instead-of <text|-> --reason <text>
+   ```
+
+   It writes one `:report` event whose own fields, in the order the payload digest serializes
+   them, are `:act`, `:subject`, `:what`, `:acted-at`, `:instead-of`, `:reason`. **No field
+   restates the envelope**: the reporter is the event's `:by`, the moment of the report is its
+   `:stamp` and `:clock`, and the six fields carry only what the envelope cannot. `:act` is the
+   class of the act, three values and no others: `:launched`, a worker started; `:stopped`, a
+   worker or a process ended; `:other`. `:subject` is what the hand acted on, a typed selector
+   as `:execution-control`'s `:scope` is: `(:node "<id>")`, `(:machine "<id>")`, `(:friend
+   "<name>")`, `(:route "<id>")`, `(:offer "<id>")`, or `(:external "<text>")` for a thing the
+   tree has no identity for; the flag's value is split at its first `:`. `:what` is the act
+   itself in one line — what was done, to what, by which road — and `:reason` is why; they are
+   two fields because a record of *what* with no *why* is a log and a *why* with no *what* is an
+   excuse. `:acted-at` is when the hand acted, which is not when it was reported, and the two
+   are kept apart as `:given` and `:tool` clocks are. `:instead-of` is the verb the hand reached
+   past, in any tool's spelling, as opaque text this tool never validates because it knows no
+   other tool's grammar, or `-` where the reporter knows of none. **Its subject is a hand act
+   and not a node**: `:node` is `(:absent)` on every `:report`, as it is on a `:machine` event,
+   and the selector carries the identity. **Two fields are the session's own half, outside the
+   payload digest as a `:settle` is**: `:unmet` and `:need`, the count and the first unmet need
+   of a `(:node …)` subject at the revision the report is applied at, `(:absent)` for every
+   other subject. **It changes no tree state**: no lease, offer, allocation, transition,
+   evidence, attempt, edge, CONFIG member, ACTIVE observation, count, required set or roadmap
+   moves, W is unchanged, and the only thing a `:report` alters is what rule 5's *engaged* reads:
+   a `:launched` report on a node begins an engagement and a `:stopped` report on that node ends
+   it, by rule 9, and neither touches a lease, a state or a count. **Who may run it**: any registered friend of
+   `friends`; `--as` is caller text as on every verb and the tool authenticates nobody, so a
+   report names whoever was typed and the journal keeps that name. **Another tool reports the
+   way a friend submits anything**: there is one writer, so a tool that wants its operator's
+   acts in the tree sends `report` to the owning session — by `--session`, or from another bench
+   as a request in a bundle `session replay` applies — under its operator's `--as`, and opens no
+   second O. **It is never reversible**: a `:report` records that something happened, it is
+   added to the reversible-verb table's row of records an undo can never erase, beside
+   `observe`, and a mistaken report is answered by another report whose `--what` names the
+   first event's id. The lines:
+
+   ```
+   REPORT OK id=<event-id> request=<id> subject=<selector> act=<launched|stopped|other> instead-of=<text|-> acted-at=<stamp> lag=<duration> unmet=<n|-> need=<id|-> holder=<name|unowned|-> rev=<n> pushed=<rev|-> emitted=<bytes>
+   REPORT FAIL subject=<selector|->: <reason>
+   REPORT FAIL subject=<selector> expect=<rev> current=<rev>: stale
+   ```
+
+   `lag=` is the event's `:stamp` less `:acted-at`; `unmet=`, `need=` and `holder=` are `-`
+   unless the subject is a node. **It refuses at exit 1, nothing written**, `REPORT FAIL
+   subject=<selector>: <reason>`: a subject naming a node, machine, friend, route or offer the
+   session does not hold (`no such <kind>`, by validator rule 2's resolution, C included); an
+   `--as` that is no friend of `friends` (`unknown reporter`); an `--acted-at` ahead of the
+   session's clock by more than `--skew` (`acted-at ahead of the clock`); and a stale
+   `--expect`, by its own line. **It refuses at exit 2**, one line ending `run: nova-work help`,
+   an invocation it cannot read: any of the six flags missing, which is `refusing to guess`; an
+   `--act` outside the three; a `--subject` with no `:` or a kind outside the six; a `--what`, a
+   `--reason`, an `--instead-of` or an `external:` text that is empty or whitespace only, the
+   same refusal this document already makes of whitespace-only evidence; a stamp that is not
+   RFC 3339 UTC; and any text past the session's string bounds. **A report carries no secret**:
+   a report about a key names where the key is and never its value, which is the reporter's
+   duty and no check this tool can make on free text. Replays
+   `report-records-and-changes-nothing`, `report-refuses-by-name`.
+
+9. SPEC-AHEAD: #854
+   **A hand launch of a node with an unmet need has one answer, and this is the one place it is
+   given.** A hand launch is the third launcher SPEC-SWARM names: a worker started for a node
+   by a person at a shell. It is a hand act in this document's sense whenever no admission verb
+   for the node printed `OK` to that person first, and a bench slot lease changes nothing about
+   that, because a bench slot lease is SPEC-SWARM's admission to a bench and says nothing of a
+   node. **Asked, it is refused**: a person who runs an admission verb for that node first gets
+   rule 3's refusal at exit 1, and no flag, role or reason turns it into an admission. **Not
+   asked, it cannot be refused**, because it happened outside the tool, **and told afterwards,
+   it is recorded and never refused**: `report --act launched --subject node:<id>` is written
+   whatever the node's needs are, because refusing the record would make the tree false twice,
+   and its `REPORT OK` prints `unmet=<n> need=<id>` for that revision. **The record is evidence
+   of a breach and never an override**: it grants no lease, adds nothing to W, moves no state,
+   and the next admission verb for the node still refuses; from that event the node reads
+   `needs-broken=true` for as long as a need is unmet, because a node carrying a report of a
+   launch is engaged, by the words above, exactly as one carrying an `:attempt` is. **How long
+   that lasts, and who can cause it, are intended and are said**: the report engages the node
+   until a `report --act stopped` on the same node or the node's next `:correct`, whichever
+   comes first, and an `:attempt` engages it for the whole of its generation, because work done
+   under this generation stands on whatever gate breaks later, however long ago the worker
+   ended; and any registered friend can write the report about anybody's node, which costs that
+   node one reading and one count while a need is unmet and nothing at all once it is met — no
+   verb reads *engaged* for a needs-met node. The only
+   override is rule 6's, and it is an edit of the edge on the record, never a launch. A hand
+   launch of a node that **is** needs-met is recorded the same way with `unmet=0 need=-`, and
+   what it went round is then the lease and not the gate: `holder=` on the line says whose.
+   Replay `a-hand-launch-is-refused-when-asked-and-recorded-when-told`.
+
+10. SPEC-AHEAD: #854
+    **Reports are read by one ask, and the counts are information.** `query --ask reports
+    --branch open --since <revision>` is the read: `--since` is required and is refused before
+    the retention boundary exactly as `handoffs --since` is, `--branch closed` and `--branch
+    root` are exit 2 as they are for `handoffs`, and `--node <id>` narrows it to reports whose
+    subject is that node. It prints one row per `:report` event since that revision, newest
+    last, capped by `--max` with a `MORE` line, and three counts in its `QUERY OK` bracket
+    group:
+
+    ```
+    QUERY OK ask=reports … [reports=<n> no-verb=<n> launched-unmet=<n>] …
+    QUERY ROW <event-id> kind=report act=<launched|stopped|other> subject=<selector> instead-of=<text|-> acted-at=<stamp> at=<stamp> clock=<tool|given> lag=<duration> by=<name> unmet=<n|-> need=<id|-> what=<text> reason=<text>
+    ```
+
+    `reports=` is the events in the range, `no-verb=` those whose `:instead-of` is `-`, and
+    `launched-unmet=` the `:launched` reports whose `:unmet` was above zero. The row prints the
+    why beside the what, `reason=` last, so the one read of reports is not a log without its
+    reasons. It is an ask like any other, under `--session` or `--snapshot`, and **the privacy
+    floor holds, the id included**: a report whose subject is a `:private` node prints
+    `subject=node:-`, `need=-`, `what=-` and `reason=-` on
+    every read but the owning session's, is counted in `reports=` and in the line's `private=`, and
+    names nothing of the node, as every other view of a private node does. **The range is
+    counted in revisions, which the session assigns, so a backdated or postdated `--acted-at`
+    moves no report into or out of any answer**; `at=` and `clock=` are the event's own, and a
+    report written under `--now` prints `clock=given` like every other event. **`no-verb=` is
+    evidence for the missing-verb register and is not a second register**: the list in *The
+    verbs* stays the one record of what this grammar lacks, it is this document's and is
+    edited by an amendment, and a report whose `--instead-of` is `-` is what an author of
+    such an amendment reads. **No rule, gate or exit in this document reads these counts**, and
+    none of them has a value that is good or bad by itself. **A report of a stop is not stop
+    evidence**: `report --act stopped --subject node:<id>` prints the node's `holder=`,
+    releases no lease — the lease reads held-not-worked to its deadline, its holder's
+    `release` or a `reassign` — reconciles no attempt, and is not the stopped-worker evidence
+    `event --kind cancel` requires; the one thing it ends is the engagement an earlier report of
+    a launch gave that node, by rule 9. Replays `reports-are-read-in-one-ask`,
+    `a-report-of-a-stop-releases-nothing`,
+    `a-report-of-a-stop-ends-the-engagement-a-launch-report-began`.
+
+11. SPEC-AHEAD: #854
+    **#854's own list of hand acts, each put through rule 7's line.** Spelled generically,
+    since nothing in this tool names a team's files or benches:
+
+    | the hand act | where its effect lives | what writes it |
+    |---|---|---|
+    | a machine's slot cap or headroom changed by an environment variable and a restart | the cap is tree state; the restart is outside | `machine --limit <id> concurrent=<n>`; the restart is `report --act other --subject machine:<id>` |
+    | waiting out a silence, then requeueing work by its cause | the wait is a reading; the requeue of a node's work is tree state | `stale`'s `finding=` under `--ack-window`; `reassign`, or `offer` with `--predecessor-offer`; a requeue made inside another tool by hand is `report --act launched` |
+    | tests kept back until the implementation they test lands | tree state | a `:deps` edge from the test's node to the implementation's node, gated by rule 3 |
+    | merge-queue entries swept in or dropped by hand | outside: a merge queue is no part of the tree | `report --act other --subject external:<text>` |
+    | a service on a machine restarted or re-registered, a phantom run cancelled, a toolchain installed for a user, a key file copied | fleet membership and declared facts are tree state; the rest is outside | `machine --register`, `--retire`, `--fact`; the rest is `report --act other --subject machine:<id>`, naming where a key is and never its value |
+    | a route file edited, a route benched, a model name rewritten | tree state | `route --register`, `--retire`, `--probe`; a hand edit of the generated harness config is the defect *Model routes* rule 4 names, and is reported as `report --act other --subject route:<id>` when it happens anyway |
+    | a worker's brief written by hand, and a worker or a pulse child started from a shell | the brief is tree state; the start is outside | `task packet`; the start is `report --act launched` with `--subject node:<id>` where it was for a node and `friend:<name>` or `external:<text>` where it was not |
+    | a file of work-set names used as the admission list | tree state with no field and no verb yet | **missing**: #854 item 11's admitted edge, which this section does not specify; until it exists a hand edit of such a file is `report --act other --subject external:<text>` |
+    | a merge made past a stuck queue by someone with the forge's authority | the merge reaches the tree as evidence; the bypass is outside | `evidence` with a `pr:` pointer on the fix's node; the bypass is `report --act other`, and #854 item 12's rule row is not specified here |
+    | an adoption pass run by script, its receipts kept in notes | tree state | `capability inventory`, which *Capability inventory* below makes the one source those receipts read |
+    | estimates and a build ledger kept by script | an actual is tree state with a verb; an estimate is tree state with none | `attempt --usage` for the actual; **missing**: `estimate`, added to the register in *The verbs* by this amendment, because *every node carries an estimate* and no verb of this grammar writes one |
+    | a lease cleared by hand | tree state, and not reachable by hand: a lease is an event in the journal | `release`, `release --handed`, `reassign`; a hand edit of a journal or a snapshot is the maintenance act *The data* names, raced by the next reconfirm, and no report makes it a verb |
+
+**What this section does not do, and must not.** It starts, stops and kills nothing, sends
+nothing and polls nothing. It adds no state to the transition table and no validator rule: an
+unmet need and `needs-broken` are readings and counts. It does not detect a hand act nobody
+reported, and no rule, count or exit above depends on one being detected; the one thing the tree
+notices by itself is work recorded on a node whose need is unmet, which is rule 5's *engaged*
+and needs no report. It bounds how many reports a caller may write no more than this document
+bounds `evidence` or `heartbeat`: a `:report` is one event under the journal, the retention
+boundary and the page bounds like every other. It does not bind SPEC-SWARM's launchers, which
+rule 3 names as owed. Of #785 it leaves the roadmap's critical-path and width view and the
+cost and estimate rollup along needs (#774); it closes the *separate PR or evidence-record
+reference kind* by rule 6, as a node and no new kind. Of #854 it leaves item 2's third edge —
+admission, under a scheduling hold, of the one node whose work would lift it — item 11's
+admitted edge and item 12's rule row, none of which is decided here, so today the way to admit
+work under a hold is the hold's own `execution resume --action release-hold`.
+
+**Two implementation tests are owed with the code, and are recorded here so a card carries
+them** (Stella's read of this section): that a report's engagement survives a clip and a fresh
+`session start` — a `:launched` report, a clip, a restart, and the node still reads
+`needs-broken=true`, then a `:stopped` report, a clip, a restart, and it still reads `false` —
+because *engaged* is derived from events and must be rebuilt from them and from nothing held in
+memory; and that a container need's cached readiness moves when **only** the verification
+cache's revision moves — a member's evidence verified by `verify` with no mutation of O, and the
+dependent's row going from `need-unverified` to `unmet=0` on the next read — because the cache
+key *Cost* gives a rollup includes that revision and a fold keyed without it would stay stale.
+
 ## Recursive coordination nodes *(nova-work v2, nova-tools#321; a draft for review)*
 
 Glenn's v2 frame is *"As above, so below."*: a **node** is the unit of coordination, and every
@@ -5412,7 +5936,7 @@ chain, high fan-out, and on one multi-command session.
 
 Every line's first token is the verb's (`SESSION`, `EXPORT`, `REPLAY`, `HANDOFF`, `CLIP`,
 `OPERATION`, `SAVEPOINT`, `UNDO`, `REDO`, `FRIEND`, `CONFIG`, `MODEL`, `OBSERVE`, `GOAL`, `MACHINE`,
-`OFFER`, `ACKNOWLEDGE`, `DECLINE`, `EXECUTION`, `ALLOC`, `PROBE`, `ROUTE`, `WORK`, `VERIFY`, `QUERY`, `RENDER`, `LOAD`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
+`OFFER`, `ACKNOWLEDGE`, `DECLINE`, `EXECUTION`, `ALLOC`, `PROBE`, `ROUTE`, `REPORT`, `WORK`, `VERIFY`, `QUERY`, `RENDER`, `LOAD`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
 `ROADMAP`, `PRIORITY`, `RESPONSIBLE`, `ACCEPT`, `SOURCE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`,
 `ATTESTED`, `STATE`, `CORRECT`, `EVENT`), the second is `OK` or `FAIL`, `RACED` for a push the base predicate
 refused (SPEC-MERGE rule 21's shape, exit 1, nothing pushed), or one of the informational
@@ -5447,15 +5971,15 @@ ATTESTED OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> criterio
 CLIP OK session=<path> operation=<id> boundary=<request-id> events=<n> base=<sha> commit=<sha> pushed=<rev> attempts=<n> emitted=<bytes>   (printed by `operation wait --id <id>` when the transport settles, and by `session stop`, which waits for its own; `clip` itself prints OPERATION OK)
 CLIP RACED session=<path> operation=<id> boundary=<request-id> generation=<n> expected=<sha12> found=<sha12>
 CLIP FAIL session=<path> operation=<id> boundary=<request-id> events=<n> base=<sha> pushed=<rev|-> attempts=<n>: <reason>   (a whole validation that found anything is `findings=<n>`, its `WORK FAIL` lines printed above it)
-WORK OK nodes=<n> edges=<n> events=<n> leases=<n> expired=<n> escalated=<n> stale=<n> scope=<rev> source=<sha|-> pushed=<rev|-> emitted=<bytes>
+WORK OK nodes=<n> edges=<n> events=<n> leases=<n> expired=<n> escalated=<n> stale=<n> needs-broken=<n> scope=<rev> source=<sha|-> pushed=<rev|-> emitted=<bytes>   (needs-broken= is SPEC-AHEAD: #785, a count and never a finding)
 WORK FAIL <id>: rule <n>: <reason>
-WORK FAIL nodes=<n> findings=<n> shown=<n> expired=<n> escalated=<n> stale=<n>
+WORK FAIL nodes=<n> findings=<n> shown=<n> expired=<n> escalated=<n> stale=<n> needs-broken=<n>   (needs-broken= is SPEC-AHEAD: #785)
 VERIFY OK pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=<n> pushed=<rev|-> emitted=<bytes>
 VERIFY ROW <event-id> pointer=<p> verdict=<verified|unverified|stale> at=<stamp>
 VERIFY FAIL pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=<n> pushed=<rev|-> shown=<n>
-QUERY OK ask=<kind> scope=<rev> membership=<rule> branch=<open|closed|root> unit=<unit> source=<sha|-> freshest=<stamp|-> done=<n> done-unverified=<n> unknown=<n> deferred=<n> cancelled=<n> superseded=<n> stale=<n> required=<n> since-baseline=<n> private=<n> open=<n> closed=<n> gap=<n> [from=<stamp> to=<stamp> closed-in=<n> settles-in=<n> revives-in=<n> items-in=<n>] [green=<k> applicable=<n> baseline-rows=<n0> row-kind=<kind>] [held-not-worked=<n> unowned=<n>] [leases=<n>] [responsible=<name|->] pushed=<rev|-> rows=<n> shown=<n> pages=<n> parses=<n> replays=<n> emitted=<bytes>
+QUERY OK ask=<kind> scope=<rev> membership=<rule> branch=<open|closed|root> unit=<unit> source=<sha|-> freshest=<stamp|-> done=<n> done-unverified=<n> unknown=<n> deferred=<n> cancelled=<n> superseded=<n> stale=<n> required=<n> since-baseline=<n> private=<n> open=<n> closed=<n> gap=<n> [from=<stamp> to=<stamp> closed-in=<n> settles-in=<n> revives-in=<n> items-in=<n>] [green=<k> applicable=<n> baseline-rows=<n0> row-kind=<kind>] [held-not-worked=<n> unowned=<n>] [leases=<n>] [reports=<n> no-verb=<n> launched-unmet=<n>] [responsible=<name|->] pushed=<rev|-> rows=<n> shown=<n> pages=<n> parses=<n> replays=<n> emitted=<bytes>   (the reports= group is SPEC-AHEAD: #854 and is printed by the reports ask alone)
 QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> escalated-to=<name|-> blocked-by=<id|->
-QUERY ROW <id> kind=<k> state=<s> ready=<true|false> reason=<text|-> resolver=<name|-> priority=<rank|default> priority-source=<id|default> priority-context=<self|subtree|default> responsible=<name|-> holder=<name|unowned>   (ready; the three priority fields read the same under either --order)
+QUERY ROW <id> kind=<k> state=<s> ready=<true|false> reason=<text|-> need=<id|-> unmet=<n> needs-broken=<true|false> resolver=<name|-> priority=<rank|default> priority-source=<id|default> priority-context=<self|subtree|default> responsible=<name|-> holder=<name|unowned>   (ready; the three priority fields read the same under either --order; need=, unmet= and needs-broken= are SPEC-AHEAD: #785, and where unmet= is above zero reason= is one of need-open, need-reverted, need-unavailable, need-closed-unaccepted, need-unverified)
 QUERY ROW <id> lease=<lease-id> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|-> escalated-to=<name|-> responsible=<name|->   (who, stale)
 QUERY ROW <id> branch=<open|closed> disposition=<pending|working|deferred|done|cancelled|superseded|removed> repo=<o/n|-> kind=<k> state=<s> landed=<sha|-> released=<version|-> holder=<name|unowned> settled=<stamp|-> evidence=<n> verified=<n> responsible=<name|->   (done, remaining and under, under --branch closed or --branch root)
 QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>   (rows whose bodies the retention archive holds, or whose day partition or manifest the committed root names, and this read could not reach)
@@ -5544,6 +6068,12 @@ ALLOC RELEASE OK allocation=<id> machine=<id> slot=<n> freed=<true> rev=<n> push
 ALLOC ROW allocation=<id> machine=<id> slot=<n> holder=<name> node=<id> batch=<id> offer=<offer-id> attempt=<attempt-id> age=<duration>
 PROBE OK machine=<id> slot=<n|-> fact=<observed|absent> at=<stamp> source=<pointer>
 LEASE FAIL node=<id> holder=<name> since=<stamp> deadline=<stamp> live=<n>: held
+LEASE FAIL node=<id> unmet=<n>: unmet need <need-id> <reason>   (SPEC-AHEAD: #785: take --node and release --handed over a node that is not needs-met, exit 1, nothing written; OFFER FAIL, ACKNOWLEDGE FAIL, ALLOC FAIL, STATE FAIL with no rule number, GOAL FAIL, UNDO FAIL, REDO FAIL and PACKET FAIL carry the same tail in their own reason place, because the needs check is a precondition of the candidate gate and no validator rule, by rule 3 of *The dependency gate and the hand report*)
+DEP OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=<add|remove> need=<id> met=<true|false> unmet=<n> needs-broken=<true|false> changed=<n> emitted=<bytes>   (SPEC-AHEAD: #785: met= is the named need's; unmet= and needs-broken= are the node's, read after the change)
+REPORT OK id=<event-id> request=<id> subject=<selector> act=<launched|stopped|other> instead-of=<text|-> acted-at=<stamp> lag=<duration> unmet=<n|-> need=<id|-> holder=<name|unowned|-> rev=<n> pushed=<rev|-> emitted=<bytes>   (SPEC-AHEAD: #854: lag= is the event's stamp less acted-at; unmet=, need= and holder= are - unless the subject is a node)
+REPORT FAIL subject=<selector|->: <reason>   (no such <kind>; unknown reporter; acted-at ahead of the clock — each named, exit 1, nothing written; an invocation it cannot read is exit 2 by the exit paragraph below)
+REPORT FAIL subject=<selector> expect=<rev> current=<rev>: stale   (nothing written)
+QUERY ROW <event-id> kind=report act=<launched|stopped|other> subject=<selector> instead-of=<text|-> acted-at=<stamp> at=<stamp> clock=<tool|given> lag=<duration> by=<name> unmet=<n|-> need=<id|-> what=<text> reason=<text>   (reports; SPEC-AHEAD: #854; a :private subject prints subject=node:-, need=-, what=- and reason=- on any read but the owning session's)
 <TOKEN> NOTE <caveat>
 <TOKEN> MORE kind=<rule|row> shown=<n> total=<t> <remedy>
 nova-work <build identity> <goos>/<goarch> <go version>
@@ -5553,9 +6083,9 @@ where `<MUTATION>` is one of `NODE`, `DECOMPOSE`, `ACCEPT`, `SOURCE`, `DEP`, `AX
 `ROADMAP`, `PRIORITY`, `RESPONSIBLE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`, `ATTESTED`, `STATE`,
 `CORRECT`, `EVENT`, `UNDO`, `REDO`, `FRIEND`, `MODEL`, `OBSERVE`, `MACHINE`, `ROUTE`, `OFFER`, `ACKNOWLEDGE`,
 `DECLINE`, `EXECUTION` and `CONFIG` (its `--intake`
-form alone), `GOAL` (its `set` and `update` forms). **Ten of them name no node, and their lines are written out above rather than left
+form alone), `GOAL` (its `set` and `update` forms), and `REPORT` (SPEC-AHEAD: #854). **Eleven of them name no node, and their lines are written out above rather than left
 to `node=`**: `UNDO` and `REDO` print `nodes=<n>`, `FRIEND`, `OBSERVE` and `CONFIG --intake`
-print `friend=<name>`, `MODEL` prints `model=<id>`, `GOAL` prints `scope=<scope> goal=<id|->`, `MACHINE` prints `machine=<id>`, `ROUTE` prints `route=<id>`, and `EXECUTION` prints `control=<id>` — each the subject its `:event` kind above
+print `friend=<name>`, `MODEL` prints `model=<id>`, `GOAL` prints `scope=<scope> goal=<id|->`, `MACHINE` prints `machine=<id>`, `ROUTE` prints `route=<id>`, `EXECUTION` prints `control=<id>`, and `REPORT` prints `subject=<selector>` — each the subject its `:event` kind above
 names, each still carrying `id=`, `request=`, `rev=` and `pushed=`, so the once-only retry
 promise reads the same for them as for every other mutation. The rest each
 add the fields their section names (`LEASE OK … holder= deadline= default= live=`, `STATE OK
@@ -6409,6 +6939,125 @@ shapes of *Model routes* being the amendment's additions to *Output grammar*:**
   coordinator's `profile` verb writes a profile, every edit a versioned record carrying `:by` and
   its own revision, so the journal answers who last edited the prompt and when.
 
+**The replays of the dependency gate and the hand report (#785, #854 item 7).** Each is written
+so its red test can be cut from this text alone, with a fake resolver, a fake clock by `--now`
+and no launcher; D is a dependent `:task`, N its one need, and every id is invented:
+
+- **`a-done-need-on-unverified-evidence-admits-nothing`** — N settled `done` on a `run:` pointer
+  the fake resolver has not yet answered: `query --ask ready --branch open --node D` prints D's
+  row with `ready=false reason=need-unverified need=N unmet=1`, and `take --node D` prints `LEASE
+  FAIL node=D unmet=1: unmet need N need-unverified` at exit 1 with the journal, W and the lease
+  index unchanged; after `verify --node N` against a resolver answering `holds`, and no other
+  command, the same ask prints `ready=true` and the same `take` prints `LEASE OK`; the same run
+  with the resolver answering `absent` leaves both refusals standing.
+- **`stale-evidence-does-not-unmeet-a-need`** — N met, then `source --to <sha>` on N's repository
+  work set: N's evidence reads stale and N counts `unknown` in its rollup, while D's row still
+  prints `ready=true unmet=0` and `take --node D` is admitted.
+- **`every-unmet-need-has-one-reason`** — five fixtures, one per row of rule 2's table, each
+  printing its one token, `need=` and the resolver that row names; over a cancelled need, `dep
+  --remove` of the edge and then `ready=true` with no other command; over a superseded need, the
+  remove and a `dep --add` of its `:superseded-by`; two unmet needs printing the first in `:deps`
+  order and `unmet=2`; and no fixture moving D's `state=`.
+- **`a-container-need-is-met-with-its-members`** — a need that is a `:feature` of two tasks: one
+  done and verified and one open, `need-open`; both done and one on unverified evidence,
+  `need-unverified`; both verified, met; and an empty container never met.
+- **`every-admission-verb-refuses-an-unmet-need`** — over D with N open and no lease, offer or
+  allocation on D: `take --node`, `take --node --for <name>`, `offer`, `state --to doing`, `goal
+  update --progress` with D the scope's goal, `take --machine` naming an offer that does not
+  exist, and `task packet`; and over a D that was leased, offered and received while N was met
+  and whose N was then reopened: `release --handed`, `reassign`, `acknowledge --stage accepted`,
+  `take --machine` on the real offer, `task packet`, and `undo` of D's earlier `release`. Each
+  exits 1 with its own `FAIL` line ending `unmet need N <reason>` — `take --machine` and `task
+  packet` in the first group printing that and not *unknown offer* or *no lease*, by rule 3's
+  order — `STATE FAIL` carrying no rule number, and no lease, offer, reservation, allocation, W
+  entry, transition, compensating envelope or packet file written; the same calls under
+  `--dry-run` print the same refusals; with N met, each prints its `OK`; with a scheduling hold
+  over D as well, `offer` prints `held by control <id>` and an acceptance is retained
+  `:accepted-held`, which `execution reconcile` leaves unconverted while N is unmet; and a
+  `take --node` of an id the session does not hold prints that verb's no-such-node refusal and
+  no `unmet need`.
+- **`a-reopened-need-under-a-doing-dependent-leaves-the-set-green`** — D `:doing` on N met; `event
+  --kind reopen` on N; then `check`, a `clip` and a fresh `session start` on that clip: each
+  prints `findings=0` and no `WORK FAIL` line names D or rule 10, `WORK OK` prints
+  `needs-broken=1`, and an unrelated `evidence` on another node is admitted after each.
+- **`a-verb-that-can-admit-declares-its-needs-gate`** — the schema file's coverage test, over a
+  fixture schema: a verb entry whose event kinds include `:lease` and which carries no
+  `needs-gate` fails the test naming the verb; the same entry with `needs-gate: refuses` passes;
+  `needs-gate: exempt` with no reason fails; an `acknowledge` entry marked `refuses` whose
+  `needs-gate-forms` omits `--stage accepted` fails; and the shipped file passes with every verb of rule
+  3's list marked `refuses` and `execution reconcile` alone marked `withholds`.
+- **`a-removed-or-corrected-need-is-unmet`** — R removed by `node remove` while no edge names it,
+  then `dep --add R` on D: admitted, `DEP OK … met=false`, and D's row prints
+  `reason=need-closed-unaccepted need=R`; N met, then `correct --node N`: D's row prints
+  `reason=need-unverified`, and after N's reopen, new evidence, verify and done at the new
+  generation it prints `unmet=0`.
+- **`an-attested-only-need-is-met-by-its-attestation-and-by-nothing-less`** — N with one
+  `:attested` criterion, done on an `attest` whose `--result` pointer the resolver has not
+  answered: `need-unverified`; the pointer verified: met; after a `correct`, unmet again; and the
+  same `attest` typed under another `--as` meets it just the same, which the replay asserts
+  because the spec says so and not because it is wanted.
+- **`ready-true-implies-needs-met-and-not-the-reverse`** — D needs-met and leased by another
+  name: its `ready` row prints `ready=false unmet=0` with an ownership reason and `take --node D`
+  prints `LEASE FAIL … : held`; across the whole fixture no row prints `ready=true` beside an
+  `unmet=` above zero.
+- **`needs-met-is-read-not-released`** — N's evidence verified in the cache, then `state --to
+  done` on N: after that `OK` line and with no further command the row of D, unowned, prints `unmet=0 ready=true`, and
+  the journal holds no event whose `:node` is D; the same for a `dep --remove` of D's last unmet
+  edge.
+- **`reverting-a-need-flags-an-engaged-dependent-and-kills-nothing`** — D leased, `:doing` and
+  heartbeating on N met; E, a second dependent of N, settled in C; F a dependent of E. `event
+  --kind reopen` on N: D's row prints `reason=need-reverted needs-broken=true`, `check` prints
+  `WORK OK … needs-broken=2` at exit 0 with no `WORK FAIL <id>` line, D's lease, attempt and
+  next `heartbeat` stand, `task packet` for D is refused by rule 3, E stays in C with every count
+  of its scope unchanged, and F's row prints `needs-broken=false`; N settled and verified again,
+  D and E read `needs-broken=false` with no command naming either.
+- **`an-edge-added-under-work-flags-and-every-way-past-a-need-is-recorded`** — `dep --add M` of an
+  open M onto leased D prints `DEP OK … change=add need=M met=false unmet=1 needs-broken=true`
+  and stops nothing; onto an unengaged `:todo` node it prints `needs-broken=false`; `dep --remove
+  N`, `take --node D`, `dep --add N` with N still open leaves three events with their authors,
+  the lease standing and `needs-broken=true`; `dep --add D` on D and an edge closing a two-node
+  cycle are each refused `rule 3`, an id naming nothing `rule 2: dangling`, each exit 1 with
+  nothing written; a need under another repository work set of the same O is admitted; and over a
+  container need with one unverified member, `node require --to false` on that member prints its
+  `:require` scope event, moves the container's `required=` by one and leaves the dependent `unmet=0`.
+- **`report-records-and-changes-nothing`** — `report --act other --subject machine:<id> --what …
+  --acted-at <t> --instead-of - --reason …` under `--now <t + 90s>` prints `REPORT OK …
+  subject=machine:<id> act=other instead-of=- acted-at=<t> lag=90s unmet=- need=- holder=- …`;
+  the journal gains one `:report` event with `:node (:absent)` and its six fields in order;
+  `|O|`, W, every lease, every count, every roadmap and the machine's member are unchanged; a
+  retry of the request id prints the original line, a changed payload under it is refused
+  `reused with a different payload`, an `undo` of it is refused `not reversible here`, and two
+  serializers digest it to one value with `:unmet` and `:need` outside the digest.
+- **`report-refuses-by-name`** — each of the six flags missing, an `--act` outside the three, a
+  `--subject` with no `:` or of an unknown kind, and a whitespace-only `--what`, `--reason`,
+  `--instead-of` and `external:` text: each exit 2 on one line ending `run: nova-work help`; a
+  subject naming no node, machine, friend, route or offer, an `--as` that is no friend, an
+  `--acted-at` ahead of the clock past `--skew`, and a stale `--expect`: each `REPORT FAIL` at
+  exit 1; and in every case no event, no journal record and no dedup entry.
+- **`a-hand-launch-is-refused-when-asked-and-recorded-when-told`** — over D with N open: `take
+  --node D --dry-run` and `take --node D` both refuse at exit 1 and no flag changes either;
+  `report --act launched --subject node:D …` prints `REPORT OK … unmet=1 need=N holder=unowned`,
+  writes no lease and no transition, leaves `who` unchanged, and D's row then prints
+  `needs-broken=true`; the next `take --node D` still refuses; N met, D's row prints
+  `needs-broken=false` and `take` is admitted. The same report over a needs-met node held by
+  another name prints `unmet=0 need=- holder=<name>`.
+- **`a-report-of-a-stop-releases-nothing`** — `report --act stopped --subject node:D` over a
+  leased D prints `holder=<name>`; the lease stands and reads held-not-worked once its heartbeat
+  leaves `--window`; no attempt is reconciled; and an `event --kind cancel` on D is admitted or
+  refused exactly as it was before the report.
+- **`a-report-of-a-stop-ends-the-engagement-a-launch-report-began`** — over an unleased `:todo`
+  D with N open: `report --act launched --subject node:D`, and D's row prints
+  `needs-broken=true`; then `report --act stopped --subject node:D`, and with no other command
+  D's row prints `needs-broken=false unmet=1` and `check` counts one fewer; a second launch
+  report raises it again and a `correct --node D` lowers it; a stop report on a D that is
+  leased leaves `needs-broken=true`, because the lease engages it by itself.
+- **`reports-are-read-in-one-ask`** — three reports, one with `--instead-of -` and one the
+  launch of the replay above: `query --ask reports --branch open --since <rev>` prints
+  `reports=3 no-verb=1 launched-unmet=1` and three `kind=report` rows, newest last; `--max 1`
+  prints one row and a `MORE` line; `--node D` prints D's alone; `--since` before the retention
+  boundary is refused as `handoffs --since` is; `--branch closed` is exit 2; and a report whose
+  `--acted-at` is a year old is in the answer for the revision it was written at and no other.
+
 ## Preservation and recovery acceptance *(Stella, `docs/SPEC-WORK-VALIDATION.md` at `81c2885`)*
 
 **These are release gates, and what they demonstrate is specific protection against specific
@@ -6605,6 +7254,27 @@ explicit pre-release, manual or nightly lane and **not on every change**. **The 
 and recovery gates still pass at the release revision**, and changing the code a receipt covers
 invalidates that receipt. **Before the lock gate each suite is mapped to its named scenarios,
 assertions, owner, command and CI lane**; before a release the exact-revision results are attached.
+
+**Recover automatically when a remote service returns** *(Glenn's refinement, 2026-09-13: a
+temporary GitHub or connectivity outage must not require a human to say resume after the
+service returns.)* A loss is classified before it is retried: **transient** failures —
+connectivity loss, timeouts, throttling and retryable server errors — are retried, while
+authentication, authorization, validation and branch-policy refusals are not, and a retry is
+capped by the `Retry-After` or rate-limit reset the service itself names. Retry uses **capped
+exponential backoff with jitter** inside a named retry/probe budget and deadline; after a
+bounded burst the dependent action is parked and cheap scheduled **health probes** run inside
+the authorized execution interval while independent work continues, and no model turn or
+context reload is spent on an unchanged failed probe. The pending action, its goal/task
+identity, exact reviewed revision, last result, attempt count, next retry time and stop state
+are persisted, so recovery survives coordinator loss and two friends never retry at once. An
+ambiguous write is reconciled through a **stable operation identity** (a repository plus head
+branch for a pull request) and an idempotency key where the service supports one, so exactly
+one remote artifact results and a successful-but-unanswered write is never replayed. When the
+service returns, ownership, source/review scope and preconditions are revalidated and the saved
+authorized work resumes automatically **without a human** steering it; a deliberate stop,
+expired authority, a rest choice or a changed goal still wins, and meaningful recovery or an
+actionable refusal is reported rather than every unchanged probe. **This is future implementation scope — no recovery watcher is deployed today** — and it extends the liveness
+and failover sections (#178/#180) while adding no resumed mutation after a stop.
 
 ## What draft 26 changed in the older text *(Rowan)*
 
@@ -7323,3 +7993,1126 @@ Red tests, one per rule, each with a fake where the real thing is the network, a
 8. `capability-unknown-on-an-unreadable-probe`: a fake probe timing out on a fake clock is `unknown`, with the timeout line in `detail`.
 9. `capability-output-is-bounded`: 200 fake rows print at most `--max` lines plus one `CAPABILITY MORE`, every value one token.
 10. `capability-is-the-source-the-note-reads`: a fake `TOOLS MOVED` note and adoption receipt resolve their rows from the table, and a disagreeing one is refused.
+
+## nova-work is the primary source; GitHub is an ingest *(Rowan, on Glenn's word of 2026-09-23; nova-tools #3141; rev 6, a draft for review, and nothing below is built until every present friend has scored it 10)*
+
+**Revisions of this section** (PR #3162): rev 1 `af157e46`; rev 2 `de351e5e` (the index folded in);
+rev 3 `f360ec8a` (repository digest over O and C, Stella's hold); rev 4 `12d1e535` (the measured
+index numbers; Stella 10, Rowan 7 with ten defects, comment 5798962823); **rev 5 folds those ten**:
+(1) the whole record lives in one private repository, by Glenn's ruling of 2026-09-23 ~3:10 PM
+(rev 5 named it after the tool; the repair below names it `mas-bandwidth/work`), and open question 1
+and every private-scope hold are gone (sections 2, 3, 4, 5, 9, 11, 12, 13); (2) `:poll` is in the map shape (3, 6); (3) the cold-start replay keys `parses=0` on
+the snapshot digest (11); (4) the benchmark replay names its rows (11); (5) the mirror marker is
+admitted only against a recorded mirror request (2b, 8, 11); (6) an edited mirror is re-pushed and
+`INGEST DRIFT` is in the output block, so verify does not drift forever (3, 4, 8); (7) `--order` has
+an access path per value and `--state` has a stated default (9, 10); (8) the per-repository value
+sets `w:i:<repo>:labels` and siblings make `--by label` a bounded count (9, 10); (9) the sample read
+is its own typed line, `SAMPLE`, with a named home (1, 4); (10) the build table carries DEPENDS-ON
+and PATHS per piece. **Rev 6** (Stella's hold at `131c68dd`): a pending mirror request is confirmed
+only by its create receipt or, for an uncertain create, by a capture matching the request's
+unguessable token, recorded actor, payload hash and time; a forged marker filed during the pending
+window is minted as its own unit and leaves the unit and request untouched (2b, 8, 11: fixtures
+(5)–(7) of `mirror-marker-not-forgeable`). **Repair on the stream** (Glenn, 2026-09-23 6:35-6:45 PM
+ET, superseding the data half of his 3:58 PM ruling and the stream repair at `95287935`, which had
+put the record in public nova-tools `docs/roadmaps/` and left the private repositories counted and not
+ingested): the work RECORD — the cross-repo sexp, the ingest map, fold receipts — lives in the
+private repository `mas-bandwidth/work`, created that day, whose README says data only, no code; the
+TOOL stays `cmd/nova-work` and `lisp/nova-work` in nova-tools; nova-tools' own `docs/roadmaps/*.sexp`
+stays nova-tools' public roadmap, a different thing from the record. *"I don't want any confusion
+between nova-work the tool, and work the repo."* So this text calls `mas-bandwidth/work` **the work
+repo** and never names the data after the tool (sections 2, 5, 7, 9, 11, 12, 13 and the build table);
+nova-tools' lander is unaffected by record writes, because the record is not in nova-tools (5); the
+replay is `record-lives-in-the-work-repo` (11); and open question 1 stays closed: private
+repositories' issues ingest into the private record (2, 3, 12, 13).
+
+**Glenn's words are the requirement, and they are all from one hour of 2026-09-23 (Eastern).** At
+12:25 PM, when one login's REST quota stalled thirty-two children: *"OK we need to switch away from
+Github. This is why we have the lisp sexpr. And why we have redis."* At 12:30: *"This is now the
+concrete benefit for us to ingest github issues and work from the nova work sexpr directly."* At
+12:35: *"I would like you to expand this sprint so we have all the tooling we need to ingest all
+issues on github across all repos into the nova work sexpr, and have this file checked in to
+github."* At 12:42: *"validate this imported data structure is a complete capture of the issues on
+github"* and *"commit to using the sexpr as the primary source"*. At 12:48: *"The nova work ingest
+should be fully specced and get 10/10 from all friends before proceeding."* At 12:50: *"We have had
+MANY discussions about this, this should already be well specced so don't duplicate this work, but
+make sure that everything is brought together"*; *"I want an incredible spec for this primary source
+sexpr. We move away from github. Github is now just an ingest into our nova work sexpr."* At 12:58,
+the one exception: *"externally filed issues are linked to from the sexpr and we close them out when
+the fix is committed to main."* At 1:05 PM: *"you need to invent verbs for nova-work that give you
+all the functionality you have right now when you query issues from github."*
+
+**This section adds no node model, no kind and no second store.** Everything an issue becomes is
+already in this document, and each place is cited by its heading rather than restated: the node, its
+kinds, `:links` and *an issue is a link, never a type* (*The data*); the COW root and its settle and
+revive (*The root is COW*); the repository work set as every top-level child of O (the same);
+*Recursive structure within a repository*; *Bugs found while working*; *Counting*; *Queries — the
+contract*; *The validator*; and Stella's four intake sections — *Public issue correspondence
+survives intake*, *Link versus absorb*, *Initial migration: preserve first, reconcile, then choose
+absorption* and *Durable primary state and GitHub intake* — whose sentences govern here wherever this
+section says less. **O is already the primary form** (stella-fe600103fa2e, *"the work set is the
+PRIMARY FORM"*, at the head of this file); what this section adds is the operational completion of
+that sentence for the team's GitHub issues: the verb that ingests, the verb that proves the capture
+complete, the path by which the record reaches its home, the work repo's `main` (`mas-bandwidth/work`), the path by which it stays current, what
+downstream reads, how new work is created, the one outbound write, the verbs that replace every
+GitHub issue query we run today, the controls, the migration and the questions only Glenn can
+answer. The recorded rulings it rests on are named where they bite: *ideas live as issues* (ideas
+are a pool, never work), *bugs are nodes at any level*, *COW*, *the nova-work lock decisions of
+2026-09-15* (absorb disabled, link the default), *count nova-work from the sexp*, *order and
+dependencies between cards*, *width is independent work*, and *GitHub is a git remote only*
+(2026-09-23).
+
+**Where this section and E09 meet.** Roadmap E09 (*Issue intake, migration and external
+boundaries*) is this section's feature set: E09-F01 (*non-destructive issue inventory and capture*)
+is sections 2 to 4 below, E09-F02 (*link mode and correspondence reconciliation*) is sections 2b,
+6 and 8b, E09-F03 (*lossless resumable initial migration*) is section 12, and E09-F04 (*explicit
+absorb and deletion gate*) **stays out of scope**: nothing here deletes a GitHub issue, and
+`absorb` stays disabled by the lock decisions of 2026-09-15.
+
+### 1. The principle, and the cutover
+
+**After the cutover the sexp is the record of the team's work and GitHub issues are its intake and,
+where chosen, its mirror.** Every verb that decides anything — what is ready, who takes it, what a
+card is cut from, what x/y is, what landed, what the table prints — reads the sexp and never GitHub;
+GitHub is written only by the two outbound paths of section 8 (the optional mirror, and the close of
+an ingested issue when its fix reaches `main`), and read only by the ingest of sections 3 and 6 and
+the verify of section 4. *GitHub is a git remote only* already moved PR state, reads, holds, CI
+verdicts and landing into nova-sprint's Redis store; this section moves the issues into the sexp,
+which is the last GitHub-held record the work reads.
+
+**The cutover is a rule, not a date.** **The sexp is the primary source from the first sprint opened
+after `nova-work ingest verify --org mas-bandwidth` prints `VERIFY PASS` for every repository the map
+declares `:work` or `:pool` — public and private alike, since the whole record has one home (section
+2) — and a non-owner friend's `SAMPLE ... ok=30/30` line of section 4 is recorded at the verified
+commit.** Before that
+sprint, the scripts that read GitHub keep running and nothing refuses a GitHub ref; from that sprint,
+`sprint open`'s preflight refuses any task or card whose ref is a GitHub issue with no unit (section
+7), and the scripts of section 10's replacement table are deleted in the same sprint. A verify that
+later fails does not undo the cutover: it is a finding filed as a fix, and the weekly verify of
+section 4 is what keeps the mirror honest afterwards.
+
+### 2. What a GitHub issue becomes in the node model
+
+**An ingested issue is a node of the existing kinds, and the issue is its `:links` entry and its
+correspondence, never its type** (*The data*: *"A GitHub issue or PR is a `:links` entry on a node,
+not the node's type"*). Stella's *Public issue correspondence survives intake* fixes the rest of the
+shape and is not restated: the stable provider/repository/issue identity, the URL and the last
+observed remote revision; the explicit mapping (one issue may become many nodes, one node may address
+many issues); remote text as data, separate from the coordinator's accepted plan.
+
+**The node.** One ingested issue is one `:task` under its repository's work set, in the one node
+shape of *The data*, carrying one key that shape does not name, `:correspondence` (the index design's `:external`), which
+*The data* already admits (*"Unknown keys on a node are
+preserved and ignored, so a team may carry its own fields"*) and which the issue verbs of section 10
+read:
+
+```lisp
+;; EXAMPLE DATA, NOT PRODUCT CONSTANTS: one ingested issue, values invented.
+(:id "gh/mas-bandwidth/schema/898"            ; the ingest's id: provider, owner, repo, number; never reused
+ :type :task
+ :title "fixed table: newer reads older, older refuses newer"   ; the issue title at the last capture
+ :children ()
+ :deps ()
+ :category "issue"                            ; or the map row's :category ("bug", "idea", ...)
+ :required true                               ; false for a :pool repository (ideas)
+ :acceptance ((:id "intake-close" :kind :attested
+               :subject "mas-bandwidth/schema#898 resolved" :predicate :attested-by))
+ :links ("https://github.com/mas-bandwidth/schema/issues/898")
+ :correspondence ((:provider "github" :repo "mas-bandwidth/schema" :number 898 :gh-id 3314159265
+                   :mode :link :origin :team :author "gafferongames" :filed-at "2026-09-10T14:02:11Z"
+                   :title "fixed table: newer reads older, older refuses newer"   ; the report, as GitHub has it
+                   :labels ("fixed-tables" "spec") :milestone (:absent) :assignees ("gafferongames")
+                   :state :open :state-reason (:absent) :closed-at (:absent)
+                   :updated-at "2026-09-21T09:40:00Z"
+                   :body-sha256 "<64 hex>"       ; blobs/<aa>/<64 hex> in the work repo
+                   :content-sha256 "<64 hex>"))  ; the verify hash of section 3
+ :priority (:self (:absent) :subtree (:absent)))
+```
+
+**The identity is `(:provider :repo :number)`, and the id is spelled from it once.** E09-F01's
+*"stable provider/repository/issue identity"* is the triple; the node id is
+`gh/<owner>/<repo>/<number>`, minted by the ingest at the unit's first capture and never re-pointed
+(the `:was` rule of SPEC-WORKLANG A2). **The `gh/` prefix is the ingest's namespace**: `node add`
+refuses a caller-given id under it (`NODE REFUSED id=<id>: gh/ ids are minted by ingest only`), so a
+hand-made node can never collide with the unit a later ingest would mint. `:gh-id`, GitHub's own
+immutable issue id, is carried beside the triple and used for one thing only, recognising a transfer
+(below). **A renamed repository keeps its ids**: the map records the rename as `:was` on the repo row,
+the ingest keeps minting under the original name, and `:repo` inside `:correspondence` follows the
+live name. **A transferred issue is a supersede**: the old unit is superseded by the unit minted for
+the issue's new home (`event --kind supersede --superseded-by <new id>`), both keep their records,
+and nothing is re-pointed.
+
+**Placement: under the container the map names, at the highest level that holds it.** The unit's
+containment parent is the node the first matching `:labels` row of `ingest-map.sexp`
+names for its repository (section 3), in the map's declared order; with no matching row, the
+repository's `inbox` work set, `<owner>/<repo>/inbox`, `:category "inbox"`, which the ingest creates
+`:required false` exactly as *The validator* creates `<repo>/shared` — so an unmapped issue is never
+counted until a person maps or moves it. Map targets are stream, project and epic containers of
+*Recursive structure within a repository*, declared in the map's own `:containers` list and created
+by the ingest on first use, so **a new epic is one line of the map**. A unit's parent is
+re-evaluated on every ingest only while the unit is still in `inbox`: once placed, a later label edit
+changes the report's `:labels` and never moves the unit, because *structure is changed only by verbs* and a remote
+label is data, not a verb; `node move` moves it, and the next ingest does not move it back.
+
+**Kind: `:task`, with `:category` carrying the label's meaning.** An ingested unit is minted
+`:task` and never `:bug`, **because rule 19 would refuse every closed bug-labelled issue that has no
+reproducing test** and the import would stop at the first one. A `bug` label maps to `:category
+"bug"`; turning a triaged unit into a `:bug` with its `:found-during` and `:test` is the triage act of
+*Bugs found while working*, done by a friend, and until then the unit is a `:task` of category `bug` and
+never counts in `bugs=<open>/<fixed>`.
+
+**Acceptance: one criterion, minted, so rule 15 never fires on an ingested unit.** Rule 15 finds a
+required `:task` with no `:acceptance`; so every ingested unit is minted with exactly one criterion,
+`intake-close`: `(:kind :merged :subject "pr:<owner>/<repo>#<pr>" :predicate :merged-at)` where a
+closing pull request is known at capture, and otherwise `(:kind :attested :subject "<owner>/<repo>#<n>
+resolved" :predicate :attested-by)`. `issue link` (section 10) replaces an `:attested` `intake-close`
+with the `:merged` one the moment a fix PR is linked, by an `accept` structure event, so the evidence
+that closes the unit is the landed PR's. A friend who decomposes a unit (`decompose`) gives its
+children their own acceptance by that verb's own rule.
+
+**Required: true on a work repository, false on the pool.** The map declares each repository's
+disposition (section 3): `:work` units are minted `:required true` and count like any required task;
+**`:pool` units — the ideas repository — are minted `:required false`, `:category "idea"`, and enter
+no required set, no `rows=`, no `required=` and no percentage**, which is *ideas live as issues*
+(*"They shouldn't count as work"*; *"We pull from here when we want to select new projects to do"*)
+kept by the counting rules that already exist and not by an exception. Selecting an idea is
+`node require --to true` on its unit, the recorded act the validator section already names.
+
+**Closed issues settle into C, honestly.** A capture whose remote state is closed yields a unit in C,
+written in one envelope as the import's own transitions, each `:clock :given` with GitHub's stamp and
+`:reason "intake: <what GitHub says>"`, by the transition table of *States and transitions, derived*:
+
+| remote state at capture | envelope | disposition | counts as |
+|---|---|---|---|
+| closed, `completed`, closing PR known | `:to :doing` at `filed-at`; `:evidence pr:<o>/<r>#<pr>@<merge sha>` on `intake-close` (`:merged`); `:to :done` at `closed-at` | `done` | done where `verify` qualifies the PR; `done-unverified` until it has |
+| closed, `completed`, no PR known | `:to :doing`; `:evidence file:work/<repo>.sexp@<commit>` (the report as ingested) on `intake-close` (`:attested`); `:to :done` | `done` | **`done-unverified`** — a `file:` pointer qualifies no criterion (*Evidence is a pointer*), so the unit is honestly unverified until a friend attests it or links its fix |
+| closed, `not_planned` | `:to :cancel-requested`; `:cancel` with `:evidence file:work/<repo>.sexp@<commit>` (no attempt was live, so the evidence covers every attempt) | `cancelled` | out of the current denominator, kept in the baseline, by *Counting* |
+| closed, `duplicate`, target known | `:supersede` with `:superseded-by` the target's unit | `superseded` | the same |
+| closed, `duplicate`, target unknown | as `not_planned` | `cancelled` | the same |
+
+So a closed issue is never a done nobody can check: *Counting*'s `done-unverified=` prints the part of
+the history the ingest could not prove, beside `done=`. **The closing commit is found without a REST
+call**: the adapter reads the default branch's history in its own git fetch for the closing keywords
+(`fix`, `fixes`, `close`, `closes`, `resolve`, `resolves`, followed by `#<n>`) and reads the lander's
+landing receipts (#3139) that name the unit; either is recorded in the report's `:closing` (inside `:correspondence`) with
+`:found-by`, and a closing commit found by neither is `(:absent)`, never guessed.
+
+**Milestones, assignees and labels are the report's, inside `:correspondence`.** `:milestone` is the milestone's title,
+`(:absent)` when none; `:assignees` are logins in GitHub's order; `:labels` are the label names in
+GitHub's order. **An assignee is not `:responsible`**, because *The data* makes `:responsible` *"durable
+accountability, set by a person's word (an event records who set it)"* and a remote assignment is
+observed data, not that word; the issue verbs filter on `:assignees` and `who` never reads it
+(open question 3). A map row may route a milestone the way it routes a label (`:milestone
+"<title>" :under "<container>"`), which is the only way a milestone moves structure.
+
+**Links: the issue, and what closed it.** `:links` carries the issue URL first and, when known, the
+closing PR's URL and the closing commit's URL; a unit that later gains a fix PR by `issue link` gains
+that link. A PR is never a node (*The data*); its record is nova-sprint's PR record (#3091).
+
+**The whole record has one home: the work repo, the private repository `mas-bandwidth/work`; its manifest is `work.sexp`; the tool stays `cmd/nova-work` in nova-tools.**
+Glenn, 2026-09-23 6:35-6:45 PM ET, answering this section's former first open question for good and
+superseding his 3:58 PM ruling (comment 5801899651), which had put the record under nova-tools
+`docs/roadmaps/`: the work RECORD — the cross-repo sexp, the ingest map, fold receipts — lives in the private repo
+`mas-bandwidth/work` (created 2026-09-23; its README says data only, no code), and the TOOL stays
+`cmd/nova-work` and `lisp/nova-work` in nova-tools: *"I don't want any confusion between nova-work
+the tool, and work the repo."* *Link versus absorb* requires
+that *"a private issue is not published by becoming part of S"*; one private home for every
+repository, public and private, keeps that with no split: **one logical forest, one manifest, one
+digest chain, one writer and one check-in path.** Units of a private repository are still minted
+`:private true` (*The data*: `render` never writes a private node into an output file), so any
+rendered view that is published elsewhere carries none of them. **nova-tools holds the tool and
+never the record**: `lisp/nova-work`, the Go verbs, this specification and the invented fixtures of
+section 10 stay in nova-tools; no unit, capture, blob, map row or fold receipt is ever written to a
+nova-tools path, and no private repository's bytes appear in nova-tools (replay
+`record-lives-in-the-work-repo`, section 11). **nova-tools' `docs/roadmaps/` is nova-tools' own
+roadmap only**: its `*.sexp` files and the rendered `ROADMAP.md` stay public in nova-tools, land
+through nova-tools' lander like any other change, and are never a record path.
+
+**Where it lives.** In the storage split of section 9, at the root of the work repo
+(`mas-bandwidth/work`), branch `main`: the manifest `work.sexp`, one O file and one C file per repository under
+`work/`, bodies as content-addressed blobs under `blobs/`, and the map `ingest-map.sexp`. **In this
+section a record path is always relative to the root of the work repo**, and a path in
+nova-tools is written with `nova-tools:` in front. **All of it is the record, and all of it is
+checked in** by section 5. The record's manifest is named for the repo, not the tool (*"I don't want
+any confusion between nova-work the tool, and work the repo"*): `work.sexp` is a file of the work
+repo, and `nova-tools:docs/roadmaps/nova-work.sexp` is nova-tools' roadmap for the tool, a different
+file that no record write touches. **The sexp moves there in the
+cutover** (section 12, step 0): from (b)'s first write the record is written only in the work repo,
+and any record data the cutover carries over from nova-tools is committed there byte-identical under the
+record's names (a manifest as `work.sexp`), the commit message naming the nova-tools commit it was
+taken from; nova-tools' roadmap files stay where
+they are. **The work repo exists (created 2026-09-23); it must be reachable before anything is
+written**: rowan-claude and the writer's bench able to push to it, a `work.git` mirror in the bench
+mirror set and its read credential sealed on every bench is the first line of (b) — an org act that
+is Rowan's as org admin (Glenn, 2026-09-23 3:15 PM) — and (a)'s real run waits on it. The node carries the report in
+`:correspondence` and the plan in its own keys, so the verify of section 4 compares the report and
+never the plan, and a person who retitles or re-places a unit never makes it drift.
+
+### 2b. Externally filed issues: linked, and closed when the fix lands on main
+
+**An issue filed on GitHub by someone outside the team is ingested exactly as above, and from then on
+the node is the record.** *Origin* is decided at capture: `:origin :mirror` only when the body's
+last line is the mirror marker of section 8 **and the record already expects this issue** (below),
+`:origin :team` when the author is in the map's `:team` roster, and `:origin :external` otherwise —
+never inferred from `author_association`, which says what GitHub thinks of an account and not
+whether it is ours.
+
+**The marker is a claim, and the record admits it only against its own request.** Anyone can type
+`nova-work: <unit-id>` into an issue body, so the marker alone proves nothing. A capture carrying a
+marker for unit U is admitted as `:origin :mirror` **only when** U's `:correspondence` already
+records this `(:repo :number)` with `:mode :mirror`, **or** the capture **proves it is the create
+that U's pending request made** (section 8) — in which case the capture's number is recorded and
+the request confirmed. **A pending request is never confirmed by a marker alone**, because a third
+party can file `nova-work: <U>` while the real create is in flight. The proof is one of two, and
+nothing else: (i) **the create receipt** — the adapter's own `POST` response for this request id,
+whose number the writer records directly (an ingest capture is then admitted by the recorded-number
+rule above); or (ii) for an uncertain create with no receipt, a capture that matches the request on
+**all four** of: its marker carries the request's **token** (`nova-work: <U> req=<token>`, a
+128-bit value from a CSPRNG minted per request and stored only in the private record); its
+**author** is the request's `:actor` (the login the adapter authenticated as when it sent the
+create, recorded on the request, so a forger would need that account's credential); the SHA-256
+of its title and body bytes equals the request's `:payload-sha256` (the exact bytes the writer
+sent); and it was created at or after the request's `:at`. Exactly one matching capture confirms
+the request; two or more confirm nothing and print `INGEST MARKER-REFUSED ... (ambiguous: <n>
+captures match request <id>)`, leaving the request pending for a person. In every other case — U
+does not exist, U records a different number, U's mirror request names another repository or is
+already confirmed, U has no mirror request, or a capture for a pending request fails the token,
+actor, payload or time test — the capture is minted as a new unit by the ordinary rule (`:origin
+:team` or `:external` by its author), **U and its request are untouched** (state, number, token,
+attempts and receipt byte-identical), and the ingest prints `INGEST MARKER-REFUSED repo=<o>/<r>
+number=<n> unit=<U>: marker not admitted (<reason>)` (exit 0: the issue is still ingested, and the
+line is the finding). The token becomes public once the genuine issue exists, which is why the
+actor and payload tests carry the weight after that moment and the token carries it before.
+Replay `mirror-marker-not-forgeable` (section 11), fixtures (5)–(7) for the pending-request race. `:correspondence` keeps what E09-F01 asks and what a
+reply needs: provider, repository, number, URL, **author, filed-at**, the last remote state and
+update stamp, the body's blob hash and the content hash. Planning, decomposition, ownership, priority and evidence
+live on the node; the public discussion stays on GitHub (*Public issue correspondence survives
+intake*); comments are not captured (section 4 says so on every report).
+
+**When the unit's fix reaches `main`, the issue is closed, once, with the commit.** Glenn: *"we close
+them out when the fix is committed to main."* The trigger is the landing receipt (#3139) that names
+the unit, **on `main`**: `dev` is promoted to `main` by the mechanical fast-forward of *dev branch;
+main is promoted*, so the close fires on the promotion that makes the landing commit an ancestor of
+`main`, not on the landing into `dev`. Section 8b is the act, its record and its control.
+
+**A reopen on GitHub revives the unit.** When a later capture reports `:state :open` with
+`state_reason "reopened"` for a unit in C, the ingest writes `event --kind reopen` on it, whose
+envelope carries the `:revive` of *The root is COW*: the unit is in O again at `:todo`, C keeps every
+earlier row and every earlier evidence event (*"a reopened issue creates a reconciliation signal; it
+neither disappears nor silently erases previous completion evidence"*), and the ingest prints
+`INGEST REVIVE unit=<id> remote=reopened`. Nothing is re-closed on GitHub by the revive; the next fix
+that lands closes it again, once, by the same rule. **A unit that settled `cancelled` or `superseded` is
+terminal** (*States and transitions, derived*: no `:reopen` reaches them), so a reopen of its issue
+mints a successor unit, `gh/<owner>/<repo>/<n>/r<k>` (`k` the count of such reopens), with `:was` the
+terminal unit's id, and X maps the issue to the successor; the ingest prints `INGEST SUCCESSOR
+unit=<new> was=<old> remote=reopened`, and no id is reused.
+
+### 3. `nova-work ingest github`: the verb, the map, idempotence, the failures
+
+**The kernel knows no forge; the adapter does.** *Evidence is a pointer the validator can fetch*
+fixes that *"the tool itself knows no forge"*, and the ingest keeps it: the map names a provider's
+**adapter**, a command the ingest executes directly and never through a shell (the resolver rule),
+which prints capture records on stdout; `github` in `nova-work ingest github` is a provider name the
+map resolves, and nova-work parses what the adapter prints under the three bounds and nothing else.
+The adapter for GitHub is a Go verb, `nova-intake github capture` (new, `cmd/nova-intake`,
+`internal/intake/github`), REST only, conditional requests only, and the only process in the system
+that talks to GitHub about issues.
+
+**The usage lines, as `nova-work help` will print them:**
+
+```
+nova-work ingest github (--session <path> <write flags> | --file <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) --map <path> --org <owner> [--repo <name> ...] [--from-events ev:github --redis <addr>] [--dry-run] [--max-calls <n>] --reason <text>
+nova-work ingest verify (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --map <path> --org <owner> [--repo <name> ...] [--sample <n> --seed <n>] --max-calls <n>
+nova-work ingest status (--session <path> | --snapshot <path> ...) --map <path> [--repo <name> ...]
+nova-work ingest sample-record (--session <path> <write flags> | --file <path> <bounds>) --who <friend> --seed <n> --commit <sha> --ok <k> [--bad <unit>:<field> ...] --reason <text>
+nova-intake github capture --org <owner> --repo <name> --etag-dir <dir> --max-calls <n> [--number <n> ...]
+```
+
+`--file` is the interim until the resident session of E01 exists: the ingest holds the one-writer
+lease of section 5 for its run and writes the files atomically (a temporary file and a rename), byte
+for byte what a clip of the same events would write (`format-determinism`). **Under `--session` the
+ingest is a long operation** — *"a source capture, an import"* are the examples *The engine and its
+client* names — begun by the existing `source.capture` and `import.stage` operations of
+`lisp/nova-work/src/capture.lisp`, admitted at an expected revision by the owning engine only.
+
+**The adapter contract.** `nova-intake github capture` prints one `(:capture ...)` form per issue
+(pull requests, which GitHub's issue list also returns, are dropped by the adapter and never printed),
+then exactly one trailer, `(:capture-end :repo "<o>/<r>" :issues <n> :calls <n> :not-modified <n>
+:complete t)`. The capture record:
+
+```lisp
+;; EXAMPLE DATA, NOT PRODUCT CONSTANTS.
+(:capture :provider "github" :repo "mas-bandwidth/schema" :number 898 :gh-id 3314159265
+ :url "https://github.com/mas-bandwidth/schema/issues/898"
+ :title "..." :body "..."                     ; verbatim UTF-8, a string, never read as a form
+ :labels ("fixed-tables" "spec") :state :closed :state-reason "completed"
+ :milestone (:absent) :assignees ("gafferongames")
+ :author "gafferongames" :created-at "2026-09-10T14:02:11Z" :updated-at "2026-09-21T09:40:00Z"
+ :closed-at "2026-09-21T09:40:00Z" :closed-by "rowan-claude"
+ :closing (:pr "mas-bandwidth/schema#901" :commit "<40 hex>" :found-by :git-log)
+ :transferred-to (:absent)
+ :etag "W/\"...\"" :content-sha256 "<64 hex>")
+```
+
+**`:content-sha256` is the verify hash, defined once**: SHA-256 over the restricted-Lisp printing of
+`(:title T :body B :labels L :state S :state-reason R :milestone M :assignees A :closed-at C)` —
+labels and assignees in GitHub's order, an absent value `(:absent)`, UTF-8, no trailing newline — the
+seven fields of #3141 (g) plus `:state-reason`, which decides the disposition of section 2. Both
+sides of section 4 compute it the same way, so a mismatch is a changed field and never a formatting
+difference. **The fetch is budgeted and cheap when nothing moved**: the list is read with `state=all`,
+`sort=created`, `direction=asc`, `per_page=100`, every page conditional on its stored ETag
+(`If-None-Match`), and **a `304` costs nothing against the primary rate limit** (GitHub's own
+contract, cited as such and not measured here), so a repository whose issues did not change costs one
+request per page and no budget; `--max-calls` is required, a run that would pass it stops at a page
+boundary and prints `:complete nil`, and `--number` captures single issues (the webhook path of
+section 6). Comments, reactions and timelines are never fetched.
+
+**The map, `ingest-map.sexp`, is the declared table and the only input besides the
+captures:**
+
+```lisp
+;; EXAMPLE DATA, NOT PRODUCT CONSTANTS: the shape of the ingest map.
+(:schema "nova-work-ingest-map-1"
+ :providers ((:name "github" :adapter ("nova-intake" "github" "capture") :etag-dir "state/intake-etags"))
+ :org "mas-bandwidth"
+ :team ("gafferongames" "rowan-claude" "<each friend's GitHub login>")
+ :poll (:every-seconds 600)                        ; the fallback poll of section 6, every declared repository
+ :repos ((:repo "nova-tools" :disposition :work :work-set "mas-bandwidth/nova-tools")
+         (:repo "schema"     :disposition :work :work-set "mas-bandwidth/schema")
+         (:repo "yojimbo"    :disposition :work :work-set "mas-bandwidth/yojimbo" :poll (:every-seconds 3600))
+         (:repo "ideas"      :disposition :pool :work-set "mas-bandwidth/ideas" :private t)
+         (:repo "hydrogen"   :disposition :skip :reason "<why, and whose word>")
+         (:repo "netcode.go" :disposition :work :work-set "mas-bandwidth/netcode.go" :was ()))
+ :containers ((:id "mas-bandwidth/nova-tools/nova-work" :type :work-set :category "stream" :title "nova-work")
+              (:id "mas-bandwidth/nova-tools/nova-sprint" :type :work-set :category "stream" :title "nova-sprint")
+              (:id "mas-bandwidth/schema/fixed-tables" :type :epic :title "Fixed tables"))
+ :labels ((:repo "nova-tools" :label "nova-work" :under "mas-bandwidth/nova-tools/nova-work")
+          (:repo "nova-tools" :label "bug" :category "bug")
+          (:repo "schema" :label "fixed-tables" :under "mas-bandwidth/schema/fixed-tables"))
+ :milestones ())
+```
+
+**A repository is one line** (section 12, step 1): `:work` ingests and counts, `:pool` ingests and never
+counts (section 2), `:skip` ingests nothing and carries its `:reason`. `:private t` marks a private
+repository, whose units are minted `:private true`; its row names it like any other, because the map
+lives in the private record. **`:poll` is a declared key**: the top-level `(:poll (:every-seconds
+<n>))` is required and sets the fallback poll interval of section 6 for every declared repository;
+a repository row may carry its own `:poll` of the same shape, which overrides it for that repository;
+`<n>` is a positive integer of seconds, and a missing top-level `:poll`, a zero, a negative or any
+other unit is refused by step (1) like any invalid map. The complete set of admitted keys is the
+top-level `:schema :providers :org :team :poll :repos :containers :labels :milestones`, the repository
+row's `:repo :disposition :work-set :reason :was :private :poll`, and the `:labels` row's `:repo
+:label :under :category`; any other key is refused at exit 2. **Every repository the org
+holds is declared, and an undeclared one refuses the run** (`INGEST REFUSED repo=<o>/<r>: undeclared
+(add one line to ingest-map.sexp)`), because *O is the team's authorized known work,
+never a scan of every reachable repository* (*The root is COW*) — the map is that authorization, and a
+new repository arriving unannounced is a decision to make, not a scan to extend. The org's repository
+list is read by the adapter's own `orgs/<org>/repos` call on a full run and compared with the map;
+nothing else is inferred from it. A `:labels` row may set `:under` (placement), `:category`, or both;
+the first row in declared order that matches a unit's labels wins, the rest are recorded on the unit
+and change nothing, so the outcome never depends on GitHub's label order.
+
+**What one run does, in order.** (1) Read and validate the map (unknown keys refused at exit 2 — the
+map is config, not a team's free data); (2) run the adapter per repository; (3) for each capture,
+compare `:content-sha256` and `:state` with the unit's `:correspondence`: **equal is no
+change**, a new identity mints a unit (section 2), a changed hash writes the body's blob when the body changed and
+updates the unit's `:correspondence` — and its `:title`, unless a person has retitled the unit, because a
+planned unit's title is the plan's — and a remote
+state change writes the envelope of section 2's table (or the reopen of section 2b) — **except on a
+`:mode :mirror` unit, whose report is never overwritten from GitHub**: a changed hash there prints
+`INGEST DRIFT` per differing field and queues the re-push of section 8, and nothing on the unit
+changes; (4) write, in one
+envelope per repository, all-or-none; (5) print the lines below; (6) hand the result to section 5.
+
+**Idempotence is the first control.** A second run over unchanged captures writes nothing: every
+count on the `INGEST OK` line is zero except `unchanged=`, and every file's bytes are identical, by
+SHA-256, to the first run's. That holds because every write is keyed by the identity triple and the
+content hash, and because the ingest never writes a stamp of its own into the record (its run stamp
+is on the output line and in the commit, never in a file).
+
+**Output, one line per repository and one count line** (SPEC.md's conventions, one `internal/oneline`
+token per value):
+
+```
+INGEST REPO repo=<o>/<r> disposition=<work|pool|skip> issues=<n> added=<n> changed=<n> settled=<n> revived=<n> unchanged=<n> superseded=<n> calls=<n> not-modified=<n> complete=<yes|no>
+INGEST REVIVE unit=<id> remote=reopened
+INGEST SUCCESSOR unit=<new> was=<old> remote=reopened
+INGEST SUPERSEDE unit=<old> by=<new>
+INGEST DRIFT unit=<id> field=<title|body|labels|state>: mirror edited on GitHub; re-push <request-id> pending
+INGEST MARKER-REFUSED repo=<o>/<r> number=<n> unit=<id>: marker not admitted (<reason>)
+INGEST OK repos=<n> issues=<n> added=<n> changed=<n> settled=<n> revived=<n> unchanged=<n> calls=<n> not-modified=<n> rev=<n> dry-run=<yes|no>
+```
+
+**Failure modes, each with its refusal and what is left behind.** Every refusal writes nothing for the
+repository it names and leaves every other repository's envelope to stand or fall on its own:
+
+| failure | line | exit | left behind |
+|---|---|---|---|
+| a flag missing, a bound missing or zero | `INGEST REFUSED: refusing to guess (<flag> is required)` | 2 | nothing read |
+| the map unreadable or invalid | `INGEST REFUSED map=<path> byte=<n>: <reason>` | 2 | nothing read |
+| a repository in the org the map does not declare | `INGEST REFUSED repo=<o>/<r>: undeclared (add one line to ingest-map.sexp)` | 1 | no repository written this run |
+| a `:labels` row naming a container that is neither in O nor in `:containers` | `INGEST REFUSED map=<path> row=<n> under=<id>: no such container` | 2 | nothing read |
+| the adapter exits non-zero, prints no trailer, or `:complete nil` | `INGEST FAIL repo=<o>/<r> calls=<n>: capture incomplete (<reason>)` | 1 | that repository unchanged; resumable, since every page already fetched is ETag-cached |
+| a capture record past a bound, or not a `(:capture ...)` form | `INGEST FAIL repo=<o>/<r> byte=<n>: <reason>` | 1 | that repository unchanged |
+| two captures with one identity in one run | `INGEST FAIL repo=<o>/<r> number=<n>: duplicate capture` | 1 | that repository unchanged |
+| a capture whose `:gh-id` matches another unit's (a transfer) | `INGEST SUPERSEDE unit=<old> by=<new>` | 0 | the supersede of section 2 |
+| the writer lease held by another | `INGEST REFUSED: writer held by <name> until <stamp>` | 1 | nothing read |
+| the rate budget reached (`--max-calls`) | `INGEST FAIL repo=<o>/<r> calls=<n>: budget reached at page <p>` | 1 | as capture incomplete |
+| the work repo unreachable (clone, fetch or push of `mas-bandwidth/work` fails) | `INGEST REFUSED record=mas-bandwidth/work: <reason>` | 1 | nothing read from GitHub, nothing written |
+| a mirror marker the record does not expect (section 2b) | `INGEST MARKER-REFUSED repo=<o>/<r> number=<n> unit=<id>: marker not admitted (<reason>)` | 0 | the issue minted as its own unit; the named unit untouched |
+
+**Remote text is data, all of it.** Titles, bodies, labels and logins are strings read by the bounded
+reader and never forms; a body containing `#.(...)`, a verb-shaped line or a node-shaped list is
+stored verbatim and changes nothing (replay `ingest-remote-text-is-data`, beside the existing
+`hostile-data`).
+
+### 4. `nova-work ingest verify`: a complete capture, proved
+
+Glenn: *"validate this imported data structure is a complete capture of the issues on github."*
+**Complete means two equalities per repository, and verify checks both:** the **set** of issue numbers
+on GitHub, open and closed, equals the set of units carrying that repository in `:correspondence`; and
+for every number in both, the `:content-sha256` in the unit's `:correspondence` equals the hash of the live issue computed by
+section 3's definition. It runs the adapter (one search count per repository, `repo:<o>/<r>
+is:issue`, as a cheap first comparison, then the conditional paged list, ETag-cached, so an unchanged
+repository costs its page count in `304`s), and reads the sexp for the other side.
+
+```
+VERIFY MISSING <o>/<r>#<n>                         ; on GitHub, no unit
+VERIFY EXTRA <unit-id>                             ; a unit whose issue GitHub does not return
+VERIFY DRIFT <o>/<r>#<n> field=<title|body|labels|state|state-reason|milestone|assignees|closed-at>
+VERIFY <o>/<r> issues=<a> units=<b> missing=<m> extra=<e> drift=<d> calls=<n> not-captured=comments,reactions,timeline
+VERIFY REPUSH <o>/<r>#<n> unit=<id> request=<id> age=<duration>   ; a mirror edit whose re-push is pending
+VERIFY PASS repos=<n> issues=<n> units=<n>         ; or VERIFY FAIL repos=<n> failing=<n>
+```
+
+`DRIFT` names each differing field once, from the report's stored fields against the live ones.
+**What verify compares for a `:mirror` unit.** A mirror's report is not what GitHub last said but
+what the writer last pushed: its `:content-sha256` is recomputed only on a *confirmed* mirror push
+(section 8), so it is the hash GitHub should show. Verify compares only the fields the writer pushes
+— `title`, `body`, `labels`, `state` — for a mirror (milestone and assignees are never pushed and
+never compared on one). A mirror whose live issue differs **and** carries a `pending` re-push younger
+than two of its repository's `:poll` intervals prints `VERIFY REPUSH`, which is not a finding; a
+difference with no re-push queued, a `failed` re-push, or a pending one older than two intervals is
+`DRIFT`. So an edited mirror is `DRIFT` for at most one ingest and two poll intervals, never forever.
+**Exit 1 on any `MISSING`, `EXTRA` or `DRIFT`**, exit 0 only on `VERIFY PASS`. **Every report says what is not captured**:
+`not-captured=comments,reactions,timeline` is on every `VERIFY <repo>` line, because link mode leaves
+the discussion on GitHub and absorb, which would need it, stays disabled (*Link versus absorb*).
+
+**The sample read is a friend's, and it is evidence.** `--sample 30 --seed <n>` prints thirty units
+chosen by a seeded draw across repositories, weighted by issue count, each with its unit id, issue URL
+and the report's fields; a friend who is not the ingest's owner compares each against the live issue
+by eye and records one typed line of its own kind — **never a `SPEC` line**, whose `score=` is the
+1–10 spec gate the lander and the table parse:
+
+```
+SAMPLE who=<friend> seed=<n> commit=<nova-work sha> ok=<k>/30 [bad=<unit>:<field>,...]
+```
+
+**Its home is the record, written through the writer**, never a PR comment or an issue comment
+(*GitHub is a git remote only*): `nova-work ingest sample-record --who <friend> --seed <n> --commit
+<sha> --ok <k> [--bad <unit>:<field>]... --reason <text>` appends `(:sample :who "<f>" :seed <n>
+:ok <k> :of 30 :bad (...) :at "<stamp>")` to the `:samples` list of the `:verify` entry whose
+`:commit` is `<sha>` in `work.sexp`, publishes the same line to `w:verify` field
+`sample:<commit>`, and prints it. It refuses (exit 1) when no `:verify` entry has that commit, when
+`--who` is the ingest's owner, or when `--ok` is outside 0–30. `ok` below 30 names each unit and
+field in `bad=` and each is filed as a fix. The seed is printed, so the draw is reproducible and a
+second friend can re-read the same thirty. The cutover rule of section 1 reads this entry.
+
+**Verify writes one record into the sexp**: `(:verify :at "<stamp>" :commit "<sha>" :repos ((:repo
+"<o>/<r>" :issues <a> :units <b> :missing <m> :extra <e> :drift <d>) ...))`, appended to
+`work.sexp`'s `:verify` list (bounded: the newest 52 kept, older ones reachable in
+git) and to `w:verify`, so `issue mirror status` of section 10 answers from the sexp with no network. **It runs weekly
+after the cutover** (a scripted card of the sprint machinery, never a model), and a failing weekly
+verify files one fix per `MISSING`/`EXTRA`/`DRIFT` class.
+
+### 5. Check-in: the sexp on `mas-bandwidth/work` `main` through the lander, one land cycle behind at most
+
+Glenn: *"have this file checked in to github"*, and at 6:35-6:45 PM, the record lives in the private
+repo `mas-bandwidth/work`, data only. **The record on the work repo's `main` is the record, and it
+gets there the way every change does: the lander**, which is multi-repository by #3139's own
+requirement. The work repo has one branch, `main`; there is
+no `dev`/`main` promotion for data (the close on `main` of section 2b is about the *fixed* repository's
+`main`, not this one). Each ingest (and each write of sections 6, 7 and 8) commits its files on a
+branch `nova-work/ingest-<stamp>` — `<stamp>` the run's UTC `YYYYMMDDTHHMMSSZ` — from the tip of
+the work repo's `main` it read, and hands the branch to the lander (#3139) as a **`roadmap`
+batch on that repository**: a batch kind whose gate is **`nova-work check --snapshot` over the
+manifest and every file of section 9's storage split (the validator whole, rule by rule) under the
+reader's three bounds, and nothing else — no build and no test**, because a data-only change is
+proved by its own lint; the lint binary is the nova-tools `nova-work` at the lander's pinned engine
+commit, printed on the landing receipt.
+
+**The refusal path set is #3168's five, and nothing else.** #3168's AMENDMENT (rev 7) narrowed the
+lander's refusal to the five storage-split paths, which it named under nova-tools `docs/roadmaps/`
+by the 3:58 PM ruling: `docs/roadmaps/nova-work.sexp`, `docs/roadmaps/work/<repo>.sexp`, `docs/roadmaps/work/<repo>.closed.sexp`, `docs/roadmaps/blobs/**` and `docs/roadmaps/ingest-map.sexp`.
+The 6:35-6:45 PM ruling moves the record to the work repo, so the same five are, at the work repo's
+root, `work.sexp`, `work/<repo>.sexp`, `work/<repo>.closed.sexp`, `blobs/**` and `ingest-map.sexp`
+(the manifest named for the repo, section 2). On `mas-bandwidth/work` the lander carries #3168's two
+refusals, both exit 1:
+
+- a `roadmap` batch that touches a path outside the five: `LAND REFUSED batch=roadmap path=<p>: not a roadmap path`;
+- any other batch, or a `roadmap` batch not from the writer, that touches one of the five: `LAND REFUSED path=<p>: written outside the nova-work writer`.
+
+A work-repo change touching none of the five (its README) is an ordinary batch. **nova-tools' lander
+is unaffected by record writes**, because the record is not in nova-tools: no record write is ever a
+nova-tools batch, so nova-tools gains no record rule and no path refusal, and its `docs/roadmaps/` —
+nova-tools' own roadmap, and the sprint set files written by `nova-work set` such as
+`docs/roadmaps/sprint-fixes-2026-09-22.sexp`, which #3168 kept landing as ordinary batches — lands
+like any other change. That the writer never targets a nova-tools path is the
+writer's own check (replay `record-lives-in-the-work-repo`, section 11). That is *One
+coordinator, one live reader/writer* applied to the files on disk: **one writer of the sexp**, landing
+in the work repo with its lease `lease:nova-work-writer` in nova-sprint's Redis
+(the resident session holds it for its life once E01 exists; the interim `--file` verbs take it per
+run), and every other hand a requester of that writer.
+
+**Batched, not one commit per event.** Writes accumulate in the writer's working copy and are
+committed once per land cycle, so a burst of webhook deliveries is one commit and one land. **A land
+cycle, `L`, is the lander's own measured cadence**, which the lander prints on every landing receipt
+(`cycle=<duration>`); nothing here fixes a number for it.
+
+**The lag bound is the control.** `nova-work lag` compares, for the newest landing receipt and the
+newest ingest, what the record on the work repo's `main` carries against what the writer
+wrote (`dev-rev` below names that branch's revision, kept as the field name the table already reads):
+
+```
+nova-work lag --redis <addr> --repo-dir <path> [--at <stamp>]
+LAG OK writer-rev=<n> dev-rev=<n> behind=<duration> cycle=<duration> receipts-missing=<n>
+LAG FAIL writer-rev=<n> dev-rev=<n> behind=<duration> cycle=<duration> receipts-missing=<n>: <what>
+```
+
+**Exit 1 when `behind` exceeds one `cycle`, or when a landing receipt older than one cycle names a unit
+whose evidence the record on `main` does not carry**; exit 2 when the lander prints no cycle
+(`lander=absent`), which is not a pass. Today, before any of this: `nova-tools:docs/roadmaps/nova-work.sexp` was
+last changed at `0878987f` (2026-09-19 18:23:38Z) and `dev` is `7187ceef` (2026-09-23 14:04:06Z) — a
+lag of 3 d 19 h 40 m across 96 commits, 27 of them touching nova-work paths; the bound makes that a
+red line within one cycle instead of a finding a person makes days later.
+
+### 6. Continuous: webhooks, and a conditional poll that costs nothing when nothing moved
+
+**Webhooks are the inbound path.** `ev:github` (#2657, `internal/ghevent`) today carries
+`pull_request`, `issue_comment`, `pull_request_review`, `check_suite`, `check_run` and `merge_group`,
+and its entry keeps a handful of fields. **It gains `issues`** — the actions `opened`, `edited`,
+`closed`, `reopened`, `labeled`, `unlabeled`, `milestoned`, `demilestoned`, `assigned`, `unassigned`,
+`transferred`, `deleted` — **and for `issues` the entry carries the payload's issue object in the
+capture shape of section 3**, so the ingest turns a delivery into a capture **with no REST call**.
+`nova-work ingest github --from-events ev:github --redis <addr>` reads the stream from its consumer
+group's cursor, ingests each delivery as a single-issue capture, and acknowledges it after the write
+is accepted, so a crash between replays the delivery and idempotence (section 3) makes the replay a
+no-op. A `deleted` delivery never deletes a unit: it marks the report's `:state :deleted` and the next verify
+reports it `EXTRA` for a person to settle, because the record outlives its mirror.
+
+**The fallback is a conditional poll, every `:poll` interval per repository.** Webhooks can be lost
+(a receiver down, a delivery never retried), so the writer also runs the full-repository capture of
+each declared `:work` or `:pool` repository once per its `:poll` interval — the map's top-level
+`(:poll (:every-seconds 600))`, ten minutes, unless the repository's row overrides it (section 3) —
+conditional on its ETags: an unchanged repository answers every page `304`, which costs nothing
+against the rate limit, and the run prints `not-modified=<pages> calls=<pages>` and writes nothing.
+The poll is the backstop and never the primary path.
+
+**The control is a stopwatch.** A webhook-delivered `issues.edited` for a fixture issue appears in
+the writer's record — the `:title` and `:content-sha256` in the unit's `:correspondence` changed — **within 60 seconds of the
+delivery's entry on `ev:github`, with zero REST calls**, and on the record's `main` within one land cycle after that
+(section 5).
+
+### 7. Everything downstream reads the sexp
+
+**Tasks and cards are cut from units, and a bare GitHub ref is refused.** `nova-sprint task push
+--ref <unit-id>` and the card cutter take a unit id of the sexp as the ref; a ref shaped like a GitHub
+issue — `<owner>/<repo>#<n>`, `<repo> #<n>`, or an issue URL — is refused at exit 2: `TASK REFUSED
+ref=<ref>: a GitHub issue is not a unit (ingest it, then push gh/<owner>/<repo>/<n>)`. A card carries
+its unit in its header (`TASK: gh/mas-bandwidth/schema/898`), which *Card names its branches* and the
+DEPENDS-ON token of WORKER-CARDS already make the card's own words; **Jev's card lint resolves the
+`TASK:` line against the sexp at the card's base and bounces a card whose unit does not exist or is
+not in O** (`JEV BOUNCE card=<id>: TASK <unit> not open at <base>`).
+
+**The sprint's ready list is one ask.** `nova-work query --ask ready --branch open --order priority
+[--node <id>]` is the ready list the sprint deals from: *Queries — the contract*'s `ready` ask, unchanged,
+**with one new flag, `--order priority`**: prioritised units first by `:priority :self :rank`
+ascending (the `prioritise` verb of the structural verbs section), then unprioritised units by their
+`:correspondence` `:filed-at` ascending (oldest first; a sexp-first unit by its creation stamp), ties by
+id. Its rows are the ready antichain *width is independent work* asks the table to show; a blocked
+row prints its reason and its resolver, as the ask already promises. `order` without a value, or any
+other value, is refused naming the flag.
+
+**x/y is `set check`'s.** A sprint is a work set (SPEC-WORKLANG A1); its units carry `:ref
+"<O node id>"`, and `nova-work set check --file <sprint>.sexp --open work.sexp`
+resolves every ref (refusing a dangling one by name) and derives each unit's done from the O node's
+state and evidence — so **x/y z% is `done/units` from the `SET OK` line and nothing else**, the same
+walk at every level (*sprint is any bounded goal*). `--open` is the one new flag.
+
+**The fold writes back.** When the lander records a landing (#3139), its receipt names the units
+the landed branch served (the card's `TASK:` line); the writer, in the next roadmap batch, appends to
+each unit the `:evidence` event of its `:merged` criterion (`pr:<o>/<r>#<pr>@<merge sha>`) and, where
+the unit's criteria are then covered, the `:to :done` of *States and transitions, derived* — whose
+envelope carries the `:settle` — so **a landed fix is a settled unit in the record on `mas-bandwidth/work` `main` within one land
+cycle**, section 5's bound. A verified criterion of the E01–E11 inventory writes the same way into its
+`:verification :by-feature` row. The fold never writes from a message, a PR comment or a hand line:
+the landing receipt is the only input, which is *GitHub is a git remote only* again.
+
+**The table reads the sexp through Redis.** nova-sprint's table (*Table at one second, zero tokens*)
+reads only Redis, so the writer publishes each accepted revision's counts — per sprint, `units`,
+`done`, `ready`, `blocked`, the `SET OK` numbers — to one Redis hash per sprint, stamped with the
+revision; the table prints `?` for a hash older than one land cycle (*Table correct end-to-end*).
+
+### 8. Creation is sexp-first; the GitHub mirror is optional
+
+Glenn: *"commit to using the sexpr as the primary source."* **After the cutover new work is created
+in the sexp** — `nova-work node add` (section 10's `issue create` is its issue-shaped spelling) — and a
+GitHub issue is made only when asked: **`--mirror-github`** makes the writer ask the adapter to open
+the issue, with the unit's title and description and a last line `nova-work: <unit-id>
+req=<token>` (the **mirror marker**), and records the created number in the unit's
+`:correspondence` with `:mode :mirror`. **The request is recorded before the call**: the unit
+carries a mirror request `(:mirror :repo "<o>/<r>" :request <id> :token <token> :actor <login>
+:payload-sha256 <hash> :at <utc> :state :pending)` from the moment the writer asks — the token a
+fresh 128-bit CSPRNG value per request, the actor the login the adapter's credential authenticates
+as, the hash over the exact title and body bytes about to be sent — and it is that record, not the
+marker, that section 2b's admission rule checks: the marker only says which unit the issue claims
+to be. **The create receipt confirms the request**: the number in the adapter's own `POST`
+response is recorded against the request id, and that is the normal path. **Marker and request
+together make the mirror idempotent both ways**: a retry of an uncertain create (no receipt) first
+searches the repository's newest issues (one conditional call) and records a found number against
+the pending request only for a single issue that passes all four tests of section 2b (token,
+actor, payload hash, created at or after `:at`) — never for an issue that merely carries the
+marker — rather than opening a second issue; and the next ingest admits `:origin :mirror` only
+against the recorded number or that same four-part proof, and mints nothing for the genuine issue.
+A forged marker filed during the pending window is minted as its own unit and leaves the request
+pending, so the retry still finds (or makes) the real create. A mirror action is recorded as *Public issue correspondence
+survives intake* requires — pending, confirmed or failed, with its request id and receipt — and is
+never retried blind.
+
+**A mirrored unit's GitHub copy follows the unit, never the other way.** Title, description, label
+and state changes made with the issue verbs are pushed to the mirror by the same adapter, each an
+outbound action (pending, confirmed, failed) keyed by `(unit, issue, content-sha256 of the pushed
+fields)`; **only a confirmed push updates the mirror's report** in `:correspondence`, so the report
+is always what GitHub should show. An edit made on GitHub to a mirrored issue is captured by the next
+ingest, **not adopted**, and **re-pushed**: the ingest prints `INGEST DRIFT unit=<id> field=<f>:
+mirror edited on GitHub; re-push <request-id> pending` per differing field and queues one re-push of
+the unit's current fields (the marker line kept), which the writer sends once, under the same
+exactly-once rule as section 8b (a retry reads the issue first and does not push when it already
+matches). So verify sees at most a `VERIFY REPUSH` while the push is pending, and `DRIFT` only when
+it failed or is overdue (section 4); an edited mirror never drifts forever. A mirror's milestone and
+assignees are not pushed and not compared.
+
+### 8b. The one outbound write: closing an ingested issue when its fix lands on `main`
+
+**Besides mirror writes, this is the only thing nova-work ever writes to GitHub.** When a unit with a
+`:link`- or `:mirror`-mode correspondence is settled `done` by a landing receipt whose commit is an
+ancestor of `main` (section 2b), the lander's close step posts **one** comment and closes the issue
+(`state_reason: completed`). The comment is a fixed template of facts and no prose — `Fixed in <sha>
+on main (<repo>@<sha12>), tracked as nova-work <unit-id>.` — so it is an operational record and not a
+publication under SPEC-OUTBOUND (open question 5 asks whether Glenn wants it behind that gate
+anyway).
+
+**Exactly once, and provably.** The close is an outbound action keyed by `(unit, issue, commit)`
+with its request id: `pending` before the call, `confirmed` with the response's comment id and
+close stamp, `failed` with the error. **A retry after an uncertain result reads the issue's newest
+comments first (one conditional call) and does not post when the template line for that commit is
+already there**; a close whose issue is already closed records `confirmed` with `already-closed=yes`
+and posts nothing. **Team-origin ingested issues close by the same rule**, because after the cutover
+an open GitHub copy of a settled unit is a mirror that lies (open question 4 asks Glenn to confirm).
+Nothing here closes an issue for any other reason: a deferral, a cancellation, a supersede or a local
+done that has not reached `main` leaves the GitHub issue exactly as it is (*"a locally completed
+attempt, a deferred work node, or a scope reduction does not by itself close the public issue"*).
+
+### 9. The index: every lookup constant, every listing proportional to its answer
+
+**Glenn's rule, 2026-09-23 1:20–1:55 PM, carried by the coordinator and written up as #3141 comment
+5796875143** (`rowan-new/reports/work-index-design-2026-09-23.md`): *"think of all the indexing you
+need ... design it"*; no linear scans, ever; finding a repository is constant time; listing issues in
+a repository is proportional to that repository's result and never to all issues across all
+repositories; a hash table from id to node; and, of the store, *"is this sexpr still the correct
+shape ... lest we end up re-implementing SQL"*, then *"or redis"*. **This section is that design
+folded into this document, and it binds every verb of sections 3 to 10: no verb ever answers by
+scanning the sexp.** It restates none of *Cost* or *Counting*; it names the indexes those sections
+already require (the `|O|` counter, the per-container open counts, W materialised eagerly, the closed
+index) and adds the ones issue parity needs.
+
+**The storage split.** One logical forest, one engine, several files, all checked in by section 5
+(all of it at the root of the work repo, `mas-bandwidth/work`, on `main`, section 2; nothing in nova-tools):
+
+| path | what | why this shape |
+|---|---|---|
+| `work.sexp` | **the manifest**: gains `:repositories`, one `(:repo "<o>/<r>" :file "<O path>" :file-digest "<sha256>" :closed "<C path>" :closed-digest "<sha256>" :digest "<sha256>")` per declared repository, public or private, and `:digest`, the root digest over the repository digests; its existing keys (`:epics`, `:verification`, `:events`, ...) unchanged. **Digest rule:** `:file-digest` and `:closed-digest` are the SHA-256 of the canonical bytes of that repository's O and C files (a repository with no closed rows yet has an empty C file and the empty file's hash); the repository `:digest` is SHA-256 over `:file-digest` then `:closed-digest`, in that order; the root `:digest` is SHA-256 over the repository digests in manifest order. **Every write to either file rewrites both of its file digests, the repository digest and the root digest in the same commit**, so a C-only change (a `:settle` or `:revive` row, or a check-in that touches only the C file) moves the root digest exactly as an O change does; lint refuses (`WORK FAIL digest`) a manifest whose digests do not match the bytes on disk | one small file every reader opens first; a digest check over every O and every C file tells a cold start whether anything moved |
+| `work/<repo>.sexp` | that repository's **O** subtree: its repository work set, its containers and its open units | *The root is COW*: every top-level child of O is a repository work set; git conflicts are scoped to one repository |
+| `work/<repo>.closed.sexp` | that repository's **C** rows: one per `:settle` and per `:revive`, keyed `<event-rev>:<id>`, the closed-index row shape of *The root is COW*, append-only; its hash is the manifest row's `:closed-digest`, folded into the repository and root digests | C beside the snapshot, never inside it; the per-repository file is the partition until E07's day partitions exist; a session loads none of it at start, and the digest still covers it |
+| `blobs/<aa>/<sha256>` | **bodies**, content-addressed (`<aa>` the first two hex digits), write-once, referenced from `:correspondence` by `:body-sha256` | *"retain external reports separately from the coordinator's accepted plan"* (Stella); bodies never bloat a parse or a diff, and identical bodies are stored once |
+| `ingest-map.sexp` | the declared table of section 3 | *capacity is config, not argv* |
+
+One file per node (git-bug's shape) is held as the alternative if per-repository files still conflict
+in practice — measured, not assumed.
+
+**Resident indexes, in the engine, maintained on the write path and proven by reconstruction.** Each
+is updated by the event that changes the field it is keyed on, inside the accepted mutation envelope,
+and each is covered by the pattern `indexes-and-counters` already holds: after every legal verb, a
+full rebuild from the canonical state must equal the maintained value, or the replay is red.
+
+| index | key → value | structure | serves | cost |
+|---|---|---|---|---|
+| N | id → node | hash (exists: `wstate-nodes`) | every read by id, every write | O(1) |
+| **R** | repository name → repository work set id | hash (new) | every `--repo` | **O(1)** |
+| **X** | `<owner>/<repo>#<n>` and issue URL → unit id | hash (new) | `issue show`, ingest dedup, the close on `main` | **O(1)** |
+| C | parent → ordered children | tree (exists; made ordered) | subtree walks, listings of a container | O(children) |
+| D, D⁻¹ | deps, dependents | exists | DEPENDS-ON, revert, ready re-check | O(edges) |
+| **READY** | repository → set of ready ids | hash-set per repository, maintained (new) | the ready list of section 7, the table's width | O(1) read; O(dependents) per state change |
+| CNT | container → open, required, closed counts | exists (*Counting*: `|O|` read, never computed) | x/y, `size` | O(depth) per change |
+| HOLD | holder → ids | exists | `who`, friend rows | O(1) |
+| **REV** | revision → changed ids, a ring of the last K revisions | vector (new) | *changed since R* for the one-second table | O(k) |
+
+**Today's `ready-nodes` walks every node** (`lisp/nova-work/src/state.lisp`), a linear scan; READY
+retires it, and `query --ask ready` reads the maintained set.
+
+**Secondary indexes in Redis only; no SQLite sidecar (measured).** The set, range and text queries of
+the issue verbs are answered from Redis — already deployed, already the sprint store, and already what
+the table reads, so one store is fewer than two — as a **derived, disposable projection written only
+by the engine** and rebuilt from the sexp on demand, never a source. **The measurement decided it**
+(bench-work-index-3174 on hulk: generated forests of 10k, 100k and 1M units in 80 Zipf-sized
+repositories, Redis 7.0 over loopback and pure-Go SQLite in WAL mode, every operation 1,000 times,
+median / p99; the full table is `rowan-new/reports/work-index-design-2026-09-23.md` §11, posted on
+#3174 as comment 5797278408 and summarised on this PR as comment 5797289214). **SQLite is dropped, not
+held in reserve**, for two measured reasons: its "no parse" cold start is **slower than parsing the
+sexp** (107 ms / 1.0 s / 10.4 s against a Go parse of 56 ms / 413 ms / 4.2 s at 10k / 100k / 1M), so
+the premise of a sidecar that saves a parse does not hold; and its state changes **stall 12–21 ms at
+p99** (WAL commits and checkpoints) against the < 1 ms target, where a Redis `MULTI`/`EXEC` stays under
+0.71 ms p99 at every size. Its FTS5 index (`repo UNINDEXED`) also searches org-wide posting lists
+(p99 306 ms at 1M).
+
+| key | structure | holds |
+|---|---|---|
+| `w:n:<id>` | HASH | the unit's listing fields (repo, kind, state, title, author, filed-at, updated-at, closed-at, external ref, body-sha256) |
+| `w:repo` | HASH | repository → work set id (R's projection) |
+| `w:ext` | HASH | external ref → unit id (X's projection) |
+| `w:i:<repo>:state:<state>` | ZSET, score = updated-at | the per-repository, per-state list, newest first |
+| `w:i:<repo>:s:<state>:label:<l>`, `...:s:<state>:assignee:<a>`, `...:s:<state>:kind:<k>` | ZSET, score = updated-at | **the composite listing sets**, one per (repository, state, label \| assignee \| kind), **maintained on every write** that changes the unit's state or the keyed field, in the same `MULTI`/`EXEC` |
+| `w:i:<repo>:updated` | ZSET, score = updated-at | every unit of the repository, all states: `--state all` newest first |
+| `w:i:<repo>:s:<state>:created`, `w:i:<repo>:created` | ZSET, score = filed-at | per state, and all states: `--order age` and the `--since` range |
+| `w:i:<repo>:closed` | ZSET, score = closed-at | closed units only: the `--closed-since` range |
+| `w:i:<repo>:label:<l>`, `...:author:<a>`, `...:milestone:<m>`, `...:under:<id>`, `...:category:<c>` | SET, all states | membership for the bounded post-filter below, and the all-states `--by` counts of section 10; never intersected at query time |
+| `w:i:<repo>:labels`, `...:assignees`, `...:kinds`, `...:authors`, `...:categories`, `...:unders` | SET | **the repository's value sets**: every label, assignee, kind, author, category and container that at least one unit of the repository carries now. Maintained in the same `MULTI`/`EXEC` as the unit's write: a value is `SADD`ed when a unit gains it, and `SREM`ed when the write leaves its all-states membership set (`...:label:<l>` and siblings) empty, tested by the `SCARD` inside the same transaction. They are what `issue count --by` enumerates, so no count ever needs a `SCAN` |
+| `w:t:<repo>:<word>` | ZSET, score = updated-at | the title-word sets: one per normalised title word per repository |
+| `w:i:<repo>:prio` | ZSET, score = rank then filed-at | open units only (a unit leaves it on settle and returns on revive): `--order priority` |
+| `w:i:<repo>:landed:<branch>` | SET, for `dev` and `main` | `issue fixed-on`, written by the fold of section 7 |
+| `w:d:<id>`, `w:r:<id>` | SET | deps and reverse deps, for readers without the engine |
+| `w:ready:<repo>` | SET | READY's projection, for the table |
+| `w:rev` | STREAM, entry id = revision | REV's projection: changed ids per revision |
+| `w:verify` | HASH | the last verify summary per repository (section 4) |
+| `w:digest` | STRING | the manifest digest the projection was built from |
+
+**A listing costs its own answer, by one fixed access path per supported combination** (Stella, SPEC 7
+on #3141: make the filtered-list plan meet its advertised worst-case bound, or narrow the supported
+combinations). The measurement is why `ZINTERSTORE` at query time is gone: an intersection grows with
+the repository, not with the answer (p99 0.7 ms → 4.2 ms → 41.7 ms at 10k / 100k / 1M; the SQL label
+join 2.0 ms → 14.4 ms → 217 ms), while a maintained composite set holds 221 / 313 / 383 µs median and
+438 / 376 / 581 µs p99, two round trips, proportional to the page. The supported combinations, within
+one repository, and their plans are exactly these (an omitted `--state` is `open` and an omitted
+`--order` is `updated`, for every verb of section 10 that takes them):
+
+| combination | access path | bound |
+|---|---|---|
+| `--state <s>` alone, `--order updated` (the default; and `issue triage`, `issue stale`) | one page by score on `w:i:<repo>:state:<s>` | O(log n + 50) |
+| `--state all` alone, `--order updated` | one page by score on `w:i:<repo>:updated` | O(log n + 50) |
+| `--state <s>` with one `--label`, one `--assignee` or one `--kind`, `--order updated` | one page by score on that composite set | O(log n + 50) |
+| `--updated-since` on any row above | a score range on the same set (its score is updated-at) | O(log n + 50) |
+| `--order age`, `--state <s>` or `--state all` | one page, oldest first, on `w:i:<repo>:s:<s>:created` or `w:i:<repo>:created` | O(log n + 50) |
+| `--since` (filed-at) on `--order age` | a score range on the same created set | O(log n + 50) |
+| `--since` on an `--order updated` row | the created set of that state (or all) range-read, oldest first, and the answer printed in that order, with `order=age` in the header line (a filed-at range is not a range on an updated-at score, so the order it can serve is age, and it says so) | O(log n + 50) |
+| `--closed-since`, `--state closed` (or `all`) | a score range on `w:i:<repo>:closed`; with `--state open` refused (`ISSUE REFUSED: --closed-since needs --state closed or all`) | O(log n + 50) |
+| `--order priority`, `--state open` | one page on `w:i:<repo>:prio`; with any other `--state`, refused (`ISSUE REFUSED: --order priority lists open units only`) | O(log n + 50) |
+| any further filter on any row above (a label, assignee or kind beyond the one composite, or with `--state all`, `--order age` or `--order priority`; `--author`, `--milestone`, `--under`, `--category`, `--not-label`) | that row's set walked in its order in pages of 50, each page tested by one pipelined `SISMEMBER`/`HGET` batch, **stopping at 50 matches or 1,000 units examined** | O(log n + 1,000), fixed; past the cap the verb prints `ISSUE MORE examined=1000 cursor=<score>` and the caller pages on |
+| no `--repo` | the row above per repository, merged by that row's score over R | O(repositories × (log n + 50)) |
+
+Any other combination is refused (`ISSUE REFUSED: no access path for <flags>`), never scanned. A new
+composite field is a declared line with its memory measured, never a query-time intersection. The
+memory is the trade, measured: ~2 KB per unit, most of it the composite and title-word sets (190 MB
+and 349,858 keys at 100k, 1.98 GB at 1M; tens of MB at today's thousands of units).
+
+**Hot lookups stay resident; every Redis call is pipelined.** A single lookup by id, repository or
+external ref is answered from the engine's own N, R and X (0.2–9 µs at 1M, flat). Redis sits on its
+round-trip floor (`PING` 44–53 µs on loopback, ~300 µs per hop on the tailnet), so the server work is
+noise and the hop is the cost: Redis serves the readers without the engine (the table, other benches),
+and **every Redis call is pipelined** (*Redis in batches*): a listing is one or two round trips, a
+page's fields one `HGET` batch, a write one `MULTI`/`EXEC` in the same envelope as the journal append.
+
+**Title search by word sets; body search out of scope until measured.** Titles are indexed per
+repository as `w:t:<repo>:<word>` (normalised lower-case words); a search intersects its word sets
+smallest first and pages newest first, O(smallest word set): measured for two words at 75 / 114 /
+186 µs median, 0.29 / 3.9 / 29.1 ms p99 at 10k / 100k / 1M, so within 20 ms at 100k (the 1M p99 is
+the commonest words in a 201k-unit repository). Neither RediSearch nor FTS5 is needed for titles.
+**Body search is out of scope until a measurement shows it is needed** — `issue search --in body`
+refuses `not indexed` until then — and that measurement names its engine. **The engine-to-index
+interface is one small module**, so the choice is reversed by a measurement and not a rewrite.
+
+**Cold start: Redis has none; the engine restarts from a snapshot.** Redis is a resident server: the
+projection outlives an engine restart and needs no cold start (measured 0). The engine's own resident
+structures are the one measured miss: rebuilding them by parsing the sexp costs 56 ms / **413 ms** /
+4.2 s at 10k / 100k / 1M (the Go parser; the Lisp reader is measured by part (x)), over the 300 ms
+target at 100k. So the engine writes a **snapshot** of N, R, X, C, D, READY, CNT, HOLD and REV keyed by
+the manifest's root `:digest` (bench-local, gitignored, never a source). On load, when the snapshot's
+digest equals the manifest's, it loads the snapshot and parses no repository file; otherwise it parses
+each repository's O and C files once (the only O(n) pass there is), rebuilds the resident structures
+and, when `w:digest` differs too, the projection, including every closed-side key (`...:closed`,
+`...:state:<state>`, the composites, `w:ready:<repo>`, the `w:n:*` state and closed-at fields), and
+writes both digests. **The two digests decide two different things, and neither stands in for the
+other**: the snapshot's digest decides whether any repository file is parsed (`parses=0` exactly when
+it equals the root `:digest`), and `w:digest` decides only whether the Redis projection is rebuilt —
+so a current snapshot with a stale `w:digest` loads the snapshot, parses nothing and rebuilds the
+projection from the loaded resident structures (`parses=0 projection=rebuilt`). **The snapshot has its own DONE-WHEN**: engine restart from a current snapshot
+< 300 ms at 100k units (reported at 1M), with the 413 ms parse as the control it must beat; a faster
+parse that meets 300 ms without a snapshot satisfies the same line. **The skip is sound only because
+the root digest covers both files of every repository** (the digest rule of the manifest row above): a
+C-only settle or revive changes `:closed-digest`, hence the repository and root digests, hence neither
+the snapshot's digest nor `w:digest` matches and both are rebuilt; a digest over O alone would leave a
+stale closed index looking current, and `c-only-change-invalidates-projection` in section 11 is the
+replay that fails if it does. A crash between the journal append and the pipeline is repaired by the
+same check on the next load: the journal commits first, so the projection can be behind and never
+ahead.
+
+**Who reads.** One resident engine per bench — **`nova-work serve`** on a Unix socket, over the
+command thread and transport E01 already names — and every verb a thin client, Lisp or Go, on the same
+wire; **no second implementation of the indexes in Go**. The table and nova-sprint read Redis only,
+which the engine **publishes to on every accepted event** — the counts, the ready width and the
+changed ids — so the table never asks the engine or the sexp (*Table at one second, zero tokens*).
+
+**The complexity table is the DONE-WHEN.** The targets are at 100k units; the measured column is
+bench-work-index-3174 (a shared, loaded bench, a single client, the Go parser rather than the Lisp
+reader, so the absolute µs are pessimistic), and part (ix) re-runs every line against the built
+engine as a benchmark that fails:
+
+| operation | bound | target at 100k | measured at 100k, median / p99 | measured at 1M | verdict |
+|---|---|---|---|---|---|
+| unit by id; repository by name; unit by external ref | O(1) | < 50 µs | resident: 9 / 15 µs, 0.2 / 2 µs, 4 / 7 µs (at 1M, flat); Redis: 73 / 96, 52 / 65, 53 / 80 µs, its round-trip floor | Redis 69, 48, 60 µs | met by the resident engine; Redis pays one pipelined hop |
+| a page of 50 by state and one label, assignee or kind, newest first | O(log n + 50) | < 2 ms | composite set 313 µs / 376 µs (`ZINTERSTORE` 526 µs / 4.2 ms, rejected) | 383 µs / 581 µs (`ZINTERSTORE` 2.5 / 41.7 ms) | met |
+| the same with a further filter (post-filter, cap 1,000 examined) | O(log n + 1,000) | < 2 ms | not yet measured | — | part (ix) measures it |
+| title search within a repository, two words | O(smallest word set) | < 20 ms | 114 µs / 3.9 ms (SQLite FTS5 823 µs / 32.2 ms) | 186 µs / 29.1 ms | met at 100k |
+| the ready set of a repository | O(1) read of a maintained set | < 100 µs | resident 3 / 6 µs (at 1M); Redis 101 / 873 µs, all hop | Redis 83 / 323 µs | met by the resident engine |
+| a state change (close, reopen, label), every index, ready and REV | O(depth + dependents + indexes) | < 1 ms | 218 µs / 618 µs (SQLite 239 µs / 16.8 ms) | 304 µs / 708 µs | met |
+| changed-since for the table, k = 10 | O(k) | < 100 µs | resident 0.07 µs; Redis 93 / 151 µs | Redis 98 / 124 µs | met |
+| cold start of the projection | none (Redis resident) | < 300 ms | 0 (SQLite sidecar 999 ms) | 0 (SQLite 10.4 s) | met |
+| **engine restart from a current snapshot** | O(n) sequential load, no parse | < 300 ms | **open**: the sexp parse it replaces is 413 ms | parse 4.2 s | **its own DONE-WHEN**, part (x) |
+| full rebuild from the sexp | O(n) | < 5 s | 4.5 s (SQLite 5.7 s) | 47.3 s | met; digest mismatch only |
+| CONTROL: one repository's open issues by a walk; `ready-nodes` as a walk | O(n) | worse than every indexed line | 1.3 / 4.1 ms; 1.3 / 3.0 ms | 15.5 / 36.2 ms; 10.8 / 16.2 ms | the controls fail as they should |
+
+**Is the sexp still the right shape? Yes as the canonical store; no as the query shape — and this
+design is why that is not a contradiction.** The sexp is never queried, so it only has to serve
+canonical form, diff, review, digest and load, which a tree of text files in git does well and a
+database file does badly (binary diffs, no review by PR, no hash chain). **What would be
+reimplementing SQL — sorted sets, B-trees, range scans, full text, a filter language, a planner — is
+not ours**: those are Redis's, as a rebuildable projection. **What is
+ours, and stays in the engine, is what a database would hide**: the recursive counters that must equal
+a reconstruction, the ready antichain under dependency edges, the journal and digest chain, request-id
+dedup and leases. **The line is visible**: the day an issue verb grows an `AND`/`OR`/`sort-by`
+expression, we have crossed it and should call it SQL; so section 10's verbs are **fixed named
+queries**, each flag a fixed key, each combination a fixed intersection, and a combination with no
+access path is refused rather than scanned (`ISSUE REFUSED: no access path for <flags>`). What would
+change the answer: a daily need for ad-hoc cross-field queries by people (then the database is the
+primary and the sexp a view), or a forest that stops being a forest. Neither holds today.
+
+### 10. Verbs: issue parity, offline
+
+Glenn, 1:05 PM: *"you need to invent verbs for nova-work that give you all the functionality you have
+right now when you query issues from github."* **Every verb below reads only the record — the files of
+section 9's storage split, through the indexes of section 9 — and makes no network call to GitHub**;
+the ones that write go through the writer like every mutation. **Each is a fixed named query**: its
+flags are a fixed set, each flag names one index key, a combination is a fixed intersection, and
+section 9's line holds — a combination with no access path is refused, never scanned. A verb's output
+is one line per row, **TSV by default** with a header line, `--format sexp|json` alike, capped by
+`--limit` (default 30, gh's default; `0` all; negative refused) with one `ISSUE MORE shown=<n>
+total=<t> --limit <n>` line when cut. Exit 0 ran (zero rows included), 1 a finding or a refused write,
+2 could not run (a flag, a bound, an unreadable file, no access path). `<unit>` is a unit id or
+`<owner>/<repo>#<n>`, resolved through X — the one place a GitHub spelling is admitted, because it
+names an existing unit and never stands for one.
+
+**The inventory of what we ask GitHub today**, from the live scripts (`rowan-tools/bin`, 2026-09-23)
+and the coordinator's own calls this week: list open issues by repository with labels and titles
+(`refill.sh`, `progress.sh`, `status.sh`); view one issue's title and body (`refill.sh`); count issues
+created or closed since a date (`status.sh`); count titles matching a word (`status.sh`,
+`progress.sh`); count open issues per repository (the 25 search calls of this spec's own inventory);
+create an issue from a body file, patch a body, close with a comment (the coordinator by hand, and
+`rowan-github`); link a PR to an issue by `#n` in a body; *"issues already fixed on dev"* (the eleven
+closed by hand on the morning of 2026-09-23); and the triage table
+(`reports/emma-supply-2026-09-20/C-open-issues-triage.tsv`). Pull-request reads, PR comments and
+reviews (`hold-to-fix`, `jev-eval`, `pr-to-read`, `sprint-landed`, `card-release`, `land-lane`,
+`land-loop-tools`, `jev-loop`, `harvest-priority`, `sprint-canary`) are **not issue queries**: they
+move to nova-sprint's PR, hold and landing records by *GitHub is a git remote only* and are named in
+the replacement table only to say so.
+
+**The verbs, each with its access path:**
+
+| verb | usage | TSV columns (header first) | access path (section 9) |
+|---|---|---|---|
+| `issue list` | `nova-work issue list [--repo <r>]... [--state open\|closed\|all (default open)] [--label <l>]... [--not-label <l>]... [--author <a>] [--assignee <a>] [--kind <k>] [--milestone <m>] [--under <id>] [--category <c>] [--since <t>] [--updated-since <t>] [--closed-since <t>] [--order updated\|age\|priority (default updated)] [--limit <n>] [--format tsv\|sexp\|json]` | `ref state title labels author created updated unit` | R for each `--repo`; the combination's fixed plan in section 9, one row per `--state` and `--order` value: a page on the `state`, `updated`, created or `prio` set or on one composite (state, label \| assignee \| kind) set, a time flag as a score range on the set whose score it is, any further filter (including `--not-label`) as the bounded post-filter (1,000 examined, then `ISSUE MORE`); no query-time intersection; an unsupported combination refused. With no `--repo`, per-repository pages merged by score over R |
+| `issue show` | `nova-work issue show <unit> [--format ...]` | a header row `ref state title labels milestone assignees author created updated closed unit under required disposition`, then `ISSUE BODY bytes=<n>` and the body verbatim, then one `ISSUE LINK` row per link and one `ISSUE EVENT` row per state event | X, then N; the body from its blob; the events from the unit's own log |
+| `issue search` | `nova-work issue search <text> --repo <r> [--in title] [--state ...] [--limit <n>]` | as `issue list`, plus `field` | the repository's title-word sets `w:t:<repo>:<word>`, intersected smallest first; `--in body` refuses `not indexed` until section 9's measurement admits it; `--repo` required |
+| `issue count` | `nova-work issue count [--by repo\|state\|label\|assignee\|kind\|category\|under\|author] [the filters of list; `--state` default open]` | `key count`, then `ISSUE COUNT total=<n>` | `ZCARD` of the row's set, `ZCOUNT` for a time flag (`--state all --since <t>` is one `ZCOUNT` on `w:i:<repo>:created`; `--state closed --closed-since <t>` one on `w:i:<repo>:closed`); `--by repo` over R; `--by state` one `ZCARD` per state set; **`--by label`, `--by assignee`, `--by kind`**: `SMEMBERS` of the repository's value set (`w:i:<repo>:labels`, `...:assignees`, `...:kinds`), then one pipelined `ZCARD` per composite key `w:i:<repo>:s:<state>:<field>:<value>` (for `--state all`, the sum over the three states' composites in the same pipeline); **`--by author`, `--by category`, `--by under`**: `SMEMBERS` of `...:authors`, `...:categories` or `...:unders`, then one pipelined `SCARD` per all-states membership set — these have no per-state composite, so they require `--state all` and refuse any other (`ISSUE REFUSED: --by author counts all states; pass --state all`); O(values of the field + 1) round trips' work, never a `SCAN`; a combination beyond one composite has no bounded count and is refused |
+| `issue create` | `nova-work issue create --repo <r> --title <t> --body-file <f> [--label <l>]... [--under <id>] [--mirror-github] --reason <text>` | `ISSUE OK unit=<id> under=<id> mirror=<pending\|none>` | a write: `node add` under the map's placement, id `<owner>/<repo>/<uuidv7>` (no natural key exists, so a guid, by the natural-keys-first rule), the body a blob |
+| `issue edit` | `nova-work issue edit <unit> [--title <t>] [--body-file <f>] [--add-label <l>]... [--remove-label <l>]... [--milestone <m>\|--no-milestone] --reason <text>` | `ISSUE OK unit=<id> changed=<fields> mirror=<pending\|none>` | a write; **refused on an `:external` unit's title or body** (`ISSUE REFUSED unit=<id>: an external reporter's text is theirs (write a note)`) |
+| `issue close` | `nova-work issue close <unit> --commit <sha> [--pr <o/r#n>] [--note <text>] --reason <text>` | `ISSUE OK unit=<id> disposition=done evidence=<pointer> outbound=<pending\|none>` | a write; the lander's close step calls it, and section 8b does the GitHub half on `main` |
+| `issue link` | `nova-work issue link <unit> (<owner/repo#pr>\|<sha>) --reason <text>` | `ISSUE OK unit=<id> link=<url> criterion=<merged\|attested>` | a write; replaces `intake-close` with its `:merged` form for a PR |
+| `issue note` | `nova-work issue note <unit> --source <pointer> <text>` | `ISSUE OK unit=<id> note=<id>` | a write of *The coordinator's notes* record (source and date required); **GitHub comments are not ingested**, and this is where our own discussion goes |
+| `issue fixed-on` | `nova-work issue fixed-on (dev\|main) [--repo <r>]... [--state open\|all]` | `ref unit state commit landed-at` | the `landed:<branch>` SET the fold maintains (section 7); any other branch refused `not a tracked branch`; open units first |
+| `issue triage` | `nova-work issue triage --repo <r> [--under <id>] [--limit <n>]` | `ref title labels age-days unit under required criterion fixed-on-dev pr` | the `state:open` page, then one pipelined `HGET` batch per page |
+| `issue stale` | `nova-work issue stale --repo <r> --days <n> [--limit <n>]` | `ref title updated-days last-event unit` | a score range on the repository's `state:open` ZSET, oldest first |
+| `issue mirror status` | `nova-work issue mirror status [--repo <r>]...` | `repo verified-at commit issues units missing extra drift age` | `w:verify`, written by section 4 |
+
+**The replacement table: every GitHub issue call we make today, and what replaces it.** The migration
+deletes each call in the cutover sprint; `rowan-tools` scripts are deleted outright where the verb
+covers the whole script.
+
+| caller (today) | GitHub call | replaced by |
+|---|---|---|
+| `refill.sh:16` | `gh issue list -R nova-tools --state open --json number,labels,title` + label and title filters | `issue list --repo nova-tools --state open --not-label next-push` (the title filter becomes `--under`/`--category` placement in the map; the script itself is already replaced by #2564) |
+| `refill.sh:23` | `gh issue view <n> --json title` / `--json body` | `issue show <unit>` |
+| `status.sh:9` | `gh issue list --state all --search created:>=<today>` / `--state closed --search closed:>=<today>` | `issue count --repo nova-tools --state all --since <today>` (all states, as the script's `--state all` meant) / `issue count --repo nova-tools --state closed --closed-since <today>` |
+| `status.sh:15`, `progress.sh:33` | `gh issue list --state open --json title` then a title regex (`Dogfood`) | `issue search Dogfood --repo nova-tools --in title --state open`, counted from its `ISSUE MORE total=` |
+| `rowan-github` (issue create) | `gh issue create` as rowan-claude | `issue create [--mirror-github]` |
+| the coordinator, by hand | `gh api -X PATCH repos/.../issues/<n> -F body=@file`; `gh issue close --comment` | `issue edit`; `issue close` |
+| the coordinator, by hand | `gh api search/issues?q=repo:<o>/<r>+is:issue+is:open` per repository | `issue count --by repo --state open` |
+| the coordinator, by hand | *"which open issues are already fixed on dev"* | `issue fixed-on dev --state open` |
+| `C-open-issues-triage.tsv` (Emma, 2026-09-20) | a triage by hand from `gh issue list` | `issue triage --repo <r>` |
+| `hold-to-fix`, `jev-eval`, `pr-to-read`, `sprint-landed:57,267` | `repos/.../issues/<n>/comments` (PR comments through the issues endpoint) | **not an issue query**: typed dispositions in nova-sprint's Redis (#3092) |
+| `sprint-landed:39-56,156,251` | `search/issues?q=...+is:pr` | **not an issue query**: nova-sprint's PR record (#3091) |
+| `card-release`, `harvest-priority`, `jev-loop`, `land-lane`, `land-loop-tools`, `sprint-canary`, `sprint-stage` | `repos/.../pulls`, `branches`, `rate_limit` | **not an issue query**: the lander (#3139), `git ls-remote`, and no rate probe once no loop polls |
+| nova-tools' own Go callers of issue endpoints | (inventoried by the cutover's owner at build time with `git grep` at the build's base; this spec did not search the tree) | the verb of this table that answers the same question |
+
+**Each verb's control is a golden file, with GitHub unreachable and a visit counter.** A fixture
+record of thirty units — `lisp/nova-work/tests/fixtures/ingest-30/`, a manifest, its per-repository
+files, blobs and a map, across three repositories, with open, closed-with-PR, closed-without-PR,
+not-planned, duplicate, external, team, mirror, pool, inbox and private units among them — and one
+golden output per verb and flag set under `.../golden/`; the replay runs every verb with the adapter
+replaced by a fake that exits 3 and records any invocation, and asserts **byte equality with the
+golden, zero adapter invocations, and a node-visit count no larger than the verb's access path
+allows** (replay `issue-verbs-golden-offline`).
+
+### 11. Invariants and their controls
+
+Each invariant has one named replay that can fail, in the style of *Acceptance replays*, and each is
+written red first:
+
+| replay | the invariant | how it fails |
+|---|---|---|
+| `ingest-is-idempotent` | a second ingest over unchanged captures writes nothing | any count but `unchanged=` non-zero, or any file's SHA-256 differs from the first run's |
+| `ingest-identity-is-stable` | a title, label or repository-rename edit keeps the unit id; a transfer supersedes | a second unit minted for one identity, or an id re-pointed |
+| `ingest-refuses-undeclared-repo` | an org repository absent from the map refuses the run | the run exits 0, or any repository is written |
+| `ingest-remote-text-is-data` | a body holding `#.(...)`, a verb-shaped line and a node-shaped list is stored verbatim | anything is evaluated, or any structure or count moves |
+| `closed-imports-settle-honestly` | the five rows of section 2's table, each with its disposition and count | a closed issue with no PR counts `done=` instead of `done-unverified=`, or a `not_planned` counts done |
+| `ideas-are-a-pool` | ingesting a `:pool` repository moves no `rows=`, `required=` or percentage | any denominator moves |
+| `bug-label-is-a-category` | a closed `bug`-labelled issue with no test imports and settles | the import refuses by rule 19, or `bugs=` counts it |
+| `verify-sets-and-hashes` | a fixture with one missing, one extra and one drifted issue | fewer than three lines, a wrong field named, or exit 0 |
+| `verify-names-what-it-does-not-capture` | every `VERIFY <repo>` line carries `not-captured=comments,reactions,timeline` | the field is absent on any line |
+| `roadmap-batch-gates-on-lint-only` | on `mas-bandwidth/work`: a `roadmap` batch with a `WORK FAIL` finding is refused, a clean one lands without build or test, a `roadmap` batch with a path outside section 5's five is refused `not a roadmap path`, and a batch not from the writer that touches one of the five is refused `written outside the nova-work writer`; nova-tools' lander carries no record rule, because no record write reaches it, and a nova-tools batch touching only `docs/roadmaps/sprint-x.sexp` lands | any of the four lands the wrong way, or nova-tools' lander refuses a batch for a record path |
+| `one-writer-of-the-sexp` | a second writer run while `lease:nova-work-writer` is held refuses | two writers each write a commit |
+| `main-equals-the-writer-within-a-cycle` | after an ingest at T, the record paths on `mas-bandwidth/work` `main` equal the writer's bytes by T + one cycle, and `nova-work lag` says so | `lag` exits 0 while they differ, or the bytes differ past the bound |
+| `webhook-edit-within-sixty-seconds` | an `issues.edited` delivery changes the unit within 60 s with zero REST calls | a REST call is made, or 60 s pass |
+| `poll-not-modified-is-free` | a conditional poll of an unchanged repository writes nothing and reports `not-modified=` equal to its pages | a write, or a non-conditional request |
+| `push-refuses-a-bare-github-ref` | `task push` and the cutter refuse every GitHub ref shape and accept the unit id | any GitHub shape is admitted |
+| `sexp-is-primary-source` | a fixture sprint with one GitHub-only ref is refused at `sprint open`; task push, card cut, `set check` x/y, the fold and the table's hash run with the adapter a failing fake and print the same numbers as with it working | a refusal is missing, a number differs, or the adapter is invoked |
+| `fold-settles-a-landed-unit` | a landing receipt naming a unit yields its `:merged` evidence and its settle on the record's `main` within one cycle | the unit stays open, or evidence is written from anything but the receipt |
+| `external-close-exactly-once` | fixture external issue → unit → landing on `main` → one comment and a close; a retry after a timed-out response posts nothing; an external reopen revives the unit on the next ingest | two comments, a close from `dev`, a close before `main`, or no revive |
+| `mirror-never-duplicates` | `issue create --mirror-github` opens one issue and the create receipt confirms the request; an uncertain create retried finds its own issue by token, actor and payload hash; the next ingest mints nothing | two issues, or two units |
+| `issue-verbs-golden-offline` | every verb of section 10 byte-equals its golden with the adapter a failing fake, within its access path's visit count | a byte differs, the fake is invoked, or a verb visits more nodes than its path allows |
+| `index-reconstruction-agrees` | after every legal verb, R, X, READY, REV and every `w:*` key equal a full rebuild from the canonical state | any maintained value differs from the rebuild |
+| `no-verb-scans-o` | with an instrumented node-visit counter, a repository listing visits O(log n + k) nodes and `query --ask ready` visits none | a verb's visits grow with the org's size rather than its answer's |
+| `cold-start-without-parse` | two separate conditions, each tested alone: (1) **the snapshot decides the parse** — with the engine snapshot's digest equal to the manifest's root `:digest`, a start prints `parses=0`; with it different, a start prints one parse per repository O and C file and writes the new snapshot digest; (2) **`w:digest` decides only the projection** — with the snapshot current and `w:digest` stale, a start prints `parses=0` and `projection=rebuilt`, and every `w:*` key equals a full rebuild; with both current, `parses=0 projection=current` | a parse on a current snapshot, `parses=0` on a stale snapshot, a projection rebuild with `w:digest` current, or a stale projection served with `w:digest` stale |
+| `c-only-change-invalidates-projection` | from a current projection, three fixtures each change only a repository's C file with its O file byte-identical: a `:settle` row appended, a `:revive` row appended, and a check-in that lands a C row alone; after each, the manifest's `:closed-digest`, repository `:digest` and root `:digest` all change, the next start prints `parses=` non-zero, and every `w:*` key of that repository (the closed range, the state sets, `w:ready:<repo>`, the `w:n:*` state fields) equals a full rebuild; a manifest whose `:closed-digest` does not match the C file's bytes is refused by lint | a start prints `parses=0` after a C-only change, any closed-side key differs from the rebuild, the root digest is unchanged, or the mismatched manifest passes lint |
+| `index-benchmark-table` | part (ix): these **nine** rows of section 9's complexity table, by their `operation` text, at 10k, 100k and 1M generated units — *unit by id; repository by name; unit by external ref*; *a page of 50 by state and one label, assignee or kind*; *the same with a further filter (post-filter, cap 1,000 examined)* (unmeasured at rev 5: this replay is its first measurement, and it fails like any other row); *title search within a repository, two words*; *the ready set of a repository*; *a state change*; *changed-since for the table, k = 10*; *cold start of the projection*; *full rebuild from the sexp*. Not in it: *engine restart from a current snapshot*, which is part (x)'s own replay `engine-restart-from-snapshot`, and *CONTROL*, which is checked the other way round | any of the nine over its target at 100k, or growing faster than its bound across the three sizes; or the CONTROL row not slower than every one of the nine at 100k and 1M (a control that does not lose means the harness is not measuring the index) |
+| `record-lives-in-the-work-repo` | every ingest, verify, sample-record, fold and mirror write, and every fold receipt, goes to `mas-bandwidth/work`; no record file (manifest, O or C file, blob, map, receipt) is written under any nova-tools path; no private repository's name, unit, capture or body appears in nova-tools; a `render` of a `:private` unit into any output published outside the record refuses | a record write goes anywhere but `mas-bandwidth/work`, a record file appears under a nova-tools path, any private repository's bytes appear in nova-tools, or a private unit is rendered into a public output |
+| `engine-restart-from-snapshot` | part (x): restart from a current snapshot at 100k units | over 300 ms at 100k, or not faster than the measured 413 ms parse |
+| `mirror-marker-not-forgeable` | fixtures: (1) an external issue whose body ends `nova-work: <U>` for an existing unit U with no mirror request; (2) the same for a U whose confirmed mirror is a different number; (3) a marker naming a nonexistent unit; (4) the genuine mirror of a pending request (right token, actor and payload hash); **the pending-request race**, with U's request pending and no receipt yet: (5) a forged issue by another login ending `nova-work: <U>` with no token or a wrong token, arriving before the genuine create; (6) a forged copy of the genuine body, correct token included, filed by another login after the genuine issue is visible; (7) an uncertain-create retry whose search sees the forged issues of (5) and (6) beside the genuine one | (1)–(3), (5), (6): U's correspondence or its request (state, number, token, attempts, receipt) changes, or the issue is not minted as its own unit, or no `INGEST MARKER-REFUSED` line; (4): a second unit minted, or the request not confirmed; (7): the retry records a forged number, opens a second issue, or leaves the request unconfirmed when exactly the genuine issue passes |
+| `mirror-edit-is-repushed` | a title edit made on GitHub to a mirrored issue: the next ingest prints `INGEST DRIFT` and queues one re-push; verify before the push prints `VERIFY REPUSH` and passes; after the confirmed push verify passes with no line for it; a failed push makes verify print `DRIFT` and exit 1 | the unit adopts the GitHub text, two re-pushes are posted, verify fails on a young pending re-push, or passes on a failed one |
+| `map-poll-is-declared` | a map with the top-level `:poll`, a per-repository override, and the admitted key set validates; a map with no `:poll`, `:every-seconds 0`, an unknown unit or any unknown key is refused at exit 2; the fallback poll of the fixture repository with an override runs at its own interval | a valid map refused, an invalid one admitted, or a repository polled at the global interval despite its override |
+| `sample-line-is-its-own-kind` | `ingest sample-record` writes `SAMPLE who= seed= commit= ok=<k>/30` into the manifest's `:verify` entry for that commit and to `w:verify`; it refuses the ingest's owner, an unknown commit and `ok` outside 0–30; the lander's and the table's `SPEC` parsers never see a `SAMPLE` line | the line lands on GitHub, a `SPEC` token appears, or a refusal is missing |
+| `list-order-and-state-defaults` | `issue list` with no `--state` lists open units and with no `--order` orders by updated; each `--order` value with each `--state` reads the set section 9's table names for it (visit counter) and `--order priority --state closed` is refused; `issue count --state all --since <t>` equals the fixture's all-states count | a default differs, a row reads another set, or a refusal is missing |
+| `count-by-uses-value-sets` | `issue count --by label` (and assignee, kind, author, category, under) reads the value set and the composite or membership keys only, with a Redis command log showing no `SCAN` or `KEYS`; after the last unit carrying a label loses it, the label is gone from `w:i:<repo>:labels` | a `SCAN`/`KEYS` appears, a count differs from the fixture, or an empty value survives in a value set |
+
+### 12. Migration: the org's open issues today, the order, and what is deleted
+
+**What there is, measured at 2026-09-23 14:26–14:30Z** (one `search/repositories?q=org:mas-bandwidth`
+call and one `search/issues?q=repo:<o>/<r>+is:issue+is:open` count per repository whose
+`open_issues_count` — which counts pull requests too — was 2 or more): **80 repositories, 43 public
+and 37 private; 1,803 open issues counted — 796 public and 1,007 private — plus at most 9 more in the
+nine repositories whose combined issue-and-PR count is 1 and which were not searched.** The public
+repositories with open issues: nova-tools 672, schema 90, fixed3d 17, yojimbo 5, nova 4, netcode.cs 2,
+and one each in .github, awesome-persistent-ai, netcode.go, netcode.rs, serialize.modern (archived)
+and serialize.rs; at most one each in fixed, netcode, patreon, reliable, reliable.go, reliable.rs and
+serialize.js. Of the private 1,007, the ideas repository — a `:pool` by *ideas live as issues* — holds
+797. Closed issues were not counted; the first dry run counts them, with every file's bytes, before
+any file is written.
+
+**The order, each step gated on the one before:**
+
+0. **The work repo** ((b)'s first line):
+   the work repo exists (created 2026-09-23); the sexp moves there in the cutover.
+   `mas-bandwidth/work` is private, with `main`, and its README says data only, no code;
+   rowan-claude and the writer's bench can push to it; it is in the bench mirror set; its read
+   credential is sealed on every bench. Each of these is measured, not assumed, and is Rowan's as
+   org admin (Glenn, 2026-09-23 3:15 PM). The sexp's move (section 2) is this step's one commit of
+   content; nova-tools' `docs/roadmaps/` is not touched by it and stays nova-tools' own roadmap.
+1. **The map** ((b), from the first cut's (f)): every one of the 80 repositories declared by name,
+   public and private alike, `:work`, `:pool` or `:skip` with a reason, `:private t` on the 37 private
+   ones, and the top-level `:poll`; one file, `ingest-map.sexp`, in the record.
+2. **A dry run per repository** (`--dry-run`): prints `INGEST REPO` with `issues=`, the calls it
+   would make and each repository file's and blob set's bytes; nothing written. Open question 1 (one
+   file or a forest) is decided from these numbers.
+3. **Ingest, work repositories first, largest backlog first** — nova-tools, then schema, then the
+   rest, public and private in one order — **and the pool last**, because the pool is the largest
+   and counts for nothing; one `roadmap` batch per repository, so a failure holds one repository and
+   not the org.
+4. **Verify every repository to `VERIFY PASS`**, then a non-owner friend's `SAMPLE ... ok=30/30`
+   recorded at the verified commit (section 4).
+5. **The cutover sprint**: `sprint open`'s preflight on; `task push` and the cutter refuse GitHub
+   refs; the fold writes back.
+6. **Delete, in the cutover sprint**: `rowan-tools/bin/refill.sh` (already replaced by #2564),
+   `progress.sh` and `status.sh`'s issue lines, `rowan-github`'s issue-create path, and every issue
+   call of section 10's replacement table, each deletion a line of the sprint with its replacing verb
+   named; nothing that reads an issue from GitHub survives except the adapter.
+
+**Nothing on GitHub is deleted or bulk-closed by the migration.** Migration is import without delete
+(*Initial migration*; the lock decisions of 2026-09-15: absorb disabled, link the default). The open
+backlog stays open on GitHub until each unit's fix reaches `main` and section 8b closes it, once.
+
+### 13. Open questions for Glenn
+
+The former first question, *where do private repositories' units live*, is closed (Glenn,
+2026-09-23 6:35-6:45 PM: the whole record in the private work repo `mas-bandwidth/work`, section 2;
+private repositories' issues ingest into the private record), and the
+former seventh, *who adds the org webhook*, is answered by *"You are org admin rowan"* (Glenn,
+2026-09-23 3:15 PM): it is a precondition of (c), Rowan's to do. Six remain, renumbered:
+
+1. **One file or a forest.** Glenn said *"this file"*; section 9 writes one logical forest as a small
+   manifest (`work.sexp`, the record's manifest in the work repo), one O and one C
+   file per repository and content-addressed bodies, because one file for 80 repositories and
+   thousands of units is one hot file for every writer and every diff. Confirm the forest, or hold to
+   one file?
+2. **The pool.** Ideas ingested as `:required false` units that never count (section 2), or not
+   ingested at all?
+3. **Assignees.** Kept as data only (never `:responsible`), or should an assignee on a `:work`
+   repository set `:responsible` by a recorded `responsible` event naming you as the word's source?
+4. **Closing team issues.** Section 8b closes team-origin ingested issues on `main` by the same rule as
+   external ones, so no open GitHub copy outlives its settled unit. Confirm, or keep team issues open
+   on GitHub as history?
+5. **The closing comment.** A fixed factual template, outside SPEC-OUTBOUND's approve gate; or behind
+   it?
+6. **The mirror re-push.** Section 8 re-pushes a mirror edited on GitHub back to the unit's text
+   (title, body, labels, state), so a teammate's edit on GitHub is undone within one ingest. Confirm,
+   or should a team-origin edit on a mirror be adopted as a proposed edit for a friend to accept?
+
+### The issues that build it
+
+Each is a pointer to sections above, with its own DONE-WHEN; its owner never reads it; **build opens
+on an issue only when every present friend who is not its owner has posted `SPEC who=<friend>
+score=10` on it and on #3141**. Sub-issue (f) of the first cut is folded into (b), and the parity
+verbs are part (vi) of the index issue, so there is one issue per owner-sized piece.
+
+**DEPENDS-ON is a closed task or a merged PR, never an open one** (*Order and dependencies between
+cards*); PATHS are the repository paths the piece may touch, each checked at the build's base by
+`git ls-tree` before the task is cut (a path marked *new* must not yet exist). Code paths are in
+nova-tools; record paths are in the work repo, `mas-bandwidth/work`, and written only by the writer
+at run time, never by a build PR; no build PR writes a record path in nova-tools.
+
+| | issue | sections | owner | readers | DEPENDS-ON | PATHS |
+|---|---|---|---|---|---|---|
+| (index) | #3174: the index and the parity verbs, in ten parts: (i) the storage split; (ii) the node fields parity needs; (iii) resident R, X, READY and REV with reconstruction proofs; (iv) the Redis projection and its rebuild; (v) title search, and the body-search measurement; (vi) the parity verbs as fixed named queries; (vii) `nova-work serve` and the Go client; (viii) Redis publication per event; (ix) the 10k/100k/1M benchmark with section 9's table as pass/fail, including the post-filter row; (x) the engine snapshot, whose DONE-WHEN is restart < 300 ms at 100k units against the 413 ms parse | 9, 10 | rowan (tracking; parts proposed: stella (i)-(iii) and (vi), johnny (iv), (v), (vii), (viii), rowan (ix), (x)) | stella, johnny | within the issue: (i) first; (ii) on (i); (iii) on (ii); (iv) on (iii); (v) on (iv); (vi) on (iii) and (iv); (vii) on (iii); (viii) on (iv); (ix) on (iv) and (vi); (x) on (iii). Outside it: none | `lisp/nova-work/src/indexes.lisp`, `lisp/nova-work/src/state.lisp` (READY replaces `ready-nodes`), `lisp/nova-work/src/render-filesystem.lisp` (the split), new `lisp/nova-work/src/issue-verbs.lisp`, new `lisp/nova-work/src/snapshot.lisp`, `lisp/nova-work/tests/`, `internal/workclient/`, `cmd/nova-work/`, new `internal/workindex/` (the projection and the benchmark) |
+| (a) | #3167: `nova-work ingest github`: the adapter, identity, placement, the map (with `:poll`), the marker admission, idempotence | 2, 2b, 3 | stella | johnny, rowan | (index) (i) and (ii) merged | `lisp/nova-work/src/capture.lisp`, new `lisp/nova-work/src/ingest.lisp`, new `lisp/nova-work/tests/fixtures/ingest-30/`, new `cmd/nova-intake/`, new `internal/intake/github/` |
+| (b) | #3168: the work repo's readiness (section 12 step 0: push access, mirror, sealed read credential) and the sexp's move into it, the writer and its lease, the `roadmap` batch on `mas-bandwidth/work`, `nova-work lag`, the declared map of all 80 repositories (the first cut's (f)) | 2, 3, 5, 12 | rowan | stella, johnny | #3139 (the multi-repository lander) merged; (index) (i) merged; step 0 done before the map is written | the lander's package as #3139 lands it (`internal/nsprint/` or its successor, the `roadmap` batch kind only), new `lisp/nova-work/src/writer.lisp`, `cmd/nova-work/` (`lag`); record, in the work repo: `nova-work.sexp`, `ingest-map.sexp` |
+| (c) | #3169: continuous: `issues` on `ev:github`, the conditional poll at the map's `:poll` | 6 | johnny | stella, rowan | (a) merged; the org webhook for `issues` added (Rowan, as org admin) | `internal/ghevent/`, `lisp/nova-work/src/ingest.lisp` (`--from-events` only) |
+| (d) | #3170: cut from the sexp: `task push` and the cutter take units, `--order priority`, `set check --open` | 7 | johnny | stella, rowan | (a) merged; (index) (iii) merged | `internal/friendqueue/`, `internal/nsprint/` (task push only), `cmd/nova-work/`, `lisp/nova-work/src/new-verbs.lisp` (`--order`, `--open`) |
+| (e) | #3171: fold write-back: landed PRs and verified criteria settle units | 7 | stella | johnny, rowan | #3139 merged; (b) merged | `lisp/nova-work/src/receipts.lisp`, `lisp/nova-work/src/receipt-admission.lisp`, `lisp/nova-work/src/writer.lisp` (fold hook only) |
+| (g) | #3172: `nova-work ingest verify`, the `SAMPLE` line and `ingest sample-record`, the weekly run | 1, 4 | johnny | stella, rowan | (a) merged | new `lisp/nova-work/src/verify.lisp`, `internal/intake/github/` (the search count only), `cmd/nova-work/` |
+| (h) | #3173: primary-source cutover: preflight, mirror (request, marker, re-push), the close on `main`, the deletions | 1, 8, 8b, 12 | rowan | stella, johnny | (b), (d), (e) and (g) merged; every repository `VERIFY PASS` and a non-owner `SAMPLE ... ok=30/30` recorded at the verified commit | `internal/nsprint/` (preflight), `internal/outbound/`, `internal/intake/github/` (mirror create, re-push, close), `lisp/nova-work/src/ingest.lisp` (mirror only); rowan-tools: `bin/refill.sh`, `bin/progress.sh`, `bin/status.sh`, `bin/rowan-github` (deletions) |

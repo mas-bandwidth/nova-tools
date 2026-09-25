@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,7 +61,56 @@ func TestBareCommandRefusesInOneLine(t *testing.T) {
 	}
 }
 
-func TestTESTSFirstRunSectionExists(t *testing.T) {
+// TestTESTSFirstRunIsWhatTheToolPrints runs docs/TESTS.md's `## nova-post`
+// `### First run` block as written, in a fresh directory holding exactly the
+// fixture the section names, and compares every line. Issue #1631 was this block
+// running `--channel fake` (not one of the spec's four channels, refused at exit
+// 2) and writing `<sha256>` where a hash goes; the block was re-cut on `ghost`
+// with the real hash pasted, and this test is what keeps it runnable.
+//
+// Every documented command must exit 0 as well as print what the page shows:
+// the block is the quickstart, and a quickstart step that fails is not one.
+//
+// TWO normalisations are declared, as the siblings declare them: the
+// `<goos>/<goarch> go<version>` tail of `version` is the machine the line was
+// recorded on, and the version word is what the build stamped itself with.
+// Nothing else is normalised, so the hash is compared byte for byte.
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	steps, err := onboarding.Steps("nova-post", firstRunLines(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("the `### First run` block holds no nova-post command; this test would pass by running nothing")
+	}
+	t.Chdir(t.TempDir())
+	write(t, "body.md", "A first post for the ghost channel.\n")
+	write(t, "allowlist", "ghost\texample.com\n")
+	if err := os.Mkdir("drafts", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range onboarding.Execute(steps, runDocumented, onboarding.Version(), onboarding.GoBuild()) {
+		t.Error(p)
+	}
+}
+
+// runDocumented calls this binary's entry point with the documented arguments
+// and refuses a non-zero exit: Compare carries no exit code, and the quickstart
+// promises every step runs.
+func runDocumented(s onboarding.Step) (onboarding.Result, error) {
+	if s.Stdin != "" {
+		return onboarding.Result{}, fmt.Errorf("nova-post reads no stdin; a `< %s` in its transcript is the document's bug", s.Stdin)
+	}
+	code, stdout, stderr := cli(s.Args...)
+	if code != 0 {
+		return onboarding.Result{}, fmt.Errorf("the documented command\n  %s\nexits %d, and every quickstart step must exit 0:\n%s%s", s.Line, code, stdout, stderr)
+	}
+	return onboarding.Result{Code: code, Stdout: stdout, Stderr: stderr}, nil
+}
+
+// firstRunLines is the `### First run` transcript of this tool, as written.
+func firstRunLines(t *testing.T) []string {
+	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -71,5 +121,13 @@ func TestTESTSFirstRunSectionExists(t *testing.T) {
 	}
 	if len(lines) == 0 {
 		t.Fatal("the `### First run` section holds no transcript")
+	}
+	return lines
+}
+
+func write(t *testing.T, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(name, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -358,6 +358,14 @@ func InputLimitEnd(jobDir, end string, rc int, recorded string, extra []string) 
 		return end, ""
 	}
 	if raw, err := readRegular(filepath.Join(jobDir, "harness.log")); err == nil {
+		// THE STRUCTURED SIGNAL IS A FIELD (#163), read before the heuristic: the harness
+		// adapter wrote `INPUT LIMIT class=… value=… limit=…`, and it names the class with no
+		// mark, bare-word bound, list marker or event-prefix rule asked to decide it. It is
+		// the field finish and rule 17's recovery pass trust when the supervisor died before
+		// it could classify and there is no exit.json to name the class.
+		if sig, ok := ReadInputLimitSignal(raw); ok {
+			return EndInputLimit, InputLimitSignalLine(sig)
+		}
 		if said, tooBig := InputLimited(raw, extra); tooBig {
 			return EndInputLimit, said
 		}

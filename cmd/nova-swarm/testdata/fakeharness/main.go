@@ -8,12 +8,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -25,7 +30,13 @@ func main() {
 	// test 11 was a RACE against a child that was already dying, and under three parallel
 	// benches it lost and the violation went unseen.
 	if os.Getenv("FAKE_BACKGROUND_CHILD") == "1" {
-		time.Sleep(60 * time.Second)
+		secs := 60
+		if v := os.Getenv("FAKE_BACKGROUND_CHILD_SECONDS"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				secs = n
+			}
+		}
+		time.Sleep(time.Duration(secs) * time.Second)
 		return
 	}
 	if len(os.Args) < 2 {
@@ -76,6 +87,13 @@ func main() {
 	}
 	// FAKE-LAUNCHES records one line per real invocation, before any directive can exit,
 	// so a test can prove how many times the machinery retried a task.
+	// FAKE-DROP-CAPTURE unlinks the harness log the parent already opened. The
+	// parent still holds the descriptor, so the child can run, but the path is
+	// gone when the run tries to publish the report. That is a required capture
+	// that cannot be copied.
+	if _, ok := directive(prompt, "FAKE-DROP-CAPTURE"); ok && job != "" {
+		_ = os.Remove(filepath.Join(job, "harness-output.log"))
+	}
 	if _, ok := directive(prompt, "FAKE-LAUNCHES"); ok && job != "" {
 		record(filepath.Join(job, "launches"))
 		if f, err := os.OpenFile(filepath.Join(job, "launches"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
@@ -97,8 +115,15 @@ func main() {
 
 	// FAKE-SAY is the harness's own words on its own stderr -- a provider's `401
 	// unauthorized`, the one diagnosis a failed job has.
+	// It writes `said` once the words are on the pipe, so a test can wait for the thing
+	// itself -- a harness that has spoken -- instead of for a clock. Before that file
+	// exists the run has captured nothing from this child at all, and everything the run
+	// decides from its capture is still undecided.
 	if said, ok := directive(prompt, "FAKE-SAY"); ok {
 		fmt.Fprintln(os.Stderr, "fake harness:", said)
+		if job != "" {
+			_ = os.WriteFile(filepath.Join(job, "said"), []byte("said\n"), 0o644)
+		}
 	}
 	// FAKE-TOUCH and FAKE-CAT are THE WALL'S OWN QUESTIONS, asked from inside the job:
 	// can this worker create a file at a path the dispatcher did not name, and can it read
@@ -142,7 +167,7 @@ func main() {
 	// never the contents of a module.
 	if _, ok := directive(prompt, "FAKE-RECORD-CACHES"); ok && job != "" {
 		var b strings.Builder
-		for _, name := range []string{"GOMODCACHE", "GOCACHE", "GOTOOLCHAIN"} {
+		for _, name := range []string{"GOMODCACHE", "GOCACHE", "GOTOOLCHAIN", "ASDF_OUTPUT_TRANSLATIONS"} {
 			fmt.Fprintf(&b, "%s=%s\n", name, os.Getenv(name))
 		}
 		for _, name := range []string{"GOMODCACHE", "GOCACHE"} {
@@ -154,12 +179,75 @@ func main() {
 		}
 		writeRecorded(filepath.Join(job, "cache-record"), []byte(b.String()), 0o644)
 	}
+	// FAKE-GIT-COMMIT creates a git repository inside the job directory and commits a file,
+	// recording the resulting commit's author and committer into <job>/commit-identity.
+	// This proves that the pool identity reached the harness child and was not displaced
+	// by misleading bench gitconfig or dropped at the supervisor/native boundary.
+	if _, ok := directive(prompt, "FAKE-GIT-COMMIT"); ok && job != "" {
+		repo := filepath.Join(job, "worker-repo")
+		_ = os.MkdirAll(repo, 0o755)
+		runGit := func(args ...string) ([]byte, error) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = repo
+			return cmd.CombinedOutput()
+		}
+		if _, err := runGit("init", "-q"); err != nil {
+			writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git init failed: "+err.Error()+"\n"), 0o644)
+		} else {
+			_ = os.WriteFile(filepath.Join(repo, "work.txt"), []byte("work\n"), 0o644)
+			if out, err := runGit("add", "work.txt"); err != nil {
+				writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git add failed: "+err.Error()+"\n"+string(out)), 0o644)
+			} else if out, err := runGit("commit", "-q", "-m", "worker commit"); err != nil {
+				writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git commit failed: "+err.Error()+"\n"+string(out)), 0o644)
+			} else {
+				if out, err := runGit("log", "-1", "--format=%an <%ae> %cn <%ce>"); err == nil {
+					writeRecorded(filepath.Join(job, "commit-identity"), out, 0o644)
+				} else {
+					writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git log failed: "+err.Error()+"\n"+string(out)), 0o644)
+				}
+			}
+		}
+	}
+	// FAKE-CARD-REPO <origin> is a card's STEP 1 and its fix: `git clone -q <origin> repo`
+	// in the job directory (lint rule clone-step), then one tracked file changed and left
+	// uncommitted, the shape the card wrapper's commit step commits.
+	if origin, ok := directive(prompt, "FAKE-CARD-REPO"); ok && job != "" && origin != "" {
+		repo := filepath.Join(job, "repo")
+		if out, err := exec.Command("git", "clone", "-q", origin, repo).CombinedOutput(); err != nil {
+			writeRecorded(filepath.Join(job, "card-repo-err"), []byte("git clone failed: "+err.Error()+"\n"+string(out)), 0o644)
+		} else {
+			_ = os.WriteFile(filepath.Join(repo, "base.txt"), []byte("base\nthe card's fix\n"), 0o644)
+		}
+	}
+	// FAKE-TURNS prints n MODEL TURNS in the harness's own voice, on the child's output,
+	// which is the capture rule 13b counts turns in: "the harness log's assistant turns
+	// (counted the way usage counts assistant rows)". It is how a card budget's `max_turns`
+	// is driven without a provider and without a model -- the turns are lines, and the
+	// lines are what the counter reads.
+	if n, ok := number(prompt, "FAKE-TURNS"); ok {
+		for i := 1; i <= n; i++ {
+			fmt.Printf("assistant: turn %d\n", i)
+		}
+	}
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {
 			fmt.Printf("fake harness: read of /etc/somewhere: permission denied (refused)\n")
 		}
 	}
-	if arg, ok := directive(prompt, "FAKE-USAGE"); ok {
+	// FAKE-USAGE-DB WRITES A REAL SQLITE DATABASE in the harness's own shape (SPEC-SWARM
+	// rule 13d, issue #1545), and it is checked BEFORE FAKE-USAGE because `directive`
+	// matches a prefix. Everything that samples or stops on a budget is tested against
+	// this one and never against the tab-separated stand-in below: the reader under test
+	// runs `sqlite3 -readonly` and folds JSON out of a `data` column, and a fixture that
+	// short-circuits both would prove nothing about either.
+	//
+	// The argument is the five token counts in rule 12's order -- tokens_in, tokens_out,
+	// cache_write, cache_read, reasoning -- with `-` for a type this provider did not
+	// report, then an optional `usd`. A `-` becomes SQL NULL, which is what an absence is
+	// in this table and is read back as a dash and never as a zero.
+	if arg, ok := directive(prompt, "FAKE-USAGE-DB"); ok {
+		writeUsageDB(data, arg)
+	} else if arg, ok := directive(prompt, "FAKE-USAGE"); ok {
 		writeUsage(data, arg)
 	}
 	// A provider 429 cannot ride the exit status: POSIX truncates 429 to 173. So the fake
@@ -203,6 +291,26 @@ func main() {
 	// the retry kept the task and harvested the second attempt's result. FAKE-5XX always
 	// fails, so a test can prove the third fast failure is filed `end=provider`. Both are
 	// checked before FAKE-5XX by their longer names, since `directive` matches a prefix.
+	// A read that died after the request may have been accepted. The line is the
+	// harness's own timeout words. The machinery must record unknown and not launch again.
+	if _, ok := directive(prompt, "FAKE-LOST-RESPONSE"); ok {
+		fmt.Fprintln(os.Stderr, "SSE read timed out")
+		os.Exit(1)
+	}
+	// FAKE-PROVIDER-READ posts once to the baseURL in the job config, which the
+	// run has pointed at its own proxy. A body that contains "ok" is success.
+	// A failed read is tried once more, the way a harness retries a dropped
+	// socket, and then this process stays up: the measured harness did not
+	// exit when its socket stalled, so the run has to end it.
+	if _, ok := directive(prompt, "FAKE-PROVIDER-READ"); ok {
+		if err := readProvider(modelFromArgs(os.Args[1:])); err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness: provider read failed")
+			time.Sleep(time.Hour)
+			os.Exit(1)
+		}
+		publish(job, prompt, 0, notesRead(job, prompt))
+		os.Exit(0)
+	}
 	if _, ok := directive(prompt, "FAKE-5XX-FIRST"); ok {
 		if launchCount(job) <= 1 {
 			fmt.Fprintln(os.Stderr, "Unexpected server error: the provider answered 503; ref=err_fake_first")
@@ -253,6 +361,19 @@ func main() {
 				[]byte(strconv.Itoa(child.Process.Pid)+"\n"), 0o644)
 		}
 	}
+	// FAKE-BACKGROUND-SLEEP is FAKE-BACKGROUND with a caller-chosen bound (issue #779): the
+	// deadline-kill test needs a grandchild that is clearly still alive when the deadline
+	// fires but does not leave a 60 s corpse behind, and a short sleep keeps the red case
+	// from waiting a full minute on the child the kill was supposed to reap.
+	if n, ok := number(prompt, "FAKE-BACKGROUND-SLEEP"); ok {
+		child := exec.Command(os.Args[0], "--background-child")
+		child.Env = append(os.Environ(), "FAKE_BACKGROUND_CHILD=1", "FAKE_BACKGROUND_CHILD_SECONDS="+strconv.Itoa(n))
+		_ = child.Start()
+		if child.Process != nil && job != "" {
+			_ = os.WriteFile(filepath.Join(job, "background.pid"),
+				[]byte(strconv.Itoa(child.Process.Pid)+"\n"), 0o644)
+		}
+	}
 	// The other half of rule 11: a worker that forks and WAITS for its child leaves nothing
 	// alive in its group, and is no violation at all.
 	if _, ok := directive(prompt, "FAKE-FOREGROUND-CHILD"); ok && os.Getenv("FAKE_FOREGROUND_CHILD") != "1" {
@@ -262,6 +383,34 @@ func main() {
 	}
 	if os.Getenv("FAKE_FOREGROUND_CHILD") == "1" {
 		return
+	}
+	// FAKE-IGNORE-TERM is THE HARD-CASE CHILD (issue #779): a harness that declines the
+	// polite SIGTERM and keeps running. The deadline must still kill it -- the wall is a
+	// SIGKILL of the whole group, never a negotiation -- so a run whose deadline is its only
+	// stop does not hang on a stubborn harness. It is installed before FAKE-SLEEP so the
+	// sleep happens with the signal already ignored.
+	if _, ok := directive(prompt, "FAKE-IGNORE-TERM"); ok {
+		signal.Ignore(syscall.SIGTERM)
+	}
+	// FAKE-NOTE-ON-TERM is THE POLITE CHILD, and the one observable that tells a TERM from
+	// a KILL from outside the process: on SIGTERM it writes `termed` into its own job
+	// directory and stops. A group ended with swarm.Reap -- terminate, wait, kill -- leaves
+	// the file behind; a group ended with a bare KillGroup cannot, because SIGKILL is not a
+	// signal any process gets to handle. It is what a harness flushing its turn and its
+	// usage row looks like to a test.
+	// It writes `term-armed` the moment the handler is installed, so a test can wait for
+	// the thing itself -- an armed handler -- instead of for a clock. Before that file
+	// exists a TERM would be the default disposition and would kill the process outright,
+	// which is exactly the race a wall-clock test would lose under load.
+	if _, ok := directive(prompt, "FAKE-NOTE-ON-TERM"); ok && job != "" {
+		termed := make(chan os.Signal, 1)
+		signal.Notify(termed, syscall.SIGTERM)
+		go func() {
+			<-termed
+			_ = os.WriteFile(filepath.Join(job, "termed"), []byte("term\n"), 0o644)
+			os.Exit(0)
+		}()
+		_ = os.WriteFile(filepath.Join(job, "term-armed"), []byte("armed\n"), 0o644)
 	}
 	if d, ok := duration(prompt, "FAKE-SLEEP"); ok {
 		time.Sleep(d)
@@ -290,6 +439,44 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error: The user rejected permission to use this specific tool call.")
 		os.Exit(0)
 	}
+	// FAKE-EXEC-REFUSED is THE GATE THAT NEVER RAN (issue #1465), in the shell's own words.
+	// A Go card inside the wall ran `go test` and the wall refused to execute the toolchain:
+	// the shell printed one line, the card wrote an honest RESULT.md saying the gate could
+	// not be built or run, and the process exited 0. The run then read `NATIVE OK rc=0
+	// harness=ok` and a commit nobody had compiled was green. The directive takes the path
+	// the wall refused, and prints the step the card had reached beside it, so the fixture
+	// writes the real shape and nothing is inferred.
+	if path, ok := directive(prompt, "FAKE-EXEC-REFUSED"); ok {
+		if path == "" {
+			path = "/nowhere/bin/go"
+		}
+		fmt.Println("STEP 3 run the gate")
+		fmt.Printf("/usr/bin/bash: line 1: %s: Permission denied\n", path)
+	}
+	// FAKE-DENY-AND-RECOVER is STELLA'S P2 WITNESS (PR #1478 comment 5737662335): a plain
+	// shell REDIRECTION to a path the card may not write prints the very same words as a
+	// refused exec -- `/bin/bash: <path>: Permission denied` -- and then the card carries on
+	// and exits 0, having attempted no program at all. She measured it with
+	// `: > "$1"; printf "RECOVERED\n"` against a non-writable directory. Nothing in the text
+	// says which operation was denied, which is the whole of P2.
+	if path, ok := directive(prompt, "FAKE-DENY-AND-RECOVER"); ok {
+		if path == "" {
+			path = "/nowhere/out.txt"
+		}
+		fmt.Println("STEP 3 write the report")
+		fmt.Printf("/bin/bash: %s: Permission denied\n", path)
+		fmt.Println("RECOVERED")
+	}
+	// FAKE-REWRITE-CAPTURE is JOHNNY'S #1478 WITNESS (the #1892 class): a card that printed a
+	// denial and then REPLACES its own capture's name -- unlink, and a clean file in its place
+	// -- inside the job directory it may write. The parent's descriptor still holds the real
+	// bytes; the path now holds none of them. A verdict read from the path after exit would
+	// see a clean run.
+	if _, ok := directive(prompt, "FAKE-REWRITE-CAPTURE"); ok && job != "" {
+		out := filepath.Join(job, "harness-output.log")
+		_ = os.Remove(out)
+		_ = os.WriteFile(out, []byte("STEP 3 run the gate\nok\n"), 0o644)
+	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
 	}
@@ -315,6 +502,14 @@ func main() {
 	}
 	if n, ok := number(prompt, "FAKE-RC"); ok {
 		os.Exit(n)
+	}
+	// THE SUPERMAN FSEVENTS SHAPE (nova-tools #2058): OpenCode logs this after the card
+	// has already published RESULT.md, then exits 255. Passing 255 through made a
+	// fill loop retry a finished card. Local ssh(1) 255 is any error, not proof
+	// execution never started; the outcome is potentially UNKNOWN.
+	if _, ok := directive(prompt, "FAKE-FSEVENTS"); ok {
+		fmt.Fprintln(os.Stderr, "error: Error starting FSEvents stream")
+		os.Exit(255)
 	}
 }
 
@@ -447,6 +642,75 @@ func writeUsage(data, arg string) {
 	writeRecorded(path, []byte(strings.Join(row, "\t")+"\n"), 0o644)
 }
 
+// writeUsageDB writes the job's accounting into a REAL sqlite database at the place a real
+// OpenCode keeps it, in the harness's own schema: a `message` table whose `data` column is
+// JSON and whose `time_created` column is MILLISECONDS since the epoch. It is what every
+// test of the live sampler and of the stop reads, because those read it with `sqlite3
+// -readonly` and fold JSON out of it, and a fixture that faked either would be a fixture
+// testing itself.
+//
+// IT APPENDS. A retried card runs this harness again into the SAME data home, and rule 13d
+// counts "every launch counted from the first launch's start" -- so a second launch's rows
+// must sit beside the first's rather than replace them. `CREATE TABLE IF NOT EXISTS` and an
+// INSERT are exactly that.
+//
+// THE ROW IS AN ASSISTANT ROW with a provider and a model, because the final read
+// (ReadCardUsage) selects `role = 'assistant'` and groups by provider and model, while the
+// live read (ReadJobUsageLive) takes every row with tokens. One shape answers both.
+//
+// A `-` IS SQL NULL, which prints as the empty string through `sqlite3 -tabs` and is read
+// back as an absence -- never as a zero (rule 12). `0` is written as a real zero, because
+// "a reported `0` ... is a measurement that adds nothing to the sum".
+func writeUsageDB(data, arg string) {
+	path := openCodeDB(data)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "fake harness: the data home could not be made:", err)
+		return
+	}
+	record(path)
+	// ONE SET OF COUNTS PER LAUNCH, separated by `;`, so a test can give a retried card a
+	// different spend on each of its launches -- which is what rule 13d's two-launch
+	// accounting case needs ("a first launch that reports 40 and dies on a provider 5xx
+	// inside the launch grace, then a second that reports 70"). The launch number comes
+	// from the FAKE-LAUNCHES record, so a card using this also names that directive; with
+	// one set and no `;` every launch writes the same counts, as before.
+	sets := strings.Split(arg, ";")
+	which := 0
+	if len(sets) > 1 {
+		if n := launchCount(jobDir); n > 1 && n-1 < len(sets) {
+			which = n - 1
+		}
+	}
+	fields := strings.Fields(sets[which])
+	// input, output, cache.write, cache.read, reasoning, then cost.
+	cell := func(i int) string {
+		if i >= len(fields) || fields[i] == "-" {
+			return "null"
+		}
+		return fields[i]
+	}
+	// The JSON is built with sqlite's own json_object so a NULL stays a NULL inside the
+	// document rather than becoming the string "null", which json_extract would hand the
+	// reader as a value.
+	sql := `CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);
+INSERT INTO message (data, time_created) VALUES (json_object(
+  'role','assistant','providerID','fake','modelID','fake-model',
+  'tokens', json_object('input',` + cell(0) + `,'output',` + cell(1) +
+		`,'cache', json_object('write',` + cell(2) + `,'read',` + cell(3) + `),'reasoning',` + cell(4) + `),
+  'cost',` + cell(5) + `), ` + nowMs() + `);
+`
+	cmd := exec.Command("sqlite3", path)
+	cmd.Stdin = strings.NewReader(sql)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "fake harness: the usage database could not be written: %v: %s\n", err, strings.TrimSpace(string(out)))
+	}
+}
+
+// nowMs is this instant in milliseconds, the unit the harness's own `time_created` column
+// carries. The final read windows on it, so a row stamped in seconds would fall outside
+// every window and be read as a harness that reported nothing.
+func nowMs() string { return strconv.FormatInt(time.Now().UnixMilli(), 10) }
+
 // THE WRITE-PATH TRIPWIRE (demanded test 9, SPEC-SWARM.md:1264). Every path this child
 // opens for writing is recorded in its OWN job directory, one per line, so a test can prove
 // that no path was opened by two children rather than trust that slots keep them apart.
@@ -543,6 +807,89 @@ func emitTimeline() {
 		time.Sleep(2 * time.Millisecond)
 		fmt.Println(s[1])
 	}
+}
+
+// readProvider posts to the model's baseURL. It tries twice. The second try is
+// how a harness retries a dropped socket; the proxy must not open a second
+// upstream request after a silent body. The error text is fixed so a stall
+// cannot be classified as a launch failure by words this process invented.
+func readProvider(model string) error {
+	var last error
+	for i := 0; i < 2; i++ {
+		last = readProviderOnce(model)
+		if last == nil {
+			return nil
+		}
+	}
+	return last
+}
+
+func readProviderOnce(model string) error {
+	base, err := providerBaseURL(model)
+	if err != nil {
+		return err
+	}
+	if job := os.Getenv("NOVA_SWARM_JOB"); job != "" {
+		f, openErr := os.OpenFile(filepath.Join(job, "provider-url"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if openErr == nil {
+			fmt.Fprintln(f, base)
+			f.Close()
+		}
+	}
+	req, err := http.NewRequest(http.MethodPost, base, strings.NewReader(`{"input":"card"}`))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Transport: &http.Transport{Proxy: nil, DisableCompression: true}}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "ok") {
+		return fmt.Errorf("provider read failed")
+	}
+	return nil
+}
+
+func providerBaseURL(model string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".config", "opencode", "opencode.json"))
+	if err != nil {
+		return "", err
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return "", err
+	}
+	provider := model
+	if i := strings.IndexByte(model, '/'); i >= 0 {
+		provider = model[:i]
+	}
+	providers, _ := cfg["provider"].(map[string]any)
+	entry, _ := providers[provider].(map[string]any)
+	opts, _ := entry["options"].(map[string]any)
+	base, _ := opts["baseURL"].(string)
+	if base == "" {
+		return "", fmt.Errorf("no baseURL")
+	}
+	return base, nil
+}
+
+func modelFromArgs(args []string) string {
+	for i, a := range args {
+		if a == "--model" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(a, "--model=") {
+			return strings.TrimPrefix(a, "--model=")
+		}
+	}
+	return ""
 }
 
 // checkInvocation is what a real harness requires of its argv: its own subcommand, the

@@ -166,6 +166,91 @@ func TestTheAttributionLadder(t *testing.T) {
 	}
 }
 
+// The tally behind `sources --unattributed`: only the `other` arm feeds it, only when a
+// caller asked for it, and the key is the tree rather than the file.
+func TestTheUnattributedTallyCountsOnlyWhatFellToOther(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "repos.tsv")
+	if err := os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := LoadRules(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Off by default: an ordinary fold pays nothing for the tally and keeps none of it.
+	rules.AttributeInputs([]string{"/w/elsewhere/a.go"}, "")
+	if n := rules.TotalUnattributed(); n != 0 || len(rules.Unattributed()) != 0 {
+		t.Fatalf("the tally ran without being asked for: total=%d stems=%v", n, rules.Unattributed())
+	}
+	rules.WatchUnattributed()
+	rules.AttributeInputs([]string{"/w/schema/a.go"}, "")               // named: not tallied
+	rules.AttributeInputs([]string{"nothing path-like here"}, "schema") // no token: not tallied
+	rules.AttributeInputs([]string{"/home/nova/tree/a.go"}, "")         // other
+	rules.AttributeInputs([]string{"/home/nova/tree/deeper/b.go"}, "")  // other, same tree
+	rules.AttributeInputs([]string{"/home/nova/other-tree/c.go"}, "")   // other
+	rules.AttributeInputs([]string{Unattributed}, "")                   // a bucket name passes through
+	if n := rules.TotalUnattributed(); n != 3 {
+		t.Errorf("unattributed total = %d, want 3", n)
+	}
+	got := rules.Unattributed()
+	if len(got) != 2 || got[0].Stem != "/home/nova/tree" || got[0].Count != 2 || got[1].Stem != "/home/nova/other-tree" {
+		t.Errorf("the tally is %v; it wants the heaviest tree first, keyed by the tree", got)
+	}
+}
+
+// The tally is bounded, and past the ceiling it still counts every token: a listing whose
+// memory grows with the tree is the unbounded read this repo's caps exist to end, and a
+// total that stopped at the ceiling would be a number nobody could use.
+func TestTheUnattributedTallyIsBoundedAndKeepsItsTotal(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "repos.tsv")
+	if err := os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := LoadRules(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules.WatchUnattributed()
+	const n = stemLimit + 1000
+	for i := 0; i < n; i++ {
+		rules.AttributeInputs([]string{fmt.Sprintf("/home/nova/t%06d/a.go", i)}, "")
+	}
+	// The one stem admitted first keeps counting after the ceiling is reached.
+	for i := 0; i < 5; i++ {
+		rules.AttributeInputs([]string{"/home/nova/t000000/b.go"}, "")
+	}
+	if got := len(rules.Unattributed()); got != stemLimit {
+		t.Errorf("%d stems held, want the ceiling of %d", got, stemLimit)
+	}
+	if got := rules.TotalUnattributed(); got != n+5 {
+		t.Errorf("total = %d, want every token counted (%d)", got, n+5)
+	}
+	if top := rules.Unattributed()[0]; top.Stem != "/home/nova/t000000" || top.Count != 6 {
+		t.Errorf("the heaviest stem is %v; a stem already held keeps counting past the ceiling", top)
+	}
+}
+
+// PathStem is the key, and it is one function so that the listing and the rule a person
+// writes from it are cut from the same string.
+func TestPathStemKeepsTheTree(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"/Users/glenn/deepseek-working-3/cmd/a.go", "/Users/glenn/deepseek-working-3"},
+		{"/Users/glenn/deepseek-working-3", "/Users/glenn/deepseek-working-3"},
+		{"/x/y", "/x/y"},
+		{"/x", "/x"},
+		{"~/rowan-working/nova-tools/cmd/a.go", "~/rowan-working/nova-tools"},
+		{"~", "~"},
+		{"//double//slash//and//more", "/double/slash/and"},
+		{"github.com:mas-bandwidth/nova-tools", "github.com:mas-bandwidth/nova-tools"},
+	} {
+		if got := PathStem(tc.in); got != tc.want {
+			t.Errorf("PathStem(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestAMalformedRulesLineIsNamed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repos.tsv")

@@ -2,7 +2,6 @@ package swarm
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -49,7 +48,7 @@ type Outcome struct {
 // only when the report cannot be read; a read report always yields an Outcome carrying the
 // grammar line, accepted or refused.
 func CheckResult(resultPath string, c Contract) (Outcome, error) {
-	raw, err := os.ReadFile(resultPath)
+	raw, err := readFileSteady(resultPath)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -83,6 +82,15 @@ func CheckResult(resultPath string, c Contract) (Outcome, error) {
 	evidence := lines[2:]
 	if len(evidence) > bound {
 		evidence = evidence[:bound]
+	}
+	// A read verdict whose run's capture carries a known failure signature was not earned:
+	// verify scans RESULT.md and the harness-output.log beside it, and a matching report is
+	// ABSTAIN reason=signature, never the verdict the card wrote (a go test that could not
+	// run is not evidence for one).
+	if sig, class, ok := failureSignatureInFile(harnessOutputBeside(resultPath)); ok {
+		out.OK = false
+		out.Line = fmt.Sprintf("ABSTAIN %s reason=signature sig=%q class=%s", oneline.Quote(c.Label), sig, class)
+		return out, nil
 	}
 	out.Evidence = evidence
 	out.OK = true

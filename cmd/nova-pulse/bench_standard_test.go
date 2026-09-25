@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // bench-standard (issue #880 item 15): tools/bench-standard.sh is the one admin
@@ -40,14 +42,51 @@ func benchStandardHome(t *testing.T, want, goVer string) (home, bin string) {
 	for _, name := range benchStandardBins {
 		writeBenchExe(t, filepath.Join(localBin, name), "#!/bin/sh\necho '"+want+"'\n")
 	}
-	// Fake go printing the wanted version.
-	writeBenchExe(t, filepath.Join(bin, "go"), "#!/bin/sh\necho 'go version "+goVer+" linux/amd64'\n")
-	// Fake sbcl: presence on PATH is the check.
-	writeBenchExe(t, filepath.Join(bin, "sbcl"), "#!/bin/sh\nexit 0\n")
+	// Fake nova-sandbox answers `version` like the other bins, but for the
+	// network probe it runs the command after `--` so the fake curl on PATH
+	// answers with the http code the probe reads.
+	writeBenchExe(t, filepath.Join(localBin, "nova-sandbox"), "#!/bin/sh\n"+
+		"if [ \"${1:-}\" = version ] || [ \"${1:-}\" = --version ]; then echo '"+want+"'; exit 0; fi\n"+
+		"while [ $# -gt 0 ]; do\n"+
+		"  if [ \"$1\" = -- ]; then shift; exec \"$@\"; fi\n"+
+		"  shift\n"+
+		"done\n"+
+		"exit 0\n")
+	// Fake curl: the probe reads only the http code it prints.
+	writeBenchExe(t, filepath.Join(bin, "curl"), "#!/bin/sh\necho 200\n")
+	// Fake go and sbcl live where a standard bench keeps them, under $HOME/sdk/<tool>-<ver>/bin
+	// (the one home toolchain root the wall grants EXECUTE), and the PATH entry is a symlink
+	// to them: check (3c) resolves the real path and drifts on a tool outside a granted root,
+	// so a fake written straight into the PATH dir is a bench the standard rightly refuses.
+	goReal := filepath.Join(home, "sdk", "go-"+goVer, "bin", "go")
+	writeBenchExe(t, goReal, "#!/bin/sh\necho 'go version "+goVer+" linux/amd64'\n")
+	// sbcl answers the pin (check 3d, NOVA_SBCL defaults to 2.5.8) and sqlite3 resolves
+	// under ~/sdk (check 3f), the way a standard bench keeps them (nova-tools#2053).
+	sbclReal := filepath.Join(home, "sdk", "sbcl-2.5.8", "bin", "sbcl")
+	writeBenchExe(t, sbclReal, "#!/bin/sh\necho 'SBCL 2.5.8'\n")
+	sqliteReal := filepath.Join(home, "sdk", "sqlite3-3.46.0", "bin", "sqlite3")
+	writeBenchExe(t, sqliteReal, "#!/bin/sh\necho '3.46.0'\n")
+	for name, real := range map[string]string{"go": goReal, "sbcl": sbclReal, "sqlite3": sqliteReal} {
+		if err := os.Symlink(real, filepath.Join(bin, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// Fake nova-secrets whose check passes for any key.
 	writeBenchExe(t, filepath.Join(bin, "nova-secrets"), "#!/bin/sh\nexit 0\n")
+	// The toolchain roots the sandbox wall grants a card, taken from the ONE list rather
+	// than spelled again here (internal/swarm/toolchain.go): the standard checks a bench
+	// has them, because a bench missing one is a bench whose Go cards die inside the wall.
+	for _, name := range swarm.ToolchainRootNames("linux") {
+		if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// Fake harness at $HOME/nova-bench/harness-<ver>/opencode.
 	writeBenchExe(t, filepath.Join(home, "nova-bench", "harness-v1", "opencode"), "#!/bin/sh\nexit 0\n")
+	// The pro rung (check 3e): a standard bench carries ~/nova-bench/rungs/pro.
+	if err := os.MkdirAll(filepath.Join(home, "nova-bench", "rungs", "pro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	// Fake seat: exactly one *.key.
 	seatDir := filepath.Join(home, ".config", "nova-secrets")
 	if err := os.MkdirAll(seatDir, 0o700); err != nil {
@@ -60,6 +99,13 @@ func benchStandardHome(t *testing.T, want, goVer string) (home, bin string) {
 }
 
 func runBenchStandard(t *testing.T, home, bin, want, goVer string) (string, int) {
+	t.Helper()
+	return runBenchStandardEnv(t, home, bin, want, goVer)
+}
+
+// runBenchStandardEnv is runBenchStandard with extra KEY=VALUE lines appended to the
+// script's environment (a later line wins, as exec does with duplicates).
+func runBenchStandardEnv(t *testing.T, home, bin, want, goVer string, extra ...string) (string, int) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("bench-standard.sh is a bash script for linux benches; skipping on windows")
@@ -74,7 +120,21 @@ func runBenchStandard(t *testing.T, home, bin, want, goVer string) (string, int)
 		"HOME="+home,
 		"NOVA_WANT="+want,
 		"NOVA_GO="+goVer,
+		"NOVA_PROBE_URL=https://probe.invalid/api.json",
+		// The bench's declared slot share (check 3g).
+		"NOVA_SLOT_SHARE=64",
+		// With a toolchain root removed the script can reach a system go, which
+		// under go.mod's go line would download a toolchain into HOME's read-only
+		// module cache and fail t.TempDir cleanup (hulk runners, stream/nova-decide).
+		"GOTOOLCHAIN=local",
+		// The disk floor is the HOST's, not the fixture's: `df` on a t.TempDir()
+		// answers for whatever disk the runner is on (21G on the Studio on
+		// 2026-09-24, dev run 36012558540), so a real floor made this test a
+		// probe of the runner. 0 keeps the row running and never drifting here;
+		// TestBenchStandardDiskFloorDrifts holds the row itself.
+		"NOVA_MIN_FREE_G=0",
 	)
+	cmd.Env = append(cmd.Env, extra...)
 	raw, err := cmd.CombinedOutput()
 	code := 0
 	if err != nil {
@@ -85,6 +145,22 @@ func runBenchStandard(t *testing.T, home, bin, want, goVer string) (string, int)
 		}
 	}
 	return string(raw), code
+}
+
+// The disk-floor row, hermetic: a floor no disk can meet is a drift on every host, and
+// the line names the floor and the directories under HOME, whatever the runner's
+// own free space is.
+func TestBenchStandardDiskFloorDrifts(t *testing.T) {
+	want := "v9.9.9-bench-test"
+	goVer := "go1.26.5"
+	home, bin := benchStandardHome(t, want, goVer)
+	out, code := runBenchStandardEnv(t, home, bin, want, goVer, "NOVA_MIN_FREE_G=999999999")
+	if code == 0 {
+		t.Fatalf("bench-standard exit 0 under a floor no disk meets, want a drift\n%s", out)
+	}
+	if !strings.Contains(out, "want>=999999999G") || !strings.Contains(out, "largest under "+home) {
+		t.Fatalf("no disk-floor drift naming the floor and HOME's largest directories:\n%s", out)
+	}
 }
 
 func TestBenchStandardOK(t *testing.T) {
@@ -118,5 +194,65 @@ func TestBenchStandardDriftNamesBinary(t *testing.T) {
 	}
 	if !strings.Contains(out, "STANDARD DRIFT") {
 		t.Fatalf("bench-standard drift output missing STANDARD DRIFT line:\n%s", out)
+	}
+}
+
+// THE SANDBOX NETWORK PROBE IS LINUX'S (bench-standard.sh check 3b, guarded by
+// `[ "$OS" = "Linux" ]`): nova-sandbox is a linux sandbox, so on any other bench the
+// probe is not attempted and there is nothing for it to drift about. The test mirrors
+// that guard instead of asserting linux behaviour everywhere -- it asserted the drift
+// on every platform, and the darwin runners are where CI found that out.
+func TestBenchStandardDriftNamesSandboxNetwork(t *testing.T) {
+	want := "v9.9.9-bench-test"
+	goVer := "go1.26.5"
+	home, bin := benchStandardHome(t, want, goVer)
+	// The sandbox answers, but curl inside it cannot reach the network.
+	writeBenchExe(t, filepath.Join(bin, "curl"), "#!/bin/sh\necho 000\n")
+	out, code := runBenchStandard(t, home, bin, want, goVer)
+	if runtime.GOOS != "linux" {
+		if code != 0 {
+			t.Fatalf("bench-standard exit = %d on %s, want 0: the probe is linux's\n%s", code, runtime.GOOS, out)
+		}
+		if strings.Contains(out, "sandbox-network") {
+			t.Fatalf("the sandbox network probe ran on %s, where it is skipped:\n%s", runtime.GOOS, out)
+		}
+		return
+	}
+	if code == 0 {
+		t.Fatalf("bench-standard drift exit = 0, want non-zero\n%s", out)
+	}
+	if !strings.Contains(out, "DRIFT sandbox-network") {
+		t.Fatalf("bench-standard output must name the sandbox network probe:\n%s", out)
+	}
+	if !strings.Contains(out, "http=000") {
+		t.Fatalf("bench-standard output must report http=000:\n%s", out)
+	}
+	if !strings.Contains(out, "STANDARD DRIFT") {
+		t.Fatalf("bench-standard drift output missing STANDARD DRIFT line:\n%s", out)
+	}
+}
+
+// TestBenchStandardDriftNamesAMissingToolchainRoot: the wall grants these roots and a card's
+// `go` lives under one of them, so a bench that is missing one has to DRIFT here rather than
+// let a Go card discover it inside the wall as `Permission denied` and then
+// `go.mod requires go >= 1.26 (running go 1.22.2)` (the schema dogfood loop, 2026-09-18).
+func TestBenchStandardDriftNamesAMissingToolchainRoot(t *testing.T) {
+	want := "v9.9.9-bench-test"
+	goVer := "go1.26.5"
+	for _, name := range swarm.ToolchainRootNames("linux") {
+		t.Run(name, func(t *testing.T) {
+			home, bin := benchStandardHome(t, want, goVer)
+			missing := filepath.Join(home, filepath.FromSlash(name))
+			if err := os.RemoveAll(missing); err != nil {
+				t.Fatal(err)
+			}
+			out, code := runBenchStandard(t, home, bin, want, goVer)
+			if code == 0 {
+				t.Fatalf("bench-standard with %s missing exit = 0, want non-zero\n%s", missing, out)
+			}
+			if !strings.Contains(out, "DRIFT toolchain root "+missing) {
+				t.Fatalf("bench-standard must name the missing toolchain root %s:\n%s", missing, out)
+			}
+		})
 	}
 }

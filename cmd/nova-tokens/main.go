@@ -50,10 +50,14 @@ usage:
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
   nova-tokens report  --ledger <file.tsv> --month <YYYY-MM> [--by model|repo|day] [--max <n>]
+  nova-tokens report  --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+                      [--password-env <NAME>]
+  nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
+                      [--password-env <NAME>]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
                       --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
-  nova-tokens check   --out <dir> [--max <n>]
-  nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--max <n>]
+  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--max <n>]
+  nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
   nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
   nova-tokens fold-pool --pool <dir> --ledger <file> [--since <stamp>]
@@ -106,11 +110,26 @@ note whose predecessor set names them all clears it.
 This tool removes nothing. There is no month file, sum writes nothing, check names a
 stray and leaves it, and no verb deletes, truncates or trims any file.
 
+check counts what it does not name. A calendar day between the first and the last with no
+file is gap=<n>, and it is MISSING only when something says there was spend on it:
+--strict names every gap, --no-spend <file> (one YYYY-MM-DD per line, the days that had
+none) names the gaps your list does not account for. A *.md, a *.log or a pre-* archive
+directory beside the day files is notes=<n> rather than a stray; --strict names those too.
+A gate that cannot go green is a gate people stop reading, and both counts stay on the
+CHECK line, so nothing was hidden to make it green.
+
+sources --unattributed prints the path stems that were SEEN and matched no rule, heaviest
+first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
+is the evidence for improving the --repos file.
+
+  cp -R cmd/nova-tokens/testdata/example-bench/. . && cp ./transcripts/window.jsonl ./session.jsonl && mkdir -p ./out
+
 example:
   nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
   nova-tokens check --out ./out
   nova-tokens sum --out ./out --month 2026-09
   nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
+  nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
   nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
 
 session is the coordinator's own window: it sums one Claude Code session jsonl per
@@ -154,6 +173,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdFold(rest, stdout, stderr, now)
 	case "report":
 		return cmdReport(rest, stdout, stderr, now)
+	case "ledger":
+		return cmdLedger(rest, stdout, stderr)
 	case "sum":
 		return cmdSum(rest, stdout, stderr, now)
 	case "check":
@@ -236,7 +257,7 @@ func (r *refusals) required(name, value, wants string) {
 // print writes one line per problem, in the order they were found, and returns exit 2.
 func (r *refusals) print(stderr io.Writer) int {
 	for _, problem := range r.list {
-		fmt.Fprintf(stderr, "%s REFUSED: %s\n", oneline.Field(r.token), oneline.Escape(problem))
+		fmt.Fprintf(stderr, "%s REFUSED: %s; run: nova-tokens help\n", oneline.Field(r.token), oneline.Escape(problem))
 	}
 	return 2
 }
@@ -245,6 +266,7 @@ func (r *refusals) print(stderr io.Writer) int {
 const (
 	wantsOut     = "the directory the day files are written to"
 	wantsRepos   = "a file of <name><TAB><regexp> lines, in priority order, naming your repos"
+	wantsUnits   = "a work set, `(work-set \"id\" :units ((unit \"u1\" :pr 1412 :branch \"…\" :lane \"…\") …))`, whose units a transcript is attributed to"
 	wantsDay     = "one UTC day as YYYY-MM-DD, or --all for every day the sources name"
 	wantsWho     = "the name this report is from, as the bus knows it"
 	wantsMonth   = "one month as YYYY-MM"
@@ -343,9 +365,17 @@ func (s *sourceFlags) check(r *refusals) {
 
 // read reads every declared source, in declaration order, through the one reader per kind.
 func (s *sourceFlags) read(rules *tokens.Rules, now time.Time) []*tokens.Source {
+	return s.readWithUnits(rules, nil, now)
+}
+
+// readWithUnits is read with the work set a fold was given, which only the Claude reader
+// uses: a unit is attributed from a CHILD TRANSCRIPT's tool inputs, and a billing export,
+// a swarm usage file and a bus self-report carry no tool inputs to read one from. Their
+// rows are `-`, which is the truthful answer and not a gap.
+func (s *sourceFlags) readWithUnits(rules *tokens.Rules, units *tokens.Units, now time.Time) []*tokens.Source {
 	var out []*tokens.Source
 	for _, it := range s.claude.items {
-		out = append(out, tokens.ReadClaude(it.label, it.value, rules))
+		out = append(out, tokens.ReadClaude(it.label, it.value, rules, units))
 	}
 	for _, it := range s.opencode.items {
 		out = append(out, tokens.ReadOpenCode(it.label, it.value, s.scratch, time.Duration(s.timeout)*time.Second, rules))
@@ -478,6 +508,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	day := fs.String("day", "", "")
 	all := fs.Bool("all", false, "")
 	allowShrink := fs.Bool("allow-shrink", false, "")
+	unitsPath := fs.String("units", "", "")
 	max := fs.Int("max", bounded.Default, "")
 	var sf sourceFlags
 	sf.declare(fs, true)
@@ -495,7 +526,18 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	if fi, err := os.Stat(*out); err != nil || !fi.IsDir() {
+	fi, statErr := os.Stat(*out)
+	switch {
+	case statErr == nil && fi.IsDir():
+		// the ordinary case: the output directory already exists
+	case statErr != nil && os.IsNotExist(statErr):
+		// first run: the output directory is absent, so create it
+		if err := os.MkdirAll(*out, 0o755); err != nil {
+			r.add("--out " + *out + ": " + err.Error() + "; it wants " + wantsOut)
+			return r.print(stderr)
+		}
+	default:
+		// an existing path that is not a directory is refused, by name, never overwritten
 		r.add("--out is not a directory: " + *out + "; it wants " + wantsOut)
 		return r.print(stderr)
 	}
@@ -504,6 +546,14 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
 	}
+	var units *tokens.Units
+	if *unitsPath != "" {
+		units, err = tokens.LoadUnits(*unitsPath)
+		if err != nil {
+			r.add("--units " + *unitsPath + ": " + err.Error() + "; it wants " + wantsUnits)
+			return r.print(stderr)
+		}
+	}
 	release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
 	if err != nil {
 		r.add(err.Error())
@@ -511,7 +561,11 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	defer release()
 
-	sources := sf.read(rules, now)
+	sources := sf.readWithUnits(rules, units, now)
+	if units != nil {
+		fmt.Fprintf(stdout, "TOKENS UNITS set=%s units=%d file=%s\n",
+			oneline.Field(orDashText(units.Set)), units.Len(), oneline.Field(*unitsPath))
+	}
 	folder := tokens.NewFolder()
 	for _, s := range sources {
 		for _, m := range s.Stream {
@@ -744,7 +798,7 @@ func buildDayFile(day string, rows []*tokens.Row, folder *tokens.Folder, now tim
 			labels[l] = true
 		}
 		f.Rows = append(f.Rows, tokens.DayRow{
-			Date: day, Model: r.Model, Repo: r.Repo, Counts: r.Counts,
+			Date: day, Model: r.Model, Repo: r.Repo, Unit: r.Unit, Counts: r.Counts,
 			Rough: r.Rough, Basis: r.Basis(), Sources: r.Sources(),
 		})
 	}
@@ -892,6 +946,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	day := fs.String("day", "", "")
 	all := fs.Bool("all", false, "")
 	max := fs.Int("max", bounded.Default, "")
+	unattributed := fs.Bool("unattributed", false, "")
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := fs.Parse(args); err != nil {
@@ -912,11 +967,17 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
 	}
+	// The tally is switched on BEFORE any source is read, because it is taken inside the
+	// attribution ladder as the paths go past; there is no second walk of the transcripts.
+	if *unattributed {
+		rules.WatchUnattributed()
+	}
 	sources := sf.read(rules, now)
 
 	srcList := bounded.Capped(stdout, *max, "SOURCES", "source", maxRemedy("sources"))
 	unreadable := bounded.Capped(stderr, *max, "SOURCES", "unreadable", maxRemedy("sources"))
 	unparsed := bounded.Capped(stderr, *max, "SOURCES", "unparsed", maxRemedy("sources"))
+	stems := bounded.Capped(stdout, *max, "SOURCES", "unattributed", maxRemedy("sources"))
 	files, messages, rows := 0, 0, 0
 	for _, s := range sources {
 		srcList.Line(sourceLine("SOURCES", s))
@@ -937,8 +998,20 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	unparsed.More()
-	fmt.Fprintf(stdout, "SOURCES OK sources=%d files=%d messages=%d unreadable=%d unparsed=%d rows=%d\n",
-		len(sources), files, messages, unreadable.Total(), unparsed.Total(), rows)
+	// The listing that says WHICH paths `other` is made of. Without it a person reads
+	// `other=81%` on a day line and has nowhere to go but grep; with it the top stems ARE
+	// the rules the file is missing, written in the shape a rule matches.
+	unattributedField := tokens.Dash
+	if *unattributed {
+		for _, s := range rules.Unattributed() {
+			stems.Line(fmt.Sprintf("SOURCES UNATTRIBUTED stem=%s tokens=%d", oneline.Field(s.Stem), s.Count))
+		}
+		stems.More()
+		unattributedField = strconv.Itoa(rules.TotalUnattributed())
+	}
+	fmt.Fprintf(stdout, "SOURCES OK sources=%d files=%d messages=%d unreadable=%d unparsed=%d rows=%d unattributed=%s\n",
+		len(sources), files, messages, unreadable.Total(), unparsed.Total(), rows,
+		oneline.Field(unattributedField))
 	return 0
 }
 
@@ -964,6 +1037,8 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	ledger := fs.String("ledger", "", "")
 	monthFlag := fs.String("month", "", "")
 	byFlag := fs.String("by", "model", "")
+	redisAddr := fs.String("redis", "", "")
+	passwordEnv := fs.String("password-env", "", "")
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := fs.Parse(args); err != nil {
@@ -971,6 +1046,12 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	if code, refused := noPositional(fs, stderr, "report"); refused {
 		return code
+	}
+	if *redisAddr != "" {
+		if *ledger != "" {
+			return (&refusals{token: "REPORT", list: []string{"--redis and --ledger are two sources for one report; name one"}}).print(stderr)
+		}
+		return cmdReportStore(*redisAddr, *passwordEnv, *monthFlag, *byFlag, *max, stdout, stderr)
 	}
 	if *ledger != "" || *monthFlag != "" {
 		return cmdReportLedger(*ledger, *monthFlag, *byFlag, *max, stdout, stderr)
@@ -1168,6 +1249,7 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	month := fs.String("month", "", "")
 	swarmRoot := fs.String("swarm-root", "", "")
 	day := fs.String("day", "", "")
+	byFlag := fs.String("by", "pair", "")
 	max := fs.Int("max", bounded.Default, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " sum", oneline.Cap(err.Error(), oneline.TailBytes))
@@ -1196,6 +1278,11 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case !validMonth(*month):
 		r.add("--month is not a month: " + *month + "; it wants " + wantsMonth)
 	}
+	switch *byFlag {
+	case "pair", "unit":
+	default:
+		r.add("--by is pair or unit, got " + *byFlag + "; `pair` is the (model, repo) tables this verb has always printed and `unit` is what one piece of work cost")
+	}
 	checkMax(r, *max)
 	if len(r.list) > 0 {
 		return r.print(stderr)
@@ -1217,22 +1304,35 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 		oneline.Field(*month), oneline.Field(stamp(now)), oneline.Field(buildVersion()),
 		len(s.Days), oneline.Field(first), oneline.Field(last), len(s.Missing), s.Rows, oneline.Field(turns))
 
-	pairs := bounded.Capped(stdout, *max, "SUM", "pair", "nova-tokens sum --out "+*out+" --month "+*month+" --max 0")
-	for _, p := range s.Pairs {
-		pairs.Line(fmt.Sprintf("SUM PAIR model=%s repo=%s %s days=%d",
-			oneline.Field(p.Model), oneline.Field(p.Repo), aggFields(p.Agg), p.Agg.Days()))
+	widen := "nova-tokens sum --out " + *out + " --month " + *month + " --max 0"
+	// `--by unit` prints the units table INSTEAD of the two (model, repo) tables, and not
+	// beside them: the tables are the answer a reader asked for, and printing both doubles
+	// a listing on a month with a hundred units for a question nobody asked.
+	if *byFlag == "unit" {
+		units := bounded.Capped(stdout, *max, "SUM", "unit", widen)
+		for _, u := range s.Units {
+			units.Line(fmt.Sprintf("SUM UNIT unit=%s %s pairs=%d days=%d",
+				oneline.Field(u.Unit), aggFields(u.Agg), u.Agg.Keys(), u.Agg.Days()))
+		}
+		units.More()
+	} else {
+		pairs := bounded.Capped(stdout, *max, "SUM", "pair", widen)
+		for _, p := range s.Pairs {
+			pairs.Line(fmt.Sprintf("SUM PAIR model=%s repo=%s %s days=%d",
+				oneline.Field(p.Model), oneline.Field(p.Repo), aggFields(p.Agg), p.Agg.Days()))
+		}
+		pairs.More()
+		models := bounded.Capped(stdout, *max, "SUM", "model", widen)
+		for _, m := range s.Models {
+			models.Line(fmt.Sprintf("SUM MODEL model=%s %s repos=%d",
+				oneline.Field(m.Model), aggFields(m.Agg), m.Agg.Keys()))
+		}
+		models.More()
 	}
-	pairs.More()
-	models := bounded.Capped(stdout, *max, "SUM", "model", "nova-tokens sum --out "+*out+" --month "+*month+" --max 0")
-	for _, m := range s.Models {
-		models.Line(fmt.Sprintf("SUM MODEL model=%s %s repos=%d",
-			oneline.Field(m.Model), aggFields(m.Agg), m.Agg.Keys()))
-	}
-	models.More()
-	fmt.Fprintf(stdout, "SUM TOTAL %s turns=%s pairs=%d models=%d\n",
-		aggFields(s.Total), oneline.Field(turns), len(s.Pairs), len(s.Models))
-	fmt.Fprintf(stdout, "SUM OK month=%s days=%d missing=%d pairs=%d models=%d nonutc=%d\n",
-		oneline.Field(*month), len(s.Days), len(s.Missing), len(s.Pairs), len(s.Models), s.Total.NonUTC)
+	fmt.Fprintf(stdout, "SUM TOTAL %s turns=%s pairs=%d models=%d units=%d\n",
+		aggFields(s.Total), oneline.Field(turns), len(s.Pairs), len(s.Models), len(s.Units))
+	fmt.Fprintf(stdout, "SUM OK month=%s days=%d missing=%d pairs=%d models=%d units=%d nonutc=%d\n",
+		oneline.Field(*month), len(s.Days), len(s.Missing), len(s.Pairs), len(s.Models), len(s.Units), s.Total.NonUTC)
 	return 0
 }
 
@@ -1266,10 +1366,18 @@ func validMonth(m string) bool {
 // cmdCheck is the GATE. It says NO on any malformed file, any malformed row, any missing
 // day and any stray, and it prints the count line either way. A missing day is NAMED and
 // never filled: nobody folded it, and this tool does not invent what nobody measured.
+//
+// What `missing` and `stray` MEAN is internal/tokens/check.go's paragraph, and the short
+// of it is that a calendar gap and a person's README are counted here (gap=, notes=) and
+// named only under --strict or a --no-spend list. A gate that cannot go green is a gate
+// people learn to skip, and this one could not: 40 findings on reports/tokens, none of
+// them work anybody would do.
 func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("check")
 	out := fs.String("out", "", "")
 	max := fs.Int("max", bounded.Default, "")
+	strict := fs.Bool("strict", false, "")
+	noSpend := fs.String("no-spend", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " check", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -1279,10 +1387,22 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	r := &refusals{token: "CHECK"}
 	r.required("out", *out, wantsOut)
 	checkMax(r, *max)
+	if *strict && strings.TrimSpace(*noSpend) != "" {
+		r.add("--strict and --no-spend are two answers to one question: --strict names every calendar gap, --no-spend names the gaps your list does not account for; give one")
+	}
+	opt := tokens.CheckOptions{Strict: *strict}
+	if strings.TrimSpace(*noSpend) != "" {
+		days, err := tokens.ReadNoSpendFile(*noSpend)
+		if err != nil {
+			r.add("--no-spend " + *noSpend + ": " + err.Error())
+		} else {
+			opt.NoSpend = days
+		}
+	}
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	res, err := tokens.Check(*out)
+	res, err := tokens.Check(*out, opt)
 	if err != nil {
 		r.add(err.Error())
 		return r.print(stderr)
@@ -1320,12 +1440,24 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	bad := files.Total() + rowsList.Total()
 	if bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 {
-		fmt.Fprintf(stderr, "CHECK FAIL files=%d rows=%d first=%s last=%s bad=%d missing=%d stray=%d\n",
-			res.Files, res.Rows, oneline.Field(first), oneline.Field(last), bad, len(res.Missing), len(res.Strays))
+		fmt.Fprintf(stderr, "CHECK FAIL files=%d rows=%d first=%s last=%s bad=%d missing=%d stray=%d gap=%d notes=%d\n",
+			res.Files, res.Rows, oneline.Field(first), oneline.Field(last), bad,
+			len(res.Missing), len(res.Strays), len(res.Gaps), len(res.Notes))
 		return 1
 	}
-	fmt.Fprintf(stdout, "CHECK OK at=%s build=%s files=%d rows=%d first=%s last=%s missing=0 stray=0\n",
+	// gap= and notes= are on the OK line too, and that is the whole point: what the gate
+	// stopped naming it still counts, so nothing was hidden to make the line green.
+	fmt.Fprintf(stdout, "CHECK OK at=%s build=%s files=%d rows=%d first=%s last=%s missing=0 stray=0 gap=%d notes=%d\n",
 		oneline.Field(stamp(now)), oneline.Field(buildVersion()), res.Files, res.Rows,
-		oneline.Field(first), oneline.Field(last))
+		oneline.Field(first), oneline.Field(last), len(res.Gaps), len(res.Notes))
 	return 0
+}
+
+// orDashText is the dash a value nobody wrote is printed as: a work set with no id of its
+// own still loads, and an empty field on a printed line is a field a scanner cannot read.
+func orDashText(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return tokens.Dash
+	}
+	return s
 }

@@ -30,6 +30,16 @@ const usage = `nova-review: bounded exact-revision review packets (docs/SPEC-REV
 usage:
   nova-review packet --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>] [--decide] [--floor 0.9] [--card <file>] [--key-env JEV_API_KEY] [--base-url <url>]
   nova-review port --lane <dir> --table <section> --pr <n> [--head <sha>] [--out <file>] [--max <n>] [--timeout <seconds>]
+  nova-review mutate --repo <dir> --base <ref> --head <ref> [--timeout <seconds>] [--max <n>]
+                         revert every non-test hunk in a throwaway worktree at the head and run the changed tests: they must fail
+  nova-review mutate --repo <dir> --head <ref> --seed <patch file> --tests <package>[,<package>...] [--timeout <seconds>]
+                         apply ONE seeded defect in a throwaway worktree at the head and run the named suites: they must fail. The edit count is asserted, not reported: exactly one, else MUTATE REFUSED.
+  nova-review guard --repo <dir> --head <ref> [--tests <package>[,<package>...]] [--timeout <seconds>] [--max <n>]
+                         revert the commit's non-test files, keep the tests, run the named packages: the verdict is computed from exit codes and test names, never judged
+  nova-review dedupe --lane <dir> (--pr <n>|--branch <name>) [--head <sha>] [--max <n>]
+                         print the open findings ledger for the entry: who saw each, who duped it, and what still stands
+  nova-review reads --lane <nova-merge lane dir> [--bus <dir of bus notes>] [--reviews <pr>:<file>]... [--waiting-on <friend>] [--ready] [--max <n>] [--timeout <seconds>]
+                         the reads ledger: per PR the required reader roles (contract, code, security; derived from the paths touched plus typed ASK lines), and per reader the verdict, scope and exact sha, ingested from GitHub reviews (or --reviews snapshot files) and from bus notes carrying a typed READ line; --waiting-on is that friend's queue in order; --ready lists the PRs whose every required read is an approve at the live head; a push that moves a head marks its reads stale and names who must re-read what delta
   nova-review version    print this build identity (--version also accepted)
   nova-review help
 
@@ -72,6 +82,14 @@ func run(args []string, out, errOut io.Writer) int {
 		return packet(args[1:], out, errOut)
 	case "port":
 		return port(args[1:], out, errOut)
+	case "mutate":
+		return mutate(args[1:], out, errOut)
+	case "guard":
+		return guard(args[1:], out, errOut)
+	case "dedupe":
+		return dedupe(args[1:], out, errOut)
+	case "reads":
+		return reads(args[1:], out, errOut)
 	default:
 		return refuse(errOut, fmt.Sprintf("unknown subcommand %q", args[0]))
 	}
@@ -447,6 +465,14 @@ func gitOut(ctx context.Context, repo string, args ...string) (string, error) {
 	return string(b), nil
 }
 
+// prRemoteURL is the forge remote a PR's head and base are fetched from, derived from
+// the lane's --repo. It is a variable only so a unit test can point it at a local bare
+// repository -- the endpoint mocked with a local fake, never a real host on the CI path
+// (TestNoRealNetworkHostsOnTheCIPath, nova-tools #2863).
+var prRemoteURL = func(hostRepo string) string {
+	return fmt.Sprintf("https://github.com/%s.git", hostRepo)
+}
+
 // fetchEntryHead fetches the entry's current head into the lane's clone: the pull request's
 // `pull/<n>/head` for a PR, the branch itself for a branch, then reads the fetched commit
 // back out of FETCH_HEAD. The fetch is the verb's one way to learn a head the remote moved
@@ -461,7 +487,7 @@ func fetchEntryHead(ctx context.Context, repo string, pr int, branch, hostRepo s
 	remote := "origin"
 	if pr > 0 {
 		refspec = fmt.Sprintf("pull/%d/head", pr)
-		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
+		remote = prRemoteURL(hostRepo)
 	}
 	if _, err := gitOut(ctx, repo, "fetch", remote, refspec); err != nil {
 		return "", fmt.Errorf("fetching %q from %q: %w", refspec, remote, err)
@@ -477,7 +503,7 @@ func fetchBase(ctx context.Context, repo string, pr int, base, hostRepo string) 
 	remote := "origin"
 	refOut := "refs/remotes/origin/" + base + "^{commit}"
 	if pr > 0 {
-		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
+		remote = prRemoteURL(hostRepo)
 		refOut = "FETCH_HEAD"
 	}
 	if _, err := gitOut(ctx, repo, "fetch", remote, base); err != nil {
@@ -1495,19 +1521,69 @@ type rawAnswerRecord struct {
 	Note    string `json:"note"`
 }
 
-func formatOpenFindings(lane, entryID string, max int, pr int, branch string) (string, int, error) {
-	var sb strings.Builder
-	sb.WriteString("## Open findings (answer with `dup <id>` if you see the same thing)\n")
+// loadReviewDir reads the review records and answer records for one entry from
+// <lane>/reviews/<entryDir>. It returns verdicts sorted oldest-first and a map
+// from finding id to answer. A missing directory is not an error: it returns
+// empty slices so callers can print "none recorded".
+func loadReviewDir(lane, entryID string) ([]rawReviewRecord, map[string]rawAnswerRecord, error) {
 	entryDir := merge.EntryDirName(entryID)
 	reviewsDir := filepath.Join(lane, "reviews", entryDir)
 	entries, err := os.ReadDir(reviewsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			sb.WriteString("none recorded\n")
-			return sb.String(), 0, nil
+			return nil, nil, nil
 		}
-		return "", 0, fmt.Errorf("could not read reviews directory: %w", err)
+		return nil, nil, fmt.Errorf("could not read reviews directory: %w", err)
 	}
+
+	answers := make(map[string]rawAnswerRecord)
+	var verdictFiles []string
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		if strings.HasPrefix(e.Name(), "policy-") {
+			continue
+		}
+		p := filepath.Join(reviewsDir, e.Name())
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil, nil, fmt.Errorf("could not read review file %s: %w", e.Name(), err)
+		}
+		if strings.HasPrefix(e.Name(), "answer-") {
+			var ans rawAnswerRecord
+			if err := json.Unmarshal(b, &ans); err != nil {
+				return nil, nil, &foldErr{file: p, err: fmt.Errorf("could not decode answer record: %w", err)}
+			}
+			answers[ans.Finding] = ans
+		} else {
+			verdictFiles = append(verdictFiles, p)
+		}
+	}
+
+	var verdicts []rawReviewRecord
+	for _, p := range verdictFiles {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil, nil, fmt.Errorf("could not read review file %s: %w", p, err)
+		}
+		var rec rawReviewRecord
+		if err := json.Unmarshal(b, &rec); err != nil {
+			return nil, nil, &foldErr{file: p, err: fmt.Errorf("could not decode review record: %w", err)}
+		}
+		verdicts = append(verdicts, rec)
+	}
+
+	sort.Slice(verdicts, func(i, j int) bool {
+		return verdicts[i].At < verdicts[j].At
+	})
+	return verdicts, answers, nil
+}
+
+func formatOpenFindings(lane, entryID string, max int, pr int, branch string) (string, int, error) {
+	var sb strings.Builder
+	sb.WriteString("## Open findings (answer with `dup <id>` if you see the same thing)\n")
 
 	type findingItem struct {
 		ID         string
@@ -1522,48 +1598,14 @@ func formatOpenFindings(lane, entryID string, max int, pr int, branch string) (s
 	}
 
 	findingsMap := make(map[string]*findingItem)
-	answers := make(map[string]rawAnswerRecord)
-	var verdictFiles []string
-
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		if strings.HasPrefix(e.Name(), "policy-") {
-			continue
-		}
-		p := filepath.Join(reviewsDir, e.Name())
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return "", 0, fmt.Errorf("could not read review file %s: %w", e.Name(), err)
-		}
-		if strings.HasPrefix(e.Name(), "answer-") {
-			var ans rawAnswerRecord
-			if err := json.Unmarshal(b, &ans); err != nil {
-				return "", 0, &foldErr{file: p, err: fmt.Errorf("could not decode answer record: %w", err)}
-			}
-			answers[ans.Finding] = ans
-		} else {
-			verdictFiles = append(verdictFiles, p)
-		}
+	verdicts, answers, err := loadReviewDir(lane, entryID)
+	if err != nil {
+		return "", 0, err
 	}
-
-	var verdicts []rawReviewRecord
-	for _, p := range verdictFiles {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return "", 0, fmt.Errorf("could not read review file %s: %w", p, err)
-		}
-		var rec rawReviewRecord
-		if err := json.Unmarshal(b, &rec); err != nil {
-			return "", 0, &foldErr{file: p, err: fmt.Errorf("could not decode review record: %w", err)}
-		}
-		verdicts = append(verdicts, rec)
+	if len(verdicts) == 0 && len(answers) == 0 {
+		sb.WriteString("none recorded\n")
+		return sb.String(), 0, nil
 	}
-
-	sort.Slice(verdicts, func(i, j int) bool {
-		return verdicts[i].At < verdicts[j].At
-	})
 
 	for _, rec := range verdicts {
 		for _, f := range rec.Findings {
@@ -1700,6 +1742,462 @@ func containsString(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// dedupe prints the open findings ledger for one entry. It groups findings by
+// (path, line, rule) and reports who saw each finding, who folded a duplicate
+// onto it, and what is still open. This is the verb SPEC-REVIEW.md names at
+// line 627 and the demanded-tests section at line 1827.
+func dedupe(args []string, out, errOut io.Writer) int {
+	fs := flag.NewFlagSet("dedupe", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	lane := fs.String("lane", "", "")
+	pr := fs.Int("pr", 0, "")
+	branch := fs.String("branch", "", "")
+	asked := fs.String("head", "", "")
+	maxFlag := fs.Int("max", 20, "")
+	if fs.Parse(args) != nil || fs.NArg() != 0 {
+		return refuse(errOut, "bad dedupe flags")
+	}
+	if *lane == "" {
+		return refuse(errOut, "--lane is required")
+	}
+	if (*pr > 0) == (*branch != "") {
+		return refuse(errOut, "give exactly one of --pr or --branch")
+	}
+	if *maxFlag < 0 {
+		return refuse(errOut, "--max must be non-negative")
+	}
+
+	st, err := merge.Load(*lane)
+	if err != nil {
+		if errors.Is(err, merge.ErrNotALane) {
+			return refuse(errOut, fmt.Sprintf("--lane %s is not a lane; a lane is a directory made by nova-merge init --lane <dir> --repo <owner/name> --base <branch> --lane-branch <name>", *lane))
+		}
+		return refuse(errOut, fmt.Sprintf("could not read lane: %v", err))
+	}
+	id := ""
+	if *pr > 0 {
+		id = fmt.Sprint(*pr)
+	} else {
+		id = *branch
+	}
+	entry := st.Find(id)
+	if entry == nil {
+		return refuse(errOut, "the lane does not hold this entry; add it with nova-merge add --lane <dir> --pr <n> --needs-read (or add-branch --branch <name>)")
+	}
+	current := entry.OID
+	if *asked != "" {
+		if !merge.IsSHA(*asked) {
+			return refuse(errOut, "--head wants a full 40-character sha")
+		}
+		current = *asked
+	}
+
+	verdicts, answers, err := loadReviewDir(*lane, id)
+	if err != nil {
+		var fe *foldErr
+		if errors.As(err, &fe) {
+			fmt.Fprintf(errOut, "DEDUPE FOLD file=%s: %s\n", oneline.Field(fe.file), oneline.Escape(fe.err.Error()))
+			return 2
+		}
+		return refuse(errOut, err.Error())
+	}
+
+	type dedupeFinding struct {
+		ID       string
+		Key      string
+		Severity string
+		Head     string
+		Side     string
+		Path     string
+		Line     int
+		RuleKind string
+		Rule     string
+		// Seen holds, per head, every view (who:model) that named this finding
+		// at that head: rule 9 prints one seen=/unreported= pair per head, so
+		// views are never aggregated across heads.
+		Seen    map[string][]string
+		Members []string
+		Dups    int
+		Closed  bool
+		Answer  string
+	}
+
+	findingsMap := make(map[string]*dedupeFinding)
+
+	viewOf := func(who, model string) string {
+		if model != "" && model != "-" {
+			return who + ":" + model
+		}
+		return who
+	}
+	addView := func(views []string, view string) []string {
+		for _, s := range views {
+			if s == view {
+				return views
+			}
+		}
+		return append(views, view)
+	}
+	recordSeen := func(item *dedupeFinding, head, view string) {
+		if head == "" {
+			head = item.Head
+		}
+		item.Seen[head] = addView(item.Seen[head], view)
+	}
+
+	for _, rec := range verdicts {
+		for _, f := range rec.Findings {
+			if strings.EqualFold(f.State, "ok") {
+				continue
+			}
+			if strings.EqualFold(f.State, "close") || strings.EqualFold(f.State, "closed") {
+				if item, ok := findingsMap[f.ID]; ok {
+					item.Closed = true
+				}
+				continue
+			}
+			if strings.EqualFold(f.State, "dup") {
+				targetID := f.ID
+				if f.Claim != "" && findingsMap[f.Claim] != nil {
+					targetID = f.Claim
+				}
+				if item, ok := findingsMap[targetID]; ok {
+					recordSeen(item, rec.Head, viewOf(rec.Who, rec.Model))
+					item.Dups++
+				}
+				continue
+			}
+			fl := f.Path
+			if f.Side == "base" {
+				fl = "base:" + fl
+			}
+			key := fmt.Sprintf("%s:%d@%s:%s", fl, f.Line, f.RuleKind, f.Rule)
+			item, ok := findingsMap[f.ID]
+			if !ok {
+				item = &dedupeFinding{
+					ID:       f.ID,
+					Key:      key,
+					Severity: strings.ToLower(f.State),
+					Head:     rec.Head,
+					Side:     f.Side,
+					Path:     f.Path,
+					Line:     f.Line,
+					RuleKind: f.RuleKind,
+					Rule:     f.Rule,
+					Seen:     map[string][]string{},
+				}
+				findingsMap[f.ID] = item
+			}
+			recordSeen(item, rec.Head, viewOf(rec.Who, rec.Model))
+		}
+	}
+
+	for findingID, ans := range answers {
+		if item, ok := findingsMap[findingID]; ok {
+			item.Answer = ans.As
+			if ans.As == "dup" && ans.Of != "" {
+				if target, tok := findingsMap[ans.Of]; tok {
+					recordSeen(target, ans.Head, viewOf(ans.Who, "-"))
+					target.Dups++
+				}
+			}
+		}
+	}
+
+	groups := make(map[string]*dedupeFinding)
+	ids := make([]string, 0, len(findingsMap))
+	for fid := range findingsMap {
+		ids = append(ids, fid)
+	}
+	sort.Strings(ids)
+	for _, fid := range ids {
+		item := findingsMap[fid]
+		if item.Closed {
+			continue
+		}
+		g, ok := groups[item.Key]
+		if !ok {
+			g = &dedupeFinding{
+				ID:       item.ID,
+				Key:      item.Key,
+				Severity: item.Severity,
+				Head:     item.Head,
+				Side:     item.Side,
+				Path:     item.Path,
+				Line:     item.Line,
+				RuleKind: item.RuleKind,
+				Rule:     item.Rule,
+				Seen:     map[string][]string{},
+			}
+			groups[item.Key] = g
+		} else if item.ID < g.ID {
+			g.ID = item.ID
+		}
+		g.Members = append(g.Members, item.ID)
+		for h, views := range item.Seen {
+			for _, v := range views {
+				g.Seen[h] = addView(g.Seen[h], v)
+			}
+		}
+		g.Dups += item.Dups
+		if item.Answer != "" {
+			g.Answer = item.Answer
+		}
+	}
+
+	// Readers of a head are the records at that head (rule 9: "every reader of
+	// that head"); headAt orders heads newest first by their newest record.
+	type headReader struct {
+		Who  string
+		View string
+		At   string
+	}
+	readersAt := make(map[string][]headReader)
+	headAt := make(map[string]string)
+	for _, rec := range verdicts {
+		if rec.Head == "" {
+			continue
+		}
+		if rec.At > headAt[rec.Head] {
+			headAt[rec.Head] = rec.At
+		}
+		list := readersAt[rec.Head]
+		replaced := false
+		for i := range list {
+			if list[i].Who == rec.Who {
+				list[i] = headReader{Who: rec.Who, View: viewOf(rec.Who, rec.Model), At: rec.At}
+				replaced = true
+			}
+		}
+		if !replaced {
+			list = append(list, headReader{Who: rec.Who, View: viewOf(rec.Who, rec.Model), At: rec.At})
+		}
+		readersAt[rec.Head] = list
+	}
+
+	// A reader's range is the packet's (rule 1): since that reader's last
+	// approve/hold at another head, else the lane base's merge-base with the
+	// head. Coverage of path:line is read from that range's diff in the
+	// lane's clone; when the clone cannot answer, the reader is never counted
+	// blind (blind means outside the declared range and nothing else).
+	repo := filepath.Join(*lane, merge.RepoDir)
+	ctx := context.Background()
+	baseSHA := ""
+	if merge.IsSHA(st.Base) {
+		baseSHA = st.Base
+	} else if st.Base != "" {
+		for _, ref := range []string{"origin/" + st.Base, st.Base} {
+			if s, err := gitOut(ctx, repo, "rev-parse", "--verify", "-q", ref+"^{commit}"); err == nil {
+				baseSHA = strings.TrimSpace(s)
+				break
+			}
+		}
+	}
+	rangeOf := func(who, head, at string) string {
+		prior := ""
+		priorAt := ""
+		for _, rec := range verdicts {
+			if rec.Who != who || rec.Head == "" || rec.Head == head || rec.At >= at {
+				continue
+			}
+			if !strings.EqualFold(rec.Verdict, "approve") && !strings.EqualFold(rec.Verdict, "hold") {
+				continue
+			}
+			if rec.At > priorAt {
+				prior, priorAt = rec.Head, rec.At
+			}
+		}
+		if prior != "" {
+			return prior + ".." + head
+		}
+		if baseSHA == "" {
+			return ""
+		}
+		return baseSHA + "..." + head
+	}
+	type span struct{ start, count int }
+	diffCache := make(map[string][2][]span)
+	diffKnown := make(map[string]bool)
+	spansOf := func(rng, path string) ([2][]span, bool) {
+		k := rng + "\x00" + path
+		if known, ok := diffKnown[k]; ok {
+			return diffCache[k], known
+		}
+		var res [2][]span
+		text, err := gitOut(ctx, repo, "diff", "--no-ext-diff", "--unified=3", rng, "--", path)
+		if err != nil {
+			diffKnown[k] = false
+			return res, false
+		}
+		parse := func(s string) span {
+			start, count := s, "1"
+			if i := strings.IndexByte(s, ','); i >= 0 {
+				start, count = s[:i], s[i+1:]
+			}
+			a, _ := strconv.Atoi(start)
+			n, _ := strconv.Atoi(count)
+			return span{a, n}
+		}
+		for _, l := range strings.Split(text, "\n") {
+			if !strings.HasPrefix(l, "@@ -") {
+				continue
+			}
+			fields := strings.Fields(l)
+			if len(fields) < 3 {
+				continue
+			}
+			res[0] = append(res[0], parse(strings.TrimPrefix(fields[1], "-")))
+			res[1] = append(res[1], parse(strings.TrimPrefix(fields[2], "+")))
+		}
+		diffCache[k] = res
+		diffKnown[k] = true
+		return res, true
+	}
+	noted := make(map[string]bool)
+	// covered reports whether the reader's range covered side/path:line, and
+	// whether that could be read at all.
+	covered := func(r headReader, head, side, path string, line int) (bool, bool) {
+		rng := rangeOf(r.Who, head, r.At)
+		if rng == "" {
+			return false, false
+		}
+		spans, known := spansOf(rng, path)
+		if !known {
+			return false, false
+		}
+		idx := 1
+		if side == "base" {
+			idx = 0
+		}
+		for _, s := range spans[idx] {
+			if s.count > 0 && line >= s.start && line < s.start+s.count {
+				return true, true
+			}
+		}
+		return false, true
+	}
+
+	var list []*dedupeFinding
+	for _, g := range groups {
+		list = append(list, g)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].Key < list[j].Key
+	})
+
+	limit := len(list)
+	if *maxFlag > 0 && limit > *maxFlag {
+		limit = *maxFlag
+	}
+	for i := 0; i < limit; i++ {
+		g := list[i]
+		answer := g.Answer
+		if answer == "" {
+			answer = "-"
+		}
+		sort.Strings(g.Members)
+		members := strings.Join(g.Members, ",")
+		if members == "" {
+			members = "-"
+		}
+		var heads []string
+		for h := range g.Seen {
+			heads = append(heads, h)
+		}
+		sort.Slice(heads, func(a, b int) bool {
+			if headAt[heads[a]] != headAt[heads[b]] {
+				return headAt[heads[a]] > headAt[heads[b]]
+			}
+			return heads[a] < heads[b]
+		})
+		var pairs []string
+		for n, h := range heads {
+			seenViews := g.Seen[h]
+			seenWho := make(map[string]bool)
+			for _, v := range seenViews {
+				who := v
+				if i := strings.IndexByte(v, ':'); i >= 0 {
+					who = v[:i]
+				}
+				seenWho[who] = true
+			}
+			var unreported []string
+			blind := 0
+			for _, r := range readersAt[h] {
+				if seenWho[r.Who] {
+					continue
+				}
+				in, known := covered(r, h, g.Side, g.Path, g.Line)
+				if !known {
+					nk := r.Who + "\x00" + h
+					if !noted[nk] {
+						noted[nk] = true
+						fmt.Fprintf(errOut, "DEDUPE NOTE who=%s head=%s: the range could not be read from the lane's clone; counted unreported, never blind\n", oneline.Field(r.Who), merge.Short(h))
+					}
+					in = true
+				}
+				if in {
+					unreported = append(unreported, r.View)
+				} else {
+					blind++
+				}
+			}
+			seen := strings.Join(seenViews, ",")
+			if seen == "" {
+				seen = "-"
+			}
+			unrep := strings.Join(unreported, ",")
+			if unrep == "" {
+				unrep = "-"
+			}
+			pair := fmt.Sprintf("seen=%s unreported=%s blind=%d", seen, unrep, blind)
+			if n > 0 {
+				pair = fmt.Sprintf("head=%s %s", merge.Short(h), pair)
+			}
+			pairs = append(pairs, pair)
+		}
+		newest := g.Head
+		if len(heads) > 0 {
+			newest = heads[0]
+		}
+		if len(pairs) == 0 {
+			pairs = []string{"seen=- unreported=- blind=0"}
+		}
+		fmt.Fprintf(out, "DEDUPE FINDING id=%s key=%s sev=%s head=%s members=%s %s dups=%d open=true answer=%s\n",
+			g.ID, g.Key, g.Severity, merge.Short(newest), members, strings.Join(pairs, " "), g.Dups, answer)
+	}
+	if *maxFlag > 0 && len(list) > *maxFlag {
+		entryFlag := ""
+		if *pr > 0 {
+			entryFlag = fmt.Sprintf("--pr %d", *pr)
+		} else {
+			entryFlag = fmt.Sprintf("--branch %s", shellQuote(*branch))
+		}
+		fmt.Fprintf(out, "DEDUPE MORE kind=finding shown=%d total=%d nova-review dedupe --lane %s %s --max 0\n",
+			*maxFlag, len(list), shellQuote(*lane), entryFlag)
+	}
+
+	readers := make(map[string]struct{})
+	for _, rec := range verdicts {
+		readers[rec.Who] = struct{}{}
+	}
+	baseCount, externalCount, proposedCount, folded := 0, 0, 0, 0
+	for _, item := range findingsMap {
+		folded += item.Dups
+		switch item.RuleKind {
+		case "base":
+			baseCount++
+		case "external":
+			externalCount++
+		case "proposed":
+			proposedCount++
+		}
+	}
+	fmt.Fprintf(out, "DEDUPE OK entry=%s head=%s findings=%d groups=%d folded=%d open=%d base=%d external=%d proposed=%d readers=%d\n",
+		oneline.Field(id), merge.Short(current), len(findingsMap), len(list), folded, len(list), baseCount, externalCount, proposedCount, len(readers))
+	return 0
 }
 
 type fileDiff struct {

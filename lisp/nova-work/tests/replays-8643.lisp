@@ -214,3 +214,120 @@
                    :implementation-cost 50))))
     (check-equal nil (getf joined :comparable)
                  "the token-saving hypothesis is comparable only after adoption")))
+
+;;; ------------------------------------------------------------------
+;;; TestE10F04RunTheAuthorizedReadOnly   SPEC-WORK.md:7228-7229
+;;; E10-F04 — run the authorized read-only real-repository pilot and
+;;; disposable import, then publish a reconciliation disposition.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE10F04RunTheAuthorizedReadOnly" "docs/SPEC-WORK.md:7228-7229"
+    "expected=read-only-pilot-mutates-nothing;disposable-import-leaves-originals-untouched;reconciliation-disposition-published"
+  (let* ((source (make-recording-adapter :inventory '(:issues 3 :comments 7)))
+         (before (adapter-inventory source)))
+    ;; The authorized real-repository pilot is read-only: a dry-run capture and
+    ;; a normal initial import call no mutation endpoint and leave the source
+    ;; inventory byte-identical.
+    (dry-run-capture source)
+    (initial-import source)
+    (check-equal 0 (length (adapter-mutation-calls source))
+                 "the read-only pilot called a source mutation endpoint")
+    (check-equal before (adapter-inventory source)
+                 "the read-only pilot changed the real repository")
+    (ok (plusp (length (adapter-read-calls source)))
+        "the read-only pilot made no reads at all")
+    ;; The disposable import writes only the throwaway destination, never the
+    ;; originals: applying a plan changes the destination and leaves the source
+    ;; untouched.
+    (let ((plan (dry-run-capture source))
+          (destination (list :applied 0)))
+      (apply-plan source destination plan)
+      (check-equal 0 (length (adapter-mutation-calls source))
+                   "the disposable import called a source mutation endpoint")
+      (check-equal before (adapter-inventory source)
+                   "the disposable import changed the originals")
+      (check-equal 3 (getf destination :applied)
+                   "the disposable import did not write the destination"))
+    ;; The reconciliation disposition is published: the pilot's capture
+    ;; reconciles against the authoritative repository, and a divergent capture
+    ;; is refused by name rather than accepted.
+    (let* ((authoritative (list (inventory-record "issues" :issues
+                                                  :original 3 :mapping "acme/issues")
+                                (inventory-record "comments" :comments
+                                                  :original 7 :mapping "acme/comments")))
+           (matching (copy-tree authoritative))
+           (divergent (list (inventory-record "issues" :issues
+                                              :original 4 :mapping "acme/issues")
+                            (inventory-record "comments" :comments
+                                              :original 7 :mapping "acme/comments"))))
+      (multiple-value-bind (okp line) (reconcile-inventory authoritative matching)
+        (ok okp "the pilot's capture failed to reconcile against the repository: ~A" line)
+        (ok (search "INVENTORY OK" line) "the reconciliation disposition is not published: ~A" line))
+      (multiple-value-bind (okp line) (reconcile-inventory authoritative divergent)
+        (check-equal nil okp "a divergent capture reconciled against the repository")
+        (ok (search "content" line) "a content mismatch is not named: ~A" line)))))
+
+;;; ------------------------------------------------------------------
+;;; TestE01F03AllowOmittedRepeatedAndRecursively   SPEC-WORK.md:1555-1556
+;;; ------------------------------------------------------------------
+;;; E01-F03-04 (ROADMAP.md:224) — allow omitted, repeated and recursively
+;;; nested work-set grouping layers without a prescribed depth.
+;;; docs/SPEC-WORK.md:1555-1556: "A team may omit, repeat or nest grouping
+;;; layers as its work requires; validation must not enforce a
+;;; repository/epic/feature depth sequence."
+
+(deftest "TestE01F03AllowOmittedRepeatedAndRecursively" "docs/SPEC-WORK.md:1555-1556"
+    "expected=deeper-witness-admitted;repeated-layers-read-by-id-not-position;omitted-layers-admitted;depth-not-prescribed"
+  ;; A grouping layer is a container whose kind is declared and read by its
+  ;; stable id, never inferred from its depth, its title or its position.
+  ;; Omitted: the shallow repository -> feature -> task witness skips project,
+  ;; stream and epic and is admitted whole.
+  (let ((state (make-seed-state
+                '((:id "r" :type :work-set :parent nil :state :unknown)
+                  (:id "r/f" :type :feature :parent "r" :state :unknown)
+                  (:id "r/f/t" :type :task :parent "r/f" :state :doing)))))
+    (check-equal 3 (state-open-count state)
+                 "the shallow witness with omitted layers was not admitted whole")
+    (check-equal :task (node-type state "r/f/t")
+                 "the admitted task is read by its id, not by a fixed depth"))
+  ;; Repeated and recursively nested: repository -> project -> project ->
+  ;; stream -> work-set -> stream -> epic -> feature -> feature -> feature ->
+  ;; task. Project and stream are work-sets distinguished by :category, never
+  ;; by a distinct mandatory kind or by their position.
+  (let ((state (make-seed-state
+                '((:id "n/repo" :type :work-set :parent nil :state :unknown)
+                  (:id "n/repo/p1" :type :work-set :category "project" :parent "n/repo" :state :unknown)
+                  (:id "n/repo/p2" :type :work-set :category "project" :parent "n/repo/p1" :state :unknown)
+                  (:id "n/repo/s1" :type :work-set :category "stream" :parent "n/repo/p2" :state :unknown)
+                  (:id "n/repo/ws" :type :work-set :parent "n/repo/s1" :state :unknown)
+                  (:id "n/repo/s2" :type :work-set :category "stream" :parent "n/repo/ws" :state :unknown)
+                  (:id "n/repo/e" :type :epic :parent "n/repo/s2" :state :unknown)
+                  (:id "n/repo/f" :type :feature :parent "n/repo/e" :state :unknown)
+                  (:id "n/repo/sf1" :type :feature :parent "n/repo/f" :state :unknown)
+                  (:id "n/repo/sf2" :type :feature :parent "n/repo/sf1" :state :unknown)
+                  (:id "n/repo/t" :type :task :parent "n/repo/sf2" :state :doing)))))
+    (check-equal 11 (state-open-count state)
+                 "the deeper witness with repeated and nested layers was not admitted whole")
+    (check-equal :task (node-type state "n/repo/t")
+                 "the leaf task is a task, read by id not by depth")
+    (check-equal "project" (node-category state "n/repo/p2")
+                 "a repeated project layer keeps its category, not inferred from position")
+    (check-equal "stream" (node-category state "n/repo/s2")
+                 "a repeated stream layer keeps its category, not inferred from position")
+    (check-equal :work-set (node-type state "n/repo/s2")
+                 "a stream is a work-set, not a distinct mandatory layer kind")
+    (check-equal :feature (node-type state "n/repo/sf2")
+                 "a sub-feature is a :feature repeated one below another"))
+  ;; No prescribed depth: a chain of 24 nested sub-features under one task is
+  ;; admitted exactly like a shallow one; depth is not a rank restriction.
+  (let* ((ids (loop for i from 0 to 24 collect (format nil "deep/~D" i)))
+         (state (make-seed-state
+                 (loop for i from 0 to 24 for id in ids
+                       collect (list :id id
+                                     :type (if (= i 24) :task :feature)
+                                     :parent (and (plusp i) (nth (1- i) ids))
+                                     :state (if (= i 24) :doing :unknown))))))
+    (check-equal 25 (state-open-count state)
+                 "the 25-level nested chain was not admitted; depth refused a grouping")
+    (check-equal :task (node-type state "deep/24")
+                 "the deep chain's task is a task at depth 25, read by id, not refused")))

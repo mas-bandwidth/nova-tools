@@ -36,18 +36,59 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	head := f.fs.String("head", "", "")
 	issue := f.fs.Int("issue", 0, "")
 	title := f.fs.String("title", "", "")
+	branch := f.fs.String("branch", "", "")
+	base := f.fs.String("base", "", "")
+	baseSHA := f.fs.String("base-sha", "", "")
 	bodyFile := f.fs.String("body-file", "", "")
+	diffFile := f.fs.String("diff-file", "", "")
+	diff := f.fs.String("diff", "", "")
+	dir := f.fs.String("dir", "", "")
+	clone := f.fs.String("clone", "", "")
+	holdFile := f.fs.String("hold-file", "", "")
+	paths := f.fs.String("paths", "", "")
+	test := f.fs.String("test", "", "")
 	prior := f.fs.String("prior", "", "")
 	names := f.fs.String("names", "", "")
 	specLines := f.fs.String("spec-lines", "", "")
 	out := f.fs.String("out", "", "")
 	queue := f.fs.String("queue", "", "")
+	index := f.fs.String("index", "", "")
+
+	// v2 flags
+	v2 := f.fs.Bool("v2", false, "")
+	testCmd := f.fs.String("test-cmd", "", "")
+	priorDiff := f.fs.String("prior-diff", "", "")
+	reviewerLine := f.fs.String("reviewer-line", "", "")
+	failingOutput := f.fs.String("failing-output", "", "")
+	preflightCmd := f.fs.String("preflight-cmd", "", "")
+	location := f.fs.String("location", "", "")
+	testPkg := f.fs.String("test-pkg", "", "")
+	testFunc := f.fs.String("test-func", "", "")
+	attempt := f.fs.Int("attempt", 0, "")
+	symbol := f.fs.String("symbol", "", "")
+	redWhen := f.fs.String("red-when", "", "")
+
 	if !f.parse(args, stderr) {
 		return 2
 	}
+	effectiveDiffFile := *diffFile
+	if effectiveDiffFile == "" {
+		effectiveDiffFile = *diff
+	}
+	effectiveDir := *dir
+	if effectiveDir == "" {
+		effectiveDir = *clone
+	}
 	return pulse.CutKind(pulse.CutKindInput{
 		Kind: *kind, Repo: *repo, PR: *pr, Head: *head, Issue: *issue, Title: *title,
-		BodyFile: *bodyFile, Prior: *prior, Names: *names, SpecLines: *specLines,
-		Out: *out, Queue: *queue, Stdout: stdout, Stderr: stderr,
+		Branch: *branch, Base: *base, BaseSHA: *baseSHA,
+		BodyFile: *bodyFile, DiffFile: effectiveDiffFile, Dir: effectiveDir, HoldFile: *holdFile,
+		Paths: *paths, TestName: *test,
+		Prior: *prior, Names: *names, SpecLines: *specLines,
+		Index: *index, Out: *out, Queue: *queue, Stdout: stdout, Stderr: stderr,
+		V2: *v2, Location: *location, TestPackage: *testPkg, TestFunction: *testFunc,
+		TestCommand: *testCmd, ReviewerLine: *reviewerLine,
+		PriorDiff: *priorDiff, FailingOutput: *failingOutput, PreflightCmd: *preflightCmd,
+		Attempt: *attempt, Symbol: *symbol, RedWhen: *redWhen,
 	})
 }

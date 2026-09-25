@@ -1,12 +1,14 @@
 package swarm
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -47,6 +49,32 @@ type RunInput struct {
 	// once per job. The two are exclusive and the verb refuses both at once.
 	Sandbox   string
 	NoSandbox bool
+	// THE BENCH SLOT LEASE (docs/SPEC-SWARM.md, "Bench slot leases"). When SlotsStore
+	// names a store the dispatcher holds one lease per running task, labelled with the
+	// task id and released the moment the task ends; it never launches past SlotOwner's
+	// share. Both empty is the behaviour without a store, unchanged.
+	SlotsStore string
+	SlotOwner  string
+	// SlotPoll is how long a refused take waits before it asks again; zero takes the
+	// 10s the spec names. SlotPID is the pid written into each lease; zero takes this
+	// process, so a dispatcher that dies leaves leases the next take reaps.
+	SlotPoll time.Duration
+	SlotPID  int
+	// THE ROUTE SEAM (issue #1486, SPEC-DECIDE "nova-decide route"). When it is
+	// set, a claimed task is asked of the ladder -- which MIND does this unit of
+	// work -- before it is launched, and a card the ladder marks ask-child or
+	// ask-bus is parked in routed-out/ rather than run on this pool's mechanical
+	// model. The worker's model is the FALLBACK, which is exactly today's
+	// behaviour (rule 5). nil leaves every claimed task to the launch, which is
+	// the behaviour every existing caller has today.
+	Route *RouteInput
+	// CloneFrom is the on-disk checkout a job clone is staged from. Empty leaves
+	// the card to clone itself (today's STEP 1), unless the card declares PATHS:
+	// prepare then sets this from the pool's reference checkout
+	// ref/<owner>/<name>@<rev> when that checkout is present (#2498 S10).
+	// When set, prepare stages <job>/repo as a sparse checkout of the card's
+	// PATHS packages.
+	CloneFrom string
 }
 
 // WorkerCap is the ceiling on --workers (Glenn, 2026-09-10). A request above it is a
@@ -79,6 +107,8 @@ type running struct {
 	deadline   time.Duration
 	adopted    bool
 	notes      int
+	leased     bool
+	leaseIDs   []string
 }
 
 // Run is the dispatcher. It returns the exit code.
@@ -337,6 +367,27 @@ func Run(in RunInput) int {
 	deadline := now().Add(time.Duration(in.Hours * float64(time.Hour)))
 	tasks := bounded.Capped(out, in.Max, "RUN", "task", "nova-swarm status --pool "+p.Dir+" --max 0")
 
+	// THE BENCH SLOT LEASE, FROM THE DISPATCHER'S SIDE. A store wider than this pool
+	// answers to a share: one lease per task, labelled with the task id and held for the
+	// task's deadline plus two minutes, released the moment the task ends. The lease is
+	// charged at the card kind's admission weight (#2033), so a schema card that would
+	// overflow the remaining share waits rather than launching. A refused take is a WAIT
+	// -- one `RUN WAIT slots owner= holders=` line, a poll every slotPoll, and no launch
+	// past the share -- until the task's own deadline says it can no longer run.
+	slotPoll := in.SlotPoll
+	if slotPoll <= 0 {
+		slotPoll = 10 * time.Second
+	}
+	slotPID := in.SlotPID
+	if slotPID <= 0 {
+		slotPID = os.Getpid()
+	}
+	var slotNextPoll time.Time
+	var slotWaitTask string
+	var slotWaitStart time.Time
+	var slotWaitBudget time.Duration
+	slotStalled := false
+
 	for {
 		// Start what can be started, while the dispatcher's own deadline is ahead of us.
 		for !haltAdmissions && !now().After(deadline) && !p.Stopped() && len(watching) < in.Workers {
@@ -344,13 +395,96 @@ func Run(in RunInput) int {
 			if !ok {
 				break
 			}
+			if in.SlotsStore != "" {
+				if slotWaitTask != "" && now().Sub(slotWaitStart) >= slotWaitBudget {
+					slotStalled = true
+					break
+				}
+				if !slotNextPoll.IsZero() && now().Before(slotNextPoll) {
+					break
+				}
+			}
 			sc, text, claimed, err := p.ClaimNext()
 			if err != nil || !claimed {
 				break
 			}
+			// THE PUBLIC-CLASS GATE (CARD-8390): a public-class worker never
+			// sees a card that clones an unlisted repo. The card is refused
+			// with CARD REFUSED and moved to failed/ without ever launching,
+			// so a free/contributor model never sees private source.
+			if repo, refused := CheckPublicCard(in.Worker, string(text), p.Dir); refused {
+				line := "CARD REFUSED " + PublicRefusalWhy(repo, in.Worker.Name)
+				fmt.Fprintln(errOut, line)
+				sc.End, sc.RC, sc.Ended = EndFailed, -1, Stamp(now())
+				_ = p.WriteSidecar(Running, sc)
+				_ = p.Claim(sc.ID, Running, Failed)
+				said = true
+				failed++
+				tasks.Line(line)
+				continue
+			}
+			// THE LADDER ON THE DISPATCH PATH (issue #1486): before a claimed
+			// task is launched the dispatcher asks which mind does the unit,
+			// the same question the batch asks on its fill path. A card the
+			// ladder marks ask-child or ask-bus is judgment work owed to a
+			// child or a friend, and it must not run on this pool's mechanical
+			// model: it is parked in routed-out/ with its ROUTE line, and the
+			// coordinator (or a friend, over the bus) takes it from there.
+			// Every other answer runs on today's model, and the receipt says
+			// which happened. Parking is not a failure, holds no slot and
+			// consumes no lease: the task never started.
+			if in.Route != nil {
+				res, park := in.routeTask(sc, text)
+				fmt.Fprintf(errOut, "ROUTE %s %s\n", oneline.Field(routeTaskLabel(sc)), res.Receipt)
+				if park {
+					_ = p.WriteSidecar(Running, sc)
+					_ = p.Claim(sc.ID, Running, RoutedOut)
+					_ = os.WriteFile(p.Path(RoutedOut, sc.ID+".route"), []byte(res.Receipt+"\n"), 0o644)
+					fmt.Fprintf(out, "RUN ROUTED-OUT id=%s dest=%s rung=%s why=%s\n",
+						oneline.Field(sc.ID), oneline.Field(RoutedOut), oneline.Field(res.Rung), oneline.Field(res.Why))
+					continue
+				}
+			}
+			leased := false
+			var leaseIDs []string
+			if in.SlotsStore != "" {
+				dur := taskDeadline(sc, in.Worker) + 2*time.Minute
+				kind := CardKindFromText(string(text))
+				ids, _, _, _, holders, granted, lerr := TakeSlotLeasesKind(in.SlotsStore, in.SlotOwner, 1, kind, dur, sc.ID, now(), slotPID)
+				if lerr != nil {
+					said = true
+					haltAdmissions = true
+					_ = p.Claim(sc.ID, Running, Pending)
+					fmt.Fprintf(errOut, "RUN REFUSED reason=slots: the slot store could not be read: %s\n", oneline.Escape(redactedReason(lerr)))
+					break
+				}
+				if !granted {
+					// THE TASK GOES BACK WHERE IT CAME FROM while the wait lasts: it is
+					// not running, and a task sitting in running/ with no slot would read
+					// as one to `status` and to the next dispatcher.
+					_ = p.Claim(sc.ID, Running, Pending)
+					if slotWaitTask != sc.ID {
+						slotWaitTask = sc.ID
+						slotWaitStart = now()
+						slotWaitBudget = taskDeadline(sc, in.Worker)
+						if holders == "" {
+							holders = "-"
+						}
+						fmt.Fprintf(out, "RUN WAIT slots owner=%s holders=%s\n", oneline.Field(in.SlotOwner), oneline.Escape(holders))
+					}
+					slotNextPoll = now().Add(slotPoll)
+					break
+				}
+				leased = true
+				leaseIDs = ids
+				slotWaitTask = ""
+				slotNextPoll = time.Time{}
+			}
 			r, line, code := in.launch(sc, text, slot, quarantined, retired)
 			switch code {
 			case launchStarted:
+				r.leased = leased
+				r.leaseIDs = leaseIDs
 				started++
 				watching[slot] = r
 				tasks.Line(line)
@@ -368,14 +502,23 @@ func Run(in RunInput) int {
 				said = true
 				failed++
 				tasks.Line(line)
+				if leased {
+					in.releaseSlotLease(leaseIDs)
+				}
 			default:
 				said = true
 				launchFailed++
 				haltAdmissions = true
 				tasks.Line(line)
+				if leased {
+					in.releaseSlotLease(leaseIDs)
+				}
 			}
 		}
-		if len(watching) == 0 {
+		if slotStalled && len(watching) == 0 {
+			break
+		}
+		if len(watching) == 0 && slotWaitTask == "" {
 			break
 		}
 		// Poll what is running. The dispatcher waits on pids it started or adopted, and it
@@ -401,6 +544,13 @@ func Run(in RunInput) int {
 				recovered++
 			}
 			line, end, dest := in.finish(r, retired, now())
+			if r.leased {
+				// THE LEASE ENDS WITH THE TASK, whatever end it found. Clearing the poll
+				// hold lets the next waiting task ask at once rather than wait out a
+				// poll interval for a capacity that is already free.
+				in.releaseSlotLease(r.leaseIDs)
+				slotNextPoll = time.Time{}
+			}
 			// D2 (the real run, 2026-09-11): two jobs printed `RUN DONE … dest=failed`
 			// and RUN OK said `started=2 done=2 failed=0` with both of them in failed/.
 			// The counts are the truth about the POOL, so a job is counted by WHERE IT
@@ -435,6 +585,11 @@ func Run(in RunInput) int {
 	}
 	tasks.More()
 
+	// ISSUE #1048: AT TASK END the finished slots' data/, tmp/ and jobs/*/scratch are freed,
+	// unless the worker description set keep_data=true. The shared per-bench caches under
+	// <root>/cache are never touched, because they are the thing every job reuses.
+	ReapAtTaskEnd(p.Dir, in.Worker, now)
+
 	pending, _ := p.List(Pending)
 	fmt.Fprintf(out, "RUN OK started=%d done=%d failed=%d killed=%d pending=%d recovered=%d auto_retry=%t after=%s\n",
 		started, done, failed, killed, len(pending), recovered, !in.NoAutoRetry, trimDuration(now().Sub(deadline.Add(-time.Duration(in.Hours*float64(time.Hour))))))
@@ -453,6 +608,29 @@ func Run(in RunInput) int {
 		return 1
 	}
 	return 0
+}
+
+// releaseSlotLease gives back EXACTLY the leases this dispatcher took. A failure is
+// reported and is not fatal: the lease names this process's pid, so a dispatcher that dies
+// leaves a lease the next take reaps anyway.
+//
+// IT RELEASES BY IDENTITY, not by owner and label (nova-tools#1582, Stella's hold on
+// PR #1562). The first cut handed `ReleaseSlotLeases(store, owner, taskID, false)` here,
+// and that removes EVERY lease matching the owner and the task id — so two dispatchers
+// sharing both each gave away the other's live seat. ids is exactly what TakeSlotLeases
+// granted this task and exactly what is handed back.
+func (in RunInput) releaseSlotLease(ids []string) {
+	if in.SlotsStore == "" || len(ids) == 0 {
+		return
+	}
+	pid := in.SlotPID
+	if pid <= 0 {
+		pid = os.Getpid()
+	}
+	if _, err := ReleaseSlotLeasesByID(in.SlotsStore, ids, pid); err != nil {
+		fmt.Fprintf(in.Stderr, "nova-swarm run: releasing the slot lease: %s\n",
+			oneline.Escape(redactedReason(err)))
+	}
 }
 
 func workerDirReady(path string) error {
@@ -513,6 +691,39 @@ func unionOf(a, b map[int]bool) map[int]bool {
 		out[n] = true
 	}
 	return out
+}
+
+// routeTask asks the ladder which mind does one claimed task. It never fails:
+// a route that cannot be made is today's model with a receipt that says so,
+// because a dispatch path that refuses to dispatch is worse than one that
+// keeps the behaviour it had.
+//
+// park is true where the ladder answered a mind that is ASKED, not run -- a
+// child, a friend, Glenn -- and the card cannot be dispatched to it: the
+// caller parks the task in routed-out/ rather than launching it. Every other
+// answer runs, on today's model where the route fell back, and the receipt
+// says which happened.
+func (in RunInput) routeTask(sc Sidecar, text []byte) (CardRoute, bool) {
+	label := routeTaskLabel(sc)
+	contract := strings.TrimSpace(first(strings.Split(string(text), "\n")))
+	unit, ok := CardUnit(label, contract, string(text))
+	if !ok {
+		receipt := fmt.Sprintf("ROUTE jev=fallback conf=0.00 rung=- model=%s why=%s",
+			oneline.Field(in.Worker.Model), oneline.Field("card-names-no-kind"))
+		return CardRoute{Model: in.Worker.Model, Rung: "-", Source: "rules",
+			Fallback: true, Why: "card-names-no-kind", Receipt: receipt}, false
+	}
+	res := RouteCard(context.Background(), *in.Route, unit, in.Worker.Model)
+	return res, res.Why == RouteFallbackNoModel
+}
+
+// routeTaskLabel is the name a claimed task's ROUTE line carries: the label
+// the task was queued under, or its id where it carries none.
+func routeTaskLabel(sc Sidecar) string {
+	if strings.TrimSpace(sc.Label) != "" {
+		return sc.Label
+	}
+	return sc.ID
 }
 
 // launch is rule 18's transaction, from this side: reserve, spawn, wait for the identity,
@@ -578,6 +789,37 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	sc.Job, sc.Slot, sc.Started = jobDir, slot, Stamp(in.Now())
 	_ = p.WriteSidecar(Running, sc)
 
+	usageEveryNS := in.UsageInterval
+	if usageEveryNS <= 0 {
+		usageEveryNS = 5 * time.Second
+	}
+	evidenceRoot := filepath.Join(p.Dir, "evidence")
+	r := LaunchRecord{
+		Schema:           LaunchSchema,
+		Context:          LaunchRecordContext{Kind: "pool", Root: p.Dir},
+		EvidenceRoot:     evidenceRoot,
+		JobID:            sc.ID,
+		Slot:             strconv.Itoa(slot),
+		ReservationNonce: nonce,
+		ManifestHash:     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		Control: LaunchRecordControl{
+			ManifestHash:  "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			Root:          evidenceRoot,
+			SandboxSource: in.Sandbox,
+			Launcher: LaunchRecordLauncher{
+				Path:   in.Supervisor,
+				SHA256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+				Source: in.Supervisor,
+			},
+		},
+		Realization: LaunchRecordRealization{
+			EnvHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
+		Sandbox:      in.Sandbox,
+		UsageEveryNS: strconv.FormatInt(usageEveryNS.Nanoseconds(), 10),
+	}
+	_ = PublishLaunchRecord(evidenceRoot, sc.ID, nonce, r)
+
 	// The SUPERVISOR is the process that samples usage, so the interval has to reach it:
 	// before this, `--usage-interval` was decoded, carried into RunInput and dropped at the
 	// fork, and every job sampled at the supervisor's own default.
@@ -597,8 +839,18 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	if in.UsageInterval > 0 {
 		supervisorArgs = append(supervisorArgs, "--usage-interval", in.UsageInterval.String())
 	}
+	id, err := LoadPoolIdentity(p.Dir)
+	if err != nil {
+		_ = p.Free(slot)
+		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(err.Error())), launchBroken
+	}
 	cmd := exec.Command(in.Supervisor, supervisorArgs...)
 	cmd.Stdout, cmd.Stderr = nil, nil
+	// The bench's own git config stops at the job boundary: the supervisor and
+	// everything it spawns read the staged clone's local config, never the
+	// bench's (SPEC-TOOLWORK §3 rule 1, #1665), and export the pool's identity
+	// so a worker cloning after launch commits under the pool's name.
+	cmd.Env = append(os.Environ(), StagingGitEnv(id)...)
 	if log, err := os.OpenFile(filepath.Join(jobDir, "supervisor.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); err == nil {
 		cmd.Stdout, cmd.Stderr = log, log
 		defer log.Close()
@@ -709,6 +961,13 @@ func (in RunInput) prepare(sc Sidecar, text []byte, slot int, jobDir string) err
 	if err := os.MkdirAll(jobDir, 0o755); err != nil {
 		return err
 	}
+	// STAGING (SPEC-TOOLWORK §3 rules 1-2, #1665): the pool's identity, the
+	// clone's local git config, and no way out of the job root -- before the
+	// worker starts, so a pool with no identity row and a tree with a way out
+	// are both refused at launch rather than run under nobody's name.
+	if err := StageJob(in.Pool.Dir, jobDir, filepath.Join(jobDir, "repo")); err != nil {
+		return err
+	}
 	if _, err := in.Worker.WriteHarnessConfig(slot); err != nil {
 		return err
 	}
@@ -717,6 +976,18 @@ func (in RunInput) prepare(sc Sidecar, text []byte, slot int, jobDir string) err
 	}
 	if err := writeAtomic(NotePath(jobDir), nil, 0o644); err != nil {
 		return err
+	}
+	// A PATHS card takes the pool's reference checkout when the run was not
+	// handed one. The assignment is on this call's copy of the input, so one
+	// card's checkout is not the next card's. No checkout leaves CloneFrom
+	// empty and the card clones itself.
+	if in.CloneFrom == "" && in.Pool != nil {
+		in.CloneFrom = referenceCheckout(in.Pool.Dir, string(text))
+	}
+	if in.CloneFrom != "" {
+		if err := StageJobTree(in.CloneFrom, filepath.Join(jobDir, JobRepo), text); err != nil {
+			return err
+		}
 	}
 	prompt := Prompt(PromptInput{
 		ID: sc.ID, JobDir: jobDir, Deadline: taskDeadline(sc, in.Worker), Files: sc.Files,

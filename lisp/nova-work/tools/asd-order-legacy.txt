@@ -1,0 +1,72 @@
+# asd-order-legacy.txt --- the hand-maintained nova-work/tests component order
+# as lisp/nova-work/nova-work.asd carried it at dev@85729f6e, the dev tip this
+# branch last merged before nova-tools#1947 replaced the list with directory
+# discovery. The prelude (tests/harness, tests/acceptance) is not here: it is
+# explicit in the .asd and always loads first.
+#
+# asd-order-check.sh's `cur` mode replays this order so the three-way comparison
+# (current / sorted / reverse) stays reproducible after the hand list is gone.
+tests/replays-8680
+tests/replays-applicable-delegation
+tests/replays-8646
+tests/replays-8662
+tests/replays-8681
+tests/replays-8683
+tests/replays-8640
+tests/replays-8641
+tests/replays-8642
+tests/replays-8643
+tests/replays-8644
+tests/replays-8645
+tests/replays-8647
+tests/replays-8648
+tests/replays-8649
+tests/replays-8650
+tests/replays-8651
+tests/replays-8660
+tests/replays-8661
+tests/replays-8663
+tests/replays-8664
+tests/decide
+tests/replays-8682
+tests/replays-notes
+tests/replays-785-gate
+tests/replays-dep-verb
+tests/request-line
+tests/replays-concurrency-witness
+tests/replays-restart-and-recovery
+tests/replays-validator-rule-witnesses
+tests/replays-fleet-stale-tokens
+tests/replays-lease-durability
+tests/replays-e08-render-file
+tests/replays-new-verb-door
+tests/replays-execution-reconcile
+tests/issue-2338
+tests/issue-1695
+tests/replays-e02-operations
+tests/criterion-e02-f04-01
+tests/replays-e02-cancel
+tests/replays-operation-records
+tests/replays-e02-wait
+tests/replays-journal-frame-integrity
+tests/replays-e02-staging
+tests/replays-e02-clip
+tests/replays-undo-roadmap
+tests/replays-undo-roadmap-rows
+tests/replays-785-dep
+tests/integrity
+tests/criterion-e09-f01-01
+tests/issue-2333
+tests/issue-2337
+tests/criterion-e09-f02-01
+tests/criterion-e09-f04-01
+tests/issue-2358
+tests/criterion-e11-f05-01
+tests/criterion-e01-f04-04
+tests/issue-2332
+tests/criterion-e02-f04-02
+tests/issue-2350
+tests/criterion-e08-f01-01
+tests/criterion-e07-f04-01
+tests/criterion-e08-f01-02
+tests/criterion-e01-f02-01

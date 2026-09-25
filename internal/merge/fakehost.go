@@ -13,6 +13,8 @@ type FakeHost struct {
 	PRs      map[int]PR
 	Branches map[string]string
 	ChecksBy map[string]Checks
+	// MergeGroupRuns holds one merge-group run per id, the evidence `classify` judges.
+	MergeGroupRuns map[int64]MergeRun
 	// CheckResults is a rollup whose every entry carries the commit it ran on,
 	// so a test can put an old failure on one sha and an in-progress run on the
 	// head and see which one the wait verb judges. Checks answers these for any
@@ -23,6 +25,13 @@ type FakeHost struct {
 	Atomic       bool
 	Merges       []string
 	Err          error
+	// CreatePR and ClosePR are the fold verb's forge operations (docs/SPEC-MERGE.md
+	// "The fold (#1142)"). Created is one line per opened pull request and Closed is
+	// the numbers closed as superseded by a squash; nextPR hands out numbers so a fold
+	// reads one back on its FOLD OK line.
+	Created []string
+	Closed  []int
+	nextPR  int
 	// OnPR, when set, answers PR reads per poll so a test can script a PR that
 	// merges on the second poll. It receives the PR number and the 1-based call
 	// count; returning ok=false falls through to the PRs map. OnChecks does the
@@ -35,11 +44,54 @@ type FakeHost struct {
 	// base really moved -- so that the read-back of rule 21 is exercised rather than
 	// skipped. A nil Do records the call and moves nothing.
 	Do func(n int, headOID, baseSHA, mergeSHA string) error
+	// Open is the open pull request list OpenPRs answers: the rebase cutter's whole input.
+	Open []RebasePR
+	// OpenQueue is the open pull requests the queue sweep walks. It is a SECOND list
+	// because the two seams want different rows: the rebase cutter reads the four
+	// fields of a RebasePR, and the sweep reads a whole PR -- its head oid, its
+	// mergeable state and when the host last saw it move. One method cannot answer two
+	// shapes, so QueuePRs answers this one and OpenPRs answers Open.
+	//
+	// Failures, Changed and Issues are the poison detector's data: the tests that
+	// failed, the packages the pull request changed, and the issue a park names.
+	OpenQueue []PR
+	Failures  map[int][]Failure
+	Changed   map[int][]string
+	Issues    map[int]string
+	// Reads is the verdicts the forge carries for a pull request (#1572): the HOLDs and
+	// APPROVEs its readers posted as comments or reviews. VerdictErr is the read failing.
+	Reads       map[int][]Verdict
+	VerdictErr  error
+	VerdictErrs map[int]error
+	// OnVerdicts and VerdictCalls are the per-call seam: see Verdicts.
+	OnVerdicts       func(n, call int) ([]Verdict, bool)
+	VerdictCalls     map[int]int
+	RawComments      map[int]string
+	RawReviews       map[int]string
+	DispositionsTime string
 }
+
+// QueuePRs lists the open pull requests this fake reports to the queue sweep. It is the
+// queueHost seam, and it is deliberately not OpenPRs: see OpenQueue.
+func (f *FakeHost) QueuePRs() ([]PR, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	return f.OpenQueue, nil
+}
+
+// PoisonFailures is the detector's view of a pull request's own run.
+func (f *FakeHost) PoisonFailures(pr int) []Failure { return f.Failures[pr] }
+
+// ChangedPackages is the packages the pull request changed.
+func (f *FakeHost) ChangedPackages(pr int) []string { return f.Changed[pr] }
+
+// IssueFor is the issue a park names, or "".
+func (f *FakeHost) IssueFor(pr int) string { return f.Issues[pr] }
 
 // NewFakeHost returns an empty one.
 func NewFakeHost() *FakeHost {
-	return &FakeHost{PRs: map[int]PR{}, Branches: map[string]string{}, ChecksBy: map[string]Checks{}}
+	return &FakeHost{PRs: map[int]PR{}, Branches: map[string]string{}, ChecksBy: map[string]Checks{}, MergeGroupRuns: map[int64]MergeRun{}, VerdictErrs: map[int]error{}}
 }
 
 func (f *FakeHost) PR(n int) (PR, error) {
@@ -57,6 +109,15 @@ func (f *FakeHost) PR(n int) (PR, error) {
 		return PR{}, fmt.Errorf("this fake host has no pull request %d", n)
 	}
 	return pr, nil
+}
+
+// OpenPRs answers the list a test set, or this fake's error, the way the real host answers
+// gh's one call.
+func (f *FakeHost) OpenPRs() ([]RebasePR, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	return f.Open, nil
 }
 
 func (f *FakeHost) BranchOID(branch string) (string, error) {
@@ -96,6 +157,18 @@ func (f *FakeHost) Ready(n int) error {
 	return nil
 }
 
+// MergeGroupRun answers one run a test set, or an error naming the id when it set none.
+func (f *FakeHost) MergeGroupRun(id int) (MergeRun, error) {
+	if f.Err != nil {
+		return MergeRun{}, f.Err
+	}
+	run, ok := f.MergeGroupRuns[int64(id)]
+	if !ok {
+		return MergeRun{}, fmt.Errorf("this fake host has no merge-group run %d", id)
+	}
+	return run, nil
+}
+
 func (f *FakeHost) AtomicMerge() bool { return f.Atomic }
 
 // Merge is the two-precondition primitive, and this fake is a GUARD rather than a
@@ -113,6 +186,34 @@ func (f *FakeHost) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 	if f.Do != nil {
 		return f.Do(n, headOID, baseSHA, mergeSHA)
 	}
+	return nil
+}
+
+// CreatePR records one opened pull request and hands back a fresh number. It is the
+// fold verb's forge side (docs/SPEC-MERGE.md "The fold (#1142)").
+func (f *FakeHost) CreatePR(head, base, title, body string) (int, error) {
+	if f.Err != nil {
+		return 0, f.Err
+	}
+	if f.nextPR == 0 {
+		f.nextPR = 900
+	}
+	f.nextPR++
+	n := f.nextPR
+	f.Created = append(f.Created, fmt.Sprintf("head=%s base=%s title=%s body=%s", head, base, title, body))
+	if f.PRs == nil {
+		f.PRs = map[int]PR{}
+	}
+	f.PRs[n] = PR{Number: n, Base: base, HeadRef: head, Body: body}
+	return n, nil
+}
+
+// ClosePR records a folded pull request closed as superseded by the squash.
+func (f *FakeHost) ClosePR(n int) error {
+	if f.Err != nil {
+		return f.Err
+	}
+	f.Closed = append(f.Closed, n)
 	return nil
 }
 
@@ -145,4 +246,94 @@ func (f *FakeHost) SetCheckDetails(oid string, details ...CheckDetail) {
 // and a test uses this to prove the wait verb ignores it (nova-tools #1014).
 func (f *FakeHost) SetCheckResult(sha, name, conclusion string) {
 	f.CheckResults = append(f.CheckResults, CheckDetail{Name: name, Conclusion: conclusion, SHA: sha})
+}
+
+// SetCheckRuns sets one commit's checks from details that carry their own sha, so a test
+// can put a green run, a current red and a stale red on the same rollup and see which
+// bucket each lands in.
+func (f *FakeHost) SetCheckRuns(oid string, details ...CheckDetail) {
+	var c Checks
+	for _, d := range details {
+		c.AddRun(d.Name, d.Conclusion, d.SHA)
+	}
+	f.ChecksBy[oid] = c
+}
+
+// Verdicts is the reads a test says this pull request carries (#1572). A host with no
+// entry for a pull request carries none, which is the ordinary case.
+func (f *FakeHost) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
+	if f.VerdictErrs != nil && f.VerdictErrs[n] != nil {
+		return nil, f.VerdictErrs[n]
+	}
+	if f.VerdictErr != nil {
+		return nil, f.VerdictErr
+	}
+	// OnVerdicts answers PER CALL, so a test can script a forge that says nothing at
+	// admission and carries a HOLD at the door -- which is #1572's own timeline and the
+	// whole reason a landing reads twice. It receives the pull request and the 1-based
+	// call count for that pull request; ok=false falls through to Reads.
+	if f.OnVerdicts != nil {
+		if f.VerdictCalls == nil {
+			f.VerdictCalls = map[int]int{}
+		}
+		f.VerdictCalls[n]++
+		if vs, ok := f.OnVerdicts(n, f.VerdictCalls[n]); ok {
+			return vs, nil
+		}
+	}
+	if f.RawComments != nil && f.RawReviews != nil {
+		c := f.RawComments[n]
+		r := f.RawReviews[n]
+		if c != "" || r != "" {
+			var opt VerdictOpts
+			if len(opts) > 0 {
+				opt = opts[0]
+			}
+			return ParseForgeVerdicts(c, r, n, opt.Reviewers, opt.Author, opt.CurrentHead, opt.UntypedComments == "ignore")
+		}
+	}
+	res := append([]Verdict(nil), f.Reads[n]...)
+	if len(opts) > 0 && opts[0].UntypedComments == "ignore" {
+		var filtered []Verdict
+		for _, v := range res {
+			if v.Source != "comment-pending" {
+				filtered = append(filtered, v)
+			}
+		}
+		res = filtered
+	}
+	return res, nil
+}
+
+// SetRawVerdicts sets raw JSON comments and reviews for pull request n.
+func (f *FakeHost) SetRawVerdicts(n int, commentsJSON, reviewsJSON string) {
+	if f.RawComments == nil {
+		f.RawComments = map[int]string{}
+	}
+	if f.RawReviews == nil {
+		f.RawReviews = map[int]string{}
+	}
+	f.RawComments[n] = commentsJSON
+	f.RawReviews[n] = reviewsJSON
+}
+
+// DispositionsStamp returns the fake forge's read stamp.
+func (f *FakeHost) DispositionsStamp() string {
+	return f.DispositionsTime
+}
+
+// SetVerdicts records what the forge says a pull request's readers have said.
+func (f *FakeHost) SetVerdicts(n int, vs ...Verdict) {
+	if f.Reads == nil {
+		f.Reads = map[int][]Verdict{}
+	}
+	f.Reads[n] = append(f.Reads[n], vs...)
+}
+
+// SetVerdictErr records an error returning verdicts for pull request n.
+func (f *FakeHost) SetVerdictErr(n int, err error) {
+	if f.VerdictErrs == nil {
+		f.VerdictErrs = map[int]error{}
+	}
+	f.VerdictErrs[n] = err
 }

@@ -104,6 +104,12 @@ const fsABI1 = fsExecute | fsWriteFile | fsReadFile | fsReadDir | fsRemoveDir | 
 // "the read set and the roots get EXECUTE|READ_FILE|READ_DIR".
 const fsReadSubset = fsExecute | fsReadFile | fsReadDir
 
+// fsReadNoExecSubset is fsReadSubset WITHOUT fsExecute: what Policy.ReadsNoExec gets. A
+// --read root is EXECUTABLE by construction, so a data tree named with --read lets the job
+// run anything its own user can drop into it; this subset is the grant that says READ and
+// means it (Johnny's security read of #1364).
+const fsReadNoExecSubset = fsReadFile | fsReadDir
+
 // fsFileSubset is what a rule on a FILE may carry, and it is not an optimisation: the
 // kernel REJECTS a path_beneath rule whose descriptor is not a directory and whose
 // allowed_access holds a directory-only right (MAKE_*, REMOVE_*, READ_DIR, REFER), with

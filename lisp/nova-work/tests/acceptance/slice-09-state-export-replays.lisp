@@ -13,18 +13,18 @@
   (let* ((k (fresh))
          (base (export-manifest (kernel-state k) :id "exp-1")))
     ;; A whole, closed manifest loads.
-    (multiple-value-bind (snap line) (load-state base :max-bytes 1000000)
+    (multiple-value-bind (snap line) (load-state base :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)
       (ok snap "the good manifest refused: ~A" line))
     ;; A missing mandatory member is refused.
     (let ((m (copy-list base)))
       (setf (getf m :members) '())
-      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000)
+      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)
         (ok (null snap) "a missing mandatory member loaded: ~A" line)
         (ok (search "missing mandatory member" line) "the refusal names the member: ~A" line)))
     ;; A changed digest is refused.
     (let ((m (copy-list base)))
       (setf (getf m :digest) "0000000000000000000000000000000000000000000000000000000000000000")
-      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000)
+      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)
         (ok (null snap) "a changed digest loaded: ~A" line)
         (ok (search "changed digest" line) "the refusal names the digest: ~A" line)))
     ;; A dangling internal reference is refused.
@@ -35,21 +35,21 @@
                     :digest (sha256-hex dangling)
                     :members (list (cons "snapshot" dangling))
                     :observations-gone nil)))
-      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000)
+      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)
         (ok (null snap) "a dangling reference loaded: ~A" line)
         (ok (search "dangling internal reference" line) "the refusal names the reference: ~A" line)))
     ;; A path escape, a symlink member and an output overrun are refused.
     (let ((m (copy-list base)))
       (setf (getf m :members) (cons '("../etc/passwd" . "x") (getf m :members)))
-      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000)
+      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)
         (ok (null snap) "a path escape loaded: ~A" line)
         (ok (search "path escape" line) "the refusal names the escape: ~A" line)))
     (let ((m (copy-list base)))
       (setf (getf m :symlinks) '("snapshot"))
-      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000)
+      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)
         (ok (null snap) "a symlink member loaded: ~A" line)
         (ok (search "symlink" line) "the refusal names the symlink: ~A" line)))
-    (multiple-value-bind (snap line) (load-state base :max-bytes 1)
+    (multiple-value-bind (snap line) (load-state base :max-bytes 1 :max-depth 1000 :max-nodes 1000000)
       (ok (null snap) "an output overrun loaded: ~A" line)
       (ok (search "output overrun" line) "the refusal names the overrun: ~A" line))
     ;; A corrupt S-expression is refused, never read as a valid load.
@@ -58,14 +58,14 @@
                     :digest (sha256-hex bad)
                     :members (list (cons "snapshot" bad))
                     :observations-gone nil)))
-      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000)
+      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)
         (ok (null snap) "a corrupt S-expression loaded: ~A" line)
         (ok (search "corrupt S-expression" line) "the refusal names the corruption: ~A" line)))
     ;; A historical export whose resolver observations are gone is refused with
     ;; a named proof gap, and current observations are never substituted.
     (let ((m (copy-list base)))
       (setf (getf m :observations-gone) t)
-      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000)
+      (multiple-value-bind (snap line) (load-state m :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)
         (ok (null snap) "a gone-observation export loaded: ~A" line)
         (ok (search "proof gap" line) "the refusal names the proof gap: ~A" line)))))
 
@@ -143,18 +143,14 @@
 ;;; state-load-is-isolated (docs/SPEC-WORK.md:5896)
 ;;; ------------------------------------------------------------------
 
-(defvar *state-load-test-counter* 0)
-
 (defun test-state-load-dir (name)
   "A fresh scratch parent for one state-load replay, so the three copies of this
-slice file (the loader list names it once per fold) never collide."
-  (let* ((base (uiop:default-temporary-directory))
-         (dir (merge-pathnames
-               (format nil "nova-work-state-load-~A-~D-~D/" name
-                       (get-universal-time) (incf *state-load-test-counter*))
-               base)))
-    (ensure-directories-exist dir)
-    (namestring dir)))
+slice file (the loader list names it once per fold) never collide -- and, since
+it is taken under this run's own root, so that two suites sharing a host never
+collide either. The old name keyed on `(get-universal-time)` and a counter that
+starts at zero in every image, which is nova-tools#1699's `state-load-is-isolated`
+red: the second process found the destination already there."
+  (namestring (test-temp-dir (format nil "state-load-~A" name))))
 
 (deftest "state-load-is-isolated" "docs/SPEC-WORK.md:5896"
     "expected=no-ownership-dispatch-replay-merge-resolver-network-or-repo-write;re-export-equal"
@@ -183,7 +179,7 @@ slice file (the loader list names it once per fold) never collide."
       (with-isolation
         (multiple-value-bind (loaded out)
             (state-load :from export-dir :into snap-dir
-                        :max-bytes 1000000 :max-depth 10 :max-nodes 100)
+                        :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)
           (setf snap loaded line out))
         (setf writes (isolation-writes)))
       (ok snap "the isolated load refused: ~A" line)
@@ -212,7 +208,7 @@ slice file (the loader list names it once per fold) never collide."
             "an isolated load created ~A" name))
       ;; A fresh reader rebuilds the model from the stored bytes, and the loaded
       ;; snapshot answers `query --snapshot`.
-      (let ((fresh (read-loaded-snapshot snap-dir)))
+      (let ((fresh (read-loaded-snapshot snap-dir :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)))
         (check-equal (state-open-count source) (snapshot-query fresh)
                      "the snapshot does not answer query --snapshot")
         (check-string= before-bytes
@@ -224,7 +220,7 @@ slice file (the loader list names it once per fold) never collide."
                      (format nil "the snapshot was accepted as a --session for ~A" verb)))
       ;; No-replace: a second load into the same directory refuses.
       (multiple-value-bind (again out)
-          (state-load :from export-dir :into snap-dir :max-bytes 1000000)
+          (state-load :from export-dir :into snap-dir :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)
         (ok (null again) "an existing destination was loaded over: ~A" out)
         (ok (search "exists" out) "the refusal names the existing destination: ~A" out))
       ;; A changed member digest is a gap, refuses, and leaves no destination.
@@ -234,13 +230,13 @@ slice file (the loader list names it once per fold) never collide."
         (with-open-file (out (merge-pathnames "state/snapshot.sexp" tampered)
                              :direction :output :if-exists :overwrite)
           (write-string "((:id \"tampered\" :type :task :parent () :state :doing)) " out))
-        (multiple-value-bind (bad out) (state-load :from tampered :into dest :max-bytes 1000000)
+        (multiple-value-bind (bad out) (state-load :from tampered :into dest :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)
           (ok (null bad) "a changed member digest loaded: ~A" out)
           (ok (search "changed digest" out) "the refusal names the digest: ~A" out)
           (ok (null (probe-file dest)) "an incomplete load left a destination")))
       ;; A bound breach refuses before anything is written.
       (let ((dest (concatenate 'string base "overrun-load/")))
-        (multiple-value-bind (bad out) (state-load :from export-dir :into dest :max-bytes 1)
+        (multiple-value-bind (bad out) (state-load :from export-dir :into dest :max-bytes 1 :max-depth 1000 :max-nodes 1000000)
           (ok (null bad) "an output overrun loaded: ~A" out)
           (ok (search "overrun" out) "the refusal names the overrun: ~A" out)
           (ok (null (probe-file dest)) "an overrun left a destination"))))))
