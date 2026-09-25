@@ -25,12 +25,19 @@
 // nothing: FN OK when the store is current, FN WOULD-LOAD when it is missing
 // or stale. fn sum prints the embedded digest, so a deploy can read the
 // declared build's --want from that build's own binary.
+//
+// fn load, check and deploy read FUNCTION LIST, which the bench seat is
+// refused by design (#3320): they run as the coordinator seat, and a NOPERM
+// refusal from fn load or fn check says so and how (#3562), so a bench
+// dogfood run never ends in an unexplained NOPERM.
 package main
 
 import (
 	"context"
 	"io"
+	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
@@ -43,7 +50,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "fn",
-		Summary: "load (idempotent, version-checked), check, deploy (load + digest read-back + receipt) or sum the nova_sprint function library",
+		Summary: "load (idempotent, version-checked), check, deploy (load + digest read-back + receipt) or sum the nova_sprint function library; load, check and deploy read FUNCTION LIST, so they run as the coordinator seat (the bench seat is refused it, #3320)",
 		Run:     runFn,
 	})
 }
@@ -81,7 +88,7 @@ func runFn(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if sub == "load" {
 		sum, loaded, err := fn.Ensure(ctx, st.Client())
 		if err != nil {
-			return refuse(errOut, "fn load", err.Error())
+			return refuse(errOut, "fn load", fnRefusal("load", err))
 		}
 		word := "UNCHANGED"
 		if loaded {
@@ -92,7 +99,7 @@ func runFn(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	state, err := fn.Check(ctx, st.Client())
 	if err != nil {
-		return refuse(errOut, "fn check", err.Error())
+		return refuse(errOut, "fn check", fnRefusal("check", err))
 	}
 	ping := oneline.Escape(state.Ping)
 	switch {
@@ -222,4 +229,24 @@ func fnDeployFailed(out io.Writer, addr, step string, err error) int {
 	io.WriteString(out, "FN REFUSED store="+addr+" reason="+step+"-failed err="+oneline.Escape(err.Error())+
 		" remedy=the store refused the "+step+"; check the address and that this seat's ACL user may FUNCTION LOAD and LIST\n")
 	return 1
+}
+
+// fnSeat is the ACL user fn load and fn check run as: the one fleet seat
+// whose grant holds FUNCTION LIST (the bench seat's does not, #3320).
+const fnSeat = "coordinator"
+
+// fnRefusal is the refusal text: an ACL refusal names the seat that ran, the
+// seat the subverb needs and how to run as it (#3562); any other error is
+// passed through unchanged.
+func fnRefusal(sub string, err error) string {
+	if !strings.Contains(err.Error(), "NOPERM") {
+		return err.Error()
+	}
+	seat := os.Getenv(store.UserEnv)
+	if seat == "" {
+		seat = "default (" + store.UserEnv + " unset)"
+	}
+	return err.Error() + "; fn " + sub + " reads FUNCTION LIST, which seat " + seat + " may not run: run it as the " + fnSeat +
+		" seat, " + store.UserEnv + "=" + fnSeat + " " + store.PasswordEnvEnv + "=NOVA_REDIS_COORDINATOR_PASSWORD" +
+		" under nova-secrets exec --only NOVA_REDIS_COORDINATOR_PASSWORD"
 }
