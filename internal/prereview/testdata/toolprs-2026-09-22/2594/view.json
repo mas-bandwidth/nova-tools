@@ -1,0 +1,501 @@
+{
+  "number": 2594,
+  "title": "prereview: fix pathish boolean logic for root files and ensure ledger directory (#2594)",
+  "body": "Author: Emma Antigravity <glenn@fiedler.co>",
+  "headRefOid": "d9173ac851ecc1fea4a6b6aaf2536bd5a8e92e07",
+  "baseRefName": "dev",
+  "files": [
+    {
+      "path": "cmd/nova-decide/main.go"
+    },
+    {
+      "path": "cmd/nova-decide/review.go"
+    },
+    {
+      "path": "cmd/nova-decide/review_test.go"
+    },
+    {
+      "path": "docs/CLI.md"
+    },
+    {
+      "path": "internal/prereview/ask.go"
+    },
+    {
+      "path": "internal/prereview/export_test.go"
+    },
+    {
+      "path": "internal/prereview/fixture.go"
+    },
+    {
+      "path": "internal/prereview/line.go"
+    },
+    {
+      "path": "internal/prereview/prereview.go"
+    },
+    {
+      "path": "internal/prereview/prereview_test.go"
+    },
+    {
+      "path": "internal/prereview/symbol.go"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1459.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1459.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1469.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1469.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1477.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1477.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1486.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1486.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1488.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1488.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1493.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1493.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1497.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1497.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1506.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1506.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1507.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1507.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1539.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1539.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1556.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1556.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1558.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1558.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1560.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1560.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1561.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1561.json"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1569.diff"
+    },
+    {
+      "path": "internal/prereview/testdata/cells/1569.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/RUN.md"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1459.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1460.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1461.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1462.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1463.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1464.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1465.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1466.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1467.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1468.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1469.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1470.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1471.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1472.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1473.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1474.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1475.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1476.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1477.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1478.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1479.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1480.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1481.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1482.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1483.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1484.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1485.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1486.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1487.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1488.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1489.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1490.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1491.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1492.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1493.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1494.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1495.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1496.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1497.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1498.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1499.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1500.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1501.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1502.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1503.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1504.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1505.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1506.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1507.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1508.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1509.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1510.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1511.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1512.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1513.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1514.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1515.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1516.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1517.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1518.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1519.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1521.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1522.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1523.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1524.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1525.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1526.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1527.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1528.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1529.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1530.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1531.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1532.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1533.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1534.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1535.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1536.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1537.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1538.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1539.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1540.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1541.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1542.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1543.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1544.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1545.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1546.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1547.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1548.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1549.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1551.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1555.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1556.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1557.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1558.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1559.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1560.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1561.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1562.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1563.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1565.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1566.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1567.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1568.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1569.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1570.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1571.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1572.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1573.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1574.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1575.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1576.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1577.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1578.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1579.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1580.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1581.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1582.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1583.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1584.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1585.json"
+    },
+    {
+      "path": "internal/prereview/testdata/jev-2026-09-22/mas-bandwidth-schema-1586.json"
+    }
+  ]
+}

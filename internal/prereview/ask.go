@@ -131,9 +131,9 @@ type Asker interface {
 }
 
 // ClientAsker is the real one: internal/decide's client, which reads its key
-// from the environment and never prints it. Last, when set, receives the usage
-// of the most recent call -- a refused call's too, because it cost what it
-// cost -- so the line can say what the score was bought for.
+// from the environment and never prints it. Last, when set, accumulates the
+// usage of every call -- a refused call's too, because it cost what it cost --
+// so the line can say what the score was bought for; the caller zeroes it.
 type ClientAsker struct {
 	Client *decide.Client
 	Last   *decide.Usage
@@ -143,7 +143,12 @@ type ClientAsker struct {
 func (a ClientAsker) Ask(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, error) {
 	answers, usage, err := a.Client.Decide(ctx, state, qs)
 	if a.Last != nil {
-		*a.Last = usage
+		// Summed, not overwritten: in tool-PR mode one pull request is one
+		// call per file group, and the line's cost is all of them.
+		a.Last.InputTokens += usage.InputTokens
+		a.Last.OutputTokens += usage.OutputTokens
+		a.Last.HasInput = a.Last.HasInput || usage.HasInput
+		a.Last.HasOutput = a.Last.HasOutput || usage.HasOutput
 	}
 	return answers, err
 }
@@ -155,15 +160,8 @@ func Score(ctx context.Context, a Asker, pr PR, card Card) (raw, conf float64, e
 }
 
 // ScoreWith asks the given score question (ScoreQuestionWith) over the pull
-// request's state.
+// request, per file group (ScoreGroups), and returns the lowest group's answer.
 func ScoreWith(ctx context.Context, a Asker, qs map[string]decide.Question, pr PR, card Card) (raw, conf float64, err error) {
-	answers, err := a.Ask(ctx, State(pr, card), qs)
-	if err != nil {
-		return 0, 0, err
-	}
-	ans, ok := answers["score"]
-	if !ok {
-		return 0, 0, fmt.Errorf("prereview: the provider returned no score answer")
-	}
-	return ans.Score, ans.Confidence, nil
+	g, err := ScoreGroups(ctx, a, qs, pr, card)
+	return g.Raw, g.Conf, err
 }

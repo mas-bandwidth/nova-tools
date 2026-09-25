@@ -187,6 +187,48 @@ func AddedLinesOutside(diff, skip string) string {
 	return b.String()
 }
 
+// tellSkipped is a file the tells are not read in: a fixture under any
+// testdata/ directory, or a page under docs/. Both quote the self-check shapes
+// because they ARE the specimens -- this package's own cells and its docs table
+// carry check(true, ...) -- and a tell read there convicts the pass of its
+// evidence corpus (#2621: #2594 flagged itself on both).
+func tellSkipped(path string) bool {
+	return strings.HasPrefix(path, "testdata/") || strings.Contains(path, "/testdata/") || strings.HasPrefix(path, "docs/")
+}
+
+// TellText is the added lines the tells and the generated-symbol families are
+// read in: AddedLines over every file tellSkipped does not skip.
+func TellText(diff string) string {
+	var b strings.Builder
+	keep := true
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "diff --git ") {
+			keep = !tellSkipped(diffGitPath(line))
+			continue
+		}
+		// The file header; AddedLines drops every "++" line the same way.
+		if strings.HasPrefix(line, "+++ ") {
+			if p := strings.TrimPrefix(line, "+++ "); p != "/dev/null" {
+				keep = !tellSkipped(strings.TrimPrefix(p, "b/"))
+			}
+			continue
+		}
+		if keep && strings.HasPrefix(line, "+") {
+			b.WriteString(strings.TrimPrefix(line, "+"))
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
+// diffGitPath is the new-side path of a `diff --git a/<p> b/<p>` header.
+func diffGitPath(line string) string {
+	if i := strings.LastIndex(line, " b/"); i >= 0 {
+		return strings.TrimSpace(line[i+len(" b/"):])
+	}
+	return ""
+}
+
 // DiffFiles is the changed paths a unified diff names, for a caller that has a
 // diff and no file list.
 var diffFileRE = regexp.MustCompile(`(?m)^\+\+\+ b/(.+)$`)
@@ -217,9 +259,9 @@ func symbolCheck(pr PR, card Card) Check {
 		}
 		return Check{Missing, "not a conformance cell: no SYMBOL on a card, no cell leg in the body, no file under test/conformance/"}
 	}
-	added := AddedLinesOutside(pr.Diff, "/testdata/")
+	added := TellText(pr.Diff)
 	if strings.TrimSpace(added) == "" {
-		return Check{Missing, "the diff adds no lines outside testdata"}
+		return Check{Missing, "the diff adds no lines outside testdata and docs"}
 	}
 	if t, ok := firstTell(added); ok {
 		return Check{No, fmt.Sprintf("the added test %s (%s)", t.says, t.from)}

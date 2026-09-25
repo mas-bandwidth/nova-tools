@@ -1,0 +1,45 @@
+{
+  "number": 2613,
+  "title": "pulse: `nova-pulse commit` — the harvest commit step in Go, a rule per table row (#2549)",
+  "body": "bin/harvest-priority's $commit_step is 5.8 KB of bash inside a single-quoted\nstring inside an `ssh <bench> bash -s`, run on every UP bench every pass. In\ntwelve hours it broke three times and stranded finished work silently each time:\nan unmatched glob under the Macs' zsh login shell (24 DONE cells never\ncommitted, no log line); a `case ... DONE\\(*` that did not parse on the remote\nbash (no bench committed for seven hours, nothing landed overnight, the canary\nfailed, one `syntax error: unexpected end of file` per bench per pass the only\ntrace); and the patch for that broke the file itself. There was no test.\n\nThis is that step in Go, split the way the cards split it: harvestcommit.go is\nthe DECISION, one pure function from a job-directory value to a plan, with no\nos, no exec and no git; harvestcommiteffect.go is the EFFECT, which applies a\nplan and never re-decides. cmd/nova-pulse/commit.go is the verb.\n\nIt is its OWN verb and not a first step of `harvest --bench`, because the two run\nin different places: `commit` runs ON a bench over its own working trees, while\n`harvest --bench` runs on the coordinator and reaches a bench only through the\nshell seam and a fetched ref -- it never has the working tree this step stages,\ncommits and rebases.\n\nThe rules, one table row each: the DONE PREFIX (`DONE (both runs green)` is\nDONE, `DONEish` is not -- the rule that cost seven hours); read cards; the\nDRAFT-ONLY list, now from a FILE rather than nine prefixes inside a shell string;\nno repo; no RESULT.md; the exfiltration fence of #2609 in both halves (a changed\npath that leaves the tree or carries a credential's shape is refused with the\npath AND the shape, and a staged file whose CONTENT matches a key shape is\nrefused the same way, index reset, neither printing a byte of what it matched);\none changed file over 1 MB, refused by name; the card's own files set aside in\nthe job directory, never committed and never deleted; `rowan/<label>` under the\nsame branch rule every push here is held against; the card's declared PATHS\nstaged and nothing else (A4, #2522), with no card a printed WARN rather than a\nrefusal; the card-added scratch dropped in a follow-up commit; the rebase onto\nthe target at its live tip, REBASE-CONFLICT printed and aborted on a clash.\n\nTwo facts from #2549's comments are fixed here. EVERY VERDICT IS PRINTED: the\nbash's driver greps `^HARVEST (JOB|NO-COMMIT|REFUSED|BENCH)` and drops every\nSKIP, so the log holds 0 SKIP lines against 12,784 REFUSED while each studio\npass reported skipped=96 -- roughly 96 verdicts per bench per pass in the bin.\nAnd the RESULT.md lines are WRITTEN, not substituted: `sed\n\"s#^BRANCH[: ].*#...#\"` changes nothing when the line is absent and exits 0, so\n`BRANCH-LINE report-nova-tools-2537-r1 -> ...` was printed 94 times and never\nonce took.\n\nTwo silent narrowings of the bash are gone: it globbed `*card-*` over slot names\n(a slot cut under another name was never looked at) and took `ls -d $d/jobs/* |\nhead -1` (a slot holding two jobs lost one). And `git status --porcelain -z`\nreplaces `| awk '{print $2}'`, which loses the tail of any path with a space.\n\nTests: TestCommitDecision is one row per rule; TestApplyCommitPlanFixtureJob is\nthe positive control (a fixture job goes in, a branch whose two-dot diff against\nthe base is EXACTLY the card's PATHS comes out) with negative controls beside it\nfor DONEish, 1.1 MB, a key file by path and by content, the scratch drop and the\nset-aside, all against real git repositories under t.TempDir(). TestCommitVerb\ndrives the verb end to end.\n\nThis does NOT delete bin/harvest-priority's $commit_step: that is the deploy\nstep, and #2549's DONE WHEN closes when the bash is removed on a rehearsal.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+  "headRefOid": "e0feddcc816ce30149b78a136648b44c175c6d37",
+  "baseRefName": "dev",
+  "files": [
+    {
+      "path": "cmd/nova-pulse/commit.go"
+    },
+    {
+      "path": "cmd/nova-pulse/commit_test.go"
+    },
+    {
+      "path": "cmd/nova-pulse/examplelines_test.go"
+    },
+    {
+      "path": "cmd/nova-pulse/main.go"
+    },
+    {
+      "path": "docs/CLI.md"
+    },
+    {
+      "path": "internal/ci/testdata/benchname_allowlist.txt"
+    },
+    {
+      "path": "internal/pulse/harvestcommit.go"
+    },
+    {
+      "path": "internal/pulse/harvestcommit_test.go"
+    },
+    {
+      "path": "internal/pulse/harvestcommiteffect.go"
+    },
+    {
+      "path": "internal/pulse/harvestcommiteffect_test.go"
+    },
+    {
+      "path": "internal/pulse/harveststale.go"
+    },
+    {
+      "path": "internal/pulse/harveststale_test.go"
+    }
+  ]
+}

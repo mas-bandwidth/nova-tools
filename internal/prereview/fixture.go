@@ -40,6 +40,47 @@ func RecordFixture(dir, repo string, pr int, score, conf float64) error {
 	return os.WriteFile(filepath.Join(dir, FixtureName(repo, pr)), append(row, '\n'), 0o644)
 }
 
+// GroupFixtureName is one file group's answer in tool-PR mode: group 0 (a
+// pull request asked as one question) is FixtureName.
+func GroupFixtureName(repo string, pr, group int) string {
+	if group <= 0 {
+		return FixtureName(repo, pr)
+	}
+	return fmt.Sprintf("%s-%d-g%d.json", strings.ReplaceAll(repo, "/", "-"), pr, group)
+}
+
+// RecordGroupFixture writes one file group's answer (group 0: the pull
+// request's) to dir.
+func RecordGroupFixture(dir, repo string, pr, group int, score, conf float64) error {
+	if group <= 0 {
+		return RecordFixture(dir, repo, pr, score, conf)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("prereview: fixture dir: %w", err)
+	}
+	row, err := json.MarshalIndent(Fixture{Repo: repo, PR: pr, Score: score, Conf: conf}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("prereview: encode fixture: %w", err)
+	}
+	return os.WriteFile(filepath.Join(dir, GroupFixtureName(repo, pr, group)), append(row, '\n'), 0o644)
+}
+
+// LoadGroupFixture reads one file group's recorded answer.
+func LoadGroupFixture(dir, repo string, pr, group int) (Fixture, error) {
+	if group <= 0 {
+		return LoadFixture(dir, repo, pr)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, GroupFixtureName(repo, pr, group)))
+	if err != nil {
+		return Fixture{}, fmt.Errorf("prereview: no recorded answer for %s#%d file group %d: %w", repo, pr, group, err)
+	}
+	var f Fixture
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return Fixture{}, fmt.Errorf("prereview: decode fixture for %s#%d file group %d: %w", repo, pr, group, err)
+	}
+	return f, nil
+}
+
 // LoadFixture reads one recorded answer.
 func LoadFixture(dir, repo string, pr int) (Fixture, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, FixtureName(repo, pr)))
@@ -71,7 +112,7 @@ func (a FixtureAsker) Ask(_ context.Context, state string, qs map[string]decide.
 			return nil, err
 		}
 	}
-	f, err := LoadFixture(a.Dir, a.Repo, pr)
+	f, err := LoadGroupFixture(a.Dir, a.Repo, pr, groupFromState(state))
 	if err != nil {
 		return nil, err
 	}
