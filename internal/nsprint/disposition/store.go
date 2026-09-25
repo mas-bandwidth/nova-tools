@@ -23,8 +23,6 @@ const (
 	FunctionRelease = "ns_hold_release"
 	// Group is the consumer group of the hold router on s:<S>:hold:events.
 	Group = "hold-route"
-	// LeaseKey is the router's single-writer lease.
-	LeaseKey = "lease:hold-route"
 	// DefaultReclaimIdle is XAUTOCLAIM's min-idle in production (5 s).
 	DefaultReclaimIdle = 5000
 )
