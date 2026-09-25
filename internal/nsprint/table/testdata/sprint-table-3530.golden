@@ -17,12 +17,12 @@ total                          |     559 |    15 |       8 |       3 |       3 |
 
 friend     | ready | working |  done | status    
 -----------+-------+---------+-------+------------
-rowan      |     0 |      12 |     4 | up        
+rowan      |     0 |       2 |     4 | up stale=10
 johnny     |     2 |       0 |     3 | down      
 emma       |     1 |       4 |     0 | up        
 stella     |     0 |       1 |     5 | down      
 -----------+-------+---------+-------+------------
-total      |     3 |      17 |    12 |
+total      |     3 |       7 |    12 | stale=10
 
 host       | ready | working |  done |    ok |  fail |  ok% |   load
 -----------+-------+---------+-------+-------+-------+------+-------

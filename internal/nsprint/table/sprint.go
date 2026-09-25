@@ -39,11 +39,15 @@
 //	                        ok% = ok / done (#3894)
 //	bench:<b>:beat          HMGET load1 at (the bench's own `bench beat` loop)
 //	friends                 SMEMBERS when no roster is given; friend:<f> HMGET at, up
-//	friend:<f>:cards:<w>    ZCARD for ready, working: the friend's cells are
-//	                        the sizes of the sets its tasks move through (the card
-//	                        model, rowan-new specs/ws-index.md; nova-tools#3779);
-//	                        done adds merging and landed (#3778: finished work
-//	                        whose PR is merging or merged)
+//	friend:<f>:cards:ready  ZCARD: the friend's cells are the sizes of the sets
+//	                        its tasks move through (the card model, rowan-new
+//	                        specs/ws-index.md; nova-tools#3779); done adds merging
+//	                        and landed (#3778: finished work whose PR is merging
+//	                        or merged)
+//	EVAL_RO liveScript      read only: every member of friend:<f>:cards:working
+//	                        with its record's where, holder and beat_at: working
+//	                        is the members with a live child, stale=<n> the rest
+//	                        (working.go, #3892)
 //	friend:<f>:cards:<d>    ZCOUNT from the current sprint's start to +inf for
 //	                        d = done, merging, landed: done counts only this
 //	                        sprint's cards (#3883); ZCARD beside each for the
@@ -120,6 +124,9 @@ type SprintConfig struct {
 	// finds a reading set non-empty and stays. The reading column is always
 	// printed.
 	ReadingSet bool
+	// BeatWindow: a friend's working card counts only while its beat is at
+	// most this old (#3892); zero is BeatWindow.
+	BeatWindow time.Duration
 }
 
 // StreamRow is one stream's six counts, in WSStates order.
@@ -315,11 +322,11 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	cells := make([][]*redis.IntCmd, len(roster))
 	doneAll := make([][]*redis.IntCmd, len(roster))
 	downs := make([]*redis.IntCmd, len(roster))
+	// working is the members with a live child, not the set's size (#3892).
+	live := pipe.EvalRO(ctx, liveScript, nil, liveArgs(now, beatWindow(cfg), roster)...)
 	for i, f := range roster {
 		rows[i] = pipe.HMGet(ctx, "friend:"+f, "at", "up")
-		for _, w := range FriendWheres[:2] {
-			cells[i] = append(cells[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
-		}
+		cells[i] = append(cells[i], pipe.ZCard(ctx, FriendCardsKey(f, "ready")))
 		for _, w := range FriendDoneWheres {
 			// Only this sprint's cards: every set is scored by created_at (#3883).
 			cells[i] = append(cells[i], pipe.ZCount(ctx, FriendCardsKey(f, w), since, "+inf"))
@@ -421,19 +428,19 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 		snap.Hosts = append(snap.Hosts, row)
 	}
+	working, stale, _ := liveCells(live, len(roster))
 	for i, f := range roster {
-		row := FriendRow{Name: f}
+		row := FriendRow{Name: f, Working: working[i], Stale: stale[i]}
 		if got, err := rows[i].Result(); err == nil && len(got) == 2 {
 			row.At, row.Up = pipeValue(got[0]), pipeValue(got[1])
 		}
-		counts := []*string{&row.Ready, &row.Working, &row.Done}
 		var done int64
 		doneOK := true
 		for j, c := range cells[i] {
 			n, err := c.Result()
-			if j < 2 {
+			if j == 0 {
 				if err == nil {
-					*counts[j] = strconv.FormatInt(n, 10)
+					row.Ready = strconv.FormatInt(n, 10)
 				}
 				continue
 			}
@@ -538,18 +545,34 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 
 	fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %-10s\n", "friend", "ready", "working", "done", "status")
 	b.WriteString(liveFriendRule)
-	var fq, fw, fd int64
+	var fq, fw, fd, fs int64
+	staleUnread := false
 	for _, row := range s.Friends {
 		q, w, d := orDash(row.Ready), orDash(row.Working), orDash(s.friendDone(row))
-		fq, fw, fd = fq+digitsOnly(q), fw+digitsOnly(w), fd+digitsOnly(d)
+		fq, fw, fd, fs = fq+digitsOnly(q), fw+digitsOnly(w), fd+digitsOnly(d), fs+digitsOnly(row.Stale)
+		staleUnread = staleUnread || row.Stale == "?"
 		status := "down"
 		if friendState(row, now, s.Config.RowStale) == "up" {
 			status = "up"
 		}
+		// working counts only live children; the rest of the set is stale (#3892).
+		if row.Stale != "" && row.Stale != "0" {
+			status += " stale=" + row.Stale
+		}
 		fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %-10s\n", row.Name, q, w, d, status)
 	}
 	b.WriteString(liveFriendRule)
-	fmt.Fprintf(&b, "%-10s | %5d | %7d | %5d |\n\n", "total", fq, fw, fd)
+	tw := strconv.FormatInt(fw, 10)
+	if staleUnread {
+		tw = "?"
+	}
+	fmt.Fprintf(&b, "%-10s | %5d | %7s | %5d |", "total", fq, tw, fd)
+	if staleUnread {
+		b.WriteString(" stale=?")
+	} else if fs > 0 {
+		fmt.Fprintf(&b, " stale=%d", fs)
+	}
+	b.WriteString("\n\n")
 
 	fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", "host", "ready", "working", "done", "ok", "fail", "ok%", "load")
 	b.WriteString(liveBenchRule)
