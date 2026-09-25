@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -695,4 +699,57 @@ func TestBeatRefusesNonStringFriendKey(t *testing.T) {
 			t.Fatalf("friend:johnny = %v; want the beat hash in place of the string", h)
 		}
 	})
+}
+
+// TestBeatSIGUSR1ReloadsWidthFromFile is #2673's live-reload path: a beat
+// started with --width pointing to a file reads that file on SIGUSR1 and
+// carries the new count on the next beat, so a friend whose width changes
+// does not need to restart the beat process.
+func TestBeatSIGUSR1ReloadsWidthFromFile(t *testing.T) {
+	dir := t.TempDir()
+	widthFile := filepath.Join(dir, "width")
+	if err := os.WriteFile(widthFile, []byte("5"), 0o600); err != nil {
+		t.Fatalf("write width file: %v", err)
+	}
+
+	st := presence.NewFakeStore(beatAt)
+	var widths []int64
+	var mu sync.Mutex
+
+	initialWidth := int64(5)
+	side := presence.Side{Width: &initialWidth}
+
+	// The Hook captures the atomic width value before each BeatSide writes.
+	st.Hook = func(call int) error {
+		mu.Lock()
+		widths = append(widths, atomic.LoadInt64(side.Width))
+		mu.Unlock()
+		if call == 2 {
+			_ = os.WriteFile(widthFile, []byte("12"), 0o600)
+			syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
+			time.Sleep(100 * time.Millisecond)
+		}
+		return nil
+	}
+
+	if err := beatLoop(context.Background(), st, "johnny", presence.DefaultEvery, presence.DefaultTTL, fakeStoreClock{st}, io.Discard, side, widthFile, 3); err != nil {
+		t.Fatalf("beatLoop: %v", err)
+	}
+
+	mu.Lock()
+	got := widths
+	mu.Unlock()
+
+	if len(got) != 3 {
+		t.Fatalf("widths = %v; want 3 entries", got)
+	}
+	if got[0] != 5 {
+		t.Fatalf("beat 1 width = %d; want 5", got[0])
+	}
+	if got[1] != 5 {
+		t.Fatalf("beat 2 width = %d; want 5", got[1])
+	}
+	if got[2] != 12 {
+		t.Fatalf("beat 3 width (post-SIGUSR1) = %d; want 12", got[2])
+	}
 }
