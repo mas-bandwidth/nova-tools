@@ -47,7 +47,7 @@ func TestLaunchLineMustNameTheCard(t *testing.T) {
 		{"other card", []string{"s1/card-b/1"}, "s1 card-a 1 " + testToken + "\n", 2, "names s1/card-a/1, not s1/card-b/1"},
 		{"two lines", []string{"s1/card-a/1"}, "s1 card-a 1 " + testToken + "\ns1 card-a 1 " + testToken + "\n", 2, "more than one"},
 		{"bad token", []string{"s1/card-a/1"}, "s1 card-a 1 2.0123456789abcdef0123456789abcdef\n", 2, "another attempt"},
-		{"no config", []string{"s1/card-a/1"}, "s1 card-a 1 " + testToken + "\n", 1, "missing or bad HOME, NOVA_BENCH_SEAT, NOVA_CARD_BENCH, NOVA_CARD_CLOCK, NOVA_CARD_DEADLINE, NOVA_CARD_HARNESS_BIN, NOVA_CARD_JOBS, NOVA_CARD_REDIS, NOVA_CARD_RESULTS, NOVA_CARD_TOKENS"},
+		{"no config", []string{"s1/card-a/1"}, "s1 card-a 1 " + testToken + "\n", 1, "missing or bad HOME, NOVA_CARD_BENCH, NOVA_CARD_CLOCK, NOVA_CARD_DEADLINE, NOVA_CARD_HARNESS_BIN, NOVA_CARD_JOBS, NOVA_CARD_REDIS, NOVA_CARD_RESULTS, NOVA_CARD_TOKENS"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

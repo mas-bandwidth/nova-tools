@@ -117,7 +117,7 @@ func newRunFixture(t *testing.T, label string) *runFixture {
 	f.cfg = card.RunConfig{
 		Sprint: f.sprint, Label: label, Attempt: 1, Bench: "testbench",
 		OutDir: filepath.Join(root, "job", "out"), JobDir: filepath.Join(root, "job"), Home: f.home,
-		Runner: self, HarnessBin: "/opt/harness/opencode", Seat: "testseat", Deadline: "60", Tokens: "1000",
+		Runner: self, HarnessBin: "/opt/harness/opencode", Deadline: "60", Tokens: "1000",
 		Env: []string{
 			fakeRunnerEnv + "=1", fakeRunnerSeen + "=" + f.seen, fakeRunnerResult + "=1",
 			"DEEPSEEK_API_KEY=ds-val", "INCEPTION_API_KEY=in-val", "OPENCODE_API_KEY=oc-val", "OPENROUTER_API_KEY=or-val",
@@ -218,8 +218,7 @@ func TestCardRunEachProviderGetsItsOwnKey(t *testing.T) {
 			}
 			argv := f.seenFile("argv")
 			for _, want := range []string{"native\n", "--harness\n/opt/harness/opencode\n", "--model\n" + rep.Model + "\n",
-				"--label\n" + f.label + "\n", "--owner\ntestseat\n", "--deadline\n60\n", "--tokens\n1000\n",
-				"--slots-store\n" + filepath.Join(f.home, "nova-bench", "slots") + "\n",
+				"--label\n" + f.label + "\n", "--deadline\n60\n", "--tokens\n1000\n",
 				"--root\n" + filepath.Join(f.home, "rowan-working", "tmp") + "\n",
 				"--results-root\n" + filepath.Join(f.cfg.OutDir, "native") + "\n"} {
 				if !strings.Contains(argv, want) {
@@ -326,6 +325,32 @@ func TestCardRunRefusesBeforeTheRunner(t *testing.T) {
 	}
 }
 
+// TestCardRunTakesNoFileLease is the card half of #3877's DONE-WHEN: a dealt
+// card runs on a bench whose home has no nova-bench/slots directory, native
+// is handed no --slots-store and no --owner (the dealer admitted the card
+// against bench:<b>:desired in Redis, the one slot ledger), and nothing makes
+// that directory on the way past. The native half, that the verb itself runs
+// with no store, is cmd/nova-swarm's TestNativeRunsWithNoSlotsStore.
+func TestCardRunTakesNoFileLease(t *testing.T) {
+	f := newRunFixture(t, "no-lease")
+	rep := f.run()
+	if rep.Code != 0 || rep.RC != 0 {
+		t.Fatalf("a dealt card with no slot store runs: %s\n%s", rep.Line(), f.harnessLog())
+	}
+	argv := f.seenFile("argv")
+	if argv == "" {
+		t.Fatal("the runner never started")
+	}
+	for _, flag := range []string{"--slots-store\n", "--owner\n"} {
+		if strings.Contains(argv, flag) {
+			t.Fatalf("native was handed %q, a lease on the retired file ledger:\n%s", strings.TrimSpace(flag), argv)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(f.home, "nova-bench", "slots")); !os.IsNotExist(err) {
+		t.Fatalf("a slot store was made under the bench home: %v", err)
+	}
+}
+
 func TestCardRunNoRouteRunsFlashAndProRunsPro(t *testing.T) {
 	f := newRunFixture(t, "tiers")
 	rep := f.run()
@@ -372,13 +397,13 @@ func TestCardRunRefusesAnIncompleteConfig(t *testing.T) {
 	if rep.Code != card.RunExitRefused || !strings.HasPrefix(rep.Why, "missing ") {
 		t.Fatalf("%s", rep.Line())
 	}
-	for _, want := range []string{"bench", "out dir", "job dir", "home", "harness bin", "seat", "deadline", "tokens"} {
+	for _, want := range []string{"bench", "out dir", "job dir", "home", "harness bin", "deadline", "tokens"} {
 		if !strings.Contains(rep.Why, want) {
 			t.Fatalf("why %q lacks %s", rep.Why, want)
 		}
 	}
 	cfg, missing := card.RunConfigFromEnv(func(string) string { return "" })
-	if cfg.Home != "" || strings.Join(missing, " ") != "HOME NOVA_BENCH_SEAT NOVA_CARD_BENCH NOVA_CARD_DEADLINE NOVA_CARD_HARNESS_BIN NOVA_CARD_TOKENS" {
+	if cfg.Home != "" || strings.Join(missing, " ") != "HOME NOVA_CARD_BENCH NOVA_CARD_DEADLINE NOVA_CARD_HARNESS_BIN NOVA_CARD_TOKENS" {
 		t.Fatalf("missing = %v", missing)
 	}
 }
@@ -428,7 +453,7 @@ func TestWrapperRunsTheHarnessInProcess(t *testing.T) {
 	seen := filepath.Join(t.TempDir(), "seen")
 	h.cfg.Store = st
 	h.cfg.InProcess = &card.RunConfig{
-		Home: t.TempDir(), Runner: self, HarnessBin: "/opt/harness/opencode", Seat: "testseat", Deadline: "60", Tokens: "1000",
+		Home: t.TempDir(), Runner: self, HarnessBin: "/opt/harness/opencode", Deadline: "60", Tokens: "1000",
 		Env: []string{fakeRunnerEnv + "=1", fakeRunnerSeen + "=" + seen, fakeRunnerResult + "=1",
 			"OPENROUTER_API_KEY=or-val", "OPENCODE_API_KEY=oc-val", "DEEPSEEK_API_KEY=ds-val", "INCEPTION_API_KEY=in-val",
 			"NOVA_CARD_TOKEN=" + token, "PATH=" + os.Getenv("PATH")},

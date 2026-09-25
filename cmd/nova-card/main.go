@@ -55,8 +55,8 @@ The bench configures it through the environment the launcher runs in:
   NOVA_CARD_BENCH    this bench's name, as the card hash names it
   NOVA_CARD_HARNESS  absolute path of a harness program; unset, the Go
                      harness runs in-process (nova-sprint card run, #3681)
-                     from NOVA_CARD_HARNESS_BIN, NOVA_BENCH_SEAT,
-                     NOVA_CARD_DEADLINE, NOVA_CARD_TOKENS and HOME
+                     from NOVA_CARD_HARNESS_BIN, NOVA_CARD_DEADLINE,
+                     NOVA_CARD_TOKENS and HOME
   NOVA_CARD_JOBS     absolute root of job dirs (<root>/<S>/<label>/<attempt>)
   NOVA_CARD_RESULTS  absolute root of results (<root>/<identity>)
   NOVA_CARD_CLOCK    the card clock, a Go duration (45m)
