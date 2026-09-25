@@ -3,6 +3,7 @@ package card
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -47,7 +48,7 @@ func Push(ctx context.Context, client *redis.Client, sprint string, body []byte)
 	}
 	reply, err := client.FCall(ctx, "ns_card_push", keys,
 		doc.Label, doc.Payload, doc.Priority, doc.Base, doc.BaseSHA, doc.Paths, doc.Repo, doc.Kind,
-		doc.DependsOn, doc.Type, doc.TypedDependsOn, boolString(ready), doc.Route,
+		doc.DependsOn, doc.Type, doc.TypedDependsOn, boolString(ready), doc.Route, doc.Bench,
 	).Text()
 	if err != nil {
 		return refused(err.Error())
@@ -57,12 +58,30 @@ func Push(ctx context.Context, client *redis.Client, sprint string, body []byte)
 		return VerbResult{Code: exitOK, Stdout: pushLine(sprint, doc.Label, "exists")}
 	case "CONFLICT":
 		return VerbResult{Code: exitConflict, Stderr: oneline.Escape("label conflict") + "\n"}
+	case "NOBENCH":
+		return refused(unregisteredBench(ctx, client, doc.Bench))
 	}
 	place, ok := strings.CutPrefix(reply, "OK place=")
 	if !ok || (place != "pool" && place != "waiting") {
 		return refused(fmt.Sprintf("card push reply %q", reply))
 	}
 	return VerbResult{Code: exitOK, Stdout: pushLine(sprint, doc.Label, place)}
+}
+
+// unregisteredBench is the refusal for a BENCH: line naming a bench that is not
+// in the benches set. It names the registered benches, read once on this
+// refusal path only, so the remedy is on the line.
+func unregisteredBench(ctx context.Context, client *redis.Client, bench string) string {
+	names, err := client.SMembers(ctx, "benches").Result()
+	registered := "unknown (" + fmt.Sprint(err) + ")"
+	if err == nil {
+		sort.Strings(names)
+		registered = strings.Join(names, ",")
+		if registered == "" {
+			registered = "none"
+		}
+	}
+	return fmt.Sprintf("BENCH: %s is not a registered bench (not in the benches set; registered: %s); name a registered bench or drop the BENCH: line", bench, registered)
 }
 
 func dependenciesReadyAtPush(ctx context.Context, client *redis.Client, sprint string, deps []dependency) (bool, error) {

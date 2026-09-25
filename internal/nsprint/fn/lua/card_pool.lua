@@ -19,7 +19,11 @@ end
 -- args: label, payload_sha, priority, base, base_sha, paths, repo, kind,
 --       depends_on, card_type (the optional TYPE: line, nova-tools#3091;
 --       empty: not stored), depends_on_typed, ready (0|1), route (the
---       card's ROUTE: pro|flash tier; empty or absent: not stored).
+--       card's ROUTE: pro|flash tier; empty or absent: not stored), bench
+--       (the card's BENCH: line, nova-tools#3650; empty or absent: any bench,
+--       not stored). A bench not in the benches set returns NOBENCH and
+--       writes nothing; a named bench is stored as the card's bench field,
+--       the pin ns_card_deal honours (pin == '' or pin == bench).
 -- priority is the card's PRIORITY: line (0 when absent) and its pool score.
 -- ready is resolved by the Go caller (card.Push); a caller that omits it
 -- (the pre-#3503 ten-argument shape) gets pool only when depends_on is empty.
@@ -32,6 +36,7 @@ redis.register_function('ns_card_push', function(keys, args)
   local card_type = args[10]
   local depends_on_typed, ready_arg = args[11], args[12]
   local route = args[13]
+  local bench = args[14]
   if type(depends_on) ~= 'string' then
     depends_on = ''
   end
@@ -40,6 +45,12 @@ redis.register_function('ns_card_push', function(keys, args)
       return 'EXISTS'
     end
     return 'CONFLICT'
+  end
+  if type(bench) ~= 'string' then
+    bench = ''
+  end
+  if bench ~= '' and redis.call('SISMEMBER', 'benches', bench) == 0 then
+    return 'NOBENCH'
   end
   if type(depends_on_typed) ~= 'string' then
     depends_on_typed = ''
@@ -72,6 +83,10 @@ redis.register_function('ns_card_push', function(keys, args)
   if type(route) == 'string' and route ~= '' then
     table.insert(fields, 'route')
     table.insert(fields, route)
+  end
+  if bench ~= '' then
+    table.insert(fields, 'bench')
+    table.insert(fields, bench)
   end
   redis.call('HSET', card, unpack(fields))
   redis.call('SADD', idx, label)

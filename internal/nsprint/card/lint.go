@@ -8,6 +8,10 @@
 // landed is stored in the waiting set. Release moves that card into the pool
 // only after the dependency is landed, and leaves every other waiting card
 // where it is.
+//
+// A card may name its bench with BENCH: <name>. Push refuses a name that is
+// not in the benches set; the stored card carries it as its bench pin, and the
+// dealer deals the card only to that bench (nova-tools#3650).
 package card
 
 import (
@@ -93,6 +97,7 @@ type cardDoc struct {
 	Type           string // optional TYPE: line, the Jev work type (code, docs, spec, ...); not KIND
 	Route          string // ROUTE: pro|flash, the routes.yaml tier the bench harness picks its model from; absent is flash
 	Priority       string // PRIORITY: <integer>, the card's score in the pool ZSET; absent is 0
+	Bench          string // BENCH: <name>, the one bench the dealer may deal this card to; absent is any bench
 	Payload        string
 }
 
@@ -137,6 +142,11 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	if err != nil {
 		return cardDoc{}, err
 	}
+	benchValue, benchDeclared := header["BENCH"]
+	bench, err := parseBench(benchValue, benchDeclared)
+	if err != nil {
+		return cardDoc{}, err
+	}
 	repo, err := probeRepo(ctx, cloneURL(header))
 	if err != nil {
 		return cardDoc{}, err
@@ -159,6 +169,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		Type:           header["TYPE"],
 		Route:          route,
 		Priority:       priority,
+		Bench:          bench,
 		Payload:        hex.EncodeToString(sum[:]),
 	}, nil
 }
@@ -195,6 +206,20 @@ func parsePriority(value string) (string, error) {
 		return "", fmt.Errorf("PRIORITY: %q is not an integer", value)
 	}
 	return strconv.FormatInt(n, 10), nil
+}
+
+// parseBench accepts BENCH: <name>, a bench id. An absent line is any bench;
+// an empty BENCH: line or a name that is not an id is refused. Whether the
+// name is registered (in the benches set) is checked by ns_card_push, in the
+// same call that stores the card.
+func parseBench(value string, declared bool) (string, error) {
+	if !declared {
+		return "", nil
+	}
+	if !idRE.MatchString(value) {
+		return "", fmt.Errorf("BENCH: %q is not a bench name; name one registered bench or drop the BENCH: line", value)
+	}
+	return value, nil
 }
 
 // parseHeader reads the contract line and the contiguous KEY: value block
