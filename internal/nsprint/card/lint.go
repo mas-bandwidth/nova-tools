@@ -208,6 +208,46 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	}, nil
 }
 
+// recordFields maps a stored card record's fields (ns_card_push and
+// ns_card_header) to the header keys push required of the card body.
+var recordFields = []struct{ field, key string }{
+	{"base", "BASE"}, {"base_sha", "base-sha"}, {"paths", "PATHS"}, {"done_when", "DONE-WHEN"},
+}
+
+// Lint judges a stored card record, the HGETALL of s:<S>:card:<label>, the
+// way push judged the card's header: a required field is present, base-sha
+// is 40 lowercase hex, the label is an id, the kind is a RESULT or runner
+// kind and a route is pro or flash. It reads nothing and probes no forge
+// (push already checked the repository), so preflight 7.13 can run it over
+// every queued card from Redis alone. DEPENDS-ON is not judged: push stores
+// "none" as an empty depends_on.
+func Lint(record map[string]string) error {
+	var missing []string
+	for _, f := range recordFields {
+		if strings.TrimSpace(record[f.field]) == "" {
+			missing = append(missing, f.key)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing %s", strings.Join(missing, ", "))
+	}
+	if !idRE.MatchString(record["label"]) {
+		return fmt.Errorf("label %q is not a card id", record["label"])
+	}
+	if !shaRE.MatchString(record["base_sha"]) {
+		return errors.New("base-sha is not 40 lowercase hex")
+	}
+	if err := checkKind(record["kind"]); err != nil {
+		return err
+	}
+	if route, ok := record["route"]; ok {
+		if _, err := parseRoute(route, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // The routes a card may carry: the rung of internal/nsprint/route/routes.yaml
 // the bench harness picks its model from (nova-sprint routes --tier <route>,
 // first allowed route). A card with no ROUTE line is flash.
