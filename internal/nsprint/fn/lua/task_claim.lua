@@ -340,3 +340,7 @@ redis.register_function('ns_task_push', task_push)
 redis.register_function('ns_task_take', task_take)
 redis.register_function('ns_task_done', task_done)
 redis.register_function('ns_task_take_denied', task_take_denied)
+
+-- task_take.lua (a later file, in its own do-block) claims a batch through
+-- this one guarded take (#3261); NS is the only way across file blocks.
+NS.claim = { take = task_take }

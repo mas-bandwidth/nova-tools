@@ -20,9 +20,16 @@ import (
 // within each sprint. A zero limit means all currently free friend slots.
 // Every individual claim still happens in the guarded Redis Function. actor is
 // recorded on each take receipt as given (the CLI passes the initiator); as is
-// the receipt's `for`. The first round trip is one pipeline of the desired
-// slots, starting, living, sprint:order and `friends` membership of as; a
-// non-member returns ErrNotFriend before any claim (#2929 rev 6).
+// the receipt's `for`.
+//
+// It costs two round trips however many sprints and claims (#3261; it was
+// 4 + S + 2k): one pipeline reads the `friends` membership of as, its desired
+// slots, starting, living and ns_task_take_view (every open sprint's queue
+// for as and the task fields its rank needs); Go ranks in memory
+// (deal.RankSnapshot); one ns_task_take_n call claims down the ranked list
+// until the free slots fill. A non-member returns ErrNotFriend before any
+// claim (#2929 rev 6). Only a candidate whose attempt moved between the two
+// round trips (RETRY, a race) costs a further single take.
 func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, limit int, actor, idem string) ([]Claim, error) {
 	if st == nil || as == "" || limit < 0 {
 		return nil, fmt.Errorf("task take: store, as and nonnegative n are required")
@@ -33,10 +40,7 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 	desiredCmd := pipe.HGet(ctx, "friend:"+as+":desired", "slots")
 	startingCmd := pipe.ZCard(ctx, "friend:"+as+":starting")
 	livingCmd := pipe.ZCard(ctx, "friend:"+as+":living")
-	var orderCmd *redis.StringSliceCmd
-	if sprint == "" {
-		orderCmd = pipe.ZRange(ctx, "sprint:order", 0, -1)
-	}
+	viewCmd := pipe.FCallRO(ctx, FunctionTakeView, nil, as, sprint, id)
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return nil, fmt.Errorf("task take: read friend %s: %w", as, err)
 	}
@@ -54,45 +58,143 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 	if limit == 0 || limit > free {
 		limit = free
 	}
-	sprints := []string{sprint}
-	if orderCmd != nil {
-		sprints = orderCmd.Val()
+	candidates, err := takeCandidates(viewCmd.Val(), as, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		return []Claim{}, nil
+	}
+	strict := "0"
+	if id != "" {
+		strict = "1"
+	}
+	args := []any{as, strconv.Itoa(limit), strict, actor, idem}
+	for _, c := range candidates {
+		random, err := RandomToken()
+		if err != nil {
+			return nil, err
+		}
+		token := fmt.Sprintf("%d.%s", c.attempt, random)
+		sum := sha256.Sum256([]byte(token))
+		args = append(args, c.sprint, c.id, c.attempt, token, hex.EncodeToString(sum[:])[:12])
+	}
+	reply, err := client.FCall(ctx, FunctionTakeN, nil, args...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("task take: %w", err)
+	}
+	entries, ok := reply.([]any)
+	if !ok {
+		return nil, fmt.Errorf("task take: unexpected batch reply %T", reply)
 	}
 	claims := make([]Claim, 0, limit)
-	for _, name := range sprints {
-		if name == "" {
-			continue
+	var retry []TakeRequest
+	for _, entry := range entries {
+		values, ok := entry.([]any)
+		if !ok || len(values) == 0 {
+			return claims, fmt.Errorf("task take: unexpected batch entry %T", entry)
 		}
-		ids := []string{id}
-		if id == "" {
-			ranks, err := deal.RankTasks(ctx, st, name, as, io.Discard)
-			if err != nil {
-				return nil, fmt.Errorf("task take: rank %s/%s: %w", name, as, err)
-			}
-			ids = make([]string, len(ranks))
-			for i, r := range ranks {
-				ids[i] = r.ID
-			}
-		}
-		for _, taskID := range ids {
-			claim, ok, err := Take(ctx, st, TakeRequest{Sprint: name, ID: taskID, As: as, Actor: actor, Idem: idem})
-			var blocked *BlockedError
-			if id == "" && errors.As(err, &blocked) {
-				// Without --id a task with unmet needs is passed over.
-				continue
-			}
+		status := fmt.Sprint(values[0])
+		if status == TakeClaimed {
+			claim, err := parseClaim(values)
 			if err != nil {
 				return claims, err
 			}
-			if ok {
-				claims = append(claims, claim)
-				if len(claims) == limit {
-					return claims, nil
-				}
+			claims = append(claims, claim)
+			continue
+		}
+		if len(values) < 4 {
+			return claims, fmt.Errorf("task take: short batch entry %v", values)
+		}
+		name, taskID, detail := fmt.Sprint(values[1]), fmt.Sprint(values[2]), fmt.Sprint(values[3])
+		switch status {
+		case TakeBlocked:
+			if id != "" {
+				return claims, &BlockedError{Sprint: name, ID: taskID, Needs: strings.Fields(detail)}
 			}
+			// Without --id a task with unmet needs is passed over.
+		case "RETRY":
+			retry = append(retry, TakeRequest{Sprint: name, ID: taskID, As: as, Actor: actor, Idem: idem})
+		case "DOWN", "FULL":
+			return claims, fmt.Errorf("task take %s: friend %s is %s", taskID, as, status)
+		default:
+			return claims, fmt.Errorf("task take %s: unexpected status %q", taskID, status)
+		}
+	}
+	for _, req := range retry {
+		if len(claims) == limit {
+			break
+		}
+		claim, ok, err := Take(ctx, st, req)
+		var blocked *BlockedError
+		if id == "" && errors.As(err, &blocked) {
+			continue
+		}
+		if err != nil {
+			return claims, err
+		}
+		if ok {
+			claims = append(claims, claim)
 		}
 	}
 	return claims, nil
+}
+
+// takeCandidate is one ranked task with the attempt its fence token names.
+type takeCandidate struct {
+	sprint, id string
+	attempt    int
+}
+
+// takeCandidates turns the ns_task_take_view reply into the take order: the
+// sprints as the view listed them (sprint:order), and within each sprint the
+// rank order of deal.RankSnapshot, or the one id when id is set.
+func takeCandidates(view any, as, id string) ([]takeCandidate, error) {
+	sprints, ok := view.([]any)
+	if !ok {
+		return nil, fmt.Errorf("task take: unexpected view reply %T", view)
+	}
+	var out []takeCandidate
+	for _, raw := range sprints {
+		parts, ok := raw.([]any)
+		if !ok || len(parts) != 3 {
+			return nil, fmt.Errorf("task take: unexpected view sprint %v", raw)
+		}
+		name := fmt.Sprint(parts[0])
+		open, _ := parts[1].([]any)
+		flat, _ := parts[2].([]any)
+		const width = 8 // id + title est priority pushed_at owner state attempt
+		if len(open)%2 != 0 || len(flat)%width != 0 {
+			return nil, fmt.Errorf("task take: view of %s has %d open and %d field values", name, len(open), len(flat))
+		}
+		fields := make(map[string][]any, len(flat)/width)
+		attempts := make(map[string]int, len(flat)/width)
+		for i := 0; i < len(flat); i += width {
+			taskID := fmt.Sprint(flat[i])
+			fields[taskID] = flat[i+1 : i+7]
+			attempt, _ := strconv.Atoi(fmt.Sprint(flat[i+7]))
+			attempts[taskID] = attempt
+		}
+		if id != "" {
+			out = append(out, takeCandidate{sprint: name, id: id, attempt: attempts[id] + 1})
+			continue
+		}
+		scores := make(map[string]float64, len(open)/2)
+		owners := make(map[string]string, len(open)/2)
+		for i := 0; i < len(open); i += 2 {
+			score, err := strconv.ParseFloat(fmt.Sprint(open[i+1]), 64)
+			if err != nil {
+				return nil, fmt.Errorf("task take: %s open score %v: %w", name, open[i+1], err)
+			}
+			taskID := fmt.Sprint(open[i])
+			scores[taskID], owners[taskID] = score, as
+		}
+		ranks := deal.RankSnapshot(deal.RankInput{Sprint: name, As: as, OpenScores: scores, OpenOwners: owners, Fields: fields}, io.Discard)
+		for _, r := range ranks {
+			out = append(out, takeCandidate{sprint: name, id: r.ID, attempt: attempts[r.ID] + 1})
+		}
+	}
+	return out, nil
 }
 
 // TakeRequest is one task take (spec 4.2). As is the consumer/friend name.
@@ -210,12 +312,22 @@ func Take(ctx context.Context, st *store.Store, req TakeRequest) (Claim, bool, e
 	default:
 		return Claim{}, false, fmt.Errorf("task take %s: unexpected status %q", req.ID, status)
 	}
+	claim, err := parseClaim(values)
+	if err != nil {
+		return Claim{}, false, err
+	}
+	return claim, true, nil
+}
+
+// parseClaim reads one CLAIMED reply of ns_task_take: status, sprint, id,
+// attempt, token, then kind, ref and title.
+func parseClaim(values []any) (Claim, error) {
 	if len(values) < 5 {
-		return Claim{}, false, fmt.Errorf("task take %s: short claim reply", req.ID)
+		return Claim{}, fmt.Errorf("task take: short claim reply %v", values)
 	}
 	attempt, err := strconv.Atoi(fmt.Sprint(values[3]))
 	if err != nil {
-		return Claim{}, false, fmt.Errorf("task take %s: attempt %v: %w", req.ID, values[3], err)
+		return Claim{}, fmt.Errorf("task take %v: attempt %v: %w", values[2], values[3], err)
 	}
 	claim := Claim{
 		Sprint:  fmt.Sprint(values[1]),
@@ -226,7 +338,7 @@ func Take(ctx context.Context, st *store.Store, req TakeRequest) (Claim, bool, e
 	if len(values) >= 8 {
 		claim.Kind, claim.Ref, claim.Title = fmt.Sprint(values[5]), fmt.Sprint(values[6]), fmt.Sprint(values[7])
 	}
-	return claim, true, nil
+	return claim, nil
 }
 
 // TakeStatus words returned by ns_task_take.

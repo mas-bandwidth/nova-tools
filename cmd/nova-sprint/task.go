@@ -229,6 +229,7 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 		_, _ = fmt.Fprintf(out, "TAKE DENIED id=%s as=%s initiator=%s\n", *id, *as, initiator)
 		return 6
 	}
+	trips := st.CountTrips()
 	claims, err := task.TakeAvailable(ctx, st, *as, *sprint, *id, *n, initiator, *idem)
 	var blocked *task.BlockedError
 	if errors.As(err, &blocked) {
@@ -239,13 +240,15 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if err != nil {
 		return refuseSeat(errOut, "task take", initiator, err)
 	}
+	// #3261: trips=<n> is the take's Redis round trips (2 for any number of
+	// sprints and claims; 1 when nothing is claimable).
 	if len(claims) == 0 {
-		fmt.Fprintln(out, "NONE")
+		fmt.Fprintf(out, "NONE trips=%d\n", trips.N())
 		return 0
 	}
 	for _, claim := range claims {
-		fmt.Fprintf(out, "CLAIMED %s/%s attempt=%d token=%s\n",
-			claim.Sprint, claim.ID, claim.Attempt, claim.Token)
+		fmt.Fprintf(out, "CLAIMED %s/%s attempt=%d token=%s trips=%d\n",
+			claim.Sprint, claim.ID, claim.Attempt, claim.Token, trips.N())
 		_, _ = fmt.Fprintf(out, "TASK %s kind=%s ref=%s title=%s\n",
 			claim.ID, claim.Kind, claim.Ref, strconv.Quote(claim.Title))
 	}
