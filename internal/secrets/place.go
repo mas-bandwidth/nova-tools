@@ -2,18 +2,18 @@ package secrets
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/benchsh"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // place.go implements issue #764: `nova-secrets place` copies one named secret from the
@@ -245,32 +245,35 @@ func RunPlaced(in PlacedInput) (string, []string, error) {
 	return okLine, items, nil
 }
 
+// placeScript writes its stdin to $1 with mode 0600, creating the directory. It runs on
+// the machine under bash through internal/benchsh (#3350), never the login shell.
+const placeScript = `set -e
+umask 077
+mkdir -p "$(dirname "$1")"
+cat > "$1"
+chmod 600 "$1"
+`
+
 // sshPlaceSecret writes value to remotePath over ssh with mode 0600. The value travels on
-// stdin; the remote path is the only caller text in the command, shell-quoted.
+// stdin after benchsh's one exec line; the remote path is an argument ($1), never command text.
 func sshPlaceSecret(sshPath, target, remotePath, value string) error {
-	remoteCmd := fmt.Sprintf("umask 077 && set -e && mkdir -p \"$(dirname %s)\" && cat > %s && chmod 600 %s",
-		shSingleQuote(remotePath), shSingleQuote(remotePath), shSingleQuote(remotePath))
-	testguard.RefuseHosts(sshPath, target, remoteCmd)
-	cmd := exec.Command(sshPath, target, remoteCmd)
-	cmd.Stdin = bytes.NewReader([]byte(value))
+	cmd, err := benchsh.Command(context.Background(), benchsh.Target{Host: target, SSH: sshPath}, placeScript,
+		strings.NewReader(value), remotePath)
+	if err != nil {
+		return fmt.Errorf("ssh to %s failed: %s", target, oneline.Err(err))
+	}
 	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
+	cmd.Stdout, cmd.Stderr = &stderrBuf, &stderrBuf
 	if err := cmd.Run(); err != nil {
-		code := 1
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			code = exitErr.ExitCode()
+		code := benchsh.Code(err)
+		if code < 0 {
+			code = 1
 		}
 		// The remote transcript is withheld; it can carry a command's own output and this
 		// path exists for a value, so nothing from it is printed.
 		return fmt.Errorf("ssh to %s failed: exit %d (transcript withheld)", target, code)
 	}
 	return nil
-}
-
-// shSingleQuote wraps s in POSIX single quotes, escaping an embedded single quote, so the
-// remote shell sees exactly the path this tool wrote.
-func shSingleQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // receiptPath names one machine's receipt file.
