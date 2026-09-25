@@ -9,9 +9,11 @@ import (
 )
 
 // adHocScript matches a go-redis call that sends EVAL or EVALSHA (Eval,
-// EvalSha, EvalRO, EvalShaRO, a redis.NewScript's Run/Load) or a raw
-// EVAL/EVALSHA/SCRIPT command name.
-var adHocScript = regexp.MustCompile(`redis\.NewScript\(|\.Eval(Sha)?(RO|Ro)?\(|\.Script(Load|Exists|Flush|Kill)\(|"(?i:evalsha|eval|eval_ro|evalsha_ro|script)"`)
+// EvalSha, EvalRO, EvalShaRO, a redis.NewScript's Run/Load), a Script* call,
+// or a raw Do whose first argument is an EVAL/EVALSHA/SCRIPT command name. A
+// bare "script" literal elsewhere is not a Redis command (KindScript, the
+// card KIND in kinds.go, is one), so the command-name form is anchored on Do.
+var adHocScript = regexp.MustCompile(`redis\.NewScript\(|\.Eval(Sha)?(RO|Ro)?\(|\.Script(Load|Exists|Flush|Kill)\(|\.Do\(\s*ctx\s*,\s*"(?i:evalsha|eval|eval_ro|evalsha_ro|script)"`)
 
 // TestCardPackageSendsNoAdHocScript is the #3419 source control: no non-test
 // Go file of package card sends an ad-hoc script. Every atomic step of the
