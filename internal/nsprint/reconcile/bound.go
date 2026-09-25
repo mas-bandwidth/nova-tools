@@ -164,3 +164,58 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// Duty bounding by the lease (nova-tools #3805).
+//
+// THE HURT. The deal pass bounded its bench sessions by the lease (#3322, #3737),
+// but the other duties -- dev-red, expire, route and ok-to-friend -- were
+// protected only by the heartbeat. A duty that ran past the lease TTL would
+// write after another instance had already taken over, leaving inconsistent
+// state or being refused FENCED partway through.
+//
+// THE RULE. Every duty checks the lease before starting new work: if the lease
+// is fenced or less than the write margin is left, the duty stops and records
+// what it did. A fenced duty returns ErrDutyFenced; a margin-bounded one
+// returns ErrDutyMargin with the count of work not started.
+
+// ErrDutyFenced: the reconciler lease is held by another instance; the duty
+// must stop and the reconciler exits.
+var ErrDutyFenced = errors.New("FENCED: duty stopped: lease lost")
+
+// ErrDutyMargin: less than the write margin of the lease is left; the duty
+// stops starting new work and records what it did.
+type ErrDutyMargin struct {
+	Left   int // work items not started
+	Reason string
+}
+
+func (e *ErrDutyMargin) Error() string {
+	return fmt.Sprintf("LEASE-MARGIN: duty stopped: %s, %d left", e.Reason, e.Left)
+}
+
+// DutyStop reports whether the duty should stop starting new work, and why.
+// It returns (fenced, margin) where fenced means the lease is lost for good,
+// and margin means less than the write margin is left.
+func DutyStop(l *Lease, margin time.Duration) (fenced bool, left time.Duration) {
+	if l.Fenced() {
+		return true, 0
+	}
+	rem := l.Remaining()
+	if rem <= margin {
+		return false, rem
+	}
+	return false, rem
+}
+
+// DutyMustStop is the one check a duty makes before starting new work: true
+// when the lease is fenced or less than the write margin is left.
+func DutyMustStop(l *Lease, margin time.Duration) bool {
+	if margin <= 0 {
+		margin = DefaultWriteMargin
+	}
+	fenced, _ := DutyStop(l, margin)
+	if fenced {
+		return true
+	}
+	return l.Remaining() <= margin
+}

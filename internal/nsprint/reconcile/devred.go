@@ -81,6 +81,9 @@ type DevRed struct {
 	ForgeEvery time.Duration
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
+	// Margin is the least lease time a base starts with; 0 is
+	// DefaultWriteMargin.
+	Margin time.Duration
 }
 
 // Outcome is one base's result in one pass, for the verb's receipt.
@@ -120,13 +123,23 @@ func short8(s string) string {
 	return s
 }
 
-// Run is the reconcile.Duty: one pass over every watched base. The lease is
-// not consulted: every write here is idempotent on the tip sha (HSETNX-shaped
-// by the sha compare) and a stale instance writing the same record is
-// harmless, so the duty needs no fence token.
-func (d *DevRed) Run(ctx context.Context, _ *Lease) (Counts, error) {
-	outs, err := d.Pass(ctx)
+// Run is the reconcile.Duty: one pass over every watched base, bounded by
+// the lease. The duty stops starting new bases when the lease is fenced or
+// less than the write margin is left, and returns ErrDutyFenced or
+// ErrDutyMargin with the count of bases not started.
+func (d *DevRed) Run(ctx context.Context, l *Lease) (Counts, error) {
+	margin := d.Margin
+	if margin <= 0 {
+		margin = DefaultWriteMargin
+	}
+	outs, _, err := d.Pass(ctx, l, margin)
 	var errs []error
+	if errors.Is(err, ErrDutyFenced) {
+		return Counts{Dealt: len(outs)}, ErrDutyFenced
+	}
+	if me, ok := err.(*ErrDutyMargin); ok {
+		return Counts{Dealt: len(outs)}, me
+	}
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -135,19 +148,23 @@ func (d *DevRed) Run(ctx context.Context, _ *Lease) (Counts, error) {
 			errs = append(errs, fmt.Errorf("%s/%s: %w", o.Repo, o.Base, o.Err))
 		}
 	}
-	return Counts{}, errors.Join(errs...)
+	if len(errs) > 0 {
+		return Counts{Dealt: len(outs)}, errors.Join(errs...)
+	}
+	return Counts{Dealt: len(outs)}, nil
 }
 
-// Pass runs one pass and returns one Outcome per base, in the order watched.
-func (d *DevRed) Pass(ctx context.Context) ([]Outcome, error) {
+// Pass runs one pass and returns one Outcome per base that was processed,
+// the number of bases not started (the lease bound), and an error.
+func (d *DevRed) Pass(ctx context.Context, l *Lease, margin time.Duration) ([]Outcome, int, error) {
 	if d.Client == nil {
-		return nil, fmt.Errorf("dev-red: nil client")
+		return nil, 0, fmt.Errorf("dev-red: nil client")
 	}
 	bases := d.Bases
 	if len(bases) == 0 {
 		members, err := d.Client.SMembers(ctx, BasesKey).Result()
 		if err != nil && !errors.Is(err, redis.Nil) {
-			return nil, fmt.Errorf("dev-red: read %s: %w", BasesKey, err)
+			return nil, 0, fmt.Errorf("dev-red: read %s: %w", BasesKey, err)
 		}
 		for _, m := range members {
 			repo, base, ok := strings.Cut(m, "/")
@@ -157,11 +174,23 @@ func (d *DevRed) Pass(ctx context.Context) ([]Outcome, error) {
 		}
 	}
 	outs := make([]Outcome, 0, len(bases))
-	for _, rb := range bases {
+	for i, rb := range bases {
+		if l != nil && DutyMustStop(l, margin) {
+			if l.Fenced() {
+				return outs, len(bases) - i, ErrDutyFenced
+			}
+			return outs, len(bases) - i, &ErrDutyMargin{Left: len(bases) - i, Reason: "dev-red"}
+		}
 		o := d.one(ctx, rb)
 		outs = append(outs, o)
 	}
-	return outs, nil
+	return outs, 0, nil
+}
+
+// RunNoLease runs one pass without lease bounding (CLI only).
+func (d *DevRed) RunNoLease(ctx context.Context) ([]Outcome, error) {
+	outs, _, err := d.Pass(ctx, nil, 0)
+	return outs, err
 }
 
 func (d *DevRed) now() time.Time {

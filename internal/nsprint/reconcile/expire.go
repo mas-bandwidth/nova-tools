@@ -93,6 +93,9 @@ func ExpireStampField(sprint string) string { return "expire_at:" + sprint }
 type Expire struct {
 	Client *redis.Client
 	Prober Prober
+	// Margin is the least lease time the sweep starts with; 0 is
+	// DefaultWriteMargin.
+	Margin time.Duration
 
 	mu      sync.Mutex
 	sprints []string // the sprint index as the last gate read it
@@ -105,16 +108,26 @@ type gateRow struct {
 }
 
 // Run is one pass of the duty: the gate for every sprint in one round trip,
-// then one sweep over the sprints that are due.
+// then one sweep over the sprints that are due, bounded by the lease.
 func (e *Expire) Run(ctx context.Context, l *Lease) (Counts, error) {
 	if e == nil || e.Client == nil || l == nil {
 		return Counts{}, errors.New("expire: no store or no lease")
+	}
+	margin := e.Margin
+	if margin <= 0 {
+		margin = DefaultWriteMargin
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	due, benches, now, err := e.gate(ctx)
 	if err != nil || len(due) == 0 {
 		return Counts{}, err
+	}
+	if DutyMustStop(l, margin) {
+		if l.Fenced() {
+			return Counts{}, ErrDutyFenced
+		}
+		return Counts{}, &ErrDutyMargin{Left: len(due), Reason: "expire"}
 	}
 	if !e.loaded {
 		if err := fn.LoadMissing(ctx, e.Client); err != nil {

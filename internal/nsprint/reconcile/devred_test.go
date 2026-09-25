@@ -49,7 +49,7 @@ func TestDevRedPushesOneTaskOnceAndHolds(t *testing.T) {
 	c.HSet(ctx, civerdict.TipKey("nova-tools", "dev"), "sha", redSHA)
 	c.HSet(ctx, reconcile.CIRecordKey("nova-tools", redSHA), "verdict", "FAIL", "check", "test-packages/internal/ci")
 
-	outs, err := d.Pass(ctx)
+	outs, _, err := d.Pass(ctx, nil, 0)
 	if err != nil || len(outs) != 1 || outs[0].Err != nil {
 		t.Fatalf("pass: %v %+v", err, outs)
 	}
@@ -57,7 +57,7 @@ func TestDevRedPushesOneTaskOnceAndHolds(t *testing.T) {
 		t.Fatalf("first pass: %s", outs[0].Line())
 	}
 	for i := 0; i < 5; i++ {
-		outs, _ = d.Pass(ctx)
+		outs, _, _ = d.Pass(ctx, nil, 0)
 		if outs[0].Action != "HOLDING" {
 			t.Fatalf("pass %d: %s", i+2, outs[0].Line())
 		}
@@ -82,21 +82,21 @@ func TestDevRedPushesOneTaskOnceAndHolds(t *testing.T) {
 
 	// A record with no verdict on a later tip is no evidence: the hold stays.
 	c.HSet(ctx, civerdict.TipKey("nova-tools", "dev"), "sha", greenSHA)
-	outs, _ = d.Pass(ctx)
+	outs, _, _ = d.Pass(ctx, nil, 0)
 	if outs[0].Action != "HOLDING" {
 		t.Fatalf("no evidence: %s", outs[0].Line())
 	}
 
 	// Green at the tip clears the hold and the gate.
 	c.HSet(ctx, reconcile.CIRecordKey("nova-tools", greenSHA), "verdict", "OK")
-	outs, _ = d.Pass(ctx)
+	outs, _, _ = d.Pass(ctx, nil, 0)
 	if outs[0].Action != "CLEARED" || outs[0].Task != "dev-red-nova-tools-dev-aaaaaaaa" {
 		t.Fatalf("green: %s", outs[0].Line())
 	}
 	if why, _ := land.RedBlocked(ctx, c, "nova-tools", "dev"); why != "" {
 		t.Fatalf("gate still set: %q", why)
 	}
-	outs, _ = d.Pass(ctx)
+	outs, _, _ = d.Pass(ctx, nil, 0)
 	if outs[0].Action != "GREEN" {
 		t.Fatalf("steady green: %s", outs[0].Line())
 	}
@@ -117,7 +117,7 @@ func TestDevRedForgeReadIsBudgeted(t *testing.T) {
 	}
 	d.ForgeEvery = time.Hour
 	for i := 0; i < 4; i++ {
-		outs, err := d.Pass(ctx)
+		outs, _, err := d.Pass(ctx, nil, 0)
 		if err != nil || outs[0].Err != nil {
 			t.Fatal(err, outs)
 		}
@@ -132,12 +132,12 @@ func TestDevRedForgeReadIsBudgeted(t *testing.T) {
 func TestDevRedWatchesTheBasesSet(t *testing.T) {
 	ctx, c, _, d := devredFixture(t)
 	d.Bases = nil
-	outs, err := d.Pass(ctx)
+	outs, _, err := d.Pass(ctx, nil, 0)
 	if err != nil || len(outs) != 0 {
 		t.Fatalf("empty set: %v %+v", err, outs)
 	}
 	c.SAdd(ctx, reconcile.BasesKey, "rowan-tools/main")
-	outs, err = d.Pass(ctx)
+	outs, _, err = d.Pass(ctx, nil, 0)
 	if err != nil || len(outs) != 1 || outs[0].Action != "NOTIP" || outs[0].Repo != "rowan-tools" {
 		t.Fatalf("set: %v %+v", err, outs)
 	}

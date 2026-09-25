@@ -67,6 +67,9 @@ type RouteDuty struct {
 	// ConsumerMaxIdle is the sweep's idle bar; DefaultConsumerMaxIdle when
 	// zero.
 	ConsumerMaxIdle time.Duration
+	// Margin is the least lease time a sprint starts with; 0 is
+	// DefaultWriteMargin.
+	Margin time.Duration
 
 	instance string
 	groups   map[string]bool
@@ -83,9 +86,10 @@ type RouteResult struct {
 	Merging []string
 	Carried []string       // read tasks carried to a new head (identical diff)
 	Skips   map[string]int // why -> count, for the pass line
+	Left    int            // sprints not started (the lease bound, #3805)
 }
 
-// Run is one route pass over every open sprint.
+// Run is one route pass over every open sprint, bounded by the lease.
 func (d *RouteDuty) Run(ctx context.Context, l *Lease) (Counts, error) {
 	if d.Client == nil || l == nil {
 		return Counts{}, fmt.Errorf("route: client and lease are required")
@@ -95,15 +99,20 @@ func (d *RouteDuty) Run(ctx context.Context, l *Lease) (Counts, error) {
 		d.groups, d.done = map[string]bool{}, map[string]bool{}
 		d.swept = map[string]time.Time{}
 	}
-	res, err := d.Pass(ctx, l.Token())
+	margin := d.Margin
+	if margin <= 0 {
+		margin = DefaultWriteMargin
+	}
+	res, err := d.Pass(ctx, l, margin)
 	c := Counts{Reads: len(res.Reads), Fixes: len(res.Fixes), Merging: len(res.Merging), Carried: len(res.Carried)}
 	c.Routed = c.Reads + c.Fixes + c.Merging + c.Carried
 	return c, err
 }
 
-// Pass runs the three legs over every open sprint with the given fence
-// token and returns what moved.
-func (d *RouteDuty) Pass(ctx context.Context, token string) (RouteResult, error) {
+// Pass runs the three legs over every open sprint with the given lease and
+// returns what moved. It stops starting new sprints when the lease is fenced
+// or less than the write margin is left.
+func (d *RouteDuty) Pass(ctx context.Context, l *Lease, margin time.Duration) (RouteResult, error) {
 	res := RouteResult{Skips: map[string]int{}}
 	if d.groups == nil {
 		d.groups, d.done = map[string]bool{}, map[string]bool{}
@@ -123,8 +132,16 @@ func (d *RouteDuty) Pass(ctx context.Context, token string) (RouteResult, error)
 	if err != nil {
 		return res, fmt.Errorf("route: coordinator: %w", err)
 	}
+	token := l.Token()
 	var errs []string
-	for _, s := range sprints {
+	for i, s := range sprints {
+		if DutyMustStop(l, margin) {
+			res.Left = len(sprints) - i
+			if l.Fenced() {
+				return res, ErrDutyFenced
+			}
+			return res, &ErrDutyMargin{Left: res.Left, Reason: "route"}
+		}
 		stream, err := d.Client.HGet(ctx, "s:"+s, "stream").Result()
 		if err != nil && !errors.Is(err, redis.Nil) {
 			return res, fmt.Errorf("route: %s: %w", s, err)

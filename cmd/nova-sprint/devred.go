@@ -219,7 +219,7 @@ func runDevRed(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return 0
 	}
 	d := devRedDuty(st, []land.RepoBase{rb}, *sprint, *to, *forge)
-	outs, err := d.Pass(ctx)
+	outs, _, err := d.Pass(ctx, nil, 0)
 	if err != nil {
 		fmt.Fprintf(errOut, "nova-sprint %s: %v\n", name, err)
 		return 1
