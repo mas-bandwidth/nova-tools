@@ -25,6 +25,7 @@ type Counts struct {
 	Reads   int // read tasks pushed to a reader's queue
 	Fixes   int // fix tasks pushed to an author's queue
 	Merging int // tasks moved to merging
+	Carried int // read tasks carried to a new head with an identical diff (#3580)
 }
 
 func (c *Counts) add(o Counts) {
@@ -36,6 +37,7 @@ func (c *Counts) add(o Counts) {
 	c.Reads += o.Reads
 	c.Fixes += o.Fixes
 	c.Merging += o.Merging
+	c.Carried += o.Carried
 }
 
 // Zero is true when the pass moved nothing.
@@ -43,8 +45,8 @@ func (c Counts) Zero() bool { return c == Counts{} }
 
 // Line is the counts as receipt words, in a fixed order.
 func (c Counts) Line() string {
-	return fmt.Sprintf("dealt=%d routed=%d expired=%d retried=%d ambiguous=%d reads=%d fixes=%d merging=%d",
-		c.Dealt, c.Routed, c.Expired, c.Retried, c.Ambiguous, c.Reads, c.Fixes, c.Merging)
+	return fmt.Sprintf("dealt=%d routed=%d expired=%d retried=%d ambiguous=%d reads=%d fixes=%d merging=%d carried=%d",
+		c.Dealt, c.Routed, c.Expired, c.Retried, c.Ambiguous, c.Reads, c.Fixes, c.Merging, c.Carried)
 }
 
 // Duty is one reconciler duty (spec 5.2): deal (#2743), refill (#2935),
