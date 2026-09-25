@@ -36,7 +36,7 @@ func init() {
 	})
 	register(Verb{
 		Name:    "land",
-		Summary: "land --repo <r> --stream <s> | status|flaky|stream|merge|run|offer|list ...: the whole stream landing (build, ci, merge on green), lander status, flaky store, its steps (land stream/merge, land status --repo), and the fenced stream-PR lander (land run/offer/list, #2942)",
+		Summary: "land --repo <r> --stream <s> | status|flaky|stream|merge|run|offer|list|migrate ...: the whole stream landing (build, ci, merge on green), lander status, flaky store, its steps (land stream/merge, land status --repo), and the fenced stream-PR lander (land run/offer/list/migrate, #2942)",
 		Run:     runLand,
 	})
 }
@@ -141,7 +141,7 @@ func unitHeader(u *land.Unit) string {
 
 func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or run or offer or list (land run is the fenced stream-PR lander, #2942)")
+		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or run or offer or list or migrate (land run is the fenced stream-PR lander, #2942)")
 	}
 	if strings.HasPrefix(args[0], "-") {
 		return runLandWhole(ctx, args, out, errOut) // the whole stream landing, #3598
@@ -156,6 +156,8 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runLandOffer(ctx, args[1:], out, errOut)
 	case "list":
 		return runLandList(ctx, args[1:], out, errOut)
+	case "migrate":
+		return runLandMigrate(ctx, args[1:], out, errOut)
 	}
 	if args[0] == "eval" {
 		return runLandEval(ctx, args[1:], out, errOut)
@@ -176,7 +178,7 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runLandStreamStatus(ctx, args[1:], out, errOut)
 	}
 	if args[0] != "status" {
-		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or run or offer or list (land run is the fenced stream-PR lander, #2942)")
+		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or run or offer or list or migrate (land run is the fenced stream-PR lander, #2942)")
 	}
 	const usage = "land status [<unit>] --redis <addr> --sprint <S>"
 	addr, sprint, now, pos, err := readFlags("land status", args[1:])
