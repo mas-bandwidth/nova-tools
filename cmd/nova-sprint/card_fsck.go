@@ -62,6 +62,9 @@ func runFsck(ctx context.Context, addr, sprint string, repair bool, verb, remedy
 	for _, l := range rep.Lines {
 		fmt.Fprintf(stderr, "DRIFT %s\n", oneline.Escape(l))
 	}
+	for bench, repos := range rep.Nomirror {
+		fmt.Fprintf(stderr, "NOMIRROR bench=%s repos=%s\n", bench, strings.Join(repos, ","))
+	}
 	fmt.Fprintln(stdout, rep.Line(verb))
 	if !rep.Clean() {
 		fmt.Fprintf(stderr, "nova-sprint card: %d drift left; run: nova-sprint %s\n", rep.Drift-rep.Fixed, remedy)

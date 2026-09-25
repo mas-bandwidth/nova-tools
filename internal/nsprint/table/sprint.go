@@ -118,6 +118,7 @@ type HostRow struct {
 	Ready, Working int64
 	Load           string
 	Down           bool
+	Nomirror       string // repos whose bench mirror this bench lacks
 }
 
 // hostBeatStale is how old a beat's own at may be before the row prints
@@ -184,13 +185,15 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	type hostCmds struct {
 		ready, working *redis.IntCmd
 		beat           *redis.SliceCmd
+		nomirror       *redis.StringSliceCmd
 	}
 	hosts := make([]hostCmds, len(r.benches))
 	for i, b := range r.benches {
 		hosts[i] = hostCmds{
-			ready:   pipe.ZCard(ctx, "bench:"+b+":cards:ready"),
-			working: pipe.ZCard(ctx, "bench:"+b+":cards:working"),
-			beat:    pipe.HMGet(ctx, "bench:"+b+":beat", "load1", "at"),
+			ready:    pipe.ZCard(ctx, "bench:"+b+":cards:ready"),
+			working:  pipe.ZCard(ctx, "bench:"+b+":cards:working"),
+			beat:     pipe.HMGet(ctx, "bench:"+b+":beat", "load1", "at"),
+			nomirror: pipe.SMembers(ctx, "ci:nomirror:"+b),
 		}
 	}
 	roster := cfg.Friends
@@ -268,6 +271,9 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 					row.Load = load
 				}
 			}
+		}
+		if nm, err := hosts[i].nomirror.Result(); err == nil && len(nm) > 0 {
+			row.Nomirror = strings.Join(nm, ",")
 		}
 		snap.Hosts = append(snap.Hosts, row)
 	}
@@ -380,9 +386,13 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 		if row.Down {
 			load = "down"
 		}
+		nm := ""
+		if row.Nomirror != "" {
+			nm = " nomirror=" + row.Nomirror
+		}
 		// done/ok/fail are the swarm's counts, dashed while no swarm sprint
 		// runs (sprint-table-redis HOST_COUNTS=0, Glenn 2026-09-22 7:00 PM).
-		fmt.Fprintf(&b, "%-10s | %5d | %7d | %5s | %5s | %5s | %4s | %6s\n", row.Name, row.Ready, row.Working, "-", "-", "-", "-", load)
+		fmt.Fprintf(&b, "%-10s | %5d | %7d | %5s | %5s | %5s | %4s | %6s%s\n", row.Name, row.Ready, row.Working, "-", "-", "-", "-", load, nm)
 		hq, hw = hq+row.Ready, hw+row.Working
 	}
 	b.WriteString(liveBenchRule)
