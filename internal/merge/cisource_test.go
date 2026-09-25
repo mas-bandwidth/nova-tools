@@ -189,12 +189,18 @@ func TestLanderReadsCIFromRedisNeverCheckRuns(t *testing.T) {
 func TestChecksMapsTheRecordWord(t *testing.T) {
 	const repo, sha = "owner/repo", "deadbeef"
 
-	t.Run("production address has safe local default", func(t *testing.T) {
+	t.Run("production address refuses when nothing is set", func(t *testing.T) {
 		t.Setenv("REDIS_ADDR", "")
 		t.Setenv("NOVA_REDIS_HOST", "")
 		t.Setenv("NOVA_REDIS_PORT", "")
-		if got := redisAddrFromEnv(); got != "localhost:6379" {
-			t.Fatalf("redisAddrFromEnv() = %q, want localhost:6379", got)
+		addr, configured := redisAddrFromEnv()
+		if configured {
+			t.Fatalf("redisAddrFromEnv() = %q, configured=true; want configured=false", addr)
+		}
+		src := RedisFromEnv()
+		_, _, err := src.Read("owner/repo", "deadbeef")
+		if !errors.Is(err, ErrRedisAddrNotConfigured) {
+			t.Fatalf("RedisFromEnv().Read() err = %v, want ErrRedisAddrNotConfigured", err)
 		}
 	})
 
@@ -202,8 +208,9 @@ func TestChecksMapsTheRecordWord(t *testing.T) {
 		t.Setenv("REDIS_ADDR", "")
 		t.Setenv("NOVA_REDIS_HOST", "redis.example.test")
 		t.Setenv("NOVA_REDIS_PORT", "6380")
-		if got := redisAddrFromEnv(); got != "redis.example.test:6380" {
-			t.Fatalf("redisAddrFromEnv() = %q, want redis.example.test:6380", got)
+		addr, configured := redisAddrFromEnv()
+		if !configured || addr != "redis.example.test:6380" {
+			t.Fatalf("redisAddrFromEnv() = %q, configured=%v; want redis.example.test:6380, true", addr, configured)
 		}
 	})
 

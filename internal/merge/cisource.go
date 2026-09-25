@@ -37,6 +37,11 @@ import (
 // commit. A green check-run on GitHub does not change it.
 var ErrCIMissing = errors.New("ci: MISSING")
 
+// ErrRedisAddrNotConfigured is returned when neither REDIS_ADDR nor
+// NOVA_REDIS_HOST is set, so the production default of localhost is refused
+// by name rather than silently connecting to it.
+var ErrRedisAddrNotConfigured = errors.New("ci: Redis address not configured: set NOVA_REDIS_HOST or REDIS_ADDR")
+
 // CIFromRedis is the only Source GH.Checks reports.
 const CIFromRedis = "redis"
 
@@ -148,8 +153,13 @@ func (r *RedisCISource) Read(repo, sha string) (string, bool, error) {
 // RedisFromEnv builds the production source from the same NOVA_REDIS_* settings
 // used by the lander. REDIS_ADDR remains a compatibility override for local
 // callers. It needs no main.go wiring because NewGH calls it.
+// When neither REDIS_ADDR nor NOVA_REDIS_HOST is set, it returns a source
+// that refuses every Read with ErrRedisAddrNotConfigured, naming the remedy.
 func RedisFromEnv() CISource {
-	addr := redisAddrFromEnv()
+	addr, configured := redisAddrFromEnv()
+	if !configured {
+		return &refusedCISource{err: ErrRedisAddrNotConfigured}
+	}
 	db := 0
 	if v := strings.TrimSpace(os.Getenv("REDIS_DB")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -164,13 +174,23 @@ func RedisFromEnv() CISource {
 	})}
 }
 
-func redisAddrFromEnv() string {
+// refusedCISource is a CISource that refuses every Read with a named error.
+type refusedCISource struct{ err error }
+
+func (r *refusedCISource) Read(repo, sha string) (string, bool, error) {
+	return "", false, r.err
+}
+
+func redisAddrFromEnv() (addr string, configured bool) {
 	if addr := strings.TrimSpace(os.Getenv("REDIS_ADDR")); addr != "" {
-		return addr
+		return addr, true
 	}
-	host := envOr("NOVA_REDIS_HOST", "localhost")
+	host := strings.TrimSpace(os.Getenv("NOVA_REDIS_HOST"))
+	if host == "" {
+		return "", false
+	}
 	port := envOr("NOVA_REDIS_PORT", "6379")
-	return host + ":" + port
+	return host + ":" + port, true
 }
 
 func envOr(name, fallback string) string {
