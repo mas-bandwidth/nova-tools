@@ -102,7 +102,7 @@ func Ingest(ctx context.Context, c *redis.Client, req IngestRequest) (IngestResu
 	}
 	ln := res.Line
 	derived := ""
-	if ln.Type == TypeDisposition && ln.Verdict == "HOLD" && ln.Kind == "" {
+	if ln.Verdict == "HOLD" && ln.Kind == "" {
 		derived = Classify(ln.Reason, req.PR)
 	}
 	cid := CommentID(req.URL)

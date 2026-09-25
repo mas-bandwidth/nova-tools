@@ -121,6 +121,8 @@ func readsLine(p *Unit) (string, bool) {
 			other = append(other, r.Friend+" "+r.Verdict)
 		case !r.HasScore || r.Score < bar:
 			other = append(other, fmt.Sprintf("%s (<%d)", desc, bar))
+		case r.CarriedFrom != "":
+			counted = append(counted, desc+" @"+short(head)+" carried_from="+short(r.CarriedFrom))
 		default:
 			counted = append(counted, desc+" @"+short(head))
 		}
