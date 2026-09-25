@@ -80,7 +80,9 @@ type Loop struct {
 // Pass is one reconciler pass: renew the lease (a stale instance stops here
 // and no duty runs), run every duty with the token, then write the pass age
 // and counts to proc:reconciler in one fenced call that also renews the lease.
-// A duty error that is not a fence is recorded and does not stop the loop.
+// A duty error that is not a fence is recorded and does not stop the loop. A
+// lease fenced while a duty ran (the heartbeat, #3737) stops the pass after
+// that duty.
 //
 // The pass is timed on the lease clock (#3322), the clock its bench sessions
 // are bounded by, so took_ms and the session bound are one measurement: a
@@ -96,6 +98,13 @@ func (lp *Loop) Pass(ctx context.Context) (PassResult, error) {
 	for i, duty := range lp.Duties {
 		c, err := duty(ctx, lp.Lease)
 		if errors.Is(err, ErrFenced) {
+			// A duty's own fenced write was refused: the lease is lost for
+			// every other holder of it too (a harvest worker stops, #3737).
+			lp.Lease.Fence(err)
+			return PassResult{}, err
+		}
+		if err := lp.Lease.fencedErr(); err != nil {
+			// The heartbeat lost the lease while the duty ran.
 			return PassResult{}, err
 		}
 		if err != nil {
@@ -124,7 +133,8 @@ func (lp *Loop) Pass(ctx context.Context) (PassResult, error) {
 }
 
 // Run passes every Interval until ctx ends (nil), the lease is fenced
-// (ErrFenced: the caller must exit without releasing), or Passes are done. A
+// (ErrFenced: the caller must exit without releasing; the heartbeat's fence
+// ends Run between passes too), or Passes are done. A
 // Redis error in one pass is retried on the next tick: within the TTL the
 // lease renews; past it the next call is fenced and Run returns. The caller
 // releases the lease after a nil return.
@@ -146,6 +156,9 @@ func (lp *Loop) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-lp.Lease.Done():
+			// The heartbeat lost the lease between passes (#3737).
+			return lp.Lease.fencedErr()
 		case <-timer.C:
 		}
 		started := time.Now()

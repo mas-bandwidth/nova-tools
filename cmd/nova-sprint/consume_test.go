@@ -218,7 +218,7 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 	}
 
 	// The production reconciler runs both built consumers as duties.
-	_, names, err := productionDuties(store.New(c), metrics.Default)
+	_, names, _, err := productionDuties(store.New(c), metrics.Default)
 	if err != nil {
 		t.Fatal(err)
 	}

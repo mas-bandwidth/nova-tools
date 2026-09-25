@@ -52,6 +52,10 @@ var consumeNotBuilt = map[string]string{
 // consumePRReadRemote is the remote seam for pr-to-read, swapped in tests.
 var consumePRReadRemote consume.Remote = consume.GitRemote
 
+// consumeHarvestLog receives the harvest duty's receipt lines (TAKEN
+// from=<instance> stale, #3737): the reconciler's stdout, its log.
+var consumeHarvestLog = func(line string) { fmt.Println(line) }
+
 // consumeHarvestSeams are the harvest's two host seams: GitHub by `gh api`
 // REST and the push over ssh from the bench. A test swaps in fixtures
 // (CI-NET: no host in a test).
@@ -70,7 +74,7 @@ func init() {
 	})
 	registerReconcileDuty(groupHarvest, func(st *store.Store) (reconcileDuty, error) {
 		forge, pusher := consumeHarvestSeams()
-		return &harvestDuty{st: st, forge: forge, pusher: pusher, busy: map[string]bool{}}, nil
+		return &harvestDuty{st: st, forge: forge, pusher: pusher, busy: map[string]bool{}, log: consumeHarvestLog}, nil
 	})
 }
 
@@ -356,12 +360,26 @@ func (d *okFriendDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.C
 // on its own goroutine under lease:harvest:<b> and the harvest clock, so a
 // slow push or REST call never holds the 1 s reconciler tick. A bench with
 // nothing due costs three Redis Function calls and writes proc:harvest:<b>.
+//
+// Every pass is bounded by the reconciler lease (#3737): no card starts once
+// the lease is fenced or less than the write margin of it is left, and the
+// pass records n, took_ms and left=<k>. Stop is the way out: the reconciler
+// exiting FENCED cancels every pass, waits for each to record its pass line
+// (err=FENCED) and give back lease:harvest:<b>, and releases any lease a
+// worker it could not wait for still holds, so no bench is left held by a
+// dead instance until its TTL.
 type harvestDuty struct {
 	st     *store.Store
 	forge  harvest.Forge
 	pusher harvest.Pusher
+	log    func(string)
 	mu     sync.Mutex
 	busy   map[string]bool
+	held   map[string]string // bench -> the lease:harvest token its worker holds
+	inst   string            // the lease holder name the workers use
+	ctx    context.Context   // every worker's context; Stop cancels it
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 func (d *harvestDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
@@ -370,7 +388,7 @@ func (d *harvestDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Co
 		var benches []string
 		benches, err = consumeBenches(ctx, d.st, nil)
 		for _, b := range benches {
-			d.start(ctx, "reconciler-"+l.Instance(), b, sprints)
+			d.start(ctx, l, "reconciler-"+l.Instance(), b, sprints)
 		}
 	}
 	if err != nil {
@@ -379,28 +397,88 @@ func (d *harvestDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Co
 	return reconcile.Counts{}, nil
 }
 
-func (d *harvestDuty) start(ctx context.Context, instance, bench string, sprints []string) {
+func (d *harvestDuty) start(ctx context.Context, l *reconcile.Lease, instance, bench string, sprints []string) {
 	d.mu.Lock()
 	if d.busy[bench] {
 		d.mu.Unlock()
 		return
 	}
+	if d.ctx == nil {
+		d.ctx, d.cancel = context.WithCancel(ctx)
+		d.held = map[string]string{}
+	}
+	if d.ctx.Err() != nil {
+		d.mu.Unlock()
+		return
+	}
+	wctx := d.ctx
+	d.inst = instance
 	d.busy[bench] = true
+	d.wg.Add(1)
 	d.mu.Unlock()
 	go func() {
+		defer d.wg.Done()
 		defer func() {
 			d.mu.Lock()
 			delete(d.busy, bench)
 			d.mu.Unlock()
 		}()
 		for _, s := range sprints {
-			if ctx.Err() != nil {
+			if wctx.Err() != nil || l.Fenced() {
 				return
 			}
-			harvest.Run(ctx, d.st, harvest.Options{
+			harvest.Run(wctx, d.st, harvest.Options{
 				Sprint: s, Benches: []string{bench}, Instance: instance, Actor: "reconciler",
 				Forge: d.forge, Pusher: d.pusher,
+				Bound: l, Margin: reconcile.DefaultWriteMargin,
+				OnLease: d.onLease, Log: d.log,
 			})
 		}
 	}()
+}
+
+func (d *harvestDuty) onLease(bench, token string, held bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if held {
+		d.held[bench] = token
+	} else if d.held[bench] == token {
+		delete(d.held, bench)
+	}
+}
+
+// Stop cancels every harvest pass in flight and waits for them until ctx
+// ends; each records its pass line and gives back its bench lease on the
+// way. A lease still held after the wait is released by its token. It
+// returns the benches released that way.
+func (d *harvestDuty) Stop(ctx context.Context) []string {
+	d.mu.Lock()
+	if d.cancel != nil {
+		d.cancel()
+	}
+	d.mu.Unlock()
+	waited := make(chan struct{})
+	go func() {
+		d.wg.Wait()
+		close(waited)
+	}()
+	select {
+	case <-waited:
+	case <-ctx.Done():
+	}
+	d.mu.Lock()
+	held := make(map[string]string, len(d.held))
+	for b, tok := range d.held {
+		held[b] = tok
+	}
+	inst := d.inst
+	d.mu.Unlock()
+	var released []string
+	for b, tok := range held {
+		if r, err := harvest.Release(context.WithoutCancel(ctx), d.st, b, inst, tok); err == nil && r == "RELEASED" {
+			released = append(released, b)
+		}
+	}
+	sort.Strings(released)
+	return released
 }

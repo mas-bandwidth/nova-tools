@@ -54,6 +54,10 @@ do
 
   -- ns_harvest_lease bench instance token ttl_ms
   -- TAKEN on a free lease, RENEWED for the holder, HELD|<instance> otherwise.
+  -- The holder's name is kept in proc:harvest:<b> holder from the take until
+  -- its pass line or release clears it (#3737), so a lease that lapsed on its
+  -- TTL with its holder still named was never given back: the take answers
+  -- TAKEN|<that instance> and the worker logs `TAKEN from=<instance> stale`.
   redis.register_function('ns_harvest_lease', function(keys, args)
     local bench, instance, token, ttl = args[1] or '', args[2] or '', args[3] or '', tonumber(args[4] or '6000')
     if bench == '' or instance == '' or token == '' or not ttl or ttl <= 0 then
@@ -69,24 +73,52 @@ do
       redis.call('PEXPIRE', key, ttl)
       return 'RENEWED'
     end
+    local proc = 'proc:harvest:' .. bench
+    local stale = hv_hget(proc, 'holder')
     redis.call('HSET', key, 'instance', instance, 'token', token, 'at', at)
     redis.call('PEXPIRE', key, ttl)
+    redis.call('HSET', proc, 'holder', instance, 'holder_at', at)
+    if stale ~= '' then
+      redis.call('HSET', proc, 'stale_from', stale, 'stale_at', at)
+      return 'TAKEN|' .. stale
+    end
     return 'TAKEN'
   end)
 
-  -- ns_harvest_pass bench instance token took_ms n err
+  -- ns_harvest_pass bench instance token took_ms n err [left]
   -- The worker's pass line (proc:harvest:<b>, written by that worker only)
-  -- and the lease release, in one call. A fenced worker writes nothing.
+  -- and the lease release, in one call. left (#3737) is the due cards the
+  -- pass never started (the reconciler lease bound); absent reads 0. A
+  -- fenced worker writes nothing.
   redis.register_function('ns_harvest_pass', function(keys, args)
     local bench, instance, token = args[1] or '', args[2] or '', args[3] or ''
     local took, n, err = args[4] or '0', args[5] or '0', args[6] or ''
+    local left = args[7] or '0'
     if not hv_lease_ok(bench, instance, token) then
       return 'FENCED'
     end
     local at = hv_now_ms()
-    redis.call('HSET', 'proc:harvest:' .. bench, 'pass_at', at, 'took_ms', took, 'n', n, 'err', err, 'at', at)
+    redis.call('HSET', 'proc:harvest:' .. bench, 'pass_at', at, 'took_ms', took, 'n', n, 'err', err,
+      'left', left, 'holder', '', 'at', at)
     redis.call('DEL', 'lease:harvest:' .. bench)
     return 'OK'
+  end)
+
+  -- ns_harvest_release bench instance token (#3737)
+  -- The holder gives lease:harvest:<b> back without a pass line: a reconciler
+  -- exiting FENCED releases what a worker it could not wait for still holds.
+  -- RELEASED, or FENCED (another holder, or none) and nothing is touched.
+  redis.register_function('ns_harvest_release', function(keys, args)
+    local bench, instance, token = args[1] or '', args[2] or '', args[3] or ''
+    if bench == '' then
+      return 'USAGE'
+    end
+    if not hv_lease_ok(bench, instance, token) then
+      return 'FENCED'
+    end
+    redis.call('DEL', 'lease:harvest:' .. bench)
+    redis.call('HSET', 'proc:harvest:' .. bench, 'holder', '', 'released_at', hv_now_ms())
+    return 'RELEASED'
   end)
 
   -- ns_harvest_due S bench limit (read only)

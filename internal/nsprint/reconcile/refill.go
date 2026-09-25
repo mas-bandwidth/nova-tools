@@ -553,13 +553,18 @@ func (f LeaseFence) Token(context.Context) (string, error) {
 	if f.L == nil || f.L.token == "" {
 		return "", fmt.Errorf("no reconciler lease: %w", ErrFenced)
 	}
+	if err := f.L.fencedErr(); err != nil {
+		return "", fmt.Errorf("%w: %w", deal.ErrFenced, err)
+	}
 	return f.L.token, nil
 }
 
 // Renew implements deal.Renewer (#3706): the deal pass renews the lease
 // before it opens each bench session, so the session's lease bound is the
-// full TTL less the write margin, not what the duties before it left. A lease
-// another instance holds is deal.ErrFenced as well as ErrFenced.
+// full TTL less the write margin, not what the duties before it left. It is
+// the lease's one coalesced renewal (#3737), shared with the heartbeat: a
+// renewal within RenewAfter of the last one sends nothing. A lease another
+// instance holds is deal.ErrFenced as well as ErrFenced.
 func (f LeaseFence) Renew(ctx context.Context) error {
 	if f.L == nil {
 		return fmt.Errorf("no reconciler lease: %w", deal.ErrFenced)

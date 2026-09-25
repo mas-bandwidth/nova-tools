@@ -74,10 +74,17 @@ func registerReconcileDuty(name string, build func(st *store.Store) (reconcileDu
 // forge map (CI-NET: no host in a test); nothing else in the loop changes.
 var reconcileSeams = func() (deal.Dialer, deal.PRs) { return deal.Remote{}, deal.GH{} }
 
+// stoppableDuty is a duty with work of its own past its Run (the harvest
+// workers, #3737): Stop ends it before the verb exits, until ctx ends.
+type stoppableDuty interface {
+	Stop(ctx context.Context) []string
+}
+
 // productionDuties is the loop's duty list: the refill and its deal pass over
 // Redis, then every registered duty. It returns the names in order. set
-// receives the deal pass's metrics (nx-g61); nil exports nothing.
-func productionDuties(st *store.Store, set *metrics.Set) ([]reconcile.Duty, []string, error) {
+// receives the deal pass's metrics (nx-g61); nil exports nothing. stops are
+// the Stop of every duty with work of its own past its Run, for the way out.
+func productionDuties(st *store.Store, set *metrics.Set) (duties []reconcile.Duty, names []string, stops []stoppableDuty, err error) {
 	dialer, prs := reconcileSeams()
 	refill := &reconcile.Refill{
 		Client: st.Client(),
@@ -89,20 +96,23 @@ func productionDuties(st *store.Store, set *metrics.Set) ([]reconcile.Duty, []st
 		}
 		return refill.Run(ctx, l)
 	}
-	duties := []reconcile.Duty{fleetRefill}
-	names := []string{"refill"}
+	duties = []reconcile.Duty{fleetRefill}
+	names = []string{"refill"}
 	for _, b := range reconcileDuties {
 		d, err := b.Build(st)
 		if err != nil {
-			return nil, nil, fmt.Errorf("duty %s: %w", b.Name, err)
+			return nil, nil, nil, fmt.Errorf("duty %s: %w", b.Name, err)
 		}
 		if d == nil {
 			continue
 		}
 		duties = append(duties, d.Run)
 		names = append(names, b.Name)
+		if s, ok := d.(stoppableDuty); ok {
+			stops = append(stops, s)
+		}
 	}
-	return duties, names, nil
+	return duties, names, stops, nil
 }
 
 // runReconcile takes the lease or refuses, then passes until SIGTERM/SIGINT
@@ -144,7 +154,7 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	}
 	defer st.Close()
 
-	duties, names, err := productionDuties(st, metrics.Default)
+	duties, names, stops, err := productionDuties(st, metrics.Default)
 	if err != nil {
 		return refuse(errOut, "reconcile", err.Error())
 	}
@@ -157,7 +167,9 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 		fmt.Fprintf(out, "METRICS reconcile url=%s\n", srv.URL())
 	}
 
-	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: *host})
+	// The lease heartbeats itself every TTL/3 from here until Release
+	// (#3737), whatever the duties are doing.
+	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: *host, Heartbeat: true})
 	var held *reconcile.HeldError
 	if errors.As(err, &held) {
 		fmt.Fprintf(out, "REFUSED reconcile %s\n", held.Error())
@@ -166,8 +178,8 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	if err != nil {
 		return refuse(errOut, "reconcile", err.Error())
 	}
-	fmt.Fprintf(out, "RECONCILER instance=%s host=%s token_sha=%s ttl=%s\n",
-		lease.Instance(), lease.Host(), lease.TokenSHA(), lease.TTL())
+	fmt.Fprintf(out, "RECONCILER instance=%s host=%s token_sha=%s ttl=%s heartbeat=%s\n",
+		lease.Instance(), lease.Host(), lease.TokenSHA(), lease.TTL(), lease.Heartbeat())
 
 	// The width duty (#3071, #3086): one width tick per pass under the lease,
 	// and a completion's replacement dealt in the same pass. It needs the
@@ -205,7 +217,12 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 		loop.Passes = 1
 	}
 	err = loop.Run(ctx)
+	// Stop the duties' own work before anything else (#3737): each harvest
+	// pass records its pass line (err=FENCED when fenced) and gives back its
+	// lease:harvest:<b>, so no bench is left held by this instance.
+	stopDuties(out, stops)
 	if errors.Is(err, reconcile.ErrFenced) {
+		lease.StopHeartbeat()
 		fmt.Fprintf(out, "FENCED reconcile %v\n", err)
 		return 3
 	}
@@ -227,6 +244,23 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 		return 1
 	}
 	return 0
+}
+
+// reconcileStopWait bounds how long the verb waits on its way out for the
+// duties' own work to record itself (each harvest pass's line and release).
+var reconcileStopWait = 5 * time.Second
+
+// stopDuties stops every stoppable duty, each bounded by reconcileStopWait,
+// and prints one `HARVEST RELEASED bench=<b>` line per bench lease released
+// by its token because its worker did not record in time.
+func stopDuties(out io.Writer, stops []stoppableDuty) {
+	for _, s := range stops {
+		ctx, cancel := context.WithTimeout(context.Background(), reconcileStopWait)
+		for _, b := range s.Stop(ctx) {
+			fmt.Fprintf(out, "HARVEST RELEASED bench=%s by token on the way out\n", b)
+		}
+		cancel()
+	}
 }
 
 // report prints one `DUTY <name> <counts> err=<text>` line per duty of the
