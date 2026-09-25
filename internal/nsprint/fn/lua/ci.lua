@@ -212,7 +212,9 @@ local CARD = NS.card
 -- absent list, the same in deal.lua's deal_runs: the bench runs every leg
 -- (one bench standard: every bench runs any card). A bench that declares a
 -- list carries only the legs it names.
+-- A bench whose registry role is friends (#3634) carries no leg at all.
 local function ci_carries(bench, leg)
+  if ci_hget('bench:' .. bench .. ':desired', 'role') == 'friends' then return false end
   local legs = ci_hget('bench:' .. bench .. ':desired', 'legs')
   if legs == '' then return true end
   for l in string.gmatch(legs, '[^%s,]+') do

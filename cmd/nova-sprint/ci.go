@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
@@ -338,9 +340,13 @@ func runCIRun(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "ci run", err.Error())
 	}
 	defer st.Close()
+	var roleErr *benchrole.Error
 	res, err := ci.Run(ctx, st, ci.RunOptions{Bench: *bench, Scratch: *scratch, ResultsRoot: *results,
 		MirrorRoot: *mirror, Lease: *lease, Timeout: *timeout, Out: out})
 	switch {
+	case errors.As(err, &roleErr):
+		fmt.Fprintln(errOut, roleErr.Error())
+		return roleErr.ExitCode()
 	case err == ci.ErrBlocked:
 		fmt.Fprintf(errOut, "nova-sprint ci run: %s; the request is back in the pool, fix the bench's mirror\n", res.Blocked)
 		return 1

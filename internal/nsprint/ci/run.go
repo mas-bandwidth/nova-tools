@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -195,6 +196,14 @@ func Claim(ctx context.Context, st *store.Store, bench string, lease time.Durati
 	parts, ok := raw.([]any)
 	if !ok || len(parts) == 0 {
 		return Claimed{}, false, fmt.Errorf("%s: reply %T", FunctionClaim, raw)
+	}
+	if fmt.Sprint(parts[0]) == "REFUSED" {
+		// #3634: a friends bench claims no CI request.
+		role := benchrole.Friends
+		if len(parts) > 1 {
+			role = strings.TrimPrefix(fmt.Sprint(parts[1]), "role=")
+		}
+		return Claimed{}, false, benchrole.Refused(bench, role, "no CI claim on a friends bench")
 	}
 	if fmt.Sprint(parts[0]) != "CLAIMED" {
 		var idle Claimed

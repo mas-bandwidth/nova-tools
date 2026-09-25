@@ -26,7 +26,8 @@ end
 --       card's ROUTE: pro|flash tier; empty or absent: not stored), bench
 --       (the card's BENCH: line, nova-tools#3650; empty or absent: any bench,
 --       not stored). A bench not in the benches set returns NOBENCH and
---       writes nothing; a named bench is stored as the card's bench field,
+--       writes nothing, a bench whose role is friends returns ROLE friends
+--       (#3634); a named bench is stored as the card's bench field,
 --       the pin ns_card_deal honours (pin == '' or pin == bench).
 --       card's ROUTE: pro|flash tier; empty or absent: not stored), est
 --       (the card's EST: line in minutes, #3653; empty or absent: not stored),
@@ -76,6 +77,11 @@ redis.register_function('ns_card_push', function(keys, args)
   end
   if bench ~= '' and redis.call('SISMEMBER', 'benches', bench) == 0 then
     return 'NOBENCH'
+  end
+  -- #3634: a bench whose registry role is friends takes no swarm card, so a
+  -- pin to it is refused here and nothing is written.
+  if bench ~= '' and redis.call('HGET', 'bench:' .. bench .. ':desired', 'role') == 'friends' then
+    return 'ROLE friends'
   end
   if type(depends_on_typed) ~= 'string' then
     depends_on_typed = ''

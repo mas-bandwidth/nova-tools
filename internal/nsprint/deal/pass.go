@@ -69,6 +69,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/metrics"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 )
 
@@ -142,6 +143,9 @@ type Bench struct {
 	Leased int      // ZCARD starting + ZCARD living, over every sprint
 	SSH    string   // the pass's last ssh state for this bench
 	SSHAt  time.Time
+	// Role is the registry role column (#3634): benchrole.Friends is dealt
+	// no swarm card; empty or benchrole.Fleet is the fleet.
+	Role string
 }
 
 // Free is desired minus leased, never negative.
@@ -283,7 +287,7 @@ func contains(items []string, want string) bool {
 }
 
 func eligible(b Bench, now time.Time, hold time.Duration) bool {
-	if !b.Up || b.Paused || b.Free() == 0 {
+	if !b.Up || b.Paused || b.Role == benchrole.Friends || b.Free() == 0 {
 		return false
 	}
 	if b.SSH == SSHRefused || b.SSH == SSHTimeout {
@@ -897,6 +901,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			Slots:  slots,
 			Leased: int(bc[i].starting.Val() + bc[i].living.Val()),
 			SSH:    ssh["state"],
+			Role:   d[benchrole.Field],
 		}
 		if ms, err := strconv.ParseInt(ssh["at"], 10, 64); err == nil {
 			b.SSHAt = time.UnixMilli(ms)
