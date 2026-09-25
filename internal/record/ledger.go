@@ -184,14 +184,16 @@ type RedisLedger struct {
 // NewRedisLedger wraps a client the caller opened.
 func NewRedisLedger(rdb *redis.Client) *RedisLedger { return &RedisLedger{rdb: rdb} }
 
-// DialLedger opens a client on addr (host:port) with the given password ("" for none).
+// DialLedger opens a client on addr (host:port) as the ACL user with its password ("" for
+// the default user, "" for no password). The fleet Redis has its default user off, so a
+// seat's password without its user is WRONGPASS (#3461).
 // It silences go-redis's own logger first (#3463): a dial failure otherwise prints the
 // library's untyped, local-time "connection pool: failed to dial after 5 attempts" lines
 // to the process's stderr ahead of the verb's one typed FAILED line. The
 // error they carry is not lost: it is the error Ping returns, which the verb prints.
-func DialLedger(addr, password string) *RedisLedger {
+func DialLedger(addr, user, password string) *RedisLedger {
 	silenceRedisLogger()
-	return NewRedisLedger(redis.NewClient(&redis.Options{Addr: addr, Password: password}))
+	return NewRedisLedger(redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password}))
 }
 
 // quietRedis is the discard logger for go-redis.
