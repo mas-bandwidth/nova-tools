@@ -432,7 +432,7 @@ func TestReactorRunReturnsAtItsDeadline(t *testing.T) {
 // one per pipeline Exec regardless of how many commands it carries.
 type tripCounter struct{ n int }
 
-func (t *tripCounter) DialHook(next redis.DialHook) redis.DialHook                  { return next }
+func (t *tripCounter) DialHook(next redis.DialHook) redis.DialHook { return next }
 func (t *tripCounter) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		t.n++
@@ -459,7 +459,6 @@ func TestPublishCardsDoneBatchesToOnePipeline(t *testing.T) {
 	if _, err := p.PublishCardsDone(ctx); err != nil {
 		t.Fatal(err)
 	}
-	groupTrips := tc.n
 
 	// Seed 100 entries that are all card ends.
 	for i := 0; i < 100; i++ {
@@ -476,10 +475,11 @@ func TestPublishCardsDoneBatchesToOnePipeline(t *testing.T) {
 	}
 
 	// One tick: read then act.
+	tc.n = 0
 	if _, err := p.PublishCardsDone(ctx); err != nil {
 		t.Fatal(err)
 	}
-	tickTrips := tc.n - groupTrips
+	tickTrips := tc.n
 	if tickTrips > 2 {
 		t.Fatalf("one tick used %d round trips, want <= 2", tickTrips)
 	}
