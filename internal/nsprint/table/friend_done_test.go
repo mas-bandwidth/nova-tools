@@ -101,7 +101,7 @@ func TestFriendDoneCountsOnlyThisSprint(t *testing.T) {
 	}
 
 	// Close s1, open s2: the column reads 0 until a card is done.
-	if _, refused, err := sprint.SetClosed(ctx, st, "s1", t0.Add(time.Hour)); err != nil || refused != "" {
+	if _, _, refused, err := sprint.SetClosed(ctx, st, "s1", t0.Add(time.Hour)); err != nil || refused != "" {
 		t.Fatalf("close s1: %v %s", err, refused)
 	}
 	t2 := t0.Add(2 * time.Hour)

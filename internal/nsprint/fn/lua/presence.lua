@@ -202,6 +202,29 @@ local function friend_poll_wake(keys, args)
   return { 'WAKE', wake }
 end
 
+-- pl_lease_beat is a card's lease beat carried by its bench's beat
+-- (nova-tools#3925): one bench beat names every live card on the bench
+-- (<S>/<label>/<attempt>, or the attempt identity
+-- <S>/<label>/<base8>/<bench>/<attempt>), and each one whose record is
+-- launched or running on this bench under this attempt gets beat_at, the
+-- field the lease reaper (ns_lease_reap) and the expire sweep read. A name
+-- that is not such a card writes nothing.
+local function pl_lease_beat(bench, identity, at)
+  local S, label, attempt = string.match(identity, '^([-a-z0-9]+)/([A-Za-z0-9][A-Za-z0-9._-]*)/([1-9][0-9]*)$')
+  if not S then
+    local b
+    S, label, b, attempt = string.match(identity,
+      '^([-a-z0-9]+)/([A-Za-z0-9][A-Za-z0-9._-]*)/[0-9a-f]+/([^/]+)/([1-9][0-9]*)$')
+    if b ~= bench then return end
+  end
+  if not S then return end
+  local id = 's:' .. S .. ':card:' .. label
+  local c = redis.call('HMGET', id, 'state', 'attempt', 'bench')
+  if (c[1] == 'launched' or c[1] == 'running') and c[2] == attempt and c[3] == bench then
+    redis.call('HSET', id, 'beat_at', tostring(at))
+  end
+end
+
 -- bench_beat is the bench-owned one-second loop. The fenced owner key gives
 -- cross-process single-instance ownership: while a different session owns the
 -- bench this call returns BUSY. When the owner key and beat have expired the
@@ -260,6 +283,7 @@ local function bench_beat(keys, args)
     for identity in string.gmatch(live, '[^' .. PL_LIVE_SEP .. ']+') do
       redis.call('SADD', live_key, identity)
       live_count = live_count + 1
+      pl_lease_beat(bench, identity, at)
     end
     redis.call('PEXPIRE', live_key, ttl)
   end

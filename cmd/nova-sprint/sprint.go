@@ -91,7 +91,7 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 		}
 		return runSprintOpen(ctx, st, *name, *from, plan, now, out, errOut)
 	case "close":
-		status, refused, err := sprint.SetClosed(ctx, st, *name, now)
+		status, retired, refused, err := sprint.SetClosed(ctx, st, *name, now)
 		if err != nil {
 			return refuse(errOut, verb, err.Error())
 		}
@@ -100,6 +100,11 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 			// refused so status=closed exit 0 always means it was open.
 			fmt.Fprintln(out, refused)
 			return 1
+		}
+		if retired > 0 {
+			// #3925: the cards the close moved to done/fail.
+			fmt.Fprintf(out, "%s retired=%d\n", sprint.Line(*name, status), retired)
+			return 0
 		}
 		fmt.Fprintln(out, sprint.Line(*name, status))
 		return 0

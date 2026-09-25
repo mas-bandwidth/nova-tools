@@ -78,7 +78,11 @@ end
 -- status=closed, closed_at stamped once and S removed from sprints. A name
 -- with no s:<S> status is ABSENT, and one past open (closed, folded) is
 -- ALREADY with its status and closed_at; both write nothing, so an exit-0 close is evidence the sprint
--- existed and was open (#3571).
+-- existed and was open (#3571). In the same call every card of the sprint
+-- that is not done moves to done/fail through the one move and its bench
+-- leases go (NS.ghost, card_ghost.lua; nova-tools#3925: no closed sprint
+-- keeps a card in a table set); the reply is CLOSED, the number retired,
+-- then any refusal lines (the fsck duty retries those).
 local function sprint_close(keys, args)
   local S, at = args[1], args[2]
   local key = 's:' .. S
@@ -92,7 +96,10 @@ local function sprint_close(keys, args)
   redis.call('HSET', key, 'status', 'closed')
   redis.call('HSETNX', key, 'closed_at', at)
   redis.call('SREM', 'sprints', S)
-  return { 'CLOSED' }
+  local n, refused = NS.ghost.retire(S, 'sprint-close')
+  local out = { 'CLOSED', tostring(n) }
+  for _, r in ipairs(refused) do out[#out + 1] = r end
+  return out
 end
 
 -- The task indexes that count toward y: every one but cancelled. The card
