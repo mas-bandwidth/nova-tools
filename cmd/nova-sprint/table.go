@@ -30,6 +30,7 @@ type tableOpts struct {
 	redis   string
 	sprint  string
 	check   bool
+	live    bool
 	loop    bool
 	every   time.Duration // --loop <seconds>; 1 s when --loop has no number
 	out     string
@@ -53,6 +54,7 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&opts.redis, "redis", "", "")
 	fs.StringVar(&opts.sprint, "sprint", "", "")
 	fs.BoolVar(&opts.check, "check", false, "")
+	fs.BoolVar(&opts.live, "live", false, "")
 	fs.Var(&loopValue{on: &opts.loop, every: &opts.every}, "loop", "")
 	fs.StringVar(&opts.out, "out", "", "")
 	fs.StringVar(&opts.lockKey, "lock", "", "")
@@ -76,7 +78,16 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 		return tableRefuse(stderr, "--friends, --xy-file, --out and --lock belong to --layout live; the wide table is written nowhere (#3326)")
 	}
 	if opts.check {
-		if opts.loop || opts.once || opts.sprint != "" {
+		if opts.live {
+			if opts.loop || opts.once || opts.sprint != "" {
+				return tableRefuse(stderr, "--check --live takes --redis <addr> and --out <file>")
+			}
+			if opts.out == "" {
+				return tableRefuse(stderr, "--check --live needs --out <file>")
+			}
+			return cmdTableCheckLive(opts.redis, opts.out, stdout, stderr)
+		}
+		if opts.loop || opts.once || opts.sprint != "" || opts.out != "" {
 			return tableRefuse(stderr, "--check takes only --redis <addr>")
 		}
 		return cmdTableCheck(opts.redis, stdout, stderr)
@@ -140,6 +151,24 @@ func cmdTableCheck(addr string, stdout, stderr io.Writer) int {
 		return tableRefuse(stderr, err.Error())
 	}
 	defer st.Close()
+	hasSprints, nonControl, err := table.CheckSprints(ctx, st.Client())
+	if err != nil {
+		return tableRefuse(stderr, err.Error())
+	}
+	if hasSprints && nonControl != "" {
+		return tableRefuse(stderr, fmt.Sprintf("--check: refusing live store: sprints set holds non-control sprint %q; use a throwaway server or --live", nonControl))
+	}
+	if !hasSprints {
+		for _, cmd := range table.DefectFixture() {
+			args := make([]any, len(cmd))
+			for i, v := range cmd {
+				args[i] = v
+			}
+			if err := st.Client().Do(ctx, args...).Err(); err != nil {
+				return tableRefuse(stderr, fmt.Sprintf("--check: seed fixture: %s", err.Error()))
+			}
+		}
+	}
 	snap, err := table.Read(ctx, st.Client())
 	if err != nil {
 		return tableRefuse(stderr, err.Error())
@@ -156,6 +185,19 @@ func cmdTableCheck(addr string, stdout, stderr io.Writer) int {
 		return tableRefuse(stderr, "--check: rendered output is not the fixture output")
 	}
 	return 0
+}
+
+func cmdTableCheckLive(addr, out string, stdout, stderr io.Writer) int {
+	if addr == "" {
+		return tableRefuse(stderr, "--check --live needs --redis <addr>")
+	}
+	ctx := context.Background()
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		return tableRefuse(stderr, err.Error())
+	}
+	defer st.Close()
+	return table.CheckLive(ctx, st.Client(), out, stdout, stderr)
 }
 
 // loopValue is --loop: bare, it is a loop at one tick a second (the form the

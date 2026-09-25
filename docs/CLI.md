@@ -4126,7 +4126,7 @@ What a first run gets wrong, and what each one wants:
 
 - **`--out`, `--fixture` or `--refresh pending`.** These were the file cut, deleted by #3326; `--fixture` and `--refresh` are unknown flags, and `--out` belongs to `--layout live` (#3530), the one published table. Read the wide table from stdout.
 - **`nova-sprint table` without `--redis`.** It wants the server address. There is no default address and no default loop.
-- **`--check` without `--redis`.** It wants a throwaway server; it seeds nothing, so load the fixture keyspace first.
+- **`--check` without `--redis`.** It wants a throwaway server; it seeds the fixture keyspace when the store is empty, and refuses a store whose `sprints` set holds a non-control sprint (the live fleet). `--check --live --redis <addr> --out <file>` checks that the published file is younger than 2 s and every rendered cell matches a direct Redis read in the same second.
 
 There is **no `quickstart` verb**. A one-word first run would have to invent a fixture path or publish a table nobody named. The three lines above are the first run, in an empty directory that already holds `table.txt`.
 
