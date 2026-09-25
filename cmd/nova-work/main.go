@@ -180,6 +180,7 @@ usage:
                  [--max-bytes <n>] [--now <stamp>]
   nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] [--bench <name>] [--log <path>] (--once | --deadline <duration>)
   nova-work push --stream <kind> --lane <red|green|small|next> --card <file> (--redis <addr> | --dir <root>) [--priority <n>] [--needs <id>[,<id>...]]
+  nova-work verification --sexp <path> --repo <dir> (--check | --write) [--timeout <duration>]
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -208,6 +209,7 @@ verbs:
   nova-work ask            delivers ONE unit to the FRIEND who owns it, as a bus note
   nova-work asks           the open asks, oldest first, with their age and their deadline
   nova-work events         bridges the events, not ticks (cards:done stream + gh fallback poll)
+  nova-work verification   runs the suite at HEAD, lists STALE and PROPOSE criteria, --write rewrites :verification
 
 THE MACHINERY ROUTES TO FRIENDS (Glenn, 2026-09-18). A bench pulls cards; a friend pulls
 asks. A unit whose owner is a friend is therefore never cut as a card: ask renders it as
@@ -311,7 +313,9 @@ bare repository per repo under --cache. The base is
 SET EVAL line with holds=yes|no|unknown and a why=; a criterion gh or git could not
 answer is unknown and counts as not done. A unit is decided by its criteria when every
 one is evaluable or one fails; a unit naming only :test, :job or :attested criteria keeps
-its :status. Each question is asked once per run.
+its :status. Each question is asked once per run, and every PR the criteria name is read
+before any is evaluated, in one gh GraphQL call per repo (100 PRs to a call; #3460); a PR
+that call did not answer is read alone by REST.
 --write-status (implies --evaluate) then rewrites :status "open" to "landed" for each unit
 whose criteria all hold, one SET WROTE line per unit, and changes no other byte.
 
@@ -478,6 +482,10 @@ type Deps struct {
 	Now   func() time.Time
 	Dial  func(addr string) *redis.Client
 	Forge func(repo, base string, timeout time.Duration) ci.Forge
+	// Suite and Head are the verification verb's two reaches outside the process:
+	// the acceptance suite run and the checkout's HEAD. Nil is the real one.
+	Suite suiteRun
+	Head  headRead
 }
 
 func production() Deps {
@@ -549,6 +557,9 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	if args[0] == "events" {
 		return cmdEvents(args[1:], stdout, stderr, deps)
 	}
+	if args[0] == "verification" {
+		return cmdVerification(args[1:], stdout, stderr, deps)
+	}
 	verb, rest := args[0], args[1:]
 	// attempt COLLIDES with the socket verb of the same name (see legacyVerbs): only
 	// its two known second tokens are this binary's own local verb; the bare word and
@@ -564,12 +575,18 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	}
 	switch verb {
 	case "help", "--help", "-h":
+		if len(rest) > 0 && (rest[0] == "--help" || rest[0] == "-h") {
+			return printVerbHelp(stderr, "help")
+		}
 		if len(rest) != 0 {
 			return refused(stderr, "help takes no arguments")
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
+		if len(rest) > 0 && (rest[0] == "--help" || rest[0] == "-h") {
+			return printVerbHelp(stderr, "version")
+		}
 		if len(rest) != 0 {
 			return refused(stderr, "version takes no arguments")
 		}
@@ -602,6 +619,9 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 		return sessionVerb(v, args, stdout, stderr)
 	}
 	if subs, ok := verbFamilies[verb]; ok {
+		if len(rest) > 0 && (rest[0] == "--help" || rest[0] == "-h") {
+			return printVerbHelp(stderr, verb)
+		}
 		if len(rest) == 0 {
 			return refused(stderr, verb+" needs one of "+orList(subs))
 		}
@@ -648,6 +668,9 @@ func cmdDependencies(args []string, stdout, stderr io.Writer) int {
 	node := fs.String("node", "", "the node to write a needs edge to")
 	needs := fs.String("needs", "", "comma-separated needs for --node")
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "dependencies")
+		}
 		return refuse(stderr, " dependencies", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -742,6 +765,9 @@ func cmdReady(args []string, stdout, stderr io.Writer) int {
 	graph := fs.String("graph", "", "the :deps graph file (required)")
 	node := fs.String("node", "", "one node to evaluate; default all nodes")
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "ready")
+		}
 		return refuse(stderr, " ready", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -816,6 +842,9 @@ func cmdPlan(args []string, stdout, stderr io.Writer) int {
 	maxDepth := fs.Int("max-depth", def.MaxDepth, "nesting depth ceiling")
 	maxNodes := fs.Int("max-nodes", def.MaxNodes, "atom ceiling")
 	if err := fs.Parse(args[1:]); err != nil {
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "plan check")
+		}
 		return refuse(stderr, " plan check", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -859,6 +888,9 @@ func cmdPlanExpand(args []string, stdout, stderr io.Writer) int {
 	maxDepth := fs.Int("max-depth", def.MaxDepth, "nesting depth ceiling")
 	maxNodes := fs.Int("max-nodes", def.MaxNodes, "atom ceiling")
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "plan expand")
+		}
 		return refuse(stderr, " plan expand", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -987,6 +1019,9 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if err := f.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, verb)
+		}
 		return refused(stderr, verb+": "+err.Error())
 	}
 	if f.NArg() != 0 {
@@ -1282,6 +1317,9 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 	logPath := fs.String("log", "", "")
 	once := fs.Bool("once", false, "")
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "events")
+		}
 		fmt.Fprintf(stderr, "nova-work events: %s; run: nova-work help\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 2
 	}

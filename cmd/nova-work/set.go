@@ -73,6 +73,9 @@ func cmdSetCheck(args []string, stdout, stderr io.Writer) int {
 	maxDepth := fs.Int("max-depth", def.MaxDepth, "nesting depth ceiling")
 	maxNodes := fs.Int("max-nodes", def.MaxNodes, "atom ceiling")
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "set check")
+		}
 		return refuse(stderr, " set check", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
