@@ -556,6 +556,12 @@ do
     if to == '' then
       return { 'SKIP', 'no-coordinator' }
     end
+    if kind == 'fix' then
+      local pol = redis.call('HMGET', 's:' .. S .. ':policy', 'fix_to', 'release_reader')
+      if (pol[1] or '') ~= '' and (pol[2] or '') ~= '' then
+        return { 'SKIP', 'policy-hold-events' }
+      end
+    end
     local at = now_ms()
     if redis.call('EXISTS', 'task:' .. id) == 1 then
       redis.call('HSET', rec.key, 'fix_task', id, 'fix_task_head', head, 'fix_task_kind', kind, 'updated_at', tostring(at))
