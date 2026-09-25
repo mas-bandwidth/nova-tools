@@ -1,0 +1,21 @@
+# The file writes TestForestWrittenOnlyByTheKernel (forestwriter_class_test.go) still
+# permits in a package that reads work sets, one `file:function # what it writes` per
+# line. The forest -- every file under docs/roadmaps/ -- is written only by the nova-work
+# kernel (#3340); a work set anywhere else goes through cmd/nova-work/forestwrite.go
+# writeWorkSet, which refuses the forest. None of the writes below is a work set, and
+# the ones whose target is a flag are refused on a forest path by their verb. The list
+# only shrinks: an entry whose write has left is a red run, as is a write not listed.
+cmd/nova-sprint/table_live.go:writeAtomic # the sprint table's --out render and table clear's --checkpoint, job storage
+cmd/nova-work/dogfood.go:dogfoodAppend # the dogfood ledger rows under --ledger
+cmd/nova-work/main.go:cmdEvents # the --log event append
+cmd/nova-work/main.go:cmdDependencies # the jobs :deps --graph file; a forest --graph is refused at exit 3 before this write
+cmd/nova-work/next.go:appendable # the --usage/--log append probe: opens for append and closes, or creates and removes a probe file
+internal/friends/friends.go:Save # ask's JSON record (--units or --record); a forest target is refused by ask before the send
+internal/tokens/dayfile.go:DayFile.Save # the token usage day file
+internal/tokens/foldpool.go:WritePoolLedger # the token pool ledger TSV
+internal/tokens/lock.go:TakeFoldLock # the fold output directory's lock file
+internal/tokens/lock_other.go:tryLockFile # the fold lock's sentinel on platforms without flock
+internal/tokens/opencode.go:copyFile # the opencode usage database copy the fold reads
+internal/tokens/package.go:AtomicNoReplaceRename # the token package marker, linked no-replace
+internal/tokens/package.go:StageMarker # the token package marker's staged temp file
+internal/worklang/expand.go:ExpandDirWithSink # plan expand's cards under --out, job storage; a forest --out is refused by the verb

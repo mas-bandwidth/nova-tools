@@ -96,6 +96,11 @@ func cmdAttemptRecord(args []string, stdout, stderr io.Writer) int {
 		a.Proof = p
 	}
 
+	// The forest is the kernel's to write (#3340): refused before the lock.
+	if isForestPath(*file) {
+		return forestRefused(stderr, " attempt record", *file)
+	}
+
 	// The lock is held across the read, the edit and the write, because those
 	// three are one operation: two minds recording attempts on one set at once
 	// would each splice into the bytes the other had already replaced.
@@ -113,7 +118,7 @@ func cmdAttemptRecord(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, " attempt record", oneline.Err(err))
 	}
-	if err := writeInPlace(*file, out); err != nil {
+	if err := writeWorkSet(*file, out); err != nil {
 		return refuse(stderr, " attempt record", oneline.Err(err))
 	}
 	how := "appended"
@@ -238,25 +243,6 @@ func readSetBounded(path string, limits worklang.Limits) ([]byte, error) {
 			path, limits.MaxBytes, len(data))
 	}
 	return data, nil
-}
-
-// writeInPlace replaces the document through a temporary file beside it and one
-// rename, so a reader of the set never sees a half-written one and a write that
-// dies leaves the original whole. The file keeps the mode it had.
-func writeInPlace(path string, data []byte) error {
-	mode := os.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
-		mode = info.Mode().Perm()
-	}
-	tmp := path + ".nova-work.tmp"
-	if err := os.WriteFile(tmp, data, mode); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
 }
 
 // lockSet takes the work set's own lock: one writer at a time over one

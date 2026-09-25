@@ -2076,6 +2076,86 @@ business. Read-time conditionals are not duplicates: `#+sbcl (defun f …)` besi
 has four such pairs), so a definition whose preceding non-blank line opens with
 `#+` or `#-` is skipped.
 
+### `forestwriter` — the forest has one writer, the nova-work kernel
+
+**The rule.** Every file write (`os.WriteFile`, `os.Create`, `os.CreateTemp`, a
+writable `os.OpenFile`, `os.Rename`, `os.Truncate`, `os.Link`, `os.Symlink` and
+their `ioutil` spellings) in a package that reads work sets — `internal/worklang`
+and every package with a non-test file importing it — is the one writer,
+`cmd/nova-work/forestwrite.go:writeWorkSet`, or an entry on the shrink-only
+allowlist, checked both ways; no function anywhere under `cmd/` or `internal/`
+both writes a file and names `docs/roadmaps/` in a string, the one writer
+excepted; and (the sibling test below) no script or workflow edits, redirects,
+tees, copies or moves onto a `docs/roadmaps/` path.
+**The hurt.** The forest — every file under `docs/roadmaps/`: `nova-work.sexp`,
+`sprint-fixes-2026-09-22.sexp` and the storage split's `work/` and `blobs/`
+beside them — had two writers in the tree, setland's `replaceFile` and attempt's
+`writeInPlace`, each free to put a work set on disk beside the kernel's own
+journal-then-render path, plus the bash `rowan-tools bin/sprint-xy` outside this
+repository entirely; a mutation outside the kernel's command loop is a defect
+(SPEC-WORK rule 6), and a second writer is exactly that defect waiting to race
+the journal. #3340 (stage 1 of #3309) collapsed the two Go call sites onto
+`forestwrite.go:writeWorkSet`, which refuses a forest path before a byte moves,
+and moved every verb that used to write one (`set check --write-status`,
+`attempt record`, `next --take`, `ask --record`, `dependencies --graph`,
+`plan expand --out`) to refuse a forest target at exit 3, before any forge call,
+lock, send or byte.
+**The test.** `TestForestWrittenOnlyByTheKernel`
+(`internal/ci/forestwriter_class_test.go`).
+**Its allowlist.** `internal/ci/testdata/forestwriter_allowlist.txt`, one
+`file:function # target it writes` per row for every write inside worklang's
+scope that is not the kernel and not the forest — the sprint table's render and
+job storage, the dogfood ledger, the `--log`/`--graph`/`--usage` writes, ask's
+record, the token package's day file, pool ledger and locks, and plan expand's
+job storage; shrink-only in both directions, and every row must carry the target
+it writes.
+**Its remedy lines.** `writes a file in a package that reads work sets and is
+not on the allowlist; write a work set through cmd/nova-work/forestwrite.go
+writeWorkSet (it refuses the forest), or list this call with the target it
+writes`; `writes a file and names docs/roadmaps/; the forest is written only by
+the nova-work kernel (#3340), and a work set goes through writeWorkSet, which
+refuses it`; and for a stale row, `delete the stale entry (the list only
+shrinks)`.
+**Its narrowings.** It follows `fileWriteCalls` within ONE function, so a write
+behind a helper one frame away is attributed to that helper, not its caller;
+scope is decided by a non-test file's own import of `internal/worklang`, so a
+package that reaches the forest only through another package's exported
+function is not itself swept into scope (its callee is, if that callee imports
+worklang); and it reads only Go source — the script and workflow sweep is the
+companion test below.
+
+### `forestscript` — the script rule sees a write, not just a read
+
+**The rule.** `scriptForestWrites`, the third read `TestForestWrittenOnlyByTheKernel`
+holds (no script or workflow edits, redirects, tees, copies or moves onto a
+`docs/roadmaps/` path), is pinned against the eight shapes it exists to catch —
+`sed -i`, `perl -pi -e`, a bare redirect, an append, `tee`, `cp` and `mv` onto a
+`docs/roadmaps/` path — and against two shapes it must stay quiet on: a
+`docs/roadmaps/` path only ever read, through a variable or piped to `grep`,
+never written. A run where any of the eight finds nothing is a regexp that has
+stopped matching, which would let a real forest write through unseen while rule
+3 keeps reporting green.
+**The hurt.** Rule 3 exists because the script that wrote the forest lived
+outside this repository — the bash `rowan-tools bin/sprint-xy`, deleted by
+#3340's rowan-tools half — so the check here is a regexp reading scripts as
+text, with no compiler to say when the pattern breaks. #3340 pinned it against
+fixtures in the same change that wrote it, rather than trusting a scan that had
+never been shown to see anything.
+**The test.** `TestForestScriptRuleSeesAWrite`
+(`internal/ci/forestwriter_class_test.go`).
+**Its allowlist.** None: it is a fixture table over `scriptForestWrites`, not a
+sweep of the tree, so there is nothing to except.
+**Its remedy lines.** None of its own; a red here means the regexp itself needs
+fixing, not a call site — the eight shapes it must keep catching and the two
+reads it must keep passing are listed in the test.
+**Its narrowings.** Same as rule 3 itself: a `#`-prefixed comment line is
+skipped; an in-place edit is flagged as soon as the script names
+`docs/roadmaps/` anywhere at all, not only on the matching line, since the path
+usually arrives through a variable; and a line is read as a write only when it
+matches a redirect, append, `tee`, `cp`, `mv`, `install` or `truncate` shape onto
+that path — a write performed some other way, such as a wrapped `dd` or a
+Python one-liner, is invisible to it.
+
 ### Tests this spec demands
 
 This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.

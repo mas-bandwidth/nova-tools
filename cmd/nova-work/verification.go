@@ -308,31 +308,6 @@ func rewriteVerification(doc *verificationDoc, values map[string]string) []byte 
 	return out
 }
 
-func writeFileAtomic(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	if err := tmp.Close(); err != nil {
-		os.Remove(name)
-		return err
-	}
-	mode := os.FileMode(0o644)
-	if fi, err := os.Stat(path); err == nil {
-		mode = fi.Mode().Perm()
-	}
-	if err := os.WriteFile(name, data, mode); err != nil {
-		os.Remove(name)
-		return err
-	}
-	if err := os.Chmod(name, mode); err != nil {
-		os.Remove(name)
-		return err
-	}
-	return os.Rename(name, path)
-}
-
 func verificationRefused(stderr io.Writer, what string) int {
 	fmt.Fprintf(stderr, "VERIFICATION REFUSED %s\n", oneline.Escape(what))
 	return 1
@@ -361,6 +336,12 @@ func cmdVerification(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return refuse(stderr, " verification", "give exactly one of --check or --write")
 	case *timeout <= 0:
 		return refuse(stderr, " verification", "--timeout must be positive")
+	// --write on the forest is the kernel's (#3340): refused before the suite
+	// runs, the same forge-call boundary attempt record, set check
+	// --write-status, next --take, ask --record, dependencies --graph and plan
+	// expand --out already hold.
+	case *write && isForestPath(*sexp):
+		return forestRefused(stderr, " verification", *sexp)
 	}
 	suiteFn, headFn, now := deps.Suite, deps.Head, deps.Now
 	if suiteFn == nil {
@@ -447,7 +428,7 @@ func cmdVerification(args []string, stdout, stderr io.Writer, deps Deps) int {
 			return verificationRefused(stderr, "the rewritten :"+k+" reads back as "+got+"; nothing written")
 		}
 	}
-	if err := writeFileAtomic(*sexp, next); err != nil {
+	if err := writeWorkSet(*sexp, next); err != nil {
 		return verificationRefused(stderr, oneline.Err(err)+"; nothing written")
 	}
 	fmt.Fprintf(stdout, "VERIFICATION OK mode=write file=%s measured-at=%s %s\n",
