@@ -23,7 +23,19 @@ var updateGolden3530 = flag.Bool("update-golden-3530", false, "write the whole t
 type cmdLog struct {
 	mu    sync.Mutex
 	names []string
+	keys  []string // "NAME key" for every command that names a key
 	trips int
+}
+
+// note records one command's name and, when it has one, its first key.
+func (l *cmdLog) note(cmd redis.Cmder) {
+	name := strings.ToUpper(cmd.Name())
+	l.names = append(l.names, name)
+	if args := cmd.Args(); len(args) > 1 {
+		if key, ok := args[1].(string); ok {
+			l.keys = append(l.keys, name+" "+key)
+		}
+	}
 }
 
 func (l *cmdLog) DialHook(next redis.DialHook) redis.DialHook { return next }
@@ -31,7 +43,7 @@ func (l *cmdLog) DialHook(next redis.DialHook) redis.DialHook { return next }
 func (l *cmdLog) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		l.mu.Lock()
-		l.names = append(l.names, strings.ToUpper(cmd.Name()))
+		l.note(cmd)
 		l.trips++
 		l.mu.Unlock()
 		return next(ctx, cmd)
@@ -42,7 +54,7 @@ func (l *cmdLog) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Proce
 	return func(ctx context.Context, cmds []redis.Cmder) error {
 		l.mu.Lock()
 		for _, c := range cmds {
-			l.names = append(l.names, strings.ToUpper(c.Name()))
+			l.note(c)
 		}
 		l.trips++
 		l.mu.Unlock()
@@ -54,8 +66,19 @@ func (l *cmdLog) reset() (names []string, trips int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	names, trips = l.names, l.trips
-	l.names, l.trips = nil, 0
+	l.names, l.keys, l.trips = nil, nil, 0
 	return names, trips
+}
+
+// keysRead is every "NAME key" logged since the last reset.
+func (l *cmdLog) keysRead() map[string]bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	got := map[string]bool{}
+	for _, k := range l.keys {
+		got[k] = true
+	}
+	return got
 }
 
 func sprintStore(t *testing.T) (*redis.Client, *miniredis.Miniredis, *cmdLog) {
@@ -171,7 +194,7 @@ func TestControl3530MembershipChange(t *testing.T) {
 		t.Fatalf("changed tick RoundTrips=%d, want 2", snap.RoundTrips)
 	}
 	got := snap.Render(now)
-	if !strings.Contains(got, "late stream                    |       0 |     0 |       1 |       0 |      0\n") {
+	if !strings.Contains(got, "late stream                    |       0 |     0 |       1 |       0 |       0 |      0\n") {
 		t.Fatalf("the new stream is not on the table:\n%s", got)
 	}
 	if strings.Contains(got, "vision") || strings.Contains(got, "ghost") {
@@ -198,7 +221,7 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := snap.Render(now); !strings.HasPrefix(got, "SPRINT TABLE\n\n585/591 left, 1% done -> ~11700m\n\n") {
+	if got := snap.Render(now); !strings.HasPrefix(got, "SPRINT TABLE\n\n588/594 left, 1% done -> ~11760m\n\n") {
 		t.Fatalf("headline:\n%s", got)
 	}
 	mr := miniredis.RunT(t)
@@ -209,10 +232,10 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "SPRINT TABLE\n\n0/0 left, 0% done -> ~0m\n\n" +
-		"stream                         | waiting | ready | working | merging | landed\n" +
-		"-------------------------------+---------+-------+---------+---------+-------\n" +
-		"-------------------------------+---------+-------+---------+---------+-------\n" +
-		"total                          |       0 |     0 |       0 |       0 |      0\n\n"
+		"stream                         | waiting | ready | working | reading | merging | landed\n" +
+		"-------------------------------+---------+-------+---------+---------+---------+-------\n" +
+		"-------------------------------+---------+-------+---------+---------+---------+-------\n" +
+		"total                          |       0 |     0 |       0 |       0 |       0 |      0\n\n"
 	if got := snap.Render(now); !strings.HasPrefix(got, want) {
 		t.Fatalf("empty keyspace:\n%s", got)
 	}
@@ -279,7 +302,7 @@ func TestControl3530WriterLock(t *testing.T) {
 
 // TestControl3637ClearUnderOneSecond (DONE-WHEN of #3637): table clear moves
 // every landed member to closed and zeroes the friend done column, waiting,
-// ready, working and merging untouched, in under one second; the checkpoint
+// ready, working, reading and merging untouched, in under one second; the checkpoint
 // names every moved task and every done count.
 func TestControl3637ClearUnderOneSecond(t *testing.T) {
 	client, _, log := sprintStore(t)
@@ -315,13 +338,13 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 	}
 	for i, row := range after.Streams {
 		b := before.Streams[i]
-		if row.Landed != 0 || row.Waiting != b.Waiting || row.Ready != b.Ready || row.Working != b.Working || row.Merging != b.Merging {
+		if row.Landed != 0 || row.Waiting != b.Waiting || row.Ready != b.Ready || row.Working != b.Working || row.Reading != b.Reading || row.Merging != b.Merging {
 			t.Fatalf("stream %q after clear %+v, before %+v", row.Name, row, b)
 		}
 	}
 	got := after.Render(now)
 	for _, want := range []string{
-		"\n585/585 left, 0% done -> ~11700m\n",
+		"\n588/588 left, 0% done -> ~11760m\n",
 		"\nrowan      |     0 |      12 |     0 | up        \n",
 		"\nstella     |     0 |       1 |     0 | down      \n",
 	} {

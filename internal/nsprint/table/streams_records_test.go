@@ -16,24 +16,27 @@ import (
 )
 
 // TestStreamsTableFromRecords (DONE-WHEN of #3530, the streams block): each
-// stream row is stream x {waiting, ready, working, merging, landed}, every
-// cell the ZCARD of ws:<stream>:<where>, the set of card ids whose record's
-// where names it. Ready is its own column: nothing is folded into waiting
-// (Glenn 2026-09-25 saw 68 waiting that were 56 waiting + 12 ready). The
+// stream row is stream x {waiting, ready, working, reading, merging, landed},
+// every cell the ZCARD of ws:<stream>:<where>, the set of card ids whose
+// record's where names it. Ready is its own column: nothing is folded into
+// waiting (Glenn 2026-09-25 saw 68 waiting that were 56 waiting + 12 ready).
+// Reading is its own column between working and merging (Glenn 2026-09-25
+// 1:50 PM: "split merging into separate reading | merging columns"). The
 // total row is the column sums and the headline's y is every card in the
-// five sets.
+// six sets: a card in reading is left, not done.
 func TestStreamsTableFromRecords(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	streams := []struct {
 		name  string
-		cells [5]int // waiting, ready, working, merging, landed
+		cells [6]int // waiting, ready, working, reading, merging, landed
 	}{
-		{"nova-sprint + merge + bus", [5]int{56, 12, 3, 2, 1}},
-		{"swarm: cards", [5]int{4, 0, 7, 0, 5}},
-		{"idle", [5]int{0, 0, 0, 0, 0}},
-		{"only ready", [5]int{0, 9, 0, 0, 0}},
+		{"nova-sprint + merge + bus", [6]int{56, 12, 3, 4, 2, 1}},
+		{"swarm: cards", [6]int{4, 0, 7, 0, 0, 5}},
+		{"idle", [6]int{0, 0, 0, 0, 0, 0}},
+		{"only ready", [6]int{0, 9, 0, 0, 0, 0}},
+		{"fleet, ci, secrets, jev", [6]int{0, 0, 0, 1, 0, 0}},
 	}
 	var cmds [][]string
 	created := 1_758_800_000_000
@@ -58,7 +61,7 @@ func TestStreamsTableFromRecords(t *testing.T) {
 	}
 	for i, s := range streams {
 		r := snap.Streams[i]
-		got := [5]int64{r.Waiting, r.Ready, r.Working, r.Merging, r.Landed}
+		got := [6]int64{r.Waiting, r.Ready, r.Working, r.Reading, r.Merging, r.Landed}
 		for j, where := range table.WSStates {
 			n, err := client.ZCard(context.Background(), "ws:"+s.name+":"+where).Result()
 			if err != nil || got[j] != n || n != int64(s.cells[j]) {
@@ -67,13 +70,14 @@ func TestStreamsTableFromRecords(t *testing.T) {
 		}
 	}
 	out := snap.Render(now)
-	rule := "-------------------------------+---------+-------+---------+---------+-------\n"
-	want := "SPRINT TABLE\n\n93/99 left, 6% done -> ~5580m\n\n" +
-		"stream                         | waiting | ready | working | merging | landed\n" + rule +
-		"nova-sprint + merge + bus      |      56 |    12 |       3 |       2 |      1\n" +
-		"swarm: cards                   |       4 |     0 |       7 |       0 |      5\n" +
-		"only ready                     |       0 |     9 |       0 |       0 |      0\n" + rule +
-		"total                          |      60 |    21 |      10 |       2 |      6\n\n"
+	rule := "-------------------------------+---------+-------+---------+---------+---------+-------\n"
+	want := "SPRINT TABLE\n\n98/104 left, 5% done -> ~5880m\n\n" +
+		"stream                         | waiting | ready | working | reading | merging | landed\n" + rule +
+		"nova-sprint + merge + bus      |      56 |    12 |       3 |       4 |       2 |      1\n" +
+		"swarm: cards                   |       4 |     0 |       7 |       0 |       0 |      5\n" +
+		"only ready                     |       0 |     9 |       0 |       0 |       0 |      0\n" +
+		"fleet, ci, secrets, jev        |       0 |     0 |       0 |       1 |       0 |      0\n" + rule +
+		"total                          |      60 |    21 |      10 |       5 |       2 |      6\n\n"
 	if !strings.HasPrefix(out, want) {
 		t.Fatalf("streams block:\n%s\nwant prefix:\n%s", out, want)
 	}
@@ -92,6 +96,9 @@ func (f *failTransport) RoundTrip(*http.Request) (*http.Response, error) {
 // ticks over the fixture make zero HTTP calls (no GitHub REST, no webhook
 // poll), and every command they send is a read of the keyspace (plus the
 // writer's lock refresh when a lock is named): no KEYS, no SCAN, no write.
+// Every stream cell is a ZCARD of its own set: the tick reads
+// ws:<s>:<where> for every stream of ws:order and every where of WSStates
+// (ready since #3866, reading between working and merging since #3929).
 func TestTableTickMakesNoRestCall(t *testing.T) {
 	ft := &failTransport{}
 	saved := http.DefaultTransport
@@ -114,6 +121,17 @@ func TestTableTickMakesNoRestCall(t *testing.T) {
 	}
 	if n := ft.n.Load(); n != 0 {
 		t.Fatalf("ten ticks made %d HTTP calls, want 0", n)
+	}
+	keys := log.keysRead()
+	for _, s := range table.SprintFixtureStreams {
+		for _, where := range table.WSStates {
+			if k := "ZCARD ws:" + s.Name + ":" + where; !keys[k] {
+				t.Fatalf("the tick never sent %s", k)
+			}
+		}
+	}
+	if !keys["ZCARD ws:fleet, ci, secrets, jev:reading"] {
+		t.Fatal("the tick never read the reading cell of fleet, ci, secrets, jev")
 	}
 	allowed := map[string]bool{"ZRANGE": true, "ZCARD": true, "SMEMBERS": true, "EXISTS": true, "XRANGE": true, "HGETALL": true, "HGET": true, "HMGET": true, "ZCOUNT": true, "EVAL": true, "EVALSHA": true}
 	names, _ := log.reset()

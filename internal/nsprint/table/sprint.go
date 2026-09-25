@@ -8,7 +8,7 @@
 //
 //	<left>/<y> left, <z>% done -> ~<eta>m
 //
-//	stream | waiting | ready | working | merging | landed   (rows in ws:order, all-zero rows hidden, total)
+//	stream | waiting | ready | working | reading | merging | landed   (rows in ws:order, all-zero rows hidden, total)
 //
 //	friend | ready | working | done | status        (status up|down)
 //
@@ -18,7 +18,7 @@
 // trip only on the tick a membership set changed; never KEYS, never SCAN):
 //
 //	ws:order                ZRANGE, the streams in rank order (the ws index, #3662)
-//	ws:<s>:<state>          ZCARD for waiting, ready, working, merging, landed
+//	ws:<s>:<state>          ZCARD for waiting, ready, working, reading, merging, landed
 //	ws:log                  XRANGE over the last hour: the landed rate for the ETA
 //	ws:done0                HGETALL: each friend's done count at the last `table clear`
 //	benches                 SMEMBERS, the bench list; per member (#2389, each
@@ -60,8 +60,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// WSStates are the five per-stream sets the table counts, in reply order.
-var WSStates = []string{"waiting", "ready", "working", "merging", "landed"}
+// WSStates are the six per-stream sets the table counts, in reply order.
+// reading sits between working and merging (Glenn 2026-09-25: "split merging
+// into separate reading | merging columns"): a card whose PR is being read.
+var WSStates = []string{"waiting", "ready", "working", "reading", "merging", "landed"}
 
 // FriendWheres are the three friend:<f>:cards:<where> sets the friend block
 // counts, in column order.
@@ -91,14 +93,16 @@ type SprintConfig struct {
 	LockTTL            time.Duration
 }
 
-// StreamRow is one stream's five counts.
+// StreamRow is one stream's six counts, in WSStates order.
 type StreamRow struct {
-	Name                                     string
-	Waiting, Ready, Working, Merging, Landed int64
+	Name                                              string
+	Waiting, Ready, Working, Reading, Merging, Landed int64
 }
 
-// Total is every task in the stream's five sets.
-func (r StreamRow) Total() int64 { return r.Waiting + r.Ready + r.Working + r.Merging + r.Landed }
+// Total is every task in the stream's six sets.
+func (r StreamRow) Total() int64 {
+	return r.Waiting + r.Ready + r.Working + r.Reading + r.Merging + r.Landed
+}
 
 // SprintSnapshot is one tick's read.
 type SprintSnapshot struct {
@@ -321,7 +325,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 	for i, s := range r.streams {
 		row := StreamRow{Name: s}
-		cells := []*int64{&row.Waiting, &row.Ready, &row.Working, &row.Merging, &row.Landed}
+		cells := []*int64{&row.Waiting, &row.Ready, &row.Working, &row.Reading, &row.Merging, &row.Landed}
 		for j, c := range counts[i] {
 			*cells[j] = c.Val()
 		}
@@ -397,10 +401,10 @@ func FailedSprint(cfg SprintConfig, last *SprintSnapshot) *SprintSnapshot {
 	return &snap
 }
 
-const streamRule = "-------------------------------+---------+-------+---------+---------+-------\n"
+const streamRule = "-------------------------------+---------+-------+---------+---------+---------+-------\n"
 
 // XY is the headline's numbers: y is every task in the streams of ws:order,
-// left is y minus landed, eta is left over the landed rate of the last hour
+// left is y minus landed (a card in reading or merging is not done), eta is left over the landed rate of the last hour
 // (at least 1 an hour, so a stall shows as a big number, never infinity).
 func (s *SprintSnapshot) XY() (left, y, pct, eta int64) {
 	var landed int64
@@ -435,20 +439,21 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 	left, y, pct, eta := s.XY()
 	fmt.Fprintf(&b, "%d/%d left, %d%% done -> ~%dm\n\n", left, y, pct, eta)
 
-	fmt.Fprintf(&b, "%-30s | %7s | %5s | %7s | %7s | %6s\n", "stream", "waiting", "ready", "working", "merging", "landed")
+	fmt.Fprintf(&b, "%-30s | %7s | %5s | %7s | %7s | %7s | %6s\n", "stream", "waiting", "ready", "working", "reading", "merging", "landed")
 	b.WriteString(streamRule)
-	var tw, tr, tk, tm, tl int64
+	var tw, tr, tk, td, tm, tl int64
 	for _, r := range s.Streams {
 		if r.Total() == 0 {
 			continue
 		}
 		// Every cell is one set's ZCARD; ready is its own column, never
-		// folded into waiting (a card is in exactly one set).
-		fmt.Fprintf(&b, "%-30s | %7d | %5d | %7d | %7d | %6d\n", r.Name, r.Waiting, r.Ready, r.Working, r.Merging, r.Landed)
-		tw, tr, tk, tm, tl = tw+r.Waiting, tr+r.Ready, tk+r.Working, tm+r.Merging, tl+r.Landed
+		// folded into waiting, and reading its own, never folded into
+		// merging (a card is in exactly one set).
+		fmt.Fprintf(&b, "%-30s | %7d | %5d | %7d | %7d | %7d | %6d\n", r.Name, r.Waiting, r.Ready, r.Working, r.Reading, r.Merging, r.Landed)
+		tw, tr, tk, td, tm, tl = tw+r.Waiting, tr+r.Ready, tk+r.Working, td+r.Reading, tm+r.Merging, tl+r.Landed
 	}
 	b.WriteString(streamRule)
-	fmt.Fprintf(&b, "%-30s | %7d | %5d | %7d | %7d | %6d\n\n", "total", tw, tr, tk, tm, tl)
+	fmt.Fprintf(&b, "%-30s | %7d | %5d | %7d | %7d | %7d | %6d\n\n", "total", tw, tr, tk, td, tm, tl)
 
 	fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %-10s\n", "friend", "ready", "working", "done", "status")
 	b.WriteString(liveFriendRule)
