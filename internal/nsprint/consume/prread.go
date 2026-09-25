@@ -42,6 +42,11 @@ const HarvestAuthor = "rowan"
 // DefaultOwner is the GitHub owner of a repo named without one.
 const DefaultOwner = "mas-bandwidth"
 
+// DefaultMirrorWaitPasses is the maximum number of passes a head-change event
+// whose new head the mirror lacks is left pending before giving up and
+// queueing re-reads (#3827).
+const DefaultMirrorWaitPasses = 1
+
 // Remote is the ls-remote seam for checking heads on git remotes.
 type Remote func(ctx context.Context, repo string) (map[int]string, error)
 
@@ -98,6 +103,10 @@ type PRRead struct {
 	// Mirror names the dir a head's diff is read from for the carry on a
 	// head change (#3806); nil is DefaultMirror, "" skips the carry.
 	Mirror func(repo string) string
+	// MirrorWaitPasses is the maximum number of passes a head-change event
+	// whose new head the mirror lacks is left pending (not acked) before
+	// giving up and queueing re-reads (#3827); 0 means DefaultMirrorWaitPasses (1).
+	MirrorWaitPasses int
 
 	Out        io.Writer
 	LastReason map[string]string
@@ -475,8 +484,12 @@ func (p *PRRead) Pass(ctx context.Context) (int, error) {
 
 		prNum, _ := strconv.Atoi(e.pr)
 		// A head whose diff is identical keeps its reads (#3806): the
-		// carried readers get no re-read.
-		carried := p.carry(ctx, e, prNum)
+		// carried readers get no re-read. When the mirror lacks the new
+		// head, the event is left pending for at most N passes (#3827).
+		carried, pending := p.carry(ctx, e, prNum)
+		if pending {
+			continue
+		}
 		// Check prior readers at prev head
 		pipeTasks := client.Pipeline()
 		existsCmds := make([]*redis.IntCmd, len(friendsList))
@@ -1030,17 +1043,19 @@ func DefaultMirror(repo string) string {
 // line to carry and prints nothing; every other outcome prints one line:
 // CARRY CARRIED|REFUSED|NOTHING <line.Result.Line>, or CARRY SKIPPED <id>
 // why=<reason> (no mirror, a head the mirror lacks), after which the
-// re-reads are queued as before.
-func (p *PRRead) carry(ctx context.Context, e headEvent, prNum int) map[string]bool {
+// re-reads are queued as before. When the mirror lacks the new head, the
+// event is left pending for at most MirrorWaitPasses (default 1) passes
+// (#3827), returning pending=true.
+func (p *PRRead) carry(ctx context.Context, e headEvent, prNum int) (map[string]bool, bool) {
 	id := land.ID{Repo: e.repo, N: prNum}
 	if _, err := land.ResolvePR(ctx, p.Store.Client(), p.Sprint, id); err != nil {
 		name := prkey.Name(e.repo)
 		if name == e.repo {
-			return nil
+			return nil, false
 		}
 		id.Repo = name
 		if _, err := land.ResolvePR(ctx, p.Store.Client(), p.Sprint, id); err != nil {
-			return nil
+			return nil, false
 		}
 	}
 	dir := ""
@@ -1049,22 +1064,36 @@ func (p *PRRead) carry(ctx context.Context, e headEvent, prNum int) map[string]b
 	}
 	if dir == "" {
 		fmt.Fprintf(p.out(), "CARRY SKIPPED %s why=no mirror of %s\n", id, e.repo)
-		return nil
+		return nil, false
+	}
+	waitKey := "s:" + p.Sprint + ":carry:wait"
+	if e.id != "" && !line.HasCommit(ctx, dir, e.head) {
+		maxPasses := p.MirrorWaitPasses
+		if maxPasses <= 0 {
+			maxPasses = DefaultMirrorWaitPasses
+		}
+		count, _ := p.Store.Client().HIncrBy(ctx, waitKey, e.id, 1).Result()
+		if count <= int64(maxPasses) {
+			return nil, true
+		}
+	}
+	if e.id != "" {
+		_ = p.Store.Client().HDel(ctx, waitKey, e.id).Err()
 	}
 	res, err := line.CarryHead(ctx, p.Store.Client(), p.Sprint, id, dir, "", e.prev, e.head)
 	if err != nil {
 		fmt.Fprintf(p.out(), "CARRY SKIPPED %s why=%s\n", id, oneLine(err.Error()))
-		return nil
+		return nil, false
 	}
 	fmt.Fprintf(p.out(), "CARRY %s\n", res.Line(id))
 	if res.Outcome != line.Carried {
-		return nil
+		return nil, false
 	}
 	carried := make(map[string]bool, len(res.Who))
 	for _, f := range res.Who {
 		carried[f] = true
 	}
-	return carried
+	return carried, false
 }
 
 func oneLine(s string) string {

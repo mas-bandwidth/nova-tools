@@ -161,6 +161,15 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 	return out.String(), nil
 }
 
+// HasCommit reports whether dir (a git repository) contains commit sha.
+func HasCommit(ctx context.Context, dir, sha string) bool {
+	if sha == "" || dir == "" {
+		return false
+	}
+	_, err := gitOut(ctx, dir, "cat-file", "-e", sha+"^{commit}")
+	return err == nil
+}
+
 // ErrNoDigest is a carry asked for a unit whose read-time digest was never
 // recorded; the remedy is `read digest` at the old head, then carry.
 var ErrNoDigest = errors.New("no diff digest recorded at read time")
