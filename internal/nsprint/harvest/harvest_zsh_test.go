@@ -63,9 +63,13 @@ type zshForge struct {
 	hide      int    // lookups that miss the next created PR
 	hidden    int    // the PR being hidden
 	lookups   int
+	reads     int
+	bodies    map[string]string // branch -> the body the PR was opened with
 }
 
-func newZshForge() *zshForge { return &zshForge{prs: map[int]harvest.PR{}, next: 100} }
+func newZshForge() *zshForge {
+	return &zshForge{prs: map[int]harvest.PR{}, next: 100, bodies: map[string]string{}}
+}
 
 func (f *zshForge) put(pr harvest.PR) {
 	f.mu.Lock()
@@ -105,9 +109,10 @@ func (f *zshForge) FindOpenPR(ctx context.Context, repo, branch string) (harvest
 
 // OpenPR makes the PR from the branch's pushed head (read from the origin),
 // then answers as configured.
-func (f *zshForge) OpenPR(_ context.Context, repo, branch, _, _, _ string) (harvest.PR, error) {
+func (f *zshForge) OpenPR(_ context.Context, repo, branch, _, _, body string) (harvest.PR, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.bodies[branch] = body
 	for _, pr := range f.prs {
 		if pr.Ref == branch && pr.State == "open" {
 			return harvest.PR{}, fmt.Errorf("%w: HTTP 422: A pull request already exists for %s", harvest.ErrAmbiguous, branch)
@@ -135,6 +140,7 @@ func (f *zshForge) OpenPR(_ context.Context, repo, branch, _, _, _ string) (harv
 func (f *zshForge) ReadPR(_ context.Context, _ string, n int) (harvest.PR, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.reads++
 	pr, ok := f.prs[n]
 	if !ok {
 		return harvest.PR{}, fmt.Errorf("HTTP 404: pull %d", n)
@@ -145,6 +151,17 @@ func (f *zshForge) ReadPR(_ context.Context, _ string, n int) (harvest.PR, error
 // origins maps a branch to the bare origin it was pushed to, so the fake
 // forge reads a PR head from what the harvest really pushed.
 var origins sync.Map
+
+// originOf is the fixture's push URL for a card: the bare origin of its
+// branch (the fake GitHub), never the forge (#3712 pushes to the card repo's
+// URL, not to the clone's origin).
+func originOf(c harvest.Card) string {
+	v, ok := origins.Load(c.Branch)
+	if !ok {
+		return ""
+	}
+	return v.(string)
+}
 
 func pushedHead(branch string) string {
 	v, ok := origins.Load(branch)
@@ -194,8 +211,14 @@ func newZshBench(t *testing.T, label string) *zshBench {
 			t.Skipf("%s unavailable", bin)
 		}
 	}
-	c := startRedis(t)
-	z := &zshBench{t: t, c: c, st: store.New(c), forge: newZshForge(), sprint: "control-2932", bench: "superman", label: label}
+	return newZshBenchOn(t, startRedis(t), newZshForge(), "superman", label)
+}
+
+// newZshBenchOn is one bench's fixture on a shared store and forge, so a test
+// can stand up several benches side by side.
+func newZshBenchOn(t *testing.T, c *redis.Client, forge *zshForge, bench, label string) *zshBench {
+	t.Helper()
+	z := &zshBench{t: t, c: c, st: store.New(c), forge: forge, sprint: "control-2932", bench: bench, label: label}
 	z.branch = card.WrapperBranch(z.sprint, label, 1)
 	dir := t.TempDir()
 	z.origin = filepath.Join(dir, "origin.git")
@@ -216,7 +239,7 @@ func newZshBench(t *testing.T, label string) *zshBench {
 		t.Fatal(err)
 	}
 	gitRun(t, results, "clone", "-q", "--branch", "dev", z.origin, z.repo)
-	if err := os.WriteFile(filepath.Join(z.repo, "work.txt"), []byte("probe-harvest-2932 superman\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(z.repo, "work.txt"), []byte("probe-harvest-2932 "+bench+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	commit, err := card.CommitOutput(z.repo, z.branch, "RESULT: "+label+" OK", z.bench)
@@ -230,12 +253,13 @@ func newZshBench(t *testing.T, label string) *zshBench {
 	if err := c.HSet(ctx, key, "kind", "model", "repo", "nova-tools", "base", "dev", "base_sha", "09fbedc9",
 		"state", "ended", "outcome", "DONE", "reason", "done", "bench", z.bench, "attempt", "1",
 		"identity", identity, "token_sha", "abcdef012345", "branch", z.branch,
-		"pushed_sha", z.sha, "results", results).Err(); err != nil {
+		"pushed_sha", z.sha, "results", results,
+		"stream", "nova-sprint", "done_when", "the branch "+z.branch+" is on origin and one PR names it").Err(); err != nil {
 		t.Fatal(err)
 	}
 	c.SAdd(ctx, "s:"+z.sprint+":idx:card:ended", label)
 	c.SAdd(ctx, "s:"+z.sprint+":bench:"+z.bench+":ended", label)
-	c.HSet(ctx, "bench:"+z.bench+":beat", "host", "superman.fixture", "user", "nova")
+	c.HSet(ctx, "bench:"+z.bench+":beat", "host", bench+".fixture", "user", "nova")
 	c.HSet(ctx, "bench:"+z.bench+":state", "state", "UP", "at", "1") // #2046: UP is the fleet record
 
 	z.sshLog = filepath.Join(dir, "ssh.log")
@@ -252,7 +276,7 @@ func (z *zshBench) pass(faultAt string) harvest.BenchResult {
 		Sprint: z.sprint, Benches: []string{z.bench}, Clock: time.Minute,
 		Instance: fmt.Sprintf("pass-%d", z.passes),
 		Forge:    z.forge,
-		Pusher:   harvest.SSHPusher{SSH: z.ssh, Remote: func(string) string { return z.origin }},
+		Pusher:   harvest.SSHPusher{SSH: z.ssh, Remote: originOf},
 		Sleep: func(_ context.Context, d time.Duration) error {
 			z.sleeps = append(z.sleeps, d)
 			return nil
@@ -314,6 +338,11 @@ func (z *zshBench) harvested(creates int) {
 	}
 	if z.idem() != h["pr"] {
 		z.t.Fatalf("idem %q, want the card's pr %s", z.idem(), h["pr"])
+	}
+	rec := z.c.HGetAll(context.Background(), harvest.RecordKey("nova-tools", n)).Val()
+	if rec["head"] != z.sha || rec["branch"] != z.branch || rec["label"] != z.label || rec["sprint"] != z.sprint ||
+		rec["base"] != "dev" || rec["base_sha"] != "09fbedc9" || rec["stream"] != "nova-sprint" || rec["state"] != "open" || rec["at"] == "" {
+		z.t.Fatalf("PR record %s = %v; want head %s on %s, base dev at 09fbedc9, stream nova-sprint, label, sprint, state open, at", harvest.RecordKey("nova-tools", n), rec, z.sha, z.branch)
 	}
 	if tip := gitRun(z.t, "", "--git-dir", z.origin, "rev-parse", "refs/heads/"+z.branch); tip != z.sha {
 		z.t.Fatalf("origin %s at %s, want pushed_sha %s", z.branch, tip, z.sha)
@@ -556,8 +585,8 @@ func TestHarvestDueSkipsNoCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 3+10 || rows[3] != "work-card" {
-		t.Fatalf("due = %q; want only work-card (rows of 10)", rows)
+	if len(rows) != 3+14 || rows[3] != "work-card" {
+		t.Fatalf("due = %q; want only work-card (rows of 14)", rows)
 	}
 	forge := newForge()
 	forge.heads["nova/"+sprint+"/work-card-a1"] = sha("work-card")

@@ -165,8 +165,8 @@ type SSHPusher struct {
 	SSH            string        // default "ssh"
 	RepoSubdir     string        // default "repo"
 	ConnectTimeout time.Duration // default 5 s
-	// Remote is the push URL for the card's repo; nil is RemoteURL.
-	Remote func(repo string) string
+	// Remote is the push URL for the card; nil is RemoteURL(card.Repo).
+	Remote func(card Card) string
 }
 
 // RemoteURL is the push URL for a card record's repo: owner/name (a bare name
@@ -180,12 +180,12 @@ func RemoteURL(repo string) string {
 	return "https://github.com/" + full + ".git"
 }
 
-// pushURL is remote(repo), or RemoteURL when remote is nil.
-func pushURL(remote func(string) string, repo string) string {
+// pushURL is remote(c), or RemoteURL(c.Repo) when remote is nil.
+func pushURL(remote func(Card) string, c Card) string {
 	if remote != nil {
-		return remote(repo)
+		return remote(c)
 	}
-	return RemoteURL(repo)
+	return RemoteURL(c.Repo)
 }
 
 // RangePusher is a Pusher that also reports the paths the card's commit range
@@ -263,7 +263,7 @@ func (p SSHPusher) PushRange(ctx context.Context, b BenchInfo, c Card, base stri
 	if err != nil {
 		return nil, err
 	}
-	url := pushURL(p.Remote, c.Repo)
+	url := pushURL(p.Remote, c)
 	if url == "" {
 		return nil, fmt.Errorf("%s: no repo on the card record to push to", c.Label)
 	}

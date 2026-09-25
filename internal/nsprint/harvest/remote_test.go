@@ -125,7 +125,7 @@ func TestHarvestHasNoResultsRoot(t *testing.T) {
 	if err := os.WriteFile(ssh, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	p := SSHPusher{SSH: ssh, Remote: func(string) string { return "/srv/origin.git" }}
+	p := SSHPusher{SSH: ssh, Remote: func(Card) string { return "/srv/origin.git" }}
 	ctx := context.Background()
 	bench := BenchInfo{Name: "b", Host: "h", User: "u"}
 	abs := "/srv/results/s/l/09fbedc9/b/1"

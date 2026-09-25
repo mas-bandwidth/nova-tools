@@ -53,9 +53,6 @@ redis.register_function('ns_card_push', function(keys, args)
   -- test (#3689): the card's TEST line, which the wrapper runs at card end.
   local test = args[16]
   local stream, origin = args[17] or '', args[18] or ''
-  -- done_when and task (#3712): the card's DONE-WHEN and TASK sentences, so
-  -- harvest writes the PR body from the record alone.
-  local done_when, task_line = args[19] or '', args[20] or ''
   local S = string.match(card, '^s:([-a-z0-9]+):card:')
   if not S or card ~= 's:' .. S .. ':card:' .. tostring(label) then
     return redis.error_reply('ns_card_push: key ' .. tostring(card) .. ' is not s:<S>:card:<label>')
@@ -117,14 +114,6 @@ redis.register_function('ns_card_push', function(keys, args)
   if origin ~= '' then
     table.insert(fields, 'origin')
     table.insert(fields, origin)
-  end
-  if done_when ~= '' then
-    table.insert(fields, 'done_when')
-    table.insert(fields, done_when)
-  end
-  if task_line ~= '' then
-    table.insert(fields, 'task')
-    table.insert(fields, task_line)
   end
   local err = CARD.create(card, fields, { bench = bench, stream = stream, by = 'card-push' })
   if not err and place == 'pool' then
@@ -274,4 +263,34 @@ redis.register_function('ns_card_import_receipt', function(keys, args)
     'kind', 'card', 'id', args[1], 'actor', 'drain-import', 'reason', 'import',
     'file', args[3], 'place', args[4], 'payload_sha', args[2], 'at', now_s())
   return 1
+end)
+
+-- ns_card_header: the card's DONE-WHEN: line, written once at push
+-- (card.Push pipelines it after ns_card_push) so harvest's PR body carries
+-- it without the card file; the STREAM: line is the record's own stream
+-- field, which CARD.create writes. keys: card. args: payload_sha, done_when
+-- [, task]: task is the card's TASK: line (#3712, the PR title), written the
+-- same way when the card carries one.
+-- The write is refused when the card is not stored (NOTFOUND) or is stored
+-- from another payload (CONFLICT: the push before it was a label conflict and
+-- wrote nothing). The field is HSETNX: a repeat push with the same payload
+-- writes nothing and returns OK.
+redis.register_function('ns_card_header', function(keys, args)
+  local card = keys[1]
+  local payload, done_when, task_line = args[1] or '', args[2] or '', args[3] or ''
+  if type(card) ~= 'string' or card == '' or payload == '' then
+    return 'USAGE'
+  end
+  local stored = redis.call('HGET', card, 'payload_sha')
+  if not stored then
+    return 'NOTFOUND'
+  end
+  if stored ~= payload then
+    return 'CONFLICT'
+  end
+  redis.call('HSETNX', card, 'done_when', done_when)
+  if task_line ~= '' then
+    redis.call('HSETNX', card, 'task', task_line)
+  end
+  return 'OK'
 end)

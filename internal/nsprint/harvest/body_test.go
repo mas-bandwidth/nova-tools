@@ -246,8 +246,8 @@ func TestHarvestPushesToRepoURLAndReadsRangePaths(t *testing.T) {
 	}
 
 	var asked []string
-	p := harvest.SSHPusher{SSH: writeFakeSSH(t, dir, filepath.Join(dir, "ssh.log")), Remote: func(r string) string {
-		asked = append(asked, r)
+	p := harvest.SSHPusher{SSH: writeFakeSSH(t, dir, filepath.Join(dir, "ssh.log")), Remote: func(c harvest.Card) string {
+		asked = append(asked, c.Repo)
 		return remote
 	}}
 	c := harvest.Card{Label: "s00-0502-quack-superman-flash", Repo: "mas-bandwidth/nova-tools", Attempt: "3",
