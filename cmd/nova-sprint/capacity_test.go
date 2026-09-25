@@ -223,3 +223,62 @@ func TestL20bRunnerHooks(t *testing.T) {
 		t.Fatalf("debit still exists after completed hook")
 	}
 }
+
+// TestCapacityBenchWritesLegs (#3349): `capacity bench --legs go,schema <b>
+// <slots>` writes legs on bench:<b>:desired through ns_capacity_desired, a
+// write without --legs keeps the stored list, the same list again is SAME,
+// and a friend or a malformed list is refused. With the legs declared by
+// verb, `ci cut` for a go leg is CREATED with no hand-written bench hash.
+func TestCapacityBenchWritesLegs(t *testing.T) {
+	t.Setenv("NOVA_TEST_NO_HOST", "1")
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	client.HSet(ctx, "machine:m:ceiling", "slots", 40)
+
+	run := func(args ...string) (int, string, string) {
+		var out, errOut bytes.Buffer
+		code := runCapacity(ctx, append([]string{"bench", "--redis", addr, "--as", "ops", "--machine", "m"}, args...), &out, &errOut)
+		return code, out.String(), errOut.String()
+	}
+	if code, out, errOut := run("--legs", "go, schema", "b", "8"); code != 0 || !strings.HasPrefix(out, "SET bench b ") ||
+		!strings.Contains(out, " legs=go,schema ") {
+		t.Fatalf("capacity bench --legs code=%d out=%q err=%q", code, out, errOut)
+	}
+	if got := client.HGet(ctx, "bench:b:desired", "legs").Val(); got != "go,schema" {
+		t.Fatalf("bench:b:desired legs=%q; want go,schema", got)
+	}
+	if code, out, _ := run("--legs", "go,schema", "b", "8"); code != 0 || !strings.HasPrefix(out, "SAME bench b ") {
+		t.Fatalf("same legs again code=%d out=%q; want SAME", code, out)
+	}
+	if code, out, _ := run("--legs", "go", "b", "8"); code != 0 || !strings.HasPrefix(out, "SET bench b ") {
+		t.Fatalf("changed legs code=%d out=%q; want SET", code, out)
+	}
+	if code, _, _ := run("b", "6"); code != 0 {
+		t.Fatalf("capacity bench without --legs code=%d", code)
+	}
+	if got := client.HGet(ctx, "bench:b:desired", "legs").Val(); got != "go" {
+		t.Fatalf("a write without --legs changed legs to %q; want go kept", got)
+	}
+	if code, _, errOut := run("--legs", "go;rm", "b", "8"); code != 2 || !strings.Contains(errOut, "--legs") {
+		t.Fatalf("malformed --legs code=%d err=%q; want a refusal naming --legs", code, errOut)
+	}
+	var out, errOut bytes.Buffer
+	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "--legs", "go", "f", "4"}, &out, &errOut); code != 2 {
+		t.Fatalf("capacity friend --legs code=%d; want a refusal (legs is a bench flag)", code)
+	}
+
+	// The legs reach ci cut: the bench is UP and declares go, so the cut is
+	// CREATED, never RUNNER-ONLY, with no hand HSET of the desired hash.
+	client.HSet(ctx, "bench:b:state", "state", "UP")
+	client.HSet(ctx, "s:ctl", "status", "open")
+	reply, err := client.FCall(ctx, "ns_ci_cut", nil, "ctl", "ci-1-abc", "nova-tools", "1",
+		"abc", "dev", "def", "go", "", "ops", "").StringSlice()
+	if err != nil || len(reply) == 0 || reply[0] != "CREATED" {
+		t.Fatalf("ci cut on a verb-declared bench = %v %v; want CREATED", reply, err)
+	}
+}
