@@ -2,18 +2,16 @@
 // bash of record rowan-tools bin/sprint-table-redis. It reads ONLY the keys
 // that script reads today and prints its layout byte for byte:
 //
-//	SPRINT TABLE / blocked: n / landed: x/y z% -> eta / sprint: x/y z% -> eta /
-//	blank / the bench block / two blanks / the friend block.
+//	SPRINT TABLE / sprint: x/y z% -> eta / blank / the bench block / two
+//	blanks / the friend block.
 //
 // Keys (all read-only; each has one writer elsewhere):
 //
 //	friend:<f>            HMGET at up ready working done   (friend-row)
 //	friend:<f>:down       GET, a set value prints "down"   (out-of-credits)
 //	sprint:<S>:xy         the sprint line                  (sprint-xy)
-//	sprint:<S>:landed     the landed line                  (sprint-landed)
 //	s:<S>:pitstop         HGETALL, the pitstop verb's hash: the title reads
 //	                      *** PIT STOP *** <why> since <at> (#3423, #3887)
-//	q:blocked             ZCARD, the one blocked count     (friend-queue, #3219)
 //	bench:*               SCAN COUNT 1000, then HGETALL    (bench-row, card-dealer)
 //	bench:<b>:cards:<w>   ZCARD, w = ready working done ok fail (the card move, #3692)
 //	ci:nomirror:<b>       SMEMBERS, the repos the bench has no mirror of (ns_ci_release, #3724)
@@ -42,7 +40,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -56,7 +53,7 @@ import (
 // LiveConfig names what the bash hard-codes; nothing here is compiled in.
 type LiveConfig struct {
 	Friends  []string      // the roster, in display order
-	Sprint   string        // sprint:<Sprint>:xy and :landed, and the pit stop (pitstop.Key)
+	Sprint   string        // sprint:<Sprint>:xy and the pit stop (pitstop.Key)
 	XYFile   string        // SPRINT-XY.txt fallback while the xy key is missing (until #2679)
 	RowStale time.Duration // a friend row older than this prints "stale" (bash ROW_STALE_S=10)
 	// BenchStale: a host row whose own at is older than this prints "stale";
@@ -93,13 +90,11 @@ type LiveSnapshot struct {
 	Config  LiveConfig
 	Friends []FriendRow
 	XY      string // "" when the key is missing
-	Landed  string // "" when the key is missing
 	// Pitstop is s:<S>:pitstop, the one key `nova-sprint pitstop set|clear`
 	// writes (#3887): while it exists the title says PIT STOP with its why
 	// and at. A key of another type there (the 09-23 string) still stops the
 	// dealer, so it shows too, By wrongtype, until the verb repairs it.
 	Pitstop pitstop.Stop
-	Blocked string // "" when the count did not come back
 	Benches []BenchRow
 	// Pool is the pool line's count: the ZCARD of bench:_pool:cards:ready
 	// (the undealt view the card move keeps, #2733) whenever that view has
@@ -153,13 +148,12 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		fc[i].downReason = pipe.HGet(ctx, "friend:"+name+":down", "reason")
 		fc[i].downExists = pipe.Exists(ctx, "friend:"+name+":down")
 	}
-	mget := pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy", "sprint:"+cfg.Sprint+":landed")
+	mget := pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy")
 	// The pit stop is the verb's hash, read in the same pipeline (#3887).
 	var pit *redis.MapStringStringCmd
 	if cfg.Sprint != "" {
 		pit = pipe.HGetAll(ctx, pitstop.Key(cfg.Sprint))
 	}
-	blocked := pipe.ZCard(ctx, "q:blocked")
 	poolView := pipe.ZCard(ctx, PoolViewKey)
 	var roster *redis.IntCmd
 	if cfg.Sprint != "" {
@@ -183,10 +177,10 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 	// The friend block is all-or-nothing, as in the bash: a failed MGET
 	// means the connection is not answering.
 	vals, err := mget.Result()
-	if err != nil || len(vals) != 2 {
-		return nil, fmt.Errorf("mget xy/landed: %v", err)
+	if err != nil || len(vals) != 1 {
+		return nil, fmt.Errorf("mget xy: %v", err)
 	}
-	snap := &LiveSnapshot{Config: cfg, XY: pipeValue(vals[0]), Landed: pipeValue(vals[1]), Pitstop: readPitstop(cfg.Sprint, pit)}
+	snap := &LiveSnapshot{Config: cfg, XY: pipeValue(vals[0]), Pitstop: readPitstop(cfg.Sprint, pit)}
 	for i, name := range cfg.Friends {
 		row := FriendRow{Name: name}
 		if got, err := fc[i].row.Result(); err == nil && len(got) == 5 {
@@ -201,9 +195,6 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 			}
 		}
 		snap.Friends = append(snap.Friends, row)
-	}
-	if n, err := blocked.Result(); err == nil {
-		snap.Blocked = strconv.FormatInt(n, 10)
 	}
 	for i, key := range benchKeys {
 		h, err := hashes[i].Result()
@@ -353,13 +344,13 @@ func (row BenchRow) noMirrorSuffix() string {
 	return " | nomirror=" + row.NoMirror
 }
 
-// FailedLive is the tick whose read failed: the friend, xy and landed values
-// of last (nil when there never was a good read), no bench rows, blocked "?",
-// and a stale line (the bash's LAST_FROWS path).
+// FailedLive is the tick whose read failed: the friend, xy and pit stop values
+// of last (nil when there never was a good read), no bench rows, and a stale
+// line (the bash's LAST_FROWS path).
 func FailedLive(cfg LiveConfig, last *LiveSnapshot) *LiveSnapshot {
 	snap := &LiveSnapshot{Config: cfg, Stale: true}
 	if last != nil {
-		snap.Friends, snap.XY, snap.Landed, snap.Pitstop, snap.LastGood = last.Friends, last.XY, last.Landed, last.Pitstop, last.LastGood
+		snap.Friends, snap.XY, snap.Pitstop, snap.LastGood = last.Friends, last.XY, last.Pitstop, last.LastGood
 	}
 	if snap.XY == "" && cfg.XYFile != "" {
 		snap.XYFileLine, snap.XYFileMod, snap.XYFileOK = readXYFile(cfg.XYFile)
@@ -566,34 +557,6 @@ func friendState(row FriendRow, now time.Time, stale time.Duration) string {
 		return "down"
 	}
 	return "up"
-}
-
-var (
-	landedWithETA = regexp.MustCompile(`^([0-9]+/[0-9]+) landed ([0-9]+%) \(.*\) eta=([^ ]*) at=(.*)$`)
-	landedNoETA   = regexp.MustCompile(`^([0-9]+/[0-9]+) landed ([0-9]+%) \(.*\) at=(.*)$`)
-)
-
-// FormatLanded reshapes sprint-landed's value into the table line; "landed: ?"
-// when it is missing, unparseable or its own at= is older than 180 s.
-func FormatLanded(raw string, now time.Time) string {
-	if raw == "" || raw == "-" || raw == "(nil)" {
-		return "landed: ?"
-	}
-	var xy, pct, eta, at string
-	if m := landedWithETA.FindStringSubmatch(raw); m != nil {
-		xy, pct, eta, at = m[1], m[2], m[3], m[4]
-	} else if m := landedNoETA.FindStringSubmatch(raw); m != nil {
-		xy, pct, eta, at = m[1], m[2], "?", m[3]
-	} else {
-		return "landed: ?"
-	}
-	if t, ok := parseUTC(at); ok && now.Unix()-t.Unix() > 180 {
-		return "landed: ?"
-	}
-	if eta == "" {
-		eta = "?"
-	}
-	return "landed: " + xy + " " + pct + " -> " + eta
 }
 
 func readXYFile(path string) (string, time.Time, bool) {
