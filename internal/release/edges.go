@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/benchsh"
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // childCap is the ceiling on one child's captured output, the same 64 KiB the
@@ -45,12 +45,8 @@ func runCommand(ctx context.Context, name string, args ...string) (string, error
 	return out, err
 }
 
-func runCommandInput(ctx context.Context, stdin io.Reader, dir, name string, args ...string) (string, error) {
-	out, _, err := runCommandCapped(ctx, childCap, stdin, dir, name, args...)
-	return out, err
-}
-
-// runCommandCapped is the one exec site. It reports whether the capture reached
+// runCommandCapped is the one local exec site (gh, git; a machine is reached only
+// through internal/benchsh, in ExecSSH). It reports whether the capture reached
 // the ceiling separately from the error, so a caller can tell "the child said
 // too much" from "the child failed": the first has a remedy about the range
 // being read, the second has a remedy about the child.
@@ -348,21 +344,21 @@ func (ExecGit) DiffNames(ctx context.Context, dir, base, head string) ([]string,
 // ExecSSH is the production remote. The ssh binary is named by --ssh rather than
 // found on PATH, because "no cwd dependence, every path a flag" applies to the
 // program as much as to the directories: a bench with two ssh binaries should
-// not be a coin toss.
+// not be a coin toss. Every invocation goes through internal/benchsh (#3350):
+// `ssh <machine> bash -s --` with the command line on stdin, so bash reads it
+// and never the machine's login shell.
 type ExecSSH struct{ Path string }
 
-// sshArgs are the options every invocation carries. BatchMode so a missing key
-// is a refusal now rather than a password prompt nobody is at the keyboard for,
-// and a connect timeout so a sleeping bench costs seconds rather than the run.
-func (s ExecSSH) sshArgs(machine string) []string {
-	return append(append([]string(nil), SSHOptions...), machine)
-}
+// SSHConnectTimeout is how long a sleeping bench may cost before the connect
+// is refused.
+const SSHConnectTimeout = 10 * time.Second
 
-// SSHOptions are the options EVERY invocation carries, in one slice so a test
-// can read the whole policy rather than three call sites (Johnny, 2026-09-18).
+// SSHOptions are the options EVERY invocation carries beyond benchsh's own
+// BatchMode=yes and ConnectTimeout, in one slice so a test can read the whole
+// policy rather than three call sites (Johnny, 2026-09-18).
 //
-// BatchMode so a missing key is a refusal now rather than a password prompt
-// nobody is at the keyboard for. ConnectTimeout so a sleeping bench costs
+// BatchMode (benchsh) so a missing key is a refusal now rather than a password
+// prompt nobody is at the keyboard for. ConnectTimeout so a sleeping bench costs
 // seconds rather than the run. And ForwardAgent=no SAID OUT LOUD rather than
 // left to the default or to whatever ~/.ssh/config on the adopting host says:
 // this verb runs on the one host that holds keys to the whole fleet, and
@@ -371,21 +367,41 @@ func (s ExecSSH) sshArgs(machine string) []string {
 //
 // There is no -i here and there never will be: a key named on argv is a key in
 // every `ps` on the box. ssh finds its own identity.
-var SSHOptions = []string{
-	"-o", "BatchMode=yes",
-	"-o", "ConnectTimeout=10",
-	"-o", "ForwardAgent=no",
+var SSHOptions = []string{"ForwardAgent=no"}
+
+// machineTarget is the machine as benchsh's target, carrying the policy above.
+func machineTarget(program, machine string) benchsh.Target {
+	return benchsh.Target{Host: machine, SSH: program, ConnectTimeout: SSHConnectTimeout,
+		Options: append([]string(nil), SSHOptions...)}
 }
 
-// Run executes argv on the machine. The arguments are handed to ssh as separate
-// argv entries; the remote's own shell still reassembles them, so every value
-// that reaches here has been checked by its caller (the machine name against
-// machineName, the version against ValidVersion, the paths by the flags that
-// named them).
+// sshArgs is the whole ssh argv for a command on the machine, for a test to read.
+func (s ExecSSH) sshArgs(machine string) []string {
+	return benchsh.Argv(machineTarget(s.Path, machine))
+}
+
+// captured runs cmd with stdout and stderr together in one bounded capture;
+// reaching the ceiling calls cancel, which ends the child.
+func captured(cmd *exec.Cmd, cancel context.CancelFunc) (string, error) {
+	out := bounded.NewCapture(childCap, cancel)
+	cmd.Stdout, cmd.Stderr = out, out
+	err := cmd.Run()
+	return string(out.Bytes()), err
+}
+
+// Run executes argv on the machine. The words are joined into one command line
+// (benchsh.Line) exactly as ssh joined them before, and bash on the machine
+// reads that line; so every value that reaches here has been checked by its
+// caller (the machine name against machineName, the version against
+// ValidVersion, the paths by the flags that named them).
 func (s ExecSSH) Run(ctx context.Context, machine string, argv []string) (string, error) {
-	args := append(s.sshArgs(machine), argv...)
-	testguard.RefuseHosts(s.Path, args...)
-	return runCommand(ctx, s.Path, args...)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd, err := benchsh.Command(runCtx, machineTarget(s.Path, machine), benchsh.Line(argv...), nil)
+	if err != nil {
+		return "", err
+	}
+	return captured(cmd, cancel)
 }
 
 // Send copies a directory to the machine as a tar stream on ssh's stdin. The tar
@@ -412,9 +428,15 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 		pw.CloseWithError(writeTar(pw, dir, base, allowed))
 	}()
 	defer pr.Close()
-	args := append(s.sshArgs(machine), "mkdir", "-p", dest, "&&", "tar", "-C", dest, "-xf", "-")
-	testguard.RefuseHosts(s.Path, args...)
-	return runCommandInput(ctx, pr, "", s.Path, args...)
+	// benchsh's input form: bash reads the one exec line, and the tar stream
+	// that follows is the whole stdin of this line's tar.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd, err := benchsh.Command(runCtx, machineTarget(s.Path, machine), benchsh.Line("mkdir", "-p", dest, "&&", "tar", "-C", dest, "-xf", "-"), pr)
+	if err != nil {
+		return "", err
+	}
+	return captured(cmd, cancel)
 }
 
 // Fetch reads a directory FROM the machine into a local one, the mirror of
@@ -423,12 +445,13 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 // tar. It is what makes `--from host:dir` work -- the host that has the ssh
 // trust adopting a release that lives on the host that has the cores.
 func (s ExecSSH) Fetch(ctx context.Context, machine, dir, dest string) (string, error) {
-	args := append(s.sshArgs(machine), "tar", "-C", dir, "-cf", "-", ".")
-	testguard.RefuseHosts(s.Path, args...)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stderr := bounded.NewCapture(childCap, cancel)
-	cmd := exec.CommandContext(runCtx, s.Path, args...)
+	cmd, err := benchsh.Command(runCtx, machineTarget(s.Path, machine), benchsh.Line("tar", "-C", dir, "-cf", "-", "."), nil)
+	if err != nil {
+		return "", err
+	}
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

@@ -23,6 +23,7 @@ package swarm
 //     own work. It is its own reason token now: bench-unreachable.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -32,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/benchsh"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
@@ -168,8 +170,8 @@ func waitForRemoteFile(host, path string, wait, poll time.Duration, clk pullCloc
 // repository it cloned, or one directory below that. It returns the first path found, or
 // the empty string when there is none.
 func findResultUnderRepo(host, job string) (string, error) {
-	// ssh joins its arguments into one command line for the remote shell, so the globs and
-	// the redirect are the remote shell's: a `ls` of two patterns, quiet about the ones
+	// sshOutput joins its arguments into one command line for bash on the bench, so the
+	// globs and the redirect are that shell's: a `ls` of two patterns, quiet about the ones
 	// that match nothing.
 	out, err := sshOutput(host, "ls", "-1",
 		job+"/repo/RESULT.md", job+"/repo/*/RESULT.md", "2>/dev/null")
@@ -196,18 +198,23 @@ func scpFile(host, remote, local string) error {
 	return nil
 }
 
+// sshRun runs args on the bench as one command line through internal/benchsh (#3350): the
+// words joined with spaces as ssh joined them before, now read by bash on the bench and
+// never its login shell, so a glob or a redirect in them is bash's.
 func sshRun(host string, args ...string) error {
-	testguard.RefuseHosts("ssh", append([]string{host}, args...)...)
-	cmd := exec.Command("ssh", append([]string{host}, args...)...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return &sshError{code: exitCodeOf(err), out: strings.TrimSpace(string(out)), err: err}
+	res, err := benchsh.Run(context.Background(), benchsh.Target{Host: host}, benchsh.Line(args...))
+	if err != nil {
+		return &sshError{code: benchsh.Code(err), out: strings.TrimSpace(res.Output), err: err}
 	}
 	return nil
 }
 
+// sshOutput is sshRun that answers the command's stdout alone.
 func sshOutput(host string, args ...string) (string, error) {
-	testguard.RefuseHosts("ssh", append([]string{host}, args...)...)
-	cmd := exec.Command("ssh", append([]string{host}, args...)...)
+	cmd, err := benchsh.Command(context.Background(), benchsh.Target{Host: host}, benchsh.Line(args...), nil)
+	if err != nil {
+		return "", &sshError{code: -1, err: err}
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return string(out), &sshError{code: exitCodeOf(err), err: err}

@@ -7,6 +7,7 @@ package swarm
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/benchsh"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
@@ -268,8 +270,9 @@ func scratchName(c batchCard) string {
 }
 
 // remoteRun copies the card to the bench -- the card only, nothing else -- then builds the
-// ssh command that runs native there: ssh <host> [taskset -c <core>] <root>/bin/nova-swarm
-// native ..., with the ssh child in a process group of its own.
+// ssh command that runs native there through internal/benchsh (#3350): `ssh <host> bash -s
+// --` with the one line `exec [taskset -c <core>] <root>/bin/nova-swarm native ...` on
+// stdin, with the ssh child in a process group of its own.
 func remoteRun(c batchCard, b Bench, localRoot string, deadline int, slotsStore, slotOwner, tokens string, logFile *os.File) (*exec.Cmd, error) {
 	// The bench slot lease travels with the launch (nova-tools#1546). The store path is
 	// resolved ON THE BENCH, not here: this argv is what ssh runs there.
@@ -281,7 +284,7 @@ func remoteRun(c batchCard, b Bench, localRoot string, deadline int, slotsStore,
 		return nil, fmt.Errorf("nova-swarm batch: card %s could not be copied to bench %s: %s",
 			oneline.Field(c.label), oneline.Field(b.Name), oneline.Err(err))
 	}
-	argv := []string{"ssh", b.Host}
+	argv := []string{"exec"}
 	if b.Cores != "-" {
 		core, err := coreFor(b.Cores, c.slot)
 		if err != nil {
@@ -307,8 +310,10 @@ func remoteRun(c batchCard, b Bench, localRoot string, deadline int, slotsStore,
 		// remote card one at a time.
 		"--tokens", tokens,
 	)
-	testguard.RefuseHosts(argv[0], argv[1:]...)
-	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd, err := benchsh.Command(context.Background(), benchsh.Target{Host: b.Host}, benchsh.Line(argv...), nil)
+	if err != nil {
+		return nil, err
+	}
 	cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+localRoot)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
