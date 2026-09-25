@@ -3,11 +3,14 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/decide/questions"
@@ -31,13 +34,18 @@ func runClassify(args []string, stdout, stderr io.Writer) int {
 	version := fs.Int("version", 1, "the question's version")
 	evidencePath := fs.String("evidence", "", "the evidence, a file or - for standard input")
 	pointer := fs.String("pointer", "", "the item's id, for the line and the log")
-	deciders := fs.String("decider", decide.DeciderRules, "the chain, in order: rules[,jev|local]")
+	deciders := fs.String("decider", decide.DeciderRules, "the chain, in order: rules[,jev|local]; jev and local need --log and --usage")
 	floor := fs.Float64("floor", 0.65, "the floor an answer must reach to stand")
 	rulesPath := fs.String("rules", "", "the rule table: a TSV of <substring>\\t<member>")
 	tamperPath := fs.String("tamper", "", "the tamper pattern table, one pattern a line")
 	escalateTo := fs.String("escalate-to", "", "the stronger reader an unknown or tampered item goes to")
 	logPath := fs.String("log", "", "append the decision row here (JSON lines; the evidence text is never written)")
 	private := fs.Bool("private", false, "the evidence is private: no decider that leaves the machine may see it")
+	keyEnv := fs.String("key-env", decide.DefaultKeyEnv, "with jev or local: the environment variable holding the key; never a file, never argv")
+	baseURL := fs.String("base-url", decide.DefaultBaseURL, "with jev or local: the Jev endpoint")
+	usagePath := fs.String("usage", "", "append what a provider call spent to this usage TSV; required with jev or local")
+	recordDir := fs.String("record", "", "write the provider's answer to this directory as a fixture")
+	replayDir := fs.String("replay", "", "answer from a fixture --record wrote instead of dialling the provider; no key, no spend")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	observeVerbFlags("classify", fs)
@@ -77,6 +85,52 @@ func runClassify(args []string, stdout, stderr io.Writer) int {
 			fmt.Sprintf("--floor %v is not a confidence; it wants a number between 0 and 1, such as --floor 0.9", *floor))
 	}
 
+	// The chain is read BEFORE anything else is: a name this build does not
+	// offer is a refusal, and a chain that asks a provider has to account for
+	// the call and hold a key before the evidence is even opened.
+	asks, err := chainAsks(*deciders)
+	if err != nil {
+		return refuse(stderr, "CLASSIFY", "bad-decider", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if strings.TrimSpace(*recordDir) != "" && strings.TrimSpace(*replayDir) != "" {
+		return refuse(stderr, "CLASSIFY", "bad-flags", "--record dials the provider and --replay does not; pass one of them")
+	}
+	// Accounting is not optional (route.go, the same rule): a provider call
+	// nobody can account for is refused rather than made, so --log and --usage
+	// are both named before the key is read.
+	if asks {
+		var missing []string
+		if strings.TrimSpace(*usagePath) == "" {
+			missing = append(missing, "--usage")
+		}
+		if strings.TrimSpace(*logPath) == "" {
+			missing = append(missing, "--log")
+		}
+		if len(missing) > 0 {
+			return refuse(stderr, "CLASSIFY", "no-accounting", fmt.Sprintf(
+				"a jev call must be accounted for: %s missing; pass %s, or --decider rules to answer by the table alone with no call to account for",
+				strings.Join(missing, " and "), remedyFor(missing)))
+		}
+	}
+	fixture := fixturePath(*replayDir, q, *pointer)
+	var client decide.Decider
+	var spent *spendMeter
+	if asks {
+		if strings.TrimSpace(*replayDir) != "" {
+			client = replayDecider{path: fixture}
+		} else {
+			opened, err := deciderOpener(*baseURL, *keyEnv)
+			if err != nil {
+				return refuse(stderr, "CLASSIFY", "no-key", oneline.Cap(err.Error(), oneline.TailBytes))
+			}
+			spent = &spendMeter{inner: opened}
+			client = spent
+			if strings.TrimSpace(*recordDir) != "" {
+				client = recordDecider{inner: spent, path: fixturePath(*recordDir, q, *pointer)}
+			}
+		}
+	}
+
 	text, err := readEvidence(*evidencePath)
 	if err != nil {
 		return refuse(stderr, "CLASSIFY", "bad-evidence", oneline.Cap(err.Error(), oneline.TailBytes))
@@ -90,7 +144,7 @@ func runClassify(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "CLASSIFY", "bad-tamper", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 
-	chain, err := buildChain(*deciders, rules)
+	chain, err := buildChain(*deciders, rules, client)
 	if err != nil {
 		return refuse(stderr, "CLASSIFY", "bad-decider", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -105,6 +159,21 @@ func runClassify(args []string, stdout, stderr io.Writer) int {
 		Text: text, Class: class, Pointer: strings.TrimSpace(*pointer),
 	}, *floor)
 
+	// The spend is written BEFORE any refusal is returned: a call that was made
+	// was paid for, and an answer outside the set does not unspend it. A
+	// classification that made no call writes no row, because an empty row
+	// would claim one was made.
+	if spent != nil && spent.usage.Calls > 0 {
+		unit := decide.Unit{ID: strings.TrimSpace(*pointer)}
+		reg, _ := decide.LoadRegistry("") // the embedded ladder's rate table; none is a dash and a NOTE
+		if err := appendUsageAs("CLASSIFY", *usagePath, decide.RouteResult{Unit: unit.ID, Usage: spent.usage}, unit, reg, stderr); err != nil {
+			return refuse(stderr, "CLASSIFY", "bad-usage", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+	}
+	if spent != nil && spent.recordErr != nil {
+		return refuse(stderr, "CLASSIFY", "bad-record", oneline.Cap(spent.recordErr.Error(), oneline.TailBytes))
+	}
+
 	if res.Exit() == 2 {
 		return refuse(stderr, "CLASSIFY", res.Why, "the answer was not one this question asked for, so it is not a decision")
 	}
@@ -117,30 +186,142 @@ func runClassify(args []string, stdout, stderr io.Writer) int {
 	return res.Exit()
 }
 
-// buildChain walks the caller's --decider list. `rules` is always first whether
-// named or not (D2), which the chain itself enforces; naming a decider this
-// build does not offer is a refusal rather than a silent omission, because a
-// chain that quietly dropped a member would answer by a weaker decider and say
-// it was the one you asked for.
-func buildChain(list string, rules map[string]string) (decide.Chain, error) {
-	chain := decide.Chain{Deciders: []decide.ChainDecider{decide.NewRulesDecider(rules)}}
+// chainAsks reads the caller's --decider list and reports whether any member
+// asks a provider. Naming a decider this build does not offer is a refusal
+// rather than a silent omission, because a chain that quietly dropped a member
+// would answer by a weaker decider and say it was the one you asked for.
+func chainAsks(list string) (bool, error) {
+	asks := false
 	for _, name := range strings.Split(list, ",") {
 		switch strings.TrimSpace(name) {
 		case "", decide.DeciderRules, decide.DeciderNone:
-			// rules is already at the head; none adds nobody, which is what it
-			// means.
 		case decide.DeciderJev, decide.DeciderLocal:
-			// The wire client is not built here: a verb that constructed a
-			// provider from a flag would need a key to exist for a test to run,
-			// and no test in this task dials anything. The seam is
-			// decide.JevDecider, and the call site that has a client passes it.
-			return chain, fmt.Errorf("the %s decider needs a client this verb does not construct; ask in process through decide.JevDecider, or use --decider rules", strings.TrimSpace(name))
+			asks = true
 		default:
-			return chain, fmt.Errorf("there is no decider %q; the deciders are %s, %s, %s and %s",
+			return false, fmt.Errorf("there is no decider %q; the deciders are %s, %s, %s and %s",
 				strings.TrimSpace(name), decide.DeciderRules, decide.DeciderJev, decide.DeciderLocal, decide.DeciderNone)
 		}
 	}
+	return asks, nil
+}
+
+// buildChain walks the caller's --decider list. `rules` is always first whether
+// named or not (D2), which the chain itself enforces. `jev` and `local` ask
+// through the one client the verb opened from --key-env and --base-url (or the
+// fixture --replay names); `local` differs only in what it may see.
+func buildChain(list string, rules map[string]string, client decide.Decider) (decide.Chain, error) {
+	chain := decide.Chain{Deciders: []decide.ChainDecider{decide.NewRulesDecider(rules)}}
+	if _, err := chainAsks(list); err != nil {
+		return chain, err
+	}
+	for _, name := range strings.Split(list, ",") {
+		switch strings.TrimSpace(name) {
+		case decide.DeciderJev, decide.DeciderLocal:
+			if client == nil {
+				return chain, fmt.Errorf("the %s decider has no client; pass --key-env and --base-url, or --decider rules", strings.TrimSpace(name))
+			}
+			chain.Deciders = append(chain.Deciders, decide.JevDecider{Client: client, Local: strings.TrimSpace(name) == decide.DeciderLocal})
+		}
+	}
 	return chain, nil
+}
+
+// spendMeter stands between the verb and the provider and counts what every
+// call made through it spent: the calls, the tokens per counter as the
+// provider reported them, and whether a call failed. It is the fact the usage
+// row is written from, so the row is never inferred from the answer line.
+type spendMeter struct {
+	inner     decide.Decider
+	usage     decide.RouteUsage
+	recordErr error
+}
+
+func (m *spendMeter) Decide(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+	start := time.Now()
+	answers, usage, err := m.inner.Decide(ctx, state, qs)
+	m.usage.Calls++
+	m.usage.Ms += int(time.Since(start).Milliseconds())
+	m.usage.HasMs = true
+	if usage.HasInput {
+		m.usage.InputTokens += usage.InputTokens
+		m.usage.HasInput = true
+	}
+	if usage.HasOutput {
+		m.usage.OutputTokens += usage.OutputTokens
+		m.usage.HasOutput = true
+	}
+	if err != nil {
+		m.usage.Failed = true
+	}
+	return answers, usage, err
+}
+
+// classifyFixture is one recorded provider answer: what came back and what it
+// reported spending. The key and the evidence are never in it; the state the
+// provider saw carries a fresh nonce, so the fixture is keyed by the question
+// and the item's pointer instead.
+type classifyFixture struct {
+	Answers map[string]decide.Answer `json:"answers"`
+	Usage   decide.Usage             `json:"usage"`
+}
+
+// fixturePath is <dir>/<question>-v<n>-<pointer>.json, the pointer reduced to
+// file-safe characters. An empty dir is no fixture.
+func fixturePath(dir string, q questions.Question, pointer string) string {
+	if strings.TrimSpace(dir) == "" {
+		return ""
+	}
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			return r
+		}
+		return '_'
+	}, strings.TrimSpace(pointer))
+	return filepath.Join(dir, fmt.Sprintf("%s-v%d-%s.json", q.Name, q.Version, safe))
+}
+
+// recordDecider asks through the metered client and writes the answer as a
+// fixture. A fixture that cannot be written is recorded on the meter and
+// refused after the spend is accounted for.
+type recordDecider struct {
+	inner *spendMeter
+	path  string
+}
+
+func (r recordDecider) Decide(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+	answers, usage, err := r.inner.Decide(ctx, state, qs)
+	if err != nil {
+		return answers, usage, err
+	}
+	raw, merr := json.MarshalIndent(classifyFixture{Answers: answers, Usage: usage}, "", "  ")
+	if merr == nil {
+		if merr = os.MkdirAll(filepath.Dir(r.path), 0o755); merr == nil {
+			merr = os.WriteFile(r.path, append(raw, '\n'), 0o644)
+		}
+	}
+	if merr != nil {
+		r.inner.recordErr = fmt.Errorf("cannot write the fixture %s: %w", r.path, merr)
+	}
+	return answers, usage, nil
+}
+
+// replayDecider answers from a fixture --record wrote. It dials nothing and
+// spends nothing, so it reports no usage; a missing fixture is a provider
+// error, which the chain walks past to unknown rather than answering from
+// nothing.
+type replayDecider struct{ path string }
+
+func (r replayDecider) Decide(_ context.Context, _ string, _ map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+	raw, err := os.ReadFile(r.path)
+	if err != nil {
+		return nil, decide.Usage{}, fmt.Errorf("decide: no fixture to replay: %w", err)
+	}
+	var f classifyFixture
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return nil, decide.Usage{}, fmt.Errorf("decide: fixture %s: %w", r.path, err)
+	}
+	return f.Answers, decide.Usage{}, nil
 }
 
 // readEvidence reads the item's text from a file or standard input.

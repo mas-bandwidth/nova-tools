@@ -505,6 +505,13 @@ func persist(res decide.RouteResult, u decide.Unit, sink decide.LogSink, usagePa
 // "-" and never a 0 (SPEC-TOKENS rule 14), so a failed call's tokens are an
 // absence rather than a claim that it was free.
 func appendUsage(path string, res decide.RouteResult, u decide.Unit, reg *decide.Registry, stderr io.Writer) error {
+	return appendUsageAs("ROUTE", path, res, u, reg, stderr)
+}
+
+// appendUsageAs is appendUsage for a verb other than route: the price NOTE is
+// the verb's own line, so a classify caller never reads a ROUTE line it did
+// not ask for.
+func appendUsageAs(verb, path string, res decide.RouteResult, u decide.Unit, reg *decide.Registry, stderr io.Writer) error {
 	row := swarm.UsageRow{
 		"job":      u.ID,
 		"attempt":  strconv.Itoa(len(u.Attempts) + 1),
@@ -529,7 +536,7 @@ func appendUsage(path string, res decide.RouteResult, u decide.Unit, reg *decide
 	if usd, note := priceRow(res, reg); usd != "" {
 		row["usd"] = usd
 	} else if note != "" {
-		fmt.Fprintf(stderr, "ROUTE NOTE %s\n", oneline.Escape(note))
+		fmt.Fprintf(stderr, "%s NOTE %s\n", verb, oneline.Escape(note))
 	}
 	return swarm.AppendCardUsage(path, row)
 }

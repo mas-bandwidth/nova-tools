@@ -2,10 +2,15 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
 
 func writeEvidence(t *testing.T, text string) string {
@@ -186,5 +191,208 @@ func TestClassifyRefusesAnInvalidFloor(t *testing.T) {
 		if !strings.Contains(stdout.String(), "answer=blocked-toolchain") {
 			t.Errorf("negative control: --floor %s did not classify: %q", good, stdout.String())
 		}
+	}
+}
+
+// jevHarvestServer is a throwaway Jev endpoint on loopback: it answers the
+// harvest question with `defect` at 0.91 and reports what the call spent. It
+// counts the calls, so a test can prove a path made none.
+func jevHarvestServer(t *testing.T, calls *int) string {
+	t.Helper()
+	srv := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		*calls++
+		raw, _ := io.ReadAll(r.Body)
+		var req struct {
+			Questions map[string]json.RawMessage `json:"questions"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil || req.Questions["harvest"] == nil {
+			http.Error(w, "want the harvest question", http.StatusBadRequest)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer classify-test-key" {
+			http.Error(w, "wrong key", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"answers":{"harvest":{"type":"choice","choice":"defect","confidence":0.91}},"usage":{"input_tokens":120,"output_tokens":8}}`)
+	})
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// #3398: `--decider rules,jev` asks Jev from the CLI. The verb builds the
+// client from --key-env and --base-url the way route and review do, the answer
+// prints decider=jev at exit 0, the decision row goes to --log and the spend
+// goes to --usage as one row of the fleet's usage TSV.
+func TestClassifyJevAnswersQuestion(t *testing.T) {
+	t.Setenv("CLASSIFY_TEST_KEY", "classify-test-key")
+	calls := 0
+	url := jevHarvestServer(t, &calls)
+	dir := t.TempDir()
+	logPath, usagePath := filepath.Join(dir, "decide.jsonl"), filepath.Join(dir, "usage.tsv")
+	ev := writeEvidence(t, "--- FAIL: TestX\n    x_test.go:12: got 3, want 4")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"classify", "--question", "harvest", "--evidence", ev, "--pointer", "test-1",
+		"--decider", "rules,jev", "--key-env", "CLASSIFY_TEST_KEY", "--base-url", url,
+		"--log", logPath, "--usage", usagePath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (stdout=%q stderr=%q)", code, stdout.String(), stderr.String())
+	}
+	line := strings.TrimSpace(stdout.String())
+	for _, want := range []string{"CLASSIFY question=harvest/v1", "answer=defect", "decider=jev", "conf=0.91", "pointer=test-1"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the line is missing %q: %s", want, line)
+		}
+	}
+	if calls != 1 {
+		t.Errorf("one item is one call, got %d", calls)
+	}
+	if strings.Contains(stdout.String()+stderr.String(), "classify-test-key") {
+		t.Errorf("the key was printed")
+	}
+	logRaw, err := os.ReadFile(logPath)
+	if err != nil || !strings.Contains(string(logRaw), `"decider":"jev"`) {
+		t.Errorf("the decision row is not in --log (err=%v): %s", err, logRaw)
+	}
+	usageRaw, err := os.ReadFile(usagePath)
+	if err != nil {
+		t.Fatalf("no usage row was written: %v", err)
+	}
+	usage := string(usageRaw)
+	for _, want := range []string{"test-1", "typesafe", decide.DefaultModel, "120", "8"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("the usage row is missing %q:\n%s", want, usage)
+		}
+	}
+
+	// NEGATIVE CONTROL: --private keeps the evidence off a decider that leaves
+	// the machine, so the same invocation makes no call, spends nothing, and
+	// says jev was skipped for private evidence.
+	calls = 0
+	stdout.Reset()
+	stderr.Reset()
+	usage2 := filepath.Join(dir, "usage2.tsv")
+	code = run([]string{"classify", "--question", "harvest", "--evidence", ev, "--pointer", "test-2",
+		"--decider", "rules,jev", "--key-env", "CLASSIFY_TEST_KEY", "--base-url", url,
+		"--log", logPath, "--usage", usage2, "--private"}, &stdout, &stderr)
+	if code != 3 || calls != 0 || !strings.Contains(stdout.String(), "jev=private-evidence") {
+		t.Errorf("private evidence: exit=%d calls=%d, want 3 and 0 with jev=private-evidence: %s%s", code, calls, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(usage2); err == nil {
+		t.Errorf("a classification that made no call wrote a usage row")
+	}
+}
+
+// #3398: a jev call is accounted for or not made. Without --usage or without
+// --log the verb refuses before any key is read or any call is dialled.
+func TestClassifyJevRequiresAccounting(t *testing.T) {
+	t.Setenv("CLASSIFY_TEST_KEY", "classify-test-key")
+	calls := 0
+	url := jevHarvestServer(t, &calls)
+	dir := t.TempDir()
+	ev := writeEvidence(t, "ordinary output")
+	base := []string{"classify", "--question", "harvest", "--evidence", ev, "--pointer", "p",
+		"--key-env", "CLASSIFY_TEST_KEY", "--base-url", url}
+	for name, extra := range map[string][]string{
+		"no usage":       {"--decider", "rules,jev", "--log", filepath.Join(dir, "d.jsonl")},
+		"no log":         {"--decider", "rules,jev", "--usage", filepath.Join(dir, "u.tsv")},
+		"neither":        {"--decider", "rules,jev"},
+		"local, neither": {"--decider", "rules,local"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := run(append(append([]string{}, base...), extra...), &stdout, &stderr)
+		if code != 2 || !strings.Contains(stderr.String(), "CLASSIFY REFUSED reason=no-accounting") {
+			t.Errorf("%s: exit=%d stderr=%q, want 2 with reason=no-accounting", name, code, stderr.String())
+		}
+		if stdout.Len() != 0 {
+			t.Errorf("%s: a refusal prints no answer line: %q", name, stdout.String())
+		}
+	}
+	if calls != 0 {
+		t.Errorf("a refused classification dialled the provider %d times", calls)
+	}
+
+	// NEGATIVE CONTROL: --decider rules makes no call, so it needs neither
+	// flag and no key, and answers from the table at exit 0.
+	rules := filepath.Join(dir, "rules.tsv")
+	if err := os.WriteFile(rules, []byte("ordinary\tclean\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"classify", "--question", "harvest", "--evidence", ev, "--pointer", "p",
+		"--decider", "rules", "--rules", rules, "--key-env", "CLASSIFY_UNSET_KEY"}, &stdout, &stderr)
+	if code != 0 || !strings.Contains(stdout.String(), "decider=rules") || calls != 0 {
+		t.Errorf("rules alone: exit=%d calls=%d stdout=%q stderr=%q", code, calls, stdout.String(), stderr.String())
+	}
+}
+
+// #3398: with jev in the chain and no key in the variable --key-env names, the
+// verb refuses naming the variable, and never the key.
+func TestClassifyJevMissingKeyRefuses(t *testing.T) {
+	t.Setenv("CLASSIFY_UNSET_KEY", "")
+	t.Setenv(decide.FallbackKeyEnv, "")
+	dir := t.TempDir()
+	ev := writeEvidence(t, "ordinary output")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"classify", "--question", "harvest", "--evidence", ev, "--pointer", "p",
+		"--decider", "rules,jev", "--key-env", "CLASSIFY_UNSET_KEY", "--base-url", "http://127.0.0.1:1",
+		"--log", filepath.Join(dir, "d.jsonl"), "--usage", filepath.Join(dir, "u.tsv")}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "CLASSIFY REFUSED reason=no-key") || !strings.Contains(stderr.String(), "CLASSIFY_UNSET_KEY") {
+		t.Errorf("exit=%d stderr=%q, want 2 with reason=no-key naming the variable", code, stderr.String())
+	}
+
+	// NEGATIVE CONTROL: an unknown decider is still bad-decider, not no-key.
+	stderr.Reset()
+	code = run([]string{"classify", "--question", "harvest", "--evidence", ev, "--pointer", "p",
+		"--decider", "rules,oracle", "--key-env", "CLASSIFY_UNSET_KEY"}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "reason=bad-decider") {
+		t.Errorf("unknown decider: exit=%d stderr=%q, want bad-decider", code, stderr.String())
+	}
+}
+
+// #3398: --record writes the provider's answer as a fixture and --replay reads
+// it back with no key and no call, so a test of a classify caller runs offline.
+func TestClassifyJevRecordThenReplay(t *testing.T) {
+	t.Setenv("CLASSIFY_TEST_KEY", "classify-test-key")
+	calls := 0
+	url := jevHarvestServer(t, &calls)
+	dir := t.TempDir()
+	fixtures := filepath.Join(dir, "fixtures")
+	ev := writeEvidence(t, "--- FAIL: TestX")
+	args := func(extra ...string) []string {
+		return append([]string{"classify", "--question", "harvest", "--evidence", ev, "--pointer", "card-7",
+			"--decider", "rules,jev", "--log", filepath.Join(dir, "d.jsonl"), "--usage", filepath.Join(dir, "u.tsv")}, extra...)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run(args("--key-env", "CLASSIFY_TEST_KEY", "--base-url", url, "--record", fixtures), &stdout, &stderr); code != 0 {
+		t.Fatalf("record: exit=%d stderr=%q", code, stderr.String())
+	}
+	recorded := stdout.String()
+	t.Setenv("CLASSIFY_TEST_KEY", "")
+	t.Setenv(decide.FallbackKeyEnv, "")
+	stdout.Reset()
+	if code := run(args("--key-env", "CLASSIFY_TEST_KEY", "--replay", fixtures), &stdout, &stderr); code != 0 {
+		t.Fatalf("replay: exit=%d stderr=%q", code, stderr.String())
+	}
+	if calls != 1 {
+		t.Errorf("replay dialled the provider: %d calls, want the one recorded", calls)
+	}
+	if !strings.Contains(stdout.String(), "answer=defect") || !strings.Contains(stdout.String(), "decider=jev") {
+		t.Errorf("replay answered differently: recorded %q, replayed %q", recorded, stdout.String())
+	}
+	usage, _ := os.ReadFile(filepath.Join(dir, "u.tsv"))
+	if n := strings.Count(string(usage), "card-7"); n != 1 {
+		t.Errorf("a replay spends nothing, so the usage file holds the one recorded call, got %d rows:\n%s", n, usage)
+	}
+
+	// NEGATIVE CONTROL: a replay with no fixture for this item refuses rather
+	// than answering from nothing.
+	stdout.Reset()
+	stderr.Reset()
+	code := run([]string{"classify", "--question", "harvest", "--evidence", ev, "--pointer", "card-8",
+		"--decider", "rules,jev", "--log", filepath.Join(dir, "d.jsonl"), "--usage", filepath.Join(dir, "u.tsv"),
+		"--replay", fixtures}, &stdout, &stderr)
+	if code == 0 || strings.Contains(stdout.String(), "answer=defect") {
+		t.Errorf("a missing fixture answered: exit=%d stdout=%q", code, stdout.String())
 	}
 }
