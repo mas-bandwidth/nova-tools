@@ -36,6 +36,7 @@ var mergeAudit = audit.Config{
 		"verbs.go|nameAnUnheldObject|strings.ToUpper(verb)":             "the verb's own name upper-cased, the literals \"read\" and \"gate\" at its two call sites in this file",
 		"verbs.go|nameAnUnheldObject|what":                              "the field's own name, the literals \"head\" and \"merge\" at its two call sites in this file",
 		"verbs.go|cmdRead|current":                                      "the literals \"true\", \"false\" and \"-\", returned by standingOf in this file",
+		"verbs.go|cmdRead|storeField":                                   "\"\" or the literal \" record=\" and the line key through oneline.Field, built above the two sites in this function",
 		// The two batch sites are the shape this walk cannot see: a value built above the
 		// print site. Each has a behavioral test of its own in batch_test.go.
 		"batch.go|runBatch|batchLine(in, baseSHA, headSHA, members, dropped, append(skipped, step.name))": "the same fields as `line` below, rendered through oneline.Field inside batchLine, built at the --require-lisp refusal with the step that could not run appended to the skipped list; TestBatchRequireLispFailsWhenTheStepCannotRun asserts the whole line",
@@ -116,13 +117,10 @@ var mergeAudit = audit.Config{
 		// react.go publishes and reads through internal/ci, whose values are rendered
 		// through oneline before this package prints them.
 		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
-		// friendread owns the read event's spelling (Stream, EventRead), so the writer
-		// in readevent.go and the fold the 1 s table runs agree on the wire by one
-		// constant. It is a fold over caller-supplied entries and prints nothing.
-		`"github.com/mas-bandwidth/nova-tools/internal/friendread"`,
-		// events owns the one stream's write contract; readevent.go takes only MaxLen,
-		// the approximate cap every writer trims the stream to, and prints nothing.
-		`"github.com/mas-bandwidth/nova-tools/internal/events"`,
+		// line is the one read record's writer (ns_line_post, nova-tools#3874): read
+		// --redis posts through line.Post, which returns a reply and prints nothing;
+		// its key and refusal reach a line through oneline.Field and oneline.Escape.
+		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/line"`,
 		// internal/ci/slowtests is batch's reader of a `go test -json` stream, and it is
 		// THE SAME DECODER cmd/nova-ci reads CI's own stream with. It holds no writer:
 		// Parse decodes newline-delimited JSON into structs and returns them, and the

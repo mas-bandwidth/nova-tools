@@ -136,9 +136,17 @@ func TestRecordAndLines(t *testing.T) {
 	if r, _ = Record(ctx, c, repo, 7, RecordFields{Head: "bbbbbbb2"}); r.CI != "pending" || r.Mergeable != "" {
 		t.Fatalf("new head kept ci/mergeable: %+v", r)
 	}
+	// The reads are line records keyed by head: none is at the new head,
+	// and the record has no reads field (nova-tools#3874).
 	recs, _ := LoadPRs(ctx, c, repo, []int{7})
-	if len(recs[0].Reads) != 2 || recs[0].Task != "" {
-		t.Fatalf("record: %+v", recs[0])
+	if len(recs[0].Reads) != 0 || recs[0].Task != "" {
+		t.Fatalf("record at the new head: %+v", recs[0])
+	}
+	if ok, _ := c.HExists(ctx, PRKey(repo, 7), "reads").Result(); ok {
+		t.Fatal("the pr record has a reads field")
+	}
+	if n, _ := c.LLen(ctx, PRKey(repo, 7)+":lines").Result(); n != 2 {
+		t.Fatalf("the line log has %d lines, want 2", n)
 	}
 }
 
@@ -258,11 +266,12 @@ func TestSaveBuiltParksAndLandMembersLands(t *testing.T) {
 	recs, _ := LoadPRs(ctx, c, repo, []int{3, 1})
 	for _, r := range recs {
 		line := CloseLine(fmt.Sprintf("%040d", r.N), l.Branch, l.Head, repo, 900, sha)
-		if r.Reads[len(r.Reads)-1] != line {
-			t.Fatalf("#%d reads %q, want the CLOSE line last", r.N, r.Reads)
+		// A CLOSE is a line, never a read: the reads are the SCORE alone.
+		if len(r.Reads) != 1 || !strings.HasPrefix(r.Reads[0], "SCORE who=rowan") {
+			t.Fatalf("#%d reads %q, want the one SCORE", r.N, r.Reads)
 		}
-		if ls, _ := c.LRange(ctx, PRKey(repo, r.N)+":lines", 0, -1).Result(); len(ls) != 1 || ls[0] != line {
-			t.Fatalf("#%d :lines %q", r.N, ls)
+		if ls, _ := c.LRange(ctx, PRKey(repo, r.N)+":lines", 0, -1).Result(); len(ls) != 2 || ls[1] != line {
+			t.Fatalf("#%d :lines %q, want the SCORE then the CLOSE", r.N, ls)
 		}
 		if cl, _ := c.HGet(ctx, PRKey(repo, r.N), "close").Result(); cl != line {
 			t.Fatalf("#%d close %q", r.N, cl)
@@ -326,10 +335,15 @@ func TestRedisPartsForAThousandAreFixedRoundTrips(t *testing.T) {
 		id := fmt.Sprintf("t%d", n)
 		pipe.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: float64(n), Member: id})
 		pipe.HSet(ctx, "task:"+id, "stream", strm, "state", "merging", "pr", fmt.Sprint(n))
-		pipe.HSet(ctx, PRKey(repo, n), "head", head, "base", "dev", "stream", strm, "state", "open", "reads", score("rowan", head, 10))
+		pipe.HSet(ctx, PRKey(repo, n), "head", head, "base", "dev", "stream", strm, "state", "open")
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatal(err)
+	}
+	for n := 1; n <= 1000; n++ {
+		if _, err := AddLine(ctx, c, repo, n, score("rowan", head, 10)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// Load the script once so the count below is EVALSHA only.
 	if err := script.Load(ctx, c).Err(); err != nil {
@@ -355,7 +369,7 @@ func TestRedisPartsForAThousandAreFixedRoundTrips(t *testing.T) {
 		t.Fatalf("moved %d %v", res.Moved, err)
 	}
 	t.Logf("members + built + load + landed + members landed for 1,000: %d round trips in %v", rt.n, time.Since(start))
-	if rt.n != 7 { // members 3 (merging, task pr, records), built 1, load 1, landed 1, land members 1
+	if rt.n != 7 { // members 3 (merging, task pr, records and their reads), built 1, load 1, landed 1, land members 1
 		t.Fatalf("%d round trips for 1,000 members, want 7", rt.n)
 	}
 	if n, _ := c.ZCard(ctx, WSKey(strm, "landed")).Result(); n != 1000 {

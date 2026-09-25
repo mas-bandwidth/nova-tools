@@ -11,8 +11,6 @@
 //
 //	pr:<name>:<n>          hash  repo, n, head, base, base_sha, state (open|parked|landed|merged|closed),
 //	                             ci (pending|green|red), mergeable (true|false|""), stream, task, kind,
-//	                             reads (typed SCORE/DISPOSITION/HOLD lines, newline-joined;
-//	                             the lander also reads pr:<name>:<n>:lines, read post's list),
 //	                             created_at, updated_at; closes (issues the body closes, "-" none);
 //	                             park, landed_with, close, closed_at on moves
 //	land:<repo>:<slug>     hash  streams, slug, base, base_sha, branch, head, members (<n>@<head> ...),
@@ -22,9 +20,14 @@
 //	cfg:land               hash  min_score, min_score:<repo>, remote:<repo>
 //	cfg:land:test:<repo>   string the repo's batch test command (bash -c)
 //
+// A PR's reads are the one read record (nova-tools#3874): the typed line
+// records pr:<name>:<n>:line:<head>:<who>:<kind> that ns_line_post writes
+// (internal/nsprint/line). LoadPRs lists them at the record's head in the
+// pipeline that reads the record; the record itself has no reads field.
+//
 // Every write goes through land_stream.lua (one EVAL, atomic) or, for a
-// member's task moves, the nova_sprint library. Reads are pipelined: one
-// round trip per batch, never a SCAN.
+// member's task moves and a typed line, the nova_sprint library. Reads are
+// pipelined: one round trip per batch, never a SCAN.
 package stream
 
 import (
@@ -41,6 +44,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/line"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
@@ -55,11 +59,6 @@ var script = redis.NewScript(luaSource)
 // the lander's owner/name and read's and ci's bare name hit the same hash.
 // land_stream.lua's prkey mirrors it.
 func PRKey(repo string, n int) string { return prkey.Key(repo, n) }
-
-// LinesKey is the record's typed-line list: `read post` appends each line
-// it stores there (internal/nsprint/read, LinesKey), where the record's
-// reads field never sees it. The lander reads both (nova-tools #3898).
-func LinesKey(repo string, n int) string { return PRKey(repo, n) + ":lines" }
 
 // LandKey is one stream landing.
 func LandKey(repo, slug string) string { return "land:" + repo + ":" + slug }
@@ -122,8 +121,10 @@ type PR struct {
 	Stream    string
 	Task      string
 	Kind      string
-	Reads     []string
-	ClosedAt  string
+	// Reads is the typed first line of each reader's current read at the
+	// head (line.Current: one per reader, Jev never), oldest first.
+	Reads    []string
+	ClosedAt string
 	// Closes is the issues the PR's body closes, space-joined; "-" for
 	// none, "" when nobody has recorded them (the lander reads the body).
 	Closes string
@@ -134,22 +135,11 @@ type PR struct {
 	Exists       bool
 }
 
-func prFrom(repo string, n int, m map[string]string, list []string) PR {
+func prFrom(repo string, n int, m map[string]string) PR {
 	p := PR{Repo: repo, N: n, Exists: len(m) > 0,
 		Head: m["head"], Base: m["base"], BaseSHA: m["base_sha"], State: m["state"], CI: m["ci"],
 		Mergeable: m["mergeable"], Stream: m["stream"], Task: m["task"], Kind: m["kind"], ClosedAt: m["closed_at"],
 		Closes: m["closes"], CommitCloses: m["commit_closes"], IssuesClosed: m["issues_closed"]}
-	// The reads field's lines first, then every line of the lines list not
-	// already there: a SCORE line `read post` stored counts the same as one
-	// `pr lines --add` stored (nova-tools #3898: 19 read PRs sat in merging
-	// with their SCORE lines only in the list).
-	seen := map[string]bool{}
-	for _, l := range append(strings.Split(m["reads"], "\n"), list...) {
-		if l = strings.TrimSpace(l); l != "" && !seen[l] {
-			seen[l] = true
-			p.Reads = append(p.Reads, l)
-		}
-	}
 	return p
 }
 
@@ -162,23 +152,39 @@ func (p PR) MergeableOK() bool {
 	return false
 }
 
-// LoadPRs reads records and their lines lists in one pipelined round trip.
+// LoadPRs reads records and each one's current reads at its head in one
+// pipelined round trip: HGETALL of the record and ns_line_list (the read
+// record, internal/nsprint/line) per PR.
 func LoadPRs(ctx context.Context, c redis.Cmdable, repo string, ns []int) ([]PR, error) {
 	pipe := c.Pipeline()
 	cmds := make([]*redis.MapStringStringCmd, len(ns))
-	lists := make([]*redis.StringSliceCmd, len(ns))
+	lines := make([]*redis.Cmd, len(ns))
 	for i, n := range ns {
 		cmds[i] = pipe.HGetAll(ctx, PRKey(repo, n))
-		lists[i] = pipe.LRange(ctx, LinesKey(repo, n), 0, -1)
+		lc, err := line.ListCmd(ctx, pipe, repo, strconv.Itoa(n), "")
+		if err != nil {
+			return nil, err
+		}
+		lines[i] = lc
 	}
 	if len(ns) > 0 {
+		// A PR with no record answers MISSING, not an error; an error
+		// here is the store (or a library without ns_line_list).
 		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 			return nil, err
 		}
 	}
 	out := make([]PR, len(ns))
 	for i, n := range ns {
-		out[i] = prFrom(repo, n, cmds[i].Val(), lists[i].Val())
+		out[i] = prFrom(repo, n, cmds[i].Val())
+		_, recs, err := line.ParseList(lines[i])
+		switch {
+		case errors.Is(err, line.ErrNoHead):
+		case err != nil:
+			return nil, err
+		default:
+			out[i].Reads = line.Firsts(line.Current(recs))
+		}
 	}
 	return out, nil
 }
@@ -248,18 +254,27 @@ func Record(ctx context.Context, c redis.Scripter, repo string, n int, f RecordF
 	return RecordResult{Created: res[1] == "1", Head: res[2], Base: res[3], Stream: res[4], CI: res[5], Mergeable: res[6], State: res[7]}, nil
 }
 
-// AddLine appends one typed line to the record's reads and returns the count.
-func AddLine(ctx context.Context, c redis.Scripter, repo string, n int, line string) (int, error) {
-	line = strings.TrimSpace(line)
-	if line == "" || strings.ContainsAny(line, "\r\n") {
+// AddLine stores one typed line through the one line store (ns_line_post,
+// internal/nsprint/line; nova-tools#3874) and returns the lines in the PR's
+// log. A line that is not a typed line, a PR with no record, and a gate the
+// store refuses are a RefusedError; nothing is written.
+func AddLine(ctx context.Context, c redis.Cmdable, repo string, n int, text string) (int, error) {
+	text = strings.TrimSpace(text)
+	if text == "" || strings.ContainsAny(text, "\r\n") {
 		return 0, errors.New("a typed line is one non-empty line")
 	}
-	res, err := eval(ctx, c, "line", map[string]any{"repo": repo, "n": strconv.Itoa(n), "now": now(), "line": line})
-	if err != nil {
+	p, err := line.Post(ctx, c, repo, strconv.Itoa(n), text, line.Scope{})
+	switch {
+	case errors.Is(err, line.ErrMalformed):
+		return 0, &RefusedError{Why: err.Error()}
+	case err != nil:
 		return 0, err
+	case p.Status == "MISSING":
+		return 0, &RefusedError{Why: "no record " + PRKey(repo, n) + " with a head: run pr record first"}
+	case p.Status == "REFUSED":
+		return 0, &RefusedError{Why: p.Why}
 	}
-	k, _ := strconv.Atoi(res[1])
-	return k, nil
+	return p.Lines, nil
 }
 
 // Read is the verdict of a record's typed lines at its head.

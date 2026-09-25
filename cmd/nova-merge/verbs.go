@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/line"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -81,9 +82,13 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 	note := f.fs.String("note", "", "")
 	scope := f.fs.String("scope", "", "")
 	releases := f.fs.String("releases", "", "")
-	// --redis names the store the typed line becomes one kind=read event in (#2683).
-	// Without it the lane-branch record is the only truth and nothing else is written.
+	// --redis names the store the read is posted to: the one read record, a typed line
+	// through ns_line_post (internal/nsprint/line; nova-tools#3874), the record the
+	// stream lander, lander --shadow and nova-review reads read. An approve is a SCORE
+	// line and needs --score; a hold is a HOLD line. Without --redis the lane-branch
+	// record is the only thing written.
 	redisAddr := f.fs.String("redis", "", "")
+	score := f.fs.Int("score", -1, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -99,6 +104,15 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 	}
 	if *releases != "" && *scope == "" {
 		f.problem("--releases requires --scope <text>")
+	}
+	if *redisAddr != "" && *pr <= 0 {
+		f.problem("--redis posts the read to the PR's read record, and a branch entry has no PR; give --pr <n> or drop --redis")
+	}
+	if *redisAddr != "" && *verdict == "approve" && (*score < 0 || *score > 10) {
+		f.problem("--redis records an approve as a SCORE line; give --score <0..10>, the score the reader gave")
+	}
+	if *score >= 0 && *redisAddr == "" {
+		f.problem("--score is the score the read record keeps; it needs --redis <addr>")
 	}
 	var releaseIDs []string
 	if *releases != "" {
@@ -135,34 +149,39 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return 2
 	}
 	file := item.Path
+	storeField := ""
+	if *redisAddr != "" {
+		// The read record first (nova-tools#3874): it is what the lander reads, so a
+		// store that refuses or cannot be reached refuses the verb and pushes
+		// nothing; a re-run is the retry. One call keyed by head, who and kind: a
+		// second run of the same read replaces its record, it never adds a second.
+		silenceRedis()
+		rdb := deps.Dial(*redisAddr)
+		ctx, cancel := context.WithTimeout(context.Background(), f.dur())
+		p, err := line.Post(ctx, rdb, st.Repo, strconv.Itoa(*pr), readLine(*who, *head, *verdict, *score, *note), line.Scope{})
+		cancel()
+		_ = rdb.Close()
+		switch {
+		case err != nil:
+			fmt.Fprintf(stderr, "READ REFUSED the read record could not be written: %s; nothing is pushed, re-run the same verb\n", oneline.Err(err))
+			return 1
+		case p.Status == "MISSING":
+			fmt.Fprintf(stderr, "READ REFUSED %s has no head in the store; the record is written when the PR is opened or imported (nova-sprint pr record); nothing is pushed\n", oneline.Field(p.Key))
+			return 1
+		case p.Status == "REFUSED":
+			fmt.Fprintf(stderr, "READ REFUSED the read record refused the line: %s; nothing is pushed\n", oneline.Escape(p.Why))
+			return 1
+		}
+		storeField = " record=" + oneline.Field(p.Key)
+	}
 	recs := merge.NewRecords(*f.lane, st.LaneBranch, "origin", merge.NewGit(*f.lane, f.dur(), deps.Runner), f.dur())
 	merge.Appendf(*f.lane, deps.Now(), "READ entry=%s who=%s head=%s verdict=%s file=%s", id, *who, *head, *verdict, file)
 	pushErr := recs.Deliver(sub, []merge.Item{item})
 	if pushErr != nil {
-		fmt.Fprintf(stderr, "READ FAIL entry=%s who=%s head=%s file=%s pushed=false: %s; re-run the same verb to push it\n",
-			oneline.Field(id), oneline.Field(*who), oneline.Field(merge.Short(*head)), oneline.Field(file),
+		fmt.Fprintf(stderr, "READ FAIL entry=%s who=%s head=%s file=%s pushed=false%s: %s; re-run the same verb to push it\n",
+			oneline.Field(id), oneline.Field(*who), oneline.Field(merge.Short(*head)), oneline.Field(file), storeField,
 			oneline.Escape(oneline.Cap(pushErr.Error(), oneline.TailBytes)))
 		return 1
-	}
-	if *redisAddr != "" {
-		// #2683: the typed line becomes one kind=read event on cards:done, so the 1 s
-		// table's done column is a store read and not a per-tick GitHub call. The
-		// record is pushed -- that is the truth -- so a store that cannot be reached
-		// is a NOTE, never a lost record, and the verb's exit stands.
-		silenceRedis()
-		rdb := deps.Dial(*redisAddr)
-		eventPR := ""
-		if *pr > 0 {
-			eventPR = id
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), f.dur())
-		_, _, eventErr := emitReadEvent(ctx, rdb, id, *who, *verdict, *head, eventPR, sub.At)
-		cancel()
-		_ = rdb.Close()
-		if eventErr != nil {
-			fmt.Fprintf(stderr, "READ NOTE the record is pushed and the read event could not be written to the store: %s; the 1 s table's done count reads cards:done, so re-run the same verb with --redis to post it\n",
-				oneline.Err(eventErr))
-		}
 	}
 	if _, _, err := foldInto(*f.lane, st, recs, f.dur()); err != nil {
 		// The record is at the remote tip -- that is what pushed=true means -- so this
@@ -170,10 +189,25 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 		fmt.Fprintf(stderr, "READ NOTE the record is pushed and this lane could not fold the branch afterwards: %s; the next run folds it\n", oneline.Err(err))
 	}
 	current, approvals, holds, stale := standingOf(st, id, *head)
-	fmt.Fprintf(stdout, "READ OK entry=%s who=%s verdict=%s head=%s current=%s approvals=%d holds=%d stale=%d file=%s pushed=true\n",
+	fmt.Fprintf(stdout, "READ OK entry=%s who=%s verdict=%s head=%s current=%s approvals=%d holds=%d stale=%d file=%s pushed=true%s\n",
 		oneline.Field(id), oneline.Field(*who), oneline.Field(*verdict), oneline.Field(merge.Short(*head)),
-		current, approvals, holds, stale, oneline.Field(file))
+		current, approvals, holds, stale, oneline.Field(file), storeField)
 	return 0
+}
+
+// readLine is the typed line a read is in the read record: an approve is
+// SCORE who=<w> head=<sha> score=N/10, a hold is HOLD who=<w> head=<sha>, and
+// the note, when there is one, is the body on the lines after it.
+func readLine(who, head, verdict string, score int, note string) string {
+	who = strings.ToLower(strings.TrimSpace(who))
+	s := "HOLD who=" + who + " head=" + head
+	if verdict == "approve" {
+		s = "SCORE who=" + who + " head=" + head + " score=" + strconv.Itoa(score) + "/10"
+	}
+	if note = strings.TrimSpace(note); note != "" {
+		s += "\n" + note
+	}
+	return s
 }
 
 func isValidReleaseID(id string) bool {

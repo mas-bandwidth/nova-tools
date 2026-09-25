@@ -4,8 +4,9 @@
 -- the op, ARGV[2] a JSON payload of strings. Keys (rowan-new specs/ws-index.md and the
 -- pr record contract):
 --   pr:<name>:<n>            hash  repo, n, head, base, base_sha, state, ci, mergeable,
---                                  stream, task, kind, reads (typed lines, newline-joined),
---                                  created_at, updated_at; park, landed_with, close on moves
+--                                  stream, task, kind, created_at, updated_at; park,
+--                                  landed_with, close on moves (no reads field: a read is a
+--                                  line record ns_line_post writes, nova-tools#3874)
 --   land:<repo>:<slug>       hash  the stream landing: streams, slug, base, base_sha, branch,
 --                                  head, members, tasks, parked, pr, state, tests, at
 --   land:<repo>:streams      set   every slug with a land hash (status reads it, no scan)
@@ -15,7 +16,6 @@
 --
 -- ops:
 --   record  {repo,n,now,fields{...}}          create or update pr:<repo>:<n>
---   line    {repo,n,now,line}                 append one typed line to reads
 --   built   {repo,slug,now,by,land{...},stream_pr{n,fields{...}}?,parked[{task,stream,n,why}],
 --            commit_closes[{n,closes}] (each kept member's commit-message closes, on its record)}
 --   landed  {repo,slug,now,by,merge_sha,why,members[{task,stream,n,close}],pr}
@@ -124,7 +124,7 @@ if op == 'record' then
       return {'REFUSED', 'no record ' .. k .. ': a new record needs --head, --base and --stream'}
     end
     redis.call('HSET', k, 'repo', p.repo, 'n', p.n, 'state', 'open', 'ci', 'pending',
-      'mergeable', '', 'reads', '', 'created_at', p.now)
+      'mergeable', '', 'created_at', p.now)
     ci_request(p.repo, f.head, p.n, p.now)
   end
   local old = redis.call('HGET', k, 'head')
@@ -140,20 +140,6 @@ if op == 'record' then
   hset(k, set)
   local r = redis.call('HMGET', k, 'head', 'base', 'stream', 'ci', 'mergeable', 'state')
   return {'OK', exists and '0' or '1', r[1] or '', r[2] or '', r[3] or '', r[4] or '', r[5] or '', r[6] or ''}
-end
-
-if op == 'line' then
-  local k = prkey(p.repo, p.n)
-  if redis.call('EXISTS', k) == 0 then
-    return {'REFUSED', 'no record ' .. k .. ': run pr record first'}
-  end
-  local old = redis.call('HGET', k, 'reads') or ''
-  local reads = p.line
-  if old ~= '' then reads = old .. '\n' .. p.line end
-  redis.call('HSET', k, 'reads', reads, 'updated_at', p.now)
-  local n = 1
-  for _ in string.gmatch(reads, '\n') do n = n + 1 end
-  return {'OK', tostring(n)}
 end
 
 if op == 'built' then

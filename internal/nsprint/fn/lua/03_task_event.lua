@@ -8,8 +8,8 @@
 --   the stream lander merges a stream PR (ns_land_member, one call per member)
 --       the CLOSE typed line on the member's pr record, and every task naming
 --       the member PR or an issue its body closes -> landed
---   a person posts a CLOSE line (ns_read_post)                -> the same landing
---   a reader posts a SCORE line (ns_read_post)
+--   a person posts a CLOSE line (ns_line_post, line.lua)     -> the same landing
+--   a reader posts a SCORE line (ns_line_post, line.lua)
 --       the PR's read task read-<n>-<head8> working -> merging (the read is done)
 --
 -- The tasks an event names come from the ref index (01_task_ref.lua): one
@@ -20,7 +20,7 @@
 -- one receipt per step. An event edge the graph takes in steps (ready ->
 -- working -> merging when the work's PR opens; ready, parked or waiting ->
 -- ... -> landed at a merge) is walked step by step, each step on the graph.
--- Exports NS.tev for harvest.lua.
+-- Exports NS.tev for harvest.lua and line.lua (TE.event).
 
 local TE = {
   TR = NS.tref,
@@ -114,28 +114,22 @@ function TE.prkey(repo, n)
   return 'pr:' .. TE.TR.bare(repo) .. ':' .. n
 end
 
--- TE.line(key, line) adds one typed line to the pr record's two line stores,
--- the reads field the lander reads and the :lines list read post and the
--- read brief use, once. Returns 1 when it was new.
+-- TE.line(key, line) adds one typed line to the pr record's line log
+-- (pr:<repo>:<n>:lines, the log read post, the read brief and the route duty
+-- read), once. Returns 1 when it was new. A read is a line record written by
+-- ns_line_post (line.lua, nova-tools#3874); the record carries no reads field.
 function TE.line(key, line)
-  local reads = redis.call('HGET', key, 'reads') or ''
-  local added = 0
-  if ('\n' .. reads .. '\n'):find('\n' .. line .. '\n', 1, true) == nil then
-    if reads ~= '' then reads = reads .. '\n' end
-    redis.call('HSET', key, 'reads', reads .. line)
-    added = 1
+  if redis.call('LPOS', key .. ':lines', line) then
+    return 0
   end
-  if not redis.call('LPOS', key .. ':lines', line) then
-    redis.call('RPUSH', key .. ':lines', line)
-    added = 1
-  end
-  return added
+  redis.call('RPUSH', key .. ':lines', line)
+  return 1
 end
 
 -- ns_land_member(repo, slug, merge_sha, n, task, line, by, why, closes)
 -- One member of a merged stream landing, fenced by the landing: land:<repo>:
 -- <slug> must be merged at merge_sha (STALE otherwise, nothing written). It
--- writes the CLOSE line on pr:<repo>:<n> (both line stores, once), stores the
+-- writes the CLOSE line on pr:<repo>:<n> (the line log, once), stores the
 -- issues the member closes (closes: numbers space-joined, '-' none, ''
 -- unknown: the record's closes field stands), and moves every task naming the
 -- member PR or one of those issues, and the member's own task, to landed with
@@ -167,22 +161,14 @@ redis.register_function('ns_land_member', function(keys, args)
   return out
 end)
 
--- ns_read_post(repo, n, line, now_s): a typed line posted on a PR, and the
--- move it is an event for, in one call. The line is appended to
--- pr:<repo>:<n>:lines and the record's last_line/last_line_at are stamped
--- (the record must have a head: NOHEAD otherwise, nothing written). A CLOSE
--- line by a person (who not jev*) lands every task naming the PR or an issue
--- in the record's closes, why the line's "with <repo>#<n> (<sha>)" when it
--- has one; a SCORE line moves the read task read-<n>-<head8> working ->
--- merging.
---   {'OK', lines, kind, moved, same, skipped, note...} | {'NOHEAD', key}
-redis.register_function('ns_read_post', function(keys, args)
-  local repo, n, line, now = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
-  local key = TE.prkey(repo, n)
-  if (redis.call('HGET', key, 'head') or '') == '' then return { 'NOHEAD', key } end
-  local lines = redis.call('RPUSH', key .. ':lines', line)
-  local first = string.match(line, '^[^\n]*')
-  redis.call('HSET', key, 'last_line', first, 'last_line_at', now)
+-- TE.event(repo, n, key, first) -> TE.apply's counts: the move a typed line
+-- (first: its first line) posted on pr:<repo>:<n> (key) is an event for. A
+-- CLOSE line by a person (who not jev*) lands every task naming the PR or an
+-- issue in the record's closes, why the line's "with <repo>#<n> (<sha>)"
+-- when it has one; a SCORE line moves the read task read-<n>-<head8> working
+-- -> merging. Any other line moves nothing. The caller writes the line in the
+-- same call (ns_read_post; ns_line_post, line.lua, nova-tools #3595).
+function TE.event(repo, n, key, first)
   local kind = string.match(first, '^(%S+)') or ''
   local who = string.match(first, 'who=([^%s:;,]+)') or ''
   local head = string.match(first, 'head=(%x+)') or ''
@@ -200,6 +186,24 @@ redis.register_function('ns_read_post', function(keys, args)
       r = TE.apply({ id }, 'merging', who, 'read: SCORE by ' .. who .. ' at ' .. string.sub(head, 1, 8))
     end
   end
+  return r
+end
+
+-- ns_read_post(repo, n, line, now_s): a typed line posted on a PR, and the
+-- move it is an event for (TE.event), in one call. The line is appended to
+-- pr:<repo>:<n>:lines and the record's last_line/last_line_at are stamped
+-- (the record must have a head: NOHEAD otherwise, nothing written). read
+-- post writes through ns_line_post (line.lua), which makes the same move.
+--   {'OK', lines, kind, moved, same, skipped, note...} | {'NOHEAD', key}
+redis.register_function('ns_read_post', function(keys, args)
+  local repo, n, line, now = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
+  local key = TE.prkey(repo, n)
+  if (redis.call('HGET', key, 'head') or '') == '' then return { 'NOHEAD', key } end
+  local lines = redis.call('RPUSH', key .. ':lines', line)
+  local first = string.match(line, '^[^\n]*')
+  redis.call('HSET', key, 'last_line', first, 'last_line_at', now)
+  local kind = string.match(first, '^(%S+)') or ''
+  local r = TE.event(repo, n, key, first)
   local out = { 'OK', tostring(lines), kind, tostring(r.moved), tostring(r.same), tostring(r.skipped) }
   for _, note in ipairs(r.notes) do out[#out + 1] = note end
   return out

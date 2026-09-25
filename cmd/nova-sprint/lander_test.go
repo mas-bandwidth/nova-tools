@@ -12,7 +12,9 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/metrics/metricstest"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/line"
 )
 
 // landerFakes are the four program seams in process: a gate that answers the
@@ -175,8 +177,8 @@ func TestLanderRefusesAMemberWithNoRecord(t *testing.T) {
 	}
 }
 
-// seedShadow writes pr:<name>:<n> records the way `pr record` and `pr lines`
-// leave them: head, state, ci, mergeable and the newline-joined typed reads.
+// seedShadow writes pr:<name>:<n> records the way `pr record` leaves them:
+// head, state, ci, mergeable.
 func seedShadow(t *testing.T, c *redis.Client, repo string, recs map[int][]string) {
 	t.Helper()
 	ctx := context.Background()
@@ -193,23 +195,43 @@ func seedShadow(t *testing.T, c *redis.Client, repo string, recs map[int][]strin
 	}
 }
 
+// seedShadowLines stores typed lines the way `pr lines` and `read post` do:
+// through the one line store (ns_line_post), the read record the lander
+// reads (nova-tools#3874).
+func seedShadowLines(t *testing.T, c *redis.Client, repo string, lines map[int][]string) {
+	t.Helper()
+	if err := fn.Load(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	for n, ls := range lines {
+		for _, l := range ls {
+			p, err := line.Post(context.Background(), c, repo, strconv.Itoa(n), l, line.Scope{})
+			if err != nil || p.Status != "POSTED" {
+				t.Fatalf("#%d %q: %+v %v", n, l, p, err)
+			}
+		}
+	}
+}
+
 // shadowFixture is one member per verdict: #1 lands, #2 waits on ci, #3 is
 // read under the floor, #4 is held at head, #5 does not merge, #6 was read
 // only by jev. A read at an older head never counts.
 func shadowFixture(t *testing.T, c *redis.Client) {
 	seedShadow(t, c, "nova-tools", map[int][]string{
-		1: {"head", "aaaa1111ffff", "state", "open", "ci", "green", "mergeable", "true",
-			"reads", "SCORE who=emma head=0000aaaa score=10/10\nSCORE who=emma head=aaaa1111 score=9/10"},
-		2: {"head", "bbbb2222ffff", "state", "open", "ci", "pending", "mergeable", "",
-			"reads", "SCORE who=stella head=bbbb2222 score=8/10"},
-		3: {"head", "cccc3333ffff", "state", "open", "ci", "green", "mergeable", "true",
-			"reads", "SCORE who=emma head=cccc3333 score=7/10"},
-		4: {"head", "dddd4444ffff", "state", "open", "ci", "green", "mergeable", "true",
-			"reads", "SCORE who=emma head=dddd4444 score=9/10\nHOLD who=stella head=dddd4444 reason=scope"},
-		5: {"head", "eeee5555ffff", "state", "open", "ci", "green", "mergeable", "false",
-			"reads", "SCORE who=emma head=eeee5555 score=9/10"},
-		6: {"head", "ffff6666ffff", "state", "open", "ci", "green", "mergeable", "true",
-			"reads", "SCORE who=jev head=ffff6666 score=10/10"},
+		1: {"head", "aaaa1111ffff", "state", "open", "ci", "green", "mergeable", "true"},
+		2: {"head", "bbbb2222ffff", "state", "open", "ci", "pending", "mergeable", ""},
+		3: {"head", "cccc3333ffff", "state", "open", "ci", "green", "mergeable", "true"},
+		4: {"head", "dddd4444ffff", "state", "open", "ci", "green", "mergeable", "true"},
+		5: {"head", "eeee5555ffff", "state", "open", "ci", "green", "mergeable", "false"},
+		6: {"head", "ffff6666ffff", "state", "open", "ci", "green", "mergeable", "true"},
+	})
+	seedShadowLines(t, c, "nova-tools", map[int][]string{
+		1: {"SCORE who=emma head=0000aaaa score=10/10", "SCORE who=emma head=aaaa1111 score=9/10"},
+		2: {"SCORE who=stella head=bbbb2222 score=8/10"},
+		3: {"SCORE who=emma head=cccc3333 score=7/10"},
+		4: {"SCORE who=emma head=dddd4444 score=9/10", "HOLD who=stella head=dddd4444 reason=scope"},
+		5: {"SCORE who=emma head=eeee5555 score=9/10"},
+		6: {"SCORE who=jev head=ffff6666 score=10/10"},
 	})
 }
 

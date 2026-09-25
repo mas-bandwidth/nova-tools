@@ -3,6 +3,8 @@ package stream
 import (
 	"context"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/line"
 )
 
 // TestBuildParkConflictsLandsTheRest (nova-tools #3898): with ParkConflicts
@@ -29,23 +31,30 @@ func TestBuildParkConflictsLandsTheRest(t *testing.T) {
 	}
 }
 
-// TestMembersCountReadPostLines (nova-tools #3898): a SCORE line only in
-// pr:<name>:<n>:lines (where read post stores it) makes the member landable;
-// the same line in both places counts once.
+// TestMembersCountReadPostLines (nova-tools #3898, #3874): a SCORE line
+// read post stores (one ns_line_post call, the line record at the head) makes
+// the member landable, and a reader's line stored twice counts once: the
+// line records are the one read record.
 func TestMembersCountReadPostLines(t *testing.T) {
 	c := newRedis(t)
 	ctx := context.Background()
 	head1, head2 := "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"
 	seed(t, c, 1, head1, 100)
 	seed(t, c, 2, head2, 200, score("emma", head2, 9))
-	c.RPush(ctx, LinesKey(repo, 1), score("stella", head1, 9))
-	c.RPush(ctx, LinesKey(repo, 2), score("emma", head2, 9))
+	for _, p := range []struct {
+		n    string
+		text string
+	}{{"1", score("stella", head1, 9)}, {"2", score("emma", head2, 9)}} {
+		if got, err := line.Post(ctx, c, repo, p.n, p.text, line.Scope{}); err != nil || got.Status != "POSTED" {
+			t.Fatalf("post #%s: %+v %v", p.n, got, err)
+		}
+	}
 	got, skips, err := Members(ctx, c, repo, []string{strm}, 8)
 	if err != nil || len(skips) != 0 || len(got) != 2 || got[0].N != 1 || got[0].Who != "stella" {
 		t.Fatalf("members %+v skips %+v err %v", got, skips, err)
 	}
 	recs, _ := LoadPRs(ctx, c, repo, []int{2})
 	if len(recs[0].Reads) != 1 {
-		t.Fatalf("the line in both places counted %d times", len(recs[0].Reads))
+		t.Fatalf("the line stored twice counted %d times", len(recs[0].Reads))
 	}
 }

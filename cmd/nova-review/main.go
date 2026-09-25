@@ -38,8 +38,8 @@ usage:
                          revert the commit's non-test files, keep the tests, run the named packages: the verdict is computed from exit codes and test names, never judged
   nova-review dedupe --lane <dir> (--pr <n>|--branch <name>) [--head <sha>] [--max <n>]
                          print the open findings ledger for the entry: who saw each, who duped it, and what still stands
-  nova-review reads --lane <nova-merge lane dir> [--bus <dir of bus notes>] [--reviews <pr>:<file>]... [--waiting-on <friend>] [--ready] [--max <n>] [--timeout <seconds>]
-                         the reads ledger: per PR the required reader roles (contract, code, security; derived from the paths touched plus typed ASK lines), and per reader the verdict, scope and exact sha, ingested from GitHub reviews (or --reviews snapshot files) and from bus notes carrying a typed READ line; --waiting-on is that friend's queue in order; --ready lists the PRs whose every required read is an approve at the live head; a push that moves a head marks its reads stale and names who must re-read what delta
+  nova-review reads --redis <addr> --repo <owner/name|name> --pr <n> [--pr <n>]... [--timeout <seconds>]
+                         who has read each PR at its head, from the one read record (the typed line records ns_line_post writes; nova-tools#3874): one READ line per reader's current read at the record's head (the newest read line, Jev never), and one READS STALE line per reader whose newest read is at another head; one pipelined round trip, no GitHub call
   nova-review version    print this build identity (--version also accepted)
   nova-review help
 

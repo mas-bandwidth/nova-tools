@@ -1431,7 +1431,7 @@ names the verb that does it.
 
 ```
 nova-merge version
-nova-merge read     --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>] [--redis <addr>]
+nova-merge read     --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>] [--redis <addr> [--score <0..10>]]
 nova-merge gate     --lane <dir> (--pr <n>|--branch <name>) --head <sha> --base-sha <sha> --merge <sha> --verdict green|red --summary <path>
 nova-merge fold     --branches <file> --onto <base> --out <branch> --lane <dir>
 nova-merge fold     --close-folded --pr <n>
@@ -1457,6 +1457,15 @@ and the stream-lander spec says where these records live next (Redis, per the
   recorded a minute after the author pushed is an approve for code nobody read.
 - **a verb on a directory that is not a lane** — exit 2, and nothing written on the
   way past.
+- **`read --redis <addr>`** posts the read to the PR's one read record first
+  (nova-tools#3874): a typed line through `ns_line_post`, `SCORE who=<w> head=<sha>
+  score=N/10` for an approve (`--score` is required) and `HOLD who=<w> head=<sha>`
+  for a hold, the note as its body. The record is keyed by head, who and kind, so
+  a re-run replaces it and never adds a second read; the stream lander,
+  `nova-sprint lander --shadow` and `nova-review reads` read it. `--redis` needs
+  `--pr`; a store that refuses the line or cannot be reached refuses the verb
+  (exit 1) and nothing is pushed. `READ OK` then names `record=<key>`. No
+  `cards:done` event and no claim key is written.
 
 ### fold
 
@@ -1611,9 +1620,20 @@ nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <f
 nova-review mutate --repo <dir> --base <ref> --head <ref> [--test <name>] [--timeout <seconds>] [--max <n>]
 nova-review mutate --repo <dir> --head <ref> --seed <patch file> --tests <package>[,<package>...] [--timeout <seconds>]
 nova-review guard --repo <dir> --head <ref> [--tests <package>[,<package>...]] [--timeout <seconds>] [--max <n>]
+nova-review reads --redis <addr> --repo <owner/name|name> --pr <n> [--pr <n>]... [--timeout <seconds>]
 nova-review version
 nova-review help
 ```
+
+`reads` reads the one read record (nova-tools#3874): the typed line records
+`pr:<name>:<n>:line:<head>:<who>:<kind>` that `ns_line_post` writes for
+`nova-sprint read post`, `nova-sprint pr lines` and `nova-merge read --redis`. Per
+PR it prints `READS PR repo= n= head= current= stale=`, one `READ ... who= kind=
+score= head= at=` line per reader's current read at the record's head (the newest
+SCORE, HOLD or DISPOSITION that reader stored there; Jev never counts), and one
+`READS STALE ... who= read=<h8> live=<h8>` line per reader whose newest read is at
+another head. One pipelined round trip for every PR named, and no GitHub call: the
+review survey and bus scan of the #2063 ledger are gone.
 
 `mutate` is the mechanical half of a read, taken off the reader, and it has two
 forms. The **range** form reverts every non-test hunk in a throwaway worktree at
@@ -3804,11 +3824,18 @@ to the task record (`brief=record`).
 
 `read post --repo <r> --n <n> --line "<typed line>" [--no-github] [--owner
 <o>] [--redis <addr>]` stores the line: the first word is one of SCORE, HOLD,
-REPAIR, SPEC, SPEC-WRITTEN, CLOSE or JEV-DIFF and the first line carries
-`who=<name>` and `head=<sha>` (a SPEC line: `who=`, `rev=<k>` and
-`score=<0..10>`, no head, see `spec` below), or the line is refused. It RPUSHes the line
-onto `pr:<repo>:<n>:lines` and stamps `last_line` and `last_line_at` on the
-record in one MULTI, then, until #3595 retires PR comments, mirrors it as one
+DISPOSITION, REPAIR, SPEC, SPEC-WRITTEN, CLOSE or JEV-DIFF and the first line
+carries `who=<name>` and `head=<sha>` (a SPEC line: `who=`, `rev=<k>` and
+`score=<0..10>`, no head, see `spec` below), or the line is refused. One library call,
+`ns_line_post` (internal/nsprint/line), writes the line record
+`pr:<repo>:<n>:line:<head>:<who>:<kind>` (keyed by who: a second line of the
+same kind by the same reader at the same head replaces the first), RPUSHes the
+line onto the log `pr:<repo>:<n>:lines`, stamps `last_line` and `last_line_at`
+on the record and, for a CLOSE or SCORE, moves the tasks the line is an event
+for (`tasks_moved=` on the receipt). The line records are the one read record
+(#3874): the stream lander, `lander --shadow` and `nova-review reads` read them,
+and the PR record has no `reads` field. Then, until #3595 retires PR comments,
+it mirrors the line as one
 REST comment (`POST /repos/<owner>/<repo>/issues/<n>/comments`, the token from
 `GH_TOKEN` or `GITHUB_TOKEN`, the base URL from `GITHUB_API_URL`). `--no-github`
 is Redis only (the tests count HTTP calls: 0 with it, exactly 1 without). A

@@ -32,9 +32,30 @@ func mergingSeed(now time.Time) [][]string {
 			cmds = append(cmds, []string{"HSET", "task:" + id, "stream", mergeStream, "state", "merging"})
 		}
 	}
+	// record writes the PR record and, per typed line in reads, the line
+	// record ns_line_post writes (nova-tools #3874): keyed at the record's
+	// head when the line's head prefixes it, else at the line's own head.
 	record := func(n int, head, state, stream, reads string) {
-		cmds = append(cmds, []string{"HSET", fmt.Sprintf("pr:nova-tools:%d", n), "repo", "mas-bandwidth/nova-tools", "n", strconv.Itoa(n),
-			"head", head, "state", state, "stream", stream, "reads", reads})
+		pk := fmt.Sprintf("pr:nova-tools:%d", n)
+		cmds = append(cmds, []string{"HSET", pk, "repo", "mas-bandwidth/nova-tools", "n", strconv.Itoa(n),
+			"head", head, "state", state, "stream", stream})
+		for i, l := range strings.Split(reads, "\n") {
+			f := strings.Fields(l)
+			if len(f) == 0 {
+				continue
+			}
+			who, at := "", head
+			for _, w := range f[1:] {
+				if v, ok := strings.CutPrefix(w, "who="); ok {
+					who = v
+				} else if v, ok := strings.CutPrefix(w, "head="); ok && !strings.HasPrefix(head, v) {
+					at = v
+				}
+			}
+			member := who + ":" + f[0]
+			cmds = append(cmds, []string{"HSET", pk + ":line:" + at + ":" + member, "who", who, "kind", f[0], "head", at, "text", l},
+				[]string{"ZADD", pk + ":line:" + at, strconv.Itoa(i + 1), member})
+		}
 	}
 	head := func(n int) string { return fmt.Sprintf("%07x0000000000000000000000000000000000", n)[:40] }
 	score := func(who string, n, s int) string {
