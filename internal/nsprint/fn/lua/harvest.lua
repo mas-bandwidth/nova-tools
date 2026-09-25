@@ -358,6 +358,9 @@ do
     redis.call('XADD', 's:' .. S .. ':log', '*',
       'kind', 'pr head', 'repo', repo, 'pr', pr, 'head', head,
       'prev', '', 'source', 'harvest', 'at', at)
+    if NS.ci and NS.ci.request then
+      NS.ci.request({}, {repo, head, pr, '', ''})
+    end
     return 'OK|' .. receipt
   end)
 

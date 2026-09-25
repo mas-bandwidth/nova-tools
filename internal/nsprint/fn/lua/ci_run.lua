@@ -317,6 +317,7 @@ do
   end
 
   redis.register_function('ns_ci_request', ci_request)
+  NS.ci.request = ci_request
   redis.register_function('ns_ci_claim', ci_claim)
   redis.register_function('ns_ci_receipt', ci_receipt)
   redis.register_function('ns_ci_release', ci_release)

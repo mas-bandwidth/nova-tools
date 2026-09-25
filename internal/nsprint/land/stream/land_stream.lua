@@ -109,6 +109,11 @@ if op == 'built' then
   if p.stream_pr and (p.stream_pr.n or '') ~= '' then
     hset(prkey(p.repo, p.stream_pr.n), p.stream_pr.fields)
   end
+  if NS.ci and NS.ci.request and (p.land.head or '') ~= '' then
+    local pr_n = ''
+    if p.stream_pr and p.stream_pr.n then pr_n = p.stream_pr.n end
+    NS.ci.request({}, {p.repo, p.land.head, pr_n, '', ''})
+  end
   return {'OK', tostring(moved), tostring(#(p.parked or {}))}
 end
 
