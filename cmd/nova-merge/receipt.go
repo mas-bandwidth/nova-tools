@@ -94,7 +94,6 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, deps Deps) int {
 	return 1
 }
 
-
 // receiptLinesInBody is every BATCH OK line a pull request's body quotes, in
 // order, or none. The body may carry many lines and prose between them. A BATCH
 // FAIL is not a receipt (it's a red gate, see merge.batchOKPrefix). Field order

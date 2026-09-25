@@ -1,8 +1,8 @@
 package merge
 
 import (
-	"fmt"
 	"encoding/json"
+	"fmt"
 )
 
 // FakeHost is the host the tests drive. It lives beside the production one rather than in

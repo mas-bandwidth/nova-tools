@@ -3,7 +3,6 @@ package merge
 import (
 	"encoding/json"
 
-
 	"fmt"
 	"sort"
 	"strconv"
