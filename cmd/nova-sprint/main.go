@@ -40,7 +40,7 @@ Control sprints are hidden unless named with --sprint.
 
 refresh runs the command after -- in its own session (POSIX setsid) and
 returns without waiting, so a unit restart does not kill it. The loop
-plist sets AbandonProcessGroup (fleet/templates/nova-loop.plist.j2), which
+plist sets AbandonProcessGroup, which
 stops launchd from signalling the unit's process group; setsid is the
 refresh leaving that group itself.
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/unit"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -89,6 +90,21 @@ func cmdTableRedis(addr, sprint string, loop bool, stdout, stderr io.Writer) int
 			return tableRefuse(stderr, err.Error())
 		}
 		return code
+	}
+	if loop {
+		lease, err := unit.AcquireLease(ctx, st, "lease:table", 6*time.Second)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-sprint table: %s\n", err.Error())
+			return 2
+		}
+		defer lease.Release(ctx)
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				_ = lease.Renew(ctx)
+			}
+		}()
 	}
 	// One FCALL_RO per tick: one consistent server instant per rendered
 	// table, never a pipeline of separate reads (6.2).

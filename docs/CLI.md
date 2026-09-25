@@ -4966,8 +4966,7 @@ there is no last table to keep. `table --check --redis <addr>` renders the
 fixture keyspace on a throwaway server and compares it byte for byte.
 `refresh -- <command>` runs that command in its own session (POSIX setsid) and
 returns without waiting, so `launchctl kickstart -k` of the loop unit does not
-kill it. The unit plist `fleet/templates/nova-loop.plist.j2`, which
-`fleet/loops.yml` renders for every loop, sets `AbandonProcessGroup` so launchd
+kill it. The unit plist sets `AbandonProcessGroup` so launchd
 itself signals only the unit's pid.
 
 ### First run

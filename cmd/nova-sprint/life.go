@@ -19,6 +19,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/unit"
 )
 
 func init() {
@@ -140,6 +141,21 @@ func runFriendHello(ctx context.Context, args []string, out, errOut io.Writer) i
 	}
 	fmt.Fprintf(out, "%s up slots=%d taken=%d\n", *as, res.Slots, len(res.Claims))
 	printLifeClaims(out, res.Claims)
+	if !*once {
+		lease, err := unit.AcquireLease(ctx, st, fmt.Sprintf("lease:friend-hello:%s", *as), 6*time.Second)
+		if err != nil {
+			fmt.Fprintf(errOut, "nova-sprint friend hello: %s\n", err.Error())
+			return 2
+		}
+		defer lease.Release(ctx)
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				_ = lease.Renew(ctx)
+			}
+		}()
+	}
 	if *once {
 		return 0
 	}
