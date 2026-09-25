@@ -7,8 +7,8 @@
 // the bench's probe answers on stdin. The record carries the verdict, the
 // failing keys, each key's answer and one DRIFT or MISSING line per failing
 // key, in bin/bench-conform's own format (rowan-tools #160, #181). The checks
-// read only the records, the sprint's probe set and the landed index; they
-// never ssh. A bench with no record, or one older than 15 min, is RED on every
+// read only the records, the sprint's probe set, each probe's card, CI word
+// and typed lines at its head (#2946), and the landed index; they never ssh. A bench with no record, or one older than 15 min, is RED on every
 // check that needs it: no evidence is not negative evidence.
 //
 // 7.22 (friend wake paths) and 7.23 (PR records against GitHub, task
@@ -32,6 +32,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 )
@@ -392,13 +395,29 @@ type LineupInput struct {
 	NotPRSprint   bool // s:<S> pr_producing is "0"; absent counts as PR-producing
 	Probes        []string
 	Landed        map[string]bool
+	Trails        map[string]ProbeTrail // per probe: card, PR, CI and read at head (#2946)
 	GraphQL       GraphQLBudget
 	BinaryScanned bool     // the running binary was read
 	BinaryHits    []string // GraphQL call sites found in it
 }
 
+// ProbeTrail is where one probe card stands on its way to dev (#2946): the
+// card record (cut), where it is (run), its PR and head (pr), the ci word of
+// ci:<name>:<head> (ci), and the first typed non-author SCORE line at that
+// head in pr:<name>:<n>:lines (read). Landing is the landed index.
+type ProbeTrail struct {
+	Card   bool   // s:<S>:card:<label> exists
+	Where  string // the card's set: working, done, ...
+	Repo   string
+	PR     string
+	Head   string
+	CI     string // green|red|pending; "" when ci:<name>:<head> has none
+	Reader string // who= of the read at head; "" when there is none
+}
+
 // GatherLineup reads the registry, the beats, every UP bench's conform record
-// and the sprint's probes in two pipelined exchanges.
+// and the sprint's probes in two pipelined exchanges, then each probe's CI
+// and read lines at its head in a third.
 func GatherLineup(ctx context.Context, c *redis.Client, sprint string) (LineupInput, error) {
 	in := LineupInput{Sprint: sprint, Conform: map[string]ConformRecord{}}
 	p := c.Pipeline()
@@ -425,10 +444,12 @@ func GatherLineup(ctx context.Context, c *redis.Client, sprint string) (LineupIn
 		recs[i] = p.HGetAll(ctx, conformKey(b))
 	}
 	var landed *redis.BoolSliceCmd
+	var cards []*redis.SliceCmd
 	if sprint != "" && len(probeSet.Val()) > 0 {
 		members := make([]any, 0, len(probeSet.Val()))
 		for _, m := range probeSet.Val() {
 			members = append(members, m)
+			cards = append(cards, p.HMGet(ctx, "s:"+sprint+":card:"+m, "label", "where", "repo", "pr", "head"))
 		}
 		landed = p.SMIsMember(ctx, "s:"+sprint+":idx:card:landed", members...)
 	}
@@ -460,8 +481,119 @@ func GatherLineup(ctx context.Context, c *redis.Client, sprint string) (LineupIn
 				}
 			}
 		}
+		trails, err := gatherTrails(ctx, c, probeSet.Val(), cards)
+		if err != nil {
+			return in, err
+		}
+		in.Trails = trails
 	}
 	return in, nil
+}
+
+// gatherTrails reads each probe's CI word and typed lines at the head its
+// card names, and the PR record's author, in one pipeline.
+func gatherTrails(ctx context.Context, c *redis.Client, labels []string, cards []*redis.SliceCmd) (map[string]ProbeTrail, error) {
+	trails := map[string]ProbeTrail{}
+	type pending struct {
+		ci, who *redis.StringCmd
+		lines   *redis.StringSliceCmd
+	}
+	reads := map[string]pending{}
+	p := c.Pipeline()
+	for i, label := range labels {
+		if i >= len(cards) {
+			break
+		}
+		v := cards[i].Val()
+		str := func(j int) string {
+			if j < len(v) {
+				if s, ok := v[j].(string); ok {
+					return s
+				}
+			}
+			return ""
+		}
+		t := ProbeTrail{Where: str(1), Repo: str(2), PR: str(3), Head: strings.ToLower(str(4))}
+		t.Card = str(0) != "" || t.Where != "" || t.Repo != ""
+		trails[label] = t
+		if t.Repo == "" || t.PR == "" || t.Head == "" {
+			continue
+		}
+		name := prkey.Name(t.Repo)
+		reads[label] = pending{
+			ci:    p.HGet(ctx, ci.RecordKey(name, t.Head), "ci"),
+			who:   p.HGet(ctx, prkey.KeyText(name, t.PR), "who"),
+			lines: p.LRange(ctx, read.LinesKey(name, t.PR), 0, -1),
+		}
+	}
+	if len(reads) == 0 {
+		return trails, nil
+	}
+	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	for label, r := range reads {
+		t := trails[label]
+		t.CI = r.ci.Val()
+		t.Reader = readerAt(r.lines.Val(), t.Head, r.who.Val())
+		trails[label] = t
+	}
+	return trails, nil
+}
+
+// readerAt is who= of the first typed SCORE line at head (a prefix of at
+// least 7 hex digits) by someone other than the PR's author; Jev lines are
+// never reads. "" when there is none.
+func readerAt(lines []string, head, author string) string {
+	for _, l := range lines {
+		if read.CheckLine(l) != nil || !strings.HasPrefix(l, "SCORE ") {
+			continue
+		}
+		var who, h string
+		for _, w := range strings.Fields(l)[1:] {
+			if v, ok := strings.CutPrefix(w, "who="); ok {
+				who = strings.ToLower(strings.TrimRight(v, ":,;"))
+			} else if v, ok := strings.CutPrefix(w, "head="); ok {
+				h = strings.ToLower(strings.TrimRight(v, ":,;"))
+			}
+		}
+		if who == "" || strings.HasPrefix(who, "jev") || (author != "" && who == strings.ToLower(author)) {
+			continue
+		}
+		if len(h) >= 7 && head != "" && strings.HasPrefix(head, h) {
+			return who
+		}
+	}
+	return ""
+}
+
+// probeStage is the first stage probe p has not passed, as the tail of its
+// RED line; "" when it has landed with ci green and a read at its head.
+func (in LineupInput) probeStage(p string) string {
+	t := in.Trails[p]
+	name := prkey.Name(t.Repo)
+	switch {
+	case !t.Card:
+		return "cut: no card s:" + in.Sprint + ":card:" + p
+	case t.PR == "" && t.Where != "done":
+		return "run: card where=" + orNone(t.Where, "-")
+	case t.PR == "" || t.Head == "":
+		return "pr: card has no PR (where=" + orNone(t.Where, "-") + ")"
+	case t.CI != "green":
+		return "ci: ci:" + name + ":" + shortHead(t.Head) + "=" + orNone(t.CI, "MISSING")
+	case t.Reader == "":
+		return "read: no typed non-author SCORE at head " + shortHead(t.Head) + " in pr:" + name + ":" + t.PR + ":lines"
+	case !in.Landed[p]:
+		return "land: not in s:" + in.Sprint + ":idx:card:landed"
+	}
+	return ""
+}
+
+func shortHead(h string) string {
+	if len(h) > 8 {
+		return h[:8]
+	}
+	return h
 }
 
 // LineupChecks runs the lineup checks in section order.
@@ -659,7 +791,10 @@ func CheckCloneVerb(in LineupInput) Line {
 	return keyCheck(in, "7.25", "clone verb", []string{KeyCloneVerb}, "scratch-clone and the "+strings.Join(CloneMirrors, ",")+" mirrors")
 }
 
-// CheckProbes is 7.20: a PR-producing sprint's five probe cards have landed.
+// CheckProbes is 7.20: a PR-producing sprint's five probe cards have landed,
+// each with ci green at its head and a typed non-author read at that head
+// (#2946); a probe that misses is one RED line naming the stage it stopped
+// at (cut, run, pr, ci, read, land).
 func CheckProbes(in LineupInput) Line {
 	const n, name = "7.20", "probes"
 	switch {
@@ -670,25 +805,23 @@ func CheckProbes(in LineupInput) Line {
 	case in.NotPRSprint:
 		return verdict(n, name, nil, "sprint "+in.Sprint+" produces no PRs")
 	}
-	var reds, waiting []string
+	var reds, stopped []string
 	landed := 0
 	for _, p := range in.Probes {
-		if in.Landed[p] {
-			landed++
+		if st := in.probeStage(p); st != "" {
+			stopped = append(stopped, oneline.Escape(p)+" RED at "+st)
 		} else {
-			waiting = append(waiting, oneline.Escape(p))
+			landed++
 		}
 	}
 	if len(in.Probes) != ProbeCount {
 		reds = append(reds, fmt.Sprintf("%d of %d probes cut; lineup --probes cuts them", len(in.Probes), ProbeCount))
 	}
 	if landed < ProbeCount {
-		reds = append(reds, fmt.Sprintf("%d of %d probes landed", landed, ProbeCount))
-		if len(waiting) > 0 {
-			reds = append(reds, "not landed: "+strings.Join(waiting, ","))
-		}
+		reds = append(reds, fmt.Sprintf("%d of %d probes landed with ci green and a read at head", landed, ProbeCount))
+		reds = append(reds, stopped...)
 	}
-	return verdict(n, name, reds, fmt.Sprintf("%d of %d probes landed", landed, ProbeCount))
+	return verdict(n, name, reds, fmt.Sprintf("%d of %d probes landed with ci green and a read at head", landed, ProbeCount))
 }
 
 // CheckGraphQL is 7.21: the binary makes no GraphQL call, and the lander

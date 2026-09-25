@@ -46,6 +46,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `memindex/` | memory vector and text index | `go test ./internal/memindex` | `go test ./internal/memindex` |
 | `merge/` | batch merge queue and land operations | `go test ./internal/merge` | `go test ./internal/merge` |
 | `metrics/` | Prometheus surface shared by the queue verbs | `go test ./internal/metrics/...` | `go test ./internal/metrics/...` |
+| `nogh/` | the refusing gh put first on friend and card child PATHs | `go test ./internal/nogh` | `go test ./internal/nogh` |
 | `nsprint/` | nova-sprint dealer, store, fold, and table | `go test ./internal/nsprint/...` | `go test ./internal/nsprint/...` |
 | `onboarding/` | onboarding banner and doc verifier | `go test ./internal/onboarding` | `go test ./internal/onboarding` |
 | `oneline/` | single-line log and output grammar | `go test ./internal/oneline` | `go test ./internal/oneline` |
@@ -54,7 +55,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `post/` | GitHub PR and issue client | `go test ./internal/post` | `go test ./internal/post` |
 | `prereview/` | mechanical first pass over one pull request | `go test ./internal/prereview` | `go test ./internal/prereview` |
 | `presence/` | friend heartbeat keys with a TTL | `go test ./internal/presence` | `go test ./internal/presence` |
-| `pulse/` | status, cut and harvest engine for nova-pulse | `go test ./internal/pulse` | `go test ./internal/pulse` |
+| `pulse/` | the frozen nova-pulse engine (status, cut, harvest); no command has reached it since #3801 | `go test ./internal/pulse` | `go test ./internal/pulse` |
 | `record/` | decision and execution records | `go test ./internal/record` | `go test ./internal/record` |
 | `records/` | database models and record formats | `go test ./internal/records` | `go test ./internal/records` |
 | `redisq/` | Redis transport queue | `go test ./internal/redisq` | `go test ./internal/redisq` |

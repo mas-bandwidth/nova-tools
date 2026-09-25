@@ -55,6 +55,47 @@ local function reason_ok(outcome, reason)
   return false
 end
 
+-- The end's whole result on the card record (nova-tools#3919; the card model:
+-- "at end the whole result"), read from the attempt's result hash that the
+-- wrapper wrote from its own facts moments before in ns_card_result, never
+-- re-parsed: record field <- the first result field present. A field the
+-- result hash lacks is not written.
+local RESULT_ON_RECORD = {
+  { 'result_line1', 'w_line1', 'line1' },
+  { 'result_line2', 'w_line2' },
+  { 'check', 'w_check', 'c_check' },
+  { 'red', 'c_red' },
+  { 'green', 'c_green' },
+  { 'result_paths', 'w_paths', 'c_paths' },
+  { 'wall_ms', 'w_wall_ms' },
+  { 'model', 'w_model' },
+  { 'provider', 'w_route' },
+}
+
+-- result_fields appends the result's record fields to fields.
+local function result_fields(res_key, fields)
+  for _, row in ipairs(RESULT_ON_RECORD) do
+    for i = 2, #row do
+      local v = redis.call('HGET', res_key, row[i])
+      if v then
+        fields[#fields + 1] = row[1]
+        fields[#fields + 1] = v
+        break
+      end
+    end
+  end
+end
+
+-- An ABSTAIN whose line 2 is `ABSTAIN done-already <sha>` names the commit
+-- that already did the card's work: ns_card_end queues its label on
+-- s:<S>:done-already (score ended_at) for the reconciler's done-already leg,
+-- which checks the sha against the base in its mirror and closes the issue.
+local function done_already_sha(line2)
+  local sha = string.match(line2 or '', '^ABSTAIN done%-already (%x+)')
+  if sha and #sha >= 7 and #sha <= 40 then return string.lower(sha) end
+  return nil
+end
+
 local function identity_parts(identity)
   local sprint, label, base, bench, attempt = string.match(identity, '^([^/]+)/([^/]+)/([^/]+)/([^/]+)/([^/]+)$')
   if not sprint then return nil end
@@ -303,11 +344,16 @@ redis.register_function('ns_card_end', function(keys, args)
   local member = sprint .. '/' .. label .. '/' .. attempt
   local actor = 'card-resolve'
   if mode == 'token' then actor = 'card-end' end
-  -- DONE with a typed result that is not invalid is ok; any other end is fail.
+  -- DONE with a typed result that is not invalid is ok; ABSTAIN is abstain
+  -- (#3919: the model said the card is not its to do, not that it failed);
+  -- any other end is fail.
+  local res_key = card_key .. ':result:a' .. attempt
   local ok = 'fail'
-  if record_outcome == 'DONE' and hget(card_key .. ':result:a' .. attempt, 'valid') ~= '0' then ok = 'ok' end
+  if record_outcome == 'DONE' and hget(res_key, 'valid') ~= '0' then ok = 'ok' end
+  if record_outcome == 'ABSTAIN' then ok = 'abstain' end
   local end_fields = { 'outcome', record_outcome, 'reason', record_reason, 'exit', record_exit,
-    'pushed_sha', record_pushed, 'results', results, 'ended_at', at }
+    'pushed_sha', record_pushed, 'results', results, 'ended_at', at, 'commit_sha', record_pushed }
+  result_fields(res_key, end_fields)
   -- The end's evidence (#3194) rides the one move, so a refused card's why is
   -- written with its done/fail and never apart from it.
   if why ~= '' then
@@ -323,6 +369,9 @@ redis.register_function('ns_card_end', function(keys, args)
   redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
   redis.call('ZREM', 'bench:' .. bench .. ':living', member)
   redis.call('SADD', 's:' .. sprint .. ':bench:' .. bench .. ':ended', label)
+  if record_outcome == 'ABSTAIN' and done_already_sha(hget(res_key, 'w_line2')) then
+    redis.call('ZADD', 's:' .. sprint .. ':done-already', at, label)
+  end
   local receipt = xadd(log_key, label, state, 'ended', attempt, stored_sha, actor, record_reason, results, idem, at)
   redis.call('HSET', card_key, 'end_receipt', receipt)
   redis.call('HSET', idem_key, idem, receipt)

@@ -282,3 +282,41 @@ func TestCapacityBenchWritesLegs(t *testing.T) {
 		t.Fatalf("ci cut on a verb-declared bench = %v %v; want CREATED", reply, err)
 	}
 }
+
+// TestCapacityRefusesMappedLogin (#3604): a name bound in friends:login is a
+// login alias and never registers as a friend, so `capacity friend` refuses it
+// with exit 2 NAME-IS-LOGIN <name> before any ceiling check or write, exactly
+// as friend hello does (#3593). The refusal must hold even when the ceiling
+// would allow the raise, and must leave the name out of the friends set.
+func TestCapacityRefusesMappedLogin(t *testing.T) {
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	client.HSet(ctx, "machine:m:ceiling", "slots", 64)
+	client.HSet(ctx, "friends:login", "rowan-claude", "rowan")
+	client.SAdd(ctx, "friends", "rowan")
+	client.HSet(ctx, "friend:rowan:desired", "slots", 32, "machine", "m")
+
+	var out, errOut bytes.Buffer
+	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "rowan-claude", "8"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "NAME-IS-LOGIN rowan-claude") {
+		t.Fatalf("capacity friend on a mapped login: exit %d %q, want 2 NAME-IS-LOGIN", code, errOut.String())
+	}
+	if client.SIsMember(ctx, "friends", "rowan-claude").Val() {
+		t.Fatalf("a mapped login registered as a friend")
+	}
+	if got := client.Exists(ctx, "friend:rowan-claude:desired").Val(); got != 0 {
+		t.Fatalf("a refused mapped login left friend:rowan-claude:desired")
+	}
+
+	// A plain friend name on the same machine still registers: the login guard
+	// refuses by name only.
+	out.Reset()
+	errOut.Reset()
+	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "alice", "8"}, &out, &errOut); code != 0 {
+		t.Fatalf("capacity friend alice: exit %d %q", code, errOut.String())
+	}
+}

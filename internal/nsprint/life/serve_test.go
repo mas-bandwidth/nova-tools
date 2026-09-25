@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +32,17 @@ func TestHelperDispatch(t *testing.T) {
 			os.Getenv(life.ServeEnvFriend), os.Getenv(life.ServeEnvHead))
 	case "done":
 		fmt.Printf("DONE built %s brief=%s\n", os.Getenv(life.ServeEnvID), os.Getenv(life.ServeEnvBrief))
+	case "gh":
+		// A child that reaches for the GitHub CLI by name, as a model's shell would.
+		out, err := exec.Command("gh", "api", "user").CombinedOutput()
+		code := 0
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		} else if err != nil {
+			code = -1
+		}
+		fmt.Printf("DONE gh exit=%d %s\n", code, strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0])
 	case "die":
 		fmt.Println("boom: harness crashed before any line")
 		os.Exit(3)
@@ -320,6 +333,119 @@ func TestServeBeatHasTTLAndSecondSeatRefuses(t *testing.T) {
 	}
 }
 
+// TestServeBeatFriendRowPreserved is #3813 on a throwaway server: when
+// friend:<f> is the friend row (has up), ns_friend_serve_beat leaves the
+// row's fields and PTTL (-1) unchanged, writing presence only to
+// friend:<f>:beat and taking the seat lock. A serve release clears the lock
+// and beat without deleting the friend row.
+func TestServeBeatFriendRowPreserved(t *testing.T) {
+	st, client := seedSeat(t, 2)
+	ctx := context.Background()
+
+	// Seed friend:emma as the friend row (#3447: has up, no TTL).
+	rowFields := map[string]interface{}{
+		"at":      "2026-09-25T08:00:00Z",
+		"up":      "1",
+		"ready":   "5",
+		"working": "2",
+		"width":   "4",
+		"done":    "12",
+		"slots":   "4",
+	}
+	if err := client.HSet(ctx, "friend:emma", rowFields).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := life.NewServer(st, serveConfig(t, "sess-row", 2, "done"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Call ns_friend_serve_beat
+	if err := srv.Beat(ctx); err != nil {
+		t.Fatalf("beat on seat with friend row: %v", err)
+	}
+
+	// friend:emma fields must be completely unchanged.
+	gotRow := client.HGetAll(ctx, "friend:emma").Val()
+	for k, wantVal := range rowFields {
+		if gotRow[k] != wantVal {
+			t.Errorf("friend:emma field %s = %q, want %q", k, gotRow[k], wantVal)
+		}
+	}
+	if gotRow["serve"] != "" {
+		t.Errorf("friend:emma wrote serve = %q, want empty", gotRow["serve"])
+	}
+	if gotRow["cap"] != "" {
+		t.Errorf("friend:emma wrote cap = %q, want empty", gotRow["cap"])
+	}
+
+	// PTTL of friend:emma must remain -1 (no expiry / unchanged).
+	if ttl := client.PTTL(ctx, "friend:emma").Val(); ttl != -1 {
+		t.Fatalf("friend:emma PTTL %v, want -1 (untimed row)", ttl)
+	}
+
+	// :last must not have been overwritten / written by serve beat.
+	if client.Exists(ctx, "friend:emma:last").Val() != 0 {
+		t.Fatal("ns_friend_serve_beat wrote friend:emma:last on a friend row")
+	}
+
+	// Presence must be only on friend:emma:beat.
+	beatTTL := client.PTTL(ctx, "friend:emma:beat").Val()
+	if beatTTL <= 0 || beatTTL > life.ServeLockTTL {
+		t.Fatalf("friend:emma:beat PTTL %v, want within (0, %v]", beatTTL, life.ServeLockTTL)
+	}
+	beatHash := client.HGetAll(ctx, "friend:emma:beat").Val()
+	if beatHash["session"] != "sess-row" || beatHash["harness"] != "fake" || beatHash["host"] != "studio" {
+		t.Fatalf("friend:emma:beat = %v", beatHash)
+	}
+
+	// Direct call to ns_friend_serve_beat also leaves row untouched.
+	reply, err := client.FCall(ctx, life.FunctionServeBeat, nil,
+		"emma", "sess-row", "2026-09-25T08:30:00Z", "1", "2", "fake", "studio", "actor",
+	).Slice()
+	if err != nil || len(reply) == 0 || fmt.Sprint(reply[0]) != "OK" {
+		t.Fatalf("direct FCall ns_friend_serve_beat: reply=%v, err=%v", reply, err)
+	}
+	if ttl := client.PTTL(ctx, "friend:emma").Val(); ttl != -1 {
+		t.Fatalf("after direct FCall: friend:emma PTTL %v, want -1", ttl)
+	}
+	gotRowAfterFCall := client.HGetAll(ctx, "friend:emma").Val()
+	for k, wantVal := range rowFields {
+		if gotRowAfterFCall[k] != wantVal {
+			t.Errorf("after direct FCall: friend:emma field %s = %q, want %q", k, gotRowAfterFCall[k], wantVal)
+		}
+	}
+
+	// Seat lock held by sess-row.
+	if lockHolder := client.Get(ctx, life.LockKey("emma")).Val(); lockHolder != "sess-row" {
+		t.Fatalf("seat lock holder = %q, want sess-row", lockHolder)
+	}
+
+	// Release clears the lock and beat, leaving the friend row intact.
+	if err := srv.Release(ctx); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if client.Exists(ctx, life.LockKey("emma")).Val() != 0 {
+		t.Fatal("seat lock still held after release")
+	}
+	if client.Exists(ctx, "friend:emma:beat").Val() != 0 {
+		t.Fatal("friend:emma:beat still exists after release")
+	}
+	if client.Exists(ctx, "friend:emma").Val() != 1 {
+		t.Fatal("release deleted friend:emma row; want row preserved")
+	}
+	afterReleaseRow := client.HGetAll(ctx, "friend:emma").Val()
+	for k, wantVal := range rowFields {
+		if afterReleaseRow[k] != wantVal {
+			t.Errorf("after release: friend:emma field %s = %q, want %q", k, afterReleaseRow[k], wantVal)
+		}
+	}
+	if ttl := client.PTTL(ctx, "friend:emma").Val(); ttl != -1 {
+		t.Fatalf("after release: friend:emma PTTL %v, want -1", ttl)
+	}
+}
+
 // TestServeStopGivesWorkBack: stopping a serve with a live child kills the
 // child and gives its task back to the queue, so the next serve retakes it.
 func TestServeStopGivesWorkBack(t *testing.T) {
@@ -375,5 +501,37 @@ func TestServeTypedLineAndVerdict(t *testing.T) {
 		if v != want[0] || s != want[1] {
 			t.Errorf("VerdictOf(%q) = %s %s, want %s %s", line, v, s, want[0], want[1])
 		}
+	}
+}
+
+// TestServeChildReachesNoGh is #3600's harness half: a friend child that runs
+// `gh api user` with a counting fake gh first on the seat's own PATH reaches
+// the refusing gh serve puts ahead of it, exits 2 naming #3594, and the fake's
+// counter (the token's call counter, standing in) is never written. The
+// control is one edit: drop the shim from the child's PATH in start and the
+// fake answers, exit=0 with one count.
+func TestServeChildReachesNoGh(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the refusing gh is a /bin/sh script")
+	}
+	st, client := seedSeat(t, 1)
+	ctx := context.Background()
+	pushWork(t, st, "w1")
+	fake := t.TempDir()
+	counter := filepath.Join(fake, "calls")
+	if err := os.WriteFile(filepath.Join(fake, "gh"), []byte("#!/bin/sh\necho call >> '"+counter+"'\necho fake gh answered\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := serveConfig(t, "sess-1", 1, "gh")
+	cfg.Env = append(cfg.Env, "PATH="+fake+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if res, err := life.ServeOnce(ctx, st, cfg); err != nil || res.Closed != 1 {
+		t.Fatalf("serve once: %+v, %v", res, err)
+	}
+	ev := client.HGet(ctx, task.Key("s1", "w1"), "evidence").Val()
+	if !strings.HasPrefix(ev, "DONE gh exit=2 ") || !strings.Contains(ev, "#3594") {
+		t.Fatalf("evidence %q, want DONE gh exit=2 with the #3594 refusal", ev)
+	}
+	if b, err := os.ReadFile(counter); err == nil {
+		t.Fatalf("the fake gh was called %d time(s): the child reached a real gh", strings.Count(string(b), "call"))
 	}
 }

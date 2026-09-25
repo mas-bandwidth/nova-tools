@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nogh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/brief"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -70,6 +71,11 @@ const (
 	ServeEnvOut     = "NOVA_TASK_OUT"
 	ServeEnvDir     = "NOVA_TASK_DIR"
 )
+
+// ShimDirName is the directory under the serve root that holds the refusing
+// gh (internal/nogh) every child finds first on its PATH. The dot keeps it
+// apart from the per-sprint task dirs beside it.
+const ShimDirName = ".shim"
 
 // LogMaxLen bounds friend:<f>:log.
 const LogMaxLen = 10000
@@ -196,7 +202,8 @@ func (s *Server) Live() int {
 }
 
 // Beat takes or renews the seat and writes presence: friend:<f>:serve (the
-// lock), friend:<f>:beat and friend:<f> with their TTLs, friend:<f>:last.
+// lock), friend:<f>:beat under its TTL, and friend:<f>:last (where friend:<f>
+// is not a row, friend:<f> also carries the beat TTL).
 // A seat another session holds is a SeatHeldError (ErrSeatHeld).
 func (s *Server) Beat(ctx context.Context) error {
 	stamp := s.now().UTC().Format(time.RFC3339)
@@ -474,6 +481,15 @@ func (s *Server) start(ctx context.Context, c task.Claim) error {
 	for i, a := range s.cfg.Dispatch {
 		argv[i] = replacer.Replace(a)
 	}
+	// The refusing gh goes first on the child's PATH (nova-tools #3600): a
+	// friend child reaches GitHub through nova-sprint verbs and git only. A
+	// shim that cannot be written starts no child.
+	shimDir := filepath.Join(s.cfg.Dir, ShimDirName)
+	if shim, err := nogh.Install(shimDir); err != nil {
+		return err
+	} else if shim == "" {
+		shimDir = "" // no shim on this OS: PATH stays as it is
+	}
 	outFile, err := os.Create(ch.out)
 	if err != nil {
 		return err
@@ -487,6 +503,7 @@ func (s *Server) start(ctx context.Context, c task.Claim) error {
 		ServeEnvKind+"="+ch.kind, ServeEnvHead+"="+ch.head, ServeEnvBrief+"="+ch.brief,
 		ServeEnvOut+"="+ch.out, ServeEnvDir+"="+ch.dir)
 	cmd.Env = append(cmd.Env, s.cfg.Env...)
+	cmd.Env = nogh.PathFirst(cmd.Env, shimDir)
 	ownGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		_ = outFile.Close()

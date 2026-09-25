@@ -2,6 +2,7 @@ package pitstop_test
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -103,7 +104,7 @@ func TestSetClearEveryBranch(t *testing.T) {
 	if err != nil || r.Outcome != pitstop.Exists || r.Prior.By != "rowan" || r.Prior.At != stop.At {
 		t.Fatalf("set over a stop: %+v %v", r, err)
 	}
-	if again, _ := pitstop.Read(ctx, c, S); again != stop || len(receipts(t, c, S)) != 1 {
+	if again, _ := pitstop.Read(ctx, c, S); !reflect.DeepEqual(again, stop) || len(receipts(t, c, S)) != 1 {
 		t.Fatalf("refused set wrote: %+v", again)
 	}
 
@@ -141,5 +142,42 @@ func TestSetClearEveryBranch(t *testing.T) {
 	}
 	if _, err := pitstop.Clear(ctx, c, S, "", ""); err == nil {
 		t.Fatal("clear with no by: want an error")
+	}
+}
+
+// TestInScopeFromHash: the Go reader answers the question the Lua clear
+// asks (NS.pitstop.in_scope): a hash with no scope field (written before
+// scope) or scope=all holds every stream it has not lifted; scope=streams
+// holds only the stream:<name> fields; no stop holds nothing.
+func TestInScopeFromHash(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		h    map[string]string
+		in   []string
+		out  []string
+		line string
+	}{
+		{"none", nil, nil, []string{"a"}, "PITSTOP sprint=s1 none"},
+		{"legacy", map[string]string{"by": "g", "why": "w", "at": "1"}, []string{"a", "b c"}, nil, ""},
+		{"all lifted", map[string]string{"by": "g", "at": "1", "scope": "all", "lifted:a": "2"}, []string{"b c"}, []string{"a"}, ` lifted="a"`},
+		{"streams", map[string]string{"by": "g", "at": "1", "scope": "streams", "stream:b c": "1", "stream:a": "1", "lifted:x": "1"},
+			[]string{"a", "b c"}, []string{"x", "d"}, ` streams="a","b c"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := pitstop.FromHash("s1", tc.h)
+			for _, x := range tc.in {
+				if !s.InScope(x) {
+					t.Errorf("%q not held", x)
+				}
+			}
+			for _, x := range tc.out {
+				if s.InScope(x) {
+					t.Errorf("%q held", x)
+				}
+			}
+			if !strings.HasSuffix(s.Line(), tc.line) {
+				t.Errorf("line %q, want suffix %q", s.Line(), tc.line)
+			}
+		})
 	}
 }

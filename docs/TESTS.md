@@ -585,24 +585,6 @@ LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flas
 LOG OK rows=1 kinds=1 escalations=0 defeated=0 coverage=0/1 lat_rules=0,-,-
 ```
 
-## nova-pulse
-
-Frozen: superseded by `nova-sprint`; `status`, `cut` and `harvest` remain.
-Fixture: `cmd/nova-pulse/testdata/`, a two-line `pool.tsv` (a read and a fix
-candidate) and a `templates` directory with `benches.tsv`, `read.md` and
-`fix.md`. Cut one card of each kind out of the fixture pool, into a fresh
-`./cards` and `./root` in the checkout. It reaches no network and makes no
-model call.
-
-### First run
-
-```text
-$ nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root
-CUT ROUTE route=opencode/deepseek-v4-flash reason=flat
-CUT ROUTE route=opencode/deepseek-v4-pro reason=flat
-CUT OK cards=2 skipped=0 zero=0 flat=2 metered=0 out=./cards
-```
-
 ## nova-board
 
 Fixture: `cmd/nova-board/testdata/example-board`.
@@ -1112,13 +1094,13 @@ Run by `cmd/nova-sprint/firstrun_test.go` in an empty directory, which must
 still be empty afterwards: the wide table is read from Redis and written nowhere
 (#3326), so none of these lines needs a server and none writes a file.
 
-`nova-sprint xy` fixtures are in the same `cmd/nova-sprint/testdata/`. `evaluate.txt` is nova-work `set check --evaluate` stdout (`SET DONE done=26` beside a single `holds=yes`). `calibration.txt` is `nova-pulse sprint calibration` (`SUGGEST fix 90m`). `open.tsv` is two open fix tasks, one depending on the other, stored estimates 120. `set.sexp` hand-marks receipts done and landed. `status-verbose.txt` is `nova-pulse sprint status --verbose` as the producer prints it: a fraction, then C/O/W rows with `kind=` and `depends=`, no `TASK` lines. `cmd/nova-sprint/xy_test.go` runs the docs/CLI.md xy example from the repo root (`26/42 61% -> ~3h`) and checks that a different evaluate stdout changes x and y, that swapping the hand-marked receipt does not, that the producer rows are the open tasks, and that kind calibration and a cross-lane dependency change the eta.
+`nova-sprint xy` fixtures are in the same `cmd/nova-sprint/testdata/`. `evaluate.txt` is nova-work `set check --evaluate` stdout (`SET DONE done=26` beside a single `holds=yes`). `calibration.txt` is the sprint calibration (`SUGGEST fix 90m`), passed as `--calibration-out`. `open.tsv` is two open fix tasks, one depending on the other, stored estimates 120. `set.sexp` hand-marks receipts done and landed. `status-verbose.txt` is a verbose sprint status as the producer printed it, passed as `--open`: a fraction, then C/O/W rows with `kind=` and `depends=`, no `TASK` lines. `cmd/nova-sprint/xy_test.go` runs the docs/CLI.md xy example from the repo root (`26/42 61% -> ~3h`) and checks that a different evaluate stdout changes x and y, that swapping the hand-marked receipt does not, that the producer rows are the open tasks, and that kind calibration and a cross-lane dependency change the eta.
 
 ### First run
 
 ```text
-$ nova-sprint table --once --out sprint-table.txt
-! nova-sprint table: --friends, --xy-file, --out and --lock belong to --layout live; the wide table is written nowhere (#3326); run: nova-sprint help
+$ nova-sprint table --once --fixture table.txt
+! nova-sprint table: flag provided but not defined: -fixture; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
 
 $ nova-sprint table --once
 ! nova-sprint table: --redis <addr> is required; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
@@ -1127,9 +1109,10 @@ $ nova-sprint table --check
 ! nova-sprint table: --check needs --redis <addr>, a throwaway server for the fixture keyspace; run: nova-sprint help
 ```
 
-The first is the deleted file cut: the wide table refuses `--out`, which
-publishes only the whole table of `--layout live` (#3530), as `--fixture` and
-`--refresh` are unknown flags. The second and third name the server the table is read
+The first is the deleted file cut: `--fixture` and `--refresh` are unknown
+flags, while `--out <file>` now publishes the wide table by atomic rename
+(#3343) and `--layout live [--out <file>]` publishes the whole sprint table
+(#3530). The second and third name the server the table is read
 from. `TestTableWritesNoFile` renders from a throwaway server twice (a second
 start) and checks the directory stays empty.
 

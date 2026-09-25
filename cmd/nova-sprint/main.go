@@ -27,7 +27,7 @@ const usage = `nova-sprint: the sprint table, read from Redis (see docs/CLI.md)
 usage:
   nova-sprint version
   nova-sprint help
-  nova-sprint table --redis <addr> [--sprint <name>] [--once | --loop]
+  nova-sprint table --redis <addr> [--sprint <name>] [--once | --loop] [--out <file>]
   nova-sprint table --check --redis <addr>
   nova-sprint table --layout live [--redis <addr>] [--sprint <name>] [--friends <a,b,...>] [--once | --loop [<seconds>]] [--out <file>] [--lock <key>]
   nova-sprint table clear --checkpoint <file> [--redis <addr>] [--friends <a,b,...>] [--by <name>]
@@ -35,8 +35,10 @@ usage:
   nova-sprint refresh -- <command> [arg...]
 
 table reads one consistent FCALL_RO snapshot per render and prints it to
-stdout; --loop renders once per second. It writes no file: there is no
---out, --fixture or --refresh pending, and a restart re-renders from Redis.
+stdout; --loop renders once per second. With --out <file> each tick publishes
+by writing <file>.tmp.<pid> beside it and renaming it, so a reader sees one
+whole table. Without --out it writes no file: there is no --fixture or
+--refresh pending, and a restart re-renders from Redis.
 Load the function library first with
 nova-sprint fn load --redis <addr> (fn check exits 1 while it is missing or stale).
 Control sprints are hidden unless named with --sprint.

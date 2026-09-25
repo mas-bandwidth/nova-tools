@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -183,4 +184,38 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// TestTheCardsShellReachesNoGh is #3600's card half: a shell the harness starts with the
+// shim first on PATH resolves `gh` to the refusing one, exit 2 naming #3594, and a
+// counting fake gh later on PATH (the token's call counter, standing in) is never run.
+// The control is one edit: drop the gh from writeNativeShellShims and the fake answers.
+func TestTheCardsShellReachesNoGh(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the shim is a /bin/sh script; windows writes none")
+	}
+	fake := t.TempDir()
+	counter := filepath.Join(fake, "calls")
+	if err := os.WriteFile(filepath.Join(fake, "gh"), []byte("#!/bin/sh\necho call >> '"+counter+"'\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir, _, err := writeNativeShellShims(t.TempDir())
+	if err != nil || dir == "" {
+		t.Fatalf("the shims could not be written: %q, %v", dir, err)
+	}
+	env := pathWithShimFirst([]string{"PATH=" + fake + string(os.PathListSeparator) + os.Getenv("PATH")}, dir)
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("no sh on PATH: %v", err)
+	}
+	cmd := exec.Command(sh, "-c", "gh api user")
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 2 || !strings.Contains(string(out), "#3594") {
+		t.Fatalf("gh through the card's PATH: err=%v out=%q, want exit 2 naming #3594", err, out)
+	}
+	if _, err := os.Stat(counter); err == nil {
+		t.Fatalf("the fake gh was called: the card's shell reached a real gh")
+	}
 }

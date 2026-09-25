@@ -1,9 +1,10 @@
-// table.go: the nova-sprint table verb. The wide table is read from Redis and
-// written nowhere (#3326): --redis <addr> makes exactly one FCALL_RO
-// ns_snapshot per rendered tick and prints it to stdout, and --check renders
-// a fixture keyspace. The live layout (table_live.go) is the whole sprint
-// table (#3530); its --out is the one published file, rewritten by rename
-// once a tick, and `table clear` (#3637) zeroes its landed and done columns.
+// table.go: the nova-sprint table verb. The wide table is read from Redis:
+// --redis <addr> makes exactly one FCALL_RO ns_snapshot per rendered tick and
+// prints it to stdout, or writes it to --out by atomic rename (#3343), and
+// --check renders a fixture keyspace. The live layout (table_live.go) is the
+// whole sprint table (#3530); its --out is the one published file, rewritten
+// by rename once a tick, and `table clear` (#3637) zeroes its landed and done
+// columns.
 //
 // Section 6 of #2756.
 package main
@@ -13,8 +14,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -72,11 +76,11 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 	if opts.layout != "wide" {
 		return tableRefuse(stderr, "--layout wants live or wide")
 	}
-	if opts.friends != "" || opts.xyFile != "" || opts.out != "" || opts.lockKey != "" {
-		return tableRefuse(stderr, "--friends, --xy-file, --out and --lock belong to --layout live; the wide table is written nowhere (#3326)")
+	if opts.friends != "" || opts.xyFile != "" || opts.lockKey != "" {
+		return tableRefuse(stderr, "--friends, --xy-file and --lock belong to --layout live; the wide table takes --out <file>")
 	}
 	if opts.check {
-		if opts.loop || opts.once || opts.sprint != "" {
+		if opts.loop || opts.once || opts.sprint != "" || opts.out != "" {
 			return tableRefuse(stderr, "--check takes only --redis <addr>")
 		}
 		return cmdTableCheck(opts.redis, stdout, stderr)
@@ -87,29 +91,55 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 	if opts.loop && opts.once {
 		return tableRefuse(stderr, "--redis takes either --once or --loop, not both")
 	}
-	return cmdTableRedis(opts.redis, opts.sprint, opts.loop, opts.every, stdout, stderr)
+	return cmdTableRedis(opts.redis, opts.sprint, opts.loop, opts.every, opts.out, stdout, stderr)
 }
 
-func cmdTableRedis(addr, sprint string, loop bool, every time.Duration, stdout, stderr io.Writer) int {
-	ctx := context.Background()
+func cmdTableRedis(addr, sprint string, loop bool, every time.Duration, out string, stdout, stderr io.Writer) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	st, err := store.Open(ctx, addr)
 	if err != nil {
 		return tableRefuse(stderr, err.Error())
 	}
 	defer st.Close()
-	render := func() (int, error) {
+	// One FCALL_RO per tick: one consistent server instant per rendered
+	// table, never a pipeline of separate reads (6.2).
+	tick := func(ctx context.Context) (string, int, error) {
 		snap, err := table.ReadNamed(ctx, st.Client(), sprint)
+		if err != nil {
+			return "", 0, err
+		}
+		code := 0
+		if len(snap.Errors) > 0 {
+			code = 1
+		}
+		return snap.Render(), code, nil
+	}
+	return tablePublishLoop(ctx, tick, loop, every, out, stdout, stderr)
+}
+
+// tableTick renders one table body, the exit code its errors want, and any
+// read failure.
+type tableTick func(context.Context) (body string, code int, err error)
+
+// tablePublishLoop is the wide table's tick loop. Each tick prints to stdout,
+// or with --out writes to a temp file beside out, fsyncs it and renames it
+// onto out, so a reader sees the old table or the new one, never half of one
+// (#3343). It returns when ctx is done.
+func tablePublishLoop(ctx context.Context, tick tableTick, loop bool, every time.Duration, out string, stdout, stderr io.Writer) int {
+	render := func() (int, error) {
+		body, code, err := tick(ctx)
 		if err != nil {
 			return 0, err
 		}
-		body := snap.Render()
-		if _, err := io.WriteString(stdout, body); err != nil {
+		if out == "" {
+			if _, err := io.WriteString(stdout, body); err != nil {
+				return 0, err
+			}
+		} else if err := writeAtomic(out, body); err != nil {
 			return 0, err
 		}
-		if len(snap.Errors) > 0 {
-			return 1, nil
-		}
-		return 0, nil
+		return code, nil
 	}
 	if !loop {
 		code, err := render()
@@ -118,16 +148,18 @@ func cmdTableRedis(addr, sprint string, loop bool, every time.Duration, stdout, 
 		}
 		return code
 	}
-	// One FCALL_RO per tick: one consistent server instant per rendered
-	// table, never a pipeline of separate reads (6.2).
 	ticker := time.NewTicker(tickEvery(every))
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
 		if _, err := render(); err != nil {
 			fmt.Fprintf(stderr, "nova-sprint table: %s; next tick\n", oneline.Escape(err.Error()))
 		}
+		select {
+		case <-ctx.Done():
+			return 0
+		case <-ticker.C:
+		}
 	}
-	return 0
 }
 
 func cmdTableCheck(addr string, stdout, stderr io.Writer) int {

@@ -17,8 +17,10 @@ import (
 // the real ns_card_end on a throwaway redis-server: a code card (fix, or a
 // model card with no KIND) that says DONE with NO-COMMIT ends FAILED reason
 // no-commit in done/fail, its why naming the NO-COMMIT and the model's DONE
-// line kept on the result record; a script, read or report card, and a code
-// card whose model said ABSTAIN or BLOCKED, end as before (DONE done).
+// line kept on the result record; a script, read or report card ends as
+// before (DONE done); a code card whose model said ABSTAIN or BLOCKED ends
+// with the model's word (#3919: ABSTAIN other in done/abstain, BLOCKED deps
+// in done/fail), never no-commit.
 func TestWrapperNoCommitCodeCardEndsFail(t *testing.T) {
 	self, err := os.Executable()
 	if err != nil {
@@ -27,13 +29,15 @@ func TestWrapperNoCommitCodeCardEndsFail(t *testing.T) {
 	cases := []struct {
 		name, kind, mode string
 		fail             bool
+		// the model's own end (#3919): outcome, reason, where_ok
+		said []string
 	}{
-		{"fix-said-done", "fix", "said-done", true},
-		{"model-said-done", "", "said-done", true},
-		{"script-said-done", "script", "said-done", false},
-		{"report-said-done", "report", "said-done", false},
-		{"fix-said-abstain", "fix", "said-abstain", false},
-		{"fix-said-blocked", "fix", "said-blocked", false},
+		{"fix-said-done", "fix", "said-done", true, nil},
+		{"model-said-done", "", "said-done", true, nil},
+		{"script-said-done", "script", "said-done", false, nil},
+		{"report-said-done", "report", "said-done", false, nil},
+		{"fix-said-abstain", "fix", "said-abstain", false, []string{"ABSTAIN", "other", "abstain"}},
+		{"fix-said-blocked", "fix", "said-blocked", false, []string{"BLOCKED", "deps", "fail"}},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -71,6 +75,16 @@ func TestWrapperNoCommitCodeCardEndsFail(t *testing.T) {
 			}
 			if result["w_commit"] != "NO-COMMIT" {
 				t.Fatalf("result w_commit %q, want NO-COMMIT", result["w_commit"])
+			}
+			if tc.said != nil {
+				if rep.Code != card.WrapperExitEnded || rep.Outcome != tc.said[0] || rep.Reason != tc.said[1] {
+					t.Fatalf("report %s why=%q; want %s %s", rep.Line(), rep.Why, tc.said[0], tc.said[1])
+				}
+				if hash["state"] != "ended" || hash["outcome"] != tc.said[0] || hash["reason"] != tc.said[1] ||
+					hash["where"] != "done" || hash["where_ok"] != tc.said[2] || hash["why"] != result["w_line2"] {
+					t.Fatalf("card hash %v, want ended %s %s in done/%s with why line 2", hash, tc.said[0], tc.said[1], tc.said[2])
+				}
+				return
 			}
 			if !tc.fail {
 				if rep.Code != card.WrapperExitEnded || rep.Outcome != "DONE" || rep.Reason != "done" {

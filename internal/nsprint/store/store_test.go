@@ -134,8 +134,13 @@ func TestOpenAuthenticatesFromEnv(t *testing.T) {
 	t.Setenv(store.PasswordEnvEnv, "")
 	t.Setenv(store.UserEnv, "")
 	t.Setenv(store.DefaultPasswordEnv, "bench-secret")
-	if _, err := store.Open(ctx, addr); err == nil || !strings.Contains(err.Error(), "NOAUTH") {
-		t.Fatalf("Open without %s = %v; want NOAUTH (the password alone never picks a user)", store.UserEnv, err)
+	// #3520 DONE-WHEN: a password without a user refuses with the line naming
+	// the missing variable and the pair (user + password), not a bare NOAUTH.
+	if _, err := store.Open(ctx, addr); err == nil ||
+		!strings.Contains(err.Error(), "NOAUTH") ||
+		!strings.Contains(err.Error(), store.UserEnv+" is unset") ||
+		!strings.Contains(err.Error(), store.UserEnv+"=bench and "+store.DefaultPasswordEnv) {
+		t.Fatalf("Open with %s but no %s = %v; want a refusal naming the missing variable and the pair", store.DefaultPasswordEnv, store.UserEnv, err)
 	}
 
 	t.Setenv(store.UserEnv, "bench")

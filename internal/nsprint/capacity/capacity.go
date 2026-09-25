@@ -88,6 +88,24 @@ func (e *CeilingError) Error() string {
 // ExitCode is the refusal's CLI exit status (spec 2.4).
 func (e *CeilingError) ExitCode() int { return 2 }
 
+// NameIsLoginError is the exit 2 refusal of #3604: a name mapped in
+// friends:login is a login alias and never registers as a friend, so
+// capacity friend refuses it by name before any ceiling check or write,
+// exactly as friend hello does (#3593).
+type NameIsLoginError struct {
+	Name string
+}
+
+func (e *NameIsLoginError) Error() string {
+	return fmt.Sprintf("NAME-IS-LOGIN %s", e.Name)
+}
+
+// ExitCode is the refusal's CLI exit status (#3604).
+func (e *NameIsLoginError) ExitCode() int { return 2 }
+
+// LoginMapKey is the hash that maps login aliases to their friend (#3092).
+const LoginMapKey = "friends:login"
+
 // Evaluate is the pure ceiling guard: it reads the machine ceiling and every
 // registered consumer, substitutes the requested slots for the requesting
 // consumer (on its requested machine), and reports whether the resulting sum
@@ -111,7 +129,16 @@ func Evaluate(ctx context.Context, r Reader, machine, kind, name string, slots i
 	var ok bool
 	var consumers []Consumer
 	var err error
-	if snap, one := r.(snapshotReader); one {
+	if snap, one := r.(loginSnapshotReader); one {
+		// #3604: the login-aware read checks friends:login in the same
+		// pipeline as the ceiling and consumers, so a mapped login is refused
+		// NAME-IS-LOGIN without an extra round trip and before the ceiling.
+		var isLogin bool
+		ceiling, ok, consumers, isLogin, err = snap.snapshotLogin(ctx, machine, kind, name)
+		if err == nil && isLogin {
+			return Plan{}, &NameIsLoginError{Name: name}
+		}
+	} else if snap, one := r.(snapshotReader); one {
 		ceiling, ok, consumers, err = snap.Snapshot(ctx, machine)
 	} else {
 		ceiling, ok, err = r.Ceiling(ctx, machine)
@@ -169,6 +196,54 @@ func (r RedisReader) Ceiling(ctx context.Context, machine string) (int, bool, er
 // round trip; Evaluate prefers it (#3265).
 type snapshotReader interface {
 	Snapshot(ctx context.Context, machine string) (int, bool, []Consumer, error)
+}
+
+// loginSnapshotReader is a snapshotReader that also reports whether name is a
+// mapped login (kind friend) in the same pipeline (#3604). Evaluate prefers it
+// over snapshotReader, so NAME-IS-LOGIN is refused before the ceiling check.
+type loginSnapshotReader interface {
+	snapshotLogin(ctx context.Context, machine, kind, name string) (ceiling int, ok bool, consumers []Consumer, isLogin bool, err error)
+}
+
+// snapshotLogin reads machine:<m>:ceiling slots, every consumer's desired hash
+// and, for a friend, whether its name is bound in friends:login, in one
+// pipeline (#3604): still one round trip for any number of consumers.
+func (r RedisReader) snapshotLogin(ctx context.Context, machine, kind, name string) (int, bool, []Consumer, bool, error) {
+	if r.Store == nil {
+		return 0, false, nil, false, fmt.Errorf("capacity: nil store")
+	}
+	pipe := r.Store.Client().Pipeline()
+	ceilingCmd := pipe.HGet(ctx, MachineCeilingKey(machine), "slots")
+	consumersCmd := pipe.FCall(ctx, "ns_capacity_consumers", nil)
+	var loginCmd *redis.BoolCmd
+	if kind == KindFriend {
+		loginCmd = pipe.HExists(ctx, LoginMapKey, name)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return 0, false, nil, false, fmt.Errorf("capacity: read machine %s and consumers: %w", machine, err)
+	}
+	if err := consumersCmd.Err(); err != nil {
+		return 0, false, nil, false, fmt.Errorf("capacity: read consumers: %w", err)
+	}
+	consumers, err := parseConsumers(consumersCmd.Val())
+	if err != nil {
+		return 0, false, nil, false, err
+	}
+	ceiling, err := ceilingCmd.Int()
+	if err == redis.Nil {
+		return 0, false, consumers, loginValue(loginCmd), nil
+	}
+	if err != nil {
+		return 0, false, nil, false, fmt.Errorf("capacity: read machine %s ceiling: %w", machine, err)
+	}
+	return ceiling, true, consumers, loginValue(loginCmd), nil
+}
+
+func loginValue(cmd *redis.BoolCmd) bool {
+	if cmd == nil {
+		return false
+	}
+	return cmd.Val()
 }
 
 // Snapshot reads machine:<m>:ceiling slots and every consumer's desired hash
@@ -418,6 +493,8 @@ func parseDesiredReply(reply any, kind, name, machine string, slots int) (Result
 	case "SET", "SAME":
 	case "UNREGISTERED":
 		return Result{}, fmt.Errorf("capacity %s %s: %w", kind, name, ErrUnregistered)
+	case "NAME-IS-LOGIN":
+		return Result{}, &NameIsLoginError{Name: name}
 	case "CEILING":
 		result := Result{Status: status, Machine: machine, Slots: slots}
 		if len(values) > 2 {

@@ -164,3 +164,74 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// Every duty bounded by the lease (nova-tools #3805).
+//
+// #3737 bounded the harvest and #3322 the deal sessions; dev-red, expire,
+// route and ok-to-friend were protected only by the heartbeat, so a slow
+// forge read or a long run of moves could carry a pass past the lease
+// deadline. The rule is the harvest's: before each unit of new work (a duty
+// in the pass, a base in dev-red, a sprint or move in route, a sprint in
+// ok-to-friend) the duty asks Bounded; below the write margin it starts
+// nothing more and returns an error wrapping ErrLeaseMargin that names what
+// it left, which the pass records in proc:reconciler err with the counts of
+// what it did. A single slow call is cut at the budget on the lease clock
+// (Budget), as a bench session is.
+
+// ErrLeaseMargin is less than the write margin of the reconciler lease left:
+// the duty starts no new work this pass.
+var ErrLeaseMargin = errors.New("LEASE-MARGIN")
+
+// Bounded is the lease bound before a unit of new work: nil to start it,
+// the fence when the lease is lost (wrapping ErrFenced), else an error
+// wrapping ErrLeaseMargin when less than margin (WriteMargin when zero) is
+// left on the lease clock. It never renews: the heartbeat does, so under a
+// held lease it refuses only when renewals are not landing. A nil lease (a
+// verb run by hand, with no reconciler lease) is never bounded.
+func (l *Lease) Bounded(margin time.Duration) error {
+	if l == nil {
+		return nil
+	}
+	if err := l.fencedErr(); err != nil {
+		return err
+	}
+	margin = l.WriteMargin(margin)
+	if left := l.Remaining(); left < margin {
+		return fmt.Errorf("%w: %s of the lease left, below the %s write margin", ErrLeaseMargin, left.Round(time.Millisecond), margin)
+	}
+	return nil
+}
+
+// Budget is ctx cut when the lease time left less margin runs out, timed on
+// the lease clock as a bench session is (LeaseBound): one slow call (a forge
+// read) then ends inside the lease. It refuses as Bounded does, before the
+// call starts. The cancel must be called. A nil lease returns ctx uncut.
+func (l *Lease) Budget(ctx context.Context, margin time.Duration) (context.Context, context.CancelFunc, error) {
+	if l == nil {
+		return ctx, func() {}, nil
+	}
+	if err := l.Bounded(margin); err != nil {
+		return ctx, func() {}, err
+	}
+	margin = l.WriteMargin(margin)
+	cctx, cancel := context.WithCancel(ctx)
+	timer := l.Clock().After(l.Remaining() - margin)
+	go func() {
+		select {
+		case <-timer:
+			cancel()
+		case <-cctx.Done():
+		}
+	}()
+	return cctx, cancel, nil
+}
+
+// WriteMargin is margin, or when it is zero the default write margin for
+// this lease: DefaultWriteMargin, capped at TTL/6 so a short test TTL keeps
+// room to work (1 s at the 6 s production TTL).
+func (l *Lease) WriteMargin(margin time.Duration) time.Duration {
+	if margin > 0 {
+		return margin
+	}
+	return min(DefaultWriteMargin, l.ttl/6)
+}

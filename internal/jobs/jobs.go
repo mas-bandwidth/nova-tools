@@ -359,7 +359,7 @@ func AcceptArgs(args []string) (string, error) {
 }
 
 // State names a node's progress: open, merged, or accepted. A merged node that is not
-// yet green is the blocker nova-pulse harvest settles.
+// yet green is the blocker nova-sprint card harvest settles.
 func (n Node) State() string {
 	switch {
 	case n.Merged && n.Green:
@@ -400,12 +400,12 @@ func (g *Graph) Ready(id string) (bool, *Blocker) {
 }
 
 // resolver names the join that settles a need. nova-merge queue lands an open PR; once
-// it has merged, nova-pulse harvest settles the green and re-evaluates dependents.
+// it has merged, nova-sprint card harvest settles the green and re-evaluates dependents.
 func resolver(n Node) string {
 	if !n.Merged {
 		return "nova-merge queue"
 	}
-	return "nova-pulse harvest"
+	return "nova-sprint card harvest"
 }
 
 // ReadySet is the mechanical ready set: the nodes with no unmet need, in seed order.

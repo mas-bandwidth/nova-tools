@@ -39,9 +39,12 @@ func TestTheRedisLedgerKeepsTheLedgerContract(t *testing.T) {
 			t.Fatalf("replace: %s", err)
 		}
 	}
-	got, err := s.LedgerReport(ctx, "2026-09", "tuple")
+	got, indexed, missing, err := s.LedgerReport(ctx, "2026-09", "tuple")
 	if err != nil {
 		t.Fatalf("report: %s", err)
+	}
+	if indexed != 1 || missing != 29 {
+		t.Fatalf("indexed=%d missing=%d; want indexed=1 missing=29", indexed, missing)
 	}
 	if len(got) != 1 {
 		t.Fatalf("want one (2026-09-13, gpt, schema) group, got %+v", got)
@@ -53,31 +56,31 @@ func TestTheRedisLedgerKeepsTheLedgerContract(t *testing.T) {
 	if g.Rows != 2 || g.Tokens != [5]int64{11, 22, 4, 0, 3} || g.Known != [5]bool{true, true, true, false, true} {
 		t.Fatalf("group = %+v; want rows=2 tokens=[11 22 4 0 3] known=[t t t f t]", g)
 	}
-	byModel, err := s.LedgerReport(ctx, "2026-09", "model")
+	byModel, _, _, err := s.LedgerReport(ctx, "2026-09", "model")
 	if err != nil || len(byModel) != 1 || byModel[0].Day != "" || byModel[0].Repo != "" || byModel[0].Model != "gpt" {
 		t.Fatalf("--by model = %+v, %v; want one group keyed on the model alone", byModel, err)
 	}
-	if other, err := s.LedgerReport(ctx, "2026-10", "tuple"); err != nil || len(other) != 0 {
+	if other, _, _, err := s.LedgerReport(ctx, "2026-10", "tuple"); err != nil || len(other) != 0 {
 		t.Fatalf("October's report = %+v, %v; want nothing", other, err)
 	}
-	if _, err := s.LedgerReport(ctx, "2026-09", "card"); err == nil {
+	if _, _, _, err := s.LedgerReport(ctx, "2026-09", "card"); err == nil {
 		t.Fatal("--by card was accepted; the report groups on model, repo, day or tuple")
 	}
-	if _, err := s.LedgerReport(ctx, "2026-9", "tuple"); err == nil {
+	if _, _, _, err := s.LedgerReport(ctx, "2026-9", "tuple"); err == nil {
 		t.Fatal("month 2026-9 was accepted; the report reads one YYYY-MM")
 	}
 	// Replacing with fewer rows drops the rest: the day is the batch, not a merge into it.
 	if err := s.ReplaceLedgerDay(ctx, "2026-09-13", ledgerFixture()[:1]); err != nil {
 		t.Fatalf("replace: %s", err)
 	}
-	if got, _ := s.LedgerReport(ctx, "2026-09", "tuple"); len(got) != 1 || got[0].Rows != 1 || got[0].Tokens[0] != 10 {
+	if got, _, _, _ := s.LedgerReport(ctx, "2026-09", "tuple"); len(got) != 1 || got[0].Rows != 1 || got[0].Tokens[0] != 10 {
 		t.Fatalf("after replacing with one row the report is %+v; want rows=1 input=10", got)
 	}
 	// An empty batch clears the day.
 	if err := s.ReplaceLedgerDay(ctx, "2026-09-13", nil); err != nil {
 		t.Fatalf("replace empty: %s", err)
 	}
-	if got, _ := s.LedgerReport(ctx, "2026-09", "tuple"); len(got) != 0 {
+	if got, _, _, _ := s.LedgerReport(ctx, "2026-09", "tuple"); len(got) != 0 {
 		t.Fatalf("an empty batch left %+v", got)
 	}
 }
@@ -131,7 +134,7 @@ func TestTheLedgerRefusesARepeatedKeyAForeignDayAndABadDay(t *testing.T) {
 func TestTheLedgerReportRefusesAValueItCannotRead(t *testing.T) {
 	s, mr := redisLedger(t)
 	mr.HSet("tokens:ledger:2026-09-02", `["c","m","r"]`, "not json")
-	_, err := s.LedgerReport(context.Background(), "2026-09", "tuple")
+	_, _, _, err := s.LedgerReport(context.Background(), "2026-09", "tuple")
 	if err == nil || !strings.Contains(err.Error(), "tokens:ledger:2026-09-02") {
 		t.Fatalf("an unreadable value gave %v; want an error naming tokens:ledger:2026-09-02", err)
 	}

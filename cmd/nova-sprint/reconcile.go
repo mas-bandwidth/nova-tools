@@ -137,6 +137,7 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 		return refuse(errOut, "reconcile", "takes flags, not positional arguments: --redis <addr> [--host <name>] [--once] [--readers a,b] [--width-rebalance-ticks n --width-readers a,b --width-builders c,d --width-coordinator e] [--metrics-addr <host:port>]")
 	}
 	reconcileReaders = splitNames(*readers)
+	reconcileOut = out
 	if *host == "" {
 		h, err := os.Hostname()
 		if err != nil {
@@ -202,6 +203,7 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	loop := &reconcile.Loop{
 		Lease:   lease,
 		Duties:  named.wrap(duties, names),
+		Names:   names,
 		OnError: func(err error) { fmt.Fprintf(errOut, "%s nova-sprint reconcile: pass: %v\n", logStamp(), err) },
 		// Per-duty receipts (#3199): every pass under --once, so the probe
 		// says what each duty did; in the loop only a duty that moved

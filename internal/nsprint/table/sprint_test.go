@@ -171,7 +171,7 @@ func TestControl3530MembershipChange(t *testing.T) {
 		t.Fatalf("changed tick RoundTrips=%d, want 2", snap.RoundTrips)
 	}
 	got := snap.Render(now)
-	if !strings.Contains(got, "late stream                    |       0 |       1 |       0 |      0\n") {
+	if !strings.Contains(got, "late stream                    |       0 |     0 |       1 |       0 |      0\n") {
 		t.Fatalf("the new stream is not on the table:\n%s", got)
 	}
 	if strings.Contains(got, "vision") || strings.Contains(got, "ghost") {
@@ -209,10 +209,10 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "SPRINT TABLE\n\n0/0 left, 0% done -> ~0m\n\n" +
-		"stream                         | waiting | working | merging | landed\n" +
-		"-------------------------------+---------+---------+---------+-------\n" +
-		"-------------------------------+---------+---------+---------+-------\n" +
-		"total                          |       0 |       0 |       0 |      0\n\n"
+		"stream                         | waiting | ready | working | merging | landed\n" +
+		"-------------------------------+---------+-------+---------+---------+-------\n" +
+		"-------------------------------+---------+-------+---------+---------+-------\n" +
+		"total                          |       0 |     0 |       0 |       0 |      0\n\n"
 	if got := snap.Render(now); !strings.HasPrefix(got, want) {
 		t.Fatalf("empty keyspace:\n%s", got)
 	}

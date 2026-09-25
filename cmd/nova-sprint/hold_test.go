@@ -1254,3 +1254,57 @@ func TestUnitMergeableWriter(t *testing.T) {
 		t.Fatalf("MERGEABLE ci note read: rowan %v", q)
 	}
 }
+
+// TestHoldRouteNoPolicyRefusal (#3814): hold route --once on a sprint without
+// fix_to/release_reader exits 1 with one line naming the remedy.
+func TestHoldRouteNoPolicyRefusal(t *testing.T) {
+	e := newHoldEnv(t, "hold-3814")
+	e.friends("rowan", "stella")
+
+	// Neither key in policy.
+	code, out, errOut := e.run("hold", "route", "--once", "--sprint", e.S)
+	if code != 1 {
+		t.Fatalf("exit code %d, want 1; out=%q errOut=%q", code, out, errOut)
+	}
+	if out != "" {
+		t.Fatalf("stdout not empty: %q", out)
+	}
+	const wantRemedy = "nova-sprint plan apply with policy fix_to and policy release_reader"
+	if !strings.Contains(errOut, wantRemedy) {
+		t.Fatalf("errOut %q does not contain remedy %q", errOut, wantRemedy)
+	}
+	if !strings.Contains(errOut, "fix_to and release_reader") {
+		t.Fatalf("errOut %q does not name missing keys", errOut)
+	}
+	if strings.Count(strings.TrimSpace(errOut), "\n") != 0 {
+		t.Fatalf("errOut has %d lines, want exactly 1: %q", strings.Count(strings.TrimSpace(errOut), "\n")+1, errOut)
+	}
+
+	// Only fix_to in policy: still refused exit 1 with the remedy.
+	if err := e.c.HSet(context.Background(), "s:"+e.S+":policy", "fix_to", "rowan").Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut = e.run("hold", "route", "--once", "--sprint", e.S)
+	if code != 1 || !strings.Contains(errOut, wantRemedy) {
+		t.Fatalf("only fix_to: code=%d out=%q errOut=%q", code, out, errOut)
+	}
+
+	// Only release_reader in policy: still refused exit 1 with the remedy.
+	e.c.Del(context.Background(), "s:"+e.S+":policy")
+	if err := e.c.HSet(context.Background(), "s:"+e.S+":policy", "release_reader", "stella").Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut = e.run("hold", "route", "--once", "--sprint", e.S)
+	if code != 1 || !strings.Contains(errOut, wantRemedy) {
+		t.Fatalf("only release_reader: code=%d out=%q errOut=%q", code, out, errOut)
+	}
+
+	// Both present: route passes (no refusal).
+	if err := e.c.HSet(context.Background(), "s:"+e.S+":policy", "fix_to", "rowan", "release_reader", "stella").Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut = e.run("hold", "route", "--once", "--sprint", e.S)
+	if code != 0 {
+		t.Fatalf("both keys present: code=%d errOut=%q", code, errOut)
+	}
+}

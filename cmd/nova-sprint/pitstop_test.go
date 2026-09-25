@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 )
 
 func runPit(t *testing.T, seat string, args ...string) (int, string, string) {
@@ -136,5 +137,107 @@ func TestPitstopStatusOnMiniredis(t *testing.T) {
 	code, out, _ := runPit(t, "", "status", "--redis", m.Addr(), "--sprint", "s1")
 	if code != 0 || out != "PITSTOP sprint=s1 set by=glenn at=1790000000000 (2026-09-21T14:13:20Z) why=\"stop\"\n" {
 		t.Fatalf("status: %d %q", code, out)
+	}
+}
+
+// TestPitstopClearNarrowsScope (DONE-WHEN of nova-tools #3371, the scope
+// half): a stop holds all streams or the named ones, and clear --scope
+// narrows it by exactly the streams named, over the real functions on a
+// throwaway redis-server. An all-scope stop narrowed by one stream lifts only
+// that stream ("run one child on nova-work"); a named-scope stop loses its
+// streams one by one and the last one going lifts the whole stop; a stream
+// the stop does not hold refuses with nothing written.
+func TestPitstopClearNarrowsScope(t *testing.T) {
+	const S = "control-3371-scope"
+	const redisStream = "redis: store + bus"
+	ctx := context.Background()
+	addr := startThrowawayRedis(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	c.HSet(ctx, "s:"+S, "status", "open")
+	key := "s:" + S + ":pitstop"
+	holds := func(stream string) bool {
+		t.Helper()
+		stop, err := pitstop.Read(ctx, c, S)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stop.InScope(stream)
+	}
+	logLen := func() int64 { return c.XLen(ctx, "s:"+S+":log").Val() }
+
+	// All-scope stop, one stream lifted.
+	code, out, errOut := runPit(t, "rowan", "set", "--redis", addr, "--sprint", S, "--why", "Glenn 8:00 PM: stop")
+	if code != 0 || !strings.Contains(out, " scope=all why=") {
+		t.Fatalf("set all: %d %q %q", code, out, errOut)
+	}
+	if !holds("nova-work") || !holds("swarm: cards") {
+		t.Fatal("an all-scope stop does not hold every stream")
+	}
+	code, out, errOut = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--scope", "nova-work")
+	if code != 0 || !strings.HasPrefix(out, "PITSTOP NARROW sprint="+S+" by=rowan at=") || !strings.Contains(out, ` lifted="nova-work" was_by=rowan`) {
+		t.Fatalf("narrow all: %d %q %q", code, out, errOut)
+	}
+	pitOneLine(t, out)
+	if holds("nova-work") || !holds("swarm: cards") || c.Exists(ctx, key).Val() != 1 {
+		t.Fatal("lifting nova-work did not leave every other stream stopped")
+	}
+	code, out, _ = runPit(t, "", "status", "--redis", addr, "--sprint", S)
+	if code != 0 || !strings.HasSuffix(out, ` lifted="nova-work"`+"\n") {
+		t.Fatalf("status after narrow: %d %q", code, out)
+	}
+	before := logLen()
+	code, _, errOut = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--scope", "nova-work")
+	if code != 1 || !strings.Contains(errOut, `REFUSED pitstop clear: sprint=`+S+` stop does not hold stream="nova-work"`) || logLen() != before {
+		t.Fatalf("clear of a lifted stream: %d %q (log %d -> %d)", code, errOut, before, logLen())
+	}
+	code, out, _ = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S)
+	if code != 0 || !strings.HasPrefix(out, "PITSTOP CLEAR sprint="+S+" by=rowan at=") || strings.Contains(out, "lifted=") || c.Exists(ctx, key).Val() != 0 {
+		t.Fatalf("whole clear: %d %q", code, out)
+	}
+
+	// Named-scope stop: only those streams, lifted one by one.
+	code, out, errOut = runPit(t, "rowan", "set", "--redis", addr, "--sprint", S, "--why", "land first",
+		"--scope", redisStream, "--scope", "nova-sprint")
+	if code != 0 || !strings.Contains(out, ` scope="redis: store + bus","nova-sprint" why="land first"`) {
+		t.Fatalf("set streams: %d %q %q", code, out, errOut)
+	}
+	if !holds(redisStream) || !holds("nova-sprint") || holds("nova-work") {
+		t.Fatal("a named-scope stop holds the wrong streams")
+	}
+	code, out, _ = runPit(t, "", "status", "--redis", addr, "--sprint", S)
+	if code != 0 || !strings.HasSuffix(out, ` streams="nova-sprint","redis: store + bus"`+"\n") {
+		t.Fatalf("status streams: %d %q", code, out)
+	}
+	before = logLen()
+	code, _, errOut = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--scope", "nova-sprint", "--scope", "nova-work")
+	if code != 1 || !strings.Contains(errOut, `does not hold stream="nova-work"`) || logLen() != before || !holds("nova-sprint") {
+		t.Fatalf("a clear naming one unheld stream wrote: %d %q", code, errOut)
+	}
+	code, out, _ = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--scope", "nova-sprint")
+	if code != 0 || !strings.HasPrefix(out, "PITSTOP NARROW ") || holds("nova-sprint") || !holds(redisStream) {
+		t.Fatalf("narrow streams: %d %q", code, out)
+	}
+	code, out, _ = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--scope", redisStream)
+	if code != 0 || !strings.HasPrefix(out, "PITSTOP CLEAR sprint="+S+" ") || !strings.Contains(out, ` lifted="redis: store + bus"`) || c.Exists(ctx, key).Val() != 0 {
+		t.Fatalf("the last scoped stream did not lift the stop: %d %q", code, out)
+	}
+	if got := logLen(); got != 6 {
+		t.Fatalf("receipts = %d, want 6 (one per write, none per refusal)", got)
+	}
+
+	// Usage: --scope all stands alone and only on set; status takes none.
+	for _, args := range [][]string{
+		{"clear", "--sprint", S, "--scope", "all"},
+		{"set", "--sprint", S, "--scope", "all", "--scope", "nova-work"},
+		{"status", "--sprint", S, "--scope", "nova-work"},
+		{"set", "--sprint", S, "--scope", " "},
+	} {
+		if code, out, errOut := runPit(t, "rowan", append(args, "--redis", addr)...); code != 2 || out != "" || !strings.HasPrefix(errOut, "nova-sprint pitstop") {
+			t.Fatalf("%v: want usage exit 2, got %d %q %q", args, code, out, errOut)
+		}
 	}
 }

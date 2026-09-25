@@ -8,7 +8,7 @@
 //
 //	<left>/<y> left, <z>% done -> ~<eta>m
 //
-//	stream | waiting | working | merging | landed   (rows in ws:order, all-zero rows hidden, total)
+//	stream | waiting | ready | working | merging | landed   (rows in ws:order, all-zero rows hidden, total)
 //
 //	friend | ready | working | done | status        (status up|down)
 //
@@ -26,16 +26,25 @@
 //	bench:<b>:cards:<w>     ZCARD for w = ready, working (the card views, #3692)
 //	bench:<b>:beat          HMGET load1 at (the bench's own `bench beat` loop)
 //	friends                 SMEMBERS when no roster is given; friend:<f> HMGET at, up
-//	friend:<f>:cards:<w>    ZCARD for ready, working, done: the friend's cells are
+//	friend:<f>:cards:<w>    ZCARD for ready, working: the friend's cells are
 //	                        the sizes of the sets its tasks move through (the card
 //	                        model, rowan-new specs/ws-index.md; nova-tools#3779)
+//	friend:<f>:cards:done   ZCOUNT from the current sprint's start to +inf: done
+//	                        counts only this sprint's cards (#3883); ZCARD beside
+//	                        it for the done base of a `table clear`
+//	sprint:order            ZRANGE -1 -1 when no sprint is named: the newest
+//	                        sprint opened is the current one
+//	s:<S>                   HGET opened_at, the current sprint's start (ms)
+//	sprint:<S>:cards        ZRANGE 0 0 WITHSCORES: the oldest card's created_at,
+//	                        the start of a sprint with no opened_at
 //	friend:<f>:down         EXISTS (a string or a hash; either means down)
 //	s:<S>:pitstop           EXISTS, with the legacy sprint:<S>:pitstop
 //
-// The membership of ws:order, benches and friends is kept from the previous
-// tick, so the tick's one pipeline reads the sets and every member's values
-// together; a tick that finds a set changed reads again at once with the new
-// members, so a row is never rendered from last second's membership.
+// The membership of ws:order, benches and friends, and the current sprint
+// with its start, are kept from the previous tick, so the tick's one pipeline
+// reads the sets and every member's values together; a tick that finds a set
+// or the sprint's start changed reads again at once with the new ones, so a
+// row is never rendered from last second's membership or scope.
 package table
 
 import (
@@ -100,6 +109,20 @@ type SprintSnapshot struct {
 	Hosts      []HostRow
 	Friends    []FriendRow
 	DoneBase   map[string]string
+	// DoneAll is each friend's ZCARD friend:<f>:cards:done, every card it
+	// ever finished: the measure a `table clear` base (DoneBase) is taken in.
+	DoneAll map[string]int64
+	// DoneSprint is the sprint the done column is scoped to (#3883): the
+	// named sprint, else the newest of sprint:order; empty when there is none.
+	DoneSprint string
+	// DoneSince is the ZCOUNT min of the done column: the sprint's start in
+	// ms, or -inf when no sprint start is known (every card counts).
+	DoneSince string
+	// DoneFrom names where DoneSince came from: "opened_at" (s:<S> opened_at,
+	// written by sprint open), "oldest card" (a sprint with no opened_at is
+	// open since the created_at of the first member of sprint:<S>:cards), or
+	// empty for -inf.
+	DoneFrom string
 	// RoundTrips is how many pipelines the read took: 1 in steady state.
 	RoundTrips int
 	// LockLost says the tick found the writer's lock held by someone else.
@@ -131,7 +154,9 @@ type SprintReader struct {
 	streams []string
 	benches []string
 	friends []string
-	primed  bool
+	// sprint, since and from are the done column's scope from the last tick.
+	sprint, since, from string
+	primed              bool
 }
 
 // NewSprintReader is a reader with no membership yet: its first Read takes
@@ -142,7 +167,9 @@ func NewSprintReader(client redis.UniversalClient, cfg SprintConfig) *SprintRead
 
 // Read is one tick at now.
 func (r *SprintReader) Read(ctx context.Context, now time.Time) (*SprintSnapshot, error) {
-	for trips := 1; trips <= 3; trips++ {
+	// Four: a first tick can learn the sets, then the newest sprint, then
+	// that sprint's start before its values are read in one pipeline.
+	for trips := 1; trips <= 4; trips++ {
 		snap, changed, err := r.readOnce(ctx, now)
 		if err != nil {
 			return nil, err
@@ -152,7 +179,7 @@ func (r *SprintReader) Read(ctx context.Context, now time.Time) (*SprintSnapshot
 			return snap, nil
 		}
 	}
-	return nil, errors.New("membership changed on three reads in a row")
+	return nil, errors.New("membership changed on four reads in a row")
 }
 
 func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnapshot, bool, error) {
@@ -168,9 +195,27 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	if cfg.Sprint != "" {
 		pit = pipe.Exists(ctx, "s:"+cfg.Sprint+":pitstop", "sprint:"+cfg.Sprint+":pitstop")
 	}
-	since := now.Add(-time.Hour).UnixMilli()
-	log := pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(since, 10), "+", logWindowMax)
+	hourAgo := now.Add(-time.Hour).UnixMilli()
+	log := pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(hourAgo, 10), "+", logWindowMax)
 	base := pipe.HGetAll(ctx, DoneBaseKey)
+	var newest *redis.StringSliceCmd
+	if cfg.Sprint == "" {
+		newest = pipe.ZRange(ctx, "sprint:order", -1, -1)
+	}
+	scope := cfg.Sprint
+	if scope == "" {
+		scope = r.sprint
+	}
+	var opened *redis.StringCmd
+	var oldest *redis.ZSliceCmd
+	if scope != "" {
+		opened = pipe.HGet(ctx, "s:"+scope, "opened_at")
+		oldest = pipe.ZRangeWithScores(ctx, "sprint:"+scope+":cards", 0, 0)
+	}
+	since := r.since
+	if since == "" {
+		since = "-inf"
+	}
 	var lock *redis.Cmd
 	if cfg.LockKey != "" {
 		lock = pipe.Eval(ctx, lockRefreshScript, []string{cfg.LockKey}, cfg.LockToken, lockTTL(cfg).Milliseconds())
@@ -199,12 +244,19 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 	rows := make([]*redis.SliceCmd, len(roster))
 	cells := make([][]*redis.IntCmd, len(roster))
+	doneAll := make([]*redis.IntCmd, len(roster))
 	downs := make([]*redis.IntCmd, len(roster))
 	for i, f := range roster {
 		rows[i] = pipe.HMGet(ctx, "friend:"+f, "at", "up")
 		for _, w := range FriendWheres {
+			if w == "done" {
+				// Only this sprint's cards: the set is scored by created_at.
+				cells[i] = append(cells[i], pipe.ZCount(ctx, FriendCardsKey(f, w), since, "+inf"))
+				continue
+			}
 			cells[i] = append(cells[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
 		}
+		doneAll[i] = pipe.ZCard(ctx, FriendCardsKey(f, "done"))
 		downs[i] = pipe.Exists(ctx, "friend:"+f+":down")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
@@ -223,15 +275,32 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		gotFriends, _ = friendSet.Result()
 		sort.Strings(gotFriends)
 	}
+	gotSprint := cfg.Sprint
+	if newest != nil {
+		gotSprint = ""
+		if names, err := newest.Result(); err == nil && len(names) == 1 {
+			gotSprint = names[0]
+		}
+	}
+	gotSince, gotFrom := doneScope(opened, oldest)
 	changed := !r.primed || !slices.Equal(gotOrder, r.streams) || !slices.Equal(gotBenches, r.benches) ||
-		(friendSet != nil && !slices.Equal(gotFriends, r.friends))
+		(friendSet != nil && !slices.Equal(gotFriends, r.friends)) ||
+		gotSprint != scope || gotSince != since
 	r.primed = true
 	if changed {
 		r.streams, r.benches, r.friends = gotOrder, gotBenches, gotFriends
+		r.sprint = gotSprint
+		// The start read is of scope; a new sprint's start is read next trip.
+		r.since, r.from = gotSince, gotFrom
+		if gotSprint != scope {
+			r.since, r.from = "-inf", ""
+		}
 		return nil, true, nil
 	}
+	r.from = gotFrom
 
-	snap := &SprintSnapshot{Config: cfg, DoneBase: map[string]string{}}
+	snap := &SprintSnapshot{Config: cfg, DoneBase: map[string]string{}, DoneAll: map[string]int64{},
+		DoneSprint: scope, DoneSince: since, DoneFrom: r.from}
 	if pit != nil && pit.Val() > 0 {
 		snap.Pitstop = true
 	}
@@ -282,12 +351,35 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 				*counts[j] = strconv.FormatInt(n, 10)
 			}
 		}
+		if n, err := doneAll[i].Result(); err == nil {
+			snap.DoneAll[f] = n
+		}
 		if downs[i].Val() > 0 {
 			row.Down = "down"
 		}
 		snap.Friends = append(snap.Friends, row)
 	}
 	return snap, false, nil
+}
+
+// doneScope is the done column's ZCOUNT min from one tick's reads of the
+// sprint's start: opened_at (written once by sprint open), else the oldest
+// card's created_at (the score of the first member of sprint:<S>:cards),
+// else -inf. from names which one it is.
+func doneScope(opened *redis.StringCmd, oldest *redis.ZSliceCmd) (since, from string) {
+	if opened != nil {
+		if v, err := opened.Result(); err == nil {
+			if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
+				return strconv.FormatInt(ms, 10), "opened_at"
+			}
+		}
+	}
+	if oldest != nil {
+		if zs, err := oldest.Result(); err == nil && len(zs) == 1 {
+			return strconv.FormatInt(int64(zs[0].Score), 10), "oldest card"
+		}
+	}
+	return "-inf", ""
 }
 
 // logWindowMax bounds the hour of ws:log one tick reads; a sprint moving more
@@ -305,7 +397,7 @@ func FailedSprint(cfg SprintConfig, last *SprintSnapshot) *SprintSnapshot {
 	return &snap
 }
 
-const streamRule = "-------------------------------+---------+---------+---------+-------\n"
+const streamRule = "-------------------------------+---------+-------+---------+---------+-------\n"
 
 // XY is the headline's numbers: y is every task in the streams of ws:order,
 // left is y minus landed, eta is left over the landed rate of the last hour
@@ -343,19 +435,20 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 	left, y, pct, eta := s.XY()
 	fmt.Fprintf(&b, "%d/%d left, %d%% done -> ~%dm\n\n", left, y, pct, eta)
 
-	fmt.Fprintf(&b, "%-30s | %7s | %7s | %7s | %6s\n", "stream", "waiting", "working", "merging", "landed")
+	fmt.Fprintf(&b, "%-30s | %7s | %5s | %7s | %7s | %6s\n", "stream", "waiting", "ready", "working", "merging", "landed")
 	b.WriteString(streamRule)
-	var tw, tk, tm, tl int64
+	var tw, tr, tk, tm, tl int64
 	for _, r := range s.Streams {
 		if r.Total() == 0 {
 			continue
 		}
-		// waiting counts ready too: both are work nobody has started.
-		fmt.Fprintf(&b, "%-30s | %7d | %7d | %7d | %6d\n", r.Name, r.Waiting+r.Ready, r.Working, r.Merging, r.Landed)
-		tw, tk, tm, tl = tw+r.Waiting+r.Ready, tk+r.Working, tm+r.Merging, tl+r.Landed
+		// Every cell is one set's ZCARD; ready is its own column, never
+		// folded into waiting (a card is in exactly one set).
+		fmt.Fprintf(&b, "%-30s | %7d | %5d | %7d | %7d | %6d\n", r.Name, r.Waiting, r.Ready, r.Working, r.Merging, r.Landed)
+		tw, tr, tk, tm, tl = tw+r.Waiting, tr+r.Ready, tk+r.Working, tm+r.Merging, tl+r.Landed
 	}
 	b.WriteString(streamRule)
-	fmt.Fprintf(&b, "%-30s | %7d | %7d | %7d | %6d\n\n", "total", tw, tk, tm, tl)
+	fmt.Fprintf(&b, "%-30s | %7d | %5d | %7d | %7d | %6d\n\n", "total", tw, tr, tk, tm, tl)
 
 	fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %-10s\n", "friend", "ready", "working", "done", "status")
 	b.WriteString(liveFriendRule)
@@ -393,9 +486,12 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 	return b.String()
 }
 
-// friendDone is the row's done count minus its count at the last clear. A
-// count below the base means the counter itself restarted (a new sprint's
-// index sets), so the base no longer applies and the count shows as is.
+// friendDone is the row's done count in the current sprint (#3883), and at
+// most the cards done since the last `table clear`: a clear stores each
+// friend's all-time count (DoneAll) as its base, so all-time minus base is
+// what finished since the clear, and the smaller of the two is what finished
+// since both the sprint opened and the clear. An all-time count below the base
+// means the set itself restarted, so the base no longer applies.
 func (s *SprintSnapshot) friendDone(row FriendRow) string {
 	done, base := row.Done, s.DoneBase[row.Name]
 	if done == "" || base == "" || strings.Trim(done, "0123456789") != "" || strings.Trim(base, "0123456789") != "" {
@@ -403,10 +499,14 @@ func (s *SprintSnapshot) friendDone(row FriendRow) string {
 	}
 	d, _ := strconv.ParseInt(done, 10, 64)
 	b, _ := strconv.ParseInt(base, 10, 64)
-	if d < b {
+	all, ok := s.DoneAll[row.Name]
+	if !ok {
+		all = d
+	}
+	if all < b || d <= all-b {
 		return done
 	}
-	return strconv.FormatInt(d-b, 10)
+	return strconv.FormatInt(all-b, 10)
 }
 
 // The writer's lock: one table writer per key, fleet-wide. AcquireLock takes

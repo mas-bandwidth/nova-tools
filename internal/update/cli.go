@@ -103,6 +103,7 @@ func help(name string, w io.Writer) {
 	}
 	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
 	fmt.Fprintln(w, note)
+	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
 	fmt.Fprintf(w, "\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n  %s version\n", name, name, name)
 }
 func interspersed(f *flag.FlagSet, args []string) []string {
@@ -394,6 +395,8 @@ func readEntries(ctx context.Context, entries []Entry, o options, env Environmen
 				e := entries[i]
 				r := entryRead{Entry: e, Installed: Installed(ctx, e, o.timeout, report), Latest: Read{Source: e.Latest}}
 				if !report {
+					r.Latest = Latest(ctx, e, o.timeout, env.Client)
+				} else if strings.HasPrefix(e.Latest, "local:") {
 					r.Latest = Latest(ctx, e, o.timeout, env.Client)
 				}
 				rs[i] = r

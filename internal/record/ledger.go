@@ -55,10 +55,11 @@ type LedgerTotal struct {
 
 // LedgerStore is the durable side of the token ledger. ReplaceLedgerDay swaps one day's rows
 // for the given ones atomically, so indexing a day twice is the same ledger as once.
-// LedgerReport is the monthly GROUP BY.
+// LedgerReport is the monthly GROUP BY; indexed is how many calendar-day keys existed and
+// missing is how many did not.
 type LedgerStore interface {
 	ReplaceLedgerDay(ctx context.Context, day string, entries []LedgerEntry) error
-	LedgerReport(ctx context.Context, month, by string) ([]LedgerTotal, error)
+	LedgerReport(ctx context.Context, month, by string) ([]LedgerTotal, int, int, error)
 	Close() error
 }
 
@@ -234,13 +235,15 @@ func (s *RedisLedger) ReplaceLedgerDay(ctx context.Context, day string, entries 
 
 // LedgerReport reads every day hash of the month in one pipelined round trip and groups it.
 // A field or value that does not decode is an error naming its key, never a skipped row.
-func (s *RedisLedger) LedgerReport(ctx context.Context, month, by string) ([]LedgerTotal, error) {
+// It returns the totals, how many calendar-day keys existed (indexed), and how many did not
+// (missing).
+func (s *RedisLedger) LedgerReport(ctx context.Context, month, by string) ([]LedgerTotal, int, int, error) {
 	if _, ok := LedgerGroupings[by]; !ok {
-		return nil, fmt.Errorf("--by %q is not one of model, repo, day, tuple", by)
+		return nil, 0, 0, fmt.Errorf("--by %q is not one of model, repo, day, tuple", by)
 	}
 	days, err := MonthDays(month)
 	if err != nil {
-		return nil, err
+		return nil, 0, 0, err
 	}
 	pipe := s.rdb.Pipeline()
 	cmds := make([]*redis.MapStringStringCmd, len(days))
@@ -251,20 +254,26 @@ func (s *RedisLedger) LedgerReport(ctx context.Context, month, by string) ([]Led
 	// under its key, so Exec's first-error summary is not the one returned.
 	_, _ = pipe.Exec(ctx)
 	var entries []LedgerEntry
+	indexed, missing := 0, 0
 	for i, d := range days {
 		key := LedgerKey(d)
 		m, err := cmds[i].Result()
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", key, err)
+			return nil, 0, 0, fmt.Errorf("%s: %w", key, err)
 		}
+		if len(m) == 0 {
+			missing++
+			continue
+		}
+		indexed++
 		for f, raw := range m {
 			var k [3]string
 			if err := json.Unmarshal([]byte(f), &k); err != nil || k[0] == "" || k[1] == "" || k[2] == "" {
-				return nil, fmt.Errorf("%s: field %q is not [card, model, repo]", key, f)
+				return nil, 0, 0, fmt.Errorf("%s: field %q is not [card, model, repo]", key, f)
 			}
 			var v ledgerValue
 			if err := json.Unmarshal([]byte(raw), &v); err != nil {
-				return nil, fmt.Errorf("%s: field %s: value does not decode: %w", key, f, err)
+				return nil, 0, 0, fmt.Errorf("%s: field %s: value does not decode: %w", key, f, err)
 			}
 			e := LedgerEntry{Day: d, Card: k[0], Model: k[1], Repo: k[2], Provider: v.Provider, Rough: v.Rough, Sources: v.Sources}
 			for t, n := range v.Tokens {
@@ -275,5 +284,6 @@ func (s *RedisLedger) LedgerReport(ctx context.Context, month, by string) ([]Led
 			entries = append(entries, e)
 		}
 	}
-	return GroupLedger(entries, by)
+	totals, err := GroupLedger(entries, by)
+	return totals, indexed, missing, err
 }
