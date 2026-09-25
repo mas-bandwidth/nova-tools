@@ -61,6 +61,8 @@ func (l *listFlag) Set(v string) error {
 //
 //	nova-sprint card harvest [--redis <addr>] [--sprint <S>|all] [--bench <b>[,<b>]|all]
 //	    (--once | --loop [--every 10s]) [--clock 5m] [<label>...]
+//	nova-sprint card harvest --orphans --sprint <S> [--bench <b>[,<b>]|all]
+//	    [--results <abs root>] [--grace 0] [--clock 5m]   (one pass; see harvest_orphans.go)
 //
 // --redis defaults to $NOVA_SPRINT_REDIS; the owner comes from each card's
 // full repo field (--owner is gone); GitHub is the caller's own GH_CONFIG_DIR
@@ -84,12 +86,18 @@ func runCardHarvest(ctx context.Context, args []string, out, errOut io.Writer) i
 	loop := fs.Bool("loop", false, "")
 	every := fs.Duration("every", 10*time.Second, "")
 	orphans := fs.Bool("orphans", false, "")
+	results := fs.String("results", "", "")
+	grace := fs.Duration("grace", 0, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "card harvest", err.Error())
 	}
 	labels := fs.Args()
 	if *orphans {
-		return refuse(errOut, "card harvest", "--orphans is the C3 build (orphan-effect, #2756 3.2), not this one")
+		return runHarvestOrphans(ctx, orphanFlags{redis: *redisAddr, sprint: *sprint, benches: benches, labels: labels,
+			loop: *loop, results: *results, grace: *grace, clock: *clock, instance: *instance}, out, errOut)
+	}
+	if *results != "" {
+		return refuse(errOut, "card harvest", "--results goes with --orphans; a harvest reads each card's own results field")
 	}
 	if *once == *loop {
 		// Neither or both: the mode is usage, refused before the store is opened,
