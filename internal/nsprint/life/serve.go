@@ -16,6 +16,9 @@
 // child's typed line (taskcard.Done), or fails it (taskcard.Cancel) when the
 // child exits without one. A child's exit wakes the loop at once, so a freed
 // slot is filled by the same pass that closes it, not by a timer.
+//
+// While the sprint's pit stop holds it (pitstop.Held) serve beats and closes
+// but takes nothing (held).
 package life
 
 import (
@@ -35,6 +38,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nogh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/brief"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -210,7 +214,9 @@ type Server struct {
 	now      func() time.Time
 	// wake gets one value when a child exits, so the loop closes it and
 	// fills its slot at once.
-	wake chan struct{}
+	wake     chan struct{}
+	pitLine  string // the last PITSTOP idle line printed; "" while taking
+	pitWhere string // the sprint that line named
 }
 
 // NewServer checks the config and returns a seat that has not beaten yet.
@@ -374,6 +380,15 @@ func (s *Server) Pass(ctx context.Context) (PassResult, error) {
 	s.beatLeases(ctx)
 	free := s.cfg.Width - s.Live()
 	if free > 0 {
+		held, err := s.held(ctx)
+		if err != nil {
+			return res, err
+		}
+		if held {
+			free = 0
+		}
+	}
+	if free > 0 {
 		taken, failed, err := s.takeCards(ctx, free)
 		if err != nil {
 			return res, fmt.Errorf("friend serve %s: take cards: %w", s.cfg.Friend, err)
@@ -398,6 +413,45 @@ func (s *Server) Pass(ctx context.Context) (PassResult, error) {
 	}
 	res.Live = s.Live()
 	return res, nil
+}
+
+// held is the pit stop gate the take reads (Glenn 2026-09-25 5:50 PM ET:
+// the pit stop gates all automatic activity on the sprint table): while a
+// scope=all stop holds the seat's sprint (--sprint), or any sprint that is
+// not closed when the seat takes across sprint:order, the pass beats, closes
+// what exited and beats its leases, and takes and starts nothing. It prints
+// `PITSTOP idle sprint=<S> scope=all friend=<f> why=<why>` when the seat
+// enters the stop and `PITSTOP resume` when it leaves it, never per tick.
+func (s *Server) held(ctx context.Context) (bool, error) {
+	var hs pitstop.Holds
+	if s.cfg.Sprint != "" {
+		h, held, err := pitstop.Held(ctx, s.st.Client(), s.cfg.Sprint)
+		if err != nil {
+			return false, fmt.Errorf("friend serve %s: pitstop: %w", s.cfg.Friend, err)
+		}
+		if held {
+			hs = pitstop.Holds{h}
+		}
+	} else {
+		var err error
+		if hs, err = pitstop.HeldOpen(ctx, s.st.Client()); err != nil {
+			return false, fmt.Errorf("friend serve %s: pitstop: %w", s.cfg.Friend, err)
+		}
+	}
+	h, whole := hs.Whole()
+	line := ""
+	if whole {
+		line = fmt.Sprintf("PITSTOP idle %s friend=%s why=%s", h.Words(), s.cfg.Friend, h.Why())
+	}
+	if line != s.pitLine {
+		if line != "" {
+			fmt.Fprintln(s.cfg.Out, line)
+		} else {
+			fmt.Fprintf(s.cfg.Out, "PITSTOP resume sprint=%s friend=%s taking\n", s.pitWhere, s.cfg.Friend)
+		}
+		s.pitLine, s.pitWhere = line, h.Sprint
+	}
+	return whole, nil
 }
 
 // Watch is a pass without a take: beat, close what exited, beat the leases.

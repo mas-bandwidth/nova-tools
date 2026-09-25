@@ -86,6 +86,7 @@ func runRoute(ctx context.Context, args []string, out, errOut io.Writer) int {
 	router := &consume.Router{
 		Store: st, Sprint: *sprint, Instance: instance, Host: host,
 		Rules: consume.Rules(ok, report, nil, pr, hold),
+		Out:   out,
 	}
 	fmt.Fprintf(out, "ROUTE sprint=%s instance=%s lease=%s rules=%s not-wired=%s\n",
 		*sprint, instance, consume.LeaseKey(*sprint), strings.Join(router.Names(), ","), routeNotWired)

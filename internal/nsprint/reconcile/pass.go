@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // DefaultInterval is the pass cadence (#2726: a 1 s pass loop).
@@ -68,6 +72,10 @@ type PassResult struct {
 	Took   time.Duration
 	Counts Counts
 	Err    string // duty errors, recorded in proc:reconciler err
+	// Skipped is the duties a pit stop held this pass; Pitstop is the pass's
+	// PITSTOP idle line ("" when no stop idled a duty).
+	Skipped int
+	Pitstop string
 }
 
 // Loop runs passes under one lease.
@@ -87,6 +95,15 @@ type Loop struct {
 	// OnError, when set, is called with a pass error that is not a fence
 	// (Redis unreachable); the loop retries on the next tick.
 	OnError func(error)
+	// Out receives the pit stop receipts (PITSTOP idle, PITSTOP resume);
+	// nil discards them.
+	Out io.Writer
+	// StreamScoped names the duties that honour a stream-scoped pit stop
+	// themselves (they read pitstop.FromContext and skip each held stream).
+	StreamScoped map[string]bool
+
+	pitLine   string // the last PITSTOP idle line printed; "" while running
+	pitSprint string // the sprint that line named
 }
 
 // Pass is one reconciler pass: renew the lease (a stale instance stops here
@@ -99,6 +116,19 @@ type Loop struct {
 // renewal did not land it records the duties it did not start in err
 // (LEASE-MARGIN) and writes its record inside the lease.
 //
+// The pit stop gates the whole pass (Glenn 2026-09-25 5:50 PM ET: "pit stop
+// should enable/disable all automatic activity related to the sprint
+// table"). After the renew the pass reads every open sprint's stop once
+// (pitstop.HeldOpen). A scope=all stop skips every duty; with streams lifted
+// from it, the StreamScoped duties still run and skip the held streams
+// themselves. A scope=streams stop skips no duty: the StreamScoped duties
+// skip its streams (pitstop.FromContext). The lease renewal and the pass
+// record still happen, so the reconciler's beat stays live. The pass prints
+// one `PITSTOP idle sprint=<S> scope=<scope> duties=<n> skipped why=<why>`
+// line when it enters the stop (or the stop changes) and one `PITSTOP resume`
+// line when it leaves it, never one per tick. A stop it cannot read fails the
+// pass before any duty starts.
+//
 // The pass is timed on the lease clock (#3322), the clock its bench sessions
 // are bounded by, so took_ms and the session bound are one measurement: a
 // pass that recorded itself took under the lease TTL on the clock the lease
@@ -110,7 +140,25 @@ func (lp *Loop) Pass(ctx context.Context) (PassResult, error) {
 	}
 	var res PassResult
 	var errs []string
+	holds, err := pitstop.HeldOpen(ctx, lp.Lease.st.Client())
+	if err != nil {
+		return PassResult{}, fmt.Errorf("reconcile pass: pitstop: %w", err)
+	}
+	ctx = pitstop.WithHolds(ctx, holds)
+	hold, whole := holds.Whole()
+	held := func(i int) bool {
+		return whole && !(len(hold.Stop.Lifted) > 0 && lp.StreamScoped[lp.name(i)])
+	}
+	for i := range lp.Duties {
+		if held(i) {
+			res.Skipped++
+		}
+	}
+	res.Pitstop = lp.pitReceipt(hold, res.Skipped)
 	for i, duty := range lp.Duties {
+		if held(i) {
+			continue
+		}
 		if lp.Lease.Remaining() < lp.Lease.WriteMargin(lp.Margin) {
 			if err := lp.Lease.Renew(ctx); errors.Is(err, ErrFenced) {
 				return PassResult{}, err
@@ -160,6 +208,28 @@ func (lp *Loop) Pass(ctx context.Context) (PassResult, error) {
 		return PassResult{}, fmt.Errorf("reconcile pass: pass_at %q: %w", reply[1], err)
 	}
 	return res, nil
+}
+
+// pitReceipt prints the pit stop's transitions: the idle line when the pass
+// enters a stop or the stop changes, one resume line when it leaves. It
+// returns this pass's idle line ("" when no duty was held).
+func (lp *Loop) pitReceipt(hold pitstop.Hold, skipped int) string {
+	line := ""
+	if skipped > 0 {
+		line = fmt.Sprintf("PITSTOP idle %s duties=%d skipped why=%s", hold.Words(), skipped, hold.Why())
+	}
+	if line == lp.pitLine {
+		return line
+	}
+	if lp.Out != nil {
+		if line != "" {
+			fmt.Fprintln(lp.Out, line)
+		} else {
+			fmt.Fprintf(lp.Out, "PITSTOP resume sprint=%s duties=%d running\n", oneline.Field(lp.pitSprint), len(lp.Duties))
+		}
+	}
+	lp.pitLine, lp.pitSprint = line, hold.Sprint
+	return line
 }
 
 func (lp *Loop) name(i int) string {

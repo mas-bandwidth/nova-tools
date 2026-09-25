@@ -15,11 +15,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
 )
@@ -136,6 +138,45 @@ type Router struct {
 	TTL      time.Duration // lease TTL; 0 means 6 s
 	Renew    time.Duration // lease renew period; 0 means 2 s
 	Backoff  time.Duration // wait before retrying a rule short of readers; 0 means 1 s
+	// Out receives the pit stop receipts (PITSTOP idle, PITSTOP resume);
+	// nil discards them.
+	Out io.Writer
+
+	pitMu   sync.Mutex
+	pitLine string // the last PITSTOP idle line printed; "" while routing
+}
+
+// held is the pit stop gate every rule reads before it passes (Glenn
+// 2026-09-25 5:50 PM ET: the pit stop gates all automatic activity on the
+// sprint table): while s:<S>:pitstop holds the whole sprint no rule passes;
+// the router keeps its lease. It prints `PITSTOP idle sprint=<S> scope=all
+// route=<instance> why=<why>` when the router enters the stop and `PITSTOP
+// resume` when it leaves it, once each whichever rule saw it first. A stop it
+// cannot read holds this tick (the lease renewal fails the router if Redis
+// is gone). A scope=streams stop does not idle the router: its rules do not
+// know streams.
+func (r *Router) held(ctx context.Context) bool {
+	h, held, err := pitstop.Held(ctx, r.Store.Client(), r.Sprint)
+	if err != nil {
+		return true
+	}
+	line := ""
+	if held && h.Whole() {
+		line = fmt.Sprintf("PITSTOP idle %s route=%s why=%s", h.Words(), r.Instance, h.Why())
+	}
+	r.pitMu.Lock()
+	defer r.pitMu.Unlock()
+	if line != r.pitLine {
+		if r.Out != nil {
+			if line != "" {
+				fmt.Fprintln(r.Out, line)
+			} else {
+				fmt.Fprintf(r.Out, "PITSTOP resume sprint=%s route=%s rules=%d running\n", r.Sprint, r.Instance, len(r.Rules))
+			}
+		}
+		r.pitLine = line
+	}
+	return line != ""
 }
 
 func (r *Router) check() error {
@@ -175,7 +216,7 @@ func (r *Router) Names() []string {
 }
 
 // Run takes the sprint's lease, starts every rule, and passes each rule in
-// its own goroutine until ctx ends (nil), a rule fails, or the lease is lost
+// its own goroutine (none while the sprint's pit stop holds it, held) until ctx ends (nil), a rule fails, or the lease is lost
 // (ErrLeaseLost). A live lease under another instance refuses before any
 // rule starts (ErrLeaseHeld, as a *LeaseHeldError). A clean stop releases
 // the lease so the next instance starts at once.
@@ -268,6 +309,14 @@ func (r *Router) Run(ctx context.Context) error {
 		go func(rule RouteRule) {
 			defer wg.Done()
 			for runCtx.Err() == nil {
+				if r.held(runCtx) {
+					select {
+					case <-runCtx.Done():
+						return
+					case <-time.After(backoff):
+					}
+					continue
+				}
 				_, err := rule.Handler.Pass(runCtx)
 				if runCtx.Err() != nil {
 					return
