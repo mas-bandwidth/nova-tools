@@ -4,7 +4,10 @@
 //
 // request, run and compare are our own CI (#3597, #3349): a head requested
 // into ci:pool, a bench's runner-only pass over it, and the one budgeted
-// parity read against GitHub. status --repo --sha prints that record's rows.
+// parity read against GitHub. github is the GitHub leg (#3597): the
+// ci-github consumer of ev:github writes ci:<repo>:<sha>:gh from the webhook
+// deliveries, so nothing polls GitHub for a check state. status --repo --sha
+// prints that record's rows and the GitHub leg, from Redis only.
 package main
 
 import (
@@ -13,24 +16,28 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
 )
 
 func init() {
 	register(Verb{
 		Name:    "ci",
-		Summary: "request, run, status and compare of our own ci; cut, show, rerun, dispose and parity of ci cards",
+		Summary: "request, run, status and compare of our own ci; github writes Actions results from ev:github; cut, show, rerun, dispose and parity of ci cards",
 		Run:     runCI,
 	})
 }
 
-const ciUsage = "want request, run, status, compare, cut, show, rerun, dispose or parity"
+const ciUsage = "want request, run, status, compare, github, cut, show, rerun, dispose or parity"
 
 func runCI(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -55,6 +62,8 @@ func runCI(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runCIRun(ctx, args[1:], out, errOut)
 	case "compare":
 		return runCICompare(ctx, args[1:], out, errOut)
+	case "github":
+		return runCIGitHub(ctx, args[1:], out, errOut)
 	default:
 		return refuse(errOut, "ci", "unknown subverb "+args[0]+"; "+ciUsage)
 	}
@@ -394,4 +403,63 @@ func runCICompare(ctx context.Context, args []string, out, errOut io.Writer) int
 		return refuse(errOut, "ci compare", err.Error())
 	}
 	return ci.WriteCompare(out, p)
+}
+
+// runCIGitHub is the ci-github consumer of ev:github (#3597):
+//
+//	nova-sprint ci github --redis <addr> [--consumer <seat>] [--once]
+//
+// Each check_run and workflow_run entry the webhook receiver appended
+// becomes one field of ci:<repo>:<sha>:gh, written and acked in one
+// ns_ci_github call; other kinds are acked as no-ops. It prints one CIGH line
+// per pass that handled an entry (every pass with --once, which drains and
+// exits) and runs until SIGINT or SIGTERM otherwise. Exit 0 stopped or
+// drained, 1 a pass failed, 2 usage.
+func runCIGitHub(ctx context.Context, args []string, out, errOut io.Writer) int {
+	fs := taskFlags("ci github")
+	redisAddr := fs.String("redis", "", "")
+	consumer := fs.String("consumer", "", "")
+	once := fs.Bool("once", false, "")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, "ci github", err.Error())
+	}
+	if fs.NArg() > 0 {
+		return refuse(errOut, "ci github", "takes --redis <addr> [--consumer <seat>] [--once], nothing positional")
+	}
+	if *consumer == "" {
+		host, _ := os.Hostname()
+		*consumer = host + "-" + strconv.Itoa(os.Getpid())
+	}
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	st, err := store.Open(ctx, *redisAddr)
+	if err != nil {
+		return refuse(errOut, "ci github", err.Error())
+	}
+	defer st.Close()
+	c := &webhook.Consumer{Client: st.Client(), Name: *consumer}
+	if *once {
+		c.Block = -1
+	}
+	if err := c.Start(ctx); err != nil {
+		fmt.Fprintf(errOut, "nova-sprint ci github: %v\n", err)
+		return 1
+	}
+	for {
+		n, err := c.Pass(ctx)
+		if ctx.Err() != nil {
+			return 0
+		}
+		if err != nil {
+			fmt.Fprintf(errOut, "nova-sprint ci github: %v\n", err)
+			return 1
+		}
+		if *once {
+			fmt.Fprintln(out, n.Line())
+			return 0
+		}
+		if n != (webhook.Counts{}) {
+			fmt.Fprintln(out, n.Line())
+		}
+	}
 }
