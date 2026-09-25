@@ -93,14 +93,6 @@ func queryVerb(args []string, stdout, stderr io.Writer) int {
 	for _, s := range verbFlags["query"] {
 		strs[s.name] = f.String(s.name, "", "")
 	}
-	// --xy is the offline-roadmap path: it reads docs/roadmaps/nova-work.sexp
-	// through the worklang reader (nova-tools#2595) and never reaches the
-	// session. It is registered on the flag set here rather than in
-	// verbFlags["query"] because the spec's verbs block does not name it --
-	// the offline reader lives only in the client and is named in the help
-	// once the spec catches up.
-	xy := f.String("xy", "", "the :by-feature node id to read offline (refuses to guess)")
-	file := f.String("file", defaultRoadmapSexp, "the roadmap file to read (with --xy)")
 	if err := f.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return printVerbHelp(stderr, "query")
@@ -109,28 +101,6 @@ func queryVerb(args []string, stdout, stderr io.Writer) int {
 	}
 	if f.NArg() != 0 {
 		return refused(stderr, fmt.Sprintf("query takes no positional arguments (got %q)", f.Arg(0)))
-	}
-
-	isXy := false
-	f.Visit(func(fl *flag.Flag) {
-		if fl.Name == "xy" {
-			isXy = true
-		}
-	})
-
-	// --xy reads docs/roadmaps/nova-work.sexp through the offline reader, not
-	// the socket. It is the verb's only path that does not require --session
-	// or --snapshot (nova-tools#2595: every nova-work verb that takes a
-	// roadmap reads this file through one reader, and the percent the spec
-	// asks for is derivable from the file alone).
-	if isXy {
-		features, err := readRoadmapByFeature(*file)
-		if err != nil {
-			fmt.Fprintf(stderr, "QUERY FAIL xy=%s: %s\n",
-				oneline.Field(*xy), oneline.Escape(err.Error()))
-			return 2
-		}
-		return printRoadmapXY(stdout, features, *xy)
 	}
 
 	session := *strs["session"]

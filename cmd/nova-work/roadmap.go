@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"flag"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
@@ -213,4 +214,28 @@ func plistInt(body []worklang.Form, key string) (int64, bool) {
 		return 0, false
 	}
 	return f.Int, true
+}
+
+func cmdRoadmapRead(args []string, stdout, stderr io.Writer) int {
+	f := flag.NewFlagSet("roadmap read", flag.ContinueOnError)
+	f.SetOutput(io.Discard)
+	node := f.String("node", "", "the :by-feature node id to read offline")
+	file := f.String("file", defaultRoadmapSexp, "the roadmap file to read")
+	if err := f.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "roadmap read")
+		}
+		return refused(stderr, "roadmap read: "+err.Error())
+	}
+	if f.NArg() != 0 {
+		return refused(stderr, fmt.Sprintf("roadmap read takes no positional arguments (got %q)", f.Arg(0)))
+	}
+
+	features, err := readRoadmapByFeature(*file)
+	if err != nil {
+		fmt.Fprintf(stderr, "QUERY FAIL xy=%s: %s\n",
+			oneline.Field(*node), oneline.Escape(err.Error()))
+		return 2
+	}
+	return printRoadmapXY(stdout, features, *node)
 }
