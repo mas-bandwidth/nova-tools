@@ -4067,6 +4067,8 @@ There is **no `quickstart` verb**. A one-word first run would have to invent a f
 
 **The Redis verbs need the `nova_sprint` function library on the server** (#3196). `nova-sprint fn load --redis <addr>` installs the library embedded in the binary with `FUNCTION LOAD REPLACE` and prints `LOADED nova_sprint sha=<sha>`; when the server already holds that exact source it loads nothing and prints `UNCHANGED nova_sprint sha=<sha>`, so a converge runs it every pass. `nova-sprint fn check --redis <addr>` changes nothing and prints `OK nova_sprint sha=<sha> ping=PONG` (exit 0), or `MISSING`, `STALE loaded=<sha> want=<sha>` or `NOPING` (exit 1): that exit is the bench-conform line for the fleet Redis. On `MISSING` or `STALE` it does not call `ns_ping` (`ping=skipped`), since the server's `ns_ping` is then not the embedded one and may write. The address authenticates the way every other `--redis` verb does.
 
+`nova-sprint backpressure check --sprint <name> [--redis <addr>]` (#3276) refuses a second backpressure source of truth beside `s:<S>:backpressure`. It reads the named keys only (the sprint's hash, the `proc:backpressure` beat and the legacy global `backpressure` hash) with one EXISTS pipeline, never SCAN or KEYS, and prints one receipt: `BACKPRESSURE CHECK OK sprint=<S> own=<0|1> beat=<0|1> legacy=0 round_trips=1` (exit 0), or `BACKPRESSURE CHECK REFUSED ... legacy=<keys> round_trips=1 remedy=...` (exit 1); usage or an unreachable store exits 2.
+
 ### lesson
 
 Every rendered build, fix, and read brief tells the card to read the repository's
