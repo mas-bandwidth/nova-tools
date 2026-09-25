@@ -193,28 +193,31 @@ func publishTable(out, body string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// writeAtomic writes body to a temp file beside path and renames it over
-// path, so a reader sees the old table or the new one, never half of one.
+// writeAtomic writes body to <path>.tmp.<pid> in path's own directory, fsyncs
+// it, and renames it over path: same directory so the rename is atomic, and a
+// pid in the name so two writers never share a temp file (#3343). A reader
+// sees the old table or the new one, never half of one.
 func writeAtomic(path, body string) error {
 	dir, base := filepath.Split(path)
 	if dir == "" {
 		dir = "."
 	}
-	f, err := os.CreateTemp(dir, "."+base+".*.tmp")
+	tmp := filepath.Join(dir, fmt.Sprintf("%s.tmp.%d", base, os.Getpid()))
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return fmt.Errorf("--out: %w", err)
 	}
-	tmp := f.Name()
 	if _, err := io.WriteString(f, body); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)
 		return fmt.Errorf("--out: %w", err)
 	}
-	if err := f.Close(); err != nil {
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
 		_ = os.Remove(tmp)
 		return fmt.Errorf("--out: %w", err)
 	}
-	if err := os.Chmod(tmp, 0o644); err != nil {
+	if err := f.Close(); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("--out: %w", err)
 	}
