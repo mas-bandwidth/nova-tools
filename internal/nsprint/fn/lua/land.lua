@@ -888,6 +888,10 @@ redis.register_function('ns_gate_receipt', function(keys, args)
   if b[1] ~= tostring(attempt) or b[2] ~= tostring(token) then return 'STALE' end
 
   local rkey = 'land:' .. repo .. ':receipt:' .. batch_id .. ':' .. attempt
+  if (not flaky_rerun or flaky_rerun == '') then
+    -- A rerun gate (ns_batch_split rerun, 6.1 step 1) receipts the tests it reran.
+    flaky_rerun = redis.call('HGET', bkey, 'rerun') or ''
+  end
   if redis.call('EXISTS', rkey) == 1 then
     if b[4] and b[4] ~= '' then
       redis.call('XACK', 'land:' .. repo .. ':gates', 'workers', b[4])
@@ -1313,5 +1317,9 @@ redis.register_function('ns_land', function(keys, args)
   )
   return 'OK'
 end)
+
+-- NS.land hands land_red.lua (red batches, 6.1) the fence, the clock and the one void, so a red
+-- split writes a batch and its members exactly as ns_chain_void does.
+NS.land = { now_ms = land_now_ms, lease_refusal = land_lease_refusal, batch_void = land_batch_void }
 
 end
