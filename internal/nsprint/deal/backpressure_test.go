@@ -3,6 +3,7 @@ package deal_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -159,26 +160,108 @@ func TestControl11BackpressureMissingAppliesPolicy(t *testing.T) {
 		m.SetTime(now)
 		c.HSet(ctx, deal.PolicyKey(sprint), "backpressure_missing", "open")
 		// Missing is allowed: zero keys is the declared-policy case above.
-		if keys, err := deal.CheckOneBackpressureKey(ctx, st, sprint); err != nil || len(keys) != 0 {
-			t.Fatalf("missing: keys %v err %v, want none and no error", keys, err)
+		if kc, err := deal.CheckOneBackpressureKey(ctx, st, sprint); err != nil || len(kc.Own) != 0 {
+			t.Fatalf("missing: check %+v err %v, want none and no error", kc, err)
 		}
 		c.HSet(ctx, deal.BackpressureKey(sprint), "state", "OFF", "debt", "0", "cap", "100", "at", now.UnixMilli())
 		// Another sprint's own hash and the backpressure process beat are not
 		// second keys for this sprint.
 		c.HSet(ctx, "s:other-sprint:backpressure", "state", "ON")
 		c.HSet(ctx, "proc:backpressure", "pass_at", now.UnixMilli())
-		keys, err := deal.CheckOneBackpressureKey(ctx, st, sprint)
+		kc, err := deal.CheckOneBackpressureKey(ctx, st, sprint)
 		if err != nil {
 			t.Fatalf("one key: %v", err)
 		}
-		if len(keys) != 1 || keys[0] != deal.BackpressureKey(sprint) {
-			t.Fatalf("keys = %v, want exactly [%s]", keys, deal.BackpressureKey(sprint))
+		if len(kc.Own) != 1 || kc.Own[0] != deal.BackpressureKey(sprint) || !kc.Beat {
+			t.Fatalf("check = %+v, want exactly [%s] and the beat", kc, deal.BackpressureKey(sprint))
+		}
+		if got, want := kc.Line(), "BACKPRESSURE CHECK OK sprint="+sprint+" own=1 beat=1 legacy=0 round_trips=1"; got != want {
+			t.Fatalf("Line = %q, want %q", got, want)
 		}
 		// The v1 global key is a second source of truth: refused, named.
 		c.HSet(ctx, "backpressure", "state", "ON")
-		_, err = deal.CheckOneBackpressureKey(ctx, st, sprint)
+		kc, err = deal.CheckOneBackpressureKey(ctx, st, sprint)
 		if !errors.Is(err, deal.ErrTwoBackpressureKeys) || !strings.Contains(err.Error(), `"backpressure" beside`) {
 			t.Fatalf("err = %v, want ErrTwoBackpressureKeys naming the global key", err)
 		}
+		if got, want := kc.Line(), "BACKPRESSURE CHECK REFUSED sprint="+sprint+" own=1 beat=1 legacy=backpressure round_trips=1"; got != want {
+			t.Fatalf("Line = %q, want %q", got, want)
+		}
 	})
+}
+
+// roundTripHook counts Redis round trips (one per single command, one per
+// pipeline) and records every command name sent.
+type roundTripHook struct {
+	roundTrips int
+	names      []string
+}
+
+func (h *roundTripHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *roundTripHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		h.roundTrips++
+		h.names = append(h.names, strings.ToLower(cmd.Name()))
+		return next(ctx, cmd)
+	}
+}
+
+func (h *roundTripHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		h.roundTrips++
+		for _, cmd := range cmds {
+			h.names = append(h.names, strings.ToLower(cmd.Name()))
+		}
+		return next(ctx, cmds)
+	}
+}
+
+// TestCheckOneBackpressureKeyOneRoundTrip is the DONE-WHEN of #3276: with
+// 6,000 unrelated keys (and other sprints' backpressure hashes) the check
+// issues exactly one pipeline, no SCAN and no KEYS, and the receipt prints
+// round_trips=1. The SCAN walk it replaced took 7 round trips at 6,357 keys.
+func TestCheckOneBackpressureKeyOneRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	const sprint = "control-00003276"
+	m, st, c := miniStore(t)
+	for i := 0; i < 6000; i++ {
+		m.Set(fmt.Sprintf("task:unrelated-%05d", i), "x")
+	}
+	for i := 0; i < 20; i++ {
+		m.HSet(fmt.Sprintf("s:sprint-%02d:backpressure", i), "state", "OFF")
+	}
+	m.HSet(deal.BackpressureKey(sprint), "state", "OFF")
+	m.HSet("backpressure", "state", "ON")
+
+	// Dial first so the connection handshake (HELLO, CLIENT SETINFO) is not
+	// counted as the check's.
+	if err := c.Ping(ctx).Err(); err != nil {
+		t.Fatal(err)
+	}
+	hook := &roundTripHook{}
+	c.AddHook(hook)
+	before := m.CommandCount()
+	kc, err := deal.CheckOneBackpressureKey(ctx, st, sprint)
+	if !errors.Is(err, deal.ErrTwoBackpressureKeys) {
+		t.Fatalf("err = %v, want ErrTwoBackpressureKeys for the legacy key", err)
+	}
+	if hook.roundTrips != 1 {
+		t.Fatalf("round trips = %d (%v), want exactly 1 pipeline", hook.roundTrips, hook.names)
+	}
+	for _, name := range hook.names {
+		if name == "scan" || name == "keys" {
+			t.Fatalf("check issued %s (%v); want the named keys only", name, hook.names)
+		}
+	}
+	// miniredis's own count: exactly the named EXISTS, nothing else.
+	if got, want := m.CommandCount()-before, 2+len(deal.LegacyBackpressureKeys); got != want {
+		t.Fatalf("server saw %d commands (%v), want %d", got, hook.names, want)
+	}
+	if kc.RoundTrips != 1 || !strings.HasSuffix(kc.Line(), " round_trips=1") {
+		t.Fatalf("receipt %q, want round_trips=1", kc.Line())
+	}
+	if len(kc.Own) != 1 || kc.Beat || len(kc.Extra) != 1 || kc.Extra[0] != "backpressure" {
+		t.Fatalf("check = %+v, want own=1 beat=false extra=[backpressure]", kc)
+	}
 }

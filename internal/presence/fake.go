@@ -3,19 +3,23 @@ package presence
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
 
-// FakeStore is the store the tests beat against: a map with real expiry, driven
-// by a clock the test moves. It is strict where the real one is -- a key whose
-// TTL has passed is gone, an MGet over a key nobody wrote answers "", and a
-// store told to fail fails -- because a lenient fake would let a heartbeat that
-// never expires look correct here and report a friend who left as up.
+// FakeStore is the store the tests beat against: hashes, strings and sets with
+// real expiry, driven by a clock the test moves. It is strict where the real
+// one is -- a hash whose TTL has passed is gone, a read of a key nobody wrote
+// answers "", a hash with no TTL is not live, and a store told to fail fails --
+// because a lenient fake would let a heartbeat that never expires look correct
+// here and report a friend who left as up.
 type FakeStore struct {
-	mu   sync.Mutex
-	now  time.Time
-	vals map[string]fakeVal
+	mu      sync.Mutex
+	now     time.Time
+	hashes  map[string]fakeHash
+	strings map[string]string
+	sets    map[string]map[string]bool
 	// Err, when set, is what every call answers. It is how a test sees
 	// what a beat does when the store is unreachable.
 	Err error
@@ -24,10 +28,16 @@ type FakeStore struct {
 	// It is how a test makes a store blink for a few seconds and then come
 	// back, inside one beat loop, without waiting for one.
 	Hook func(call int) error
-	// Calls counts every call, failed ones too; Sets counts the writes that
-	// landed, so a test can say how many beats the store actually took.
+	// Calls counts every call, failed ones too; Sets counts the beats that
+	// landed (one WriteBeat is one write), so a test can say how many beats
+	// the store actually took.
 	Calls int
 	Sets  int
+}
+
+type fakeHash struct {
+	fields map[string]string
+	until  time.Time // zero: no expiry
 }
 
 // fail is the answer this call should give, Hook first and the blanket Err
@@ -42,17 +52,17 @@ func (f *FakeStore) fail() error {
 	return f.Err
 }
 
-type fakeVal struct {
-	val   string
-	until time.Time // zero: no expiry
-}
-
 // NewFakeStore starts a fake at the given moment.
 func NewFakeStore(now time.Time) *FakeStore {
-	return &FakeStore{now: now.UTC(), vals: map[string]fakeVal{}}
+	return &FakeStore{
+		now:     now.UTC(),
+		hashes:  map[string]fakeHash{},
+		strings: map[string]string{},
+		sets:    map[string]map[string]bool{},
+	}
 }
 
-// Now is the fake's clock, and Advance moves it. Keys expire against it, so
+// Now is the fake's clock, and Advance moves it. Hashes expire against it, so
 // `Advance(91 * time.Second)` is a friend's window that went away.
 func (f *FakeStore) Now() time.Time {
 	f.mu.Lock()
@@ -66,43 +76,150 @@ func (f *FakeStore) Advance(d time.Duration) {
 	f.now = f.now.Add(d)
 }
 
-// Set writes value at key, with an expiry when ttl is positive.
-func (f *FakeStore) Set(ctx context.Context, key, value string, ttl time.Duration) error {
+// hash is the live hash at key, expiring it first; the caller holds mu.
+func (f *FakeStore) hash(key string) (fakeHash, bool) {
+	h, ok := f.hashes[key]
+	if !ok {
+		return fakeHash{}, false
+	}
+	if !h.until.IsZero() && !f.now.Before(h.until) {
+		delete(f.hashes, key)
+		return fakeHash{}, false
+	}
+	return h, true
+}
+
+// WriteBeat is HSET key fields..., PEXPIRE key ttl and SET lastKey stamp, all
+// or nothing.
+func (f *FakeStore) WriteBeat(ctx context.Context, key string, fields []string, ttl time.Duration, lastKey, stamp string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.fail(); err != nil {
 		return err
 	}
-	if ttl < 0 {
-		return fmt.Errorf("negative ttl")
+	if len(fields) == 0 || len(fields)%2 != 0 {
+		return fmt.Errorf("beat fields must be field, value pairs")
 	}
-	v := fakeVal{val: value}
-	if ttl > 0 {
-		v.until = f.now.Add(ttl)
+	if ttl <= 0 {
+		return fmt.Errorf("non-positive ttl")
 	}
-	f.vals[key] = v
+	h, ok := f.hash(key)
+	if !ok {
+		h = fakeHash{fields: map[string]string{}}
+	}
+	for i := 0; i < len(fields); i += 2 {
+		h.fields[fields[i]] = fields[i+1]
+	}
+	h.until = f.now.Add(ttl)
+	f.hashes[key] = h
+	f.strings[lastKey] = stamp
 	f.Sets++
 	return nil
 }
 
-// MGet answers one value per key, "" for a key that is absent or has expired.
-func (f *FakeStore) MGet(ctx context.Context, keys ...string) ([]string, error) {
+// ReadBeats answers one Reading per key: the three fields, whether a TTL is
+// running on the hash, and the untimed :last string.
+func (f *FakeStore) ReadBeats(ctx context.Context, keys []string) ([]Reading, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.fail(); err != nil {
 		return nil, err
 	}
-	out := make([]string, len(keys))
+	out := make([]Reading, len(keys))
 	for i, k := range keys {
-		v, ok := f.vals[k]
-		if !ok {
-			continue
+		if h, ok := f.hash(k); ok {
+			out[i] = Reading{At: h.fields[FieldAt], Width: h.fields[FieldWidth], Window: h.fields[FieldWindow], Live: !h.until.IsZero()}
 		}
-		if !v.until.IsZero() && !f.now.Before(v.until) {
-			delete(f.vals, k)
-			continue
-		}
-		out[i] = v.val
+		out[i].Last = f.strings[k+LastSuffix]
 	}
 	return out, nil
+}
+
+// Members answers the set's members, sorted.
+func (f *FakeStore) Members(ctx context.Context, set string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.fail(); err != nil {
+		return nil, err
+	}
+	var out []string
+	for m := range f.sets[set] {
+		out = append(out, m)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// The helpers below are the tests' hands and eyes on the fake. They are not
+// Store calls: they do not count, and they never fail.
+
+// AddMembers is SADD set members...: how a test registers friends.
+func (f *FakeStore) AddMembers(set string, members ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.sets[set] == nil {
+		f.sets[set] = map[string]bool{}
+	}
+	for _, m := range members {
+		f.sets[set][m] = true
+	}
+}
+
+// SetHash is HSET key fields... with a TTL, or none when ttl is 0: a table
+// row with no TTL, or a beat whose at is not a stamp.
+func (f *FakeStore) SetHash(key string, ttl time.Duration, fields ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	h, ok := f.hash(key)
+	if !ok {
+		h = fakeHash{fields: map[string]string{}}
+	}
+	for i := 0; i+1 < len(fields); i += 2 {
+		h.fields[fields[i]] = fields[i+1]
+	}
+	if ttl > 0 {
+		h.until = f.now.Add(ttl)
+	}
+	f.hashes[key] = h
+}
+
+// SetString is SET key value with no expiry: how a test writes a :last alone.
+func (f *FakeStore) SetString(key, value string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.strings[key] = value
+}
+
+// Hash is HGETALL key: nil when the hash is absent or has expired.
+func (f *FakeStore) Hash(key string) map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	h, ok := f.hash(key)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string, len(h.fields))
+	for k, v := range h.fields {
+		out[k] = v
+	}
+	return out
+}
+
+// TTL is PTTL key as a duration: 0 when the hash is absent, expired or has
+// no expiry.
+func (f *FakeStore) TTL(key string) time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	h, ok := f.hash(key)
+	if !ok || h.until.IsZero() {
+		return 0
+	}
+	return h.until.Sub(f.now)
+}
+
+// String is GET key: "" when absent.
+func (f *FakeStore) String(key string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.strings[key]
 }

@@ -202,12 +202,10 @@ local function ci_receipt(S, kind, id, from_state, to_state, attempt, token_sha,
     'idem', idem or '', 'at', tostring(at))
 end
 
-local function ci_move(S, label, from_state, to_state)
-  if from_state ~= '' then
-    redis.call('SREM', 's:' .. S .. ':idx:card:' .. from_state, label)
-  end
-  redis.call('SADD', 's:' .. S .. ':idx:card:' .. to_state, label)
-end
+-- Every ci card state write is NS.card (02_card_move.lua): cut creates the
+-- record and moves it to ready, end is working -> done (ok only for DONE with
+-- verdict OK), rerun and dispose are done/fail -> ready on the new bench.
+local CARD = NS.card
 
 -- A leg list is the desired hash's `legs` field, space or comma separated.
 -- A bench that declares no legs carries none: no evidence is not a leg.
@@ -295,17 +293,18 @@ local function ci_cut(keys, args)
   if not carried then return { 'RUNNER-ONLY', leg } end
 
   local at = ci_now_ms()
-  redis.call('HSET', card_key,
+  local cut_fields = {
     'kind', 'script', 'leg', leg, 'tier', 'front', 'repo', repo,
     'base', base, 'base_sha', base_sha, 'paths', paths, 'depends_on', 'none',
-    'priority', tostring(CI_FRONT), 'state', 'queued', 'attempt', '1',
-    'identity', '', 'token', '', 'token_sha', '', 'bench', '', 'avoid', '',
+    'priority', tostring(CI_FRONT), 'attempt', '1',
+    'identity', '', 'token', '', 'token_sha', '', 'avoid', '',
     'ci_for', repo .. ' ' .. pr .. ' ' .. head .. ' ' .. base,
     'ci_repo', repo, 'ci_pr', pr, 'ci_head', head,
     'cut_at', at, 'outcome', '', 'reason', '', 'reruns', '0', 'prev', '',
-    'verdict', 'PENDING', 'disp', '', 'blocked', '')
-  redis.call('ZADD', 's:' .. S .. ':pool', CI_FRONT, label)
-  ci_move(S, label, '', 'queued')
+    'verdict', 'PENDING', 'disp', '', 'blocked', '' }
+  local err = CARD.create(card_key, cut_fields, { by = actor })
+  if not err then err = CARD.move(card_key, 'ready', { by = actor, why = 'ci cut', priority = CI_FRONT }) end
+  if err then return redis.error_reply('ns_ci_cut: ' .. err) end
   ci_receipt(S, 'ci cut', label, '', 'queued', 1, '', actor, 'cut', repo .. '@' .. head, idem, at)
   return { 'CREATED', '1' }
 end
@@ -352,10 +351,6 @@ local function ci_end(keys, args)
   local repo, pr, head = ci_hget(card_key, 'ci_repo'), ci_hget(card_key, 'ci_pr'), ci_hget(card_key, 'ci_head')
   local bench = ci_hget(card_key, 'bench')
   local member = S .. '/' .. label .. '/' .. attempt
-  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
-  redis.call('SADD', 's:' .. S .. ':bench:' .. bench .. ':ended', label)
-  ci_move(S, label, state, 'ended')
 
   local prev = ci_hget(card_key, 'prev')
   local disp = ci_hget(card_key, 'disp')
@@ -386,6 +381,14 @@ local function ci_end(keys, args)
     final = verdict
   end
 
+  local ok = 'fail'
+  if outcome == 'DONE' and final == 'OK' then ok = 'ok' end
+  local refused = CARD.move(card_key, 'done', { state = 'ended', ok = ok, by = actor, why = reason })
+  if refused then return { 'STATE', attempt } end
+  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
+  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
+  redis.call('SADD', 's:' .. S .. ':bench:' .. bench .. ':ended', label)
+
   local flaky = ''
   if final == 'FLAKY' then
     flaky = pbench .. ':FAIL,' .. bench .. ':' .. verdict
@@ -400,7 +403,7 @@ local function ci_end(keys, args)
       'ci-fail ' .. repo .. ' ' .. head .. ' ' .. pkg .. ' ' .. test .. ' ' .. S .. '/' .. label)
   end
 
-  redis.call('HSET', card_key, 'state', 'ended', 'outcome', outcome, 'reason', reason,
+  redis.call('HSET', card_key, 'outcome', outcome, 'reason', reason,
     'ended_at', at, 'results', log, 'tree', tree, 'verdict', (final ~= '' and final or 'MISSING'),
     'pkg', pkg, 'test', test, 'wall_s', tostring(wall_s or ''), 'flaky', flaky)
 
@@ -483,13 +486,14 @@ local function ci_rerun(keys, args)
   local next_attempt = attempt + 1
   local prev = from_bench .. '|' .. (verdict == '' and 'MISSING' or verdict) .. '|' ..
     ci_hget(card_key, 'pkg') .. '|' .. ci_hget(card_key, 'test')
-  redis.call('HSET', card_key, 'state', 'queued', 'attempt', tostring(next_attempt),
-    'identity', '', 'token', '', 'token_sha', '', 'bench', to_bench, 'avoid', from_bench,
-    'outcome', '', 'reason', '', 'reruns', tostring(reruns + 1), 'prev', prev, 'blocked', '',
-    'verdict', 'PENDING')
-  redis.call('ZADD', 's:' .. S .. ':pool', CI_FRONT, label)
+  local refused = CARD.move(card_key, 'ready', { state = 'queued', bench = to_bench, by = actor, why = 'ci rerun',
+    priority = CI_FRONT,
+    fields = { 'attempt', tostring(next_attempt),
+      'identity', '', 'token', '', 'token_sha', '', 'avoid', from_bench,
+      'outcome', '', 'reason', '', 'reruns', tostring(reruns + 1), 'prev', prev, 'blocked', '',
+      'verdict', 'PENDING' } })
+  if refused then return { 'STATE', tostring(attempt) } end
   redis.call('ZADD', 's:' .. S .. ':bench:' .. to_bench .. ':queue', CI_FRONT, label)
-  ci_move(S, label, 'ended', 'queued')
   ci_receipt(S, 'ci rerun', label, 'ended', 'queued', next_attempt, '', actor, reason,
     repo .. '@' .. head .. ' ' .. from_bench .. '->' .. to_bench, idem, at)
   return { 'RERUN', tostring(next_attempt), to_bench }
@@ -534,15 +538,16 @@ local function ci_dispose(keys, args)
     if to_bench == '' and ci_healthy(from_bench, leg) then
       to_bench = from_bench
     end
-    redis.call('HSET', card_key, 'state', 'queued', 'attempt', tostring(next_attempt),
-      'identity', '', 'token', '', 'token_sha', '', 'bench', to_bench, 'avoid', from_bench,
-      'outcome', '', 'reason', '', 'verdict', 'PENDING', 'disp', '1',
-      'disposition', 'APPROVE ' .. friend .. ' ' .. url, 'log', url, 'blocked', '')
-    redis.call('ZADD', 's:' .. S .. ':pool', CI_FRONT, label)
+    local refused = CARD.move(card_key, 'ready', { state = 'queued', bench = to_bench, by = friend, why = 'ci dispose APPROVE',
+      priority = CI_FRONT,
+      fields = { 'attempt', tostring(next_attempt),
+        'identity', '', 'token', '', 'token_sha', '', 'avoid', from_bench,
+        'outcome', '', 'reason', '', 'verdict', 'PENDING', 'disp', '1',
+        'disposition', 'APPROVE ' .. friend .. ' ' .. url, 'log', url, 'blocked', '' } })
+    if refused then return { 'STATE' } end
     if to_bench ~= '' then
       redis.call('ZADD', 's:' .. S .. ':bench:' .. to_bench .. ':queue', CI_FRONT, label)
     end
-    ci_move(S, label, 'ended', 'queued')
     redis.call('HDEL', unresolved, item)
     ci_receipt(S, 'ci dispose', label, 'FLAKY', 'PENDING', attempt,
       '', friend, disposition, url, 'ci-dispose:' .. item, at)

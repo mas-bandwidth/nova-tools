@@ -1,7 +1,8 @@
 // `nova-sprint card harvest` (#2932, spec #2756 4.3): one worker per bench,
 // every bench in parallel, each under its own clock; push the card's branch
-// from its bench, find or open the PR under pr:<repo>:<branch>, read the head
-// back by REST, then harvested.
+// from its bench, find or open the PR under pr:<repo>:<branch>, write the PR
+// record pr:<repo>:<n> and read the head back from it, then harvested. The
+// reconciler runs the same pass as its harvest duty (consume.go).
 //
 // The card verb may already be registered by card_run.go (#2928); this file
 // then wraps it and adds the harvest subverb, so neither file edits the other.
@@ -205,7 +206,7 @@ func printHarvest(out io.Writer, sprint string, results []harvest.BenchResult) i
 				sprint, c.Label, c.PR, c.Head, c.Via, r.Bench)
 		}
 		for _, f := range r.Failed {
-			_, _ = fmt.Fprintf(out, "HARVEST-FAILED %s %s bench=%s err=%s detail=%s\n", sprint, f.Label, r.Bench, f.Code, oneline.Escape(f.Err.Error()))
+			_, _ = fmt.Fprintf(out, "HARVEST-FAILED %s %s bench=%s err=%s detail=%s%s\n", sprint, f.Label, r.Bench, f.Code, oneline.Escape(f.Err.Error()), harvestFails(f))
 			if code == 0 {
 				code = 1
 			}
@@ -230,4 +231,17 @@ func printHarvest(out io.Writer, sprint string, results []harvest.BenchResult) i
 		_, _ = fmt.Fprintln(out, line)
 	}
 	return code
+}
+
+// harvestFails is the HARVEST-FAILED line's tail (#3712): the card's failed
+// passes so far, and card=done/fail on the pass that reached the cap.
+func harvestFails(f harvest.CardFailure) string {
+	if f.Fails == 0 {
+		return ""
+	}
+	tail := fmt.Sprintf(" fails=%d", f.Fails)
+	if f.Moved {
+		tail += " card=done/fail"
+	}
+	return tail
 }

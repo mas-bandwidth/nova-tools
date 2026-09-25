@@ -90,6 +90,11 @@ func (f *fixture) deal(label, bench string) (token, identity string) {
 	f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
 	f.client.ZRem(f.ctx, "s:"+f.sprint+":pool", label)
 	f.client.ZRem(f.ctx, "s:"+f.sprint+":bench:"+bench+":queue", label)
+	// The hand deal wrote the fine state around the card move (#3692):
+	// fsck --repair re-points the card from its record, as after any drift.
+	if err := f.client.FCall(f.ctx, "ns_card_repair", nil, f.sprint).Err(); err != nil {
+		f.t.Fatal(err)
+	}
 	return token, identity
 }
 

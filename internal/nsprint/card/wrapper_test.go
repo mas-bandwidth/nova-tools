@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -23,11 +24,15 @@ const (
 	fakeHarnessEnv = "WRAPPER_FAKE_HARNESS" // done, fail or hang
 	fakeGateEnv    = "WRAPPER_FAKE_GATE"    // done and fail exit once this file exists
 	fakeOriginEnv  = "WRAPPER_FAKE_ORIGIN"  // repo mode clones this into out/repo
+	fakeSlotEnv    = "WRAPPER_FAKE_SLOT"    // native modes run the card in <slot>/jobs/<label>
 )
 
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeHarnessEnv); mode != "" {
 		os.Exit(fakeHarness(mode))
+	}
+	if os.Getenv(fakeRunnerEnv) != "" {
+		os.Exit(fakeRunner())
 	}
 	os.Exit(m.Run())
 }
@@ -39,8 +44,15 @@ func fakeHarness(mode string) int {
 	for _, kv := range os.Environ() {
 		fmt.Println(kv)
 	}
+	if mode == "refuse" || mode == "refuse-identity" {
+		return fakeRefusal(mode)
+	}
 	out := os.Getenv("NOVA_CARD_OUT")
-	if err := os.WriteFile(filepath.Join(out, "RESULT.md"), []byte("RESULT: "+os.Getenv("NOVA_CARD")+" sha=000000000000\n"), 0o644); err != nil {
+	if strings.HasPrefix(mode, "native") {
+		if code := fakeNative(mode, out); code != 0 {
+			return code
+		}
+	} else if err := os.WriteFile(filepath.Join(out, "RESULT.md"), []byte("RESULT: "+os.Getenv("NOVA_CARD")+" sha=000000000000\n"+saidLine2[mode]), 0o644); err != nil {
 		fmt.Println("fake harness:", err)
 		return 9
 	}
@@ -71,6 +83,63 @@ func fakeHarness(mode string) int {
 	}
 	if mode == "fail" {
 		return 3
+	}
+	return 0
+}
+
+// saidLine2 is the model's line 2 the said-* modes write under line 1 (the
+// quack-0925d no-commit cards: DONE and nothing committed).
+var saidLine2 = map[string]string{
+	"said-done":    "DONE\n",
+	"said-abstain": "ABSTAIN out of scope\n",
+	"said-blocked": "BLOCKED deps missing\n",
+}
+
+// fakeNative is today's native route (quack test, 2026-09-24): the card runs in
+// <slot>/jobs/<label>, a slot the bench harness picks outside the wrapper's job, its
+// STEP 1 clones there as repo (one committed base), its fix leaves one changed file,
+// and its RESULT.md is written beside the repo. mode native then makes the same
+// hand-off call nova-swarm native makes under NOVA_CARD_OUT; native-nohandoff is the
+// layout before the fix, with nothing under out.
+func fakeNative(mode, out string) int {
+	parts := strings.Split(os.Getenv("NOVA_CARD"), "/")
+	job := filepath.Join(os.Getenv(fakeSlotEnv), "jobs", parts[1])
+	repo := filepath.Join(job, "repo")
+	if msg, err := exec.Command("git", "clone", "-q", os.Getenv(fakeOriginEnv), repo).CombinedOutput(); err != nil {
+		fmt.Println("fake native clone:", err, string(msg))
+		return 9
+	}
+	if err := os.WriteFile(filepath.Join(repo, "base.txt"), []byte("base\nthe card's fix\n"), 0o644); err != nil {
+		fmt.Println("fake native:", err)
+		return 9
+	}
+	body := "RESULT: " + os.Getenv("NOVA_CARD") + " sha=000000000000\nfixed; tests pass\n"
+	switch mode {
+	case "native-two":
+		// #3689: the model's whole contract, two lines and a note.
+		body = "RESULT: " + os.Getenv("NOVA_CARD") + " sha=000000000000\nDONE\nthe retry path is still owed\n"
+	case "native-wrongbranch":
+		// #3689: the quack cards' shape, the BRANCH the card told the model.
+		body = "RESULT: " + os.Getenv("NOVA_CARD") + " sha=000000000000\nDONE\nBRANCH: rowan/" + parts[1] + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(job, "RESULT.md"), []byte(body), 0o644); err != nil {
+		fmt.Println("fake native:", err)
+		return 9
+	}
+	if mode != "native" && mode != "native-nohandoff" {
+		// The bench harness's START line (rowan-tools' nova-card-harness):
+		// names only, never a key's value.
+		start := "2026-09-24T23:59:00Z START " + os.Getenv("NOVA_CARD") + " bench=wrap-bench tier=flash route=opencode-flash model=opencode/kimi-k3 key=OPENCODE_API_KEY sha=0123456789ab\n"
+		if err := os.WriteFile(filepath.Join(out, "harness.log"), []byte(start), 0o644); err != nil {
+			fmt.Println("fake native:", err)
+			return 9
+		}
+	}
+	if mode != "native-nohandoff" {
+		if _, err := swarm.HandOffCardOut(job, out); err != nil {
+			fmt.Println("fake native hand-off:", err)
+			return 9
+		}
 	}
 	return 0
 }
@@ -315,8 +384,8 @@ func (o *observed) Claim(ctx context.Context, nonce string) (int, error) {
 	return claimOf(o.inner).Claim(ctx, nonce)
 }
 
-func (o *observed) Launched(ctx context.Context, branch, job string) (int, error) {
-	code, err := o.inner.Launched(ctx, branch, job)
+func (o *observed) Launched(ctx context.Context, branch, job string, wallMax time.Duration) (int, error) {
+	code, err := o.inner.Launched(ctx, branch, job, wallMax)
 	o.events <- "launched"
 	return code, err
 }
@@ -569,13 +638,13 @@ func (r *racer) Claim(ctx context.Context, nonce string) (int, error) {
 	return claimOf(r.inner).Claim(ctx, nonce)
 }
 
-func (r *racer) Launched(ctx context.Context, branch, job string) (int, error) {
+func (r *racer) Launched(ctx context.Context, branch, job string, wallMax time.Duration) (int, error) {
 	r.race.mu.Lock()
 	if _, err := os.Stat(r.race.job); err == nil && r.race.dirSeen == "" {
 		r.race.dirSeen = "the job dir " + r.race.job + " existed before ns_card_launched returned 0"
 	}
 	r.race.mu.Unlock()
-	code, err := r.inner.Launched(ctx, branch, job)
+	code, err := r.inner.Launched(ctx, branch, job, wallMax)
 	if err != nil || code != 0 {
 		return code, err
 	}

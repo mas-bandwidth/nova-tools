@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -80,6 +81,8 @@ func (p *fixturePusher) Push(ctx context.Context, b harvest.BenchInfo, c harvest
 }
 
 // fixtureForge is GitHub: one PR per head branch, heads read back as pushed.
+// It counts opens, finds and reads: a pass that has the PR record needs none
+// of the reads.
 type fixtureForge struct {
 	mu       sync.Mutex
 	next     int
@@ -87,14 +90,14 @@ type fixtureForge struct {
 	byNumber map[int]harvest.PR
 	opens    int
 	finds    int
-	failRead map[int]int // PR number -> reads left that fail
-	failOnce map[string]bool
+	reads    int
+	bodies   map[string]string // branch -> the body the PR was opened with
 	heads    map[string]string // branch -> sha pushed there
 }
 
 func newForge() *fixtureForge {
 	return &fixtureForge{next: 100, byBranch: map[string]harvest.PR{}, byNumber: map[int]harvest.PR{},
-		failRead: map[int]int{}, failOnce: map[string]bool{}, heads: map[string]string{}}
+		bodies: map[string]string{}, heads: map[string]string{}}
 }
 
 func (f *fixtureForge) add(repo, branch, head string) harvest.PR {
@@ -122,10 +125,8 @@ func (f *fixtureForge) OpenPR(ctx context.Context, repo, branch, base, title, bo
 		return harvest.PR{}, fmt.Errorf("422 a pull request already exists for %s", branch)
 	}
 	f.opens++
+	f.bodies[branch] = body
 	pr := f.add(repo, branch, f.heads[branch])
-	if f.failOnce[branch] {
-		f.failRead[pr.Number] = 1
-	}
 	return pr, nil
 }
 
@@ -133,10 +134,7 @@ func (f *fixtureForge) ReadPR(ctx context.Context, repo string, n int) (harvest.
 	time.Sleep(20 * time.Millisecond)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.failRead[n] > 0 {
-		f.failRead[n]--
-		return harvest.PR{}, errors.New("502 bad gateway")
-	}
+	f.reads++
 	pr, ok := f.byNumber[n]
 	if !ok {
 		return harvest.PR{}, fmt.Errorf("404 pull %d", n)
@@ -153,8 +151,9 @@ func byBench(results []harvest.BenchResult) map[string]harvest.BenchResult {
 }
 
 // Control 13 (#2756 section 8): harvest with one bench down; the other
-// benches' harvests finish within their own clock. And 5.4: a re-run finds
-// the PR by its idem key and opens no second PR.
+// benches' harvests finish within their own clock. And 5.4: a card whose PR a
+// dead worker had recorded is finished from its idem key and PR record with
+// no GitHub read, and a re-run opens no second PR.
 func TestControl13OneBenchDownOthersFinish(t *testing.T) {
 	c := startRedis(t)
 	st := store.New(c)
@@ -177,9 +176,14 @@ func TestControl13OneBenchDownOthersFinish(t *testing.T) {
 	seedEnded(t, c, "ctl-a", "ctl-a-failed", "model", "FAILED", sha("failed"))
 	// A worker opened this PR and died before recording it: found by REST.
 	forge.add("nova-tools", "nova/"+sprint+"/ctl-c-card3-a1", sha("ctl-c-card3"))
-	// This PR opens, then its head read-back fails once: the card stays ended
-	// with the idem key recorded, for the re-run.
-	forge.failOnce["nova/"+sprint+"/ctl-b-card2-a1"] = true
+	// A worker opened this PR, recorded it (idem key, published, PR record)
+	// and died before the receipt: finished from the record, no GitHub read.
+	recordedBranch := "nova/" + sprint + "/ctl-b-card2-a1"
+	recorded := forge.add("nova-tools", recordedBranch, sha("ctl-b-card2"))
+	c.HSet(ctx, "s:"+sprint+":idem", "pr:nova-tools:"+recordedBranch, recorded.Number)
+	c.HSet(ctx, "s:"+sprint+":card:ctl-b-card2", "harvest_step", harvest.StepPublished)
+	c.HSet(ctx, harvest.RecordKey("nova-tools", recorded.Number), "head", sha("ctl-b-card2"), "branch", recordedBranch,
+		"base", "dev", "base_sha", "09fbedc9", "label", "ctl-b-card2", "sprint", sprint, "state", "open")
 
 	pusher := &fixturePusher{down: map[string]bool{"ctl-down": true}, pushes: map[string]int{}}
 	clock := 2 * time.Second
@@ -211,11 +215,13 @@ func TestControl13OneBenchDownOthersFinish(t *testing.T) {
 			t.Fatalf("%s took %v (done at +%v); want inside its own clock and not waiting on ctl-down", b, r.Took, r.Done.Sub(start))
 		}
 	}
-	if n := len(res["ctl-a"].Cards) + len(res["ctl-b"].Cards) + len(res["ctl-c"].Cards); n != 8 {
-		t.Fatalf("harvested %d cards on the UP benches, want 8 (ctl-b-card2's head read failed once)", n)
+	if n := len(res["ctl-a"].Cards) + len(res["ctl-b"].Cards) + len(res["ctl-c"].Cards); n != 9 {
+		t.Fatalf("harvested %d cards on the UP benches, want 9", n)
 	}
-	if len(res["ctl-b"].Failed) != 1 || res["ctl-b"].Failed[0].Label != "ctl-b-card2" {
-		t.Fatalf("ctl-b failures = %+v, want ctl-b-card2 only", res["ctl-b"].Failed)
+	for _, b := range up {
+		if len(res[b].Failed) != 0 {
+			t.Fatalf("%s failures = %+v, want none", b, res[b].Failed)
+		}
 	}
 	via := map[string]string{}
 	for _, b := range up {
@@ -223,31 +229,45 @@ func TestControl13OneBenchDownOthersFinish(t *testing.T) {
 			via[cr.Label] = cr.Via
 		}
 	}
-	if via["ctl-c-card3"] != "rest" || via["ctl-a-card1"] != "opened" {
-		t.Fatalf("via = %v; want ctl-c-card3 found by REST and ctl-a-card1 opened", via)
+	if via["ctl-c-card3"] != "rest" || via["ctl-a-card1"] != "opened" || via["ctl-b-card2"] != "record" {
+		t.Fatalf("via = %v; want ctl-c-card3 found by REST, ctl-a-card1 opened, ctl-b-card2 from its record", via)
 	}
-	if forge.opens != 8 {
-		t.Fatalf("opened %d PRs, want 8 (9 UP cards, one already open on GitHub)", forge.opens)
+	if forge.opens != 7 {
+		t.Fatalf("opened %d PRs, want 7 (9 UP cards, one already open on GitHub, one recorded)", forge.opens)
+	}
+	if forge.reads != 0 {
+		t.Fatalf("GitHub read %d times; the head comes from the create or lookup reply and then from the record, never a read-back", forge.reads)
 	}
 
 	// Redis state: harvested with pr and head, ended ones untouched, the
 	// lease released and the pass line written for each bench.
-	for _, label := range []string{"ctl-a-card1", "ctl-c-card3"} {
+	for _, label := range []string{"ctl-a-card1", "ctl-b-card2", "ctl-c-card3"} {
 		h := c.HGetAll(ctx, "s:"+sprint+":card:"+label).Val()
 		if h["state"] != "harvested" || h["head"] != sha(label) || h["pr"] == "" {
 			t.Fatalf("%s = %v; want harvested at its pushed sha", label, h)
 		}
+		n, _ := strconv.Atoi(h["pr"])
+		rec := c.HGetAll(ctx, harvest.RecordKey("nova-tools", n)).Val()
+		if rec["head"] != sha(label) || rec["label"] != label || rec["sprint"] != sprint || rec["base"] != "dev" ||
+			rec["base_sha"] != "09fbedc9" || rec["state"] != "open" || rec["branch"] != "nova/"+sprint+"/"+label+"-a1" {
+			t.Fatalf("%s = %v; want head, base, base_sha, label, sprint, branch and state=open", harvest.RecordKey("nova-tools", n), rec)
+		}
 	}
-	for _, label := range []string{"ctl-b-card2", "ctl-down-card1", "ci-3011-deadbeef", "ctl-a-failed"} {
+	for _, label := range []string{"ctl-down-card1", "ci-3011-deadbeef", "ctl-a-failed"} {
 		if s := c.HGet(ctx, "s:"+sprint+":card:"+label, "state").Val(); s != "ended" {
 			t.Fatalf("%s state = %s, want ended", label, s)
 		}
 	}
-	if n := c.SCard(ctx, "s:"+sprint+":idx:card:harvested").Val(); n != 8 {
-		t.Fatalf("idx:card:harvested = %d, want 8", n)
+	if n := c.SCard(ctx, "s:"+sprint+":idx:card:harvested").Val(); n != 9 {
+		t.Fatalf("idx:card:harvested = %d, want 9", n)
 	}
-	if n := c.XLen(ctx, "s:"+sprint+":log").Val(); n != 8 {
-		t.Fatalf("receipts = %d, want one per harvested card (8)", n)
+	// One harvested receipt and one `pr head` entry per harvested card (#3712).
+	kinds := map[string]int{}
+	for _, e := range c.XRange(ctx, "s:"+sprint+":log", "-", "+").Val() {
+		kinds[fmt.Sprint(e.Values["kind"])]++
+	}
+	if kinds["card"] != 9 || kinds["pr head"] != 9 || len(kinds) != 2 {
+		t.Fatalf("log kinds = %v, want 9 card receipts and 9 pr head entries", kinds)
 	}
 	for _, b := range benches {
 		if c.Exists(ctx, "lease:harvest:"+b).Val() != 0 {
@@ -257,34 +277,29 @@ func TestControl13OneBenchDownOthersFinish(t *testing.T) {
 	if p := c.HGetAll(ctx, "proc:harvest:ctl-down").Val(); p["err"] == "" {
 		t.Fatalf("proc:harvest:ctl-down = %v, want the clock error named", p)
 	}
-	idemKey := "pr:nova-tools:nova/" + sprint + "/ctl-b-card2-a1"
-	stuckPR := c.HGet(ctx, "s:"+sprint+":idem", idemKey).Val()
-	if stuckPR == "" {
-		t.Fatalf("idem %s not recorded after the PR opened", idemKey)
+	if v := c.HGet(ctx, "s:"+sprint+":idem", "pr:nova-tools:"+recordedBranch).Val(); v != strconv.Itoa(recorded.Number) {
+		t.Fatalf("idem for ctl-b-card2 = %q, want the recorded PR %d kept", v, recorded.Number)
 	}
 
-	// The re-run: the PR is found by its idem key, never searched or opened.
-	findsBefore, opensBefore := forge.finds, forge.opens
+	// The re-run: nothing is due, nothing is searched, opened or read.
+	findsBefore, opensBefore, readsBefore := forge.finds, forge.opens, forge.reads
 	opt.Instance = "ctl-run-2"
 	opt.Clock = time.Second
 	res = byBench(harvest.Run(ctx, st, opt))
-	b := res["ctl-b"]
-	if b.Err != nil || len(b.Cards) != 1 || b.Cards[0].Label != "ctl-b-card2" || b.Cards[0].Via != "idem" ||
-		fmt.Sprint(b.Cards[0].PR) != stuckPR {
-		t.Fatalf("re-run ctl-b = %+v; want ctl-b-card2 harvested via idem as PR %s", b, stuckPR)
+	for _, b := range up {
+		if res[b].Err != nil || len(res[b].Cards)+len(res[b].Failed) != 0 {
+			t.Fatalf("re-run %s = %+v; want n=0", b, res[b])
+		}
 	}
-	if forge.opens != opensBefore || forge.finds != findsBefore {
-		t.Fatalf("re-run opened %d and searched %d; want no second PR and no REST search",
-			forge.opens-opensBefore, forge.finds-findsBefore)
-	}
-	if len(res["ctl-a"].Cards)+len(res["ctl-c"].Cards) != 0 {
-		t.Fatalf("re-run touched harvested cards: %+v %+v", res["ctl-a"].Cards, res["ctl-c"].Cards)
+	if forge.opens != opensBefore || forge.finds != findsBefore || forge.reads != readsBefore {
+		t.Fatalf("re-run opened %d, searched %d and read %d; want no second PR and no GitHub",
+			forge.opens-opensBefore, forge.finds-findsBefore, forge.reads-readsBefore)
 	}
 	if n := c.SCard(ctx, "s:"+sprint+":idx:card:harvested").Val(); n != 9 {
 		t.Fatalf("idx:card:harvested = %d after the re-run, want 9", n)
 	}
-	if pusher.pushes["nova/"+sprint+"/ctl-b-card2-a1"] != 2 {
-		t.Fatalf("ctl-b-card2 pushed %d times; the idempotent re-push is expected once per pass",
+	if pusher.pushes["nova/"+sprint+"/ctl-b-card2-a1"] != 1 {
+		t.Fatalf("ctl-b-card2 pushed %d times; want the idempotent push once, in the pass that harvested it",
 			pusher.pushes["nova/"+sprint+"/ctl-b-card2-a1"])
 	}
 }

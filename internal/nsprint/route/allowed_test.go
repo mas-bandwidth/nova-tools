@@ -13,7 +13,7 @@ func TestAllowedRoutesRefusesADroppedRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	flashDropped := []string{"orgptnano", "ornemotron", "orgeminilite"}
-	proDropped := []string{"ocpro", "ordspro", "ocglm53", "orkimicode", "orminimax", "orqwenplus", "orgemini25pro", "orhaiku", "ordevstral", "ocmuse", "ormuse"}
+	proDropped := []string{"ocpro", "ordspro", "ocglm53", "orkimicode", "orminimax", "orqwenplus", "orgemini25pro", "orhaiku", "ordevstral", "ocmuse", "ormuse", "ormimo26pro"}
 	types := append([]string{""}, tab.Types()...)
 	for _, typ := range types {
 		for _, r := range flashDropped {

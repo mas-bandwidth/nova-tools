@@ -25,8 +25,9 @@ var (
 var itemFields = []string{"state", "depends_on", "paths", "repo", "base", "priority"}
 
 // Read takes one Snapshot from Redis in four pipelined rounds: the sprints,
-// the state indexes, the item hashes (with each queued card's pool score),
-// then the cards and tasks named in DEPENDS-ON. sprint limits it to one
+// the state indexes, the item hashes (a queued card's priority is its
+// record's field; the pool is scored by age, #3692), then the cards and
+// tasks named in DEPENDS-ON. sprint limits it to one
 // sprint (read whatever its status); empty reads every open sprint in
 // sprint:order. Nothing is read with SCAN or KEYS.
 func Read(ctx context.Context, c *redis.Client, sprint string) (Snapshot, error) {
@@ -67,7 +68,6 @@ func Read(ctx context.Context, c *redis.Client, sprint string) (Snapshot, error)
 		sprint, kind, id string
 		inFlight         bool
 		hash             *redis.SliceCmd
-		score            *redis.FloatCmd
 	}
 	var items []itemCmd
 	seen := map[string]bool{}
@@ -83,9 +83,6 @@ func Read(ctx context.Context, c *redis.Client, sprint string) (Snapshot, error)
 			seen[k] = true
 			ic := itemCmd{sprint: x.sprint, kind: x.kind, id: id, inFlight: x.inFlight,
 				hash: pipe.HMGet(ctx, "s:"+x.sprint+":"+x.kind+":"+id, itemFields...)}
-			if x.kind == KindCard && !x.inFlight {
-				ic.score = pipe.ZScore(ctx, "s:"+x.sprint+":pool", id)
-			}
 			items = append(items, ic)
 		}
 	}
@@ -108,9 +105,6 @@ func Read(ctx context.Context, c *redis.Client, sprint string) (Snapshot, error)
 			Repo: str(v, 3), Base: str(v, 4),
 		}
 		it.Priority, _ = strconv.ParseFloat(str(v, 5), 64)
-		if ic.score != nil && ic.score.Err() == nil {
-			it.Priority = ic.score.Val()
-		}
 		switch {
 		case ic.inFlight && in(it.State, cardInFlight, taskInFlight):
 			snap.InFlight = append(snap.InFlight, it)

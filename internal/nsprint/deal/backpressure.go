@@ -188,60 +188,88 @@ func ReadBackpressure(ctx context.Context, st *store.Store, sprint string) (Verd
 	return EvaluateBackpressure(hash, policy, now.UnixMilli())
 }
 
-// CheckOneBackpressureKey lists every Redis key naming backpressure and
-// refuses any second source of truth for sprint S. Allowed: this sprint's
-// s:<S>:backpressure (zero or one), other sprints' own s:<T>:backpressure, and
-// the backpressure process beat proc:backpressure. Anything else, such as the
-// v1 global `backpressure` key, is ErrTwoBackpressureKeys naming the keys. It
-// returns this sprint's keys (empty or exactly one). It uses SCAN, so it is a
-// preflight check, never part of the table snapshot.
-func CheckOneBackpressureKey(ctx context.Context, st *store.Store, sprint string) ([]string, error) {
-	if st == nil || st.Client() == nil {
-		return nil, fmt.Errorf("backpressure: nil store")
-	}
-	mine := BackpressureKey(sprint)
-	var own, extra []string
-	iter := st.Client().Scan(ctx, 0, "*backpressure*", 1000).Iterator()
-	for iter.Next(ctx) {
-		key := iter.Val()
-		switch {
-		case key == mine:
-			own = append(own, key)
-		case key == "proc:backpressure":
-		case isSprintBackpressureKey(key):
-		default:
-			extra = append(extra, key)
-		}
-	}
-	if err := iter.Err(); err != nil {
-		return nil, fmt.Errorf("backpressure: scan: %w", err)
-	}
-	if len(extra) > 0 {
-		sort.Strings(extra)
-		quoted := make([]string, len(extra))
-		for i, k := range extra {
-			quoted[i] = strconv.Quote(k)
-		}
-		return own, fmt.Errorf("%w: %s beside %q", ErrTwoBackpressureKeys, strings.Join(quoted, ", "), mine)
-	}
-	return own, nil
+// ProcBackpressureKey is the backpressure process beat. It is not state, so
+// it is never a second source of truth; the check reports whether it exists.
+const ProcBackpressureKey = "proc:backpressure"
+
+// LegacyBackpressureKeys are the key names that carried backpressure state
+// before s:<S>:backpressure: the v1 global hash `backpressure` (the two-files
+// defect of 2026-09-22). Any of them present beside the sprint's own hash is
+// a second source of truth. A new legacy name is one entry here.
+var LegacyBackpressureKeys = []string{"backpressure"}
+
+// KeyCheck is what CheckOneBackpressureKey read.
+type KeyCheck struct {
+	// Sprint is the sprint checked.
+	Sprint string
+	// Own is this sprint's key: empty, or exactly [s:<S>:backpressure].
+	Own []string
+	// Beat is true when proc:backpressure exists.
+	Beat bool
+	// Extra are the legacy keys present, sorted.
+	Extra []string
+	// RoundTrips is the number of Redis round trips the check made (1).
+	RoundTrips int
 }
 
-// isSprintBackpressureKey matches s:<name>:backpressure for a valid sprint
-// name ([a-z0-9-]{1,40}, #2756 section 2.1 rule 10).
-func isSprintBackpressureKey(key string) bool {
-	name, ok := strings.CutPrefix(key, "s:")
-	if !ok {
-		return false
+// Line is the check's one receipt line.
+func (k KeyCheck) Line() string {
+	beat := 0
+	if k.Beat {
+		beat = 1
 	}
-	name, ok = strings.CutSuffix(name, ":backpressure")
-	if !ok || len(name) < 1 || len(name) > 40 {
-		return false
+	if len(k.Extra) > 0 {
+		return fmt.Sprintf("BACKPRESSURE CHECK REFUSED sprint=%s own=%d beat=%d legacy=%s round_trips=%d",
+			k.Sprint, len(k.Own), beat, strings.Join(k.Extra, ","), k.RoundTrips)
 	}
-	for _, r := range name {
-		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
-			return false
+	return fmt.Sprintf("BACKPRESSURE CHECK OK sprint=%s own=%d beat=%d legacy=0 round_trips=%d",
+		k.Sprint, len(k.Own), beat, k.RoundTrips)
+}
+
+// CheckOneBackpressureKey refuses any second source of truth for sprint S. It
+// reads the named keys it needs, s:<S>:backpressure, proc:backpressure and
+// LegacyBackpressureKeys, with one EXISTS each in one pipeline: one round trip
+// whatever the size of the keyspace, and no SCAN or KEYS (#3276; the SCAN walk
+// it replaces took 7 round trips at 6,357 keys). Other sprints' own
+// s:<T>:backpressure hashes are theirs and are not read. A legacy key present
+// is ErrTwoBackpressureKeys naming the keys; the KeyCheck is returned either
+// way so the receipt can print it.
+func CheckOneBackpressureKey(ctx context.Context, st *store.Store, sprint string) (KeyCheck, error) {
+	check := KeyCheck{Sprint: sprint}
+	if st == nil || st.Client() == nil {
+		return check, fmt.Errorf("backpressure: nil store")
+	}
+	if sprint == "" {
+		return check, fmt.Errorf("backpressure: sprint is required")
+	}
+	mine := BackpressureKey(sprint)
+	pipe := st.Client().Pipeline()
+	ownCmd := pipe.Exists(ctx, mine)
+	beatCmd := pipe.Exists(ctx, ProcBackpressureKey)
+	legacy := make([]*redis.IntCmd, len(LegacyBackpressureKeys))
+	for i, k := range LegacyBackpressureKeys {
+		legacy[i] = pipe.Exists(ctx, k)
+	}
+	check.RoundTrips = 1
+	if _, err := pipe.Exec(ctx); err != nil {
+		return check, fmt.Errorf("backpressure: exists %s: %w", mine, err)
+	}
+	if ownCmd.Val() > 0 {
+		check.Own = []string{mine}
+	}
+	check.Beat = beatCmd.Val() > 0
+	for i, cmd := range legacy {
+		if cmd.Val() > 0 {
+			check.Extra = append(check.Extra, LegacyBackpressureKeys[i])
 		}
 	}
-	return true
+	if len(check.Extra) > 0 {
+		sort.Strings(check.Extra)
+		quoted := make([]string, len(check.Extra))
+		for i, k := range check.Extra {
+			quoted[i] = strconv.Quote(k)
+		}
+		return check, fmt.Errorf("%w: %s beside %q", ErrTwoBackpressureKeys, strings.Join(quoted, ", "), mine)
+	}
+	return check, nil
 }

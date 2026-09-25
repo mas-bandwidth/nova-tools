@@ -59,6 +59,40 @@ func Config(ctx context.Context, client *redis.Client) (downAfter, upAfter int, 
 	return downAfter, upAfter, nil
 }
 
+// SessionFailAfter is cfg:fleet ssh_fail_after (#3322): the consecutive deal-pass
+// ssh timeouts at which the fleet step holds an UP bench (PROBING); 3 when
+// unset.
+func SessionFailAfter(ctx context.Context, client *redis.Client) (int, error) {
+	reply, err := client.FCall(ctx, FunctionConfig, nil).StringSlice()
+	if err != nil {
+		return 0, fmt.Errorf("fleet config: %w", err)
+	}
+	if len(reply) < 4 || reply[0] != "OK" {
+		return 0, fmt.Errorf("fleet config: unexpected reply %v", reply)
+	}
+	n, err := strconv.Atoi(reply[3])
+	if err != nil {
+		return 0, fmt.Errorf("fleet config ssh_fail_after %q: %w", reply[3], err)
+	}
+	return n, nil
+}
+
+// SetSessionFailAfter sets cfg:fleet ssh_fail_after, leaving the other two
+// thresholds as they are. Values < 1 are refused.
+func SetSessionFailAfter(ctx context.Context, client *redis.Client, n int) error {
+	if n < 1 {
+		return fmt.Errorf("ssh_fail_after must be >= 1")
+	}
+	reply, err := client.FCall(ctx, FunctionConfig, nil, "", "", strconv.Itoa(n)).StringSlice()
+	if err != nil {
+		return fmt.Errorf("fleet config: %w", err)
+	}
+	if len(reply) < 1 || reply[0] != "OK" {
+		return fmt.Errorf("fleet config: unexpected reply %v", reply)
+	}
+	return nil
+}
+
 // SetConfig sets the fleet down_after and up_after thresholds. Values < 1 are refused.
 func SetConfig(ctx context.Context, client *redis.Client, downAfter, upAfter int) error {
 	if downAfter < 1 {

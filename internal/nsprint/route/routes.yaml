@@ -285,14 +285,15 @@ routes:
     q: 0.17
     tok_per_8: 14.6
     wall_s: 1181
-    why: "second tier: on the pro frontier but outside the best third (eff 11.38); cell3 only (5 of 5 scored at 8+)"
+    why: "second tier: on the pro frontier but outside the best third (eff 11.38); cell3 only (5 of 5 scored at 8+); the pro spread's openrouter slot: pro A/B on OpenRouter after mimo went dead; measured per useful card (#3742)"
     faults: [CARD-WIRE, CARD-GATE, CARD-NOCTRL, CARD-STALE]
     faults_from: rung
   - route: ormimo26pro
     rung: pro
     model: xiaomi/mimo-v2.6-pro
     via: openrouter
-    state: held
+    state: dropped
+    flag: dead
     run: 18
     scored: 4
     u8: 3
@@ -302,7 +303,7 @@ routes:
     q: 0.30
     tok_per_8: 14.8
     wall_s: 1372
-    why: "too few to say (U=3); on the pro frontier"
+    why: "dead route: 3 of 3 one-line cards walled at 180 s with no RESULT (quack-0925b hulk-pro, vision-pro; quack-0925c hulk-pro), #3742"
     faults: [CARD-WIRE, CARD-GATE, CARD-NOCTRL, CARD-STALE]
     faults_from: rung
   - route: ormimopro
@@ -595,5 +596,5 @@ spread:
   - tier: pro
     provider: openrouter
     via: openrouter
-    routes: [ormimo26pro, ormimopro, orglm53, orkimi3]
-    why: "held non-DeepSeek openrouter pro routes by efficiency, lower is better: 0.89, 0.98, 10.80, 11.38"
+    routes: [orkimi3, ormimopro, orglm53]
+    why: "pro A/B on OpenRouter after mimo went dead; measured per useful card (#3742): kimi-k3 8 of 12 scored at 8+, held only on cost; alternates held by efficiency, lower is better: 0.98, 10.80"

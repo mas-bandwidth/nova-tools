@@ -670,6 +670,19 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, stageErr.Error())
 		return nativeRunResult{}, 2
 	}
+	// NO-REPO-STAGED (nova-tools#3711): a card that NAMES a repo (base-repo:, REPO:, or a clone
+	// URL) and ends with nothing staged is a staging failure. quack-0925b launched all 12 of
+	// its `REPO: owner/name` cards into job dirs with no repo after `STAGE OK repo= base=`;
+	// the models cloned it themselves (75 s on batman), were refused by the wall (hulk), or
+	// ran out of wall. The wrapper hands the model the repo, or the card does not start.
+	if !stageRes.Staged && swarm.CardNamesRepo(cfg.card) {
+		named := swarm.ReadCardBase(cfg.card)
+		fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=no-repo-staged\n",
+			oneline.Field(bench), oneline.Field(named.Named), oneline.Field(swarm.Version8(named.Sha)))
+		refuseNative(errOut, fmt.Sprintf("%s names repo %s but nothing was staged into %s: read the card's REPO:/base-repo: line (owner/name or a clone URL)",
+			oneline.Field(cfg.label), oneline.Field(named.Named), oneline.Field(stageOpts.TargetDir)))
+		return nativeRunResult{}, 2
+	}
 	// STAGE OK (issue #3050): staging returned silently, so the rowan-tools #187 launcher
 	// -- which detaches 2s after seeing a STAGE OK/FAIL line on stdout instead of waiting
 	// the full 135s -- printed STAGE UNSEEN on every #3050 launch. One line, on success.
@@ -2011,10 +2024,12 @@ var launchArgvFor = swarm.LaunchArgvFor
 // the providers table (tools-48, #2646). The table's row for the route's provider gives the
 // shape -- the row swarm.DefaultLaunchRow when the table names no row of its own -- and
 // this run fills it: the binary resolved from --harness, the provider/model the run was
-// routed to, its label as the title, and the card text as the prompt.
+// routed to, its label as the title, and the card text as the prompt -- followed, for a
+// typed card, by the RESULT-FORMAT paragraph (swarm.CardPrompt, nova-tools#3651). The
+// card's sha256 stays the sha of the card text alone.
 func nativeLaunchArgv(bin string, cfg nativeRunConfig, provider string) ([]string, error) {
 	return launchArgvFor(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
-		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: string(cfg.card),
+		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: swarm.CardPrompt(cfg.card),
 	})
 }
 

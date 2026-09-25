@@ -9,7 +9,8 @@
 // adds the units and places <S> in sprints and sprint:order (ZADD NX, score =
 // open time in ms). Both re-make the existing-sprint decision atomically:
 // a closed sprint is never reopened, and an open or opening sprint is resumed
-// only from the same source. Close is one MULTI/EXEC round trip.
+// only from the same source. Close is one Redis Function, ns_sprint_close,
+// which refuses a name with no s:<S> and a sprint already closed (#3571).
 package sprint
 
 import (
@@ -19,6 +20,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -40,6 +42,7 @@ const (
 	FunctionBegin  = "ns_sprint_begin"
 	FunctionOpen   = "ns_sprint_open"
 	FunctionStatus = "ns_sprint_status"
+	FunctionClose  = "ns_sprint_close"
 )
 
 // nameRE is the card identity's sprint shape (card/identity.go).
@@ -64,25 +67,39 @@ type Existing struct {
 	Status  string
 	FromSHA string
 	Member  map[string]bool
+	// Friends is SCARD friends: 0 means no friend is registered on this
+	// store yet, which the owner refusal names (#3570).
+	Friends int64
+	// RegistryRefused is the NOPERM line when the seat's ACL refuses the
+	// friends registry read; Member is then empty and Friends is 0, and open
+	// refuses naming the ACL rather than calling every owner unregistered.
+	RegistryRefused string
 }
 
-// ReadExisting is one pipeline, one round trip: HMGET s:<S> status from_sha
-// and SMISMEMBER friends over owners (skipped when there are none).
+// ReadExisting is one pipeline, one round trip: HMGET s:<S> status from_sha,
+// SCARD friends, and one SISMEMBER friends per owner. SISMEMBER, not
+// SMISMEMBER: every seat's ACL (the ns-* actors' command set) grants
+// SISMEMBER and SCARD, and none grants SMISMEMBER (#3570). A NOPERM on the
+// registry reads is reported in RegistryRefused, never as an error.
 func ReadExisting(ctx context.Context, st *store.Store, name string, owners []string) (Existing, error) {
 	if err := check(st, name); err != nil {
 		return Existing{}, err
 	}
 	pipe := st.Client().Pipeline()
 	hm := pipe.HMGet(ctx, "s:"+name, "status", "from_sha")
-	var mem *redis.BoolSliceCmd
+	var (
+		count *redis.IntCmd
+		mem   []*redis.BoolCmd
+	)
 	if len(owners) > 0 {
-		args := make([]any, len(owners))
+		count = pipe.SCard(ctx, "friends")
+		mem = make([]*redis.BoolCmd, len(owners))
 		for i, o := range owners {
-			args[i] = o
+			mem[i] = pipe.SIsMember(ctx, "friends", o)
 		}
-		mem = pipe.SMIsMember(ctx, "friends", args...)
 	}
-	if _, err := pipe.Exec(ctx); err != nil {
+	_, _ = pipe.Exec(ctx) // each command's error is read below
+	if err := hm.Err(); err != nil {
 		return Existing{}, fmt.Errorf("sprint open %s: existing-sprint read: %w", name, err)
 	}
 	vals := hm.Val()
@@ -91,12 +108,47 @@ func ReadExisting(ctx context.Context, st *store.Store, name string, owners []st
 		e.Status, _ = vals[0].(string)
 		e.FromSHA, _ = vals[1].(string)
 	}
-	if mem != nil {
-		for i, ok := range mem.Val() {
-			e.Member[owners[i]] = ok
+	if count == nil {
+		return e, nil
+	}
+	registry := append([]redis.Cmder{count}, cmders(mem)...)
+	for _, c := range registry {
+		err := c.Err()
+		if err == nil {
+			continue
 		}
+		if refused := nopermLine(err); refused != "" {
+			e.RegistryRefused = refused
+			e.Member = map[string]bool{}
+			return e, nil
+		}
+		return Existing{}, fmt.Errorf("sprint open %s: friends registry read: %w", name, err)
+	}
+	e.Friends = count.Val()
+	for i, c := range mem {
+		e.Member[owners[i]] = c.Val()
 	}
 	return e, nil
+}
+
+func cmders(cmds []*redis.BoolCmd) []redis.Cmder {
+	out := make([]redis.Cmder, len(cmds))
+	for i, c := range cmds {
+		out[i] = c
+	}
+	return out
+}
+
+// nopermLine is the first line of an ACL refusal, or "" for any other error.
+func nopermLine(err error) string {
+	msg := err.Error()
+	if !strings.HasPrefix(msg, "NOPERM") {
+		return ""
+	}
+	if i := strings.IndexByte(msg, '\n'); i >= 0 {
+		msg = msg[:i]
+	}
+	return strings.TrimSpace(msg)
 }
 
 // Sha8 is the first eight characters of a sha, or none when it is empty.
@@ -192,23 +244,36 @@ func Finish(ctx context.Context, st *store.Store, name, from, fromSHA string, no
 	return "", fmt.Errorf("sprint open %s: unexpected status %q", name, word)
 }
 
-// SetClosed sets s:<S> status=closed, stamps closed_at once (HSETNX) and
-// removes <S> from sprints in one transaction. sprint:order keeps its entry:
-// every reader of the order also checks status=open. There is no reopen.
-func SetClosed(ctx context.Context, st *store.Store, name string, now time.Time) (Status, error) {
+// SetClosed is ns_sprint_close, one function call: an open or opening
+// sprint gets status=closed, closed_at stamped once and <S> removed from
+// sprints. A name with no s:<S> status and a sprint past open (closed or
+// folded) write nothing and come back as refused, the REFUSED line naming
+// the remedy (#3571); the verb exits 1 on it. sprint:order keeps its entry: every reader
+// of the order also checks status=open. There is no reopen.
+func SetClosed(ctx context.Context, st *store.Store, name string, now time.Time) (s Status, refused string, err error) {
 	if err := check(st, name); err != nil {
-		return "", err
+		return "", "", err
 	}
-	_, err := st.Client().TxPipelined(ctx, func(p redis.Pipeliner) error {
-		p.HSet(ctx, "s:"+name, "status", string(Closed))
-		p.HSetNX(ctx, "s:"+name, "closed_at", now.UnixMilli())
-		p.SRem(ctx, "sprints", name)
-		return nil
-	})
+	values, word, err := call(ctx, st, FunctionClose, name, now.UnixMilli())
 	if err != nil {
-		return "", fmt.Errorf("sprint close %s: %w", name, err)
+		return "", "", fmt.Errorf("sprint close %s: %w", name, err)
 	}
-	return Closed, nil
+	switch word {
+	case "CLOSED":
+		return Closed, "", nil
+	case "ABSENT":
+		return Absent, "REFUSED " + name + " no such sprint (no s:" + name + " status); nothing closed; remedy: sprint status lists the open sprints", nil
+	case "ALREADY":
+		was, at := string(Closed), "?"
+		if len(values) > 2 {
+			was, at = fmt.Sprint(values[1]), fmt.Sprint(values[2])
+		}
+		if at == "" {
+			at = "?"
+		}
+		return Status(was), "REFUSED " + name + " already " + was + " (closed_at " + at + "); nothing written; there is no reopen", nil
+	}
+	return "", "", fmt.Errorf("sprint close %s: unexpected status %q", name, word)
 }
 
 // Line is the one line close prints.

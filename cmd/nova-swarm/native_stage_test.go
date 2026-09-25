@@ -280,3 +280,137 @@ func TestStageFailLinePrintsOnStagingFailure(t *testing.T) {
 		t.Fatalf("STAGE FAIL line missing bench/repo fields:\n%s", line)
 	}
 }
+
+// TestStagePushedHeaderStagesRepoBeforeTheModel is nova-tools#3711's DONE-WHEN: a card whose
+// header is `REPO: mas-bandwidth/nova-tools` / `BASE: dev` / `base-sha: <sha>` (the header
+// every pushed card carries) is staged into <job>/repo at that sha from the bench mirror
+// before the model starts, and STAGE OK names the repo and the 8-char sha. RED WITHOUT THE
+// FIX: `STAGE OK bench=vision repo= base= secs=0` and no <job>/repo, as on all 12 quack-0925b
+// cards.
+func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	benchHome := filepath.Join(root, "bench-home")
+	srcDir := filepath.Join(root, "src-repo")
+	mirrorDir := filepath.Join(benchHome, "nova-bench", "mirror", "nova-tools.git")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(mirrorDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, srcDir, "init", "-q")
+	runGit(t, srcDir, "checkout", "-q", "-b", "dev")
+	runGit(t, srcDir, "config", "user.name", "test")
+	runGit(t, srcDir, "config", "user.email", "test@example.com")
+	var shas []string
+	for _, body := range []string{"one\n", "two\n"} {
+		if err := os.WriteFile(filepath.Join(srcDir, "README.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, srcDir, "add", "README.md")
+		runGit(t, srcDir, "commit", "-q", "-m", "commit")
+		shas = append(shas, strings.TrimSpace(runGit(t, srcDir, "rev-parse", "HEAD")))
+	}
+	runGit(t, root, "clone", "--mirror", "-q", srcDir, mirrorDir)
+	base := shas[0] // the older commit: the check is the sha, not the mirror's tip
+
+	cardText := []byte("RESULT: s00-0302-quack-hulk-flash sha=" + base[:12] + "\n" +
+		"KIND: fix\nTYPE: code\nREPO: mas-bandwidth/nova-tools\nBASE: dev\n" +
+		"base-sha: " + base + "\nPATHS: docs/quack/s00-0302-quack-hulk-flash.txt\n")
+	var errOut bytes.Buffer
+	var code int
+	line := captureStageLine(t, func() {
+		_, code = nativeRun(nativeRunConfig{
+			binary:       bin,
+			model:        "fake/fake-model",
+			label:        "card-pushed-header",
+			card:         cardText,
+			slotDir:      slot,
+			root:         root,
+			benchHome:    benchHome,
+			benchName:    "vision",
+			stageTimeout: 30 * time.Second,
+			deadline:     30 * time.Second,
+			noWall:       true,
+		}, &errOut)
+	})
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d:\n%s", code, errOut.String())
+	}
+	if !strings.HasPrefix(line, "STAGE OK ") {
+		t.Fatalf("expected a STAGE OK line, got %q", line)
+	}
+	for _, want := range []string{"bench=vision", "/mas-bandwidth/nova-tools.git", "base=" + base[:8]} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("STAGE OK line missing %q:\n%s", want, line)
+		}
+	}
+	repoDir := filepath.Join(slot, "jobs", "card-pushed-header", "repo")
+	if head := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD")); head != base {
+		t.Fatalf("<job>/repo HEAD = %s, want base-sha %s", head, base)
+	}
+	if branch := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "--abbrev-ref", "HEAD")); branch != "rowan/s00-0302-quack-hulk-flash" {
+		t.Fatalf("<job>/repo is on %q, want the card's branch rowan/s00-0302-quack-hulk-flash", branch)
+	}
+}
+
+// TestStageNamedRepoNotStagedIsRefused is the other half of #3711: a card that names a repo
+// and ends with nothing staged prints `STAGE FAIL ... reason=no-repo-staged` and is refused
+// (exit 2) before any child starts, never `STAGE OK repo= base=` into an empty job dir.
+// A card with no repo line at all keeps today's behaviour (STAGE OK, nothing to stage).
+func TestStageNamedRepoNotStagedIsRefused(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	benchHome := filepath.Join(root, "bench-home")
+
+	cardText := []byte("RESULT: card-unreadable-repo sha=123456789012\nREPO: nova-tools\nBASE: dev\nbase-sha: 1234567890123456789012345678901234567890\n")
+	var errOut bytes.Buffer
+	var code int
+	line := captureStageLine(t, func() {
+		_, code = nativeRun(nativeRunConfig{
+			binary:       bin,
+			model:        "fake/fake-model",
+			label:        "card-no-repo-staged",
+			card:         cardText,
+			slotDir:      slot,
+			root:         root,
+			benchHome:    benchHome,
+			benchName:    "hulk",
+			stageTimeout: 30 * time.Second,
+			deadline:     30 * time.Second,
+			noWall:       true,
+		}, &errOut)
+	})
+	if code != 2 {
+		t.Fatalf("expected refusal exit 2, got %d:\n%s", code, errOut.String())
+	}
+	if !strings.HasPrefix(line, "STAGE FAIL ") || !strings.Contains(line, "reason=no-repo-staged") || !strings.Contains(line, "bench=hulk") || !strings.Contains(line, "repo=nova-tools") {
+		t.Fatalf("expected STAGE FAIL bench=hulk repo=nova-tools ... reason=no-repo-staged, got %q", line)
+	}
+	if !strings.Contains(errOut.String(), "nothing was staged") {
+		t.Fatalf("refusal does not name the cause:\n%s", errOut.String())
+	}
+
+	// No repo line at all: nothing to stage, the card runs as before.
+	plain := []byte("RESULT: card-no-repo sha=123456789012\nKIND: read\n")
+	errOut.Reset()
+	line = captureStageLine(t, func() {
+		_, code = nativeRun(nativeRunConfig{
+			binary:       bin,
+			model:        "fake/fake-model",
+			label:        "card-no-repo",
+			card:         plain,
+			slotDir:      slot,
+			root:         root,
+			benchHome:    benchHome,
+			benchName:    "hulk",
+			stageTimeout: 30 * time.Second,
+			deadline:     30 * time.Second,
+			noWall:       true,
+		}, &errOut)
+	})
+	if code != 0 || !strings.HasPrefix(line, "STAGE OK ") {
+		t.Fatalf("card with no repo line: code=%d line=%q, want 0 and STAGE OK\n%s", code, line, errOut.String())
+	}
+}

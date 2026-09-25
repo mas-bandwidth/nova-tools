@@ -5,36 +5,22 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
 )
 
-const listBenchesLua = `
-local S = ARGV[1]
-local benches = redis.call('SMEMBERS', 'benches')
-table.sort(benches)
-local res = {}
-for _, b in ipairs(benches) do
-    local beat = redis.call('EXISTS', 'bench:' .. b .. ':beat')
-    local des = redis.call('HMGET', 'bench:' .. b .. ':desired', 'slots', 'paused', 'legs')
-    local starting = redis.call('ZCARD', 'bench:' .. b .. ':starting')
-    local living = redis.call('ZCARD', 'bench:' .. b .. ':living')
-    local queue = redis.call('ZCARD', 's:' .. S .. ':bench:' .. b .. ':queue')
-    local ssh = redis.call('HMGET', 'bench:' .. b .. ':ssh', 'state', 'at')
-    table.insert(res, {
-        b,
-        beat,
-        des[1] or '0',
-        des[2] or '',
-        starting,
-        living,
-        queue,
-        ssh[1] or '',
-        ssh[2] or ''
-    })
-end
-return res
-`
+// StatusFunction is `deal status` list mode: a read-only Function of the
+// nova_sprint library (deal.lua), called with FCALL_RO (#3605). The bench
+// seat may FCALL but has no scripting grant, so list mode sends no ad-hoc script.
+const StatusFunction = "ns_deal_status_list"
+
+// StatusUsage is the verb's help line (#3605). The fleet Redis has its
+// default user off: NOVA_SPRINT_REDIS_USER names the ACL seat (bench on a
+// bench) and the password stays in the environment (store.Open), never a flag.
+const StatusUsage = "deal status --redis <addr> --sprint <S> [--bench <b>]: bench dealability and sprint cards left; " +
+	"on the fleet Redis set NOVA_SPRINT_REDIS_USER=bench (password from nova-secrets exec, never a flag) " +
+	"(exit 2 on usage, 6 no Redis)"
 
 func evalVerdict(isMember, beatExists, paused bool, free int) string {
 	if !isMember {
@@ -138,7 +124,7 @@ func Status(ctx context.Context, c *redis.Client, sprint, bench string) ([]strin
 
 	if bench == "" {
 		// List mode
-		benchListCmd = pipe.Eval(ctx, listBenchesLua, []string{}, sprint)
+		benchListCmd = pipe.FCallRo(ctx, StatusFunction, []string{}, sprint)
 	} else {
 		// Lookup mode
 		isMemberCmd = pipe.SIsMember(ctx, "benches", bench)
@@ -151,6 +137,9 @@ func Status(ctx context.Context, c *redis.Client, sprint, bench string) ([]strin
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		if strings.Contains(err.Error(), "Function not found") {
+			return nil, fmt.Errorf("%s is not loaded; converge the library as its owner (nova-sprint fn load): %w", StatusFunction, err)
+		}
 		return nil, err
 	}
 

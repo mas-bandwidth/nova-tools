@@ -539,3 +539,153 @@ func TestFleetOneWriter(t *testing.T) {
 		t.Fatal("found no write to cfg:fleet; check regex")
 	}
 }
+
+// TestFleetStepHoldsBenchAfterSSHTimeouts is nova-tools #3322 on the fleet
+// duty: the deal pass counts a bench's consecutive ssh timeouts on its own
+// cell (bench:<b>:ssh timeouts); the step holds an UP bench (PROBING, the
+// reason on it, one fleet-state receipt) once the count since the last hold
+// reaches cfg:fleet ssh_fail_after (3 by default, set through ns_fleet_config
+// and read back by SessionFailAfter), remembers the count in ssh_held so the same
+// count never holds twice, lets up_after beats earn UP again, and holds again
+// only after ssh_fail_after fresh timeouts; a count cleared by an ok session
+// starts over.
+func TestFleetStepHoldsBenchAfterSSHTimeouts(t *testing.T) {
+	t.Setenv(testutil.CIEnv, "1")
+	addr := testutil.Start(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatalf("load fn: %v", err)
+	}
+	const bench = "bench-ssh"
+	if err := c.SAdd(ctx, "benches", bench).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := fleet.SessionFailAfter(ctx, c); err != nil || n != 3 {
+		t.Fatalf("default ssh_fail_after = %d (%v), want 3", n, err)
+	}
+	if err := fleet.SetConfig(ctx, c, 30, 2); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := fleet.SessionFailAfter(ctx, c); err != nil || n != 3 {
+		t.Fatalf("ssh_fail_after after SetConfig = %d (%v), want still 3", n, err)
+	}
+	if err := fleet.SetSessionFailAfter(ctx, c, 0); err == nil {
+		t.Fatal("SetSessionFailAfter(0) was not refused")
+	}
+	// The bench comes up: DOWN, then two beats (up_after 2) earn UP.
+	setBeat(t, ctx, c, bench, "v1")
+	for i := 0; i < 3; i++ {
+		if err := fleet.Step(ctx, c, bench); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := func() (string, string, string) {
+		t.Helper()
+		v, err := c.HMGet(ctx, "bench:"+bench+":state", "state", "reason", "ssh_held").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		get := func(i int) string { s, _ := v[i].(string); return s }
+		return get(0), get(1), get(2)
+	}
+	if st, _, _ := state(); st != "UP" {
+		t.Fatalf("state %q, want UP before any timeout", st)
+	}
+	// The deal pass's cell: two timeouts hold nothing, three do.
+	cell := func(timeouts int) {
+		t.Helper()
+		if err := c.HSet(ctx, "bench:"+bench+":ssh", "state", "timeout", "why", "ssh killed at the deadline", "at", "2000", "timeouts", strconv.Itoa(timeouts)).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cell(2)
+	if err := fleet.Step(ctx, c, bench); err != nil {
+		t.Fatal(err)
+	}
+	if st, _, _ := state(); st != "UP" {
+		t.Fatalf("state %q after 2 timeouts, want UP", st)
+	}
+	cell(3)
+	if err := fleet.Step(ctx, c, bench); err != nil {
+		t.Fatal(err)
+	}
+	st, reason, held := state()
+	if st != "PROBING" || !strings.HasPrefix(reason, "ssh timeout 3 of 3: ssh killed") || held != "3" {
+		t.Fatalf("after 3 timeouts: state %q reason %q ssh_held %q, want PROBING, the count and why, 3", st, reason, held)
+	}
+	flips := func() []string {
+		t.Helper()
+		entries, err := c.XRange(ctx, "cap:log", "-", "+").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, e := range entries {
+			k, _ := e.Values["kind"].(string)
+			r, _ := e.Values["reason"].(string)
+			if k == "fleet-state" && strings.Contains(r, "PROBING ssh") {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	if got := flips(); len(got) != 1 || !strings.HasPrefix(got[0], "UP->PROBING ssh timeout 3 of 3") {
+		t.Fatalf("fleet-state receipts = %v, want one UP->PROBING with the count", got)
+	}
+	// Beats earn UP again (up_after 2); the same count does not hold twice.
+	for i := 0; i < 3; i++ {
+		if err := fleet.Step(ctx, c, bench); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if st, _, held := state(); st != "UP" || held != "3" {
+		t.Fatalf("after the probe: state %q ssh_held %q, want UP with the hold remembered at 3", st, held)
+	}
+	// Two fresh timeouts (5) do not hold; the third fresh one (6) does.
+	cell(5)
+	if err := fleet.Step(ctx, c, bench); err != nil {
+		t.Fatal(err)
+	}
+	if st, _, _ := state(); st != "UP" {
+		t.Fatalf("state %q at 5 timeouts (2 since the hold), want UP", st)
+	}
+	cell(6)
+	if err := fleet.Step(ctx, c, bench); err != nil {
+		t.Fatal(err)
+	}
+	if st, _, held := state(); st != "PROBING" || held != "6" {
+		t.Fatalf("state %q ssh_held %q at 6 timeouts, want PROBING held at 6", st, held)
+	}
+	if got := flips(); len(got) != 2 {
+		t.Fatalf("fleet-state receipts = %v, want two", got)
+	}
+	// An ok session cleared the count (0 < ssh_held): the next hold needs
+	// ssh_fail_after from zero; with ssh_fail_after 1 one timeout holds.
+	for i := 0; i < 3; i++ {
+		if err := fleet.Step(ctx, c, bench); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := fleet.SetSessionFailAfter(ctx, c, 1); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := fleet.SessionFailAfter(ctx, c); err != nil || n != 1 {
+		t.Fatalf("ssh_fail_after = %d (%v), want 1", n, err)
+	}
+	cell(0)
+	if err := fleet.Step(ctx, c, bench); err != nil {
+		t.Fatal(err)
+	}
+	if st, _, held := state(); st != "UP" || held != "0" {
+		t.Fatalf("state %q ssh_held %q after the count cleared, want UP and 0", st, held)
+	}
+	cell(1)
+	if err := fleet.Step(ctx, c, bench); err != nil {
+		t.Fatal(err)
+	}
+	if st, _, held := state(); st != "PROBING" || held != "1" {
+		t.Fatalf("state %q ssh_held %q at 1 timeout with ssh_fail_after 1, want PROBING held at 1", st, held)
+	}
+}

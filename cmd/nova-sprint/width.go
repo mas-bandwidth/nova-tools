@@ -11,7 +11,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/width"
-	"github.com/redis/go-redis/v9"
 )
 
 func init() {
@@ -51,14 +50,14 @@ func runWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 	nowMs := timeVal.UnixMilli()
 
 	if *as != "" {
-		fsData, ok, err := width.ReadFillstate(ctx, st, *as)
+		rows, err := width.ReadRows(ctx, st, []string{*as})
 		if err != nil {
 			return refuse(errOut, "width", err.Error())
 		}
-		if !ok {
-			return refuse(errOut, "width", fmt.Sprintf("friend %s has no fillstate", *as))
+		if !rows[0].Measured && !rows[0].Declared {
+			return refuse(errOut, "width", fmt.Sprintf("friend %s has no fillstate and no desired slots (set them with capacity friend)", *as))
 		}
-		fmt.Fprintln(out, fsData.Line(nowMs))
+		fmt.Fprintln(out, rows[0].Line(nowMs))
 		return 0
 	}
 
@@ -73,12 +72,8 @@ func runWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return 0
 	}
 
-	pipe := client.Pipeline()
-	cmds := make([]*redis.MapStringStringCmd, len(friends))
-	for i, f := range friends {
-		cmds[i] = pipe.HGetAll(ctx, width.FillstateKey(f))
-	}
-	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+	rows, err := width.ReadRows(ctx, st, friends)
+	if err != nil {
 		return refuse(errOut, "width", err.Error())
 	}
 
@@ -86,16 +81,19 @@ func runWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fleetSlots := 0
 	fleetDeficit := 0
 
-	for i, f := range friends {
-		m := cmds[i].Val()
-		if len(m) == 0 {
-			continue
+	for _, r := range rows {
+		switch {
+		case r.Measured:
+			fmt.Fprintln(out, r.Line(nowMs))
+			fleetWorking += r.Fillstate.Working
+			fleetSlots += r.Fillstate.Slots
+			fleetDeficit += r.Fillstate.Deficit
+		case r.Declared:
+			// Declared but not yet measured: the slots count toward the
+			// fleet, working and deficit are unknown so they add nothing.
+			fmt.Fprintln(out, r.Line(nowMs))
+			fleetSlots += r.DesiredSlots()
 		}
-		fsData := width.ParseFillstate(f, m)
-		fmt.Fprintln(out, fsData.Line(nowMs))
-		fleetWorking += fsData.Working
-		fleetSlots += fsData.Slots
-		fleetDeficit += fsData.Deficit
 	}
 
 	fmt.Fprintln(out, width.FleetLine(fleetWorking, fleetSlots, fleetDeficit))

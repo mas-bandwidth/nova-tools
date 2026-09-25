@@ -3,6 +3,9 @@
 -- Wrapped in do/end so its helpers stay out of the library main chunk's
 -- 200-local limit (the same shape as classify.lua and route.lua).
 do
+  -- The requeue's state write is NS.card (02_card_move.lua): working -> ready.
+  local CARD = NS.card
+
   local function reset_now_ms()
     local t = redis.call('TIME')
     return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
@@ -103,19 +106,17 @@ do
       local c = redis.call('HMGET', ck, 'state', 'bench', 'attempt', 'token_sha', 'pin', 'priority')
       local from, to = c[1] or '', 'kept'
       if c[2] == bench and c[3] == attempt and (from == 'dealt' or from == 'launched' or from == 'running') then
-        if status == 'STOPPED' or status == 'GONE' then
+        local qk = 's:' .. S .. ':bench:' .. bench .. ':queue'
+        if (status == 'STOPPED' or status == 'GONE') and
+            not CARD.move(ck, 'ready', { state = 'queued', bench = c[5] or '', by = actor, why = 'bench-reset',
+              priority = tonumber(redis.call('ZSCORE', qk, label) or c[6]) or 0,
+              fields = { 'token', '', 'reason', 'bench-reset' } }) then
           local pin = c[5] or ''
-          local qk = 's:' .. S .. ':bench:' .. bench .. ':queue'
-          local score = redis.call('ZSCORE', qk, label) or c[6] or '0'
-          redis.call('HSET', ck, 'state', 'queued', 'token', '', 'bench', pin, 'reason', 'bench-reset')
           redis.call('ZREM', 'bench:' .. bench .. ':starting', S .. '/' .. label .. '/' .. attempt)
           redis.call('ZREM', 'bench:' .. bench .. ':living', S .. '/' .. label .. '/' .. attempt)
           if pin ~= bench then
             redis.call('ZREM', qk, label)
           end
-          redis.call('ZADD', 's:' .. S .. ':pool', score, label)
-          redis.call('SREM', 's:' .. S .. ':idx:card:' .. from, label)
-          redis.call('SADD', 's:' .. S .. ':idx:card:queued', label)
           reset_card_receipt(S, label, from, attempt, c[4], actor, at)
           stopped = stopped + 1
           requeued = requeued + 1

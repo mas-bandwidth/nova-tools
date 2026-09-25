@@ -8,6 +8,8 @@
 //	nova-sprint why <unit>|<repo>#<n> --redis <addr> --sprint <S> [--now <unix>]
 //	nova-sprint land status [<unit>] --redis <addr> --sprint <S> [--now <unix>]
 //
+// land status --repo <owner/repo> is the stream form (land_stream.go).
+//
 // Exit (7.7): 0 printed, 1 no record for that unit or PR, 2 refused or
 // usage (a REFUSED <reason> remedy=<cmd> line), 6 no Redis.
 package main
@@ -33,7 +35,7 @@ func init() {
 	})
 	register(Verb{
 		Name:    "land",
-		Summary: "land status|flaky ...: lander status and flaky observation store",
+		Summary: "land status|flaky|stream|merge ...: lander status, flaky store, and the stream landing (land stream/merge, land status --repo)",
 		Run:     runLand,
 	})
 }
@@ -138,7 +140,7 @@ func unitHeader(u *land.Unit) string {
 
 func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "land", "want status or flaky or writer or eval (sprint land is the lander's verb, #2942)")
+		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge (sprint land is the lander's verb, #2942)")
 	}
 	if args[0] == "writer" {
 		return runLandWriter(ctx, args[1:], out, errOut)
@@ -152,8 +154,17 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if args[0] == "flaky" {
 		return runLandFlaky(ctx, args[1:], out, errOut)
 	}
+	if args[0] == "stream" {
+		return runLandStream(ctx, args[1:], out, errOut)
+	}
+	if args[0] == "merge" {
+		return runLandMerge(ctx, args[1:], out, errOut)
+	}
+	if args[0] == "status" && hasRepoFlag(args[1:]) {
+		return runLandStreamStatus(ctx, args[1:], out, errOut)
+	}
 	if args[0] != "status" {
-		return refuse(errOut, "land", "want status or flaky or writer or eval (sprint land is the lander's verb, #2942)")
+		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge (sprint land is the lander's verb, #2942)")
 	}
 	const usage = "land status [<unit>] --redis <addr> --sprint <S>"
 	addr, sprint, now, pos, err := readFlags("land status", args[1:])

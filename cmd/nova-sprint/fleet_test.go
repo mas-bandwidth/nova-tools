@@ -170,7 +170,7 @@ func TestFleetDownKeepsLeases(t *testing.T) {
 		t.Fatalf("dump benchEnded before: %v", err)
 	}
 
-	duties, _, err := productionDuties(st, nil)
+	duties, _, _, err := productionDuties(st, nil)
 	if err != nil {
 		t.Fatalf("productionDuties: %v", err)
 	}

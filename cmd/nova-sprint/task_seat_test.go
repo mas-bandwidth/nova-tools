@@ -117,7 +117,7 @@ func (f *seatFixture) wantOpen(id string) {
 // actor they are given.
 func TestControl2929PushTakeFromSeat(t *testing.T) {
 	ctx := context.Background()
-	claimRx := regexp.MustCompile(`^CLAIMED ` + seatSprint + `/t1 attempt=1 token=1\.[0-9a-f]{32}\nTASK t1 kind=work ref=r title="T"\n$`)
+	claimRx := regexp.MustCompile(`^CLAIMED ` + seatSprint + `/t1 attempt=1 token=1\.[0-9a-f]{32} trips=2\nTASK t1 kind=work ref=r title="T"\n$`)
 
 	t.Run("cross_push_then_self_take", func(t *testing.T) {
 		f := newSeat(t)

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,7 +50,10 @@ printed, passed to the harness, or written to a receipt (token_sha only).
 The bench configures it through the environment the launcher runs in:
   NOVA_CARD_REDIS    the sprint Redis address
   NOVA_CARD_BENCH    this bench's name, as the card hash names it
-  NOVA_CARD_HARNESS  absolute path of the harness program
+  NOVA_CARD_HARNESS  absolute path of a harness program; unset, the Go
+                     harness runs in-process (nova-sprint card run, #3681)
+                     from NOVA_CARD_HARNESS_BIN, NOVA_BENCH_SEAT,
+                     NOVA_CARD_DEADLINE, NOVA_CARD_TOKENS and HOME
   NOVA_CARD_JOBS     absolute root of job dirs (<root>/<S>/<label>/<attempt>)
   NOVA_CARD_RESULTS  absolute root of results (<root>/<identity>)
   NOVA_CARD_CLOCK    the card clock, a Go duration (45m)
@@ -59,8 +63,9 @@ The bench configures it through the environment the launcher runs in:
 The harness runs in the job dir with NOVA_CARD, NOVA_CARD_BRANCH,
 NOVA_CARD_JOB and NOVA_CARD_OUT set; what it writes under NOVA_CARD_OUT is
 copied to the results dir before the end record, and the job dir is deleted.
-Exit 0 is DONE/done; any other exit is FAILED crash; the clock running out
-is FAILED timeout.
+Exit 0 is DONE/done; any other exit is FAILED crash, or FAILED refused with
+the refusal line as the card's why when the harness's program printed a
+NATIVE REFUSED line (#3194); the clock running out is FAILED timeout.
 
 exit codes: 0 the end was recorded (any outcome), 1 configuration missing,
 2 could not run, 3 fenced, 4 not dealt to this bench, 6 Redis unavailable.
@@ -116,6 +121,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 		return card.WrapperExitRedis
 	}
 	defer st.Close()
+	cfg.Store = st
 	cfg.Started = func() { ack("LAUNCHED") }
 	ledger := &card.RedisLedger{
 		Store: st, Sprint: line.Sprint, Label: line.Label, Token: line.Token,
@@ -188,7 +194,7 @@ func config(l launch.Line, getenv func(string) string) (card.WrapperConfig, erro
 		name string
 		dst  *time.Duration
 		need bool
-	}{{"NOVA_CARD_CLOCK", &cfg.Clock, true}, {"NOVA_CARD_BEAT", &cfg.BeatEvery, false}} {
+	}{{"NOVA_CARD_CLOCK", &cfg.Clock, true}, {"NOVA_CARD_BEAT", &cfg.BeatEvery, false}, {"NOVA_CARD_CHECK", &cfg.CheckTimeout, false}} {
 		v := getenv(kv.name)
 		if v == "" {
 			if kv.need {
@@ -203,13 +209,21 @@ func config(l launch.Line, getenv func(string) string) (card.WrapperConfig, erro
 		}
 		*kv.dst = d
 	}
-	for name, v := range map[string]string{"NOVA_CARD_BENCH": cfg.Bench, "NOVA_CARD_HARNESS": cfg.Harness, "NOVA_CARD_JOBS": cfg.JobsRoot, "NOVA_CARD_RESULTS": cfg.ResultsRoot} {
+	for name, v := range map[string]string{"NOVA_CARD_BENCH": cfg.Bench, "NOVA_CARD_JOBS": cfg.JobsRoot, "NOVA_CARD_RESULTS": cfg.ResultsRoot} {
 		if v == "" {
 			bad = append(bad, name)
 		}
 	}
+	if cfg.Harness == "" {
+		// No harness program: the Go harness in-process (#3681), configured
+		// from the same card.env the bash one read.
+		rc, missing := card.RunConfigFromEnv(getenv)
+		bad = append(bad, missing...)
+		cfg.InProcess = &rc
+	}
 	if len(bad) > 0 {
 		sort.Strings(bad)
+		bad = slices.Compact(bad)
 		return cfg, fmt.Errorf("missing or bad %s", strings.Join(bad, ", "))
 	}
 	return cfg, nil

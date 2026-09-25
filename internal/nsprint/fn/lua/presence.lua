@@ -198,7 +198,7 @@ end
 -- bench this call returns BUSY. When the owner key and beat have expired the
 -- bench is free, so a stalled process never wedges it (stale expiry recovery).
 -- Absence-to-presence logs bench-up. The live set is rewritten each beat.
--- args[14] is the TTL in ms the caller's loop promises (3 x its interval,
+-- args[17] is the TTL in ms the caller's loop promises (3 x its interval,
 -- #3372); a missing or non-positive value keeps PL_BEAT_MS.
 local function bench_beat(keys, args)
   local bench = args[1]
@@ -210,7 +210,11 @@ local function bench_beat(keys, args)
   local live, why = args[8], args[9]
   local session, actor, idem = args[10], args[11], args[12]
   local build = args[13]
-  local ttl = tonumber(args[14])
+  -- The bench's own facts, measured on the bench each beat (#3646):
+  -- harness versions present, git mirrors present, free GiB under its root.
+  -- A caller that predates them passes nothing and they read as missing.
+  local harness, mirrors, disk_gib = args[14], args[15], args[16]
+  local ttl = tonumber(args[17])
   if not ttl or ttl <= 0 then
     ttl = PL_BEAT_MS
   end
@@ -232,7 +236,9 @@ local function bench_beat(keys, args)
   redis.call('HSET', 'bench:' .. bench .. ':beat',
     'host', host or '', 'user', user or '', 'load1', load1 or '',
     'ssh', ssh or '', 'probe', probe or '', 'launcher', launcher or '',
-    'live', '0', 'why', why or '', 'build', build or '', 'at', tostring(at))
+    'live', '0', 'why', why or '', 'build', build or '',
+    'harness', harness or '', 'mirrors', mirrors or '', 'disk_gib', disk_gib or '',
+    'at', tostring(at))
   redis.call('PEXPIRE', 'bench:' .. bench .. ':beat', ttl)
   redis.call('SET', owner_key, session, 'PX', ttl)
 

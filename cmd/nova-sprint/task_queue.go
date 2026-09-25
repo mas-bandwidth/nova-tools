@@ -1,7 +1,8 @@
 // The one task store's subverbs (#3206 rev 5 PR A): the friend-queue verbs
 // the task verb lacked. Each mutating subverb is one Redis Function call;
-// counts and owners are pipelined reads. There is no block/unblock (ruling
-// nova-tools#3516): `task depends` gives a task DEPENDS-ON conditions, and a
+// counts and owners are pipelined reads. This store has no block/unblock (ruling
+// nova-tools#3516; the ws index's batch block/unblock are task_batch.go, #3661):
+// `task depends` gives a task DEPENDS-ON conditions, and a
 // task with an unmet one is waiting, never ready, until `task resolve` or the
 // done/close of the task it waits on makes it ready on its own queue.
 package main

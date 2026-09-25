@@ -11,9 +11,10 @@
 // lease:harvest:<b> and clock, off the reconciler's goroutine. Each writes its
 // own proc line (proc:ok-to-friend, proc:harvest:<b>).
 //
-// pr-to-read and hold-to-fix (#2941) are not built on dev: their verbs refuse
-// and name the issue, and `consume list` says so. Each becomes one case here
-// when its handler lands.
+// pr-to-read passes every open sprint's log too (prReadDuty), each under its
+// own lease:route:<S>, joining a sprint opened after the reconciler started
+// on the next pass. hold-to-fix (#3092) is not built on dev: its verb
+// refuses and names the issue, and `consume list` says so.
 package main
 
 import (
@@ -52,6 +53,10 @@ var consumeNotBuilt = map[string]string{
 // consumePRReadRemote is the remote seam for pr-to-read, swapped in tests.
 var consumePRReadRemote consume.Remote = consume.GitRemote
 
+// consumeHarvestLog receives the harvest duty's receipt lines (TAKEN
+// from=<instance> stale, #3737): the reconciler's stdout, its log.
+var consumeHarvestLog = func(line string) { fmt.Println(line) }
+
 // consumeHarvestSeams are the harvest's two host seams: GitHub by `gh api`
 // REST and the push over ssh from the bench. A test swaps in fixtures
 // (CI-NET: no host in a test).
@@ -70,9 +75,16 @@ func init() {
 	})
 	registerReconcileDuty(groupHarvest, func(st *store.Store) (reconcileDuty, error) {
 		forge, pusher := consumeHarvestSeams()
-		return &harvestDuty{st: st, forge: forge, pusher: pusher, busy: map[string]bool{}}, nil
+		return &harvestDuty{st: st, forge: forge, pusher: pusher, busy: map[string]bool{}, log: consumeHarvestLog}, nil
+	})
+	registerReconcileDuty(groupPRToRead, func(st *store.Store) (reconcileDuty, error) {
+		return &prReadDuty{st: st, out: consumePRReadOut}, nil
 	})
 }
+
+// consumePRReadOut receives the pr-to-read duty's receipt lines (PRREAD
+// JOINED, READ QUEUED): the reconciler's stdout, its log.
+var consumePRReadOut io.Writer = os.Stdout
 
 // Exit 0 every pass finished (an event left pending for want of readers is
 // not a failure; its line says PENDING); 1 a pass failed; 2 usage or a
@@ -85,7 +97,7 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if group == "list" {
 		fmt.Fprintf(out, "%s duty=reconcile verb=consume proc=proc:%s\n", consume.GroupOkFriend, consume.GroupOkFriend)
 		fmt.Fprintf(out, "%s duty=reconcile verb=consume proc=proc:harvest:<bench>\n", groupHarvest)
-		fmt.Fprintf(out, "%s duty=route verb=consume-once proc=proc:%s\n", groupPRToRead, groupPRToRead)
+		fmt.Fprintf(out, "%s duty=reconcile,route verb=consume-once proc=proc:%s\n", groupPRToRead, groupPRToRead)
 		for _, g := range []string{groupHoldToFix} {
 			fmt.Fprintf(out, "%s not-built=%s\n", g, consumeNotBuilt[g])
 		}
@@ -300,7 +312,7 @@ func harvestPass(ctx context.Context, st *store.Store, only string, benchList []
 				fmt.Fprintf(out, "HARVESTED %s %s pr=%d head=%s via=%s bench=%s\n", s, c.Label, c.PR, c.Head, c.Via, r.Bench)
 			}
 			for _, f := range r.Failed {
-				fmt.Fprintf(out, "HARVEST-FAILED %s %s bench=%s err=%s\n", s, f.Label, r.Bench, oneline.Escape(f.Err.Error()))
+				fmt.Fprintf(out, "HARVEST-FAILED %s %s bench=%s err=%s%s\n", s, f.Label, r.Bench, oneline.Escape(f.Err.Error()), harvestFails(f))
 				code = 1
 			}
 			if r.Err != nil {
@@ -351,17 +363,109 @@ func (d *okFriendDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.C
 	return counts, nil
 }
 
+// prReadDuty is pr-to-read as a reconcile duty: every pass, every open
+// sprint in `sprints` (read again each pass, so a sprint opened after the
+// reconciler started is joined on the next pass) gets one pr-to-read pass
+// under its own lease:route:<S> (consume.PRReadSprints), as consumer
+// reconciler-<instance>. A sprint a `nova-sprint route --sprint <S>` process
+// serves is held by it and skipped. The passes run off the reconciler's
+// goroutine, one at a time, since a pass may run git ls-remote; Run reports
+// what the last finished pass moved and its error.
+type prReadDuty struct {
+	st  *store.Store
+	out io.Writer
+
+	mu      sync.Mutex
+	all     *consume.PRReadSprints
+	busy    bool
+	moved   int
+	lastErr error
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+}
+
+func (d *prReadDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	counts, err := reconcile.Counts{Routed: d.moved}, d.lastErr
+	d.moved, d.lastErr = 0, nil
+	if d.busy || l.Fenced() {
+		return counts, err
+	}
+	if d.ctx == nil {
+		d.ctx, d.cancel = context.WithCancel(ctx)
+	}
+	if d.ctx.Err() != nil {
+		return counts, err
+	}
+	instance := "reconciler-" + l.Instance()
+	if d.all == nil || d.all.Instance != instance {
+		d.all = &consume.PRReadSprints{Store: d.st, Instance: instance, Actor: "reconciler",
+			Remote: consumePRReadRemote, Out: d.out}
+	}
+	all, wctx := d.all, d.ctx
+	d.busy = true
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		n, perr := all.Pass(wctx)
+		d.mu.Lock()
+		d.moved += n
+		if perr != nil {
+			d.lastErr = perr
+		}
+		d.busy = false
+		d.mu.Unlock()
+	}()
+	return counts, err
+}
+
+// Stop cancels the pass in flight and waits for it until ctx ends; the pass
+// gives back its lease:route:<S> on the way (PRRead.OnceN).
+func (d *prReadDuty) Stop(ctx context.Context) []string {
+	d.mu.Lock()
+	if d.cancel != nil {
+		d.cancel()
+	}
+	d.mu.Unlock()
+	waited := make(chan struct{})
+	go func() {
+		d.wg.Wait()
+		close(waited)
+	}()
+	select {
+	case <-waited:
+	case <-ctx.Done():
+	}
+	return nil
+}
+
 // harvestDuty is harvest as a reconcile duty: every pass, each registered
 // bench with no pass in flight starts one, over every open sprint in order,
 // on its own goroutine under lease:harvest:<b> and the harvest clock, so a
 // slow push or REST call never holds the 1 s reconciler tick. A bench with
 // nothing due costs three Redis Function calls and writes proc:harvest:<b>.
+//
+// Every pass is bounded by the reconciler lease (#3737): no card starts once
+// the lease is fenced or less than the write margin of it is left, and the
+// pass records n, took_ms and left=<k>. Stop is the way out: the reconciler
+// exiting FENCED cancels every pass, waits for each to record its pass line
+// (err=FENCED) and give back lease:harvest:<b>, and releases any lease a
+// worker it could not wait for still holds, so no bench is left held by a
+// dead instance until its TTL.
 type harvestDuty struct {
 	st     *store.Store
 	forge  harvest.Forge
 	pusher harvest.Pusher
+	log    func(string)
 	mu     sync.Mutex
 	busy   map[string]bool
+	held   map[string]string // bench -> the lease:harvest token its worker holds
+	inst   string            // the lease holder name the workers use
+	ctx    context.Context   // every worker's context; Stop cancels it
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 func (d *harvestDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
@@ -370,7 +474,7 @@ func (d *harvestDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Co
 		var benches []string
 		benches, err = consumeBenches(ctx, d.st, nil)
 		for _, b := range benches {
-			d.start(ctx, "reconciler-"+l.Instance(), b, sprints)
+			d.start(ctx, l, "reconciler-"+l.Instance(), b, sprints)
 		}
 	}
 	if err != nil {
@@ -379,28 +483,88 @@ func (d *harvestDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Co
 	return reconcile.Counts{}, nil
 }
 
-func (d *harvestDuty) start(ctx context.Context, instance, bench string, sprints []string) {
+func (d *harvestDuty) start(ctx context.Context, l *reconcile.Lease, instance, bench string, sprints []string) {
 	d.mu.Lock()
 	if d.busy[bench] {
 		d.mu.Unlock()
 		return
 	}
+	if d.ctx == nil {
+		d.ctx, d.cancel = context.WithCancel(ctx)
+		d.held = map[string]string{}
+	}
+	if d.ctx.Err() != nil {
+		d.mu.Unlock()
+		return
+	}
+	wctx := d.ctx
+	d.inst = instance
 	d.busy[bench] = true
+	d.wg.Add(1)
 	d.mu.Unlock()
 	go func() {
+		defer d.wg.Done()
 		defer func() {
 			d.mu.Lock()
 			delete(d.busy, bench)
 			d.mu.Unlock()
 		}()
 		for _, s := range sprints {
-			if ctx.Err() != nil {
+			if wctx.Err() != nil || l.Fenced() {
 				return
 			}
-			harvest.Run(ctx, d.st, harvest.Options{
+			harvest.Run(wctx, d.st, harvest.Options{
 				Sprint: s, Benches: []string{bench}, Instance: instance, Actor: "reconciler",
 				Forge: d.forge, Pusher: d.pusher,
+				Bound: l, Margin: reconcile.DefaultWriteMargin,
+				OnLease: d.onLease, Log: d.log,
 			})
 		}
 	}()
+}
+
+func (d *harvestDuty) onLease(bench, token string, held bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if held {
+		d.held[bench] = token
+	} else if d.held[bench] == token {
+		delete(d.held, bench)
+	}
+}
+
+// Stop cancels every harvest pass in flight and waits for them until ctx
+// ends; each records its pass line and gives back its bench lease on the
+// way. A lease still held after the wait is released by its token. It
+// returns the benches released that way.
+func (d *harvestDuty) Stop(ctx context.Context) []string {
+	d.mu.Lock()
+	if d.cancel != nil {
+		d.cancel()
+	}
+	d.mu.Unlock()
+	waited := make(chan struct{})
+	go func() {
+		d.wg.Wait()
+		close(waited)
+	}()
+	select {
+	case <-waited:
+	case <-ctx.Done():
+	}
+	d.mu.Lock()
+	held := make(map[string]string, len(d.held))
+	for b, tok := range d.held {
+		held[b] = tok
+	}
+	inst := d.inst
+	d.mu.Unlock()
+	var released []string
+	for b, tok := range held {
+		if r, err := harvest.Release(context.WithoutCancel(ctx), d.st, b, inst, tok); err == nil && r == "RELEASED" {
+			released = append(released, b)
+		}
+	}
+	sort.Strings(released)
+	return released
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -17,41 +18,118 @@ const DefaultStageTimeout = 120 * time.Second
 // ErrStageTimeout is returned when card staging exceeds the hard timeout.
 var ErrStageTimeout = errors.New("stage-timeout")
 
-// ParseCardBase extracts base-repo and base-sha (or ref) from the card text.
-// It checks the first 40 lines for lowercase base-repo: and base-sha:, matching SPEC-CARD reader 5.
-func ParseCardBase(card []byte) (baseRepo, baseSha string, ok bool) {
+// CardBase is what a card's header says to stage into <job>/repo (nova-tools#3711).
+type CardBase struct {
+	Repo  string // the clone URL (or a local path) to stage; "" when the card names none that can be read
+	Sha   string // base-sha: (or the sha of BASE: <ref>@<sha40>); "" when absent
+	Ref   string // BASE: <ref> without @; the ref checked out when there is no sha
+	Named string // the raw value of the card's base-repo: or REPO: line, even one Repo could not be read from
+}
+
+// cardRepoNameRE is the owner/name a REPO: line carries.
+var cardRepoNameRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+
+// cardLabelRE is the card id line 1 carries (RESULT: <label> sha=<sha12>).
+var cardLabelRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// CardRepoURL is the clone URL a REPO: value names: a URL or a local path as written,
+// an owner/name as the forge's https URL ending .git (the shape base-repo: lines and the
+// URL fallback carry, so FindBenchMirror resolves all three to ~/nova-bench/mirror/<name>.git).
+// "" when the value is none of those.
+func CardRepoURL(value string) string {
+	v := strings.TrimSpace(value)
+	switch {
+	case v == "" || v == "-" || strings.EqualFold(v, "none"):
+		return ""
+	case isRemoteRepo(v) || strings.HasPrefix(v, "/") || strings.Contains(v, "://"):
+		return v
+	case cardRepoNameRE.MatchString(v):
+		return defaultProbeBase + "/" + strings.TrimSuffix(v, ".git") + ".git"
+	}
+	return ""
+}
+
+// ReadCardBase is THE reader of which repository a card works in, at which sha: staging
+// (StageCard) and the push-time lint (internal/nsprint/card) both call it, so the repo a card
+// is admitted with is the repo it is staged from. It reads the first 40 lines. Precedence:
+// `base-repo: <url>`, then `REPO: <owner>/<name>` (the header every pushed card carries), then
+// the first github clone URL anywhere in the card (CardCloneRepos). The sha is `base-sha:`,
+// else the sha of `BASE: <ref>@<sha40>`; the ref is BASE:'s value before any @.
+func ReadCardBase(card []byte) CardBase {
 	lines := strings.Split(string(card), "\n")
 	if len(lines) > 40 {
 		lines = lines[:40]
 	}
+	var b CardBase
+	var baseRepo, repoLine string
+	var sawRepoLine bool
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "base-repo:") {
+		switch {
+		case strings.HasPrefix(trimmed, "base-repo:"):
 			baseRepo = strings.TrimSpace(strings.TrimPrefix(trimmed, "base-repo:"))
-		} else if strings.HasPrefix(trimmed, "base-sha:") {
-			baseSha = strings.TrimSpace(strings.TrimPrefix(trimmed, "base-sha:"))
-		}
-	}
-	if baseRepo != "" {
-		return baseRepo, baseSha, true
-	}
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "BASE:") {
+		case strings.HasPrefix(trimmed, "base-sha:"):
+			b.Sha = strings.TrimSpace(strings.TrimPrefix(trimmed, "base-sha:"))
+		case strings.HasPrefix(trimmed, "REPO:") && !sawRepoLine:
+			sawRepoLine = true
+			repoLine = strings.TrimSpace(strings.TrimPrefix(trimmed, "REPO:"))
+		case strings.HasPrefix(trimmed, "BASE:") && b.Ref == "":
 			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "BASE:"))
-			if at := strings.Index(val, "@"); at != -1 {
-				shaCandidate := strings.TrimSpace(val[at+1:])
-				if len(shaCandidate) >= 40 {
-					baseSha = shaCandidate[:40]
+			ref, sha, hasAt := strings.Cut(val, "@")
+			b.Ref = strings.TrimSpace(ref)
+			if hasAt && b.Sha == "" {
+				if s := strings.TrimSpace(sha); len(s) >= 40 {
+					b.Sha = s[:40]
 				}
 			}
 		}
 	}
-	repos := CardCloneRepos(string(card))
-	if len(repos) > 0 {
-		return "https://github.com/" + repos[0] + ".git", baseSha, true
+	switch {
+	case baseRepo != "":
+		b.Repo, b.Named = baseRepo, baseRepo
+	case CardRepoURL(repoLine) != "":
+		b.Repo, b.Named = CardRepoURL(repoLine), repoLine
+	default:
+		if repos := CardCloneRepos(string(card)); len(repos) > 0 {
+			b.Repo = defaultProbeBase + "/" + repos[0] + ".git"
+			b.Named = repos[0]
+		} else if repoLine != "-" && !strings.EqualFold(repoLine, "none") {
+			// A REPO: line no reader can resolve still NAMES a repo: staging must refuse
+			// it (no-repo-staged), never launch the model into an empty job dir.
+			b.Named = repoLine
+		}
 	}
-	return "", "", false
+	return b
+}
+
+// ParseCardBase extracts the base repo and base sha from the card text (ReadCardBase).
+// ok is false when the card names no repo that can be staged.
+func ParseCardBase(card []byte) (baseRepo, baseSha string, ok bool) {
+	b := ReadCardBase(card)
+	if b.Repo == "" {
+		return "", "", false
+	}
+	return b.Repo, b.Sha, true
+}
+
+// CardNamesRepo reports whether the card names a repository at all, readable or not: such
+// a card that ends with nothing staged is a staging failure (STAGE FAIL reason=no-repo-staged).
+func CardNamesRepo(card []byte) bool {
+	return ReadCardBase(card).Named != ""
+}
+
+// CardStageBranch is the branch the staged checkout is on, so the card commits on a named
+// branch rather than a detached HEAD: rowan/<label> from line 1 (RESULT: <label> sha=...),
+// rowan/card when line 1 names no label.
+func CardStageBranch(card []byte) string {
+	first, _, _ := strings.Cut(string(card), "\n")
+	first = strings.TrimSpace(first)
+	first = strings.TrimPrefix(first, "RESULT:")
+	first = strings.TrimPrefix(first, "RESULT")
+	if f := strings.Fields(first); len(f) > 0 && cardLabelRE.MatchString(f[0]) {
+		return "rowan/" + f[0]
+	}
+	return "rowan/card"
 }
 
 // FindBenchMirror finds the path to the bench's local mirror for baseRepo.
@@ -99,6 +177,19 @@ func FindBenchMirror(benchHome, baseRepo string) string {
 		}
 	}
 	return ""
+}
+
+// MirrorCloneArgs is the git argv of the one staging convention, for cards (StageCard) and
+// for ci run (internal/nsprint/ci): a local clone of the bench mirror that borrows its
+// objects and dissociates, so staging never reads the network and a later gc of the
+// mirror cannot take objects from under the clone. noCheckout leaves the worktree empty
+// for a caller that checks out an exact sha next.
+func MirrorCloneArgs(mirror, target string, noCheckout bool) []string {
+	args := []string{"clone", "-q"}
+	if noCheckout {
+		args = append(args, "--no-checkout")
+	}
+	return append(args, "--reference", mirror, "--dissociate", mirror, target)
 }
 
 func isGitDir(dir string) bool {
@@ -174,7 +265,9 @@ type StageOptions struct {
 // StageResult is the outcome of a staging operation.
 type StageResult struct {
 	BaseRepo string
-	BaseSha  string
+	BaseSha  string // the card's base sha; once staged, the full sha <job>/repo's HEAD is at
+	Ref      string // the card's BASE: ref, checked out when it names no sha
+	Branch   string // the branch the staged checkout is on (CardStageBranch)
 	Mirror   string
 	Staged   bool
 	TimedOut bool
@@ -182,7 +275,11 @@ type StageResult struct {
 }
 
 // StageCard stages the repository for a card into TargetDir using the bench mirror.
-// If the card carries no base-repo or clone URLs, staging is skipped.
+// The repo, sha and ref are ReadCardBase's (base-repo:, REPO:, or a clone URL; base-sha:
+// or BASE:). If the card names no repo that can be read, staging is skipped and Staged is
+// false; the caller refuses such a card when CardNamesRepo says it named one (#3711).
+// The checkout is at the sha (else the ref, else the clone's default head) on the branch
+// CardStageBranch names, so the card commits on a branch, not a detached HEAD.
 // If base-repo is remote and no bench mirror is found, staging fails without contacting GitHub.
 // Staging runs git clone --reference <mirror> and git fetch/checkout <base-sha> with a hard timeout (default 120s).
 // If the timeout expires, it writes RESULT.md:
@@ -194,8 +291,9 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	if len(opts.Card) == 0 {
 		return StageResult{}, nil
 	}
-	baseRepo, baseSha, ok := ParseCardBase(opts.Card)
-	if !ok || baseRepo == "" {
+	cb := ReadCardBase(opts.Card)
+	baseRepo, baseSha := cb.Repo, cb.Sha
+	if baseRepo == "" {
 		return StageResult{}, nil
 	}
 	if isGitDir(opts.TargetDir) {
@@ -238,11 +336,10 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	defer cancel()
 
 	start := time.Now()
-	cloneArgs := []string{"clone", "-q"}
+	cloneArgs := []string{"clone", "-q", cloneSource, opts.TargetDir}
 	if mirror != "" {
-		cloneArgs = append(cloneArgs, "--reference", mirror, "--dissociate")
+		cloneArgs = MirrorCloneArgs(mirror, opts.TargetDir, false)
 	}
-	cloneArgs = append(cloneArgs, cloneSource, opts.TargetDir)
 
 	cloneCmd := stageGit(ctx, cloneArgs...)
 	if out, err := cloneCmd.CombinedOutput(); err != nil {
@@ -259,37 +356,64 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		_ = remCmd.Run()
 	}
 
-	// Fetch and checkout the named ref / baseSha
-	if baseSha != "" {
+	fail := func(what string, out []byte, err error) (StageResult, error) {
+		if stageTimedOut(ctx, err) {
+			_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror, TimedOut: true, Wall: time.Since(start)}, ErrStageTimeout
+		}
+		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror, Wall: time.Since(start)}, fmt.Errorf("git %s failed: %s (%w)", what, strings.TrimSpace(string(out)), err)
+	}
+
+	// Fetch and checkout baseSha (else the BASE: ref) on the card's branch.
+	branch := CardStageBranch(opts.Card)
+	switch {
+	case baseSha != "":
 		catCmd := stageGit(ctx, "-C", opts.TargetDir, "cat-file", "-e", baseSha+"^{commit}")
 		if err := catCmd.Run(); err != nil {
 			// Commit not present locally, fetch from origin
 			fetchCmd := stageGit(ctx, "-C", opts.TargetDir, "fetch", "-q", "origin", baseSha)
 			if out, ferr := fetchCmd.CombinedOutput(); ferr != nil {
-				if stageTimedOut(ctx, ferr) {
-					_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
-					return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Mirror: mirror, TimedOut: true, Wall: time.Since(start)}, ErrStageTimeout
-				}
-				return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Mirror: mirror, Wall: time.Since(start)}, fmt.Errorf("git fetch failed: %s (%w)", strings.TrimSpace(string(out)), ferr)
+				return fail("fetch", out, ferr)
 			}
 		}
-
-		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", baseSha)
+		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, baseSha)
+		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
+			return fail("checkout", out, cerr)
+		}
+	case cb.Ref != "":
+		// The clone's remote-tracking ref first (the mirror's branch), then the ref as
+		// written (a tag or a sha the clone holds).
+		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, "origin/"+cb.Ref)
 		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
 			if stageTimedOut(ctx, cerr) {
-				_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
-				return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Mirror: mirror, TimedOut: true, Wall: time.Since(start)}, ErrStageTimeout
+				return fail("checkout", out, cerr)
 			}
-			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Mirror: mirror, Wall: time.Since(start)}, fmt.Errorf("git checkout failed: %s (%w)", strings.TrimSpace(string(out)), cerr)
+			coCmd = stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, cb.Ref)
+			if out, cerr := coCmd.CombinedOutput(); cerr != nil {
+				return fail("checkout", out, cerr)
+			}
+		}
+	default:
+		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch)
+		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
+			return fail("checkout", out, cerr)
 		}
 	}
+	headCmd := stageGit(ctx, "-C", opts.TargetDir, "rev-parse", "HEAD")
+	headOut, herr := headCmd.Output()
+	if herr != nil {
+		return fail("rev-parse", headOut, herr)
+	}
+	head := strings.TrimSpace(string(headOut))
 
 	_ = exec.Command("git", "-C", opts.TargetDir, "config", "user.name", "Rowan").Run()
 	_ = exec.Command("git", "-C", opts.TargetDir, "config", "user.email", "rowan@mas-bandwidth.com").Run()
 
 	return StageResult{
 		BaseRepo: baseRepo,
-		BaseSha:  baseSha,
+		BaseSha:  head,
+		Ref:      cb.Ref,
+		Branch:   branch,
 		Mirror:   mirror,
 		Staged:   true,
 		Wall:     time.Since(start),

@@ -17,6 +17,12 @@ end
 -- do-block (like harvest.lua), so its locals never add to the library's
 -- 200-local main-function limit (dev crossed it at 6bf01359, #3487).
 do
+-- Every state write here is NS.card (02_card_move.lua): launched and beat
+-- are working -> working, end is working -> done (ok when DONE and the
+-- attempt's typed result is not invalid, else fail), and a result stored
+-- invalid after a DONE end moves done/ok -> done/fail.
+local CARD = NS.card
+
 local function reply(code, status, attempt, receipt)
   if attempt == nil then attempt = '' end
   if receipt == nil then receipt = '' end
@@ -31,7 +37,12 @@ end
 
 local function reason_ok(outcome, reason)
   if outcome == 'DONE' and reason == 'done' then return true end
-  if reason == 'crash' or reason == 'timeout' or reason == 'idle-killed' or reason == 'tests-red' then
+  -- refused (#3194): the harness's own program refused the card before it ran
+  -- (a NATIVE REFUSED line); the card's why carries that line.
+  -- no-commit: a code card whose model said DONE and committed nothing
+  -- (w_commit NO-COMMIT); the card's why says so.
+  if reason == 'crash' or reason == 'timeout' or reason == 'wall' or reason == 'idle-killed' or reason == 'tests-red' or reason == 'refused'
+      or reason == 'no-commit' then
     return outcome == 'FAILED'
   end
   if reason == 'env' or reason == 'base-moved' or reason == 'deps' or reason == 'spec' or reason == 'access' then
@@ -132,6 +143,12 @@ end)
 redis.register_function('ns_card_launched', function(keys, args)
   local sprint, label, token, branch, jobdir = args[1], args[2], args[3] or '', args[4] or '', args[5] or ''
   local deadline = args[6] or ''
+  -- wall_max_s (#3653): the attempt's wall cap in whole seconds; empty or
+  -- absent stores nothing (the pre-#3653 six-argument shape).
+  local wall_max_s = args[7] or ''
+  if wall_max_s ~= '' and not string.match(wall_max_s, '^[1-9][0-9]*$') then
+    return reply(1, 'USAGE', '', '')
+  end
   if not card_keys_ok(keys, sprint, label) then return reply(4, 'CONFLICT', '', '') end
   local card_key, log_key, idem_key = keys[1], keys[2], keys[3]
   local state = hget(card_key, 'state')
@@ -157,10 +174,16 @@ redis.register_function('ns_card_launched', function(keys, args)
     if not deadline_ms or deadline_ms < 1 then return reply(2, 'STATE', attempt, '') end
     if tonumber(at) >= deadline_ms then return reply(2, 'TIMEOUT', attempt, '') end
   end
+  local fields = { 'branch', branch, 'jobdir', jobdir, 'launched_at', at }
+  if wall_max_s ~= '' then
+    fields[#fields + 1] = 'wall_max_s'
+    fields[#fields + 1] = wall_max_s
+  end
+  if CARD.move(card_key, 'working', { state = 'launched', fields = fields, by = 'card-launched', why = 'launched' }) then
+    return reply(2, 'STATE', attempt, '')
+  end
   local receipt = xadd(log_key, label, 'dealt', 'launched', attempt, hget(card_key, 'token_sha'), 'card-launched', 'launched', branch, idem, at)
-  redis.call('HSET', card_key, 'state', 'launched', 'branch', branch, 'jobdir', jobdir, 'launched_at', at, 'launched_receipt', receipt)
-  redis.call('SREM', 's:' .. sprint .. ':idx:card:dealt', label)
-  redis.call('SADD', 's:' .. sprint .. ':idx:card:launched', label)
+  redis.call('HSET', card_key, 'launched_receipt', receipt)
   redis.call('HSET', idem_key, idem, receipt)
   return reply(0, 'OK', attempt, receipt)
 end)
@@ -182,12 +205,14 @@ redis.register_function('ns_card_beat', function(keys, args)
   local member = sprint .. '/' .. label .. '/' .. attempt
   local from = state
   if state == 'launched' then
+    if CARD.move(card_key, 'working', { state = 'running', fields = { 'beat_at', at }, by = 'card-beat', why = 'beat' }) then
+      return reply(2, 'STATE', attempt, '')
+    end
     redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-    redis.call('SREM', 's:' .. sprint .. ':idx:card:launched', label)
-    redis.call('SADD', 's:' .. sprint .. ':idx:card:running', label)
+  else
+    redis.call('HSET', card_key, 'beat_at', at)
   end
   redis.call('ZADD', 'bench:' .. bench .. ':living', at, member)
-  redis.call('HSET', card_key, 'state', 'running', 'beat_at', at)
   local idem = 'beat:' .. hget(card_key, 'identity') .. ':' .. at
   local receipt = xadd(log_key, label, from, 'running', attempt, hget(card_key, 'token_sha'), 'card-beat', 'beat', '-', idem, at)
   return reply(0, 'OK', attempt, receipt)
@@ -206,6 +231,11 @@ redis.register_function('ns_card_end', function(keys, args)
   local record_exit = args[11] or ''
   local claim_outcome = args[12] or ''
   local claim_reason = args[13] or ''
+  -- why (#3194) is the wrapper's evidence for the end, one line: for FAILED
+  -- refused it is the refusal line the harness's program printed. It is
+  -- written to the card's why only when given, so an end without evidence
+  -- never blanks a why another writer left.
+  local why = string.sub((string.gsub(args[14] or '', '[\r\n]', ' ')), 1, 1024)
   if mode ~= 'token' and mode ~= 'record' then return reply(2, 'STATE', '', '') end
   if not results_absolute(results) then return reply(1, 'USAGE', '', '') end
   if not card_keys_ok(keys, sprint, label) then return reply(4, 'CONFLICT', '', '') end
@@ -271,29 +301,39 @@ redis.register_function('ns_card_end', function(keys, args)
 
   local at = now_ms()
   local member = sprint .. '/' .. label .. '/' .. attempt
-  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
-  redis.call('SREM', 's:' .. sprint .. ':idx:card:' .. state, label)
-  redis.call('SADD', 's:' .. sprint .. ':idx:card:ended', label)
-  redis.call('SADD', 's:' .. sprint .. ':bench:' .. bench .. ':ended', label)
   local actor = 'card-resolve'
   if mode == 'token' then actor = 'card-end' end
+  -- DONE with a typed result that is not invalid is ok; any other end is fail.
+  local ok = 'fail'
+  if record_outcome == 'DONE' and hget(card_key .. ':result:a' .. attempt, 'valid') ~= '0' then ok = 'ok' end
+  local end_fields = { 'outcome', record_outcome, 'reason', record_reason, 'exit', record_exit,
+    'pushed_sha', record_pushed, 'results', results, 'ended_at', at }
+  -- The end's evidence (#3194) rides the one move, so a refused card's why is
+  -- written with its done/fail and never apart from it.
+  if why ~= '' then
+    end_fields[#end_fields + 1] = 'why'
+    end_fields[#end_fields + 1] = why
+    end_fields[#end_fields + 1] = 'why_at'
+    end_fields[#end_fields + 1] = at
+  end
+  if CARD.move(card_key, 'done', { state = 'ended', ok = ok, by = actor, why = record_reason,
+      fields = end_fields }) then
+    return reply(2, 'STATE', attempt, '')
+  end
+  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
+  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
+  redis.call('SADD', 's:' .. sprint .. ':bench:' .. bench .. ':ended', label)
   local receipt = xadd(log_key, label, state, 'ended', attempt, stored_sha, actor, record_reason, results, idem, at)
-  redis.call('HSET', card_key,
-    'state', 'ended',
-    'outcome', record_outcome,
-    'reason', record_reason,
-    'exit', record_exit,
-    'pushed_sha', record_pushed,
-    'results', results,
-    'ended_at', at,
-    'end_receipt', receipt)
+  redis.call('HSET', card_key, 'end_receipt', receipt)
   redis.call('HSET', idem_key, idem, receipt)
   return reply(0, 'OK', attempt, receipt)
 end)
 
 -- The six typed-record card kinds (typedrec.Kinds). A card hash kind outside
 -- this set (model, script) is a runner kind and sets no RESULT expectation.
+-- card push refuses any other KIND before the card is stored, naming this set
+-- (internal/nsprint/card/kinds.go, nova-tools#3651); its KindMap maps a
+-- classification kind (go-verb, spec, ...) to one of these at cut time.
 local RESULT_KINDS = { ['fix'] = true, ['recut'] = true, ['port'] = true,
   ['docs-guard'] = true, ['report'] = true, ['read'] = true }
 
@@ -362,6 +402,27 @@ redis.register_function('ns_card_result', function(keys, args)
     'v_pr_head', v_pr_head,
   }
 
+  -- w_synth=1 (#3689): the card wrapper wrote KIND, REPO, BRANCH and ATTEMPT
+  -- from this card hash and its own run, so a disagreement with the card is a
+  -- wrapper bug, never the model's: it is logged (wrapper_bug on the result
+  -- hash and a card-result-bug log entry) and the record keeps its validity,
+  -- so the card stays DONE. line 1 and HEAD are still the worker's and still
+  -- refuse.
+  local synth = false
+  for i = 14, #args, 2 do
+    if args[i] == 'w_synth' and args[i+1] == '1' then synth = true end
+  end
+  local bugs = {}
+  local function contradict(f)
+    if synth and f ~= 'line 1' and f ~= 'HEAD' then
+      table.insert(bugs, f)
+      return
+    end
+    valid = '0'
+    field = f
+    defect = 'contradictory'
+  end
+
   -- KIND is checked against the declared set and the card's own KIND here,
   -- whatever the caller's parse said: a valid=1 claim with a kind outside the
   -- six, or a kind other than a typed card's, is persisted invalid.
@@ -371,9 +432,7 @@ redis.register_function('ns_card_result', function(keys, args)
       field = 'KIND'
       defect = 'malformed'
     elseif RESULT_KINDS[v_kind] and kind ~= v_kind then
-      valid = '0'
-      field = 'KIND'
-      defect = 'contradictory'
+      contradict('KIND')
     end
   end
 
@@ -385,27 +444,26 @@ redis.register_function('ns_card_result', function(keys, args)
       table.insert(hset_args, v)
       if valid == '1' then
         if k == 'line1' and v_contract ~= '' and v ~= v_contract then
-          valid = '0'
-          field = 'line 1'
-          defect = 'contradictory'
+          contradict('line 1')
         elseif k == 'c_repo' and v ~= '' and v_repo ~= '' and v ~= v_repo then
-          valid = '0'
-          field = 'REPO'
-          defect = 'contradictory'
+          contradict('REPO')
         elseif k == 'c_branch' and v ~= '' and v_branch ~= '' and v ~= v_branch then
-          valid = '0'
-          field = 'BRANCH'
-          defect = 'contradictory'
+          contradict('BRANCH')
         elseif k == 'c_attempt' and v ~= '' and v_attempt ~= '' and v ~= v_attempt then
-          valid = '0'
-          field = 'ATTEMPT'
-          defect = 'contradictory'
+          contradict('ATTEMPT')
         elseif k == 'c_head' and v ~= '' and v_pr_head ~= '' and v ~= v_pr_head then
-          valid = '0'
-          field = 'HEAD'
-          defect = 'contradictory'
+          contradict('HEAD')
         end
       end
+    end
+  end
+  if #bugs > 0 then
+    local bug = table.concat(bugs, ',') .. ' contradictory'
+    table.insert(hset_args, 'wrapper_bug')
+    table.insert(hset_args, bug)
+    if keys[2] == 's:' .. sprint .. ':log' then
+      redis.call('XADD', keys[2], '*', 'kind', 'card', 'id', label, 'attempt', tostring(attempt),
+        'actor', 'card-result', 'reason', 'wrapper-bug', 'evidence', bug, 'at', at)
     end
   end
 
@@ -413,7 +471,51 @@ redis.register_function('ns_card_result', function(keys, args)
   hset_args[9] = field
   hset_args[11] = defect
 
+  -- An invalid result of the attempt that ended DONE moves the card done/ok
+  -- -> done/fail BEFORE the result is stored. A refused move (drift) stores
+  -- nothing, logs the refusal to sprint:<S>:moves and returns 2|MOVE with
+  -- that receipt: the card stays where its sets say, and the wrapper sees a
+  -- non-zero code.
+  if valid ~= '1' and attempt == v_attempt and hget(card_key, 'where') == 'done' and hget(card_key, 'where_ok') == 'ok' then
+    local refused = CARD.move(card_key, 'done', { ok = 'fail', by = 'card-result', why = 'result ' .. field .. ' ' .. defect })
+    if refused then
+      local r = redis.call('XADD', 'sprint:' .. sprint .. ':moves', 'MAXLEN', '~', '100000', '*',
+        'id', card_key, 'stream', hget(card_key, 'stream'), 'from', 'done/ok', 'to', 'REFUSED',
+        'by', 'card-result', 'why', refused, 'at', at)
+      return reply(2, 'MOVE', attempt, r)
+    end
+  end
   redis.call('HSET', unpack(hset_args))
   return reply(0, 'OK', attempt, '')
 end)
+
+-- ns_card_show S label (read only, #3689): the card hash and its current
+-- attempt's result hash in one call, so nobody sshes to a bench to learn what
+-- a card did. The token is never returned. Reply: the card's field/value
+-- pairs, then '--', then the result hash's pairs (none when there is none).
+redis.register_function{
+  function_name = 'ns_card_show',
+  flags = { 'no-writes' },
+  callback = function(keys, args)
+    local sprint, label = args[1] or '', args[2] or ''
+    if sprint == '' or label == '' then return { 'USAGE' } end
+    local card_key = 's:' .. sprint .. ':card:' .. label
+    local out = {}
+    local attempt = ''
+    local h = redis.call('HGETALL', card_key)
+    for i = 1, #h, 2 do
+      if h[i] == 'attempt' then attempt = h[i + 1] end
+      if h[i] ~= 'token' then
+        table.insert(out, h[i])
+        table.insert(out, h[i + 1])
+      end
+    end
+    table.insert(out, '--')
+    if attempt ~= '' then
+      local r = redis.call('HGETALL', card_key .. ':result:a' .. attempt)
+      for i = 1, #r do table.insert(out, r[i]) end
+    end
+    return out
+  end,
+}
 end

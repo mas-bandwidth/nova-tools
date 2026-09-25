@@ -22,6 +22,32 @@
 // open a second session to one bench in one pass is refused by the pass itself
 // before the second child starts.
 //
+// THE WIDTH (#3706, sprint quack-0925b, 2026-09-25 03:59Z). Twelve cards on
+// six benches: batman, vision and one hetzner card launched, and hulk, space,
+// superman and hetzner's second card read `WEDGED: no session opened: 1.726s
+// of lease left after the 1s write margin`. The lease was renewed only when
+// the reconciler pass began; the duties before the deal and the reserve calls,
+// one bench after another (two round trips each), spent it, so the benches
+// planned last had no lease left to open a session in, and their cards took
+// 2-3 more passes (10-40 s) to launch. So every bench is one worker, all at
+// once, bounded by cfg:deal max_sessions (default 8): the worker reserves its
+// bench's batch, renews the lease (Renewer; the reconciler lease coalesces
+// the renewals, so one serves every worker that starts just after it, #3737) so its session's lease-derived deadline
+// is the full window, opens the one session, and writes its bench's row when
+// its own session ends. A pass over N benches takes the slowest bench, not
+// the sum.
+//
+// THE SECOND HURT (#3322, the 2026-09-23 live smoke). A wedged sshd held its
+// session past the reconciler lease, the pass wrote no row, and 200
+// reservations sat in `starting` on benches that ran nothing. So every session
+// is bounded (the lease bound in the reconciler, the hard deadline in ssh.go,
+// which kills the ssh process group), each bench's row is written the moment
+// its session ends and not after the slowest bench, and a refused or timed-out
+// bench's row and the return of its batch are ONE call (Row.Fail, the
+// ns_card_deal companion ns_card_deal_fail), which also counts the bench's
+// consecutive timeouts on its row; at cfg:fleet ssh_fail_after (default 3) of
+// them the fleet duty marks the bench PROBING at its next step and holds it.
+//
 // THE SEAMS. The pass holds no state. It reads through Source, presents the
 // reconciler's fencing token (Fence, #2726) on every write, writes only
 // through Reserver and Row, and reaches benches only through ssh.go. The
@@ -37,11 +63,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/metrics"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 )
 
 // SSH states on the bench row (#2756 2.2 `bench:<b>:beat` ssh: ok, refused,
@@ -58,12 +86,26 @@ const (
 const TierPriority = "priority"
 
 // ReasonSSHRefused is the receipt reason on a reservation returned to the pool
-// because its bench's sshd refused the batch session before anything ran.
-const ReasonSSHRefused = "ssh-refused"
+// because its bench's sshd refused the batch session before anything ran;
+// ReasonSSHTimeout when the session was cut before anything ran. Row.Fail
+// writes `ssh-<state>` itself; these name the two values it can write.
+const (
+	ReasonSSHRefused = "ssh-refused"
+	ReasonSSHTimeout = "ssh-timeout"
+)
 
 // DefaultRefusedHold is how long a bench whose sshd refused is skipped before
 // the pass tries it again. One sweep (#2756 5.2: a full sweep every 10 s).
 const DefaultRefusedHold = 10 * time.Second
+
+// DefaultMaxSessions is how many bench sessions one pass holds open at once
+// when cfg:deal max_sessions is unset (#3706): one worker per bench, at most
+// this many at a time; a bench past it waits for a slot, then reserves.
+const DefaultMaxSessions = 8
+
+// MaxSessionsKey is the hash whose max_sessions field bounds the pass's
+// concurrent bench sessions (#3706).
+const MaxSessionsKey = "cfg:deal"
 
 // ErrFenced is what a Reserver or Row returns when the token presented is not
 // the current lease:reconciler token (#2756 2.1 rule 8: exit 3 FENCED). The
@@ -74,10 +116,11 @@ var ErrFenced = errors.New("FENCED: the reconciler lease is held by another inst
 type Card struct {
 	Sprint   string
 	Label    string
-	Priority float64  // the pool score; lower deals first, front items are negative
+	Priority float64  // the record's priority field; lower deals first, front items are negative
+	Age      float64  // the pool score: the card's created_at ms (#3692); older deals first at equal priority
 	Leg      string   // empty: any bench
 	Tier     string   // TierPriority or anything else (bulk)
-	Bench    string   // pinned by `card push --bench`; empty: any bench
+	Bench    string   // the card hash's bench pin, from the card's BENCH: line at card push (#3650); empty: any bench
 	Avoid    []string // benches already failed by classification
 	// DependsOn is the card's DEPENDS-ON entries (card ids in its sprint or
 	// <owner>/<repo>#<n>); `-`, `none` or empty waits for nothing (#3066).
@@ -138,7 +181,10 @@ type Sprint struct {
 	Name         string
 	Share        int  // weight against the other open sprints; 0 reads as 1
 	Backpressure bool // s:<S>:backpressure ON (or missing under a closed policy)
-	Pool         []Card
+	// Pitstop is s:<S>:pitstop present (#3371): the sprint deals nothing
+	// until `nova-sprint pitstop clear` lifts it.
+	Pitstop bool
+	Pool    []Card
 	// Waiting is the queued cards in s:<S>:waiting: an unmet DEPENDS-ON when
 	// the last gate ran (#3066). Ready re-tests them every pass.
 	Waiting []Card
@@ -152,6 +198,9 @@ type Input struct {
 	// Deps is every card a pooled or waiting card names in DEPENDS-ON, keyed
 	// <S>/<label>; a card id the sprint does not have is absent (#3066).
 	Deps map[string]DepCard
+	// MaxSessions is cfg:deal max_sessions; zero when unset or unreadable,
+	// and the pass uses its own MaxSessions or DefaultMaxSessions (#3706).
+	MaxSessions int
 }
 
 // Batch is the cards planned for one bench in one pass.
@@ -162,8 +211,9 @@ type Batch struct {
 
 // Plan is the pure deal: for each eligible bench, min(free, eligible) cards
 // split across the open sprints by share, highest priority first within each
-// sprint. A card is planned to at most one bench. hold is how long a refused
-// bench is skipped. Plan never writes.
+// sprint. A card is planned to at most one bench; a pit-stopped sprint
+// (#3371) plans nothing. hold is how long a refused bench is skipped. Plan
+// never writes.
 func Plan(in Input, hold time.Duration) []Batch {
 	taken := map[string]bool{}
 	benches := append([]Bench(nil), in.Benches...)
@@ -174,6 +224,9 @@ func Plan(in Input, hold time.Duration) []Batch {
 		sort.SliceStable(pools[i], func(a, b int) bool {
 			if pools[i][a].Priority != pools[i][b].Priority {
 				return pools[i][a].Priority < pools[i][b].Priority
+			}
+			if pools[i][a].Age != pools[i][b].Age {
+				return pools[i][a].Age < pools[i][b].Age
 			}
 			return pools[i][a].Label < pools[i][b].Label
 		})
@@ -188,6 +241,9 @@ func Plan(in Input, hold time.Duration) []Batch {
 		cands := make([][]Card, len(in.Sprints))
 		total := 0
 		for i, s := range in.Sprints {
+			if s.Pitstop {
+				continue
+			}
 			for _, c := range pools[i] {
 				if taken[key(c)] || (c.Bench != "" && c.Bench != b.Name) || contains(c.Avoid, b.Name) || !b.runs(c.Leg) {
 					continue
@@ -307,6 +363,17 @@ type Fence interface {
 	Token(ctx context.Context) (string, error)
 }
 
+// Renewer is a Fence whose lease the pass extends to its full TTL before it
+// opens a bench session (#3706), so a session bounded by the lease gets the
+// whole window however long the reads and reserves before it took. It
+// returns ErrFenced (or an error wrapping it) when this instance no longer
+// holds the lease. The Renewer coalesces (the reconciler lease serves every
+// renewal inside 500 ms of the last with it, #3737); the pass asks before
+// every session. A Fence that is not a Renewer is never renewed.
+type Renewer interface {
+	Renew(ctx context.Context) error
+}
+
 // Reserver is the per-bench reservation, one Redis Function call per bench
 // (#2756 3.2 queued -> dealt, 5.3). Both calls check the fence token against
 // lease:reconciler inside the function and return ErrFenced on a mismatch.
@@ -323,7 +390,32 @@ type Reserver interface {
 // Row records the outcome of the pass's ssh session on the bench row: ok,
 // refused, timeout or error, with why. The pass is the only writer.
 type Row interface {
+	// SSH writes the row for a session that ran (ok, or error: the batch
+	// stays dealt).
 	SSH(ctx context.Context, fence, bench, state, why string) error
+	// Fail writes the row for a session that failed before anything ran
+	// (refused or timeout) AND returns its reservations to the pool, in ONE
+	// fenced call (#3322): the row can never be written without the return,
+	// nor the return without the row. It reports the bench's consecutive
+	// timeouts and whether they reached cfg:fleet ssh_fail_after, at which
+	// the fleet duty holds the bench (PROBING) at its next step.
+	Fail(ctx context.Context, fence, bench, state, why string, res []Reservation) (Failed, error)
+}
+
+// Failed is what Row.Fail did.
+type Failed struct {
+	Returned int    // reservations returned to the pool
+	Timeouts int    // the bench's consecutive ssh timeouts after this call
+	State    string // the bench's fleet state as the call read it (UP, PROBING, ...)
+	Hold     bool   // the timeouts reached ssh_fail_after: the fleet duty holds the bench next
+}
+
+// CardWhy writes a refusal line on each named card (#3700): why[i] is
+// res[i]'s line, empty for a card with none. The card record's why is the
+// launcher's REFUSED line for that card, so `card show` names the refusal
+// without a bench. Fenced like Row.
+type CardWhy interface {
+	CardWhy(ctx context.Context, fence string, res []Reservation, why []string) error
 }
 
 // Source reads the pass's Input in one consistent round.
@@ -349,6 +441,11 @@ type Pass struct {
 	// Metrics receives the pool left, the leases held and one session
 	// latency per bench after every pass (nx-g61); nil exports nothing.
 	Metrics *metrics.Set
+	// MaxSessions bounds the bench sessions open at once when cfg:deal
+	// max_sessions is unset; zero is DefaultMaxSessions (#3706).
+	MaxSessions int
+	// Why writes each refused card's refusal line (#3700); nil writes none.
+	Why CardWhy
 }
 
 // BenchResult is what happened on one bench in one pass.
@@ -359,7 +456,18 @@ type BenchResult struct {
 	Sessions int // ssh sessions opened; never more than 1
 	SSH      string
 	Why      string
-	Returned int // reservations returned to the pool after a refusal
+	Returned int // reservations returned to the pool after a refusal or timeout
+	Timeouts int // the bench's consecutive ssh timeouts after this pass
+	// Held is true when this pass's failure brought the bench's consecutive
+	// timeouts to cfg:fleet ssh_fail_after: the fleet duty marks it PROBING
+	// at its next step, and this pass plans it nothing more.
+	Held bool
+	// Took is the bench's worker, reserve to row, on the wall clock (#3706).
+	Took time.Duration
+	// CardWhy is each Dealt reservation's refusal line (same index), empty
+	// for a card that launched: its own REFUSED line from `card launch
+	// --stdin`, or Why for every card when the batch never ran (#3700).
+	CardWhy []string
 }
 
 // Result is one pass.
@@ -386,7 +494,8 @@ func (r Result) Launched() int {
 
 // Run is one deal pass. It deals at most two rounds: the plan, and, only when
 // a bench refused its session, the refused cards re-planned onto the benches
-// that remain. It stops at the first ErrFenced.
+// that remain. Each round runs one worker per planned bench, all at once and
+// at most maxSessions at a time (#3706); it stops at the first ErrFenced.
 func (p *Pass) Run(ctx context.Context) (Result, error) {
 	if p.Source == nil || p.Fence == nil || p.Reserver == nil || p.Row == nil || p.Dialer == nil {
 		return Result{}, fmt.Errorf("deal: source, fence, reserver, row and dialer are required")
@@ -427,48 +536,22 @@ func (p *Pass) Run(ctx context.Context) (Result, error) {
 		}
 	}
 	in = gated
+	renew := &renewal{fence: p.Fence}
 	for round := 0; round < 2; round++ {
 		batches := Plan(in, hold)
 		if len(batches) == 0 {
 			break
 		}
 		res.Rounds++
-		// Reserve every bench first, one call each, so a fenced token deals
-		// nothing further; then one session per bench, all benches at once.
-		reserved := make([][]Reservation, len(batches))
-		for i, b := range batches {
-			r, err := p.Reserver.Reserve(ctx, token, b.Bench.Name, b.Cards)
-			if err != nil {
-				return res, fmt.Errorf("deal: reserve %s: %w", b.Bench.Name, err)
-			}
-			reserved[i] = r
+		results, err := p.round(ctx, token, launcher, renew, batches, p.maxSessions(in))
+		if err != nil {
+			return res, err
 		}
-		results := make([]BenchResult, len(batches))
-		var wg sync.WaitGroup
-		for i := range batches {
-			wg.Add(1)
-			go func(i int) {
-				defer wg.Done()
-				results[i] = p.launch(ctx, launcher, batches[i], reserved[i])
-			}(i)
-		}
-		wg.Wait()
 		refused := false
-		for i, br := range results {
-			b := batches[i].Bench
-			if err := p.Row.SSH(ctx, token, b.Name, br.SSH, br.Why); err != nil {
-				return res, fmt.Errorf("deal: row %s: %w", b.Name, err)
-			}
+		for _, br := range results {
 			if br.SSH == SSHRefused || br.SSH == SSHTimeout {
-				// Nothing ran on the bench: the reservations go back to the
+				// Nothing ran on the bench: its reservations are back in the
 				// pool and this pass deals them elsewhere.
-				if len(br.Dealt) > 0 {
-					if err := p.Reserver.Unreserve(ctx, token, b.Name, br.Dealt, ReasonSSHRefused); err != nil {
-						return res, fmt.Errorf("deal: unreserve %s: %w", b.Name, err)
-					}
-				}
-				br.Returned = len(br.Dealt)
-				results[i] = br
 				refused = true
 			}
 			in = apply(in, br)
@@ -480,6 +563,125 @@ func (p *Pass) Run(ctx context.Context) (Result, error) {
 	}
 	p.export(in)
 	return res, nil
+}
+
+// round runs one worker per batch, at most slots at a time (#3706). Each
+// worker reserves its bench's batch (one call, fenced), renews the lease
+// before it opens the bench's one session, and writes the bench's row the
+// moment that session ends: a slow or wedged bench never delays another's
+// launch or row, and the round takes the slowest bench, not the sum. After a
+// fence no worker that has not started reserves; the round returns the
+// first error by batch order, a fence before any other.
+func (p *Pass) round(ctx context.Context, token string, l Launcher, renew *renewal, batches []Batch, slots int) ([]BenchResult, error) {
+	results := make([]BenchResult, len(batches))
+	errs := make([]error, len(batches))
+	sem := make(chan struct{}, slots)
+	var fenced atomic.Bool
+	var wg sync.WaitGroup
+	for i := range batches {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if fenced.Load() {
+				errs[i] = ErrFenced
+				return
+			}
+			results[i], errs[i] = p.bench(ctx, token, l, renew, batches[i])
+			if errors.Is(errs[i], ErrFenced) {
+				fenced.Store(true)
+			}
+		}(i)
+	}
+	wg.Wait()
+	var first error
+	for _, err := range errs {
+		if errors.Is(err, ErrFenced) {
+			return results, err
+		}
+		if err != nil && first == nil {
+			first = err
+		}
+	}
+	return results, first
+}
+
+// bench is one bench's worker: reserve, renew, launch, record.
+func (p *Pass) bench(ctx context.Context, token string, l Launcher, renew *renewal, b Batch) (BenchResult, error) {
+	start := time.Now()
+	reserved, err := p.Reserver.Reserve(ctx, token, b.Bench.Name, b.Cards)
+	if err != nil {
+		return BenchResult{Bench: b.Bench.Name, Planned: len(b.Cards)}, fmt.Errorf("deal: reserve %s: %w", b.Bench.Name, err)
+	}
+	if len(reserved) > 0 {
+		if err := renew.renew(ctx); err != nil {
+			// Fenced: nothing is sent; this instance's writes would be
+			// refused, and the next holder's expiry returns the batch.
+			return BenchResult{Bench: b.Bench.Name, Planned: len(b.Cards), Dealt: reserved}, fmt.Errorf("deal: renew before %s: %w", b.Bench.Name, err)
+		}
+	}
+	br, err := p.record(ctx, token, p.launch(ctx, l, b, reserved))
+	br.Took = time.Since(start)
+	return br, err
+}
+
+// record writes one bench's row when its own session ends, then each
+// refused card's refusal line (#3700). A refused or timed-out session
+// (nothing ran on the bench) is Row.Fail: its row and the return of its batch
+// are ONE call (#3322); anything else is Row.SSH.
+func (p *Pass) record(ctx context.Context, token string, br BenchResult) (BenchResult, error) {
+	if br.SSH != SSHRefused && br.SSH != SSHTimeout {
+		if err := p.Row.SSH(ctx, token, br.Bench, br.SSH, br.Why); err != nil {
+			return br, fmt.Errorf("deal: row %s: %w", br.Bench, err)
+		}
+	} else {
+		f, err := p.Row.Fail(ctx, token, br.Bench, br.SSH, br.Why, br.Dealt)
+		if err != nil {
+			return br, fmt.Errorf("deal: row %s: %w", br.Bench, err)
+		}
+		br.Returned, br.Timeouts, br.Held = f.Returned, f.Timeouts, f.Hold
+	}
+	if p.Why != nil && anyWhy(br.CardWhy) {
+		if err := p.Why.CardWhy(ctx, token, br.Dealt, br.CardWhy); err != nil {
+			return br, fmt.Errorf("deal: why %s: %w", br.Bench, err)
+		}
+	}
+	return br, nil
+}
+
+func (p *Pass) maxSessions(in Input) int {
+	switch {
+	case in.MaxSessions > 0:
+		return in.MaxSessions
+	case p.MaxSessions > 0:
+		return p.MaxSessions
+	}
+	return DefaultMaxSessions
+}
+
+// renewal is a worker's lease renewal before it opens its session. The
+// coalescing lives in the Renewer (the reconciler lease's one Renew, which
+// its heartbeat shares, #3737), so there is one renewal mechanism, not two. A
+// Fence that is not a Renewer is a no-op.
+type renewal struct {
+	fence Fence
+}
+
+func (r *renewal) renew(ctx context.Context) error {
+	rn, ok := r.fence.(Renewer)
+	if !ok {
+		return nil
+	}
+	if err := rn.Renew(ctx); err != nil {
+		if errors.Is(err, ErrFenced) {
+			return err
+		}
+		// A renewal that failed on the wire is not a fence: the session is
+		// still bounded by the lease as it stands.
+		return nil
+	}
+	return nil
 }
 
 // export sets the dealer's gauges from the input as the pass left it: the
@@ -519,6 +721,7 @@ func (p *Pass) launch(ctx context.Context, l Launcher, b Batch, res []Reservatio
 		var se *SessionError
 		if errors.As(err, &se) {
 			br.SSH, br.Why = se.State, se.Error()
+			br.Why, br.CardWhy = refusalWhys(se, br.Why, len(res))
 		} else {
 			br.SSH, br.Why = SSHError, err.Error()
 		}
@@ -526,8 +729,45 @@ func (p *Pass) launch(ctx context.Context, l Launcher, b Batch, res []Reservatio
 	return br
 }
 
+// refusalWhys reads a failed session's stdout (#3700): the row's why is the
+// first REFUSED line `card launch --stdin` printed, verbatim, else the
+// session's own why; each card's why is its own REFUSED line, or, when the
+// verb printed no per-line answer at all (the batch never ran: ssh refused,
+// the launcher could not start), the row's why.
+func refusalWhys(se *SessionError, why string, n int) (string, []string) {
+	refused, ran := Refusals(se.Stdout)
+	first := 0
+	for line := range refused {
+		if first == 0 || line < first {
+			first = line
+		}
+	}
+	if first > 0 {
+		why = refused[first]
+	}
+	cards := make([]string, n)
+	for i := range cards {
+		if l, ok := refused[i+1]; ok {
+			cards[i] = l
+		} else if !ran {
+			cards[i] = why
+		}
+	}
+	return why, cards
+}
+
+func anyWhy(why []string) bool {
+	for _, w := range why {
+		if w != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // apply folds one bench's outcome into the input for the next round: dealt
-// cards leave the pools, the bench's lease grows, a refusal marks the bench.
+// cards leave the pools, the bench's lease grows, a refusal marks the bench,
+// and a bench whose timeouts reached the hold is no longer up.
 func apply(in Input, br BenchResult) Input {
 	gone := map[string]bool{}
 	returned := br.SSH == SSHRefused || br.SSH == SSHTimeout
@@ -542,6 +782,9 @@ func apply(in Input, br BenchResult) Input {
 		}
 		if returned {
 			in.Benches[i].SSH, in.Benches[i].SSHAt = br.SSH, in.Now
+			if br.Held {
+				in.Benches[i].Up = false
+			}
 		} else {
 			in.Benches[i].Leased += len(br.Dealt)
 		}
@@ -563,8 +806,9 @@ func apply(in Input, br BenchResult) Input {
 // pools, then the pooled cards. Nothing is read with SCAN or KEYS.
 type RedisSource struct {
 	Client *redis.Client
-	// PoolLimit bounds the pool entries read per sprint; 0 reads four times
-	// the fleet's free slots (at least 64), enough for leg and pin filters.
+	// PoolLimit is retired (#3692): the pool is scored by age, so the whole
+	// pool is read and each card's priority comes from its record. Kept so
+	// callers that set it still build; it bounds nothing.
 	PoolLimit int
 }
 
@@ -579,10 +823,21 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	benchNames := pipe.SMembers(ctx, "benches")
 	order := pipe.ZRange(ctx, "sprint:order", 0, -1)
 	open := pipe.SMembers(ctx, "sprints")
+	// cfg:deal max_sessions rides the first round (#3706). It is optional:
+	// unset, unreadable (an ACL without cfg:*) or not a positive number, the
+	// pass uses its default. Its own error is the only one the round
+	// forgives; any other command's error (a lost connection, a NOPERM on the
+	// registries) fails the read as before.
+	maxSessions := pipe.HGet(ctx, MaxSessionsKey, "max_sessions")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return Input{}, err
+		if err := roundErr(maxSessions, clock, benchNames, order, open); err != nil {
+			return Input{}, err
+		}
 	}
 	in := Input{Now: clock.Val()}
+	if n, err := strconv.Atoi(maxSessions.Val()); err == nil && n > 0 && maxSessions.Err() == nil {
+		in.MaxSessions = n
+	}
 	openSet := map[string]bool{}
 	for _, s := range open.Val() {
 		openSet[s] = true
@@ -613,19 +868,22 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			living:   pipe.ZCard(ctx, "bench:"+b+":living"),
 		}
 	}
-	type sprintCmds struct{ meta, policy, bp *redis.MapStringStringCmd }
+	type sprintCmds struct {
+		meta, policy, bp *redis.MapStringStringCmd
+		stop             *redis.IntCmd
+	}
 	sc := make([]sprintCmds, len(sprintNames))
 	for i, s := range sprintNames {
 		sc[i] = sprintCmds{
 			meta:   pipe.HGetAll(ctx, "s:"+s),
 			policy: pipe.HGetAll(ctx, "s:"+s+":policy"),
 			bp:     pipe.HGetAll(ctx, "s:"+s+":backpressure"),
+			stop:   pipe.Exists(ctx, pitstop.Key(s)),
 		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return Input{}, err
 	}
-	free := 0
 	for i, name := range names {
 		d, beat, ssh := bc[i].desired.Val(), bc[i].beat.Val(), bc[i].ssh.Val()
 		slots, _ := strconv.Atoi(d["slots"])
@@ -644,16 +902,6 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			b.SSHAt = time.UnixMilli(ms)
 		}
 		in.Benches = append(in.Benches, b)
-		if b.Up && !b.Paused {
-			free += b.Free()
-		}
-	}
-	limit := r.PoolLimit
-	if limit <= 0 {
-		limit = 4 * free
-		if limit < 64 {
-			limit = 64
-		}
 	}
 	pipe = c.Pipeline()
 	pools := make([]*redis.ZSliceCmd, len(sprintNames))
@@ -664,7 +912,10 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			continue
 		}
 		live = append(live, i)
-		pools[i] = pipe.ZRangeWithScores(ctx, "s:"+s+":pool", 0, int64(limit-1))
+		// The pool is scored by age (created_at, #3692), not priority, so
+		// the whole pool is read (O(n)) and the priority comes from each
+		// record.
+		pools[i] = pipe.ZRangeWithScores(ctx, "s:"+s+":pool", 0, -1)
 		waits[i] = pipe.SMembers(ctx, "s:"+s+":waiting")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
@@ -703,13 +954,13 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			continue
 		}
 		card := Card{
-			Sprint: sprintNames[cc.sprint], Label: cc.label, Priority: cc.score,
+			Sprint: sprintNames[cc.sprint], Label: cc.label, Age: cc.score,
 			Leg: str(v, 1), Tier: str(v, 2), Bench: str(v, 3),
 			DependsOn: splitDeps(str(v, 4)), Repo: str(v, 5), Base: str(v, 6), WaitWhy: str(v, 7),
 			Avoid: strings.Fields(str(v, 9)),
 		}
+		card.Priority, _ = strconv.ParseFloat(str(v, 8), 64)
 		if cc.waiting {
-			card.Priority, _ = strconv.ParseFloat(str(v, 8), 64)
 			waitBySprint[cc.sprint] = append(waitBySprint[cc.sprint], card)
 			continue
 		}
@@ -772,9 +1023,26 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			// (fail-open) is OFF, "closed" is ON.
 			on = policy["backpressure_missing"] == "closed"
 		}
-		in.Sprints = append(in.Sprints, Sprint{Name: sprintNames[i], Share: shareN, Backpressure: on, Pool: bySprint[i], Waiting: waitBySprint[i]})
+		in.Sprints = append(in.Sprints, Sprint{Name: sprintNames[i], Share: shareN, Backpressure: on,
+			Pitstop: sc[i].stop.Val() > 0, Pool: bySprint[i], Waiting: waitBySprint[i]})
 	}
 	return in, nil
+}
+
+// roundErr is the first error, other than redis.Nil, of the round's
+// commands, skipping forgiven: the one optional read whose own error leaves
+// its default. A round whose Exec failed but whose every other command
+// succeeded failed only on forgiven.
+func roundErr(forgiven redis.Cmder, cmds ...redis.Cmder) error {
+	for _, cmd := range cmds {
+		if cmd == forgiven {
+			continue
+		}
+		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
+			return err
+		}
+	}
+	return nil
 }
 
 // RowKey is the hash (bench:<b>:ssh) the deal pass's Row writes the last session outcome to:

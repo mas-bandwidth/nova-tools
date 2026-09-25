@@ -46,6 +46,10 @@ func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "f", "32"}, &out, &errOut); code != 0 {
 		t.Fatalf("capacity friend code=%d stderr=%q", code, errOut.String())
 	}
+	// #3265: the receipt names its round trips, one pipeline and one FCALL.
+	if got := out.String(); got != "SET friend f machine=m slots=32 desired=40/40 trips=2\n" {
+		t.Fatalf("capacity friend receipt=%q", got)
+	}
 	if !client.SIsMember(ctx, "friends", "f").Val() {
 		t.Fatal("capacity friend did not register f")
 	}

@@ -249,6 +249,9 @@ type BenchRequest struct {
 	Idem     string
 	// TTL is the life of this beat's keys; zero means BenchBeatTTL.
 	TTL time.Duration
+	// Facts are the bench's own measurements (#3646), refreshed every beat;
+	// MeasureBench fills them.
+	Facts Facts
 }
 
 // BenchResult is one bench beat. Accepted is false when another live session
@@ -278,7 +281,8 @@ func BenchBeat(ctx context.Context, st *store.Store, req BenchRequest) (BenchRes
 	reply, err := st.Client().FCall(ctx, FunctionBenchBeat, nil,
 		req.Bench, req.Host, req.User, req.Load1, req.SSH, req.Probe,
 		req.Launcher, strings.Join(req.Live, liveSeparator), req.Why,
-		req.Session, req.Actor, req.Idem, build, ttl.Milliseconds()).Result()
+		req.Session, req.Actor, req.Idem, build,
+		req.Facts.Harness, req.Facts.Mirrors, req.Facts.DiskGiB, ttl.Milliseconds()).Result()
 	if err != nil {
 		return BenchResult{}, fmt.Errorf("bench beat %s: %w", req.Bench, err)
 	}

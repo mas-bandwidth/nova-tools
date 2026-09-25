@@ -13,6 +13,14 @@
 //	sprint:<S>:landed     the landed line                  (sprint-landed)
 //	q:blocked             ZCARD, the one blocked count     (friend-queue, #3219)
 //	bench:*               SCAN COUNT 1000, then HGETALL    (bench-row, card-dealer)
+//	bench:<b>:cards:<w>   ZCARD, w = ready working done ok fail (the card move, #3692)
+//
+// A host row's ready, working, done, ok and fail are the ZCARDs of its card
+// views, read in the same pipeline (nova-tools#3692, ONE PLACE: every card is
+// in one place, and these sets are the bench view of it). The bash
+// bench-row's queue, working, done, ok and fail fields are no longer read: it
+// counted job dirs, and cards that had ended printed as "-". host, at and
+// load1 still come from the bench's own hash.
 //
 // Bench keys are found by SCAN, as the bash does (a cursor walk; the bench
 // ACL user has no KEYS and no EVAL_RO); every value is then read in ONE
@@ -120,8 +128,14 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 	mget := pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy", "sprint:"+cfg.Sprint+":landed")
 	blocked := pipe.ZCard(ctx, "q:blocked")
 	hashes := make([]*redis.MapStringStringCmd, len(benchKeys))
+	cards := make([][]*redis.IntCmd, len(benchKeys))
 	for i, key := range benchKeys {
 		hashes[i] = pipe.HGetAll(ctx, key)
+		if name := strings.TrimPrefix(key, "bench:"); name != "pool" && !strings.Contains(name, ":") {
+			for _, w := range benchCardCells {
+				cards[i] = append(cards[i], pipe.ZCard(ctx, key+":cards:"+w))
+			}
+		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, fmt.Errorf("pipeline: %w", err)
@@ -168,12 +182,40 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		for f, v := range h {
 			fields[f] = sanitize(v)
 		}
+		cardCells(fields, cards[i])
 		snap.Benches = append(snap.Benches, BenchRow{Key: strings.TrimPrefix(key, "bench:"), Fields: fields})
 	}
 	if snap.XY == "" && cfg.XYFile != "" {
 		snap.XYFileLine, snap.XYFileMod, snap.XYFileOK = readXYFile(cfg.XYFile)
 	}
 	return snap, nil
+}
+
+// benchCardCells are the host row's card columns, each a ZCARD of
+// bench:<b>:cards:<cell>; the first is the row's queue column (ready).
+var benchCardCells = []string{"ready", "working", "done", "ok", "fail"}
+
+// cardCells writes the card view counts over the bench hash's own queue,
+// working, done, ok and fail (and drops the dealer's queue override): the
+// row prints the sets. A count that could not be read (the ZCARD errored)
+// is "?", never a false 0; the row and its column total print "?".
+func cardCells(fields map[string]string, cmds []*redis.IntCmd) {
+	if len(cmds) != len(benchCardCells) {
+		return
+	}
+	delete(fields, "dealer_queue")
+	delete(fields, "dealer_at")
+	for j, w := range benchCardCells {
+		field := w
+		if w == "ready" {
+			field = "queue"
+		}
+		if cmds[j].Err() != nil {
+			fields[field] = "?"
+			continue
+		}
+		fields[field] = strconv.FormatInt(cmds[j].Val(), 10)
+	}
 }
 
 // FailedLive is the tick whose read failed: the friend, xy and landed values
@@ -215,42 +257,40 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 	fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", "host", "ready", "working", "done", "ok", "fail", "ok%", "load")
 	b.WriteString(liveBenchRule)
 	var tq, tw, td, to, tf int64
+	unread := map[string]bool{}
 	for _, row := range s.Benches {
-		f := row.Fields
-		if f["host"] != row.Key {
-			continue // a hash without its OWN host field (expired, partial) is not a row
-		}
-		if s.benchRowStale(f, now) {
-			fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", f["host"], "stale", "?", "?", "?", "?", "?", "?")
+		c, show := row.cells(now)
+		if !show {
 			continue
 		}
-		queue := strconv.FormatInt(awkInt(f["queue"]), 10)
-		if dq, dat := f["dealer_queue"], f["dealer_at"]; dq != "" && dat != "" {
-			if at, ok := parseUTC(dat); ok {
-				if age := now.Unix() - at.Unix(); age >= 0 && age <= 30 {
-					queue = dq
-				}
-			}
+		if s.benchRowStale(row.Fields, now) {
+			fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", c.host, "stale", "?", "?", "?", "?", "?", "?")
+			continue
 		}
-		working, done, ok, fail := awkInt(f["working"]), awkInt(f["done"]), awkInt(f["ok"]), awkInt(f["fail"])
-		load := f["load1"]
-		if load == "" {
-			load = "-"
+		for cell := range c.unread {
+			unread[cell] = true
 		}
-		var pct int64
-		if done > 0 {
-			pct = 100 * ok / done
+		pct := "0%"
+		if c.unread["done"] || c.unread["ok"] {
+			pct = "?"
+		} else if c.done > 0 {
+			pct = strconv.FormatInt(100*c.ok/c.done, 10) + "%"
 		}
-		fmt.Fprintf(&b, "%-10s | %5s | %7d | %5d | %5d | %5d | %3d%% | %6s\n", f["host"], queue, working, done, ok, fail, pct, load)
-		qn, _ := strconv.ParseInt(queue, 10, 64)
-		tq, tw, td, to, tf = tq+qn, tw+working, td+done, to+ok, tf+fail
+		fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", c.host, c.queue,
+			c.num("working", c.working), c.num("done", c.done), c.num("ok", c.ok), c.num("fail", c.fail), pct, c.load)
+		qn, _ := strconv.ParseInt(c.queue, 10, 64)
+		tq, tw, td, to, tf = tq+qn, tw+c.working, td+c.done, to+c.ok, tf+c.fail
 	}
 	b.WriteString(liveBenchRule)
-	var tpct int64
-	if td > 0 {
-		tpct = 100 * to / td
+	total := benchCells{unread: unread}
+	tpct := "0%"
+	if unread["done"] || unread["ok"] {
+		tpct = "?"
+	} else if td > 0 {
+		tpct = strconv.FormatInt(100*to/td, 10) + "%"
 	}
-	fmt.Fprintf(&b, "%-10s | %5d | %7d | %5d | %5d | %5d | %3d%% |\n", "total", tq, tw, td, to, tf, tpct)
+	fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s |\n", "total", total.num("queue", tq), total.num("working", tw),
+		total.num("done", td), total.num("ok", to), total.num("fail", tf), tpct)
 	if s.PoolPresent {
 		fmt.Fprintf(&b, "pool: %s undealt\n", s.Pool)
 	}
@@ -305,9 +345,78 @@ func (s *LiveSnapshot) benchRowStale(f map[string]string, now time.Time) bool {
 	return now.Sub(at) > limit
 }
 
+// benchCells is one bench row's cells, the rules the bash applies.
+type benchCells struct {
+	host, queue, load       string
+	working, done, ok, fail int64
+	// unread names the cells whose value is "?" (a card view count that
+	// could not be read, #3692): they print "?", never a number.
+	unread map[string]bool
+}
+
+// num prints one count cell: "?" when it could not be read.
+func (c benchCells) num(cell string, v int64) string {
+	if c.unread[cell] {
+		return "?"
+	}
+	return strconv.FormatInt(v, 10)
+}
+
+// beatWithin60 is the bash of record's 60 s freshness on the bench's own beat
+// (an unparseable at counts as fresh, an at ahead of now does not). The whole
+// sprint table (sprint.go) still drops a host row that fails it; the live
+// table prints such a row "stale" instead (benchRowStale, #3372).
+func (row BenchRow) beatWithin60(now time.Time) bool {
+	at, ok := parseUTC(row.Fields["at"])
+	if !ok {
+		return true
+	}
+	age := now.Unix() - at.Unix()
+	return age >= 0 && age <= 60
+}
+
+// cells applies the bash's row rules: a hash whose own host field is not its
+// key is no row; the dealer's queue count wins while dealer_at is at most
+// 30 s old; a missing load prints "-". The beat's age is not a cell rule:
+// an old row prints "stale" (benchRowStale, #3372) instead of vanishing.
+func (row BenchRow) cells(now time.Time) (benchCells, bool) {
+	f := row.Fields
+	if f["host"] != row.Key {
+		return benchCells{}, false
+	}
+	c := benchCells{host: f["host"], queue: strconv.FormatInt(awkInt(f["queue"]), 10), load: f["load1"]}
+	if dq, dat := f["dealer_queue"], f["dealer_at"]; dq != "" && dat != "" {
+		if at, ok := parseUTC(dat); ok {
+			if age := now.Unix() - at.Unix(); age >= 0 && age <= 30 {
+				c.queue = dq
+			}
+		}
+	}
+	c.working, c.done, c.ok, c.fail = awkInt(f["working"]), awkInt(f["done"]), awkInt(f["ok"]), awkInt(f["fail"])
+	for _, cell := range []string{"queue", "working", "done", "ok", "fail"} {
+		if f[cell] == "?" {
+			if c.unread == nil {
+				c.unread = map[string]bool{}
+			}
+			c.unread[cell] = true
+		}
+	}
+	if c.unread["queue"] {
+		c.queue = "?"
+	}
+	if c.load == "" {
+		c.load = "-"
+	}
+	return c, true
+}
+
 // friendStatus: down (the down flag) | ? (no row) | stale (older than
 // RowStale) | down (up != 1) | up. No ages (Glenn 2026-09-23 3:30 PM ET).
 func (s *LiveSnapshot) friendStatus(row FriendRow, now time.Time) string {
+	return friendState(row, now, s.Config.RowStale)
+}
+
+func friendState(row FriendRow, now time.Time, stale time.Duration) string {
 	if row.Down != "" {
 		return "down"
 	}
@@ -326,7 +435,6 @@ func (s *LiveSnapshot) friendStatus(row FriendRow, now time.Time) string {
 	if age < 0 {
 		age = 0
 	}
-	stale := s.Config.RowStale
 	if stale <= 0 {
 		stale = 10 * time.Second
 	}

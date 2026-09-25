@@ -366,6 +366,72 @@ func TestEndAfterPushAndDealRecordsEnded(t *testing.T) {
 	}
 }
 
+// TestEndComparesIdentityBaseOnThePrefix is the other half of nova-tools
+// #3351: the identity carries base8 and the stored base_sha may be the linted
+// 40-hex sha (card push) or base8 (ci.lua), so ns_card_end compares the
+// identity's base with the stored base's first eight hex. A stored base whose
+// prefix differs is still a real mismatch and refuses CONFLICT with no write:
+// the fix never weakens the check.
+func TestEndComparesIdentityBaseOnThePrefix(t *testing.T) {
+	const base8 = "89abcdef"
+	cases := []struct {
+		name     string
+		stored   string
+		wantCode int
+		reason   string
+	}{
+		{"stored 40-hex with the identity prefix ends", base8 + "0123456789abcdef0123456789abcdef", 0, "OK"},
+		{"stored base8 equal to the identity ends", base8, 0, "OK"},
+		{"stored 40-hex with another prefix conflicts", "0123abcd" + "0123456789abcdef0123456789abcdef", 4, "CONFLICT"},
+		{"stored 40-hex differing in the eighth hex conflicts", "89abcde0" + "0123456789abcdef0123456789abcdef", 4, "CONFLICT"},
+		{"stored base8 of another cut conflicts", "0123abcd", 4, "CONFLICT"},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st, client := newSprint(t)
+			id := card.Identity{Sprint: "control-3351", Label: fmt.Sprintf("base-prefix-%d", i), BaseSHA: base8, Bench: "ctl-bench", Attempt: 1}
+			token := attemptToken(1, "0123456789abcdef0123456789abcdef")
+			seedCard(t, ctx, client, id, "running", token)
+			if err := client.HSet(ctx, card.CardKey(id.Sprint, id.Label), "base_sha", tc.stored).Err(); err != nil {
+				t.Fatal(err)
+			}
+			results := canonicalResults(t, id)
+			writeRecord(t, results, card.EndRecord{
+				Identity: id, Outcome: "DONE", Reason: "done", ExitCode: 0,
+				TokenSHA: card.TokenSHA(token), PushedSHA: "0123456789abcdef0123456789abcdef01234567", At: "1970-01-01T00:00:00Z",
+			})
+			got, err := card.End(ctx, st, card.EndRequest{
+				Sprint: id.Sprint, Label: id.Label, Token: token, Outcome: "DONE", Reason: "done", ResultsDir: results,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantCode == 0 {
+				if got.Code != 0 || !got.Resolved {
+					t.Fatalf("end with stored base %q = %+v, want ended", tc.stored, got)
+				}
+				if state := stateOf(t, ctx, client, id.Sprint, id.Label); state != "ended" {
+					t.Fatalf("state = %q, want ended", state)
+				}
+				return
+			}
+			if got.Code != tc.wantCode || got.Reason != tc.reason || got.Resolved {
+				t.Fatalf("end with stored base %q = %+v, want code=%d %s unresolved", tc.stored, got, tc.wantCode, tc.reason)
+			}
+			if state := stateOf(t, ctx, client, id.Sprint, id.Label); state != "running" {
+				t.Fatalf("refused end moved the card to %q", state)
+			}
+			if n := xlen(t, ctx, client, id.Sprint); n != 0 {
+				t.Fatalf("refused end wrote %d log entries", n)
+			}
+			if _, err := os.Stat(filepath.Join(results, card.EndRecordName)); err != nil {
+				t.Fatal("refused end removed the record")
+			}
+		})
+	}
+}
+
 func TestControl26OtherAttemptResolvesNothing(t *testing.T) {
 	ctx := context.Background()
 	st, client := newSprint(t)

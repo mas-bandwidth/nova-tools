@@ -208,6 +208,17 @@ func main() {
 			}
 		}
 	}
+	// FAKE-CARD-REPO <origin> is a card's STEP 1 and its fix: `git clone -q <origin> repo`
+	// in the job directory (lint rule clone-step), then one tracked file changed and left
+	// uncommitted, the shape the card wrapper's commit step commits.
+	if origin, ok := directive(prompt, "FAKE-CARD-REPO"); ok && job != "" && origin != "" {
+		repo := filepath.Join(job, "repo")
+		if out, err := exec.Command("git", "clone", "-q", origin, repo).CombinedOutput(); err != nil {
+			writeRecorded(filepath.Join(job, "card-repo-err"), []byte("git clone failed: "+err.Error()+"\n"+string(out)), 0o644)
+		} else {
+			_ = os.WriteFile(filepath.Join(repo, "base.txt"), []byte("base\nthe card's fix\n"), 0o644)
+		}
+	}
 	// FAKE-TURNS prints n MODEL TURNS in the harness's own voice, on the child's output,
 	// which is the capture rule 13b counts turns in: "the harness log's assistant turns
 	// (counted the way usage counts assistant rows)". It is how a card budget's `max_turns`

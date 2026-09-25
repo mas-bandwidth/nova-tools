@@ -62,7 +62,7 @@ func TestControl2674SprintLayout(t *testing.T) {
 			snap := table.FailedLive(cfg, nil)
 			if !c.noRedis {
 				var err error
-				client := liveStore(t, append(table.Fixture2674(), c.extra...))
+				client := liveStore(t, withCardViews(append(table.Fixture2674(), c.extra...), now))
 				if snap, err = table.ReadLive(context.Background(), client, cfg); err != nil {
 					t.Fatal(err)
 				}
@@ -187,12 +187,14 @@ func TestTableShowsStaleBenchRowNotAbsent(t *testing.T) {
 	row := func(host, stamp string) []string {
 		return []string{"HSET", "bench:" + host, "host", host, "queue", "2", "working", "3", "done", "10", "ok", "9", "fail", "1", "load1", "4.00", "at", stamp}
 	}
-	client := liveStore(t, [][]string{
+	// The counts are the card views (#3692); withCardViews seeds them from
+	// the hash's queue, working, done, ok and fail.
+	client := liveStore(t, withCardViews([][]string{
 		row("fresh", at(1*time.Second)),
 		row("edge", at(2*time.Second)),
 		row("slow", at(3*time.Second)),
 		row("dead", at(10*time.Minute)),
-	})
+	}, now))
 	cfg := table.LiveConfig{Friends: []string{"rowan"}, Sprint: "s1"}
 	snap, err := table.ReadLive(context.Background(), client, cfg)
 	if err != nil {

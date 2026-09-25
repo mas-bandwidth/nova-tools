@@ -72,7 +72,8 @@ func runCardLaunch(_ context.Context, args []string, in io.Reader, out, errOut i
 	if err != nil {
 		return refuse(errOut, "card launch", err.Error())
 	}
-	res, err := launch.Launch(in, out, launch.Config{Wrapper: path})
+	// Every REFUSED line goes to stderr too (#3700), so a session log shows it.
+	res, err := launch.Launch(in, out, launch.Config{Wrapper: path, Err: errOut})
 	if err != nil {
 		fmt.Fprintf(errOut, "nova-sprint %s\n", oneline.Err(err))
 		return 2

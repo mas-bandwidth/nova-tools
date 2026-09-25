@@ -209,7 +209,7 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 	for _, want := range []string{
 		"ok-to-friend duty=reconcile",
 		"harvest duty=reconcile",
-		"pr-to-read duty=route verb=consume-once proc=proc:pr-to-read",
+		"pr-to-read duty=reconcile,route verb=consume-once proc=proc:pr-to-read",
 		"hold-to-fix not-built=#3092",
 	} {
 		if code != 0 || !strings.Contains(out, want) {
@@ -217,14 +217,14 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 		}
 	}
 
-	// The production reconciler runs both built consumers as duties.
-	_, names, err := productionDuties(store.New(c), metrics.Default)
+	// The production reconciler runs the built consumers as duties.
+	_, names, _, err := productionDuties(store.New(c), metrics.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := strings.Join(names, ",")
-	if !strings.HasPrefix(got, "refill,ok-to-friend,harvest") {
-		t.Fatalf("productionDuties = %s; want refill,ok-to-friend,harvest first", got)
+	if !strings.HasPrefix(got, "refill,ok-to-friend,harvest,pr-to-read") {
+		t.Fatalf("productionDuties = %s; want refill,ok-to-friend,harvest,pr-to-read first", got)
 	}
 
 	// And one `reconcile --once` pass consumes a second ended card with no
@@ -247,7 +247,7 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 	if code := runReconcile(ctx, []string{"--redis", addr, "--host", "ctl-host", "--once"}, &rOut, &rErr); code != 0 {
 		t.Fatalf("reconcile --once: exit %d out %q err %q", code, rOut.String(), rErr.String())
 	}
-	if !strings.Contains(rOut.String(), "DUTIES refill,ok-to-friend,harvest") {
+	if !strings.Contains(rOut.String(), "DUTIES refill,ok-to-friend,harvest,pr-to-read") {
 		t.Fatalf("reconcile out %q; want the consumer duties on the DUTIES line", rOut.String())
 	}
 	if state, err := c.HGet(ctx, "s:"+S+":task:harvest-"+label2, "state").Result(); err != nil || state != "open" {
