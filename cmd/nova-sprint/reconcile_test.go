@@ -217,6 +217,10 @@ func TestReconcileVerbDealsOnEvent(t *testing.T) {
 	if !strings.Contains(out.String(), "RELEASED reconcile") {
 		t.Fatalf("stdout %q, want the lease released", out.String())
 	}
+	// The start line names the heartbeat (#3737): TTL/3 of the 6 s lease.
+	if !strings.Contains(out.String(), " ttl=6s heartbeat=2s\n") {
+		t.Fatalf("stdout %q, want the RECONCILER line to end ttl=6s heartbeat=2s", out.String())
+	}
 	if extra.n.Load() < 2 {
 		t.Fatalf("registered duty ran %d passes, want one per pass", extra.n.Load())
 	}

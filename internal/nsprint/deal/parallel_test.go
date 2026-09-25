@@ -371,9 +371,9 @@ func (f *renewingFence) Renew(context.Context) error {
 	return nil
 }
 
-// TestPassRenewsLeaseBeforeSessions: a Renewer fence is renewed before the
-// first session opens, one renewal serves the workers that start inside
-// RenewAfter of it, and a fenced renewal opens no session and fences the
+// TestPassRenewsLeaseBeforeSessions: a Renewer fence is renewed before each
+// session opens (the coalescing of those renewals is the reconciler lease's,
+// #3737, tested there), and a fenced renewal opens no session and fences the
 // pass.
 func TestPassRenewsLeaseBeforeSessions(t *testing.T) {
 	t.Run("renewed before the sessions", func(t *testing.T) {
@@ -384,7 +384,7 @@ func TestPassRenewsLeaseBeforeSessions(t *testing.T) {
 		fe := &renewingFence{token: lease, events: ev}
 		d := newBarrier(nil, len(sixBenches))
 		d.events = ev
-		p := &Pass{Source: staticSource{in}, Fence: fe, Reserver: st, Row: st, Dialer: d, RenewAfter: guard}
+		p := &Pass{Source: staticSource{in}, Fence: fe, Reserver: st, Row: st, Dialer: d}
 		if _, err := p.Run(context.Background()); err != nil {
 			t.Fatal(err)
 		}
@@ -395,8 +395,8 @@ func TestPassRenewsLeaseBeforeSessions(t *testing.T) {
 				renewals++
 			}
 		}
-		if len(got) == 0 || got[0] != "renew" || renewals != 1 || len(got) != 1+len(sixBenches) {
-			t.Fatalf("events %v, want one renewal, then the six sessions", got)
+		if len(got) == 0 || got[0] != "renew" || renewals != len(sixBenches) || len(got) != 2*len(sixBenches) {
+			t.Fatalf("events %v, want a renewal before each of the six sessions", got)
 		}
 	})
 	t.Run("fenced renewal opens nothing", func(t *testing.T) {

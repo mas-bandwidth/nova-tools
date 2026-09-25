@@ -40,6 +40,16 @@
 // has: the PR number (the create or the lookup). The head is verified from
 // that same response and then lives in the record; no pass reads it back
 // from GitHub, and the lander reads the record, never GitHub.
+//
+// Bounded by the reconciler lease (#3737). Run as the reconciler's duty, a
+// pass is given the reconciler lease as Options.Bound: before each card it
+// checks the lease, and starts no new card when the lease is fenced or less
+// than Options.Margin of it is left. The pass then records what it did in
+// proc:harvest:<b> (n, took_ms, left=<cards not started>, err=FENCED or
+// err=LEASE-MARGIN ...), never a silent n=0, and releases lease:harvest:<b>
+// in the same call. A worker that takes a lease:harvest:<b> its last holder
+// never released (the lease lapsed on its TTL) is told the holder and logs
+// `TAKEN from=<instance> stale`.
 package harvest
 
 import (
@@ -68,6 +78,7 @@ const (
 	FunctionHarvested = "ns_card_harvested"
 	FunctionRefuse    = "ns_harvest_refuse"
 	FunctionFail      = "ns_harvest_fail"
+	FunctionRelease   = "ns_harvest_release"
 )
 
 // The durable harvest steps (card hash field harvest_step).
@@ -126,6 +137,26 @@ var ErrLeaseHeld = errors.New("harvest lease held elsewhere")
 
 // ErrFenced: the lease was lost mid-pass; the worker stops writing.
 var ErrFenced = errors.New("harvest lease lost (fenced)")
+
+// ErrBoundFenced: the reconciler lease the pass runs under (Options.Bound) is
+// fenced; the pass starts no new card and records err=FENCED.
+var ErrBoundFenced = errors.New("FENCED")
+
+// ErrBoundMargin: less than Options.Margin of the reconciler lease is left;
+// the pass starts no new card and records err=LEASE-MARGIN.
+var ErrBoundMargin = errors.New("LEASE-MARGIN")
+
+// Bound is the lease clock a pass runs under (#3737): the reconciler's lease
+// (*reconcile.Lease). Remaining is the lease time left on its clock; Fenced
+// is true once it is lost for good.
+type Bound interface {
+	Remaining() time.Duration
+	Fenced() bool
+}
+
+// DefaultMargin is the lease time a bounded pass keeps back: a card is not
+// started with less left (reconcile.DefaultWriteMargin, the deal pass's).
+const DefaultMargin = time.Second
 
 // Card is one ended(DONE) card due for harvest, as ns_harvest_due returns it.
 type Card struct {
@@ -208,6 +239,17 @@ type Options struct {
 	// FailCap is the failed passes a card gets before it moves to done/fail;
 	// 0 means DefaultFailCap.
 	FailCap int
+	// Bound, when set, is the reconciler lease the pass runs under (#3737):
+	// no card starts once it is fenced or less than Margin of it is left.
+	Bound Bound
+	// Margin is the least lease time a card starts with; 0 is DefaultMargin.
+	Margin time.Duration
+	// OnLease, when set, is told each lease:harvest:<b> this pass takes
+	// (held true, with its token) and gives back (held false), so an owner
+	// that must stop can release what a stuck worker still holds (Release).
+	OnLease func(bench, token string, held bool)
+	// Log, when set, receives receipt lines (TAKEN from=<instance> stale).
+	Log func(line string)
 }
 
 // CardResult is one harvested card. Via is record (the idem key and its PR
@@ -238,9 +280,13 @@ type BenchResult struct {
 	Bench  string
 	Cards  []CardResult
 	Failed []CardFailure
+	Left   int // due cards the pass never started (the lease bound, #3737)
 	Took   time.Duration
 	Done   time.Time
 	Err    error // the bench's own clock, the lease, or Redis
+	// StaleFrom is the instance that last held lease:harvest:<b> and never
+	// released it, when this pass took it after it lapsed.
+	StaleFrom string
 }
 
 // Run harvests every bench in parallel, each under its own clock, and returns
@@ -263,6 +309,9 @@ func Run(ctx context.Context, st *store.Store, opt Options) []BenchResult {
 	}
 	if opt.FailCap <= 0 {
 		opt.FailCap = DefaultFailCap
+	}
+	if opt.Margin <= 0 {
+		opt.Margin = DefaultMargin
 	}
 	out := make([]BenchResult, len(opt.Benches))
 	var wg sync.WaitGroup
@@ -309,9 +358,25 @@ func runBench(parent context.Context, st *store.Store, opt Options, bench string
 		res.Err = fmt.Errorf("lease %s: %w", bench, err)
 		return res
 	}
+	status, from, _ := strings.Cut(status, "|")
 	if status != "TAKEN" && status != "RENEWED" {
 		res.Err = fmt.Errorf("%w: %s %s", ErrLeaseHeld, bench, status)
+		if from != "" {
+			res.Err = fmt.Errorf("%w|%s", res.Err, from)
+		}
 		return res
+	}
+	if opt.OnLease != nil {
+		opt.OnLease(bench, l.token, true)
+		defer opt.OnLease(bench, l.token, false)
+	}
+	if status == "TAKEN" && from != "" {
+		// The last holder never recorded its pass: it died (or was fenced
+		// and killed) holding the lease, which then lapsed on its TTL.
+		res.StaleFrom = from
+		if opt.Log != nil {
+			opt.Log(fmt.Sprintf("HARVEST TAKEN from=%s stale bench=%s instance=%s", from, bench, l.instance))
+		}
 	}
 
 	// Renew the lease every Renew until the pass ends; a lost lease cancels
@@ -338,7 +403,7 @@ func runBench(parent context.Context, st *store.Store, opt Options, bench string
 		}
 	}()
 
-	res.Cards, res.Failed, res.Err = harvestBench(ctx, st, opt, l)
+	res.Cards, res.Failed, res.Left, res.Err = harvestBench(ctx, st, opt, l)
 	var died *faultStop
 	if errors.As(res.Err, &died) {
 		// The fault seam: the process "died" at died.step. It writes no pass
@@ -351,6 +416,11 @@ func runBench(parent context.Context, st *store.Store, opt Options, bench string
 	case <-lost:
 		res.Err = fmt.Errorf("%w: %s", ErrFenced, bench)
 	default:
+	}
+	if opt.Bound != nil && opt.Bound.Fenced() && !errors.Is(res.Err, ErrFenced) {
+		// The reconciler lease is lost: whatever stopped the pass (the
+		// bound, or the owner cancelling it on the way out), it says FENCED.
+		res.Err = ErrBoundFenced
 	}
 	if res.Err == nil && ctx.Err() != nil {
 		res.Err = fmt.Errorf("bench %s clock %v: %w", bench, opt.Clock, ctx.Err())
@@ -369,8 +439,35 @@ func runBench(parent context.Context, st *store.Store, opt Options, bench string
 		errText = fmt.Sprintf("%d card(s) failed: %s", len(res.Failed), oneLine(res.Failed[0].Err.Error()))
 	}
 	_ = st.Client().FCall(pctx, FunctionPass, nil, bench, l.instance, l.token,
-		time.Since(start).Milliseconds(), len(res.Cards), errText).Err()
+		time.Since(start).Milliseconds(), len(res.Cards), errText, res.Left).Err()
 	return res
+}
+
+// Release gives back lease:harvest:<bench> if token still holds it (the
+// holder's name is cleared from proc:harvest:<bench> in the same call), so an
+// owner stopping a worker that never reached its pass line does not leave the
+// bench held until the TTL. Another holder's lease is untouched (FENCED).
+func Release(ctx context.Context, st *store.Store, bench, instance, token string) (string, error) {
+	return st.Client().FCall(ctx, FunctionRelease, nil, bench, instance, token).Text()
+}
+
+// bounded is the lease bound before a card starts: nil to start it, else why
+// not (ErrBoundFenced, ErrBoundMargin with what is left).
+func bounded(opt Options) error {
+	if opt.Bound == nil {
+		return nil
+	}
+	if opt.Bound.Fenced() {
+		return ErrBoundFenced
+	}
+	margin := opt.Margin
+	if margin <= 0 {
+		margin = DefaultMargin
+	}
+	if left := opt.Bound.Remaining(); left < margin {
+		return fmt.Errorf("%w: %s of the reconciler lease left, below the %s margin", ErrBoundMargin, left.Round(time.Millisecond), margin)
+	}
+	return nil
 }
 
 func oneLine(s string) string {
@@ -384,7 +481,7 @@ func oneLine(s string) string {
 // harvestBench is the pass: due cards in label order, each pushed, its PR
 // found or opened, its head read back, then the harvested transition. A card
 // that fails stays ended; the bench goes on to the next card until its clock.
-func harvestBench(ctx context.Context, st *store.Store, opt Options, l lease) ([]CardResult, []CardFailure, error) {
+func harvestBench(ctx context.Context, st *store.Store, opt Options, l lease) ([]CardResult, []CardFailure, int, error) {
 	if labels, err := st.Client().SInter(ctx, "s:"+opt.Sprint+":bench:"+l.bench+":ended", "s:"+opt.Sprint+":idx:card:ended").Result(); err == nil {
 		sort.Strings(labels)
 		for _, label := range labels {
@@ -410,7 +507,7 @@ func harvestBench(ctx context.Context, st *store.Store, opt Options, l lease) ([
 					continue
 				}
 				if reply == "FENCED" {
-					return nil, nil, ErrFenced
+					return nil, nil, 0, ErrFenced
 				}
 			}
 		}
@@ -418,25 +515,28 @@ func harvestBench(ctx context.Context, st *store.Store, opt Options, l lease) ([
 
 	info, cards, err := due(ctx, st, opt.Sprint, l.bench, opt.Limit)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 	var done []CardResult
 	var failed []CardFailure
-	for _, c := range cards {
+	for i, c := range cards {
 		if len(opt.Labels) > 0 && !opt.Labels[c.Label] {
 			continue
 		}
 		if ctx.Err() != nil {
-			return done, failed, nil
+			return done, failed, notStarted(opt, cards[i:]), nil
+		}
+		if err := bounded(opt); err != nil {
+			return done, failed, notStarted(opt, cards[i:]), err
 		}
 		r, err := harvestCard(ctx, st, opt, l, info, c)
 		var died *faultStop
 		if errors.Is(err, ErrFenced) || errors.As(err, &died) {
-			return done, failed, err
+			return done, failed, notStarted(opt, cards[i+1:]), err
 		}
 		if err != nil {
 			if ctx.Err() != nil {
-				return done, failed, nil
+				return done, failed, notStarted(opt, cards[i:]), nil
 			}
 			code := CodeFailed
 			var ce *cardError
@@ -445,14 +545,25 @@ func harvestBench(ctx context.Context, st *store.Store, opt Options, l lease) ([
 			}
 			f := CardFailure{Label: c.Label, Code: code, Err: err}
 			if ferr := countFail(ctx, st, opt, l, &f); ferr != nil {
-				return done, append(failed, f), ferr
+				return done, append(failed, f), notStarted(opt, cards[i+1:]), ferr
 			}
 			failed = append(failed, f)
 			continue
 		}
 		done = append(done, r)
 	}
-	return done, failed, nil
+	return done, failed, 0, nil
+}
+
+// notStarted counts the due cards (of the pass's labels) left unstarted.
+func notStarted(opt Options, cards []Card) int {
+	n := 0
+	for _, c := range cards {
+		if len(opt.Labels) == 0 || opt.Labels[c.Label] {
+			n++
+		}
+	}
+	return n
 }
 
 // cardError is a card failure with its err= code.

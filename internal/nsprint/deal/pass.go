@@ -31,8 +31,8 @@
 // planned last had no lease left to open a session in, and their cards took
 // 2-3 more passes (10-40 s) to launch. So every bench is one worker, all at
 // once, bounded by cfg:deal max_sessions (default 8): the worker reserves its
-// bench's batch, renews the lease (Renewer; one renewal serves every worker
-// that starts inside RenewAfter of it) so its session's lease-derived deadline
+// bench's batch, renews the lease (Renewer; the reconciler lease coalesces
+// the renewals, so one serves every worker that starts just after it, #3737) so its session's lease-derived deadline
 // is the full window, opens the one session, and writes its bench's row when
 // its own session ends. A pass over N benches takes the slowest bench, not
 // the sum.
@@ -106,12 +106,6 @@ const DefaultMaxSessions = 8
 // MaxSessionsKey is the hash whose max_sessions field bounds the pass's
 // concurrent bench sessions (#3706).
 const MaxSessionsKey = "cfg:deal"
-
-// DefaultRenewAfter is how long one lease renewal serves the workers that
-// start after it: a worker about to open its session renews the lease unless
-// the pass renewed it this recently (#3706), so every session is bounded by a
-// lease at most this much short of its full TTL.
-const DefaultRenewAfter = 500 * time.Millisecond
 
 // ErrFenced is what a Reserver or Row returns when the token presented is not
 // the current lease:reconciler token (#2756 2.1 rule 8: exit 3 FENCED). The
@@ -373,7 +367,9 @@ type Fence interface {
 // opens a bench session (#3706), so a session bounded by the lease gets the
 // whole window however long the reads and reserves before it took. It
 // returns ErrFenced (or an error wrapping it) when this instance no longer
-// holds the lease. A Fence that is not a Renewer is never renewed.
+// holds the lease. The Renewer coalesces (the reconciler lease serves every
+// renewal inside 500 ms of the last with it, #3737); the pass asks before
+// every session. A Fence that is not a Renewer is never renewed.
 type Renewer interface {
 	Renew(ctx context.Context) error
 }
@@ -448,9 +444,6 @@ type Pass struct {
 	// MaxSessions bounds the bench sessions open at once when cfg:deal
 	// max_sessions is unset; zero is DefaultMaxSessions (#3706).
 	MaxSessions int
-	// RenewAfter is how long one lease renewal serves the workers starting
-	// after it; zero is DefaultRenewAfter (#3706).
-	RenewAfter time.Duration
 	// Why writes each refused card's refusal line (#3700); nil writes none.
 	Why CardWhy
 }
@@ -543,7 +536,7 @@ func (p *Pass) Run(ctx context.Context) (Result, error) {
 		}
 	}
 	in = gated
-	renew := &renewal{fence: p.Fence, after: p.renewAfter()}
+	renew := &renewal{fence: p.Fence}
 	for round := 0; round < 2; round++ {
 		batches := Plan(in, hold)
 		if len(batches) == 0 {
@@ -667,21 +660,12 @@ func (p *Pass) maxSessions(in Input) int {
 	return DefaultMaxSessions
 }
 
-func (p *Pass) renewAfter() time.Duration {
-	if p.RenewAfter > 0 {
-		return p.RenewAfter
-	}
-	return DefaultRenewAfter
-}
-
-// renewal is one pass's lease renewals: a worker about to open its session
-// renews unless a renewal was sent within after; concurrent workers wait for
-// the one in flight and share it. A Fence that is not a Renewer is a no-op.
+// renewal is a worker's lease renewal before it opens its session. The
+// coalescing lives in the Renewer (the reconciler lease's one Renew, which
+// its heartbeat shares, #3737), so there is one renewal mechanism, not two. A
+// Fence that is not a Renewer is a no-op.
 type renewal struct {
 	fence Fence
-	after time.Duration
-	mu    sync.Mutex
-	sent  time.Time
 }
 
 func (r *renewal) renew(ctx context.Context) error {
@@ -689,12 +673,6 @@ func (r *renewal) renew(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !r.sent.IsZero() && time.Since(r.sent) < r.after {
-		return nil
-	}
-	sent := time.Now()
 	if err := rn.Renew(ctx); err != nil {
 		if errors.Is(err, ErrFenced) {
 			return err
@@ -703,7 +681,6 @@ func (r *renewal) renew(ctx context.Context) error {
 		// still bounded by the lease as it stands.
 		return nil
 	}
-	r.sent = sent
 	return nil
 }
 
