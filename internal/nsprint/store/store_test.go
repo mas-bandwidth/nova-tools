@@ -124,7 +124,8 @@ func TestPipelineThousandReadsOneRoundTrip(t *testing.T) {
 // the default user is off, so an unauthenticated Open fails NOAUTH, and every
 // nova-sprint verb failed that way on 2026-09-23 (adoption receipt on #3009).
 // The password comes from the environment nova-secrets exec leaves it in,
-// never from a flag.
+// never from a flag. Open sends nothing (#3277), so a refused login is the
+// first command's error.
 func TestOpenAuthenticatesFromEnv(t *testing.T) {
 	addr := startRedis(t, "--user", "default", "off", "--user", "bench", "on", ">bench-secret", "~*", "&*", "+@all")
 	ctx := context.Background()
@@ -134,13 +135,33 @@ func TestOpenAuthenticatesFromEnv(t *testing.T) {
 	t.Setenv(store.PasswordEnvEnv, "")
 	t.Setenv(store.UserEnv, "")
 	t.Setenv(store.DefaultPasswordEnv, "bench-secret")
+	first := func() error {
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		return st.Client().Get(ctx, "auth:probe").Err()
+	}
 	// #3520 DONE-WHEN: a password without a user refuses with the line naming
 	// the missing variable and the pair (user + password), not a bare NOAUTH.
-	if _, err := store.Open(ctx, addr); err == nil ||
+	if err := first(); err == nil ||
 		!strings.Contains(err.Error(), "NOAUTH") ||
 		!strings.Contains(err.Error(), store.UserEnv+" is unset") ||
 		!strings.Contains(err.Error(), store.UserEnv+"=bench and "+store.DefaultPasswordEnv) {
-		t.Fatalf("Open with %s but no %s = %v; want a refusal naming the missing variable and the pair", store.DefaultPasswordEnv, store.UserEnv, err)
+		t.Fatalf("first command with %s but no %s = %v; want NOAUTH and a refusal naming the missing variable and the pair", store.DefaultPasswordEnv, store.UserEnv, err)
+	}
+	pipe := func() error {
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		_, err = st.PipelineHMGet(ctx, []store.HashRead{{Key: "auth:probe", Fields: []string{"f"}}})
+		return err
+	}
+	if err := pipe(); err == nil || !strings.Contains(err.Error(), "NOAUTH") || !strings.Contains(err.Error(), store.UserEnv+" is unset") {
+		t.Fatalf("first batch with %s but no %s = %v; want NOAUTH and the named refusal", store.DefaultPasswordEnv, store.UserEnv, err)
 	}
 
 	t.Setenv(store.UserEnv, "bench")
@@ -159,7 +180,7 @@ func TestOpenAuthenticatesFromEnv(t *testing.T) {
 		t.Fatalf("Open with an empty named password variable = %v; want a refusal naming it", err)
 	}
 	t.Setenv("NOVA_REDIS_OTHER_SEAT", "wrong")
-	if _, err := store.Open(ctx, addr); err == nil || !strings.Contains(err.Error(), "WRONGPASS") {
-		t.Fatalf("Open with the wrong password = %v; want WRONGPASS", err)
+	if err := first(); err == nil || !strings.Contains(err.Error(), "WRONGPASS") {
+		t.Fatalf("first command with the wrong password = %v; want WRONGPASS", err)
 	}
 }

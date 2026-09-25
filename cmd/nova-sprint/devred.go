@@ -193,6 +193,9 @@ func runDevRed(ctx context.Context, args []string, out, errOut io.Writer) int {
 	switch sub {
 	case "status":
 		red, ok, err := land.ReadRed(ctx, c, rb.Repo, rb.Base)
+		if storeDown(errOut, name, err) {
+			return 6
+		}
 		if err != nil {
 			fmt.Fprintf(errOut, "nova-sprint %s: %v\n", name, err)
 			return 1

@@ -86,6 +86,12 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	default:
 		return cardUsage(stderr, "unknown verb "+sub, "wants cut, push, release, stop, show, run, launched, beat, or end")
 	}
+	if store.Unreachable(err) {
+		// Open sends nothing (#3277): this is the first batch, and an
+		// unreachable store is the same REDIS line and exit 6 as before.
+		fmt.Fprintln(stdout, (card.Result{Code: 6, Verb: "card " + sub, ID: label, Reason: "REDIS"}).Line())
+		return 6
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-sprint card: %s; run: nova-sprint help\n", oneline.Escape(err.Error()))
 		return 2

@@ -135,7 +135,7 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	st, err := store.Open(ctx, *redisAddr)
+	st, err := openReached(ctx, *redisAddr)
 	if err != nil {
 		fmt.Fprintf(errOut, "nova-sprint consume %s: %v\n", group, err)
 		return 6

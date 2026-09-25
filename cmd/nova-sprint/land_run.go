@@ -327,6 +327,9 @@ func runLandList(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	defer st.Close()
 	lines, err := fenced.List(ctx, st.Client(), *sprint, *repo, *base)
+	if storeDown(errOut, verb, err) {
+		return 6
+	}
 	if err != nil {
 		fmt.Fprintf(errOut, "nova-sprint %s: %v\n", verb, err)
 		return 1

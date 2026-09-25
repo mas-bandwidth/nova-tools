@@ -25,8 +25,9 @@ type Store struct {
 // With UserEnv unset, Open connects as before, so a throwaway test Redis and a
 // bench that exports the bench password for other tools are unaffected; only
 // when that unauthenticated connection is refused NOAUTH while the password is
-// already in the environment does Open name the missing variable and the pair
-// (#3520) instead of passing the raw NOAUTH through.
+// already in the environment does the refusal name the missing variable and
+// the pair (#3520) instead of passing the raw NOAUTH through. Open sends
+// nothing (#3277), so that refusal is the first command's error.
 const (
 	UserEnv            = "NOVA_SPRINT_REDIS_USER"
 	PasswordEnvEnv     = "NOVA_SPRINT_REDIS_PASSWORD_ENV"
@@ -59,6 +60,44 @@ func NoUserHint() string {
 		DefaultPasswordEnv + ", never a flag)"
 }
 
+// noUserHook adds NoUserHint to a NOAUTH refusal (#3520). Open sends nothing
+// (#3277), so the refusal arrives on the caller's first command or batch; the
+// hook costs no round trip and is installed only when the user is unset while
+// the bench password is in the environment.
+type noUserHook struct{ addr string }
+
+func (h noUserHook) wrap(err error) error {
+	return fmt.Errorf("redis at %s: %w; %s", h.addr, err, NoUserHint())
+}
+
+func (noUserHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h noUserHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		if isNoAuth(err) {
+			err = h.wrap(err)
+			cmd.SetErr(err)
+		}
+		return err
+	}
+}
+
+func (h noUserHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		err := next(ctx, cmds)
+		for _, cmd := range cmds {
+			if isNoAuth(cmd.Err()) {
+				cmd.SetErr(h.wrap(cmd.Err()))
+			}
+		}
+		if isNoAuth(err) {
+			err = h.wrap(err)
+		}
+		return err
+	}
+}
+
 // isNoAuth reports a refusal for lack of authentication.
 func isNoAuth(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "NOAUTH")
@@ -84,13 +123,11 @@ func open(ctx context.Context, addr string, poolSize int) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// No PING (#3277): go-redis dials on the first command, so the caller's
+	// first pipeline is the probe and an unreachable store fails there.
 	client := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password, PoolSize: poolSize})
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = client.Close()
-		if user == "" && isNoAuth(err) && os.Getenv(DefaultPasswordEnv) != "" {
-			return nil, fmt.Errorf("redis at %s: %w; %s", addr, err, NoUserHint())
-		}
-		return nil, fmt.Errorf("redis at %s: %w", addr, err)
+	if user == "" && os.Getenv(DefaultPasswordEnv) != "" {
+		client.AddHook(noUserHook{addr: addr})
 	}
 	return &Store{client: client}, nil
 }

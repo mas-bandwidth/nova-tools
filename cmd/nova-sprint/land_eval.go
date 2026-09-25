@@ -107,6 +107,9 @@ func runLandEval(ctx context.Context, args []string, out, errOut io.Writer) int 
 			fmt.Fprintf(errOut, "nova-sprint land eval: %v\n", err)
 			return 3
 		}
+		if storeDown(errOut, "land eval", err) {
+			return 6
+		}
 		return refuse(errOut, "land eval", err.Error())
 	}
 

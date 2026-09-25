@@ -39,6 +39,15 @@ func openFleetStore(ctx context.Context, addr string) (*store.Store, error) {
 	return store.Open(ctx, fleetAddr(addr))
 }
 
+// fleetRefuse is a fleet verb's refusal of its first batch: an unreachable
+// store is still exit 5 now that Open sends nothing (#3277).
+func fleetRefuse(stderr io.Writer, verb string, err error) int {
+	if store.Unreachable(err) {
+		return unreachable(stderr, verb, err.Error())
+	}
+	return refuse(stderr, verb, err.Error())
+}
+
 func unreachable(stderr io.Writer, verb, what string) int {
 	where := ""
 	if verb != "" {
@@ -92,7 +101,7 @@ func runFleetState(ctx context.Context, args []string, out, errOut io.Writer) in
 		if errors.Is(err, fleet.ErrUnregistered) {
 			return refuse(errOut, "fleet state", "unregistered bench "+*bench)
 		}
-		return refuse(errOut, "fleet state", err.Error())
+		return fleetRefuse(errOut, "fleet state", err)
 	}
 	if *upOnly {
 		for _, r := range rows {
@@ -132,7 +141,7 @@ func runFleetIsUp(ctx context.Context, args []string, out, errOut io.Writer) int
 		if errors.Is(err, fleet.ErrUnregistered) {
 			return refuse(errOut, "fleet is-up", "unregistered bench "+*bench)
 		}
-		return refuse(errOut, "fleet is-up", err.Error())
+		return fleetRefuse(errOut, "fleet is-up", err)
 	}
 	if len(rows) == 0 {
 		return refuse(errOut, "fleet is-up", "unregistered bench "+*bench)
@@ -178,7 +187,7 @@ func runFleetHold(ctx context.Context, args []string, out, errOut io.Writer) int
 		if errors.Is(err, fleet.ErrUnregistered) {
 			return refuse(errOut, "fleet hold", "unregistered bench "+*bench)
 		}
-		return refuse(errOut, "fleet hold", err.Error())
+		return fleetRefuse(errOut, "fleet hold", err)
 	}
 	return 0
 }
@@ -209,7 +218,7 @@ func runFleetRelease(ctx context.Context, args []string, out, errOut io.Writer) 
 		if errors.Is(err, fleet.ErrUnregistered) {
 			return refuse(errOut, "fleet release", "unregistered bench "+*bench)
 		}
-		return refuse(errOut, "fleet release", err.Error())
+		return fleetRefuse(errOut, "fleet release", err)
 	}
 	return 0
 }
@@ -258,7 +267,7 @@ func runFleetConfig(ctx context.Context, args []string, out, errOut io.Writer) i
 
 	curDown, curUp, err := fleet.Config(ctx, st.Client())
 	if err != nil {
-		return refuse(errOut, "fleet config", err.Error())
+		return fleetRefuse(errOut, "fleet config", err)
 	}
 
 	if downSet {
