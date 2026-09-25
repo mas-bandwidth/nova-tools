@@ -8,7 +8,6 @@ package main
 // with the lane then.
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -337,22 +336,6 @@ func githubOwner(s string) bool {
 	return true
 }
 
-// validRepoSlug is the shape of <owner>/<name>, the value init hands to git and gh.
-// Exactly one slash, both halves non-empty, each half in GitHub's own character set, and
-// no leading dash on either half: "-x/y" is not a repo, it is an option to git.
-func validRepoSlug(s string) error {
-	owner, name, ok := strings.Cut(s, "/")
-	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
-		return errors.New("exactly one slash between a non-empty owner and a non-empty name")
-	}
-	if strings.HasPrefix(owner, "-") || strings.HasPrefix(name, "-") {
-		return errors.New("neither half may begin with a dash, which git and gh would read as an option")
-	}
-	if !githubOwner(owner) || !githubRepoName(name) {
-		return errors.New("the owner holds letters, digits and '-', and the name may also hold '_' and '.', and nothing else")
-	}
-	return nil
-}
 
 // given reports whether the flag was typed at all, which is not the same question as
 // what its value is: a default is a value nobody chose.

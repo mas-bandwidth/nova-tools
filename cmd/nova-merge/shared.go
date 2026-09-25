@@ -166,3 +166,15 @@ func hasConflicts(g *merge.Git) (bool, error) {
 }
 
 func silenceRedis() { silenceRedisOnce.Do(func() { redis.SetLogger(quietRedis{}) }) }
+
+// validRepoSlug is the shape of <owner>/<name>, the value init hands to git and gh.
+func validRepoSlug(s string) error {
+	owner, name, ok := strings.Cut(s, "/")
+	if !ok || owner == "" || name == "" {
+		return fmt.Errorf("must be <owner>/<name>")
+	}
+	if strings.ContainsAny(owner, " \t\n") || strings.ContainsAny(name, " \t\n") {
+		return fmt.Errorf("must not contain spaces")
+	}
+	return nil
+}
