@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // VerbResult is one card verb (push, release, land, lint). Code 0 wrote or found the same card. Code 2 is a
@@ -160,7 +161,9 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	if strings.ContainsAny(stream, "\r\n\t") || strings.ContainsAny(origin, "\r\n\t") {
 		return cardDoc{}, fmt.Errorf("STREAM: and ORIGIN: are one line each")
 	}
-	repo, err := probeRepo(ctx, cloneURL(header))
+	// The repo is read by swarm.ReadCardBase, the one reader staging uses too
+	// (nova-tools#3711), so a card is admitted with the repo it is staged from.
+	repo, err := probeRepo(ctx, swarm.ReadCardBase(body).Repo)
 	if err != nil {
 		return cardDoc{}, err
 	}
@@ -412,20 +415,6 @@ func typedDependencies(deps []dependency) string {
 	return strings.Join(entries, ",")
 }
 
-func cloneURL(header map[string]string) string {
-	if u := strings.TrimSpace(header["base-repo"]); u != "" {
-		return u
-	}
-	repo := strings.TrimSpace(header["REPO"])
-	if repo == "" {
-		return ""
-	}
-	if strings.Contains(repo, "://") {
-		return repo
-	}
-	return "https://github.com/" + repo
-}
-
 type privateRepoError struct{ Name string }
 
 func (e *privateRepoError) Error() string {
@@ -442,7 +431,7 @@ func (e *privateRepoError) Error() string {
 // an unread repository is not a public one.
 func probeRepo(ctx context.Context, cloneURL string) (string, error) {
 	if strings.TrimSpace(cloneURL) == "" {
-		return "", errors.New("missing base-repo")
+		return "", errors.New("missing base-repo or REPO: <owner>/<name>")
 	}
 	probeURL, name, err := repoProbeURL(cloneURL)
 	if err != nil {
