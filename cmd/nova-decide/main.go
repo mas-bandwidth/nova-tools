@@ -72,7 +72,7 @@ usage:
   nova-decide log --log <path> --summary [--registry <path>]
 
   nova-decide review --repo <owner/name> --pr <n> [--card <file>]
-                     [--post|--dry-run] [--ledger file|redis|file,redis] [--store <host:port>]
+                     [--task <id>] [--post|--dry-run] [--ledger file|redis|file,redis] [--store <host:port>]
                      [--user <user>] [--password-env <NAME>] [--ledger-path <jsonl>]
                      [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
                      [--base-url <url>] [--key-env <name>] [--gh <path>] [--stream <name>]

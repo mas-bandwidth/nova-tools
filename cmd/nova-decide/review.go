@@ -21,8 +21,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/prereview"
 )
-
-// runReview is the Jev FIRST PASS over a pull request (nova-tools #2565).
 //
 // It fetches the diff and the card, runs four mechanical checks in Go with no
 // model, asks Jev ONE question for a 1-10 score, prints one typed DISPOSITION
@@ -38,10 +36,11 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	pr := fs.Int("pr", 0, "the pull request number")
 	batch := fs.String("batch", "", "a file of pull request numbers, one a line; # and blank lines skipped")
 	cardPath := fs.String("card", "", "the card file; when absent PATHS and SYMBOL are inferred from the pull request body")
+	taskID := fs.String("task", "", "the Redis task ID to load card bounds and DONE-WHEN from (e.g. read-3384-d358cbd0)")
+	store := fs.String("store", os.Getenv("NOVA_REDIS_ADDR"), "the Redis server address (host:port), for --task or --ledger redis (env NOVA_REDIS_ADDR)")
 	post := fs.Bool("post", false, "post the typed line on the pull request as a comment")
 	dryRun := fs.Bool("dry-run", false, "print the typed line and post nothing (the default)")
 	ledger := fs.String("ledger", "file", "where the verdict is written: file | redis | file,redis (redis is one kind=jev entry on cards:done per JEV line)")
-	store := fs.String("store", os.Getenv("NOVA_REDIS_ADDR"), "the fleet Redis host:port, for --ledger redis (env NOVA_REDIS_ADDR)")
 	var storeUser string
 	fs.StringVar(&storeUser, "user", "", "the Redis ACL user, for --ledger redis")
 	fs.StringVar(&storeUser, "store-user", "", "alias for --user")
@@ -96,6 +95,18 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	}
 	if *batch != "" && *cardPath != "" {
 		return refuse(stderr, "REVIEW", "bad-arguments", "--card names one card and --batch is many pull requests; give --card with --pr")
+	}
+	// --task and --card are mutually exclusive (nova-tools #3392).
+	if strings.TrimSpace(*taskID) != "" && strings.TrimSpace(*cardPath) != "" {
+		return refuse(stderr, "REVIEW", "bad-arguments", "cannot specify both --card and --task")
+	}
+	// --task requires --store (nova-tools #3392).
+	if strings.TrimSpace(*taskID) != "" && strings.TrimSpace(*store) == "" {
+		return refuse(stderr, "REVIEW", "bad-arguments", "--task requires --store")
+	}
+	// --task cannot be used with --batch (nova-tools #3392).
+	if strings.TrimSpace(*taskID) != "" && strings.TrimSpace(*batch) != "" {
+		return refuse(stderr, "REVIEW", "bad-arguments", "--task cannot be used with --batch")
 	}
 	toFile, toRedis, err := ledgerSinks(*ledger)
 	if err != nil {
@@ -176,7 +187,7 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	}
 	held := 0
 	for _, n := range numbers {
-		d, err := reviewOne(src, *repo, n, *cardPath, asker, usage, tune, prompt, skip, *record, posting, stdout, stderr)
+		d, err := reviewOne(src, *repo, n, *cardPath, *taskID, *store, asker, usage, tune, prompt, skip, *record, posting, stdout, stderr)
 		if err == errSkipped {
 			continue
 		}
@@ -324,7 +335,7 @@ func reviewTargets(pr int, batch string) ([]int, error) {
 }
 
 // reviewOne is the pass over one pull request.
-func reviewOne(gh prSource, repo string, n int, cardPath string, asker prereview.Asker, usage *decide.Usage, tune prereview.Tuning, prompt jevcalib.Prompt, skip map[string]bool, record string, posting bool, stdout, stderr io.Writer) (prereview.Disposition, error) {
+func reviewOne(gh prSource, repo string, n int, cardPath string, taskID string, storeAddr string, asker prereview.Asker, usage *decide.Usage, tune prereview.Tuning, prompt jevcalib.Prompt, skip map[string]bool, record string, posting bool, stdout, stderr io.Writer) (prereview.Disposition, error) {
 	pr, err := gh.pullRequest(repo, n)
 	if err != nil {
 		return prereview.Disposition{}, err
@@ -347,6 +358,14 @@ func reviewOne(gh prSource, repo string, n int, cardPath string, asker prereview
 			inferred := prereview.InferCard(pr)
 			card.Paths, card.PathsFrom = inferred.Paths, inferred.PathsFrom
 		}
+	}
+	if strings.TrimSpace(taskID) != "" {
+		ctx := context.Background()
+		taskCard, err := prereview.TaskCardReader(ctx, storeAddr, taskID)
+		if err != nil {
+			return prereview.Disposition{}, fmt.Errorf("--task: %w", err)
+		}
+		card = taskCard
 	}
 	checks := prereview.Mechanical(pr, card)
 	base := pr.Base

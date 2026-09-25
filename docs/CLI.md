@@ -833,6 +833,7 @@ OUTCOME unit=row-card-9 kind=row-test rung=pro result=green outcome=ok
 
 ```
 nova-decide review --repo <owner/name> --pr <n> [--card <file>]
+                   [--task <id> --store <host:port>]
                    [--post|--dry-run] [--ledger file|redis|file,redis]
                    [--store <host:port> [--user <acl user>] [--password-env NOVA_REDIS_BENCH_PASSWORD]]
                    [--ledger-path <jsonl>] [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
@@ -881,6 +882,8 @@ JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 conf=0.
 **The symbol check is two-sided, and one side alone gets it wrong.** "Does the file mention a generated symbol" says *yes* to schema#1459, which calls the real `tableFixedSelect` for half its assertions and writes `// Simulate exactly what FixedLoad does` for the other half. So the check asks for a generated symbol **and** the absence of a self-check tell, and every tell cites the pull request a friend read it out of. That is also its honest limit: it is calibrated on 122 cells of one repository's conformance legs, and a tell is a string a future card can avoid writing while doing the same thing. It bounces a card to a recut; it lands nothing.
 
 **With no card,** `PATHS` is inferred from the pull request's own `cell: <lang>/<row>` line and the line says so (`paths_from=pr-body-cell` in the ledger, and the posted comment says it in words). The inference comes from the cell's *identity*, never from the list of files the diff happens to touch — a bound read off the diff would pass by construction, and the row would then say a check ran that decided nothing.
+
+**With `--task <id>`,** the card is read from the Redis task hash `task:<id>` (`HGET task:<id> title`). The title is parsed for `PATHS:`, `DONE-WHEN:`, and `RESULT:` keys. The line reports `paths_from=task` and `card=task:<id>`. `--task` and `--card` are mutually exclusive. `--task` requires `--store <host:port>`. `--task` cannot be used with `--batch`.
 
 **One question, one call, one price.** `ScoreLevels` is ten levels in a fixed order: Jev is order-sensitive, so the same ten shuffled are a different question and a score from one ordering cannot be compared with one from another. A test pins the ordering by hash. The raw provider answer travels into the ledger beside the 1-10 that was printed, so that if the provider ever answers in level *indexes* rather than in the numbering the levels carry, both numbers are on the record and somebody can tell.
 
