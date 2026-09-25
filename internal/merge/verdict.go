@@ -1,12 +1,16 @@
 package merge
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
@@ -359,9 +363,58 @@ func asReviewVerdict(v Verdict, id int64) Verdict {
 	return v
 }
 
+// DefaultAbsentAfter is the lane's absent_after when none is configured: a
+// holder absent at least this long releases a carried hold to another may-hold
+// reader's APPROVE at the current head (nova-tools #3032).
+const DefaultAbsentAfter = 60 * time.Minute
+
+// FriendState is one holder's presence as the merge gate reads it. State is
+// the friend's word (up, down, out-of-credits, away, ...); Since is the moment
+// the friend was last seen present, i.e. when the absence began. Known is
+// false when no presence record names the holder, and a holder nobody has seen
+// is not absent -- it is unknown, and the carried hold still waits for its
+// holder.
+type FriendState struct {
+	State string
+	Since time.Time
+	Known bool
+}
+
+// Absent reports the states that let another reader release a carried hold
+// once the holder has been gone long enough: down and out-of-credits, plus
+// away (a declared absence).
+func (f FriendState) Absent() bool {
+	switch f.State {
+	case "down", "out-of-credits", "away":
+		return true
+	}
+	return false
+}
+
+// ReleasedHold is one carried hold released by the absent-holder rule: the
+// absent holder, when their absence began, and the may-hold reader whose
+// APPROVE at the current head released it.
+type ReleasedHold struct {
+	Holder string
+	Since  time.Time
+	Reader string
+	Head   string
+	Hold   Verdict
+}
+
 // UnliftedHolds is the canonical Reading 3 fold over all input verdicts.
 // It extracts lane record approvals/holds and folds comments/reviews against them.
 func UnliftedHolds(vs []Verdict, currentHead, author string, rs *ReviewerSet) []Verdict {
+	holds, _ := UnliftedHoldsWithPresence(vs, currentHead, author, rs, nil, time.Time{}, DefaultAbsentAfter)
+	return holds
+}
+
+// UnliftedHoldsWithPresence is UnliftedHolds plus the absent-holder rule
+// (#3032): a carried hold whose holder has been absent at least absentAfter is
+// released by another non-author may-hold reader's typed APPROVE (a lane
+// record) at the current head. It answers the still-unreleased holds and the
+// releases that rule made, so a caller can print one RELEASED line each.
+func UnliftedHoldsWithPresence(vs []Verdict, currentHead, author string, rs *ReviewerSet, presence map[string]FriendState, now time.Time, absentAfter time.Duration) ([]Verdict, []ReleasedHold) {
 	var holds []Verdict
 	var reads []Read
 	for _, v := range vs {
@@ -385,7 +438,137 @@ func UnliftedHolds(vs []Verdict, currentHead, author string, rs *ReviewerSet) []
 			holds = append(holds, v)
 		}
 	}
-	return releaseSameFriendSupersededHolds(UnreleasedHolds(holds, reads, currentHead, author, rs), vs)
+	unreleased := releaseSameFriendSupersededHolds(UnreleasedHolds(holds, reads, currentHead, author, rs), vs)
+	return releaseAbsentHoldersCarriedHolds(unreleased, reads, currentHead, author, rs, presence, now, absentAfter)
+}
+
+// releaseAbsentHoldersCarriedHolds is nova-tools #3032's rule: a carried hold
+// whose holder has been absent at least absentAfter is released by another
+// non-author may-hold reader's typed APPROVE (a lane record) at the current
+// head. A hold AT the current head is never released this way -- the holder
+// judged this exact head -- and neither is a hold whose holder nobody has
+// marked absent.
+func releaseAbsentHoldersCarriedHolds(unreleased []Verdict, reads []Read, currentHead, author string, rs *ReviewerSet, presence map[string]FriendState, now time.Time, absentAfter time.Duration) ([]Verdict, []ReleasedHold) {
+	if len(presence) == 0 || absentAfter <= 0 || now.IsZero() {
+		return unreleased, nil
+	}
+	var kept []Verdict
+	var released []ReleasedHold
+	for _, h := range unreleased {
+		if rel := releasedByAbsentHolder(h, reads, currentHead, author, rs, presence, now, absentAfter); rel != nil {
+			released = append(released, *rel)
+			continue
+		}
+		kept = append(kept, h)
+	}
+	return kept, released
+}
+
+// releasedByAbsentHolder reports whether h is released by the absent-holder
+// rule, and if so by which reader's read. It is nil when h is not a carried
+// hold with a named holder absent long enough, or when no other may-hold
+// reader has a record APPROVE at the current head.
+func releasedByAbsentHolder(h Verdict, reads []Read, currentHead, author string, rs *ReviewerSet, presence map[string]FriendState, now time.Time, absentAfter time.Duration) *ReleasedHold {
+	if h.Who == "" || h.Who == "unknown" {
+		return nil
+	}
+	// A hold AT the current head is never released this way: the holder
+	// judged this exact head, and an absent friend's word about it stands.
+	if headMatch(h.Head, currentHead) {
+		return nil
+	}
+	st, ok := presence[normWho(h.Who)]
+	if !ok || !st.Known || !st.Absent() || st.Since.IsZero() {
+		return nil
+	}
+	if now.Sub(st.Since) < absentAfter {
+		return nil
+	}
+	for _, rec := range reads {
+		if rec.Verdict != "approve" || rec.Scope != "" {
+			continue
+		}
+		if !headMatch(rec.Head, currentHead) {
+			continue
+		}
+		if sameLine(rec.Who, author) || sameLine(rec.Who, h.Who) {
+			continue
+		}
+		if rs != nil && !rs.MayHold(rec.Who) {
+			continue
+		}
+		return &ReleasedHold{Holder: h.Who, Since: st.Since, Reader: rec.Who, Head: currentHead, Hold: h}
+	}
+	return nil
+}
+
+// LoadPresence reads the reviewer file's down/out-of-credits marks into a
+// presence map the absent-holder rule reads. The reviewer TSV may carry two
+// optional columns after may-hold: a status word (down, out-of-credits or
+// away) and a since stamp (RFC 3339 or unix seconds) naming when the absence
+// began. A mark with no readable since is kept as absent-since-unknown and
+// releases nothing on its own, because "absent longer than absent_after" is a
+// claim about a duration and an unreadable stamp proves none.
+func LoadPresence(path string) (map[string]FriendState, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("reviewer file could not be opened: %w", err)
+	}
+	defer f.Close()
+	return ParsePresence(f)
+}
+
+// ParsePresence is LoadPresence for a reader, so a test can parse the same
+// bytes ParseReviewers reads.
+func ParsePresence(r io.Reader) (map[string]FriendState, error) {
+	s := bufio.NewScanner(r)
+	out := map[string]FriendState{}
+	for s.Scan() {
+		line := strings.TrimSpace(s.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		// A row short of the base three columns is ParseReviewers' to refuse,
+		// and a header row names nobody.
+		if len(fields) < 4 {
+			continue
+		}
+		who := normWho(fields[0])
+		if who == "" || who == "who" {
+			continue
+		}
+		st := FriendState{State: strings.ToLower(strings.TrimSpace(fields[3]))}
+		if !st.Absent() {
+			continue
+		}
+		st.Known = true
+		if len(fields) >= 5 {
+			if t, ok := parseAbsentSince(strings.TrimSpace(fields[4])); ok {
+				st.Since = t
+			}
+		}
+		out[who] = st
+	}
+	if err := s.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// parseAbsentSince reads a since stamp as unix seconds or RFC 3339, the two
+// spellings the friend state hash already uses.
+func parseAbsentSince(v string) (time.Time, bool) {
+	if v == "" {
+		return time.Time{}, false
+	}
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return time.Unix(n, 0), true
+	}
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t, true
+	}
+	return time.Time{}, false
 }
 
 // releaseSameFriendSupersededHolds is nova-tools #2550's rule (a HOLD is released by a

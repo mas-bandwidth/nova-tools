@@ -1359,6 +1359,22 @@ to match, so it is never carried and this releases none of them. The hurt: on 20
 consecutive ticks took the same 16 approved cell pull requests and dropped every one of them on a
 `held_at` the branch had moved past, `members=none`, for 11.5 h with read debt at 0.
 
+**A carried hold whose holder is absent is released by another may-hold reader's read at head**
+(#3032). The #2550 rule above releases a carried hold only by the **holder's own** later typed
+word; a holder who is not there to type one -- Emma out of credits overnight, Johnny down --
+pins every pull request a different friend approved at head. So a carried hold (`held_at` an
+older head than the current one) whose holder's presence has been **absent longer than the
+lane's `absent_after`** (default 60 min) is released by any other non-author `may-hold`
+reader's typed APPROVE at the current head, and the gate prints
+`RELEASED carried hold by <holder> (absent since <t>) on <reader>'s read at <head>`. The
+holder's absence is read from `friend:<name>` presence in the sprint Redis, or from the
+reviewer file's `down`/`out-of-credits` mark (an optional fourth column `status`, with an
+optional fifth column `since` as unix seconds or RFC 3339); the friend lifecycle's
+`out-of-credits` event marks the holder absent immediately (#2992 owns the presence side). A
+hold **at** the current head is never released this way: the holder judged this exact head,
+and an absent friend's word about it stands. A holder nobody has marked absent, or one absent
+less than `absent_after`, still pins exactly as before.
+
 **No flag ignores a hold.** There is no `--ignore-hold`, for one hold or for one comment: a hold
 is a no, and stepping over one named member while the gate still claims to read holds is the
 02:43Z hole with a flag. The one waiver is `--no-require-holds --reason <text>`, and it waives the
@@ -1382,6 +1398,7 @@ refused, at the exit code SPEC-MERGE's *Exit codes* gives a landing that did not
 ```
 BATCH DROP #<n> reason="head <sha12> carries an unreleased HOLD" who=<name|unknown> hold=<id> source=<record|review|comment-rule|comment-decided> held_at=<sha12> carried=<yes|no> at=<stamp> conf=<x|->
 BATCH DROP #<n> reason="head <sha12> has a pending comment" who=unknown hold=comment:<id> source=comment-pending at=<stamp>
+RELEASED carried hold by <holder> (absent since <t>) on <reader>'s read at <head>
 LAND REFUSED reason=held member=#<n> ...the same fields...
 ```
 
