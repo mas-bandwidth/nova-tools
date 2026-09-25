@@ -134,6 +134,7 @@ var lsRemoteWaits = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.
 type batch struct {
 	id, state, fromTip, trainHead, trainTree, createdAt string
 	pubState                                            string // the unresolved intent's state on a resume
+	kind, revertHead, revertParent                      string // kind revert: the revert train of §8.4
 	heads                                               []string
 	units                                               []string
 }
@@ -205,6 +206,9 @@ func (p *Publisher) LandFront(ctx context.Context) (Result, error) {
 		if strings.Contains(reason, "lease") || strings.Contains(reason, "writer") {
 			return ps.done(Fenced, "REFUSED "+reason+" remedy=nova-sprint land status"), nil
 		}
+		if strings.HasPrefix(reason, "frozen ") {
+			return ps.done(Refused, land.RefusedLine(reason)), nil
+		}
 		return ps.done(Refused, fmt.Sprintf("REFUSED %s remedy=nova-sprint why %s", reason, firstUnit(b))), nil
 	}
 	if err := p.hook(AfterIntent); err != nil {
@@ -217,7 +221,19 @@ func (p *Publisher) LandFront(ctx context.Context) (Result, error) {
 // of an intent another pass cut: 7.2 reconciliation comes before any push.
 func (ps *pass) publish(ctx context.Context, resume bool) (Result, error) {
 	p, c, b := ps.p, ps.p.cfg, ps.b
-	tr, err := BuildTrain(ctx, TrainParams{GitDir: c.GitDir, FromTip: b.fromTip, Members: b.heads, BatchID: b.id, CreatedAt: b.createdAt})
+	var tr *TrainResult
+	var err error
+	if b.kind == "revert" {
+		// The revert train of §8.4: the worker's construction, so the shas agree.
+		var lt *land.TrainResult
+		lt, err = land.BuildRevert(ctx, land.RevertParams{GitDir: c.GitDir, FromTip: b.fromTip,
+			RevertHead: b.revertHead, RevertParent: b.revertParent, BatchID: b.id, CreatedAt: b.createdAt})
+		if lt != nil {
+			tr = &TrainResult{TrainHead: lt.TrainHead, TrainTree: lt.TrainTree, Commits: lt.Commits}
+		}
+	} else {
+		tr, err = BuildTrain(ctx, TrainParams{GitDir: c.GitDir, FromTip: b.fromTip, Members: b.heads, BatchID: b.id, CreatedAt: b.createdAt})
+	}
 	if err != nil {
 		return ps.res, fmt.Errorf("rebuild train b%s: %w", b.id, err)
 	}
@@ -444,7 +460,7 @@ func (p *Publisher) voidChain(ctx context.Context, keep, reason string) (bool, e
 func (p *Publisher) readBatch(ctx context.Context, id string) (batch, error) {
 	c := p.cfg
 	v, err := c.Redis.HMGet(ctx, land.BatchKey(c.Repo, c.Base, id),
-		"state", "from_tip", "train_head", "train_tree", "created_at", "members").Result()
+		"state", "from_tip", "train_head", "train_tree", "created_at", "members", "kind", "revert_head", "revert_parent").Result()
 	if err != nil {
 		return batch{}, err
 	}
@@ -454,7 +470,8 @@ func (p *Publisher) readBatch(ctx context.Context, id string) (batch, error) {
 		}
 		return fmt.Sprint(v[i])
 	}
-	b := batch{id: id, state: s(0), fromTip: s(1), trainHead: s(2), trainTree: s(3), createdAt: s(4)}
+	b := batch{id: id, state: s(0), fromTip: s(1), trainHead: s(2), trainTree: s(3), createdAt: s(4),
+		kind: s(6), revertHead: s(7), revertParent: s(8)}
 	for _, m := range strings.Split(s(5), ",") {
 		unit, head, ok := strings.Cut(m, "@")
 		if !ok {
@@ -463,7 +480,7 @@ func (p *Publisher) readBatch(ctx context.Context, id string) (batch, error) {
 		b.units = append(b.units, unit)
 		b.heads = append(b.heads, head)
 	}
-	if len(b.heads) == 0 {
+	if len(b.heads) == 0 && b.kind != "revert" {
 		return batch{}, fmt.Errorf("batch %s has no members", id)
 	}
 	return b, nil

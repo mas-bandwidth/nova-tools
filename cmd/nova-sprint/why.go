@@ -140,7 +140,7 @@ func unitHeader(u *land.Unit) string {
 
 func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge (sprint land is the lander's verb, #2942)")
+		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or freeze or thaw (sprint land is the lander's verb, #2942)")
 	}
 	if args[0] == "writer" {
 		return runLandWriter(ctx, args[1:], out, errOut)
@@ -154,6 +154,9 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if args[0] == "flaky" {
 		return runLandFlaky(ctx, args[1:], out, errOut)
 	}
+	if args[0] == "freeze" || args[0] == "thaw" {
+		return runLandFreeze(ctx, args[0], args[1:], out, errOut)
+	}
 	if args[0] == "stream" {
 		return runLandStream(ctx, args[1:], out, errOut)
 	}
@@ -164,7 +167,7 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runLandStreamStatus(ctx, args[1:], out, errOut)
 	}
 	if args[0] != "status" {
-		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge (sprint land is the lander's verb, #2942)")
+		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or freeze or thaw (sprint land is the lander's verb, #2942)")
 	}
 	const usage = "land status [<unit>] --redis <addr> --sprint <S>"
 	addr, sprint, now, pos, err := readFlags("land status", args[1:])
