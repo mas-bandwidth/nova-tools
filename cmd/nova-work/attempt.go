@@ -66,7 +66,9 @@ func cmdAttemptRecord(args []string, stdout, stderr io.Writer) int {
 	started := fs.String("started", "", "when it started, as 2026-09-18T12:00:00Z; this run's clock when absent")
 	limits, bounds := boundFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp { return printVerbHelp(stderr, "attempt record") }
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "attempt record")
+		}
 		return refuse(stderr, " attempt record", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -132,7 +134,9 @@ func cmdAttemptList(args []string, stdout, stderr io.Writer) int {
 	unit := fs.String("unit", "", "the unit whose attempts to read (required)")
 	limits, bounds := boundFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp { return printVerbHelp(stderr, "attempt list") }
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "attempt list")
+		}
 		return refuse(stderr, " attempt list", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {

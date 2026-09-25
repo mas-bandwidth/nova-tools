@@ -63,7 +63,9 @@ func askWith(args []string, stdout, stderr io.Writer, sender friends.Sender) int
 	maxBytes := fs.Int64("max-bytes", friends.DefaultMaxBytes, "the work set's byte ceiling")
 	now := fs.String("now", "", "the instant to measure the deadline against, RFC3339; default this run's clock")
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp { return printVerbHelp(stderr, "ask") }
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "ask")
+		}
 		return refuse(stderr, " ask", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -204,7 +206,9 @@ func cmdAsks(args []string, stdout, stderr io.Writer) int {
 	maxBytes := fs.Int64("max-bytes", friends.DefaultMaxBytes, "the work set's byte ceiling")
 	now := fs.String("now", "", "the instant ages and deadlines are measured against, RFC3339; default this run's clock")
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp { return printVerbHelp(stderr, "asks") }
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "asks")
+		}
 		return refuse(stderr, " asks", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {

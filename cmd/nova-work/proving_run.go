@@ -26,7 +26,9 @@ func cmdProvingRun(args []string, stdout, stderr io.Writer) int {
 	simulateInterrupt := fs.Bool("interrupt", true, "simulate interruption and prove clean resumption")
 
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp { return printVerbHelp(stderr, "proving-run") }
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "proving-run")
+		}
 		return refuse(stderr, " proving-run", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if *ntPath == "" {

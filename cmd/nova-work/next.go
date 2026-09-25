@@ -111,7 +111,9 @@ func cmdNext(args []string, stdout, stderr io.Writer) int {
 	started := fs.String("started", "", "--take: when the attempt started; this run's clock when absent")
 	limits, bounds := boundFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp { return printVerbHelp(stderr, "next") }
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "next")
+		}
 		return refuse(stderr, " next", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {

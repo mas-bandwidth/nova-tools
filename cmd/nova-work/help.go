@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"io"
 	"strings"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // printVerbHelp prints the specific usage lines for a verb or family from the main usage string,
@@ -13,7 +13,7 @@ func printVerbHelp(stderr io.Writer, verb string) int {
 	prefix1 := "  nova-work " + verb + " "
 	prefix2 := "  nova-work " + verb + "\t"
 	exact := "  nova-work " + verb
-	
+
 	lines := strings.Split(usage, "\n")
 	capturing := false
 	found := false
@@ -22,7 +22,7 @@ func printVerbHelp(stderr io.Writer, verb string) int {
 			fmt.Fprintln(stderr, line)
 			continue
 		}
-		
+
 		if strings.HasPrefix(line, prefix1) || strings.HasPrefix(line, prefix2) || line == exact {
 			capturing = true
 			found = true
