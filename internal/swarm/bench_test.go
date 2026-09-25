@@ -133,7 +133,7 @@ func writeBenches(t *testing.T, dir string, rows ...string) string {
 }
 
 // fakeBin writes a fake ssh and a fake rsync on a temp PATH: ssh records its full argv and
-// exits 0 without running native, rsync records its argv and copies the source locally. The
+// the command line benchsh sends on its stdin, and exits 0 without running native, rsync records its argv and copies the source locally. The
 // recorded argv lands in ssh.log and rsync.log under dir.
 func fakeBin(t *testing.T, dir string) (sshLog, rsyncLog string) {
 	t.Helper()
@@ -143,7 +143,8 @@ func fakeBin(t *testing.T, dir string) (sshLog, rsyncLog string) {
 	}
 	sshLog = filepath.Join(dir, "ssh.log")
 	rsyncLog = filepath.Join(dir, "rsync.log")
-	ssh := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconvQuote(sshLog) + "\n"
+	// internal/benchsh (#3350): the command line is the script on stdin, after argv.
+	ssh := "#!/bin/sh\nprintf '%s %s\\n' \"$*\" \"$(cat)\" >> " + strconvQuote(sshLog) + "\n"
 	rsync := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> " + strconvQuote(rsyncLog) + "\n" +
 		"src=\"$1\"; dst=\"$2\"; dst=\"${dst#*:}\"\n" +

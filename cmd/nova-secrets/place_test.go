@@ -78,6 +78,8 @@ func newPlaceFixture(t *testing.T) placeFixture {
 	sshPath := filepath.Join(td, "fake-ssh")
 	writeFakeExe(t, sshPath, "#!/bin/sh\n"+
 		"printf '%s\\n' \"$@\" >> "+sshArgsFile+"\n"+
+		// internal/benchsh (#3350): bash -s reads the one exec line; the value follows.
+		"IFS= read -r benchsh_line\n"+
 		"cat > "+sshStdinFile+"\n"+
 		"exit 0\n")
 

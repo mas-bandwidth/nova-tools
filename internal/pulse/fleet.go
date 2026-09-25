@@ -18,11 +18,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+	"github.com/mas-bandwidth/nova-tools/internal/benchsh"
 )
 
 // fleetDefaultTimeout is the bound on every ssh child when the caller names none.
@@ -38,17 +37,12 @@ type FleetBench struct {
 }
 
 // fleetSSH runs one remote script on the bench with the ssh program from --ssh, through
-// `ssh <target> bash -s`, bounded by --timeout. The target is the benches file's ssh
-// column; the script is the remote command, on the child's stdin.
+// internal/benchsh (`ssh <target> bash -s --`, script on stdin), bounded by --timeout. The
+// target is the benches file's ssh column (user@host or a host alone). The output is stdout
+// and stderr together.
 func fleetSSH(ctx context.Context, program, target, script string) (string, error) {
-	if program == "" {
-		program = "ssh"
-	}
-	testguard.RefuseHosts(program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s")
-	cmd := exec.CommandContext(ctx, program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s")
-	cmd.Stdin = strings.NewReader(script)
-	raw, err := cmd.CombinedOutput()
-	return string(raw), err
+	res, err := benchsh.Run(ctx, benchsh.Target{Host: target, SSH: program}, script)
+	return res.Output, err
 }
 
 // fleetQuote single-quotes a path for the remote shell.
