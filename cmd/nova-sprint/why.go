@@ -35,7 +35,7 @@ func init() {
 	})
 	register(Verb{
 		Name:    "land",
-		Summary: "land status|flaky|stream|merge ...: lander status, flaky store, and the stream landing (land stream/merge, land status --repo)",
+		Summary: "land --repo <r> --stream <s> | status|flaky|stream|merge ...: the whole stream landing (build, ci, merge on green), lander status, flaky store, and its steps (land stream/merge, land status --repo)",
 		Run:     runLand,
 	})
 }
@@ -141,6 +141,9 @@ func unitHeader(u *land.Unit) string {
 func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
 		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge (sprint land is the lander's verb, #2942)")
+	}
+	if strings.HasPrefix(args[0], "-") {
+		return runLandRun(ctx, args, out, errOut) // the whole stream landing, #3598
 	}
 	if args[0] == "writer" {
 		return runLandWriter(ctx, args[1:], out, errOut)
