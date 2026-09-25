@@ -404,7 +404,9 @@ type LineupInput struct {
 // ProbeTrail is where one probe card stands on its way to dev (#2946): the
 // card record (cut), where it is (run), its PR and head (pr), the ci word of
 // ci:<name>:<head> (ci), and the first typed non-author SCORE line at that
-// head in pr:<name>:<n>:lines (read). Landing is the landed index.
+// head in the reads field of pr:<name>:<n>, the one place typed lines are
+// read from (the stream lander reads it too, #4049) (read). Landing is the
+// landed index.
 type ProbeTrail struct {
 	Card   bool   // s:<S>:card:<label> exists
 	Where  string // the card's set: working, done, ...
@@ -495,8 +497,7 @@ func GatherLineup(ctx context.Context, c *redis.Client, sprint string) (LineupIn
 func gatherTrails(ctx context.Context, c *redis.Client, labels []string, cards []*redis.SliceCmd) (map[string]ProbeTrail, error) {
 	trails := map[string]ProbeTrail{}
 	type pending struct {
-		ci, who *redis.StringCmd
-		lines   *redis.StringSliceCmd
+		ci, who, lines *redis.StringCmd
 	}
 	reads := map[string]pending{}
 	p := c.Pipeline()
@@ -523,7 +524,7 @@ func gatherTrails(ctx context.Context, c *redis.Client, labels []string, cards [
 		reads[label] = pending{
 			ci:    p.HGet(ctx, ci.RecordKey(name, t.Head), "ci"),
 			who:   p.HGet(ctx, prkey.KeyText(name, t.PR), "who"),
-			lines: p.LRange(ctx, read.LinesKey(name, t.PR), 0, -1),
+			lines: p.HGet(ctx, prkey.KeyText(name, t.PR), "reads"),
 		}
 	}
 	if len(reads) == 0 {
@@ -535,7 +536,7 @@ func gatherTrails(ctx context.Context, c *redis.Client, labels []string, cards [
 	for label, r := range reads {
 		t := trails[label]
 		t.CI = r.ci.Val()
-		t.Reader = readerAt(r.lines.Val(), t.Head, r.who.Val())
+		t.Reader = readerAt(strings.Split(r.lines.Val(), "\n"), t.Head, r.who.Val())
 		trails[label] = t
 	}
 	return trails, nil
@@ -582,7 +583,7 @@ func (in LineupInput) probeStage(p string) string {
 	case t.CI != "green":
 		return "ci: ci:" + name + ":" + shortHead(t.Head) + "=" + orNone(t.CI, "MISSING")
 	case t.Reader == "":
-		return "read: no typed non-author SCORE at head " + shortHead(t.Head) + " in pr:" + name + ":" + t.PR + ":lines"
+		return "read: no typed non-author SCORE at head " + shortHead(t.Head) + " in pr:" + name + ":" + t.PR + " reads"
 	case !in.Landed[p]:
 		return "land: not in s:" + in.Sprint + ":idx:card:landed"
 	}

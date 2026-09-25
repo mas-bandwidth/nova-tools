@@ -37,8 +37,8 @@ func putProbe(t *testing.T, c *redis.Client, label, upTo string) {
 		case "ci":
 			err = c.HSet(ctx, "ci:nova-tools:"+head, "ci", "green", "sha", head).Err()
 		case "read":
-			err = c.RPush(ctx, "pr:nova-tools:37"+label[len(label)-1:]+":lines",
-				"SCORE who=rowan-claude head="+head[:8]+" 9/10: one file, PATHS = CHANGED").Err()
+			err = addReads(ctx, c, "pr:nova-tools:37"+label[len(label)-1:],
+				"SCORE who=rowan-claude head="+head[:8]+" 9/10: one file, PATHS = CHANGED")
 		case "land":
 			err = c.SAdd(ctx, "s:s1:idx:card:landed", label).Err()
 		}
@@ -49,6 +49,20 @@ func putProbe(t *testing.T, c *redis.Client, label, upTo string) {
 			return
 		}
 	}
+}
+
+// addReads appends typed lines to a pr record's reads field, newline-joined,
+// as read post (ns_read_post) writes them.
+func addReads(ctx context.Context, c *redis.Client, key string, lines ...string) error {
+	old, err := c.HGet(ctx, key, "reads").Result()
+	if err != nil && err != redis.Nil {
+		return err
+	}
+	all := append(strings.Split(old, "\n"), lines...)
+	if old == "" {
+		all = lines
+	}
+	return c.HSet(ctx, key, "reads", strings.Join(all, "\n")).Err()
 }
 
 func probeInput(t *testing.T, c *redis.Client) LineupInput {
@@ -125,10 +139,10 @@ func TestProbeReadMustBeTypedNonAuthorAtHead(t *testing.T) {
 	}
 	in := probeInput(t, c)
 	head := in.Trails["probe-2"].Head
-	k := "pr:nova-tools:372:lines"
-	c.Del(ctx, k)
-	c.HSet(ctx, "pr:nova-tools:372", "who", "stella")
-	c.RPush(ctx, k,
+	k := "pr:nova-tools:372"
+	c.HDel(ctx, k, "reads")
+	c.HSet(ctx, k, "who", "stella")
+	addReads(ctx, c, k,
 		"SCORE who=jev head="+head[:8]+" 9/10",
 		"SCORE who=stella head="+head[:8]+" 10/10",
 		"SCORE who=emma head=0123456789 9/10",
@@ -138,7 +152,7 @@ func TestProbeReadMustBeTypedNonAuthorAtHead(t *testing.T) {
 	if !l.Red || !strings.Contains(l.Why, "probe-2 RED at read: no typed non-author SCORE at head "+head[:8]) {
 		t.Fatalf("a non-read counted as a read: %v", l)
 	}
-	c.RPush(ctx, k, "SCORE who=emma head="+head[:8]+" 9/10: fine")
+	addReads(ctx, c, k, "SCORE who=emma head="+head[:8]+" 9/10: fine")
 	if l := CheckProbes(probeInput(t, c)); l.Red {
 		t.Fatalf("a typed non-author read at head did not count: %v", l)
 	}

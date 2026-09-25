@@ -3748,9 +3748,13 @@ brief, and the record head is what is read.
 <o>] [--redis <addr>]` stores the line: the first word is one of SCORE, HOLD,
 REPAIR, SPEC, SPEC-WRITTEN, CLOSE or JEV-DIFF and the first line carries
 `who=<name>` and `head=<sha>` (a SPEC line: `who=`, `rev=<k>` and
-`score=<0..10>`, no head, see `spec` below), or the line is refused. It RPUSHes the line
-onto `pr:<repo>:<n>:lines` and stamps `last_line` and `last_line_at` on the
-record in one MULTI, then, until #3595 retires PR comments, mirrors it as one
+`score=<0..10>`, no head, see `spec` below), or the line is refused. Every
+kind but SPEC is one `ns_read_post` library call: it RPUSHes the line onto
+`pr:<repo>:<n>:lines`, appends its first line to the record's `reads` field
+(the one place typed lines are read from: the stream lander's member
+selection, the route duty and the lineup read it, so a SCORE is a member's read
+to `stream open --dry-run` at once, #4049) and stamps `last_line` and
+`last_line_at`, then, until #3595 retires PR comments, mirrors it as one
 REST comment (`POST /repos/<owner>/<repo>/issues/<n>/comments`, the token from
 `GH_TOKEN` or `GITHUB_TOKEN`, the base URL from `GITHUB_API_URL`). `--no-github`
 is Redis only (the tests count HTTP calls: 0 with it, exactly 1 without). A

@@ -117,17 +117,24 @@ function TE.prkey(repo, n)
   return 'pr:' .. TE.TR.bare(repo) .. ':' .. n
 end
 
--- TE.line(key, line) adds one typed line to the pr record's two line stores,
--- the reads field the lander reads and the :lines list read post and the
--- read brief use, once. Returns 1 when it was new.
-function TE.line(key, line)
+-- TE.reads(key, line, once) appends one typed line to the pr record's reads
+-- field, the one place typed lines are read from (the stream lander's ReadAt,
+-- the route duty, the reaper's fence, the digest and the lineup's probe read;
+-- nova-tools#4049, until the read record of #3874 replaces the field). once
+-- skips a line the field already holds. Returns 1 when it was appended.
+function TE.reads(key, line, once)
   local reads = redis.call('HGET', key, 'reads') or ''
-  local added = 0
-  if ('\n' .. reads .. '\n'):find('\n' .. line .. '\n', 1, true) == nil then
-    if reads ~= '' then reads = reads .. '\n' end
-    redis.call('HSET', key, 'reads', reads .. line)
-    added = 1
-  end
+  if once and ('\n' .. reads .. '\n'):find('\n' .. line .. '\n', 1, true) then return 0 end
+  if reads ~= '' then reads = reads .. '\n' end
+  redis.call('HSET', key, 'reads', reads .. line)
+  return 1
+end
+
+-- TE.line(key, line) adds one typed line to the pr record's two line stores,
+-- the reads field (TE.reads) and the :lines log read post writes and the read
+-- brief prints, once. Returns 1 when it was new.
+function TE.line(key, line)
+  local added = TE.reads(key, line, true)
   if not redis.call('LPOS', key .. ':lines', line) then
     redis.call('RPUSH', key .. ':lines', line)
     added = 1
@@ -171,9 +178,11 @@ redis.register_function('ns_land_member', function(keys, args)
 end)
 
 -- ns_read_post(repo, n, line, now_s): a typed line posted on a PR, and the
--- move it is an event for, in one call. The line is appended to
--- pr:<repo>:<n>:lines and the record's last_line/last_line_at are stamped
--- (the record must have a head: NOHEAD otherwise, nothing written). A CLOSE
+-- move it is an event for, in one call: the one writer of read post, for
+-- every kind but SPEC. The line is appended to pr:<repo>:<n>:lines, its first
+-- line to the record's reads field (TE.reads, every time, so a re-read after
+-- a hold is the last word again) and last_line/last_line_at are stamped (the
+-- record must have a head: NOHEAD otherwise, nothing written). A CLOSE
 -- line by a person (who not jev*) lands every task naming the PR or an issue
 -- in the record's closes, why the line's "with <repo>#<n> (<sha>)" when it
 -- has one; a SCORE line moves the read task read-<n>-<head8> working ->
@@ -185,6 +194,7 @@ redis.register_function('ns_read_post', function(keys, args)
   if (redis.call('HGET', key, 'head') or '') == '' then return { 'NOHEAD', key } end
   local lines = redis.call('RPUSH', key .. ':lines', line)
   local first = string.match(line, '^[^\n]*')
+  TE.reads(key, first, false)
   redis.call('HSET', key, 'last_line', first, 'last_line_at', now)
   local kind = string.match(first, '^(%S+)') or ''
   local who = string.match(first, 'who=([^%s:;,]+)') or ''
