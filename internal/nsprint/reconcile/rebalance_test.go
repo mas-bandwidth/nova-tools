@@ -37,8 +37,6 @@ func (f *dealFixture) queued(t *testing.T, id, stream, friend string, age int64,
 // down, and the next pass moves her task onto rowan's queue and prints one
 // REBALANCE line naming it. A third pass prints nothing.
 func TestFriendDownRebalancesInOneTick(t *testing.T) {
-	t.Parallel()
-
 	f := newDealFixture(t)
 	const s = "nova-sprint"
 	must(t, f.c.ZAdd(f.ctx, "ws:order", redis.Z{Score: 1, Member: s}).Err())
@@ -87,8 +85,6 @@ func TestFriendDownRebalancesInOneTick(t *testing.T) {
 // reply is REFUSED with the reason and the id; with a stream it goes back to
 // the stream's ready set, unowned, why=no-consumer.
 func TestFriendRebalanceNeverSilentZero(t *testing.T) {
-	t.Parallel()
-
 	f := newDealFixture(t)
 	f.friend(t, "emma", 2, false)
 	must(t, f.c.HSet(f.ctx, "friend:emma:down", "reason", "down", "actor", "rowan").Err())
