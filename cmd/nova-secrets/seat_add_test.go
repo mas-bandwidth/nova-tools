@@ -17,6 +17,8 @@ import (
 // one, and only the new seat's key opens the new seat's file. The store's PR #15 broke
 // that circle with a hand pipe; this test holds the verb to what the hand did.
 func TestSeatAddGivesANewSeatItsFirstValues(t *testing.T) {
+	t.Parallel()
+
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -114,6 +116,8 @@ func TestSeatAddGivesANewSeatItsFirstValues(t *testing.T) {
 // TestSeatAddRefusesASecondTimeOnTheSameSeat: run twice, and the second run must find
 // both the file and the rule already there and change nothing.
 func TestSeatAddRefusesASecondTimeOnTheSameSeat(t *testing.T) {
+	t.Parallel()
+
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 

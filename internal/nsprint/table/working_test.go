@@ -40,6 +40,8 @@ func liveFixture(now time.Time) [][]string {
 // beat moves the count on the next tick, and a lapsed beat moves it back.
 // The same read runs on miniredis and on a real redis-server.
 func TestFriendWorkingCountsLiveBeatsOnly(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 25, 20, 40, 0, 0, time.UTC)
 	stores := map[string]func(t *testing.T) *redis.Client{
 		"miniredis": func(t *testing.T) *redis.Client {
@@ -98,6 +100,8 @@ func TestFriendWorkingCountsLiveBeatsOnly(t *testing.T) {
 // TestFriendWorkingUnreadIsNotZero: a working set the tick could not read
 // (a WRONGTYPE key) prints "?" for working and stale, never a false number.
 func TestFriendWorkingUnreadIsNotZero(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	now := time.Date(2026, 9, 25, 20, 40, 0, 0, time.UTC)
 	c := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})

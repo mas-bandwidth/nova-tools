@@ -19,6 +19,8 @@ import (
 // 50 ticks of NOBUDGET: 0 pending entries and 0 debits, then budget restored: exactly one claim,
 // and the debit sum is 0 after the receipt (fails on: an entry lost before claim; a leaked debit).
 func TestL2c(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	const machine = "bench-studio"
@@ -167,6 +169,8 @@ func TestL2c(t *testing.T) {
 // SIGKILL mid-gate: re-gated within 30 s, late receipt STALE, one final receipt
 // (fails on: the 90 s reclaim; 5:32 PM unit restarts).
 func TestL5(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	unit := "gh/mas-bandwidth/nova-tools/105"
@@ -244,6 +248,8 @@ func TestL5(t *testing.T) {
 // carries no input_id, the worker computes it from what it tested (from_tip, member heads, class,
 // base and train selection graph ids, policy_id, runner_id) and receipts that.
 func TestL31(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	bareDir, workDir, runGit := setupGitMirror(t)
@@ -365,6 +371,8 @@ func TestL31(t *testing.T) {
 // TestLDeterministicTrain verifies that two independent workers produce the identical train sha
 // (spec 5.3, B6: "two workers produce one train sha").
 func TestLDeterministicTrain(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	tmp := t.TempDir()
 

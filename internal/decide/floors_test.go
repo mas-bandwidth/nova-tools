@@ -29,6 +29,8 @@ func dayLog(t *testing.T) []Entry {
 // the provider gave, for every kind it answered. That is not a floor gating a
 // decision, it is a floor deleting it, and the summary says so per kind.
 func TestTheOneFloorWasAboveEveryProviderAnswer(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	// The ladder before per-kind floors: ONE floor of 0.90 stood in for every
 	// kind, and it sat above every answer the provider gave -- a 100%
@@ -73,6 +75,8 @@ func uniformFloors(kinds []string, floor float64) []KindFloor {
 // And the fix, counted on the same rows: with the floors the registry now
 // ships, one answer in thirteen steps up instead of thirteen.
 func TestThePerKindFloorsCutTheEscalation(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	sum, err := Summarize(reg, dayLog(t))
 	if err != nil {
@@ -97,6 +101,8 @@ func TestThePerKindFloorsCutTheEscalation(t *testing.T) {
 // The histogram is the shape of those answers, per kind, on one line: every
 // bucket named and counted, including the empty ones.
 func TestTheSummaryCarriesAConfidenceHistogramPerKind(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	sum, err := Summarize(reg, dayLog(t))
 	if err != nil {
@@ -142,6 +148,8 @@ func TestTheSummaryCarriesAConfidenceHistogramPerKind(t *testing.T) {
 // p25 of the provider answers that stood, per kind. A measured default that
 // cannot be reproduced from the rows is a number somebody chose.
 func TestTheShippedFloorsAreWhatTuneProposesFromTheDaysLog(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	proposals, err := ProposeFloors(reg, dayLog(t))
 	if err != nil {
@@ -194,6 +202,8 @@ func TestTheShippedFloorsAreWhatTuneProposesFromTheDaysLog(t *testing.T) {
 // A kind with one provider answer is not a quartile, so no floor is proposed
 // and the note says how many rows there were.
 func TestOneAnswerIsNotAQuartile(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	entries := []Entry{{Unit: "u1", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.61), RungTried: "emma", Outcome: OutcomeOK}}
 	proposals, err := ProposeFloors(reg, entries)
@@ -218,6 +228,8 @@ func TestOneAnswerIsNotAQuartile(t *testing.T) {
 // A decision the log recorded a failure against does not set the floor: the
 // floor is proposed from the answers that STOOD.
 func TestAFailedDecisionDoesNotSetTheFloor(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	entries := []Entry{
 		{Unit: "a", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.40), Outcome: OutcomeFailed},
@@ -242,6 +254,8 @@ func TestAFailedDecisionDoesNotSetTheFloor(t *testing.T) {
 // Blank or pending outcomes are not counted as stood-up or failed, and cannot
 // propose a floor.
 func TestBlankOrPendingOutcomesDoNotCountAsStood(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	entries := []Entry{
 		{Unit: "pending-1", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.85)},
@@ -268,6 +282,8 @@ func TestBlankOrPendingOutcomesDoNotCountAsStood(t *testing.T) {
 // keyed by unit. ProposeFloors must correlate them by unit to determine which
 // decisions stood, which failed, and skip pending or precondition-skipped units.
 func TestSeparateOutcomeRowsDriveStoodAndFailed(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	entries := []Entry{
 		// u1: stood via outcome row
@@ -314,6 +330,8 @@ func TestSeparateOutcomeRowsDriveStoodAndFailed(t *testing.T) {
 // A later HOLD appends a second outcome row (red/failed) and costs the bad route
 // its floor even if an earlier outcome was green/ok.
 func TestLaterHoldCostsRouteItsFloorEvenIfEarlierGreen(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	entries := []Entry{
 		{Unit: "u-hold", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.80)},
@@ -334,6 +352,8 @@ func TestLaterHoldCostsRouteItsFloorEvenIfEarlierGreen(t *testing.T) {
 // the number to write instead. Such a floor escalates every decision, which is
 // the defect this whole change is about, and it does not get written back.
 func TestAFloorAboveTheObservedMaxIsRefused(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	proposals, err := ProposeFloors(reg, dayLog(t))
 	if err != nil {
@@ -362,6 +382,8 @@ func TestAFloorAboveTheObservedMaxIsRefused(t *testing.T) {
 // not a confidence, and one kind with two floors are all refusals on the way
 // in, never a row sitting in a file being silently ignored.
 func TestTheFloorTableIsValidated(t *testing.T) {
+	t.Parallel()
+
 	minds := `"minds":[{"name":"flash","lineage":"deepseek","height":0,"availability":"available","ask":"card"}]`
 	for name, floors := range map[string]string{
 		"unknown kind": `"floors":[{"kind":"vibes","floor":0.7}]`,
@@ -389,6 +411,8 @@ func TestTheFloorTableIsValidated(t *testing.T) {
 // ResolveFloor: the flag wins, then the kind's measured row, then the built-in
 // default -- and every answer says which it was.
 func TestResolveFloorPrefersTheFlagThenTheKind(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	if got, from := ResolveFloor(reg, KindFixWithRedTest, 0.42, true); got != 0.42 || from != FloorFromFlag {
 		t.Errorf("an explicit --floor wins: %.2f from %s", got, from)
@@ -405,6 +429,8 @@ func TestResolveFloorPrefersTheFlagThenTheKind(t *testing.T) {
 // here -- the caller writes a dash and a NOTE rather than a number nobody
 // published.
 func TestTheRateTablePricesTokens(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	if _, ok := reg.RateFor(DefaultModel); ok {
 		t.Errorf("the shipped table holds a rate for %s; TypeSafe has published none to us", DefaultModel)
@@ -432,6 +458,8 @@ func TestTheRateTablePricesTokens(t *testing.T) {
 // exactly as it was -- the comments above all, which are where the ladder
 // explains itself -- and what is written parses back as a registry.
 func TestMergeFloorsKeepsTheRestOfTheFile(t *testing.T) {
+	t.Parallel()
+
 	source := DefaultRegistryJSON()
 	out, err := MergeFloors(source, []KindFloor{{Kind: KindRebase, Floor: 0.55, From: "a test"}})
 	if err != nil {

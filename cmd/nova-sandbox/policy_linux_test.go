@@ -18,6 +18,8 @@ import (
 // `;; nova-sandbox — darwin sandbox-exec profile, TEMPLATE.` — seven kilobytes
 // of policy that is not the policy in force.
 func TestPolicyVerbOnLinuxPrintsLandlockRuleset(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	code, out, errOut := j.tool(t, j.env(), "policy", "--read", j.read, "--write", j.write, "--net-deny")
 	if code != 0 {

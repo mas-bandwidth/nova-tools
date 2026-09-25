@@ -197,6 +197,8 @@ func printedLines(r result) []string {
 }
 
 func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	grammar := outputGrammar(t)
 
 	// A transcript with a stamp this tool cannot read: the UNPARSED line carries a

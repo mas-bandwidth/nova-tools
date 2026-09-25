@@ -17,6 +17,8 @@ import (
 // shape, and the word that matters is at the END, past the 500-byte prefix Cap would keep
 // if it were fed the whole file.
 func TestHarnessTailCarriesTheLastWordsIntoTheRunDoneLog(t *testing.T) {
+	t.Parallel()
+
 	job := filepath.Join(t.TempDir(), "job")
 	if err := os.MkdirAll(job, 0o755); err != nil {
 		t.Fatal(err)

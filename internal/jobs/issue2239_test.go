@@ -11,6 +11,8 @@ import (
 // whose lease is past expiry without a termination proof is uncertain, keeps
 // its reservation, and is never re-granted until a fence is written.
 func TestIssue2239(t *testing.T) {
+	t.Parallel()
+
 	// jobs-uncertain-keeps-its-resources: Release is the only thing that frees
 	// capacity, and it refuses an uncertain grant. The control is a sibling
 	// grant that is not uncertain: the same Release frees it.

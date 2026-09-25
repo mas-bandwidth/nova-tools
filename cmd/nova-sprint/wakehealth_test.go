@@ -521,22 +521,32 @@ func declareRefuses(t *testing.T, body, want string) {
 }
 
 func TestDeclareRefusesUnitWithoutBus(t *testing.T) {
+	t.Parallel()
+
 	declareRefuses(t, "  walter: { wake: unit, host: h, wake_bus_remote: r, wake_bus_branch: main, wake_on_note: x }\n", "walter wake_bus")
 }
 
 func TestDeclareRefusesUnitWithoutRemote(t *testing.T) {
+	t.Parallel()
+
 	declareRefuses(t, "  walter: { wake: unit, host: h, wake_bus: /b, wake_bus_branch: main, wake_on_note: x }\n", "walter wake_bus_remote")
 }
 
 func TestDeclareRefusesHumanWithoutNotify(t *testing.T) {
+	t.Parallel()
+
 	declareRefuses(t, "  stella: { wake: human }\n", "stella notify")
 }
 
 func TestDeclareRefusesKeeperWithoutBus(t *testing.T) {
+	t.Parallel()
+
 	declareRefuses(t, "  walter: { wake: unit, host: h, wake_bus: /b, wake_bus_remote: r, wake_bus_branch: main, wake_on_note: x, keeper_unit: k, keeper_remote: r, keeper_branch: main }\n", "walter keeper_bus")
 }
 
 func TestDeclareRefusesDirtyFile(t *testing.T) {
+	t.Parallel()
+
 	addr, c, _ := wakeFixture(t)
 	repo := newFleetRepo(t)
 	repo.commit("friends:\n  stella: { wake: human, notify: glenn }\n")
@@ -551,6 +561,8 @@ func TestDeclareRefusesDirtyFile(t *testing.T) {
 }
 
 func TestDeclareRemovesDroppedFriend(t *testing.T) {
+	t.Parallel()
+
 	addr, c, _ := wakeFixture(t)
 	ctx := context.Background()
 	repo := newFleetRepo(t)
@@ -601,6 +613,8 @@ func registryDump(t *testing.T, c *redis.Client) string {
 // at r1, then declares and is refused stale with zero writes and no false
 // receipt.
 func TestDeclareStaleCheckoutRefused(t *testing.T) {
+	t.Parallel()
+
 	addr, c, _ := wakeFixture(t)
 	ctx := context.Background()
 	b := newFleetRepo(t)
@@ -715,6 +729,8 @@ func TestRepairLockOneRepairer(t *testing.T) {
 // TestWakeHealthStaleIsQuestionMark: a wake cell no tick wrote in the last
 // 30 s prints `wake: ?`, never its carried-over row, and the gate names it.
 func TestWakeHealthStaleIsQuestionMark(t *testing.T) {
+	t.Parallel()
+
 	addr, c, _ := wakeFixture(t)
 	ctx := context.Background()
 	repo := newFleetRepo(t)
@@ -737,6 +753,8 @@ func TestWakeHealthStaleIsQuestionMark(t *testing.T) {
 // TestPreflight718RedOnUndeclaredAndMissing: with no friends:decl and a
 // registered friend with no wakepath, 7.18 is RED naming both.
 func TestPreflight718RedOnUndeclaredAndMissing(t *testing.T) {
+	t.Parallel()
+
 	_, c, _ := wakeFixture(t)
 	c.SAdd(context.Background(), "friends", "walter")
 	l, n := preflightNamed(t, c)
@@ -772,6 +790,8 @@ func TestPreflight718RedOnBeatStale(t *testing.T) {
 // TestDeclareCheckVerbReadsOnly: --check prints the diff and the stored rev
 // and writes nothing.
 func TestDeclareCheckVerbReadsOnly(t *testing.T) {
+	t.Parallel()
+
 	addr, c, _ := wakeFixture(t)
 	repo := newFleetRepo(t)
 	rev := repo.commit("friends:\n  stella: { wake: human, notify: glenn }\n")

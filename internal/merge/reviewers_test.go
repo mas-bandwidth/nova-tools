@@ -6,6 +6,8 @@ import (
 )
 
 func TestParseReviewers(t *testing.T) {
+	t.Parallel()
+
 	tsv := `who	logins	may-hold
 rowan	rowan-claude,claude	yes
 stella	stella-astra,astra	yes

@@ -20,6 +20,8 @@ func receipt(key, by, at string, ok bool, issue int) Receipt {
 }
 
 func TestLedgerSaysNobodyForAVerbNoOneHasRun(t *testing.T) {
+	t.Parallel()
+
 	rows, summary := Ledger(verbs("nova-check links"), nil, nil)
 	if len(rows) != 1 {
 		t.Fatalf("rows %d, want one per verb", len(rows))
@@ -35,6 +37,8 @@ func TestLedgerSaysNobodyForAVerbNoOneHasRun(t *testing.T) {
 
 // The whole point of the ledger: the author's own pass is not evidence.
 func TestAnAuthorDogfoodingTheirOwnVerbDoesNotCount(t *testing.T) {
+	t.Parallel()
+
 	authors := Authors{}
 	authors.Set("nova-check links", "Rowan")
 	rows, summary := Ledger(
@@ -54,6 +58,8 @@ func TestAnAuthorDogfoodingTheirOwnVerbDoesNotCount(t *testing.T) {
 }
 
 func TestAVerbWithNoKnownAuthorCountsEveryReceipt(t *testing.T) {
+	t.Parallel()
+
 	_, summary := Ledger(
 		verbs("nova-check links"),
 		[]Receipt{receipt("nova-check links", "Rowan", "2026-09-18T09:00:00Z", true, 0)},
@@ -65,6 +71,8 @@ func TestAVerbWithNoKnownAuthorCountsEveryReceipt(t *testing.T) {
 }
 
 func TestTheRowShowsTheReceiptThatSpeaksBestForTheVerb(t *testing.T) {
+	t.Parallel()
+
 	authors := Authors{}
 	authors.Set("nova-check links", "Rowan")
 	rows, _ := Ledger(verbs("nova-check links"), []Receipt{
@@ -80,6 +88,8 @@ func TestTheRowShowsTheReceiptThatSpeaksBestForTheVerb(t *testing.T) {
 }
 
 func TestTheRowCarriesTheIssueWhenAnEdgeWasFiled(t *testing.T) {
+	t.Parallel()
+
 	rows, summary := Ledger(verbs("nova-check links"), []Receipt{
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", false, 1301),
 	}, nil)
@@ -105,6 +115,8 @@ func TestTheRowCarriesTheIssueWhenAnEdgeWasFiled(t *testing.T) {
 // one's finding out of the gate's sight, unread and unfiled. A pass is evidence
 // about the passer's run, not an answer to somebody else's.
 func TestALaterPassClosesAnEdgeAndAnEarlierOneDoesNot(t *testing.T) {
+	t.Parallel()
+
 	_, closed := Ledger(verbs("nova-check links"), []Receipt{
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", false, 1301),
 		receipt("nova-check links", "Stella", "2026-09-18T11:00:00Z", true, 0),
@@ -131,6 +143,8 @@ func TestALaterPassClosesAnEdgeAndAnEarlierOneDoesNot(t *testing.T) {
 }
 
 func TestLedgerCountsAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing.T) {
+	t.Parallel()
+
 	rows, summary := Ledger(verbs("nova-check links"), []Receipt{
 		receipt("nova-check ghost", "Stella", "2026-09-18T09:00:00Z", true, 0),
 	}, nil)
@@ -143,6 +157,8 @@ func TestLedgerCountsAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing.T) {
 }
 
 func TestRowsComeBackInTheReferencesOrder(t *testing.T) {
+	t.Parallel()
+
 	rows, _ := Ledger(verbs("nova-check quickstart", "nova-check links", "nova-bus send"), nil, nil)
 	got := []string{rows[0].Verb, rows[1].Verb, rows[2].Verb}
 	want := []string{"quickstart", "links", "send"}
@@ -154,6 +170,8 @@ func TestRowsComeBackInTheReferencesOrder(t *testing.T) {
 }
 
 func TestGateSaysNoOnAnOpenEdgeWithoutRequireAll(t *testing.T) {
+	t.Parallel()
+
 	findings, _ := Gate(verbs("nova-check links"), []Receipt{
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", false, 1301),
 	}, nil, false)
@@ -169,6 +187,8 @@ func TestGateSaysNoOnAnOpenEdgeWithoutRequireAll(t *testing.T) {
 }
 
 func TestGateRequireAllListsEveryVerbNoNonAuthorHasRun(t *testing.T) {
+	t.Parallel()
+
 	authors := Authors{}
 	authors.Set("nova-check links", "Rowan")
 	authors.Set("nova-check nocode", "Rowan")
@@ -196,6 +216,8 @@ func TestGateRequireAllListsEveryVerbNoNonAuthorHasRun(t *testing.T) {
 }
 
 func TestGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
+	t.Parallel()
+
 	authors := Authors{}
 	authors.Set("nova-check links", "Rowan")
 	findings, summary := Gate(verbs("nova-check links"), []Receipt{
@@ -215,6 +237,8 @@ func TestGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
 // writes them — "Edges: (1) … (2) …" — with no issue filed. A ledger that
 // counts only ok=false says a clean number about a bench that found six things.
 func TestAnEdgeNamedInTheNotesIsAnOpenEdge(t *testing.T) {
+	t.Parallel()
+
 	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0)
 	r.Notes = "Ran it over the lane's own docs. Edges: (1) it reads only --dir, so one file cannot be checked alone."
 	rows, summary := Ledger(verbs("nova-check links"), []Receipt{r}, nil)
@@ -233,6 +257,8 @@ func TestAnEdgeNamedInTheNotesIsAnOpenEdge(t *testing.T) {
 }
 
 func TestAnEdgeWithAnIssueIsOpenButFiled(t *testing.T) {
+	t.Parallel()
+
 	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 1301)
 	r.Notes = "worked; Edge: the refusal names no remedy"
 	_, summary := Ledger(verbs("nova-check links"), []Receipt{r}, nil)
@@ -242,6 +268,8 @@ func TestAnEdgeWithAnIssueIsOpenButFiled(t *testing.T) {
 }
 
 func TestNotesThatMerelyUseTheWordEdgeAreNotAnEdge(t *testing.T) {
+	t.Parallel()
+
 	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0)
 	r.Notes = "ran it on the edge of the release; nothing to report"
 	_, summary := Ledger(verbs("nova-check links"), []Receipt{r}, nil)
@@ -254,6 +282,8 @@ func TestNotesThatMerelyUseTheWordEdgeAreNotAnEdge(t *testing.T) {
 // person who wrote it runs the verb again and writes nothing (round 5, edge 2 —
 // this used to be Emma's clean run closing Stella's note).
 func TestALaterCleanRunClosesAnEdgeNamedInTheNotes(t *testing.T) {
+	t.Parallel()
+
 	first := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0)
 	first.Notes = "Edges: (1) the refusal names no remedy"
 	later := receipt("nova-check links", "Stella", "2026-09-18T11:00:00Z", true, 0)
@@ -272,6 +302,8 @@ func TestALaterCleanRunClosesAnEdgeNamedInTheNotes(t *testing.T) {
 }
 
 func TestGateSaysNoToAnEdgeNamedOnlyInTheNotes(t *testing.T) {
+	t.Parallel()
+
 	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0)
 	r.Notes = "Edge: the refusal names no remedy"
 	findings, _ := Gate(verbs("nova-check links"), []Receipt{r}, nil, false)
@@ -287,6 +319,8 @@ func TestGateSaysNoToAnEdgeNamedOnlyInTheNotes(t *testing.T) {
 // so nobody could tell which receipt was stranded or how it should have been
 // spelled.
 func TestStrandedReceiptsAreNamedOneByOneWithTheNearestVerb(t *testing.T) {
+	t.Parallel()
+
 	declared := verbs("nova-check dogfood ledger", "nova-check links")
 	got := []Receipt{
 		receipt("nova-check ledger", "Stella", "2026-09-18T09:00:00Z", true, 0),
@@ -312,6 +346,8 @@ func TestStrandedReceiptsAreNamedOneByOneWithTheNearestVerb(t *testing.T) {
 }
 
 func TestNearestPrefersTheSameTool(t *testing.T) {
+	t.Parallel()
+
 	declared := verbs("nova-bus check", "nova-check nocode")
 	if got := Nearest(declared, "nova-check", "nocdoe"); got != "nova-check nocode" {
 		t.Fatalf("nearest = %q, want nova-check nocode", got)
@@ -324,6 +360,8 @@ func TestNearestPrefersTheSameTool(t *testing.T) {
 }
 
 func TestTheBareInvocationPrintsAsADash(t *testing.T) {
+	t.Parallel()
+
 	rows, _ := Ledger([]Verb{{Tool: "nova-decide", Verb: "", Line: 1}}, nil, nil)
 	if !strings.Contains(rows[0].Line(), "verb=- ") {
 		t.Fatalf("a tool with no verb prints as %q; the bare invocation is a unit like any other", rows[0].Line())
@@ -331,6 +369,8 @@ func TestTheBareInvocationPrintsAsADash(t *testing.T) {
 }
 
 func TestAReceiptCanNameTheBareInvocation(t *testing.T) {
+	t.Parallel()
+
 	declared := []Verb{{Tool: "nova-decide", Verb: "", Line: 1}}
 	r := Receipt{Tool: "nova-decide", Verb: "-", By: "Stella", At: "2026-09-18T09:00:00Z", OK: true, Notes: "one real decision"}
 	_, summary := Ledger(declared, []Receipt{r}, nil)

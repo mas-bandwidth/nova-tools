@@ -19,6 +19,8 @@ func withHeader(f cardFix, lines ...string) []byte {
 }
 
 func TestCardPushStoresRoute(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -45,6 +47,8 @@ func TestCardPushStoresRoute(t *testing.T) {
 }
 
 func TestCardLintRefusesBadRoute(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -63,6 +67,8 @@ func TestCardLintRefusesBadRoute(t *testing.T) {
 // field, the dealer's order; the pool is scored by the card's created_at like
 // every view (#3692: age order, uniformly).
 func TestCardPushPriorityIsTheRecordField(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)

@@ -11,6 +11,8 @@ import (
 // whose README says it tunes nothing -- and these assertions are about the
 // arithmetic the flag adds, not about any floor.
 func TestTuneDefaultFlagPrintsWhatTheDefaultAnsweredDifferently(t *testing.T) {
+	t.Parallel()
+
 	const log = "../../internal/decide/testdata/reader-observations-2026-09-19.jsonl"
 	var out, errb bytes.Buffer
 	// The fixture is an OBSERVATION log, so every read of it is the explicitly
@@ -42,6 +44,8 @@ func TestTuneDefaultFlagPrintsWhatTheDefaultAnsweredDifferently(t *testing.T) {
 // A default nothing in the log ever answered is a refusal with a remedy, and
 // the exit code is the verb's bad-decisions 2, never a silent 0.
 func TestTuneDefaultNoRowAnsweredIsRefused(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	code := run([]string{"tune", "--decisions", "../../internal/decide/testdata/reader-observations-2026-09-19.jsonl", "--observations", "--default", "a-reader-nobody-named"}, &out, &errb)
 	if code != 2 {

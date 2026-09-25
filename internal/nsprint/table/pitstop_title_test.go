@@ -24,6 +24,8 @@ import (
 // and lifted by clear, never refused WRONGTYPE, and the title shows it while
 // it stands. live.go names no other pit stop key.
 func TestPitstopTitleReadsTheVerbKey(t *testing.T) {
+	t.Parallel()
+
 	const S = "control-00003887"
 	ctx := context.Background()
 	c := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})

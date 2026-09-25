@@ -57,6 +57,8 @@ func (r *recordingGit) fetched(remote string) bool {
 // live remote after that check and before the rebase fetch. The card lands on
 // the live tip, and the harvest's stale-base decision against that tip is clear.
 func TestRebaseReadsLiveBaseWhenDevMovesAfterTheMirrorCheck(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	live := filepath.Join(root, "live.git")
 	runCmd(t, root, "git", "init", "--bare", live)
@@ -228,6 +230,8 @@ func TestFindingRedCardRebasesAndOpensPRCarryingVerdict(t *testing.T) {
 // The refusal sentence names a decoy branch and does not match the pre-#2598
 // sed. The Branch field names the card. Unstick follows the field.
 func TestUnstickStaleBaseMatchesTypedRefusalNotWording(t *testing.T) {
+	t.Parallel()
+
 	repo := t.TempDir()
 	runCmd(t, repo, "git", "init", "-b", "dev")
 	runCmd(t, repo, "git", "config", "user.name", "Rowan")

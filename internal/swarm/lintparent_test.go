@@ -10,6 +10,8 @@ func lines(l ...string) []string { return l }
 
 // A path the card asks the worker to WALK above the job is a finding, wherever it sits.
 func TestAWalkedParentPathIsAFinding(t *testing.T) {
+	t.Parallel()
+
 	for _, l := range []string{
 		"cd ../scratch",
 		"  cd ../..",
@@ -34,6 +36,8 @@ func TestAWalkedParentPathIsAFinding(t *testing.T) {
 // `go test` ellipsis -- is not a path the worker walks, and is not a finding. Every line
 // below is verbatim from a card cut on 2026-09-19.
 func TestAQuotedParentPathIsNotAFinding(t *testing.T) {
+	t.Parallel()
+
 	for _, l := range []string{
 		"| the test package you add to | `internal/docs/`, package `docs`. See `internal/docs/agents_md_test.go` -- its paths to repo files are relative to the package directory, in the form `\"../../AGENTS.md\"` (that file, line 34). Follow that convention. |",
 		"3. **`docs/SPEC-CI.md:515`, one link,** `[pit-stop ledger item 20](../reports/pitstop-tests-2026-09-17.md)`.",
@@ -52,6 +56,8 @@ func TestAQuotedParentPathIsNotAFinding(t *testing.T) {
 // A fenced block is a quotation: the four lines of pasted `go test` output a card shows
 // its worker are not four instructions to climb out of the job (issue #1494).
 func TestAFencedQuotationIsNotAFinding(t *testing.T) {
+	t.Parallel()
+
 	got := CardParentPaths(lines(
 		"RESULT: c sha=0",
 		"Its refusal, verbatim:",
@@ -69,6 +75,8 @@ func TestAFencedQuotationIsNotAFinding(t *testing.T) {
 // ...but a walk inside a fence is still a walk: a card's commands live in fences, which is
 // exactly where practice 25's hurt was written.
 func TestAWalkInsideAFenceIsStillAFinding(t *testing.T) {
+	t.Parallel()
+
 	got := CardParentPaths(lines(
 		"RESULT: c sha=0",
 		"```",
@@ -84,6 +92,8 @@ func TestAWalkInsideAFenceIsStillAFinding(t *testing.T) {
 // An ellipsis is three dots, not a parent path. `ok .../internal/pulse 1.813s` is what
 // `go test` prints and what a card pastes.
 func TestAnEllipsisIsNotAParentPath(t *testing.T) {
+	t.Parallel()
+
 	for _, l := range []string{
 		"ok .../internal/pulse 1.813s",
 		"run it from .../nova-tools and paste what it printed",
@@ -97,6 +107,8 @@ func TestAnEllipsisIsNotAParentPath(t *testing.T) {
 // Every finding is reported once per line, in line order, 1-based, so the DRIFT lines a
 // manager reads are in the order the card reads.
 func TestFindingsAreOneToALineInOrder(t *testing.T) {
+	t.Parallel()
+
 	got := CardParentPaths(lines(
 		"RESULT: c sha=0",
 		"cd ../a ../b",

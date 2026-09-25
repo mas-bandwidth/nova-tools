@@ -14,6 +14,8 @@ import (
 // THE KEY IS READ AS DATA. One line, the two strips, whitespace out, and a second line that
 // nothing may read -- the file somebody appends to tomorrow.
 func TestTheKeyFileIsReadAsOneLine(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	for _, c := range []struct{ name, body, want string }{
 		{"a bare key", "sk-abc123\n", "sk-abc123"},
@@ -53,6 +55,8 @@ func TestTheKeyFileIsReadAsOneLine(t *testing.T) {
 // Rule 8 and rule 15, at the parser: completion is EVIDENCE, separate from the count, and a
 // malformed report yields no findings, ever.
 func TestTheParserClassifiesWithoutAnOpinion(t *testing.T) {
+	t.Parallel()
+
 	head := "# t\n\n## Head\nfindings: %s\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n\n## Findings\n%s\n## Per item\n| item | state | evidence |\n| --- | --- | --- |\n| an item | %s | x.go:1 |\n"
 	finding := "- something `THE RULE, VERBATIM` internal/x.go:10\n"
 
@@ -101,6 +105,8 @@ func TestTheParserClassifiesWithoutAnOpinion(t *testing.T) {
 // the shape the parser required, and a report could bury its completion evidence anywhere
 // in the head.
 func TestTheHeadsFirstLineIsTheFindingCount(t *testing.T) {
+	t.Parallel()
+
 	good := "# t\n\n## Head\nfindings: 1\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n"
 	if got := ParseReport([]byte(good)); got.Class != ClassOK {
 		t.Fatalf("findings: first is the shape rule 8 names, got %s", got.Class)
@@ -142,6 +148,8 @@ func TestTheHeadsFirstLineIsTheFindingCount(t *testing.T) {
 // `unquoted`, it got no de-duplication key, and it was folded into nobody's page. The
 // parser discarded the exact evidence rule 2 exists to demand.
 func TestAFindingCarriesItsQuoteOnTheSameLineOrTheNext(t *testing.T) {
+	t.Parallel()
+
 	head := "# t\n\n## Head\nfindings: %s\nrepo: o/n\nrev: abc\na paragraph.\n\n## Findings\n"
 
 	// The next line carries the quote and the file:line.
@@ -193,6 +201,8 @@ func TestAFindingCarriesItsQuoteOnTheSameLineOrTheNext(t *testing.T) {
 
 // Rule 15's normalization: ./internal/x.go:10 and internal\x.go:10 are one file.
 func TestAPathIsNormalizedBeforeTheCompare(t *testing.T) {
+	t.Parallel()
+
 	a := parseFinding(1, "something `RULE` ./internal/x.go:10")
 	b := parseFinding(1, `something `+"`RULE`"+` internal\x.go:10`)
 	ka, oka := a.Key("o/n", "abc")
@@ -212,6 +222,8 @@ func TestAPathIsNormalizedBeforeTheCompare(t *testing.T) {
 
 // The prompt is this tool's output, and every sentence in it is a failure from the record.
 func TestThePromptCarriesEverySentenceTheRecordBought(t *testing.T) {
+	t.Parallel()
+
 	prompt := string(Prompt(PromptInput{
 		ID: "job-1", JobDir: "/j", Deadline: 20 * time.Minute, Files: 7, Tokens: "100000",
 		Board: "mas-bandwidth/schema#876", Task: []byte("the task"),
@@ -243,6 +255,8 @@ func TestThePromptCarriesEverySentenceTheRecordBought(t *testing.T) {
 }
 
 func TestThePromptUsesJobRelativeWorkerPaths(t *testing.T) {
+	t.Parallel()
+
 	jobDir := "/Users/glenn/Documents/ChatGPT/stella 2/jobs/job;$(touch SHOULD_NOT_RUN)"
 	prompt := string(Prompt(PromptInput{
 		ID: "job-paths", JobDir: jobDir, Deadline: time.Minute, Files: 1, Tokens: "10",
@@ -265,6 +279,8 @@ func TestThePromptUsesJobRelativeWorkerPaths(t *testing.T) {
 }
 
 func TestHarnessArgsUseJobRelativePromptFile(t *testing.T) {
+	t.Parallel()
+
 	w := Worker{Model: "model", HarnessArgs: []string{"run", "--model", "{model}", "--", "{prompt}"}}
 	got := harnessArgs(w, "/tmp/job with spaces;$(touch SHOULD_NOT_RUN)")
 	want := []string{"run", "--model", "model", "--", "PROMPT.md"}
@@ -276,6 +292,8 @@ func TestHarnessArgsUseJobRelativePromptFile(t *testing.T) {
 // The harness config carries the variable's NAME and never its value: a value written there
 // would be a key at rest in a directory nobody treats as a secret store.
 func TestTheHarnessConfigCarriesTheNameNotTheValue(t *testing.T) {
+	t.Parallel()
+
 	w := Worker{Provider: "fake", Model: "m", EnvVar: "FAKE_KEY", BaseURL: "https://example.invalid"}
 	cfg := string(w.HarnessConfig())
 	if !strings.Contains(cfg, "{env:FAKE_KEY}") {
@@ -289,6 +307,8 @@ func TestTheHarnessConfigCarriesTheNameNotTheValue(t *testing.T) {
 // A template is text and nothing else, and `add --template` writes the file budget into the
 // condition that names it, so the number in the prompt is the number the machinery holds.
 func TestTemplatesCarryTheirConditions(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range TemplateNames() {
 		body, err := Template(name)
 		if err != nil || strings.TrimSpace(body) == "" {
@@ -319,6 +339,8 @@ func TestTemplatesCarryTheirConditions(t *testing.T) {
 // output directly. The floor decides which findings are emitted, not how they are
 // written, so the verbatim-quote condition stays.
 func TestReadPRTemplateCarriesASeverityFloor(t *testing.T) {
+	t.Parallel()
+
 	wrapped, err := WrapTemplate("read-pr", 12, []byte("read PR #65"))
 	if err != nil {
 		t.Fatal(err)
@@ -340,6 +362,8 @@ func TestReadPRTemplateCarriesASeverityFloor(t *testing.T) {
 // A worker description is decoded STRICTLY: an unknown field is a refusal, because a
 // misspelled field in a file that names a key's location is a silent default.
 func TestAnUnknownFieldInAWorkerDescriptionIsARefusal(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "w.json")
 	if err := os.WriteFile(path, []byte(`{"name":"x","key_fil":"/k"}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -371,6 +395,8 @@ func sprintf(format string, args ...any) string {
 // description with NEITHER key_file nor secret, and refuses one carrying both -- the two
 // mechanisms contradict. The old key_file shape stays accepted.
 func TestASecretNamedWorkerDescriptionIsAcceptedByTheLoader(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	home := filepath.Join(dir, "worker")
 	if err := os.MkdirAll(home, 0o755); err != nil {
@@ -410,6 +436,8 @@ func TestASecretNamedWorkerDescriptionIsAcceptedByTheLoader(t *testing.T) {
 // worker description: the key is delivered by `nova-secrets exec` under that NAME, and the
 // harness config carries the variable's NAME).
 func TestSecretImpliesEnvVar(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	home := filepath.Join(dir, "worker")
 	if err := os.MkdirAll(home, 0o755); err != nil {
@@ -436,6 +464,8 @@ func TestSecretImpliesEnvVar(t *testing.T) {
 // after it -- and added one for each yes, so a single backgrounded child could be reported
 // as two (read 4, F8). The number a person reads tomorrow is a count of processes.
 func TestOneSurvivorIsCountedOnce(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		name                      string
 		aliveBefore, survivedReap bool

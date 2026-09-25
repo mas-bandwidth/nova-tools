@@ -16,6 +16,8 @@ import (
 // command's whole output with the block under it. The version word and the
 // machine triple are the run's, not the document's.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	t.Parallel()
+
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +52,8 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 
 // TestExampleLinesRun runs every line of the help banner's example block.
 func TestExampleLinesRun(t *testing.T) {
+	t.Parallel()
+
 	var banner bytes.Buffer
 	if code := run([]string{"help"}, strings.NewReader(""), &banner, &banner, func(string) string { return "" }); code != 0 {
 		t.Fatalf("help exits %d", code)

@@ -108,6 +108,8 @@ func upBench(name string, desired int) BenchState {
 }
 
 func TestPreflightOneSessionPerBatch(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	benches := []BenchState{upBench("ctl-a", 50), upBench("ctl-b", 8)}
 
@@ -254,6 +256,8 @@ const unresolvedGo = `jobs:
 `
 
 func TestPreflightTwoSchedulersRed(t *testing.T) {
+	t.Parallel()
+
 	linuxGo := []BenchProfile{{Bench: "ctl-hulk", OS: "linux", Legs: []string{"go"}}}
 	darwinGo := []BenchProfile{{Bench: "ctl-studio", OS: "darwin", Legs: []string{"go"}}}
 	both := append(append([]BenchProfile{}, linuxGo...), darwinGo...)
@@ -320,6 +324,8 @@ func TestPreflightTwoSchedulersRed(t *testing.T) {
 }
 
 func TestPreflightFleetChecksInOrder(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	green := FleetInput{
 		Loaded:       allLoaded(),
@@ -440,6 +446,8 @@ func TestPreflightFleetChecksInOrder(t *testing.T) {
 // collection cannot say whether it was read, so a check whose snapshot is
 // unread is RED naming it, never GREEN on nothing.
 func TestPreflightUnreadInputRefuses(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	t.Run("an unread fleet passes no collection check", func(t *testing.T) {
@@ -522,6 +530,8 @@ func TestPreflightUnreadInputRefuses(t *testing.T) {
 // goes through CheckBatchLauncher GREEN, and the same fixture with the
 // launcher field dropped is RED naming the bench.
 func TestLiveBeatShapeFixtureNamesLauncher(t *testing.T) {
+	t.Parallel()
+
 	// The seven live benches from the issue.
 	benches := []string{"studio", "hulk", "vision", "superman", "batman", "spacegame", "hetzner"}
 

@@ -23,6 +23,8 @@ const bannerRefusalLog = "\n> build · deepseek-v4-pro\n" +
 // is one the model routed around. RED WITHOUT THE FIX: WallRefused takes the first refusal
 // in the file whatever the card did next, so the banner line was named as the death.
 func TestWallStoppedIgnoresARefusalTheCardMovedPast(t *testing.T) {
+	t.Parallel()
+
 	if _, ok := WallRefused([]byte(bannerRefusalLog)); !ok {
 		t.Fatal("the fixture must hold a refusal WallRefused finds, or this test proves nothing")
 	}
@@ -34,6 +36,8 @@ func TestWallStoppedIgnoresARefusalTheCardMovedPast(t *testing.T) {
 // TestWallStoppedNamesARefusalWithNothingAfterIt: the other half. A refusal the card never
 // got past is still a wall death, and the classification must survive the fix.
 func TestWallStoppedNamesARefusalWithNothingAfterIt(t *testing.T) {
+	t.Parallel()
+
 	log := "STEP 2: build\n$ cc -o probe probe.c\n" +
 		"cc: error: unable to read data link at '/var/db/xcode_select_link' (Operation not permitted)\n"
 	w, ok := WallStopped([]byte(log))
@@ -50,6 +54,8 @@ func TestWallStoppedNamesARefusalWithNothingAfterIt(t *testing.T) {
 // Permission denied`. RED WITHOUT THE FIX: this package knew only `SANDBOX REFUSED` and
 // `Operation not permitted`, so no linux wall refusal was classified at all.
 func TestPermissionDeniedOnAPathIsARefusal(t *testing.T) {
+	t.Parallel()
+
 	log := "STEP 1\n$ sh -c 'echo probe > /tmp/nova-wall-probe-swarm'\n" +
 		"sh: 1: cannot create /tmp/nova-wall-probe-swarm: Permission denied\n"
 	w, ok := WallStopped([]byte(log))
@@ -72,6 +78,8 @@ func TestPermissionDeniedOnAPathIsARefusal(t *testing.T) {
 // FIX: nothing read the child's output until the child was gone, so the coordinator learnt
 // of a refusal at the reap -- twenty minutes later on the card that died of one.
 func TestWallReaderAnnouncesTheRefusalAsItArrives(t *testing.T) {
+	t.Parallel()
+
 	var said []string
 	r := NewWallReader("card-8311", func(line string) { said = append(said, line) })
 	if _, err := r.Write([]byte("STEP 2: write the file\n")); err != nil {
@@ -99,6 +107,8 @@ func TestWallReaderAnnouncesTheRefusalAsItArrives(t *testing.T) {
 // TestWallReaderHoldsAPartialLine: the child's stdout and stderr arrive in whatever pieces
 // the pipe hands over, and a refusal split across two writes is still a refusal.
 func TestWallReaderHoldsAPartialLine(t *testing.T) {
+	t.Parallel()
+
 	var said []string
 	r := NewWallReader("c", func(line string) { said = append(said, line) })
 	_, _ = r.Write([]byte("sh: 1: cannot create /etc/ho"))
@@ -115,6 +125,8 @@ func TestWallReaderHoldsAPartialLine(t *testing.T) {
 // that saw a refusal and then a tool call reports no refusal at all, so a card ended for
 // stillness is not reported as a wall death it had already worked past.
 func TestWallReaderForgetsARefusalTheCardMovedPast(t *testing.T) {
+	t.Parallel()
+
 	r := NewWallReader("c", nil)
 	_, _ = r.Write([]byte("xcode-select: error: unable to read data link at '/var/db/xcode_select_link' (Operation not permitted)\n"))
 	if _, _, ok := r.Stopped(); !ok {
@@ -129,6 +141,8 @@ func TestWallReaderForgetsARefusalTheCardMovedPast(t *testing.T) {
 // TestWriteBlockedResultNeverOverwritesAPublishedReport: a card that published owns its
 // report, and the machinery never writes over one.
 func TestWriteBlockedResultNeverOverwritesAPublishedReport(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	mine := filepath.Join(job, "RESULT.md")
 	if err := os.WriteFile(mine, []byte("RESULT: mine\nfindings: 0\n"), 0o644); err != nil {
@@ -147,6 +161,8 @@ func TestWriteBlockedResultNeverOverwritesAPublishedReport(t *testing.T) {
 // none is given. It carries the typed line, it says who wrote it, and it has NO findings
 // head -- so it parses `plan-only` and can never be folded as work a worker did.
 func TestWriteBlockedResultNamesTheBlockAndCannotBeGreen(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	path, wrote, err := WriteBlockedResult(job, "card-8311", "write", "/etc/hosts", "2", "the card wrote nothing for 300s")
 	if err != nil || !wrote {

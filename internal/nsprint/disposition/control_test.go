@@ -20,6 +20,8 @@ import (
 // line make no record (NORECORD prose); a HOLD whose reason's only sentence
 // names another pull makes a note kind=order and no hold.
 func TestControl39(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	c := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})
 	t.Cleanup(func() { _ = c.Close() })

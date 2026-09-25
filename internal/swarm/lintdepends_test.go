@@ -16,6 +16,8 @@ func dependsHeader(value string) []byte {
 }
 
 func TestLintDependsRefusesAMissingKey(t *testing.T) {
+	t.Parallel()
+
 	fs := LintCardDepends(typedCard(fullHeader()...), nil)
 	if len(fs) != 1 || fs[0].Check != "depends-on" {
 		t.Fatalf("a typed card with no DEPENDS-ON key draws depends-on, got %v", fs)
@@ -26,6 +28,8 @@ func TestLintDependsRefusesAMissingKey(t *testing.T) {
 }
 
 func TestLintDependsRefusesASelfDependency(t *testing.T) {
+	t.Parallel()
+
 	fs := LintCardDepends(dependsHeader("other-card, CARD-0000"), Lineup{"other-card": true})
 	if len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "CARD-0000") || !strings.Contains(fs[0].Excerpt, "own id") {
 		t.Fatalf("a card that names its own id is a self-dependency, got %v", fs)
@@ -36,6 +40,8 @@ func TestLintDependsRefusesASelfDependency(t *testing.T) {
 }
 
 func TestLintDependsRefusesAnUnknownID(t *testing.T) {
+	t.Parallel()
+
 	fs := LintCardDepends(dependsHeader("missing-card"), Lineup{"other-card": true})
 	if len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "missing-card") || !strings.Contains(fs[0].Excerpt, "not in the lineup") {
 		t.Fatalf("an id the lineup does not hold is refused, got %v", fs)
@@ -47,12 +53,16 @@ func TestLintDependsRefusesAnUnknownID(t *testing.T) {
 }
 
 func TestLintDependsDashPasses(t *testing.T) {
+	t.Parallel()
+
 	if fs := LintCardDepends(dependsHeader("-"), Lineup{"other-card": true}); len(fs) != 0 {
 		t.Fatalf("DEPENDS-ON: - passes, and `-` is not looked up as an id, got %v", fs)
 	}
 }
 
 func TestLintDependsReferenceIsNotLookedUp(t *testing.T) {
+	t.Parallel()
+
 	const ref = "mas-bandwidth/nova-tools#2550"
 	lineup := Lineup{"other-card": true}
 	if _, ok := lineup[ref]; ok {
@@ -64,6 +74,8 @@ func TestLintDependsReferenceIsNotLookedUp(t *testing.T) {
 }
 
 func TestLintDependsRefusesASpaceAndDogfood(t *testing.T) {
+	t.Parallel()
+
 	lineup := Lineup{"other-card": true}
 	fs := LintCardDepends(dependsHeader("nova-tools #2550"), lineup)
 	if len(fs) == 0 || !dependsNames(fs, "nova-tools #2550") {
@@ -85,6 +97,8 @@ func dependsNames(fs []CardHeaderFinding, name string) bool {
 }
 
 func TestLintDependsKnownIDPasses(t *testing.T) {
+	t.Parallel()
+
 	lineup := Lineup{"other-card": true, "third-card": true}
 	if fs := LintCardDepends(dependsHeader("other-card, third-card"), lineup); len(fs) != 0 {
 		t.Fatalf("ids the lineup holds pass, got %v", fs)
@@ -92,6 +106,8 @@ func TestLintDependsKnownIDPasses(t *testing.T) {
 }
 
 func TestReadLineupSkipsTheDependsOnHeader(t *testing.T) {
+	t.Parallel()
+
 	p := filepath.Join(t.TempDir(), "ORDER.tsv")
 	body := "id\tdepends-on\nother-card\t-\nthird-card\tother-card\n# a comment\n\n"
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {

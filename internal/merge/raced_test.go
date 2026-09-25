@@ -10,6 +10,8 @@ import "testing"
 // Widening the lease word turns a protected branch into "the base moved after the gate",
 // which sends a reader to wait for a next pass that will be refused the same way forever.
 func TestOnlyALeaseRejectionIsRaced(t *testing.T) {
+	t.Parallel()
+
 	raced := []string{
 		" ! [rejected]        aaaa -> main (stale info)",
 		"error: failed to push some refs\n ! [rejected] main (stale info)",

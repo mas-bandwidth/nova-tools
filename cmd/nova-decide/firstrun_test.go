@@ -54,6 +54,8 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 // (nova-tools #1425). The count is the cage: route, help and log must be here,
 // not anywhere else the section might grow.
 func TestFirstRunHoldsTheWholeLadder(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)

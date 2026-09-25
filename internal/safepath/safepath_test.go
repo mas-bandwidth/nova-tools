@@ -31,6 +31,8 @@ func exists(p string) bool {
 // name-ok-is-one-path-element: only [A-Za-z0-9._-]+, never empty, never ".",
 // never "..", never a slash and never a leading dash.
 func TestNameOKIsOnePathElement(t *testing.T) {
+	t.Parallel()
+
 	ok := []string{"3", "card-9322", "a.b_c-d", "..hidden", "x..y"}
 	for _, s := range ok {
 		if !NameOK(s) {
@@ -47,6 +49,8 @@ func TestNameOKIsOnePathElement(t *testing.T) {
 
 // remove-under-is-the-only-rm: a directory strictly below a root goes.
 func TestRemoveUnderRootsRemovesBelowRoot(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	victim := filepath.Join(root, "slot", "jobs", "card-1")
 	mustWrite(t, filepath.Join(victim, "scratch", "s"), "x")
@@ -60,6 +64,8 @@ func TestRemoveUnderRootsRemovesBelowRoot(t *testing.T) {
 
 // a path outside every root is refused, and left where it is.
 func TestRemoveUnderRefusesOutsideTheRoots(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	outside := t.TempDir()
 	victim := filepath.Join(outside, "keep")
@@ -74,6 +80,8 @@ func TestRemoveUnderRefusesOutsideTheRoots(t *testing.T) {
 
 // a path containing ".." is refused even when it would resolve below the root.
 func TestRemoveUnderRefusesDotDot(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	target := filepath.Join(root, "slot")
 	mustMkdir(t, target)
@@ -88,6 +96,8 @@ func TestRemoveUnderRefusesDotDot(t *testing.T) {
 
 // a path that IS a symlink is refused; the target survives.
 func TestRemoveUnderRefusesSymlinkPath(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	outside := t.TempDir()
 	mustWrite(t, filepath.Join(outside, "keep"), "x")
@@ -106,6 +116,8 @@ func TestRemoveUnderRefusesSymlinkPath(t *testing.T) {
 // a symlink on an intermediate component that points outside the root is
 // refused too: the resolved path is not below the root.
 func TestResolvedUnderRefusesSymlinkEscape(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	outside := t.TempDir()
 	mustWrite(t, filepath.Join(outside, "keep"), "x")

@@ -122,6 +122,8 @@ func closedPR(head string) string {
 }
 
 func TestLandedIsTheLandersMergeRule(t *testing.T) {
+	t.Parallel()
+
 	url, heads := origin(t)
 	f := &forge{answers: map[string]string{
 		"api repos/o/r/pulls/1":  closedPR(heads[1]),
@@ -194,6 +196,8 @@ func TestLandedIsTheLandersMergeRule(t *testing.T) {
 }
 
 func TestLandedWithoutACacheIsUnknown(t *testing.T) {
+	t.Parallel()
+
 	_, heads := origin(t)
 	f := &forge{answers: map[string]string{"api repos/o/r/pulls/1": closedPR(heads[1])}}
 	v := New(f.run, "o/r", "dev", "").Landed(context.Background(), "pr:o/r#1")
@@ -203,6 +207,8 @@ func TestLandedWithoutACacheIsUnknown(t *testing.T) {
 }
 
 func TestMergedAt(t *testing.T) {
+	t.Parallel()
+
 	f := &forge{answers: map[string]string{
 		"api repos/o/r/pulls/1": `{"state":"closed","merged_at":"2026-09-22T00:00:00Z","merge_commit_sha":"abc123","head":{"sha":"def456"}}`,
 		"api repos/o/r/pulls/2": closedPR("h2"),
@@ -226,6 +232,8 @@ func TestMergedAt(t *testing.T) {
 }
 
 func TestCommitReachable(t *testing.T) {
+	t.Parallel()
+
 	f := &forge{answers: map[string]string{
 		"api repos/o/r/compare/dev...aaaaaaa": `{"status":"identical"}`,
 		"api repos/p/q/compare/dev...bbbbbbb": `{"status":"behind"}`,

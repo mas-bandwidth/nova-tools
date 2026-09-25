@@ -17,6 +17,8 @@ import (
 )
 
 func TestCIVerbGitHubOnceAndStatus(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })

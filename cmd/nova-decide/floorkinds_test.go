@@ -15,6 +15,8 @@ import (
 // from. A reader cannot tell a measured 0.90 from the default nobody has tuned
 // by looking at the number.
 func TestRouteUsesTheRegistrysFloorForTheKind(t *testing.T) {
+	t.Parallel()
+
 	for name, tc := range map[string]struct {
 		args  []string
 		floor string
@@ -42,6 +44,8 @@ func TestRouteUsesTheRegistrysFloorForTheKind(t *testing.T) {
 // A registry the caller names carries its own floors, and they are the ones
 // used: the table is data, like the ladder.
 func TestRouteTakesTheFloorFromTheRegistryGiven(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "registry.json")
 	if err := os.WriteFile(path, []byte(`{
 	  "minds":[{"name":"tiny","lineage":"deepseek","height":0,"availability":"available","ask":"card"},
@@ -63,6 +67,8 @@ func TestRouteTakesTheFloorFromTheRegistryGiven(t *testing.T) {
 // The floor's source travels into the log row too, so the ledger can tell a
 // measured floor from an untuned one a week later.
 func TestTheLogRowCarriesTheFloorSourceAndTheRead(t *testing.T) {
+	t.Parallel()
+
 	log := filepath.Join(t.TempDir(), "decide.jsonl")
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"route", "--no-jev", "--unit-id", "l-1", "--kind", "fleet-chore",
@@ -170,6 +176,8 @@ func lastUsageRow(t *testing.T, path string) map[string]string {
 // tune --propose-floors reads an escalation log and proposes a floor per kind,
 // and --write puts them in a registry the next route will use.
 func TestTuneProposesAndWritesTheFloors(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	log := filepath.Join(dir, "decide.jsonl")
 	if err := os.WriteFile(log, []byte(strings.Join([]string{
@@ -217,6 +225,8 @@ func TestTuneProposesAndWritesTheFloors(t *testing.T) {
 // A hand-named floor above what the provider has ever answered for that kind is
 // refused with the remedy, and nothing is written.
 func TestTuneRefusesAFloorAboveTheObservedMax(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	log := filepath.Join(dir, "decide.jsonl")
 	if err := os.WriteFile(log, []byte(strings.Join([]string{
@@ -241,6 +251,8 @@ func TestTuneRefusesAFloorAboveTheObservedMax(t *testing.T) {
 
 // --propose-floors wants a log: a floor with no rows behind it is untuned.
 func TestProposeFloorsWantsALog(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"tune", "--propose-floors"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("exit = %d, want 2", code)
@@ -254,6 +266,8 @@ func TestProposeFloorsWantsALog(t *testing.T) {
 // other verb's (the #1358 class). `flag: help requested` at exit 2 is package
 // flag's sentinel handed to somebody who asked a reasonable question.
 func TestEverySubVerbAnswersHelp(t *testing.T) {
+	t.Parallel()
+
 	for _, verb := range []string{"route", "help", "log", "tune"} {
 		for _, flag := range []string{"--help", "-h"} {
 			var stdout, stderr bytes.Buffer

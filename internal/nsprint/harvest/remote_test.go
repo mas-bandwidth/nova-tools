@@ -10,12 +10,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // The REST calls name the exact endpoints, and the push script is idempotent
 // against a real git remote: same sha is success, another sha is refused.
 func TestGitHubCallsAndIdempotentPush(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls")
 	gh := filepath.Join(dir, "gh")
@@ -26,7 +29,7 @@ func TestGitHubCallsAndIdempotentPush(t *testing.T) {
 *) echo '{"number":7,"html_url":"u","head":{"sha":"abc","ref":"nova/s/l-a1"}}';;
 esac
 `
-	if err := os.WriteFile(gh, []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(gh, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	g := GitHub{Bin: gh}
@@ -115,6 +118,8 @@ esac
 // `results` the card hash carries, and refuses a relative one, naming the
 // field, before it starts ssh.
 func TestHarvestHasNoResultsRoot(t *testing.T) {
+	t.Parallel()
+
 	if _, ok := reflect.TypeOf(SSHPusher{}).FieldByName("ResultsRoot"); ok {
 		t.Fatal("SSHPusher still has a ResultsRoot; the results dir comes from the card hash only")
 	}
@@ -122,7 +127,7 @@ func TestHarvestHasNoResultsRoot(t *testing.T) {
 	log := filepath.Join(dir, "ssh.log")
 	ssh := filepath.Join(dir, "ssh")
 	script := "#!/bin/bash\nprintf '%s\\n' \"$@\" >> " + strconv.Quote(log) + "\ncat >/dev/null\n"
-	if err := os.WriteFile(ssh, []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(ssh, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	p := SSHPusher{SSH: ssh, Remote: func(Card) string { return "/srv/origin.git" }}
@@ -152,11 +157,13 @@ func TestHarvestHasNoResultsRoot(t *testing.T) {
 // pusher applies the same Unix absolute rule as card end and ns_card_end, so a
 // drive root, a network share or a dot-dot path never reaches ssh.
 func TestPusherRefusesNonUnixResults(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	log := filepath.Join(dir, "ssh.log")
 	ssh := filepath.Join(dir, "ssh")
 	script := "#!/bin/bash\nprintf '%s\\n' \"$@\" >> " + strconv.Quote(log) + "\ncat >/dev/null\n"
-	if err := os.WriteFile(ssh, []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(ssh, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	p := SSHPusher{SSH: ssh}

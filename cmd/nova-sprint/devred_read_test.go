@@ -9,6 +9,8 @@ import (
 // TestDevRedAndReadVerbsRefuseUsage: both verbs are registered and refuse
 // a missing subverb or flag with exit 2 and the remedy on the line.
 func TestDevRedAndReadVerbsRefuseUsage(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		args []string
 		want string

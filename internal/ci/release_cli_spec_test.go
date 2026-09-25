@@ -20,6 +20,8 @@ import (
 // written here, so a sixth release verb is a test failure on the day it is
 // added rather than on the day somebody notices the reference is short.
 func TestTheCommandReferenceDeclaresEveryReleaseVerb(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(repoRoot(t), "docs", "CLI.md")
 	declared, err := dogfood.ParseCLI(path)
 	if err != nil {
@@ -58,6 +60,8 @@ func TestTheCommandReferenceDeclaresEveryReleaseVerb(t *testing.T) {
 // gate's whole worth is that somebody meeting its refusal can find out what it
 // is. A refusal a person cannot look up is a refusal they route around.
 func TestTheDogfoodGateIsInTheReleaseSpec(t *testing.T) {
+	t.Parallel()
+
 	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-RELEASE.md"))
 	for _, want := range []string{
 		"## 11. ",
@@ -85,6 +89,8 @@ func TestTheDogfoodGateIsInTheReleaseSpec(t *testing.T) {
 // decisions rather than restarting, so a reference to "lesson 7" means one
 // thing forever.
 func TestTheFourthDogfoodsLessonsAreInTheReleaseSpec(t *testing.T) {
+	t.Parallel()
+
 	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-RELEASE.md"))
 	for _, want := range []string{
 		"## 4. ",

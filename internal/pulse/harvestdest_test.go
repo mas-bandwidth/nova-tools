@@ -347,6 +347,8 @@ func TestHarvestBenchRefusesWhenTheCoordinatorCloneNamesNothing(t *testing.T) {
 // ---------------------------------------------------------------------------------------
 
 func TestResolveDestinationRefusals(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	card := filepath.Join(dir, "card-1.md")
 	if err := os.WriteFile(card, []byte("RESULT card-1\nREPO owner/repo\n"), 0o644); err != nil {
@@ -388,6 +390,8 @@ func TestResolveDestinationRefusals(t *testing.T) {
 // The coordinator's own spelling, and the one ambiguity it refuses rather than resolving
 // out of a RESULT.md.
 func TestTheOneCoordinatorDispatch(t *testing.T) {
+	t.Parallel()
+
 	got, err := theOneCoordinatorDispatch([]string{"owner/repo=/somewhere"})
 	if err != nil || got.repo != "owner/repo" || got.from != "coordinator-clone" {
 		t.Fatalf("one named clone: %+v %v", got, err)
@@ -406,6 +410,8 @@ func TestTheOneCoordinatorDispatch(t *testing.T) {
 // claim, which is the defect itself and not a detail of it. It is gone, and this test says
 // so from the package's own source so it cannot quietly come back.
 func TestNoPushURLFromAResultRemains(t *testing.T) {
+	t.Parallel()
+
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)

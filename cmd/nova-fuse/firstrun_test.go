@@ -76,6 +76,8 @@ func examples(t *testing.T) []string {
 // "could not run". The five examples are one sitting and are executed in order
 // against one box, because that is how a reader will type them.
 func TestUsageBannerExamplesRun(t *testing.T) {
+	t.Parallel()
+
 	box := freshBox(t)
 	exs := examples(t)
 	if len(exs) != 5 {
@@ -138,6 +140,8 @@ func fields(example string) []string {
 
 // (b) A refusal says what the flag or input WANTS, not only what was wrong.
 func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		args []string
@@ -174,6 +178,8 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 // verb's own arguments are independent, so a caller who gave neither should not
 // be sent back twice.
 func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		args []string

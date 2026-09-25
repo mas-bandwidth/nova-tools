@@ -20,6 +20,8 @@ var spreadVia = map[string]string{
 // on its provider's via, never dropped or dead, no DeepSeek model through a
 // router, and no kimi model on the pro tier at all.
 func TestSpreadRoutesAreValid(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +70,8 @@ func TestSpreadRoutesAreValid(t *testing.T) {
 // slots 2 0 1 0 1 2 of pro's three (dspro owns slot 0, ocqwenplus, share 2,
 // slots 1 and 2) under fnv32a.
 func TestSpreadPickCoversEveryProvider(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -114,6 +118,8 @@ func TestSpreadPickCoversEveryProvider(t *testing.T) {
 // Parse refuses a spread row that names an unknown, wrong-rung, wrong-via,
 // dropped or dead route, or a provider twice in a tier, and admits a held one.
 func TestParseSpreadValidation(t *testing.T) {
+	t.Parallel()
+
 	base := `routes:
   - route: good
     rung: flash
@@ -172,6 +178,8 @@ spread:
 // never pick a kimi or dead route; and a pro spread row naming the dead
 // ormimo26pro still does not parse.
 func TestProSpreadKimiShareGoesToQwen(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -228,6 +236,8 @@ func TestProSpreadKimiShareGoesToQwen(t *testing.T) {
 
 // A spread share is a whole number 1..MaxShare; anything else does not parse.
 func TestParseSpreadShare(t *testing.T) {
+	t.Parallel()
+
 	base := "routes:\n  - route: good\n    rung: flash\n    model: m1\n    via: opencode\n    state: held\n    why: \"held\"\nspread:\n"
 	row := func(share string) string {
 		return "  - tier: flash\n    provider: opencode\n    via: opencode\n    share: " + share + "\n    routes: [good]\n    why: \"w\"\n"

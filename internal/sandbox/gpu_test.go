@@ -11,9 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 func TestGPUProbeDistinguishesMetalDeviceUnavailableFromPolicyRefusal(t *testing.T) {
+	t.Parallel()
+
 	r := ClassifyGPUProbe("[metal::load_device] No Metal device available\n", 1)
 	if r.Status != GPUDeviceUnavailable {
 		t.Fatalf("metal load failure classified as %q, want %q (%s)", r.Status, GPUDeviceUnavailable, r.Detail)
@@ -21,6 +25,8 @@ func TestGPUProbeDistinguishesMetalDeviceUnavailableFromPolicyRefusal(t *testing
 }
 
 func TestGPUProbeDistinguishesPackageDiscoveryFailure(t *testing.T) {
+	t.Parallel()
+
 	r := ClassifyGPUProbe("ModuleNotFoundError: No module named 'mlx'\n", 1)
 	if r.Status != GPUPackageDiscovery {
 		t.Fatalf("missing mlx import classified as %q, want %q (%s)", r.Status, GPUPackageDiscovery, r.Detail)
@@ -28,6 +34,8 @@ func TestGPUProbeDistinguishesPackageDiscoveryFailure(t *testing.T) {
 }
 
 func TestGPUProbeDistinguishesMissingRuntime(t *testing.T) {
+	t.Parallel()
+
 	r := ClassifyGPUProbe("python3: No such file or directory\n", 127)
 	if r.Status != GPUMissingRuntime {
 		t.Fatalf("missing python classified as %q, want %q (%s)", r.Status, GPUMissingRuntime, r.Detail)
@@ -35,6 +43,8 @@ func TestGPUProbeDistinguishesMissingRuntime(t *testing.T) {
 }
 
 func TestVenvPythonKeepsItsPackagesInsteadOfResolvingToBase(t *testing.T) {
+	t.Parallel()
+
 	base := t.TempDir()
 	venvBin := filepath.Join(base, "venv", "bin")
 	if err := os.MkdirAll(venvBin, 0o755); err != nil {
@@ -47,7 +57,7 @@ func TestVenvPythonKeepsItsPackagesInsteadOfResolvingToBase(t *testing.T) {
 	// The venv python is a symlink to a base executable elsewhere; resolving it
 	// must not lose the venv's own site-packages.
 	target := filepath.Join(base, "base-python3")
-	if err := os.WriteFile(target, []byte("x"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(target, []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(venvBin, "python3")
@@ -64,6 +74,8 @@ func TestVenvPythonKeepsItsPackagesInsteadOfResolvingToBase(t *testing.T) {
 }
 
 func TestParseGPUModeRejectsBlanketAccess(t *testing.T) {
+	t.Parallel()
+
 	if _, err := ParseGPUMode("all"); err == nil {
 		t.Fatal("ParseGPUMode(\"all\") accepted a blanket GPU grant; only none|metal are explicit capabilities")
 	}

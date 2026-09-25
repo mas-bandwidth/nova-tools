@@ -26,6 +26,8 @@ func landEvalRedis(t *testing.T) string {
 }
 
 func TestLandEvalMissingRepoRefuses(t *testing.T) {
+	t.Parallel()
+
 	code, _, stderr := runSprint("land", "eval")
 	if code != 2 {
 		t.Fatalf("exit %d, want 2", code)
@@ -36,6 +38,8 @@ func TestLandEvalMissingRepoRefuses(t *testing.T) {
 }
 
 func TestLandEvalBadRedisExits6(t *testing.T) {
+	t.Parallel()
+
 	code, _, stderr := runSprint("land", "eval", "--repo", "nova-tools", "--redis", "127.0.0.1:99999")
 	if code != 6 {
 		t.Fatalf("exit %d, want 6", code)
@@ -46,6 +50,8 @@ func TestLandEvalBadRedisExits6(t *testing.T) {
 }
 
 func TestLandEvalPass(t *testing.T) {
+	t.Parallel()
+
 	addr := landEvalRedis(t)
 	code, stdout, stderr := runSprint("land", "eval", "--repo", "nova-tools", "--redis", addr, "--sprint", "sprint-eval", "--mirror", "none")
 	if code != 0 {

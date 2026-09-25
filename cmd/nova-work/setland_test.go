@@ -301,6 +301,8 @@ func TestSetCheckEvaluateBase(t *testing.T) {
 }
 
 func TestSetDonePercentRoundsDown(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct{ done, units, want int }{
 		{26, 42, 61}, {0, 0, 0}, {0, 5, 0}, {1, 3, 33}, {2, 3, 66}, {3, 3, 100}, {4, 7, 57},
 	} {

@@ -11,14 +11,17 @@
 package main
 
 import (
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
 
 func TestASecondFoldWaitsAndThenRefusesNamingTheHolder(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -41,4 +44,24 @@ func TestASecondFoldWaitsAndThenRefusesNamingTheHolder(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(out, "2026-09-11.tsv")); err == nil {
 		t.Error("the refused fold wrote a day file")
 	}
+}
+
+// SLOW: 1.0 s on hetzner at dev 64b9bec48, a deadline/wedge/wall bound proved by waiting it out.
+func TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	scratch := mkdir(t, filepath.Join(dir, "scratch"))
+	db := write(t, filepath.Join(dir, "opencode.db"), "SQLite format 3\x00\n")
+	fakeSqlite3Sleeping(t)
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 3}, "/x/schema/a.go")+"\n")
+
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir),
+		"--opencode", "bench="+db, "--scratch", scratch, "--claude", "g="+tr, "--timeout", "1")
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "timeout after 1s")
+	if _, err := os.Stat(filepath.Join(out, "2026-09-11.tsv")); err != nil {
+		t.Error("the fold did not continue over the other sources")
+	}
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr, "--timeout", "0"), 2)
 }

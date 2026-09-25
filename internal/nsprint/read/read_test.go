@@ -156,6 +156,8 @@ func TestReadBriefZeroGitHubCalls(t *testing.T) {
 // TestReadBriefNamesFilesOutsidePaths: the scope gate is precomputed from
 // the mirror diff and PATHS, so the reader does not redo it by hand.
 func TestReadBriefNamesFilesOutsidePaths(t *testing.T) {
+	t.Parallel()
+
 	mirror, base, head := mirrorFixture(t, true)
 	c := client(t)
 	seedRecord(t, c, base, head)
@@ -176,6 +178,8 @@ func TestReadBriefNamesFilesOutsidePaths(t *testing.T) {
 // TestReadBriefSaysHeadMoved: the record head is what is read; a mirror
 // refs/pull/<n>/head that moved on is named so the line can say so.
 func TestReadBriefSaysHeadMoved(t *testing.T) {
+	t.Parallel()
+
 	mirror, base, head := mirrorFixture(t, false)
 	gitRun(t, mirror, "update-ref", "refs/pull/7/head", base)
 	c := client(t)
@@ -198,6 +202,8 @@ func TestReadBriefSaysHeadMoved(t *testing.T) {
 // not fetched yet are each one refusal with the remedy named, exit 1,
 // nothing written.
 func TestReadBriefRefusals(t *testing.T) {
+	t.Parallel()
+
 	mirror, base, head := mirrorFixture(t, false)
 	c := client(t)
 	ctx := context.Background()
@@ -260,6 +266,8 @@ const line = "SCORE who=rowan head=%s score=9/10 gates=ci:ok,base:ok,scope:ok\n1
 // record's lines list in Redis and, with a poster, exactly one REST call
 // makes the comment.
 func TestReadPostStoresLineAndMirrorsOneComment(t *testing.T) {
+	t.Parallel()
+
 	_, base, head := mirrorFixture(t, false)
 	c := client(t)
 	seedRecord(t, c, base, head)
@@ -346,6 +354,8 @@ func TestReadPostRefusals(t *testing.T) {
 // TestReadPostGitHubDownKeepsTheRedisLine: a failed comment mirror is
 // reported (exit 1) and the Redis line stays; the record is Redis.
 func TestReadPostGitHubDownKeepsTheRedisLine(t *testing.T) {
+	t.Parallel()
+
 	_, base, head := mirrorFixture(t, false)
 	c := client(t)
 	seedRecord(t, c, base, head)
@@ -368,6 +378,8 @@ func TestReadPostGitHubDownKeepsTheRedisLine(t *testing.T) {
 // diff outside PATHS is refused with nothing stored, the same line inside
 // PATHS is stored with scope measured, and no mirror leaves it typed.
 func TestReadPostMeasuresScopeInTheMirror(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	for _, tc := range []struct {
 		outside bool
@@ -401,6 +413,8 @@ func TestReadPostMeasuresScopeInTheMirror(t *testing.T) {
 }
 
 func TestOutsidePaths(t *testing.T) {
+	t.Parallel()
+
 	got := read.OutsidePaths("internal/x, docs/CLI.md", []string{"internal/x/a.go", "internal/xy/b.go", "docs/CLI.md", "docs/other.md"})
 	if strings.Join(got, ",") != "internal/xy/b.go,docs/other.md" {
 		t.Fatalf("outside %q", got)

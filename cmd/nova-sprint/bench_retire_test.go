@@ -128,6 +128,8 @@ func retire(t *testing.T, addr string, args ...string) (int, string, string) {
 // card that pointed at x moved (not lost) with fsck clean, and exit 0 on a
 // second run; with a leased card it exits 2 and changes nothing.
 func TestBenchRetire(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	c, addr, units := retireFixture(t)
 	seedBench(t, c, "x")
@@ -197,6 +199,8 @@ func TestBenchRetire(t *testing.T) {
 // TestBenchRetireUnreachable: a unit half that cannot reach the bench exits 1
 // with Redis untouched and names --offline; --offline then retires.
 func TestBenchRetireUnreachable(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	c, addr, units := retireFixture(t)
 	seedBench(t, c, "z")

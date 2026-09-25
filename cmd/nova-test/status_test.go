@@ -79,6 +79,8 @@ func wantField(t *testing.T, line, key, want string) {
 // 15. status --since surveys recent runs: only runs queued at or after the
 // boundary are listed, in queue order, and the summary counts what was left out.
 func TestStatusSinceSurveysRecentRuns(t *testing.T) {
+	t.Parallel()
+
 	runs, summary := status(t, seedStore(t))
 	if _, listed := runs["old"]; listed {
 		t.Errorf("run old was queued before --since and is listed:\n%s", runs["old"])
@@ -102,6 +104,8 @@ func TestStatusSinceSurveysRecentRuns(t *testing.T) {
 
 // 16. status reports queue and cancellation drain per run.
 func TestStatusReportsQueueAndCancellationDrain(t *testing.T) {
+	t.Parallel()
+
 	runs, _ := status(t, seedStore(t))
 	wantField(t, runs["done"], "queue", "30s")
 	wantField(t, runs["done"], "drain", "-")
@@ -114,6 +118,8 @@ func TestStatusReportsQueueAndCancellationDrain(t *testing.T) {
 
 // 17. status reports execution and end-to-end latency per run.
 func TestStatusReportsLatency(t *testing.T) {
+	t.Parallel()
+
 	runs, _ := status(t, seedStore(t))
 	wantField(t, runs["done"], "exec", "2m0s")
 	wantField(t, runs["done"], "e2e", "2m30s")
@@ -130,6 +136,8 @@ func TestStatusReportsLatency(t *testing.T) {
 // 18. attempt identities and prior failures are preserved: a run that passed
 // on its second attempt still names both attempts and the failure before it.
 func TestStatusPreservesAttemptsAndPriorFailures(t *testing.T) {
+	t.Parallel()
+
 	runs, _ := status(t, seedStore(t))
 	wantField(t, runs["retry"], "attempts", "retry.a1,retry.a2")
 	wantField(t, runs["retry"], "prior_failures", "retry.a1:lint")
@@ -142,6 +150,8 @@ func TestStatusPreservesAttemptsAndPriorFailures(t *testing.T) {
 // A run file that does not parse is named, not skipped: a survey that
 // silently dropped a run would report a healthier queue than the one there is.
 func TestStatusRefusesAnUnreadableRun(t *testing.T) {
+	t.Parallel()
+
 	store := seedStore(t)
 	if err := os.WriteFile(filepath.Join(store, "broken.json"), []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
@@ -155,6 +165,8 @@ func TestStatusRefusesAnUnreadableRun(t *testing.T) {
 
 // --store and --since are required: no default store, no default window.
 func TestStatusRefusesMissingFlags(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	if code := run([]string{"status"}, &out, &errb); code != 2 {
 		t.Fatalf("bare status exits %d, want 2", code)

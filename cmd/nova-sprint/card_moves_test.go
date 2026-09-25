@@ -15,6 +15,8 @@ import (
 // --ids or --as and the bench attempt form's with a label and --token; fsck
 // is theirs with no --sprint.
 func TestCardMoveDispatch(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		args []string
 		want bool

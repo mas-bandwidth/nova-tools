@@ -9,6 +9,8 @@ import (
 // sorted by absolute movement descending, a side missing an entry is a dash, and the
 // delta is the signed new-minus-old when both sides are present.
 func TestTokensDiffLargestMovement(t *testing.T) {
+	t.Parallel()
+
 	oldEntries := map[string]int64{
 		"schema": 100,
 		"cli":    50,

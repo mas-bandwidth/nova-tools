@@ -19,6 +19,8 @@ import (
 // findings and emma's H2 findings (including a dup <id1> row), runs dedupe, and
 // asserts the subcommand exists and reports id1 with both viewers and one dup.
 func TestIssue2169(t *testing.T) {
+	t.Parallel()
+
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
@@ -120,6 +122,8 @@ func TestIssue2169(t *testing.T) {
 // line is blind=1 and never in unreported=. Two ids on one key print as
 // members with folded=0; an author's answer --as dup folds them, folded=1.
 func TestTheLedgerNamesTheBlind(t *testing.T) {
+	t.Parallel()
+
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)

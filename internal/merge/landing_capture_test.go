@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // nova-tools #2455: the landing path reads a pull request's comments and reviews, and
@@ -36,7 +38,7 @@ done
 echo "stub gh: unhandled arguments: $*" >&2
 exit 1
 `
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
 		t.Fatalf("could not write the stub gh: %v", err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

@@ -497,6 +497,8 @@ func findRepoRoot(t *testing.T) string {
 }
 
 func TestOneTypedParser(t *testing.T) {
+	t.Parallel()
+
 	root := findRepoRoot(t)
 	pc := newParserChecker(typedrec.Contract)
 

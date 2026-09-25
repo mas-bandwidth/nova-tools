@@ -18,6 +18,8 @@ import (
 // routes the read; a redelivered harvested event answers EXISTS and cuts
 // nothing more. Without the wiring the pass routes the read with no ci card.
 func TestRouteAdoptionCutsOnce(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	const sprint, label, pr = "control-3496c0de", "card-6", 106

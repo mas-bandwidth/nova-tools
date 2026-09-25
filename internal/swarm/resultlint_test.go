@@ -79,6 +79,8 @@ func resultHasCheck(r ResultLint, check string) bool {
 // 2026-09-22 sprint is refused as a DONE, every BLOCKED head==base is flagged, and the
 // results the harvest must keep counting are not touched.
 func TestResultLintFlagsTemplateDone(t *testing.T) {
+	t.Parallel()
+
 	flagged := 0
 	for _, c := range templateDones {
 		r := LintResult(resultText(c.line1, c.line2), "")

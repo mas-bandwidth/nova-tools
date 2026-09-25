@@ -13,6 +13,8 @@ import (
 // model, route) or `cost: unmetered <reason>`; a missing cost field parses
 // as not found, never as $0; a cost that does not parse refuses the done.
 func TestControl55Cost(t *testing.T) {
+	t.Parallel()
+
 	metered := task.Cost{Metered: true, USDMicro: 400000, TokensIn: 91000, TokensOut: 2100, Model: "claude-sonnet-5", Route: "child"}
 	if got, want := metered.Clause(), "cost_usd=0.4 tokens_in=91000 tokens_out=2100 model=claude-sonnet-5 route=child"; got != want {
 		t.Fatalf("metered clause = %q; want %q", got, want)

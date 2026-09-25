@@ -21,6 +21,8 @@ Error: {"name":"UnknownError","data":{"message":"Unexpected server error. Check 
 // after 75 s is PROVIDER-5XX, not INCOMPLETE, and the launcher line names the next route
 // with avoid=<failed route>.
 func TestUnknownErrorAtAnyWallHandsBack(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	routes := ParseRouteList("zen/kimi-k3, openrouter/qwen3-coder ,zen/glm-5")
 
@@ -70,6 +72,8 @@ func TestUnknownErrorAtAnyWallHandsBack(t *testing.T) {
 // The hand-back never names the failed route as the next one, and says so with a dash when
 // the list has nowhere else to go; the avoid= is still there for whoever re-deals.
 func TestProviderHandbackNeverNamesTheFailedRouteNext(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	for _, routes := range [][]string{nil, {"zen/glm-5"}} {
 		h, ok := ProviderHandback(ProviderExit{Tail: []byte(unknownErrorTail), Job: job, RC: 1, Wall: 80 * time.Second, Route: "zen/glm-5", Routes: routes})
@@ -94,6 +98,8 @@ func TestProviderHandbackNeverNamesTheFailedRouteNext(t *testing.T) {
 // What is NOT the provider's: a card that published its report, a clean exit, and a card
 // whose own work mentioned the words long before its harness's last line.
 func TestProviderHandbackLeavesTheCardsOwnEndsAlone(t *testing.T) {
+	t.Parallel()
+
 	routes := []string{"zen/glm-5", "zen/kimi-k3"}
 
 	published := t.TempDir()
@@ -121,6 +127,8 @@ func TestProviderHandbackLeavesTheCardsOwnEndsAlone(t *testing.T) {
 }
 
 func TestParseRouteListReadsCommasAndSpaces(t *testing.T) {
+	t.Parallel()
+
 	got := ParseRouteList(" zen/a, zen/b\tzen/c ,, zen/a ")
 	if strings.Join(got, "|") != "zen/a|zen/b|zen/c" {
 		t.Fatalf("got %v, want zen/a zen/b zen/c (first occurrence wins)", got)

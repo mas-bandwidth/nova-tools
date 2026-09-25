@@ -20,6 +20,8 @@ import (
 // This is the end-to-end shape: four cards, one route, a cap of two. Two run; the other two
 // wait at the gate holding no process and no spend, and start only as the first two end.
 func TestABatchNeverExceedsItsRouteCap(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -96,6 +98,8 @@ func TestABatchNeverExceedsItsRouteCap(t *testing.T) {
 // free tier and exactly what must not change for anyone who did not ask for a cap. No ROUTE
 // line is printed at all.
 func TestWithNoCapEveryCardLaunchesAtOnce(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -144,6 +148,8 @@ func TestWithNoCapEveryCardLaunchesAtOnce(t *testing.T) {
 // the tier queues per key and per model, so a cap that were global would halve a batch that
 // spreads across providers for no reason at all.
 func TestTheCapIsPerRouteEndToEnd(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -210,6 +216,8 @@ func runBatchInput(in BatchInput) (int, string, string) {
 // So a card that has produced nothing since it launched is ended at `StallAfter`, and its
 // reason says what happened rather than borrowing the idle token.
 func TestACardWithNoFirstTokenIsStalled(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -262,6 +270,8 @@ func TestACardWithNoFirstTokenIsStalled(t *testing.T) {
 // behaviour exactly: a silent card runs to its deadline and is scored by what it left, and
 // no card is ever `stalled` for a window nobody asked for.
 func TestWithNoStallAfterASilentCardIsNotStalled(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")

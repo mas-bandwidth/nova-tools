@@ -23,6 +23,8 @@ import (
 var usagePointerRe = regexp.MustCompile(`^usage:[0-9a-f]{32}$`)
 
 func TestWorkAttemptUsagePointerSchema(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	work := readFile(t, filepath.Join(root, "docs", "SPEC-WORK.md"))
 	tokens := readFile(t, filepath.Join(root, "docs", "SPEC-TOKENS.md"))

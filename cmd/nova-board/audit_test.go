@@ -10,10 +10,14 @@ import (
 // prints is quoted, numeric, literal, escaped through internal/oneline, or exempted here
 // with its reason. See package audit for what the two walks see and what they cannot.
 func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
+	t.Parallel()
+
 	audit.PrintedArguments(t, boardAudit)
 }
 
 func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
+	t.Parallel()
+
 	audit.Bypasses(t, boardAudit)
 }
 

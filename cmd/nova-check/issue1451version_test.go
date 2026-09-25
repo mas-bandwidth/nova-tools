@@ -15,6 +15,8 @@ import (
 // one bare verb that exits 0 (version); it never invokes `version` with an
 // argument, so this path is not in its table and needs its own assertion.
 func TestVersionsStrayArgumentRefusalNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	const door = "; run: nova-check help"
 
 	exit, _, stderr := runCheck(t, "version", "extra")

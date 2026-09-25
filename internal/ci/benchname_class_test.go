@@ -175,6 +175,8 @@ func benchFuncName(fn *ast.FuncDecl) string {
 // TestTheBenchNameHeuristicReadsWhatItClaims holds the walker against hand-written sources,
 // so a rule that quietly stopped matching anything cannot pass as a green run.
 func TestTheBenchNameHeuristicReadsWhatItClaims(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name     string
 		src      string

@@ -523,6 +523,8 @@ func TestWorktreeNeverPrintsTheToken(t *testing.T) {
 // the forge's own name would included, and a remote whose path names no
 // owner/name yields nothing at all.
 func TestWorktreeParseOwnerRepo(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct{ name, url, want string }{
 		{"https with .git", "https://example.com/o/n.git", "o/n"},
 		{"https without .git", "https://example.com/o/n", "o/n"},

@@ -53,6 +53,8 @@ func goSetupRuns(t *testing.T) []string {
 // newest sdk Go while the release build beside it switched toolchains in the
 // same caches.
 func TestCIGoSetupPrefersTheGoModToolchain(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the step runs under bash on the self-hosted Linux and macOS runners")
 	}

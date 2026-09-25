@@ -61,6 +61,8 @@ func netLineAt(t *testing.T, root, rel string, line int) string {
 // 1. A test carrying https://api.acme.com is refused with its file, line and
 // host, and the remedy names httptest or a local fake.
 func TestNetRefusesRealURLHost(t *testing.T) {
+	t.Parallel()
+
 	root := netFixtureTree(t, "realurl.go.txt")
 	res, err := CheckNet(root, "")
 	if err != nil {
@@ -87,6 +89,8 @@ func TestNetRefusesRealURLHost(t *testing.T) {
 // 2. A test whose only hosts are localhost, the loopback IPs, and the reserved
 // test domains example.* / *.invalid / *.test is allowed.
 func TestNetAllowsLocalAndReservedHosts(t *testing.T) {
+	t.Parallel()
+
 	root := netFixtureTree(t, "allowed.go.txt")
 	res, err := CheckNet(root, "")
 	if err != nil {
@@ -103,6 +107,8 @@ func TestNetAllowsLocalAndReservedHosts(t *testing.T) {
 // 3. A file carrying //go:build nightly is exempt: the nightly suite is where
 // the real network is allowed.
 func TestNetAllowsNightlyBuildTag(t *testing.T) {
+	t.Parallel()
+
 	root := netFixtureTree(t, "nightly.go.txt")
 	res, err := CheckNet(root, "")
 	if err != nil {
@@ -115,6 +121,8 @@ func TestNetAllowsNightlyBuildTag(t *testing.T) {
 
 // 4. A file carrying //go:build soak is exempt, the same way.
 func TestNetAllowsSoakBuildTag(t *testing.T) {
+	t.Parallel()
+
 	root := netFixtureTree(t, "soak.go.txt")
 	res, err := CheckNet(root, "")
 	if err != nil {
@@ -127,6 +135,8 @@ func TestNetAllowsSoakBuildTag(t *testing.T) {
 
 // 5. A bare host:port literal with a real host is refused.
 func TestNetRefusesBareHostPort(t *testing.T) {
+	t.Parallel()
+
 	root := netFixtureTree(t, "hostport.go.txt")
 	res, err := CheckNet(root, "")
 	if err != nil {
@@ -146,6 +156,8 @@ func TestNetRefusesBareHostPort(t *testing.T) {
 
 // 6. A bare host:port on a local or reserved host is allowed.
 func TestNetAllowsLocalHostPort(t *testing.T) {
+	t.Parallel()
+
 	root := netFixtureTree(t, "allowedhostport.go.txt")
 	res, err := CheckNet(root, "")
 	if err != nil {
@@ -160,6 +172,8 @@ func TestNetAllowsLocalHostPort(t *testing.T) {
 // entry that names no offender on the tree is a place to park a host, and the
 // remedy says the file only shrinks.
 func TestNetAllowlistGrowsRefused(t *testing.T) {
+	t.Parallel()
+
 	root := netEmptyTree(t)
 	allow := filepath.Join(t.TempDir(), "net-allowlist.txt")
 
@@ -204,6 +218,8 @@ func TestNetAllowlistGrowsRefused(t *testing.T) {
 // now stands: the line in the row is for a reader and is never matched on. A
 // second offender of the same kind in the file has no row and is refused.
 func TestNetAllowlistSurvivesShiftedLines(t *testing.T) {
+	t.Parallel()
+
 	root := netFixtureTree(t, "realurl.go.txt")
 	first, err := CheckNet(root, "")
 	if err != nil || len(first.Findings) != 1 {
@@ -247,6 +263,8 @@ func TestNetAllowlistSurvivesShiftedLines(t *testing.T) {
 // line, the refusal line and the closing FAIL line, and the exit 2 a refusal
 // costs.
 func TestNetOutputMatchesTheSpec(t *testing.T) {
+	t.Parallel()
+
 	root := netFixtureTree(t, "realurl.go.txt")
 	res, err := CheckNet(root, "")
 	if err != nil {
@@ -279,6 +297,8 @@ func TestNetOutputMatchesTheSpec(t *testing.T) {
 // TestNetVerbLineMatchesTheSpec pins the help line the class test is entered
 // under, word for word, to the section that prints it.
 func TestNetVerbLineMatchesTheSpec(t *testing.T) {
+	t.Parallel()
+
 	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-CI.md"))
 	if !strings.Contains(spec, NetVerbLine) {
 		t.Errorf("the net verb line is not in docs/SPEC-CI.md:\n%s", NetVerbLine)

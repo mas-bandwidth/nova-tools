@@ -18,6 +18,8 @@ const asToolEnv = "NOVA_TOKENS_AS_TOOL"
 // injected writer and the library writes to os.Stderr, so an in-process test cannot see the
 // leak: this runs the tool as its own process and holds the WHOLE stderr to the one line.
 func TestReportRedisDialFailureStderrIsTheOneFailedLine(t *testing.T) {
+	t.Parallel()
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

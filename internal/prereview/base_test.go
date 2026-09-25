@@ -11,6 +11,8 @@ import (
 )
 
 func TestBaseGateFromGH(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name      string
 		mergeable string
@@ -36,6 +38,8 @@ func TestBaseGateFromGH(t *testing.T) {
 }
 
 func TestBaseGateFromGit(t *testing.T) {
+	t.Parallel()
+
 	// Create a real temp git repo to exercise BaseGateFromGit
 	dir := t.TempDir()
 

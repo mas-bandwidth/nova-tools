@@ -10,6 +10,8 @@ import (
 // kept this package green: take/list tests still passed, and nothing called
 // SlotHoldings.
 func TestSlotHoldingsCountsTheOwnerAndNamesTheShare(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t4\nreserve\t0\nalice\t2\nbob\t2\n")
 	now := time.Now().UTC()
 	pid := os.Getpid()

@@ -60,6 +60,8 @@ func runWorkerCheck(args ...string) (int, string, string) {
 // A description that names an executable harness, both placeholders, an existing worker
 // directory and a real deadline passes on one line.
 func TestWorkerCheckAGoodDescriptionPasses(t *testing.T) {
+	t.Parallel()
+
 	path := workerCheckFixture(t, nil)
 	code, out, errb := runWorkerCheck(path)
 	if code != 0 {
@@ -73,6 +75,8 @@ func TestWorkerCheckAGoodDescriptionPasses(t *testing.T) {
 
 // A harness that is not there is one drift naming the harness field, exit 2.
 func TestWorkerCheckAMissingHarnessNamesTheField(t *testing.T) {
+	t.Parallel()
+
 	path := workerCheckFixture(t, func(d map[string]any) {
 		d["harness"] = filepath.Join(t.TempDir(), "no-such-harness")
 	})
@@ -88,6 +92,8 @@ func TestWorkerCheckAMissingHarnessNamesTheField(t *testing.T) {
 // `worker check --help` is a help request, not an unknown flag: it answers the same
 // `flag: help requested` refusal every other verb hands back, at exit 2 (#3525).
 func TestWorkerHelpMatchesOtherVerbs(t *testing.T) {
+	t.Parallel()
+
 	var otherOut, otherErr bytes.Buffer
 	if code := run([]string{"status", "--help"}, strings.NewReader(""), &otherOut, &otherErr, time.Now().UTC()); code != 2 {
 		t.Fatalf("status --help: exit %d, want 2", code)

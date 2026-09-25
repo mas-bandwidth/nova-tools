@@ -50,6 +50,8 @@ func loadTableFunction(t *testing.T, addr string) {
 }
 
 func TestTableCLICheckFixture(t *testing.T) {
+	t.Parallel()
+
 	addr := startThrowawayRedis(t)
 	loadTableFunction(t, addr)
 	seed(t, addr, table.DefectFixture())
@@ -81,6 +83,8 @@ func TestTableCLICheckFixture(t *testing.T) {
 // and two ended cards render 3 and 2, and stray open:<f>/done:<f> keys that a
 // buggy reader might use do not leak into the bench cells.
 func TestTableCLIBenchCellsFromCardIndexes(t *testing.T) {
+	t.Parallel()
+
 	addr := startThrowawayRedis(t)
 	loadTableFunction(t, addr)
 	seed(t, addr, [][]string{

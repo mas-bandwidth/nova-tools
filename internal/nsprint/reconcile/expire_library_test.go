@@ -76,6 +76,8 @@ func (h *commandLog) reset() [][]string {
 // all 200, reads them in its one read round trip, sends no SORT, and the
 // server counts no SORT call.
 func TestExpireDutyUsesLibraryOnly(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	ctx := context.Background()
 	admin := redis.NewClient(&redis.Options{Addr: addr})
@@ -190,6 +192,8 @@ func TestExpireDutyUsesLibraryOnly(t *testing.T) {
 // reconciler calls (the reconcile and fleet packages' Go) to FUNCTION LIST,
 // so a name that drifts from its Lua registration fails here, not on a bench.
 func TestReconcilerFunctionsInLibrary(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	ctx := context.Background()
 	c := redis.NewClient(&redis.Options{Addr: addr})

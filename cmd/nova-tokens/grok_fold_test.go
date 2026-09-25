@@ -10,6 +10,8 @@ import (
 // day-file row carrying the turn's input, output and cost columns, and check accepts the
 // day it wrote. The fixture is the sanitized turn docs/MAPPING-TOKENS-GROK.md names.
 func TestGrokUsageFileFoldsToLedgerRow(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	grok := write(t, filepath.Join(dir, "grok-usage.json"), `{

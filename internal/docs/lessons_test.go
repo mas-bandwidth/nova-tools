@@ -10,6 +10,8 @@ import (
 // repository's reviewed lessons stay small enough to include in every card,
 // and each card template tells the worker to consume them as data.
 func TestLessonsFileIsCappedAndReadByEveryCard(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("../../docs/LESSONS.md")
 	if err != nil {
 		t.Fatalf("docs/LESSONS.md: %v", err)

@@ -23,6 +23,8 @@ import (
 // then, with the store's clock moved past the 5 s TTL and no new beat, every
 // row is DOWN and fleet-live lists nobody.
 func TestFleetStateVerbReadsHeartbeatKeysFromRedis(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	t0 := time.Date(2026, 9, 23, 18, 0, 0, 0, time.UTC)
 	mr.SetTime(t0)
@@ -65,6 +67,8 @@ func TestFleetStateVerbReadsHeartbeatKeysFromRedis(t *testing.T) {
 
 // TestFleetStateVerbRefusesWithoutRedis: no --redis, no reading, exit 2.
 func TestFleetStateVerbRefusesWithoutRedis(t *testing.T) {
+	t.Parallel()
+
 	var out, errOut bytes.Buffer
 	if code := runFleetVerb("fleet-state")(context.Background(), nil, &out, &errOut); code != 2 {
 		t.Fatalf("code=%d want 2 stderr=%q", code, errOut.String())

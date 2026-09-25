@@ -16,6 +16,8 @@ import (
 // `question "criteria_version" has no instructions`. The three question files
 // this repository ships are exactly that shape.
 func TestAQuestionFileMayCarryItsCriteriaMetadata(t *testing.T) {
+	t.Parallel()
+
 	for _, path := range []string{
 		"../../docs/decide/questions-reader.json",
 		"../../docs/decide/questions-triage.json",
@@ -47,6 +49,8 @@ func TestAQuestionFileMayCarryItsCriteriaMetadata(t *testing.T) {
 // A key beside the envelope that is NOT one of the four the metadata holds is a
 // refusal that names it, never a question read by accident.
 func TestAnUnknownKeyBesideTheEnvelopeIsRefusedByName(t *testing.T) {
+	t.Parallel()
+
 	_, err := ParseQuestions([]byte(`{"questions":{"q":{"type":"choice","instructions":"i","criteria":{"a":"b"}}},"criteria_versionn":"x"}`))
 	if err == nil {
 		t.Fatal("a misspelled metadata key must be refused, not read as a question")

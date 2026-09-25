@@ -67,6 +67,8 @@ var (
 // TestSelectPackagesAlwaysAddsInternalCI pins the script: ./internal/ci is
 // added to `want` on every selection, not only when the diff touches .github/.
 func TestSelectPackagesAlwaysAddsInternalCI(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "scripts", "select-packages.sh"))
 	if !selectAppendRe.MatchString(src) {
@@ -78,6 +80,8 @@ func TestSelectPackagesAlwaysAddsInternalCI(t *testing.T) {
 // selection: internal/ci is appended to $pkgs on every group, not only when the
 // group changed no Go package.
 func TestMergeGateAlwaysAppendsInternalCI(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	step := stepBody(src, "select the packages this group changes")
@@ -95,6 +99,8 @@ func TestMergeGateAlwaysAppendsInternalCI(t *testing.T) {
 // TestSelectPackagesAlwaysAddsInternalDocs pins the script: ./internal/docs is
 // added to `want` on every selection, not only when the diff touches .github/.
 func TestSelectPackagesAlwaysAddsInternalDocs(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "scripts", "select-packages.sh"))
 	if !selectDocsAppendRe.MatchString(src) {
@@ -106,6 +112,8 @@ func TestSelectPackagesAlwaysAddsInternalDocs(t *testing.T) {
 // selection: internal/docs is appended to $pkgs on every group, not only when
 // the group changed no Go package.
 func TestMergeGateAlwaysAppendsInternalDocs(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	step := stepBody(src, "select the packages this group changes")

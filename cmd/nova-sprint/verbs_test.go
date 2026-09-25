@@ -10,6 +10,8 @@ import (
 // verbs is registered: a bad flag is refused with the help door, and help
 // lists the verb with its summary.
 func TestVerbsRegistered(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, stderr := runSprint("verbs", "unused", "--bogus")
 	if code != 2 || stdout != "" || !strings.HasSuffix(stderr, "; run: nova-sprint help\n") {
 		t.Fatalf("verbs unused --bogus: exit %d stdout %q stderr %q", code, stdout, stderr)

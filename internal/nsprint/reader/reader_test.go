@@ -45,6 +45,8 @@ func base(pr int, head string, friends []reader.Friend) reader.Request {
 // NO-READER <pr> and no task is assigned. The reader who is chosen is the
 // least-loaded may-hold friend with free width.
 func TestControl44(t *testing.T) {
+	t.Parallel()
+
 	t.Run("author and down excluded", func(t *testing.T) {
 		stella := up("stella", 0)
 		stella.State = "down"
@@ -138,6 +140,8 @@ func TestControl44(t *testing.T) {
 // says DEDUP and the reason. A friend with neither gets the one task. A
 // different full head does not dedup, including one that shares a prefix.
 func TestControl61(t *testing.T) {
+	t.Parallel()
+
 	t.Run("closed read and typed line", func(t *testing.T) {
 		req := base(3073, headA, []reader.Friend{
 			up("stella", 0),

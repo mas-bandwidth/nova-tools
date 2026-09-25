@@ -15,6 +15,8 @@ import (
 // live output, or a live line drifts unbuilt: the grammar and the dispatch
 // (`main.go`'s switch) cannot disagree about which verbs ship.
 func TestGrammarStrikesTheUnbuiltVerbs(t *testing.T) {
+	t.Parallel()
+
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-REVIEW.md"))
 	if err != nil {
 		t.Fatal(err)

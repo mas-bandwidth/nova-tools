@@ -18,6 +18,8 @@ import (
 )
 
 func TestHelperProcess(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("NOVA_UPDATE_HELPER") != "1" {
 		return
 	}
@@ -142,6 +144,8 @@ func need(t *testing.T, s string, want ...string) {
 	}
 }
 func TestManifestRefusesBeforeAnyProcess(t *testing.T) {
+	t.Parallel()
+
 	good := row("x", "tool", "example version", "github:o/r", "none")
 	for _, s := range []string{"", good + "\n", Header + "\nx\n", Header + "\n" + strings.Replace(good, "example version", "example  version", 1), Header + "\n" + strings.Replace(good, "tool", "weights", 1), Header + "\n" + good + "\n" + good, Header + "\n" + strings.Replace(good, "example version", "\"space path\" version", 1)} {
 		if _, e := Load(strings.NewReader(s)); e == nil {
@@ -154,6 +158,8 @@ func TestManifestRefusesBeforeAnyProcess(t *testing.T) {
 	}
 }
 func TestWholeVersionAndVerifiedOrder(t *testing.T) {
+	t.Parallel()
+
 	examples := map[string]string{"gh version 2.100.0 (2026-09-03)": "2.100.0", "go version go1.27.1 darwin/arm64": "1.27.1", "ollama version is 0.33.3": "0.33.3", "v1.3.2": "1.3.2", "1.18.30": "1.18.30", "codex-cli 0.153.4": "0.153.4", "0.46.0": "0.46.0", "sops 3.13.3": "3.13.3", "git version 2.55.0": "2.55.0", "v26.8.2": "26.8.2", "nova-bus v0.12.1-0.20260912135226-0459069+dirty darwin/arm64 go1.27.1": "0.12.1-0.20260912135226-0459069+dirty"}
 	for line, want := range examples {
 		r := identity(Entry{Kind: "tool"}, line+"\nsecond 900.0.0", true)
@@ -178,6 +184,8 @@ func TestWholeVersionAndVerifiedOrder(t *testing.T) {
 	}
 }
 func TestModelDigestAndPinIdentity(t *testing.T) {
+	t.Parallel()
+
 	r := identity(Entry{Name: "model:tag", Kind: "model"}, "NAME ID SIZE\nmodel:other ffffffffffff 4GB\nmodel:tag 07d35212591f 4GB\n", true)
 	if r.Version != "07d35212591f" || r.Raw != "model:tag 07d35212591f 4GB" {
 		t.Fatal(r)
@@ -249,6 +257,8 @@ func testClient(handler func(http.ResponseWriter, *http.Request)) (*http.Client,
 	return c, server.Close
 }
 func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
+	t.Parallel()
+
 	var calls []string
 	client, close := testClient(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.URL.RequestURI())

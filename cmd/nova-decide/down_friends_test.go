@@ -18,6 +18,8 @@ import (
 // When friend:<f>:down is set in Redis, route with --store excludes friend <f>
 // from routing and records excluded=<f>:down in the log row (#3397).
 func TestRouteStoreExcludesDownFriend(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	mr.Set("friend:emma:down", "out-of-credits")
 	log := filepath.Join(t.TempDir(), "decide.jsonl")

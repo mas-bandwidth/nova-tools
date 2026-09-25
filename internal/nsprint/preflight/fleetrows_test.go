@@ -17,6 +17,8 @@ import (
 // binary's library; the bench seat is refused, and the fleet line says FAIL
 // with NOPERM and the seat to run as, never PASS on an unread library.
 func TestReadLibraryAsTheSeat(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t,
 		"--user", "default", "off",
 		"--user", "coordinator", "on", ">coord-secret", "~*", "&*", "+@all",
@@ -56,6 +58,8 @@ func TestReadLibraryAsTheSeat(t *testing.T) {
 }
 
 func TestReadStandard(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	write := func(body string) string {
 		p := filepath.Join(dir, "all.yml")

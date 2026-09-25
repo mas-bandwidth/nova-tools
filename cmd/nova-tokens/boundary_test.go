@@ -206,6 +206,8 @@ func namesGit(lit string) bool {
 // ordinary way, and cannot push to a fixture remote under any verb, and a determined author
 // who hides the name from the source is caught by the second and not the first.
 func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
+	t.Parallel()
+
 	const theOneSubprocess = "internal/tokens/opencode.go"
 	checked := 0
 	literals := 0
@@ -270,6 +272,8 @@ func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 // namesGit's own test: the tripwire above is only as good as this function, and the two
 // false positives it must not have are in every file of this repository.
 func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
+	t.Parallel()
+
 	for _, yes := range []string{
 		"git", "GIT", "git.exe", "/usr/bin/git", "git push", `C:\bin\git.exe`,
 		"git -C x push", "/opt/homebrew/bin/git", "  git  ",
@@ -371,6 +375,8 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 // and maintenance.auto off (the repair), and this test pins that: any later change is one
 // this tool may not make.
 func TestConcurrentWritersDoNotMutateTheBareRemote(t *testing.T) {
+	t.Parallel()
+
 	realGit, _ := exec.LookPath("git")
 	if realGit == "" || runtime.GOOS == "windows" {
 		t.Skip("the fixture wants a real git to build the checkout")
@@ -535,6 +541,8 @@ func treeDigest(t *testing.T, root string) string {
 }
 
 func TestDiffTreesReportsDifferences(t *testing.T) {
+	t.Parallel()
+
 	a := treeSnapshot{
 		digest: "1",
 		files: map[string]string{
@@ -569,6 +577,8 @@ func TestDiffTreesReportsDifferences(t *testing.T) {
 // spec in the same hand -- rather than discovering afterwards that a verb which pushes to a
 // git remote landed in a tool whose spec says it runs no git.
 func TestTheRecordsNamespaceIsNotAVerbUntilItsGateIsDecided(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	for _, args := range [][]string{

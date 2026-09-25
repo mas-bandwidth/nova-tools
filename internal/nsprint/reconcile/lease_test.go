@@ -63,6 +63,8 @@ func procField(t *testing.T, ctx context.Context, client *redis.Client, field st
 //   - B writes the pass age to proc:reconciler on every pass, and a third
 //     instance refuses while B holds the lease.
 func TestControl10StaleInstanceCannotDeal(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	const shortTTL = 300 * time.Millisecond

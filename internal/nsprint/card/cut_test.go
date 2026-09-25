@@ -6,6 +6,8 @@ import "testing"
 // vocabulary (#3623): #n and name#n are owner/name#n, a (WHY: ...) is the
 // why, other parentheticals drop, and prose is refused.
 func TestCutDependsVocabulary(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct{ in, deps, why, err string }{
 		{"none", "none", "", ""},
 		{"none (WHY: nothing)", "none", "nothing", ""},
@@ -29,6 +31,8 @@ func TestCutDependsVocabulary(t *testing.T) {
 // markers and bold keys are read, and a value that is one code span loses its
 // backticks while one that contains code keeps them.
 func TestIssueFieldsFirstLineWins(t *testing.T) {
+	t.Parallel()
+
 	f := IssueFields("intro\n- **DONE-WHEN:** `go test ./x` fails red\nbase-sha: `0123`\nSTREAM: a\nSTREAM: b\nWHY: none of it\n")
 	for k, v := range map[string]string{"DONE-WHEN": "`go test ./x` fails red", "base-sha": "0123", "STREAM": "a", "WHY": "none of it"} {
 		if f[k] != v {

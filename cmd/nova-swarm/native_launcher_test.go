@@ -76,6 +76,8 @@ func TestNativeLaunchGoesThroughTheOneLauncher(t *testing.T) {
 // now the two-line contract (the wrapper writes every other field). RED WITHOUT
 // swarm.CardPrompt: the prompt was the card text alone.
 func TestNativeLaunchCarriesTheResultFormat(t *testing.T) {
+	t.Parallel()
+
 	card := "RESULT: c1 sha=0123456789ab nova-tools fix: a card\nKIND: fix\n"
 	argv, err := nativeLaunchArgv("/bin/true", nativeRunConfig{model: "fake/fake-model", label: "fmt-lbl", card: []byte(card)}, "fake")
 	if err != nil {

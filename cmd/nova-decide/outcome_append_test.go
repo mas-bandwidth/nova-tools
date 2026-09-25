@@ -40,6 +40,8 @@ func outcomeRun(t *testing.T, log, unit, result string) string {
 // is supposed to cost a bad route its floor -- the green would vanish and the
 // kind would look like it had never succeeded.
 func TestOutcomeAppendsOneRowAndKeepsTheEarlierOne(t *testing.T) {
+	t.Parallel()
+
 	log := routeThen(t, "hold-me", "row-test")
 
 	decisionRow := readRows(t, log)[0] // the bytes before any outcome exists
@@ -99,6 +101,8 @@ func TestOutcomeAppendsOneRowAndKeepsTheEarlierOne(t *testing.T) {
 // no other unit's rows, and a refused outcome writes NOTHING. A verb that
 // appended on the refusal path would still pass the test above.
 func TestOutcomeTouchesNoOtherUnitAndARefusalWritesNoRow(t *testing.T) {
+	t.Parallel()
+
 	log := routeThen(t, "unit-a", "row-test")
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"route", "--unit-id", "unit-b", "--kind", "rebase", "--files", "1", "--packages", "1", "--no-jev", "--log", log}, &stdout, &stderr); code != 0 {
@@ -139,6 +143,8 @@ func TestOutcomeTouchesNoOtherUnitAndARefusalWritesNoRow(t *testing.T) {
 // the rung that was never asked to run it. It is an outcome row all the same,
 // so coverage counts it, but it moves no floor in either direction.
 func TestOutcomeSkippedIsTheFourthResult(t *testing.T) {
+	t.Parallel()
+
 	log := routeThen(t, "skip-me", "row-test")
 	line := outcomeRun(t, log, "skip-me", "skipped")
 	if !strings.Contains(line, "result=skipped") || !strings.Contains(line, "outcome=skipped") {
@@ -188,6 +194,8 @@ func TestOutcomeSkippedIsTheFourthResult(t *testing.T) {
 // decisions on 2026-09-19, and a floor tuned on a third of the rows is tuned on
 // the rows somebody remembered.
 func TestLogSummaryPrintsCoverage(t *testing.T) {
+	t.Parallel()
+
 	log := routeThen(t, "covered", "row-test")
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"route", "--unit-id", "bare", "--kind", "row-test", "--files", "1", "--packages", "1", "--no-jev", "--log", log}, &stdout, &stderr); code != 0 {

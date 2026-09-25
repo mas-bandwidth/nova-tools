@@ -15,6 +15,8 @@ import (
 
 // The description carries the budget.
 func TestCardBudgetLoadsFromWorkerDescription(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	home := filepath.Join(dir, "worker")
 	if err := os.MkdirAll(home, 0o755); err != nil {
@@ -45,6 +47,8 @@ func TestCardBudgetLoadsFromWorkerDescription(t *testing.T) {
 // fake harness log are produced by the fake runner
 // (internal/swarm/testdata/fakerunner).
 func TestCardBudgetCacheReadEndsWithPromptDefect(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	label, slot := "card1", "1"
 	root := filepath.Join(dir, "root")
@@ -100,6 +104,8 @@ func TestCardBudgetCacheReadEndsWithPromptDefect(t *testing.T) {
 // naming both. A max_turns below the measured startup's turns plus two is
 // refused the same way.
 func TestCardBudgetBelowMeasuredStartupIsRefused(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	if err := RecordStartupCost(root, "abc123", 5000, 7); err != nil {
 		t.Fatal(err)
@@ -125,6 +131,8 @@ func TestCardBudgetBelowMeasuredStartupIsRefused(t *testing.T) {
 // A max_cache_read of 20000 against a startup of 5000 is accepted: it is at
 // or above twice the measured first context.
 func TestCardBudgetAtTwiceStartupIsAccepted(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	if err := RecordStartupCost(root, "abc123", 5000, 7); err != nil {
 		t.Fatal(err)
@@ -144,6 +152,8 @@ func TestCardBudgetAtTwiceStartupIsAccepted(t *testing.T) {
 // An absent startup file accepts the budget, and the file is written from
 // the first finished task's usage so the next run has a measurement.
 func TestCardBudgetAbsentStartupIsAcceptedAndRecorded(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	sc, err := ReadStartupCost(root)
 	if err != nil {
@@ -173,6 +183,8 @@ func TestCardBudgetAbsentStartupIsAcceptedAndRecorded(t *testing.T) {
 // A description without a budget is unchanged: the same fake usage
 // does not end the card.
 func TestCardBudgetWithoutBudgetIsUnchanged(t *testing.T) {
+	t.Parallel()
+
 	w := Worker{}
 	u := ProviderUsage{Observed: true, Values: map[string]string{"cache_read": "2000"}}
 	if over, _, _ := w.OverCardBudget(u, 2); over {

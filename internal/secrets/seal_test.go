@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // skipPOSIXFakesOnWindows marks the seal tests whose sops/git/gh fakes are POSIX
@@ -108,7 +110,7 @@ func newSealFixture(t *testing.T, decryptOut string) *sealFixture {
 func (f *sealFixture) writeScript(t *testing.T, name, body string) string {
 	t.Helper()
 	p := filepath.Join(f.dir, name)
-	if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0755); err != nil {
+	if err := testbin.WriteExecutable(p, []byte("#!/bin/sh\n"+body), 0755); err != nil {
 		t.Fatal(err)
 	}
 	return p
@@ -142,6 +144,8 @@ func readMaybe(t *testing.T, path string) string {
 }
 
 func TestSealPipedValueLandsInEncryptStdinNotArgv(t *testing.T) {
+	t.Parallel()
+
 	skipPOSIXFakesOnWindows(t)
 	f := newSealFixture(t, "OTHER: keepme\nTARGET: oldvalue\n")
 	line, err := RunSeal(f.options(t, "TARGET", "newsecretvalue\n", true))
@@ -178,6 +182,8 @@ func TestSealPipedValueLandsInEncryptStdinNotArgv(t *testing.T) {
 }
 
 func TestSealEmptyValueRefused(t *testing.T) {
+	t.Parallel()
+
 	skipPOSIXFakesOnWindows(t)
 	f := newSealFixture(t, "TARGET: old\n")
 	for _, value := range []string{"", "\n"} {
@@ -195,6 +201,8 @@ func TestSealEmptyValueRefused(t *testing.T) {
 }
 
 func TestSealReplacesExistingNameNotDuplicated(t *testing.T) {
+	t.Parallel()
+
 	skipPOSIXFakesOnWindows(t)
 	f := newSealFixture(t, "TARGET: old\nOTHER: keepme\nTARGET: older\n")
 	if _, err := RunSeal(f.options(t, "TARGET", "fresh\n", true)); err != nil {
@@ -220,6 +228,8 @@ func TestSealReplacesExistingNameNotDuplicated(t *testing.T) {
 // remains retrievable on the named branch. No gh, no push, no pull. The
 // placeholder is a fixture, not a credential.
 func TestSealNoPRMakesNoGHCalls(t *testing.T) {
+	t.Parallel()
+
 	skipPOSIXFakesOnWindows(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -353,6 +363,8 @@ func TestSealNoPRMakesNoGHCalls(t *testing.T) {
 // refuse a dirty store before checkout -b so unstaged and staged tracked
 // changes are still there after the refusal.
 func TestReviewSealNoPRPreservesStartingDirtyWorktree(t *testing.T) {
+	t.Parallel()
+
 	skipPOSIXFakesOnWindows(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -454,6 +466,8 @@ func TestReviewSealNoPRPreservesStartingDirtyWorktree(t *testing.T) {
 }
 
 func TestSealFullPathOpensPRAndMerges(t *testing.T) {
+	t.Parallel()
+
 	skipPOSIXFakesOnWindows(t)
 	f := newSealFixture(t, "TARGET: old\n")
 	line, err := RunSeal(f.options(t, "TARGET", "v\n", false))
@@ -476,6 +490,8 @@ func TestSealFullPathOpensPRAndMerges(t *testing.T) {
 // Every step that can take time has a progress line; none of them carries the value;
 // and after the merge the store goes back to the branch it was on before pulling.
 func TestSealSaysWhatItIsDoing(t *testing.T) {
+	t.Parallel()
+
 	skipPOSIXFakesOnWindows(t)
 	f := newSealFixture(t, "TARGET: old\n")
 	opts := f.options(t, "TARGET", "quietsecretvalue\n", false)
@@ -512,6 +528,8 @@ func TestSealSaysWhatItIsDoing(t *testing.T) {
 // argv. The child is a pure-Go fake supplied through the exec seam, so no
 // shell and no POSIX mode bits are involved (card 8517).
 func TestSealEncryptTakesValueOnStdin(t *testing.T) {
+	t.Parallel()
+
 	var gotStdin, gotDir string
 	var gotArgs []string
 	run := func(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {

@@ -18,6 +18,8 @@ func (r *rebaseLaunchRecorder) Run(_ context.Context, _ string, command string, 
 }
 
 func TestBenchLauncherPlanIsExactLaunchCommand(t *testing.T) {
+	t.Parallel()
+
 	run := &rebaseLaunchRecorder{}
 	launcher := BenchLauncher{Run: run}
 	card := "/owned/cards/card-17.md"

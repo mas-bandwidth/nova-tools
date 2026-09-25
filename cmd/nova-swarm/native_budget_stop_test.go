@@ -73,6 +73,8 @@ func cell(t *testing.T, head []string, row []string, name string) string {
 
 // TestNativeBudgetStopsTheCardAndKeepsWhatItPublished is the heart of demanded test 13d.
 func TestNativeBudgetStopsTheCardAndKeepsWhatItPublished(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	needsSQLite(t)
 	bin := nativeHarness(t)
@@ -186,6 +188,8 @@ func TestNativeBudgetStopsTheCardAndKeepsWhatItPublished(t *testing.T) {
 // `tokens_in + tokens_out + reasoning`, so a `cache_read` that alone passes the number ends
 // nothing.
 func TestNativeBudgetFiresAtExactlyTheNumberAndNotOnCacheAlone(t *testing.T) {
+	t.Parallel()
+
 	needsSQLite(t)
 	for _, tc := range []struct {
 		name       string
@@ -372,77 +376,6 @@ func TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample(t *testing.T
 	}
 	if got := fieldOf(line, "budget"); got != "200/100" {
 		t.Errorf("the line prints the final read's budget=200/100, got %q:\n%s", got, line)
-	}
-}
-
-// TestNativeThreeFailedReadsEndTheCardUnverifiable, and two then an answer end nothing.
-//
-// A READ THAT FAILS IS NOT A SOURCE THAT REPORTED NOTHING: the first ends a card, because a
-// numeric budget the tool has stopped being able to see is a budget the caller believes is
-// enforced and is not; the second leaves the budget unable to fire and the deadline to end
-// the job.
-func TestNativeThreeFailedReadsEndTheCardUnverifiable(t *testing.T) {
-	windowsIsNotABench(t)
-	needsSQLite(t)
-	bin := nativeHarness(t)
-	for _, tc := range []struct {
-		name     string
-		failures int // how many refusals the reader gives before it answers
-		wantRC   int
-		wantStop string
-		wantEnd  string
-	}{
-		{"three_in_a_row_ends_it", 1000, 1, "unverifiable", swarm.EndUnverifiable},
-		{"twice_then_an_answer_ends_nothing", 2, 0, "", swarm.EndDone},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root, slot := aSlot(t)
-			// A DATABASE MUST EXIST for a read to be attempted at all: an absent one is an
-			// absence, and rule 13d keeps the two apart.
-			db := filepath.Join(slot, "data", "opencode", "opencode.db")
-			if err := os.MkdirAll(filepath.Dir(db), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(db, []byte("a database\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			// A reader that refuses its first `failures` calls and answers after that,
-			// counting in a file of its own so the count survives across processes.
-			dir := t.TempDir()
-			counter := filepath.Join(dir, "calls")
-			script := "#!/bin/sh\n" +
-				"n=$(cat " + counter + " 2>/dev/null || echo 0)\n" +
-				"n=$((n+1)); echo $n > " + counter + "\n" +
-				"if [ \"$n\" -le " + strconv.Itoa(tc.failures) + " ]; then echo 'Error: file is not a database' >&2; exit 1; fi\n" +
-				"exit 0\n"
-			if err := os.WriteFile(filepath.Join(dir, swarm.SQLiteBinary), []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-			card := filepath.Join(root, "card.md")
-			if err := os.WriteFile(card, []byte("a card\nFAKE-SLEEP 8\nFAKE-FINDINGS 1\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			args := append(budgetNativeArgs(t, bin, card, slot, root, "100000"), "--usage-interval", "1s")
-			for i := range args {
-				if args[i] == "--deadline" {
-					args[i+1] = "60s"
-				}
-			}
-			var stdout, stderr strings.Builder
-			rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
-			if rc != tc.wantRC {
-				t.Fatalf("this card exits %d, got %d\nstdout:\n%s\nstderr:\n%s", tc.wantRC, rc, stdout.String(), stderr.String())
-			}
-			if got := fieldOf(nativeOKLine(t, stdout.String()), "stopped"); got != tc.wantStop {
-				t.Errorf("stopped= is %q, want %q:\n%s", got, tc.wantStop, stdout.String())
-			}
-			head, rows := usageRows(t, filepath.Join(slot, "jobs", "lbl"))
-			if got := cell(t, head, rows[len(rows)-1], "end"); got != tc.wantEnd {
-				t.Errorf("the last row carries end=%s, got %q", tc.wantEnd, got)
-			}
-		})
 	}
 }
 

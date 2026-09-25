@@ -14,6 +14,8 @@ import (
 )
 
 func TestCardTemplateV2A1InlineEvidence(t *testing.T) {
+	t.Parallel()
+
 	// A1: Inline evidence (prior diff, reviewer line, failing test output).
 	// Must cap diff at 6 KB (6144 bytes) and report omitted bytes.
 	shortDiff := "--- a/foo.go\n+++ b/foo.go\n@@ -1 +1 @@\n-old\n+new\n"
@@ -86,6 +88,8 @@ func TestCardTemplateV2A1InlineEvidence(t *testing.T) {
 }
 
 func TestCardTemplateV2A2NamedPlaceAndTestCommand(t *testing.T) {
+	t.Parallel()
+
 	// A2: Named place and one test command. PATHS as declared scope.
 	card, err := RenderCardV2(CardV2Input{
 		Kind:         "fix",
@@ -131,6 +135,8 @@ func TestCardTemplateV2A2NamedPlaceAndTestCommand(t *testing.T) {
 }
 
 func TestCardTemplateV2A3PreflightLine(t *testing.T) {
+	t.Parallel()
+
 	// A3: Preflight line in card. Coherent with read/report rules.
 	fixCard, err := RenderCardV2(CardV2Input{
 		Kind:         "fix",
@@ -182,6 +188,8 @@ func TestCardTemplateV2A3PreflightLine(t *testing.T) {
 }
 
 func TestCardTemplateV2A4PerKindTemplatesAndTurnBudgets(t *testing.T) {
+	t.Parallel()
+
 	// A4: Per-kind templates and turn budgets: recut, fix, port, docs-guard, report, read.
 	expectedBudgets := map[string]int{
 		"read":       8,
@@ -224,6 +232,8 @@ func TestCardTemplateV2A4PerKindTemplatesAndTurnBudgets(t *testing.T) {
 }
 
 func TestCardTemplateV2A5NoQuotedPRBodiesOrFooters(t *testing.T) {
+	t.Parallel()
+
 	// A5: Strip noise: no quoted PR bodies, footers, or harvest paths.
 	noisyTitle := "clean title"
 	card, err := RenderCardV2(CardV2Input{
@@ -260,6 +270,8 @@ func TestCardTemplateV2A5NoQuotedPRBodiesOrFooters(t *testing.T) {
 }
 
 func TestCardTemplateV2A6ThreeClausesPerKind(t *testing.T) {
+	t.Parallel()
+
 	// A6: Three clauses per kind in conditions block.
 	kinds := []string{"recut", "fix", "port", "docs-guard", "report", "read"}
 
@@ -303,6 +315,8 @@ func TestCardTemplateV2A6ThreeClausesPerKind(t *testing.T) {
 }
 
 func TestCardTemplateV2A7ResultTemplateAndExemplar(t *testing.T) {
+	t.Parallel()
+
 	// A7: RESULT.md fill-in template with one format illustration per kind.
 	// Preserves DONE, ABSTAIN, BLOCKED; separate typed check conclusion.
 	kinds := []string{"recut", "fix", "port", "docs-guard", "report", "read"}
@@ -373,6 +387,8 @@ func TestCardTemplateV2A7ResultTemplateAndExemplar(t *testing.T) {
 }
 
 func TestRenderCardIdentityRetention(t *testing.T) {
+	t.Parallel()
+
 	// Verifies that CardV2Input retains Head, PR, Issue, BaseSHA, Remains, HoldLine, Body
 	card, err := RenderCardV2(CardV2Input{
 		Kind:          "recut",
@@ -420,6 +436,8 @@ func TestRenderCardIdentityRetention(t *testing.T) {
 }
 
 func TestHarvestV2RoundTrip(t *testing.T) {
+	t.Parallel()
+
 	// Verifies end-to-end round trip: v2 card cut -> filled RESULT.md -> harvest classifyResult
 	card, err := RenderCardV2(CardV2Input{
 		Kind:         "fix",
@@ -498,6 +516,8 @@ GREEN: test passed
 }
 
 func TestLegacyRecutCardPreservesSemantics(t *testing.T) {
+	t.Parallel()
+
 	// A legacy card generated before v2 with kind "recut" carries "recut:" on line 1,
 	// but does NOT declare SCHEMA: v2 and does NOT carry a CHECK: line.
 	// It must pass through classifyResult without being forced through v2 CHECK validation.
@@ -526,6 +546,8 @@ Notes from prior attempt.
 }
 
 func TestEnvelopeOnlyFieldExtraction(t *testing.T) {
+	t.Parallel()
+
 	// Verifies that classifyResult extracts effective fields ONLY from the header envelope.
 	// Quoted lines or examples in markdown evidence must remain data and never override header fields.
 	contractLine := "RESULT CARD-300 sha=abcdef123456 mas-bandwidth/nova-tools fix: test extraction"
@@ -561,6 +583,8 @@ REPO other/quoted-fake-repo
 }
 
 func TestImmutableDiffArtifactRetention(t *testing.T) {
+	t.Parallel()
+
 	// Verifies that diff artifacts > 6KB are retained immutably in card directory
 	// and locators with digests are recorded in card markdown, for both literal and file inputs.
 	queueDir := t.TempDir()
@@ -737,6 +761,8 @@ func TestImmutableDiffArtifactRetention(t *testing.T) {
 }
 
 func TestCardTemplateV2A10SymbolAndRedWhen(t *testing.T) {
+	t.Parallel()
+
 	// A10: Every card must carry SYMBOL: and RED-WHEN:.
 	// Cutter lint refuses a card without them.
 	card, err := RenderCardV2(CardV2Input{
@@ -806,6 +832,8 @@ func cardV2RunSection(operative ...string) string {
 }
 
 func TestValidateCardV2CutterLint(t *testing.T) {
+	t.Parallel()
+
 	validCard := cardV2With("", "go test ./internal/pulse -run TestBoundary")
 	if err := ValidateCardV2(validCard); err != nil {
 		t.Errorf("ValidateCardV2 rejected valid card: %v", err)
@@ -849,6 +877,8 @@ func TestValidateCardV2CutterLint(t *testing.T) {
 // — belongs to the card's structured input, so prose can neither become a region nor add
 // one. Her exact bypass case is the first row; her second hold's cases follow it.
 func TestValidateCardV2OperativeRegionBoundary(t *testing.T) {
+	t.Parallel()
+
 	stellaBypass := "STEP: git add -A && git commit # do not run again"
 	quotedEvidence := "Task: remove `git add -A` and `git add --all` from deploy.sh.\n" +
 		"> Reviewer verdict: never run git add -A; stage declared PATHS only.\n" +
@@ -1049,6 +1079,8 @@ func TestValidateCardV2OperativeRegionBoundary(t *testing.T) {
 }
 
 func TestCardTemplateV2A4CommitRuleAndGitAddRefusal(t *testing.T) {
+	t.Parallel()
+
 	// A4: commit rule stages PATHS only, never git add -A; notes live outside repo/.
 	// DONE WHEN the cutter's lint refuses a card containing git add -A.
 	card, err := RenderCardV2(CardV2Input{
@@ -1219,6 +1251,8 @@ func TestCardTemplateV2A4CommitRuleAndGitAddRefusal(t *testing.T) {
 // owns — the single `## Run` heading, the marker as its first line, then one fenced block
 // — and states the contract sentence above that heading.
 func TestRenderCardV2OperativeRegionPosition(t *testing.T) {
+	t.Parallel()
+
 	for _, kind := range CardV2Kinds {
 		t.Run(kind, func(t *testing.T) {
 			card, err := RenderCardV2(CardV2Input{
@@ -1293,6 +1327,8 @@ func TestRenderCardV2OperativeRegionPosition(t *testing.T) {
 }
 
 func TestRenderCardV2RefusesMissingSymbolOrRedWhen(t *testing.T) {
+	t.Parallel()
+
 	baseInput := CardV2Input{
 		Kind:         "fix",
 		Number:       152,
@@ -1340,6 +1376,8 @@ func TestRenderCardV2RefusesMissingSymbolOrRedWhen(t *testing.T) {
 }
 
 func TestCutTemplateFormatDependsOn(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		deps      []string
@@ -1423,6 +1461,8 @@ func TestCutTemplateFormatDependsOn(t *testing.T) {
 }
 
 func TestCutTemplateParseDependsOn(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		input string
 		want  []string
@@ -1453,6 +1493,8 @@ func TestCutTemplateParseDependsOn(t *testing.T) {
 }
 
 func TestCutTemplateApplyDependsOn(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		tmpl string
@@ -1514,6 +1556,8 @@ func TestCutTemplateApplyDependsOn(t *testing.T) {
 }
 
 func TestCutTemplateRoundtripAndValidationControls(t *testing.T) {
+	t.Parallel()
+
 	// Fixture P (accept.md shape from docs/SPEC-CARD.md clause 9 & 10)
 	fixtureAccept := strings.Join([]string{
 		"RESULT: tools-03 sha=000000000000",
@@ -1595,6 +1639,8 @@ func TestCutTemplateRoundtripAndValidationControls(t *testing.T) {
 }
 
 func TestCutTemplatePreservesFencedPriorCardEvidence(t *testing.T) {
+	t.Parallel()
+
 	tmpl := strings.Join([]string{
 		"RESULT: tools-03 sha=000000000000",
 		"KIND: fix",
@@ -1647,6 +1693,8 @@ func TestCutTemplatePreservesFencedPriorCardEvidence(t *testing.T) {
 }
 
 func TestCutTemplateInsertsDependsOnWhenNoPathsOrTest(t *testing.T) {
+	t.Parallel()
+
 	tmpl := strings.Join([]string{
 		"RESULT: tools-05 sha=000000000000",
 		"KIND: fix",

@@ -14,6 +14,8 @@ import (
 // stranded=1 with its label.
 
 func TestSlotsTakeRefusesASchemaKindWhenTheShareFitsOnlyARead(t *testing.T) {
+	t.Parallel()
+
 	store := slotShares(t, "capacity\t3\nreserve\t0\nswarm-space\t3\n")
 	var out, errb bytes.Buffer
 	rc := run([]string{"slots", "take", "--store", store, "--owner", "swarm-space",
@@ -49,6 +51,8 @@ func TestSlotsTakeRefusesASchemaKindWhenTheShareFitsOnlyARead(t *testing.T) {
 }
 
 func TestSlotsListMarksADeadHolderStrandedWithItsLabel(t *testing.T) {
+	t.Parallel()
+
 	const deadPid = 2147483647
 	if swarm.Alive(deadPid, "") {
 		t.Skip("dead pid probe is alive here")

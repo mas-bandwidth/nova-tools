@@ -29,6 +29,8 @@ func hashOf(f *Fold) map[string]string {
 
 // The hash the fold writes reads back as the same ranking.
 func TestFoldFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	f := foldFixture()
 	got, err := ParseFold("fix", hashOf(f))
 	if err != nil {
@@ -47,6 +49,8 @@ func TestFoldFieldsRoundTrip(t *testing.T) {
 
 // A record the fold would not write is refused, so the router fails closed.
 func TestParseFoldRefusesADamagedRecord(t *testing.T) {
+	t.Parallel()
+
 	for name, edit := range map[string]func(map[string]string){
 		"other type":           func(h map[string]string) { h["type"] = "nx" },
 		"read kind on landed":  func(h map[string]string) { h["kind"] = KindRead },
@@ -66,6 +70,8 @@ func TestParseFoldRefusesADamagedRecord(t *testing.T) {
 // The static table keeps the last word on rung and on a dead route; no fold
 // for the type is the static check alone.
 func TestCheckFoldKeepsRungAndDeadAndFallsBack(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)

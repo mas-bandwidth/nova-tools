@@ -69,6 +69,8 @@ func runCost(t *testing.T, by string, summaryOnly bool) string {
 }
 
 func TestCostByModelSumsEachModel(t *testing.T) {
+	t.Parallel()
+
 	got := costByLines(t, runCost(t, "model", false), "model")
 	want := []string{
 		"COST BY model=model-b tasks=2 in=80 out=8 cache_write=10 cache_read=450 reasoning=12 usd=-",
@@ -80,6 +82,8 @@ func TestCostByModelSumsEachModel(t *testing.T) {
 }
 
 func TestCostByDaySumsEachDay(t *testing.T) {
+	t.Parallel()
+
 	got := costByLines(t, runCost(t, "day", false), "day")
 	want := []string{
 		"COST BY day=2026-09-14 tasks=2 in=90 out=9 cache_write=11 cache_read=410 reasoning=13 usd=-",
@@ -91,6 +95,8 @@ func TestCostByDaySumsEachDay(t *testing.T) {
 }
 
 func TestCostByDashUSDPropagates(t *testing.T) {
+	t.Parallel()
+
 	got := costByLines(t, runCost(t, "repo", false), "repo")
 	want := []string{
 		"COST BY repo=repo-y tasks=2 in=70 out=7 cache_write=9 cache_read=600 reasoning=11 usd=-",
@@ -102,6 +108,8 @@ func TestCostByDashUSDPropagates(t *testing.T) {
 }
 
 func TestCostBySitsBetweenTaskLinesAndSummary(t *testing.T) {
+	t.Parallel()
+
 	out := runCost(t, "model", false)
 	lastTask := strings.LastIndex(out, "COST TASK ")
 	firstBy := strings.Index(out, "COST BY model=")
@@ -115,6 +123,8 @@ func TestCostBySitsBetweenTaskLinesAndSummary(t *testing.T) {
 }
 
 func TestCostSummaryOnlySkipsTaskLines(t *testing.T) {
+	t.Parallel()
+
 	out := runCost(t, "model", true)
 	if strings.Contains(out, "COST TASK") || strings.Contains(out, "COST MORE") {
 		t.Fatalf("summary-only kept per-task lines:\n%s", out)
@@ -125,6 +135,8 @@ func TestCostSummaryOnlySkipsTaskLines(t *testing.T) {
 }
 
 func TestCostByRefusesAnUnknownGroup(t *testing.T) {
+	t.Parallel()
+
 	p := costByPool(t)
 	var stdout, stderr bytes.Buffer
 	if exit := Cost(p, "", 0, "colour", false, &stdout, &stderr); exit != 2 {

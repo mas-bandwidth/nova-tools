@@ -102,6 +102,8 @@ gofmt -l .: pass
 `
 
 func TestIssue2386(t *testing.T) {
+	t.Parallel()
+
 	staged := stage2386(t)
 	card := filepath.Join(staged, "cards", "fix-2035.md")
 	if err := os.MkdirAll(filepath.Dir(card), 0o755); err != nil {
@@ -348,6 +350,8 @@ func (testGateError) Error() string { return "the bench refused the command" }
 // section; only the card-typed harvest section is removed. And a gate with no bench
 // prints bench=-, the same fallback the sha has.
 func TestIssue2386CRLFBodyStaysVerbatim(t *testing.T) {
+	t.Parallel()
+
 	head := "RESULT: card\r\nDONE\r\n\r\n## Gates\r\n| gofmt | pass |\r\nmixed line\n"
 	tail := "## After\r\nkept\r\n"
 	body := head + "\r\n## Harvest gate\r\nHARVEST GATE bench=forged sha=x result=green checks=0 failed=0\r\n\r\n" + tail
@@ -376,6 +380,8 @@ func TestIssue2386CRLFBodyStaysVerbatim(t *testing.T) {
 // conversation fill context in ~60 minutes and idle the fleet every time they
 // stop to report. A TURNS: budget bounds each explore card's loop.
 func TestIssue2035Repro(t *testing.T) {
+	t.Parallel()
+
 	// An explore card with no TURNS: line is refused — this is the defect.
 	why := admitWhyOf(t, t.TempDir(), "e1", "opencode/deepseek-v4-flash",
 		"MODE: explore\nRESULT: find the bug\nSTEP 1 grep\n")

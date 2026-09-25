@@ -95,6 +95,8 @@ func snapshotDir(t *testing.T, dir string) map[string]string {
 // every (day, model, repo) -- while the day files themselves are left byte for byte as the
 // fold wrote them.
 func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T) {
+	t.Parallel()
+
 	dsn, mr := ledgerRedis(t)
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
@@ -179,6 +181,8 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 // TestReportRedisRefusesWithoutMonth: the store report names what it wants rather than
 // guessing a month, and one report has one source.
 func TestReportRedisRefusesWithoutMonth(t *testing.T) {
+	t.Parallel()
+
 	dsn, _ := ledgerRedis(t)
 	r := invoke(t, "report", "--redis", dsn)
 	wantExit(t, r, 2)
@@ -194,6 +198,8 @@ func TestReportRedisRefusesWithoutMonth(t *testing.T) {
 // TestLedgerRefusesWithoutRedisAndNamesAMissingDay: `ledger` wants its store named, and a
 // day with no file is a NO naming the fold, with nothing written for it.
 func TestLedgerRefusesWithoutRedisAndNamesAMissingDay(t *testing.T) {
+	t.Parallel()
+
 	out := mkdir(t, filepath.Join(t.TempDir(), "out"))
 	r := invoke(t, "ledger", "--out", out, "--day", "2026-09-11")
 	wantExit(t, r, 2)
@@ -227,6 +233,8 @@ func TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly(t *testing.T) {
 // cover #3462: a month with no indexed calendar-day keys is REPORT NO exit 1, and a month
 // with only some days indexed names indexed and missing on the OK line.
 func TestReportRedisNoIndexedDaysExitsOne(t *testing.T) {
+	t.Parallel()
+
 	addr, _ := ledgerRedis(t)
 	r := invoke(t, "report", "--redis", addr, "--month", "2026-08")
 	wantExit(t, r, 1)
@@ -234,6 +242,8 @@ func TestReportRedisNoIndexedDaysExitsOne(t *testing.T) {
 }
 
 func TestReportRedisPartialMonthNamesIndexedMissing(t *testing.T) {
+	t.Parallel()
+
 	addr, mr := ledgerRedis(t)
 	// Seed only two of September's 30 days.
 	mr.HSet("tokens:ledger:2026-09-05", `["c","m","r"]`, `{"provider":"x","tokens":[10,20,null,null,3],"sources":"x:o"}`)

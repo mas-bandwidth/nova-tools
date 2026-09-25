@@ -11,13 +11,14 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // script writes an executable sh program into dir.
 func script(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+	if err := testbin.WriteExecutable(p, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return p
@@ -28,6 +29,8 @@ func script(t *testing.T, dir, name, body string) string {
 // exit and red line, the bisect's base= members= line, the lander's exit and
 // the filer's issue number with the body on stdin.
 func TestLanderProgramsSpeakTheProtocol(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	argv := filepath.Join(dir, "argv")
 	ctx := context.Background()

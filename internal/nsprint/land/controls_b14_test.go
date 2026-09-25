@@ -36,6 +36,8 @@ func hasLine(t *testing.T, lines []string, prefix string, parts ...string) {
 // the unit keys are the ones the lander writes, not a hand-made shape. The
 // retired s:<S>:pr:<repo>:<n> record is never written, and why still answers.
 func TestL17(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	ctx, c := f.ctx, f.client
 	const (

@@ -49,6 +49,8 @@ func runAsk(t *testing.T, f *fakeSender, args ...string) (int, string, string) {
 }
 
 func TestAskSendsTheUnitToItsFriendAndRecordsTheAskID(t *testing.T) {
+	t.Parallel()
+
 	p := unitsFile(t, askUnits)
 	f := &fakeSender{id: "2026-09-18T1200Z-ask-abcdef"}
 	code, stdout, stderr := runAsk(t, f,
@@ -86,6 +88,8 @@ func TestAskSendsTheUnitToItsFriendAndRecordsTheAskID(t *testing.T) {
 }
 
 func TestAskKindReadIsTheReadCardForAFriend(t *testing.T) {
+	t.Parallel()
+
 	p := unitsFile(t, askUnits)
 	f := &fakeSender{id: "id1"}
 	code, stdout, stderr := runAsk(t, f,
@@ -104,6 +108,8 @@ func TestAskKindReadIsTheReadCardForAFriend(t *testing.T) {
 }
 
 func TestAskRefusesWhatItCannotRun(t *testing.T) {
+	t.Parallel()
+
 	p := unitsFile(t, askUnits)
 	full := []string{"--owner", "Emma", "--unit", "u1", "--units", p,
 		"--deadline", "2026-09-18T20:00:00Z", "--bus", "/bus", "--as", "Rowan",
@@ -151,6 +157,8 @@ func TestAskRefusesWhatItCannotRun(t *testing.T) {
 }
 
 func TestAskDoesNotRecordWhenTheSendFailed(t *testing.T) {
+	t.Parallel()
+
 	p := unitsFile(t, askUnits)
 	f := &fakeSender{err: errSendRefused}
 	code, _, stderr := runAsk(t, f,
@@ -170,6 +178,8 @@ func TestAskDoesNotRecordWhenTheSendFailed(t *testing.T) {
 }
 
 func TestAsksListsOpenAsksWithAgeAndDeadlineAndFlagsOverdue(t *testing.T) {
+	t.Parallel()
+
 	p := unitsFile(t, `{"units":[
       {"id":"u1","title":"t","asks":[
         {"id":"a1","owner":"Emma","kind":"work","unit":"u1","sent":"2026-09-18T11:30:00Z","deadline":"2026-09-18T13:00:00Z","by":"Rowan"},
@@ -198,6 +208,8 @@ func TestAsksListsOpenAsksWithAgeAndDeadlineAndFlagsOverdue(t *testing.T) {
 }
 
 func TestAsksFiltersByOwnerAndBoundsItsOutput(t *testing.T) {
+	t.Parallel()
+
 	p := unitsFile(t, `{"units":[
       {"id":"u1","title":"t","asks":[
         {"id":"a1","owner":"Emma","kind":"work","unit":"u1","sent":"2026-09-18T11:30:00Z","deadline":"2026-09-18T13:00:00Z"},
@@ -222,6 +234,8 @@ func TestAsksFiltersByOwnerAndBoundsItsOutput(t *testing.T) {
 }
 
 func TestAsksRefusesWithoutUnits(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := cmdAsks(nil, &stdout, &stderr); code != 2 {
 		t.Fatalf("exit = %d, want 2", code)
@@ -232,6 +246,8 @@ func TestAsksRefusesWithoutUnits(t *testing.T) {
 }
 
 func TestHelpNamesTheAskAndAsksVerbs(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"help"}, &stdout, &stderr, ""); code != 0 {
 		t.Fatalf("help exit %d", code)
@@ -244,6 +260,8 @@ func TestHelpNamesTheAskAndAsksVerbs(t *testing.T) {
 }
 
 func TestAskVerbsAreReachableFromTheTopLevel(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"asks"}, &stdout, &stderr, ""); code != 2 {
 		t.Fatalf("`nova-work asks` with no flags must be exit 2, got %d", code)
@@ -262,6 +280,8 @@ func TestAskVerbsAreReachableFromTheTopLevel(t *testing.T) {
 
 // The deadline is a fact about the world and never a default: the tool refuses to guess one.
 func TestAskHasNoDefaultDeadline(t *testing.T) {
+	t.Parallel()
+
 	src, err := os.ReadFile("ask.go")
 	if err != nil {
 		t.Fatal(err)
@@ -275,6 +295,8 @@ func TestAskHasNoDefaultDeadline(t *testing.T) {
 // ---------------------------------------------------------------- the dogfood edges
 
 func TestAskReadsTheLispWorkSetAndRecordsNowhereWithoutARecordFile(t *testing.T) {
+	t.Parallel()
+
 	f := &fakeSender{id: "rowan-93d3cbffc3d0"}
 	code, stdout, stderr := runAsk(t, f,
 		"--owner", "Stella", "--unit", "pull:queue",
@@ -304,6 +326,8 @@ func TestAskReadsTheLispWorkSetAndRecordsNowhereWithoutARecordFile(t *testing.T)
 }
 
 func TestAskRecordsALispWorkSetsAskIntoTheRecordFile(t *testing.T) {
+	t.Parallel()
+
 	rec := filepath.Join(t.TempDir(), "asks.json")
 	f := &fakeSender{id: "rowan-93d3cbffc3d0"}
 	code, _, stderr := runAsk(t, f,
@@ -323,6 +347,8 @@ func TestAskRecordsALispWorkSetsAskIntoTheRecordFile(t *testing.T) {
 }
 
 func TestAskStillRefusesWhenNeitherTheFlagNorTheUnitHasADeadline(t *testing.T) {
+	t.Parallel()
+
 	f := &fakeSender{id: "x"}
 	code, _, stderr := runAsk(t, f,
 		"--owner", "Emma", "--unit", "verb:hygiene",
@@ -340,6 +366,8 @@ func TestAskStillRefusesWhenNeitherTheFlagNorTheUnitHasADeadline(t *testing.T) {
 }
 
 func TestAsksReadsTheBusWhenGivenOne(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	code := cmdAsks([]string{"--bus", "../../internal/friends/testdata/bus", "--as", "Ada",
 		"--owner", "Bo", "--now", "2026-09-18T12:00:00Z"}, &stdout, &stderr)
@@ -362,6 +390,8 @@ func TestAsksReadsTheBusWhenGivenOne(t *testing.T) {
 }
 
 func TestAsksTakesEitherSourceAndRefusesNeither(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := cmdAsks([]string{"--now", "2026-09-18T12:00:00Z"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("neither --units nor --bus must be exit 2, got %d", code)
@@ -416,6 +446,8 @@ func bigLane(t *testing.T, notes, asks int) string {
 }
 
 func TestAsksMaxBoundsTheRowsPrintedAndNeverTheNotesRead(t *testing.T) {
+	t.Parallel()
+
 	// 60 notes, the newest 10 of which carry 4 asks. At the DEFAULT --max -- which is
 	// smaller than 60 -- every note is still read, so the count is 4 and not 0.
 	bus := bigLane(t, 60, 4)
@@ -431,6 +463,8 @@ func TestAsksMaxBoundsTheRowsPrintedAndNeverTheNotesRead(t *testing.T) {
 }
 
 func TestAsksMaxStillBoundsTheRowsWithAMoreLine(t *testing.T) {
+	t.Parallel()
+
 	bus := bigLane(t, 60, 4)
 	var stdout, stderr bytes.Buffer
 	code := cmdAsks([]string{"--bus", bus, "--as", "Ada", "--max", "2", "--now", "2026-09-18T12:00:00Z"}, &stdout, &stderr)
@@ -447,6 +481,8 @@ func TestAsksMaxStillBoundsTheRowsWithAMoreLine(t *testing.T) {
 }
 
 func TestAsksMaxNotesReadsTheNewestAndSaysItWasBounded(t *testing.T) {
+	t.Parallel()
+
 	// The other half of the rule: a caller may bound the FILES too, but then the files
 	// are the NEWEST ones and one line on stderr names the bound and its remedy, the way
 	// nova-bus inbox names --max-commits.
@@ -474,6 +510,8 @@ func TestAsksMaxNotesReadsTheNewestAndSaysItWasBounded(t *testing.T) {
 }
 
 func TestAsksRefusesAMaxNotesThatIsNotACount(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := cmdAsks([]string{"--bus", "../../internal/friends/testdata/bus", "--as", "Ada",
 		"--max-notes", "-1", "--now", "2026-09-18T12:00:00Z"}, &stdout, &stderr); code != 2 {

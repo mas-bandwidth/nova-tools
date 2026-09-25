@@ -58,6 +58,8 @@ func lintCardFile(t *testing.T, name string) (string, int) {
 // The control card is fully clean. The two tools11 cards draw `kind-declared` for
 // `KIND: dogfood` and nothing else that is a defect.
 func TestTheShiftsOwnCardsLintClean(t *testing.T) {
+	t.Parallel()
+
 	t.Run("queue-1282-bench-hygiene-home-guard.md", func(t *testing.T) {
 		name := "queue-1282-bench-hygiene-home-guard.md"
 		stdout, code := lintCardFile(t, name)
@@ -96,6 +98,8 @@ func TestTheShiftsOwnCardsLintClean(t *testing.T) {
 // advisory (issue #1527, #1494). This fixture also carries KIND: dogfood, which is a
 // true kind-declared drift as of #1853; that is why the verb exits 2, not the size.
 func TestACardOverTheCeilingIsAdvisedNotRefused(t *testing.T) {
+	t.Parallel()
+
 	const name = "tools11-c2-links-toplevel.md"
 	stdout, _ := lintCardFile(t, name)
 	if !strings.Contains(stdout, "LINT NOTE card="+name+" size: ") {

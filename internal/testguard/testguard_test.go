@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // arm turns the guard on for one test and puts the cached value back
@@ -60,7 +62,7 @@ func TestAFakeOnPATHIsNotAHost(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		fake += ".bat"
 	}
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

@@ -61,6 +61,8 @@ func waitLineAt(t *testing.T, root, rel string, line int) string {
 // 1. A test carrying time.Sleep(150 * time.Millisecond) is refused with its
 // file and line, and the remedy names the poll.
 func TestWaitsRefusesFixedSleep(t *testing.T) {
+	t.Parallel()
+
 	root := waitFixtureTree(t, "sleep.go.txt")
 	res, err := CheckWaits(root, "")
 	if err != nil {
@@ -84,6 +86,8 @@ func TestWaitsRefusesFixedSleep(t *testing.T) {
 // 2. A test with context.WithTimeout(ctx, 5*time.Second) used as its pass/fail
 // condition is refused as a bound under ten seconds.
 func TestWaitsRefusesShortBound(t *testing.T) {
+	t.Parallel()
+
 	root := waitFixtureTree(t, "bound.go.txt")
 	res, err := CheckWaits(root, "")
 	if err != nil {
@@ -107,6 +111,8 @@ func TestWaitsRefusesShortBound(t *testing.T) {
 // 3. A test asserting time.Since(start) < 5*time.Second is refused as an
 // elapsed-time assertion.
 func TestWaitsRefusesElapsedAssertion(t *testing.T) {
+	t.Parallel()
+
 	root := waitFixtureTree(t, "elapsed.go.txt")
 	res, err := CheckWaits(root, "")
 	if err != nil {
@@ -130,6 +136,8 @@ func TestWaitsRefusesElapsedAssertion(t *testing.T) {
 // 4. A polling test reading NOVA_TEST_WAIT (default 30s) and waiting for the
 // event through a fake network is allowed.
 func TestWaitsAllowsThePoll(t *testing.T) {
+	t.Parallel()
+
 	root := waitFixtureTree(t, "poll.go.txt")
 	res, err := CheckWaits(root, "")
 	if err != nil {
@@ -146,6 +154,8 @@ func TestWaitsAllowsThePoll(t *testing.T) {
 // 5. A test whose subprocess bench and clock are fakes passes with no wall
 // clock in the file.
 func TestWaitsAllowsFakeBenchAndClock(t *testing.T) {
+	t.Parallel()
+
 	root := waitFixtureTree(t, "fakeclock.go.txt")
 	res, err := CheckWaits(root, "")
 	if err != nil {
@@ -160,6 +170,8 @@ func TestWaitsAllowsFakeBenchAndClock(t *testing.T) {
 // entry that names no offender on the tree is a place to park a wait, and the
 // remedy says the file only shrinks.
 func TestWaitsAllowlistGrowsRefused(t *testing.T) {
+	t.Parallel()
+
 	root := waitEmptyTree(t)
 	allow := filepath.Join(t.TempDir(), "fixed-waits-allowlist.txt")
 
@@ -204,6 +216,8 @@ func TestWaitsAllowlistGrowsRefused(t *testing.T) {
 // OK line, the refusal line and the closing FAIL line, and the exit 2 a
 // refusal costs.
 func TestWaitsOutputMatchesTheSpec(t *testing.T) {
+	t.Parallel()
+
 	root := waitFixtureTree(t, "sleep.go.txt")
 	res, err := CheckWaits(root, "")
 	if err != nil {
@@ -235,6 +249,8 @@ func TestWaitsOutputMatchesTheSpec(t *testing.T) {
 // TestWaitsVerbLineMatchesTheSpec pins the help line the class test is entered
 // under, word for word, to the section that prints it.
 func TestWaitsVerbLineMatchesTheSpec(t *testing.T) {
+	t.Parallel()
+
 	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-CI.md"))
 	if !strings.Contains(spec, WaitsVerbLine) {
 		t.Errorf("the waits verb line is not in docs/SPEC-CI.md:\n%s", WaitsVerbLine)
@@ -269,6 +285,8 @@ func TestNoFixedWaitsOnTheCIPath(t *testing.T) {
 // budget still holds: a second offender of the same kind in the file has no row and is
 // refused, and a row with no offender left is still stale.
 func TestWaitsAllowlistSurvivesShiftedLines(t *testing.T) {
+	t.Parallel()
+
 	root := waitFixtureTree(t, "sleep.go.txt")
 	first, err := CheckWaits(root, "")
 	if err != nil || len(first.Findings) != 1 {

@@ -15,6 +15,8 @@ import (
 // carries them on bench:<b>:beat through ns_bench_beat, so preflight --fleet
 // reads them from Redis without ssh.
 func TestBenchBeatCarriesFacts(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	for _, d := range []string{
 		"harness-v1.18.20", "harness-v1.18.19",

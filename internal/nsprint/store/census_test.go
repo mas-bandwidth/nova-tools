@@ -114,6 +114,8 @@ func censusLines(t *testing.T, out string) []string {
 // flush for the reads; a key missing in Redis prints MISSING <key>, never a
 // blank row or the value an earlier census read.
 func TestCensusOnePipeline(t *testing.T) {
+	t.Parallel()
+
 	addr := startRedis(t)
 	client, flushes := countedClient(t, addr)
 	keys := seedBenches(t, client)
@@ -266,6 +268,8 @@ func TestCensusOnePipeline(t *testing.T) {
 }
 
 func TestCensusRefusals(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"}))
 	defer st.Close()
@@ -288,6 +292,8 @@ func TestCensusRefusals(t *testing.T) {
 }
 
 func TestCensusSetKeys(t *testing.T) {
+	t.Parallel()
+
 	for set, want := range map[string][2]string{
 		"benches":            {"benches", "bench:"},
 		"friends":            {"friends", "friend:"},

@@ -48,6 +48,8 @@ func ciCount(cs []QueuedCard) (ci, model int) {
 }
 
 func TestCIShareAndCoreCap(t *testing.T) {
+	t.Parallel()
+
 	pol := InterimCIPolicy()
 	if got, want := pol.ShareSlots(8), 4; got != want {
 		t.Fatalf("ShareSlots(8) = %d, want %d (0.5 x 8)", got, want)
@@ -135,6 +137,8 @@ func TestCIShareAndCoreCap(t *testing.T) {
 }
 
 func TestControl30NeverDealtIsNeverCancelled(t *testing.T) {
+	t.Parallel()
+
 	pol := InterimCIPolicy()
 	queue := fxQueue()
 	before := append([]QueuedCard(nil), queue...)
@@ -189,6 +193,8 @@ func TestControl30NeverDealtIsNeverCancelled(t *testing.T) {
 }
 
 func TestReadCIPolicyRefusesUnreadableLines(t *testing.T) {
+	t.Parallel()
+
 	p, err := ReadCIPolicy(map[string]string{})
 	if err != nil || p != InterimCIPolicy() {
 		t.Fatalf("empty policy = %+v, %v; want the interim policy", p, err)

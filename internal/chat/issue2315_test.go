@@ -21,6 +21,8 @@ import (
 // red on the base (allow.go does not exist) and green at the head where the
 // file exists and is the parser the work-list item describes.
 func TestIssue2315(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	allowPath := filepath.Join(dir, "allow")

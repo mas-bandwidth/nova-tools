@@ -30,6 +30,8 @@ func cleanReceipt(key, by, at string) Receipt {
 // THE EDGE ITSELF. Stella finds something; Johnny runs the same verb an hour later and it
 // works for him. Johnny's pass is not a fix, and it is not an answer to Stella.
 func TestAnUnrelatedPassDoesNotCloseSomebodyElsesEdge(t *testing.T) {
+	t.Parallel()
+
 	stella := edgeReceipt("nova-check links", "stella", "2026-09-18T09:00:00Z", "the verb refused a relative path")
 	johnny := cleanReceipt("nova-check links", "johnny", "2026-09-18T10:00:00Z")
 
@@ -60,6 +62,8 @@ func TestAnUnrelatedPassDoesNotCloseSomebodyElsesEdge(t *testing.T) {
 // The person who found it, running it again later and finding nothing, closes it. That is
 // what "feedback applied" means from inside the finding.
 func TestTheDogfooderWhoFoundItClosesItByRunningItAgain(t *testing.T) {
+	t.Parallel()
+
 	stella := edgeReceipt("nova-check links", "stella", "2026-09-18T09:00:00Z", "the verb refused a relative path")
 	again := cleanReceipt("nova-check links", "stella", "2026-09-18T12:00:00Z")
 
@@ -72,6 +76,8 @@ func TestTheDogfooderWhoFoundItClosesItByRunningItAgain(t *testing.T) {
 // And anybody may close it by NAMING it: the fixer records a receipt that says which
 // finding this run answers. That is the only way a third party closes somebody's edge.
 func TestAReceiptThatNamesTheEdgeClosesIt(t *testing.T) {
+	t.Parallel()
+
 	stella := edgeReceipt("nova-check links", "stella", "2026-09-18T09:00:00Z", "the verb refused a relative path")
 	fixer := cleanReceipt("nova-check links", "rowan", "2026-09-18T11:00:00Z")
 	fixer.Closes = stella.ID()
@@ -89,6 +95,8 @@ func TestAReceiptThatNamesTheEdgeClosesIt(t *testing.T) {
 // A receipt naming an id nothing carries closes nothing, and does not disappear: a typo in
 // a --closes must not be a silent close.
 func TestAClosesThatNamesNothingClosesNothing(t *testing.T) {
+	t.Parallel()
+
 	stella := edgeReceipt("nova-check links", "stella", "2026-09-18T09:00:00Z", "the verb refused a relative path")
 	fixer := cleanReceipt("nova-check links", "rowan", "2026-09-18T11:00:00Z")
 	fixer.Closes = "deadbeef"
@@ -101,6 +109,8 @@ func TestAClosesThatNamesNothingClosesNothing(t *testing.T) {
 
 // Two people, two findings, one of them answered: the other is still open and still named.
 func TestEachEdgeIsClosedOnItsOwn(t *testing.T) {
+	t.Parallel()
+
 	stella := edgeReceipt("nova-check links", "stella", "2026-09-18T09:00:00Z", "the verb refused a relative path")
 	johnny := edgeReceipt("nova-check links", "johnny", "2026-09-18T09:30:00Z", "the line named no remedy")
 	fixer := cleanReceipt("nova-check links", "rowan", "2026-09-18T11:00:00Z")
@@ -123,6 +133,8 @@ func TestEachEdgeIsClosedOnItsOwn(t *testing.T) {
 // An id is a fact of the receipt's content: two reads of one receipt give one id, and two
 // different receipts do not collide.
 func TestAReceiptsIDIsItsContent(t *testing.T) {
+	t.Parallel()
+
 	a := edgeReceipt("nova-check links", "stella", "2026-09-18T09:00:00Z", "one")
 	b := a
 	b.File = "somewhere/else.json:3" // where it was read from is not part of it
@@ -141,6 +153,8 @@ func TestAReceiptsIDIsItsContent(t *testing.T) {
 // A verb with nothing open says so, rather than leaving the field off: a field that
 // appears only when it is interesting is a field nobody can parse.
 func TestTheRowAlwaysCarriesTheOpenCount(t *testing.T) {
+	t.Parallel()
+
 	rows, _ := Ledger(verbs("nova-check links"), nil, nil)
 	want := "DOGFOOD tool=nova-check verb=links by=nobody at=- ok=- issue=- open=0"
 	if rows[0].Line() != want {

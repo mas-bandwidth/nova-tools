@@ -225,6 +225,8 @@ func xyStatus(t *testing.T, bin, set, status string) string {
 // xy never runs it. --store, --name and --nova-pulse are usage errors, and the
 // calibration and the open rows come from files only.
 func TestXYRefusesTheDeletedNovaPulseSource(t *testing.T) {
+	t.Parallel()
+
 	for _, flag := range [][]string{
 		{"--store", "example.invalid:6399"},
 		{"--name", "s1"},
@@ -243,6 +245,8 @@ func TestXYRefusesTheDeletedNovaPulseSource(t *testing.T) {
 }
 
 func TestXYRefusesWithoutItsSources(t *testing.T) {
+	t.Parallel()
+
 	code, _, stderr := runCLI("xy")
 	if code != 2 {
 		t.Fatalf("xy with no sources exit %d, want 2; stderr %s", code, stderr)

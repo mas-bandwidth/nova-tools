@@ -9,6 +9,8 @@ import (
 // holds the card's DONE-WHEN and TASK sentences, so harvest writes the PR body
 // from Redis alone.
 func TestCardPushStoresDoneWhenAndTask(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)

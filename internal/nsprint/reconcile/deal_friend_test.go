@@ -229,6 +229,8 @@ func TestDealHonoursWhoKindAndOwner(t *testing.T) {
 }
 
 func TestWhoAdmits(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		who, f string
 		want   bool
@@ -266,6 +268,8 @@ func (f *dealFixture) stubDealFriend(t *testing.T, reply string) {
 // cards dealt to rowan, and the DEAL line names each refused id with the
 // Lua's reason verbatim after refused=<n>, in the reply's order.
 func TestDealReceiptNamesEveryRefusal(t *testing.T) {
+	t.Parallel()
+
 	f := newDealFixture(t)
 	const s = "nova-sprint"
 	must(t, f.c.ZAdd(f.ctx, "ws:order", redis.Z{Score: 1, Member: s}).Err())
@@ -288,6 +292,8 @@ func TestDealReceiptNamesEveryRefusal(t *testing.T) {
 // <id>:no-reason, and a batch of more than 12 refusals prints 12 pairs then
 // +N more.
 func TestDealReceiptSilentRefusalAndCap(t *testing.T) {
+	t.Parallel()
+
 	f := newDealFixture(t)
 	const s = "nova-sprint"
 	must(t, f.c.ZAdd(f.ctx, "ws:order", redis.Z{Score: 1, Member: s}).Err())

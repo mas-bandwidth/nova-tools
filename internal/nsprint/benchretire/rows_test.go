@@ -22,6 +22,8 @@ var benchKeyShapes = []*regexp.Regexp{
 // A shape that ends in ':' is a prefix built further (cards:<where>), and the
 // card sets are in Rows by name.
 func TestRowsCoverEveryBenchKey(t *testing.T) {
+	t.Parallel()
+
 	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)

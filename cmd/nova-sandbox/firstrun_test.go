@@ -17,6 +17,8 @@ import (
 // above it, so they are the same on every bench -- which is what makes the drift real and
 // this test portable. `hosts=` was the field that went missing from the documented line.
 func TestTheCheckTranscriptNamesEveryFieldTheVerbPrints(t *testing.T) {
+	t.Parallel()
+
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +103,8 @@ func checkFieldNames(line string) []string {
 // platform branch above them. Field VALUES are the recording machine's and are
 // not compared; field NAMES in order are.
 func TestTheProbeAndSandboxTranscriptsNameEveryFieldTheVerbsPrint(t *testing.T) {
+	t.Parallel()
+
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)

@@ -46,6 +46,8 @@ func runGit(t *testing.T, dir string, args ...string) string {
 // is recorded in the card header, the card lands in the red lane, and the diff
 // is inlined for the worker (#2498 S1).
 func TestCutKindRecutMechanicalApplyClean(t *testing.T) {
+	t.Parallel()
+
 	repo := setupGitRepo(t)
 	dir := t.TempDir()
 	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
@@ -125,6 +127,8 @@ func TestCutKindRecutMechanicalApplyClean(t *testing.T) {
 // cut-kind-recut-apply-conflict: When the previous card's diff conflicts with the tip,
 // `applied: conflict` is recorded in the card header (#2498 S1).
 func TestCutKindRecutMechanicalApplyConflict(t *testing.T) {
+	t.Parallel()
+
 	repo := setupGitRepo(t)
 	dir := t.TempDir()
 	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
@@ -182,6 +186,8 @@ func TestCutKindRecutMechanicalApplyConflict(t *testing.T) {
 
 // cut-kind-recut-refusals: Missing diff/hold file, missing dir, or unreadable diff refuse cleanly.
 func TestCutKindRecutRefusals(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
 	if err := os.MkdirAll(queue, 0o755); err != nil {
@@ -253,6 +259,8 @@ func TestCutKindRecutRefusals(t *testing.T) {
 // cut-kind-recut-with-hold-and-diff: When both --hold-file and --diff-file are given,
 // the card carries the HOLD metadata and the mechanical rebase applied header.
 func TestCutKindRecutWithHoldAndDiff(t *testing.T) {
+	t.Parallel()
+
 	repo := setupGitRepo(t)
 	dir := t.TempDir()
 	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")

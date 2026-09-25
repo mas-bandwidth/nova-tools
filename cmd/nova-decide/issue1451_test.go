@@ -14,6 +14,8 @@ import (
 // "<tool>[ <verb>]: <what was wrong>; run: <tool> help". Asserting only that
 // "help" appears somewhere would pass "refusing to guess" plus the whole banner.
 func TestIssue1451EveryMissingFlagRefusalNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	const door = "; run: nova-decide help"
 
 	verbs := usageVerbs(t)

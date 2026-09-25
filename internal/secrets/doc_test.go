@@ -12,6 +12,8 @@ import (
 // reads the spec the way internal/decide/doc_test.go reads SPEC-DECIDE.md, so a
 // rule renamed out of the document is red in a build.
 func TestSpecSecretsNamesDogfoodingAdditions(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SECRETS.md"))
 	if err != nil {
 		t.Fatalf("the secrets spec is missing: %s", err)

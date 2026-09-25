@@ -177,6 +177,8 @@ func only(t *testing.T, cfg map[string][][]string, directive string) []string {
 // or wildcard address, or a hostname, is refused before anything is launched,
 // and a missing --bind is refused rather than defaulted.
 func TestBoundToLocalhostAndTailnetOnly(t *testing.T) {
+	t.Parallel()
+
 	for _, bind := range []string{
 		"127.0.0.1",
 		"::1",
@@ -245,6 +247,8 @@ func TestBoundToLocalhostAndTailnetOnly(t *testing.T) {
 // never in a file on the bench, and never in what serve prints. There is no
 // flag that takes it, and without it serve refuses rather than running open.
 func TestAuthFromNovaSecretsNeverAPlaintextArgument(t *testing.T) {
+	t.Parallel()
+
 	const pw = `n0va-s3cret "quoted" \back value`
 	secret := secrets.NewSecret(pw)
 	h := newServeHarness(t, pw)
@@ -321,6 +325,8 @@ func TestAuthFromNovaSecretsNeverAPlaintextArgument(t *testing.T) {
 // Nothing sets a TTL policy: no volatile-* eviction, no dump file named
 // elsewhere, no include that could turn any of it back.
 func TestPersistenceIsAOFWithNoEviction(t *testing.T) {
+	t.Parallel()
+
 	h := newServeHarness(t, "pw-from-nova-secrets")
 	code, out, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6379", "--dir", h.dir)
 	if code != 0 || len(h.launches) != 1 {
@@ -378,6 +384,8 @@ func TestPersistenceIsAOFWithNoEviction(t *testing.T) {
 // and started again on the same --dir, and the key is back intact with no TTL,
 // and preflight 7.1 reads GREEN against that instance.
 func TestRestartOnTheSameDirKeepsTheStore(t *testing.T) {
+	t.Parallel()
+
 	const pw = "pw-from-nova-secrets"
 	program := testutil.Program(t)
 	h := newServeHarness(t, pw)

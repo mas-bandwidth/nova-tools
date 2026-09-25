@@ -151,6 +151,8 @@ func TestTheBinaryWritesOnlyTheLanesOwnFiles(t *testing.T) {
 // actually about was unscanned. verbs.go's `commit` does carry merge.Identity today; a
 // second one added here would not have been caught by anything.
 func TestEveryCommitWritingCommandInThisPackageCarriesTheIdentity(t *testing.T) {
+	t.Parallel()
+
 	fset := token.NewFileSet()
 	checked := 0
 	for name := range mainPackageSource(t) {

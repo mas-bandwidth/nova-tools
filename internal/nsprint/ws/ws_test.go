@@ -72,6 +72,8 @@ func counts(t *testing.T, c *redis.Client) map[string]ws.Count {
 }
 
 func TestFixtureHoldsTheInvariants(t *testing.T) {
+	t.Parallel()
+
 	_, c := wstest.Start(t)
 	ids := wstest.Fixture(t, c, 1000, 10)
 	check(t, c, ids)
@@ -90,6 +92,8 @@ func TestFixtureHoldsTheInvariants(t *testing.T) {
 // move_many are each one round trip, no command runs a second on the server,
 // and the invariants hold after every one. The measured ms are logged.
 func TestEveryOperationIsOneRoundTripUnderOneSecond(t *testing.T) {
+	t.Parallel()
+
 	_, c := wstest.Start(t)
 	ids := wstest.Fixture(t, c, 1000, 10)
 	done := slowlog(t, c)
@@ -198,6 +202,8 @@ func TestEveryOperationIsOneRoundTripUnderOneSecond(t *testing.T) {
 }
 
 func TestMoveGraph(t *testing.T) {
+	t.Parallel()
+
 	_, c := wstest.Start(t)
 	ids := wstest.Fixture(t, c, 20, 1)
 	ctx := context.Background()
@@ -250,6 +256,8 @@ func TestMoveGraph(t *testing.T) {
 // target or not; any set at all for a closed task), is refused with the
 // mismatch named and writes nothing; move_many refuses that id alone.
 func TestMoveRefusesABrokenLink(t *testing.T) {
+	t.Parallel()
+
 	_, c := wstest.Start(t)
 	wstest.Fixture(t, c, 20, 1)
 	ctx := context.Background()
@@ -292,6 +300,8 @@ func TestMoveRefusesABrokenLink(t *testing.T) {
 }
 
 func TestRefusalsWriteNothing(t *testing.T) {
+	t.Parallel()
+
 	_, c := wstest.Start(t)
 	ids := wstest.Fixture(t, c, 100, 10)
 	ctx := context.Background()
@@ -420,6 +430,8 @@ func migrateAll(t *testing.T, c *redis.Client) ws.MigrateResult {
 // friend-queue idx sets and q:waiting / q:blocked; a second pass places
 // nothing; a ws move made after migrate survives a re-run.
 func TestMigrateBuildsTheSetsAndIsIdempotent(t *testing.T) {
+	t.Parallel()
+
 	_, c := wstest.Start(t)
 	ids, want := legacy(t, c, 1000)
 	done := slowlog(t, c)
@@ -470,6 +482,8 @@ func TestMigrateBuildsTheSetsAndIsIdempotent(t *testing.T) {
 }
 
 func TestCheckpointWritesEverySet(t *testing.T) {
+	t.Parallel()
+
 	_, c := wstest.Start(t)
 	wstest.Fixture(t, c, 1000, 10)
 	ctx := context.Background()
@@ -502,6 +516,8 @@ func TestCheckpointWritesEverySet(t *testing.T) {
 }
 
 func TestReadIDsAndParseStreams(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "ids")
 	if err := os.WriteFile(path, []byte("a b\n# comment\nc,a  # trailing\n\n"), 0o644); err != nil {
 		t.Fatal(err)

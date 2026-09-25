@@ -30,6 +30,8 @@ func slowEvents(t *testing.T, fixture string) []Event {
 
 // A package under budget is a green with the single slowest package named.
 func TestSlowTestsUnderBudgetIsOK(t *testing.T) {
+	t.Parallel()
+
 	fixture := `{"Action":"run","Package":"example.com/pkg","Test":"TestA"}
 {"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
 {"Action":"pass","Package":"example.com/pkg","Elapsed":3.2}
@@ -50,6 +52,8 @@ func TestSlowTestsUnderBudgetIsOK(t *testing.T) {
 // A package over budget is one finding naming the package, its total, the
 // budget and its slowest tests, worst first.
 func TestSlowTestsOverBudgetNamesThePackageAndSlowestTests(t *testing.T) {
+	t.Parallel()
+
 	fixture := `{"Action":"pass","Package":"example.com/pkg","Test":"TestB","Elapsed":2.9}
 {"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
 {"Action":"pass","Package":"example.com/pkg","Elapsed":75.3}
@@ -71,6 +75,8 @@ func TestSlowTestsOverBudgetNamesThePackageAndSlowestTests(t *testing.T) {
 // An empty stdin is not a package over budget; it is zero packages, and the
 // OK line says so rather than leaving the slowest slot empty.
 func TestSlowTestsEmptyInputIsOKWithZeroPackages(t *testing.T) {
+	t.Parallel()
+
 	report := Sum(nil, slowBudget)
 	if report.Packages != 0 {
 		t.Errorf("Packages = %d, want 0", report.Packages)
@@ -87,6 +93,8 @@ func TestSlowTestsEmptyInputIsOKWithZeroPackages(t *testing.T) {
 // A line that is not a TestEvent is a refusal naming the line, never a silent
 // skip: a truncated pipe must not read as a clean run.
 func TestSlowTestsMalformedLineIsRefused(t *testing.T) {
+	t.Parallel()
+
 	fixture := `{"Action":"pass","Package":"example.com/pkg","Elapsed":3.2}
 this is not json
 `
@@ -102,6 +110,8 @@ this is not json
 // The slowest list holds the slowest few tests, sorted, and never grows past
 // the cap; the package total is what decides over budget, not the test rows.
 func TestSlowTestsSlowestListIsSortedAndCapped(t *testing.T) {
+	t.Parallel()
+
 	fixture := `{"Action":"pass","Package":"example.com/pkg","Test":"TestD","Elapsed":1.0}
 {"Action":"pass","Package":"example.com/pkg","Test":"TestC","Elapsed":1.5}
 {"Action":"pass","Package":"example.com/pkg","Test":"TestB","Elapsed":2.0}
@@ -126,6 +136,8 @@ func TestSlowTestsSlowestListIsSortedAndCapped(t *testing.T) {
 // More than one package over budget prints one line each, worst first, and the
 // order does not depend on map iteration.
 func TestSlowTestsOverPackagesAreOrderedWorstFirst(t *testing.T) {
+	t.Parallel()
+
 	fixture := `{"Action":"pass","Package":"example.com/small","Elapsed":61.0}
 {"Action":"pass","Package":"example.com/big","Elapsed":90.0}
 {"Action":"pass","Package":"example.com/under","Elapsed":5.0}

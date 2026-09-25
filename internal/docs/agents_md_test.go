@@ -57,6 +57,13 @@ var classRuleRe = regexp.MustCompile("(?m)^### `([^`]+)` — ")
 func TestContributingPageNamesEveryClassRule(t *testing.T) {
 	t.Parallel()
 
+	contributingPageNamesEveryClassRule(t)
+}
+
+// contributingPageNamesEveryClassRule is the body both test names run; a test
+// that calls another Test would call t.Parallel twice.
+func contributingPageNamesEveryClassRule(t *testing.T) {
+	t.Helper()
 	page, err := os.ReadFile(contributingPath)
 	if err != nil {
 		t.Fatalf("%s: %v; docs/CONTRIBUTING.md carries the prose and class rules — it is not optional", contributingPath, err)
@@ -84,7 +91,9 @@ func TestContributingPageNamesEveryClassRule(t *testing.T) {
 // TestAgentsPageNamesEveryClassRule preserves the historical test name while
 // asserting the contract in docs/CONTRIBUTING.md.
 func TestAgentsPageNamesEveryClassRule(t *testing.T) {
-	TestContributingPageNamesEveryClassRule(t)
+	t.Parallel()
+
+	contributingPageNamesEveryClassRule(t)
 }
 
 // TestAgentsPageStaysUnderTheLineCap holds the ceiling.

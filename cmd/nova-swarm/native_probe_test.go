@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // SWARM GATE #3501: inside card sandbox ~/.local/bin is on PATH but its files cannot be inspected.
@@ -15,6 +17,8 @@ import (
 // exits 0 inside `nova-swarm native` on Studio bench, while direct file reads under ~/.local/bin
 // are denied.
 func TestNativeProbeCardRunsNovaCheckByName(t *testing.T) {
+	t.Parallel()
+
 	wallOnly(t)
 
 	checkBin, err := exec.LookPath("nova-check")
@@ -67,7 +71,7 @@ if [ $cat_rc -eq 0 ]; then
 fi
 exit 0
 `
-	if err := os.WriteFile(harnessScript, []byte(harnessContent), 0o755); err != nil {
+	if err := testbin.WriteExecutable(harnessScript, []byte(harnessContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

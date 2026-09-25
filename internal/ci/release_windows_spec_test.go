@@ -13,6 +13,8 @@ import (
 // decision that lives only in a Go comment is a decision the next person
 // re-makes differently, so the spec carries it and this holds the spec to it.
 func TestTheWindowsBenchIsInTheReleaseSpec(t *testing.T) {
+	t.Parallel()
+
 	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-RELEASE.md"))
 	for _, want := range []string{
 		"## 11. ",
@@ -36,6 +38,8 @@ func TestTheWindowsBenchIsInTheReleaseSpec(t *testing.T) {
 // the last mile, and a windows bench that needs a differently-shaped --bin has
 // to say so where the flags are documented (lesson 10's reason, one target on).
 func TestTheCommandReferenceShowsAWindowsAdopt(t *testing.T) {
+	t.Parallel()
+
 	text := readFile(t, filepath.Join(repoRoot(t), "docs", "CLI.md"))
 	for _, want := range []string{"windows-amd64", `C:\Users\nova\.local\bin`} {
 		if !strings.Contains(text, want) {

@@ -20,6 +20,8 @@ import (
 // (GatherFleet) and 7.4 is GREEN. The same hash with the launcher field
 // dropped is RED naming the bench.
 func TestLiveBeatShapeNamesLauncher(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	ctx := context.Background()
 	c := redis.NewClient(&redis.Options{Addr: addr})

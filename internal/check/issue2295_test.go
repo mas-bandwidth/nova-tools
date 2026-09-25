@@ -35,6 +35,8 @@ import (
 //     (SPEC.md 945), so a contributor's `diff.renames` is byte-identical
 //     on plumbing output and cannot re-shape the gate.
 func TestIssue2295(t *testing.T) {
+	t.Parallel()
+
 	t.Run("DestinationOID", func(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("windows: `:` is not a legal file-name character; this shape cannot be staged on that platform")
@@ -310,6 +312,8 @@ func issue2295HasSubject(fs []Failure, want string) bool {
 
 // guard against the test being run from outside the repo root
 func TestIssue2295Runshield(t *testing.T) {
+	t.Parallel()
+
 	wd, _ := os.Getwd()
 	if filepath.Base(wd) != "check" {
 		t.Errorf("issue2295 tests assume pkg=check; cwd=%s", wd)

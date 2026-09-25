@@ -28,6 +28,8 @@ func runCIIn(t *testing.T, stdin string, args ...string) (int, string, string) {
 // something on stdout. `slowtests` reads stdin, so an empty stream stands in
 // for "no events yet" and must still be a green, not a hang.
 func TestUsageBannerExamplesRun(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runCIIn(t, "", "help")
 	if exit != 0 {
 		t.Fatalf("`nova-ci help` exit = %d, want 0; stderr: %s", exit, stderr)
@@ -55,6 +57,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 // (b) The two refusals a first run hits name what the input wants: the whole
 // seconds a budget must be, and the line of stdin that was not a TestEvent.
 func TestARefusalSaysWhatTheInputWants(t *testing.T) {
+	t.Parallel()
+
 	exit, _, stderr := runCIIn(t, "", "slowtests", "--budget", "0")
 	if exit != 2 {
 		t.Errorf("--budget 0 exit = %d, want 2", exit)

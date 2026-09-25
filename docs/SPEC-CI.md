@@ -2156,6 +2156,69 @@ matches a redirect, append, `tee`, `cp`, `mv`, `install` or `truncate` shape ont
 that path — a write performed some other way, such as a wrapped `dd` or a
 Python one-liner, is invisible to it.
 
+### `parallel` — every test opens with `t.Parallel()`
+
+**The rule.** Every top-level `func TestX(t *testing.T)` in a `_test.go` under
+`cmd/` or `internal/`, whatever its build tags, has `t.Parallel()` as its FIRST
+statement, or sits on the serial allowlist with its reason.
+**The hurt.** Glenn, 2026-09-25: "Go tests always run in parallel." On that day
+843 of 6,417 test functions were parallel; `cmd/nova-sprint` ran 267 tests one
+after another and `go-test-cmd` took 129 s on the Linux bench against a
+two-minute ceiling and a one-minute target. The same change made 4,487 more
+tests parallel (5,330 of 6,417) with a Go program: a test that calls
+`t.Setenv`/`t.Chdir`, `os.Setenv` or `os.Chdir`, or assigns a package-level
+variable from test code, directly or through a helper, stayed serial, and so did
+the few that read a process-wide counter (`tokens.Opens`, `bus.NoteParses`,
+pulse's `statusIndexReads`) every parallel test adds to, or register into a
+package map (`go test -race` found nova-sprint's `verbs`).
+**The test.** `TestEveryTestOpensWithTParallel`
+(`internal/ci/parallel_class_test.go`).
+**Its allowlist.** `internal/ci/testdata/serial-tests_allowlist.txt`, one
+`path:TestName serial: <reason>` per line (`t.Setenv`, `t.Chdir`, `os.Chdir`,
+`swaps package var <pkg>.<name>`, or a sentence); shrink-only both ways, a row
+without a `serial:` reason is refused, and `serialTestsCeiling` caps the count
+so the list can only come down.
+**Its remedy lines.** `does not open with t.Parallel(); make it the first
+statement, or give the test a per-test seam (cmd.Env, an injected clock,
+t.TempDir) instead of t.Setenv, os.Chdir or a package-level swap`; for a stale
+row, `delete the stale entry and lower serialTestsCeiling (the list only
+shrinks)`.
+**Its narrowings.** It reads the syntax only: a `t.Parallel()` later in the body
+does not count, a test that opens with `t.Parallel()` and then races a shared
+resource is not seen (that is `go test -race`'s job), and subtests are not
+required to call it.
+
+### `slowwaits` — no per-commit test sleeps over a second or waits out a deadline
+
+**The rule.** No `_test.go` under `cmd/` or `internal/` outside a
+`//go:build slow` file writes `time.Sleep` of more than one second, or hands
+the code under test a deadline over five seconds and under thirty -- a field,
+assignment or `--flag` value named deadline, timeout, wall, grace or idle.
+**The hurt.** Glenn, 2026-09-25: "as we have worked, we have made tests
+slower." One verdict test sat 59 s in provider retry waits it asserted nothing
+about, one route test polled the wrong key until its 30 s ceiling, and a
+deadline test waited out a stalled reader for 25 s; eighteen tests were over
+five seconds. The five-to-thirty band is the shape of a deadline proved by
+reaching it; below five is the short injected deadline, and thirty or more is
+the generous ceiling `waits` and the ten-second law ask for, which costs
+nothing and is not read here.
+**The test.** `TestNoTestSleepsOverASecondOrWaitsOutADeadlineOverFive`
+(`internal/ci/slowwaits_class_test.go`), and `TestSlowWaitsRuleSeesEveryShape`
+beside it, which pins the reader against six shapes it must catch and eight it
+must pass.
+**Its allowlist.** `internal/ci/testdata/slowwaits_allowlist.txt`, one
+`path:Func <reason>` per line, keyed by function and not by line; each entry
+was measured on the day the rule landed and none pays its wait. Shrink-only.
+**Its remedy lines.** `inject a short one through the seam (200 ms proves a
+deadline as well as 10 s does), wait on the event instead of the clock, or move
+the test behind //go:build slow (nightly-slow.yml runs it)`; for a stale row,
+`delete the stale entry (the list only shrinks)`.
+**Its narrowings.** It reads literal durations only (`constDuration`, the
+`waits` rule's evaluator): a duration from a variable, a `FAKE-SLEEP` or shell
+`sleep` inside a fake's script, a provider retry wait inside the code under
+test and a poll that never sees its event are all invisible to it. The
+per-package budget (`slowtests`) and the measured table are the net under those.
+
 ### Tests this spec demands
 
 This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.

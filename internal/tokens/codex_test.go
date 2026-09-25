@@ -119,6 +119,8 @@ func codexOne(t *testing.T, d *CodexDecoding, id string) CodexObservation {
 // assertion here would be this test inventing a cell. The count is asserted too, and the
 // exact duplicate is a line on both sides rather than a collapsed one.
 func TestCodexDecoderMatchesTheExpectedEnvelopesByteForByte(t *testing.T) {
+	t.Parallel()
+
 	_, d := codexDecode(t)
 	want := codexLines(t, "expected_records.jsonl")
 	have := make([][]byte, 0, len(d.Observations))
@@ -155,6 +157,8 @@ func codexSealedForTest(line []byte) (string, []byte, error) { return codexSeale
 // file but accepted by the record validator under this mapping's own allowlists, with the
 // ID the validator derives.
 func TestCodexDecoderSealsThroughTheLandedBoundary(t *testing.T) {
+	t.Parallel()
+
 	m, d := codexDecode(t)
 	v := records.NewValidator(m.Allowlists())
 	for _, o := range d.Observations {
@@ -187,6 +191,8 @@ func TestCodexDecoderSealsThroughTheLandedBoundary(t *testing.T) {
 // TestCodexDecoderRefusesTheFixtureRefusals: every refused shape refuses with the rule and
 // the field the fixture names, and the decoder emits none of them.
 func TestCodexDecoderRefusesTheFixtureRefusals(t *testing.T) {
+	t.Parallel()
+
 	m, d := codexDecode(t)
 	v := records.NewValidator(m.Allowlists())
 	produced := map[string]bool{}
@@ -241,6 +247,8 @@ func TestCodexDecoderRefusesTheFixtureRefusals(t *testing.T) {
 // rendering of the whole decoding carries one. resp-u2's output_tokens VALUE is a sentinel,
 // so the unavailable path is covered too.
 func TestCodexDecoderLeaksNoPrivacySentinel(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range []string{"source_rollout.jsonl", "source_rollout_copy.jsonl"} {
 		raw, err := os.ReadFile(filepath.Join(codexDir(), name))
 		if err != nil {
@@ -281,6 +289,8 @@ func TestCodexDecoderLeaksNoPrivacySentinel(t *testing.T) {
 // accepted envelopes: original lexemes, the three presence states, zero semantics, the
 // model basis, and the identity provenance.
 func TestCodexDecoderPreservesLexemesPresenceAndModelBasis(t *testing.T) {
+	t.Parallel()
+
 	m, d := codexDecode(t)
 	v := records.NewValidator(m.Allowlists())
 	obs := map[string]*records.Observation{}
@@ -446,6 +456,8 @@ func TestCodexDecoderPreservesLexemesPresenceAndModelBasis(t *testing.T) {
 // changed copy is a conflict with no newest-wins, an arithmetic mismatch is retained and
 // excluded, and two keys are spendable.
 func TestCodexDecoderCopyConflictAndArithmetic(t *testing.T) {
+	t.Parallel()
+
 	_, d := codexDecode(t)
 	c1 := codexByResponse(d, "resp-c1")
 	if len(c1) != 3 {
@@ -506,6 +518,8 @@ func TestCodexDecoderCopyConflictAndArithmetic(t *testing.T) {
 // and the owed task the manifest names is reported so a report cannot claim complete
 // history. Nothing approximates a request identity or a spend from a cumulative snapshot.
 func TestCodexDecoderLeavesTheOwedSnapshotShapeUncovered(t *testing.T) {
+	t.Parallel()
+
 	m, d := codexDecode(t)
 	if n := d.Unsupported["token_count"]; n != 1 {
 		t.Errorf("the token_count snapshot is counted as unsupported once, found %d", n)
@@ -535,6 +549,8 @@ func TestCodexDecoderLeavesTheOwedSnapshotShapeUncovered(t *testing.T) {
 // token_usage_record. An event_msg carrying the same name inside a payload is the wrapper
 // shape the document rules out, and a record with no usage manufactures nothing.
 func TestCodexDecoderSelectsTopLevelRecordsOnly(t *testing.T) {
+	t.Parallel()
+
 	m := codexMapping(t)
 	lines := strings.Join([]string{
 		`{"type":"event_msg","payload":{"type":"token_usage_record","response_id":"resp-w1","session_id":"t1","turn_id":"1","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3,"cached_input_tokens":0,"cache_write_input_tokens":0,"reasoning_output_tokens":0}}}`,
@@ -583,6 +599,8 @@ func TestCodexDecoderSelectsTopLevelRecordsOnly(t *testing.T) {
 // object and a missing/unreadable turn_id. It decodes inline source lines and touches
 // neither the fixture files nor the mapping.
 func TestCodexDecoderSubsetImpossibleAndSourceShapes(t *testing.T) {
+	t.Parallel()
+
 	m := codexMapping(t)
 	lines := strings.Join([]string{
 		`{"type":"token_usage_record","response_id":"resp-s1","session_id":"t1","turn_id":"1","timestamp":"2026-09-12T00:00:00Z","usage":{"input_tokens":100,"output_tokens":50,"total_tokens":150,"cached_input_tokens":200}}`,
@@ -664,6 +682,8 @@ func TestCodexDecoderSubsetImpossibleAndSourceShapes(t *testing.T) {
 // identifier is preserved as its exact decimal string, and a later configured model never
 // relabels an earlier response.
 func TestCodexDecoderKeepsIdentityLexemesAndDoesNotRelabelEarlierModels(t *testing.T) {
+	t.Parallel()
+
 	m := codexMapping(t)
 	lines := strings.Join([]string{
 		`{"type":"token_usage_record","response_id":"resp-m1","session_id":"t1","turn_id":9007199254740993,"timestamp":"2026-09-12T00:00:00Z","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`,
@@ -716,6 +736,8 @@ func TestCodexDecoderKeepsIdentityLexemesAndDoesNotRelabelEarlierModels(t *testi
 // instant allocates none. A -04:00 evening is the next UTC day, which is the whole reason
 // the format shards on the UTC day of the point instant and not on the source's local date.
 func TestCodexShardDayIsTheUTCDayOfAKnownInstant(t *testing.T) {
+	t.Parallel()
+
 	at := func(s string) *string { return &s }
 	for _, tc := range []struct{ in, want string }{
 		{"2026-09-12T01:02:03-04:00", "2026-09-12"},
@@ -737,6 +759,8 @@ func TestCodexShardDayIsTheUTCDayOfAKnownInstant(t *testing.T) {
 // rather than assumed. A manifest that decided something else must fail here, not be
 // silently followed.
 func TestCodexMappingManifestIsTheDecidedContract(t *testing.T) {
+	t.Parallel()
+
 	m := codexMapping(t)
 	if m.Schema != "nova.tokens.mapping/2" {
 		t.Errorf("manifest schema is %q", m.Schema)
@@ -776,6 +800,8 @@ func TestCodexMappingManifestIsTheDecidedContract(t *testing.T) {
 // line this mapping cannot read stops the decode naming the source's index and line number
 // -- never the caller's path, and never the line's own bytes, which can hold a prompt.
 func TestCodexDecoderRefusesAnUnreadableLineWithoutQuotingIt(t *testing.T) {
+	t.Parallel()
+
 	m := codexMapping(t)
 	for _, bad := range []string{
 		`{"type":"token_usage_record","response_id":"resp-x1","session_id":"t1","usage":{"input_tokens":1}} {"type":"token_usage_record","response_id":"` + codexSentinelPrompt + `"}`,
@@ -797,6 +823,8 @@ func TestCodexDecoderRefusesAnUnreadableLineWithoutQuotingIt(t *testing.T) {
 // TestCodexPartialBindingIsNoBinding: a binding missing any of its three parts is not the
 // explicit owner binding the mapping requires, and an origin is never half-supplied.
 func TestCodexPartialBindingIsNoBinding(t *testing.T) {
+	t.Parallel()
+
 	m := codexMapping(t)
 	line := `{"type":"token_usage_record","response_id":"resp-p1","session_id":"t1","turn_id":"1","timestamp":"2026-09-12T00:00:00Z","turn_context_model":"gpt-5-codex","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
 	v := records.NewValidator(m.Allowlists())

@@ -65,6 +65,8 @@ func one(t *testing.T, root, name string) guard.Result {
 // fixture can carry (the catalog guard needs the real map and is covered by
 // TestGuardsOnThisRepository).
 func TestGuardsPassOnACleanFixture(t *testing.T) {
+	t.Parallel()
+
 	root := fixtureRepo(t)
 	for _, name := range []string{"lua-locals", "lua-crossfile", "one-parser", "named-paths", "tracked-files"} {
 		r := one(t, root, name)
@@ -81,6 +83,8 @@ func TestGuardsPassOnACleanFixture(t *testing.T) {
 // shape: one file with 201 top-level locals fails lua-locals and the row
 // names the file.
 func TestGuardCatchesA201LocalLuaFile(t *testing.T) {
+	t.Parallel()
+
 	root := fixtureRepo(t)
 	var b strings.Builder
 	for i := 0; i < 201; i++ {
@@ -102,6 +106,8 @@ func TestGuardCatchesA201LocalLuaFile(t *testing.T) {
 // TestGuardCatchesABareCrossFileName: the a42285c5 shape, a file that calls
 // another file's local by its bare name.
 func TestGuardCatchesABareCrossFileName(t *testing.T) {
+	t.Parallel()
+
 	root := fixtureRepo(t)
 	src := "local function pong2() return ping() end\nredis.register_function('ns_pong2', pong2)\n"
 	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(guard.LuaDir), "02_bare.lua"), []byte(src), 0o644); err != nil {
@@ -116,6 +122,8 @@ func TestGuardCatchesABareCrossFileName(t *testing.T) {
 // TestGuardCatchesAMissingNamedPath is the DONE-WHEN control: a comment that
 // names a path the tree does not have fails named-paths at that line.
 func TestGuardCatchesAMissingNamedPath(t *testing.T) {
+	t.Parallel()
+
 	root := fixtureRepo(t)
 	src := "// Package y follows internal/gone/y.go.\npackage y\n"
 	p := filepath.Join(root, "internal", "y", "y.go")
@@ -141,6 +149,8 @@ func TestGuardCatchesAMissingNamedPath(t *testing.T) {
 // TestGuardCatchesASecondParser: a new non-test file that reads who= and
 // verdict= is not in the allow list.
 func TestGuardCatchesASecondParser(t *testing.T) {
+	t.Parallel()
+
 	root := fixtureRepo(t)
 	src := "package z\n\nfunc parse(s string) bool { return s == \"who=\" || s == \"verdict=\" }\n"
 	p := filepath.Join(root, "internal", "z", "z.go")
@@ -159,6 +169,8 @@ func TestGuardCatchesASecondParser(t *testing.T) {
 // TestGuardCatchesTrackedScratchAndOversized: a tracked scratch/ file and a
 // tracked file over the cap each fail tracked-files.
 func TestGuardCatchesTrackedScratchAndOversized(t *testing.T) {
+	t.Parallel()
+
 	root := fixtureRepo(t)
 	git := func(args ...string) {
 		t.Helper()
@@ -193,6 +205,8 @@ func TestGuardCatchesTrackedScratchAndOversized(t *testing.T) {
 // TestRunReportsAnUnknownGuardAsAFailRow: a typo in a lander's list is a
 // row, never a silent skip.
 func TestRunReportsAnUnknownGuardAsAFailRow(t *testing.T) {
+	t.Parallel()
+
 	rs := guard.Run(context.Background(), t.TempDir(), "no-such-guard")
 	if len(rs) != 1 || rs[0].Err == nil || !strings.HasPrefix(rs[0].Row(), "FAIL no-such-guard") {
 		t.Fatalf("got %+v", rs)
@@ -206,6 +220,8 @@ func TestRunReportsAnUnknownGuardAsAFailRow(t *testing.T) {
 // this test is in: dev is green by construction, so every row is PASS, and a
 // red row here is a real finding on the tree under test.
 func TestGuardsOnThisRepository(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("walks the whole tree")
 	}

@@ -21,6 +21,8 @@ func testWait() time.Duration {
 }
 
 func TestCoordinatorLockReleasedWhenHolderDies(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "coordinator.lock")
 
@@ -82,6 +84,8 @@ func TestCoordinatorLockReleasedWhenHolderDies(t *testing.T) {
 }
 
 func TestHelperHoldsCoordinatorLock(t *testing.T) {
+	t.Parallel()
+
 	path := os.Getenv("CONTROL_LOCK_HELPER")
 	if path == "" {
 		t.Skip("not the helper: this runs only as the child of TestCoordinatorLockReleasedWhenHolderDies")

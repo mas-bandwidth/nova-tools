@@ -21,6 +21,8 @@ import (
 const firstRunDraft = "The lantern glazing is cleaned with two cloths, one for the brass and one for the glass, before the fog signal is tested.\n"
 
 func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name, want string
 		args       []string
@@ -81,6 +83,8 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 // reader who cannot tell. The quickstart line comes first because it is the
 // one a reader with nothing but a directory can type.
 func TestUsageBannerExamplesRun(t *testing.T) {
+	t.Parallel()
+
 	examples := usageExamples(t)
 	if len(examples) != 3 {
 		t.Fatalf("want a quickstart, a search and a check example under `example:`, got %d: %q", len(examples), examples)
@@ -151,6 +155,8 @@ func usageExamples(t *testing.T) []string {
 // DEFECT on steps 2 and 3 and the other read CLEAN, and the tool was right both
 // times (nova-tools#1547).
 func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	blocks := readmeFirstRun(t)
 	lines := blocks[len(blocks)-1]
 	draft := writeDraft(t)
@@ -332,6 +338,8 @@ func writeDraft(t *testing.T) string {
 // demonstration whose printed command differs from the command it ran teaches
 // an invocation that does not work.
 func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus)
 	if exit != 0 {
 		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
@@ -397,6 +405,8 @@ func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
 // a flag that changed the run without changing the printed command would make
 // the transcript a decoration.
 func TestQuickstartRunsTheWordsAndDraftItWasGiven(t *testing.T) {
+	t.Parallel()
+
 	draft := writeDraft(t)
 	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--words", "glazing", "--words", "brass", "--draft", draft)
 	if exit != 0 {
@@ -422,6 +432,8 @@ func TestQuickstartRunsTheWordsAndDraftItWasGiven(t *testing.T) {
 // there, and the closing note — the sentence a reader is meant to leave with —
 // is not printed over a run that did not finish.
 func TestQuickstartExitsTwoWhenAStepCouldNotRun(t *testing.T) {
+	t.Parallel()
+
 	empty := filepath.Join(t.TempDir(), "empty.md")
 	if err := os.WriteFile(empty, []byte("ok\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -447,6 +459,8 @@ func TestQuickstartExitsTwoWhenAStepCouldNotRun(t *testing.T) {
 // shows a reader's corpus and the test has its own; everything else is
 // compared by shape, so the fixture's scores stay the fixture's business.
 func TestREADMEFirstRunQuickstartBlockMatchesWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	lines := readmeFirstRun(t)[0]
 	cmd, ok := strings.CutPrefix(lines[0], "$ nova-memory quickstart ")
 	if !ok {
@@ -540,6 +554,8 @@ func field(t *testing.T, line, key string) string {
 // round per invocation. Every reason a run cannot start is reported by the run
 // that could not start.
 func TestARefusalReportsEveryReasonAtOnce(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		args []string
@@ -617,6 +633,8 @@ func TestARefusalReportsEveryReasonAtOnce(t *testing.T) {
 // whose whole job is to be copied. Both platforms' rules are pinned here
 // rather than on the platform that happens to be running.
 func TestTheEchoedStepPastesBackIntoThatPlatformsShell(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name    string
 		windows bool
@@ -676,6 +694,8 @@ func TestTheEchoedStepPastesBackIntoThatPlatformsShell(t *testing.T) {
 
 // Every flag defined by any subcommand must have a flag entry in the usage banner (F5-7).
 func TestEveryDefinedFlagAppearsInTheUsageBanner(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, _ := runCLI(t, "", "help")
 	if exit != 0 {
 		t.Fatalf("help failed: %d", exit)
@@ -699,6 +719,8 @@ func TestEveryDefinedFlagAppearsInTheUsageBanner(t *testing.T) {
 }
 
 func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--words", "-glazing")
 	if exit != 0 {
 		t.Fatalf("quickstart with dash-leading word failed: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)

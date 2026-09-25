@@ -17,6 +17,8 @@ import (
 // The template is text the tool prints and the spec is the contract that text
 // serves. This test pins both, so the ask cannot drift out of one of them.
 func TestReadPRTemplateAsksForBoundedFindingsOnly(t *testing.T) {
+	t.Parallel()
+
 	rules := []string{
 		"findings only",
 		"one line per finding",

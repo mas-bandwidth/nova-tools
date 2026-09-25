@@ -33,6 +33,8 @@ func blobPeek(blob []byte) func() ([]byte, error) {
 // is REMOVED from disk before the index side runs, so a blob reader that
 // secretly reopened the path would fail here rather than pass by coincidence.
 func TestNoCodeStagedClassifyTakesParameterisedInputs(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name    string
 		rel     string
@@ -95,6 +97,8 @@ func TestNoCodeStagedClassifyTakesParameterisedInputs(t *testing.T) {
 // readers, no filesystem) must produce the same findings, and each flag's
 // behaviour is asserted explicitly on the index path.
 func TestNoCodeStagedReusesTheClassifierUnchanged(t *testing.T) {
+	t.Parallel()
+
 	type blob struct {
 		content string
 		exec    bool
@@ -239,6 +243,8 @@ func findingsByPath(fs []Failure) map[string]string {
 // code is flagged without being followed, through the parameterised path: the
 // reader is never called.
 func TestIssue2294ClassifyParametrisedSymlink(t *testing.T) {
+	t.Parallel()
+
 	rules, err := newNoCodeRules(NoCodeOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -258,6 +264,8 @@ func TestIssue2294ClassifyParametrisedSymlink(t *testing.T) {
 // from the first-two-bytes reader, or no reader at all, is a finding through
 // the parameterised path, never a pass.
 func TestIssue2294ClassifyParametrisedUnreadablePeek(t *testing.T) {
+	t.Parallel()
+
 	rules, err := newNoCodeRules(NoCodeOptions{})
 	if err != nil {
 		t.Fatal(err)

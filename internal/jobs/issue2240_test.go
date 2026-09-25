@@ -14,6 +14,8 @@ import (
 )
 
 func TestIssue2240(t *testing.T) {
+	t.Parallel()
+
 	// jobs-an-executor-draws-its-budget-from-the-parent-grant: an external
 	// executor's sub-budget comes out of the parent unit's reservation and
 	// returns to it on release.

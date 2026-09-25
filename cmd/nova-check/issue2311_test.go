@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // Issue #2311: `docs/SPEC.md` claims `record` writes a dated clock stamp,
@@ -91,7 +93,7 @@ func TestIssue2311(t *testing.T) {
 		}
 		tools := t.TempDir()
 		script := "#!/bin/sh\ncat <<'EOF'\nnova-example: fixture\n\nusage:\n  nova-example links --dir <dir>\nEOF\n"
-		if err := os.WriteFile(filepath.Join(tools, "nova-example"), []byte(script), 0o755); err != nil {
+		if err := testbin.WriteExecutable(filepath.Join(tools, "nova-example"), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 

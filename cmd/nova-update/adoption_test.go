@@ -7,6 +7,8 @@ import (
 )
 
 func TestUpdateAdoptionMatrix(t *testing.T) {
+	t.Parallel()
+
 	t.Run("status validation", func(t *testing.T) {
 		for _, s := range []string{"adopted", "trying", "declined", "unknown"} {
 			input := "emma nova-bus " + s

@@ -26,6 +26,8 @@ func cacheEnvValue(t *testing.T, env []string, name string) string {
 
 // The child env of two fake jobs on one root carries the same GOMODCACHE.
 func TestTwoJobsOnOneRootShareTheGoModuleCache(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	w := Worker{WorkerDir: filepath.Join(root, "worker")}
 	a := childEnv(w, 1, "job-a", "", root)
@@ -73,6 +75,8 @@ func makeFinishedSlot(t *testing.T, root, slot string) (slotPath, jobPath string
 // Reap on a temp root with a finished slot removes data/ and keeps RESULT.md and reports
 // freed bytes.
 func TestReapRemovesAFinishedSlotAndKeepsTheEvidence(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	slotPath, jobPath := makeFinishedSlot(t, root, "1")
 	slots, freed, err := ReapSlots(ReapInput{Root: root, Older: time.Hour, Now: time.Now})
@@ -103,6 +107,8 @@ func TestReapRemovesAFinishedSlotAndKeepsTheEvidence(t *testing.T) {
 
 // A live slot (fresh log, no RESULT) is untouched.
 func TestReapLeavesALiveSlotAlone(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	slotPath := filepath.Join(root, "2")
 	makeSlotFile(t, filepath.Join(slotPath, "data", "live.bin"), 512)
@@ -121,6 +127,8 @@ func TestReapLeavesALiveSlotAlone(t *testing.T) {
 
 // keep_data leaves data/ alone.
 func TestReapKeepDataLeavesData(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	slotPath, _ := makeFinishedSlot(t, root, "3")
 	slots, freed := ReapAtTaskEnd(root, Worker{KeepData: true}, time.Now)
@@ -134,6 +142,8 @@ func TestReapKeepDataLeavesData(t *testing.T) {
 
 // An old harness log with no RESULT is a finished slot too.
 func TestReapRemovesASlotWhoseLogIsOlder(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	slotPath := filepath.Join(root, "4")
 	log := filepath.Join(slotPath, "jobs", "card-c", "harness.log")
@@ -158,6 +168,8 @@ func TestReapRemovesASlotWhoseLogIsOlder(t *testing.T) {
 // A reaped target that is a symlink out of the slot is a derivation the reaper must not
 // act on: safepath.RemoveUnder refuses the link, and the directory it pointed at survives.
 func TestReapRefusesASlotScratchSymlinkToOutside(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	slotPath := filepath.Join(root, "5")
 	jobPath := filepath.Join(slotPath, "jobs", "card-e")

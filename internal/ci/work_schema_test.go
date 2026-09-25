@@ -102,6 +102,8 @@ func loadWorkSchema(t *testing.T) workSchema {
 // TestWorkWireSchemaLoadsAndValidatesPins asserts that the protocol v1 schema
 // file exists, loads cleanly, and pins the wire-level invariants verbatim.
 func TestWorkWireSchemaLoadsAndValidatesPins(t *testing.T) {
+	t.Parallel()
+
 	ws := loadWorkSchema(t)
 
 	if ws.ProtocolVersion != "1" {
@@ -191,6 +193,8 @@ func TestWorkWireSchemaLoadsAndValidatesPins(t *testing.T) {
 // completeness: non-empty op, non-empty grammar line, explicit ordered fields,
 // strengthened grammar first-token matching, and correct event kind classification.
 func TestAllInScopeVerbsHaveCompleteConcreteMappings(t *testing.T) {
+	t.Parallel()
+
 	ws := loadWorkSchema(t)
 
 	if len(ws.Verbs) != 71 {
@@ -327,6 +331,8 @@ func TestAllInScopeVerbsHaveCompleteConcreteMappings(t *testing.T) {
 // operation domains are defined, and their union covers all 71 post-fold verbs
 // (with version and help handled client-side per docs/SPEC-WORK.md:2250-2253).
 func TestCoordinatorDomainsCoverAllOperations(t *testing.T) {
+	t.Parallel()
+
 	ws := loadWorkSchema(t)
 
 	if len(ws.CoordinatorDomains) != 12 {
@@ -383,6 +389,8 @@ func TestCoordinatorDomainsCoverAllOperations(t *testing.T) {
 // missing/deferred verbs have status filled-by-folds and concrete op, owning domain,
 // disposition, ordered fields, and grammar lines (docs/SPEC-WORK.md:2759-2780).
 func TestMissingAndDeferredVerbsHaveConcreteDispositions(t *testing.T) {
+	t.Parallel()
+
 	ws := loadWorkSchema(t)
 
 	if len(ws.MissingVerbs) != 13 {
@@ -445,6 +453,8 @@ func TestMissingAndDeferredVerbsHaveConcreteDispositions(t *testing.T) {
 // are explicitly present in numeric order, with non-empty descriptions and citations
 // matching origin/spec/nova-work at 977980d.
 func TestRowanMarksArePinnedAndCited(t *testing.T) {
+	t.Parallel()
+
 	ws := loadWorkSchema(t)
 
 	if len(ws.RowanMarks) != 18 {
@@ -497,6 +507,8 @@ func TestRowanMarksArePinnedAndCited(t *testing.T) {
 // 4-byte big-endian framing length, RFC 3339 UTC timestamps with trailing Z,
 // and verbatim line splitting into stdout/stderr according to the second token.
 func TestWireFramingAndGrammarContracts(t *testing.T) {
+	t.Parallel()
+
 	// 1. Framing prefix: 4 bytes big endian unsigned integer
 	payload := []byte(`{"op":"ping","request":"req-1"}`)
 	buf := make([]byte, 4+len(payload))
@@ -569,6 +581,8 @@ func TestWireFramingAndGrammarContracts(t *testing.T) {
 
 // TestJSONRequestFrameParsing verifies reading and parsing a complete 4-byte-prefixed JSON request frame.
 func TestJSONRequestFrameParsing(t *testing.T) {
+	t.Parallel()
+
 	rawJSON := `{"op":"node-add","request":"req-12345","as":"worker-1","expect":"42","now":"2026-09-15T02:30:00Z","deadline":"2026-09-15T03:00:00Z","args":{"id":"task-99","title":"implement wire framing"}}`
 	frameLen := len(rawJSON)
 	frame := make([]byte, 4+frameLen)
@@ -798,6 +812,8 @@ func checkNeedsGateCoverage(ws workSchema) []string {
 // TestAVerbThatCanAdmitDeclaresItsNeedsGate is the fixture half of the replay:
 // the coverage rule itself, exercised over schemas built for the purpose.
 func TestAVerbThatCanAdmitDeclaresItsNeedsGate(t *testing.T) {
+	t.Parallel()
+
 	assignment := ":assignment"
 	acknowledge := ":acknowledge"
 
@@ -859,6 +875,8 @@ func TestAVerbThatCanAdmitDeclaresItsNeedsGate(t *testing.T) {
 // repository passes the same rule, with every verb of rule 3's list marked
 // refuses and execution reconcile alone marked withholds.
 func TestShippedSchemaDeclaresEveryNeedsGate(t *testing.T) {
+	t.Parallel()
+
 	ws := loadWorkSchema(t)
 	if findings := checkNeedsGateCoverage(ws); len(findings) != 0 {
 		for _, f := range findings {
@@ -908,6 +926,8 @@ func TestShippedSchemaDeclaresEveryNeedsGate(t *testing.T) {
 // the register that says so, and it fails the day an entry appears unmarked --
 // which is the coverage rule's job from then on.
 func TestRule3VerbsWithoutASchemaEntryAreNamed(t *testing.T) {
+	t.Parallel()
+
 	ws := loadWorkSchema(t)
 	byVerb := map[string]bool{}
 	for _, v := range ws.Verbs {
@@ -923,6 +943,8 @@ func TestRule3VerbsWithoutASchemaEntryAreNamed(t *testing.T) {
 // TestEveryCanonicalAdmittingKindIsCovered is one negative fixture per
 // canonical admitting kind, so the kind list cannot quietly shrink again.
 func TestEveryCanonicalAdmittingKindIsCovered(t *testing.T) {
+	t.Parallel()
+
 	for _, kind := range canonicalAdmittingKinds {
 		k := kind
 		t.Run(strings.TrimPrefix(k, ":"), func(t *testing.T) {
@@ -954,6 +976,8 @@ func TestEveryCanonicalAdmittingKindIsCovered(t *testing.T) {
 // one unmarked hypothetical verb of each canonical admitting kind, which must
 // FAIL the coverage rule.
 func TestShippedSchemaSurvivesAnInjectedUnmarkedVerb(t *testing.T) {
+	t.Parallel()
+
 	ws := loadWorkSchema(t)
 	for _, kind := range canonicalAdmittingKinds {
 		k := kind
@@ -979,6 +1003,8 @@ func TestShippedSchemaSurvivesAnInjectedUnmarkedVerb(t *testing.T) {
 // other side: a verb entry whose event kind this test has never heard of is a
 // verb the coverage rule silently ignores.
 func TestShippedSchemaUsesOnlyKnownEventKinds(t *testing.T) {
+	t.Parallel()
+
 	ws := loadWorkSchema(t)
 	// Kinds the shipped file uses that are deliberately NOT admitting, listed
 	// so a NEW kind appearing forces a decision rather than being ignored.
@@ -1005,6 +1031,8 @@ func TestShippedSchemaUsesOnlyKnownEventKinds(t *testing.T) {
 // entry's event kind to an admitting one, with no `needs_gate`, and expects it
 // to be found; marking it clears the finding.
 func TestAMissingVerbWithAnAdmittingKindIsCaught(t *testing.T) {
+	t.Parallel()
+
 	ws := loadWorkSchema(t)
 	if len(ws.MissingVerbs) == 0 {
 		t.Fatal("the shipped schema has no missing_verbs to mutate")

@@ -28,6 +28,8 @@ func fieldsIndexFindings(t *testing.T, body string) []string {
 // commit-only cursor line splits into two fields and the walker reaches
 // fields[2:]. Nothing in the function ever measured the slice.
 func TestFieldsIndexRefusesThePreFixCursor(t *testing.T) {
+	t.Parallel()
+
 	got := fieldsIndexFindings(t, `
 func readCursor(line string) []string {
 	fields := strings.Fields(line)
@@ -46,6 +48,8 @@ func readCursor(line string) []string {
 // TestFieldsIndexAcceptsTheFixedCursor is the fix the rule asks for: a length
 // check with a refusal line ahead of the index.
 func TestFieldsIndexAcceptsTheFixedCursor(t *testing.T) {
+	t.Parallel()
+
 	got := fieldsIndexFindings(t, `
 func readCursor(line string) ([]string, error) {
 	fields := strings.Fields(line)
@@ -65,6 +69,8 @@ var errShort error`)
 // one: each of these is in range for every input, and refusing it would make the
 // rule noise and train a reader to allowlist.
 func TestFieldsIndexAcceptsTheShapesThatCannotBeShort(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		body string
@@ -131,6 +137,8 @@ func rest(raw string) []string {
 // narrowings are narrow. strings.Fields gives no first element, a computed
 // separator may be empty, and index 1 is past the end of a one-element Split.
 func TestFieldsIndexRefusesTheShapesThatCanBeShort(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		body string
@@ -183,6 +191,8 @@ func firstTwo(raw string) []string {
 // TestFieldsIndexKeyIsFileAndFunction proves the allowlist key: the row a reader
 // would add, receiver-qualified when the offender is a method.
 func TestFieldsIndexKeyIsFileAndFunction(t *testing.T) {
+	t.Parallel()
+
 	findings, err := uncheckedSplitIndexes("cmd/nova-wake/serve.go", fieldsIndexSource(`
 type server struct{ onNote string }
 
@@ -205,6 +215,8 @@ func (s *server) spawn() string {
 // a `file:function` a reader can find, and the list is empty today because the
 // one offender the rule found was fixed rather than listed.
 func TestFieldsIndexAllowlistIsShrinkOnly(t *testing.T) {
+	t.Parallel()
+
 	allow := readFieldsIndexAllowlist(t)
 	for key := range allow {
 		if !strings.Contains(key, ":") || strings.HasSuffix(key, ":") {

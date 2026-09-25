@@ -19,6 +19,8 @@ func startRedis(t *testing.T) *redis.Client {
 }
 
 func TestFoldEstErrorPerOwner(t *testing.T) {
+	t.Parallel()
+
 	client := startRedis(t)
 	ctx := context.Background()
 	sprint := "sprint-fold-fx"
@@ -87,6 +89,8 @@ func TestFoldEstErrorPerOwner(t *testing.T) {
 }
 
 func TestFoldPctDashWhenNoEstimate(t *testing.T) {
+	t.Parallel()
+
 	client := startRedis(t)
 	ctx := context.Background()
 

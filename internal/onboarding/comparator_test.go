@@ -59,6 +59,8 @@ func copyWith(edit func(lines []string) []string) []string {
 // every red below would prove nothing: a comparator that failed everything would
 // pass all three seeds.
 func TestCompareAcceptsTheDocumentTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	problems := CompareTranscript(parse(t, documented), theRun(), nil)
 	if len(problems) != 0 {
 		t.Fatalf("the document the tool printed drew %d problem(s):\n%s", len(problems), joinProblems(problems))
@@ -69,6 +71,8 @@ func TestCompareAcceptsTheDocumentTheToolPrints(t *testing.T) {
 // comparator that asks only whether each documented line was printed stays green
 // here, which is exactly how an abridged transcript survived.
 func TestCompareRejectsADroppedLine(t *testing.T) {
+	t.Parallel()
+
 	seeded := copyWith(func(lines []string) []string { return append(lines[:6:6], lines[6+1:]...) })
 	problems := CompareTranscript(parse(t, seeded), theRun(), nil)
 	if len(problems) == 0 {
@@ -83,6 +87,8 @@ func TestCompareRejectsADroppedLine(t *testing.T) {
 // compared as written unless it is named from the Volatile table, so this is red
 // with no normalisation declared.
 func TestCompareRejectsAnAlteredValue(t *testing.T) {
+	t.Parallel()
+
 	seeded := copyWith(func(lines []string) []string {
 		lines[4] = "BUS READ topic=pit n=2"
 		return lines
@@ -100,6 +106,8 @@ func TestCompareRejectsAnAlteredValue(t *testing.T) {
 // lines is unchanged and the count is unchanged, so this is the seed that a
 // `printed map[string]bool` cannot see.
 func TestCompareRejectsAMovedLine(t *testing.T) {
+	t.Parallel()
+
 	seeded := copyWith(func(lines []string) []string {
 		lines[5], lines[6] = lines[6], lines[5]
 		return lines
@@ -120,6 +128,8 @@ func TestCompareRejectsAMovedLine(t *testing.T) {
 // quietly applied or quietly ignored. A test that could invent a normalisation
 // could make any red green by widening one pattern.
 func TestVolatileFieldOutsideTheTableIsRefused(t *testing.T) {
+	t.Parallel()
+
 	problems := CompareTranscript(parse(t, documented), theRun(), []Field{{Name: "elapsed"}})
 	if len(problems) != 1 {
 		t.Fatalf("an invented volatile field drew %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
@@ -142,6 +152,8 @@ func TestVolatileFieldOutsideTheTableIsRefused(t *testing.T) {
 // only place they are named. A field that leaves the table without a reading is
 // a widening nobody read.
 func TestTheVolatileTableHoldsTheNamedRunOwnedValues(t *testing.T) {
+	t.Parallel()
+
 	want := []string{"at", "took", "created", "tmpdir", "sha"}
 	got := VolatileNames()
 	if len(got) != len(want) {
@@ -163,6 +175,8 @@ func TestTheVolatileTableHoldsTheNamedRunOwnedValues(t *testing.T) {
 // transcript whose instant belongs to the run is green -- and the failure
 // message still says what was not compared.
 func TestAVolatileFieldFromTheTableIsMatchedByShape(t *testing.T) {
+	t.Parallel()
+
 	run := theRun()
 	run[0].Stdout = "BUS POST id=3f2a1b at=2026-09-19T14:55:01Z topic=pit\n"
 
@@ -184,6 +198,8 @@ func TestAVolatileFieldFromTheTableIsMatchedByShape(t *testing.T) {
 // supplies both spellings, and a missing one is refused rather than applied as a
 // pattern that would match every path in the transcript.
 func TestTheRunsTemporaryDirectoryIsNamedWithBothItsSpellings(t *testing.T) {
+	t.Parallel()
+
 	doc := []string{
 		"$ nova-bus read --root /tmp/nova-bus-1",
 		"BUS READ root=/tmp/nova-bus-1 n=0",
@@ -205,6 +221,8 @@ func TestTheRunsTemporaryDirectoryIsNamedWithBothItsSpellings(t *testing.T) {
 // A shape field carries no path, and handing it one is refused: it would mean
 // the test believes the table entry is something other than what it is.
 func TestAShapeFieldGivenAPathIsRefused(t *testing.T) {
+	t.Parallel()
+
 	problems := CompareTranscript(parse(t, documented), theRun(), []Field{{Name: "at", Doc: "/tmp/x", Run: "/tmp/y"}})
 	if len(problems) != 1 {
 		t.Fatalf("a shape field handed a path drew %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
@@ -214,6 +232,8 @@ func TestAShapeFieldGivenAPathIsRefused(t *testing.T) {
 // A comparison over no command passes by comparing nothing, so it is a problem
 // and not a green.
 func TestCompareRefusesATranscriptWithNoCommand(t *testing.T) {
+	t.Parallel()
+
 	if problems := CompareTranscript(nil, nil, nil); len(problems) != 1 {
 		t.Fatalf("an empty transcript drew %d problem(s), want 1", len(problems))
 	}
@@ -223,6 +243,8 @@ func TestCompareRefusesATranscriptWithNoCommand(t *testing.T) {
 // that stopped, and is reported as that rather than compared pairwise until the
 // slice runs out.
 func TestCompareRefusesARunThatIsShorterThanTheDocument(t *testing.T) {
+	t.Parallel()
+
 	problems := CompareTranscript(parse(t, documented), theRun()[:1], nil)
 	if len(problems) != 1 {
 		t.Fatalf("a short run drew %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
@@ -255,6 +277,8 @@ func joinProblems(problems []Problem) string {
 // the run. That has to be red. A future sixth entry that forgets to anchor is
 // caught here by adding one row.
 func TestAVolatileEntryNeverSwallowsANeighbouringFieldsValue(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ name, field, docValue, runValue, mine string }{
 		{name: "at", field: "at", docValue: "2026-09-19T11:02:03Z", runValue: "2026-09-19T14:55:01Z", mine: "2026-09-19T11:02:03Z"},
 		{name: "took", field: "took", docValue: "5ms", runValue: "9h", mine: "8ms"},
@@ -293,6 +317,8 @@ func TestAVolatileEntryNeverSwallowsANeighbouringFieldsValue(t *testing.T) {
 // another path, and a field whose value merely CONTAINS the run's directory as a
 // prefix of a longer one, are both left alone.
 func TestTheDirectoryEntryTouchesNothingButThatDirectory(t *testing.T) {
+	t.Parallel()
+
 	doc := []string{
 		"$ nova-bus read --root /tmp/nova-bus-1",
 		"BUS READ root=/tmp/nova-bus-1 home=/tmp/nova-bus-1x/cache n=0",
@@ -322,6 +348,8 @@ func TestTheDirectoryEntryTouchesNothingButThatDirectory(t *testing.T) {
 // impossible value erases the finding with it. `took=` is a duration, so a
 // `took=` that is not one is the tool disagreeing with the document.
 func TestAVolatileEntryLeavesAnInvalidValueOnTheLine(t *testing.T) {
+	t.Parallel()
+
 	doc := []string{"$ nova-bus read", "BUS READ took=5ms"}
 	run := []Result{{Stdout: "BUS READ took=soon\n"}}
 	if problems := CompareTranscript(parse(t, doc), run, []Field{{Name: "took"}}); len(problems) != 1 {
@@ -330,6 +358,8 @@ func TestAVolatileEntryLeavesAnInvalidValueOnTheLine(t *testing.T) {
 }
 
 func TestTookAcceptsEveryGoDuration(t *testing.T) {
+	t.Parallel()
+
 	doc := []string{"$ nova-bus read", "BUS READ took=5ms"}
 	for _, duration := range []string{"1h3m1ns", "1h3m1us", "1h3m1µs"} {
 		t.Run(duration, func(t *testing.T) {

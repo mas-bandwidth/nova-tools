@@ -10,6 +10,8 @@ import (
 // the host OS process table and accumulate real CPU time (via kern.proc.all and
 // proc_pidinfo on Darwin, or /proc on Linux) against a live burning subprocess.
 func TestOSProcessTreeCPUAccrual(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := builtFakeRunner(t)
 
@@ -63,6 +65,8 @@ func TestOSProcessTreeCPUAccrual(t *testing.T) {
 // TestOSProcessTreeCPUNonExistent verifies that TreeCPU returns ok=false for an
 // unknown or dead PID rather than pretending zero or inventing activity.
 func TestOSProcessTreeCPUNonExistent(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	snap := newProcSnapshot()
 	// Negative PID, zero PID, and a PID exceedingly unlikely to exist:

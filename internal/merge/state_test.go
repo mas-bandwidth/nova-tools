@@ -14,6 +14,8 @@ import (
 // fold of its records; every one of these is a refusal the spec names by hand.
 
 func TestAnUnknownFieldRefuses(t *testing.T) {
+	t.Parallel()
+
 	_, err := Decode([]byte(`{"version":1,"repo":"o/n","base":"main","lane_branch":"l","prs":[],"branches":[],"gates":[],"needs_reads":"yes"}`))
 	if err == nil {
 		t.Fatal("an unknown field must refuse: a state file whose needs_read key was typed needs_reads is a state file whose owner believes a read is required")
@@ -24,6 +26,8 @@ func TestAnUnknownFieldRefuses(t *testing.T) {
 }
 
 func TestNeedsReadIsClosedToYesAndNo(t *testing.T) {
+	t.Parallel()
+
 	// F3: needs_read is closed to exactly "yes" or "no", and a missing or empty field
 	// refuses. "true", "Yes", "y", "1" and a missing key all fall off the package's
 	// comparison against the word "yes", which is the direction that merges unread.
@@ -44,6 +48,8 @@ func TestNeedsReadIsClosedToYesAndNo(t *testing.T) {
 }
 
 func TestAStringWhereANumberBelongsRefuses(t *testing.T) {
+	t.Parallel()
+
 	_, err := Decode([]byte(`{"version":1,"repo":"o/n","base":"main","lane_branch":"l","prs":[{"pr":951,"needs_read":"yes","reads":[],"head":"b","oid":"","state":"NEW","last":"","detail":"","green":"24","pending":0,"red":0}],"branches":[],"gates":[]}`))
 	if err == nil {
 		t.Fatal(`"24" is a string and green is a number; a count that is a string compares as a string and "10" < "9"`)
@@ -51,6 +57,8 @@ func TestAStringWhereANumberBelongsRefuses(t *testing.T) {
 }
 
 func TestAGateWithoutBaseOrMergeRefuses(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ name, json, want string }{
 		{"no base", `{"version":1,"repo":"o/n","base":"main","lane_branch":"l","prs":[],"branches":[],"gates":[{"pr":949,"head":"` + h40('a') + `","merge":"` + h40('c') + `","verdict":"green","summary":"s","at":"t","run":"r","file":"f"}]}`, "base"},
 		{"no merge", `{"version":1,"repo":"o/n","base":"main","lane_branch":"l","prs":[],"branches":[],"gates":[{"pr":949,"head":"` + h40('a') + `","base":"` + h40('b') + `","verdict":"green","summary":"s","at":"t","run":"r","file":"f"}]}`, "merge"},
@@ -67,6 +75,8 @@ func TestAGateWithoutBaseOrMergeRefuses(t *testing.T) {
 }
 
 func TestAVersionThisBinaryDoesNotKnowIsRefusedByNumber(t *testing.T) {
+	t.Parallel()
+
 	_, err := Decode([]byte(`{"version":2,"repo":"o/n","base":"main","lane_branch":"l","prs":[],"branches":[],"gates":[]}`))
 	if err == nil {
 		t.Fatal("version 2 must be refused")
@@ -77,6 +87,8 @@ func TestAVersionThisBinaryDoesNotKnowIsRefusedByNumber(t *testing.T) {
 }
 
 func TestVersionIsCheckedBeforeAnyOtherField(t *testing.T) {
+	t.Parallel()
+
 	// A version this binary does not know is refused BY NUMBER, before the fields it
 	// cannot be expected to understand are read.
 	_, err := Decode([]byte(`{"version":2,"whatever":true}`))
@@ -88,6 +100,8 @@ func TestVersionIsCheckedBeforeAnyOtherField(t *testing.T) {
 // HostedRedBlocks is rule 15's derivation as a table, because the run-path tests in
 // cmd/nova-merge drive the same derivation through a real pass but a table pins every arm.
 func TestHostedRedBlocksDerivation(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name                                       string
 		hostedRed, defaultBranch, base, discovered string
@@ -113,6 +127,8 @@ func TestHostedRedBlocksDerivation(t *testing.T) {
 }
 
 func TestARoundTripPreservesOrder(t *testing.T) {
+	t.Parallel()
+
 	lane := t.TempDir()
 	if err := Init(lane, LaneConfig{Repo: "o/n", Base: "main", LaneBranch: "nova-merge/l"}); err != nil {
 		t.Fatal(err)
@@ -145,6 +161,8 @@ func TestARoundTripPreservesOrder(t *testing.T) {
 }
 
 func TestAnInitOfALaneThatExistsRefuses(t *testing.T) {
+	t.Parallel()
+
 	lane := t.TempDir()
 	if err := Init(lane, LaneConfig{Repo: "o/n", Base: "main", LaneBranch: "nova-merge/l"}); err != nil {
 		t.Fatal(err)
@@ -173,6 +191,8 @@ func TestAnInitOfALaneThatExistsRefuses(t *testing.T) {
 // does succeed, the bytes it gets parse, so a zero-byte or half-written state file is red
 // on every platform, which is the property the rename is there for.
 func TestThirtyConcurrentWritersAllLandAndTheFileAlwaysParses(t *testing.T) {
+	t.Parallel()
+
 	lane := t.TempDir()
 	if err := Init(lane, LaneConfig{Repo: "o/n", Base: "main", LaneBranch: "nova-merge/l"}); err != nil {
 		t.Fatal(err)

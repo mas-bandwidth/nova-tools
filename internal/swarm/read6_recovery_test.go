@@ -20,6 +20,8 @@ import (
 // identical exit record was quarantined when the dispatcher lived and counted when it
 // died: the failure direction rule 11 exists to prevent.
 func TestARecoveredBackgroundViolationIsQuarantined(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p, w := recoveryPool(t, dir)
 	id := NewID(time.Now().UTC(), "survivor")

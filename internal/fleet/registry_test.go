@@ -25,6 +25,8 @@ func row(fields ...string) string { return strings.Join(fields, "\t") + "\n" }
 const benchRow = "hulk\thulk\tlinux/x64\tbench\tswarm-hulk\t64\t-\n"
 
 func TestReadRegistryReadsEveryColumn(t *testing.T) {
+	t.Parallel()
+
 	path := write(t, "# a comment\n\n"+row("batman", "batman", "darwin/amd64", "runner", "-", "8", "2019 iMac Pro, six runners"))
 	reg, err := ReadRegistry(path)
 	if err != nil {
@@ -52,6 +54,8 @@ func TestReadRegistryReadsEveryColumn(t *testing.T) {
 }
 
 func TestReadRegistryRefusesAMachineThatIsBothRunnerAndBenchWithoutTheNote(t *testing.T) {
+	t.Parallel()
+
 	path := write(t, row("hulk", "hulk", "linux/x64", "bench,runner", "swarm-hulk", "64", "eight runners beside the cards"))
 	reg, err := ReadRegistry(path)
 	if err != nil {
@@ -82,6 +86,8 @@ func TestReadRegistryRefusesAMachineThatIsBothRunnerAndBenchWithoutTheNote(t *te
 // #2031: one bench,runner row without allow-shared= must not make ReadRegistry fail the
 // whole file. The four neighbours still load; the poisoned name is not a bench.
 func TestReadRegistryDoesNotRefuseTheFleetForOnePoisonedSharedRow(t *testing.T) {
+	t.Parallel()
+
 	var body strings.Builder
 	for _, name := range []string{"b1", "b2", "b3", "b4"} {
 		body.WriteString(row(name, name, "linux/x64", "bench", "swarm-"+name, "64", "-"))
@@ -113,6 +119,8 @@ func TestReadRegistryDoesNotRefuseTheFleetForOnePoisonedSharedRow(t *testing.T) 
 }
 
 func TestReadRegistryAcceptsTheSharedExceptionWithItsDateAndReason(t *testing.T) {
+	t.Parallel()
+
 	path := write(t, row("hulk", "hulk", "linux/x64", "bench,runner", "swarm-hulk", "64",
 		"allow-shared=2026-09-18 the pull worker does not containerise cards yet"))
 	reg, err := ReadRegistry(path)
@@ -130,6 +138,8 @@ func TestReadRegistryAcceptsTheSharedExceptionWithItsDateAndReason(t *testing.T)
 }
 
 func TestReadRegistryRefusesASharedNoteWithNoDateAndOneWithNoReason(t *testing.T) {
+	t.Parallel()
+
 	for name, note := range map[string]string{
 		"no date":   "allow-shared=the pull worker does not containerise cards yet",
 		"no reason": "allow-shared=2026-09-18",
@@ -148,6 +158,8 @@ func TestReadRegistryRefusesASharedNoteWithNoDateAndOneWithNoReason(t *testing.T
 }
 
 func TestReadRegistryRefusesWhatItCannotRead(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string]string{
 		"six fields":      "hulk\thulk\tlinux/x64\tbench\tswarm-hulk\t64\n",
 		"unknown role":    row("hulk", "hulk", "linux/x64", "bench,builder", "swarm-hulk", "64", "-"),
@@ -171,12 +183,16 @@ func TestReadRegistryRefusesWhatItCannotRead(t *testing.T) {
 }
 
 func TestReadRegistryRefusesAnEmptyFileRatherThanPretendTheFleetIsEmpty(t *testing.T) {
+	t.Parallel()
+
 	if _, err := ReadRegistry(write(t, "# only comments\n")); err == nil {
 		t.Fatal("a registry with no machine was accepted")
 	}
 }
 
 func TestRequireBenchRefusesARunnerHostWithItsReasonAndItsRemedy(t *testing.T) {
+	t.Parallel()
+
 	reg := example(t)
 	err := reg.RequireBench("batman")
 	if err == nil {
@@ -202,6 +218,8 @@ func TestRequireBenchRefusesARunnerHostWithItsReasonAndItsRemedy(t *testing.T) {
 }
 
 func TestRequireBenchRefusesTheCoordinationHostAndAnUnknownMachine(t *testing.T) {
+	t.Parallel()
+
 	reg := example(t)
 	for name, want := range map[string]string{
 		"studio": ReasonRunnerHost, // the Studio serves the lisp shards as well as coordinating
@@ -219,6 +237,8 @@ func TestRequireBenchRefusesTheCoordinationHostAndAnUnknownMachine(t *testing.T)
 }
 
 func TestRequireBenchAcceptsEveryBenchInTheFleet(t *testing.T) {
+	t.Parallel()
+
 	reg := example(t)
 	for _, name := range []string{"hulk", "vision", "threadripper-wsl", "space"} {
 		if err := reg.RequireBench(name); err != nil {
@@ -228,6 +248,8 @@ func TestRequireBenchAcceptsEveryBenchInTheFleet(t *testing.T) {
 }
 
 func TestWithRoleAndMachinesReadInFileOrder(t *testing.T) {
+	t.Parallel()
+
 	reg := example(t)
 	var names []string
 	for _, m := range reg.WithRole(RoleBench) {
@@ -253,6 +275,8 @@ func TestWithRoleAndMachinesReadInFileOrder(t *testing.T) {
 // on."). WSL2 is what the cards and the CI runners see, so it takes the Linux bench
 // standard and the ordinary Linux runner labels, and no line in this file says `windows`.
 func TestTheExampleIsTheFleetWeHave(t *testing.T) {
+	t.Parallel()
+
 	reg := example(t)
 	want := map[string]string{
 		"studio":           "coordination,runner",
@@ -296,6 +320,8 @@ func TestTheExampleIsTheFleetWeHave(t *testing.T) {
 }
 
 func TestAMissingFileIsARefusalThatNamesIt(t *testing.T) {
+	t.Parallel()
+
 	_, err := ReadRegistry(filepath.Join(t.TempDir(), "nowhere.tsv"))
 	if err == nil {
 		t.Fatal("a missing machines file was accepted")

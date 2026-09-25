@@ -16,6 +16,8 @@ import (
 // is the remedy the line carries. RED WITHOUT THE CLASSIFIER: the same job scored
 // `no-result`, which sends a reader to the model.
 func TestAFenceRejectionIsNeverNoResult(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	job := filepath.Join(root, "1", "jobs", "a")
 	if err := os.MkdirAll(job, 0o755); err != nil {
@@ -42,6 +44,8 @@ func TestAFenceRejectionIsNeverNoResult(t *testing.T) {
 // and `fence` names the path this tool's own machinery shut. RED WITHOUT THE ORDERING: the
 // silent check ran first and the card was read as a harness that never spoke.
 func TestFenceComesBeforeHarnessSilent(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	job := filepath.Join(root, "1", "jobs", "a")
 	if err := os.MkdirAll(job, 0o755); err != nil {
@@ -64,6 +68,8 @@ func TestFenceComesBeforeHarnessSilent(t *testing.T) {
 // TestFenceRejectionReadsTheHarnesssOwnWords: the line OpenCode 1.18.20 prints, colours and
 // all, is the one this parses; a capture with no rejection in it says so.
 func TestFenceRejectionReadsTheHarnesssOwnWords(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		in   string
@@ -102,6 +108,8 @@ func TestFenceRejectionReadsTheHarnesssOwnWords(t *testing.T) {
 // asks about everything else, and NAMES NOTHING ABOVE THE JOB -- a sibling job in the same
 // slot is another card's work, and a fence rule is no place to hand it over.
 func TestFencePermissionNamesTheWholeJobAndNothingAboveIt(t *testing.T) {
+	t.Parallel()
+
 	block := FencePermission("/root/1/jobs/a", []string{"/sys/kernel/security/lsm"})
 	external, ok := block[FenceExternalDirectory].(map[string]any)
 	if !ok {
@@ -130,6 +138,8 @@ func TestFencePermissionNamesTheWholeJobAndNothingAboveIt(t *testing.T) {
 // and the card's commits are stranded. A `deny` is a tool error returned to the model, which
 // notes it, works inside the job instead, and continues (issue #918).
 func TestFencePermissionDeniesExternalDirectory(t *testing.T) {
+	t.Parallel()
+
 	block := FencePermission("/root/1/jobs/a", nil)
 	external, ok := block[FenceExternalDirectory].(map[string]any)
 	if !ok {
@@ -147,6 +157,8 @@ func TestFencePermissionDeniesExternalDirectory(t *testing.T) {
 // its providers and its own rules, and the job's fence rules are added to them. A config
 // this side cannot parse is returned unchanged, and says so.
 func TestMergeFencePermissionKeepsTheCarriedConfig(t *testing.T) {
+	t.Parallel()
+
 	carried := []byte(`{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}}},"permission":{"read":{"*":"allow"},"external_directory":{"/opt/toolchains/*":"allow"}}}`)
 	out, ok := MergeFencePermission(carried, "/root/1/jobs/a", nil)
 	if !ok {
@@ -178,6 +190,8 @@ func TestMergeFencePermissionKeepsTheCarriedConfig(t *testing.T) {
 
 // TestCardReadPathsReadsTheCardsOwnLine: the `READ:` line, and nothing inferred from prose.
 func TestCardReadPathsReadsTheCardsOwnLine(t *testing.T) {
+	t.Parallel()
+
 	card := []byte("do the thing\n" +
 		"READ: /sys/kernel/security/lsm /proc/self/status\n" +
 		"- READ: `/etc/os-release`\n" +

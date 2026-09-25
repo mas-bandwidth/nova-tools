@@ -110,6 +110,8 @@ func publish(t *testing.T, f *landTestFixture, id, trainHead string) {
 // TestL3 verifies control L3 (Issue #3139 rev 7 §11):
 // a batch whose members share a file is refused before any gate.
 func TestL3(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	a := addUnit(t, f, 301, sha(301), "internal/x/a.go,internal/x/shared.go", "", "emma")
 	b := addUnit(t, f, 302, sha(302), "internal/x/shared.go,internal/y/b.go", "", "emma")
@@ -148,6 +150,8 @@ func TestL3(t *testing.T) {
 // only docs/roadmaps/sprint-x.sexp is planned; one touching any of the five
 // storage-split paths is refused roadmap-path.
 func TestL3b(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	sprintSet := addUnit(t, f, 310, sha(310), "docs/roadmaps/sprint-x.sexp", "", "emma")
 	if _, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, "b-l3b-ok", f.lease,
@@ -200,6 +204,8 @@ func TestL3b(t *testing.T) {
 // TestL16 verifies control L16 (Issue #3139 rev 7 §11): batch 2 of 4 turns red:
 // 3 and 4 void and re-plan on the new base; all end landed or dropped.
 func TestL16(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	units := map[string]string{}
 	for i := 0; i < 8; i++ {
@@ -286,6 +292,8 @@ func TestL16(t *testing.T) {
 // TestL24 verifies control L24 (Issue #3139 rev 7 §11): a child unit is never
 // planned before its sexp parent.
 func TestL24(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	parent := "gh/mas-bandwidth/nova-tools/3011"
 	// The child is older (evaluated first) but its parent is still reading.
@@ -341,6 +349,8 @@ func TestL24(t *testing.T) {
 // with one rebase task and re-offered only on a new head; a conflict ahead waits
 // without a drop.
 func TestL26(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	m := &fakeMerge{conflict: map[string]bool{}}
 	b := newBatcher(f, m)
@@ -411,6 +421,8 @@ func TestL26(t *testing.T) {
 // TestL27 verifies control L27 (Issue #3139 rev 7 §11): a member without a unit id
 // is refused at plan.
 func TestL27(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	addUnit(t, f, 3053, sha(3053), "cmd/c/c.go", "", "emma")
 	for _, m := range []string{"3053@" + sha(3053), "nova-tools#3053@" + sha(3053), "@" + sha(3053)} {
@@ -424,6 +436,8 @@ func TestL27(t *testing.T) {
 
 // TestGitMergeTree runs the real merge-tree pre-check on a throwaway repository.
 func TestGitMergeTree(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
 	}
@@ -476,6 +490,8 @@ func TestGitMergeTree(t *testing.T) {
 // lost the lease (a new token, or a writer gen bump) cannot bind, drop or void; the chain, the
 // units and the author queues are unchanged, and the new lease holder does all three.
 func TestBatcherLeaseLost(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name, reason string
 		lose         func(t *testing.T, f *landTestFixture) string // returns the new holder's lease
@@ -607,6 +623,8 @@ func TestBatcherLeaseLost(t *testing.T) {
 // batcher plans nothing (a front batch with no from_tip and no parent could never be bound) and
 // reports the landable units waiting on "no tip"; once the tip is recorded it plans.
 func TestBatcherNoTip(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	if err := f.client.Del(f.ctx, land.TipKey(f.repo, f.base)).Err(); err != nil {
 		t.Fatalf("del tip: %v", err)

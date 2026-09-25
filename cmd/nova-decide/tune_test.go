@@ -31,6 +31,8 @@ func tonight() string {
 
 // Rule 8: tune reads the log and prints the per-floor lines and the finish.
 func TestTuneVerbTonightShape(t *testing.T) {
+	t.Parallel()
+
 	p := writeDecisions(t, tonight())
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"tune", "--decisions", p}, &stdout, &stderr)
@@ -48,6 +50,8 @@ func TestTuneVerbTonightShape(t *testing.T) {
 
 // Fewer than 10 labeled rows cannot set a floor: exit 2.
 func TestTuneVerbExits2UnderTenLabeled(t *testing.T) {
+	t.Parallel()
+
 	data := tonight() + `{"decision":"abstain","confidence":0.95}` + "\n"
 	// keep only nine labeled rows plus the unlabeled one
 	lines := strings.Split(strings.TrimSpace(data), "\n")
@@ -69,6 +73,8 @@ func TestTuneVerbExits2UnderTenLabeled(t *testing.T) {
 
 // A missing --decisions is a refusal, not a guess.
 func TestTuneVerbExits2WithoutDecisions(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"tune"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("exit = %d, want 2 (stdout=%q stderr=%q)", code, stdout.String(), stderr.String())

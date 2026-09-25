@@ -20,6 +20,8 @@ func runCI(t *testing.T, args []string, stdin string) (int, string, string) {
 
 // A bare command refuses in one line that names the door.
 func TestBareCommandNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, stderr := runCI(t, nil, "")
 	if code != 2 {
 		t.Errorf("exit = %d, want 2", code)
@@ -38,6 +40,8 @@ func TestBareCommandNamesTheDoor(t *testing.T) {
 // help opens the door on stdout at exit 0, and ends in an example block whose
 // lines are commands a stranger can paste.
 func TestHelpOpensTheDoor(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, stderr := runCI(t, []string{"help"}, "")
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
@@ -49,6 +53,8 @@ func TestHelpOpensTheDoor(t *testing.T) {
 
 // slowtests under budget prints the OK line on stdout and exits 0.
 func TestSlowtestsUnderBudgetIsOK(t *testing.T) {
+	t.Parallel()
+
 	stdin := `{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
 {"Action":"pass","Package":"example.com/pkg","Elapsed":3.2}
 `
@@ -64,6 +70,8 @@ func TestSlowtestsUnderBudgetIsOK(t *testing.T) {
 
 // slowtests over budget prints one line per offending package and exits 2.
 func TestSlowtestsOverBudgetExitsTwo(t *testing.T) {
+	t.Parallel()
+
 	stdin := `{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
 {"Action":"pass","Package":"example.com/pkg","Elapsed":75.3}
 `
@@ -79,6 +87,8 @@ func TestSlowtestsOverBudgetExitsTwo(t *testing.T) {
 
 // A malformed line is a refusal on stderr at exit 2, and prints no OK line.
 func TestSlowtestsMalformedLineRefuses(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60"}, "not json\n")
 	if code != 2 {
 		t.Errorf("exit = %d, want 2", code)
@@ -99,6 +109,8 @@ func TestSlowtestsMalformedLineRefuses(t *testing.T) {
 
 // A budget of zero or less is refused rather than read as unlimited.
 func TestSlowtestsRefusesANonPositiveBudget(t *testing.T) {
+	t.Parallel()
+
 	for _, budget := range []string{"0", "-1"} {
 		code, _, stderr := runCI(t, []string{"slowtests", "--budget", budget}, "")
 		if code != 2 {

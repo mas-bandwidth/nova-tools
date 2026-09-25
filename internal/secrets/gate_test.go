@@ -75,6 +75,8 @@ func gateSealedFile() string {
 }
 
 func TestGateApprovesAGoodSeatPR(t *testing.T) {
+	t.Parallel()
+
 	dir := gateStart(t)
 	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 	head := gateCommit(t, dir, map[string]string{
@@ -91,6 +93,8 @@ func TestGateApprovesAGoodSeatPR(t *testing.T) {
 }
 
 func TestGateRefusesARuleWithThreeRecipients(t *testing.T) {
+	t.Parallel()
+
 	dir := gateStart(t)
 	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 	head := gateCommit(t, dir, map[string]string{
@@ -107,6 +111,8 @@ func TestGateRefusesARuleWithThreeRecipients(t *testing.T) {
 }
 
 func TestGateRefusesAPlaintextValue(t *testing.T) {
+	t.Parallel()
+
 	dir := gateStart(t)
 	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 	head := gateCommit(t, dir, map[string]string{
@@ -123,6 +129,8 @@ func TestGateRefusesAPlaintextValue(t *testing.T) {
 }
 
 func TestGateRefusesAChangeToAnotherFile(t *testing.T) {
+	t.Parallel()
+
 	dir := gateStart(t)
 	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 	head := gateCommit(t, dir, map[string]string{

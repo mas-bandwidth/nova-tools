@@ -63,6 +63,8 @@ func slotDesc(t *testing.T, dir, workerDir, keyFile string) string {
 // `filepath.Dir(worker_dir)`, and the `<base>-<digits>` name is judged under the filesystem's
 // own equality.
 func TestAKeyFileInASlotDirectorySpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing.T) {
+	t.Parallel()
+
 	dir, folds := caseFoldingTempDir(t)
 	if !folds {
 		t.Skipf("the filesystem under %s is case-SENSITIVE: caseprobe is not CaseProbe, so <dir>/Worker-1 and <dir>/worker-1 are two directories here and the fold this test is about cannot happen", dir)
@@ -132,6 +134,8 @@ func TestAKeyFileInASlotDirectorySpelledInAnotherCaseIsRefusedWhereTheFilesystem
 // not held by it, a slot that does not exist yet is still a slot, and a sibling whose name
 // merely starts the same way is not one.
 func TestSlotDirHoldingJudgesTheSlotName(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
@@ -164,6 +168,8 @@ func TestSlotDirHoldingJudgesTheSlotName(t *testing.T) {
 // are not on any. It runs on every platform, because what it asserts is what the filesystem
 // under it says -- and the answer it gives is the answer the slot check acts on.
 func TestNamesOneFileAsksTheFilesystem(t *testing.T) {
+	t.Parallel()
+
 	dir, folds := caseFoldingTempDir(t)
 	if err := os.MkdirAll(filepath.Join(dir, "worker"), 0o755); err != nil {
 		t.Fatal(err)
@@ -267,6 +273,8 @@ func caseBoundaryDir(t *testing.T) (dir string, folds bool, found bool) {
 // inside a case-sensitive image, which is the setup this PR already uses to prove its skips.
 // Where no boundary is reachable it skips by name rather than passing about nothing.
 func TestTheFoldIsMeasuredInsideTheDirectoryNotInItsParent(t *testing.T) {
+	t.Parallel()
+
 	boundary, folds, found := caseBoundaryDir(t)
 	if !found {
 		t.Skip("no case-sensitivity boundary is reachable from this machine's temp directory: every directory on that path answers the same inside as its own name does in its parent, so the inference this test is about cannot be observed here. Run with TMPDIR inside a case-sensitive image mounted under a folding parent")

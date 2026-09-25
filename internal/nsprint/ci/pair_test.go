@@ -19,6 +19,8 @@ import (
 // FAIL, rerun, FLAKY, disposition and verdict never touch B1's card or its
 // write-once receipt, and the disposition finds B2's card from the item.
 func TestCIAttemptsImmutableTwoBasesTwoAttempts(t *testing.T) {
+	t.Parallel()
+
 	const (
 		b1 = base
 		b2 = "4444444444444444444444444444444444444444"

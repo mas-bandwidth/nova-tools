@@ -101,6 +101,8 @@ func routesFixture(t *testing.T) (*redis.Client, fold.Options) {
 // per landed and read types on $ per useful, writes routes:<type>, and the
 // router refuses a benched route for that type.
 func TestControl47(t *testing.T) {
+	t.Parallel()
+
 	client, o := routesFixture(t)
 	ctx := context.Background()
 	var out bytes.Buffer
@@ -204,6 +206,8 @@ func TestControl47(t *testing.T) {
 // killed after its commit leaves no ranking, and the re-run writes it with the
 // commit's sha.
 func TestFoldRoutesWrittenOnlyWithTheRecord(t *testing.T) {
+	t.Parallel()
+
 	client, o := routesFixture(t)
 	ctx := context.Background()
 	killed := o
@@ -231,6 +235,8 @@ func TestFoldRoutesWrittenOnlyWithTheRecord(t *testing.T) {
 
 // A policy that is not a count or a share is refused before anything is written.
 func TestFoldRoutesPolicyRefusesNonsense(t *testing.T) {
+	t.Parallel()
+
 	for field, v := range map[string]string{"route_min_landed": "three", "route_bench_after": "0", "probation_share": "1.5"} {
 		client, o := routesFixture(t)
 		ctx := context.Background()

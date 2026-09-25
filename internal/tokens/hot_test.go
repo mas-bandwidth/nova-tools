@@ -9,6 +9,8 @@ import (
 // step outputs, and say on one HOT NOTE line what the ranking cannot see.
 
 func TestHotSessionReadsAndOutputs(t *testing.T) {
+	t.Parallel()
+
 	reads := []ReadRecord{
 		{Path: "a", Count: 3},
 		{Path: "b", Count: 10},

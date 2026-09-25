@@ -21,6 +21,8 @@ const (
 )
 
 func TestCardPushRefusesWithoutDoneWhen(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -66,6 +68,8 @@ func TestCardPushRefusesWithoutDoneWhen(t *testing.T) {
 }
 
 func TestCardPushRefusesPrivateRepo(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -113,6 +117,8 @@ func TestCardPushRefusesPrivateRepo(t *testing.T) {
 // answers a private repository with 302 and a login page that returns 200.
 // Following that redirect would accept the page's 200 as a public repository.
 func TestPrivateRepoRedirectIsRefused(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	var loginHits int
@@ -145,6 +151,8 @@ func TestPrivateRepoRedirectIsRefused(t *testing.T) {
 }
 
 func TestDependentWaitsUntilParentMerged(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)

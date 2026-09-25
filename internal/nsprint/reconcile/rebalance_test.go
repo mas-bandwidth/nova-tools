@@ -37,6 +37,8 @@ func (f *dealFixture) queued(t *testing.T, id, stream, friend string, age int64,
 // down, and the next pass moves her task onto rowan's queue and prints one
 // REBALANCE line naming it. A third pass prints nothing.
 func TestFriendDownRebalancesInOneTick(t *testing.T) {
+	t.Parallel()
+
 	f := newDealFixture(t)
 	const s = "nova-sprint"
 	must(t, f.c.ZAdd(f.ctx, "ws:order", redis.Z{Score: 1, Member: s}).Err())
@@ -85,6 +87,8 @@ func TestFriendDownRebalancesInOneTick(t *testing.T) {
 // reply is REFUSED with the reason and the id; with a stream it goes back to
 // the stream's ready set, unowned, why=no-consumer.
 func TestFriendRebalanceNeverSilentZero(t *testing.T) {
+	t.Parallel()
+
 	f := newDealFixture(t)
 	f.friend(t, "emma", 2, false)
 	must(t, f.c.HSet(f.ctx, "friend:emma:down", "reason", "down", "actor", "rowan").Err())
@@ -126,6 +130,8 @@ func TestFriendRebalanceNeverSilentZero(t *testing.T) {
 // ns_redistribute_from, on a down friend moves every ready task on its
 // queue (the 2026-09-25 evidence: state=- moved=0 with 15 on the queue).
 func TestRedistributeFromMovesDownFriendsQueue(t *testing.T) {
+	t.Parallel()
+
 	f := newDealFixture(t)
 	const s = "nova-sprint"
 	f.friend(t, "emma", 2, false)
@@ -156,6 +162,8 @@ func TestRedistributeFromMovesDownFriendsQueue(t *testing.T) {
 // TestFriendStaleBeatRebalances: a beat older than FriendLive is down too;
 // the pass that sees it go stale moves the friend's ready task.
 func TestFriendStaleBeatRebalances(t *testing.T) {
+	t.Parallel()
+
 	f := newDealFixture(t)
 	const s = "nova-sprint"
 	f.friend(t, "emma", 1, true, "pre-emma")

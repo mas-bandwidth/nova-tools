@@ -12,6 +12,8 @@ import (
 // TestReadCardFilesDir: --dir reads every regular non-dot file in name order,
 // each named by its path, so one batch carries the whole directory (#3266).
 func TestReadCardFilesDir(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	for name, body := range map[string]string{"b.md": "B", "a.md": "A", ".hidden": "H", "c.md": "C"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
@@ -39,6 +41,8 @@ func TestReadCardFilesDir(t *testing.T) {
 
 // TestCardPushOneSource: files, --dir and --stdin are exclusive, and one is required.
 func TestCardPushOneSource(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{
 		{"--sprint", "s", "--redis", "127.0.0.1:1", "--dir", "x", "a.md"},
 		{"--sprint", "s", "--redis", "127.0.0.1:1", "--stdin", "--dir", "x"},

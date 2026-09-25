@@ -57,6 +57,8 @@ func reportsTokensFixture(t *testing.T) string {
 // list maintained: the gaps and the notes are counted on the line, and neither is a
 // finding, because nothing in that directory says anybody worked on 2026-08-03.
 func TestCheckIsGreenOnTheReportsTokensDirectoryAsItIs(t *testing.T) {
+	t.Parallel()
+
 	out := reportsTokensFixture(t)
 	r := invoke(t, "check", "--out", out)
 	wantExit(t, r, 0)
@@ -77,6 +79,8 @@ func TestCheckIsGreenOnTheReportsTokensDirectoryAsItIs(t *testing.T) {
 // And --strict is the old reading, whole: the same forty findings, so a person who wants
 // them has them and nobody had to argue about which ones to keep.
 func TestCheckStrictRestoresEveryFindingTheGateUsedToMake(t *testing.T) {
+	t.Parallel()
+
 	out := reportsTokensFixture(t)
 	r := invoke(t, "check", "--out", out, "--strict", "--max", "0")
 	wantExit(t, r, 1)
@@ -99,6 +103,8 @@ func TestCheckStrictRestoresEveryFindingTheGateUsedToMake(t *testing.T) {
 // A .tsv that is not a day, and a file with no extension at all, are strays under BOTH
 // readings: the allowlist is three shapes, not "anything that is not a day file".
 func TestTheAllowlistDoesNotSwallowARealStray(t *testing.T) {
+	t.Parallel()
+
 	out := reportsTokensFixture(t)
 	write(t, filepath.Join(out, "daily-2026-09.tsv"), "a month file from the prototype\n")
 	write(t, filepath.Join(out, "scratch"), "no extension\n")
@@ -120,6 +126,8 @@ func TestTheAllowlistDoesNotSwallowARealStray(t *testing.T) {
 // `sources --unattributed` is the evidence — the path stems that were seen and matched no
 // rule, heaviest first, in the shape a rule matches.
 func TestSourcesUnattributedNamesThePathsThatFellToOther(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	repos := reposFile(t, dir) // names `schema` and `serialize`, and nothing else
@@ -173,6 +181,8 @@ func TestSourcesUnattributedNamesThePathsThatFellToOther(t *testing.T) {
 // The listing is capped like every other listing here, with the one MORE line that says
 // what was not shown and how to see it.
 func TestSourcesUnattributedIsCappedWithARemedy(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	repos := reposFile(t, dir)
@@ -202,6 +212,8 @@ func TestSourcesUnattributedIsCappedWithARemedy(t *testing.T) {
 // A message naming several unattributed paths counts each of them: `other` is one repo for
 // the row, and the tally is about the PATHS, which is what a rules file matches.
 func TestSourcesUnattributedCountsEveryTokenOfAMessage(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	repos := reposFile(t, dir)

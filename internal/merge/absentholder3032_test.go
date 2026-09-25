@@ -38,6 +38,8 @@ func mustReviewers3032(t *testing.T) *ReviewerSet {
 }
 
 func TestAnAbsentHoldersCarriedHoldIsReleasedByAnotherMayHoldReadAtHead(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
 	rs := mustReviewers3032(t)
 
@@ -160,6 +162,8 @@ func TestAnAbsentHoldersCarriedHoldIsReleasedByAnotherMayHoldReadAtHead(t *testi
 }
 
 func TestParsePresenceReadsDownAndOutOfCreditsMarks(t *testing.T) {
+	t.Parallel()
+
 	tsv := "who\tlogins\tmay-hold\tstatus\tsince\n" +
 		"emma\temma-claude\tyes\tdown\t2026-09-23T08:30:00Z\n" +
 		"johnny\tjohnny-grok\tyes\tout-of-credits\t1758612600\n" +

@@ -23,6 +23,8 @@ func probeHistory(t *testing.T, classes ...string) string {
 }
 
 func TestProbeReadsTheAbstainHistory(t *testing.T) {
+	t.Parallel()
+
 	// The class is not in the history, so the check is not learned and the card passes:
 	// the card leaves its job (`../`) but no `admission` class was ever recorded.
 	card := "STEP 1. cd ../scratch and write\nRESULT.md red line\n"
@@ -46,6 +48,8 @@ func TestProbeReadsTheAbstainHistory(t *testing.T) {
 }
 
 func TestProbeNamesTheFiveChecks(t *testing.T) {
+	t.Parallel()
+
 	card := "STEP 1. mkdir -p scratch && git clone -q https://example.invalid/o/r.git .\n" +
 		"STEP 2. red line then green line\nRESULT.md\n"
 	for _, class := range []string{"admission", "wall refusal", "line1-mismatch", "idle kill", "no-result"} {
@@ -57,6 +61,8 @@ func TestProbeNamesTheFiveChecks(t *testing.T) {
 }
 
 func TestProbeRefusalNamesTheClass(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	code := Probe(ProbeInput{Label: "7", Card: "no result written\n", History: probeHistory(t, "no-result"), Stdout: &out, Stderr: &errb})
 	if code != 1 {

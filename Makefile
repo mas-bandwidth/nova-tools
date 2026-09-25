@@ -69,7 +69,7 @@ DARWIN_TIMEOUT ?= 300s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp verify-roadmap measure-roadmap check clean darwin-timeout map new-rule new-verb
+.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-slow test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp verify-roadmap measure-roadmap check clean darwin-timeout map new-rule new-verb
 
 help:
 	@echo "make help        this list"
@@ -83,6 +83,7 @@ help:
 	@echo "make test        go test -count=1 PKGS plus the 60s slowtests budget (the fast tier)"
 	@echo "make test-full   go test -count=1 ./... (the whole tree)"
 	@echo "make test-short  go test -short -count=1 -timeout 12m PKGS"
+	@echo "make test-slow   go test -count=1 -tags slow ./... (the nightly tier: the tests too slow for a commit)"
 	@echo "make test-merge  go test -count=1 -timeout MERGE_TIMEOUT -run RUN PKGS"
 	@echo "make test-race   go test -race ./... (the certification tier)"
 	@echo "make test-e2e    go test -count=1 -run TestFriendSequence ./cmd/..."
@@ -196,6 +197,15 @@ test-full:
 
 test-short:
 	$(GO) test -short -count=1 -timeout 12m $(PKGS)
+
+# The nightly tier (go-test-slow): every test behind `//go:build slow`, with the
+# whole tree around it. A test lands there when the per-commit run cannot pay it
+# -- over five seconds on the Linux bench, or a deadline proved by waiting it out
+# (internal/ci/slowwaits_class_test.go) -- and .github/workflows/nightly-slow.yml
+# runs the same command every night. The per-commit legs, go-test-cmd and
+# go-test-internal, do not build these files.
+test-slow:
+	$(GO) test -count=1 -tags slow ./...
 
 # `test-pr` LIVED HERE, the sharded hosted PR leg's entry, and it went with
 # test-windows-pr on 2026-09-18: it had exactly one caller, and the caller is

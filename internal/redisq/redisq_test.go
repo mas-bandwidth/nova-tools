@@ -67,6 +67,8 @@ func mustAdd(t *testing.T, q *redisq.Queue, stream, card string) string {
 // same stream would hand both a copy, so the test fails unless the group is per stream,
 // never per bench.
 func TestOneCardIsDeliveredToExactlyOneConsumer(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	stream := "nova:queue:red:green"
 	_, q := newQueue(t)
@@ -91,6 +93,8 @@ func TestOneCardIsDeliveredToExactlyOneConsumer(t *testing.T) {
 // a-stream-consumer-that-dies-mid-card-has-its-card-reclaimed: kill a puller mid-card;
 // XAUTOCLAIM hands the card to the next puller, its partial RESULT.md kept as evidence.
 func TestAStreamConsumerThatDiesMidCardHasItsCardReclaimed(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	stream := "nova:queue:red:small"
 	mr, q := newQueue(t)
@@ -134,6 +138,8 @@ func TestAStreamConsumerThatDiesMidCardHasItsCardReclaimed(t *testing.T) {
 // a-cap-counter-refuses-the-41st-in-flight-muse-call: the 40th Muse call admits, the 41st
 // is refused, and a lapsed call frees its seat with no reap pass.
 func TestACapCounterRefusesThe41stInFlightMuseCall(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, q := newQueue(t)
 	base := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
@@ -176,6 +182,8 @@ func TestACapCounterRefusesThe41stInFlightMuseCall(t *testing.T) {
 // through the single script and exactly 40 hold the key; no ZCARD-then-ZADD interleaving
 // lets a 41st in.
 func TestACapAdmissionIsOneAtomicScriptThatRefusesThe41st(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, q := newQueue(t)
 	base := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
@@ -213,6 +221,8 @@ func TestACapAdmissionIsOneAtomicScriptThatRefusesThe41st(t *testing.T) {
 // that chose the file mode never touches the Redis key (nor the reverse), so one slot never
 // has two modes.
 func TestAStaleLeaseTokenCannotRenewOrReleaseASlot(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, q := newQueue(t)
 	q.SetClock(func() time.Time { return time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC) })

@@ -114,6 +114,8 @@ func (f *fixture) taskReceipts(sprint, id, from, to string) int {
 // ci-fail item <pr>:<head>:ci-fail:<pkg> has exactly one writer, ns_ci_end,
 // when the rerun budget is spent and the failure stands.
 func TestCiEndReleasesWaitingTasksAndOwnsTheFailItem(t *testing.T) {
+	t.Parallel()
+
 	const other = "3333333333333333333333333333333333333333"
 
 	t.Run("OK releases every task waiting on that head in the same call", func(t *testing.T) {

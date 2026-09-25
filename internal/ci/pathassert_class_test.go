@@ -299,6 +299,8 @@ func reportsWithErrorf(body *ast.BlockStmt) bool {
 // and the ones it claims to leave alone, are fed through it here as source text.
 // A future narrowing that quietly blinds the rule is a red run in this function.
 func TestPathAssertHeuristicReadsWhatItClaims(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		want int // how many literals the heuristic must flag

@@ -7,6 +7,8 @@ import (
 )
 
 func TestBothSpellingsNameOneKey(t *testing.T) {
+	t.Parallel()
+
 	for _, repo := range []string{"rowan-tools", "mas-bandwidth/rowan-tools", " rowan-tools "} {
 		if got := prkey.Key(repo, 375); got != "pr:rowan-tools:375" {
 			t.Fatalf("Key(%q, 375) = %q, want pr:rowan-tools:375", repo, got)
@@ -18,6 +20,8 @@ func TestBothSpellingsNameOneKey(t *testing.T) {
 }
 
 func TestSplit(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct{ in, owner, name string }{
 		{"rowan-tools", prkey.DefaultOwner, "rowan-tools"},
 		{"mas-bandwidth/nova-tools", "mas-bandwidth", "nova-tools"},

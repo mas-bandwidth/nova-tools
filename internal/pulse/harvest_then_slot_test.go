@@ -64,6 +64,8 @@ func TestHarvestThenFoldsPulledBenchScratchWhenSlotIsDash(t *testing.T) {
 }
 
 func TestJobDirMapsDashSlotToPulledBenchScratch(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	pulled := filepath.Join(root, "studio-1", "jobs", "card-a")
 	if err := os.MkdirAll(pulled, 0o755); err != nil {
@@ -79,6 +81,8 @@ func TestJobDirMapsDashSlotToPulledBenchScratch(t *testing.T) {
 }
 
 func TestJobDirDashWithNoJobStaysAtZero(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	got, n := resolveJobDir(root, "-", "card-a", "RESULT card-a")
 	want := filepath.Join(root, "0", "jobs", "card-a")
@@ -107,6 +111,8 @@ func writeJobResult(t *testing.T, root, slot, label, body string, when time.Time
 // before looking at the pulled <bench>-<n> path, so a leftover local result hid
 // the current bench pull for the same label.
 func TestJobDirDoesNotPreferStaleZeroOverPulledResult(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	old := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	copied := time.Date(2026, 9, 20, 17, 0, 0, 0, time.UTC)
@@ -122,6 +128,8 @@ func TestJobDirDoesNotPreferStaleZeroOverPulledResult(t *testing.T) {
 }
 
 func TestJobDirPicksUniqueContractNotNewerMtime(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	old := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	copied := time.Date(2026, 9, 20, 17, 0, 0, 0, time.UTC)
@@ -137,6 +145,8 @@ func TestJobDirPicksUniqueContractNotNewerMtime(t *testing.T) {
 }
 
 func TestJobDirAmbiguousSameContract(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	when := time.Date(2026, 9, 20, 16, 0, 0, 0, time.UTC)
 	writeJobResult(t, root, "0", "card-a", "RESULT card-a sha=000000000000\nDONE\nBRANCH rowan/stale\n", when)

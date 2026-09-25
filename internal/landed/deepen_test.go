@@ -110,6 +110,8 @@ func commitTime(t *testing.T, url, sha string) int64 {
 // window past it, answers the lander's commit, and is still shallow afterwards. A
 // plain --depth 50 clone cannot answer: the lander's commit is not in it.
 func TestSetCheckShallowCloneDeepensForAnOldWindow(t *testing.T) {
+	t.Parallel()
+
 	url, c := deepOrigin(t)
 	f := &forge{answers: map[string]string{
 		"api repos/o/r/pulls/7": closedWhen(c[1007], commitTime(t, url, c[450])+300),

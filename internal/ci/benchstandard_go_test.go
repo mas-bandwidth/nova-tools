@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 func TestBenchStandardGoWantTracksGoMod(t *testing.T) {
@@ -30,7 +32,7 @@ func TestBenchStandardGoWantTracksGoMod(t *testing.T) {
 	// A toolchain one patch behind the tree: the shape that left captainamerica
 	// "conforming" while batch refused it.
 	fake := "#!/bin/sh\necho 'go version go1.26.5 linux/amd64'\n"
-	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(fake), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(bin, "go"), []byte(fake), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

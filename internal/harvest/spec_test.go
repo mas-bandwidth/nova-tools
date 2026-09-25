@@ -18,6 +18,8 @@ import (
 )
 
 func TestDurableLaunch5_TwoLiveWorkersCurrentFencePublishes(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
 	ctrl := harvest.NewFakeControl(1, now.Add(time.Hour))
 	cards := harvest.NewMemory()
@@ -83,6 +85,8 @@ func TestDurableLaunch5_TwoLiveWorkersCurrentFencePublishes(t *testing.T) {
 }
 
 func TestDurableLaunch5_SeparateRUNActionTokens(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
 	ctrl := harvest.NewFakeControl(1, now.Add(time.Hour))
 	cards := harvest.NewMemory()
@@ -113,6 +117,8 @@ func TestDurableLaunch5_SeparateRUNActionTokens(t *testing.T) {
 }
 
 func TestDurableLaunch9_PauseCaptureCannotBecomeAuthoritativeResult(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
 	ctrl := harvest.NewFakeControl(1, now.Add(time.Hour))
 	cards := harvest.NewMemory()
@@ -168,6 +174,8 @@ func TestDurableLaunch9_PauseCaptureCannotBecomeAuthoritativeResult(t *testing.T
 }
 
 func TestEffectOwnerDoesNotWriteEventsJSONL(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	life := filepath.Join(root, "lifecycle")
 	if err := os.MkdirAll(filepath.Join(life, "cards"), 0o755); err != nil {
@@ -203,6 +211,8 @@ func TestEffectOwnerDoesNotWriteEventsJSONL(t *testing.T) {
 }
 
 func TestReview2153EmptyScopeMustRefuse(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
 	owner, cred := reviewOwner(t, now, "card-scope", "att-scope", 1)
 	tok := tokenFor(cred, harvest.ActionPush, 1, now.Add(time.Hour))
@@ -221,6 +231,8 @@ func TestReview2153EmptyScopeMustRefuse(t *testing.T) {
 }
 
 func TestReview2153TokenReplayMustNotRepeatEffect(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
 	owner, cred := reviewOwner(t, now, "card-replay", "att-replay", 1)
 	tok := tokenFor(cred, harvest.ActionPush, 1, now.Add(time.Hour))
@@ -246,6 +258,8 @@ func TestReview2153TokenReplayMustNotRepeatEffect(t *testing.T) {
 }
 
 func TestReview2153DiskCardIdentityMustMatchRequestedCard(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	life := filepath.Join(root, "lifecycle")
 	if err := os.MkdirAll(filepath.Join(life, "cards"), 0o755); err != nil {

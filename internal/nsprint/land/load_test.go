@@ -13,6 +13,8 @@ import (
 )
 
 func TestLoadPRSurfacesExpectedPolicyReadError(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})

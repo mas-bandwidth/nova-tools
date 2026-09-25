@@ -14,6 +14,8 @@ import (
 // out of the spec the way TestBenchSlotLeasesSectionNamesItsRules does: the spec
 // is the one place the contract is written.
 func TestEfficiencyCardSectionNamesItsThreeMeasuredOperations(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
 	if err != nil {
 		t.Fatalf("the efficiency contract is the spec's: %s", err)

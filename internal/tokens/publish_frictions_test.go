@@ -10,6 +10,8 @@ import (
 // shuffle what is already there.
 
 func TestPublishFrictionsAppend(t *testing.T) {
+	t.Parallel()
+
 	existing := FormatFrictionsPublication([]string{
 		"gap=build issue=#1 cost=~",
 		"gap=review issue=#2 cost=12000",

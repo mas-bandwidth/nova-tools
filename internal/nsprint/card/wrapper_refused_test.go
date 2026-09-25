@@ -134,6 +134,8 @@ func TestWrapperEndsANativeRefusalFailedRefused(t *testing.T) {
 // sources: a stamped log line is read from the mark on, a job with only other
 // output holds no refusal, and a later source is read when the first is silent.
 func TestNativeRefusalReadsTheLineFromTheMark(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(job, "out"), 0o755); err != nil {
 		t.Fatal(err)

@@ -22,6 +22,8 @@ func pushedHeader(sha string) []byte {
 }
 
 func TestParseCardBaseReadsThePushedHeader(t *testing.T) {
+	t.Parallel()
+
 	const sha = "ac1dfd2ea24f90af179121f26d71a2f8bfb85df6"
 	repo, gotSha, ok := ParseCardBase(pushedHeader(sha))
 	if !ok {
@@ -59,6 +61,8 @@ func TestParseCardBaseReadsThePushedHeader(t *testing.T) {
 }
 
 func TestParseCardBasePrecedenceAndAbsence(t *testing.T) {
+	t.Parallel()
+
 	const sha = "09fbedc9052145b20677501a1dbcb5f5ba9c87d4"
 
 	// base-repo: wins over REPO: (unchanged behaviour for base-repo cards).
@@ -131,6 +135,8 @@ func stageMirror(t *testing.T, root string) (benchHome, first, second string) {
 // base-sha (the OLDER commit, so the check is the sha and not the mirror's tip), on a named
 // branch the card can commit on.
 func TestStageCardStagesThePushedHeaderFromTheMirror(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	benchHome, first, second := stageMirror(t, root)
 	jobDir := filepath.Join(root, "jobs", "card-1")
@@ -173,6 +179,8 @@ func TestStageCardStagesThePushedHeaderFromTheMirror(t *testing.T) {
 // TestStageCardChecksOutTheBaseRefWithoutASha: BASE: dev with no base-sha stages the
 // mirror's dev tip.
 func TestStageCardChecksOutTheBaseRefWithoutASha(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	benchHome, _, second := stageMirror(t, root)
 	jobDir := filepath.Join(root, "jobs", "card-2")

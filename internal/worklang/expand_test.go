@@ -41,6 +41,8 @@ func renderAll(t *testing.T, cards []worklang.Card) map[string][]byte {
 // worklang-card-carries-its-budget-and-floor, and
 // worklang-duplicate-branch-name-refuses.
 func TestWorklangExpand(t *testing.T) {
+	t.Parallel()
+
 	// A two-node plan: n1 has no need, n2 needs n1. Both hand-written.
 	const twoNodes = `(:plan :version 1
  (:goal :id "g" :acceptance ((:id "a1" :kind :test :subject "test:x" :predicate :passes)))
@@ -205,6 +207,8 @@ func TestWorklangExpand(t *testing.T) {
 // is refused once, naming every missing field. The docs/CLI.md must also
 // document both :output and :budget fields.
 func TestExpandNamesEveryMissingField(t *testing.T) {
+	t.Parallel()
+
 	noFields := `(:plan :version 1
   (:node :id "n1" :kind docs :repo "o/r" :base "dev"
    :inputs ((:spec "docs/a.md"))

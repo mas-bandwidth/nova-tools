@@ -73,6 +73,8 @@ func head8(t *testing.T, dir string) string {
 }
 
 func TestMutateVerbPrintsOneLineAndExitsZeroWhenTheTestIsRed(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, true)
 	var out, errb bytes.Buffer
 	code := run([]string{"mutate", "--repo", dir, "--base", "main", "--head", "HEAD"}, &out, &errb)
@@ -107,6 +109,8 @@ func TestMutateVerbIgnoresTheCallersGOFLAGS(t *testing.T) {
 }
 
 func TestMutateVerbExitsOneAndNamesTheGreenTest(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, false)
 	var out, errb bytes.Buffer
 	code := run([]string{"mutate", "--repo", dir, "--base", "main", "--head", "HEAD"}, &out, &errb)
@@ -124,6 +128,8 @@ func TestMutateVerbExitsOneAndNamesTheGreenTest(t *testing.T) {
 // The listing is capped and counted like every listing here, and the remedy is the command
 // that shows the rest.
 func TestMutateGreenListingIsBounded(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, false)
 	var out, errb bytes.Buffer
 	if code := run([]string{"mutate", "--repo", dir, "--base", "main", "--head", "HEAD", "--max", "1"}, &out, &errb); code != 1 {
@@ -139,6 +145,8 @@ func TestMutateGreenListingIsBounded(t *testing.T) {
 }
 
 func TestMutateVerbRefusesARangeWithNoTestChange(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, true)
 	// Drop the test change: the head now carries only the fix.
 	gitRun(t, dir, "checkout", "-q", "main", "--", "sign/sign_test.go")
@@ -161,6 +169,8 @@ func TestMutateVerbRefusesARangeWithNoTestChange(t *testing.T) {
 // so the control cannot be PROVED -- which is not the same as a run that broke, and
 // is not acceptance either.
 func TestMutateVerbAbstainsOnATestOnlyRange(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, true)
 	gitRun(t, dir, "checkout", "-q", "main", "--", "sign/sign.go")
 	gitRun(t, dir, "commit", "-q", "-m", "drop the fix, keep the test")
@@ -178,6 +188,8 @@ func TestMutateVerbAbstainsOnATestOnlyRange(t *testing.T) {
 }
 
 func TestMutateVerbRefusesBadInvocation(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{
 		{"mutate", "--base", "main", "--head", "HEAD"},
 		{"mutate", "--repo", ".", "--head", "HEAD"},
@@ -196,6 +208,8 @@ func TestMutateVerbRefusesBadInvocation(t *testing.T) {
 }
 
 func TestMutateVerbRefusesARepoThatIsNotAWorkingCopy(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	if code := run([]string{"mutate", "--repo", t.TempDir(), "--base", "main", "--head", "HEAD"}, &out, &errb); code != 2 {
 		t.Fatalf("exit %d, want 2 (stderr %s)", code, errb.String())
@@ -206,6 +220,8 @@ func TestMutateVerbRefusesARepoThatIsNotAWorkingCopy(t *testing.T) {
 }
 
 func TestMutateUsageNamesTheVerb(t *testing.T) {
+	t.Parallel()
+
 	if !strings.Contains(usage, "nova-review mutate --repo <dir> --base <ref> --head <ref>") {
 		t.Fatalf("the help does not carry the mutate line:\n%s", usage)
 	}
@@ -223,6 +239,8 @@ func TestMutateUsageNamesTheVerb(t *testing.T) {
 // mutate-prints-reverted-count: "every non-test hunk" becomes a number a caller can
 // gate on, rather than a sentence in a spec.
 func TestMutatePrintsRevertedCount(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, true)
 	var out, errb bytes.Buffer
 	code := run([]string{"mutate", "--repo", dir, "--base", "main", "--head", "HEAD"}, &out, &errb)
@@ -276,6 +294,8 @@ const oneEditSeed = `--- a/sign/sign.go
 `
 
 func TestMutateSeedPassesWhenTheSeedTurnsThePackageRed(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, oneEditSeed), "--tests", "sign"}, &out, &errb)
@@ -290,6 +310,8 @@ func TestMutateSeedPassesWhenTheSeedTurnsThePackageRed(t *testing.T) {
 
 // A mutant the suite does not kill is a FAIL, and it exits 1: the verb ran and said no.
 func TestMutateSeedFailsWhenTheSeedSurvives(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	// Nothing in the suite reads the negative branch, so this mutant survives.
 	survivor := `--- a/sign/sign.go
@@ -312,6 +334,8 @@ func TestMutateSeedFailsWhenTheSeedSurvives(t *testing.T) {
 
 // mutate-seed-refuses-two-edits.
 func TestMutateSeedRefusesTwoEdits(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	two := `--- a/sign/sign.go
 +++ b/sign/sign.go
@@ -347,6 +371,8 @@ func TestMutateSeedRefusesTwoEdits(t *testing.T) {
 // that counted the patch would run this and report a suite proved against a defect
 // that was never in the tree.
 func TestMutateSeedRefusesZeroEdits(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	none := `--- a/sign/sign.go
 +++ b/sign/sign.go
@@ -372,6 +398,8 @@ func TestMutateSeedRefusesZeroEdits(t *testing.T) {
 // One line moved -- the same text removed in one place and added in another -- is one
 // edit, and the gate's `renamed` and `no-test` style seeds depend on it being one.
 func TestMutateSeedCountsAMovedLineAsOneEdit(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	moved := `--- a/sign/sign_test.go
 +++ b/sign/sign_test.go
@@ -400,6 +428,8 @@ func TestMutateSeedCountsAMovedLineAsOneEdit(t *testing.T) {
 // The seed form keeps the range form's promise: it writes nothing into the repo it is
 // pointed at. The mutant lives and dies in the throwaway worktree.
 func TestMutateSeedWritesNothingIntoTheRepo(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	before := head8(t, dir)
 	var out, errb bytes.Buffer
@@ -428,6 +458,8 @@ func TestMutateSeedWritesNothingIntoTheRepo(t *testing.T) {
 // A seed that does not apply at all is a could-not-run, not a verdict: the control was
 // never installed, so nothing was proved either way.
 func TestMutateSeedRefusesAPatchThatDoesNotApply(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, "--- a/nope.go\n+++ b/nope.go\n@@ -1 +1 @@\n-a\n+b\n"), "--tests", "sign"}, &out, &errb)
@@ -442,6 +474,8 @@ func TestMutateSeedRefusesAPatchThatDoesNotApply(t *testing.T) {
 // The two forms are exclusive, and each names what it needs: --seed wants --tests and
 // no --base, the range wants --base and no --tests.
 func TestMutateSeedFlagCombinationsAreRefused(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	seed := seedFile(t, oneEditSeed)
 	for _, args := range [][]string{
@@ -484,6 +518,8 @@ func slowSeedLab(t *testing.T) string {
 // non-zero with no FAIL line, and a run that counted that as a kill reported
 // "edits=1 red=1 green=0 PASS" for a package name nobody spelled right.
 func TestMutateSeedRefusesAPackageThatDoesNotExist(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, oneEditSeed), "--tests", "nosuch"}, &out, &errb)
@@ -502,36 +538,11 @@ func TestMutateSeedRefusesAPackageThatDoesNotExist(t *testing.T) {
 	}
 }
 
-// mutate-seed-timeout-is-not-a-pass: the deadline kills `go test` before any unit
-// reports, and a deadline is a could-not-run -- exit 2 -- never a mutant that died.
-//
-// This is the end-to-end of it, and the only way to have it end to end is to let a
-// real second pass: the deadline is `--timeout`, in whole seconds, on the wall clock.
-// So it is behind `-short`, and `internal/review`'s
-// TestSeedTimeoutIsACouldNotRunAndNeverAKill holds the same rule at the function that
-// decides it, instantly, on every run. The two-minute law is not a thing to spend a
-// second of on a branch that already has the proof.
-func TestMutateSeedTimeoutIsNotAPass(t *testing.T) {
-	if testing.Short() {
-		t.Skip("a real --timeout is a real second; internal/review holds this rule without the clock")
-	}
-	dir := slowSeedLab(t)
-	var out, errb bytes.Buffer
-	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, oneEditSeed), "--tests", "sign", "--timeout", "1"}, &out, &errb)
-	if code != 2 {
-		t.Fatalf("exit %d, want 2\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
-	}
-	if out.String() != "" {
-		t.Fatalf("a verdict printed for a run that was killed: %q", out.String())
-	}
-	if !strings.Contains(errb.String(), "deadline") {
-		t.Fatalf("stderr = %q, want a refusal naming the deadline", errb.String())
-	}
-}
-
 // mutate-seed-refuses-a-suite-already-red: a suite red at the unseeded head kills
 // every seed, so a PASS under it is the head's own failure wearing the control's name.
 func TestMutateSeedRefusesASuiteAlreadyRedAtTheHead(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	// The unit now asserts something the fixed code does not do: red before any seed.
 	put(t, dir, "sign/sign_test.go", "package sign\n\nimport \"testing\"\n\nfunc TestSignZero(t *testing.T) {\n\tif Sign(0) != 7 {\n\t\tt.Fatal(\"zero\")\n\t}\n}\n")
@@ -554,6 +565,8 @@ func TestMutateSeedRefusesASuiteAlreadyRedAtTheHead(t *testing.T) {
 // Markdown rule is one edit. Read line by line, `----` in the applied diff is a `---`
 // file header, and the seed was refused as a control that changed nothing.
 func TestMutateSeedCountsAContentLineThatLooksLikeAFileHeader(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	put(t, dir, "sign/doc.md", "title\n---\nbody\n")
 	gitRun(t, dir, "add", "-A")
@@ -579,6 +592,8 @@ func TestMutateSeedCountsAContentLineThatLooksLikeAFileHeader(t *testing.T) {
 // binary itself -- is still the mutant dying. The refusals above narrow what counts as
 // a kill; this is the line they must not cross.
 func TestMutateSeedCountsAPackageLevelFailAsAKill(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	gitRun(t, dir, "init", "-q", "-b", "main")
 	gitRun(t, dir, "config", "user.email", "fixture@example.com")
@@ -644,6 +659,8 @@ func selectLab(t *testing.T) string {
 // test is red. It is the control for the whole slice -- if this ever passes by
 // itself, --test proved nothing.
 func TestMutateRangeStillFailsPerFileWithoutTheFlag(t *testing.T) {
+	t.Parallel()
+
 	dir := selectLab(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"mutate", "--repo", dir, "--base", "main", "--head", "HEAD"}, &out, &errb)
@@ -661,6 +678,8 @@ func TestMutateRangeStillFailsPerFileWithoutTheFlag(t *testing.T) {
 
 // #1849: the selected form answers rule 4(d)'s question and PASSes the same range.
 func TestMutateSelectedTestPassesWhenTheNamedUnitIsRed(t *testing.T) {
+	t.Parallel()
+
 	dir := selectLab(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"mutate", "--repo", dir, "--base", "main", "--head", "HEAD", "--test", "TestSignZero"}, &out, &errb)
@@ -684,6 +703,8 @@ func TestMutateSelectedTestPassesWhenTheNamedUnitIsRed(t *testing.T) {
 // The other half of the ruling: a named unit that RAN GREEN is FAIL, exit 1 -- the
 // question was asked and answered no. Another test's red must not answer it.
 func TestMutateSelectedTestFailsWhenTheNamedUnitRanGreen(t *testing.T) {
+	t.Parallel()
+
 	dir := selectLab(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"mutate", "--repo", dir, "--base", "main", "--head", "HEAD", "--test", "TestShapeOnly"}, &out, &errb)
@@ -698,6 +719,8 @@ func TestMutateSelectedTestFailsWhenTheNamedUnitRanGreen(t *testing.T) {
 // Absent, ambiguous and unchanged-file-only are REFUSED, never a vacuous PASS and
 // never an inferred FAIL. "Do not guess which test the caller meant."
 func TestMutateSelectedTestRefusesWhenItCannotBeResolved(t *testing.T) {
+	t.Parallel()
+
 	dir := selectLab(t)
 	// selectLab already carries other/other_test.go at the BASE, unchanged by this
 	// range: a name in the repo but in no CHANGED test file cannot be asked, and
@@ -740,6 +763,8 @@ func TestMutateSelectedTestRefusesWhenItCannotBeResolved(t *testing.T) {
 // The two forms stay distinct: seed's plural --tests is a package selector, the
 // range's singular --test is a unit. Together they are malformed.
 func TestMutateSelectedTestIsRangeOnly(t *testing.T) {
+	t.Parallel()
+
 	dir := selectLab(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, oneEditSeed), "--tests", "sign", "--test", "TestSignZero"}, &out, &errb)
@@ -754,6 +779,8 @@ func TestMutateSelectedTestIsRangeOnly(t *testing.T) {
 // "Any MORE/remedy must carry --test so rerunning asks the same question." A remedy
 // that dropped it would print the per-file listing for a different question.
 func TestMutateSelectedRemedyCarriesTheFlag(t *testing.T) {
+	t.Parallel()
+
 	dir := selectLab(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"mutate", "--repo", dir, "--base", "main", "--head", "HEAD", "--test", "TestShapeOnly", "--max", "1"}, &out, &errb)
@@ -782,6 +809,8 @@ func TestMutateSelectedRemedyCarriesTheFlag(t *testing.T) {
 
 // The readers' receipt is PR #1812: every changed file is a test file.
 func TestMutateAbstainsWhenThereIsNoChangeToRevert(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, true)
 	gitRun(t, dir, "checkout", "-q", "-b", "tests-only")
 	put(t, dir, "sign/sign_test.go", "package sign\n\nimport \"testing\"\n\nfunc TestSignPositive(t *testing.T) {\n\tif Sign(5) != 1 {\n\t\tt.Fatal(\"positive\")\n\t}\n}\n\nfunc TestSignZero(t *testing.T) {\n\tif Sign(0) != 0 {\n\t\tt.Fatal(\"zero\")\n\t}\n}\n\nfunc TestSignNegative(t *testing.T) {\n\tif Sign(-2) != -1 {\n\t\tt.Fatal(\"negative\")\n\t}\n}\n")
@@ -808,6 +837,8 @@ func TestMutateAbstainsWhenThereIsNoChangeToRevert(t *testing.T) {
 // file is still a refusal, because it can be an ordinary production fix missing the
 // red test it was required to have.
 func TestMutateStillRefusesWhenNoTestFileChanged(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, true)
 	gitRun(t, dir, "checkout", "-q", "-b", "prod-only")
 	put(t, dir, "sign/sign.go", "package sign\n\n// a comment-only change to production code\nfunc Sign(n int) int {\n\tif n > 0 {\n\t\treturn 1\n\t}\n\tif n == 0 {\n\t\treturn 0\n\t}\n\treturn -1\n}\n")
@@ -829,6 +860,8 @@ func TestMutateStillRefusesWhenNoTestFileChanged(t *testing.T) {
 // A mixed range keeps ordinary PASS/FAIL, which is what stops the abstain widening
 // into "any range with a test file in it".
 func TestMutateMixedRangeKeepsItsVerdict(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, true)
 	var out, errb bytes.Buffer
 	if code := run([]string{"mutate", "--repo", dir, "--base", "main", "--head", "HEAD"}, &out, &errb); code != 0 {
@@ -846,6 +879,8 @@ func TestMutateMixedRangeKeepsItsVerdict(t *testing.T) {
 // selected form must say FAIL, or naming a test would be a way to borrow a passing
 // verdict from the test next to it.
 func TestMutateSelectedTestIsNotAnsweredByItsFileNeighbour(t *testing.T) {
+	t.Parallel()
+
 	dir := mutateLab(t, true)
 	var out, errb bytes.Buffer
 	if code := run([]string{"mutate", "--repo", dir, "--base", "main", "--head", "HEAD"}, &out, &errb); code != 0 {
@@ -876,6 +911,8 @@ func TestMutateSelectedTestIsNotAnsweredByItsFileNeighbour(t *testing.T) {
 
 // #1803 receipt 1: one line ADDED in one file and one line REMOVED in another.
 func TestMutateSeedRefusesTwoFiles(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	twoFiles := `--- a/sign/sign_test.go
 +++ b/sign/sign_test.go
@@ -903,6 +940,8 @@ func TestMutateSeedRefusesTwoFiles(t *testing.T) {
 // #1803 receipt 2: one line ADDED in one function and one line REMOVED in another,
 // in the SAME file -- two hunks, two places, and not a moved line.
 func TestMutateSeedRefusesTwoHunksInOneFile(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	twoHunks := `--- a/sign/sign.go
 +++ b/sign/sign.go
@@ -930,6 +969,8 @@ func TestMutateSeedRefusesTwoHunksInOneFile(t *testing.T) {
 // the "one line moved" exception disagree, and two files is two places: a gate that
 // went red under it has caught something about `a.go` or something about `b.go`.
 func TestMutateSeedRefusesALineMovedBetweenFiles(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	movedAcross := `--- a/sign/sign.go
 +++ b/sign/sign.go
@@ -966,6 +1007,8 @@ func TestMutateSeedRefusesALineMovedBetweenFiles(t *testing.T) {
 // a kill. The reader's receipt was `MUTATE 04b3c236 seed=1d072599 edits=1 red=1
 // green=0 PASS` over a tree that answered `fill.go:367:6: syntax error`.
 func TestMutateSeedRefusesASeedThatDoesNotBuild(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	broken := `--- a/sign/sign.go
 +++ b/sign/sign.go
@@ -999,6 +1042,8 @@ func TestMutateSeedRefusesASeedThatDoesNotBuild(t *testing.T) {
 // The negative control for the control: a seed that DOES build is judged as before.
 // A build step that refused everything would pass the test above and break the verb.
 func TestMutateSeedStillRunsASeedThatBuilds(t *testing.T) {
+	t.Parallel()
+
 	dir := seedLab(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"mutate", "--repo", dir, "--head", "HEAD", "--seed", seedFile(t, oneEditSeed), "--tests", "sign"}, &out, &errb)

@@ -18,6 +18,8 @@ import (
 // name, no live bench path, no key-shaped or token-shaped string -- a template that
 // published a private detail would be the one artifact this issue exists to keep private.
 func TestTheSetupTemplateIsTheAgreementFormNotThePrivateConfig(t *testing.T) {
+	t.Parallel()
+
 	body, err := Template("setup")
 	if err != nil {
 		t.Fatalf("template setup: %v", err)

@@ -11,6 +11,8 @@ import (
 )
 
 func TestSpecNamesSparseCheckoutOfPATHSPackages(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
 	if err != nil {
 		t.Fatalf("SPEC-SWARM.md is missing: %s", err)
@@ -39,6 +41,8 @@ func TestSpecNamesSparseCheckoutOfPATHSPackages(t *testing.T) {
 // their in-module dependencies only. A fixture PATHS list must not materialize
 // an unrelated package; the named package's tests still run.
 func TestSparseCheckoutDoesNotMaterializeAnUnrelatedPackage(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	writeSparseFixture(t, src)
@@ -108,6 +112,8 @@ func writeSparseFixture(t *testing.T, src string) {
 // Leaving CloneFrom empty with that checkout present must still stage the
 // sparse job clone. A run that is handed CloneFrom stages from that checkout.
 func TestPrepareStagesASparseJobClone(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	workerDir := filepath.Join(root, "home")
 	if err := os.MkdirAll(workerDir, 0o755); err != nil {
@@ -158,6 +164,8 @@ func assertSparseJob(t *testing.T, jobDir string) {
 // refuse rather than check out PATHS with that dependency omitted, and the
 // destination directory itself must not exist afterward.
 func TestSparseCheckoutRefusesAMissingInModuleImport(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	mustWrite(t, filepath.Join(src, "go.mod"), "module example.com/s10absent\n\ngo 1.22\n")
@@ -190,6 +198,8 @@ func TestSparseCheckoutRefusesAMissingInModuleImport(t *testing.T) {
 // No Go packages under PATHS is a valid empty dependency set: staging still
 // checks out that path, and does not treat the empty lookup as a failure.
 func TestSparseCheckoutEmptyInModuleSetStillChecksOutPATHS(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	mustWrite(t, filepath.Join(src, "go.mod"), "module example.com/s10empty\n\ngo 1.22\n")

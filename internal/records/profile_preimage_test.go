@@ -46,6 +46,8 @@ func testCanonicalCatalog(profilesMap map[string]any) (string, string, error) {
 }
 
 func TestSwarmProfilePreimageMigrationFixtures(t *testing.T) {
+	t.Parallel()
+
 	repoRoot := filepath.Join("..", "..")
 
 	catBytes, err := os.ReadFile(filepath.Join(repoRoot, "docs", "fixtures", "swarm-profile-catalog-encoding.json"))
@@ -271,6 +273,8 @@ func TestSwarmProfilePreimageMigrationFixtures(t *testing.T) {
 }
 
 func TestSwarmProfilePreimageNegativeWitnesses(t *testing.T) {
+	t.Parallel()
+
 	repoRoot := filepath.Join("..", "..")
 
 	attBytes, err := os.ReadFile(filepath.Join(repoRoot, "docs", "fixtures", "swarm-attempt-body.json"))

@@ -19,6 +19,8 @@ func writePoolLedgerFixture(t *testing.T, path string) {
 }
 
 func TestReportLedgerMonthFiltersAndSums(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	ledger := filepath.Join(dir, "ledger.tsv")
 	writePoolLedgerFixture(t, ledger)
@@ -37,6 +39,8 @@ func TestReportLedgerMonthFiltersAndSums(t *testing.T) {
 }
 
 func TestReportLedgerByRepo(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	ledger := filepath.Join(dir, "ledger.tsv")
 	header := "day\tprovider\tmodel\trepo\ttasks\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\tsource"

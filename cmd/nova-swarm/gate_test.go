@@ -89,6 +89,8 @@ func TestNativeGateThatCouldNotRunIsNeverOK(t *testing.T) {
 // card that merely prints the words -- another program's refusal it routed around, its own
 // prose -- is a finished run and still says OK.
 func TestNativeOrdinaryRunIsStillOK(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)

@@ -16,6 +16,8 @@ import (
 // card lands. The red test the issue asks for: add into a nonexistent dir
 // succeeds and list prints the one card.
 func TestAddMakesTheDirectoryOnFirstUse(t *testing.T) {
+	t.Parallel()
+
 	missing := filepath.Join(t.TempDir(), "board")
 	var out, errb bytes.Buffer
 	exit := run([]string{"add", "--dir", missing, "--as", "stella", "--text", "the board dir was not there",

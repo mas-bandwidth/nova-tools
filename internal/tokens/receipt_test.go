@@ -9,6 +9,8 @@ import (
 // a fixed order, a 32-hex receipt id, a stage drawn from the six declared stages, and a
 // Format/Parse round trip that is the identity.
 func TestReceiptsFormatAndValidation(t *testing.T) {
+	t.Parallel()
+
 	if got, want := len(ReceiptColumns), 17; got != want {
 		t.Fatalf("ReceiptColumns has %d entries, want %d", got, want)
 	}

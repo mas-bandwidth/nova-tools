@@ -24,6 +24,8 @@ func later(verb, id, ev, after, as, when string, override bool) string {
 // it is in the log where a reader can see that two lines thought they had finished the
 // same thing.
 func TestASecondCloseChangesNothing(t *testing.T) {
+	t.Parallel()
+
 	lines := []string{
 		card(idA, "a thing two lines both finished"),
 		later("closed", idA, "0000000000a1", idA, "ada", "2026-09-10T09:10:00Z", false),
@@ -45,6 +47,8 @@ func TestASecondCloseChangesNothing(t *testing.T) {
 // A RE-TAKE MOVES THE OWNER, and takes are repeatable because that is the remedy for a
 // stale take being a guess about a clock rather than about a line.
 func TestARetakeMovesTheOwner(t *testing.T) {
+	t.Parallel()
+
 	lines := []string{
 		card(idA, "a thing that changes hands"),
 		later("taken", idA, "0000000000a1", idA, "ada", "2026-09-10T09:10:00Z", false),
@@ -62,6 +66,8 @@ func TestARetakeMovesTheOwner(t *testing.T) {
 // STALENESS IS AN ANNOTATION AND WRITES NOTHING. It is a pure function of (the latest
 // event's stamp, now, the window), and the same log at two instants is the same log.
 func TestStaleIsAnAnnotationAndAPureFunction(t *testing.T) {
+	t.Parallel()
+
 	lines := []string{
 		card(idA, "a thing that goes quiet"),
 		later("taken", idA, "0000000000a1", idA, "ada", "2026-09-10T09:10:00Z", false),
@@ -89,6 +95,8 @@ func TestStaleIsAnAnnotationAndAPureFunction(t *testing.T) {
 // THE SAME EVENTS IN TWO TEXTUAL ORDERS DERIVE ONE OWNER, and a union merge that holds one
 // line twice folds it once.
 func TestTheTextualOrderAndADuplicatedLineChangeNothing(t *testing.T) {
+	t.Parallel()
+
 	ada := later("taken", idA, "0000000000a1", idA, "Ada", "2026-09-10T09:10:00Z", false)
 	bo := later("taken", idA, "0000000000b2", idA, "Bo", "2026-09-10T09:10:00Z", false)
 	root := card(idA, "one card, two clones")
@@ -110,6 +118,8 @@ func TestTheTextualOrderAndADuplicatedLineChangeNothing(t *testing.T) {
 
 // An event whose at= will not parse folds LAST and is counted, never guessed at.
 func TestAnUnreadableStampFoldsLastAndIsCounted(t *testing.T) {
+	t.Parallel()
+
 	broken := "taken " + idA + " ev=0000000000c3 after=" + idA + " as=zz at=yesterday override=false"
 	lines := []string{
 		card(idA, "a card with a stamp nobody can read"),
@@ -136,6 +146,8 @@ func TestAnUnreadableStampFoldsLastAndIsCounted(t *testing.T) {
 // for `ev=` in the id's place would let the DRAW decide a tie the document says the VERB
 // decides, and two documents that disagree about the order are two boards.
 func TestTheTotalKeyIsTheDocumentedOne(t *testing.T) {
+	t.Parallel()
+
 	at := "2026-09-10T09:10:00Z"
 	// Two concurrent closing events at one at= and one as=, whose ev= sorts the opposite
 	// way from their verbs: by the documented key `closed` folds first (closed < landed),
@@ -159,6 +171,8 @@ func TestTheTotalKeyIsTheDocumentedOne(t *testing.T) {
 // whose at= will not parse as of any other: two events equal in all five keys ARE one
 // line, so the count a reader acts on cannot double because git kept a line twice.
 func TestADuplicatedUnreadableStampIsCountedOnce(t *testing.T) {
+	t.Parallel()
+
 	broken := "taken " + idA + " ev=0000000000c3 after=" + idA + " as=zz at=yesterday override=false"
 	lines := []string{card(idA, "a card with a stamp nobody can read"), broken, broken}
 	b := Derive(Log{Lines: lines}, mustTime2("2026-09-10T09:15:00Z"), 10*time.Minute)

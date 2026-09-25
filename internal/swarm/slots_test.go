@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 func writeSlotStore(t *testing.T, shares string) string {
@@ -28,6 +30,8 @@ func mustSlotTake(t *testing.T, store, owner string, k int, d time.Duration, lab
 
 // Two owners at share 2 each with capacity 4 reserve 0 cannot take a fifth.
 func TestSlotSharesRefuseFifth(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t4\nreserve\t0\nalice\t2\nbob\t2\n")
 	now := time.Now().UTC()
 	pid := os.Getpid()
@@ -51,6 +55,8 @@ func TestSlotSharesRefuseFifth(t *testing.T) {
 
 // An expired lease with a dead pid is reaped and its slot granted.
 func TestSlotExpiredDeadPidReaped(t *testing.T) {
+	t.Parallel()
+
 	const deadPid = 2147483647
 	if Alive(deadPid, "") {
 		t.Skip("dead pid probe is alive here")
@@ -79,6 +85,8 @@ func TestSlotExpiredDeadPidReaped(t *testing.T) {
 
 // An expired lease with the test's live pid stays and is printed DRIFT.
 func TestSlotExpiredLivePidDrift(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t2\nreserve\t0\nalice\t1\n")
 	past := time.Now().UTC().Add(-time.Hour)
 	if err := MakeSlotLease(store, "drift-1", "alice", os.Getpid(), "", past); err != nil {
@@ -113,6 +121,8 @@ func TestSlotExpiredLivePidDrift(t *testing.T) {
 
 // Take past capacity-reserve is refused naming holders.
 func TestSlotCapacityReserveRefused(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t4\nreserve\t1\nalice\t10\nbob\t10\n")
 	now := time.Now().UTC()
 	pid := os.Getpid()
@@ -137,10 +147,12 @@ func TestSlotCapacityReserveRefused(t *testing.T) {
 // TestIssue2238 asserts that a Batch with no SlotsStore/SlotOwner refuses before
 // any worker starts, citing the missing lease (docs/SPEC-JOBS.md:76).
 func TestIssue2238(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	// Create a fake harness so we get past the harness check
 	harness := filepath.Join(root, "harness")
-	if err := os.WriteFile(harness, []byte("#!/bin/sh\necho OK\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(harness, []byte("#!/bin/sh\necho OK\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cards := writeCards(t, root, [][2]string{{"c1", "RESULT: test\nDONE"}})

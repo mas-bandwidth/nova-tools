@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // Rules 16 and 18, the halves that are about what does NOT decide an answer: the checkout's
@@ -26,7 +28,7 @@ func fakeGit(t *testing.T) (logPath string) {
 	dir := t.TempDir()
 	logPath = filepath.Join(dir, "git-argv.log")
 	bin := mkdir(t, filepath.Join(dir, "bin"))
-	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho \"$@\" >> "+logPath+"\nexit 0\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho \"$@\" >> "+logPath+"\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -119,6 +121,8 @@ func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
 // Rule 20 and demanded test 20's last third: a provider's local-day total crosses the bus
 // as a seventh field, and folds back to the same row it would have folded from the export.
 func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
 	export := write(t, filepath.Join(dir, "xai.csv"), strings.Join([]string{
@@ -182,6 +186,8 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 
 // Rule 5's refusal half at the binary: a malformed rules line is exit 2 naming the line.
 func TestAMalformedRulesFileIsRefusedByLine(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -199,6 +205,8 @@ func TestAMalformedRulesFileIsRefusedByLine(t *testing.T) {
 // Rule 12's other half: the build id is compiled in, and `version` says which build wrote
 // a day file. A day file whose stamp a caller could set would be a stamp nobody could trust.
 func TestVersionSaysWhichBuildIsRunning(t *testing.T) {
+	t.Parallel()
+
 	r := invoke(t, "version")
 	wantExit(t, r, 0)
 	if n := len(strings.Fields(strings.TrimSpace(r.stdout))); n != 4 {
@@ -211,6 +219,8 @@ func TestVersionSaysWhichBuildIsRunning(t *testing.T) {
 // Demanded test 3's other half: a line that is not JSON is counted inside this file's
 // unreadable accounting, and the file continues.
 func TestANonJSONLineIsCountedAndTheFileContinues(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))

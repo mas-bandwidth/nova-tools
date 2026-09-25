@@ -159,6 +159,8 @@ func thousand() []row {
 // TestCancelThousandInOneCall is the bar: 1,000 ids across 10 streams cancel
 // in one function call in under a second, every invariant held after.
 func TestCancelThousandInOneCall(t *testing.T) {
+	t.Parallel()
+
 	_, c := newStore(t)
 	rows := thousand()
 	seed(t, c, rows)
@@ -194,6 +196,8 @@ func TestCancelThousandInOneCall(t *testing.T) {
 }
 
 func TestBlockUnblockRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	_, c := newStore(t)
 	rows := []row{
 		{id: "a", stream: "s", state: "ready", owner: "f", order: 3},
@@ -248,6 +252,8 @@ func TestBlockUnblockRoundTrip(t *testing.T) {
 }
 
 func TestMoveStreamKeepsOrder(t *testing.T) {
+	t.Parallel()
+
 	_, c := newStore(t)
 	var rows []row
 	for i := 1; i <= 5; i++ {
@@ -297,6 +303,8 @@ func TestMoveStreamKeepsOrder(t *testing.T) {
 }
 
 func TestMoveStateFriendAndFront(t *testing.T) {
+	t.Parallel()
+
 	_, c := newStore(t)
 	rows := []row{
 		{id: "w", stream: "s", state: "waiting", owner: "f", order: 5},
@@ -355,6 +363,8 @@ func TestMoveStateFriendAndFront(t *testing.T) {
 }
 
 func TestRefusalChangesNothingAndNamesFirstBadID(t *testing.T) {
+	t.Parallel()
+
 	_, c := newStore(t)
 	rows := []row{
 		{id: "a", stream: "s", state: "ready", owner: "f", order: 1},
@@ -391,6 +401,8 @@ func TestRefusalChangesNothingAndNamesFirstBadID(t *testing.T) {
 }
 
 func TestSweepCancelsMovedHeadAndParksPitstop(t *testing.T) {
+	t.Parallel()
+
 	_, c := newStore(t)
 	rows := []row{
 		{id: "r1", stream: "s", state: "ready", owner: "f", order: 1, extra: []string{"kind", "read", "head", "aaaa111", "ref", "mas-bandwidth/nova-tools#10"}},
@@ -436,6 +448,8 @@ func TestSweepCancelsMovedHeadAndParksPitstop(t *testing.T) {
 }
 
 func TestRequestCheck(t *testing.T) {
+	t.Parallel()
+
 	base := taskbatch.Request{Verb: taskbatch.Cancel, Sprint: "s", By: "b", IDs: []string{"x"}}
 	if err := base.Check(); err != nil {
 		t.Fatal(err)

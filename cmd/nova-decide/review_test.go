@@ -14,6 +14,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/prereview"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -63,7 +64,7 @@ case "$1" in
   *) echo "fake gh: unexpected $*" >&2; exit 2 ;;
 esac
 `, argvLog, cellData(t, "cells"), cellData(t, "cells"))
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return path, argvLog
@@ -86,6 +87,8 @@ func argv(t *testing.T, log string) string {
 // seen the 122-row result, and until then no verb run may write to a pull
 // request.
 func TestReviewDryRunPrintsTheLineAndPostsNothing(t *testing.T) {
+	t.Parallel()
+
 	gh, log := fakeGH(t)
 	ledger := filepath.Join(t.TempDir(), "ledger.jsonl")
 	var out, errb bytes.Buffer
@@ -133,6 +136,8 @@ func TestReviewDryRunPrintsTheLineAndPostsNothing(t *testing.T) {
 // TestReviewPostPostsExactlyOneComment. --post is the verb's only write, and it
 // is one comment carrying the typed line.
 func TestReviewPostPostsExactlyOneComment(t *testing.T) {
+	t.Parallel()
+
 	gh, log := fakeGH(t)
 	var out, errb bytes.Buffer
 	run([]string{"review", "--repo", "mas-bandwidth/schema", "--pr", "1488", "--post",
@@ -152,6 +157,8 @@ func TestReviewPostPostsExactlyOneComment(t *testing.T) {
 
 // TestReviewBatchRunsEveryPullRequestOnce.
 func TestReviewBatchRunsEveryPullRequestOnce(t *testing.T) {
+	t.Parallel()
+
 	gh, _ := fakeGH(t)
 	batch := filepath.Join(t.TempDir(), "batch.txt")
 	if err := os.WriteFile(batch, []byte("# the two exemplars\n1488\n\n#1556\n1488\n"), 0o644); err != nil {
@@ -174,6 +181,8 @@ func TestReviewBatchRunsEveryPullRequestOnce(t *testing.T) {
 
 // TestReviewRefusals. Every refusal names the remedy and spends nothing.
 func TestReviewRefusals(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -223,6 +232,8 @@ func TestReviewNoJevSpendsNothing(t *testing.T) {
 
 // TestReviewHelpNamesTheVerb. The usage is the door a stranger comes through.
 func TestReviewHelpNamesTheVerb(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	if code := run([]string{"help"}, &out, &errb); code != 0 {
 		t.Fatalf("exit=%d", code)
@@ -265,7 +276,7 @@ case "$1" in
   *) echo "unexpected $*" >&2; exit 2 ;;
 esac
 `, view, sha, rollup)
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -275,6 +286,8 @@ esac
 // is checks_enabled with only that check on, so the verdict is the rollup's:
 // #2519 at 907546af BOUNCEs and names the red jobs; #2522 at 8359db4f PASSes.
 func TestReviewCIControlsReplayTheRecordedRollup(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake gh is a shell script")
 	}
@@ -331,6 +344,8 @@ func TestReviewCIControlsReplayTheRecordedRollup(t *testing.T) {
 // TestReviewBaseGatePinsBaseOutput verifies that base=ok|behind|conflict is printed
 // on the JEV line and recorded in the ledger based on PR merge status (#3394).
 func TestReviewBaseGate(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake gh is a shell script")
 	}
@@ -368,7 +383,7 @@ case "$1" in
   *) echo "unexpected $*" >&2; exit 2 ;;
 esac
 `, viewFile)
-			if err := os.WriteFile(ghScript, []byte(script), 0o755); err != nil {
+			if err := testbin.WriteExecutable(ghScript, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			ledger := filepath.Join(dir, "ledger.jsonl")
@@ -448,7 +463,7 @@ case "$1" in
   *) echo "unexpected $*" >&2; exit 2 ;;
 esac
 `, viewFile, diffFile)
-		if err := os.WriteFile(ghScript, []byte(script), 0o755); err != nil {
+		if err := testbin.WriteExecutable(ghScript, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		ledger := filepath.Join(dir, "ledger.jsonl")
@@ -523,7 +538,7 @@ case "$1" in
   *) echo "unexpected $*" >&2; exit 2 ;;
 esac
 `, viewFile, diffFile)
-		if err := os.WriteFile(ghScript, []byte(script), 0o755); err != nil {
+		if err := testbin.WriteExecutable(ghScript, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		ledger := filepath.Join(dir, "ledger.jsonl")

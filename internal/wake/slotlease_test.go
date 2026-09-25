@@ -10,6 +10,8 @@ import (
 )
 
 func TestSlotLeaseConstants(t *testing.T) {
+	t.Parallel()
+
 	if DefaultSlotLeaseTTL != 15*time.Second {
 		t.Fatalf("DefaultSlotLeaseTTL = %v; want 15s", DefaultSlotLeaseTTL)
 	}
@@ -19,6 +21,8 @@ func TestSlotLeaseConstants(t *testing.T) {
 }
 
 func TestSlotLeaseAcquireAndRelease(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	leasePath := filepath.Join(dir, SlotLeaseFileName)
 
@@ -71,6 +75,8 @@ func TestSlotLeaseAcquireAndRelease(t *testing.T) {
 }
 
 func TestSlotLeaseHeartbeatLoop(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	leasePath := filepath.Join(dir, SlotLeaseFileName)
 
@@ -110,6 +116,8 @@ func TestSlotLeaseHeartbeatLoop(t *testing.T) {
 }
 
 func TestSlotLeaseDRIFTPreservation(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	leasePath := filepath.Join(dir, SlotLeaseFileName)
 
@@ -185,6 +193,8 @@ func TestSlotLeaseDRIFTPreservation(t *testing.T) {
 }
 
 func TestSlotLeaseDeadPIDReclaim(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	leasePath := filepath.Join(dir, SlotLeaseFileName)
 
@@ -256,6 +266,8 @@ func TestSlotLeaseDeadPIDReclaim(t *testing.T) {
 }
 
 func TestSlotLeaseAtomicWrites(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	leasePath := filepath.Join(dir, SlotLeaseFileName)
 
@@ -303,6 +315,8 @@ func TestSlotLeaseAtomicWrites(t *testing.T) {
 }
 
 func TestSlotLeaseFencedReleaseProtection(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	leasePath := filepath.Join(dir, SlotLeaseFileName)
 

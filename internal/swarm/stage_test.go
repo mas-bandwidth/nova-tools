@@ -8,9 +8,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 func TestParseCardBase(t *testing.T) {
+	t.Parallel()
+
 	card := []byte("RESULT test-1 sha=1234\nbase-repo: https://example.com/mas-bandwidth/nova-tools.git\nbase-sha: 09fbedc9052145b20677501a1dbcb5f5ba9c87d4\nKIND: fix\n")
 	repo, sha, ok := ParseCardBase(card)
 	if !ok {
@@ -37,6 +41,8 @@ func TestParseCardBase(t *testing.T) {
 }
 
 func TestFindBenchMirror(t *testing.T) {
+	t.Parallel()
+
 	home := t.TempDir()
 	mirrorDir := filepath.Join(home, "nova-bench", "mirror", "nova-tools.git")
 	if err := os.MkdirAll(mirrorDir, 0o755); err != nil {
@@ -58,6 +64,8 @@ func TestFindBenchMirror(t *testing.T) {
 }
 
 func TestStageCardUsesMirrorAndDissociates(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	mirror := filepath.Join(root, "home", "nova-bench", "mirror", "repo.git")
@@ -120,6 +128,8 @@ func TestStageCardUsesMirrorAndDissociates(t *testing.T) {
 }
 
 func TestStageCardFailsWithoutMirror(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	target := filepath.Join(root, "jobs", "card-1", "repo")
 	jobDir := filepath.Join(root, "jobs", "card-1")
@@ -145,6 +155,8 @@ func TestStageCardFailsWithoutMirror(t *testing.T) {
 }
 
 func TestStageCardTimesOutAndWritesResult(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	mirror := filepath.Join(root, "home", "nova-bench", "mirror", "repo.git")
@@ -232,7 +244,7 @@ func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := "#!/bin/sh\nsleep 60 &\nwait\n"
-	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(fake), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(bin, "git"), []byte(fake), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))

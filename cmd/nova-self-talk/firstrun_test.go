@@ -64,6 +64,8 @@ func examples(t *testing.T) []string {
 // not run". Both examples here answer 1, because both fixture pages carry
 // findings — which is what a first run should be shown.
 func TestUsageBannerExamplesRun(t *testing.T) {
+	t.Parallel()
+
 	for _, ex := range examples(t) {
 		exit, stdout, stderr := runSelfTalk(t, localize(strings.Fields(ex)[1:])...)
 		if exit == 2 {
@@ -81,6 +83,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 
 // (b) A refusal says what the flag or input WANTS, not only what was wrong.
 func TestARefusalSaysWhatTheInputWants(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		args []string
@@ -109,6 +113,8 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 // (b), the other half: one run names every problem it can find. Three mistyped
 // paths are three refusals, not the first one and a second trip.
 func TestEveryUnreadableFileIsNamedInOneRun(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	good := filepath.Join(dir, "real.md")
 	if err := os.WriteFile(good, []byte("I cannot check my own work.\n"), 0o644); err != nil {
@@ -250,6 +256,8 @@ func copyDir(t *testing.T, from, to string) {
 // law: 1 is an answer (both fixture pages carry findings), 2 is "could not run". No line here
 // pushes, publishes, contacts a forge, acts on a machine or needs a key, so none is skipped.
 func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
+	t.Parallel()
+
 	lines := exampleBlockLines(usage)
 	if len(lines) == 0 {
 		t.Fatal("the usage banner's `example:` block holds no line; this test would pass by running nothing")

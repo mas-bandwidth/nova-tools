@@ -19,6 +19,8 @@ import (
 // build than the declared one) exits 1 and loads nothing; --dry-run changes
 // nothing and prints WOULD-LOAD while the store is missing or stale.
 func TestFnDeployReceiptAndDigestRefusal(t *testing.T) {
+	t.Parallel()
+
 	addr := startThrowawayRedis(t)
 	ctx := context.Background()
 	client := redis.NewClient(&redis.Options{Addr: addr})
@@ -101,6 +103,8 @@ func TestFnDeployReceiptAndDigestRefusal(t *testing.T) {
 // deploy must exit 1 with no receipt. The race is forced by a server whose
 // FUNCTION LOAD is renamed away, so the store keeps the stale library.
 func TestFnDeployRefusesAReadBackMismatch(t *testing.T) {
+	t.Parallel()
+
 	addr := startThrowawayRedis(t)
 	ctx := context.Background()
 	client := redis.NewClient(&redis.Options{Addr: addr})
@@ -126,6 +130,8 @@ func TestFnDeployRefusesAReadBackMismatch(t *testing.T) {
 }
 
 func TestFnDeployUsage(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{
 		{"fn", "deploy"},
 		{"fn", "deploy", "--redis", "127.0.0.1:1", "--want", "short"},

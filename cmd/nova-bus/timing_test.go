@@ -70,6 +70,8 @@ const timingBound = time.Second
 const pushBound = 3 * time.Second
 
 func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
+	t.Parallel()
+
 	if raceEnabled {
 		t.Skip("a wall-clock bound under the race detector measures the instrumentation")
 	}
@@ -139,6 +141,8 @@ func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
 // no listing and wrote nothing -- every part of the promise that does not depend on the
 // runner.
 func TestAWaitPollsMoreThanOnceBeforeItsDeadline(t *testing.T) {
+	t.Parallel()
+
 	hermetic(t)
 	checkout, _ := busDir(t)
 	settled(t, checkout)

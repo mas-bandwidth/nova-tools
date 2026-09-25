@@ -12,6 +12,8 @@ import (
 // resident session runs the same tick and pool floor over the tree, check carries contraction
 // from the journal, the scope gate is a node property, and bug nodes close only by test.
 func TestSpecWorkCarriesTheRateAndConvergenceRules(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	spec := readFile(t, filepath.Join(root, "docs", "SPEC-WORK.md"))
 

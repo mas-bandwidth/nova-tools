@@ -415,6 +415,8 @@ func TestStatusHTMLCarriesHygieneActions(t *testing.T) {
 // The remote script counts them in the same round trip as the liveness numbers: a second
 // ssh per bench per minute for one integer is the kind of waste the fleet audits for.
 func TestFleetStatusScriptCountsHygieneInTheSameTrip(t *testing.T) {
+	t.Parallel()
+
 	script := fleetStatusScript("/home/bench", "2026-09-18T11:00:00Z")
 	for _, want := range []string{"hygiene.log", "delete-job", "delete-slot", "reap", "2026-09-18T11:00:00Z"} {
 		if !strings.Contains(script, want) {
@@ -434,6 +436,8 @@ func TestFleetStatusScriptCountsHygieneInTheSameTrip(t *testing.T) {
 // processes is a hundred thousand readlinks, which is why a live bench read DOWN at
 // --timeout 10. The pid list is walked ONCE and matched against the slots.
 func TestFleetStatusScriptWalksProcOnce(t *testing.T) {
+	t.Parallel()
+
 	script := fleetStatusScript("/home/bench", "2026-09-18T11:00:00Z")
 	if n := strings.Count(script, "/proc/$pid/cwd"); n != 1 {
 		t.Errorf("the script reads /proc/<pid>/cwd from %d places, want exactly one pass:\n%s", n, script)
@@ -548,6 +552,8 @@ func TestStatusHTMLFailedPublishIsLoud(t *testing.T) {
 // gh on this bench answers as whoever GH_CONFIG_DIR says. A verb that drops it runs as
 // somebody else, or as nobody.
 func TestGhEnvCarriesTheConfigDir(t *testing.T) {
+	t.Parallel()
+
 	env := ghEnv([]string{"PATH=/usr/bin", "GH_CONFIG_DIR=/old"}, "/home/me/.config/gh-rowan")
 	found := 0
 	for _, kv := range env {
@@ -566,6 +572,8 @@ func TestGhEnvCarriesTheConfigDir(t *testing.T) {
 // No --gh-config leaves the caller's environment exactly as it is: the flag overrides, it
 // never invents.
 func TestGhEnvWithoutTheFlagIsTheCallersOwn(t *testing.T) {
+	t.Parallel()
+
 	in := []string{"PATH=/usr/bin", "GH_CONFIG_DIR=/theirs"}
 	got := ghEnv(in, "")
 	if len(got) != len(in) {
@@ -576,6 +584,8 @@ func TestGhEnvWithoutTheFlagIsTheCallersOwn(t *testing.T) {
 // ---- gap 10: --timeout accepts a duration.
 
 func TestTimeoutFlagAcceptsSecondsAndDurations(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		in   string
 		want time.Duration
@@ -625,6 +635,8 @@ func TestStatusHTMLProgressLineSaysTheTimeout(t *testing.T) {
 // bench that answered perfectly well. It is the dash-vs-zero rule a third time, so the
 // bench says DOWN and the row says WHY.
 func TestFleetStatusScriptRefusesAHomeItCannotRead(t *testing.T) {
+	t.Parallel()
+
 	script := fleetStatusScript("/home/nobody", "2026-09-18T11:00:00Z")
 	if !strings.Contains(script, "NOHOME") {
 		t.Fatalf("the script does not say when the home is not there:\n%s", script)

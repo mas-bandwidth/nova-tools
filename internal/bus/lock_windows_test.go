@@ -12,6 +12,8 @@ import (
 // TestWindowsTransientLockCollisionClassification tests that the Windows-specific
 // error classifier recognizes transient collision errnos (such as access denied and sharing violations).
 func TestWindowsTransientLockCollisionClassification(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		err  error

@@ -306,6 +306,8 @@ func classStatusRoot(t *testing.T, day string) string {
 // needs no database: the index's class is RESULT.md's verdict, so it holds everywhere -- the
 // reopen half, whose fixture carries a real store, skips by name where sqlite3 is not on PATH.
 func TestStatusIndexCarriesResultClass(t *testing.T) {
+	t.Parallel()
+
 	const day = "2026-09-16"
 	root := classStatusRoot(t, day)
 	queue := t.TempDir()
@@ -336,6 +338,8 @@ func TestStatusIndexCarriesResultClass(t *testing.T) {
 // test: a wall bound asserts the machine's load, not the code, so the fast suite never
 // runs it. It needs a non-short run AND NOVA_SLOW_TESTS.
 func TestStatusOnelineTwoThousandJobRootIsFast(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("slow: the 2,000-job wall budget asserts the machine, not the code")
 	}
@@ -385,6 +389,8 @@ func TestStatusOnelineTwoThousandJobRootIsFast(t *testing.T) {
 // drops tokens_out. Both shapes are asserted here: the fourteen-column file and the
 // thirteen-column file a run written before rule 13d left behind.
 func TestStatusIndexMapsUsageColumnsByHeaderName(t *testing.T) {
+	t.Parallel()
+
 	const started, ended = "2026-09-16T09:00:00Z", "2026-09-16T09:10:00Z"
 	for _, tc := range []struct {
 		name string

@@ -28,6 +28,8 @@ C. BETTER: what comes back can be trusted.
 `
 
 func TestParseSprintPriorities(t *testing.T) {
+	t.Parallel()
+
 	priorities, err := ParseSprintPriorities(sampleSprintText, "mas-bandwidth/nova-tools")
 	if err != nil {
 		t.Fatalf("ParseSprintPriorities failed: %v", err)
@@ -68,6 +70,8 @@ func TestParseSprintPriorities(t *testing.T) {
 }
 
 func TestSprintPriorityQueryCompletion(t *testing.T) {
+	t.Parallel()
+
 	store := NewStore()
 
 	// Import issue nodes:

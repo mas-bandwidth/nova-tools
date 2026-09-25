@@ -69,6 +69,8 @@ func TestTaskQueueSubverbs(t *testing.T) {
 // ready task onto the up friend's queue in the same call and prints the one
 // REBALANCE line naming it; the reconciler's next pass has nothing to redo.
 func TestFriendDownRebalancesAtOnce(t *testing.T) {
+	t.Parallel()
+
 	f := newSeat(t)
 	f.as("a")
 	ctx := context.Background()

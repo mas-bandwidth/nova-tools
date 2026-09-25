@@ -14,6 +14,8 @@ const testHead = "0123456789abcdef0123456789abcdef01234567"
 var testSubmission = merge.Submission{At: "2026-09-14T01:02:03Z", Rand: "a1b2c3"}
 
 func TestAnswerItemGoldenRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	item, err := AnswerItem("951/feature", "rowan", "20260913T140102Z-a1b2c3.1", "dup", "20260913T140102Z-a1b2c3.0", testHead, "same root cause", testSubmission)
 	if err != nil {
 		t.Fatal(err)
@@ -49,6 +51,8 @@ func TestAnswerItemGoldenRoundTrip(t *testing.T) {
 }
 
 func TestPolicyItemGoldenRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	item, err := PolicyItem("951", "glenn", []string{"emma", "stella"}, []string{"freddy"}, "2026-09-15T00:00:00Z", "freddy's harness is down", testHead, testSubmission)
 	if err != nil {
 		t.Fatal(err)
@@ -89,6 +93,8 @@ func TestPolicyItemGoldenRoundTrip(t *testing.T) {
 }
 
 func TestDecodeV1RefusesHostileRecordShapes(t *testing.T) {
+	t.Parallel()
+
 	answer := mustAnswerItem(t)
 	policy := mustPolicyItem(t)
 	cases := []struct {
@@ -128,6 +134,8 @@ func TestDecodeV1RefusesHostileRecordShapes(t *testing.T) {
 }
 
 func TestDecodeVersionPrecedesOtherValidation(t *testing.T) {
+	t.Parallel()
+
 	answer := mustAnswerItem(t)
 	base := replaceOnce(answer.Body, `"version": 1`, `"version": 2`)
 	for _, body := range [][]byte{
@@ -142,6 +150,8 @@ func TestDecodeVersionPrecedesOtherValidation(t *testing.T) {
 }
 
 func TestAnswerDispositionIsClosed(t *testing.T) {
+	t.Parallel()
+
 	for _, tt := range []struct {
 		as, of string
 		want   bool
@@ -164,6 +174,8 @@ func TestAnswerDispositionIsClosed(t *testing.T) {
 }
 
 func TestPolicyCodecDoesNotDecideListMembership(t *testing.T) {
+	t.Parallel()
+
 	item, err := PolicyItem("951", "glenn", []string{"emma", "emma"}, []string{"emma"}, "2026-09-15T00:00:00Z", "verbatim", testHead, testSubmission)
 	if err != nil {
 		t.Fatalf("PolicyItem rejected list membership reserved for policy/fold layers: %v", err)
@@ -178,6 +190,8 @@ func TestPolicyCodecDoesNotDecideListMembership(t *testing.T) {
 }
 
 func TestPolicyItemWritesNonNullEmptyArrays(t *testing.T) {
+	t.Parallel()
+
 	item, err := PolicyItem("951", "glenn", nil, nil, "2026-09-15T00:00:00Z", "", testHead, testSubmission)
 	if err != nil {
 		t.Fatal(err)
@@ -191,6 +205,8 @@ func TestPolicyItemWritesNonNullEmptyArrays(t *testing.T) {
 }
 
 func TestPolicyDeadlineIsExactUTCStamp(t *testing.T) {
+	t.Parallel()
+
 	for _, deadline := range []string{"", "tomorrow", "2026-09-15T00:00:00+00:00", "2026-09-15T00:00:00.000Z"} {
 		t.Run(deadline, func(t *testing.T) {
 			_, err := PolicyItem("951", "glenn", nil, nil, deadline, "", testHead, testSubmission)
@@ -214,6 +230,8 @@ func TestPolicyDeadlineIsExactUTCStamp(t *testing.T) {
 }
 
 func TestDecodeIdentityMustMatchPathAndStamp(t *testing.T) {
+	t.Parallel()
+
 	answer := mustAnswerItem(t)
 	cases := []struct {
 		name string
@@ -236,6 +254,8 @@ func TestDecodeIdentityMustMatchPathAndStamp(t *testing.T) {
 }
 
 func TestCodecConfinesEntryDirectoryAndUTF8(t *testing.T) {
+	t.Parallel()
+
 	for _, entry := range []string{".", ".."} {
 		t.Run("entry="+entry, func(t *testing.T) {
 			_, err := AnswerItem(entry, "rowan", "finding.1", "fixed", "", testHead, "", testSubmission)

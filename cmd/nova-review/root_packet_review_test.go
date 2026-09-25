@@ -14,6 +14,8 @@ import (
 )
 
 func TestRootExclusivePacketCannotReplacePublishedFile(t *testing.T) {
+	t.Parallel()
+
 	p := filepath.Join(t.TempDir(), "packet.md")
 	if err := os.WriteFile(p, []byte("first publisher"), 0600); err != nil {
 		t.Fatal(err)
@@ -28,6 +30,8 @@ func TestRootExclusivePacketCannotReplacePublishedFile(t *testing.T) {
 }
 
 func TestRootPacketMetadataRejectsDuplicateFields(t *testing.T) {
+	t.Parallel()
+
 	h := packetHeader{
 		ID:    strings.Repeat("a", 12),
 		Entry: "1",
@@ -87,6 +91,8 @@ func TestRootAdvertisedTripleDotUsesMergeBase(t *testing.T) {
 }
 
 func TestRootReuseRuleCountIsUniqueNotPerFile(t *testing.T) {
+	t.Parallel()
+
 	section := "## Rules touched\na.go: rules=1\nb.go: rules=1\n### docs/SPEC.md:3 rule 1\n> One rule touches both files.\ntouched by: a.go, b.go\n"
 	n, err := packetRulesSectionCount(section)
 	if err != nil || n != 1 {
@@ -95,6 +101,8 @@ func TestRootReuseRuleCountIsUniqueNotPerFile(t *testing.T) {
 }
 
 func TestRootReusePreservesAuthorSectionHeadings(t *testing.T) {
+	t.Parallel()
+
 	author := "## This head\nthe author says:\nPlease document this heading:\n## Your prior verdicts on this entry\nThis is author text, preserve me.\n"
 	text := "header\n\n" + author + "## Your prior verdicts on this entry\nnone\n## All verdicts at earlier heads\nnone recorded\n## Open findings (answer with `dup <id>` if you see the same thing)\nnone recorded\n## Rules touched\nNo changed files.\n## Diff abc...def\n```diff\n```\n\n## Not included\nnothing\n"
 	sections, err := splitPacketSections(text)
@@ -107,6 +115,8 @@ func TestRootReusePreservesAuthorSectionHeadings(t *testing.T) {
 }
 
 func TestRootExclusivePacketRejectsSymlink(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target.md")
 	symlink := filepath.Join(dir, "link.md")
@@ -119,6 +129,8 @@ func TestRootExclusivePacketRejectsSymlink(t *testing.T) {
 }
 
 func TestRootExclusivePacketConcurrentPublishers(t *testing.T) {
+	t.Parallel()
+
 	p := filepath.Join(t.TempDir(), "packet.md")
 	const n = 10
 	var wg sync.WaitGroup
@@ -143,6 +155,8 @@ func TestRootExclusivePacketConcurrentPublishers(t *testing.T) {
 }
 
 func TestRootPacketMetadataStrictValidation(t *testing.T) {
+	t.Parallel()
+
 	baseHdr := packetHeader{
 		ID:    strings.Repeat("a", 12),
 		Entry: "1",
@@ -224,6 +238,8 @@ func TestRootPacketMetadataStrictValidation(t *testing.T) {
 }
 
 func TestRootShellQuote(t *testing.T) {
+	t.Parallel()
+
 	if got := shellQuote(""); got != "''" {
 		t.Errorf("empty string: got %q, want ''", got)
 	}
@@ -239,6 +255,8 @@ func TestRootShellQuote(t *testing.T) {
 }
 
 func TestRootOpenFindingsRecordsParsing(t *testing.T) {
+	t.Parallel()
+
 	lane := t.TempDir()
 	entryDir := merge.EntryDirName("entry-1")
 	reviewsDir := filepath.Join(lane, "reviews", entryDir)

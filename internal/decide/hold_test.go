@@ -15,6 +15,8 @@ import (
 // and nothing else. No unit id, no path name, no attempt reason, no free text
 // of any kind leaves this process (SPEC-DECIDE rule 4).
 func TestJevSeesOnlyTypedEnumeratedEvidence(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{
 		ID:        "card-41-glenn-private-rowan-new",
@@ -97,6 +99,8 @@ func setOf(values ...string) map[string]bool {
 // every path, and the WORK goes to the rung the evidence supports -- which the
 // floor may move, like any other rung, without touching the read.
 func TestSecurityNeverFallsThrough(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	touches := []Unit{
 		{Guard: true},
@@ -172,6 +176,8 @@ func TestSecurityNeverFallsThrough(t *testing.T) {
 // Security waits for its rung; it never spills onto another one. Where the
 // designated mind is asleep, or the registry names none, that is a refusal.
 func TestSecurityWaitsRatherThanSpills(t *testing.T) {
+	t.Parallel()
+
 	asleep, err := ParseRegistry([]byte(`{"minds":[
 	  {"name":"cheap","lineage":"deepseek","height":0,"availability":"available","ask":"card"},
 	  {"name":"guardian","lineage":"johnny","height":3,"kinds":["guard","fresh-take"],"availability":"asleep","ask":"bus"}
@@ -193,6 +199,8 @@ func TestSecurityWaitsRatherThanSpills(t *testing.T) {
 
 // An unknown touch is a refusal: the six are an enumeration, not free text.
 func TestTouchesAreEnumerated(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	if _, err := RouteRules(reg, Unit{ID: "s", Kind: KindRebase, Files: 1, Touches: []string{"the vibes"}}, DefaultFloor); err == nil {
 		t.Error("an unknown touch routed, want a refusal naming the six")
@@ -203,6 +211,8 @@ func TestTouchesAreEnumerated(t *testing.T) {
 // proof leaves expiry UNKNOWN (Stella's lease rule): the answer is the SAME
 // rung until the attempt is known dead. Only a CONFIRMED failure moves up.
 func TestATimeoutDoesNotAdvanceTheRung(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	timedOut := Unit{ID: "t", Kind: KindFixWithRedTest, Files: 3, Packages: 1, Attempts: []Attempt{
 		{Rung: "opus", Outcome: OutcomeTimeout},
@@ -254,6 +264,8 @@ func TestATimeoutDoesNotAdvanceTheRung(t *testing.T) {
 
 // There is nothing for the provider to choose while an attempt is still alive.
 func TestJevIsNotAskedWhileAnAttemptMayStillBeAlive(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	fake := &fakeDecider{choice: "fable", conf: 0.99}
 	res, err := RouteJev(context.Background(), fake, reg, Unit{ID: "t", Kind: KindNewVerb, Files: 3, Packages: 1,
@@ -272,6 +284,8 @@ func TestJevIsNotAskedWhileAnAttemptMayStillBeAlive(t *testing.T) {
 // A timeout that is not known dead is not counted as a failure in the log
 // either: the starting rung is regenerated from confirmed outcomes only.
 func TestTheLogCountsConfirmedFailuresOnly(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	sum, err := Summarize(reg, []Entry{
 		{Unit: "a", Kind: KindRebase, RungTried: "flash", Height: 0, Outcome: OutcomeOK, RungSucceeded: "flash",
@@ -289,6 +303,8 @@ func TestTheLogCountsConfirmedFailuresOnly(t *testing.T) {
 // pass: NaN compares false against every bound, which is exactly how it slipped
 // through.
 func TestFloorRefusesNaNAndBothBounds(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "f", Kind: KindRebase, Files: 1, Packages: 1}
 	for name, floor := range map[string]float64{

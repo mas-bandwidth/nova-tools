@@ -38,6 +38,8 @@ var fast = reconcile.Windows{Start: 150 * time.Millisecond, Beat: 250 * time.Mil
 // record, to ended(DONE). A dealt-only reservation with no live identity
 // requeues under a new attempt; one whose identity is live is launched.
 func TestControl23NoSecondLaunch(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := newSprint(t)
 	const sprint, label, bench = "control-23a0b1c2", "c23", "ctl-bench"
@@ -170,6 +172,8 @@ func TestControl23NoSecondLaunch(t *testing.T) {
 // item. POSITIVE: the same run whose wrapper wrote an end record FAILED
 // tests-red before dying ends FAILED tests-red.
 func TestControl25OrphanNeverDone(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := newSprint(t)
 	const sprint, bench = "control-25a0b1c2", "ctl-bench"
@@ -280,6 +284,8 @@ func TestControl25OrphanNeverDone(t *testing.T) {
 // `idem resolve` is the one writer of the ambiguous transition, fenced by
 // compare-and-set on --was.
 func TestControl08NoSecondPR(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := newSprint(t)
 	const sprint, repo = "control-08a0b1c2", "ctl-org/ctl-repo"
@@ -741,6 +747,8 @@ func checkForgeReads(fset *token.FileSet, f *ast.File) []string {
 // Test files (*_test.go) are excluded because test fixtures in TestASTForgeReadGuard
 // intentionally contain these constructs to verify the AST guard.
 func TestNoForgeReadInReconcile(t *testing.T) {
+	t.Parallel()
+
 	files, err := filepath.Glob("*.go")
 	must(t, err)
 	if len(files) == 0 {
@@ -768,6 +776,8 @@ func TestNoForgeReadInReconcile(t *testing.T) {
 // even across raw string literals (`GET`, `HEAD`), aliased imports
 // (import h "net/http"), and dot-imports (import . "net/http").
 func TestASTForgeReadGuard(t *testing.T) {
+	t.Parallel()
+
 	fset := token.NewFileSet()
 	tests := []struct {
 		name      string
@@ -897,6 +907,8 @@ func sameHash(t *testing.T, what string, want, got map[string]string) {
 // land only before or after the one function call: exactly one assignment
 // and one durable receipt, and the retry after a crash writes nothing new.
 func TestControl09OneAssignmentOneReceipt(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := newSprint(t)
 	const sprint, id = "control-09a0b1c2", "t9"

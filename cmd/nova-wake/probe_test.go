@@ -156,6 +156,8 @@ func hasFields(t *testing.T, line, want string) {
 // probe --here: a readiness receipt is a measurement, taken by the tool.
 
 func TestAProbeHereIsAMeasurement(t *testing.T) {
+	t.Parallel()
+
 	r := probeAt(t, at, "--here")
 	if r.exit != 0 {
 		t.Fatalf("exit %d, want 0:\n%s", r.exit, r.all())
@@ -209,6 +211,8 @@ func TestAProbeHereIsAMeasurement(t *testing.T) {
 // probe --line, the measurement half.
 
 func TestAProbeMeasuresBeforeItPings(t *testing.T) {
+	t.Parallel()
+
 	busDir, _ := newLaneBus(t)
 	addLaneCommit(t, busDir, "from-peer", at.Add(-4*time.Minute), note{name: "one.md", from: peer, to: caller, subject: "a sign"})
 

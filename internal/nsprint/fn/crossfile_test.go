@@ -79,6 +79,8 @@ var (
 // (Redis refuses both), or reads an NS field no file at or before it (in load
 // order) assigns.
 func TestNoBareCrossFileReferences(t *testing.T) {
+	t.Parallel()
+
 	names, err := fs.Glob(sources, "lua/*.lua")
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +120,8 @@ func TestNoBareCrossFileReferences(t *testing.T) {
 // a42285c5 shape (a bare reference to another file's local) is a free name,
 // and the fixed shape (bound from NS) is not.
 func TestCrossFileGuardSeesTheBrokenShape(t *testing.T) {
+	t.Parallel()
+
 	broken := "local function done() return HD.ingest(nil, {}) end\nredis.register_function('x', done)\n"
 	reads, _ := freeNames(t, "broken.lua", broken)
 	if strings.Join(reads, ",") != "HD,redis" {

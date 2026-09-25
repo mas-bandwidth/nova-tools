@@ -267,6 +267,8 @@ func field(t *testing.T, line, key string) string {
 // ---------------------------------------------------------------------------
 
 func TestConvergencePrintsOneLinePerStream(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	lines := f.read(t).Lines()
 	if len(lines) != len(Order)+1 {
@@ -295,6 +297,8 @@ func TestConvergencePrintsOneLinePerStream(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestATrendIsTheDirectionTheStreamConverges(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name        string
 		now, before float64
@@ -320,6 +324,8 @@ func TestATrendIsTheDirectionTheStreamConverges(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRatioIsAlwaysNowOverBefore(t *testing.T) {
+	t.Parallel()
+
 	for _, lower := range []bool{true, false} {
 		s := Stream{Now: 3, Before: 4, HaveNow: true, HaveBefore: true, Lower: lower}
 		if !strings.Contains(s.Line(), "ratio=0.75") {
@@ -341,6 +347,8 @@ func TestRatioIsAlwaysNowOverBefore(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLandingReadsRoundsFromTheBodyAndTheLogs(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	// #3 says round 2 in its body; three logs say it went to round 3, and the
 	// logs win because a body is written by hand.
@@ -362,6 +370,8 @@ func TestLandingReadsRoundsFromTheBodyAndTheLogs(t *testing.T) {
 }
 
 func TestLandingComparesTheWindowWithTheOneBefore(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	s := stream(t, f.read(t), "LANDING")
 	if s.Now != 3 { // #3 round 2 and #4 round 4
@@ -387,6 +397,8 @@ func TestLandingComparesTheWindowWithTheOneBefore(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestClassesCountsTheIndexEntriesAtBothRevisions(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	s := stream(t, f.read(t), "CLASSES")
 	if s.Now != 29 || s.Before != 27 {
@@ -405,6 +417,8 @@ func TestClassesCountsTheIndexEntriesAtBothRevisions(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestScriptsCountsWhatIsLeftAndWhatTheWindowRetired(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	s := stream(t, f.read(t), "SCRIPTS")
 	if s.Now != 3 {
@@ -419,6 +433,8 @@ func TestScriptsCountsWhatIsLeftAndWhatTheWindowRetired(t *testing.T) {
 }
 
 func TestRetiredRowsInheritTheNearestDateAbove(t *testing.T) {
+	t.Parallel()
+
 	md := strings.Join([]string{
 		"| undated.sh | 1 | before any date at all |",
 		"",
@@ -448,6 +464,8 @@ func TestRetiredRowsInheritTheNearestDateAbove(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPRsCountsWhatWasOpenAtSince(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	s := stream(t, f.read(t), "PRS")
 	if s.Now != 2 {
@@ -471,6 +489,8 @@ func TestPRsCountsWhatWasOpenAtSince(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEdgesIsTheGateAndTheRounds(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	s := stream(t, f.read(t), "EDGES")
 	// Stella's Edges: note and Rowan's older one are open; the not-ok receipt
@@ -507,6 +527,8 @@ func TestEdgesIsTheGateAndTheRounds(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFleetIsTheUnitsOffTheMajorityStamp(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	s := stream(t, f.read(t), "FLEET")
 	if s.Now != 1 {
@@ -540,6 +562,8 @@ func TestFleetIsTheUnitsOffTheMajorityStamp(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFleetAndLedgerTakeTheirBeforeFromTheState(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	report := f.read(t)
 	for _, name := range []string{"FLEET", "LEDGER"} {
@@ -575,6 +599,8 @@ func TestFleetAndLedgerTakeTheirBeforeFromTheState(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLedgerCountsTheRowsNotYetPass(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	s := stream(t, f.read(t), "LEDGER")
 	if got := field(t, s.Line(), "rows"); got != "5" {
@@ -594,6 +620,8 @@ func TestLedgerCountsTheRowsNotYetPass(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAStreamWithNoSourceIsAbsentNotZero(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	f.opts.BinDir = ""
 	f.opts.RepoDir = ""
@@ -636,6 +664,8 @@ func widening(now, before float64) Report {
 }
 
 func TestExitOneOnlyOnTheSecondConsecutiveWidening(t *testing.T) {
+	t.Parallel()
+
 	tick := at(t, windowNow)
 	st := State{Streams: map[string]StreamState{}}
 
@@ -665,6 +695,8 @@ func TestExitOneOnlyOnTheSecondConsecutiveWidening(t *testing.T) {
 // window are one tick read twice, and counting the second would have gone red
 // on a reading nobody took.
 func TestTheSameTickReadTwiceIsNotTwoTicks(t *testing.T) {
+	t.Parallel()
+
 	tick := at(t, windowNow)
 	st := State{Streams: map[string]StreamState{}}
 
@@ -691,6 +723,8 @@ func TestTheSameTickReadTwiceIsNotTwoTicks(t *testing.T) {
 }
 
 func TestWithNoStateNothingIsRemembered(t *testing.T) {
+	t.Parallel()
+
 	tick := at(t, windowNow)
 	st, err := LoadState("")
 	if err != nil {
@@ -718,6 +752,8 @@ func TestWithNoStateNothingIsRemembered(t *testing.T) {
 }
 
 func TestStateSurvivesARoundTrip(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "state.json")
 	st := State{Streams: map[string]StreamState{"EDGES": {Now: 4, At: windowNow, Widening: 1}}}
 	if err := st.Save(path); err != nil {
@@ -740,6 +776,8 @@ func TestStateSurvivesARoundTrip(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParseSinceTakesBothSpellingsAndRefusesTheRest(t *testing.T) {
+	t.Parallel()
+
 	now := at(t, windowNow)
 	got, err := ParseSince(windowSince, now)
 	if err != nil || !got.Equal(at(t, windowSince)) {
@@ -767,6 +805,8 @@ func TestParseSinceTakesBothSpellingsAndRefusesTheRest(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestConvergenceRefusesAVersionsFileItDoesNotKnow(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ name, body string }{
 		{"unknown header", "host\tbuild\na\tv1"},
 		{"wrong arity", "machine\tstamp\na\tv1\textra"},
@@ -800,6 +840,8 @@ func TestConvergenceRefusesAVersionsFileItDoesNotKnow(t *testing.T) {
 const hostile = "one\ntwo=three\tfour\u202eevil"
 
 func TestEveryFieldSurvivesAHostileValue(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	forge := f.opts.Forge.(fakeForge)
 	forge.closed = append(forge.closed, PR{
@@ -834,6 +876,8 @@ func TestEveryFieldSurvivesAHostileValue(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestJSONCarriesTheSameReadingAsTheLines(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	report := f.read(t)
 	raw, err := json.Marshal(report.AsJSON(at(t, windowNow), at(t, windowSince)))
@@ -874,6 +918,8 @@ func TestJSONCarriesTheSameReadingAsTheLines(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEveryChildIsBounded(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	f.opts.Forge = fakeForge{hang: true}
 	if _, err := Read(context.Background(), f.opts); err == nil {
@@ -894,6 +940,8 @@ func TestEveryChildIsBounded(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReadRefusesAnUnreadableSource(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		set  func(o *Options)

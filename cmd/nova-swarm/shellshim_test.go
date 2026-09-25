@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // The fixture is built at test time and is a valid key for nothing. It is the string the
@@ -20,6 +22,8 @@ const shimFixtureValue = "sk-" + "notarealkey" + "0123456789abcdef"
 // (nova-tools #1814). The control is one edit: drop pathWithShimFirst/SHELL from
 // nativeChildEnv, or exec the real shell instead of the wrapper, and this goes red.
 func TestTheCardsShellNeverSeesASecret(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the shim is a /bin/sh script; windows writes none")
 	}
@@ -72,6 +76,8 @@ func TestTheCardsShellNeverSeesASecret(t *testing.T) {
 // TestTheShimNeverPrintsAValue reads the wrapper's own text: no value, of the fixture or
 // of anything else, may appear in it, and the awk it runs prints names only.
 func TestTheShimNeverPrintsAValue(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the shim is a /bin/sh script; windows writes none")
 	}
@@ -100,6 +106,8 @@ func TestTheShimNeverPrintsAValue(t *testing.T) {
 // slot, which nativeSandboxArgv passes as --read, and never under the job directory or the
 // data home, which it passes as --write and the card can rewrite.
 func TestTheShimIsInTheWallsReadSetAndNotItsWriteSet(t *testing.T) {
+	t.Parallel()
+
 	cfg := nativeRunConfig{slotDir: filepath.Join("root", "slot"), root: "root", label: "card"}
 	dir := nativeShellShimDir(cfg.slotDir)
 	jobDir := filepath.Join(cfg.slotDir, "jobs", cfg.label)
@@ -115,6 +123,8 @@ func TestTheShimIsInTheWallsReadSetAndNotItsWriteSet(t *testing.T) {
 // TestTheChildEnvPutsTheShimFirstAndPinsShell asserts the two names the harness resolves
 // its tool shell through.
 func TestTheChildEnvPutsTheShimFirstAndPinsShell(t *testing.T) {
+	t.Parallel()
+
 	shim := filepath.Join("slot", "shim")
 	shell := filepath.Join(shim, "bash")
 	env := nativeChildEnv("data", "job", "tmp", "", "", shim, shell)
@@ -191,12 +201,14 @@ func itoa(n int) string {
 // counting fake gh later on PATH (the token's call counter, standing in) is never run.
 // The control is one edit: drop the gh from writeNativeShellShims and the fake answers.
 func TestTheCardsShellReachesNoGh(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the shim is a /bin/sh script; windows writes none")
 	}
 	fake := t.TempDir()
 	counter := filepath.Join(fake, "calls")
-	if err := os.WriteFile(filepath.Join(fake, "gh"), []byte("#!/bin/sh\necho call >> '"+counter+"'\nexit 0\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(fake, "gh"), []byte("#!/bin/sh\necho call >> '"+counter+"'\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	dir, _, err := writeNativeShellShims(t.TempDir())

@@ -130,6 +130,8 @@ func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 
 // LockFile can be called directly on any file path.
 func TestLockFileNonBlockingAndHolderStamping(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "test.lock")
 
@@ -170,6 +172,8 @@ func TestLockFileNonBlockingAndHolderStamping(t *testing.T) {
 }
 
 func TestReadLockHolderFormats(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	// Missing file returns "-"

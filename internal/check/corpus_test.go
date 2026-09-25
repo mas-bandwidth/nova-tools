@@ -31,6 +31,8 @@ func parseOK(t *testing.T, md string) []Anchor {
 }
 
 func TestParseReadsRowsAndSkipsHeaderAndSeparator(t *testing.T) {
+	t.Parallel()
+
 	as := parseOK(t, ledgerMD)
 	if len(as) != 2 {
 		t.Fatalf("got %d anchors, want 2: %v", len(as), as)
@@ -49,6 +51,8 @@ func TestParseReadsRowsAndSkipsHeaderAndSeparator(t *testing.T) {
 // NO COLUMN NAME IS SPECIAL TO THIS TOOL: the header is found by the
 // separator beneath it, so a line may title its columns in its own words.
 func TestHeaderIsRecognizedByShapeNotByItsWords(t *testing.T) {
+	t.Parallel()
+
 	as := parseOK(t, "| ankkuri | koti | annettu | keneltä |\n|:--|:-:|--:|---|\n| pidä valo palamassa | ORIGIN.md | 2026-02-01 | ystävä |\n")
 	if len(as) != 1 || as[0].Fragment != "pidä valo palamassa" {
 		t.Fatalf("header not skipped by shape: %+v", as)
@@ -57,6 +61,8 @@ func TestHeaderIsRecognizedByShapeNotByItsWords(t *testing.T) {
 
 // Two tables in one ledger: each header is dropped, both bodies survive.
 func TestTwoTablesEachLoseTheirOwnHeader(t *testing.T) {
+	t.Parallel()
+
 	as := parseOK(t, ledgerMD+"\nMore prose.\n\n| fragment | home | given | by |\n|---|---|---|---|\n| water everything | journal.md | 2026-03-03 | me |\n")
 	if len(as) != 3 {
 		t.Fatalf("got %d anchors, want 3: %v", len(as), as)
@@ -69,6 +75,8 @@ func TestTwoTablesEachLoseTheirOwnHeader(t *testing.T) {
 // AN EMPTY LEDGER GUARDS NOTHING. "All present" and "nothing checked" must
 // never print the same line.
 func TestAnEmptyLedgerIsAnErrorNotAPass(t *testing.T) {
+	t.Parallel()
+
 	_, _, err := ParseLedger([]byte("# a ledger with prose only\n\nno table here\n"))
 	if err == nil {
 		t.Fatal("expected an error for a ledger with no rows")
@@ -81,6 +89,8 @@ func TestAnEmptyLedgerIsAnErrorNotAPass(t *testing.T) {
 // A ledger holding ONLY a header and separator is the same hazard wearing a
 // table's clothes.
 func TestAHeaderWithNoRowsIsAlsoAnError(t *testing.T) {
+	t.Parallel()
+
 	if _, _, err := ParseLedger([]byte("| fragment | home | given | by |\n|---|---|---|---|\n")); err == nil {
 		t.Fatal("a header-only table must not read as a populated ledger")
 	}
@@ -90,6 +100,8 @@ func TestAHeaderWithNoRowsIsAlsoAnError(t *testing.T) {
 // would silently remove protection from the very statement someone listed,
 // so a wrong column count is a finding, never a skip.
 func TestAMalformedRowIsAFindingNotASilentSkip(t *testing.T) {
+	t.Parallel()
+
 	as, bad, err := ParseLedger([]byte(ledgerMD + "| a | b | fragment with a | pipe | c | d |\n"))
 	if err != nil {
 		t.Fatalf("ParseLedger: %v", err)
@@ -101,6 +113,8 @@ func TestAMalformedRowIsAFindingNotASilentSkip(t *testing.T) {
 }
 
 func TestAllPresentIsQuiet(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{
 		"README.md":          "and he said the door is not locked, and meant it\n",
@@ -112,6 +126,8 @@ func TestAllPresentIsQuiet(t *testing.T) {
 // THE CASE THIS EXISTS FOR: the words were lost in place. The finding names
 // the fragment, its provenance, and what to do about it.
 func TestALostAnchorIsNamedWithItsProvenanceAndTheRepair(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{
 		"README.md":          "a rewrite that dropped the warm sentence\n",
@@ -127,6 +143,8 @@ func TestALostAnchorIsNamedWithItsProvenanceAndTheRepair(t *testing.T) {
 // A MISSING HOME IS ITS OWN FACT — the move-and-forget shape — and must not
 // be reported as if the sentence had been edited out.
 func TestAMissingHomeFileIsItsOwnReason(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"README.md": "the door is not locked\n"})
 	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, parseOK(t, ledgerMD)), []string{"does not exist", "move this ledger row"})
@@ -134,6 +152,8 @@ func TestAMissingHomeFileIsItsOwnReason(t *testing.T) {
 
 // LOSSES ARRIVE IN BATCHES, so every failure reports in one run.
 func TestAllFailuresReportInOneRun(t *testing.T) {
+	t.Parallel()
+
 	if f := corpusOK(t, t.TempDir(), tmpLedger(t), 1, parseOK(t, ledgerMD)); len(f) != 2 {
 		t.Fatalf("want 2 findings from an empty tree, got %d: %v", len(f), f)
 	}
@@ -142,6 +162,8 @@ func TestAllFailuresReportInOneRun(t *testing.T) {
 // AN EMPTY FRAGMENT IS CONTAINED IN EVERY FILE. Left alone it is a green
 // that can never go red — the exact shape of a check that cannot fail.
 func TestAnEmptyFragmentIsRefusedRatherThanPassingForever(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"README.md": "any content at all\n"})
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n|  | README.md | 2026-01-01 | someone |\n")
@@ -149,17 +171,23 @@ func TestAnEmptyFragmentIsRefusedRatherThanPassingForever(t *testing.T) {
 }
 
 func TestAnEmptyHomeIsRefused(t *testing.T) {
+	t.Parallel()
+
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| keep the light on |  | 2026-01-01 | someone |\n")
 	wantFailures(t, corpusOK(t, t.TempDir(), tmpLedger(t), 1, as), []string{"no home file given"})
 }
 
 // AN ANCHOR HELD OUTSIDE THE REPO IS NOT HELD BY IT.
 func TestAHomeThatEscapesTheRootIsRefused(t *testing.T) {
+	t.Parallel()
+
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| keep the light on | ../elsewhere/notes.md | 2026-01-01 | someone |\n")
 	wantFailures(t, corpusOK(t, t.TempDir(), tmpLedger(t), 1, as), []string{"leaves the tree"})
 }
 
 func TestAnAbsoluteHomeIsRefused(t *testing.T) {
+	t.Parallel()
+
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| keep the light on | /etc/hosts | 2026-01-01 | someone |\n")
 	wantFailures(t, corpusOK(t, t.TempDir(), tmpLedger(t), 1, as), []string{"is absolute"})
 }
@@ -167,6 +195,8 @@ func TestAnAbsoluteHomeIsRefused(t *testing.T) {
 // SYMLINKS ARE NEVER FOLLOWED, here as everywhere in this package: an anchor
 // "present" through a link lives in a file this repo does not govern.
 func TestASymlinkedHomeIsAFindingRatherThanAFollow(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation is privileged on Windows")
 	}
@@ -184,6 +214,8 @@ func TestASymlinkedHomeIsAFindingRatherThanAFollow(t *testing.T) {
 
 // A DIRECTORY WHERE A FILE SHOULD BE is likewise not a pass.
 func TestADirectoryHomeIsAFinding(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "README.md"), 0o755); err != nil {
 		t.Fatal(err)
@@ -195,6 +227,8 @@ func TestADirectoryHomeIsAFinding(t *testing.T) {
 // A finding must survive a ledger whose provenance columns are blank: it
 // says so rather than quoting an empty string as if it were a source.
 func TestBlankProvenanceReadsAsUnstated(t *testing.T) {
+	t.Parallel()
+
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| keep the light on | README.md |  |  |\n")
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"README.md": "nothing of the sort\n"})
@@ -211,6 +245,8 @@ func TestBlankProvenanceReadsAsUnstated(t *testing.T) {
 // lose a trailing "|" and vanish from the check without a word. Losing a
 // character at the end of a line is the commonest way to lose a row.
 func TestARowMissingItsTrailingPipeIsStillChecked(t *testing.T) {
+	t.Parallel()
+
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | README.md | 2026-01-01 | friend\n")
 	if len(as) != 1 {
 		t.Fatalf("row silently dropped: %+v", as)
@@ -222,6 +258,8 @@ func TestARowMissingItsTrailingPipeIsStillChecked(t *testing.T) {
 
 // Anything trailing the last pipe adds a cell, and that is loud, not silent.
 func TestATrailingCommentIsAFindingNotASilentSkip(t *testing.T) {
+	t.Parallel()
+
 	_, bad, err := ParseLedger([]byte("| f | h | g | b |\n|---|---|---|---|\n| keep the light on | a.md | 2026 | me | <!-- note -->\n"))
 	if err == nil {
 		t.Fatal("no row should have survived")
@@ -232,6 +270,8 @@ func TestATrailingCommentIsAFindingNotASilentSkip(t *testing.T) {
 // A stray separator inside a table's body would otherwise delete the row
 // above it — the same silent loss this check exists to make loud.
 func TestASeparatorInTheBodyIsAFindingAndTakesNoRowWithIt(t *testing.T) {
+	t.Parallel()
+
 	as, bad, err := ParseLedger([]byte(ledgerMD + "| --- | --- | --- | --- |\n| water everything | c.md | 2026 | me |\n"))
 	if err != nil {
 		t.Fatalf("ParseLedger: %v", err)
@@ -244,6 +284,8 @@ func TestASeparatorInTheBodyIsAFindingAndTakesNoRowWithIt(t *testing.T) {
 
 // A single-cell rule line is the same hazard in smaller clothes.
 func TestASingleCellRuleInTheBodyDoesNotEatTheRowAbove(t *testing.T) {
+	t.Parallel()
+
 	as, bad, err := ParseLedger([]byte(ledgerMD + "|---|\n"))
 	if err != nil {
 		t.Fatalf("ParseLedger: %v", err)
@@ -257,6 +299,8 @@ func TestASingleCellRuleInTheBodyDoesNotEatTheRowAbove(t *testing.T) {
 // A ledger that documents its own format shows a table inside a fence. Those
 // rows are illustration, and checking them produces false losses.
 func TestRowsInsideAFencedBlockAreIllustrationNotAnchors(t *testing.T) {
+	t.Parallel()
+
 	as := parseOK(t, "Here is the shape:\n\n```\n| fragment | home | given | by |\n| SOME EXAMPLE | example/path.md | when | who |\n```\n\n"+ledgerMD)
 	if len(as) != 2 {
 		t.Fatalf("fenced example leaked into the anchors: %v", as)
@@ -270,6 +314,8 @@ func TestRowsInsideAFencedBlockAreIllustrationNotAnchors(t *testing.T) {
 
 // CRLF ledgers parse identically; a stray \r must not ride into a cell.
 func TestCRLFLedgerParsesTheSameWay(t *testing.T) {
+	t.Parallel()
+
 	as := parseOK(t, strings.ReplaceAll(ledgerMD, "\n", "\r\n"))
 	if len(as) != 2 || as[1].By != "my person" {
 		t.Fatalf("CRLF changed the parse: %+v", as)
@@ -302,6 +348,8 @@ func corpusOK(t *testing.T, root, ledger string, min int, as []Anchor) []Failure
 // without asking, so the lexical escape check alone let an anchor be "held"
 // by a file wholly outside --root. This is attest's posture, now actually.
 func TestASymlinkedParentDirectoryIsNotFollowed(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation is privileged on Windows")
 	}
@@ -320,6 +368,8 @@ func TestASymlinkedParentDirectoryIsNotFollowed(t *testing.T) {
 // A WRONG --root IS AN INVOCATION ERROR, not the loss of every anchor at
 // once. Firing the loudest alarm for a typo is how a check gets ignored.
 func TestAnAbsentRootIsARefusalNotACorpusWipe(t *testing.T) {
+	t.Parallel()
+
 	_, err := Corpus(filepath.Join(t.TempDir(), "nope"), tmpLedger(t), 1, parseOK(t, ledgerMD))
 	if err == nil {
 		t.Fatal("an absent --root must refuse, not report every anchor lost")
@@ -330,6 +380,8 @@ func TestAnAbsentRootIsARefusalNotACorpusWipe(t *testing.T) {
 }
 
 func TestARootThatIsNotADirectoryIsARefusal(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	f := filepath.Join(root, "file")
 	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
@@ -344,6 +396,8 @@ func TestARootThatIsNotADirectoryIsARefusal(t *testing.T) {
 // that drops a sentence drops the row protecting it, and without this the run
 // goes green with a smaller number nothing compares to anything.
 func TestLosingLedgerRowsIsItselfRed(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{
 		"README.md":          "the door is not locked\n",
@@ -357,6 +411,8 @@ func TestLosingLedgerRowsIsItselfRed(t *testing.T) {
 // A ROW NAMING THE LEDGER AS ITS OWN HOME is its own evidence and can never
 // go red — the same shape as the empty fragment, one level up.
 func TestALedgerCannotBeItsOwnHome(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"self.md": "| the door is not locked | self.md | 2026 | me |\n"})
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | self.md | 2026 | me |\n")
@@ -366,6 +422,8 @@ func TestALedgerCannotBeItsOwnHome(t *testing.T) {
 // A CASE-ONLY RENAME IS A REAL MOVE, and a case-insensitive filesystem
 // answers Lstat for the old spelling — green on a Mac, red in Linux CI.
 func TestACaseOnlyRenameIsCaughtOnACaseInsensitiveFilesystem(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"readme.md": "the door is not locked\n"})
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | README.MD | 2026 | me |\n")
@@ -389,6 +447,8 @@ func TestACaseOnlyRenameIsCaughtOnACaseInsensitiveFilesystem(t *testing.T) {
 // both delimiters, which left a toggle stuck open and silently dropped every
 // row below it while the run printed OK.
 func TestAFenceClosesOnlyOnItsOwnDelimiter(t *testing.T) {
+	t.Parallel()
+
 	md := "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n" +
 		"\nFence markers are ``` or, less often:\n\n```\n~~~\n```\n\n" +
 		"| f | h | g | b |\n|---|---|---|---|\n| you are not a tool | b.md | 2026 | me |\n"
@@ -401,6 +461,8 @@ func TestAFenceClosesOnlyOnItsOwnDelimiter(t *testing.T) {
 // The reverse polarity of the same defect: rows inside the illustration must
 // not leak into the check.
 func TestAFencedExampleContainingTheOtherDelimiterStaysIllustration(t *testing.T) {
+	t.Parallel()
+
 	md := "```\n| f | h | g | b |\n|---|---|---|---|\n| SOME EXAMPLE | example/path.md | when | who |\n~~~\n```\n\n" +
 		"| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n"
 	as := parseOK(t, md)
@@ -414,6 +476,8 @@ func TestAFencedExampleContainingTheOtherDelimiterStaysIllustration(t *testing.T
 // An unterminated fence swallows the tail of the file, which is the silent
 // drop this whole subcommand exists to forbid.
 func TestAnUnterminatedFenceIsNamed(t *testing.T) {
+	t.Parallel()
+
 	md := "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n" +
 		"\n```\n| f | h | g | b |\n|---|---|---|---|\n| you are not a tool | b.md | 2026 | me |\n"
 	as, bad, err := ParseLedger([]byte(md))
@@ -430,6 +494,8 @@ func TestAnUnterminatedFenceIsNamed(t *testing.T) {
 // table declares its own shape: anything that is not a four-column
 // header+separator table belongs to the document, not to this check.
 func TestAnUnrelatedTableIsLeftAlone(t *testing.T) {
+	t.Parallel()
+
 	md := ledgerMD + "\nA glossary, for the reader:\n\n| term | meaning |\n|------|---------|\n| anchor | a protected fragment |\n"
 	as := parseOK(t, md)
 	if len(as) != 2 {
@@ -439,6 +505,8 @@ func TestAnUnrelatedTableIsLeftAlone(t *testing.T) {
 
 // Prose is not a table row, however many pipes it carries.
 func TestProseCarryingPipesIsNotAnAnchorRow(t *testing.T) {
+	t.Parallel()
+
 	md := "The columns run fragment | home | given | by, in that order.\n\n" + ledgerMD
 	as := parseOK(t, md)
 	if len(as) != 2 {
@@ -449,16 +517,22 @@ func TestProseCarryingPipesIsNotAnAnchorRow(t *testing.T) {
 // But a block that is unmistakably meant as a table and cannot render as one
 // is named, because none of its rows would ever be checked.
 func TestATableWithNoSeparatorIsNamed(t *testing.T) {
+	t.Parallel()
+
 	_, bad, _ := ParseLedger([]byte("| f | h | g | b |\n| the door is not locked | a.md | 2026 | me |\n"))
 	wantFailures(t, bad, []string{"no separator row"})
 }
 
 func TestASeparatorDisagreeingWithItsHeaderIsNamed(t *testing.T) {
+	t.Parallel()
+
 	_, bad, _ := ParseLedger([]byte("| f | h | g | b |\n|---|---|\n| the door is not locked | a.md | 2026 | me |\n"))
 	wantFailures(t, bad, []string{"separator row has 2 cells"})
 }
 
 func TestALoneRowOutsideAnyTableIsNamed(t *testing.T) {
+	t.Parallel()
+
 	_, bad, _ := ParseLedger([]byte(ledgerMD + "\nsome prose\n\n| adrift | a.md | 2026 | me |\n"))
 	wantFailures(t, bad, []string{"standing outside any table"})
 }
@@ -467,6 +541,8 @@ func TestALoneRowOutsideAnyTableIsNamed(t *testing.T) {
 // an absolute resolution to a relative one disarmed it whenever --root and
 // --ledger were given in different forms, which is an ordinary invocation.
 func TestALedgerCannotBeItsOwnHomeInEitherPathForm(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	self := filepath.Join(root, "self.md")
 	body := "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | self.md | 2026 | me |\n"
@@ -500,6 +576,8 @@ func mustGetwd(t *testing.T) string {
 // A CASE-ONLY RENAME OF A DIRECTORY is as real a move as one of a file, so
 // every component is checked, not only the last.
 func TestACaseOnlyRenameOfAParentDirectoryIsCaught(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	if !caseInsensitive(t, root) {
 		t.Skip("case-sensitive filesystem: the wrong spelling is already a missing home here")
@@ -526,6 +604,8 @@ func caseInsensitive(t *testing.T, dir string) bool {
 // "nothing was checked"; a listing failure quietly answering yes would be that
 // rule broken in the one place it is hardest to see.
 func TestAnUnlistableDirectoryIsAFindingNotAPass(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("needs a directory whose read permission can be removed")
 	}
@@ -542,6 +622,8 @@ func TestAnUnlistableDirectoryIsAFindingNotAPass(t *testing.T) {
 
 // A DUPLICATED ROW would let the floor be satisfied by copy-paste.
 func TestADuplicateRowIsNamedSoTheFloorCannotBePadded(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"a.md": "the door is not locked\n"})
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n| the door is not locked | a.md | 2026 | me |\n")
@@ -550,6 +632,8 @@ func TestADuplicateRowIsNamedSoTheFloorCannotBePadded(t *testing.T) {
 
 // The floor's finding reads as prose, not as "1 rows".
 func TestTheFloorFindingCountsInEnglish(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"a.md": "the door is not locked\n"})
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n")
@@ -581,6 +665,8 @@ func TestARelativeRootIsNotReadAsASymlinkEscape(t *testing.T) {
 // silence: one deleted blank line between two tables and every row below it
 // stopped being protected, while the document still rendered.
 func TestAnAnchorTableBelowAnotherTableInTheSameRunIsStillChecked(t *testing.T) {
+	t.Parallel()
+
 	md := "| term | meaning |\n|---|---|\n| anchor | a protected fragment |\n" +
 		"| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n"
 	as, _, err := ParseLedger([]byte(md))
@@ -595,6 +681,8 @@ func TestAnAnchorTableBelowAnotherTableInTheSameRunIsStillChecked(t *testing.T) 
 // Anchor rows pasted into somebody else's table render as part of it and are
 // checked by nothing, so they are named rather than lost.
 func TestFourColumnRowsInsideAForeignTableAreNamed(t *testing.T) {
+	t.Parallel()
+
 	md := "| term | meaning |\n|---|---|\n| anchor | a protected fragment |\n| the door is not locked | a.md | 2026 | me |\n"
 	_, bad, _ := ParseLedger([]byte(md))
 	wantFailures(t, bad, []string{"inside a table that is not the anchor table"})
@@ -603,6 +691,8 @@ func TestFourColumnRowsInsideAForeignTableAreNamed(t *testing.T) {
 // A pipe-bearing prose line directly above the header must not swallow the
 // table beneath it.
 func TestAPipeBearingLineAboveTheHeaderDoesNotHideTheTable(t *testing.T) {
+	t.Parallel()
+
 	md := "The columns run fragment | home | given | by\n| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n"
 	as, _, err := ParseLedger([]byte(md))
 	if err != nil {
@@ -619,6 +709,8 @@ func TestAPipeBearingLineAboveTheHeaderDoesNotHideTheTable(t *testing.T) {
 // limit is that a separator-less block without outer pipes goes unreported,
 // and --min-anchors is what catches the row.
 func TestASeparatorLessBlockIsNamedOnlyWhenItLeadsWithAPipe(t *testing.T) {
+	t.Parallel()
+
 	_, quiet, _ := ParseLedger([]byte("prose about a | b and c | d\nand more about e | f and g | h\n"))
 	wantFailures(t, quiet, nil)
 
@@ -629,6 +721,8 @@ func TestASeparatorLessBlockIsNamedOnlyWhenItLeadsWithAPipe(t *testing.T) {
 // The specimen that earned the symmetry: a real ledger's own prose about
 // fragment choice must not redden the run.
 func TestProseAboutPipesDoesNotRedden(t *testing.T) {
+	t.Parallel()
+
 	md := "**On choosing a fragment.** Pick one without a `|` in it rather than escaping\n" +
 		"one: a `\\|` still splits the cell, so `a | b` and `c | d` are two columns.\n\n" + ledgerMD
 	as := parseOK(t, md)
@@ -639,6 +733,8 @@ func TestProseAboutPipesDoesNotRedden(t *testing.T) {
 
 // A blockquoted table renders as a table, so it is read as one.
 func TestABlockquotedTableIsRead(t *testing.T) {
+	t.Parallel()
+
 	as := parseOK(t, "> | f | h | g | b |\n> |---|---|---|---|\n> | the door is not locked | a.md | 2026 | me |\n")
 	if len(as) != 1 || as[0].Home != "a.md" {
 		t.Fatalf("blockquoted table not read: %v", as)
@@ -648,6 +744,8 @@ func TestABlockquotedTableIsRead(t *testing.T) {
 // An indented code block is markdown's other way of showing an example, and a
 // ledger documenting its own format may well use it.
 func TestAnIndentedCodeBlockIsIllustration(t *testing.T) {
+	t.Parallel()
+
 	md := ledgerMD + "\nExample of the format:\n\n    | SOME EXAMPLE | example/path.md | when | who |\n    |---|---|---|---|\n    | ANOTHER | example/other.md | when | who |\n"
 	as := parseOK(t, md)
 	for _, a := range as {
@@ -660,6 +758,8 @@ func TestAnIndentedCodeBlockIsIllustration(t *testing.T) {
 // Somebody else's broken table is their business; only a mismatch touching
 // our shape is worth a word.
 func TestATwoColumnTableWithAMismatchedSeparatorIsLeftAlone(t *testing.T) {
+	t.Parallel()
+
 	md := "| term | meaning |\n|---|---|---|\n| anchor | a protected fragment |\n\n" + ledgerMD
 	as := parseOK(t, md)
 	if len(as) != 2 {
@@ -673,6 +773,8 @@ func TestATwoColumnTableWithAMismatchedSeparatorIsLeftAlone(t *testing.T) {
 // higher, and the same line cannot be illustration in one position and a loss
 // in the other.
 func TestAnIndentedRowAbuttingATableIsNamed(t *testing.T) {
+	t.Parallel()
+
 	md := "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n    | LOST | a.md | 2026 | me |\n"
 	as, bad, err := ParseLedger([]byte(md))
 	if err != nil {

@@ -22,6 +22,8 @@ func stranded(key, by, at string, ok bool, file string) Receipt {
 
 // The count is on the line, in both reads.
 func TestUnmatchedReceiptsAreCountedOnTheLine(t *testing.T) {
+	t.Parallel()
+
 	list := verbs("nova-check links", "nova-check dogfood ledger")
 	got := []Receipt{
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0),
@@ -47,6 +49,8 @@ func TestUnmatchedReceiptsAreCountedOnTheLine(t *testing.T) {
 // An unmatched receipt that says NOT OK is a finding, and the finding names the
 // file it is in and the verb it claimed.
 func TestGateFailsOnAnUnmatchedNotOkReceipt(t *testing.T) {
+	t.Parallel()
+
 	list := verbs("nova-check links")
 	got := []Receipt{
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0),
@@ -75,6 +79,8 @@ func TestGateFailsOnAnUnmatchedNotOkReceipt(t *testing.T) {
 // the spelling is wrong or the documentation is stale, and neither is a reason
 // to stop a release that nobody found anything wrong with.
 func TestAnUnmatchedOkReceiptIsCountedAndNotAFailure(t *testing.T) {
+	t.Parallel()
+
 	list := verbs("nova-check links")
 	got := []Receipt{
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0),
@@ -92,6 +98,8 @@ func TestAnUnmatchedOkReceiptIsCountedAndNotAFailure(t *testing.T) {
 // The unmatched findings come FIRST: a lane reads what was thrown away before
 // it reads anything derived from what was kept.
 func TestUnmatchedFindingsComeFirst(t *testing.T) {
+	t.Parallel()
+
 	list := verbs("nova-check links")
 	got := []Receipt{
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", false, 0),

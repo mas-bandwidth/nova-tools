@@ -16,6 +16,8 @@ import (
 // line. The verbs come from the tool's own help output, so a verb added later is
 // covered rather than remembered.
 func TestIssue1451EveryMissingFlagRefusalNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	code, help, helpErr := capture(t, []string{"help"}, nowish())
 	if code != 0 {
 		t.Fatalf("`nova-fuse help` exits %d, want 0; stderr: %s", code, helpErr)

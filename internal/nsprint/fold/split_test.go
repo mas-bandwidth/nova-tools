@@ -42,6 +42,8 @@ func addReads(t *testing.T, client *redis.Client, sprint string) {
 // same way; read and code cards are separate rows per class, type and route;
 // the approved-not-landed PRs print with their why line.
 func TestControl55Unknown(t *testing.T) {
+	t.Parallel()
+
 	t.Run("card-with-no-end-record", func(t *testing.T) {
 		mr, client, fx := seed(t)
 		work := workRepo(t)

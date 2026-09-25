@@ -742,6 +742,8 @@ func TestServesPollBudgetCoversTheIntervalItFetchesFor(t *testing.T) {
 // --on-note is refused naming the flag" -- because the state stores no command,
 // so a redelivery names its handler.
 func TestServeRefusesARedeliveryThatNamesNoHandler(t *testing.T) {
+	t.Parallel()
+
 	r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan",
 		"--state", filepath.Join(t.TempDir(), "s"), "--redeliver", "aaa111")
 	if r.exit != 2 {

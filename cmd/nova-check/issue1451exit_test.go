@@ -20,6 +20,8 @@ import (
 // door. The control pins the other half: a genuine exit-2 refusal from the same verb
 // still ends in the door.
 func TestAnExitOneVerdictCarriesNoDoor(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")

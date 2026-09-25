@@ -22,6 +22,8 @@ func fixedReceipt() Receipt {
 }
 
 func TestRecordWritesAReceiptTheLedgerReadsBack(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	want := fixedReceipt()
 	path, err := Record(dir, want)
@@ -61,6 +63,8 @@ func TestRecordWritesAReceiptTheLedgerReadsBack(t *testing.T) {
 // The append leaves no half-written file behind and no temporary file in the
 // directory the ledger reads.
 func TestRecordLeavesNoTemporaryFileBehind(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if _, err := Record(dir, fixedReceipt()); err != nil {
 		t.Fatalf("Record: %v", err)
@@ -80,6 +84,8 @@ func TestRecordLeavesNoTemporaryFileBehind(t *testing.T) {
 // Two benches recording at once is the case this is built for: every receipt
 // arrives whole, and no two of them collide on one filename.
 func TestRecordIsAtomicUnderConcurrentWriters(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	const n = 16
 	var wg sync.WaitGroup
@@ -109,6 +115,8 @@ func TestRecordIsAtomicUnderConcurrentWriters(t *testing.T) {
 }
 
 func TestRecordRefusesAMissingFieldWithOneRemedy(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	for _, tc := range []struct {
 		name   string
@@ -139,6 +147,8 @@ func TestRecordRefusesAMissingFieldWithOneRemedy(t *testing.T) {
 }
 
 func TestValidateReportsEveryMissingFieldAtOnce(t *testing.T) {
+	t.Parallel()
+
 	errs := Receipt{}.Validate()
 	if len(errs) < 5 {
 		t.Fatalf("an empty receipt produced %d complaints, want one per field", len(errs))
@@ -159,6 +169,8 @@ func TestValidateReportsEveryMissingFieldAtOnce(t *testing.T) {
 }
 
 func TestValidateRefusesAStampThatIsNotRFC3339(t *testing.T) {
+	t.Parallel()
+
 	r := fixedReceipt()
 	r.At = "yesterday"
 	if errs := r.Validate(); len(errs) == 0 {
@@ -167,6 +179,8 @@ func TestValidateRefusesAStampThatIsNotRFC3339(t *testing.T) {
 }
 
 func TestValidateRefusesAControlCharacterInAField(t *testing.T) {
+	t.Parallel()
+
 	r := fixedReceipt()
 	r.Notes = "first line\nDOGFOOD OK verbs=99 dogfooded=99 by-nonauthor=99 open-edges=0"
 	errs := r.Validate()
@@ -176,6 +190,8 @@ func TestValidateRefusesAControlCharacterInAField(t *testing.T) {
 }
 
 func TestReadReceiptsNamesWhatItCannotParseAndNeverDropsItQuietly(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if _, err := Record(dir, fixedReceipt()); err != nil {
 		t.Fatal(err)
@@ -204,6 +220,8 @@ func TestReadReceiptsNamesWhatItCannotParseAndNeverDropsItQuietly(t *testing.T) 
 }
 
 func TestReadReceiptsReadsSeveralRecordsInOneFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	var lines []string
 	for _, by := range []string{"Stella", "Emma", "Johnny"} {
@@ -229,6 +247,8 @@ func TestReadReceiptsReadsSeveralRecordsInOneFile(t *testing.T) {
 }
 
 func TestReadReceiptsRefusesAPathThatIsNotADirectory(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	file := filepath.Join(dir, "a-file")
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
@@ -245,6 +265,8 @@ func TestReadReceiptsRefusesAPathThatIsNotADirectory(t *testing.T) {
 // An empty receipts directory is the day-one state, not an error: the ledger
 // then says nobody, for every verb.
 func TestReadReceiptsAcceptsAnEmptyDirectory(t *testing.T) {
+	t.Parallel()
+
 	got, failures, err := ReadReceipts(t.TempDir())
 	if err != nil {
 		t.Fatalf("ReadReceipts: %v", err)

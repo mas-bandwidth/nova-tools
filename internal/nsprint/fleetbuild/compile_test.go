@@ -111,6 +111,8 @@ func tempHome(t *testing.T) string {
 // caches. The build then publishes every platform, and a second run builds
 // nothing.
 func TestCompileBuildsWithItsOwnGoCaches(t *testing.T) {
+	t.Parallel()
+
 	home := tempHome(t)
 	f := &fakeBuilder{t: t, tools: []string{"nova-card", "nova-sprint"}}
 	c, out := newCompile(t, home, f)
@@ -166,6 +168,8 @@ func TestCompileBuildsWithItsOwnGoCaches(t *testing.T) {
 // toolchain pinned (local when none was read), and a build child adds only
 // cgo off and its platform.
 func TestGoEnvNamesOnlyTheBuildsOwnDirectories(t *testing.T) {
+	t.Parallel()
+
 	home := "/home/ubuntu"
 	want := []string{
 		"GOMODCACHE=/home/ubuntu/nova-bench/space-build/go/mod",
@@ -185,6 +189,8 @@ func TestGoEnvNamesOnlyTheBuildsOwnDirectories(t *testing.T) {
 // TestCompileRefusesADigestMismatch: a reference whose linux-amd64 digest
 // differs from the rebuild is not the declared build, and nothing is published.
 func TestCompileRefusesADigestMismatch(t *testing.T) {
+	t.Parallel()
+
 	home := tempHome(t)
 	ref := filepath.Join(home, ReferenceRoot, testV)
 	if err := os.MkdirAll(ref, 0o755); err != nil {
@@ -208,6 +214,8 @@ func TestCompileRefusesADigestMismatch(t *testing.T) {
 
 // TestCompileRefusesAWrongHeaderAndAFailedBuild covers steps 5 and 6.
 func TestCompileRefusesAWrongHeaderAndAFailedBuild(t *testing.T) {
+	t.Parallel()
+
 	home := tempHome(t)
 	f := &fakeBuilder{t: t, tools: []string{"nova-sprint"}, badPlat: "darwin-arm64"}
 	c, _ := newCompile(t, home, f)
@@ -224,6 +232,8 @@ func TestCompileRefusesAWrongHeaderAndAFailedBuild(t *testing.T) {
 
 // TestCompileDryRunAndBadInput: --dry-run and a bad argument start no child.
 func TestCompileDryRunAndBadInput(t *testing.T) {
+	t.Parallel()
+
 	home := tempHome(t)
 	f := &fakeBuilder{t: t}
 	c, out := newCompile(t, home, f, "linux-amd64")

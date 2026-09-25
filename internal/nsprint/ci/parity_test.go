@@ -99,6 +99,8 @@ func (f *fixture) parity(minHeads int) (string, int) {
 // the verb exits 1. Heads Actions failed, PRs our CI never saw, and runs
 // outside the window are not counted.
 func TestParityCountsEveryActionsPassedHead(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t, "ctl-a")
 	f.client.HSet(f.ctx, ci.MaxAttemptsKey, "max_attempts", "1")
 
@@ -188,6 +190,8 @@ func TestParityCountsEveryActionsPassedHead(t *testing.T) {
 // HTTP or process package, name the GitHub API, or call the one budgeted
 // GitHub read (FetchCheckRuns, Compare in compare.go).
 func TestParityNeverPollsGitHub(t *testing.T) {
+	t.Parallel()
+
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "parity.go", nil, 0)
 	if err != nil {

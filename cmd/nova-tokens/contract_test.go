@@ -79,6 +79,8 @@ var rule9Emptiers = []string{"os.Remove", "os.RemoveAll", "os.Truncate", ".Trunc
 // Rule 9 and demanded test 8: this tool removes NOTHING. The prototype removed the old
 // month files on every real run and noted it in a list capped at six.
 func TestNothingInThisToolRemovesAFile(t *testing.T) {
+	t.Parallel()
+
 	// Rule 9 says "deletes, truncates or trims", and a tripwire that searches only for the
 	// three removal names is hollow for the middle word: `f.Truncate(0)` on the lock and
 	// `os.Create` on the scratch copy both truncate and both walked past it. Every call
@@ -164,6 +166,8 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 // is a hole, a name the list carries and the spec does not is drift. Neither side can be
 // edited alone.
 func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
+	t.Parallel()
+
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
@@ -256,6 +260,8 @@ func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
 // TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit in boundary_test.go; this one stays as
 // the demanded test's own line, named after the rule it came from.
 func TestTheOnlySubprocessIsSqlite3AndThereIsNoNetwork(t *testing.T) {
+	t.Parallel()
+
 	files := pkgFiles(t, "internal/tokens")
 	for name, f := range files {
 		for _, imp := range f.Imports {
@@ -290,6 +296,8 @@ func TestTheOnlySubprocessIsSqlite3AndThereIsNoNetwork(t *testing.T) {
 // reader carrying a regexp of its own. The prototype had two tables in two scripts and
 // they disagreed about three repos.
 func TestOnlyRepoGoCarriesTheAttributionRule(t *testing.T) {
+	t.Parallel()
+
 	for name, body := range pkgText(t, "internal/tokens") {
 		if name == "repo.go" || name == "bus.go" {
 			continue // bus.go's regexps are the note GRAMMAR, not a repo table
@@ -311,6 +319,8 @@ func TestOnlyRepoGoCarriesTheAttributionRule(t *testing.T) {
 // literal zero for a type it did not read. Every DeepSeek row and every Claude reasoning
 // cell in the prototype said zero when nothing had measured them.
 func TestNoReaderWritesAZeroForATypeItDidNotRead(t *testing.T) {
+	t.Parallel()
+
 	for name, body := range pkgText(t, "internal/tokens") {
 		if !strings.Contains(body, "Counts.Set") && !strings.Contains(body, ".Set(t,") && !strings.Contains(body, "Set(t, v)") {
 			continue
@@ -324,6 +334,8 @@ func TestNoReaderWritesAZeroForATypeItDidNotRead(t *testing.T) {
 // Rule 14's tripwire: nothing under done/ or failed/ is opened. The answer has to be the
 // same before and after `reclaim`, which is the whole reason the usage file is a sidecar.
 func TestNothingUnderDoneOrFailedIsOpened(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	pool := mkdir(t, filepath.Join(dir, "pool"))
@@ -357,6 +369,8 @@ func TestEachDeclaredFileIsOpenedOncePerRun(t *testing.T) {
 // ---------------------------------------------------------------- the ceilings
 
 func TestMaxZeroPrintsAllAndMaxNegativeIsRefused(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	for _, verb := range [][]string{
@@ -380,6 +394,8 @@ func TestMaxZeroPrintsAllAndMaxNegativeIsRefused(t *testing.T) {
 // sum OK, and nothing anywhere said the day had been doubled. The numbers still double,
 // because that is what the spec says this tool does; the run now says so.
 func TestTwoSourcesOverOneTreeAreNamedInTheRemedy(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
@@ -416,6 +432,8 @@ func TestTwoSourcesOverOneTreeAreNamedInTheRemedy(t *testing.T) {
 // unreadable and then returned 0 whenever any line printed, so a friend pasted a partial
 // day onto the bus under REPORT OK.
 func TestReportWithOneUnreadableSourceExitsOne(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
 	good := mkdir(t, filepath.Join(dir, "good"))
@@ -436,6 +454,8 @@ func TestReportWithOneUnreadableSourceExitsOne(t *testing.T) {
 // note with one unparsed body line was not dead, entered the superseded map, and its
 // predecessor's numbers vanished behind a correction nobody could read whole.
 func TestAHalfReadSuccessorDoesNotReplaceItsPredecessor(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
@@ -466,6 +486,8 @@ func TestAHalfReadSuccessorDoesNotReplaceItsPredecessor(t *testing.T) {
 // any turn before the first tool call was unknown for the whole file -- and `unknown` is a
 // bucket `check` is happy with.
 func TestCwdIsTheLowestRungOfTheAttributionLadder(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -512,6 +534,8 @@ func TestCwdIsTheLowestRungOfTheAttributionLadder(t *testing.T) {
 // and reached nothing else -- not the exit code, not TOKENS NOTE. 100% of a file's usage
 // can be dropped that way under TOKENS OK (lesson 95: a number is not a sentence).
 func TestMessagesWithNoIDReachTheRemedyLine(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -533,6 +557,8 @@ func TestMessagesWithNoIDReachTheRemedyLine(t *testing.T) {
 // meaning 'not measured' would sum into a month claiming to be complete", and SUM PAIR
 // printed reasoning=0 for a month whose every row had a dash there.
 func TestSumPrintsADashWhereNoRowReportedTheType(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -553,6 +579,8 @@ func TestSumPrintsADashWhereNoRowReportedTheType(t *testing.T) {
 // output=0 cache_write=0 cache_read=0 reasoning=0` -- the one "not measured" zero rule 15
 // forbids, in the one place the tool had no row to learn it from.
 func TestAMonthWithNoDayFilesSumsToDashesNotZeros(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	r := invoke(t, "sum", "--out", out, "--month", "2026-09")
@@ -573,6 +601,8 @@ func TestAMonthWithNoDayFilesSumsToDashesNotZeros(t *testing.T) {
 // with `#` had that line deleted out of the middle of its own record -- the record then
 // parsed from the wrong bytes, with the `line=` map off by as many lines as were removed.
 func TestAQuotedFieldWhoseContinuationStartsWithAHashIsNotStripped(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	// The quoted field is the model, the only column of this export that can carry text;
@@ -648,6 +678,8 @@ func exprText(fset *token.FileSet, e ast.Expr) string {
 }
 
 func TestNoFunctionAddsOneTypeColumnIntoAnother(t *testing.T) {
+	t.Parallel()
+
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)

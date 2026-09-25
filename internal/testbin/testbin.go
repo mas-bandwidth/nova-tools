@@ -12,6 +12,7 @@ package testbin
 import (
 	"os"
 	"runtime"
+	"syscall"
 )
 
 // link is os.Link by default. A test swaps it to exercise the copy fallback
@@ -42,7 +43,7 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, raw, 0o755)
+	return WriteExecutable(dst, raw, 0o755)
 }
 
 // PlaceCopy puts a real byte copy of src at dst, never a link, and is the one
@@ -57,4 +58,17 @@ func PlaceCopy(src, dst string) error {
 		return err
 	}
 	return copyFile(src, dst)
+}
+
+// WriteExecutable is os.WriteFile for a file a test is about to exec: a fake
+// tool, a stand-in script, a stub on PATH. It holds syscall.ForkLock for
+// reading while the file is open for writing, so no other goroutine can fork
+// in that window. Without it, a parallel test's fork inherits the write
+// descriptor for the instant before its exec, and this test's exec of the file
+// fails on Linux with ETXTBSY, "text file busy" (golang/go#22315): the flake
+// internal/secrets' seat test hit the first time its package ran in parallel.
+func WriteExecutable(path string, data []byte, perm os.FileMode) error {
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
+	return os.WriteFile(path, data, perm)
 }

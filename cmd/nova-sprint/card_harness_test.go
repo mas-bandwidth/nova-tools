@@ -29,6 +29,8 @@ func cardRunEnv(extra map[string]string) func(string) string {
 }
 
 func TestCardRunRefusesABadArgv(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		args []string
@@ -60,6 +62,8 @@ func TestCardRunRefusesABadArgv(t *testing.T) {
 }
 
 func TestCardRunRefusesARedisItCannotReach(t *testing.T) {
+	t.Parallel()
+
 	var out, errOut bytes.Buffer
 	code := runCardRunEnv(context.Background(), []string{"--sprint", "s", "--label", "l", "--attempt", "1"}, &out, &errOut, cardRunEnv(nil))
 	if code != card.RunExitRefused || !strings.HasPrefix(out.String(), `REFUSED card run s/l/1 code=2 why="redis: `) {

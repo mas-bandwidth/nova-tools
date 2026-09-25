@@ -209,6 +209,8 @@ func mustPass(t *testing.T, lp *reconcile.Loop) reconcile.PassResult {
 // in the same reconciler pass, woken by the event and not by the sweep, and
 // working = min(slots, working + open) after every pass.
 func TestRefillOnChildCompletion(t *testing.T) {
+	t.Parallel()
+
 	st, c := controlRedis(t)
 	ctx := context.Background()
 	const bench, S, slots = "ctl-refill", "control-29350c01", 4
@@ -313,6 +315,8 @@ func TestRefillOnChildCompletion(t *testing.T) {
 // two control sprints sharing one fixture bench do not collide, and leased
 // never exceeds desired, with two refills racing every pass.
 func TestControl05TwoSprintsOneBench(t *testing.T) {
+	t.Parallel()
+
 	st, c := controlRedis(t)
 	ctx := context.Background()
 	const bench, slots, cards = "ctl-shared", 4, 6
@@ -435,6 +439,8 @@ func TestControl05TwoSprintsOneBench(t *testing.T) {
 // TestRefillClassify: which events wake the deal, which the route, and which
 // nothing (the reconciler's own receipts and beats).
 func TestRefillClassify(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		stream string
 		v      map[string]any
@@ -460,6 +466,8 @@ func TestRefillClassify(t *testing.T) {
 // waits on the streams, and a completion event wakes it to deal in that same
 // pass. The assertion is the event's deal, never the clock.
 func TestRefillBlockWakesOnEvent(t *testing.T) {
+	t.Parallel()
+
 	st, c := controlRedis(t)
 	ctx := context.Background()
 	const bench, S = "ctl-block", "control-2935b10c"
@@ -565,6 +573,8 @@ func groupPending(t *testing.T, c *redis.Client, stream string) int64 {
 // then; and the replay never wakes the deal again, so the deal the event rode
 // in with ran exactly once.
 func TestRefillFailedRouteReplayedOnceDealt(t *testing.T) {
+	t.Parallel()
+
 	st, c := controlRedis(t)
 	ctx := context.Background()
 	const bench, S, slots = "ctl-route", "control-2935f00d", 2

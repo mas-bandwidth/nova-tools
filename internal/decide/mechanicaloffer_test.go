@@ -13,6 +13,8 @@ const mechanicalNoAskReason = "a mechanical kind with no confirmed failure, so n
 // #1513: a mechanical kind with no CONFIRMED failure is offered its supported
 // rung ALONE, so the rules answer without a decision being asked at all.
 func TestAMechanicalKindIsOfferedOneRungUntilSomethingFails(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	fake := &fakeDecider{choice: "rung-2", conf: 0.99}
 	u := Unit{ID: "u", Kind: KindRebase, Files: 2, Packages: 1}
@@ -35,6 +37,8 @@ func TestAMechanicalKindIsOfferedOneRungUntilSomethingFails(t *testing.T) {
 // The other half: once a mechanical kind carries a CONFIRMED failure the
 // step-up offer is restored, and the rung the provider chose is the answer.
 func TestAConfirmedFailureRestoresTheStepUpOffer(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	fake := &fakeDecider{choice: "rung-2", conf: 0.99}
 	u := Unit{ID: "u", Kind: KindRebase, Files: 2, Packages: 1, Attempts: []Attempt{
@@ -65,6 +69,8 @@ func TestAConfirmedFailureRestoresTheStepUpOffer(t *testing.T) {
 // proxy. The explicit Mechanical/no-confirmed-failure guard in routeJev must
 // catch this even though the offered set itself is not a singleton.
 func TestASameHeightMechanicalOfferWithTwoMindsMakesNoCall(t *testing.T) {
+	t.Parallel()
+
 	reg, err := ParseRegistry([]byte(`{"minds":[
 	  {"name":"low-a","lineage":"one","height":0,"availability":"available","ask":"card"},
 	  {"name":"low-b","lineage":"two","height":0,"availability":"available","ask":"card"}

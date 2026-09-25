@@ -24,6 +24,8 @@ import (
 // because that flag admits a log that says it is observations, not a log that
 // says nothing legible at all.
 func TestAPresentButMalformedAdjudicationMarkerRefusesAndNeverTunes(t *testing.T) {
+	t.Parallel()
+
 	for _, marker := range []string{`"maybe"`, `null`, `{}`, `[]`, `1`, `"true"`} {
 		t.Run("adjudicated:"+marker, func(t *testing.T) {
 			log := markerLog(t, `,"adjudicated":`+marker)

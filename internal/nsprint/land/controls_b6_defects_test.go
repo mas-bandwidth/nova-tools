@@ -51,6 +51,8 @@ func setupGitMirror(t *testing.T) (bareDir, workDir string, runGit func(...strin
 // TestDefect1_WorkerTestsTrainHead verifies that the worker checks out the train head
 // so the gate tests the train, turning RED when a member commit introduces a test failure (spec 5.3, 5).
 func TestDefect1_WorkerTestsTrainHead(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	bareDir, workDir, runGit := setupGitMirror(t)
@@ -127,6 +129,8 @@ func TestDefect1_WorkerTestsTrainHead(t *testing.T) {
 // TestDefect2_WorkerChangedFilesAndSelectionCache verifies that changedFiles is populated
 // from member changes and selection graph is cached in Redis (spec 5.4, B4, B6).
 func TestDefect2_WorkerChangedFilesAndSelectionCache(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	bareDir, workDir, runGit := setupGitMirror(t)
@@ -206,6 +210,8 @@ func TestDefect2_WorkerChangedFilesAndSelectionCache(t *testing.T) {
 // TestDefect3_WorkerReceiptGIDAndCoreS verifies that the worker writes gid receipts
 // and computes core_s from execution instead of hard-coding "10" (spec 3.7, 5.5, B6).
 func TestDefect3_WorkerReceiptGIDAndCoreS(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	policyID := "pol-test-d3"
@@ -318,6 +324,8 @@ func TestDefect3_WorkerReceiptGIDAndCoreS(t *testing.T) {
 // TestDefect4_GateTakeOneArgumentForm verifies that ns_gate_take uses a single argument form
 // without a hard-coded list of bench names, correctly handling arbitrary bench names.
 func TestDefect4_GateTakeOneArgumentForm(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	// Verify that land.lua does NOT contain hardcoded bench names
@@ -384,6 +392,8 @@ func TestDefect4_GateTakeOneArgumentForm(t *testing.T) {
 // TestDefect5_WorkerMergeConflictVerdict verifies that a merge-tree conflict is receipted
 // as CONFLICT, never ERROR (spec 5.3, 5).
 func TestDefect5_WorkerMergeConflictVerdict(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	bareDir, workDir, runGit := setupGitMirror(t)
@@ -551,6 +561,8 @@ func TestDefect6_WorkerWorktreeFailureIsError(t *testing.T) {
 // TestDefect7_GateReceiptRepliesAreErrors verifies that the worker treats a receipt the
 // function did not write (STALE, NOTFOUND, a transport error) as an error, never drops it.
 func TestDefect7_GateReceiptRepliesAreErrors(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		reply string
 		err   error
@@ -572,6 +584,8 @@ func TestDefect7_GateReceiptRepliesAreErrors(t *testing.T) {
 // train: the same head and tree for the same inputs (a millisecond created_at included),
 // and the same refusal of a created_at that is not a Unix time (spec 5.3, 5.5; #3531).
 func TestDefect8_TrainMatchesPublisher(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	bareDir, workDir, runGit := setupGitMirror(t)
 	_ = os.WriteFile(filepath.Join(workDir, "README.md"), []byte("# base\n"), 0644)

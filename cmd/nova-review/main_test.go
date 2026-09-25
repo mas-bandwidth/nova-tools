@@ -150,6 +150,8 @@ func TestPacketDiffOnlyStripsUnchangedContext(t *testing.T) {
 }
 
 func TestPacketOutUsageStatesRelativeToCwd(t *testing.T) {
+	t.Parallel()
+
 	if !strings.Contains(usage, "relative to the cwd") {
 		t.Fatalf("--out usage does not state it is relative to the cwd:\n%s", usage)
 	}
@@ -326,6 +328,8 @@ func TestPacketReuseRejectsArbitraryLineScanning(t *testing.T) {
 }
 
 func TestParsePacketFirstLineRejectsMalformed(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		line string
@@ -693,6 +697,8 @@ func TestPacketAcceptsAbsoluteOutUnderSymlinkedCwd(t *testing.T) {
 }
 
 func TestPacketRefetchesMovedHead(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	remote := filepath.Join(dir, "remote.git")
 	seed := filepath.Join(dir, "seed")
@@ -763,6 +769,8 @@ func TestPacketRefetchesMovedHead(t *testing.T) {
 }
 
 func TestPacketFetchesBaseBeforeRange(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	remote := filepath.Join(dir, "remote.git")
 	seed := filepath.Join(dir, "seed")
@@ -832,6 +840,8 @@ func TestPacketFetchesBaseBeforeRange(t *testing.T) {
 }
 
 func TestPacketFetchesPRHeadFromGitHubNotLaneRemote(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	rehearsal := filepath.Join(dir, "rehearsal.git")
 	ghremote := filepath.Join(dir, "ghremote.git")
@@ -897,6 +907,8 @@ func TestPacketFetchesPRHeadFromGitHubNotLaneRemote(t *testing.T) {
 }
 
 func TestPacketFetchesBaseFromGitHubNotLaneRemote(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	rehearsal := filepath.Join(dir, "rehearsal.git")
 	ghremote := filepath.Join(dir, "ghremote.git")
@@ -961,6 +973,8 @@ func TestPacketFetchesBaseFromGitHubNotLaneRemote(t *testing.T) {
 }
 
 func TestLaneRefusalNamesRemedy(t *testing.T) {
+	t.Parallel()
+
 	plain := t.TempDir()
 	var out, errb bytes.Buffer
 	// --out is named inside the temp dir even though this run refuses before it
@@ -1096,6 +1110,8 @@ func TestPacketRefusalNamesAddRemedy(t *testing.T) {
 }
 
 func TestPacketBaseIsSHAWhenLaneBaseIsBranchName(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	rehearsal := filepath.Join(dir, "rehearsal.git")
 	ghremote := filepath.Join(dir, "ghremote.git")

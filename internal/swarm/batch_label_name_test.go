@@ -15,6 +15,8 @@ import (
 // a NAME, and a table that breaks it queues nothing -- a batch is all of its cards
 // or none, so a walking label is a refusal at the parse with its line named.
 func TestReadCardsRefusesALabelThatIsAPath(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	card := filepath.Join(dir, "card.md")
 	if err := os.WriteFile(card, []byte("do the thing\n"), 0o644); err != nil {

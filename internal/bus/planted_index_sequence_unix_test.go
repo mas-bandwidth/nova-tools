@@ -17,6 +17,8 @@ import (
 // is the sequence both probes walk together.
 
 func TestFriendSequencePlantedIndexIsRefused(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	body := "deadbeef\tfrom-x/2026-note.md\t2026-09-13T00:00:00Z\t-\t-\n"

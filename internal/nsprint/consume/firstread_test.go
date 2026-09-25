@@ -103,6 +103,8 @@ func (f *firstReadFixture) logKinds(kind string) int {
 // two UP friends and readers=1 queues exactly one read, to the least-loaded
 // friend that is not the author (rowan, who opened it, and jev never read).
 func TestFirstReadQueuesLeastLoadedNonAuthor(t *testing.T) {
+	t.Parallel()
+
 	f := newFirstReadFixture(t, "fr-one")
 	head := "0123456789abcdef0123456789abcdef01234567"
 	f.up("rowan", "1", 0, 0) // author: least loaded, never a reader
@@ -166,6 +168,8 @@ func TestFirstReadQueuesLeastLoadedNonAuthor(t *testing.T) {
 // TestFirstReadSecurityPathTwoFriends: a card touching a security path needs
 // readers_security distinct friends.
 func TestFirstReadSecurityPathTwoFriends(t *testing.T) {
+	t.Parallel()
+
 	f := newFirstReadFixture(t, "fr-sec", "security_paths", "internal/secrets")
 	head := "abcdef0123456789abcdef0123456789abcdef01"
 	f.up("rowan", "1", 0, 0)
@@ -194,6 +198,8 @@ func TestFirstReadSecurityPathTwoFriends(t *testing.T) {
 // s:<S>:reads:pending with one READ-PENDING record; a later pass with a
 // friend up drains it. With only Emma up (Rowan the author) Emma reads.
 func TestFirstReadPendingUntilAFriendIsUp(t *testing.T) {
+	t.Parallel()
+
 	f := newFirstReadFixture(t, "fr-pend")
 	head := "fedcba9876543210fedcba9876543210fedcba98"
 	f.up("rowan", "1", 0, 0) // the author, up: still no reader
@@ -236,6 +242,8 @@ func TestFirstReadPendingUntilAFriendIsUp(t *testing.T) {
 
 // TestFirstReadNotACardPR: a first head of a PR no card produced stays a NOOP.
 func TestFirstReadNotACardPR(t *testing.T) {
+	t.Parallel()
+
 	f := newFirstReadFixture(t, "fr-none")
 	f.up("emma", "1", 0, 0)
 	if err := f.client.XAdd(f.ctx, &redis.XAddArgs{Stream: "s:fr-none:log", Values: []any{

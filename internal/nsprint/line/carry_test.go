@@ -103,6 +103,8 @@ func storeFixture(t *testing.T, f repoFixture, head string) (context.Context, *r
 // carries emma's line to the new head as a record with a carried_from
 // receipt; the disp row follows; a second carry is NOTHING.
 func TestCarryIdenticalDiff(t *testing.T) {
+	t.Parallel()
+
 	f := newRepoFixture(t)
 	ctx, c := storeFixture(t, f, f.b)
 	res, err := line.Carry(ctx, c, sprint, id, f.dir, "")
@@ -135,6 +137,8 @@ func TestCarryIdenticalDiff(t *testing.T) {
 // TestCarryRefusesChangedFiles: one more edit on top of the rebased head is
 // a changed diff; the carry refuses naming the file and writes nothing.
 func TestCarryRefusesChangedFiles(t *testing.T) {
+	t.Parallel()
+
 	f := newRepoFixture(t)
 	ctx, c := storeFixture(t, f, f.c)
 	res, err := line.Carry(ctx, c, sprint, id, f.dir, "")
@@ -159,6 +163,8 @@ func TestCarryRefusesChangedFiles(t *testing.T) {
 // TestLanderReadsCarriedLine: the lander's unit load sees the carried line
 // at the unit's head, with CarriedFrom set, so it counts as a read.
 func TestLanderReadsCarriedLine(t *testing.T) {
+	t.Parallel()
+
 	f := newRepoFixture(t)
 	ctx, c := storeFixture(t, f, f.b)
 	if _, err := line.Carry(ctx, c, sprint, id, f.dir, ""); err != nil {
@@ -180,6 +186,8 @@ func TestLanderReadsCarriedLine(t *testing.T) {
 // TestCarryNeedsARecordedDigest: a unit read before digests were recorded
 // is refused with the remedy, never carried on faith.
 func TestCarryNeedsARecordedDigest(t *testing.T) {
+	t.Parallel()
+
 	f := newRepoFixture(t)
 	ctx, c := storeFixture(t, f, f.b)
 	c.HDel(ctx, land.UnitKey(sprint, unit), line.FieldSHA, line.FieldHead, line.FieldFiles)
@@ -192,6 +200,8 @@ func TestCarryNeedsARecordedDigest(t *testing.T) {
 // TestDigestOfSplitsSections: the per-file digests are the sections, and
 // Changed names the differing one.
 func TestDigestOfSplitsSections(t *testing.T) {
+	t.Parallel()
+
 	one := "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
 	two := "diff --git a/y b/y\n--- a/y\n+++ b/y\n@@ -1 +1 @@\n-c\n+d\n"
 	d1 := line.DigestOf([]byte(one + two))

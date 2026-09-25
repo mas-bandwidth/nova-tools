@@ -162,6 +162,8 @@ func TestVerbHelpNamesEveryFlag(t *testing.T) {
 
 // TestEveryVerbHasHelpCase keeps helpCases complete as verbs are registered.
 func TestEveryVerbHasHelpCase(t *testing.T) {
+	t.Parallel()
+
 	listed := map[string]bool{}
 	for _, args := range helpCases {
 		listed[args[0]] = true
@@ -176,6 +178,8 @@ func TestEveryVerbHasHelpCase(t *testing.T) {
 // TestHelpKeepsParseErrorsQuiet: an undefined flag is still the verb's own
 // one-line refusal on stderr, exit 2, not the help text.
 func TestHelpKeepsParseErrorsQuiet(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, stderr := runSprint("task", "push", "--nope")
 	if code != 2 || stdout != "" || !strings.Contains(stderr, "flag provided but not defined: -nope") {
 		t.Fatalf("task push --nope: exit %d stdout %q stderr %q", code, stdout, stderr)

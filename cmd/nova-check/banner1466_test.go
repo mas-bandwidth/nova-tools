@@ -18,6 +18,8 @@ import (
 // makes the verb refuse and collects the flags its remedy names; the second
 // asks for the banner the refusal points at and checks that line names them.
 func TestTheGateBannerNamesTheFlagItsOwnRefusalTellsYouToPass(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")

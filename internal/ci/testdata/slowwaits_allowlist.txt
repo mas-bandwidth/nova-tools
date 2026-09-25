@@ -1,0 +1,30 @@
+# The per-commit tests that still write a sleep over one second or a deadline
+# between five and thirty seconds (internal/ci/slowwaits_class_test.go), one
+# `path:Func <reason>` per line. Every entry was measured on the day the rule
+# landed (2026-09-25, hetzner, dev 64b9bec48) and none of them pays its wait:
+# the deadline is a ceiling the run ends long before, or the sleep is a child's
+# hang that a short bound kills. A test that WAITS a deadline out goes behind
+# //go:build slow instead (the 26 moved that day are in the slow_test.go files
+# beside them). The list only shrinks: an entry with no hit left is a red run.
+cmd/nova-sprint/quack_test.go:TestQuackPassAndBars hands the code under test --timeout 20s; a ceiling the run never reaches: 0.23 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/fixture_guards_test.go:TestTheDeadlineACappedJobIsMeasuredAgainstIsTheOneItRunsUnder hands the code under test --deadline 9s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestCmdNativeCLI hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestNativeAuthCopyIsGoneAfterTheRun hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestNativeAuthWithAWorkerNamesItsLegacyCopy hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestNativeOKNamesTheWall hands the code under test --deadline 10s; a ceiling the run never reaches: 0.06 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestNativeRefusesAModelThatDiffersFromTheWorkerDescription hands the code under test --deadline 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestNativeWorkerModelGateComparesQualifiedName hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
+internal/nsprint/deal/pass_test.go:fixture.remote sets RunTimeout to 20s; a helper, not a test: its callers are timed, and none reached five seconds at dev 64b9bec48
+internal/nsprint/reconcile/retrycap_test.go:TestDealRetryCapRefusedLaunch sets RunTimeout to 20s; a ceiling the run never reaches: 0.13 s on hetzner at dev 64b9bec48
+internal/swarm/batch_native_636_test.go:TestBatchUnknownAcceptanceDoesNotExitZero sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+internal/swarm/batch_native_636_test.go:TestCard8909BatchRefusesWithNeitherRunnerNorHarness sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+internal/swarm/batch_native_636_test.go:TestCard8909BatchRunsNativeWithNoRunner sets Deadline to 10s; a ceiling the run never reaches: 0.01 s on hetzner at dev 64b9bec48
+internal/swarm/batch_reliability_test.go:TestBatchAbstainNamesReason sets deadline to 10s; a ceiling the run never reaches: 0.12 s on hetzner at dev 64b9bec48
+internal/swarm/batch_tokens_13d_test.go:TestBatchCardsHandsTheRunnerTheWordAsItsSixthArgument sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+internal/swarm/batch_tokens_13d_test.go:TestBatchCardsPutsTheWordInTheLocalNativeArgv sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+internal/swarm/batch_tokens_13d_test.go:TestBatchCardsRefusesWithoutTheBudgetWord sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+internal/swarm/publicbatch_test.go:TestBatchPublicGateListedRunsUnlistedRefused sets Deadline to 20s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+internal/update/delivery_test.go:fakeBus sleeps 30s in a helper child that stands in for a hung bus; the test kills it at its own short bound, so the thirty seconds are never paid
+internal/update/inventory_spec_test.go:TestSnapshotTakesItsBoundsFromFlags hands the code under test --timeout 10s; a ceiling the run never reaches: 0.50 s on hetzner at dev 64b9bec48
+internal/update/update_test.go:TestHelperProcess sleeps 30s as a re-exec child standing in for a hung binary; the caller kills it at a short bound, so the thirty seconds are never paid

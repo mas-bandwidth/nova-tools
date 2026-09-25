@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // The reference this verb reads in the tests: the shapes docs/CLI.md holds,
@@ -63,6 +65,8 @@ func writeAuthors(t *testing.T, dir, body string) string {
 }
 
 func TestDogfoodLedgerPrintsOneRowPerVerbAndOneSummary(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -88,6 +92,8 @@ func TestDogfoodLedgerPrintsOneRowPerVerbAndOneSummary(t *testing.T) {
 }
 
 func TestDogfoodLedgerDoesNotCountAnAuthorRunningTheirOwnVerb(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -107,6 +113,8 @@ func TestDogfoodLedgerDoesNotCountAnAuthorRunningTheirOwnVerb(t *testing.T) {
 }
 
 func TestDogfoodLedgerCountsAnOpenEdge(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -124,6 +132,8 @@ func TestDogfoodLedgerCountsAnOpenEdge(t *testing.T) {
 }
 
 func TestDogfoodLedgerNamesAReceiptItCannotReadAndPrintsNoLedger(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -146,6 +156,8 @@ func TestDogfoodLedgerNamesAReceiptItCannotReadAndPrintsNoLedger(t *testing.T) {
 }
 
 func TestDogfoodLedgerNotesAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -166,6 +178,8 @@ func TestDogfoodLedgerNotesAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing
 }
 
 func TestDogfoodRecordWritesAReceiptTheLedgerReadsBack(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -196,6 +210,8 @@ func TestDogfoodRecordWritesAReceiptTheLedgerReadsBack(t *testing.T) {
 }
 
 func TestDogfoodRecordRefusesEveryMissingFieldWithOneRemedyEach(t *testing.T) {
+	t.Parallel()
+
 	receipts := filepath.Join(t.TempDir(), "receipts")
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--receipts", receipts, "--ok")
 	if code != 2 {
@@ -215,6 +231,8 @@ func TestDogfoodRecordRefusesEveryMissingFieldWithOneRemedyEach(t *testing.T) {
 }
 
 func TestDogfoodRecordRefusesAVerdictItWasNotGiven(t *testing.T) {
+	t.Parallel()
+
 	receipts := filepath.Join(t.TempDir(), "receipts")
 	args := []string{"dogfood", "record", "--cli", writeCLI(t, t.TempDir()), "--tool", "nova-example", "--verb", "links",
 		"--by", "Stella", "--notes", "real work", "--receipts", receipts}
@@ -235,6 +253,8 @@ func TestDogfoodRecordRefusesAVerdictItWasNotGiven(t *testing.T) {
 }
 
 func TestDogfoodRecordKeepsTheReceiptOnOneLine(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -251,6 +271,8 @@ func TestDogfoodRecordKeepsTheReceiptOnOneLine(t *testing.T) {
 }
 
 func TestDogfoodGateRequireAllNamesEveryVerbNoNonAuthorHasRun(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -276,6 +298,8 @@ func TestDogfoodGateRequireAllNamesEveryVerbNoNonAuthorHasRun(t *testing.T) {
 }
 
 func TestDogfoodGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -297,6 +321,8 @@ func TestDogfoodGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
 // Without --require-all the gate still says no to an edge nobody has cleared:
 // feedback filed is not feedback applied.
 func TestDogfoodGateSaysNoToAnOpenEdgeWithoutRequireAll(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -314,6 +340,8 @@ func TestDogfoodGateSaysNoToAnOpenEdgeWithoutRequireAll(t *testing.T) {
 }
 
 func TestDogfoodGateCapsItsFindingsAndSaysHowToSeeTheRest(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -345,6 +373,8 @@ func TestDogfoodGateCapsItsFindingsAndSaysHowToSeeTheRest(t *testing.T) {
 }
 
 func TestDogfoodRefusesAMissingPath(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	for _, tc := range []struct {
@@ -370,6 +400,8 @@ func TestDogfoodRefusesAMissingPath(t *testing.T) {
 }
 
 func TestDogfoodRefusesAnUnknownSubVerb(t *testing.T) {
+	t.Parallel()
+
 	code, _, stderr := dogfoodRun(t, "dogfood", "ledgre")
 	if code != 2 {
 		t.Fatalf("exit %d, want 2", code)
@@ -387,6 +419,8 @@ func TestDogfoodRefusesAnUnknownSubVerb(t *testing.T) {
 }
 
 func TestDogfoodIsInTheUsageBanner(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, _ := dogfoodRun(t, "help")
 	if code != 0 {
 		t.Fatalf("exit %d", code)
@@ -399,6 +433,8 @@ func TestDogfoodIsInTheUsageBanner(t *testing.T) {
 }
 
 func TestDogfoodRecordUsageNamesTheVerbList(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, _ := dogfoodRun(t, "help")
 	if code != 0 {
 		t.Fatalf("exit %d", code)
@@ -423,6 +459,8 @@ func TestDogfoodRecordUsageNamesTheVerbList(t *testing.T) {
 // The --repo path end to end, against a git repository built here. Local only:
 // this binary's tests never touch the network.
 func TestDogfoodLedgerReadsAuthorshipFromGit(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git on this machine")
 	}
@@ -473,6 +511,8 @@ func TestDogfoodLedgerReadsAuthorshipFromGit(t *testing.T) {
 // runs were invisible and nobody could tell how the verb should have been
 // spelled.
 func TestDogfoodLedgerNamesEveryStrandedReceiptAndTheNearestVerb(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -499,6 +539,8 @@ func TestDogfoodLedgerNamesEveryStrandedReceiptAndTheNearestVerb(t *testing.T) {
 // note entirely, so a lane could pass or fail without ever learning that every
 // receipt it read had been discarded.
 func TestDogfoodGateAlsoNamesTheStrandedReceipts(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -525,6 +567,8 @@ func TestDogfoodGateAlsoNamesTheStrandedReceipts(t *testing.T) {
 // Edge 5: every receipt of the pass was written with --ok, because the verbs
 // worked, and the edges were in the notes where the family writes them.
 func TestDogfoodLedgerCountsAnEdgeNamedInTheNotes(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -553,6 +597,8 @@ func TestDogfoodLedgerCountsAnEdgeNamedInTheNotes(t *testing.T) {
 // receipt for a verb spelled differently was accepted silently and discovered
 // later as a NOTE that named nothing. Nine receipts were lost that way.
 func TestDogfoodRecordRefusesAVerbTheReferenceDoesNotDeclare(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -574,6 +620,8 @@ func TestDogfoodRecordRefusesAVerbTheReferenceDoesNotDeclare(t *testing.T) {
 }
 
 func TestDogfoodRecordAcceptsADeclaredVerb(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -589,6 +637,8 @@ func TestDogfoodRecordAcceptsADeclaredVerb(t *testing.T) {
 }
 
 func TestDogfoodRecordRefusesWithNothingToCheckAgainst(t *testing.T) {
+	t.Parallel()
+
 	receipts := filepath.Join(t.TempDir(), "receipts")
 	code, _, stderr := dogfoodRun(t, "dogfood", "record",
 		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--ok",
@@ -604,12 +654,14 @@ func TestDogfoodRecordRefusesWithNothingToCheckAgainst(t *testing.T) {
 // The binaries are the authoritative list when they are to hand: a reference
 // that has gone stale strands receipts for verbs that really exist.
 func TestDogfoodReadsTheVerbsFromTheBinariesWhenToldTo(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the fixture is a shell script")
 	}
 	tools := t.TempDir()
 	script := "#!/bin/sh\ncat <<'EOF'\nnova-example: a fixture\n\nusage:\n  nova-example links --dir <dir>\n  nova-example ask   delivers ONE unit to the FRIEND who owns it\nEOF\n"
-	if err := os.WriteFile(filepath.Join(tools, "nova-example"), []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(tools, "nova-example"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
@@ -642,6 +694,8 @@ func TestDogfoodReadsTheVerbsFromTheBinariesWhenToldTo(t *testing.T) {
 // something; somebody else's later pass does not close it; the fixer records a receipt
 // that NAMES it, and the gate goes green.
 func TestDogfoodRecordClosesTheFindingItNames(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -700,6 +754,8 @@ func TestDogfoodRecordClosesTheFindingItNames(t *testing.T) {
 // A --closes that is not an id is refused where it is written, not stored and puzzled
 // over later.
 func TestDogfoodRecordRefusesAClosesThatIsNotAnID(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,

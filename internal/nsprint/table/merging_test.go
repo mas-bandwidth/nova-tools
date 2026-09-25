@@ -101,6 +101,8 @@ func landingSeed(now time.Time) [][]string {
 // PM ET, nova-tools#3973/#3900: "It is cluttered" — the facts are
 // `nova-sprint stream status --repo <owner/repo>` instead).
 func TestMergingCellShowsReadUnread(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
@@ -152,6 +154,8 @@ func TestMergingCellShowsReadUnread(t *testing.T) {
 // unread, merging = read, merging no longer <read>/<unread>), and keeps that
 // source on a later tick when the set is empty again.
 func TestReadingSetIsTheSameSplitsOtherSource(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })

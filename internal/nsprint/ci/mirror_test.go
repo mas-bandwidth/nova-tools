@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // mirrorFixture is an origin with commits old and new on dev, a bench mirror
@@ -46,7 +47,7 @@ func newMirrorFixture(t *testing.T) *mirrorFixture {
 	f.gitLog = filepath.Join(tmp, "git.log")
 	f.gitBin = filepath.Join(tmp, "git-wrap")
 	wrap := "#!/bin/sh\necho \"$*\" >> '" + f.gitLog + "'\nexec git \"$@\"\n"
-	if err := os.WriteFile(f.gitBin, []byte(wrap), 0o755); err != nil {
+	if err := testbin.WriteExecutable(f.gitBin, []byte(wrap), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -106,6 +107,8 @@ func (f *mirrorFixture) headLog(t *testing.T, sha string) string {
 }
 
 func TestCIRunStagesTheOlderShaFromTheMirrorWithoutNetwork(t *testing.T) {
+	t.Parallel()
+
 	f := newMirrorFixture(t)
 	// The mirror's origin goes nowhere: any fetch or forge read would fail.
 	git(t, f.mirrorRoot, "-C", filepath.Join(f.mirrorRoot, runRepo+".git"), "remote", "set-url", "origin", "git@github.com:mas-bandwidth/nowhere.git")
@@ -130,6 +133,8 @@ func TestCIRunStagesTheOlderShaFromTheMirrorWithoutNetwork(t *testing.T) {
 }
 
 func TestCIRunFetchesTheMirrorOnceForAnAbsentSha(t *testing.T) {
+	t.Parallel()
+
 	f := newMirrorFixture(t)
 	newer := f.commit(t, "newer") // in the origin, not yet in the mirror
 	f.request(t, runRepo, newer)
@@ -165,6 +170,8 @@ func TestCIRunFetchesTheMirrorOnceForAnAbsentSha(t *testing.T) {
 }
 
 func TestCIRunMissingMirrorReleasesWithTheWhyAndSkipsTheBench(t *testing.T) {
+	t.Parallel()
+
 	f := newMirrorFixture(t)
 	empty := filepath.Join(t.TempDir(), "mirror")
 	if err := os.MkdirAll(empty, 0o755); err != nil {

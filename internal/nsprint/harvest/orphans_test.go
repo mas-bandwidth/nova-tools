@@ -162,6 +162,8 @@ func cardHash(t *testing.T, c *redis.Client, label string) map[string]string {
 // Control 25 at the harvest worker (#2756 3.2, 4.3; #3042): an orphan-effect
 // card ends only on the end record of its own fixed identity.
 func TestHarvestOrphansEndsOnlyOnItsRecord(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	st := store.New(c)
 	ctx := context.Background()
@@ -281,6 +283,8 @@ func TestHarvestOrphansEndsOnlyOnItsRecord(t *testing.T) {
 // the orphan is superseded: its branch is renamed orphan/<S>/<label>-a<n> and
 // its PR is closed with the identity in the comment, once.
 func TestSupersededOrphanRenamed(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	st := store.New(c)
 	ctx := context.Background()

@@ -87,11 +87,12 @@ func findRetry(t *testing.T, pool, id string) string {
 // grace on a provider server error, keeps the same job, harvests the second attempt's result
 // and writes one usage row per attempt for the one job.
 func TestNativeRetriesAProvider5xxLaunch(t *testing.T) {
+	t.Parallel()
+
+	// The retry wait is pinned to zero for the whole package by TestMain.
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	label := "retry-5xx"
-
-	t.Setenv("NOVA_SWARM_PROVIDER_BACKOFF", "0s")
 
 	var errOut bytes.Buffer
 	res, code := nativeRun(nativeRunConfig{
@@ -150,6 +151,8 @@ func TestNativeRetriesAProvider5xxLaunch(t *testing.T) {
 // OpenCode consumer honors headerTimeout; it proves this loop does not turn
 // that tail into done or failed, and does not start a second launch.
 func TestNativeLostResponseStaysUnknownAndLaunchesOnce(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	label := "lost-response"
@@ -186,6 +189,8 @@ func TestNativeLostResponseStaysUnknownAndLaunchesOnce(t *testing.T) {
 }
 
 func TestPersistUnknownFallsBackWhenTheMarkerCannotBeWritten(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	if err := os.Mkdir(filepath.Join(job, "provider-acceptance"), 0o755); err != nil {
 		t.Fatal(err)
@@ -259,6 +264,8 @@ func TestUnrecordedUnknownIsStillAHarvestHold(t *testing.T) {
 }
 
 func TestPersistUnknownFailsWhenNothingCanBeWritten(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	if err := os.Chmod(job, 0o555); err != nil {
 		t.Fatal(err)
@@ -270,6 +277,8 @@ func TestPersistUnknownFailsWhenNothingCanBeWritten(t *testing.T) {
 }
 
 func TestNativeLostResponseLineSaysUnknownAcceptance(t *testing.T) {
+	t.Parallel()
+
 	out := nativeVerdict(t, "lost", "FAKE-LOST-RESPONSE\n")
 	if strings.Contains(out, "NATIVE OK") {
 		t.Fatalf("a lost response said OK:\n%s", out)

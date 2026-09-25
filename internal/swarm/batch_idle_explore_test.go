@@ -36,6 +36,8 @@ import (
 // The negative control is in the same test: a card with NO store movement, no log growth and
 // no CPU is still killed. The signal must not become "never kill anything".
 func TestIdleWatchCountsHarnessStoreProgress(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -109,6 +111,8 @@ func TestIdleWatchCountsHarnessStoreProgress(t *testing.T) {
 // has been still ever since is the card the idle window exists for, and a monitor that took
 // "a store is there" for "the card is working" would never kill anything again.
 func TestAStoreThatStoppedGrowingIsStillIdle(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -168,6 +172,8 @@ func fileSize(path string) int64 {
 // and they move at a CONSTANT FILE SIZE, which is the case sizes cannot see. This test pins
 // all three sizes and moves only those bytes.
 func TestIdleWatchCountsWALCommitAtConstantSize(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")

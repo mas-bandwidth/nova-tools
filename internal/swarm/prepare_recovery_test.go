@@ -9,6 +9,8 @@ import (
 )
 
 func TestPreparationRollbackRetainsNonceReservationWhenTaskMoveFails(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p, err := OpenPool(dir)
 	if err != nil {
@@ -74,6 +76,8 @@ func TestPreparationRollbackRetainsNonceReservationWhenTaskMoveFails(t *testing.
 }
 
 func TestUnlaunchedRecoveryHandlesAlreadyPendingTask(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p, err := OpenPool(dir)
 	if err != nil {

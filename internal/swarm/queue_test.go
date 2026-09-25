@@ -30,6 +30,8 @@ func plantCard(t *testing.T, benchDir, name string) {
 // within the directory, so two workers racing for one card cannot both take it --
 // exactly one wins and the card is on exactly one worker.
 func TestTwoWorkersCannotTakeOneCard(t *testing.T) {
+	t.Parallel()
+
 	bench := t.TempDir()
 	plantCard(t, bench, "only")
 
@@ -88,6 +90,8 @@ func TestTwoWorkersCannotTakeOneCard(t *testing.T) {
 // worker steals from the fullest bench, but a steal leaves the victim at or above its
 // own capacity line, and a victim already at the line is left alone.
 func TestAStealNeverStarvesTheVictim(t *testing.T) {
+	t.Parallel()
+
 	// The capacity line is min(cores*1.5 - load1, (free_gb-25)/2, memfree_gb/2),
 	// floored to a whole worker and never negative.
 	if got := CapacityLine(8, 2, 125, 64); got != 10 {
@@ -150,6 +154,8 @@ func TestAStealNeverStarvesTheVictim(t *testing.T) {
 // The idle worker reaches for the FULLEST bench, and only on the mirror's five-minute
 // timer.
 func TestStealPicksTheFullestBenchOnTheMirrorTimer(t *testing.T) {
+	t.Parallel()
+
 	small, full := t.TempDir(), t.TempDir()
 	plantCard(t, small, "s0")
 	for i := 0; i < 3; i++ {

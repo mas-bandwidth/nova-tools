@@ -137,6 +137,8 @@ func TestFoldFetchedTipUsesPinnedTreeWithoutCheckoutLock(t *testing.T) {
 }
 
 func TestFoldTipRetainsLegacyTreeishInput(t *testing.T) {
+	t.Parallel()
+
 	lane, _, _ := fetchedTipLab(t)
 	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, nil), time.Second)
 	folded, err := records.FoldTip("HEAD")
@@ -213,6 +215,8 @@ func (r *tipRunner) Run(_ context.Context, _ string, _ string, args ...string) (
 }
 
 func TestFoldFetchedTipRefusesMutableAndNonCommitTipsBeforeTreeWalk(t *testing.T) {
+	t.Parallel()
+
 	runner := &tipRunner{}
 	lane := t.TempDir()
 	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)

@@ -16,6 +16,8 @@ import (
 
 // TestReadAndLineOnMiniredis: status is one HGETALL, so it runs on miniredis.
 func TestReadAndLineOnMiniredis(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	m := miniredis.RunT(t)
 	c := redis.NewClient(&redis.Options{Addr: m.Addr()})
@@ -73,6 +75,8 @@ func receipts(t *testing.T, c *redis.Client, sprint string) []map[string]any {
 // set refused over an existing stop, forced replace, clear, clear with none,
 // and a missing by. Each write leaves exactly one receipt; each refusal none.
 func TestSetClearEveryBranch(t *testing.T) {
+	t.Parallel()
+
 	const S = "control-00003371"
 	ctx := context.Background()
 	c := fnRedis(t)
@@ -150,6 +154,8 @@ func TestSetClearEveryBranch(t *testing.T) {
 // scope) or scope=all holds every stream it has not lifted; scope=streams
 // holds only the stream:<name> fields; no stop holds nothing.
 func TestInScopeFromHash(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		h    map[string]string

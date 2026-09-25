@@ -11,6 +11,8 @@ import (
 // argument is a refusal at exit 2. nova-wake was the one binary still missing
 // the double-dash spelling.
 func TestVersionAndDoubleDashVersionAgree(t *testing.T) {
+	t.Parallel()
+
 	var single, singleErr, doubled, doubledErr bytes.Buffer
 	if code := run([]string{"version"}, &single, &singleErr); code != 0 {
 		t.Fatalf("version exit %d: %s", code, singleErr.String())

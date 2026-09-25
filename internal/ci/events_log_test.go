@@ -82,6 +82,8 @@ func wantFields(t *testing.T, m map[string]interface{}, event string) {
 
 // 1. A card republished on card-done is one emitted line carrying the card.
 func TestEmitterWritesOneLinePerCardDone(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	p, sink := testProducer(t, rdb, &fakeForge{})
 	if _, err := p.PublishCardsDone(ctx); err != nil {
@@ -110,6 +112,8 @@ func TestEmitterWritesOneLinePerCardDone(t *testing.T) {
 // 2. A completed check suite and a moved base are one line each, carrying the pr number
 // and the sha in the message, and the pr field is 0 on the line that is not about a PR.
 func TestEmitterWritesChecksDoneAndDevMoved(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	p, sink := testProducer(t, rdb, &fakeForge{snap: Snapshot{
 		PRs:  []PRState{{Number: 42, Branch: "rowan/x", Head: "a1b2c3d", Conclusion: ConclusionSuccess}},
@@ -140,6 +144,8 @@ func TestEmitterWritesChecksDoneAndDevMoved(t *testing.T) {
 
 // 3. A quiet poll publishes nothing and so emits nothing: the log is as silent as the bus.
 func TestEmitterIsSilentWhenTheBusIs(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	p, sink := testProducer(t, rdb, &fakeForge{snap: Snapshot{
 		PRs:  []PRState{{Number: 42, Head: "a1b2c3d", Conclusion: ConclusionSuccess}},
@@ -160,6 +166,8 @@ func TestEmitterIsSilentWhenTheBusIs(t *testing.T) {
 // 4. No sink means no lines: the emitter is additive, and a caller that configures none
 // keeps exactly the stdout and stderr it had before this slice.
 func TestEmitterWritesNothingWithoutASink(t *testing.T) {
+	t.Parallel()
+
 	_, rdb, ctx := newBus(t)
 	p := NewProducer(rdb, &fakeForge{snap: Snapshot{Base: "0d739352"}}, "events", nil)
 	if n, err := p.PollOnce(ctx); err != nil || n != 1 {
@@ -171,6 +179,8 @@ func TestEmitterWritesNothingWithoutASink(t *testing.T) {
 // off the stream, which is data from outside this program, and it is shaped like an API
 // key; the line still ships and the value does not.
 func TestEmitterRedactsASecretShapedValue(t *testing.T) {
+	t.Parallel()
+
 	const secret = "sk-live-9aXbQ2mR7tZk4LpW8vNc3JdH"
 	_, rdb, ctx := newBus(t)
 	p, sink := testProducer(t, rdb, &fakeForge{})

@@ -119,6 +119,8 @@ func scriptingCalls(t *testing.T, ctx context.Context, admin *redis.Client) []st
 // EVAL/EVALSHA, and sends no FUNCTION call: the owner loaded the library, the bench only
 // calls it.
 func TestCardClaimIsAFunction(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, admin := fcallOnlySprint(t, true)
 	libs, err := admin.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: fn.Library}).Result()

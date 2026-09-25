@@ -18,6 +18,8 @@ import (
 // read, so this transcript carries an INBOX REFUSED, a real note and a
 // WAIT DONE with another reason, and requires all three to still arrive.
 func TestTheInnerWaitsOwnTimeoutIsNotABusChange(t *testing.T) {
+	t.Parallel()
+
 	b := &Bus{}
 	res := b.Classify(strings.Join([]string{
 		"WAIT as=Rowan timeout=20s interval=10s cursor=73ca511e",

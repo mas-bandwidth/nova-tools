@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // nova-tools #2654: execOutputCap (gitops.go) held EVERY subprocess capture to 64 KiB,
@@ -52,7 +54,7 @@ echo "stub gh: unhandled arguments: $*" >&2
 exit 1
 `
 	path := filepath.Join(dir, "gh")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("could not write the stub gh: %v", err)
 	}
 }
@@ -296,6 +298,8 @@ func TestRunUncappedKeepsWholeSuccessfulCaptureAt3Point4MB(t *testing.T) {
 // retained buffer never grows past that limit, so the in-flight resource bound Stella
 // asked for is provably a bound on ALLOCATION, not merely on what is eventually returned.
 func TestCeilingWriterBoundsAllocationRegardlessOfHowMuchIsWritten(t *testing.T) {
+	t.Parallel()
+
 	const limit = 8192
 	cancelled := false
 	w := newCeilingWriter(limit, func() { cancelled = true })
@@ -332,6 +336,8 @@ func TestCeilingWriterBoundsAllocationRegardlessOfHowMuchIsWritten(t *testing.T)
 // the most RECENT bytes written, exactly, whatever mix of small and oversize writes
 // crossed it -- the shape RunUncapped's failure and ceiling-exceeded paths both depend on.
 func TestRingBufferKeepsExactlyTheLastCapacityBytes(t *testing.T) {
+	t.Parallel()
+
 	const capacity = 16
 	r := newRingBuffer(capacity)
 	var full []byte
@@ -367,6 +373,8 @@ func TestRingBufferKeepsExactlyTheLastCapacityBytes(t *testing.T) {
 // TestRingBufferBelowCapacityKeepsEverythingUntruncated is the negative control: a stream
 // that never crosses the ring's capacity is not marked truncated, and comes back whole.
 func TestRingBufferBelowCapacityKeepsEverythingUntruncated(t *testing.T) {
+	t.Parallel()
+
 	r := newRingBuffer(16)
 	if _, err := r.Write([]byte("hello")); err != nil {
 		t.Fatalf("ring Write returned an error: %v", err)

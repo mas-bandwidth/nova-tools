@@ -80,10 +80,12 @@ func ccNote(t *testing.T, dir, id, subject string) {
 // call it news. Here the only new note copies Ada on Cc:. The wait prints nothing for it,
 // does not return on it, and ends on its deadline with WAIT TIMEOUT and the rearm line.
 func TestWaitOnNoteEmptyTickPrintsNothingAndDoesNotReturn(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+
 	hermetic(t)
 	checkout, bare := busDir(t)
 	settled(t, checkout)
