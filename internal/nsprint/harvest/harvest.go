@@ -3,8 +3,11 @@
 // bench never blocks another. Each worker holds lease:harvest:<b>, pushes each
 // ended(DONE) card's branch nova/<S>/<label>-a<attempt> from its bench
 // (idempotent to the same sha), finds or opens the PR under the idempotency
-// key pr:<repo>:<branch>, reads the PR head back by REST and only then moves
-// the card to harvested in one Redis Function call.
+// key pr:<repo>:<branch>, writes the PR record pr:<repo>:<n> from the head a
+// REST response verified, reads that record back and only then moves the
+// card to harvested in one Redis Function call. The reconciler runs this as
+// its harvest duty (cmd/nova-sprint/consume.go): one goroutine per bench,
+// each fenced by its own lease.
 //
 // The PR step reuses the #2611 rule (harvest_commit.go): the harvest never
 // commits to a trunk and never pushes outside its own branch prefix; here the
@@ -20,17 +23,23 @@
 //
 //	a. push, skipped when the remote is already at pushed_sha; another sha
 //	   there is err=branch-moved and never a force push;
-//	b. an idem key naming PR n: REST read n, head.ref == branch and head.sha
-//	   == pushed_sha, else err=idem-mismatch (no create, no receipt);
+//	b. an idem key naming PR n: the PR record pr:<repo>:<n> answers with its
+//	   head (no GitHub); a key with no record yet is a REST read of n; head
+//	   == pushed_sha (and head.ref == branch), else err=idem-mismatch (no
+//	   create, no receipt);
 //	c. look up before creating (state=all): one PR is verified and recorded,
 //	   two are err=pr-duplicate, a closed unmerged one is err=pr-closed;
 //	d. none: intent, then the create; a 201 is verified and recorded, an
 //	   ambiguous reply (timeout, reset, 5xx, 422 exists) is read back by the
 //	   lookup at most len(Readback) times, else err=create-ambiguous with the
 //	   card left at intent and no second POST in this pass;
-//	e. the receipt (ns_card_harvested), after the PR head is read back.
+//	e. the receipt (ns_card_harvested), after the PR record is read back
+//	   from Redis with head == pushed_sha.
 //
-// A card is harvested only through (e).
+// A card is harvested only through (e). GitHub is asked only for what only it
+// has: the PR number (the create or the lookup). The head is verified from
+// that same response and then lives in the record; no pass reads it back
+// from GitHub, and the lander reads the record, never GitHub.
 package harvest
 
 import (
@@ -121,7 +130,21 @@ type Card struct {
 	IdemPR string
 	// Step is the card's harvest_step when the pass read it, or "".
 	Step string
+	// BaseSHA, Stream and DoneWhen are the card hash's base_sha, stream and
+	// done_when (the card's base-sha, STREAM and DONE-WHEN lines), carried
+	// into the PR body and the PR record.
+	BaseSHA, Stream, DoneWhen string
+	// RecHead is the head in the PR record pr:<repo>:<IdemPR>, or "" when
+	// there is no idem PR or no record yet.
+	RecHead string
 }
+
+// RecordKey is the PR record pr:<repo>:<n>, the hash ns_harvest_pr writes once
+// (head, base, base_sha, stream, label, sprint, branch, state, at) for the
+// lander and for every later pass: the head lives here, not on GitHub. The
+// same call writes pr and head on the card record (the card model of
+// rowan-new specs/ws-index.md), so the card and its PR point at each other.
+func RecordKey(repo string, n int) string { return "pr:" + repo + ":" + strconv.Itoa(n) }
 
 // BenchInfo names the bench the worker pushes from; host and user come from
 // the bench's own beat (bench:<b>:beat), never assumed.
@@ -180,8 +203,9 @@ type Options struct {
 	Sleep    func(ctx context.Context, d time.Duration) error
 }
 
-// CardResult is one harvested card. Via is idem, rest or opened: how the PR
-// was found.
+// CardResult is one harvested card. Via is record (the idem key and its PR
+// record, no GitHub), idem (the idem key, PR read by REST), rest, readback or
+// opened: how the PR was found.
 type CardResult struct {
 	Label, Branch string
 	PR            int
@@ -507,11 +531,20 @@ func harvestCard(ctx context.Context, st *store.Store, opt Options, l lease, inf
 	}
 	res := CardResult{Label: c.Label, Branch: c.Branch}
 
-	// b. The idem key names the PR: read it, verify it, receipt.
+	// b. The idem key names the PR: its record answers with the head (no
+	// GitHub); a key from before the record existed is read by REST once.
 	if c.IdemPR != "" {
 		n, err := strconv.Atoi(c.IdemPR)
 		if err != nil {
 			return res, fail(CodeIdemMismatch, c.Label, "idem PR %q: %w", c.IdemPR, err)
+		}
+		if c.RecHead != "" {
+			if c.RecHead != c.PushedSHA {
+				return res, fail(CodeIdemMismatch, c.Label, "idem pr:%s:%s names PR %d whose record head is %s, not pushed_sha %s",
+					c.Repo, c.Branch, n, short(c.RecHead), short(c.PushedSHA))
+			}
+			res.Via = "record"
+			return receipt(ctx, st, opt, l, c, res, PR{Number: n, Head: c.RecHead, Ref: c.Branch})
 		}
 		pr, err := opt.Forge.ReadPR(ctx, c.Repo, n)
 		if err != nil {
@@ -587,13 +620,13 @@ func found(ctx context.Context, st *store.Store, opt Options, l lease, c Card, r
 	return publish(ctx, st, opt, l, c, res, pr)
 }
 
-// publish verifies a PR GitHub returned, reserves it (published), reads its
-// head back and writes the receipt.
+// publish verifies a PR GitHub returned, reserves it (published) with its
+// record, reads the record back from Redis and writes the receipt.
 func publish(ctx context.Context, st *store.Store, opt Options, l lease, c Card, res CardResult, pr PR) (CardResult, error) {
 	if !verified(pr, c) {
 		return res, fail(CodePRMismatch, c.Label, "PR %d head %s %s is not %s %s", pr.Number, pr.Ref, short(pr.Head), c.Branch, short(c.PushedSHA))
 	}
-	recorded, err := recordPR(ctx, st, opt.Sprint, l, c, pr.Number)
+	recorded, err := recordPR(ctx, st, opt.Sprint, l, c, pr.Number, pr.Head)
 	if err != nil {
 		return res, err
 	}
@@ -603,17 +636,20 @@ func publish(ctx context.Context, st *store.Store, opt Options, l lease, c Card,
 	if err := fault(opt, FaultAfterRecord); err != nil {
 		return res, err
 	}
-	back, err := opt.Forge.ReadPR(ctx, c.Repo, pr.Number)
-	if err != nil {
-		return res, fmt.Errorf("%s: read PR %d head: %w", c.Label, pr.Number, err)
+	back, err := st.Client().HMGet(ctx, RecordKey(c.Repo, pr.Number), "head", "branch").Result()
+	if err != nil || len(back) < 2 {
+		return res, fmt.Errorf("%s: read record %s: %w", c.Label, RecordKey(c.Repo, pr.Number), err)
 	}
-	if !verified(back, c) {
-		return res, fail(CodePRMismatch, c.Label, "PR %d head %s is not pushed_sha %s", pr.Number, short(back.Head), short(c.PushedSHA))
+	head, _ := back[0].(string)
+	branch, _ := back[1].(string)
+	if head != c.PushedSHA || branch != c.Branch {
+		return res, fail(CodePRMismatch, c.Label, "record %s head %s %s is not %s %s", RecordKey(c.Repo, pr.Number), branch, short(head), c.Branch, short(c.PushedSHA))
 	}
-	return receipt(ctx, st, opt, l, c, res, back)
+	return receipt(ctx, st, opt, l, c, res, PR{Number: pr.Number, Head: head, Ref: branch, URL: pr.URL})
 }
 
-// receipt is step e: ns_card_harvested with the head read back by REST.
+// receipt is step e: ns_card_harvested with the head as the PR record holds
+// it (or, for an idem key from before the record existed, as REST read it).
 func receipt(ctx context.Context, st *store.Store, opt Options, l lease, c Card, res CardResult, pr PR) (CardResult, error) {
 	reply, err := st.Client().FCall(ctx, FunctionHarvested, nil, opt.Sprint, c.Label, l.bench,
 		l.instance, l.token, strconv.Itoa(pr.Number), pr.Head, opt.Actor).Text()
@@ -660,14 +696,23 @@ func prTitle(sprint string, c Card) string {
 	return fmt.Sprintf("%s: nova-sprint %s card %s attempt %s", c.Label, sprint, c.Label, c.Attempt)
 }
 
+// prBody is the PR body: the card's BASE, base-sha, STREAM and DONE-WHEN
+// lines as the card carried them (each on its own line, the shape a reader
+// and the lander expect), then the harvest's own lines. A card with no
+// STREAM line writes STREAM: none.
 func prBody(sprint string, c Card) string {
-	return fmt.Sprintf("nova-sprint harvest (#2932)\n\nsprint: %s\ncard: %s\nidentity: %s\npushed_sha: %s\nresults: %s\n",
-		sprint, c.Label, c.Identity, c.PushedSHA, c.Results)
+	stream := c.Stream
+	if stream == "" {
+		stream = "none"
+	}
+	return fmt.Sprintf("nova-sprint harvest (#2932)\n\nBASE: %s\nbase-sha: %s\nSTREAM: %s\nDONE-WHEN: %s\n\nsprint: %s\ncard: %s\nidentity: %s\npushed_sha: %s\nresults: %s\n",
+		c.Base, c.BaseSHA, stream, c.DoneWhen, sprint, c.Label, c.Identity, c.PushedSHA, c.Results)
 }
 
 // dueCols is ns_harvest_due's row: label repo base attempt pushed_sha
-// identity results branch pr_idem harvest_step.
-const dueCols = 10
+// identity results branch pr_idem harvest_step base_sha stream done_when
+// rec_head.
+const dueCols = 14
 
 func due(ctx context.Context, st *store.Store, sprint, bench string, limit int) (BenchInfo, []Card, error) {
 	raw, err := st.Client().FCallRO(ctx, FunctionDue, nil, sprint, bench, limit).StringSlice()
@@ -682,14 +727,17 @@ func due(ctx context.Context, st *store.Store, sprint, bench string, limit int) 
 	for i := 3; i < len(raw); i += dueCols {
 		r := raw[i : i+dueCols]
 		cards = append(cards, Card{Label: r[0], Repo: r[1], Base: r[2], Attempt: r[3], PushedSHA: r[4],
-			Identity: r[5], Results: r[6], Branch: r[7], IdemPR: r[8], Step: r[9]})
+			Identity: r[5], Results: r[6], Branch: r[7], IdemPR: r[8], Step: r[9],
+			BaseSHA: r[10], Stream: r[11], DoneWhen: r[12], RecHead: r[13]})
 	}
 	return info, cards, nil
 }
 
-func recordPR(ctx context.Context, st *store.Store, sprint string, l lease, c Card, n int) (int, error) {
+// recordPR is ns_harvest_pr: the reservation and the PR record, from the head
+// the REST response verified.
+func recordPR(ctx context.Context, st *store.Store, sprint string, l lease, c Card, n int, head string) (int, error) {
 	reply, err := st.Client().FCall(ctx, FunctionPR, nil, sprint, l.bench, l.instance, l.token,
-		c.Label, c.Repo, c.Branch, strconv.Itoa(n)).Text()
+		c.Label, c.Repo, c.Branch, strconv.Itoa(n), head).Text()
 	if err != nil {
 		return 0, fmt.Errorf("%s: record PR: %w", c.Label, err)
 	}

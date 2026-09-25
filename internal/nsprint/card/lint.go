@@ -107,6 +107,7 @@ type cardDoc struct {
 	Test           string // TEST: <package> <TestName>, the card's test field the wrapper runs at end (#3689); "" is absent
 	Stream         string // STREAM: <name>, the work stream whose ws:<stream>:<where> view holds the card (#3692); "" is none
 	Origin         string // ORIGIN: <url>, the GitHub issue the card came from (#3692); "" is absent
+	DoneWhen       string // DONE-WHEN: the sentence a test can fail; required, carried into the PR body (#2932)
 	Payload        string
 }
 
@@ -190,6 +191,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		Test:           strings.TrimSpace(header["TEST"]),
 		Stream:         stream,
 		Origin:         origin,
+		DoneWhen:       header["DONE-WHEN"],
 		Payload:        hex.EncodeToString(sum[:]),
 	}, nil
 }

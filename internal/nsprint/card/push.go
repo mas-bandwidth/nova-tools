@@ -63,11 +63,19 @@ func PushWith(ctx context.Context, client *redis.Client, sprint string, body []b
 		keyLog(sprint),
 		keyIdx(sprint, "queued"),
 	}
-	reply, err := client.FCall(ctx, "ns_card_push", keys,
+	// One pipeline: the push (CARD.create writes stream and origin with the
+	// record), then ns_card_header writes the card's DONE-WHEN line
+	// (harvest's PR body, #2932) only when the card is stored from this
+	// payload; after EXISTS it writes nothing, after CONFLICT it refuses.
+	pipe := client.Pipeline()
+	pushCmd := pipe.FCall(ctx, "ns_card_push", keys,
 		doc.Label, doc.Payload, doc.Priority, doc.Base, doc.BaseSHA, doc.Paths, doc.Repo, doc.Kind,
 		doc.DependsOn, doc.Type, doc.TypedDependsOn, boolString(ready), doc.Route, doc.Bench, doc.Est, doc.Test,
 		doc.Stream, doc.Origin,
-	).Text()
+	)
+	headerCmd := pipe.FCall(ctx, "ns_card_header", keys[:1], doc.Payload, doc.DoneWhen)
+	_, _ = pipe.Exec(ctx)
+	reply, err := pushCmd.Text()
 	if err != nil {
 		return refused(err.Error())
 	}
@@ -82,6 +90,9 @@ func PushWith(ctx context.Context, client *redis.Client, sprint string, body []b
 	place, ok := strings.CutPrefix(reply, "OK place=")
 	if !ok || (place != "pool" && place != "waiting") {
 		return refused(fmt.Sprintf("card push reply %q", reply))
+	}
+	if h, err := headerCmd.Text(); err != nil || h != "OK" {
+		return refused(fmt.Sprintf("card header reply %q %v", h, err))
 	}
 	return VerbResult{Code: exitOK, Stdout: pushLine(sprint, doc.Label, place)}
 }

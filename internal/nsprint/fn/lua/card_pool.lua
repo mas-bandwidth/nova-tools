@@ -264,3 +264,28 @@ redis.register_function('ns_card_import_receipt', function(keys, args)
     'file', args[3], 'place', args[4], 'payload_sha', args[2], 'at', now_s())
   return 1
 end)
+
+-- ns_card_header: the card's DONE-WHEN: line, written once at push
+-- (card.Push pipelines it after ns_card_push) so harvest's PR body carries
+-- it without the card file; the STREAM: line is the record's own stream
+-- field, which CARD.create writes. keys: card. args: payload_sha, done_when.
+-- The write is refused when the card is not stored (NOTFOUND) or is stored
+-- from another payload (CONFLICT: the push before it was a label conflict and
+-- wrote nothing). The field is HSETNX: a repeat push with the same payload
+-- writes nothing and returns OK.
+redis.register_function('ns_card_header', function(keys, args)
+  local card = keys[1]
+  local payload, done_when = args[1] or '', args[2] or ''
+  if type(card) ~= 'string' or card == '' or payload == '' then
+    return 'USAGE'
+  end
+  local stored = redis.call('HGET', card, 'payload_sha')
+  if not stored then
+    return 'NOTFOUND'
+  end
+  if stored ~= payload then
+    return 'CONFLICT'
+  end
+  redis.call('HSETNX', card, 'done_when', done_when)
+  return 'OK'
+end)
