@@ -1116,3 +1116,5 @@ internal/presence/seat_test.go:TestOpenLogsInAsTheSeat serial: t.Setenv
 internal/seatcred/seatcred_test.go:TestResolveReadsTheSeatThroughTheSecretsLibrary serial: t.Setenv
 cmd/nova-sprint/task_queue_test.go:TestFriendDownRebalancesAtOnce serial: t.Setenv (through a helper)
 internal/nsprint/reconcile/rebalance_test.go:TestFriendStaleBeatRebalances serial: t.Setenv (through a helper)
+cmd/nova-sprint/jev_test.go:TestJevMechRecordsOneLine serial: t.Setenv (through a helper)
+internal/nsprint/reconcile/rebalance_test.go:TestRedistributeFromMovesDownFriendsQueue serial: t.Setenv (through a helper)

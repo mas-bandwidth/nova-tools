@@ -17,8 +17,6 @@ import (
 // the body, appends one JEV line to the record's reads, does not append the
 // same line twice, and exits 1 with the remedy when a pass fails.
 func TestJevMechRecordsOneLine(t *testing.T) {
-	t.Parallel()
-
 	mirror, addr, head := readFixture(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()

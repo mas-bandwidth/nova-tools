@@ -130,8 +130,6 @@ func TestFriendRebalanceNeverSilentZero(t *testing.T) {
 // ns_redistribute_from, on a down friend moves every ready task on its
 // queue (the 2026-09-25 evidence: state=- moved=0 with 15 on the queue).
 func TestRedistributeFromMovesDownFriendsQueue(t *testing.T) {
-	t.Parallel()
-
 	f := newDealFixture(t)
 	const s = "nova-sprint"
 	f.friend(t, "emma", 2, false)
