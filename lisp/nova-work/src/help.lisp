@@ -136,7 +136,7 @@ a verb, so `help <word>` never has two readings.")
     ("clip" "durability"
      "nova-work clip           --session <path> --as <name> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]")
     ("check" "roadmaps"
-     "nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) [--max <n>]")
+     "nova-work check          --session <path> [--max <n>]")
     ("verify" "completion"
      "nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-timeout <seconds>) [--node <id>] [--max <n>]")
     ("query" "queries"

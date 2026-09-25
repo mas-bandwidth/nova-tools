@@ -114,7 +114,7 @@ usage:
   nova-work execution correct   --session <path> <write flags> --node <id> --instructions <pointer> --sha256 <hex> --reason <text>
   nova-work execution reconcile --session <path> <write flags> --control <id> --from <manifest-id> --reason <text>   (a content identity, never a local path)
   nova-work execution status    --session <path> --control <id> [--max <n>]
-  nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) [--max <n>]
+  nova-work check          --session <path> [--max <n>]
   nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-timeout <seconds>) [--node <id>] [--max <n>]
   nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind> --branch <open|closed|root>
                            (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet, routes, reports)
@@ -465,17 +465,18 @@ func refused(stderr io.Writer, what string) int {
 // dispatched by its second token (below, beside `record`/`results`) instead of living in
 // this table: the bare word and every other second token still reach the socket switch.
 var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
-	"dependencies": cmdDependencies,
-	"ready":        cmdReady,
-	"clip":         cmdClip,
-	"plan":         cmdPlan,
-	"push":         cmdPushNow,
-	"set":          cmdSet,
-	"next":         cmdNext,
-	"ask":          cmdAsk,
-	"asks":         cmdAsks,
-	"proving-run":  cmdProvingRun,
-	"dogfood":      cmdDogfood,
+	"dependencies":  cmdDependencies,
+	"ready":         cmdReady,
+	"clip":          cmdClip,
+	"plan":          cmdPlan,
+	"push":          cmdPushNow,
+	"set":           cmdSet,
+	"next":          cmdNext,
+	"ask":           cmdAsk,
+	"asks":          cmdAsks,
+	"proving-run":   cmdProvingRun,
+	"roadmap-check": cmdRoadmapCheck,
+	"dogfood":       cmdDogfood,
 }
 
 // Deps is everything this binary reaches outside itself, injected so the tests drive a

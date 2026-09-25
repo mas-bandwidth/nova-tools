@@ -253,3 +253,6 @@ clean:
 	rm -rf ./bin ./scratch
 
 -include make/*.mk
+
+roadmap-check:
+	$(GO) run ./cmd/nova-work roadmap-check
