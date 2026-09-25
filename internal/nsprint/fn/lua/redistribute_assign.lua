@@ -212,7 +212,7 @@ local function redistribute_from(keys, args)
   end
   local skey = 'friend:' .. f .. ':state'
   local state = redis.call('HGET', skey, 'state') or ''
-  local up = redis.call('EXISTS', 'friend:' .. f .. ':beat') == 1
+  local up = NS.beat.live('friend:' .. f .. ':beat')
   -- The tick's expired-window rule (ns_friend_redistribute): an up friend
   -- whose out-of-credits until has passed is back, so the state is cleared
   -- and its live leases are never fenced by hand.

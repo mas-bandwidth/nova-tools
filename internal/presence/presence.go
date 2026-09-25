@@ -1,13 +1,15 @@
 // Package presence is the friend heartbeat of nova-tools #2610: one hash per
-// friend, written by that friend's window with a TTL, and read by everyone who
-// is about to hand that friend work.
+// friend, written by that friend's window, and read by everyone who is about
+// to hand that friend work.
 //
 // The whole mechanism is one MULTI per beat and one pipeline per read, and no
 // model anywhere. A friend's harness startup runs `nova-wake beat --as <name>`,
-// which writes the hash `friend:<name>` (field `at` = <RFC3339 utc>, plus
-// `width` and `window` when the caller passed them) and gives it a 90s TTL
-// every 30s; a window that exits, runs out of credit or is killed simply stops
-// writing, and the hash lapses. `nova-wake presence` reads the hashes of every
+// which writes the hash `friend:<name>` (field `at` = <RFC3339 utc>,
+// `stale_ms` = the window it promises, 90s, plus `width` and `window` when the
+// caller passed them) every 30s. The hash never expires (#3878, "keys do not
+// expire"): a window that exits, runs out of credit or is killed simply stops
+// writing, its at grows older than its stale_ms, and every reader reads it
+// down, dated, instead of watching it vanish. `nova-wake presence` reads the hashes of every
 // member of the `friends` SET and prints one line. Nothing here spends a token,
 // because the cost of presence has to be zero or the heartbeat is the first
 // thing dropped under load (Glenn, 2026-09-22: "As long as this can be done
@@ -22,12 +24,13 @@
 // and a TTL on it made the whole row lapse): where the row exists, or the key
 // is any type but a string or the beat's own hash, beat refuses and names the
 // type. Where no row loop runs (a test store, a bench with no row loop) the
-// beat's own TTL'd hash is the presence instead, up while its TTL runs (#2673).
+// beat's own hash is the presence instead, up while its at is within its
+// stale_ms (#2673, #3878).
 //
 // The second key, `friend:<name>:last`, carries no TTL and exists for one
-// reason: an absent beat says a friend is down but not since when, and a
+// reason: a key that is gone says a friend is down but not since when, and a
 // "down" with no duration is the report that cost an hour on 2026-09-22. The
-// TTL'd hash is the presence; the untimed string is the memory of it.
+// hash is the presence; the untimed string is the memory of it.
 //
 // The git message bus carries notes and never beats (#3144: 79% of bus commits
 // on 2026-09-23 were `beat <friend>`). Liveness is this package's hash only.
@@ -67,6 +70,10 @@ const (
 	// FieldUp is the friend row's own field, 1 or 0, written only by the
 	// row loop. The beat never writes it, so a hash carrying it is the row.
 	FieldUp = "up"
+	// FieldStale is the window in milliseconds the beat promises to write
+	// again within (#3878): the hash is up while its at is younger. The
+	// same field and rule as the nova_sprint beats (internal/nsprint/beat).
+	FieldStale = "stale_ms"
 )
 
 // RowStale is how old the friend row's at may be before the row is read as a
@@ -90,21 +97,23 @@ func (e *KeyTypeError) Error() string {
 }
 
 // DefaultEvery and DefaultTTL are the cadence and the timeout of #2610: beat
-// every 30s, lapse after 90s. The TTL is three beats rather than two so one
-// missed write -- a network hiccup, a laptop asleep for a moment -- is not
-// reported as a friend who left.
+// every 30s, read down 90s after the last beat. DefaultTTL is the window the
+// beat stamps into stale_ms and the window a reader assumes for a beat that
+// carries none; it is no longer a key expiry (#3878). It is three beats
+// rather than two so one missed write -- a network hiccup, a laptop asleep
+// for a moment -- is not reported as a friend who left.
 const (
 	DefaultEvery = 30 * time.Second
 	DefaultTTL   = 90 * time.Second
 )
 
 // Stamp is the layout every heartbeat value is written in: RFC3339 in UTC, to
-// the second. It is parsed back to say how long ago the beat was, and a value
-// that will not parse is still a beat -- the key's existence is the presence.
+// the second. It is parsed back to say how long ago the beat was and so
+// whether the friend is up (#3878).
 const Stamp = time.RFC3339
 
-// Key is the TTL'd presence hash for a friend, and LastKey its untimed
-// companion. Both normalize the name, so `Emma` and `emma` are one friend.
+// Key is the presence hash for a friend, and LastKey its untimed companion.
+// Both normalize the name, so `Emma` and `emma` are one friend.
 func Key(name string) string     { return Prefix + Normalize(name) }
 func LastKey(name string) string { return Prefix + Normalize(name) + LastSuffix }
 
@@ -130,13 +139,14 @@ func Normalize(name string) string { return strings.ToLower(strings.TrimSpace(na
 // grant.
 type Store interface {
 	// WriteBeat is one heartbeat in one MULTI: HSET key fields... (field,
-	// value pairs), PEXPIRE key ttl, SET lastKey stamp with no expiry. When
-	// key is the friend row or any type but a string or the beat's own hash
-	// it writes nothing and answers a *KeyTypeError; a plain string (a beat
-	// older than #2673) is deleted in the same MULTI.
-	WriteBeat(ctx context.Context, key string, fields []string, ttl time.Duration, lastKey, stamp string) error
+	// value pairs, stale_ms among them), SET lastKey stamp, neither with an
+	// expiry (#3878). When key is the friend row or any type but a string
+	// or the beat's own hash it writes nothing and answers a *KeyTypeError;
+	// a plain string (a beat older than #2673) is deleted in the same MULTI.
+	WriteBeat(ctx context.Context, key string, fields []string, lastKey, stamp string) error
 	// ReadBeats is one pipeline over every key: HMGET key at width window
-	// up, PTTL key, GET key+":last". An absent key or field answers "".
+	// up stale_ms, PTTL key, GET key+":last". An absent key or field
+	// answers "".
 	ReadBeats(ctx context.Context, keys []string) ([]Reading, error)
 	// Members is SMEMBERS of one set: the friends registry.
 	Members(ctx context.Context, set string) ([]string, error)
@@ -150,14 +160,18 @@ type Reading struct {
 	// hash is the friend row, not a beat.
 	Up  string
 	Row bool
-	// Live is PTTL > 0: the hash exists and a beat's expiry is running on
-	// it. A hash with no TTL (a table row) or no hash at all is not live.
+	// Stale is the stale_ms the beat promised, "" when it carries none.
+	Stale string
+	// Live is PTTL > 0: a beat written before #3878 still carries an
+	// expiry. It decides only a beat whose at is not a stamp; a beat with
+	// a stamp is judged by its age (#3878).
 	Live bool
 	Last string
 }
 
-// Beat writes one heartbeat: the TTL'd hash that IS the presence and the
-// untimed key that remembers it, in one MULTI. It passes no Side, so it writes
+// Beat writes one heartbeat: the hash that IS the presence and the untimed
+// key that remembers it, in one MULTI. ttl is the window the beat promises
+// (stale_ms), never a key expiry (#3878). It passes no Side, so it writes
 // neither width nor window.
 func Beat(ctx context.Context, st Store, name string, now time.Time, ttl time.Duration) error {
 	return BeatSide(ctx, st, name, now, ttl, Side{})
@@ -165,8 +179,8 @@ func Beat(ctx context.Context, st Store, name string, now time.Time, ttl time.Du
 
 // BeatSide is Beat plus the optional fields. A zero Side field is not a value:
 // that field is not written, and the beat still succeeds. Window is stored as
-// given. Width is stored as a decimal. The whole hash carries the beat's TTL,
-// so a window that stops writing takes them all with it.
+// given. Width is stored as a decimal. The whole hash is dated by its at, so
+// a window that stops writing leaves them all behind it, read as down.
 func BeatSide(ctx context.Context, st Store, name string, now time.Time, ttl time.Duration, side Side) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("beat needs a name")
@@ -178,25 +192,26 @@ func BeatSide(ctx context.Context, st Store, name string, now time.Time, ttl tim
 		return fmt.Errorf("width cannot be negative")
 	}
 	stamp := now.UTC().Format(Stamp)
-	fields := []string{FieldAt, stamp}
+	fields := []string{FieldAt, stamp, FieldStale, strconv.FormatInt(ttl.Milliseconds(), 10)}
 	if side.Width != nil {
 		fields = append(fields, FieldWidth, strconv.FormatInt(*side.Width, 10))
 	}
 	if side.Window != "" {
 		fields = append(fields, FieldWindow, side.Window)
 	}
-	return st.WriteBeat(ctx, Key(name), fields, ttl, LastKey(name), stamp)
+	return st.WriteBeat(ctx, Key(name), fields, LastKey(name), stamp)
 }
 
 // State is what one friend's two keys say.
 type State int
 
 const (
-	// Away: the presence hash has lapsed (or carries no TTL). Last says
-	// when the last beat was, when the untimed key survives to say it.
-	// The line prints it as down.
+	// Away: the presence hash's at is older than its window, or the hash
+	// is gone. Last says when the last beat was. The line prints it as
+	// down.
 	Away State = iota
-	// Up: the presence hash carries a live TTL, so a beat landed inside it.
+	// Up: the presence hash's at is within its window, so a beat landed
+	// inside it.
 	Up
 	// Never: no beat and no memory of one. Freddy, all of 2026-09-22. The
 	// line prints it as down.
@@ -222,16 +237,16 @@ type Status struct {
 }
 
 // Present reports whether this friend is here: the friend row says up=1 with
-// an at inside RowStale, or, where there is no row, the beat's own hash
-// carried a live TTL at the read. A missing hash is absent, so is a lapsed
-// beat, a row that says up=0 and a row whose loop has gone silent. The untimed
+// an at inside RowStale, or, where there is no row, the beat's own hash has an
+// at inside its stale_ms at the read (#3878). A missing hash is absent, so is
+// a stale beat, a row that says up=0 and a row whose loop has gone silent. The untimed
 // friend:<name>:last key dates a down; it is not presence. Nothing in this
 // package reads a hand-written override in place of the row or the beat
 // (#2675, #3447).
 func (s Status) Present() bool { return s.State == Up }
 
 // Read returns one Status per name, in the order given, from one pipeline
-// over the presence hash, its TTL and its untimed memory for every friend. One
+// over the presence hash and its untimed memory for every friend. One
 // round trip, whatever the roster's length: the line is refreshed every second
 // on a table and must cost the store nothing.
 func Read(ctx context.Context, st Store, names []string, now time.Time) ([]Status, error) {
@@ -273,13 +288,22 @@ func Read(ctx context.Context, st Store, names []string, now time.Time) ([]Statu
 				// cannot read: down, and not since when.
 				s.State = Away
 			}
+		case stamped(r.At):
+			// The beat's own hash (#3878): up while its at is within
+			// the window it promised, down and dated once older.
+			t, _ := time.Parse(Stamp, r.At)
+			s.Last, s.Dated, s.Age = t, true, now.Sub(t)
+			if s.Age < window(r.Stale) {
+				s.State = Up
+				s.Window, s.Width = r.Window, r.Width
+			} else {
+				s.State = Away
+			}
 		case r.Live:
+			// A beat written before #3878 whose at is not a stamp: its
+			// running TTL is the presence, undated.
 			s.State = Up
 			s.Window, s.Width = r.Window, r.Width
-			if t, err := time.Parse(Stamp, r.At); err == nil {
-				s.Last, s.Dated = t, true
-				s.Age = now.Sub(t)
-			}
 		case r.Last != "":
 			s.State = Away
 			if t, err := time.Parse(Stamp, r.Last); err == nil {
@@ -292,6 +316,22 @@ func Read(ctx context.Context, st Store, names []string, now time.Time) ([]Statu
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// stamped reports whether at is a beat stamp this build can date.
+func stamped(at string) bool {
+	_, err := time.Parse(Stamp, at)
+	return err == nil
+}
+
+// window is the stale_ms a beat promised, or DefaultTTL for a beat that
+// promised none (one written before #3878, or by a caller that never passed
+// it).
+func window(stale string) time.Duration {
+	if ms, err := strconv.ParseInt(stale, 10, 64); err == nil && ms > 0 {
+		return time.Duration(ms) * time.Millisecond
+	}
+	return DefaultTTL
 }
 
 // Friends is the roster from the registry: SMEMBERS friends, normalized,

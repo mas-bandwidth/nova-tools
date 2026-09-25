@@ -247,7 +247,7 @@ function DEP.free_lease(S, id, key, state, at)
   redis.call('ZREM', 'friend:' .. owner .. ':starting', identity)
   redis.call('ZREM', 'friend:' .. owner .. ':living', identity)
   redis.call('SREM', 's:' .. S .. ':idx:task:' .. state, id)
-  redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
+  redis.call('XADD', 'cap:log', '*',
     'kind', 'slot-freed', 'consumer', 'friend:' .. owner,
     'sprint', S, 'id', id, 'attempt', tostring(attempt), 'at', tostring(at))
 end
@@ -501,7 +501,7 @@ local function friend_down(keys, args)
   if on then
     kind = 'friend-down'
   end
-  redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
+  redis.call('XADD', 'cap:log', '*',
     'kind', kind, 'consumer', 'friend:' .. f, 'reason', reason,
     'actor', actor, 'idem', idem, 'at', tostring(at))
   if on then

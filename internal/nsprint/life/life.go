@@ -37,9 +37,10 @@ const (
 // BeatInterval is the one-second presence cadence of #2756 v5.
 const BeatInterval = time.Second
 
-// BenchBeatTTL is the life of one bench beat (bench:<b>:beat, :live and
-// :owner): three intervals, so one slow or missed tick never drops the key
-// while a dead loop still frees the bench within three seconds (#3372).
+// BenchBeatTTL is the life of one bench beat: three intervals, so one slow or
+// missed tick never drops the bench while a dead loop still frees it within
+// three seconds (#3372). It is the TTL of the leases :owner and :live and the
+// stale_ms stamped on bench:<b>:beat, which itself never expires (#3878).
 const BenchBeatTTL = 3 * BeatInterval
 
 // liveSeparator joins a bench's card identities, which Lua cannot receive as a
@@ -252,7 +253,8 @@ type BenchRequest struct {
 	Live     []string
 	Actor    string
 	Idem     string
-	// TTL is the life of this beat's keys; zero means BenchBeatTTL.
+	// TTL is the life of this beat (the beat's stale_ms and its leases'
+	// TTL); zero means BenchBeatTTL.
 	TTL time.Duration
 	// Facts are the bench's own measurements (#3646), refreshed every beat;
 	// MeasureBench fills them.
@@ -273,9 +275,10 @@ type BenchResult struct {
 
 // BenchBeat writes one bench beat and its live row, and refuses when a
 // different live session owns the bench. Ownership is fenced in Redis with the
-// beat TTL (req.TTL, else BenchBeatTTL), so it works across processes; once the owner and beat expire the
-// bench is free again (stale expiry recovery). Absence-to-presence is logged
-// to cap:log as bench-up.
+// beat TTL (req.TTL, else BenchBeatTTL) on the owner lease, so it works across
+// processes; once the owner lease lapses the bench is free again (stale expiry
+// recovery). The beat hash never expires (#3878): it carries the window as
+// stale_ms. Down-to-live is logged to cap:log as bench-up.
 func BenchBeat(ctx context.Context, st *store.Store, req BenchRequest) (BenchResult, error) {
 	if st == nil || req.Bench == "" || req.Session == "" {
 		return BenchResult{}, fmt.Errorf("bench beat: store, bench and session are required")

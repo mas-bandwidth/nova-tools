@@ -305,7 +305,7 @@ local function width_fill(keys, args)
   if redis.call('HGET', dkey, 'paused') == '1' then
     return { 'OK', '0', '0' }
   end
-  if redis.call('SISMEMBER', 'friends', f) == 0 or redis.call('EXISTS', 'friend:' .. f .. ':beat') == 0 then
+  if redis.call('SISMEMBER', 'friends', f) == 0 or not NS.beat.live('friend:' .. f .. ':beat') then
     return { 'OK', '0', '0' }
   end
 
@@ -460,7 +460,7 @@ local function width_move(keys, args)
   end
 
   -- Condition 2: to_f is up
-  if redis.call('EXISTS', 'friend:' .. to_f .. ':beat') == 0 then
+  if not NS.beat.live('friend:' .. to_f .. ':beat') then
     return { 'OK', '0' }
   end
 

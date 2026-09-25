@@ -125,3 +125,38 @@ func TestReadRedisPTTLMinusTwoIsAbsent(t *testing.T) {
 		t.Fatalf("Live = %v, want [hulk] (PTTL -1 is present; PTTL -2 is absent)", got)
 	}
 }
+
+// TestReadRedisJudgesAStampedBeatByItsWindow is #3878: ns_bench_beat writes
+// bench:<b>:beat with no TTL and its window as stale_ms, so the key stays in
+// the store and the bench is UP while at + stale_ms is ahead of the store's
+// clock and DOWN after it.
+func TestReadRedisJudgesAStampedBeatByItsWindow(t *testing.T) {
+	mr := miniredis.RunT(t)
+	t0 := time.Date(2026, 9, 25, 9, 14, 0, 0, time.UTC)
+	mr.SAdd(state.Registry, "studio")
+	mr.HSet(state.BeatKey("studio"), "at", "1790327639000", "stale_ms", "3000", "load1", "2")
+	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	for _, tc := range []struct {
+		at   time.Time
+		want state.State
+	}{
+		{t0.Add(time.Second), state.Up},       // 2 s after the beat, inside 3 s
+		{t0.Add(2 * time.Second), state.Down}, // 3 s after: the window has passed
+	} {
+		mr.SetTime(tc.at)
+		benches, now, err := state.ReadRedis(context.Background(), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(benches) != 1 || benches[0].Key == nil {
+			t.Fatalf("benches = %+v, want studio with a key", benches)
+		}
+		if got := benches[0].State(now); got != tc.want {
+			t.Fatalf("studio at %s = %s, want %s", tc.at.Format(time.RFC3339), got, tc.want)
+		}
+	}
+	if !mr.Exists(state.BeatKey("studio")) {
+		t.Fatal("the beat left the store; it never expires (#3878)")
+	}
+}

@@ -25,8 +25,11 @@ func TestBeatWritesThePresenceHashAndItsUntimedMemory(t *testing.T) {
 	if _, ok := h[FieldWidth]; ok {
 		t.Fatalf("friend:johnny = %v; a beat with no width writes no width field", h)
 	}
-	if got := st.TTL("friend:johnny"); got != DefaultTTL {
-		t.Fatalf("friend:johnny ttl = %s; want %s", got, DefaultTTL)
+	if got := st.TTL("friend:johnny"); got != 0 {
+		t.Fatalf("friend:johnny ttl = %s; want none (#3878: keys do not expire)", got)
+	}
+	if h[FieldStale] != "90000" {
+		t.Fatalf("friend:johnny stale_ms = %q; want the window, 90000", h[FieldStale])
 	}
 	if st.Sets != 1 {
 		t.Fatalf("writes = %d; one beat is one write", st.Sets)
@@ -34,7 +37,8 @@ func TestBeatWritesThePresenceHashAndItsUntimedMemory(t *testing.T) {
 }
 
 // TestBeatSideWritesWidthIntoTheHashWithTheTTL is #2673: the child count is a
-// field of the beat's own hash, written with it and lapsing with it.
+// field of the beat's own hash, written with it and going stale with it
+// (#3878: the hash stays, read down).
 func TestBeatSideWritesWidthIntoTheHashWithTheTTL(t *testing.T) {
 	st := NewFakeStore(at)
 	eight := int64(8)
@@ -45,16 +49,16 @@ func TestBeatSideWritesWidthIntoTheHashWithTheTTL(t *testing.T) {
 	if h[FieldWidth] != "8" || h[FieldAt] != "2026-09-22T09:41:00Z" {
 		t.Fatalf("friend:emma = %v; want at and width=8", h)
 	}
-	if got := st.TTL("friend:emma"); got != DefaultTTL {
-		t.Fatalf("ttl = %s; want %s", got, DefaultTTL)
+	if got := st.TTL("friend:emma"); got != 0 {
+		t.Fatalf("ttl = %s; want none (#3878)", got)
 	}
 	sts := mustRead(t, st, []string{"emma"})
 	if got := sts[0].Phrase(at); got != "emma up 0s width=8" {
 		t.Fatalf("phrase = %q", got)
 	}
 	st.Advance(DefaultTTL)
-	if h := st.Hash("friend:emma"); h != nil {
-		t.Fatalf("past the ttl friend:emma = %v; want it gone, width and all", h)
+	if h := st.Hash("friend:emma"); h[FieldWidth] != "8" {
+		t.Fatalf("past the window friend:emma = %v; want it kept, width and all (#3878)", h)
 	}
 	sts = mustRead(t, st, []string{"emma"})
 	if got := sts[0].Phrase(st.Now()); got != "emma down 1m (last 09:41Z)" {
@@ -184,11 +188,11 @@ func TestAMissingBeatKeyIsAbsentAndALiveKeyIsPresent(t *testing.T) {
 
 	st.Advance(DefaultTTL)
 	sts = mustRead(t, st, []string{"stella"})
-	if h, last := st.Hash(Key("stella")), st.String(LastKey("stella")); h != nil || last == "" {
-		t.Fatalf("after the ttl, hash = %v, last = %q; want the beat hash missing and :last kept", h, last)
+	if h, last := st.Hash(Key("stella")), st.String(LastKey("stella")); h == nil || last == "" {
+		t.Fatalf("after the window, hash = %v, last = %q; want the beat hash and :last both kept (#3878)", h, last)
 	}
 	if sts[0].Present() {
-		t.Fatal("an expired beat key is present; want absent")
+		t.Fatal("a stale beat key is present; want absent")
 	}
 }
 

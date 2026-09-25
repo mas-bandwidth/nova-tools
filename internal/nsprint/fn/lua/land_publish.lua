@@ -26,7 +26,7 @@ redis.register_function('ns_pub_step', function(keys, args)
   if state == 'dead' and redis.call('GET', pre .. ':pub:active') == batch_id then
     redis.call('DEL', pre .. ':pub:active')
   end
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', string.upper(state), 'repo', repo, 'base', base, 'batch', batch_id, 'at', now)
   return 'OK'
 end)
@@ -43,7 +43,7 @@ redis.register_function('ns_tip', function(keys, args)
   local t = redis.call('TIME')
   local now = string.format('%.0f', tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000))
   redis.call('HSET', pre .. ':tip', 'sha', sha, 'at', now, 'by', by)
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', 'TIP', 'repo', repo, 'base', base, 'sha', sha, 'by', by, 'at', now)
   return 'OK'
 end)
@@ -82,7 +82,7 @@ redis.register_function('ns_pub_void', function(keys, args)
       if redis.call('GET', pre .. ':pub:active') == id then
         redis.call('DEL', pre .. ':pub:' .. id, pre .. ':pub:active')
       end
-      redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+      redis.call('XADD', 'land:' .. repo .. ':events', '*',
         'event', 'VOID', 'repo', repo, 'base', base, 'batch', id, 'reason', reason, 'at', now)
     end
   end

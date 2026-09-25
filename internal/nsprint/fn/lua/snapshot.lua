@@ -44,7 +44,7 @@ end
 -- A bench and a friend row are one shape (6.4): width is derived from
 -- starting + living, never stored.
 local function count_row(bucket, name, sprints, now_ms)
-  local up = exists(bucket .. ':' .. name .. ':beat')
+  local up = NS.beat.up(bucket .. ':' .. name .. ':beat', now_ms)
   local desired, missing = desired_of(bucket .. ':' .. name)
   local starting = zcard(bucket .. ':' .. name .. ':starting')
   local living = redis.call('ZCOUNT', bucket .. ':' .. name .. ':living', now_ms - LIVING_FRESH_MS, '+inf')

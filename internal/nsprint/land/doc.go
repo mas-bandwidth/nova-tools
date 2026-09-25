@@ -50,7 +50,7 @@
 //	                                      train_tree, gen, policy_id, rec_seq_cut, at per state
 //	landed:<repo>:<unit>:<head>    string SET NX: <merge_sha> <batch> <receipt>
 //	land:<repo>:<base>:freeze      hash   reason, remedy, at
-//	land:<repo>:events             stream MAXLEN ~100k: one entry per transition
+//	land:<repo>:events             stream, never trimmed (#3878): one entry per transition
 //	friend:<f>:state               hash   state (up|underfull|idle|out-of-credits|down|away), since
 //
 // Fences and Linearization Point (§2.3):

@@ -7,21 +7,26 @@
 -- Global keys (#2756 v5):
 --   friends                     set of registered friend names
 --   friend:<f>:desired          hash (slots, machine, paused, at)
---   friend:<f>:beat             hash (harness, host, session, at), TTL 5 s
+--   friend:<f>:beat             hash (harness, host, session, at, stale_ms),
+--                                    no TTL: live while TIME - at < stale_ms
+--                                    (5 s), judged by NS.beat (#3878)
 --   friend:<f>:wake             list max 1, no TTL; stale values are discarded
 --   bench:<b>:beat              hash (host, user, load1, ssh, probe,
---                                    launcher, live, why, build, at), TTL from
---                                    the caller (3 x the beat interval, #3372)
---   bench:<b>:live              set of card identities, same TTL
---   bench:<b>:owner             fenced owner session, same TTL (single
---                                    instance; a different session is BUSY)
+--                                    launcher, live, why, build, at,
+--                                    stale_ms), no TTL: stale_ms is the window
+--                                    the caller promises (3 x the beat
+--                                    interval, #3372), judged by NS.beat
+--   bench:<b>:live              set of card identities, TTL the same window
+--   bench:<b>:owner             fenced owner session, a lease with the same
+--                                    TTL (single instance; a different session
+--                                    is BUSY until it lapses)
 --   bench:<b>                   the host table row (host, load1, ncpu, at),
 --                                    no TTL: an old at prints stale (#3440)
 --   friend:<f>                  the friend table row (at, up, ready, queue,
 --                                    working, waiting, width, done, slots),
 --                                    no TTL, and friend:<f>:last (#3440)
 --   machine:<m>:ceiling         hash with slots, shared with capacity friend
---   cap:log                     presence-change stream
+--   cap:log                     presence-change stream, never trimmed (#3878)
 --   friend:<f>:events           lifecycle events (#3153): beat, deliver,
 --                                    turn-start [cause], turn-end, turn-error,
 --                                    usage-limit; written only by
@@ -39,7 +44,7 @@ local function pl_now_ms()
 end
 
 local function pl_caplog(kind, subject, reason, actor, idem, at)
-  redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
+  redis.call('XADD', 'cap:log', '*',
     'kind', kind, 'subject', subject, 'reason', reason or '',
     'actor', actor or '', 'idem', idem or '', 'at', tostring(at))
 end
@@ -65,8 +70,12 @@ local function friend_hello(keys, args)
     return { 'UNREGISTERED' }
   end
   local beat_key = 'friend:' .. friend .. ':beat'
+  local at = pl_now_ms()
+  local was_up = NS.beat.up(beat_key, at)
+  -- A beat that stopped keeps its hash (#3878): its session holds the seat
+  -- only while the beat is live.
   local current_session = redis.call('HGET', beat_key, 'session')
-  if current_session and current_session ~= session then
+  if current_session and current_session ~= session and was_up == 1 then
     return { 'BUSY' }
   end
   local desired_key = 'friend:' .. friend .. ':desired'
@@ -104,16 +113,14 @@ local function friend_hello(keys, args)
       end
     end
   end
-  local at = pl_now_ms()
-  local was_up = redis.call('EXISTS', beat_key)
   for _, alias in ipairs(logins) do
     redis.call('HSET', 'friends:login', alias, friend)
     pl_caplog('friend-login', friend, alias, actor, idem, at)
   end
   redis.call('HSET', beat_key,
     'harness', harness or '', 'host', host, 'session', session,
-    'at', tostring(at))
-  redis.call('PEXPIRE', beat_key, PL_BEAT_MS)
+    'at', tostring(at), NS.beat.STALE, tostring(PL_BEAT_MS))
+  redis.call('PERSIST', beat_key)
   if was_up == 0 then
     pl_caplog('friend-up', friend, '', actor, idem, at)
   end
@@ -128,17 +135,17 @@ local function friend_beat(keys, args)
     return { 'INVALID' }
   end
   local beat_key = 'friend:' .. friend .. ':beat'
-  if redis.call('SISMEMBER', 'friends', friend) == 0 or redis.call('EXISTS', beat_key) == 0 then
+  local at = pl_now_ms()
+  if redis.call('SISMEMBER', 'friends', friend) == 0 or not NS.beat.live(beat_key, at) then
     return { 'DOWN' }
   end
   if redis.call('HGET', beat_key, 'session') ~= session then
     return { 'FENCED' }
   end
-  local at = pl_now_ms()
   redis.call('HSET', beat_key,
     'harness', harness or '', 'host', host or '', 'session', session,
-    'at', tostring(at))
-  redis.call('PEXPIRE', beat_key, PL_BEAT_MS)
+    'at', tostring(at), NS.beat.STALE, tostring(PL_BEAT_MS))
+  redis.call('PERSIST', beat_key)
   return { 'OK' }
 end
 
@@ -151,12 +158,13 @@ local function friend_bye(keys, args)
     return { 'INVALID' }
   end
   local beat_key = 'friend:' .. friend .. ':beat'
+  local at = pl_now_ms()
+  local was_up = NS.beat.up(beat_key, at)
+  -- A stopped beat's session fences nothing (#3878: the hash outlives it).
   local active_session = redis.call('HGET', beat_key, 'session')
-  if active_session and session ~= '' and active_session ~= session then
+  if active_session and session ~= '' and active_session ~= session and was_up == 1 then
     return { 'FENCED' }
   end
-  local was_up = redis.call('EXISTS', beat_key)
-  local at = pl_now_ms()
   redis.call('DEL', beat_key)
   if was_up == 1 then
     pl_caplog('friend-down', friend, '', actor, idem, at)
@@ -193,7 +201,7 @@ local function friend_poll_wake(keys, args)
   local at = pl_now_ms()
   local wake_at = tonumber(string.match(wake, '^(%d+):'))
   if not wake_at or at - wake_at > 600000 then
-    redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
+    redis.call('XADD', 'cap:log', '*',
       'kind', 'friend-wake-consumed', 'subject', friend, 'reason', wake,
       'actor', '', 'idem', '', 'at', tostring(at), 'stale', '1')
     return { 'NONE', 'STALE' }
@@ -204,11 +212,13 @@ end
 
 -- bench_beat is the bench-owned one-second loop. The fenced owner key gives
 -- cross-process single-instance ownership: while a different session owns the
--- bench this call returns BUSY. When the owner key and beat have expired the
--- bench is free, so a stalled process never wedges it (stale expiry recovery).
--- Absence-to-presence logs bench-up. The live set is rewritten each beat.
--- args[17] is the TTL in ms the caller's loop promises (3 x its interval,
--- #3372); a missing or non-positive value keeps PL_BEAT_MS. args[18] is the
+-- bench this call returns BUSY. The owner key is a lease: when it lapses the
+-- bench is free, so a stalled process never wedges it (stale expiry
+-- recovery). The beat itself never expires (#3878): it carries stale_ms and
+-- reads down once its at is older. Down-to-live logs bench-up. The live set
+-- is rewritten each beat. args[17] is the window in ms the caller's loop
+-- promises (3 x its interval, #3372); a missing or non-positive value keeps
+-- PL_BEAT_MS. args[18] is the
 -- host row's at (RFC 3339 UTC) and args[19] the bench's ncpu; an empty
 -- args[18] writes no row (#3440).
 local function bench_beat(keys, args)
@@ -243,14 +253,14 @@ local function bench_beat(keys, args)
   end
 
   local at = pl_now_ms()
-  local first = redis.call('EXISTS', 'bench:' .. bench .. ':beat')
+  local first = NS.beat.up('bench:' .. bench .. ':beat', at)
   redis.call('HSET', 'bench:' .. bench .. ':beat',
     'host', host or '', 'user', user or '', 'load1', load1 or '',
     'ssh', ssh or '', 'probe', probe or '', 'launcher', launcher or '',
     'live', '0', 'why', why or '', 'build', build or '',
     'harness', harness or '', 'mirrors', mirrors or '', 'disk_gib', disk_gib or '',
-    'at', tostring(at))
-  redis.call('PEXPIRE', 'bench:' .. bench .. ':beat', ttl)
+    'at', tostring(at), NS.beat.STALE, tostring(ttl))
+  redis.call('PERSIST', 'bench:' .. bench .. ':beat')
   redis.call('SET', owner_key, session, 'PX', ttl)
 
   local live_key = 'bench:' .. bench .. ':live'
@@ -294,7 +304,8 @@ end
 -- #3281): one read of the friend-queue index sets sprint:<S>:idx:<f>:open,
 -- working, waiting and closed, the declared slots and the seat's own beat,
 -- then ONE HSET of friend:<f> with one at, and friend:<f>:last. up is 1 while
--- friend:<f>:beat exists (written only by the seat's own hello/beat). A
+-- friend:<f>:beat is live (NS.beat: written only by the seat's own
+-- hello/beat, at within its stale_ms). A
 -- friend:<f> left over as another type is replaced. The row never expires:
 -- an old at is what the table prints stale. args = friend, sprint, at.
 local function friend_row(keys, args)
@@ -312,7 +323,7 @@ local function friend_row(keys, args)
   if type(slots) ~= 'string' or not string.match(slots, '^[0-9]+$') then
     slots = ''
   end
-  local up = redis.call('EXISTS', 'friend:' .. friend .. ':beat')
+  local up = NS.beat.up('friend:' .. friend .. ':beat')
   local row = 'friend:' .. friend
   local kind = redis.call('TYPE', row)
   if type(kind) == 'table' then
@@ -321,6 +332,8 @@ local function friend_row(keys, args)
   if kind ~= 'hash' and kind ~= 'none' then
     redis.call('DEL', row)
   end
+  -- The row never expires (#3878): a TTL an older friend_serve gave it goes.
+  redis.call('PERSIST', row)
   redis.call('HSET', row, 'at', at, 'up', tostring(up),
     'ready', tostring(ready), 'queue', tostring(ready),
     'working', tostring(working), 'waiting', tostring(waiting),

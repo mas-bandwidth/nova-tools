@@ -13,7 +13,7 @@ package life
 //
 // and one sprint tick, before it prints a friend's row, verifies the unit is
 // loaded, each clone is behind=0 against its remote's real tip and the beat is
-// within its TTL, and repairs what it can: bootstrap an unloaded unit (twice at
+// within its window, and repairs what it can: bootstrap an unloaded unit (twice at
 // most in one tick), fetch the declared remote and branch and fast-forward to
 // exactly the fetched id. What it cannot repair it prints as `wake: down` in
 // red. The registry is friends:declared and friend:<f>:wakepath, written only
@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 	"github.com/redis/go-redis/v9"
@@ -129,15 +130,14 @@ var (
 	ErrBusDiverged = errors.New("checkout ahead of or diverged from the remote")
 )
 
-// BeatReader reports whether a friend's beat is within its TTL.
+// BeatReader reports whether a friend's beat is within its window.
 type BeatReader func(ctx context.Context, friend string) (bool, error)
 
-// RedisBeats reads the presence beat presence.lua keeps with a TTL: the key
-// exists exactly while the beat is within it.
+// RedisBeats reads the presence beat presence.lua keeps with no TTL (#3878):
+// live while the store's TIME - at is within its stale_ms (internal/nsprint/beat).
 func RedisBeats(st *store.Store) BeatReader {
 	return func(ctx context.Context, friend string) (bool, error) {
-		n, err := st.Client().Exists(ctx, "friend:"+friend+":beat").Result()
-		return n == 1, err
+		return beat.LiveNow(ctx, st.Client(), beat.FriendKey(friend))
 	}
 }
 
@@ -219,10 +219,10 @@ func CheckWake(ctx context.Context, host WakeHost, beats BeatReader, d WakeDecl)
 			h.FetchedKeeper = h.ensureCurrent(ctx, host, d.KeeperBus, d.KeeperRemote, d.KeeperBranch)
 		}
 	}
-	// A beat older than its TTL is a dead wake path even with the unit loaded
+	// A beat older than its window is a dead wake path even with the unit loaded
 	// and every clone current (#3134 hold, Stella): the server is not beating.
 	// The one exception is a wake unit this tick just bootstrapped, whose
-	// server cannot have beaten yet; the next tick holds it to the TTL.
+	// server cannot have beaten yet; the next tick holds it to the window.
 	if !h.BeatLive && !h.bootstrapped(d.Unit) {
 		h.down("", "beat older than its TTL")
 	}
@@ -448,7 +448,8 @@ func RecordWakes(ctx context.Context, st *store.Store, recs []WakeRecord, actor,
 				"behind", behind, "fetched_bus", h.FetchedBus, "fetched_keeper", h.FetchedKeeper,
 				"beat", beat, "attempts", h.Attempts, "at", at)
 			receipt := func(kind, reason string) {
-				p.XAdd(ctx, &redis.XAddArgs{Stream: "cap:log", MaxLen: 100000, Approx: true,
+				// cap:log is never trimmed (#3878).
+				p.XAdd(ctx, &redis.XAddArgs{Stream: "cap:log",
 					Values: []any{"kind", kind, "subject", h.Friend, "reason", reason,
 						"actor", actor, "idem", idem, "at", at}})
 			}
@@ -618,7 +619,7 @@ type FriendWake struct {
 	Declared bool              // a member of friends:declared
 	Path     map[string]string // friend:<f>:wakepath
 	Health   map[string]string // friend:<f>:wakehealth
-	BeatLive bool              // friend:<f>:beat exists (its TTL is the liveness)
+	BeatLive bool              // friend:<f>:beat is within its stale_ms at Now (#3878)
 }
 
 // WakeSnapshot is one read of the registry: friends ∪ friends:declared, each
@@ -660,19 +661,19 @@ func ReadWake(ctx context.Context, c redis.Cmdable) (WakeSnapshot, error) {
 	}
 	type cmds struct {
 		path, health *redis.MapStringStringCmd
-		beat         *redis.IntCmd
+		beat         *beat.Cmd
 	}
 	cs := make([]cmds, len(names))
 	p = c.Pipeline()
 	for i, n := range names {
-		cs[i] = cmds{p.HGetAll(ctx, WakePathKey(n)), p.HGetAll(ctx, WakeHealthKey(n)), p.Exists(ctx, "friend:"+n+":beat")}
+		cs[i] = cmds{p.HGetAll(ctx, WakePathKey(n)), p.HGetAll(ctx, WakeHealthKey(n)), beat.Read(ctx, p, beat.FriendKey(n))}
 	}
 	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return WakeSnapshot{}, fmt.Errorf("read wake paths: %w", err)
 	}
 	for i, n := range names {
 		s.Friends = append(s.Friends, FriendWake{Name: n, Declared: isDecl[n],
-			Path: cs[i].path.Val(), Health: cs[i].health.Val(), BeatLive: cs[i].beat.Val() == 1})
+			Path: cs[i].path.Val(), Health: cs[i].health.Val(), BeatLive: cs[i].beat.Live(s.Now)})
 	}
 	return s, nil
 }

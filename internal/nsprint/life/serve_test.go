@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -280,10 +281,11 @@ func TestServeWidthRespected(t *testing.T) {
 	}
 }
 
-// TestServeBeatHasTTLAndSecondSeatRefuses: one beat leaves friend:emma (the
-// #2673 hash with width) and friend:emma:beat under a TTL and friend:emma:last
-// untimed; a second serve on the seat is refused with the holder named until
-// the first releases.
+// TestServeBeatHasTTLAndSecondSeatRefuses: one beat leaves the seat lock under
+// a TTL (a lease), and friend:emma (the #2673 hash with width),
+// friend:emma:beat and friend:emma:last with none (#3878: the beats carry
+// stale_ms instead); a second serve on the seat is refused with the holder
+// named until the first releases.
 func TestServeBeatHasTTLAndSecondSeatRefuses(t *testing.T) {
 	st, client := seedSeat(t, 2)
 	ctx := context.Background()
@@ -294,10 +296,15 @@ func TestServeBeatHasTTLAndSecondSeatRefuses(t *testing.T) {
 	if err := a.Beat(ctx); err != nil {
 		t.Fatalf("first beat: %v", err)
 	}
-	for _, key := range []string{"friend:emma", "friend:emma:beat", life.LockKey("emma")} {
-		ttl := client.PTTL(ctx, key).Val()
-		if ttl <= 0 || ttl > life.ServeLockTTL {
-			t.Fatalf("%s PTTL %v, want within (0, %v]", key, ttl, life.ServeLockTTL)
+	if ttl := client.PTTL(ctx, life.LockKey("emma")).Val(); ttl <= 0 || ttl > life.ServeLockTTL {
+		t.Fatalf("%s PTTL %v, want within (0, %v]", life.LockKey("emma"), ttl, life.ServeLockTTL)
+	}
+	for _, key := range []string{"friend:emma", "friend:emma:beat"} {
+		if ttl := client.PTTL(ctx, key).Val(); ttl != -1 {
+			t.Fatalf("%s PTTL %v, want -1 (#3878)", key, ttl)
+		}
+		if got := client.HGet(ctx, key, "stale_ms").Val(); got != strconv.FormatInt(life.ServeLockTTL.Milliseconds(), 10) {
+			t.Fatalf("%s stale_ms %q, want %d", key, got, life.ServeLockTTL.Milliseconds())
 		}
 	}
 	if ttl := client.PTTL(ctx, "friend:emma:last").Val(); ttl != -1 {
@@ -390,10 +397,12 @@ func TestServeBeatFriendRowPreserved(t *testing.T) {
 		t.Fatal("ns_friend_serve_beat wrote friend:emma:last on a friend row")
 	}
 
-	// Presence must be only on friend:emma:beat.
-	beatTTL := client.PTTL(ctx, "friend:emma:beat").Val()
-	if beatTTL <= 0 || beatTTL > life.ServeLockTTL {
-		t.Fatalf("friend:emma:beat PTTL %v, want within (0, %v]", beatTTL, life.ServeLockTTL)
+	// Presence must be only on friend:emma:beat, untimed with its stale_ms (#3878).
+	if beatTTL := client.PTTL(ctx, "friend:emma:beat").Val(); beatTTL != -1 {
+		t.Fatalf("friend:emma:beat PTTL %v, want -1 (#3878)", beatTTL)
+	}
+	if got := client.HGet(ctx, "friend:emma:beat", "stale_ms").Val(); got != strconv.FormatInt(life.ServeLockTTL.Milliseconds(), 10) {
+		t.Fatalf("friend:emma:beat stale_ms %q, want %d", got, life.ServeLockTTL.Milliseconds())
 	}
 	beatHash := client.HGetAll(ctx, "friend:emma:beat").Val()
 	if beatHash["session"] != "sess-row" || beatHash["harness"] != "fake" || beatHash["host"] != "studio" {

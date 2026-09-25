@@ -29,7 +29,7 @@ local RB = { L = NS.land, FQ = NS.fq }
 function RB.key(repo, base, what) return 'land:' .. repo .. ':' .. base .. ':' .. what end
 
 function RB.event(repo, ...)
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*', ...)
+  redis.call('XADD', 'land:' .. repo .. ':events', '*', ...)
 end
 
 -- RB.test names a receipt's failing field "<pkg> <Test>" as <pkg>.<Test> (one word in a reason).

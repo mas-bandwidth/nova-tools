@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -114,7 +115,7 @@ func Status(ctx context.Context, c *redis.Client, sprint, bench string) ([]strin
 	var (
 		benchListCmd *redis.Cmd
 		isMemberCmd  *redis.BoolCmd
-		beatCmd      *redis.IntCmd
+		beatCmd      *beat.Cmd
 		desiredCmd   *redis.SliceCmd
 		startingCmd  *redis.IntCmd
 		livingCmd    *redis.IntCmd
@@ -128,7 +129,7 @@ func Status(ctx context.Context, c *redis.Client, sprint, bench string) ([]strin
 	} else {
 		// Lookup mode
 		isMemberCmd = pipe.SIsMember(ctx, "benches", bench)
-		beatCmd = pipe.Exists(ctx, "bench:"+bench+":beat")
+		beatCmd = beat.Read(ctx, pipe, beat.BenchKey(bench))
 		desiredCmd = pipe.HMGet(ctx, "bench:"+bench+":desired", "slots", "paused", "legs")
 		startingCmd = pipe.ZCard(ctx, "bench:"+bench+":starting")
 		livingCmd = pipe.ZCard(ctx, "bench:"+bench+":living")
@@ -184,7 +185,7 @@ func Status(ctx context.Context, c *redis.Client, sprint, bench string) ([]strin
 		}
 	} else {
 		isMember := isMemberCmd.Val()
-		beatExists := beatCmd.Val() > 0
+		beatExists := beatCmd.Live(serverTime)
 		desiredVals := desiredCmd.Val()
 		slots := 0
 		paused := false
