@@ -213,3 +213,56 @@ func TestTableShowsStaleBenchRowNotAbsent(t *testing.T) {
 		}
 	}
 }
+
+// TestLiveTitlePitstop (DONE-WHEN of #3423): the live layout's title reads
+// sprint:<S>:pitstop as the bash of record does (GET; any value set prints
+// the pit stop): SPRINT TABLE *** PIT STOP *** while it is set, SPRINT TABLE
+// when it is unset or empty. The key rides the existing xy/landed MGET, so
+// the tick is still the SCAN walk plus one pipeline, with the same commands;
+// only line 1 changes, and a failed tick keeps the last good title.
+func TestLiveTitlePitstop(t *testing.T) {
+	cfg, now := table.Fixture2674Config(), table.Fixture2674Now()
+	golden := table.Golden2674()
+	rest := golden[strings.Index(golden, "\n"):]
+	pitKey := "sprint:" + cfg.Sprint + ":pitstop"
+	for _, c := range []struct {
+		name  string
+		extra [][]string
+		title string
+	}{
+		{"unset", nil, "SPRINT TABLE"},
+		{"empty", [][]string{{"SET", pitKey, ""}}, "SPRINT TABLE"},
+		{"set", [][]string{{"SET", pitKey, "Glenn: rest tonight"}}, "SPRINT TABLE *** PIT STOP ***"},
+		{"other-sprint", [][]string{{"SET", "sprint:other:pitstop", "x"}}, "SPRINT TABLE"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			client := liveStore(t, withCardViews(append(table.Fixture2674(), c.extra...), now))
+			log := &cmdLog{}
+			client.AddHook(log)
+			snap, err := table.ReadLive(context.Background(), client, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			names, trips := log.reset()
+			if got, want := snap.RenderLive(now), c.title+rest; got != want {
+				t.Fatalf("title with %s:\ngot:\n%s\nwant:\n%s", c.name, got, want)
+			}
+			if trips != 2 {
+				t.Fatalf("round trips = %d, want 2 (SCAN, then one pipeline): %v", trips, names)
+			}
+			mgets := 0
+			for _, n := range names {
+				if n == "MGET" {
+					mgets++
+				}
+			}
+			if mgets != 1 {
+				t.Fatalf("MGET count = %d, want the one xy/landed/pitstop MGET: %v", mgets, names)
+			}
+			failed := table.FailedLive(cfg, snap).RenderLive(now)
+			if first := failed[:strings.Index(failed, "\n")]; first != c.title {
+				t.Fatalf("failed tick title = %q, want the last good %q", first, c.title)
+			}
+		})
+	}
+}

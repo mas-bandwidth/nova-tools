@@ -11,6 +11,7 @@
 //	friend:<f>:down       GET, a set value prints "down"   (out-of-credits)
 //	sprint:<S>:xy         the sprint line                  (sprint-xy)
 //	sprint:<S>:landed     the landed line                  (sprint-landed)
+//	sprint:<S>:pitstop    set: the title reads *** PIT STOP *** (#3423)
 //	q:blocked             ZCARD, the one blocked count     (friend-queue, #3219)
 //	bench:*               SCAN COUNT 1000, then HGETALL    (bench-row, card-dealer)
 //	bench:<b>:cards:<w>   ZCARD, w = ready working done ok fail (the card move, #3692)
@@ -45,7 +46,7 @@ import (
 // LiveConfig names what the bash hard-codes; nothing here is compiled in.
 type LiveConfig struct {
 	Friends  []string      // the roster, in display order
-	Sprint   string        // sprint:<Sprint>:xy and sprint:<Sprint>:landed
+	Sprint   string        // sprint:<Sprint>:xy, :landed and :pitstop
 	XYFile   string        // SPRINT-XY.txt fallback while the xy key is missing (until #2679)
 	RowStale time.Duration // a friend row older than this prints "stale" (bash ROW_STALE_S=10)
 	// BenchStale: a host row whose own at is older than this prints "stale";
@@ -76,6 +77,7 @@ type LiveSnapshot struct {
 	Friends     []FriendRow
 	XY          string // "" when the key is missing
 	Landed      string // "" when the key is missing
+	Pitstop     bool   // sprint:<S>:pitstop holds a value: the title says so (#3423)
 	Blocked     string // "" when the count did not come back
 	Benches     []BenchRow
 	Pool        string // bench:pool queue; PoolPresent says whether the key exists
@@ -125,7 +127,8 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		fc[i].downReason = pipe.HGet(ctx, "friend:"+name+":down", "reason")
 		fc[i].downExists = pipe.Exists(ctx, "friend:"+name+":down")
 	}
-	mget := pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy", "sprint:"+cfg.Sprint+":landed")
+	// The pit stop rides the xy/landed MGET: no extra command (#3423).
+	mget := pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy", "sprint:"+cfg.Sprint+":landed", "sprint:"+cfg.Sprint+":pitstop")
 	blocked := pipe.ZCard(ctx, "q:blocked")
 	hashes := make([]*redis.MapStringStringCmd, len(benchKeys))
 	cards := make([][]*redis.IntCmd, len(benchKeys))
@@ -143,10 +146,10 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 	// The friend block is all-or-nothing, as in the bash: a failed MGET
 	// means the connection is not answering.
 	vals, err := mget.Result()
-	if err != nil || len(vals) != 2 {
-		return nil, fmt.Errorf("mget xy/landed: %v", err)
+	if err != nil || len(vals) != 3 {
+		return nil, fmt.Errorf("mget xy/landed/pitstop: %v", err)
 	}
-	snap := &LiveSnapshot{Config: cfg, XY: pipeValue(vals[0]), Landed: pipeValue(vals[1])}
+	snap := &LiveSnapshot{Config: cfg, XY: pipeValue(vals[0]), Landed: pipeValue(vals[1]), Pitstop: pipeValue(vals[2]) != ""}
 	for i, name := range cfg.Friends {
 		row := FriendRow{Name: name}
 		if got, err := fc[i].row.Result(); err == nil && len(got) == 5 {
@@ -224,7 +227,7 @@ func cardCells(fields map[string]string, cmds []*redis.IntCmd) {
 func FailedLive(cfg LiveConfig, last *LiveSnapshot) *LiveSnapshot {
 	snap := &LiveSnapshot{Config: cfg, Stale: true}
 	if last != nil {
-		snap.Friends, snap.XY, snap.Landed, snap.LastGood = last.Friends, last.XY, last.Landed, last.LastGood
+		snap.Friends, snap.XY, snap.Landed, snap.Pitstop, snap.LastGood = last.Friends, last.XY, last.Landed, last.Pitstop, last.LastGood
 	}
 	if snap.XY == "" && cfg.XYFile != "" {
 		snap.XYFileLine, snap.XYFileMod, snap.XYFileOK = readXYFile(cfg.XYFile)
@@ -238,7 +241,11 @@ const liveFriendRule = "-----------+-------+---------+-------+------------\n"
 // RenderLive prints the bash layout at now.
 func (s *LiveSnapshot) RenderLive(now time.Time) string {
 	var b strings.Builder
-	b.WriteString("SPRINT TABLE\n")
+	if s.Pitstop {
+		b.WriteString("SPRINT TABLE *** PIT STOP ***\n")
+	} else {
+		b.WriteString("SPRINT TABLE\n")
+	}
 	if s.Blocked == "" || strings.Trim(s.Blocked, "0123456789") != "" {
 		b.WriteString("blocked: ?\n")
 	} else {
