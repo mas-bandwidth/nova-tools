@@ -553,6 +553,21 @@ func (f LeaseFence) Token(context.Context) (string, error) {
 	return f.L.token, nil
 }
 
+// Renew implements deal.Renewer (#3706): the deal pass renews the lease
+// before it opens each bench session, so the session's lease bound is the
+// full TTL less the write margin, not what the duties before it left. A lease
+// another instance holds is deal.ErrFenced as well as ErrFenced.
+func (f LeaseFence) Renew(ctx context.Context) error {
+	if f.L == nil {
+		return fmt.Errorf("no reconciler lease: %w", deal.ErrFenced)
+	}
+	err := f.L.Renew(ctx)
+	if errors.Is(err, ErrFenced) {
+		return fmt.Errorf("%w: %w", deal.ErrFenced, err)
+	}
+	return err
+}
+
 // DealFunctions is the deal pass's Reserver, Row and Gate over the
 // nova_sprint functions of deal.lua (#3063): one ns_card_deal call per bench,
 // one ns_card_undeal per returned batch, one ns_bench_ssh per bench row, one
