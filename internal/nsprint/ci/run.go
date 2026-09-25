@@ -41,12 +41,19 @@ const (
 	FunctionRelease = "ns_ci_release"
 )
 
-// Summary words on the request record's ci field.
+// Summary words on the request record's ci field. SummaryRetry is only a
+// receipt reply: the attempt was red below cfg:ci max_attempts, so the head
+// went back to the pool still pending (ci_run.lua).
 const (
 	SummaryPending = "pending"
 	SummaryGreen   = "green"
 	SummaryRed     = "red"
+	SummaryRetry   = "retry"
 )
+
+// MaxAttemptsKey holds max_attempts, the claims one head may take before it
+// ends FAIL (default 2 in ci_run.lua: one run plus one retry for flake).
+const MaxAttemptsKey = "cfg:ci"
 
 // PoolKey is the ZSET the benches pull requests from.
 const PoolKey = "ci:pool"
@@ -109,16 +116,20 @@ func CheckName(name string) error {
 // RequestRequest asks for the checks of one head. Checks empty means every
 // declared check; each named one must be declared. PR is optional; URL is the
 // clone url the runner uses (empty: the runner's default for the repo).
+// Again resets an existing record to attempt 0 and puts it back in the pool
+// (the explicit retry after a capped FAIL).
 type RequestRequest struct {
 	Repo   string
 	SHA    string
 	PR     int
 	URL    string
 	Checks []string
+	Again  bool
 }
 
 // Request writes ci:<repo>:<sha> and adds it to the pool, once. EXISTS on a
-// second request for the head, REFUSED when a check is not declared.
+// second request for the head (RESET with Again), REFUSED when a check is not
+// declared.
 func Request(ctx context.Context, st *store.Store, req RequestRequest) (Result, error) {
 	if !repoRx.MatchString(req.Repo) {
 		return Result{}, fmt.Errorf("repo %q is not a repository name", req.Repo)
@@ -135,14 +146,20 @@ func Request(ctx context.Context, st *store.Store, req RequestRequest) (Result, 
 	if req.PR > 0 {
 		pr = strconv.Itoa(req.PR)
 	}
-	args := []string{req.Repo, req.SHA, pr, req.URL, strings.Join(req.Checks, ",")}
+	again := ""
+	if req.Again {
+		again = "1"
+	}
+	args := []string{req.Repo, req.SHA, pr, req.URL, strings.Join(req.Checks, ","), again}
 	for _, c := range Defaults[req.Repo] {
 		args = append(args, c.Name, c.Argv)
 	}
 	return call(ctx, st, FunctionRequest, args...)
 }
 
-// Claimed is one request a bench holds under a lease.
+// Claimed is one request a bench holds under a lease. Capped names the
+// <repo>:<sha> members the claim ended FAIL on the way because their next
+// attempt would pass cfg:ci max_attempts (set with or without a claim).
 type Claimed struct {
 	Repo    string
 	SHA     string
@@ -151,6 +168,7 @@ type Claimed struct {
 	Attempt int
 	Token   string
 	Checks  []Check
+	Capped  []string
 }
 
 // Claim takes the oldest claimable request for the bench; ok is false when
@@ -172,13 +190,18 @@ func Claim(ctx context.Context, st *store.Store, bench string, lease time.Durati
 		return Claimed{}, false, fmt.Errorf("%s: reply %T", FunctionClaim, raw)
 	}
 	if fmt.Sprint(parts[0]) != "CLAIMED" {
-		return Claimed{}, false, nil
+		var idle Claimed
+		if len(parts) > 1 {
+			idle.Capped = splitList(fmt.Sprint(parts[1]))
+		}
+		return idle, false, nil
 	}
 	fields := map[string]string{}
 	for i := 1; i+1 < len(parts); i += 2 {
 		fields[fmt.Sprint(parts[i])] = fmt.Sprint(parts[i+1])
 	}
-	c := Claimed{Repo: fields["repo"], SHA: fields["sha"], PR: fields["pr"], URL: fields["url"], Token: fields["token"]}
+	c := Claimed{Repo: fields["repo"], SHA: fields["sha"], PR: fields["pr"], URL: fields["url"], Token: fields["token"],
+		Capped: splitList(fields["capped"])}
 	c.Attempt, _ = strconv.Atoi(fields["attempt"])
 	for _, name := range strings.Split(fields["checks"], ",") {
 		if name != "" {
@@ -188,7 +211,8 @@ func Claim(ctx context.Context, st *store.Store, bench string, lease time.Durati
 	return c, true, nil
 }
 
-// ReceiptRecord is what one finished check writes.
+// ReceiptRecord is what one finished check writes. Fail is the log's first
+// FAIL line when RC is not 0 (the why a capped FAIL names).
 type ReceiptRecord struct {
 	Repo, SHA, Check, Token string
 	RC                      int
@@ -196,6 +220,7 @@ type ReceiptRecord struct {
 	Log                     string
 	Bench                   string
 	Lease                   time.Duration
+	Fail                    string
 }
 
 // ReceiptResult is one receipt's reply: RECEIPT with the summary so far
@@ -211,7 +236,7 @@ type ReceiptResult struct {
 // FENCED when the token is not the live attempt's.
 func WriteReceipt(ctx context.Context, st *store.Store, r ReceiptRecord) (ReceiptResult, error) {
 	words, err := st.Client().FCall(ctx, FunctionReceipt, nil, r.Repo, r.SHA, r.Check, r.Token, strconv.Itoa(r.RC),
-		strconv.FormatInt(r.WallMS, 10), r.Log, r.Bench, strconv.FormatInt(r.Lease.Milliseconds(), 10)).StringSlice()
+		strconv.FormatInt(r.WallMS, 10), r.Log, r.Bench, strconv.FormatInt(r.Lease.Milliseconds(), 10), r.Fail).StringSlice()
 	if err != nil {
 		return ReceiptResult{}, fmt.Errorf("%s: %w", FunctionReceipt, err)
 	}
@@ -260,12 +285,14 @@ type RunResult struct {
 	Checks  []CheckResult
 }
 
-// CheckResult is one check as it ran.
+// CheckResult is one check as it ran; Fail is the log's first FAIL line
+// when RC is not 0.
 type CheckResult struct {
 	Name   string
 	RC     int
 	WallMS int64
 	Log    string
+	Fail   string
 }
 
 // ErrBlocked is Run's answer when the clone failed and the request was
@@ -303,6 +330,9 @@ func Run(ctx context.Context, st *store.Store, opt RunOptions) (RunResult, error
 	began := time.Now()
 	c, ok, err := Claim(ctx, st, opt.Bench, opt.Lease)
 	res.StoreMS += time.Since(began).Milliseconds()
+	for _, m := range c.Capped {
+		fmt.Fprintf(out, "CAPPED %s FAIL attempts over cfg:ci max_attempts; why on the record; ci request --again resets\n", m)
+	}
 	if err != nil || !ok {
 		return res, err
 	}
@@ -355,7 +385,7 @@ func Run(ctx context.Context, st *store.Store, opt RunOptions) (RunResult, error
 		res.Checks = append(res.Checks, cr)
 		t := time.Now()
 		r, err := WriteReceipt(ctx, st, ReceiptRecord{Repo: c.Repo, SHA: c.SHA, Check: ch.Name, Token: c.Token,
-			RC: cr.RC, WallMS: cr.WallMS, Log: cr.Log, Bench: opt.Bench, Lease: opt.Lease})
+			RC: cr.RC, WallMS: cr.WallMS, Log: cr.Log, Bench: opt.Bench, Lease: opt.Lease, Fail: cr.Fail})
 		res.StoreMS += time.Since(t).Milliseconds()
 		if err != nil {
 			return res, err
@@ -442,6 +472,9 @@ func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, env []str
 		}
 	}
 	cr.WallMS = time.Since(began).Milliseconds()
+	if cr.RC != 0 {
+		cr.Fail = FirstFail(body)
+	}
 	if len(body) > maxLog {
 		body = append([]byte("ci: log truncated to its last 4 MiB\n"), body[len(body)-maxLog:]...)
 	}
@@ -449,6 +482,48 @@ func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, env []str
 		cr.Log = "unwritable:" + logPath
 	}
 	return cr
+}
+
+// FirstFail is the line a capped FAIL's why quotes: the first `--- FAIL`
+// line, else the first line starting FAIL, else the last non-empty line,
+// trimmed to one line of at most 200 bytes.
+func FirstFail(body []byte) string {
+	lines := strings.Split(string(body), "\n")
+	pick := ""
+	for _, prefix := range []string{"--- FAIL", "FAIL"} {
+		for _, l := range lines {
+			if strings.HasPrefix(strings.TrimSpace(l), prefix) {
+				pick = l
+				break
+			}
+		}
+		if pick != "" {
+			break
+		}
+	}
+	if pick == "" {
+		for i := len(lines) - 1; i >= 0; i-- {
+			if strings.TrimSpace(lines[i]) != "" {
+				pick = lines[i]
+				break
+			}
+		}
+	}
+	pick = strings.Join(strings.Fields(pick), " ")
+	if len(pick) > 200 {
+		pick = pick[:200]
+	}
+	return pick
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func isDir(p string) bool {
