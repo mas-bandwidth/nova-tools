@@ -264,7 +264,7 @@ func TestCheckOneBackpressureKeyOneRoundTrip(t *testing.T) {
 	// We didn't set proc:backpressure, so beat is false. Let's test with all recognized forms.
 	m.HSet("proc:backpressure", "pass_at", "123")
 	kcWithBeat, _ := deal.CheckOneBackpressureKey(ctx, st, sprint)
-	
+
 	if len(kcWithBeat.Own) != 1 || !kcWithBeat.Beat || len(kcWithBeat.Extra) != 1 || kcWithBeat.Extra[0] != "backpressure" {
 		t.Fatalf("check = %+v, want own=1 beat=true extra=[backpressure]", kcWithBeat)
 	}
