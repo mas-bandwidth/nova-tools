@@ -125,11 +125,11 @@ func TestHarvestHasNoResultsRoot(t *testing.T) {
 	if err := os.WriteFile(ssh, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	p := SSHPusher{SSH: ssh}
+	p := SSHPusher{SSH: ssh, Remote: func(string) string { return "/srv/origin.git" }}
 	ctx := context.Background()
 	bench := BenchInfo{Name: "b", Host: "h", User: "u"}
 	abs := "/srv/results/s/l/09fbedc9/b/1"
-	if err := p.Push(ctx, bench, Card{Label: "l", Results: abs, PushedSHA: "abc", Branch: "nova/s/l-a1"}); err != nil {
+	if err := p.Push(ctx, bench, Card{Label: "l", Repo: "nova-tools", Results: abs, PushedSHA: "abc", Branch: "nova/s/l-a1"}); err != nil {
 		t.Fatalf("push from absolute results: %v", err)
 	}
 	calls, err := os.ReadFile(log)

@@ -215,14 +215,18 @@ do
     return 'PR|' .. stored
   end)
 
-  -- ns_card_harvested S label bench instance token pr head actor
+  -- ns_card_harvested S label bench instance token pr head actor [pr_body]
   -- ended(DONE) -> harvested (3.2): the bench's lease holder only, the card
   -- ended DONE on this bench, the PR recorded under the card's idem key, and
   -- the head read back by REST equal to pushed_sha. A repeat with the same PR
-  -- and head returns the stored receipt and writes nothing.
+  -- and head returns the stored receipt and writes nothing. pr_body (#3712),
+  -- when given, is the body this harvest opened the PR with, stored on the
+  -- record with pr and head; the same call writes the `pr head` log entry in
+  -- ns_pr_head's shape (kind repo pr head prev source at).
   redis.register_function('ns_card_harvested', function(keys, args)
     local S, label, bench, instance, token = args[1] or '', args[2] or '', args[3] or '', args[4] or '', args[5] or ''
     local pr, head, actor = args[6] or '', args[7] or '', args[8] or 'card-harvest'
+    local pr_body = args[9] or ''
     if S == '' or label == '' or bench == '' or pr == '' or head == '' then
       return 'USAGE|'
     end
@@ -250,9 +254,13 @@ do
     if hv_hget(idem_key, 'pr:' .. repo .. ':' .. branch) ~= pr then return 'IDEM|' end
 
     local at = hv_now_ms()
-    if CARD.move(key, 'done', { state = 'harvested', by = actor, why = 'harvested',
-        fields = { 'pr', pr, 'head', head, 'harvested_at', at,
-          'harvest_step', 'harvested', 'harvest_step_at', at } }) then
+    local fields = { 'pr', pr, 'head', head, 'harvested_at', at,
+      'harvest_step', 'harvested', 'harvest_step_at', at }
+    if pr_body ~= '' then
+      fields[#fields + 1] = 'pr_body'
+      fields[#fields + 1] = pr_body
+    end
+    if CARD.move(key, 'done', { state = 'harvested', by = actor, why = 'harvested', fields = fields }) then
       return 'STATE|'
     end
     local receipt = redis.call('XADD', 's:' .. S .. ':log', '*',
@@ -264,7 +272,52 @@ do
     redis.call('HSET', key, 'harvest_receipt', receipt)
     redis.call('HSET', 's:' .. S .. ':prcard', repo .. '#' .. pr, label) -- pr-to-read skips card PRs (#3040)
     redis.call('HSET', idem_key, idem, receipt)
+    -- The PR's first head, in the shape ns_pr_head writes and pr-to-read's
+    -- readHeadEvents parses; prev is empty: harvest opened the PR at head.
+    redis.call('XADD', 's:' .. S .. ':log', '*',
+      'kind', 'pr head', 'repo', repo, 'pr', pr, 'head', head,
+      'prev', '', 'source', 'harvest', 'at', at)
     return 'OK|' .. receipt
+  end)
+
+  -- ns_harvest_fail S label bench instance token code err cap
+  -- One failed harvest pass for an ended(DONE) card (#3712): the lease holder
+  -- counts it in harvest_fails and records the err line. Below cap it answers
+  -- COUNT|<n> and the next pass retries; at cap the card moves to done/fail
+  -- through NS.card (state refused, reason harvest, the err line as why) and
+  -- leaves the bench's ended set, FAILED|<n>, so no card loops silently.
+  redis.register_function('ns_harvest_fail', function(keys, args)
+    local S, label, bench, instance, token = args[1] or '', args[2] or '', args[3] or '', args[4] or '', args[5] or ''
+    local code, err, cap = args[6] or '', args[7] or '', tonumber(args[8] or '3')
+    if S == '' or label == '' or bench == '' or not cap or cap < 1 then
+      return 'USAGE|'
+    end
+    if not hv_lease_ok(bench, instance, token) then
+      return 'FENCED|'
+    end
+    local key = 's:' .. S .. ':card:' .. label
+    local f = redis.call('HMGET', key, 'state', 'bench')
+    local state, cbench = f[1] or '', f[2] or ''
+    if state == '' then return 'NOTFOUND|' end
+    if state ~= 'ended' then return 'STATE|' .. state end
+    if cbench ~= bench then return 'CONFLICT|' .. cbench end
+    local line = code .. ': ' .. err
+    local at = hv_now_ms()
+    local n = redis.call('HINCRBY', key, 'harvest_fails', 1)
+    redis.call('HSET', key, 'harvest_err', line, 'harvest_err_at', at)
+    if n < cap then return 'COUNT|' .. n end
+    local moved = CARD.move(key, 'done', { state = 'refused', ok = 'fail', by = 'card-harvest', why = line,
+      fields = { 'reason', 'harvest', 'refused_field', 'harvest', 'refused_defect', code, 'refused_at', at } })
+    if moved then return 'MOVE|' .. moved end
+    local receipt = redis.call('XADD', 's:' .. S .. ':log', '*',
+      'kind', 'card', 'id', label, 'from', 'ended', 'to', 'refused',
+      'attempt', hv_hget(key, 'attempt'), 'token_sha', hv_hget(key, 'token_sha'),
+      'actor', 'card-harvest', 'reason', 'harvest', 'evidence', line,
+      'idem', 'harvest-fail:' .. S .. ':' .. label .. ':' .. hv_hget(key, 'attempt'), 'at', at)
+    redis.call('HSET', key, 'refused_receipt', receipt)
+    redis.call('SREM', 's:' .. S .. ':bench:' .. bench .. ':ended', label)
+    redis.call('SADD', 's:' .. S .. ':bench:' .. bench .. ':refused', label)
+    return 'FAILED|' .. n
   end)
 
   -- ns_harvest_refuse S label bench instance token field defect

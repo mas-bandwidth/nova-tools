@@ -107,6 +107,8 @@ type cardDoc struct {
 	Test           string // TEST: <package> <TestName>, the card's test field the wrapper runs at end (#3689); "" is absent
 	Stream         string // STREAM: <name>, the work stream whose ws:<stream>:<where> view holds the card (#3692); "" is none
 	Origin         string // ORIGIN: <url>, the GitHub issue the card came from (#3692); "" is absent
+	DoneWhen       string // DONE-WHEN: <sentence>, stored as done_when so harvest writes the PR body from the record (#3712)
+	Task           string // TASK: <sentence>, stored as task when present (#3712); "" is absent
 	Payload        string
 }
 
@@ -157,6 +159,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		return cardDoc{}, err
 	}
 	stream, origin := strings.TrimSpace(header["STREAM"]), strings.TrimSpace(header["ORIGIN"])
+	doneWhen, taskLine := strings.TrimSpace(header["DONE-WHEN"]), strings.TrimSpace(header["TASK"])
 	if strings.ContainsAny(stream, "\r\n\t") || strings.ContainsAny(origin, "\r\n\t") {
 		return cardDoc{}, fmt.Errorf("STREAM: and ORIGIN: are one line each")
 	}
@@ -190,6 +193,8 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		Test:           strings.TrimSpace(header["TEST"]),
 		Stream:         stream,
 		Origin:         origin,
+		DoneWhen:       doneWhen,
+		Task:           taskLine,
 		Payload:        hex.EncodeToString(sum[:]),
 	}, nil
 }

@@ -212,6 +212,9 @@ func symbolCheck(pr PR, card Card) Check {
 	// and it answers missing rather than no (#2621: on tool pull requests it
 	// said no to every one).
 	if card.Symbol == "" && !isCell(pr, card) {
+		if c, ok := selfCheckLine(pr.Body); ok {
+			return c
+		}
 		return Check{Missing, "not a conformance cell: no SYMBOL on a card, no cell leg in the body, no file under test/conformance/"}
 	}
 	added := AddedLinesOutside(pr.Diff, "/testdata/")
@@ -237,6 +240,29 @@ func symbolCheck(pr PR, card Card) Check {
 		return Check{Yes, "the added test imports a generated unit by name"}
 	}
 	return Check{No, "the added test reaches no generated symbol: no fixed-form entry point, no generated include, import or artifact path, no generator subprocess"}
+}
+
+// selfCheckRE is the SELF-CHECK line a harvested card's body carries (#3712):
+// `SELF-CHECK: <pass|fail|not-run> (<the card's TEST or none>)`, the result of
+// the card wrapper's own run of the card's TEST line.
+var selfCheckRE = regexp.MustCompile(`(?m)^\s*SELF-CHECK:[ \t]*([A-Za-z-]+)[ \t]*(.*)$`)
+
+// selfCheckLine reads a non-cell pull request's SELF-CHECK line: pass is
+// yes, fail is no, anything else (not-run) is missing; ok is false when the
+// body has no such line.
+func selfCheckLine(body string) (Check, bool) {
+	m := selfCheckRE.FindStringSubmatch(strings.ReplaceAll(body, "\r\n", "\n"))
+	if m == nil {
+		return Check{}, false
+	}
+	test := strings.TrimSpace(m[2])
+	switch strings.ToLower(m[1]) {
+	case "pass":
+		return Check{Yes, "SELF-CHECK: the card wrapper ran the card's TEST " + test + " at head: pass"}, true
+	case "fail":
+		return Check{No, "SELF-CHECK: the card wrapper ran the card's TEST " + test + " at head: fail"}, true
+	}
+	return Check{Missing, "SELF-CHECK: " + m[1] + " " + test + ": the card's TEST did not run"}, true
 }
 
 // firstTell is the first self-check tell present in the added lines, in list

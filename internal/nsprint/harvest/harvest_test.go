@@ -246,8 +246,13 @@ func TestControl13OneBenchDownOthersFinish(t *testing.T) {
 	if n := c.SCard(ctx, "s:"+sprint+":idx:card:harvested").Val(); n != 8 {
 		t.Fatalf("idx:card:harvested = %d, want 8", n)
 	}
-	if n := c.XLen(ctx, "s:"+sprint+":log").Val(); n != 8 {
-		t.Fatalf("receipts = %d, want one per harvested card (8)", n)
+	// One harvested receipt and one `pr head` entry per harvested card (#3712).
+	kinds := map[string]int{}
+	for _, e := range c.XRange(ctx, "s:"+sprint+":log", "-", "+").Val() {
+		kinds[fmt.Sprint(e.Values["kind"])]++
+	}
+	if kinds["card"] != 8 || kinds["pr head"] != 8 || len(kinds) != 2 {
+		t.Fatalf("log kinds = %v, want 8 card receipts and 8 pr head entries", kinds)
 	}
 	for _, b := range benches {
 		if c.Exists(ctx, "lease:harvest:"+b).Val() != 0 {

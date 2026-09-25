@@ -252,7 +252,7 @@ func (z *zshBench) pass(faultAt string) harvest.BenchResult {
 		Sprint: z.sprint, Benches: []string{z.bench}, Clock: time.Minute,
 		Instance: fmt.Sprintf("pass-%d", z.passes),
 		Forge:    z.forge,
-		Pusher:   harvest.SSHPusher{SSH: z.ssh},
+		Pusher:   harvest.SSHPusher{SSH: z.ssh, Remote: func(string) string { return z.origin }},
 		Sleep: func(_ context.Context, d time.Duration) error {
 			z.sleeps = append(z.sleeps, d)
 			return nil

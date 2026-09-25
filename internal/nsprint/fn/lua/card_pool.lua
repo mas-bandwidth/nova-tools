@@ -53,6 +53,9 @@ redis.register_function('ns_card_push', function(keys, args)
   -- test (#3689): the card's TEST line, which the wrapper runs at card end.
   local test = args[16]
   local stream, origin = args[17] or '', args[18] or ''
+  -- done_when and task (#3712): the card's DONE-WHEN and TASK sentences, so
+  -- harvest writes the PR body from the record alone.
+  local done_when, task_line = args[19] or '', args[20] or ''
   local S = string.match(card, '^s:([-a-z0-9]+):card:')
   if not S or card ~= 's:' .. S .. ':card:' .. tostring(label) then
     return redis.error_reply('ns_card_push: key ' .. tostring(card) .. ' is not s:<S>:card:<label>')
@@ -114,6 +117,14 @@ redis.register_function('ns_card_push', function(keys, args)
   if origin ~= '' then
     table.insert(fields, 'origin')
     table.insert(fields, origin)
+  end
+  if done_when ~= '' then
+    table.insert(fields, 'done_when')
+    table.insert(fields, done_when)
+  end
+  if task_line ~= '' then
+    table.insert(fields, 'task')
+    table.insert(fields, task_line)
   end
   local err = CARD.create(card, fields, { bench = bench, stream = stream, by = 'card-push' })
   if not err and place == 'pool' then
