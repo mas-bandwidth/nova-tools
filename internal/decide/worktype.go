@@ -325,6 +325,9 @@ func (w WorkTypeRoutes) Admit(t string, res RouteResult, reg *Registry) error {
 	}
 	rs := w.For(t)
 	if len(rs) == 0 {
+		if KnownWorkType(t) {
+			return fmt.Errorf("allowed_routes has no row for %s: a card whose WORKTYPE: is set must not be stamped with allowed=-; add a row for this type or drop --allowed-routes", t)
+		}
 		return fmt.Errorf("allowed_routes has no row for %s: no route is allowed for this card", t)
 	}
 	names := []string{res.Rung.Name}

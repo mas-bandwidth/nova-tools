@@ -266,3 +266,153 @@ func TestWorkTypeAllowedRoutesGateTheSelectedRung(t *testing.T) {
 		t.Errorf("a wait was gated as if it dispatched: %v", err)
 	}
 }
+
+// A table with a row for one type but not another refuses the type with no row,
+// even for a non-branch work type: a card whose WORKTYPE: is set must not be
+// stamped with allowed=- (closing the #2961 shape).
+func TestWorkTypeRoutesRefusesAllowedDashOnKnownType(t *testing.T) {
+	reg := testRegistry(t)
+	res := mustRoute(t, reg, Unit{ID: "card-allowed-dash", Kind: KindRebase, Files: 1, Packages: 1, Lanes: 1}, DefaultFloor)
+	if res.Rung.Name == "" || !res.Dispatchable() {
+		t.Fatalf("the fixture route chose no dispatchable rung: %+v", res)
+	}
+
+	// A table that has issue-cold-read but NOT spec-contract-probe:
+	// admitting spec-contract-probe must refuse, not write allowed=-.
+	table := WorkTypeRoutes{WorkTypeIssueColdRead: {res.Rung.Name}}
+	err := table.Admit(WorkTypeSpecContractProbe, res, reg)
+	if err == nil {
+		t.Errorf("a known work type with no row in the table was admitted; it must refuse rather than stamp allowed=-")
+	}
+	if err != nil && !strings.Contains(err.Error(), "must not be stamped with allowed=-") {
+		t.Errorf("the refusal must name the allowed=- remedy: %v", err)
+	}
+
+	// The type that IS in the table still passes.
+	if err := table.Admit(WorkTypeIssueColdRead, res, reg); err != nil {
+		t.Errorf("issue-cold-read is in the table and was refused: %v", err)
+	}
+}
+
+// nxF02Holdout is the held-out-20% fixture for work-type agreement (#3084).
+// Each card is from a real card shape, with the rule label it should match.
+// The set covers the read family boundary (code-audit-read vs issue-cold-read)
+// where agreement was weakest in the 2026-09-22 report.
+var nxF02Holdout = []struct {
+	card, want string
+	weight     float64 // relative weight for the agreement calculation
+}{
+	// Spec-rule and transcript cards: near-perfect agreement.
+	{`card-spec-rule-7
+KIND: read
+SOURCE: SPEC-DECIDE.md#rule-7
+TEST: none
+Does the code at base abc123 satisfy docs/SPEC-DECIDE.md rule 7?
+Answer CONFORMS or GAP.
+`, WorkTypeSpecRuleConformance, 1.0},
+	{`card-transcript-drift-3
+KIND: transcript-test
+TEST: none
+Replay the "nova-sprint route" heading from docs/CLI.md line for line.
+Report CLEAN or DRIFT with the first diff.
+`, WorkTypeTranscriptReproduction, 1.0},
+	// Read family: the boundary where agreement was weakest.
+	// code-audit-read: has audit scope markers.
+	{`card-audit-pr-2201
+TEST: none
+PATHS: internal/decide/worktype.go
+The files the pull request changes in #2201: brief what it does.
+`, WorkTypeCodeAuditRead, 1.2},
+	{`card-preread-1916-r2
+TEST: none
+Pre-read of PR #1916: what does it change?
+`, WorkTypeCodeAuditRead, 1.2},
+	// issue-cold-read: kind=read/report or mode=read with source.
+	{`card-read-schema-1118
+KIND: read
+SOURCE: schema#1118
+TEST: none
+Swarm read of schema#1118 at head. One finding and verdict.
+`, WorkTypeIssueColdRead, 1.0},
+	{`card-read-roadmap-q3
+KIND: report
+SOURCE: roadmap-q3
+TEST: none
+Summarise the Q3 roadmap progress for Glenn.
+`, WorkTypeIssueColdRead, 1.0},
+	// spec-contract-probe: kind=probe/spec-read or read-only.
+	{`card-probe-work-contract
+KIND: spec-read
+TEST: none
+Read-only. Does the contract say a card picks its own number?
+`, WorkTypeSpecContractProbe, 1.0},
+	{`card-explore-design-q
+KIND: design
+MODE: explore
+TEST: none
+Read only. Answer the design question about the spec; write nothing.
+`, WorkTypeSpecContractProbe, 1.0},
+	// issue-fix-red-first: kind=fix with test, or red-then-green.
+	{`card-fix-idle-kill
+KIND: fix
+SOURCE: nova-tools#2254
+TEST: go test ./internal/swarm -run TestIdleKill
+Fix the idle-kill race. Red first, then green.
+`, WorkTypeIssueFixRedFirst, 1.1},
+	{`card-fix-red-base
+KIND: fix-red
+SOURCE: tools#1800
+TEST: go test ./internal/ci
+The test fails on the base; make it pass.
+`, WorkTypeIssueFixRedFirst, 1.1},
+	// recut-at-tip: kind=recut/rebase or "recut" in first line.
+	{`recut PR #2417 at the current dev tip
+KIND: recut
+BASE: dev
+Rewrite the change at the new base.
+`, WorkTypeRecutAtTip, 0.9},
+	{`card-rebase-feature
+KIND: rebase
+BASE: main
+Rebase the feature branch.
+`, WorkTypeRecutAtTip, 0.9},
+	// conformance-cell: cell wording, or RUN + one test path.
+	{`weak-cell wave · row C12 · leg cpp
+PATHS: tests/conformance/cpp/c12_test.cpp
+RUN: make -C tests/conformance cpp ROW=C12
+DONE-WHEN: the test fails on base and passes at head.
+`, WorkTypeConformanceCell, 1.0},
+	{`matrix-cell row D5 leg go
+PATHS: tests/conformance/go/d5_test.go
+RUN: go test ./tests/conformance/go -run D5
+Write the assertion.
+`, WorkTypeConformanceCell, 1.0},
+}
+
+// TestWorkTypeHoldoutNx02 measures weighted agreement between the rule-based
+// classifier and the rule labels on the held-out-20% (nx-f02) fixture.
+// The bar is >= 90% weighted agreement, up from 78% in the 2026-09-22 report.
+func TestWorkTypeHoldoutNx02(t *testing.T) {
+	if len(nxF02Holdout) == 0 {
+		t.Fatal("nx-f02 holdout fixture is empty")
+	}
+	var totalWeight, agreementWeight float64
+	for _, tc := range nxF02Holdout {
+		got, err := ClassifyWorkType(context.Background(), nil, tc.card)
+		if err != nil {
+			t.Fatalf("classify: %v", err)
+		}
+		if got.By != WorkTypeByRules {
+			t.Errorf("card %q classified by %s, want rules (zero model calls)", tc.want, got.By)
+		}
+		totalWeight += tc.weight
+		if got.Type == tc.want {
+			agreementWeight += tc.weight
+		}
+	}
+	weighted := agreementWeight / totalWeight
+	if weighted < 0.90 {
+		t.Errorf("weighted agreement = %.2f (%.0f/%.0f), want >= 0.90; nx-f02 bar not met",
+			weighted, agreementWeight, totalWeight)
+	}
+}
