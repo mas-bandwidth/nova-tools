@@ -114,6 +114,12 @@ var workAudit = audit.Config{
 		// safepath validates --stream so that directory-mode streams cannot escape the
 		// queue root; it matches and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
+		// os/exec runs the verification verb's two reaches (#3459): the acceptance
+		// suite, whose combined output is captured into a byte slice and parsed, and
+		// git rev-parse/status, whose output is a sha and a dirty flag. Neither is
+		// wired to stdout or stderr; a test name or sha reaches a VERIFICATION line
+		// only through an oneline field.
+		`"os/exec"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,

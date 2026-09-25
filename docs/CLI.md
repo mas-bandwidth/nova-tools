@@ -3275,6 +3275,7 @@ usage:
                  [--max-bytes <n>] [--now <stamp>]
   nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] [--bench <name>] [--log <path>] (--once | --deadline <duration>)
   nova-work push --stream <kind> --lane <red|green|small|next> --card <file> (--redis <addr> | --dir <root>) [--priority <n>] [--needs <id>[,<id>...]]
+  nova-work verification --sexp <path> --repo <dir> (--check | --write) [--timeout <duration>]
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -3303,6 +3304,7 @@ verbs:
   nova-work ask            delivers ONE unit to the FRIEND who owns it, as a bus note
   nova-work asks           the open asks, oldest first, with their age and their deadline
   nova-work events         bridges the events, not ticks (cards:done stream + gh fallback poll)
+  nova-work verification   runs the suite at HEAD, lists STALE and PROPOSE criteria, --write rewrites :verification
 
 THE MACHINERY ROUTES TO FRIENDS (Glenn, 2026-09-18). A bench pulls cards; a friend pulls
 asks. A unit whose owner is a friend is therefore never cut as a card: ask renders it as
