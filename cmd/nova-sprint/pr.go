@@ -4,14 +4,15 @@
 //
 //	nova-sprint pr record --repo <owner/name|name> --n <n> [--head <sha>] [--base <b>] [--stream <s>]
 //	    [--base-sha <sha>] [--ci green|red|pending] [--mergeable true|false]
-//	    [--state open|closed] [--task <id>] [--kind member|stream] [--redis <addr>]
+//	    [--state open|closed] [--task <id>] [--kind member|stream] [--closes <n,n>|-] [--redis <addr>]
 //	nova-sprint pr lines --repo <owner/name|name> --n <n> --add "<typed line>" [--redis <addr>]
 //
 // pr:<name>:<n> is a hash (internal/nsprint/land/stream) under the one PR
 // record key (internal/nsprint/prkey): --repo owner/name and --repo name
 // write the same record read and ci read. A new record needs
 // --head, --base and --stream; a new head resets ci to pending and mergeable
-// to unknown unless the same call names them. pr lines appends one typed line
+// to unknown unless the same call names them; --closes records the issues
+// the PR's body closes (- for none), which the lander lands with it. pr lines appends one typed line
 // (SCORE who=<w> head=<sha> score=N/10 ..., DISPOSITION ..., HOLD ...) to reads.
 // One Lua call each, one receipt line. Exit 0 written, 2 refused, 6 no Redis.
 package main
@@ -78,8 +79,20 @@ func runPRRecord(ctx context.Context, args []string, out, errOut io.Writer) int 
 	fs.StringVar(&f.State, "state", "", "")
 	fs.StringVar(&f.Task, "task", "", "")
 	fs.StringVar(&f.Kind, "kind", "", "")
+	closes := fs.String("closes", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
+	}
+	if *closes == "-" {
+		f.Closes = "-"
+	} else if *closes != "" {
+		nums := strings.FieldsFunc(*closes, func(r rune) bool { return r == ',' || r == ' ' || r == '#' })
+		for _, x := range nums {
+			if k, err := strconv.Atoi(x); err != nil || k <= 0 {
+				return refuse(errOut, verb, "--closes takes issue numbers (1,2) or -, got "+strconv.Quote(*closes))
+			}
+		}
+		f.Closes = strings.Join(nums, " ")
 	}
 	full, rerr := prkey.Full(*repo)
 	if fs.NArg() > 0 || rerr != nil || *n <= 0 {

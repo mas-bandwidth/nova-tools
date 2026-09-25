@@ -14,7 +14,9 @@ import (
 
 // GitHub is the REST seam: the only GitHub calls the lander makes are the
 // ones a git remote cannot avoid (open the stream PR, merge it, comment and
-// close the members). Budget caps the calls one verb run makes; a run that
+// close the members, read a member's body when its record does not say which
+// issues it closes, and comment on and close those issues, which GitHub does
+// not close on a merge into a branch other than the default). Budget caps the calls one verb run makes; a run that
 // would exceed it stops and says so. Never GraphQL.
 type GitHub struct {
 	API    string // default https://api.github.com
@@ -127,5 +129,23 @@ func (g *GitHub) Comment(ctx context.Context, repo string, n int, body string) e
 // Close sets a PR's state to closed.
 func (g *GitHub) Close(ctx context.Context, repo string, n int) error {
 	_, err := g.do(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/pulls/%d", repo, n), map[string]string{"state": "closed"}, nil)
+	return err
+}
+
+// PRBody reads a PR's body: the lander's one read, for a member whose record
+// does not say which issues it closes.
+func (g *GitHub) PRBody(ctx context.Context, repo string, n int) (string, error) {
+	var out struct {
+		Body string `json:"body"`
+	}
+	_, err := g.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d", repo, n), nil, &out)
+	return out.Body, err
+}
+
+// CloseIssue sets an issue's state to closed (completed). GitHub closes a
+// "Closes #n" issue only on a merge into the default branch; the lander
+// lands on dev, so it closes the issue itself.
+func (g *GitHub) CloseIssue(ctx context.Context, repo string, n int) error {
+	_, err := g.do(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/issues/%d", repo, n), map[string]string{"state": "closed", "state_reason": "completed"}, nil)
 	return err
 }
