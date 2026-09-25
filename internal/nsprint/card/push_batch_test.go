@@ -211,10 +211,11 @@ func TestCardPushBatchIsOnePipeline(t *testing.T) {
 	if len(rec.singles) != 0 || len(rec.pipes) != 1 {
 		t.Fatalf("card push of 12 made %d single calls and %d pipelines, want 0 and 1: singles %v pipes %v", len(rec.singles), len(rec.pipes), rec.singles, rec.pipes)
 	}
-	// Two FCALLs per card in the one pipeline: ns_card_push, then
-	// ns_card_header (the DONE-WHEN line, #2932).
-	if got := rec.pipes[0]; len(got) != 24 || got[0] != "fcall" || got[23] != "fcall" {
-		t.Fatalf("pipeline %v, want 24 fcall (push and header per card)", got)
+	// Three commands per card in the one pipeline: SETNX of the body the
+	// wrapper runs (#4101), then ns_card_push, then ns_card_header (the
+	// DONE-WHEN line, #2932).
+	if got := rec.pipes[0]; len(got) != 36 || got[0] != "set" || got[1] != "fcall" || got[35] != "fcall" {
+		t.Fatalf("pipeline %v, want 36 (set nx, push and header per card)", got)
 	}
 	for i := range files {
 		if leg := client.HGet(ctx, keyCard(fmt.Sprintf("batch-%02d", i)), "leg").Val(); leg != "go" {

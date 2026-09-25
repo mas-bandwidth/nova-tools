@@ -72,6 +72,7 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 		return []VerbResult{refused("no card to push")}
 	}
 	docs := make([]cardDoc, len(files))
+	bodies := make([][]byte, len(files))
 	for i, f := range files {
 		body := f.Body
 		if opts.MapKind {
@@ -82,6 +83,7 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 			return []VerbResult{refused(named(f.Name, err.Error()))}
 		}
 		docs[i] = doc
+		bodies[i] = body
 	}
 	ready, i, err := batchDependenciesReady(ctx, client, sprint, docs)
 	if err != nil {
@@ -91,6 +93,10 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 	cmds := make([]*redis.Cmd, len(docs))
 	headers := make([]*redis.Cmd, len(docs))
 	for i, doc := range docs {
+		// The body the wrapper runs (card run reads BodyKey(sprint,
+		// payload_sha), nova-tools#4101): stored by every push path, in the
+		// same pipeline, once (SETNX; the sha names the bytes).
+		pipe.SetNX(ctx, BodyKey(sprint, doc.Payload), bodies[i], 0)
 		keys := []string{
 			keyCard(sprint, doc.Label),
 			keyPool(sprint),
