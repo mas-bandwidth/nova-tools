@@ -176,6 +176,33 @@ func TestDrainReleasesAndImportsOnce(t *testing.T) {
 	if n := client.XLen(ctx, keyLog()).Val(); n != logAfter {
 		t.Fatalf("refused drain wrote %d log entries, want 0", n-logAfter)
 	}
+	// #3419: resume and the import receipt are library Functions (FCALL);
+	// the server counts no EVAL, EVALSHA or SCRIPT from any client, over the
+	// pushes, the land and all three drains.
+	if hits := adHocScriptCalls(t, ctx, client); len(hits) != 0 {
+		t.Fatalf("drain sent ad-hoc scripting commands: %v", hits)
+	}
+}
+
+// adHocScriptCalls reads the server's command counters for EVAL, EVALSHA
+// (and their _RO forms) and SCRIPT: an ad-hoc script from any client on any
+// path is counted, refused or not. FCALL and FUNCTION are not in the list
+// (drain runs as the owner, which loads the library).
+func adHocScriptCalls(t *testing.T, ctx context.Context, client *redis.Client) []string {
+	t.Helper()
+	info, err := client.Info(ctx, "commandstats").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hits []string
+	for _, line := range strings.Split(info, "\n") {
+		name, _, _ := strings.Cut(strings.TrimSpace(line), ":")
+		name = strings.TrimPrefix(name, "cmdstat_")
+		if strings.HasPrefix(name, "eval") || strings.HasPrefix(name, "script") {
+			hits = append(hits, strings.TrimSpace(line))
+		}
+	}
+	return hits
 }
 
 // TestDrainRefusesBadInput is the negative control for the arguments: a bad
