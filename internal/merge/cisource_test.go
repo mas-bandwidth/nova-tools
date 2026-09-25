@@ -328,14 +328,11 @@ func TestCIVerdictFromRecordLaw(t *testing.T) {
 		t.Setenv("NOVA_REDIS_HOST", "")
 		t.Setenv("NOVA_REDIS_PORT", "")
 
-		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		t.Cleanup(func() { _ = client.Close() })
-
 		// Write a green CI record that the bench user can read.
 		mr.HSet(CIRequestKey(repo, sha), "ci", "green", "final", "OK")
 
 		runner := &ciFakeRunner{out: ghGreen}
-		c, err := NewGH(repo, time.Second, runner, WithCISource(&RedisCISource{Client: client})).Checks(sha)
+		c, err := NewGH(repo, time.Second, runner).Checks(sha)
 		if err != nil {
 			t.Fatalf("Checks = %v; want nil (ci: from-redis)", err)
 		}
