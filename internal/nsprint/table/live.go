@@ -15,6 +15,8 @@
 //	q:blocked             ZCARD, the one blocked count     (friend-queue, #3219)
 //	bench:*               SCAN COUNT 1000, then HGETALL    (bench-row, card-dealer)
 //	bench:<b>:cards:<w>   ZCARD, w = ready working done ok fail (the card move, #3692)
+//	bench:_pool:cards:ready ZCARD, the pool line: cards not dealt (#2733)
+//	sprint:<S>:cards      EXISTS, the sprint has cards: the pool line prints at 0
 //
 // A host row's ready, working, done, ok and fail are the ZCARDs of its card
 // views, read in the same pipeline (nova-tools#3692, ONE PLACE: every card is
@@ -73,14 +75,19 @@ type BenchRow struct {
 
 // LiveSnapshot is one read of the live keyspace.
 type LiveSnapshot struct {
-	Config      LiveConfig
-	Friends     []FriendRow
-	XY          string // "" when the key is missing
-	Landed      string // "" when the key is missing
-	Pitstop     bool   // sprint:<S>:pitstop holds a value: the title says so (#3423)
-	Blocked     string // "" when the count did not come back
-	Benches     []BenchRow
-	Pool        string // bench:pool queue; PoolPresent says whether the key exists
+	Config  LiveConfig
+	Friends []FriendRow
+	XY      string // "" when the key is missing
+	Landed  string // "" when the key is missing
+	Pitstop bool   // sprint:<S>:pitstop holds a value: the title says so (#3423)
+	Blocked string // "" when the count did not come back
+	Benches []BenchRow
+	// Pool is the pool line's count: the ZCARD of bench:_pool:cards:ready
+	// (the undealt view the card move keeps, #2733) whenever that view has
+	// cards or the sprint's roster exists; otherwise the retired card-dealer
+	// bench:pool hash's queue, as the bash of record read it. PoolPresent
+	// says whether the line prints.
+	Pool        string
 	PoolPresent bool
 	// XYFileLine / XYFileMod are the fallback file, read only when XY == "".
 	XYFileLine string
@@ -130,6 +137,11 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 	// The pit stop rides the xy/landed MGET: no extra command (#3423).
 	mget := pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy", "sprint:"+cfg.Sprint+":landed", "sprint:"+cfg.Sprint+":pitstop")
 	blocked := pipe.ZCard(ctx, "q:blocked")
+	poolView := pipe.ZCard(ctx, PoolViewKey)
+	var roster *redis.IntCmd
+	if cfg.Sprint != "" {
+		roster = pipe.Exists(ctx, "sprint:"+cfg.Sprint+":cards")
+	}
 	hashes := make([]*redis.MapStringStringCmd, len(benchKeys))
 	cards := make([][]*redis.IntCmd, len(benchKeys))
 	for i, key := range benchKeys {
@@ -188,10 +200,31 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		cardCells(fields, cards[i])
 		snap.Benches = append(snap.Benches, BenchRow{Key: strings.TrimPrefix(key, "bench:"), Fields: fields})
 	}
+	poolFromView(snap, poolView, roster)
 	if snap.XY == "" && cfg.XYFile != "" {
 		snap.XYFileLine, snap.XYFileMod, snap.XYFileOK = readXYFile(cfg.XYFile)
 	}
 	return snap, nil
+}
+
+// PoolViewKey is the undealt pool, the card move's bench view for cards with
+// no bench (card.BenchCardsKey("_pool", "ready")).
+const PoolViewKey = "bench:_pool:cards:ready"
+
+// poolFromView sets the pool line from the undealt view (#2733): the dealer's
+// bench:pool hash is retired and nothing writes it, so the line reads the set
+// the card move keeps. It prints when the view has cards or the sprint has a
+// roster (an empty pool is "0", not no line); a view that could not be read
+// prints "?", never a false 0. With neither, the legacy hash (if any) stands.
+func poolFromView(snap *LiveSnapshot, view, roster *redis.IntCmd) {
+	live := roster != nil && roster.Err() == nil && roster.Val() > 0
+	n, err := view.Result()
+	switch {
+	case err != nil && live:
+		snap.Pool, snap.PoolPresent = "?", true
+	case err == nil && (n > 0 || live):
+		snap.Pool, snap.PoolPresent = strconv.FormatInt(n, 10), true
+	}
 }
 
 // benchCardCells are the host row's card columns, each a ZCARD of
