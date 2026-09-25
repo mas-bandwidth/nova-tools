@@ -22,7 +22,10 @@
 //	ws:log                  XRANGE over the last hour: the landed rate for the ETA
 //	ws:done0                HGETALL: each friend's done count at the last `table clear`
 //	benches                 SMEMBERS, the bench list; bench:<b> HGETALL per member
-//	friends                 SMEMBERS when no roster is given; friend:<f> HMGET
+//	friends                 SMEMBERS when no roster is given; friend:<f> HMGET at, up
+//	friend:<f>:cards:<w>    ZCARD for ready, working, done: the friend's cells are
+//	                        the sizes of the sets its tasks move through (the card
+//	                        model, rowan-new specs/ws-index.md; nova-tools#3779)
 //	friend:<f>:down         EXISTS (a string or a hash; either means down)
 //	s:<S>:pitstop           EXISTS, with the legacy sprint:<S>:pitstop
 //
@@ -47,6 +50,13 @@ import (
 
 // WSStates are the five per-stream sets the table counts, in reply order.
 var WSStates = []string{"waiting", "ready", "working", "merging", "landed"}
+
+// FriendWheres are the three friend:<f>:cards:<where> sets the friend block
+// counts, in column order.
+var FriendWheres = []string{"ready", "working", "done"}
+
+// FriendCardsKey is one friend's set of task ids at where.
+func FriendCardsKey(friend, where string) string { return "friend:" + friend + ":cards:" + where }
 
 // DoneBaseKey holds each friend's done count at the last `table clear`
 // (#3637): the friend block shows done minus this, so a clear zeroes the
@@ -162,9 +172,13 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		roster = r.friends
 	}
 	rows := make([]*redis.SliceCmd, len(roster))
+	cells := make([][]*redis.IntCmd, len(roster))
 	downs := make([]*redis.IntCmd, len(roster))
 	for i, f := range roster {
-		rows[i] = pipe.HMGet(ctx, "friend:"+f, "at", "up", "ready", "working", "done")
+		rows[i] = pipe.HMGet(ctx, "friend:"+f, "at", "up")
+		for _, w := range FriendWheres {
+			cells[i] = append(cells[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
+		}
 		downs[i] = pipe.Exists(ctx, "friend:"+f+":down")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
@@ -231,8 +245,14 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 	for i, f := range roster {
 		row := FriendRow{Name: f}
-		if got, err := rows[i].Result(); err == nil && len(got) == 5 {
-			row.At, row.Up, row.Ready, row.Working, row.Done = pipeValue(got[0]), pipeValue(got[1]), pipeValue(got[2]), pipeValue(got[3]), pipeValue(got[4])
+		if got, err := rows[i].Result(); err == nil && len(got) == 2 {
+			row.At, row.Up = pipeValue(got[0]), pipeValue(got[1])
+		}
+		counts := []*string{&row.Ready, &row.Working, &row.Done}
+		for j, c := range cells[i] {
+			if n, err := c.Result(); err == nil {
+				*counts[j] = strconv.FormatInt(n, 10)
+			}
 		}
 		if downs[i].Val() > 0 {
 			row.Down = "down"

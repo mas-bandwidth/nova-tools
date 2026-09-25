@@ -9,15 +9,21 @@
 --   land:<repo>:<slug>       hash  the stream landing: streams, slug, base, base_sha, branch,
 --                                  head, members, tasks, parked, pr, state, tests, at
 --   land:<repo>:streams      set   every slug with a land hash (status reads it, no scan)
---   ws:<stream>:merging|working|landed  zset  task ids (ws-index)
+--   ws:<stream>:merging|working  zset  task ids (ws-index; built parks a member back)
 --   task:<id>                hash  state, state_at
 --   ws:log                   stream one entry per move: id, stream, from, to, by, why, at
 --
 -- ops:
 --   record  {repo,n,now,fields{...}}          create or update pr:<repo>:<n>
 --   line    {repo,n,now,line}                 append one typed line to reads
---   built   {repo,slug,now,by,land{...},stream_pr{n,fields{...}}?,parked[{task,stream,n,why}]}
+--   built   {repo,slug,now,by,land{...},stream_pr{n,fields{...}}?,parked[{task,stream,n,why}],
+--            commit_closes[{n,closes}] (each kept member's commit-message closes, on its record)}
 --   landed  {repo,slug,now,by,merge_sha,why,members[{task,stream,n,close}],pr}
+--
+-- landed marks the landing and the records merged; it moves no task. Each
+-- member's tasks move to landed, with the CLOSE line on its record, in the
+-- nova_sprint library's ns_land_member (one call per member, fenced by this
+-- landing's merged state; nova-tools#3779), the same move every event makes.
 local op = ARGV[1]
 local p = cjson.decode(ARGV[2])
 
@@ -40,11 +46,13 @@ local function wslog(id, stream, from, to, by, why, at)
     'by', by, 'why', why, 'at', at)
 end
 
--- move one task between two ws sets of its stream; returns 1 when it was in `from`.
-local function move(id, stream, from, to, score, by, why, at)
+-- move one task between two ws sets of its stream; returns 1 when it was in
+-- `from`. The score is the task's age and a move keeps it (ws-index).
+local function move(id, stream, from, to, by, why, at)
   if id == nil or id == '' or stream == nil or stream == '' then return 0 end
   local fromkey = 'ws:' .. stream .. ':' .. from
-  if not redis.call('ZSCORE', fromkey, id) then return 0 end
+  local score = redis.call('ZSCORE', fromkey, id)
+  if not score then return 0 end
   redis.call('ZREM', fromkey, id)
   redis.call('ZADD', 'ws:' .. stream .. ':' .. to, score, id)
   redis.call('HSET', 'task:' .. id, 'state', to, 'state_at', at)
@@ -95,13 +103,17 @@ if op == 'built' then
   local lk = landkey(p.repo, p.slug)
   local moved = 0
   for _, m in ipairs(p.parked or {}) do
-    moved = moved + move(m.task, m.stream, 'merging', 'working', p.now, p.by, m.why, p.now)
+    moved = moved + move(m.task, m.stream, 'merging', 'working', p.by, m.why, p.now)
     if (m.n or '') ~= '' then
       local pk = prkey(p.repo, m.n)
       if redis.call('EXISTS', pk) == 1 then
         redis.call('HSET', pk, 'state', 'parked', 'park', m.why, 'updated_at', p.now)
       end
     end
+  end
+  for _, m in ipairs(p.commit_closes or {}) do
+    local pk = prkey(p.repo, m.n)
+    if redis.call('EXISTS', pk) == 1 then redis.call('HSET', pk, 'commit_closes', m.closes) end
   end
   redis.call('DEL', lk)
   hset(lk, p.land)
@@ -117,11 +129,7 @@ if op == 'landed' then
   local state = redis.call('HGET', lk, 'state')
   if state == 'merged' then return {'ALREADY', redis.call('HGET', lk, 'merge_sha') or ''} end
   if state ~= 'open' then return {'REFUSED', 'land ' .. lk .. ' state is ' .. tostring(state) .. ', not open'} end
-  local moved, missing = 0, 0
   for _, m in ipairs(p.members or {}) do
-    local ok = move(m.task, m.stream, 'merging', 'landed', p.now, p.by, m.close, p.now)
-    moved = moved + ok
-    if ok == 0 then missing = missing + 1 end
     local pk = prkey(p.repo, m.n)
     if redis.call('EXISTS', pk) == 1 then
       redis.call('HSET', pk, 'state', 'landed', 'landed_with', p.repo .. '#' .. p.pr,
@@ -134,7 +142,7 @@ if op == 'landed' then
     redis.call('HSET', sk, 'state', 'merged', 'merge_sha', p.merge_sha, 'updated_at', p.now)
   end
   wslog(lk, redis.call('HGET', lk, 'streams') or '', 'merging', 'landed', p.by, p.why, p.now)
-  return {'OK', tostring(moved), tostring(missing)}
+  return {'OK'}
 end
 
 return {'REFUSED', 'unknown op ' .. tostring(op)}

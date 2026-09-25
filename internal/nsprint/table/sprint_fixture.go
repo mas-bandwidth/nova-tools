@@ -98,14 +98,39 @@ func SprintFixture() [][]string {
 	// Friends: rowan up (done 14, 10 at the last clear), johnny down flag,
 	// emma up, stella's beat 30 s old; the friends SET also names ghost,
 	// who has no row.
+	// The counts are the friend's card sets (friend:<f>:cards:<where>); the
+	// hash holds only the beat (at, up).
 	cmds = append(cmds,
 		[]string{"SADD", "friends", "rowan", "johnny", "emma", "stella", "ghost"},
-		[]string{"HSET", "friend:rowan", "at", at(-1 * time.Second), "up", "1", "ready", "0", "working", "12", "done", "14"},
-		[]string{"HSET", "friend:johnny", "at", at(-1 * time.Second), "up", "1", "ready", "2", "working", "0", "done", "3"},
+		[]string{"HSET", "friend:rowan", "at", at(-1 * time.Second), "up", "1"},
+		[]string{"HSET", "friend:johnny", "at", at(-1 * time.Second), "up", "1"},
 		[]string{"SET", "friend:johnny:down", "out-of-credits@2026-09-24T23:00Z"},
-		[]string{"HSET", "friend:emma", "at", at(-2 * time.Second), "up", "1", "ready", "1", "working", "4", "done", "0"},
-		[]string{"HSET", "friend:stella", "at", at(-30 * time.Second), "up", "1", "ready", "0", "working", "1", "done", "5"},
+		[]string{"HSET", "friend:emma", "at", at(-2 * time.Second), "up", "1"},
+		[]string{"HSET", "friend:stella", "at", at(-30 * time.Second), "up", "1"},
 		[]string{"HSET", DoneBaseKey, "rowan", "10"},
 	)
+	for _, f := range []struct {
+		name   string
+		counts [3]int
+	}{
+		{"rowan", [3]int{0, 12, 14}},
+		{"johnny", [3]int{2, 0, 3}},
+		{"emma", [3]int{1, 4, 0}},
+		{"stella", [3]int{0, 1, 5}},
+	} {
+		cmds = append(cmds, FriendCards(f.name, f.counts)...)
+	}
+	return cmds
+}
+
+// FriendCards is n[i] task ids in friend:<name>:cards:<FriendWheres[i]>, as
+// ZADD commands scored by age.
+func FriendCards(name string, n [3]int) [][]string {
+	var cmds [][]string
+	for i, w := range FriendWheres {
+		for k := 0; k < n[i]; k++ {
+			cmds = append(cmds, []string{"ZADD", FriendCardsKey(name, w), strconv.Itoa(k + 1), fmt.Sprintf("%s-%s-%d", name, w, k)})
+		}
+	}
 	return cmds
 }
