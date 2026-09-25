@@ -1,0 +1,12 @@
+=== RUN   TestTakeAvailableOneSprintEightSlotsTwoTrips
+TakeAvailable called
+calling FCall
+FCall returned
+looping retry 0
+returning claims
+    take_batch_test.go:157: take 1 sprint 8 slots: 8 claims, 1 round trips in 714.833µs
+    take_batch_test.go:159: claims=8 pipelines=[] singles=[fcall ns_task_take_n]; want 8 claims in one pipeline and one FCALL
+--- FAIL: TestTakeAvailableOneSprintEightSlotsTwoTrips (0.75s)
+FAIL
+FAIL	github.com/mas-bandwidth/nova-tools/internal/nsprint/task	1.368s
+FAIL

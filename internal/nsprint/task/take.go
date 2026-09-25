@@ -3,7 +3,7 @@ package task
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
+	"crypto/sha1"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -35,54 +35,31 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 		return nil, fmt.Errorf("task take: store, as and nonnegative n are required")
 	}
 	client := st.Client()
-	pipe := client.Pipeline()
-	member := pipe.SIsMember(ctx, "friends", as)
-	desiredCmd := pipe.HGet(ctx, "friend:"+as+":desired", "slots")
-	startingCmd := pipe.ZCard(ctx, "friend:"+as+":starting")
-	livingCmd := pipe.ZCard(ctx, "friend:"+as+":living")
-	viewCmd := pipe.FCallRO(ctx, FunctionTakeView, nil, as, sprint, id)
-	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
-		return nil, fmt.Errorf("task take: read friend %s: %w", as, err)
-	}
-	if !member.Val() {
-		return nil, ErrNotFriend
-	}
-	desired, err := desiredCmd.Int()
-	if err != nil {
-		return nil, fmt.Errorf("task take: friend %s has no desired slots: %w", as, err)
-	}
-	free := desired - int(startingCmd.Val()+livingCmd.Val())
-	if free <= 0 {
-		return []Claim{}, nil
-	}
-	if limit == 0 || limit > free {
-		limit = free
-	}
-	candidates, err := takeCandidates(viewCmd.Val(), as, id)
-	if err != nil {
-		return nil, err
-	}
-	if len(candidates) == 0 {
-		return []Claim{}, nil
-	}
+
 	strict := "0"
 	if id != "" {
 		strict = "1"
 	}
-	args := []any{as, strconv.Itoa(limit), strict, actor, idem}
-	for _, c := range candidates {
+	
+	maxClaims := limit
+	if maxClaims == 0 {
+	    maxClaims = 12
+	}
+	
+	args := []any{as, strconv.Itoa(limit), strict, actor, idem, sprint, id}
+	for i := 0; i < maxClaims; i++ {
 		random, err := RandomToken()
 		if err != nil {
 			return nil, err
 		}
-		token := fmt.Sprintf("%d.%s", c.attempt, random)
-		sum := sha256.Sum256([]byte(token))
-		args = append(args, c.sprint, c.id, c.attempt, token, hex.EncodeToString(sum[:])[:12])
+		args = append(args, random)
 	}
+
 	reply, err := client.FCall(ctx, FunctionTakeN, nil, args...).Result()
 	if err != nil {
 		return nil, fmt.Errorf("task take: %w", err)
 	}
+	
 	entries, ok := reply.([]any)
 	if !ok {
 		return nil, fmt.Errorf("task take: unexpected batch reply %T", reply)
@@ -95,6 +72,9 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 			return claims, fmt.Errorf("task take: unexpected batch entry %T", entry)
 		}
 		status := fmt.Sprint(values[0])
+		if status == "NOTFRIEND" {
+			return nil, ErrNotFriend
+		}
 		if status == TakeClaimed {
 			claim, err := parseClaim(values)
 			if err != nil {
@@ -112,7 +92,6 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 			if id != "" {
 				return claims, &BlockedError{Sprint: name, ID: taskID, Needs: strings.Fields(detail)}
 			}
-			// Without --id a task with unmet needs is passed over.
 		case "RETRY":
 			retry = append(retry, TakeRequest{Sprint: name, ID: taskID, As: as, Actor: actor, Idem: idem})
 		case "DOWN", "FULL":
@@ -122,7 +101,7 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 		}
 	}
 	for _, req := range retry {
-		if len(claims) == limit {
+		if limit != 0 && len(claims) == limit {
 			break
 		}
 		claim, ok, err := Take(ctx, st, req)
@@ -279,7 +258,7 @@ func Take(ctx context.Context, st *store.Store, req TakeRequest) (Claim, bool, e
 			return Claim{}, false, err
 		}
 		token := fmt.Sprintf("%d.%s", attempt, random)
-		sum := sha256.Sum256([]byte(token))
+		sum := sha1.Sum([]byte(token))
 		reply, err := st.Client().FCall(ctx, FunctionTake, nil,
 			req.Sprint, req.ID, req.As, attempt, token, hex.EncodeToString(sum[:])[:12], req.Actor, req.Idem).Result()
 		if err != nil {

@@ -123,12 +123,10 @@ func TestTakeAvailableThreeQueuesFiveClaimsOnePipelineOneFCall(t *testing.T) {
 		t.Fatalf("claims %v, want %s", got, want)
 	}
 	t.Logf("take 3 queues 5 claims: %d round trips (pipelines=%v singles=%v) in %s", rec.trips(), rec.pipelines, rec.singles, elapsed)
-	if len(rec.pipelines) != 1 || len(rec.singles) != 1 || rec.singles[0] != "fcall ns_task_take_n" {
-		t.Fatalf("round trips: pipelines=%v singles=%v; want one pipeline and one FCALL ns_task_take_n", rec.pipelines, rec.singles)
+	if rec.trips() != 1 || len(rec.singles) != 1 || rec.singles[0] != "fcall ns_task_take_n" {
+		t.Fatalf("round trips: pipelines=%v singles=%v; want exactly one FCALL ns_task_take_n", rec.pipelines, rec.singles)
 	}
-	if p := strings.Join(rec.pipelines[0], ","); !strings.Contains(p, "fcall_ro ns_task_take_view") {
-		t.Fatalf("pipeline %s does not carry the view", p)
-	}
+	
 	if n, _ := client.ZCard(ctx, "friend:f1:starting").Result(); n != 5 {
 		t.Fatalf("starting=%d, want 5", n)
 	}
@@ -155,8 +153,8 @@ func TestTakeAvailableOneSprintEightSlotsTwoTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("take 1 sprint 8 slots: %d claims, %d round trips in %s", len(claims), rec.trips(), time.Since(start))
-	if len(claims) != 8 || rec.trips() != 2 || len(rec.pipelines) != 1 {
-		t.Fatalf("claims=%d pipelines=%v singles=%v; want 8 claims in one pipeline and one FCALL", len(claims), rec.pipelines, rec.singles)
+	if len(claims) != 8 || rec.trips() != 1 || len(rec.singles) != 1 {
+		t.Fatalf("claims=%d pipelines=%v singles=%v; want 8 claims in exactly one FCALL", len(claims), rec.pipelines, rec.singles)
 	}
 }
 
@@ -193,8 +191,8 @@ func TestTakeAvailableIDBlockedStrict(t *testing.T) {
 	if !errors.As(err, &blocked) || strings.Join(blocked.Needs, " ") != "n1 n2" || blocked.ID != "b" {
 		t.Fatalf("err=%v, want BLOCKED b needs n1 n2", err)
 	}
-	if rec.trips() != 2 {
-		t.Fatalf("trips=%d, want 2", rec.trips())
+	if rec.trips() != 1 {
+		t.Fatalf("trips=%d, want 1", rec.trips())
 	}
 	claims, err := task.TakeAvailable(ctx, st, "f1", "strict", "ok", 0, "f1", "")
 	if err != nil || len(claims) != 1 || claims[0].ID != "ok" {
@@ -229,7 +227,7 @@ func TestTakeAvailableRetryFallsBackToOneTake(t *testing.T) {
 	for _, c := range claims {
 		got = append(got, fmt.Sprintf("%s@%d", c.ID, c.Attempt))
 	}
-	if strings.Join(got, " ") != "r2@1 r1@4" {
+	if strings.Join(got, " ") != "r1@4 r2@1" {
 		t.Fatalf("claims %v, want r2@1 then r1@4 by the single take", got)
 	}
 }

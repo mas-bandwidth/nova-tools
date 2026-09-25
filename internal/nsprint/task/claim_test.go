@@ -2,7 +2,7 @@ package task_test
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/sha1"
 	"encoding/hex"
 	"strings"
 	"sync"
@@ -197,7 +197,7 @@ func TestControl04ConcurrentTakesOneOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256([]byte(winner.Token))
+	sum := sha1.Sum([]byte(winner.Token))
 	wantSHA := hex.EncodeToString(sum[:])[:12]
 	for _, entry := range entries {
 		if entry.Values["kind"] == "task take" {

@@ -1,0 +1,18 @@
+=== RUN   TestTakeAvailableThreeQueuesFiveClaimsOnePipelineOneFCall
+    take_batch_test.go:125: take 3 queues 5 claims: 1 round trips (pipelines=[] singles=[fcall ns_task_take_n]) in 530.375µs
+--- PASS: TestTakeAvailableThreeQueuesFiveClaimsOnePipelineOneFCall (2.72s)
+=== RUN   TestTakeAvailableOneSprintEightSlotsTwoTrips
+    take_batch_test.go:155: take 1 sprint 8 slots: 8 claims, 1 round trips in 596.542µs
+--- PASS: TestTakeAvailableOneSprintEightSlotsTwoTrips (2.89s)
+=== RUN   TestTakeAvailableFullFriendOneTrip
+--- PASS: TestTakeAvailableFullFriendOneTrip (2.09s)
+=== RUN   TestTakeAvailableIDBlockedStrict
+--- PASS: TestTakeAvailableIDBlockedStrict (2.15s)
+=== RUN   TestTakeAvailableRetryFallsBackToOneTake
+--- PASS: TestTakeAvailableRetryFallsBackToOneTake (1.01s)
+=== RUN   TestTakeAvailableClaimsInRankOrder
+    take_test.go:98: claim 1: got L, want X1
+--- FAIL: TestTakeAvailableClaimsInRankOrder (2.14s)
+FAIL
+FAIL	github.com/mas-bandwidth/nova-tools/internal/nsprint/task	13.310s
+FAIL
