@@ -1448,7 +1448,9 @@ func TestValidRemotePathTakesWhatItShould(t *testing.T) {
 // would put the fleet's trust inside a machine the release is being pushed TO,
 // and a key named on argv is a key in every `ps` on the box.
 func TestSSHOptionsForbidAgentForwardingAndKeysOnArgv(t *testing.T) {
-	joined := strings.Join(SSHOptions, " ")
+	// The whole composed argv (internal/benchsh's, #3350) carries the policy.
+	argv := ExecSSH{Path: "/usr/bin/ssh"}.sshArgs("hulk")
+	joined := strings.Join(argv, " ")
 	if !strings.Contains(joined, "ForwardAgent=no") {
 		t.Fatalf("ForwardAgent=no is not said out loud: %s", joined)
 	}
@@ -1460,10 +1462,10 @@ func TestSSHOptionsForbidAgentForwardingAndKeysOnArgv(t *testing.T) {
 			t.Fatalf("the ssh options carry %q: %s", never, joined)
 		}
 	}
-	// And the whole composed argv for a real machine carries none of them.
-	argv := ExecSSH{Path: "/usr/bin/ssh"}.sshArgs("hulk")
-	if argv[len(argv)-1] != "hulk" {
-		t.Fatalf("the machine is not the last argument: %v", argv)
+	// The machine, then bash -s -- as the only remote command word: no command
+	// line on argv for the machine's login shell to read.
+	if argv[len(argv)-2] != "hulk" || argv[len(argv)-1] != "bash -s --" {
+		t.Fatalf("argv does not end with the machine and bash -s --: %v", argv)
 	}
 	for _, a := range argv {
 		if a == "-i" || a == "-A" || strings.HasSuffix(a, ".key") || strings.HasSuffix(a, ".pem") {

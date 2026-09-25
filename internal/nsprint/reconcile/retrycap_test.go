@@ -30,6 +30,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 echo "open $1" >> %q
+IFS= read -r benchsh_line # internal/benchsh's exec line; the batch follows
 echo "SECRETS EXEC OK as=ctl-cap keys=1 only=1 required=1 cmd=nova-sprint" >&2
 n=0
 while read -r s label attempt token; do

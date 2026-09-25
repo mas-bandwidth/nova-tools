@@ -58,9 +58,10 @@ var sshFamily = []string{"ssh", "scp", "sftp", "rsync"}
 //	    which catches a seam that hands the work to a helper, where the child is
 //	    one call deeper but the function IS the seam a caller reaches for.
 //
-// Every host seam calls testguard.RefuseHosts, and where the function starts a
-// child itself the call stands BEFORE the first one: a guard after the exec
-// guards nothing.
+// Every host seam calls testguard.RefuseHosts (directly, or through
+// internal/benchsh's Run, RunInput or Command, which call it before the child
+// starts), and where the function starts a child itself the call stands BEFORE
+// the first one: a guard after the exec guards nothing.
 func TestNoTestReachesAHostThroughAnUnfakedSeam(t *testing.T) {
 	root := repoRoot(t)
 	allow := readHostSeamAllowlist(t)
@@ -279,8 +280,14 @@ func isExecCommand(call *ast.CallExpr) bool {
 	return sel.Sel.Name == "Command" || sel.Sel.Name == "CommandContext"
 }
 
-// guardCallPos is the position of the first testguard.RefuseHosts call in fn,
-// or NoPos when there is none.
+// benchshGuards are internal/benchsh's entry points: each calls
+// testguard.RefuseHosts before its ssh child starts (#2932, #3350), so a seam
+// that goes through one is guarded.
+var benchshGuards = map[string]bool{"Run": true, "RunInput": true, "Command": true}
+
+// guardCallPos is the position of the first testguard.RefuseHosts call in fn
+// (or of a call into internal/benchsh, which makes it), or NoPos when there is
+// none.
 func guardCallPos(fn *ast.FuncDecl) token.Pos {
 	pos := token.NoPos
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -289,11 +296,11 @@ func guardCallPos(fn *ast.FuncDecl) token.Pos {
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "RefuseHosts" {
+		if !ok {
 			return true
 		}
 		id, ok := sel.X.(*ast.Ident)
-		if !ok || id.Name != "testguard" {
+		if !ok || !(id.Name == "testguard" && sel.Sel.Name == "RefuseHosts" || id.Name == "benchsh" && benchshGuards[sel.Sel.Name]) {
 			return true
 		}
 		if pos == token.NoPos || call.Pos() < pos {

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+	"github.com/mas-bandwidth/nova-tools/internal/benchsh"
 )
 
 // ErrSessionPerCard is the refusal of a launcher that asks for a second ssh
@@ -19,10 +19,12 @@ import (
 // that shape (#2743); the pass refuses it before the second child starts.
 var ErrSessionPerCard = errors.New("refused: one ssh session per bench per pass; this launcher asked for a second")
 
-// DefaultRemote is the bench-side verb the one session runs (#2756 4.3 `card
+// DefaultRemote is the bench-side script the one session runs (#2756 4.3 `card
 // launch --stdin`, #2931): it reads `<S> <label> <attempt> <token>` lines,
 // starts each card wrapper detached in its own session and exits, so the
-// session never outlives the batch. bash, never the login shell's dialect.
+// session never outlives the batch. It reaches the bench through
+// internal/benchsh with the batch as its stdin (#3350): bash, never the login
+// shell's dialect; `bash -lc` for the bench's login PATH.
 const DefaultRemote = "exec bash -lc 'exec nova-sprint card launch --stdin'"
 
 // DefaultConnectTimeout bounds how long a wedged sshd can hold the pass: the
@@ -194,11 +196,12 @@ func Refusals(stdout string) (map[int]string, bool) {
 	return out, ran
 }
 
-// Remote is the production Dialer: the system ssh (or Program), BatchMode, a
-// connect timeout, one remote command.
+// Remote is the production Dialer: the system ssh (or Program) through
+// internal/benchsh, BatchMode, a connect timeout, one bash script that reads
+// the batch on its stdin.
 type Remote struct {
 	Program        string // default "ssh"; a test's fake lives in t.TempDir()
-	Command        string // default DefaultRemote
+	Command        string // the bench-side script; default DefaultRemote
 	ConnectTimeout time.Duration
 	RunTimeout     time.Duration
 }
@@ -212,12 +215,10 @@ type remoteSession struct {
 }
 
 // Run starts the one ssh child for the batch. It is the package's only host
-// seam and calls testguard.RefuseHosts before the child starts.
+// seam, through internal/benchsh (which calls testguard.RefuseHosts before the
+// child starts).
 func (s *remoteSession) Run(ctx context.Context, stdin []byte) error {
 	program := s.r.Program
-	if program == "" {
-		program = "ssh"
-	}
 	command := s.r.Command
 	if command == "" {
 		command = DefaultRemote
@@ -230,20 +231,15 @@ func (s *remoteSession) Run(ctx context.Context, stdin []byte) error {
 	if run <= 0 {
 		run = DefaultRunTimeout
 	}
-	secs := int((connect + time.Second - 1) / time.Second)
-	args := []string{
-		"-o", "BatchMode=yes",
-		"-o", "ConnectTimeout=" + strconv.Itoa(secs),
-		"-o", "ServerAliveInterval=5",
-		"-o", "ServerAliveCountMax=2",
-		s.bench.Target(), command,
-	}
-	testguard.RefuseHosts(program, args...)
+	target := benchsh.Target{Host: s.bench.Target(), SSH: program, ConnectTimeout: connect,
+		Options: []string{"ServerAliveInterval=5", "ServerAliveCountMax=2"}}
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, run)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, program, args...)
-	cmd.Stdin = bytes.NewReader(stdin)
+	cmd, err := benchsh.Command(ctx, target, command, bytes.NewReader(stdin))
+	if err != nil {
+		return &SessionError{Bench: s.bench.Name, State: SSHError, Exit: -1, Stderr: err.Error()}
+	}
 	var stderr bytes.Buffer
 	var stdout capped
 	cmd.Stderr = &stderr
@@ -254,7 +250,7 @@ func (s *remoteSession) Run(ctx context.Context, stdin []byte) error {
 	ownGroup(cmd)
 	cmd.Cancel = func() error { return killGroup(cmd) }
 	cmd.WaitDelay = DefaultKillGrace
-	err := cmd.Run()
+	err = cmd.Run()
 	if err == nil {
 		return nil
 	}

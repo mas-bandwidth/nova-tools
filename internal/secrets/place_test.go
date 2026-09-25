@@ -2,6 +2,8 @@ package secrets
 
 import (
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -36,4 +38,38 @@ func TestPlaceSSHSeamPanicsUnderTheGuard(t *testing.T) {
 		}
 	}()
 	_ = sshPlaceSecret("ssh", "bench.invalid", "/tmp/secret", "value")
+}
+
+// TestPlaceSSHWritesTheValueThroughBenchsh (#3350): sshPlaceSecret runs through
+// internal/benchsh, the value rides stdin after the one exec line, and the file lands
+// byte for byte at the quoted path with mode 0600. The fake ssh plays the machine
+// locally (its login shell is `bash -c` on the remote command word) and records argv, so
+// the test also proves the value never reaches argv.
+func TestPlaceSSHWritesTheValueThroughBenchsh(t *testing.T) {
+	dir := t.TempDir()
+	argvLog := filepath.Join(dir, "argv")
+	ssh := filepath.Join(dir, "ssh")
+	fake := "#!/bin/bash\nprintf '%s\\n' \"$@\" > " + strconv.Quote(argvLog) + "\nwhile [ \"$1\" = \"-o\" ]; do shift 2; done\nshift\nexec bash -c \"$1\"\n"
+	if err := os.WriteFile(ssh, []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "it's here", "sub dir", "secret")
+	value := "line one\nit's $HOME `x` \"q\"\nno trailing newline"
+	if err := sshPlaceSecret(ssh, "bench.example", dest, value); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || string(got) != value {
+		t.Fatalf("placed %q (%v), want the value byte for byte", got, err)
+	}
+	if fi, err := os.Stat(dest); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v (%v), want 0600", fi.Mode().Perm(), err)
+	}
+	argv, err := os.ReadFile(argvLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(argv), "\nbash -s -- ") || strings.Contains(string(argv), "no trailing newline") {
+		t.Fatalf("ssh argv %q: want internal/benchsh's bash -s -- and no value", argv)
+	}
 }

@@ -7,9 +7,15 @@
 // to `refs/heads/$x:refs/...` in #3291 cannot happen here. The script itself is
 // read by bash from stdin.
 //
-// Every other ssh exec site in the tree is listed in
-// internal/ci/testdata/bench-runners.allow with its retiring issue;
-// TestCIOneBenchRunner refuses a new one.
+// A site whose stdin also carries data (a batch, a secret's value, a tar
+// stream) passes it as Command's input: stdin is then the one line
+// `exec bash -c $'<script>' bash "$@"` followed by the data. bash reads a
+// pipe one byte at a time, so it stops at that line's newline and the script
+// it execs inherits the rest of stdin untouched (#3350).
+//
+// There is no other ssh exec site in the tree: TestCIOneBenchRunner fails any
+// function outside this package that runs ssh itself (#3350 moved the last
+// ones here and removed the allow list).
 package benchsh
 
 import (
@@ -17,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -30,12 +37,14 @@ const DefaultConnectTimeout = 5 * time.Second
 
 // Target is the bench: host and user come from the bench's own beat
 // (bench:<b>:beat), never assumed. SSH is the program (default "ssh"); a test
-// puts a fake in t.TempDir().
+// puts a fake in t.TempDir(). Options are further `-o` values after BatchMode
+// and ConnectTimeout (ServerAliveInterval=5, ForwardAgent=no).
 type Target struct {
 	Host           string
 	User           string
 	SSH            string
 	ConnectTimeout time.Duration
+	Options        []string
 }
 
 // Result is one run: the combined output and the remote exit code (-1 when
@@ -77,35 +86,100 @@ func (t Target) Dest() string {
 }
 
 // Argv is the ssh argv after the program: the options, the target, and the
-// one remote command word `bash -s -- <quoted args>`.
+// one remote command word `bash -s -- <quoted args>`. ConnectTimeout is whole
+// seconds, rounded up.
 func Argv(t Target, args ...string) []string {
 	timeout := t.ConnectTimeout
 	if timeout <= 0 {
 		timeout = DefaultConnectTimeout
 	}
+	secs := int((timeout + time.Second - 1) / time.Second)
 	remote := []string{"bash", "-s", "--"}
 	for _, a := range args {
 		remote = append(remote, Quote(a))
 	}
-	return []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=" + strconv.Itoa(int(timeout/time.Second)),
-		t.Dest(), strings.Join(remote, " ")}
+	argv := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=" + strconv.Itoa(secs)}
+	for _, o := range t.Options {
+		argv = append(argv, "-o", o)
+	}
+	return append(argv, t.Dest(), strings.Join(remote, " "))
+}
+
+// Line is argv as one command line, its words joined with spaces: exactly the
+// line `ssh <host> <argv...>` handed the bench's login shell, now read by bash
+// from stdin instead. The words keep their shell meaning (&&, a glob, a
+// redirect, a leading ~), so every word must already be one the caller
+// checked; Quote a word that has to stay literal.
+func Line(argv ...string) string { return strings.Join(argv, " ") }
+
+// InputLine is the stdin line that precedes a site's own data: bash -s reads
+// it, then execs bash -c on the script with the args, and that bash inherits
+// the rest of stdin. The script is ANSI-C quoted ($'...'), so the line is one
+// physical line whatever newlines the script holds.
+func InputLine(script string) string {
+	return "exec bash -c " + quoteLine(script) + ` bash "$@"` + "\n"
+}
+
+// quoteLine is bash's $'...' form of s with every control byte escaped.
+func quoteLine(s string) string {
+	var b strings.Builder
+	b.WriteString("$'")
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '\\' || c == '\'':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		case c == '\n':
+			b.WriteString(`\n`)
+		case c == '\t':
+			b.WriteString(`\t`)
+		case c < 0x20 || c == 0x7f:
+			fmt.Fprintf(&b, `\x%02x`, c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteByte('\'')
+	return b.String()
+}
+
+// Command is the ssh child that runs script on the bench with args as $1..,
+// not yet started: the caller sets Stdout, Stderr, Env and any process-group
+// handling. With input nil stdin is the script alone; otherwise it is
+// InputLine(script) followed by input, so the script reads input as its whole
+// stdin. It calls testguard.RefuseHosts before it returns.
+func Command(ctx context.Context, t Target, script string, input io.Reader, args ...string) (*exec.Cmd, error) {
+	if t.Host == "" {
+		return nil, errors.New("benchsh: target has no host")
+	}
+	prog := Program(t.SSH)
+	argv := Argv(t, args...)
+	testguard.RefuseHosts(prog, argv...)
+	cmd := exec.CommandContext(ctx, prog, argv...)
+	if input == nil {
+		cmd.Stdin = strings.NewReader(script)
+	} else {
+		cmd.Stdin = io.MultiReader(strings.NewReader(InputLine(script)), input)
+	}
+	return cmd, nil
 }
 
 // Run runs script on the bench with args as $1.. and returns its output. A
 // non-zero exit is an *ExitError carrying the code, so a caller can tell a
 // refusal of its own script (a code it chose) from ssh failing (255).
 func Run(ctx context.Context, t Target, script string, args ...string) (Result, error) {
-	if t.Host == "" {
-		return Result{Exit: -1}, errors.New("benchsh: target has no host")
+	return RunInput(ctx, t, script, nil, args...)
+}
+
+// RunInput is Run with input as the script's stdin (see Command).
+func RunInput(ctx context.Context, t Target, script string, input io.Reader, args ...string) (Result, error) {
+	cmd, err := Command(ctx, t, script, input, args...)
+	if err != nil {
+		return Result{Exit: -1}, err
 	}
-	prog := Program(t.SSH)
-	argv := Argv(t, args...)
-	testguard.RefuseHosts(prog, argv...)
-	cmd := exec.CommandContext(ctx, prog, argv...)
-	cmd.Stdin = strings.NewReader(script)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
-	err := cmd.Run()
+	err = cmd.Run()
 	res := Result{Output: out.String(), Exit: 0}
 	if err == nil {
 		return res, nil
@@ -117,6 +191,20 @@ func Run(ctx context.Context, t Target, script string, args ...string) (Result, 
 	}
 	res.Exit = -1
 	return res, fmt.Errorf("ssh %s: %w: %s", t.Dest(), err, oneLine(res.Output))
+}
+
+// Code is the remote exit code an error from a Command child or Run carries,
+// -1 when ssh never exited with one (not started, killed).
+func Code(err error) int {
+	var be *ExitError
+	if errors.As(err, &be) {
+		return be.Code
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return -1
 }
 
 func oneLine(s string) string {
