@@ -144,7 +144,7 @@ func ndPush(t *testing.T, ctx context.Context, client *redis.Client, repo, label
 	}
 }
 
-func ndEnd(t *testing.T, ctx context.Context, client *redis.Client, label, token, outcome, reason string) {
+func ndEnd(t *testing.T, ctx context.Context, client *redis.Client, label, token, outcome, reason string, why ...string) {
 	t.Helper()
 	id, err := card.ParseIdentity(hashOf(t, ctx, client, ndSprint, label)["identity"])
 	if err != nil {
@@ -157,6 +157,7 @@ func ndEnd(t *testing.T, ctx context.Context, client *redis.Client, label, token
 	})
 	got, err := card.End(ctx, storeOf(client), card.EndRequest{
 		Sprint: ndSprint, Label: label, Token: token, Outcome: outcome, Reason: reason, ResultsDir: results,
+		Why: strings.Join(why, " "),
 	})
 	if err != nil || !got.Resolved || got.Code != 0 {
 		t.Fatalf("end %s %s = %+v, %v", label, outcome, got, err)
@@ -202,7 +203,7 @@ func assertHostRow(t *testing.T, ctx context.Context, client *redis.Client, step
 }
 
 // TestCardsNeverDisappear is #3692's DONE-WHEN: push, deal, launch, end DONE,
-// end FAILED, an invalid result, a harvest refusal, an undeal, a land and a
+// end FAILED (a native refusal, #3194), an invalid result, a harvest refusal, an undeal, a land and a
 // release, with card fsck and the Go-side check after every transition, and
 // the live table's host row read against the bench ZCARDs.
 func TestCardsNeverDisappear(t *testing.T) {
@@ -269,10 +270,16 @@ func TestCardsNeverDisappear(t *testing.T) {
 	if c["ok"] != 1 || c["fail"] != 0 {
 		t.Fatalf("after end DONE: %v", c)
 	}
-	ndEnd(t, ctx, client, "nd-b", tokens["nd-b"], "FAILED", "crash")
-	c = oneTable(t, ctx, client, "end FAILED", 5)
+	// A native refusal (#3194) is a FAILED end like any other: the one move
+	// to done/fail, its refusal line the card's why, fsck clean after it.
+	refusal := "NATIVE REFUSED: pool /p has no identity row in identity.tsv; remedy: make -C fleet converge"
+	ndEnd(t, ctx, client, "nd-b", tokens["nd-b"], "FAILED", "refused", refusal)
+	c = oneTable(t, ctx, client, "end FAILED refused", 5)
 	if c["ok"] != 1 || c["fail"] != 1 {
-		t.Fatalf("after end FAILED: %v", c)
+		t.Fatalf("after end FAILED refused: %v", c)
+	}
+	if h := hashOf(t, ctx, client, ndSprint, "nd-b"); h["where"] != "done" || h["where_ok"] != "fail" || h["reason"] != "refused" || h["why"] != refusal {
+		t.Fatalf("refused card %v, want done/fail reason refused why the refusal line", h)
 	}
 	ndEnd(t, ctx, client, "nd-c", tokens["nd-c"], "DONE", "done")
 	oneTable(t, ctx, client, "end DONE nd-c", 5)
