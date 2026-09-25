@@ -243,7 +243,8 @@ func TestMoveGraph(t *testing.T) {
 
 // TestMoveRefusesABrokenLink is Glenn's invariant ("a card can only ever be
 // in no set, or one of these sets"): a move whose record names a set the id
-// is not in, or whose target set already holds the id, is refused with the
+// is not in, or whose id also sits in any other of the stream's sets (the
+// target or not; any set at all for a closed task), is refused with the
 // mismatch named and writes nothing; move_many refuses that id alone.
 func TestMoveRefusesABrokenLink(t *testing.T) {
 	_, c := wstest.Start(t)
@@ -252,11 +253,18 @@ func TestMoveRefusesABrokenLink(t *testing.T) {
 	s := wstest.StreamName(0)
 	// t00000 is in waiting; its record is made to say ready (set -> card broken)
 	c.HSet(ctx, "task:t00000", "state", "ready")
-	// t00001 is in waiting and also in ready (two places)
+	// t00001 is in waiting and also in ready, the target (two places)
 	c.ZAdd(ctx, ws.Key(s, "ready"), redis.Z{Score: float64(wstest.Created(1)), Member: "t00001"})
+	// t00003 is in waiting and also in landed, a set neither named nor the target
+	c.ZAdd(ctx, ws.Key(s, "landed"), redis.Z{Score: float64(wstest.Created(3)), Member: "t00003"})
+	// t00019 is closed (in no set) but sits in parked
+	c.ZAdd(ctx, ws.Key(s, "parked"), redis.Z{Score: float64(wstest.Created(19)), Member: "t00019"})
 	for _, tc := range []struct{ id, to, want string }{
 		{"t00000", "working", "task t00000 says ready but is not in ws:s0: work:ready"},
-		{"t00001", "ready", "task t00001 says waiting but is already in ws:s0: work:ready"},
+		{"t00001", "ready", "task t00001 says waiting but is also in ws:s0: work:ready"},
+		{"t00003", "ready", "task t00003 says waiting but is also in ws:s0: work:landed"},
+		{"t00003", "closed", "task t00003 says waiting but is also in ws:s0: work:landed"},
+		{"t00019", "parked", "task t00019 says closed but is also in ws:s0: work:parked"},
 	} {
 		before, _ := c.Dump(ctx, "task:"+tc.id).Result()
 		_, err := ws.Move(ctx, c, tc.id, tc.to, "test", "broken")

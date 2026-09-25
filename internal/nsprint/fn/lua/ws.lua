@@ -124,15 +124,10 @@ function W.move_one(id, to, by, why, now)
   if not W.KNOWN[from or ''] then
     return 'REFUSED', 'task ' .. id .. ' state ' .. tostring(from) .. ' is not a ws state; run ws migrate'
   end
-  if from == to then
-    return 'SAME', stream, from
-  end
-  if not W.allowed(from, to) then
-    return 'REFUSED', 'task ' .. id .. ' ' .. from .. '->' .. to .. ' is not an allowed move'
-  end
   -- ONE PLACE (the links are valid both ways) before any write: the id must
-  -- be in the set its record names, and not already in the target set;
-  -- otherwise the mismatch is refused by name and nothing is written.
+  -- be in the set its record names and in none of the stream's other five
+  -- (in none at all when closed); otherwise the mismatch is refused by name
+  -- and nothing is written. Six ZSCOREs, O(1) each.
   local cur
   if from ~= 'closed' then
     cur = redis.call('ZSCORE', W.key(stream, from), id)
@@ -140,8 +135,16 @@ function W.move_one(id, to, by, why, now)
       return 'REFUSED', 'task ' .. id .. ' says ' .. from .. ' but is not in ' .. W.key(stream, from)
     end
   end
-  if to ~= 'closed' and redis.call('ZSCORE', W.key(stream, to), id) then
-    return 'REFUSED', 'task ' .. id .. ' says ' .. from .. ' but is already in ' .. W.key(stream, to)
+  for _, st in ipairs(W.STATES) do
+    if st ~= from and redis.call('ZSCORE', W.key(stream, st), id) then
+      return 'REFUSED', 'task ' .. id .. ' says ' .. from .. ' but is also in ' .. W.key(stream, st)
+    end
+  end
+  if from == to then
+    return 'SAME', stream, from
+  end
+  if not W.allowed(from, to) then
+    return 'REFUSED', 'task ' .. id .. ' ' .. from .. '->' .. to .. ' is not an allowed move'
   end
   local fields = { 'state', to, 'state_at', tostring(now) }
   -- The score is the task's age: created_at, else the score it already has,
