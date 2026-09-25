@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -359,11 +360,15 @@ var ErrInfra = errors.New("ci run infra")
 
 // Run claims one request, runs its checks and writes the receipts. It returns
 // Claimed false when the pool has nothing claimable, and ErrBlocked (with the
-// request released) when the clone at the sha failed. A check that fails
-// does not stop the rest: every check gets a receipt, so the red one is named.
-// A check the bench killed (BenchKilled) does stop them: it writes no
-// receipt, the request is released as infra (ReleaseInfra) and Run returns
-// ErrInfra, because a kill from outside says nothing about the head.
+// request released) when the clone at the sha failed. The checks run
+// concurrently, at most cfg:ci:<repo> parallel at once (ParallelChecks), and
+// each writes its receipt as it finishes. A check that fails does not stop
+// the rest: every check gets a receipt, so the red one is named. A check the
+// bench killed (BenchKilled) does stop them (their groups are killed and
+// write nothing): it writes no receipt, the request is released as infra
+// (ReleaseInfra) and Run returns ErrInfra, because a kill from outside says
+// nothing about the head; a run stopped by its own context is released the
+// same way.
 func Run(ctx context.Context, st *store.Store, opt RunOptions) (RunResult, error) {
 	var res RunResult
 	if opt.Bench == "" {
@@ -444,36 +449,118 @@ func Run(ctx context.Context, st *store.Store, opt RunOptions) (RunResult, error
 		return res, ErrBlocked
 	}
 
-	for _, ch := range c.Checks {
-		cr := runCheck(ctx, opt, dir, logDir, env, ch)
-		res.Checks = append(res.Checks, cr)
+	// Every check of the head runs at once, each in its own process group,
+	// at most cfg:ci:<repo> parallel at a time (default 4); a `go test`
+	// check without its own -p gets -p cores/parallel so the checks share
+	// the bench's cores instead of each taking all of them. A receipt is
+	// written as each check finishes: ns_ci_receipt counts the receipts of
+	// the declared checks whatever order they arrive in (ci_run.lua).
+	t := time.Now()
+	parallel := ParallelChecks(ctx, st, c.Repo)
+	res.StoreMS += time.Since(t).Milliseconds()
+	goP := GoTestP(runtime.NumCPU(), parallel)
+	fmt.Fprintf(out, "PARALLEL %d go-test-p=%d checks=%d\n", parallel, goP, len(c.Checks))
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	type outcome struct {
+		i  int
+		cr CheckResult
+		ok bool // false: never started, the run stopped first
+	}
+	done := make(chan outcome, len(c.Checks))
+	go func() {
+		sem := make(chan struct{}, parallel)
+		for i, ch := range c.Checks {
+			select {
+			case sem <- struct{}{}:
+			case <-runCtx.Done():
+			}
+			if runCtx.Err() != nil {
+				done <- outcome{i: i}
+				continue
+			}
+			go func(i int, ch Check) {
+				defer func() { <-sem }()
+				done <- outcome{i: i, cr: runCheck(runCtx, opt, dir, logDir, env, ch, goP), ok: true}
+			}(i, ch)
+		}
+	}()
+	// One goroutine, this one, writes the receipts and the output lines. The
+	// first killed check or failed receipt stops the rest (their groups are
+	// killed and they write nothing); every check is waited for before Run
+	// returns, so none outlives the clone.
+	ran := make([]*CheckResult, len(c.Checks))
+	var failed error
+	killed, written := "", 0
+	for range c.Checks {
+		o := <-done
+		if !o.ok {
+			continue
+		}
+		cr := o.cr
+		ran[o.i] = &cr
+		if failed != nil || killed != "" || ctx.Err() != nil {
+			continue
+		}
+		name := c.Checks[o.i].Name
 		if cr.Killed {
-			reason := "infra: " + ch.Name + ": signal: terminated"
-			t := time.Now()
-			r, err := ReleaseInfra(ctx, st, c.Repo, c.SHA, c.Token, reason)
-			res.StoreMS += time.Since(t).Milliseconds()
-			if err != nil {
-				return res, err
-			}
-			if r.Status != "RELEASED" {
-				return res, fmt.Errorf("release %s@%s %s: %s", c.Repo, c.SHA[:8], ch.Name, r.Status)
-			}
-			res.Blocked, res.Summary = reason, ""
-			fmt.Fprintf(out, "INFRA %s@%s %s signal: terminated %s %s log=%s\n", c.Repo, c.SHA[:8], ch.Name, r.Status, r.Detail, cr.Log)
-			return res, ErrInfra
+			killed = name
+			stop()
+			continue
 		}
 		t := time.Now()
-		r, err := WriteReceipt(ctx, st, ReceiptRecord{Repo: c.Repo, SHA: c.SHA, Check: ch.Name, Token: c.Token,
+		r, err := WriteReceipt(ctx, st, ReceiptRecord{Repo: c.Repo, SHA: c.SHA, Check: name, Token: c.Token,
 			RC: cr.RC, WallMS: cr.WallMS, Log: cr.Log, Bench: opt.Bench, Lease: opt.Lease, Fail: cr.Fail})
+		res.StoreMS += time.Since(t).Milliseconds()
+		switch {
+		case err != nil:
+			failed = err
+		case r.Status != "RECEIPT":
+			failed = fmt.Errorf("receipt %s@%s %s: %s %s", c.Repo, c.SHA[:8], name, r.Status, r.Summary)
+		default:
+			written++
+			fmt.Fprintf(out, "CHECK %s rc=%d wall_ms=%d log=%s\n", name, cr.RC, cr.WallMS, cr.Log)
+			res.Summary = r.Summary
+		}
+		if failed != nil {
+			stop()
+		}
+	}
+	for _, cr := range ran {
+		if cr != nil {
+			res.Checks = append(res.Checks, *cr)
+		}
+	}
+	if failed != nil {
+		return res, failed
+	}
+	if killed == "" && written < len(c.Checks) && ctx.Err() != nil {
+		// The run itself was stopped (the bench's ci run got a signal): the
+		// checks cut short are no evidence about the head.
+		killed = "ci run stopped"
+	}
+	if killed != "" {
+		reason := "infra: " + killed + ": signal: terminated"
+		t := time.Now()
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		r, err := ReleaseInfra(rctx, st, c.Repo, c.SHA, c.Token, reason)
+		cancel()
 		res.StoreMS += time.Since(t).Milliseconds()
 		if err != nil {
 			return res, err
 		}
-		if r.Status != "RECEIPT" {
-			return res, fmt.Errorf("receipt %s@%s %s: %s %s", c.Repo, c.SHA[:8], ch.Name, r.Status, r.Summary)
+		if r.Status != "RELEASED" {
+			return res, fmt.Errorf("release %s@%s %s: %s", c.Repo, c.SHA[:8], killed, r.Status)
 		}
-		fmt.Fprintf(out, "CHECK %s rc=%d wall_ms=%d log=%s\n", ch.Name, cr.RC, cr.WallMS, cr.Log)
-		res.Summary = r.Summary
+		res.Blocked, res.Summary = reason, ""
+		log := ""
+		for i, cr := range ran {
+			if cr != nil && c.Checks[i].Name == killed {
+				log = cr.Log
+			}
+		}
+		fmt.Fprintf(out, "INFRA %s@%s %s signal: terminated %s %s log=%s\n", c.Repo, c.SHA[:8], killed, r.Status, r.Detail, log)
+		return res, ErrInfra
 	}
 	fmt.Fprintf(out, "CI %s@%s %s bench=%s attempt=%d store_ms=%d\n", c.Repo, c.SHA[:8], res.Summary, opt.Bench, c.Attempt, res.StoreMS)
 	return res, nil
@@ -571,12 +658,14 @@ func stage(ctx context.Context, opt RunOptions, c Claimed, dir string) Staged {
 const maxLog = 4 << 20
 
 // runCheck runs one declared argv in the clone, in env (the scrubbed
-// environment, env.go), with the log at <logDir>/<name>.log. An argv that cannot start is rc 127 with the error in
-// the log; a timeout is rc 124.
-func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, env []string, ch Check) CheckResult {
+// environment, env.go), in its own process group, with the log at
+// <logDir>/<name>.log; a `go test` argv with no -p gets -p goP (WithGoTestP).
+// An argv that cannot start is rc 127 with the error in the log; a timeout
+// is rc 124, the check's whole group killed.
+func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, env []string, ch Check, goP int) CheckResult {
 	logPath := filepath.Join(logDir, ch.Name+".log")
 	cr := CheckResult{Name: ch.Name, Log: logPath}
-	argv := strings.Fields(ch.Argv)
+	argv := WithGoTestP(strings.Fields(ch.Argv), goP)
 	began := time.Now()
 	var body []byte
 	if len(argv) == 0 {
@@ -587,6 +676,7 @@ func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, env []str
 		cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
 		cmd.Dir = dir
 		cmd.Env = env
+		checkProcessGroup(cmd)
 		b, err := cmd.CombinedOutput()
 		cancel()
 		body = b
@@ -618,6 +708,53 @@ func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, env []str
 		cr.Log = "unwritable:" + logPath
 	}
 	return cr
+}
+
+// DefaultParallel is how many checks of one head run at once when
+// cfg:ci:<repo> names no parallel.
+const DefaultParallel = 4
+
+// ParallelChecks is cfg:ci:<repo> parallel, the checks of one head that run
+// at once on a bench: one HGET; DefaultParallel when unset, not a positive
+// integer, or unreadable.
+func ParallelChecks(ctx context.Context, st *store.Store, repo string) int {
+	v, err := st.Client().HGet(ctx, ConfigKey(repo), "parallel").Result()
+	if err != nil {
+		return DefaultParallel
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 1 {
+		return DefaultParallel
+	}
+	return n
+}
+
+// GoTestP is the -p each `go test` check gets: the bench's cores shared by
+// the checks that run at once, at least 1.
+func GoTestP(cores, parallel int) int {
+	if parallel < 1 {
+		parallel = 1
+	}
+	return max(1, cores/parallel)
+}
+
+// WithGoTestP is argv with -p p after `go test` when argv is a `go test`
+// with no -p of its own (before any -args); any other argv is returned as is.
+func WithGoTestP(argv []string, p int) []string {
+	if len(argv) < 2 || filepath.Base(argv[0]) != "go" || argv[1] != "test" || p < 1 {
+		return argv
+	}
+	for _, a := range argv[2:] {
+		if a == "-args" || a == "--args" {
+			break
+		}
+		if a == "-p" || a == "--p" || strings.HasPrefix(a, "-p=") || strings.HasPrefix(a, "--p=") {
+			return argv
+		}
+	}
+	out := make([]string, 0, len(argv)+2)
+	out = append(out, argv[0], argv[1], "-p", strconv.Itoa(p))
+	return append(out, argv[2:]...)
 }
 
 // BenchKilled is true when a red check's only failure text is the bench's:

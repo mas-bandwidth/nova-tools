@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
@@ -344,6 +346,11 @@ func runCIRun(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "ci run", err.Error())
 	}
 	defer st.Close()
+	// Each check runs in its own process group, out of reach of a TERM sent
+	// to this one: the signal cancels the run, which kills every check's
+	// group and releases the head as infra.
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	var roleErr *benchrole.Error
 	res, err := ci.Run(ctx, st, ci.RunOptions{Bench: *bench, Scratch: *scratch, ResultsRoot: *results,
 		MirrorRoot: *mirror, Lease: *lease, Timeout: *timeout, Out: out})
