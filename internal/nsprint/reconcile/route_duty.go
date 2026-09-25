@@ -260,9 +260,18 @@ func (d *RouteDuty) reads(ctx context.Context, token, S, stream string, readers 
 
 // fixes: the sprint's hold events under the route group. A pending entry a
 // dead instance left is claimed first; every entry is acknowledged by the
-// function (a hold) or here (a note or repair, which route nothing).
+// function (a hold) or here (a note or repair, which route nothing). A
+// sprint whose s:<S>:policy has fix_to and release_reader is the hold
+// router's (consume.HoldRoute under lease:route:<S>, #3799): its events are
+// acknowledged here unrouted (skip hold-router), so a HOLD makes one fix
+// task, never one from each.
 func (d *RouteDuty) fixes(ctx context.Context, token, S, stream string, _ []string, res *RouteResult) error {
 	ev := "s:" + S + ":hold:events"
+	pol, err := d.Client.HMGet(ctx, "s:"+S+":policy", "fix_to", "release_reader").Result()
+	if err != nil {
+		return fmt.Errorf("%s: policy: %w", S, err)
+	}
+	holdRouter := str(pol, 0) != "" && str(pol, 1) != ""
 	if !d.groups[ev] {
 		err := d.Client.XGroupCreateMkStream(ctx, ev, RouteGroup, "0").Err()
 		if err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
@@ -291,7 +300,10 @@ func (d *RouteDuty) fixes(ctx context.Context, token, S, stream string, _ []stri
 	var ack []string
 	for _, m := range msgs {
 		get := func(k string) string { s, _ := m.Values[k].(string); return s }
-		if get("type") != "hold" {
+		if holdRouter || get("type") != "hold" {
+			if holdRouter {
+				res.Skips["hold-router"]++
+			}
 			ack = append(ack, m.ID)
 			continue
 		}
