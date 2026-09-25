@@ -118,7 +118,7 @@ type WrapperCard struct {
 
 // WrapperEnd is the exit class the wrapper hands to the ledger.
 type WrapperEnd struct {
-	Outcome    string // DONE, FAILED (the wrapper never infers ABSTAIN or BLOCKED)
+	Outcome    string // DONE, FAILED; ABSTAIN or BLOCKED only from the model's line 2 (ModelEnd)
 	Reason     string // done, crash, timeout, wall, refused, other
 	Exit       int    // the harness exit code; -1 when it was killed
 	ResultsDir string
@@ -638,6 +638,15 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 	end.ResultsDir = results
 	rep.Outcome, rep.Reason, rep.Exit, rep.Wall, rep.Why = end.Outcome, end.Reason, end.Exit, wall, why
 	end.PushedSHA, end.Commit = NoCommit, "NO-COMMIT"
+	// The model's line 2 (#3919): ABSTAIN or BLOCKED is the end, not DONE,
+	// and there is nothing to commit.
+	if me, ok := ModelEnd(kind, filepath.Join(job, "out"), end); ok {
+		end = me
+		rep.Outcome, rep.Reason = end.Outcome, end.Reason
+		if rep.Why == "" {
+			rep.Why = end.Why
+		}
+	}
 	if end.Outcome == "DONE" {
 		// The commit step (#2932): <job>/out/repo onto the card branch, before copy out.
 		msg := resultLine(filepath.Join(job, "out"))

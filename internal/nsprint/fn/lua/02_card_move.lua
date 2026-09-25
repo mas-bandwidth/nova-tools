@@ -34,12 +34,13 @@
 -- to sprint:<S>:cards (every card of the sprint, ever; the roster, not a
 -- table set); push then moves it to waiting. The record points to its one
 -- place: where (waiting,
--- ready, working, done, parked) with where_ok (ok|fail once done, - before),
+-- ready, working, done, parked) with where_ok (ok|fail|abstain once done, -
+-- before; abstain is a model's ABSTAIN, nova-tools#3919),
 -- plus the dimensions that apply to it: bench (dealt bench or pin; _pool when
 -- empty), stream (the card's STREAM: line) and owner (a friend holding it).
 -- Each dimension is a view of the one place, a ZSET of card ids:
 --
---   bench:<bench|_pool>:cards:<where>, and bench:<b>:cards:ok|fail while done
+--   bench:<bench|_pool>:cards:<where>, and bench:<b>:cards:ok|fail|abstain while done
 --   ws:<stream>:<where>               when the card has a stream
 --   friend:<owner>:cards:<where>      when the card has an owner
 --   s:<S>:pool (ZSET of labels) while ready, and
@@ -172,6 +173,7 @@ local function cm_others(S, label, id, p, extra)
     for _, w in ipairs(CM_WHERE) do add('z', 'bench:' .. b .. ':cards:' .. w, id) end
     add('z', 'bench:' .. b .. ':cards:ok', id)
     add('z', 'bench:' .. b .. ':cards:fail', id)
+    add('z', 'bench:' .. b .. ':cards:abstain', id)
   end
   for _, w in ipairs(CM_WHERE) do
     if p.stream ~= '' then add('z', 'ws:' .. p.stream .. ':' .. w, id) end
@@ -204,7 +206,9 @@ end
 -- reservation returned: undeal, bench reset, requeue); any -> done/fail
 -- (refusal, crash, wall); any not done -> done/ok only by a merge (landed);
 -- done/fail -> waiting or ready (a retry); waiting, ready <-> parked; done/ok
--- becomes done/fail on a refused result and never returns to the pool.
+-- becomes done/fail on a refused result and never returns to the pool;
+-- done/abstain (#3919) never returns to the pool and becomes done/ok only by
+-- a merge, like done/fail.
 local function cm_edge(from, fok, to, tok, state)
   if from == '' then
     if to == 'waiting' then return nil end
@@ -212,7 +216,7 @@ local function cm_edge(from, fok, to, tok, state)
   end
   if to == 'done' then
     if from == 'done' then
-      if fok == 'fail' and tok == 'ok' and state ~= 'landed' then return 'OFFGRAPH done/fail -> done/ok' end
+      if fok ~= 'ok' and tok == 'ok' and state ~= 'landed' then return 'OFFGRAPH done/' .. fok .. ' -> done/ok' end
       return nil
     end
     if from == 'working' or tok == 'fail' or state == 'landed' then return nil end
@@ -253,7 +257,11 @@ local function cm_derive(S, label, id)
   if w == 'done' then
     if state == 'landed' then
       ok = 'ok'
-    elseif state == 'refused' or state == 'superseded' or c[2] ~= 'DONE' then
+    elseif state == 'refused' or state == 'superseded' then
+      ok = 'fail'
+    elseif c[2] == 'ABSTAIN' then
+      ok = 'abstain'
+    elseif c[2] ~= 'DONE' then
       ok = 'fail'
     elseif c[4] and c[4] ~= '' and c[3] ~= 'OK' then
       ok = 'fail'
@@ -296,7 +304,7 @@ local function cm_adopt(id, S, label)
 end
 
 -- card_move(id, to, o): the one move. o.state is the new fine state (nil
--- keeps it), o.ok is ok|fail (entering done; nil keeps it), o.bench the new
+-- keeps it), o.ok is ok|fail|abstain (entering done; nil keeps it), o.bench the new
 -- bench (nil keeps it), o.priority the card's deal priority as it enters
 -- ready (written to the record's priority field; nil keeps the field),
 -- o.fields more HSET pairs (never a pointer field),
@@ -324,7 +332,7 @@ local function card_move(id, to, o)
   local ok = '-'
   if to == 'done' then
     ok = o.ok or cur.ok
-    if ok ~= 'ok' and ok ~= 'fail' then return 'OUTCOME done needs ok or fail' end
+    if ok ~= 'ok' and ok ~= 'fail' and ok ~= 'abstain' then return 'OUTCOME done needs ok, fail or abstain' end
   end
   local err = cm_edge(cur.where, cur.ok, to, ok, state)
   if err then return err end
@@ -449,7 +457,7 @@ local function card_fsck(S, write)
     end
   end
 
-  local n = { null = 0, waiting = 0, ready = 0, working = 0, done = 0, parked = 0, ok = 0, fail = 0 }
+  local n = { null = 0, waiting = 0, ready = 0, working = 0, done = 0, parked = 0, ok = 0, fail = 0, abstain = 0 }
   local want, benches, streams, owners = {}, { _pool = true }, {}, {}
   for _, b in ipairs(redis.call('SMEMBERS', 'benches')) do benches[b] = true end
   for _, id in ipairs(redis.call('ZRANGE', all, 0, -1)) do
@@ -555,6 +563,7 @@ local function card_fsck(S, write)
     for _, w in ipairs(CM_WHERE) do sweep('bench:' .. b .. ':cards:' .. w) end
     sweep('bench:' .. b .. ':cards:ok')
     sweep('bench:' .. b .. ':cards:fail')
+    sweep('bench:' .. b .. ':cards:abstain')
   end
   for s in pairs(streams) do
     for _, w in ipairs(CM_WHERE) do sweep('ws:' .. s .. ':' .. w) end

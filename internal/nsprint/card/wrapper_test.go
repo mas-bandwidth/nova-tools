@@ -25,6 +25,8 @@ const (
 	fakeGateEnv    = "WRAPPER_FAKE_GATE"    // done and fail exit once this file exists
 	fakeOriginEnv  = "WRAPPER_FAKE_ORIGIN"  // repo mode clones this into out/repo
 	fakeSlotEnv    = "WRAPPER_FAKE_SLOT"    // native modes run the card in <slot>/jobs/<label>
+	// native-done-already writes `ABSTAIN done-already <this sha>` (#3919)
+	fakeDoneAlreadyEnv = "WRAPPER_FAKE_DONE_ALREADY"
 )
 
 func TestMain(m *testing.M) {
@@ -118,6 +120,9 @@ func fakeNative(mode, out string) int {
 	case "native-two":
 		// #3689: the model's whole contract, two lines and a note.
 		body = "RESULT: " + os.Getenv("NOVA_CARD") + " sha=000000000000\nDONE\nthe retry path is still owed\n"
+	case "native-done-already":
+		// #3919: the swarm-0925a cards, whose work had landed minutes before.
+		body = "RESULT: " + os.Getenv("NOVA_CARD") + " sha=000000000000\nABSTAIN done-already " + os.Getenv(fakeDoneAlreadyEnv) + "\n"
 	case "native-wrongbranch":
 		// #3689: the quack cards' shape, the BRANCH the card told the model.
 		body = "RESULT: " + os.Getenv("NOVA_CARD") + " sha=000000000000\nDONE\nBRANCH: rowan/" + parts[1] + "\n"

@@ -28,6 +28,11 @@ func mirrorPath(fullName string) string {
 	return filepath.Join(root, filepath.Base(fullName)+".git")
 }
 
+// MirrorPath is this host's bare mirror of owner/name (or name):
+// <root>/<name>.git under $NOVA_MIRROR_ROOT or ~/nova-bench/mirror; "" when
+// there is no root. The reconciler's done-already leg (#3919) reads it.
+func MirrorPath(fullName string) string { return mirrorPath(fullName) }
+
 // hasMirror reports whether this host holds a bare mirror of owner/name. A
 // directory with objects/ counts: the repository exists even when an
 // anonymous request cannot see it (a private repo answers 404).
