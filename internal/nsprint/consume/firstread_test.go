@@ -124,7 +124,7 @@ func TestFirstReadQueuesLeastLoadedNonAuthor(t *testing.T) {
 	}
 	task, _ := f.client.HGetAll(f.ctx, "task:"+id).Result()
 	want := map[string]string{
-		"kind": "read", "owner": "stella", "state": "open", "head": head, "pr": "3726",
+		"kind": "read", "owner": "stella", "state": "open", "head": head, "front": "0",
 		"ref":   prURL(nil, "mas-bandwidth/nova-tools", "3726"),
 		"title": "STREAM: swarm | read nova-tools#3726 at 01234567 (c-3726)",
 	}
