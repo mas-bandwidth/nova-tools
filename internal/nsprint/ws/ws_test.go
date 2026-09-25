@@ -2,6 +2,7 @@ package ws_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -237,6 +238,45 @@ func TestMoveGraph(t *testing.T) {
 	c.HSet(ctx, "task:nostream", "state", "ready")
 	if _, err := ws.Move(ctx, c, "nostream", "working", "test", ""); !ws.IsRefused(err) || !strings.Contains(err.Error(), "no stream") {
 		t.Fatalf("a task with no stream: %v", err)
+	}
+}
+
+// TestMoveRefusesABrokenLink is Glenn's invariant ("a card can only ever be
+// in no set, or one of these sets"): a move whose record names a set the id
+// is not in, or whose target set already holds the id, is refused with the
+// mismatch named and writes nothing; move_many refuses that id alone.
+func TestMoveRefusesABrokenLink(t *testing.T) {
+	_, c := wstest.Start(t)
+	wstest.Fixture(t, c, 20, 1)
+	ctx := context.Background()
+	s := wstest.StreamName(0)
+	// t00000 is in waiting; its record is made to say ready (set -> card broken)
+	c.HSet(ctx, "task:t00000", "state", "ready")
+	// t00001 is in waiting and also in ready (two places)
+	c.ZAdd(ctx, ws.Key(s, "ready"), redis.Z{Score: float64(wstest.Created(1)), Member: "t00001"})
+	for _, tc := range []struct{ id, to, want string }{
+		{"t00000", "working", "task t00000 says ready but is not in ws:s0: work:ready"},
+		{"t00001", "ready", "task t00001 says waiting but is already in ws:s0: work:ready"},
+	} {
+		before, _ := c.Dump(ctx, "task:"+tc.id).Result()
+		_, err := ws.Move(ctx, c, tc.id, tc.to, "test", "broken")
+		var r *ws.Refused
+		if !errors.As(err, &r) || r.Why != tc.want {
+			t.Fatalf("%s -> %s: %v, want REFUSED %s", tc.id, tc.to, err, tc.want)
+		}
+		if after, _ := c.Dump(ctx, "task:"+tc.id).Result(); after != before {
+			t.Fatalf("%s: a refused move rewrote the record", tc.id)
+		}
+	}
+	if n, _ := c.XLen(ctx, "ws:log").Result(); n != 0 {
+		t.Fatalf("refused moves logged %d entries", n)
+	}
+	r, err := ws.MoveMany(ctx, c, "ready", "test", "batch", []string{"t00001", "t00002"})
+	if err != nil || r.Moved != 1 || len(r.Refused) != 1 || r.Refused[0].ID != "t00001" {
+		t.Fatalf("move_many over a broken link: %+v %v", r, err)
+	}
+	if err := ws.Check(ctx, c, []string{"t00000"}); err == nil {
+		t.Fatal("Check passes a record whose set does not hold it")
 	}
 }
 

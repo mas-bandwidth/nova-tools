@@ -130,12 +130,25 @@ function W.move_one(id, to, by, why, now)
   if not W.allowed(from, to) then
     return 'REFUSED', 'task ' .. id .. ' ' .. from .. '->' .. to .. ' is not an allowed move'
   end
+  -- ONE PLACE (the links are valid both ways) before any write: the id must
+  -- be in the set its record names, and not already in the target set;
+  -- otherwise the mismatch is refused by name and nothing is written.
+  local cur
+  if from ~= 'closed' then
+    cur = redis.call('ZSCORE', W.key(stream, from), id)
+    if not cur then
+      return 'REFUSED', 'task ' .. id .. ' says ' .. from .. ' but is not in ' .. W.key(stream, from)
+    end
+  end
+  if to ~= 'closed' and redis.call('ZSCORE', W.key(stream, to), id) then
+    return 'REFUSED', 'task ' .. id .. ' says ' .. from .. ' but is already in ' .. W.key(stream, to)
+  end
   local fields = { 'state', to, 'state_at', tostring(now) }
   -- The score is the task's age: created_at, else the score it already has,
   -- else now (written back as created_at so every later move keeps it).
   local age = W.created_ms(f[3])
-  if not age and from ~= 'closed' then
-    age = tonumber(redis.call('ZSCORE', W.key(stream, from), id))
+  if not age then
+    age = tonumber(cur)
   end
   if not age then
     age = now
