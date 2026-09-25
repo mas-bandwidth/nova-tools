@@ -12,6 +12,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -80,6 +81,31 @@ func readRoadmapByFeature(path string) ([]roadmapByFeature, error) {
 		id, _ := plistString(entry.List, "feature")
 		verified, vOk := plistInt(entry.List, "verified")
 		total, tOk := plistInt(entry.List, "total")
+
+		criteriaForm, hasCriteria := plistAny(entry.List, "criteria")
+		if hasCriteria && criteriaForm.Kind == worklang.List {
+			calcTotal := int64(len(criteriaForm.List))
+			calcVerified := int64(0)
+			for _, c := range criteriaForm.List {
+				if c.Kind == worklang.List {
+					st, _ := plistString(c.List, "state")
+					if st == "verified" {
+						calcVerified++
+					}
+				}
+			}
+			if vOk && tOk {
+				if verified != calcVerified || total != calcTotal {
+					return nil, fmt.Errorf("plan %s: feature %s counter %d/%d disagrees with criteria rows %d/%d", path, id, verified, total, calcVerified, calcTotal)
+				}
+			} else {
+				verified = calcVerified
+				total = calcTotal
+				vOk = true
+				tOk = true
+			}
+		}
+
 		if id == "" || !vOk || !tOk {
 			continue
 		}
@@ -106,6 +132,19 @@ func printRoadmapXY(w io.Writer, features []roadmapByFeature, filter string) int
 				return 0
 			}
 		}
+
+		// Check for epic rollup
+		var epicFeats []roadmapByFeature
+		for _, f := range features {
+			if len(f.ID) > len(filter) && f.ID[:len(filter)] == filter && f.ID[len(filter)] == '-' {
+				epicFeats = append(epicFeats, f)
+			}
+		}
+		if len(epicFeats) > 0 {
+			fmt.Fprintf(w, "%s\n", oneline.Escape(formatRollupLine(filter, epicFeats)))
+			return 0
+		}
+
 		fmt.Fprintf(w, "QUERY FAIL xy=%s: no such feature in :by-feature (held=%d)\n",
 			oneline.Field(filter), len(features))
 		return 1
@@ -113,7 +152,29 @@ func printRoadmapXY(w io.Writer, features []roadmapByFeature, filter string) int
 	for _, f := range features {
 		fmt.Fprintf(w, "%s\n", oneline.Escape(formatRoadmapXYLine(f)))
 	}
+	fmt.Fprintf(w, "%s\n", oneline.Escape(formatRollupLine("ROOT", features)))
 	return 0
+}
+
+func formatRollupLine(id string, feats []roadmapByFeature) string {
+	var fVerified, fTotal, cVerified, cTotal int64
+	for _, f := range feats {
+		fTotal++
+		if f.Verified == f.Total && f.Total > 0 {
+			fVerified++
+		}
+		cVerified += f.Verified
+		cTotal += f.Total
+	}
+	fPct := int64(0)
+	if fTotal > 0 {
+		fPct = (100*fVerified + fTotal/2) / fTotal
+	}
+	cPct := int64(0)
+	if cTotal > 0 {
+		cPct = (100*cVerified + cTotal/2) / cTotal
+	}
+	return fmt.Sprintf("%s %d/%d %d%% %d/%d %d%%", oneline.Field(id), fVerified, fTotal, fPct, cVerified, cTotal, cPct)
 }
 
 func formatRoadmapXYLine(f roadmapByFeature) string {
@@ -153,4 +214,28 @@ func plistInt(body []worklang.Form, key string) (int64, bool) {
 		return 0, false
 	}
 	return f.Int, true
+}
+
+func cmdRoadmapRead(args []string, stdout, stderr io.Writer) int {
+	f := flag.NewFlagSet("roadmap read", flag.ContinueOnError)
+	f.SetOutput(io.Discard)
+	node := f.String("node", "", "the :by-feature node id to read offline")
+	file := f.String("file", defaultRoadmapSexp, "the roadmap file to read")
+	if err := f.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return printVerbHelp(stderr, "roadmap read")
+		}
+		return refused(stderr, "roadmap read: "+err.Error())
+	}
+	if f.NArg() != 0 {
+		return refused(stderr, fmt.Sprintf("roadmap read takes no positional arguments (got %q)", f.Arg(0)))
+	}
+
+	features, err := readRoadmapByFeature(*file)
+	if err != nil {
+		fmt.Fprintf(stderr, "QUERY FAIL xy=%s: %s\n",
+			oneline.Field(*node), oneline.Escape(err.Error()))
+		return 2
+	}
+	return printRoadmapXY(stdout, features, *node)
 }
