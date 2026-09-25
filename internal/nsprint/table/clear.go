@@ -1,10 +1,10 @@
-// clear.go: `nova-sprint table clear` (#3637). Zeroes the table's landed and
-// done columns in under a second and leaves waiting untouched: every member of
+// clear.go: `nova-sprint table clear` (#3637). Zeroes the table's landed
+// column in under a second and leaves waiting untouched: every member of
 // every ws:<s>:landed set moves to done/ok through the one task move
 // (ns_tcard_move, fn/lua/02_card_move.lua, #3778: landed -> done/ok; the card
 // stays, in ws:<s>:done, which the stream table does not print), and each
 // friend's current done count (ZCARD of its done, merging and landed card
-// sets) is stored in ws:done0 so the friend block counts from zero. working
+// sets) is stored in ws:done0 (no longer read by the table, #4071). working
 // and merging are live places, not counters, so a clear never moves them.
 //
 // Round trips: the stream and friend lists, the landed members and done
@@ -23,6 +23,19 @@ import (
 
 	"github.com/redis/go-redis/v9"
 )
+
+// FriendDoneWheres are the friend card sets a clear's checkpoint counts as
+// a friend's done work (#3778): done, and merging and landed for a task that
+// named a PR.
+var FriendDoneWheres = []string{"done", "merging", "landed"}
+
+// FriendCardsKey is one friend's set of task ids at where.
+func FriendCardsKey(friend, where string) string { return "friend:" + friend + ":cards:" + where }
+
+// DoneBaseKey holds each friend's done count at the last `table clear`
+// (#3637). The sprint table no longer reads it (#4071: the consumer done
+// column is ok + fail, ZCARDs with no base); a clear still records it.
+const DoneBaseKey = "ws:done0"
 
 // ClearPlan is what a clear will move, read before anything is written.
 type ClearPlan struct {

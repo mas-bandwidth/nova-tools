@@ -197,7 +197,8 @@ func tableMoves(t *testing.T, consumer, reader string) {
 	wantCells(t, cellsOf(t, c, k), "work", 4, 6, 0, 0)
 	cleanMoves(t, c, "work")
 
-	// card end --ok --pr on 4 (each its own PR), --fail on 2 (one call).
+	// card end --ok --pr on 4 (each its own PR), --fail on 2 (one call):
+	// a fail's primary goes to review (#4072).
 	// The build copy's ok is what moves its primary working -> reading, and
 	// the read copies are cut for the reader in that same call (never the
 	// author); CI has not run on any head yet.
@@ -213,7 +214,7 @@ func tableMoves(t *testing.T, consumer, reader string) {
 		reads = append(reads, taskcard.Dealt{Primary: PrimaryOf(w.IDs[i]), Copy: strings.Split(e[0].Next, ",")[0]})
 	}
 	e, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: w.IDs[4:6], Why: "red at head", By: "rowan"})
-	if err != nil || len(e) != 2 || e[0].To != "waiting" {
+	if err != nil || len(e) != 2 || e[0].To != "review" {
 		t.Fatalf("end fail: %v %v", e, err)
 	}
 	cells := cellsOf(t, c, k)
@@ -221,7 +222,7 @@ func tableMoves(t *testing.T, consumer, reader string) {
 	if cells.Done() != 6 || cells.OKPct() != 67 || !strings.Contains(cells.Line(), "done=6 ok=4 fail=2 ok%=67") {
 		t.Fatalf("derived cells: %s", cells.Line())
 	}
-	wantWS(t, c, "end", map[string]int64{"waiting": 12, "working": 4, "reading": 4})
+	wantWS(t, c, "end", map[string]int64{"waiting": 10, "working": 4, "review": 2, "reading": 4})
 	wantCells(t, cellsOf(t, c, rd), "end", 4*per, 0, 0, 0)
 	// The primary carries the result and names its read copies; the build
 	// copy is in no ready/working set.
@@ -575,7 +576,8 @@ func TestCardMovesRefuseOffGraph(t *testing.T) {
 
 // TestCardCancelAndExpire: a copy given back returns its primary without an
 // attempt; a primary cancelled retires its live copy; a lapsed lease
-// returns the copy as a fail and counts an attempt.
+// returns the copy as a fail, counts an attempt and moves its primary to
+// review (#4072).
 func TestCardCancelAndExpire(t *testing.T) {
 	c := start(t)
 	ctx := context.Background()
@@ -607,7 +609,7 @@ func TestCardCancelAndExpire(t *testing.T) {
 	}
 	c.HSet(ctx, taskcard.Key(d[2].Copy), "lease_until", "1")
 	x, err := taskcard.ExpireCopies(ctx, c, "reconciler")
-	if err != nil || len(x) != 1 || x[0].Copy != d[2].Copy || x[0].To != "waiting" {
+	if err != nil || len(x) != 1 || x[0].Copy != d[2].Copy || x[0].To != "review" {
 		t.Fatalf("expire %v %v", x, err)
 	}
 	if h := c.HGetAll(ctx, taskcard.Key(ids[2])).Val(); h["why"] != "lease lapsed" || h["attempts"] != "1" {

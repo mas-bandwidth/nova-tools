@@ -195,15 +195,17 @@ func TestControl3530MembershipChange(t *testing.T) {
 		t.Fatalf("changed tick RoundTrips=%d, want 2", snap.RoundTrips)
 	}
 	got := snap.Render(now)
-	if !strings.Contains(got, "late stream                    |       0 |     0 |       1 |       0 |       0 |      0\n") {
+	if !strings.Contains(got, "late stream                    |       0 |     0 |       1 |      0 |       0 |       0 |      0\n") {
 		t.Fatalf("the new stream is not on the table:\n%s", got)
 	}
 	if strings.Contains(got, "vision") || strings.Contains(got, "ghost") {
 		t.Fatalf("a removed bench or friend is still on the table:\n%s", got)
 	}
 	friends := []string{}
-	for _, row := range snap.Friends {
-		friends = append(friends, row.Name)
+	for _, row := range snap.Consumers {
+		if row.Kind == "friend" {
+			friends = append(friends, row.Name)
+		}
 	}
 	if strings.Join(friends, ",") != "emma,johnny,rowan,stella" {
 		t.Fatalf("friends from the SET = %v, want sorted emma,johnny,rowan,stella", friends)
@@ -222,7 +224,7 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := snap.Render(now); !strings.HasPrefix(got, "SPRINT TABLE\n\n588/594 left, 1% done -> ~11760m\n\n") {
+	if got := snap.Render(now); !strings.HasPrefix(got, "SPRINT TABLE\n\n592/598 left, 1% done -> ~11840m\n\n") {
 		t.Fatalf("headline:\n%s", got)
 	}
 	mr := miniredis.RunT(t)
@@ -233,11 +235,15 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "SPRINT TABLE\n\n0/0 left, 0% done -> ~0m\n\n" +
-		"stream                         | waiting | ready | working | reading | merging | landed\n" +
-		"-------------------------------+---------+-------+---------+---------+---------+-------\n" +
-		"-------------------------------+---------+-------+---------+---------+---------+-------\n" +
-		"total                          |       0 |     0 |       0 |       0 |     0/0 |      0\n\n"
-	if got := snap.Render(now); !strings.HasPrefix(got, want) {
+		"stream                         | waiting | ready | working | review | reading | merging | landed\n" +
+		"-------------------------------+---------+-------+---------+--------+---------+---------+-------\n" +
+		"-------------------------------+---------+-------+---------+--------+---------+---------+-------\n" +
+		"total                          |       0 |     0 |       0 |      0 |       0 |     0/0 |      0\n\n" +
+		"consumer             | ready | working |  done |    ok |  fail |  ok% | status | load\n" +
+		"---------------------+-------+---------+-------+-------+-------+------+--------+------\n" +
+		"---------------------+-------+---------+-------+-------+-------+------+--------+------\n" +
+		"total                |     0 |       0 |     0 |     0 |     0 |    - |\n"
+	if got := snap.Render(now); got != want {
 		t.Fatalf("empty keyspace:\n%s", got)
 	}
 }
@@ -302,9 +308,10 @@ func TestControl3530WriterLock(t *testing.T) {
 }
 
 // TestControl3637ClearUnderOneSecond (DONE-WHEN of #3637): table clear moves
-// every landed member to closed and zeroes the friend done column, waiting,
-// ready, working, reading and merging untouched, in under one second; the checkpoint
-// names every moved task and every done count.
+// every landed member to closed, waiting, ready, working, review, reading and
+// merging untouched, in under one second; the checkpoint names every moved
+// task and every done count. The consumer table is untouched (#4071: its
+// done is ok + fail, ZCARDs with no base from a clear).
 // sprintStoreLua is the fixture on a throwaway redis-server with the
 // nova_sprint library loaded: the clear moves through the one task move.
 func sprintStoreLua(t *testing.T) (*redis.Client, *cmdLog) {
@@ -341,7 +348,7 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 	if names, trips := log.reset(); trips != 4 {
 		t.Fatalf("clear took %d round trips, want 4: %v", trips, names)
 	}
-	if plan.Count() != 6 || strings.Count(cp, "\ntask\t") != 6 || !strings.Contains(cp, "\nfriend\trowan\t14\n") {
+	if plan.Count() != 6 || strings.Count(cp, "\ntask\t") != 6 || !strings.Contains(cp, "\nfriend\trowan\t0\n") {
 		t.Fatalf("plan count %d; checkpoint:\n%s", plan.Count(), cp)
 	}
 	after, err := r.Read(ctx, now)
@@ -350,19 +357,17 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 	}
 	for i, row := range after.Streams {
 		b := before.Streams[i]
-		if row.Landed != 0 || row.Waiting != b.Waiting || row.Ready != b.Ready || row.Working != b.Working || row.Reading != b.Reading || row.Merging != b.Merging {
+		if row.Landed != 0 || row.Waiting != b.Waiting || row.Ready != b.Ready || row.Working != b.Working || row.Review != b.Review ||
+			row.Reading != b.Reading || row.Merging != b.Merging {
 			t.Fatalf("stream %q after clear %+v, before %+v", row.Name, row, b)
 		}
 	}
 	got := after.Render(now)
-	for _, want := range []string{
-		"\n588/588 left, 0% done -> ~11760m\n",
-		"\nrowan      |     0 |       2 |     0 |     0 |     0 |    - | up stale=10\n", // working is live children only (#3892)
-		"\nstella     |     0 |       1 |     0 |     0 |     0 |    - | down      \n",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("after clear lacks %q:\n%s", want, got)
-		}
+	if !strings.Contains(got, "\n592/592 left, 0% done -> ~11840m\n") {
+		t.Fatalf("after clear:\n%s", got)
+	}
+	if b, a := before.Render(now), got; b[strings.Index(b, "\nconsumer "):] != a[strings.Index(a, "\nconsumer "):] {
+		t.Fatalf("a clear changed the consumer table:\nbefore\n%s\nafter\n%s", b, a)
 	}
 	if state, _ := client.HGet(ctx, "task:t9-landed-0", "state").Result(); state != "closed" {
 		t.Fatalf("task:t9-landed-0 state=%q, want closed", state)
@@ -379,11 +384,5 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 	}
 	if v, _ := client.Get(ctx, "ws:checkpoint").Result(); v != "receipt" {
 		t.Fatalf("ws:checkpoint=%q", v)
-	}
-	// a counter that restarts below its base (a new sprint's index sets) shows as is
-	seedCommands(t, client, [][]string{{"ZREMRANGEBYRANK", table.FriendCardsKey("rowan", "done"), "0", "10"}})
-	again, _ := r.Read(ctx, now)
-	if got := again.Render(now); !strings.Contains(got, "\nrowan      |     0 |       2 |     3 |     0 |     0 |    - | up stale=10\n") {
-		t.Fatalf("restarted counter:\n%s", got)
 	}
 }
