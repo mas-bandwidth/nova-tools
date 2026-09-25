@@ -46,6 +46,9 @@ type Options struct {
 	// NoTest skips the batch test (and cfg:land:test): the stream head is
 	// tested by the CI request nova-sprint land makes (nova-tools#3899).
 	NoTest bool
+	// ParkConflicts parks a conflicting member and lands the rest (the land
+	// duty, nova-tools #3898); the default stops the build at it.
+	ParkConflicts bool
 }
 
 // Report is what one land stream run did.
@@ -131,7 +134,7 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	}
 	rep.Workdir = o.Workdir
 	b := Build{Repo: o.Repo, Remote: remote, Mirror: o.Mirror, Base: o.Base, Branch: rep.Branch, Workdir: o.Workdir,
-		Test: test, TestTimeout: o.TestTimeout, NoTest: o.NoTest, Author: o.Author, Log: o.Log}
+		Test: test, TestTimeout: o.TestTimeout, NoTest: o.NoTest, Author: o.Author, Log: o.Log, ParkConflicts: o.ParkConflicts}
 	res, err := b.Run(ctx, rep.Members)
 	rep.Build = res
 	rep.TestCmd = res.TestCmd
