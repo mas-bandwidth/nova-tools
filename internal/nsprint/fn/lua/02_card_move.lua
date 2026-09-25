@@ -69,7 +69,9 @@
 -- card with a stream needs ~ws:* there). A Redis Function cannot call
 -- another, so later files reach it as NS.card (hence the 02_ name: it loads
 -- first).
--- nova-sprint card fsck walks both directions (ns_card_fsck, ns_card_repair).
+-- nova-sprint card fsck walks both directions (ns_card_fsck, ns_card_repair)
+-- and every table set's members (ns_card_members, ns_card_members_repair: a
+-- member that is not the id of a record is MEMBER-NOT-A-CARD, #4054).
 
 local CM_WHERE = { 'waiting', 'ready', 'working', 'done', 'parked' }
 local CM_IS_WHERE = { waiting = true, ready = true, working = true, done = true, parked = true }
@@ -136,11 +138,47 @@ local function cm_has(e)
   return redis.call('ZSCORE', e.k, e.m) ~= false
 end
 
+-- A table set's member is a record (nova-tools#4054). Found 2026-09-25: a
+-- friend's ready set held 32 members of the shape '<file path>:task:<id>' (a
+-- grep with filenames in an import pipe), counted on the friend table for
+-- hours, and no fsck flagged them because they are not records at all. A
+-- member of a set that drives a table names an existing record: a card id
+-- s:<S>:card:<label> whose record exists, or a task id <id> whose task:<id>
+-- exists (rowan-new specs/ws-index.md, "Tasks are cards"). cm_record returns
+-- that record's key, or nil.
+local function cm_record(m)
+  if type(m) ~= 'string' or m == '' then return nil end
+  if cm_split(m) then
+    if redis.call('EXISTS', m) == 1 then return m end
+    return nil
+  end
+  if redis.call('EXISTS', 'task:' .. m) == 1 then return 'task:' .. m end
+  return nil
+end
+
+-- card_add(k, score, m): the one add into a table set (ws:<stream>:<where>,
+-- bench:<b>:cards:*, friend:<f>:cards:*) outside the task move. card_move's
+-- views add through it here, and another file adds as NS.card.add; the task
+-- moves of 03_task_event.lua, deal_friend.lua and route_duty.lua go through
+-- NS.task.move (TK, below), which adds only the views of the task:<id> record
+-- it has read. It refuses a member that is not the id of an existing record:
+-- NOTACARD <set> <member>, and nothing is written.
+local function card_add(k, score, m)
+  if not cm_record(m) then return 'NOTACARD ' .. k .. ' ' .. tostring(m) end
+  redis.call('ZADD', k, score, m)
+  return nil
+end
+
+-- The pool's members are labels (not a table set of ids): added as they are.
+-- A card-id view goes through card_add; a refusal there leaves the view
+-- unlinked, which card_move's after-check names (DRIFT-AFTER).
 local function cm_add(e, score)
   if e.t == 's' then
     redis.call('SADD', e.k, e.m)
-  else
+  elseif e.t == 'l' then
     redis.call('ZADD', e.k, score, e.m)
+  else
+    card_add(e.k, score, e.m)
   end
 end
 
@@ -428,6 +466,16 @@ local function card_create(id, fields, o)
   return card_move(id, 'waiting', { by = o.by, why = 'push' })
 end
 
+-- cm_evict(k, m, stream, w, by): remove a table-set member that is not a
+-- record, with its one ws:log receipt (id, stream, from = the set's where,
+-- to '', set, by, why MEMBER-NOT-A-CARD, at). The one remover of such a
+-- member, for the sprint walk and the member walk alike.
+local function cm_evict(k, m, stream, w, by)
+  redis.call('ZREM', k, m)
+  redis.call('XADD', 'ws:log', 'MAXLEN', '~', '200000', '*', 'id', m, 'stream', stream or '',
+    'from', w or '', 'to', '', 'set', k, 'by', by or '', 'why', 'MEMBER-NOT-A-CARD', 'at', tostring(cm_now()))
+end
+
 -- fsck of one sprint in one call, both directions. write repairs: adopts
 -- every record the sprint's state indexes, waiting set and pool name that
 -- sprint:<S>:cards lacks, rewrites a pointer its fine state contradicts, adds
@@ -527,12 +575,15 @@ local function card_fsck(S, write)
     end
   end
 
-  local function sweep(k)
+  -- A member with no record is not a stray card but no card at all:
+  -- MEMBER-NOT-A-CARD, removed with its ws:log receipt (#4054).
+  local function sweep(k, stream, w)
     for _, id in ipairs(redis.call('ZRANGE', k, 0, -1)) do
       if string.sub(id, 1, #prefix) == prefix and not (want[k] and want[k][id]) then
-        note('stray ' .. k .. ' ' .. id)
+        local card = cm_record(id) ~= nil
+        if card then note('stray ' .. k .. ' ' .. id) else note('MEMBER-NOT-A-CARD ' .. k .. ' ' .. id) end
         if write then
-          redis.call('ZREM', k, id)
+          if card then redis.call('ZREM', k, id) else cm_evict(k, id, stream, w, 'card-repair') end
           fixed = fixed + 1
         end
       end
@@ -560,16 +611,16 @@ local function card_fsck(S, write)
     end
   end
   for b in pairs(benches) do
-    for _, w in ipairs(CM_WHERE) do sweep('bench:' .. b .. ':cards:' .. w) end
-    sweep('bench:' .. b .. ':cards:ok')
-    sweep('bench:' .. b .. ':cards:fail')
-    sweep('bench:' .. b .. ':cards:abstain')
+    for _, w in ipairs(CM_WHERE) do sweep('bench:' .. b .. ':cards:' .. w, '', w) end
+    sweep('bench:' .. b .. ':cards:ok', '', 'done')
+    sweep('bench:' .. b .. ':cards:fail', '', 'done')
+    sweep('bench:' .. b .. ':cards:abstain', '', 'done')
   end
   for s in pairs(streams) do
-    for _, w in ipairs(CM_WHERE) do sweep('ws:' .. s .. ':' .. w) end
+    for _, w in ipairs(CM_WHERE) do sweep('ws:' .. s .. ':' .. w, s, w) end
   end
   for f in pairs(owners) do
-    for _, w in ipairs(CM_WHERE) do sweep('friend:' .. f .. ':cards:' .. w) end
+    for _, w in ipairs(CM_WHERE) do sweep('friend:' .. f .. ':cards:' .. w, '', w) end
   end
   for fine in pairs(CM_FINE) do
     for _, l in ipairs(redis.call('SMEMBERS', cm_idx(S, fine))) do
@@ -593,6 +644,77 @@ local function card_fsck(S, write)
   return out
 end
 
+-- Every set that drives a table, each with the stream its receipt names:
+-- ws:<stream>:<where> for every stream in ws:order or ws:names (the task
+-- places reading, merging and landed included), bench:<b>:cards:<where> and
+-- :ok|fail|abstain for every registered bench and _pool, and
+-- friend:<f>:cards:<where> for every member of friends. Read from the three
+-- registries, never a SCAN; sorted, so a walk reads in one order.
+local CM_TABLE_WHERE = { 'waiting', 'ready', 'working', 'reading', 'merging', 'landed', 'done', 'parked' }
+
+local function cm_table_sets()
+  local out, seen = {}, {}
+  local function add(k, stream, w)
+    if not seen[k] then
+      seen[k] = true
+      out[#out + 1] = { k = k, s = stream, w = w }
+    end
+  end
+  local streams = redis.call('ZRANGE', 'ws:order', 0, -1)
+  for _, s in ipairs(redis.call('SMEMBERS', 'ws:names')) do streams[#streams + 1] = s end
+  table.sort(streams)
+  for _, s in ipairs(streams) do
+    for _, w in ipairs(CM_TABLE_WHERE) do add('ws:' .. s .. ':' .. w, s, w) end
+  end
+  local benches = redis.call('SMEMBERS', 'benches')
+  table.sort(benches)
+  benches[#benches + 1] = '_pool'
+  for _, b in ipairs(benches) do
+    for _, w in ipairs(CM_WHERE) do add('bench:' .. b .. ':cards:' .. w, '', w) end
+    for _, w in ipairs({ 'ok', 'fail', 'abstain' }) do add('bench:' .. b .. ':cards:' .. w, '', 'done') end
+  end
+  local friends = redis.call('SMEMBERS', 'friends')
+  table.sort(friends)
+  for _, f in ipairs(friends) do
+    for _, w in ipairs(CM_TABLE_WHERE) do add('friend:' .. f .. ':cards:' .. w, '', w) end
+  end
+  return out
+end
+
+-- card_members(write, by): the walk of every table set's members, the
+-- direction a per-sprint fsck cannot see (a member that is no sprint's card
+-- is in no sprint's sweep). A member that is not the id of an existing
+-- record (cm_record) is the violation MEMBER-NOT-A-CARD <set> <member>;
+-- write removes it with its ws:log receipt (cm_evict). A set of the wrong type
+-- is named WRONGTYPE <set> and never written. Returns MEMBERS sets members
+-- bad removed, then up to 50 lines.
+local function card_members(write, by)
+  local sets, members, bad, removed, lines = 0, 0, 0, 0, {}
+  for _, e in ipairs(cm_table_sets()) do
+    local got = redis.pcall('ZRANGE', e.k, 0, -1)
+    if type(got) == 'table' and got.err then
+      bad = bad + 1
+      if #lines < 50 then lines[#lines + 1] = 'WRONGTYPE ' .. e.k end
+    else
+      sets = sets + 1
+      for _, m in ipairs(got) do
+        members = members + 1
+        if not cm_record(m) then
+          bad = bad + 1
+          if #lines < 50 then lines[#lines + 1] = 'MEMBER-NOT-A-CARD ' .. e.k .. ' ' .. m end
+          if write then
+            cm_evict(e.k, m, e.s, e.w, by)
+            removed = removed + 1
+          end
+        end
+      end
+    end
+  end
+  local out = { 'MEMBERS', tostring(sets), tostring(members), tostring(bad), tostring(removed) }
+  for _, l in ipairs(lines) do out[#out + 1] = l end
+  return out
+end
+
 -- ns_card_move(id, where[, ok[, by[, why]]]): a move that keeps the fine
 -- state (waiting <-> ready <-> parked, done/ok -> done/fail); the dealer's
 -- pool and waiting lists move with it, as with every move. OK or
@@ -611,6 +733,13 @@ end)
 redis.register_function({ function_name = 'ns_card_fsck', flags = { 'no-writes' },
   callback = function(keys, args) return card_fsck(args[1], false) end })
 redis.register_function('ns_card_repair', function(keys, args) return card_fsck(args[1], true) end)
+
+-- ns_card_members(): the member walk, read-only. ns_card_members_repair(by):
+-- the same walk, removing every member that is not a record (by names the
+-- receipt's actor: card fsck, fsck-duty).
+redis.register_function({ function_name = 'ns_card_members', flags = { 'no-writes' },
+  callback = function(keys, args) return card_members(false, '') end })
+redis.register_function('ns_card_members_repair', function(keys, args) return card_members(true, args[1]) end)
 
 -- ns_card_counts(S): every table cell as a ZCARD in one reply, read-only:
 -- {cards, n}, then {stream, name, waiting, ready, working, done, parked} per
@@ -678,7 +807,7 @@ local function card_purge(S)
   return n
 end
 
-NS.card = { move = card_move, create = card_create, purge = card_purge }
+NS.card = { move = card_move, create = card_create, purge = card_purge, add = card_add, record = cm_record }
 
 -- ===========================================================================
 -- Tasks are cards (nova-tools #3778; rowan-new specs/ws-index.md, "Tasks are

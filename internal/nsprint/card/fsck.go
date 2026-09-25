@@ -106,3 +106,53 @@ func Unplaced(ctx context.Context, client redis.UniversalClient, sprint string) 
 	}
 	return out, nil
 }
+
+// MembersReport is one ns_card_members or ns_card_members_repair reply: the
+// walk of every set that drives a table (nova-tools#4054).
+type MembersReport struct {
+	Sets, Members, Bad, Removed int64
+	Lines                       []string // MEMBER-NOT-A-CARD <set> <member> (or WRONGTYPE <set>), the first 50
+}
+
+// Clean is true when every member is a record, or repair removed each one
+// that was not.
+func (r MembersReport) Clean() bool { return r.Bad == 0 || r.Removed >= r.Bad }
+
+// Members walks every table set (ws:<stream>:<where> for each stream of
+// ws:order and ws:names, bench:<b>:cards:* for each registered bench and
+// _pool, friend:<f>:cards:* for each member of friends) in one function
+// call and names each member that is not the id of an existing card or task
+// record: MEMBER-NOT-A-CARD <set> <member>. repair removes each one with a
+// receipt on ws:log whose by is by. A member that is no sprint's card is in
+// no sprint's Fsck, so this is the other half of card fsck.
+func Members(ctx context.Context, client redis.UniversalClient, repair bool, by string) (MembersReport, error) {
+	fname := "ns_card_members"
+	var cmd *redis.Cmd
+	if repair {
+		fname = "ns_card_members_repair"
+		cmd = client.FCall(ctx, fname, nil, by)
+	} else {
+		cmd = client.FCallRO(ctx, fname, nil)
+	}
+	reply, err := cmd.StringSlice()
+	if err != nil {
+		return MembersReport{}, fmt.Errorf("%s: %w", fname, err)
+	}
+	return ParseMembers(fname, reply)
+}
+
+// ParseMembers reads a MEMBERS sets members bad removed line... reply.
+func ParseMembers(fname string, reply []string) (MembersReport, error) {
+	if len(reply) < 5 || reply[0] != "MEMBERS" {
+		return MembersReport{}, fmt.Errorf("%s reply %q", fname, reply)
+	}
+	n := make([]int64, 4)
+	for i := range n {
+		v, err := strconv.ParseInt(reply[1+i], 10, 64)
+		if err != nil {
+			return MembersReport{}, fmt.Errorf("%s reply field %d %q", fname, 1+i, reply[1+i])
+		}
+		n[i] = v
+	}
+	return MembersReport{Sets: n[0], Members: n[1], Bad: n[2], Removed: n[3], Lines: reply[5:]}, nil
+}

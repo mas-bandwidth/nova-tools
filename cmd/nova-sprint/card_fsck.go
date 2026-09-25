@@ -22,8 +22,11 @@ import (
 // internal/nsprint/fn/lua/02_card_move.lua (the one move primitive).
 
 // cmdCardFsck: card fsck --sprint <S> --redis <addr> [--repair]. One
-// function call walks the sprint's cards both ways; exit 0 clean (or every
-// drift repaired), 1 drift left (the remedy is --repair), 2 usage or Redis.
+// function call walks the sprint's cards both ways and one more walks every
+// table set's members (a member that is not the id of an existing record is
+// MEMBER-NOT-A-CARD, #4054; --repair removes it with a ws:log receipt); exit
+// 0 clean (or every drift repaired), 1 drift left (the remedy is --repair),
+// 2 usage or Redis.
 func cmdCardFsck(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card fsck")
 	sprint := fs.String("sprint", "", "")
@@ -61,13 +64,20 @@ func runFsck(ctx context.Context, addr, sprint string, repair bool, verb, remedy
 	if err != nil {
 		return refuse(stderr, "card", err.Error())
 	}
+	mem, err := card.Members(ctx, client, repair, "card fsck")
+	if err != nil {
+		return refuse(stderr, "card", err.Error())
+	}
 	for _, l := range rep.Lines {
 		fmt.Fprintf(stderr, "DRIFT %s\n", oneline.Escape(l))
 	}
+	for _, l := range mem.Lines {
+		fmt.Fprintf(stderr, "DRIFT %s\n", oneline.Escape(l))
+	}
 	nomirror := fsckNoMirror(ctx, client, stdout, stderr)
-	fmt.Fprintln(stdout, rep.Line(verb)+" nomirror="+nomirror)
-	if !rep.Clean() {
-		fmt.Fprintf(stderr, "nova-sprint card: %d drift left; run: nova-sprint %s\n", rep.Drift-rep.Fixed, remedy)
+	fmt.Fprintf(stdout, "%s notacard=%d removed=%d nomirror=%s\n", rep.Line(verb), mem.Bad, mem.Removed, nomirror)
+	if !rep.Clean() || !mem.Clean() {
+		fmt.Fprintf(stderr, "nova-sprint card: %d drift left; run: nova-sprint %s\n", rep.Drift-rep.Fixed+mem.Bad-mem.Removed, remedy)
 		return 1
 	}
 	return 0
