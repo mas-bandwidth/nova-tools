@@ -237,6 +237,11 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 		_, _ = fmt.Fprintf(out, "BLOCKED needs %s\n", strings.Join(blocked.Needs, " "))
 		return 7
 	}
+	var pitstopErr *task.PitstopError
+	if errors.As(err, &pitstopErr) {
+		_, _ = fmt.Fprintf(out, "%s\n", pitstopErr.Error())
+		return 7
+	}
 	if err != nil {
 		return refuseSeat(errOut, "task take", initiator, err)
 	}

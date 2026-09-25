@@ -76,7 +76,7 @@ func SprintFixture() [][]string {
 	} {
 		cmds = append(cmds, []string{"XADD", "ws:log", ms(-e.ago) + "-0", "id", e.id, "from", "working", "to", e.to, "by", "fixture", "at", ms(-e.ago)})
 	}
-	cmds = append(cmds, []string{"SET", "s:fix:pitstop", "fixture"})
+	cmds = append(cmds, []string{"HSET", "s:fix:pitstop", "reason", "fixture", "at", "1600000000000"})
 	// Benches: six in the SET; studio has a fresh row but is not in it.
 	for _, b := range []struct {
 		name, queue, working, load string

@@ -163,6 +163,27 @@ local function task_take(keys, args)
     return { 'NONE' }
   end
 
+  local pitstop = redis.call('HMGET', 's:' .. S .. ':pitstop', 'reason', 'scope')
+  if pitstop[1] then
+    local reason, scope = pitstop[1], pitstop[2] or 'all'
+    local in_scope = true
+    if scope ~= 'all' then
+      local tstream = redis.call('HGET', key, 'stream')
+      if not tstream or tstream == '' then
+        tstream = string.match(redis.call('HGET', key, 'title') or '', '^%s*STREAM:%s*(.-)%s*|')
+      end
+      if tstream and tstream ~= '' then
+        in_scope = false
+        for s in string.gmatch(scope, "%S+") do
+          if s == tstream then in_scope = true; break end
+        end
+      end
+    end
+    if in_scope then
+      return { 'PITSTOP', reason }
+    end
+  end
+
   -- A friend takes only from its assigned queue. The ready queue is for
   -- routing unassigned work, never an implicit claim by an arbitrary friend.
   local in_open = redis.call('ZSCORE', 's:' .. S .. ':open:' .. friend, id)

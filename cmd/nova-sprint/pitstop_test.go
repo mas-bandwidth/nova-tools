@@ -138,3 +138,67 @@ func TestPitstopStatusOnMiniredis(t *testing.T) {
 		t.Fatalf("status: %d %q", code, out)
 	}
 }
+
+
+func TestTakeRefusedWhilePitstopInScope(t *testing.T) {
+	addr, c := sprintRedis(t)
+	const S = "scope-test"
+	ctx := context.Background()
+	c.HSet(ctx, "s:"+S, "status", "open")
+	c.SAdd(ctx, "sprints", S)
+	c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: S})
+	t.Setenv("NOVA_FRIEND", "rowan")
+	c.SAdd(ctx, "friends", "rowan")
+	c.HSet(ctx, "friend:rowan:desired", "slots", "5")
+	c.HSet(ctx, "friend:rowan:beat", "at", "123456")
+
+	c.SAdd(ctx, "ws:names", "streamA", "streamB")
+	expect(t, 0, "PUSH CREATED id=tA\n", "task", "push", "--redis", addr, "--sprint", S, "--id", "tA", "--to", "rowan", "--title", "STREAM: streamA | task A")
+	expect(t, 0, "PUSH CREATED id=tB\n", "task", "push", "--redis", addr, "--sprint", S, "--id", "tB", "--to", "rowan", "--title", "STREAM: streamB | task B")
+	
+	// pitstop for streamA
+	runPit(t, "rowan", "set", "--redis", addr, "--sprint", S, "--reason", "testing", "--scope", "streamA")
+	
+	// taking tA should be refused
+	expect(t, 7, "PITSTOP testing\n", "task", "take", "--redis", addr, "--sprint", S, "--id", "tA", "--as", "rowan")
+	
+	// taking tB should succeed
+	code, out, errOut := runSprint("task", "take", "--redis", addr, "--sprint", S, "--id", "tB", "--as", "rowan")
+	if code != 0 || !strings.HasPrefix(out, "CLAIMED") {
+		_ = errOut
+		t.Fatalf("expected CLAIMED for tB, got out=%q", out)
+	}
+}
+
+func TestPitstopClearNarrowsScope(t *testing.T) {
+	addr, c := sprintRedis(t)
+	const S = "scope-test"
+	ctx := context.Background()
+	c.HSet(ctx, "s:"+S, "status", "open")
+	c.SAdd(ctx, "sprints", S)
+	c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: S})
+	t.Setenv("NOVA_FRIEND", "rowan")
+	c.SAdd(ctx, "friends", "rowan")
+	c.HSet(ctx, "friend:rowan:desired", "slots", "5")
+	c.HSet(ctx, "friend:rowan:beat", "at", "123456")
+
+	c.SAdd(ctx, "ws:names", "streamA", "streamB")
+	
+	// pitstop all
+	runPit(t, "rowan", "set", "--redis", addr, "--sprint", S, "--reason", "testing", "--scope", "all")
+	
+	// clear streamA
+	runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--scope", "streamA")
+	
+	// streamA tasks should be claimable now
+	expect(t, 0, "PUSH CREATED id=tA\n", "task", "push", "--redis", addr, "--sprint", S, "--id", "tA", "--to", "rowan", "--title", "STREAM: streamA | task A")
+	code, out, errOut := runSprint("task", "take", "--redis", addr, "--sprint", S, "--id", "tA", "--as", "rowan")
+	if code != 0 || !strings.HasPrefix(out, "CLAIMED") {
+		_ = errOut
+		t.Fatalf("expected CLAIMED for tA, got out=%q", out)
+	}
+	
+	// streamB tasks still stopped
+	expect(t, 0, "PUSH CREATED id=tB\n", "task", "push", "--redis", addr, "--sprint", S, "--id", "tB", "--to", "rowan", "--title", "STREAM: streamB | task B")
+	expect(t, 7, "PITSTOP testing\n", "task", "take", "--redis", addr, "--sprint", S, "--id", "tB", "--as", "rowan")
+}

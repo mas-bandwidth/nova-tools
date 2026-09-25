@@ -113,6 +113,8 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 				return claims, &BlockedError{Sprint: name, ID: taskID, Needs: strings.Fields(detail)}
 			}
 			// Without --id a task with unmet needs is passed over.
+		case "PITSTOP":
+			return claims, &PitstopError{Reason: detail}
 		case "RETRY":
 			retry = append(retry, TakeRequest{Sprint: name, ID: taskID, As: as, Actor: actor, Idem: idem})
 		case "DOWN", "FULL":
@@ -296,6 +298,12 @@ func Take(ctx context.Context, st *store.Store, req TakeRequest) (Claim, bool, e
 		}
 	}
 	switch status {
+	case "PITSTOP":
+		reason := ""
+		if len(values) > 1 {
+			reason = fmt.Sprint(values[1])
+		}
+		return Claim{}, false, &PitstopError{Reason: reason}
 	case "NONE", "NOTFOUND":
 		return Claim{}, false, nil
 	case TakeBlocked:
@@ -351,6 +359,14 @@ const (
 // BlockedError is a take refused because the task needs ids that are not
 // closed yet (#2939). `task take --id` prints it as BLOCKED needs <ids> and
 // exits 7; a take without --id passes over the task.
+type PitstopError struct {
+	Reason string
+}
+
+func (e *PitstopError) Error() string {
+	return "PITSTOP " + e.Reason
+}
+
 type BlockedError struct {
 	Sprint string
 	ID     string

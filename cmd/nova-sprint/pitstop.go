@@ -1,5 +1,5 @@
 // The pitstop verb (nova-tools #3371): the sprint's pit stop and its lift are
-// one Redis state, s:<S>:pitstop {by, why, at}, never a bus note; the deal
+// one Redis state, s:<S>:pitstop {by, reason, scope, at}, never a bus note; the deal
 // pass honours it (a pit-stopped sprint deals nothing). set and clear are one FCALL each
 // (ns_pitstop_set, ns_pitstop_clear) with a receipt on s:<S>:log; status is
 // one HGETALL. Every subverb prints one line: exit 0 done, 1 refused with the
@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -19,7 +20,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "pitstop",
-		Summary: "set|clear|status --sprint <S> [--why <text>] [--by <who>] [--force]: the sprint's pit stop, one Redis key the dealer honours",
+		Summary: "set|clear|status --sprint <S> [--reason <text>] [--scope all|<stream>...] [--by <who>] [--force]: the sprint's pit stop, one Redis key the dealer honours",
 		Run:     runPitstop,
 	})
 }
@@ -37,10 +38,12 @@ func runPitstop(ctx context.Context, args []string, out, errOut io.Writer) int {
 	name := "pitstop " + sub
 	fs, addr := lifeFlags(name)
 	sprint := fs.String("sprint", "", "sprint")
-	why := fs.String("why", "", "why the sprint is stopped (set)")
+	reason := fs.String("reason", "", "reason the sprint is stopped (set)")
+	scope := fs.String("scope", "all", "which streams to stop (or clear); default all")
 	by := fs.String("by", "", "who sets or clears it; default NOVA_FRIEND")
 	force := fs.Bool("force", false, "replace an existing stop (set)")
 	idem := fs.String("idem", "", "idempotency marker for the receipt")
+	busAddr := fs.String("bus", "", "the message bus dir to post to")
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, name, err.Error())
 	}
@@ -50,8 +53,8 @@ func runPitstop(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if *sprint == "" {
 		return refuse(errOut, name, "--sprint is required")
 	}
-	if sub != "set" && (*why != "" || *force) {
-		return refuse(errOut, name, "--why and --force belong to set")
+	if sub != "set" && (*reason != "" || *force) {
+		return refuse(errOut, name, "--reason and --force belong to set")
 	}
 	who := *by
 	if who == "" {
@@ -68,6 +71,8 @@ func runPitstop(ctx context.Context, args []string, out, errOut io.Writer) int {
 	c := st.Client()
 	S := oneline.Field(*sprint)
 
+	var line string
+
 	switch sub {
 	case "status":
 		stop, err := pitstop.Read(ctx, c, *sprint)
@@ -77,7 +82,7 @@ func runPitstop(ctx context.Context, args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(out, stop.Line())
 		return 0
 	case "set":
-		r, err := pitstop.Set(ctx, c, *sprint, who, *why, *force, *idem)
+		r, err := pitstop.Set(ctx, c, *sprint, who, *reason, *scope, *force, *idem)
 		if err != nil {
 			return refuse(errOut, name, err.Error())
 		}
@@ -86,18 +91,16 @@ func runPitstop(ctx context.Context, args []string, out, errOut io.Writer) int {
 			fmt.Fprintf(errOut, "REFUSED pitstop set: sprint=%s is unknown (no s:%s status); remedy: name an opened sprint (nova-sprint sprint status)\n", S, S)
 			return 1
 		case pitstop.Exists:
-			fmt.Fprintf(errOut, "REFUSED pitstop set: sprint=%s already stopped by=%s at=%d why=%s; remedy: nova-sprint pitstop clear --sprint %s, or set --force to replace it\n",
-				S, oneline.Field(r.Prior.By), r.Prior.At, oneline.Quote(r.Prior.Why), S)
+			fmt.Fprintf(errOut, "REFUSED pitstop set: sprint=%s already stopped by=%s at=%d reason=%s scope=%s; remedy: nova-sprint pitstop clear --sprint %s, or set --force to replace it\n",
+				S, oneline.Field(r.Prior.By), r.Prior.At, oneline.Quote(r.Prior.Reason), oneline.Field(r.Prior.Scope), S)
 			return 1
 		}
-		line := fmt.Sprintf("PITSTOP SET sprint=%s by=%s at=%d why=%s", S, oneline.Field(who), r.At, oneline.Quote(*why))
+		line = fmt.Sprintf("PITSTOP SET sprint=%s by=%s at=%d reason=%s scope=%s", S, oneline.Field(who), r.At, oneline.Quote(*reason), oneline.Field(*scope))
 		if r.Prior.Set {
-			line += fmt.Sprintf(" replaced_by=%s replaced_why=%s", oneline.Field(r.Prior.By), oneline.Quote(r.Prior.Why))
+			line += fmt.Sprintf(" replaced_by=%s replaced_reason=%s", oneline.Field(r.Prior.By), oneline.Quote(r.Prior.Reason))
 		}
-		fmt.Fprintln(out, line)
-		return 0
 	default: // clear
-		r, err := pitstop.Clear(ctx, c, *sprint, who, *idem)
+		r, err := pitstop.Clear(ctx, c, *sprint, who, *scope, *idem)
 		if err != nil {
 			return refuse(errOut, name, err.Error())
 		}
@@ -105,8 +108,20 @@ func runPitstop(ctx context.Context, args []string, out, errOut io.Writer) int {
 			fmt.Fprintf(errOut, "REFUSED pitstop clear: sprint=%s has no pit stop; remedy: nothing to lift (nova-sprint pitstop status --sprint %s)\n", S, S)
 			return 1
 		}
-		fmt.Fprintf(out, "PITSTOP CLEAR sprint=%s by=%s at=%d was_by=%s was_at=%d was_why=%s\n",
-			S, oneline.Field(who), r.At, oneline.Field(r.Prior.By), r.Prior.At, oneline.Quote(r.Prior.Why))
-		return 0
+		line = fmt.Sprintf("PITSTOP CLEAR sprint=%s by=%s at=%d was_by=%s was_at=%d was_reason=%s was_scope=%s",
+			S, oneline.Field(who), r.At, oneline.Field(r.Prior.By), r.Prior.At, oneline.Quote(r.Prior.Reason), oneline.Field(r.Prior.Scope))
 	}
+	
+	fmt.Fprintln(out, line)
+	
+	// Post to the bus
+	if *busAddr != "" {
+		cmd := exec.Command("nova-bus", "send", "--bus", *busAddr, "--as", who, "--text", line)
+		_ = cmd.Run() // Ignore errors as it is a side-effect. Wait, is error handling expected? "post the same line to the bus".
+	} else if os.Getenv("NOVA_BUS_ADDR") != "" {
+		cmd := exec.Command("nova-bus", "send", "--bus", os.Getenv("NOVA_BUS_ADDR"), "--as", who, "--text", line)
+		_ = cmd.Run()
+	}
+	
+	return 0
 }

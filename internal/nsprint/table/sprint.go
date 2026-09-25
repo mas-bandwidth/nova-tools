@@ -79,9 +79,14 @@ type StreamRow struct {
 func (r StreamRow) Total() int64 { return r.Waiting + r.Ready + r.Working + r.Merging + r.Landed }
 
 // SprintSnapshot is one tick's read.
+type PitstopInfo struct {
+	Reason string
+	At     int64
+}
+
 type SprintSnapshot struct {
 	Config     SprintConfig
-	Pitstop    bool
+	Pitstop    *PitstopInfo
 	Streams    []StreamRow
 	LandedHour int64 // ws:log moves to landed in the hour before the read
 	Benches    []BenchRow
@@ -136,9 +141,9 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	if len(cfg.Friends) == 0 {
 		friendSet = pipe.SMembers(ctx, "friends")
 	}
-	var pit *redis.IntCmd
+	var pit *redis.MapStringStringCmd
 	if cfg.Sprint != "" {
-		pit = pipe.Exists(ctx, "s:"+cfg.Sprint+":pitstop", "sprint:"+cfg.Sprint+":pitstop")
+		pit = pipe.HGetAll(ctx, "s:"+cfg.Sprint+":pitstop")
 	}
 	since := now.Add(-time.Hour).UnixMilli()
 	log := pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(since, 10), "+", logWindowMax)
@@ -192,8 +197,12 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 
 	snap := &SprintSnapshot{Config: cfg, DoneBase: map[string]string{}}
-	if pit != nil && pit.Val() > 0 {
-		snap.Pitstop = true
+	if pit != nil {
+		h := pit.Val()
+		if len(h) > 0 {
+			at, _ := strconv.ParseInt(h["at"], 10, 64)
+			snap.Pitstop = &PitstopInfo{Reason: h["reason"], At: at}
+		}
 	}
 	if msgs, err := log.Result(); err == nil {
 		for _, m := range msgs {
@@ -283,8 +292,8 @@ func (s *SprintSnapshot) XY() (left, y, pct, eta int64) {
 func (s *SprintSnapshot) Render(now time.Time) string {
 	var b strings.Builder
 	b.Grow(4096)
-	if s.Pitstop {
-		b.WriteString("SPRINT TABLE *** PIT STOP ***\n\n")
+	if s.Pitstop != nil {
+		fmt.Fprintf(&b, "SPRINT TABLE *** PIT STOP ***\nPIT STOP %s since %s\n\n", s.Pitstop.Reason, time.UnixMilli(s.Pitstop.At).UTC().Format("2006-01-02T15:04:05Z"))
 	} else {
 		b.WriteString("SPRINT TABLE\n\n")
 	}
