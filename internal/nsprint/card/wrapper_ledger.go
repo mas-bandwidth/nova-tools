@@ -3,6 +3,7 @@ package card
 import (
 	"context"
 	"errors"
+	"math"
 	"strconv"
 	"time"
 
@@ -27,13 +28,23 @@ type RedisLedger struct {
 
 var _ WrapperLedger = (*RedisLedger)(nil)
 
-// Card reads state, bench, attempt and identity from the card hash. It writes
-// nothing, so a refusal before launched leaves the keyspace as it was.
+// CardConfigKey is the card configuration hash; its wall_max_min is the EST
+// of a card that carries none (#3653).
+const CardConfigKey = "cfg:card"
+
+// Card reads state, bench, attempt, identity and est from the card hash, and
+// cfg:card wall_max_min, in one round trip. It writes nothing, so a refusal
+// before launched leaves the keyspace as it was. An unreadable cfg:card (no
+// key, or a bench user not allowed to read it) is an absent wall_max_min.
 func (l *RedisLedger) Card(ctx context.Context) (WrapperCard, error) {
 	if l.Store == nil || l.Store.Client() == nil {
 		return WrapperCard{}, errors.New("no store")
 	}
-	vals, err := l.Store.Client().HMGet(ctx, CardKey(l.Sprint, l.Label), "state", "bench", "attempt", "identity").Result()
+	pipe := l.Store.Client().Pipeline()
+	cardCmd := pipe.HMGet(ctx, CardKey(l.Sprint, l.Label), "state", "bench", "attempt", "identity", "est")
+	cfgCmd := pipe.HGet(ctx, CardConfigKey, "wall_max_min")
+	_, _ = pipe.Exec(ctx)
+	vals, err := cardCmd.Result()
 	if err != nil {
 		return WrapperCard{}, err
 	}
@@ -42,12 +53,24 @@ func (l *RedisLedger) Card(ctx context.Context) (WrapperCard, error) {
 		return s
 	}
 	attempt, _ := strconv.Atoi(str(vals[2]))
-	return WrapperCard{State: str(vals[0]), Bench: str(vals[1]), Attempt: attempt, Identity: str(vals[3])}, nil
+	return WrapperCard{
+		State: str(vals[0]), Bench: str(vals[1]), Attempt: attempt, Identity: str(vals[3]),
+		EstMin: positiveFloat(str(vals[4])), WallMaxMin: positiveFloat(cfgCmd.Val()),
+	}, nil
 }
 
-// Launched is ns_card_launched: dealt to launched.
-func (l *RedisLedger) Launched(ctx context.Context, branch, jobDir string) (int, error) {
-	res, err := Launched(ctx, l.Store, LaunchRequest{Sprint: l.Sprint, Label: l.Label, Token: l.Token, Branch: branch, JobDir: jobDir, Deadline: l.LaunchDeadline})
+// positiveFloat is s as a positive number, or 0.
+func positiveFloat(s string) float64 {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || f <= 0 || math.IsInf(f, 0) || math.IsNaN(f) {
+		return 0
+	}
+	return f
+}
+
+// Launched is ns_card_launched: dealt to launched, recording wall_max_s.
+func (l *RedisLedger) Launched(ctx context.Context, branch, jobDir string, wallMax time.Duration) (int, error) {
+	res, err := Launched(ctx, l.Store, LaunchRequest{Sprint: l.Sprint, Label: l.Label, Token: l.Token, Branch: branch, JobDir: jobDir, Deadline: l.LaunchDeadline, WallMax: wallMax})
 	return res.Code, err
 }
 

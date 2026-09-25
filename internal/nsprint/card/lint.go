@@ -93,6 +93,7 @@ type cardDoc struct {
 	Type           string // optional TYPE: line, the Jev work type (code, docs, spec, ...); not KIND
 	Route          string // ROUTE: pro|flash, the routes.yaml tier the bench harness picks its model from; absent is flash
 	Priority       string // PRIORITY: <integer>, the card's score in the pool ZSET; absent is 0
+	Est            string // EST: <minutes>, the card's est field (#3653); "" is absent or not a number of minutes
 	Payload        string
 }
 
@@ -159,6 +160,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		Type:           header["TYPE"],
 		Route:          route,
 		Priority:       priority,
+		Est:            parseEst(header["EST"]),
 		Payload:        hex.EncodeToString(sum[:]),
 	}, nil
 }
@@ -195,6 +197,31 @@ func parsePriority(value string) (string, error) {
 		return "", fmt.Errorf("PRIORITY: %q is not an integer", value)
 	}
 	return strconv.FormatInt(n, 10), nil
+}
+
+// estRE is an EST: line the wrapper can enforce (#3653): a positive number
+// of minutes, or of hours with an h suffix.
+var estRE = regexp.MustCompile(`^(?i)([0-9]+(?:\.[0-9]+)?)\s*(m|min|mins|minutes?|h|hr|hrs|hours?)?$`)
+
+// parseEst is the card's EST: line as minutes for the card hash's est field,
+// which the wrapper's wall cap reads (EST x 1.5, #3653). An absent line, or
+// one that is prose rather than a number of minutes (EST: S, EST: 1 read,
+// ~15 min), is "" and not stored: the wrapper then uses cfg:card
+// wall_max_min, or 30. It never refuses the card: EST was free text before
+// the wrapper read it.
+func parseEst(value string) string {
+	m := estRE.FindStringSubmatch(strings.TrimSpace(value))
+	if m == nil {
+		return ""
+	}
+	n, err := strconv.ParseFloat(m[1], 64)
+	if err != nil || n <= 0 {
+		return ""
+	}
+	if u := strings.ToLower(m[2]); u != "" && u[0] == 'h' {
+		n *= 60
+	}
+	return strconv.FormatFloat(n, 'f', -1, 64)
 }
 
 // parseHeader reads the contract line and the contiguous KEY: value block

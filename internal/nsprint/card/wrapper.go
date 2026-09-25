@@ -16,8 +16,10 @@ package card
 //     <job>/harness.log, with the token nowhere in its argv or environment;
 //  4. beats: once at start (the start acknowledgement that moves launched to
 //     running) and then every BeatEvery until the harness exits;
-//  5. kills the harness's group when the card clock runs out (FAILED timeout)
-//     or a beat is fenced (FAILED other);
+//  5. kills the harness's group when the card clock runs out (FAILED timeout),
+//     when the card's wall cap runs out (FAILED wall, #3653: EST x 1.5
+//     minutes, recorded as wall_max_s on the card hash at launched) or a beat
+//     is fenced (FAILED other);
 //  6. copies <job>/out and harness.log into the results directory, writes
 //     wrapper.line (exit class, wall, the harness's RESULT line) and hands the
 //     end to the ledger, which writes end.record there FIRST and then calls
@@ -37,6 +39,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,18 +65,49 @@ const (
 // DefaultBeatEvery is the card beat cadence (#2756 2: 60 s per card).
 const DefaultBeatEvery = 60 * time.Second
 
+// DefaultEstMin is the EST a card without one is given when cfg:card carries
+// no wall_max_min (#3653).
+const DefaultEstMin = 30
+
+// WallFactor is the wall cap's multiple of the card's EST (#3653).
+const WallFactor = 1.5
+
+// WallMax is the card's wall cap (#3653): EST x 1.5 minutes, whole seconds
+// (at least one). estMin is the card's est field; when it is absent (0) the
+// EST is defaultMin (cfg:card wall_max_min), and DefaultEstMin when that is
+// absent too.
+func WallMax(estMin, defaultMin float64) time.Duration {
+	est := estMin
+	if est <= 0 {
+		est = defaultMin
+	}
+	if est <= 0 {
+		est = DefaultEstMin
+	}
+	secs := math.Round(est * WallFactor * 60)
+	if secs < 1 {
+		secs = 1
+	}
+	return time.Duration(secs) * time.Second
+}
+
 // WrapperCard is what the wrapper reads before it writes anything.
 type WrapperCard struct {
 	State    string
 	Bench    string
 	Attempt  int
 	Identity string // <S>/<label>/<base sha8>/<bench>/<attempt>
+	// EstMin is the card's est field (its EST: line in minutes, stored by
+	// card push); 0 is absent. WallMaxMin is cfg:card wall_max_min, the EST
+	// of a card that carries none; 0 is absent. See WallMax.
+	EstMin     float64
+	WallMaxMin float64
 }
 
 // WrapperEnd is the exit class the wrapper hands to the ledger.
 type WrapperEnd struct {
 	Outcome    string // DONE, FAILED (the wrapper never infers ABSTAIN or BLOCKED)
-	Reason     string // done, crash, timeout, other
+	Reason     string // done, crash, timeout, wall, other
 	Exit       int    // the harness exit code; -1 when it was killed
 	ResultsDir string
 	// PushedSHA is the commit step's commit on the card branch, or "-"
@@ -81,6 +115,8 @@ type WrapperEnd struct {
 	PushedSHA string
 	// Commit is the commit step's note: COMMITTED, NO-COMMIT or OVERSIZE <file>.
 	Commit string
+	// WallMax is the attempt's wall cap (#3653); wrapper.line names it.
+	WallMax time.Duration
 }
 
 // WrapperLedger is the Redis side of one attempt. Every method returns the
@@ -92,7 +128,8 @@ type WrapperLedger interface {
 	// exactly one wrapper invocation own a dealt attempt. nonce is this
 	// invocation's; a retry of the same call with the same nonce is 0 again.
 	Claim(ctx context.Context, nonce string) (int, error)
-	Launched(ctx context.Context, branch, jobDir string) (int, error)
+	// Launched records the attempt's wall cap as wall_max_s (#3653).
+	Launched(ctx context.Context, branch, jobDir string, wallMax time.Duration) (int, error)
 	Beat(ctx context.Context) (int, error)
 	End(ctx context.Context, end WrapperEnd) (int, error)
 }
@@ -235,6 +272,9 @@ type WrapperConfig struct {
 	Now   func() time.Time
 	After func(time.Duration) <-chan time.Time
 	Tick  func(time.Duration) (<-chan time.Time, func())
+	// WallAfter is the wall cap's timer (#3653), separate from After so a
+	// test driving the card clock never fires the wall; nil is time.After.
+	WallAfter func(time.Duration) <-chan time.Time
 }
 
 // WrapperReport is what one run did; the command prints Line.
@@ -373,7 +413,8 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	if expired() {
 		return refuse(WrapperExitCouldNot, "launch deadline exceeded")
 	}
-	code, err := ledger.Launched(ctx, WrapperBranch(cfg.Sprint, cfg.Label, cfg.Attempt), job)
+	wallMax := WallMax(c.EstMin, c.WallMaxMin)
+	code, err := ledger.Launched(ctx, WrapperBranch(cfg.Sprint, cfg.Label, cfg.Attempt), job, wallMax)
 	if err != nil || code != 0 {
 		return refuse(ledgerCode(code, err), fmt.Sprintf("card launched refused code=%d%s", code, errSuffix(err)))
 	}
@@ -395,9 +436,13 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 		}
 	}
 	began := now()
+	wallAfter := cfg.WallAfter
+	if wallAfter == nil {
+		wallAfter = time.After
+	}
 	if err := makeJobDir(cfg.JobsRoot, job); err != nil {
 		// The card is launched and the harness never ran: a crash, recorded.
-		return finish(ctx, cfg, ledger, &rep, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1}, "job dir: "+err.Error(), cleanup)
+		return finish(ctx, cfg, ledger, &rep, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1, WallMax: wallMax}, "job dir: "+err.Error(), cleanup)
 	}
 
 	// 3. The harness, in its own group, token-free.
@@ -414,10 +459,12 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	if err := cmd.Start(); err != nil {
 		log.Close()
 		// The card is launched and the harness never ran: a crash, recorded.
-		return finish(ctx, cfg, ledger, &rep, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1}, "harness start: "+err.Error(), cleanup)
+		return finish(ctx, cfg, ledger, &rep, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1, WallMax: wallMax}, "harness start: "+err.Error(), cleanup)
 	}
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
+	// The wall cap runs from the harness start, whatever the beats say.
+	wall := wallAfter(wallMax)
 
 	// 4 and 5. Beat until the harness exits, the clock runs out, or a beat is fenced.
 	end := WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1}
@@ -450,6 +497,12 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 			waitErr, done = <-exited, true
 			end = WrapperEnd{Outcome: "FAILED", Reason: "timeout", Exit: -1}
 			why = "card clock " + cfg.Clock.String() + " ran out"
+		case <-wall:
+			// The harness's whole group goes; out/ is copied for the read.
+			killGroup(cmd)
+			waitErr, done = <-exited, true
+			end = WrapperEnd{Outcome: "FAILED", Reason: "wall", Exit: -1}
+			why = fmt.Sprintf("card wall %s ran out (EST x %.1f, wall_max_s=%d)", wallMax, WallFactor, int64(wallMax/time.Second))
 		case <-ticks:
 			if !beat() {
 				killGroup(cmd)
@@ -461,6 +514,7 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	stop()
 	_ = waitErr
 	log.Close()
+	end.WallMax = wallMax
 	// A fenced beat ends here too: the ledger writes end.record before its
 	// end call, which is then fenced, and the record stays for the reconciler.
 	return finish(ctx, cfg, ledger, &rep, job, results, began, now, end, why, cleanup)
@@ -651,8 +705,8 @@ func copyFile(src, dst string) error {
 // writeWrapperLine records what end.record has no field for: the wall and the
 // harness's RESULT line (line 1 of out/RESULT.md, if it wrote one).
 func writeWrapperLine(results string, cfg WrapperConfig, end WrapperEnd, beats int, wall time.Duration) {
-	line := fmt.Sprintf("WRAPPER card=%s outcome=%s reason=%s exit=%d beats=%d wall_ms=%d commit=%s result=%s\n",
-		cfg.card(), end.Outcome, end.Reason, end.Exit, beats, wall.Milliseconds(), strconv.Quote(end.Commit), strconv.Quote(resultLine(results)))
+	line := fmt.Sprintf("WRAPPER card=%s outcome=%s reason=%s exit=%d beats=%d wall_ms=%d wall_max_s=%d commit=%s result=%s\n",
+		cfg.card(), end.Outcome, end.Reason, end.Exit, beats, wall.Milliseconds(), int64(end.WallMax/time.Second), strconv.Quote(end.Commit), strconv.Quote(resultLine(results)))
 	_ = os.WriteFile(filepath.Join(results, "wrapper.line"), []byte(line), 0o644)
 }
 
