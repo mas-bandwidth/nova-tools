@@ -32,7 +32,7 @@ func SprintFixtureConfig() SprintConfig {
 
 // SprintFixtureStreams are the fixture's streams in rank order with their
 // waiting, ready, working, merging and landed counts.
-var SprintFixtureStreams = []StreamRow{
+var SprintFixtureStreams = []FixtureStream{
 	{"swarm: cards", 150, 5, 6, 0, 0},
 	{"nova-sprint + merge + bus", 310, 6, 0, 1, 2},
 	{"nova sprint migration", 14, 0, 0, 0, 0},
@@ -43,6 +43,12 @@ var SprintFixtureStreams = []StreamRow{
 	{"docs", 0, 0, 0, 0, 0},
 	{"rowan-tools", 1, 0, 0, 0, 3},
 	{"harvest", 0, 4, 0, 0, 0},
+}
+
+// FixtureStream is one fixture stream's five set sizes.
+type FixtureStream struct {
+	Name                                     string
+	Waiting, Ready, Working, Merging, Landed int64
 }
 
 // SprintFixture is the keyspace as Redis commands.

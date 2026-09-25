@@ -21,7 +21,8 @@ import (
 // where names it. Ready is its own column: nothing is folded into waiting
 // (Glenn 2026-09-25 saw 68 waiting that were 56 waiting + 12 ready). The
 // total row is the column sums and the headline's y is every card in the
-// five sets.
+// five sets. The merging cell is <read>/<unread> (#3900): these cards carry
+// no PR, so none is read.
 func TestStreamsTableFromRecords(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -70,10 +71,10 @@ func TestStreamsTableFromRecords(t *testing.T) {
 	rule := "-------------------------------+---------+-------+---------+---------+-------\n"
 	want := "SPRINT TABLE\n\n93/99 left, 6% done -> ~5580m\n\n" +
 		"stream                         | waiting | ready | working | merging | landed\n" + rule +
-		"nova-sprint + merge + bus      |      56 |    12 |       3 |       2 |      1\n" +
-		"swarm: cards                   |       4 |     0 |       7 |       0 |      5\n" +
-		"only ready                     |       0 |     9 |       0 |       0 |      0\n" + rule +
-		"total                          |      60 |    21 |      10 |       2 |      6\n\n"
+		"nova-sprint + merge + bus      |      56 |    12 |       3 |     0/2 |      1\n" +
+		"swarm: cards                   |       4 |     0 |       7 |     0/0 |      5\n" +
+		"only ready                     |       0 |     9 |       0 |     0/0 |      0\n" + rule +
+		"total                          |      60 |    21 |      10 |     0/2 |      6\n\n"
 	if !strings.HasPrefix(out, want) {
 		t.Fatalf("streams block:\n%s\nwant prefix:\n%s", out, want)
 	}
@@ -115,7 +116,7 @@ func TestTableTickMakesNoRestCall(t *testing.T) {
 	if n := ft.n.Load(); n != 0 {
 		t.Fatalf("ten ticks made %d HTTP calls, want 0", n)
 	}
-	allowed := map[string]bool{"ZRANGE": true, "ZCARD": true, "SMEMBERS": true, "EXISTS": true, "XRANGE": true, "HGETALL": true, "HGET": true, "HMGET": true, "ZCOUNT": true, "EVAL": true, "EVALSHA": true}
+	allowed := map[string]bool{"ZRANGE": true, "ZCARD": true, "SMEMBERS": true, "EXISTS": true, "XRANGE": true, "HGETALL": true, "HGET": true, "HMGET": true, "ZCOUNT": true, "EVAL": true, "EVALSHA": true, "EVAL_RO": true}
 	names, _ := log.reset()
 	if len(names) == 0 {
 		t.Fatal("no commands logged")
