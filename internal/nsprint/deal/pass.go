@@ -753,11 +753,12 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	open := pipe.SMembers(ctx, "sprints")
 	// cfg:deal max_sessions rides the first round (#3706). It is optional:
 	// unset, unreadable (an ACL without cfg:*) or not a positive number, the
-	// pass uses its default, and the read never fails on it.
+	// pass uses its default. Its own error is the only one the round
+	// forgives; any other command's error (a lost connection, a NOPERM on the
+	// registries) fails the read as before.
 	maxSessions := pipe.HGet(ctx, MaxSessionsKey, "max_sessions")
-	_, _ = pipe.Exec(ctx)
-	for _, cmd := range []redis.Cmder{clock, benchNames, order, open} {
-		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		if err := roundErr(maxSessions, clock, benchNames, order, open); err != nil {
 			return Input{}, err
 		}
 	}
@@ -954,6 +955,22 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			Pitstop: sc[i].stop.Val() > 0, Pool: bySprint[i], Waiting: waitBySprint[i]})
 	}
 	return in, nil
+}
+
+// roundErr is the first error, other than redis.Nil, of the round's
+// commands, skipping forgiven: the one optional read whose own error leaves
+// its default. A round whose Exec failed but whose every other command
+// succeeded failed only on forgiven.
+func roundErr(forgiven redis.Cmder, cmds ...redis.Cmder) error {
+	for _, cmd := range cmds {
+		if cmd == forgiven {
+			continue
+		}
+		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
+			return err
+		}
+	}
+	return nil
 }
 
 // RowKey is the hash (bench:<b>:ssh) the deal pass's Row writes the last session outcome to:
