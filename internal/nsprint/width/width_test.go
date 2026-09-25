@@ -82,7 +82,7 @@ func TestWidthControls(t *testing.T) {
 		for i := 1; i <= 20; i++ {
 			id := fmt.Sprintf("t%d", i)
 			client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: float64(i), Member: id})
-			client.HSet(ctx, "s:"+sprint+":task:"+id, "state", "open", "kind", "work", "ref", id)
+			client.HSet(ctx, "task:"+id, "state", "open", "kind", "work", "ref", id)
 		}
 
 		res, err := task.WidthFill(ctx, st, "f1", sprint, 0, "f1", "")
@@ -187,7 +187,7 @@ func TestWidthControls(t *testing.T) {
 		for i := 1; i <= 5; i++ {
 			id := fmt.Sprintf("t%d", i)
 			client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: float64(i), Member: id})
-			client.HSet(ctx, "s:"+sprint+":task:"+id, "state", "open", "kind", "work", "ref", id)
+			client.HSet(ctx, "task:"+id, "state", "open", "kind", "work", "ref", id)
 		}
 
 		type fillOut struct {
@@ -240,7 +240,7 @@ func TestWidthControls(t *testing.T) {
 		client.HSet(ctx, "friend:f1:beat", "at", "1")
 
 		client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: 1, Member: "t1"})
-		client.HSet(ctx, "s:"+sprint+":task:t1", "state", "open", "kind", "work", "ref", "t1")
+		client.HSet(ctx, "task:t1", "state", "open", "kind", "work", "ref", "t1")
 
 		res, err := task.WidthFill(ctx, st, "f1", sprint, 0, "f1", "")
 		if err != nil || res.N != 1 {
@@ -253,7 +253,7 @@ func TestWidthControls(t *testing.T) {
 		}
 		nowMs := timeVal.UnixMilli()
 
-		client.HSet(ctx, "s:"+sprint+":task:t1", "claimed_at", strconv.FormatInt(nowMs-61000, 10))
+		client.HSet(ctx, "task:t1", "claimed_at", strconv.FormatInt(nowMs-61000, 10))
 
 		reply, err := client.FCall(ctx, "ns_task_expire", nil, sprint, "t1", "reconciler", "").Result()
 		if err != nil {
@@ -264,7 +264,7 @@ func TestWidthControls(t *testing.T) {
 			t.Fatalf("expire reply = %v; want REOPENED", vals)
 		}
 
-		state := client.HGet(ctx, "s:"+sprint+":task:t1", "state").Val()
+		state := client.HGet(ctx, "task:t1", "state").Val()
 		if state != "open" {
 			t.Fatalf("state = %q; want open", state)
 		}
@@ -341,13 +341,13 @@ func TestWidthControls(t *testing.T) {
 			redis.Z{Score: 1, Member: "e1"},
 			redis.Z{Score: 2, Member: "e2"},
 		)
-		client.HSet(ctx, "s:"+sprint+":task:e1", "state", "open", "depends_on", "")
-		client.HSet(ctx, "s:"+sprint+":task:e2", "state", "open", "depends_on", "")
+		client.HSet(ctx, "task:e1", "state", "open", "depends_on", "")
+		client.HSet(ctx, "task:e2", "state", "open", "depends_on", "")
 
 		for i := 1; i <= 10; i++ {
 			id := fmt.Sprintf("d%d", i)
 			client.ZAdd(ctx, "s:"+sprint+":open:A", redis.Z{Score: float64(i + 2), Member: id})
-			client.HSet(ctx, "s:"+sprint+":task:"+id, "state", "open", "depends_on", "dep_task")
+			client.HSet(ctx, "task:"+id, "state", "open", "depends_on", "dep_task")
 		}
 
 		lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c4"})
@@ -423,10 +423,13 @@ func TestWidthControls(t *testing.T) {
 
 		// (c) same B but fill_at written rebalance_after+1 s ago (no fresh fill): 0 moves.
 		// Move tasks back to A first
-		client.Del(ctx, "s:"+sprint+":open:B")
-		client.ZAdd(ctx, "s:"+sprint+":open:A", redis.Z{Score: 1, Member: "e1"}, redis.Z{Score: 2, Member: "e2"})
-		client.HSet(ctx, "s:"+sprint+":task:e1", "owner", "A")
-		client.HSet(ctx, "s:"+sprint+":task:e2", "owner", "A")
+		// through the one task move (#3778): a hand write would be drift
+		for i, id := range []string{"e1", "e2"} {
+			if got := client.FCall(ctx, "ns_tcard_move", nil, id, "ready", "test", "back to A", "friend", "A",
+				"sprint", sprint, "state", "open", "qscore", strconv.Itoa(i+1)).Val(); !strings.HasPrefix(fmt.Sprint(got), "MOVED") {
+				t.Fatalf("move %s back to A: %v", id, got)
+			}
+		}
 		client.HSet(ctx, "friend:B:fillstate", "fill_at", strconv.FormatInt(nowMs-int64((rebalAfter+time.Second).Milliseconds()), 10))
 
 		if _, err := duty.Run(ctx, lease); err != nil {
@@ -453,7 +456,7 @@ func TestWidthControls(t *testing.T) {
 		for i := 1; i <= 4; i++ {
 			id := fmt.Sprintf("be%d", i)
 			client.ZAdd(ctx, "s:"+sprint+":open:B", redis.Z{Score: float64(i), Member: id})
-			client.HSet(ctx, "s:"+sprint+":task:"+id, "state", "open", "depends_on", "")
+			client.HSet(ctx, "task:"+id, "state", "open", "depends_on", "")
 		}
 		if _, err := duty.Run(ctx, lease); err != nil {
 			t.Fatal(err)
@@ -466,7 +469,7 @@ func TestWidthControls(t *testing.T) {
 		// (f) B spare 1 (slots 1, leased 0, eligible 0, fresh fill_at, up): exactly 1 moves.
 		for i := 1; i <= 4; i++ {
 			id := fmt.Sprintf("be%d", i)
-			client.Del(ctx, "s:"+sprint+":task:"+id)
+			client.Del(ctx, "task:"+id)
 		}
 		client.Del(ctx, "s:"+sprint+":open:B")
 		client.HSet(ctx, "friend:B:desired", "slots", "1")
@@ -505,7 +508,7 @@ func TestWidthControls(t *testing.T) {
 		client.HSet(ctx, "friend:f1:beat", "at", "1")
 
 		client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: 1, Member: "t-deps"})
-		client.HSet(ctx, "s:"+sprint+":task:t-deps",
+		client.HSet(ctx, "task:t-deps",
 			"state", "open",
 			"kind", "work",
 			"depends_on", "mas-bandwidth/nova-tools#100",
@@ -594,7 +597,7 @@ func TestWidthControls(t *testing.T) {
 		head := "4139b79f"
 
 		client.ZAdd(ctx, "s:"+sprint+":open:A", redis.Z{Score: 1, Member: "task-move"})
-		client.HSet(ctx, "s:"+sprint+":task:task-move",
+		client.HSet(ctx, "task:task-move",
 			"state", "open", "kind", "work", "repo", repo, "pr", pr, "head", head, "depends_on", "")
 
 		lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c6"})
@@ -604,7 +607,7 @@ func TestWidthControls(t *testing.T) {
 
 		// Case 1: B holds closed task for same (repo, PR, head)
 		client.SAdd(ctx, "s:"+sprint+":done:B", "task-closed")
-		client.HSet(ctx, "s:"+sprint+":task:task-closed",
+		client.HSet(ctx, "task:task-closed",
 			"state", "closed", "kind", "work", "repo", repo, "pr", pr, "head", head)
 
 		duty := &Duty{Store: st, RebalanceAfter: rebalAfter}
@@ -620,7 +623,7 @@ func TestWidthControls(t *testing.T) {
 
 		// Case 2: B holds working task for same (repo, PR, head)
 		client.ZAdd(ctx, "friend:B:living", redis.Z{Score: float64(nowMs), Member: sprint + "/task-working/1"})
-		client.HSet(ctx, "s:"+sprint+":task:task-working",
+		client.HSet(ctx, "task:task-working",
 			"state", "working", "kind", "work", "repo", repo, "pr", pr, "head", head)
 
 		client.HSet(ctx, "friend:A:fillstate",
@@ -638,7 +641,7 @@ func TestWidthControls(t *testing.T) {
 		client.Del(ctx, "friend:B:living")
 
 		// Case 3: Read task is never moved
-		client.HSet(ctx, "s:"+sprint+":task:task-move", "kind", "read")
+		client.HSet(ctx, "task:task-move", "kind", "read")
 		client.HSet(ctx, "friend:A:fillstate",
 			"unfilled_since", strconv.FormatInt(unfilledSince, 10),
 			"idle_unfilled", "1",
@@ -689,7 +692,7 @@ func TestWidthControls(t *testing.T) {
 		)
 
 		client.ZAdd(ctx, "s:"+sprint+":open:r1", redis.Z{Score: 1, Member: "read-task"})
-		client.HSet(ctx, "s:"+sprint+":task:read-task",
+		client.HSet(ctx, "task:read-task",
 			"state", "open", "kind", "read", "repo", "nova-tools", "pr", "10", "head", "abcdef")
 
 		lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c7"})
@@ -819,7 +822,7 @@ func TestWidthControls(t *testing.T) {
 		client.ZAdd(ctx, "friend:f1:starting", redis.Z{Score: 1, Member: "start1"})
 		client.ZAdd(ctx, "friend:f1:living", redis.Z{Score: float64(time.Now().UnixMilli()), Member: "live1"})
 		client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: 1, Member: "t1"})
-		client.HSet(ctx, "s:"+sprint+":task:t1", "state", "open")
+		client.HSet(ctx, "task:t1", "state", "open")
 
 		hook := &cmdHook{}
 		client.AddHook(hook)
@@ -877,7 +880,7 @@ func TestWidthControls(t *testing.T) {
 			client8.ZAdd(ctx, "friend:"+f+":starting", redis.Z{Score: 1, Member: "start_" + f})
 			client8.ZAdd(ctx, "friend:"+f+":living", redis.Z{Score: float64(time.Now().UnixMilli()), Member: "live_" + f})
 			client8.ZAdd(ctx, "s:"+sprint+":open:"+f, redis.Z{Score: 1, Member: "task_" + f})
-			client8.HSet(ctx, "s:"+sprint+":task:task_"+f, "state", "open")
+			client8.HSet(ctx, "task:task_"+f, "state", "open")
 		}
 
 		hook8 := &cmdHook{}
@@ -1021,7 +1024,7 @@ func TestWidthDutySurfacesMoveRefusal(t *testing.T) {
 		"idle_unfilled", "2",
 	)
 	client.ZAdd(ctx, "s:"+sprint+":open:A", redis.Z{Score: 1, Member: "e1"})
-	client.HSet(ctx, "s:"+sprint+":task:e1", "state", "open", "kind", "work", "depends_on", "")
+	client.HSet(ctx, "task:e1", "state", "open", "kind", "work", "depends_on", "")
 
 	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c-move-fenced"})
 	if err != nil {
@@ -1124,7 +1127,7 @@ func TestWidthReadBoundFencedAtomic(t *testing.T) {
 		redis.Z{Score: float64(nowMs), Member: sprint + "/r-live2/1"},
 	)
 	client.ZAdd(ctx, "s:"+sprint+":open:r1", redis.Z{Score: 1, Member: "read-task"})
-	client.HSet(ctx, "s:"+sprint+":task:read-task",
+	client.HSet(ctx, "task:read-task",
 		"state", "open", "kind", "read", "repo", "nova-tools", "pr", "10", "head", "abcdef")
 
 	hook := &unfencedHook{}
@@ -1193,7 +1196,7 @@ func TestWidthMoveConsumesSpare(t *testing.T) {
 	seed := func(s, f string, n int) {
 		for i := 0; i < n; i++ {
 			id := fmt.Sprintf("%s-%s-%d", f, s, i)
-			client.HSet(ctx, "s:"+s+":task:"+id, "state", "open", "kind", "work", "owner", f)
+			client.HSet(ctx, "task:"+id, "state", "open", "kind", "work", "owner", f)
 			client.ZAdd(ctx, "s:"+s+":open:"+f, redis.Z{Score: float64(i), Member: id})
 		}
 	}
@@ -1250,7 +1253,7 @@ func TestWidthFillNoPredictableToken(t *testing.T) {
 	client.HSet(ctx, "friend:f1:beat", "at", "1")
 	for i := 0; i < 65; i++ {
 		id := fmt.Sprintf("t%02d", i)
-		client.HSet(ctx, "s:s1:task:"+id, "state", "open", "kind", "work", "owner", "f1")
+		client.HSet(ctx, "task:"+id, "state", "open", "kind", "work", "owner", "f1")
 		client.ZAdd(ctx, "s:s1:open:f1", redis.Z{Score: float64(i), Member: id})
 	}
 
@@ -1331,7 +1334,7 @@ func TestWidthFillSizesPartsToClaims(t *testing.T) {
 		client.HSet(ctx, "friend:"+f+":beat", "at", "1")
 		for i := 0; i < 65; i++ {
 			id := fmt.Sprintf("%s-t%02d", f, i)
-			client.HSet(ctx, "s:s1:task:"+id, "state", "open", "kind", "work", "owner", f)
+			client.HSet(ctx, "task:"+id, "state", "open", "kind", "work", "owner", f)
 			client.ZAdd(ctx, "s:s1:open:"+f, redis.Z{Score: float64(i), Member: id})
 		}
 	}

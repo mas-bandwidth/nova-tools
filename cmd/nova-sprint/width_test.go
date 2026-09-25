@@ -131,7 +131,7 @@ func TestWidthVerbs(t *testing.T) {
 		for i := 1; i <= 5; i++ {
 			id := fmt.Sprintf("t%d", i)
 			client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: float64(i), Member: id})
-			client.HSet(ctx, "s:"+sprint+":task:"+id, "state", "open", "kind", "work", "ref", id)
+			client.HSet(ctx, "task:"+id, "state", "open", "kind", "work", "ref", id)
 		}
 
 		var out1, err1 bytes.Buffer

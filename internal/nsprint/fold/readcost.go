@@ -125,7 +125,7 @@ func ReadTasks(ctx context.Context, client *redis.Client, sprint string) ([]Read
 	pipe := client.Pipeline()
 	cmds := make([]*redis.SliceCmd, len(ids))
 	for i, id := range ids {
-		cmds[i] = pipe.HMGet(ctx, key+":task:"+id, "kind", "evidence")
+		cmds[i] = pipe.HMGet(ctx, "task:"+id, "kind", "evidence")
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return nil, fmt.Errorf("read the closed tasks of %s: %w", key, err)

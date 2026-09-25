@@ -92,7 +92,7 @@ func TestControl01EightClaimsOneChild(t *testing.T) {
 	// The seven with no start ack are 70 s stale; run the reconciler pass.
 	stale := redisNowMS(t, ctx, client) - 70_000
 	for _, claim := range claims[1:] {
-		if err := client.HSet(ctx, "s:"+sprint+":task:"+claim.ID, "claimed_at", stale).Err(); err != nil {
+		if err := client.HSet(ctx, "task:"+claim.ID, "claimed_at", stale).Err(); err != nil {
 			t.Fatalf("backdate %s: %v", claim.ID, err)
 		}
 	}
@@ -104,7 +104,7 @@ func TestControl01EightClaimsOneChild(t *testing.T) {
 		t.Fatalf("expired = %d; want 7", expired)
 	}
 	for _, claim := range claims[1:] {
-		state, err := client.HGet(ctx, "s:"+sprint+":task:"+claim.ID, "state").Result()
+		state, err := client.HGet(ctx, "task:"+claim.ID, "state").Result()
 		if err != nil || state != "open" {
 			t.Fatalf("expired %s state = %q, %v; want open", claim.ID, state, err)
 		}
@@ -151,13 +151,13 @@ func TestControl02TakeNeverBeat(t *testing.T) {
 
 	// No beat: once the 60 s start window has passed the reconciler reopens.
 	stale := redisNowMS(t, ctx, client) - 70_000
-	if err := client.HSet(ctx, "s:"+sprint+":task:never", "claimed_at", stale).Err(); err != nil {
+	if err := client.HSet(ctx, "task:never", "claimed_at", stale).Err(); err != nil {
 		t.Fatalf("backdate: %v", err)
 	}
 	if got, err := task.Expire(ctx, st, task.ExpireRequest{Sprint: sprint, ID: "never", Actor: "reconciler"}); err != nil || got != task.ExpireReopened {
 		t.Fatalf("expire = %s, %v; want REOPENED", got, err)
 	}
-	state, err := client.HGet(ctx, "s:"+sprint+":task:never", "state").Result()
+	state, err := client.HGet(ctx, "task:never", "state").Result()
 	if err != nil || state != "open" {
 		t.Fatalf("state = %q, %v; want open", state, err)
 	}
@@ -227,20 +227,20 @@ func TestTaskWorkingStaleExpiry(t *testing.T) {
 
 	stale := redisNowMS(t, ctx, client) - 181_000
 	for _, p := range parts {
-		if err := client.HSet(ctx, "s:"+sprint+":task:"+p.id, "beat_at", stale).Err(); err != nil {
+		if err := client.HSet(ctx, "task:"+p.id, "beat_at", stale).Err(); err != nil {
 			t.Fatalf("backdate %s: %v", p.id, err)
 		}
 	}
 	if got, err := task.Expire(ctx, st, task.ExpireRequest{Sprint: sprint, ID: "w0", Actor: "reconciler"}); err != nil || got != task.ExpireExpired {
 		t.Fatalf("expire w0 = %s, %v; want EXPIRED", got, err)
 	}
-	if state, _ := client.HGet(ctx, "s:"+sprint+":task:w0", "state").Result(); state != "open" {
+	if state, _ := client.HGet(ctx, "task:w0", "state").Result(); state != "open" {
 		t.Fatalf("w0 state = %q; want open", state)
 	}
 	if got, err := task.Expire(ctx, st, task.ExpireRequest{Sprint: sprint, ID: "w1", Actor: "reconciler"}); err != nil || got != task.ExpireReconcile {
 		t.Fatalf("expire w1 = %s, %v; want RECONCILE", got, err)
 	}
-	if state, _ := client.HGet(ctx, "s:"+sprint+":task:w1", "state").Result(); state != "reconcile-required" {
+	if state, _ := client.HGet(ctx, "task:w1", "state").Result(); state != "reconcile-required" {
 		t.Fatalf("w1 state = %q; want reconcile-required", state)
 	}
 	unresolved, err := client.HExists(ctx, "s:"+sprint+":unresolved", "w1:beat-timeout:").Result()
@@ -288,7 +288,7 @@ func TestTaskCancelExternal(t *testing.T) {
 	}); err != nil || got != task.CancelOpen {
 		t.Fatalf("cancel c0 = %s, %v; want OPEN", got, err)
 	}
-	if state, _ := client.HGet(ctx, "s:"+sprint+":task:c0", "state").Result(); state != "open" {
+	if state, _ := client.HGet(ctx, "task:c0", "state").Result(); state != "open" {
 		t.Fatalf("c0 state = %q; want open", state)
 	}
 	if got, err := task.Cancel(ctx, st, task.CancelRequest{
@@ -296,7 +296,7 @@ func TestTaskCancelExternal(t *testing.T) {
 	}); err != nil || got != task.CancelReconcile {
 		t.Fatalf("cancel c1 = %s, %v; want RECONCILE", got, err)
 	}
-	if state, _ := client.HGet(ctx, "s:"+sprint+":task:c1", "state").Result(); state != "reconcile-required" {
+	if state, _ := client.HGet(ctx, "task:c1", "state").Result(); state != "reconcile-required" {
 		t.Fatalf("c1 state = %q; want reconcile-required", state)
 	}
 	unresolved, err := client.HExists(ctx, "s:"+sprint+":unresolved", "c1:cancel-external:").Result()

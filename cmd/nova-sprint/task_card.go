@@ -398,7 +398,15 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if err != nil {
 			return refuse(errOut, c.verb, err.Error())
 		}
-		_, _ = fmt.Fprintf(out, "TASK migrate scanned=%d %s skipped=%s ms=%d\n", r.Scanned, counts(r.Placed, true), counts(r.Skipped, false), ms())
+		for _, k := range r.Held {
+			_, _ = fmt.Fprintf(out, "HELD %s (task:<id> holds another task; rename one)\n", k)
+		}
+		folded := 0
+		for _, n := range r.Folded {
+			folded += n
+		}
+		_, _ = fmt.Fprintf(out, "TASK migrate scanned=%d folded=%d held=%d %s skipped=%s ms=%d\n", r.Scanned, folded, len(r.Held),
+			counts(r.Placed, true), counts(r.Skipped, false), ms())
 		return 0
 	}
 	return refuse(errOut, c.verb, "unknown card subverb "+sub)

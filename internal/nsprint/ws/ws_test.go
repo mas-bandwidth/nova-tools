@@ -213,7 +213,7 @@ func TestMoveGraph(t *testing.T) {
 		{"t00000", "merging", "MOVED"},
 		{"t00000", "landed", "REFUSED"},
 		{"t00001", "working", "REFUSED"},
-		{"t00012", "waiting", "REFUSED"},
+		{"t00012", "parked", "REFUSED"},
 		{"t00008", "parked", "MOVED"},
 		{"t00008", "ready", "MOVED"},
 		{"t00008", "waiting", "MOVED"},

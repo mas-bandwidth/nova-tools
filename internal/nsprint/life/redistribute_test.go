@@ -184,7 +184,7 @@ func rdAssertMoved(t *testing.T, st *store.Store, client *redis.Client, f, why s
 		}
 	}
 	for _, id := range []string{"read-a", "read-b", "read-d", "build-1", "fix-1", "build-2"} {
-		key := "s:" + rdSprint + ":task:" + id
+		key := "task:" + id
 		if state := client.HGet(ctx, key, "state").Val(); state != "open" {
 			t.Fatalf("%s state %q, want open", id, state)
 		}
@@ -233,11 +233,11 @@ func rdAssertMoved(t *testing.T, st *store.Store, client *redis.Client, f, why s
 
 	// The carried HOLD: the re-read is cancelled and exactly one release task
 	// exists, on a may-hold non-author reader other than f, at the current head.
-	if state := client.HGet(ctx, "s:"+rdSprint+":task:reread-c", "state").Val(); state != "cancelled" {
+	if state := client.HGet(ctx, "task:reread-c", "state").Val(); state != "cancelled" {
 		t.Fatalf("reread-c state %q, want cancelled", state)
 	}
 	releases := 0
-	for _, key := range client.Keys(ctx, "s:"+rdSprint+":task:release-*").Val() {
+	for _, key := range client.Keys(ctx, "task:release-*").Val() {
 		releases++
 		rel := client.HGetAll(ctx, key).Val()
 		if rel["pr"] != "103" || rel["head"] != rdHead('d') || rel["state"] != "open" {
@@ -246,7 +246,7 @@ func rdAssertMoved(t *testing.T, st *store.Store, client *redis.Client, f, why s
 		if !strings.Contains(rel["title"], marker) || !strings.Contains(rel["title"], "--releases") {
 			t.Fatalf("release title %q lacks the marker or the --releases recipe", rel["title"])
 		}
-		owner := rdQueueOf(t, client, strings.TrimPrefix(key, "s:"+rdSprint+":task:"))
+		owner := rdQueueOf(t, client, strings.TrimPrefix(key, "task:"))
 		if owner != "stella" && owner != "johnny" {
 			t.Fatalf("release task on %q", owner)
 		}

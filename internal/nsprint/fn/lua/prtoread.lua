@@ -209,7 +209,7 @@ do
     end
     for i = 0, n - 1 do
       local id, payload_sha = args[base + i * width], args[base + i * width + 4]
-      local tkey = 's:' .. S .. ':task:' .. id
+      local tkey = 'task:' .. id
       local existing = redis.call('HGET', tkey, 'payload_sha')
       local why = nil
       if existing and existing ~= payload_sha then
@@ -230,18 +230,18 @@ do
       local id, friend, title, priority = args[o], args[o + 1], args[o + 2], args[o + 3]
       local payload_sha, ref = args[o + 4], args[o + 5]
       readers[#readers + 1] = friend
-      local tkey = 's:' .. S .. ':task:' .. id
+      local tkey = 'task:' .. id
       local status = 'EXISTS'
-      if not redis.call('HGET', tkey, 'payload_sha') then
-        redis.call('HSET', tkey,
-          'kind', 'review', 'repo', repo, 'ref', ref, 'pr', pr, 'head', head,
-          'title', title, 'effects', 'none', 'owner', '', 'priority', tostring(priority),
-          'state', 'open', 'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
-          'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
-          'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '')
+      if redis.call('EXISTS', tkey) == 0 then
         -- The front of open:<friend> is negative (classify.lua: a requeued card's priority).
-        redis.call('ZADD', 's:' .. S .. ':open:' .. friend, -math.abs(tonumber(priority) or 0) - 1, id)
-        redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
+        NS.task.create(id, {
+          'kind', 'review', 'repo', repo, 'ref', ref, 'pr', pr, 'head', head,
+          'title', title, 'effects', 'none', 'priority', tostring(priority),
+          'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
+          'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
+          'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '', 'dest', friend },
+          { where = 'ready', state = 'open', friend = friend, sprint = S, created = at, by = actor, why = 'pr-to-read',
+            qscore = -math.abs(tonumber(priority) or 0) - 1 })
         receipt(S, id, actor, idem, at)
         status = 'CREATED'
       elseif redis.call('HGET', tkey, 'state') == 'closed' then

@@ -718,6 +718,8 @@ NS.card = { move = card_move, create = card_create, purge = card_purge }
 --   merging -> landed | done                       a merge, a PR closed unmerged
 --   parked -> waiting | ready | done               unpark, cancel
 --   landed -> done (ok only)                       table clear
+--   working -> waiting                             a durable wait (a why)
+--   done/ok -> merging | landed                    the PR of a closed task (a why)
 -- landed needs the merge sha; a done that does not come from working needs
 -- a why, and so does working -> ready.
 -- A take (-> working) writes lease_until = now + TK.LEASE; the child renews
@@ -732,30 +734,38 @@ NS.card = { move = card_move, create = card_create, purge = card_purge }
 --   NS.task.place(id, where, ok, o)  -> placed where | nil, why (migrate only)
 -- o: by, why, ok (ok|fail entering done), friend, stream, sha (landed),
 -- sprint (the legacy idx sets' sprint when the record names none), front
--- ('1' requeues on q:<f>:front), as (a take: the friend taking), fields (more
+-- ('1' requeues on q:<f>:front), as (a take: the friend taking), state (the
+-- fine state to write; default the where's friend-queue word), qscore (the
+-- sprint ready queue score; default from priority and front), fields (more
 -- HSET pairs, never a pointer field). info: from, to, xid (the ready entry).
 local TK = {
   WHERE = { 'waiting', 'ready', 'working', 'merging', 'landed', 'done', 'parked' },
   IS = { waiting = true, ready = true, working = true, merging = true, landed = true, done = true, parked = true },
   STATE = { waiting = 'waiting', ready = 'open', working = 'working', merging = 'merging', landed = 'landed',
     done = 'closed', parked = 'parked' },
+  -- the where of every fine state a task record carries (the sprint store's
+  -- words, #3206, and friend-queue's); cancelled is done/fail
+  WHERE_OF = { open = 'ready', ready = 'ready', claimed = 'working', working = 'working', waiting = 'waiting',
+    blocked = 'waiting', ['waiting-ci'] = 'waiting', closed = 'done', cancelled = 'done', merging = 'merging', landed = 'landed',
+    parked = 'parked', ['reconcile-required'] = 'waiting' },
   IDX = { ready = 'open', working = 'working', merging = 'closed', landed = 'closed', done = 'closed' },
   GRAPH = {
     [''] = { waiting = true, ready = true },
     waiting = { ready = true, parked = true, done = true },
     ready = { waiting = true, working = true, parked = true, done = true },
-    working = { merging = true, done = true, landed = true, ready = true },
+    working = { merging = true, done = true, landed = true, ready = true, waiting = true },
     merging = { landed = true, done = true },
     parked = { waiting = true, ready = true, done = true },
     landed = { done = true },
-    done = {},
+    done = { merging = true, landed = true },
   },
   REPLACE = { waiting = true, ready = true, parked = true },
   POINTER = { where = true, where_ok = true, where_at = true, state = true, state_at = true, stream = true,
     friend = true, owner = true, created_at = true, sprint = true, queue = true, xid = true, cancelled = true,
     lease_until = true },
   FIELDS = { 'where', 'where_ok', 'stream', 'friend', 'owner', 'created_at', 'sprint', 'state', 'title',
-    'queue', 'xid', 'front', 'cancelled', 'pr', 'kind', 'ref', 'lease_until', 'beat_at', 'leased_at', 'where_at' },
+    'queue', 'xid', 'front', 'cancelled', 'pr', 'kind', 'ref', 'lease_until', 'beat_at', 'leased_at', 'where_at',
+    'priority', 'dest', 'claimed_at', 'token' },
   LOG_MAX = '200000',
   -- a take's lease: three missed 60 s beats
   LEASE = 180000,
@@ -889,9 +899,26 @@ end
 -- TK.legacy keeps the friend-queue shapes of one move from cur to nxt and
 -- returns the HSET pairs it owes the record (queue, xid) and whether they
 -- are cleared.
-function TK.legacy(id, S, cur, nxt, front, at)
+function TK.legacy(id, S, cur, nxt, front, at, prio)
   local h, clear = {}, false
   if S ~= '' then
+    -- The sprint store's ready queues (#3206, read by the take, the ranker,
+    -- width and redistribute): s:<S>:open:<friend>, or s:<S>:ready for a
+    -- task no friend holds, scored by the deal priority (negative at the
+    -- front). Legacy views like the idx sets: written here only.
+    local function q(f)
+      if f == '' then return 's:' .. S .. ':ready' end
+      return 's:' .. S .. ':open:' .. f
+    end
+    if cur.where == 'ready' then redis.call('ZREM', q(cur.friend), id) end
+    if nxt.where == 'ready' then
+      local pr = tonumber(prio) or 0
+      if front == '1' then
+        if pr == 0 then pr = 1 end
+        pr = -pr
+      end
+      redis.call('ZADD', q(nxt.friend), tonumber(nxt.qscore) or pr, id)
+    end
     local ix = 'sprint:' .. S .. ':idx:'
     if cur.friend ~= '' then
       for _, st in ipairs({ 'open', 'working', 'closed' }) do redis.call('SREM', ix .. cur.friend .. ':' .. st, id) end
@@ -946,7 +973,12 @@ function TK.edge(id, cur, nxt, ok, o)
       return 'WHY ' .. from .. ' -> done needs a why'
     end
   end
-  if from == 'working' and to == 'ready' and TK.str(o.why) == '' then return 'WHY working -> ready needs a why' end
+  if from == 'working' and (to == 'ready' or to == 'waiting') and TK.str(o.why) == '' then
+    return 'WHY working -> ' .. to .. ' needs a why'
+  end
+  if from == 'done' and (cur.ok ~= 'ok' or TK.str(o.why) == '') then
+    return 'OFFGRAPH done/' .. cur.ok .. ' -> ' .. to .. ' (only done/ok, with a why)'
+  end
   if to == 'working' and o.as and o.as ~= '' and cur.friend ~= '' and cur.friend ~= o.as then
     return 'OWNER task:' .. id .. ' is ' .. cur.friend .. "'s, not " .. o.as .. "'s"
   end
@@ -980,7 +1012,7 @@ function TK.move(id, to, o)
       cur = TK.read(id)
     end
   end
-  local nxt = { where = to, stream = cur.stream, friend = cur.friend }
+  local nxt = { where = to, stream = cur.stream, friend = cur.friend, qscore = o.qscore }
   if o.stream ~= nil then nxt.stream = o.stream end
   if o.friend ~= nil then nxt.friend = o.friend end
   if to == 'working' and nxt.friend == '' and o.as and o.as ~= '' then nxt.friend = o.as end
@@ -994,13 +1026,16 @@ function TK.move(id, to, o)
   local err = TK.edge(id, cur, nxt, ok, o)
   if err then return err end
   local front = TK.str(o.front)
+  local state = o.state or TK.STATE[to]
+  if TK.WHERE_OF[state] ~= to then return 'STATE ' .. TK.str(state) .. ' is not ' .. to end
   -- ONE PLACE, before any write: a violation is a refusal, never a write.
   if not adopted then
     err = TK.verify(id, cur, { nxt.stream }, { nxt.friend })
     if err then return 'DRIFT ' .. err .. ' task:' .. id .. '; run nova-sprint task fsck' end
   end
   if o.dry then return nil end
-  if cur.where == to and nxt.stream == cur.stream and nxt.friend == cur.friend and front ~= '1' and ok == cur.ok then
+  if cur.where == to and nxt.stream == cur.stream and nxt.friend == cur.friend and front ~= '1' and ok == cur.ok and
+      state == cur.state then
     if #fields > 0 then redis.call('HSET', 'task:' .. id, unpack(fields)) end
     return nil, { from = to, to = to, same = true }
   end
@@ -1020,8 +1055,17 @@ function TK.move(id, to, o)
   local at = cm_now()
   local S = TK.sprint(cur, o)
   if front == '' then front = cur.front end
-  local lh, clear = TK.legacy(id, S, cur, nxt, front, at)
-  local h = { 'task:' .. id, 'where', to, 'where_ok', ok, 'state', TK.STATE[to] }
+  local prio = cur.priority
+  for i = 1, #fields, 2 do
+    if fields[i] == 'priority' then prio = fields[i + 1] end
+  end
+  local lh, clear = TK.legacy(id, S, cur, nxt, front, at, prio)
+  local h = { 'task:' .. id, 'where', to, 'where_ok', ok, 'state', state }
+  -- The sprint's fine-state index (s:<S>:idx:task:<state>) follows the state.
+  if S ~= '' and state ~= cur.state then
+    if cur.state ~= '' then redis.call('SREM', 's:' .. S .. ':idx:task:' .. cur.state, id) end
+    redis.call('SADD', 's:' .. S .. ':idx:task:' .. state, id)
+  end
   local function put(k, v)
     h[#h + 1] = k
     h[#h + 1] = v
@@ -1112,7 +1156,8 @@ function TK.create(id, fields, o)
   end
   redis.call('HSET', unpack(h))
   TK.register(stream)
-  return TK.move(id, where, { by = o.by, why = o.why or 'push', front = o.front, sprint = o.sprint })
+  return TK.move(id, where, { by = o.by, why = o.why or 'push', front = o.front, sprint = o.sprint, state = o.state,
+    qscore = o.qscore })
 end
 
 -- TK.derive: the place a record's own facts imply, for adoption and
@@ -1151,11 +1196,29 @@ function TK.derive(id, p)
     if redis.call('SISMEMBER', ix .. 'open', id) == 1 then return 'ready', '-' end
     if redis.call('SISMEMBER', ix .. 'closed', id) == 1 then return 'done', 'ok' end
   end
-  if st == 'open' or st == 'ready' then return 'ready', '-' end
-  if st == 'blocked' then return 'waiting', '-' end
-  if st == 'landed' then return 'landed', 'ok' end
-  if TK.IS[st] and st ~= 'done' then return st, '-' end
+  local w = TK.WHERE_OF[st] or (TK.IS[st] and st ~= 'done' and st)
+  if w == 'landed' then return 'landed', 'ok' end
+  if w then return w, '-' end
   return '', '-'
+end
+
+-- TK.holder names the friend of a record that predates the card: its owner,
+-- else its dest (the sprint store's queue), else the one sprint ready queue
+-- (s:<S>:open:<f>, f in friends) that holds it.
+function TK.holder(id, p, o)
+  if p.friend ~= '' then return end
+  if p.dest ~= '' then
+    p.friend = p.dest
+    return
+  end
+  local S = TK.sprint(p, o)
+  if S == '' then return end
+  for _, f in ipairs(redis.call('SMEMBERS', 'friends')) do
+    if redis.call('ZSCORE', 's:' .. S .. ':open:' .. f, id) then
+      p.friend = f
+      return
+    end
+  end
 end
 
 -- TK.adopt links a record that predates the where field (a friend-queue
@@ -1164,6 +1227,7 @@ end
 -- that is drift for task migrate, not a guess. dry writes nothing and
 -- returns nil, where, ok.
 function TK.adopt(id, p, o, dry)
+  TK.holder(id, p, o)
   local w, ok = TK.derive(id, p)
   if not w then return 'DRIFT ' .. ok .. ' task:' .. id .. '; run nova-sprint task migrate' end
   local q = { where = w, ok = ok, stream = p.stream, friend = p.friend }
@@ -1183,7 +1247,10 @@ function TK.adopt(id, p, o, dry)
   redis.call('HSET', 'task:' .. id, 'where', w, 'where_ok', ok, 'stream', p.stream, 'friend', p.friend,
     'owner', p.friend, 'created_at', string.format('%.0f', created))
   local S = TK.sprint(p, o)
-  if S ~= '' then redis.call('SADD', 'sprint:' .. S .. ':tasks', id) end
+  if S ~= '' then
+    redis.call('SADD', 'sprint:' .. S .. ':tasks', id)
+    if p.sprint == '' then redis.call('HSET', 'task:' .. id, 'sprint', S) end
+  end
   return nil
 end
 
@@ -1193,7 +1260,7 @@ function TK.last_beat(p)
   local last = 0
   local lease = tonumber(p.lease_until)
   if lease then last = lease - TK.LEASE end
-  for _, v in ipairs({ p.beat_at, p.leased_at, p.where_at }) do
+  for _, v in ipairs({ p.beat_at, p.leased_at, p.claimed_at, p.where_at }) do
     local ms = TK.ms(v)
     if ms and ms > last then last = ms end
   end
@@ -1213,6 +1280,7 @@ function TK.place(id, where, ok, o)
   if p.kind == '' and p.title == '' and p.state == '' and p.ref == '' and not p.placed then return nil, 'notatask' end
   if p.stream == '' and TK.str(o.stream) ~= '' then p.stream = o.stream end
   if not TK.valid_stream(p.stream) then return nil, 'badstream' end
+  if not p.placed then TK.holder(id, p, o) end
   if not where or where == '' then
     local w, k = TK.derive(id, { placed = false, stream = p.stream, state = p.state, cancelled = p.cancelled,
       friend = p.friend, sprint = TK.sprint(p, o), where = '' })
@@ -1237,6 +1305,10 @@ function TK.place(id, where, ok, o)
   if where == 'working' and now - TK.last_beat(p) > TK.STALE then
     where = 'ready'
     o.why = 'lease lapsed (migrate: no beat in 10 min)'
+    -- a sprint store claim's old token is fenced: its done refuses FENCED
+    if p.token ~= '' and p.token ~= '0' and p.token ~= 'fenced' then
+      redis.call('HSET', 'task:' .. id, 'token', 'fenced')
+    end
   end
   if where == 'landed' then ok = 'ok' end
   if where == 'done' and ok ~= 'fail' then ok = 'ok' end
@@ -1263,10 +1335,28 @@ function TK.place(id, where, ok, o)
   TK.register(p.stream)
   local at = cm_now()
   local S = TK.sprint(p, o)
+  if S ~= '' then
+    -- out of every ready queue of its sprint; TK.legacy puts it back in one
+    redis.call('ZREM', 's:' .. S .. ':ready', id)
+    for _, f in ipairs(friends) do
+      if f ~= '' then redis.call('ZREM', 's:' .. S .. ':open:' .. f, id) end
+    end
+  end
   local cur = { where = '', friend = p.friend, queue = p.queue, xid = p.xid }
   if p.placed then cur.where = p.where end
-  local lh, clear = TK.legacy(id, S, cur, { where = where, friend = p.friend }, '0', at)
-  local h = { 'task:' .. id, 'where', where, 'where_ok', ok, 'where_at', tostring(at), 'state', TK.STATE[where] or '',
+  local lh, clear = TK.legacy(id, S, cur, { where = where, friend = p.friend }, p.front, at, p.priority)
+  -- a fine state that names this where stays (claimed, cancelled, ...)
+  local state = TK.STATE[where] or ''
+  if TK.WHERE_OF[p.state] == where and not (where == 'done' and (p.state == 'cancelled') ~= (ok == 'fail')) then
+    state = p.state
+  elseif where == 'done' and ok == 'fail' and p.state == 'cancelled' then
+    state = 'cancelled'
+  end
+  if S ~= '' and state ~= p.state then
+    if p.state ~= '' then redis.call('SREM', 's:' .. S .. ':idx:task:' .. p.state, id) end
+  end
+  if S ~= '' and state ~= '' then redis.call('SADD', 's:' .. S .. ':idx:task:' .. state, id) end
+  local h = { 'task:' .. id, 'where', where, 'where_ok', ok, 'where_at', tostring(at), 'state', state,
     'stream', p.stream, 'friend', p.friend, 'owner', p.friend, 'created_at', string.format('%.0f', created),
     'migrated_at', tostring(at) }
   if p.sprint == '' and S ~= '' then
@@ -1380,8 +1470,11 @@ function TK.fsck(S)
         for _, k in ipairs(TK.views(p)) do
           if not redis.call('ZSCORE', k, id) then note('unlinked ' .. k .. ' ' .. id) end
         end
-        if p.state ~= TK.STATE[p.where] then
+        if TK.WHERE_OF[p.state] ~= p.where then
           note('state task:' .. id .. ' state=' .. p.state .. ' where=' .. p.where)
+        end
+        if p.sprint ~= '' and p.state ~= '' and redis.call('SISMEMBER', 's:' .. p.sprint .. ':idx:task:' .. p.state, id) == 0 then
+          note('unindexed s:' .. p.sprint .. ':idx:task:' .. p.state .. ' ' .. id)
         end
         local LS = TK.sprint(p, { sprint = S })
         if p.friend ~= '' and LS ~= '' then
@@ -1405,9 +1498,11 @@ function TK.fsck(S)
 end
 
 -- TK.opts reads the k v pairs after the fixed args: ok, friend, stream,
--- sha, sprint, front, as are options; any other k is a record field.
+-- sha, sprint, front, as, state, qscore are options; any other k is a record
+-- field.
 function TK.opts(args, from, o)
-  local known = { ok = true, friend = true, stream = true, sha = true, sprint = true, front = true, as = true }
+  local known = { ok = true, friend = true, stream = true, sha = true, sprint = true, front = true, as = true,
+    state = true, qscore = true }
   o.fields = o.fields or {}
   for i = from, #args - 1, 2 do
     local k, v = args[i], args[i + 1]
@@ -1513,8 +1608,20 @@ redis.register_function('ns_tcard_expire', function(keys, args)
         local p = TK.read(id)
         local lease = p and tonumber(p.lease_until)
         if p and not lease then lease = TK.last_beat(p) + TK.LEASE end
-        if p and lease < now and not TK.move(id, 'ready', { by = by, why = 'lease lapsed' }) then
-          out[#out + 1] = id
+        if p and p.state ~= 'reconcile-required' and lease < now then
+          -- a sprint store claim is fenced too: its old token's done and
+          -- beat refuse FENCED, and its lease leaves the friend's slots
+          local c = redis.call('HMGET', 'task:' .. id, 'token', 'attempt', 'sprint')
+          local token, attempt, S = TK.str(c[1]), TK.str(c[2]), TK.str(c[3])
+          if not TK.move(id, 'ready', { by = by, why = 'lease lapsed', state = 'open' }) then
+            if token ~= '' and token ~= '0' and token ~= 'fenced' then
+              redis.call('HSET', 'task:' .. id, 'token', 'fenced')
+              local identity = S .. '/' .. id .. '/' .. attempt
+              redis.call('ZREM', 'friend:' .. f .. ':starting', identity)
+              redis.call('ZREM', 'friend:' .. f .. ':living', identity)
+            end
+            out[#out + 1] = id
+          end
         end
       end
     end
@@ -1567,16 +1674,52 @@ redis.register_function('ns_tcard_land_stream', function(keys, args)
   return out
 end)
 
+-- ns_tcard_fold(by, [S, id]...) -> per pair: the where placed, 'skip
+-- <why>' or 'held' (task:<id> already holds another task). task migrate's
+-- one-time fold of the sprint store into the one store (ruling 2026-09-25
+-- 09:35 ET): the record s:<S>:task:<id> becomes task:<id> (RENAME: the
+-- record moves, it never disappears) with sprint=S, then TK.place links it.
+-- After it nothing writes s:<S>:task:* (the fn and ci one-writer rules).
+redis.register_function('ns_tcard_fold', function(keys, args)
+  local by = args[1] or ''
+  local out = {}
+  for i = 2, #args - 1, 2 do
+    local S, id = args[i], args[i + 1]
+    local old = 's:' .. S .. ':task:' .. id
+    if redis.call('EXISTS', old) == 0 then
+      out[#out + 1] = 'skip gone'
+    elseif redis.call('EXISTS', 'task:' .. id) == 1 then
+      out[#out + 1] = 'held'
+    else
+      redis.call('RENAME', old, 'task:' .. id)
+      redis.call('HSET', 'task:' .. id, 'sprint', S)
+      local w, why = TK.place(id, nil, nil, { by = by, sprint = S, why = 'fold s:' .. S .. ':task' })
+      if w then out[#out + 1] = w else out[#out + 1] = 'skip ' .. why end
+    end
+  end
+  return out
+end)
+
 -- ns_tcard_fsck(S): TK.fsck, read-only.
 redis.register_function({ function_name = 'ns_tcard_fsck', flags = { 'no-writes' },
   callback = function(keys, args) return TK.fsck(args[1] or '') end })
 
 NS.task = { move = TK.move, create = TK.create, place = TK.place, read = TK.read, stream_of = TK.stream_of,
-  ms = TK.ms, where = TK.IS,
-  -- the where of a record's friend-queue or ws state (a record that predates
-  -- the where field)
-  where_of = { open = 'ready', ready = 'ready', working = 'working', waiting = 'waiting', blocked = 'waiting',
-    merging = 'merging', landed = 'landed', parked = 'parked', closed = 'done' },
+  ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF,
+  -- set(id, state, o): the move to the where a fine state names (cancelled is
+  -- done/fail), writing that state: the sprint store's transitions.
+  -- renew(id, at): a live holder's beat renews the task's lease.
+  renew = function(id, at)
+    redis.call('HSET', 'task:' .. id, 'lease_until', tostring(at + TK.LEASE), 'beat_at', tostring(at))
+  end,
+  set = function(id, state, o)
+    o = o or {}
+    local to = TK.WHERE_OF[state]
+    if not to then return 'STATE ' .. TK.str(state) end
+    o.state = state
+    if to == 'done' then o.ok = (state == 'cancelled') and 'fail' or (o.ok or 'ok') end
+    return TK.move(id, to, o)
+  end,
   check = function(id, to, o)
     o = o or {}
     o.dry = true

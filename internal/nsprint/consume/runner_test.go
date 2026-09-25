@@ -157,7 +157,7 @@ func (f *c33Fix) seedPR(n int, author, draft, state string) string {
 
 func (f *c33Fix) tasks() []string {
 	f.t.Helper()
-	keys, err := f.client.Keys(f.ctx, "s:"+c33Sprint+":task:*").Result()
+	keys, err := f.client.Keys(f.ctx, "task:*").Result()
 	must(f.t, err)
 	return keys
 }
@@ -413,7 +413,7 @@ func TestControl33PrToRead(t *testing.T) {
 		}
 		for _, friend := range []string{"ctl-b", "ctl-c"} {
 			id := task.ReviewID(c33Short, 7, head, friend)
-			got, err := f.client.HGetAll(f.ctx, "s:"+c33Sprint+":task:"+id).Result()
+			got, err := f.client.HGetAll(f.ctx, "task:"+id).Result()
 			must(t, err)
 			if got["kind"] != "review" || got["head"] != head || got["state"] != "open" ||
 				!strings.HasSuffix(got["title"], ReadTitleSuffix) {

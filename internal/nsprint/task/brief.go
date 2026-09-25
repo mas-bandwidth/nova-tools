@@ -30,7 +30,7 @@ const (
 )
 
 // Key is the task hash s:<sprint>:task:<id>.
-func Key(sprint, id string) string { return "s:" + sprint + ":task:" + id }
+func Key(sprint, id string) string { return "task:" + id }
 
 // Field is one HMGET cell: Set is false for a nil reply.
 type Field struct {

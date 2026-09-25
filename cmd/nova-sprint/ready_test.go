@@ -57,7 +57,7 @@ func TestReadyWhy(t *testing.T) {
 	card("task-e", "queued", 3, "paths", "internal/x/")
 	card("task-g", "queued", 4, "paths", "docs/g.md")
 	card("task-h", "queued", 5, "depends_on", "task-i", "paths", "cmd/h")
-	c.HSet(ctx, "s:"+S+":task:t-1", "state", "open", "priority", "6", "repo", repo, "base", "dev",
+	c.HSet(ctx, "task:t-1", "state", "open", "priority", "6", "repo", repo, "base", "dev",
 		"depends_on", repo+"#44", "paths", "cmd/t1")
 	c.SAdd(ctx, "s:"+S+":idx:task:open", "t-1")
 

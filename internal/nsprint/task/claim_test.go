@@ -98,7 +98,7 @@ func TestControl03PushIsCreateOnly(t *testing.T) {
 	if again.ExitCode() != 0 {
 		t.Fatalf("CLOSED exit = %d; want 0", again.ExitCode())
 	}
-	state, err := client.HGet(ctx, "s:"+sprint+":task:t1", "state").Result()
+	state, err := client.HGet(ctx, "task:t1", "state").Result()
 	if err != nil || state != "closed" {
 		t.Fatalf("same push changed terminal state to %q: %v", state, err)
 	}
@@ -182,7 +182,7 @@ func TestControl04ConcurrentTakesOneOwner(t *testing.T) {
 		t.Fatalf("owners = %d; want exactly one", owners)
 	}
 
-	owner, err := client.HGet(ctx, "s:"+sprint+":task:t2", "owner").Result()
+	owner, err := client.HGet(ctx, "task:t2", "owner").Result()
 	if err != nil || owner != "ctl-b" {
 		t.Fatalf("task owner = %q, %v; want ctl-b", owner, err)
 	}

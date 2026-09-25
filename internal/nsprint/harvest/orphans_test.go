@@ -204,7 +204,7 @@ func TestHarvestOrphansEndsOnlyOnItsRecord(t *testing.T) {
 	if logLen(t, c) != before {
 		t.Fatalf("five sweeps over an orphan wrote %d receipts", logLen(t, c)-before)
 	}
-	if keys, _ := c.Keys(ctx, "s:"+sprint+":task:*").Result(); len(keys) != 0 {
+	if keys, _ := c.Keys(ctx, "task:*").Result(); len(keys) != 0 {
 		t.Fatalf("tasks exist for an orphan: %v", keys)
 	}
 	if forge.calls() != 0 || harvestForge.finds+harvestForge.opens != 0 || len(pusher.pushes) != 0 {

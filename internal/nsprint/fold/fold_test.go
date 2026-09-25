@@ -67,7 +67,7 @@ func seed(t *testing.T) (*miniredis.Miniredis, *redis.Client, fixture) {
 	}
 	for state, ids := range fx.Tasks {
 		for _, id := range ids {
-			must(client.HSet(ctx, s+":task:"+id, "state", state).Err())
+			must(client.HSet(ctx, "task:"+id, "state", state).Err())
 			must(client.SAdd(ctx, s+":idx:task:"+state, id).Err())
 		}
 	}

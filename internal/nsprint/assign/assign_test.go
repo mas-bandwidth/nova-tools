@@ -251,7 +251,7 @@ func TestControl46AssignStdinIsOneRoundTrip(t *testing.T) {
 	if fmt.Sprint(qb) != fmt.Sprint(qs) {
 		t.Fatalf("queues differ:\nbatch  %v\nsingle %v", qb, qs)
 	}
-	title, err := client.HGet(ctx, "s:"+asSprint+":task:read-2", "title").Result()
+	title, err := client.HGet(ctx, "task:read-2", "title").Result()
 	must(t, err)
 	if !strings.HasSuffix(title, "[moved from emma: assign]") {
 		t.Fatalf("moved title %q carries no marker", title)
@@ -362,7 +362,7 @@ func TestRedistributeFromByKindAndTo(t *testing.T) {
 		if where[id] != "johnny" {
 			t.Fatalf("%s on %q, want the builder johnny", id, where[id])
 		}
-		title := client.HGet(ctx, "s:"+asSprint+":task:"+id, "title").Val()
+		title := client.HGet(ctx, "task:"+id, "title").Val()
 		if !strings.HasSuffix(title, "[moved from emma: underfull]") {
 			t.Fatalf("%s title %q", id, title)
 		}
@@ -421,7 +421,7 @@ func TestRedistributeFromDownFriendClosesLeases(t *testing.T) {
 	if n := client.ZCard(ctx, "s:"+asSprint+":open:emma").Val() + client.ZCard(ctx, "friend:emma:starting").Val(); n != 0 {
 		t.Fatalf("emma still holds %d", n)
 	}
-	if title := client.HGet(ctx, "s:"+asSprint+":task:build-1", "title").Val(); !strings.HasSuffix(title, "[moved from emma: away]") {
+	if title := client.HGet(ctx, "task:build-1", "title").Val(); !strings.HasSuffix(title, "[moved from emma: away]") {
 		t.Fatalf("title %q", title)
 	}
 }
@@ -456,7 +456,7 @@ func TestRedistributeFromExpiredOutOfCreditsKeepsLease(t *testing.T) {
 			}
 			res, err := assign.From(ctx, st, assign.FromRequest{From: "emma", Reason: "hand", Roster: asRoster, Actor: "rowan", Idem: "oc-" + strconv.Itoa(int(tc.until))})
 			must(t, err)
-			key := "s:" + asSprint + ":task:build-1"
+			key := "task:build-1"
 			fenced := client.HGet(ctx, key, "token").Val() == "fenced"
 			owner := client.HGet(ctx, key, "owner").Val()
 			if res.Leases != tc.leases || res.State != tc.state || fenced != (tc.leases == 1) {
