@@ -44,15 +44,24 @@ func pushIssue(t *testing.T, c *redis.Client, id, route, paths string) (taskcard
 		Title: "a waiting card is complete", By: "rowan", Spec: &spec})
 }
 
-// mirror makes card push's repository probe local: a bare mirror directory
-// for nova-tools, so the lint never asks the network.
-func mirror(t *testing.T) {
-	t.Helper()
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "nova-tools.git", "objects"), 0o755); err != nil {
-		t.Fatal(err)
+// TestMain makes card push's repository probe local for the whole package:
+// a bare mirror directory for nova-tools under $NOVA_MIRROR_ROOT, so the lint
+// never asks the network. It is set once here, not per test with t.Setenv,
+// so every test in the package can run with t.Parallel().
+func TestMain(m *testing.M) {
+	root, err := os.MkdirTemp("", "taskcard-mirror-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	t.Setenv("NOVA_MIRROR_ROOT", root)
+	if err := os.MkdirAll(filepath.Join(root, "nova-tools.git", "objects"), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Setenv("NOVA_MIRROR_ROOT", root)
+	code := m.Run()
+	_ = os.RemoveAll(root)
+	os.Exit(code)
 }
 
 // TestWaitingCardIsCompleteForFriendOrSwarm is the #3911 DONE-WHEN: a card
@@ -65,7 +74,7 @@ func mirror(t *testing.T) {
 // and no generation step: the under-one-second bound, held by structure
 // rather than by a wall clock the CI path refuses (internal/ci waits check).
 func TestWaitingCardIsCompleteForFriendOrSwarm(t *testing.T) {
-	mirror(t)
+	t.Parallel()
 	c := start(t)
 	c.SAdd(context.Background(), "friends", "batman")
 	ctx := context.Background()
@@ -197,7 +206,7 @@ func TestWaitingCardIsCompleteForFriendOrSwarm(t *testing.T) {
 // where was computed from r.DependsOn before fillSpec filled it from the
 // spec, so such a card landed in ready with blocked_on written anyway.
 func TestPushFromIssueDependsOnLineLandsWaiting(t *testing.T) {
-	mirror(t)
+	t.Parallel()
 	c := start(t)
 	ctx := context.Background()
 

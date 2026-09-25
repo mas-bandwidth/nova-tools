@@ -15,12 +15,16 @@ import (
 // task:<id> carries its route gets the friend brief rendered from that
 // record (taskcard.RenderBrief) at @brief, and the start receipt says so.
 func TestServeBriefFromCompleteCard(t *testing.T) {
+	t.Parallel()
 	st, client := seedSeat(t, 1)
 	ctx := context.Background()
-	pushWork(t, st, "w1")
-	if err := client.HSet(ctx, taskcard.Key("w1"), "route", "friend", "stream", "swarm: cards",
-		"done_when", "go test ./internal/x -run TestX passes", "paths", "internal/x/x.go",
-		"body", "build the thing\nDONE-WHEN: go test ./internal/x -run TestX passes").Err(); err != nil {
+	// One task store (#3778): the card is pushed with its spec, so its
+	// stream and route are on the record and in the queue it sits in
+	// (friend:emma:cards:ready), not written onto task:w1 behind the move.
+	if _, err := taskcard.Push(ctx, client, taskcard.PushRequest{ID: "w1", Stream: "swarm: cards", Friend: "emma",
+		Sprint: "s1", Kind: "work", Title: "build w1", By: "coordinator",
+		Spec: &taskcard.Spec{Route: taskcard.RouteFriend, DoneWhen: "go test ./internal/x -run TestX passes",
+			Paths: "internal/x/x.go", Body: "build the thing\nDONE-WHEN: go test ./internal/x -run TestX passes"}}); err != nil {
 		t.Fatal(err)
 	}
 	cfg := serveConfig(t, "sess-1", 1, "done")
