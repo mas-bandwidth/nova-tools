@@ -179,7 +179,7 @@ func (r RedisReader) Snapshot(ctx context.Context, machine string) (int, bool, [
 	}
 	pipe := r.Store.Client().Pipeline()
 	ceilingCmd := pipe.HGet(ctx, MachineCeilingKey(machine), "slots")
-	consumersCmd := pipe.FCall(ctx, "ns_capacity_consumers", nil)
+	consumersCmd := pipe.FCallRO(ctx, "ns_capacity_consumers", nil)
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return 0, false, nil, fmt.Errorf("capacity: read machine %s and consumers: %w", machine, err)
 	}
@@ -206,9 +206,8 @@ func (r RedisReader) Consumers(ctx context.Context) ([]Consumer, error) {
 	if r.Store == nil {
 		return nil, fmt.Errorf("capacity: nil store")
 	}
-	pipe := r.Store.Client().Pipeline()
-	cmd := pipe.FCall(ctx, "ns_capacity_consumers", nil)
-	if _, err := pipe.Exec(ctx); err != nil {
+	cmd := r.Store.Client().FCallRO(ctx, "ns_capacity_consumers", nil)
+	if err := cmd.Err(); err != nil {
 		return nil, fmt.Errorf("capacity: read consumers: %w", err)
 	}
 	return parseConsumers(cmd.Val())

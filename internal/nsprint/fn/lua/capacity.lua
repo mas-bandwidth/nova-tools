@@ -549,7 +549,7 @@ end
 
 redis.register_function('ns_capacity_desired', capacity_desired)
 redis.register_function('ns_capacity_machine', capacity_machine)
-redis.register_function('ns_capacity_consumers', capacity_consumers)
+redis.register_function{ function_name = 'ns_capacity_consumers', callback = capacity_consumers, flags = { 'no-writes' } }
 redis.register_function('ns_budget_set', cap_budget_set)
 redis.register_function('ns_budget_take', cap_budget_take)
 redis.register_function('ns_budget_renew', cap_budget_renew)
