@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,6 +30,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -72,9 +72,7 @@ var repoRx = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 
 // Main runs the verb. It never posts before every refusal has been checked.
 func Main(ctx context.Context, args []string, stdout, stderr io.Writer, d Deps) int {
-	fs := flag.NewFlagSet("file", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("file")
 	repo := fs.String("repo", "", "")
 	title := fs.String("title", "", "")
 	bodyFile := fs.String("body-file", "", "")

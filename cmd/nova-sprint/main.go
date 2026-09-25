@@ -16,6 +16,7 @@ import (
 	"os/exec"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprinttable"
 )
@@ -33,6 +34,7 @@ usage:
   nova-sprint table clear --checkpoint <file> [--redis <addr>] [--friends <a,b,...>] [--by <name>]
   nova-sprint table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...> [--xy-file <file>]
   nova-sprint refresh -- <command> [arg...]
+  nova-sprint <verb> [<subverb>] -h
 
 table reads one consistent FCALL_RO snapshot per render and prints it to
 stdout; --loop renders once per second. With --out <file> each tick publishes
@@ -55,6 +57,9 @@ plist sets AbandonProcessGroup (fleet/templates/nova-loop.plist.j2), which
 stops launchd from signalling the unit's process group; setsid is the
 refresh leaving that group itself.
 
+-h on any verb or subverb prints its usage line and every flag it takes on
+stdout, and exits 2.
+
 exit codes: 0 ran, 2 could not run.
 
 example:
@@ -65,7 +70,9 @@ example:
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdout, stderr io.Writer) (code int) {
+	// -h on any verb or subverb: its usage line and flags on stdout, exit 2 (#3254).
+	defer verbflag.Recover(stdout, "nova-sprint", &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb; table renders, refresh detaches")
 	}

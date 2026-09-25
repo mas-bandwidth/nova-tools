@@ -11,7 +11,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/harvest"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -68,8 +68,7 @@ func (l *listFlag) Set(v string) error {
 // full repo field (--owner is gone); GitHub is the caller's own GH_CONFIG_DIR
 // over REST.
 func runCardHarvest(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("card harvest", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("card harvest")
 	for _, a := range args {
 		if a == "--results-root" || strings.HasPrefix(a, "--results-root=") || a == "-results-root" || strings.HasPrefix(a, "-results-root=") {
 			// #3329: deleted, not ignored; a launcher still passing it is told where the dir lives now.

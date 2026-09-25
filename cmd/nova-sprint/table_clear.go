@@ -6,7 +6,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -14,15 +13,14 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 const tableClearWants = "table clear --checkpoint <file> [--redis <addr>] [--friends <a,b,...>] [--by <name>]"
 
 func cmdTableClear(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("table clear", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("table clear")
 	redisAddr := fs.String("redis", "", "")
 	friends := fs.String("friends", "", "")
 	checkpoint := fs.String("checkpoint", "", "")

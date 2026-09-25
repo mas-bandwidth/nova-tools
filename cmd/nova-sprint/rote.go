@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fold"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -31,10 +32,7 @@ func refuseVerb(stderr io.Writer, verb, what string) int {
 }
 
 func quietFlags(name string) *flag.FlagSet {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	return fs
+	return verbflag.New(name)
 }
 
 // cmdNote is `note --rote <class> --as <mind> --store <host:port>`. Exit 0

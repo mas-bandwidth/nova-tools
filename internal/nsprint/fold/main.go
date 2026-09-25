@@ -3,13 +3,13 @@ package fold
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -29,8 +29,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		sprint, args = args[0], args[1:]
 	}
-	fs := flag.NewFlagSet("fold", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("fold")
 	addr := fs.String("store", "", "")
 	work := fs.String("work", "", "")
 	path := fs.String("path", "", "")

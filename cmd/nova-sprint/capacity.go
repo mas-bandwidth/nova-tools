@@ -17,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/capacity"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
 func init() {
@@ -61,10 +62,7 @@ func runCapacity(ctx context.Context, args []string, out, errOut io.Writer) int 
 // capacityFlags is the flag set shared by the capacity subverbs, quiet on a
 // parse error so the verb prints one refusal line the way main.go does.
 func capacityFlags(name string) *flag.FlagSet {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	return fs
+	return verbflag.New(name)
 }
 
 func runCapacityDesired(ctx context.Context, kind string, args []string, out, errOut io.Writer) int {

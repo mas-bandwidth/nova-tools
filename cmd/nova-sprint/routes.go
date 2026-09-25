@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/route"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
 // nova-sprint routes prints the router's allowed_routes table (#2895) with
@@ -65,9 +65,7 @@ func init() {
 }
 
 func cmdRoutes(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("routes", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("routes")
 	rung := fs.String("rung", "", "")
 	typ := fs.String("type", "", "")
 	check := fs.String("check", "", "")
