@@ -79,6 +79,11 @@ const RunnerEnv = "NOVA_CARD_RUNNER"
 // BodyKey is where the pusher stores the card's exact bytes, content-addressed.
 func BodyKey(sprint, sha string) string { return "s:" + sprint + ":body:sha256:" + sha }
 
+// BodyTTL is how long a card body lives at BodyKey: the retired bash
+// nova-card-push stored it with a 7-day PX, and card run reads it within that
+// window. A body that never expires leaks every pushed card's bytes forever.
+const BodyTTL = 7 * 24 * time.Hour
+
 // ProviderKey is the key name for one launch string, or an error naming the
 // provider that has none.
 func ProviderKey(launch string) (string, error) {
