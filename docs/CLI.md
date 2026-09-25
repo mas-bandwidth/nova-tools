@@ -897,8 +897,10 @@ Exit **0** when every pull request PASSed, **3** when any did not — a BOUNCE i
 
 ```
 nova-decide classify --question <q> --evidence <file|-> --pointer <id>
-                     [--version 1] [--decider rules] [--floor 0.65] [--rules <tsv>]
+                     [--version 1] [--decider rules[,jev|local]] [--floor 0.65] [--rules <tsv>]
                      [--tamper <file>] [--escalate-to <name>] [--log <path>] [--private]
+                     [--key-env <name>] [--base-url <url>] [--usage <tsv>]
+                     [--record <dir>] [--replay <dir>]
 ```
 
 The generic door onto the question table (`docs/SPEC-DECIDE.md` D3). It exists **beside** the `--decide` flags on the tools that own the acts, and the reason runs both ways: a verb alone can be skipped, and a flag alone hides the question inside one tool where nobody else can ask or test it. So a shell script, a fixture, or a person with a text file and a question can ask anything nova-tools asks.
@@ -913,6 +915,8 @@ CLASSIFY question=harvest/v1 answer=unknown conf=- floor=0.65 decider=none stop=
 **The chain.** `rules` is always consulted first whether or not you name it, because a question a table can answer is a call not worth making. A **stopping** member ends the walk before the floor is looked at, at any confidence: a first decider's stop is not undone by a later one's permission. Below the floor the answer is kept as `below=` and the walk goes on; when the chain is exhausted the answer is `unknown`, and `why=` says which nothing it was — `no-decider`, `below-floor`, `tamper`. `skipped=` names every decider the walk could not get an answer out of, as bounded `<decider>=<reason>` tokens and never a provider's own error text: without it a chain with no provider and a chain whose provider failed print the same words, and a failure behind a later success disappears from both the line and the row. `--floor` is a confidence: -1, 1.1, NaN and +Inf are refused as `bad-floor` at exit 2 before anything is asked.
 
 **What never happens.** The evidence is redacted, bounded and framed between two markers carrying a nonce drawn fresh per call, every evidence line behind a `| ` so it cannot forge a marker; the instructions are constants and no byte of evidence is interpolated into them. A text addressed to a classifier is screened *before* any call and answers with the question's tamper answer at `tamper=yes`. `--private` evidence never reaches a decider that leaves the machine — the question falls through to the next one instead. An answer outside the question's closed set is a provider error at exit 2 and never a decision. `--log` writes a row carrying a **hash and a size** of the evidence, never its text.
+
+**Asking Jev.** `--decider rules,jev` (or `rules,local`) asks the provider after the table, through the client the verb opens from `--key-env` (default `JEV_API_KEY`; the key is read from that variable, never from argv or a file) and `--base-url`, the same way `route` and `review` open theirs. A provider call is accounted for or not made: without both `--log` and `--usage` the verb refuses `no-accounting` at exit 2 before any key is read, and with no key in the variable it refuses `no-key`, naming the variable. Every call made writes one row of the fleet's usage TSV to `--usage` (provider `typesafe`, the call's tokens), before any refusal; a classification that made no call — `--decider rules`, or `--private` evidence that skipped `jev` as `jev=private-evidence` — writes none. `--record <dir>` writes the provider's answer to `<dir>/<question>-v<n>-<pointer>.json`, and `--replay <dir>` answers from that file with no key and no call, so a test of a classify caller runs offline; a missing fixture is skipped as a provider error and the answer is `unknown`.
 
 ### log — the escalation log
 
