@@ -16,3 +16,9 @@ The tests start a throwaway Redis server bound to loopback, with its working
 directory beneath the test's temporary directory (`internal/nsprint/testutil`).
 CI sets `NOVA_CI=1` and installs `redis-server`, so a missing binary fails the
 run instead of skipping it. The process is private. It is not the fleet store.
+
+The fleet Redis has its default user off, so every verb against it needs the
+ACL user *and* its password in one pair: `NOVA_SPRINT_REDIS_USER=bench` and
+`NOVA_REDIS_BENCH_PASSWORD` (the password reaches the process through
+`nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD`, never a flag). A password
+with no user is refused naming the missing variable and the pair.

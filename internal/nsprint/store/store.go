@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -22,7 +23,10 @@ type Store struct {
 // UserEnv names the ACL user and turns authentication on; PasswordEnvEnv names
 // the variable holding that user's password, DefaultPasswordEnv when unset.
 // With UserEnv unset, Open connects as before, so a throwaway test Redis and a
-// bench that exports the bench password for other tools are unaffected.
+// bench that exports the bench password for other tools are unaffected; only
+// when that unauthenticated connection is refused NOAUTH while the password is
+// already in the environment does Open name the missing variable and the pair
+// (#3520) instead of passing the raw NOAUTH through.
 const (
 	UserEnv            = "NOVA_SPRINT_REDIS_USER"
 	PasswordEnvEnv     = "NOVA_SPRINT_REDIS_PASSWORD_ENV"
@@ -43,6 +47,21 @@ func authFromEnv() (user, password string, err error) {
 		return "", "", fmt.Errorf("%s=%s but %s is empty; run under nova-secrets exec --only %s", UserEnv, user, name, name)
 	}
 	return user, password, nil
+}
+
+// NoUserHint is the refusal the fleet Redis needs when the default user is off
+// (#3520): the password is already in the environment but the ACL user is
+// unset, so the verb connected as the default user and was refused NOAUTH. The
+// line names the missing variable and the pair (user + password) in one line.
+func NoUserHint() string {
+	return UserEnv + " is unset but " + DefaultPasswordEnv + " is set; set the pair " +
+		UserEnv + "=bench and " + DefaultPasswordEnv + " (password from nova-secrets exec --only " +
+		DefaultPasswordEnv + ", never a flag)"
+}
+
+// isNoAuth reports a refusal for lack of authentication.
+func isNoAuth(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "NOAUTH")
 }
 
 func Open(ctx context.Context, addr string) (*Store, error) {
@@ -68,6 +87,9 @@ func open(ctx context.Context, addr string, poolSize int) (*Store, error) {
 	client := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password, PoolSize: poolSize})
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
+		if user == "" && isNoAuth(err) && os.Getenv(DefaultPasswordEnv) != "" {
+			return nil, fmt.Errorf("redis at %s: %w; %s", addr, err, NoUserHint())
+		}
 		return nil, fmt.Errorf("redis at %s: %w", addr, err)
 	}
 	return &Store{client: client}, nil
