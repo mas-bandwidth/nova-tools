@@ -13,6 +13,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -281,8 +282,19 @@ func TestControl3530WriterLock(t *testing.T) {
 // every landed member to closed and zeroes the friend done column, waiting,
 // ready, working and merging untouched, in under one second; the checkpoint
 // names every moved task and every done count.
+// sprintStoreLua is the fixture on a throwaway redis-server with the
+// nova_sprint library loaded: the clear moves through the one task move.
+func sprintStoreLua(t *testing.T) (*redis.Client, *cmdLog) {
+	t.Helper()
+	_, client := wstest.Start(t)
+	seedCommands(t, client, table.SprintFixture())
+	log := &cmdLog{}
+	client.AddHook(log)
+	return client, log
+}
+
 func TestControl3637ClearUnderOneSecond(t *testing.T) {
-	client, _, log := sprintStore(t)
+	client, log := sprintStoreLua(t)
 	ctx, now := context.Background(), table.SprintFixtureNow()
 	r := table.NewSprintReader(client, table.SprintFixtureConfig())
 	before, err := r.Read(ctx, now)
@@ -335,12 +347,12 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 	msgs, _ := client.XRange(ctx, "ws:log", "-", "+").Result()
 	closed := 0
 	for _, m := range msgs {
-		if m.Values["to"] == "closed" && m.Values["from"] == "landed" && m.Values["by"] == "rowan" {
+		if m.Values["to"] == "done/ok" && m.Values["from"] == "landed" && m.Values["by"] == "rowan" {
 			closed++
 		}
 	}
 	if closed != 6 {
-		t.Fatalf("ws:log has %d landed->closed entries, want 6", closed)
+		t.Fatalf("ws:log has %d landed->done/ok entries, want 6", closed)
 	}
 	if v, _ := client.Get(ctx, "ws:checkpoint").Result(); v != "receipt" {
 		t.Fatalf("ws:checkpoint=%q", v)

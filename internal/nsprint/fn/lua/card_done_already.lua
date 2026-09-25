@@ -39,7 +39,7 @@ redis.register_function('ns_card_done_already', function(keys, args)
   if verdict == 'closed' then
     local f = redis.call('HMGET', card, 'origin', 'repo')
     local repo, n = TE.TR.parse(f[1] or '', f[2] or '')
-    if repo then r = TE.landed({ repo .. '#' .. n }, {}, 'reconciler', evidence) end
+    if repo then r = TE.landed({ repo .. '#' .. n }, {}, 'reconciler', evidence, sha) end
   end
   redis.call('XADD', 's:' .. S .. ':log', '*', 'kind', 'card', 'id', label, 'actor', 'reconciler',
     'reason', 'done-already-' .. verdict, 'evidence', evidence, 'at', now)

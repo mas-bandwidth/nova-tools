@@ -55,12 +55,14 @@ func TestWSVerbsOnAThousandTasks(t *testing.T) {
 		{[]string{"scope", "keep", "--streams", s(0) + "|" + s(1)}, "KEPT streams=2 parked_streams=8 parked=480 checkpoint=" + cpDir + "/ws-", 1},
 		{[]string{"scope", "ls"}, "SCOPE streams=10 kept=2 parked=8 partial=0 ", 11},
 		{[]string{"scope", "unpark", "--stream", s(2)}, `UNPARKED stream="s2: work" unparked=60 `, 1},
-		{[]string{"scope", "park", "--stream", s(1), "--ids", "@" + idsFile, "--checkpoint", cp}, `PARKED stream="s1: work" parked=2 same=0 checkpoint=` + cp + " rows=950 ", 1},
+		{[]string{"scope", "park", "--stream", s(1), "--ids", "@" + idsFile, "--checkpoint", cp}, `PARKED stream="s1: work" parked=2 same=0 checkpoint=` + cp + " rows=1000 ", 1},
 		{[]string{"scope", "park", "--stream", s(0)}, `PARKED stream="s0: work" parked=60 `, 1},
-		{[]string{"stream", "rename", s(4), "swarm: cards"}, `RENAMED from="s4: work" to="swarm: cards" members=95 `, 1},
+		{[]string{"stream", "rename", s(4), "swarm: cards"}, `RENAMED from="s4: work" to="swarm: cards" members=100 `, 1},
 		{[]string{"stream", "order", "swarm: cards", s(9)}, `ORDERED streams=10 first="swarm: cards" `, 1},
-		{[]string{"ws", "checkpoint", "--out", cp}, "CHECKPOINT path=" + cp + " streams=10 rows=950 ", 1},
-		{[]string{"ws", "migrate"}, "MIGRATED scanned=1000 placed=1000 same=0 nostream=0 skipped=0 pages=", 1},
+		{[]string{"ws", "checkpoint", "--out", cp}, "CHECKPOINT path=" + cp + " streams=10 rows=1000 ", 1},
+		// the fixture is already the task card shape (#3778): migrate keeps
+		// every place but the 150 working rows no child beats (back to ready)
+		{[]string{"ws", "migrate"}, "MIGRATED scanned=1000 placed=150 same=850 nostream=0 skipped=0 pages=", 1},
 		{[]string{"ws", "migrate"}, "MIGRATED scanned=1000 placed=0 same=1000 nostream=0 skipped=0 pages=", 1},
 	} {
 		args := append(append([]string{}, tc.args...), "--redis", addr)
@@ -85,7 +87,7 @@ func TestWSVerbsOnAThousandTasks(t *testing.T) {
 	if n, _ := filepath.Glob(filepath.Join(cpDir, "ws-*.tsv")); len(n) != 2 {
 		t.Fatalf("default checkpoints %v, want one each for scope keep and scope park", n)
 	}
-	if got, _ := c.Get(ctx, ws.CheckpointKey).Result(); !strings.Contains(got, "path="+cp+" rows=950") {
+	if got, _ := c.Get(ctx, ws.CheckpointKey).Result(); !strings.Contains(got, "path="+cp+" rows=1000") {
 		t.Fatalf("ws:checkpoint %q", got)
 	}
 }

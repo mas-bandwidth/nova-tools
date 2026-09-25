@@ -2076,6 +2076,36 @@ business. Read-time conditionals are not duplicates: `#+sbcl (defun f …)` besi
 has four such pairs), so a definition whose preceding non-blank line opens with
 `#+` or `#-` is skipped.
 
+### `taskwriter` — a task card has one writer
+
+**The rule.** A task is a card (nova-tools #3778; `rowan-new`
+`specs/ws-index.md`, "Tasks are cards"): its record `task:<id>` carries one
+pointer (`where`, `where_ok`, `stream`, `friend`), and the sets behind the
+tables — `ws:<stream>:<where>`, `friend:<f>:cards:<where>`, the friend-queue idx
+sets and the retired sprint store (`s:<S>:task:<id>`, `s:<S>:open:<f>`,
+`s:<S>:ready`) — are written by one move, `TK.move` in
+`internal/nsprint/fn/lua/02_card_move.lua`, reached from Go only as the
+`ns_tcard_*` Functions (`internal/nsprint/taskcard`). No non-test Go file under
+`cmd/` or `internal/` writes one of those keys with a direct Redis call.
+**The hurt.** The friends table and the stream table counted sets that several
+writers maintained by hand, each remembering a different part of the
+structure, so a task could sit in two sets or none and the counts drifted from
+the work (Glenn, 2026-09-25: the structure should "just happen", not be
+remembered).
+**The test.** `TestTaskCardsHaveOneWriter`
+(`internal/ci/taskwriter_class_test.go`), the Go half; the Lua half is
+`TestTaskCardOneWriter` in `internal/nsprint/fn/taskwriter_test.go`, which
+refuses a set or pointer write in any Function file but `02_card_move.lua`.
+**Its allowlist.** None listed: the stream registry (`ws:names`, `ws:order`,
+`ws:checkpoint`) is not a task set, and fixtures that seed a throwaway store
+(a `*fixture*.go` file, `internal/nsprint/ws/wstest`) are exempt by path.
+**Its remedy line.** `a second writer of the task card sets (the one writer is
+ns_tcard_move, internal/nsprint/taskcard): <file>:<line>: <line>` — call
+`taskcard.Move` (or `Push`, `Take`, `Done`, `Land`) instead.
+**Its narrowings.** It reads one line at a time: a key built in a variable
+first and written through that variable, or a write through a helper whose
+name the patterns do not know, passes. Test files are not read.
+
 ### Tests this spec demands
 
 This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.

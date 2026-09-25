@@ -102,7 +102,7 @@ func (r RedisReader) Details(ctx context.Context, sprint string, ids []string) (
 	}
 	reads := make([]store.HashRead, len(ids))
 	for i, id := range ids {
-		reads[i] = store.HashRead{Key: "s:" + sprint + ":task:" + id, Fields: []string{"state", "owner"}}
+		reads[i] = store.HashRead{Key: "task:" + id, Fields: []string{"state", "owner"}}
 	}
 	values, err := r.Store.PipelineHMGet(ctx, reads)
 	if err != nil {

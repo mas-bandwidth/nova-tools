@@ -267,7 +267,7 @@ func Take(ctx context.Context, st *store.Store, req TakeRequest) (Claim, bool, e
 	var values []any
 	var status string
 	for tries := 0; tries < 3; tries++ {
-		previous, err := st.Client().HGet(ctx, "s:"+req.Sprint+":task:"+req.ID, "attempt").Int()
+		previous, err := st.Client().HGet(ctx, "task:"+req.ID, "attempt").Int()
 		if err == redis.Nil {
 			previous = 0
 		} else if err != nil {

@@ -45,7 +45,7 @@ func assignSeatFixture(t *testing.T) (string, *redis.Client) {
 		{"HSET", "friend:c:roles", "roles", "may-hold,builder"},
 		{"HSET", "friend:a:desired", "slots", "8", "paused", "0"}, {"HSET", "friend:b:desired", "slots", "8", "paused", "0"}, {"HSET", "friend:c:desired", "slots", "8", "paused", "0"},
 		{"HSET", "friend:a:beat", "at", "1"}, {"HSET", "friend:b:beat", "at", "1"}, {"HSET", "friend:c:beat", "at", "1"},
-		{"HSET", "s:s:task:r1", "state", "open", "kind", "read", "priority", "1", "repo", "r", "pr", "1", "head", strings.Repeat("1", 40), "author", "a"},
+		{"HSET", "task:r1", "state", "open", "kind", "read", "priority", "1", "repo", "r", "pr", "1", "head", strings.Repeat("1", 40), "author", "a"},
 		{"ZADD", "s:s:open:c", "1", "r1"}, {"SADD", "s:s:idx:task:open", "r1"},
 	})
 	return addr, client
@@ -152,7 +152,7 @@ func TestSeatNeutralNoFriendLiterals(t *testing.T) {
 func TestFloorIsOneBatch(t *testing.T) {
 	addr, client := assignSeatFixture(t)
 	seed(t, addr, [][]string{
-		{"HSET", "s:s:task:r2", "state", "open", "kind", "read", "priority", "2", "repo", "r", "pr", "2", "head", strings.Repeat("2", 40), "author", "a"},
+		{"HSET", "task:r2", "state", "open", "kind", "read", "priority", "2", "repo", "r", "pr", "2", "head", strings.Repeat("2", 40), "author", "a"},
 		{"ZADD", "s:s:open:c", "2", "r2"}, {"SADD", "s:s:idx:task:open", "r2"},
 	})
 	t.Setenv("NOVA_FRIEND", "a")
@@ -224,7 +224,7 @@ func TestAssignStdinVerbPrintsOneLinePerInputLine(t *testing.T) {
 		!strings.Contains(out.String(), "REDISTRIBUTE friend=emma state=- moved=1 leases=0 released=0 unrouted=0 kept=0") {
 		t.Fatalf("redistribute exit %d:\n%s%s", code, out.String(), errOut.String())
 	}
-	if title := client.HGet(ctx, "s:s1:task:build-1", "title").Val(); title != "build-1 [moved from emma: underfull]" {
+	if title := client.HGet(ctx, "task:build-1", "title").Val(); title != "build-1 [moved from emma: underfull]" {
 		t.Fatalf("title %q", title)
 	}
 

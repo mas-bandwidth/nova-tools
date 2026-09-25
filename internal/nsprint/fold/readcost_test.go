@@ -29,7 +29,7 @@ func TestControl55Cost(t *testing.T) {
 		"build-3104-d": {"work", "PR https://example.test/pr/3104 | cost_usd=9.99"},
 	}
 	for id, f := range closed {
-		if err := client.HSet(ctx, key+":task:"+id, "kind", f[0], "state", "closed", "evidence", f[1]).Err(); err != nil {
+		if err := client.HSet(ctx, "task:"+id, "kind", f[0], "state", "closed", "evidence", f[1]).Err(); err != nil {
 			t.Fatal(err)
 		}
 		if err := client.SAdd(ctx, key+":idx:task:closed", id).Err(); err != nil {

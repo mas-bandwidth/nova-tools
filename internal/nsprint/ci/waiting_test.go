@@ -16,7 +16,7 @@ import (
 // head's waiting set ci:<repo>:<h>:waiting. No open queue holds it.
 func (f *fixture) waitOn(sprint, id, to, h string) {
 	f.t.Helper()
-	key := "s:" + sprint + ":task:" + id
+	key := "task:" + id
 	if err := f.client.HSet(f.ctx, key,
 		"kind", "review", "repo", repo, "pr", strconv.Itoa(pr), "head", h,
 		"title", "read "+id, "effects", "none", "owner", "", "priority", "5",
@@ -35,7 +35,7 @@ func (f *fixture) waitOn(sprint, id, to, h string) {
 func (f *fixture) waitOnScored(sprint, id, to, h, priority, waitScore string) {
 	f.t.Helper()
 	f.waitOn(sprint, id, to, h)
-	key := "s:" + sprint + ":task:" + id
+	key := "task:" + id
 	if err := f.client.HSet(f.ctx, key, "priority", priority).Err(); err != nil {
 		f.t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func (f *fixture) order(key string) []string {
 
 func (f *fixture) task(sprint, id string) map[string]string {
 	f.t.Helper()
-	m, err := f.client.HGetAll(f.ctx, "s:"+sprint+":task:"+id).Result()
+	m, err := f.client.HGetAll(f.ctx, "task:"+id).Result()
 	if err != nil {
 		f.t.Fatal(err)
 	}

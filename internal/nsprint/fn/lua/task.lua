@@ -19,7 +19,7 @@ local function task_live(keys, args)
   if push_sprint ~= '' and not seen[push_sprint] then
     order[#order + 1] = push_sprint
   end
-  local out = { tostring(redis.call('EXISTS', 's:' .. push_sprint .. ':task:' .. push_id)) }
+  local out = { tostring(redis.call('EXISTS', 'task:' .. push_id)) }
   local live = { open = true, claimed = true, working = true, waiting = true }
   for _, s in ipairs(order) do
     local done = {}
@@ -27,7 +27,7 @@ local function task_live(keys, args)
       for _, id in ipairs(redis.call('SMEMBERS', 's:' .. s .. ':idx:task:' .. idx)) do
         if not done[id] then
           done[id] = true
-          local row = redis.call('HMGET', 's:' .. s .. ':task:' .. id, 'state', 'kind', 'repo', 'title')
+          local row = redis.call('HMGET', 'task:' .. id, 'state', 'kind', 'repo', 'title')
           if row[1] and live[row[1]] then
             out[#out + 1] = s
             out[#out + 1] = id
@@ -105,7 +105,6 @@ function TW.holds(fence)
 end
 
 function TW.leave(S, id, f, on)
-  redis.call('SREM', 's:' .. S .. ':idx:task:waiting', id)
   redis.call('SREM', 's:' .. S .. ':waiton:' .. on, id)
   redis.call('ZREM', 'friend:' .. f .. ':waiting', S .. '/' .. id)
 end
@@ -123,9 +122,8 @@ function TW.resume(S, id, key, actor, idem, at)
   if first[2] and tonumber(first[2]) - 1 < score then
     score = tonumber(first[2]) - 1
   end
-  redis.call('ZADD', q, score, id)
-  redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
-  redis.call('HSET', key, 'state', 'open', 'wait_on', '', 'waited_ms', tostring(at - since))
+  NS.task.set(id, 'open', { sprint = S, by = actor, why = 'wait resolved ' .. on, qscore = score,
+    fields = { 'wait_on', '', 'waited_ms', tostring(at - since) } })
   TW.receipt(S, 'task resume', id, 'waiting', 'open', redis.call('HGET', key, 'attempt'),
     '', actor, on, 'owner=' .. f, idem, at)
 end
@@ -136,8 +134,8 @@ function TW.dead(S, id, key, reason, actor, idem, at)
   local f = redis.call('HGET', key, 'owner') or ''
   local on = redis.call('HGET', key, 'wait_on') or ''
   TW.leave(S, id, f, on)
-  redis.call('HSET', key, 'state', 'reconcile-required', 'reason', 'wait-dead ' .. reason)
-  redis.call('SADD', 's:' .. S .. ':idx:task:reconcile-required', id)
+  NS.task.set(id, 'reconcile-required', { sprint = S, by = actor, why = 'wait-dead ' .. reason,
+    fields = { 'reason', 'wait-dead ' .. reason } })
   redis.call('HSET', 's:' .. S .. ':unresolved', id .. ':wait-dead:' .. on,
     'owner=' .. f .. ' wait_on=' .. on .. ' reason=' .. reason ..
     ' wait_since=' .. (redis.call('HGET', key, 'wait_since') or '') .. ' at=' .. tostring(at))
@@ -150,7 +148,7 @@ end
 function TW.check(S, key, on)
   local kind = TW.kind(on)
   if kind == 'dep' then
-    local dk = 's:' .. S .. ':task:' .. string.sub(on, 5)
+    local dk = 'task:' .. string.sub(on, 5)
     local state = redis.call('HGET', dk, 'state')
     if not state then return 'dead', 'dep:missing' end
     if state == 'cancelled' or state == 'reconcile-required' then return 'dead', 'dep:' .. state end
@@ -184,7 +182,7 @@ end
 -- the owner and indexes the task under its key, atomically, with one receipt.
 local function task_wait(keys, args)
   local S, id, token, on, actor, idem = args[1], args[2], args[3], args[4], args[5], args[6]
-  local key = 's:' .. S .. ':task:' .. id
+  local key = 'task:' .. id
   if not TW.kind(on or '') then
     return { 'BADKEY' }
   end
@@ -201,9 +199,11 @@ local function task_wait(keys, args)
   local f = redis.call('HGET', key, 'owner') or ''
   local token_sha = redis.call('HGET', key, 'token_sha') or ''
   local at = TW.now_ms()
-  redis.call('HSET', key, 'state', 'waiting', 'token', 'fenced', 'wait_on', on, 'wait_since', tostring(at))
-  redis.call('SREM', 's:' .. S .. ':idx:task:working', id)
-  redis.call('SADD', 's:' .. S .. ':idx:task:waiting', id)
+  local err = NS.task.set(id, 'waiting', { sprint = S, by = actor, why = 'wait ' .. on,
+    fields = { 'token', 'fenced', 'wait_on', on, 'wait_since', tostring(at) } })
+  if err then
+    return { 'REFUSED', err }
+  end
   redis.call('SADD', 's:' .. S .. ':waiton:' .. on, id)
   redis.call('ZREM', 'friend:' .. f .. ':living', S .. '/' .. id .. '/' .. attempt)
   redis.call('ZADD', 'friend:' .. f .. ':waiting', at, S .. '/' .. id)
@@ -239,7 +239,7 @@ local function task_wake(keys, args)
   local ids = redis.call('SMEMBERS', 's:' .. S .. ':waiton:' .. on)
   table.sort(ids)
   for _, id in ipairs(ids) do
-    local key = 's:' .. S .. ':task:' .. id
+    local key = 'task:' .. id
     if redis.call('HGET', key, 'state') == 'waiting' and redis.call('HGET', key, 'wait_on') == on then
       if outcome == 'ok' then
         TW.resume(S, id, key, actor, idem, at)
@@ -269,10 +269,8 @@ local function task_wait_sweep(keys, args)
   local ids = redis.call('SMEMBERS', 's:' .. S .. ':idx:task:waiting')
   table.sort(ids)
   for _, id in ipairs(ids) do
-    local key = 's:' .. S .. ':task:' .. id
-    if redis.call('HGET', key, 'state') ~= 'waiting' then
-      redis.call('SREM', 's:' .. S .. ':idx:task:waiting', id)
-    else
+    local key = 'task:' .. id
+    if redis.call('HGET', key, 'state') == 'waiting' then
       local verdict, why = TW.check(S, key, redis.call('HGET', key, 'wait_on') or '')
       if verdict == 'ok' then
         TW.resume(S, id, key, actor, idem, at)

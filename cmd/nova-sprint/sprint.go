@@ -327,8 +327,10 @@ func runSprintOpen(ctx context.Context, st *store.Store, name, from string, plan
 			closed++
 		case task.PushConflict:
 			refused++
-			fmt.Fprintf(out, "CONFLICT %s %s: id held by another payload; remedy: sprint close --sprint %s, then sprint open --sprint <new-sprint> --from %s\n",
-				name, req.ID, name, from)
+			// one task store (#3778): ids are global, so a new sprint does not
+			// free the id; the unit needs its own
+			fmt.Fprintf(out, "CONFLICT %s %s: id held by another payload (task:%s; ids are global); remedy: give the unit a new id in %s\n",
+				name, req.ID, req.ID, from)
 			continue
 		case task.PushInvalid:
 			refused++

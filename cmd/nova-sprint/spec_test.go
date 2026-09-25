@@ -55,7 +55,7 @@ func TestSpecMarkDoneOnTwoTensFiresSpecUnblock(t *testing.T) {
 	if err != nil || res.Waiting != 1 {
 		t.Fatalf("push waiting on %s = %+v %v", cond, res, err)
 	}
-	state := func() string { return c.HGet(ctx, "s:"+S+":task:b1", "state").Val() }
+	state := func() string { return c.HGet(ctx, "task:b1", "state").Val() } // one task store (#3778)
 	mark := func(who, rev, score string) (int, string, string) {
 		return runSpecArgs(t, "mark", "mas-bandwidth/nova-tools#3370", "--rev", rev, "--who", who, "--score", score, "--stream", "nova-sprint", "--redis", addr)
 	}

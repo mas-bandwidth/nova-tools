@@ -228,7 +228,7 @@ func RankTasksWithClient(ctx context.Context, client redis.Cmdable, sprint, as s
 	pipe2 := client.Pipeline()
 	hmgetCmos := make(map[string]*redis.SliceCmd, len(allIDs))
 	for _, id := range allIDs {
-		hmgetCmos[id] = pipe2.HMGet(ctx, "s:"+sprint+":task:"+id,
+		hmgetCmos[id] = pipe2.HMGet(ctx, "task:"+id,
 			"title", "est", "priority", "pushed_at", "owner", "state")
 	}
 	if _, err := pipe2.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {

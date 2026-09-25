@@ -58,7 +58,7 @@ local function take_view(keys, args)
       end
       local fields = {}
       for _, tid in ipairs(ids) do
-        local values = redis.call('HMGET', 's:' .. S .. ':task:' .. tid, unpack(rank_fields))
+        local values = redis.call('HMGET', 'task:' .. tid, unpack(rank_fields))
         fields[#fields + 1] = tid
         for i = 1, #rank_fields do
           fields[#fields + 1] = values[i] or ''

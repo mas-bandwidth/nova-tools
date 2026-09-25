@@ -27,7 +27,7 @@ func TestPushEstDomain(t *testing.T) {
 	if err != nil || got != task.PushCreated {
 		t.Fatalf("--est 45 push = %s, %v; want CREATED", got, err)
 	}
-	if v := client.HGet(ctx, "s:"+sprint+":task:t-est-45", "est").Val(); v != "45" {
+	if v := client.HGet(ctx, "task:t-est-45", "est").Val(); v != "45" {
 		t.Fatalf("stored est = %q; want 45", v)
 	}
 
@@ -40,7 +40,7 @@ func TestPushEstDomain(t *testing.T) {
 	if err != nil || got != task.PushCreated {
 		t.Fatalf("title est 30 push = %s, %v; want CREATED", got, err)
 	}
-	if v := client.HGet(ctx, "s:"+sprint+":task:t-title-30", "est").Val(); v != "30" {
+	if v := client.HGet(ctx, "task:t-title-30", "est").Val(); v != "30" {
 		t.Fatalf("stored est = %q; want 30", v)
 	}
 
@@ -53,7 +53,7 @@ func TestPushEstDomain(t *testing.T) {
 	if err != nil || got != task.PushCreated {
 		t.Fatalf("neither push = %s, %v; want CREATED", got, err)
 	}
-	if v := client.HGet(ctx, "s:"+sprint+":task:t-neither", "est").Val(); v != "" {
+	if v := client.HGet(ctx, "task:t-neither", "est").Val(); v != "" {
 		t.Fatalf("stored est = %q; want empty", v)
 	}
 
@@ -66,7 +66,7 @@ func TestPushEstDomain(t *testing.T) {
 	if err != nil || got != task.PushCreated {
 		t.Fatalf("--est 1 push = %s, %v; want CREATED", got, err)
 	}
-	if v := client.HGet(ctx, "s:"+sprint+":task:t-est-1", "est").Val(); v != "1" {
+	if v := client.HGet(ctx, "task:t-est-1", "est").Val(); v != "1" {
 		t.Fatalf("stored est = %q; want 1", v)
 	}
 
@@ -79,7 +79,7 @@ func TestPushEstDomain(t *testing.T) {
 	if err != nil || got != task.PushCreated {
 		t.Fatalf("--est 10080 push = %s, %v; want CREATED", got, err)
 	}
-	if v := client.HGet(ctx, "s:"+sprint+":task:t-est-10080", "est").Val(); v != "10080" {
+	if v := client.HGet(ctx, "task:t-est-10080", "est").Val(); v != "10080" {
 		t.Fatalf("stored est = %q; want 10080", v)
 	}
 
@@ -97,7 +97,7 @@ func TestPushEstDomain(t *testing.T) {
 		if got != task.PushInvalid {
 			t.Fatalf("--est %s got = %s; want INVALID", bad, got)
 		}
-		if client.Exists(ctx, "s:"+sprint+":task:"+id).Val() != 0 {
+		if client.Exists(ctx, "task:"+id).Val() != 0 {
 			t.Fatalf("--est %s wrote task hash; want EXISTS = 0", bad)
 		}
 		wantErr := fmt.Sprintf("INVALID est=%s: whole minutes 1..10080", bad)
@@ -117,7 +117,7 @@ func TestPushEstDomain(t *testing.T) {
 		if err != nil || got != task.PushCreated {
 			t.Fatalf("title est %s push = %s, %v; want CREATED", badTitle, got, err)
 		}
-		if v := client.HGet(ctx, "s:"+sprint+":task:"+id, "est").Val(); v != "" {
+		if v := client.HGet(ctx, "task:"+id, "est").Val(); v != "" {
 			t.Fatalf("stored est for title %s = %q; want empty", badTitle, v)
 		}
 		wantWarn := fmt.Sprintf("WARN est: title value %s outside 1..10080, stored empty", badTitle)
@@ -138,7 +138,7 @@ func TestPushEstDomain(t *testing.T) {
 		if !ok || len(status) == 0 || status[0] != "INVALID" {
 			t.Fatalf("direct FCALL with est %s reply = %v; want [INVALID]", bad, reply)
 		}
-		if client.Exists(ctx, "s:"+sprint+":task:"+id).Val() != 0 {
+		if client.Exists(ctx, "task:"+id).Val() != 0 {
 			t.Fatalf("direct FCALL with est %s wrote task hash; want EXISTS = 0", bad)
 		}
 	}
@@ -160,7 +160,7 @@ func TestPushWritesEstAndPushedAt(t *testing.T) {
 	if err != nil || got != task.PushCreated {
 		t.Fatalf("push t1 = %s, %v; want CREATED", got, err)
 	}
-	hash := client.HGetAll(ctx, "s:"+sprint+":task:t1").Val()
+	hash := client.HGetAll(ctx, "task:t1").Val()
 	if hash["est"] != "45" {
 		t.Fatalf("hash[est] = %q; want 45", hash["est"])
 	}
@@ -193,7 +193,7 @@ func TestPushWritesEstAndPushedAt(t *testing.T) {
 	if err != nil || got != task.PushCreated {
 		t.Fatalf("front push = %s, %v; want CREATED", got, err)
 	}
-	frontHash := client.HGetAll(ctx, "s:"+sprint+":task:t-front").Val()
+	frontHash := client.HGetAll(ctx, "task:t-front").Val()
 	if frontHash["priority"] != "1" {
 		t.Fatalf("front task priority = %q; want 1", frontHash["priority"])
 	}
@@ -212,7 +212,7 @@ func TestPushWritesEstAndPushedAt(t *testing.T) {
 	if !ok || len(status) == 0 || status[0] != "CREATED" {
 		t.Fatalf("direct front FCALL reply = %v; want [CREATED]", reply)
 	}
-	rawHash := client.HGetAll(ctx, "s:"+sprint+":task:t-front-raw").Val()
+	rawHash := client.HGetAll(ctx, "task:t-front-raw").Val()
 	if rawHash["priority"] != "1" {
 		t.Fatalf("direct front priority = %q; want 1", rawHash["priority"])
 	}

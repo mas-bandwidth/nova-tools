@@ -7,7 +7,8 @@
 --   ws:order                 ZSET stream -> rank (1 = top priority)
 --   ws:<stream>:<state>      ZSET id -> the task's created_at ms, for every state
 --                            (waiting, ready, working, merging, landed, parked)
---   task:<id>                HASH stream, state, created_at, parked_from, state_at, ...
+--   task:<id>                HASH the task card (02_card_move.lua, NS.task): stream,
+--                            where, created_at, parked_from, ...
 --
 -- Every set's score is the task's age (created_at in ms, Glenn 2026-09-25
 -- 12:22 AM: "the sorted order should be in order of age of the card,
@@ -15,10 +16,12 @@
 -- changes the score.
 --   ws:log                   STREAM one entry per move: id stream from to by why at
 --
--- Invariant: a task id is in exactly one ws:<stream>:<state> set, the one its
--- hash's stream and state name; closed is in none. Every function here is O(1)
--- or O(k) in the ids (or one stream's members) it is handed; the one scan is
--- ns_ws_migrate, a SCAN page per call, run once.
+-- Invariant: a task id is in exactly one ws:<stream>:<where> set, the one its
+-- record's stream and where name, or in none when where is empty. This file
+-- writes no task set and no task pointer itself: every move is NS.task.move
+-- and migrate's placing NS.task.place (02_card_move.lua, nova-tools #3778).
+-- Every function here is O(1) or O(k) in the ids (or one stream's members)
+-- it is handed; the one scan is ns_ws_migrate, a SCAN page per call, run once.
 --
 -- Callers: every function is the coordinator seat's (ns-coordinator), FCALLed
 -- by internal/nsprint/ws (ws.go); ns_ws_counts is no-writes (FCALL_RO), so the
@@ -26,43 +29,14 @@
 
 local W = {
   STATES = { 'waiting', 'ready', 'working', 'merging', 'landed', 'parked' },
-  NEXT = { waiting = 'ready', ready = 'working', working = 'merging', merging = 'landed' },
-  KNOWN = { waiting = true, ready = true, working = true, merging = true, landed = true,
-    parked = true, closed = true },
-  -- States only ws writes (friend-queue never did): a hash in one is ws's.
-  WS_ONLY = { ready = true, merging = true, landed = true, parked = true },
-  LOG_MAX = '200000',
+  -- every where a task's stream has a set for (NS.task's), done included
+  WHERE = { 'waiting', 'ready', 'working', 'merging', 'landed', 'parked', 'done' },
 }
 
--- W.days: days from 1970-01-01 to y-m-d (the proleptic Gregorian calendar).
-function W.days(y, m, d)
-  if m <= 2 then
-    y = y - 1
-  end
-  local era = math.floor(y / 400)
-  local yoe = y - era * 400
-  local mp = (m + 9) % 12
-  local doy = math.floor((153 * mp + 2) / 5) + d - 1
-  local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
-  return era * 146097 + doe - 719468
-end
-
--- W.created_ms reads a created_at field as epoch ms: a number is ms already;
--- friend-queue wrote "YYYY-MM-DDTHH:MM:SSZ" (UTC). nil for anything else.
+-- W.created_ms reads a created_at field as epoch ms (NS.task.ms: a number,
+-- or friend-queue's YYYY-MM-DDTHH:MM:SSZ); nil for anything else.
 function W.created_ms(v)
-  if not v or v == '' then
-    return nil
-  end
-  local n = tonumber(v)
-  if n then
-    return n
-  end
-  local y, mo, d, h, mi, se = string.match(v, '^(%d%d%d%d)-(%d%d)-(%d%d)T(%d%d):(%d%d):(%d%d)')
-  if not y then
-    return nil
-  end
-  return ((W.days(tonumber(y), tonumber(mo), tonumber(d)) * 24 + tonumber(h)) * 60 + tonumber(mi)) * 60000 +
-    tonumber(se) * 1000
+  return NS.task.ms(v)
 end
 
 function W.key(stream, state)
@@ -81,21 +55,8 @@ function W.valid_name(s)
 end
 
 function W.log(id, stream, from, to, by, why, at)
-  redis.call('XADD', 'ws:log', 'MAXLEN', '~', W.LOG_MAX, '*', 'id', id, 'stream', stream,
+  redis.call('XADD', 'ws:log', 'MAXLEN', '~', '200000', '*', 'id', id, 'stream', stream,
     'from', from, 'to', to, 'by', by or '', 'why', why or '', 'at', tostring(at))
-end
-
-function W.allowed(from, to)
-  if to == 'closed' then
-    return true
-  end
-  if to == 'parked' then
-    return from ~= 'closed'
-  end
-  if from == 'parked' then
-    return to == 'waiting'
-  end
-  return W.NEXT[from] == to
 end
 
 -- W.place registers a stream: ws:names, and a rank after the last in
@@ -107,81 +68,42 @@ function W.place(stream)
   end
 end
 
--- W.move_one: returns 'MOVED'|'SAME'|'REFUSED' and, for REFUSED, the reason;
--- otherwise the stream and the from state.
-function W.move_one(id, to, by, why, now)
-  if not W.KNOWN[to] then
-    return 'REFUSED', 'unknown state ' .. tostring(to)
+-- W.move_one is a thin call of the one task move (NS.task.move,
+-- 02_card_move.lua, nova-tools #3778): closed is done/fail (a cancel; the
+-- why defaults to closed), landed needs the merge sha. Returns
+-- 'MOVED'|'SAME'|'REFUSED' and, for REFUSED, the reason; otherwise the
+-- stream and the from where.
+function W.move_one(id, to, by, why, now, sha)
+  local o = { by = by, why = why, sha = sha }
+  if to == 'closed' then
+    to, o.ok = 'done', 'fail'
+    if not why or why == '' then o.why = 'closed' end
   end
-  local f = redis.call('HMGET', 'task:' .. id, 'stream', 'state', 'created_at')
-  local stream, from = f[1], f[2]
-  if not stream and not from then
+  local p = NS.task.read(id)
+  if not p then
     return 'REFUSED', 'no task ' .. id
   end
-  if not stream or stream == '' then
+  if p.stream == '' then
     return 'REFUSED', 'task ' .. id .. ' has no stream'
   end
-  if not W.KNOWN[from or ''] then
-    return 'REFUSED', 'task ' .. id .. ' state ' .. tostring(from) .. ' is not a ws state; run ws migrate'
+  local err, info = NS.task.move(id, to, o)
+  if err then
+    return 'REFUSED', err
   end
-  -- ONE PLACE (the links are valid both ways) before any write: the id must
-  -- be in the set its record names and in none of the stream's other five
-  -- (in none at all when closed); otherwise the mismatch is refused by name
-  -- and nothing is written. Six ZSCOREs, O(1) each.
-  local cur
-  if from ~= 'closed' then
-    cur = redis.call('ZSCORE', W.key(stream, from), id)
-    if not cur then
-      return 'REFUSED', 'task ' .. id .. ' says ' .. from .. ' but is not in ' .. W.key(stream, from)
-    end
+  if info.same then
+    return 'SAME', p.stream, info.to
   end
-  for _, st in ipairs(W.STATES) do
-    if st ~= from and redis.call('ZSCORE', W.key(stream, st), id) then
-      return 'REFUSED', 'task ' .. id .. ' says ' .. from .. ' but is also in ' .. W.key(stream, st)
-    end
-  end
-  if from == to then
-    return 'SAME', stream, from
-  end
-  if not W.allowed(from, to) then
-    return 'REFUSED', 'task ' .. id .. ' ' .. from .. '->' .. to .. ' is not an allowed move'
-  end
-  local fields = { 'state', to, 'state_at', tostring(now) }
-  -- The score is the task's age: created_at, else the score it already has,
-  -- else now (written back as created_at so every later move keeps it).
-  local age = W.created_ms(f[3])
-  if not age then
-    age = tonumber(cur)
-  end
-  if not age then
-    age = now
-  end
-  if not f[3] or f[3] == '' then
-    fields[#fields + 1] = 'created_at'
-    fields[#fields + 1] = tostring(age)
-  end
-  if from ~= 'closed' then
-    redis.call('ZREM', W.key(stream, from), id)
-  end
-  if to ~= 'closed' then
-    redis.call('ZADD', W.key(stream, to), age, id)
-  end
-  if to == 'parked' then
-    fields[#fields + 1] = 'parked_from'
-    fields[#fields + 1] = from
-  end
-  redis.call('HSET', 'task:' .. id, unpack(fields))
-  W.log(id, stream, from, to, by, why, now)
-  return 'MOVED', stream, from
+  return 'MOVED', p.stream, info.from
 end
 
--- ns_ws_move(id, to, by, why) -> MOVED stream from to | SAME stream state | REFUSED why
+-- ns_ws_move(id, to, by, why[, sha]) -> MOVED stream from to | SAME stream
+-- where | REFUSED why
 local function ws_move(keys, args)
   local id, to, by, why = args[1], args[2], args[3], args[4]
   if not id or id == '' then
     return { 'REFUSED', 'no id' }
   end
-  local status, a, b = W.move_one(id, to, by, why, W.now())
+  local status, a, b = W.move_one(id, to, by, why, W.now(), args[5])
   if status == 'REFUSED' then
     return { 'REFUSED', a }
   end
@@ -215,21 +137,17 @@ local function ws_move_many(keys, args)
   return out
 end
 
--- W.park moves one stream's waiting and ready sets into parked (scores, the
--- tasks' created_at, kept) and returns how many it parked.
+-- W.park moves one stream's waiting and ready tasks to parked through the
+-- one task move (the record keeps parked_from) and returns how many it
+-- parked; a task the move refuses stays where it is.
 function W.park(stream, by, why, now)
-  local wk, rk, pk = W.key(stream, 'waiting'), W.key(stream, 'ready'), W.key(stream, 'parked')
   local n = 0
   for _, from in ipairs({ 'waiting', 'ready' }) do
     for _, id in ipairs(redis.call('ZRANGE', W.key(stream, from), 0, -1)) do
-      redis.call('HSET', 'task:' .. id, 'state', 'parked', 'state_at', tostring(now), 'parked_from', from)
-      W.log(id, stream, from, 'parked', by, why, now)
-      n = n + 1
+      if not NS.task.move(id, 'parked', { by = by, why = why, fields = { 'parked_from', from } }) then
+        n = n + 1
+      end
     end
-  end
-  if n > 0 then
-    redis.call('ZUNIONSTORE', pk, 3, pk, wk, rk, 'AGGREGATE', 'MIN')
-    redis.call('DEL', wk, rk)
   end
   return n
 end
@@ -255,22 +173,18 @@ local function ws_unpark_stream(keys, args)
   if not W.known(stream) then
     return { 'REFUSED', 'unknown stream ' .. tostring(stream) }
   end
-  local now = W.now()
-  local pk = W.key(stream, 'parked')
-  local rows = redis.call('ZRANGE', pk, 0, -1, 'WITHSCORES')
-  for i = 1, #rows, 2 do
-    local id, score = rows[i], rows[i + 1]
+  local n = 0
+  for _, id in ipairs(redis.call('ZRANGE', W.key(stream, 'parked'), 0, -1)) do
     local to = redis.call('HGET', 'task:' .. id, 'parked_from')
     if to ~= 'ready' then
       to = 'waiting'
     end
-    redis.call('ZADD', W.key(stream, to), score, id)
-    redis.call('HSET', 'task:' .. id, 'state', to, 'state_at', tostring(now))
-    redis.call('HDEL', 'task:' .. id, 'parked_from')
-    W.log(id, stream, 'parked', to, by, why, now)
+    if not NS.task.move(id, to, { by = by, why = why }) then
+      redis.call('HDEL', 'task:' .. id, 'parked_from')
+      n = n + 1
+    end
   end
-  redis.call('DEL', pk)
-  return { 'UNPARKED', #rows / 2 }
+  return { 'UNPARKED', n }
 end
 
 -- ns_ws_keep(by, why, stream...) -> KEPT kept parked_streams parked_tasks |
@@ -314,20 +228,29 @@ local function ws_rename(keys, args)
   if redis.call('SISMEMBER', 'ws:names', new) == 1 then
     return { 'REFUSED', 'stream ' .. new .. ' exists' }
   end
-  for _, state in ipairs(W.STATES) do
+  for _, state in ipairs(W.WHERE) do
     if redis.call('EXISTS', W.key(new, state)) == 1 then
       return { 'REFUSED', 'key ' .. W.key(new, state) .. ' exists' }
     end
   end
-  local n = 0
-  for _, state in ipairs(W.STATES) do
-    local k = W.key(old, state)
-    for _, id in ipairs(redis.call('ZRANGE', k, 0, -1)) do
-      redis.call('HSET', 'task:' .. id, 'stream', new)
-      n = n + 1
+  -- A card (ns_card_move's; its record names the stream) is refused before
+  -- any write; every task moves through the one task move, where kept,
+  -- stream new, so the old sets empty themselves.
+  for _, state in ipairs(W.WHERE) do
+    for _, id in ipairs(redis.call('ZRANGE', W.key(old, state), 0, -1)) do
+      if string.match(id, '^s:[-a-z0-9]+:card:') then
+        return { 'REFUSED', 'stream holds card ' .. id .. '; cards keep their stream' }
+      end
     end
-    if redis.call('EXISTS', k) == 1 then
-      redis.call('RENAME', k, W.key(new, state))
+  end
+  local n = 0
+  for _, state in ipairs(W.WHERE) do
+    for _, id in ipairs(redis.call('ZRANGE', W.key(old, state), 0, -1)) do
+      local err = NS.task.move(id, state, { by = by, why = 'rename', stream = new })
+      if err then
+        return { 'REFUSED', err }
+      end
+      n = n + 1
     end
   end
   local rank = redis.call('ZSCORE', 'ws:order', old)
@@ -426,105 +349,27 @@ function W.derive(stream, title)
   return nil
 end
 
--- W.legacy_state maps a friend-queue task to a ws state: q:waiting or
--- q:blocked -> waiting; closed/cancelled -> closed; the owner's idx working
--- or open set (sprint:<S>:idx:<owner>:<state>) -> working or ready; else the
--- hash's own state. nil when none of these says anything.
-function W.legacy_state(id, state, owner, cancelled, sprint)
-  if redis.call('ZSCORE', 'q:waiting', id) or redis.call('ZSCORE', 'q:blocked', id) then
-    return 'waiting'
-  end
-  if state == 'closed' or state == 'cancelled' or cancelled == '1' then
-    return 'closed'
-  end
-  if sprint ~= '' and owner and owner ~= '' then
-    local ix = 'sprint:' .. sprint .. ':idx:' .. owner .. ':'
-    if redis.call('SISMEMBER', ix .. 'working', id) == 1 then
-      return 'working'
-    end
-    if redis.call('SISMEMBER', ix .. 'open', id) == 1 then
-      return 'ready'
-    end
-    if redis.call('SISMEMBER', ix .. 'closed', id) == 1 then
-      return 'closed'
-    end
-  end
-  if state == 'working' then
-    return 'working'
-  end
-  if state == 'open' then
-    return 'ready'
-  end
-  if state == 'waiting' or state == 'blocked' then
-    return 'waiting'
-  end
-  return nil
-end
-
--- W.migrate_one places one task hash; returns 'placed', 'same', 'nostream'
+-- W.migrate_one places one task hash through NS.task.place (the one-time
+-- placer beside the one task move); returns 'placed', 'same', 'nostream'
 -- or 'skipped'.
 function W.migrate_one(id, sprint, by, now)
-  local f = redis.call('HMGET', 'task:' .. id, 'stream', 'title', 'state', 'owner', 'created_at',
-    'cancelled', 'ws_migrated_at')
+  local f = redis.call('HMGET', 'task:' .. id, 'stream', 'title', 'where')
   local stream = W.derive(f[1], f[2])
+  if stream and not W.valid_name(stream) then
+    return 'skipped'
+  end
+  local before = f[3]
+  local w = NS.task.place(id, nil, nil, { by = by, sprint = sprint, stream = stream })
+  if not w then
+    return 'skipped'
+  end
   if not stream then
     return 'nostream'
   end
-  if not W.valid_name(stream) then
-    return 'skipped'
+  if before == w then
+    return 'same'
   end
-  local state = f[3]
-  -- Migrated once, or in a state only ws writes: the hash is the truth.
-  if not ((f[7] and W.KNOWN[state or '']) or W.WS_ONLY[state or '']) then
-    state = W.legacy_state(id, f[3], f[4], f[6], sprint)
-  end
-  if not state then
-    return 'skipped'
-  end
-  W.place(stream)
-  local target = W.key(stream, state)
-  local changed = false
-  for _, s in ipairs(W.STATES) do
-    if s ~= state and redis.call('ZREM', W.key(stream, s), id) == 1 then
-      changed = true
-    end
-  end
-  local fields = {}
-  if state ~= 'closed' and not redis.call('ZSCORE', target, id) then
-    local score = W.created_ms(f[5]) or tonumber(redis.call('ZSCORE', 'q:waiting', id)) or now
-    redis.call('ZADD', target, score, id)
-    if not f[5] or f[5] == '' then
-      fields[#fields + 1] = 'created_at'
-      fields[#fields + 1] = tostring(score)
-    end
-    changed = true
-  end
-  if f[1] ~= stream or f[3] ~= state then
-    fields[#fields + 1] = 'stream'
-    fields[#fields + 1] = stream
-    fields[#fields + 1] = 'state'
-    fields[#fields + 1] = state
-    fields[#fields + 1] = 'state_at'
-    fields[#fields + 1] = tostring(now)
-    if f[3] and f[3] ~= state then
-      fields[#fields + 1] = 'fq_state'
-      fields[#fields + 1] = f[3]
-    end
-    changed = true
-  end
-  if not f[7] then
-    changed = true -- the first placement of a task is a move from friend-queue
-    fields[#fields + 1] = 'ws_migrated_at'
-    fields[#fields + 1] = tostring(now)
-  end
-  if #fields > 0 then
-    redis.call('HSET', 'task:' .. id, unpack(fields))
-  end
-  if changed then
-    W.log(id, stream, f[3] or '', state, by, 'migrate', now)
-    return 'placed'
-  end
-  return 'same'
+  return 'placed'
 end
 
 -- ns_ws_migrate(cursor[, sprint[, count[, by]]]) -> next cursor, scanned,

@@ -70,14 +70,14 @@ func TestControl55Cost(t *testing.T) {
 	if got, err := task.Done(ctx, st, bad); err == nil {
 		t.Fatalf("done with cost_usd=a-dollar = %s; want refused", got)
 	}
-	if state, _ := client.HGet(ctx, "s:"+sprint+":task:"+id, "state").Result(); state == "closed" {
+	if state, _ := client.HGet(ctx, "task:"+id, "state").Result(); state == "closed" {
 		t.Fatal("a refused cost closed the task")
 	}
 
 	if got, err := task.Done(ctx, st, done); err != nil || got != task.DoneClosed {
 		t.Fatalf("done = %s, %v; want DONE", got, err)
 	}
-	evidence, _ := client.HGet(ctx, "s:"+sprint+":task:"+id, "evidence").Result()
+	evidence, _ := client.HGet(ctx, "task:"+id, "evidence").Result()
 	if want := "APPROVE 9/10 at " + head[:7] + " | " + metered.Clause(); evidence != want {
 		t.Fatalf("stored evidence = %q; want %q", evidence, want)
 	}

@@ -263,6 +263,7 @@ func TestReadPostStoresLineAndMirrorsOneComment(t *testing.T) {
 	_, base, head := mirrorFixture(t, false)
 	c := client(t)
 	seedRecord(t, c, base, head)
+	seedCopy(t, c)
 	cc := startCounter(t)
 	poster := &read.Poster{BaseURL: cc.srv.URL, Owner: "mas-bandwidth", Token: "t", HTTP: cc.srv.Client()}
 	typed := strings.ReplaceAll(line, "%s", head)
@@ -299,6 +300,7 @@ func TestReadPostNoGitHubMakesZeroCalls(t *testing.T) {
 	_, base, head := mirrorFixture(t, false)
 	c := client(t)
 	seedRecord(t, c, base, head)
+	seedCopy(t, c)
 	typed := strings.ReplaceAll(line, "%s", head)
 	var stdout, stderr strings.Builder
 	if code := read.Post(context.Background(), c, "nova-tools", "7", typed, nil, &stdout, &stderr); code != 0 {
@@ -349,6 +351,7 @@ func TestReadPostGitHubDownKeepsTheRedisLine(t *testing.T) {
 	_, base, head := mirrorFixture(t, false)
 	c := client(t)
 	seedRecord(t, c, base, head)
+	seedCopy(t, c)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "rate limited", 403) }))
 	defer srv.Close()
 	poster := &read.Poster{BaseURL: srv.URL, Owner: "mas-bandwidth", Token: "t", HTTP: srv.Client()}
