@@ -212,6 +212,7 @@ func runCIStatus(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci status", err.Error())
 	}
+	*repo = bareRepo(*repo)
 	if (*repo == "") != (*sha == "") {
 		return refuse(errOut, "ci status", "needs both --repo and --sha for one head, or --sprint")
 	}
@@ -275,6 +276,7 @@ func runCIRequest(ctx context.Context, args []string, out, errOut io.Writer) int
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci request", err.Error())
 	}
+	*repo = bareRepo(*repo)
 	if *repo == "" || *sha == "" {
 		return refuse(errOut, "ci request", "needs --repo <r> and --sha <full sha>")
 	}

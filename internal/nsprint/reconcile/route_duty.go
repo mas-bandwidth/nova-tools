@@ -31,6 +31,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -528,7 +529,7 @@ func (d *RouteDuty) prLegs(ctx context.Context, token, S, stream string, readers
 	pipe := d.Client.Pipeline()
 	rows := make([]*redis.SliceCmd, len(cands))
 	for i, c := range cands {
-		rows[i] = pipe.HMGet(ctx, "pr:"+c.repo+":"+strconv.Itoa(c.n), "head", "state", "reads")
+		rows[i] = pipe.HMGet(ctx, prkey.Key(c.repo, c.n), "head", "state", "reads")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("%s: pr records: %w", S, err)

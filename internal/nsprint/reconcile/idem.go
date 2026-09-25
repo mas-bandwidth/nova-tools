@@ -151,7 +151,9 @@ type PRResult struct {
 	Msg     string
 }
 
-// PRKey is the idem key of a PR open (5.4).
+// PRKey is the idem key of a PR open (5.4): pr:<repo>:<branch>, a field of
+// the sprint's idem hash, not the PR record pr:<name>:<n> (that one is
+// internal/nsprint/prkey.Key).
 func PRKey(repo, branch string) string { return "pr:" + repo + ":" + branch }
 
 // PendingIndexKey is the zset of pending idem keys scored by their begin

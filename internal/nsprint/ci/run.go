@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/redis/go-redis/v9"
@@ -98,8 +99,9 @@ func ReceiptKey(repo, sha, check string) string { return RecordKey(repo, sha) + 
 // ConfigKey is where a repo declares its checks.
 func ConfigKey(repo string) string { return "cfg:ci:" + repo }
 
-// PRKey is the PR record the summary is copied to when its head is the sha.
-func PRKey(repo string, pr int) string { return "pr:" + repo + ":" + strconv.Itoa(pr) }
+// PRKey is the PR record the summary is copied to when its head is the sha:
+// the one PR record key, pr:<name>:<n> (internal/nsprint/prkey).
+func PRKey(repo string, pr int) string { return prkey.Key(repo, pr) }
 
 // CheckName validates a check name against the key grammar and the reserved
 // suffixes.
