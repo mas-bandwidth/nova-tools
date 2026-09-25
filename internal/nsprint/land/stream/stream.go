@@ -8,7 +8,7 @@
 //
 // Keys (specs/ws-index.md in rowan-new for the ws sets; the rest here):
 //
-//	pr:<repo>:<n>          hash  repo, n, head, base, base_sha, state (open|parked|landed|merged|closed),
+//	pr:<name>:<n>          hash  repo, n, head, base, base_sha, state (open|parked|landed|merged|closed),
 //	                             ci (pending|green|red), mergeable (true|false|""), stream, task, kind,
 //	                             reads (typed SCORE/DISPOSITION/HOLD lines, newline-joined),
 //	                             created_at, updated_at; park, landed_with, close, closed_at on moves
@@ -36,6 +36,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -44,8 +45,11 @@ var luaSource string
 
 var script = redis.NewScript(luaSource)
 
-// PRKey is the per-PR record the lander reads.
-func PRKey(repo string, n int) string { return fmt.Sprintf("pr:%s:%d", repo, n) }
+// PRKey is the per-PR record the lander reads: the one PR record key,
+// pr:<name>:<n> with the bare repository name (internal/nsprint/prkey), so
+// the lander's owner/name and read's and ci's bare name hit the same hash.
+// land_stream.lua's prkey mirrors it.
+func PRKey(repo string, n int) string { return prkey.Key(repo, n) }
 
 // LandKey is one stream landing.
 func LandKey(repo, slug string) string { return "land:" + repo + ":" + slug }

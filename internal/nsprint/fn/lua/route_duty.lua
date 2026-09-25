@@ -11,7 +11,7 @@
 --                     fix-<n>-<sha8> on the author's queue
 --   ns_route_merging  a PR with a non-jev APPROVE at or over the bar, CI
 --                     green at head and no open hold -> its task to merging
--- The two legs over the pr:<repo>:<n> record (#3579, #3580; the record
+-- The two legs over the pr:<name>:<n> record (#3579, #3580; the record
 -- `pr record|lines` writes, cmd/nova-sprint/pr.go), keyed by the record's
 -- own head and typed lines, never by GitHub or a branch name:
 --   ns_route_pr_read  an open PR whose head no counting friend line (SCORE,
@@ -312,7 +312,7 @@ do
     return { 'MERGING', id, tstream }
   end
 
-  -- The pr:<repo>:<n> record legs (#3579, #3580).
+  -- The pr:<name>:<n> record legs (#3579, #3580).
 
   -- repo_name is the repo without its owner; the task id carries it as a
   -- suffix for every repo but nova-tools (fix-311-abcd1234-rowan-tools), the
@@ -395,9 +395,10 @@ do
   end
 
   -- pr_record reads the record's fields the two legs need; nil when it is
-  -- not an open member PR at a head.
+  -- not an open member PR at a head. The key is the one PR record key,
+  -- pr:<name>:<n> with the bare repository name (internal/nsprint/prkey).
   local function pr_record(repo, pr)
-    local key = 'pr:' .. repo .. ':' .. pr
+    local key = 'pr:' .. (string.match(repo, '([^/]+)$') or repo) .. ':' .. pr
     local r = redis.call('HMGET', key, 'head', 'state', 'reads', 'task', 'kind',
       'read_task', 'read_task_head', 'fix_task', 'fix_task_head', 'diff_sha256', 'stream')
     if not r[1] or r[1] == '' then

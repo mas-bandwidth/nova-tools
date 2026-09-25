@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -52,9 +53,10 @@ type Record struct {
 	CI                                                                   map[string]string
 }
 
-// Key is the record's hash key; LinesKey the list of typed lines under it;
-// CIKey the CI hash at one head (#3597).
-func Key(repo, n string) string      { return "pr:" + repo + ":" + n }
+// Key is the record's hash key, the one PR record key pr:<name>:<n>
+// (internal/nsprint/prkey; repo may be owner/name or name); LinesKey the list
+// of typed lines under it; CIKey the CI hash at one head (#3597).
+func Key(repo, n string) string      { return prkey.KeyText(repo, n) }
 func LinesKey(repo, n string) string { return Key(repo, n) + ":lines" }
 func CIKey(repo, head string) string { return "ci:" + repo + ":" + head }
 

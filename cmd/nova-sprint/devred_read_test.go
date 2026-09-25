@@ -21,7 +21,7 @@ func TestDevRedAndReadVerbsRefuseUsage(t *testing.T) {
 		{[]string{"dev-red", "bogus"}, "unknown subverb bogus"},
 		{[]string{"read"}, "want brief"},
 		{[]string{"read", "carry", "--repo", "nova-tools", "--n", "7", "--redis", "127.0.0.1:1", "--line", "x"}, "want --repo <r> --n <n> [--sprint <S>]"},
-		{[]string{"read", "digest", "--repo", "mas-bandwidth/nova-tools", "--n", "7", "--redis", "127.0.0.1:1"}, "no owner, no slash"},
+		{[]string{"read", "digest", "--repo", "mas-bandwidth/nova-tools/x", "--n", "7", "--redis", "127.0.0.1:1"}, "needs --repo <owner/name|name>"},
 	}
 	for _, tc := range cases {
 		var out, errOut bytes.Buffer

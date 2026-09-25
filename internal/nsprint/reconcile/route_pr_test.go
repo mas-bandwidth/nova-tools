@@ -8,6 +8,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
@@ -76,7 +77,7 @@ func (f *prFixture) addPR(t *testing.T, task, owner, n, head string, lines ...st
 	pipe.HSet(f.ctx, "task:"+task, "stream", prStream, "state", "working", "owner", owner,
 		"pr", prRepo+"#"+n, "kind", "build", "branch", "codex/"+n+"-anything")
 	pipe.ZAdd(f.ctx, "ws:"+prStream+":working", redis.Z{Score: 1, Member: task})
-	pipe.HSet(f.ctx, "pr:"+prRepo+":"+n, "repo", prRepo, "n", n, "head", head, "base", "dev",
+	pipe.HSet(f.ctx, prkey.KeyText(prRepo, n), "repo", prRepo, "n", n, "head", head, "base", "dev",
 		"stream", prStream, "task", task, "state", "open", "ci", "green", "reads", strings.Join(lines, "\n"))
 	if _, err := pipe.Exec(f.ctx); err != nil {
 		t.Fatal(err)
@@ -105,7 +106,7 @@ func (f *prFixture) qlen(name string) int64 { return f.c.XLen(f.ctx, "q:"+name).
 
 func (f *prFixture) record(t *testing.T, n string) map[string]string {
 	t.Helper()
-	m, err := f.c.HGetAll(f.ctx, "pr:"+prRepo+":"+n).Result()
+	m, err := f.c.HGetAll(f.ctx, prkey.KeyText(prRepo, n)).Result()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +261,7 @@ func TestEveryUnreadHeadGetsOneRead(t *testing.T) {
 		t.Fatalf("q:emma has %d entries after the second pass, want still 2", f.qlen("emma"))
 	}
 	// A counting read at head (emma's SCORE) ends the need: no further task.
-	f.c.HSet(f.ctx, "pr:"+prRepo+":3542", "reads", "SCORE who=emma head="+headA+" score=8/10")
+	f.c.HSet(f.ctx, prkey.Key(prRepo, 3542), "reads", "SCORE who=emma head="+headA+" score=8/10")
 	if c := f.run(t); c.Reads != 0 {
 		t.Fatalf("a read at head still pushed: %s", c.Line())
 	}
@@ -302,7 +303,7 @@ func TestNewHeadSupersedesOldRead(t *testing.T) {
 	old := "read-3552-" + headA[:8]
 	owner := f.task(t, old)["owner"]
 	before := f.qlen(owner)
-	f.c.HSet(f.ctx, "pr:"+prRepo+":3552", "head", headB, "ci", "pending")
+	f.c.HSet(f.ctx, prkey.Key(prRepo, 3552), "head", headB, "ci", "pending")
 	c := f.run(t)
 	if c.Reads != 1 || c.Carried != 0 {
 		t.Fatalf("after the head move %s; want reads=1 carried=0", c.Line())
@@ -339,7 +340,7 @@ func TestNewHeadSupersedesOldRead(t *testing.T) {
 func TestIdenticalDiffCarriesTheRead(t *testing.T) {
 	f := newPRFixture(t, "ctl-3580c")
 	f.addPR(t, "build-3556", "stella", "3556", headA)
-	f.c.HSet(f.ctx, "pr:"+prRepo+":3556", "diff_sha256", "d1")
+	f.c.HSet(f.ctx, prkey.Key(prRepo, 3556), "diff_sha256", "d1")
 	if c := f.run(t); c.Reads != 1 {
 		t.Fatalf("counts %s; want reads=1", c.Line())
 	}
@@ -347,7 +348,7 @@ func TestIdenticalDiffCarriesTheRead(t *testing.T) {
 	if f.task(t, id)["diff_sha256"] != "d1" {
 		t.Fatalf("the read task did not record the diff digest")
 	}
-	f.c.HSet(f.ctx, "pr:"+prRepo+":3556", "head", headB)
+	f.c.HSet(f.ctx, prkey.Key(prRepo, 3556), "head", headB)
 	c := f.run(t)
 	if c.Carried != 1 || c.Reads != 0 {
 		t.Fatalf("after a rebase with the same diff %s; want carried=1 reads=0", c.Line())
