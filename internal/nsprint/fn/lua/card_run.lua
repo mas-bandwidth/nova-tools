@@ -378,6 +378,53 @@ redis.register_function('ns_card_end', function(keys, args)
   return reply(0, 'OK', attempt, receipt)
 end)
 
+-- ns_card_sweep (#2632): the one writer of swept_at, sweep_how and
+-- sweep_receipt. `nova-sprint bench sweep` calls it after it deleted an ended
+-- card's leftover job dir (how=deleted) or found it already gone
+-- (how=absent), with the card's results proven in a separate dir. It refuses,
+-- writing nothing: a card that is not ended (2 STATE), an identity that is not
+-- the card's current attempt (2 IDENTITY, a stale read), another bench's card
+-- (4 CONFLICT), and a card already swept (2 ALREADY). The log entry is kind
+-- sweep, never kind card: a sweep is not a card transition, so where, state and
+-- the card indexes are untouched and no card-event consumer sees it.
+-- args: sprint, label, identity, how, bench, jobdir.
+redis.register_function('ns_card_sweep', function(keys, args)
+  local sprint, label, identity = args[1] or '', args[2] or '', args[3] or ''
+  local how, bench, jobdir = args[4] or '', args[5] or '', args[6] or ''
+  if how ~= 'deleted' and how ~= 'absent' then return reply(1, 'USAGE', '', '') end
+  if identity == '' or bench == '' then return reply(1, 'USAGE', '', '') end
+  if not card_keys_ok(keys, sprint, label) then return reply(4, 'CONFLICT', '', '') end
+  local card_key, log_key = keys[1], keys[2]
+  local state = hget(card_key, 'state')
+  if state == '' then return reply(5, 'NOTFOUND', '', '') end
+  local attempt = hget(card_key, 'attempt')
+  if state ~= 'ended' then return reply(2, 'STATE', attempt, '') end
+  if hget(card_key, 'identity') ~= identity then return reply(2, 'IDENTITY', attempt, '') end
+  if hget(card_key, 'bench') ~= bench then return reply(4, 'CONFLICT', attempt, '') end
+  local prev = hget(card_key, 'sweep_receipt')
+  if hget(card_key, 'swept_at') ~= '' then return reply(2, 'ALREADY', attempt, prev) end
+  local at = now_ms()
+  local receipt = redis.call('XADD', log_key, '*',
+    'kind', 'sweep', 'id', label, 'from', 'ended', 'to', 'swept',
+    'attempt', attempt, 'actor', 'bench-sweep', 'reason', how,
+    'evidence', jobdir, 'idem', 'sweep:' .. identity, 'at', at)
+  redis.call('HSET', card_key, 'swept_at', at, 'sweep_how', how, 'sweep_receipt', receipt)
+  return reply(0, 'OK', attempt, receipt)
+end)
+
+-- ns_card_sweep_unlock (#2632): releases bench:<b>:sweep:lock only when it
+-- still holds this sweep's token, so a sweep that outlived the lock's 60 s
+-- never frees the next sweep's lock. Reply 1 released, 0 not ours.
+redis.register_function('ns_card_sweep_unlock', function(keys, args)
+  local token = args[1] or ''
+  if token == '' or not string.match(keys[1] or '', '^bench:[^:]+:sweep:lock$') then return 0 end
+  if redis.call('GET', keys[1]) == token then
+    redis.call('DEL', keys[1])
+    return 1
+  end
+  return 0
+end)
+
 -- The six typed-record card kinds (typedrec.Kinds). A card hash kind outside
 -- this set (model, script) is a runner kind and sets no RESULT expectation.
 -- card push refuses any other KIND before the card is stored, naming this set
