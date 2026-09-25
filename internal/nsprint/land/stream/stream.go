@@ -11,7 +11,8 @@
 //
 //	pr:<name>:<n>          hash  repo, n, head, base, base_sha, state (open|parked|landed|merged|closed),
 //	                             ci (pending|green|red), mergeable (true|false|""), stream, task, kind,
-//	                             reads (typed SCORE/DISPOSITION/HOLD lines, newline-joined),
+//	                             reads (typed SCORE/DISPOSITION/HOLD lines, newline-joined;
+//	                             the lander also reads pr:<name>:<n>:lines, read post's list),
 //	                             created_at, updated_at; closes (issues the body closes, "-" none);
 //	                             park, landed_with, close, closed_at on moves
 //	land:<repo>:<slug>     hash  streams, slug, base, base_sha, branch, head, members (<n>@<head> ...),
@@ -54,6 +55,11 @@ var script = redis.NewScript(luaSource)
 // the lander's owner/name and read's and ci's bare name hit the same hash.
 // land_stream.lua's prkey mirrors it.
 func PRKey(repo string, n int) string { return prkey.Key(repo, n) }
+
+// LinesKey is the record's typed-line list: `read post` appends each line
+// it stores there (internal/nsprint/read, LinesKey), where the record's
+// reads field never sees it. The lander reads both (nova-tools #3898).
+func LinesKey(repo string, n int) string { return PRKey(repo, n) + ":lines" }
 
 // LandKey is one stream landing.
 func LandKey(repo, slug string) string { return "land:" + repo + ":" + slug }
@@ -128,13 +134,19 @@ type PR struct {
 	Exists       bool
 }
 
-func prFrom(repo string, n int, m map[string]string) PR {
+func prFrom(repo string, n int, m map[string]string, list []string) PR {
 	p := PR{Repo: repo, N: n, Exists: len(m) > 0,
 		Head: m["head"], Base: m["base"], BaseSHA: m["base_sha"], State: m["state"], CI: m["ci"],
 		Mergeable: m["mergeable"], Stream: m["stream"], Task: m["task"], Kind: m["kind"], ClosedAt: m["closed_at"],
 		Closes: m["closes"], CommitCloses: m["commit_closes"], IssuesClosed: m["issues_closed"]}
-	for _, l := range strings.Split(m["reads"], "\n") {
-		if l = strings.TrimSpace(l); l != "" {
+	// The reads field's lines first, then every line of the lines list not
+	// already there: a SCORE line `read post` stored counts the same as one
+	// `pr lines --add` stored (nova-tools #3898: 19 read PRs sat in merging
+	// with their SCORE lines only in the list).
+	seen := map[string]bool{}
+	for _, l := range append(strings.Split(m["reads"], "\n"), list...) {
+		if l = strings.TrimSpace(l); l != "" && !seen[l] {
+			seen[l] = true
 			p.Reads = append(p.Reads, l)
 		}
 	}
@@ -150,12 +162,14 @@ func (p PR) MergeableOK() bool {
 	return false
 }
 
-// LoadPRs reads records in one pipelined round trip.
+// LoadPRs reads records and their lines lists in one pipelined round trip.
 func LoadPRs(ctx context.Context, c redis.Cmdable, repo string, ns []int) ([]PR, error) {
 	pipe := c.Pipeline()
 	cmds := make([]*redis.MapStringStringCmd, len(ns))
+	lists := make([]*redis.StringSliceCmd, len(ns))
 	for i, n := range ns {
 		cmds[i] = pipe.HGetAll(ctx, PRKey(repo, n))
+		lists[i] = pipe.LRange(ctx, LinesKey(repo, n), 0, -1)
 	}
 	if len(ns) > 0 {
 		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
@@ -164,7 +178,7 @@ func LoadPRs(ctx context.Context, c redis.Cmdable, repo string, ns []int) ([]PR,
 	}
 	out := make([]PR, len(ns))
 	for i, n := range ns {
-		out[i] = prFrom(repo, n, cmds[i].Val())
+		out[i] = prFrom(repo, n, cmds[i].Val(), lists[i].Val())
 	}
 	return out, nil
 }

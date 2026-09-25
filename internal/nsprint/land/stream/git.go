@@ -35,6 +35,11 @@ type Build struct {
 	// a bench claims (nova-tools#3899), so every merged member is kept and
 	// nothing is bisected on this seat.
 	NoTest bool
+	// ParkConflicts parks a member whose batch merge conflicts (Parked, why
+	// conflict:<files>) and merges the rest without it, where the default
+	// stops the build at it (nova-tools #3898: the land duty never stops a
+	// stream for one member; the member's author gets a rebase task).
+	ParkConflicts bool
 }
 
 // Conflict is a member whose merge conflicted: the build stops there.
@@ -149,18 +154,27 @@ func (b Build) Run(ctx context.Context, members []Member) (Result, error) {
 		return res, err
 	}
 
-	// Batch merge, oldest first. A conflict stops the build: Rowan resolves.
+	// Batch merge, oldest first. A conflict stops the build (Rowan
+	// resolves), or with ParkConflicts parks that member and goes on.
+	merged := todo[:0:0]
 	for _, m := range todo {
 		files, err := b.merge(ctx, m)
 		if err != nil {
 			return res, err
 		}
 		if files != nil {
-			res.Conflict = &Conflict{Member: m, Files: files}
-			return res, nil
+			if !b.ParkConflicts {
+				res.Conflict = &Conflict{Member: m, Files: files}
+				return res, nil
+			}
+			res.Parked = append(res.Parked, Parked{Member: m, Why: "conflict:" + strings.Join(files, ",")})
+			b.logf("PARKED #%d conflict: %s", m.N, strings.Join(files, ","))
+			continue
 		}
+		merged = append(merged, m)
 		b.logf("MERGED #%d at %s", m.N, short(m.Head))
 	}
+	todo = merged
 	if len(todo) == 0 {
 		res.Head = res.BaseSHA
 		return res, nil
