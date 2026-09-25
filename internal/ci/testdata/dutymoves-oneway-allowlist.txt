@@ -1,0 +1,6 @@
+# The dutymoves class test (dutymoves_class_test.go): the reconciler moves
+# that take a card from ready back to waiting, which Glenn ruled out on
+# 2026-09-25 (waiting -> ready is ONE WAY, nova-tools #4059). One
+# `<duty> <via> ready->waiting # reason` per line; shrink-only, checked both
+# ways (an unlisted row is red, a listed row that no longer exists is red).
+refill ns_card_gate ready->waiting # the swarm dealer's DEPENDS-ON gate on a pooled card (#3066); its release is the same predicate's other side, so the pair is exclusive; owed: place such a card in waiting at push and delete the pool -> waiting leg

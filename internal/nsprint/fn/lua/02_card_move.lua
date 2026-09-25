@@ -1501,13 +1501,18 @@ redis.register_function('ns_tcard_beat', function(keys, args)
 end)
 
 -- ns_tcard_expire(by[, friend...]) -> EXPIRED n then the ids: every working
--- task of the named friends (else every member of friends) whose lease
--- lapsed goes back to ready, why=lease lapsed. O(the working sets).
+-- task of the named friends (else every member of friends, plus swarm:
+-- ns_deal_swarm parks a task in friend:swarm:cards:working too, and swarm
+-- is not a member of the friends set) whose lease lapsed goes back to
+-- ready, why=lease lapsed. O(the working sets).
 redis.register_function('ns_tcard_expire', function(keys, args)
   local by = args[1] or ''
   local friends = {}
   for i = 2, #args do friends[#friends + 1] = args[i] end
-  if #friends == 0 then friends = redis.call('SMEMBERS', 'friends') end
+  if #friends == 0 then
+    friends = redis.call('SMEMBERS', 'friends')
+    friends[#friends + 1] = 'swarm'
+  end
   local now = cm_now()
   local out = { 'EXPIRED', '0' }
   for _, f in ipairs(friends) do

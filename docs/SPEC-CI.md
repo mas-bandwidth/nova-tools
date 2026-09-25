@@ -2156,6 +2156,55 @@ matches a redirect, append, `tee`, `cp`, `mv`, `install` or `truncate` shape ont
 that path — a write performed some other way, such as a wrapped `dd` or a
 Python one-liner, is invisible to it.
 
+### `dutymoves` — no two reconciler duties undo each other
+
+**The rule.** Every move a duty in `internal/nsprint/reconcile` can make is a
+row of `reconcile.DutyMoves` (`internal/nsprint/reconcile/moves.go`): the duty,
+the file that calls the Lua function, the function, the places (From, To), the
+atoms that hold when it fires (its guard) and the atoms it makes true. No two
+rows (of two duties, or of one) may be each other's inverse (X -> Y and
+Y -> X) when neither guard stops the other firing right after it: one of the
+two must require the negation of an atom the other requires or sets. No row
+may move a card ready -> waiting (Glenn, 2026-09-25 1:40 PM ET: waiting ->
+ready is ONE WAY; a ready card is dealt the same tick). And the table is held
+to the code: every place a Lua function the package calls moves a card to (the
+card model's one move, the task card's `NS.task.move` and `NS.task.create`'s
+where (#3778), the ws index's `move_one`, the task events, a ZADD into a `ws:`
+set) needs a row through a function its file registers, every
+`ws.Move`/`ws.MoveMany` call needs a row, and a row whose file never names its
+function, or whose function never moves to its To, is stale.
+**The hurt.** 2026-09-25 1:35 PM ET: build-3041 moved waiting -> ready by the
+waiting-resolve duty ("depends-on met") and ready -> waiting by the deal duty
+("no-consumer") every three to five seconds for an hour, a ws:log entry a
+tick. Each duty was right by its own rule; the pair was a loop because the
+resolve's guard said nothing of consumers (nova-tools #4059).
+**The test.** `TestNoInverseDutyMovesInTheReconciler`
+(`internal/ci/dutymoves_class_test.go`, machine in `internal/ci/dutymoves.go`),
+with its controls `TestDutyMovesSeesTheOscillation` (the #4059 pair is red, the
+guarded resolve and the exclusive gate, deal and reclaim pairs are not) and
+`TestDutyMovesHoldsTheTableToTheCode` (an undeclared Lua move, a row whose file
+never calls its function, and a row to a place the function never moves to are
+each red; a destination in a Lua comment is not read).
+**Its allowlist.** `internal/ci/testdata/dutymoves-oneway-allowlist.txt`, one
+`<duty> <via> ready->waiting # reason` per line, checked both ways so it only
+shrinks. Today: the refill's `ns_card_gate` pool -> waiting leg (the swarm
+dealer's DEPENDS-ON gate on a pooled card, #3066), whose release is the same
+predicate's other side and so passes the inverse rule; owed: place such a card
+in waiting at push and delete the leg.
+**Its remedy lines.** `remedy="guard one move on the negation of the other's
+(the resolve moves to ready only with a consumer), or delete the reverse
+move"`; `remedy="leave the card in waiting with its why, never move it
+back"`; and for the table, `add the row with its guard` or `delete the row`.
+**Its narrowings.** The guards and the From places are declared, not derived:
+the test proves every destination the code writes has a row, not that a row's
+guard is what the Lua checks. A Lua function is matched to its file, not its
+body, so a file's destinations are covered by any row through a function that
+file registers. A move whose destination is a variable (the ws index's
+`move_one(id, to)` reached through `ns_ws_move_many`) is read from the Go
+call's literal, the ws index file's other destinations (park) are not swept
+for it, and one built at run time is not seen. Only `internal/nsprint/reconcile` is read: a
+verb outside it that moves cards is not a duty and is not held here.
+
 ### Tests this spec demands
 
 This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.
@@ -2202,6 +2251,7 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 38. `TestSpecCIIndexesEveryClassTest` — every class test is named by the index and every indexed `Test…` name exists (the parked section exempted).
 39. `TestNoGhInAnyBrief` / `TestBriefRuleCatchesEachSpelling` — no brief this repository ships tells a child to call GitHub (#3600, umbrella #3594: GitHub is a git remote only). **The hurt:** one PR cost ~60 REST calls and the rowan token's 5,000/h was spent twice in a day, freezing every merge for an hour; a brief that says `gh api`, `gh pr`, GraphQL or a bare remote clone teaches the next child to spend the budget again. **The sweep:** every file under `internal/nsprint/brief/tmpl/*.tmpl`, `internal/nsprint/read/tmpl/*.tmpl`, `internal/swarm/templates.go` and `cmd/nova-swarm/testdata/cards/*.md` (an empty glob is a red run, so a template directory that moves must move in the list too); a line matching `gh ` as a command (line start or after a non-word, non-path character, so "through " does not match), `graphql` in any case, or a `git clone` of any remote (`https://`, `ssh://`, `git@`) without `--reference` on the same line is refused. **No allowlist:** the remedy is the verb, not an exception. **The remedy line:** `<file>:<line>: gh  in a brief: <line>` (or `GraphQL in a brief`, or `a remote clone without the bench mirror as --reference`), with the fix named once: `nova-sprint read brief`, `nova-sprint read post`, `nova-sprint card`, or a clone with `--reference ~/nova-bench/mirror/<repo>.git`. **The control:** `TestBriefRuleCatchesEachSpelling` feeds the scanner one brief per spelling and wants exactly one finding at that line, and a brief carrying the verbs, a mirror-referenced clone and the words "through" and "high" wants none.
 40. `TestTaskCardsHaveOneWriter` — no non-test Go file under `cmd/` or `internal/` writes a task card's sets or record (`ws:<stream>:<where>`, `friend:<f>:cards:<where>`, the friend-queue idx sets, `task:<id>`) with a direct Redis call; every move is one FCALL of the one writer, `ns_tcard_move` in `internal/nsprint/fn/lua/02_card_move.lua` (#3778, Glenn 2026-09-25: "a card can only ever be in no set, or one of these sets"; the 07:46 table read 143/143 left after a night that landed 27 PRs because four writers kept the sets). Fixtures that seed a throwaway store (a `*fixture*.go` file, `internal/nsprint/ws/wstest`) are the only exceptions; the remedy is `internal/nsprint/taskcard`. Its Lua twin is `TestTaskCardOneWriter` in `internal/nsprint/fn`.
+41. `TestNoInverseDutyMovesInTheReconciler` / `TestDutyMovesSeesTheOscillation` / `TestDutyMovesHoldsTheTableToTheCode` — no two reconciler duties are each other's inverse unless a guard stops one right after the other, no duty moves a card ready -> waiting outside the shrink-only allowlist, and `reconcile.DutyMoves` covers every move the duties' Lua functions write (#4059).
 
 ## Parked class tests
 
