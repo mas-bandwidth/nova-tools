@@ -128,12 +128,19 @@ type Config struct {
 	Dir       string // mirror = <Dir>/<repo>.git
 	Repos     []Repo
 	Git       Git
+	// SourceStale sends a follower to Upstream (from=github-fallback): Pass
+	// sets it when the source's receipt is missing or older than StaleAfter.
+	SourceStale bool
+	StaleAfter  time.Duration
 }
 
 // IsSource reports whether this bench is the one that talks to GitHub.
 func (c Config) IsSource() bool { return c.Bench == c.Source }
 
 func (c Config) remote(r Repo) (url, from string) {
+	if !c.IsSource() && c.SourceStale {
+		return strings.TrimSuffix(c.Upstream, "/") + "/" + r.Name + ".git", "github-fallback"
+	}
 	if c.IsSource() {
 		return strings.TrimSuffix(c.Upstream, "/") + "/" + r.Name + ".git", "github"
 	}
@@ -149,8 +156,8 @@ func (c Config) Validate() error {
 		return fmt.Errorf("--source <bench> is required: the one bench that fetches GitHub")
 	case !c.IsSource() && c.SourceURL == "":
 		return fmt.Errorf("--source-url is required on a follower (for example space:nova-bench/mirror)")
-	case c.IsSource() && c.Upstream == "":
-		return fmt.Errorf("--upstream is required on the source")
+	case c.Upstream == "":
+		return fmt.Errorf("--upstream is required: the source fetches it, a follower falls back to it")
 	case c.Dir == "":
 		return fmt.Errorf("--dir is required")
 	case len(c.Repos) == 0:
@@ -269,6 +276,18 @@ func (c Config) refused(r Repo, reason string, err error, out string) Result {
 }
 
 func (c Config) refreshOne(ctx context.Context, r Repo) Result {
+	res := c.refreshFrom(ctx, r)
+	if !res.OK && !c.IsSource() && !c.SourceStale && (res.Reason == "fetch" || res.Reason == "clone" || res.Reason == "auth") {
+		// the source's mirror is unreachable from here: fetch GitHub, and say so
+		c.SourceStale = true
+		if fb := c.refreshFrom(ctx, r); fb.OK {
+			return fb
+		}
+	}
+	return res
+}
+
+func (c Config) refreshFrom(ctx context.Context, r Repo) Result {
 	m := c.path(r)
 	url, from := c.remote(r)
 	res := Result{Repo: r.Name, OK: true, From: from}

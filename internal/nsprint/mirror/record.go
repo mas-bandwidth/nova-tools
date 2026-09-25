@@ -17,15 +17,6 @@ func Key(bench string) string { return "bench:" + bench + ":mirrors" }
 // LeaseKey is the one-loop-per-bench lease, the only key here with a TTL.
 func LeaseKey(bench string) string { return "lease:mirror:" + bench }
 
-// Now is Redis TIME in ms: every at is the store's clock, never the bench's.
-func Now(ctx context.Context, rdb redis.Cmdable) (int64, error) {
-	t, err := rdb.Time(ctx).Result()
-	if err != nil {
-		return 0, err
-	}
-	return t.UnixMilli(), nil
-}
-
 // Record writes one pass as one HSET: at, and per repo its tip, from, pulls and
 // err. A refusal keeps the last good tip and sets err; an OK clears err.
 func Record(ctx context.Context, rdb redis.Cmdable, bench string, at int64, results []Result) error {

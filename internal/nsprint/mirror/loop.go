@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -14,11 +15,27 @@ import (
 // moved since last, or a refusal (the loop: silence while nothing changes).
 // It reports whether every repo was OK.
 func Pass(ctx context.Context, c Config, rdb redis.Cmdable, last map[string]string, all bool, out io.Writer) (bool, error) {
-	results := Refresh(ctx, c)
-	at, err := Now(ctx, rdb)
-	if err != nil {
+	start := time.Now()
+	pipe := rdb.Pipeline()
+	now := pipe.Time(ctx)
+	var srcAt *redis.StringCmd
+	if !c.IsSource() {
+		srcAt = pipe.HGet(ctx, Key(c.Source), "at")
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return false, err
 	}
+	nowMS := now.Val().UnixMilli()
+	if srcAt != nil {
+		stale := c.StaleAfter
+		if stale <= 0 {
+			stale = 3 * time.Minute
+		}
+		at, err := strconv.ParseInt(srcAt.Val(), 10, 64)
+		c.SourceStale = err != nil || nowMS-at > stale.Milliseconds()
+	}
+	results := Refresh(ctx, c)
+	at := nowMS + time.Since(start).Milliseconds()
 	if err := Record(ctx, rdb, c.Bench, at, results); err != nil {
 		return false, err
 	}
@@ -45,6 +62,9 @@ func Loop(ctx context.Context, c Config, rdb redis.Cmdable, ticks <-chan time.Ti
 	ttl := 3 * every
 	if ttl < 30*time.Second {
 		ttl = 30 * time.Second
+	}
+	if c.StaleAfter <= 0 {
+		c.StaleAfter = ttl
 	}
 	held, holder, err := Lease(ctx, rdb, c.Bench, session, ttl)
 	if err != nil {

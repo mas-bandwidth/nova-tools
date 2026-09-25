@@ -205,6 +205,50 @@ func TestMirrorFanOut(t *testing.T) {
 	}
 }
 
+// TestSourceStaleFallsBackToGitHub: with no fresh source receipt a follower
+// fetches the upstream itself (from=github-fallback); with the source's mirror
+// unreachable it does the same; with a fresh source it never touches upstream.
+func TestSourceStaleFallsBackToGitHub(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	mr, rdb := newRedis(t)
+	up := filepath.Join(f.base, "nova-tools.git")
+
+	// no source receipt at all: stale
+	g := &logGit{}
+	f1 := benchConfig(t, "f1", f, filepath.Join(t.TempDir(), "src-mirror"), g)
+	var out bytes.Buffer
+	if ok, err := Pass(ctx, f1, rdb, nil, true, &out); err != nil || !ok {
+		t.Fatalf("stale pass ok=%v err=%v\n%s", ok, err, out.String())
+	}
+	if !strings.Contains(out.String(), "from=github-fallback") || mr.HGet(Key("f1"), "nova-tools:from") != "github-fallback" {
+		t.Fatalf("stale source: %s", out.String())
+	}
+	if u := g.fetchURLs(); len(u) != 1 || u[0] != up {
+		t.Fatalf("stale follower fetched %v, want only %s", u, up)
+	}
+
+	// a fresh receipt but the source's mirror is unreachable: fall back too
+	mr.HSet(Key("src"), "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
+	g.reset()
+	out.Reset()
+	if ok, _ := Pass(ctx, f1, rdb, nil, true, &out); !ok || !strings.Contains(out.String(), "from=github-fallback") {
+		t.Fatalf("unreachable source: %s", out.String())
+	}
+	if u := g.fetchURLs(); len(u) != 2 || u[0] != f1.SourceURL+"/nova-tools.git" || u[1] != up {
+		t.Fatalf("unreachable source fetched %v", u)
+	}
+
+	// status marks the bench by its tip as usual, and names the fallback
+	out.Reset()
+	tip := mr.HGet(Key("f1"), "nova-tools")
+	mr.SAdd("benches", "f1")
+	if ok, _ := Status(ctx, rdb, StatusOptions{Repos: []string{"nova-tools"}, Expect: map[string]string{"nova-tools": tip}, Stale: time.Minute}, &out); !ok ||
+		!strings.Contains(out.String(), "f1 nova-tools observed="+tip+" expected="+tip+" OK from=github-fallback") {
+		t.Fatalf("status: %s", out.String())
+	}
+}
+
 // TestFetchFailureLeavesMirror: the source vanishes; the pass is REFUSED
 // reason=fetch, the refs are byte-identical, the tip in Redis is kept, and a
 // --reference clone against the mirror still works.
