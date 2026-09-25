@@ -39,6 +39,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/presence"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
 
@@ -343,6 +344,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
+	// --seat <name> (or NOVA_SEAT): the Redis login is read from that seat's
+	// file through nova-secrets' library, in this process (#4052).
+	args, err := seatcred.FromArgs(args, os.Getenv)
+	if err != nil {
+		return refuse(stderr, "", err.Error())
+	}
 	cfg := loadWakeConfig()
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; watch is the blocking call, serve is the process outside a session")

@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -29,55 +31,32 @@ type Store struct {
 // the pair (#3520) instead of passing the raw NOAUTH through. Open sends
 // nothing (#3277), so that refusal is the first command's error.
 const (
-	UserEnv            = "NOVA_SPRINT_REDIS_USER"
-	PasswordEnvEnv     = "NOVA_SPRINT_REDIS_PASSWORD_ENV"
-	DefaultPasswordEnv = "NOVA_REDIS_BENCH_PASSWORD"
+	UserEnv            = redisauth.UserEnv
+	PasswordEnvEnv     = redisauth.PasswordEnvEnv
+	DefaultPasswordEnv = redisauth.DefaultPasswordEnv
 )
 
 func authFromEnv() (user, password string, err error) {
+	// A seat given by --seat or NOVA_SEAT (nova-tools#4052) is read through
+	// nova-secrets' library in this process: its login wins, and the password
+	// goes to the client in memory, never into this process's environment.
+	if c, ok, err := seatcred.Active(); ok {
+		if err != nil {
+			return "", "", err
+		}
+		_ = c.Password.Use(func(pw string) error { password = pw; return nil })
+		return c.User, password, nil
+	}
 	return Auth("", "")
 }
 
-// Auth is the one fleet Redis seat every tool dials with (nova-sprint here, nova-tokens
-// ledger/report through --user and --password-env, #3461). user is the ACL user, else
-// UserEnv; passwordEnv names the variable holding its password, else PasswordEnvEnv, else
-// DefaultPasswordEnv. With no user the connection is the default user's: a password is read
-// only when passwordEnv names its variable, so a throwaway test Redis needs nothing. A user
-// whose password variable is empty is refused with the remedy, never dialed as default.
-func Auth(user, passwordEnv string) (string, string, error) {
-	named := "--user " + user
-	if user == "" {
-		user = os.Getenv(UserEnv)
-		named = UserEnv + "=" + user
-	}
-	if user == "" {
-		if passwordEnv == "" {
-			return "", "", nil
-		}
-		return "", os.Getenv(passwordEnv), nil
-	}
-	if passwordEnv == "" {
-		passwordEnv = os.Getenv(PasswordEnvEnv)
-	}
-	if passwordEnv == "" {
-		passwordEnv = DefaultPasswordEnv
-	}
-	password := os.Getenv(passwordEnv)
-	if password == "" {
-		return "", "", fmt.Errorf("%s but %s is empty; run under nova-secrets exec --only %s", named, passwordEnv, passwordEnv)
-	}
-	return user, password, nil
-}
+// Auth is the environment seat (internal/nsprint/redisauth, #3461): user is the
+// ACL user, else UserEnv; passwordEnv the variable holding its password, else
+// PasswordEnvEnv, else DefaultPasswordEnv.
+func Auth(user, passwordEnv string) (string, string, error) { return redisauth.Auth(user, passwordEnv) }
 
-// NoUserHint is the refusal the fleet Redis needs when the default user is off
-// (#3520): the password is already in the environment but the ACL user is
-// unset, so the verb connected as the default user and was refused NOAUTH. The
-// line names the missing variable and the pair (user + password) in one line.
-func NoUserHint() string {
-	return UserEnv + " is unset but " + DefaultPasswordEnv + " is set; set the pair " +
-		UserEnv + "=bench and " + DefaultPasswordEnv + " (password from nova-secrets exec --only " +
-		DefaultPasswordEnv + ", never a flag)"
-}
+// NoUserHint is the #3520 refusal: password in the environment, ACL user unset.
+func NoUserHint() string { return redisauth.NoUserHint() }
 
 // noUserHook adds NoUserHint to a NOAUTH refusal (#3520). Open sends nothing
 // (#3277), so the refusal arrives on the caller's first command or batch; the

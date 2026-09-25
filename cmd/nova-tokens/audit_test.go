@@ -39,10 +39,10 @@ var tokensAudit = audit.Config{
 		// at the print site; record prints nothing itself.
 		`"context"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/record"`,
-		// ledger.go's seat (#3461): store.Auth resolves the ACL user and the password from
+		// ledger.go's seat (#3461): redisauth.Auth (a leaf: no net, no os/exec) resolves the ACL user and the password from
 		// the environment, the one config nova-sprint dials with; it holds no writer and
 		// returns strings and an error this package prints through oneline.Err.
-		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/tokens"`,

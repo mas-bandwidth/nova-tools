@@ -114,6 +114,7 @@ var DefaultCatalog = []Entry{
 	E("internal/sandbox", "OS isolation primitives (seatbelt/landlock)", "go test ./internal/sandbox", "go test ./internal/sandbox"),
 	E("internal/scaffold", "scaffolding engine for class rules and CLI verbs", "go test ./internal/scaffold", "go test ./internal/scaffold"),
 	E("internal/secrets", "zero-leak memory and file vault", "go test ./internal/secrets", "go test ./internal/secrets"),
+	E("internal/seatcred", "a seat's Redis login read through the secrets library (--seat, NOVA_SEAT)", "go test ./internal/seatcred/...", "go test ./internal/seatcred/..."),
 	E("internal/selftalk", "agent self-talk journal stream", "go test ./internal/selftalk", "go test ./internal/selftalk"),
 	E("internal/specwork", "worklang spec compliance checks", "go test ./internal/specwork", "go test ./internal/specwork"),
 	E("internal/sprintcol", "one column of the unified sprint table", "go test ./internal/sprintcol", "go test ./internal/sprintcol"),

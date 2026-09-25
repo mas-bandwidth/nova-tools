@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -36,6 +37,9 @@ func Open(ctx context.Context, addr string) (*redis.Client, error) {
 		who := "the default user, because " + store.UserEnv + " is unset"
 		if u := os.Getenv(store.UserEnv); u != "" {
 			who = "seat " + u
+		}
+		if s := seatcred.Selected(); s != "" {
+			who = "--seat " + s
 		}
 		return nil, fmt.Errorf("%w (connected as %s); %s", err, who, SeatHint)
 	}

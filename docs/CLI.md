@@ -4040,6 +4040,37 @@ the same rule (so nothing is written), and harvest refuses it before ssh. `nova-
 `--results-root` (it is refused as an unknown flag that names the field),
 because no worker needs to know a bench's layout (#3329).
 
+### `--seat` and `nova-sprint redis-cli`
+
+`nova-sprint`, `nova-card`, `nova-swarm` and `nova-wake` take `--seat <name>`
+anywhere before a `--` (or `NOVA_SEAT=<name>` when no flag names one) and log
+in to Redis as that seat with no wrapper around them (nova-tools #4052). The
+seat's file is read in the tool's own process through `internal/seatcred`, on
+the library `nova-secrets exec` runs on, with every check exec makes: the store
+is `~/nova-bench/secrets` (`NOVA_SECRETS_STORE` overrides it), the key
+`~/.config/nova-secrets/<seat>.key` (`NOVA_SECRETS_KEY`), and `sops` the one on
+`PATH` (`NOVA_SECRETS_SOPS`). The Redis user is the first of `coordinator` and
+`bench` whose password (`NOVA_REDIS_COORDINATOR_PASSWORD`,
+`NOVA_REDIS_BENCH_PASSWORD`) the seat's file holds, or `NOVA_SPRINT_REDIS_USER`
+when set. The password goes to the Redis client in memory: it is never printed,
+logged, put on an argument list or set in the tool's own environment, so no
+child the tool starts inherits it. Without a seat each tool authenticates as
+before, from its environment.
+
+`nova-sprint redis-cli [--seat <name>] [--redis <host:port>] -- <cmd...>` runs
+one `redis-cli` command under the seat's login for the rare hand read:
+`redis-cli -h <host> -p <port> --user <user> --no-auth-warning <cmd...>`, with
+the password as `REDISCLI_AUTH` in that child's environment only. `--redis`
+defaults to `NOVA_REDIS_ADDR`. stdout is redis-cli's; the receipt is one line on
+stderr, `REDIS-CLI seat=<s> user=<u> key=<k> addr=<a> cmd=<c> exit=<n>`. Exit 0
+the command ran, 1 redis-cli failed, 2 refused (no seat, no address, no command
+after `--`, or a seat that cannot be read, named with its remedy).
+
+```
+nova-sprint table --seat studio --redis 100.115.99.19:6380 --once
+nova-sprint redis-cli --seat studio --redis 100.115.99.19:6380 -- ZCARD sprint:S:cards
+```
+
 ### `nova-sprint bench reset`
 
 `nova-sprint bench reset --bench <bench> [--keep-queue] [--grace 5s] [--redis <addr>] [--actor <seat>] [--idem <key>]` stops the bench's in-flight card process groups in one SSH session and returns stopped attempts to their sprint pools without charging a retry. A persistent reset record blocks the dealer until every process is gone. An SSH refusal or surviving process leaves the record held and the command exits 1.

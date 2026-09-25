@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
@@ -24,12 +24,12 @@ import (
 
 // openLedger opens the fleet Redis at addr and pings it, so an unreachable or refusing
 // store is named before any file is read. The seat is the one every nova tool dials with
-// (store.Auth, #3461): --user, else NOVA_SPRINT_REDIS_USER; the password is never a flag,
+// (redisauth.Auth, #3461): --user, else NOVA_SPRINT_REDIS_USER; the password is never a flag,
 // it is the variable --password-env names, else (for a user) NOVA_SPRINT_REDIS_PASSWORD_ENV's
 // or NOVA_REDIS_BENCH_PASSWORD. With no user, no variable is consulted unless --password-env
 // names one.
 func openLedger(addr, user, passwordEnv string) (record.LedgerStore, error) {
-	user, password, err := store.Auth(user, passwordEnv)
+	user, password, err := redisauth.Auth(user, passwordEnv)
 	if err != nil {
 		return nil, err
 	}

@@ -81,6 +81,12 @@ var wakeAudit = audit.Config{
 		// clock time; window and width, when present, are store text rendered
 		// through oneline.Field inside Phrase -- see the exemption above.
 		`"github.com/mas-bandwidth/nova-tools/internal/presence"`,
+		// internal/seatcred is --seat / NOVA_SEAT (#4052): it takes the flag out
+		// of the arguments and resolves the seat's Redis login, which it hands
+		// to presence's client in memory. It writes nothing to any writer; its
+		// one error this tool prints is refused through oneline like every
+		// other refusal, and it never carries a password.
+		`"github.com/mas-bandwidth/nova-tools/internal/seatcred"`,
 	},
 	MinClassified: 40,
 }
