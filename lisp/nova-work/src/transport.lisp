@@ -317,8 +317,8 @@ the reader's bound refuses whole, before any payload is answered (:2663-2665)."
     (subseq trimmed 1 (1- (length trimmed)))))
 
 (defun %wire-key (pair)
-  "The key of one `"key": value` top-level pair, or NIL when it has no colon or
-its key is not a quoted string."
+  "The key of one `\"key\": value` top-level pair, or NIL when it has no colon
+or its key is not a quoted string."
   (let* ((colon (position #\: pair))
          (key (and colon (wire-trim (subseq pair 0 colon)))))
     (when (and key (>= (length key) 2)
@@ -375,6 +375,8 @@ or (:absent) for a JSON null and (:missing) when the key is not there."
                (#\" (write-string "\\\"" out))
                (#\\ (write-string "\\\\" out))
                (#\Newline (write-string "\\n" out))
+               (#\Return (write-string "\\r" out))
+               (#\Tab (write-string "\\t" out))
                (t (write-char ch out))))
     (write-char #\" out)))
 
@@ -586,6 +588,23 @@ is refused by the kernel's dedup predicate."
 ;;;; the session process; the process it starts is a supervised, long-lived
 ;;;; session that serves reads against its resident objects while a fresh CLI
 ;;;; process is never a fresh parse.
+;;;; transport.lisp --- the request bundle: the bus between two owners.
+;;;;
+;;;; SPEC-WORK.md:423-440 and :2210-2240: a fenced session's accepted events
+;;;; since its base are written as a request bundle -- each request with its
+;;;; request id, its required `--expect` (the one clipped revision) and its
+;;;; payload -- which the owning coordinator applies with `session replay
+;;;; --from`, one request at a time, validated fresh against the live O.
+;;;;
+;;;; The offline form `session export --journal` reads the journal alone, under
+;;;; the caller's bounds and the journal's own lock: each request's required
+;;;; `--expect` and the bundle's `base=` come from the journal's newest clip
+;;;; boundary record, it starts no session, takes no ownership, reads no
+;;;; repository and validates nothing -- a bundle is requests, and `session
+;;;; replay` is where they are validated (SPEC-WORK.md:430-440). A journal
+;;;; whose lock is held is refused `journal held`.
+;;;;
+;;;; This is the one bus: no second transport is invented (SPEC-WORK.md:2240).
 
 (in-package #:nova-work)
 
@@ -1329,6 +1348,10 @@ moved independently refuses the request `stale` and applies nothing. Answers
     (dolist (request requests)
       (let ((rid (getf request :request))
             (expect (getf request :expect)))
+        ;; The replay path's expectation is the clipped revision, required;
+        ;; checked against the revision the target started at, never the
+        ;; revision this bundle's own earlier requests moved (SPEC-WORK.md:2214-
+        ;; 2238). A value that is not the current value of its kind is stale.
         (if (/= (or expect clipped) start)
             (push (format nil "REPLAY FAIL request=~A expect=~D current=~D: stale"
                           rid (or expect clipped) start)
@@ -1351,3 +1374,132 @@ moved independently refuses the request `stale` and applies nothing. Answers
                             (length events))
                     lines)))))
     (values (nreverse lines) applied)))
+
+;;;; ------------------------------------------------------------------
+;;;; The framed wire handshake: `hello` protocol-version negotiation.
+;;;;
+;;;; The engine and its client (SPEC-WORK.md:2642-2708). The client's first
+;;;; frame is {"op": "hello", "protocol": ["1"], "client": "<build identity>"}
+;;;; and the session answers with the one version it will speak or refuses,
+;;;; naming what it supports, and closes; an unsupported version fails clearly
+;;;; and never degrades into a guess (SPEC-WORK.md:2682-2685). The initial
+;;;; `hello` is the sole ordinary exchange without a request id and finishes
+;;;; before pipelining begins (SPEC-WORK.md:2705-2708; replay
+;;;; `protocol-version-negotiated-or-refused`).
+;;;; ------------------------------------------------------------------
+
+(defun wire-unframe (frame)
+  "Answer (values TEXT COMPLETE-P) for one length-prefixed message. TEXT is the
+whole declared payload when COMPLETE-P is true; an unfinished frame answers
+(values NIL NIL) rather than dispatching a truncated object."
+  (if (< (length frame) 4)
+      (values nil nil)
+      (let ((length (wire-frame-length frame)))
+        (if (< (length frame) (+ 4 length))
+            (values nil nil)
+            (values (sb-ext:octets-to-string frame :start 4 :end (+ 4 length)
+                                             :external-format :utf-8)
+                    t)))))
+
+;;; ------------------------------------------------------------------
+;;; The JSON spellings of the two hello answers.
+;;; ------------------------------------------------------------------
+
+(defun wire-json-string-array (strings)
+  "STRINGS as one JSON array of string literals."
+  (format nil "[~{~A~^, ~}]" (mapcar #'wire-json-string strings)))
+
+(defun protocol-build-identity ()
+  "The `session` of the hello answer: the running build says which build it is
+(SPEC-WORK.md:302-303)."
+  (format nil "~A-~A" (lisp-implementation-type) (lisp-implementation-version)))
+
+(defun protocol-hello-ok-text (version)
+  "The one version the session will speak, as the `hello-ok` JSON object."
+  (format nil "{\"op\": \"hello-ok\", \"protocol\": ~A, \"session\": ~A}"
+          (wire-json-string version)
+          (wire-json-string (protocol-build-identity))))
+
+(defun protocol-hello-refused-text (supported reason)
+  "A refusal as the `hello-refused` JSON object, naming every version the
+session supports and why the offer was refused."
+  (format nil "{\"op\": \"hello-refused\", \"supported\": ~A, \"reason\": ~A}"
+          (wire-json-string-array supported)
+          (wire-json-string reason)))
+
+;;; ------------------------------------------------------------------
+;;; The hello exchange (SPEC-WORK.md:2682-2685).
+;;; ------------------------------------------------------------------
+
+(defun protocol-version-list (object key)
+  "The version list KEY of a decoded hello object, as strings. The wire codec
+answers a quoted decimal version as an integer, so both spellings are accepted
+and normalized to the string the protocol carries."
+  (let ((field (wire-field object key)))
+    (cond
+      ((absentp field)
+       (error 'unsupported-input
+              :what (format nil "hello frame carries no ~A list" key)))
+      ((and (listp field)
+            (every (lambda (v) (or (stringp v) (integerp v))) field))
+       (mapcar (lambda (v) (if (stringp v) v (princ-to-string v))) field))
+      (t
+       (error 'unsupported-input
+              :what (format nil "hello frame's ~A must be an array of version strings"
+                            key))))))
+
+(defun protocol-hello-versions (object)
+  "The offered versions of a decoded hello object, as strings."
+  (protocol-version-list object "protocol"))
+
+(defun %protocol-refusal-frame (session reason)
+  "Close SESSION and frame the refusal that names its supported versions."
+  (setf (protocol-session-closed-p session) t)
+  (wire-frame (protocol-hello-refused-text (protocol-session-supported session)
+                                           reason)))
+
+(defun %protocol-hello-body (session text)
+  "Decode one hello payload and answer (values RESPONSE-OCTETS VERSION REFUSAL).
+The frame must carry op=hello and an array of version strings. VERSION is the
+one version the session will speak; REFUSAL is the reason it would not."
+  (let ((object (wire-object-decode text)))
+    (if (equal (wire-field object "op") "hello")
+        (multiple-value-bind (version refusal)
+            (protocol-hello session (protocol-hello-versions object))
+          (declare (ignore refusal))
+          (if version
+              (values (wire-frame (protocol-hello-ok-text version)) version nil)
+              (values (%protocol-refusal-frame session "unsupported protocol version")
+                      nil "unsupported protocol version")))
+        (values (%protocol-refusal-frame session "hello frame must carry op=hello")
+                nil "hello frame must carry op=hello"))))
+
+(defun protocol-hello-frame (session frame)
+  "One `hello` exchange over FRAME, one 4-byte-length-prefixed UTF-8 JSON object
+(SPEC-WORK.md:2662-2685). Answer (values RESPONSE-OCTETS VERSION REFUSAL).
+VERSION is the one version the session will speak. On an unsupported version,
+an oversized or malformed frame, REFUSAL is the reason, RESPONSE-OCTETS is the
+framed refusal naming the supported list, and the connection is closed."
+  (cond
+    ((protocol-session-closed-p session)
+     (values (%protocol-refusal-frame session "connection closed")
+             nil "connection closed"))
+    ((< (length frame) 4)
+     (values (%protocol-refusal-frame session "incomplete frame")
+             nil "incomplete frame"))
+    ((> (wire-frame-length frame) (protocol-session-max-frame-bytes session))
+     (values (%protocol-refusal-frame session "frame exceeds max-frame-bytes")
+             nil "frame exceeds max-frame-bytes"))
+    ((< (length frame) (+ 4 (wire-frame-length frame)))
+     (values (%protocol-refusal-frame session "incomplete frame")
+             nil "incomplete frame"))
+    (t
+     (handler-case
+         (%protocol-hello-body
+          session
+          (sb-ext:octets-to-string frame :start 4
+                                   :end (+ 4 (wire-frame-length frame))
+                                   :external-format :utf-8))
+       (error ()
+         (values (%protocol-refusal-frame session "malformed hello frame")
+                 nil "malformed hello frame"))))))

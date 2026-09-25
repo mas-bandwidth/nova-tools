@@ -90,6 +90,17 @@ catalog is implementation-ready.
 | credentials | Required strings `kind`, `store`, `seat`, `age_key`, `sops`, `gate`, `launcher` | `kind` is exactly `nova-secrets`; no alternate plaintext or inherited-environment credential source |
 | prompt | Required `mode` string, `prefix` string, `tools` string array | Existing `legacy`/`compact`, byte bound and adapter allow-list rules above |
 
+`worker.execution` owns the native adapter identity and its compatibility
+revision, both closed implementation identifiers (issue #296): `adapter` must be
+exactly `opencode-native/1` and `adapter_revision` exactly `1`. They are
+implementation identifiers, never provider or model names. An unknown adapter or a
+mismatched revision is an exit-2 refusal naming the field, before any gate or
+provider use, and a missing one is the missing-member refusal:
+`PROFILE REFUSED profile.<id>.worker.execution.adapter: a native adapter must be
+the supported closed identifier opencode-native/1`, and
+`PROFILE REFUSED profile.<id>.worker.execution.adapter_revision: a compatibility
+revision must be the supported closed identifier 1`.
+
 `worker.provider`, `worker.model`, `worker.base_url`, `worker.env_var`,
 `worker.key_file` and `worker.board` are forbidden in a profile. In particular,
 even a duplicate that agrees with the canonical field is refused. The common
@@ -100,7 +111,10 @@ with a pretend plaintext key path. Profile workers still carry no friend/board
 identity.
 
 `store`, `age_key`, `sops`, `gate`, `launcher`, `worker.harness` and
-`worker.worker_dir` are explicit absolute paths; `read_roots` keeps its existing
+`worker.worker_dir` are explicit absolute paths -- rooted in either pathname
+grammar (a leading `/` or a volume), so one profile file loads on every client
+platform and a harness path typed POSIX-style is not refused on windows;
+`read_roots` keeps its existing
 absolute-path rules. `seat` uses nova-secrets' existing seat-name validator.
 `env_var` names one variable, never `all`, a comma-separated list, or a runtime
 variable such as PATH/HOME. Its syntax and reserved-name rules must agree with
@@ -1111,3 +1125,61 @@ Adopt the route for task classes where measured quality is maintained and total
 operational cost/latency improve. Keep local execution available where it wins or
 where the configured data boundary requires it. Record negative or inconclusive
 results; repeat only when changed conditions justify another bounded trial.
+
+## Tests this spec demands
+
+Every test runs against a temp-dir profile catalog file and fake gate/launcher/harness processes
+with synthetic credentials; nothing reaches a network, a real secret or a live provider, and every
+refusal is proven red first (the loader or command returns the named exit code before any worker,
+reservation, gate invocation or provider call). The admission, attempt-snapshot, launch-record,
+gate-observation, kernel-lock and accounting fixtures all assert zero queued jobs / reservations /
+provider calls on refusal.
+
+1. `TestProfileRefusesUnknownField` — a profile worker carrying a forbidden field (`key_file` on the forbidden list) is an exit-2 refusal naming that field, before any provider or gate use.
+2. `TestProfileRefusesMissingLimit` — a worker with no `deadline` is the missing-limits refusal naming the field.
+3. `TestProfilePreimageIsStable` — the preimage hashes the six binding fields, is stable across reordered members/whitespace, and changes when one field changes; `sha256:<64 hex>`.
+4. `TestProfileRefusesEmptyID` — a catalog entry with an empty id is refused, naming the id.
+5. `TestProfileRefusesDuplicateID` — a catalog member repeated under the same id is a duplicate-key refusal naming that member.
+6. `TestProfileRefusesUnknownAdapter` — an `execution.adapter` this build does not support refuses on that field before any provider or gate use.
+7. `TestProfileRefusesUnknownAdapterRevision` — an unsupported `adapter_revision` refuses on its own field.
+8. `version` must be the integer token `1`; `1.0`, `1e0`, `"1"` and every other version refuse exit-2.
+9. A profile must have exactly one route; an empty route refuses `profile <id> has no configured route`, multiple routes `… has multiple routes`, exit-2.
+10. `route.credentials.kind` is exactly `nova-secrets`; any alternate plaintext or inherited-environment credential source refuses.
+11. `env_var` names one variable, never `all`, a comma-separated list, or a runtime variable such as PATH/HOME.
+12. `allowed_models` is a nonempty allow-list; an empty model list refuses, and an explicit model override is valid only when it appears in the list.
+13. `prompt.mode` is `legacy|compact`; `prefix` is UTF-8 and at most 4096 bytes; a harness that cannot express the named tool profile is refused before launch.
+14. `store`, `age_key`, `sops`, `gate`, `launcher`, `worker.harness` and `worker.worker_dir` are absolute paths (rooted in either pathname grammar).
+15. The whole catalog digest is `sha256:<64 lowercase hex>` over RFC 8785 canonical, number-free bytes (`{"profiles":…,"version":1}` frame); member order/whitespace/escapes do not change it, array order and member presence do.
+16. Catalog read bounds: at most 262144 bytes + one overflow byte, within five seconds; trailing JSON, duplicate (and equivalently escaped) members, unknown members, invalid UTF-8, lone surrogates, >32 nesting and FIFOs refuse; exactly-at-limit valid input passes.
+17. A `--worker` invocation with no profile catalog keeps its meaning byte-for-byte; a mixed mocked Go/Zen pool receives only its resolved profile and records requested versus observed identity, with a profile concurrency cap on top of `--workers`.
+18. A `--model` override without a `--profile` is refused.
+19. A catalog under a writable pool/job/slot/scratch/worker-data-home/`read_roots` path is an exit-2 refusal before any worker or provider is started (including key/store/gate paths, case/symlink aliases, future slots and worker-replaceable gate executables).
+20. Profiled admission validates the catalog, route and allow-listed model before adding the task; invalid selection creates no queued job, reservation or provider call, with no fallback and no decrypt or harness call.
+21. `run --profiles` selects the task before checking its admission hash; a catalog-hash mismatch retains the task pending and refuses its launch before reservation or provider activity.
+22. An explicit changed-profile requeue is a new admission linked to the old task, never an automatic retry; the flag checks the admission, never replaces it.
+23. The attempt body uses `schema: "nova.swarm.attempt/1"`; every member is required, every object rejects unknown/duplicate members and `null`, there are no runtime defaults, and arrays retain order.
+24. `lineage.kind` is `none`/`retry`/`rework`/`unknown`; `none` requires `previous: "-"`, every other kind requires a distinct predecessor; a self-reference and a changed immutable predecessor refuse.
+25. `files`/`deadline_ns` are positive base-10 integers (no sign/leading zero) fitting s64; `tokens` is a positive integer or `unmetered`; `max_input` is `-` when unset; `input_bytes` are nonnegative integers with no leading zero except `0`.
+26. `hashes` carries `task`/`prompt`/`config`/`prefix`/`generated_config` (each `sha256:<64 hex>`); `config` hashes exactly the eight resolved members; none contains itself.
+27. Evidence publication writes `TASK.txt`/`PROMPT.md`/`PROFILE.json`/`MANIFEST.json` manifest-last, atomically no-replace, never following a symlink; an identical complete set is an idempotent replay, differing content refuses, an incomplete set is not committed.
+28. Recovery opens bounded regular files at constant names, verifies manifest job-id against its directory, recomputes task/prompt/config/prefix hashes, and quarantines on mismatch/missing/lineage conflict before launch/reclaim.
+29. The launch record uses `schema: "nova.swarm.launch/1"` with all required members; `--launch-hash` is `sha256:<64 hex>` over the canonical record with no trailing newline, and the record contains no self-hash.
+30. Each reservation publishes `<evidence>/<job_id>/launch/<reservation_nonce>.json` (`reservation_nonce` is twelve lowercase hex); the record is at most 65536 bytes + one, nesting at most 8, within the launch timeout; invalid UTF-8/duplicates/unknown/missing/trailing/noncanonical/digest-mismatch refuse before identify or spawn.
+31. Stale nonce, wrong slot, swapped manifest, changed record/hash, duplicate publication, invalid duration and unknown argv all refuse with zero identify/provider calls.
+32. A new reservation of the same pending job gets a new nonce and a new record (never overwriting the prior); `realization.env_hash` and `--launch-hash` are recomputed while job identity, control identities and attempt/config/artifact/HARNESS bytes stay unchanged.
+33. A live-route profile whose binding is absent or unsupported makes `run` refuse exit-2 before the first worker.
+34. On a proven gate refusal (exit 125, complete output, no `SECRETS EXEC OK`, identity absent), `run` emits `RUN REFUSED profile=<id> reason=secrets_gate code=125`, retains the task pending (not failed), disables that profile for the run, and releases only confirmed non-launch reservation.
+35. An OK event followed by a child exit 125 before identify is post-gate uncertainty; a harness that exits 125 after identifying is a normal launch, not this non-launch case; a forged OK prefix never authorizes launch.
+36. The gate observation uses a streaming detector with a 65536-byte maximum line, 1048576-byte total and the launch timeout; oversized/malformed/limit/pipe-error mark output incomplete, never absent.
+37. The gate record is `schema: "nova.swarm.gate/1"` with exactly `job_id`, `reservation_nonce`, `manifest_hash`, `exit_code`, `identity`, `output_complete`, `ok_event_seen`, persisted to a protected non-worker-writable path.
+38. No key value appears in task files, catalog/profile paths, snapshots, receipts, argv, logs, worker scratch, `RESULT.md` or retained reports; the age-key path never reaches provider configuration as an API key.
+39. A shared budget-domain lock is a kernel advisory lock at one launcher-named path outside every pool, held from reading allowance through durable reservation commit; a fork/exec fixture of two `nova-swarm` processes proves only one reservation consumes the allowance.
+40. A reservation is durably committed under the shared lock before any send; a deadline/unknown/expiry leaves liability reserved until settled; quota and account balance are separate domains with no Go-to-Zen fallback, overflow or top-up.
+41. Retention/training default to `private` requiring configured, current evidence of zero retention/no training; unknown or expired metadata refuses before send; catalog/metadata refresh is bounded to 256 KiB and 5 seconds and never silently edits the catalog.
+42. Exact-once recording keys on the concrete `job_id` plus provider session and native call identity; a replay with an identical counter payload is already recorded, a different payload prints `CONFLICT` and is refused; `retry_from` links without aliasing or double counting.
+43. The five token kinds stay separately attributable; a source's aggregate must declare a disjoint basis; a cache/reasoning subtype is never added twice to a parent total, and the total is `-` when disjointness is unestablishable.
+44. Source coverage per field is `observed`/`missing`/`unsupported` (missing/unsupported record `-`, never zero); local inference declares `usd=0`, absent cost/usage is `-`, and a numeric harness cost keeps its source/basis rather than becoming observed provider USD.
+45. Every new receipt carries `bench`/`repo`/`actor` (or `-` plus `attribution=unattributed`); `model_observed` is populated only from runtime evidence, never `resolved.model`, and requested-versus-observed identity stays distinct.
+46. A typed reasoning effort/variant selection that is unsupported or contradictory refuses before any reservation, gate invocation, provider request or worker start, with no route fallback or silent coercion.
+47. The `requested` and `resolved` effort settings are retained separately with provenance (profile default / explicit override / adapter default); omitted, explicit `default`, `disabled`, `unsupported` and `unknown` are distinct records, none folded into zero or the others.
+

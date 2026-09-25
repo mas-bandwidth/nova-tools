@@ -329,6 +329,9 @@ own id would not be the same counting rule one level down. Decision for review."
 (defun state-closed-count (state) (wstate-closed state))
 (defun state-revision (state) (wstate-revision state))
 (defun state-history (state) (reverse (wstate-history state)))
+(defun state-node-ids (state)
+  "Every id the set holds, in seed order. A read."
+  (copy-list (wstate-order state)))
 (defun state-closed-rows (state) (reverse (wstate-rows state)))
 
 ;;; Reads of one node. These do visit.
@@ -380,10 +383,104 @@ it carries no count and is not a containment."
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (wnode-needs-broken n)))
 
-(defun %need-terminal-p (state id)
-  "A need is terminal accepted when its node has settled into C."
+;;; ------------------------------------------------------------------
+;;; the recorded half of rule 1 (SPEC-WORK.md:4780-4867, nova-tools #785)
+;;; ------------------------------------------------------------------
+;;;
+;;; src/needs.lisp holds the one predicate, `need-met-p`, which adds rule 1's
+;;; verified half over a NEEDS-VIEW. It cannot live here: it reads the
+;;; verification cache, and src/verifier.lisp loads after this file. What lives
+;;; here is what the write path itself needs -- the closed-index row that says
+;;; how a need settled, the `:revive` that says it was reopened, and the
+;;; container clause -- so that `ready-p` and the settle/revive recheck read the
+;;; same recorded facts `need-met-p` does.
+
+(defun %need-settle-row (state id)
+  "The newest `:settle` row of ID in the closed index, or NIL when the page that
+says how it settled cannot be read. Rows are newest first."
+  (find-if (lambda (row)
+             (and (eq :settle (getf row :kind))
+                  (equal id (getf row :node))))
+           (wstate-rows state)))
+
+(defun %need-revived-p (state id)
+  "True when ID's closed-index rows hold a `:revive`: it settled and was
+reopened (rule 2, row 2, SPEC-WORK.md:4820)."
+  (and (find-if (lambda (row)
+                  (and (eq :revive (getf row :kind))
+                       (equal id (getf row :node))))
+                (wstate-rows state))
+       t))
+
+(defparameter *need-container-types* '(:work-set :epic :feature :roadmap)
+  "The container kinds of rule 2's container clause (SPEC-WORK.md:4849). A
+container has no evidence of its own and is met with its direct required
+members.")
+
+(defun %need-container-p (node)
+  (and node (member (wnode-type node) *need-container-types*) t))
+
+(defparameter *need-unaccepted-dispositions* '(:cancelled :superseded :removed)
+  "The three closed-and-not-accepted dispositions of rule 2, row 4
+(SPEC-WORK.md:4820). A need carrying one is never met and never becomes met.")
+
+(defun %need-closed-unaccepted-p (state id)
+  "True when ID carries one of the three unaccepted dispositions, whichever
+branch this kernel left it in.
+
+A COMPATIBILITY READING, stated so nobody has to infer it. Rule 2 row 4
+(SPEC-WORK.md:4820) says such a need is \"in C\"; this kernel puts only one of
+the three there. `node remove` settles into C with disposition `removed`
+(src/kernel.lisp:480), while `event --kind cancel` writes a `:terminal` event
+that sets the disposition and leaves the node in O (src/edit-undo.lisp:248-253),
+and `superseded` has no verb at all. So the DISPOSITION and not the branch is
+what is read here, which preserves the safety property :4841 names -- \"never
+met and never becomes met\" -- under both spellings.
+
+This predicate deliberately does NOT change the cancel or undo lifecycle: no
+new settle transition is introduced, no branch is moved, and nothing else in
+this kernel reads a cancelled node differently than it did before. The O/C
+discrepancy itself is tracked as its own issue, on Stella's read of #1584."
   (let ((n (%node-quiet state id)))
-    (and n (eq :c (wnode-branch n)))))
+    (and n
+         (or (member (wnode-state n) *need-unaccepted-dispositions*)
+             (let ((row (%need-settle-row state id)))
+               (and row (member (getf row :disposition)
+                                *need-unaccepted-dispositions*))))
+         t)))
+
+(defun %need-required-members (state node)
+  "The direct required members of a container, in seed order."
+  (remove-if-not (lambda (child)
+                   (let ((c (%node-quiet state child)))
+                     (and c (wnode-required c))))
+                 (wnode-children node)))
+
+(defun %need-terminal-p (state id)
+  "The recorded half of rule 1: a need is terminal accepted when it is in C with
+disposition `done` -- never merely in C.
+
+A `cancelled`, `superseded` or `removed` need is never met and never becomes
+met (SPEC-WORK.md:4841); a need in C whose closed-index row cannot be read is
+*unavailable*, and incomplete is not green (:4839); a container is met with its
+direct required members, and an empty required set never settles (:4849).
+
+Rule 1's other half -- that every evidence event the standing `:to :done` names
+is verified from the session's cache -- is `need-met-p` in src/needs.lisp, which
+this predicate does not call: the write path holds no verification cache, so a
+settle's own recheck reads the recorded facts and the candidate gate reads
+both."
+  (let ((n (%node-quiet state id)))
+    (and n
+         (eq :c (wnode-branch n))
+         (let ((row (%need-settle-row state id)))
+           (and row
+                (eq :done (getf row :disposition))
+                (if (%need-container-p n)
+                    (let ((members (%need-required-members state n)))
+                      (and members
+                           (every (lambda (m) (%need-terminal-p state m)) members)))
+                    t))))))
 
 (defun ready-p (state id)
   "Open leaf work whose every need is terminal accepted and which no reverted
@@ -500,7 +597,10 @@ rather than zero. A view: it never writes, and a closed node is not in it."
     ;; no containment node, so they advance the revision and move no node, no
     ;; count, no roadmap and no required set (SPEC-WORK.md:1054-1058, replay
     ;; new-verbs-have-a-kind-and-a-field-order).
-    (when (member kind '(:undo :redo :friend :model :observe :config))
+    (when (member kind '(:undo :redo :friend :model :observe :config
+                         ;; A receipt and its seal are CONFIG-shaped too: they
+                         ;; name no containment node (SPEC-WORK.md:3857-3862).
+                         :receipt :receipt-seal))
       (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
       (return-from apply-event state)))
   (let* ((id (work-event-node event))
@@ -508,6 +608,49 @@ rather than zero. A view: it never writes, and a closed node is not in it."
     (unless node
       (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (ecase (work-event-kind event)
+      (:structure
+       ;; SPEC-WORK.md:2362 -- a structure verb appends one structure event; its
+       ;; `:verb` names the verb (`dep`) and v1's body fixes the field order at
+       ;; :987. `dep` edits the `:deps` reference edge, so the forward edge, the
+       ;; reverse edge and the append-only structure log are all rebuilt here
+       ;; and a canonical replay reconstructs the same edge the live path did
+       ;; (nova-tools#1673, #785).
+       (let* ((fields (work-event-fields event))
+              (verb (getf fields :verb))
+              (add (getf fields :add +absent+))
+              (remove (getf fields :remove +absent+))
+              (reason (getf fields :reason +absent+)))
+         (unless (eq verb :dep)
+           (error 'unsupported-input
+                  :what (format nil "unsupported: structure verb ~A is not in slice 1"
+                                (if verb (string-downcase (princ-to-string verb)) "-"))))
+         (when (and (stringp add) (plusp (length add)))
+           (unless (member add (wnode-deps node) :test #'equal)
+             (setf (wnode-deps node) (append (wnode-deps node) (list add)))
+             (let ((target (%node-quiet state add)))
+               (when target
+                 (setf (wnode-dependents target)
+                       (append (wnode-dependents target) (list id)))))))
+         (when (and (stringp remove) (plusp (length remove)))
+           (setf (wnode-deps node) (remove remove (wnode-deps node) :test #'equal))
+           (let ((target (%node-quiet state remove)))
+             (when target
+               (setf (wnode-dependents target)
+                     (remove id (wnode-dependents target) :test #'equal)))))
+         ;; Removing the need that raised a `needs-broken` clears it again when
+         ;; every remaining need is terminal. Adding one never raises it: a
+         ;; fresh unmet need is simply not ready (`ready-p`), not broken.
+         (when (and (eq verb :dep) (wnode-needs-broken node))
+           (setf (wnode-needs-broken node)
+                 (not (every (lambda (dep) (%need-terminal-p state dep))
+                             (wnode-deps node)))))
+         (push (list :op :structure :kind :structure :verb verb
+                     :node id :add add :remove remove
+                     :by (work-event-by event) :reason reason
+                     :request (work-event-request event)
+                     :stamp (work-event-stamp event)
+                     :rev (work-event-rev event))
+               (wnode-meta-log node))))
       (:edit
        ;; The five permitted metadata fields, each a tagged patch.
        (dolist (field *metadata-fields*)
@@ -518,6 +661,22 @@ rather than zero. A view: it never writes, and a closed node is not in it."
                    (%apply-patch (wnode-field node field) patch))))))
       (:terminal
        (setf (wnode-state node) (getf (work-event-fields event) :disposition)))
+      ;; `take` and `release` on a node (nova-tools #1612 lane). Applied HERE,
+      ;; inside the single writer, in the same total order as every other
+      ;; event -- which is what makes a lease survive `replay-journal` and what
+      ;; a raw `(setf (wnode-holder n) by)` on the caller's thread could not do.
+      ;; The log row carries the CHANGE as its kind, so it reads `:take` and
+      ;; `:release` exactly as the settle path already writes `:release`.
+      (:lease
+       (let ((change (getf (work-event-fields event) :change))
+             (holder (getf (work-event-fields event) :holder)))
+         (setf (wnode-holder node) (when (eq change :take) holder))
+         (push (list :kind change :node id
+                     :by (work-event-by event)
+                     :holder holder
+                     :stamp (work-event-stamp event)
+                     :rev (work-event-rev event))
+               (wstate-lease-log state))))
       (:transition
        (setf (wnode-state node) (getf (work-event-fields event) :to)))
       (:reopen
@@ -638,32 +797,13 @@ set, and replay the history over it."
 transition log (SPEC-WORK.md:5055)."
   (reverse (wstate-lease-log state)))
 
-(defun take-lease (kernel id by)
-  "`take`: one live lease per node; a second `take` is refused and names the
-holder (SPEC-WORK.md:135)."
-  (let* ((state (kernel-state kernel))
-         (n (%node state id)))
-    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
-    (unless (eq :o (wnode-branch n))
-      (error 'unsupported-input :what (format nil "~A is in C and takes no lease" id)))
-    (when (wnode-holder n)
-      (error 'unsupported-input
-             :what (format nil "LEASE FAIL node=~A holder=~A: held" id (wnode-holder n))))
-    (setf (wnode-holder n) by)
-    by))
-
-(defun release-lease (kernel id by)
-  "`release`: a claim is ended by the one who made it, never a third name
-reaching in (SPEC-WORK.md:1354-1357)."
-  (let* ((state (kernel-state kernel))
-         (n (%node state id)))
-    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
-    (unless (equal by (wnode-holder n))
-      (error 'unsupported-input
-             :what (format nil "LEASE FAIL node=~A holder=~A live: held" id
-                           (or (wnode-holder n) "unowned"))))
-    (setf (wnode-holder n) nil)
-    by))
+;;; `take-lease` and `release-lease` MOVED to src/take-verb.lisp (nova-tools
+;;; #1612 lane). They lived here and did `(setf (wnode-holder n) by)` on the
+;;; live kernel state, on the CALLER's thread, with no event, no journal record
+;;; and no request id -- exactly the mutation outside the command loop that
+;;; SPEC-WORK.md:2603-2616 rule 6 calls a defect. A lease so taken was invisible
+;;; to the journal's total order and did not survive `replay-journal`. They are
+;;; `:lease` events on the single writer now; the callers' contract is unchanged.
 
 (defun working-count (kernel)
   "|W|: the O items that hold a live lease. W is a view of O and never a third

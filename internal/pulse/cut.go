@@ -1,22 +1,25 @@
 package pulse
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// textKinds are the three text-only templates: read, text and tone. Their cards carry the
+// textKinds are the text-only templates: read, text, tone and report. Their cards carry the
 // no-build line and are routed to any model that can hold them (SPEC-PULSE rule 6 and 7).
-var textKinds = map[string]bool{"read": true, "text": true, "tone": true}
+var textKinds = map[string]bool{"read": true, "text": true, "tone": true, "report": true}
 
 // SlotDash is the cards.tsv slot every cut card carries until launch allocates one.
 const SlotDash = "-"
@@ -30,8 +33,16 @@ type CutInput struct {
 	Root      string // the state root; skipped.tsv and retry.tsv are read and written here
 	Local     string // an optional ollama tag that overrides the flash model for read and text cards
 	Max       int    // cap on the cards cut, and on the skipped lines printed; 0 means no cap
+	Probe     bool   // run the learned admission checklist before writing each card (#585)
+	History   string // the abstain history the checklist is cut from, when Probe is set
+	Budget    int    // the card's byte budget, when Probe is set; 0 means unbounded
 	Stdout    io.Writer
 	Stderr    io.Writer
+	// ValidateContract preflights every candidate's locator before any card file is
+	// written: a locator that does not resolve (gh repo view non-zero) is refused with
+	// the reason and no card is written, so a dead repo never spends admission plus the
+	// scaffold before an abstain (issue #675).
+	ValidateContract bool
 }
 
 // Cut writes one card per pool.tsv candidate from its typed template and returns the exit
@@ -61,9 +72,23 @@ func Cut(in CutInput) int {
 	}
 	retries := readRetries(in.Root)
 
-	zero, flat, metered, flash, pro, skipped := 0, 0, 0, 0, 0, 0
+	zero, flat, metered, flash, pro, skipped, probed := 0, 0, 0, 0, 0, 0, 0
 	skipList := bounded.Capped(in.Stderr, in.Max, "CUT", "skipped", "use --max 0 to show all")
 	var cards []CardRow
+
+	if in.ValidateContract {
+		seen := map[string]bool{}
+		for _, row := range pool {
+			if seen[row.Source] {
+				continue
+			}
+			seen[row.Source] = true
+			if reason := locatorUnresolvable(row.Source); reason != "" {
+				fmt.Fprintf(in.Stderr, "CUT REFUSED locator=%s: %s (check gh auth and the repo name)\n", oneline.Field(row.Source), oneline.Escape(reason))
+				return 2
+			}
+		}
+	}
 
 	for _, row := range pool {
 		if in.Max > 0 && len(cards) >= in.Max {
@@ -80,6 +105,12 @@ func Cut(in CutInput) int {
 		if reason != "" {
 			fmt.Fprintf(in.Stderr, "CUT REFUSED template=%s: %s\n", oneline.Field(name), oneline.Escape(reason))
 			return 2
+		}
+		if in.Probe {
+			if code := Probe(ProbeInput{Label: row.ID, Card: card, History: in.History, Budget: in.Budget, Stdout: in.Stdout, Stderr: in.Stderr}); code != 0 {
+				probed++
+				continue
+			}
 		}
 		cardName := row.ID + ".md"
 		if err := os.WriteFile(filepath.Join(in.Out, cardName), []byte(card), 0o644); err != nil {
@@ -125,12 +156,16 @@ func Cut(in CutInput) int {
 			return 2
 		}
 	}
-	if tableErr == nil {
-		fmt.Fprintf(in.Stdout, "CUT OK cards=%d skipped=%d zero=%d flat=%d metered=%d out=%s\n", len(cards), skipped, zero, flat, metered, oneline.Field(in.Out))
-	} else {
-		fmt.Fprintf(in.Stdout, "CUT OK cards=%d skipped=%d flash=%d pro=%d out=%s\n", len(cards), skipped, flash, pro, oneline.Field(in.Out))
+	probeField := ""
+	if in.Probe {
+		probeField = fmt.Sprintf(" probe=%d", probed)
 	}
-	if skipped > 0 {
+	if tableErr == nil {
+		fmt.Fprintf(in.Stdout, "CUT OK cards=%d skipped=%d zero=%d flat=%d metered=%d out=%s%s\n", len(cards), skipped, zero, flat, metered, oneline.Field(in.Out), probeField)
+	} else {
+		fmt.Fprintf(in.Stdout, "CUT OK cards=%d skipped=%d flash=%d pro=%d out=%s%s\n", len(cards), skipped, flash, pro, oneline.Field(in.Out), probeField)
+	}
+	if skipped > 0 || probed > 0 {
 		return 1
 	}
 	return 0
@@ -138,7 +173,20 @@ func Cut(in CutInput) int {
 
 func isFlashKind(kind string) bool { return textKinds[kind] }
 
-// modelFor decides the model by kind and nowhere else: read/text/tone -> flash, the rest ->
+// locatorUnresolvable returns a non-empty reason when the candidate's locator (owner/repo)
+// does not resolve through gh repo view, else "". A locator that does not resolve is a card
+// that would clone nothing and abstain after the scaffold, so cut refuses it up front.
+func locatorUnresolvable(locator string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "repo", "view", locator)
+	if _, err := cmd.Output(); err != nil {
+		return "does not resolve"
+	}
+	return ""
+}
+
+// modelFor decides the model by kind and nowhere else: read/text/tone/report -> flash, the rest ->
 // pro, with --local naming an ollama/<tag> override for read and text (SPEC-PULSE rule 7).
 // A models.tsv may name only one of the two ids; the cards that would take the missing model
 // hold to the one the table names, so `flash <id>` alone is the spend rule "flash only".
@@ -232,12 +280,13 @@ var costOrder = map[string]int{"zero": 0, "flat": 1, "metered": 2}
 // ladder (read -> text -> code -> replay).
 var capOrder = map[string]int{"read": 0, "text": 1, "code": 2, "replay": 3}
 
-// requiredCaps is what each card kind needs a route to cover: read, text and tone any
+// requiredCaps is what each card kind needs a route to cover: read, text, tone and report any
 // reading-capable model, fix and drift a code model, replay a replay model.
 var requiredCaps = map[string][]string{
 	"read":   {"read", "text", "replay"},
 	"text":   {"read", "text", "replay"},
 	"tone":   {"read", "text", "replay"},
+	"report": {"read", "text", "replay"},
 	"fix":    {"code"},
 	"drift":  {"code"},
 	"replay": {"replay"},
@@ -447,7 +496,7 @@ func renderCard(tmpl string, row PoolRow) (string, string) {
 	}
 	if textKinds[row.Kind] {
 		if !strings.Contains(strings.ToLower(rendered), "do not run go build") {
-			return "", "rule 6: the text template lacks the no-build line (read, text and tone cards must state `Do not run go build, go test or any toolchain`)"
+			return "", "rule 6: the text template lacks the no-build line (read, text, tone and report cards must state `Do not run go build, go test or any toolchain`)"
 		}
 	} else {
 		if !strings.Contains(strings.ToLower(rendered), "red line") || !strings.Contains(strings.ToLower(rendered), "green line") {
@@ -483,8 +532,8 @@ func countSteps(lines []string) int {
 	return n
 }
 
-// turnBudget is the step count each kind may spend: the read family (read, text, tone) gets
-// 8 turns, the writing family (fix, replay, drift) 20 (#855).
+// turnBudget is the step count each kind may spend: the read family (read, text, tone,
+// report) gets 8 turns, the writing family (fix, replay, drift) 20 (#855).
 func turnBudget(kind string) int {
 	if textKinds[kind] {
 		return 8
@@ -492,8 +541,12 @@ func turnBudget(kind string) int {
 	return 20
 }
 
+// branchOf is where a card's branch NAME comes from, and DefaultBranchPrefix is the one
+// spelling of the prefix -- the same constant harvest refuses a push outside of (Stella's
+// ruling on #1824) and a bench harvest filters by. It was a second literal "rowan/" here,
+// which is exactly how a generator and its gate drift apart.
 func branchOf(row PoolRow) string {
-	return "rowan/" + strings.ReplaceAll(row.ID, " ", "-")
+	return DefaultBranchPrefix + strings.ReplaceAll(row.ID, " ", "-")
 }
 
 func writeCardsTSV(path string, cards []CardRow) error {

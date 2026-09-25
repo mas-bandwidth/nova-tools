@@ -324,3 +324,173 @@ a closed node D, under the coordinator scope \"coord\"."
       (ok (<= *intake-visits* (* 4 (length wide)))
           "the high-fan-out input is scanned linearly (~D visits for ~D bytes)"
           *intake-visits* (length wide)))))
+
+;;; ------------------------------------------------------------------
+;;; TestE01F04ValidateAcceptanceKindSubjectPredicate  docs/SPEC-WORK.md:930-943
+;;;
+;;; E01-F04 (ROADMAP.md:236): "Validate acceptance kind, subject, predicate and
+;;; required flag". The `:task` `:acceptance` schema is one form
+;;; `(:id "c1" :kind :test :subject "test:…@<rev>" :predicate :passes)` where
+;;; `:kind` is one of `:test :job :merged :attested`, `:subject` names the exact
+;;; thing the evidence must be about, `:predicate` is what must be true of it
+;;; (`:passes :succeeds :merged-at :attested-by`, held at the named revision),
+;;; and `:required` defaults true. The kernel realizes the four in
+;;; src/verifier.lisp (`verify-qualifies-p`, the (pointer subject resolver)
+;;; cache key) and src/state.lisp (`%seed-required`); this replay asserts the
+;;; behaviour, not the implementation.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE01F04ValidateAcceptanceKindSubjectPredicate" "docs/SPEC-WORK.md:930-943"
+    "expected=kind-must-match-scheme;subject-binds-the-fact;predicate-holds-at-the-named-revision;required-defaults-true"
+  ;; KIND -- a pointer qualifies a criterion only when its scheme matches the
+  ;; criterion's kind (SPEC-WORK.md:931-932). A test: pointer qualifies a :test
+  ;; criterion and never a :merged one.
+  (let ((merged (make-verify-evidence "ev-m" :pointer "test:pkg/x@sha-1"
+                                      :criterion :merged :subject "7" :against "sha-1"))
+        (test   (make-verify-evidence "ev-t" :pointer "test:pkg/x@sha-1"
+                                      :criterion :test :subject "pkg/x" :against "sha-1")))
+    (ok (verify-qualifies-p test) "a test: pointer qualifies a :test criterion")
+    (check-equal nil (verify-qualifies-p merged)
+                 "a test: pointer never qualifies a :merged criterion")
+    (check-equal "test" (pointer-scheme (verify-evidence-pointer test))
+                 "the kind is matched against the pointer's scheme, not its subject"))
+
+  ;; SUBJECT -- the raw fact is bound to the subject the resolver was asked for:
+  ;; the cache key is (pointer subject resolver), so a fact resolved for one
+  ;; subject answers nothing under another (SPEC-WORK.md:938-940, :1294-1301).
+  (let ((cache (make-verification-cache)))
+    (verification-cache-store cache "test:pkg/x@sha-1" "pkg/x" "resolver-cmd" :holds
+                              "2026-09-14T12:00:00Z")
+    (ok (verification-cache-lookup cache "test:pkg/x@sha-1" "pkg/x" "resolver-cmd")
+        "the fact is bound to the subject it was asked for")
+    (check-equal nil (verification-cache-lookup cache "test:pkg/x@sha-1" "pkg/y" "resolver-cmd")
+                 "the same pointer under another subject reads nothing"))
+
+  ;; PREDICATE -- what must be true (`:passes`, `:succeeds`, `:merged-at`) holds
+  ;; at the named revision (SPEC-WORK.md:941): a :job criterion is met only
+  ;; where the run's `@<sha>` is the revision the evidence was written against.
+  (let ((job-of-rev (make-verify-evidence "ev-j1" :pointer "run:acme/work#j1@sha-1"
+                                          :criterion :job :subject "j1" :against "sha-1"))
+        (job-of-other (make-verify-evidence "ev-j2" :pointer "run:acme/work#j1@sha-1"
+                                            :criterion :job :subject "j1" :against "sha-9")))
+    (ok (verify-qualifies-p job-of-rev) "a :job criterion qualifies at the revision it names")
+    (check-equal nil (verify-qualifies-p job-of-other)
+                 "the same run at another revision does not qualify"))
+
+  ;; REQUIRED FLAG -- absent defaults true; an explicit boolean is admitted; a
+  ;; truthy lookalike is refused, never guessed (SPEC-WORK.md:943, src/state.lisp).
+  (check-equal t (nova-work::%seed-required '(:id "x"))
+               "the required flag defaults to true")
+  (check-equal t (nova-work::%seed-required '(:required t))
+               "an explicit true is admitted")
+  (check-equal nil (nova-work::%seed-required '(:required nil))
+               "an explicit nil is admitted")
+   (ok (handler-case (progn (nova-work::%seed-required '(:required :yes)) nil)
+         (error () t))
+       "a truthy non-boolean required flag is refused, never guessed"))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F02TrackPendingConfirmedAndFailed  docs/SPEC-WORK.md:7576-7581
+;;;
+;;; E09-F02-03 (ROADMAP.md:911): "Track pending, confirmed and failed
+;;; outbound actions with receipts". SPEC-WORK.md:7576-7581 fixes the
+;;; correspondence contract: every outbound action toward a public issue is
+;;; tracked as :pending, :confirmed or :failed under a stable request id and a
+;;; receipt; an uncertain action retried under the same request id is never
+;;; duplicated; and a reopened issue produces a reconciliation signal that
+;;; never erases earlier completion evidence.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE09F02TrackPendingConfirmedAndFailed" "docs/SPEC-WORK.md:7576-7581"
+    "expected=pending-confirmed-failed-with-request-id-and-receipt;idempotent-retry;reopen-reconciles-without-erasing"
+  (let ((l (make-correspondence-ledger)))
+    ;; A started outbound action is :pending, carries its request id, no receipt.
+    (let ((a (start-outbound l :request "req-1" :issue "acme/work#7" :kind :close)))
+      (check-equal :pending (outbound-action-state a) "a started action is pending")
+      (check-equal "req-1" (outbound-action-request a) "the action carries its request id")
+      (ok (null (outbound-action-receipt a)) "a pending action carries no receipt"))
+    ;; Confirmation records the receipt.
+    (let ((a (confirm-outbound l "req-1" "close-receipt-7")))
+      (check-equal :confirmed (outbound-action-state a) "the confirmed close is :confirmed")
+      (check-equal "close-receipt-7" (outbound-action-receipt a)
+                   "the confirmation carries its receipt"))
+    ;; A failed outbound action is :failed with its failure receipt.
+    (start-outbound l :request "req-2" :issue "acme/work#8" :kind :report-fix)
+    (let ((a (fail-outbound l "req-2" "http-500")))
+      (check-equal :failed (outbound-action-state a) "a failed action is :failed")
+      (check-equal "http-500" (outbound-action-receipt a) "the failure carries its receipt"))
+    (check-equal :confirmed (outbound-state l "req-1")
+                 "the confirmed state is queryable by request id")
+    (check-equal :failed (outbound-state l "req-2")
+                 "the failed state is queryable by request id")
+    ;; Retrying an uncertain outbound action under the same request id is
+    ;; idempotent: no second entry is recorded.
+    (let ((n (length (correspondence-ledger-actions l))))
+      (start-outbound l :request "req-2" :issue "acme/work#8" :kind :report-fix)
+      (check-equal n (length (correspondence-ledger-actions l))
+                   "retrying an uncertain action writes no second entry"))
+    ;; A reopened issue reconciles: the earlier confirmed close and its receipt
+    ;; survive, and a new pending reconciliation signal is recorded.
+    (let ((r (reopen-ledger l :issue "acme/work#7" :request "req-3")))
+      (check-equal :pending (outbound-action-state r)
+                   "the reopen is a pending reconciliation signal")
+      (check-equal "req-3" (outbound-action-request r)
+                   "the reconciliation carries its own request id"))
+    (check-equal :confirmed (outbound-state l "req-1")
+                 "the earlier confirmed close is not erased by the reopen")
+    (check-equal "close-receipt-7" (outbound-receipt l "req-1")
+                 "the earlier completion receipt survives the reopen")))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F02RefuseConflictingRequestReuse  docs/SPEC-WORK.md:7576-7581
+;;;
+;;; A retry under a request id is idempotent only when it is the SAME action:
+;;; reusing the id for a different issue, kind or payload is refused with
+;;; OUTBOUND-REQUEST-CONFLICT and records nothing. A terminal outcome is
+;;; immutable: fail after confirm (or a second, different receipt) is refused,
+;;; so the earlier completion evidence survives.
+;;; ------------------------------------------------------------------
+
+(defun %refuses-conflict-p (thunk)
+  (handler-case (progn (funcall thunk) nil)
+    (outbound-request-conflict () t)))
+
+(deftest "TestE09F02RefuseConflictingRequestReuse" "docs/SPEC-WORK.md:7576-7581"
+    "expected=conflicting-request-reuse-refused;terminal-outcome-immutable"
+  (let ((l (make-correspondence-ledger)))
+    (start-outbound l :request "req-1" :issue "acme/work#7" :kind :close
+                      :payload "closing: fixed in abc123")
+    ;; The same action retried is idempotent.
+    (ok (not (%refuses-conflict-p
+              (lambda () (start-outbound l :request "req-1" :issue "acme/work#7"
+                                           :kind :close :payload "closing: fixed in abc123"))))
+        "an identical retry is idempotent, not refused")
+    ;; The same id reused for a different action is refused.
+    (ok (%refuses-conflict-p
+         (lambda () (start-outbound l :request "req-1" :issue "acme/work#9" :kind :close
+                                      :payload "closing: fixed in abc123")))
+        "reusing a request id for a different issue is refused")
+    (ok (%refuses-conflict-p
+         (lambda () (start-outbound l :request "req-1" :issue "acme/work#7" :kind :report-fix
+                                      :payload "closing: fixed in abc123")))
+        "reusing a request id for a different kind is refused")
+    (ok (%refuses-conflict-p
+         (lambda () (start-outbound l :request "req-1" :issue "acme/work#7" :kind :close
+                                      :payload "closing: wontfix")))
+        "reusing a request id for a different payload is refused")
+    (check-equal 1 (length (correspondence-ledger-actions l))
+                 "a refused reuse records nothing")
+    (check-equal "acme/work#7" (outbound-action-issue (first (correspondence-ledger-actions l)))
+                 "the first action is unchanged by a refused reuse")
+    ;; Confirm, then a fail on the same request is refused: the receipt stays.
+    (confirm-outbound l "req-1" "close-receipt-7")
+    (ok (not (%refuses-conflict-p (lambda () (confirm-outbound l "req-1" "close-receipt-7"))))
+        "repeating the same confirmation is idempotent")
+    (ok (%refuses-conflict-p (lambda () (fail-outbound l "req-1" "http-500")))
+        "fail after confirm is refused")
+    (ok (%refuses-conflict-p (lambda () (confirm-outbound l "req-1" "other-receipt")))
+        "a second confirmation with a different receipt is refused")
+    (check-equal :confirmed (outbound-state l "req-1")
+                 "the confirmed outcome survives a refused fail")
+    (check-equal "close-receipt-7" (outbound-receipt l "req-1")
+                 "the completion receipt survives a refused fail")))

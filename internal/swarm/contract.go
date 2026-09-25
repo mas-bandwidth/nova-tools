@@ -2,7 +2,6 @@ package swarm
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -49,7 +48,7 @@ type Outcome struct {
 // only when the report cannot be read; a read report always yields an Outcome carrying the
 // grammar line, accepted or refused.
 func CheckResult(resultPath string, c Contract) (Outcome, error) {
-	raw, err := os.ReadFile(resultPath)
+	raw, err := readFileSteady(resultPath)
 	if err != nil {
 		return Outcome{}, err
 	}

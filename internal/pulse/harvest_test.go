@@ -2,6 +2,7 @@ package pulse
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,13 +20,76 @@ func setupPulse(t *testing.T) (root, specs, arglog string) {
 	root = t.TempDir()
 	specs = fakePATH(t)
 	arglog = filepath.Join(root, "argv.log")
+	// The pulse table `launch` writes beside every pulse: its id, its card count, and
+	// the width and deadline it ran with. Rule 15's relaunch reads the last two and
+	// passes them to the launch subprocess, which requires both (issue #1819).
+	writePulseTable(t, root, "p1", 1, 4, "300")
 	return root, specs, arglog
 }
 
-// fakeGit records every git invocation and succeeds; nothing here has a repository.
+// writePulseTable writes <root>/pulses/<id>.tsv exactly as launch's record() does.
+func writePulseTable(t *testing.T, root, id string, cards, slots int, deadline string) {
+	t.Helper()
+	dir := filepath.Join(root, "pulses")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	row := fmt.Sprintf("pulse-%s\t%d\t%d\t%s\n", id, cards, slots, deadline)
+	if err := os.WriteFile(filepath.Join(dir, id+".tsv"), []byte(row), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// queueCard writes a card file and the queue.tsv row `launch --queue` writes for its
+// overflow: label<TAB>model<TAB>card, three fields (issue #1820).
+func queueCard(t *testing.T, root, label string) string {
+	t.Helper()
+	dir := filepath.Join(root, "cardsrc")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	card := filepath.Join(dir, label+".md")
+	if err := os.WriteFile(card, []byte("RESULT "+label+" sha=000000000000\nREPO owner/repo\nSTEP 1. go\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(filepath.Join(root, "queue.tsv"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(label + "\tflash\t" + card + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	return card
+}
+
+// fakeGit records every git invocation and succeeds, and answers `remote get-url origin`
+// with the repository the fixtures' cards are all for.
+//
+// It used to answer NOTHING to that question, and the harvest pushed anyway -- which is the
+// defect Johnny held #1809 for, modelled in the fixture: a real job's clone always has an
+// origin, because a card that pushes is a card that cloned. A harvest whose destination
+// nothing but the worker's RESULT.md can name now refuses (resolveDestination,
+// HARVEST REFUSED repo-unknown), so a fixture with no origin tests the refusal and not the
+// push. Tests that want the refusal leave this rule out on purpose and say so.
 func fakeGit(t *testing.T, specs, arglog string) {
 	t.Helper()
-	fakeTool(t, specs, "git", fakeSpec{Log: arglog})
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
+		originRule("owner/repo"),
+		pinRule(),
+	}})
+}
+
+// originRule teaches a fake git to answer `git -C <dir> config --get remote.origin.url`
+// (cloneOrigin), argument 5 the key, with a repository the way every clone a card made does.
+func originRule(repo string) fakeRule {
+	return fakeRule{Arg: 5, Equals: "remote.origin.url", Stdout: "https://forge.invalid/" + repo + ".git"}
+}
+
+// pinRule answers `git -C <dir> rev-parse --verify refs/harvest/target/<base>^{commit}`
+// so a fake-git harvest can pin the authorized target (HOLD on #2117).
+func pinRule() fakeRule {
+	return fakeRule{Arg: 3, Equals: "rev-parse", Stdout: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 }
 
 // fakeGH records every gh invocation, refuses `gh pr view` (no PR exists yet) and answers
@@ -46,7 +110,10 @@ func addCard(t *testing.T, root, label, slot, model, contract, result string) {
 		t.Fatal(err)
 	}
 	cardPath := filepath.Join(cardDir, label+".md")
-	if err := os.WriteFile(cardPath, []byte(contract+"\nSTEP 1. go\n"), 0o644); err != nil {
+	// The card names its own repository: a harvest checks the RESULT.md's REPO line
+	// against the card before it pushes anywhere, because a RESULT is a report and not
+	// an instruction (issue #1824). Every card these tests fold is for owner/repo.
+	if err := os.WriteFile(cardPath, []byte(contract+"\nREPO owner/repo\nSTEP 1. go\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	job := filepath.Join(root, slot, "jobs", label)
@@ -68,10 +135,19 @@ func addCard(t *testing.T, root, label, slot, model, contract, result string) {
 
 func runHarvest(t *testing.T, root string) (string, string) {
 	t.Helper()
+	return runHarvestWithClones(t, root, nil)
+}
+
+// runHarvestWithClones is runHarvest with the COORDINATOR's own `--clone`, which is where
+// the destination comes from when the root has no cards.tsv and so no launch record at all
+// -- a bare swarm root (Johnny's HOLD of #1809 at 7f692ef6). A root whose cards name their
+// REPO needs none of it.
+func runHarvestWithClones(t *testing.T, root string, clones []string) (string, string) {
+	t.Helper()
 	var out, errs bytes.Buffer
 	code := Harvest(HarvestInput{
 		ID: "p1", Root: root, Sources: filepath.Join(root, "sources.tsv"),
-		Templates: root, MaxBodyBytes: 4096, Max: 20,
+		Templates: root, MaxBodyBytes: 4096, Max: 20, Clones: clones,
 		Stdout: &out, Stderr: &errs,
 	})
 	_ = code
@@ -100,9 +176,9 @@ func TestHarvestPushesOnlyOnLine1Match(t *testing.T) {
 	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
 
 	addCard(t, root, "a", "1", "flash", "RESULT a sha=aaa",
-		"RESULT a sha=aaa\nDONE\nBRANCH br1\nREPO owner/repo\n")
+		"RESULT a sha=aaa\nDONE\nBRANCH rowan/br1\nREPO owner/repo\n")
 	addCard(t, root, "b", "1", "flash", "RESULT b sha=bbb",
-		"RESULT b sha=bbc\nDONE\nBRANCH br2\nREPO owner/repo\n")
+		"RESULT b sha=bbc\nDONE\nBRANCH rowan/br2\nREPO owner/repo\n")
 	addCard(t, root, "c", "1", "flash", "RESULT c sha=ccc",
 		"RESULT c sha=ccc\nDONE\nBRANCH main\nREPO owner/repo\n")
 
@@ -122,7 +198,7 @@ func TestHarvestPushesOnlyOnLine1Match(t *testing.T) {
 	for _, l := range alls {
 		if strings.HasPrefix(l, "git push ") {
 			pushes++
-			if !strings.Contains(l, "br1:br1") {
+			if !strings.Contains(l, "rowan/br1:rowan/br1") {
 				t.Fatalf("push must name the branch by explicit refspec, got: %s", l)
 			}
 			if !strings.Contains(l, "https://") {
@@ -150,6 +226,202 @@ func TestHarvestPushesOnlyOnLine1Match(t *testing.T) {
 	}
 }
 
+func TestHarvestUnknownAcceptanceDoesNotRetry(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeGit(t, specs, arglog)
+	fakeGH(t, specs, arglog, "https://example.invalid/owner/repo/pull/9")
+
+	addCard(t, root, "lost", "1", "flash", "RESULT lost sha=lll",
+		"RESULT lost sha=lll\nDONE\nBRANCH rowan/lost\nREPO owner/repo\n")
+	job := filepath.Join(root, "1", "jobs", "lost")
+	if err := os.WriteFile(filepath.Join(job, "provider-acceptance"), []byte("unknown\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A pool result that would otherwise publish. The slot marker has to win.
+	id := "20260922T000000Z-lost"
+	if err := os.MkdirAll(filepath.Join(root, "pool", "done"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "pool", "reports", id), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	done := "RESULT lost sha=lll\nDONE\nBRANCH rowan/lost\nREPO owner/repo\n"
+	if err := os.WriteFile(filepath.Join(root, "pool", "done", id+".task"), []byte(done), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pool", "reports", id, "RESULT.md"), []byte(done), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut := runHarvest(t, root)
+	if strings.Contains(out, "retry=1") || strings.Contains(out, "pushed=1") {
+		t.Fatalf("an unknown acceptance was retried or pushed:\n%s", out)
+	}
+	if !strings.Contains(errOut, "HARVEST HOLD label=lost reason=unknown-acceptance") {
+		t.Fatalf("the hold was not named:\n%s\n%s", out, errOut)
+	}
+	if raw, err := os.ReadFile(filepath.Join(root, "retry.tsv")); err == nil && strings.Contains(string(raw), "lost") {
+		t.Fatalf("retry.tsv named the unknown card:\n%s", raw)
+	}
+}
+
+func TestHarvestHoldIsNotAdmittedAgain(t *testing.T) {
+	dir := t.TempDir()
+	body := writeTestFile(t, dir, "issues.json", `[
+  {"number": 1, "title": "held", "labels": [{"name": "card"}], "body": ""},
+  {"number": 2, "title": "free", "labels": [{"name": "card"}], "body": ""}
+]`)
+	specs := fakePATH(t)
+	fakeTool(t, specs, "gh", fakeSpec{Log: filepath.Join(dir, "gh.log"), Default: fakeRule{StdoutFile: body}})
+	launchLog := filepath.Join(dir, "launch.log")
+	fakeTool(t, specs, "nova-pulse", fakeSpec{Log: launchLog, Default: fakeRule{Exit: 0}})
+
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sources := writeTestFile(t, dir, "sources.tsv", "issues\towner/repo\tfix\n")
+	var pout, perr bytes.Buffer
+	if code := Pool(PoolInput{Sources: sources, Root: root, Stdout: &pout, Stderr: &perr}); code != 0 {
+		t.Fatalf("pool exit %d: %s", code, perr.String())
+	}
+
+	addCard(t, root, "1", "1", "flash", "RESULT 1 sha=111",
+		"RESULT 1 sha=111\nDONE\nBRANCH rowan/1\nREPO owner/repo\n")
+	if err := os.WriteFile(filepath.Join(root, "1", "jobs", "1", "provider-acceptance"), []byte("unknown\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	queueCard(t, root, "2")
+	writePulseTable(t, root, "p1", 2, 1, "60s")
+
+	out, errOut := runHarvest(t, root)
+	seen, err := os.ReadFile(filepath.Join(root, "seen.tsv"))
+	if err != nil || !strings.Contains(string(seen), "issues\t1\thold") {
+		t.Fatalf("harvest did not record the pool identity as a hold:\n%s\n%s\nseen=%s", out, errOut, seen)
+	}
+	launched, err := os.ReadFile(filepath.Join(root, "cards.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(string(launched), "1\t") || strings.Contains(string(launched), "\n1\t") {
+		t.Fatalf("the held card was launched again:\n%s", launched)
+	}
+	if !strings.Contains(string(launched), "2\t") {
+		t.Fatalf("the unheld card did not proceed:\n%s", launched)
+	}
+	if _, err := os.Stat(launchLog); err != nil {
+		t.Fatalf("the launch was not recorded: %v", err)
+	}
+
+	var pout2, perr2 bytes.Buffer
+	if code := Pool(PoolInput{Sources: sources, Root: root, Stdout: &pout2, Stderr: &perr2}); code != 0 {
+		t.Fatalf("second pool exit %d: %s", code, perr2.String())
+	}
+	pooled, err := os.ReadFile(filepath.Join(root, "pool.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(pooled), "\t1\t") {
+		t.Fatalf("the held issue was pooled again:\n%s", pooled)
+	}
+	if !strings.Contains(string(pooled), "\t2\t") {
+		t.Fatalf("the free issue was not pooled:\n%s", pooled)
+	}
+	ident, err := os.ReadFile(filepath.Join(root, "identity.tsv"))
+	if err != nil || !strings.Contains(string(ident), "issues\t1\t") {
+		t.Fatalf("the second pool forgot the held identity:\n%s", ident)
+	}
+
+	// The original queue, still naming the held card, after that second pool.
+	os.Remove(filepath.Join(root, "queue.tsv"))
+	queueCard(t, root, "1")
+	queueCard(t, root, "2")
+	var rout, rerr bytes.Buffer
+	if rc := relaunch(HarvestInput{ID: "p1", Root: root, Stdout: &rout, Stderr: &rerr}); rc != 0 {
+		t.Fatalf("relaunch exit %d\n%s\n%s", rc, rout.String(), rerr.String())
+	}
+	again, err := os.ReadFile(filepath.Join(root, "cards.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(again), "\n1\t") || strings.HasPrefix(string(again), "1\t") {
+		t.Fatalf("a stale queue admitted the held card after the second pool:\n%s", again)
+	}
+	if !strings.Contains(string(again), "2\t") {
+		t.Fatalf("the free card did not proceed from the stale queue:\n%s", again)
+	}
+}
+
+func TestSameIDFromTwoSourcesDoesNotCrossTheHold(t *testing.T) {
+	root := t.TempDir()
+	ident := "issues\t1\t1\t1\nprs\t1\t1\t1\n"
+	if err := os.WriteFile(filepath.Join(root, "identity.tsv"), []byte(ident), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "seen.tsv"), []byte("issues\t1\thold\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	card := filepath.Join(root, "prs.md")
+	if err := os.WriteFile(card, []byte("RESULT prs sha=1\nIDENTITY kind=prs id=1 attempt=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seen, err := readSeen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := dropHeldCards(root, []CardRow{{Label: "1", Card: card}}, seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != 1 {
+		t.Fatalf("the prs card was treated as the held issue: %+v", kept)
+	}
+	bare, err := dropHeldCards(root, []CardRow{{Label: "1", Card: filepath.Join(root, "missing.md")}}, seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bare) != 0 {
+		t.Fatalf("an ambiguous bare label was admitted: %+v", bare)
+	}
+
+	slash := "issues\ta/b\ta/b\t1\n"
+	if err := os.WriteFile(filepath.Join(root, "identity.tsv"), []byte(slash), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "seen.tsv"), []byte("issues\ta/b\thold\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seen, err = readSeen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanitized, err := dropHeldCards(root, []CardRow{{Label: "a-b"}}, seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sanitized) != 0 {
+		t.Fatalf("a sanitized label was admitted under the raw id's hold: %+v", sanitized)
+	}
+}
+
+func TestRelaunchRefusesAnUnreadableHoldLedger(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "seen.tsv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	queueCard(t, root, "2")
+	writePulseTable(t, root, "p1", 1, 1, "60s")
+	var out, errOut bytes.Buffer
+	rc := relaunch(HarvestInput{ID: "p1", Root: root, Stdout: &out, Stderr: &errOut})
+	if rc == 0 {
+		t.Fatalf("an unreadable seen.tsv admitted work:\n%s\n%s", out.String(), errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "cards.tsv")); !os.IsNotExist(err) {
+		raw, _ := os.ReadFile(filepath.Join(root, "cards.tsv"))
+		t.Fatalf("cards were written despite the unreadable ledger:\n%s", raw)
+	}
+}
+
 func TestHarvestAbstainGoesToRetry(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
@@ -157,7 +429,7 @@ func TestHarvestAbstainGoesToRetry(t *testing.T) {
 
 	// One ABSTAIN with a refusal in the harness log, one card with no RESULT.md at all.
 	addCard(t, root, "x", "1", "flash", "RESULT x sha=xxx",
-		"RESULT x sha=xxx\nABSTAIN -- idle 300s\nBRANCH bx\nREPO owner/repo\n")
+		"RESULT x sha=xxx\nABSTAIN -- idle 300s\nBRANCH rowan/bx\nREPO owner/repo\n")
 	job := filepath.Join(root, "1", "jobs", "x")
 	os.WriteFile(filepath.Join(job, "harness.log"), []byte("running\npermission denied: /etc\n"), 0o644)
 
@@ -201,13 +473,13 @@ func TestHarvestRelaunchesQueueFirst(t *testing.T) {
 
 	// One done card to fold, then a queue of three, a read card, and two source items.
 	addCard(t, root, "done", "1", "flash", "RESULT done sha=ddd",
-		"RESULT done sha=ddd\nDONE\nBRANCH bd\nREPO owner/repo\n")
+		"RESULT done sha=ddd\nDONE\nBRANCH rowan/bd\nREPO owner/repo\n")
 
-	writeTSV(t, filepath.Join(root, "queue.tsv"), []string{
-		"q\tq1\tfix\tt1\tfix\n",
-		"q\tq2\tfix\tt2\tfix\n",
-		"q\tq3\tfix\tt3\tfix\n",
-	})
+	// The queue is what `launch --queue` actually writes: three-field card rows, not
+	// the five-field candidate table this test used to plant (issue #1820).
+	queueCard(t, root, "q1")
+	queueCard(t, root, "q2")
+	queueCard(t, root, "q3")
 	writeTSV(t, filepath.Join(root, "next.tsv"), []string{
 		"pr\towner/repo#42\tread\ttitle\tread\n",
 	})
@@ -261,9 +533,9 @@ func TestThenGatedOnVerdict(t *testing.T) {
 	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/5")
 
 	addCard(t, root, "m", "1", "flash", "RESULT m sha=mmm",
-		"RESULT m sha=mmm\nDONE\nBRANCH bm\nREPO owner/repo\n")
+		"RESULT m sha=mmm\nDONE\nBRANCH rowan/bm\nREPO owner/repo\n")
 	addCard(t, root, "n", "1", "flash", "RESULT n sha=nnn",
-		"RESULT n sha=nnn\nBLOCKED head=abc123\nBRANCH bn\nREPO owner/repo\n")
+		"RESULT n sha=nnn\nBLOCKED head=abc123\nBRANCH rowan/bn\nREPO owner/repo\n")
 
 	out, _ := runHarvest(t, root)
 	if !strings.Contains(out, "pushed=1") || !strings.Contains(out, "prs=1") {
@@ -303,7 +575,7 @@ func TestHarvestCutsReadCardPerPR(t *testing.T) {
 		})
 
 		addCard(t, root, label, "1", "flash", "RESULT "+label+" sha=aaa",
-			"RESULT "+label+" sha=aaa\nDONE\nBRANCH br1\nREPO owner/repo\n")
+			"RESULT "+label+" sha=aaa\nDONE\nBRANCH rowan/br1\nREPO owner/repo\n")
 
 		out, _ = runHarvest(t, root)
 		if !strings.Contains(out, "prs=1") {

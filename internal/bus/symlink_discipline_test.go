@@ -87,6 +87,24 @@ func TestReceiptAppendRefusesASymlinkedReceipts(t *testing.T) {
 	stillLink(t, filepath.Join(root, "from-x", ReceiptsName))
 }
 
+// The lane reader (ReadLaneIndex) used to os.ReadFile its INDEX, which followed a planted
+// symlink and blocked on a planted FIFO (issue #233). It now refuses both, never following
+// and never waiting.
+func TestReadLaneIndexRefusesASymlinkedIndex(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "bus")
+	v := victimHolding(t, dir, "deadbeef\tfrom-x/2026-note.md\t2026-09-13T00:00:00Z\t-\t-\n")
+	plant(t, v, filepath.Join(root, "from-x", IndexName))
+	_, err := ReadLaneIndex(root, "from-x")
+	if err == nil {
+		t.Fatal("ReadLaneIndex read through a symlinked INDEX and raised nothing")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("the read refusal does not name the kind symlink: %v", err)
+	}
+	unchangedHolding(t, v, "deadbeef\tfrom-x/2026-note.md\t2026-09-13T00:00:00Z\t-\t-\n")
+}
+
 func TestEnsureMergeAttributesRefusesASymlinkedAttributes(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")

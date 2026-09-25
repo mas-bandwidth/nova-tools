@@ -1,0 +1,15 @@
+# The functions TestNoTestReachesAHostThroughAnUnfakedSeam finds and does not
+# require a guard call from, one `file:function  # reason` per line. A row with
+# no reason is refused: an exception nobody explained is one nobody can ever
+# delete. The list is checked in both directions -- a listed function that is no
+# longer found is a red run -- so it only shrinks.
+#
+# Every row below is a function that reaches a host through ANOTHER function in
+# this tree that does call the guard. The guard is where the child is started,
+# once, rather than at every frame above it.
+cmd/nova-pulse/power.go:powerWaitSSH  # takes the powerRunner seam; the real one, powerSSHRunner.Run, is guarded
+internal/pulse/fleetverbs.go:SSHRunner.Run  # the FleetRunner seam's real implementation; it runs nothing itself, fleetSSH does and is guarded
+internal/pulse/statushtml.go:readFleetOverSSH  # fans out to readOneBench, which reaches the bench through the guarded fleetSSH
+internal/pulse/statushtmlrows.go:publishOverSSH  # builds the script and hands it to the guarded fleetSSH
+internal/release/edges.go:ExecSSH.sshArgs  # builds the option list and starts nothing; Run, Send and Fetch each guard the child they start
+internal/swarm/benchpull.go:sshError.Error  # an error type's message, named for the ssh exit code it carries; no child process

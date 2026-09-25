@@ -164,6 +164,150 @@ a cadence.
 
 **Red tests.** `watch-returns-once-per-change`; `quiet-time-makes-no-model-call`.
 
+### Events, not ticks
+
+The four events above cross the process boundary on local Redis pub/sub, so no merge-path
+verb waits for a tick. The bridge is two verbs and one internal edge:
+
+- `nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>]
+  [--gh-poll 60s] (--once | --deadline <duration>)` is the producer. It reads the
+  `cards:done` stream with the consumer group `events` and republishes each entry as
+  `card-done`. Because GitHub webhooks are not wired here yet, it also polls `gh` every
+  `--gh-poll` for check-suite completions on open `rowan/*` pull requests and for the base
+  branch's head, publishing `pr-checks-done {number, head, conclusion}` and
+  `dev-moved {sha}` **only on change**. The poll is the fallback heartbeat the principle
+  allows; a webhook later replaces it without moving the line between producer and
+  reactor. A quiet poll publishes nothing.
+- `nova-merge react --redis <addr> [--lane <dir>] (--once | --deadline <seconds>)` is the
+  subscriber. On `pr-checks-done` success and not in the skip set (`enqueue:skip`, a Redis
+  set) and not under `enqueue:hold` (a TTL'd key), it enqueues the PR once. On `dev-moved`
+  it lists the `rowan/*` pull requests the move made DIRTY and publishes
+  `rebase-wanted {number, head}`, which the rebase verb consumes. On `card-done` it
+  publishes nothing, because the recorder and the harvester read the stream directly. The
+  reactor holds no timer: it blocks on the subscription and returns once at its deadline,
+  so an idle reactor makes no model call and no subprocess poll.
+
+The gh edge is an interface with a fake; the bus is a real Redis addressed by `--redis`
+and, under test, miniredis. Every loop has a `--deadline`. One action prints one line, in
+the same grammar the sweep verb already prints.
+
+**Red tests.** `producer-publishes-card-done-from-the-stream`;
+`producer-publishes-pr-checks-done-only-on-change`;
+`producer-publishes-dev-moved-only-on-change`; `reactor-enqueues-a-green-pr`;
+`reactor-skips-the-skip-set`; `reactor-holds-on-the-hold-key`;
+`reactor-publishes-rebase-wanted-for-dirty-prs`; `reactor-card-done-publishes-nothing`.
+
+## 9. Resource vectors, writes and no barriers (Amendment 1, 2026-09-18)
+
+The scheduling side of docs/SPEC-WORKLANG.md's **Amendment 1**. That part fixes the grammar and
+lands the reader; this section fixes what the scheduler does with it. Rule numbers below are the
+amendment's A1 to A14, and every red test named here is the kernel's, none of them implemented by
+the reader slice.
+
+**Game engine.** A job system does not admit a job into a slot; it admits a job against independent
+reservations — cpu, memory, disk, network, gpu — held by one allocator per machine. Nothing in a
+well-built one waits on a phase boundary: a job runs the moment its dependencies are done and its
+reservations are granted, and a group that must finish together is expressed as a dependency, never
+as a barrier every worker parks on. A nested scheduler is handed a sub-budget by the allocator above
+it; it never counts the same cores twice.
+
+**Nova.** A unit carries `:resources` (A5), and a slot becomes the degenerate one-dimensional case
+of that vector. Admission is atomic across the vector's dimensions — all or nothing, never a partial
+grant a unit then waits inside (A8). A **lane** is one dimension with capacity 1 over an area of the
+tree, `queue/control/lanes.tsv` the map, so `nova-pulse fill` keeps one live card per lane and
+unrelated lanes scatter and gather (A6). Two units whose `:writes` intersect serialize **even when
+their lanes differ** (A7), because an area of the tree and a file are not the same grain. Every
+other scheduler on a machine — the CI runners, an external engine such as Patrick's Tandem — holds a
+delegated sub-budget from the one allocator, and a second independent count of the same cores is a
+refusal, not a wait (A8). The day's evidence for all of it: load average 147 on the Studio with four
+independent counters over 32 cores, and a darwin CI leg that was the queue's clock while 61 Linux
+runners idled — a resource **kind** no slot count can see.
+
+**Uncertainty is not idleness.** An attempt is a record with a termination proof (A3); a unit whose
+last attempt cannot prove it stopped is `uncertain` (A4) and **keeps its reservation**. A lease past
+its expiry with a live pid stays DRIFT and is never re-granted — section 3's rule, now written into
+the work language rather than left to a reaper's judgment. The evidence is the same day's 55 orphan
+harness processes hours past their cap, whose capacity had already been handed to someone else.
+
+**No barriers.** There is no phase, wave or round in this scheduler. A unit goes when its own needs
+are closed and its own resources are granted (A9); a work set's `:done-when` is a report of its
+finish line and never a gate on its members. The pit-stop set of 2026-09-17 is the argument: 54 of
+79 units name needs and the rest are independent, so a barrier idles most of the fleet behind the
+slowest member of a group it has nothing to do with.
+
+**Warmth and collections.** Warm state is retained and accounted apart from active resources (A12),
+so a kept worktree, a toolchain image or a loaded compiler is never charged as running capacity and
+never freed because it is merely warm — section 4's affinity, now with an account. Outputs whose
+members cannot be listed before the run are `:collects` collections (A11): named before, bound to the
+unit's revision at harvest. A unit's `:tools` name the verbs it needs at a version, with an optional
+semantic key that invalidates its outputs when the tool's behaviour moves without its version (A10).
+
+**Owners.** `:owner` is a mind — a friend, a child rung, a swarm, or `all` (A13). `nova-work ask`
+(#1338) and the pull worker read that one form: the ask answers for the owner it finds, and the
+worker takes only what its own mind owns or what no mind claims. One form, two readers.
+
+**Invariant.** One authority per physical capacity; admission is atomic over the vector or refused;
+a lane admits one live unit and intersecting writes serialize across lanes; an uncertain outcome
+keeps its reservation until termination is proved or a fence is written; no unit ever waits on a
+barrier, only on its own needs and its own resources.
+
+**Red tests.** `jobs-admission-is-atomic-no-partial-grant`;
+`jobs-a-nested-grant-draws-from-its-parent`; `jobs-double-reservation-is-a-refusal-not-a-wait`;
+`jobs-a-download-asks-for-network-and-no-cpu`; `jobs-one-live-unit-per-lane`;
+`jobs-unrelated-lanes-scatter`; `jobs-intersecting-writes-serialize-across-lanes`;
+`jobs-uncertain-keeps-its-resources`;
+`jobs-an-uncertain-attempt-is-never-re-granted-on-expiry`;
+`jobs-a-ready-unit-goes-with-no-global-barrier`; `jobs-done-when-is-a-report-not-a-gate`;
+`jobs-retained-warm-state-is-not-charged-as-active`;
+`jobs-a-collection-binds-its-members-at-harvest`;
+`jobs-a-tool-key-move-invalidates-the-unit`;
+`jobs-a-unit-refuses-on-a-tool-below-its-version`;
+`jobs-a-unit-without-acceptance-is-refused-at-load`;
+`work-ask-reads-the-same-set-as-the-pull-worker`.
+
+### What the kernel slice implements (internal/jobs, 2026-09-18)
+
+`internal/jobs.Admission` is the authority: a `Grant` over a resource vector, a `Release`
+and a `Snapshot` for the status line. It is deterministic, in-memory and single-writer --
+one goroutine owns the state, like redis -- and it holds no condition variable, no queue
+of waiters and no timeout, because A9 says a request is granted NOW or refused NOW, and a
+waiter inside admission would BE the barrier A9 removes. Only `Release` frees a
+reservation: no clock does, because an expiry is unknown until termination is proved.
+`internal/worklang`'s `Unit.Request` is the one place a unit's form becomes a request, so
+`nova-work set check --ready`, the pull worker and the kernel cannot drift apart.
+
+Green here, each named as this section names it: `jobs-admission-is-atomic-no-partial-grant`,
+`jobs-a-nested-grant-draws-from-its-parent`, `jobs-intersecting-writes-serialize-across-lanes`,
+`jobs-a-ready-unit-goes-with-no-global-barrier`, `jobs-double-reservation-is-a-refusal-not-a-wait`,
+`jobs-one-live-unit-per-lane`, `jobs-unrelated-lanes-scatter`,
+`jobs-a-download-asks-for-network-and-no-cpu`. The rest of the list above -- the lease,
+the uncertain reservation, the tool key, the collection harvest, acceptance at load and
+the executor seam -- are still red and still unimplemented.
+
+The pinned reading is the real set of 2026-09-18 (20 units, `work/pitstop-2026-09-18-units.lisp`,
+copied verbatim into `internal/worklang/testdata`): 11 units have their needs closed and
+8 of those may go, the other 3 held by A6 on the merge, pulse and ci lanes. On that file
+the lane rule dominates and the writes intersection never fires among ready units,
+because every pair that shares a path also shares a lane -- which is a reading about the
+set, not about the rule: `certify:verb` and `certify:launchd` share
+`fleet/launchd/com.rowan.fleet-certify.plist` and serialize on it with their lanes forced
+apart.
+
+### The executor seam
+
+An assignment may name an external execution engine for its validation graph: the engine owns action
+dependencies, artifact validity and supervision *inside* the sub-budget one allocator granted it, and
+its results arrive as evidence bound to the unit's revision and its `:acceptance` criteria. The
+boundary carries two things in both directions — a grant (drawn from the parent's reservation,
+returned on release) and an outcome (with its termination proof, or `uncertain`). Neither side may
+assume a disconnected process stopped. Reuse over invention applies: we do not grow our own build
+graph engine, and the seam stays a proposal until an engine on the other side of it has incremental
+records and runs on the platforms the fleet uses (ideas #783).
+
+**Red tests.** `jobs-an-executor-draws-its-budget-from-the-parent-grant`;
+`jobs-an-executor-result-binds-to-the-units-revision`;
+`jobs-a-disconnected-executor-is-uncertain-not-stopped`.
+
 ## Migration: push launcher to pull worker, in three steps
 
 Each step shadows the last, so the old launcher can be restored until the numbers move, and each
@@ -184,3 +328,52 @@ number is read from `usage.tsv` and the queue — never from a report body.
    **minutes per card**, **tokens per landed card** — against step 2, and keep the pull only
    where the three move together; a lane that raises cards per hour while lowering landed quality
    is a regression and the measurement says so.
+
+## Tests this spec demands
+
+The spec names its red tests explicitly, one per behaviour, so the enumeration below is the spec's own (44 lines). The present ones run against temp dirs (`t.TempDir`), fake clocks, fake runners and fake forges; the ci events tests run against miniredis plus a fake forge; the jobs admission tests are in-memory and deterministic. Nothing reaches a network or a real secret, and each test is written to be seen red before green.
+
+1. `TestLaunchReadsTheReadySetNotTheQueue` — launch reads the ready set and nothing else; a card whose need is an open PR is never on a slot.
+2. `TestANeedsCycleRefusesAtSeed` — a `:deps` cycle is refused at seed (validator rule 3), so the graph can never deadlock.
+3. `TestTwoWorkersCannotTakeOneCard` — the rename is the ownership record; two workers racing one card cannot both take it, exactly one wins.
+4. `TestAStealNeverStarvesTheVictim` — a steal leaves the victim at or above its own capacity line; a victim at the line is left alone.
+5. `TestSlotExpiredDeadPidReaped` — an expired lease with a dead pid is reaped by the next take and the slot is freed.
+6. `a-launch-without-a-lease-is-refused-by-the-puller` — no launch without a lease (rule 2 of **Bench slot leases**).
+7. `TestPullPrefersTheBenchThatHoldsTheRepo` — pull prefers the bench that already holds the card's repo in a kept worktree, else fetches from the mirror.
+8. `TestAClipResetsTheWorktreeToBase` — clip commits the card's branch, harvests its result, and resets the worktree to base.
+9. `TestRedLaneDrainsBeforeGreen` — pull drains red, then green, then small, then next; source order inside a lane.
+10. `TestAScorerRefusalKeepsSourceOrder` — a tie the rule cannot break is asked of a typed score behind the 0.9 floor; a refusal keeps source order.
+11. `TestABatchClipsBetweenCards` — a batch clips between cards, so card n+1 never sees card n's uncommitted diff and each card keeps its own RESULT.md.
+12. `TestACardOverEffortReturnsTheRemainder` — a card past its `:effort` stops the batch and the remainder returns to `queue/`.
+13. `TestPullNeverExceedsTheCapacityLine` — pulls never exceed the capacity line; a full bench admits nothing.
+14. `TestAnIdleSlotAsksOnAnEventNotAPoll` — an idle slot asks the coordinator for work on an event, never by polling its empty queue.
+15. `TestWatchReturnsOncePerChange` — a watch returns once per change, one line per event, and does not replay on quiet polls.
+16. `TestQuietTimeMakesNoModelCall` — quiet time makes no model call and no subprocess poll.
+17. `TestProducerPublishesCardDoneFromTheStream` — the producer republishes each `cards:done` stream entry as `card-done`.
+18. `TestProducerPublishesPRChecksDoneOnlyOnChange` — the producer publishes `pr-checks-done` only on change.
+19. `TestProducerPublishesDevMovedOnlyOnChange` — the producer publishes `dev-moved {sha}` only on change.
+20. `TestReactorEnqueuesGreenPR` — the reactor enqueues a PR once on a successful `pr-checks-done`.
+21. `TestReactorSkipsTheQueuesSkipSet` — the reactor skips the `enqueue:skip` set.
+22. `TestReactorHoldsOnTheLanesHold` — the reactor holds on the `enqueue:hold` key.
+23. `TestReactorPublishesRebaseWantedForDirtyPRs` — on `dev-moved` the reactor publishes `rebase-wanted` for each PR the move made DIRTY.
+24. `TestReactorCardDonePublishesNothing` — on `card-done` the reactor publishes nothing.
+25. `TestJobsAdmission/jobs-admission-is-atomic-no-partial-grant` — admission takes the whole vector or none of it, never a partial grant.
+26. `TestJobsAdmission/jobs-a-nested-grant-draws-from-its-parent` — a nested grant draws from its parent's reservation, not from the machine.
+27. `TestJobsAdmission/jobs-double-reservation-is-a-refusal-not-a-wait` — a second reservation for one capacity is a refusal, not a wait.
+28. `TestJobsAdmission/jobs-a-download-asks-for-network-and-no-cpu` — a download asks for network and no cpu, which a slot count cannot see.
+29. `TestJobsAdmission/jobs-one-live-unit-per-lane` — a lane admits one live unit at a time.
+30. `TestJobsAdmission/jobs-unrelated-lanes-scatter` — unrelated lanes scatter and gather.
+31. `TestJobsAdmission/jobs-intersecting-writes-serialize-across-lanes` — two units whose `:writes` intersect serialize even when their lanes differ.
+32. `jobs-uncertain-keeps-its-resources` — an `uncertain` unit keeps its reservation until termination is proved or a fence is written.
+33. `jobs-an-uncertain-attempt-is-never-re-granted-on-expiry` — a lease past expiry with a live/uncertain outcome is never re-granted.
+34. `TestJobsAdmission/jobs-a-ready-unit-goes-with-no-global-barrier` — a ready unit goes with no phase, wave or round; a refusal ahead of it does not hold it.
+35. `jobs-done-when-is-a-report-not-a-gate` — a work set's `:done-when` is a report of its finish line, never a gate on its members.
+36. `jobs-retained-warm-state-is-not-charged-as-active` — retained warm state is accounted apart from active resources, never charged as running capacity.
+37. `jobs-a-collection-binds-its-members-at-harvest` — a `:collects` collection is named before the run and its members bound to the unit's revision at harvest.
+38. `jobs-a-tool-key-move-invalidates-the-unit` — a tool's semantic key moving invalidates the unit's outputs.
+39. `jobs-a-unit-refuses-on-a-tool-below-its-version` — a unit refuses on a tool below its version.
+40. `jobs-a-unit-without-acceptance-is-refused-at-load` — a unit without `:acceptance` is refused at load.
+41. `work-ask-reads-the-same-set-as-the-pull-worker` — `nova-work ask` and the pull worker read the one `:owner` form.
+42. `jobs-an-executor-draws-its-budget-from-the-parent-grant` — an external executor draws its sub-budget from the parent's grant.
+43. `jobs-an-executor-result-binds-to-the-units-revision` — an executor's result arrives bound to the unit's revision and `:acceptance`.
+44. `jobs-a-disconnected-executor-is-uncertain-not-stopped` — a disconnected executor is `uncertain`, never assumed stopped.

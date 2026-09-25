@@ -195,3 +195,94 @@
                  "the cost is the measured spend of the one call that event caused")
     (check-equal '(:clip :beat :projection) (pulse-result-published busy)
                  "publication is still mechanical")))
+
+;;; ------------------------------------------------------------------
+;;; rule 18 reads the LATEST closed-index row     SPEC-WORK.md:1630
+;;; ------------------------------------------------------------------
+;;;
+;;; The replay above proves the COUNTS after a revive. It never asks the rule
+;;; 18 predicate itself, which is what let `cow-load-findings` read *any* row
+;;; naming an id instead of that id's latest one. :1630 is the sentence:
+;;; "the finding is an id whose *latest* state puts it in both branches, never
+;;; the history of an id that has honestly moved and kept its record (replay
+;;; `revive-appends-and-counts-latest`)".
+
+(deftest "rule-18-finds-the-latest-row-not-the-history" "docs/SPEC-WORK.md:1630"
+    "expected=seed-no-finding;settled-id-no-finding;settled-then-revived-id-no-finding;LOAD-OK;a-row-over-a-still-open-node-is-found-and-refused"
+  (let* ((k (fresh))
+         (id "acme/work/f1/t1"))
+    (ok (null (cow-load-findings (kernel-state k))) "the seed has no finding")
+    (ok (cow-partition-holds-p (kernel-state k)) "the seed partitions O and C")
+    (ok (submit k (close-request :request "req-1")) "close refused")
+    (check-equal :c (node-branch (kernel-state k) id) "the id is in C")
+    (ok (null (cow-load-findings (kernel-state k)))
+        "an id in C with its settle row is no finding")
+    (ok (submit k (reopen-request :request "req-2")) "reopen refused")
+    (check-equal :o (node-branch (kernel-state k) id) "the id is open again")
+    ;; C is append-only: the settle row is still there beside the revive.
+    (check-equal 2 (length (state-closed-rows (kernel-state k)))
+                 "the settle row survives the revive")
+    (check-equal :revive (getf (first (wstate-rows (kernel-state k))) :kind)
+                 "and the id's latest row is the revive")
+    (ok (null (cow-load-findings (kernel-state k)))
+        "an id that settled and was honestly revived is no rule 18 finding")
+    (ok (cow-partition-holds-p (kernel-state k))
+        "the partition still holds after the revive")
+    (multiple-value-bind (admitted line code) (cow-candidate-gate (kernel-state k))
+      (ok admitted "the candidate gate admits a revived id")
+      (check-string= "LOAD OK" line "and says so")
+      (check-equal 0 code "at exit 0")))
+  ;; The finding rule 18 is actually for: a closed-index row that settles an id
+  ;; whose node still reads :o, with nothing over it (SPEC-WORK.md:5496).
+  (let* ((k (fresh))
+         (id "acme/work/f1/t2")
+         (state (hand-write-closed-row (kernel-state k) id 7)))
+    (check-equal :o (node-branch state id) "the node still reads :o")
+    (check-equal (list id) (cow-load-findings state) "the double membership is found")
+    (ok (not (cow-partition-holds-p state)) "the partition does not hold")
+    (multiple-value-bind (admitted line code) (cow-candidate-gate state)
+      (ok (not admitted) "the candidate gate refuses it")
+      (check-equal 1 code "at exit 1")
+      (ok (search "rule 18" line) "and the line names rule 18")
+      (ok (search id line) "and the id in both branches"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE11F05NoReceiptOfReceiptA        E11-F05-03  SPEC-WORK.md:4650
+;;; ------------------------------------------------------------------
+;;;
+;;; The criterion: a worker returns one structured result; a receipt of a
+;;; receipt is refused as a duplicate. One reply id names one receipt, so the
+;;; second admission of the same reply over the same bytes is a receipt of a
+;;; receipt and is refused as a duplicate rather than writing a second row.
+
+(deftest "TestE11F05NoReceiptOfReceiptA" "docs/SPEC-WORK.md:4650"
+    "expected=worker-returns-one-structured-result;receipt-of-a-receipt-refused-as-a-duplicate"
+  (let* ((body "receipt for o-1 accepted by glenn")
+         (digest (sha256-hex body))
+         (path (write-provenance-file (test-provenance-path "no-rr") body))
+         (pointer (format nil "file:~A" path))
+         (k (receipt-kernel)))
+    (configure-verifier k :recipient "glenn"
+                        :command (operator-verifier-command "glenn" "receipt-1"))
+    ;; The worker's one structured result is admitted as one receipt.
+    (let ((staged (stage-receipt k :provenance pointer :recipient "glenn")))
+      (ok (staged-input-valid-p staged) "the worker's result stages")
+      (multiple-value-bind (okp line code)
+          (submit k (ack-request :provenance pointer :provenance-sha256 digest
+                                 :staged staged :reply "receipt-1"
+                                 :request "ack-no-rr-1"))
+        (ok okp "the one structured result is admitted: ~A" line)
+        (check-equal 0 code "the admission exits 0")))
+    ;; A receipt OF that receipt -- the same reply id over the same bytes -- is
+    ;; refused as a duplicate and writes nothing (SPEC-WORK.md:4650).
+    (let ((staged (stage-receipt k :provenance pointer :recipient "glenn")))
+      (multiple-value-bind (okp line code)
+          (submit k (ack-request :provenance pointer :provenance-sha256 digest
+                                 :staged staged :reply "receipt-1"
+                                 :request "ack-no-rr-2"))
+        (check-equal nil okp "a receipt of a receipt was admitted, not refused")
+        (check-equal 1 code "the duplicate refusal is exit 1")
+        (ok (search "duplicate" line)
+            "the refusal does not name it as a duplicate: ~A" line)))
+    (check-equal 1 (length (admitted-receipts (kernel-state k)))
+                 "a receipt of a receipt wrote a second receipt")))

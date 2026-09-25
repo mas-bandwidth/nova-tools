@@ -1,0 +1,15 @@
+# The `gh pr merge` and `--auto` spellings this repository still permits, one per line as
+# <path>:<func>, each with the reason a reader can check.
+#
+# Glenn, 2026-09-18: nothing reaches the dev merge queue but a batch. `gh pr merge --auto`
+# is not an enqueue -- it is a standing instruction the forge executes later, with nobody in
+# the room -- and four pull requests landed on dev that way that morning, from calls made
+# while they were still red. Admission to a merge queue is internal/merge.Enqueuer.Enqueue
+# and nothing else.
+#
+# THE LIST ONLY SHRINKS. TestNoGhPrMergeSpellingInTheToolsGo checks it in both directions:
+# an unlisted call is red, and an entry whose call has left is red too.
+
+internal/merge/gitops.go:guard  # the mutation guard NAMES --auto in order to refuse it; this is the refusal, not a call
+internal/merge/audit.go:disableAutoMergeArgs  # the one spelling that unmerges: `gh pr merge <n> -R <repo> --disable-auto` takes an auto-merge OFF, and the audit is the sweep that removed 27 of them
+internal/secrets/seal.go:RunSeal  # the SECRETS STORE's own pull request, squash-merged in a repository that has no merge queue and no batches; it lands a sealed secret, never a change to this tree

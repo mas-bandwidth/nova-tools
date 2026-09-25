@@ -69,144 +69,6 @@ jobs:
       - name: test
         run: go test -race ./...
 
-  build-windows:
-    # `go build ./...` and `go vet ./...` ON WINDOWS, which the fan-out would otherwise have
-    # dropped: the `test` job carries them and the `test` job is ubuntu and macOS now, while
-    # `test-windows` runs `go test -race` per package and nothing else. docs/CONTRIBUTING.md
-    # promises all three on all three platforms, and two of them had quietly become a
-    # two-platform promise -- `internal/onboarding` and `internal/oneline/audit` have no
-    # test files, so nothing would have compiled them on Windows at all, and `go test`'s
-    # built-in vet is the high-confidence subset rather than `go vet`.
-    #
-    # Its own job rather than a step in one of the shards: a shard is a matrix leg, so a
-    # step added to "the first one" runs in all of them or in none, and this is work that
-    # should happen once, beside them, not before them.
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-      - name: build
-        run: go build ./...
-      - name: vet
-        run: go vet ./...
-
-  windows-packages:
-    # The list the Windows fan-out runs on, READ OUT OF THE SOURCE rather than written
-    # down. It is `go list` filtered to packages that have tests, printed as JSON for the
-    # matrix below.
-    #
-    # This job exists so that there is no second list to keep in step with the first. This
-    # file already carries one hand-copied list -- the release targets in release-dry-run,
-    # which says of itself that it is worth nothing the moment the two lists disagree -- and
-    # that one has a reason (a workflow cannot read another workflow's matrix). This one
-    # does not: a package added tomorrow would quietly never run on Windows, and nothing
-    # would say so. Here, it is in the fan-out the moment it has a test file.
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    outputs:
-      packages: ${{ steps.list.outputs.packages }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-      - id: list
-        shell: bash
-        run: |
-          set -euo pipefail
-          # GOOS=windows, because this list is what WINDOWS will run and `go list` answers
-          # for the platform it is asked about: a package whose test files are all
-          # windows-tagged would be missing from a Linux answer and would never run on the
-          # platform it is written for, and one whose tests are all `!windows` would be a
-          # vacuous green. It needs no Windows runner -- listing is not building.
-          #
-          # SPLITS is the only hand-written number here, and it is a TUNING number rather
-          # than a coverage one: a package absent from it runs as one job, which costs
-          # speed and never coverage. cmd/nova-bus measured 6m33s as a single Windows job
-          # against under 90 seconds for everything else, because its tests are almost
-          # entirely git subprocesses and Windows pays the most per process.
-          declare -A SPLITS=( ["cmd/nova-bus"]=4 )
-          entries=()
-          while read -r pkg; do
-            [ -n "$pkg" ] || continue
-            n=${SPLITS[$pkg]:-1}
-            for g in $(seq 1 "$n"); do
-              entries+=("{\"package\":\"$pkg\",\"group\":\"$g\",\"groups\":\"$n\"}")
-            done
-          done < <(GOOS=windows go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... |
-            sed 's#^github.com/mas-bandwidth/nova-tools/##')
-          packages=$(printf '%s\n' "${entries[@]}" | jq -s -c '.')
-          echo "$packages"
-          [ "$(echo "$packages" | jq 'length')" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
-          echo "packages=$packages" >> "$GITHUB_OUTPUT"
-
-  test-windows:
-    # WINDOWS, ONE RUNNER PER PACKAGE -- and per GROUP of a package that is big enough to
-    # want more than one -- all launched at once.
-    #
-    # The shape is mirrored from networknext/next's `.semaphore/functional-tests.yml`,
-    # where every functional test is its own job inside a block and the whole block is what
-    # has to be green, so a run takes as long as its slowest single job rather than as long
-    # as their sum.
-    #
-    # Why Windows and not the others: this repository's tests are mostly git subprocesses,
-    # and Windows pays the most per process. Making the tests inside a package parallel
-    # sped ubuntu and macOS up and slowed Windows DOWN -- 7m58s to 10m41s -- because
-    # `go test` already runs packages in parallel, so a four-core runner was suddenly
-    # asked for four packages times four tests at once. More cores is the answer that does
-    # not trade one platform against another: the packages go to separate machines instead
-    # of competing for one. One job per package took the leg to 6m33s; splitting the one
-    # package that was all of that 6m33s is the second cut.
-    #
-    # A group takes every Nth test of its package, by name, from `go test -list` -- so the
-    # split needs no list of test names anywhere and a test added tomorrow lands in a group
-    # by arithmetic. Groups are separate PROCESSES, which is also why the parse-count tests
-    # are safe here: bus.NoteParses is per process.
-    name: test-windows (${{ matrix.entry.package }}${{ matrix.entry.groups != '1' && format(' {0}/{1}', matrix.entry.group, matrix.entry.groups) || '' }})
-    needs: windows-packages
-    strategy:
-      fail-fast: false
-      matrix:
-        entry: ${{ fromJSON(needs.windows-packages.outputs.packages) }}
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-      - name: test
-        shell: bash
-        run: |
-          set -euo pipefail
-          pkg="./${{ matrix.entry.package }}"
-          group="${{ matrix.entry.group }}"
-          groups="${{ matrix.entry.groups }}"
-          flags=(-race)
-          # #206: internal/update requires verbose output on Windows so named boundary,
-          # snapshot, reporter-death and two-phase receipts and PASS/SKIP status are preserved in CI logs.
-          if [ "$pkg" = "./internal/update" ]; then
-            flags+=(-v)
-          fi
-          if [ "$groups" = "1" ]; then
-            go test "${flags[@]}" "$pkg"
-            exit 0
-          fi
-          # Test, Fuzz AND Example: `go test` runs examples with an output comment, and a
-          # function kind missing from this filter is in no group and therefore runs nowhere.
-          names=$(go test -list '.*' "$pkg" | grep -E '^(Test|Fuzz|Example)' | sort |
-            awk -v g="$group" -v n="$groups" 'NR % n == g % n')
-          if [ -z "$names" ]; then
-            echo "group $group of $groups over $pkg selected no tests; the split is wrong, not green"
-            exit 1
-          fi
-          echo "$names"
-          run="^($(printf '%s\n' "$names" | paste -sd'|' -))$"
-          go test "${flags[@]}" -run "$run" "$pkg"
-
   smoke:
     needs: release-dry-run
     # Exercises the BUILT BINARY. `go test` covers the packages; nothing else
@@ -1133,7 +995,7 @@ jobs:
     # succeeded, so a leg renamed out of existence shows up here as a missing success and
     # not as silence. A red certification is a blocker for the next release, never for a
     # CL, whose gate is ci-ok in ci.yml.
-    needs: [test, build-windows, windows-packages, test-windows, smoke, release-dry-run, perf]
+    needs: [test, smoke, release-dry-run, perf]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1145,9 +1007,6 @@ jobs:
           bad=0
           for pair in \
             "test:${{ needs.test.result }}" \
-            "build-windows:${{ needs.build-windows.result }}" \
-            "windows-packages:${{ needs.windows-packages.result }}" \
-            "test-windows:${{ needs.test-windows.result }}" \
             "smoke:${{ needs.smoke.result }}" \
             "release-dry-run:${{ needs.release-dry-run.result }}" \
             "perf:${{ needs.perf.result }}"

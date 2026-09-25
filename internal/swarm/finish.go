@@ -266,6 +266,18 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		return fmt.Sprintf("RUN PROVIDER id=%s slot=%d after=%s attempts=%d dest=failed provider=%s requeued=%t: %s",
 			oneline.Field(sc.ID), r.slot, after, sc.Requeued+1, oneline.Field(dashOr(providerRef)), requeued,
 			oneline.Escape(oneline.Cap(HarnessTail(r.jobDir), oneline.TailBytes))), EndProvider, dest
+	case end == EndWall:
+		// THE WALL LINE IS THE REPORT (issue #918): `WALL task=<id> path=<p>` and the
+		// commits it kept. The supervisor wrote it onto the evidence; a recovered job
+		// whose supervisor died is rebuilt here from the same classifier.
+		report := rec.Reason
+		if strings.TrimSpace(report) == "" {
+			report, _ = WallDeath(r.jobDir, sc.ID)
+		}
+		if strings.TrimSpace(report) == "" {
+			report = "WALL task=" + oneline.Field(sc.ID) + " path=" + Dash
+		}
+		return report, EndWall, dest
 	case report.Class == ClassMalformed:
 		return fmt.Sprintf("RUN MALFORMED id=%s slot=%d line=%d dest=failed",
 			oneline.Field(sc.ID), r.slot, report.MalformedLine), EndFailed, dest
@@ -362,7 +374,7 @@ func survivorsSeen(aliveBefore, survivedTheReap bool) int {
 func destinationFor(end, class string, rc int) string {
 	switch {
 	case end == EndViolation, end == EndKilled, end == EndUnverifiable, end == EndUnknown, end == EndFailed,
-		end == EndInputLimit, end == EndProvider:
+		end == EndInputLimit, end == EndProvider, end == EndWall:
 		return Failed
 	case class == ClassMalformed, class == ClassPlanOnly, class == ClassNoResult:
 		return Failed
@@ -375,7 +387,15 @@ func destinationFor(end, class string, rc int) string {
 // settle is finalize in rule 12's order: the usage file, then the report copy or its marker,
 // and only then anything else.
 func (in RunInput) settle(sc Sidecar, jobDir string, rec ExitRecord, end string, now time.Time) (Finalized, string) {
-	usage, _ := ReadProviderUsage(in.Worker.Usage, in.Worker.DataHome(sc.Slot, sc.ID))
+	// THE FINAL READ SPEAKS WHEN IT FAILS. It used to discard the error and write a row of
+	// dashes: a bench without sqlite3, or a store that stopped answering, produced a
+	// completed job whose token row said nothing and whose run said nothing either. The
+	// refusal names the class on one line, so a dash is a fact with a reason and never a
+	// silence (rule 13).
+	usage, usageErr := ReadProviderUsage(in.Worker.Usage, in.Worker.DataHome(sc.Slot, sc.ID))
+	if usageErr != nil {
+		fmt.Fprintln(in.Stderr, UsageRefusalLine(sc.ID, usageErr))
+	}
 	fin, err := in.Pool.Finalize(Ending{
 		Sidecar: sc, JobDir: jobDir, Provider: in.Worker.Provider, Model: in.Worker.Model,
 		End: end, RC: rec.RC, Started: parseStamp(sc.Started, time.Time{}), Ended: now, Usage: usage,
