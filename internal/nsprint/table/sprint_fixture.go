@@ -11,9 +11,10 @@ import (
 // friends, every stamp relative to SprintFixtureNow so the golden holds at
 // that instant. It exercises every rule the render applies: two all-zero
 // streams hidden, ready counted as waiting, landed moves in and out of the
-// ETA's hour, a bench outside the benches SET (studio) not shown, a fresh
-// dealer count winning, a friend with a down flag, a friend whose beat is
-// stale, a friend with no row, and a done base from a clear.
+// ETA's hour, a bench outside the benches SET (studio) not shown, a friend with a down flag, a friend whose beat is
+// stale, a friend with no row, and a done base from a clear. Host rows are
+// each bench's own keys (#2389): its card views and its beat; the bash
+// bench-row hash beside them disagrees on every cell and is never read.
 
 //go:embed testdata/sprint-table-3530.golden
 var golden3530 string
@@ -77,35 +78,70 @@ func SprintFixture() [][]string {
 		cmds = append(cmds, []string{"XADD", "ws:log", ms(-e.ago) + "-0", "id", e.id, "from", "working", "to", e.to, "by", "fixture", "at", ms(-e.ago)})
 	}
 	cmds = append(cmds, []string{"SET", "s:fix:pitstop", "fixture"})
-	// Benches: six in the SET; studio has a fresh row but is not in it.
+	// Benches: six in the SET; studio has a fresh beat and cards but is not
+	// in it. Each bench's ready and working are its card views, its load its
+	// beat; the bash hash bench:<b> says 9/9/9.99 and must not show.
 	for _, b := range []struct {
-		name, queue, working, load string
+		name           string
+		ready, working int
+		load           string
 	}{
-		{"batman", "0", "0", "0.89"},
-		{"hetzner", "2", "3", "0.19"},
-		{"hulk", "0", "0", "0.40"},
-		{"space", "1", "4", "1.04"},
-		{"superman", "0", "1", "1.02"},
-		{"vision", "0", "0", "0.72"},
+		{"batman", 0, 0, "0.89"},
+		{"hetzner", 2, 3, "0.19"},
+		{"hulk", 7, 0, "0.40"},
+		{"space", 1, 4, "1.04"},
+		{"superman", 0, 1, "1.02"},
+		{"vision", 0, 0, "0.72"},
+		{"studio", 9, 9, "3.00"},
 	} {
-		cmds = append(cmds, []string{"SADD", "benches", b.name})
-		cmds = append(cmds, []string{"HSET", "bench:" + b.name, "host", b.name, "queue", b.queue, "working", b.working, "done", "9", "ok", "2", "fail", "7", "load1", b.load, "at", at(-1 * time.Second)})
+		if b.name != "studio" {
+			cmds = append(cmds, []string{"SADD", "benches", b.name})
+		}
+		cmds = append(cmds, []string{"HSET", "bench:" + b.name + ":beat", "host", b.name, "load1", b.load, "live", strconv.Itoa(b.working), "at", ms(-1 * time.Second)})
+		cmds = append(cmds, []string{"HSET", "bench:" + b.name, "host", b.name, "queue", "9", "working", "9", "load1", "9.99", "at", at(-1 * time.Second)})
+		for k := 0; k < b.ready; k++ {
+			cmds = append(cmds, []string{"ZADD", "bench:" + b.name + ":cards:ready", strconv.Itoa(k + 1), fmt.Sprintf("card:%s-r%d", b.name, k)})
+		}
+		for k := 0; k < b.working; k++ {
+			cmds = append(cmds, []string{"ZADD", "bench:" + b.name + ":cards:working", strconv.Itoa(k + 1), fmt.Sprintf("card:%s-w%d", b.name, k)})
+		}
 	}
-	cmds = append(cmds,
-		[]string{"HSET", "bench:hulk", "dealer_queue", "7", "dealer_at", at(-2 * time.Second)}, // a fresh dealer count wins: 7
-		[]string{"HSET", "bench:studio", "host", "studio", "queue", "9", "working", "9", "load1", "3.00", "at", at(-1 * time.Second)},
-	)
 	// Friends: rowan up (done 14, 10 at the last clear), johnny down flag,
 	// emma up, stella's beat 30 s old; the friends SET also names ghost,
 	// who has no row.
+	// The counts are the friend's card sets (friend:<f>:cards:<where>); the
+	// hash holds only the beat (at, up).
 	cmds = append(cmds,
 		[]string{"SADD", "friends", "rowan", "johnny", "emma", "stella", "ghost"},
-		[]string{"HSET", "friend:rowan", "at", at(-1 * time.Second), "up", "1", "ready", "0", "working", "12", "done", "14"},
-		[]string{"HSET", "friend:johnny", "at", at(-1 * time.Second), "up", "1", "ready", "2", "working", "0", "done", "3"},
+		[]string{"HSET", "friend:rowan", "at", at(-1 * time.Second), "up", "1"},
+		[]string{"HSET", "friend:johnny", "at", at(-1 * time.Second), "up", "1"},
 		[]string{"SET", "friend:johnny:down", "out-of-credits@2026-09-24T23:00Z"},
-		[]string{"HSET", "friend:emma", "at", at(-2 * time.Second), "up", "1", "ready", "1", "working", "4", "done", "0"},
-		[]string{"HSET", "friend:stella", "at", at(-30 * time.Second), "up", "1", "ready", "0", "working", "1", "done", "5"},
+		[]string{"HSET", "friend:emma", "at", at(-2 * time.Second), "up", "1"},
+		[]string{"HSET", "friend:stella", "at", at(-30 * time.Second), "up", "1"},
 		[]string{"HSET", DoneBaseKey, "rowan", "10"},
 	)
+	for _, f := range []struct {
+		name   string
+		counts [3]int
+	}{
+		{"rowan", [3]int{0, 12, 14}},
+		{"johnny", [3]int{2, 0, 3}},
+		{"emma", [3]int{1, 4, 0}},
+		{"stella", [3]int{0, 1, 5}},
+	} {
+		cmds = append(cmds, FriendCards(f.name, f.counts)...)
+	}
+	return cmds
+}
+
+// FriendCards is n[i] task ids in friend:<name>:cards:<FriendWheres[i]>, as
+// ZADD commands scored by age.
+func FriendCards(name string, n [3]int) [][]string {
+	var cmds [][]string
+	for i, w := range FriendWheres {
+		for k := 0; k < n[i]; k++ {
+			cmds = append(cmds, []string{"ZADD", FriendCardsKey(name, w), strconv.Itoa(k + 1), fmt.Sprintf("%s-%s-%d", name, w, k)})
+		}
+	}
 	return cmds
 }

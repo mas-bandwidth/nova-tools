@@ -13,12 +13,16 @@
 // thing dropped under load (Glenn, 2026-09-22: "As long as this can be done
 // with zero tokens, that's fine. It's a heartbeat for a timeout.").
 //
-// friend:<name> is one hash with more than one writer: the sprint table's
-// friend-row loop writes its counts (at, up, ready, working, done, ...) into
-// the same hash with no TTL. So presence is not the key's existence but its
-// TTL: a friend is up only while friend:<name> carries a live expiry, which
-// only a beat gives it (#2673, #3144). A row with no TTL is a table row, not a
-// friend who is here, and a beat that stops lets the whole hash lapse.
+// friend:<name> has one schema and one writer (#3447). On the fleet store it
+// is the friend row: a HASH with no TTL (at, up, ready, working, width, done,
+// slots) that the per-friend row loop rewrites every second, and that row is
+// the presence: its up field says up or down and its at dates the reading. A
+// row whose at is older than RowStale is a silent row loop, read as down. The
+// beat never writes into the row (#3447: a write into it was a second writer,
+// and a TTL on it made the whole row lapse): where the row exists, or the key
+// is any type but a string or the beat's own hash, beat refuses and names the
+// type. Where no row loop runs (a test store, a bench with no row loop) the
+// beat's own TTL'd hash is the presence instead, up while its TTL runs (#2673).
 //
 // The second key, `friend:<name>:last`, carries no TTL and exists for one
 // reason: an absent beat says a friend is down but not since when, and a
@@ -60,7 +64,30 @@ const (
 	FieldAt     = "at"
 	FieldWidth  = "width"
 	FieldWindow = "window"
+	// FieldUp is the friend row's own field, 1 or 0, written only by the
+	// row loop. The beat never writes it, so a hash carrying it is the row.
+	FieldUp = "up"
 )
+
+// RowStale is how old the friend row's at may be before the row is read as a
+// silent loop and the friend as down: the sprint table's own rule for the same
+// row (internal/nsprint/table, RowStale 10s), so the line and the table agree.
+const RowStale = 10 * time.Second
+
+// KeyTypeError is beat's refusal: friend:<name> exists and is not the beat's
+// to write. Row is true when it is the friend row (a hash with the up field),
+// whose one writer is the row loop. The beat wrote nothing.
+type KeyTypeError struct {
+	Key, Type string
+	Row       bool
+}
+
+func (e *KeyTypeError) Error() string {
+	if e.Row {
+		return fmt.Sprintf("%s is a hash holding the friend row (field up, no TTL), whose one writer is the row loop; beat never writes into it (#3447)", e.Key)
+	}
+	return fmt.Sprintf("%s is a %s, not a beat; beat never overwrites a key of another type (#3447)", e.Key, e.Type)
+}
 
 // DefaultEvery and DefaultTTL are the cadence and the timeout of #2610: beat
 // every 30s, lapse after 90s. The TTL is three beats rather than two so one
@@ -103,10 +130,13 @@ func Normalize(name string) string { return strings.ToLower(strings.TrimSpace(na
 // grant.
 type Store interface {
 	// WriteBeat is one heartbeat in one MULTI: HSET key fields... (field,
-	// value pairs), PEXPIRE key ttl, SET lastKey stamp with no expiry.
+	// value pairs), PEXPIRE key ttl, SET lastKey stamp with no expiry. When
+	// key is the friend row or any type but a string or the beat's own hash
+	// it writes nothing and answers a *KeyTypeError; a plain string (a beat
+	// older than #2673) is deleted in the same MULTI.
 	WriteBeat(ctx context.Context, key string, fields []string, ttl time.Duration, lastKey, stamp string) error
-	// ReadBeats is one pipeline over every key: HMGET key at width window,
-	// PTTL key, GET key+":last". An absent key or field answers "".
+	// ReadBeats is one pipeline over every key: HMGET key at width window
+	// up, PTTL key, GET key+":last". An absent key or field answers "".
 	ReadBeats(ctx context.Context, keys []string) ([]Reading, error)
 	// Members is SMEMBERS of one set: the friends registry.
 	Members(ctx context.Context, set string) ([]string, error)
@@ -116,6 +146,10 @@ type Store interface {
 // hash, whether the hash carries a live TTL, and the untimed memory.
 type Reading struct {
 	At, Width, Window string
+	// Up is the row's up field, and Row says the hash carries it: the
+	// hash is the friend row, not a beat.
+	Up  string
+	Row bool
 	// Live is PTTL > 0: the hash exists and a beat's expiry is running on
 	// it. A hash with no TTL (a table row) or no hash at all is not live.
 	Live bool
@@ -187,12 +221,13 @@ type Status struct {
 	Width  string
 }
 
-// Present reports whether this friend is here. It is true only while the
-// hash friend:<name> carried a live beat TTL at the read. A missing hash is
-// absent, so is one that has lapsed, and so is a table row with no TTL. The
-// untimed friend:<name>:last key dates a down; it is not presence. Nothing in
-// this package reads a hand-written override in place of the beat. The TTL is
-// the only evidence (#2675).
+// Present reports whether this friend is here: the friend row says up=1 with
+// an at inside RowStale, or, where there is no row, the beat's own hash
+// carried a live TTL at the read. A missing hash is absent, so is a lapsed
+// beat, a row that says up=0 and a row whose loop has gone silent. The untimed
+// friend:<name>:last key dates a down; it is not presence. Nothing in this
+// package reads a hand-written override in place of the row or the beat
+// (#2675, #3447).
 func (s Status) Present() bool { return s.State == Up }
 
 // Read returns one Status per name, in the order given, from one pipeline
@@ -219,6 +254,25 @@ func Read(ctx context.Context, st Store, names []string, now time.Time) ([]Statu
 		r := rs[i]
 		s := Status{Name: Normalize(n)}
 		switch {
+		case r.Row:
+			// The friend row: up and at decide it, never a TTL.
+			t, err := time.Parse(Stamp, r.At)
+			dated := err == nil
+			age := now.Sub(t)
+			switch {
+			case dated && r.Up == "1" && age <= RowStale:
+				s.State = Up
+				s.Width, s.Window = r.Width, r.Window
+				s.Last, s.Dated, s.Age = t, true, age
+			case dated && age > RowStale:
+				// The row loop is silent: down since its last write.
+				s.State = Away
+				s.Last, s.Dated, s.Age = t, true, age
+			default:
+				// A fresh row that says down, or an at this build
+				// cannot read: down, and not since when.
+				s.State = Away
+			}
 		case r.Live:
 			s.State = Up
 			s.Window, s.Width = r.Window, r.Width

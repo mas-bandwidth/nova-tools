@@ -135,17 +135,18 @@ func friendWidthName(tok string) string {
 
 // refusedWidthHandWrite is the one command exec refuses for a reason that is
 // another tool's law (nova-tools#2676): redis-cli writing
-// friend:<name>:width, the sprint table's working column. That column is the
-// friend's own tool's to write -- nova-wake beat --width (#2673), the
-// coordinator's from the number of its live child agents -- and the hand-write
-// of it reached the store only because the store held REDISCLI_AUTH. Reads of
-// the key still run: the table's working column reads exactly that key.
+// friend:<name>:width, the sprint table's working column. Since #3447 that
+// column is the friend row's working count, written by the row loop
+// (rowan-tools friend-row) from the friend's leased tasks; nova-wake beat
+// refuses the row, so the remedy is taking work through the queue, never a
+// beat and never a hand-write (nova-tools#3807). The hand-write reached the
+// store only because the store held REDISCLI_AUTH. Reads of the key still run.
 func refusedWidthHandWrite(cmdArgs []string) error {
 	base := filepath.Base(cmdArgs[0])
 	if base != "redis-cli" && base != "redis-cli.exe" {
 		return nil
 	}
-	writes, name, width := false, "", "<n>"
+	writes, name := false, ""
 	for i := 1; i < len(cmdArgs); i++ {
 		tok := cmdArgs[i]
 		if redisWidthWriteVerbs[strings.ToLower(tok)] {
@@ -153,27 +154,12 @@ func refusedWidthHandWrite(cmdArgs []string) error {
 		}
 		if n := friendWidthName(tok); n != "" {
 			name = n
-			if i+1 < len(cmdArgs) && allDigits(cmdArgs[i+1]) {
-				width = cmdArgs[i+1]
-			}
 		}
 	}
 	if !writes || name == "" {
 		return nil
 	}
-	return fmt.Errorf("redis-cli writing friend:%s:width is the sprint table's working column written by hand through nova-secrets exec; that key is the friend's own tool's to write, never a redis-cli line; run: nova-wake beat --width %s (nova-tools #2673)", name, width)
-}
-
-func allDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
+	return fmt.Errorf("redis-cli writing friend:%s:width is the sprint table's working column written by hand through nova-secrets exec; that count is the friend row's (friend:%s working), written only by the friend row loop (rowan-tools friend-row) from the friend's leased tasks, never a redis-cli line; take work through the queue: nova-sprint task take --as %s (nova-tools #3447)", name, name, name)
 }
 
 func main() {

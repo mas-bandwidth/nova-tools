@@ -93,6 +93,21 @@ func (e *SeatHeldError) Is(target error) bool { return target == ErrSeatHeld }
 // ErrUnregistered is a serve for a name not in the friends SET.
 var ErrUnregistered = errors.New("unregistered")
 
+// ErrLogin is a start whose login aliases ns_friend_hello refused.
+// LoginError carries the refusal words.
+var ErrLogin = errors.New("login refused")
+
+// LoginError is ns_friend_hello's refusal of the seat's --login aliases, in
+// its own words (LOGIN-TAKEN <alias> <friend>, LOGIN-IS-FRIEND <alias>,
+// NAME-IS-LOGIN <friend>, INVALID <alias>).
+type LoginError struct{ Friend, Words string }
+
+func (e *LoginError) Error() string {
+	return fmt.Sprintf("friend serve %s: login: %s", e.Friend, e.Words)
+}
+
+func (e *LoginError) Is(target error) bool { return target == ErrLogin }
+
 // ServeConfig is one seat.
 type ServeConfig struct {
 	Friend  string
@@ -115,6 +130,9 @@ type ServeConfig struct {
 	Env []string
 	// Out receives one line per event; nil discards.
 	Out io.Writer
+	// Logins are `--login` aliases (#3797): written to friends:login once on
+	// start through ns_friend_hello, the only writer of that hash.
+	Logins []string
 }
 
 // child is one dispatched task.
@@ -207,6 +225,53 @@ func (s *Server) Beat(ctx context.Context) error {
 		return fmt.Errorf("friend serve %s: %w: nova-sprint capacity friend", s.cfg.Friend, ErrUnregistered)
 	default:
 		return fmt.Errorf("friend serve %s: beat: %s", s.cfg.Friend, fmt.Sprint(reply[0]))
+	}
+}
+
+// Start is the seat's first step: beat (take the seat), then bind the
+// --login aliases through ns_friend_hello under the same session. A refused
+// login releases the seat, so a clashing alias never leaves a seat held.
+func (s *Server) Start(ctx context.Context) error {
+	if err := s.Beat(ctx); err != nil {
+		return err
+	}
+	if err := s.login(ctx); err != nil {
+		_ = s.Release(context.WithoutCancel(ctx))
+		return err
+	}
+	return nil
+}
+
+// login writes the seat's aliases to friends:login through ns_friend_hello
+// (#3092 rev 6), one call. The beat already holds friend:<f>:beat under this
+// session, so the hello is a renewal: no second friend-up, no take.
+func (s *Server) login(ctx context.Context) error {
+	if len(s.cfg.Logins) == 0 {
+		return nil
+	}
+	fargs := []any{s.cfg.Friend, -1, s.cfg.Harness, s.cfg.Host, s.cfg.Session, "", s.cfg.Actor, ""}
+	for _, alias := range s.cfg.Logins {
+		fargs = append(fargs, alias)
+	}
+	reply, err := s.st.Client().FCall(ctx, FunctionHello, nil, fargs...).Slice()
+	if err != nil {
+		return fmt.Errorf("friend serve %s: login: %w", s.cfg.Friend, err)
+	}
+	if len(reply) == 0 {
+		return fmt.Errorf("friend serve %s: login: empty reply", s.cfg.Friend)
+	}
+	switch status := fmt.Sprint(reply[0]); status {
+	case "UP":
+		s.receipt(ctx, "login", nil, "logins="+strings.Join(s.cfg.Logins, ","))
+		return nil
+	case "UNREGISTERED":
+		return fmt.Errorf("friend serve %s: %w: nova-sprint capacity friend", s.cfg.Friend, ErrUnregistered)
+	default:
+		words := make([]string, 0, len(reply))
+		for _, v := range reply {
+			words = append(words, fmt.Sprint(v))
+		}
+		return &LoginError{Friend: s.cfg.Friend, Words: strings.Join(words, " ")}
 	}
 }
 
@@ -336,6 +401,9 @@ func Serve(ctx context.Context, st *store.Store, cfg ServeConfig) error {
 	if err != nil {
 		return err
 	}
+	if err := s.Start(ctx); err != nil {
+		return err
+	}
 	if _, err := s.Pass(ctx); err != nil {
 		return err
 	}
@@ -362,6 +430,9 @@ func Serve(ctx context.Context, st *store.Store, cfg ServeConfig) error {
 func ServeOnce(ctx context.Context, st *store.Store, cfg ServeConfig) (PassResult, error) {
 	s, err := NewServer(st, cfg)
 	if err != nil {
+		return PassResult{}, err
+	}
+	if err := s.Start(ctx); err != nil {
 		return PassResult{}, err
 	}
 	res, err := s.Pass(ctx)
