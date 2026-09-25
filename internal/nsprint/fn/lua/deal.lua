@@ -145,8 +145,10 @@ local function card_deal(keys, args)
       bp[S] = deal_backpressure(S)
     end
     local ck = 's:' .. S .. ':card:' .. label
-    local c = redis.call('HMGET', ck, 'state', 'attempt', 'bench', 'leg', 'tier', 'base_sha', 'avoid')
-    local score = redis.call('ZSCORE', 's:' .. S .. ':pool', label)
+    local c = redis.call('HMGET', ck, 'state', 'attempt', 'bench', 'leg', 'tier', 'base_sha', 'avoid', 'priority')
+    -- In the pool (scored by created_at, like every view) is dealable; the
+    -- bench queue keeps the card's deal priority, the record's field.
+    local score = redis.call('ZSCORE', 's:' .. S .. ':pool', label) and (tonumber(c[8]) or 0)
     local pin = c[3] or ''
     if open[S] and c[1] == 'queued' and score and attempt and
         attempt == (tonumber(c[2]) or 0) + 1 and
@@ -178,7 +180,7 @@ end
 -- 3.2 dealt -> queued; reason ssh-refused from the deal pass, spawn-timeout
 -- from the reconciler): the card token is cleared so a late child with it is
 -- refused, retries+1, the reason on the card, the slot freed, the card back
--- in the pool at the score it was dealt from, a pin kept, one receipt per
+-- in the pool with the priority it was dealt at, a pin kept, one receipt per
 -- card and one cap:log slot-freed event per call. A card that is not dealt on
 -- this bench under exactly this attempt is skipped, so a repeat writes
 -- nothing. Returns FENCED or UNDEALT <n>.
@@ -205,7 +207,7 @@ local function card_undeal(keys, args)
     local qk = 's:' .. S .. ':bench:' .. bench .. ':queue'
     if c[1] == 'dealt' and c[2] == bench and c[3] == attempt and
         not CARD.move(ck, 'ready', { state = 'queued', bench = c[5] or '', by = actor, why = reason,
-          pool_score = tonumber(redis.call('ZSCORE', qk, label) or c[7]) or 0,
+          priority = tonumber(redis.call('ZSCORE', qk, label) or c[7]) or 0,
           fields = { 'token', '', 'reason', reason, 'retries', tostring((tonumber(c[6]) or 0) + 1) } }) then
       local pin = c[5] or ''
       redis.call('ZREM', 'bench:' .. bench .. ':starting', S .. '/' .. label .. '/' .. attempt)
@@ -248,7 +250,7 @@ end
 -- ns_card_gate(token, S, actor, idem, then per card: label, verb, why)
 -- The deal pass's DEPENDS-ON gate for one sprint in one call (nova-tools
 -- #3066, #2756 3.2 `card release`). verb `wait` moves a queued, pooled card
--- to s:<S>:waiting (its pool score kept in priority, why in wait_why), or
+-- to s:<S>:waiting (its priority stays on the record, why in wait_why), or
 -- rewrites wait_why on a card already waiting; verb `release` moves a queued,
 -- waiting card back to the pool at its priority and clears wait_why. A card
 -- that is not queued, or not where the verb expects it, is skipped, so a
@@ -278,7 +280,7 @@ local function card_gate(keys, args)
       if verb == 'wait' then
         local score = redis.call('ZSCORE', pool, label)
         if score and not CARD.move(ck, 'waiting', { by = actor, why = why,
-            fields = { 'priority', tostring(score), 'wait_why', why or '' } }) then
+            fields = { 'wait_why', why or '' } }) then
           deal_receipt(S, 'card wait', label, 'queued', 'queued', c[4], '', actor, why, idem, at)
           waited = waited + 1
         elseif redis.call('SISMEMBER', waiting, label) == 1 and c[3] ~= why then
@@ -286,7 +288,7 @@ local function card_gate(keys, args)
         end
       elseif verb == 'release' then
         if redis.call('SISMEMBER', waiting, label) == 1 and
-            not CARD.move(ck, 'ready', { by = actor, why = 'depends-on landed', pool_score = tonumber(c[2]) or 0 }) then
+            not CARD.move(ck, 'ready', { by = actor, why = 'depends-on landed' }) then
           redis.call('HDEL', ck, 'wait_why')
           deal_receipt(S, 'card release', label, 'queued', 'queued', c[4], '', actor, 'depends-on landed', idem, at)
           released = released + 1

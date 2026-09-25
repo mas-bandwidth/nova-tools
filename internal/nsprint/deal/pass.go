@@ -75,7 +75,8 @@ var ErrFenced = errors.New("FENCED: the reconciler lease is held by another inst
 type Card struct {
 	Sprint   string
 	Label    string
-	Priority float64  // the pool score; lower deals first, front items are negative
+	Priority float64  // the record's priority field; lower deals first, front items are negative
+	Age      float64  // the pool score: the card's created_at ms (#3692); older deals first at equal priority
 	Leg      string   // empty: any bench
 	Tier     string   // TierPriority or anything else (bulk)
 	Bench    string   // the card hash's bench pin, from the card's BENCH: line at card push (#3650); empty: any bench
@@ -179,6 +180,9 @@ func Plan(in Input, hold time.Duration) []Batch {
 		sort.SliceStable(pools[i], func(a, b int) bool {
 			if pools[i][a].Priority != pools[i][b].Priority {
 				return pools[i][a].Priority < pools[i][b].Priority
+			}
+			if pools[i][a].Age != pools[i][b].Age {
+				return pools[i][a].Age < pools[i][b].Age
 			}
 			return pools[i][a].Label < pools[i][b].Label
 		})
@@ -571,8 +575,9 @@ func apply(in Input, br BenchResult) Input {
 // pools, then the pooled cards. Nothing is read with SCAN or KEYS.
 type RedisSource struct {
 	Client *redis.Client
-	// PoolLimit bounds the pool entries read per sprint; 0 reads four times
-	// the fleet's free slots (at least 64), enough for leg and pin filters.
+	// PoolLimit is retired (#3692): the pool is scored by age, so the whole
+	// pool is read and each card's priority comes from its record. Kept so
+	// callers that set it still build; it bounds nothing.
 	PoolLimit int
 }
 
@@ -637,7 +642,6 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return Input{}, err
 	}
-	free := 0
 	for i, name := range names {
 		d, beat, ssh := bc[i].desired.Val(), bc[i].beat.Val(), bc[i].ssh.Val()
 		slots, _ := strconv.Atoi(d["slots"])
@@ -656,16 +660,6 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			b.SSHAt = time.UnixMilli(ms)
 		}
 		in.Benches = append(in.Benches, b)
-		if b.Up && !b.Paused {
-			free += b.Free()
-		}
-	}
-	limit := r.PoolLimit
-	if limit <= 0 {
-		limit = 4 * free
-		if limit < 64 {
-			limit = 64
-		}
 	}
 	pipe = c.Pipeline()
 	pools := make([]*redis.ZSliceCmd, len(sprintNames))
@@ -676,7 +670,10 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			continue
 		}
 		live = append(live, i)
-		pools[i] = pipe.ZRangeWithScores(ctx, "s:"+s+":pool", 0, int64(limit-1))
+		// The pool is scored by age (created_at, #3692), not priority, so
+		// the whole pool is read (O(n)) and the priority comes from each
+		// record.
+		pools[i] = pipe.ZRangeWithScores(ctx, "s:"+s+":pool", 0, -1)
 		waits[i] = pipe.SMembers(ctx, "s:"+s+":waiting")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
@@ -715,13 +712,13 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			continue
 		}
 		card := Card{
-			Sprint: sprintNames[cc.sprint], Label: cc.label, Priority: cc.score,
+			Sprint: sprintNames[cc.sprint], Label: cc.label, Age: cc.score,
 			Leg: str(v, 1), Tier: str(v, 2), Bench: str(v, 3),
 			DependsOn: splitDeps(str(v, 4)), Repo: str(v, 5), Base: str(v, 6), WaitWhy: str(v, 7),
 			Avoid: strings.Fields(str(v, 9)),
 		}
+		card.Priority, _ = strconv.ParseFloat(str(v, 8), 64)
 		if cc.waiting {
-			card.Priority, _ = strconv.ParseFloat(str(v, 8), 64)
 			waitBySprint[cc.sprint] = append(waitBySprint[cc.sprint], card)
 			continue
 		}

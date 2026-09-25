@@ -42,11 +42,16 @@
 --   bench:<bench|_pool>:cards:<where>, and bench:<b>:cards:ok|fail while done
 --   ws:<stream>:<where>               when the card has a stream
 --   friend:<owner>:cards:<where>      when the card has an owner
---   s:<S>:pool (ZSET of labels at the deal score) while ready, and
+--   s:<S>:pool (ZSET of labels) while ready, and
 --   s:<S>:waiting (SET of labels) while waiting: the dealer's lists
 --
--- Every score, in every view and in sprint:<S>:cards, is the card's
--- created_at (ms), so each list reads oldest first and a move never rescores.
+-- Every score, in every view (the pool included) and in sprint:<S>:cards,
+-- is the card's created_at (ms), uniformly, so each list reads oldest first
+-- and a move never rescores; fsck checks every score and --repair re-scores.
+-- The deal priority is not a score: it is the record's priority field
+-- (lower deals first; front and ci cards are negative), which the move
+-- writes when a card enters ready with o.priority, and the dealer reads the
+-- pool oldest first and deals by that field, age breaking ties.
 -- The fine state (queued, dealt, ..., landed) stays on the record as state,
 -- with its SET index s:<S>:idx:card:<state> (members are labels).
 --
@@ -109,9 +114,9 @@ local function cm_read(id)
 end
 
 -- The views one pointer names. A view entry is t = 'z' (a ZSET of card
--- ids scored by created_at), 'p' (the sprint's pool: the dealer's ZSET of
--- labels at their deal score) or 's' (the sprint's waiting SET of labels):
--- the dealer's two lists are views of ready and waiting like any other.
+-- ids), 'l' (the sprint's pool: a ZSET of labels) or 's' (the sprint's
+-- waiting SET of labels); every ZSET is scored by created_at. The dealer's
+-- two lists are views of ready and waiting like any other.
 local function cm_views(S, label, id, p)
   local v = {}
   if p.where == '' then return v end
@@ -120,7 +125,7 @@ local function cm_views(S, label, id, p)
   if p.where == 'done' then v[#v + 1] = { t = 'z', k = 'bench:' .. b .. ':cards:' .. p.ok, m = id } end
   if p.stream ~= '' then v[#v + 1] = { t = 'z', k = 'ws:' .. p.stream .. ':' .. p.where, m = id } end
   if p.owner ~= '' then v[#v + 1] = { t = 'z', k = 'friend:' .. p.owner .. ':cards:' .. p.where, m = id } end
-  if p.where == 'ready' then v[#v + 1] = { t = 'p', k = 's:' .. S .. ':pool', m = label } end
+  if p.where == 'ready' then v[#v + 1] = { t = 'l', k = 's:' .. S .. ':pool', m = label } end
   if p.where == 'waiting' then v[#v + 1] = { t = 's', k = 's:' .. S .. ':waiting', m = label } end
   return v
 end
@@ -130,11 +135,9 @@ local function cm_has(e)
   return redis.call('ZSCORE', e.k, e.m) ~= false
 end
 
-local function cm_add(e, score, pscore)
+local function cm_add(e, score)
   if e.t == 's' then
     redis.call('SADD', e.k, e.m)
-  elseif e.t == 'p' then
-    redis.call('ZADD', e.k, pscore, e.m)
   else
     redis.call('ZADD', e.k, score, e.m)
   end
@@ -174,7 +177,7 @@ local function cm_others(S, label, id, p, extra)
     if p.stream ~= '' then add('z', 'ws:' .. p.stream .. ':' .. w, id) end
     if p.owner ~= '' then add('z', 'friend:' .. p.owner .. ':cards:' .. w, id) end
   end
-  add('p', 's:' .. S .. ':pool', label)
+  add('l', 's:' .. S .. ':pool', label)
   add('s', 's:' .. S .. ':waiting', label)
   return v
 end
@@ -278,10 +281,13 @@ local function cm_adopt(id, S, label)
     if created < 100000000000 then created = created * 1000 end
   end
   local p = { where = w, ok = ok, bench = c[3] or '', stream = c[4] or '', owner = c[5] or '' }
+  -- A pre-model pool scored the card by its deal priority: that score moves
+  -- to the record's priority field (when it has none) and the pool is
+  -- re-scored by created_at like every view.
+  local legacy = redis.call('ZSCORE', 's:' .. S .. ':pool', label)
+  if legacy and not c[7] then redis.call('HSET', id, 'priority', tostring(legacy)) end
   redis.call('ZADD', 'sprint:' .. S .. ':cards', created, id)
-  for _, e in ipairs(cm_views(S, label, id, p)) do
-    if not cm_has(e) then cm_add(e, created, tonumber(c[7]) or 0) end
-  end
+  for _, e in ipairs(cm_views(S, label, id, p)) do cm_add(e, created) end
   if w ~= 'ready' then redis.call('ZREM', 's:' .. S .. ':pool', label) end
   if w ~= 'waiting' then redis.call('SREM', 's:' .. S .. ':waiting', label) end
   redis.call('SADD', cm_idx(S, c[6]), label)
@@ -291,8 +297,9 @@ end
 
 -- card_move(id, to, o): the one move. o.state is the new fine state (nil
 -- keeps it), o.ok is ok|fail (entering done; nil keeps it), o.bench the new
--- bench (nil keeps it), o.pool_score the card's deal score when it enters
--- the pool (nil: its priority), o.fields more HSET pairs (never a pointer field),
+-- bench (nil keeps it), o.priority the card's deal priority as it enters
+-- ready (written to the record's priority field; nil keeps the field),
+-- o.fields more HSET pairs (never a pointer field),
 -- o.by and o.why the receipt. Returns nil when moved, else the refusal; a
 -- refusal writes nothing but the one-time adoption of a record that
 -- predates the model.
@@ -332,7 +339,6 @@ local function card_move(id, to, o)
   end
   if err then return 'DRIFT ' .. err .. ' ' .. id .. '; run nova-sprint card fsck --sprint ' .. S .. ' --repair' end
 
-  local pscore = o.pool_score or cur.priority
   local old, new = cm_views(S, label, id, cur), cm_views(S, label, id, nxt)
   local was, keep = {}, {}
   for _, e in ipairs(old) do was[e.k] = true end
@@ -341,7 +347,7 @@ local function card_move(id, to, o)
     if not keep[e.k] then cm_rem(e) end
   end
   for _, e in ipairs(new) do
-    if not was[e.k] then cm_add(e, cur.created, pscore) end
+    if not was[e.k] then cm_add(e, cur.created) end
   end
   if state ~= cur.state then redis.call('SMOVE', cm_idx(S, cur.state), cm_idx(S, state), label) end
   local at = cm_now()
@@ -353,6 +359,10 @@ local function card_move(id, to, o)
   if to ~= cur.where then
     h[#h + 1] = 'where_at'
     h[#h + 1] = tostring(at)
+  end
+  if o.priority ~= nil and to == 'ready' then
+    h[#h + 1] = 'priority'
+    h[#h + 1] = tostring(o.priority)
   end
   for i = 1, #fields do h[#h + 1] = fields[i] end
   redis.call('HSET', unpack(h))
@@ -449,6 +459,13 @@ local function card_fsck(S, write)
       if not c or not label or string.sub(id, 1, #prefix) ~= prefix then
         note('gone ' .. id)
       else
+        if tonumber(redis.call('ZSCORE', all, id)) ~= c.created then
+          note('score ' .. all .. ' ' .. id)
+          if write then
+            redis.call('ZADD', all, c.created, id)
+            fixed = fixed + 1
+          end
+        end
         local w, ok = cm_derive(S, label, id)
         if c.where == '' and c.state == 'queued' then
           -- null: created, not yet placed; in no table set (Glenn 12:32 AM)
@@ -478,7 +495,14 @@ local function card_fsck(S, write)
             if not cm_has(e) then
               note('unlinked ' .. e.k .. ' ' .. e.m)
               if write then
-                cm_add(e, c.created, c.priority)
+                cm_add(e, c.created)
+                fixed = fixed + 1
+              end
+            elseif e.t ~= 's' and tonumber(redis.call('ZSCORE', e.k, e.m)) ~= c.created then
+              -- every ZSET is scored by the card's created_at, uniformly
+              note('score ' .. e.k .. ' ' .. e.m)
+              if write then
+                cm_add(e, c.created)
                 fixed = fixed + 1
               end
             end

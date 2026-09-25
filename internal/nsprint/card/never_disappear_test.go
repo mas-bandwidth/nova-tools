@@ -3,11 +3,13 @@ package card_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/redis/go-redis/v9"
@@ -77,7 +79,22 @@ func oneTable(t *testing.T, ctx context.Context, client *redis.Client, step stri
 		if strings.Join(benchIn, ",") != strings.Join(want, ",") {
 			t.Fatalf("%s: %s (state %s) bench views %v, its record says %v", step, id, h["state"], benchIn, want)
 		}
+		// Every ZSET is scored by the card's created_at, uniformly (#3692).
+		created, _ := strconv.ParseFloat(h["created_at"], 64)
+		scored := map[string]string{card.RosterKey(ndSprint): id}
+		for _, v := range benchIn {
+			b, w, _ := strings.Cut(v, "/")
+			scored[card.BenchCardsKey(b, w)] = id
+		}
 		label := strings.TrimPrefix(id, "s:"+ndSprint+":card:")
+		if where == "ready" {
+			scored["s:"+ndSprint+":pool"] = label
+		}
+		for key, m := range scored {
+			if sc := client.ZScore(ctx, key, m).Val(); sc != created {
+				t.Fatalf("%s: %s scores %s at %v, its created_at is %v", step, key, m, sc, created)
+			}
+		}
 		if inPool, inWaiting := zHas(t, ctx, client, "s:"+ndSprint+":pool", label), setHas(t, ctx, client, "s:"+ndSprint+":waiting", label); inPool != (where == "ready") || inWaiting != (where == "waiting") {
 			t.Fatalf("%s: %s where=%s but pool=%v waiting=%v", step, id, where, inPool, inWaiting)
 		}
@@ -524,5 +541,76 @@ func TestInvalidResultRefusedMoveSurfaces(t *testing.T) {
 	}
 	if c := oneTable(t, ctx, client, "invalid result", 1); c["fail"] != 1 {
 		t.Fatalf("after an invalid result %v", c)
+	}
+}
+
+// TestFsckChecksEveryScore (#3695 hold 7 item 1): every ZSET is scored by the
+// card's created_at; a view or the roster re-scored by hand is drift that
+// --repair re-scores.
+func TestFsckChecksEveryScore(t *testing.T) {
+	ctx := context.Background()
+	_, client := newSprint(t)
+	srv := repoServer(t)
+	ndPush(t, ctx, client, srv.URL+"/acme/public.git", "sc-a", "none", "pool")
+	id := card.CardKey(ndSprint, "sc-a")
+	for _, z := range [][2]string{{card.BenchCardsKey("_pool", "ready"), id}, {"ws:" + ndStream + ":ready", id},
+		{"s:" + ndSprint + ":pool", "sc-a"}, {card.RosterKey(ndSprint), id}} {
+		client.ZAdd(ctx, z[0], redis.Z{Score: 1, Member: z[1]})
+	}
+	rep, err := card.Fsck(ctx, client, ndSprint, false)
+	if err != nil || rep.Drift != 4 || !strings.HasPrefix(rep.Lines[0], "score ") {
+		t.Fatalf("fsck over four re-scored sets = %+v, %v", rep, err)
+	}
+	if rep, err = card.Fsck(ctx, client, ndSprint, true); err != nil || rep.Fixed != 4 {
+		t.Fatalf("repair = %+v, %v", rep, err)
+	}
+	oneTable(t, ctx, client, "re-scored", 1)
+}
+
+// TestPoolIsAgeOrderedAndTheDealerDealsByPriority (#3695 hold 7 item 2): the
+// pool is scored by created_at like every view; the deal priority is the
+// record's priority field, and the dealer deals the lowest priority value
+// first, the oldest first among equals.
+func TestPoolIsAgeOrderedAndTheDealerDealsByPriority(t *testing.T) {
+	ctx := context.Background()
+	_, client := newSprint(t)
+	ndSetup(t, ctx, client)
+	client.SAdd(ctx, "sprints", ndSprint)
+	client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: ndSprint})
+	srv := repoServer(t)
+	repo := srv.URL + "/acme/public.git"
+	for _, c := range []struct{ label, prio string }{{"pa-old5", "5"}, {"pa-mid1", "1"}, {"pa-new1", "1"}} {
+		f := validCard(repo)
+		f.label = c.label
+		body := string(f.render()) + "PRIORITY: " + c.prio + "\n"
+		if res := card.Push(ctx, client, ndSprint, []byte(body)); res.Code != 0 {
+			t.Fatalf("push %s: %+v", c.label, res)
+		}
+	}
+	oneTable(t, ctx, client, "pushed", 3)
+	// oneTable proved every pool score is the card's created_at; push order
+	// is age order (two pushes in one millisecond tie, and ZRANGE breaks the
+	// tie by label).
+	var last float64
+	for _, l := range []string{"pa-old5", "pa-mid1", "pa-new1"} {
+		sc := client.ZScore(ctx, "s:"+ndSprint+":pool", l).Val()
+		if sc < last {
+			t.Fatalf("pool score of %s is %v, older than the card pushed before it (%v)", l, sc, last)
+		}
+		last = sc
+	}
+	in, err := deal.RedisSource{Client: client}.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batches := deal.Plan(in, time.Minute)
+	var got []string
+	for _, b := range batches {
+		for _, c := range b.Cards {
+			got = append(got, c.Label)
+		}
+	}
+	if strings.Join(got, ",") != "pa-mid1,pa-new1,pa-old5" {
+		t.Fatalf("deal order %v, want priority 1 oldest first, then priority 5", got)
 	}
 }

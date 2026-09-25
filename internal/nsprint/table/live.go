@@ -191,8 +191,8 @@ var benchCardCells = []string{"ready", "working", "done", "ok", "fail"}
 
 // cardCells writes the card view counts over the bench hash's own queue,
 // working, done, ok and fail (and drops the dealer's queue override): the
-// row prints the sets. A count that did not come back prints 0, as the bash
-// prints a missing field.
+// row prints the sets. A count that could not be read (the ZCARD errored)
+// is "?", never a false 0; the row and its column total print "?".
 func cardCells(fields map[string]string, cmds []*redis.IntCmd) {
 	if len(cmds) != len(benchCardCells) {
 		return
@@ -203,6 +203,10 @@ func cardCells(fields map[string]string, cmds []*redis.IntCmd) {
 		field := w
 		if w == "ready" {
 			field = "queue"
+		}
+		if cmds[j].Err() != nil {
+			fields[field] = "?"
+			continue
 		}
 		fields[field] = strconv.FormatInt(cmds[j].Val(), 10)
 	}
@@ -247,25 +251,36 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 	fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", "host", "ready", "working", "done", "ok", "fail", "ok%", "load")
 	b.WriteString(liveBenchRule)
 	var tq, tw, td, to, tf int64
+	unread := map[string]bool{}
 	for _, row := range s.Benches {
 		c, show := row.cells(now)
 		if !show {
 			continue
 		}
-		var pct int64
-		if c.done > 0 {
-			pct = 100 * c.ok / c.done
+		for cell := range c.unread {
+			unread[cell] = true
 		}
-		fmt.Fprintf(&b, "%-10s | %5s | %7d | %5d | %5d | %5d | %3d%% | %6s\n", c.host, c.queue, c.working, c.done, c.ok, c.fail, pct, c.load)
+		pct := "0%"
+		if c.unread["done"] || c.unread["ok"] {
+			pct = "?"
+		} else if c.done > 0 {
+			pct = strconv.FormatInt(100*c.ok/c.done, 10) + "%"
+		}
+		fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", c.host, c.queue,
+			c.num("working", c.working), c.num("done", c.done), c.num("ok", c.ok), c.num("fail", c.fail), pct, c.load)
 		qn, _ := strconv.ParseInt(c.queue, 10, 64)
 		tq, tw, td, to, tf = tq+qn, tw+c.working, td+c.done, to+c.ok, tf+c.fail
 	}
 	b.WriteString(liveBenchRule)
-	var tpct int64
-	if td > 0 {
-		tpct = 100 * to / td
+	total := benchCells{unread: unread}
+	tpct := "0%"
+	if unread["done"] || unread["ok"] {
+		tpct = "?"
+	} else if td > 0 {
+		tpct = strconv.FormatInt(100*to/td, 10) + "%"
 	}
-	fmt.Fprintf(&b, "%-10s | %5d | %7d | %5d | %5d | %5d | %3d%% |\n", "total", tq, tw, td, to, tf, tpct)
+	fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s |\n", "total", total.num("queue", tq), total.num("working", tw),
+		total.num("done", td), total.num("ok", to), total.num("fail", tf), tpct)
 	if s.PoolPresent {
 		fmt.Fprintf(&b, "pool: %s undealt\n", s.Pool)
 	}
@@ -307,6 +322,17 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 type benchCells struct {
 	host, queue, load       string
 	working, done, ok, fail int64
+	// unread names the cells whose value is "?" (a card view count that
+	// could not be read, #3692): they print "?", never a number.
+	unread map[string]bool
+}
+
+// num prints one count cell: "?" when it could not be read.
+func (c benchCells) num(cell string, v int64) string {
+	if c.unread[cell] {
+		return "?"
+	}
+	return strconv.FormatInt(v, 10)
 }
 
 // cells applies the bash's row rules: a hash whose own host field is not its
@@ -332,6 +358,17 @@ func (row BenchRow) cells(now time.Time) (benchCells, bool) {
 		}
 	}
 	c.working, c.done, c.ok, c.fail = awkInt(f["working"]), awkInt(f["done"]), awkInt(f["ok"]), awkInt(f["fail"])
+	for _, cell := range []string{"queue", "working", "done", "ok", "fail"} {
+		if f[cell] == "?" {
+			if c.unread == nil {
+				c.unread = map[string]bool{}
+			}
+			c.unread[cell] = true
+		}
+	}
+	if c.unread["queue"] {
+		c.queue = "?"
+	}
 	if c.load == "" {
 		c.load = "-"
 	}

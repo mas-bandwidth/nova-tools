@@ -109,7 +109,7 @@ do
         local qk = 's:' .. S .. ':bench:' .. bench .. ':queue'
         if (status == 'STOPPED' or status == 'GONE') and
             not CARD.move(ck, 'ready', { state = 'queued', bench = c[5] or '', by = actor, why = 'bench-reset',
-              pool_score = tonumber(redis.call('ZSCORE', qk, label) or c[6]) or 0,
+              priority = tonumber(redis.call('ZSCORE', qk, label) or c[6]) or 0,
               fields = { 'token', '', 'reason', 'bench-reset' } }) then
           local pin = c[5] or ''
           redis.call('ZREM', 'bench:' .. bench .. ':starting', S .. '/' .. label .. '/' .. attempt)

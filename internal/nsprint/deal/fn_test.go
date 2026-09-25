@@ -542,8 +542,13 @@ func TestDealFunctionsFencedAndAtomic(t *testing.T) {
 			if h["state"] != "queued" || h["reason"] != ReasonSSHRefused || h["retries"] != "1" || h["token"] != "" || h["bench"] != wantBench || h["attempt"] != "1" {
 				t.Fatalf("card %s after undeal: %v", r.Card.Label, h)
 			}
-			if score, err := c.ZScore(ctx, "s:"+sprint+":pool", r.Card.Label).Result(); err != nil || score != r.Card.Priority {
-				t.Fatalf("card %s back in pool at %v (err %v), want its score %v", r.Card.Label, score, err, r.Card.Priority)
+			// Back in the pool, scored by its created_at (#3692: every view
+			// by age); the deal priority it was dealt at stays on the record.
+			if score, err := c.ZScore(ctx, "s:"+sprint+":pool", r.Card.Label).Result(); err != nil || strconv.FormatFloat(score, 'f', 0, 64) != h["created_at"] {
+				t.Fatalf("card %s back in pool at %v (err %v), want its created_at %s", r.Card.Label, score, err, h["created_at"])
+			}
+			if p, _ := strconv.ParseFloat(h["priority"], 64); p != r.Card.Priority {
+				t.Fatalf("card %s priority %q after undeal, want %v", r.Card.Label, h["priority"], r.Card.Priority)
 			}
 			undeals := logEntries(t, c, sprint, "card undeal", r.Card.Label)
 			if len(undeals) != 1 {

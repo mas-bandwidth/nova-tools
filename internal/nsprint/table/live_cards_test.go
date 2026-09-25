@@ -97,3 +97,35 @@ func TestHostRowReadsCardViews(t *testing.T) {
 		}
 	}
 }
+
+// TestHostRowPrintsUnreadCountsAsQuestionMarks (#3695 hold 7 item 3): a card
+// view whose ZCARD errors (here WRONGTYPE) prints "?" in its cell, its ok%
+// and its column total, never a false 0.
+func TestHostRowPrintsUnreadCountsAsQuestionMarks(t *testing.T) {
+	now := table.Fixture2674Now()
+	at := now.Add(-1 * time.Second).UTC().Format("2006-01-02T15:04:05Z")
+	client := liveStore(t, [][]string{
+		{"HSET", "bench:alpha", "host", "alpha", "at", at, "load1", "1.00"},
+		{"ZADD", "bench:alpha:cards:ready", "1", "s:x:card:r1"},
+		{"SET", "bench:alpha:cards:working", "not-a-zset"},
+		{"ZADD", "bench:alpha:cards:done", "1", "s:x:card:d1"},
+		{"ZADD", "bench:alpha:cards:ok", "1", "s:x:card:d1"},
+		{"SET", "bench:alpha:cards:fail", "not-a-zset"},
+		{"HSET", "bench:beta", "host", "beta", "at", at},
+		{"ZADD", "bench:beta:cards:working", "1", "s:x:card:w9"},
+	})
+	snap, err := table.ReadLive(context.Background(), client, table.LiveConfig{Friends: []string{"rowan"}, Sprint: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := snap.RenderLive(now)
+	for _, want := range []string{
+		"alpha      |     1 |       ? |     1 |     1 |     ? | 100% |   1.00\n",
+		"beta       |     0 |       1 |     0 |     0 |     0 |   0% |      -\n",
+		"total      |     1 |       ? |     1 |     1 |     ? | 100% |\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("table lacks %q\n%s", want, out)
+		}
+	}
+}

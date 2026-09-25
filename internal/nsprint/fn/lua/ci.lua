@@ -303,7 +303,7 @@ local function ci_cut(keys, args)
     'cut_at', at, 'outcome', '', 'reason', '', 'reruns', '0', 'prev', '',
     'verdict', 'PENDING', 'disp', '', 'blocked', '' }
   local err = CARD.create(card_key, cut_fields, { by = actor })
-  if not err then err = CARD.move(card_key, 'ready', { by = actor, why = 'ci cut', pool_score = CI_FRONT }) end
+  if not err then err = CARD.move(card_key, 'ready', { by = actor, why = 'ci cut', priority = CI_FRONT }) end
   if err then return redis.error_reply('ns_ci_cut: ' .. err) end
   ci_receipt(S, 'ci cut', label, '', 'queued', 1, '', actor, 'cut', repo .. '@' .. head, idem, at)
   return { 'CREATED', '1' }
@@ -487,7 +487,7 @@ local function ci_rerun(keys, args)
   local prev = from_bench .. '|' .. (verdict == '' and 'MISSING' or verdict) .. '|' ..
     ci_hget(card_key, 'pkg') .. '|' .. ci_hget(card_key, 'test')
   local refused = CARD.move(card_key, 'ready', { state = 'queued', bench = to_bench, by = actor, why = 'ci rerun',
-    pool_score = CI_FRONT,
+    priority = CI_FRONT,
     fields = { 'attempt', tostring(next_attempt),
       'identity', '', 'token', '', 'token_sha', '', 'avoid', from_bench,
       'outcome', '', 'reason', '', 'reruns', tostring(reruns + 1), 'prev', prev, 'blocked', '',
@@ -539,7 +539,7 @@ local function ci_dispose(keys, args)
       to_bench = from_bench
     end
     local refused = CARD.move(card_key, 'ready', { state = 'queued', bench = to_bench, by = friend, why = 'ci dispose APPROVE',
-      pool_score = CI_FRONT,
+      priority = CI_FRONT,
       fields = { 'attempt', tostring(next_attempt),
         'identity', '', 'token', '', 'token_sha', '', 'avoid', from_bench,
         'outcome', '', 'reason', '', 'verdict', 'PENDING', 'disp', '1',

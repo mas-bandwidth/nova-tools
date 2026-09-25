@@ -198,7 +198,7 @@ do
         return unresolved(S, ckey, classkey, label, root, reason, base_sha, event_id, actor, at, '')
       end
       local refused = CARD.move(ckey, 'ready', { state = 'queued', bench = pin, by = actor, why = 'classify REQUEUE',
-        pool_score = at - 10000000000000, fields = { 'token', '', 'avoid', next_avoid } })
+        priority = at - 10000000000000, fields = { 'token', '', 'avoid', next_avoid } })
       if refused then return { 'RETRY', refused } end
       record(S, ckey, classkey, label, event_id, 'REQUEUE', actor, at)
       return finish(S, event_id, 'REQUEUE')
@@ -253,7 +253,7 @@ do
       end
       local nerr = CARD.create(nkey, nfields, { stream = lineage[1] or '', by = actor })
       if not nerr then
-        nerr = CARD.move(nkey, 'ready', { by = actor, why = 'classify ' .. action, pool_score = at - 10000000000000 })
+        nerr = CARD.move(nkey, 'ready', { by = actor, why = 'classify ' .. action, priority = at - 10000000000000 })
       end
       if nerr then return redis.error_reply('ns_classify: ' .. nerr) end
       record(S, ckey, classkey, label, event_id, action, actor, at)

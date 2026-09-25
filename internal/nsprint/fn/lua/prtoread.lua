@@ -239,7 +239,7 @@ do
           'state', 'open', 'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
           'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
           'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '')
-        -- The front of open:<friend> is negative (classify.lua pool_score).
+        -- The front of open:<friend> is negative (classify.lua: a requeued card's priority).
         redis.call('ZADD', 's:' .. S .. ':open:' .. friend, -math.abs(tonumber(priority) or 0) - 1, id)
         redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
         receipt(S, id, actor, idem, at)

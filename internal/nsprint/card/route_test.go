@@ -2,6 +2,7 @@ package card_test
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -58,19 +59,21 @@ func TestCardLintRefusesBadRoute(t *testing.T) {
 	}
 }
 
-func TestCardPushPriorityIsTheScore(t *testing.T) {
+// TestCardPushPriorityIsTheRecordField: PRIORITY: is the record's priority
+// field, the dealer's order; the pool is scored by the card's created_at like
+// every view (#3692: age order, uniformly).
+func TestCardPushPriorityIsTheRecordField(t *testing.T) {
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
 	for _, tc := range []struct {
 		label string
 		lines []string
-		want  float64
 		field string
 	}{
-		{"prio-seven", []string{"PRIORITY: 7"}, 7, "7"},
-		{"prio-negative", []string{"PRIORITY: -3"}, -3, "-3"},
-		{"prio-absent", nil, 0, "0"},
+		{"prio-seven", []string{"PRIORITY: 7"}, "7"},
+		{"prio-negative", []string{"PRIORITY: -3"}, "-3"},
+		{"prio-absent", nil, "0"},
 	} {
 		f := validCard(srv.URL + "/acme/public.git")
 		f.label = tc.label
@@ -79,8 +82,9 @@ func TestCardPushPriorityIsTheScore(t *testing.T) {
 			t.Fatalf("%s: exit %d stdout %q stderr %q, want pool", tc.label, res.Code, res.Stdout, res.Stderr)
 		}
 		score, err := client.ZScore(ctx, keyPool(), tc.label).Result()
-		if err != nil || score != tc.want {
-			t.Fatalf("%s: pool score %v (%v), want %v", tc.label, score, err, tc.want)
+		created, _ := strconv.ParseFloat(client.HGet(ctx, keyCard(tc.label), "created_at").Val(), 64)
+		if err != nil || score != created || created == 0 {
+			t.Fatalf("%s: pool score %v (%v), want the card's created_at %v", tc.label, score, err, created)
 		}
 		if got, _ := client.HGet(ctx, keyCard(tc.label), "priority").Result(); got != tc.field {
 			t.Fatalf("%s: priority field %q, want %q", tc.label, got, tc.field)
