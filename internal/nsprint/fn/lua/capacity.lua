@@ -118,6 +118,12 @@ local function capacity_desired(keys, args)
   if kind ~= 'friend' and kind ~= 'bench' then
     return { 'INVALID', machine, '0', '0' }
   end
+  -- NAME-IS-LOGIN (#3604): a name mapped in friends:login never registers as
+  -- a friend, so capacity friend refuses it before any ceiling or write, the
+  -- same rule hello enforces (#3593, #3092 rev 6).
+  if kind == 'friend' and redis.call('HEXISTS', 'friends:login', name) == 1 then
+    return { 'NAME-IS-LOGIN', name }
+  end
   if set_legs ~= '' and (kind ~= 'bench' or not string.match(set_legs, '^[%w_,-]+$')) then
     return { 'INVALID', machine, '0', '0' }
   end
