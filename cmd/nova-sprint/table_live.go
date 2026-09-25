@@ -273,20 +273,42 @@ func compareLive(ctx context.Context, st *store.Store, cfg table.LiveConfig, pat
 	if err != nil {
 		return tableRefuse(stderr, err.Error())
 	}
-	want, err := os.ReadFile(path)
+	wantBytes, err := os.ReadFile(path)
 	if err != nil {
 		return tableRefuse(stderr, "--compare: "+err.Error())
 	}
-	if err != nil {
-		return tableRefuse(stderr, err.Error())
-	}
-	got := snap.RenderLive(time.Now())
-	if got == string(want) {
-		fmt.Fprintln(stdout, "MATCH")
+	want := maskVolatile(string(wantBytes))
+	got := maskVolatile(snap.RenderLive(time.Now()))
+	if got == want {
+		fmt.Fprintln(stdout, "MATCH (load and age masked)")
 		return 0
 	}
-	_, _ = io.WriteString(stdout, unifiedDiff(path, "nova-sprint table --layout live", string(want), got))
+	_, _ = io.WriteString(stdout, unifiedDiff(path, "nova-sprint table --layout live", want, got))
 	return 1
+}
+
+func maskVolatile(s string) string {
+	var out []string
+	inHost := false
+	for _, l := range strings.Split(s, "\n") {
+		if strings.HasPrefix(l, "host       |") {
+			inHost = true
+		} else if strings.HasPrefix(l, "total      |") && inHost {
+			inHost = false
+		} else if strings.HasPrefix(l, "friend     |") {
+			inHost = false
+		}
+		if inHost && len(l) > 62 && !strings.HasPrefix(l, "-----------") && !strings.HasPrefix(l, "host ") {
+			l = l[:62] + " MASKED"
+		}
+		if strings.HasPrefix(l, "stale: ") {
+			if idx := strings.Index(l, "s ("); idx != -1 {
+				l = "stale: MASKED" + l[idx:]
+			}
+		}
+		out = append(out, l)
+	}
+	return strings.Join(out, "\n")
 }
 
 const comparePublishWait = 3 * time.Second

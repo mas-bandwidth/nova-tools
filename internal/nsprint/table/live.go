@@ -378,18 +378,13 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 	} else {
 		b.WriteString("SPRINT TABLE\n")
 	}
-	if s.Blocked == "" || strings.Trim(s.Blocked, "0123456789") != "" {
-		b.WriteString("blocked: ?\n")
-	} else {
-		b.WriteString("blocked: " + s.Blocked + "\n")
-	}
-	b.WriteString(FormatLanded(s.Landed, now) + "\n")
+	b.WriteString("\n")
 	if s.XY != "" {
-		b.WriteString("sprint: " + s.XY + "\n")
+		b.WriteString(strings.TrimPrefix(s.XY, "sprint: ") + "\n")
 	} else if s.XYFileOK {
-		b.WriteString("sprint: " + s.XYFileLine + "\n")
+		b.WriteString(strings.TrimPrefix(s.XYFileLine, "sprint: ") + "\n")
 	} else {
-		b.WriteString("sprint: SPRINT ? (sprint-xy has not written yet)\n")
+		b.WriteString("SPRINT ? (sprint-xy has not written yet)\n")
 	}
 	b.WriteString("\n")
 
