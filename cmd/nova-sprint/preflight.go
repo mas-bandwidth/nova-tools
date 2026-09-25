@@ -97,10 +97,14 @@ func cmdPreflight(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		} else {
 			lines = preflight.Run(ctx, client, preflight.Options{Sprint: *sprint})
 		}
-		// #3899: batch tests never run in the coordinator's session. The
-		// process snapshot is local, so it is read even when Redis is down.
-		procs, perr := preflightProcs(ctx)
-		lines = append(lines, preflight.CheckLocalBatchTests(procs, perr, os.Getpid()))
+		if *only != "store" {
+			// #3899: batch tests never run in the coordinator's session. The
+			// process snapshot is local, so it is read even when Redis is
+			// down. Not a store check (StoreNames leaves it out), so --only
+			// store prints the 11 store lines alone.
+			procs, perr := preflightProcs(ctx)
+			lines = append(lines, preflight.CheckLocalBatchTests(procs, perr, os.Getpid()))
+		}
 		for _, l := range lines {
 			fmt.Fprintln(stdout, l)
 		}

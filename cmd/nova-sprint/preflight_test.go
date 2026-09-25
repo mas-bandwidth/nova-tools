@@ -473,8 +473,8 @@ func pfCases() []pfCase {
 		{name: "guard-lint", line: "7.13", text: "DONE-WHEN", mutate: func(ctx context.Context, f *pfFixture) { f.admin.HDel(ctx, "s:ctl:card:c1", "done_when") }},
 		{name: "over-ceiling", line: "7.15", text: "over its ceiling", mutate: func(ctx context.Context, f *pfFixture) { f.admin.HSet(ctx, "machine:m1:ceiling", "slots", "4") }},
 		{name: "no-ceiling", line: "7.15", text: "has no ceiling", mutate: func(ctx context.Context, f *pfFixture) { f.admin.Del(ctx, "machine:m2:ceiling") }},
-		{name: "ttl-on-beat", line: "7.26", text: "bench:b1:beat", mutate: func(ctx context.Context, f *pfFixture) { f.admin.PExpire(ctx, "bench:b1:beat", time.Minute) }},
-		{name: "changed-under-load", line: "7.27", text: "capacity machine", mutate: func(ctx context.Context, f *pfFixture) {
+		{name: "ttl-on-beat", line: "7.27", text: "bench:b1:beat", mutate: func(ctx context.Context, f *pfFixture) { f.admin.PExpire(ctx, "bench:b1:beat", time.Minute) }},
+		{name: "changed-under-load", line: "7.28", text: "capacity machine", mutate: func(ctx context.Context, f *pfFixture) {
 			f.admin.XAdd(ctx, &redis.XAddArgs{Stream: "cap:log", Values: []any{"kind", "capacity machine", "target", "machine:m1", "machine", "m1", "at", sec(f, 10)}})
 		}},
 	}

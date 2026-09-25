@@ -14,7 +14,7 @@ import (
 )
 
 // storeOrder is the store lines in section order (#2947 rev 3).
-const storeOrder = "7.1 7.2 7.3 7.7 7.9 7.10 7.11 7.13 7.15 7.26 7.27"
+const storeOrder = "7.1 7.2 7.3 7.7 7.9 7.10 7.11 7.13 7.15 7.27 7.28"
 
 // t0 is the fixture's Redis server time. Every age in these controls is
 // measured from it, never from the test machine's clock.

@@ -4,7 +4,7 @@ package preflight
 // library (7.1), state files and second writers (7.2), leases against beats
 // (7.3), the reconciler (7.7), the policy (7.9), states against their
 // receipts (7.10), supply (7.11), card guards (7.13), width per machine
-// (7.15), TTLs (7.26) and capacity changed under load (7.27). Nothing here
+// (7.15), TTLs (7.27) and capacity changed under load (7.28). Nothing here
 // reads a file or talks to Redis: preflight.go's snapshot is the only input.
 
 import (
@@ -598,7 +598,7 @@ func (s *snapshot) checkCeiling() Line {
 	return verdict(n, name, reds, fmt.Sprintf("%d machines: %s", len(machines), strings.Join(green, ", ")))
 }
 
-// interimKey reports a key 7.2's InterimKeys judge (bench:<b>), which 7.26
+// interimKey reports a key 7.2's InterimKeys judge (bench:<b>), which 7.27
 // leaves alone: bash bench-row sets EXPIRE 5 there, and one fault turns one
 // line RED.
 func (s *snapshot) interimKey(key string) bool {
@@ -610,9 +610,9 @@ func (s *snapshot) interimKey(key string) bool {
 	return false
 }
 
-// 7.26: a key the snapshot read carries a TTL and is not in fn.TTLAllow.
+// 7.27: a key the snapshot read carries a TTL and is not in fn.TTLAllow.
 func (s *snapshot) checkTTL() Line {
-	const n, name = "7.26", "ttl"
+	const n, name = "7.27", "ttl"
 	keys := make([]string, 0, len(s.pttl))
 	for k := range s.pttl {
 		keys = append(keys, k)
@@ -640,11 +640,11 @@ func (s *snapshot) checkTTL() Line {
 	return verdict(n, name, reds, fmt.Sprintf("%d keys held, TTLs only on fn.TTLAllow keys (%s)", held, strings.Join(allowed, ", ")))
 }
 
-// 7.27: an open sprint's capacity changed after it opened (a cap:log entry
+// 7.28: an open sprint's capacity changed after it opened (a cap:log entry
 // whose kind starts "capacity ", as capacity.lua writes it, at after
 // s:<S>.opened_at).
 func (s *snapshot) checkUnderLoad() Line {
-	const n, name = "7.27", "under-load"
+	const n, name = "7.28", "under-load"
 	var reds, open []string
 	for _, st := range s.sprints {
 		if !st.open() {

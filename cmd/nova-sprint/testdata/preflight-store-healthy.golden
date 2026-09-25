@@ -7,5 +7,5 @@ GREEN 7.10 receipts: 1 sprints, 1 indexed ids, each at its latest receipt
 GREEN 7.11 supply: 1 ready tasks and 1 pool cards each have an eligible consumer
 GREEN 7.13 guards: 1 queued cards lint clean
 GREEN 7.15 machine-ceiling: 2 machines: m1 12/16, m2 4/16
-GREEN 7.26 ttl: 30 keys held, TTLs only on fn.TTLAllow keys (lease:reconciler)
-GREEN 7.27 under-load: no capacity change since s:ctl opened
+GREEN 7.27 ttl: 30 keys held, TTLs only on fn.TTLAllow keys (lease:reconciler)
+GREEN 7.28 under-load: no capacity change since s:ctl opened

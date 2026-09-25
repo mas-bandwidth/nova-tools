@@ -2,7 +2,7 @@ package fn
 
 import "path"
 
-// TTLAllow names the keys that may carry a TTL (#2947 rev 3, preflight 7.26):
+// TTLAllow names the keys that may carry a TTL (#2947 rev 3, preflight 7.27):
 // the leases, whose expiry is how a dead holder lets go, and the blocked-queue
 // lock. Every other key the store holds lives until a verb removes it (keys do
 // not expire; an old at is what a reader judges stale). Entries are path.Match
