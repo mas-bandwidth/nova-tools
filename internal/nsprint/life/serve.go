@@ -8,6 +8,20 @@
 // and on exit closes the task with the typed line the child wrote or with
 // `blocked: <exit reason>`. A task is in working only while its child lives:
 // a serve that stops kills its children and gives their tasks back.
+//
+// Consumer copies (#3998; rowan-new specs/table-moves.md): a friend is a
+// consumer (friend:<f>) like a bench, and the seat runs the COPIES the
+// card-deal duty cut onto friend:<f>:cards:ready before any friend-queue
+// task. Each pass takes them with one `card work --as friend:<f> --fill`
+// (--n <free width> when the seat is narrower than the consumer's free
+// slots), dispatches each with its card (card.RenderCopy of task:<copy>) as
+// the brief, beats every due copy in one `card beat`, and at exit returns it
+// with `card end --id <copy>` (unless the child ended it itself): a SCORE
+// line is the read's score, a DONE line with pr=<repo>#<n> head=<sha> names
+// the PR (with done-already=<sha> the work already on the base), any other
+// DONE is ok, and no typed line or a BLOCKED one is a fail with the reason.
+// Stop gives every live copy back (card cancel). All of it is the table
+// moves' one writer, 02_card_move.lua.
 package life
 
 import (
@@ -30,6 +44,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
@@ -71,6 +86,9 @@ const (
 	ServeEnvBrief   = "NOVA_TASK_BRIEF"
 	ServeEnvOut     = "NOVA_TASK_OUT"
 	ServeEnvDir     = "NOVA_TASK_DIR"
+	// ServeEnvCopy names a consumer copy's id (#3998); its token is
+	// ServeEnvToken and its sprint is card.CopySprint.
+	ServeEnvCopy = "NOVA_CARD_COPY"
 )
 
 // ShimDirName is the directory under the serve root that holds the refusing
@@ -159,6 +177,10 @@ type child struct {
 	lastBeat time.Time
 	exited   chan struct{}
 	waitErr  error
+	// copy is a consumer copy's id (#3998), "" for a friend-queue task; leg
+	// is its leg (work, fix or read).
+	copy string
+	leg  string
 }
 
 func (c *child) key() string { return c.claim.Sprint + "/" + c.claim.ID }
@@ -170,6 +192,9 @@ type Server struct {
 	mu       sync.Mutex
 	children map[string]*child
 	now      func() time.Time
+	// copyErr is the last copy-take error printed, so a seat whose ACL
+	// cannot call the card verbs yet prints it once, not every second.
+	copyErr string
 }
 
 // NewServer checks the config and returns a seat that has not beaten yet.
@@ -329,6 +354,11 @@ func (s *Server) Pass(ctx context.Context) (PassResult, error) {
 	s.beatLeases(ctx)
 	free := s.cfg.Width - s.Live()
 	if free > 0 {
+		n := s.takeCopies(ctx, free)
+		res.Taken += n
+		free -= n
+	}
+	if free > 0 {
 		claims, err := task.TakeAvailable(ctx, s.st, s.cfg.Friend, s.cfg.Sprint, "", free, s.cfg.Actor, "")
 		if err != nil {
 			return res, fmt.Errorf("friend serve %s: take: %w", s.cfg.Friend, err)
@@ -388,6 +418,17 @@ func (s *Server) Stop(ctx context.Context, reason string) error {
 	for _, c := range live {
 		killGroup(c.cmd)
 		<-c.exited
+		if c.copy != "" {
+			_, err := taskcard.CancelCards(ctx, s.st.Client(), s.cfg.Actor, "serve-stopped: "+reason, c.copy)
+			if err != nil && first == nil {
+				first = err
+			}
+			s.receipt(ctx, "cancel", &c.claim, "copy="+c.copy+" reason="+reason)
+			s.mu.Lock()
+			delete(s.children, c.key())
+			s.mu.Unlock()
+			continue
+		}
 		status, err := task.Cancel(ctx, s.st, task.CancelRequest{
 			Sprint: c.claim.Sprint, ID: c.claim.ID, Token: c.claim.Token,
 			Reason: "serve-stopped: " + reason, Actor: s.cfg.Actor,
@@ -479,6 +520,17 @@ func (s *Server) start(ctx context.Context, c task.Claim) error {
 	if err := s.writeBrief(ctx, ch, fields); err != nil {
 		return err
 	}
+	if err := s.spawn(ctx, ch); err != nil {
+		return err
+	}
+	s.beatLease(ctx, ch)
+	return nil
+}
+
+// spawn starts ch's harness with the Token* words replaced and the
+// ServeEnv* environment, watches it, and adds it to the live children.
+func (s *Server) spawn(ctx context.Context, ch *child) error {
+	c := ch.claim
 	argv := make([]string, len(s.cfg.Dispatch))
 	replacer := strings.NewReplacer(TokenBrief, ch.brief, TokenOut, ch.out, TokenDir, ch.dir,
 		TokenSprint, c.Sprint, TokenID, c.ID)
@@ -506,6 +558,9 @@ func (s *Server) start(ctx context.Context, c task.Claim) error {
 		ServeEnvAttempt+"="+strconv.Itoa(c.Attempt), ServeEnvToken+"="+c.Token,
 		ServeEnvKind+"="+ch.kind, ServeEnvHead+"="+ch.head, ServeEnvBrief+"="+ch.brief,
 		ServeEnvOut+"="+ch.out, ServeEnvDir+"="+ch.dir)
+	if ch.copy != "" {
+		cmd.Env = append(cmd.Env, ServeEnvCopy+"="+ch.copy)
+	}
 	cmd.Env = append(cmd.Env, s.cfg.Env...)
 	cmd.Env = nogh.PathFirst(cmd.Env, shimDir)
 	ownGroup(cmd)
@@ -524,7 +579,6 @@ func (s *Server) start(ctx context.Context, c task.Claim) error {
 	s.children[ch.key()] = ch
 	s.mu.Unlock()
 	s.receipt(ctx, "start", &c, fmt.Sprintf("pid=%d brief=%s argv=%s", cmd.Process.Pid, ch.briefSrc, argv[0]))
-	s.beatLease(ctx, ch)
 	return nil
 }
 
@@ -591,9 +645,15 @@ func (s *Server) beatLeases(ctx context.Context) {
 		}
 	}
 	s.mu.Unlock()
+	var copies []*child
 	for _, c := range due {
+		if c.copy != "" {
+			copies = append(copies, c)
+			continue
+		}
 		s.beatLease(ctx, c)
 	}
+	s.beatCopies(ctx, copies)
 }
 
 func (s *Server) beatLease(ctx context.Context, c *child) {
@@ -643,6 +703,10 @@ func (s *Server) close(ctx context.Context, c *child) {
 	line := TypedLine(output)
 	secs := int(s.now().Sub(c.started).Seconds())
 	s.receipt(ctx, "exit", &c.claim, fmt.Sprintf("rc=%d secs=%d typed=%t", rc, secs, line != ""))
+	if c.copy != "" {
+		s.endCopy(ctx, c, rc, reason, line, output)
+		return
+	}
 	if rc == 0 && line != "" {
 		verdict, score := "", ""
 		if isReview(c.kind) {

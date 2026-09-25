@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/launch"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -276,6 +278,8 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	live := fs.String("live", "", "comma separated card identities")
 	once := fs.Bool("once", false, "write one beat and return without the 1 s loop")
 	root := fs.String("root", "", "the bench root whose harness, mirrors and free disk the beat carries (default ~/"+life.DefaultRoot+")")
+	copies := fs.Bool("copies", true, "each beat, when bench:<b> is enrolled in consumers, open the copy session: card work --fill and one nova-card copy per copy (#3998)")
+	wrapper := fs.String("wrapper", "", "the nova-card the copy session starts (default: beside this executable)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "bench beat", err.Error())
 	}
@@ -343,6 +347,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 		wakeOn, _ = os.Hostname()
 	}
 	beats := 0
+	copySession := benchCopySession(st, *bench, *copies, *wrapper, out, errOut)
 	return benchBeatLoop(signalCtx, ticker.C, life.BeatInterval, *bench, errOut,
 		func(ctx context.Context) (life.BenchResult, error) {
 			req.Facts, req.RowAt = life.MeasureBench(*root), time.Now()
@@ -353,8 +358,45 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 			if beats++; err == nil && res.Accepted && beats%life.WakeRepairEvery == 0 {
 				benchWakeRepair(ctx, st, wakeOn, *session, errOut)
 			}
+			if err == nil && res.Accepted {
+				copySession(ctx)
+			}
 			return res, err
 		})
+}
+
+// benchCopySession is the bench harness's session start on each beat
+// (#3998): when bench:<b> is enrolled in consumers, card work --as
+// bench:<b> --fill (one call) and one detached `nova-card copy <copy>` per
+// copy (card.OpenCopySession); a copy that cannot start is given back. A
+// session that took nothing prints nothing; an error prints once until it
+// changes, and never stops the beat.
+func benchCopySession(st *store.Store, bench string, on bool, wrapperFlag string, out, errOut io.Writer) func(context.Context) {
+	if !on {
+		return func(context.Context) {}
+	}
+	last := ""
+	return func(ctx context.Context) {
+		s, err := card.OpenCopySession(ctx, st.Client(), bench, "bench:"+bench, func(l card.CopyLaunch) error {
+			wrapper, err := wrapperPath(wrapperFlag)
+			if err != nil {
+				return err
+			}
+			_, err = launch.LaunchCopy(wrapper, launch.CopyLine{Copy: l.Copy, Token: l.Token}, launch.DefaultBudget)
+			return err
+		})
+		if err != nil {
+			if msg := err.Error(); msg != last {
+				last = msg
+				fmt.Fprintf(errOut, "bench %s copy session: %v\n", bench, err)
+			}
+			return
+		}
+		last = ""
+		if len(s.Launched)+len(s.GivenBack) > 0 {
+			fmt.Fprintln(out, s.Line(bench))
+		}
+	}
 }
 
 // benchBeatMaxBackoff caps the wait between failed beats.

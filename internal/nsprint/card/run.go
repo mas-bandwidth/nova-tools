@@ -118,6 +118,10 @@ type RunConfig struct {
 	Proc func(*exec.Cmd)
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
+	// CopyID is a consumer copy (#3998): steps 1 and 2 read its record
+	// task:<copy> in one HGETALL and the card body is RenderCopy of it (its
+	// payload_sha is the body's sha256), the route its tier.
+	CopyID string
 }
 
 // RunReport is what one run did; the command prints Line.
@@ -246,30 +250,61 @@ func Run(ctx context.Context, st *store.Store, cfg RunConfig) RunReport {
 	card := rep.Card
 	cardKey := CardKey(cfg.Sprint, cfg.Label)
 
-	// 1. The card hash, one pipeline.
-	rows, err := st.PipelineHMGet(ctx, []store.HashRead{{Key: cardKey, Fields: []string{"payload_sha", "route", "repo", "base", "base_sha", "est"}}})
-	if err != nil {
-		return refuse("card read failed: " + err.Error())
-	}
-	field := func(i int) string { s, _ := rows[0][i].(string); return strings.TrimSpace(s) }
-	want := field(0)
-	if !hex64.MatchString(want) {
-		return refuse("no payload_sha on " + cardKey)
-	}
-	rep.SHA = want
+	var body []byte
+	var field func(int) string
+	if cfg.CopyID != "" {
+		// 1 and 2 for a copy: its record, its rendered card.
+		cardKey = "task:" + cfg.CopyID
+		rec, err := st.Client().HGetAll(ctx, cardKey).Result()
+		if err != nil {
+			return refuse("copy read failed: " + err.Error())
+		}
+		if len(rec) == 0 {
+			return refuse("no copy " + cardKey)
+		}
+		if body, err = RenderCopy(CopyCardFrom(cfg.CopyID, rec)); err != nil {
+			return refuse(err.Error())
+		}
+		tier := rec["tier"]
+		if tier != RoutePro && tier != RouteFlash {
+			tier = rec["route"]
+		}
+		if rec["leg"] == "read" {
+			tier = RoutePro
+		}
+		if tier != RoutePro && tier != RouteFlash {
+			tier = ""
+		}
+		vals := []string{"", tier, rec["repo"], rec["base"], rec["base_sha"], rec["est"]}
+		field = func(i int) string { return strings.TrimSpace(vals[i]) }
+		sum := sha256.Sum256(body)
+		rep.SHA = hex.EncodeToString(sum[:])
+	} else {
+		// 1. The card hash, one pipeline.
+		rows, err := st.PipelineHMGet(ctx, []store.HashRead{{Key: cardKey, Fields: []string{"payload_sha", "route", "repo", "base", "base_sha", "est"}}})
+		if err != nil {
+			return refuse("card read failed: " + err.Error())
+		}
+		field = func(i int) string { s, _ := rows[0][i].(string); return strings.TrimSpace(s) }
+		want := field(0)
+		if !hex64.MatchString(want) {
+			return refuse("no payload_sha on " + cardKey)
+		}
+		rep.SHA = want
 
-	// 2. The body, refused unless its sha256 is the payload_sha.
-	body, err := st.Client().Get(ctx, BodyKey(cfg.Sprint, want)).Bytes()
-	if errors.Is(err, redis.Nil) || (err == nil && len(body) == 0) {
-		return refuse("no body at " + BodyKey(cfg.Sprint, want) + " (push with nova-card-push)")
-	}
-	if err != nil {
-		return refuse("body read failed: " + err.Error())
-	}
-	sum := sha256.Sum256(body)
-	got := hex.EncodeToString(sum[:])
-	if got != want {
-		return refuse(fmt.Sprintf("body sha %s != payload_sha '%s'", got, want))
+		// 2. The body, refused unless its sha256 is the payload_sha.
+		body, err = st.Client().Get(ctx, BodyKey(cfg.Sprint, want)).Bytes()
+		if errors.Is(err, redis.Nil) || (err == nil && len(body) == 0) {
+			return refuse("no body at " + BodyKey(cfg.Sprint, want) + " (push with nova-card-push)")
+		}
+		if err != nil {
+			return refuse("body read failed: " + err.Error())
+		}
+		sum := sha256.Sum256(body)
+		got := hex.EncodeToString(sum[:])
+		if got != want {
+			return refuse(fmt.Sprintf("body sha %s != payload_sha '%s'", got, want))
+		}
 	}
 	if err := os.MkdirAll(cfg.JobDir, 0o700); err != nil {
 		return refuse("job dir: " + err.Error())
@@ -318,7 +353,7 @@ func Run(ctx context.Context, st *store.Store, cfg RunConfig) RunReport {
 	rep.Key = key
 
 	// 5. START, the runner, END.
-	log("START %s bench=%s tier=%s route=%s model=%s key=%s sha=%s", card, cfg.Bench, tier, row.Route, model, key, short(want))
+	log("START %s bench=%s tier=%s route=%s model=%s key=%s sha=%s", card, cfg.Bench, tier, row.Route, model, key, short(rep.SHA))
 	root := filepath.Join(cfg.Home, "rowan-working", "tmp")
 	slot := filepath.Join(root, fmt.Sprintf("nc-%s-%s-%d", cfg.Sprint, cfg.Label, cfg.Attempt))
 	if err := os.MkdirAll(slot, 0o755); err != nil {

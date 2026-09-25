@@ -17,26 +17,19 @@ import (
 //	ws:<stream>:<where>               the stream table (primaries)
 //	bench:<b>:cards:<col>             the host table (copies, sprint cards)
 //	friend:<f>:cards:<col>            the friend table (copies, friend-queue tasks)
-//	bench:<b>:living | :starting      the bench lease ledgers being folded into
-//	                                  bench:<b>:cards:working (#3877)
+//	bench|friend:<n>:living|starting  the old lease ledgers, folded into
+//	                                  <consumer>:cards:working (#3877, #3998)
 //
 // A ZADD, ZREM, SADD, SREM, SMOVE (or a pop, range removal, store, DEL,
 // UNLINK or RENAME) of one of them in any other Lua file, or any Go write of
-// one outside a fixture, fails here. The legacy writers of the two bench
-// lease ledgers are a ratchet (legacyLedgerWriters): a file may keep at most
-// its count until the fold lands, a new writer fails, and a count that fell
-// must be lowered here in the same change.
+// one outside a fixture, fails here. The old ledgers' allowlist is empty
+// (legacyLedgerWriters, #3998: the fold landed and the ratchet reached zero),
+// so any write of one anywhere fails, and TestNoOldLeaseLedgerLeft fails a
+// read of one in any Lua or non-test Go file.
 
-// legacyLedgerWriters are the Lua writes of bench:<b>:living|starting that
-// predate the rule, per file: they only go down.
-var legacyLedgerWriters = map[string]int{
-	"bench_reset.lua":        2,
-	"card_ghost.lua":         2, // #3925 (landed on dev beside the rule): the closed sprint's lease reap
-	"card_run.lua":           4,
-	"ci.lua":                 2,
-	"deal.lua":               2,
-	"reconcile_required.lua": 6,
-}
+// legacyLedgerWriters are the Lua writes of the old lease ledgers allowed
+// per file: none (#3998).
+var legacyLedgerWriters = map[string]int{}
 
 // theMoveFile is the one writer.
 const theMoveFile = "02_card_move.lua"
@@ -45,14 +38,14 @@ var (
 	tmLuaWrite = regexp.MustCompile(`redis\.p?call\('(ZADD|ZREM|SADD|SREM|SMOVE|ZPOPMIN|ZPOPMAX|ZREMRANGEBYSCORE|` +
 		`ZREMRANGEBYRANK|ZUNIONSTORE|ZINTERSTORE|ZRANGESTORE|DEL|UNLINK|RENAME)',\s*([^,)]+)`)
 	tmLuaTable  = regexp.MustCompile(`^('ws:'\s*\.\.|W\.key\(|TM\.key\(|'(bench|friend):'\s*\.\..*':cards:)`)
-	tmLuaLedger = regexp.MustCompile(`^'bench:'\s*\.\..*':(living|starting)'`)
-	tmLuaBind   = regexp.MustCompile(`local\s+(\w+)\s*=\s*('ws:'\s*\.\..*|'(bench|friend):'\s*\.\..*':cards:.*|'bench:'\s*\.\..*':(living|starting)'.*)$`)
+	tmLuaLedger = regexp.MustCompile(`^'(bench|friend):'\s*\.\..*':(living|starting)'`)
+	tmLuaBind   = regexp.MustCompile(`local\s+(\w+)\s*=\s*('ws:'\s*\.\..*|'(bench|friend):'\s*\.\..*':cards:.*|'(bench|friend):'\s*\.\..*':(living|starting)'.*)$`)
 
 	tmGoWrite = regexp.MustCompile(`\.(ZAdd|ZAddNX|ZAddXX|ZAddArgs|ZIncrBy|ZRem|ZRemRangeByScore|ZRemRangeByRank|ZUnionStore|` +
 		`ZInterStore|ZPopMin|ZPopMax|SAdd|SRem|SMove|Del|Unlink|Rename|RenameNX)\(ctx, ([^,)]+)`)
-	tmGoKey = regexp.MustCompile(`^("ws:"\s*\+|"(bench|friend):"\s*\+.*":cards:|"bench:"\s*\+.*":(living|starting)"|` +
+	tmGoKey = regexp.MustCompile(`^("ws:"\s*\+|"(bench|friend):"\s*\+.*":cards:|"(bench|friend):"\s*\+.*":(living|starting)"|` +
 		`(\w+\.)?(BenchStartingKey|BenchLivingKey|FriendCardsKey|StreamKey|FriendKey|WSKey)\(|\w+\.Key\(("(ready|working|ok|fail)"|col))`)
-	tmGoRaw = regexp.MustCompile(`"(ZADD|ZREM|SADD|SREM|SMOVE|DEL|RENAME)", "(ws:|(bench|friend):[^"]*:cards:|bench:[^"]*:(living|starting))`)
+	tmGoRaw = regexp.MustCompile(`"(ZADD|ZREM|SADD|SREM|SMOVE|DEL|RENAME)", "(ws:|(bench|friend):[^"]*:cards:|(bench|friend):[^"]*:(living|starting))`)
 )
 
 // tableWrite is one write the rule found: where, and whether it is a bench
@@ -171,7 +164,7 @@ func TestTableSetsHaveOneWriter(t *testing.T) {
 	}
 	for n, allowed := range legacyLedgerWriters {
 		if ledgers[n] < allowed {
-			t.Errorf("%s now writes bench:<b>:living|starting %d times, allowed %d: lower legacyLedgerWriters[%q] to %d (the ratchet only goes down)",
+			t.Errorf("%s now writes an old lease ledger (living|starting) %d times, allowed %d: lower legacyLedgerWriters[%q] to %d (the ratchet only goes down)",
 				n, ledgers[n], allowed, n, ledgers[n])
 		}
 	}
@@ -201,6 +194,7 @@ func TestTableSetsRuleCatchesAnInjectedWriter(t *testing.T) {
 		"redis.call('ZREM', 'friend:' .. f .. ':cards:working', id)",
 		"redis.call('ZADD', 'ws:' .. s .. ':waiting', 1, id)",
 		"redis.call('ZADD', 'bench:' .. bench .. ':living', at, member)",
+		"redis.call('ZREM', 'friend:' .. f .. ':starting', member)",
 		"redis.call('SREM', TM.key(c, 'ok'), id)",
 		"local k = 'bench:' .. b .. ':cards:working'\n  redis.call('ZADD', k, 1, id)",
 	}
@@ -217,6 +211,7 @@ func TestTableSetsRuleCatchesAnInjectedWriter(t *testing.T) {
 		`c.ZAdd(ctx, "bench:"+b+":cards:working", redis.Z{Score: 1, Member: id})`,
 		`pipe.ZRem(ctx, "friend:"+f+":cards:ready", id)`,
 		`c.ZRem(ctx, "bench:"+b+":starting", member)`,
+		`c.ZAdd(ctx, "friend:"+f+":living", redis.Z{Score: 1, Member: member})`,
 		`c.ZAdd(ctx, k.Key("ok"), redis.Z{Score: 1, Member: id})`,
 		`{"ZADD", "bench:b:cards:ready", "1", "x"},`,
 	} {
@@ -232,5 +227,54 @@ func TestTableSetsRuleCatchesAnInjectedWriter(t *testing.T) {
 		if len(goTableWrites("cmd/x.go", line)) != 0 || len(luaTableWrites("x.lua", line)) != 0 {
 			t.Errorf("the rule refused a read: %s", line)
 		}
+	}
+}
+
+// oldLedgerKey is any spelling of the old lease ledger keys in code: a Lua or
+// Go string ending ':living' or ':starting' after a bench or friend root.
+var oldLedgerKey = regexp.MustCompile(`(bench|friend)[^'"\n]*['"]\s*(\.\.|\+)\s*[^'"\n]*['"]:(living|starting)['"]|['"](bench|friend):[^'"\s]*:(living|starting)['"]`)
+
+// TestNoOldLeaseLedgerLeft (#3998): nothing reads or writes
+// bench|friend:<n>:living|starting any more, in the Lua library or in any
+// non-test Go file; the width in use is ZCARD <consumer>:cards:working.
+func TestNoOldLeaseLedgerLeft(t *testing.T) {
+	t.Parallel()
+	var bad []string
+	for n, src := range luaSources(t) {
+		for i, line := range strings.Split(src, "\n") {
+			code := line
+			if j := strings.Index(code, "--"); j >= 0 {
+				code = code[:j]
+			}
+			if oldLedgerKey.MatchString(code) {
+				bad = append(bad, n+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
+			}
+		}
+	}
+	tree := repoTree(t)
+	for _, dir := range []string{"cmd", "internal"} {
+		for _, src := range tree.GoFilesUnder(false, dir) {
+			for i, line := range strings.Split(string(src.Src), "\n") {
+				if oldLedgerKey.MatchString(line) {
+					bad = append(bad, src.Rel+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+	sort.Strings(bad)
+	for _, b := range bad {
+		t.Errorf("an old lease ledger key (folded into <consumer>:cards:working, #3998): %s", b)
+	}
+	for _, line := range []string{
+		"redis.call('ZCARD', 'friend:' .. f .. ':starting')",
+		`pipe.ZCard(ctx, "bench:"+b+":living")`,
+		`{"ZADD", "friend:eight:living", "1", "l1"},`,
+	} {
+		if !oldLedgerKey.MatchString(line) {
+			t.Errorf("the rule missed an old ledger key: %s", line)
+		}
+	}
+	if oldLedgerKey.MatchString(`pipe.ZCard(ctx, "bench:"+b+":cards:working")`) {
+		t.Error("the rule refused the one ledger")
 	}
 }

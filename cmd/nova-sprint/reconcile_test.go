@@ -132,7 +132,7 @@ func TestReconcileVerbDealsOnEvent(t *testing.T) {
 	t.Cleanup(func() { reconcileSeams, reconcileDuties = seams, registered })
 
 	leased := func() int {
-		n, err := c.ZCard(ctx, "bench:"+bench+":starting").Result()
+		n, err := c.ZCard(ctx, "bench:"+bench+":cards:working").Result()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -179,13 +179,14 @@ func TestReconcileVerbDealsOnEvent(t *testing.T) {
 
 	// One child ends: the fixture event on cap:log and s:<S>:log. The running
 	// verb refills the slot, far inside the 10 s sweep floor.
-	members, err := c.ZRange(ctx, "bench:"+bench+":starting", 0, 0).Result()
+	members, err := c.ZRange(ctx, "bench:"+bench+":cards:working", 0, 0).Result()
 	if err != nil || len(members) != 1 {
 		t.Fatalf("starting: %v %v", members, err)
 	}
-	parts := strings.Split(members[0], "/")
+	// the bench's one working set holds the card's id (#3998)
+	parts := []string{S, strings.TrimPrefix(members[0], "s:"+S+":card:"), c.HGet(ctx, members[0], "attempt").Val()}
 	pipe = c.TxPipeline()
-	pipe.ZRem(ctx, "bench:"+bench+":starting", members[0])
+	pipe.ZRem(ctx, "bench:"+bench+":cards:working", members[0])
 	pipe.HSet(ctx, "s:"+S+":card:"+parts[1], "state", "done", "outcome", "DONE")
 	pipe.SMove(ctx, "s:"+S+":idx:card:dealt", "s:"+S+":idx:card:done", parts[1])
 	pipe.ZRem(ctx, "s:"+S+":bench:"+bench+":queue", parts[1])

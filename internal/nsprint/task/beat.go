@@ -26,8 +26,9 @@ type BeatRequest struct {
 type BeatStatus string
 
 const (
-	// BeatWorking is the first beat: claimed -> working (start ack). It moves
-	// the identity from the friend's global starting lease to its living one.
+	// BeatWorking is the first beat: claimed -> working (start ack). The
+	// identity stays in the friend's one working set (#3998): a beat moves
+	// nothing but the task's beat_at.
 	BeatWorking BeatStatus = "WORKING"
 	// BeatBeating refreshes the lease and beat_at of a working task.
 	BeatBeating BeatStatus = "BEAT"

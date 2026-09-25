@@ -96,8 +96,8 @@ func TestDealStatusListUsesFcallOnly(t *testing.T) {
 	seed.Set(ctx, "bench:hulk:beat", "1", 0)
 	seed.HSet(ctx, "bench:studio:desired", "slots", "8", "paused", "0")
 	seed.HSet(ctx, "bench:hulk:desired", "slots", "4", "paused", "1")
-	seed.ZAdd(ctx, "bench:studio:living", redis.Z{Score: 1, Member: "c1"}, redis.Z{Score: 2, Member: "c2"})
-	seed.ZAdd(ctx, "bench:studio:starting", redis.Z{Score: 1, Member: "c3"})
+	seed.ZAdd(ctx, "bench:studio:cards:working", redis.Z{Score: 1, Member: "c1"}, redis.Z{Score: 2, Member: "c2"})
+	seed.ZAdd(ctx, "bench:studio:cards:working", redis.Z{Score: 1, Member: "c3"})
 	seed.ZAdd(ctx, "s:"+S+":bench:studio:queue", redis.Z{Score: 1, Member: "q1"})
 	seed.ZAdd(ctx, "s:"+S+":pool", redis.Z{Score: 1, Member: "p1"}, redis.Z{Score: 2, Member: "p2"})
 	seed.SAdd(ctx, "s:"+S+":waiting", "w1")
@@ -113,9 +113,9 @@ func TestDealStatusListUsesFcallOnly(t *testing.T) {
 		t.Fatalf("list mode as the bench seat: %v", err)
 	}
 	want := []string{
-		"bench hulk verdict=paused free=4 starting=0 living=0 queue=0 ssh=- ssh_age=-",
-		"bench studio verdict=ok free=5 starting=1 living=2 queue=1 ssh=- ssh_age=-",
-		"bench superman verdict=down free=0 starting=0 living=0 queue=0 ssh=- ssh_age=-",
+		"bench hulk verdict=paused free=4 ready=0 working=0 queue=0 ssh=- ssh_age=-",
+		"bench studio verdict=ok free=5 ready=0 working=3 queue=1 ssh=- ssh_age=-",
+		"bench superman verdict=down free=0 ready=0 working=0 queue=0 ssh=- ssh_age=-",
 		"sprint " + S + " pool=2 waiting=1 dealt=0 last_deal_age=-",
 	}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {

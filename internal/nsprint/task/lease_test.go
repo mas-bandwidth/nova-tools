@@ -45,11 +45,11 @@ func zcard(t *testing.T, ctx context.Context, client *redis.Client, key string) 
 }
 
 // TestControl01EightClaimsOneChild is #2756 control 1 with the #2745 expiry
-// transition: eight claimed tasks with one first beat leave seven starting and
-// one living. The seven stale leases stay visible until the reconciler expiry
-// runs; with a claimed_at backdated 70 s against Redis TIME they reopen,
-// release their global starting leases and emit one receipt each, leaving
-// starting 0 and living 1.
+// transition: eight claimed tasks with one first beat hold eight leases in
+// the friend's one working set (#3998; the beat moves nothing). The seven
+// stale leases stay visible until the reconciler expiry runs; with a
+// claimed_at backdated 70 s against Redis TIME they reopen, release their
+// leases and emit one receipt each, leaving working 1.
 func TestControl01EightClaimsOneChild(t *testing.T) {
 	st, client := controlRedis(t)
 	ctx := context.Background()
@@ -82,11 +82,8 @@ func TestControl01EightClaimsOneChild(t *testing.T) {
 	}); err != nil || got != task.BeatWorking {
 		t.Fatalf("first beat = %s, %v; want WORKING", got, err)
 	}
-	if got := zcard(t, ctx, client, "friend:ctl-a:starting"); got != 7 {
-		t.Fatalf("starting = %d; want 7", got)
-	}
-	if got := zcard(t, ctx, client, "friend:ctl-a:living"); got != 1 {
-		t.Fatalf("living = %d; want 1", got)
+	if got := zcard(t, ctx, client, "friend:ctl-a:cards:working"); got != 8 {
+		t.Fatalf("working = %d; want 8", got)
 	}
 
 	// The seven with no start ack are 70 s stale; run the reconciler pass.
@@ -109,11 +106,8 @@ func TestControl01EightClaimsOneChild(t *testing.T) {
 			t.Fatalf("expired %s state = %q, %v; want open", claim.ID, state, err)
 		}
 	}
-	if got := zcard(t, ctx, client, "friend:ctl-a:starting"); got != 0 {
-		t.Fatalf("starting after expiry = %d; want 0", got)
-	}
-	if got := zcard(t, ctx, client, "friend:ctl-a:living"); got != 1 {
-		t.Fatalf("living after expiry = %d; want 1", got)
+	if got := zcard(t, ctx, client, "friend:ctl-a:cards:working"); got != 1 {
+		t.Fatalf("working after expiry = %d; want 1", got)
 	}
 	if got, err := client.XLen(ctx, "cap:log").Result(); err != nil || got != 7 {
 		t.Fatalf("slot-freed events = %d, %v; want 7", got, err)
@@ -161,7 +155,7 @@ func TestControl02TakeNeverBeat(t *testing.T) {
 	if err != nil || state != "open" {
 		t.Fatalf("state = %q, %v; want open", state, err)
 	}
-	if got := zcard(t, ctx, client, "friend:ctl-b:starting"); got != 0 {
+	if got := zcard(t, ctx, client, "friend:ctl-b:cards:working"); got != 0 {
 		t.Fatalf("starting = %d; want 0", got)
 	}
 	if got, err := client.XLen(ctx, "cap:log").Result(); err != nil || got != 1 {
@@ -247,7 +241,7 @@ func TestTaskWorkingStaleExpiry(t *testing.T) {
 	if err != nil || !unresolved {
 		t.Fatalf("w1 unresolved evidence present = %v, %v; want true", unresolved, err)
 	}
-	if got := zcard(t, ctx, client, "friend:ctl-c:living"); got != 0 {
+	if got := zcard(t, ctx, client, "friend:ctl-c:cards:working"); got != 0 {
 		t.Fatalf("living after expiry = %d; want 0", got)
 	}
 }
@@ -309,7 +303,7 @@ func TestTaskCancelExternal(t *testing.T) {
 	if err != nil || done != task.DoneFenced || done.ExitCode() != 3 {
 		t.Fatalf("done with cancelled token = %s, %v; want FENCED exit 3", done, err)
 	}
-	if got := zcard(t, ctx, client, "friend:ctl-d:starting"); got != 0 {
+	if got := zcard(t, ctx, client, "friend:ctl-d:cards:working"); got != 0 {
 		t.Fatalf("starting after cancels = %d; want 0", got)
 	}
 	if got, err := client.XLen(ctx, "cap:log").Result(); err != nil || got != 2 {

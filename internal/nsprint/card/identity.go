@@ -113,9 +113,9 @@ func IdemKey(sprint string) string { return "s:" + sprint + ":idem" }
 
 func IdxKey(sprint, state string) string { return "s:" + sprint + ":idx:card:" + state }
 
-func BenchStartingKey(bench string) string { return "bench:" + bench + ":starting" }
-
-func BenchLivingKey(bench string) string { return "bench:" + bench + ":living" }
+// BenchWorkingKey is the bench's one lease ledger (#3998): its dealt,
+// launched and running sprint cards and its working copies.
+func BenchWorkingKey(bench string) string { return "bench:" + bench + ":cards:working" }
 
 func BenchEndedKey(sprint, bench string) string {
 	return "s:" + sprint + ":bench:" + bench + ":ended"

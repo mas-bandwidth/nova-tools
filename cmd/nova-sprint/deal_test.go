@@ -113,8 +113,8 @@ func setupDealFixture(t *testing.T, c *redis.Client, sprint string) {
 	c.HSet(ctx, "bench:full:beat", "host", "full.host", "user", "bench", "at", strconv.FormatInt(nowMs, 10))
 	c.HSet(ctx, "bench:full:state", "state", "UP", "at", "1") // #2046: UP is the fleet record
 	c.HSet(ctx, "bench:full:desired", "slots", "2", "paused", "0")
-	c.ZAdd(ctx, "bench:full:starting", redis.Z{Score: float64(nowMs), Member: sprint + "/card-f1/1"})
-	c.ZAdd(ctx, "bench:full:living", redis.Z{Score: float64(nowMs), Member: sprint + "/card-f2/1"})
+	c.ZAdd(ctx, "bench:full:cards:working", redis.Z{Score: float64(nowMs), Member: sprint + "/card-f1/1"})
+	c.ZAdd(ctx, "bench:full:cards:working", redis.Z{Score: float64(nowMs), Member: sprint + "/card-f2/1"})
 
 	// ok: free 2, ssh=refused
 	c.HSet(ctx, "bench:ok:beat", "host", "ok.host", "user", "bench", "at", strconv.FormatInt(nowMs, 10))

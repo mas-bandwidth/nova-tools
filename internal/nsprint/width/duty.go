@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -101,9 +102,7 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 	// Round 2: One pipeline over all friends.
 	type friendCmds struct {
 		desired       *redis.StringCmd
-		starting      *redis.IntCmd
-		living        *redis.IntCmd
-		livingScores  *redis.ZSliceCmd
+		held          *redis.StringSliceCmd
 		beat          *redis.IntCmd
 		fillstate     *redis.MapStringStringCmd
 		openPerSprint map[string]*redis.StringSliceCmd
@@ -114,9 +113,7 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 	for _, f := range friends {
 		fc := &friendCmds{
 			desired:       pipe2.HGet(ctx, "friend:"+f+":desired", "slots"),
-			starting:      pipe2.ZCard(ctx, "friend:"+f+":starting"),
-			living:        pipe2.ZCard(ctx, "friend:"+f+":living"),
-			livingScores:  pipe2.ZRangeWithScores(ctx, "friend:"+f+":living", 0, -1),
+			held:          pipe2.ZRange(ctx, "friend:"+f+":cards:working", 0, -1),
 			beat:          pipe2.Exists(ctx, "friend:"+f+":beat"),
 			fillstate:     pipe2.HGetAll(ctx, "friend:"+f+":fillstate"),
 			openPerSprint: make(map[string]*redis.StringSliceCmd, len(openSprints)),
@@ -140,8 +137,6 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 
 	type friendComputed struct {
 		slots         int
-		starting      int
-		living        int
 		leased        int
 		working       int
 		deficit       int
@@ -152,22 +147,48 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 		fillAt        int64
 	}
 
+	// Round 2b: the friend's one working set (#3998) holds its leases;
+	// a friend-queue take is working once its task is working with a beat
+	// inside 60 s, read in one pipeline (skipped when no friend holds one).
+	// Since one task store (#3907) the take is the task card itself (task
+	// <id>, its record carrying the take's attempt); an older lease member
+	// <S>/<id>/<attempt> reads the same record. A copy, a sprint card or a
+	// task card moved by the card verbs (no attempt) is working.
+	beats := map[string][]*redis.SliceCmd{}
+	pipe3 := client.Pipeline()
+	for _, f := range friends {
+		for _, m := range fcmds[f].held.Val() {
+			id := m
+			if parts := strings.SplitN(m, "/", 3); len(parts) == 3 {
+				id = parts[1]
+			} else if strings.HasPrefix(m, "s:") || copyMember.MatchString(m) {
+				continue
+			}
+			beats[f] = append(beats[f], pipe3.HMGet(ctx, "task:"+id, "state", "beat_at", "attempt"))
+		}
+	}
+	if len(beats) > 0 {
+		if _, err := pipe3.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return reconcile.Counts{}, fmt.Errorf("width duty: round 2b: %w", err)
+		}
+	}
+
 	computed := make(map[string]*friendComputed, len(friends))
 	for _, f := range friends {
 		fc := fcmds[f]
 		desiredSlots, _ := strconv.Atoi(fc.desired.Val())
-		starting := int(fc.starting.Val())
-		living := int(fc.living.Val())
-		w := task.WidthFrom(desiredSlots, starting, living)
-
-		working := 0
-		for _, z := range fc.livingScores.Val() {
-			if int64(z.Score) >= nowMs-60000 {
+		held := len(fc.held.Val())
+		w := task.WidthFrom(desiredSlots, held)
+		working := held - len(beats[f])
+		for _, b := range beats[f] {
+			v := b.Val()
+			state, _ := v[0].(string)
+			raw, _ := v[1].(string)
+			attempt, _ := v[2].(string)
+			at, err := strconv.ParseInt(raw, 10, 64)
+			if attempt == "" || (state == "working" && err == nil && at >= nowMs-60000) {
 				working++
 			}
-		}
-		if working > living {
-			working = living
 		}
 
 		fsMap := fc.fillstate.Val()
@@ -178,8 +199,6 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 
 		computed[f] = &friendComputed{
 			slots:         w.Desired,
-			starting:      w.Starting,
-			living:        w.Living,
 			leased:        w.Leased,
 			working:       working,
 			deficit:       w.Free,
@@ -406,8 +425,6 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 			strconv.Itoa(peak),
 			strconv.FormatInt(peakAt, 10),
 			strconv.FormatInt(unfilledSince, 10),
-			strconv.Itoa(c.starting),
-			strconv.Itoa(c.living),
 		)
 	}
 
@@ -486,3 +503,6 @@ func strVal(val []any, idx int) string {
 	}
 	return fmt.Sprint(val[idx])
 }
+
+// copyMember is a consumer copy's id in a working set (<primary>~<n>).
+var copyMember = regexp.MustCompile(`^\S+~\d+$`)

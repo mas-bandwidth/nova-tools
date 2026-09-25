@@ -25,8 +25,7 @@ local function take_view(keys, args)
   local friend, sprint, id = args[1], args[2] or '', args[3] or ''
   -- A friend with no free slot takes nothing: the view reads no queue.
   local desired = tonumber(redis.call('HGET', 'friend:' .. friend .. ':desired', 'slots') or '0') or 0
-  if desired - redis.call('ZCARD', 'friend:' .. friend .. ':starting') -
-      redis.call('ZCARD', 'friend:' .. friend .. ':living') <= 0 then
+  if desired - NS.moves.held('friend:' .. friend) <= 0 then
     return {}
   end
   local sprints = { sprint }

@@ -21,16 +21,15 @@ type Login struct {
 }
 
 // Friend is one candidate reader. Load is that friend's open+working count.
-// Free width is Desired minus Starting minus Living, the same accounting as
+// Free width is Desired minus Leased (ZCARD friend:<f>:cards:working, #3998), the same accounting as
 // task width. Only a friend with free width greater than zero can be chosen.
 type Friend struct {
-	Name     string
-	State    string
-	MayHold  bool
-	Desired  int
-	Starting int
-	Living   int
-	Load     int
+	Name    string
+	State   string
+	MayHold bool
+	Desired int
+	Leased  int
+	Load    int
 }
 
 // Task is a read the friend already holds. Dedup matches on repo, PR, the
@@ -192,7 +191,7 @@ func available(state string) bool {
 }
 
 func freeWidth(f Friend) int {
-	return f.Desired - f.Starting - f.Living
+	return f.Desired - f.Leased
 }
 
 // blocked reports the first reason this friend must not receive a new task

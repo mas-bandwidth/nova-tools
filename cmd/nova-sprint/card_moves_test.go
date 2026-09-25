@@ -190,3 +190,45 @@ func TestCardMovesCLI(t *testing.T) {
 		t.Fatalf("usage = %d %q", code, errOut)
 	}
 }
+
+// TestCardSessionCLI (#3998): `card session --as bench:<b>` is the bench
+// harness's session start. A friend is refused (its seat is friend serve), a
+// bench that is not enrolled takes nothing, and an enrolled bench takes its
+// ready copies with one card work --fill; a copy whose wrapper cannot start
+// is given back to its primary (card cancel), so nothing is left working
+// without a live wrapper.
+func TestCardSessionCLI(t *testing.T) {
+	addr, c := sprintRedis(t)
+	t.Setenv("NOVA_SPRINT_REDIS", addr)
+	t.Setenv("NOVA_REDIS_ADDR", "")
+	t.Setenv("NOVA_FRIEND", "")
+	ctx := context.Background()
+	c.HSet(ctx, "bench:b:desired", "slots", "2")
+	if code, out, errOut := runTaskCLI("push", "--actor", "rowan", "--id", "s0", "--stream", "swarm: cards", "--waiting",
+		"--kind", "build", "--repo", "mas-bandwidth/nova-tools", "--title", "t"); code != 0 {
+		t.Fatalf("push %d %q %q", code, out, errOut)
+	}
+	if code, _, errOut := runCLI("card", "session", "--as", "friend:emma"); code != 2 || !strings.Contains(errOut, "session wants --as bench:<b>") {
+		t.Fatalf("friend session = %d %q", code, errOut)
+	}
+	missing := filepath.Join(t.TempDir(), "nova-card")
+	if code, out, _ := runCLI("card", "session", "--as", "bench:b", "--wrapper", missing); code != 0 || !strings.HasPrefix(out, "CARD SESSION bench:b not enrolled") {
+		t.Fatalf("not enrolled = %d %q", code, out)
+	}
+	if code, out, _ := runCLI("card", "consumers", "--add", "bench:b"); code != 0 {
+		t.Fatalf("enroll = %d %q", code, out)
+	}
+	if code, out, _ := runCLI("card", "deal", "--to", "bench:b", "--n", "1", "--actor", "rowan"); code != 0 {
+		t.Fatalf("deal = %d %q", code, out)
+	}
+	code, out, _ := runCLI("card", "session", "--as", "bench:b", "--wrapper", missing)
+	if code != 1 || !strings.HasPrefix(out, "CARD SESSION bench:b worked=1 launched=0 given_back=1 free=1 ms=") {
+		t.Fatalf("session with no wrapper = %d %q", code, out)
+	}
+	if n := c.ZCard(ctx, "bench:b:cards:working").Val(); n != 0 {
+		t.Fatalf("bench:b:cards:working holds %d after the give-back", n)
+	}
+	if w := c.HGet(ctx, "task:s0", "where").Val(); w != "waiting" {
+		t.Fatalf("primary where=%s after the give-back, want waiting", w)
+	}
+}

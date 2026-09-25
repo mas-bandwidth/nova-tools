@@ -1468,7 +1468,8 @@ function TK.fsck(S)
     local rows = redis.call('ZRANGE', k, 0, -1, 'WITHSCORES')
     for i = 1, #rows, 2 do
       local id = rows[i]
-      if not TK.card_id(id) and not TK.copy_id(id) then
+      -- (a / is a friend-queue lease in the working set: TM.hold)
+      if not TK.card_id(id) and not TK.copy_id(id) and not string.find(id, '/', 1, true) then
         want(id)
         local p = rec(id)
         if not p then
@@ -1659,8 +1660,7 @@ redis.register_function('ns_tcard_expire', function(keys, args)
             if token ~= '' and token ~= '0' and token ~= 'fenced' then
               redis.call('HSET', 'task:' .. id, 'token', 'fenced')
               local identity = S .. '/' .. id .. '/' .. attempt
-              redis.call('ZREM', 'friend:' .. f .. ':starting', identity)
-              redis.call('ZREM', 'friend:' .. f .. ':living', identity)
+              NS.moves.drop('friend:' .. f, identity)
             end
             out[#out + 1] = id
           end
@@ -2671,6 +2671,66 @@ end)
 redis.register_function({ function_name = 'ns_cm_fsck', flags = { 'no-writes' },
   callback = function(keys, args) return TM.fsck(false) end })
 redis.register_function('ns_cm_repair', function(keys, args) return TM.fsck(true) end)
+
+-- THE ONE LEASE LEDGER (#3998, #3877's other half; it replaces the
+-- bench:<b>:starting|living and friend:<f>:starting|living ledgers, which
+-- nothing writes or reads any more). A consumer's width in
+-- use is ZCARD <consumer>:cards:working and nothing else: its working copies
+-- (TM.work), its task cards (TK.move with a friend) and, while the older
+-- paths still run, their leases. A bench's sprint card is already a member
+-- there from its deal to its end (card_move: dealt, launched and running are
+-- where=working), so the bench keeps no second ledger. A friend-queue take
+-- (s:<S>:task:<id>, task_claim.lua) holds the member <S>/<id>/<attempt>
+-- there from the take to its done, cancel, expiry or redistribute: TM.hold
+-- adds it once, scored by the take's time and never rescored (the task
+-- record's beat_at is its beat), and TM.drop removes it; the files that take
+-- and close those tasks call them as NS.moves.hold and NS.moves.drop, so this
+-- file stays the one writer of the set. TK.fsck and TM.fsck pass over these
+-- members (a / in the member; no task id or copy id has one).
+--
+-- One task store (#3907): a friend-queue take is a task card, so the take's
+-- own move (NS.task.set ... claimed, friend f) already put task <id> in
+-- friend:<f>:cards:working. That member is the lease: TM.hold adds no second
+-- <S>/<id>/<attempt> for it (a take counts once against the width), and
+-- TM.leases names it as <S>/<id>/<attempt> from the record, so the fence and
+-- requeue paths read one identity either way.
+function TM.lease_id(m) return type(m) == 'string' and string.find(m, '/', 1, true) ~= nil end
+
+function TM.hold(c, member, at)
+  if not TM.parse(c) or not TM.lease_id(member) then return 0 end
+  local id = string.match(member, '^[^/]+/(.+)/%d+$')
+  if id and redis.call('ZSCORE', TM.key(c, 'working'), id) then return 0 end
+  return redis.call('ZADD', TM.key(c, 'working'), 'NX', at, member)
+end
+
+function TM.drop(c, member)
+  if not TM.parse(c) or not TM.lease_id(member) then return 0 end
+  return redis.call('ZREM', TM.key(c, 'working'), member)
+end
+
+-- TM.held: the consumer's width in use (every member of its working set).
+function TM.held(c) return redis.call('ZCARD', TM.key(c, 'working')) end
+
+-- TM.leases: the consumer's friend-queue leases, oldest first.
+function TM.leases(c)
+  local out = {}
+  for _, m in ipairs(redis.call('ZRANGE', TM.key(c, 'working'), 0, -1)) do
+    if TM.lease_id(m) then
+      out[#out + 1] = m
+    elseif not TK.card_id(m) and not TK.copy_id(m) then
+      -- a task card taken off a friend queue (one task store, #3907)
+      local v = redis.call('HMGET', 'task:' .. m, 'sprint', 'attempt', 'state')
+      if TK.str(v[1]) ~= '' and TK.str(v[2]) ~= '' and (v[3] == 'claimed' or v[3] == 'working') then
+        out[#out + 1] = v[1] .. '/' .. m .. '/' .. v[2]
+      end
+    end
+  end
+  return out
+end
+
+-- NS.moves: what a later file calls: the lease ledger above (no CI word
+-- moves a primary; a copy's end does, #3929).
+NS.moves = { hold = TM.hold, drop = TM.drop, held = TM.held, leases = TM.leases }
 
 NS.task = { move = TK.move, create = TK.create, place = TK.place, read = TK.read, stream_of = TK.stream_of,
   ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF,

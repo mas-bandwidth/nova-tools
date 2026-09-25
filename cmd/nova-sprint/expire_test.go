@@ -333,9 +333,9 @@ func TestExpireDutyReplacesSprintRequeue(t *testing.T) {
 		"pushed_sha", "89abcdef0123456789abcdef0123456789abcdef")
 	// (c) a silent running card and a dealt card with no ack and no live identity.
 	x.seed(S, "c-silent", "running", "launched_at", old(400000), "beat_at", old(181000))
-	x.must(x.c.ZAdd(x.ctx, card.BenchLivingKey(B), redis.Z{Score: float64(now), Member: S + "/c-silent/1"}).Err())
+	x.must(x.c.ZAdd(x.ctx, card.BenchWorkingKey(B), redis.Z{Score: float64(now), Member: S + "/c-silent/1"}).Err())
 	x.seed(S, "c-dealt", "dealt", "dealt_at", old(61000))
-	x.must(x.c.ZAdd(x.ctx, card.BenchStartingKey(B), redis.Z{Score: float64(now), Member: S + "/c-dealt/1"}).Err())
+	x.must(x.c.ZAdd(x.ctx, card.BenchWorkingKey(B), redis.Z{Score: float64(now), Member: S + "/c-dealt/1"}).Err())
 	// (d) reconcile-required cards: one whose branch exists, one proven absent.
 	x.seed(S, "d-branch", "reconcile-required", "branch", "nova/"+S+"/d-branch-a1", "jobdir", "/jobs/d-branch", "repo", repo)
 	x.seed(S, "d-absent", "reconcile-required", "branch", "nova/"+S+"/d-absent-a1", "jobdir", "/jobs/d-absent", "repo", repo)
@@ -529,7 +529,7 @@ func TestExpireStaleFenceWritesNothing(t *testing.T) {
 		keys, err := x.c.Keys(x.ctx, "s:"+S+":*").Result()
 		x.must(err)
 		slices.Sort(keys)
-		keys = append(keys, reconcile.ProcKey, card.BenchLivingKey("exp-bench"), card.BenchStartingKey("exp-bench"))
+		keys = append(keys, reconcile.ProcKey, card.BenchWorkingKey("exp-bench"), card.BenchWorkingKey("exp-bench"))
 		for _, k := range keys {
 			typ, _ := x.c.Type(x.ctx, k).Result()
 			switch typ {

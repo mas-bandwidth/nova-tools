@@ -20,6 +20,8 @@
 //	card table [--as <consumer>]...       the consumer cells: ready working done ok fail ok%
 //	card consumers [--add <consumer>] [--rm <consumer>]
 //	card render --id <copy>               the copy's card file (the bench runs it)
+//	card session --as bench:<b> [--wrapper <path>]   the bench harness's session start (#3998):
+//	                                      card work --fill, then one detached nova-card copy per copy
 //
 // every verb also takes --redis <addr> (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)
 // and --actor <a> (else NOVA_FRIEND, else nova-sprint).
@@ -37,6 +39,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/launch"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/redis/go-redis/v9"
@@ -44,7 +47,7 @@ import (
 
 // cardMoveVerbs are the table move subverbs no other card form has.
 var cardMoveVerbs = map[string]bool{"deal": true, "work": true, "land": true, "cancel": true, "expire": true,
-	"table": true, "consumers": true, "render": true, "assign": true}
+	"table": true, "consumers": true, "render": true, "assign": true, "session": true}
 
 // isCardMove says whether a card call is a table move. end and beat are
 // the move form with --id, --ids or --as (the bench attempt form names a
@@ -83,7 +86,7 @@ func isCardMove(sub string, args []string) bool {
 type moveCmd struct {
 	redis, actor, to, as, stream, ids, id, why, sha *string
 	pr, head, doneAlready, score, gates, finding    *string
-	reader, fail, add, rm, token                    *string
+	reader, fail, add, rm, token, wrapper           *string
 	n                                               *int
 	fill, ok, repair, revoke                        *bool
 	result                                          map[string]*string
@@ -118,6 +121,7 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	m.add = fs.String("add", "", "")
 	m.rm = fs.String("rm", "", "")
 	m.token = fs.String("token", "", "")
+	m.wrapper = fs.String("wrapper", "", "")
 	m.revoke = fs.Bool("revoke", false, "")
 	m.n = fs.Int("n", 0, "")
 	m.fill = fs.Bool("fill", false, "")
@@ -244,6 +248,10 @@ func (m *moveCmd) usage(sub string, ids []string) string {
 	case "consumers":
 		if *m.add != "" && *m.rm != "" {
 			return "consumers wants at most one of --add and --rm"
+		}
+	case "session":
+		if !strings.HasPrefix(*m.as, "bench:") {
+			return "session wants --as bench:<b> (a friend's seat is friend serve)"
 		}
 	}
 	return ""
@@ -467,6 +475,27 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 			names[i] = k.String()
 		}
 		fmt.Fprintf(out, "CARD CONSUMERS n=%d consumers=%s ms=%d\n", len(ks), dash(strings.Join(names, ",")), ms())
+		return 0
+	case "session":
+		as, err := consumerArg(*m.as)
+		if err != nil {
+			return refuse(errOut, "card session", err.Error())
+		}
+		wrapper, err := wrapperPath(*m.wrapper)
+		if err != nil {
+			return refuse(errOut, "card session", err.Error())
+		}
+		s, err := card.OpenCopySession(ctx, c, as.Name, *m.actor, func(l card.CopyLaunch) error {
+			_, err := launch.LaunchCopy(wrapper, launch.CopyLine{Copy: l.Copy, Token: l.Token}, launch.DefaultBudget)
+			return err
+		})
+		if err != nil {
+			return refuse(errOut, "card session", err.Error())
+		}
+		fmt.Fprintf(out, "CARD %s ms=%d\n", s.Line(as.Name), ms())
+		if len(s.GivenBack) > 0 {
+			return 1
+		}
 		return 0
 	case "render":
 		if !taskcard.IsCopy(ids[0]) {
