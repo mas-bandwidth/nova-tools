@@ -118,6 +118,9 @@ func landedForge(t *testing.T) map[string]string {
 	closed := func(n int) string {
 		return `{"state":"closed","merged_at":null,"head":{"sha":"` + heads[n] + `"}}`
 	}
+	closedGQL := func(n int) string {
+		return `{"state":"CLOSED","mergedAt":null,"closedAt":null,"headRefOid":"` + heads[n] + `","mergeCommit":null}`
+	}
 	return map[string]string{
 		"api repos/o/r/pulls/1": `{"state":"closed","merged_at":"2026-09-22T10:00:00Z","merge_commit_sha":"m1","head":{"sha":"h1"}}`,
 		"api repos/o/r/pulls/2": closed(2),
@@ -127,6 +130,14 @@ func landedForge(t *testing.T) map[string]string {
 		"api repos/o/r/pulls/6": closed(6),
 
 		"api repos/o/r/compare/dev...abcdef1": `{"status":"behind"}`,
+
+		// the same six PRs as set check reads them: one batch call (#3460)
+		strings.Join(landed.BatchArgs("o/r", []int{1, 2, 3, 4, 5, 6}), " "): `{"data":{"repository":{` +
+			`"p1":{"state":"MERGED","mergedAt":"2026-09-22T10:00:00Z","headRefOid":"h1","mergeCommit":{"oid":"m1"}},` +
+			`"p2":` + closedGQL(2) + `,"p3":` + closedGQL(3) + `,` +
+			`"p4":{"state":"OPEN","mergedAt":null,"headRefOid":"h4"},` +
+			`"p5":{"state":"CLOSED","mergedAt":null,"headRefOid":"h5"},` +
+			`"p6":` + closedGQL(6) + `}}}`,
 	}
 }
 
@@ -216,6 +227,16 @@ func TestSetCheckEvaluateDerivesDoneFromCriteria(t *testing.T) {
 		if n != 1 {
 			t.Errorf("gh %s was asked %d times in one run, want 1", key, n)
 		}
+	}
+	// #3460: the six PRs are read in one batch call, and none again by REST; the
+	// one other call is the commit's compare.
+	for key := range forge.calls {
+		if strings.HasPrefix(key, "api repos/o/r/pulls/") {
+			t.Errorf("gh %s: a PR was read by REST after the batch", key)
+		}
+	}
+	if len(forge.calls) != 2 {
+		t.Errorf("one run made %d distinct gh calls, want 2 (one batch, one compare): %v", len(forge.calls), forge.calls)
 	}
 	// Without --evaluate the document's words count, and gh is never asked.
 	forge.calls = map[string]int{}

@@ -3408,7 +3408,9 @@ bare repository per repo under --cache. The base is
 SET EVAL line with holds=yes|no|unknown and a why=; a criterion gh or git could not
 answer is unknown and counts as not done. A unit is decided by its criteria when every
 one is evaluable or one fails; a unit naming only :test, :job or :attested criteria keeps
-its :status. Each question is asked once per run.
+its :status. Each question is asked once per run, and every PR the criteria name is read
+before any is evaluated, in one gh GraphQL call per repo (100 PRs to a call; #3460); a PR
+that call did not answer is read alone by REST.
 --write-status (implies --evaluate) then rewrites :status "open" to "landed" for each unit
 whose criteria all hold, one SET WROTE line per unit, and changes no other byte.
 
