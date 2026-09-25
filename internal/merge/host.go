@@ -41,10 +41,9 @@ type Checks struct {
 	RedNames     []string
 	Details      []CheckDetail
 	PendingNames []string
-	// Source is where the evidence came from: CIFromRedis (the verdict
-	// record), CIFromGitHub (check-runs, because the record said nothing), or
-	// "" for a host that does not say. SourceWhy is the record's state when
-	// the forge answered.
+	// Source is where the evidence came from: CIFromRedis (a CI record in
+	// Redis), or "" for a host that does not say. SourceWhy is kept for a host
+	// that explains its source; GH leaves it empty.
 	Source    string
 	SourceWhy string
 }
@@ -240,8 +239,8 @@ type GH struct {
 	Timeout time.Duration
 	Runner  Runner
 	// CI is the injectable CI verdict source GH.Checks reads. NewGH sets it to
-	// RedisFromEnv (ci:<owner/repo>:<head>:<gid>); WithCISource overrides it. It is
-	// never GitHub's check-runs.
+	// RedisFromEnv (the three ci:<owner/repo>:<head> records); WithCISource
+	// overrides it. It is never GitHub's check-runs.
 	CI CISource
 }
 
@@ -432,54 +431,25 @@ func decodeOpenPRs(out string) ([]RebasePR, error) {
 	return prs, nil
 }
 
-// Checks reads a commit's CI evidence. The verdict record ci:<owner/repo>:<head>:<gid>
-// (the injectable source) answers first; when it says nothing -- absent, no
-// verdict, or unreadable -- the commit's GitHub check-runs answer, and the
-// result's Source is "from-github". A missing record is not a verdict.
-// ErrCIMissing is returned only when both say nothing.
+// Checks reads a commit's CI evidence from Redis only (the injectable CISource;
+// cisource.go names the three records). It never reads GitHub's check-runs:
+// when no record says anything the answer is ErrCIMissing, and an unreadable
+// record is an error. A missing record is not a verdict, so neither is red.
 func (h *GH) Checks(oid string) (Checks, error) {
 	oid = strings.TrimSpace(oid)
-	why := "no ci source"
-	if h.CI != nil {
-		value, ok, err := h.CI.Read(h.Repo, oid)
-		switch {
-		case err != nil:
-			why = civerdict.GIDsKey(h.Repo, oid) + " unreadable: " + oneline.Err(err)
-		case ok:
-			c := Checks{Source: CIFromRedis}
-			c.AddRun("ci", ciState(value), oid)
-			return c, nil
-		default:
-			why = civerdict.GIDsKey(h.Repo, oid) + " absent"
-		}
+	if h.CI == nil {
+		return Checks{}, fmt.Errorf("%w (no ci source) at %s", ErrCIMissing, oid)
 	}
-	c, err := h.checkRuns(oid)
-	if err != nil {
-		return Checks{}, fmt.Errorf("ci: %s, and the github check-runs could not be read: %w", why, err)
+	value, ok, err := h.CI.Read(h.Repo, oid)
+	switch {
+	case err != nil:
+		return Checks{}, fmt.Errorf("ci: the record for %s is unreadable: %s", CIRequestKey(h.Repo, oid), oneline.Err(err))
+	case !ok:
+		return Checks{}, fmt.Errorf("%w (%s, %s and %s say nothing)", ErrCIMissing,
+			civerdict.GIDsKey(h.Repo, oid), CIRequestKey(h.Repo, oid), CIGitHubKey(h.Repo, oid))
 	}
-	if c.Total() == 0 {
-		return Checks{}, fmt.Errorf("%w (%s, and github has no check-runs at %s)", ErrCIMissing, why, oid)
-	}
-	c.Source, c.SourceWhy = CIFromGitHub, why
-	return c, nil
-}
-
-// checkRuns reads a commit's GitHub check-runs and buckets them.
-func (h *GH) checkRuns(oid string) (Checks, error) {
-	out, err := h.gh("api", fmt.Sprintf("repos/%s/commits/%s/check-runs", h.Repo, oid),
-		"--jq", ".check_runs[] | [.name, (.conclusion // .status), .head_sha] | @tsv")
-	if err != nil {
-		return Checks{}, err
-	}
-	var c Checks
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		name, rest, _ := strings.Cut(line, "\t")
-		state, sha, _ := strings.Cut(rest, "\t")
-		c.AddRun(name, state, sha)
-	}
+	c := Checks{Source: CIFromRedis}
+	c.AddRun("ci", ciState(value), oid)
 	return c, nil
 }
 
