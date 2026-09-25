@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
@@ -273,6 +274,38 @@ func SetBench(ctx context.Context, st *store.Store, name, machine string, slots 
 type DesiredOpts struct {
 	Paused   string
 	Register bool
+	// Legs (#3349) is a bench's declared CI legs, the ninth arg, already
+	// normalized by NormalizeLegs; "" keeps the stored list.
+	Legs string
+}
+
+// NormalizeLegs turns a --legs value ("go,schema" or "go schema") into the
+// comma-joined list ns_capacity_desired stores, in the given order with
+// duplicates dropped. A leg name is letters, digits, '_' or '-'.
+func NormalizeLegs(raw string) (string, error) {
+	var legs []string
+	seen := map[string]bool{}
+	for _, leg := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }) {
+		for _, r := range leg {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+				return "", fmt.Errorf("leg %q: want letters, digits, _ or -", leg)
+			}
+		}
+		if !seen[leg] {
+			seen[leg] = true
+			legs = append(legs, leg)
+		}
+	}
+	if len(legs) == 0 {
+		return "", errors.New("no leg named")
+	}
+	return strings.Join(legs, ","), nil
+}
+
+// SetBenchWith is SetBench with the legs arg (#3349). An identical write
+// returns Status SAME and writes nothing.
+func SetBenchWith(ctx context.Context, st *store.Store, name, machine string, slots int, actor, idem string, opts DesiredOpts) (Result, error) {
+	return setDesiredWith(ctx, st, KindBench, name, machine, slots, actor, idem, opts)
 }
 
 // ErrUnregistered is the UNREGISTERED status of a capacity function (the
@@ -304,12 +337,15 @@ func setDesiredWith(ctx context.Context, st *store.Store, kind, name, machine st
 		return Result{}, &CeilingError{Machine: machine, Sum: plan.Sum, Ceiling: plan.Ceiling}
 	}
 	fargs := []any{kind, name, strconv.Itoa(slots), machine, actor, idem}
-	if opts.Paused != "" || opts.Register {
+	if opts.Paused != "" || opts.Register || opts.Legs != "" {
 		register := "0"
 		if opts.Register {
 			register = "1"
 		}
 		fargs = append(fargs, opts.Paused, register)
+		if opts.Legs != "" {
+			fargs = append(fargs, opts.Legs)
+		}
 	}
 	reply, err := st.Client().FCall(ctx, FunctionDesired, nil, fargs...).Result()
 	if err != nil {
