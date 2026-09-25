@@ -8,12 +8,13 @@
 //
 //	<left>/<y> left, <z>% done -> ~<eta>m
 //
-//	stream | waiting | ready | working | merging | landed   (rows in ws:order, all-zero rows hidden, total)
+//	stream | waiting | ready | working | reading | merging | landed   (rows in ws:order, all-zero rows hidden, total)
 //	LAND stream=<s> members=<n> head=<sha8> ci=<word> age=<d>   (one per open landing, #3900)
 //
-// merging prints <read>/<unread> (merging.go, #3900); once a ws:<s>:reading
-// set exists (#3929) reading is its own column before merging and merging is
-// the read cards alone: the same ReadSplit, its other source.
+// reading is ZCARD ws:<s>:reading (#3929). merging prints <read>/<unread>
+// (merging.go, #3900) until a ws:<s>:reading set exists; from then on the
+// unread cards are the reading column and merging is the read cards alone:
+// the same ReadSplit, its other source.
 //
 //	friend | ready | working | done | status        (status up|down)
 //
@@ -23,7 +24,7 @@
 // trip only on the tick a membership set changed; never KEYS, never SCAN):
 //
 //	ws:order                ZRANGE, the streams in rank order (the ws index, #3662)
-//	ws:<s>:<state>          ZCARD for waiting, ready, working, merging, landed, reading
+//	ws:<s>:<state>          ZCARD for waiting, ready, working, reading, merging, landed
 //	EVAL_RO detailScript    read only: ws:<s>:merging with each card's pr:<name>:<n>
 //	                        head/state/stream/reads, cfg:land, and every
 //	                        land:<repo>:<slug> of land:<repo>:streams with its PR's ci
@@ -72,8 +73,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// WSStates are the five per-stream sets the table counts, in reply order.
-var WSStates = []string{"waiting", "ready", "working", "merging", "landed"}
+// WSStates are the six per-stream sets the table counts, in reply order.
+// reading sits between working and merging (Glenn 2026-09-25: "split merging
+// into separate reading | merging columns"): a card whose PR is being read.
+var WSStates = []string{"waiting", "ready", "working", "reading", "merging", "landed"}
 
 // FriendWheres are the three friend:<f>:cards:<where> sets the friend block
 // counts, in column order.
@@ -104,24 +107,24 @@ type SprintConfig struct {
 	// LandRepos are the owner/name repos whose open landings print as LAND
 	// lines; empty is DefaultLandRepos.
 	LandRepos []string
-	// ReadingSet prints the reading column from ws:<s>:reading (#3929) even
-	// before any card is in one; without it the column appears on the first
-	// tick that finds a reading set non-empty and stays.
+	// ReadingSet takes the merging split from ws:<s>:reading (#3929) even
+	// before any card is in one: merging prints the read count alone, not
+	// <read>/<unread>. Without it the switch happens on the first tick that
+	// finds a reading set non-empty and stays. The reading column is always
+	// printed.
 	ReadingSet bool
 }
 
-// StreamRow is one stream's counts.
+// StreamRow is one stream's six counts, in WSStates order.
 type StreamRow struct {
-	Name                                     string
-	Waiting, Ready, Working, Merging, Landed int64
-	// Reading is ZCARD ws:<s>:reading, the cards waiting on a read (#3929).
-	Reading int64
+	Name                                              string
+	Waiting, Ready, Working, Reading, Merging, Landed int64
 	// MergingRead is how many cards of merging the lander would take (a
 	// read at head >= cfg:land, no hold), from the PR records; -1 unknown.
 	MergingRead int64
 }
 
-// Total is every task in the stream's sets.
+// Total is every task in the stream's six sets.
 func (r StreamRow) Total() int64 {
 	return r.Waiting + r.Ready + r.Working + r.Reading + r.Merging + r.Landed
 }
@@ -205,7 +208,7 @@ type SprintReader struct {
 	sprint, since, from string
 	primed              bool
 	// sawReading is set on the first tick a reading set was non-empty: the
-	// column stays from then on, so the layout never flaps.
+	// split stays ReadFromSet from then on, so the merging cell never flaps.
 	sawReading bool
 }
 
@@ -271,12 +274,10 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		lock = pipe.Eval(ctx, lockRefreshScript, []string{cfg.LockKey}, cfg.LockToken, lockTTL(cfg).Milliseconds())
 	}
 	counts := make([][]*redis.IntCmd, len(r.streams))
-	reading := make([]*redis.IntCmd, len(r.streams))
 	for i, s := range r.streams {
 		for _, state := range WSStates {
 			counts[i] = append(counts[i], pipe.ZCard(ctx, "ws:"+s+":"+state))
 		}
-		reading[i] = pipe.ZCard(ctx, "ws:"+s+":reading")
 	}
 	// The merging split from records only while there is no reading set.
 	var fromRecords []string
@@ -381,8 +382,8 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 	}
 	for i, s := range r.streams {
-		row := StreamRow{Name: s, Reading: reading[i].Val(), MergingRead: -1}
-		cells := []*int64{&row.Waiting, &row.Ready, &row.Working, &row.Merging, &row.Landed}
+		row := StreamRow{Name: s, MergingRead: -1}
+		cells := []*int64{&row.Waiting, &row.Ready, &row.Working, &row.Reading, &row.Merging, &row.Landed}
 		for j, c := range counts[i] {
 			*cells[j] = c.Val()
 		}
@@ -471,13 +472,10 @@ func FailedSprint(cfg SprintConfig, last *SprintSnapshot) *SprintSnapshot {
 	return &snap
 }
 
-const streamRule = "-------------------------------+---------+-------+---------+---------+-------\n"
-
-// readingRule is the stream block's rule with the reading column (#3929).
-const readingRule = "-------------------------------+---------+-------+---------+---------+---------+-------\n"
+const streamRule = "-------------------------------+---------+-------+---------+---------+---------+-------\n"
 
 // XY is the headline's numbers: y is every task in the streams of ws:order,
-// left is y minus landed, eta is left over the landed rate of the last hour
+// left is y minus landed (a card in reading or merging is not done), eta is left over the landed rate of the last hour
 // (at least 1 an hour, so a stall shows as a big number, never infinity).
 func (s *SprintSnapshot) XY() (left, y, pct, eta int64) {
 	var landed int64
@@ -624,20 +622,14 @@ func ReleaseLock(ctx context.Context, client redis.UniversalClient, key, token s
 }
 
 // renderStreams is the stream block and its LAND lines. Every cell is one
-// set's ZCARD, ready its own column (a card is in exactly one set), except
-// the read split: merging prints <read>/<unread> from the records until a
-// reading set exists, then reading (unread) and merging (read) are two
-// columns. Both come from ReadSplit.
+// set's ZCARD, ready and reading each their own column (a card is in exactly
+// one set), except the read split: merging prints <read>/<unread> from the
+// records until a reading set exists, then reading is the unread cards and
+// merging the read ones. Both come from ReadSplit.
 func (s *SprintSnapshot) renderStreams(b *strings.Builder, now time.Time) {
 	sets := s.ReadSource == ReadFromSet
-	rule := streamRule
-	if sets {
-		rule = readingRule
-		fmt.Fprintf(b, "%-30s | %7s | %5s | %7s | %7s | %7s | %6s\n", "stream", "waiting", "ready", "working", "reading", "merging", "landed")
-	} else {
-		fmt.Fprintf(b, "%-30s | %7s | %5s | %7s | %7s | %6s\n", "stream", "waiting", "ready", "working", "merging", "landed")
-	}
-	b.WriteString(rule)
+	fmt.Fprintf(b, "%-30s | %7s | %5s | %7s | %7s | %7s | %6s\n", "stream", "waiting", "ready", "working", "reading", "merging", "landed")
+	b.WriteString(streamRule)
 	var tot StreamRow
 	var tread, tunread int64
 	known := true
@@ -649,22 +641,19 @@ func (s *SprintSnapshot) renderStreams(b *strings.Builder, now time.Time) {
 		known = known && ok
 		tread, tunread = tread+read, tunread+unread
 		tot.Waiting, tot.Ready, tot.Working = tot.Waiting+r.Waiting, tot.Ready+r.Ready, tot.Working+r.Working
-		tot.Merging, tot.Landed = tot.Merging+r.Merging, tot.Landed+r.Landed
-		if sets {
-			fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %7d | %7d | %6d\n", r.Name, r.Waiting, r.Ready, r.Working, unread, read, r.Landed)
-		} else {
-			fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %7s | %6d\n", r.Name, r.Waiting, r.Ready, r.Working, s.mergingCell(r), r.Landed)
+		tot.Reading, tot.Merging, tot.Landed = tot.Reading+r.Reading, tot.Merging+r.Merging, tot.Landed+r.Landed
+		merging := strconv.FormatInt(r.Merging, 10)
+		if !sets {
+			merging = s.mergingCell(r)
 		}
+		fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %7d | %7s | %6d\n", r.Name, r.Waiting, r.Ready, r.Working, r.Reading, merging, r.Landed)
 	}
-	b.WriteString(rule)
-	switch {
-	case sets:
-		fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %7d | %7d | %6d\n", "total", tot.Waiting, tot.Ready, tot.Working, tunread, tread, tot.Landed)
-	case known:
-		fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %7s | %6d\n", "total", tot.Waiting, tot.Ready, tot.Working, fmt.Sprintf("%d/%d", tread, tunread), tot.Landed)
-	default:
-		fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %7d | %6d\n", "total", tot.Waiting, tot.Ready, tot.Working, tot.Merging, tot.Landed)
+	b.WriteString(streamRule)
+	merging := strconv.FormatInt(tot.Merging, 10)
+	if !sets && known {
+		merging = fmt.Sprintf("%d/%d", tread, tunread)
 	}
+	fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %7d | %7s | %6d\n", "total", tot.Waiting, tot.Ready, tot.Working, tot.Reading, merging, tot.Landed)
 	for _, l := range s.Landings {
 		b.WriteString(l.LandLine(now))
 		b.WriteByte('\n')

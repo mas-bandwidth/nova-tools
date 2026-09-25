@@ -10,7 +10,7 @@ import (
 // The #3530 fixture: a whole-table keyspace of 10 streams, 6 benches and 4
 // friends, every stamp relative to SprintFixtureNow so the golden holds at
 // that instant. It exercises every rule the render applies: two all-zero
-// streams hidden, ready in its own column, landed moves in and out of the
+// streams hidden, ready and reading in their own columns, landed moves in and out of the
 // ETA's hour, a bench outside the benches SET (studio) not shown, a friend with a down flag, a friend whose beat is
 // stale, a friend with no row, and a done base from a clear. Host rows are
 // each bench's own keys (#2389): its card views and its beat; the bash
@@ -31,24 +31,24 @@ func SprintFixtureConfig() SprintConfig {
 }
 
 // SprintFixtureStreams are the fixture's streams in rank order with their
-// waiting, ready, working, merging and landed counts.
+// waiting, ready, working, reading, merging and landed counts.
 var SprintFixtureStreams = []FixtureStream{
-	{"swarm: cards", 150, 5, 6, 0, 0},
-	{"nova-sprint + merge + bus", 310, 6, 0, 1, 2},
-	{"nova sprint migration", 14, 0, 0, 0, 0},
-	{"fleet, ci, secrets, jev", 0, 0, 2, 0, 1},
-	{"redis: store + bus", 81, 0, 0, 0, 0},
-	{"nova-work", 0, 0, 0, 0, 0},
-	{"landing: streams + lander", 3, 0, 0, 2, 0},
-	{"docs", 0, 0, 0, 0, 0},
-	{"rowan-tools", 1, 0, 0, 0, 3},
-	{"harvest", 0, 4, 0, 0, 0},
+	{"swarm: cards", 150, 5, 6, 0, 0, 0},
+	{"nova-sprint + merge + bus", 310, 6, 0, 2, 1, 2},
+	{"nova sprint migration", 14, 0, 0, 0, 0, 0},
+	{"fleet, ci, secrets, jev", 0, 0, 2, 1, 0, 1},
+	{"redis: store + bus", 81, 0, 0, 0, 0, 0},
+	{"nova-work", 0, 0, 0, 0, 0, 0},
+	{"landing: streams + lander", 3, 0, 0, 0, 2, 0},
+	{"docs", 0, 0, 0, 0, 0, 0},
+	{"rowan-tools", 1, 0, 0, 0, 0, 3},
+	{"harvest", 0, 4, 0, 0, 0, 0},
 }
 
-// FixtureStream is one fixture stream's five set sizes.
+// FixtureStream is one fixture stream's six set sizes, in WSStates order.
 type FixtureStream struct {
-	Name                                     string
-	Waiting, Ready, Working, Merging, Landed int64
+	Name                                              string
+	Waiting, Ready, Working, Reading, Merging, Landed int64
 }
 
 // SprintFixture is the keyspace as Redis commands.
@@ -59,7 +59,7 @@ func SprintFixture() [][]string {
 	var cmds [][]string
 	for i, s := range SprintFixtureStreams {
 		cmds = append(cmds, []string{"ZADD", "ws:order", strconv.Itoa(i + 1), s.Name})
-		counts := []int64{s.Waiting, s.Ready, s.Working, s.Merging, s.Landed}
+		counts := []int64{s.Waiting, s.Ready, s.Working, s.Reading, s.Merging, s.Landed}
 		for j, state := range WSStates {
 			for k := int64(0); k < counts[j]; k++ {
 				id := fmt.Sprintf("t%d-%s-%d", i+1, state, k)

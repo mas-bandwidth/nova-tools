@@ -3624,9 +3624,12 @@ watches (#3530): the headline (`SPRINT TABLE *** PIT STOP ***` while
 `<left>/<y> left, <z>% done -> ~<eta>m` line, the streams block, the friend
 block and the host block, one blank line between them. The streams are the
 rows of `ws:order` (the ws index, #3662) with
-the ZCARDs of their `waiting`, `ready`, `working`, `merging` and
-`landed` sets, one column each (nothing folded); rows with all zeros are hidden. y is every task in those sets,
-left is y minus landed, and the ETA is left over the moves to `landed` in the
+the ZCARDs of their `waiting`, `ready`, `working`, `reading`, `merging` and
+`landed` sets (`ws:<stream>:<where>`), one column each in that order (nothing
+folded: `reading` is its own column between `working` and `merging`); rows
+with all zeros are hidden. The total row sums each column. y is every task in
+those sets, left is y minus landed (a card in `reading` or `merging` is left,
+not done), and the ETA is left over the moves to `landed` in the
 last hour of `ws:log` (at least one an hour). The hosts are the `benches` SET
 (each bench's own keys, #2389: ready and working are the ZCARDs of
 `bench:<b>:cards:ready` and `:working`, load is `bench:<b>:beat` load1 from
@@ -3650,8 +3653,8 @@ it writes the checkpoint (every landed task with its fields, every friend's
 done count) and prints `CHECKPOINT`, then in one MULTI/EXEC moves every
 `ws:<s>:landed` member to closed (`task:<id>` state, one `ws:log` entry
 each), stores the done counts in `ws:done0` and the receipt in
-`ws:checkpoint`, and prints `CLEARED ... ms=<n>`. Waiting, ready, working and
-merging are untouched.
+`ws:checkpoint`, and prints `CLEARED ... ms=<n>`. Waiting, ready, working,
+reading and merging are untouched.
 
 `table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...>`
 renders the #2674 port of rowan-tools `bin/sprint-table-redis` (the keys
