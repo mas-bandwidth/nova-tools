@@ -20,11 +20,13 @@ import (
 // pipelined round trip over a NAMED key set, the sprint's card index sets
 // s:<S>:idx:card:<state>. Nothing is scanned. Each index is one
 //
-//	SORT s:<S>:idx:card:<state> BY nosort GET # GET s:<S>:card:*-><field> ...
+//	FCALL_RO ns_census_read 0 <S> <state> <field> ...
 //
-// so the members and their hash fields come back in the same reply, and every
-// SORT plus one TIME (the clock the ages are measured on) travel in a single
-// pipeline flush. It is read-only.
+// (the nova_sprint library, census.lua), so the members and their hash fields
+// come back in the same reply, and every call plus one TIME (the clock the
+// ages are measured on) travel in a single pipeline flush. No SORT: it is
+// @dangerous and the coordinator ACL refuses it (#3620). It is read-only and
+// loads nothing; the deploy loads the library (nova-sprint fn load).
 //
 // Output is TSV, a header then one row per card sorted by index order, then
 // label:
@@ -50,6 +52,10 @@ var CardStates = []string{
 	"queued", "dealt", "launched", "running", "ended", "reconcile-required",
 	"orphan-effect", "harvested", "refused", "review-ready", "land-ready", "landed",
 }
+
+// CensusReadFunction is the library function that reads one card index with
+// the named hash fields of each member (census.lua).
+const CensusReadFunction = "ns_census_read"
 
 // cardCensusFields are the card hash fields read per member, after the label.
 var cardCensusFields = []string{"state", "bench", "route", "attempt", "beat_at", "ended_at", "launched_at", "dealt_at", "cut_at"}
@@ -166,23 +172,23 @@ func RunCardCensus(ctx context.Context, s *Store, req CardCensusRequest, out io.
 	return sum, w.Flush()
 }
 
-// CardCensus is the read: one pipeline of TIME plus one SORT ... GET per
-// named index. Rows come back sorted by index order, then label.
+// CardCensus is the read: one pipeline of TIME plus one FCALL_RO
+// ns_census_read per named index. Rows come back sorted by index order, then label.
 func (s *Store) CardCensus(ctx context.Context, req CardCensusRequest) ([]CardCensusRow, CardCensusSummary, error) {
 	if err := req.Check(); err != nil {
 		return nil, CardCensusSummary{}, err
 	}
 	states := req.states()
-	get := make([]string, 0, len(cardCensusFields)+1)
-	get = append(get, "#")
-	for _, f := range cardCensusFields {
-		get = append(get, "s:"+req.Sprint+":card:*->"+f)
-	}
 	pipe := s.client.Pipeline()
 	clock := pipe.Time(ctx)
-	reads := make([]*redis.StringSliceCmd, len(states))
+	reads := make([]*redis.Cmd, len(states))
 	for i, st := range states {
-		reads[i] = pipe.Sort(ctx, "s:"+req.Sprint+":idx:card:"+st, &redis.Sort{By: "nosort", Get: get})
+		args := make([]any, 0, len(cardCensusFields)+2)
+		args = append(args, req.Sprint, st)
+		for _, f := range cardCensusFields {
+			args = append(args, f)
+		}
+		reads[i] = pipe.FCallRo(ctx, CensusReadFunction, nil, args...)
 	}
 	sum := CardCensusSummary{Sprint: req.Sprint, Sets: len(states), RoundTrips: 1}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
@@ -193,16 +199,16 @@ func (s *Store) CardCensus(ctx context.Context, req CardCensusRequest) ([]CardCe
 		return nil, CardCensusSummary{}, fmt.Errorf("census TIME: %w", err)
 	}
 	nowMS := now.UnixMilli()
-	width := len(get)
+	width := len(cardCensusFields) + 1
 	seen := map[string]bool{}
 	var rows []CardCensusRow
 	for i, st := range states {
-		vals, err := reads[i].Result()
+		vals, err := reads[i].StringSlice()
 		if err != nil {
-			return nil, CardCensusSummary{}, fmt.Errorf("census SORT s:%s:idx:card:%s: %w", req.Sprint, st, err)
+			return nil, CardCensusSummary{}, fmt.Errorf("census %s s:%s:idx:card:%s: %w", CensusReadFunction, req.Sprint, st, err)
 		}
 		if len(vals)%width != 0 {
-			return nil, CardCensusSummary{}, fmt.Errorf("census SORT s:%s:idx:card:%s: %d values, not a multiple of %d", req.Sprint, st, len(vals), width)
+			return nil, CardCensusSummary{}, fmt.Errorf("census %s s:%s:idx:card:%s: %d values, not a multiple of %d", CensusReadFunction, req.Sprint, st, len(vals), width)
 		}
 		var group []CardCensusRow
 		for j := 0; j < len(vals); j += width {
@@ -229,8 +235,8 @@ func (s *Store) CardCensus(ctx context.Context, req CardCensusRequest) ([]CardCe
 	return rows, sum, nil
 }
 
-// cardRow builds one row from the SORT GET values, in cardCensusFields order.
-// SORT GET returns nil (read as "") for a field the hash lacks and for every
+// cardRow builds one row from the ns_census_read values, in cardCensusFields
+// order. The function returns ” for a field the hash lacks and for every
 // field of a hash that does not exist; a card hash always holds state, so an
 // empty state is a missing hash.
 func cardRow(label, index string, v []string, nowMS int64) CardCensusRow {

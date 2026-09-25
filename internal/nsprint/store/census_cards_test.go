@@ -5,12 +5,67 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
 )
+
+// commandNames records the name of every command a client sends, pipelined or not.
+type commandNames struct {
+	mu    sync.Mutex
+	names []string
+}
+
+func (h *commandNames) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *commandNames) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		h.add(cmd)
+		return next(ctx, cmd)
+	}
+}
+
+func (h *commandNames) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		h.add(cmds...)
+		return next(ctx, cmds)
+	}
+}
+
+func (h *commandNames) add(cmds ...redis.Cmder) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, c := range cmds {
+		h.names = append(h.names, strings.ToLower(c.Name()))
+	}
+}
+
+func (h *commandNames) take() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := h.names
+	h.names = nil
+	return n
+}
+
+// serverSorts is the server's own count of SORT calls since start.
+func serverSorts(t *testing.T, client *redis.Client) string {
+	t.Helper()
+	info, err := client.Info(context.Background(), "commandstats").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(info, "\n") {
+		if strings.HasPrefix(line, "cmdstat_sort:") || strings.HasPrefix(line, "cmdstat_sort_ro:") {
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
+}
 
 const censusCards = 1042
 
@@ -59,13 +114,21 @@ func seedCards(t *testing.T, client *redis.Client, sprint string, nowMS int64) m
 // logged ms, not an assertion: internal/ci refuses an elapsed-time bound in a
 // test (CI-WAITS kind=elapsed); the event asserted is the single flush.
 //
-// The Redis is testutil's throwaway redis-server, not miniredis: miniredis
-// v2.39.0 implements neither SORT nor FCALL, and without one of them a set's
-// members and their hash fields cannot come back in one round trip.
+// The read is FCALL_RO ns_census_read per index, never SORT (@dangerous, and
+// refused to the coordinator seat, #3620): the test asserts the commands the
+// client sent and the server's own commandstats. The Redis is testutil's
+// throwaway redis-server, not miniredis: miniredis v2.39.0 implements no
+// FCALL, and without a server-side read a set's members and their hash fields
+// cannot come back in one round trip.
 func TestCensusSprintCardsOneRoundTrip(t *testing.T) {
 	addr := startRedis(t)
 	client, flushes := countedClient(t, addr)
 	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatalf("load nova_sprint library: %v", err)
+	}
+	names := &commandNames{}
+	client.AddHook(names)
 	now, err := client.Time(ctx).Result()
 	if err != nil {
 		t.Fatal(err)
@@ -76,6 +139,7 @@ func TestCensusSprintCardsOneRoundTrip(t *testing.T) {
 
 	var out bytes.Buffer
 	flushes.reset()
+	names.take()
 	start := time.Now()
 	sum, err := store.RunCardCensus(ctx, st, store.CardCensusRequest{Sprint: sprint}, &out)
 	elapsed := time.Since(start)
@@ -84,6 +148,17 @@ func TestCensusSprintCardsOneRoundTrip(t *testing.T) {
 	}
 	if got := flushes.count(); got != 1 {
 		t.Fatalf("census --sprint used %d flushes; want exactly 1 for all %d cards", got, censusCards)
+	}
+	sent := names.take()
+	wantSent := []string{"time"}
+	for range store.CardStates {
+		wantSent = append(wantSent, "fcall_ro")
+	}
+	if strings.Join(sent, " ") != strings.Join(wantSent, " ") {
+		t.Fatalf("census --sprint sent %v; want %v (TIME, then one FCALL_RO %s per index, no SORT)", sent, wantSent, store.CensusReadFunction)
+	}
+	if got := serverSorts(t, client); got != "" {
+		t.Fatalf("the server counted SORT calls: %s", got)
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	if lines[0] != store.CardCensusHeader {

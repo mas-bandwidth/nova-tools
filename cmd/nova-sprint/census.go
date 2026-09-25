@@ -112,7 +112,7 @@ func runCardCensus(ctx context.Context, addr, sprint, keys string, out, errOut i
 	}
 	defer st.Close()
 	if _, err := store.RunCardCensus(ctx, st, req, out); err != nil {
-		fmt.Fprintf(errOut, "nova-sprint census: REFUSED %s; each s:%s:idx:card:<state> must be a set of card labels\n", oneline.Escape(err.Error()), sprint)
+		fmt.Fprintf(errOut, "nova-sprint census: REFUSED %s; load the nova_sprint library (nova-sprint fn load) and keep each s:%s:idx:card:<state> a set of card labels\n", oneline.Escape(err.Error()), sprint)
 		return 1
 	}
 	return 0
