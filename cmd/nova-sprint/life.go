@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -39,7 +40,7 @@ func init() {
 	})
 	register(Verb{
 		Name:    "bench",
-		Summary: "beat, release, or reset one bench; reindex a sprint's card views once; ls the registry with each bench's role",
+		Summary: "beat, release, reset or sweep one bench; reindex a sprint's card views once; ls the registry with each bench's role",
 		Run:     runBench,
 	})
 }
@@ -87,7 +88,7 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 
 func runBench(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "bench", "want beat, release, reset, reindex or ls")
+		return refuse(errOut, "bench", "want beat, release, reset, sweep, reindex or ls")
 	}
 	switch args[0] {
 	case "beat":
@@ -100,8 +101,10 @@ func runBench(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runBenchReindex(ctx, args[1:], out, errOut)
 	case "ls":
 		return runBenchLs(ctx, args[1:], out, errOut)
+	case "sweep":
+		return runBenchSweep(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "bench", fmt.Sprintf("unknown subverb %s; want beat, release, reset, reindex or ls", args[0]))
+		return refuse(errOut, "bench", fmt.Sprintf("unknown subverb %s; want beat, release, reset, sweep, reindex or ls", args[0]))
 	}
 }
 
@@ -497,6 +500,59 @@ func runBenchRelease(ctx context.Context, args []string, out, errOut io.Writer) 
 	}
 	fmt.Fprintf(out, "%s released\n", *bench)
 	return 0
+}
+
+// runBenchSweep is `nova-sprint bench sweep` (#2632): delete the job dirs a
+// crashed wrapper left for this bench's ended cards, and record each on the
+// card hash (card.RunSweep). The jobs root is NOVA_CARD_JOBS, the variable
+// nova-card reads, and never argv: it is checked before any Redis command.
+// --dry-run previews one sweep and writes nothing; --loop <s> repeats it.
+func runBenchSweep(ctx context.Context, args []string, out, errOut io.Writer) int {
+	fs, addr := lifeFlags("bench sweep")
+	bench := fs.String("bench", "", "bench name")
+	sprint := fs.String("sprint", "", "one sprint (default every sprint in sprints)")
+	dryRun := fs.Bool("dry-run", false, "preview one sweep: every check, no lock, no delete, no write")
+	loop := fs.Int("loop", 0, "repeat every <s> seconds until interrupted")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, "bench sweep", err.Error()+"; the jobs root is "+card.SweepJobsEnv+", never a flag")
+	}
+	if fs.NArg() != 0 {
+		return refuse(errOut, "bench sweep", "takes flags, not positional arguments; the jobs root is "+card.SweepJobsEnv)
+	}
+	if *bench == "" {
+		return refuse(errOut, "bench sweep", "--bench is required")
+	}
+	if *loop < 0 || (*dryRun && *loop > 0) {
+		return refuse(errOut, "bench sweep", "--dry-run is one shot; drop --loop")
+	}
+	cfg := card.SweepConfig{Bench: *bench, Sprint: *sprint, Root: os.Getenv(card.SweepJobsEnv), DryRun: *dryRun}
+	if _, why := card.SweepRoot(cfg.Root); why != "" {
+		fmt.Fprintf(out, "SWEEP-REFUSED root=%q why=%s\n", cfg.Root, why)
+		return card.SweepExitRoot
+	}
+	st, err := store.OpenSingle(ctx, lifeAddr(*addr))
+	if err != nil {
+		fmt.Fprintf(out, "SWEEP-REFUSED bench=%s why=redis %s\n", *bench, strings.Join(strings.Fields(err.Error()), " "))
+		return card.SweepExitRedis
+	}
+	defer st.Close()
+	if *loop == 0 {
+		return card.RunSweep(ctx, st, cfg, out)
+	}
+	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ticker := time.NewTicker(time.Duration(*loop) * time.Second)
+	defer ticker.Stop()
+	for {
+		if code := card.RunSweep(signalCtx, st, cfg, out); code == card.SweepExitRoot {
+			return code
+		}
+		select {
+		case <-signalCtx.Done():
+			return 0
+		case <-ticker.C:
+		}
+	}
 }
 
 // runPresenceLoop keeps a friend's beat fresh at 1 s until the process is
