@@ -1,6 +1,4 @@
 SPRINT TABLE
-blocked: 0
-landed: ?
 sprint: SPRINT ? (sprint-xy has not written yet)
 
 host       | ready | working |  done |    ok |  fail |  ok% |   load
