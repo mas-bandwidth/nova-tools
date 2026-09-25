@@ -51,6 +51,7 @@ var helpCases = [][]string{
 	{"lander"},
 	{"lesson", "append"}, {"lesson", "supersede"},
 	{"life", "event"}, {"life", "wake-mode"},
+	{"line", "post"}, {"line", "list"}, {"line", "import"},
 	{"lineup"}, {"lineup", "publish"},
 	{"mirror", "refresh"}, {"mirror", "check"}, {"mirror", "status"},
 	{"note"},

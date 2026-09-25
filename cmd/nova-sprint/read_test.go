@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
@@ -51,13 +52,16 @@ func readFixture(t *testing.T) (mirror, addr, head string) {
 	mirror = filepath.Join(t.TempDir(), "nova-tools.git")
 	readGit(t, work, "clone", "-q", "--bare", work, mirror)
 	readGit(t, mirror, "update-ref", "refs/pull/3/head", head)
-	mr := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	addr = testutil.Start(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
+	if err := fn.Load(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
 	if err := c.HSet(context.Background(), read.Key("nova-tools", "3"), "head", head, "base", "dev", "base_sha", base, "paths", "a.txt", "done_when", "true", "stream", "s").Err(); err != nil {
 		t.Fatal(err)
 	}
-	return mirror, mr.Addr(), head
+	return mirror, addr, head
 }
 
 // TestReadUsageRefusalsOpenNoStore: every usage error is exit 2 on stderr
