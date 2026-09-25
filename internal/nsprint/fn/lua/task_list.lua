@@ -5,6 +5,8 @@
 -- filtering the Go List function did: open tasks must be in the friend's
 -- assigned queue, all other live tasks must name the friend as owner, and
 -- without a state filter only open, claimed, working and waiting are returned.
+-- The record is the one card store task:<id> (#3778): s:<S>:task:<id> is
+-- retired, so the sprint's index sets name the ids and task:<id> holds them.
 
 local function is_assigned(queue, id)
   for _, qid in ipairs(queue) do
@@ -64,7 +66,7 @@ local function task_list(keys, args)
 
       -- HMGET state and owner for each candidate.
       for _, id in ipairs(ids) do
-        local row = redis.call('HMGET', 's:' .. sprint .. ':task:' .. id, 'state', 'owner')
+        local row = redis.call('HMGET', 'task:' .. id, 'state', 'owner')
         local state = row[1] or ''
         local owner = row[2] or ''
         if state ~= '' then
