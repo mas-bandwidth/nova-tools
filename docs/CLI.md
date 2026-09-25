@@ -3767,6 +3767,46 @@ scanned by `internal/ci` (TestNoGhInAnyBrief, #3600): a `gh ` invocation, a
 GraphQL mention, or a GitHub clone without the bench mirror as `--reference`
 is a red run.
 
+### jev
+
+Jev runs the mechanical passes first, on every PR, before any friend read
+(#3631). `jev mech --repo <r> --n <n> --body-file <f> [--mirror <dir>]
+[--redis <addr>]` reads the PR record `pr:<repo>:<n>` (head, base, base_sha,
+paths, reads) in one HMGET, the changed files `<base_sha>..<head>` from the
+bench mirror (default `~/nova-bench/mirror/<repo>.git`; the verb never
+fetches) and the PR body from the file, runs three passes (`internal/jev`)
+and appends ONE typed line to the record's `reads`:
+
+- lint: every typed body line present, once, in its one form: `BASE:` (one
+  branch), `base-sha:` (7-40 hex), `PATHS:` (parses), `DEPENDS-ON:` (`none`
+  or `owner/name#n[, ...]`, an optional `(WHY: ...)` after), `DONE-WHEN:`,
+  `STREAM:`, and `Closes #<n>` (or `ORIGIN:`). The refusal names the line.
+- scope: every changed file inside the body's PATHS (else the record's).
+- base: the PR targets dev or main, the base the body names, cut from the
+  record's base_sha.
+
+```
+JEV who=jev pass=mech head=<sha> gate=ok|fail lint=ok scope=ok base=ok why=-
+```
+
+A pass with nothing to decide on (no mirror, the head not in the mirror yet,
+no base) is `missing`, which is not `fail`. The line is never a read:
+`stream.ReadAt` skips every `who=jev*` line and it carries no SCORE,
+DISPOSITION or HOLD word. The stream lander reads it as a gate: `cfg:land jev`
+is `gate` (the default: a gating pass that failed at head skips the PR as
+`jev:<passes>`), `require` (a PR with no JEV line at head also skips, as
+`no-jev-at-head`) or `off`; `cfg:land jev_passes` names the passes that gate
+(empty: all), so a pass whose precision falls is turned off by config. The
+same line already last at head is not appended again (`JEV SAME`).
+
+```
+JEV RECORDED pr:nova-tools:7 head=b7628a80 gate=ok lint=ok scope=ok base=ok
+```
+
+Exit 0 recorded with gate=ok; 1 recorded with gate=fail (`why=` and
+`remedy=` on the receipt), or refused (no record, no Redis: `JEV REFUSED`
+on stderr); 2 usage, before Redis is touched.
+
 ### spec
 
 The specs table in Redis (#3370, part of #3364). A SPEC line's facts go
