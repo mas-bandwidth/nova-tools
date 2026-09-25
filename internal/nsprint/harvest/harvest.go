@@ -33,8 +33,11 @@
 //	   ambiguous reply (timeout, reset, 5xx, 422 exists) is read back by the
 //	   lookup at most len(Readback) times, else err=create-ambiguous with the
 //	   card left at intent and no second POST in this pass;
-//	e. the receipt (ns_card_harvested), after the PR record is read back
-//	   from Redis with head == pushed_sha.
+//	e. the head's own CI request (ci.Request, the function `ci request`
+//	   calls: ci:<repo>:<head> pending in ci:pool, EXISTS on a second pass,
+//	   no GitHub call; a refusal is err=ci-request, card not harvested),
+//	   then the receipt (ns_card_harvested), after the PR record is read
+//	   back from Redis with head == pushed_sha.
 //
 // A card is harvested only through (e). GitHub is asked only for what only it
 // has: the PR number (the create or the lookup). The head is verified from
@@ -64,6 +67,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
@@ -111,6 +115,7 @@ const (
 	CodeResultsRelative = "results-relative"
 	CodeNoCommit        = "no-commit"
 	CodeFailed          = "failed"
+	CodeCIRequest       = "ci-request"
 )
 
 // ErrAmbiguous marks a forge reply after which the request may have been
@@ -263,6 +268,9 @@ type CardResult struct {
 	Head          string
 	URL           string
 	Via           string
+	// CI is the word ns_ci_request answered for the head: CREATED on a new
+	// head, EXISTS when the head was already requested (#3717).
+	CI string
 }
 
 // CardFailure is one card this pass could not harvest; it stays ended and the
@@ -799,7 +807,18 @@ func publish(ctx context.Context, st *store.Store, opt Options, l lease, c Card,
 // it (or, for an idem key from before the record existed, as REST read it),
 // and the body this pass opened the PR with (stored as pr_body, #3712; ""
 // stores none: a PR found open was opened by an earlier pass).
+//
+// Before the receipt, the head's own CI request (#3717): ci.Request, the
+// function `nova-sprint ci request` calls (ns_ci_request), idempotent on the
+// sha and with no GitHub call, so ci:pool holds every head harvest records.
+// It runs first so a failed request leaves the card unharvested and the next
+// pass (through the PR record, no GitHub) asks again.
 func receipt(ctx context.Context, st *store.Store, opt Options, l lease, c Card, res CardResult, pr PR, body string) (CardResult, error) {
+	word, err := requestCI(ctx, st, c, pr)
+	if err != nil {
+		return res, err
+	}
+	res.CI = word
 	reply, err := st.Client().FCall(ctx, FunctionHarvested, nil, opt.Sprint, c.Label, l.bench,
 		l.instance, l.token, strconv.Itoa(pr.Number), pr.Head, opt.Actor, body).Text()
 	if err != nil {
@@ -815,6 +834,21 @@ func receipt(ctx context.Context, st *store.Store, opt Options, l lease, c Card,
 	}
 	res.PR, res.Head, res.URL = pr.Number, pr.Head, pr.URL
 	return res, nil
+}
+
+// requestCI puts the PR head in ci:pool through ci.Request (every declared
+// check of the repo's bare name, the PR number on the record). CREATED and
+// EXISTS are the two answers a head can take; anything else refuses.
+func requestCI(ctx context.Context, st *store.Store, c Card, pr PR) (string, error) {
+	r, err := ci.Request(ctx, st, ci.RequestRequest{Repo: prkey.Name(c.Repo), SHA: pr.Head, PR: pr.Number})
+	if err != nil {
+		return "", fail(CodeCIRequest, c.Label, "ci request %s@%s: %w", prkey.Name(c.Repo), short(pr.Head), err)
+	}
+	switch r.Status {
+	case "CREATED", "EXISTS":
+		return r.Status, nil
+	}
+	return "", fail(CodeCIRequest, c.Label, "ci request %s@%s answered %s %s", prkey.Name(c.Repo), short(pr.Head), r.Status, r.Detail)
 }
 
 // writeStep is ns_harvest_step: forward only, lease-fenced.

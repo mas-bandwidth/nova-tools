@@ -309,7 +309,7 @@ func harvestPass(ctx context.Context, st *store.Store, only string, benchList []
 		})
 		for _, r := range results {
 			for _, c := range r.Cards {
-				fmt.Fprintf(out, "HARVESTED %s %s pr=%d head=%s via=%s bench=%s\n", s, c.Label, c.PR, c.Head, c.Via, r.Bench)
+				fmt.Fprintf(out, "HARVESTED %s %s pr=%d head=%s via=%s ci=%s bench=%s\n", s, c.Label, c.PR, c.Head, c.Via, c.CI, r.Bench)
 			}
 			for _, f := range r.Failed {
 				fmt.Fprintf(out, "HARVEST-FAILED %s %s bench=%s err=%s%s\n", s, f.Label, r.Bench, oneline.Escape(f.Err.Error()), harvestFails(f))
