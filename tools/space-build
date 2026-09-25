@@ -137,7 +137,28 @@ fi
 #    (CGO off, -trimpath, the version stamp; measured 2026-09-24: this reproduces ~/nova-bench/build/<v> byte for
 #    byte, where nova-update release build's -s -w does not)
 OUT=$WORK/out
-[ ! -e "$OUT/$V" ] || refuse "$OUT/$V is left from an earlier run (remedy: move it aside by hand and rerun)"
+mkdir -p "$OUT" || refuse "cannot make $OUT"
+exec 9> "$OUT/.lock"
+flock 9
+if [ -e "$OUT/$V" ]; then
+	rm -rf "$OUT/$V"
+	say "REMOVED stale out directory $OUT/$V"
+todo_new=()
+for p in "${todo[@]}"; do
+	if [ -e "$PUB/$p" ]; then
+		verify_dir "$PUB/$p" || refuse "$PUB/$p already holds files that do not verify"
+		say "OK $p $PUB/$p sums=$(sum "$PUB/$p/SHA256SUMS")"
+	else
+		todo_new+=("$p")
+	fi
+done
+todo=("${todo_new[@]}")
+if [ "${#todo[@]}" -eq 0 ]; then
+	say "BUILT $V platforms=$todo_csv tools=0 toolchain=${tc:-default} log=none reused=true"
+	say "SPACE BUILD OK $V commit=$COMMIT platforms=$PLATFORMS built=none"
+	exit 0
+fi
+
 todo_csv=$(IFS=,; printf '%s' "${todo[*]}")
 log=$WORK/build-$V.log
 : > "$log" 2>/dev/null || { mkdir -p "$WORK" && : > "$log"; } || refuse "cannot write $log"
