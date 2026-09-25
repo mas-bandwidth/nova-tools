@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-
-	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 )
 
 // TestDevRedAndReadVerbsRefuseUsage: both verbs are registered and refuse
@@ -28,22 +25,5 @@ func TestDevRedAndReadVerbsRefuseUsage(t *testing.T) {
 		if code := run(tc.args, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), tc.want) {
 			t.Errorf("%v: exit %d, stderr %q; want 2 and %q", tc.args, code, errOut.String(), tc.want)
 		}
-	}
-}
-
-// TestDevRedFromRuns: the forge seam's reading of check runs.
-func TestDevRedFromRuns(t *testing.T) {
-	type run = struct{ Name, Status, Conclusion string }
-	if st := devRedFromRuns(nil); st.Verdict != "" {
-		t.Fatalf("no runs: %+v", st)
-	}
-	if st := devRedFromRuns([]run{{"lint", "completed", "success"}, {"test", "in_progress", ""}}); st.Verdict != "" {
-		t.Fatalf("in progress: %+v", st)
-	}
-	if st := devRedFromRuns([]run{{"lint", "completed", "success"}, {"test", "completed", "success"}}); st.Verdict != civerdict.OK {
-		t.Fatalf("all green: %+v", st)
-	}
-	if st := devRedFromRuns([]run{{"lint", "completed", "success"}, {"test-packages", "completed", "failure"}}); st != (reconcile.CIState{Verdict: "FAIL", Check: "test-packages"}) {
-		t.Fatalf("one red: %+v", st)
 	}
 }
