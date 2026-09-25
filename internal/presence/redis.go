@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -42,11 +43,12 @@ func Open(ctx context.Context, addr, user string) (*Redis, error) {
 		return nil, err
 	}
 	opts := &redis.Options{Addr: a}
-	if pw := os.Getenv(PasswordEnv); pw != "" {
-		if strings.TrimSpace(user) == "" {
-			user = DefaultUser
-		}
-		opts.Username, opts.Password = user, pw
+	u, pw, err := Login(user)
+	if err != nil {
+		return nil, err
+	}
+	if pw != "" {
+		opts.Username, opts.Password = u, pw
 	}
 	rdb := redis.NewClient(opts)
 	if err := rdb.Ping(ctx).Err(); err != nil {
@@ -54,12 +56,33 @@ func Open(ctx context.Context, addr, user string) (*Redis, error) {
 		// The error carries the address and the diagnosis, never the
 		// credential: redis returns "NOAUTH"/"WRONGPASS" and go-redis
 		// does not echo the password back.
-		if os.Getenv(PasswordEnv) == "" && isAuthError(err) {
-			return nil, fmt.Errorf("store %s: %w; no %s in this environment -- run this under `nova-secrets exec --only %s`", a, err, PasswordEnv, PasswordEnv)
+		if opts.Password == "" && isAuthError(err) {
+			return nil, fmt.Errorf("store %s: %w; no %s in this environment -- run this with --seat <name> (or under `nova-secrets exec --only %s`)", a, err, PasswordEnv, PasswordEnv)
 		}
 		return nil, fmt.Errorf("store %s: %w", a, err)
 	}
 	return &Redis{rdb: rdb}, nil
+}
+
+// Login is the user and password a client of the presence store dials with.
+// A seat given by --seat or NOVA_SEAT (nova-tools#4052) supplies both through
+// nova-secrets' library, and the password never enters the environment;
+// otherwise it is user (DefaultUser when blank) with PasswordEnv's value, and
+// an empty password means dial with no credentials at all.
+func Login(user string) (string, string, error) {
+	if c, ok, err := seatcred.Active(); ok {
+		if err != nil {
+			return "", "", err
+		}
+		pw := ""
+		_ = c.Password.Use(func(v string) error { pw = v; return nil })
+		return c.User, pw, nil
+	}
+	pw := os.Getenv(PasswordEnv)
+	if strings.TrimSpace(user) == "" {
+		user = DefaultUser
+	}
+	return user, pw, nil
 }
 
 // refusedAddr is the one refusal every bad --store gets, verbatim and with no

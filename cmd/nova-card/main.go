@@ -34,6 +34,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/launch"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 )
 
 var version string
@@ -85,6 +86,12 @@ func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Getenv
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
 	ack := launchAcker(getenv)
 	defer ack("REFUSED wrapper exited before card launched")
+	// --seat <name> (or NOVA_SEAT): the Redis login is read from that seat's
+	// file through nova-secrets' library, in this process (#4052).
+	args, err := seatcred.FromArgs(args, getenv)
+	if err != nil {
+		return refuse(stderr, err.Error())
+	}
 	if len(args) == 0 {
 		return refuse(stderr, "wants <sprint>/<label>/<attempt> with the launch line on stdin")
 	}

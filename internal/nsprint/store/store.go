@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -34,6 +35,16 @@ const (
 )
 
 func authFromEnv() (user, password string, err error) {
+	// A seat given by --seat or NOVA_SEAT (nova-tools#4052) is read through
+	// nova-secrets' library in this process: its login wins, and the password
+	// goes to the client in memory, never into this process's environment.
+	if c, ok, err := seatcred.Active(); ok {
+		if err != nil {
+			return "", "", err
+		}
+		_ = c.Password.Use(func(pw string) error { password = pw; return nil })
+		return c.User, password, nil
+	}
 	user = os.Getenv(UserEnv)
 	if user == "" {
 		return "", "", nil

@@ -22,10 +22,10 @@ import (
 var scrubPrefixes = []string{"NOVA_SPRINT_", "NOVA_REDIS_", "NOVA_SECRETS_"}
 
 // scrubNames are single variables a check never inherits.
-var scrubNames = map[string]bool{"REDISCLI_AUTH": true}
+var scrubNames = map[string]bool{"REDISCLI_AUTH": true, "NOVA_SEAT": true}
 
 // CheckEnv returns environ without the seat's Redis and secrets variables:
-// every NOVA_SPRINT_*, NOVA_REDIS_* and NOVA_SECRETS_* variable, REDISCLI_AUTH,
+// every NOVA_SPRINT_*, NOVA_REDIS_* and NOVA_SECRETS_* variable, REDISCLI_AUTH, NOVA_SEAT,
 // and the variable named by the value of NOVA_SPRINT_REDIS_PASSWORD_ENV
 // (whatever it is called). dropped is the sorted, de-duplicated list of the
 // names removed; values are never returned.
