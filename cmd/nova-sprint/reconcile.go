@@ -4,8 +4,11 @@
 //
 // Every pass runs the production duties under the lease: the refill (#2935),
 // which deals on stream events and on the 10 s sweep, then each duty another
-// package registered through registerReconcileDuty (the width tick of #3071
-// plugs in there without this file importing it).
+// file registered through registerReconcileDuty: ok-to-friend and harvest
+// (consume.go), expire (expire.go), route (route_duty.go, #3323: reads, fixes
+// and merging over every open sprint). After each pass a `DUTY <name>` line
+// says what each duty did (#3199: every duty under --once, a moving or
+// failing one in the loop).
 //
 // --metrics-addr <host:port> serves /metrics (internal/metrics, nx-g61 #2720)
 // for as long as the verb runs: the deal pass exports the cards still pooled,
@@ -116,12 +119,14 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	widthBuilders := fs.String("width-builders", "", "")
 	widthCoordinator := fs.String("width-coordinator", "", "")
 	metricsAddr := fs.String("metrics-addr", "", "")
+	readers := fs.String("readers", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "reconcile", err.Error())
 	}
 	if fs.NArg() > 0 {
-		return refuse(errOut, "reconcile", "takes flags, not positional arguments: --redis <addr> [--host <name>] [--once] [--width-rebalance-ticks n --width-readers a,b --width-builders c,d --width-coordinator e] [--metrics-addr <host:port>]")
+		return refuse(errOut, "reconcile", "takes flags, not positional arguments: --redis <addr> [--host <name>] [--once] [--readers a,b] [--width-rebalance-ticks n --width-readers a,b --width-builders c,d --width-coordinator e] [--metrics-addr <host:port>]")
 	}
+	reconcileReaders = splitNames(*readers)
 	if *host == "" {
 		h, err := os.Hostname()
 		if err != nil {
@@ -186,6 +191,10 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 		Lease:   lease,
 		Duties:  named.wrap(duties, names),
 		OnError: func(err error) { fmt.Fprintf(errOut, "%s nova-sprint reconcile: pass: %v\n", logStamp(), err) },
+		// Per-duty receipts (#3199): every pass under --once, so the probe
+		// says what each duty did; in the loop only a duty that moved
+		// something or failed, so an idle second prints nothing.
+		AfterPass: func(reconcile.PassResult) { named.report(out, *once) },
 	}
 	if *widthTicks > 0 {
 		fmt.Fprintf(out, "WIDTH on rebalance_ticks=%d\n", *widthTicks)
@@ -220,6 +229,22 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	return 0
 }
 
+// report prints one `DUTY <name> <counts> err=<text>` line per duty of the
+// pass just recorded, in duty order; all of them when all is set, else only
+// the duties that moved something or errored.
+func (n *namedDuties) report(out io.Writer, all bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, name := range n.names {
+		c, e := n.counts[name], n.last[name]
+		if !all && c.Zero() && e == "" {
+			continue
+		}
+		fmt.Fprintf(out, "DUTY %s %s err=%s\n", name, c.Line(), e)
+	}
+	n.counts = map[string]reconcile.Counts{}
+}
+
 // namedDuties wraps each duty so its error reaches stderr under the duty's
 // name, not only proc:reconciler err (nova-tools #3321: Loop.OnError sees pass
 // errors, never duty errors). A duty's error is printed when it first appears
@@ -228,25 +253,29 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 type namedDuties struct {
 	errOut io.Writer
 	mu     sync.Mutex
-	last   map[string]string // duty name -> its last error text ("" when clean)
-	any    bool              // any duty errored in any pass
+	names  []string                    // duty names in pass order
+	counts map[string]reconcile.Counts // duty name -> its counts in the current pass
+	last   map[string]string           // duty name -> its last error text ("" when clean)
+	any    bool                        // any duty errored in any pass
 }
 
 func (n *namedDuties) wrap(duties []reconcile.Duty, names []string) []reconcile.Duty {
+	n.names = names
 	n.last = map[string]string{}
+	n.counts = map[string]reconcile.Counts{}
 	out := make([]reconcile.Duty, len(duties))
 	for i, d := range duties {
 		d, name := d, names[i]
 		out[i] = func(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
 			c, err := d(ctx, l)
-			n.note(name, err)
+			n.note(name, c, err)
 			return c, err
 		}
 	}
 	return out
 }
 
-func (n *namedDuties) note(name string, err error) {
+func (n *namedDuties) note(name string, c reconcile.Counts, err error) {
 	if errors.Is(err, reconcile.ErrFenced) {
 		return
 	}
@@ -256,6 +285,7 @@ func (n *namedDuties) note(name string, err error) {
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.counts[name] = c
 	if err != nil {
 		n.any = true
 	}
