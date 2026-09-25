@@ -95,6 +95,7 @@ var DefaultCatalog = []Entry{
 	E("internal/memindex", "memory vector and text index", "go test ./internal/memindex", "go test ./internal/memindex"),
 	E("internal/merge", "batch merge queue and land operations", "go test ./internal/merge", "go test ./internal/merge"),
 	E("internal/metrics", "Prometheus surface shared by the queue verbs", "go test ./internal/metrics/...", "go test ./internal/metrics/..."),
+	E("internal/nogh", "the refusing gh put first on friend and card child PATHs", "go test ./internal/nogh", "go test ./internal/nogh"),
 	E("internal/nsprint", "nova-sprint dealer, store, fold, and table", "go test ./internal/nsprint/...", "go test ./internal/nsprint/..."),
 	E("internal/onboarding", "onboarding banner and doc verifier", "go test ./internal/onboarding", "go test ./internal/onboarding"),
 	E("internal/oneline", "single-line log and output grammar", "go test ./internal/oneline", "go test ./internal/oneline"),

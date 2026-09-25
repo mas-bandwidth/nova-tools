@@ -135,6 +135,11 @@ var swarmAudit = audit.Config{
 		// prints nothing; the label it judges is rendered by this package through
 		// oneline.Field in the refusal that follows.
 		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
+		// nogh (nova-tools #3600) installs the refusing gh file into <slot>/shim beside the
+		// shell wrappers and returns its path or an error. It prints nothing to any stream
+		// of this binary: the one line it holds is the gh script's own stderr, written by
+		// that script in the card's shell, never by nova-swarm.
+		`"github.com/mas-bandwidth/nova-tools/internal/nogh"`,
 		// redisq (slice 1 of SPEC-STATE) reads the Redis Streams pull queue, the fenced
 		// slot lease and the in-flight cap. It holds no writer of its own: every call
 		// either returns a value this package prints through oneline.Field or an error

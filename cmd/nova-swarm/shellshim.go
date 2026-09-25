@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nogh"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -153,6 +154,11 @@ func writeNativeShellShims(slotDir string) (dir, shell string, err error) {
 			return "", "", fmt.Errorf("the shell shim %s could not be put in place: %w", oneline.Field(path), renameErr)
 		}
 		written[name] = path
+	}
+	// The refusing gh sits beside the shells (nova-tools #3600): a card's shell that
+	// reaches for the GitHub CLI by name gets exit 2 and #3594, never a GitHub call.
+	if _, ghErr := nogh.Install(dir); ghErr != nil {
+		return "", "", ghErr
 	}
 	shell = written["bash"]
 	if shell == "" {
