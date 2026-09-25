@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/lessons"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
 func init() {
@@ -32,8 +32,7 @@ func cmdLesson(_ context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func cmdLessonAppend(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("lesson append", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("lesson append")
 	repo := fs.String("repo", "", "")
 	l := lessons.Lesson{}
 	fs.StringVar(&l.ID, "id", "", "")
@@ -63,8 +62,7 @@ func cmdLessonAppend(args []string, stdout, stderr io.Writer) int {
 }
 
 func cmdLessonSupersede(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("lesson supersede", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("lesson supersede")
 	repo := fs.String("repo", "", "")
 	id := fs.String("id", "", "")
 	if err := fs.Parse(args); err != nil {

@@ -18,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/disposition"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
 func init() {
@@ -104,10 +105,7 @@ func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 // taskFlags is the flag set shared by the subverbs, quiet on parse error so
 // the verb prints one line the way main.go does.
 func taskFlags(name string) *flag.FlagSet {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	return fs
+	return verbflag.New(name)
 }
 
 func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -321,7 +319,7 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if typed != nil && typed.Verdict == "HOLD" && typed.Kind == "" {
 		// The classifier names another pull by number, so it needs the
 		// task's PR.
-		prText, err := st.Client().HGet(ctx, "s:"+*sprint+":task:"+*id, "pr").Result()
+		prText, err := st.Client().HGet(ctx, "task:"+*id, "pr").Result()
 		if err != nil && !errors.Is(err, redis.Nil) {
 			return refuse(errOut, "task done", err.Error())
 		}

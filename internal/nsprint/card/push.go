@@ -17,7 +17,7 @@ func keyPool(sprint string) string         { return "s:" + sprint + ":pool" }
 func keyWaiting(sprint string) string      { return "s:" + sprint + ":waiting" }
 func keyLog(sprint string) string          { return "s:" + sprint + ":log" }
 func keyIdx(sprint, state string) string   { return "s:" + sprint + ":idx:card:" + state }
-func keyTask(sprint, id string) string     { return "s:" + sprint + ":task:" + id }
+func keyTask(sprint, id string) string     { return "task:" + id }
 func keyStream(sprint, slug string) string { return "s:" + sprint + ":stream:" + slug }
 
 // Push is PushWith under no options.

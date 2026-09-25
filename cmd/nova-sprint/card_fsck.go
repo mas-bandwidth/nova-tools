@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 )
@@ -25,8 +25,7 @@ import (
 // function call walks the sprint's cards both ways; exit 0 clean (or every
 // drift repaired), 1 drift left (the remedy is --repair), 2 usage or Redis.
 func cmdCardFsck(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("card fsck", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("card fsck")
 	sprint := fs.String("sprint", "", "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	repair := fs.Bool("repair", false, "")
@@ -41,8 +40,7 @@ func cmdCardFsck(ctx context.Context, args []string, stdout, stderr io.Writer) i
 // is adopted into sprint:<S>:cards with its one place and every view,
 // including bench:<b>:cards:*, and every stray link is removed.
 func runBenchReindex(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("bench reindex", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("bench reindex")
 	sprint := fs.String("sprint", "", "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || fs.NArg() > 0 {
@@ -101,8 +99,7 @@ func fsckNoMirror(ctx context.Context, client redis.UniversalClient, stdout, std
 // cmdCardLs: card ls --unplaced --sprint <S> --redis <addr>: the null cards
 // (where empty, in no table set), oldest first, then the receipt line.
 func cmdCardLs(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("card ls", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("card ls")
 	sprint := fs.String("sprint", "", "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	unplaced := fs.Bool("unplaced", false, "")

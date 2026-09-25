@@ -194,12 +194,12 @@ func (e *holdEnv) parks() map[string]disposition.Park {
 func (e *holdEnv) fixIDs() []string {
 	e.t.Helper()
 	var ids []string
-	keys, err := e.c.Keys(context.Background(), "s:"+e.S+":task:fix-*").Result()
+	keys, err := e.c.Keys(context.Background(), "task:fix-*").Result()
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	for _, k := range keys {
-		ids = append(ids, strings.TrimPrefix(k, "s:"+e.S+":task:"))
+		ids = append(ids, strings.TrimPrefix(k, "task:"))
 	}
 	sort.Strings(ids)
 	return ids
@@ -530,7 +530,7 @@ func TestHoldRouteOneOwner(t *testing.T) {
 	e.unit(3, headB, "johnny")
 	e.mustIngest(3, repairLine("rowan", headB), "RECORD repair")
 	e.route()
-	if e.c.Exists(ctx, "s:"+e.S+":task:"+disposition.FixID("3", "stella", headA)).Val() != 0 {
+	if e.c.Exists(ctx, "task:"+disposition.FixID("3", "stella", headA)).Val() != 0 {
 		t.Fatalf("a superseded hold got a fix task")
 	}
 	if q := e.queue("stella"); len(q) != 1 || q[0] != task.ReviewID(holdRepo, 3, headB, "stella") {
@@ -554,14 +554,14 @@ func TestHoldRouteOneOwner(t *testing.T) {
 	if err != nil || len(claims) != 1 {
 		t.Fatalf("take %s: %v %v", fix6, claims, err)
 	}
-	if s := e.hget("s:"+e.S+":task:"+fix6, "state"); s != "claimed" {
+	if s := e.hget("task:"+fix6, "state"); s != "claimed" {
 		t.Fatalf("%s state = %q, want claimed", fix6, s)
 	}
 	e.mustIngest(6, typed("emma", headA, "HOLD", 5, substance), "RECORD hold")
 	if out := e.route(); !strings.Contains(out, "OPEN-FIX "+fix6) {
 		t.Fatalf("second holder with a claimed fix: %q, want OPEN-FIX %s", out, fix6)
 	}
-	if e.c.Exists(ctx, "s:"+e.S+":task:"+disposition.FixID("6", "emma", headA)).Val() != 0 {
+	if e.c.Exists(ctx, "task:"+disposition.FixID("6", "emma", headA)).Val() != 0 {
 		t.Fatalf("a second fix task was created while the first was claimed")
 	}
 
@@ -593,7 +593,7 @@ func downHolderCase(t *testing.T, pr int, markDown func(e *holdEnv), wantTo stri
 	e.unit(pr, headB, "johnny")
 	e.mustIngest(pr, repairLine("rowan", headB), "RECORD repair")
 	e.route()
-	if s := e.hget("s:"+e.S+":task:"+fix, "state"); s != "closed" || e.hget("s:"+e.S+":task:"+fix, "evidence") != "repair at "+headB[:12] {
+	if s := e.hget("task:"+fix, "state"); s != "closed" || e.hget("task:"+fix, "evidence") != "repair at "+headB[:12] {
 		t.Fatalf("fix task not closed: %s", s)
 	}
 	if e.c.ZScore(ctx, "s:"+e.S+":open:rowan", fix).Err() == nil {
@@ -603,7 +603,7 @@ func downHolderCase(t *testing.T, pr int, markDown func(e *holdEnv), wantTo stri
 	if e.c.ZScore(ctx, "s:"+e.S+":open:"+wantTo, id).Err() != nil {
 		t.Fatalf("re-read %s not in open:%s", id, wantTo)
 	}
-	title := e.hget("s:"+e.S+":task:"+id, "title")
+	title := e.hget("task:"+id, "title")
 	if wantTo != "emma" {
 		if !strings.Contains(title, "release_for=emma") {
 			t.Fatalf("title %q lacks release_for=emma", title)
@@ -703,7 +703,7 @@ func TestHoldRouteUnpark(t *testing.T) {
 	a.setDown("stella", false)
 	a.route()
 	a.route()
-	if q := a.queue("stella"); len(q) != 1 || q[0] != id || !strings.Contains(a.hget("s:"+a.S+":task:"+id, "title"), "release_for=emma") {
+	if q := a.queue("stella"); len(q) != 1 || q[0] != id || !strings.Contains(a.hget("task:"+id, "title"), "release_for=emma") {
 		t.Fatalf("(a) stella queue %v", q)
 	}
 	if len(a.parks()) != 0 || a.zcard("emma") != 0 || a.zcard("johnny") != 0 {
@@ -714,7 +714,7 @@ func TestHoldRouteUnpark(t *testing.T) {
 	b.setDown("emma", false)
 	b.route()
 	b.route()
-	if q := b.queue("emma"); len(q) != 1 || q[0] != id || strings.Contains(b.hget("s:"+b.S+":task:"+id, "title"), "release_for") {
+	if q := b.queue("emma"); len(q) != 1 || q[0] != id || strings.Contains(b.hget("task:"+id, "title"), "release_for") {
 		t.Fatalf("(b) emma queue %v", q)
 	}
 	if len(b.parks()) != 0 || b.zcard("stella") != 0 {
@@ -1099,7 +1099,7 @@ func TestTaskDoneReviewIngest(t *testing.T) {
 	e.unit(81, headA, "johnny")
 	id, token := e.reviewTask(81, headA, "stella")
 	url := "mas-bandwidth/nova-tools/pull/81#issuecomment-5900000081"
-	taskKey := "s:" + e.S + ":task:" + id
+	taskKey := "task:" + id
 	readKey := "s:" + e.S + ":read:" + unitOf(81) + ":stella"
 	claimed := func(what string) {
 		t.Helper()
@@ -1172,7 +1172,7 @@ func TestTaskDoneReviewIngest(t *testing.T) {
 	if n := e.c.XLen(ctx, disposition.EventsKey(e.S)).Val(); n != 1 {
 		t.Fatalf("hold events = %d, want 1", n)
 	}
-	if s := e.hget("s:"+e.S+":task:"+hid, "state"); s != "closed" {
+	if s := e.hget("task:"+hid, "state"); s != "closed" {
 		t.Fatalf("hold: task state %q", s)
 	}
 	if d := e.hget("s:"+e.S+":disp:"+holdRepo+":82", "emma@"+headA); !strings.HasPrefix(d, "HOLD 4 "+hurl) {
@@ -1184,7 +1184,7 @@ func TestTaskDoneReviewIngest(t *testing.T) {
 	if code, out, _ := e.done(nid, ntoken, url, typed("stella", headA, "APPROVE", 9, "")); code != 2 || !strings.Contains(out, "REFUSED no-unit") {
 		t.Fatalf("no unit: exit %d %q", code, out)
 	}
-	if s := e.hget("s:"+e.S+":task:"+nid, "state"); s != "claimed" {
+	if s := e.hget("task:"+nid, "state"); s != "claimed" {
 		t.Fatalf("no unit: task state %q", s)
 	}
 

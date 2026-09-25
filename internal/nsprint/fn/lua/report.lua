@@ -46,19 +46,19 @@ do
     elseif c[7] and c[7] ~= '' and c[7] == friend then
       return { 'RETRY', 'author ' .. friend }
     else
-      local key = 's:' .. S .. ':task:' .. id
+      local key = 'task:' .. id
       if redis.call('EXISTS', key) == 1 then
         result = 'EXISTS ' .. id
       else
         local at = now_ms()
-        redis.call('HSET', key,
+        NS.task.create(id, {
           'kind', 'read', 'repo', repo, 'ref', ref, 'pr', '0', 'head', '',
-          'title', title, 'effects', 'none', 'owner', '', 'priority', tostring(priority),
-          'state', 'open', 'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
+          'title', title, 'effects', 'none', 'priority', tostring(priority),
+          'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
           'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
-          'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '')
-        redis.call('ZADD', 's:' .. S .. ':open:' .. friend, -tonumber(priority), id)
-        redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
+          'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '', 'dest', friend },
+          { where = 'ready', state = 'open', friend = friend, sprint = S, created = at, by = actor,
+            why = 'report-to-read', qscore = -tonumber(priority) })
         redis.call('XADD', log, '*',
           'kind', 'task push', 'id', id, 'from', '', 'to', 'open',
           'attempt', '0', 'token_sha', '', 'actor', actor or '', 'reason', 'report-to-read',

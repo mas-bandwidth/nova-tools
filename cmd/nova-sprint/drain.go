@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"flag"
 	"io"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
 func init() {
@@ -32,8 +32,7 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 // key that control run left in the store, in one call, and prints one
 // DRAIN DONE control=<id> line.
 func runDrain(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("drain", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("drain")
 	sprint := fs.String("sprint", "", "")
 	control := fs.String("control", "", "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")

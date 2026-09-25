@@ -88,13 +88,13 @@ func TestControl15FriendReturnTakesWork(t *testing.T) {
 	if claim.Sprint != sprint || claim.ID == "" || claim.Attempt != 1 || claim.Token == "" {
 		t.Fatalf("claim is not fenced: %+v", claim)
 	}
-	if stored, _ := client.HGet(ctx, "s:"+sprint+":task:"+claim.ID, "token").Result(); stored != claim.Token {
+	if stored, _ := client.HGet(ctx, "task:"+claim.ID, "token").Result(); stored != claim.Token {
 		t.Fatalf("fence token not preserved for the child: got %q want %q", stored, claim.Token)
 	}
-	if state, _ := client.HGet(ctx, "s:"+sprint+":task:"+claim.ID, "state").Result(); state != "claimed" && state != "working" {
+	if state, _ := client.HGet(ctx, "task:"+claim.ID, "state").Result(); state != "claimed" && state != "working" {
 		t.Fatalf("task state %q, want claimed or working", state)
 	}
-	if owner, _ := client.HGet(ctx, "s:"+sprint+":task:"+claim.ID, "owner").Result(); owner != friend {
+	if owner, _ := client.HGet(ctx, "task:"+claim.ID, "owner").Result(); owner != friend {
 		t.Fatalf("task owner %q, want %q", owner, friend)
 	}
 	if beat := client.Exists(ctx, "friend:"+friend+":beat").Val(); beat != 1 {

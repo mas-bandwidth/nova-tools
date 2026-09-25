@@ -12,7 +12,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/digest"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -47,9 +47,7 @@ func (r *repoList) Set(v string) error {
 var digestNow = time.Now
 
 func runDigest(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("digest", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("digest")
 	addr := fs.String("redis", "", "")
 	sinceS := fs.String("since", "", "")
 	untilS := fs.String("until", "", "")

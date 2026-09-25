@@ -93,7 +93,7 @@ func TestPipelineThousandReadsOneRoundTrip(t *testing.T) {
 	seed := client.Pipeline()
 	reads := make([]store.HashRead, 1000)
 	for i := range reads {
-		key := fmt.Sprintf("s:control:task:%d", i)
+		key := fmt.Sprintf("task:%d", i)
 		seed.HSet(ctx, key, "state", "open", "owner", "stella")
 		reads[i] = store.HashRead{Key: key, Fields: []string{"state", "owner"}}
 	}

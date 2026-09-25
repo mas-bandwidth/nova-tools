@@ -1,8 +1,10 @@
 -- The one task store (#3206 rev 5 PR A): what bash friend-queue had and the
--- nova-sprint task verb lacked, as Redis Functions on s:<S>:* keys. No
--- shebang: loader.go prepends the library header. Each transition is one
--- Function call that checks its guard, moves the id between index sets and
--- appends its receipt to s:<S>:log, atomically.
+-- nova-sprint task verb lacked, as Redis Functions. No shebang: loader.go
+-- prepends the library header. Each transition is one Function call that
+-- checks its guard, moves the task through the one task move (NS.task,
+-- 02_card_move.lua: task:<id>, its where, its sets, the sprint's idx sets and
+-- ready queues; nova-tools #3778) and appends its receipt to s:<S>:log,
+-- atomically. Nothing here writes a task's state or a queue itself.
 --
 -- Vocabulary (ruling nova-tools#3516, SPEC-NOTE on #3206 2026-09-24): there
 -- is no blocked state and no block/unblock verb. A task carries DEPENDS-ON
@@ -20,7 +22,7 @@
 -- in friend:<dest>:waiting, so the width line counts it as waiting.
 --
 -- Conditions (the one DEPENDS-ON form, nova-tools#3409):
---   task:<id>            met when s:<S>:task:<id> is closed (done or closed)
+--   task:<id>            met when task:<id> is closed (done or closed)
 --   key:<k>=<v>          met when GET k equals v
 --   anything else        <owner>/<repo>#<n>, stream/<slug>, card:<id>, pr:,
 --                        spec:, node: -- met only by ns_task_resolve with
@@ -91,7 +93,7 @@ end
 -- DEP.holds reports whether a condition can be proven met from Redis alone.
 function DEP.holds(S, c)
   if string.sub(c, 1, 5) == 'task:' then
-    return redis.call('HGET', 's:' .. S .. ':task:' .. string.sub(c, 6), 'state') == 'closed'
+    return redis.call('HGET', 'task:' .. string.sub(c, 6), 'state') == 'closed'
   end
   if string.sub(c, 1, 4) == 'key:' then
     local k, v = string.match(c, '^key:([^=]+)=(.*)$')
@@ -122,16 +124,6 @@ function DEP.score(front, priority)
   return priority
 end
 
--- DEP.enqueue puts an open task on its queue: open:<dest>, or the ready pool.
-function DEP.enqueue(S, id, dest, front, priority)
-  if dest ~= '' then
-    redis.call('ZADD', 's:' .. S .. ':open:' .. dest, DEP.score(front, priority), id)
-  else
-    redis.call('ZADD', 's:' .. S .. ':ready', DEP.score(front, priority), id)
-  end
-  redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
-end
-
 -- DEP.open_location finds an open task's queue and score. Tasks pushed before
 -- the one-store cutover have no dest field, so fall back to the registered
 -- friend's queue that already contains the id. The friends set is bounded and
@@ -157,20 +149,10 @@ function DEP.open_location(S, id, dest)
   return '', 's:' .. S .. ':ready', nil
 end
 
--- DEP.dequeue removes an open task from every queue it can be in.
-function DEP.dequeue(S, id, dest)
-  if dest ~= '' then
-    redis.call('ZREM', 's:' .. S .. ':open:' .. dest, id)
-  end
-  redis.call('ZREM', 's:' .. S .. ':ready', id)
-  redis.call('SREM', 's:' .. S .. ':idx:task:open', id)
-end
-
--- DEP.wait makes a task waiting on its unmet conditions.
+-- DEP.wait records the unmet conditions of a task the one move has just
+-- made waiting: the release index and the width line's friend waiting set.
 function DEP.wait(S, id, key, dest, unmet, at)
-  redis.call('HSET', key, 'state', 'waiting', 'waits_on', table.concat(unmet, ';'),
-    'wait_on', '', 'wait_since', tostring(at))
-  redis.call('SADD', 's:' .. S .. ':idx:task:waiting', id)
+  redis.call('HSET', key, 'waits_on', table.concat(unmet, ';'), 'wait_on', '', 'wait_since', tostring(at))
   for _, c in ipairs(unmet) do
     redis.call('SADD', 's:' .. S .. ':waits:' .. c, id)
   end
@@ -185,7 +167,6 @@ function DEP.unwait(S, id, key)
   for c in string.gmatch(redis.call('HGET', key, 'waits_on') or '', '[^;]+') do
     redis.call('SREM', 's:' .. S .. ':waits:' .. c, id)
   end
-  redis.call('SREM', 's:' .. S .. ':idx:task:waiting', id)
   if dest ~= '' then
     redis.call('ZREM', 'friend:' .. dest .. ':waiting', S .. '/' .. id)
   end
@@ -195,10 +176,8 @@ end
 function DEP.release(S, id, key, actor, idem, at)
   DEP.unwait(S, id, key)
   local dest = redis.call('HGET', key, 'dest') or ''
-  local front = redis.call('HGET', key, 'front') == '1'
-  local priority = tonumber(redis.call('HGET', key, 'priority') or '0') or 0
-  redis.call('HSET', key, 'state', 'open', 'waits_on', '', 'ready_at', tostring(at))
-  DEP.enqueue(S, id, dest, front, priority)
+  NS.task.set(id, 'open', { sprint = S, by = actor, why = 'depends-on met',
+    fields = { 'waits_on', '', 'ready_at', tostring(at) } })
   tq_receipt(S, 'task ready', id, 'waiting', 'open', redis.call('HGET', key, 'attempt'),
     actor, dest, 'depends-on met', redis.call('HGET', key, 'depends_on') or '', idem, at)
 end
@@ -216,7 +195,7 @@ function DEP.resolve(S, cond, asserted, actor, idem, at)
   local ids = redis.call('SMEMBERS', 's:' .. S .. ':waits:' .. cond)
   table.sort(ids)
   for _, id in ipairs(ids) do
-    local key = 's:' .. S .. ':task:' .. id
+    local key = 'task:' .. id
     redis.call('SREM', 's:' .. S .. ':waits:' .. cond, id)
     if redis.call('HGET', key, 'state') == 'waiting' then
       local left = {}
@@ -238,7 +217,8 @@ end
 
 -- DEP.free_lease ends a claimed or working lease without closing the task:
 -- the token is fenced (the old done and beat refuse FENCED), the identity
--- leaves the owner's starting/living and the slot is freed on cap:log.
+-- leaves the owner's starting/living and the slot is freed on cap:log; the
+-- caller's one move takes the task out of working.
 function DEP.free_lease(S, id, key, state, at)
   local attempt = tonumber(redis.call('HGET', key, 'attempt') or '0')
   local owner = redis.call('HGET', key, 'owner') or ''
@@ -246,7 +226,6 @@ function DEP.free_lease(S, id, key, state, at)
   redis.call('HSET', key, 'token', 'fenced')
   redis.call('ZREM', 'friend:' .. owner .. ':starting', identity)
   redis.call('ZREM', 'friend:' .. owner .. ':living', identity)
-  redis.call('SREM', 's:' .. S .. ':idx:task:' .. state, id)
   redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
     'kind', 'slot-freed', 'consumer', 'friend:' .. owner,
     'sprint', S, 'id', id, 'attempt', tostring(attempt), 'at', tostring(at))
@@ -260,7 +239,7 @@ end
 -- refused with nothing written.
 local function task_move(keys, args)
   local S, id, to, actor, idem = args[1], args[2], args[3], args[4], args[5]
-  local key = 's:' .. S .. ':task:' .. id
+  local key = 'task:' .. id
   if to == nil or to == '' then
     return { 'INVALID', 'to is required' }
   end
@@ -276,7 +255,6 @@ local function task_move(keys, args)
   end
   local state = redis.call('HGET', key, 'state')
   local dest = redis.call('HGET', key, 'dest') or ''
-  local priority = tonumber(redis.call('HGET', key, 'priority') or '0') or 0
   local at = tq_now_ms()
 
   if state == 'open' then
@@ -288,9 +266,11 @@ local function task_move(keys, args)
     if dest == to then
       return { 'SAME' }
     end
-    redis.call('ZREM', q, id)
-    redis.call('ZADD', 's:' .. S .. ':open:' .. to, score, id)
-    redis.call('HSET', key, 'dest', to, 'moved_from', dest, 'moved_at', tostring(at))
+    local err = NS.task.set(id, 'open', { friend = to, sprint = S, by = actor, why = 'move from ' .. dest, qscore = score,
+      fields = { 'dest', to, 'moved_from', dest, 'moved_at', tostring(at) } })
+    if err then
+      return { 'INVALID', err }
+    end
     tq_receipt(S, 'task move', id, 'open', 'open', redis.call('HGET', key, 'attempt'), actor, to, 'from ' .. dest, '', idem, at)
     return { 'MOVED', dest }
   end
@@ -303,7 +283,11 @@ local function task_move(keys, args)
       redis.call('ZREM', 'friend:' .. dest .. ':waiting', S .. '/' .. id)
     end
     redis.call('ZADD', 'friend:' .. to .. ':waiting', at, S .. '/' .. id)
-    redis.call('HSET', key, 'dest', to, 'moved_from', dest, 'moved_at', tostring(at))
+    local err = NS.task.set(id, 'waiting', { friend = to, sprint = S, by = actor, why = 'move from ' .. dest,
+      fields = { 'dest', to, 'moved_from', dest, 'moved_at', tostring(at) } })
+    if err then
+      return { 'INVALID', err }
+    end
     tq_receipt(S, 'task move', id, 'waiting', 'waiting', redis.call('HGET', key, 'attempt'), actor, to, 'from ' .. dest, '', idem, at)
     return { 'MOVED', dest }
   end
@@ -314,9 +298,11 @@ local function task_move(keys, args)
       return { 'LEASED', owner }
     end
     DEP.free_lease(S, id, key, state, at)
-    redis.call('HSET', key, 'state', 'open', 'owner', '', 'dest', to,
-      'moved_from', owner, 'moved_at', tostring(at))
-    DEP.enqueue(S, id, to, redis.call('HGET', key, 'front') == '1', priority)
+    local err = NS.task.set(id, 'open', { friend = to, sprint = S, by = actor, why = 'owner down: ' .. owner,
+      fields = { 'dest', to, 'moved_from', owner, 'moved_at', tostring(at) } })
+    if err then
+      return { 'INVALID', err }
+    end
     tq_receipt(S, 'task move', id, state, 'open', redis.call('HGET', key, 'attempt'), actor, to, 'owner down: ' .. owner, '', idem, at)
     return { 'MOVED', owner }
   end
@@ -330,7 +316,7 @@ end
 -- condition is met.
 local function task_close(keys, args)
   local S, id, evidence, actor, idem = args[1], args[2], args[3], args[4], args[5]
-  local key = 's:' .. S .. ':task:' .. id
+  local key = 'task:' .. id
   if redis.call('EXISTS', key) == 0 then
     return { 'NOTFOUND' }
   end
@@ -344,7 +330,6 @@ local function task_close(keys, args)
   local dest = redis.call('HGET', key, 'dest') or ''
   if state == 'open' then
     dest = DEP.open_location(S, id, dest)
-    DEP.dequeue(S, id, dest)
   elseif state == 'waiting' then
     local on = redis.call('HGET', key, 'wait_on') or ''
     if on ~= '' then
@@ -356,9 +341,11 @@ local function task_close(keys, args)
     return { 'LEASED', state or '' }
   end
   local at = tq_now_ms()
-  redis.call('HSET', key, 'state', 'closed', 'cancelled', '1', 'evidence', evidence,
-    'waits_on', '', 'closed_at', tostring(at))
-  redis.call('SADD', 's:' .. S .. ':idx:task:closed', id)
+  local err = NS.task.set(id, 'closed', { ok = 'fail', sprint = S, by = actor, why = evidence,
+    fields = { 'evidence', evidence, 'waits_on', '', 'closed_at', tostring(at) } })
+  if err then
+    return { 'INVALID', err }
+  end
   local who = redis.call('HGET', key, 'owner') or ''
   if who == '' then
     who = dest
@@ -375,7 +362,7 @@ end
 -- args = S, id, as, actor, idem.
 local function task_front(keys, args)
   local S, id, as, actor, idem = args[1], args[2], args[3], args[4], args[5]
-  local key = 's:' .. S .. ':task:' .. id
+  local key = 'task:' .. id
   local q = 's:' .. S .. ':open:' .. as
   local score = redis.call('ZSCORE', q, id)
   if not score then
@@ -391,8 +378,10 @@ local function task_front(keys, args)
   if first[1] ~= id then
     new = top - 1
   end
-  redis.call('ZADD', q, new, id)
-  redis.call('HSET', key, 'front', '1')
+  local err = NS.task.set(id, 'open', { sprint = S, by = actor, why = 'front', front = '1', qscore = new })
+  if err then
+    return { 'INVALID', err }
+  end
   tq_receipt(S, 'task front', id, 'open', 'open', redis.call('HGET', key, 'attempt'), actor, as, '', '', idem, at)
   return { 'FRONT' }
 end
@@ -405,7 +394,7 @@ end
 -- condition already holds nothing is written (MET).
 local function task_depends(keys, args)
   local S, id, text, as, token, actor, idem = args[1], args[2], args[3], args[4], args[5], args[6], args[7]
-  local key = 's:' .. S .. ':task:' .. id
+  local key = 'task:' .. id
   local conds, bad = DEP.parse(text)
   if bad then
     return { 'INVALID', 'depends-on ' .. bad }
@@ -435,12 +424,9 @@ local function task_depends(keys, args)
   end
   local at = tq_now_ms()
   local dest = redis.call('HGET', key, 'dest') or ''
-  if state == 'open' then
-    DEP.dequeue(S, id, dest)
-  else
+  if state ~= 'open' then
     DEP.free_lease(S, id, key, state, at)
     dest = redis.call('HGET', key, 'owner') or ''
-    redis.call('HSET', key, 'owner', '', 'dest', dest)
   end
   local all = {}
   local seen = {}
@@ -456,7 +442,11 @@ local function task_depends(keys, args)
       all[#all + 1] = c
     end
   end
-  redis.call('HSET', key, 'depends_on', table.concat(all, ';'))
+  local err = NS.task.set(id, 'waiting', { sprint = S, by = actor, why = 'depends-on ' .. table.concat(unmet, ';'),
+    fields = { 'depends_on', table.concat(all, ';'), 'dest', dest } })
+  if err then
+    return { 'INVALID', err }
+  end
   DEP.wait(S, id, key, dest, unmet, at)
   tq_receipt(S, 'task depends', id, state, 'waiting', redis.call('HGET', key, 'attempt'), actor, dest,
     'depends-on ' .. table.concat(unmet, ';'), '', idem, at)

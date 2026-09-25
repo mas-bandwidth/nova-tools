@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -70,9 +71,7 @@ func runFleet(ctx context.Context, args []string, out, errOut io.Writer) int {
 }
 
 func runFleetState(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("fleet state", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("fleet state")
 	redisAddr := fs.String("redis", "", "")
 	bench := fs.String("bench", "", "")
 	upOnly := fs.Bool("up", false, "")
@@ -110,9 +109,7 @@ func runFleetState(ctx context.Context, args []string, out, errOut io.Writer) in
 }
 
 func runFleetIsUp(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("fleet is-up", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("fleet is-up")
 	redisAddr := fs.String("redis", "", "")
 	bench := fs.String("bench", "", "")
 	if err := fs.Parse(args); err != nil {
@@ -157,9 +154,7 @@ func runFleetIsUp(ctx context.Context, args []string, out, errOut io.Writer) int
 }
 
 func runFleetHold(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("fleet hold", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("fleet hold")
 	redisAddr := fs.String("redis", "", "")
 	bench := fs.String("bench", "", "")
 	why := fs.String("why", "", "")
@@ -189,9 +184,7 @@ func runFleetHold(ctx context.Context, args []string, out, errOut io.Writer) int
 }
 
 func runFleetRelease(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("fleet release", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("fleet release")
 	redisAddr := fs.String("redis", "", "")
 	bench := fs.String("bench", "", "")
 	if err := fs.Parse(args); err != nil {
@@ -222,9 +215,7 @@ func runFleetRelease(ctx context.Context, args []string, out, errOut io.Writer) 
 }
 
 func runFleetConfig(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("fleet config", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("fleet config")
 	redisAddr := fs.String("redis", "", "")
 	downAfter := fs.Int("down-after", 0, "")
 	upAfter := fs.Int("up-after", 0, "")

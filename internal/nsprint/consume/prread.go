@@ -101,6 +101,9 @@ type PRRead struct {
 
 	Out        io.Writer
 	LastReason map[string]string
+	// Hold, when set, is the sprint's hold-to-fix pass, run by OnceN after
+	// pr-to-read's under the same lease:route:<S> (#3799).
+	Hold *HoldRoute
 
 	mu         sync.Mutex
 	lastRemote map[string]time.Time
@@ -478,7 +481,7 @@ func (p *PRRead) Pass(ctx context.Context) (int, error) {
 		pipeTasks := client.Pipeline()
 		existsCmds := make([]*redis.IntCmd, len(friendsList))
 		for i, f := range friendsList {
-			existsCmds[i] = pipeTasks.Exists(ctx, fmt.Sprintf("s:%s:task:%s", p.Sprint, task.ReviewID(e.repo, prNum, e.prev, f)))
+			existsCmds[i] = pipeTasks.Exists(ctx, task.Key(p.Sprint, task.ReviewID(e.repo, prNum, e.prev, f)))
 		}
 		holdCmd := pipeTasks.HGetAll(ctx, fmt.Sprintf("s:%s:hold:%s:%s", p.Sprint, e.repo, e.pr))
 		prAuthorCmd := pipeTasks.HGet(ctx, fmt.Sprintf("s:%s:pr:%s:%s", p.Sprint, e.repo, e.pr), "author")
@@ -936,6 +939,24 @@ func (p *PRRead) OnceN(ctx context.Context) (int, error) {
 		p.Block = -1
 	}
 	defer func() { p.Block = origBlock }()
+	return underRouteLease(ctx, p.Store, p.Sprint, p.Instance, func(ctx context.Context) (int, error) {
+		if err := p.Start(ctx); err != nil {
+			return 0, err
+		}
+		n, err := p.Pass(ctx)
+		if p.Hold != nil {
+			got, herr := p.Hold.Pass(ctx)
+			n += got
+			err = errors.Join(err, herr)
+		}
+		return n, err
+	})
+}
+
+// underRouteLease takes lease:route:<S> as instance, renews it every 2 s
+// (TTL 6 s) while fn runs, and releases it by token after. A live lease
+// under another instance is a *LeaseHeldError and fn never runs.
+func underRouteLease(ctx context.Context, st *store.Store, sprint, instance string, fn func(context.Context) (int, error)) (int, error) {
 	token, err := randomHex(16)
 	if err != nil {
 		return 0, err
@@ -944,14 +965,14 @@ func (p *PRRead) OnceN(ctx context.Context) (int, error) {
 	ttl := 6 * time.Second
 	renew := 2 * time.Second
 
-	client := p.Store.Client()
-	reply, err := client.FCall(ctx, FunctionRouteLeaseTake, nil, p.Sprint, p.Instance, token, host,
+	client := st.Client()
+	reply, err := client.FCall(ctx, FunctionRouteLeaseTake, nil, sprint, instance, token, host,
 		strconv.FormatInt(ttl.Milliseconds(), 10)).Slice()
 	if err != nil {
-		return 0, fmt.Errorf("pr-to-read: take %s: %w", LeaseKey(p.Sprint), err)
+		return 0, fmt.Errorf("route: take %s: %w", LeaseKey(sprint), err)
 	}
 	if len(reply) > 0 && reply[0] == "HELD" {
-		held := &LeaseHeldError{Sprint: p.Sprint}
+		held := &LeaseHeldError{Sprint: sprint}
 		if len(reply) > 1 {
 			held.Holder = fmt.Sprint(reply[1])
 		}
@@ -975,7 +996,7 @@ func (p *PRRead) OnceN(ctx context.Context) (int, error) {
 				return
 			case <-ticker.C:
 			}
-			_ = client.FCall(renewCtx, FunctionRouteLeaseRenew, nil, p.Sprint, p.Instance, token,
+			_ = client.FCall(renewCtx, FunctionRouteLeaseRenew, nil, sprint, instance, token,
 				strconv.FormatInt(ttl.Milliseconds(), 10)).Err()
 		}
 	}()
@@ -983,13 +1004,9 @@ func (p *PRRead) OnceN(ctx context.Context) (int, error) {
 	defer func() {
 		stopRenew()
 		wg.Wait()
-		_ = client.FCall(context.WithoutCancel(ctx), FunctionRouteLeaseRelease, nil, p.Sprint, p.Instance, token).Err()
+		_ = client.FCall(context.WithoutCancel(ctx), FunctionRouteLeaseRelease, nil, sprint, instance, token).Err()
 	}()
-
-	if err := p.Start(ctx); err != nil {
-		return 0, err
-	}
-	return p.Pass(ctx)
+	return fn(ctx)
 }
 
 // DefaultMirror is the bench mirror of repo, ~/nova-bench/mirror/<name>.git,

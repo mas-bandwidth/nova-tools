@@ -485,7 +485,7 @@ redis.register_function('ns_task_assign', function(keys, args)
   local S, id, consumer, rtoken = args[1], args[2], args[3] or '', args[4] or ''
   if rr_fenced(rtoken) then return rr_reply(3, 'FENCED', '', '') end
   if consumer == '' then return rr_reply(1, 'USAGE', '', '') end
-  local task = 's:' .. S .. ':task:' .. id
+  local task = 'task:' .. id
   if redis.call('EXISTS', task) == 0 then return rr_reply(5, 'NOTFOUND', '', '') end
   local attempt = rr_get(task, 'attempt')
   local idem = 'route:' .. id .. ':' .. attempt
@@ -506,9 +506,9 @@ redis.register_function('ns_task_assign', function(keys, args)
   end
   if registered == 0 then return rr_reply(2, 'CONSUMER', attempt, '') end
   local now = rr_now()
-  redis.call('ZREM', 's:' .. S .. ':ready', id)
-  redis.call('ZADD', 's:' .. S .. ':open:' .. consumer, score, id)
-  redis.call('HSET', task, 'owner', consumer)
+  local err = NS.task.set(id, 'open', { friend = consumer, sprint = S, qscore = score, by = 'reconciler', why = 'route',
+    fields = { 'dest', consumer } })
+  if err then return rr_reply(2, 'STATE', attempt, err) end
   local r = rr_receipt(S, 'task', id, 'ready', 'open:' .. consumer, attempt, '', 'reconciler', 'route', consumer, idem, now)
   redis.call('HSET', 's:' .. S .. ':idem', idem, r)
   return rr_reply(0, 'OK', attempt, r)

@@ -85,7 +85,7 @@ func rtTaskIDs(t *testing.T, client *redis.Client, sprint string) map[string]map
 	must(t, err)
 	out := map[string]map[string]string{}
 	for _, id := range ids {
-		h, err := client.HGetAll(ctx, "s:"+sprint+":task:"+id).Result()
+		h, err := client.HGetAll(ctx, "task:"+id).Result()
 		must(t, err)
 		out[id] = h
 	}
@@ -167,7 +167,7 @@ func TestRouteReportReadForNoCommitCard(t *testing.T) {
 		if len(owners) != 1 || owners[0] == "ctl-a" || owners[0] == "ctl-down" {
 			t.Fatalf("%s: %s is queued for %v; want exactly one UP non-author friend", when, reportID, owners)
 		}
-		if n, _ := client.Exists(context.Background(), "s:"+sprint+":task:harvest-card-r").Result(); n != 0 {
+		if n, _ := client.Exists(context.Background(), "task:harvest-card-r").Result(); n != 0 {
 			t.Fatalf("%s: a card that committed nothing got a harvest task", when)
 		}
 		for id, h := range tasks {

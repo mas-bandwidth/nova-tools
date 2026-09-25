@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 	"github.com/redis/go-redis/v9"
@@ -56,9 +56,7 @@ func cmdLineup(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	if len(args) > 0 && args[0] == "publish" {
 		return cmdLineupPublish(ctx, args[1:], os.Stdin, stdout, stderr)
 	}
-	fs := flag.NewFlagSet("lineup", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("lineup")
 	addr := fs.String("redis", "", "")
 	sprint := fs.String("sprint", "", "")
 	probes := fs.String("probes", "", "")
@@ -165,9 +163,7 @@ func ghGraphQLRemaining(ctx context.Context) (int, error) {
 }
 
 func cmdLineupPublish(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("lineup publish", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs := verbflag.New("lineup publish")
 	addr := fs.String("redis", "", "")
 	bench := fs.String("bench", "", "")
 	allYML := fs.String("all-yml", "", "")

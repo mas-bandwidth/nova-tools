@@ -431,7 +431,7 @@ func TestControl22(t *testing.T) {
 	const s = "control-22"
 	from := writeWorkSet(t, "needs", unit("a", fxFriend, ""), unit("b", fxFriend, `:needs ("a")`))
 	expect(t, 0, "OPEN "+s+" units=2 pushed=2 existed=0 closed=0 skipped_done=0\n", openArgs(addr, s, from)...)
-	if got := hget(t, c, "s:"+s+":task:b", "needs"); got != "a" {
+	if got := hget(t, c, "task:b", "needs"); got != "a" {
 		t.Fatalf("s:%s:task:b needs=%q want a", s, got)
 	}
 
@@ -455,15 +455,16 @@ func TestControl22(t *testing.T) {
 
 	// A need on a unit done in the file does not block.
 	const s2 = "control-22-done"
-	from2 := writeWorkSet(t, "done-need", unit("a", fxFriend, ":done t"), unit("b", fxFriend, `:needs ("a")`))
+	// one task store (#3778): ids are global, so this sprint's units are c, d
+	from2 := writeWorkSet(t, "done-need", unit("c", fxFriend, ":done t"), unit("d", fxFriend, `:needs ("c")`))
 	expect(t, 0, "OPEN "+s2+" units=2 pushed=1 existed=0 closed=0 skipped_done=1\n", openArgs(addr, s2, from2)...)
-	if exists(t, c, "s:"+s2+":task:a") {
-		t.Fatalf("s:%s:task:a exists; a done unit is never pushed", s2)
+	if exists(t, c, "task:c") {
+		t.Fatalf("task:c exists; a done unit is never pushed (%s)", s2)
 	}
-	if got := hget(t, c, "s:"+s2+":task:b", "needs"); got != "" {
-		t.Fatalf("s:%s:task:b needs=%q want empty", s2, got)
+	if got := hget(t, c, "task:d", "needs"); got != "" {
+		t.Fatalf("task:d needs=%q want empty (%s)", got, s2)
 	}
-	if out := takeOne(t, addr, "--sprint", s2); !strings.HasPrefix(out, "CLAIMED "+s2+"/b attempt=1 ") {
+	if out := takeOne(t, addr, "--sprint", s2); !strings.HasPrefix(out, "CLAIMED "+s2+"/d attempt=1 ") {
 		t.Fatalf("take after open: %q; want b claimed", out)
 	}
 }
@@ -518,7 +519,7 @@ func TestSprintOpenReplay(t *testing.T) {
 		if got := hget(t, c, "s:"+s, "from_sha"); got != fileSHA(t, a) {
 			t.Fatalf("from_sha=%q", got)
 		}
-		if exists(t, c, "s:"+s+":task:u3") {
+		if exists(t, c, "task:u3") {
 			t.Fatal("u3 was pushed")
 		}
 	})
@@ -536,7 +537,7 @@ func TestSprintOpenReplay(t *testing.T) {
 		if got := hget(t, c, "s:"+s, "from_sha"); got != fileSHA(t, a) {
 			t.Fatalf("from_sha=%q", got)
 		}
-		if !exists(t, c, "s:"+s+":task:u1") {
+		if !exists(t, c, "task:u1") {
 			t.Fatal("u1 was not pushed before the kill")
 		}
 		b := writeWorkSet(t, "B", unit("u1", fxFriend, ""), unit("u3", fxFriend, ""))
@@ -548,7 +549,7 @@ func TestSprintOpenReplay(t *testing.T) {
 		if st := hget(t, c, "s:"+s, "status"); st != "opening" {
 			t.Fatalf("status=%q want opening", st)
 		}
-		if exists(t, c, "s:"+s+":task:u3") {
+		if exists(t, c, "task:u3") {
 			t.Fatal("u3 was pushed")
 		}
 		if out := takeOne(t, addr); out != "NONE trips=1\n" {
@@ -602,8 +603,7 @@ func TestSprintOpenPushRefused(t *testing.T) {
 		a := writeWorkSet(t, "A", unit("u1", fxFriend, ""), unit("u2", fxFriend, ""))
 		expect(t, 0, "PUSH CREATED id=u2\n", "task", "push", "--redis", addr, "--sprint", s, "--id", "u2",
 			"--to", fxFriend, "--title", "another title")
-		expect(t, 1, "CONFLICT "+s+" u2: id held by another payload; remedy: sprint close --sprint "+s+
-			", then sprint open --sprint <new-sprint> --from "+a+"\n"+
+		expect(t, 1, "CONFLICT "+s+" u2: id held by another payload (task:u2; ids are global); remedy: give the unit a new id in "+a+"\n"+
 			"NOT-OPENED "+s+" units=2 pushed=1 existed=0 closed=0 skipped_done=0 refused=1\n", openArgs(addr, s, a)...)
 		notOpened(t, c, addr, s)
 		return addr, c, a
@@ -616,15 +616,14 @@ func TestSprintOpenPushRefused(t *testing.T) {
 		addr, c, a := conflict(t, s)
 		ctx := context.Background()
 		// The writes redistribute.lua makes (:295-298); no verb cancels it.
-		key := "s:" + s + ":task:u2"
+		key := "task:u2"
 		sha := hget(t, c, key, "payload_sha")
 		c.ZRem(ctx, "s:"+s+":open:"+fxFriend, "u2")
 		c.SRem(ctx, "s:"+s+":idx:task:open", "u2")
 		c.SAdd(ctx, "s:"+s+":idx:task:cancelled", "u2")
 		c.HSet(ctx, key, "state", "cancelled")
 
-		expect(t, 1, "CONFLICT "+s+" u2: id held by another payload; remedy: sprint close --sprint "+s+
-			", then sprint open --sprint <new-sprint> --from "+a+"\n"+
+		expect(t, 1, "CONFLICT "+s+" u2: id held by another payload (task:u2; ids are global); remedy: give the unit a new id in "+a+"\n"+
 			"NOT-OPENED "+s+" units=2 pushed=0 existed=1 closed=0 skipped_done=0 refused=1\n", openArgs(addr, s, a)...)
 		if st := hget(t, c, key, "state"); st != "cancelled" || hget(t, c, key, "payload_sha") != sha {
 			t.Fatalf("u2 state=%q payload moved; want cancelled with its first payload", st)
@@ -639,15 +638,18 @@ func TestSprintOpenPushRefused(t *testing.T) {
 
 		oldS := c.HGetAll(ctx, "s:"+s).Val()
 		oldU2 := c.HGetAll(ctx, key).Val()
+		// one task store (#3778): the ids stay held; the new sprint's units
+		// carry new ids
+		a = writeWorkSet(t, "A2", unit("u1n", fxFriend, ""), unit("u2n", fxFriend, ""))
 		expect(t, 0, "OPEN "+s2+" units=2 pushed=2 existed=0 closed=0 skipped_done=0\n", openArgs(addr, s2, a)...)
 		if st := hget(t, c, "s:"+s2, "status"); st != "open" {
 			t.Fatalf("s:%s status=%q want open", s2, st)
 		}
-		if got := members(t, c, "s:"+s2+":units"); got != "u1,u2" {
+		if got := members(t, c, "s:"+s2+":units"); got != "u1n,u2n" {
 			t.Fatalf("s:%s:units=%q", s2, got)
 		}
-		if out := takeOne(t, addr, "--sprint", s2); !strings.HasPrefix(out, "CLAIMED "+s2+"/u1 ") {
-			t.Fatalf("take --sprint %s: %q; want u1", s2, out)
+		if out := takeOne(t, addr, "--sprint", s2); !strings.HasPrefix(out, "CLAIMED "+s2+"/u1n ") {
+			t.Fatalf("take --sprint %s: %q; want u1n", s2, out)
 		}
 		if fmt.Sprint(c.HGetAll(ctx, "s:"+s).Val()) != fmt.Sprint(oldS) || fmt.Sprint(c.HGetAll(ctx, key).Val()) != fmt.Sprint(oldU2) {
 			t.Fatal("the new sprint's open changed s:<S> or s:<S>:task:u2")
@@ -675,7 +677,7 @@ func TestSprintOpenPushRefused(t *testing.T) {
 			lines[1] != "NOT-OPENED "+s+" units=2 pushed=1 existed=0 closed=0 skipped_done=0 refused=1" {
 			t.Fatalf("code=%d out=%q stderr=%q", code, out, errOut)
 		}
-		if exists(t, c, "s:"+s+":task:u2") {
+		if exists(t, c, "task:u2") {
 			t.Fatal("u2 was written")
 		}
 		// T's own claim is not this test's point; take only s's queue.

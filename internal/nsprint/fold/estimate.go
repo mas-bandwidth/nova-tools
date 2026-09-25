@@ -62,7 +62,7 @@ func ComputeEstimates(ctx context.Context, client *redis.Client, sprint string) 
 	pipe := client.Pipeline()
 	cmds := make([]*redis.SliceCmd, len(members))
 	for i, id := range members {
-		cmds[i] = pipe.HMGet(ctx, "s:"+sprint+":task:"+id, "owner", "est", "claimed_at", "closed_at", "state", "evidence")
+		cmds[i] = pipe.HMGet(ctx, "task:"+id, "owner", "est", "claimed_at", "closed_at", "state", "evidence")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, OwnerEst{}, fmt.Errorf("est: hmget: %w", err)

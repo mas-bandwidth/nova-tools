@@ -36,9 +36,9 @@
 -- is NS.task.create onto the friend's ready set, merging and cancel are
 -- NS.task.move, which keeps every set (ws:<stream>:<where>,
 -- friend:<f>:cards:<where>) and the friend-queue shape (q:<friend> entry,
--- sprint:<S>:idx:<friend>:*); this file writes neither itself. A task of the
--- sprint store (s:<S>:task:<id>) still moves to the legacy
--- s:<S>:idx:task:merging set. The locals are scoped to this block.
+-- sprint:<S>:idx:<friend>:*) and the sprint's fine-state index
+-- (s:<S>:idx:task:<state>); this file writes none of them itself. The locals
+-- are scoped to this block.
 do
   local function now_ms()
     local t = redis.call('TIME')
@@ -198,14 +198,11 @@ do
     return finish({ 'CREATED', id, author })
   end
 
-  -- task_key is the task's hash: the friend queue's task:<id>, else the
-  -- sprint store's s:<S>:task:<id>.
+  -- task_key is the task's record, task:<id> (one store, nova-tools #3778),
+  -- or nil when there is none.
   local function task_key(S, id)
     if redis.call('EXISTS', 'task:' .. id) == 1 then
       return 'task:' .. id
-    end
-    if redis.call('EXISTS', 's:' .. S .. ':task:' .. id) == 1 then
-      return 's:' .. S .. ':task:' .. id
     end
     return nil
   end
@@ -269,41 +266,24 @@ do
       return { 'SKIP', 'no-task' }
     end
     local at = now_ms()
-    local tstream, tstate
-    if tkey == 'task:' .. id then
-      -- A task card: through the one task move. A task nobody took is taken
-      -- first (ready -> working -> merging, two receipted moves).
-      local p = NS.task.read(id)
-      tstream, tstate = p.stream, p.where
-      if tstream == '' then tstream = stream end
-      if p.placed and tstate == 'merging' then
-        redis.call('HSET', routed, idem, id)
-        return { 'DUP', id }
-      end
-      local o = { by = actor, why = 'route merging', stream = tstream, fields = { 'pr', pr, 'head', head } }
-      local err
-      if not p.placed or tstate == 'ready' then
-        err = NS.task.move(id, 'working', o)
-      end
-      if not err then err = NS.task.move(id, 'merging', o) end
-      if err then
-        return { 'SKIP', 'task-' .. err }
-      end
-    else
-      local t = redis.call('HMGET', tkey, 'stream', 'state')
-      tstream, tstate = t[1] or '', t[2] or ''
-      if tstream == '' then
-        tstream = stream
-      end
-      if tstate == 'merging' then
-        redis.call('HSET', routed, idem, id)
-        return { 'DUP', id }
-      end
-      for _, st in ipairs({ 'open', 'claimed', 'working' }) do
-        redis.call('SREM', 's:' .. S .. ':idx:task:' .. st, id)
-      end
-      redis.call('SADD', 's:' .. S .. ':idx:task:merging', id)
-      redis.call('HSET', tkey, 'state', 'merging', 'state_at', tostring(at), 'pr', pr, 'head', head, 'stream', tstream)
+    -- Through the one task move. A task nobody took is taken first
+    -- (ready -> working -> merging, two receipted moves); a closed one moves
+    -- on to merging (done/ok -> merging).
+    local p = NS.task.read(id)
+    local tstream, tstate = p.stream, p.where
+    if tstream == '' then tstream = stream end
+    if p.placed and tstate == 'merging' then
+      redis.call('HSET', routed, idem, id)
+      return { 'DUP', id }
+    end
+    local o = { by = actor, why = 'route merging', stream = tstream, sprint = S, fields = { 'pr', pr, 'head', head } }
+    local err
+    if not p.placed or tstate == 'ready' then
+      err = NS.task.move(id, 'working', o)
+    end
+    if not err then err = NS.task.move(id, 'merging', o) end
+    if err then
+      return { 'SKIP', 'task-' .. err }
     end
     redis.call('HSET', routed, idem, id)
     receipt(S, 'task merging', id, tstate, 'merging', actor, 'route merging',

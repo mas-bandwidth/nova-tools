@@ -74,9 +74,8 @@ func (f *consumeForge) ReadPR(_ context.Context, repo string, n int) (harvest.PR
 // its ended(DONE) event gives ok-to-friend's harvest task; the harvest verb
 // pushes, opens the PR and reads the head back (harvested); the harvested
 // event gives ok-to-friend's read task for the one UP friend at exactly that
-// head. Each consumer writes its proc line. pr-to-read and hold-to-fix are not
-// built on dev (#2941): their verbs refuse and name the issue, never pass
-// silently, and they are not duties until they exist.
+// head. Each consumer writes its proc line. pr-to-read and hold-to-fix
+// (#3799) run once by hand under lease:route:<S> and as the route duties.
 func TestConsumerVerbsRunOnce(t *testing.T) {
 	addr := startThrowawayRedis(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
@@ -139,7 +138,7 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "CONSUMED ok-to-friend sprint="+S+" n=1") {
 		t.Fatalf("consume ok-to-friend once: exit %d out %q err %q", code, out, errOut)
 	}
-	h, err := c.HGetAll(ctx, "s:"+S+":task:harvest-"+label).Result()
+	h, err := c.HGetAll(ctx, "task:harvest-"+label).Result()
 	if err != nil || h["state"] != "open" || h["kind"] != "harvest" {
 		t.Fatalf("harvest-%s = %v (%v); want an open harvest task", label, h, err)
 	}
@@ -167,7 +166,7 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 	}
 	pr, _ := strconv.Atoi(card["pr"])
 	readID := task.ReviewID(repo, pr, pushed, friend)
-	read, err := c.HGetAll(ctx, "s:"+S+":task:"+readID).Result()
+	read, err := c.HGetAll(ctx, "task:"+readID).Result()
 	if err != nil || read["state"] != "open" || read["head"] != pushed {
 		t.Fatalf("read task %s = %v (%v); want an open read for %s at %s", readID, read, err, friend, pushed)
 	}
@@ -200,17 +199,31 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 		t.Fatalf("lease:route:%s exists = %d (%v); want 0 after consume once", S, exists, err)
 	}
 
-	// hold-to-fix remains unbuilt: refused naming #3092, exit 2.
+	// hold-to-fix (#3799): once needs --sprint and runs under
+	// lease:route:<S>; with no fix_to/release_reader it routes nothing and
+	// says so; run is the router's.
 	code, _, errOut = run("hold-to-fix", "once")
-	if code != 2 || !strings.Contains(errOut, "#3092") {
-		t.Fatalf("consume hold-to-fix once: exit %d err %q; want 2 naming #3092", code, errOut)
+	if code != 2 || !strings.Contains(errOut, "--sprint is required") {
+		t.Fatalf("consume hold-to-fix once: exit %d err %q; want 2 asking for --sprint", code, errOut)
+	}
+	code, _, errOut = run("hold-to-fix", "run", "--sprint", S)
+	if code != 2 || !strings.Contains(errOut, "nova-sprint route") {
+		t.Fatalf("consume hold-to-fix run: exit %d err %q; want 2 naming nova-sprint route", code, errOut)
+	}
+	code, out, errOut = run("hold-to-fix", "once", "--sprint", S)
+	if code != 0 || !strings.Contains(out, "HOLDROUTE WAIT sprint="+S) || !strings.Contains(out, "CONSUMED hold-to-fix sprint="+S+" n=0") {
+		t.Fatalf("consume hold-to-fix once: exit %d out %q err %q", code, out, errOut)
+	}
+	procUp("proc:hold-to-fix")
+	if exists := c.Exists(ctx, "lease:route:"+S).Val(); exists != 0 {
+		t.Fatalf("lease:route:%s exists after consume hold-to-fix once", S)
 	}
 	code, out, _ = run("list")
 	for _, want := range []string{
 		"ok-to-friend duty=reconcile",
 		"harvest duty=reconcile",
 		"pr-to-read duty=reconcile,route verb=consume-once proc=proc:pr-to-read",
-		"hold-to-fix not-built=#3092",
+		"hold-to-fix duty=reconcile,route verb=consume-once proc=proc:hold-to-fix needs=fix_to,release_reader",
 	} {
 		if code != 0 || !strings.Contains(out, want) {
 			t.Fatalf("consume list: exit %d out %q; want %q", code, out, want)
@@ -250,7 +263,7 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 	if !strings.Contains(rOut.String(), "DUTIES refill,ok-to-friend,harvest,pr-to-read") {
 		t.Fatalf("reconcile out %q; want the consumer duties on the DUTIES line", rOut.String())
 	}
-	if state, err := c.HGet(ctx, "s:"+S+":task:harvest-"+label2, "state").Result(); err != nil || state != "open" {
+	if state, err := c.HGet(ctx, "task:harvest-"+label2, "state").Result(); err != nil || state != "open" {
 		t.Fatalf("harvest-%s after one reconcile pass: state %q (%v); want open", label2, state, err)
 	}
 }

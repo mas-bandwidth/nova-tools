@@ -36,7 +36,7 @@ func TestBriefLintRefusesWrongCoauthorFixture20260923(t *testing.T) {
 		t.Fatalf("fixture task is incomplete: %+v", fx)
 	}
 	// Test-only bare write: the fixture hash as it stood that day.
-	if err := client.HSet(context.Background(), "s:"+fx.Sprint+":task:"+fx.ID, fx.Hash).Err(); err != nil {
+	if err := client.HSet(context.Background(), "task:"+fx.ID, fx.Hash).Err(); err != nil {
 		t.Fatal(err)
 	}
 	code, lines := runLint(t, st, filepath.Join("testdata", "wrong-coauthor-2026-09-23.brief"), fx.Sprint+"/"+fx.ID)
