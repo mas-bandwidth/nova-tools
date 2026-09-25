@@ -241,3 +241,44 @@ func TestPitstopClearNarrowsScope(t *testing.T) {
 		}
 	}
 }
+
+// TestPitstopVerbRepairsWrongType (#3887): a string at s:<S>:pitstop (the
+// 09-23 shape) is ours: status prints it with the remedy, set replaces it
+// without --force, clear lifts it; nothing answers WRONGTYPE.
+func TestPitstopVerbRepairsWrongType(t *testing.T) {
+	const S = "control-00003887"
+	ctx := context.Background()
+	addr := startThrowawayRedis(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	c.HSet(ctx, "s:"+S, "status", "open")
+	key := "s:" + S + ":pitstop"
+
+	c.Set(ctx, key, "Glenn: rest tonight", 0)
+	code, out, errOut := runPit(t, "rowan", "status", "--redis", addr, "--sprint", S)
+	if code != 0 || !strings.HasPrefix(out, "PITSTOP sprint="+S+` set by=wrongtype:string why="Glenn: rest tonight"; remedy: nova-sprint pitstop clear`) {
+		t.Fatalf("status over a string: %d %q %q", code, out, errOut)
+	}
+	pitOneLine(t, out)
+
+	code, out, errOut = runPit(t, "rowan", "set", "--redis", addr, "--sprint", S, "--why", "fixes day")
+	if code != 0 || !strings.Contains(out, `replaced_by=wrongtype:string replaced_why="Glenn: rest tonight"`) {
+		t.Fatalf("set over a string: %d %q %q", code, out, errOut)
+	}
+	if typ := c.Type(ctx, key).Val(); typ != "hash" {
+		t.Fatalf("after set the key is %s, want hash", typ)
+	}
+
+	c.Del(ctx, key)
+	c.Set(ctx, key, "stale", 0)
+	code, out, errOut = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S)
+	if code != 0 || !strings.HasPrefix(out, "PITSTOP CLEAR sprint="+S) || !strings.Contains(out, `was_by=wrongtype:string`) || !strings.HasSuffix(out, `was_why="stale"`+"\n") {
+		t.Fatalf("clear over a string: %d %q %q", code, out, errOut)
+	}
+	if n := c.Exists(ctx, key).Val(); n != 0 {
+		t.Fatal("clear over a string left the key")
+	}
+}
