@@ -7,11 +7,18 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/redis/go-redis/v9"
 )
 
 // FillstateKey returns the key for friend's fillstate hash.
 func FillstateKey(friend string) string {
 	return "friend:" + friend + ":fillstate"
+}
+
+// DesiredKey returns the key for friend's declared slots hash (capacity friend
+// writes it; the slots field is the width the friend asked for).
+func DesiredKey(friend string) string {
+	return "friend:" + friend + ":desired"
 }
 
 // LogKey is the per-tick sample stream the fold integrates.
@@ -55,6 +62,17 @@ func (fs Fillstate) Line(nowMs int64) string {
 	}
 	return fmt.Sprintf("WIDTH %s slots=%d starting=%d living=%d leased=%d working=%d deficit=%d eligible=%d idle=%s peak=%d@%d at=%d",
 		fs.Friend, fs.Slots, fs.Starting, fs.Living, fs.Leased, fs.Working, fs.Deficit, fs.Eligible, fs.IdleString(), fs.Peak, fs.PeakAt, fs.At)
+}
+
+// UnmeasuredLine is the WIDTH row for a friend that has declared slots in
+// friend:<f>:desired but no fillstate yet: slots prints the declared value
+// (or ? when it is not an integer) and every measured field prints ?, since
+// stale or missing prints ?, never a guess (#3615).
+func UnmeasuredLine(friend, slots string) string {
+	if _, err := strconv.Atoi(slots); err != nil {
+		slots = "?"
+	}
+	return fmt.Sprintf("WIDTH %s slots=%s starting=? living=? leased=? working=? deficit=? eligible=? idle=? peak=?@? at=?", friend, slots)
 }
 
 // IdleString formats the typed idle counts into <reason>:<n>,...
@@ -119,6 +137,65 @@ func ParseFillstate(friend string, m map[string]string) Fillstate {
 		UnfilledSince: unfilledSince,
 		At:            at,
 	}
+}
+
+// Row is one friend's WIDTH row as read in one pipeline: the fillstate when
+// there is one, else the declared slots from friend:<f>:desired.
+type Row struct {
+	Fillstate  Fillstate
+	Measured   bool   // friend:<f>:fillstate exists
+	Declared   bool   // friend:<f>:desired exists
+	DesiredRaw string // friend:<f>:desired slots, as stored
+}
+
+// Line returns the row's WIDTH line: the fillstate line when measured, the
+// unmeasured line when only declared. Callers check Measured || Declared.
+func (r Row) Line(nowMs int64) string {
+	if r.Measured {
+		return r.Fillstate.Line(nowMs)
+	}
+	return UnmeasuredLine(r.Fillstate.Friend, r.DesiredRaw)
+}
+
+// DesiredSlots is the declared slots as an integer (0 when absent or not one).
+func (r Row) DesiredSlots() int {
+	n, _ := strconv.Atoi(r.DesiredRaw)
+	return n
+}
+
+// ReadRows reads fillstate and desired for each friend in one pipeline.
+func ReadRows(ctx context.Context, st *store.Store, friends []string) ([]Row, error) {
+	if st == nil {
+		return nil, fmt.Errorf("width: nil store")
+	}
+	if len(friends) == 0 {
+		return nil, nil
+	}
+	pipe := st.Client().Pipeline()
+	fill := make([]*redis.MapStringStringCmd, len(friends))
+	desired := make([]*redis.MapStringStringCmd, len(friends))
+	for i, f := range friends {
+		fill[i] = pipe.HGetAll(ctx, FillstateKey(f))
+		desired[i] = pipe.HGetAll(ctx, DesiredKey(f))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return nil, fmt.Errorf("width: %w", err)
+	}
+	rows := make([]Row, len(friends))
+	for i, f := range friends {
+		m := fill[i].Val()
+		d := desired[i].Val()
+		rows[i] = Row{
+			Fillstate:  Fillstate{Friend: f},
+			Measured:   len(m) > 0,
+			Declared:   len(d) > 0,
+			DesiredRaw: d["slots"],
+		}
+		if rows[i].Measured {
+			rows[i].Fillstate = ParseFillstate(f, m)
+		}
+	}
+	return rows, nil
 }
 
 // ReadFillstate reads friend:<f>:fillstate for one friend.

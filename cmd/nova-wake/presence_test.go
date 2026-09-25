@@ -58,27 +58,72 @@ func TestBeatOnceWritesTheFriendsKey(t *testing.T) {
 	if got := out.String(); !strings.HasPrefix(got, "beat johnny key=friend:johnny every=30s ttl=1m30s") {
 		t.Fatalf("startup line = %q", got)
 	}
-	vals, err := st.MGet(context.Background(), "friend:johnny", "friend:johnny:last")
-	if err != nil {
-		t.Fatalf("mget: %v", err)
+	at, last := st.Hash("friend:johnny")["at"], st.String("friend:johnny:last")
+	if at != "2026-09-22T09:41:00Z" || last != at {
+		t.Fatalf("at = %q, last = %q; want the beat and its memory", at, last)
 	}
-	if vals[0] != "2026-09-22T09:41:00Z" || vals[1] != vals[0] {
-		t.Fatalf("keys = %q, %q; want the beat and its memory", vals[0], vals[1])
+	if got := st.TTL("friend:johnny"); got != presence.DefaultTTL {
+		t.Fatalf("friend:johnny ttl = %s; want %s", got, presence.DefaultTTL)
+	}
+}
+
+// TestBeatWidthWritesTheHashAndPresencePrintsUpOrDown is #2673's DONE-WHEN
+// through the verbs: `beat --width 8` puts width beside at in friend:<name>
+// with the beat's TTL, `presence` over the friends SET prints the friend up
+// with that width, and once the beat has lapsed the same line prints down.
+func TestBeatWidthWritesTheHashAndPresencePrintsUpOrDown(t *testing.T) {
+	st := presence.NewFakeStore(beatAt)
+	st.AddMembers(presence.FriendsSet, "emma", "stella", "rowan")
+	clock := fakeStoreClock{st}
+	var out, errb bytes.Buffer
+	for _, as := range []string{"Emma", "stella"} {
+		if code := cmdBeat([]string{"--as", as, "--store", "store.invalid:6380", "--once", "--width", "8"},
+			&out, &errb, clock, fakeOpener(st)); code != 0 {
+			t.Fatalf("beat exited %d: %s", code, errb.String())
+		}
+	}
+	if h := st.Hash("friend:emma"); h["width"] != "8" || h["at"] != "2026-09-22T09:41:00Z" {
+		t.Fatalf("friend:emma = %v; want at and width=8", h)
+	}
+	if got := st.TTL("friend:emma"); got != presence.DefaultTTL {
+		t.Fatalf("ttl = %s; want %s", got, presence.DefaultTTL)
+	}
+
+	// Stella's width changes: she re-runs beat with the new number.
+	clock.Sleep(60 * time.Second)
+	if code := cmdBeat([]string{"--as", "stella", "--store", "store.invalid:6380", "--once", "--width", "3"},
+		&out, &errb, clock, fakeOpener(st)); code != 0 {
+		t.Fatalf("beat exited %d: %s", code, errb.String())
+	}
+	out.Reset()
+	if code := cmdPresence([]string{"--store", "store.invalid:6380"}, &out, &errb, clock, fakeOpener(st)); code != 0 {
+		t.Fatalf("presence exited %d: %s", code, errb.String())
+	}
+	if want := "friends: emma up 1m width=8 · stella up 0s width=3\n"; out.String() != want {
+		t.Fatalf("line =\n\t%q\nwant\n\t%q", out.String(), want)
+	}
+
+	// Emma's beat stops; 31s later her 90s TTL has run out and she is down.
+	clock.Sleep(31 * time.Second)
+	out.Reset()
+	if code := cmdPresence([]string{"--store", "store.invalid:6380"}, &out, &errb, clock, fakeOpener(st)); code != 0 {
+		t.Fatalf("presence exited %d: %s", code, errb.String())
+	}
+	if want := "friends: emma down 1m (last 09:41Z) · stella up 31s width=3\n"; out.String() != want {
+		t.Fatalf("line =\n\t%q\nwant\n\t%q", out.String(), want)
 	}
 }
 
 // TestBeatWindowAndWidthAreSetOnlyWhenTheFlagsArePassed is Rowan's rule of
-// 2026-09-22 beside the #2612 beat: friend:<name>:window is the cap's reset
-// time and friend:<name>:width is how many children are in use, each a flag
-// the caller passes. The reset time is not this beat's clock. A missing flag
-// writes no key and the beat still succeeds. presence prints the ones that
-// are there.
+// 2026-09-22 beside the #2612 beat: the window field is the cap's reset time
+// and the width field is how many children are in use, each a flag the caller
+// passes. The reset time is not this beat's clock. A missing flag writes no
+// field and the beat still succeeds. presence prints the ones that are there.
 func TestBeatWindowAndWidthAreSetOnlyWhenTheFlagsArePassed(t *testing.T) {
 	const (
 		reset = "2026-09-23T04:00:00Z" // not the beat's own stamp
 		stamp = "2026-09-22T09:41:00Z"
 	)
-	keys := []string{"friend:johnny", "friend:johnny:last", "friend:johnny:window", "friend:johnny:width"}
 
 	t.Run("both flags", func(t *testing.T) {
 		st := presence.NewFakeStore(beatAt)
@@ -88,9 +133,9 @@ func TestBeatWindowAndWidthAreSetOnlyWhenTheFlagsArePassed(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("beat --once exited %d: %s", code, errb.String())
 		}
-		vals := mustMGet(t, st, keys)
+		vals := beatFields(st)
 		if vals[0] != stamp || vals[1] != stamp {
-			t.Fatalf("presence keys = %q, %q; want the beat stamp %q on both", vals[0], vals[1], stamp)
+			t.Fatalf("presence at/last = %q, %q; want the beat stamp %q on both", vals[0], vals[1], stamp)
 		}
 		if vals[2] != reset {
 			t.Fatalf("window = %q; want the flag %q, not a clock this beat invented", vals[2], reset)
@@ -98,8 +143,8 @@ func TestBeatWindowAndWidthAreSetOnlyWhenTheFlagsArePassed(t *testing.T) {
 		if vals[3] != "2" {
 			t.Fatalf("width = %q; want 2", vals[3])
 		}
-		if st.Sets != 4 {
-			t.Fatalf("writes = %d; want 4 (the beat, its memory, window, width)", st.Sets)
+		if st.Sets != 1 {
+			t.Fatalf("writes = %d; want 1 (one MULTI: the hash, its TTL and its memory)", st.Sets)
 		}
 
 		out.Reset()
@@ -123,15 +168,15 @@ func TestBeatWindowAndWidthAreSetOnlyWhenTheFlagsArePassed(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("beat --once exited %d: %s; a missing flag must not fail the beat", code, errb.String())
 		}
-		vals := mustMGet(t, st, keys)
+		vals := beatFields(st)
 		if vals[0] != stamp || vals[1] != stamp {
-			t.Fatalf("presence keys = %q, %q; want the beat to have landed", vals[0], vals[1])
+			t.Fatalf("presence at/last = %q, %q; want the beat to have landed", vals[0], vals[1])
 		}
 		if vals[2] != "" || vals[3] != "" {
-			t.Fatalf("window = %q, width = %q; a missing flag must not write the key", vals[2], vals[3])
+			t.Fatalf("window = %q, width = %q; a missing flag must not write the field", vals[2], vals[3])
 		}
-		if st.Sets != 2 {
-			t.Fatalf("writes = %d; want 2, the beat and its memory only", st.Sets)
+		if st.Sets != 1 {
+			t.Fatalf("writes = %d; want 1", st.Sets)
 		}
 
 		out.Reset()
@@ -155,9 +200,9 @@ func TestBeatWindowAndWidthAreSetOnlyWhenTheFlagsArePassed(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("window only exited %d: %s", code, errb.String())
 		}
-		vals := mustMGet(t, st, keys)
+		vals := beatFields(st)
 		if vals[2] != reset || vals[3] != "" {
-			t.Fatalf("window only: window = %q, width = %q; want the reset and no width key", vals[2], vals[3])
+			t.Fatalf("window only: window = %q, width = %q; want the reset and no width field", vals[2], vals[3])
 		}
 
 		st = presence.NewFakeStore(beatAt)
@@ -168,9 +213,9 @@ func TestBeatWindowAndWidthAreSetOnlyWhenTheFlagsArePassed(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("width 0 exited %d: %s; zero children is a count, not a missing flag", code, errb.String())
 		}
-		vals = mustMGet(t, st, keys)
+		vals = beatFields(st)
 		if vals[2] != "" || vals[3] != "0" {
-			t.Fatalf("width 0: window = %q, width = %q; want no window key and width 0", vals[2], vals[3])
+			t.Fatalf("width 0: window = %q, width = %q; want no window field and width 0", vals[2], vals[3])
 		}
 	})
 
@@ -188,25 +233,18 @@ func TestBeatWindowAndWidthAreSetOnlyWhenTheFlagsArePassed(t *testing.T) {
 		if st.Sets != 0 {
 			t.Fatalf("writes = %d; a refused width must not write a beat", st.Sets)
 		}
-		vals := mustMGet(t, st, keys)
-		for i, v := range vals {
+		for i, v := range beatFields(st) {
 			if v != "" {
-				t.Fatalf("key %s = %q; want nothing written", keys[i], v)
+				t.Fatalf("value %d = %q; want nothing written", i, v)
 			}
 		}
 	})
 }
 
-func mustMGet(t *testing.T, st presence.Store, keys []string) []string {
-	t.Helper()
-	vals, err := st.MGet(context.Background(), keys...)
-	if err != nil {
-		t.Fatalf("mget: %v", err)
-	}
-	if len(vals) != len(keys) {
-		t.Fatalf("mget answered %d values for %d keys", len(vals), len(keys))
-	}
-	return vals
+// beatFields is johnny's beat as the store holds it: at, :last, window, width.
+func beatFields(st *presence.FakeStore) [4]string {
+	h := st.Hash("friend:johnny")
+	return [4]string{h["at"], st.String("friend:johnny:last"), h["window"], h["width"]}
 }
 
 func TestBeatRefusesWhatItCannotGuess(t *testing.T) {
@@ -351,12 +389,11 @@ func TestBeatStoreURLQueryParametersAreRefusedWithoutDialing(t *testing.T) {
 
 func TestTheLoopKeepsBeatingThroughAStoreThatBlinked(t *testing.T) {
 	st := presence.NewFakeStore(beatAt)
-	// One good beat (calls 1 and 2), then a store that refuses four calls
-	// -- four beats, each giving up on its first write -- and then a store
-	// that answers again. A beat that exited on the first error would have
+	// One good beat (call 1), then a store that refuses four calls -- four
+	// beats -- and then a store that answers again. A beat that exited on the first error would have
 	// reported its friend as gone for the rest of the day.
 	st.Hook = func(call int) error {
-		if call >= 3 && call <= 6 {
+		if call >= 2 && call <= 5 {
 			return errStoreDown
 		}
 		return nil
@@ -364,8 +401,8 @@ func TestTheLoopKeepsBeatingThroughAStoreThatBlinked(t *testing.T) {
 	var errb bytes.Buffer
 	beatLoop(context.Background(), st, "johnny", presence.DefaultEvery, presence.DefaultTTL, fakeStoreClock{st}, &errb, presence.Side{}, 6)
 
-	if got := st.Sets; got != 4 {
-		t.Fatalf("writes = %d; want 4 (two keys each for the two beats the store took)", got)
+	if got := st.Sets; got != 2 {
+		t.Fatalf("writes = %d; want 2 (the two beats the store took)", got)
 	}
 	lines := strings.Count(strings.TrimSpace(errb.String()), "\n") + 1
 	if lines != 2 {
@@ -403,7 +440,7 @@ func TestPresencePrintsTheOneLine(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("presence exited %d: %s", code, errb.String())
 	}
-	want := "friends: johnny up 12s · emma AWAY 1h12m (last 09:41Z) · freddy none\n"
+	want := "friends: johnny up 12s · emma down 1h12m (last 09:41Z) · freddy down\n"
 	if out.String() != want {
 		t.Fatalf("line =\n\t%q\nwant\n\t%q", out.String(), want)
 	}
@@ -422,7 +459,7 @@ func TestPresenceReadsTheRosterFromTheBusCheckout(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("presence exited %d: %s", code, errb.String())
 	}
-	if out.String() != "friends: stella none\n" {
+	if out.String() != "friends: stella down\n" {
 		t.Fatalf("line = %q; want the roster minus Glenn and Rowan", out.String())
 	}
 }
@@ -434,7 +471,7 @@ func TestPresenceRefusesARosterItWouldHaveToInvent(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"no roster at all", []string{"--store", "store.invalid:6380"}, "name the friends"},
+		{"no roster flag and an empty friends set", []string{"--store", "store.invalid:6380"}, "the friends set names no friends"},
 		{"two rosters", []string{"--store", "store.invalid:6380", "--friends", "a", "--bus", "."}, "three spellings of one roster"},
 		{"no store", []string{"--friends", "a"}, "--store is required"},
 		{"a bus with no participants file", []string{"--store", "store.invalid:6380", "--bus", t.TempDir()}, "cannot read"},
@@ -487,12 +524,10 @@ func TestTheUsageNamesBothVerbs(t *testing.T) {
 // straight out of the document here rather than through onboarding.FirstRun,
 // and its command and output block are compared with the one comparator every
 // firstrun_test.go in this repo uses (onboarding.Compare, #2218): same number
-// of lines, same lines, same order. The doc's `--store 100.115.99.19:6380` and
-// `--bus ./bus` are illustrative -- CI-NET means nothing here dials it -- so
-// the store is a fake built to the documented scenario (johnny up 12s, stella
-// up 4s, emma AWAY 1h12m last 09:41Z, freddy never beaten) and `./bus` is
-// localized to a roster this test owns, the same substitution firstrun_test.go
-// makes for `./reports` and `./wake.state`.
+// of lines, same lines, same order. The doc's `--store 100.115.99.19:6380` is
+// illustrative -- CI-NET means nothing here dials it -- so the store is a fake
+// built to the documented scenario (johnny up 12s width 8, stella up 4s, emma
+// down 1h12m last 09:41Z, freddy never beaten, all four in the friends SET).
 func TestTheCommandReferencePresenceExampleMatchesWhatTheToolPrints(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
 	if err != nil {
@@ -505,23 +540,9 @@ func TestTheCommandReferencePresenceExampleMatchesWhatTheToolPrints(t *testing.T
 		t.Fatalf("docs/CLI.md's presence example is %q; want it to start `$ nova-wake presence`", cmdLine)
 	}
 	args := append([]string(nil), fields[3:]...)
-	dir := t.TempDir()
-	found := false
-	for i, a := range args {
-		if a == "./bus" {
-			args[i] = dir
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("docs/CLI.md's presence example %q carries no `./bus` to localize", cmdLine)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "participants.json"), []byte(
-		`{"participants":[{"name":"johnny"},{"name":"stella"},{"name":"emma"},{"name":"freddy"}]}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
 
 	st := presence.NewFakeStore(beatAt)
+	st.AddMembers(presence.FriendsSet, "johnny", "stella", "emma", "freddy")
 	ctx := context.Background()
 	if err := presence.Beat(ctx, st, "emma", st.Now(), presence.DefaultTTL); err != nil {
 		t.Fatalf("beat emma: %v", err)
@@ -530,7 +551,8 @@ func TestTheCommandReferencePresenceExampleMatchesWhatTheToolPrints(t *testing.T
 	if err := presence.Beat(ctx, st, "stella", st.Now().Add(-4*time.Second), presence.DefaultTTL); err != nil {
 		t.Fatalf("beat stella: %v", err)
 	}
-	if err := presence.Beat(ctx, st, "johnny", st.Now().Add(-12*time.Second), presence.DefaultTTL); err != nil {
+	eight := int64(8)
+	if err := presence.BeatSide(ctx, st, "johnny", st.Now().Add(-12*time.Second), presence.DefaultTTL, presence.Side{Width: &eight}); err != nil {
 		t.Fatalf("beat johnny: %v", err)
 	}
 

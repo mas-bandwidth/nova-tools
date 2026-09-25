@@ -190,8 +190,5 @@ func ensure(ctx context.Context, client *redis.Client) error {
 	if client == nil {
 		return fmt.Errorf("redis client is required")
 	}
-	if err := fn.Load(ctx, client); err != nil {
-		return err
-	}
-	return nil
+	return fn.LoadMissing(ctx, client)
 }

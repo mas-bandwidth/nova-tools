@@ -20,7 +20,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Function names registered by internal/nsprint/fn/lua/task_claim.lua. The
+// Function names registered by internal/nsprint/fn/lua/task_claim.lua and
+// internal/nsprint/fn/lua/task_take.lua. The
 // library is `nova_sprint` (fn.Library); the loader prepends its header.
 const (
 	FunctionPush = "ns_task_push"
@@ -29,6 +30,12 @@ const (
 	// FunctionTakeDenied writes the one receipt of a take the CLI refused
 	// because --as is not the initiator (#2929 rev 6). It touches no task key.
 	FunctionTakeDenied = "ns_task_take_denied"
+	// FunctionTakeView is the read-only half of a batched take (#3261): every
+	// open sprint's queue for the friend and the task fields its rank needs.
+	FunctionTakeView = "ns_task_take_view"
+	// FunctionTakeN claims a ranked candidate list through ns_task_take's
+	// guard until n are claimed, in one call (#3261).
+	FunctionTakeN = "ns_task_take_n"
 )
 
 // ErrNotFriend is an initiator (or a take's --as) that is not a member of

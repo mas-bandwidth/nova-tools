@@ -235,12 +235,51 @@ func RankTasksWithClient(ctx context.Context, client redis.Cmdable, sprint, as s
 		return nil, fmt.Errorf("deal rank: round trip 2: %w", err)
 	}
 
+	fields := make(map[string][]any, len(allIDs))
+	for _, id := range allIDs {
+		vals, err := hmgetCmos[id].Result()
+		if err != nil {
+			continue
+		}
+		fields[id] = vals
+	}
+	return RankSnapshot(RankInput{Sprint: sprint, As: as, OpenScores: openScores, OpenOwners: openOwners, Fields: fields}, stderr), nil
+}
+
+// RankInput is everything one sprint's upward rank reads, so a caller that
+// batched the reads itself (task take's one pipeline, #3261) ranks with no
+// round trip. OpenScores and OpenOwners are the queue(s) considered: the
+// friend's open queue when As is set, else the ready pool and every open
+// queue. Fields holds, per id in the queues and the open/claimed/working
+// indexes, title est priority pushed_at owner state in that order (HMGET
+// shape; extra trailing values are ignored).
+type RankInput struct {
+	Sprint     string
+	As         string
+	OpenScores map[string]float64
+	OpenOwners map[string]string
+	Fields     map[string][]any
+}
+
+// RankSnapshot computes the take order of in's open tasks without Redis.
+func RankSnapshot(in RankInput, stderr io.Writer) []TaskRank {
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	sprint, as := in.Sprint, in.As
+	openScores, openOwners := in.OpenScores, in.OpenOwners
+	allIDs := make([]string, 0, len(in.Fields))
+	for id := range in.Fields {
+		allIDs = append(allIDs, id)
+	}
+	sort.Strings(allIDs)
+
 	liveTasks := make(map[string]*taskRecord)
 	var liveIDs []string
 
 	for _, id := range allIDs {
-		vals, err := hmgetCmos[id].Result()
-		if err != nil || len(vals) < 6 {
+		vals := in.Fields[id]
+		if len(vals) < 6 {
 			continue
 		}
 		title, _ := vals[0].(string)
@@ -451,5 +490,5 @@ func RankTasksWithClient(ctx context.Context, client redis.Cmdable, sprint, as s
 		return a.ID < b.ID
 	})
 
-	return candidates, nil
+	return candidates
 }

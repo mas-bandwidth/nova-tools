@@ -23,7 +23,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "task",
-		Summary: "push, take, beat, done, cancel, list, width, move, close, front, depends, resolve, fill, counts, owners and rebalance tasks",
+		Summary: "push, take, beat, done, cancel, list, width, move, close, front, depends, resolve, fill, counts, owners and rebalance tasks; cancel|block|unblock|move|front --ids @file|--stream <s>|--set <key> and sweep --friend <f> on the ws index",
 		Run:     runTask,
 	})
 }
@@ -34,7 +34,7 @@ func openTaskStore(ctx context.Context, addr string) (*store.Store, error) {
 }
 
 // queueSubs are the one task store's subverbs (#3206 PR A, task_queue.go).
-const queueSubs = "move, close, front, depends, resolve, fill, counts, owners or rebalance"
+const queueSubs = "move, close, front, depends, resolve, fill, counts, owners, rebalance, block, unblock or sweep"
 
 // seatEnv names the seat's friend (#2929): the initiator of every task push and
 // take. bin/friend-harness exports it; a shell outside a harness has none and
@@ -69,6 +69,10 @@ func refuseSeat(errOut io.Writer, verb, initiator string, err error) int {
 func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
 		return refuse(errOut, "task", "want push, take, beat, done, cancel, list, width, "+queueSubs)
+	}
+	if isTaskBatch(args[0], args[1:]) {
+		// #3661: the batch verbs on the ws index (task_batch.go).
+		return runTaskBatch(ctx, args[0], args[1:], out, errOut)
 	}
 	switch args[0] {
 	case "push":
@@ -225,6 +229,7 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 		_, _ = fmt.Fprintf(out, "TAKE DENIED id=%s as=%s initiator=%s\n", *id, *as, initiator)
 		return 6
 	}
+	trips := st.CountTrips()
 	claims, err := task.TakeAvailable(ctx, st, *as, *sprint, *id, *n, initiator, *idem)
 	var blocked *task.BlockedError
 	if errors.As(err, &blocked) {
@@ -235,13 +240,15 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if err != nil {
 		return refuseSeat(errOut, "task take", initiator, err)
 	}
+	// #3261: trips=<n> is the take's Redis round trips (2 for any number of
+	// sprints and claims; 1 when nothing is claimable).
 	if len(claims) == 0 {
-		fmt.Fprintln(out, "NONE")
+		fmt.Fprintf(out, "NONE trips=%d\n", trips.N())
 		return 0
 	}
 	for _, claim := range claims {
-		fmt.Fprintf(out, "CLAIMED %s/%s attempt=%d token=%s\n",
-			claim.Sprint, claim.ID, claim.Attempt, claim.Token)
+		fmt.Fprintf(out, "CLAIMED %s/%s attempt=%d token=%s trips=%d\n",
+			claim.Sprint, claim.ID, claim.Attempt, claim.Token, trips.N())
 		_, _ = fmt.Fprintf(out, "TASK %s kind=%s ref=%s title=%s\n",
 			claim.ID, claim.Kind, claim.Ref, strconv.Quote(claim.Title))
 	}

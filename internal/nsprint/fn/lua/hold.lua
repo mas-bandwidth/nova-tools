@@ -145,6 +145,9 @@ do
       kind = kind_derived
     end
     local seq = redis.call('INCR', 'rec:seq')
+    -- The unit's readers index, as ns_read keeps it (#3139 B2): the route
+    -- duty counts reads at head from it, never by a scan.
+    redis.call('SADD', 's:' .. S .. ':readers:' .. unit, f)
     redis.call('HSET', 's:' .. S .. ':read:' .. unit .. ':' .. f,
       'seq', tostring(seq), 'head', head, 'verdict', verdict, 'score', score,
       'kind', kind, 'files', '', 'done_when', '', 'at', tostring(at),

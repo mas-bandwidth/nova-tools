@@ -207,6 +207,10 @@ local function bench_beat(keys, args)
   local live, why = args[8], args[9]
   local session, actor, idem = args[10], args[11], args[12]
   local build = args[13]
+  -- The bench's own facts, measured on the bench each beat (#3646):
+  -- harness versions present, git mirrors present, free GiB under its root.
+  -- A caller that predates them passes nothing and they read as missing.
+  local harness, mirrors, disk_gib = args[14], args[15], args[16]
   if not session or session == '' then
     session = actor or ''
   end
@@ -225,7 +229,9 @@ local function bench_beat(keys, args)
   redis.call('HSET', 'bench:' .. bench .. ':beat',
     'host', host or '', 'user', user or '', 'load1', load1 or '',
     'ssh', ssh or '', 'probe', probe or '', 'launcher', launcher or '',
-    'live', '0', 'why', why or '', 'build', build or '', 'at', tostring(at))
+    'live', '0', 'why', why or '', 'build', build or '',
+    'harness', harness or '', 'mirrors', mirrors or '', 'disk_gib', disk_gib or '',
+    'at', tostring(at))
   redis.call('PEXPIRE', 'bench:' .. bench .. ':beat', PL_BEAT_MS)
   redis.call('SET', owner_key, session, 'PX', PL_BEAT_MS)
 

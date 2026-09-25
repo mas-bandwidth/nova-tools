@@ -1,10 +1,12 @@
 package main
 
 // The friend heartbeat of #2610. `beat` is the process a friend's window
-// starts and forgets: it writes one key with a TTL every 30 seconds and spends
-// nothing else, so presence costs no tokens and is never the thing dropped
-// under load. `presence` is the read: one line, from those keys, for the swarm
-// table and for anyone about to hand a friend work.
+// starts and forgets: it writes one hash with a TTL every 30 seconds (its
+// stamp, and its child count when --width is passed, #2673) and spends nothing
+// else, so presence costs no tokens and is never the thing dropped under load.
+// `presence` is the read: one line, up or down per friend, for the swarm table
+// and for anyone about to hand a friend work. Presence is Redis only; the git
+// bus carries notes and never beats (#3144).
 //
 // The two failures this replaces both happened on 2026-09-22: four tasks were
 // handed to a friend who had been gone ten hours, and a friend who had never
@@ -31,9 +33,9 @@ import (
 const (
 	storeHint  = `--store <host:port> is the fleet Redis the heartbeat lives on, the same address the other verbs spell --redis; the password is never a flag -- it reaches this process as NOVA_REDIS_BENCH_PASSWORD through nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD`
 	beatAsHint = `--as <name> is the friend whose window this is, spelled as the bus roster spells it; the key it writes is friend:<name> and there is no flag that beats for somebody else`
-	rosterHint = `name the friends: --friends <a,b,c>, --participants <file> (the bus participants.json) or --bus <dir> (its checkout, whose participants.json is read). The roster is the bus's, so a friend who joins is on the line without an edit here`
+	rosterHint = `the roster is the friends SET in the store when no flag names one; otherwise --friends <a,b,c>, --participants <file> (the bus participants.json) or --bus <dir> (its checkout, whose participants.json is read), exactly one`
 	ttlHint    = `--ttl <duration> is how long one beat keeps the friend up, and it must be longer than --every or the key lapses between beats and a friend who is here reads as AWAY; the default is three beats, 90s for a 30s cadence`
-	widthHint  = `--width <n> is how many children are in use now, a whole number written to friend:<name>:width; zero is a real count, and leaving --width off writes no key and is not a failure`
+	widthHint  = `--width <n> is how many children are in use now, a whole number written to the width field of friend:<name> with the beat's TTL; zero is a real count, and leaving --width off writes no field and is not a failure`
 )
 
 // storeOpener is the seam the tests enter through: the live verbs dial Redis,
@@ -49,8 +51,9 @@ func dialStore(ctx context.Context, addr, user string) (presence.Store, func() e
 	return r, r.Close, nil
 }
 
-// cmdBeat is the friend's own process: SET friend:<name> <utc> EX <ttl> every
-// --every, for as long as the window lives. It ends when the window does, and
+// cmdBeat is the friend's own process: HSET friend:<name> at <utc> [width <n>]
+// plus PEXPIRE <ttl>, in one MULTI, every --every, for as long as the window
+// lives. A friend whose width changes re-runs beat with the new number. It ends when the window does, and
 // that ending IS the signal: no shutdown hook, no goodbye note, nothing to
 // forget to run.
 func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open storeOpener) int {
@@ -89,7 +92,7 @@ func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open sto
 	}
 	// Window is the cap's reset time as the caller spelled it. This verb
 	// does not read a clock to invent one. Empty, including a flag of only
-	// spaces, is the flag not passed: no key, and not a failure.
+	// spaces, is the flag not passed: no field, and not a failure.
 	var widthN int64
 	side := presence.Side{Window: strings.TrimSpace(*window)}
 	if raw := strings.TrimSpace(*width); raw != "" {
@@ -166,8 +169,10 @@ func beatLoop(ctx context.Context, st presence.Store, name string, period, ttl t
 	}
 }
 
-// cmdPresence is the read: one line naming every friend on the bus roster and
-// whether they are here. It reports what the keys say and nothing else -- never
+// cmdPresence is the read: one line naming every friend and whether they are
+// up or down, with the width a live beat carries. The roster is the store's
+// `friends` SET unless a flag names one; the hashes are read in one pipeline,
+// never by a scan. It reports what the store says and nothing else -- never
 // what the reader expects, which is the report that was wrong twice in one day.
 func cmdPresence(args []string, stdout, stderr io.Writer, clock wake.Clock, open storeOpener) int {
 	fs := flag.NewFlagSet("presence", flag.ContinueOnError)
@@ -200,6 +205,12 @@ func cmdPresence(args []string, stdout, stderr io.Writer, clock wake.Clock, open
 	}
 	defer func() { _ = closeStore() }()
 
+	if names == nil {
+		names, err = presence.Friends(ctx, st)
+		if err != nil {
+			return refuse(stderr, " presence", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+	}
 	now := clock.Now()
 	sts, err := presence.Read(ctx, st, names, now)
 	if err != nil {
@@ -211,8 +222,9 @@ func cmdPresence(args []string, stdout, stderr io.Writer, clock wake.Clock, open
 
 // rosterFrom resolves the friends to report on: the names a caller listed, the
 // participants file they named, or the participants.json of the bus checkout
-// they named. Exactly one source, and no built-in list: a roster hard-coded
-// here would be a second copy of the bus's, and the copy is what goes stale.
+// they named. At most one source, and no built-in list: a roster hard-coded
+// here would be a second copy, and the copy is what goes stale. No source at
+// all is nil and no problem: the caller reads the store's friends SET.
 func rosterFrom(p *problems, friends, participants, busDir string) []string {
 	given := 0
 	for _, s := range []string{friends, participants, busDir} {
@@ -221,7 +233,6 @@ func rosterFrom(p *problems, friends, participants, busDir string) []string {
 		}
 	}
 	if given == 0 {
-		p.add("name the friends to report on; refusing to guess", "  "+rosterHint+"\n")
 		return nil
 	}
 	if given > 1 {

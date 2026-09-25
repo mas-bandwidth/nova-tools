@@ -46,7 +46,7 @@ func call(ctx context.Context, st *store.Store, verb, id, name string, args ...a
 	if st == nil || st.Client() == nil {
 		return Result{Code: 1, Verb: verb, ID: id, Status: "USAGE"}, nil
 	}
-	if err := fn.Load(ctx, st.Client()); err != nil {
+	if err := fn.LoadMissing(ctx, st.Client()); err != nil {
 		return Result{}, err
 	}
 	return callNoLoad(ctx, st, verb, id, name, args...)

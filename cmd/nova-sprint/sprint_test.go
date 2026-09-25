@@ -54,7 +54,7 @@ func TestSprintOpenLetsTaskTakeClaim(t *testing.T) {
 	step("PUSH CREATED id=t1", "task", "push", "--redis", addr, "--sprint", s, "--id", "t1",
 		"--title", "first", "--payload-sha", "p1", "--to", "ctl-open")
 	step(s+" absent 0/1 0% -> eta ?", "sprint", "status", "--redis", addr, "--sprint", s)
-	step("NONE", "task", "take", "--redis", addr, "--sprint", s, "--as", "ctl-open")
+	step("NONE trips=1", "task", "take", "--redis", addr, "--sprint", s, "--as", "ctl-open")
 
 	step("OPEN "+s+" units=0 pushed=0 existed=0 closed=0 skipped_done=0", "sprint", "open", "--redis", addr, "--sprint", s)
 	step("OPEN "+s+" units=0 pushed=0 existed=0 closed=0 skipped_done=0", "sprint", "open", "--redis", addr, "--sprint", s)
@@ -70,12 +70,17 @@ func TestSprintOpenLetsTaskTakeClaim(t *testing.T) {
 	step(s+" open 0/1 0% -> eta ?", "sprint", "status", "--redis", addr, "--sprint", s)
 
 	code, out, errOut := runSprint("task", "take", "--redis", addr, "--as", "ctl-open")
-	if code != 0 || !strings.HasPrefix(out, "CLAIMED "+s+"/t1 attempt=1 ") {
+	// #3261: the take names its round trips, one pipeline and one FCALL.
+	if code != 0 || !strings.HasPrefix(out, "CLAIMED "+s+"/t1 attempt=1 ") || !strings.Contains(out, " trips=2\n") {
 		t.Fatalf("take after open: code=%d out=%q stderr=%q; want CLAIMED %s/t1", code, out, errOut, s)
 	}
 
 	step(s+" status=closed", "sprint", "close", "--redis", addr, "--sprint", s)
-	step(s+" status=closed", "sprint", "close", "--redis", addr, "--sprint", s)
+	// #3571: a second close is refused, so status=closed exit 0 means open.
+	if code, out, errOut := runSprint("sprint", "close", "--redis", addr, "--sprint", s); code != 1 ||
+		!strings.HasPrefix(out, "REFUSED "+s+" already closed (closed_at ") {
+		t.Fatalf("second close: code=%d out=%q stderr=%q; want exit 1 REFUSED already closed", code, out, errOut)
+	}
 	if ok, _ := client.SIsMember(ctx, "sprints", s).Result(); ok {
 		t.Fatalf("sprints still holds %s after close", s)
 	}
@@ -373,7 +378,7 @@ func TestControl20(t *testing.T) {
 	if sha := hget(t, c, "s:"+s, "from_sha"); sha != fileSHA(t, from) {
 		t.Fatalf("after the kill: from_sha=%q want %q", sha, fileSHA(t, from))
 	}
-	if out := takeOne(t, addr); out != "NONE\n" {
+	if out := takeOne(t, addr); out != "NONE trips=1\n" {
 		t.Fatalf("take after the kill: %q; want NONE", out)
 	}
 
@@ -412,7 +417,9 @@ func TestControl20(t *testing.T) {
 
 	expect(t, 0, s+" status=closed\n", "sprint", "close", "--redis", addr, "--sprint", s, "--now", fxNow)
 	closedAt := hget(t, c, "s:"+s, "closed_at")
-	expect(t, 0, s+" status=closed\n", "sprint", "close", "--redis", addr, "--sprint", s, "--now", fxLater)
+	// #3571: the second close is refused and writes nothing.
+	expect(t, 1, "REFUSED "+s+" already closed (closed_at "+closedAt+"); nothing written; there is no reopen\n",
+		"sprint", "close", "--redis", addr, "--sprint", s, "--now", fxLater)
 	if got := hget(t, c, "s:"+s, "closed_at"); closedAt == "" || got != closedAt {
 		t.Fatalf("closed_at %q -> %q; want one stamp", closedAt, got)
 	}
@@ -544,7 +551,7 @@ func TestSprintOpenReplay(t *testing.T) {
 		if exists(t, c, "s:"+s+":task:u3") {
 			t.Fatal("u3 was pushed")
 		}
-		if out := takeOne(t, addr); out != "NONE\n" {
+		if out := takeOne(t, addr); out != "NONE trips=1\n" {
 			t.Fatalf("take: %q want NONE", out)
 		}
 		expect(t, 0, "OPEN "+s+" units=2 pushed=1 existed=1 closed=0 skipped_done=0\n", openArgs(addr, s, a)...)
@@ -565,7 +572,7 @@ func TestSprintOpenReplay(t *testing.T) {
 		if st := hget(t, c, "s:"+s, "status"); st != "closed" {
 			t.Fatalf("status=%q want closed", st)
 		}
-		if out := takeOne(t, addr); out != "NONE\n" {
+		if out := takeOne(t, addr); out != "NONE trips=1\n" {
 			t.Fatalf("take: %q want NONE", out)
 		}
 	})
@@ -585,7 +592,7 @@ func TestSprintOpenPushRefused(t *testing.T) {
 		if _, err := c.ZScore(context.Background(), "sprint:order", s).Result(); err == nil {
 			t.Fatalf("sprint:order holds %s", s)
 		}
-		if out := takeOne(t, addr); out != "NONE\n" {
+		if out := takeOne(t, addr); out != "NONE trips=1\n" {
 			t.Fatalf("take: %q want NONE", out)
 		}
 	}
@@ -681,7 +688,7 @@ func TestSprintOpenPushRefused(t *testing.T) {
 		if _, err := c.ZScore(ctx, "sprint:order", s).Result(); err == nil {
 			t.Fatalf("sprint:order holds %s", s)
 		}
-		if out := takeOne(t, addr, "--sprint", s); out != "NONE\n" {
+		if out := takeOne(t, addr, "--sprint", s); out != "NONE trips=1\n" {
 			t.Fatalf("take: %q want NONE", out)
 		}
 	})

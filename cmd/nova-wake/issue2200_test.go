@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,7 +22,6 @@ func TestPresenceKeyExpiresAndLeavesNoTombstone(t *testing.T) {
 	st := presence.NewFakeStore(t0)
 	clock := fakeStoreClock{st}
 	open := fakeOpener(st)
-	ctx := context.Background()
 
 	// The bus says stella is asleep: her cursor is ten minutes old, twice the
 	// window, and there is no BEAT file. Only the live key can wake her.
@@ -41,11 +39,7 @@ func TestPresenceKeyExpiresAndLeavesNoTombstone(t *testing.T) {
 	}
 	keys := func() (live, last string) {
 		t.Helper()
-		v, err := st.MGet(ctx, presence.Key("stella"), presence.LastKey("stella"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return v[0], v[1]
+		return st.Hash(presence.Key("stella"))["at"], st.String(presence.LastKey("stella"))
 	}
 	awake := func() string {
 		t.Helper()
