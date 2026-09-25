@@ -64,6 +64,9 @@ type reconcileDutyBuilder struct {
 // refill in registration order.
 var reconcileDuties []reconcileDutyBuilder
 
+// reconcileResultsRoot is --results on reconcile, when set.
+var reconcileResultsRoot string
+
 // registerReconcileDuty adds a duty to every `nova-sprint reconcile` loop.
 func registerReconcileDuty(name string, build func(st *store.Store) (reconcileDuty, error)) {
 	reconcileDuties = append(reconcileDuties, reconcileDutyBuilder{Name: name, Build: build})
@@ -130,11 +133,17 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	widthCoordinator := fs.String("width-coordinator", "", "")
 	metricsAddr := fs.String("metrics-addr", "", "")
 	readers := fs.String("readers", "", "")
+	results := fs.String("results", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "reconcile", err.Error())
 	}
 	if fs.NArg() > 0 {
-		return refuse(errOut, "reconcile", "takes flags, not positional arguments: --redis <addr> [--host <name>] [--once] [--readers a,b] [--width-rebalance-ticks n --width-readers a,b --width-builders c,d --width-coordinator e] [--metrics-addr <host:port>]")
+		return refuse(errOut, "reconcile", "takes flags, not positional arguments: --redis <addr> [--host <name>] [--once] [--results <dir>] [--readers a,b] [--width-rebalance-ticks n --width-readers a,b --width-builders c,d --width-coordinator e] [--metrics-addr <host:port>]")
+	}
+	if *results != "" {
+		old := reconcileResultsRoot
+		reconcileResultsRoot = *results
+		defer func() { reconcileResultsRoot = old }()
 	}
 	reconcileReaders = splitNames(*readers)
 	if *host == "" {

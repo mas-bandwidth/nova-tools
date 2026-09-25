@@ -64,6 +64,9 @@ type OrphanOptions struct {
 	LeaseTTL time.Duration
 	Renew    time.Duration
 	Forge    OrphanForge
+	Bound    Bound
+	Margin   time.Duration
+	OnLease  func(bench, token string, held bool)
 }
 
 // OrphanEnded is an orphan its own end record ended this pass.
@@ -147,9 +150,14 @@ func orphanBench(parent context.Context, st *store.Store, opt OrphanOptions, ben
 		res.Err = fmt.Errorf("lease %s: %w", bench, err)
 		return res
 	}
+	status, _, _ = strings.Cut(status, "|")
 	if status != "TAKEN" && status != "RENEWED" {
 		res.Err = fmt.Errorf("%w: %s %s", ErrLeaseHeld, bench, status)
 		return res
+	}
+	if opt.OnLease != nil {
+		opt.OnLease(bench, l.token, true)
+		defer opt.OnLease(bench, l.token, false)
 	}
 	lost := make(chan struct{})
 	renewDone := make(chan struct{})
@@ -178,6 +186,9 @@ func orphanBench(parent context.Context, st *store.Store, opt OrphanOptions, ben
 		res.Err = fmt.Errorf("%w: %s", ErrFenced, bench)
 	default:
 	}
+	if opt.Bound != nil && opt.Bound.Fenced() && !errors.Is(res.Err, ErrFenced) {
+		res.Err = ErrBoundFenced
+	}
 	if res.Err == nil && ctx.Err() != nil {
 		res.Err = fmt.Errorf("bench %s clock %v: %w", bench, opt.Clock, ctx.Err())
 	}
@@ -205,6 +216,9 @@ func sweepOrphanBench(ctx context.Context, st *store.Store, opt OrphanOptions, l
 	for _, r := range rows {
 		if ctx.Err() != nil {
 			return nil
+		}
+		if err := orphanBounded(opt); err != nil {
+			return err
 		}
 		var err error
 		switch r.kind {
@@ -376,4 +390,21 @@ func (g GitHub) RenameBranch(ctx context.Context, repo, from, to string) error {
 		}
 	}
 	return err
+}
+
+func orphanBounded(opt OrphanOptions) error {
+	if opt.Bound == nil {
+		return nil
+	}
+	if opt.Bound.Fenced() {
+		return ErrBoundFenced
+	}
+	margin := opt.Margin
+	if margin <= 0 {
+		margin = DefaultMargin
+	}
+	if left := opt.Bound.Remaining(); left < margin {
+		return fmt.Errorf("%w: %s of the reconciler lease left, below the %s margin", ErrBoundMargin, left.Round(time.Millisecond), margin)
+	}
+	return nil
 }
