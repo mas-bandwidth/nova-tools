@@ -53,7 +53,7 @@ func lineupFixture(t *testing.T, benches map[string]map[string]string, landed in
 		t.Fatal(err)
 	}
 	for _, p := range probes[:landed] {
-		c.SAdd(ctx, "s:s1:idx:card:landed", p)
+		putProbe(t, c, p, "land")
 	}
 	mr.FastForward(time.Minute)
 	in, err := GatherLineup(ctx, c, "s1")
@@ -448,7 +448,7 @@ func TestLineupOrderProbeCutAfterPreflight(t *testing.T) {
 	}
 
 	for _, p := range probes {
-		c.SAdd(ctx, "s:s1:idx:card:landed", p)
+		putProbe(t, c, p, "land")
 	}
 	res, err = RunLineup(ctx, c, run)
 	if err != nil {
