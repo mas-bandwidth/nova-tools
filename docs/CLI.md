@@ -3747,7 +3747,8 @@ brief, and the record head is what is read.
 `read post --repo <r> --n <n> --line "<typed line>" [--no-github] [--owner
 <o>] [--redis <addr>]` stores the line: the first word is one of SCORE, HOLD,
 REPAIR, SPEC, SPEC-WRITTEN, CLOSE or JEV-DIFF and the first line carries
-`who=<name>` and `head=<sha>`, or the line is refused. It RPUSHes the line
+`who=<name>` and `head=<sha>` (a SPEC line: `who=`, `rev=<k>` and
+`score=<0..10>`, no head, see `spec` below), or the line is refused. It RPUSHes the line
 onto `pr:<repo>:<n>:lines` and stamps `last_line` and `last_line_at` on the
 record in one MULTI, then, until #3595 retires PR comments, mirrors it as one
 REST comment (`POST /repos/<owner>/<repo>/issues/<n>/comments`, the token from
@@ -3765,6 +3766,37 @@ template, the `nova-swarm template` cards and the swarm's card fixtures) is
 scanned by `internal/ci` (TestNoGhInAnyBrief, #3600): a `gh ` invocation, a
 GraphQL mention, or a GitHub clone without the bench mirror as `--reference`
 is a red run.
+
+### spec
+
+The specs table in Redis (#3370, part of #3364). A SPEC line's facts go
+onto the record `pr:<repo>:<n>` in the same call that stores the line
+(`spec_rev`, `spec_state`, `spec_stream`, `spec_score:<who>` = `<rev>
+<score>`), and the spec is in exactly one of `specs:<stream>:working` or
+`specs:<stream>:done` (ZSETs of `<repo>#<n>`, score = the spec's first mark
+in ms, so every list reads oldest first). Done is two distinct `who=` with
+score 10 at the current rev; a newer rev resets the count and a line at an
+older rev is refused `STALE_REV` with nothing written. On done the same call
+releases every task waiting on `spec:<repo>#<n>` (the DEPENDS-ON release).
+Both subverbs are one FCALL of a function in
+`internal/nsprint/fn/lua/unblock_spec.lua`.
+
+- `nova-sprint spec mark <repo>#<n> --rev <k> --who <friend> --score <s>
+  [--stream <name>] [--sprint <S>] [--redis <addr>]` stores `SPEC
+  who=<friend> rev=<k> score=<s>` and its facts. `read post` of a SPEC line
+  is the same call, and its comment mirror follows the Redis write.
+- `nova-sprint spec list [--stream <name>] [--redis <addr>]` prints the
+  specs block from Redis alone; `--stream` adds that stream's ids.
+
+```
+SPEC MARK nova-tools#3370 who=emma rev=3 score=10 answer=DONE state=done tens=2 released=1 stream=nova-sprint
+specs | working | done
+nova-sprint | 4 | 9
+SPEC LIST streams=1 working=4 done=9
+```
+
+Exit 0 written or already so (RECORDED, NEW_REV, DONE, SAME), 1 refused
+(STALE_REV, INVALID; nothing written), 2 usage or could not run.
 
 ### ws, scope, stream
 
