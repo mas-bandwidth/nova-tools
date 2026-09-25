@@ -1247,3 +1247,4 @@
             "Presence: who is awake and who is asleep")
           :state "missing"
           :evidence ())))))
+; modified
