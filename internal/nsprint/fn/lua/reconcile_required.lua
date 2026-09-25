@@ -338,7 +338,8 @@ end)
 
 -- ns_card_retry: feed a crashed card back once (#2930 rev 5, replaces
 -- rowan-tools bin/sprint-requeue). It acts only on a card that is ended with
--- outcome FAILED, reason idle-killed or crash with exit -1, no pushed sha, and
+-- outcome FAILED, reason idle-killed or crash with exit -1, no pushed sha
+-- (empty or the wrapper's no-commit '-'), and
 -- retries below retry_max: the child died before it could leave any effect,
 -- so a new attempt cannot make a second one. The card goes back to the pool
 -- (queued, reason retry:<reason>; the next deal takes attempt+1), with
@@ -358,7 +359,10 @@ redis.register_function('ns_card_retry', function(keys, args)
   local idem = 'retry:' .. S .. '/' .. label .. '/' .. attempt
   local prev = rr_get('s:' .. S .. ':idem', idem)
   if prev ~= '' then return rr_reply(0, 'OK', attempt, prev) end
-  if state ~= 'ended' or rr_get(card, 'outcome') ~= 'FAILED' or rr_get(card, 'pushed_sha') ~= '' then
+  -- pushed_sha '-' is the wrapper's no-commit mark (card.NoCommit): every
+  -- non-DONE end carries it, and it is no effect, the same as empty.
+  local pushed = rr_get(card, 'pushed_sha')
+  if state ~= 'ended' or rr_get(card, 'outcome') ~= 'FAILED' or (pushed ~= '' and pushed ~= '-') then
     return rr_reply(0, 'NOTHING', attempt, '')
   end
   local reason = rr_get(card, 'reason')

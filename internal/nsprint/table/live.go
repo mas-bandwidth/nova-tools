@@ -11,9 +11,12 @@
 //	friend:<f>:down       GET, a set value prints "down"   (out-of-credits)
 //	sprint:<S>:xy         the sprint line                  (sprint-xy)
 //	sprint:<S>:landed     the landed line                  (sprint-landed)
+//	sprint:<S>:pitstop    set: the title reads *** PIT STOP *** (#3423)
 //	q:blocked             ZCARD, the one blocked count     (friend-queue, #3219)
 //	bench:*               SCAN COUNT 1000, then HGETALL    (bench-row, card-dealer)
 //	bench:<b>:cards:<w>   ZCARD, w = ready working done ok fail (the card move, #3692)
+//	bench:_pool:cards:ready ZCARD, the pool line: cards not dealt (#2733)
+//	sprint:<S>:cards      EXISTS, the sprint has cards: the pool line prints at 0
 //
 // A host row's ready, working, done, ok and fail are the ZCARDs of its card
 // views, read in the same pipeline (nova-tools#3692, ONE PLACE: every card is
@@ -45,7 +48,7 @@ import (
 // LiveConfig names what the bash hard-codes; nothing here is compiled in.
 type LiveConfig struct {
 	Friends  []string      // the roster, in display order
-	Sprint   string        // sprint:<Sprint>:xy and sprint:<Sprint>:landed
+	Sprint   string        // sprint:<Sprint>:xy, :landed and :pitstop
 	XYFile   string        // SPRINT-XY.txt fallback while the xy key is missing (until #2679)
 	RowStale time.Duration // a friend row older than this prints "stale" (bash ROW_STALE_S=10)
 	// BenchStale: a host row whose own at is older than this prints "stale";
@@ -72,13 +75,19 @@ type BenchRow struct {
 
 // LiveSnapshot is one read of the live keyspace.
 type LiveSnapshot struct {
-	Config      LiveConfig
-	Friends     []FriendRow
-	XY          string // "" when the key is missing
-	Landed      string // "" when the key is missing
-	Blocked     string // "" when the count did not come back
-	Benches     []BenchRow
-	Pool        string // bench:pool queue; PoolPresent says whether the key exists
+	Config  LiveConfig
+	Friends []FriendRow
+	XY      string // "" when the key is missing
+	Landed  string // "" when the key is missing
+	Pitstop bool   // sprint:<S>:pitstop holds a value: the title says so (#3423)
+	Blocked string // "" when the count did not come back
+	Benches []BenchRow
+	// Pool is the pool line's count: the ZCARD of bench:_pool:cards:ready
+	// (the undealt view the card move keeps, #2733) whenever that view has
+	// cards or the sprint's roster exists; otherwise the retired card-dealer
+	// bench:pool hash's queue, as the bash of record read it. PoolPresent
+	// says whether the line prints.
+	Pool        string
 	PoolPresent bool
 	// XYFileLine / XYFileMod are the fallback file, read only when XY == "".
 	XYFileLine string
@@ -125,8 +134,14 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		fc[i].downReason = pipe.HGet(ctx, "friend:"+name+":down", "reason")
 		fc[i].downExists = pipe.Exists(ctx, "friend:"+name+":down")
 	}
-	mget := pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy", "sprint:"+cfg.Sprint+":landed")
+	// The pit stop rides the xy/landed MGET: no extra command (#3423).
+	mget := pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy", "sprint:"+cfg.Sprint+":landed", "sprint:"+cfg.Sprint+":pitstop")
 	blocked := pipe.ZCard(ctx, "q:blocked")
+	poolView := pipe.ZCard(ctx, PoolViewKey)
+	var roster *redis.IntCmd
+	if cfg.Sprint != "" {
+		roster = pipe.Exists(ctx, "sprint:"+cfg.Sprint+":cards")
+	}
 	hashes := make([]*redis.MapStringStringCmd, len(benchKeys))
 	cards := make([][]*redis.IntCmd, len(benchKeys))
 	for i, key := range benchKeys {
@@ -143,10 +158,10 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 	// The friend block is all-or-nothing, as in the bash: a failed MGET
 	// means the connection is not answering.
 	vals, err := mget.Result()
-	if err != nil || len(vals) != 2 {
-		return nil, fmt.Errorf("mget xy/landed: %v", err)
+	if err != nil || len(vals) != 3 {
+		return nil, fmt.Errorf("mget xy/landed/pitstop: %v", err)
 	}
-	snap := &LiveSnapshot{Config: cfg, XY: pipeValue(vals[0]), Landed: pipeValue(vals[1])}
+	snap := &LiveSnapshot{Config: cfg, XY: pipeValue(vals[0]), Landed: pipeValue(vals[1]), Pitstop: pipeValue(vals[2]) != ""}
 	for i, name := range cfg.Friends {
 		row := FriendRow{Name: name}
 		if got, err := fc[i].row.Result(); err == nil && len(got) == 5 {
@@ -185,10 +200,31 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		cardCells(fields, cards[i])
 		snap.Benches = append(snap.Benches, BenchRow{Key: strings.TrimPrefix(key, "bench:"), Fields: fields})
 	}
+	poolFromView(snap, poolView, roster)
 	if snap.XY == "" && cfg.XYFile != "" {
 		snap.XYFileLine, snap.XYFileMod, snap.XYFileOK = readXYFile(cfg.XYFile)
 	}
 	return snap, nil
+}
+
+// PoolViewKey is the undealt pool, the card move's bench view for cards with
+// no bench (card.BenchCardsKey("_pool", "ready")).
+const PoolViewKey = "bench:_pool:cards:ready"
+
+// poolFromView sets the pool line from the undealt view (#2733): the dealer's
+// bench:pool hash is retired and nothing writes it, so the line reads the set
+// the card move keeps. It prints when the view has cards or the sprint has a
+// roster (an empty pool is "0", not no line); a view that could not be read
+// prints "?", never a false 0. With neither, the legacy hash (if any) stands.
+func poolFromView(snap *LiveSnapshot, view, roster *redis.IntCmd) {
+	live := roster != nil && roster.Err() == nil && roster.Val() > 0
+	n, err := view.Result()
+	switch {
+	case err != nil && live:
+		snap.Pool, snap.PoolPresent = "?", true
+	case err == nil && (n > 0 || live):
+		snap.Pool, snap.PoolPresent = strconv.FormatInt(n, 10), true
+	}
 }
 
 // benchCardCells are the host row's card columns, each a ZCARD of
@@ -224,7 +260,7 @@ func cardCells(fields map[string]string, cmds []*redis.IntCmd) {
 func FailedLive(cfg LiveConfig, last *LiveSnapshot) *LiveSnapshot {
 	snap := &LiveSnapshot{Config: cfg, Stale: true}
 	if last != nil {
-		snap.Friends, snap.XY, snap.Landed, snap.LastGood = last.Friends, last.XY, last.Landed, last.LastGood
+		snap.Friends, snap.XY, snap.Landed, snap.Pitstop, snap.LastGood = last.Friends, last.XY, last.Landed, last.Pitstop, last.LastGood
 	}
 	if snap.XY == "" && cfg.XYFile != "" {
 		snap.XYFileLine, snap.XYFileMod, snap.XYFileOK = readXYFile(cfg.XYFile)
@@ -238,7 +274,11 @@ const liveFriendRule = "-----------+-------+---------+-------+------------\n"
 // RenderLive prints the bash layout at now.
 func (s *LiveSnapshot) RenderLive(now time.Time) string {
 	var b strings.Builder
-	b.WriteString("SPRINT TABLE\n")
+	if s.Pitstop {
+		b.WriteString("SPRINT TABLE *** PIT STOP ***\n")
+	} else {
+		b.WriteString("SPRINT TABLE\n")
+	}
 	if s.Blocked == "" || strings.Trim(s.Blocked, "0123456789") != "" {
 		b.WriteString("blocked: ?\n")
 	} else {
