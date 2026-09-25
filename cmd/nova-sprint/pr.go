@@ -4,7 +4,8 @@
 //
 //	nova-sprint pr record --repo <owner/name|name> --n <n> [--head <sha>] [--base <b>] [--stream <s>]
 //	    [--base-sha <sha>] [--ci green|red|pending] [--mergeable true|false]
-//	    [--state open|closed] [--task <id>] [--kind member|stream] [--closes <n,n>|-] [--redis <addr>]
+//	    [--state open|closed] [--task <id>] [--kind member|stream] [--closes <n,n>|-]
+//	    [--branch-gone <why>] [--redis <addr>]
 //	nova-sprint pr lines --repo <owner/name|name> --n <n> --add "<typed line>" [--redis <addr>]
 //
 // pr:<name>:<n> is a hash (internal/nsprint/land/stream) under the one PR
@@ -14,6 +15,8 @@
 // to unknown unless the same call names them; --closes records the issues
 // the PR's body closes (- for none), which the lander lands with it. pr lines appends one typed line
 // (SCORE who=<w> head=<sha> score=N/10 ..., DISPOSITION ..., HOLD ...) to reads.
+// --branch-gone marks the PR's head branch gone (branch_gone), one of the
+// three records pr reap (pr_reap.go) closes a PR on.
 // One Lua call each, one receipt line. Exit 0 written, 2 refused, 6 no Redis.
 package main
 
@@ -33,22 +36,24 @@ import (
 func init() {
 	register(Verb{
 		Name:    "pr",
-		Summary: "pr record|lines --repo <owner/name|name> --n <n> ...: the pr:<name>:<n> record the stream lander reads (head, base, stream, ci, mergeable, typed read lines)",
+		Summary: "pr record|lines --repo <owner/name|name> --n <n> ...: the pr:<name>:<n> record the stream lander reads (head, base, stream, ci, mergeable, typed read lines); pr reap --sprint <S>: close stale superseded card PRs with a reason record",
 		Run:     runPR,
 	})
 }
 
 func runPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "pr", "want record or lines")
+		return refuse(errOut, "pr", "want record, lines or reap")
 	}
 	switch args[0] {
 	case "record":
 		return runPRRecord(ctx, args[1:], out, errOut)
 	case "lines":
 		return runPRLines(ctx, args[1:], out, errOut)
+	case "reap":
+		return runPRReap(ctx, args[1:], out, errOut)
 	}
-	return refuse(errOut, "pr", "want record or lines, not "+strconv.Quote(args[0]))
+	return refuse(errOut, "pr", "want record, lines or reap, not "+strconv.Quote(args[0]))
 }
 
 func oneOf(v string, allowed ...string) bool {
@@ -79,6 +84,7 @@ func runPRRecord(ctx context.Context, args []string, out, errOut io.Writer) int 
 	fs.StringVar(&f.State, "state", "", "")
 	fs.StringVar(&f.Task, "task", "", "")
 	fs.StringVar(&f.Kind, "kind", "", "")
+	fs.StringVar(&f.BranchGone, "branch-gone", "", "")
 	closes := fs.String("closes", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
