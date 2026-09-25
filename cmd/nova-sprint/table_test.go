@@ -71,25 +71,19 @@ func runDocumented(s onboarding.Step) (onboarding.Result, error) {
 	return onboarding.Result{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}, nil
 }
 
-// TestTableWritesNoFile is #3326's DONE-WHEN: the sprint table is read from
-// Redis and written nowhere. The file modes (--out, --fixture, --refresh
-// pending) are unknown flags; a --redis --once render and a second start
-// leave the working directory empty; and internal/sprinttable, whose
+// TestTableWritesNoFile is #3326's DONE-WHEN: without --out the sprint table
+// is read from Redis and written nowhere. The other file modes (--fixture,
+// --refresh pending) are unknown flags; a --redis --once render and a second
+// start leave the working directory empty; and internal/sprinttable, whose
 // Publish kept the last table on disk, exports no Publish.
 func TestTableWritesNoFile(t *testing.T) {
 	for _, flagArgs := range [][]string{
-		{"--out", "sprint-table.txt"},
 		{"--fixture", "table.txt"},
 		{"--refresh", "pending"},
 	} {
 		args := append([]string{"table", "--redis", "127.0.0.1:1", "--once"}, flagArgs...)
 		code, stdout, stderr := runSprint(args...)
 		want := "flag provided but not defined: " + strings.Replace(flagArgs[0], "--", "-", 1)
-		if flagArgs[0] == "--out" {
-			// #3530: --out publishes the whole table of --layout live; the
-			// wide table still refuses it.
-			want = "--out and --lock belong to --layout live; the wide table is written nowhere"
-		}
 		if code != 2 || stdout != "" || !strings.Contains(stderr, want) {
 			t.Errorf("table %s: exit %d stdout %q stderr %q; want exit 2 and %q", flagArgs[0], code, stdout, stderr, want)
 		}

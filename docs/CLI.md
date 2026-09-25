@@ -4022,13 +4022,16 @@ shape holds refuses with the whole remedy verb: `open first: nova-cairn open
 
 ## nova-sprint
 
-Renders the sprint table from Redis. The wide table is written nowhere
-(#3326): `table --redis <addr>` makes one `FCALL_RO ns_snapshot` per render
-over the `s:<S>:*`, `bench:*` and `friend:*` keys and prints the table to
-standard output; `--once` renders one, `--loop` one per second, and
-`--sprint <name>` shows a control sprint. The wide table has no `--out`, no
-`--fixture` and no `--refresh pending`: a reader runs the verb and reads
-stdout, and a restarted unit re-renders from Redis on its next tick. `table --check --redis <addr>` renders the
+Renders the sprint table from Redis. `table --redis <addr>` makes one
+`FCALL_RO ns_snapshot` per render over the `s:<S>:*`, `bench:*` and
+`friend:*` keys and prints the table to standard output; `--once` renders one,
+`--loop` one per second, and `--sprint <name>` shows a control sprint.
+`--out <file>` publishes instead of printing (#3343): each tick writes
+`<file>.tmp.<pid>` beside `<file>`, fsyncs it, and renames it onto `<file>`,
+so a reader sees one whole table and never a partial or empty one, and the
+temp file is gone after each tick. There is still no `--fixture` and no
+`--refresh pending`: a reader runs the verb and reads stdout or the published
+file, and a restarted unit re-renders from Redis on its next tick. `table --check --redis <addr>` renders the
 fixture keyspace on a throwaway server and compares it byte for byte.
 `refresh -- <command>` runs that command in its own session (POSIX setsid) and
 returns without waiting, so `launchctl kickstart -k` of the loop unit does not
@@ -4107,13 +4110,14 @@ the one remedy. The lander counts a carried read as a read.
 ### First run
 
 Run the three lines in an empty directory. They are the three file-shaped
-first tries, and each is refused with the whole verb, because the wide table
-is read from Redis and written nowhere; the directory stays empty. With a server,
-`nova-sprint table --redis 127.0.0.1:6379 --once` prints the table.
+first tries, and each is refused with the whole verb; the directory stays
+empty. With a server, `nova-sprint table --redis 127.0.0.1:6379 --once` prints
+the table, and `nova-sprint table --redis 127.0.0.1:6379 --loop --out
+sprint-table.txt` publishes it by atomic rename.
 
 ```text
-$ nova-sprint table --once --out sprint-table.txt
-! nova-sprint table: --friends, --xy-file, --out and --lock belong to --layout live; the wide table is written nowhere (#3326); run: nova-sprint help
+$ nova-sprint table --once --fixture table.txt
+! nova-sprint table: flag provided but not defined: -fixture; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
 
 $ nova-sprint table --once
 ! nova-sprint table: --redis <addr> is required; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
@@ -4124,7 +4128,7 @@ $ nova-sprint table --check
 
 What a first run gets wrong, and what each one wants:
 
-- **`--out`, `--fixture` or `--refresh pending`.** These were the file cut, deleted by #3326; `--fixture` and `--refresh` are unknown flags, and `--out` belongs to `--layout live` (#3530), the one published table. Read the wide table from stdout.
+- **`--fixture` or `--refresh pending`.** These were the file cut, deleted by #3326; both are unknown flags. `--out <file>` is the one file the wide table writes (#3343), by writing a temp file beside it and renaming it; `--layout live [--out <file>]` remains the one published whole-sprint table (#3530).
 - **`nova-sprint table` without `--redis`.** It wants the server address. There is no default address and no default loop.
 - **`--check` without `--redis`.** It wants a throwaway server; it seeds nothing, so load the fixture keyspace first.
 
