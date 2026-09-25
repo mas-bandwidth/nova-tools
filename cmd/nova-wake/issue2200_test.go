@@ -16,7 +16,8 @@ import (
 // beat writes (#2610's friend:<name>, `nova-wake beat`), and the reader is the
 // production awake verb with --store: nothing here calls a helper that only a
 // test calls. One clock drives the verbs and the store, so a TTL lapse is a
-// function call and not ninety seconds of test.
+// function call and not ninety seconds of test. Since #3878 the key never
+// expires: it ages past its stale_ms and reads down, still with no tombstone.
 func TestPresenceKeyExpiresAndLeavesNoTombstone(t *testing.T) {
 	t0 := beatAt
 	st := presence.NewFakeStore(t0)
@@ -77,15 +78,15 @@ func TestPresenceKeyExpiresAndLeavesNoTombstone(t *testing.T) {
 		t.Fatalf("awake does not read the renewed key:\n%s", got)
 	}
 
-	// 3. The line crashes: no more beats. Past the renewed TTL the key is
-	// simply absent -- no write happened at the death, and the only other key
-	// is the untimed :last, still holding the last beat's own stamp, not a
-	// tombstone.
+	// 3. The line crashes: no more beats. Past the renewed window the key is
+	// still there, never expiring (#3878), its at simply older than its
+	// stale_ms -- no write happened at the death, and :last still holds the
+	// last beat's own stamp, not a tombstone.
 	sets := st.Sets
 	clock.Sleep(presence.DefaultTTL)
 	live, last := keys()
-	if live != "" {
-		t.Fatalf("a crashed line's key is still there: friend:stella = %q", live)
+	if live != renewed {
+		t.Fatalf("a crashed line's key = %q, want it kept with the last beat's %q (#3878)", live, renewed)
 	}
 	if last != renewed {
 		t.Fatalf("friend:stella:last = %q, want the last beat's %q", last, renewed)

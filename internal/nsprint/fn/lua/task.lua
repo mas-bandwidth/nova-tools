@@ -207,7 +207,7 @@ local function task_wait(keys, args)
   redis.call('SADD', 's:' .. S .. ':waiton:' .. on, id)
   redis.call('ZREM', 'friend:' .. f .. ':living', S .. '/' .. id .. '/' .. attempt)
   redis.call('ZADD', 'friend:' .. f .. ':waiting', at, S .. '/' .. id)
-  redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
+  redis.call('XADD', 'cap:log', '*',
     'kind', 'slot-freed', 'consumer', 'friend:' .. f,
     'sprint', S, 'id', id, 'attempt', tostring(attempt), 'at', tostring(at))
   TW.receipt(S, 'task wait', id, 'working', 'waiting', attempt, token_sha, actor, on, '', idem, at)

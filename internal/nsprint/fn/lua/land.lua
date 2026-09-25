@@ -329,7 +329,7 @@ redis.register_function('ns_ci_single', function(keys, args)
   local id = redis.call('XADD', 'land:' .. repo .. ':gates', '*',
     'base', base, 'batch', 'ci:' .. gid, 'attempt', '1', 'token', tostring(token),
     'unit', unit, 'head', head, 'gid', gid, 'kind', 'single', 'priority', 'ci')
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', 'CI QUEUED', 'repo', repo, 'base', base, 'unit', unit, 'head', head, 'gid', gid, 'at', now)
   return { 'QUEUED', id, tostring(token) }
 end)
@@ -350,7 +350,7 @@ redis.register_function('ns_ref_seen', function(keys, args)
   end
   if prev ~= sha and source == 'git' then
     redis.call('HINCRBY', 'land:' .. repo .. ':inbound', 'missed', 1)
-    redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+    redis.call('XADD', 'land:' .. repo .. ':events', '*',
       'event', 'INBOUND MISSED', 'repo', repo, 'ref', ref, 'sha', sha, 'prev', prev, 'at', now)
     return { 'MISSED', prev }
   end
@@ -443,7 +443,7 @@ redis.register_function('ns_writer', function(keys, args)
     'since', tostring(now),
     'by', by or ''
   )
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', 'WRITER',
     'gen', tostring(gen),
     'owner', to_owner,
@@ -620,7 +620,7 @@ redis.register_function('ns_batch_plan', function(keys, args)
           redis.call('ZREM', 's:' .. S .. ':landable:' .. repo .. ':' .. base, m.unit)
         end
         redis.call('ZADD', chain_key, seq, batch_id)
-        redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+        redis.call('XADD', 'land:' .. repo .. ':events', '*',
           'event', 'REUSE',
           'repo', repo,
           'base', base,
@@ -671,7 +671,7 @@ redis.register_function('ns_batch_plan', function(keys, args)
   )
   redis.call('HSET', bkey, 'entry_id', entry_id)
 
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', 'PLAN',
     'repo', repo,
     'base', base,
@@ -705,7 +705,7 @@ redis.register_function('ns_batch_bind', function(keys, args)
     return 'STALE'
   end
   redis.call('HSET', bkey, 'from_tip', from_tip, 'input_id', input_id or '')
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', 'BIND', 'repo', repo, 'base', base, 'batch', batch_id, 'from_tip', from_tip, 'at', land_now_ms())
   return 'OK'
 end)
@@ -741,7 +741,7 @@ redis.register_function('ns_unit_drop', function(keys, args)
     redis.call('XADD', 'q:' .. u[4], '*', 'kind', task, 'unit', unit, 'head', head, 'reason', reason or '',
       'drop_key', h8 .. ':' .. tostring(seq))
   end
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', 'DROP', 'repo', repo, 'base', base, 'unit', unit, 'head', head, 'reason', reason or '', 'at', now)
   return 'OK'
 end)
@@ -834,7 +834,7 @@ redis.register_function('ns_gate_take', function(keys, args)
     'entry_id', entry_id
   )
   redis.call('SET', 'worker:' .. bench .. ':' .. slot, batch_id .. ':' .. attempt .. ':' .. token, 'PX', 15000)
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', 'CLAIM',
     'repo', repo,
     'base', base,
@@ -861,7 +861,7 @@ redis.register_function('ns_gate_claim', function(keys, args)
   local now = land_now_ms()
   redis.call('HSET', bkey, 'state', 'gating', 'bench', bench, 'slot', slot, 'claimed_at', tostring(now))
   redis.call('SET', 'worker:' .. bench .. ':' .. slot, batch_id .. ':' .. attempt .. ':' .. token, 'PX', 15000)
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', 'CLAIM',
     'repo', repo,
     'base', base,
@@ -986,7 +986,7 @@ redis.register_function('ns_gate_receipt', function(keys, args)
     gate_receipt_write(repo, head or '', gid, verdict, kind or 'single', base, base_sha or b[5] or '', req_set_id or '', policy_id or '', runner_id or '', rkey, bench, pkg or '', test or '', now)
   end
 
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', 'GATE',
     'repo', repo,
     'base', base,
@@ -1016,7 +1016,7 @@ redis.register_function('ns_requeue', function(keys, args)
   )
   local now = land_now_ms()
   redis.call('HSET', bkey, 'state', 'queued', 'token', tostring(token), 'entry_id', new_entry_id)
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', 'REQUEUE',
     'repo', repo,
     'base', base,
@@ -1052,7 +1052,7 @@ local function land_batch_void(S, repo, base, batch_id, reason)
     redis.call('DEL', 'land:' .. repo .. ':' .. base .. ':pub:active')
   end
 
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', 'VOID',
     'repo', repo,
     'base', base,
@@ -1204,7 +1204,7 @@ redis.register_function('ns_land_intent', function(keys, args)
     redis.call('HSET', 's:' .. S .. ':u:' .. m.unit, 'state', 'landing')
   end
 
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', 'INTENT',
     'repo', repo,
     'base', base,
@@ -1225,7 +1225,7 @@ redis.register_function('ns_pub_state', function(keys, args)
   if state == 'dead' then
     redis.call('DEL', 'land:' .. repo .. ':' .. base .. ':pub:active')
   end
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', string.upper(state),
     'repo', repo,
     'base', base,
@@ -1306,7 +1306,7 @@ redis.register_function('ns_land', function(keys, args)
   redis.call('DEL', 'land:' .. repo .. ':' .. base .. ':pub:' .. batch_id)
   redis.call('DEL', 'land:' .. repo .. ':' .. base .. ':pub:active')
 
-  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+  redis.call('XADD', 'land:' .. repo .. ':events', '*',
     'event', 'LANDED',
     'repo', repo,
     'base', base,

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/width"
@@ -118,7 +119,7 @@ func runWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 			allUpDeficitZero := true
 			hasUpReader := false
 			for _, r := range readers {
-				if client.Exists(ctx, "friend:"+r+":beat").Val() == 1 {
+				if live, _ := beat.LiveNow(ctx, client, beat.FriendKey(r)); live {
 					hasUpReader = true
 					fsData, ok, _ := width.ReadFillstate(ctx, st, r)
 					if !ok || fsData.Deficit > 0 {

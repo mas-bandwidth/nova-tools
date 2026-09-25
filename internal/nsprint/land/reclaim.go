@@ -257,7 +257,7 @@ local function charge(b)
   redis.call('HSET', k, 'last_bad', batch, 'last_bad_at', now)
   if n >= tonumber(ARGV[6]) and redis.call('HGET', k, 'benched') ~= '1' then
     redis.call('HSET', k, 'benched', '1', 'benched_at', now, 'benched_reason', 'bad=' .. n .. ' last=' .. batch)
-    redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+    redis.call('XADD', 'land:' .. repo .. ':events', '*',
       'event', 'BENCHED', 'repo', repo, 'bench', b, 'bad', tostring(n), 'batch', batch, 'at', now)
     table.insert(benched, b .. ':' .. n)
   end
@@ -334,7 +334,7 @@ func BenchOut(ctx context.Context, c *redis.Client, repo, bench, reason string) 
 	at := strconv.FormatInt(now.UnixMilli(), 10)
 	pipe := c.TxPipeline()
 	pipe.HSet(ctx, BenchLandKey(bench), "benched", "1", "benched_at", at, "benched_reason", "out="+reason)
-	pipe.XAdd(ctx, &redis.XAddArgs{Stream: EventsStream(repo), MaxLen: 100000, Approx: true,
+	pipe.XAdd(ctx, &redis.XAddArgs{Stream: EventsStream(repo),
 		Values: []any{"event", "BENCHED", "repo", repo, "bench", bench, "reason", "out=" + reason, "at", at}})
 	_, err = pipe.Exec(ctx)
 	return err
@@ -352,7 +352,7 @@ local at = tonumber(cf[2] or '')
 if cf[1] ~= 'PASS' or not at or now_s - at > fresh or at > now_s + 60 then return 'NOCONFORM' end
 local now = tostring(now_s * 1000 + math.floor(tonumber(t[2]) / 1000))
 redis.call('HSET', k, 'benched', '0', 'consecutive_bad', '0', 'reinstated_at', now, 'reinstated_conform_at', tostring(at))
-redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+redis.call('XADD', 'land:' .. repo .. ':events', '*',
   'event', 'REINSTATED', 'repo', repo, 'bench', bench, 'conform_at', tostring(at), 'at', now)
 return 'OK'
 `)

@@ -191,7 +191,7 @@ local function task_take(keys, args)
     return { 'DOWN' }
   end
   if redis.call('SISMEMBER', 'friends', friend) == 0 or
-      redis.call('EXISTS', 'friend:' .. friend .. ':beat') == 0 then
+      not NS.beat.live('friend:' .. friend .. ':beat') then
     return { 'DOWN' }
   end
   local desired_key = 'friend:' .. friend .. ':desired'

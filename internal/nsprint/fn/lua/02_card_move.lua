@@ -387,7 +387,7 @@ local function card_move(id, to, o)
     if from == 'done' then from = 'done/' .. cur.ok end
     local dest = to
     if to == 'done' then dest = 'done/' .. ok end
-    redis.call('XADD', 'sprint:' .. S .. ':moves', 'MAXLEN', '~', '100000', '*',
+    redis.call('XADD', 'sprint:' .. S .. ':moves', '*',
       'id', id, 'stream', cur.stream, 'from', from, 'to', dest,
       'by', o.by or '', 'why', o.why or state, 'at', tostring(at))
   end

@@ -92,8 +92,8 @@ func TestDealStatusListUsesFcallOnly(t *testing.T) {
 	const S = "control-3605"
 	seed := admin.Pipeline()
 	seed.SAdd(ctx, "benches", "studio", "hulk", "superman")
-	seed.Set(ctx, "bench:studio:beat", "1", 0)
-	seed.Set(ctx, "bench:hulk:beat", "1", 0)
+	seed.HSet(ctx, "bench:studio:beat", "at", "1")
+	seed.HSet(ctx, "bench:hulk:beat", "at", "1")
 	seed.HSet(ctx, "bench:studio:desired", "slots", "8", "paused", "0")
 	seed.HSet(ctx, "bench:hulk:desired", "slots", "4", "paused", "1")
 	seed.ZAdd(ctx, "bench:studio:living", redis.Z{Score: 1, Member: "c1"}, redis.Z{Score: 2, Member: "c2"})

@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -170,15 +169,16 @@ func (r *Redis) Close() error {
 	return r.rdb.Close()
 }
 
-// WriteBeat is one MULTI/EXEC under WATCH key: HSET key fields..., PEXPIRE key
-// ttl, SET lastKey stamp with no expiry. Before it, TYPE key (and HEXISTS key
+// WriteBeat is one MULTI/EXEC under WATCH key: HSET key fields... and SET
+// lastKey stamp, neither with an expiry (#3878: the beat's at and stale_ms
+// are what a reader judges). Before it, TYPE key (and HEXISTS key
 // up for a hash) decides whether the key is the beat's to write: absent, the
 // beat's own hash, or a plain string left by a beat older than #2673 (deleted
 // in the same MULTI). The friend row, or a key of any other type, answers a
 // *KeyTypeError and nothing is written (#3447). The WATCH makes the check and
 // the write one step: a row loop that creates the row in between fails the
 // EXEC, and the beat checks again.
-func (r *Redis) WriteBeat(ctx context.Context, key string, fields []string, ttl time.Duration, lastKey, stamp string) error {
+func (r *Redis) WriteBeat(ctx context.Context, key string, fields []string, lastKey, stamp string) error {
 	if len(fields) == 0 || len(fields)%2 != 0 {
 		return fmt.Errorf("beat fields must be field, value pairs")
 	}
@@ -208,8 +208,10 @@ func (r *Redis) WriteBeat(ctx context.Context, key string, fields []string, ttl 
 			if typ == "string" {
 				p.Del(ctx, key)
 			}
+			// A beat written before #3878 carries a TTL; this write
+			// makes it a key that never expires.
 			p.HSet(ctx, key, args...)
-			p.PExpire(ctx, key, ttl)
+			p.Persist(ctx, key)
 			p.Set(ctx, lastKey, stamp, 0)
 			return nil
 		})
@@ -224,10 +226,10 @@ func (r *Redis) WriteBeat(ctx context.Context, key string, fields []string, ttl 
 	return err
 }
 
-// ReadBeats is one pipeline: per key HMGET key at width window up, PTTL key
-// and GET key:last. An absent key or field answers "". A key that is not a
-// hash (a beat older than #2673) reads its TTL and no fields. A hash with the
-// up field is the friend row (Reading.Row).
+// ReadBeats is one pipeline: per key HMGET key at width window up stale_ms,
+// PTTL key and GET key:last. An absent key or field answers "". A key that is
+// not a hash (a beat older than #2673) reads its TTL and no fields. A hash
+// with the up field is the friend row (Reading.Row).
 func (r *Redis) ReadBeats(ctx context.Context, keys []string) ([]Reading, error) {
 	if len(keys) == 0 {
 		return nil, nil
@@ -241,7 +243,7 @@ func (r *Redis) ReadBeats(ctx context.Context, keys []string) ([]Reading, error)
 	p := r.rdb.Pipeline()
 	for i, k := range keys {
 		cs[i] = cmds{
-			fields: p.HMGet(ctx, k, FieldAt, FieldWidth, FieldWindow, FieldUp),
+			fields: p.HMGet(ctx, k, FieldAt, FieldWidth, FieldWindow, FieldUp, FieldStale),
 			ttl:    p.PTTL(ctx, k),
 			last:   p.Get(ctx, k+LastSuffix),
 		}
@@ -266,7 +268,7 @@ func (r *Redis) ReadBeats(ctx context.Context, keys []string) ([]Reading, error)
 				}
 				return ""
 			}
-			out[i].At, out[i].Width, out[i].Window, out[i].Up = str(0), str(1), str(2), str(3)
+			out[i].At, out[i].Width, out[i].Window, out[i].Up, out[i].Stale = str(0), str(1), str(2), str(3), str(4)
 			if len(vals) > 3 && vals[3] != nil {
 				out[i].Row = true
 			}

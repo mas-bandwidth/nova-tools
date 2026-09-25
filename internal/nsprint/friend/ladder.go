@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
@@ -193,7 +194,7 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 		return nil, err
 	}
 	type cmds struct {
-		beat     *redis.IntCmd
+		beat     *beat.Cmd
 		desired  *redis.SliceCmd
 		starting *redis.IntCmd
 		living   *redis.IntCmd
@@ -202,10 +203,11 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 		open     []*redis.IntCmd
 	}
 	pipe := client.Pipeline()
+	clock := pipe.Time(ctx)
 	all := make([]cmds, len(friends))
 	for i, f := range friends {
 		c := cmds{
-			beat:     pipe.Exists(ctx, "friend:"+f+":beat"),
+			beat:     beat.Read(ctx, pipe, beat.FriendKey(f)),
 			desired:  pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "paused"),
 			starting: pipe.ZCard(ctx, "friend:"+f+":starting"),
 			living:   pipe.ZCard(ctx, "friend:"+f+":living"),
@@ -225,7 +227,7 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 	out := make([]reading, len(friends))
 	for i, f := range friends {
 		c := all[i]
-		r := reading{friend: f, up: c.beat.Val() == 1}
+		r := reading{friend: f, up: c.beat.Live(clock.Val())}
 		vals := c.desired.Val()
 		if len(vals) == 2 {
 			if s, ok := vals[0].(string); ok {

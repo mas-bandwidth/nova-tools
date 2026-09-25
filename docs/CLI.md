@@ -1209,13 +1209,15 @@ AWAKE OK friends=4 awake=2 asleep=1 unknown=1 window=300
 
 And two that cost nothing at all. `nova-wake beat --as <name> --store <host:port>`
 is the process a friend's window starts once at startup and forgets: every
-`--every` (default 30s) it writes the hash `friend:<name>` (field
-`at = <RFC3339 utc>`) and gives it a `--ttl` (default 90s) on the fleet store,
-with `friend:<name>:last` and no TTL beside it, all in one `MULTI`. It reads
+`--every` (default 30s) it writes the hash `friend:<name>` (fields
+`at = <RFC3339 utc>` and `stale_ms` = the `--ttl` window, default 90s) on the
+fleet store, with `friend:<name>:last` beside it, all in one `MULTI` and
+neither with a TTL: keys do not expire (nova-tools #3878). It reads
 nothing, prints one line and then nothing, and **no model runs on either
 side** — the cost of presence has to be zero or the heartbeat is the first
 thing dropped under load. A window that exits, runs out of credit or is killed
-simply stops writing, and the hash lapses within the TTL: there is no shutdown
+simply stops writing, and the hash's `at` grows older than its window, when
+every reader reads the friend down, dated: there is no shutdown
 hook to forget to run, which is the whole point. Presence is Redis only: the
 git bus carries notes and never beats (#3144). That is the beat on a store with
 no row loop. On the fleet store `friend:<name>` is the friend row and
@@ -1226,8 +1228,8 @@ Two flags sit beside that and change nothing when they are left off.
 `--window <time>` is the cap's reset time, stored as passed in the `window`
 field — the beat does not read a clock to invent one — and `--width <n>` is
 how many children are in use now, in the `width` field (#2673). Zero is a real
-count. A missing flag writes no field and does not fail the beat. Both lapse
-with the hash. A friend whose width changes re-runs `beat` with the new number.
+count. A missing flag writes no field and does not fail the beat. Both go
+stale with the hash. A friend whose width changes re-runs `beat` with the new number.
 
 `nova-wake presence --store <host:port>` reads the `friends` SET (one
 `SMEMBERS`, never a scan) and then every member's hash in one pipeline, and
@@ -1246,9 +1248,10 @@ the age of `at` and the row's `width=<n>`; `up=0` is `down` with no age,
 because the row does not say since when; a row whose `at` is older than 10s is
 a silent row loop, `down` with the age and clock time of its last write. A TTL
 on the row means nothing. Where no row loop runs, the beat's own hash is the
-presence: `up` is a beat inside the TTL, with the age of it and the
-`width=<n>` (and `window=<time>`) that beat carried; `down` is a hash that
-lapsed, with the age of the last beat and its clock time from the untimed key,
+presence: `up` is a beat whose `at` is inside its `stale_ms` (90s when it
+carries none), with the age of it and the `width=<n>` (and `window=<time>`)
+that beat carried; `down` is a beat older than that, with the age of the last
+beat and its clock time,
 or a friend who has never beaten, with nothing after it. The untimed key is
 not presence, and this verb reads no hand-written override. The
 roster is the store's `friends` SET, sorted, minus Glenn and Rowan; `--bus
@@ -4040,7 +4043,7 @@ The bench-side command is `nova-sprint card stop --stdin --grace <duration>`. It
 
 ### `nova-sprint friend serve`
 
-`nova-sprint friend serve --as <f> [--width <n>] [--dispatch "<argv>" | -- <argv...>] [--dir <root>] [--sprint <s>] [--host <h>] [--harness <h>] [--session <s>] [--login <alias>]... [--once] [--redis <addr>]` is the loop unit on a friend's seat (nova-tools #2938): a friend who is not awake in a session still works her queue, at zero model tokens. Every second it beats (`ns_friend_serve_beat`, one call: the seat lock `friend:<f>:serve`, the presence hash `friend:<f>:beat` under a 5 s TTL, and the untimed `friend:<f>:last`), takes ready tasks from the friend's queue up to the free width (`task take`'s one pipeline plus one call), writes each task's brief (`brief render`, else the task record when render refuses the kind), starts the friend's own harness by exec and watches the child, beating its task lease every 60 s. When the child exits 0 having written a typed line (`SCORE`, `DISPOSITION`, `HOLD`, `DONE`, `BLOCKED`, `ABSTAIN`, `REPAIR`, `SPEC`, `SPEC-WRITTEN`, `CLOSE`; the last such line on stdout wins) the task is closed with that line as its evidence, a read with its verdict and score at the task's head; any other exit closes it with `blocked: exit=<rc> ...` naming the last line it wrote. A task is in working only while its child lives: a serve stopped by a signal kills its children and gives their tasks back (`task cancel`). Every event is one entry on `friend:<f>:log` and one `SERVE <f> <kind> ...` line on stdout. On start, after its first beat, each `--login` alias is bound to the seat in `friends:login` through `ns_friend_hello` (one call, the only writer of that hash; nova-tools #3797), so typed hold and read lines signed `who=<alias>` resolve to the friend instead of `REFUSED unknown-who`; a clashing alias (`LOGIN-TAKEN`, `LOGIN-IS-FRIEND`, `NAME-IS-LOGIN`) prints `FRIEND SERVE <f> REFUSED login <words>`, releases the seat and exits 1.
+`nova-sprint friend serve --as <f> [--width <n>] [--dispatch "<argv>" | -- <argv...>] [--dir <root>] [--sprint <s>] [--host <h>] [--harness <h>] [--session <s>] [--login <alias>]... [--once] [--redis <addr>]` is the loop unit on a friend's seat (nova-tools #2938): a friend who is not awake in a session still works her queue, at zero model tokens. Every second it beats (`ns_friend_serve_beat`, one call: the seat lock `friend:<f>:serve`, the presence hash `friend:<f>:beat` with `at` and `stale_ms` = 5000, the lock under a 5 s TTL and the hash with none (keys do not expire, #3878: a reader judges `at` against `stale_ms`), and the untimed `friend:<f>:last`), takes ready tasks from the friend's queue up to the free width (`task take`'s one pipeline plus one call), writes each task's brief (`brief render`, else the task record when render refuses the kind), starts the friend's own harness by exec and watches the child, beating its task lease every 60 s. When the child exits 0 having written a typed line (`SCORE`, `DISPOSITION`, `HOLD`, `DONE`, `BLOCKED`, `ABSTAIN`, `REPAIR`, `SPEC`, `SPEC-WRITTEN`, `CLOSE`; the last such line on stdout wins) the task is closed with that line as its evidence, a read with its verdict and score at the task's head; any other exit closes it with `blocked: exit=<rc> ...` naming the last line it wrote. A task is in working only while its child lives: a serve stopped by a signal kills its children and gives their tasks back (`task cancel`). Every event is one entry on `friend:<f>:log` and one `SERVE <f> <kind> ...` line on stdout. On start, after its first beat, each `--login` alias is bound to the seat in `friends:login` through `ns_friend_hello` (one call, the only writer of that hash; nova-tools #3797), so typed hold and read lines signed `who=<alias>` resolve to the friend instead of `REFUSED unknown-who`; a clashing alias (`LOGIN-TAKEN`, `LOGIN-IS-FRIEND`, `NAME-IS-LOGIN`) prints `FRIEND SERVE <f> REFUSED login <words>`, releases the seat and exits 1.
 
 The harness argv is the seat's declaration: `--dispatch` or the argv after `--`, else the `dispatch` field of the `cfg:friend:<f>` hash (space separated, no argument may contain a space, as the fleet loops table is spelled). In every argument `@brief`, `@out`, `@dir`, `@sprint` and `@id` are replaced per task; the child also gets `NOVA_FRIEND`, `NOVA_TASK_SPRINT`, `NOVA_TASK_ID`, `NOVA_TASK_ATTEMPT`, `NOVA_TASK_TOKEN`, `NOVA_TASK_KIND`, `NOVA_TASK_HEAD`, `NOVA_TASK_BRIEF`, `NOVA_TASK_OUT` and `NOVA_TASK_DIR` in its environment, with `<dir>/.shim` first on its `PATH`: that directory holds the refusing `gh` of `internal/nogh` (nova-tools #3600), which prints one line naming #3594 and exits 2, so a friend child reaches GitHub only through nova-sprint verbs and `git push`. A Claude seat declares `claude -p @brief`; Emma's seat declares her Antigravity dispatcher. `--width 0` (the default) reads `friend:<f>:desired`; `--dir` defaults to `~/nova-bench/serve/<f>`, holding `<sprint>/<id>-<attempt>/brief.md` and `out.log`.
 

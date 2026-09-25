@@ -65,7 +65,7 @@ local function fs_key(f)
 end
 
 local function fs_caplog(kind, subject, reason, actor, idem, at)
-  redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
+  redis.call('XADD', 'cap:log', '*',
     'kind', kind, 'subject', subject, 'reason', reason or '',
     'actor', actor or '', 'idem', idem or '', 'at', tostring(at))
 end

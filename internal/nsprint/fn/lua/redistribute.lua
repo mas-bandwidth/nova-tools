@@ -10,7 +10,7 @@
 --   friend:<f>:state   hash, written only through friend.lua's fs_set and
 --                      fs_clear (ns_friend_state, #3101). This tick reads it
 --                      and, through those same two functions, writes state
---                      `down` when the presence key friend:<f>:beat has expired
+--                      `down` when the presence beat friend:<f>:beat is stale (NS.beat)
 --                      with work still on f, and clears a state whose reason is
 --                      over (a beat back, an out-of-credits or away `until`
 --                      passed with the friend up). `out-of-credits` and `away`
@@ -21,7 +21,7 @@
 --   * out-of-credits, away, wake-missed (beat or not), or idle at rung 3:
 --     every open task on f's queues
 --     and every lease f holds is moved in this same call.
---   * presence expired with open work or leases: the first tick writes
+--   * presence stale with open work or leases: the first tick writes
 --     state=down and moves nothing; the next tick that still finds no beat
 --     moves everything (one tick later). A beat back before then clears it.
 --   * a moved read goes to the least-loaded UP, unpaused, stateless may-hold
@@ -65,7 +65,7 @@ local function rd_log(S, kind, id, from_state, to_state, attempt, token_sha, act
 end
 
 local function rd_caplog(kind, subject, reason, actor, idem, at)
-  redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
+  redis.call('XADD', 'cap:log', '*',
     'kind', kind, 'subject', subject, 'reason', reason or '',
     'actor', actor or '', 'idem', idem or '', 'at', tostring(at))
 end
@@ -95,7 +95,7 @@ end
 -- paused, or in a state that bars routing: fs_blocks), else its free width.
 local function rd_free(g, sprints)
   if redis.call('SISMEMBER', 'friends', g) == 0 or
-      redis.call('EXISTS', 'friend:' .. g .. ':beat') == 0 or
+      not NS.beat.live('friend:' .. g .. ':beat') or
       redis.call('HGET', 'friend:' .. g .. ':desired', 'paused') == '1' or
       fs_blocks(g) then
     return nil
@@ -467,7 +467,7 @@ local function friend_redistribute(keys, args)
   for _, f in ipairs(friends) do
     local st = redis.call('HMGET', 'friend:' .. f .. ':state', 'state', 'until', 'rung')
     local state = st[1]
-    local up = redis.call('EXISTS', 'friend:' .. f .. ':beat') == 1
+    local up = NS.beat.live('friend:' .. f .. ':beat')
     local why, pending = nil, false
     if (state == FS_IDLE or state == FS_UNDER) and not up then
       -- a ladder state whose beat expired is judged as any absent friend

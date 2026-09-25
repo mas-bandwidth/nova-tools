@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -519,8 +520,9 @@ func (o *OkFriend) census(ctx context.Context) (*readerCensus, error) {
 	}
 	c.secPrefixes = strings.FieldsFunc(policy["security_paths"], func(r rune) bool { return r == ' ' || r == ',' })
 	pipe := client.Pipeline()
+	clock := pipe.Time(ctx)
 	type row struct {
-		beat          *redis.IntCmd
+		beat          *beat.Cmd
 		desired       *redis.SliceCmd
 		start, living *redis.IntCmd
 		open          *redis.IntCmd
@@ -528,7 +530,7 @@ func (o *OkFriend) census(ctx context.Context) (*readerCensus, error) {
 	rows := make([]row, len(names))
 	for i, f := range names {
 		rows[i] = row{
-			beat:    pipe.Exists(ctx, "friend:"+f+":beat"),
+			beat:    beat.Read(ctx, pipe, beat.FriendKey(f)),
 			desired: pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "paused"),
 			start:   pipe.ZCard(ctx, "friend:"+f+":starting"),
 			living:  pipe.ZCard(ctx, "friend:"+f+":living"),
@@ -542,7 +544,7 @@ func (o *OkFriend) census(ctx context.Context) (*readerCensus, error) {
 	}
 	for i, f := range names {
 		r := rows[i]
-		if r.beat.Val() == 0 || f == "jev" {
+		if !r.beat.Live(clock.Val()) || f == "jev" {
 			continue
 		}
 		d := r.desired.Val()

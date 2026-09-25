@@ -25,7 +25,7 @@ do
   end
 
   local function reset_receipt(kind, bench, id, actor, why, stopped, requeued, kept, alive, at)
-    redis.call('XADD', 'cap:log', 'MAXLEN', '~', '100000', '*',
+    redis.call('XADD', 'cap:log', '*',
       'kind', kind, 'bench', bench, 'id', id or '', 'actor', actor or '',
       'why', why or '', 'stopped', tostring(stopped or 0),
       'requeued', tostring(requeued or 0), 'kept', tostring(kept or 0),

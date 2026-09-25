@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -104,20 +105,21 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 		starting      *redis.IntCmd
 		living        *redis.IntCmd
 		livingScores  *redis.ZSliceCmd
-		beat          *redis.IntCmd
+		beat          *beat.Cmd
 		fillstate     *redis.MapStringStringCmd
 		openPerSprint map[string]*redis.StringSliceCmd
 	}
 
 	fcmds := make(map[string]*friendCmds, len(friends))
 	pipe2 := client.Pipeline()
+	clock2 := pipe2.Time(ctx)
 	for _, f := range friends {
 		fc := &friendCmds{
 			desired:       pipe2.HGet(ctx, "friend:"+f+":desired", "slots"),
 			starting:      pipe2.ZCard(ctx, "friend:"+f+":starting"),
 			living:        pipe2.ZCard(ctx, "friend:"+f+":living"),
 			livingScores:  pipe2.ZRangeWithScores(ctx, "friend:"+f+":living", 0, -1),
-			beat:          pipe2.Exists(ctx, "friend:"+f+":beat"),
+			beat:          beat.Read(ctx, pipe2, beat.FriendKey(f)),
 			fillstate:     pipe2.HGetAll(ctx, "friend:"+f+":fillstate"),
 			openPerSprint: make(map[string]*redis.StringSliceCmd, len(openSprints)),
 		}
@@ -183,7 +185,7 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 			leased:        w.Leased,
 			working:       working,
 			deficit:       w.Free,
-			up:            fc.beat.Val() == 1,
+			up:            fc.beat.Live(clock2.Val()),
 			prevPeak:      pPeak,
 			prevPeakAt:    pPeakAt,
 			unfilledSince: unfSince,

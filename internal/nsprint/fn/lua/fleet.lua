@@ -23,7 +23,7 @@ local function fl_now_ms()
 end
 
 local function fl_caplog(kind, subject, reason, actor, idem, at)
-  redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
+  redis.call('XADD', 'cap:log', '*',
     'kind', kind, 'subject', subject, 'reason', reason or '',
     'actor', actor or '', 'idem', idem or '', 'at', tostring(at))
 end
@@ -221,7 +221,7 @@ local function fleet_step(keys, args)
   table.sort(benches)
 
   for _, b in ipairs(benches) do
-    local has_beat = redis.call('EXISTS', 'bench:' .. b .. ':beat') == 1
+    local has_beat = NS.beat.live('bench:' .. b .. ':beat')
     local beat_build = ''
     if has_beat then
       beat_build = redis.call('HGET', 'bench:' .. b .. ':beat', 'build') or ''
