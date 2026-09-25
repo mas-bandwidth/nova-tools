@@ -206,3 +206,22 @@ func TestDigestOfSplitsSections(t *testing.T) {
 		t.Fatalf("empty %+v", empty)
 	}
 }
+
+// TestHasCommit: HasCommit reports true for an existing commit and false for
+// a missing commit, non-existent directory, or empty SHA.
+func TestHasCommit(t *testing.T) {
+	f := newRepoFixture(t)
+	ctx := context.Background()
+	if !line.HasCommit(ctx, f.dir, f.a) {
+		t.Fatalf("HasCommit(%s) = false, want true", f.a)
+	}
+	if line.HasCommit(ctx, f.dir, "0123456789abcdef0123456789abcdef01234567") {
+		t.Fatal("HasCommit with bogus sha = true, want false")
+	}
+	if line.HasCommit(ctx, f.dir, "") {
+		t.Fatal("HasCommit with empty sha = true, want false")
+	}
+	if line.HasCommit(ctx, "/no/such/dir", f.a) {
+		t.Fatal("HasCommit with bad dir = true, want false")
+	}
+}

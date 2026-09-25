@@ -214,3 +214,150 @@ func TestHeadChangeNoMirrorQueuesReRead(t *testing.T) {
 		t.Fatalf("emma's re-read state %q, want open", s)
 	}
 }
+
+// TestHeadChangeMirrorLagCarriesOnSecondPass is #3827's DONE-WHEN on a
+// throwaway server: when the bench mirror has not fetched the new head yet
+// on the first pass, the head-change event is left pending (not acked),
+// no re-read is queued, and the carry lands on the second pass after the
+// mirror has fetched the new head.
+func TestHeadChangeMirrorLagCarriesOnSecondPass(t *testing.T) {
+	r := newCarryRepo(t)
+	st, client := initTestRedis(t)
+	ctx := context.Background()
+
+	mirrorDir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", "--bare", mirrorDir)
+	git("-C", r.dir, "push", "-q", mirrorDir, "dev:dev", r.a+":refs/pull/7/head")
+
+	if !line.HasCommit(ctx, mirrorDir, r.a) {
+		t.Fatal("mirror missing r.a")
+	}
+	if line.HasCommit(ctx, mirrorDir, r.b) {
+		t.Fatal("mirror already has r.b before pass 1")
+	}
+
+	seedCarry(t, ctx, client, r, r.b, true)
+	var out bytes.Buffer
+	p := &PRRead{Store: st, Sprint: carrySprint, Consumer: "t", Instance: "t", Actor: "pr-to-read",
+		Out: &out, Mirror: func(string) string { return mirrorDir }}
+
+	// Pass 1: mirror lacks r.b -> left pending (not acked), no re-read queued.
+	if err := p.Once(ctx); err != nil {
+		t.Fatalf("pass 1 Once: %v\n%s", err, out.String())
+	}
+	if strings.Contains(out.String(), "CARRY SKIPPED") {
+		t.Fatalf("pass 1 printed CARRY SKIPPED:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "CARRY CARRIED") {
+		t.Fatalf("pass 1 prematurely carried:\n%s", out.String())
+	}
+	pending, err := client.XPending(ctx, "s:"+carrySprint+":log", RulePRToRead).Result()
+	if err != nil || pending.Count != 1 {
+		t.Fatalf("pass 1 pending count = %d (err %v), want 1", pending.Count, err)
+	}
+	if n := client.Exists(ctx, "s:"+carrySprint+":task:"+task.ReviewID(carryRepoN, carryPR, r.b, "emma")).Val(); n != 0 {
+		t.Fatal("pass 1 queued a re-read for emma at the new head")
+	}
+	if h := client.HGet(ctx, land.ReadKey(carrySprint, carryUnit, "emma"), "head").Val(); h != r.a {
+		t.Fatalf("pass 1 read record head = %q, want %s (unchanged)", h, r.a)
+	}
+	if s := client.HGet(ctx, "s:"+carrySprint+":card:"+carryLabel, "state").Val(); s != "review-ready" {
+		t.Fatalf("pass 1 card state = %q, want review-ready", s)
+	}
+
+	// Mirror now fetches r.b (tick 2).
+	git("-C", r.dir, "push", "-q", "--force", mirrorDir, r.b+":refs/pull/7/head")
+	if !line.HasCommit(ctx, mirrorDir, r.b) {
+		t.Fatal("mirror missing r.b after fetch")
+	}
+
+	// Pass 2: carry lands on the second pass with no re-read queued.
+	out.Reset()
+	if err := p.Once(ctx); err != nil {
+		t.Fatalf("pass 2 Once: %v\n%s", err, out.String())
+	}
+	want := "CARRY CARRIED nova-tools#7 " + r.a[:8] + "->" + r.b[:8] + " reads=1 who=emma"
+	if !strings.Contains(out.String(), want+"\n") {
+		t.Fatalf("pass 2 output lacks %q:\n%s", want, out.String())
+	}
+	pending, err = client.XPending(ctx, "s:"+carrySprint+":log", RulePRToRead).Result()
+	if err != nil || pending.Count != 0 {
+		t.Fatalf("pass 2 pending count = %d, want 0 (acked)", pending.Count)
+	}
+	rec := client.HGetAll(ctx, land.ReadKey(carrySprint, carryUnit, "emma")).Val()
+	if rec["head"] != r.b || rec["carried_from"] != r.a || rec["verdict"] != "APPROVE" || rec["score"] != "10" {
+		t.Fatalf("pass 2 read record %v", rec)
+	}
+	if v := client.HGet(ctx, "s:"+carrySprint+":disp:nova-tools:7", "emma@"+r.b).Val(); v == "" {
+		t.Fatal("pass 2: no disp row at the new head")
+	}
+	if n := client.Exists(ctx, "s:"+carrySprint+":task:"+task.ReviewID(carryRepoN, carryPR, r.b, "emma")).Val(); n != 0 {
+		t.Fatal("pass 2: a re-read was queued for emma at the new head")
+	}
+	if s := client.HGet(ctx, "s:"+carrySprint+":card:"+carryLabel, "state").Val(); s != "land-ready" {
+		t.Fatalf("pass 2 card state %q, want land-ready", s)
+	}
+}
+
+// TestHeadChangeMirrorLacksHeadGivesUp: when the mirror never gets the new
+// head, after at most N passes (default 1) the event is no longer left
+// pending: CARRY SKIPPED is printed with its reason, the event is acked,
+// and the re-read is queued as before.
+func TestHeadChangeMirrorLacksHeadGivesUp(t *testing.T) {
+	r := newCarryRepo(t)
+	st, client := initTestRedis(t)
+	ctx := context.Background()
+
+	mirrorDir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", "--bare", mirrorDir)
+	git("-C", r.dir, "push", "-q", mirrorDir, "dev:dev", r.a+":refs/pull/7/head")
+
+	seedCarry(t, ctx, client, r, r.b, true)
+	var out bytes.Buffer
+	p := &PRRead{Store: st, Sprint: carrySprint, Consumer: "t", Instance: "t", Actor: "pr-to-read",
+		Out: &out, Mirror: func(string) string { return mirrorDir }}
+
+	// Pass 1: left pending (pass 1 of at most 1).
+	if err := p.Once(ctx); err != nil {
+		t.Fatalf("pass 1 Once: %v\n%s", err, out.String())
+	}
+	pending, err := client.XPending(ctx, "s:"+carrySprint+":log", RulePRToRead).Result()
+	if err != nil || pending.Count != 1 {
+		t.Fatalf("pass 1 pending = %d, want 1", pending.Count)
+	}
+
+	// Pass 2: mirror still lacks r.b -> gives up, prints CARRY SKIPPED, acks, queues re-read.
+	out.Reset()
+	if err := p.Once(ctx); err != nil {
+		t.Fatalf("pass 2 Once: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "CARRY SKIPPED nova-tools#7 why=") {
+		t.Fatalf("pass 2 lacks CARRY SKIPPED:\n%s", out.String())
+	}
+	pending, err = client.XPending(ctx, "s:"+carrySprint+":log", RulePRToRead).Result()
+	if err != nil || pending.Count != 0 {
+		t.Fatalf("pass 2 pending count = %d, want 0 (acked)", pending.Count)
+	}
+	if s := client.HGet(ctx, "s:"+carrySprint+":task:"+task.ReviewID(carryRepoN, carryPR, r.b, "emma"), "state").Val(); s != "open" {
+		t.Fatalf("emma's re-read state = %q, want open", s)
+	}
+	if s := client.HGet(ctx, "s:"+carrySprint+":card:"+carryLabel, "state").Val(); s != "review-ready" {
+		t.Fatalf("card state = %q, want review-ready", s)
+	}
+}
