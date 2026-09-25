@@ -3628,9 +3628,12 @@ watches (#3530): the headline (`SPRINT TABLE *** PIT STOP ***` while
 `<left>/<y> left, <z>% done -> ~<eta>m` line, the streams block, the friend
 block and the host block, one blank line between them. The streams are the
 rows of `ws:order` (the ws index, #3662) with
-the ZCARDs of their `waiting`, `ready`, `working`, `merging` and
-`landed` sets, one column each (nothing folded); rows with all zeros are hidden. y is every task in those sets,
-left is y minus landed, and the ETA is left over the moves to `landed` in the
+the ZCARDs of their `waiting`, `ready`, `working`, `reading`, `merging` and
+`landed` sets (`ws:<stream>:<where>`), one column each in that order (nothing
+folded: `reading` is its own column between `working` and `merging`); rows
+with all zeros are hidden. The total row sums each column. y is every task in
+those sets, left is y minus landed (a card in `reading` or `merging` is left,
+not done), and the ETA is left over the moves to `landed` in the
 last hour of `ws:log` (at least one an hour). The hosts are the `benches` SET
 (each bench's own keys, #2389: ready and working are the ZCARDs of
 `bench:<b>:cards:ready` and `:working`, load is `bench:<b>:beat` load1 from
@@ -3654,8 +3657,8 @@ it writes the checkpoint (every landed task with its fields, every friend's
 done count) and prints `CHECKPOINT`, then in one MULTI/EXEC moves every
 `ws:<s>:landed` member to closed (`task:<id>` state, one `ws:log` entry
 each), stores the done counts in `ws:done0` and the receipt in
-`ws:checkpoint`, and prints `CLEARED ... ms=<n>`. Waiting, ready, working and
-merging are untouched.
+`ws:checkpoint`, and prints `CLEARED ... ms=<n>`. Waiting, ready, working,
+reading and merging are untouched.
 
 `table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...>`
 renders the #2674 port of rowan-tools `bin/sprint-table-redis` (the keys
@@ -3748,7 +3751,7 @@ What a first run gets wrong, and what each one wants:
 
 - **`--fixture` or `--refresh pending`.** These were the file cut, deleted by #3326; both are unknown flags. `--out <file>` is the one file the wide table writes (#3343), by writing a temp file beside it and renaming it; `--layout live [--out <file>]` remains the one published whole-sprint table (#3530).
 - **`nova-sprint table` without `--redis`.** It wants the server address. There is no default address and no default loop.
-- **`--check` without `--redis`.** It wants a throwaway server; it seeds nothing, so load the fixture keyspace first.
+- **`--check` without `--redis`.** It wants a throwaway server; it seeds the fixture keyspace when the store is empty, and refuses a store whose `sprints` set holds a non-control sprint (the live fleet). `--check --live --redis <addr> --out <file>` checks that the published file is younger than 2 s and every rendered cell matches a direct Redis read in the same second.
 
 There is **no `quickstart` verb**. A one-word first run would have to invent a fixture path or publish a table nobody named. The three lines above are the first run, in an empty directory that already holds `table.txt`.
 
@@ -3775,7 +3778,7 @@ posted lines, the file list and the files outside PATHS, and `<dir>/diff.patch`,
 then prints one receipt:
 
 ```
-READ BRIEF repo=nova-tools n=7 head=b7628a80 base_sha=1a1ad594 files=1 outside_paths=0 lines=1 ci=2 out=<dir>/brief.md github_calls=0
+READ BRIEF repo=nova-tools n=7 head=b7628a80 base_sha=1a1ad594 files=1 outside_paths=0 lines=1 ci=2 out=<dir>/brief.md diff=<dir>/diff.patch github_calls=0
 ```
 
 A record with no head, a record with no base_sha, a mirror without the head
@@ -3783,6 +3786,21 @@ yet, and a missing mirror are each one `READ BRIEF REFUSED repo= n= why=`
 line naming the remedy (exit 1); a head the mirror's `refs/pull/<n>/head`
 has moved past is reported as `mirror_head=` and as a `HEAD MOVED` line in the
 brief, and the record head is what is read.
+
+`read brief --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis
+<addr>]` is the same brief for a read task, so a friend holding one needs
+nothing but its id. It reads the task hash (`task:<id>`, and
+`s:<S>:task:<id>` with `--sprint`, in one pipeline), which names the PR by
+its `repo` and `pr` fields or by `ref` (the PR URL the first read pushes, or
+`<repo>#<n>`), and the head the task was queued at; the brief reads that head
+(its diff and its CI) even when the record has moved on, and the receipt adds
+`record_head=` then and `task=<id>` always. A task that is not a read (kind
+`read` or `review`), names no PR or has no head is one `READ BRIEF REFUSED
+task=<id> why=` line (exit 1). `friend serve` briefs a taken read task the
+same way: when the task's title does not render through `brief render`, the
+child's `brief.md` is this read brief with `diff.patch` beside it (start
+receipt `brief=read`), and only a read the mirror cannot brief yet falls back
+to the task record (`brief=record`).
 
 `read post --repo <r> --n <n> --line "<typed line>" [--no-github] [--owner
 <o>] [--redis <addr>]` stores the line: the first word is one of SCORE, HOLD,

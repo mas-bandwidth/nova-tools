@@ -1,6 +1,7 @@
-// The sprint verb (#2939) opens a sprint from a work set, closes it and
-// prints its status as x/y z% -> eta. It registers itself through the
-// registry (registry.go), so main.go is unchanged.
+// The sprint verb (#2939) opens a sprint from a work set, closes it, folds
+// it once closed (#2618, internal/nsprint/sprint/fold.go) and prints its
+// status as x/y z% -> eta. It registers itself through the registry
+// (registry.go), so main.go is unchanged.
 package main
 
 import (
@@ -22,7 +23,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "sprint",
-		Summary: "open --from a work set, close, and status as x/y z% -> eta",
+		Summary: "open --from a work set, close, fold (the end-of-sprint refinement, #2618), and status as x/y z% -> eta",
 		Run:     runSprintVerb,
 	})
 }
@@ -36,13 +37,13 @@ var sprintGate func(ctx context.Context, name string) (bool, string)
 var sprintStoreOpen = store.Open
 
 func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) int {
-	const want = "want open --sprint <S> [--from <work-set.lisp>], close --sprint <S> or status [--sprint <S>] [--now <unix>] [--redis host:port]"
+	const want = "want open --sprint <S> [--from <work-set.lisp>], close --sprint <S>, fold --sprint <S> or status [--sprint <S>] [--now <unix>] [--redis host:port]"
 	if len(args) == 0 {
 		return refuse(errOut, "sprint", want)
 	}
 	sub := args[0]
 	switch sub {
-	case "open", "close", "status":
+	case "open", "close", "status", "fold":
 	default:
 		return refuse(errOut, "sprint", fmt.Sprintf("unknown subverb %s; %s", sub, want))
 	}
@@ -102,6 +103,21 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 			return 1
 		}
 		fmt.Fprintln(out, sprint.Line(*name, status))
+		return 0
+	case "fold":
+		// #2618: the report lines, then the receipt; a re-fold replaces
+		// s:<S>:fold:<section>. Exit 1 is a refusal with its remedy.
+		rep, refused, err := sprint.Fold(ctx, st.Client(), *name, now)
+		if err != nil {
+			return refuse(errOut, verb, err.Error())
+		}
+		if refused != "" {
+			fmt.Fprintln(out, refused)
+			return 1
+		}
+		for _, l := range append(rep.Lines, rep.Receipt) {
+			fmt.Fprintln(out, l)
+		}
 		return 0
 	default:
 		lines, err := sprint.StatusLines(ctx, st, *name, now)

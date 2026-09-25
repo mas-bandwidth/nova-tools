@@ -78,6 +78,10 @@ func TestReadUsageRefusalsOpenNoStore(t *testing.T) {
 		{"read", "post", "--repo", "nova-tools", "--n", "3", "--line", "SCORE who=r head=abcdef0 score=9/10", "--out", "d", "--redis", mr.Addr()},
 		{"read", "lines", "--repo", "nova-tools", "--n", "3", "--redis", mr.Addr()},
 		{"read", "brief", "--repo", "nova-tools", "--n", "3", "--out", "d", "--redis", mr.Addr(), "extra"},
+		{"read", "brief", "--id", "read-3-x", "--redis", mr.Addr()},
+		{"read", "brief", "--id", "read-3-x", "--repo", "nova-tools", "--out", "d", "--redis", mr.Addr()},
+		{"read", "post", "--id", "read-3-x", "--line", "SCORE who=r head=abcdef0 score=9/10", "--redis", mr.Addr()},
+		{"read", "brief", "--id", "read-3-x", "--out", "d"},
 	} {
 		code, stdout, stderr := runSprint(args...)
 		if code != 2 || stdout != "" || !strings.HasPrefix(stderr, "nova-sprint read") {
@@ -112,6 +116,39 @@ func TestReadBriefVerbWritesTheBriefWithZeroGitHubCalls(t *testing.T) {
 	p, err := os.ReadFile(filepath.Join(out, "diff.patch"))
 	if err != nil || !strings.Contains(string(p), "+b") {
 		t.Fatalf("diff.patch: %v %s", err, p)
+	}
+}
+
+// TestReadBriefVerbByTaskID: `read brief --id <task>` needs only the read
+// task's id: the first-read task (task:<id>, ref the PR URL, head) names the
+// PR and head, the brief and the mirror diff are written, zero GitHub calls;
+// an unknown id is refused (exit 1) naming the keys it read.
+func TestReadBriefVerbByTaskID(t *testing.T) {
+	stub := testutil.StartGitHubStub(t)
+	mirror, addr, head := readFixture(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	defer c.Close()
+	id := "read-3-" + head[:8]
+	if err := c.HSet(context.Background(), "task:"+id, "kind", "read", "ref", "https://forge.test/mas-bandwidth/nova-tools/pull/3", "head", head).Err(); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), id)
+	code, stdout, stderr := runSprint("read", "brief", "--id", id, "--out", out, "--mirror", mirror, "--redis", addr)
+	if code != 0 {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	if !strings.HasPrefix(stdout, "READ BRIEF repo=nova-tools n=3 head="+head[:8]) || !strings.Contains(stdout, "task="+id) || !strings.Contains(stdout, "diff="+filepath.Join(out, "diff.patch")) {
+		t.Fatalf("receipt %q", stdout)
+	}
+	if stub.Calls() != 0 {
+		t.Fatalf("%d GitHub calls", stub.Calls())
+	}
+	if p, err := os.ReadFile(filepath.Join(out, "diff.patch")); err != nil || !strings.Contains(string(p), "+b") {
+		t.Fatalf("diff.patch: %v %s", err, p)
+	}
+	code, _, stderr = runSprint("read", "brief", "--id", "read-9-nothere", "--sprint", "s1", "--out", out, "--mirror", mirror, "--redis", addr)
+	if code != 1 || !strings.Contains(stderr, "READ BRIEF REFUSED task=read-9-nothere why=MISSING task:read-9-nothere and s:s1:task:read-9-nothere") {
+		t.Fatalf("unknown id: exit %d stderr %q", code, stderr)
 	}
 }
 

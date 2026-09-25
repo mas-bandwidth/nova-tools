@@ -516,3 +516,52 @@ func TestPreflightUnreadInputRefuses(t *testing.T) {
 		}
 	})
 }
+
+// TestLiveBeatShapeFixtureNamesLauncher (#3191): the fixture of the live beat hash
+// as the bench beat writer emits it (with launcher=nova-sprint card launch)
+// goes through CheckBatchLauncher GREEN, and the same fixture with the
+// launcher field dropped is RED naming the bench.
+func TestLiveBeatShapeFixtureNamesLauncher(t *testing.T) {
+	// The seven live benches from the issue.
+	benches := []string{"studio", "hulk", "vision", "superman", "batman", "spacegame", "hetzner"}
+
+	// Fixture exactly as the beat writer emits it: every bench beat carries
+	// launcher=nova-sprint card launch.
+	withLauncher := make([]BenchState, len(benches))
+	for i, b := range benches {
+		withLauncher[i] = BenchState{
+			Name:        b,
+			BeatPresent: true,
+			BeatAge:     500 * time.Millisecond,
+			Launcher:    BatchLauncherName,
+		}
+	}
+	in := FleetInput{Loaded: Loaded{Benches: true}, Benches: withLauncher}
+	line := CheckBatchLauncher(in)
+	if line.Red {
+		t.Fatalf("live beat shape with launcher must be GREEN: %s", line)
+	}
+	if !strings.Contains(line.What, "7 beats name "+BatchLauncherName) {
+		t.Fatalf("green line must count the beats: %s", line)
+	}
+
+	// Same fixture with the launcher field dropped: each bench is RED.
+	withoutLauncher := make([]BenchState, len(benches))
+	for i, b := range benches {
+		withoutLauncher[i] = BenchState{
+			Name:        b,
+			BeatPresent: true,
+			BeatAge:     500 * time.Millisecond,
+		}
+	}
+	inRed := FleetInput{Loaded: Loaded{Benches: true}, Benches: withoutLauncher}
+	lineRed := CheckBatchLauncher(inRed)
+	if !lineRed.Red {
+		t.Fatalf("live beat shape without launcher must be RED: %s", lineRed)
+	}
+	for _, b := range benches {
+		if !strings.Contains(lineRed.What, b+" launcher MISSING") {
+			t.Fatalf("red line must name bench %q: %s", b, lineRed)
+		}
+	}
+}

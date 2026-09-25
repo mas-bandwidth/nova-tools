@@ -23,6 +23,9 @@ var ParserAllow = []string{
 	"cmd/nova-review/reads.go",
 	"cmd/nova-sprint/result.go",
 	"internal/merge/status.go",
+	// The sprint fold (#2618) reads the disposition hash by field, never the
+	// wire line; its own refinement lines print who= and verdict= keys.
+	"internal/nsprint/sprint/fold.go",
 	"internal/pulse/recut.go",
 }
 

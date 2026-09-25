@@ -28,7 +28,7 @@ func (h *tripHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Pro
 	}
 }
 
-func TestConsumersOnePipeline(t *testing.T) {
+func TestConsumersOneRoundTrip(t *testing.T) {
 	_, seed := redisControl(t)
 	ctx := context.Background()
 	seed.SAdd(ctx, "friends", "a", "b")
@@ -46,17 +46,17 @@ func TestConsumersOnePipeline(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("consumers=%v", got)
 	}
-	if h.pipeline.Load() != 1 || h.single.Load() != 0 {
-		t.Fatalf("round trips: pipeline=%d single=%d, want 1/0", h.pipeline.Load(), h.single.Load())
+	if h.pipeline.Load() != 0 || h.single.Load() != 1 {
+		t.Fatalf("round trips: pipeline=%d single=%d, want 0/1", h.pipeline.Load(), h.single.Load())
 	}
 }
 
-// TestCapacityFourFriendsSixBenchesOnePipeline is the #3265 DONE-WHEN: with 4
+// TestCapacityFourFriendsElevenBenchesOnePipeline is the #3265 DONE-WHEN: with 4
 // friends and 6 benches registered, the ceiling guard reads the machine
 // ceiling and every consumer in one pipeline (it was 2 + F + B = 12 serial
 // reads plus the ceiling), and a desired write is that pipeline plus one
 // FCALL. store.Trips, the counter the verb prints as trips=<n>, agrees.
-func TestCapacityFourFriendsSixBenchesOnePipeline(t *testing.T) {
+func TestCapacityFourFriendsElevenBenchesOnePipeline(t *testing.T) {
 	st, seed := redisControl(t)
 	ctx := context.Background()
 	if _, err := capacity.SetMachine(ctx, st, "m", 100, 0, 0, "test", ""); err != nil {
@@ -66,7 +66,7 @@ func TestCapacityFourFriendsSixBenchesOnePipeline(t *testing.T) {
 		seed.SAdd(ctx, "friends", f)
 		seed.HSet(ctx, "friend:"+f+":desired", "slots", i+1, "machine", "m")
 	}
-	for i, b := range []string{"b1", "b2", "b3", "b4", "b5", "b6"} {
+	for i, b := range []string{"b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9", "b10", "b11"} {
 		seed.SAdd(ctx, "benches", b)
 		seed.HSet(ctx, "bench:"+b+":desired", "slots", i+1, "machine", "m")
 	}
@@ -79,8 +79,8 @@ func TestCapacityFourFriendsSixBenchesOnePipeline(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 2+3+4 + 1+2+3+4+5+6 = 30 for the others, 5 for f1.
-	if !plan.Allowed || plan.Sum != 35 || plan.Ceiling != 100 {
-		t.Fatalf("plan=%+v, want allowed 35/100", plan)
+	if !plan.Allowed || plan.Sum != 80 || plan.Ceiling != 100 {
+		t.Fatalf("plan=%+v, want allowed 80/100", plan)
 	}
 	t.Logf("capacity guard, 4 friends 6 benches: pipeline=%d single=%d in %s", h.pipeline.Load(), h.single.Load(), time.Since(start))
 	if h.pipeline.Load() != 1 || h.single.Load() != 0 {
@@ -97,8 +97,8 @@ func TestCapacityFourFriendsSixBenchesOnePipeline(t *testing.T) {
 	if trips.N() != 2 {
 		t.Fatalf("desired write trips=%d, want 2 (one pipeline, one FCALL)", trips.N())
 	}
-	if _, ok, consumers, err := (capacity.RedisReader{Store: st}).Snapshot(ctx, "absent"); err != nil || ok || len(consumers) != 10 {
-		t.Fatalf("absent machine snapshot: ok=%v consumers=%d err=%v, want no ceiling and 10 consumers", ok, len(consumers), err)
+	if _, ok, consumers, err := (capacity.RedisReader{Store: st}).Snapshot(ctx, "absent"); err != nil || ok || len(consumers) != 15 {
+		t.Fatalf("absent machine snapshot: ok=%v consumers=%d err=%v, want no ceiling and 15 consumers", ok, len(consumers), err)
 	}
 	if _, err := capacity.Evaluate(ctx, capacity.RedisReader{Store: st}, "absent", capacity.KindFriend, "f1", 1); err == nil ||
 		!strings.Contains(err.Error(), "has no ceiling") {

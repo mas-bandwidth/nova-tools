@@ -22,7 +22,7 @@ DEPENDS-ON: {{.DependsOn}}
 DONE-WHEN: {{.DoneWhen}}
 STREAM: {{.Stream}}
 WHO: {{.Who}}
-{{if and .MirrorHead (ne .MirrorHead .Head)}}HEAD MOVED: the mirror's refs/pull/{{.N}}/head is {{.MirrorHead}}; this brief reads the record head {{.Head}}. Say so in your line.
+{{if and .MirrorHead (ne .MirrorHead .Head)}}HEAD MOVED: the mirror's refs/pull/{{.N}}/head is {{.MirrorHead}}; this brief reads head {{.Head}}, the head your task names. Say so in your line.
 {{end}}
 CI at head (Redis ci:{{.Repo}}:{{.Head}}; empty means pending, say so):
 {{range .CILines}}- {{.}}
