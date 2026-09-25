@@ -69,7 +69,7 @@ DARWIN_TIMEOUT ?= 300s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
+.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp verify-roadmap measure-roadmap check clean darwin-timeout map new-rule new-verb
 
 help:
 	@echo "make help        this list"
@@ -89,7 +89,9 @@ help:
 	@echo "make test-prewarm-done run the exact #2498 S3 test manifest"
 	@echo "make test-lisp   ./lisp/nova-work/run-tests.sh"
 	@echo "make compile-lisp compile nova-work and its tests without running them"
-	@echo "make check       build, lint, test, test-e2e and test-lisp (what CI runs)"
+	@echo "make verify-roadmap test-lisp's suite, then the roadmap sexp's criteria judged against it (writes nothing)"
+	@echo "make measure-roadmap the same, then :verification rewritten to what was measured at HEAD"
+	@echo "make check       build, lint, test, test-e2e and verify-roadmap (CI's gates; the stream lander's batch test)"
 	@echo "make clean       remove ./bin and ./scratch"
 	@echo "make map         regenerate AGENTS.md and per-directory maps"
 	@echo "make new-rule    scaffold a class rule skeleton (ARGS=<name>)"
@@ -229,9 +231,21 @@ test-lisp:
 compile-lisp:
 	./lisp/nova-work/compile.sh
 
+# The roadmap sexp's :verification block against the suite at HEAD (#3459):
+# verification runs ./lisp/nova-work/run-tests.sh itself, so verify-roadmap is
+# test-lisp plus the judgement -- every verified criterion's named test is still
+# green -- and check runs it in test-lisp's place rather than the suite twice.
+# CI's lisp job keeps make test-lisp: its runners carry sbcl, not Go.
+verify-roadmap:
+	$(GO) run ./cmd/nova-work verification --sexp docs/roadmaps/nova-work.sexp --repo . --check
+
+measure-roadmap:
+	$(GO) run ./cmd/nova-work verification --sexp docs/roadmaps/nova-work.sexp --repo . --write
+
 # What CI runs on a pull request: the self-hosted lint job, the sharded test
-# job, the friend sequences and the nova-work acceptance suite.
-check: build lint test test-e2e test-lisp
+# job, the friend sequences and the nova-work acceptance suite (run once, by
+# verify-roadmap, with the roadmap's verified criteria judged against it).
+check: build lint test test-e2e verify-roadmap
 
 # An explicit list, never a computed path: clean removes the two directories a
 # local build and a worker's notes land in, and nothing else.

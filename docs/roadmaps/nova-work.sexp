@@ -59,11 +59,11 @@
   :current-acceptance-items 231
   :current-bugs (0 0)
   :bugs ()
-  :verification (    :measured-at "2026-09-19"
-    :revision "4c793b55a30160e5fe1ed45e25928f2c85dcfe5c"
+  :verification (    :measured-at "2026-09-25"
+    :revision "bfad27aa0221630c58f8804fd468e12d06b7ec4f"
     :branch "dev"
     :suite "cd lisp/nova-work && ./run-tests.sh"
-    :suite-result "NOVA-WORK SLICE1 total=336 pass=336 fail=0"
+    :suite-result "NOVA-WORK SLICE1 total=591 pass=591 fail=0"
     :criteria-rule "each :criteria row is THE record of one acceptance criterion: :id is stable (feature id + ordinal), :state is verified | unverified | unmet (a test exists and is RED: the behaviour is missing), :tests names the proving tests when known; ROADMAP.md checkboxes are a view of these rows and tools/roadmap-parity.sh fails when they differ"
     :rule "a criterion is verified only when a named test in this repository proves it and that test passed at :revision; a feature is verified only when every one of its criteria is"
     :verified-features 24

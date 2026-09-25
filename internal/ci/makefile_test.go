@@ -136,10 +136,17 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 	for _, d := range mk.deps["check"] {
 		checkDeps[d] = true
 	}
-	for _, want := range []string{"build", "lint", "test", "test-e2e", "test-lisp"} {
+	// The lisp gate is verify-roadmap: cmd/nova-work's verification verb runs
+	// test-lisp's own suite and judges the roadmap's verified criteria against
+	// it (#3459), so check runs the suite once, not twice. test-lisp stays the
+	// bare suite, which CI's lisp job runs on runners that carry no Go.
+	for _, want := range []string{"build", "lint", "test", "test-e2e", "verify-roadmap"} {
 		if !checkDeps[want] {
-			t.Errorf("Makefile check does not run %q; the contract is build, lint, test, test-e2e and test-lisp", want)
+			t.Errorf("Makefile check does not run %q; the contract is build, lint, test, test-e2e and verify-roadmap", want)
 		}
+	}
+	if got := strings.TrimSpace(strings.Join(mk.recipeFor("test-lisp"), "\n")); got != "./lisp/nova-work/run-tests.sh" {
+		t.Errorf("Makefile test-lisp is %q, want the bare suite ./lisp/nova-work/run-tests.sh (CI's lisp job and the verification verb both run it)", got)
 	}
 
 	// And the gates themselves: every command `make check` would run, gathered
@@ -153,7 +160,7 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 		"go vet ./...",
 		"go test -count=1 ./cmd/... ./internal/...",
 		"go test -count=1 -run TestFriendSequence ./cmd/...",
-		"./lisp/nova-work/run-tests.sh",
+		"go run ./cmd/nova-work verification --sexp docs/roadmaps/nova-work.sexp --repo . --check",
 	} {
 		if !strings.Contains(recipes, gate) {
 			t.Errorf("`make check` does not reach %q; the recipes it runs are:\n%s", gate, recipes)
