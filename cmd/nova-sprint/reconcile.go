@@ -137,6 +137,7 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 		return refuse(errOut, "reconcile", "takes flags, not positional arguments: --redis <addr> [--host <name>] [--once] [--readers a,b] [--width-rebalance-ticks n --width-readers a,b --width-builders c,d --width-coordinator e] [--metrics-addr <host:port>]")
 	}
 	reconcileReaders = splitNames(*readers)
+	reconcileOut = out
 	if *host == "" {
 		h, err := os.Hostname()
 		if err != nil {
