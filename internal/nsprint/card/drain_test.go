@@ -116,6 +116,11 @@ func TestDrainReleasesAndImportsOnce(t *testing.T) {
 	for _, l := range imported {
 		assertPlace(t, ctx, client, l, false, true)
 	}
+	// #4054: the import adds to the table sets only through the one move, so
+	// every member of every set it wrote is the id of a record.
+	if mem, err := card.Members(ctx, client, false, ""); err != nil || mem.Bad != 0 || mem.Members == 0 {
+		t.Fatalf("members walk after the import = %+v, %v; want every member a record", mem, err)
+	}
 	if n := client.SCard(ctx, keyParked(bench)).Val(); n != 0 {
 		t.Fatalf("bench parked set still holds %d cards", n)
 	}
