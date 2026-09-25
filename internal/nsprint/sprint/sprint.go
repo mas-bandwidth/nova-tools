@@ -250,19 +250,26 @@ func Finish(ctx context.Context, st *store.Store, name, from, fromSHA string, no
 // folded) write nothing and come back as refused, the REFUSED line naming
 // the remedy (#3571); the verb exits 1 on it. sprint:order keeps its entry: every reader
 // of the order also checks status=open. There is no reopen.
-func SetClosed(ctx context.Context, st *store.Store, name string, now time.Time) (s Status, refused string, err error) {
+//
+// The same call retires every card of the sprint that is not done (#3925):
+// each moves to done/fail through the one card move and its bench leases go,
+// so no closed sprint keeps a card in a table set. retired is how many moved.
+func SetClosed(ctx context.Context, st *store.Store, name string, now time.Time) (s Status, retired int, refused string, err error) {
 	if err := check(st, name); err != nil {
-		return "", "", err
+		return "", 0, "", err
 	}
 	values, word, err := call(ctx, st, FunctionClose, name, now.UnixMilli())
 	if err != nil {
-		return "", "", fmt.Errorf("sprint close %s: %w", name, err)
+		return "", 0, "", fmt.Errorf("sprint close %s: %w", name, err)
 	}
 	switch word {
 	case "CLOSED":
-		return Closed, "", nil
+		if len(values) > 1 {
+			retired, _ = strconv.Atoi(fmt.Sprint(values[1]))
+		}
+		return Closed, retired, "", nil
 	case "ABSENT":
-		return Absent, "REFUSED " + name + " no such sprint (no s:" + name + " status); nothing closed; remedy: sprint status lists the open sprints", nil
+		return Absent, 0, "REFUSED " + name + " no such sprint (no s:" + name + " status); nothing closed; remedy: sprint status lists the open sprints", nil
 	case "ALREADY":
 		was, at := string(Closed), "?"
 		if len(values) > 2 {
@@ -271,9 +278,9 @@ func SetClosed(ctx context.Context, st *store.Store, name string, now time.Time)
 		if at == "" {
 			at = "?"
 		}
-		return Status(was), "REFUSED " + name + " already " + was + " (closed_at " + at + "); nothing written; there is no reopen", nil
+		return Status(was), 0, "REFUSED " + name + " already " + was + " (closed_at " + at + "); nothing written; there is no reopen", nil
 	}
-	return "", "", fmt.Errorf("sprint close %s: unexpected status %q", name, word)
+	return "", 0, "", fmt.Errorf("sprint close %s: unexpected status %q", name, word)
 }
 
 // Line is the one line close prints.

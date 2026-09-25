@@ -31,6 +31,12 @@ package reconcile
 //
 // Every function checks the reconciler fence before it writes; a FENCED
 // answer anywhere stops the duty with ErrFenced.
+//
+// Once per LeaseReapEvery, whether a sprint is due or not, the pass runs one
+// fenced ns_lease_reap (#3925, card_ghost.lua): a bench:<b>:starting or
+// :living entry whose card record is gone, names another attempt or bench,
+// is past running, sits in a closed sprint, or has not beaten for LeaseStale
+// is dropped and the slot is free. The count is Counts.Reaped.
 
 import (
 	"context"
@@ -100,9 +106,10 @@ type Expire struct {
 	Client *redis.Client
 	Prober Prober
 
-	mu      sync.Mutex
-	sprints []string // the sprint index as the last gate read it
-	loaded  bool
+	mu       sync.Mutex
+	sprints  []string // the sprint index as the last gate read it
+	loaded   bool
+	reapedAt time.Time // the last lease reap (LeaseReapEvery)
 
 	wmu     sync.Mutex
 	busy    map[string]bool // bench -> its evidence worker is in flight
@@ -193,8 +200,17 @@ func (e *Expire) Run(ctx context.Context, l *Lease) (Counts, error) {
 }
 
 func (e *Expire) run(ctx context.Context, l *Lease) (Counts, error) {
-	due, benches, now, err := e.gate(ctx)
-	if err != nil || len(due) == 0 {
+	// The reap is due once per LeaseReapEvery; once the library is known
+	// loaded it rides the gate's round trip, so a pass between reaps and
+	// sweeps is still the gate read alone.
+	reapDue := time.Since(e.reapedAt) >= LeaseReapEvery
+	var reap *redis.Cmd
+	due, benches, now, err := e.gate(ctx, func(pipe redis.Pipeliner) {
+		if reapDue && e.loaded {
+			reap = pipe.FCall(ctx, LeaseReapFunction, nil, l.Token(), LeaseStale.Milliseconds())
+		}
+	})
+	if err != nil {
 		return Counts{}, err
 	}
 	if !e.loaded {
@@ -203,15 +219,72 @@ func (e *Expire) run(ctx context.Context, l *Lease) (Counts, error) {
 		}
 		e.loaded = true
 	}
-	return e.sweep(ctx, l, due, benches, now)
+	var c Counts
+	switch {
+	case reap != nil:
+		c.Reaped, err = reapReply(reap)
+	case reapDue:
+		c.Reaped, err = ReapLeases(ctx, e.Client, l.Token(), LeaseStale)
+	}
+	if reapDue && err == nil {
+		e.reapedAt = time.Now()
+	}
+	if err != nil {
+		return c, err
+	}
+	if len(due) == 0 {
+		return c, nil
+	}
+	sc, err := e.sweep(ctx, l, due, benches, now)
+	sc.Reaped = c.Reaped
+	return sc, err
+}
+
+// LeaseStale is how long a lease's card may go without a beat before the
+// expire duty reaps the lease (#3925: 90 s; the card beats every
+// card.DefaultBeatEvery, and its bench beat stamps it every second when
+// the beat names it live).
+const LeaseStale = 90 * time.Second
+
+// LeaseReapEvery is the lease reap's cadence inside the expire duty: a
+// ghost lease is gone within LeaseStale + LeaseReapEvery of its last beat.
+const LeaseReapEvery = 10 * time.Second
+
+// LeaseReapFunction is the fenced reaper (card_ghost.lua).
+const LeaseReapFunction = "ns_lease_reap"
+
+// ReapLeases is one ns_lease_reap over every registered bench: the number
+// of lease entries dropped. A fenced token is ErrFenced.
+func ReapLeases(ctx context.Context, c *redis.Client, token string, stale time.Duration) (int, error) {
+	return reapReply(c.FCall(ctx, LeaseReapFunction, nil, token, stale.Milliseconds()))
+}
+
+func reapReply(cmd *redis.Cmd) (int, error) {
+	reply, err := cmd.StringSlice()
+	if err != nil {
+		return 0, fmt.Errorf("lease reap: %w", err)
+	}
+	if len(reply) > 0 && reply[0] == "FENCED" {
+		return 0, fmt.Errorf("lease reap: %w", ErrFenced)
+	}
+	if len(reply) < 2 || reply[0] != "REAPED" {
+		return 0, fmt.Errorf("lease reap: reply %q", reply)
+	}
+	n, err := strconv.Atoi(reply[1])
+	if err != nil {
+		return 0, fmt.Errorf("lease reap: count %q", reply[1])
+	}
+	return n, nil
 }
 
 // gate answers the sprints due for a sweep, the bench index and Redis TIME
-// ms. It is one pipeline (the sprint and bench indexes, TIME, and each known
-// sprint's expire_every_ms and expire_at); a sprint new to the index since
-// the last gate costs one more round trip, once.
-func (e *Expire) gate(ctx context.Context) ([]string, []string, int64, error) {
+// ms. It is one pipeline (also's commands first, then the sprint and bench
+// indexes, TIME, and each known sprint's expire_every_ms and expire_at); a
+// sprint new to the index since the last gate costs one more round trip,
+// once.
+func (e *Expire) gate(ctx context.Context, also func(redis.Pipeliner)) ([]string, []string, int64, error) {
 	pipe := e.Client.Pipeline()
+	also(pipe)
 	members := pipe.SMembers(ctx, "sprints")
 	benches := pipe.SMembers(ctx, "benches")
 	clock := pipe.Time(ctx)
