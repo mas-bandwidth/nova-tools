@@ -16,7 +16,7 @@ var openDealStore = func(ctx context.Context, addr string) (*store.Store, error)
 func init() {
 	register(Verb{
 		Name:    "deal",
-		Summary: "deal status --redis <addr> --sprint <S> [--bench <b>]: bench dealability and sprint cards left (exit 2 on usage, 6 no Redis)",
+		Summary: deal.StatusUsage,
 		Run:     runDeal,
 	})
 }
