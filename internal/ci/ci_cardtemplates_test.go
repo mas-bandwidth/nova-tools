@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // ci_cardtemplates_test.go is the red-test contract of the card-template
@@ -284,8 +286,22 @@ func TestNoCardTemplateCarriesAnOSSpecificCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The cards nova-swarm `template` prints are shipped card templates too; since
+	// the templates directory went with cmd/nova-pulse (#3801) they are the ones
+	// the estate cuts from, so they are read here as text under the same rule.
+	for _, name := range swarm.TemplateNames() {
+		if name == "models.tsv" || !(swarm.IsCardTemplate(name) || swarm.IsPulseTemplate(name)) {
+			continue
+		}
+		text, err := swarm.Template(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Templates++
+		res.Findings = append(res.Findings, scanCardTemplate("internal/swarm/templates.go#"+name, text)...)
+	}
 	if res.Templates == 0 {
-		t.Fatalf("no card template was read under %v; the directory list has gone stale", CardTemplateDirs)
+		t.Fatalf("no card template was read under %v or from nova-swarm template; the list has gone stale", CardTemplateDirs)
 	}
 	for _, f := range res.Findings {
 		t.Errorf("%s", f.Render())

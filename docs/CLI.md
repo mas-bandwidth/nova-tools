@@ -10,9 +10,7 @@ A verb earns its place by taking a hand-written script out of `~/rowan-working/b
 
 | script | the verb that replaces it |
 | --- | --- |
-| `status-page.sh` | `nova-pulse status --html <out> --machines <registry> --queue <dir>` |
-| `status.sh` | `nova-pulse status --queue <dir> --roots <dirs> --batches <dir>` |
-| `progress.sh` | `nova-pulse progress --queue <dir> --roots <dirs>` |
+| `status-page.sh`, `status.sh`, `progress.sh` | `nova-sprint table` (the nova-pulse verbs that first replaced them are deleted, #3801) |
 | `board.sh` | `nova-board list`, `add`, `take`, `close`, `check` |
 | `token-fold.sh` | `nova-tokens fold --claude <label>=<dir>` |
 | `token-fold-opencode.sh` | `nova-tokens fold --opencode <label>=<file> --scratch <dir>` |
@@ -1580,428 +1578,16 @@ serialize runtimes.
 
 ## nova-pulse
 
-Frozen: superseded by `nova-sprint`. Three verbs remain: `status` (the status
-page the launchd status-page agent renders), `cut` (card cutting until
-`nova-sprint` cuts cards) and `harvest`. It makes no model call. `nova-pulse
-help` lists exactly those three; `version` prints the build.
+Deleted (nova-tools #3801). It was frozen on 2026-09-23 and superseded by
+`nova-sprint`; its last three verbs moved there:
 
-### version
+| nova-pulse verb | now |
+| --- | --- |
+| `cut` | `nova-sprint card cut` (#3789): one issue becomes one card record in Redis |
+| `harvest` | `nova-sprint card harvest`: push, find-or-open the PR, verify the head |
+| `status` | `nova-sprint table`: the sprint table from Redis |
 
-`nova-pulse version` (and `--version`) prints which build is running, one line,
-four tokens, exit 0:
-
-```
-nova-pulse <build identity> <goos>/<goarch> <go version>
-```
-
-Field two is the release's `-ldflags "-X main.version=<tag>"` stamp when there
-is one, the module version the toolchain recorded when there is not, then the
-vcs stamp `<utc revision time>-<12 hex of the revision>[-dirty]`, and the word
-`devel` for a build with none of those. It takes no flags and no arguments and
-refuses, exit 2, when given any.
-
-### cut
-
-```
-nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--validate-contract] [--depends-on <cards>] [--max <n>]
-nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
-nova-pulse cut --kind read|fix|replay|spec|guard|recut --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>] [--diff-file <f>] [--dir <dir>] [--hold-file <path>]
-```
-
-`cut --kind recut` cuts a recut card from a prior diff (`--diff-file <path>`) or a typed HOLD (`--hold-file <path>`). With `--diff-file`, it performs a mechanical 3-way patch rebase (`git apply --3way`) against the target clone (`--dir <dir>`), recording `applied: clean` or `applied: conflict` in the card header and inlining the prior diff for the worker.
-
-**A v2 card's operative region, and what the cutter lint actually checks.** Every Card
-Template v2 carries **exactly one** operative region, at a position the template owns and
-the card's structured input fills: the card's single `## Run` section, whose first
-non-blank line is exactly `RUN:`, followed by one fenced block. The lines inside that block
-are the only commands the worker may execute; every other line of the card — the task, the
-inlined evidence, the reviewer verdict, the conditions, the exemplar — is prose it reads
-and never runs. A card that runs nothing, a `read` card, carries the region empty.
-
-Because the position is structure rather than a phrase, **prose cannot declare commands and
-cannot move the region**. A `RUN:` line and a fenced block in task text or inlined evidence
-— a prior card's RUN block quoted whole, for instance — are retained verbatim as data, are
-never linted, and are never run; quote a prior card whole inside a fenced block so its own
-`## Run` heading stays data too. A card that declares a **second** region, or that puts
-`RUN:` later in `## Run` after prose, is refused with a remedy naming the one position:
-
-```
-CUT REFUSED: cutter lint: card declares a second operative region: "## Run" at card line 61
-after the one at card line 44. A v2 card has exactly one, and the one operative region of a
-v2 card is the first line of its single `## Run` section: a `RUN:` line, then a fenced block.
-```
-
-The cutter lint reads **only** the lines inside the region, and refuses the card when one of
-them contains `git add -A`, `git add --all` or `git add .` as a whole argument, with
-whitespace runs collapsed. Nothing inside the region is exempt: a trailing comment,
-surrounding quotes, a backtick span or an `sh -c "…"` wrapper does not make the line
-non-evidence — `STEP: git add -A && git commit # do not run again` is refused. Nothing
-outside it is read: quoting that same line as evidence, or writing "never run `git add -A`"
-in a HOLD, always passes. The lint is not a shell parser and makes no claim to be one, and
-it does **not** enforce PATHS-only staging — what a worker actually stages is a separate
-staged-diff and commit boundary check, not something a lint over card text can promise.
-
-**`--root` belongs to the pool form and `--repo` to the validated forms**, and each
-is required of the form that uses it and of no other. `--root` is where `--pool`
-writes `skipped.tsv`; the validated forms write nothing under it, and used to demand
-a path they never opened. `--repo` is the clone every `git` call runs in — `git -C
-<repo> ls-remote`, `git -C <repo> cat-file` — because a command that reads the
-working directory answers differently depending on where a hand happened to stand. It
-is a path here; `cut --kind` is a different cutter and its own `--repo` is an
-`<owner>/<name>`. A `--repo` that is not a directory is one refusal before any child
-runs:
-
-```
-CUT REFUSED: --repo <path> is not a directory (name the clone every git call runs in; cut never reads the working directory)
-```
-
-`cut` reads **one** source and refuses none and refuses two: naming no source is
-`cut wants one source; it wants --pool, --issue, --rows or --branch-from`, and
-naming two is `cut reads one source; pass only one of ...`, both exit 2 with the
-whole list in the refusal. `--max` bounds the number of cards cut, in source order
-(default 20, `0` for all) — `--max 6` cuts six cards and the rest waits for the next
-call — and also caps the `CUT SKIPPED` lines printed.
-
-**`--pool`** writes one practice-17 card per `pool.tsv` candidate from its typed
-template, plus a `cards.tsv` naming the model by kind. `pool` wrote one candidate
-per line, field 1 the locator the sources line declares (an `owner/repo` for the
-`issues` kind, never the source kind), and a template's `<source>` in the `STEP 1`
-clone URL renders that locator — `git clone -q
-https://github.com/mas-bandwidth/nova-tools.git .` — so every card clones the repo
-it is about (the dogfood probe's red line cloned `github.com/issues.git`). One line
-on success:
-
-```
-CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
-```
-
-**`--validate-contract`** preflights the pool form before any card file is
-written. `cut` already refuses a template whose rendered card violates the
-practice-17 contract (line 1 `RESULT <label> sha=<sha12>`, `STEP 1` carrying
-`mkdir -p scratch`, an `https://` clone and `checkout -b`, no `TMPDIR` of its
-own, no `../scratch`), but it only learns that while writing, and a locator that
-does not resolve is not checked at all. With the flag, every distinct candidate
-locator is confirmed once through `gh repo view <owner/repo>` before the first
-card exists, so a dead repo never spends an admission and a scaffold before it
-abstains:
-
-```
-CUT REFUSED locator=<owner/repo>: does not resolve (check gh auth and the repo name)
-```
-
-**`--issue`, `--rows` and `--branch-from`** are the **validated-template** form, and
-the template is the source's own name: `--issue` wants `<templates>/issue.md`,
-`--rows` wants `rows.md`, `--branch-from` wants `branch-from.md`, and a missing one
-is `CUT REFUSED: --templates wants <source>.md`. A template declares named slots —
-`issue`, `title`, `body`, `branch`, `base`, `row`, `replay`, `lane` — and the source
-fills every one it declares.
-
-- `--issue <owner>/<repo>#<n>` reads that issue's title and body through `gh`,
-  verbatim, and derives the branch `rowan/issue-<n>-<slug of the title>` onto `dev`.
-- `--rows <file.tsv>` is one card per row: `label`, `base`, `row`, `replay`,
-  `branch`, `lane`, `template`, tab separated. An empty `base` is `--base` (`dev`
-  unless you say otherwise — a repo without a `dev` branch used to spell it in every
-  row), an empty `label` is the slug of the row, and a separator or header row is
-  skipped and counted as skipped. **`lane` is the card's own** — it fills the `<lane>`
-  slot, so one cut fills as many lanes as it has rows rather than putting every card
-  in the one lane the template named. **`template` is the card's own too**: it names
-  another `<templates>/<name>.md`, so one table cuts N different tasks instead of
-  wanting N cuts and N template directories; a row that names none takes the source's
-  own `rows.md`, and a template the directory does not hold is `CUT REFUSED:
-  --templates wants <name>.md`.
-- `--branch-from <owner>/<repo>#<n>` reads that pull request's head ref through `gh`
-  and cuts one card on that exact branch onto `dev`.
-
-**One example of each of the three ships in the repo**, and they are the shape a
-template of your own takes: `cmd/nova-pulse/testdata/templates/issue.md`, `rows.md`
-and `branch-from.md`. Each one passes the five checks and cuts a card, which is what
-the tests assert, so a first run is the line below with nothing of your own written
-yet:
-
-```
-nova-pulse cut --issue mas-bandwidth/nova-tools#42 --templates cmd/nova-pulse/testdata/templates --out ./queue/ready --repo .
-```
-
-**`--cards <file.tsv>`** names where the `cards.tsv` goes; without it the table lands
-beside the cards, which in real use is a queue directory the table does not belong in.
-
-**A label never carries the `card-` prefix.** It belongs to the filename: a label spelt
-`card-9601` to make `fill` see the card rendered `CARD-card-9601` into the RESULT line
-and rode from there into a PR title, so `cut` strips it and the label is `9601`.
-
-**Every card is written as `card-<label>.md`** — the one filename contract the queue
-directories keep and the one `fill` globs. `cut` wrote `<label>.md` until
-2026-09-18, and a directory of cut cards sat in a `--ready` that every tick stepped
-over in silence. A **second cut into the same `--out` appends** to `cards.tsv` rather
-than overwriting it: two cuts into one queue are two batches of cards, and a row
-already in the table is not written twice, so cutting the same source again is the
-same table.
-
-**A template is portable, because `cut` does not choose the bench.** The card text
-is handed to the worker verbatim and the router picks the bench later, out of a
-mixed estate (hulk, vision, space and mini are linux; the Studio and the Air are
-darwin). Spell presence as `command -v <name>`, a version as that toolchain spells
-it (`go version`, `dotnet --version`, `java -version 2>&1`), and a fact only one
-platform reports by choosing with `uname` on the same line — `cores=$(if [
-"$(uname -s)" = Darwin ]; then sysctl -n hw.ncpu; else nproc; fi)`. Do not measure
-a step with GNU `time(1)`; the harness writes the run's own timing line. The rule
-is SPEC-SWARM, "A template is portable, because the bench is not chosen when it is
-written", and `internal/ci`'s `cardtemplates` class test refuses the shipped
-templates that break it. `cmd/nova-pulse/testdata/templates/{read,fix}.md` are the
-worked examples.
-
-**Five checks run in order before a byte is written**, and the first that fails is
-the whole answer, exit 2, one line:
-
-```
-CUT REFUSED check=branch branch=<name> (<why git refuses the name>: git check-ref-format --branch refuses this name)
-CUT REFUSED check=branch branch=<name> (pass --branch-from <pr>, or rename the issue)
-CUT REFUSED check=base path=<path> not at <base> (fix the row, or add the file)
-CUT REFUSED check=step1 (<what is wrong with the line>)
-CUT REFUSED check=slot slot=<name> (named slot with no value: fill it, or drop it from the template)
-CUT REFUSED check=result (the RESULT line is more than one line: fix the template)
-```
-
-The branch check is two questions. First, **is it a branch name at all**: the rules
-of `git check-ref-format --branch` are applied in process, no subprocess, so a space,
-a control character, `..`, `@{`, a trailing dot, a `.lock` component or a leading dash
-is refused by name — `rowan/has a space` was `CUT OK` on 2026-09-18 because nobody
-asked. Then `git -C <repo> ls-remote origin <branch>`: a branch that already exists is
-a card that would collide, and it is refused. `--branch-from` names its exact head
-ref, so both are skipped for it and only for it. The base check is
-`git -C <repo> cat-file -e <base>:<path>` for every file a row names, so a card never
-asks a worker to edit a file that is not there. `step1` is parsed as one shell line
-in process, never run. Success is one line naming the source:
-
-```
-CUT OK cards=<n> from=<issue|rows|branch-from> skipped=<n> out=<dir>
-```
-
-Exit 0 when every candidate was cut, 1 when any was skipped, 2 on a refusal, for
-both forms.
-
-### harvest
-
-```
-nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>] [--commit]
-nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>] [--events-store <host:port>] [--commit] [--batch [--store <host:port>] [--store-user <name>] [--password-env <NAME>]]
-nova-pulse harvest --working <dir> [--roots <dirs>] [--clone <o/n>=<dir>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>] [--commit]
-```
-
-The first form folds **the pulse `launch` admitted**: `<root>/cards/<id>/cards.tsv`,
-the table launch writes for that `--id`, falling back to `<root>/cards.tsv` for a root
-`cut` wrote and to the job directories themselves for a bare swarm root. Reading only
-`<root>/cards.tsv` meant the `--then` harvest launch chains refused every successful
-pulse, with `run: nova-pulse cut` as the remedy — the wrong door, because launch had
-already written the table (issue #1818). The table's slot column is `-` until swarm
-allocates; a `--bench` pull lands at `<root>/<bench>-<n>/jobs/<label>/`, and harvest
-`--id` folds a same-label `RESULT.md` only when its line 1 uniquely matches the
-current card contract. Two matches are refused as ambiguous; a copied leftover
-with a later mtime is not identity (issue #1907).
-
-A card is **this** card when its `RESULT.md` line 1 **begins with** the card's contract
-line, trailing spaces trimmed — the same rule `nova-swarm batch`'s gather applies
-(`docs/SPEC-SWARM.md`), because a card generator can truncate a title. Harvest compared
-for equality and scored a card the gather had already called `done` as `mismatch`, so it
-was never pushed (issue #1823).
-
-**A `RESULT.md` is a report, never an instruction** (`docs/SPEC-SWARM.md`). Before any
-push, the `REPO` line on it is checked against the repository the **card** names, or
-failing that against the job clone's own `origin`; a `REPO` that matches neither, or a
-card and clone that name none, is refused by name and counted `refused`, and nothing is
-pushed or opened. Harvest used to form `https://github.com/<REPO>.git` from the worker's
-line and push there (issue #1824). The branch prefix policy and #1650's `accept` gate are
-not part of that check yet.
-
-The first form folds one pulse's cards under a local root: it pushes and opens a PR for
-every card whose `RESULT.md` line 1 equals its contract line, sends every abstain to
-`retry.tsv`, and pulses again (SPEC-PULSE rules 11 to 15).
-
-**The second form harvests a bench**, and is the verb
-`~/rowan-working/bin/harvest-bench.sh` was the working sketch of. It lists every
-`<root>/<slot>/jobs/<label>` on the bench over `ssh`, reads each `RESULT.md` there, and
-folds the jobs that are this run's to fold:
-
-```
-nova-pulse harvest --bench hulk --root '~/rowan-swarm-root' --clone ~/rowan-working/nova-tools --clone mas-bandwidth/schema=~/rowan-working/schema --session s-42 --launched ./queue/launched
-```
-
-**The branch is pushed from here, never from the bench.** The job's clone is fetched over
-`ssh://<bench><job>/repo` into `refs/harvest/<branch>` in the clone `--clone` names, and
-pushed from there by explicit refspec — a bench holds no forge credential and never will.
-`--clone <dir>` is the clone for any repo and `--clone <owner>/<name>=<dir>` binds one,
-which is the two-repo table the script hardcoded. `--clone` is required with `--bench`.
-
-**Where a harvest pushes comes from what the manager recorded before the worker ran**
-(nova-tools #1824; Johnny's holds on #1809). That is the LAUNCH RECORD — the card file `cut`
-wrote, or the manager queue's `launched/<card>` — and failing that the `--clone` an operator
-typed here. The `RESULT.md`'s `REPO` line is a claim, and so is `git remote get-url origin`
-in the job's own clone: a worker owns that directory and rewrites its origin with one
-`git remote set-url`. Both are compared against the record and neither is ever read as it. A
-disagreement is `HARVEST REFUSED repo-mismatch card=<label> dispatched=<x> origin|claimed=<y>`
-and nothing is pushed; nothing naming a repository at all is `HARVEST REFUSED repo-unknown`.
-So `harvest --working` and a bare swarm root — neither of which carries a launch record —
-want `--clone <owner>/<name>=<dir>`, and on `--working` exactly one, because choosing between
-several would mean reading the worker's own report.
-
-**A returned branch whose base is stale never becomes a PR** (issue #2032). Before any
-push, harvest fetches the authorized destination's target branch, pins that OID, and takes
-`git diff --name-only <oid>..<branch>` (two-dot, not the merge-base and not the worker
-clone's cached `origin/dev`). It refuses when that diff contains a path the card did not
-declare on `PATHS:`, naming the offending files. An explicit target that cannot be fetched
-is a refusal, never a walk of local fallbacks. Opening the branch as it came off the bench
-would revert later landings.
-
-**`--machines` holds `--bench` against the machines registry before the first ssh.**
-A harvest opens a connection to the machine it names, and runner hosts are CI-only, so the
-NAME is resolved at the verb's edge: an unknown machine, a runner host, the coordination
-bench or a services host is refused with `HARVEST REFUSED bench=... reason=... remedy="..."`
-and nothing is connected to. An unnamed registry leaves the verb unguarded, which is what a
-by-hand run against a bench not in the file yet wants; name it on every real invocation.
-
-**A bench harvest wants no `--id`, no `--sources` and no `--templates`**: there is no pulse
-packet to name and no relaunch to feed, and a `cut --rows` produces none of the three.
-
-**The filter is the session and the branch prefix, never an age alone.** `--session` takes
-only jobs whose `RESULT.md` carries that `SESSION` line, `--branch-prefix` (default
-`rowan/`) only branches under it, and `--since` is an optional extra bound. The script took
-every `rowan/*` job under six hours, whoever cut it. **The base is the card's** — the
-`RESULT.md`'s `BASE` line, else `--base`, else `dev` — and it is both the base the
-no-commit guard counts against and the base the PR is opened against; the script hardcoded
-`origin/dev` for the first and `main` for the second. A job that committed nothing is not
-pushed. The PR title is cut at a word boundary and keeps its ` (<label>, <bench>)` suffix,
-whole title at most 110 bytes.
-
-```
-HARVEST JOB bench=<name> label=<label> branch=<name> sha=<sha> base=<branch> pr=<repo>#<n>
-HARVEST NO-COMMIT bench=<name> label=<label> branch=<name> base=<branch> (nothing was committed; not pushed)
-HARVEST SKIP bench=<name> label=<label> reason=<session|branch-prefix|age|no-repo|no-clone|no-count> <detail>
-HARVEST ROOT-INCOMPLETE bench=<name> root=<path> (<why>)
-HARVEST DRAIN card=<card-<n>.md> lane=<name> state=<done|failed> bench=<name> why=<result|job-dir-gone>
-HARVEST DRAIN-FAIL card=<card-<n>.md> lane=<name> bench=<name> reason=<destination-exists|marker-move|card-move|rollback> <detail>
-HARVEST LEFT reason=<running|unharvested|no-session|other-session|other-bench|probe-present|probe-unknown|unprobed|unproven|incomplete-listing|max> cards=<n>
-HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> left=<n> took=<d>
-```
-
-**`--launched <dir>` drains the queue, in either form.** Nothing but `manager` drained it,
-so a lane taken by a card that finished hours ago stayed occupied forever. A launched card
-whose job is done moves to `--done` (`<launched>/../done` by default), one whose job
-directory is gone moves to `--failed`, each with a marker naming the lane, the bench and
-why; one still running is left where it is. A harvested job is marked `.harvested` on the
-bench, so a second run opens no second PR. Exit is 0, 1 when a fetch, a push or the forge
-failed for a job, 2 on a refusal.
-
-**The launched directory is shared, so the drain takes only what is the caller's** (#1950,
-SPEC-PULSE "Harvest, from a bench" rule 9). One `harvest --bench vision --max 1` emptied a
-live 151-card queue in 733 ms — `jobs=0 ... drained=151` — and deleted every `.launched`
-marker, five of them another lane's. A card is drained only when its own launch record says
-it is the caller's, it names the bench this harvest looked at, and its job either finished
-and was folded here to a durable end or is PROVEN gone. `--max` bounds what is consumed,
-not only what is printed.
-
-- **`--session` is required for any drain.** With no `--session`, `--launched` drains
-  nothing at all and says so (`HARVEST LEFT reason=no-session cards=<n>`): an omitted
-  session is not a wildcard over a shared queue, and it is not inferred from the job's
-  `RESULT.md` or from anything else. With one, the marker's `session` must match it exactly.
-- **Absence is proven, never inferred.** The listing answers `ROOT <path> ok|missing|
-  incomplete`, holding every root, slot and `jobs` directory against `-r` and `-x` — an
-  unreadable directory is not an empty one, and one `incomplete` root costs the run its
-  absence claims but not its harvest. Each remaining candidate card is then probed BY NAME
-  (`PROBE <label> present|absent|unknown`), and only `absent` means `job-dir-gone`: a
-  sibling job being listed says nothing about this card.
-- **The card and its marker move as a pair or not at all.** The `.launched` marker is the
-  only record of which bench the job is on. The destination is checked for a collision
-  first, the marker moves first, and a failed card move rolls it back; a drain that cannot
-  complete is never counted, prints `HARVEST DRAIN-FAIL reason=<…>` and exits 1.
-
-`drained=<n> left=<n>` says what was taken and how many launched cards were left exactly as
-found, with one `HARVEST LEFT reason=<r> cards=<n>` line per reason. A `--root` that does
-not resolve on the bench is `HARVEST REFUSED` before anything moves — a quoted `'~/…'` is
-not expanded by this verb.
-
-### status
-
-```
-nova-pulse status --queue <dir> --roots <dirs> [--results-root <dir>] [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
-```
-
-`status` prints, no model, counted from the queue, `usage.tsv`, the ADOPT
-files and a cached `gh` step, at most `--max` lines per capped kind (default
-20, `0` for all), eight line kinds each one line:
-
-```
-STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
-STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
-STATUS FAILURES card_fail=<n> gateway=<n>
-STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|-> parallelism=<n.n|->
-STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
-STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
-STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
-STATUS ADOPTION <friend> version=<v> receipt=<n> edges=<n>
-STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
-STATUS TOOLS merged_since_adoption=<n> <names>
-```
-
-`FAILURES` splits attempt results. `gateway` is an attempt that ended with no
-model turn: a provider gateway 5xx, or no tokens and no recorded error on an
-attempt that still failed. That attempt does not increment `card_fail`.
-`card_fail` is the card's own verdict (abstain, blocked) and every other failed
-attempt. `QUEUE failed=` is still the count of cards in the failed directory,
-not this split. The same two fields are on `status --oneline`.
-
-`WIDTH` prints one line per bench in `--roots` (running jobs, slots, load and
-headroom from each bench's slot files); `--roots` is the scope — a bench or
-friend outside it is nowhere on any line. `REMAINING` counts what is still in
-flight in scope only. `ADOPTION` prints one line per friend, the coordinator
-included (its `version=` reads `-` until there is an ADOPT file for it).
-With no `usage.tsv` rows in the window every `RATE` metric reads `-` — a cost
-or latency never measured is unknown, never zero.
-The `CONTRACTION` verdict is one sustained fact per run, computed from the
-hourly samples once and printed on both the hour and the day line, and the line
-names the sustained window and the threshold that produced it (`window=<n>h
-above=1`), because a divergence signal whose window and threshold a reader has
-to infer is a signal nobody can check (#177: configurable windows and
-thresholds must stay visible). `--expanding-hours <n>` (default 2, whole hours)
-is that window: the verdict reads `EXPANDING` only after that many consecutive
-sampled hours above the threshold, the run remembered between runs in the
-queue's `EXPANDING` marker, so no one sampling instant decides it.
-Sources: the queue directory (`pending`, `launched`, `done`, `failed`, and the
-`COORDINATOR`, `REPO`, `UNREAD`, `DIRTY`, `UNCARDED`, `HOLD`, `ESCALATE`,
-`DOGFOOD` state files), each bench's `pool/slots/*.json` and `usage.tsv` rows,
-and each bench's `ADOPT/<friend>` files. Prototype: `bin/status.sh`.
-
-**The fleet page.**
-
-```
-nova-pulse status --html <out> --machines <registry> [--benches <file>, retired] [--queue <dir>] [--ssh <path>]
-                  [--timeout <s|duration>] [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]...
-                  [--branch <name>] [--day-start <HH:MMZ>] [--gh-config <dir>]
-```
-
-`--html` writes the fleet page and one seven-column `metrics.tsv` row beside
-it, and prints one `STATUS HTML` line. It reads the fleet from **the machines
-registry** — `--machines queue/control/machines.tsv`, the same file
-`fleet registry` prints and every fill refusal names. The benches read over ssh
-are its rows carrying the role `bench`; the page also carries a **machines**
-table naming every machine, its roles and its own note, so the page says which
-hosts serve the merge group's shards and may take no card, and says out loud
-that the Air is a fleet machine WHILE UP rather than showing a bare `DOWN` row
-every time the laptop is shut. The registry carries no home column and needs
-none: with no home the liveness script uses the login home, which is the home
-ssh lands in.
-
-`--benches` is the retired four-column file (`name`, ssh target, home, mac). It
-reads for one more release, and every run of it prints one `STATUS NOTE` line
-naming `--machines`. Given both, the registry decides and the run names the
-file it did not read: two files that disagree about what the fleet IS is how a
-runner host quietly becomes a bench.
-
-The forge rows (the branch tip and its run, merged since the day start, PRs
-opened in the last hour, the merge queue) are about the repo in `<queue>/REPO`,
-and failing that the origin of the clone the queue sits in, named on a
-`STATUS NOTE` line. With neither there is nobody to ask and the page says so;
-with a repo that did not answer it says that instead — they are different
-facts, and the page used to print the first for both.
+The engine it drove is still `internal/pulse`, reached by no command.
 
 ## nova-review
 
@@ -2690,8 +2276,8 @@ authorization.
 
 `nova-swarm template --name read` (and `fix`, `text`, `replay`, `drift`, `tone` and
 `models.tsv`) prints the six typed card templates SPEC-PULSE rule 4 names and the cost
-table rule 7 reads, so the templates directory `nova-pulse cut --templates <dir>` needs is
-built from the tool instead of copied out of `cmd/nova-pulse/testdata`. `read`, `text` and
+table rule 7 reads, so the templates directory the deleted `nova-pulse cut --templates <dir>`
+needed was built from the tool rather than copied out of the old command's testdata. `read`, `text` and
 `tone` are text-only cards and carry rule 6's no-build line; `fix`, `replay` and `drift`
 carry the red-then-green row. They are cards, not task templates: `add --template read`
 is refused the way `add --template result` is.
@@ -4238,7 +3824,7 @@ The one line under the sprint table, `x/y z% -> ~eta`. It does not render the ta
 
 x, y and the percent are the stdout of `nova-work set check --evaluate`: `SET OK units=<y>` and `SET DONE done=<x> percent=<p>`. The percent is printed as that tool printed it. A `:status "done"` or `:status "landed"` in the work-set is not counted; those are the hand-marked receipts the old sprint-xy bash grepped.
 
-eta is the sprint verb's wall. `nova-pulse sprint calibration` prints `SUGGEST <kind> <n>m`, the mean lease-to-done actual for that kind, and each still-open task is charged that instead of its stored estimate when the task names a kind. The wall is one lane per owner, or per the route's consumer when the owner is clear, with real dependencies waited on. It is not the sum of the work, and it is not `open * 10/3 + 12`. `nova-pulse sprint status --verbose` prints C/O/W rows (`Open` or `Working`, `owner=`, `route=`, `est=` as `~Nh` or `~Nm`, `kind=`, `depends=`), not `TASK` lines. `depends=-` is no edge. A row without `kind=` or `depends=` is a refusal: the printed estimate alone is not the calibrated wall.
+eta is the sprint's wall. `--calibration-out` is a file of `SUGGEST <kind> <n>m` lines, the mean lease-to-done actual for that kind, and each still-open task is charged that instead of its stored estimate when the task names a kind. The wall is one lane per owner, or per the route's consumer when the owner is clear, with real dependencies waited on. It is not the sum of the work, and it is not `open * 10/3 + 12`. `--open` is a file of `TASK` lines, or a verbose sprint status: C/O/W rows (`Open` or `Working`, `owner=`, `route=`, `est=` as `~Nh` or `~Nm`, `kind=`, `depends=`). `depends=-` is no edge. A row without `kind=` or `depends=` is a refusal: the printed estimate alone is not the calibrated wall.
 
 Run from the repo root. The three files are captured tool output and the open tasks. `--set` is a work-set whose receipts are already marked done; the line does not move.
 
@@ -4250,7 +3836,7 @@ nova-sprint xy --evaluate-out cmd/nova-sprint/testdata/evaluate.txt --calibratio
 
 **Reading it.** `26/42` is `SET DONE done=26` over `SET OK units=42`. `61%` is the tool's `percent=`, not a recomputation. `~3h` is two open `fix` tasks on different owners, one depending on the other, each charged the calibrated 90 minutes rather than the stored 120. `evaluate.txt` also has a criterion `holds=yes`; that is not the count. `set.sexp` marks three receipts done or landed; that is not the count either.
 
-**What a first run gets wrong.** Leaving the flags off is one refusal that names each missing source. Pointing `--set` at a sexp full of `:status "done"` and reading those marks as x is the old count; this line will not do it. Omitting `--store` when the live sprint verb has to be run is a refusal, not a guessed Redis address. A `nova-pulse sprint status` that prints a fraction and no open row is a refusal: that fraction is the sprint store's own x/y, and eta reads the verbose rows.
+**What a first run gets wrong.** Leaving the flags off is one refusal that names each missing source. Pointing `--set` at a sexp full of `:status "done"` and reading those marks as x is the old count; this line will not do it. xy runs no sprint verb: `--calibration-out` and `--open` are files, and `--store`, `--name` and `--nova-pulse` are usage errors since nova-pulse was deleted (#3801). An `--open` status that prints a fraction and no open row is a refusal: that fraction is the sprint store's own x/y, and eta reads the verbose rows.
 
 ### pitstop
 

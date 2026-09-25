@@ -18,7 +18,6 @@
 # T8 (#1653): the sections no test executes at all.
 nova-decide   # #1653 -- executed by no test
 nova-post     # #1653 -- asserts only that the section is non-empty; its block waits on the #1631 re-cut (SPEC-TOOLWORK Q5)
-nova-pulse    # #1653 -- executed by no test
 nova-review   # #1653 -- executed by no test
 
 # T9 (#1654): the set-of-shapes tests, which pass an abridged or reordered block.

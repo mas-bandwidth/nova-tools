@@ -109,3 +109,10 @@ internal/pulse/layout560_test.go deleted with the frozen nova-pulse (2026-09-24)
 docs/spec-pulse/02-the-rules-numbered.md history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
 docs/spec-pulse/03-fleet.md history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
 docs/spec-pulse/10 history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
+cmd/nova-pulse deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
+cmd/nova-pulse/ deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
+cmd/nova-pulse/cut_kind.go deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
+cmd/nova-pulse/testdata/card-contract-2608/ deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
+cmd/nova-pulse/testdata/templates deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
+cmd/nova-pulse/testdata deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
+cmd/nova-pulse/testdata/templates/fix.md deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
