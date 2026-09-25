@@ -301,7 +301,7 @@ func Cut(ctx context.Context, client *redis.Client, src IssueSource, in CutInput
 		return CutCard{}, VerbResult{}, err
 	}
 	sum := sha256.Sum256(c.Body)
-	if err := client.SetNX(ctx, BodyKey(in.Sprint, hex.EncodeToString(sum[:])), c.Body, 0).Err(); err != nil {
+	if err := client.SetNX(ctx, BodyKey(in.Sprint, hex.EncodeToString(sum[:])), c.Body, BodyTTL).Err(); err != nil {
 		return c, VerbResult{}, fmt.Errorf("store body: %v", err)
 	}
 	res := PushBatch(ctx, client, in.Sprint, []CardFile{{Name: c.Label, Body: c.Body}}, PushOptions{})[0]
