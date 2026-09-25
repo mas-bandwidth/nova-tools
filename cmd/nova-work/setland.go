@@ -71,6 +71,17 @@ func evaluator(c worklang.Criterion) func(*landed.Evaluator, context.Context, st
 // the ones --write-status may flip.
 func evaluate(stdout io.Writer, ws *worklang.WorkSet, ev *landed.Evaluator) (map[string]bool, map[string]bool) {
 	ctx := context.Background()
+	// Every PR the criteria name is read up front, one call per repo (#3460), so
+	// the loop below answers from the run's cache instead of one REST read each.
+	var subjects []string
+	for _, u := range ws.Units {
+		for _, c := range u.Acceptance() {
+			if u.ID != "" && evaluator(c) != nil {
+				subjects = append(subjects, c.Subject)
+			}
+		}
+	}
+	ev.Prefetch(ctx, subjects)
 	evidence, whole := map[string]bool{}, map[string]bool{}
 	for _, u := range ws.Units {
 		crits := u.Acceptance()
