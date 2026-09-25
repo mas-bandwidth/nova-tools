@@ -83,13 +83,18 @@ func parseHolds(m map[string]string) ([]Hold, error) {
 	return out, nil
 }
 
-// Read is one typed disposition from s:<S>:disp:<repo>:<n>.
+// Read is one typed disposition from s:<S>:disp:<repo>:<n>, or one
+// s:<S>:read:<unit>:<who> record. CarriedFrom is the head the line was
+// typed at when `read carry` (nova-tools #3630) moved it to Head across an
+// identical-diff head move; "" for a line typed at Head itself. A carried
+// read counts as a read: the lander compares Head, never CarriedFrom.
 type Read struct {
-	Friend   string
-	Head     string
-	Verdict  string
-	Score    int
-	HasScore bool
+	Friend      string
+	Head        string
+	Verdict     string
+	Score       int
+	HasScore    bool
+	CarriedFrom string
 }
 
 func parseReads(m map[string]string) []Read {
