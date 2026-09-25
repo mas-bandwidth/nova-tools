@@ -1,4 +1,4 @@
-//go:build linux && swarmtest
+//go:build linux
 
 package swarm
 
@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 const probeSource = `package main
@@ -79,7 +81,7 @@ func TestPausePointThreadDirected(t *testing.T) {
 	binFile := filepath.Join(dir, "probe_bin")
 	cmd := exec.Command("go", "build", "-tags", "swarmtest", "-o", binFile, "./internal/swarm/testprobe")
 	cmd.Dir = repoRoot
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
+	cmd.Env = append(goenv.Clean(os.Environ()), "CGO_ENABLED=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build probe: %v\n%s", err, out)
 	}
