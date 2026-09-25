@@ -69,7 +69,14 @@ func CheckGitWorkingCopy(storeDir string) (GitRefStatus, error) {
 		return status, fmt.Errorf("store %s: %w", storeDir, err)
 	}
 	if remote == "" || mergeRef == "" {
-		return status, fmt.Errorf("store %s: branch %s has no upstream tracking branch configured in .git/config", storeDir, branch)
+		// nova-tools#3550: the refusal names the prerequisite and the next action,
+		// including a store that has no remote at all, since a first-time caller
+		// meets it here and not in the spec.
+		return status, fmt.Errorf("store %[1]s: branch %[2]s has no upstream tracking branch configured in .git/config; "+
+			"check and exec compare HEAD with the ref the branch tracks, so a store must be on a named branch with an upstream (see: nova-secrets check --help); "+
+			"next: git -C %[1]s switch <the branch that tracks the store's remote>, or git -C %[1]s branch --set-upstream-to=<remote>/%[2]s when that remote branch exists; "+
+			"a local/offline store with no remote takes a local bare one: git init --bare <dir> && git -C %[1]s remote add origin <dir> && git -C %[1]s push -u origin %[2]s",
+			storeDir, branch)
 	}
 
 	upstreamBranch := strings.TrimPrefix(mergeRef, "refs/heads/")
