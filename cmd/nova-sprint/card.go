@@ -83,8 +83,7 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	stitchRoute := fs.String("stitch-route", "", "")
 	stitchEst := fs.String("stitch-est", "", "")
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(stderr, "nova-sprint card: cut: "+oneline.Escape(err.Error())+"; run: nova-sprint help")
-		return 2
+		return refuse(stderr, "card", "cut: "+err.Error())
 	}
 	// --parent without --from re-cuts a stitch that ended done (#4317 fix).
 	if *from != "" || *parent != "" {
@@ -269,8 +268,15 @@ func writeCardResult(stdout, stderr io.Writer, res card.VerbResult) int {
 		return res.Code
 	}
 	if res.Code != 0 {
-		fmt.Fprintf(stderr, "nova-sprint card: %s; run: nova-sprint help\n", oneline.Escape(strings.TrimSpace(res.Stderr)))
-		return res.Code
+		// The shared refusal's store classes (library missing, store down,
+		// NOPERM) name their remedy here too; only a store that cannot be
+		// used changes the verb's own code.
+		line, code := storeRefusal(strings.TrimSpace(res.Stderr))
+		if code != exitStoreDown {
+			code = res.Code
+		}
+		fmt.Fprintf(stderr, "nova-sprint card: %s\n", oneline.Escape(line))
+		return code
 	}
 	if _, err := io.WriteString(stdout, res.Stdout); err != nil {
 		return refuse(stderr, "card", err.Error())

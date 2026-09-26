@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // storeDown writes the verb's line and answers true when err, from the verb's
@@ -13,10 +15,14 @@ import (
 // (#3277), so the first batch is the probe, and a verb that exits 6 on an
 // unreachable store checks that batch's error here to keep the code.
 func storeDown(errOut io.Writer, verb string, err error) bool {
-	if !store.Unreachable(err) {
+	if err == nil || !(store.Unreachable(err) || strings.Contains(err.Error(), "NOPERM")) {
 		return false
 	}
-	fmt.Fprintf(errOut, "nova-sprint %s: connect redis: %v\n", verb, err)
+	// The same cause and remedy the shared refusal prints (storeRefusal):
+	// the store that did not answer, or the ACL user it denied, and the
+	// verb that shows it. The caller's exit stays 6.
+	line, _ := storeRefusal("connect redis: " + err.Error())
+	fmt.Fprintf(errOut, "nova-sprint %s: %s\n", verb, oneline.Escape(line))
 	return true
 }
 

@@ -423,14 +423,20 @@ const (
 	// who is not the task owner, or ns_ingest_disposition refused it (the
 	// reason is DoneOutcome.Why). Nothing is written (exit 2).
 	DoneRefused DoneStatus = "REFUSED"
+	// DoneNotFound is a task id with no record: absent, not fenced and not
+	// failed (exit 2, as beat and cancel answer it).
+	DoneNotFound DoneStatus = "NOTFOUND"
 )
 
 // DoneOutcome is one done with its typed record: Why on REFUSED, Record the
-// ingest reply after RECORD on a typed close.
+// ingest reply after RECORD on a typed close, State and Holder the task's on
+// FENCED (whose lease the token did not match).
 type DoneOutcome struct {
 	Status DoneStatus
 	Why    string
 	Record []string
+	State  string
+	Holder string
 }
 
 // ExitCode maps a done outcome to its CLI exit code (spec 4.2, 2.1 rule 8).
@@ -440,7 +446,7 @@ func (s DoneStatus) ExitCode() int {
 		return 3
 	case DoneConflict:
 		return 4
-	case DoneNoEvidence, DoneInvalid, DoneRefused:
+	case DoneNoEvidence, DoneInvalid, DoneRefused, DoneNotFound:
 		return 2
 	default:
 		return 0
@@ -503,7 +509,13 @@ func DoneTyped(ctx context.Context, st *store.Store, req DoneRequest) (DoneOutco
 		return out, nil
 	case DoneRefused:
 		return DoneOutcome{Status: st, Why: strings.Join(words[1:], " ")}, nil
-	case DoneRepeat, DoneFenced, DoneConflict, DoneNoEvidence, DoneInvalid:
+	case DoneFenced:
+		out := DoneOutcome{Status: st}
+		if len(words) > 2 {
+			out.State, out.Holder = words[1], words[2]
+		}
+		return out, nil
+	case DoneRepeat, DoneConflict, DoneNoEvidence, DoneInvalid, DoneNotFound:
 		return DoneOutcome{Status: st}, nil
 	default:
 		return DoneOutcome{}, fmt.Errorf("task done %s: unexpected status %q", req.ID, words[0])

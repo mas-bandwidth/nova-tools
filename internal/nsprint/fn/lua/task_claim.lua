@@ -273,18 +273,19 @@ local function task_done(keys, args)
   -- #3206 PR A: `done --as <f>` with no token is the friend-queue shape; it
   -- is accepted only when f is the owner (the state rules below still hold,
   -- so only a claimed or working lease closes). Anything else without the
-  -- stored token refuses FENCED.
+  -- stored token refuses FENCED, naming the task's state and holder so the
+  -- caller sees whose lease it is (fg-b).
+  local state = redis.call('HGET', key, 'state') or ''
+  local owner = redis.call('HGET', key, 'owner') or ''
   if token == '' and as ~= '' then
     -- the card names its friend from the push (one store), so the owner
     -- alone is no lease: only a claimed or working task of as closes
-    local st = redis.call('HGET', key, 'state')
-    if redis.call('HGET', key, 'owner') ~= as or (st ~= 'claimed' and st ~= 'working' and st ~= 'closed') then
-      return { 'FENCED' }
+    if owner ~= as or (state ~= 'claimed' and state ~= 'working' and state ~= 'closed') then
+      return { 'FENCED', state, owner }
     end
   elseif redis.call('HGET', key, 'token') ~= token then
-    return { 'FENCED' }
+    return { 'FENCED', state, owner }
   end
-  local state = redis.call('HGET', key, 'state')
   if state == 'closed' then
     if redis.call('HGET', key, 'evidence') == evidence then
       return { 'CLOSED' }

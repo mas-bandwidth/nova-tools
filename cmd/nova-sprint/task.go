@@ -331,9 +331,19 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if err != nil {
 		return refuse(errOut, "task done", err.Error())
 	}
+	show := "nova-sprint task list --redis " + *redisAddr + " --sprint " + *sprint
 	switch {
 	case res.Status == task.DoneRefused:
 		_, _ = fmt.Fprintf(out, "REFUSED %s id=%s\n", res.Why, *id)
+	case res.Status == task.DoneNotFound:
+		// Absent is its own outcome: no task:<id> on this store, nothing
+		// written, and the two verbs that show what is there.
+		_, _ = fmt.Fprintf(out, "DONE NOTFOUND id=%s sprint=%s: no task:%s; run: %s, or nova-sprint ready --why %s --redis %s --sprint %s\n",
+			*id, *sprint, *id, show, *id, *redisAddr, *sprint)
+	case res.Status == task.DoneFenced:
+		// The token is not the lease's: whose it is, and the verb that shows it.
+		_, _ = fmt.Fprintf(out, "DONE FENCED id=%s state=%s holder=%s: the token does not match the task's lease, nothing written; run: %s\n",
+			*id, orDash(res.State), orDash(res.Holder), show)
 	case len(res.Record) > 0:
 		_, _ = fmt.Fprintf(out, "DONE %s id=%s RECORD %s\n", res.Status, *id, strings.Join(res.Record, " "))
 	default:

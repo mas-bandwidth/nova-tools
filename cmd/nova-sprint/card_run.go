@@ -99,8 +99,7 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 6
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-sprint card: %s; run: nova-sprint help\n", oneline.Escape(err.Error()))
-		return 2
+		return refuse(stderr, "card", err.Error())
 	}
 	fmt.Fprintln(stdout, res.Line())
 	return res.Code

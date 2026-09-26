@@ -212,6 +212,44 @@ func TestRowanAuditSweep(t *testing.T) {
 	}
 }
 
+func rowanStore(t *testing.T) string {
+	t.Helper()
+	addr := testutil.Start(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	defer c.Close()
+	if err := fn.Load(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	return addr
+}
+
+// TestRowanAuditTaskDoneNotFoundIsNamed: ns_task_done answers NOTFOUND for a
+// task that does not exist, but task.Done (internal/nsprint/task/take.go:
+// 499-509) has no case for it, so the verb says `unexpected status
+// "NOTFOUND"; run: nova-sprint help` and exits 2 (could not run). Beat and
+// cancel name NOTFOUND. A FENCED done names neither the holder nor the state.
+func TestRowanAuditTaskDoneNotFoundIsNamed(t *testing.T) {
+	t.Setenv("NOVA_FRIEND", "rowan")
+	addr := rowanStore(t)
+	rc := redis.NewClient(&redis.Options{Addr: addr})
+	defer rc.Close()
+	if err := rc.SAdd(context.Background(), "friends", "rowan").Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runSprint("task", "done", "--redis", addr, "--sprint", "audit", "--id", "ghost", "--token", "t", "--evidence", "x")
+	all := out + errOut
+	if strings.Contains(all, "unexpected status") || !strings.Contains(all, "NOTFOUND") || !strings.Contains(all, "task list") {
+		t.Errorf("task done on a missing task: exit=%d stdout=%q stderr=%q; want DONE NOTFOUND id=ghost sprint=audit and an inspect verb", code, out, errOut)
+	}
+	if code, out, errOut := runSprint("task", "push", "--redis", addr, "--sprint", "audit", "--id", "t1", "--title", "x", "--kind", "work", "--author", "rowan"); code != 0 {
+		t.Fatalf("push: %d %q %q", code, out, errOut)
+	}
+	code, out, errOut = runSprint("task", "done", "--redis", addr, "--sprint", "audit", "--id", "t1", "--token", "stale", "--evidence", "x")
+	if code != 3 || !strings.Contains(out+errOut, "state=") {
+		t.Errorf("stale-token done: exit=%d stdout=%q stderr=%q; want FENCED with the task's state and holder and the verb that shows it", code, out, errOut)
+	}
+}
+
 // TestRowanAuditMissingFunctionNamesFnLoad: with no nova_sprint library on
 // the store, some forty verbs print `ERR Function not found; run: nova-sprint
 // help`; only census names the library. The remedy is `nova-sprint fn load
