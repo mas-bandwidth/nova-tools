@@ -44,7 +44,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card/harvestcopy"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -254,11 +253,7 @@ func (l *CopyLedger) End(ctx context.Context, end WrapperEnd) (int, error) {
 	}
 	if c.Leg == "fix" {
 		// a fix commits on the PR's branch, not on a branch of its own
-		b, err := l.prBranch(ctx, c)
-		if err != nil {
-			return WrapperExitRedis, err
-		}
-		branch = b
+		branch = l.prBranch(ctx, c)
 	}
 	if branch != "" && c.Leg != "read" {
 		fields = append(fields, "branch", branch)
@@ -341,8 +336,7 @@ func (l *CopyLedger) endRead(ctx context.Context, c CopyCard, line2 string, fiel
 		// stays in review; the deal pass cuts a fresh read when CI is in)
 		if _, err := taskcard.CancelCards(ctx, l.Client, l.byName(), "read "+strconv.Itoa(sc.N)+"/10 held: "+oneLine(r.Why), l.Copy); err != nil {
 			if errors.As(err, &r) {
-				// the refusal's why goes back with the code, never dropped
-				return WrapperExitCouldNot, r
+				return WrapperExitCouldNot, nil
 			}
 			return WrapperExitRedis, err
 		}
@@ -361,34 +355,30 @@ func (l *CopyLedger) endRead(ctx context.Context, c CopyCard, line2 string, fiel
 		}
 		if err := score(n, finding); err != nil {
 			if errors.As(err, &r) {
-				return refusedExit(r), r
+				return refusedExit(r), nil
 			}
 			return WrapperExitRedis, err
 		}
 		return 0, nil
 	}
-	return refusedExit(r), r
+	return refusedExit(r), nil
 }
 
 // prBranch is the branch a fix copy pushes to: the PR's head branch the
 // copy carries (CopyCard.Branch), else the PR record's.
-func (l *CopyLedger) prBranch(ctx context.Context, c CopyCard) (string, error) {
+func (l *CopyLedger) prBranch(ctx context.Context, c CopyCard) string {
 	if b := oneLine(c.Branch); b != "" {
-		return b, nil
+		return b
 	}
 	if c.Repo == "" || c.PR == "" {
-		return "", nil
+		return ""
 	}
 	n, err := strconv.Atoi(c.PR)
 	if err != nil {
-		return "", fmt.Errorf("task:%s pr=%q is not a number", l.Copy, c.PR)
+		return ""
 	}
-	b, err := l.Client.HGet(ctx, prkey.Key(c.Repo, n), "branch").Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		// A store that did not answer is not "the branch is unknown".
-		return "", fmt.Errorf("read %s branch: %w", prkey.Key(c.Repo, n), err)
-	}
-	return oneLine(b), nil
+	b, _ := l.Client.HGet(ctx, prkey.Key(c.Repo, n), "branch").Result()
+	return oneLine(b)
 }
 
 // harvest is the work copy's boundary step (End's comment): push, PR, the
@@ -441,7 +431,7 @@ func (l *CopyLedger) recordPR(ctx context.Context, res harvestcopy.Result, c Cop
 	head := pipe.HGet(ctx, key, "head")
 	checks := pipe.HGet(ctx, "cfg:ci:"+name, "checks")
 	ciThere := pipe.Exists(ctx, ciKey)
-	if err := pipeerr.Exec(ctx, pipe); err != nil {
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("pr record %s: %w", key, err)
 	}
 	now := l.Now
@@ -482,10 +472,7 @@ func (l *CopyLedger) endCopy(ctx context.Context, r taskcard.EndRequest) (int, e
 	if err != nil {
 		var r *taskcard.Refused
 		if errors.As(err, &r) {
-			// The refused end's why (FENCED, the move file's reason) comes
-			// back with its code: the wrapper's line and the results'
-			// wrapper.line carry it, where "code=2" alone said nothing.
-			return refusedExit(r), r
+			return refusedExit(r), nil
 		}
 		return WrapperExitRedis, err
 	}

@@ -23,6 +23,11 @@
 #                             do). They have a leg before they have a file, so the
 #                             first such test that lands runs the same night rather
 #                             than never.
+#   functional ubuntu         the tests that start a redis-server (#4328): run as
+#                             whole streams land, and here every night. Its leg
+#                             installs redis-server and sets NOVA_CI=1 so a missing
+#                             binary fails instead of skipping, and passes `slow`
+#                             too for the four files that are both.
 #   novadisk  macos           cmd/nova-sandbox's one real end-to-end run: a real APFS
 #                             volume made and destroyed. It is tagged off because
 #                             EIGHT CI runners share the Mac this tree is built on —
@@ -64,6 +69,9 @@ jobs:
             tag: soak
           - os: ubuntu-latest
             tag: nightly
+          - os: ubuntu-latest
+            tag: functional
+            tags: functional,slow
           - os: macos-latest
             tag: novadisk
     name: ${{ matrix.tag }} (${{ matrix.os }})
@@ -75,8 +83,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: install redis-server
+        if: matrix.tag == 'functional'
+        run: bash .github/scripts/install-redis-server.sh
+
       - name: tagged suite
-        run: go test -tags ${{ matrix.tag }} -count=1 ./...
+        env:
+          NOVA_CI: ${{ matrix.tag == 'functional' && '1' || '' }}
+        run: go test -tags ${{ matrix.tags || matrix.tag }} -count=1 ./...
 
   report:
     # ONE ISSUE PER DAY, not one per leg. The matrix jobs above are `failure()`

@@ -1,3 +1,5 @@
+//go:build functional
+
 package ci_test
 
 // Control 54 (nova-tools #3099, spec 10.13): a cancelled or timed-out CI leg

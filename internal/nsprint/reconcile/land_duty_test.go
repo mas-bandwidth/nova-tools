@@ -1,3 +1,5 @@
+//go:build functional
+
 package reconcile_test
 
 // The land duty (nova-tools #3898): a throwaway redis-server with the

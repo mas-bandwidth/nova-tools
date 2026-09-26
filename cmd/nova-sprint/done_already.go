@@ -31,37 +31,19 @@ func init() {
 	})
 }
 
-// doneAlreadyDuty prints one receipt line per card the pass acted on, and
-// one WAIT line per card when its reason first appears or changes (a forge
-// that refused the close, a mirror this host lacks, a git error): a card
-// the duty retries every DoneAlreadyEvery with no line was the silent
-// shape (Glenn 2026-09-26), so a WAIT is on stdout once per reason.
-type doneAlreadyDuty struct {
-	d    *reconcile.DoneAlready
-	last map[string]string // card -> the WAIT why last printed
-}
+// doneAlreadyDuty prints one receipt line per card the pass acted on.
+type doneAlreadyDuty struct{ d *reconcile.DoneAlready }
 
 func (dd *doneAlreadyDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
 	if l == nil {
 		return reconcile.Counts{}, fmt.Errorf("done-already: no lease")
 	}
-	if dd.last == nil {
-		dd.last = map[string]string{}
-	}
 	out, err := dd.d.Pass(ctx, l.Token())
 	c := reconcile.Counts{}
 	for _, o := range out {
-		key := o.Sprint + "/" + o.Label
-		switch o.Action {
-		case "CLOSED", "REFUSED":
+		if o.Action == "CLOSED" || o.Action == "REFUSED" {
 			c.Routed++
-			delete(dd.last, key)
 			fmt.Fprintln(os.Stdout, o.Line())
-		case "WAIT":
-			if dd.last[key] != o.Why {
-				dd.last[key] = o.Why
-				fmt.Fprintln(os.Stdout, o.Line())
-			}
 		}
 	}
 	return c, err

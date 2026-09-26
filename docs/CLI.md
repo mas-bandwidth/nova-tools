@@ -3749,9 +3749,9 @@ moves it to landed with `outcome=dropped` and closes its origin issue with
 the `REVIEW verdict=<v> by=<actor>: <why>` line. That line is on the record
 (`review`) and is carried to the card's next copy, whose card file says why
 it is back. One receipt line: `REVIEW POST id=<id> verdict=<v> to=<where>
-copy=<copy|-> [issue=<repo#n|-> closed=yes|no [err=<why>]] ms=<n>` (a close
-the forge refused says why, exit 1), or `REVIEW POST REFUSED id=<id>
-why=<why>` with exit 1 (a card not in review, a consumer with no slots).
+copy=<copy|-> [issue=<repo#n|-> closed=yes|no] ms=<n>`, or `REVIEW POST
+REFUSED id=<id> why=<why>` with exit 1 (a card not in review, a consumer
+with no slots).
 
 `table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...>`
 renders the #2674 port of rowan-tools `bin/sprint-table-redis` (the keys
@@ -4207,6 +4207,45 @@ nova-sprint table --seat studio --redis 100.115.99.19:6380 --once
 nova-sprint redis-cli --seat studio --redis 100.115.99.19:6380 -- ZCARD sprint:S:cards
 ```
 
+### Seat profiles: `nova-sprint --seat coordinator <verb>` and `nova-sprint redis`
+
+The seat is a fact of the machine, not of the shell (nova-tools #4330). The
+fleet play writes `$XDG_CONFIG_HOME/nova-sprint/seats.tsv` (else
+`~/.config/nova-sprint/seats.tsv`), one tab-separated row per seat: name, redis
+addr, redis user, secret env, store, key. Blank lines and `#` lines are
+skipped; a leading `~/` in store or key is `$HOME`. The key's file name names
+the seat's file in the store (`studio.key` opens `<store>/studio.yaml`).
+
+```
+coordinator	100.115.99.19:6380	coordinator	NOVA_REDIS_COORDINATOR_PASSWORD	~/nova-bench/secrets	~/.config/nova-secrets/studio.key
+```
+
+`nova-sprint --seat coordinator <verb>` (or `NOVA_SPRINT_SEAT=coordinator`,
+which wins over `NOVA_SEAT`) reads the row: the verb logs in as the row's user
+with the password the seat's file holds under the row's secret env, read in
+process through `internal/seatcred` as above (never printed, never in the
+environment). The row's address becomes the default of every verb whose
+`--redis` falls back to `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR` or `NOVA_REDIS`,
+and the address a store dial uses when its verb names none; a `--redis` on the
+line still wins. A seat with no row is the #4052 seat above; when that does not
+open either, the refusal names `seats.tsv` and the row it wants. A malformed
+row is refused before any verb runs, as `seats.tsv:<line>`, exit 2.
+
+`nova-sprint [--seat <name>] redis [--redis <host:port>] [--] <cmd...>` sends
+one raw command over the same dial (no redis-cli, the password never leaves the
+process) and prints the reply as redis-cli does to a pipe: one line per value,
+arrays and maps flattened (map keys sorted), nil an empty line. The receipt is
+one line on stderr, `REDIS seat=<s> user=<u> key=<k> addr=<a> cmd=<c> exit=0`;
+a Redis refusal (NOPERM, WRONGTYPE, NOAUTH, unreachable) prints `REDIS REFUSED
+... why=<error>` there and exits 1; 2 is could not run (no command, no
+address, a seat that cannot be read). The address is the row's, else
+`NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then `NOVA_REDIS`.
+
+```
+nova-sprint --seat coordinator redis ZCARD sprint:S:cards
+NOVA_SPRINT_SEAT=coordinator nova-sprint sprint status
+```
+
 ### `nova-sprint fleet build`
 
 `nova-sprint fleet build [--redis <addr>] [--bench <b>[,<b>...]] [--build-cmd <path>] [--machines <file>] [--dry-run]` is the fleet deploy (nova-tools #3310), with its whole plan in Redis: the `fleet:release` hash holds `version` (`v<x>.<y>.<z>-dev.<sha8>`), `commit` (the full sha of that `<sha8>`), `builder` (the bench that builds), `self` (this machine's bench name), an optional `tools` list (default `nova-sprint,nova-swarm,nova-card,nova-wake`) and `platform:<bench>` (`<goos>-<goarch>`) for every bench and for `self`; the `benches` set names where to install. One pipeline reads both, and a gap is refused (`FLEET BUILD REFUSED: <why> (<remedy>)`, exit 1) before any child starts. The run: the builder builds the release once for the distinct platforms, in one ssh session running the nova-sprint the last fleet build installed there (`ssh -n <builder> .local/bin/nova-sprint fleet build compile --version <v> --commit <sha> --platform <list>`, which skips a platform already built; `--build-cmd <path>` runs that command locally with rowan-tools' space-build argv `--host <builder> --version <v> --commit <sha> --platform <list>` instead), and the `BUILD OK` line carries its last line; every bench, in one ssh session each and all at once, rsyncs its platform's tools from `<builder>:nova-bench/release/<v>/<platform>/` (the builder from its own disk) into `~/.local/bin.new`, renames each into `~/.local/bin` and prints its `nova-sprint version` line; this machine does the same locally. Each target prints `OK|MISMATCH|FAIL <bench> platform=<p>: <detail>`; a target whose version line names the release gets its receipt in one pipeline, `bench:<b>` fields `build`, `build_sha`, `build_at`, and a failed or mismatched one keeps its old receipt. Last, the new nova-sprint here runs `fn deploy --redis <addr>`, so the store's function library is this release's. The final line is `FLEET BUILD OK version=<v> commit=<sha12> benches=<n> fn=ok` (exit 0) or `FLEET BUILD FAIL ... at=build|install|fn ok=<n> failed=<list>` (exit 1). `--dry-run` prints `WOULD BUILD`/`WOULD INSTALL` lines and starts nothing. `nova-sprint fleet build set [--redis <addr>] <key>=<value>...` validates and writes `fleet:release` fields in one HSET. `nova-sprint fleet build compile --version <v> --commit <sha40> [--platform <p>[,<p>...]] [--repo-url <url>] [--dry-run]` is the builder half (nova-tools #4080; internal/nsprint/fleetbuild/compile.go), space-build's steps in Go: a platform already published under `~/nova-bench/release/<v>/<p>/` whose SHA256SUMS verifies prints `OK <p>` and is not rebuilt; the commit and the v* tags are fetched from GitHub into `~/nova-bench/space-build/src/nova-tools` (the mirror only an object alternate); a missing linux-amd64 reference at `~/nova-bench/build/<v>` is built first (`REFERENCE BUILT ...`); every cmd/nova-* is built per platform with `CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=<v>"` under the reference's toolchain, headers checked, the linux-amd64 build held file for file to the reference's sha256 (`IDENTICAL`), and each platform renamed into the release root (`PUBLISHED`). Every go child runs with the build's OWN Go state, `GOMODCACHE=~/nova-bench/space-build/go/mod`, `GOCACHE=~/nova-bench/space-build/go/build` and `GOTOOLCHAIN=<the reference's toolchain>` (a downloaded toolchain lands in that module cache), on top of the sanitized environment, so it never shares a cache or a toolchain extraction with a CI runner on the same machine; `BUILT <v> platforms=<list> tools=<n> toolchain=<go> gomodcache=<dir> gocache=<dir> log=<file>` is the receipt, and the last line is `FLEET COMPILE OK <v> commit=<sha> platforms=<list> built=<list>|none [go=<dir>]` (exit 0) or `FLEET COMPILE REFUSED: <why> (<remedy>)` (exit 1); 2 is usage. The loops that run the old binaries are not restarted by this verb.
@@ -4219,9 +4258,31 @@ Since nova-tools #4050 nothing in the plan is typed. `land merge` of nova-tools 
 
 `nova-sprint fleet release <sha> [--redis <addr>] [--machines <file>] [--benches <a,b,...>] [--studio-only | --benches-only] [--admin-password-env NAME]` is the deploy of a landed dev tip as one verb (nova-tools #4306; internal/nsprint/fleetbuild/release.go): the six hand steps of 2026-09-26 in order, one receipt line each, refusing on the first failure with nothing after it run. `<sha>` is a landed dev commit, 8 to 40 hex digits; the version is `v0.16.0-dev.<sha8>`. The steps: `SOURCE <dir> <sha40>` (the clone under `~/nova-bench/release-src/nova-tools`, shallow and dev only, fetches dev, resolves the sha to its 40 digits and checks it out detached; a 40-digit sha outside dev's last 50 is fetched on its own); `BUILT <v> ~/.local/bin/nova-sprint.new` (`go build -trimpath -ldflags "-X main.version=<v>" ./cmd/nova-sprint` in that clone); `MOVED ~/.local/bin/nova-sprint <v>` (the new binary renamed over the live one, mv and never cp over a running binary, then `nova-sprint version` must name `<v>` or the run refuses); `KICKSTARTED <unit>` for `nova-sprint-reconciler`, `sprint-table-live` and `nova-sprint-bench-beat` (`launchctl kickstart -k gui/<uid>/com.nova.loop.<unit>` on darwin, `systemctl --user restart nova-loop-<unit>.service` on linux; a swapped binary leaves a running loop on the old code); `FN <receipt>` (`nova-sprint fn deploy --redis <addr>` run by the new binary as the Redis `admin` user, `NOVA_SPRINT_REDIS_USER=admin` with `NOVA_SPRINT_REDIS_PASSWORD_ENV` naming the variable `--admin-password-env` names, default `NS_ADMIN`; the coordinator seat may not `FUNCTION LOAD`, nova-tools #4175, and the password is never fetched by ssh); then the bench roll, `FLEET RELEASE SET version=<v> commit=<sha40>` (`fleet:release` written as `fleet build set` would), `CONVERGED ...` when the registry moves a field, and `fleet build` per pair of benches (seven at once hit the 80 s install bound; pairs install in 35-65 s) with its own `BUILD OK`, `MANIFEST` and `OK <bench>` lines, then each rolled bench's beat restarted over ssh (`BEAT <bench> restarted`: `systemctl --user restart nova-loop-nova-sprint-bench-beat.service` on linux, `sudo -n launchctl kickstart -k system/com.nova.loop.nova-sprint-bench-beat` on a darwin LaunchDaemon bench) and `ROLLED <bench> <v>`. The benches are `--benches`, else every machine of the registry (`--machines <file>`, else `$NOVA_FLEET_MACHINES`) with the `bench` role, in registry order; the registry's ssh column is the host. It is idempotent: a Studio whose live binary already answers `<v>` prints `SKIPPED studio <v>` and is neither built, moved nor kickstarted, and a bench whose beat already names `<v>` prints `SKIPPED <bench> <v>` and is not rolled, so a rerun after a failure does only what is left. With the admin password variable empty the FN step alone is refused, `FN REFUSED store=<addr> reason=no-admin-password env=NS_ADMIN remedy=export NS_ADMIN=$(ssh <stack host> 'sudo cat /var/lib/nova-redis/admin.pass'), then rerun ...`, and the rest still runs. `--studio-only` stops after FN and needs no store; `--benches-only` is the roll alone (with a 40-digit sha it touches neither git nor go). The last line is `FLEET RELEASE OK version=<v> commit=<sha12> studio=built|skipped|- fn=ok|- rolled=<n> skipped=<n>` (exit 0), `FLEET RELEASE FAIL ... fn=refused ...` (exit 1, the password remedy printed above it), or `FLEET RELEASE REFUSED: <why> (<remedy>)` on standard error (exit 1) at the step that failed; 2 is usage and 5 the store unreachable. `nova-sprint fleet release --bench <b>` with no sha is the older verb: it releases a held bench (the fleet state machine), and the two forms refuse each other's flags.
 
+### `nova-sprint self update`
+
+`nova-sprint self update [--sha <sha>] [--from <checkout>] [--allow-branch]` rebuilds this machine's own nova-sprint and installs it by rename (nova-tools #4337; internal/nsprint/fleetbuild/selfupdate.go): the coordinator's hand rebuild after every landing, as one verb. The fleet play does the benches; this verb does the machine it runs on. With no `--from` it builds in the release clone `fleet release` uses (`~/nova-bench/release-src/nova-tools`, fetched from dev) at `--sha`, or at dev's tip when none is given; with `--from <checkout>` it builds that checkout as it stands (it runs `git fetch origin dev` there and never checks anything out), and a `--sha` that is not the checkout's HEAD is refused. The receipt lines: `SOURCE <dir> <sha40>`; `TOOLCHAIN <go> from <go.mod>` (the module's pinned Go: its `toolchain` line, else its `go` line, handed to the build as `GOTOOLCHAIN`); `BUILT <v> <temp>` (`go build -trimpath -ldflags "-X main.version=<v>" ./cmd/nova-sprint` into a temp file beside the live binary, which must answer `<v>` before anything is installed); `MOVED ~/.local/bin/nova-sprint <v>` (the temp file renamed over the live binary, then the binary must answer `<v>`). The install is a rename and nothing else, so a process running the old binary keeps its file; the verb holds no code that writes into the live binary, and a class test keeps it that way. `<v>` is `v0.16.0-dev.<sha8>` for a commit on origin/dev (the version `fleet release` stamps, so it sees this machine already current); a commit off dev, or a `--from` tree with uncommitted edits, is refused unless `--allow-branch`, which stamps `-branch.<sha8>` and `-dirty`. A live binary already answering `<v>` is not rebuilt: `SELF UPDATE SKIPPED <bin> already answers <v> commit=<sha12>`. The last line is `SELF UPDATE OK <old> -> <new> commit=<sha12> toolchain=<go> bin=<bin>` (exit 0; `<old>` is `none` when no binary answered), or `SELF UPDATE REFUSED: <why> (<remedy>)` on standard error (exit 1, nothing installed); 2 is usage. The loops on this machine keep running the old binary until kickstarted; `fleet release <sha> --studio-only` builds, moves and kickstarts.
+
 ### `nova-sprint fleet churn`
 
 `nova-sprint fleet churn [--seconds 12] [--machines <file>] [--only <a,b,...>]` is the process-age sample as a verb (nova-tools #4310; internal/nsprint/fleet/churn.go): finding the relaunch churn (a bench-row every second, a ci-run dead and relaunched, a grok heartbeat) took a hand `ps` per machine. It runs one sample on every machine of the registry (`--machines <file>`, else `$NOVA_FLEET_MACHINES`; `--only` narrows to the names given and refuses one the registry lacks), all at once, over the registry's ssh column (`ssh -n -o BatchMode=yes -o ConnectTimeout=6 <host> <ps>`; a machine whose ssh column is `localhost` is sampled without ssh): `ps -eo pid,etimes,ppid,comm` on linux, `ps -Ao pid,etime,ppid,comm` on darwin with `[[dd-]hh:]mm:ss` parsed to seconds, a path reduced to its base name and a login shell's leading `-` dropped. Per machine, in registry order, it prints one `<machine> young <command> <n>` line per command with a process younger than `--seconds` (most first), one `<machine> old pid=<pid> age=<n>d comm=<command>` line per process older than a day whose parent is 1, and last `CHURN <machine> young=<n> old=<n>` (young counts processes, not commands). The sample's own pipeline is left out: `ps`, `awk`, `sshd`, and the shell `ps` runs under. A machine whose sample fails prints `CHURN <machine> FAIL <why>` (an ssh error, a bad ps line, or an os/arch that is neither linux nor darwin) and the verb goes on to the rest. Exit 0 every machine answered, 1 a machine failed, 2 usage or no registry.
+
+### `nova-sprint acl check`
+
+`nova-sprint acl check [--redis <addr>] [--rows <file>] [--admin-password-env NAME]` is the store's live Redis ACL against the declared users (nova-tools #4333; internal/nsprint/acl): one `ACL LIST`, read as the `admin` user with the password from the variable `--admin-password-env` names (default `NS_ADMIN`; the password lives on the store, `/var/lib/nova-redis/admin.pass`, and is never a flag), diffed against the rows file. It replaces the hand `ACL SETUSER` of apply-acl.sh and fix-acl.py: drift is one command away and is never fixed by hand.
+
+The rows file (`--rows`, default `/var/lib/nova-redis/acl-rows.tsv`, which the play installs beside the server) is one declared user per line, `<user>` TAB `<rules>`, where `<rules>` is the ACL SETUSER rule list after the password: `rowan-tools/fleet/redis.yml` `redis_users` rules, each line of `rowan-tools/fleet/templates/redis-acl.rules` (its first space a tab), and `default` with the `off ~* &* +@all` the play writes first. A leading `on` or `off` is the user's state (default `on`); `#` lines and blank lines are skipped; a password token (`>`, `<`, `#`, `!`, `nopass`, `resetpass`) is refused, as are a duplicate user and an unknown rule, each naming its line. `internal/nsprint/acl/testdata/acl-rows.tsv` is the mirror of `rowan-tools/fleet/redis.yml` at 2026-09-26.
+
+The comparison is by rule tokens, not text, because `ACL LIST` prints rules in its own canonical order: `resetkeys`/`resetchannels`/`reset`, a user's leading `-@all`, `sanitize-payload` and password hashes carry no grant and are dropped; `allkeys`, `allchannels`, `allcommands`, `nocommands` read as `~*`, `&*`, `+@all`, `-@all`; `%RW~k` reads as `~k`; commands are lower-cased (keys and channels are not); a selector `( ... )` is one token. Each drifted user prints one line, declared users in rows order, then users the server holds that no row declares:
+
+```
+ACL DRIFT user=bench missing="~cfg:deal" extra="+sort"
+ACL DRIFT user=viewer state=off want=on
+ACL DRIFT user=ns-deploy absent=live
+ACL DRIFT user=ghost absent=declared
+ACL CHECK DRIFT store=127.0.0.1:6380 drifted=4 users=12 rows=/var/lib/nova-redis/acl-rows.tsv converge="make -C rowan-tools/fleet store"
+```
+
+`missing` is what the row grants and the live user lacks, `extra` what the live user holds beyond the row. No drift is `ACL CHECK OK store=<addr> users=<n> rows=<file>`. `acl check --fix` is refused, `REFUSED acl check --fix: the play is the only writer of the store's ACL, never a hand ACL SETUSER; run: make -C rowan-tools/fleet store`: the play writes `users.acl` from the declared users and applies it with `ACL LOAD`. A rows file, password or store that cannot be read is `ACL CHECK REFUSED ... reason=... remedy=...` on standard error. Exit 0 no drift, 1 drift, 2 could not check (or `--fix`).
 
 ### Cutting a card from an issue: `nova-sprint card cut`
 

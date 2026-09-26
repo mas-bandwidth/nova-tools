@@ -1,3 +1,5 @@
+//go:build functional
+
 package land_test
 
 import (

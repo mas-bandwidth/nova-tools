@@ -1,4 +1,4 @@
-//go:build slow
+//go:build slow && functional
 
 // The tests of this package that cost more than the per-commit run can pay:
 // over five seconds each on the Linux bench, or a deadline, wedge or wall-clock

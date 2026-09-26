@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 // nova-tools #3634 ("Studio is for friends. Fleet is for CI and swarms."):

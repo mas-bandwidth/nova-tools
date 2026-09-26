@@ -1,3 +1,5 @@
+//go:build functional
+
 package disposition_test
 
 import (

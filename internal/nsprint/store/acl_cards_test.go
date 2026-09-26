@@ -1,3 +1,5 @@
+//go:build functional
+
 package store_test
 
 import (

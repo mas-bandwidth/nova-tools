@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 // nova-tools#3370: a SPEC line's facts (who, rev, score, stream) go to Redis

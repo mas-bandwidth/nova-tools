@@ -14,6 +14,7 @@ import (
 // A verb added to the registry fails TestEveryVerbHasHelpCase until it is
 // listed here (#3254).
 var helpCases = [][]string{
+	{"acl", "check"},
 	{"adopt", "receipt"}, {"adopt", "matrix"}, {"adopt", "status"},
 	{"backpressure", "check"},
 	{"bench", "beat"}, {"bench", "release"}, {"bench", "reindex"}, {"bench", "ls"},
@@ -43,7 +44,7 @@ var helpCases = [][]string{
 	{"hold", "ingest"}, {"hold", "show"}, {"hold", "release"}, {"hold", "route"},
 	{"idem", "resolve"},
 	{"jev", "mech"},
-	{"redis-cli"},
+	{"redis-cli"}, {"redis"},
 	{"land"}, {"land", "status"}, {"land", "flaky", "list"}, {"land", "flaky", "observe"}, {"land", "writer"}, {"land", "eval"}, {"land", "stream"},
 	{"land", "merge"}, {"land", "pr"}, {"land", "run"}, {"land", "offer"}, {"land", "list"},
 	{"lander"},
@@ -62,6 +63,7 @@ var helpCases = [][]string{
 	{"result", "contract"}, {"result", "check"}, {"result", "show"}, {"result", "disposition"},
 	{"rote"}, {"route", "report"}, {"routes"},
 	{"scope", "keep"}, {"scope", "park"}, {"scope", "unpark"}, {"scope", "ls"},
+	{"self", "update"},
 	{"spec", "mark"}, {"spec", "list"},
 	{"sprint", "open"}, {"sprint", "close"}, {"sprint", "status"},
 	{"stream", "ls"}, {"stream", "order"}, {"stream", "rename"},
