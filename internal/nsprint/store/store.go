@@ -106,6 +106,18 @@ func isNoAuth(err error) bool {
 // noRetryWaits is set by NoRetryWaits and never cleared.
 var noRetryWaits atomic.Bool
 
+// lastOpened is the address the last open in this process dialed. A Redis
+// error names no address ("ERR Function not found", "NOPERM ..."), so the
+// CLI's shared refusal (cmd/nova-sprint refuse) reads it to print the remedy
+// with the store it was talking to: nova-sprint fn load --redis <addr>.
+var lastOpened atomic.Value
+
+// LastOpened is the address the last open in this process dialed, or "".
+func LastOpened() string {
+	v, _ := lastOpened.Load().(string)
+	return v
+}
+
 // NoRetryWaits makes every client Open and OpenSingle build from now on retry a
 // refused dial or command WITHOUT WAITING between attempts. It is for test
 // binaries: go-redis waits 100 ms between each of five dial attempts and backs
@@ -162,6 +174,7 @@ func openWith(ctx context.Context, addr string, sel *seatcred.Selection, tune fu
 	if err != nil {
 		return nil, err
 	}
+	lastOpened.Store(addr)
 	// No PING (#3277): go-redis dials on the first command, so the caller's
 	// first pipeline is the probe and an unreachable store fails there.
 	opts := &redis.Options{Addr: addr, Username: user, Password: password}

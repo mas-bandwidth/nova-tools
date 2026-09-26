@@ -15,8 +15,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
@@ -119,13 +121,39 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	}
 }
 
+// refuse is the one refusal line every verb prints on stderr: the verb, the
+// cause, and the next verb. The cause is read for the store's own errors
+// (storeRefusal) so a missing function library is answered with the same
+// remedy on every verb; anything else ends with the help door and exit 2.
 func refuse(stderr io.Writer, verb, what string) int {
 	where := ""
 	if verb != "" {
 		where = " " + verb
 	}
-	fmt.Fprintf(stderr, "nova-sprint%s: %s; run: nova-sprint help\n", where, oneline.Escape(what))
-	return 2
+	line, code := storeRefusal(what)
+	fmt.Fprintf(stderr, "nova-sprint%s: %s\n", where, oneline.Escape(line))
+	return code
+}
+
+// storeRefusal reads a refusal's cause for the store's own errors and gives
+// each class one remedy and one exit code, whichever verb hit it: the
+// nova_sprint function library not loaded on the store ("ERR Function not
+// found") is `nova-sprint fn load --redis <addr>`, exit 2. The address is the
+// one this process last opened (store.LastOpened), since Redis's error names
+// none; with no open yet the remedy spells the flag.
+func storeRefusal(what string) (string, int) {
+	addr := store.LastOpened()
+	flag := "--redis <addr>"
+	at := "the store"
+	if addr != "" {
+		flag, at = "--redis "+addr, addr
+	}
+	switch {
+	case strings.Contains(what, "Function not found"):
+		return what + "; the nova_sprint function library is not loaded on " + at +
+			"; run: nova-sprint fn load " + flag + " (nova-sprint doctor " + flag + " shows the store)", 2
+	}
+	return what + "; run: nova-sprint help", 2
 }
 
 func cmdRefresh(args []string, stdout, stderr io.Writer) int {
