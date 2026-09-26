@@ -18,6 +18,14 @@
 # already here, and the 72 rows marked "seed #4413" grandfather the 85 waits in
 # functions no SLEEPS row named (where = the first wait and how many more).
 #
+# THE COUNT (ci-sleeps-ratchet): the line below is the number of SLEEPS rows, the
+# tree's t.Skip("SLEEPS: ...") tests, and the day it was measured. internal/ci
+# TestSleepsSkipsOnlyFall counts the tree and reads this line with no git in
+# between: a count over it is red on any tree, a ledger row written in the same
+# change or not; a count under it is red until the line is lowered in the same
+# change. The number only falls.
+# sleeps: 85 2026-09-26
+#
 # IT ONLY SHRINKS. internal/ci holds this file to the tree both ways
 # (TestSleepsLedgerIsTheTreesSleepsSkips: a SLEEPS skip or wait with no row, or a
 # row that names neither, is red) and to its merge base

@@ -2527,6 +2527,44 @@ code under test (a production retry that sleeps) is invisible to it, and the
 printed CI-SLOW line and the nightly enforcing run are the net under that. A
 context deadline handed to the code under test and waited on there is not seen.
 
+### `sleeps` — the count of SLEEPS skips only falls, with no git in the verdict
+
+**The rule.** The SLEEPS ledger carries one `# sleeps: <count> <YYYY-MM-DD>`
+line. The tree's `t.Skip("SLEEPS: ...")` tests under `cmd/`, `internal/` and
+`tools/` (outside testdata) are counted with the ledger's own reader
+(`treeSleepsSkips`, so the two never disagree on what a SLEEPS skip is), and a
+count over the line is red on any tree, whether or not the change wrote its
+ledger row too; a count under the line is red until the line is lowered in the
+same change.
+**The hurt.** Glenn, 2026-09-25: a unit test never waits on the wall clock; the
+tests that did were skipped in one change (#4221), so the debt is countable and
+the count only falls (#4312, PR #4321). On dev the `unitwaits` ledger refuses a
+row its merge base lacks by reading git (`TestSleepsLedgerOnlyShrinksAgainstTheMergeParent`:
+a merge base with origin/dev, or HEAD's first parent), which is a verdict about
+a checkout, not a tree: a depth-1 checkout is a Fatal there, and its control is
+functional-tier. Card ci-sleeps-ratchet (2026-09-26) asked for the same
+invariant as a static class test.
+**The test.** `TestSleepsSkipsOnlyFall` (`internal/ci/sleeps_class_test.go`),
+with `TestSleepsRatchetIsRedOnOneAddedSkipAndGreenOnDev` (the DONE-WHEN over
+the real tree and the real ledger: at the line green, one over red naming the
+ledger and the rule, one under red with the line to write) and
+`TestSleepsCountLineIsExactlyOne` (the line's reader: one spelling; no line, two
+lines, a bad count or a bad date is an error, never a zero).
+**Its allowlist.** The `# sleeps:` line of `internal/ci/sleeps-skips_allowlist.txt`
+(the `unitwaits` ledger); the number only falls.
+**Its remedy lines.** `a test that waits on the wall clock is not skipped, it
+gets an injected clock and asserts the transition, or it becomes a functional
+test (#4221). The count only falls, and a ledger row written in the same change
+does not raise it`; for a count under the line, `tighten the ratchet in the
+same change: write # sleeps: <count> <date> as the one # sleeps: line of
+internal/ci/sleeps-skips_allowlist.txt`.
+**Its narrowings.** It counts what `sleepsSkippers` sees: a top-level `Test`
+function whose body calls `.Skip` with a string literal starting with
+`SLEEPS:`. `Skipf`, a skip in a helper or a method, and a reason built from a
+constant are not counted (and are not on the ledger either). A count is not a
+set: a skip removed and a skip added in one change is at the line here, and it
+is the ledger's per-row rules that catch it.
+
 ### `allowlist` — every list is read through the one helper
 
 **The rule.** Every list file under `internal/ci/testdata/` (`*allowlist*.txt`,
