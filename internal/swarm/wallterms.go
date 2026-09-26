@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 )
 
 // THE HARNESS WALL (S7, nova-tools#2498). Johnny owns the terms; Rowan owns the
@@ -314,16 +315,16 @@ func literalDir(glob string) string {
 	return strings.Join(lit, "/")
 }
 
+// testPackageGlobs is the test files of the package TEST names, read through
+// cardhdr.ParseTest, the one TEST grammar (nova-tools#4401 read, item 3): a
+// tagged line's package is the one after -tags, and `none <why>` or a line
+// ParseTest refuses names no package.
 func testPackageGlobs(testLine string) []string {
-	testLine = strings.TrimSpace(testLine)
-	if testLine == "" || testLine == "none" {
+	tl, why := cardhdr.ParseTest(testLine)
+	if why != "" || tl.None {
 		return nil
 	}
-	fields := strings.Fields(testLine)
-	if len(fields) == 0 {
-		return nil
-	}
-	pkg := strings.TrimPrefix(fields[0], "./")
+	pkg := strings.TrimPrefix(tl.Package, "./")
 	pkg = strings.TrimSuffix(pkg, "/")
 	if pkg == "" || strings.Contains(pkg, "..") {
 		return nil
