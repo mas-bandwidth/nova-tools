@@ -10,6 +10,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -136,8 +137,8 @@ func TestCardCutFromLedgerFilesNothingTwice(t *testing.T) {
 	if ttl := client.TTL(ctx, key).Val(); ttl != -1 {
 		t.Fatalf("%s has a TTL %v; keys do not expire", key, ttl)
 	}
-	if n := client.ZCard(ctx, taskcard.StreamKey("ledger", "waiting")).Val(); n != 5 {
-		t.Fatalf("ws:ledger:waiting holds %d, want 5", n)
+	if n, _ := ws.CardCount(ctx, client, "ledger", "waiting"); n != 5 { // the cards, the stream's stop aside (#4318)
+		t.Fatalf("ws:ledger:waiting holds %d cards, want 5", n)
 	}
 	for id, ref := range map[string]string{"base": "#5000", "nova-tools-5001": "#5001", "nova-tools-5004": "#5004"} {
 		if got := client.HGet(ctx, taskcard.Key(id), "ref").Val(); got != "mas-bandwidth/nova-tools"+ref {

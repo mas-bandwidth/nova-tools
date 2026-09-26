@@ -141,8 +141,9 @@ function W.park(stream, by, why, now)
   local n = 0
   for _, from in ipairs({ 'waiting', 'ready' }) do
     for _, id in ipairs(redis.call('ZRANGE', W.key(stream, from), 0, -1)) do
-      if not NS.task.move(id, 'parked', { by = by, why = why, fields = { 'parked_from', from } }) then
-        n = n + 1
+      if not NS.task.move(id, 'parked', { by = by, why = why, fields = { 'parked_from', from } }) and
+          not NS.task.is_sentinel(id) then
+        n = n + 1 -- the stop parks with its stream, uncounted (#4318)
       end
     end
   end
@@ -178,7 +179,7 @@ local function ws_unpark_stream(keys, args)
     end
     if not NS.task.move(id, to, { by = by, why = why }) then
       redis.call('HDEL', 'task:' .. id, 'parked_from')
-      n = n + 1
+      if not NS.task.is_sentinel(id) then n = n + 1 end
     end
   end
   return { 'UNPARKED', n }
@@ -225,9 +226,14 @@ local function ws_rename(keys, args)
   if redis.call('SISMEMBER', 'ws:names', new) == 1 then
     return { 'REFUSED', 'stream ' .. new .. ' exists' }
   end
-  local serr = NS.task.slug_clash(new)
-  if serr then
-    return { 'REFUSED', serr }
+  -- The same slug (a display change) keeps the stream's stop; another slug
+  -- ends the old stop and the new name gets its own (#4318).
+  local same_slug = NS.task.slug(old) ~= '' and NS.task.slug(old) == NS.task.slug(new)
+  if not same_slug then
+    local serr = NS.task.slug_clash(new)
+    if serr then
+      return { 'REFUSED', serr }
+    end
   end
   for _, state in ipairs(W.WHERE) do
     if redis.call('EXISTS', W.key(new, state)) == 1 then
@@ -244,27 +250,44 @@ local function ws_rename(keys, args)
       end
     end
   end
-  -- The old name's sentinel (#4318, its id carries the old slug) ends as
-  -- done/fail under the new name; the new name's sentinel is created as the
-  -- first member's move registers the stream.
-  local n = 0
+  -- The old name's sentinel (#4318, its id carries the old slug) ends under
+  -- the new name: done/fail from waiting or parked, done/ok from landed (the
+  -- new name's stop then lands at the same sha); the new name's sentinel is
+  -- created as the first move registers the stream. With the same slug the
+  -- one stop moves with its stream.
+  if same_slug then
+    redis.call('SET', 'ws:slug:' .. NS.task.slug(new), new)
+  end
+  local n, landed_sha = 0, nil
+  local why_new = 'rename: stream ' .. old .. ' is ' .. new .. '; its sentinel is ' .. NS.task.sentinel_id(new)
   for _, state in ipairs(W.WHERE) do
     for _, id in ipairs(redis.call('ZRANGE', W.key(old, state), 0, -1)) do
       local err
-      if NS.task.is_sentinel(id) and (state == 'waiting' or state == 'parked') then
-        err = NS.task.move(id, 'done', { by = by, ok = 'fail', stream = new, rename = true,
-          why = 'rename: stream ' .. old .. ' is ' .. new .. '; its sentinel is ' .. NS.task.sentinel_id(new) })
+      if NS.task.is_sentinel(id) and not same_slug and (state == 'waiting' or state == 'parked') then
+        err = NS.task.move(id, 'done', { by = by, ok = 'fail', stream = new, rename = true, why = why_new })
+      elseif NS.task.is_sentinel(id) and not same_slug and state == 'landed' then
+        landed_sha = redis.call('HGET', 'task:' .. id, 'merge_sha')
+        err = NS.task.move(id, 'done', { by = by, ok = 'ok', stream = new, rename = true, why = why_new })
       else
-        err = NS.task.move(id, state, { by = by, why = 'rename', stream = new })
+        err = NS.task.move(id, state, { by = by, why = 'rename', stream = new, rename = true })
       end
       if err then
         return { 'REFUSED', err }
       end
-      n = n + 1
+      if not NS.task.is_sentinel(id) then n = n + 1 end
+    end
+  end
+  if landed_sha and landed_sha ~= '' then
+    local nsid = NS.task.sentinel_id(new)
+    if redis.call('EXISTS', 'task:' .. nsid) == 1 then
+      local err = NS.task.move(nsid, 'landed', { by = by, sha = landed_sha, why = 'rename: landed as ' .. old })
+      if err then
+        return { 'REFUSED', err }
+      end
     end
   end
   local rank = redis.call('ZSCORE', 'ws:order', old)
-  if NS.task.slug(old) ~= '' and redis.call('GET', 'ws:slug:' .. NS.task.slug(old)) == old then
+  if not same_slug and NS.task.slug(old) ~= '' and redis.call('GET', 'ws:slug:' .. NS.task.slug(old)) == old then
     redis.call('DEL', 'ws:slug:' .. NS.task.slug(old))
   end
   redis.call('SREM', 'ws:names', old)

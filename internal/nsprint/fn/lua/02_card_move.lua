@@ -1379,8 +1379,17 @@ function TK.edge(id, cur, nxt, ok, o)
   -- not done by task done, cancel or sprint clear, and no friend.
   if TK.is_sentinel(id) then
     if nxt.friend ~= '' then return 'SENTINEL task:' .. id .. ' is nobody\'s: the stream stop has no friend' end
+    -- the stop is its stream's: no move takes it to another stream, or to
+    -- none (a rename carries it with the stream)
+    if nxt.stream ~= cur.stream and not o.rename then
+      return 'SENTINEL task:' .. id .. ' keeps its stream ' .. cur.stream .. ' (only nova-sprint stream rename moves it), not ' ..
+        (nxt.stream == '' and 'no stream' or nxt.stream)
+    end
     if from == to then
       if to == 'done' and ok ~= cur.ok then return 'SENTINEL task:' .. id .. ' keeps its outcome (' .. cur.ok .. ')' end
+      if #(o.fields or {}) > 0 then
+        return 'SENTINEL task:' .. id .. ' carries no fields (task block, unblock and front are for cards)'
+      end
       return nil
     end
     if from == '' then
@@ -1409,6 +1418,7 @@ function TK.edge(id, cur, nxt, ok, o)
     end
     if to == 'done' then
       if o.rename and ok == 'fail' and (from == 'waiting' or from == 'parked') then return nil end
+      if o.rename and ok == 'ok' and from == 'landed' then return nil end
       return 'SENTINEL task:' .. id .. ' ends only when its stream is renamed (nova-sprint stream rename); it lands ' ..
         '(task land --id ' .. id .. ' --sha <merge sha>) once every other card of stream ' .. cur.stream .. ' has'
     end
@@ -2004,13 +2014,27 @@ function TK.fsck(S)
   end
   for _, s in ipairs(streams) do
     for _, w in ipairs(TK.WHERE) do sweep('ws:' .. s .. ':' .. w, 'stream', s, w) end
-    -- the stream's stop (#4318): waiting, parked or landed, else missing
+    -- the stream's stop (#4318): waiting, parked or landed, in its own
+    -- stream, else missing; another stream's stop in one of s's sets is
+    -- named too
     local sid = TK.sentinel_id(s)
     if sid ~= '' then
-      local w = TK.str(redis.call('HGET', 'task:' .. sid, 'where'))
+      local f = redis.call('HMGET', 'task:' .. sid, 'where', 'stream')
+      local w, st = TK.str(f[1]), TK.str(f[2])
       if w ~= 'waiting' and w ~= 'parked' and w ~= 'landed' then
         note('NOSENTINEL stream=' .. s .. ' id=' .. sid .. (w == '' and ' (no record' or ' (' .. w) ..
           '; nova-sprint task fsck --repair creates it)')
+      elseif st ~= s then
+        note('NOSENTINEL stream=' .. s .. ' id=' .. sid .. ' (sits in stream ' .. st ..
+          '; nova-sprint task fsck --repair moves it home)')
+      end
+    end
+    for _, w in ipairs(TK.WHERE) do
+      for _, id in ipairs(redis.call('ZRANGE', 'ws:' .. s .. ':' .. w, 0, -1)) do
+        if TK.is_sentinel(id) and id ~= sid then
+          note('SENTINEL ' .. id .. ' in ws:' .. s .. ':' .. w .. ' is another stream\'s stop (' ..
+            TK.str(redis.call('GET', 'ws:slug:' .. string.sub(id, 1, -10))) .. '); nova-sprint task fsck --repair moves it home')
+        end
       end
     end
   end
@@ -4214,13 +4238,22 @@ redis.register_function('ns_tcard_sentinels', function(keys, args)
   for _, s in ipairs(list) do
     local sid = TK.sentinel_id(s)
     if sid ~= '' then
-      local w = TK.str(redis.call('HGET', 'task:' .. sid, 'where'))
+      local f = redis.call('HMGET', 'task:' .. sid, 'where', 'stream')
+      local w, st = TK.str(f[1]), TK.str(f[2])
       if w ~= 'waiting' and w ~= 'parked' and w ~= 'landed' then
         missing[#missing + 1] = s
         missing[#missing + 1] = sid
         if write and not TK.slug_clash(s) then
           cm_sentinel(s)
           if TK.str(redis.call('HGET', 'task:' .. sid, 'where')) == 'waiting' then created = created + 1 end
+        end
+      elseif st ~= s then
+        -- a stop sitting in another stream's set (a record edited by hand)
+        -- goes home, where it is, through the one move
+        missing[#missing + 1] = s
+        missing[#missing + 1] = sid
+        if write and not TK.move(sid, w, { by = 'fsck', why = 'sentinel home', stream = s, rename = true }) then
+          created = created + 1
         end
       end
     end

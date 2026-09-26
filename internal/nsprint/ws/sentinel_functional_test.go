@@ -286,3 +286,137 @@ func TestSentinelIsStructure(t *testing.T) {
 		t.Fatalf("stream order registered fleet: stop where %q, want waiting", w)
 	}
 }
+
+// TestSentinelKeepsItsStream (the re-read of #4369): no move takes a stop to
+// another stream or to none, a move that stays in place carries no fields,
+// task fsck names a stop sitting in another stream's set and the repair
+// walk moves it home, scope park and unpark count cards only, a rename that
+// keeps the slug keeps the stop, and a rename of a landed stream ends the
+// old stop done/ok and lands the new name's at the same sha, leaving no
+// empty waiting stop and nothing extra in the landed count.
+func TestSentinelKeepsItsStream(t *testing.T) {
+	t.Parallel()
+	_, c := wstest.Start(t)
+	ctx := context.Background()
+	const alpha, beta = "alpha", "beta"
+	snPush(t, c, "A", alpha, "")
+	snPush(t, c, "B", beta, "")
+	sid := ws.SentinelID(alpha)
+	for name, err := range map[string]error{
+		"to another stream": func() error {
+			_, err := taskcard.Move(ctx, c, sid, "waiting", taskcard.Opts{By: "test", Stream: beta, SetStream: true})
+			return err
+		}(),
+		"to no stream": func() error {
+			_, err := taskcard.Move(ctx, c, sid, "waiting", taskcard.Opts{By: "test", Stream: "", SetStream: true})
+			return err
+		}(),
+		"task block": func() error {
+			_, err := taskcard.Move(ctx, c, sid, "waiting", taskcard.Opts{By: "test", Why: "on x", Fields: []string{"blocked_on", "x"}})
+			return err
+		}(),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "SENTINEL task:"+sid) {
+			t.Errorf("%s: %v, want a SENTINEL refusal", name, err)
+		}
+	}
+	if st, _ := c.HGet(ctx, "task:"+sid, "stream").Result(); st != alpha {
+		t.Fatalf("stop stream %q after refused moves", st)
+	}
+	// a stop planted in another stream by hand: fsck names it twice (alpha's
+	// missing, beta holding it) and the repair walk moves it home
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	score := c.ZScore(ctx, ws.Key(alpha, "waiting"), sid).Val()
+	must(c.ZRem(ctx, ws.Key(alpha, "waiting"), sid).Err())
+	must(c.ZAdd(ctx, ws.Key(beta, "waiting"), redis.Z{Score: score, Member: sid}).Err())
+	must(c.HSet(ctx, "task:"+sid, "stream", beta).Err())
+	r, err := taskcard.Fsck(ctx, c, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Join(r.Lines, "\n")
+	if r.Drift != 2 || !strings.Contains(lines, "NOSENTINEL stream=alpha id="+sid+" (sits in stream beta; nova-sprint task fsck --repair moves it home)") ||
+		!strings.Contains(lines, "SENTINEL "+sid+" in ws:beta:waiting is another stream's stop (alpha); nova-sprint task fsck --repair moves it home") {
+		t.Fatalf("fsck over a planted stop: drift=%d\n%s", r.Drift, lines)
+	}
+	sw, err := taskcard.SentinelsWalk(ctx, c, true)
+	if err != nil || len(sw.Missing) != 1 || sw.Missing[0].Stream != alpha || sw.Created != 1 {
+		t.Fatalf("repair walk: %+v %v", sw, err)
+	}
+	if r, err := taskcard.Fsck(ctx, c, "s1"); err != nil || r.Drift != 0 {
+		t.Fatalf("fsck after the repair: %+v %v", r, err)
+	}
+	if st, _ := c.HGet(ctx, "task:"+sid, "stream").Result(); st != alpha {
+		t.Fatalf("stop stream %q after the repair, want alpha", st)
+	}
+	if err := ws.Check(ctx, c, []string{"A", "B", sid, ws.SentinelID(beta)}); err != nil {
+		t.Fatalf("invariant: %v", err)
+	}
+
+	// scope park and unpark count cards: the stop parks with its stream
+	snPush(t, c, "A2", alpha, "")
+	if n, err := ws.ParkStream(ctx, c, alpha, "test", "scope"); err != nil || n != 2 {
+		t.Fatalf("park: %d %v, want 2 cards", n, err)
+	}
+	if w, _ := c.HGet(ctx, "task:"+sid, "where").Result(); w != "parked" {
+		t.Fatalf("stop where %q after park, want parked", w)
+	}
+	if n, err := ws.UnparkStream(ctx, c, alpha, "test", "scope"); err != nil || n != 2 {
+		t.Fatalf("unpark: %d %v, want 2 cards", n, err)
+	}
+
+	// the same slug keeps the stop: no SLUG refusal, no done entry
+	if _, err := ws.Rename(ctx, c, alpha, "Alpha", "test"); err != nil {
+		t.Fatalf("rename to the same slug: %v", err)
+	}
+	if h := c.HGetAll(ctx, "task:"+sid).Val(); h["stream"] != "Alpha" || h["where"] != "waiting" {
+		t.Fatalf("stop after the same-slug rename: %v", h)
+	}
+	if n, _ := c.ZCard(ctx, ws.Key("Alpha", "done")).Result(); n != 0 {
+		t.Fatal("the same-slug rename ended the stop")
+	}
+	if owner, _ := c.Get(ctx, "ws:slug:alpha").Result(); owner != "Alpha" {
+		t.Fatalf("ws:slug:alpha %q, want Alpha", owner)
+	}
+
+	// a landed stream renamed to another slug: the old stop ends done/ok,
+	// the new name's stop lands at the same sha, the landed count is the cards
+	snPush(t, c, "G", "gamma", "")
+	gsid := ws.SentinelID("gamma")
+	if _, err := taskcard.Move(ctx, c, "G", "ready", taskcard.Opts{By: "test", Why: "deps met"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Move(ctx, c, "G", "working", taskcard.Opts{By: "test", As: "f1", Friend: "f1", SetFriend: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Land(ctx, c, "G", "test", snSHA, "merged"); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := c.HGet(ctx, "task:"+gsid, "where").Result(); w != "landed" {
+		t.Fatalf("gamma's stop after its last landing: %q", w)
+	}
+	if _, err := ws.Rename(ctx, c, "gamma", "delta", "test"); err != nil {
+		t.Fatalf("rename a landed stream: %v", err)
+	}
+	dsid := ws.SentinelID("delta")
+	if h := c.HGetAll(ctx, "task:"+gsid).Val(); h["where"] != "done" || h["where_ok"] != "ok" || h["stream"] != "delta" {
+		t.Fatalf("the old stop after the rename: %v", h)
+	}
+	if h := c.HGetAll(ctx, "task:"+dsid).Val(); h["where"] != "landed" || h["merge_sha"] != snSHA {
+		t.Fatalf("the new stop after the rename: %v", h)
+	}
+	if n, _ := c.ZCard(ctx, ws.Key("delta", "waiting")).Result(); n != 0 {
+		t.Fatal("the rename left a waiting stop")
+	}
+	if n, err := ws.CardCount(ctx, c, "delta", "landed"); err != nil || n != 1 {
+		t.Fatalf("delta landed cards %d %v, want 1 (G)", n, err)
+	}
+	if err := ws.Check(ctx, c, []string{"G", gsid, dsid}); err != nil {
+		t.Fatalf("invariant after the rename: %v", err)
+	}
+}
