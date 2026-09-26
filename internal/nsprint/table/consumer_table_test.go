@@ -28,7 +28,7 @@ func consumerStore(t *testing.T, cmds [][]string) (*redis.Client, *cmdLog) {
 // consumerBlock is the rendered table from its consumer header to the end.
 func consumerBlock(t *testing.T, got string) string {
 	t.Helper()
-	i := strings.Index(got, "\nconsumer ")
+	i := strings.Index(got, "\nworker ")
 	if i < 0 {
 		t.Fatalf("no consumer table:\n%s", got)
 	}
@@ -66,7 +66,7 @@ func TestControl4071OneConsumerTable(t *testing.T) {
 	if strings.Contains(got, "\nfriend     |") || strings.Contains(got, "\nhost       |") {
 		t.Fatalf("a separate friend or host block is still printed:\n%s", got)
 	}
-	want := "consumer                  | ready | working |  done |  ok% | status | load\n" +
+	want := "worker                    | ready | working |  done |  ok% | status | load\n" +
 		"--------------------------+-------+---------+-------+------+--------+------\n" +
 		"emma                      |     0 |       0 |     2 |  50% | up     | -\n" +
 		"hetzner                   |     0 |       0 |     2 |  50% | up     | 0.19\n" +

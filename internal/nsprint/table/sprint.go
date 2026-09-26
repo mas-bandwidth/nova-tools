@@ -465,8 +465,14 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 		b.WriteString("stale: never read (Redis did not answer since start)\n")
 		return b.String()
 	}
-	left, y, pct, eta := s.XY()
-	fmt.Fprintf(&b, "%d/%d left, %d%% done -> ~%dm\n\n", left, y, pct, eta)
+	// With no task in the sprint the headline is hidden too (Glenn
+	// 2026-09-26 10:01 AM ET: "when there are 0 tasks in the current sprint,
+	// you can hide the status x/y z% etc. make sure there is not an extra
+	// newline left"): the title's blank line is then the gap before the
+	// worker table.
+	if left, y, pct, eta := s.XY(); y > 0 {
+		fmt.Fprintf(&b, "%d/%d left, %d%% done -> ~%dm\n\n", left, y, pct, eta)
+	}
 
 	s.renderStreams(&b)
 	writeConsumerTable(&b, s.Consumers)
@@ -489,7 +495,10 @@ const consumerRule = "--------------------------+-------+---------+-------+-----
 // not come back prints "?" (and so do done and ok% when ok or fail is
 // one), never a false 0.
 func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
-	fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %4s | %-6s | %s\n", "consumer", "ready", "working", "done",
+	// The header says worker (Glenn 2026-09-26 9:58 AM ET: "rename consumer to
+	// worker, just in the display tables"); the record and the keys stay
+	// consumer.
+	fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %4s | %-6s | %s\n", "worker", "ready", "working", "done",
 		"ok%", "status", "load")
 	b.WriteString(consumerRule)
 	// The row is the name alone (Glenn 2026-09-25 11:20 PM ET: the friend:/bench:
@@ -585,6 +594,20 @@ func ReleaseLock(ctx context.Context, client redis.UniversalClient, key, token s
 // 8:03 AM ET), no <read>/<unread> split (Glenn 2026-09-26 8:22 AM ET, "Let's
 // remove it, and use review as that state").
 func (s *SprintSnapshot) renderStreams(b *strings.Builder) {
+	// An empty stream table is hidden (Glenn 2026-09-26 10:00 AM ET: "when
+	// the work sprint table has no sprints in it, you can hide it. make sure
+	// there is not an extra newline when it's hidden"): the headline's blank
+	// line is the only gap before the worker table.
+	any := false
+	for _, r := range s.Streams {
+		if r.Total() != 0 {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return
+	}
 	fmt.Fprintf(b, "%-25s | %7s | %5s | %7s | %6s | %7s | %6s\n", "stream", "waiting", "ready", "working", "review",
 		"merging", "landed")
 	b.WriteString(streamRule)
