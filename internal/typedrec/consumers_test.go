@@ -22,7 +22,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/harvest"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
-	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
@@ -53,43 +52,7 @@ func TestEveryConsumerRefusesMissingFieldByName(t *testing.T) {
 				t.Fatalf("exemplar for %s invalid: field=%s defect=%s", kind, res.Field, res.Defect)
 			}
 
-			// ValidateCardV2 refuses template minus its first required field with that field named
-			// First required field key in Fields(kind) is "SCHEMA"
-			firstFieldKey, _, _ := strings.Cut(wantFields[0], ":")
-			var filtered []string
-			for _, line := range strings.Split(tmpl, "\n") {
-				if strings.HasPrefix(strings.TrimSpace(line), firstFieldKey+":") {
-					continue
-				}
-				filtered = append(filtered, line)
-			}
-			badTmpl := strings.Join(filtered, "\n")
-			card, err := pulse.RenderCardV2(pulse.CardV2Input{
-				Kind:         kind,
-				Number:       400,
-				Repo:         "mas-bandwidth/nova-tools",
-				Title:        "test card " + kind,
-				Branch:       "worker/test-" + kind,
-				Base:         "dev",
-				Location:     "foo.go:1",
-				TestPackage:  "./pkg",
-				TestFunction: "TestFoo",
-				TestCommand:  "go test ./pkg -run TestFoo",
-				Paths:        "foo.go",
-				Symbol:       "TestFoo",
-				RedWhen:      "fails",
-			})
-			if err != nil {
-				t.Fatalf("RenderCardV2 failed: %v", err)
-			}
-			cardBad := strings.Replace(card, tmpl, badTmpl, 1)
-			err = pulse.ValidateCardV2(cardBad)
-			if err == nil {
-				t.Fatalf("expected ValidateCardV2 to refuse template for %s without %s", kind, firstFieldKey)
-			}
-			if !strings.Contains(err.Error(), firstFieldKey) {
-				t.Fatalf("ValidateCardV2 error %q does not name missing field %s", err.Error(), firstFieldKey)
-			}
+			// The nova-pulse card-template check that followed left with internal/pulse (deleted 2026-09-25, #3969).
 		}
 	})
 
@@ -605,22 +568,7 @@ func TestUnknownKindRefusedOnEveryPath(t *testing.T) {
 		t.Fatalf("ValidateResultV2 fix record on a report card: err=%v, want a KIND contradiction", err)
 	}
 
-	cardText, err := pulse.RenderCardV2(pulse.CardV2Input{
-		Kind: typedrec.KindFix, Number: 401, Repo: "mas-bandwidth/nova-tools", Title: "kind card",
-		Branch: "worker/kind", Base: "dev", Location: "foo.go:1", TestPackage: "./pkg",
-		TestFunction: "TestFoo", TestCommand: "go test ./pkg -run TestFoo", Paths: "foo.go",
-		Symbol: "TestFoo", RedWhen: "fails",
-	})
-	if err != nil {
-		t.Fatalf("RenderCardV2: %v", err)
-	}
-	if err := pulse.ValidateCardV2(cardText); err != nil {
-		t.Fatalf("control: ValidateCardV2 refused the rendered fix card: %v", err)
-	}
-	badCard := strings.Replace(cardText, "KIND: fix", "KIND: bogus", -1)
-	if err := pulse.ValidateCardV2(badCard); err == nil || !strings.Contains(err.Error(), "KIND") {
-		t.Fatalf("ValidateCardV2 KIND: bogus: err=%v, want a KIND refusal", err)
-	}
+	// The nova-pulse card KIND check that followed left with internal/pulse (deleted 2026-09-25, #3969).
 
 	// ns_card_result judges KIND itself: a caller claiming valid with a kind
 	// outside the six is persisted invalid.

@@ -1540,36 +1540,6 @@ then any number of key=value extras``.
 **Its narrowings.** Only the `version` verb is read; a `--version` flag or a
 version inside a banner is not. Extras are not checked beyond their `key=value`
 shape.
-### `benchname` — a bench name is resolved through the machines registry
-
-**The rule.** Glenn's lock of 2026-09-18: runner hosts are CI-only — no card,
-probe or load on a machine that serves the merge group's shards. A function in
-`internal/pulse` or `cmd/nova-pulse` that takes a `bench string` must resolve it
-through `internal/fleet`'s registry (`RequireBench`, `Lookup`, or the two pulse
-wrappers `fleetOneBench` and `refuseNonBenches`) before the name reaches a
-machine, or be named in the allowlist with its reason.
-**The hurt.** The lock was broken by a SHAPE, not a mistake: a bench name was a
-bare string, so `--bench batman` was a hostname to ssh to and nothing in the
-tools knew batman is six CI runners and not a card bench (2026-09-18: a
-reproduction loaded onto batman put the darwin shards under, ledger item 13).
-**The test.** `TestEveryBenchNameIsResolvedThroughTheRegistry` and
-`TestTheBenchNameHeuristicReadsWhatItClaims`
-(`internal/ci/benchname_class_test.go`); the second holds the heuristic itself
-to hand-written sources so the first cannot pass by reading nothing.
-**Its allowlist.** `internal/ci/testdata/benchname_allowlist.txt`, one
-`<path>:<func>` per line with its reason, checked in BOTH directions — a listed
-function that has left or now resolves its name is a red run — so the list only
-shrinks. Today: `reissue` (formats card text, touches no machine), the two raw
-seams `sshCapacity.Capacity` and `flashLauncher.Launch` (wrapped by
-`pulse.Fill`), and the Mac power verbs, which exist FOR the runner hosts.
-**Its remedy line.** `<path>:<func> takes a bench name and does not resolve it
-through the machines registry; call fleet.RequireBench (or fleetOneBench /
-refuseNonBenches) first, or add it to internal/ci/testdata/benchname_allowlist.txt
-with the reason`.
-**Its narrowings.** Only the two packages where a bench name reaches a machine
-are read; a bench name that arrives as a different type, or through a package
-outside them, is the compiler's rule, not this one.
-
 ### `namedpaths` — every path this repository names, it has
 
 **The rule.** A token in this repository's non-test Go source — in a string
@@ -2205,7 +2175,6 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 24. `TestNoToolIsWrittenTwiceInTheTranscripts` — no two `## ` headings in `docs/TESTS.md` carry the same tool name.
 25. `TestEveryToolPrintsTheOneVersionLine` — every `cmd/nova-*` binary answers `version` with one line in the `internal/buildinfo` grammar.
 26. `TestTheVersionGrammarIsSpelledOutOnceInTheSpec` — `docs/SPEC.md` states that grammar once.
-27. `TestEveryBenchNameIsResolvedThroughTheRegistry` — a `bench string` in `internal/pulse`/`cmd/nova-pulse` is resolved through the `internal/fleet` registry before it reaches a machine.
 28. `TestNoGhPrMergeSpellingInTheToolsGo` / `TestNoGhPrMergeSpellingUnderDotGithub` — no `gh pr merge` (or `--auto`) spelling reaches the dev queue but a batch; enqueue is `internal/merge.Enqueuer.Enqueue`.
 29. `TestEveryTestBuildTagIsRunBySomeScheduledJob` — every opt-in build tag a `_test.go` carries is named by a scheduled workflow's `go test -tags`.
 30. `TestTheNetworkExemptTagsHaveAHomeInTheSchedule` — the net checker's `nightly`/`soak` exempt tags have a scheduled leg.
@@ -2279,6 +2248,40 @@ that fits the two-minute law. Read `windows-sizes` below before writing either:
 its rule — a number in a table or a cap must come from a MEASUREMENT, and a
 measurement made at a cap is a floor and not a size — is the one that cost the
 most to learn and it is live today, one platform over, as `darwin-sizes`.
+
+### Parked 2026-09-25: the bench-name rule (`benchname`)
+
+**Why parked.** The rule read one package, internal/pulse (nova-pulse's), where a bench name reached a machine. internal/pulse was deleted on 2026-09-25 (#3969; Glenn: "Yes it's dead. remove."), so the rule has no package to read; nova-sprint resolves benches through the registry by construction. The test and its allowlist are DELETED; the rule is kept here.
+
+### `benchname` — a bench name is resolved through the machines registry
+
+**The rule.** Glenn's lock of 2026-09-18: runner hosts are CI-only — no card,
+probe or load on a machine that serves the merge group's shards. A function in
+`internal/pulse` or `cmd/nova-pulse` that takes a `bench string` must resolve it
+through `internal/fleet`'s registry (`RequireBench`, `Lookup`, or the two pulse
+wrappers `fleetOneBench` and `refuseNonBenches`) before the name reaches a
+machine, or be named in the allowlist with its reason.
+**The hurt.** The lock was broken by a SHAPE, not a mistake: a bench name was a
+bare string, so `--bench batman` was a hostname to ssh to and nothing in the
+tools knew batman is six CI runners and not a card bench (2026-09-18: a
+reproduction loaded onto batman put the darwin shards under, ledger item 13).
+**The test.** `TestEveryBenchNameIsResolvedThroughTheRegistry` and
+`TestTheBenchNameHeuristicReadsWhatItClaims`
+(the deleted benchname_class_test.go); the second holds the heuristic itself
+to hand-written sources so the first cannot pass by reading nothing.
+**Its allowlist.** its deleted allowlist, one
+`<path>:<func>` per line with its reason, checked in BOTH directions — a listed
+function that has left or now resolves its name is a red run — so the list only
+shrinks. Today: `reissue` (formats card text, touches no machine), the two raw
+seams `sshCapacity.Capacity` and `flashLauncher.Launch` (wrapped by
+`pulse.Fill`), and the Mac power verbs, which exist FOR the runner hosts.
+**Its remedy line.** `<path>:<func> takes a bench name and does not resolve it
+through the machines registry; call fleet.RequireBench (or fleetOneBench /
+refuseNonBenches) first, or add it to its deleted allowlist
+with the reason`.
+**Its narrowings.** Only the two packages where a bench name reaches a machine
+are read; a bench name that arrives as a different type, or through a package
+outside them, is the compiler's rule, not this one.
 
 ### Parked 2026-09-25: the merge gate's darwin leg (`darwin-sizes`, `darwin-table`)
 
