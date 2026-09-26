@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -68,36 +69,44 @@ func TestRoutesTierPrintsAllowedOnly(t *testing.T) {
 func TestRoutesTierLabelPicksTheSpread(t *testing.T) {
 	t.Parallel()
 
-	want := map[string][]string{
-		"flash": {
-			"mercury inception/mercury-2.5",
-			"orqwen38 openrouter/qwen/qwen3.8-flash",
-			"ocglmflash opencode/glm-5.3-flash",
-			"dsflash deepseek/deepseek-flash",
-		},
-		"pro": {
-			"dspro deepseek/deepseek-v4-pro",
-			"ocqwenplus opencode/qwen3.6-plus",
-		},
+	// While routes.yaml carries a probe (Glenn 2026-09-26 11:05 AM ET: "turn
+	// all models back on to try again"), --tier --label spreads a tier's
+	// cards over every probed route; without one it follows the measured
+	// spread. Either way every route the table would pick is printed as
+	// "<route> <via>/<model>" over enough labels.
+	tab, err := route.Load()
+	if err != nil {
+		t.Fatal(err)
 	}
-	for tier, lines := range want {
-		n := map[string]int{"flash": 8, "pro": 6}[tier]
+	for _, tier := range []string{"flash", "pro"} {
+		var want []string
+		if pr := tab.Probe(tier); pr != nil {
+			want = pr.Routes
+		} else {
+			for _, s := range tab.Spread(tier) {
+				want = append(want, s.Routes[0])
+			}
+		}
 		seen := map[string]bool{}
-		for i := 1; i <= n; i++ {
-			label := "spread-" + tier + "-" + string(rune('0'+i))
+		for i := 0; i < 40*len(want); i++ {
+			label := fmt.Sprintf("spread-%s-%d", tier, i)
 			code, out, errOut := runSprint("routes", "--tier", tier, "--label", label)
 			if code != 0 {
 				t.Fatalf("%s: exit %d stderr %q", label, code, errOut)
 			}
-			seen[strings.TrimSuffix(out, "\n")] = true
+			r, rest, ok := strings.Cut(strings.TrimSuffix(out, "\n"), " ")
+			if !ok || !strings.Contains(rest, "/") {
+				t.Fatalf("%s: printed %q, want \"<route> <via>/<model>\"", label, out)
+			}
+			seen[r] = true
 		}
-		for _, l := range lines {
-			if !seen[l] {
-				t.Errorf("--tier %s over %d labels never printed %q (printed %v)", tier, n, l, seen)
+		for _, r := range want {
+			if !seen[r] {
+				t.Errorf("--tier %s never printed %s over %d labels (printed %v)", tier, r, 40*len(want), seen)
 			}
 		}
-		if len(seen) != len(lines) {
-			t.Errorf("--tier %s printed %d distinct routes, want %d: %v", tier, len(seen), len(lines), seen)
+		if len(seen) != len(want) {
+			t.Errorf("--tier %s printed %d distinct routes, want %d: %v", tier, len(seen), len(want), seen)
 		}
 	}
 	code, out, _ := runSprint("routes", "--spread")
