@@ -4,8 +4,8 @@
 // base sha read by hand).
 //
 //	nova-sprint quack cut --n <N> --repo <owner/name> --stream <s> --sprint <S>
-//	    [--tiers flash,pro] [--base dev] [--base-sha <sha40>] [--ref <owner/name#n>] [--actor <a>] [--redis <addr>]
-//	nova-sprint quack run --sprint <S> [--slots hetzner=8,hulk=16,...] [--actor <a>] [--redis <addr>]
+//	    [--tiers flash,pro] [--base dev] [--base-sha <sha40>] [--ref <owner/name#n>] [--redis <addr>]
+//	nova-sprint quack run --sprint <S> [--slots hetzner=8,hulk=16,...] [--redis <addr>]
 //
 // quack cut sets the sprint's pit stop (why: cutting N quack cards), pushes
 // N primaries quack-001..quack-NNN into the stream's waiting set (the
@@ -27,8 +27,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -68,31 +68,23 @@ func runQuack(ctx context.Context, args []string, out, errOut io.Writer) int {
 	return refuse(errOut, "quack", fmt.Sprintf("unknown subverb %s; want cut or run", args[0]))
 }
 
-// quackActor is --actor, else the seat (NOVA_FRIEND).
-func quackActor(flag string) string {
-	if flag != "" {
-		return flag
-	}
-	return os.Getenv(seatEnv)
-}
-
 func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "quack cut"
 	fs := taskFlags(verb)
-	n := fs.Int("n", 0, "")
-	repo := fs.String("repo", "", "")
-	stream := fs.String("stream", "", "")
-	name := fs.String("sprint", "", "")
-	tiers := fs.String("tiers", cardhdr.DefaultTiers, "")
-	base := fs.String("base", "dev", "")
-	baseSHA := fs.String("base-sha", "", "")
-	ref := fs.String("ref", "", "")
-	actor := fs.String("actor", "", "")
-	addr := fs.String("redis", redisDefault(), "")
-	const want = "wants --n <N> --repo <owner/name> --stream <s> --sprint <S> [--tiers flash,pro] [--base dev] [--base-sha <sha40>] [--ref <owner/name#n>] [--actor <a>] [--redis <addr>]"
+	n := fs.Int("n", 0, verbflag.HelpN)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	stream := fs.String("stream", "", verbflag.HelpStream)
+	name := fs.String("sprint", "", verbflag.HelpSprint)
+	tiers := fs.String("tiers", cardhdr.DefaultTiers, "the model types the cards round-robin over, comma-separated")
+	base := fs.String("base", "dev", "the base branch")
+	baseSHA := fs.String("base-sha", "", "the base's sha, 40 hex (default the tip of --base in the mirror)")
+	ref := fs.String("ref", "", "the issue the cards cite, <owner/name#n>")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	const want = "wants --n <N> --repo <owner/name> --stream <s> --sprint <S> [--tiers flash,pro] [--base dev] [--base-sha <sha40>] [--ref <owner/name#n>] [--redis <addr>]"
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
+	actor := seatActor()
 	if fs.NArg() > 0 {
 		return refuse(errOut, verb, "takes flags, not "+strconv.Quote(fs.Arg(0)))
 	}
@@ -111,10 +103,7 @@ func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int 
 			return refuse(errOut, verb, fmt.Sprintf("tier %q is not %s", t, cardhdr.RouteList))
 		}
 	}
-	who := quackActor(*actor)
-	if who == "" {
-		return refuse(errOut, verb, "--actor is required when "+seatEnv+" is empty")
-	}
+	who := actor
 	raddr := taskAddr(*addr)
 	if raddr == "" {
 		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")
@@ -201,27 +190,24 @@ func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int 
 func runQuackRun(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "quack run"
 	fs := taskFlags(verb)
-	name := fs.String("sprint", "", "")
-	slots := fs.String("slots", "", "")
-	actor := fs.String("actor", "", "")
-	addr := fs.String("redis", redisDefault(), "")
+	name := fs.String("sprint", "", verbflag.HelpSprint)
+	slots := fs.String("slots", "", "the slots per bench, bench=n comma-separated")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
+	actor := seatActor()
 	if fs.NArg() > 0 {
 		return refuse(errOut, verb, "takes flags, not "+strconv.Quote(fs.Arg(0)))
 	}
 	if *name == "" {
-		return refuse(errOut, verb, "wants --sprint <S> [--slots <bench>=<n>,...] [--actor <a>] [--redis <addr>]")
+		return refuse(errOut, verb, "wants --sprint <S> [--slots <bench>=<n>,...] [--redis <addr>]")
 	}
 	benches, err := parseSlots(*slots)
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
-	who := quackActor(*actor)
-	if who == "" {
-		return refuse(errOut, verb, "--actor is required when "+seatEnv+" is empty")
-	}
+	who := actor
 	raddr := taskAddr(*addr)
 	if raddr == "" {
 		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")

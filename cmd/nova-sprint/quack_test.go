@@ -46,7 +46,7 @@ func TestQuackCut(t *testing.T) {
 	client, addr := quackFixture(t, S)
 	ctx := context.Background()
 	code, out, errOut := runSprint("quack", "cut", "--redis", addr, "--n", "5", "--repo", "mas-bandwidth/quack", "--stream", "quack",
-		"--sprint", S, "--tiers", "flash,pro", "--base-sha", quackBase, "--ref", "mas-bandwidth/nova-tools#4232", "--actor", "rowan")
+		"--sprint", S, "--tiers", "flash,pro", "--base-sha", quackBase, "--ref", "mas-bandwidth/nova-tools#4232")
 	if code != 0 {
 		t.Fatalf("exit %d\nstdout:\n%s\nstderr: %s", code, out, errOut)
 	}
@@ -86,7 +86,7 @@ func TestQuackCut(t *testing.T) {
 
 	// The same cut again: every id exists, each is SKIPPED, the stop is held.
 	code, out, _ = runSprint("quack", "cut", "--redis", addr, "--n", "6", "--repo", "mas-bandwidth/quack", "--stream", "quack",
-		"--sprint", S, "--base-sha", quackBase, "--actor", "rowan")
+		"--sprint", S, "--base-sha", quackBase)
 	if code != 0 || strings.Count(out, "SKIPPED id=quack-00") != 5 || !strings.Contains(out, "SKIPPED id=quack-003 why=exists\n") {
 		t.Fatalf("second cut: exit %d\n%s", code, out)
 	}
@@ -99,21 +99,21 @@ func TestQuackCut(t *testing.T) {
 
 	// Refusals write nothing.
 	code, out, _ = runSprint("quack", "cut", "--redis", addr, "--n", "2", "--repo", "mas-bandwidth/quack", "--stream", "quack",
-		"--sprint", "quack-nobody-opened", "--base-sha", quackBase, "--actor", "rowan")
+		"--sprint", "quack-nobody-opened", "--base-sha", quackBase)
 	if code != 1 || !strings.HasPrefix(out, "CUT REFUSED sprint=quack-nobody-opened why=sprint-unknown remedy=") || client.Exists(ctx, "task:quack-001").Val() != 1 || client.Exists(ctx, "s:quack-nobody-opened:pitstop").Val() != 0 {
 		t.Fatalf("unknown sprint: exit %d %q", code, out)
 	}
 	code, out, _ = runSprint("quack", "cut", "--redis", addr, "--n", "2", "--repo", "example/no-such-mirror-4307", "--stream", "quack2",
-		"--sprint", S, "--actor", "rowan")
+		"--sprint", S)
 	if code != 1 || !strings.HasPrefix(out, "CUT REFUSED sprint=quack-t1 repo=example/no-such-mirror-4307 why=") || !strings.Contains(out, "remedy=\"pass --base-sha <sha40>, or nova-sprint mirror refresh") || client.Exists(ctx, "ws:quack2:waiting").Val() != 0 {
 		t.Fatalf("no mirror, no --base-sha: exit %d %q", code, out)
 	}
 	for _, args := range [][]string{
-		{"--redis", addr, "--n", "0", "--repo", "o/r", "--stream", "q", "--sprint", S, "--base-sha", quackBase, "--actor", "a"},
-		{"--redis", addr, "--n", "2", "--repo", "o/r", "--stream", "q", "--sprint", S, "--base-sha", quackBase, "--actor", "a", "--tiers", "max"},
-		{"--redis", addr, "--n", "2", "--repo", "norepo", "--stream", "q", "--sprint", S, "--base-sha", quackBase, "--actor", "a"},
-		{"--redis", addr, "--n", "2", "--repo", "o/r", "--stream", "q", "--sprint", "Bad Name", "--base-sha", quackBase, "--actor", "a"},
-		{"--redis", addr, "--n", "2", "--repo", "o/r", "--stream", "q", "--sprint", S, "--base-sha", quackBase, "--actor", "a", "extra"},
+		{"--redis", addr, "--n", "0", "--repo", "o/r", "--stream", "q", "--sprint", S, "--base-sha", quackBase},
+		{"--redis", addr, "--n", "2", "--repo", "o/r", "--stream", "q", "--sprint", S, "--base-sha", quackBase, "--tiers", "max"},
+		{"--redis", addr, "--n", "2", "--repo", "norepo", "--stream", "q", "--sprint", S, "--base-sha", quackBase},
+		{"--redis", addr, "--n", "2", "--repo", "o/r", "--stream", "q", "--sprint", "Bad Name", "--base-sha", quackBase},
+		{"--redis", addr, "--n", "2", "--repo", "o/r", "--stream", "q", "--sprint", S, "--base-sha", quackBase, "extra"},
 	} {
 		if code, _, errOut := runSprint(append([]string{"quack", "cut"}, args...)...); code != 2 || !strings.HasPrefix(errOut, "nova-sprint quack cut: ") {
 			t.Fatalf("%v: exit %d %q, want usage", args, code, errOut)
@@ -142,7 +142,7 @@ func TestQuackRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, out, errOut := runSprint("quack", "run", "--redis", addr, "--sprint", S, "--slots", "hulk=16,hetzner=8,ghost=2", "--actor", "rowan")
+	code, out, errOut := runSprint("quack", "run", "--redis", addr, "--sprint", S, "--slots", "hulk=16,hetzner=8,ghost=2")
 	if code != 1 {
 		t.Fatalf("exit %d, want 1 (ghost refused)\n%s%s", code, out, errOut)
 	}
@@ -165,15 +165,15 @@ func TestQuackRun(t *testing.T) {
 		t.Fatalf("hulk slots=%q", got)
 	}
 
-	code, out, _ = runSprint("quack", "run", "--redis", addr, "--sprint", S, "--slots", "hulk=16", "--actor", "rowan")
+	code, out, _ = runSprint("quack", "run", "--redis", addr, "--sprint", S, "--slots", "hulk=16")
 	if code != 0 || !strings.Contains(out, "SLOTS SAME bench=hulk machine=m slots=16") || !strings.Contains(out, "PITSTOP NONE sprint=quack-t2\n") || !strings.Contains(out, "QUACK RUN sprint=quack-t2 benches=1 refused=0 pitstop=none") {
 		t.Fatalf("second run: exit %d\n%s", code, out)
 	}
 	for _, args := range [][]string{
-		{"--redis", addr, "--actor", "a"},
-		{"--redis", addr, "--sprint", S, "--actor", "a", "--slots", "hulk"},
-		{"--redis", addr, "--sprint", S, "--actor", "a", "--slots", "hulk=-1"},
-		{"--redis", addr, "--sprint", S, "--actor", "a", "--slots", "hulk=1,hulk=2"},
+		{"--redis", addr},
+		{"--redis", addr, "--sprint", S, "--slots", "hulk"},
+		{"--redis", addr, "--sprint", S, "--slots", "hulk=-1"},
+		{"--redis", addr, "--sprint", S, "--slots", "hulk=1,hulk=2"},
 	} {
 		if code, _, errOut := runSprint(append([]string{"quack", "run"}, args...)...); code != 2 || !strings.HasPrefix(errOut, "nova-sprint quack run: ") {
 			t.Fatalf("%v: exit %d %q, want usage", args, code, errOut)
