@@ -42,6 +42,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/note"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -284,7 +285,11 @@ func Run(ctx context.Context, st *store.Store, cfg RunConfig) RunReport {
 		if len(rec) == 0 {
 			return refuse("no copy " + cardKey)
 		}
-		if body, err = RenderCopy(CopyCardFrom(cfg.CopyID, rec)); err != nil {
+		cc := CopyCardFrom(cfg.CopyID, rec)
+		if cc.Notes, err = note.ForCopy(ctx, st.Client(), rec["stream"], rec["sprint"]); err != nil {
+			return refuse("notes read failed: " + err.Error())
+		}
+		if body, err = RenderCopy(cc); err != nil {
 			return refuse(err.Error())
 		}
 		tier := rec["tier"]

@@ -1,15 +1,19 @@
 // The stream landing verbs (nova-tools#3598; #3611-#3613): the flow Rowan
 // lands by hand, as verbs with all state in Redis (internal/nsprint/land/stream).
 //
-//	nova-sprint land stream --repo <owner/repo> --stream <s> [--stream <s2>...] [--base dev] [--dry-run]
+//	nova-sprint land stream --repo <owner/repo> --stream <s> [--stream <s2>...] [--base dev] [--dry-run] [--partial]
 //	    [--redis <addr>] [--remote <url>] [--mirror <dir>|none] [--workdir <dir>] [--branch <b>]
 //	    [--test <cmd>] [--test-timeout 20m] [--min-score N] [--by rowan] [--api <url>] [--budget N]
 //	nova-sprint land status --repo <owner/repo> [--redis <addr>]
 //	nova-sprint land merge --repo <owner/repo> --stream <s> [--by rowan] [--api <url>] [--budget N]
 //
 // land stream: members are ws:<s>:merging intersected with pr:<repo>:<n>
-// records read >= 8 at head (cfg:land min_score[:<repo>]), oldest
-// pr_ready_at first. --dry-run prints the order from Redis alone. A run
+// records read >= 8 at head (cfg:land min_score[:<repo>]), in the work
+// order the ws:<s>:merging score gives (#4342). --dry-run prints the plan
+// (PLAN, ORDER lines) from Redis alone: the coordinator's first move. A run
+// refuses LAND-SERIAL when a merging member would be left out (unread,
+// held, no PR): never one at a time (#4324); --partial lands without them
+// with the same line printed as allowed. A run
 // clones the base shallow (--reference-if-able the bench mirror), merges each
 // member --no-ff onto stream/<slug>, runs the batch test once
 // (cfg:land:test:<repo>, else make check, else go test ./...), bisects a red
@@ -117,6 +121,7 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 	by := fs.String("by", "rowan", "")
 	api := fs.String("api", "https://api.github.com", "")
 	budget := fs.Int("budget", 4, "")
+	partial := fs.Bool("partial", false, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -131,7 +136,8 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR")
 	}
 	opts := stream.Options{Repo: *repo, Streams: streams, Base: *base, Branch: *branch, DryRun: *dry, Remote: *remote,
-		Test: *test, TestTimeout: *testTimeout, MinScore: *minScore, By: *by, Author: "Rowan <rowan@mas-bandwidth.com>", Log: out}
+		Test: *test, TestTimeout: *testTimeout, MinScore: *minScore, By: *by, Author: "Rowan <rowan@mas-bandwidth.com>", Log: out,
+		Partial: *partial}
 	slug, err := stream.Slug(streams...)
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -167,9 +173,18 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 	defer st.Close()
 	rep, err := stream.LandStream(ctx, st.Client(), opts)
 	if rep.State == "dry-run" && err == nil {
+		// The plan (nova-tools #4324): the coordinator's first move whenever
+		// a stream has members in merging. The base, the ONE PR, the members
+		// in work order (order= is the ws:<stream>:merging score, #4342), and
+		// the LAND-SERIAL line a run would refuse with.
+		fmt.Fprintf(out, "PLAN repo=%s stream=%s base=%s branch=%s pr=one members=%d left_out=%d order=ws-score\n",
+			*repo, slug, *base, rep.Branch, len(rep.Members), len(rep.LeftOut))
 		for i, m := range rep.Members {
-			fmt.Fprintf(out, "ORDER %d %s#%d head=%s ready_at=%d read=%s:%d task=%s stream=%s\n",
+			fmt.Fprintf(out, "ORDER %d %s#%d head=%s order=%d read=%s:%d task=%s stream=%s\n",
 				i+1, *repo, m.N, stream.Short(m.Head), m.ReadyAt, m.Who, m.Score, m.Task, oneline.Field(m.Stream))
+		}
+		if rep.Serial != "" {
+			fmt.Fprintf(out, "%s (a run refuses with this line; --partial lands without them)\n", rep.Serial)
 		}
 	}
 	for _, s := range rep.Skips {
@@ -339,8 +354,8 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 		}
 		return orDash(strings.Join(out, ","))
 	}
-	fmt.Fprintf(out, "LAND MERGE repo=%s stream=%s pr=#%d head=%s merge=%s members=%d moved=%d missing=%d already=%t closed=%s unclosed=%s rest_calls=%d close_lines=%d skipped=%d closes_unread=%s issues_closed=%s issues_unclosed=%s release=%s\n",
-		*repo, l.Slug, l.PR, stream.Short(l.Head), stream.Short(rep.MergeSHA), len(l.Members), rep.Moved, rep.Missing, rep.Already,
+	fmt.Fprintf(out, "LAND MERGE repo=%s stream=%s pr=#%d head=%s merge=%s notes_dropped=%d members=%d moved=%d missing=%d already=%t closed=%s unclosed=%s rest_calls=%d close_lines=%d skipped=%d closes_unread=%s issues_closed=%s issues_unclosed=%s release=%s\n",
+		*repo, l.Slug, l.PR, stream.Short(l.Head), stream.Short(rep.MergeSHA), rep.NotesDropped, len(l.Members), rep.Moved, rep.Missing, rep.Already,
 		orDash(strings.Join(closed, ",")), orDash(strings.Join(unclosed, ",")), calls, rep.Lines, len(rep.Skipped), orDash(strings.Join(unread, ",")),
 		issues(rep.IssuesClosed), issues(rep.IssuesUnclosed), orDash(rep.Release))
 	for _, s := range rep.Skipped {

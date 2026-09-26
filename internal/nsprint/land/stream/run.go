@@ -110,6 +110,9 @@ func Run(ctx context.Context, c Client, o RunOptions) (RunReport, error) {
 	}
 	deadline := time.Now().Add(o.CIWait)
 	rebuild := o.Rebuild
+	// The step lines of the whole landing, with their walls (nova-tools
+	// #4324); LandStream prints the build's with the same clock.
+	steps := NewSteps(o.Log, o.Now)
 	for {
 		l, ok, err := LoadLanding(ctx, c, o.Repo, slug)
 		if err != nil {
@@ -160,6 +163,7 @@ func Run(ctx context.Context, c Client, o RunOptions) (RunReport, error) {
 			if l, _, err = LoadLanding(ctx, c, o.Repo, slug); err != nil {
 				return rep, err
 			}
+			steps.Line("BUILT %s head=%s pr=#%d members=%d build=%d", b.Branch, short(l.Head), l.PR, len(l.Members), rep.Builds)
 		}
 		rebuild = false
 		rep.Landing = l
@@ -172,6 +176,7 @@ func Run(ctx context.Context, c Client, o RunOptions) (RunReport, error) {
 		if err != nil {
 			return rep, err
 		}
+		steps.Line("CI %s %s pr=#%d request=%s", short(l.Head), orDash(rep.CI), l.PR, orDash(word))
 		switch rep.CI {
 		case "green":
 		case "red":
@@ -202,10 +207,14 @@ func Run(ctx context.Context, c Client, o RunOptions) (RunReport, error) {
 		if mr.MergeSHA != "" && !mr.Already {
 			rep.Calls++ // the one merge call
 		}
+		if mr.MergeSHA != "" {
+			steps.Line("MERGED %s pr=#%d already=%t", short(mr.MergeSHA), l.PR, mr.Already)
+		}
 		if err != nil {
 			return rep, err
 		}
 		rep.State = "landed"
+		steps.Line("LANDED n=%d stream=%s moved=%d total_ms=%d", len(l.Members), field(slug), mr.Moved, steps.Total().Milliseconds())
 		return rep, nil
 	}
 }

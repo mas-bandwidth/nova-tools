@@ -40,6 +40,9 @@ type Build struct {
 	// stops the build at it (nova-tools #3898: the land duty never stops a
 	// stream for one member; the member's author gets a rebase task).
 	ParkConflicts bool
+	// Steps prints each member's REBASED line with its wall (nova-tools
+	// #4324); nil prints them without one.
+	Steps *Steps
 }
 
 // Conflict is a member whose merge conflicted: the build stops there.
@@ -172,7 +175,13 @@ func (b Build) Run(ctx context.Context, members []Member) (Result, error) {
 			continue
 		}
 		merged = append(merged, m)
-		b.logf("MERGED #%d at %s", m.N, short(m.Head))
+		// The member is on the stream head in work order (the act is a
+		// --no-ff merge; the step's word is REBASED).
+		if b.Steps != nil {
+			b.Steps.Line("REBASED #%d at %s onto %s", m.N, short(m.Head), b.Branch)
+		} else {
+			b.logf("REBASED #%d at %s onto %s", m.N, short(m.Head), b.Branch)
+		}
 	}
 	todo = merged
 	if len(todo) == 0 {

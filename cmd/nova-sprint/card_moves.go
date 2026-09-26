@@ -43,6 +43,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/brief"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/launch"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/note"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -568,7 +569,11 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		var body []byte
 		switch {
 		case taskcard.IsCopy(ids[0]):
-			body, err = card.RenderCopy(card.CopyCardFrom(ids[0], rec))
+			cc := card.CopyCardFrom(ids[0], rec)
+			if cc.Notes, err = note.ForCopy(ctx, c, rec["stream"], rec["sprint"]); err != nil {
+				return refuse(errOut, "card render", "notes: "+err.Error())
+			}
+			body, err = card.RenderCopy(cc)
 		case *m.brief:
 			body, err = brief.RenderCard(ids[0], rec, *m.result["model"])
 		default:

@@ -33,7 +33,7 @@ func TestRenderCardByKind(t *testing.T) {
 		}
 	}
 	rec["kind"] = "harvest"
-	if _, err := RenderCard("k-h", rec, "opus-5.5"); err == nil || !strings.Contains(err.Error(), "field=kind want=build|fix|read|rebase got=harvest") {
+	if _, err := RenderCard("k-h", rec, "opus-5.5"); err == nil || !strings.Contains(err.Error(), "field=kind want=build|fix|read|rebase|merge got=harvest") {
 		t.Fatalf("harvest: %v", err)
 	}
 	rec["kind"] = "build"

@@ -52,7 +52,7 @@ func templateFor(kind string) ([]byte, bool) {
 }
 
 // Kinds lists the kinds that have a template, for refusal lines.
-func Kinds() string { return "build|fix|read|rebase" }
+func Kinds() string { return "build|fix|read|rebase|merge" }
 
 func sha256hex(b []byte) string {
 	h := sha256.Sum256(b)

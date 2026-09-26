@@ -506,7 +506,7 @@ func (d *LandDuty) land(ctx context.Context, repo string) ([]LandLine, error) {
 				continue
 			}
 		}
-		out = append(out, d.landStream(ctx, repo, s, slug, gh, line))
+		out = append(out, d.landStream(ctx, repo, s, slug, gh, line, cfg.Partial))
 	}
 	return out, nil
 }
@@ -539,8 +539,12 @@ func (d *LandDuty) workroot() string {
 }
 
 // landStream is one stream's land run with every landable member in one
-// batch, conflicts parked, and a rebase task per parked conflict.
-func (d *LandDuty) landStream(ctx context.Context, repo, s, slug string, gh *stream.GitHub, line LandLine) LandLine {
+// batch, conflicts parked, and a rebase task per parked conflict. partial is
+// cfg:land partial: off, a stream with a member that cannot land is refused
+// with LAND-SERIAL on its line (nova-tools #4324: never one at a time), and
+// the alarms carry it; on, the PR opens without them and the line prints
+// as allowed.
+func (d *LandDuty) landStream(ctx context.Context, repo, s, slug string, gh *stream.GitHub, line LandLine, partial bool) LandLine {
 	if d.Request == nil {
 		line.State, line.Err = "error", "no CI request seam"
 		return line
@@ -553,7 +557,7 @@ func (d *LandDuty) landStream(ctx context.Context, repo, s, slug string, gh *str
 		Options: stream.Options{Repo: repo, Streams: []string{s}, Base: d.base(), Mirror: mirror,
 			Workdir:     filepath.Join(d.workroot(), fmt.Sprintf("land-%s-%d", strings.ReplaceAll(slug, "+", "_"), time.Now().UnixNano())),
 			TestTimeout: d.TestTimeout, MinScore: -1, By: LandActor, Author: "Rowan <rowan@mas-bandwidth.com>",
-			Log: d.Log, GH: gh, ParkConflicts: true, NoTest: true},
+			Log: d.Log, GH: gh, ParkConflicts: true, NoTest: true, Partial: partial},
 		// No sleeping on CI: one read of the CI word, and the next tick
 		// resumes the open landing at its wait.
 		CIWait: 0, Tick: time.Second, Request: d.Request, CIURL: d.CIURL, BaseTip: d.BaseTip,

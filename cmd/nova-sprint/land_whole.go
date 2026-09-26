@@ -4,7 +4,12 @@
 //	nova-sprint land --repo <owner/repo> --stream <s> [--stream <s2>...] [--base dev]
 //	    [--redis <addr>] [--remote <url>] [--mirror <dir>|none] [--workdir <dir>] [--branch <b>]
 //	    [--test <cmd>] [--test-timeout 20m] [--min-score N] [--by rowan] [--api <url>] [--budget N]
-//	    [--ci-wait 45m] [--tick 10s] [--ci-url <url>] [--rebuild]
+//	    [--ci-wait 45m] [--tick 10s] [--ci-url <url>] [--rebuild] [--partial]
+//
+// Every step prints one line with its wall (REBASED, PUSHED, PR opened,
+// BUILT, CI, MERGED, LANDED n= total_ms=; nova-tools #4324), and a stream
+// with a merging member that cannot land is refused LAND-SERIAL unless
+// --partial (the line prints as allowed).
 //
 // It builds the stream branch off the base tip (the members merged --no-ff
 // oldest first), pushes it, opens ONE stream PR, requests our own CI for the stream head (ci:pool; a bench's ci
@@ -67,6 +72,7 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 	tick := fs.Duration("tick", 10*time.Second, "")
 	ciURL := fs.String("ci-url", "", "")
 	rebuild := fs.Bool("rebuild", false, "")
+	partial := fs.Bool("partial", false, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -98,7 +104,7 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 	o := stream.RunOptions{
 		Options: stream.Options{Repo: *repo, Streams: streams, Base: *base, Branch: *branch, Remote: *remote,
 			Test: *test, TestTimeout: *testTimeout, NoTest: *test == "", MinScore: *minScore, By: *by,
-			Author: "Rowan <rowan@mas-bandwidth.com>", Log: out, GH: gh},
+			Author: "Rowan <rowan@mas-bandwidth.com>", Log: out, GH: gh, Partial: *partial},
 		CIWait: *ciWait, Tick: *tick, Rebuild: *rebuild, Sleep: landRunSleep,
 		// The runner clones --ci-url, else stages from its mirror (never the
 		// forge's ssh url).

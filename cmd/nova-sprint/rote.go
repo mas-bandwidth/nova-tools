@@ -38,6 +38,9 @@ func quietFlags(name string) *flag.FlagSet {
 // cmdNote is `note --rote <class> --as <mind> --store <host:port>`. Exit 0
 // the note is on rote:log, 2 refused or could not run.
 func cmdNote(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if isMergeNoteSub(args) {
+		return runMergeNote(ctx, args, stdout, stderr) // MERGE-NOTE post|ls|drop, #4324 (note.go)
+	}
 	fs := quietFlags("note")
 	class := fs.String("rote", "", "")
 	mind := fs.String("as", "", "")
