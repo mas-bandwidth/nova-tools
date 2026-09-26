@@ -43,6 +43,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 const (
@@ -173,11 +174,16 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
 	}
 	pkgArg := "PKGS=" + strings.Join(pkgs, " ")
 
-	tmp, err := os.MkdirTemp("", "nova-ci-local-")
+	tmpRoot := os.TempDir()
+	tmp, err := os.MkdirTemp(tmpRoot, "nova-ci-local-")
 	if err != nil {
 		return refuse(stderr, " local", fmt.Sprintf("cannot make a private RUNNER_TEMP for make test's test.json: %s", oneline.Err(err)))
 	}
-	defer os.RemoveAll(tmp)
+	defer func() {
+		if err := safepath.RemoveUnder(tmpRoot, tmp); err != nil {
+			fmt.Fprintf(stderr, "nova-ci local: NOTE could not remove its private RUNNER_TEMP %s: %s\n", oneline.Field(tmp), oneline.Err(err))
+		}
+	}()
 
 	fmt.Fprintf(stdout, "nova-ci local: unit tier: nice -n %s make test %q GOTEST_P=%s GOTEST_COUNT_FLAG=-count=1 (GOMAXPROCS=%s)\n", localNice, pkgArg, localCores, localCores)
 	col := &localCollector{out: stdout, pkgs: map[string]*localPkg{}}
