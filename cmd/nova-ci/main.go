@@ -65,6 +65,20 @@ usage:
                       (a _test.go built only under the functional build tag) on
                       one line and a go test -run pattern naming exactly those
                       tests on the next; print nothing when there are none.
+  nova-ci cost --repo owner/name --sha <40hex> --run-id <n> --event <ev>
+               --workflow <name> --conclusion <job.status> [--pr <n>]
+               [--head-branch <b>] [--base-branch <b>] [--at <rfc3339>]
+               [--redis <addr>] < jobs.json
+                      the one COST line of a CI run: read the run's job listing
+                      (repos/<owner>/<name>/actions/runs/<id>/jobs) on stdin
+                      and print job-seconds per job, the total, and spin (the
+                      seconds of the failed, cancelled and rerun jobs); the
+                      flags are the run receipt's (nova-sprint ci github
+                      --from-runner). --redis appends the same entry to the
+                      ci:cost stream first and the line ends in its id.
+                      Exit 0 with the line, 2 a refusal (a flag the receipt
+                      refuses, a listing that is not the forge's, a store
+                      that would not take the entry).
   nova-ci new-rule [--root <checkout>] <rule-name>
                       scaffold a new class rule skeleton: class test, fixture, and makefile
   nova-ci new-verb [--root <checkout>] <tool> <verb>
@@ -106,6 +120,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdLocal(args[1:], stdout, stderr, execLocal)
 	case "functional":
 		return cmdFunctional(args[1:], stdout, stderr)
+	case "cost":
+		return cmdCost(args[1:], stdin, stdout, stderr, openCostStore)
 	case "new-rule":
 		return cmdNewRule(args[1:], stdout, stderr)
 	case "new-verb":
