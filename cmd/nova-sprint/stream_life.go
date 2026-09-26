@@ -60,7 +60,7 @@ func streamLanding(ctx context.Context, args []string) (l stream.Landing, found,
 	if rs := flagValues(args, "redis"); len(rs) > 0 {
 		addr = rs[len(rs)-1]
 	}
-	addr = landRedisAddr(addr)
+	addr = redisOr(addr, "NOVA_REDIS_ADDR") // landRedisAddr, the seat's address last (#4330)
 	if len(repos) != 1 || !landRepoOK(repos[0]) || len(streams) == 0 || addr == "" {
 		return l, false, false, nil
 	}

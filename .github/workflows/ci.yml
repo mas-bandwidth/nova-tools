@@ -487,17 +487,33 @@ jobs:
             base="${{ github.event.merge_group.base_sha }}"
             STUDIO_SHARDS=4
           fi
+          # A GO LIST FAILURE NEVER YIELDS `test (nothing)`. Measured 2026-09-26
+          # ~1:00 PM ET: on PR #4370's final head the shards reported `test
+          # (nothing)` because select-packages.sh hit a shared-GOCACHE race on a
+          # space runner ("open /home/ubuntu/.cache/go-build/...: no such file or
+          # directory") inside `done < <(bash select-packages.sh ...)`, which
+          # throws the script's exit status away, and "0 package(s) touched: none"
+          # was green. The script's answer is now read by command substitution,
+          # so its exit status stops this step, and the script itself judges a
+          # go list failure: on pull_request it FAILS the job with the go list
+          # error printed (fast and cheap; the runner is broken, re-run it); on
+          # merge_group, push and schedule it prints `WARN select-packages: go
+          # list failed (...); testing the whole tree` and selects the whole tree
+          # (the landing must not stall on one runner's cache).
+          on_go_list_error=--on-go-list-error=whole-tree
+          [ "${{ github.event_name }}" = "pull_request" ] && on_go_list_error=--on-go-list-error=fail
           if [ -n "$base" ]; then
-            while IFS= read -r pkg; do
-              [ -n "$pkg" ] || continue
-              all+=("$pkg")
-            done < <(bash .github/scripts/select-packages.sh "$base")
+            selected=$(bash .github/scripts/select-packages.sh "$on_go_list_error" "$base") || { echo "select-packages.sh failed; see its error above"; exit 1; }
+          else
+            selected=$(bash .github/scripts/select-packages.sh "$on_go_list_error" --all) || { echo "select-packages.sh failed; see its error above"; exit 1; }
+          fi
+          while IFS= read -r pkg; do
+            [ -n "$pkg" ] || continue
+            all+=("$pkg")
+          done <<<"$selected"
+          if [ -n "$base" ]; then
             echo "${{ github.event_name }}: ${#all[@]} package(s) touched: ${all[*]:-none}"
           else
-            while IFS= read -r pkg; do
-              [ -n "$pkg" ] || continue
-              all+=("$pkg")
-            done < <(bash .github/scripts/select-packages.sh --all)
             [ "${#all[@]}" -gt 0 ] || { echo "no packages: the fan-out would be empty and green"; exit 1; }
           fi
 

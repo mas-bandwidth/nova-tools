@@ -41,7 +41,7 @@ func cmdNote(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := quietFlags("note")
 	class := fs.String("rote", "", "")
 	mind := fs.String("as", "", "")
-	addr := fs.String("store", "", "")
+	addr := fs.String("store", redisDefault(), "")
 	what := fs.String("what", "", "")
 	mech := fs.String("mech", "", "")
 	if err := fs.Parse(args); err != nil {
@@ -84,7 +84,7 @@ func cmdNote(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 // Exit 0 printed, 2 refused or could not run.
 func cmdRote(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := quietFlags("rote")
-	addr := fs.String("store", "", "")
+	addr := fs.String("store", redisDefault(), "")
 	since := fs.String("since", "", "")
 	until := fs.String("until", "", "")
 	sprint := fs.String("sprint", "", "")

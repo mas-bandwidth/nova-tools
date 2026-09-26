@@ -16,6 +16,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -158,21 +159,21 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 	line, err := readLaunchLine(stdin)
 	if err != nil {
 		if l, ok := cardFromArg(args[0]); ok {
-			recordRefusal(ctx, getenv, nil, true, l, card.WrapperReport{Code: 2, Card: l.Card(), Why: err.Error()})
+			keepRefusal(ctx, stderr, getenv, nil, true, l, card.WrapperReport{Code: 2, Card: l.Card(), Why: err.Error()})
 		}
 		return refuse(stderr, err.Error())
 	}
 	if line.Card() != args[0] {
 		// Neither side is echoed whole: the stdin line holds the token.
 		why := "the launch line on stdin names " + line.Card() + ", not " + oneline.Escape(args[0])
-		recordRefusal(ctx, getenv, nil, true, line, card.WrapperReport{Code: 2, Card: line.Card(), Why: why})
+		keepRefusal(ctx, stderr, getenv, nil, true, line, card.WrapperReport{Code: 2, Card: line.Card(), Why: why})
 		return refuse(stderr, why)
 	}
 	cfg, err := config(line, getenv)
 	if err != nil {
 		ack("REFUSED " + err.Error())
 		rep := card.WrapperReport{Code: card.WrapperExitUsage, Card: line.Card(), Why: err.Error()}
-		recordRefusal(ctx, getenv, nil, true, line, rep)
+		keepRefusal(ctx, stderr, getenv, nil, true, line, rep)
 		fmt.Fprintln(stdout, rep.Line())
 		return card.WrapperExitUsage
 	}
@@ -180,7 +181,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 	if err != nil {
 		ack("REFUSED redis unavailable")
 		rep := card.WrapperReport{Code: card.WrapperExitRedis, Card: line.Card(), Why: "redis: " + err.Error()}
-		recordRefusal(ctx, getenv, nil, false, line, rep)
+		keepRefusal(ctx, stderr, getenv, nil, false, line, rep)
 		fmt.Fprintln(stdout, rep.Line())
 		return card.WrapperExitRedis
 	}
@@ -197,7 +198,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 	}
 	if rep.Outcome == "" && rep.Code != card.WrapperExitEnded {
 		// Refused before launched: nothing else records it (#3420).
-		recordRefusal(ctx, getenv, st, false, line, rep)
+		keepRefusal(ctx, stderr, getenv, st, false, line, rep)
 	}
 	fmt.Fprintln(stdout, rep.Line())
 	return rep.Code
@@ -330,8 +331,11 @@ const refusalTimeout = 3 * time.Second
 // s:<S>:log as one entry of kind RefusedLogKind when Redis answers: st when
 // the wrapper has a connection, else a fresh dial of NOVA_CARD_REDIS when dial
 // is set. Otherwise it is appended to <NOVA_CARD_RESULTS>/refused/<S>/<label>/
-// <attempt>.line on the bench. With neither, nothing can be kept.
-func recordRefusal(ctx context.Context, getenv func(string) string, st *store.Store, dial bool, l launch.Line, rep card.WrapperReport) {
+// <attempt>.line on the bench. With neither, nothing can be kept: the
+// error says where the record could not go, and the caller prints it on
+// stderr (keepRefusal), so a refusal that reached no store is at least on
+// the one stream the bench operator can still read.
+func recordRefusal(ctx context.Context, getenv func(string) string, st *store.Store, dial bool, l launch.Line, rep card.WrapperReport) error {
 	bench := getenv("NOVA_CARD_BENCH")
 	text := rep.Line() + " bench=" + oneline.Escape(bench) + " at=" + time.Now().UTC().Format(time.RFC3339)
 	why := rep.Why
@@ -341,8 +345,12 @@ func recordRefusal(ctx context.Context, getenv func(string) string, st *store.St
 	}
 	ctx, cancel := context.WithTimeout(ctx, refusalTimeout)
 	defer cancel()
+	var missed []string
 	if st == nil && dial && getenv("NOVA_CARD_REDIS") != "" {
-		if s, err := store.Open(ctx, getenv("NOVA_CARD_REDIS")); err == nil {
+		s, err := store.Open(ctx, getenv("NOVA_CARD_REDIS"))
+		if err != nil {
+			missed = append(missed, "redis: "+err.Error())
+		} else {
 			defer s.Close()
 			st = s
 		}
@@ -355,25 +363,47 @@ func recordRefusal(ctx context.Context, getenv func(string) string, st *store.St
 			"at", strconv.FormatInt(time.Now().Unix(), 10),
 		}}).Err()
 		if err == nil {
-			return
+			return nil
 		}
+		missed = append(missed, "xadd "+card.LogKey(l.Sprint)+": "+err.Error())
 	}
 	root := getenv("NOVA_CARD_RESULTS")
 	if !filepath.IsAbs(root) {
-		return
+		missed = append(missed, "NOVA_CARD_RESULTS is not an absolute path: nothing on disk either")
+		return errors.New(strings.Join(missed, "; "))
 	}
 	// l's sprint and label passed launch.ParseLine ([a-z0-9-]), so the path
 	// stays under root.
 	dir := filepath.Join(root, "refused", l.Sprint, l.Label)
-	if os.MkdirAll(dir, 0o755) != nil {
-		return
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		missed = append(missed, err.Error())
+		return errors.New(strings.Join(missed, "; "))
 	}
-	f, err := os.OpenFile(filepath.Join(dir, strconv.Itoa(l.Attempt)+".line"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	path := filepath.Join(dir, strconv.Itoa(l.Attempt)+".line")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		missed = append(missed, err.Error())
+		return errors.New(strings.Join(missed, "; "))
 	}
-	_, _ = fmt.Fprintln(f, text)
-	_ = f.Close()
+	if _, err := fmt.Fprintln(f, text); err != nil {
+		_ = f.Close()
+		missed = append(missed, "write "+path+": "+err.Error())
+		return errors.New(strings.Join(missed, "; "))
+	}
+	if err := f.Close(); err != nil {
+		missed = append(missed, "close "+path+": "+err.Error())
+		return errors.New(strings.Join(missed, "; "))
+	}
+	return nil
+}
+
+// keepRefusal is recordRefusal with its failure on stderr: the refusal
+// itself is already on stdout, so this line says only where the record
+// could not be kept.
+func keepRefusal(ctx context.Context, stderr io.Writer, getenv func(string) string, st *store.Store, dial bool, l launch.Line, rep card.WrapperReport) {
+	if err := recordRefusal(ctx, getenv, st, dial, l, rep); err != nil {
+		fmt.Fprintf(stderr, "nova-card: refusal of %s not recorded: %s\n", l.Card(), oneline.Escape(err.Error()))
+	}
 }
 
 // cardFromArg reads argv's <sprint>/<label>/<attempt> when the launch line

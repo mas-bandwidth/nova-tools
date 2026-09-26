@@ -46,13 +46,7 @@ const wantFriend = "want NOVA_FRIEND in friends"
 // NOVA_SPRINT_REDIS, else NOVA_REDIS_ADDR, else empty, which store.Open
 // refuses (never a localhost default on a mutating verb).
 func taskAddr(flagAddr string) string {
-	if flagAddr != "" {
-		return flagAddr
-	}
-	if v := os.Getenv("NOVA_SPRINT_REDIS"); v != "" {
-		return v
-	}
-	return os.Getenv("NOVA_REDIS_ADDR")
+	return redisOr(flagAddr, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR")
 }
 
 // refuseSeat maps the seat errors to their one line: ErrNotFriend is
@@ -100,7 +94,7 @@ func taskFlags(name string) *flag.FlagSet {
 
 func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("task push")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	id := fs.String("id", "", "")
 	kind := fs.String("kind", "work", "")
@@ -184,7 +178,7 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("task take")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	id := fs.String("id", "", "")
 	as := fs.String("as", "", "")
@@ -244,7 +238,7 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("task done")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	id := fs.String("id", "", "")
 	token := fs.String("token", "", "")
@@ -308,7 +302,13 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 		if err != nil && !errors.Is(err, redis.Nil) {
 			return refuse(errOut, "task done", err.Error())
 		}
-		pr, _ := strconv.Atoi(prText)
+		pr := 0
+		if prText != "" {
+			// A pr field that is not a number is a broken record, not PR 0.
+			if pr, err = strconv.Atoi(prText); err != nil {
+				return refuse(errOut, "task done", "task:"+*id+" pr="+prText+" is not a number")
+			}
+		}
 		typed.KindDerived = disposition.Classify(typed.Reason, pr)
 	}
 	scoreText := ""

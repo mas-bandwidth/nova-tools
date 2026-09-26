@@ -54,7 +54,7 @@ func runLine(ctx context.Context, args []string, out, errOut io.Writer) int {
 	sub := args[0]
 	verb := "line " + sub
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	repo := fs.String("repo", "", "")
 	n := fs.String("n", "", "")
 	typed := fs.String("line", "", "")

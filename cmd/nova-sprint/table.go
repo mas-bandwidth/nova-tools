@@ -53,7 +53,7 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("table")
 	var opts tableOpts
 	fs.BoolVar(&opts.once, "once", false, "")
-	fs.StringVar(&opts.redis, "redis", "", "")
+	fs.StringVar(&opts.redis, "redis", redisDefault(), "")
 	fs.StringVar(&opts.sprint, "sprint", "", "")
 	fs.BoolVar(&opts.check, "check", false, "")
 	fs.BoolVar(&opts.live, "live", false, "")

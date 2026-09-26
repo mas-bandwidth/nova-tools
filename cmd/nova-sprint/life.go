@@ -103,7 +103,7 @@ func runBench(ctx context.Context, args []string, out, errOut io.Writer) int {
 // then the local test endpoint. A real production host is never hardcoded.
 func lifeFlags(name string) (*flag.FlagSet, *string) {
 	fs := verbflag.New(name)
-	addr := fs.String("redis", "", "redis address (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
+	addr := fs.String("redis", redisDefault(), "redis address (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
 	return fs, addr
 }
 
@@ -316,6 +316,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 		req.Load1 = life.Load1Now()
 	}
 	req.CPU = life.CPUBusyNow()
+	req.CI = life.CILegsNow()
 	res, err := life.BenchBeat(ctx, st, req)
 	if err != nil {
 		return refuse(errOut, "bench beat", err.Error())
@@ -336,7 +337,13 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	// this host; no new unit, no tokens.
 	wakeOn := *host
 	if wakeOn == "" {
-		wakeOn, _ = os.Hostname()
+		h, err := os.Hostname()
+		if err != nil {
+			// The repair tick names this host; a bench that cannot say
+			// its name refuses now, not every tenth beat with an empty host.
+			return refuse(errOut, "bench beat", "no --host and no hostname: "+err.Error())
+		}
+		wakeOn = h
 	}
 	beats := 0
 	var launchEnv []string
@@ -363,6 +370,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 				req.Load1 = life.Load1Now()
 			}
 			req.CPU = life.CPUBusyNow()
+			req.CI = life.CILegsNow()
 			res, err := life.BenchBeat(ctx, st, req)
 			if beats++; err == nil && res.Accepted && beats%life.WakeRepairEvery == 0 {
 				benchWakeRepair(ctx, st, wakeOn, *session, errOut)
@@ -585,8 +593,12 @@ type presenceSteps struct {
 
 func livePresenceSteps(st *store.Store, p life.Presence, sprint string) presenceSteps {
 	return presenceSteps{
-		now:  time.Now,
-		beat: func(ctx context.Context) error { return life.Beat(ctx, st, p) },
+		now: time.Now,
+		beat: func(ctx context.Context) error {
+			q := p
+			q.CI = life.CILegsNow() // the CI legs on this machine, each a slot (nova-tools#4293)
+			return life.Beat(ctx, st, q)
+		},
 		// The process beat as a lifecycle event (#3153). p.Friend is the
 		// initiator: hello refused any --as != NOVA_FRIEND.
 		event: func(ctx context.Context, at time.Time) error {

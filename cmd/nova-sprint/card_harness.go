@@ -38,7 +38,7 @@ func runCardRunEnv(ctx context.Context, args []string, stdout, stderr io.Writer,
 	sprint := fs.String("sprint", "", "")
 	label := fs.String("label", "", "")
 	attempt := fs.String("attempt", "", "")
-	addr := fs.String("redis", getenv("NOVA_CARD_REDIS"), "")
+	addr := fs.String("redis", redisOr(getenv("NOVA_CARD_REDIS")), "")
 	out := fs.String("out", getenv("NOVA_CARD_OUT"), "")
 	job := fs.String("job", getenv("NOVA_CARD_JOB"), "")
 	if err := fs.Parse(args); err != nil {

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -34,7 +33,7 @@ func runDrain(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs := verbflag.New("drain")
 	sprint := fs.String("sprint", "", "")
 	control := fs.String("control", "", "")
-	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	var resume multiFlag
 	fs.Var(&resume, "resume", "")
 	if err := fs.Parse(args); err != nil || (*sprint == "" && *control == "") || *addr == "" || fs.NArg() > 0 {

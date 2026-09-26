@@ -132,7 +132,7 @@ func productionDuties(st *store.Store, set *metrics.Set) (duties []reconcile.Dut
 // 1 when any duty errored. Every duty error is printed with the duty's name.
 func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("reconcile")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	host := fs.String("host", "", "")
 	once := fs.Bool("once", false, "")
 	metricsAddr := fs.String("metrics-addr", "", "")

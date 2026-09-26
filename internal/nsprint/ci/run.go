@@ -704,6 +704,7 @@ type Row struct {
 	WallMS string
 	Log    string
 	Bench  string
+	Fail   string // the receipt's fail: the log's first FAIL line
 }
 
 // Rows is the request record, its receipts and the GitHub leg, read in two
@@ -750,7 +751,7 @@ func ReadRows(ctx context.Context, st *store.Store, repo, sha string) (Rows, err
 		r := cmds[i].Val()
 		row := Row{Check: n, State: SummaryPending}
 		if rc, ok := r["rc"]; ok {
-			row.RC, row.WallMS, row.Log, row.Bench = rc, r["wall_ms"], r["log"], r["bench"]
+			row.RC, row.WallMS, row.Log, row.Bench, row.Fail = rc, r["wall_ms"], r["log"], r["bench"], r["fail"]
 			row.State = SummaryRed
 			if rc == "0" {
 				row.State = SummaryGreen

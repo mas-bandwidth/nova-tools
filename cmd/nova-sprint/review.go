@@ -45,7 +45,7 @@ func runReview(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "review", "wants post: review post --id <primary> --verdict recut|redeal|reassign:<consumer>|drop --why <text>")
 	}
 	fs := verbflag.New("review post")
-	addr := fs.String("redis", "", "Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
+	addr := fs.String("redis", redisDefault(), "Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
 	actor := fs.String("actor", "", "who posts the verdict (else NOVA_FRIEND, else nova-sprint)")
 	id := fs.String("id", "", "the primary in review")
 	verdict := fs.String("verdict", "", "recut | redeal | reassign:<consumer> | drop")
@@ -99,18 +99,25 @@ func runReview(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 		get := func(i int) string { s, _ := rec[i].(string); return s }
 		repo, n, ok := reviewIssue(get(0), get(1), get(2))
-		switch {
-		case !ok:
-			line += " issue=- closed=no"
-		case reviewForge(st).CloseIssue(ctx, repo, n, get(3)) != nil:
-			line += fmt.Sprintf(" issue=%s#%d closed=no", repo, n)
-			code = 1
-		default:
-			line += fmt.Sprintf(" issue=%s#%d closed=yes", repo, n)
-		}
+		var suffix string
+		suffix, code = reviewClose(ctx, reviewForge(st), ok, repo, n, get(3))
+		line += suffix
 	}
 	fmt.Fprintf(out, "%s ms=%d\n", line, time.Since(start).Milliseconds())
 	return code
+}
+
+// reviewClose closes a dropped card's origin issue (when it has one) and
+// answers the receipt's issue words and the exit code: a close the forge
+// refused is `closed=no err=<why>`, exit 1 (the why used to be dropped).
+func reviewClose(ctx context.Context, forge reconcile.IssueCloser, ok bool, repo string, n int, comment string) (string, int) {
+	if !ok {
+		return " issue=- closed=no", 0
+	}
+	if err := forge.CloseIssue(ctx, repo, n, comment); err != nil {
+		return fmt.Sprintf(" issue=%s#%d closed=no err=%s", repo, n, quoteField(err.Error())), 1
+	}
+	return fmt.Sprintf(" issue=%s#%d closed=yes", repo, n), 0
 }
 
 // reviewVerdict is the typed verdict: recut, redeal, drop, or

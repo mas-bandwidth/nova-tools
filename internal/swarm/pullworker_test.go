@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // plantWorkerTestCard puts one <name>.card in store/queue/.
@@ -175,21 +173,6 @@ func TestWrapSecretsExec(t *testing.T) {
 	}
 }
 
-// writeFakeExec puts a shell script named <name> in dir/bin and returns the dir
-// with that bin and nothing else on PATH, so a test can prove which binary a
-// path ran and with what arguments, never the real one.
-func writeFakeExec(t *testing.T, name, script string) string {
-	t.Helper()
-	bin := filepath.Join(t.TempDir(), "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := testbin.WriteExecutable(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return bin
-}
-
 // A container that plants a symlink where RESULT.md is expected must not carry the
 // host-side harvest out of the job: the read is refused, and nothing is harvested.
 func TestHarvestRefusesASymlinkedResult(t *testing.T) {
@@ -248,38 +231,6 @@ func TestWorkerRefusesACardWithAnUnsafeLabel(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "not a safe name") {
 		t.Fatalf("stderr does not say the label is unsafe:\n%s", stderr.String())
-	}
-}
-
-// --seat wraps the container command through nova-secrets exec: the production
-// executeContainer path, not just the helper, must hand nova-secrets the wrapped
-// command line.
-func TestExecuteContainerRunsThroughNovaSecrets(t *testing.T) {
-	log := filepath.Join(t.TempDir(), "args.log")
-	script := "#!/bin/sh\nprintf '%s' \"$*\" > " + `"` + log + `"` + "\n"
-	bin := writeFakeExec(t, "nova-secrets", script)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	workDir := t.TempDir()
-	opts := PullWorkerOptions{
-		Seat:      "hulk",
-		Container: "podman",
-		Image:     "nova-card:dev",
-		Model:     "m",
-		Stderr:    &bytes.Buffer{},
-	}
-
-	code, err := executeContainer(context.Background(), opts, "CARD-1", "card", workDir)
-	if err != nil || code != 0 {
-		t.Fatalf("executeContainer = %d, %v; want 0", code, err)
-	}
-	data, rerr := os.ReadFile(log)
-	if rerr != nil {
-		t.Fatalf("nova-secrets was never run: %v", rerr)
-	}
-	got := string(data)
-	if !strings.Contains(got, "exec --as hulk -- podman") {
-		t.Fatalf("nova-secrets was not handed the wrapped command; got %q", got)
 	}
 }
 

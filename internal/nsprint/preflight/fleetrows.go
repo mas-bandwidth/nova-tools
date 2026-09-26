@@ -115,11 +115,13 @@ type BenchFacts struct {
 	DiskOK  bool     // the beat carried a readable disk fact
 	Slots   int      // bench:<b>:desired slots
 	Leased  int      // ZCARD bench:<b>:cards:working, the one lease ledger (#3998)
+	CI      int      // CI legs running on the bench, the beat's ci (nova-tools#4293)
 }
 
-// Free is the bench's free slots now.
+// Free is the bench's free slots now: declared minus the CI legs running
+// minus leased (nova-tools#4293), never negative.
 func (b BenchFacts) Free() int {
-	if f := b.Slots - b.Leased; f > 0 {
+	if f := b.Slots - b.CI - b.Leased; f > 0 {
 		return f
 	}
 	return 0
@@ -210,6 +212,7 @@ func GatherFleet(ctx context.Context, c *redis.Client, sprint string) (Fleet, er
 				}
 			}
 		}
+		b.CI, _ = strconv.Atoi(beat["ci"])
 		b.Build = shortBuild(beat["build"])
 		b.Harness = splitList(beat["harness"])
 		b.Mirrors = splitList(beat["mirrors"])

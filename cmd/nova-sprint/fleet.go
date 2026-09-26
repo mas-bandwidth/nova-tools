@@ -17,7 +17,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "fleet",
-		Summary: "fleet state, is-up, hold, release (a held bench, or <sha>: the whole deploy), config, build, and churn (the process-age sample)",
+		Summary: "fleet state, is-up, hold, release (a held bench, or <sha>|dev: the whole roll, build, fn, fn check, the bench play, self update and the beat verify), config, build, and churn (the process-age sample); roll is retired into release",
 		Run:     runFleet,
 	})
 }
@@ -76,6 +76,8 @@ func runFleet(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runFleetBuild(ctx, args[1:], out, errOut)
 	case "churn":
 		return runFleetChurn(ctx, args[1:], out, errOut)
+	case "roll":
+		return runFleetRoll(ctx, args[1:], out, errOut)
 	default:
 		return refuse(errOut, "fleet", fmt.Sprintf("unknown subverb %s; want state, is-up, hold, release, config, build, or churn", args[0]))
 	}
@@ -83,7 +85,7 @@ func runFleet(ctx context.Context, args []string, out, errOut io.Writer) int {
 
 func runFleetState(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("fleet state")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	bench := fs.String("bench", "", "")
 	upOnly := fs.Bool("up", false, "")
 	if err := fs.Parse(args); err != nil {
@@ -121,7 +123,7 @@ func runFleetState(ctx context.Context, args []string, out, errOut io.Writer) in
 
 func runFleetIsUp(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("fleet is-up")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	bench := fs.String("bench", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fleet is-up", err.Error())
@@ -166,7 +168,7 @@ func runFleetIsUp(ctx context.Context, args []string, out, errOut io.Writer) int
 
 func runFleetHold(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("fleet hold")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	bench := fs.String("bench", "", "")
 	why := fs.String("why", "", "")
 	by := fs.String("by", "", "")
@@ -196,7 +198,7 @@ func runFleetHold(ctx context.Context, args []string, out, errOut io.Writer) int
 
 func runFleetConfig(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("fleet config")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	downAfter := fs.Int("down-after", 0, "")
 	upAfter := fs.Int("up-after", 0, "")
 	sshFailAfter := fs.Int("ssh-fail-after", 0, "")

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
@@ -29,7 +28,7 @@ func runLandFlaky(ctx context.Context, args []string, out, errOut io.Writer) int
 
 func runLandFlakyList(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("land flaky list")
-	addr := fs.String("redis", "", "")
+	addr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "land flaky list", err.Error())
@@ -59,7 +58,7 @@ func runLandFlakyList(ctx context.Context, args []string, out, errOut io.Writer)
 
 func runLandFlakyObserve(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("land flaky observe")
-	addr := fs.String("redis", "", "")
+	addr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	repo := fs.String("repo", "", "")
 	pkg := fs.String("pkg", "", "")
@@ -77,12 +76,12 @@ func runLandFlakyObserve(ctx context.Context, args []string, out, errOut io.Writ
 			return refuse(errOut, "land flaky observe", "--"+name+" must not contain ':'")
 		}
 	}
-	tok := strings.TrimSpace(os.Getenv("GH_TOKEN"))
-	if tok == "" {
-		tok = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+	tok, err := envGitHubToken()
+	if err != nil {
+		return refuse(errOut, "land flaky observe", err.Error())
 	}
 	if tok == "" {
-		return refuse(errOut, "land flaky observe", "needs GH_TOKEN or GITHUB_TOKEN from the seat environment")
+		return refuse(errOut, "land flaky observe", "needs a GitHub token: a seats.tsv row naming the seat's token env (seventh column), or GH_TOKEN or GITHUB_TOKEN")
 	}
 	st, err := store.Open(ctx, *addr)
 	if err != nil {

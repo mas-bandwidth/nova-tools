@@ -30,7 +30,7 @@ var readyForge = func(st *store.Store) deal.PRs {
 
 func runReady(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ready")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	why := fs.String("why", "", "")
 	if err := fs.Parse(args); err != nil {

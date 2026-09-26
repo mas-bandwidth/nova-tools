@@ -3,7 +3,6 @@ package ci
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -183,7 +182,7 @@ func walkCIGoFiles(root string, fn func(rel string, src []byte) error) error {
 			}
 			return statErr
 		}
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
+		err := walkSourceDir(base, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
@@ -205,7 +204,7 @@ func walkCIGoFiles(root string, fn func(rel string, src []byte) error) error {
 			if rel == goEnvPkgDir || strings.HasPrefix(rel, goEnvPkgDir+"/") {
 				return nil
 			}
-			raw, readErr := os.ReadFile(path)
+			raw, readErr := readSourceFile(path)
 			if readErr != nil {
 				return readErr
 			}
@@ -223,8 +222,7 @@ func walkCIGoFiles(root string, fn func(rel string, src []byte) error) error {
 // read-but-clean rather than as an error: the checker refuses environments,
 // never syntax, and the compiler has the better message for a broken file.
 func scanGoEnvFile(rel string, raw []byte) ([]GoEnvFinding, bool) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, rel, raw, 0)
+	fset, file, err := parseSource(rel, raw, 0)
 	if err != nil {
 		return nil, false
 	}

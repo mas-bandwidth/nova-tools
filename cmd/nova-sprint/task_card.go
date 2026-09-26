@@ -130,7 +130,7 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	verb := "task " + sub
 	fs := taskFlags(verb)
 	c := &cardCmd{verb: verb}
-	c.redis = fs.String("redis", "", "")
+	c.redis = fs.String("redis", redisDefault(), "")
 	c.actor = fs.String("actor", "", "")
 	c.sprint = fs.String("sprint", "", "")
 	c.id = fs.String("id", "", "")

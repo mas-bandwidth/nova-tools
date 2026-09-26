@@ -34,7 +34,7 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "land pr"
 	fs := taskFlags(verb)
 	repo := fs.String("repo", "mas-bandwidth/nova-tools", "")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	api := fs.String("api", gh.DefaultAPI, "")
 	wait := fs.Duration("wait", 0, "")
 	tick := fs.Duration("tick", 30*time.Second, "")
@@ -70,7 +70,10 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR (the check state is read from Redis): "+usage)
 	}
 	tok, err := landStreamToken()
-	if err != nil || tok == "" {
+	if err != nil {
+		return landExit(errOut, verb, &stream.Refusal{Why: "no GitHub token", Remedy: err.Error()})
+	}
+	if tok == "" {
 		return landExit(errOut, verb, stream.ErrNoToken)
 	}
 	st, err := store.Open(ctx, addr)

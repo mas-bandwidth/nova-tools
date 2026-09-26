@@ -12,6 +12,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	jevledger "github.com/mas-bandwidth/nova-tools/internal/nsprint/jev"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
@@ -306,6 +308,11 @@ type MergeReport struct {
 	// Release is the fleet:release version this merge wrote (a landing of
 	// nova-tools into dev, #4050), "" when it wrote none.
 	Release string
+	// GateJoined is the members whose Jev gate row took the landing as its
+	// outcome, GateMissing those with no gate row, GateErr why the join
+	// failed ("" when it did not; the land stands either way).
+	GateJoined, GateMissing int
+	GateErr                 string
 }
 
 // Merge merges the stream PR when its record says ci=green and mergeable at
@@ -409,6 +416,17 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 		return rep, err
 	}
 	rep.Moved, rep.Missing, rep.Lines, rep.Skipped = landed.Moved, landed.Missing, landed.Lines, landed.Skipped
+	// The Jev gate at each member's head is a decision; its landing is the
+	// outcome (#4316): one call, never a reason to refuse the land.
+	heads := make([]jevledger.GateHead, len(l.Members))
+	for i, m := range l.Members {
+		heads[i] = jevledger.GateHead{N: m.N, Head: m.Head}
+	}
+	rep.GateJoined, rep.GateMissing, err = jevledger.JoinGates(ctx, c, prkey.Name(o.Repo), heads, "ok", "landed",
+		"landed with "+LandedWith(o.Repo, l.PR)+" ("+Short(rep.MergeSHA)+") by "+o.By)
+	if err != nil {
+		rep.GateErr, err = err.Error(), nil
+	}
 	// Close the issues each member closes: GitHub does not on a merge into
 	// dev (not the default branch). One comment naming the merge sha, then
 	// state=closed; an issue closed on an earlier run is not closed again.

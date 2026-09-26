@@ -29,7 +29,7 @@ import (
 func runPRReap(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "pr reap"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	dry := fs.Bool("dry-run", false, "")
 	budget := fs.Int("budget", reap.DefaultBudget, "")

@@ -14,15 +14,15 @@ var DefaultCatalog = []Entry{
 	E(".github", "CI workflows and automation", "go test ./internal/ci", "make test"),
 	E("assets", "static assets and schemas", "none", "none"),
 	E("fleet", "fleet loop units and bench templates", "none", "none"),
-	Page("cmd", "26 nova command-line tools", "go test ./cmd/...", "make build"),
+	Page("cmd", "26 nova command-line tools", "nova-ci local", "make build"),
 	Page("docs", "specs, guides, and proposals", "go test ./internal/docs", "go test ./internal/docs"),
 	E("infra", "runner images and scripts", "none", "none"),
-	Page("internal", "packages and libraries", "go test ./internal/...", "make test"),
+	Page("internal", "packages and libraries", "nova-ci local", "make test"),
 	E("lisp", "nova-work lisp kernel", "go test ./internal/ci", "make test-lisp"),
 	E("profiles", "swarm worker profiles", "go test ./internal/swarm", "nova-swarm lint"),
 	E("scripts", "maintenance and operational scripts", "none", "none"),
 	E("testdata", "shared test fixtures and data", "go test ./internal/ci", "make test"),
-	Page("tools", "developer and bench tools", "go test ./tools/...", "make map"),
+	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
 
 	// cmd/
 	E("cmd/nova-board", "board viewer and coordinator CLI", "go test ./cmd/nova-board", "go test ./cmd/nova-board"),
@@ -117,6 +117,7 @@ var DefaultCatalog = []Entry{
 	E("internal/workclient", "client bindings for nova-work daemon", "go test ./internal/workclient", "go test ./internal/workclient"),
 	E("internal/worklang", "worklang s-expression evaluator", "go test ./internal/worklang", "go test ./internal/worklang"),
 	E("internal/workreconcile", "GitHub issue import and work reconcile", "go test ./internal/workreconcile", "go test ./internal/workreconcile"),
+	E("internal/yield", "CI over work: a copy or local test run steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
 
 	// docs/
 	E("docs/spec-pulse", "the card contract the pulse cut engine writes (10-the-card-as-cut-writes-it.md); the rest of the spec folder deleted 2026-09-24", "go test ./internal/docs", "go test ./internal/docs"),

@@ -1628,13 +1628,13 @@ words is not seen.
 
 **The rule.** Every opt-in build tag a `_test.go` carries is named by a
 SCHEDULED workflow, either literally on a `go test`/`go vet` line
-(`go test -tags perf ./...`) or as a `tag:` entry of a job's matrix the step
-then expands (`go test -tags ${{ matrix.tag }} ./...`). Platform and toolchain
+(`go test -tags perf` over the tree) or as a `tag:` entry of a job's matrix the
+step then expands (`go test -tags ${{ matrix.tag }}` over the tree). Platform and toolchain
 constraints are not opt-ins and are out of scope: `//go:build darwin` says where
 a test runs, not whether it runs, and a negation (`!windows`) is on by default
 everywhere else.
 **The hurt.** A build tag is how this tree takes a test off the per-change path,
-and `go test ./...` without the tag compiles the file away silently. So a tag no
+and a plain `go test` over the tree compiles the file away silently. So a tag no
 scheduled job passes to `go test -tags` is not a slower tier, it is a deleted
 test that still looks like a test in the tree. One tag was in exactly that
 state: `//go:build darwin && novadisk`
@@ -1853,7 +1853,7 @@ The standard had been silent about all of it.
 **The test.** `TestBenchStandardDriftsOnAToolTheWallCannotExecute` and
 `TestBenchStandardAcceptsAToolUnderAGrantedRoot`
 (`internal/ci/benchstandard_wall_toolchain_test.go`), in the shape
-`benchstandard_disk_test.go` already uses: run the REAL script with a FAKE PATH
+`benchstandard_disk_functional_test.go` already uses: run the REAL script with a FAKE PATH
 layout and a HOME of its own. The negative half puts the tool at
 `$HOME/.local/bin` — where the fleet's sbcl actually was — and demands exactly
 one DRIFT line carrying the remedy. The positive half puts it at
@@ -2153,8 +2153,10 @@ per-package budget (`slowtests`) and the measured table are the net under those.
 
 **The rule.** Every list file under `internal/ci/testdata/` (`*allowlist*.txt`,
 `*.allow`, `*_examples.txt`) is loaded by a call to `loadAllowlist` or
-`allowlist.Load` in `internal/ci`, and nothing there reads one with
-`os.ReadFile`, `os.Open` or `readFile`.
+`allowlist.Load`, and no Go file anywhere in the tree reads one with
+`os.ReadFile`, `os.Open` or `readFile`; the lander's guard
+(`internal/nsprint/land/guard`) reads `namedpaths_allowlist.txt` through the
+helper too.
 **The hurt.** 2026-09-26 (#4339): each class test had its own list format and
 no update path, so removals were followed by hand-written scripts
 (`fix-ci-serial2/3/4.py`, `drain_test_rewrite.py`, `prune.py`) rewriting
@@ -2171,9 +2173,8 @@ allowlist.Load`.
 **Its narrowings.** The walk is syntactic: a call's path is resolved through
 string literals (`filepath.Join` parts included), package constants, a variable
 assigned in the same function and one level of parameter; a path computed any
-other way is not seen. It reads `internal/ci` only, so a list read from another
-package (`internal/nsprint/land/guard` reads `namedpaths_allowlist.txt` for the
-lander) is not held here.
+other way is not seen. A package none of whose files spells a list file's name
+is not parsed, since the resolver could not reach a list from it.
 
 ### `seatwrap` — no script wraps `nova-secrets exec` around a seat tool for its Redis password
 
@@ -2209,6 +2210,39 @@ delivers only the Redis login and that wrapper is still the way to deliver the
 rest; a wrapper around any other nova tool (`nova-tokens`, `nova-decide`,
 `nova-redis serve`) is not flagged until that tool takes `--seat`; and only
 `docs/` Markdown is read, so a README elsewhere is not.
+
+### `seatredis` — no nova-sprint verb refuses an empty `--redis` while a seat is selected
+
+**The rule.** Every `--redis` flag in `cmd/nova-sprint` and `internal/nsprint`
+(and `--store`, nova-sprint's `note`) defaults to a seat-aware expression:
+`redisDefault(...)`, `redisOr(...)`, `redisDefaultFrom(...)`,
+`rawAddrDefault(...)` or, outside cmd/nova-sprint, `seatcred.Addr()`. Each of
+these is the verb's own environment default first, then the selected seat
+row's address from seats.tsv. A `--redis` read by hand (a `["redis"]` index or
+`flagValues(..., "redis")`) sits in a function that calls `redisOr`.
+**The hurt.** #4357 gave nova-sprint `--seat coordinator` and a seats.tsv row
+naming its Redis, but the cold read found that `table`, `census`, `digest` and
+`fn load` declared `--redis` with no default and refused the empty address
+before `store.Open` could fall back to the seat. So a session still typed
+`--redis` on every line, doing by hand what the retired wrapper script did
+(nova-tools#4330).
+**The test.** `TestNoVerbRefusesAnEmptyRedisUnderASeat`, with its control
+`TestSeatRedisRuleSeesEachShape` (`internal/ci/seatredis_class_test.go`). It
+reads the shared AST and fails when it finds fewer than 100 flags, so it cannot
+pass by matching nothing. The control pins `""`, `os.Getenv(...)`, a
+`StringVar` with `""`, a bare `flags["redis"]` and nova-sprint's `--store` as
+red, and the seat-aware spellings as green. The functional
+`TestSeatRowDrivesVerbsWithNoWrapper` (`cmd/nova-sprint`) runs `table --once`,
+`census`, `digest`, `fn load` and `fn check` on the seat row with no `--redis`.
+**Its allowlist.** None.
+**Its remedy line.** `default the flag to redisDefault() (or
+redisDefault("ENV")), wrap a hand-parsed one in redisOr, or use
+seatcred.Addr() outside cmd/nova-sprint`.
+**Its narrowings.** Only `String`, `StringVar` and the two hand-parse shapes
+are read. A flag named anything other than `redis` (or nova-sprint's `store`)
+is not held, and neither are other tools (`nova-work`, `nova-tokens`,
+`nova-post`, `nova-merge`). A hand-parsed read counts as covered when its
+function calls `redisOr` anywhere, not necessarily on that value.
 
 ### Tests this spec demands
 
@@ -2255,6 +2289,8 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 40. `TestTaskCardsHaveOneWriter` — no non-test Go file under `cmd/` or `internal/` writes a task card's sets or record (`ws:<stream>:<where>`, `friend:<f>:cards:<where>`, the friend-queue idx sets, `task:<id>`) with a direct Redis call; every move is one FCALL of the one writer, `ns_tcard_move` in `internal/nsprint/fn/lua/02_card_move.lua` (#3778, Glenn 2026-09-25: "a card can only ever be in no set, or one of these sets"; the 07:46 table read 143/143 left after a night that landed 27 PRs because four writers kept the sets). Fixtures that seed a throwaway store (a `*fixture*.go` file, `internal/nsprint/ws/wstest`) are the only exceptions; the remedy is `internal/nsprint/taskcard`. Its Lua twin is `TestTaskCardOneWriter` in `internal/nsprint/fn`.
 41. `TestTableSetsHaveOneWriter` / `TestTableSetsRuleCatchesAnInjectedWriter` — nothing but the one move file, `internal/nsprint/fn/lua/02_card_move.lua`, writes a set behind the three tables: `ws:<stream>:<where>` (the stream table's primaries), `bench:<b>:cards:<col>` and `friend:<f>:cards:<col>` (the host and friend tables' copies), and the bench lease ledgers `bench:<b>:living|starting` being folded into `bench:<b>:cards:working` (#3929, the table moves; Glenn 2026-09-25: "it's YOUR JOB to make sure that these links are always valid"). **The hurt:** the table printed counts no card record could account for, because several files each kept their own copy of a set, so a move in one left a stale member in another. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (a ZADD, ZREM, SADD, SREM, SMOVE, pop, range removal, store, DEL, UNLINK or RENAME of one of those keys, directly or through a local bound to one) and every non-test Go file under `cmd/` and `internal/` (the go-redis write methods and raw command lists on the same keys). **The allowlist:** fixtures (`*fixture*.go`) seed a throwaway store; the legacy ledger writers were a ratchet (`legacyLedgerWriters` in `internal/ci/tablemoves_class_test.go`), now empty since the fold landed (#3998): any write of an old ledger fails. **The remedy line:** `a second writer of a table set (the one writer is 02_card_move.lua; verbs call it: nova-sprint card deal|work|end|land|cancel): <file>:<line>`, or the ratchet's `lower legacyLedgerWriters[...]`. **The control:** `TestTableSetsRuleCatchesAnInjectedWriter` feeds the scanner Lua and Go writers of the table sets and the ledgers and wants each found, and wants the move file, a fixture and a ZCARD read left alone.
 42. `TestNoOldLeaseLedgerLeft` — nothing reads or writes the old lease ledgers `bench:<b>:living|starting` and `friend:<f>:living|starting` any more, in the Lua library or in any non-test Go file: they fold into `<consumer>:cards:working`, the one lease ledger, and the width in use is its ZCARD (#3998, #3877's other half). **The hurt:** a bench or friend kept two ledgers beside its working set, so the width a table printed, the width a take was refused at and the width the dealer reserved against could each read a different set. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (code before a `--` comment) and every non-test Go file under `cmd/` and `internal/`, for a string spelling of a bench or friend key ending `:living` or `:starting`. **No allowlist:** fixtures seed the consumer sets. **The remedy line:** `an old lease ledger key (folded into <consumer>:cards:working, #3998): <file>:<line>: <line>`; hold and drop a friend-queue lease with `NS.moves.hold` / `NS.moves.drop` (02_card_move.lua) and read width as ZCARD `<consumer>:cards:working`. **The control:** the test feeds the pattern a Lua ZCARD of a friend's `:starting`, a Go ZCard of a bench's `:living` and a fixture ZADD of a friend's `:living` and wants each found, and wants `bench:<b>:cards:working` left alone.
+43. `TestCopiesRunNiced` — every path that execs a copy's harness, or a coordinator child's local test run, steps its OWN process down to nice 15 (`internal/yield`, `Nice = 15`: `setpriority(PRIO_PROCESS, 0, n)` on darwin, where a nice belongs to the process, and on Linux, where a nice belongs to a THREAD and a child forked from an un-niced thread inherits 0, `setpriority(PRIO_PROCESS, tid, n)` over every thread in `/proc/self/task`, repeated until a pass sets none — measured on hetzner 2026-09-26: the one-thread form left 31 of 32 children of a wrapper at nice 0) BEFORE the exec: `RunWrapper` (`internal/nsprint/card/wrapper.go`, before `proc.start()`), `Run` (`internal/nsprint/card/run.go`, before `cmd.Start()`) and `cmdLocal` (`cmd/nova-ci/local.go`, before its first `localCapture(`; its `nice -n` is pinned to `yield.Nice`); the card paths default their `Yield` seam to the package's `yieldToCI` (`yield = yieldToCI`, assigned once in `nice.go` to `yield.ToCI`), and no production caller sets a `Yield` of its own (nova-tools#4293, Glenn 2026-09-26 ~12:00 PM ET: "CI over work is a permanent setting. It's a GOOD idea. because work creates more CI, so without this, it is unstable"). **The hurt:** the morning of 2026-09-26, with slots raised to hulk 24, space 12 and vision 24, one-minute load per core reached 5.0, 4.1 and 3.8 while the PR CI shards ran on the same machines and the darwin shard on the Studio reached 1m53s against the two-minute cap; copies at nice 0 shared the cores evenly with the legs, so more work meant slower CI meant more work waiting. **The sweep:** the three named exec paths, read as text: the yield call's index in the function body against the exec call's. **No allowlist:** a new worker kind gets its nice by calling `yield.ToCI` before its exec and joining the list. **The remedy line:** `<file> <func>: no <yield> call: a copy or a local test run must yield to CI before it execs`, or `<yield> stands after <exec>: a yield after the exec yields nothing`, or `production may set the wrapper's yield only in nice.go, to yield.ToCI`, or `nice_linux.go: the one-thread form setpriority(PRIO_PROCESS, 0, n) nices the calling thread only`. **The control:** `internal/nsprint/card/nice_test.go` gives the wrapper a recording `Yield` and wants it called once, before the ledger's first read, and wants a failing one refused with `yield to CI: ...`; `internal/yield/yield_test.go` reads the process's own priority back after `ToCI`; `internal/yield/child_test.go` starts sixteen children from fresh goroutines after `ToCI` and wants each to read its own nice as 15 (the one-thread form fails it: 15 of 16 at 0 on hetzner).
+44. `TestSlotsShrinkByCILegs` — no slot computation, a bench's or a friend's, ignores the CI legs running on the machine: the bench beat and the friend beat write the count measured there as `ci` every beat (`ns_bench_beat` args[21] and `ns_friend_beat` args[5] in `presence.lua`; `cmd/nova-sprint/life.go` measures it with `life.CILegsNow`, one `Runner.Worker` process per running job; a friend is not free of legs, the Studio hosts friends and CI both), and every slot subtraction in Go and Lua under `internal/nsprint` and `cmd/nova-sprint` — `slots - ...`, or the desired hash's slots read as a number and subtracted from, the form `ns_card_deal`'s in-Redis re-check used (`deal.lua`) — names `ci`, `CI` or `TM.ci_legs(`: `deal.Bench.Free`, `taskcard.FreeSlots` (the deal pass and the progress duty's room), `ns_cm_work`'s fill and `TM.room`'s read route in `02_card_move.lua`, `ns_card_deal`'s re-check, `DF.take` and `DF.open` in `deal_friend.lua`, `task.WidthFrom`, the friend ladder's underfull, and `preflight`'s fleet rows (nova-tools#4293: "a bench's free slots = declared slots minus the CI legs running on it"). **The hurt:** the same morning: the deal filled every bench to its declared slots whether or not a CI leg was already on it, so a leg landed beside a full bench and the copies took its cores. **The sweep:** every non-test `.go` and `.lua` under the two trees, code lines only (a `//` or `--` line is not a computation), for `[sS]lots\s*-\s*<name or paren>` or `desired ... ) - <name or paren>`; at least eight such lines must be found, or one has moved out of reach. **No allowlist:** a friend's slots shrink by its own beat's `ci` like a bench's. **The remedy line:** `<file>:<line>: "<line>" computes free slots without the CI legs running on the bench (nova-tools#4293)`, or `the beat must write the CI leg count as ci (args[21]) every beat`. **The control:** `TestBenchFreeShrinksByCILegs` (deal), `TestFreeSlotsShrinkByCILegs` (taskcard) and `TestCountCILegsCountsRunnerWorkers` (life) pin the arithmetic and the count; `TestDealAndFillTakeCILegsOffABenchsSlots` and `TestBenchBeatCarriesCILegs` (`-tags functional`) prove it in Redis.
 
 ### `cap` — every job two minutes, permanently, on every platform
 
@@ -2284,6 +2320,124 @@ with a Go stack before the job cap kills it without one.
 per functional program), move a process-in-the-loop test behind the `slow` tag
 into the nightly functional matrix, or put the leg on a machine that compiles the
 set in seconds. Never a larger number.
+
+### `wholetree` — no doc and no card tells anyone to test the whole tree
+
+**The rule.** No Markdown file in the tree outside `testdata/` (the docs,
+`AGENTS.md`, `TESTING.md`, the READMEs), no card template (`CardTemplateDirs`),
+no brief source (the `briefSources` the no-gh rule reads) and neither Go file
+that writes a harness card's standard lines (`internal/nsprint/taskcard/complete.go`,
+`internal/nsprint/card/copy.go`) spells `go test`, with any flags, over `./...`
+or over one of the three trees that are most of it (`./cmd/...`,
+`./internal/...`, `./tools/...`).
+The door is `nova-ci local` (nova-tools#4336): the packages
+`.github/scripts/select-packages.sh` picks against the merge base of the base
+and `HEAD`, run through the Makefile's `test` target under `nice -n 15` at
+`-p 2`, with the unit budgets, exiting as CI would ([TESTING.md](../TESTING.md)).
+**The hurt.** Glenn 2026-09-26 10:08 AM ET, "CPU is for real work": children
+test the packages they touched and nothing else. The day's children each
+invented a way to test what they changed (a sharding script under `timeout 95`,
+a six-pass loop hunting t.Parallel violations, hand timing scripts) and several
+ran the whole tree on the benches the real work shares. A doc that spells the
+whole-tree run teaches the next child to do it again.
+**The test.** `TestNoWholeTreeGoTestInDocs`, with its control
+`TestWholeTreeRuleSeesEachSpelling` (`internal/ci/wholetree_class_test.go`),
+which pins the bare, flagged, piped and table-cell spellings and the
+`./cmd/...`, `./internal/...` and `./tools/...` trees as red, and `nova-ci
+local`, a named package, one tool's own subtree, `go vet ./...` and prose as
+green.
+**Its allowlist.** None. The offenders in the tree when the rule landed (the
+build sections of `docs/CLI.md` and `docs/USAGE.md`, two sentences of this
+spec, one release note, and the `cmd/`, `internal/` and `tools/` guard cells
+of `AGENTS.md`, now `nova-ci local` in `internal/docs/catalog.go`) were
+rewritten.
+**Its remedy line.** `run nova-ci local (the unit tier CI runs for this diff)
+or name the packages you touched: nice -n 15 go test -p 2 -count=1 ./cmd/<tool>`.
+**Its narrowings.** One line at a time: a command split across a backslash
+continuation is not seen. A package list spelled out by hand, however long, is
+not read, nor is one tool's own subtree (`./cmd/nova-ci/...`), and neither are
+the Makefile's `test-full` and `test-slow` targets, which CI's whole-tree runs
+call.
+
+### `silent` — no silent failure on the copy model's live path
+
+**The rule.** Glenn, 2026-09-25: "every verb must return an error that you see,
+for breadcrumbs as you work, failing silent is not allowed. Without this every
+thing we have done shows it is not possible to make a reliable system"; and
+2026-09-26 11:30 AM ET: "every verb in nova tools related to current work should
+not fail silently. Scan for silent failures and fix." In the live packages
+(`cmd/nova-sprint`, `cmd/nova-card`, `internal/nsprint/{reconcile, taskcard,
+table, card, launch, fn, capacity, pipeerr}`), no non-test `.go` file holds
+`_ = err` (any error-named identifier assigned to the blank identifier) or a
+`|| true` inside a Go string literal (an embedded script step whose exit is
+thrown away). A failure is returned, printed as one typed line (`REFUSED <verb>:
+<why>` on stderr with exit 1, or the verb's own receipt vocabulary) or, in a
+loop, counted and printed once per pass (the reconciler's `DUTY <name> ...
+err=<text>` line is the model).
+**The hurt.** The 2026-09-26 sweep (`rowan/no-silent-failures`): a `card render`
+that reported a Redis outage as `NOTASK`; a copy whose refused `card end` left
+only `code=2` on a line written to `/dev/null`; a reconciler deal duty that threw
+its pass's `REFUSED` lines away and returned clean counts; a consumer whose
+`slots` field would not parse and was skipped every pass with no line; a lapsed
+copy the expire sweep could not end, left in `working` with nothing said, every
+sweep; a go-redis pipeline whose first absent field (`redis.Nil`) hid a later
+`NOPERM` and read the rest as zero. Each was a card that sat still while the
+table said nothing.
+**The test.** `TestNoSilentFailureOnTheLivePath`
+(`internal/ci/silent_class_test.go`), with the rule proved over source in
+`TestSilentRuleReadsTheTwoShapes` (the two shapes refused; a discarded value
+that is not an error and a `|| true` in a comment are not).
+**Its allowlist.** `internal/ci/testdata/silent_allowlist.txt`, read through
+the one helper (`allowlist`), one `file:function <why it is judged not silent>`
+per row (a package-level literal is `file:<package>`); EMPTY today under
+`# ceiling: 0`, shrink-only in both directions, and a row with no reason is
+red.
+**Its remedy lines.** `` `_ = err` drops the failure where it happened; return
+it, print one typed line (REFUSED <verb>: <why>) or count it into the pass's
+DUTY line``; `` `|| true` inside a Go string literal hides an embedded script
+step's failure; drop it and read the step's exit``; for a stale row, `delete the
+stale entry (the list only shrinks; NOVA_CI_UPDATE=1 drops it)`.
+**Its narrowings.** Non-test `.go` files of the live packages only. It reads the
+two shapes by their syntax: `_, _ = f()` (a discarded multi-value), `_ =
+f.Close()`, an `err` assigned and never read, and an `if err != nil { return
+nil }` are not read (`go vet`, errcheck and the reviewer's eye are theirs), and
+neither is a Lua function that returns `nil` where a `REFUSED <why>` belongs.
+The go-redis pipeline shape has its own remedy rather than a rule:
+`internal/nsprint/pipeerr.Exec` walks every command of a pipeline whose fields
+may be absent and returns the first error that is not `redis.Nil`.
+
+### `classtests` — no merge deletes a class test file dev had
+
+**The rule.** Every `internal/ci/*_class_test.go` is a row of
+`internal/ci/testdata/class-tests.txt`, and every row's file is in the tree.
+The list only grows: a new class test adds its row, and a row is never removed
+by an update. A class test is a rule this repository keeps by structure; a
+tree that lacks the file lacks the rule, and nothing else notices.
+**The hurt.** 2026-09-26: #4346 (`rowan/functional-tag`) was built on a base
+older than #4344 and its squash put a tree on dev that lacked the four files
+#4344 had added an hour before — the `silent` class test, its allowlist and
+two of its controls — and undid #4344's forty live-path fixes with them. Every
+check on the merge was green, because a rule that is not there cannot fail;
+the loss was found by a reader, not by CI.
+**The test.** `TestNoMergeDeletesAClassTest`
+(`internal/ci/classtests_class_test.go`): every row's file must be in the
+tree; a file the tree lacks is a red run naming the commit that deleted it
+(`git log --first-parent -m --diff-filter=D -- <file>` from the checkout), and
+the list is not handed to the helper while a row is missing, so no update can
+drop the row instead of the finding. `TestClassTestFileReadsThePath` pins the
+shape it reads (this package's `*_class_test.go` only).
+**Its allowlist.** `internal/ci/testdata/class-tests.txt`, the list itself:
+grow-only, no ceiling, `NOVA_CI_UPDATE=1` appends a new class test's row.
+**Its remedy lines.** `<list> lists <file> and the tree lacks it: deleted by
+<sha> <subject>. A merge never deletes a class test; restore the file from the
+commit before that one`; `<file> is a class test <list> does not list; add its
+row (NOVA_CI_UPDATE=1 does; the list only grows)`.
+**Its narrowings.** It reads `internal/ci` only, by file name; a class test kept
+elsewhere (`internal/nsprint/land/guard`) is not held here, and a class test
+emptied of its `Test…` functions but left on disk is `internal/docs`' index
+test's finding, not this one's. On a shallow checkout the deleting commit may
+be outside the fetched history; the finding says so and the file is still
+missing.
 
 ## Parked class tests
 
@@ -2527,6 +2681,7 @@ fix and integration-4 is what it costs`.
 **Its narrowings.** It counts jobs that name `windows-latest` AND the
 `pull_request` event in their text; a Windows runner reached through a reusable
 workflow or a matrix value built elsewhere would not be counted.
+
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 

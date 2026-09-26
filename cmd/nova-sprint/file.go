@@ -39,6 +39,16 @@ func cmdFile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	})
 }
 
+// githubToken is the seat's GitHub token when its seats.tsv row names one
+// (#4330), else GH_TOKEN, then GITHUB_TOKEN, then `gh auth token` through
+// internal/gh's one token read (#4343).
+func githubToken() (string, error) {
+	if v, err := envGitHubToken(); v != "" || err != nil {
+		return v, err
+	}
+	return gh.Token()
+}
+
 // openFileStore is the store the file verb counts its calls in (#4343):
 // NOVA_REDIS_ADDR, or the seat's address.
 func openFileStore(ctx context.Context) (redis.Cmdable, func(), error) {
@@ -48,11 +58,6 @@ func openFileStore(ctx context.Context) (redis.Cmdable, func(), error) {
 	}
 	return st.Client(), func() { _ = st.Close() }, nil
 }
-
-// githubToken is GH_TOKEN, then GITHUB_TOKEN, then `gh auth token` (which
-// honours GH_CONFIG_DIR, the fleet's per-seat gh config): internal/gh's
-// one token read (#4343).
-var githubToken = gh.Token
 
 func pushFiledTask(ctx context.Context, addr string, req task.PushRequest) (task.PushResult, error) {
 	st, err := store.Open(ctx, addr)

@@ -53,7 +53,7 @@ func runIdem(ctx context.Context, args []string, out, errOut io.Writer) int {
 func runIdemResolve(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "idem resolve"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	key := fs.String("key", "", "")
 	was := fs.String("was", "", "")

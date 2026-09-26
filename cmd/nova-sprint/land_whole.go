@@ -51,7 +51,7 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 	fs := taskFlags(verb)
 	var streams multiFlag
 	fs.Var(&streams, "stream", "")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	base := fs.String("base", "dev", "")
 	remote := fs.String("remote", "", "")

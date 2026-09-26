@@ -1,7 +1,7 @@
 //go:build swarmtest
 
 // Command testprobe is the helper binary TestPausePointThreadDirected
-// (internal/swarm/killpoint_linux_test.go) builds with -tags swarmtest. It is
+// (internal/swarm/killpoint_linux_functional_test.go) builds with -tags swarmtest. It is
 // committed rather than written into the tree at test time, because a test
 // that creates and deletes files under the repository races every other
 // package that walks the tree in parallel (internal/ci's class tests failed

@@ -66,7 +66,7 @@ func cmdLineup(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return cmdLineupPublish(ctx, args[1:], os.Stdin, stdout, stderr)
 	}
 	fs := verbflag.New("lineup")
-	addr := fs.String("redis", "", "")
+	addr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	probes := fs.String("probes", "", "")
 	conformCmd := fs.String("conform-cmd", "bench-conform --publish", "")
@@ -170,7 +170,7 @@ func ghGraphQLRemaining(ctx context.Context, rdb redis.Cmdable) (int, error) {
 
 func cmdLineupPublish(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := verbflag.New("lineup publish")
-	addr := fs.String("redis", "", "")
+	addr := fs.String("redis", redisDefault(), "")
 	bench := fs.String("bench", "", "")
 	allYML := fs.String("all-yml", "", "")
 	runMarker := fs.String("run", os.Getenv(preflight.RunMarkerEnv), "")

@@ -220,7 +220,7 @@ how a commons acquires a reputation for being a clique.
   lines run, refusals that say what the flag wants and that report every
   independent problem in one go, a `### First run` in `docs/CLI.md`, a `quickstart`
   verb where there is a natural first run, and tests that pin all three by
-  executing them. `internal/ci/onboarding_test.go` walks `cmd/`, so a new
+  executing them. `internal/ci/onboarding_functional_test.go` walks `cmd/`, so a new
   binary is held to it without anyone adding it to a list.
 - **Expect the review to be slow and specific.** That is the bar working, not a
   judgment about you.
@@ -275,9 +275,9 @@ with its sweep of the tree or it does not land.
 `templates`, `goenv`, `pathassert`, `busprogress`,
 `outputs`, `windows-pr`, `windows-sizes`, `windows-table`, `one-windows-leg`,
 `darwin-sizes`, `darwin-table`, `cache`, `pinned-actions`, `ci-ok`, `failed`,
-`benchname`, `nightly-tags`, `functional` (a test that starts a redis-server is behind `//go:build functional`), `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
+`benchname`, `nightly-tags`, `functional` (a test that starts a redis-server, execs a whole program or asserts a real-time bound is behind `//go:build functional`), `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
 `kernel-components`, `asd-closing-line`, `ciworkspace`, `lisptemppath`, `admitkind`, `namedpaths`, `lispduplicate`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `forestwriter`, `forestscript`, `parallel`, `slowwaits`, `allowlist`,
-`seatwrap`. Every entry — the ten above too — is written out in
+`seatwrap`, `seatredis` (every nova-sprint `--redis` defaults to the seat's address), `wholetree` (no doc or card spells a whole-tree `go test`; run `nova-ci local`), `silent` (no `_ = err` and no `|| true` literal on the copy model's live path), `classtests` (no merge deletes a class test file dev had). Every entry — the ten above too — is written out in
 [SPEC-CI.md](SPEC-CI.md) under **The class tests** with its rule, the hurt
 that bought it, its allowlist, its remedy line and its narrowings. Read the entry, not
 the test. An allowlist only ever shrinks: a new row is a refusal, not a parking place.

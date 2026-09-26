@@ -13,7 +13,7 @@ import (
 
 func runTaskList(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("task list")
-	addr := fs.String("redis", "", "")
+	addr := fs.String("redis", redisDefault(), "")
 	as := fs.String("as", "", "")
 	sprint := fs.String("sprint", "", "")
 	state := fs.String("state", "", "")
@@ -44,7 +44,7 @@ func runTaskList(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 func runTaskWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("task width")
-	addr := fs.String("redis", "", "")
+	addr := fs.String("redis", redisDefault(), "")
 	as := fs.String("as", "", "")
 	actor := fs.String("actor", "", "")
 	idem := fs.String("idem", "", "")
@@ -67,7 +67,10 @@ func runTaskWidth(ctx context.Context, args []string, out, errOut io.Writer) int
 		if err != nil || n < 0 {
 			return refuse(errOut, "task width", "slots must be a nonnegative integer")
 		}
-		machine := existingMachine(ctx, st, capacity.KindFriend, *as)
+		machine, err := existingMachine(ctx, st, capacity.KindFriend, *as)
+		if err != nil {
+			return refuse(errOut, "task width", "read "+capacity.DesiredKey(capacity.KindFriend, *as)+" machine: "+err.Error())
+		}
 		if machine == "" {
 			return refuse(errOut, "task width", "friend has no machine; set it with capacity friend --machine")
 		}

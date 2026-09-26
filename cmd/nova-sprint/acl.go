@@ -28,24 +28,70 @@ func init() {
 	})
 }
 
-// aclLister is the one read of the store: ACL LIST as the given user.
-type aclLister func(ctx context.Context, addr, user, password string) ([]string, error)
+// aclReader is the one read of the store as the given user: its version,
+// ACL LIST, and ACL CAT for every category (the comparison reads the
+// server's own categories, since servers print their rules differently).
+type aclReader func(ctx context.Context, addr, user, password string) (acl.Server, error)
 
-// redisACLList is the real read. A test hands aclCheck a canned listing
-// instead; the functional test runs this one.
-func redisACLList(ctx context.Context, addr, user, password string) ([]string, error) {
+// redisACLRead is the real read, two pipelined round trips: INFO server,
+// ACL LIST and ACL CAT, then ACL CAT <category> for each. A test hands
+// aclCheck a canned capture instead; the functional test runs this one.
+func redisACLRead(ctx context.Context, addr, user, password string) (acl.Server, error) {
 	c := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password, MaxRetries: -1})
 	defer c.Close()
-	return c.Do(ctx, "ACL", "LIST").StringSlice()
+	var info *redis.StringCmd
+	var list, cats *redis.Cmd
+	if _, err := c.Pipelined(ctx, func(p redis.Pipeliner) error {
+		info = p.Info(ctx, "server")
+		list = p.Do(ctx, "ACL", "LIST")
+		cats = p.Do(ctx, "ACL", "CAT")
+		return nil
+	}); err != nil {
+		return acl.Server{}, err
+	}
+	lines, err := list.StringSlice()
+	if err != nil {
+		return acl.Server{}, err
+	}
+	names, err := cats.StringSlice()
+	if err != nil {
+		return acl.Server{}, err
+	}
+	s := acl.Server{List: lines, Cats: acl.Cats{}}
+	for _, line := range strings.Split(info.Val(), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "redis_version:"); ok {
+			s.Version = v
+		}
+	}
+	members := make(map[string]*redis.Cmd, len(names))
+	if _, err := c.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for _, cat := range names {
+			members[cat] = p.Do(ctx, "ACL", "CAT", cat)
+		}
+		return nil
+	}); err != nil {
+		return acl.Server{}, err
+	}
+	for cat, cmd := range members {
+		m, err := cmd.StringSlice()
+		if err != nil {
+			return acl.Server{}, err
+		}
+		s.Cats[cat] = m
+	}
+	if len(s.Cats) == 0 {
+		return acl.Server{}, fmt.Errorf("ACL CAT named no categories")
+	}
+	return s, nil
 }
 
 func runACL(ctx context.Context, args []string, out, errOut io.Writer) int {
-	return aclCheck(ctx, args, out, errOut, os.Getenv, redisACLList)
+	return aclCheck(ctx, args, out, errOut, os.Getenv, redisACLRead)
 }
 
 // aclCheck is the verb with its two seams, the environment and the store
 // read, passed in so a test sets neither process state nor a package var.
-func aclCheck(ctx context.Context, args []string, out, errOut io.Writer, getenv func(string) string, list aclLister) int {
+func aclCheck(ctx context.Context, args []string, out, errOut io.Writer, getenv func(string) string, read aclReader) int {
 	if len(args) == 0 {
 		return refuse(errOut, "acl", "want check")
 	}
@@ -87,26 +133,26 @@ func aclCheck(ctx context.Context, args []string, out, errOut io.Writer, getenv 
 			oneline.Field(store), oneline.Field(*adminEnv), oneline.Field(*adminEnv))
 		return 2
 	}
-	lines, err := list(ctx, store, "admin", password)
+	server, err := read(ctx, store, "admin", password)
 	if err != nil {
-		fmt.Fprintf(errOut, "ACL CHECK REFUSED store=%s reason=%s remedy=the admin user reads ACL LIST; check the address and %s\n",
+		fmt.Fprintf(errOut, "ACL CHECK REFUSED store=%s reason=%s remedy=the admin user reads INFO, ACL LIST and ACL CAT; check the address and %s\n",
 			oneline.Field(store), oneline.Field(strings.TrimSpace(err.Error())), oneline.Field(*adminEnv))
 		return 2
 	}
-	live, err := acl.ParseList(lines)
+	live, err := acl.ParseList(server.List)
 	if err != nil {
 		fmt.Fprintf(errOut, "ACL CHECK REFUSED store=%s reason=%s\n", oneline.Field(store), oneline.Field(err.Error()))
 		return 2
 	}
-	drift := acl.Diff(declared, live)
+	drift := acl.Diff(declared, live, server.Cats)
 	for _, d := range drift {
 		fmt.Fprintln(out, d.Line())
 	}
 	if len(drift) == 0 {
-		fmt.Fprintf(out, "ACL CHECK OK store=%s users=%d rows=%s\n", oneline.Field(store), len(declared), oneline.Field(*rows))
+		fmt.Fprintf(out, "ACL CHECK OK store=%s redis=%s users=%d rows=%s\n", oneline.Field(store), oneline.Field(server.Version), len(declared), oneline.Field(*rows))
 		return 0
 	}
-	fmt.Fprintf(out, "ACL CHECK DRIFT store=%s drifted=%d users=%d rows=%s converge=%s\n",
-		oneline.Field(store), len(drift), len(declared), oneline.Field(*rows), oneline.Quote(acl.PlayCommand))
+	fmt.Fprintf(out, "ACL CHECK DRIFT store=%s redis=%s drifted=%d users=%d rows=%s converge=%s\n",
+		oneline.Field(store), oneline.Field(server.Version), len(drift), len(declared), oneline.Field(*rows), oneline.Quote(acl.PlayCommand))
 	return 1
 }

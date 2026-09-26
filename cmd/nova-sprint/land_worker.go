@@ -15,7 +15,7 @@ import (
 func runLandWorker(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("land worker")
 	bench := fs.String("bench", "", "bench name (required)")
-	redisAddr := fs.String("redis", "", "redis address")
+	redisAddr := fs.String("redis", redisDefault(), "redis address")
 	slots := fs.Int("slots", 1, "number of slot goroutines")
 	mirrorDir := fs.String("mirror", "", "mirror directory")
 	once := fs.Bool("once", false, "run one pass then exit")

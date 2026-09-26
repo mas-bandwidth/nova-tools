@@ -3,7 +3,6 @@ package ci
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -115,7 +114,7 @@ func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
 			}
 			return statErr
 		}
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
+		err := walkSourceDir(base, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
@@ -129,7 +128,7 @@ func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
 			if !strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
-			raw, readErr := os.ReadFile(path)
+			raw, readErr := readSourceFile(path)
 			if readErr != nil {
 				return readErr
 			}
@@ -289,8 +288,7 @@ func matchWaitAllow(entries []waitAllow, used []bool, f WaitFinding) int {
 // cannot carry the shapes this check reads, and a fixture deliberately holding
 // a broken literal is not the offender itself.
 func scanWaitFile(rel string, src []byte) ([]WaitFinding, bool) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, rel, src, 0)
+	fset, file, err := parseSource(rel, src, 0)
 	if err != nil {
 		return nil, false
 	}

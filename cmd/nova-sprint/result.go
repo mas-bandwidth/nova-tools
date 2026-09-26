@@ -88,7 +88,7 @@ func runResultCheck(args []string, out, errOut io.Writer) int {
 func runResultShow(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("result show")
 	sprint := fs.String("sprint", "", "")
-	redisAddr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "result show", err.Error())
 	}

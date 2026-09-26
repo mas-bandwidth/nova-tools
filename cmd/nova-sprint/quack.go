@@ -88,7 +88,7 @@ func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int 
 	baseSHA := fs.String("base-sha", "", "")
 	ref := fs.String("ref", "", "")
 	actor := fs.String("actor", "", "")
-	addr := fs.String("redis", "", "")
+	addr := fs.String("redis", redisDefault(), "")
 	const want = "wants --n <N> --repo <owner/name> --stream <s> --sprint <S> [--tiers flash,pro] [--base dev] [--base-sha <sha40>] [--ref <owner/name#n>] [--actor <a>] [--redis <addr>]"
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -204,7 +204,7 @@ func runQuackRun(ctx context.Context, args []string, out, errOut io.Writer) int 
 	name := fs.String("sprint", "", "")
 	slots := fs.String("slots", "", "")
 	actor := fs.String("actor", "", "")
-	addr := fs.String("redis", "", "")
+	addr := fs.String("redis", redisDefault(), "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -237,7 +237,13 @@ func runQuackRun(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 	refused := 0
 	for _, b := range benches {
-		machine := existingMachine(ctx, st, capacity.KindBench, b.name)
+		machine, err := existingMachine(ctx, st, capacity.KindBench, b.name)
+		if err != nil {
+			refused++
+			fmt.Fprintf(out, "SLOTS REFUSED bench=%s slots=%d why=%s\n", oneline.Field(b.name), b.slots,
+				oneline.Field("read "+capacity.DesiredKey(capacity.KindBench, b.name)+" machine: "+err.Error()))
+			continue
+		}
 		if machine == "" {
 			refused++
 			fmt.Fprintf(out, "SLOTS REFUSED bench=%s slots=%d why=no-machine remedy=%s\n", oneline.Field(b.name), b.slots,

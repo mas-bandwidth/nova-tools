@@ -3,7 +3,6 @@ package ci
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -102,7 +101,7 @@ func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
 	}
 	matched := make([]bool, len(entries))
 
-	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+	err = walkSourceDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -116,7 +115,7 @@ func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
 		if !strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		raw, readErr := os.ReadFile(path)
+		raw, readErr := readSourceFile(path)
 		if readErr != nil {
 			return readErr
 		}
@@ -175,8 +174,7 @@ func matchTemplateAllow(entries []waitAllow, f TemplateFinding) int {
 // Go cannot carry the shape this check reads, and a fixture deliberately
 // holding a broken literal is not the offender itself.
 func scanTemplateFile(rel string, src []byte) ([]TemplateFinding, bool) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, rel, src, 0)
+	fset, file, err := parseSource(rel, src, 0)
 	if err != nil {
 		return nil, false
 	}

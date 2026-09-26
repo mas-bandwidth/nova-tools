@@ -61,6 +61,8 @@ func TestLoadProfileNamesTheFile(t *testing.T) {
 		{"c\th:1\tu\tlower\t/s\t/k/a.key", "secret env"},
 		{"c\th:1\tu\tK\trel/s\t/k/a.key", "store"},
 		{"c\th:1\tu\tK\t/s\t/k/a.pem", "key"},
+		{"c\th:1\tu\tK\t/s\t/k/a.key\tlower", "github token env"},
+		{"c\th:1\tu\tK\t/s\t/k/a.key\tGH\textra", "8 columns"},
 	} {
 		if err := os.WriteFile(path, []byte("# x\n"+c.row+"\n"), 0o600); err != nil {
 			t.Fatal(err)
@@ -128,5 +130,55 @@ func TestSelectWithResolvesThroughTheGivenFunc(t *testing.T) {
 	sel.Select("")
 	if _, ok, _ := sel.Active(); ok || sel.Addr() != "" {
 		t.Fatal("Select(\"\") left a seat or its address selected")
+	}
+}
+
+// TestLoadProfileSeventhColumnIsTheGitHubTokenEnv is #4330's second gap: a
+// row may name the key of the seat's file that holds its GitHub token; a
+// six-column row is still a row, with no token env.
+func TestLoadProfileSeventhColumnIsTheGitHubTokenEnv(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "seats.tsv")
+	body := "coordinator\th:1\tcoordinator\tNOVA_REDIS_COORDINATOR_PASSWORD\t/s\t/k/studio.key\tGH_GATE_TOKEN\n" +
+		"bench\th:1\tbench\tNOVA_REDIS_BENCH_PASSWORD\t/s\t/k/air.key\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := seatcred.LoadProfile(path, "coordinator", "/h"); err != nil || p.GitHubEnv != "GH_GATE_TOKEN" {
+		t.Fatalf("seven columns: %+v %v; want GitHubEnv GH_GATE_TOKEN", p, err)
+	}
+	if p, err := seatcred.LoadProfile(path, "bench", "/h"); err != nil || p.GitHubEnv != "" {
+		t.Fatalf("six columns: %+v %v; want no GitHubEnv", p, err)
+	}
+}
+
+// TestResolveProfileReadsTheGitHubToken: the row's seventh column names the
+// key the token is read from, in the same open of the seat's file; a file
+// without it is a refusal kept for the GitHub verb that asks, not for the
+// Redis login.
+func TestResolveProfileReadsTheGitHubToken(t *testing.T) {
+	t.Parallel()
+
+	const pw, tok = "profile-gh-test-pw-4330", "profile-gh-test-token-4330"
+	home := seattest.Home(t, "studio", map[string]string{"NOVA_REDIS_COORDINATOR_PASSWORD": pw, "GH_GATE_TOKEN": tok})
+	noenv := func(string) string { return "" }
+	p := seatcred.Profile{
+		Name: "coordinator", Addr: "h:1", User: "coordinator", SecretEnv: "NOVA_REDIS_COORDINATOR_PASSWORD",
+		Store: filepath.Join(home, seatcred.DefaultStore), Key: filepath.Join(home, seatcred.DefaultKeyDir, "studio.key"),
+		GitHubEnv: "GH_GATE_TOKEN",
+	}
+	c, err := seatcred.ResolveProfile(p, noenv)
+	if err != nil || c.GitHubErr != nil || c.GitHubKey != "GH_GATE_TOKEN" {
+		t.Fatalf("ResolveProfile = %v %v %v", c, err, c.GitHubErr)
+	}
+	got := ""
+	if err := c.GitHub.Use(func(v string) error { got = v; return nil }); err != nil || got != tok {
+		t.Fatal("the GitHub token is not the one sealed under GH_GATE_TOKEN")
+	}
+	p.GitHubEnv = "GH_GHOST_TOKEN"
+	c, err = seatcred.ResolveProfile(p, noenv)
+	if err != nil || c.GitHubErr == nil || !strings.Contains(c.GitHubErr.Error(), "GH_GHOST_TOKEN") || !strings.Contains(c.GitHubErr.Error(), "--as studio") || strings.Contains(c.GitHubErr.Error(), tok) {
+		t.Fatalf("absent token env: login err %v, GitHubErr %v; want the login and a GitHub refusal naming the key and the seal remedy", err, c.GitHubErr)
 	}
 }

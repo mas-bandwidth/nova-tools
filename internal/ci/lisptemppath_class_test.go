@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
@@ -234,7 +235,7 @@ func checkLispRule(t *testing.T, pats []*regexp.Regexp, allowPath, rule, remedy 
 	var violations []string
 
 	for _, rel := range lispTestFiles(t, root) {
-		src := readFile(t, filepath.Join(root, filepath.FromSlash(rel)))
+		src := lispSource(t, filepath.Join(root, filepath.FromSlash(rel)))
 		for _, f := range lispFindings(rel, src, pats) {
 			seen[f.key()] = true
 			if !allow.Has(f.key()) {
@@ -253,6 +254,21 @@ func checkLispRule(t *testing.T, pats []*regexp.Regexp, allowPath, rule, remedy 
 	for _, v := range violations {
 		t.Error(v)
 	}
+}
+
+// lispSources holds each Lisp test file both rules read, read once per test
+// process: the tree is read-only under these tests (nova-tools#4328).
+var lispSources sync.Map
+
+// lispSource is readFile through lispSources.
+func lispSource(t *testing.T, path string) string {
+	t.Helper()
+	if src, ok := lispSources.Load(path); ok {
+		return src.(string)
+	}
+	src := readFile(t, path)
+	lispSources.Store(path, src)
+	return src
 }
 
 // TestNoLispTestBuildsATempPathWithoutTheHelper is rule A.

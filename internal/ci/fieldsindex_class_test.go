@@ -3,7 +3,6 @@ package ci
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -48,7 +47,7 @@ func TestNoUncheckedFieldsIndex(t *testing.T) {
 
 	for _, dir := range []string{"cmd", "internal"} {
 		base := filepath.Join(root, dir)
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+		err := walkSourceDir(base, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -60,7 +59,7 @@ func TestNoUncheckedFieldsIndex(t *testing.T) {
 				return err
 			}
 			rel = filepath.ToSlash(rel)
-			raw, err := os.ReadFile(path)
+			raw, err := readSourceFile(path)
 			if err != nil {
 				return err
 			}
@@ -106,8 +105,7 @@ type splitFinding struct {
 // the shape of #1390 and against the shapes it must NOT refuse, without a fixture
 // tree on disk.
 func uncheckedSplitIndexes(rel string, src []byte) ([]splitFinding, error) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, rel, src, 0)
+	fset, file, err := parseSource(rel, src, 0)
 	if err != nil {
 		return nil, err
 	}

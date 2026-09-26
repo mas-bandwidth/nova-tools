@@ -55,10 +55,7 @@ import (
 var landStreamToken = githubToken
 
 func landRedisAddr(flagVal string) string {
-	if flagVal != "" {
-		return flagVal
-	}
-	return os.Getenv("NOVA_REDIS_ADDR")
+	return redisOr(flagVal, "NOVA_REDIS_ADDR")
 }
 
 func landRepoOK(repo string) bool {
@@ -111,7 +108,7 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 	fs := taskFlags(verb)
 	var streams multiFlag
 	fs.Var(&streams, "stream", "")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	base := fs.String("base", "dev", "")
 	dry := fs.Bool("dry-run", false, "")
@@ -233,7 +230,7 @@ func memberIndex(ms []stream.Member, n int) int {
 func runLandStreamStatus(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "land status"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -291,7 +288,7 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 	fs := taskFlags(verb)
 	var streams multiFlag
 	fs.Var(&streams, "stream", "")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	by := fs.String("by", "rowan", "")
 	api := fs.String("api", gh.DefaultAPI, "")
@@ -356,6 +353,10 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 		issues(rep.IssuesClosed), issues(rep.IssuesUnclosed), orDash(rep.Release))
 	for _, s := range rep.Skipped {
 		fmt.Fprintf(errOut, "LAND MERGE SKIPPED %s\n", oneline.Field(s))
+	}
+	if rep.GateErr != "" {
+		fmt.Fprintf(errOut, "JEV REFUSED land-gate pr=#%d why=%s remedy=%s\n", l.PR, oneline.Field(rep.GateErr),
+			oneline.Field("the land stands; nova-sprint jev outcome --type gate joins a head by hand"))
 	}
 	if len(rep.Unclosed) > 0 || len(rep.IssuesUnclosed) > 0 {
 		return 1

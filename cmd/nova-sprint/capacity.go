@@ -18,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/capacity"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/redis/go-redis/v9"
 )
 
 func init() {
@@ -67,7 +68,7 @@ func capacityFlags(name string) *flag.FlagSet {
 
 func runCapacityDesired(ctx context.Context, kind string, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity " + kind)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	machine := fs.String("machine", "", "")
 	actor := new(string)
 	fs.StringVar(actor, "as", "", "")
@@ -150,7 +151,10 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 
 	resolved := *machine
 	if resolved == "" {
-		resolved = existingMachine(ctx, st, kind, name)
+		var err error
+		if resolved, err = existingMachine(ctx, st, kind, name); err != nil {
+			return refuse(errOut, "capacity "+kind, "read "+capacity.DesiredKey(kind, name)+" machine: "+err.Error())
+		}
 	}
 	if resolved == "" {
 		return refuse(errOut, "capacity "+kind, "machine is required; pass --machine")
@@ -196,7 +200,7 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 
 func runCapacityMachine(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity machine")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	cores := fs.Int("cores", 0, "")
 	memGB := fs.Int("mem-gb", 0, "")
 	cpuMilli := fs.Int("cpu-milli", 0, "")
@@ -237,7 +241,7 @@ func runCapacityMachine(ctx context.Context, args []string, out, errOut io.Write
 
 func runCapacityBudget(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity budget")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	actor := new(string)
 	fs.StringVar(actor, "as", "", "")
 	fs.StringVar(actor, "actor", "", "")
@@ -275,7 +279,7 @@ func runCapacityBudget(ctx context.Context, args []string, out, errOut io.Writer
 
 func runCapacityTake(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity take")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	machine := fs.String("machine", "", "")
 	consumer := fs.String("consumer", "", "")
 	cpuMilli := fs.Int("cpu-milli", 0, "")
@@ -327,7 +331,7 @@ func runCapacityTake(ctx context.Context, args []string, out, errOut io.Writer) 
 
 func runCapacityGive(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity give")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	machine := fs.String("machine", "", "")
 	consumer := fs.String("consumer", "", "")
 	pgid := fs.Int("pgid", 0, "")
@@ -366,7 +370,7 @@ func runCapacityGive(ctx context.Context, args []string, out, errOut io.Writer) 
 
 func runCapacityRenew(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity renew")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	machine := fs.String("machine", "", "")
 	consumer := fs.String("consumer", "", "")
 	pgid := fs.Int("pgid", 0, "")
@@ -394,7 +398,7 @@ func runCapacityRenew(ctx context.Context, args []string, out, errOut io.Writer)
 
 func runCapacityReap(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity reap")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	machine := fs.String("machine", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity reap", err.Error())
@@ -422,7 +426,7 @@ func runCapacityReap(ctx context.Context, args []string, out, errOut io.Writer) 
 
 func runCapacityHook(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity hook")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	machine := fs.String("machine", "", "")
 	consumer := fs.String("consumer", "", "")
 	cpuMilli := fs.Int("cpu-milli", 0, "")
@@ -478,23 +482,10 @@ func runCapacityHook(ctx context.Context, args []string, out, errOut io.Writer) 
 
 	switch action {
 	case "job-started", "started", "start":
-		reqCPU := *cpuMilli
-		if reqCPU <= 0 {
-			if envCPU := os.Getenv("NOVA_CI_CPU_MILLI"); envCPU != "" {
-				reqCPU, _ = strconv.Atoi(envCPU)
-			}
-		}
-		if reqCPU <= 0 {
-			reqCPU = 2000
-		}
-		reqMem := *memMB
-		if reqMem <= 0 {
-			if envMem := os.Getenv("NOVA_CI_MEM_MB"); envMem != "" {
-				reqMem, _ = strconv.Atoi(envMem)
-			}
-		}
-		if reqMem <= 0 {
-			reqMem = 4096
+		reqCPU, reqMem, err := hookBudget(os.Getenv, *cpuMilli, *memMB)
+		if err != nil {
+			// A malformed budget is refused, never the default.
+			return refuse(errOut, "capacity hook", err.Error())
 		}
 		resolvedPgid := *pgid
 		if resolvedPgid == 0 {
@@ -543,14 +534,50 @@ func runCapacityHook(ctx context.Context, args []string, out, errOut io.Writer) 
 	}
 }
 
+// hookBudget is the job's request: the flags when positive, else
+// NOVA_CI_CPU_MILLI and NOVA_CI_MEM_MB, else 2000 milli and 4096 MB. A
+// variable that is not an integer is an error naming it, never the default
+// (it used to be, in silence).
+func hookBudget(getenv func(string) string, cpuMilli, memMB int) (int, int, error) {
+	read := func(have int, name string, fallback int) (int, error) {
+		if have <= 0 {
+			if v := getenv(name); v != "" {
+				n, err := strconv.Atoi(v)
+				if err != nil {
+					return 0, fmt.Errorf("%s=%s wants an integer", name, v)
+				}
+				have = n
+			}
+		}
+		if have <= 0 {
+			have = fallback
+		}
+		return have, nil
+	}
+	cpu, err := read(cpuMilli, "NOVA_CI_CPU_MILLI", 2000)
+	if err != nil {
+		return 0, 0, err
+	}
+	mem, err := read(memMB, "NOVA_CI_MEM_MB", 4096)
+	if err != nil {
+		return 0, 0, err
+	}
+	return cpu, mem, nil
+}
+
 // existingMachine reads the machine already written in a consumer's desired
 // hash so a re-raise need not repeat --machine (spec 2.2: capacity writes it).
-func existingMachine(ctx context.Context, st *store.Store, kind, name string) string {
+// No field is "" with a nil error; a store that did not answer is the error,
+// so it is never reported as "machine is required".
+func existingMachine(ctx context.Context, st *store.Store, kind, name string) (string, error) {
 	value, err := st.Client().HGet(ctx, capacity.DesiredKey(kind, name), "machine").Result()
-	if err != nil {
-		return ""
+	if errors.Is(err, redis.Nil) {
+		return "", nil
 	}
-	return value
+	if err != nil {
+		return "", err
+	}
+	return value, nil
 }
 
 // refuseCapacity turns a ceiling refusal into the exact exit 2 line and any

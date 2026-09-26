@@ -77,7 +77,7 @@ func oneOf(v string, allowed ...string) bool {
 func runPRRecord(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "pr record"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	n := fs.Int("n", 0, "")
 	var f stream.RecordFields
@@ -156,7 +156,7 @@ func runPRRecord(ctx context.Context, args []string, out, errOut io.Writer) int 
 func runPRLines(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "pr lines"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	n := fs.Int("n", 0, "")
 	add := fs.String("add", "", "")
