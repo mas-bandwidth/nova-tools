@@ -42,7 +42,7 @@ func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 	}
 
 	var out, errOut bytes.Buffer
-	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "f", "32"}, &out, &errOut); code != 0 {
+	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "f", "--machine", "m", "--slots", "32"}, &out, &errOut); code != 0 {
 		t.Fatalf("capacity friend code=%d stderr=%q", code, errOut.String())
 	}
 	// #3265: the receipt names its round trips, one pipeline and one FCALL.
@@ -86,7 +86,7 @@ func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 	// Setter: a 33 through capacity friend is refused at the machine ceiling.
 	out.Reset()
 	errOut.Reset()
-	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "f", "33"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "CEILING m 41/40") {
+	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "f", "--slots", "33"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "CEILING m 41/40") {
 		t.Fatalf("capacity friend 33 code=%d out=%q err=%q", code, out.String(), errOut.String())
 	}
 	if got := client.HGet(ctx, "friend:f:desired", "slots").Val(); got != "32" {
@@ -108,13 +108,13 @@ func TestCapacityAsActorControlReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if code := runCapacity(ctx, []string{"machine", "--redis", addr, "--as", "operator", "ctl-machine", "64"}, &out, &errOut); code != 0 {
+	if code := runCapacity(ctx, []string{"machine", "--redis", addr, "--machine", "ctl-machine", "--slots", "64"}, &out, &errOut); code != 0 {
 		t.Fatalf("capacity machine code=%d stderr=%q", code, errOut.String())
 	}
 	client.SAdd(ctx, "friends", "alice")
 	out.Reset()
 	errOut.Reset()
-	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "operator", "--machine", "ctl-machine", "alice", "32"}, &out, &errOut); code != 0 {
+	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "alice", "--machine", "ctl-machine", "--slots", "32"}, &out, &errOut); code != 0 {
 		t.Fatalf("capacity friend code=%d stderr=%q", code, errOut.String())
 	}
 	entries, err := client.XRange(ctx, "cap:log", "-", "+").Result()
@@ -147,7 +147,7 @@ func TestL20bRunnerHooks(t *testing.T) {
 	var out, errOut bytes.Buffer
 	// Set machine with cores and mem-gb to establish budget (spec 5.1: 90%)
 	// 32 cores -> 28800 cpu_milli; 64 GB -> 58982 mem_mb
-	if code := runCapacity(ctx, []string{"machine", "--redis", addr, "--as", "operator", "--cores", "32", "--mem-gb", "64", "ctl-machine", "64"}, &out, &errOut); code != 0 {
+	if code := runCapacity(ctx, []string{"machine", "--redis", addr, "--cores", "32", "--mem-gb", "64", "--machine", "ctl-machine", "--slots", "64"}, &out, &errOut); code != 0 {
 		t.Fatalf("capacity machine code=%d stderr=%q", code, errOut.String())
 	}
 
@@ -157,7 +157,7 @@ func TestL20bRunnerHooks(t *testing.T) {
 	code := runCapacity(ctx, []string{
 		"hook", "--redis", addr,
 		"--machine", "ctl-machine",
-		"--consumer", "ci-runner-job-123",
+		"--as", "ci-runner-job-123",
 		"--cpu-milli", "4000",
 		"--mem-mb", "8192",
 		"job-started",
@@ -181,7 +181,7 @@ func TestL20bRunnerHooks(t *testing.T) {
 	code = runCapacity(ctx, []string{
 		"take", "--redis", addr,
 		"--machine", "ctl-machine",
-		"--consumer", "huge-job",
+		"--as", "huge-job",
 		"--cpu-milli", "30000", // exceeds remaining ~24800
 		"--mem-mb", "10000",
 	}, &out, &errOut)
@@ -198,7 +198,7 @@ func TestL20bRunnerHooks(t *testing.T) {
 	code = runCapacity(ctx, []string{
 		"hook", "--redis", addr,
 		"--machine", "ctl-machine",
-		"--consumer", "ci-runner-job-123",
+		"--as", "ci-runner-job-123",
 		"job-completed",
 	}, &out, &errOut)
 	if code != 0 {
@@ -233,33 +233,33 @@ func TestCapacityBenchWritesLegs(t *testing.T) {
 
 	run := func(args ...string) (int, string, string) {
 		var out, errOut bytes.Buffer
-		code := runCapacity(ctx, append([]string{"bench", "--redis", addr, "--as", "ops", "--machine", "m"}, args...), &out, &errOut)
+		code := runCapacity(ctx, append([]string{"bench", "--redis", addr, "--machine", "m"}, args...), &out, &errOut)
 		return code, out.String(), errOut.String()
 	}
-	if code, out, errOut := run("--legs", "go, schema", "b", "8"); code != 0 || !strings.HasPrefix(out, "SET bench b ") ||
+	if code, out, errOut := run("--legs", "go, schema", "--as", "b", "--slots", "8"); code != 0 || !strings.HasPrefix(out, "SET bench b ") ||
 		!strings.Contains(out, " legs=go,schema ") {
 		t.Fatalf("capacity bench --legs code=%d out=%q err=%q", code, out, errOut)
 	}
 	if got := client.HGet(ctx, "bench:b:desired", "legs").Val(); got != "go,schema" {
 		t.Fatalf("bench:b:desired legs=%q; want go,schema", got)
 	}
-	if code, out, _ := run("--legs", "go,schema", "b", "8"); code != 0 || !strings.HasPrefix(out, "SAME bench b ") {
+	if code, out, _ := run("--legs", "go,schema", "--as", "b", "--slots", "8"); code != 0 || !strings.HasPrefix(out, "SAME bench b ") {
 		t.Fatalf("same legs again code=%d out=%q; want SAME", code, out)
 	}
-	if code, out, _ := run("--legs", "go", "b", "8"); code != 0 || !strings.HasPrefix(out, "SET bench b ") {
+	if code, out, _ := run("--legs", "go", "--as", "b", "--slots", "8"); code != 0 || !strings.HasPrefix(out, "SET bench b ") {
 		t.Fatalf("changed legs code=%d out=%q; want SET", code, out)
 	}
-	if code, _, _ := run("b", "6"); code != 0 {
+	if code, _, _ := run("--as", "b", "--slots", "6"); code != 0 {
 		t.Fatalf("capacity bench without --legs code=%d", code)
 	}
 	if got := client.HGet(ctx, "bench:b:desired", "legs").Val(); got != "go" {
 		t.Fatalf("a write without --legs changed legs to %q; want go kept", got)
 	}
-	if code, _, errOut := run("--legs", "go;rm", "b", "8"); code != 2 || !strings.Contains(errOut, "--legs") {
+	if code, _, errOut := run("--legs", "go;rm", "--as", "b", "--slots", "8"); code != 2 || !strings.Contains(errOut, "--legs") {
 		t.Fatalf("malformed --legs code=%d err=%q; want a refusal naming --legs", code, errOut)
 	}
 	var out, errOut bytes.Buffer
-	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "--legs", "go", "f", "4"}, &out, &errOut); code != 2 {
+	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "f", "--machine", "m", "--legs", "go", "--slots", "4"}, &out, &errOut); code != 2 {
 		t.Fatalf("capacity friend --legs code=%d; want a refusal (legs is a bench flag)", code)
 	}
 
@@ -295,7 +295,7 @@ func TestCapacityRefusesMappedLogin(t *testing.T) {
 	client.HSet(ctx, "friend:rowan:desired", "slots", 32, "machine", "m")
 
 	var out, errOut bytes.Buffer
-	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "rowan-claude", "8"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "NAME-IS-LOGIN rowan-claude") {
+	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "rowan-claude", "--machine", "m", "--slots", "8"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "NAME-IS-LOGIN rowan-claude") {
 		t.Fatalf("capacity friend on a mapped login: exit %d %q, want 2 NAME-IS-LOGIN", code, errOut.String())
 	}
 	if client.SIsMember(ctx, "friends", "rowan-claude").Val() {
@@ -309,7 +309,7 @@ func TestCapacityRefusesMappedLogin(t *testing.T) {
 	// refuses by name only.
 	out.Reset()
 	errOut.Reset()
-	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "alice", "8"}, &out, &errOut); code != 0 {
+	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "alice", "--machine", "m", "--slots", "8"}, &out, &errOut); code != 0 {
 		t.Fatalf("capacity friend alice: exit %d %q", code, errOut.String())
 	}
 }
@@ -331,7 +331,7 @@ func TestCapacityWritesKindsAndTiers(t *testing.T) {
 	client.HSet(ctx, "machine:m:ceiling", "slots", 40)
 	run := func(kind string, args ...string) (int, string, string) {
 		var out, errOut bytes.Buffer
-		code := runCapacity(ctx, append([]string{kind, "--redis", addr, "--as", "ops", "--machine", "m"}, args...), &out, &errOut)
+		code := runCapacity(ctx, append([]string{kind, "--redis", addr, "--machine", "m"}, args...), &out, &errOut)
 		return code, out.String(), errOut.String()
 	}
 	desired := func() (string, string) {
@@ -344,47 +344,47 @@ func TestCapacityWritesKindsAndTiers(t *testing.T) {
 		}
 		return s(v[0]), s(v[1])
 	}
-	if code, out, errOut := run("bench", "--kinds", "work, read", "--tiers", "pro", "b", "8"); code != 0 ||
+	if code, out, errOut := run("bench", "--kinds", "work, read", "--tiers", "pro", "--as", "b", "--slots", "8"); code != 0 ||
 		!strings.HasPrefix(out, "SET bench b ") || !strings.Contains(out, " kinds=work,read tiers=pro ") {
 		t.Fatalf("capacity bench --kinds --tiers code=%d out=%q err=%q", code, out, errOut)
 	}
 	if k, tr := desired(); k != "work,read" || tr != "pro" {
 		t.Fatalf("bench:b:desired kinds=%q tiers=%q; want work,read and pro", k, tr)
 	}
-	if code, out, _ := run("bench", "--kinds", "work,read", "--tiers", "pro", "b", "8"); code != 0 || !strings.HasPrefix(out, "SAME bench b ") {
+	if code, out, _ := run("bench", "--kinds", "work,read", "--tiers", "pro", "--as", "b", "--slots", "8"); code != 0 || !strings.HasPrefix(out, "SAME bench b ") {
 		t.Fatalf("the same filters again code=%d out=%q; want SAME", code, out)
 	}
-	if code, _, _ := run("bench", "b", "6"); code != 0 {
+	if code, _, _ := run("bench", "--as", "b", "--slots", "6"); code != 0 {
 		t.Fatalf("capacity bench without the flags code=%d", code)
 	}
 	if k, tr := desired(); k != "work,read" || tr != "pro" {
 		t.Fatalf("a write without the flags changed kinds=%q tiers=%q; want kept", k, tr)
 	}
-	if code, out, _ := run("bench", "--kinds", "work", "b", "6"); code != 0 || !strings.Contains(out, " kinds=work ") || strings.Contains(out, "tiers=") {
+	if code, out, _ := run("bench", "--kinds", "work", "--as", "b", "--slots", "6"); code != 0 || !strings.Contains(out, " kinds=work ") || strings.Contains(out, "tiers=") {
 		t.Fatalf("narrowed kinds code=%d out=%q", code, out)
 	}
 	if k, tr := desired(); k != "work" || tr != "pro" {
 		t.Fatalf("kinds=%q tiers=%q; want work and pro kept", k, tr)
 	}
-	if code, out, _ := run("bench", "--kinds", "", "--tiers", "", "b", "6"); code != 0 || !strings.Contains(out, " kinds=- tiers=- ") {
+	if code, out, _ := run("bench", "--kinds", "", "--tiers", "", "--as", "b", "--slots", "6"); code != 0 || !strings.Contains(out, " kinds=- tiers=- ") {
 		t.Fatalf("clear code=%d out=%q", code, out)
 	}
 	if k, tr := desired(); k != "<none>" || tr != "<none>" {
 		t.Fatalf("after clearing: kinds=%q tiers=%q; want neither field", k, tr)
 	}
-	if code, _, errOut := run("bench", "--kinds", "work,report", "b", "6"); code != 2 || !strings.Contains(errOut, "--kinds") {
+	if code, _, errOut := run("bench", "--kinds", "work,report", "--as", "b", "--slots", "6"); code != 2 || !strings.Contains(errOut, "--kinds") {
 		t.Fatalf("a kind that is not work, read or fix: code=%d err=%q; want a refusal naming --kinds", code, errOut)
 	}
-	if code, _, errOut := run("bench", "--tiers", "pro;rm", "b", "6"); code != 2 || !strings.Contains(errOut, "--tiers") {
+	if code, _, errOut := run("bench", "--tiers", "pro;rm", "--as", "b", "--slots", "6"); code != 2 || !strings.Contains(errOut, "--tiers") {
 		t.Fatalf("malformed --tiers: code=%d err=%q; want a refusal naming --tiers", code, errOut)
 	}
 	// the three model types (Glenn 2026-09-26): frontier joins pro and flash;
 	// any other word is refused naming the three, and the Lua refuses it too
-	if code, _, errOut := run("bench", "--tiers", "turbo", "b", "6"); code != 2 || !strings.Contains(errOut, "--tiers") ||
+	if code, _, errOut := run("bench", "--tiers", "turbo", "--as", "b", "--slots", "6"); code != 2 || !strings.Contains(errOut, "--tiers") ||
 		!strings.Contains(errOut, "frontier, pro or flash") {
 		t.Fatalf("--tiers turbo: code=%d err=%q; want a refusal naming --tiers and the three types", code, errOut)
 	}
-	if code, out, errOut := run("bench", "--tiers", "frontier, pro", "b", "6"); code != 0 || !strings.Contains(out, " tiers=frontier,pro ") {
+	if code, out, errOut := run("bench", "--tiers", "frontier, pro", "--as", "b", "--slots", "6"); code != 0 || !strings.Contains(out, " tiers=frontier,pro ") {
 		t.Fatalf("--tiers frontier,pro: code=%d out=%q err=%q", code, out, errOut)
 	}
 	if _, tr := desired(); tr != "frontier,pro" {
@@ -397,7 +397,7 @@ func TestCapacityWritesKindsAndTiers(t *testing.T) {
 	if _, tr := desired(); tr != "frontier,pro" {
 		t.Fatalf("after the refused Lua write tiers=%q; want frontier,pro kept", tr)
 	}
-	if code, out, errOut := run("friend", "--kinds", "read", "f", "4"); code != 0 || !strings.Contains(out, " kinds=read ") {
+	if code, out, errOut := run("friend", "--kinds", "read", "--as", "f", "--slots", "4"); code != 0 || !strings.Contains(out, " kinds=read ") {
 		t.Fatalf("capacity friend --kinds code=%d out=%q err=%q", code, out, errOut)
 	}
 	if got := client.HGet(ctx, "friend:f:desired", "kinds").Val(); got != "read" {
