@@ -38,7 +38,7 @@ usage:
   nova-sprint task push    --actor <a> --id <id> [--stream <s>] [--friend|--to <f>] [--waiting | --depends-on <c>]
                            [--kind <k>] [--ref <repo#n>] [--origin <url>] [--title <t>] [--head <sha>] [--pr <n>] [--repo <r>] [--front]
                            [--issue <file|->] [--route pro|flash|friend] [--base <b>] [--base-sha <sha>] [--paths <p>]
-  nova-sprint task take    --actor <f> [--id <id>] [--n <k>]
+  nova-sprint task take    --actor <f> [--id <id>] [--n <k>] [--model <m>] [--harness <h>] [--child <id>]
   nova-sprint task beat    --actor <f> --id <id>
   nova-sprint task done    --actor <a> --id <id> --evidence <text> [--pr <n>]
   nova-sprint task land    --actor <a> (--id <id> | --stream <s>) --sha <merge sha8>
@@ -58,6 +58,8 @@ done moves working -> merging when the task names a PR (its pr field or --pr), e
 take, done, beat and cancel are card work, end, beat and cancel for a friend's consumer copies
 (<primary>~<n>, #3929): take works the friend's ready copies first, then takes friend-queue
 tasks; done of a copy returns it to its primary (--pr <n> --head <sha>: the primary is review).
+take records --model, --harness and --child on each copy it works and keeps the friend's one
+beat loop running (a BEATLOOP line, as friend pull and card work print).
 land moves merging (or working) -> landed at the merge sha; land --stream moves every
 member of ws:<s>:merging and prints LANDED <id> ref=<repo#n> origin=<url> per member (the
 lander closes those PRs and issues with the CLOSE line). take starts a lease the child
@@ -122,6 +124,7 @@ type cardCmd struct {
 	evidence, sha, where, toFriend, toStream, toWhr *string
 	ok                                              *string
 	issue, route, base, baseSHA, paths              *string
+	model, harness, child                           *string
 	n                                               *int
 	waiting, front, help, repair                    *bool
 	friends                                         multiFlag
@@ -158,6 +161,9 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	c.base = fs.String("base", "", "")
 	c.baseSHA = fs.String("base-sha", "", "")
 	c.paths = fs.String("paths", "", "")
+	c.model = fs.String("model", "", "")
+	c.harness = fs.String("harness", "", "")
+	c.child = fs.String("child", "", "")
 	c.n = fs.Int("n", 1, "")
 	c.waiting = fs.Bool("waiting", false, "")
 	c.repair = fs.Bool("repair", false, "")
@@ -202,6 +208,11 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	return c.run(ctx, st, sub, out, errOut)
 }
 
+// who is take's --model, --harness and --child: who works the copies.
+func (c *cardCmd) who() taskcard.Who {
+	return taskcard.Who{Model: *c.model, Harness: *c.harness, Child: *c.child}
+}
+
 // missing names the first required flag a verb lacks, or "".
 func (c *cardCmd) missing(sub string) string {
 	need := func(v *string, name string) string {
@@ -221,6 +232,9 @@ func (c *cardCmd) missing(sub string) string {
 		}
 	case "take", "expire":
 		checks = append(checks, need(c.actor, "actor"))
+		if err := c.who().Check(); err != nil {
+			checks = append(checks, err.Error())
+		}
 	case "fsck":
 		checks = append(checks, need(c.sprint, "sprint"))
 	case "ls":
@@ -305,9 +319,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		// task take is card work for a friend harness (#3929): the friend's
 		// ready copies first (card work --as friend:<f>), then friend-queue
 		// tasks for what is left of --n.
+		// who works the copies goes onto each one's record in the move
+		// (ns_cm_work), as card work --model --harness --child does
+		who := c.who() // one word each: missing refused it before the store
+		k := taskcard.Consumer{Kind: "friend", Name: *c.actor}
 		var got []string
 		if *c.id == "" || taskcard.IsCopy(*c.id) {
-			w, err := taskcard.Work(ctx, cl, taskcard.Consumer{Kind: "friend", Name: *c.actor}, *c.actor, *c.n, false, ids...)
+			w, err := taskcard.WorkAs(ctx, cl, k, *c.actor, *c.n, false, who, ids...)
 			if err != nil {
 				// a friend with no declared slots holds no copies: the friend queue only
 				if why, ok := taskcard.IsRefused(err); !ok || *c.id != "" || !strings.HasPrefix(why, "SLOTS") {
@@ -323,8 +341,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			}
 			got = append(got, more...)
 		}
+		// the friend's one beat loop, as friend pull and card work keep it
+		code := 0
+		if !printFriendBeat(ctx, cl, k, redisArg(*c.redis), out) {
+			code = 1
+		}
 		_, _ = fmt.Fprintf(out, "TASK take n=%d ids=%s ms=%d\n", len(got), strings.Join(got, ","), ms())
-		return 0
+		return code
 	case "beat":
 		beat := taskcard.Beat
 		if taskcard.IsCopy(*c.id) { // card beat --as friend:<f> (#3929)

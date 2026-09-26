@@ -2801,8 +2801,11 @@ end
 -- counts them (nova-tools#4293: a copy is never put beside a leg it would
 -- slow); named copies all or nothing. Each starts a lease its holder renews with
 -- card beat, and a token its end may present (a stale one is FENCED).
+-- who is the worker's field, value pairs (model, harness, child;
+-- seat-keeps-beat), written onto each copy's record in the same HSET as its
+-- move: the one writer records who works the copy.
 -- Returns the reply WORKED n free, then per copy its id and token.
-function TM.work(c, by, k, fill, ids)
+function TM.work(c, by, k, fill, ids, who)
   if not TM.parse(c) then return { 'REFUSED', 'CONSUMER ' .. TK.str(c) .. ' is not bench:<b> or friend:<f>' } end
   local d = TM.desired(c)
   if not d.slots then return { 'REFUSED', 'SLOTS ' .. c .. ':desired has no slots; run nova-sprint capacity' } end
@@ -2837,8 +2840,10 @@ function TM.work(c, by, k, fill, ids)
     redis.call('ZREM', TM.key(c, 'ready'), id)
     cm_zadd(TM.key(c, 'working'), TK.ms(r[3]) or at, id)
     local token = id .. '@' .. tostring(at)
-    redis.call('HSET', 'task:' .. id, 'where', 'working', 'where_at', tostring(at), 'leased_at', tostring(at),
-      'lease_until', tostring(at + TM.LEASE), 'token', token)
+    local h = { 'task:' .. id, 'where', 'working', 'where_at', tostring(at), 'leased_at', tostring(at),
+      'lease_until', tostring(at + TM.LEASE), 'token', token }
+    for _, v in ipairs(who or {}) do h[#h + 1] = v end
+    redis.call('HSET', unpack(h))
     TM.log(id, r[4], c .. ':ready', c .. ':working', by, 'work', c)
     out[#out + 1] = id
     out[#out + 1] = token
@@ -3867,14 +3872,22 @@ function TM.sprint_clear(by, why, force)
 end
 
 -- TM.beat(c, ids): the holder renews its working copies' leases. Named
--- copies all or nothing. Returns BEAT n lease_until.
+-- copies all or nothing. Returns BEAT n lease_until, then each member of
+-- the working set skipped as no copy.
 function TM.beat(c, ids)
   local at = cm_now()
+  local skipped = {}
   if #ids == 0 then
     -- no id: every copy the consumer holds working (#4233: the friend
-    -- beat's one round trip renews its whole working set here)
+    -- beat's one round trip renews its whole working set here). A
+    -- friend-queue task beside the copies (task take) is task beat's to
+    -- renew: it is skipped and named, never the refusal of the whole beat
+    -- (seat-keeps-beat: NOTWORKING here stopped every copy's renewal).
     if not TM.parse(c) then return { 'REFUSED', 'CONSUMER ' .. TK.str(c) .. ' is not bench:<b> or friend:<f>' } end
-    ids = redis.call('ZRANGE', TM.key(c, 'working'), 0, -1)
+    ids = {}
+    for _, id in ipairs(redis.call('ZRANGE', TM.key(c, 'working'), 0, -1)) do
+      if TK.copy_id(id) then ids[#ids + 1] = id else skipped[#skipped + 1] = id end
+    end
   end
   for _, id in ipairs(ids) do
     if not TK.copy_id(id) or not redis.call('ZSCORE', TM.key(c, 'working'), id) then
@@ -3884,7 +3897,9 @@ function TM.beat(c, ids)
   for _, id in ipairs(ids) do
     redis.call('HSET', 'task:' .. id, 'lease_until', tostring(at + TM.LEASE), 'beat_at', tostring(at))
   end
-  return { 'BEAT', tostring(#ids), tostring(at + TM.LEASE) }
+  local out = { 'BEAT', tostring(#ids), tostring(at + TM.LEASE) }
+  for _, id in ipairs(skipped) do out[#out + 1] = id end
+  return out
 end
 
 -- TM.roster: every consumer: the consumers set, and bench:<b> for each of
@@ -4112,10 +4127,21 @@ redis.register_function('ns_cm_deal', function(keys, args)
   return TM.deal(args[1], TK.str(args[2]), tonumber(args[3]) or 0, TK.str(args[4]), TM.ids(args, 5))
 end)
 
--- ns_cm_work(consumer, by, k|fill, id...) -> WORKED n free, then the ids |
--- REFUSED <why>.
+-- ns_cm_work(consumer, by, k|fill, [model=<m>] [harness=<h>] [child=<c>],
+-- id...) -> WORKED n free, then the ids | REFUSED <why>. The who words
+-- (seat-keeps-beat: who works the copies, taskcard.Who) come before the ids,
+-- each one word, and go onto each worked copy's record.
 redis.register_function('ns_cm_work', function(keys, args)
-  return TM.work(args[1], TK.str(args[2]), tonumber(args[3]) or 0, args[3] == 'fill', TM.ids(args, 4))
+  local who, i = {}, 4
+  while args[i] do
+    local f, v = string.match(args[i], '^(%a+)=(.*)$')
+    if f ~= 'model' and f ~= 'harness' and f ~= 'child' then break end
+    if v == '' or string.find(v, '%s') then return { 'REFUSED', 'WHO ' .. f .. ' wants one word' } end
+    who[#who + 1] = f
+    who[#who + 1] = v
+    i = i + 1
+  end
+  return TM.work(args[1], TK.str(args[2]), tonumber(args[3]) or 0, args[3] == 'fill', TM.ids(args, i), who)
 end)
 
 -- ns_cm_end(by, ok|fail, why, sha, score, reader, token, nfields, k, v...,
@@ -4150,8 +4176,9 @@ redis.register_function('ns_sprint_clear', function(keys, args)
   return TM.sprint_clear(TK.str(args[1]), args[2], args[3] == '1')
 end)
 
--- ns_cm_beat(consumer, id...) -> BEAT n lease_until | REFUSED <why>; with
--- no id, every copy in <consumer>:cards:working.
+-- ns_cm_beat(consumer, id...) -> BEAT n lease_until skipped... | REFUSED
+-- <why>; with no id, every copy in <consumer>:cards:working, and skipped
+-- names each member that is no copy (a friend-queue task).
 redis.register_function('ns_cm_beat', function(keys, args) return TM.beat(args[1], TM.ids(args, 2)) end)
 
 -- ns_cm_expire(by, consumer...) -> EXPIRED n, then per copy: id, where.

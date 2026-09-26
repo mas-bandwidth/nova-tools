@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -26,7 +27,13 @@ import (
 //	ns_cm_beat        friend:<f> with no id: every copy in
 //	                  friend:<f>:cards:working gets a fresh lease, in the
 //	                  same pipeline, so no copy can end between a read of
-//	                  the set and its beat
+//	                  the set and its beat; a friend-queue task in the set
+//	                  (task take) is skipped and named (Skipped)
+//	friend:<f>:beat   models: the distinct models of the copies it holds in
+//	models            working (task:<copy> model, what card work --model
+//	                  and friend pull --model record), comma joined, in the
+//	                  same pipeline; removed when none names one. The
+//	                  table's friend row prints it beside the name.
 //
 // No TTL is set and any TTL a `friend hello` loop left is removed: keys do
 // not expire, at is reader-judged (Glenn 2026-09-23). The friend:<f> row is
@@ -56,6 +63,11 @@ type FriendBeatResult struct {
 	// lease they now hold (ms; 0 with none).
 	Working    int
 	LeaseUntil int64
+	// Models is the models field the beat wrote ("" when it removed it).
+	Models string
+	// Skipped is each member of the working set ns_cm_beat left alone as
+	// no copy: a friend-queue task (task take), which task beat renews.
+	Skipped []string
 }
 
 // FriendBeatHarness is the harness field a friend beat writes, naming its
@@ -63,7 +75,7 @@ type FriendBeatResult struct {
 const FriendBeatHarness = "friend beat"
 
 // FriendBeat writes the friend's beat and renews its working copies' leases
-// in one pipeline. A refused lease renewal (ns_cm_beat REFUSED) is the
+// in one pipeline, then (when it holds copies or had models) the models. A refused lease renewal (ns_cm_beat REFUSED) is the
 // error, so the verb's loop backs off and says why.
 func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (FriendBeatResult, error) {
 	friend := strings.ToLower(strings.TrimSpace(req.Friend))
@@ -91,6 +103,9 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 	pipe.HSet(ctx, beat, fields...)
 	pipe.Persist(ctx, beat)
 	leases := pipe.FCall(ctx, "ns_cm_beat", nil, "friend:"+friend)
+	working := "friend:" + friend + ":cards:working"
+	held := pipe.ZRange(ctx, working, 0, -1)
+	had := pipe.HGet(ctx, beat, "models")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return FriendBeatResult{}, fmt.Errorf("friend beat %s: %w", friend, err)
 	}
@@ -105,7 +120,7 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 	if len(words) == 2 && words[0] == "REFUSED" {
 		return FriendBeatResult{}, fmt.Errorf("friend beat %s: leases: %s", friend, words[1])
 	}
-	if len(words) != 3 || words[0] != "BEAT" {
+	if len(words) < 3 || words[0] != "BEAT" {
 		return FriendBeatResult{}, fmt.Errorf("friend beat %s: leases: unexpected reply %v", friend, words)
 	}
 	n, _ := strconv.Atoi(words[1])
@@ -113,5 +128,26 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 	if n == 0 {
 		until = 0
 	}
-	return FriendBeatResult{Friend: friend, AtMS: ms, Working: n, LeaseUntil: until}, nil
+	// The models are a second round trip, only when there is something to
+	// write or remove: ns_friend_models declares every key it reads (the
+	// beat, the working set, task:<copy> for each copy the first trip saw).
+	skipped := words[3:]
+	ids, m := held.Val(), had.Val()
+	if len(ids) > 0 || m != "" {
+		keys := []string{beat, working}
+		for _, id := range ids {
+			if !slices.Contains(skipped, id) {
+				keys = append(keys, "task:"+id)
+			}
+		}
+		if m, err = st.Client().FCall(ctx, FnFriendModels, keys).Text(); err != nil {
+			return FriendBeatResult{}, fmt.Errorf("friend beat %s: models: %w", friend, err)
+		}
+	}
+	return FriendBeatResult{Friend: friend, AtMS: ms, Working: n, LeaseUntil: until, Models: m, Skipped: skipped}, nil
 }
+
+// FnFriendModels writes the beat's models field from the named working
+// copies' models (fn/lua/friend_beatloop.lua): each distinct model once, in
+// the set's order, comma joined; the field is removed when none names one.
+const FnFriendModels = "ns_friend_models"
