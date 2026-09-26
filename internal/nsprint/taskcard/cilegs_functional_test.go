@@ -70,7 +70,7 @@ func TestDealAndFillTakeCILegsOffABenchsSlots(t *testing.T) {
 	if w, err = taskcard.Work(ctx, c, b, "b", 0, true); err != nil || len(w.IDs) != 4 || w.Free != 0 {
 		t.Fatalf("refill %+v %v", w, err)
 	}
-	if n := c.ZCard(ctx, b.Key("working")).Val(); n != 8 {
+	if n := c.ZCard(ctx, b.KeyAt(0, "working")).Val(); n != 8 {
 		t.Fatalf("working %d, want 8", n)
 	}
 }

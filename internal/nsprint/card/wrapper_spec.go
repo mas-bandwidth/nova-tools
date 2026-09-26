@@ -229,7 +229,7 @@ func GateFriendCopy(ctx context.Context, fg FriendGate) (GateResult, error) {
 		return GateResult{}, fmt.Errorf("--checkout %s is not a git checkout", fg.Repo)
 	}
 	var at lineBuffer
-	if exit, err := run(ctx, Cmd{Dir: repo, Argv: []string{"git", "rev-parse", "HEAD"}, Out: &at, Timeout: fg.Timeout}); err != nil || exit != 0 {
+	if exit, err := run(ctx, Cmd{Dir: repo, Argv: gitArgv("rev-parse", "HEAD"), Out: &at, Timeout: fg.Timeout}); err != nil || exit != 0 {
 		return GateResult{}, fmt.Errorf("git rev-parse HEAD in %s: exit %d%s", fg.Repo, exit, errSuffix(err))
 	}
 	head := strings.TrimSpace(at.tail(1))
@@ -395,17 +395,18 @@ func funcSource(src []byte, name string) string {
 // redLineMark is how nova-ci local prints a red test.
 const redLineMark = "RED package="
 
+// gitArgv is git's argv for one gate command, as runAtBase's git builds it.
+func gitArgv(args ...string) []string {
+	return append([]string{"git"}, args...)
+}
+
 // runCI is CI's answer for the diff: nova-ci local, else the touched packages.
 // It returns the rows, the red names, and the reason and why of a refusal.
 func runCI(ctx context.Context, run Runner, in GateInput) (rows, reds []string, reason, why string) {
 	var out lineBuffer
 	exit, err := run(ctx, Cmd{Dir: in.Repo, Argv: []string{"nova-ci", "local", "--base", in.Base}, Out: &out,
 		Timeout: in.Timeout, Ticks: in.Ticks, Beat: in.Beat})
-	for _, l := range out.lines {
-		if strings.HasPrefix(l, redLineMark) {
-			reds = append(reds, l)
-		}
-	}
+	reds = out.with(redLineMark)
 	summary := out.last("nova-ci local: packages=")
 	switch {
 	case err == nil && exit == 0:
@@ -419,7 +420,7 @@ func runCI(ctx context.Context, run Runner, in GateInput) (rows, reds []string, 
 		}
 		rows = append([]string{summary}, reds...)
 		if len(reds) == 0 {
-			reds = []string{"RED package=- test=- (nova-ci local exit 1 with no RED line: " + out.tail(1) + ")"}
+			reds = append(reds, redLineMark+"- test=- (nova-ci local exit 1 with no RED line: "+out.tail(1)+")")
 			rows = append(rows, reds...)
 		}
 		return rows, reds, GateCIRed, "nova-ci local red: " + strings.Join(reds, "; ") + "; fix the red, never the budget"
@@ -453,7 +454,7 @@ func runCI(ctx context.Context, run Runner, in GateInput) (rows, reds []string, 
 		return []string{"nova-ci local: not-run (" + could + ")", cmdline + ": pass"}, nil, "", ""
 	}
 	if len(reds) == 0 {
-		reds = []string{"RED package=- test=- (" + cmdline + " exit " + fmt.Sprint(exit) + ": " + ev.tail(1) + ")"}
+		reds = append(reds, redLineMark+"- test=- ("+cmdline+" exit "+fmt.Sprint(exit)+": "+ev.tail(1)+")")
 	}
 	rows = append([]string{"nova-ci local: not-run (" + could + ")", cmdline + ": red"}, reds...)
 	return rows, reds, GateCIRed, cmdline + " red: " + strings.Join(reds, "; ") + "; fix the red, never the budget"
@@ -554,6 +555,17 @@ func (l *lineBuffer) last(prefix string) string {
 		}
 	}
 	return ""
+}
+
+// with is every line kept with prefix, in order (nil without one).
+func (l *lineBuffer) with(prefix string) []string {
+	var out []string
+	for _, s := range l.all() {
+		if strings.HasPrefix(s, prefix) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // all is every line kept.

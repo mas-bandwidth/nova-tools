@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -31,6 +32,13 @@ func (s scripted) Decide(_ context.Context, _ string, qs map[string]decide.Quest
 		out[k] = decide.Answer{Type: "choice", Choice: a, Confidence: 0.8}
 	}
 	return out, decide.Usage{InputTokens: 500, HasInput: true, HasOutput: true}, nil
+}
+
+// sorted is a sorted copy of a set's members.
+func sorted(m []string) []string {
+	out := append([]string(nil), m...)
+	sort.Strings(out)
+	return out
 }
 
 // cancelling is Jev whose caller gives up mid-call: it cancels the ask's
@@ -94,6 +102,19 @@ func TestLedgerFromTheMoveLogToTheReport(t *testing.T) {
 	}
 	at := c.HGet(ctx, "task:nova-tools-4316", "review_at").Val()
 	row := func(typ, s string) map[string]string { return c.HGetAll(ctx, jev.RowKey(typ, s)).Val() }
+	// the three decisions by identity: the primary's tier and worktype and
+	// its review; the stream's sentinel (swarm-cards:sentinel, created by the
+	// stream's registration, #4318) is a mechanical card and asks nothing
+	wantPending := []string{jev.TypeReview + " nova-tools-4316@" + at, jev.TypeTier + " nova-tools-4316",
+		jev.TypeWorkType + " nova-tools-4316"}
+	if p := c.SMembers(ctx, jev.KeyPending).Val(); strings.Join(sorted(p), "|") != strings.Join(wantPending, "|") {
+		t.Fatalf("first sync pending %v, want %v", sorted(p), wantPending)
+	}
+	for _, typ := range []string{jev.TypeTier, jev.TypeWorkType, jev.TypeReview} {
+		if n := c.Exists(ctx, jev.RowKey(typ, "swarm-cards:sentinel")).Val(); n != 0 {
+			t.Errorf("the sentinel has a %s row", typ)
+		}
+	}
 	if h := row(jev.TypeTier, "nova-tools-4316"); h["rules"] != "pro" || !strings.Contains(h["state"], "PATHS: internal/nsprint/jev") {
 		t.Errorf("tier row %v", h)
 	}

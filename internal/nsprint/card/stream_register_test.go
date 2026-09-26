@@ -60,17 +60,12 @@ func TestCardPushRegistersItsStream(t *testing.T) {
 	if ok, rank := registered(t, ctx, client, "ci"); !ok || rank != 2 || client.ZCard(ctx, "ws:order").Val() != 2 {
 		t.Fatalf("after second push: ci registered=%v rank=%v order=%v", ok, rank, client.ZRange(ctx, "ws:order", 0, -1).Val())
 	}
-	rows, err := ws.Counts(ctx, client)
+	counts, err := ws.Counts(ctx, client, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got *ws.Count
-	for i := range rows {
-		if rows[i].Stream == "ci" {
-			got = &rows[i]
-		}
-	}
-	if got == nil || got.Rank != 2 || got.Ready != 2 {
+	rows := counts.Streams
+	if len(rows) != 2 || rows[1].Stream != "ci" || rows[1].Cell(ws.Ready) != 2 {
 		t.Fatalf("stream ls rows = %+v, want ci at rank 2 with ready=2", rows)
 	}
 	if rep, err := card.Fsck(ctx, client, sprint, false); err != nil || rep.Drift != 0 {

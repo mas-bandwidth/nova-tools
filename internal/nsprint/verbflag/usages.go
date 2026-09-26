@@ -70,8 +70,8 @@ var Usages = map[string]Usage{
 	"card assign":    {Forms: []string{"--ids <primary> --to <worker>"}, Examples: []string{"card assign --ids nova-tools-4352 --to friend:emma"}},
 	"card session":   {Forms: []string{"--ids <copy> --as <worker>"}, Examples: []string{"card session --ids nova-tools-4352~1 --as friend:rowan"}},
 
-	"census": {Forms: []string{"--sprint <S> [--keys <state,...>]", "--set <benches|friends|sprint:<S>:<state>> --fields <f,...>", "--keys-from <file|-> --fields <f,...>"},
-		Examples: []string{"census --sprint quack-0926", "census --set benches --fields host,at"}},
+	"census": {Forms: []string{"--set <benches|friends> --fields <f,...>", "--keys-from <file|-> --fields <f,...>"},
+		Examples: []string{"census --set benches --fields host,at"}}, // --sprint <S> is refused: a retired key family (nova-sprint ws counts)
 
 	"ci request": {Forms: []string{"--repo <r> --sha <sha> [--pr <n>] [--checks <c,...>] [--again]"}, Examples: []string{"ci request --repo nova-tools --sha dcd918e6d --pr 4399"}},
 	"ci run":     {Forms: []string{"--bench <b> --results <dir> [--scratch <dir>] [--mirror-root <dir>]"}, Examples: []string{"ci run --bench hulk --results /srv/ci/results"}},
@@ -221,8 +221,8 @@ var Usages = map[string]Usage{
 	"read digest": {Forms: []string{"--repo <r> --n <n> [--sprint <S>] [--head <sha>] [--base-ref <ref>]"}, Examples: []string{"read digest --repo nova-tools --n 4399"}},
 	"read carry":  {Forms: []string{"--repo <r> --n <n> [--sprint <S>] [--base-ref <ref>]"}, Examples: []string{"read carry --repo nova-tools --n 4399"}},
 
-	"redis":     {Forms: []string{"<redis command...>"}, Examples: []string{"redis ZCARD ws:console:ready"}},
-	"redis-cli": {Forms: []string{"-- <redis command...>"}, Examples: []string{"redis-cli -- ZCARD ws:console:ready"}},
+	"redis":     {Forms: []string{"<redis command...>"}, Examples: []string{"redis HGETALL task:nova-tools-4352"}},
+	"redis-cli": {Forms: []string{"-- <redis command...>"}, Examples: []string{"redis-cli -- HGETALL task:nova-tools-4352"}},
 
 	"result check":       {Forms: []string{"<RESULT.md|-> [--kind <k>]"}, Examples: []string{"result check RESULT.md"}},
 	"result show":        {Forms: []string{"--sprint <S> --ids <label>"}, Examples: []string{"result show --sprint quack-0926 --ids nova-tools-4352"}},

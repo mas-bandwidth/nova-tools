@@ -414,10 +414,15 @@ func prCard(ctx context.Context, rdb redis.Cmdable, repo string, n int) (string,
 	}
 	var cands []string
 	if st := str(1); st != "" && st != "-" {
+		// the stream's sets under the current epoch (nova-tools#4238)
+		epoch, err := ws.Epoch(ctx, rdb)
+		if err != nil {
+			return "", fmt.Errorf("read stream %s: %w", st, err)
+		}
 		pipe := rdb.Pipeline()
 		var sets []*redis.StringSliceCmd
 		for _, w := range []string{"review", "merging", "working"} {
-			sets = append(sets, pipe.ZRange(ctx, ws.Key(st, w), 0, -1))
+			sets = append(sets, pipe.ZRange(ctx, ws.KeyAt(epoch, st, w), 0, -1))
 		}
 		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 			return "", fmt.Errorf("read stream %s: %w", st, err)

@@ -50,7 +50,7 @@ func TestControl3530LoopPublishesOneWriter(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var stdout, stderr lockedBuffer
 	done := make(chan int, 1)
-	go func() { done <- loopTable(ctx, addr, cfg, opts, &stdout, &stderr) }()
+	go func() { done <- loopTable(ctx, addr, cfg, "--sprint", opts, &stdout, &stderr) }()
 
 	var body []byte
 	waitFor(t, "the first publish", func() bool {
@@ -66,7 +66,7 @@ func TestControl3530LoopPublishesOneWriter(t *testing.T) {
 	}
 
 	var out2, err2 lockedBuffer
-	if code := loopTable(context.Background(), addr, cfg, opts, &out2, &err2); code != 3 || !strings.Contains(err2.String(), "REFUSED: lock:nova-sprint-table is held by") {
+	if code := loopTable(context.Background(), addr, cfg, "--sprint", opts, &out2, &err2); code != 3 || !strings.Contains(err2.String(), "REFUSED: lock:nova-sprint-table is held by") {
 		t.Fatalf("second writer: exit %d stderr %q, want 3 and REFUSED", code, err2.String())
 	}
 

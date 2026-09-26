@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"fmt"
-	"github.com/alicebob/miniredis/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -269,12 +268,13 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":merging").Result(); n != 0 {
 		t.Fatalf("merging %d", n)
 	}
-	// the three tasks and the stream's stop, landed by structure with the last (#4318)
-	if n, _ := c.ZCard(ctx, "ws:"+swarm+":landed").Result(); n != 4 {
-		t.Fatalf("the closed issues' tasks: %s landed %d, want 3 and the stop", swarm, n)
+	// the closed issues' three tasks landed, by identity; the stream's
+	// sentinel waits for the coordinator's acceptance (#4412)
+	if got := strings.Join(c.ZRange(ctx, "ws:"+swarm+":landed", 0, -1).Val(), " "); got != "build-101-one build-7-seven build-103-three" {
+		t.Fatalf("the closed issues' tasks: %s landed %s", swarm, got)
 	}
-	if h := c.HGetAll(ctx, "task:"+ws.SentinelID(swarm)).Val(); h["where"] != "landed" || !strings.HasPrefix(h["merge_sha"], "dddddddd") {
-		t.Fatalf("%s's stop after its last landing: %v", swarm, h)
+	if h := c.HGetAll(ctx, "task:"+ws.SentinelID(swarm)).Val(); h["where"] != "waiting" || h["merge_sha"] != "" {
+		t.Fatalf("%s's sentinel after its last landing: %v, want waiting for acceptance", swarm, h)
 	}
 	for _, id := range []string{"t1", "t3", "build-101-one", "build-103-three", "build-7-seven"} {
 		if why := c.HGet(ctx, "task:"+id, "why").Val(); why != "landed with nova-tools#900 (dddddddd)" {
@@ -325,13 +325,22 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if cl := c.HGet(ctx, "pr:nova-tools:1", "closes").Val(); cl != "101" {
 		t.Fatalf("#1 closes %q, want 101 from its body", cl)
 	}
-	// the refused run's park, the --partial run's park, the landing, five
-	// lands walked step by step through the one move (#3778: a ready member
-	// goes ready -> working -> landed, one receipt each) (and the two
-	// streams' sentinels created at registration, and the swarm's landed
-	// with its last card, #4318)
-	if log, _ := c.XLen(ctx, "ws:log").Result(); log != 14 {
-		t.Fatalf("ws:log %d", log)
+	// the rows by identity and order: the refused run's park, the --partial
+	// run's park, the landing, five lands walked step by step through the one
+	// move (#3778: a ready member goes ready -> working -> landed, one
+	// receipt each), the two streams' sentinels created at registration
+	// (#4318), and no sentinel landed: the swarm's waits for the
+	// coordinator's acceptance (#4412)
+	var rows []string
+	for _, e := range c.XRange(ctx, "ws:log", "-", "+").Val() {
+		rows = append(rows, fmt.Sprintf("%v %v->%v", e.Values["id"], e.Values["from"], e.Values["to"]))
+	}
+	wantRows := []string{"t2 merging->working", "t2 merging->working", "land:mas-bandwidth/nova-tools:landing-streams-lander merging->landed",
+		ws.SentinelID(swarm) + " ->waiting", "build-103-three waiting->ready", "build-103-three ready->working",
+		"build-103-three working->landed", "build-7-seven ready->working", "build-7-seven working->landed",
+		ws.SentinelID(lsStream) + " ->waiting", "t3 merging->landed", "build-101-one working->landed", "t1 merging->landed"}
+	if got := strings.Join(rows, "; "); got != strings.Join(wantRows, "; ") {
+		t.Fatalf("ws:log rows\n%s\nwant\n%s", got, strings.Join(wantRows, "; "))
 	}
 	// The table reads the sets: the stream's landed cell is 2.
 	snap, err := table.NewSprintReader(c, table.SprintConfig{Friends: []string{"rowan"}}).Read(ctx, time.Now())
@@ -386,13 +395,17 @@ func landedRelease(t *testing.T, ctx context.Context, c *redis.Client, addr, rec
 
 // TestLandStreamConflictStops runs a whole land stream against a git remote it
 // builds with a dozen git processes; exec of whole programs is the functional
-// tier's (Glenn 2026-09-26, nova-tools#4328: unit tests under 2 s).
+// tier's (Glenn 2026-09-26, nova-tools#4328: unit tests under 2 s). The store
+// is a real one with the library: the lander reads each stream's merging set
+// through the epoch-keyed cell function ns_ws_zrange (nova-tools#4238).
 func TestLandStreamConflictStops(t *testing.T) {
-	mr := miniredis.RunT(t)
-	addr := mr.Addr()
+	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	src, bare := filepath.Join(root, "src"), filepath.Join(root, "remote.git")
 	_ = os.MkdirAll(src, 0o755)

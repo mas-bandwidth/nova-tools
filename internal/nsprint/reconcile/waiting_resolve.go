@@ -29,12 +29,15 @@ package reconcile
 //     blocked_on is no evidence either way and the task stays waiting.
 //
 // A stream's own sentinel is never a waiter here: it waits in its stream
-// for every other card to land and lands by structure with the last one
-// (TK.land_stop in 02_card_move.lua; task land by hand when the last card
-// was cancelled instead). The duty leaves it out of the counts, and when a
-// waiting sentinel has no live card left it prints the remedy:
+// for every other card to land, and then for the coordinator's acceptance
+// (nova-tools#4412, Glenn 2026-09-26 via Stella: "sentinels wait for the
+// coordinator's review and merge"): the coordinator's task land lands it,
+// never the last card's landing and never this duty (TK.edge refuses an
+// actor without the coordinator role). The duty leaves it out of the
+// counts, and when a waiting sentinel has no live card left it prints the
+// receipt with the acceptance command, once per change:
 //
-//	SENTINEL stream=<s> id=<slug>:sentinel live=0 ready-to-land: nova-sprint task land --id <slug>:sentinel --sha <merge sha>
+//	SENTINEL ready-for-acceptance stream=<s> id=<slug>:sentinel live=0: nova-sprint task land --actor <coordinator> --id <slug>:sentinel --sha <merge sha>
 //
 // A sentinel edge is met by landed alone (never by done: a sentinel's done
 // is a rename's), so a dependent stream is released only by the stop.
@@ -94,14 +97,15 @@ type ResolveLine struct {
 	On      []string   // unmet dependencies that have a record
 	Unknown []string   // dependencies with no record
 	Refused []ws.IDWhy // ids ns_ws_move_many refused (left waiting, counted in Still)
-	// Stop is the stream's waiting sentinel with no live card left (its
-	// landing by structure had no last landing: the last card was cancelled).
+	// Stop is the stream's waiting sentinel with no live card left: ready
+	// for the coordinator's acceptance (#4412).
 	Stop string
 }
 
-// StopLine is the remedy line for a sentinel ready to land.
+// StopLine is the receipt for a sentinel ready for the coordinator's
+// acceptance, with the one command that accepts it.
 func (r ResolveLine) StopLine() string {
-	return fmt.Sprintf("SENTINEL stream=%s id=%s live=0 ready-to-land: nova-sprint task land --id %s --sha <merge sha>",
+	return fmt.Sprintf("SENTINEL ready-for-acceptance stream=%s id=%s live=0: nova-sprint task land --actor <coordinator> --id %s --sha <merge sha>",
 		wrField(r.Stream), r.Stop, r.Stop)
 }
 
@@ -286,11 +290,16 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		return nil, nil
 	}
 
-	// Round 2: every stream's waiting set, oldest first.
+	// Round 2: every stream's waiting set under the current epoch
+	// (nova-tools#4238), oldest first.
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return nil, fmt.Errorf("waiting-resolve: %w", err)
+	}
 	pipe := c.Pipeline()
 	waitCmds := make([]*redis.StringSliceCmd, len(streams))
 	for i, s := range streams {
-		waitCmds[i] = pipe.ZRange(ctx, ws.Key(s, "waiting"), 0, -1)
+		waitCmds[i] = pipe.ZRange(ctx, ws.KeyAt(epoch, s, "waiting"), 0, -1)
 	}
 	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("waiting-resolve: waiting sets: %w", err)
@@ -300,14 +309,14 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	for i, s := range streams {
 		for _, id := range waitCmds[i].Val() {
 			if ws.IsSentinel(id) {
-				stops[s] = id // the stream's stop: it lands by structure, not by this duty
+				stops[s] = id // the stream's stop: the coordinator's acceptance lands it, never this duty (#4412)
 				continue
 			}
 			waiters = append(waiters, &wrWaiter{id: id, stream: s})
 		}
 	}
 	// A waiting stop with no live card left is named with its remedy.
-	ready, err := wrStopsReady(ctx, c, streams, stops)
+	ready, err := wrStopsReady(ctx, c, epoch, streams, stops)
 	if err != nil {
 		return nil, err
 	}
@@ -367,9 +376,10 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	if len(refDeps) > 0 {
 		for _, s := range streams {
 			for _, st := range ws.States {
-				setCmds = append(setCmds, pipe.ZRange(ctx, ws.Key(s, st), 0, -1))
+				setCmds = append(setCmds, pipe.ZRange(ctx, ws.KeyAt(epoch, s, st), 0, -1))
 			}
 		}
+
 	}
 	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("waiting-resolve: dependencies: %w", err)
@@ -527,7 +537,7 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 // wrStopsReady reads, for every stream with a waiting sentinel, whether any
 // other card of the stream is live (waiting, ready, working, review,
 // merging or parked), one pipelined round; ready[s] is true when none is.
-func wrStopsReady(ctx context.Context, c *redis.Client, streams []string, stops map[string]string) (map[string]bool, error) {
+func wrStopsReady(ctx context.Context, c *redis.Client, epoch uint64, streams []string, stops map[string]string) (map[string]bool, error) {
 	ready := map[string]bool{}
 	if len(stops) == 0 {
 		return ready, nil
@@ -540,7 +550,7 @@ func wrStopsReady(ctx context.Context, c *redis.Client, streams []string, stops 
 			continue
 		}
 		for _, w := range live {
-			cmds[s] = append(cmds[s], ws.QueueCardCount(ctx, pipe, s, w))
+			cmds[s] = append(cmds[s], ws.QueueCardCount(ctx, pipe, epoch, s, w))
 		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
@@ -692,11 +702,16 @@ func Explain(ctx context.Context, c redis.Cmdable, id string) (w Why, found bool
 		taskDeps[t] = wrTaskStatus(t, wrStr(tv, 0), wrStr(tv, 1), wrStr(tv, 2))
 	}
 	if order != nil {
+		// every stream's sets under the current epoch (nova-tools#4238)
+		epoch, err := ws.Epoch(ctx, c)
+		if err != nil {
+			return w, true, fmt.Errorf("why %s: %w", id, err)
+		}
 		pipe = c.Pipeline()
 		var setCmds []*redis.StringSliceCmd
 		for _, s := range order.Val() {
 			for _, st := range ws.States {
-				setCmds = append(setCmds, pipe.ZRange(ctx, ws.Key(s, st), 0, -1))
+				setCmds = append(setCmds, pipe.ZRange(ctx, ws.KeyAt(epoch, s, st), 0, -1))
 			}
 		}
 		if len(setCmds) > 0 {

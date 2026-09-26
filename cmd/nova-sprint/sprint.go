@@ -1,6 +1,7 @@
 // The sprint verb (#2939) opens a sprint from a work set, closes it, folds
 // it once closed (#2618, internal/nsprint/sprint/fold.go) and prints its
-// status as x/y z% -> eta. It registers itself through the registry
+// status from the one count (ws.Counts): <landed>/<total> done <z>%, left <l>,
+// eta <HH:MM> ET. It registers itself through the registry
 // (registry.go), so main.go is unchanged.
 package main
 
@@ -8,10 +9,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +22,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 	"github.com/redis/go-redis/v9"
@@ -27,7 +31,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "sprint",
-		Summary: "open --from a work set, close, fold (the end-of-sprint refinement, #2618), and status as x/y z% -> eta",
+		Summary: "open --from a work set, close, fold (the end-of-sprint refinement, #2618), and status as landed/total done z%, left l, eta HH:MM ET (the one count)",
 		Run:     runSprintVerb,
 	})
 }
@@ -132,6 +136,12 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 		return 0
 	default:
 		lines, err := sprint.StatusLines(ctx, st, *name, now)
+		var notOpen *sprint.StatusRefusal
+		if errors.As(err, &notOpen) {
+			// the ws index counts the open sprint only: one line, exit 1
+			fmt.Fprintln(out, notOpen.Error())
+			return 1
+		}
 		if err != nil {
 			return refuse(errOut, verb, err.Error())
 		}
@@ -392,13 +402,21 @@ func runSprintOpen(ctx context.Context, st *store.Store, name, from string, plan
 // runSprintClear is `nova-sprint sprint clear` (Glenn 2026-09-26 8:40 AM ET,
 // "reset the sprint table. zeros everywhere"; 8:41 AM: "make sprint clearing
 // a verb. It should be simple and fast"): one Redis Function call,
-// ns_sprint_clear, moves every card of every stream to done (landed ->
-// done/ok, the rest done/fail with the why), retires their live copies and
-// deletes every consumer's ok and fail sets, so both tables read zero on the
-// next tick. Cards working or merging are in flight and refuse the clear
-// without --force. --checkpoint <file> writes every ws set's members before
-// anything moves. Prints CLEARED streams=<n> cards=<n> copies=<n>
-// consumers=<n> ms=<n>, then STREAM <name> cards=<n> per stream cleared.
+// ns_sprint_clear, which is ONE INCR of sprint:epoch (nova-tools#4238; Glenn
+// 9:25 AM ET). Every set the tables read is named by the epoch, so the next
+// tick reads the new epoch's empty sets and every member of the old epoch
+// is invisible for good; nothing is moved or deleted, and a writer still
+// holding the old epoch cannot make a cell non-zero. Cards working or
+// merging are in flight and refuse the clear without --force. The pit stop
+// is kept, never lifted: the receipt says which one it found. A parked card
+// is not work in flight and not landed, and a clear is not a cancel: parked
+// cards stay parked in the epoch the clear left, and the receipt names them
+// (parked_kept, sentinels aside, #4411); the new epoch counts them nowhere.
+// --checkpoint <file> writes every ws set's members (the epoch's) before
+// the INCR. Prints CLEARED streams=<n> cards=<n> copies=<n> consumers=<n>
+// epoch=<n> parked_kept=<n|?> by=<who> ms=<n>, PITSTOP kept sprint=<S> |
+// PITSTOP none, then STREAM <name> cards=<n> per stream (what the clear
+// made invisible).
 func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "sprint clear"
 	fs := taskFlags(verb)
@@ -424,7 +442,7 @@ func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) i
 	if who == "" {
 		who = "sprint-clear"
 	}
-	start := time.Now()
+	at := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	st, err := sprintStoreOpen(ctx, *redisAddr)
@@ -433,7 +451,7 @@ func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) i
 	}
 	defer st.Close()
 	if *checkpoint != "" {
-		if err := writeClearCheckpoint(ctx, st.Client(), *checkpoint, start); err != nil {
+		if err := writeClearCheckpoint(ctx, st.Client(), *checkpoint, at); err != nil {
 			return refuse(errOut, verb, "checkpoint: "+err.Error())
 		}
 	}
@@ -441,7 +459,11 @@ func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) i
 	if *force {
 		forceArg = "1"
 	}
+	// ms is the clear's own time: the one call, not the dial or the
+	// checkpoint before it (DONE-WHEN of #4238: under 10 ms)
+	start := time.Now()
 	reply, err := st.Client().FCall(ctx, "ns_sprint_clear", nil, who, *why, forceArg).Slice()
+
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -456,20 +478,39 @@ func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) i
 		}
 		return refuse(errOut, verb, "unexpected reply "+oneline.Escape(strings.Join(words, " ")))
 	}
-	if len(words) < 5 {
+	if len(words) < 8 {
 		return refuse(errOut, verb, "short reply "+oneline.Escape(strings.Join(words, " ")))
 	}
-	fmt.Fprintf(out, "CLEARED streams=%s cards=%s copies=%s consumers=%s by=%s ms=%d\n", words[1], words[2], words[3], words[4], who, time.Since(start).Milliseconds())
-	for i := 5; i+1 < len(words); i += 2 {
+	ms := time.Since(start).Milliseconds()
+	// the parked cards the clear left parked in the epoch it left, sentinels
+	// aside; "?" when the count did not read (never a false 0)
+	kept := "?"
+	if e, err := ws.ParseEpoch(words[5]); err == nil && e > 0 {
+		if n, err := ws.ParkedAt(ctx, st.Client(), e-1); err == nil {
+			kept = strconv.FormatInt(n, 10)
+		}
+	}
+	fmt.Fprintf(out, "CLEARED streams=%s cards=%s copies=%s consumers=%s epoch=%s parked_kept=%s by=%s ms=%d\n", words[1], words[2], words[3], words[4], words[5], kept, who, ms)
+	if words[6] == "kept" {
+		fmt.Fprintf(out, "PITSTOP kept sprint=%s\n", oneline.Escape(words[7]))
+	} else {
+		fmt.Fprintln(out, "PITSTOP none")
+	}
+	for i := 8; i+1 < len(words); i += 2 {
 		fmt.Fprintf(out, "STREAM %s cards=%s\n", oneline.Escape(words[i]), words[i+1])
 	}
 	return 0
 }
 
-// writeClearCheckpoint records every stream's set members, one line per
-// card (stream, where, id), before a clear moves them.
+// writeClearCheckpoint records every stream's set members under the current
+// epoch, one line per card (stream, where, id), before the clear's INCR
+// makes them invisible.
 func writeClearCheckpoint(ctx context.Context, client redis.UniversalClient, path string, at time.Time) error {
 	streams, err := client.ZRange(ctx, "ws:order", 0, -1).Result()
+	if err != nil {
+		return err
+	}
+	epoch, err := ws.Epoch(ctx, client)
 	if err != nil {
 		return err
 	}
@@ -477,14 +518,15 @@ func writeClearCheckpoint(ctx context.Context, client redis.UniversalClient, pat
 	cmds := map[string]*redis.StringSliceCmd{}
 	for _, s := range streams {
 		for _, w := range table.WSStates {
-			cmds[s+"\t"+w] = pipe.ZRange(ctx, "ws:"+s+":"+w, 0, -1)
+			cmds[s+"\t"+w] = pipe.ZRange(ctx, ws.KeyAt(epoch, s, w), 0, -1)
 		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "# nova-sprint sprint clear checkpoint at=%s streams=%d\n", at.UTC().Format(time.RFC3339), len(streams))
+	fmt.Fprintf(&b, "# nova-sprint sprint clear checkpoint at=%s epoch=%d streams=%d\n", at.UTC().Format(time.RFC3339), epoch, len(streams))
+
 	for _, s := range streams {
 		for _, w := range table.WSStates {
 			for _, id := range cmds[s+"\t"+w].Val() {

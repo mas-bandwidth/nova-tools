@@ -52,7 +52,7 @@ func runMergeNote(ctx context.Context, args []string, out, errOut io.Writer) int
 	case *streamName != "" && *sprint != "":
 		return refuse(errOut, verb, "one of --stream <s> or --sprint <S>, not both")
 	case *streamName != "":
-		key = note.StreamKey(*streamName)
+		key = note.StreamNotesKey(*streamName)
 	case *sprint != "":
 		key = note.SprintKey(*sprint)
 	default:

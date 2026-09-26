@@ -48,7 +48,7 @@ func TestGrammarTheColdSessionLinesReachTheStore(t *testing.T) {
 		{"ci status --repo nova-tools --n 4371", "ci:nova-tools:" + head + " green"},
 		{"friend show", ""},
 		{"width", ""},
-		{"census --sprint quack-0926", ""},
+		{"census --set benches --fields host,at", ""}, // --sprint is a retired key family on dev (#4428): the --set form
 		{"pr lines --repo nova-tools --n 4373", "SCORE who=emma head=abcdef1 score=9/10\nPR LINES pr:nova-tools:4373 lines=1"},
 		// #4399 item 10: the verbs that read NOVA_REDIS_ADDR themselves
 		// (line.go, read.go, spec.go, land_writer.go) now read the one

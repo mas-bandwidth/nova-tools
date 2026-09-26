@@ -599,11 +599,14 @@ func (c *cardCmd) spec() (*taskcard.Spec, error) {
 // the issue text.
 func taskLintText(kind string, s *taskcard.Spec) string {
 	var b strings.Builder
-	for _, kv := range [][2]string{{"KIND", firstOf(kind, s.Kind)}, {"PATHS", s.Paths}, {"DONE-WHEN", s.DoneWhen}} {
-		if kv[1] != "" {
-			fmt.Fprintf(&b, "%s: %s\n", kv[0], kv[1])
+	line := func(k, v string) {
+		if v != "" {
+			fmt.Fprintf(&b, "%s: %s\n", k, v)
 		}
 	}
+	line("KIND", firstOf(kind, s.Kind))
+	line("PATHS", s.Paths)
+	line("DONE-WHEN", s.DoneWhen)
 	b.WriteString("\n" + s.Body + "\n")
 	return b.String()
 }
@@ -709,6 +712,11 @@ func (c *cardCmd) lsWide(ctx context.Context, cl *redis.Client, asFriend string,
 			return refuse(errOut, c.verb, err.Error())
 		}
 	}
+	// every set under the current sprint epoch (nova-tools#4238)
+	epoch, err := ws.Epoch(ctx, cl)
+	if err != nil {
+		return refuse(errOut, c.verb, err.Error())
+	}
 	type key struct{ stream, where string }
 	var keys []key
 	pipe := cl.Pipeline()
@@ -716,13 +724,13 @@ func (c *cardCmd) lsWide(ctx context.Context, cl *redis.Client, asFriend string,
 	if *c.as != "" {
 		for _, w := range wheres {
 			keys = append(keys, key{"friend:" + asFriend, w})
-			cmds = append(cmds, pipe.ZRange(ctx, taskcard.FriendKey(asFriend, w), 0, -1))
+			cmds = append(cmds, pipe.ZRange(ctx, taskcard.FriendKeyAt(epoch, asFriend, w), 0, -1))
 		}
 	}
 	for _, s := range streams {
 		for _, w := range wheres {
 			keys = append(keys, key{s, w})
-			cmds = append(cmds, pipe.ZRange(ctx, taskcard.StreamKey(s, w), 0, -1))
+			cmds = append(cmds, pipe.ZRange(ctx, taskcard.StreamKeyAt(epoch, s, w), 0, -1))
 		}
 	}
 	if len(cmds) > 0 {

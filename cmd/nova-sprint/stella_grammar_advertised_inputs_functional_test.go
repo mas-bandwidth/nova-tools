@@ -169,7 +169,7 @@ func TestStellaGrammarAdvertisedIDInputs(t *testing.T) {
 	if counts, err := (&reconcile.WaitingResolve{Client: client}).Run(ctx, lease); err != nil || counts.Routed != 10 {
 		t.Fatalf("waiting-resolve: routed %d err %v, want the ten", counts.Routed, err)
 	}
-	if n := client.ZCard(ctx, taskcard.StreamKey("probe-a", "ready")).Val(); n != 10 {
+	if n := client.ZCard(ctx, taskcard.StreamKeyAt(0, "probe-a", "ready")).Val(); n != 10 {
 		t.Fatalf("ws:probe-a:ready holds %d, want ten", n)
 	}
 

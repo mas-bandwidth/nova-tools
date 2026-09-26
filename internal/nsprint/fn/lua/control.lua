@@ -46,8 +46,14 @@ do
     local base = prefix .. name
     local machine = redis.call('HGET', base .. ':desired', 'machine')
     for _, s in ipairs(suffixes) do ct_del(dead, base .. s) end
-    for _, w in ipairs(CT_WHERE) do ct_del(dead, base .. ':cards:' .. w) end
+    -- its sets under the current epoch and the legacy names (#4238)
+    local e = CARD.epoch()
+    for _, w in ipairs(CT_WHERE) do
+      ct_del(dead, CARD.ckey(e, base, w))
+      if e ~= 0 then ct_del(dead, CARD.ckey(0, base, w)) end
+    end
     return machine
+
   end
 
   -- ns_control_teardown: keys = control:<C>:keys; args = C.
@@ -77,6 +83,11 @@ do
       cards = cards + n
       local base = 's:' .. S
       for _, s in ipairs(CT_SPRINT) do ct_del(dead, base .. s) end
+      -- the dealer's lists under the current epoch (#4238): base is s:<S>
+      local e = CARD.epoch()
+      if e ~= 0 then
+        for _, l in ipairs({ 'pool', 'waiting' }) do ct_del(dead, CARD.skey(e, string.sub(base, 3), l)) end
+      end
       for _, st in ipairs(CT_STATES) do ct_del(dead, base .. ':idx:card:' .. st) end
       for _, b in ipairs(benches) do
         ct_del(dead, base .. ':bench:' .. b .. ':queue')

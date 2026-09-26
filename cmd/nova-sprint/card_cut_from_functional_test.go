@@ -41,7 +41,7 @@ func TestCardCutFromLandsHundredInWaiting(t *testing.T) {
 	if n := strings.Count("\n"+out, "\nCARD CUT row="); n != 100 {
 		t.Fatalf("%d receipts, want 100:\n%s", n, out)
 	}
-	if n := client.ZCard(ctx, taskcard.StreamKey("swarm: cards", "waiting")).Val(); n != 101 { // 100 cards and the stream's sentinel (#4318)
+	if n := client.ZCard(ctx, taskcard.StreamKeyAt(0, "swarm: cards", "waiting")).Val(); n != 101 { // 100 cards and the stream's sentinel (#4318)
 		t.Fatalf("ws:swarm: cards:waiting holds %d, want 100 cards and the sentinel", n)
 	}
 	rec, err := client.HGetAll(ctx, taskcard.Key("nova-tools-5006")).Result() // row 2, filed seventh
@@ -61,7 +61,7 @@ func TestCardCutFromLandsHundredInWaiting(t *testing.T) {
 		!strings.Contains(out, "rows=100 cut=0 already=100 refused=0 filed=0 reused=100 ") {
 		t.Fatalf("rerun: exit %d filed %d, want 0, nothing filed and 100 already:\n%s", code, len(forge2.titles), out)
 	}
-	if n := client.ZCard(ctx, taskcard.StreamKey("swarm: cards", "waiting")).Val(); n != 101 { // the 100 and the sentinel
+	if n := client.ZCard(ctx, taskcard.StreamKeyAt(0, "swarm: cards", "waiting")).Val(); n != 101 { // the 100 and the sentinel
 		t.Fatalf("rerun left %d in waiting, want 100 cards and the sentinel", n)
 	}
 }
@@ -227,7 +227,7 @@ func TestCardCutFromNoneResolvesToReady(t *testing.T) {
 	if err != nil || counts.Routed != 10 || !strings.Contains(log.String(), "RESOLVE stream=probe-a ready=10 still=0 ") {
 		t.Fatalf("resolve: routed %d err %v, want 10:\n%s", counts.Routed, err, log.String())
 	}
-	if n := client.ZCard(ctx, taskcard.StreamKey("probe-a", "ready")).Val(); n != 10 {
+	if n := client.ZCard(ctx, taskcard.StreamKeyAt(0, "probe-a", "ready")).Val(); n != 10 {
 		t.Fatalf("ws:probe-a:ready holds %d, want the ten", n)
 	}
 
@@ -240,7 +240,7 @@ func TestCardCutFromNoneResolvesToReady(t *testing.T) {
 		t.Fatalf("empty cell: exit %d, want 1 and the row refused naming none:\n%s", code, out)
 	}
 	if n := client.Exists(ctx, taskcard.Key("q1"), taskcard.Key("q2")).Val(); n != 0 || len(forge.titles) != 0 ||
-		client.ZCard(ctx, taskcard.StreamKey("probe-b", "waiting")).Val() != 0 {
+		client.ZCard(ctx, taskcard.StreamKeyAt(0, "probe-b", "waiting")).Val() != 0 {
 		t.Fatalf("an empty cell wrote something: %d records, %d issues", n, len(forge.titles))
 	}
 }
