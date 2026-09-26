@@ -121,9 +121,12 @@ func IsRefused(err error) (string, bool) {
 }
 
 // Result is one move: Status MOVED (From -> To) or SAME (already there,
-// nothing to change).
+// nothing to change). Parent, ParentRef and ParentOrigin are set when the
+// move landed a plan's stitch and so the plan (nova-tools#4317): the plan's
+// id and the issue ref and origin its lander closes.
 type Result struct {
-	Status, From, To string
+	Status, From, To                string
+	Parent, ParentRef, ParentOrigin string
 }
 
 func str(reply any) (string, error) {
@@ -151,12 +154,29 @@ func parseMove(fn, s string) (Result, error) {
 	switch {
 	case strings.HasPrefix(s, "REFUSED "):
 		return Result{}, &Refused{Why: strings.TrimPrefix(s, "REFUSED ")}
-	case len(f) == 3 && f[0] == "MOVED":
+	case len(f) >= 3 && f[0] == "MOVED":
 		from := f[1]
 		if from == "-" {
 			from = ""
 		}
-		return Result{Status: f[0], From: from, To: f[2]}, nil
+		r := Result{Status: f[0], From: from, To: f[2]}
+		for _, kv := range f[3:] {
+			k, v, ok := strings.Cut(kv, "=")
+			if v == "-" {
+				v = ""
+			}
+			switch {
+			case ok && k == "parent":
+				r.Parent = v
+			case ok && k == "ref":
+				r.ParentRef = v
+			case ok && k == "origin":
+				r.ParentOrigin = v
+			default:
+				return Result{}, fmt.Errorf("%s: unexpected reply %q", fn, s)
+			}
+		}
+		return r, nil
 	case len(f) == 2 && f[0] == "SAME":
 		return Result{Status: f[0], From: f[1], To: f[1]}, nil
 	}
