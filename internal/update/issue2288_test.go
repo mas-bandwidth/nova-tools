@@ -343,6 +343,11 @@ func TestMovedEmptyDiffIsNotARefusal(t *testing.T) {
 // missing revision is refused with the git fetch that would bring it, and no
 // build is started.
 func TestMovedIsBoundedByTheClock(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (asserts a clock bound; failed on the
+	// 2026-09-25 darwin shard of PR #4215). Skipped 2026-09-25 by Glenn's rule ("unit
+	// tests must not have real sleeps or waits"): it becomes a mocked-clock unit test
+	// or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	b := movedBenchSetup(t)
 	b.rev(t, "aaaa1", map[string]string{
 		"nova-bus": "nova-bus seat --file <path>\nnova-bus version (or --version)\nnova-bus help\n",
