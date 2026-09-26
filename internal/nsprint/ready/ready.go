@@ -26,6 +26,7 @@
 // The first blocker is one line, its first word the class:
 //
 //	WAIT <dep> pr#<n> open
+//	WAIT <dep> sentinel-<where>
 //	WAIT PATHS <other>
 //	DEAD <dep> pr#<n> closed-unmerged
 //	UNKNOWN <dep> pr#<n> base-unresolved
@@ -33,6 +34,15 @@
 // plus the rarer WAIT <dep> issue#<n> open, WAIT <dep> card-<state> no-pr,
 // WAIT <dep> pr#<n> merged-into <b> not <base>, DEAD <dep> no-such-card,
 // DEAD <dep> card-<state>, and UNKNOWN <dep> ... forge/state/repo lines.
+//
+// A dependency on a task record (task:<id>, or an id with no sprint card,
+// a stream's <slug>:sentinel among them) is met by the one dependency rule,
+// ws.DepMet: landed, or done/ok; a sentinel only when landed. One that is
+// not prints WAIT <dep> task-<where> (sentinel-<where> for a stream's stop),
+// or DEAD <dep> task-done/fail; a sentinel with no record prints UNKNOWN
+// <dep> no-such-stream. A waiting task is a candidate too, so --why
+// names what it waits on; one whose dependencies are all met waits only for
+// its release: WAIT <wait_on> for a durable wait, else WAIT release.
 //
 // Evaluate never writes; the forge is the dealer's one seam (deal.PRs), so
 // a test hands in a map and no host is reached.
@@ -45,6 +55,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // Item kinds.
@@ -64,7 +75,12 @@ type Item struct {
 	Paths     []string // repo-relative; empty is the whole repo
 	Repo      string
 	Base      string
+	WaitOn    string // a waiting task's durable wait (#3090), "" for none
 }
+
+// TaskDep is what a task record named in DEPENDS-ON holds: the one
+// dependency rule's fields (the dealer's type).
+type TaskDep = deal.TaskDep
 
 // Snapshot is one read of what ready needs.
 type Snapshot struct {
@@ -75,9 +91,12 @@ type Snapshot struct {
 	// InFlight are the dealt and running cards and the claimed and working
 	// tasks: their PATHS are taken.
 	InFlight []Item
-	// Deps is every card or task a candidate names in DEPENDS-ON, keyed
+	// Deps is every sprint card a candidate names in DEPENDS-ON, keyed
 	// <sprint>/<id>; an id the sprint does not have is absent.
 	Deps map[string]deal.DepCard
+	// Tasks is every task record (task:<id>) a candidate names, keyed by id:
+	// a task:<id> entry, or an id with no card in Deps.
+	Tasks map[string]TaskDep
 }
 
 // Verdict is one candidate's answer.
@@ -97,6 +116,11 @@ func Evaluate(ctx context.Context, snap Snapshot, prs deal.PRs) []Verdict {
 		v := Verdict{Item: c}
 		if b := f.depBlocker(ctx, snap, c); b != "" {
 			v.Blocker = b
+		} else if c.Kind == KindTask && c.State == "waiting" {
+			v.Blocker = "WAIT release"
+			if c.WaitOn != "" {
+				v.Blocker = "WAIT " + c.WaitOn
+			}
 		} else if b := pathsBlocker(c, snap.InFlight, claimed); b != "" {
 			v.Blocker = b
 		} else {
@@ -191,8 +215,16 @@ func (f *forge) entryBlocker(ctx context.Context, snap Snapshot, c Item, e strin
 		ref, err := f.ref(ctx, repo, n)
 		return refBlocker(e, n, ref, err, c.Base)
 	}
+	id, isTask := strings.CutPrefix(e, "task:")
 	d, ok := snap.Deps[c.Sprint+"/"+e]
-	if !ok || !d.Found {
+	if isTask || ws.IsSentinel(id) || !ok || !d.Found {
+		if t, ok := snap.Tasks[id]; ok {
+			return taskBlocker(e, id, t)
+		}
+		if ws.IsSentinel(id) {
+			// never met, and named: no stream has that slug
+			return "UNKNOWN " + e + " no-such-stream"
+		}
 		return "DEAD " + e + " no-such-card"
 	}
 	switch {
@@ -226,6 +258,28 @@ func (f *forge) entryBlocker(ctx context.Context, snap Snapshot, c Item, e strin
 		state = "unknown"
 	}
 	return "WAIT " + e + " card-" + state + " no-pr"
+}
+
+// taskBlocker is the one dependency rule (ws.DepMet) on a task record as a
+// blocker line; empty when it is met.
+func taskBlocker(e, id string, t TaskDep) string {
+	if ws.DepMet(id, t.State, t.Where, t.WhereOK) {
+		return ""
+	}
+	if t.State == "cancelled" || (t.Where == ws.Done && t.WhereOK == "fail") {
+		return "DEAD " + e + " task-done/fail"
+	}
+	w := t.Where
+	if w == "" {
+		w = t.State
+	}
+	if w == "" {
+		w = "unknown"
+	}
+	if ws.IsSentinel(id) {
+		return "WAIT " + e + " sentinel-" + w
+	}
+	return "WAIT " + e + " task-" + w
 }
 
 // refBlocker reads one forge answer against the dependent's base. An unknown

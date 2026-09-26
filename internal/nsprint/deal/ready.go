@@ -44,6 +44,7 @@ import (
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 	"strconv"
 	"strings"
@@ -59,6 +60,28 @@ type DepCard struct {
 	Base      string
 	PR        int
 	PushedSHA string
+}
+
+// TaskDep is a task record (task:<id>, the one task store) named in
+// DEPENDS-ON: the fields the one dependency rule (ws.DepMet) reads.
+type TaskDep struct {
+	State, Where, WhereOK string
+}
+
+// Why is empty when the edge on task record id is met by the one rule, else
+// why not: done/fail can no longer land; anything else is not landed yet.
+func (t TaskDep) Why(entry, id string) string {
+	if ws.DepMet(id, t.State, t.Where, t.WhereOK) {
+		return ""
+	}
+	if t.State == "cancelled" || (t.Where == ws.Done && t.WhereOK == "fail") {
+		return entry + " can no longer land: task done/fail"
+	}
+	w := t.Where
+	if w == "" {
+		w = t.State
+	}
+	return entry + " not landed: task " + w
 }
 
 // Ref is the forge's answer for one number: a PR (IsPR) with its merge state
@@ -223,8 +246,16 @@ func (r *resolver) entryWhy(ctx context.Context, in Input, c Card, entry string)
 		ref, err := r.ref(ctx, repo, n)
 		return landedPR(ref, err, entry, c.Base)
 	}
+	id, isTask := strings.CutPrefix(entry, "task:")
 	d := in.Deps[c.Sprint+"/"+entry]
-	if !d.Found {
+	if isTask || ws.IsSentinel(id) || !d.Found {
+		// a task record, a stream's sentinel among them: the one rule
+		if t, ok := in.Tasks[id]; ok {
+			return t.Why(entry, id)
+		}
+		if ws.IsSentinel(id) {
+			return entry + " unknown: no stream with that slug is registered"
+		}
 		return entry + " can no longer land: no such card in sprint " + c.Sprint
 	}
 	switch {

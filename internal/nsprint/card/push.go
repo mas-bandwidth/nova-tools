@@ -245,6 +245,9 @@ func dependenciesReady(sprint string, deps []dependency, reads []*redis.MapStrin
 		if dep.Kind == dependencyTask && deadTaskState(fields["state"]) {
 			return false, fmt.Errorf("DEPENDS-ON: task:%s is %s in sprint %s and will never finish", dep.Value, fields["state"], sprint)
 		}
+		if dep.Kind == dependencyTask && fields["where"] == ws.Done && fields["where_ok"] == "fail" {
+			return false, fmt.Errorf("DEPENDS-ON: task:%s is done/fail in sprint %s and will never land", dep.Value, sprint)
+		}
 		if !localDependencyReady(dep, fields) {
 			ready = false
 		}
@@ -282,15 +285,9 @@ func localDependencyReady(dep dependency, fields map[string]string) bool {
 		}
 		return fields["state"] == "ended" && fields["outcome"] == "DONE" && fields["pushed_sha"] == ""
 	case dependencyTask:
-		// a stream's sentinel (#4318) is met by its landing alone: its done
-		// is a rename's, never a landing
-		if ws.IsSentinel(dep.Value) {
-			return fields["state"] == "landed" || fields["where"] == "landed"
-		}
-		// a task record (task:<id>, the one task store): closed or done, or
-		// landed by its where
-		return fields["state"] == "closed" || fields["state"] == "done" || fields["state"] == "landed" ||
-			fields["where"] == "landed" || (fields["where"] == "done" && fields["where_ok"] != "fail")
+		// a task record (task:<id>, the one task store): the one dependency
+		// rule, a stream's sentinel (#4318) by its landing alone
+		return ws.DepMet(dep.Value, fields["state"], fields["where"], fields["where_ok"])
 	}
 	return false
 }

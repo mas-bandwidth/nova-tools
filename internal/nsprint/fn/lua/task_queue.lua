@@ -22,7 +22,12 @@
 -- in friend:<dest>:waiting, so the width line counts it as waiting.
 --
 -- Conditions (the one DEPENDS-ON form, nova-tools#3409):
---   task:<id>            met when task:<id> is closed (done or closed)
+--   task:<id>            met by the one dependency rule (NS.dep, 01_dep.lua):
+--                        task:<id> landed, or done/ok (closed); a stream
+--                        sentinel only when landed. A bare sentinel id
+--                        (<slug>:sentinel) is stored as task:<slug>:sentinel.
+--                        The move that meets it releases its waiters
+--                        (TK.release_waiters, 02_card_move.lua).
 --   key:<k>=<v>          met when GET k equals v
 --   anything else        <owner>/<repo>#<n>, stream/<slug>, card:<id>, pr:,
 --                        spec:, node: -- met only by ns_task_resolve with
@@ -81,6 +86,8 @@ function DEP.parse(text)
       if string.sub(c, 1, 4) == 'key:' and not string.match(c, '^key:[^=]+=.*$') then
         return out, c
       end
+      -- a stream's sentinel named bare is the task edge task:<slug>:sentinel
+      if NS.dep.is_sentinel(c) then c = 'task:' .. c end
       if not seen[c] then
         seen[c] = true
         out[#out + 1] = c
@@ -93,7 +100,7 @@ end
 -- DEP.holds reports whether a condition can be proven met from Redis alone.
 function DEP.holds(S, c)
   if string.sub(c, 1, 5) == 'task:' then
-    return redis.call('HGET', 'task:' .. string.sub(c, 6), 'state') == 'closed'
+    return NS.dep.met(string.sub(c, 6))
   end
   if string.sub(c, 1, 4) == 'key:' then
     local k, v = string.match(c, '^key:([^=]+)=(.*)$')
@@ -265,3 +272,7 @@ local function friend_down(keys, args)
 end
 
 redis.register_function('ns_friend_down', friend_down)
+
+-- The move that meets a dependency (landed, or done/ok) releases its waiters
+-- through DEP.resolve (TK.release_waiters, 02_card_move.lua).
+NS.task.on_met(DEP.resolve)

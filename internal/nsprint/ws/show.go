@@ -94,16 +94,6 @@ func DepID(entry string) string {
 	return entry
 }
 
-// showLanded is whether a record's fields say landed (the waiting resolver's
-// rule): where landed, or done with where_ok not fail; a stream's sentinel
-// only when landed (its done is a rename's, never a landing).
-func showLanded(where, whereOK, id string) bool {
-	if IsSentinel(id) {
-		return where == Landed
-	}
-	return where == Landed || (where == Done && whereOK != "fail")
-}
-
 // Show reads every stream's cards and edges. It returns the streams in rank
 // order (ws:order, then unranked names by name).
 func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
@@ -238,7 +228,7 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 			deps := out[i].Cards[j].Deps
 			for k := range deps {
 				if w, ok := whereOf[deps[k].ID]; ok && !deps[k].Ref {
-					deps[k].Known, deps[k].Where, deps[k].Landed = true, w, showLanded(w, okOf[deps[k].ID], deps[k].ID)
+					deps[k].Known, deps[k].Where, deps[k].Landed = true, w, DepMet(deps[k].ID, "", w, okOf[deps[k].ID])
 				}
 			}
 		}

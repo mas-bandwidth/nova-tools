@@ -70,7 +70,7 @@ end
 -- why defaults to closed), landed needs the merge sha. Returns
 -- 'MOVED'|'SAME'|'REFUSED' and, for REFUSED, the reason; otherwise the
 -- stream and the from where.
-function W.move_one(id, to, by, why, now, sha)
+function W.move_one(id, to, by, why, now, sha, from)
   local o = { by = by, why = why, sha = sha }
   if to == 'closed' then
     to, o.ok = 'done', 'fail'
@@ -82,6 +82,15 @@ function W.move_one(id, to, by, why, now, sha)
   end
   if p.stream == '' then
     return 'REFUSED', 'task ' .. id .. ' has no stream'
+  end
+  if from then
+    -- a record that predates the where field is where its state says (the
+    -- move adopts it there)
+    local w = p.where
+    if w == '' then w = NS.task.where_of[p.state] or '' end
+    if w ~= from then
+      return 'REFUSED', 'NOTFROM task:' .. id .. ' is ' .. (w == '' and 'null' or w) .. ', not ' .. from
+    end
   end
   local err, info = NS.task.move(id, to, o)
   if err then
@@ -112,12 +121,18 @@ end
 
 -- ns_ws_move_many(to, by, why, id...) -> MOVED moved same refused, then
 -- (id, why) per refused id. A refused id is left where it is; the rest move.
+-- to may be <from>><to> (waiting>ready, the waiting resolver's release): a
+-- guarded move, where an id not in <from> is left where it is and refused
+-- NOTFROM, so two releases racing move a card once (ws.Release).
 local function ws_move_many(keys, args)
   local to, by, why = args[1], args[2], args[3]
+  local from
+  local f, t = string.match(to or '', '^(%a+)>(%a+)$')
+  if f then from, to = f, t end
   local now = W.now()
   local moved, same, refused = 0, 0, {}
   for i = 4, #args do
-    local status, a = W.move_one(args[i], to, by, why, now)
+    local status, a = W.move_one(args[i], to, by, why, now, nil, from)
     if status == 'MOVED' then
       moved = moved + 1
     elseif status == 'SAME' then

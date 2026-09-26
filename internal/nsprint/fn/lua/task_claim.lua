@@ -187,13 +187,15 @@ local function task_take(keys, args)
     return { 'NONE' }
   end
 
-  -- A task whose needs are not all closed is passed over (#2939): the reply
-  -- names the unmet ids and nothing is written.
+  -- A task whose needs are not all met is passed over (#2939): the reply
+  -- names the unmet ids and nothing is written. A need is met by the one
+  -- dependency rule (NS.dep: landed, or done/ok; a sentinel only landed), or
+  -- by the sprint's closed index the rule's closed state writes.
   local needs = redis.call('HGET', key, 'needs')
   if needs and needs ~= '' then
     local unmet = {}
     for need in string.gmatch(needs, '%S+') do
-      if redis.call('SISMEMBER', 's:' .. S .. ':idx:task:closed', need) == 0 then
+      if redis.call('SISMEMBER', 's:' .. S .. ':idx:task:closed', need) == 0 and not NS.dep.met(need) then
         unmet[#unmet + 1] = need
       end
     end
@@ -327,7 +329,7 @@ local function task_done(keys, args)
 
   local attempt = tonumber(redis.call('HGET', key, 'attempt') or '0')
   local at = now_ms()
-  local err = NS.task.set(id, 'closed', { sprint = S, by = actor, why = 'done',
+  local err, moved = NS.task.set(id, 'closed', { sprint = S, by = actor, why = 'done',
     fields = { 'evidence', evidence, 'verdict', verdict, 'score', score, 'closed_at', tostring(at) } })
   if err then
     return { 'REFUSED', err }
@@ -340,7 +342,9 @@ local function task_done(keys, args)
       friend .. '@' .. head, verdict .. ' ' .. score .. ' ' .. evidence)
   end
   receipt(S, 'task done', id, state, 'closed', attempt, redis.call('HGET', key, 'token_sha'), actor, '', '', evidence, idem, at)
-  local ready = DEP.resolve(S, 'task:' .. id, false, actor, idem, at)
+  -- the move released every sprint's waiters on task:<id> (TK.release_waiters);
+  -- this resolve settles any the move did not (a dependency already met)
+  local ready = ((moved and moved.released) or 0) + DEP.resolve(S, 'task:' .. id, false, actor, idem, at)
   if record then
     return { 'DONE', unpack(record) }
   end

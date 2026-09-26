@@ -11,6 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // The state indexes ready reads (#2756 2.2): candidates, then in flight. The
@@ -18,11 +19,11 @@ import (
 var (
 	cardCandidate = []string{"queued"}
 	cardInFlight  = []string{"dealt", "running"}
-	taskCandidate = []string{"open"}
+	taskCandidate = []string{"open", "waiting"}
 	taskInFlight  = []string{"claimed", "working"}
 )
 
-var itemFields = []string{"state", "depends_on", "paths", "repo", "base", "priority"}
+var itemFields = []string{"state", "depends_on", "paths", "repo", "base", "priority", "blocked_on", "wait_on"}
 
 // Read takes one Snapshot from Redis in four pipelined rounds: the sprints,
 // the state indexes, the item hashes (a queued card's priority is its
@@ -99,10 +100,14 @@ func Read(ctx context.Context, c *redis.Client, sprint string) (Snapshot, error)
 	var snap Snapshot
 	for _, ic := range items {
 		v := ic.hash.Val()
+		deps := str(v, 1)
+		if deps == "" {
+			deps = str(v, 6) // a stream card's DEPENDS-ON is its blocked_on
+		}
 		it := Item{
 			Sprint: ic.sprint, ID: ic.id, Kind: ic.kind, State: str(v, 0),
-			DependsOn: splitDeps(str(v, 1)), Paths: splitList(str(v, 2)),
-			Repo: str(v, 3), Base: str(v, 4),
+			DependsOn: ws.SplitDeps(deps), Paths: splitList(str(v, 2)),
+			Repo: str(v, 3), Base: str(v, 4), WaitOn: str(v, 7),
 		}
 		it.Priority, _ = strconv.ParseFloat(str(v, 5), 64)
 		switch {
@@ -123,11 +128,11 @@ func Read(ctx context.Context, c *redis.Client, sprint string) (Snapshot, error)
 		return a.ID < b.ID
 	})
 
-	deps, err := readDeps(ctx, c, snap.Candidates)
+	deps, tasks, err := readDeps(ctx, c, snap.Candidates)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	snap.Deps = deps
+	snap.Deps, snap.Tasks = deps, tasks
 	return snap, nil
 }
 
@@ -168,10 +173,10 @@ func openSprints(ctx context.Context, c *redis.Client) ([]string, error) {
 	return out, nil
 }
 
-// readDeps reads each card or task a candidate names, in one pipelined round.
-// A card hash wins over a task hash of the same id; a task done with no PR
-// reads as a card ended DONE with nothing pushed.
-func readDeps(ctx context.Context, c *redis.Client, cands []Item) (map[string]deal.DepCard, error) {
+// readDeps reads each sprint card and task record a candidate names, in one
+// pipelined round. A card hash wins over a task hash of the same id; a
+// task:<id> entry, or a stream's <slug>:sentinel, is a task record alone.
+func readDeps(ctx context.Context, c *redis.Client, cands []Item) (map[string]deal.DepCard, map[string]TaskDep, error) {
 	var keys []string
 	seen := map[string]bool{}
 	for _, it := range cands {
@@ -189,39 +194,40 @@ func readDeps(ctx context.Context, c *redis.Client, cands []Item) (map[string]de
 			}
 		}
 	}
-	out := map[string]deal.DepCard{}
+	out, tasks := map[string]deal.DepCard{}, map[string]TaskDep{}
 	if len(keys) == 0 {
-		return out, nil
+		return out, tasks, nil
 	}
 	sort.Strings(keys)
 	pipe := c.Pipeline()
 	cards := make([]*redis.SliceCmd, len(keys))
-	tasks := make([]*redis.SliceCmd, len(keys))
+	recs := make([]*redis.SliceCmd, len(keys))
 	for i, k := range keys {
 		slash := strings.IndexByte(k, '/')
-		S, id := k[:slash], k[slash+1:]
-		cards[i] = pipe.HMGet(ctx, "s:"+S+":card:"+id, "state", "outcome", "repo", "base", "pr", "pushed_sha")
-		tasks[i] = pipe.HMGet(ctx, "task:"+id, "state", "repo", "base", "pr")
+		S, e := k[:slash], k[slash+1:]
+		id, isTask := strings.CutPrefix(e, "task:")
+		if !isTask && !ws.IsSentinel(id) {
+			cards[i] = pipe.HMGet(ctx, "s:"+S+":card:"+id, "state", "outcome", "repo", "base", "pr", "pushed_sha")
+		}
+		recs[i] = pipe.HMGet(ctx, "task:"+id, "state", "where", "where_ok")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("ready: dependencies: %w", err)
+		return nil, nil, fmt.Errorf("ready: dependencies: %w", err)
 	}
 	for i, k := range keys {
-		if v := cards[i].Val(); str(v, 0) != "" {
-			pr, _ := strconv.Atoi(str(v, 4))
-			out[k] = deal.DepCard{Found: true, State: str(v, 0), Outcome: str(v, 1), Repo: str(v, 2), Base: str(v, 3), PR: pr, PushedSHA: str(v, 5)}
-			continue
-		}
-		if v := tasks[i].Val(); str(v, 0) != "" {
-			pr, _ := strconv.Atoi(str(v, 3))
-			d := deal.DepCard{Found: true, State: str(v, 0), Repo: str(v, 1), Base: str(v, 2), PR: pr}
-			if d.State == "done" && pr == 0 {
-				d.State, d.Outcome = "ended", "DONE"
+		if cards[i] != nil {
+			if v := cards[i].Val(); str(v, 0) != "" {
+				pr, _ := strconv.Atoi(str(v, 4))
+				out[k] = deal.DepCard{Found: true, State: str(v, 0), Outcome: str(v, 1), Repo: str(v, 2), Base: str(v, 3), PR: pr, PushedSHA: str(v, 5)}
+				continue
 			}
-			out[k] = d
+		}
+		if v := recs[i].Val(); str(v, 0) != "" || str(v, 1) != "" {
+			id := strings.TrimPrefix(k[strings.IndexByte(k, '/')+1:], "task:")
+			tasks[id] = TaskDep{State: str(v, 0), Where: str(v, 1), WhereOK: str(v, 2)}
 		}
 	}
-	return out, nil
+	return out, tasks, nil
 }
 
 func in(s string, lists ...[]string) bool {
@@ -237,16 +243,6 @@ func in(s string, lists ...[]string) bool {
 
 func splitList(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' })
-}
-
-func splitDeps(s string) []string {
-	var out []string
-	for _, f := range strings.Split(s, ",") {
-		if f = strings.TrimSpace(f); f != "" {
-			out = append(out, f)
-		}
-	}
-	return out
 }
 
 func str(v []any, i int) string {

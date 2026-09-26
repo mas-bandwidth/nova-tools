@@ -14,8 +14,8 @@ package reconcile
 // owner/repo#n issues or PRs, joined by ',' or ';'), and checks every entry
 // against the records:
 //
-//   - task:<id> (or a bare id) is met when task:<id> is landed (state landed,
-//     or where landed, or where done with where_ok not fail); a stream's
+//   - task:<id> (or a bare id) is met by the one dependency rule, ws.DepMet
+//     (landed, or where done with where_ok not fail); a stream's
 //     sentinel, <slug>:sentinel (nova-tools #4318, ws.SentinelID), is a
 //     task id like any other, so a stream that must wait for another whole
 //     stream puts DEPENDS-ON <slug>:sentinel on its first card and that is
@@ -40,7 +40,8 @@ package reconcile
 // is a rename's), so a dependent stream is released only by the stop.
 //
 // A task whose every entry is met moves waiting -> ready through
-// ns_ws_move_many (ws.MoveMany, the ws index's one writer), one call per
+// ns_ws_move_many guarded from waiting (ws.Release, the ws index's one
+// writer; a card another pass released first is skipped), one call per
 // stream per distinct blocked_on, so the ws:log entry's why names the
 // dependencies that released it; its score in ready is its created_at,
 // unchanged. Reads are pipelined rounds over the sets and the named records,
@@ -241,11 +242,6 @@ func wrParse(text string) (deps []wrDep, none bool) {
 	return deps, false
 }
 
-// wrLanded is whether a task record's fields say landed.
-func wrLanded(state, where, whereOK string) bool {
-	return state == "landed" || where == "landed" || (where == "done" && whereOK != "fail")
-}
-
 // wrStatus is what the records say of one dependency.
 type wrStatus int
 
@@ -380,11 +376,7 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		switch {
 		case state == "" && where == "":
 			taskDeps[id] = wrUnknown
-		case ws.IsSentinel(id) && (state == "landed" || where == "landed"):
-			taskDeps[id] = wrMet // a stop is met by its landing alone
-		case ws.IsSentinel(id):
-			taskDeps[id] = wrUnmet
-		case wrLanded(state, where, ok):
+		case ws.DepMet(id, state, where, ok): // the one rule: a stop by its landing alone
 			taskDeps[id] = wrMet
 		default:
 			taskDeps[id] = wrUnmet
@@ -415,7 +407,7 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		}
 		for i := range members {
 			v := memCmds[i].Val()
-			landed := wrLanded(wrStr(v, 0), wrStr(v, 1), wrStr(v, 2))
+			landed := ws.DepMet(members[i], wrStr(v, 0), wrStr(v, 1), wrStr(v, 2))
 			for _, k := range wrNames(wrStr(v, 3), wrStr(v, 4), wrStr(v, 5), wrStr(v, 6)) {
 				st, named := refDeps[k]
 				if !named || st == wrMet {
@@ -516,31 +508,31 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 				len(groups)-gi, len(groups), skipped, left.Round(time.Millisecond), m))
 			break
 		}
-		res, err := ws.MoveMany(ctx, c, "ready", d.actor(), g.why, g.ids)
+		// The guarded release (ws.Release): an id another pass (or any move)
+		// took out of waiting first is skipped, neither counted nor refused,
+		// so two passes at once release a card exactly once.
+		res, err := ws.Release(ctx, c, d.actor(), g.why, g.ids)
 		r := byStream[g.stream]
 		if err != nil {
 			r.Still += len(g.ids)
 			errs = append(errs, fmt.Sprintf("stream %s: %v", g.stream, err))
 			continue
 		}
-		refused := map[string]bool{}
 		for _, x := range res.Refused {
-			refused[x.ID] = true
+			r.Still++
 			r.Refused = append(r.Refused, x)
 			errs = append(errs, fmt.Sprintf("stream %s: %s refused: %s", g.stream, x.ID, x.Why))
 		}
-		for _, id := range g.ids {
-			if refused[id] {
-				r.Still++
-				continue
-			}
-			r.Ready = append(r.Ready, id)
+		r.Ready = append(r.Ready, res.Moved...)
+		moved := map[string]bool{}
+		for _, id := range res.Moved {
+			moved[id] = true
 		}
 		// A released stitch starts with the whole picture (#4317): its body's
 		// generated section is every child's PR, RESULT.md summary and read
 		// score as the records hold them now, after every child landed.
 		for _, id := range g.stitches {
-			if refused[id] {
+			if !moved[id] {
 				continue
 			}
 			if _, _, err := taskcard.WriteStitchBrief(ctx, c, id); err != nil {
