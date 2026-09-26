@@ -55,7 +55,7 @@ func TestSprintOpenLetsTaskTakeClaim(t *testing.T) {
 			t.Fatalf("%s: code=%d out=%q stderr=%q; want 0 %q", strings.Join(args, " "), code, out, errOut, want)
 		}
 	}
-	step("PUSH CREATED id=t1", "task", "push", "--redis", addr, "--sprint", s, "--id", "t1",
+	step("PUSH CREATED id=t1", "task", "push", "--redis", addr, "--sprint", s, "--ids", "t1",
 		"--title", "first", "--payload-sha", "p1", "--to", "ctl-open")
 	step(s+" absent 0/1 0% -> eta ?", "sprint", "status", "--redis", addr, "--sprint", s)
 	step("NONE trips=1", "task", "take", "--redis", addr, "--sprint", s, "--as", "ctl-open")
@@ -389,7 +389,7 @@ func TestControl20(t *testing.T) {
 	if _, err := fmt.Sscanf(out, "CLAIMED "+s+"/%s attempt=1 token=%s", &id, &token); err != nil {
 		t.Fatalf("take: %q: %v", out, err)
 	}
-	expect(t, 0, "DONE DONE id="+id+"\n", "task", "done", "--redis", addr, "--sprint", s, "--id", id,
+	expect(t, 0, "DONE DONE id="+id+"\n", "task", "done", "--redis", addr, "--sprint", s, "--ids", id,
 		"--token", token, "--evidence", "fixture done")
 
 	before := dbsize(t, c)
@@ -435,10 +435,10 @@ func TestControl22(t *testing.T) {
 	if _, err := fmt.Sscanf(out, "CLAIMED "+s+"/a attempt=1 token=%s", &token); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, 7, "BLOCKED needs a\n", "task", "take", "--redis", addr, "--sprint", s, "--as", fxFriend, "--id", "b")
-	expect(t, 0, "DONE DONE id=a\n", "task", "done", "--redis", addr, "--sprint", s, "--id", "a",
+	expect(t, 7, "BLOCKED needs a\n", "task", "take", "--redis", addr, "--sprint", s, "--as", fxFriend, "--ids", "b")
+	expect(t, 0, "DONE DONE id=a\n", "task", "done", "--redis", addr, "--sprint", s, "--ids", "a",
 		"--token", token, "--evidence", "fixture done")
-	code, out, errOut = runSprint("task", "take", "--redis", addr, "--sprint", s, "--as", fxFriend, "--id", "b")
+	code, out, errOut = runSprint("task", "take", "--redis", addr, "--sprint", s, "--as", fxFriend, "--ids", "b")
 	if code != 0 || !strings.HasPrefix(out, "CLAIMED "+s+"/b attempt=1 ") {
 		t.Fatalf("take --id b after done a: code=%d out=%q stderr=%q", code, out, errOut)
 	}
@@ -591,7 +591,7 @@ func TestSprintOpenPushRefused(t *testing.T) {
 		t.Helper()
 		addr, c := openFixture(t)
 		a := writeWorkSet(t, "A", unit("u1", fxFriend, ""), unit("u2", fxFriend, ""))
-		expect(t, 0, "PUSH CREATED id=u2\n", "task", "push", "--redis", addr, "--sprint", s, "--id", "u2",
+		expect(t, 0, "PUSH CREATED id=u2\n", "task", "push", "--redis", addr, "--sprint", s, "--ids", "u2",
 			"--to", fxFriend, "--title", "another title")
 		expect(t, 1, "CONFLICT "+s+" u2: id held by another payload (task:u2; ids are global); remedy: give the unit a new id in "+a+"\n"+
 			"NOT-OPENED "+s+" units=2 pushed=1 existed=0 closed=0 skipped_done=0 refused=1\n", openArgs(addr, s, a)...)
@@ -657,7 +657,7 @@ func TestSprintOpenPushRefused(t *testing.T) {
 		c.HSet(ctx, "s:t-overlap", "status", "open")
 		c.SAdd(ctx, "sprints", "t-overlap")
 		c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: "t-overlap"})
-		expect(t, 0, "PUSH CREATED id=x1\n", "task", "push", "--redis", addr, "--sprint", "t-overlap", "--id", "x1",
+		expect(t, 0, "PUSH CREATED id=x1\n", "task", "push", "--redis", addr, "--sprint", "t-overlap", "--ids", "x1",
 			"--to", fxFriend, "--title", "x work | PATHS: internal/x/")
 		a := writeWorkSet(t, "A", unit("u1", fxFriend, ""),
 			`(unit "u2" :kind work :owner "stella" :title "u2 title | PATHS: internal/x/y.go" :done-when "u2 passes")`)

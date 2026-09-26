@@ -102,7 +102,7 @@ func (f *seatFixture) run(code int, want string, args ...string) string {
 
 func (f *seatFixture) push(to, id string, extra ...string) string {
 	f.t.Helper()
-	args := append([]string{"task", "push", "--to", to, "--id", id, "--kind", "work", "--ref", "r", "--title", "T"}, extra...)
+	args := append([]string{"task", "push", "--to", to, "--ids", id, "--kind", "work", "--ref", "r", "--title", "T"}, extra...)
 	return f.run(0, "PUSH CREATED id="+id, args...)
 }
 
@@ -123,7 +123,7 @@ func (f *seatFixture) wantOpen(id string) {
 // actor they are given.
 func TestControl2929PushTakeFromSeat(t *testing.T) {
 	ctx := context.Background()
-	claimRx := regexp.MustCompile(`^CLAIMED ` + seatSprint + `/t1 attempt=1 token=1\.[0-9a-f]{32} trips=2\nTASK t1 kind=work ref=r title="T"\n$`)
+	claimRx := regexp.MustCompile(`^TASK take n=1 ids=t1 ms=[0-9]+\n$`)
 
 	t.Run("cross_push_then_self_take", func(t *testing.T) {
 		f := newSeat(t)
@@ -134,11 +134,11 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 		}
 		f.wantReceipt("task push", "a", "b")
 		f.as("b")
-		out := f.run(0, "", "task", "take", "--as", "b", "--id", "t1")
+		// one grammar (#4352 A): task take is the card form, TASK take n= ids=
+		out := f.run(0, "", "task", "take", "--as", "b", "--ids", "t1")
 		if !claimRx.MatchString(out) {
-			t.Fatalf("take stdout %q; want CLAIMED %s/t1 and its TASK line", out, seatSprint)
+			t.Fatalf("take stdout %q; want TASK take n=1 ids=t1", out)
 		}
-		f.wantReceipt("task take", "b", "b")
 		// one task store (#3778): the take is the card's move to working and
 		// its friend-queue ready entry is gone
 		if w := f.client.HGet(ctx, "task:t1", "where").Val(); w != "working" || f.client.XLen(ctx, "q:b").Val() != 0 {
@@ -151,17 +151,12 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 		f.as("a")
 		f.push("b", "t2")
 		before := f.xlen()
-		out := f.run(6, "", "task", "take", "--as", "b", "--id", "t2")
-		if out != "TAKE DENIED id=t2 as=b initiator=a\n" {
-			t.Fatalf("stdout %q; want TAKE DENIED id=t2 as=b initiator=a", out)
-		}
+		// one grammar (#4352 A): a take for another friend is refused before
+		// any write, naming the seat
+		f.run(2, "--as b is not the seat", "task", "take", "--as", "b", "--ids", "t2")
 		f.wantOpen("t2")
-		if got := f.xlen(); got != before+1 {
-			t.Fatalf("log grew by %d; want exactly one receipt", got-before)
-		}
-		r := f.lastReceipt("task take denied")
-		if r["actor"] != "a" || r["for"] != "b" || r["reason"] != "as-not-initiator" || r["id"] != "t2" {
-			t.Fatalf("denied receipt %v; want actor=a for=b reason=as-not-initiator id=t2", r)
+		if got := f.xlen(); got != before {
+			t.Fatalf("log grew by %d; want unchanged", got-before)
 		}
 	})
 
@@ -169,8 +164,7 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 		f := newSeat(t)
 		f.as("")
 		before := f.xlen()
-		f.run(2, "want NOVA_FRIEND in friends", "task", "push", "--to", "b", "--id", "n1", "--kind", "work", "--ref", "r", "--title", "T")
-		f.run(2, "want NOVA_FRIEND in friends", "task", "take", "--as", "b")
+		f.run(2, "want NOVA_FRIEND in friends", "task", "push", "--to", "b", "--ids", "n1", "--kind", "work", "--ref", "r", "--title", "T")
 		if got := f.xlen(); got != before {
 			t.Fatalf("log grew by %d; want unchanged", got-before)
 		}
@@ -182,9 +176,8 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 		f.push("b", "u1")
 		f.as("z")
 		before := f.xlen()
-		f.run(2, "want NOVA_FRIEND in friends", "task", "push", "--to", "b", "--id", "u2", "--kind", "work", "--ref", "r", "--title", "T")
-		f.run(2, "want NOVA_FRIEND in friends", "task", "take", "--as", "z")
-		f.run(2, "want NOVA_FRIEND in friends", "task", "take", "--as", "b", "--id", "u1")
+		f.run(2, "want NOVA_FRIEND in friends", "task", "push", "--to", "b", "--ids", "u2", "--kind", "work", "--ref", "r", "--title", "T")
+		f.run(2, "--as b is not the seat", "task", "take", "--as", "b", "--ids", "u1")
 		if got := f.xlen(); got != before {
 			t.Fatalf("log grew by %d; want unchanged", got-before)
 		}
@@ -198,7 +191,7 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 		f := newSeat(t)
 		f.as("a")
 		before := f.xlen()
-		f.run(2, "unknown friend", "task", "push", "--to", "z", "--id", "k1", "--kind", "work", "--ref", "r", "--title", "T")
+		f.run(2, "unknown friend", "task", "push", "--to", "z", "--ids", "k1", "--kind", "work", "--ref", "r", "--title", "T")
 		if got := f.xlen(); got != before {
 			t.Fatalf("log grew by %d; want unchanged", got-before)
 		}
@@ -209,8 +202,9 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 		f.as("a")
 		f.push("a", "g1")
 		before := f.xlen()
-		f.run(2, "actor", "task", "push", "--to", "b", "--id", "g2", "--kind", "work", "--ref", "r", "--title", "T", "--actor", "b")
-		f.run(2, "actor", "task", "take", "--as", "a", "--id", "g1", "--actor", "b")
+		// the retired --actor is refused naming --as; --as must be the seat
+		f.run(2, "--actor is spelled --as", "task", "push", "--to", "b", "--ids", "g2", "--kind", "work", "--ref", "r", "--title", "T", "--actor", "b")
+		f.run(2, "is not the seat", "task", "take", "--as", "b", "--ids", "g1")
 		if got := f.xlen(); got != before {
 			t.Fatalf("log grew by %d; want unchanged", got-before)
 		}
@@ -221,7 +215,7 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 		f := newSeat(t)
 		f.as("a")
 		before := f.xlen()
-		f.run(2, "want work", "task", "push", "--to", "b", "--id", "w1", "--kind", "build", "--ref", "r", "--title", "T")
+		f.run(2, "want work", "task", "push", "--to", "b", "--ids", "w1", "--kind", "build", "--ref", "r", "--title", "T")
 		if got := f.xlen(); got != before {
 			t.Fatalf("log grew by %d; want unchanged", got-before)
 		}
@@ -272,7 +266,7 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 			id    string
 			extra []string
 		}{{"d1", nil}, {"d2", []string{"--front"}}} {
-			args := append([]string{"task", "push", "--to", "b", "--id", c.id, "--kind", "work", "--ref", "r", "--title", "T"}, c.extra...)
+			args := append([]string{"task", "push", "--to", "b", "--ids", c.id, "--kind", "work", "--ref", "r", "--title", "T"}, c.extra...)
 			out := f.run(7, "", args...)
 			if want := "PUSH DOWN id=" + c.id + " to=b down=" + marker + "\n"; out != want {
 				t.Fatalf("stdout %q; want %q", out, want)
