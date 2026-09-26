@@ -70,7 +70,11 @@ func (f *verbRelFake) Run(ctx context.Context, dir string, env []string, argv []
 	case argv[0] == "ssh" && strings.HasPrefix(argv[len(argv)-1], "cat "):
 		return strings.Repeat("a", 64) + "  nova-sprint\n", nil
 	case argv[0] == "ansible-playbook":
-		return "PLAY RECAP ***\nhulk : ok=9 changed=1 unreachable=0 failed=0\n", nil
+		recap := "PLAY RECAP ***\n"
+		for _, h := range strings.Split(argv[len(argv)-1], ",") {
+			recap += h + " : ok=9 changed=1 unreachable=0 failed=0\n"
+		}
+		return recap, nil
 	case argv[0] == "ansible":
 		for _, h := range strings.Split(argv[1], ",") {
 			f.mr.HSet("bench:"+h+":beat", "build", "nova-sprint "+verbVersion+" linux/amd64 go1.26.6")

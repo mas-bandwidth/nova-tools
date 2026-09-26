@@ -57,8 +57,11 @@ type relFake struct {
 	unreached string // a host the beat restart cannot reach
 	tip       string // what git ls-remote answers
 	restarted func(hosts []string)
-	mu        sync.Mutex
-	call      []call
+	// playOut and adhocOut, when set, are what ansible-playbook and ansible
+	// print (exit 0) in place of the made-up recap and headers.
+	playOut, adhocOut *string
+	mu                sync.Mutex
+	call              []call
 }
 
 func (f *relFake) Run(ctx context.Context, dir string, env []string, argv []string) (string, error) {
@@ -111,6 +114,10 @@ func (f *relFake) Run(ctx context.Context, dir string, env []string, argv []stri
 		return "FLEET COMPILE OK " + relVersion + "\n", nil
 	case argv[0] == "ssh" && strings.HasPrefix(argv[len(argv)-1], "cat "):
 		return strings.Repeat("a", 64) + "  nova-sprint\n" + strings.Repeat("b", 64) + "  nova-card\n", nil
+	case argv[0] == "ansible-playbook" && f.playOut != nil:
+		return *f.playOut, nil
+	case argv[0] == "ansible" && f.adhocOut != nil:
+		return *f.adhocOut, nil
 	case argv[0] == "ansible-playbook":
 		if f.playErr {
 			return rollRecap + "hulk : ok=3 changed=0 unreachable=1 failed=0\n", errors.New("exit status 4")
@@ -299,7 +306,7 @@ func TestReleaseRollsTheWholeFleetInOrder(t *testing.T) {
 		"RELEASE fn-check OK OK nova_sprint sha=abc ping=PONG\n",
 		"RECAP batman : ok=9 changed=1 unreachable=0 failed=0\nRECAP hulk : ok=9 changed=1 unreachable=0 failed=0\nRECAP space : ok=9 changed=0 unreachable=0 failed=0\n",
 		"BEAT hulk restarted\nBEAT batman restarted\n",
-		"RELEASE play OK tools.yml version=" + relVersion + " hosts=3 beats-restarted=2\n",
+		"RELEASE play OK tools.yml version=" + relVersion + " hosts=3 beats-restarted=2 log=" + filepath.Join(f.home, "nova-bench", "release-src", "logs", "play-"+relVersion+".log") + "\n",
 		"KICKSTARTED nova-sprint-reconciler\nKICKSTARTED sprint-table-live\nKICKSTARTED nova-sprint-bench-beat\n",
 		"RELEASE self OK none -> " + relVersion + " bin=" + filepath.Join(f.home, ".local", "bin", "nova-sprint") + "\n",
 		"VERIFY space want=" + relVersion + " have=" + relVersion + " ok\nVERIFY hulk want=" + relVersion + " have=" + relVersion + " ok\nVERIFY batman want=" + relVersion + " have=" + relVersion + " ok\n",
@@ -373,10 +380,10 @@ func TestReleaseStepRefusalLetsTheRestRun(t *testing.T) {
 			"RELEASE build REFUSED: " + relSha + " is not a commit in dev's last 50"},
 		{"play fails", func(r *Release, f *relFake) { f.playErr = true },
 			"build=OK fn=OK fn-check=OK play=REFUSED self=OK",
-			"RELEASE play REFUSED: tools.yml " + relVersion + ": exit_status_4: hulk : ok=3 changed=0 unreachable=1 failed=0 (read the RECAP lines; a rerun converges what is left)"},
+			"RELEASE play REFUSED: tools.yml " + relVersion + ": exit_status_4: hulk : ok=3 changed=0 unreachable=1 failed=0 (read the RECAP lines and "},
 		{"beat unreachable", func(r *Release, f *relFake) { f.unreached = "batman" },
 			"build=OK fn=OK fn-check=OK play=REFUSED self=OK",
-			"BEAT batman failed unreachable\nRELEASE play REFUSED: the beat restart failed on batman (read the BEAT lines; a rerun restarts the beats still behind)"},
+			"BEAT batman failed unreachable\nRELEASE play REFUSED: the beat restart failed on batman (read the BEAT lines and "},
 		{"no play dir", func(r *Release, f *relFake) { os.Remove(filepath.Join(r.PlayDir, PlayInventory)) },
 			"build=OK fn=OK fn-check=OK play=REFUSED self=OK",
 			"has no inventory.py (--play-dir <dir>, or NOVA_FLEET_PLAY_DIR)"},

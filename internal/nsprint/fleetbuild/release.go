@@ -34,6 +34,7 @@ package fleetbuild
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -584,10 +585,21 @@ func (r *Release) playStep(ctx context.Context, published bool, benches []string
 	// updated) nova-sprint over the one the fn step deployed.
 	pctx, cancel := context.WithTimeout(ctx, PlayTimeout)
 	out, playErr := r.run(pctx, r.PlayDir, PlayEnv(r.Registry), PlayArgv(r.play(), res.Version, benches)...)
+	if playErr != nil && errors.Is(pctx.Err(), context.DeadlineExceeded) {
+		playErr = fmt.Errorf("timed out after %s: %v", PlayTimeout, playErr)
+	}
 	cancel()
+	playLog := r.keepLog("play-"+res.Version+".log", out)
 	recap := Recap(out)
 	for _, row := range recap {
 		r.printf("RECAP %s\n", row)
+	}
+	inRecap := RecapHosts(recap)
+	var missing []string
+	for _, b := range benches {
+		if !inRecap[b] {
+			missing = append(missing, b)
+		}
 	}
 
 	checks, err := VerifyBeats(ctx, r.Client, benches, res.Version)
@@ -596,34 +608,73 @@ func (r *Release) playStep(ctx context.Context, published bool, benches []string
 	}
 	restart := behind(checks)
 	var failed []string
+	restartWhy := ""
 	if len(restart) > 0 {
 		rctx, cancel := context.WithTimeout(ctx, RestartTimeout)
-		out, _ := r.run(rctx, r.PlayDir, PlayEnv(r.Registry), RestartBeatsArgv(restart)...)
+		out, rErr := r.run(rctx, r.PlayDir, PlayEnv(r.Registry), RestartBeatsArgv(restart)...)
+		if rErr != nil && errors.Is(rctx.Err(), context.DeadlineExceeded) {
+			rErr = fmt.Errorf("timed out after %s: %v", RestartTimeout, rErr)
+		}
 		cancel()
+		beatLog := r.keepLog("beat-restart-"+res.Version+".log", out)
 		st := ParseAdhoc(out)
+		if len(st) == 0 {
+			restartWhy = fmt.Sprintf("the beat restart of %s: %s (ansible's output: %s)", strings.Join(restart, ","), Unparseable(out, rErr), beatLog)
+			restart = nil
+		}
 		for _, b := range restart {
 			switch s := st[b]; s {
 			case "CHANGED", "SUCCESS":
 				r.printf("BEAT %s restarted\n", b)
 			default:
 				if s == "" {
-					s = "no answer"
+					s = "absent from ansible's answer"
 				}
 				r.printf("BEAT %s failed %s\n", b, strings.ToLower(strings.TrimSuffix(s, "!")))
 				failed = append(failed, b)
 			}
 		}
+		if restartWhy == "" && len(failed) > 0 {
+			restartWhy = fmt.Sprintf("the beat restart failed on %s (read the BEAT lines and %s; a rerun restarts the beats still behind)", strings.Join(failed, ","), beatLog)
+		}
 	}
+	inventory := "the inventory read " + PlayRegistry + "=" + r.Registry
 	switch {
 	case playErr != nil:
-		r.step(res, StepPlay, StateRefused, "%s %s: %s: %s (read the RECAP lines; a rerun converges what is left)",
-			r.play(), res.Version, strings.Join(strings.Fields(playErr.Error()), "_"), lastLine(out))
-	case len(failed) > 0:
-		r.step(res, StepPlay, StateRefused, "the beat restart failed on %s (read the BEAT lines; a rerun restarts the beats still behind)", strings.Join(failed, ","))
+		r.step(res, StepPlay, StateRefused, "%s %s: %s: %s (read the RECAP lines and %s; a rerun converges what is left)",
+			r.play(), res.Version, strings.Join(strings.Fields(playErr.Error()), "_"), lastLine(out), playLog)
+	case len(recap) == 0:
+		r.step(res, StepPlay, StateRefused, "%s (the play reached none of %s; %s; ansible's output: %s)",
+			Unparseable(out, playErr), strings.Join(benches, ","), inventory, playLog)
+	case len(missing) > 0:
+		r.step(res, StepPlay, StateRefused, "the play's RECAP has no %s (%s: does it list them? ansible's output: %s)",
+			strings.Join(missing, ","), inventory, playLog)
+	case restartWhy != "":
+		r.step(res, StepPlay, StateRefused, "%s", restartWhy)
 	default:
-		r.step(res, StepPlay, StateOK, "%s version=%s hosts=%d beats-restarted=%d", r.play(), res.Version, len(recap), len(restart))
+		r.step(res, StepPlay, StateOK, "%s version=%s hosts=%d beats-restarted=%d log=%s", r.play(), res.Version, len(recap), len(restart), playLog)
 	}
 	return nil
+}
+
+// LogDirRel is where the release keeps ansible's raw output, relative to
+// home: beside the release clone, one file per run kind and version (a rerun
+// of the version replaces it).
+const LogDirRel = "nova-bench/release-src/logs"
+
+// keepLog writes out to name under LogDirRel and returns its path, or why
+// it could not be written: the receipt names the file either way.
+func (r *Release) keepLog(name, out string) string {
+	dir := filepath.Join(r.Home, filepath.FromSlash(LogDirRel))
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "unwritten (" + err.Error() + ")"
+	}
+	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		return "unwritten (" + err.Error() + ")"
+	}
+	r.printf("ANSIBLE LOG %s bytes=%d\n", path, len(out))
+	return path
 }
 
 // self is the self step: self update of this machine at the commit, then

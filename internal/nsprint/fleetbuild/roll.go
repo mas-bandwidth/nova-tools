@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -139,24 +140,68 @@ func PlayEnv(registry string) []string {
 	return []string{"ANSIBLE_NOCOWS=1", "ANSIBLE_HOST_KEY_CHECKING=True", PlayRegistry + "=" + registry}
 }
 
-// Recap is the PLAY RECAP section of ansible's output, one host per line
-// with its runs of spaces folded.
+// Recap is the PLAY RECAP section of ansible's output: one row per host
+// (`<host> : ok=N changed=N unreachable=N failed=N ...`) with its runs of
+// spaces folded. A line in the section that is not a host row (a timing
+// callback's ROLES RECAP, a warning printed at the end) is not a row. Lines
+// are read without a carriage return or colour codes.
 func Recap(out string) []string {
 	var rows []string
 	in := false
 	for _, l := range strings.Split(out, "\n") {
+		l = plainLine(l)
 		if strings.HasPrefix(l, "PLAY RECAP") {
 			in = true
 			continue
 		}
-		if !in {
-			continue
-		}
-		if t := strings.Join(strings.Fields(l), " "); t != "" {
-			rows = append(rows, t)
+		if in && recapRowRe.MatchString(l) {
+			rows = append(rows, strings.Join(strings.Fields(l), " "))
 		}
 	}
 	return rows
+}
+
+// RecapHosts is the host each Recap row names.
+func RecapHosts(rows []string) map[string]bool {
+	hosts := map[string]bool{}
+	for _, r := range rows {
+		if f := strings.Fields(r); len(f) > 0 {
+			hosts[f[0]] = true
+		}
+	}
+	return hosts
+}
+
+var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")
+
+// plainLine is an output line without its carriage return or ANSI colour.
+func plainLine(l string) string {
+	return ansiRe.ReplaceAllString(strings.TrimRight(l, "\r"), "")
+}
+
+// FirstLine is the first non-empty line of out, trimmed, without colour:
+// what a refusal quotes when ansible printed nothing the parsers read.
+func FirstLine(out string) string {
+	for _, l := range strings.Split(out, "\n") {
+		if t := strings.TrimSpace(plainLine(l)); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// Unparseable is the refusal of an ansible run the parsers read nothing
+// from: the first line it printed, quoted, or, when it printed nothing, how
+// it exited.
+func Unparseable(out string, err error) string {
+	if l := FirstLine(out); l != "" {
+		return fmt.Sprintf("ansible printed nothing parseable: %q", l)
+	}
+	exit := "exit status 0"
+	if err != nil {
+		exit = err.Error()
+	}
+	return "ansible printed nothing (" + exit + ")"
 }
 
 // BeatRestartScript restarts the bench beat whatever the bench's OS: the
@@ -176,14 +221,20 @@ func RestartBeatsArgv(benches []string) []string {
 		"-m", "ansible.builtin.shell", "-a", BeatRestartScript()}
 }
 
+// adhocStatus are the status words of an ad hoc header line.
+var adhocStatus = map[string]bool{"CHANGED": true, "SUCCESS": true, "FAILED": true, "FAILED!": true, "UNREACHABLE!": true}
+
 // ParseAdhoc reads ansible's ad hoc output: host -> its status word
-// (CHANGED, SUCCESS, FAILED, UNREACHABLE!) from each `<host> | <STATUS> ...`
-// header line.
+// (CHANGED, SUCCESS, FAILED, FAILED!, UNREACHABLE!) from each `<host> |
+// <STATUS> ...` header line at the start of a line. Everything else (the
+// [ERROR]/[WARNING]/[DEPRECATION WARNING] blocks ansible 2.19 prints before a
+// header, a command's own output) is not a header.
 func ParseAdhoc(out string) map[string]string {
 	st := map[string]string{}
 	for _, l := range strings.Split(out, "\n") {
+		l = plainLine(l)
 		f := strings.Fields(l)
-		if len(f) >= 3 && f[1] == "|" && !strings.HasPrefix(l, " ") {
+		if len(f) >= 3 && f[1] == "|" && adhocStatus[f[2]] && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "[") {
 			st[f[0]] = f[2]
 		}
 	}
