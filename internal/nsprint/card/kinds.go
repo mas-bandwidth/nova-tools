@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -23,38 +24,21 @@ import (
 // Runner kinds: a card hash kind that sets no RESULT expectation (card_run.lua
 // says the same of them). A card with no KIND line is KindModel.
 const (
-	KindModel  = "model"
-	KindScript = "script"
+	KindModel  = cardhdr.KindModel
+	KindScript = cardhdr.KindScript
 )
 
 // RunnerKinds are the card kinds besides typedrec.Kinds that card push accepts.
-var RunnerKinds = []string{KindModel, KindScript}
+var RunnerKinds = cardhdr.RunnerKinds
 
 // KindMap is the one declared mapping from a classification kind to the RESULT
 // kind the card is pushed as. The cutter and the feed apply it at cut time
 // (MapKind), and card push --map-kind applies it at push. A kind already in
 // typedrec.Kinds or RunnerKinds is never in this table and is never rewritten.
-var KindMap = map[string]string{
-	"go-verb":  typedrec.KindFix,
-	"go-fix":   typedrec.KindFix,
-	"lua-fn":   typedrec.KindFix,
-	"bats":     typedrec.KindFix,
-	"security": typedrec.KindFix,
-	"fleet":    typedrec.KindFix,
-	"retire":   typedrec.KindFix,
-	"docs":     typedrec.KindDocsGuard,
-	"spec":     typedrec.KindReport,
-	"probe":    typedrec.KindReport,
-}
+// The table itself lives in the cardhdr leaf so taskcard reads the same one.
+var KindMap = cardhdr.KindMap
 
-func isRunnerKind(kind string) bool {
-	for _, k := range RunnerKinds {
-		if k == kind {
-			return true
-		}
-	}
-	return false
-}
+func isRunnerKind(kind string) bool { return cardhdr.IsRunnerKind(kind) }
 
 // checkKind is the push-time KIND check. An absent KIND is a model card.
 func checkKind(kind string) error {

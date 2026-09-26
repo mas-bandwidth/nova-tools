@@ -15,7 +15,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "card",
-		Summary: "cut, push, release, stop, run, show, launched, beat, and end one card attempt; fsck and ls --unplaced the card model; deal, work, end, beat, land, cancel, expire, fsck, table, consumers and render: the table moves",
+		Summary: "cut, push, release, stop, run, show, launched, beat, and end one card attempt; fsck and ls --unplaced the card model; deal, work, end, beat, land, cancel, expire, fsck, table, consumers and render: the table moves (render --id: a copy's card, or a primary's harness card, --brief its friend brief)",
 		Run:     runCard,
 	})
 }
