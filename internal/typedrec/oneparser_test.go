@@ -86,6 +86,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "first word of the child's last typed line (BLOCKED, ABSTAIN): friend serve's fail signal for a card (#4095), an event line, not RESULT line 2"},
 	{file: "internal/nsprint/life/serve_copy.go", fn: "endCopy", record: "typed-line", since: "51b0ae73",
 		reason: "first word of the child's last typed line (DONE, SCORE, BLOCKED): friend serve's end of a consumer copy (#3998), an event line, not RESULT line 2"},
+	{file: "internal/nsprint/taskcard/complete.go", fn: "specFields", record: "SPEC-CARD", since: "98b5b444",
+		reason: "the issue's card header keys (ROUTE, KIND, REPO, PATHS, ...) that task push --issue fills the record from (#3916), read before any RESULT exists"},
 	{file: "internal/swarm/sparse.go", fn: "cardPATHS", record: "SPEC-CARD", since: "dd08d6e3",
 		reason: "the card's PATHS header for the sparse checkout, read before any RESULT exists"},
 	{file: "internal/nsprint/brief/lint.go", fn: "briefPaths", record: "brief", since: "1db79631",
