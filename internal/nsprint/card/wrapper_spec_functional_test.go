@@ -41,21 +41,28 @@ func (m *memLedger) End(_ context.Context, end card.WrapperEnd) (int, error) {
 // before its end; on a red the end is FAILED with the gate's reason (so the
 // copy's ledger opens no PR), RESULT.md in the results carries the red names
 // under ## Gates and wrapper.line names the gate; on a green the end is DONE
-// with the gate passed.
+// with the gate passed. A sprint card (no copy: nova-card <S>/<label>/<n>,
+// harvest #2932) is held to the same gate (the fix round's item 3 on
+// #4401): its red is a FAILED end, which ns_harvest_due never offers.
 func TestCopyWrapperRefusesThePROnARed(t *testing.T) {
 	t.Parallel()
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+	red := gateAnswer{exit: 1, out: "RED package=./x test=TestZ\nnova-ci local: packages=1 seconds=0.4 red=1 make-exit=1\n"}
+	green := gateAnswer{exit: 0, out: "nova-ci local: packages=1 seconds=0.4 red=0 make-exit=0\n"}
 	for _, tc := range []struct {
 		name    string
 		ci      gateAnswer
 		outcome string
 		reason  string
+		copy    string // "" is a sprint card
 	}{
-		{"red", gateAnswer{exit: 1, out: "RED package=./x test=TestZ\nnova-ci local: packages=1 seconds=0.4 red=1 make-exit=1\n"}, "FAILED", card.GateCIRed},
-		{"green", gateAnswer{exit: 0, out: "nova-ci local: packages=1 seconds=0.4 red=0 make-exit=0\n"}, "DONE", "done"},
+		{"red", red, "FAILED", card.GateCIRed, "p1~1"},
+		{"green", green, "DONE", "done", "p1~1"},
+		{"sprint red", red, "FAILED", card.GateSprintReason, ""},
+		{"sprint green", green, "DONE", "done", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -63,12 +70,15 @@ func TestCopyWrapperRefusesThePROnARed(t *testing.T) {
 			origin := newOrigin(t)
 			base := gitIn(t, filepath.Dir(origin), "--git-dir", origin, "rev-parse", "refs/heads/dev")
 			id := card.Identity{Sprint: card.CopySprint, Label: card.CopyCardLabel("p1~1"), BaseSHA: base[:8], Bench: "wrap-bench", Attempt: 1}
+			if tc.copy == "" {
+				id.Sprint, id.Label = "s1", "c1"
+			}
 			gate := filepath.Join(t.TempDir(), "gate")
 			h := newHarnessRun(t, id, self)
 			// the fake harness's switches go on the harness's own environment
 			// (cfg.HarnessEnv), never the test process's
 			h.cfg.HarnessEnv = append(os.Environ(), fakeHarnessEnv+"=repo", fakeGateEnv+"="+gate, fakeOriginEnv+"="+origin)
-			h.cfg.Copy = "p1~1"
+			h.cfg.Copy = tc.copy
 			fake := &gateFake{ci: tc.ci}
 			h.cfg.Run = fake.run
 			// the fixture's diff is work.txt: TEST: none <why> excuses the
@@ -100,7 +110,7 @@ func TestCopyWrapperRefusesThePROnARed(t *testing.T) {
 			if !strings.Contains(calls, "nova-ci local --base "+base) || strings.Contains(calls, "go test") {
 				t.Errorf("calls:\n%s\nwant nova-ci local at the base and no class test (TEST: none)", calls)
 			}
-			switch tc.name {
+			switch strings.TrimPrefix(tc.name, "sprint ") {
 			case "red":
 				if !strings.Contains(end.Why, "RED package=./x test=TestZ") || strings.Join(end.Gate.Reds, "") != "RED package=./x test=TestZ" {
 					t.Errorf("end why %q reds %q: want the red name", end.Why, end.Gate.Reds)
@@ -108,7 +118,7 @@ func TestCopyWrapperRefusesThePROnARed(t *testing.T) {
 				if !strings.Contains(string(raw), "\n## Gates\n") || !strings.Contains(string(raw), "\n- RED package=./x test=TestZ\n") {
 					t.Errorf("RESULT.md lacks the red under ## Gates:\n%s", raw)
 				}
-				if !strings.Contains(string(line), "gate=ci-red") || !strings.Contains(string(line), "reason=ci-red") {
+				if !strings.Contains(string(line), "gate=ci-red") || !strings.Contains(string(line), "reason="+tc.reason) {
 					t.Errorf("wrapper.line %q", line)
 				}
 			case "green":

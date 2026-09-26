@@ -122,7 +122,6 @@ func ParseIssue(text string) Spec {
 var (
 	shaRE     = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	refRE     = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*)#[1-9][0-9]*$`)
-	goTestRE  = regexp.MustCompile("go test (?:-[a-z]+(?:=\\S+)? )*(\\./\\S+)\\s+(?:-[a-z]+(?:=\\S+)? )*-run[ =]'?\\^?(Test[A-Za-z0-9_]*)")
 	onelineRE = regexp.MustCompile(`\s+`)
 )
 
@@ -197,14 +196,101 @@ func (s *Spec) Complete(ref, origin string) []string {
 	return missing
 }
 
-// TestFromDoneWhen is the TEST line a DONE-WHEN implies: `<package>
-// <TestName>` from a `go test <pkg> -run <TestName>` in the sentence, else
-// none (with no why: the card must say it, cardhdr.ParseTest).
+// TestFromDoneWhen is the TEST line a DONE-WHEN implies: `[-tags <tags>]
+// <package> <TestName>` from the first `go test ... <./pkg> ... -run
+// <TestName>` in the sentence, else none (with no why: the card must say
+// it, cardhdr.ParseTest). The command is read as go test reads it: a flag
+// that takes a value takes the next word (`-p 2`, `-tags functional`,
+// `-timeout 30s`) or its own `=value`, so a value is never read as the
+// package, and -tags travels to the TEST line.
 func TestFromDoneWhen(doneWhen string) string {
-	if m := goTestRE.FindStringSubmatch(doneWhen); m != nil {
-		return m[1] + " " + m[2]
+	words := strings.Fields(doneWhen)
+	for i := 0; i+1 < len(words); i++ {
+		if trimWord(words[i]) != "go" || trimWord(words[i+1]) != "test" {
+			continue
+		}
+		if t := goTestLine(words[i+2:]); t != "" {
+			return t
+		}
 	}
 	return "none"
+}
+
+// goTestValueFlags are go test's (and go build's) flags that take a value.
+var goTestValueFlags = map[string]bool{
+	"p": true, "tags": true, "run": true, "skip": true, "timeout": true, "count": true, "parallel": true,
+	"cpu": true, "bench": true, "benchtime": true, "list": true, "shuffle": true, "fuzz": true, "fuzztime": true,
+	"fuzzminimizetime": true, "coverprofile": true, "coverpkg": true, "covermode": true, "o": true, "exec": true,
+	"ldflags": true, "gcflags": true, "asmflags": true, "gccgoflags": true, "mod": true, "modfile": true,
+	"vet": true, "C": true, "outputdir": true, "cpuprofile": true, "memprofile": true, "memprofilerate": true,
+	"blockprofile": true, "blockprofilerate": true, "mutexprofile": true, "mutexprofilefraction": true,
+	"trace": true, "overlay": true, "pgo": true, "pkgdir": true, "toolexec": true, "installsuffix": true,
+	"compiler": true, "buildvcs": true,
+}
+
+// goTestLine reads the words after `go test` up to the command's end (a
+// word that closes a backtick or ends in ; | &): the first
+// ./-relative package, -run's test name and -tags.
+func goTestLine(words []string) string {
+	var pkg, name, tags string
+	for i := 0; i < len(words); i++ {
+		w := words[i]
+		last := endsCommand(w)
+		w = trimWord(w)
+		if strings.HasPrefix(w, "-") {
+			flag, raw, hasVal := strings.Cut(strings.TrimLeft(strings.Trim(words[i], "`"), "-"), "=")
+			if !hasVal && goTestValueFlags[flag] && !last && i+1 < len(words) {
+				i++
+				last = endsCommand(words[i])
+				raw = words[i]
+			}
+			if openQuote(strings.Trim(raw, "`;|&")) {
+				return "" // a quoted value of more than one word is not a TEST line
+			}
+			val := trimWord(raw)
+			switch flag {
+			case "run":
+				name = strings.TrimSuffix(strings.TrimPrefix(strings.TrimRight(val, "."), "^"), "$")
+			case "tags":
+				tags = val
+			}
+		} else if pkg == "" && (strings.HasPrefix(w, "./") || w == ".") {
+			pkg = w
+		}
+		if last {
+			break
+		}
+	}
+	if pkg == "" || name == "" {
+		return ""
+	}
+	line := pkg + " " + name
+	if tags != "" {
+		line = "-tags " + tags + " " + line
+	}
+	if _, why := cardhdr.ParseTest(line); why != "" {
+		return ""
+	}
+	return line
+}
+
+// openQuote is a word that opens a quote it does not close.
+func openQuote(w string) bool {
+	if w == "" || (w[0] != '\'' && w[0] != '"') {
+		return false
+	}
+	return len(w) == 1 || w[len(w)-1] != w[0]
+}
+
+// endsCommand is a word that closes the command: a closing backtick or a
+// shell separator.
+func endsCommand(w string) bool {
+	return strings.HasSuffix(w, "`") || strings.HasSuffix(w, ";") || strings.HasSuffix(w, "|") || strings.HasSuffix(w, "&")
+}
+
+// trimWord drops the quoting a sentence puts around a command's words.
+func trimWord(w string) string {
+	return strings.Trim(w, "`'\";|&,()")
 }
 
 // fields are the record's HSET pairs for the spec (never a pointer field).

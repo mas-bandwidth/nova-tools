@@ -138,13 +138,12 @@ func (l *CopyLedger) Card(ctx context.Context) (WrapperCard, error) {
 		return WrapperCard{}, nil
 	}
 	cc := CopyCardFrom(l.Copy, rec)
-	c := WrapperCard{State: rec["where"], Kind: copyKind(cc), EstMin: positiveFloat(rec["est"]), BaseSHA: cc.BaseSHA, Test: cc.Test}
-	if cc.Leg == "fix" && cc.Head != "" {
-		// a fix copy's repo/ is staged at the PR's head (RenderCopy): the
-		// gate's base is that head
-		c.BaseSHA = cc.Head
-	}
-	if c.Test == "" && cc.Primary != "" {
+	// a fix copy's repo/ is staged at the PR's head (RenderCopy): the gate's
+	// base is that head, and its test the finding test the fix names in
+	// RESULT.md, never the primary's (green at that head already)
+	c := WrapperCard{State: rec["where"], Kind: copyKind(cc), EstMin: positiveFloat(rec["est"]), BaseSHA: cc.GateBase(),
+		Test: cc.GateTest(""), FindingTest: cc.Leg == "fix"}
+	if c.Test == "" && cc.Primary != "" && !c.FindingTest {
 		// A copy cut by a move library from before TM.CARRY carried test
 		// (#4313): the primary's TEST line is the copy's.
 		if v, err := l.Client.HGet(ctx, "task:"+cc.Primary, "test").Result(); err == nil {

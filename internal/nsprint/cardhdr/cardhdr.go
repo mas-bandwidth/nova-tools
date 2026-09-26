@@ -113,8 +113,10 @@ func KeyValue(line string) (key, value string, ok bool) {
 // TestLine is a card's TEST value, read by ParseTest.
 type TestLine struct {
 	// Package and Name are `TEST: <package> <TestName>`: the Go package
-	// path the wrapper runs and the test it selects.
-	Package, Name string
+	// path the wrapper runs and the test it selects. Tags are the build
+	// tags the test needs (`TEST: -tags functional <package> <TestName>`),
+	// "" for none.
+	Package, Name, Tags string
 	// None is `TEST: none <why>`; Why is the reason the card has no test.
 	None bool
 	Why  string
@@ -125,24 +127,40 @@ func (t TestLine) String() string {
 	if t.None {
 		return "none " + t.Why
 	}
+	if t.Tags != "" {
+		return "-tags " + t.Tags + " " + t.Package + " " + t.Name
+	}
 	return t.Package + " " + t.Name
+}
+
+// GoPackage is Package as go test takes it: a repository-relative
+// package (`internal/x`) is `./internal/x`.
+func (t TestLine) GoPackage() string {
+	if strings.HasPrefix(t.Package, ".") {
+		return t.Package
+	}
+	return "./" + t.Package
 }
 
 // TestRemedy is what a card whose DONE-WHEN cannot be turned into a test is
 // told, on every refusal.
-const TestRemedy = "name `go test <package> -run <TestName>` in DONE-WHEN, or add TEST: <package> <TestName>, or TEST: none <why the change has no test>"
+const TestRemedy = "name `go test <package> -run <TestName>` in DONE-WHEN, or add TEST: [-tags <tags>] <package> <TestName>, or TEST: none <why the change has no test>"
 
 var (
-	testPkgRE  = regexp.MustCompile(`^\.(/[A-Za-z0-9_.-]+)*/?(\.\.\.)?$`)
+	// testPkgRE is a ./-relative or repository-relative Go package path.
+	testPkgRE  = regexp.MustCompile(`^(\.|\./[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*|[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_.-]+)*)/?(\.\.\.)?$`)
 	testNameRE = regexp.MustCompile(`^(Test|Example|Fuzz)[A-Za-z0-9_]*$`)
+	testTagsRE = regexp.MustCompile(`^[A-Za-z0-9_.]+(,[A-Za-z0-9_.]+)*$`)
 )
 
-// ParseTest reads a TEST value: `<package> <TestName>` (the package a
-// ./-relative Go path with no .., the name a Go test name) or `none <why>`.
-// Anything else is refused: why is one line with the remedy, and the line
-// is zero. A bare `none` is refused too: the reader must see why.
+// ParseTest reads a TEST value: `[-tags <tags>] <package> <TestName>` (the
+// package a ./-relative or repository-relative Go path with no .., the name
+// a Go test name, the tags go test's -tags list) or `none <why>`. Anything
+// else is refused: why is one line with the remedy, and the line is zero. A
+// bare `none` is refused too: the reader must see why.
 func ParseTest(v string) (TestLine, string) {
 	f := strings.Fields(v)
+	refused := "TEST " + strings.TrimSpace(v) + " is not `[-tags <tags>] <package> <TestName>` or `none <why>`: " + TestRemedy
 	switch {
 	case len(f) == 0:
 		return TestLine{}, "DONE-WHEN cannot be turned into a test (no TEST line): " + TestRemedy
@@ -152,10 +170,22 @@ func ParseTest(v string) (TestLine, string) {
 			return TestLine{}, "TEST: none says no why: write TEST: none <why the change has no test>, or TEST: <package> <TestName>"
 		}
 		return TestLine{None: true, Why: why}, ""
-	case len(f) == 2 && testPkgRE.MatchString(f[0]) && !hasDotDot(f[0]) && testNameRE.MatchString(f[1]):
-		return TestLine{Package: f[0], Name: f[1]}, ""
 	}
-	return TestLine{}, "TEST " + strings.TrimSpace(v) + " is not `<package> <TestName>` or `none <why>`: " + TestRemedy
+	var tags string
+	flagged := strings.HasPrefix(f[0], "-")
+	switch {
+	case strings.HasPrefix(f[0], "-tags="):
+		tags, f = strings.TrimPrefix(f[0], "-tags="), f[1:]
+	case f[0] == "-tags" && len(f) > 1:
+		tags, f = f[1], f[2:]
+	}
+	if flagged && !testTagsRE.MatchString(tags) {
+		return TestLine{}, refused
+	}
+	if len(f) == 2 && testPkgRE.MatchString(f[0]) && !hasDotDot(f[0]) && testNameRE.MatchString(f[1]) {
+		return TestLine{Package: f[0], Name: f[1], Tags: tags}, ""
+	}
+	return TestLine{}, refused
 }
 
 func hasDotDot(p string) bool {

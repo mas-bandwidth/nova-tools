@@ -28,6 +28,7 @@ package card
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -40,6 +41,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -94,13 +96,19 @@ type CheckRun struct {
 	Green string // on pass: the command and its output tail
 	Tail  string
 	Wall  time.Duration
+	// Red is a fail that proves the test red: go test's fail event for the
+	// named test, its package failing to build or run with the test in it,
+	// or the run killed at the cap. A test that did not run (no pass and no
+	// fail event: [no test files], [no tests to run], a package go test
+	// cannot find) is a fail at head and never a red at base.
+	Red bool
 }
 
-// TestCommand is the card's TEST line as argv: `<package> <TestName>` is
-// `go test <package> -run ^<TestName>$ -count=1`. Anything else (absent,
-// `none <why>`, a free command) has no argv and why says so: the wrapper runs
-// only the declared grammar (cardhdr.ParseTest) and never assumes a package
-// from PATHS.
+// TestCommand is the card's TEST line as argv: `[-tags <tags>] <package>
+// <TestName>` is `go test [-tags <tags>] <package> -run ^<TestName>$
+// -count=1`. Anything else (absent, `none <why>`, a free command) has no argv
+// and why says so: the wrapper runs only the declared grammar
+// (cardhdr.ParseTest) and never assumes a package from PATHS.
 func TestCommand(test string) (argv []string, why string) {
 	tl, refused := cardhdr.ParseTest(test)
 	switch {
@@ -109,15 +117,27 @@ func TestCommand(test string) (argv []string, why string) {
 	case tl.None:
 		return nil, "TEST: none (" + tl.Why + ")"
 	case refused != "":
-		return nil, "TEST is not `<package> <TestName>`"
+		return nil, "TEST is not `[-tags <tags>] <package> <TestName>`"
 	}
-	return []string{"go", "test", tl.Package, "-run", "^" + tl.Name + "$", "-count=1"}, ""
+	argv = []string{"go", "test"}
+	if tl.Tags != "" {
+		argv = append(argv, "-tags", tl.Tags)
+	}
+	return append(argv, tl.GoPackage(), "-run", "^"+tl.Name+"$", "-count=1"), ""
 }
 
 // NoTestsMark is what go test prints for a -run that selected nothing: a
 // TEST line naming no test in its package passes vacuously, which the
 // wrapper reads as a fail, never as a green.
 const NoTestsMark = "[no tests to run]"
+
+// SetupFailedMark is go test's frame for a package it could not even set
+// up (the directory is not there): no test ran, so nothing is red.
+const SetupFailedMark = "[setup failed]"
+
+// NoTestFilesMark is what go test prints for a package with no test files:
+// as vacuous as NoTestsMark.
+const NoTestFilesMark = "[no test files]"
 
 // Cmd is one child process the wrapper runs at end: in Dir, the argv, its
 // output (stdout and stderr together) to Out, under Timeout, beating on
@@ -192,7 +212,10 @@ func RunCheck(ctx context.Context, repo, test string, timeout time.Duration, tic
 	return runCheck(ctx, nil, repo, test, timeout, ticks, beat)
 }
 
-// runCheck is RunCheck through run (nil is execRun).
+// runCheck is RunCheck through run (nil is execRun). The test runs under
+// go test -json, and green is the pass event of the named test itself
+// (nova-tools#4313 fix round: exit 0 alone is green for [no test files] and
+// [no tests to run], a vacuous pass). The row keeps the plain command.
 func runCheck(ctx context.Context, run Runner, repo, test string, timeout time.Duration, ticks <-chan time.Time, beat func()) CheckRun {
 	if run == nil {
 		run = execRun
@@ -208,36 +231,123 @@ func runCheck(ctx context.Context, run Runner, repo, test string, timeout time.D
 	if timeout <= 0 {
 		timeout = DefaultCheckTimeout
 	}
-	var out tailBuffer
+	tl, _ := cardhdr.ParseTest(test)
+	var out lineBuffer
 	began := time.Now()
-	exit, err := run(ctx, Cmd{Dir: repo, Argv: argv, Out: &out, Timeout: timeout, Ticks: ticks, Beat: beat})
-	r := CheckRun{Cmd: cmdline, Wall: time.Since(began), Tail: out.tail(3)}
+	exit, err := run(ctx, Cmd{Dir: repo, Argv: append(argv, "-json"), Out: &out, Timeout: timeout, Ticks: ticks, Beat: beat})
+	ev := readTestEvents(out.all(), tl.Name)
+	r := CheckRun{Cmd: cmdline, Wall: time.Since(began), Tail: ev.tail(3)}
 	secs := fmt.Sprintf("%.2fs", r.Wall.Seconds())
 	switch {
 	case err != nil && !errors.Is(err, context.DeadlineExceeded):
 		return CheckRun{Check: "not-run", Cmd: cmdline, Gate: cmdline + ": not-run (" + oneField(err.Error()) + ")"}
-	case err == nil && exit == 0 && bytes.Contains(out.b, []byte(NoTestsMark)):
-		// go test's vacuous ok: the TEST line names no test in its package.
-		r.Check = "fail"
-		r.Gate = cmdline + ": fail (no tests to run: TEST names no test in " + argv[2] + ")"
-	case err == nil && exit == 0:
+	case err != nil:
+		r.Check, r.Red = "fail", true
+		r.Gate = cmdline + ": fail timeout after " + timeout.String()
+	case ev.passed && !ev.failed && exit == 0:
 		r.Check = "pass"
 		r.Gate = cmdline + ": pass " + secs
 		r.Green = cmdline + ": pass " + secs
 		if r.Tail != "" {
 			r.Green += "; " + r.Tail
 		}
-	case err != nil:
-		r.Check = "fail"
-		r.Gate = cmdline + ": fail timeout after " + timeout.String()
-	default:
-		r.Check = "fail"
+	case ev.failed || ev.pkgFailed:
+		r.Check, r.Red = "fail", true
 		r.Gate = cmdline + ": fail " + secs
 		if r.Tail != "" {
 			r.Gate += ": " + r.Tail
 		}
+	default:
+		// no pass and no fail of the named test: it did not run
+		r.Check = "fail"
+		what := "go test ran no " + tl.Name + " in " + tl.GoPackage()
+		switch {
+		case ev.noFiles:
+			what += ": " + NoTestFilesMark
+		case ev.noTests:
+			what += ": " + NoTestsMark
+		case ev.setup:
+			what += ": " + SetupFailedMark + " " + r.Tail
+		case r.Tail != "":
+			what += ": " + r.Tail
+		}
+		if exit != 0 {
+			what += fmt.Sprintf(" (exit %d)", exit)
+		}
+		r.Gate = cmdline + ": fail (" + what + ")"
 	}
 	return r
+}
+
+// testEvents is what a go test -json stream says of one named test.
+type testEvents struct {
+	// passed and failed are the named test's own pass and fail events
+	// (a subtest's are not); pkgFailed is its package failing outside any
+	// test (a build error, a panic, TestMain, the -timeout) while the
+	// package has test files and is there to set up.
+	passed, failed, pkgFailed bool
+	noFiles, noTests, setup   bool
+	output                    []string
+}
+
+func (e testEvents) tail(n int) string {
+	rows := e.output
+	if len(rows) > n {
+		rows = rows[len(rows)-n:]
+	}
+	return oneField(strings.Join(rows, " | "))
+}
+
+// readTestEvents reads go test -json lines for the test named name. A line
+// that is not an event (go's own error before any event) is output.
+func readTestEvents(lines []string, name string) testEvents {
+	var e testEvents
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		var ev slowtests.Event
+		if t == "" || t[0] != '{' || json.Unmarshal([]byte(t), &ev) != nil {
+			if t != "" {
+				e.output = append(e.output, t)
+			}
+			continue
+		}
+		switch ev.Action {
+		case "output", "build-output":
+			o := strings.TrimSpace(ev.Output)
+			if o == "" {
+				continue
+			}
+			if strings.Contains(o, NoTestFilesMark) {
+				e.noFiles = true
+			}
+			if strings.Contains(o, NoTestsMark) {
+				e.noTests = true
+			}
+			if strings.Contains(o, SetupFailedMark) {
+				e.setup = true
+			}
+			if !strings.HasPrefix(o, "=== ") {
+				e.output = append(e.output, o)
+			}
+		case "pass":
+			if ev.Test == name {
+				e.passed = true
+			}
+		case "fail", "build-fail":
+			switch {
+			case ev.Test == name:
+				e.failed = true
+			case ev.Test == "":
+				e.pkgFailed = true
+			}
+		}
+	}
+	if e.noFiles || e.setup {
+		// no test to run (no test files), or no package to run it in
+		// (go test cannot find the directory): nothing is proved red
+		e.pkgFailed = false
+	}
+	return e
 }
 
 // checkEnv is the wrapper's environment minus anything naming a token.

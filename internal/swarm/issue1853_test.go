@@ -65,7 +65,7 @@ func TestIssue1853(t *testing.T) {
 		},
 		{
 			name:   "TEST: none on an ungated kind is a declaration",
-			header: []string{"KIND: read", "PATHS: internal/swarm/a.go", "TEST: none"},
+			header: []string{"KIND: read", "PATHS: internal/swarm/a.go", "TEST: none the read changes no code"},
 			clean:  true,
 		},
 	} {
@@ -88,7 +88,7 @@ func TestIssue1853(t *testing.T) {
 	// every ungated kind accepts it.
 	for _, kind := range []string{"fix-red", "transcript-test", "mutation-kill"} {
 		t.Run(fmt.Sprintf("TEST: none on gated kind %s", kind), func(t *testing.T) {
-			raw := headerCard(t, "KIND: "+kind, "PATHS: internal/swarm/a.go", "TEST: none")
+			raw := headerCard(t, "KIND: "+kind, "PATHS: internal/swarm/a.go", "TEST: none the fixture has a why")
 			fs := findingsOn(raw)
 			if !hasCheck(fs, "test-named") {
 				t.Fatalf("kind %q is gated and requires a test; got:\n%s", kind, dumpFindings(fs))
@@ -97,7 +97,7 @@ func TestIssue1853(t *testing.T) {
 	}
 	for _, kind := range []string{"read", "probe", "text", "tone", "report"} {
 		t.Run(fmt.Sprintf("TEST: none on ungated kind %s", kind), func(t *testing.T) {
-			raw := headerCard(t, "KIND: "+kind, "PATHS: internal/swarm/a.go", "TEST: none")
+			raw := headerCard(t, "KIND: "+kind, "PATHS: internal/swarm/a.go", "TEST: none the kind changes no code")
 			fs := findingsOn(raw)
 			for _, f := range fs {
 				if f.Check == "test-named" {

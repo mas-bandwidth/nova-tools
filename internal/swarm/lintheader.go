@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 )
 
 // THE TYPED CARD HEADER, CHECKED BEFORE ANY SPEND (SPEC-TOOLWORK.md §5 rule 1, #1651).
@@ -18,7 +19,7 @@ import (
 //
 //	KIND: <kind>
 //	PATHS: <glob>[, <glob>...]
-//	TEST: <package> <TestName>          (or `TEST: none` where the kind allows it)
+//	TEST: [-tags <tags>] <package> <TestName>   (or `TEST: none <why>` where the kind allows it)
 //	LEGS: <leg>[,<leg>...]
 //	SOURCE: <owner>/<repo>#<n> | <file:line at the pinned head>
 //
@@ -40,8 +41,10 @@ import (
 //     below for why the case-sensitive `^[A-Z][A-Z-]*:` this used to be was a defect);
 //   - `PATHS: none` declares no paths; otherwise the value is comma-separated
 //     (cardheader.go:82-88);
-//   - `TEST: none` is a declaration where the kind allows it; otherwise the value is
-//     exactly two fields, the second matching `^Test[A-Za-z0-9_]*$` (cardheader.go:89-108);
+//   - TEST is read by cardhdr.ParseTest, the one TEST grammar the copy wrapper's gate
+//     runs (nova-tools#4313): `none <why>` is a declaration where the kind allows it (a
+//     bare `none` is refused: the reader must see why); otherwise `[-tags <tags>]
+//     <package> <TestName>`, the name matching `^Test[A-Za-z0-9_]*$` (cardheader.go:89-108);
 //   - KIND, PATHS and TEST are the three a gated card must carry (cardheader.go:138-150).
 //
 // THE PARSER IS CITED; THE VALIDATOR IS CALLED. `internal/pulse` still does not carry
@@ -75,7 +78,7 @@ type CardHeaderFinding struct {
 var CardHeaderRemedies = map[string]string{
 	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one `nova-pulse accept --kinds` names; `cut` writes it from the pool row and a model never does (SPEC-TOOLWORK.md §5 rules 1, 3)",
 	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none` (SPEC-TOOLWORK.md §5 rules 1, 2)",
-	"test-named":     "the card carries `TEST: <package> <TestName>` -- two fields, the package repository-relative and the name a Go test name -- or `TEST: none` where the kind declares no gate (SPEC-TOOLWORK.md §5 rule 1)",
+	"test-named":     "the card carries `TEST: [-tags <tags>] <package> <TestName>` -- the package repository-relative and the name a Go test name -- or `TEST: none <why>` where the kind declares no gate (SPEC-TOOLWORK.md §5 rule 1; the grammar is cardhdr.ParseTest's)",
 	"paused":         "the coordinator paused this kind, so `cut` cuts no card of it and a card launched before the pause is `ACCEPT ABSTAIN reason=paused` at harvest; the remedy is not a rerun but `nova-pulse trust --set trial --queue <dir> --kind <kind> --who <name> --reason <text>` (SPEC-TOOLWORK.md §5 rule 1, eligibility rule 3, §1's abstain list)",
 }
 
@@ -325,27 +328,26 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 		}
 	}
 
-	// 3. TEST: is declared, and is `<package> <TestName>` or `none`.
+	// 3. TEST: is declared, and is what cardhdr.ParseTest reads: `[-tags <tags>]
+	// <package> <TestName>` or `none <why>`.
 	test := h["TEST"]
+	tl, testWhy := cardhdr.ParseTest(test.value)
 	switch {
 	case !test.found && stranded["TEST"] > 0:
 	case !test.found:
 		add("test-named", 1, "no TEST: line under the contract line")
-	case test.value == "none":
+	case test.value == "":
+		add("test-named", test.line, "TEST: with no package and no test name after it")
+	case testWhy != "":
+		add("test-named", test.line, testWhy)
+	case tl.None:
 		// TEST: none is only a declaration for ungated kinds; gated kinds strictly
 		// require a reproducing test (SPEC-TOOLWORK.md §5 rule 1, rule 2).
 		if kind.value != "" && !ungatedKinds[kind.value] {
 			add("test-named", test.line, fmt.Sprintf("TEST: none is not allowed for kind %q; gated kinds require `TEST: <package> <TestName>`", kind.value))
 		}
-	case test.value == "":
-		add("test-named", test.line, "TEST: with no package and no test name after it")
 	default:
-		fields := strings.Fields(test.value)
-		if len(fields) != 2 {
-			add("test-named", test.line, fmt.Sprintf("TEST: wants `<package> <TestName>` or `none`, got %q", test.value))
-			break
-		}
-		pkg := strings.Trim(fields[0], "/")
+		pkg := strings.Trim(tl.Package, "/")
 		if pkg == "" {
 			pkg = "."
 		}
@@ -354,8 +356,8 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 		if why, ok := validGlobs([]string{pkg}); !ok {
 			add("test-named", test.line, "TEST: package: "+why)
 		}
-		if !goTestNameRE.MatchString(fields[1]) {
-			add("test-named", test.line, fmt.Sprintf("TEST: %q is not a Go test name", fields[1]))
+		if !goTestNameRE.MatchString(tl.Name) {
+			add("test-named", test.line, fmt.Sprintf("TEST: %q is not a Go test name", tl.Name))
 		}
 	}
 

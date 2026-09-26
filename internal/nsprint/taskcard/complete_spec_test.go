@@ -55,3 +55,29 @@ func TestSwarmCardIsRefusedWithoutATest(t *testing.T) {
 		t.Errorf("TestFromDoneWhen = %q", got)
 	}
 }
+
+// TestFromDoneWhenReadsFlagsWithValues is the fix round's item 4 on
+// nova-tools#4401: a DONE-WHEN's go test is read as go test reads it, so a
+// flag's value (-p 2, -tags functional, -timeout 30s) is never the package,
+// -tags travels to the TEST line, and a command without a ./ package or a
+// single -run test implies none.
+func TestFromDoneWhenReadsFlagsWithValues(t *testing.T) {
+	t.Parallel()
+	for dw, want := range map[string]string{
+		"`go test -p 2 ./internal/x -run TestY` passes":                                  "./internal/x TestY",
+		"`go test -tags functional ./internal/nsprint/card -run TestCopyWrapper` passes": "-tags functional ./internal/nsprint/card TestCopyWrapper",
+		"nice -n 15 go test -p 2 -count=1 -tags=functional ./x/ -run '^TestZ$' passes":   "-tags functional ./x/ TestZ",
+		"`go test -run TestY -timeout 30s ./x` passes":                                   "./x TestY",
+		"go test -v -race ./x -run=TestQ, then the receipt":                              "./x TestQ",
+		"go test ./x -run TestY.":                                                        "./x TestY",
+		"go test ./x passes; go test ./y -run TestW passes":                              "./y TestW",
+		"`go test -p 2 ./x` passes":                                                      "none",
+		"go test ./x -run 'TestA|TestB'":                                                 "none",
+		"`go test -tags 'a b' ./x -run TestY`":                                           "none",
+		"the page reads right":                                                           "none",
+	} {
+		if got := taskcard.TestFromDoneWhen(dw); got != want {
+			t.Errorf("TestFromDoneWhen(%q) = %q, want %q", dw, got, want)
+		}
+	}
+}

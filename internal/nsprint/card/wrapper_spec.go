@@ -52,6 +52,10 @@ const (
 	GateNotRed   = "test-not-red"   // TEST passes at BASE with the diff's tests
 	GateCIRed    = "ci-red"         // nova-ci local (or the touched packages) red
 	GatePass     = "pass"
+	// GateSprintReason is a sprint card's end reason on a red gate: the
+	// reason ns_card_end already takes for a FAILED end whose tests are
+	// red (the copy moves take the typed reasons above).
+	GateSprintReason = "tests-red"
 )
 
 // GateInput is what the gate runs on.
@@ -61,8 +65,12 @@ type GateInput struct {
 	// Base is the sha repo/ was staged at: the card's base-sha, or the PR's
 	// head for a fix copy. Head is the commit the step made.
 	Base, Head string
-	// Test is the card's TEST line.
+	// Test is the card's TEST line; for a fix (Fix), the finding test the
+	// fix names.
 	Test string
+	// Fix is a fix copy's gate: Test is the finding test, and its absence
+	// is told the fix's remedy (FindingTestLine).
+	Fix bool
 	// Paths are the files the commit changed (ChangedPaths(Repo, Base)).
 	Paths []string
 	// Timeout bounds each command; zero is DefaultCheckTimeout. Ticks and
@@ -72,6 +80,10 @@ type GateInput struct {
 	Beat    func()
 	// Run is the Runner; nil is execRun.
 	Run Runner
+	// BaseDir is where the base worktree goes; "" is <dir of Repo>/base,
+	// the job's own out dir. A checkout that is not a job's (a friend's)
+	// passes a directory of its own, so nothing beside it is touched.
+	BaseDir string
 }
 
 // GateResult is what the gate found.
@@ -118,6 +130,9 @@ func RunSpecGate(ctx context.Context, in GateInput) GateResult {
 		return res
 	}
 	tl, why := cardhdr.ParseTest(in.Test)
+	if why != "" && in.Fix {
+		why = "a fix names its finding test: " + why + "; " + FindingTestLine
+	}
 	if why != "" {
 		res.Rows = append(res.Rows, "TEST: refused ("+why+")")
 		return refuse(GateNoTest, why)
@@ -142,8 +157,11 @@ func RunSpecGate(ctx context.Context, in GateInput) GateResult {
 			return refuse(GateNotRed, "TEST "+in.Test+" could not run at base-sha "+short(in.Base)+": "+stage)
 		}
 		res.Rows = append(res.Rows, "TEST "+in.Test+" at base "+short(in.Base)+" with the diff's tests: "+strings.TrimPrefix(red.Gate, red.Cmd+": "))
-		if red.Check != "fail" {
+		switch {
+		case red.Check == "pass":
 			return refuse(GateNotRed, "TEST "+in.Test+" passes at base-sha "+short(in.Base)+" with your test files ("+strings.Join(tests, " ")+"): the test does not fail without the change; write one that does")
+		case !red.Red:
+			return refuse(GateNotRed, "TEST "+in.Test+" did not run at base-sha "+short(in.Base)+" with your test files ("+strings.Join(tests, " ")+"): "+red.Gate+"; a red is the named test failing (or its package failing to build), never a test that is not there")
 		}
 		res.Red = red.Gate
 	}
@@ -154,6 +172,80 @@ func RunSpecGate(ctx context.Context, in GateInput) GateResult {
 		return refuse(reason, why)
 	}
 	return res
+}
+
+// FriendGate is a code copy a friend ends itself (friend done --ok --pr):
+// no wrapper ran the spec gate, so the verb runs it in the friend's
+// checkout before it records the PR or ends the copy (nova-tools#4401 fix
+// round, item 3).
+type FriendGate struct {
+	Copy CopyCard
+	// Finding is a fix copy's finding test (friend done --test).
+	Finding string
+	// Repo is the friend's checkout, at Head.
+	Repo, Head string
+	Timeout    time.Duration
+	Run        Runner
+}
+
+// GateFriendCopy runs the spec gate on a friend's copy: the checkout must be
+// at Head (the commit the PR carries), the base is the copy's (GateBase),
+// the test the copy's (GateTest, a fix's own finding test), and the base
+// worktree goes in a temporary directory of its own, removed after. An
+// error is a gate that could not run.
+func GateFriendCopy(ctx context.Context, fg FriendGate) (GateResult, error) {
+	run := fg.Run
+	if run == nil {
+		run = execRun
+	}
+	repo, err := filepath.Abs(fg.Repo)
+	if err != nil {
+		return GateResult{}, err
+	}
+	if fi, err := os.Stat(filepath.Join(repo, ".git")); err != nil || fi == nil {
+		return GateResult{}, fmt.Errorf("--repo %s is not a git checkout", fg.Repo)
+	}
+	var at lineBuffer
+	if exit, err := run(ctx, Cmd{Dir: repo, Argv: []string{"git", "rev-parse", "HEAD"}, Out: &at, Timeout: fg.Timeout}); err != nil || exit != 0 {
+		return GateResult{}, fmt.Errorf("git rev-parse HEAD in %s: exit %d%s", fg.Repo, exit, errSuffix(err))
+	}
+	head := strings.TrimSpace(at.tail(1))
+	if fg.Head == "" || !strings.HasPrefix(head, strings.TrimSpace(fg.Head)) {
+		return GateResult{}, fmt.Errorf("--repo %s is at %s, not --head %s: check out the head the PR carries", fg.Repo, short(head), short(fg.Head))
+	}
+	base := fg.Copy.GateBase()
+	paths, err := ChangedPaths(repo, base)
+	if err != nil {
+		return GateResult{}, err
+	}
+	tmp, err := os.MkdirTemp("", "friend-gate-")
+	if err != nil {
+		return GateResult{}, err
+	}
+	defer func() { _ = safepath.RemoveUnder(filepath.Dir(tmp), tmp) }()
+	return RunSpecGate(ctx, GateInput{Repo: repo, Base: base, Head: head, Test: fg.Copy.GateTest(fg.Finding), Fix: fg.Copy.Leg == "fix",
+		Paths: paths, Timeout: fg.Timeout, Run: run, BaseDir: filepath.Join(tmp, "base")}), nil
+}
+
+// FindingTestOf is the finding test a fix copy's model named in <out>/RESULT.md:
+// the first `TEST: ` line after line 2 and before the first section, "" when
+// there is none.
+func FindingTestOf(out string) string {
+	raw, err := os.ReadFile(filepath.Join(out, "RESULT.md"))
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+	for i := 2; i < len(lines); i++ {
+		l := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(l, "## ") {
+			break
+		}
+		if v, ok := strings.CutPrefix(l, "TEST:"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // testFiles are the changed paths that are Go test files still present in
@@ -175,7 +267,10 @@ func testFiles(repo string, paths []string) []string {
 // diff's test files out of Head over it and runs TEST there. stage names the
 // step that could not run; the worktree is removed either way.
 func runAtBase(ctx context.Context, run Runner, in GateInput, tests []string) (CheckRun, string) {
-	base := filepath.Join(filepath.Dir(in.Repo), "base")
+	base := in.BaseDir
+	if base == "" {
+		base = filepath.Join(filepath.Dir(in.Repo), "base")
+	}
 	git := func(dir string, argv ...string) string {
 		var out tailBuffer
 		argv = append([]string{"git", "-c", "core.hooksPath=/dev/null"}, argv...)
@@ -188,7 +283,7 @@ func runAtBase(ctx context.Context, run Runner, in GateInput, tests []string) (C
 		}
 		return ""
 	}
-	out := filepath.Dir(in.Repo)
+	out := filepath.Dir(base)
 	_ = safepath.RemoveUnder(out, base)
 	if why := git(in.Repo, "worktree", "add", "--detach", "--force", base, in.Base); why != "" {
 		return CheckRun{}, why
@@ -366,6 +461,15 @@ func (l *lineBuffer) last(prefix string) string {
 		}
 	}
 	return ""
+}
+
+// all is every line kept.
+func (l *lineBuffer) all() []string {
+	if len(l.buf) > 0 {
+		l.add(string(l.buf))
+		l.buf = nil
+	}
+	return l.lines
 }
 
 // tail is the last n lines, joined with " | ".

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -43,11 +44,35 @@ func TestFriendPullDoneBeat(t *testing.T) {
 	emma, _ := taskcard.ParseConsumer("friend:emma")
 	c.HSet(ctx, rowan.DesiredKey(), "slots", "2")
 	c.HSet(ctx, emma.DesiredKey(), "slots", "1")
-	base := strings.Repeat("ab", 20)
+	// the friend's checkout: base-sha, then the friend's commit, the head the
+	// PR carries; friend done --ok --pr runs the spec gate in it (#4401 fix
+	// round, item 3). The copy's TEST is none with a why, so the gate is
+	// CI's answer for a diff of one text file.
+	checkout := filepath.Join(t.TempDir(), "q1")
+	git := func(args ...string) string {
+		cmd := exec.Command("git", append([]string{"-C", checkout, "-c", "user.email=f@example.com", "-c", "user.name=f"}, args...)...)
+		b, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	if err := os.MkdirAll(checkout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git("init", "-q")
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := git("rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(checkout, "work.txt"), []byte("the friend's work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "work.txt")
+	git("commit", "-q", "-m", "the work")
+	head := git("rev-parse", "HEAD")
 	for _, id := range []string{"q1", "q2"} {
 		if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: id, Where: "waiting", Stream: "swarm: cards", Kind: "build",
 			Title: "quack " + id, Repo: "mas-bandwidth/nova-tools", Origin: "issue:nova-tools#4233", By: "rowan",
-			Fields: []string{"base", "dev", "base_sha", base, "paths", "cmd/nova-sprint/friend_copies.go",
+			Fields: []string{"base", "dev", "base_sha", base, "paths", "cmd/nova-sprint/friend_copies.go", "test", "none the fixture's diff is one text file",
 				"done_when", "go test ./cmd/nova-sprint -run TestFriendPullDoneBeat passes", "body", "the issue"}}); err != nil {
 			t.Fatal(err)
 		}
@@ -93,7 +118,7 @@ func TestFriendPullDoneBeat(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"\nCOPY: " + mine + "\n", "FRIEND: friend:" + me + " owns this copy end to end",
-		"nova-sprint friend done --as friend:" + me + " --id " + mine + " --ok --pr nova-tools#<n> --head <sha>", "\n> the issue\n"} {
+		"nova-sprint friend done --as friend:" + me + " --id " + mine + " --ok --pr nova-tools#<n> --head <sha> --repo <your checkout at that head>", "\nGATE: friend done --ok runs TEST at base-sha " + base, "\n> the issue\n"} {
 		if !strings.Contains(string(brief), want) {
 			t.Fatalf("brief lacks %q:\n%s", want, brief)
 		}
@@ -136,9 +161,29 @@ func TestFriendPullDoneBeat(t *testing.T) {
 	// nothing pre-records the PR: friend done --ok --pr records it (as the
 	// wrapper's harvest does) before the end, which card end would refuse
 	// NOPR without the record
-	head := strings.Repeat("cd", 20)
-	code, out, errOut = run("done", "--as", "friend:"+me, "--id", mine, "--ok", "--pr", "nova-tools#4400", "--head", head, "--token", token)
-	if code != 0 || !strings.HasPrefix(out, "RECORDED pr=nova-tools#4400 head="+head+" branch=nova/copies/q1-c1-a1\nENDED "+mine+" primary=q1 from=working to=review next=-\n") ||
+	// the spec gate first: no checkout, a checkout at another head, and a
+	// TEST the diff carries no test file for are refused before anything is
+	// recorded
+	if code, out, _ := run("done", "--as", "friend:"+me, "--id", mine, "--ok", "--pr", "nova-tools#4400", "--head", head, "--token", token); code != 1 ||
+		!strings.Contains(out, "FRIEND DONE REFUSED id="+mine+" why=\"no-test --ok --pr wants --repo") {
+		t.Fatalf("no --repo: exit %d %s", code, out)
+	}
+	if code, out, _ := run("done", "--as", "friend:"+me, "--id", mine, "--ok", "--pr", "nova-tools#4400", "--head", base, "--repo", checkout, "--token", token); code != 1 ||
+		!strings.Contains(out, "why=\"gate could not run: --repo "+checkout+" is at ") {
+		t.Fatalf("a checkout at another head: exit %d %s", code, out)
+	}
+	c.HSet(ctx, taskcard.Key(mine), "test", "./x TestX")
+	if code, out, _ := run("done", "--as", "friend:"+me, "--id", mine, "--ok", "--pr", "nova-tools#4400", "--head", head, "--repo", checkout, "--token", token); code != 1 ||
+		!strings.Contains(out, "why=\"no-test the diff adds or changes no test file") {
+		t.Fatalf("a red gate: exit %d %s", code, out)
+	}
+	if n := c.Exists(ctx, "pr:nova-tools:4400").Val(); n != 0 || c.HGet(ctx, taskcard.Key(mine), "where").Val() != "working" {
+		t.Fatalf("a refused gate recorded the PR or ended the copy")
+	}
+	c.HSet(ctx, taskcard.Key(mine), "test", "none the fixture's diff is one text file")
+	code, out, errOut = run("done", "--as", "friend:"+me, "--id", mine, "--ok", "--pr", "nova-tools#4400", "--head", head, "--repo", checkout, "--token", token)
+	if code != 0 || !strings.HasPrefix(out, "GATE TEST: none (the fixture's diff is one text file); no class test required\n") ||
+		!strings.Contains(out, "\nRECORDED pr=nova-tools#4400 head="+head+" branch=nova/copies/q1-c1-a1\nENDED "+mine+" primary=q1 from=working to=review next=-\n") ||
 		!strings.Contains(out, "FRIEND DONE as=friend:"+me+" n=1 ") {
 		t.Fatalf("friend done exit %d %q %s", code, out, errOut)
 	}
@@ -152,7 +197,7 @@ func TestFriendPullDoneBeat(t *testing.T) {
 	if got := c.HGet(ctx, taskcard.Key("q1"), "where").Val(); got != "review" {
 		t.Fatalf("q1 is %s, want review", got)
 	}
-	if code, out, _ := run("done", "--as", "friend:"+me, "--id", mine, "--ok", "--pr", "nova-tools#4400", "--head", head); code != 0 || !strings.Contains(out, "ALREADY "+mine+" ") {
+	if code, out, _ := run("done", "--as", "friend:"+me, "--id", mine, "--ok", "--pr", "nova-tools#4400", "--head", head, "--repo", checkout); code != 0 || !strings.Contains(out, "ALREADY "+mine+" ") {
 		t.Fatalf("the same end again: exit %d %s", code, out)
 	}
 }

@@ -120,6 +120,9 @@ type WrapperCard struct {
 	// (#4313, RunSpecGate) holds a DONE code card's commit to them before
 	// the push.
 	BaseSHA, Test string
+	// FindingTest is a fix copy: the gate holds its commit to the finding
+	// test the fix names on RESULT.md (FindingTestOf), not to Test.
+	FindingTest bool
 }
 
 // WrapperEnd is the exit class the wrapper hands to the ledger.
@@ -760,19 +763,24 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 			}
 		}
 	}
-	if cfg.Copy != "" && end.Outcome == "DONE" && end.Commit == "COMMITTED" && CodeKind(kind) {
-		// The spec gate (#4313) on a copy: the class test at head and at
-		// base, then CI's answer for the diff, before the copy's end pushes
-		// anything (CopyLedger.End harvests a DONE end only). A red is a
-		// FAILED end with the gate's reason; the rows go into RESULT.md
-		// beside the model's word, red names included. A sprint card's
-		// harvest is the older flow (#2932) and is not held here.
+	if end.Outcome == "DONE" && end.Commit == "COMMITTED" && CodeKind(kind) {
+		// The spec gate (#4313) on every code card's commit, a copy's and a
+		// sprint card's alike: the class test at head and at base, then
+		// CI's answer for the diff, before the end pushes or harvests
+		// anything (CopyLedger.End and ns_harvest_due take a DONE end
+		// only). A red is a FAILED end with the gate's reason; the rows go
+		// into RESULT.md beside the model's word, red names included. A fix
+		// copy is held to the finding test it names, not the primary's.
 		repo := filepath.Join(job, "out", "repo")
 		paths, perr := ChangedPaths(repo, c.BaseSHA)
 		if perr != nil {
 			appendWhy(rep, "paths: "+perr.Error())
 		}
-		g := RunSpecGate(ctx, GateInput{Repo: repo, Base: c.BaseSHA, Head: end.PushedSHA, Test: c.Test, Paths: paths,
+		test := c.Test
+		if c.FindingTest {
+			test = FindingTestOf(filepath.Join(job, "out"))
+		}
+		g := RunSpecGate(ctx, GateInput{Repo: repo, Base: c.BaseSHA, Head: end.PushedSHA, Test: test, Fix: c.FindingTest, Paths: paths,
 			Timeout: cfg.CheckTimeout, Ticks: ticks, Beat: beat, Run: cfg.Run})
 		end.Gate = &g
 		if err := AppendGates(filepath.Join(job, "out"), g.Rows); err != nil {
@@ -780,6 +788,13 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 		}
 		if !g.Passed() {
 			end.Outcome, end.Reason, end.Why = "FAILED", g.Reason, g.Why
+			if cfg.Copy == "" {
+				// ns_card_end takes a fixed reason set that a library
+				// not yet redeployed still enforces: a sprint card's red
+				// is tests-red, and the gate's own word leads the why
+				// (gate= on wrapper.line says it too).
+				end.Reason, end.Why = GateSprintReason, "gate="+g.Reason+": "+g.Why
+			}
 			rep.Outcome, rep.Reason = end.Outcome, end.Reason
 			if rep.Why == "" {
 				rep.Why = end.Why
