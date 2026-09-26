@@ -69,14 +69,26 @@ func Home(t *testing.T, seat string, values map[string]string) string {
 
 // Env points every variable seatcred reads at home and clears the ones that
 // would otherwise steer a resolution (store, key, sops, user, seat) for the
-// rest of the test.
+// rest of the test. The discovered sops path is then pinned for decryption.
 func Env(t *testing.T, home string) {
 	t.Helper()
 	t.Setenv("HOME", home)
 	for _, k := range []string{seatcred.SeatEnv, seatcred.StoreEnv, seatcred.KeyEnv, seatcred.SopsEnv, seatcred.UserEnv} {
 		t.Setenv(k, "")
 	}
+	// Home may find sops outside PATH (for example the macOS runner).
+	// Read the fixture with the same discovery rule used to encrypt it.
+	t.Setenv(seatcred.SopsEnv, Sops(t))
 	t.Cleanup(func() { seatcred.Select("") })
+}
+
+// Sops is the sops Home seals with: the one on PATH, else Homebrew's, else the
+// test is skipped. A parallel test that hands seatcred its own getenv answers
+// seatcred.SopsEnv with it, so the fixture is read by the binary that wrote it
+// on a machine whose PATH names no /opt/homebrew.
+func Sops(t *testing.T) string {
+	t.Helper()
+	return lookTool(t, "sops")
 }
 
 func lookTool(t *testing.T, name string) string {

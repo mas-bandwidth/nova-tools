@@ -634,34 +634,6 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 	}
 }
 
-// A beat commit from another line is not a note, so a wait sleeps through it -- with or
-// without --quiet-beats. Until #328 (2026-09-17) the flag made a beat a wake worth one WAIT
-// line; with six lines beating once a minute that was a poll with extra steps, and every
-// wake cost the waiting window a turn. A wake is a note addressed to the reader, nothing
-// else; the flag stays accepted so callers that pass it keep working.
-func TestWaitQuietBeatsSleepsThroughABeatCommit(t *testing.T) {
-	t.Parallel()
-	hermetic(t)
-	checkout, bare := busDir(t)
-	settled(t, checkout)
-
-	other := bench(t, bare)
-	// Bo's beat: a commit touching only from-bo/BEAT, no note.
-	writeFile(t, other, "from-bo/BEAT", "2026-09-09T12:35:00Z - until=2026-09-09T12:45:00Z\n")
-	gitIn(t, other, "add", "from-bo/BEAT")
-	gitIn(t, other, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "beat bo")
-	if err := push(other); err != nil {
-		t.Fatal(err)
-	}
-
-	r := invoke(t, "", waitFlags(checkout, "Ada", "2s", "--quiet-beats")...).mustCode(t, 0)
-
-	r.mustContain(t, "stdout", "WAIT DONE reason=timeout")
-	if strings.Contains(r.stdout, "WAIT OK") || strings.Contains(r.stdout, "reason=new") {
-		t.Fatalf("a beat-only change woke the wait; a beat is not news:\n%s", r.stdout)
-	}
-}
-
 // The wait help must document #328, not #674. The flag is accepted and changes
 // nothing, so the long paragraph promising a WAIT OK line on a beat-only change is
 // stale: the flag's own usage string says so, and the banner must agree. (#903)

@@ -246,6 +246,210 @@ less — `remedy="--budget must be a whole number of seconds greater than zero"`
 missing or unreadable invocation is the tool’s own one-line refusal ending `run:
 nova-ci help`.
 
+**The budget is in one place (nova-tools#4413, 2026-09-26).** The verb judges a
+LIVE run against the budgets it is handed; there is no second budget.
+`docs/TEST-DURATIONS.md` is a record of what each bench measured, evidence and
+not a verdict: its sixty-second check (`TestFastSuiteUnderOneMinute`) and the
+per-platform `budget-factor:` it read were deleted with #4413.
+`tools/testdur` still heads each table it prints with the platform it
+measured, so a regenerated table cannot be pasted under another bench's
+heading, and a bench's package table is the one directly under its heading --
+a table under a `###` inside the section is prose, not a second measurement of
+the same packages.
+
+**The mistake it removes.** A card cut waits to make a suite fit the two-minute
+gate, which made the launch-transaction test (deleted with `nova-swarm run`, 2026-09-24) flaky under load and dropped three
+innocent PRs from the queue in one hour — the same class hit twice in one night.
+
+**Red tests.**
+
+1. A test carrying `time.Sleep(150 * time.Millisecond)` is refused with its file
+   and line, and the remedy names the poll, with the network it waits on faked.
+2. A test with `context.WithTimeout(ctx, 5*time.Second)` used as its pass/fail
+   condition is refused as a bound under ten seconds, with the bench it guards
+   faked.
+3. A test asserting `time.Since(start) < 5*time.Second` is refused as an
+   elapsed-time assertion, with the clock faked.
+4. A polling test reading `NOVA_TEST_WAIT` (default `30s`) and waiting for the
+   event through a fake network is allowed.
+5. A test whose subprocess bench and clock are fakes passes with no wall clock
+   in the file.
+6. Adding an entry to `testdata/fixed-waits-allowlist.txt` is refused, and
+   removing one is allowed.
+
+## The CI class test against copied built binaries
+
+**The help line.** The class test is entered in the CI check roster and in help
+as the verb `testbins`:
+
+```
+testbins   read every _test.go on the CI path; refuse copying a built executable into a fixture
+```
+
+It runs as `go test ./internal/ci -run TestNoCopiedTestBinariesOnTheCIPath`, and
+it is the fixture-copy audit made an official verb (#1142): the shared helper a
+fixture places a built program with is now the check a PR runs.
+
+**What it reads and what it writes.** It reads, as text, every `_test.go` under
+`internal/` and `cmd/` that the two-minute CI path runs, and refuses one shape
+with the file and the line: an `os.WriteFile` whose mode literal carries an
+execute bit and whose data argument is a variable the file fills from
+`os.ReadFile` -- the variable the parser resolves the identifier to, never its
+spelling, so a `raw` in one function does not taint another function's `raw`
+(an `io.Copy` into an `os.Create`/`os.OpenFile` of the same mode is
+the same shape). That shape copies a compiled executable into a fixture, and on
+macOS every fresh copy of an executable is a never-seen binary the system policy
+scanner assesses on its first exec; one is quick, but a package run places
+dozens at once and they queue behind the scanner for longer than a test waits.
+The allowed shape is `internal/testbin.Place`, which hard-links first and copies
+only where a link is impossible; a shell script written `0o755` is not the
+shape, because the interpreter is the executable and its bytes are never
+assessed. It writes nothing. Its only input besides the tree is
+`testdata/fixed-testbins-allowlist.txt`: the existing offenders, and that file
+may only shrink — a new entry is a refusal, not a place to park a copy.
+
+**Its one-line output.** On a clean tree it prints one line,
+`CI-TESTBIN OK tests=<n> allowlisted=<n> refused=0`, where `tests=` is the
+`_test.go` files read, `allowlisted=` the entries still on the allowlist, and
+`refused=` the copied built binaries found (always `0` on `OK`). On a refusal it
+prints one line per offender, `CI-TESTBIN file=<path> line=<n> kind=copy
+remedy="place built binaries with testbin.Place: link, never copy"`, then closes
+with `CI-TESTBIN FAIL tests=<n> allowlisted=<n> refused=<k>`; the count is the
+truth about the CI path whether or not the lines printed.
+
+**Its refusals (exit 2, one remedy line each).** A built executable copied into
+a fixture — `remedy="place built binaries with testbin.Place: link, never
+copy"`. A new line in the allowlist — `remedy="fix the copy; the allowlist only
+shrinks"`. A refusal names the file and the line, so the queue’s PR comment is
+the whole diagnosis.
+
+**The mistake it removes.** On 2026-09-17 internal/swarm’s
+`TestBatchAbstainNamesReason/result-after-deadline` failed on the merge gate’s
+darwin leg and on an idle iMac Pro: the package copied one built fake runner
+into dozens of fixtures and the copies queued behind the macOS policy scanner
+past the thirty seconds a test waits, and hard-linking the one fixture took the
+package from FAIL at 74 s to ok at 30 s. Every fixture now places a built
+program through `internal/testbin.Place`, and the class test refuses a new copy.
+
+**Red tests.**
+
+1. A fixture `_test.go` that reads a built binary with `os.ReadFile` and writes
+   the bytes `0o755` into a fixture is refused with its file and line, the
+   fixture read from a tree given on the command line and not by walking the
+   repository.
+2. The bytes may be handed to the `os.WriteFile` through a package-level map,
+   the way nova-wake’s `fakeBins` did; the taint follows the bytes and the copy
+   is refused.
+3. A shell script written `0o755` is allowed: the interpreter is the executable.
+   It stays allowed when another function in the same file copies a binary
+   through a variable of the same name: only the copy is refused.
+4. A test that places the built program through `testbin.Place` is allowed.
+5. Adding an entry to `testdata/fixed-testbins-allowlist.txt` is refused, and
+   removing one is allowed.
+
+## The CI class test against unquoted paths in JSON and template literals
+
+**The help line.** The class test is entered in the CI check roster and in help
+as the verb `templates`:
+
+```
+templates   read every _test.go; refuse a filesystem path unquoted in a JSON or template literal
+```
+
+It runs as `go test ./internal/ci -run TestNoUnquotedPathsInTemplateLiterals`,
+and it is the Windows-path audit made an official verb (#1142): the grep every
+card ran by eye is now the check a PR runs.
+
+**What it reads and what it writes.** It reads, as text, every `_test.go` under
+`internal/` and `cmd/`, and refuses two shapes with the file and the line: a
+`filepath.Join(...)` concatenated raw into a JSON or `text/template` string
+literal, and an OS path — a `C:\...` or `\\host\...` literal, an
+`os.Getenv(...)` value, or any variable the checker can see holds a filesystem
+path — placed unquoted inside such a literal. A backslash in a Windows path
+begins an escape the literal's grammar does not have, so the file parses on
+Linux and darwin and fails on Windows. The allowed shape is `strconv.Quote(path)`
+— or `oneline.Quote`, its wrapper — whose escaped output is a string on every
+platform. It writes nothing. Its only input besides the tree is
+`testdata/template-paths-allowlist.txt`: the existing offenders, each with the
+file, the line, a reason and the date, and that file may only shrink — a new
+entry is a refusal, not a place to park a path.
+
+**Its one-line output.** On a clean tree it prints one line,
+`CI-TEMPLATES OK tests=<n> allowlisted=<n> refused=0`, where `tests=` is the
+`_test.go` files read, `allowlisted=` the entries still on the allowlist, and
+`refused=` the unquoted paths found (always `0` on `OK`). On a refusal it prints
+one line per offender, `CI-TEMPLATES file=<path> line=<n> kind=<join|literal>
+remedy="<the one thing to do>"`, then closes with `CI-TEMPLATES FAIL tests=<n>
+allowlisted=<n> refused=<k>`; the count is the truth about the tree whether or
+not the lines printed.
+
+**Its refusals (exit 2, one remedy line each).** A `filepath.Join(...)` inside a
+JSON or template literal — `remedy="wrap the path in strconv.Quote"`. An OS path
+placed unquoted inside a JSON or template literal —
+`remedy="wrap the path in strconv.Quote; a backslash there is an escape the
+literal does not have"`. A new line in the allowlist —
+`remedy="quote the path; the allowlist only shrinks"`. A refusal names the file
+and the line, so the queue’s PR comment is the whole diagnosis.
+
+**The mistake it removes.** Two Windows-only reds (#904, #920) came from a
+`filepath.Join(dir, "key")` concatenated raw into a JSON worker description, so
+`C:\...\key` reached the literal unquoted and the parse failed where Linux and
+darwin never saw it.
+
+**Red tests.**
+
+1. A fixture `_test.go` whose JSON literal concatenates `filepath.Join(dir,
+   "key")` raw is refused with its file and line, the fixture read from a tree
+   given on the command line and not by walking the repository.
+2. A test that places `C:\Users\RUNN\keys\key` unquoted inside a JSON literal is
+   refused, with the worker description faked rather than read from disk.
+3. A test that places a path unquoted inside a `text/template` string is refused,
+   with the template rendered into a fake writer and no subprocess started.
+4. A test that wraps the path in `strconv.Quote` is allowed, with the bench it
+   guards faked.
+5. A test using `oneline.Quote` is allowed, with the network it reports on faked.
+6. Adding an entry to `testdata/template-paths-allowlist.txt` is refused, and
+   removing one is allowed.
+
+## The per-package test time budget
+
+**The verb.** The budget check is `cmd/nova-ci`'s first verb, `slowtests`:
+
+```
+slowtests  read newline-delimited go test -json TestEvents on stdin; refuse any
+           package whose summed elapsed time is over --budget (default 60s)
+```
+
+It runs as `go test -json -count=1 <packages> | tee "$RUNNER_TEMP/test.json"; go
+run ./cmd/nova-ci slowtests --budget 60 < "$RUNNER_TEMP/test.json"` in the
+self-hosted `test` step of `.github/workflows/ci.yml`, so the slow package
+surfaces to the coordinator the moment it happens.
+
+**The invariant.** A package's total is the sum of its package-level
+`Elapsed` — the `pass`, `fail` or `skip` event whose `Test` is empty — and a
+package whose total is over `--budget` is a refusal. The engine is the
+`internal/ci/slowtests` subpackage's `Parse` and `Sum`: the events come from the
+caller, the budget comes from the caller, and nothing reads a file, the clock or
+the network. The test-level `Elapsed` rows are kept, sorted worst first, only so
+a finding can name where the time went; they never decide the verdict.
+
+**Its one-line output.** On a clean stream it prints one line, `CI-SLOW OK
+packages=<n> slowest=<pkg>:<seconds>`, where `packages=` is the packages seen
+and `slowest=` the single slowest package overall (or `slowest=none` when the
+stream is empty). On a refusal it prints one line per offending package, `CI-SLOW
+package=<pkg> seconds=<seconds> budget=<b> slowest=<TestA:3.2s,TestB:2.9s>`, the
+slowest tests in that package, comma-separated, worst first and capped at three,
+then exits 2; the lines go to stdout, so one `CI-SLOW` grep reads the whole run.
+The stream is one `go test -json` line per event, parsed by `encoding/json`; a
+line that is not a TestEvent is a refusal naming its line number, never a silent
+skip, so a truncated pipe cannot read as a clean run.
+
+**Its refusals (exit 2, one remedy line each).** A malformed line —
+`remedy="stdin is not newline-delimited go test -json"`. A `--budget` of zero or
+less — `remedy="--budget must be a whole number of seconds greater than zero"`. A
+missing or unreadable invocation is the tool’s own one-line refusal ending `run:
+nova-ci help`.
+
 **The budget is per platform.** The verb judges a LIVE run against the
 `--budget` it is handed; `docs/TEST-DURATIONS.md` is the recorded half, and
 since the record grew a `## Bench:` section per machine the ceiling a package is
@@ -270,20 +474,54 @@ nothing noticed, because nothing summed the per-package elapsed time `go test
 -json` was already printing. A green that hides a doubling suite is the same
 mistake as a flaky wait, one layer up. The same mistake one layer out is a
 number RECORDED and enforced against nothing: `cmd/nova-wake` was recorded at
-62.9 s on the Air -- over a minute -- and until the per-platform ceiling above,
-nothing read it.
+62.9 s on the Air -- over a minute -- and nothing read it; a live run's
+CI-SLOW line is where such a number is read now.
 
 **The unit tier's budgets (2026-09-26, nova-tools#4328).** `make test` runs
 `nova-ci slowtests --package-budget 2 --test-budget 1 --allowlist
-internal/ci/slow-tests_allowlist.txt`: a package over 2 s is the line above,
+internal/ci/slow-tests_allowlist.txt --sleeps
+internal/ci/sleeps-skips_allowlist.txt`: a package over 2 s is the line above,
 and a top-level test over 1 s is `CI-SLOW test=<name> package=<pkg>
-seconds=<s> budget=<b>`, both exit 2, unless an allowlist row
-(`pkg<TAB>test<TAB>seconds`, `-` in the test column for the package's own row)
-names a higher budget for exactly that package or test. The list was seeded
-from the CI-SLOW lines of #4345's run 36255893861 at two cores a leg, at 1.5x,
-and only shrinks
-(`TestSlowAllowlistOnlyShrinks`). A push or manual run over the whole tree,
-which is not yet cut to these budgets, keeps `--budget 60`.
+seconds=<s> budget=<b>`, unless an allowlist row
+(`pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>`, `-` in the test column for
+the package's own row) names a higher budget for exactly that package or test.
+Every row names the time it was measured at and where: `run<id>` (a CI run) or
+a bench (`slowtests.Benches`: space, studio, superman, batman, air), never free
+text (`2s@guess` is refused), with a budget between that time and three times
+it (`TestSlowAllowlistRowsNameTheirMeasurement`,
+`TestSlowAllowlistRatchetRefusesAnUnmeasuredRow`,
+`TestSlowTestsMeasuredWhereIsARunOrABench`). The 33 rows first seeded at
+`@run36255893861` were the budget divided by 1.5, not measured, and were
+dropped; the first enforcing nightly run's raw times re-add the ones still
+over.
+
+**A budget verdict is the same on any machine (Rowan's ruling on #4413,
+2026-09-26).** Run 36261817989 (PR #4409) was red on all eight self-hosted
+shards with no test failing: twelve tests at 1.0-1.2 s that run near 0.9 s
+idle, on a Studio at load 16-18 of 32 CPUs; a load gate that waived the budgets
+above 0.25 a CPU made the verdict depend on the load instead. So:
+
+- **Enforced on every leg, load-independent, static:** no unit test waits on
+  the wall clock (the `unitwaits` class test below), and a test skipped with
+  the SLEEPS marker that the ledger does not name is `CI-SLEEPS test=<name>
+  package=<pkg>` and exit 2, the push leg included.
+- **Measured on every leg:** every CI-SLOW line and one `CI-LOAD load=<n>
+  cpus=<n> per-cpu=<n>: measured, not a verdict` line (the host's load
+  average, the larger of its 1- and 5-minute figures; `load=unknown` with the
+  reason when it cannot be read) are printed, and the exit is 0 on them.
+- **Enforced only on the nightly whole-tree run on the space legs:** ci.yml's
+  `test` job runs on `schedule` too, test-packages deals that tree onto the
+  space shards only, and the test step's schedule branch runs `make test
+  GOTEST_COUNT_FLAG=-count=1 SLOWTESTS_ENFORCE=1`, which passes `--enforce`: a
+  CI-SLOW line is exit 2 there and nowhere else. A red schedule run blocks
+  nothing (ci-ok does not run on schedule); it is evidence, and its raw times
+  are what a row is measured from. test-hosted's ubuntu leg was the other
+  candidate (a fresh VM, idle by construction) and was not used: it runs `make
+  test-short`, whose `-short` skips are not the unit tier the budgets describe.
+
+(`TestUnitBudgetsJudgeTheTestNotTheLoad`, `TestSlowTestsVerdictIsTheSameAtAnyLoad`,
+`TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd`.) A push or manual run over the
+whole tree keeps `--budget 60`, printed.
 
 **Red tests.** `internal/ci/slowtests/slowtests_test.go` feeds canned TestEvent
 lines through the parser and the summer, and `cmd/nova-ci/main_test.go` runs the
@@ -293,7 +531,7 @@ verb end to end:
    slowest=example.com/pkg:3.2s`, exit 0.
 2. A package summing `75.3s` with tests at `3.2s` and `2.9s` is one line naming
    the package, its total, the budget and `slowest=TestA:3.2s,TestB:2.9s`, exit
-   2.
+   2 under `--enforce` and 0 without it.
 3. An empty stream is `CI-SLOW OK packages=0 slowest=none`, exit 0.
 4. A line that is not JSON is a refusal naming its line number.
 5. The slowest list is sorted and capped at three.
@@ -811,8 +1049,9 @@ brings everything to a crawl.
 (`internal/ci/slowtests/slowtests_test.go`), with the verb run end to end in
 `cmd/nova-ci/main_test.go`.
 **Its allowlist.** `internal/ci/slow-tests_allowlist.txt`, one row per package
-or test allowed over the unit tier's 2 s / 1 s budgets, each at 1.5x its
-measured time at two cores a leg; it only shrinks (`TestSlowAllowlistOnlyShrinks`).
+or test allowed over the unit tier's 2 s / 1 s budgets, each naming its
+measured time and where, its budget at most three times that
+(`TestSlowAllowlistRowsNameTheirMeasurement`).
 **Its remedy lines.** `remedy="stdin is not newline-delimited go test -json"` and
 `remedy="--budget must be a whole number of seconds greater than zero"`.
 **Its narrowings.** It judges on the PACKAGE total only; the test-level rows are
@@ -1330,7 +1569,9 @@ redis-server is functional-only (build tag functional)` and exits 86, so
 tests of the selected packages, on `merge_group`, `schedule` and
 `workflow_dispatch`, never on `pull_request`, four space shards under the
 two-minute cap; `ci-ok` requires it when it ran. The unit budgets are 2 s a
-package and 1 s a test, with an allowlist that only shrinks.
+package and 1 s a test, with an allowlist whose every row names its
+measurement, printed on every leg and enforced only on the nightly space legs;
+what is enforced on every leg is static (`unitwaits`).
 **The hurt.** "The constant bottleneck in our working process in CI. This is the
 real 'blocker' for merging." Four shards of every PR each took the whole of a
 box, 133 test files started a redis-server each, and 13 tests ran over a
@@ -1340,9 +1581,22 @@ and its line), `TestStartFailsClosedOnTheUnitTierShim` (functional-tagged, in
 `internal/ci/redis_ci_test.go`: `testutil.Start` against that shim fails
 closed), `TestUnitLegTakesAtMostTwoCores` (runs the share
 step with one runner on the box), `TestFunctionalTierRunsOnlyAsStreamsMerge` and
-`TestSlowAllowlistOnlyShrinks` (`internal/ci/unit_tier_class_test.go`).
-**Its allowlist.** `internal/ci/slow-tests_allowlist.txt`, capped by
-`slowAllowlistCeiling`, which only goes down.
+`TestSlowAllowlistRowsNameTheirMeasurement`,
+`TestSlowAllowlistRatchetRefusesAnUnmeasuredRow`,
+`TestUnitBudgetsJudgeTheTestNotTheLoad` (a 1.4 s test is exit 0 with its
+CI-SLOW and CI-LOAD lines at load 2, at load 20 and unread, and exit 2 at all
+three under enforce; an unledgered SLEEPS skip is red at all three on both
+legs), `TestNightlySpaceLegIsTheOnlyEnforcingLeg` (ci.yml's test job runs on
+schedule, deals it onto space only and passes SLOWTESTS_ENFORCE=1 only from
+that branch; nothing spells SLOWTESTS_ENFORCE=0; the Makefile reads it only to
+pass --enforce and carries slowtests' exit through) and
+`TestMeasuredBenchesAreCIRunners` (every bench a row may name is one ci.yml
+names) (`internal/ci/unit_tier_class_test.go`); through make itself,
+`TestMakeTestExitIsCISleepsOnEveryLegAndCISlowOnlyNightly`
+(functional-tagged, `cmd/nova-ci/make_functional_test.go`).
+**Its allowlist.** `internal/ci/slow-tests_allowlist.txt`, every row naming its
+measurement (`<seconds>s@run<id>` or `@<bench>`), and
+`internal/ci/sleeps-skips_allowlist.txt`, the SLEEPS ledger (`unitwaits`).
 **Its remedy line.** Tag a test that needs a real server, binary or process
 `//go:build functional`; make a slow unit test fast, or delete its allowlist row
 once it is.
@@ -2195,6 +2449,56 @@ the test behind //go:build slow (nightly-slow.yml runs it)`; for a stale row,
 `sleep` inside a fake's script, a provider retry wait inside the code under
 test and a poll that never sees its event are all invisible to it. The
 per-package budget (`slowtests`) and the measured table are the net under those.
+
+### `unitwaits` — no unit test waits on the wall clock
+
+**The rule.** Rowan's ruling on nova-tools#4413 (2026-09-26): a budget verdict
+must be the same on any machine, so what fails a leg is static. Every `_test.go`
+the unit tier compiles (under `cmd/`, `internal/` and `tools/`, outside
+testdata, built with no custom tag: a `//go:build functional`, slow, soak,
+nightly, novadisk, perf or race file is not a unit test) is read, and a call of
+`time.Sleep`, `time.After` (so `<-time.After` in a select), `time.Tick`,
+`time.NewTimer`, `time.NewTicker` or `time.AfterFunc`, any of those named as a
+value (the real clock handed to a seam), or a `context.WithTimeout` /
+`WithDeadline` whose context the same function waits on (`<-ctx.Done()`), is
+refused unless internal/ci/sleeps-skips_allowlist.txt names the package
+directory and the top-level function it is written in. A wait through an
+injected clock seam is not a wall-clock wait and is not found: the seams the
+tree has are internal/wake.Clock, internal/bus's lockClock, internal/swarm's
+batchClock and pullClock, internal/nsprint/land.Clock, internal/log.Clock and
+the injected `Sleep func(time.Duration)` and `now func() time.Time` fields of
+internal/merge, internal/gh, internal/swarm, cmd/nova-merge and cmd/nova-sprint.
+**The hurt.** A load gate made the wall-time verdict depend on the machine:
+PR #4413's own head was red at load 3 of 32 CPUs on
+TestJoinInterruptionNegativeControlWithoutKillFails (1.6 s, run 36264290984),
+green at load 16; and a change that added a SLEEPS skip and its ledger row in
+one diff passed.
+**The test.** `TestNoUnitTestWaitsOnTheWallClock`,
+`TestSleepsLedgerIsTheTreesSleepsSkips` (the ledger names exactly the tree's
+SLEEPS skips and waiting functions: a missing row or a stale one is red),
+`TestSleepsLedgerOnlyShrinksAgainstTheMergeParent` (a row HEAD has that the
+ledger at the merge base lacks is red: HEAD's first parent in CI, dev's tip on
+a pull request's merge ref and in the queue, the comparison `classtests` makes;
+the merge base with origin/dev on a developer's branch; a base with no ledger is
+the seed), with the controls
+`TestWallClockWaitDetectorFindsTheWaitsAndNotTheSeam`
+(`internal/ci/unitwaits_class_test.go`) and `TestSleepsLedgerGrowthIsReadOutOfGit`
+(functional-tagged, `internal/ci/unitwaits_git_functional_test.go`: seven
+commits in a repository it builds).
+**The ratchet row (the waits the tree owes).** Seeded by #4413 from dev
+be3e5f8ef plus #4413's changes: 114 wall-clock waits in 95 functions of 1210
+unit-tier test files, 72 functions grandfathered by the seed and 23 already
+SLEEPS-skipped. `TestNoUnitTestWaitsOnTheWallClock -v` prints the count; it
+only falls.
+**Its allowlist.** `internal/ci/sleeps-skips_allowlist.txt`,
+`pkg<TAB>Func<TAB>where`, read through `slowtests.ParseSleeps`, the reader
+`make test`'s CI-SLEEPS check uses. It only shrinks.
+**Its remedy line.** `inject a clock (internal/wake.Clock, an injected Sleep
+func) or tag the file //go:build functional (the ledger only shrinks)`.
+**Its narrowings.** It reads the test files only: a wall-clock wait inside the
+code under test (a production retry that sleeps) is invisible to it, and the
+printed CI-SLOW line and the nightly enforcing run are the net under that. A
+context deadline handed to the code under test and waited on there is not seen.
 
 ### `allowlist` — every list is read through the one helper
 

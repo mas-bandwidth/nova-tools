@@ -90,8 +90,8 @@ func TestResolveProfileReadsTheRowsSecret(t *testing.T) {
 	const pw = "profile-test-pw-4330"
 	home := seattest.Home(t, "studio", map[string]string{"NOVA_REDIS_COORDINATOR_PASSWORD": pw, "NOVA_REDIS_BENCH_PASSWORD": "not-this-one"})
 	// Nothing from the environment: the row names the store and key, and
-	// sops is the one on PATH.
-	noenv := func(string) string { return "" }
+	// sops is the one Home sealed with.
+	noenv := sopsOnly(t)
 	p := seatcred.Profile{
 		Name: "coordinator", Addr: "h:1", User: "coordinator", SecretEnv: "NOVA_REDIS_COORDINATOR_PASSWORD",
 		Store: filepath.Join(home, seatcred.DefaultStore), Key: filepath.Join(home, seatcred.DefaultKeyDir, "studio.key"),
@@ -162,7 +162,7 @@ func TestResolveProfileReadsTheGitHubToken(t *testing.T) {
 
 	const pw, tok = "profile-gh-test-pw-4330", "profile-gh-test-token-4330"
 	home := seattest.Home(t, "studio", map[string]string{"NOVA_REDIS_COORDINATOR_PASSWORD": pw, "GH_GATE_TOKEN": tok})
-	noenv := func(string) string { return "" }
+	noenv := sopsOnly(t)
 	p := seatcred.Profile{
 		Name: "coordinator", Addr: "h:1", User: "coordinator", SecretEnv: "NOVA_REDIS_COORDINATOR_PASSWORD",
 		Store: filepath.Join(home, seatcred.DefaultStore), Key: filepath.Join(home, seatcred.DefaultKeyDir, "studio.key"),
@@ -180,5 +180,20 @@ func TestResolveProfileReadsTheGitHubToken(t *testing.T) {
 	c, err = seatcred.ResolveProfile(p, noenv)
 	if err != nil || c.GitHubErr == nil || !strings.Contains(c.GitHubErr.Error(), "GH_GHOST_TOKEN") || !strings.Contains(c.GitHubErr.Error(), "--as studio") || strings.Contains(c.GitHubErr.Error(), tok) {
 		t.Fatalf("absent token env: login err %v, GitHubErr %v; want the login and a GitHub refusal naming the key and the seal remedy", err, c.GitHubErr)
+	}
+}
+
+// sopsOnly is an environment holding nothing but seatcred.SopsEnv, answered
+// with the sops seattest.Home sealed with, so a parallel test reads its fixture
+// on a runner whose PATH names no Homebrew without touching the process's
+// environment.
+func sopsOnly(t *testing.T) func(string) string {
+	t.Helper()
+	sops := seattest.Sops(t)
+	return func(k string) string {
+		if k == seatcred.SopsEnv {
+			return sops
+		}
+		return ""
 	}
 }
