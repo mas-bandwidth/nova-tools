@@ -35,7 +35,7 @@ func TestCIVerbGitHubOnceAndStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if code := runCI(ctx, []string{"github", "--redis", addr, "--consumer", "t1", "--once"}, &out, &errOut); code != 0 {
+	if code := runCI(ctx, []string{"github", "--redis", addr, "--as", "t1", "--once"}, &out, &errOut); code != 0 {
 		t.Fatalf("github --once code=%d stderr=%q", code, errOut.String())
 	}
 	if got := strings.TrimSpace(out.String()); got != "CIGH applied=1 kept=0 skipped=0 reclaimed=0" {

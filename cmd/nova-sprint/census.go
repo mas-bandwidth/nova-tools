@@ -35,12 +35,12 @@ func init() {
 
 func runCensus(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("census")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	set := fs.String("set", "", "")
-	keysFrom := fs.String("keys-from", "", "")
-	fields := fs.String("fields", "", "")
-	sprint := fs.String("sprint", "", "")
-	keys := fs.String("keys", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	set := fs.String("set", "", "the registry set to read: benches, friends or sprint:<name>:<state>")
+	keysFrom := fs.String("keys-from", "", "a file of keys, one per line")
+	fields := fs.String("fields", "", "the fields to print, comma-separated")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	keys := fs.String("keys", "", "the card states to read, comma-separated")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "census", err.Error())
 	}

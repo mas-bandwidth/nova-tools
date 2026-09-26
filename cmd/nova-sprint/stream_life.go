@@ -60,7 +60,7 @@ func streamLanding(ctx context.Context, args []string) (l stream.Landing, found,
 	if rs := flagValues(args, "redis"); len(rs) > 0 {
 		addr = rs[len(rs)-1]
 	}
-	addr = redisOr(addr, "NOVA_REDIS_ADDR") // landRedisAddr, the seat's address last (#4330)
+	addr = redisOr(addr) // the one resolver (seat.go), as landRedisAddr
 	if len(repos) != 1 || !landRepoOK(repos[0]) || len(streams) == 0 || addr == "" {
 		return l, false, false, nil
 	}
@@ -81,14 +81,17 @@ func streamLanding(ctx context.Context, args []string) (l stream.Landing, found,
 func runStreamLife(ctx context.Context, sub string, args []string, out, errOut io.Writer) (int, bool) {
 	switch sub {
 	case "status":
-		return runLandStreamStatus(ctx, args, out, errOut), true
+		return runLandStreamStatusAs(ctx, "stream status", args, out, errOut), true
 	case "close":
-		return runLandMerge(ctx, args, out, errOut), true
+		return runLandMergeAs(ctx, "stream close", args, out, errOut), true
 	case "pr":
-		return runLandStream(ctx, args, out, errOut), true
+		return runLandStreamAs(ctx, "stream pr", args, out, errOut), true
 	case "open", "rebase":
 	default:
 		return 0, false
+	}
+	if helpAsked(args) { // -h reads no store: the flags are the answer
+		return runLandStreamAs(ctx, "stream "+sub, args, out, errOut), true
 	}
 	l, found, ok, err := streamLanding(ctx, args)
 	if err != nil {
@@ -111,5 +114,5 @@ func runStreamLife(ctx context.Context, sub string, args []string, out, errOut i
 			return 1, true
 		}
 	}
-	return runLandStream(ctx, args, out, errOut), true
+	return runLandStreamAs(ctx, "stream "+sub, args, out, errOut), true
 }

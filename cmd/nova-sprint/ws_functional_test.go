@@ -55,13 +55,13 @@ func TestWSVerbsOnAThousandTasks(t *testing.T) {
 	}{
 		{[]string{"ws", "counts"}, "COUNTS streams=10 waiting=400 ready=200 working=150 merging=100 landed=100 parked=0 ", 1},
 		{[]string{"stream", "ls"}, "STREAMS n=10 ", 11},
-		{[]string{"scope", "keep", "--streams", s(0) + "|" + s(1)}, "KEPT streams=2 parked_streams=8 parked=480 checkpoint=" + cpDir + "/ws-", 1},
+		{[]string{"scope", "keep", "--stream", s(0) + "," + s(1)}, "KEPT streams=2 parked_streams=8 parked=480 checkpoint=" + cpDir + "/ws-", 1},
 		{[]string{"scope", "ls"}, "SCOPE streams=10 kept=2 parked=8 partial=0 ", 11},
 		{[]string{"scope", "unpark", "--stream", s(2)}, `UNPARKED stream="s2: work" unparked=60 `, 1},
 		{[]string{"scope", "park", "--stream", s(1), "--ids", "@" + idsFile, "--checkpoint", cp}, `PARKED stream="s1: work" parked=2 same=0 checkpoint=` + cp + " rows=1000 ", 1},
 		{[]string{"scope", "park", "--stream", s(0)}, `PARKED stream="s0: work" parked=60 `, 1},
-		{[]string{"stream", "rename", s(4), "swarm: cards"}, `RENAMED from="s4: work" to="swarm: cards" members=100 `, 1},
-		{[]string{"stream", "order", "swarm: cards", s(9)}, `ORDERED streams=10 first="swarm: cards" `, 1},
+		{[]string{"stream", "rename", "--stream", s(4), "--name", "swarm: cards"}, `RENAMED from="s4: work" to="swarm: cards" members=100 `, 1},
+		{[]string{"stream", "order", "--stream", "swarm: cards," + s(9)}, `ORDERED streams=10 first="swarm: cards" `, 1},
 		// 1,002 rows: the rename registered "swarm: cards" through the one
 		// move and stream order registered s9, each creating its sentinel
 		// (#4318); the other fixture streams were written straight into the
@@ -105,10 +105,10 @@ func TestWSVerbRefusals(t *testing.T) {
 		code int
 		want string
 	}{
-		{[]string{"scope", "keep", "--redis", addr, "--streams", "nope|" + wstest.StreamName(0)}, 1, "REFUSED unknown stream nope"},
+		{[]string{"scope", "keep", "--redis", addr, "--stream", "nope," + wstest.StreamName(0)}, 1, "REFUSED unknown stream nope"},
 		{[]string{"scope", "unpark", "--redis", addr, "--stream", "nope"}, 1, "REFUSED unknown stream nope"},
-		{[]string{"stream", "rename", "--redis", addr, wstest.StreamName(0), wstest.StreamName(1)}, 1, "REFUSED stream s1: work exists"},
-		{[]string{"stream", "order", "--redis", addr, "nope"}, 1, "REFUSED unknown stream nope"},
+		{[]string{"stream", "rename", "--redis", addr, "--stream", wstest.StreamName(0), "--name", wstest.StreamName(1)}, 1, "REFUSED stream s1: work exists"},
+		{[]string{"stream", "order", "--redis", addr, "--stream", "nope"}, 1, "REFUSED unknown stream nope"},
 		{[]string{"scope", "park", "--redis", addr, "--stream", wstest.StreamName(1), "--ids", "t00000"}, 1, "REFUSED 1 of 1 ids are not in stream"},
 	} {
 		code, stdout, stderr := runSprint(tc.args...)
@@ -165,7 +165,7 @@ SHOW streams=2 cards=5 edges=5 ms=`
 	if code != 2 || !strings.Contains(stderr, "want --order: ws show --redis <addr> --order [--stream <s>]") {
 		t.Fatalf("no --order: exit %d %q", code, stderr)
 	}
-	code, _, stderr = runSprint("stream", "order", "--redis", addr, "--show", "ci")
+	code, _, stderr = runSprint("stream", "order", "--redis", addr, "--show", "--stream", "ci")
 	if code != 2 || !strings.Contains(stderr, "--show lists the streams; it ranks nothing") {
 		t.Fatalf("--show with names: exit %d %q", code, stderr)
 	}

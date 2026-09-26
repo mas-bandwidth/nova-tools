@@ -43,7 +43,7 @@ func TestCardCutParentEndToEnd(t *testing.T) {
 	if err := os.WriteFile(tsv, []byte(rows), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errOut := run("card", "cut", "--parent", "hier", "--from", tsv, "--no-github", "--actor", "rowan")
+	code, out, errOut := run("card", "cut", "--parent", "hier", "--from", tsv, "--no-github")
 	if code != 0 {
 		t.Fatalf("cut exit %d:\n%s%s", code, out, errOut)
 	}
@@ -75,7 +75,7 @@ func TestCardCutParentEndToEnd(t *testing.T) {
 	}
 	// A rerun of the same file is idempotent: every row to=already, the
 	// bind a no-op, exit 0, nothing pushed twice.
-	code, out, _ = run("card", "cut", "--parent", "hier", "--from", tsv, "--no-github", "--actor", "rowan")
+	code, out, _ = run("card", "cut", "--parent", "hier", "--from", tsv, "--no-github")
 	if code != 0 || strings.Count(out, " to=already ") != 3 || strings.Contains(out, "REFUSED") ||
 		!strings.Contains(out, "CARD CUT PLAN parent=hier children=2 stitch=hier-stitch parent_to=waiting depends=hier-stitch\n") {
 		t.Fatalf("rerun: exit %d:\n%s", code, out)
@@ -87,10 +87,10 @@ func TestCardCutParentEndToEnd(t *testing.T) {
 	// parent lists it, and the waiting stitch's edge grows to it (it is
 	// never pushed again, so the store's EXISTS never orphans a child).
 	more := filepath.Join(dir, "more.tsv")
-	if err := os.WriteFile(more, []byte("id\ttitle\tpaths\tdone-when\nthe-docs\tthe docs\tdocs/CLI.md\tdocumented\n"), 0o644); err != nil {
+	if err := os.WriteFile(more, []byte("id\ttitle\tpaths\tdone-when\tdepends-on\nthe-docs\tthe docs\tdocs/CLI.md\tdocumented\tnone\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ = run("card", "cut", "--parent", "hier", "--from", more, "--no-github", "--actor", "rowan")
+	code, out, _ = run("card", "cut", "--parent", "hier", "--from", more, "--no-github")
 	if code != 0 || !strings.Contains(out, "CARD CUT row=1 id=the-docs ref=- stream=autonomy to=waiting depends=none\n") ||
 		!strings.Contains(out, "CARD CUT row=stitch id=hier-stitch ref=- stream=autonomy to=already depends=the-docs,the-model,the-verb\n") ||
 		!strings.Contains(out, "CARD CUT PLAN parent=hier children=1 stitch=hier-stitch") {
@@ -115,13 +115,13 @@ func TestCardCutParentEndToEnd(t *testing.T) {
 	if code, out, _ := run("stream", "ls", "--tree"); !strings.Contains(out, "  plan hier stuck children=3 ") {
 		t.Fatalf("a failed child derives stuck (exit %d):\n%s", code, out)
 	}
-	if code, out, _ := run("card", "stitch", "--id", "hier"); code != 0 || !strings.Contains(out, "stuck: the-docs ended done/fail and the stitch waits on it; nova-sprint card stitch --id hier --drop the-docs drops it from the plan") {
+	if code, out, _ := run("card", "stitch", "--ids", "hier"); code != 0 || !strings.Contains(out, "stuck: the-docs ended done/fail and the stitch waits on it; nova-sprint card stitch --drop the-docs drops it from the plan") {
 		t.Fatalf("the stuck remedy (exit %d):\n%s", code, out)
 	}
 	if code, out, _ := run("card", "stitch", "--drop", "the-model"); code != 1 || !strings.Contains(out, `REFUSED card stitch drop=the-model why=task:the-model\x20is\x20waiting,\x20not\x20done:`) {
 		t.Fatalf("drop of a live child (exit %d):\n%s", code, out)
 	}
-	if code, out, _ := run("card", "stitch", "--drop", "the-docs", "--as", "rowan"); code != 0 || !strings.Contains(out, "STITCH DROP parent=hier child=the-docs children=2 state=waiting ms=") {
+	if code, out, _ := run("card", "stitch", "--drop", "the-docs"); code != 0 || !strings.Contains(out, "STITCH DROP parent=hier child=the-docs children=2 state=waiting ms=") {
 		t.Fatalf("drop (exit %d):\n%s", code, out)
 	}
 	if got := c.HGetAll(ctx, taskcard.Key("hier")).Val(); got["children"] != "the-model the-verb" {
@@ -148,13 +148,13 @@ func TestCardCutParentEndToEnd(t *testing.T) {
 	}
 	// card stitch prints the plan and the brief, by the parent or the stitch.
 	for _, id := range []string{"hier", "hier-stitch"} {
-		code, out, _ = run("card", "stitch", "--id", id)
+		code, out, _ = run("card", "stitch", "--ids", id)
 		if code != 0 || !strings.HasPrefix(out, "plan hier waiting children=2") || !strings.Contains(out, "\n"+taskcard.BriefMarker) ||
 			!strings.Contains(out, "\nPLAN id=hier state=waiting children=2 stitch=hier-stitch:waiting written=0 ms=") {
-			t.Fatalf("card stitch --id %s exit %d:\n%s", id, code, out)
+			t.Fatalf("card stitch --ids %s exit %d:\n%s", id, code, out)
 		}
 	}
-	if code, out, _ := run("card", "stitch", "--id", "the-model"); code != 1 || !strings.Contains(out, `REFUSED card stitch id=the-model why=task:the-model\x20is\x20not\x20a\x20plan remedy=`) {
+	if code, out, _ := run("card", "stitch", "--ids", "the-model"); code != 1 || !strings.Contains(out, `REFUSED card stitch id=the-model why=task:the-model\x20is\x20not\x20a\x20plan remedy=`) {
 		t.Fatalf("card stitch on a child: exit %d:\n%s", code, out)
 	}
 
@@ -195,7 +195,7 @@ func TestCardCutParentEndToEnd(t *testing.T) {
 	if _, err := taskcard.LandStream(ctx, c, stream, sha(2), "rowan", ""); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ = run("card", "stitch", "--id", "hier", "--write")
+	code, out, _ = run("card", "stitch", "--ids", "hier", "--write")
 	if code != 0 || !strings.Contains(out, "- the-model landed pr=nova-tools#71 head=000000000000 score=10/10") || !strings.Contains(out, "- the-verb landed pr=nova-tools#72 head=000000000000 score=9/10") || !strings.Contains(out, " written=1 ") {
 		t.Fatalf("card stitch --write exit %d:\n%s", code, out)
 	}
@@ -215,7 +215,7 @@ func TestCardCutParentEndToEnd(t *testing.T) {
 	}
 	// task land on the parent is the same door by hand: already landed, it
 	// stays (landed -> landed, nothing written).
-	if code, out, _ := run("task", "land", "--id", "hier", "--sha", sha(3), "--actor", "rowan"); code != 0 || !strings.Contains(out, "from=landed to=landed") {
+	if code, out, _ := run("task", "land", "--ids", "hier", "--sha", sha(3)); code != 0 || !strings.Contains(out, "from=landed to=landed") {
 		t.Fatalf("task land on the landed parent: exit %d %s", code, out)
 	}
 }
@@ -239,7 +239,7 @@ func TestCardCutParentGrowFilesNoSecondStitchIssue(t *testing.T) {
 	d.Bind = func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error) {
 		return taskcard.BindPlan(ctx, c, parent, children, stitch, by)
 	}
-	first := "id\ttitle\tpaths\tdone-when\nc1\tone\ta.go\tholds\nc2\ttwo\tb.go\tholds\n"
+	first := "id\ttitle\tpaths\tdone-when\tdepends-on\nc1\tone\ta.go\tholds\tnone\nc2\ttwo\tb.go\tholds\tnone\n"
 	code, out := runCutFrom(cutFromOpts{Text: []byte(first), Parent: "grow"}, d)
 	if code != 0 || len(forge.titles) != 3 || forge.titles[2] != "stitch: grow" {
 		t.Fatalf("first cut exit %d filed %v:\n%s", code, forge.titles, out)
@@ -251,7 +251,7 @@ func TestCardCutParentGrowFilesNoSecondStitchIssue(t *testing.T) {
 		t.Fatalf("rerun exit %d filed %v:\n%s", code, forge.titles, out)
 	}
 	// Growing: one issue for the new child, none for the stitch.
-	code, out = runCutFrom(cutFromOpts{Text: []byte("id\ttitle\tpaths\tdone-when\nc3\tthree\tc.go\tholds\n"), Parent: "grow"}, d)
+	code, out = runCutFrom(cutFromOpts{Text: []byte("id\ttitle\tpaths\tdone-when\tdepends-on\nc3\tthree\tc.go\tholds\tnone\n"), Parent: "grow"}, d)
 	if code != 0 || len(forge.titles) != 4 || forge.titles[3] != "three" ||
 		!strings.Contains(out, "CARD CUT row=stitch id=grow-stitch ref=mas-bandwidth/nova-tools#5002 stream=autonomy to=already depends=c3,c1,c2\n") {
 		t.Fatalf("grow exit %d filed %v:\n%s", code, forge.titles, out)

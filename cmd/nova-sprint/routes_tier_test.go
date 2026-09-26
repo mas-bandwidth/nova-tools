@@ -90,7 +90,7 @@ func TestRoutesTierLabelPicksTheSpread(t *testing.T) {
 		seen := map[string]bool{}
 		for i := 0; i < 40*len(want); i++ {
 			label := fmt.Sprintf("spread-%s-%d", tier, i)
-			code, out, errOut := runSprint("routes", "--tier", tier, "--label", label)
+			code, out, errOut := runSprint("routes", "--tier", tier, "--ids", label)
 			if code != 0 {
 				t.Fatalf("%s: exit %d stderr %q", label, code, errOut)
 			}
@@ -114,10 +114,10 @@ func TestRoutesTierLabelPicksTheSpread(t *testing.T) {
 		t.Fatalf("--spread: exit %d\n%s", code, out)
 	}
 	for _, args := range [][]string{
-		{"routes", "--tier", "turbo", "--label", "x"},
-		{"routes", "--label", "x"},
+		{"routes", "--tier", "turbo", "--ids", "x"},
+		{"routes", "--ids", "x"},
 		{"routes", "--spread", "--rung", "pro"},
-		{"routes", "--tier", "pro", "--label", "x", "--spread"},
+		{"routes", "--tier", "pro", "--ids", "x", "--spread"},
 	} {
 		if code, out, _ := runSprint(args...); code != 2 || out != "" {
 			t.Fatalf("%v: exit %d stdout %q, want exit 2 and nothing printed", args, code, out)

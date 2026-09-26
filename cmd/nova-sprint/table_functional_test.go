@@ -26,7 +26,7 @@ func TestTableWritesNoFile(t *testing.T) {
 	} {
 		args := append([]string{"table", "--redis", "127.0.0.1:1", "--once"}, flagArgs...)
 		code, stdout, stderr := runSprint(args...)
-		want := "flag provided but not defined: " + strings.Replace(flagArgs[0], "--", "-", 1)
+		want := flagArgs[0] + " is not a flag of nova-sprint table"
 		if code != 2 || stdout != "" || !strings.Contains(stderr, want) {
 			t.Errorf("table %s: exit %d stdout %q stderr %q; want exit 2 and %q", flagArgs[0], code, stdout, stderr, want)
 		}

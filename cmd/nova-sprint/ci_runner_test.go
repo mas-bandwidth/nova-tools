@@ -7,7 +7,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"os"
 	"strings"
 	"testing"
 )
@@ -43,12 +42,12 @@ func TestCIGitHubFromRunnerRefusesWithOneLine(t *testing.T) {
 		{"bad job", append(without("--job"), "--job", "lint"), "--job wants <name>=<result>"},
 		{"positional", append(append([]string{}, full...), "extra"), "takes flags only, nothing positional"},
 	}
-	if os.Getenv("NOVA_REDIS_ADDR") == "" {
+	if redisDefault() == "" { // the one resolver finds no address in this environment
 		cases = append(cases, struct {
 			name string
 			args []string
 			want string
-		}{"no redis", without("--redis"), "needs --redis <addr> or NOVA_REDIS_ADDR"})
+		}{"no redis", without("--redis"), "needs --redis <addr> or NOVA_SPRINT_REDIS"})
 	}
 	for _, c := range cases {
 		var out, errOut bytes.Buffer

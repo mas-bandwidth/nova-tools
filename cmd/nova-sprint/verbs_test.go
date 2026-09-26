@@ -13,7 +13,7 @@ func TestVerbsRegistered(t *testing.T) {
 	t.Parallel()
 
 	code, stdout, stderr := runSprint("verbs", "unused", "--bogus")
-	if code != 2 || stdout != "" || !strings.HasSuffix(stderr, "; run: nova-sprint help\n") {
+	if code != 2 || stdout != "" || !strings.Contains(stderr, "; usage: nova-sprint verbs unused ") {
 		t.Fatalf("verbs unused --bogus: exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
 	code, stdout, stderr = runSprint("help")

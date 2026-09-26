@@ -271,15 +271,15 @@ func TestMainFlagsAndExitCodes(t *testing.T) {
 	mr, _, fx := seed(t)
 	work := workRepo(t)
 	var stdout, stderr bytes.Buffer
-	code := fold.Main(context.Background(), []string{fx.Sprint, "--store", mr.Addr(), "--work", work, "--as", "fold-test"}, &stdout, &stderr)
+	code := fold.Main(context.Background(), []string{"--sprint", fx.Sprint, "--redis", mr.Addr(), "--work", work, "--as", "fold-test"}, &stdout, &stderr)
 	// Folded, with no verbs flags: the verbs step did not run (#3160), exit 5.
 	if code != 5 || !strings.Contains(stdout.String(), "FOLD RECORDED sprint="+fx.Sprint) {
 		t.Fatalf("exit %d\nstdout %s\nstderr %s", code, stdout.String(), stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := fold.Main(context.Background(), []string{"--store", mr.Addr()}, &stdout, &stderr); code != 2 ||
-		!strings.Contains(stderr.String(), "run: nova-sprint help") {
+	if code := fold.Main(context.Background(), []string{"--redis", mr.Addr()}, &stdout, &stderr); code != 2 ||
+		!strings.Contains(stderr.String(), "; usage: nova-sprint fold ") {
 		t.Fatalf("no sprint name: exit %d stderr %q", code, stderr.String())
 	}
 }
@@ -666,7 +666,7 @@ func TestMainJevEvalExitCodes(t *testing.T) {
 		mr, client, fx := seed(t)
 		client.HSet(context.Background(), "jev:prompt", "sha", "p-current")
 		var stdout, stderr bytes.Buffer
-		code := fold.Main(context.Background(), []string{fx.Sprint, "--store", mr.Addr(), "--work", workRepo(t),
+		code := fold.Main(context.Background(), []string{"--sprint", fx.Sprint, "--redis", mr.Addr(), "--work", workRepo(t),
 			"--calib", set, "--prompt-sha", "p-current", "--candidate", tc.candidate, "--jev-eval", helper}, &stdout, &stderr)
 		if code != tc.code {
 			t.Fatalf("candidate %s: exit %d, want %d\nstdout %s\nstderr %s", tc.candidate, code, tc.code, stdout.String(), stderr.String())
@@ -717,7 +717,7 @@ func TestFoldVerbs(t *testing.T) {
 	ctx := context.Background()
 	main := func(mr *miniredis.Miniredis, fx fixture, work string, extra ...string) (int, string, string) {
 		var stdout, stderr bytes.Buffer
-		args := append([]string{fx.Sprint, "--store", mr.Addr(), "--work", work, "--as", "fold-test"}, extra...)
+		args := append([]string{"--sprint", fx.Sprint, "--redis", mr.Addr(), "--work", work, "--as", "fold-test"}, extra...)
 		code := fold.Main(ctx, args, &stdout, &stderr)
 		return code, stdout.String(), stderr.String()
 	}
@@ -745,10 +745,10 @@ func TestFoldVerbs(t *testing.T) {
 		mr, client, fx := seed(t)
 		tools, repo, receipts, _ := verbsFixture(t, true)
 		code, out, errOut := main(mr, fx, workRepo(t), "--tools", tools, "--repo", repo, "--receipts", receipts)
-		if code != 5 || !strings.Contains(out, "FOLD VERBS sprint="+fx.Sprint+" nova-sprint verbs: inventory tool=nova-fix") {
+		if code != 5 || !strings.Contains(out, "FOLD VERBS sprint="+fx.Sprint+" nova-sprint verbs unused: inventory tool=nova-fix") {
 			t.Fatalf("exit %d, want 5\nstdout %s\nstderr %s", code, out, errOut)
 		}
-		if !strings.Contains(errOut, "run: nova-sprint verbs unused --store "+mr.Addr()+" --tools "+tools) {
+		if !strings.Contains(errOut, "run: nova-sprint verbs unused --redis "+mr.Addr()+" --tools "+tools) {
 			t.Fatalf("stderr names no hand command: %s", errOut)
 		}
 		if st := client.HGet(ctx, "s:"+fx.Sprint, "status").Val(); st != "folded" {
@@ -767,7 +767,7 @@ func TestFoldVerbs(t *testing.T) {
 		tools, _, _, _ := verbsFixture(t, false)
 		work := workRepo(t)
 		code, out, errOut := main(mr, fx, work, "--tools", tools)
-		if code != 2 || !strings.Contains(errOut, "run: nova-sprint help") {
+		if code != 2 || !strings.Contains(errOut, "; usage: nova-sprint fold ") {
 			t.Fatalf("exit %d, want 2\nstdout %s\nstderr %s", code, out, errOut)
 		}
 		if st := client.HGet(ctx, "s:"+fx.Sprint, "status").Val(); st != "closed" {

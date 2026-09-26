@@ -52,7 +52,7 @@ func control35(t *testing.T) *miniredis.Miniredis {
 
 func why(t *testing.T, mr *miniredis.Miniredis) string {
 	t.Helper()
-	code, stdout, stderr := runSprint("why", "nova-tools#3200", "--redis", mr.Addr(), "--sprint", c35Sprint, "--now", strconv.FormatInt(c35Now, 10))
+	code, stdout, stderr := runSprint("why", "--ref", "nova-tools#3200", "--redis", mr.Addr(), "--sprint", c35Sprint, "--now", strconv.FormatInt(c35Now, 10))
 	if code != 0 {
 		t.Fatalf("why exit %d, stderr %s", code, stderr)
 	}
@@ -205,14 +205,14 @@ func TestWhyRefusesAnUnknownPR(t *testing.T) {
 	t.Parallel()
 
 	mr := control35(t)
-	code, stdout, _ := runSprint("why", "nova-tools#9999", "--redis", mr.Addr(), "--sprint", c35Sprint)
+	code, stdout, _ := runSprint("why", "--ref", "nova-tools#9999", "--redis", mr.Addr(), "--sprint", c35Sprint)
 	if code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
 	if !strings.Contains(stdout, "MISSING s:control-35:prunit:nova-tools:9999") {
 		t.Fatalf("stdout %q, want the missing key named", stdout)
 	}
-	if code, _, _ := runSprint("why", "3200", "--redis", mr.Addr(), "--sprint", c35Sprint); code != 2 {
+	if code, _, _ := runSprint("why", "--ids", "3200", "--redis", mr.Addr(), "--sprint", c35Sprint); code != 2 {
 		t.Fatalf("a PR without a repo exit %d, want 2", code)
 	}
 }

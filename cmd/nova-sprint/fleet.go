@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -23,14 +22,8 @@ func init() {
 }
 
 func fleetAddr(addr string) string {
-	if addr != "" {
-		return addr
-	}
-	if v := os.Getenv("NOVA_SPRINT_REDIS"); v != "" {
-		return v
-	}
-	if v := os.Getenv("NOVA_REDIS_ADDR"); v != "" {
-		return v
+	if a := redisOr(addr); a != "" {
+		return a
 	}
 	return "127.0.0.1:6379"
 }
@@ -89,9 +82,9 @@ func runFleet(ctx context.Context, args []string, out, errOut io.Writer) int {
 
 func runFleetState(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("fleet state")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	bench := fs.String("bench", "", "")
-	upOnly := fs.Bool("up", false, "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	bench := fs.String("bench", "", "the bench")
+	upOnly := fs.Bool("up", false, "only the benches that are up")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fleet state", err.Error())
 	}
@@ -127,8 +120,8 @@ func runFleetState(ctx context.Context, args []string, out, errOut io.Writer) in
 
 func runFleetIsUp(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("fleet is-up")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	bench := fs.String("bench", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	bench := fs.String("bench", "", "the bench")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fleet is-up", err.Error())
 	}
@@ -172,13 +165,14 @@ func runFleetIsUp(ctx context.Context, args []string, out, errOut io.Writer) int
 
 func runFleetHold(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("fleet hold")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	bench := fs.String("bench", "", "")
-	why := fs.String("why", "", "")
-	by := fs.String("by", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	bench := fs.String("bench", "", "the bench")
+	why := fs.String("why", "", verbflag.HelpWhy)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fleet hold", err.Error())
 	}
+	actor := seatActor()
+	by := &actor
 	if fs.NArg() != 0 {
 		return refuse(errOut, "fleet hold", "takes no positional arguments")
 	}
@@ -202,10 +196,10 @@ func runFleetHold(ctx context.Context, args []string, out, errOut io.Writer) int
 
 func runFleetConfig(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("fleet config")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	downAfter := fs.Int("down-after", 0, "")
-	upAfter := fs.Int("up-after", 0, "")
-	sshFailAfter := fs.Int("ssh-fail-after", 0, "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	downAfter := fs.Int("down-after", 0, "beats missed before a bench reads down")
+	upAfter := fs.Int("up-after", 0, "beats seen before a bench reads up")
+	sshFailAfter := fs.Int("ssh-fail-after", 0, "ssh failures before a bench reads unreachable")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fleet config", err.Error())
 	}

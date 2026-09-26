@@ -8,9 +8,13 @@
 // refusal is one line with its remedy and the later steps run where they
 // can; the verify always runs.
 //
-//	fleet release <sha>|dev [--redis <addr>] [--machines <file>] [--benches <a,b,...>]
+//	fleet release --sha <sha>|dev [--redis <addr>] [--machines <file>] [--bench <a,b,...>]
 //	                        [--play-dir <dir>] [--play tools.yml] [--wait 60s]
 //	                        [--admin-password-env NAME]
+//
+// One grammar (#4352 A): the commit is --sha, the benches to roll are
+// --bench, a comma list; `fleet release --bench <b>` with no --sha is the
+// older verb that releases a held bench.
 //
 // The admin password is the variable --admin-password-env names (default
 // NS_ADMIN), else the seat's sealed NOVA_REDIS_ADMIN_PASSWORD (--seat <name>
@@ -146,42 +150,39 @@ func adminPassword(env string, deps releaseDeps) (pw, seat, why string) {
 
 func runFleetReleaseWith(ctx context.Context, args []string, out, errOut io.Writer, deps releaseDeps) int {
 	fs := verbflag.New("fleet release")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	bench := fs.String("bench", "", "")
-	machines := fs.String("machines", "", "")
-	benches := fs.String("benches", "", "")
-	playDir := fs.String("play-dir", "", "")
-	play := fs.String("play", fleetbuild.DefaultPlay, "")
-	wait := fs.Duration("wait", fleetbuild.DefaultVerifyWait, "")
-	adminEnv := fs.String("admin-password-env", fleetbuild.DefaultAdminEnv, "")
-	studioOnly := fs.Bool("studio-only", false, "")
-	benchesOnly := fs.Bool("benches-only", false, "")
-	pos, err := parseInterspersed(fs, args)
-	if err != nil {
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sha := fs.String("sha", "", "the landed dev commit to roll, 8-40 hex, or dev for dev's tip")
+	bench := fs.String("bench", "", "the benches to roll, comma-separated (default every bench); without --sha, the one held bench to release")
+	machines := fs.String("machines", "", "the machines registry file (default NOVA_FLEET_MACHINES)")
+	playDir := fs.String("play-dir", "", "the ansible play directory (default NOVA_FLEET_PLAY_DIR, else ~/"+fleetbuild.DefaultPlayDirRel+")")
+	play := fs.String("play", fleetbuild.DefaultPlay, "the play file in the play directory")
+	wait := fs.Duration("wait", fleetbuild.DefaultVerifyWait, "how long the verify waits for every bench's beat to name the release")
+	adminEnv := fs.String("admin-password-env", fleetbuild.DefaultAdminEnv, "the environment variable holding the Redis admin password fn deploy uses")
+	studioOnly := fs.Bool("studio-only", false, "retired: nova-sprint self update does this machine alone")
+	benchesOnly := fs.Bool("benches-only", false, "retired: fleet release --sha is the whole roll and a rerun keeps what is done")
+	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fleet release", err.Error())
 	}
+	if fs.NArg() > 0 {
+		return refuse(errOut, "fleet release", "takes flags, not positional arguments: the commit is --sha <sha>|dev")
+	}
 	if *studioOnly {
-		return refuse(errOut, "fleet release", "--studio-only is retired: nova-sprint self update does this machine alone; fleet release <sha> is the whole roll")
+		return refuse(errOut, "fleet release", "--studio-only is retired: nova-sprint self update does this machine alone; fleet release --sha <sha> is the whole roll")
 	}
 	if *benchesOnly {
-		return refuse(errOut, "fleet release", "--benches-only is retired: fleet release <sha> is the whole roll, and a rerun keeps what is done (the play skips a bench on the release)")
+		return refuse(errOut, "fleet release", "--benches-only is retired: fleet release --sha <sha> is the whole roll, and a rerun keeps what is done (the play skips a bench on the release)")
 	}
-	if len(pos) == 0 {
+	if *sha == "" {
 		return runFleetReleaseHeld(ctx, fs, *redisAddr, *bench, out, errOut, deps)
 	}
-	if len(pos) != 1 {
-		return refuse(errOut, "fleet release", "wants one <sha> (a landed dev commit) or dev (dev's tip), or --bench <b> to release a held bench")
-	}
-	if *bench != "" {
-		return refuse(errOut, "fleet release <sha>", "does not take --bench; --benches <a,b,...> names the benches to roll")
-	}
+	benches := bench
 	if *wait < 0 {
-		return refuse(errOut, "fleet release <sha>", "--wait must be >= 0")
+		return refuse(errOut, "fleet release --sha", "--wait must be >= 0")
 	}
 	if strings.ContainsAny(*play, `/\`) || !strings.HasSuffix(*play, ".yml") {
-		return refuse(errOut, "fleet release <sha>", "--play names a play file in the play directory, like tools.yml")
+		return refuse(errOut, "fleet release --sha", "--play names a play file in the play directory, like tools.yml")
 	}
-	if err := fleetbuild.CheckArg(pos[0]); err != nil {
+	if err := fleetbuild.CheckArg(*sha); err != nil {
 		return releaseRefused(errOut, err)
 	}
 	home, err := deps.Home()
@@ -206,12 +207,7 @@ func runFleetReleaseWith(ctx context.Context, args []string, out, errOut io.Writ
 	if dir == "" {
 		dir = filepath.Join(home, filepath.FromSlash(fleetbuild.DefaultPlayDirRel))
 	}
-	var only []string
-	for _, b := range strings.Split(*benches, ",") {
-		if b = strings.TrimSpace(b); b != "" {
-			only = append(only, b)
-		}
-	}
+	only := verbflag.List(*benches)
 	st, err := deps.Open(ctx, *redisAddr)
 	if err != nil {
 		return unreachable(errOut, "fleet release", err.Error())
@@ -222,7 +218,7 @@ func runFleetReleaseWith(ctx context.Context, args []string, out, errOut io.Writ
 		Redis: fleetAddr(*redisAddr), AdminEnv: *adminEnv, AdminPassword: pw, AdminWhy: why, Seat: seat,
 		BuildCmd: fleetBuildCmd(), Machines: ms, Benches: only, PlayDir: dir, Play: *play, Registry: registry,
 		Wait: *wait, Poll: fleetbuild.DefaultVerifyPoll, Sleep: deps.Sleep, Out: out}
-	res, err := rel.Run(ctx, pos[0])
+	res, err := rel.Run(ctx, *sha)
 	if errors.Is(err, fleetbuild.ErrRefused) {
 		return releaseRefused(errOut, err)
 	}
@@ -238,7 +234,7 @@ func runFleetReleaseWith(ctx context.Context, args []string, out, errOut io.Writ
 
 // runFleetReleaseHeld is `fleet release --bench <b>`: the held bench is
 // released; every other flag belongs to the sha form.
-func runFleetReleaseHeld(ctx context.Context, fs *flag.FlagSet, redisAddr, bench string, out, errOut io.Writer, deps releaseDeps) int {
+func runFleetReleaseHeld(ctx context.Context, fs *verbflag.Set, redisAddr, bench string, out, errOut io.Writer, deps releaseDeps) int {
 	var other []string
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name != "redis" && f.Name != "bench" {
@@ -246,10 +242,10 @@ func runFleetReleaseHeld(ctx context.Context, fs *flag.FlagSet, redisAddr, bench
 		}
 	})
 	if len(other) > 0 {
-		return refuse(errOut, "fleet release", "wants a <sha> with "+strings.Join(other, ", ")+"; --bench <b> alone releases a held bench")
+		return refuse(errOut, "fleet release", "wants --sha <sha> with "+strings.Join(other, ", ")+"; --bench <b> alone releases a held bench")
 	}
 	if bench == "" {
-		return refuse(errOut, "fleet release", "wants a <sha> (the deploy) or --bench <b> (release a held bench)")
+		return refuse(errOut, "fleet release", "wants --sha <sha>|dev (the roll) or --bench <b> (release a held bench)")
 	}
 	st, err := deps.Open(ctx, redisAddr)
 	if err != nil {

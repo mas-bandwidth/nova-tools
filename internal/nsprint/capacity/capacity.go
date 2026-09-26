@@ -152,7 +152,7 @@ func Evaluate(ctx context.Context, r Reader, machine, kind, name string, slots i
 		return Plan{}, err
 	}
 	if !ok {
-		return Plan{}, fmt.Errorf("capacity: machine %s has no ceiling; run capacity machine %s <n>", machine, machine)
+		return Plan{}, fmt.Errorf("capacity: machine %s has no ceiling; run: nova-sprint capacity machine --machine %s --slots <n>", machine, machine)
 	}
 	sum := 0
 	counted := false

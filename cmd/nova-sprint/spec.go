@@ -1,6 +1,6 @@
 // The spec verb (nova-tools#3370, part of #3364): the specs table in Redis.
 //
-//	nova-sprint spec mark <repo>#<n> --rev <k> --who <friend> --score <s> [--stream <name>] [--sprint <S>] [--redis <addr>]
+//	nova-sprint spec mark --ref <repo>#<n> --rev <k> --as <friend> --score <s> [--stream <name>] [--sprint <S>] [--redis <addr>]
 //	nova-sprint spec list [--stream <name>] [--redis <addr>]
 //
 // mark stores the line `SPEC who=<friend> rev=<k> score=<s>` on
@@ -16,8 +16,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
-	"os"
 	"strconv"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
@@ -33,34 +33,40 @@ func init() {
 	})
 }
 
-const specUsage = "want mark <repo>#<n> --rev <k> --who <friend> --score <s> [--stream <name>] [--sprint <S>] [--redis <addr>] or list [--stream <name>] [--redis <addr>]"
-
 func runSpec(ctx context.Context, args []string, out, errOut io.Writer) int {
-	if len(args) == 0 || (args[0] != "mark" && args[0] != "list") {
-		return refuse(errOut, "spec", specUsage)
+	if len(args) == 0 {
+		return refuse(errOut, "spec", "wants a subverb")
+	}
+	if args[0] != "mark" && args[0] != "list" {
+		return refuse(errOut, "spec", "unknown subverb "+args[0])
 	}
 	sub := args[0]
-	pos, flags := holdSplitArgs(args[1:], map[string]bool{"rev": true, "who": true, "score": true, "stream": true, "sprint": true, "redis": true})
 	fs := taskFlags("spec " + sub)
-	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
-	rev := fs.Int("rev", 0, "")
-	who := fs.String("who", "", "")
-	score := fs.Int("score", -1, "")
-	stream := fs.String("stream", "", "")
-	sprint := fs.String("sprint", "", "")
-	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 {
-		return refuse(errOut, "spec "+sub, specUsage)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	ref := fs.String("ref", "", "the spec issue, <repo>#<n> (mark)")
+	rev := fs.Int("rev", 0, "the spec revision the score is of (mark)")
+	who := fs.String("as", "", verbflag.HelpAs)
+	score := fs.Int("score", -1, "the score, 0-10 (mark)")
+	stream := fs.String("stream", "", verbflag.HelpStream)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	if err := fs.Parse(args[1:]); err != nil {
+		return refuse(errOut, "spec "+sub, err.Error())
 	}
-	if *redisAddr == "" {
-		*redisAddr = os.Getenv("NOVA_REDIS_ADDR")
+	if fs.NArg() != 0 {
+		return refuse(errOut, "spec "+sub, "takes flags, not positional arguments")
 	}
+	var pos []string
+	if *ref != "" {
+		pos = []string{*ref}
+	}
+	*redisAddr = redisOr(*redisAddr) // the one resolver (seat.go)
 	if *redisAddr == "" {
 		return refuse(errOut, "spec "+sub, "needs --redis <addr> (or NOVA_SPRINT_REDIS)")
 	}
 	var m spec.Mark
 	if sub == "mark" {
 		if len(pos) != 1 {
-			return refuse(errOut, "spec mark", specUsage)
+			return refuse(errOut, "spec mark", "wants --ref <repo>#<n>")
 		}
 		repo, n, err := parseRepoPR(pos[0])
 		if err != nil {
@@ -68,7 +74,7 @@ func runSpec(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 		_, name, err := prkey.Split(repo)
 		if err != nil || *rev < 1 || *who == "" || *score < 0 || *score > 10 {
-			return refuse(errOut, "spec mark", specUsage)
+			return refuse(errOut, "spec mark", "wants --ref <repo>#<n>")
 		}
 		m = spec.Mark{Repo: name, N: strconv.Itoa(n), Who: *who, Rev: *rev, Score: *score, Stream: *stream, Sprint: *sprint, Actor: *who}
 		m.Line = fmt.Sprintf("SPEC who=%s rev=%d score=%d", m.Who, m.Rev, m.Score)

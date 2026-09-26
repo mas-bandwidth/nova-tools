@@ -1,0 +1,598 @@
+# The one grammar's allowlist (nova-tools#4352 A; docs/STYLE-CLI.md; the class
+# test is internal/ci/clistyle_class_test.go). One row per finding the tools
+# other than nova-sprint still carry today, tool<TAB>rule<TAB>verb<TAB>flag.
+# The list only shrinks: an unlisted finding is red, and a row whose finding
+# has left is stale and also red. nova-sprint never has a row here. Each
+# tool comes over one card at a time (remove its rows as it does).
+nova-board	empty-help	cmdAdd	as
+nova-board	empty-help	cmdAdd	by
+nova-board	empty-help	cmdAdd	default
+nova-board	empty-help	cmdAdd	evidence
+nova-board	empty-help	cmdAdd	id
+nova-board	empty-help	cmdAdd	leg
+nova-board	empty-help	cmdAdd	owner
+nova-board	empty-help	cmdAdd	text
+nova-board	empty-help	cmdAdd	thing
+nova-board	empty-help	cmdCheck	all
+nova-board	empty-help	cmdCheck	max
+nova-board	empty-help	cmdCheck	words
+nova-board	empty-help	cmdClose	anyway
+nova-board	empty-help	cmdClose	as
+nova-board	empty-help	cmdClose	card
+nova-board	empty-help	cmdClose	how
+nova-board	empty-help	cmdClose	landed
+nova-board	empty-help	cmdClose	probed
+nova-board	empty-help	cmdClose	stale
+nova-board	empty-help	cmdControl	anyway
+nova-board	empty-help	cmdControl	as
+nova-board	empty-help	cmdControl	card
+nova-board	empty-help	cmdControl	kind
+nova-board	empty-help	cmdControl	reason
+nova-board	empty-help	cmdControl	stale
+nova-board	empty-help	cmdList	list
+nova-board	empty-help	cmdList	max
+nova-board	empty-help	cmdList	open
+nova-board	empty-help	cmdList	owner
+nova-board	empty-help	cmdList	stale
+nova-board	empty-help	cmdQuickstart	stale
+nova-board	empty-help	cmdTake	anyway
+nova-board	empty-help	cmdTake	as
+nova-board	empty-help	cmdTake	card
+nova-board	empty-help	cmdTake	stale
+nova-board	empty-help	newFlags	dir
+nova-board	empty-help	newFlags	gh-timeout
+nova-board	empty-help	newFlags	issue
+nova-board	retired	cmdAdd	by (spelled --as)
+nova-board	retired	cmdAdd	id (spelled --ids)
+nova-board	retired	cmdControl	reason (spelled --why)
+nova-board	vocabulary	cmdAdd	as (help is verbflag.HelpAs)
+nova-board	vocabulary	cmdClose	as (help is verbflag.HelpAs)
+nova-board	vocabulary	cmdControl	as (help is verbflag.HelpAs)
+nova-board	vocabulary	cmdTake	as (help is verbflag.HelpAs)
+nova-bus	vocabulary	cmdCheck	as (help is verbflag.HelpAs)
+nova-bus	vocabulary	cmdCheck	since (help is verbflag.HelpSince)
+nova-bus	vocabulary	cmdClose	as (help is verbflag.HelpAs)
+nova-bus	vocabulary	cmdClose	dry-run (help is verbflag.HelpDryRun)
+nova-bus	vocabulary	cmdDraft	as (help is verbflag.HelpAs)
+nova-bus	vocabulary	cmdDraft	to (help is verbflag.HelpTo)
+nova-bus	vocabulary	cmdInbox	as (help is verbflag.HelpAs)
+nova-bus	vocabulary	cmdPrepare	as (help is verbflag.HelpAs)
+nova-bus	vocabulary	cmdReceipt	as (help is verbflag.HelpAs)
+nova-bus	vocabulary	cmdReply	as (help is verbflag.HelpAs)
+nova-bus	vocabulary	cmdReply	dry-run (help is verbflag.HelpDryRun)
+nova-bus	vocabulary	cmdSend	as (help is verbflag.HelpAs)
+nova-bus	vocabulary	cmdSend	dry-run (help is verbflag.HelpDryRun)
+nova-bus	vocabulary	cmdWait	as (help is verbflag.HelpAs)
+nova-cairn	retired	append	store (spelled --redis)
+nova-cairn	retired	index	store (spelled --redis)
+nova-cairn	retired	open	store (spelled --redis)
+nova-cairn	retired	receipt	store (spelled --redis)
+nova-check	empty-help	hygiene	base
+nova-check	empty-help	hygiene	head
+nova-check	empty-help	hygiene	identity
+nova-check	empty-help	hygiene	kind
+nova-check	empty-help	hygiene	max
+nova-check	empty-help	hygiene	paths
+nova-check	empty-help	hygiene	repo
+nova-check	empty-help	hygiene	timeout
+nova-check	retired	convergence	by (spelled --as)
+nova-check	retired	dogfood record	by (spelled --as)
+nova-check	vocabulary	addDogfoodReadFlags	repo (help is verbflag.HelpRepo)
+nova-check	vocabulary	convergence	json (help is verbflag.HelpJSON)
+nova-check	vocabulary	convergence	repo (help is verbflag.HelpRepo)
+nova-check	vocabulary	convergence	since (help is verbflag.HelpSince)
+nova-check	vocabulary	hygiene	repo (help is verbflag.HelpRepo)
+nova-ci	positional	new-rule	cmdNewRule
+nova-ci	positional	new-verb	cmdNewVerb
+nova-decide	alias	nova-decide review	store-password-env (an alias of --password-env)
+nova-decide	alias	nova-decide review	store-user (an alias of --user)
+nova-decide	alias	nova-decide route	store-password-env (an alias of --password-env)
+nova-decide	alias	nova-decide route	store-user (an alias of --user)
+nova-decide	retired	nova-decide review	store (spelled --redis)
+nova-decide	retired	nova-decide route	store (spelled --redis)
+nova-decide	retired	nova-decide tune	label (spelled --ids)
+nova-decide	vocabulary	nova-decide review	dry-run (help is verbflag.HelpDryRun)
+nova-decide	vocabulary	nova-decide review	pr (help is verbflag.HelpPR)
+nova-decide	vocabulary	nova-decide review	repo (help is verbflag.HelpRepo)
+nova-decide	vocabulary	nova-decide review	stream (help is verbflag.HelpStream)
+nova-fuse	positional	parseBoxWith	parseBoxWith
+nova-memory	positional	check	cmdCheck
+nova-memory	positional	eval	cmdEval
+nova-memory	positional	view	cmdView
+nova-merge	empty-help	cmdBatch	accept-control
+nova-merge	empty-help	cmdBatch	base
+nova-merge	empty-help	cmdBatch	check-name
+nova-merge	empty-help	cmdBatch	gomaxprocs
+nova-merge	empty-help	cmdBatch	lane
+nova-merge	empty-help	cmdBatch	name
+nova-merge	empty-help	cmdBatch	no-require-checks
+nova-merge	empty-help	cmdBatch	no-require-holds
+nova-merge	empty-help	cmdBatch	pr
+nova-merge	empty-help	cmdBatch	reason
+nova-merge	empty-help	cmdBatch	receipt-file
+nova-merge	empty-help	cmdBatch	reference
+nova-merge	empty-help	cmdBatch	repo
+nova-merge	empty-help	cmdBatch	require-lisp
+nova-merge	empty-help	cmdBatch	reviewers
+nova-merge	empty-help	cmdBatch	root
+nova-merge	empty-help	cmdBatch	sibling
+nova-merge	empty-help	cmdBatch	timeout
+nova-merge	empty-help	cmdBatch	untyped-comments
+nova-merge	empty-help	cmdClassify	base-url
+nova-merge	empty-help	cmdClassify	key-env
+nova-merge	empty-help	cmdClassify	run
+nova-merge	empty-help	cmdFold	branches
+nova-merge	empty-help	cmdFold	close-folded
+nova-merge	empty-help	cmdFold	onto
+nova-merge	empty-help	cmdFold	out
+nova-merge	empty-help	cmdFold	pr
+nova-merge	empty-help	cmdGate	base-sha
+nova-merge	empty-help	cmdGate	branch
+nova-merge	empty-help	cmdGate	head
+nova-merge	empty-help	cmdGate	merge
+nova-merge	empty-help	cmdGate	pr
+nova-merge	empty-help	cmdGate	summary
+nova-merge	empty-help	cmdGate	verdict
+nova-merge	empty-help	cmdRead	branch
+nova-merge	empty-help	cmdRead	head
+nova-merge	empty-help	cmdRead	note
+nova-merge	empty-help	cmdRead	pr
+nova-merge	empty-help	cmdRead	redis
+nova-merge	empty-help	cmdRead	releases
+nova-merge	empty-help	cmdRead	scope
+nova-merge	empty-help	cmdRead	verdict
+nova-merge	empty-help	cmdRead	who
+nova-merge	empty-help	gateBench	bench
+nova-merge	empty-help	gateBench	machines
+nova-merge	empty-help	laneSet	lane
+nova-merge	empty-help	laneSet	max
+nova-merge	empty-help	laneSet	timeout
+nova-merge	retired	cmdBatch	reason (spelled --why)
+nova-merge	retired	cmdRead	scope (spelled --stream)
+nova-merge	retired	cmdRead	who (spelled --as)
+nova-merge	vocabulary	cmdBatch	pr (help is verbflag.HelpPR)
+nova-merge	vocabulary	cmdBatch	repo (help is verbflag.HelpRepo)
+nova-merge	vocabulary	cmdFold	pr (help is verbflag.HelpPR)
+nova-merge	vocabulary	cmdGate	pr (help is verbflag.HelpPR)
+nova-merge	vocabulary	cmdRead	pr (help is verbflag.HelpPR)
+nova-merge	vocabulary	cmdRead	redis (help is verbflag.HelpRedis)
+nova-play	positional	view	cmdView
+nova-play	retired	reply	id (spelled --ids)
+nova-post	positional	nova-post draft	runDraft
+nova-post	positional	nova-post hook	runHook
+nova-post	positional	nova-post issue	runIssue
+nova-post	positional	nova-post send	runSend
+nova-post	positional	nova-post show	runShow
+nova-post	retired	nova-post hook	addr (spelled --redis)
+nova-post	vocabulary	nova-post hook	redis (help is verbflag.HelpRedis)
+nova-post	vocabulary	nova-post issue	repo (help is verbflag.HelpRepo)
+nova-redis	retired	recall	addr (spelled --redis)
+nova-redis	retired	spill	addr (spelled --redis)
+nova-review	empty-help	dedupe	branch
+nova-review	empty-help	dedupe	head
+nova-review	empty-help	dedupe	lane
+nova-review	empty-help	dedupe	max
+nova-review	empty-help	dedupe	pr
+nova-review	empty-help	guard	head
+nova-review	empty-help	guard	max
+nova-review	empty-help	guard	repo
+nova-review	empty-help	guard	tests
+nova-review	empty-help	guard	timeout
+nova-review	empty-help	mutate	base
+nova-review	empty-help	mutate	head
+nova-review	empty-help	mutate	max
+nova-review	empty-help	mutate	repo
+nova-review	empty-help	mutate	seed
+nova-review	empty-help	mutate	test
+nova-review	empty-help	mutate	tests
+nova-review	empty-help	mutate	timeout
+nova-review	empty-help	packet	base-url
+nova-review	empty-help	packet	branch
+nova-review	empty-help	packet	card
+nova-review	empty-help	packet	decide
+nova-review	empty-help	packet	diff-only
+nova-review	empty-help	packet	files
+nova-review	empty-help	packet	floor
+nova-review	empty-help	packet	head
+nova-review	empty-help	packet	key-env
+nova-review	empty-help	packet	lane
+nova-review	empty-help	packet	max
+nova-review	empty-help	packet	max-bytes
+nova-review	empty-help	packet	out
+nova-review	empty-help	packet	pr
+nova-review	empty-help	packet	reuse
+nova-review	empty-help	packet	rule
+nova-review	empty-help	packet	spec
+nova-review	empty-help	packet	timeout
+nova-review	empty-help	packet	who
+nova-review	empty-help	port	head
+nova-review	empty-help	port	lane
+nova-review	empty-help	port	max
+nova-review	empty-help	port	out
+nova-review	empty-help	port	pr
+nova-review	empty-help	port	table
+nova-review	empty-help	port	timeout
+nova-review	empty-help	reads	bus
+nova-review	empty-help	reads	lane
+nova-review	empty-help	reads	max
+nova-review	empty-help	reads	ready
+nova-review	empty-help	reads	reviews
+nova-review	empty-help	reads	timeout
+nova-review	empty-help	reads	waiting-on
+nova-review	retired	packet	who (spelled --as)
+nova-review	vocabulary	dedupe	pr (help is verbflag.HelpPR)
+nova-review	vocabulary	guard	repo (help is verbflag.HelpRepo)
+nova-review	vocabulary	mutate	repo (help is verbflag.HelpRepo)
+nova-review	vocabulary	packet	pr (help is verbflag.HelpPR)
+nova-review	vocabulary	port	pr (help is verbflag.HelpPR)
+nova-secrets	positional	check	runCheckCLI
+nova-secrets	positional	exec	runExecCLI
+nova-secrets	positional	gate	runGateCLI
+nova-secrets	positional	keygen	runKeygenCLI
+nova-secrets	positional	names	runNamesCLI
+nova-secrets	positional	place	runPlaceCLI
+nova-secrets	positional	placed	runPlacedCLI
+nova-secrets	positional	seal	runSealCLI
+nova-secrets	positional	seat add	runSeatAddCLI
+nova-secrets	retired	check	store (spelled --redis)
+nova-secrets	retired	exec	store (spelled --redis)
+nova-secrets	retired	gate	store (spelled --redis)
+nova-secrets	retired	keygen	store (spelled --redis)
+nova-secrets	retired	names	store (spelled --redis)
+nova-secrets	retired	place	store (spelled --redis)
+nova-secrets	retired	seal	store (spelled --redis)
+nova-secrets	retired	seat add	store (spelled --redis)
+nova-secrets	vocabulary	check	as (help is verbflag.HelpAs)
+nova-secrets	vocabulary	exec	as (help is verbflag.HelpAs)
+nova-secrets	vocabulary	keygen	as (help is verbflag.HelpAs)
+nova-secrets	vocabulary	names	as (help is verbflag.HelpAs)
+nova-secrets	vocabulary	place	as (help is verbflag.HelpAs)
+nova-secrets	vocabulary	seal	as (help is verbflag.HelpAs)
+nova-secrets	vocabulary	seat add	as (help is verbflag.HelpAs)
+nova-secrets	vocabulary	seat add	from (help is verbflag.HelpFrom)
+nova-self-talk	positional	nova-self-talk	run
+nova-swarm	alias	cmdNative	recipient (an alias of --repo)
+nova-swarm	empty-help	cmdBatch	auth
+nova-swarm	empty-help	cmdBatch	bench
+nova-swarm	empty-help	cmdBatch	benches
+nova-swarm	empty-help	cmdBatch	cards
+nova-swarm	empty-help	cmdBatch	deadline
+nova-swarm	empty-help	cmdBatch	files
+nova-swarm	empty-help	cmdBatch	harness
+nova-swarm	empty-help	cmdBatch	id
+nova-swarm	empty-help	cmdBatch	idle
+nova-swarm	empty-help	cmdBatch	label
+nova-swarm	empty-help	cmdBatch	max-inflight
+nova-swarm	empty-help	cmdBatch	max-input
+nova-swarm	empty-help	cmdBatch	no-route
+nova-swarm	empty-help	cmdBatch	owner
+nova-swarm	empty-help	cmdBatch	pool
+nova-swarm	empty-help	cmdBatch	reason
+nova-swarm	empty-help	cmdBatch	root
+nova-swarm	empty-help	cmdBatch	route
+nova-swarm	empty-help	cmdBatch	route-base-url
+nova-swarm	empty-help	cmdBatch	route-floor
+nova-swarm	empty-help	cmdBatch	route-key-env
+nova-swarm	empty-help	cmdBatch	route-log
+nova-swarm	empty-help	cmdBatch	route-registry
+nova-swarm	empty-help	cmdBatch	route-usage
+nova-swarm	empty-help	cmdBatch	runner
+nova-swarm	empty-help	cmdBatch	slots
+nova-swarm	empty-help	cmdBatch	slots-store
+nova-swarm	empty-help	cmdBatch	stall-after
+nova-swarm	empty-help	cmdBatch	tasks
+nova-swarm	empty-help	cmdBatch	template
+nova-swarm	empty-help	cmdBatch	then
+nova-swarm	empty-help	cmdBatch	tokens
+nova-swarm	empty-help	cmdBatch	worker
+nova-swarm	empty-help	cmdDoctor	local
+nova-swarm	empty-help	cmdDoctor	path
+nova-swarm	empty-help	cmdFinalize	pool
+nova-swarm	empty-help	cmdFinalize	task
+nova-swarm	empty-help	cmdLint	base-check
+nova-swarm	empty-help	cmdLint	card
+nova-swarm	empty-help	cmdLint	fleet
+nova-swarm	empty-help	cmdLint	legs
+nova-swarm	empty-help	cmdLint	lineup
+nova-swarm	empty-help	cmdLint	p95
+nova-swarm	empty-help	cmdLint	repo
+nova-swarm	empty-help	cmdLint	rules
+nova-swarm	empty-help	cmdLint	trust
+nova-swarm	empty-help	cmdLint	typed
+nova-swarm	empty-help	cmdNative	auth
+nova-swarm	empty-help	cmdNative	bench
+nova-swarm	empty-help	cmdNative	card
+nova-swarm	empty-help	cmdNative	config
+nova-swarm	empty-help	cmdNative	deadline
+nova-swarm	empty-help	cmdNative	events-store
+nova-swarm	empty-help	cmdNative	harness
+nova-swarm	empty-help	cmdNative	idle
+nova-swarm	empty-help	cmdNative	label
+nova-swarm	empty-help	cmdNative	model
+nova-swarm	empty-help	cmdNative	no-shared-caches
+nova-swarm	empty-help	cmdNative	no-wall
+nova-swarm	empty-help	cmdNative	owner
+nova-swarm	empty-help	cmdNative	recipient
+nova-swarm	empty-help	cmdNative	repo
+nova-swarm	empty-help	cmdNative	results-root
+nova-swarm	empty-help	cmdNative	root
+nova-swarm	empty-help	cmdNative	sandbox
+nova-swarm	empty-help	cmdNative	slot
+nova-swarm	empty-help	cmdNative	slots-store
+nova-swarm	empty-help	cmdNative	stage-timeout
+nova-swarm	empty-help	cmdNative	sweep-now
+nova-swarm	empty-help	cmdNative	tokens
+nova-swarm	empty-help	cmdNative	worker
+nova-swarm	empty-help	cmdProfile	jobs
+nova-swarm	empty-help	cmdQuickstart	pool
+nova-swarm	empty-help	cmdResult	id
+nova-swarm	empty-help	cmdResult	pool
+nova-swarm	empty-help	cmdRoute	base-url
+nova-swarm	empty-help	cmdRoute	card
+nova-swarm	empty-help	cmdRoute	default
+nova-swarm	empty-help	cmdRoute	floor
+nova-swarm	empty-help	cmdRoute	key-env
+nova-swarm	empty-help	cmdRoute	routes
+nova-swarm	empty-help	cmdSlotsInit	capacity
+nova-swarm	empty-help	cmdSlotsInit	owner
+nova-swarm	empty-help	cmdSlotsInit	share
+nova-swarm	empty-help	cmdSlotsInit	store
+nova-swarm	empty-help	cmdSlotsList	store
+nova-swarm	empty-help	cmdSlotsRelease	all
+nova-swarm	empty-help	cmdSlotsRelease	force
+nova-swarm	empty-help	cmdSlotsRelease	label
+nova-swarm	empty-help	cmdSlotsRelease	owner
+nova-swarm	empty-help	cmdSlotsRelease	store
+nova-swarm	empty-help	cmdSlotsTake	for
+nova-swarm	empty-help	cmdSlotsTake	kind
+nova-swarm	empty-help	cmdSlotsTake	label
+nova-swarm	empty-help	cmdSlotsTake	n
+nova-swarm	empty-help	cmdSlotsTake	owner
+nova-swarm	empty-help	cmdSlotsTake	store
+nova-swarm	empty-help	cmdStatus	owner
+nova-swarm	empty-help	cmdStatus	pool
+nova-swarm	empty-help	cmdStatus	slots-store
+nova-swarm	empty-help	cmdStop	pool
+nova-swarm	empty-help	cmdTemplate	name
+nova-swarm	empty-help	cmdTriage	all
+nova-swarm	empty-help	cmdTriage	base-url
+nova-swarm	empty-help	cmdTriage	batch
+nova-swarm	empty-help	cmdTriage	decide
+nova-swarm	empty-help	cmdTriage	floor
+nova-swarm	empty-help	cmdTriage	key-env
+nova-swarm	empty-help	cmdTriage	no-state
+nova-swarm	empty-help	cmdTriage	owed
+nova-swarm	empty-help	cmdTriage	pool
+nova-swarm	empty-help	cmdTriage	since
+nova-swarm	empty-help	cmdTriage	usage
+nova-swarm	empty-help	cmdVerify	card
+nova-swarm	empty-help	cmdVerify	contract
+nova-swarm	empty-help	cmdVerify	label
+nova-swarm	empty-help	cmdVerify	max
+nova-swarm	empty-help	cmdVerify	result
+nova-swarm	empty-help	cmdVerify	run-record
+nova-swarm	empty-help	cmdVerify	usage
+nova-swarm	retired	cmdBatch	id (spelled --ids)
+nova-swarm	retired	cmdBatch	label (spelled --ids)
+nova-swarm	retired	cmdBatch	reason (spelled --why)
+nova-swarm	retired	cmdNative	label (spelled --ids)
+nova-swarm	retired	cmdResult	id (spelled --ids)
+nova-swarm	retired	cmdSlotsInit	store (spelled --redis)
+nova-swarm	retired	cmdSlotsList	store (spelled --redis)
+nova-swarm	retired	cmdSlotsRelease	label (spelled --ids)
+nova-swarm	retired	cmdSlotsRelease	store (spelled --redis)
+nova-swarm	retired	cmdSlotsTake	label (spelled --ids)
+nova-swarm	retired	cmdSlotsTake	store (spelled --redis)
+nova-swarm	retired	cmdVerify	label (spelled --ids)
+nova-swarm	vocabulary	cmdLint	repo (help is verbflag.HelpRepo)
+nova-swarm	vocabulary	cmdNative	repo (help is verbflag.HelpRepo)
+nova-swarm	vocabulary	cmdSlotsTake	n (help is verbflag.HelpN)
+nova-swarm	vocabulary	cmdTriage	since (help is verbflag.HelpSince)
+nova-test	retired	status	store (spelled --redis)
+nova-test	vocabulary	status	since (help is verbflag.HelpSince)
+nova-tokens	empty-help	check	max
+nova-tokens	empty-help	check	no-spend
+nova-tokens	empty-help	check	out
+nova-tokens	empty-help	check	strict
+nova-tokens	empty-help	declare	bus
+nova-tokens	empty-help	declare	claude
+nova-tokens	empty-help	declare	opencode
+nova-tokens	empty-help	declare	provider
+nova-tokens	empty-help	declare	repos
+nova-tokens	empty-help	declare	scratch
+nova-tokens	empty-help	declare	swarm
+nova-tokens	empty-help	declare	timeout
+nova-tokens	empty-help	fold	all
+nova-tokens	empty-help	fold	allow-shrink
+nova-tokens	empty-help	fold	day
+nova-tokens	empty-help	fold	max
+nova-tokens	empty-help	fold	out
+nova-tokens	empty-help	fold	units
+nova-tokens	empty-help	fold-pool	ledger
+nova-tokens	empty-help	fold-pool	pool
+nova-tokens	empty-help	fold-pool	since
+nova-tokens	empty-help	ledger	day
+nova-tokens	empty-help	ledger	month
+nova-tokens	empty-help	ledger	out
+nova-tokens	empty-help	ledger	password-env
+nova-tokens	empty-help	ledger	redis
+nova-tokens	empty-help	ledger	user
+nova-tokens	empty-help	profiles	swarm-root
+nova-tokens	empty-help	report	by
+nova-tokens	empty-help	report	day
+nova-tokens	empty-help	report	ledger
+nova-tokens	empty-help	report	max
+nova-tokens	empty-help	report	month
+nova-tokens	empty-help	report	note
+nova-tokens	empty-help	report	password-env
+nova-tokens	empty-help	report	redis
+nova-tokens	empty-help	report	supersedes
+nova-tokens	empty-help	report	user
+nova-tokens	empty-help	report	who
+nova-tokens	empty-help	session	claude-session
+nova-tokens	empty-help	session	day
+nova-tokens	empty-help	session	out
+nova-tokens	empty-help	sources	all
+nova-tokens	empty-help	sources	day
+nova-tokens	empty-help	sources	max
+nova-tokens	empty-help	sources	unattributed
+nova-tokens	empty-help	sum	by
+nova-tokens	empty-help	sum	day
+nova-tokens	empty-help	sum	max
+nova-tokens	empty-help	sum	month
+nova-tokens	empty-help	sum	out
+nova-tokens	empty-help	sum	swarm-root
+nova-tokens	retired	report	by (spelled --as)
+nova-tokens	retired	report	who (spelled --as)
+nova-tokens	retired	sum	by (spelled --as)
+nova-tokens	vocabulary	fold-pool	since (help is verbflag.HelpSince)
+nova-tokens	vocabulary	ledger	redis (help is verbflag.HelpRedis)
+nova-tokens	vocabulary	report	redis (help is verbflag.HelpRedis)
+nova-update	positional	Run	Run
+nova-update	retired	Run	store (spelled --redis)
+nova-update	vocabulary	adoption	as (help is verbflag.HelpAs)
+nova-update	vocabulary	diff	from (help is verbflag.HelpFrom)
+nova-update	vocabulary	diff	to (help is verbflag.HelpTo)
+nova-update	vocabulary	moved	from (help is verbflag.HelpFrom)
+nova-update	vocabulary	moved	repo (help is verbflag.HelpRepo)
+nova-update	vocabulary	moved	to (help is verbflag.HelpTo)
+nova-update	vocabulary	watch	as (help is verbflag.HelpAs)
+nova-update	vocabulary	watch	to (help is verbflag.HelpTo)
+nova-version	positional	Run	Run
+nova-version	retired	Run	store (spelled --redis)
+nova-version	vocabulary	adoption	as (help is verbflag.HelpAs)
+nova-version	vocabulary	diff	from (help is verbflag.HelpFrom)
+nova-version	vocabulary	diff	to (help is verbflag.HelpTo)
+nova-version	vocabulary	moved	from (help is verbflag.HelpFrom)
+nova-version	vocabulary	moved	repo (help is verbflag.HelpRepo)
+nova-version	vocabulary	moved	to (help is verbflag.HelpTo)
+nova-version	vocabulary	watch	as (help is verbflag.HelpAs)
+nova-version	vocabulary	watch	to (help is verbflag.HelpTo)
+nova-wake	empty-help	awake	bus
+nova-wake	empty-help	awake	max
+nova-wake	empty-help	awake	store
+nova-wake	empty-help	awake	user
+nova-wake	empty-help	awake	window
+nova-wake	empty-help	beat	as
+nova-wake	empty-help	beat	every
+nova-wake	empty-help	beat	once
+nova-wake	empty-help	beat	store
+nova-wake	empty-help	beat	ttl
+nova-wake	empty-help	beat	user
+nova-wake	empty-help	beat	width
+nova-wake	empty-help	beat	window
+nova-wake	empty-help	cmdWatch	advance-cursor
+nova-wake	empty-help	cmdWatch	as
+nova-wake	empty-help	cmdWatch	baseline
+nova-wake	empty-help	cmdWatch	branch
+nova-wake	empty-help	cmdWatch	bus
+nova-wake	empty-help	cmdWatch	entry
+nova-wake	empty-help	cmdWatch	entry-interval
+nova-wake	empty-help	cmdWatch	final-only
+nova-wake	empty-help	cmdWatch	forge-interval
+nova-wake	empty-help	cmdWatch	gh-timeout
+nova-wake	empty-help	cmdWatch	interval
+nova-wake	empty-help	cmdWatch	line
+nova-wake	empty-help	cmdWatch	lock
+nova-wake	empty-help	cmdWatch	max
+nova-wake	empty-help	cmdWatch	max-lines
+nova-wake	empty-help	cmdWatch	not-mine
+nova-wake	empty-help	cmdWatch	offline-after
+nova-wake	empty-help	cmdWatch	on-deadline
+nova-wake	empty-help	cmdWatch	owned-prs
+nova-wake	empty-help	cmdWatch	pr
+nova-wake	empty-help	cmdWatch	receipt-max-words
+nova-wake	empty-help	cmdWatch	ref
+nova-wake	empty-help	cmdWatch	refresh
+nova-wake	empty-help	cmdWatch	remote
+nova-wake	empty-help	cmdWatch	reports
+nova-wake	empty-help	cmdWatch	run
+nova-wake	empty-help	cmdWatch	state
+nova-wake	empty-help	cmdWatch	store
+nova-wake	empty-help	cmdWatch	to-only
+nova-wake	empty-help	cmdWatch	user
+nova-wake	empty-help	presence	bus
+nova-wake	empty-help	presence	friends
+nova-wake	empty-help	presence	participants
+nova-wake	empty-help	presence	store
+nova-wake	empty-help	presence	user
+nova-wake	empty-help	probe	answer-within
+nova-wake	empty-help	probe	as
+nova-wake	empty-help	probe	branch
+nova-wake	empty-help	probe	bus
+nova-wake	empty-help	probe	correlate-bytes
+nova-wake	empty-help	probe	correlate-max
+nova-wake	empty-help	probe	gh-timeout
+nova-wake	empty-help	probe	here
+nova-wake	empty-help	probe	interval
+nova-wake	empty-help	probe	line
+nova-wake	empty-help	probe	ping-draft
+nova-wake	empty-help	probe	quiet-load
+nova-wake	empty-help	probe	refresh
+nova-wake	empty-help	probe	remote
+nova-wake	empty-help	probe	rest
+nova-wake	empty-help	probe	silent-after
+nova-wake	empty-help	probe	state
+nova-wake	empty-help	serve	as
+nova-wake	empty-help	serve	batch-max
+nova-wake	empty-help	serve	branch
+nova-wake	empty-help	serve	bus
+nova-wake	empty-help	serve	git-timeout
+nova-wake	empty-help	serve	hours
+nova-wake	empty-help	serve	interval
+nova-wake	empty-help	serve	no-beat
+nova-wake	empty-help	serve	on-note
+nova-wake	empty-help	serve	on-note-idempotent
+nova-wake	empty-help	serve	receipt
+nova-wake	empty-help	serve	receipt-max-words
+nova-wake	empty-help	serve	redeliver
+nova-wake	empty-help	serve	remote
+nova-wake	empty-help	serve	state
+nova-wake	retired	awake	store (spelled --redis)
+nova-wake	retired	beat	store (spelled --redis)
+nova-wake	retired	cmdWatch	store (spelled --redis)
+nova-wake	retired	presence	store (spelled --redis)
+nova-wake	vocabulary	beat	as (help is verbflag.HelpAs)
+nova-wake	vocabulary	cmdWatch	as (help is verbflag.HelpAs)
+nova-wake	vocabulary	cmdWatch	pr (help is verbflag.HelpPR)
+nova-wake	vocabulary	probe	as (help is verbflag.HelpAs)
+nova-wake	vocabulary	serve	as (help is verbflag.HelpAs)
+nova-work	empty-help	clip	base
+nova-work	empty-help	clip	branch
+nova-work	empty-help	clip	harvest
+nova-work	empty-help	clip	message
+nova-work	empty-help	clip	result
+nova-work	empty-help	clip	worktree
+nova-work	empty-help	cmdVisualize	file
+nova-work	empty-help	cmdVisualize	max
+nova-work	empty-help	cmdVisualize	select
+nova-work	empty-help	events	base
+nova-work	empty-help	events	bench
+nova-work	empty-help	events	consumer
+nova-work	empty-help	events	deadline
+nova-work	empty-help	events	gh-poll
+nova-work	empty-help	events	log
+nova-work	empty-help	events	once
+nova-work	empty-help	events	redis
+nova-work	empty-help	events	repo
+nova-work	empty-help	push	card
+nova-work	empty-help	push	dir
+nova-work	empty-help	push	lane
+nova-work	empty-help	push	needs
+nova-work	empty-help	push	priority
+nova-work	empty-help	push	redis
+nova-work	empty-help	push	stream
+nova-work	retired	attempt record	by (spelled --as)
+nova-work	retired	events	consumer (spelled --as)
+nova-work	retired	next	by (spelled --as)
+nova-work	vocabulary	ask	as (help is verbflag.HelpAs)
+nova-work	vocabulary	asks	as (help is verbflag.HelpAs)
+nova-work	vocabulary	attempt record	pr (help is verbflag.HelpPR)
+nova-work	vocabulary	cmdDogfoodReport	from (help is verbflag.HelpFrom)
+nova-work	vocabulary	cmdDogfoodReport	to (help is verbflag.HelpTo)
+nova-work	vocabulary	events	redis (help is verbflag.HelpRedis)
+nova-work	vocabulary	events	repo (help is verbflag.HelpRepo)
+nova-work	vocabulary	proving-run	sprint (help is verbflag.HelpSprint)
+nova-work	vocabulary	push	redis (help is verbflag.HelpRedis)
+nova-work	vocabulary	push	stream (help is verbflag.HelpStream)
+nova-work	vocabulary	verification	repo (help is verbflag.HelpRepo)

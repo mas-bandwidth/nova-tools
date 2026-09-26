@@ -83,7 +83,7 @@ func TestFleetPlayVerb(t *testing.T) {
 	dir := toolsPlayDir(t)
 	f := &verbPlayFake{playOut: verbPlayOut}
 	var out, errOut bytes.Buffer
-	code := runFleetPlayWith(context.Background(), []string{"tools", "--limit", "hulk,space", "--redis", mr.Addr(), "--machines", reg},
+	code := runFleetPlayWith(context.Background(), []string{"--play", "tools", "--bench", "hulk,space", "--redis", mr.Addr(), "--machines", reg},
 		&out, &errOut, playDeps(f, map[string]string{fleetbuild.PlayDirEnv: dir}))
 	if code != 1 || errOut.Len() != 0 {
 		t.Fatalf("code=%d\n%s\nerr=%s", code, out.String(), errOut.String())
@@ -102,7 +102,7 @@ func TestFleetPlayVerb(t *testing.T) {
 
 	f = &verbPlayFake{playOut: "PLAY RECAP ****\nspace : ok=2 changed=0 unreachable=0 failed=0\n"}
 	out.Reset()
-	code = runFleetPlayWith(context.Background(), []string{"tools.yml", "--dry-run", "--play-dir", dir, "--machines", reg},
+	code = runFleetPlayWith(context.Background(), []string{"--play", "tools.yml", "--dry-run", "--play-dir", dir, "--machines", reg},
 		&out, &errOut, playDeps(f, nil))
 	if code != 0 || !strings.HasSuffix(out.String(), "FLEET PLAY OK tag=tools sha=c8178673f5e1 benches=1 failed=- check=yes\n") {
 		t.Fatalf("dry run: code=%d\n%s err=%s", code, out.String(), errOut.String())
@@ -123,15 +123,16 @@ func TestFleetPlayUsage(t *testing.T) {
 		code  int
 		want  string
 	}{
-		{nil, nil, "", 2, "wants one <tag>"},
-		{[]string{"tools", "bench"}, nil, "", 2, "wants one <tag>"},
-		{[]string{"tools", "--nope"}, nil, "", 2, "flag provided but not defined"},
-		{[]string{"tools", "--redis", mr.Addr()}, nil, "", 1, "FLEET PLAY REFUSED: the play's inventory reads the machines registry"},
-		{[]string{"tools", "--machines", filepath.Join(t.TempDir(), "none.tsv")}, nil, "", 1, "FLEET PLAY REFUSED: machines registry:"},
-		{[]string{"tools", "--redis", mr.Addr(), "--machines", reg, "--play-dir", t.TempDir()}, nil, "", 1, "FLEET PLAY REFUSED: the fleet play directory"},
-		{[]string{"tools", "--redis", mr.Addr(), "--play-dir", dir, "--limit", "batman"}, map[string]string{fleetbuild.MachinesEnv: reg}, "", 1,
-			"FLEET PLAY REFUSED: --limit batman is not a machine in the registry"},
-		{[]string{"tools", "--redis", mr.Addr(), "--play-dir", dir, "--machines", reg}, nil, "?? stray\n", 1,
+		{nil, nil, "", 2, "wants --play <tag>"},
+		{[]string{"tools"}, nil, "", 2, "takes flags, not positional arguments"},
+		{[]string{"--play", "tools", "--nope"}, nil, "", 2, "--nope is not a flag of nova-sprint fleet play"},
+		{[]string{"--play", "tools", "--limit", "hulk"}, nil, "", 2, "--limit is not a flag of nova-sprint fleet play"},
+		{[]string{"--play", "tools", "--redis", mr.Addr()}, nil, "", 1, "FLEET PLAY REFUSED: the play's inventory reads the machines registry"},
+		{[]string{"--play", "tools", "--machines", filepath.Join(t.TempDir(), "none.tsv")}, nil, "", 1, "FLEET PLAY REFUSED: machines registry:"},
+		{[]string{"--play", "tools", "--redis", mr.Addr(), "--machines", reg, "--play-dir", t.TempDir()}, nil, "", 1, "FLEET PLAY REFUSED: the fleet play directory"},
+		{[]string{"--play", "tools", "--redis", mr.Addr(), "--play-dir", dir, "--bench", "batman"}, map[string]string{fleetbuild.MachinesEnv: reg}, "", 1,
+			"FLEET PLAY REFUSED: --bench batman is not a machine in the registry"},
+		{[]string{"--play", "tools", "--redis", mr.Addr(), "--play-dir", dir, "--machines", reg}, nil, "?? stray\n", 1,
 			"FLEET PLAY REFUSED: the rowan-tools clone " + dir + " is dirty (1 paths, first ?? stray): commit and push it, or git -C " + dir + " stash -u"},
 	} {
 		f := &verbPlayFake{porcelain: tc.dirty}

@@ -26,9 +26,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// tableWants is the whole table verb, named in every refusal.
-const tableWants = "the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]"
-
 type tableOpts struct {
 	once    bool
 	redis   string
@@ -52,20 +49,20 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 	args = joinLoopSeconds(args)
 	fs := verbflag.New("table")
 	var opts tableOpts
-	fs.BoolVar(&opts.once, "once", false, "")
-	fs.StringVar(&opts.redis, "redis", redisDefault(), "")
-	fs.StringVar(&opts.sprint, "sprint", "", "")
-	fs.BoolVar(&opts.check, "check", false, "")
-	fs.BoolVar(&opts.live, "live", false, "")
-	fs.Var(&loopValue{on: &opts.loop, every: &opts.every}, "loop", "")
-	fs.StringVar(&opts.out, "out", "", "")
-	fs.StringVar(&opts.lockKey, "lock", "", "")
-	fs.StringVar(&opts.layout, "layout", "wide", "")
-	fs.StringVar(&opts.compare, "compare", "", "")
-	fs.StringVar(&opts.friends, "friends", "", "")
-	fs.StringVar(&opts.xyFile, "xy-file", "", "")
+	fs.BoolVar(&opts.once, "once", false, "render one table, then return")
+	fs.StringVar(&opts.redis, "redis", redisDefault(), verbflag.HelpRedis)
+	fs.StringVar(&opts.sprint, "sprint", "", verbflag.HelpSprint)
+	fs.BoolVar(&opts.check, "check", false, "render the fixture store and compare exact output")
+	fs.BoolVar(&opts.live, "live", false, "the live layout")
+	fs.Var(&loopValue{on: &opts.loop, every: &opts.every}, "loop", "render every second (or every N seconds)")
+	fs.StringVar(&opts.out, "out", "", "the file the table is published to by rename")
+	fs.StringVar(&opts.lockKey, "lock", "", "the Redis key the loop holds as its lock")
+	fs.StringVar(&opts.layout, "layout", "wide", "the layout: wide or live")
+	fs.StringVar(&opts.compare, "compare", "", "the published file to compare a render against")
+	fs.StringVar(&opts.friends, "friends", "", "the friends to show, comma-separated")
+	fs.StringVar(&opts.xyFile, "xy-file", "", "the x/y line's file")
 	if err := fs.Parse(args); err != nil {
-		return tableRefuse(stderr, err.Error()+"; "+tableWants)
+		return tableRefuse(stderr, err.Error())
 	}
 	if fs.NArg() > 0 {
 		return tableRefuse(stderr, "takes flags, not positional arguments")
@@ -95,7 +92,7 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 		return cmdTableCheck(opts.redis, stdout, stderr)
 	}
 	if opts.redis == "" {
-		return tableRefuse(stderr, "--redis <addr> is required; "+tableWants)
+		return tableRefuse(stderr, "--redis <addr> is required (or NOVA_SPRINT_REDIS): the wide table is read from Redis and written nowhere")
 	}
 	if opts.loop && opts.once {
 		return tableRefuse(stderr, "--redis takes either --once or --loop, not both")

@@ -3,11 +3,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
@@ -95,11 +99,11 @@ func TestCardCutFromLedgerFilesNothingTwice(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows := "id\ttitle\tstream\tpaths\tdone-when\tdepends-on\troute\n" +
-		"base\tBase\tledger\tp1.go\tgo test passes\t\tpro\n" +
+		"base\tBase\tledger\tp1.go\tgo test passes\tnone\tpro\n" +
 		"\tTwo\tledger\tp2.go\tgo test passes\tbase\tflash\n" +
 		"\tThree\tledger\tp3.go\tgo test passes\ttask:base\t\n" +
 		"\tFour\tledger\tp4.go\tgo test passes\t#12\t\n" +
-		"\tFive\tledger\tp5.go\tgo test passes\t\t\n"
+		"\tFive\tledger\tp5.go\tgo test passes\t-\t\n"
 	forge := &fakeCutForge{failAt: 3}
 	d := cutDepsRedis(forge, client)
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows)}, d)
@@ -147,5 +151,66 @@ func TestCardCutFromLedgerFilesNothingTwice(t *testing.T) {
 	}
 	if got := client.HGet(ctx, taskcard.Key("nova-tools-5002"), "blocked_on").Val(); got != "base" {
 		t.Fatalf("row 3 blocked_on %q, want base", got)
+	}
+}
+
+// TestCardCutFromNoneResolvesToReady is #4399 item 8 on a real store: the
+// cold walk's ten rows, depends-on `-` (the TSV's empty marker) or `none`,
+// land in waiting with blocked_on none, and one pass of the reconciler's
+// waiting-resolve duty moves all ten to ready (the walk logged RESOLVE
+// ready=0 still=10 when the cut wrote no blocked_on). A row whose depends-on
+// cell is empty is refused naming none, and nothing is written.
+func TestCardCutFromNoneResolvesToReady(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	b.WriteString("id\ttitle\tstream\tpaths\tdone-when\tdepends-on\n")
+	for i := 1; i <= 10; i++ {
+		dep := "-"
+		if i%2 == 0 {
+			dep = "none"
+		}
+		fmt.Fprintf(&b, "p%d\tprobe %d\tprobe-a\tp%d.go\tgo test passes\t%s\n", i, i, i, dep)
+	}
+	d := cutDepsRedis(&fakeCutForge{}, client)
+	code, out := runCutFrom(cutFromOpts{Text: []byte(b.String()), Sprint: "probe", NoGitHub: true}, d)
+	if code != 0 || strings.Count(out, " to=waiting depends=none\n") != 10 {
+		t.Fatalf("cut: exit %d, want ten cards to waiting depends=none:\n%s", code, out)
+	}
+	for i := 1; i <= 10; i++ {
+		if bo := client.HGet(ctx, taskcard.Key(fmt.Sprintf("p%d", i)), "blocked_on").Val(); bo != "none" {
+			t.Fatalf("task:p%d blocked_on %q, want none (the resolver's met marker)", i, bo)
+		}
+	}
+	lease, err := reconcile.Acquire(ctx, store.New(client), reconcile.AcquireOptions{Host: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	counts, err := (&reconcile.WaitingResolve{Client: client, Out: &log}).Run(ctx, lease)
+	if err != nil || counts.Routed != 10 || !strings.Contains(log.String(), "RESOLVE stream=probe-a ready=10 still=0 ") {
+		t.Fatalf("resolve: routed %d err %v, want 10:\n%s", counts.Routed, err, log.String())
+	}
+	if n := client.ZCard(ctx, taskcard.StreamKey("probe-a", "ready")).Val(); n != 10 {
+		t.Fatalf("ws:probe-a:ready holds %d, want the ten", n)
+	}
+
+	// An empty cell: refused with its row, nothing filed, pushed or ledgered.
+	empty := "id\ttitle\tstream\tpaths\tdone-when\tdepends-on\nq1\tq one\tprobe-b\tq1.go\tgo test passes\t\nq2\tq two\tprobe-b\tq2.go\tgo test passes\tnone\n"
+	forge := &fakeCutForge{}
+	code, out = runCutFrom(cutFromOpts{Text: []byte(empty), Sprint: "probe", NoGitHub: true}, cutDepsRedis(forge, client))
+	if code != 1 || !strings.Contains(out, `CARD CUT REFUSED row=1 line=2 id=q1 why="depends-on is empty: write none or the ids"`) ||
+		!strings.Contains(out, "rows=2 cut=0 already=0 refused=1 filed=0 ") {
+		t.Fatalf("empty cell: exit %d, want 1 and the row refused naming none:\n%s", code, out)
+	}
+	if n := client.Exists(ctx, taskcard.Key("q1"), taskcard.Key("q2")).Val(); n != 0 || len(forge.titles) != 0 ||
+		client.ZCard(ctx, taskcard.StreamKey("probe-b", "waiting")).Val() != 0 {
+		t.Fatalf("an empty cell wrote something: %d records, %d issues", n, len(forge.titles))
 	}
 }

@@ -266,7 +266,7 @@ func TestPlayOKAndDryRun(t *testing.T) {
 }
 
 // TestPlayWithNoRecapFailsAndWritesNothing: a play that dies before any
-// bench (a missing collection, a syntax error) is PLAY ERROR and FAIL, and no
+// bench (a missing collection, a syntax error) is PLAY DIED and FAIL, and no
 // receipt is written.
 func TestPlayWithNoRecapFailsAndWritesNothing(t *testing.T) {
 	t.Parallel()
@@ -278,7 +278,7 @@ func TestPlayWithNoRecapFailsAndWritesNothing(t *testing.T) {
 	if err != nil || res.OK() || res.Err != "exit_status_4" {
 		t.Fatalf("%v %+v", err, res)
 	}
-	if out.String() != "PLAY ERROR bench.yml err=exit_status_4 last=ERROR! couldn't resolve module/action 'x'\n" ||
+	if out.String() != "PLAY DIED bench.yml err=exit_status_4 last=ERROR! couldn't resolve module/action 'x'\n" ||
 		res.Line() != "FLEET PLAY FAIL tag=bench sha=0123456789ab benches=0 failed=-" {
 		t.Errorf("out %q line %q", out.String(), res.Line())
 	}
@@ -305,7 +305,7 @@ func TestPlayRefusesBeforeThePlay(t *testing.T) {
 			"the rowan-tools clone " + playTop + " is 5 commits behind its upstream: git -C " + playTop + " pull --ff-only"},
 		{"no upstream", &playFake{noUpstream: true}, nil, "has no upstream branch: git -C " + playTop + " switch main"},
 		{"not a clone", &playFake{notClone: true}, nil, "is not in a git clone of rowan-tools"},
-		{"limit", &playFake{}, func(p *Play) { p.Limit = []string{"hulkk"} }, "--limit hulkk is not a machine in the registry /reg/machines.tsv"},
+		{"limit", &playFake{}, func(p *Play) { p.Limit = []string{"hulkk"} }, "--bench hulkk is not a machine in the registry /reg/machines.tsv"},
 		{"tag", &playFake{}, func(p *Play) { p.Tag = "../x" }, `"../x" is not a play name`},
 		{"no play file", &playFake{}, func(p *Play) { p.Tag = "tools" }, "has no tools.yml"},
 		{"no store", &playFake{}, func(p *Play) { p.Client = nil }, "--redis <addr>, or --dry-run"},

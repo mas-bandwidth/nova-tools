@@ -448,7 +448,7 @@ func TestReleaseRefusesBeforeAnyStep(t *testing.T) {
 		{"short sha", "c81786", func(*Release, *relFake) {}, "is not a commit sha", ""},
 		{"no store", relSha, func(r *Release, _ *relFake) { r.Client = nil }, "needs the fleet store", ""},
 		{"no benches", relSha, func(r *Release, _ *relFake) { r.Machines = nil }, "no benches to roll", ""},
-		{"bad tip", "dev", func(_ *Release, f *relFake) { f.tip = "fatal: could not read\n" }, "not a dev tip (name the commit: fleet release <sha>)", "git ls-remote"},
+		{"bad tip", "dev", func(_ *Release, f *relFake) { f.tip = "fatal: could not read\n" }, "not a dev tip (name the commit: fleet release --sha <sha>)", "git ls-remote"},
 		{"no tip", "dev", func(_ *Release, f *relFake) { f.fail = "ls-remote" }, "git ls-remote git@github.com:mas-bandwidth/nova-tools.git dev: exit status 1: boom", "git ls-remote"},
 	} {
 		f := &relFake{home: t.TempDir()}

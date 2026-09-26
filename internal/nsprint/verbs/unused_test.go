@@ -592,7 +592,7 @@ func TestVerbsUnused(t *testing.T) {
 		addr := f.mr.Addr()
 		f.mr.Close()
 		var out, errOut bytes.Buffer
-		code := Main(context.Background(), []string{"unused", "--store", addr, "--tools", f.tools, "--repo", f.repo, "--receipts", f.receipts}, &out, &errOut)
+		code := Main(context.Background(), []string{"unused", "--redis", addr, "--tools", f.tools, "--repo", f.repo, "--receipts", f.receipts}, &out, &errOut)
 		wantRefused(t, code, errOut.String(), "store")
 		if err := f.mr.Restart(); err != nil {
 			t.Fatal(err)
@@ -604,7 +604,7 @@ func TestVerbsUnused(t *testing.T) {
 	t.Run("bad_flag_refuses", func(t *testing.T) {
 		f := newFixture(t)
 		var out, errOut bytes.Buffer
-		code := Main(context.Background(), []string{"unused", "--store", f.mr.Addr(), "--tools", f.tools, "--repo", f.repo, "--receipts", f.receipts, "--days", "0"}, &out, &errOut)
+		code := Main(context.Background(), []string{"unused", "--redis", f.mr.Addr(), "--tools", f.tools, "--repo", f.repo, "--receipts", f.receipts, "--days", "0"}, &out, &errOut)
 		wantRefused(t, code, errOut.String(), "--days")
 		if f.xlen() != 0 {
 			t.Fatal("a refused run appended")

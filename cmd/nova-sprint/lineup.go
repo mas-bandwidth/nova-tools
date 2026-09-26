@@ -66,14 +66,14 @@ func cmdLineup(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return cmdLineupPublish(ctx, args[1:], os.Stdin, stdout, stderr)
 	}
 	fs := verbflag.New("lineup")
-	addr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	probes := fs.String("probes", "", "")
-	conformCmd := fs.String("conform-cmd", "bench-conform --publish", "")
-	noConform := fs.Bool("no-conform", false, "")
-	remaining := fs.Int("gql-remaining", -1, "")
-	perPass := fs.Int("lane-gql-per-pass", -1, "")
-	cadence := fs.Duration("lane-cadence", 0, "")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	probes := fs.String("probes", "", "the probes to run, comma-separated")
+	conformCmd := fs.String("conform-cmd", "bench-conform --publish", "the bench-conform command a probe runs")
+	noConform := fs.Bool("no-conform", false, "skip bench-conform")
+	remaining := fs.Int("gql-remaining", -1, "the GraphQL budget left")
+	perPass := fs.Int("lane-gql-per-pass", -1, "the GraphQL calls one lane pass makes")
+	cadence := fs.Duration("lane-cadence", 0, "how often a lane passes")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, "lineup", err.Error()+"; it wants --redis <addr> --sprint <S>")
 	}
@@ -170,10 +170,10 @@ func ghGraphQLRemaining(ctx context.Context, rdb redis.Cmdable) (int, error) {
 
 func cmdLineupPublish(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := verbflag.New("lineup publish")
-	addr := fs.String("redis", redisDefault(), "")
-	bench := fs.String("bench", "", "")
-	allYML := fs.String("all-yml", "", "")
-	runMarker := fs.String("run", os.Getenv(preflight.RunMarkerEnv), "")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	bench := fs.String("bench", "", "the bench")
+	allYML := fs.String("all-yml", "", "the fleet's group_vars/all.yml")
+	runMarker := fs.String("run", os.Getenv(preflight.RunMarkerEnv), "the run marker (default the environment's)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, "lineup publish", err.Error()+"; it wants --redis <addr> --bench <b> --all-yml <file> [--run <marker>]")
 	}

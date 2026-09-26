@@ -93,3 +93,15 @@ func TestParseCardBasePrecedenceAndAbsence(t *testing.T) {
 		t.Fatal("CardNamesRepo = false on REPO: nova-tools")
 	}
 }
+
+// TestReadCardBaseReadsTheOneCaseHeader (nova-tools#4352 A): BASE-SHA: and
+// BASE-REPO: are the spellings a card carries now; the retired lowercase ones
+// above are still read.
+func TestReadCardBaseReadsTheOneCaseHeader(t *testing.T) {
+	t.Parallel()
+	sha := "09fbedc9052145b20677501a1dbcb5f5ba9c87d4"
+	b := ReadCardBase([]byte("RESULT: c9 sha=09fbedc90521\nBASE-REPO: https://example.com/mas-bandwidth/nova-tools.git\nBASE: dev\nBASE-SHA: " + sha + "\n"))
+	if b.Sha != sha || b.Repo != "https://example.com/mas-bandwidth/nova-tools.git" || b.Ref != "dev" {
+		t.Fatalf("ReadCardBase = %+v", b)
+	}
+}

@@ -243,7 +243,7 @@ func TestFixCopyEndPushesOntoThePRBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"\nKIND: fix\n", "\nbase-sha: " + readHead + "\n", "\nBRANCH: " + readBranch + "\n",
+	for _, want := range []string{"\nKIND: fix\n", "\nBASE-SHA: " + readHead + "\n", "\nBRANCH: " + readBranch + "\n",
 		"repo/ is checked out at the PR's head " + readHead + ", which is " + readBranch, "the wrapper pushes your commit to " + readBranch,
 		"the read found: SCORE who=b head=" + readHead + " score=6/10 gates=ci:green,base:ok,scope:ok: the test does not fail without the fix"} {
 		if !strings.Contains(string(body), want) {

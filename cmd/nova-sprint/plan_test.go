@@ -21,7 +21,7 @@ func TestPlanVerb(t *testing.T) {
 		{"plan", "show"},
 		{"plan", "show", "--sprint", "s", "--plan", "x.tsv"},
 	} {
-		if code, out, errOut := runSprint(args...); code != 2 || out != "" || !strings.Contains(errOut, "run: nova-sprint help") {
+		if code, out, errOut := runSprint(args...); code != 2 || out != "" || !strings.Contains(errOut, "; usage: nova-sprint plan") {
 			t.Fatalf("%v: code=%d out=%q err=%q; want a refusal", args, code, out, errOut)
 		}
 	}

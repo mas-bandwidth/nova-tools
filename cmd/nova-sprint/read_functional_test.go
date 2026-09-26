@@ -112,7 +112,7 @@ func TestReadBriefVerbByTaskID(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(t.TempDir(), id)
-	code, stdout, stderr := runSprint("read", "brief", "--id", id, "--out", out, "--mirror", mirror, "--redis", addr)
+	code, stdout, stderr := runSprint("read", "brief", "--ids", id, "--out", out, "--mirror", mirror, "--redis", addr)
 	if code != 0 {
 		t.Fatalf("exit %d stderr %q", code, stderr)
 	}
@@ -125,7 +125,7 @@ func TestReadBriefVerbByTaskID(t *testing.T) {
 	if p, err := os.ReadFile(filepath.Join(out, "diff.patch")); err != nil || !strings.Contains(string(p), "+b") {
 		t.Fatalf("diff.patch: %v %s", err, p)
 	}
-	code, _, stderr = runSprint("read", "brief", "--id", "read-9-nothere", "--sprint", "s1", "--out", out, "--mirror", mirror, "--redis", addr)
+	code, _, stderr = runSprint("read", "brief", "--ids", "read-9-nothere", "--sprint", "s1", "--out", out, "--mirror", mirror, "--redis", addr)
 	if code != 1 || !strings.Contains(stderr, "READ BRIEF REFUSED task=read-9-nothere why=MISSING task:read-9-nothere and s:s1:task:read-9-nothere") {
 		t.Fatalf("unknown id: exit %d stderr %q", code, stderr)
 	}

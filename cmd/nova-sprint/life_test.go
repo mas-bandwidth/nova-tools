@@ -80,17 +80,17 @@ func TestLifeVerbRefusals(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"ada", []string{"life", "event", "--kind", "beat"}, "nova-sprint life event: --as is required; run: nova-sprint help\n"},
-		{"", []string{"life", "event", "--as", "ada", "--kind", "beat"}, "nova-sprint life event: want NOVA_FRIEND; run: nova-sprint help\n"},
-		{"bo", []string{"life", "event", "--as", "ada", "--kind", "beat"}, "nova-sprint life event: want --as equal to NOVA_FRIEND (NOVA_FRIEND=bo, --as ada); run: nova-sprint help\n"},
-		{"bo", []string{"life", "event", "--as", "ada", "--kind", "deliver"}, "nova-sprint life event: want --as equal to NOVA_FRIEND (NOVA_FRIEND=bo, --as ada); run: nova-sprint help\n"},
-		{"ada", []string{"life", "event", "--as", "ada"}, "nova-sprint life event: --kind is required; run: nova-sprint help\n"},
-		{"ada", []string{"life", "event", "--as", "ada", "--kind", "sleeping"}, "nova-sprint life event: --kind sleeping is not one of beat, deliver, turn-start, turn-end, turn-error, usage-limit; run: nova-sprint help\n"},
-		{"ada", []string{"life", "event", "--as", "ada", "--kind", "beat", "--cause", "1-0"}, "nova-sprint life event: --cause is only for --kind turn-start; run: nova-sprint help\n"},
-		{"zed", []string{"life", "event", "--as", "zed", "--kind", "beat"}, "nova-sprint life event: INVALID unknown friend zed; run: nova-sprint help\n"},
-		{"ada", []string{"life", "wake-mode", "--as", "ada"}, "nova-sprint life wake-mode: --set is required; run: nova-sprint help\n"},
-		{"ada", []string{"life", "wake-mode", "--set", "scheduled-model-turn"}, "nova-sprint life wake-mode: --as is required; run: nova-sprint help\n"},
-		{"ada", []string{"life", "wake-mode", "--as", "ada", "--set", "active"}, "nova-sprint life wake-mode: --set active is not scheduled-model-turn; run: nova-sprint help\n"},
+		{"ada", []string{"life", "event", "--kind", "beat"}, "nova-sprint life event: --as is required; usage: nova-sprint life event --as <f> --kind <beat|deliver|turn-start|turn-end|turn-error|usage-limit> [--cause <c>]\n"},
+		{"", []string{"life", "event", "--as", "ada", "--kind", "beat"}, "nova-sprint life event: want NOVA_FRIEND; usage: nova-sprint life event --as <f> --kind <beat|deliver|turn-start|turn-end|turn-error|usage-limit> [--cause <c>]\n"},
+		{"bo", []string{"life", "event", "--as", "ada", "--kind", "beat"}, "nova-sprint life event: want --as equal to NOVA_FRIEND (NOVA_FRIEND=bo, --as ada); usage: nova-sprint life event --as <f> --kind <beat|deliver|turn-start|turn-end|turn-error|usage-limit> [--cause <c>]\n"},
+		{"bo", []string{"life", "event", "--as", "ada", "--kind", "deliver"}, "nova-sprint life event: want --as equal to NOVA_FRIEND (NOVA_FRIEND=bo, --as ada); usage: nova-sprint life event --as <f> --kind <beat|deliver|turn-start|turn-end|turn-error|usage-limit> [--cause <c>]\n"},
+		{"ada", []string{"life", "event", "--as", "ada"}, "nova-sprint life event: --kind is required; usage: nova-sprint life event --as <f> --kind <beat|deliver|turn-start|turn-end|turn-error|usage-limit> [--cause <c>]\n"},
+		{"ada", []string{"life", "event", "--as", "ada", "--kind", "sleeping"}, "nova-sprint life event: --kind sleeping is not one of beat, deliver, turn-start, turn-end, turn-error, usage-limit; usage: nova-sprint life event --as <f> --kind <beat|deliver|turn-start|turn-end|turn-error|usage-limit> [--cause <c>]\n"},
+		{"ada", []string{"life", "event", "--as", "ada", "--kind", "beat", "--cause", "1-0"}, "nova-sprint life event: --cause is only for --kind turn-start; usage: nova-sprint life event --as <f> --kind <beat|deliver|turn-start|turn-end|turn-error|usage-limit> [--cause <c>]\n"},
+		{"zed", []string{"life", "event", "--as", "zed", "--kind", "beat"}, "nova-sprint life event: INVALID unknown friend zed; usage: nova-sprint life event --as <f> --kind <beat|deliver|turn-start|turn-end|turn-error|usage-limit> [--cause <c>]\n"},
+		{"ada", []string{"life", "wake-mode", "--as", "ada"}, "nova-sprint life wake-mode: --set is required; usage: nova-sprint life wake-mode --as <f> --set scheduled-model-turn\n"},
+		{"ada", []string{"life", "wake-mode", "--set", "scheduled-model-turn"}, "nova-sprint life wake-mode: --as is required; usage: nova-sprint life wake-mode --as <f> --set scheduled-model-turn\n"},
+		{"ada", []string{"life", "wake-mode", "--as", "ada", "--set", "active"}, "nova-sprint life wake-mode: --set active is not scheduled-model-turn; usage: nova-sprint life wake-mode --as <f> --set scheduled-model-turn\n"},
 	}
 	for _, r := range rows {
 		t.Setenv(seatEnv, r.seat)

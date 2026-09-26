@@ -54,13 +54,12 @@ func runSelfWith(ctx context.Context, args []string, out, errOut io.Writer, deps
 	}
 	fs := verbflag.New("self update")
 	sha := fs.String("sha", "", "the commit to build (default: dev's tip in the release clone, HEAD with --from)")
-	from := fs.String("from", "", "a nova-tools checkout built as it stands (default: the release clone)")
+	from := fs.String("from", "", verbflag.HelpFrom)
 	allow := fs.Bool("allow-branch", false, "install a commit off origin/dev or an edited --from tree")
-	pos, err := parseInterspersed(fs, args[1:])
-	if err != nil {
+	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, "self update", err.Error())
 	}
-	if len(pos) > 0 {
+	if fs.NArg() > 0 {
 		return refuse(errOut, "self update", "takes no arguments; the commit is --sha <sha>")
 	}
 	home, err := deps.Home()

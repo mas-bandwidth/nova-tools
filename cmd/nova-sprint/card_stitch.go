@@ -1,8 +1,8 @@
 // card stitch (nova-tools#4317): a plan and its stitch's brief, from the
 // records.
 //
-//	nova-sprint card stitch --id <parent|stitch> [--write] [--redis <addr>]
-//	nova-sprint card stitch --drop <child> [--as <by>] [--redis <addr>]
+//	nova-sprint card stitch --ids <parent|stitch> [--write] [--redis <addr>]
+//	nova-sprint card stitch --drop <child> [--redis <addr>] (the seat is who dropped it)
 //
 // --drop <child> drops a child that ended done/fail (a cancelled child) from
 // its plan (taskcard.DropChild): the parent's children and the stitch's
@@ -39,16 +39,17 @@ import (
 func cmdCardStitch(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	const verb = "card stitch"
 	fs := verbflag.New(verb)
-	id := fs.String("id", "", "")
-	write := fs.Bool("write", false, "")
-	drop := fs.String("drop", "", "")
-	as := fs.String("as", "", "")
-	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
+	ids := fs.String("ids", "", verbflag.HelpIDs)
+	write := fs.Bool("write", false, "write the stitch brief onto the stitch card")
+	drop := fs.String("drop", "", "a child id to drop from its plan")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
+	id := new(string)
+	*id = oneID(*ids)
 	if (*id == "") == (*drop == "") || fs.NArg() > 0 || (*drop != "" && *write) {
-		return refuse(stderr, verb, "wants --id <parent|stitch> [--write], or --drop <child> [--as <by>], and --redis <addr> (or NOVA_SPRINT_REDIS)")
+		return refuse(stderr, verb, "wants --ids <parent|stitch> [--write], or --drop <child>, and --redis <addr> (or NOVA_SPRINT_REDIS)")
 	}
 	raddr := taskAddr(*addr)
 	if raddr == "" {
@@ -64,14 +65,7 @@ func cmdCardStitch(ctx context.Context, args []string, stdout, stderr io.Writer)
 	start := time.Now()
 	c := st.Client()
 	if *drop != "" {
-		by := *as
-		if by == "" {
-			by = quackActor("")
-		}
-		if by == "" {
-			by = "nova-sprint"
-		}
-		p, err := taskcard.DropChild(ctx, c, *drop, by)
+		p, err := taskcard.DropChild(ctx, c, *drop, seatActor())
 		if err != nil {
 			why := err.Error()
 			if w, ok := taskcard.IsRefused(err); ok {

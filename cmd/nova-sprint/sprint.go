@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"strings"
@@ -54,10 +55,10 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 	}
 	verb := "sprint " + sub
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
-	name := fs.String("sprint", "", "")
-	from := fs.String("from", "", "")
-	nowUnix := fs.Int64("now", 0, "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	name := fs.String("sprint", "", verbflag.HelpSprint)
+	from := fs.String("from", "", verbflag.HelpFrom)
+	nowUnix := fs.Int64("now", 0, "the clock to read against, unix seconds (default now)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -401,14 +402,15 @@ func runSprintOpen(ctx context.Context, st *store.Store, name, from string, plan
 func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "sprint clear"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
-	why := fs.String("why", "", "")
-	by := fs.String("by", "", "")
-	force := fs.Bool("force", false, "")
-	checkpoint := fs.String("checkpoint", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	why := fs.String("why", "", verbflag.HelpWhy)
+	force := fs.Bool("force", false, "clear a sprint that still has working cards")
+	checkpoint := fs.String("checkpoint", "", "the TSV the cleared index is checkpointed to first (default a new file in the checkpoint directory)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
+	actor := seatActor()
+	by := &actor
 	if fs.NArg() > 0 {
 		return refuse(errOut, verb, "takes flags, not positional arguments")
 	}

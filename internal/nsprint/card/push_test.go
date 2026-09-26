@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -29,7 +30,7 @@ func TestCardPushRefusesWithoutDoneWhen(t *testing.T) {
 	client := newRedis(t)
 	srv := repoServer(t)
 	fields := validCard(srv.URL + "/acme/public.git")
-	for _, key := range []string{"BASE", "base-sha", "PATHS", "DEPENDS-ON", "DONE-WHEN"} {
+	for _, key := range []string{"BASE", "BASE-SHA", "PATHS", "DEPENDS-ON", "DONE-WHEN"} {
 		t.Run(key, func(t *testing.T) {
 			f := fields
 			f.label = "miss-" + key
@@ -41,8 +42,9 @@ func TestCardPushRefusesWithoutDoneWhen(t *testing.T) {
 			if !strings.Contains(res.Stderr, "missing "+key) {
 				t.Fatalf("stderr %q, want missing %s", res.Stderr, key)
 			}
-			for _, other := range []string{"BASE", "base-sha", "PATHS", "DEPENDS-ON", "DONE-WHEN"} {
-				if other != key && strings.Contains(res.Stderr, "missing "+other) {
+			for _, other := range []string{"BASE", "BASE-SHA", "PATHS", "DEPENDS-ON", "DONE-WHEN"} {
+				// "missing BASE-SHA" is not "missing BASE": the key ends where a key character does not follow
+				if other != key && regexp.MustCompile(`missing `+regexp.QuoteMeta(other)+`([^A-Z-]|$)`).MatchString(res.Stderr) {
 					t.Fatalf("stderr %q also says missing %s", res.Stderr, other)
 				}
 			}
@@ -256,8 +258,8 @@ func (f cardFix) render() []byte {
 	}
 	write("KIND", "fix")
 	write("BASE", f.base)
-	write("base-repo", f.repoURL)
-	write("base-sha", f.baseSHA)
+	write("BASE-REPO", f.repoURL)
+	write("BASE-SHA", f.baseSHA)
 	write("PATHS", f.paths)
 	write("DEPENDS-ON", f.depends)
 	write("DONE-WHEN", f.done)

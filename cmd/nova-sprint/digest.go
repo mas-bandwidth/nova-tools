@@ -3,7 +3,7 @@
 // (internal/nsprint/digest): ws:log, land:<repo>:events and the pr:<name>:<n>
 // records. No GitHub, no model.
 //
-//	nova-sprint digest --redis <host:port> --since <RFC3339 UTC> [--until <RFC3339 UTC>] [--repo <owner/name>]...
+//	nova-sprint digest --redis <host:port> --since <RFC3339 UTC> [--until <RFC3339 UTC>] [--repo <owner/name>,...]
 //
 // --until defaults to now. --repo adds an event stream to read besides the
 // ones a landing in the window names. Exit 0 printed, 1 a Redis read
@@ -31,7 +31,7 @@ func init() {
 	})
 }
 
-// repoList is --repo, repeatable.
+// repoList is --repo, a comma list, each item checked by Set.
 type repoList []string
 
 func (r *repoList) String() string { return strings.Join(*r, ",") }
@@ -48,13 +48,18 @@ var digestNow = time.Now
 
 func runDigest(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("digest")
-	addr := fs.String("redis", redisDefault(), "")
-	sinceS := fs.String("since", "", "")
-	untilS := fs.String("until", "", "")
-	var repos repoList
-	fs.Var(&repos, "repo", "")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sinceS := fs.String("since", "", verbflag.HelpSince)
+	untilS := fs.String("until", "", "the end of the window, RFC 3339 UTC (default now)")
+	reposFlag := fs.String("repo", "", verbflag.HelpRepo)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "digest", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	var repos repoList
+	for _, r := range verbflag.List(*reposFlag) {
+		if err := repos.Set(r); err != nil {
+			return refuse(errOut, "digest", err.Error())
+		}
 	}
 	if fs.NArg() > 0 {
 		return refuse(errOut, "digest", "takes flags, not positional arguments")

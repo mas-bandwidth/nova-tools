@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
@@ -18,9 +19,9 @@ func init() {
 
 func runRank(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("rank")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	as := fs.String("as", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	as := fs.String("as", "", verbflag.HelpAs)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "rank", err.Error())
 	}

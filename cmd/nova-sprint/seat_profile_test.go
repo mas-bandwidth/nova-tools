@@ -166,8 +166,9 @@ func TestRedisRawRefusesWithoutCommandOrAddress(t *testing.T) {
 }
 
 // TestRedisDefaultIsEnvThenSeat is #4330's first gap: a verb given no --redis
-// under a seat dials the seat's address; a verb's own environment default
-// still comes first, and with no seat and no environment it is "".
+// under a seat dials the seat's address; the environment's address (the one
+// order, seatAddrEnvs) still comes first, and with no seat and no environment
+// it is "".
 func TestRedisDefaultIsEnvThenSeat(t *testing.T) {
 	t.Parallel()
 
@@ -182,9 +183,14 @@ func TestRedisDefaultIsEnvThenSeat(t *testing.T) {
 	}{
 		{&none, nil, nil, ""},
 		{&sel, nil, nil, "seat.invalid:6380"},
-		{&sel, map[string]string{"NOVA_SPRINT_REDIS": "env.invalid:1"}, nil, "seat.invalid:6380"},
-		{&sel, map[string]string{"NOVA_SPRINT_REDIS": "env.invalid:1"}, []string{"NOVA_SPRINT_REDIS"}, "env.invalid:1"},
-		{&none, map[string]string{"NOVA_REDIS_ADDR": "env.invalid:2"}, []string{"NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"}, "env.invalid:2"},
+		// the one resolver (#4352 A): every verb reads the same variables in
+		// the same order, with no list of its own
+		{&sel, map[string]string{"NOVA_SPRINT_REDIS": "env.invalid:1"}, nil, "env.invalid:1"},
+		{&none, map[string]string{"NOVA_REDIS_ADDR": "env.invalid:2"}, nil, "env.invalid:2"},
+		{&none, map[string]string{"NOVA_REDIS": "env.invalid:3"}, nil, "env.invalid:3"},
+		{&none, map[string]string{"NOVA_REDIS_ADDR": "env.invalid:2", "NOVA_SPRINT_REDIS": "env.invalid:1"}, nil, "env.invalid:1"},
+		// a verb's own variable (card run's NOVA_CARD_REDIS) comes first
+		{&none, map[string]string{"NOVA_CARD_REDIS": "card.invalid:4", "NOVA_SPRINT_REDIS": "env.invalid:1"}, []string{"NOVA_CARD_REDIS"}, "card.invalid:4"},
 	} {
 		if got := redisDefaultFrom(c.sel, env(c.env), c.envs...); got != c.want {
 			t.Fatalf("seat %q env %v envs %v: %q, want %q", c.sel.Selected(), c.env, c.envs, got, c.want)

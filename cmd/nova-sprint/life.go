@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -107,21 +106,15 @@ func runBench(ctx context.Context, args []string, out, errOut io.Writer) int {
 // lifeFlags is the quiet flag set shared by the presence subverbs, with the
 // Redis endpoint from --redis, then NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR,
 // then the local test endpoint. A real production host is never hardcoded.
-func lifeFlags(name string) (*flag.FlagSet, *string) {
+func lifeFlags(name string) (*verbflag.Set, *string) {
 	fs := verbflag.New(name)
-	addr := fs.String("redis", redisDefault(), "redis address (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	return fs, addr
 }
 
 func lifeAddr(addr string) string {
-	if addr != "" {
-		return addr
-	}
-	if v := os.Getenv("NOVA_SPRINT_REDIS"); v != "" {
-		return v
-	}
-	if v := os.Getenv("NOVA_REDIS_ADDR"); v != "" {
-		return v
+	if a := redisOr(addr); a != "" {
+		return a
 	}
 	return "127.0.0.1:6379"
 }
@@ -132,19 +125,19 @@ func openLifeStore(ctx context.Context, addr string) (*store.Store, error) {
 
 func runFriendHello(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs, addr := lifeFlags("friend hello")
-	as := fs.String("as", "", "friend name")
+	as := fs.String("as", "", verbflag.HelpAs)
 	slots := fs.Int("slots", -1, "desired slots; omitted preserves configured capacity")
-	sprint := fs.String("sprint", "", "sprint to take returned work from")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	harness := fs.String("harness", "", "harness identity")
 	host := fs.String("host", "", "host the friend runs on")
 	machine := fs.String("machine", "", "configured capacity machine, if different from host")
 	session := fs.String("session", "", "presence session identity")
 	once := fs.Bool("once", false, "register once and return without the 1 s loop")
-	var logins loginFlags
-	fs.Var(&logins, "login", "a login alias for this friend (repeatable; #3092)")
+	loginsFlag := fs.String("login", "", "the friend's login aliases, comma-separated (#3092)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "friend hello", err.Error())
 	}
+	logins := loginFlags(verbflag.List(*loginsFlag))
 	if fs.NArg() != 0 {
 		return refuse(errOut, "friend hello", "takes flags, not positional arguments")
 	}
@@ -152,7 +145,7 @@ func runFriendHello(ctx context.Context, args []string, out, errOut io.Writer) i
 		return refuse(errOut, "friend hello", "--as is required")
 	}
 	if *slots != -1 {
-		fmt.Fprintf(errOut, "FRIEND CAPACITY %s: use nova-sprint capacity friend --as <actor> --machine <m> %s <slots>\n", *as, *as)
+		fmt.Fprintf(errOut, "FRIEND CAPACITY %s: use nova-sprint capacity friend --as %s --machine <m> --slots <n>\n", *as, *as)
 		return 1
 	}
 	// #2929 rev 4: hello is a take and obeys the seat contract. Both refusals
@@ -202,7 +195,7 @@ func runFriendHello(ctx context.Context, args []string, out, errOut io.Writer) i
 
 func runFriendBye(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs, addr := lifeFlags("friend bye")
-	as := fs.String("as", "", "friend name")
+	as := fs.String("as", "", verbflag.HelpAs)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "friend bye", err.Error())
 	}
@@ -226,27 +219,18 @@ func runFriendBye(ctx context.Context, args []string, out, errOut io.Writer) int
 }
 
 func runFriendWake(ctx context.Context, args []string, out, errOut io.Writer) int {
-	positional := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		positional, args = args[0], args[1:]
-	}
 	fs, addr := lifeFlags("friend wake")
-	friend := fs.String("friend", "", "friend name")
-	reason := fs.String("reason", "", "wake reason")
+	friend := fs.String("as", "", verbflag.HelpAs)
+	reason := fs.String("why", "", verbflag.HelpWhy)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "friend wake", err.Error())
 	}
 	if fs.NArg() != 0 {
-		return refuse(errOut, "friend wake", "takes one friend name followed by flags")
+		return refuse(errOut, "friend wake", "takes flags, not positional arguments; the friend is --as <f>")
 	}
-	if positional != "" {
-		if *friend != "" && *friend != positional {
-			return refuse(errOut, "friend wake", "positional friend and --friend disagree")
-		}
-		*friend = positional
-	}
+	*friend = strings.TrimPrefix(*friend, "friend:")
 	if *friend == "" {
-		return refuse(errOut, "friend wake", "--friend is required")
+		return refuse(errOut, "friend wake", "--as names the friend")
 	}
 	st, err := openLifeStore(ctx, lifeAddr(*addr))
 	if err != nil {
@@ -268,7 +252,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	load1 := fs.String("load1", "", "one minute load")
 	ssh := fs.String("ssh", "", "ssh endpoint")
 	launcher := fs.String("launcher", life.BatchLauncher, "launcher identity the beat names (preflight 7.4)")
-	why := fs.String("why", "", "why the bench is live")
+	why := fs.String("why", "", verbflag.HelpWhy)
 	session := fs.String("session", "", "fenced owner session identity")
 	live := fs.String("live", "", "comma separated card identities")
 	once := fs.Bool("once", false, "write one beat and return without the 1 s loop")
@@ -480,8 +464,8 @@ func benchBeatBackoff(last, interval time.Duration) time.Duration {
 // row and prints it. A failed pass backs off as bench beat does.
 func runFriendRow(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs, addr := lifeFlags("friend row")
-	as := fs.String("as", "", "friend whose row this is")
-	sprint := fs.String("sprint", "", "sprint whose friend-queue index sets are counted")
+	as := fs.String("as", "", verbflag.HelpAs)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	once := fs.Bool("once", false, "write one row and return without the 1 s loop")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "friend row", err.Error())
@@ -671,7 +655,7 @@ func runLife(ctx context.Context, args []string, out, errOut io.Writer) int {
 func runLifeEvent(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "life event"
 	fs, addr := lifeFlags(verb)
-	as := fs.String("as", "", "friend whose event this is")
+	as := fs.String("as", "", verbflag.HelpAs)
 	kind := fs.String("kind", "", "beat, deliver, turn-start, turn-end, turn-error or usage-limit")
 	cause := fs.String("cause", "", "for turn-start: the deliver event id that started the turn")
 	if err := fs.Parse(args); err != nil {
@@ -722,7 +706,7 @@ func runLifeEvent(ctx context.Context, args []string, out, errOut io.Writer) int
 func runLifeWakeMode(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "life wake-mode"
 	fs, addr := lifeFlags(verb)
-	as := fs.String("as", "", "friend whose wake mode this is")
+	as := fs.String("as", "", verbflag.HelpAs)
 	set := fs.String("set", "", "the wake mode to declare: scheduled-model-turn")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -821,7 +805,7 @@ func benchWakeRepair(ctx context.Context, st *store.Store, host, session string,
 func runFriendDeclare(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend declare"
 	fs, addr := lifeFlags(verb)
-	from := fs.String("from", "", "the committed fleet group_vars file holding friends:")
+	from := fs.String("from", "", verbflag.HelpFrom)
 	check := fs.Bool("check", false, "print the diff against Redis and write nothing")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -892,7 +876,7 @@ func runFriendDeclare(ctx context.Context, args []string, out, errOut io.Writer)
 func runFriendWakeHealth(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend wake-health"
 	fs, addr := lifeFlags(verb)
-	as := fs.String("as", "", "one friend")
+	as := fs.String("as", "", verbflag.HelpAs)
 	all := fs.Bool("all", false, "every registered or declared friend")
 	repair := fs.Bool("repair", false, "run the repair tick for the friends declared on this host first")
 	host := fs.String("host", "", "this host (default the hostname); only with --repair")

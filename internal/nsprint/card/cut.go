@@ -22,7 +22,7 @@ import (
 //
 // The retired pulse cutter rendered a card file into a queue directory; card cut reads
 // the issue, renders the card body in the card-push shape (WHO, STREAM,
-// DEPENDS-ON and WHY, PATHS, DONE-WHEN, BASE, base-sha, EST, ORIGIN), inlines
+// DEPENDS-ON and WHY, PATHS, DONE-WHEN, BASE, BASE-SHA, EST, ORIGIN), inlines
 // the S2 context block (internal/ctxindex) when an index is named, stores the
 // body's exact bytes at BodyKey before the card is published, and pushes the
 // card with PushBatch, the one card writer. No file, no queue directory.
@@ -84,6 +84,9 @@ func RenderCut(ctx context.Context, src IssueSource, in CutInput) (CutCard, erro
 		return CutCard{}, fmt.Errorf("read %s#%d: %v", in.Repo, in.Issue, err)
 	}
 	fields := IssueFields(issue.Body)
+	if err := RetiredHeaderKey(issue.Body); err != nil {
+		return CutCard{}, fmt.Errorf("%s#%d: %v", in.Repo, in.Issue, err)
+	}
 	stream := strings.TrimSpace(in.Stream)
 	if stream == "" {
 		stream = fields["STREAM"]
@@ -116,7 +119,7 @@ func RenderCut(ctx context.Context, src IssueSource, in CutInput) (CutCard, erro
 	if base == "" {
 		return CutCard{}, fmt.Errorf("%s#%d has no BASE: line; pass --base <branch>", in.Repo, in.Issue)
 	}
-	baseSHA := strings.ToLower(fields["base-sha"])
+	baseSHA := strings.ToLower(fields["BASE-SHA"])
 	if !shaRE.MatchString(baseSHA) {
 		if baseSHA, err = src.BranchSHA(ctx, in.Repo, base); err != nil {
 			return CutCard{}, fmt.Errorf("resolve %s %s: %v", in.Repo, base, err)
@@ -146,7 +149,7 @@ func RenderCut(ctx context.Context, src IssueSource, in CutInput) (CutCard, erro
 		{"TASK", title},
 		{"REPO", in.Repo},
 		{"BASE", base},
-		{"base-sha", baseSHA},
+		{"BASE-SHA", baseSHA},
 		{"PATHS", fields["PATHS"]},
 		{"DEPENDS-ON", depends},
 		{"WHY", why},
@@ -195,7 +198,7 @@ func IssueURL(repo string, n int) string {
 
 // quote writes text with every line prefixed "> ", so no line of the issue
 // can be read as a header line of the card (ReadCardBase reads the first 40
-// lines for base-sha:).
+// lines for BASE-SHA:).
 func quote(b *strings.Builder, text string) {
 	text = strings.TrimRight(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	for _, line := range strings.Split(text, "\n") {
@@ -212,7 +215,21 @@ func sealContract(card string) string {
 }
 
 // cutKeys are the issue lines a cut reads, first occurrence wins.
-var cutKeys = []string{"STREAM", "PATHS", "DEPENDS-ON", "WHY", "DONE-WHEN", "BASE", "base-sha", "EST", "WHO"}
+var cutKeys = []string{"STREAM", "PATHS", "DEPENDS-ON", "WHY", "DONE-WHEN", "BASE", "BASE-SHA", "EST", "WHO"}
+
+// retiredKeyRE finds a header key in a spelling the one grammar retired
+// (nova-tools#4352 A: header keys are one case, BASE-SHA: and BASE-REPO:
+// like BASE:), on a line of its own or a list item.
+var retiredKeyRE = regexp.MustCompile("(?m)^[-*> \t]*(?:\\*\\*)?(base-sha|base-repo)(?:\\*\\*)?:")
+
+// RetiredHeaderKey is the refusal for a retired header spelling in text:
+// `base-sha: is spelled BASE-SHA:`, or nil.
+func RetiredHeaderKey(text string) error {
+	if m := retiredKeyRE.FindStringSubmatch(text); m != nil {
+		return fmt.Errorf("%s: is spelled %s:", m[1], strings.ToUpper(m[1]))
+	}
+	return nil
+}
 
 // IssueFields reads the card's lines from an issue body: the first line of
 // each key in cutKeys, anywhere in the body, after list markers and Markdown

@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -24,7 +23,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "task",
-		Summary: "push, take, beat, done, cancel, list and width tasks; the task card verbs (--actor): push, take, beat, done, land, cancel, block, unblock, front, move, expire, ls, fsck",
+		Summary: "push, take, beat, done, cancel, list and width tasks; the task card verbs: push (--as), take, beat, done, land, cancel, block, unblock, front, move, expire, ls, fsck",
 		Run:     runTask,
 	})
 }
@@ -42,11 +41,11 @@ const seatEnv = "NOVA_FRIEND"
 // wantFriend is the one refusal for an empty or unregistered initiator.
 const wantFriend = "want NOVA_FRIEND in friends"
 
-// taskAddr is the Redis address of a seat verb: --redis, else
-// NOVA_SPRINT_REDIS, else NOVA_REDIS_ADDR, else empty, which store.Open
-// refuses (never a localhost default on a mutating verb).
+// taskAddr is the Redis address of a seat verb: --redis, else the one
+// resolver (seat.go), else empty, which store.Open refuses (never a
+// localhost default on a mutating verb).
 func taskAddr(flagAddr string) string {
-	return redisOr(flagAddr, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR")
+	return redisOr(flagAddr)
 }
 
 // refuseSeat maps the seat errors to their one line: ErrNotFriend is
@@ -69,8 +68,6 @@ func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 	switch args[0] {
 	case "push":
 		return runTaskPush(ctx, args[1:], out, errOut)
-	case "take":
-		return runTaskTake(ctx, args[1:], out, errOut)
 	case "done":
 		return runTaskDone(ctx, args[1:], out, errOut)
 	case "beat":
@@ -88,38 +85,40 @@ func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 
 // taskFlags is the flag set shared by the subverbs, quiet on parse error so
 // the verb prints one line the way main.go does.
-func taskFlags(name string) *flag.FlagSet {
+func taskFlags(name string) *verbflag.Set {
 	return verbflag.New(name)
 }
 
 func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("task push")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	id := fs.String("id", "", "")
-	kind := fs.String("kind", "work", "")
-	title := fs.String("title", "", "")
-	effects := fs.String("effects", "none", "")
-	repo := fs.String("repo", "", "")
-	pr := fs.Int("pr", 0, "")
-	head := fs.String("head", "", "")
-	ref := fs.String("ref", "", "")
-	to := fs.String("to", "", "")
-	front := fs.Bool("front", false, "")
-	priority := fs.Int("priority", 0, "")
-	payloadSHA := fs.String("payload-sha", "", "")
-	idem := fs.String("idem", "", "")
-	est := fs.String("est", "", "")
-	// #3206 PR A: DEPENDS-ON (--on is friend-queue's spelling) and the read
-	// rule's author.
-	dependsOn := fs.String("depends-on", "", "")
-	fs.StringVar(dependsOn, "on", "", "")
-	author := fs.String("author", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	ids := fs.String("ids", "", verbflag.HelpIDs)
+	kind := fs.String("kind", "work", "the task's kind: work or read")
+	title := fs.String("title", "", "the task's title")
+	effects := fs.String("effects", "none", "the task's side effects: none, or what it writes")
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	pr := fs.Int("pr", 0, verbflag.HelpPR)
+	head := fs.String("head", "", "the PR's head sha")
+	ref := fs.String("ref", "", "the task's ref, <repo>#<n>")
+	to := fs.String("to", "", verbflag.HelpTo)
+	front := fs.Bool("front", false, "queue the task at the front")
+	priority := fs.Int("priority", 0, "the task's priority, higher first")
+	payloadSHA := fs.String("payload-sha", "", "the sha of the payload the task carries")
+	idem := fs.String("idem", "", verbflag.HelpIdem)
+	est := fs.String("est", "", "the estimate in whole minutes, 1..10080")
+	// #3206 PR A: DEPENDS-ON and the read rule's author.
+	dependsOn := fs.String("depends-on", "", "what the task waits on, comma-separated ids")
+	author := fs.String("author", "", "the author of the read rule the task carries")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "task push", err.Error())
 	}
 	if fs.NArg() > 0 {
 		return refuse(errOut, "task push", "takes flags, not positional arguments")
+	}
+	id := oneID(*ids)
+	if id == "" {
+		return refuse(errOut, "task push", "--ids wants one id")
 	}
 	// #2929: the initiator is the seat, read before any dial; --actor is gone.
 	initiator := os.Getenv(seatEnv)
@@ -135,7 +134,7 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	defer st.Close()
 	res, err := task.PushChecked(ctx, st, task.PushRequest{
-		Sprint: *sprint, ID: *id, Kind: task.Kind(*kind), Title: *title,
+		Sprint: *sprint, ID: id, Kind: task.Kind(*kind), Title: *title,
 		Effects: task.Effects(*effects), Repo: *repo, PR: *pr, Head: *head,
 		Ref: *ref, To: *to, Front: *front, Priority: *priority,
 		PayloadSHA: *payloadSHA, Actor: initiator, Idem: *idem,
@@ -148,7 +147,7 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if res.Status == task.PushDown {
 		// #2929 rev 5: exit 7 means only DOWN, so a router can tell "pick
 		// another friend" from "fix the call".
-		_, _ = fmt.Fprintf(out, "PUSH DOWN id=%s to=%s down=%s\n", *id, *to, res.Down)
+		_, _ = fmt.Fprintf(out, "PUSH DOWN id=%s to=%s down=%s\n", id, *to, res.Down)
 		return res.Status.ExitCode()
 	}
 	if res.Status == task.PushInvalid && res.Reason != "" {
@@ -167,99 +166,43 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	switch {
 	case res.Status == task.PushCreated && res.Waiting > 0:
-		_, _ = fmt.Fprintf(out, "PUSH %s id=%s waiting=%d\n", res.Status, *id, res.Waiting)
+		_, _ = fmt.Fprintf(out, "PUSH %s id=%s waiting=%d\n", res.Status, id, res.Waiting)
 	case res.Status == task.PushCreated && res.OnMet:
-		_, _ = fmt.Fprintf(out, "PUSH %s id=%s on-met\n", res.Status, *id)
+		_, _ = fmt.Fprintf(out, "PUSH %s id=%s on-met\n", res.Status, id)
 	default:
-		_, _ = fmt.Fprintf(out, "PUSH %s id=%s\n", res.Status, *id)
+		_, _ = fmt.Fprintf(out, "PUSH %s id=%s\n", res.Status, id)
 	}
 	return res.Status.ExitCode()
 }
 
-func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := taskFlags("task take")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	id := fs.String("id", "", "")
-	as := fs.String("as", "", "")
-	n := fs.Int("n", 0, "")
-	idem := fs.String("idem", "", "")
-	if err := fs.Parse(args); err != nil {
-		return refuse(errOut, "task take", err.Error())
-	}
-	if fs.NArg() > 0 {
-		return refuse(errOut, "task take", "takes flags, not positional arguments")
-	}
-	// #2929: only --as equal to the initiator takes; --actor is gone.
-	initiator := os.Getenv(seatEnv)
-	if initiator == "" {
-		return refuse(errOut, "task take", wantFriend+" ("+seatEnv+" is empty)")
-	}
-	if *as == "" {
-		return refuse(errOut, "task take", "--as is required")
-	}
-	st, err := openTaskStore(ctx, taskAddr(*redisAddr))
-	if err != nil {
-		return refuse(errOut, "task take", err.Error())
-	}
-	defer st.Close()
-	if *as != initiator {
-		if _, err := task.DenyTake(ctx, st, initiator, *as, *sprint, *id, *idem); err != nil {
-			return refuseSeat(errOut, "task take", initiator, err)
-		}
-		_, _ = fmt.Fprintf(out, "TAKE DENIED id=%s as=%s initiator=%s\n", *id, *as, initiator)
-		return 6
-	}
-	trips := st.CountTrips()
-	claims, err := task.TakeAvailable(ctx, st, *as, *sprint, *id, *n, initiator, *idem)
-	var blocked *task.BlockedError
-	if errors.As(err, &blocked) {
-		// #2939: exit 7, new because 3-6 are taken.
-		_, _ = fmt.Fprintf(out, "BLOCKED needs %s\n", strings.Join(blocked.Needs, " "))
-		return 7
-	}
-	if err != nil {
-		return refuseSeat(errOut, "task take", initiator, err)
-	}
-	// #3261: trips=<n> is the take's Redis round trips (2 for any number of
-	// sprints and claims; 1 when nothing is claimable).
-	if len(claims) == 0 {
-		fmt.Fprintf(out, "NONE trips=%d\n", trips.N())
-		return 0
-	}
-	for _, claim := range claims {
-		fmt.Fprintf(out, "CLAIMED %s/%s attempt=%d token=%s trips=%d\n",
-			claim.Sprint, claim.ID, claim.Attempt, claim.Token, trips.N())
-		_, _ = fmt.Fprintf(out, "TASK %s kind=%s ref=%s title=%s\n",
-			claim.ID, claim.Kind, claim.Ref, strconv.Quote(claim.Title))
-	}
-	return 0
-}
-
 func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("task done")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	id := fs.String("id", "", "")
-	token := fs.String("token", "", "")
-	evidence := fs.String("evidence", "", "")
-	verdict := fs.String("verdict", "", "")
-	score := fs.Int("score", 0, "")
-	head := fs.String("head", "", "")
-	actor := fs.String("actor", "", "")
-	idem := fs.String("idem", "", "")
-	as := fs.String("as", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	ids := fs.String("ids", "", verbflag.HelpIDs)
+	token := fs.String("token", "", "the attempt's token, from the take")
+	evidence := fs.String("evidence", "", "what proves the work is done: a PR, a url, a line")
+	verdict := fs.String("verdict", "", "a read's verdict")
+	score := fs.Int("score", 0, "a read's score, 1-10")
+	head := fs.String("head", "", "the PR's head sha the read is of")
+	idem := fs.String("idem", "", verbflag.HelpIdem)
+	as := fs.String("as", "", verbflag.HelpAs)
 	// nova-tools #3092 rev 7: a review closes on the comment as posted. The
 	// shared parser (internal/nsprint/disposition) reads its typed line and
 	// ns_task_done records it with the close in one atomic call.
-	bodyFile := fs.String("body-file", "", "")
-	url := fs.String("url", "", "")
+	bodyFile := fs.String("body-file", "", "the review comment as posted, a file; carries verdict, score and head")
+	url := fs.String("url", "", "the comment's url (with --body-file)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "task done", err.Error())
 	}
 	if fs.NArg() > 0 {
 		return refuse(errOut, "task done", "takes flags, not positional arguments")
 	}
+	id := oneID(*ids)
+	if id == "" {
+		return refuse(errOut, "task done", "--ids wants one id")
+	}
+	actor := seatActor()
 	var typed *task.TypedLine
 	if *bodyFile != "" {
 		if *verdict != "" || *score != 0 || *head != "" {
@@ -273,11 +216,11 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 		if res.Outcome != disposition.Record {
 			// A review closes on a record: prose, NORECORD and a malformed
 			// line all refuse the close.
-			_, _ = fmt.Fprintf(out, "REFUSED %s id=%s\n", res, *id)
+			_, _ = fmt.Fprintf(out, "REFUSED %s id=%s\n", res, id)
 			return 2
 		}
 		if res.Line.Type != disposition.TypeDisposition {
-			_, _ = fmt.Fprintf(out, "REFUSED not-a-disposition id=%s\n", *id)
+			_, _ = fmt.Fprintf(out, "REFUSED not-a-disposition id=%s\n", id)
 			return 2
 		}
 		typed = &task.TypedLine{Type: string(res.Line.Type), Who: res.Line.Who, Head: res.Line.Head,
@@ -298,7 +241,7 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if typed != nil && typed.Verdict == "HOLD" && typed.Kind == "" {
 		// The classifier names another pull by number, so it needs the
 		// task's PR.
-		prText, err := st.Client().HGet(ctx, "task:"+*id, "pr").Result()
+		prText, err := st.Client().HGet(ctx, "task:"+id, "pr").Result()
 		if err != nil && !errors.Is(err, redis.Nil) {
 			return refuse(errOut, "task done", err.Error())
 		}
@@ -306,7 +249,7 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 		if prText != "" {
 			// A pr field that is not a number is a broken record, not PR 0.
 			if pr, err = strconv.Atoi(prText); err != nil {
-				return refuse(errOut, "task done", "task:"+*id+" pr="+prText+" is not a number")
+				return refuse(errOut, "task done", "task:"+id+" pr="+prText+" is not a number")
 			}
 		}
 		typed.KindDerived = disposition.Classify(typed.Reason, pr)
@@ -316,8 +259,8 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 		scoreText = strconv.Itoa(*score)
 	}
 	res, err := task.DoneTyped(ctx, st, task.DoneRequest{
-		Sprint: *sprint, ID: *id, Token: *token, Evidence: *evidence,
-		Verdict: *verdict, Score: scoreText, Head: *head, Actor: *actor, Idem: *idem, As: *as,
+		Sprint: *sprint, ID: id, Token: *token, Evidence: *evidence,
+		Verdict: *verdict, Score: scoreText, Head: *head, Actor: actor, Idem: *idem, As: *as,
 		Typed: typed,
 	})
 	if err != nil {
@@ -325,11 +268,11 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	switch {
 	case res.Status == task.DoneRefused:
-		_, _ = fmt.Fprintf(out, "REFUSED %s id=%s\n", res.Why, *id)
+		_, _ = fmt.Fprintf(out, "REFUSED %s id=%s\n", res.Why, id)
 	case len(res.Record) > 0:
-		_, _ = fmt.Fprintf(out, "DONE %s id=%s RECORD %s\n", res.Status, *id, strings.Join(res.Record, " "))
+		_, _ = fmt.Fprintf(out, "DONE %s id=%s RECORD %s\n", res.Status, id, strings.Join(res.Record, " "))
 	default:
-		_, _ = fmt.Fprintf(out, "DONE %s id=%s\n", res.Status, *id)
+		_, _ = fmt.Fprintf(out, "DONE %s id=%s\n", res.Status, id)
 	}
 	return res.Status.ExitCode()
 }

@@ -17,9 +17,9 @@ func TestCardMoveDispatch(t *testing.T) {
 	}{
 		{[]string{"deal", "--to", "bench:b", "--n", "3"}, true},
 		{[]string{"work", "--as", "friend:f", "--fill"}, true},
-		{[]string{"end", "--id", "p~1", "--ok"}, true},
+		{[]string{"end", "--ids", "p~1", "--ok"}, true},
 		{[]string{"end", "lbl", "--sprint", "s", "--token", "t"}, false},
-		{[]string{"beat", "--as", "bench:b", "--id", "p~1"}, true},
+		{[]string{"beat", "--as", "bench:b", "--ids", "p~1"}, true},
 		{[]string{"beat", "lbl", "--sprint", "s", "--token", "t"}, false},
 		{[]string{"fsck"}, true},
 		{[]string{"fsck", "--sprint", "s"}, false},

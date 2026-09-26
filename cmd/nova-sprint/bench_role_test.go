@@ -44,26 +44,26 @@ func TestBenchRoleFriendsRefusedOnEverySwarmAndCIPath(t *testing.T) {
 	addr, c := benchRoleFixture(t)
 	ctx := context.Background()
 
-	if code, _, stderr := runVerb(t, "capacity", "machine", "--redis", addr, "--as", "t", "m1", "64"); code != 0 {
+	if code, _, stderr := runVerb(t, "capacity", "machine", "--redis", addr, "--machine", "m1", "--slots", "64"); code != 0 {
 		t.Fatalf("capacity machine: %d %q", code, stderr)
 	}
-	code, stdout, stderr := runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--as", "t", "--role", "friends", "studio", "0")
+	code, stdout, stderr := runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--role", "friends", "--as", "studio", "--slots", "0")
 	if code != 0 || !strings.HasPrefix(stdout, "SET bench studio ") || !strings.Contains(stdout, " role=friends ") {
 		t.Fatalf("capacity bench --role friends: %d %q %q", code, stdout, stderr)
 	}
-	if code, _, stderr := runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--as", "t", "hulk", "8"); code != 0 {
+	if code, _, stderr := runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--as", "hulk", "--slots", "8"); code != 0 {
 		t.Fatalf("capacity bench hulk: %d %q", code, stderr)
 	}
 	// The same write again is SAME: the role column takes part in the compare.
-	code, stdout, _ = runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--as", "t", "--role", "friends", "studio", "0")
+	code, stdout, _ = runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--role", "friends", "--as", "studio", "--slots", "0")
 	if code != 0 || !strings.HasPrefix(stdout, "SAME bench studio ") {
 		t.Fatalf("repeat --role friends: %d %q, want SAME", code, stdout)
 	}
-	if code, _, stderr := runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--as", "t", "--role", "ci", "studio", "0"); code != 2 ||
+	if code, _, stderr := runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--role", "ci", "--as", "studio", "--slots", "0"); code != 2 ||
 		!strings.Contains(stderr, "want friends or fleet") {
 		t.Fatalf("--role ci: %d %q, want exit 2 naming friends or fleet", code, stderr)
 	}
-	if code, _, stderr := runVerb(t, "capacity", "friend", "--redis", addr, "--machine", "m1", "--as", "t", "--role", "fleet", "ann", "1"); code != 2 ||
+	if code, _, stderr := runVerb(t, "capacity", "friend", "--redis", addr, "--machine", "m1", "--role", "fleet", "--as", "ann", "--slots", "1"); code != 2 ||
 		!strings.Contains(stderr, "--role is a bench flag") {
 		t.Fatalf("capacity friend --role: %d %q, want exit 2", code, stderr)
 	}
@@ -78,7 +78,7 @@ func TestBenchRoleFriendsRefusedOnEverySwarmAndCIPath(t *testing.T) {
 	}
 
 	// CI runner registration: a legs declaration on a friends bench.
-	code, stdout, stderr = runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--as", "t", "--legs", "go", "studio", "0")
+	code, stdout, stderr = runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--legs", "go", "--as", "studio", "--slots", "0")
 	if code != 1 || stdout != "" || !strings.HasPrefix(stderr, "REFUSED bench=studio role=friends: ") || strings.Count(stderr, "\n") != 1 {
 		t.Fatalf("--legs on a friends bench: %d %q %q, want exit 1 and one REFUSED line", code, stdout, stderr)
 	}
@@ -86,7 +86,7 @@ func TestBenchRoleFriendsRefusedOnEverySwarmAndCIPath(t *testing.T) {
 		t.Fatalf("refused legs were written: %q", legs)
 	}
 	// ... and --role friends with --legs in one call is the same refusal.
-	if code, _, stderr := runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--as", "t", "--legs", "go", "--role", "friends", "hulk", "8"); code != 1 ||
+	if code, _, stderr := runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--legs", "go", "--role", "friends", "--as", "hulk", "--slots", "8"); code != 1 ||
 		!strings.HasPrefix(stderr, "REFUSED bench=hulk role=friends: ") {
 		t.Fatalf("--legs --role friends: %d %q", code, stderr)
 	}
@@ -126,7 +126,7 @@ func TestBenchRoleFriendsRefusedOnEverySwarmAndCIPath(t *testing.T) {
 	}
 
 	// Back to fleet: the role column moves, and bench ls follows.
-	if code, _, stderr := runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--as", "t", "--role", "fleet", "studio", "4"); code != 0 {
+	if code, _, stderr := runVerb(t, "capacity", "bench", "--redis", addr, "--machine", "m1", "--role", "fleet", "--as", "studio", "--slots", "4"); code != 0 {
 		t.Fatalf("--role fleet: %d %q", code, stderr)
 	}
 	reply, err = c.FCall(ctx, "ns_card_deal", nil, "studio", "fence", "t", "").StringSlice()

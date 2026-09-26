@@ -21,8 +21,8 @@ func pitOneLine(t *testing.T, s string) {
 
 // TestPitstopVerbEveryBranch is the verb over the real functions (a throwaway
 // redis-server: miniredis has no FCALL): set, status, set refused, set
-// --force, clear, clear refused, unknown sprint, and --by defaulting to the
-// seat. Each prints one line with exit 0, or one REFUSED line naming the
+// --force, clear, clear refused, unknown sprint, and the seat as who set
+// it (#4352 A: no --by). Each prints one line with exit 0, or one REFUSED line naming the
 // remedy with exit 1.
 func TestPitstopVerbEveryBranch(t *testing.T) {
 	const S = "control-00003371"
@@ -64,12 +64,12 @@ func TestPitstopVerbEveryBranch(t *testing.T) {
 	}
 	pitOneLine(t, errOut)
 
-	code, out, _ = runPit(t, "rowan", "set", "--redis", addr, "--sprint", S, "--why", "again", "--by", "stella", "--force")
+	code, out, _ = runPit(t, "stella", "set", "--redis", addr, "--sprint", S, "--why", "again", "--force")
 	if code != 0 || !strings.Contains(out, "by=stella") || !strings.Contains(out, `replaced_by=rowan replaced_why="Glenn: rest tonight"`) {
 		t.Fatalf("set --force: %d %q", code, out)
 	}
 	if got := c.HGet(ctx, "s:"+S+":pitstop", "by").Val(); got != "stella" {
-		t.Fatalf("--by did not win over the seat: by=%q", got)
+		t.Fatalf("the seat did not set it: by=%q", got)
 	}
 
 	code, out, _ = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S)
@@ -126,7 +126,7 @@ func TestPitstopClearNarrowsScope(t *testing.T) {
 	if !holds("nova-work") || !holds("swarm: cards") {
 		t.Fatal("an all-scope stop does not hold every stream")
 	}
-	code, out, errOut = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--scope", "nova-work")
+	code, out, errOut = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--stream", "nova-work")
 	if code != 0 || !strings.HasPrefix(out, "PITSTOP NARROW sprint="+S+" by=rowan at=") || !strings.Contains(out, ` lifted="nova-work" was_by=rowan`) {
 		t.Fatalf("narrow all: %d %q %q", code, out, errOut)
 	}
@@ -139,7 +139,7 @@ func TestPitstopClearNarrowsScope(t *testing.T) {
 		t.Fatalf("status after narrow: %d %q", code, out)
 	}
 	before := logLen()
-	code, _, errOut = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--scope", "nova-work")
+	code, _, errOut = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--stream", "nova-work")
 	if code != 1 || !strings.Contains(errOut, `REFUSED pitstop clear: sprint=`+S+` stop does not hold stream="nova-work"`) || logLen() != before {
 		t.Fatalf("clear of a lifted stream: %d %q (log %d -> %d)", code, errOut, before, logLen())
 	}
@@ -150,7 +150,7 @@ func TestPitstopClearNarrowsScope(t *testing.T) {
 
 	// Named-scope stop: only those streams, lifted one by one.
 	code, out, errOut = runPit(t, "rowan", "set", "--redis", addr, "--sprint", S, "--why", "land first",
-		"--scope", redisStream, "--scope", "nova-sprint")
+		"--stream", redisStream+",nova-sprint")
 	if code != 0 || !strings.Contains(out, ` scope="redis: store + bus","nova-sprint" why="land first"`) {
 		t.Fatalf("set streams: %d %q %q", code, out, errOut)
 	}
@@ -162,15 +162,15 @@ func TestPitstopClearNarrowsScope(t *testing.T) {
 		t.Fatalf("status streams: %d %q", code, out)
 	}
 	before = logLen()
-	code, _, errOut = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--scope", "nova-sprint", "--scope", "nova-work")
+	code, _, errOut = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--stream", "nova-sprint", "--stream", "nova-work")
 	if code != 1 || !strings.Contains(errOut, `does not hold stream="nova-work"`) || logLen() != before || !holds("nova-sprint") {
 		t.Fatalf("a clear naming one unheld stream wrote: %d %q", code, errOut)
 	}
-	code, out, _ = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--scope", "nova-sprint")
+	code, out, _ = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--stream", "nova-sprint")
 	if code != 0 || !strings.HasPrefix(out, "PITSTOP NARROW ") || holds("nova-sprint") || !holds(redisStream) {
 		t.Fatalf("narrow streams: %d %q", code, out)
 	}
-	code, out, _ = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--scope", redisStream)
+	code, out, _ = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S, "--stream", redisStream)
 	if code != 0 || !strings.HasPrefix(out, "PITSTOP CLEAR sprint="+S+" ") || !strings.Contains(out, ` lifted="redis: store + bus"`) || c.Exists(ctx, key).Val() != 0 {
 		t.Fatalf("the last scoped stream did not lift the stop: %d %q", code, out)
 	}
@@ -180,10 +180,10 @@ func TestPitstopClearNarrowsScope(t *testing.T) {
 
 	// Usage: --scope all stands alone and only on set; status takes none.
 	for _, args := range [][]string{
-		{"clear", "--sprint", S, "--scope", "all"},
-		{"set", "--sprint", S, "--scope", "all", "--scope", "nova-work"},
-		{"status", "--sprint", S, "--scope", "nova-work"},
-		{"set", "--sprint", S, "--scope", " "},
+		{"clear", "--sprint", S, "--stream", "all"},
+		{"set", "--sprint", S, "--stream", "all,nova-work"},
+		{"status", "--sprint", S, "--stream", "nova-work"},
+		{"set", "--sprint", S, "--stream", " "},
 	} {
 		if code, out, errOut := runPit(t, "rowan", append(args, "--redis", addr)...); code != 2 || out != "" || !strings.HasPrefix(errOut, "nova-sprint pitstop") {
 			t.Fatalf("%v: want usage exit 2, got %d %q %q", args, code, out, errOut)

@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"strings"
@@ -118,11 +119,11 @@ func runDevRed(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	name := "dev-red " + sub
 	fs := taskFlags(name)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	repo := fs.String("repo", "", "")
-	base := fs.String("base", "dev", "")
-	sprint := fs.String("sprint", "", "")
-	to := fs.String("to", devRedEnv("NOVA_DEVRED_TO", devRedTo), "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	base := fs.String("base", "dev", "the base branch")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	to := fs.String("to", devRedEnv("NOVA_DEVRED_TO", devRedTo), verbflag.HelpTo)
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, name, err.Error())
 	}

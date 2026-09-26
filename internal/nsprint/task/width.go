@@ -28,7 +28,7 @@ func WidthFrom(desired, leased, ci int) Width {
 
 // GetWidth reads a friend's desired slots and the ZCARD of its working set,
 // and returns the accounting. It is read only: task width
-// without n never writes, and with n it is capacity friend <f> <n> (one
+// without n never writes, and with n it is capacity friend --as <f> --slots <n> (one
 // writer, the capacity function).
 func GetWidth(ctx context.Context, st *store.Store, as string) (Width, error) {
 	if st == nil {

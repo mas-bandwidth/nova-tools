@@ -55,23 +55,24 @@ func TestFriendVerbs(t *testing.T) {
 		}
 	}
 
-	if got := runOK("capacity", "friend", "--redis", addr, "--wake", "human", "--notify", "bus:To:Glenn", "--as", "config", "emma"); got != "SET friend emma wake=human:bus:To:Glenn\n" {
+	if got := runOK("capacity", "friend", "--redis", addr, "--wake", "human", "--notify", "bus:To:Glenn", "--as", "emma"); got != "SET friend emma wake=human:bus:To:Glenn\n" {
 		t.Fatalf("wake human: %q", got)
 	}
-	if got := runOK("capacity", "friend", "--redis", addr, "--wake", "unit:com.nova.loop.wake-serve-johnny@studio", "--as", "config", "johnny"); !strings.Contains(got, "wake=unit:com.nova.loop.wake-serve-johnny@studio") {
+	if got := runOK("capacity", "friend", "--redis", addr, "--wake", "unit:com.nova.loop.wake-serve-johnny@studio", "--as", "johnny"); !strings.Contains(got, "wake=unit:com.nova.loop.wake-serve-johnny@studio") {
 		t.Fatalf("wake unit: %q", got)
 	}
-	// Hold 7 on #3135: the published name-first order, --as included.
-	if got := runOK("capacity", "friend", "emma", "--as", "config", "--redis", addr, "--wake", "human", "--notify", "bus:To:Glenn"); got != "SET friend emma wake=human:bus:To:Glenn\n" {
-		t.Fatalf("wake name-first: %q", got)
+	// One grammar (#4352 A): the friend is --as, in any flag order, with or
+	// without the friend: prefix; a positional name is refused.
+	if got := runOK("capacity", "friend", "--as", "emma", "--redis", addr, "--wake", "human", "--notify", "bus:To:Glenn"); got != "SET friend emma wake=human:bus:To:Glenn\n" {
+		t.Fatalf("wake as-first: %q", got)
 	}
-	if got := runOK("capacity", "friend", "--redis", addr, "--as", "config", "johnny", "--wake", "unit:com.nova.loop.wake-serve-johnny@studio"); !strings.Contains(got, "SET friend johnny wake=unit:com.nova.loop.wake-serve-johnny@studio") {
-		t.Fatalf("wake name-between: %q", got)
+	if got := runOK("capacity", "friend", "--redis", addr, "--as", "friend:johnny", "--wake", "unit:com.nova.loop.wake-serve-johnny@studio"); !strings.Contains(got, "SET friend johnny wake=unit:com.nova.loop.wake-serve-johnny@studio") {
+		t.Fatalf("wake friend: prefix: %q", got)
 	}
-	refused("capacity", "friend", "emma", "--redis", addr, "--wake", "human", "--notify", "bus:To:Glenn")
-	refused("capacity", "friend", "emma", "johnny", "--redis", addr, "--as", "config", "--wake", "human", "--notify", "bus:To:Glenn")
-	refused("capacity", "friend", "--redis", addr, "--wake", "human", "--as", "config", "emma")
-	refused("capacity", "friend", "--redis", addr, "--wake", "unit:no-host", "--as", "config", "emma")
+	refused("capacity", "friend", "--redis", addr, "--wake", "human", "--notify", "bus:To:Glenn")
+	refused("capacity", "friend", "emma", "--redis", addr, "--as", "johnny", "--wake", "human", "--notify", "bus:To:Glenn")
+	refused("capacity", "friend", "--redis", addr, "--wake", "human", "--as", "emma")
+	refused("capacity", "friend", "--redis", addr, "--wake", "unit:no-host", "--as", "emma")
 
 	if got := runOK("friend", "report", "--redis", addr, "--as", "emma", "--out-of-credits", "--until", "3h"); !strings.HasPrefix(got, "REPORT friend=emma state=out-of-credits until=") {
 		t.Fatalf("report: %q", got)
@@ -80,13 +81,13 @@ func TestFriendVerbs(t *testing.T) {
 	refused("friend", "report", "--redis", addr, "--as", "emma", "--away", "--clear", "--until", "1h")
 	refused("friend", "report", "--redis", addr, "--as", "nobody", "--out-of-credits")
 
-	show := runOK("friend", "show", "--redis", addr, "emma")
+	show := runOK("friend", "show", "--redis", addr, "--as", "emma")
 	for _, want := range []string{"friend=emma", "state=out-of-credits", "wake=human:bus:To:Glenn"} {
 		if !strings.Contains(show, want) {
 			t.Fatalf("show %q lacks %q", show, want)
 		}
 	}
-	if got := runOK("friend", "sweep", "--redis", addr, "--as", "reconciler"); !strings.Contains(got, "SWEEP idem=sweep-") {
+	if got := runOK("friend", "sweep", "--redis", addr); !strings.Contains(got, "SWEEP idem=sweep-") {
 		t.Fatalf("sweep: %q", got)
 	}
 	if got := runOK("friend", "report", "--redis", addr, "--as", "emma", "--clear"); got != "REPORT friend=emma state=up\n" {

@@ -35,6 +35,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"strconv"
@@ -51,6 +52,7 @@ import (
 )
 
 func init() {
+	ledger.DefaultAddr = func() string { return redisDefault() } // the one resolver (seat.go)
 	register(Verb{
 		Name: "jev",
 		Summary: "mech --repo <r> --n <n> --body-file <f>: Jev's mechanical passes (lint, scope, base) as one JEV line on the PR record, before any friend read; never a read. " +
@@ -70,12 +72,15 @@ func runJev(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	const verb = "jev mech"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	repo := fs.String("repo", "", "")
-	n := fs.Int("n", 0, "")
-	bodyFile := fs.String("body-file", "", "")
-	mirror := fs.String("mirror", "", "")
-	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	n := fs.Int("n", 0, verbflag.HelpN)
+	bodyFile := fs.String("body-file", "", "the PR body, a file")
+	mirror := fs.String("mirror", "", "the bench mirror of the repo (default ~/nova-bench/mirror/<repo>.git)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	if fs.NArg() != 0 {
 		return refuse(errOut, verb, jevUsage)
 	}
 	_, name, rerr := prkey.Split(*repo)
@@ -88,7 +93,7 @@ func runJev(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	addr := landRedisAddr(*redisAddr)
 	if addr == "" {
-		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR")
+		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")
 	}
 	st, err := store.Open(ctx, addr)
 	if err != nil {

@@ -129,7 +129,7 @@ func TestReadBriefZeroGitHubCalls(t *testing.T) {
 	}
 	b := string(brief)
 	for _, want := range []string{
-		"HEAD: " + head, "base-sha: " + base, "PATHS: internal/x", "DONE-WHEN: go test ./internal/x/ -run TestX",
+		"HEAD: " + head, "BASE-SHA: " + base, "PATHS: internal/x", "DONE-WHEN: go test ./internal/x/ -run TestX",
 		"STREAM: nova sprint migration", "DEPENDS-ON: none", "- state=success", "- shards=3/3",
 		"- JEV who=jev head=" + head, "- internal/x/x.go", "Files outside PATHS (0):\n- none",
 		"nova-sprint read post --repo nova-tools --n 7", "git -C " + mirror + " diff " + base + ".." + head,
@@ -152,6 +152,28 @@ func TestReadBriefZeroGitHubCalls(t *testing.T) {
 	}
 	if !strings.Contains(string(patch), "+func X() int { return 7 }") || !strings.Contains(string(patch), "internal/x/x.go") {
 		t.Fatalf("diff.patch is not the mirror diff base..head:\n%s", patch)
+	}
+}
+
+// TestReadBriefToStdoutWithoutOut (#4399 item 4): with no --out the brief,
+// then the diff, go to stdout and the receipt is the last line (out=-
+// diff=-); nothing is written to disk.
+func TestReadBriefToStdoutWithoutOut(t *testing.T) {
+	t.Parallel()
+	mirror, base, head := mirrorFixture(t, false)
+	c := client(t)
+	seedRecord(t, c, base, head)
+	var stdout, stderr strings.Builder
+	if code := read.Brief(context.Background(), c, "nova-tools", "7", mirror, "", &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	out := stdout.String()
+	brief, diff := strings.Index(out, "HEAD: "+head), strings.Index(out, "+func X() int { return 7 }")
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	last := lines[len(lines)-1]
+	if brief < 0 || diff < brief || !strings.HasPrefix(last, "READ BRIEF repo=nova-tools n=7 ") || !strings.Contains(last, " out=- diff=- ") ||
+		!strings.Contains(out, "the diff printed below this brief") {
+		t.Fatalf("want the brief, the diff, then the receipt:\n%s", out)
 	}
 }
 

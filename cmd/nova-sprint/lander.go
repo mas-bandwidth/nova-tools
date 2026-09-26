@@ -6,8 +6,8 @@
 //
 //	nova-sprint lander --redis <addr> --sprint <S> --repo <repo> --batch <name>
 //	    --gate <prog> --bisect <prog> --land <prog> --file <prog>
-//	    [--metrics-addr <host:port>] <n> [<n> ...]
-//	nova-sprint lander --shadow --redis <addr> --repo <repo> <n> [<n> ...]
+//	    [--metrics-addr <host:port>] --pr <n>[,<n>...]
+//	nova-sprint lander --shadow --redis <addr> --repo <repo> --pr <n>[,<n>...]
 //
 // --shadow (nova-tools#3613) is the parity mode: no programs, no batch, no
 // writes. It reads each member's one PR record pr:<name>:<n>
@@ -55,6 +55,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
 func init() {
@@ -83,29 +84,25 @@ var landerClock land.Clock = land.WallClock{}
 
 func runLander(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("lander")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	repo := fs.String("repo", "", "")
-	batchName := fs.String("batch", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	batchName := fs.String("batch", "", "the batch name the pass records under")
 	var progs landerPrograms
-	fs.StringVar(&progs.Gate, "gate", "", "")
-	fs.StringVar(&progs.Bisect, "bisect", "", "")
-	fs.StringVar(&progs.Land, "land", "", "")
-	fs.StringVar(&progs.File, "file", "", "")
-	metricsAddr := fs.String("metrics-addr", "", "")
-	shadow := fs.Bool("shadow", false, "")
-	var nums []string
-	for len(args) > 0 {
-		if !strings.HasPrefix(args[0], "-") {
-			nums = append(nums, args[0])
-			args = args[1:]
-			continue
-		}
-		if err := fs.Parse(args); err != nil {
-			return refuse(errOut, "lander", err.Error())
-		}
-		args = fs.Args()
+	fs.StringVar(&progs.Gate, "gate", "", "the gate program")
+	fs.StringVar(&progs.Bisect, "bisect", "", "the bisect program")
+	fs.StringVar(&progs.Land, "land", "", "the land program")
+	fs.StringVar(&progs.File, "file", "", "the file program")
+	metricsAddr := fs.String("metrics-addr", "", "serve /metrics for the pass at this host:port")
+	shadow := fs.Bool("shadow", false, "parity mode: read the records, run no program, write nothing")
+	prs := fs.String("pr", "", verbflag.HelpPR)
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, "lander", err.Error())
 	}
+	if fs.NArg() > 0 {
+		return refuse(errOut, "lander", "takes flags, not positional arguments: the members are --pr <n>[,<n>...]")
+	}
+	nums := verbflag.List(*prs)
 	if *shadow {
 		return runLanderShadow(ctx, *redisAddr, *repo, nums, out, errOut)
 	}
@@ -116,7 +113,7 @@ func runLander(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "lander", "needs --gate, --bisect, --land and --file programs")
 	}
 	if len(nums) == 0 {
-		return refuse(errOut, "lander", "names no member: give the PR numbers of the batch")
+		return refuse(errOut, "lander", "names no member: --pr <n>[,<n>...], the PR numbers of the batch")
 	}
 	numbers := make([]int, 0, len(nums))
 	for _, s := range nums {
@@ -187,7 +184,7 @@ func runLanderShadow(ctx context.Context, redisAddr, repo string, nums []string,
 		return refuse(errOut, "lander", err.Error())
 	}
 	if len(nums) == 0 {
-		return refuse(errOut, "lander", "names no member: give the PR numbers of the batch")
+		return refuse(errOut, "lander", "names no member: --pr <n>[,<n>...], the PR numbers of the batch")
 	}
 	numbers := make([]int, 0, len(nums))
 	for _, s := range nums {

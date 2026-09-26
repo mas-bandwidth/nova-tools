@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"time"
 
@@ -29,8 +30,8 @@ func runBackpressure(ctx context.Context, args []string, out, errOut io.Writer) 
 		return refuse(errOut, "backpressure", "want the subverb check; "+backpressureUsage)
 	}
 	fs := taskFlags("backpressure check")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, "backpressure check", err.Error()+"; "+backpressureUsage)
 	}

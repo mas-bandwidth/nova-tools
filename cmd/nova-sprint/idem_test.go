@@ -37,7 +37,7 @@ func TestIdemResolveLinesAndExits(t *testing.T) {
 		return code, out.String(), errOut.String()
 	}
 	resolve := func(extra ...string) (int, string, string) {
-		return idemRun(append([]string{"resolve", "--redis", addr, "--sprint", s, "--who", "ctl-friend"}, extra...)...)
+		return idemRun(append([]string{"resolve", "--redis", addr, "--sprint", s, "--as", "ctl-friend"}, extra...)...)
 	}
 	unchanged := func(what string, run func() (int, string, string), want int, line string) {
 		t.Helper()
@@ -98,7 +98,7 @@ func TestIdemResolveLinesAndExits(t *testing.T) {
 	refused := func(what string, code int, out, errOut string) {
 		t.Helper()
 		if code != 2 || out != "" || strings.Count(errOut, "\n") != 1 ||
-			!strings.HasPrefix(errOut, "nova-sprint idem") || !strings.HasSuffix(errOut, "; run: nova-sprint help\n") {
+			!strings.HasPrefix(errOut, "nova-sprint idem") || !strings.Contains(errOut, "; usage: nova-sprint idem ") {
 			t.Fatalf("%s: exit %d stdout %q stderr %q, want exit 2 and one refuse line", what, code, out, errOut)
 		}
 	}
@@ -132,7 +132,7 @@ func TestIdemResolveLinesAndExits(t *testing.T) {
 	dead := l.Addr().String()
 	idemMust(t, l.Close())
 	var o, e bytes.Buffer
-	code = run([]string{"idem", "resolve", "--redis", dead, "--sprint", s, "--key", keyA, "--was", wasA, "--url", url, "--who", "ctl-friend"}, &o, &e)
+	code = run([]string{"idem", "resolve", "--redis", dead, "--sprint", s, "--key", keyA, "--was", wasA, "--url", url, "--as", "ctl-friend"}, &o, &e)
 	refused("redis unreachable", code, o.String(), e.String())
 
 	// Exit 2: the function library is not loaded (never loaded by a friend).
@@ -171,7 +171,7 @@ func TestIdemResolvePaddedValidInputs(t *testing.T) {
 		"--redis", "  "+addr+"  ",
 		"--sprint", "  "+s+"  ",
 		"--key", "  "+keyA+"  ",
-		"--who", "  ctl-friend  ",
+		"--as", "  ctl-friend  ",
 		"--was", "  "+wasA+"  ",
 		"--url", "  "+url+"  ",
 	)
@@ -191,7 +191,7 @@ func TestIdemResolvePaddedValidInputs(t *testing.T) {
 		"--redis", "  "+addr+"  ",
 		"--sprint", "  "+s+"  ",
 		"--key", "  "+keyA+"  ",
-		"--who", "  ctl-friend  ",
+		"--as", "  ctl-friend  ",
 		"--was", "  stale-was  ",
 		"--url", "  "+url+"  ",
 	)
@@ -208,7 +208,7 @@ func TestIdemResolvePaddedValidInputs(t *testing.T) {
 		"--redis", "  "+addr+"  ",
 		"--sprint", "  "+s+"  ",
 		"--key", "  "+keyB+"  ",
-		"--who", "  ctl-friend  ",
+		"--as", "  ctl-friend  ",
 		"--was", "  "+wasB+"  ",
 		"--none",
 	)

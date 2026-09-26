@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
-	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/capacity"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -13,10 +14,10 @@ import (
 
 func runTaskList(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("task list")
-	addr := fs.String("redis", redisDefault(), "")
-	as := fs.String("as", "", "")
-	sprint := fs.String("sprint", "", "")
-	state := fs.String("state", "", "")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	as := fs.String("as", "", verbflag.HelpAs)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	state := fs.String("state", "", "list only tasks in this state")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "task list", err.Error())
 	}
@@ -44,29 +45,28 @@ func runTaskList(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 func runTaskWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("task width")
-	addr := fs.String("redis", redisDefault(), "")
-	as := fs.String("as", "", "")
-	actor := fs.String("actor", "", "")
-	idem := fs.String("idem", "", "")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	as := fs.String("as", "", verbflag.HelpAs)
+	slots := fs.Int("slots", -1, "the width to set: how many tasks the friend works at once")
+	idem := fs.String("idem", "", verbflag.HelpIdem)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "task width", err.Error())
 	}
 	if *as == "" {
 		return refuse(errOut, "task width", "--as is required")
 	}
-	if fs.NArg() > 1 {
-		return refuse(errOut, "task width", "takes at most one slot count")
+	if fs.NArg() > 0 {
+		return refuse(errOut, "task width", "takes flags, not positional arguments; the width is --slots <n>")
 	}
+	actor := seatActor()
+	*as = strings.TrimPrefix(*as, "friend:")
 	st, err := store.Open(ctx, *addr)
 	if err != nil {
 		return refuse(errOut, "task width", err.Error())
 	}
 	defer st.Close()
-	if fs.NArg() == 1 {
-		n, err := strconv.Atoi(fs.Arg(0))
-		if err != nil || n < 0 {
-			return refuse(errOut, "task width", "slots must be a nonnegative integer")
-		}
+	if *slots >= 0 {
+		n := *slots
 		machine, err := existingMachine(ctx, st, capacity.KindFriend, *as)
 		if err != nil {
 			return refuse(errOut, "task width", "read "+capacity.DesiredKey(capacity.KindFriend, *as)+" machine: "+err.Error())
@@ -74,7 +74,7 @@ func runTaskWidth(ctx context.Context, args []string, out, errOut io.Writer) int
 		if machine == "" {
 			return refuse(errOut, "task width", "friend has no machine; set it with capacity friend --machine")
 		}
-		if _, err := capacity.SetFriend(ctx, st, *as, machine, n, *actor, *idem); err != nil {
+		if _, err := capacity.SetFriend(ctx, st, *as, machine, n, actor, *idem); err != nil {
 			return refuseCapacity(errOut, "task width", err)
 		}
 	}

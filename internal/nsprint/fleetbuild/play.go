@@ -343,7 +343,7 @@ func (p *Play) check() error {
 	}
 	for _, b := range p.Limit {
 		if !known[b] {
-			return refused("--limit %s is not a machine in the registry %s (--limit names registry machines, comma separated)", b, p.Registry)
+			return refused("--bench %s is not a machine in the registry %s (--bench names registry machines, comma separated)", b, p.Registry)
 		}
 	}
 	if p.Client == nil && !p.DryRun {
@@ -421,7 +421,10 @@ func (p *Play) Run(ctx context.Context) (PlayResult, error) {
 			why = strings.Join(strings.Fields(runErr.Error()), "_")
 		}
 		res.Err = why
-		p.printf("PLAY ERROR %s err=%s last=%s\n", PlayFile(p.Tag), why, lastLine(out))
+		// DIED, never ERROR: an event line's second word is never a provider
+		// error mark, or a harness log reads the line under it as the
+		// provider's (internal/swarm, TestNoEventLineOfThisFamilyHasAMarkForItsSecondWord).
+		p.printf("PLAY DIED %s err=%s last=%s\n", PlayFile(p.Tag), why, lastLine(out))
 	}
 	if p.DryRun || len(res.Hosts) == 0 {
 		return res, nil

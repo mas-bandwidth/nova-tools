@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"sort"
 	"strings"
@@ -21,9 +22,9 @@ func init() {
 
 func runWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("width")
-	addr := fs.String("redis", redisDefault(), "")
-	as := fs.String("as", "", "")
-	sprint := fs.String("sprint", "", "")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	as := fs.String("as", "", verbflag.HelpAs)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	_ = sprint
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "width", err.Error())

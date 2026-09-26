@@ -15,7 +15,7 @@
 // <r> is owner/name or name: every subverb keys the PR record pr:<name>:<n>
 // by the bare name (internal/nsprint/prkey), the key pr record writes.
 //
-// brief writes the read brief; with --id it reads the read task
+// brief writes the read brief; with --ids it reads the read task
 // (task:<id>, or s:<S>:task:<id> with --sprint) for the PR and the exact
 // head, so a friend holding a read task needs nothing but its id. brief
 // --pr (#4335, #4315) prints the whole read to stdout in one screen: the
@@ -48,6 +48,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"path/filepath"
@@ -70,59 +71,64 @@ func init() {
 	})
 }
 
-const readUsage = "want brief --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>], brief --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis <addr>], brief --pr <n> [--repo <r>] [--issue <ref>] [--mirror <dir>] [--no-github] [--redis <addr>], post --repo <r> --n <n> --line <typed line> [--mirror <dir>] [--no-github] [--owner <o>] [--redis <addr>], post --file <scores.tsv> [--mirror <dir>] [--no-github] [--redis <addr>], digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>] or carry --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]"
-
 func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "read", readUsage)
+		return refuse(errOut, "read", "wants a subverb")
 	}
 	sub := args[0]
+	switch sub {
+	case "brief", "post", "digest", "carry":
+	default:
+		return refuse(errOut, "read", "unknown subverb "+sub)
+	}
 	fs := taskFlags("read " + sub)
-	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
-	repo := fs.String("repo", "", "")
-	n := fs.String("n", "", "")
-	outDir := fs.String("out", "", "")
-	mirror := fs.String("mirror", "", "")
-	typed := fs.String("line", "", "")
-	noGitHub := fs.Bool("no-github", false, "")
-	owner := fs.String("owner", "mas-bandwidth", "")
-	sprint := fs.String("sprint", "", "")
-	head := fs.String("head", "", "")
-	baseRef := fs.String("base-ref", "", "")
-	taskID := fs.String("id", "", "")
-	prN := fs.String("pr", "", "")
-	issue := fs.String("issue", "", "")
-	file := fs.String("file", "", "")
-	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
-		return refuse(errOut, "read "+sub, readUsage)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	n := fs.String("n", "", verbflag.HelpN)
+	outDir := fs.String("out", "", "the directory the brief is written to")
+	mirror := fs.String("mirror", "", "the bench mirror of the repo (default ~/nova-bench/mirror/<repo>.git)")
+	typed := fs.String("line", "", "the typed line to post")
+	noGitHub := fs.Bool("no-github", false, "post nothing to GitHub, the record only")
+	owner := fs.String("owner", "mas-bandwidth", "the GitHub owner the repo lives under")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	head := fs.String("head", "", "the head the digest is of (default the record's)")
+	baseRef := fs.String("base-ref", "", "the base ref the diff is read against")
+	taskIDs := fs.String("ids", "", verbflag.HelpIDs)
+	prN := fs.String("pr", "", verbflag.HelpPR)
+	issue := fs.String("issue", "", "the issue number")
+	file := fs.String("file", "", "the file")
+	if err := fs.Parse(args[1:]); err != nil {
+		return refuse(errOut, "read "+sub, err.Error())
 	}
-	if *redisAddr == "" {
-		*redisAddr = os.Getenv("NOVA_REDIS_ADDR")
+	if fs.NArg() != 0 {
+		return refuse(errOut, "read "+sub, "takes flags, not positional arguments")
 	}
+	*redisAddr = redisOr(*redisAddr) // the one resolver (seat.go)
 	if *prN != "" || *issue != "" {
-		if sub != "brief" || *prN == "" || *n != "" || *outDir != "" || *typed != "" || *taskID != "" || *file != "" || *head != "" || *baseRef != "" || *redisAddr == "" {
-			return refuse(errOut, "read "+sub, "--pr and --issue are brief only: want brief --pr <n> [--repo <r>] [--issue <ref>] [--mirror <dir>] [--no-github] [--redis <addr>] (or NOVA_SPRINT_REDIS)")
+		if sub != "brief" || *prN == "" || *n != "" || *outDir != "" || *typed != "" || *taskIDs != "" || *file != "" || *head != "" || *baseRef != "" || *redisAddr == "" {
+			return refuse(errOut, "read "+sub, "--pr and --issue are brief only, with no --n, --out, --line, --ids, --file, --head or --base-ref, and a store (--redis or NOVA_SPRINT_REDIS)")
 		}
 		return runReadBriefPR(ctx, *redisAddr, *repo, *prN, *issue, *mirror, *noGitHub, out, errOut)
 	}
 	if *file != "" {
-		if sub != "post" || *repo != "" || *n != "" || *typed != "" || *outDir != "" || *taskID != "" || *head != "" || *baseRef != "" || *redisAddr == "" {
-			return refuse(errOut, "read "+sub, "--file is post only: want post --file <scores.tsv> [--mirror <dir>] [--no-github] [--redis <addr>] (or NOVA_SPRINT_REDIS); a row is <repo>\\t<n>\\t<typed line>")
+		if sub != "post" || *repo != "" || *n != "" || *typed != "" || *outDir != "" || *taskIDs != "" || *head != "" || *baseRef != "" || *redisAddr == "" {
+			return refuse(errOut, "read "+sub, "--file is post only, with no --repo, --n, --line, --out, --ids, --head or --base-ref, and a store (--redis or NOVA_SPRINT_REDIS); a row is <repo>\\t<n>\\t<typed line>")
 		}
 		return runReadPostFile(ctx, *redisAddr, *file, *mirror, *noGitHub, out, errOut)
 	}
-	if *taskID != "" {
-		if sub != "brief" || *repo != "" || *n != "" || *outDir == "" || *typed != "" || *noGitHub || *head != "" || *baseRef != "" || *redisAddr == "" {
-			return refuse(errOut, "read "+sub, "--id is brief only: want brief --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis <addr>] (or NOVA_SPRINT_REDIS)")
+	if *taskIDs != "" {
+		taskID := oneID(*taskIDs)
+		if taskID == "" || sub != "brief" || *repo != "" || *n != "" || *typed != "" || *noGitHub || *head != "" || *baseRef != "" || *redisAddr == "" {
+			return refuse(errOut, "read "+sub, "--ids is brief only, one task, with no --repo, --n, --line, --no-github, --head or --base-ref, and a store (--redis or NOVA_SPRINT_REDIS)")
 		}
-		return runReadBriefTask(ctx, *redisAddr, *sprint, *taskID, *mirror, *outDir, out, errOut)
+		return runReadBriefTask(ctx, *redisAddr, *sprint, taskID, *mirror, *outDir, out, errOut)
 	}
 	// --repo is owner/name or name (internal/nsprint/prkey): the record,
 	// the ci hash and the mirror take the bare name; an owner in --repo is
 	// the comment mirror's owner and must agree with an explicit --owner.
 	repoOwner, repoName, rerr := prkey.Split(*repo)
 	if *repo == "" || rerr != nil || *redisAddr == "" {
-		return refuse(errOut, "read "+sub, "needs --repo <owner/name|name>, --n <number> and --redis <addr> (or NOVA_SPRINT_REDIS); "+readUsage)
+		return refuse(errOut, "read "+sub, "needs --repo <owner/name|name>, --n <number> and --redis <addr> (or NOVA_SPRINT_REDIS)")
 	}
 	if strings.Contains(*repo, "/") {
 		ownerSet := false
@@ -139,19 +145,17 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	switch sub {
 	case "brief":
-		if *outDir == "" || *typed != "" || *noGitHub {
-			return refuse(errOut, "read brief", "want --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>]")
+		if *typed != "" || *noGitHub {
+			return refuse(errOut, "read brief", "takes no --line or --no-github")
 		}
 	case "post":
 		if *typed == "" || *outDir != "" {
-			return refuse(errOut, "read post", "want --repo <r> --n <n> --line <typed line> [--mirror <dir>] [--no-github] [--owner <o>] [--redis <addr>]")
+			return refuse(errOut, "read post", "wants --line <typed line> and no --out")
 		}
 	case "digest", "carry":
 		if *typed != "" || *outDir != "" || *noGitHub || (sub == "carry" && *head != "") {
-			return refuse(errOut, "read "+sub, "want --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]"+map[bool]string{true: " [--head <sha>]"}[sub == "digest"])
+			return refuse(errOut, "read "+sub, "takes no --line, --out or --no-github"+map[bool]string{true: ", and no --head"}[sub == "carry"])
 		}
-	default:
-		return refuse(errOut, "read", "unknown subverb "+sub+"; "+readUsage)
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {

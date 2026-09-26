@@ -30,7 +30,7 @@ func TestBareCommandNamesTheDoor(t *testing.T) {
 	if stdout != "" {
 		t.Fatalf("stdout %q; a refusal belongs on stderr", stdout)
 	}
-	if !strings.Contains(stderr, "run: nova-sprint help") {
+	if !strings.Contains(stderr, "the verbs are ") || !strings.Contains(stderr, "nova-sprint <verb> -h") {
 		t.Fatalf("stderr %q, want the help door", stderr)
 	}
 	if strings.Count(stderr, "\n") != 1 {
@@ -45,7 +45,7 @@ func TestTableRefusalNamesEveryMissingPiece(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit %d, want 2", code)
 	}
-	for _, want := range []string{"--redis <addr>", "--once", "--loop", "--check", "written nowhere", "run: nova-sprint help"} {
+	for _, want := range []string{"--redis <addr>", "--once", "--loop", "--check", "written nowhere", "usage: nova-sprint table"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}

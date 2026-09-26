@@ -35,6 +35,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 )
 
 // LogKey is the stream every run appends one entry to.
@@ -60,7 +61,7 @@ const (
 )
 
 // VerbSummary is the verb's line on nova-sprint help.
-const VerbSummary = "verbs unused --store <host:port> --tools <dir of nova-* binaries built at dev> --repo <nova-tools clone at dev> --receipts <dogfood receipts dir> [--days 14] | verbs unused --check --store <host:port> --repo <clone>: verbs with no use and no non-author dogfood receipt in the window, one entry on verbs:unused:log; --check says whether the count fell"
+const VerbSummary = "verbs unused --redis <host:port> --tools <dir of nova-* binaries built at dev> --repo <nova-tools clone at dev> --receipts <dogfood receipts dir> [--days 14] | verbs unused --check --redis <host:port> --repo <clone>: verbs with no use and no non-author dogfood receipt in the window, one entry on verbs:unused:log; --check says whether the count fell"
 
 // Config is one `verbs unused` run.
 type Config struct {
@@ -81,15 +82,15 @@ type Config struct {
 // Main is `nova-sprint verbs unused ...`.
 func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] != "unused" {
-		return refuse(stderr, "verbs takes one sub-verb, unused: verbs unused --store <host:port> --tools <dir> --repo <clone> --receipts <dir> [--days 14], or verbs unused --check --store <host:port> --repo <clone>")
+		return refuse(stderr, "verbs takes one sub-verb, unused: verbs unused --redis <host:port> --tools <dir> --repo <clone> --receipts <dir> [--days 14], or verbs unused --check --redis <host:port> --repo <clone>")
 	}
 	fs := verbflag.New("verbs unused")
-	addr := fs.String("store", "", "")
-	tools := fs.String("tools", "", "")
-	repo := fs.String("repo", "", "")
-	receipts := fs.String("receipts", "", "")
-	days := fs.String("days", strconv.Itoa(DefaultDays), "")
-	check := fs.Bool("check", false, "")
+	addr := fs.String("redis", seatcred.Addr(), verbflag.HelpRedis)
+	tools := fs.String("tools", "", "a directory of nova-* binaries at dev")
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	receipts := fs.String("receipts", "", "the dogfood receipts directory")
+	days := fs.String("days", strconv.Itoa(DefaultDays), "the window in days")
+	check := fs.Bool("check", false, "only say whether the unused count fell")
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(stderr, err.Error())
 	}
@@ -98,7 +99,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		problems = append(problems, "extra arguments "+strings.Join(fs.Args(), " "))
 	}
 	if *addr == "" {
-		problems = append(problems, "--store <host:port> is the sprint's Redis")
+		problems = append(problems, "--redis <host:port> is the sprint's Redis")
 	}
 	if *repo == "" {
 		problems = append(problems, "--repo names the nova-tools clone at dev")
@@ -130,7 +131,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func refuse(stderr io.Writer, what string) int {
-	fmt.Fprintf(stderr, "nova-sprint verbs: %s; run: nova-sprint help\n", oneline.Escape(what))
+	_ = verbflag.Refuse(stderr, "verbs unused", what)
 	return ExitRefused
 }
 
@@ -259,7 +260,7 @@ func Unused(ctx context.Context, client *redis.Client, cfg Config, stdout, stder
 	e := entry{At: until, Days: cfg.Days, Since: since, Until: until, DevSHA: devSHA, Verbs: r.listed}
 	id, err := appendEntry(ctx, client, e, r.resolve, cfg.beforeExec)
 	if errors.Is(err, errPrevMoved) {
-		fmt.Fprintf(stderr, "nova-sprint verbs: prev-moved tries=%d; nothing appended; run: nova-sprint help\n", Tries)
+		fmt.Fprintf(stderr, "nova-sprint verbs: prev-moved tries=%d; nothing appended; the log moved under every try, so the same line again appends\n", Tries)
 		return ExitFenced
 	}
 	if err != nil {

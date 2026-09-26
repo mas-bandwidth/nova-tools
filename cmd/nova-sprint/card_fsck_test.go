@@ -59,7 +59,7 @@ func TestCardFsckAndBenchReindexVerbs(t *testing.T) {
 	if code, out, errOut := run(cmdCardFsck, "--sprint", sprint, "--redis", addr, "--repair"); code != 0 || !strings.Contains(out, "drift=1 fixed=1") {
 		t.Fatalf("fsck --repair: %d %q %q", code, out, errOut)
 	}
-	if code, out, _ := runSprint("card", "show", "--redis", addr, "--sprint", sprint, "--label", "old"); code != 0 ||
+	if code, out, _ := runSprint("card", "show", "--redis", addr, "--sprint", sprint, "--ids", "old"); code != 0 ||
 		!strings.Contains(out, "card.where working\n") || !strings.Contains(out, "card.where_ok -\n") {
 		t.Fatalf("card show after reindex: %d %q", code, out)
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fold"
@@ -18,9 +19,9 @@ func init() {
 
 func runEst(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("est")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	owner := fs.String("owner", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	owner := fs.String("owner", "", "the GitHub owner")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "est", err.Error())
 	}

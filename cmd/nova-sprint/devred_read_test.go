@@ -18,8 +18,8 @@ func TestDevRedAndReadVerbsRefuseUsage(t *testing.T) {
 		{[]string{"dev-red"}, "want status, check, watch or unwatch"},
 		{[]string{"dev-red", "status"}, "needs --repo <r> and --base <b>"},
 		{[]string{"dev-red", "bogus"}, "unknown subverb bogus"},
-		{[]string{"read"}, "want brief"},
-		{[]string{"read", "carry", "--repo", "nova-tools", "--n", "7", "--redis", "127.0.0.1:1", "--line", "x"}, "want --repo <r> --n <n> [--sprint <S>]"},
+		{[]string{"read"}, "usage: nova-sprint read <brief|carry|digest|post>"},
+		{[]string{"read", "carry", "--repo", "nova-tools", "--n", "7", "--redis", "127.0.0.1:1", "--line", "x"}, "takes no --line, --out or --no-github, and no --head; usage: nova-sprint read carry --repo <r> --n <n>"},
 		{[]string{"read", "digest", "--repo", "mas-bandwidth/nova-tools/x", "--n", "7", "--redis", "127.0.0.1:1"}, "needs --repo <owner/name|name>"},
 	}
 	for _, tc := range cases {

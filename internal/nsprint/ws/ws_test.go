@@ -85,7 +85,7 @@ func legacy(t *testing.T, c *redis.Client, n int) (ids []string, want map[string
 	return ids, want
 }
 
-func TestReadIDsAndParseStreams(t *testing.T) {
+func TestReadIDs(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "ids")
@@ -106,8 +106,5 @@ func TestReadIDsAndParseStreams(t *testing.T) {
 	}
 	if _, err := ws.ReadIDs("@"+path+".missing", nil); err == nil {
 		t.Fatal("a missing ids file read")
-	}
-	if got := ws.ParseStreams(" swarm: cards | nova-sprint ||"); strings.Join(got, "/") != "swarm: cards/nova-sprint" {
-		t.Fatalf("ParseStreams %q", got)
 	}
 }

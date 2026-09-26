@@ -21,7 +21,7 @@ import (
 //	nova-sprint routes --check orgptnano --rung flash [--type read3 [--redis <host:port>]]
 //	nova-sprint routes --preamble ordspro
 //	nova-sprint routes --tier flash|pro
-//	nova-sprint routes --tier flash|pro --label <card label>
+//	nova-sprint routes --tier flash|pro --ids <card label>
 //	nova-sprint routes --spread
 //
 // --tier prints the allowed routes of the tier a card names with ROUTE:
@@ -30,7 +30,7 @@ import (
 // harness (rowan-tools' nova-card-harness) runs the card on the
 // first line's model.
 //
-// --tier with --label prints the one route the swarm spread picks for that
+// --tier with --ids prints the one route the swarm spread picks for that
 // card: "<route> <launch>", where the provider is the spread row owning slot
 // fnv32a(label) mod the sum of the tier's shares (Glenn 2026-09-24: all four
 // providers, DeepSeek direct, OpenCode, OpenRouter and Mercury; OpenRouter
@@ -58,32 +58,32 @@ import (
 func init() {
 	register(Verb{
 		Name:    "routes",
-		Summary: "print allowed_routes per rung and work type with the ranking numbers; --tier flash|pro prints that tier's allowed routes and launch models, best first, and with --label <card> the one spread route that card runs on; --spread prints the per-tier provider spread; --check <route> --rung <r> [--type <t>] answers one card (exit 1 REFUSED); --preamble <route> prints its preamble",
+		Summary: "print allowed_routes per rung and work type with the ranking numbers; --tier flash|pro prints that tier's allowed routes and launch models, best first, and with --ids <card> the one spread route that card runs on; --spread prints the per-tier provider spread; --check <route> --rung <r> [--type <t>] answers one card (exit 1 REFUSED); --preamble <route> prints its preamble",
 		Run:     cmdRoutes,
 	})
 }
 
 func cmdRoutes(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("routes")
-	rung := fs.String("rung", "", "")
-	typ := fs.String("type", "", "")
-	check := fs.String("check", "", "")
-	preamble := fs.String("preamble", "", "")
-	tier := fs.String("tier", "", "")
-	label := fs.String("label", "", "")
-	spread := fs.Bool("spread", false, "")
-	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
+	rung := fs.String("rung", "", "the ladder rung")
+	typ := fs.String("type", "", "the work type")
+	check := fs.String("check", "", "the route to check")
+	preamble := fs.String("preamble", "", "the route whose preamble is printed")
+	tier := fs.String("tier", "", "the model type: flash or pro")
+	label := fs.String("ids", "", verbflag.HelpIDs)
+	spread := fs.Bool("spread", false, "spread the tiers over the providers round-robin")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	if err := fs.Parse(args); err != nil {
-		return refuse(stderr, "routes", err.Error()+"; it takes --rung, --type, --check <route>, --preamble <route>, --tier flash|pro [--label <card>], --spread and --redis <host:port>")
+		return refuse(stderr, "routes", err.Error()+"; it takes --rung, --type, --check <route>, --preamble <route>, --tier flash|pro [--ids <card>], --spread and --redis <host:port>")
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, "routes", "takes flags, not positional arguments")
 	}
 	if *tier != "" && (*check != "" || *typ != "" || *rung != "" || *preamble != "" || *spread) {
-		return refuse(stderr, "routes", "--tier takes no other flag but --label")
+		return refuse(stderr, "routes", "--tier takes no other flag but --ids")
 	}
 	if *label != "" && *tier == "" {
-		return refuse(stderr, "routes", "--label needs --tier flash or --tier pro")
+		return refuse(stderr, "routes", "--ids needs --tier flash or --tier pro")
 	}
 	if *spread && (*check != "" || *typ != "" || *rung != "" || *preamble != "") {
 		return refuse(stderr, "routes", "--spread takes no other flag")

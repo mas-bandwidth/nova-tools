@@ -144,7 +144,7 @@ func (f *landFix) offer(n, minute int, body string) {
 func (f *landFix) offerBase(n, minute int, body, base string) {
 	f.t.Helper()
 	at := f.created.Add(time.Duration(minute) * time.Minute).Format(time.RFC3339)
-	code, out, errOut := runSprint("land", "offer", fmt.Sprintf("%s#%d", f.repo, n), "--sprint", f.sprint,
+	code, out, errOut := runSprint("land", "offer", "--ref", fmt.Sprintf("%s#%d", f.repo, n), "--sprint", f.sprint,
 		"--stream", fmt.Sprintf("s%d", n), "--base", base, "--created", at, "--body-first", body,
 		"--as", "tester", "--redis", f.addr)
 	if code != 0 || !strings.HasPrefix(out, "LAND OFFERED") {
@@ -396,7 +396,7 @@ func TestLandTakesStreamPRsOldestFirst(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "CANDIDATE acme/widget#21 head="+c1+" facts=ci:FAIL") || g.keyspace() != ks {
 		t.Fatalf("dry run: code=%d out=%q (or it wrote)", code, out)
 	}
-	code, _, errOut = runSprint("land", "offer", "acme/widget#21", "--sprint", g.sprint, "--base", "dev",
+	code, _, errOut = runSprint("land", "offer", "--ref", "acme/widget#21", "--sprint", g.sprint, "--base", "dev",
 		"--as", "tester", "--withdraw", "--redis", g.addr)
 	if code != 0 || g.queued(21) || g.prHash(21)["drop_reason"] != "withdrawn" {
 		t.Fatalf("withdraw: code=%d err=%q %v", code, errOut, g.prHash(21))
@@ -847,7 +847,7 @@ func TestLandStreamPRLivesOnUnitRecord(t *testing.T) {
 	if n := f.c.Exists(f.ctx, fmt.Sprintf("s:%s:pr:%s:91", f.sprint, f.repo)).Val(); n != 0 {
 		t.Fatal("the lander wrote the retired sprint-scoped PR record")
 	}
-	code, out, _ = runSprint("land", "offer", "acme/widget#91", "--sprint", "s-next", "--stream", "s91",
+	code, out, _ = runSprint("land", "offer", "--ref", "acme/widget#91", "--sprint", "s-next", "--stream", "s91",
 		"--base", "dev", "--created", "2026-09-23T20:01:00Z", "--body-first", "s91", "--as", "tester",
 		"--redis", f.addr)
 	if code != 0 || !strings.HasPrefix(out, "LAND LANDED acme/widget#91") {

@@ -37,7 +37,7 @@ func cardRenderFromIssuePush(t *testing.T) {
 	}
 	sha := strings.Repeat("ab", 20)
 	push := func(id, route string, extra ...string) (int, string, string) {
-		args := append([]string{"push", "--actor", "rowan", "--id", id, "--waiting", "--ref", "mas-bandwidth/nova-tools#3911",
+		args := append([]string{"push", "--as", seat(), "--ids", id, "--waiting", "--ref", "mas-bandwidth/nova-tools#3911",
 			"--title", "card " + id, "--issue", issue, "--route", route, "--base", "dev", "--base-sha", sha}, extra...)
 		return runTaskCLI(args...)
 	}
@@ -49,7 +49,7 @@ func cardRenderFromIssuePush(t *testing.T) {
 		code := runCard(context.Background(), append([]string{"render"}, args...), &out, &errOut)
 		return code, out.String(), errOut.String()
 	}
-	code, out, errOut := render("--id", "f1")
+	code, out, errOut := render("--ids", "f1")
 	if code != 0 || !strings.HasPrefix(out, "RESULT: f1 sha="+sha[:12]+"\n") || !strings.Contains(errOut, "RENDERED card id=f1") {
 		t.Fatalf("render = %d %q %q", code, out, errOut)
 	}
@@ -61,7 +61,7 @@ func cardRenderFromIssuePush(t *testing.T) {
 			t.Errorf("render lacks %q:\n%s", want, out)
 		}
 	}
-	if code, out, _ := render("--id", "f1", "--brief", "--model", "sonnet"); code != 0 || !strings.HasPrefix(out, "CARD: f1\n") || !strings.Contains(out, "DONE-WHEN: `go test ./internal/x -run TestX` passes.\n") {
+	if code, out, _ := render("--ids", "f1", "--brief", "--model", "sonnet"); code != 0 || !strings.HasPrefix(out, "CARD: f1\n") || !strings.Contains(out, "DONE-WHEN: `go test ./internal/x -run TestX` passes.\n") {
 		t.Errorf("render --brief = %d %q", code, out)
 	}
 	// pro from an issue with no PATHS line: refused at push, naming it.
@@ -69,7 +69,7 @@ func cardRenderFromIssuePush(t *testing.T) {
 	if err := os.WriteFile(bare, []byte("STREAM: swarm: cards\n\nDONE-WHEN: it works."), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ = runTaskCLI("push", "--actor", "rowan", "--id", "p1", "--waiting", "--ref", "mas-bandwidth/nova-tools#1",
+	code, out, _ = runTaskCLI("push", "--as", "rowan", "--ids", "p1", "--waiting", "--ref", "mas-bandwidth/nova-tools#1",
 		"--issue", bare, "--route", "pro", "--base", "dev", "--base-sha", sha)
 	if code != 1 || !strings.Contains(out, "REFUSED") || !strings.Contains(out, "PATHS") {
 		t.Errorf("pro push without PATHS = %d %q", code, out)
@@ -77,10 +77,10 @@ func cardRenderFromIssuePush(t *testing.T) {
 	if code, out, _ := push("fr1", "friend"); code != 0 {
 		t.Fatalf("push friend = %d %q", code, out)
 	}
-	if code, out, _ := render("--id", "fr1"); code != 1 || !strings.Contains(out, "CARD RENDER REFUSED id=fr1") || !strings.Contains(out, "ROUTE") {
+	if code, out, _ := render("--ids", "fr1"); code != 1 || !strings.Contains(out, "CARD RENDER REFUSED id=fr1") || !strings.Contains(out, "ROUTE") {
 		t.Errorf("render of a friend card = %d %q", code, out)
 	}
-	if code, out, _ := render("--id", "nope"); code != 1 || !strings.Contains(out, "NOTASK") {
+	if code, out, _ := render("--ids", "nope"); code != 1 || !strings.Contains(out, "NOTASK") {
 		t.Errorf("render of no record = %d %q", code, out)
 	}
 	if code, _, _ := render(); code != 2 {

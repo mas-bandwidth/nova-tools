@@ -1,6 +1,7 @@
 // The ws index verbs (nova-tools #3662, #3659, #3660; contract: rowan-new
 // specs/ws-index.md): `ws counts|checkpoint|show`, `scope
-// keep|park|unpark|ls` and `stream ls|order|rename`. Each is one call into
+// keep|park|unpark|ls` and `stream ls|order|rename`. One grammar (#4352 A):
+// streams are --stream <a,b> everywhere, the actor --as defaults to the seat. Each is one call into
 // internal/nsprint/ws, which is one FCALL of a fn/lua/ws.lua function (scope
 // park/keep first write a checkpoint, a pipelined read). Each prints one
 // receipt line with its measured ms (the list verbs print their rows first)
@@ -11,7 +12,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -38,7 +38,7 @@ var wsStdin io.Reader = os.Stdin
 // wsCmd is one ws/scope/stream subverb's parsed common flags and its store.
 type wsCmd struct {
 	name  string
-	fs    *flag.FlagSet
+	fs    *verbflag.Set
 	redis *string
 	by    *string
 	why   *string
@@ -49,16 +49,16 @@ type wsCmd struct {
 
 func newWSCmd(name string, out, errOut io.Writer) *wsCmd {
 	fs := verbflag.New(name)
-	by := os.Getenv("USER")
-	if by == "" {
-		by = "nova-sprint"
-	}
+	// --sprint is taken and changes nothing (#4352 A): the ws index is one
+	// per store, and `ws counts --sprint S` was refused "-sprint not
+	// defined".
+	_ = fs.String("sprint", "", verbflag.HelpSprint)
 	return &wsCmd{
 		name:  name,
 		fs:    fs,
-		redis: fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), ""),
-		by:    fs.String("as", by, ""),
-		why:   fs.String("why", "", ""),
+		redis: fs.String("redis", redisDefault(), verbflag.HelpRedis),
+		by:    fs.String("as", seatActor(), verbflag.HelpAs),
+		why:   fs.String("why", "", verbflag.HelpWhy),
 		out:   out,
 		err:   errOut,
 	}
@@ -138,8 +138,8 @@ func runWS(ctx context.Context, args []string, out, errOut io.Writer) int {
 // has. `stream order --show` is the same listing.
 func runWSShow(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("ws show", out, errOut)
-	order := w.fs.Bool("order", false, "")
-	stream := w.fs.String("stream", "", "")
+	order := w.fs.Bool("order", false, "every stream's cards in order, one line each, with their edges")
+	stream := w.fs.String("stream", "", verbflag.HelpStream)
 	if _, code, ok := w.parse(args, 0, "ws show --redis <addr> --order [--stream <s>]"); !ok {
 		return code
 	}
@@ -217,7 +217,7 @@ func runWSCounts(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 func runWSCheckpoint(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("ws checkpoint", out, errOut)
-	path := w.fs.String("out", "", "")
+	path := w.fs.String("out", "", "the TSV the index is written to")
 	if _, code, ok := w.parse(args, 0, "ws checkpoint --redis <addr> --out <path>"); !ok {
 		return code
 	}
@@ -278,14 +278,14 @@ func runScope(ctx context.Context, args []string, out, errOut io.Writer) int {
 
 func runScopeKeep(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("scope keep", out, errOut)
-	streams := w.fs.String("streams", "", "")
-	cp := w.fs.String("checkpoint", "", "")
-	if _, code, ok := w.parse(args, 0, `scope keep --redis <addr> --streams "<a>|<b>" [--checkpoint <path>]`); !ok {
+	streams := w.fs.String("stream", "", verbflag.HelpStream)
+	cp := w.fs.String("checkpoint", "", "the TSV the index is checkpointed to first (default a new file in the checkpoint directory)")
+	if _, code, ok := w.parse(args, 0, `scope keep --redis <addr> --stream <a,b> [--checkpoint <path>]`); !ok {
 		return code
 	}
-	names := ws.ParseStreams(*streams)
+	names := verbflag.List(*streams)
 	if len(names) == 0 {
-		return refuse(errOut, w.name, `--streams "<a>|<b>" names the streams to keep; every other stream is parked`)
+		return refuse(errOut, w.name, `--stream <a,b> names the streams to keep; every other stream is parked`)
 	}
 	st, code, ok := w.open(ctx)
 	if !ok {
@@ -310,9 +310,9 @@ func whyOr(why, def string) string {
 
 func runScopePark(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("scope park", out, errOut)
-	stream := w.fs.String("stream", "", "")
-	idsArg := w.fs.String("ids", "", "")
-	cp := w.fs.String("checkpoint", "", "")
+	stream := w.fs.String("stream", "", verbflag.HelpStream)
+	idsArg := w.fs.String("ids", "", verbflag.HelpIDs)
+	cp := w.fs.String("checkpoint", "", "the TSV the index is checkpointed to first (default a new file in the checkpoint directory)")
 	if _, code, ok := w.parse(args, 0, "scope park --redis <addr> --stream <s> [--ids @file] [--checkpoint <path>]"); !ok {
 		return code
 	}
@@ -370,7 +370,7 @@ func runScopePark(ctx context.Context, args []string, out, errOut io.Writer) int
 
 func runScopeUnpark(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("scope unpark", out, errOut)
-	stream := w.fs.String("stream", "", "")
+	stream := w.fs.String("stream", "", verbflag.HelpStream)
 	if _, code, ok := w.parse(args, 0, "scope unpark --redis <addr> --stream <s>"); !ok {
 		return code
 	}
@@ -443,8 +443,8 @@ func runStream(ctx context.Context, args []string, out, errOut io.Writer) int {
 // lists each child and the stitch under the parent.
 func runStreamLs(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("stream ls", out, errOut)
-	tree := w.fs.Bool("tree", false, "")
-	expand := w.fs.Bool("expand", false, "")
+	tree := w.fs.Bool("tree", false, "add every plan of the stream under its line, collapsed")
+	expand := w.fs.Bool("expand", false, "with --tree, list each child and the stitch under its plan")
 	if _, code, ok := w.parse(args, 0, "stream ls --redis <addr> [--tree [--expand]]"); !ok {
 		return code
 	}
@@ -496,11 +496,13 @@ func runStreamLs(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 func runStreamOrder(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("stream order", out, errOut)
-	show := w.fs.Bool("show", false, "")
-	names, code, ok := w.parse(args, -1, "stream order --redis <addr> <stream> [<stream>...] | stream order --redis <addr> --show")
+	streams := w.fs.String("stream", "", verbflag.HelpStream)
+	show := w.fs.Bool("show", false, "list every stream's cards with their edges instead of ranking (ws show --order)")
+	_, code, ok := w.parse(args, 0, "stream order --redis <addr> --stream <a,b,...> | stream order --redis <addr> --show")
 	if !ok {
 		return code
 	}
+	names := verbflag.List(*streams)
 	if *show {
 		// the listing of ws show --order: every stream's cards with edges
 		if len(names) > 0 {
@@ -514,7 +516,7 @@ func runStreamOrder(ctx context.Context, args []string, out, errOut io.Writer) i
 		return showOrder(ctx, w, st.Client(), "")
 	}
 	if len(names) == 0 {
-		return refuse(errOut, w.name, "name the streams in priority order, first is rank 1; --show lists the cards of every stream with their edges")
+		return refuse(errOut, w.name, "--stream <a,b,...> names the streams in priority order, first is rank 1; --show lists the cards of every stream with their edges")
 	}
 	st, code, ok := w.open(ctx)
 	if !ok {
@@ -527,10 +529,16 @@ func runStreamOrder(ctx context.Context, args []string, out, errOut io.Writer) i
 
 func runStreamRename(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("stream rename", out, errOut)
-	names, code, ok := w.parse(args, 2, "stream rename --redis <addr> <old> <new>")
+	old := w.fs.String("stream", "", verbflag.HelpStream)
+	name := w.fs.String("name", "", "the stream's new name")
+	_, code, ok := w.parse(args, 0, "stream rename --redis <addr> --stream <old> --name <new>")
 	if !ok {
 		return code
 	}
+	if *old == "" || *name == "" {
+		return refuse(errOut, w.name, "want --stream <old> --name <new>")
+	}
+	names := []string{*old, *name}
 	if strings.TrimSpace(names[1]) != names[1] {
 		return refuse(errOut, w.name, "the new name has leading or trailing space")
 	}

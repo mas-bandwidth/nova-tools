@@ -40,31 +40,31 @@ var cardLine = regexp.MustCompile(`^TASK (\w+) id=(\S+) from=(\S+) to=(\S+) ms=\
 func TestTaskCardCLI(t *testing.T) {
 	f := newSeat(t)
 	t.Setenv("FRIEND_QUEUE_SPRINT", seatSprint)
-	t.Setenv("NOVA_FRIEND", "") // a coordinator shell: --actor names itself
+	t.Setenv("NOVA_FRIEND", "") // a coordinator shell: --as names the worker it acts as
 	ctx := context.Background()
 	c := f.client
 	const s = "nova-sprint + merge + bus"
 	zc := func(w string) int64 { return c.ZCard(ctx, "ws:"+s+":"+w).Val() }
 
-	code, out, errOut := runTaskCLI("push", "--actor", "rowan", "--id", "build-1", "--stream", s, "--friend", "a",
+	code, out, errOut := runTaskCLI("push", "--as", "rowan", "--ids", "build-1", "--stream", s, "--to", "a",
 		"--kind", "build", "--ref", "nova-tools#3778", "--title", "tasks are cards", "--pr", "3790")
 	if m := cardLine.FindStringSubmatch(out); code != 0 || errOut != "" || m == nil || m[4] != "ready" {
 		t.Fatalf("push = %d %q %q", code, out, errOut)
 	}
-	code, out, _ = runTaskCLI("take", "--actor", "a")
+	code, out, _ = runTaskCLI("take", "--as", "a")
 	if code != 0 || !strings.HasPrefix(out, "TASK take n=1 ids=build-1 ms=") || zc("ready") != 0 || zc("working") != 1 {
 		t.Fatalf("take = %d %q", code, out)
 	}
-	code, out, _ = runTaskCLI("beat", "--actor", "a", "--id", "build-1")
+	code, out, _ = runTaskCLI("beat", "--as", "a", "--ids", "build-1")
 	if code != 0 || !strings.HasPrefix(out, "TASK beat id=build-1 lease_until=") {
 		t.Fatalf("beat = %d %q", code, out)
 	}
-	code, out, _ = runTaskCLI("done", "--actor", "a", "--id", "build-1", "--evidence", "PR #3790")
+	code, out, _ = runTaskCLI("done", "--as", "a", "--ids", "build-1", "--evidence", "PR #3790")
 	if m := cardLine.FindStringSubmatch(out); code != 0 || m == nil || m[3] != "working" || m[4] != "merging" || zc("merging") != 1 {
 		t.Fatalf("done = %d %q", code, out)
 	}
 	// the last card's landing lands the stream's stop with it (#4318): two in landed
-	code, out, _ = runTaskCLI("land", "--actor", "lander", "--id", "build-1", "--sha", "0123abcd")
+	code, out, _ = runTaskCLI("land", "--as", "lander", "--ids", "build-1", "--sha", "0123abcd")
 	if m := cardLine.FindStringSubmatch(out); code != 0 || m == nil || m[4] != "landed" || zc("landed") != 2 || zc("merging") != 0 {
 		t.Fatalf("land = %d %q", code, out)
 	}
@@ -79,7 +79,7 @@ func TestTaskCardCLI(t *testing.T) {
 	}
 
 	// Off the graph: exit 1, nothing written.
-	code, out, _ = runTaskCLI("unblock", "--actor", "a", "--id", "build-1")
+	code, out, _ = runTaskCLI("unblock", "--as", "a", "--ids", "build-1")
 	if code != 1 || !strings.HasPrefix(out, "TASK unblock REFUSED id=build-1 why=") || !strings.Contains(out, "OFFGRAPH landed -> ready") {
 		t.Fatalf("unblock a landed task = %d %q", code, out)
 	}
@@ -91,10 +91,10 @@ func TestTaskCardCLI(t *testing.T) {
 	}
 	c.ZRem(ctx, "ws:"+s+":ready", "build-1")
 
-	if code, out, _ = runTaskCLI("land", "--help"); code != 0 || !strings.Contains(out, "nova-sprint task land") {
+	if code, out, _ = runSprint("task", "land", "--help"); code != 2 || !strings.Contains(out, "usage: nova-sprint task land") {
 		t.Fatalf("help = %d %q", code, out)
 	}
-	if code, _, errOut = runTaskCLI("land", "--actor", "a", "--id", "x"); code != 2 || !strings.Contains(errOut, "--sha is required") {
+	if code, _, errOut = runTaskCLI("land", "--as", "a", "--ids", "x"); code != 2 || !strings.Contains(errOut, "--sha is required") {
 		t.Fatalf("land without --sha = %d %q", code, errOut)
 	}
 }
@@ -114,17 +114,17 @@ func TestTaskMoveRefusesAPrimaryUnread(t *testing.T) {
 	const s = "nova-sprint + merge + bus"
 	zc := func(w string) int64 { return c.ZCard(ctx, "ws:"+s+":"+w).Val() }
 
-	code, out, errOut := runTaskCLI("push", "--actor", "rowan", "--id", "prim-1", "--stream", s, "--waiting",
+	code, out, errOut := runTaskCLI("push", "--as", "rowan", "--ids", "prim-1", "--stream", s, "--waiting",
 		"--kind", "build", "--ref", "nova-tools#3929", "--title", "a primary")
 	if m := cardLine.FindStringSubmatch(out); code != 0 || m == nil || m[4] != "waiting" {
 		t.Fatalf("push = %d %q %q", code, out, errOut)
 	}
-	code, out, _ = runTaskCLI("move", "--actor", "rowan", "--id", "prim-1", "--to-where", "ready")
+	code, out, _ = runTaskCLI("move", "--as", "rowan", "--ids", "prim-1", "--where", "ready")
 	if m := cardLine.FindStringSubmatch(out); code != 0 || m == nil || m[4] != "ready" {
 		t.Fatalf("waiting -> ready = %d %q", code, out)
 	}
 	for _, to := range []string{"working", "merging"} {
-		code, out, _ = runTaskCLI("move", "--actor", "rowan", "--id", "prim-1", "--to-where", to)
+		code, out, _ = runTaskCLI("move", "--as", "rowan", "--ids", "prim-1", "--where", to)
 		if code != 1 || !strings.HasPrefix(out, "TASK move REFUSED id=prim-1 why=") || (to == "working" && !strings.Contains(out, "NOCOPY")) {
 			t.Fatalf("ready -> %s by hand = %d %q", to, code, out)
 		}
@@ -137,7 +137,7 @@ func TestTaskMoveRefusesAPrimaryUnread(t *testing.T) {
 	// cannot be moved to merging by hand either.
 	c.HSet(ctx, "task:prim-2", "stream", s, "state", "working", "kind", "build", "created_at", "1000")
 	c.ZAdd(ctx, "ws:"+s+":working", redis.Z{Score: 1000, Member: "prim-2"})
-	code, out, _ = runTaskCLI("move", "--actor", "rowan", "--id", "prim-2", "--to-where", "merging")
+	code, out, _ = runTaskCLI("move", "--as", "rowan", "--ids", "prim-2", "--where", "merging")
 	if code != 1 || !strings.Contains(out, "NOCOPY a primary enters merging only as a read copy's card end") {
 		t.Fatalf("working -> merging by hand = %d %q", code, out)
 	}
@@ -146,12 +146,12 @@ func TestTaskMoveRefusesAPrimaryUnread(t *testing.T) {
 	}
 
 	// A friend's take keeps its own path: ready -> working with the friend.
-	code, out, errOut = runTaskCLI("push", "--actor", "rowan", "--id", "held-1", "--stream", s, "--friend", "a",
+	code, out, errOut = runTaskCLI("push", "--as", "rowan", "--ids", "held-1", "--stream", s, "--to", "a",
 		"--kind", "build", "--ref", "nova-tools#3930", "--title", "a friend's task")
 	if code != 0 {
 		t.Fatalf("push held-1 = %d %q %q", code, out, errOut)
 	}
-	code, out, _ = runTaskCLI("take", "--actor", "a", "--id", "held-1")
+	code, out, _ = runTaskCLI("take", "--as", "a", "--ids", "held-1")
 	if code != 0 || !strings.Contains(out, "held-1") || c.HGet(ctx, "task:held-1", "where").Val() != "working" {
 		t.Fatalf("friend take = %d %q", code, out)
 	}

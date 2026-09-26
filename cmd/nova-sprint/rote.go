@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -11,7 +10,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fold"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // rote and note --rote (nova-tools #3110; #2756 v6 4.11 and 11.9): each
@@ -27,25 +25,24 @@ func init() {
 var roteNow = time.Now
 
 func refuseVerb(stderr io.Writer, verb, what string) int {
-	fmt.Fprintf(stderr, "nova-sprint %s: %s; run: nova-sprint help\n", verb, oneline.Escape(what))
-	return 2
+	return verbflag.Refuse(stderr, verb, what)
 }
 
-func quietFlags(name string) *flag.FlagSet {
+func quietFlags(name string) *verbflag.Set {
 	return verbflag.New(name)
 }
 
-// cmdNote is `note --rote <class> --as <mind> --store <host:port>`. Exit 0
+// cmdNote is `note --rote <class> --as <mind> --redis <host:port>`. Exit 0
 // the note is on rote:log, 2 refused or could not run.
 func cmdNote(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := quietFlags("note")
-	class := fs.String("rote", "", "")
-	mind := fs.String("as", "", "")
-	addr := fs.String("store", redisDefault(), "")
-	what := fs.String("what", "", "")
-	mech := fs.String("mech", "", "")
+	class := fs.String("rote", "", "the rote class")
+	mind := fs.String("as", "", verbflag.HelpAs)
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	what := fs.String("what", "", "what happened, one line")
+	mech := fs.String("mech", "", "the mechanism that removes it, one line")
 	if err := fs.Parse(args); err != nil {
-		return refuseVerb(stderr, "note", err.Error()+"; it wants --rote <class> --as <mind> --store <host:port>")
+		return refuseVerb(stderr, "note", err.Error()+"; it wants --rote <class> --as <mind> --redis <host:port>")
 	}
 	var problems []string
 	if *class == "" {
@@ -55,7 +52,7 @@ func cmdNote(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		problems = append(problems, "--as <mind> names who did it by hand")
 	}
 	if *addr == "" {
-		problems = append(problems, "--store <host:port> is the sprint's Redis")
+		problems = append(problems, "--redis <host:port> is the sprint's Redis")
 	}
 	if fs.NArg() > 0 {
 		problems = append(problems, "takes flags, not positional arguments: "+strings.Join(fs.Args(), " "))
@@ -80,20 +77,20 @@ func cmdNote(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// cmdRote is `rote --store <host:port> [--since <t>] [--until <t>] [--sprint <S>]`.
+// cmdRote is `rote --redis <host:port> [--since <t>] [--until <t>] [--sprint <S>]`.
 // Exit 0 printed, 2 refused or could not run.
 func cmdRote(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := quietFlags("rote")
-	addr := fs.String("store", redisDefault(), "")
-	since := fs.String("since", "", "")
-	until := fs.String("until", "", "")
-	sprint := fs.String("sprint", "", "")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	since := fs.String("since", "", verbflag.HelpSince)
+	until := fs.String("until", "", "the end of the window, a duration or RFC 3339")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	if err := fs.Parse(args); err != nil {
-		return refuseVerb(stderr, "rote", err.Error()+"; it wants --store <host:port> [--since <t>]")
+		return refuseVerb(stderr, "rote", err.Error()+"; it wants --redis <host:port> [--since <t>]")
 	}
 	var problems []string
 	if *addr == "" {
-		problems = append(problems, "--store <host:port> is the sprint's Redis")
+		problems = append(problems, "--redis <host:port> is the sprint's Redis")
 	}
 	if fs.NArg() > 0 {
 		problems = append(problems, "takes flags, not positional arguments: "+strings.Join(fs.Args(), " "))

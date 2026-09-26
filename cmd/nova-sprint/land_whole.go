@@ -1,9 +1,9 @@
 // The whole stream landing as one verb (nova-tools#3598): what Rowan did by
 // hand (land stream, ci request, pr record, land merge) in one run.
 //
-//	nova-sprint land --repo <owner/repo> --stream <s> [--stream <s2>...] [--base dev]
+//	nova-sprint land --repo <owner/repo> --stream <s> (comma-separated) [--base dev]
 //	    [--redis <addr>] [--remote <url>] [--mirror <dir>|none] [--workdir <dir>] [--branch <b>]
-//	    [--test <cmd>] [--test-timeout 20m] [--min-score N] [--by rowan] [--api <url>] [--budget N]
+//	    [--test <cmd>] [--test-timeout 20m] [--min-score N] [--api <url>] [--budget N]
 //	    [--ci-wait 45m] [--tick 10s] [--ci-url <url>] [--rebuild]
 //
 // It builds the stream branch off the base tip (the members merged --no-ff
@@ -40,6 +40,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -49,28 +50,29 @@ var landRunSleep func(ctx context.Context, d time.Duration) error
 func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "land"
 	fs := taskFlags(verb)
-	var streams multiFlag
-	fs.Var(&streams, "stream", "")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	repo := fs.String("repo", "", "")
-	base := fs.String("base", "dev", "")
-	remote := fs.String("remote", "", "")
-	mirror := fs.String("mirror", "", "")
-	workdir := fs.String("workdir", "", "")
-	branch := fs.String("branch", "", "")
-	test := fs.String("test", "", "")
-	testTimeout := fs.Duration("test-timeout", 20*time.Minute, "")
-	minScore := fs.Int("min-score", -1, "")
-	by := fs.String("by", "rowan", "")
-	api := fs.String("api", gh.DefaultAPI, "")
-	budget := fs.Int("budget", 64, "")
-	ciWait := fs.Duration("ci-wait", 45*time.Minute, "")
-	tick := fs.Duration("tick", 10*time.Second, "")
-	ciURL := fs.String("ci-url", "", "")
-	rebuild := fs.Bool("rebuild", false, "")
+	streamsFlag := fs.String("stream", "", verbflag.HelpStream)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	base := fs.String("base", "dev", "the base branch the stream lands on")
+	remote := fs.String("remote", "", "the git url pushed to (default the repo's GitHub url)")
+	mirror := fs.String("mirror", "", "the bench mirror of the repo (default ~/nova-bench/mirror/<repo>.git)")
+	workdir := fs.String("workdir", "", "the working directory the clone is made in (default a fresh one)")
+	branch := fs.String("branch", "", "the stream branch name (default stream/<slug>)")
+	test := fs.String("test", "", "the test command the batch runs once")
+	testTimeout := fs.Duration("test-timeout", 20*time.Minute, "how long the batch test may run")
+	minScore := fs.Int("min-score", -1, "the read score a member needs to land (default cfg:land min_score)")
+	actor := seatActor()
+	by := &actor
+	api := fs.String("api", gh.DefaultAPI, "the forge's REST base url")
+	budget := fs.Int("budget", 64, "the most forge writes one run makes")
+	ciWait := fs.Duration("ci-wait", 45*time.Minute, "how long to wait for the stream head's ci word")
+	tick := fs.Duration("tick", 10*time.Second, "how often the wait polls")
+	ciURL := fs.String("ci-url", "", "the ci status url the PR body links")
+	rebuild := fs.Bool("rebuild", false, "rebuild the stream branch on the base tip first")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
+	streams := verbflag.List(*streamsFlag)
 	if fs.NArg() > 0 {
 		return refuse(errOut, verb, "takes flags, not "+strconv.Quote(fs.Arg(0)))
 	}
@@ -86,7 +88,7 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 	}
 	addr := landRedisAddr(*redisAddr)
 	if addr == "" {
-		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR")
+		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")
 	}
 	slug, err := stream.Slug(streams...)
 	if err != nil {

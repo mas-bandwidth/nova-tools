@@ -62,36 +62,36 @@ func runCapacity(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 // capacityFlags is the flag set shared by the capacity subverbs, quiet on a
 // parse error so the verb prints one refusal line the way main.go does.
-func capacityFlags(name string) *flag.FlagSet {
+func capacityFlags(name string) *verbflag.Set {
 	return verbflag.New(name)
 }
 
 func runCapacityDesired(ctx context.Context, kind string, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity " + kind)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	machine := fs.String("machine", "", "")
-	actor := new(string)
-	fs.StringVar(actor, "as", "", "")
-	fs.StringVar(actor, "actor", "", "")
-	idem := fs.String("idem", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	machine := fs.String("machine", "", "the machine the worker runs on (default the one it has)")
+	as := fs.String("as", "", verbflag.HelpAs)
+	slotsFlag := fs.Int("slots", -1, "the worker's slot budget: how many cards it works at once")
+	idem := fs.String("idem", "", verbflag.HelpIdem)
 	// #3206 rev 4 PR A: --paused 0|1 sets the paused flag (omitted keeps it;
 	// a bench's too since #4308); every capacity friend write adds the friend
 	// to `friends` (#2934).
-	paused := fs.String("paused", "", "")
+	paused := fs.String("paused", "", "0 or 1: pause or resume the worker (omitted keeps it)")
 	// #3349: --legs go,schema declares a bench's CI legs on its desired hash
 	// (omitted keeps them), so ci cut finds a bench that carries the leg.
-	legsFlag := fs.String("legs", "", "")
+	legsFlag := fs.String("legs", "", "the CI legs a bench carries, comma-separated (bench; omitted keeps them)")
 	// #3634: --role friends|fleet is the bench registry's role column
 	// (omitted keeps it; a bench with none reads as fleet).
-	roleFlag := fs.String("role", "", "")
+	roleFlag := fs.String("role", "", "the bench's role: friends or fleet (bench; omitted keeps it)")
 	// #4270: --kinds work|read|fix,... and --tiers <t>,... are the consumer's
 	// copy filters on its desired hash (what the card moves' TM.may reads);
 	// omitted keeps them, an empty value clears.
-	kindsFlag := fs.String("kinds", "", "")
-	tiersFlag := fs.String("tiers", "", "")
+	kindsFlag := fs.String("kinds", "", "the card kinds the worker runs, comma-separated: work, read, fix (omitted keeps, empty clears)")
+	tiersFlag := fs.String("tiers", "", "the model types the worker runs, comma-separated: frontier, pro, flash (omitted keeps, empty clears)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity "+kind, err.Error())
 	}
+	actor := seatActor()
 	given := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	kinds, tiers := "", ""
@@ -127,20 +127,23 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 		}
 		legs = normalized
 	}
-	if *actor == "" {
-		return refuse(errOut, "capacity "+kind, "--as actor is required")
-	}
 	if *paused != "" && *paused != "0" && *paused != "1" {
 		return refuse(errOut, "capacity "+kind, "--paused wants 0 or 1")
 	}
-	rest := fs.Args()
-	if len(rest) != 2 {
-		return refuse(errOut, "capacity "+kind, fmt.Sprintf("want %s <name> <slots>; flags precede names", kind))
+	if fs.NArg() > 0 {
+		return refuse(errOut, "capacity "+kind, fmt.Sprintf("takes flags, not positional arguments: capacity %s --as <name> --slots <n>", kind))
 	}
-	name := rest[0]
-	slots, err := strconv.Atoi(rest[1])
-	if err != nil || slots < 0 {
-		return refuse(errOut, "capacity "+kind, "slots must be a nonnegative integer")
+	if *as == "" {
+		return refuse(errOut, "capacity "+kind, fmt.Sprintf("--as names the %s: capacity %s --as <name> --slots <n>", kind, kind))
+	}
+	worker, err := consumerOrName(kind, *as)
+	if err != nil || worker.Kind != kind {
+		return refuse(errOut, "capacity "+kind, fmt.Sprintf("--as wants a %s, %s:<name> or a bare name", kind, kind))
+	}
+	name := worker.Name
+	slots := *slotsFlag
+	if slots < 0 {
+		return refuse(errOut, "capacity "+kind, "--slots wants a nonnegative integer")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
@@ -162,10 +165,10 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 
 	var result capacity.Result
 	if kind == capacity.KindBench {
-		result, err = capacity.SetBenchWith(ctx, st, name, resolved, slots, *actor, *idem,
+		result, err = capacity.SetBenchWith(ctx, st, name, resolved, slots, actor, *idem,
 			capacity.DesiredOpts{Paused: *paused, Legs: legs, Role: role, Kinds: kinds, Tiers: tiers})
 	} else {
-		result, err = capacity.SetFriendWith(ctx, st, name, resolved, slots, *actor, *idem,
+		result, err = capacity.SetFriendWith(ctx, st, name, resolved, slots, actor, *idem,
 			capacity.DesiredOpts{Paused: *paused, Kinds: kinds, Tiers: tiers})
 	}
 	if err != nil {
@@ -200,29 +203,28 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 
 func runCapacityMachine(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity machine")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	cores := fs.Int("cores", 0, "")
-	memGB := fs.Int("mem-gb", 0, "")
-	cpuMilli := fs.Int("cpu-milli", 0, "")
-	memMB := fs.Int("mem-mb", 0, "")
-	actor := new(string)
-	fs.StringVar(actor, "as", "", "")
-	fs.StringVar(actor, "actor", "", "")
-	idem := fs.String("idem", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	machineFlag := fs.String("machine", "", "the machine")
+	slotsFlag := fs.Int("slots", -1, "the machine's ceiling: the slots its workers may hold in all")
+	cores := fs.Int("cores", 0, "the machine's cores, for its CPU budget")
+	memGB := fs.Int("mem-gb", 0, "the machine's memory in GB, for its memory budget")
+	cpuMilli := fs.Int("cpu-milli", 0, "the machine's CPU budget in millicores (else from --cores)")
+	memMB := fs.Int("mem-mb", 0, "the machine's memory budget in MB (else from --mem-gb)")
+	idem := fs.String("idem", "", verbflag.HelpIdem)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity machine", err.Error())
 	}
-	if *actor == "" {
-		return refuse(errOut, "capacity machine", "--as actor is required")
+	actor := seatActor()
+	if fs.NArg() > 0 {
+		return refuse(errOut, "capacity machine", "takes flags, not positional arguments: capacity machine --machine <m> --slots <n>")
 	}
-	rest := fs.Args()
-	if len(rest) != 2 {
-		return refuse(errOut, "capacity machine", "want machine <slots>")
+	if *machineFlag == "" {
+		return refuse(errOut, "capacity machine", "--machine names the machine")
 	}
-	machine := rest[0]
-	slots, err := strconv.Atoi(rest[1])
-	if err != nil || slots < 0 {
-		return refuse(errOut, "capacity machine", "slots must be a nonnegative integer")
+	machine := *machineFlag
+	slots := *slotsFlag
+	if slots < 0 {
+		return refuse(errOut, "capacity machine", "--slots wants a nonnegative integer")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
@@ -230,7 +232,7 @@ func runCapacityMachine(ctx context.Context, args []string, out, errOut io.Write
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	result, err := capacity.SetMachineBudget(ctx, st, machine, slots, *cores, *memGB, *cpuMilli, *memMB, *actor, *idem)
+	result, err := capacity.SetMachineBudget(ctx, st, machine, slots, *cores, *memGB, *cpuMilli, *memMB, actor, *idem)
 	if err != nil {
 		return refuseCapacity(errOut, "capacity machine", err)
 	}
@@ -241,36 +243,32 @@ func runCapacityMachine(ctx context.Context, args []string, out, errOut io.Write
 
 func runCapacityBudget(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity budget")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	actor := new(string)
-	fs.StringVar(actor, "as", "", "")
-	fs.StringVar(actor, "actor", "", "")
-	idem := fs.String("idem", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	machineFlag := fs.String("machine", "", "the machine")
+	cpuFlag := fs.Int("cpu-milli", -1, "the machine's CPU budget in millicores")
+	memFlag := fs.Int("mem-mb", -1, "the machine's memory budget in MB")
+	idem := fs.String("idem", "", verbflag.HelpIdem)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity budget", err.Error())
 	}
-	if *actor == "" {
-		return refuse(errOut, "capacity budget", "--as actor is required")
+	actor := seatActor()
+	if fs.NArg() > 0 || *machineFlag == "" {
+		return refuse(errOut, "capacity budget", "takes flags: capacity budget --machine <m> --cpu-milli <n> --mem-mb <n>")
 	}
-	rest := fs.Args()
-	if len(rest) != 3 {
-		return refuse(errOut, "capacity budget", "want machine <cpu_milli> <mem_mb>")
+	machine := *machineFlag
+	cpuMilli, memMB := *cpuFlag, *memFlag
+	if cpuMilli < 0 {
+		return refuse(errOut, "capacity budget", "--cpu-milli wants a nonnegative integer")
 	}
-	machine := rest[0]
-	cpuMilli, err := strconv.Atoi(rest[1])
-	if err != nil || cpuMilli < 0 {
-		return refuse(errOut, "capacity budget", "cpu_milli must be a nonnegative integer")
-	}
-	memMB, err := strconv.Atoi(rest[2])
-	if err != nil || memMB < 0 {
-		return refuse(errOut, "capacity budget", "mem_mb must be a nonnegative integer")
+	if memMB < 0 {
+		return refuse(errOut, "capacity budget", "--mem-mb wants a nonnegative integer")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
 		return refuse(errOut, "capacity budget", err.Error())
 	}
 	defer st.Close()
-	if err := capacity.SetBudget(ctx, st, machine, cpuMilli, memMB, *actor, *idem); err != nil {
+	if err := capacity.SetBudget(ctx, st, machine, cpuMilli, memMB, actor, *idem); err != nil {
 		return refuse(errOut, "capacity budget", err.Error())
 	}
 	fmt.Fprintf(out, "SET budget %s cpu=%d mem=%d\n", machine, cpuMilli, memMB)
@@ -279,26 +277,24 @@ func runCapacityBudget(ctx context.Context, args []string, out, errOut io.Writer
 
 func runCapacityTake(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity take")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	machine := fs.String("machine", "", "")
-	consumer := fs.String("consumer", "", "")
-	cpuMilli := fs.Int("cpu-milli", 0, "")
-	memMB := fs.Int("mem-mb", 0, "")
-	ttlMs := fs.Int("ttl-ms", 30000, "")
-	pgid := fs.Int("pgid", 0, "")
-	kind := fs.String("kind", "", "")
-	actor := new(string)
-	fs.StringVar(actor, "as", "", "")
-	fs.StringVar(actor, "actor", "", "")
-	idem := fs.String("idem", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	machine := fs.String("machine", "", "the machine whose budget is taken from")
+	consumer := fs.String("as", "", verbflag.HelpAs)
+	cpuMilli := fs.Int("cpu-milli", 0, "the CPU to take, in millicores")
+	memMB := fs.Int("mem-mb", 0, "the memory to take, in MB")
+	ttlMs := fs.Int("ttl-ms", 30000, "how long the take holds before it lapses, in ms")
+	pgid := fs.Int("pgid", 0, "the process group the take is for")
+	kind := fs.String("kind", "", "what the take is for: a card, a CI job")
+	idem := fs.String("idem", "", verbflag.HelpIdem)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity take", err.Error())
 	}
+	actor := seatActor()
 	if *machine == "" {
 		return refuse(errOut, "capacity take", "--machine is required")
 	}
 	if *consumer == "" {
-		return refuse(errOut, "capacity take", "--consumer is required")
+		return refuse(errOut, "capacity take", "--as names the taker")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
@@ -313,7 +309,7 @@ func runCapacityTake(ctx context.Context, args []string, out, errOut io.Writer) 
 		TTLMs:    *ttlMs,
 		PGID:     *pgid,
 		Kind:     *kind,
-		Actor:    *actor,
+		Actor:    actor,
 		Idem:     *idem,
 	})
 	if err != nil {
@@ -331,19 +327,19 @@ func runCapacityTake(ctx context.Context, args []string, out, errOut io.Writer) 
 
 func runCapacityGive(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity give")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	machine := fs.String("machine", "", "")
-	consumer := fs.String("consumer", "", "")
-	pgid := fs.Int("pgid", 0, "")
-	confirmed := fs.Bool("confirmed", false, "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	machine := fs.String("machine", "", "the machine the take was from")
+	consumer := fs.String("as", "", verbflag.HelpAs)
+	pgid := fs.Int("pgid", 0, "the process group the take was for")
+	confirmed := fs.Bool("confirmed", false, "the process group is known gone: give back without checking it")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity give", err.Error())
 	}
-	if *consumer == "" && len(fs.Args()) > 0 {
-		*consumer = fs.Args()[0]
+	if fs.NArg() > 0 {
+		return refuse(errOut, "capacity give", "takes flags, not positional arguments")
 	}
 	if *consumer == "" {
-		return refuse(errOut, "capacity give", "--consumer is required")
+		return refuse(errOut, "capacity give", "--as names the taker")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
@@ -370,19 +366,19 @@ func runCapacityGive(ctx context.Context, args []string, out, errOut io.Writer) 
 
 func runCapacityRenew(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity renew")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	machine := fs.String("machine", "", "")
-	consumer := fs.String("consumer", "", "")
-	pgid := fs.Int("pgid", 0, "")
-	ttlMs := fs.Int("ttl-ms", 30000, "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	machine := fs.String("machine", "", "the machine the take was from")
+	consumer := fs.String("as", "", verbflag.HelpAs)
+	pgid := fs.Int("pgid", 0, "the process group the take is for")
+	ttlMs := fs.Int("ttl-ms", 30000, "how long the renewed take holds, in ms")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity renew", err.Error())
 	}
-	if *consumer == "" && len(fs.Args()) > 0 {
-		*consumer = fs.Args()[0]
+	if fs.NArg() > 0 {
+		return refuse(errOut, "capacity renew", "takes flags, not positional arguments")
 	}
 	if *consumer == "" {
-		return refuse(errOut, "capacity renew", "--consumer is required")
+		return refuse(errOut, "capacity renew", "--as names the taker")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
@@ -398,16 +394,16 @@ func runCapacityRenew(ctx context.Context, args []string, out, errOut io.Writer)
 
 func runCapacityReap(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity reap")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	machine := fs.String("machine", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	machine := fs.String("machine", "", "the machine whose lapsed takes are reaped")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity reap", err.Error())
 	}
-	if *machine == "" && len(fs.Args()) > 0 {
-		*machine = fs.Args()[0]
+	if fs.NArg() > 0 {
+		return refuse(errOut, "capacity reap", "takes flags, not positional arguments")
 	}
 	if *machine == "" {
-		return refuse(errOut, "capacity reap", "machine is required; pass --machine")
+		return refuse(errOut, "capacity reap", "--machine is required")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
@@ -426,23 +422,21 @@ func runCapacityReap(ctx context.Context, args []string, out, errOut io.Writer) 
 
 func runCapacityHook(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity hook")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	machine := fs.String("machine", "", "")
-	consumer := fs.String("consumer", "", "")
-	cpuMilli := fs.Int("cpu-milli", 0, "")
-	memMB := fs.Int("mem-mb", 0, "")
-	pgid := fs.Int("pgid", 0, "")
-	actor := new(string)
-	fs.StringVar(actor, "as", "ci-runner", "")
-	fs.StringVar(actor, "actor", "ci-runner", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	machine := fs.String("machine", "", "the runner's machine (default NOVA_MACHINE, else the hostname)")
+	consumer := fs.String("as", "", verbflag.HelpAs)
+	cpuMilli := fs.Int("cpu-milli", 0, "the CPU a job takes, in millicores")
+	memMB := fs.Int("mem-mb", 0, "the memory a job takes, in MB")
+	pgid := fs.Int("pgid", 0, "the job's process group")
+	event := fs.String("event", "job-started", "the runner hook: job-started or job-completed")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity hook", err.Error())
 	}
-	action := "job-started"
-	rest := fs.Args()
-	if len(rest) > 0 {
-		action = rest[0]
+	if fs.NArg() > 0 {
+		return refuse(errOut, "capacity hook", "takes flags, not positional arguments; the hook is --event job-started|job-completed")
 	}
+	actor := seatActor()
+	action := *event
 
 	resolvedMachine := *machine
 	if resolvedMachine == "" {
@@ -503,7 +497,7 @@ func runCapacityHook(ctx context.Context, args []string, out, errOut io.Writer) 
 			TTLMs:    30000,
 			PGID:     resolvedPgid,
 			Kind:     capacity.KindCI,
-			Actor:    *actor,
+			Actor:    actor,
 		})
 		if err != nil {
 			var bErr *capacity.BudgetError
@@ -530,7 +524,7 @@ func runCapacityHook(ctx context.Context, args []string, out, errOut io.Writer) 
 		return 0
 
 	default:
-		return refuse(errOut, "capacity hook", fmt.Sprintf("unknown action %s; want job-started or job-completed", action))
+		return refuse(errOut, "capacity hook", fmt.Sprintf("unknown --event %s; want job-started or job-completed", action))
 	}
 }
 

@@ -6,8 +6,8 @@
 // and TM.evidence); this verb applies the typed verdict through the one move
 // function (ns_cm_review):
 //
-//	review post --id <primary> --verdict recut|redeal|reassign:<consumer>|drop --why <text>
-//	            [--to <consumer>] [--redis <addr>] [--actor <a>]
+//	review post --ids <primary> --verdict recut|redeal|reassign:<consumer>|drop --why <text>
+//	            [--to <consumer>] [--redis <addr>]   (the actor is the seat)
 //
 // recut returns the card to waiting, redeal to ready, reassign cuts its copy
 // on the named consumer (--to, or reassign:<consumer>), drop moves it to
@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -42,15 +41,14 @@ func init() {
 
 func runReview(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 || args[0] != "post" {
-		return refuse(errOut, "review", "wants post: review post --id <primary> --verdict recut|redeal|reassign:<consumer>|drop --why <text>")
+		return refuse(errOut, "review", "wants post: review post --ids <primary> --verdict recut|redeal|reassign:<consumer>|drop --why <text>")
 	}
 	fs := verbflag.New("review post")
-	addr := fs.String("redis", redisDefault(), "Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
-	actor := fs.String("actor", "", "who posts the verdict (else NOVA_FRIEND, else nova-sprint)")
-	id := fs.String("id", "", "the primary in review")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	ids := fs.String("ids", "", verbflag.HelpIDs)
 	verdict := fs.String("verdict", "", "recut | redeal | reassign:<consumer> | drop")
-	to := fs.String("to", "", "the consumer a reassign deals to (bench:<b> or friend:<f>)")
-	why := fs.String("why", "", "the reason, on the REVIEW line")
+	to := fs.String("to", "", verbflag.HelpTo)
+	why := fs.String("why", "", verbflag.HelpWhy)
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, "review post", err.Error())
 	}
@@ -61,18 +59,11 @@ func runReview(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return refuse(errOut, "review post", err.Error())
 	}
-	if *id == "" || strings.TrimSpace(*why) == "" {
-		return refuse(errOut, "review post", "wants --id <primary> and --why <text>")
+	id := oneID(*ids)
+	if id == "" || strings.TrimSpace(*why) == "" {
+		return refuse(errOut, "review post", "wants --ids <primary> and --why <text>")
 	}
-	if *actor == "" {
-		*actor = os.Getenv(seatEnv)
-	}
-	if seat := os.Getenv(seatEnv); seat != "" && *actor != seat {
-		return refuse(errOut, "review post", fmt.Sprintf("--actor %s is not the seat (%s=%s)", *actor, seatEnv, seat))
-	}
-	if *actor == "" {
-		*actor = "nova-sprint"
-	}
+	actor := seatActor()
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -82,10 +73,10 @@ func runReview(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	defer func() { _ = st.Close() }()
 	c := st.Client()
-	r, err := taskcard.Review(ctx, c, *id, v, *why, *actor)
+	r, err := taskcard.Review(ctx, c, id, v, *why, actor)
 	if err != nil {
 		if w, ok := taskcard.IsRefused(err); ok {
-			fmt.Fprintf(out, "REVIEW POST REFUSED id=%s why=%s ms=%d\n", *id, quoteField(w), time.Since(start).Milliseconds())
+			fmt.Fprintf(out, "REVIEW POST REFUSED id=%s why=%s ms=%d\n", id, quoteField(w), time.Since(start).Milliseconds())
 			return 1
 		}
 		return refuse(errOut, "review post", err.Error())

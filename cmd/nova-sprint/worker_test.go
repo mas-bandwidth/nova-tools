@@ -26,14 +26,14 @@ func TestWorkerPauseResumeShowCLI(t *testing.T) {
 	c.HSet(ctx, "bench:hetzner:desired", "slots", "8", "machine", "hetzner", "tiers", "flash,pro")
 	c.HSet(ctx, "friend:emma:desired", "slots", "4", "machine", "studio")
 
-	code, out, errOut := runVerb(t, "worker", "pause", "--redis", addr, "--as", "rowan", "bench:hetzner")
+	code, out, errOut := runVerb(t, "worker", "pause", "--redis", addr, "--as", "bench:hetzner")
 	if code != 0 || out != "PAUSED bench:hetzner\n" || errOut != "" {
 		t.Fatalf("pause bench = %d %q %q", code, out, errOut)
 	}
 	if got := c.HGet(ctx, "bench:hetzner:desired", "paused").Val(); got != "1" {
 		t.Fatalf("bench paused=%q", got)
 	}
-	code, out, _ = runVerb(t, "worker", "pause", "--redis", addr, "friend:emma")
+	code, out, _ = runVerb(t, "worker", "pause", "--redis", addr, "--as", "friend:emma")
 	if code != 0 || out != "PAUSED friend:emma\n" {
 		t.Fatalf("pause friend = %d %q", code, out)
 	}
@@ -43,19 +43,19 @@ func TestWorkerPauseResumeShowCLI(t *testing.T) {
 	if code != 0 || out != want {
 		t.Fatalf("show = %d\n%s\nwant:\n%s", code, out, want)
 	}
-	code, out, _ = runVerb(t, "worker", "resume", "--redis", addr, "friend:emma")
+	code, out, _ = runVerb(t, "worker", "resume", "--redis", addr, "--as", "friend:emma")
 	if code != 0 || out != "RESUMED friend:emma\n" {
 		t.Fatalf("resume friend = %d %q", code, out)
 	}
-	code, out, _ = runVerb(t, "worker", "show", "--redis", addr, "friend:emma")
+	code, out, _ = runVerb(t, "worker", "show", "--redis", addr, "--as", "friend:emma")
 	if code != 0 || out != "WORKER friend:emma slots=4 paused=0 tiers=- kinds=- machine=studio\n" {
 		t.Fatalf("show one = %d %q", code, out)
 	}
-	code, out, errOut = runVerb(t, "worker", "pause", "--redis", addr, "bench:nope")
+	code, out, errOut = runVerb(t, "worker", "pause", "--redis", addr, "--as", "bench:nope")
 	if code != 1 || !strings.HasPrefix(out, "WORKER PAUSE REFUSED bench:nope why=\"UNKNOWN bench:nope") || errOut != "" {
 		t.Fatalf("pause unknown = %d %q %q", code, out, errOut)
 	}
-	code, _, errOut = runVerb(t, "worker", "pause", "--redis", addr, "hetzner")
+	code, _, errOut = runVerb(t, "worker", "pause", "--redis", addr, "--as", "hetzner")
 	if code != 2 || !strings.Contains(errOut, "not bench:<b> or friend:<f>") {
 		t.Fatalf("pause bare name = %d %q", code, errOut)
 	}
@@ -65,7 +65,7 @@ func TestWorkerPauseResumeShowCLI(t *testing.T) {
 	}
 	// capacity bench --paused is no longer a friend-only flag (#4308)
 	c.HSet(ctx, "machine:hetzner:ceiling", "slots", "64")
-	code, out, errOut = runVerb(t, "capacity", "bench", "--redis", addr, "--as", "rowan", "--paused", "0", "hetzner", "8")
+	code, out, errOut = runVerb(t, "capacity", "bench", "--redis", addr, "--as", "hetzner", "--paused", "0", "--slots", "8")
 	if code != 0 || !strings.HasPrefix(out, "SET bench hetzner machine=hetzner slots=8") {
 		t.Fatalf("capacity bench --paused 0 = %d %q %q", code, out, errOut)
 	}
@@ -93,20 +93,20 @@ func TestCardCancelEachCLI(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	code, out, errOut := runVerb(t, "card", "deal", "--redis", addr, "--to", "bench:b", "--n", "2", "--actor", "rowan")
+	code, out, errOut := runVerb(t, "card", "deal", "--redis", addr, "--to", "bench:b", "--n", "2")
 	if code != 0 || !strings.HasPrefix(out, "CARD DEAL to=bench:b n=2 copies=c0~1,c1~1 ms=") {
 		t.Fatalf("deal = %d %q %q", code, out, errOut)
 	}
-	code, out, _ = runVerb(t, "card", "cancel", "--redis", addr, "--ids", "c0~1,nope,c1", "--why", "moved", "--actor", "rowan")
+	code, out, _ = runVerb(t, "card", "cancel", "--redis", addr, "--ids", "c0~1,nope,c1", "--why", "moved")
 	if code != 1 || !strings.HasPrefix(out, "CARD CANCEL REFUSED ids=c0~1,nope,c1 why=\"NOTASK task:nope\"") {
 		t.Fatalf("batch = %d %q", code, out)
 	}
-	code, out, _ = runVerb(t, "card", "cancel", "--redis", addr, "--ids", "c0~1,nope,c1", "--why", "moved", "--each", "--actor", "rowan")
+	code, out, _ = runVerb(t, "card", "cancel", "--redis", addr, "--ids", "c0~1,nope,c1", "--why", "moved", "--each")
 	want := "CANCELLED c0~1 to=waiting\nREFUSED nope why=\"NOTASK task:nope\"\nCANCELLED c1 to=done\nCARD CANCEL n=2 refused=1 ms="
 	if code != 1 || !strings.HasPrefix(out, want) {
 		t.Fatalf("each = %d %q, want prefix %q", code, out, want)
 	}
-	code, out, _ = runVerb(t, "card", "cancel", "--redis", addr, "--id", "c0", "--why", "moved", "--each", "--actor", "rowan")
+	code, out, _ = runVerb(t, "card", "cancel", "--redis", addr, "--ids", "c0", "--why", "moved", "--each")
 	if code != 0 || !strings.HasPrefix(out, "CANCELLED c0 to=done\nCARD CANCEL n=1 refused=0 ms=") {
 		t.Fatalf("each, all ok = %d %q", code, out)
 	}

@@ -72,7 +72,7 @@ func (e *holdEnv) register(f string, slots int) {
 		e.t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
-	if code := run([]string{"capacity", "friend", "--redis", e.addr, "--as", "config", "--machine", "ctl", f, strconv.Itoa(slots)}, &out, &errb); code != 0 {
+	if code := run([]string{"capacity", "friend", "--redis", e.addr, "--as", f, "--machine", "ctl", "--slots", strconv.Itoa(slots)}, &out, &errb); code != 0 {
 		e.t.Fatalf("capacity friend %s %d: exit %d %s", f, slots, code, errb.String())
 	}
 }
@@ -970,7 +970,7 @@ func TestHoldReleaseHolderOnly(t *testing.T) {
 		t.Fatalf("stale approve: %d %q", code, out)
 	}
 	rel := func(as, head string) (int, string) {
-		code, out, _ := e.run("hold", "release", "--as", as, "--sprint", e.S, "nova-tools#60", "johnny", "--head", head, "--evidence", "evidence-1")
+		code, out, _ := e.run("hold", "release", "--as", as, "--sprint", e.S, "--ref", "nova-tools#60", "--holder", "johnny", "--head", head, "--evidence", "evidence-1")
 		return code, out
 	}
 	if code, out := rel("johnny", headA); code != 2 || !strings.HasPrefix(out, "REFUSED stale-head") {
@@ -989,7 +989,7 @@ func TestHoldReleaseHolderOnly(t *testing.T) {
 	e.unit(61, headA, "emma")
 	e.mustIngest(61, typed("johnny", headA, "HOLD", 4, substance), "RECORD hold")
 	e.unit(61, headB, "emma")
-	if code, out, _ := e.run("hold", "release", "--as", "johnny", "--sprint", e.S, "nova-tools#61", "johnny", "--head", headB, "--evidence", "evidence-2"); code != 0 || !strings.HasPrefix(out, "RELEASED") {
+	if code, out, _ := e.run("hold", "release", "--as", "johnny", "--sprint", e.S, "--ref", "nova-tools#61", "--holder", "johnny", "--head", headB, "--evidence", "evidence-2"); code != 0 || !strings.HasPrefix(out, "RELEASED") {
 		t.Fatalf("holder release: %d %q", code, out)
 	}
 }
@@ -1022,10 +1022,10 @@ func TestHoldRouteZeroREST(t *testing.T) {
 	e.unit(80, headB, "johnny")
 	e.mustIngest(80, repairLine("rowan", headB), "RECORD repair")
 	e.route()
-	if code, _, errOut := e.run("hold", "show", "--sprint", e.S, "nova-tools#80"); code != 0 {
+	if code, _, errOut := e.run("hold", "show", "--sprint", e.S, "--ref", "nova-tools#80"); code != 0 {
 		t.Fatalf("hold show: %s", errOut)
 	}
-	if code, _, _ := e.run("hold", "release", "--as", "stella", "--sprint", e.S, "nova-tools#80", "stella", "--head", headB, "--evidence", "evidence-3"); code != 0 {
+	if code, _, _ := e.run("hold", "release", "--as", "stella", "--sprint", e.S, "--ref", "nova-tools#80", "--holder", "stella", "--head", headB, "--evidence", "evidence-3"); code != 0 {
 		t.Fatalf("hold release")
 	}
 	if n := stub.Calls(); n != 0 {
@@ -1070,7 +1070,7 @@ func (e *holdEnv) done(id, token, url, body string, extra ...string) (int, strin
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		e.t.Fatal(err)
 	}
-	args := []string{"task", "done", "--sprint", e.S, "--id", id, "--token", token,
+	args := []string{"task", "done", "--sprint", e.S, "--ids", id, "--token", token,
 		"--evidence", url, "--url", url, "--body-file", path}
 	return e.run(append(args, extra...)...)
 }
@@ -1183,7 +1183,7 @@ func TestTaskDoneReviewIngest(t *testing.T) {
 	// keeps the base disp value for the readers #3491 has not moved.
 	e.unit(84, headA, "johnny")
 	lid, ltoken := e.reviewTask(84, headA, "stella")
-	if code, out, errOut := e.run("task", "done", "--sprint", e.S, "--id", lid, "--token", ltoken,
+	if code, out, errOut := e.run("task", "done", "--sprint", e.S, "--ids", lid, "--token", ltoken,
 		"--evidence", "legacy evidence", "--verdict", "APPROVE", "--score", "8", "--head", headA); code != 0 || out != "DONE DONE id="+lid+"\n" {
 		t.Fatalf("legacy: exit %d %q %q", code, out, errOut)
 	}

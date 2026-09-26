@@ -1,7 +1,7 @@
 // The consume verb and the consumer duties (nova-tools #3323): each built
 // consumer of #2756 4.5 runs under its own verb
 //
-//	nova-sprint consume <group> once|run --redis <addr> [--sprint <S>] [--bench <b>[,<b>...]] [--consumer <id>] [--every 1s]
+//	nova-sprint consume <group> once|run --redis <addr> [--sprint <S>] [--bench <b>[,<b>...]] [--as <id>] [--every 1s]
 //	nova-sprint consume list
 //
 // and as a production duty of `nova-sprint reconcile`, so the fleet runs it
@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"os/signal"
@@ -86,14 +87,14 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "consume "+group, "wants once or run")
 	}
 	mode := args[1]
-	fs := taskFlags("consume " + group)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	consumer := fs.String("consumer", "", "")
-	actor := fs.String("actor", group, "")
-	every := fs.Duration("every", time.Second, "")
+	fs := taskFlags("consume " + group + " " + mode)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	consumer := fs.String("as", "", verbflag.HelpAs)
+	every := fs.Duration("every", time.Second, "how often a run pass ticks")
+	actor := &group
 	if err := fs.Parse(args[2:]); err != nil {
-		return refuse(errOut, "consume "+group, err.Error())
+		return refuse(errOut, "consume "+group+" "+mode, err.Error())
 	}
 	if fs.NArg() > 0 {
 		return refuse(errOut, "consume "+group, "takes flags after once|run, not positional arguments")

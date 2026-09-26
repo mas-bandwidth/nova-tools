@@ -212,6 +212,9 @@ func Render(rec Record, d Diff, mirror, outDir string) ([]byte, error) {
 	data.Base, data.BaseSHA, data.Paths = orDash(rec.Base), orDash(rec.BaseSHA), orDash(rec.Paths)
 	data.DoneWhen, data.Stream, data.DependsOn, data.Branch = orDash(rec.DoneWhen), orDash(rec.Stream), orDash(rec.DependsOn), orDash(rec.Branch)
 	data.DiffFile = filepath.Join(outDir, "diff.patch")
+	if outDir == "" {
+		data.DiffFile = "the diff printed below this brief"
+	}
 	data.Files = d.Files
 	data.Outside = OutsidePaths(rec.Paths, d.Files)
 	keys := make([]string, 0, len(rec.CI))
@@ -267,13 +270,46 @@ func brief(ctx context.Context, c *redis.Client, repo, n, head, id, mirror, outD
 		recordHead, rec.Head, rec.CI = rec.Head, head, ci
 	}
 	if rec.BaseSHA == "" {
-		fmt.Fprintf(stderr, "READ BRIEF REFUSED repo=%s n=%s why=record has no base_sha; the card names it (BASE/base-sha) and harvest writes it\n", repo, n)
+		fmt.Fprintf(stderr, "READ BRIEF REFUSED repo=%s n=%s why=record has no base_sha; the card names it (BASE/BASE-SHA) and harvest writes it\n", repo, n)
 		return 1
 	}
 	d, err := MirrorDiff(ctx, mirror, n, rec.BaseSHA, rec.Head)
 	if err != nil {
 		fmt.Fprintf(stderr, "READ BRIEF REFUSED repo=%s n=%s why=%v\n", repo, n, err)
 		return 1
+	}
+	moved := ""
+	if d.MirrorHead != "" && d.MirrorHead != rec.Head {
+		moved = " mirror_head=" + short(d.MirrorHead)
+	}
+	if recordHead != "" {
+		moved += " record_head=" + short(recordHead)
+	}
+	if id != "" {
+		moved += " task=" + id
+	}
+	receipt := func(out, diff string) {
+		fmt.Fprintf(stdout, "READ BRIEF repo=%s n=%s head=%s base_sha=%s files=%d outside_paths=%d lines=%d ci=%d out=%s diff=%s github_calls=0%s\n",
+			repo, n, short(rec.Head), short(rec.BaseSHA), len(d.Files), len(OutsidePaths(rec.Paths, d.Files)), len(rec.Lines), len(rec.CI), out, diff, moved)
+	}
+	if outDir == "" {
+		// No --out (#4399): the brief, then the diff, on stdout, and the
+		// receipt last; nothing is written.
+		body, err := Render(rec, d, mirror, "")
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-sprint read brief: %v\n", err)
+			return 2
+		}
+		_, _ = stdout.Write(body)
+		if len(body) > 0 && body[len(body)-1] != '\n' {
+			_, _ = io.WriteString(stdout, "\n")
+		}
+		_, _ = io.WriteString(stdout, d.Patch)
+		if d.Patch != "" && !strings.HasSuffix(d.Patch, "\n") {
+			_, _ = io.WriteString(stdout, "\n")
+		}
+		receipt("-", "-")
+		return 0
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		fmt.Fprintf(stderr, "nova-sprint read brief: %v\n", err)
@@ -293,18 +329,7 @@ func brief(ctx context.Context, c *redis.Client, repo, n, head, id, mirror, outD
 		fmt.Fprintf(stderr, "nova-sprint read brief: %v\n", err)
 		return 2
 	}
-	moved := ""
-	if d.MirrorHead != "" && d.MirrorHead != rec.Head {
-		moved = " mirror_head=" + short(d.MirrorHead)
-	}
-	if recordHead != "" {
-		moved += " record_head=" + short(recordHead)
-	}
-	if id != "" {
-		moved += " task=" + id
-	}
-	fmt.Fprintf(stdout, "READ BRIEF repo=%s n=%s head=%s base_sha=%s files=%d outside_paths=%d lines=%d ci=%d out=%s diff=%s github_calls=0%s\n",
-		repo, n, short(rec.Head), short(rec.BaseSHA), len(d.Files), len(OutsidePaths(rec.Paths, d.Files)), len(rec.Lines), len(rec.CI), briefPath, filepath.Join(outDir, "diff.patch"), moved)
+	receipt(briefPath, filepath.Join(outDir, "diff.patch"))
 	return 0
 }
 

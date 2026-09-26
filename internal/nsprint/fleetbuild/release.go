@@ -1,6 +1,6 @@
 package fleetbuild
 
-// Release (#4306, #4356 A) is `nova-sprint fleet release <sha>|dev`: the whole
+// Release (#4306, #4356 A) is `nova-sprint fleet release --sha <sha>|dev`: the whole
 // roll of a landed dev commit, which was nine hand commands across three tools
 // on 2026-09-26 (an ssh for the admin password, fn deploy and fn check; go
 // build, mv and version for the Studio; the bench play and an ssh verify), as
@@ -300,7 +300,7 @@ func (r *Release) rollList() []string {
 func CheckArg(arg string) error {
 	arg = strings.ToLower(strings.TrimSpace(arg))
 	if arg != DevArg && !shaRe.MatchString(arg) {
-		return refused("%q is not a commit sha of 8 to 40 hex digits (fleet release <sha> wants a landed dev commit, or dev for dev's tip)", arg)
+		return refused("%q is not a commit sha of 8 to 40 hex digits (fleet release --sha <sha> wants a landed dev commit, or dev for dev's tip)", arg)
 	}
 	return nil
 }
@@ -322,11 +322,11 @@ func (r *Release) Resolve(ctx context.Context, arg string) (string, error) {
 	}
 	out, err := r.run(ctx, "", nil, DevTipArgv(repo)...)
 	if err != nil {
-		return "", refused("git ls-remote %s %s: %v: %s (name the commit: fleet release <sha>)", repo, ReleaseBase, err, lastLine(out))
+		return "", refused("git ls-remote %s %s: %v: %s (name the commit: fleet release --sha <sha>)", repo, ReleaseBase, err, lastLine(out))
 	}
 	tip, ok := ParseDevTip(out)
 	if !ok {
-		return "", refused("git ls-remote %s answered %q, not a %s tip (name the commit: fleet release <sha>)", repo, lastLine(out), ReleaseBase)
+		return "", refused("git ls-remote %s answered %q, not a %s tip (name the commit: fleet release --sha <sha>)", repo, lastLine(out), ReleaseBase)
 	}
 	r.printf("DEV TIP %s\n", tip)
 	return tip, nil

@@ -18,6 +18,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
 func init() {
@@ -34,7 +35,7 @@ func runGH(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	const verb = "gh budget"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -43,7 +44,7 @@ func runGH(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	addr := landRedisAddr(*redisAddr)
 	if addr == "" {
-		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR")
+		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")
 	}
 	st, err := store.Open(ctx, addr)
 	if err != nil {

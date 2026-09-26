@@ -5,17 +5,20 @@
 //	friend report --as <f> --out-of-credits [--until <t>]   (the harness keeper)
 //	friend report --as <f> --away --until <t>
 //	friend report --as <f> --clear
-//	friend show [<f>]
-//	friend sweep --as <actor> [--may-hold a,b] [--builders a,b] [--coordinator c]
-//	capacity friend <f> --as <actor> --wake unit:<label>@<host> | --wake human --notify <channel>
+//	friend show [--as <f>]
+//	friend sweep [--idle-ticks <n>] [--underfull-ticks <n>]
+//	capacity friend --as <f> --wake unit:<label>@<host> | --wake human --notify <channel>
+//
+// One grammar (#4352 A): --as is the friend the verb concerns; the actor of
+// a receipt is the seat, never a flag.
 //
 // <t> is RFC 3339 or a duration from now (for example 3h).
 package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"strings"
 	"time"
@@ -45,25 +48,22 @@ func parseUntil(s string, now time.Time) (time.Time, error) {
 func runFriendReport(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend report"
 	fs := capacityFlags(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	as := fs.String("as", "", "")
-	outOfCredits := fs.Bool("out-of-credits", false, "")
-	away := fs.Bool("away", false, "")
-	clear := fs.Bool("clear", false, "")
-	until := fs.String("until", "", "")
-	reason := fs.String("reason", "", "")
-	actor := fs.String("actor", "", "")
-	idem := fs.String("idem", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	as := fs.String("as", "", verbflag.HelpAs)
+	outOfCredits := fs.Bool("out-of-credits", false, "the friend is out of credits")
+	away := fs.Bool("away", false, "the friend is away")
+	clear := fs.Bool("clear", false, "the friend is back")
+	until := fs.String("until", "", "until when, RFC 3339 or a duration from now (3h)")
+	why := fs.String("why", "", verbflag.HelpWhy)
+	idem := fs.String("idem", "", verbflag.HelpIdem)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
 	if *as == "" || len(fs.Args()) != 0 {
 		return refuse(errOut, verb, "want --as <friend> and one of --out-of-credits, --away or --clear")
 	}
-	req := friend.ReportRequest{Friend: *as, Reason: *reason, Actor: *actor, Idem: *idem}
-	if req.Actor == "" {
-		req.Actor = *as
-	}
+	*as = strings.TrimPrefix(*as, "friend:")
+	req := friend.ReportRequest{Friend: *as, Reason: *why, Actor: seatActor(), Idem: *idem}
 	n := 0
 	for flag, state := range map[*bool]string{outOfCredits: friend.StateOutOfCredits, away: friend.StateAway, clear: "clear"} {
 		if *flag {
@@ -108,17 +108,15 @@ func runFriendReport(ctx context.Context, args []string, out, errOut io.Writer) 
 func runFriendShow(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend show"
 	fs := capacityFlags(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	as := fs.String("as", "", verbflag.HelpAs)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
-	if len(fs.Args()) > 1 {
-		return refuse(errOut, verb, "want at most one friend; flags precede the name")
+	if len(fs.Args()) > 0 {
+		return refuse(errOut, verb, "takes flags, not positional arguments; one friend is --as <f>")
 	}
-	name := ""
-	if len(fs.Args()) == 1 {
-		name = fs.Args()[0]
-	}
+	name := strings.TrimPrefix(*as, "friend:")
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -137,16 +135,17 @@ func runFriendShow(ctx context.Context, args []string, out, errOut io.Writer) in
 func runFriendSweep(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend sweep"
 	fs := capacityFlags(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	as := fs.String("as", "", "")
-	idleTicks := fs.Int("idle-ticks", friend.DefaultPolicy.IdleTicks, "")
-	underfullTicks := fs.Int("underfull-ticks", friend.DefaultPolicy.UnderfullTicks, "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	idleTicks := fs.Int("idle-ticks", friend.DefaultPolicy.IdleTicks, "ticks a friend may sit idle before the sweep acts")
+	underfullTicks := fs.Int("underfull-ticks", friend.DefaultPolicy.UnderfullTicks, "ticks a friend may run under its width before the sweep acts")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
-	if *as == "" || len(fs.Args()) != 0 {
-		return refuse(errOut, verb, "want --as <actor>")
+	if len(fs.Args()) != 0 {
+		return refuse(errOut, verb, "takes flags, not positional arguments")
 	}
+	actor := seatActor()
+	as := &actor
 	if *idleTicks < 1 || *underfullTicks < 1 {
 		return refuse(errOut, verb, "--idle-ticks and --underfull-ticks must be at least 1")
 	}
@@ -184,52 +183,24 @@ func hasWakeFlag(args []string) bool {
 	return false
 }
 
-// parseInterspersed parses fs over args, allowing positionals before, between
-// or after the flags (Go's FlagSet alone stops at the first positional, so the
-// published name-first order `capacity friend <f> --as <a> --wake ...` would
-// leave every flag unparsed). A bare "--" ends flag parsing as usual.
-func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
-	var pos []string
-	for {
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		rest := fs.Args()
-		if len(rest) == 0 {
-			return pos, nil
-		}
-		if len(args) > len(rest) && args[len(args)-len(rest)-1] == "--" {
-			return append(pos, rest...), nil
-		}
-		pos = append(pos, rest[0])
-		args = rest[1:]
-	}
-}
-
-// runCapacityWake is `capacity friend <f> --as <actor> --wake unit:<label>@<host>`
+// runCapacityWake is `capacity friend --as <f> --wake unit:<label>@<host>`
 // or `... --wake human --notify <channel>`: it declares friend:<f>:wakepath.
-// The name may come first (the published order) or after the flags.
 func runCapacityWake(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "capacity friend --wake"
 	fs := capacityFlags(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	wake := fs.String("wake", "", "")
-	notify := fs.String("notify", "", "")
-	actor := new(string)
-	fs.StringVar(actor, "as", "", "")
-	fs.StringVar(actor, "actor", "", "")
-	idem := fs.String("idem", "", "")
-	pos, err := parseInterspersed(fs, args)
-	if err != nil {
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	wake := fs.String("wake", "", "the wake path: unit:<label>@<host>, or human")
+	notify := fs.String("notify", "", "the channel a human wake notifies (with --wake human)")
+	as := fs.String("as", "", verbflag.HelpAs)
+	idem := fs.String("idem", "", verbflag.HelpIdem)
+	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
-	if *actor == "" {
-		return refuse(errOut, verb, "--as actor is required")
+	if fs.NArg() > 0 || *as == "" {
+		return refuse(errOut, verb, "want capacity friend --as <f> --wake <path> [--notify <channel>]")
 	}
-	if len(pos) != 1 {
-		return refuse(errOut, verb, "want capacity friend <name> --as <actor> --wake <path> [--notify <channel>]")
-	}
-	name := pos[0]
+	actor := seatActor()
+	name := strings.TrimPrefix(*as, "friend:")
 	wp, err := friend.ParseWakePath(*wake, *notify)
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -239,7 +210,7 @@ func runCapacityWake(ctx context.Context, args []string, out, errOut io.Writer) 
 		return refuse(errOut, verb, err.Error())
 	}
 	defer st.Close()
-	if err := friend.SetWakePath(ctx, st, name, wp, *actor, *idem); err != nil {
+	if err := friend.SetWakePath(ctx, st, name, wp, actor, *idem); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
 	fmt.Fprintf(out, "SET friend %s wake=%s\n", name, wp)

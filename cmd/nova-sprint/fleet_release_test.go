@@ -129,7 +129,7 @@ func TestFleetReleaseIsOneCommand(t *testing.T) {
 	reg, dir := releaseRegistry(t), releasePlayDir(t)
 	sleeps := 0
 	var out, errOut bytes.Buffer
-	code := runFleetReleaseWith(context.Background(), []string{"dev", "--redis", mr.Addr(), "--machines", reg},
+	code := runFleetReleaseWith(context.Background(), []string{"--sha", "dev", "--redis", mr.Addr(), "--machines", reg},
 		&out, &errOut, verbDeps(f, map[string]string{fleetbuild.PlayDirEnv: dir}, "studio", &sleeps))
 	if code != 0 || errOut.Len() != 0 || sleeps != 0 {
 		t.Fatalf("code=%d sleeps=%d\n%s\nerr=%s", code, sleeps, out.String(), errOut.String())
@@ -189,7 +189,7 @@ func TestFleetReleaseAdminPassword(t *testing.T) {
 	sleeps := 0
 	var out, errOut bytes.Buffer
 	code := runFleetReleaseWith(context.Background(),
-		[]string{verbSha[:8], "--redis", mr.Addr(), "--machines", releaseRegistry(t), "--benches", "hulk", "--play-dir", releasePlayDir(t)},
+		[]string{"--sha", verbSha[:8], "--redis", mr.Addr(), "--machines", releaseRegistry(t), "--bench", "hulk", "--play-dir", releasePlayDir(t)},
 		&out, &errOut, verbDeps(f, nil, "", &sleeps))
 	if code != 1 || !strings.Contains(out.String(), "RELEASE fn REFUSED: no admin password for "+mr.Addr()+": NS_ADMIN is empty and no seat is named") ||
 		!strings.Contains(out.String(), "RELEASE self OK ") ||
@@ -216,15 +216,16 @@ func TestFleetReleaseUsage(t *testing.T) {
 		args []string
 		want string
 	}{
-		{nil, "wants a <sha> (the deploy) or --bench <b>"},
-		{[]string{"--benches", "hulk"}, "wants a <sha> with --benches"},
-		{[]string{verbSha, "--bench", "hulk"}, "does not take --bench"},
-		{[]string{verbSha, "deadbeef"}, "wants one <sha>"},
-		{[]string{verbSha, "--studio-only"}, "--studio-only is retired: nova-sprint self update does this machine alone"},
-		{[]string{verbSha, "--benches-only"}, "--benches-only is retired: fleet release <sha> is the whole roll"},
-		{[]string{verbSha, "--wait", "-1s"}, "--wait must be >= 0"},
-		{[]string{verbSha, "--play", "../x.yml"}, "--play names a play file"},
-		{[]string{"--nope", verbSha}, "flag provided but not defined"},
+		{nil, "wants --sha <sha>|dev (the roll) or --bench <b>"},
+		{[]string{"--bench", "hulk", "--wait", "1s"}, "wants --sha <sha> with --wait"},
+		{[]string{verbSha}, "takes flags, not positional arguments"},
+		{[]string{"--sha", verbSha, "deadbeef"}, "takes flags, not positional arguments"},
+		{[]string{"--sha", verbSha, "--studio-only"}, "--studio-only is retired: nova-sprint self update does this machine alone"},
+		{[]string{"--sha", verbSha, "--benches-only"}, "--benches-only is retired: fleet release --sha <sha> is the whole roll"},
+		{[]string{"--sha", verbSha, "--wait", "-1s"}, "--wait must be >= 0"},
+		{[]string{"--sha", verbSha, "--play", "../x.yml"}, "--play names a play file"},
+		{[]string{"--nope", "--sha", verbSha}, "--nope is not a flag of nova-sprint fleet release"},
+		{[]string{"--sha", verbSha, "--benches", "hulk"}, "--benches is not a flag of nova-sprint fleet release"},
 	} {
 		var out, errOut bytes.Buffer
 		code := runFleetReleaseWith(context.Background(), tc.args, &out, &errOut, deps)
@@ -242,9 +243,9 @@ func TestFleetReleaseUsage(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"nothex"}, `"nothex" is not a commit sha of 8 to 40 hex digits`},
-		{[]string{verbSha}, "read the machines registry: --machines <file>, or NOVA_FLEET_MACHINES"},
-		{[]string{"--machines", filepath.Join(t.TempDir(), "none.tsv"), verbSha}, "machines registry:"},
+		{[]string{"--sha", "nothex"}, `"nothex" is not a commit sha of 8 to 40 hex digits`},
+		{[]string{"--sha", verbSha}, "read the machines registry: --machines <file>, or NOVA_FLEET_MACHINES"},
+		{[]string{"--machines", filepath.Join(t.TempDir(), "none.tsv"), "--sha", verbSha}, "machines registry:"},
 	} {
 		out.Reset()
 		errOut.Reset()

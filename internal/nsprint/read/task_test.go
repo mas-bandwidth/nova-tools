@@ -36,3 +36,23 @@ func TestReadTargetOfEveryTaskShape(t *testing.T) {
 		}
 	}
 }
+
+// TestReadTargetOfACardInReview (#4399): a card whose child ended with a PR
+// (where review or merging, kind as cut) is read by its id, the way the
+// cold session typed `read brief --ids <card>`; a card still waiting or
+// working is not a read.
+func TestReadTargetOfACardInReview(t *testing.T) {
+	t.Parallel()
+	h := strings.Repeat("b", 40)
+	for _, w := range []string{"review", "merging"} {
+		got, err := read.TargetOf(map[string]string{"where": w, "repo": "nova-tools", "pr": "4399", "head": h})
+		if err != nil || got != (read.Target{Repo: "nova-tools", N: "4399", Head: h}) {
+			t.Fatalf("where %s: %+v, %v", w, got, err)
+		}
+	}
+	for _, w := range []string{"waiting", "ready", "working", ""} {
+		if got, err := read.TargetOf(map[string]string{"where": w, "repo": "nova-tools", "pr": "4399", "head": h}); err == nil {
+			t.Fatalf("where %q: resolved %+v, want a refusal", w, got)
+		}
+	}
+}

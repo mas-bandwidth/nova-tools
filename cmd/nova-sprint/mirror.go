@@ -6,7 +6,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/mirror"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
 func init() {
@@ -47,7 +47,7 @@ func runMirror(ctx context.Context, args []string, out, errOut io.Writer) int {
 }
 
 type mirrorFlags struct {
-	fs                                                   *flag.FlagSet
+	fs                                                   *verbflag.Set
 	addr, bench, source, sourceURL, upstream, dir, repos *string
 }
 
@@ -158,14 +158,14 @@ func runMirrorCheck(ctx context.Context, args []string, out, errOut io.Writer) i
 func runMirrorStatus(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs, addr := lifeFlags("mirror status")
 	repos := fs.String("repos", mirror.DefaultRepos, "<repo>:<ref>, comma-joined")
-	repo := fs.String("repo", "", "report only this repo")
+	repo := fs.String("repo", "", verbflag.HelpRepo)
 	source := fs.String("source", "", "the source bench, whose recorded tip is expected when --expect names none")
 	stale := fs.Duration("stale", 3*time.Minute, "a receipt older than this reads UNREACHABLE")
-	var expects loginFlags
-	fs.Var(&expects, "expect", "<repo>=<40-hex> (repeatable)")
+	expectFlag := fs.String("expect", "", "the tips expected, <repo>=<40-hex>, comma-separated")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "mirror status", err.Error())
 	}
+	expects := verbflag.List(*expectFlag)
 	if fs.NArg() != 0 {
 		return refuse(errOut, "mirror status", "takes flags, not positional arguments")
 	}

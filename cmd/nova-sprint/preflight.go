@@ -42,18 +42,19 @@ func (r *repeated) Set(v string) error { *r = append(*r, v); return nil }
 
 func cmdPreflight(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("preflight")
-	addr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	policy := fs.String("policy-file", "", "")
-	launcher := fs.String("launcher-config", "", "")
-	fleet := fs.Bool("fleet", false, "")
-	allYML := fs.String("all-yml", "", "")
-	var unitEnv, retired repeated
-	fs.Var(&unitEnv, "unit-env", "")
-	fs.Var(&retired, "retired", "")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	policy := fs.String("policy-file", "", "the policy file")
+	launcher := fs.String("launcher-config", "", "the launcher config file")
+	fleet := fs.Bool("fleet", false, "check the fleet's rows, not a sprint")
+	allYML := fs.String("all-yml", "", "the fleet's group_vars/all.yml every row is held to")
+	var unitEnv repeated
+	fs.Var(&unitEnv, "unit-env", "an environment line every unit must carry, KEY=VALUE; repeatable, since a value may hold commas")
+	retiredFlag := fs.String("retired", "", "the retired scripts no unit may still run, comma-separated")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, "preflight", err.Error()+"; it wants --redis <host:port> and optionally --sprint <S>, or --fleet --all-yml <fleet/group_vars/all.yml>")
 	}
+	retired := repeated(verbflag.List(*retiredFlag))
 	var problems []string
 	if *addr == "" {
 		problems = append(problems, "--redis <host:port> is required, the fleet Redis the sprint lives in; "+preflight.SeatHint)

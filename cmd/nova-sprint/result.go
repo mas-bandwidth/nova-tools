@@ -41,7 +41,7 @@ func runResult(ctx context.Context, args []string, out, errOut io.Writer) int {
 
 func runResultContract(args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("result contract")
-	_ = fs.Bool("markdown", false, "")
+	_ = fs.Bool("markdown", false, "print the contract as markdown")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "result contract", err.Error())
 	}
@@ -51,7 +51,7 @@ func runResultContract(args []string, out, errOut io.Writer) int {
 
 func runResultCheck(args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("result check")
-	kind := fs.String("kind", "", "")
+	kind := fs.String("kind", "", "the result kind: fix, recut, port, docs-guard, report or read")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "result check", err.Error())
 	}
@@ -87,17 +87,21 @@ func runResultCheck(args []string, out, errOut io.Writer) int {
 
 func runResultShow(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("result show")
-	sprint := fs.String("sprint", "", "")
-	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	ids := fs.String("ids", "", verbflag.HelpIDs)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "result show", err.Error())
+	}
+	if fs.NArg() > 0 {
+		return refuse(errOut, "result show", "takes flags, not positional arguments: the cards are --ids <a,b>")
 	}
 	if *sprint == "" {
 		return refuse(errOut, "result show", "--sprint is required")
 	}
-	labels := fs.Args()
+	labels := verbflag.List(*ids)
 	if len(labels) == 0 {
-		return refuse(errOut, "result show", "wants at least one card label")
+		return refuse(errOut, "result show", "wants --ids <label>[,<label>...]")
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -173,16 +177,19 @@ func runResultShow(ctx context.Context, args []string, out, errOut io.Writer) in
 }
 
 func runResultDisposition(args []string, out, errOut io.Writer) int {
-	verbflag.HelpIfAsked(args, "result disposition")
-	if len(args) == 0 {
-		return refuse(errOut, "result disposition", "wants a file path or - for stdin")
+	fs := verbflag.New("result disposition")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, "result disposition", err.Error())
+	}
+	if fs.NArg() != 1 {
+		return refuse(errOut, "result disposition", "wants one file path, or - for stdin")
 	}
 	var raw []byte
 	var err error
-	if args[0] == "-" {
+	if fs.Arg(0) == "-" {
 		raw, err = io.ReadAll(os.Stdin)
 	} else {
-		raw, err = os.ReadFile(args[0])
+		raw, err = os.ReadFile(fs.Arg(0))
 	}
 	if err != nil {
 		return refuse(errOut, "result disposition", err.Error())

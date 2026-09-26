@@ -8,7 +8,7 @@
 // lives in Redis (internal/nsprint/fleetbuild).
 //
 //	fleet build [--redis <addr>] [--bench <b>[,<b>...]] [--build-cmd <path>] [--machines <file>] [--dry-run]
-//	fleet build set [--redis <addr>] <key>=<value>...
+//	fleet build set [--redis <addr>] <key>=<value>...   (the flags before the pairs)
 //	fleet build compile --version <v> --commit <sha40> [--platform <p>[,<p>...]] [--repo-url <url>] [--dry-run]
 //	fleet build duty [--redis <addr>] [--machines <file>] [--dry-run]
 //
@@ -98,16 +98,24 @@ func runFleetBuild(ctx context.Context, args []string, out, errOut io.Writer) in
 		return runFleetBuildCompile(ctx, args[1:], out, errOut)
 	}
 	fs := verbflag.New("fleet build")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	benches := fs.String("bench", "", "")
-	buildCmd := fs.String("build-cmd", fleetBuildCmd(), "")
-	machines := fs.String("machines", "", "")
-	dry := fs.Bool("dry-run", false, "")
-	// --redis anywhere on the line (#4050): before, between or after the
-	// subverb and set's key=value pairs.
-	pos, err := parseInterspersed(fs, args)
-	if err != nil {
-		return refuse(errOut, "fleet build", err.Error())
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	benches := fs.String("bench", "", "the benches to build for, comma-separated (default every bench)")
+	buildCmd := fs.String("build-cmd", fleetBuildCmd(), "the build command the builder runs")
+	machines := fs.String("machines", "", "the machines registry file (default NOVA_FLEET_MACHINES)")
+	dry := fs.Bool("dry-run", false, verbflag.HelpDryRun)
+	// --redis anywhere on the line (#4050): the flag set parses up to each
+	// positional (the mode word, set's key=value pairs) and goes on after it.
+	var pos []string
+	for rest := args; ; {
+		if err := fs.Parse(rest); err != nil {
+			return refuse(errOut, "fleet build", err.Error())
+		}
+		rest = fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		pos = append(pos, rest[0])
+		rest = rest[1:]
 	}
 	if len(pos) > 0 && (pos[0] == "set" || pos[0] == "duty") {
 		var other []string
@@ -240,11 +248,11 @@ func runFleetBuildSet(ctx context.Context, redisAddr string, pairs []string, out
 // build), 1 refused with the remedy named, 2 usage.
 func runFleetBuildCompile(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("fleet build compile")
-	version := fs.String("version", "", "")
-	commit := fs.String("commit", "", "")
-	platforms := fs.String("platform", fleetbuild.DefaultPlatforms, "")
-	repoURL := fs.String("repo-url", fleetbuild.DefaultRepoURL, "")
-	dry := fs.Bool("dry-run", false, "")
+	version := fs.String("version", "", "the release version")
+	commit := fs.String("commit", "", "the commit built, 40 hex")
+	platforms := fs.String("platform", fleetbuild.DefaultPlatforms, "the platforms built, comma-separated")
+	repoURL := fs.String("repo-url", fleetbuild.DefaultRepoURL, "the repository url the builder clones")
+	dry := fs.Bool("dry-run", false, verbflag.HelpDryRun)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fleet build compile", err.Error())
 	}

@@ -55,16 +55,3 @@ func ReadIDs(arg string, in io.Reader) ([]string, error) {
 	}
 	return ids, nil
 }
-
-// ParseStreams splits a `--streams "<a>|<b>"` value on '|' (a stream name is
-// a display string that may hold spaces and colons, never '|'), trimming
-// each name and dropping empty ones.
-func ParseStreams(s string) []string {
-	var out []string
-	for _, p := range strings.Split(s, "|") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}

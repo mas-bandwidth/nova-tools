@@ -4,10 +4,10 @@
 // 2026-09-25 5:50 PM ET): the reconciler skips its duties, the route loop
 // passes no rule; beats and the table go on. set and clear are one FCALL each
 // (ns_pitstop_set, ns_pitstop_clear) with a receipt on s:<S>:log; status is
-// one HGETALL. --scope (repeatable; set and clear) names streams: set
-// --scope <stream>... stops only those (default all); clear --scope
-// <stream>... narrows a stop by those, the last scoped stream going lifts it
-// whole. A key of another type at s:<S>:pitstop (the 09-23 string) is ours
+// one HGETALL. --stream <a,b> (set and clear) names streams: set --stream
+// <a,b> stops only those (default all); clear --stream <a,b> narrows a stop
+// by those, the last scoped stream going lifts it whole; clear --why records
+// why it was lifted. A key of another type at s:<S>:pitstop (the 09-23 string) is ours
 // (#3887): set replaces it without --force and clear lifts it, each naming it
 // replaced_by/was_by=wrongtype:<type>; status prints it with the remedy, never
 // WRONGTYPE. The live table reads this one key. Every subverb prints one
@@ -19,17 +19,17 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 func init() {
 	register(Verb{
 		Name:    "pitstop",
-		Summary: "set|clear|status --sprint <S> [--scope all|<stream>]... [--why <text>] [--by <who>] [--force]: the sprint's pit stop, one Redis key every automatic duty and the route loop honour",
+		Summary: "set|clear|status --sprint <S> [--stream all|<a,b>] [--why <text>] [--force]: the sprint's pit stop, one Redis key every automatic duty and the route loop honour",
 		Run:     runPitstop,
 	})
 }
@@ -46,13 +46,11 @@ func runPitstop(ctx context.Context, args []string, out, errOut io.Writer) int {
 	sub := args[0]
 	name := "pitstop " + sub
 	fs, addr := lifeFlags(name)
-	sprint := fs.String("sprint", "", "sprint")
-	why := fs.String("why", "", "why the sprint is stopped (set)")
-	by := fs.String("by", "", "who sets or clears it; default NOVA_FRIEND")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	why := fs.String("why", "", verbflag.HelpWhy)
 	force := fs.Bool("force", false, "replace an existing stop (set)")
-	idem := fs.String("idem", "", "idempotency marker for the receipt")
-	var scope multiFlag
-	fs.Var(&scope, "scope", "a stream the stop holds (set) or lifts (clear); repeatable; set --scope all (the default) holds every stream")
+	idem := fs.String("idem", "", verbflag.HelpIdem)
+	scopeFlag := fs.String("stream", "", verbflag.HelpStream)
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, name, err.Error())
 	}
@@ -62,30 +60,27 @@ func runPitstop(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if *sprint == "" {
 		return refuse(errOut, name, "--sprint is required")
 	}
-	if sub != "set" && (*why != "" || *force) {
-		return refuse(errOut, name, "--why and --force belong to set")
+	if sub == "status" && (*why != "" || *force) {
+		return refuse(errOut, name, "--why and --force belong to set and clear")
 	}
-	if sub == "status" && len(scope) > 0 {
-		return refuse(errOut, name, "--scope belongs to set and clear")
+	if sub == "status" && *scopeFlag != "" {
+		return refuse(errOut, name, "--stream belongs to set and clear")
+	}
+	scope := verbflag.List(*scopeFlag)
+	if *scopeFlag != "" && len(scope) == 0 {
+		return refuse(errOut, name, "--stream is empty")
 	}
 	var streams []string
 	for _, v := range scope {
 		switch {
-		case strings.TrimSpace(v) == "":
-			return refuse(errOut, name, "--scope is empty")
 		case v == "all" && (sub != "set" || len(scope) > 1):
-			return refuse(errOut, name, "--scope all is set's default and stands alone; clear without --scope lifts the whole stop")
+			return refuse(errOut, name, "--stream all is set's default and stands alone; clear without --stream lifts the whole stop")
 		case v != "all":
 			streams = append(streams, v)
 		}
 	}
-	who := *by
-	if who == "" {
-		who = os.Getenv(seatEnv)
-	}
-	if sub != "status" && who == "" {
-		return refuse(errOut, name, "--by is required when "+seatEnv+" is empty")
-	}
+	// the actor is the seat (#4352 A): --by is retired
+	who := seatActor()
 	st, err := openLifeStore(ctx, lifeAddr(*addr))
 	if err != nil {
 		return refuse(errOut, name, err.Error())

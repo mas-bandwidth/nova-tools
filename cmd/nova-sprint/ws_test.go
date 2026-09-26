@@ -15,12 +15,12 @@ func TestWSVerbsRefuseHelpAndUsage(t *testing.T) {
 		{"ws", "checkpoint", "--redis", "127.0.0.1:1"},
 		{"scope", "keep", "--redis", "127.0.0.1:1"},
 		{"scope", "park", "--redis", "127.0.0.1:1"},
-		{"stream", "rename", "--redis", "127.0.0.1:1", "only-one"},
+		{"stream", "rename", "--redis", "127.0.0.1:1", "--stream", "only-one"},
 		{"stream", "order", "--redis", "127.0.0.1:1"},
 	} {
 		t.Setenv("NOVA_SPRINT_REDIS", "")
 		code, stdout, stderr := runSprint(args...)
-		if code != 2 || stdout != "" || strings.Count(stderr, "\n") != 1 || !strings.Contains(stderr, "run: nova-sprint help") {
+		if code != 2 || stdout != "" || strings.Count(stderr, "\n") != 1 || !strings.Contains(stderr, "; usage: nova-sprint "+args[0]) {
 			t.Errorf("%v: exit %d stdout %q stderr %q; want one refusal line, exit 2", args, code, stdout, stderr)
 		}
 	}

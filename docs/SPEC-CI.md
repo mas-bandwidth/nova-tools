@@ -2291,6 +2291,64 @@ is not held, and neither are other tools (`nova-work`, `nova-tokens`,
 `nova-post`, `nova-merge`). A hand-parsed read counts as covered when its
 function calls `redisOr` anywhere, not necessarily on that value.
 
+### `cli-style` — one grammar for every nova-* tool
+
+**The rule.** `<tool> <noun> <verb> [--flags] [positionals]` (docs/STYLE-CLI.md).
+The same flag means the same thing on every verb, with the one help line
+`internal/nsprint/verbflag.Vocabulary` carries for it (`--redis`, `--sprint`,
+`--as`, `--ids`, `--stream`, `--why`, `--n`, `--to`, `--repo`, `--pr`,
+`--from`, `--since`, `--idem`, `--dry-run`, `--json`); a spelling the grammar
+retired (`--actor`, `--by`, `--consumer`, `--who`, `--friend` for `--as`;
+`--id`, `--label` for `--ids`; `--reason` for `--why`; `--streams`,
+`--to-stream`, `--scope` for `--stream`; `--to-friend` for `--to`; `--store`,
+`--addr` for `--redis`: `verbflag.Retired`) is refused by `verbflag.Set.Parse`
+naming the current one and is never defined again; every flag carries a
+one-line help; no flag set binds two names to one variable; a tool defines no
+flags on the package's default set (a verb form with no noun and verb); and a
+named object is a flag, never a positional: a verb may read `Args()`/`Arg(i)`
+only when `positionalVerbs` says what they are (files, or what follows `--`).
+**The hurt.** The morning of 2026-09-26 cut 32 cards and moved them by hand,
+and measured eight refusals from spelling before the first card landed:
+`--sprint` here and a positional there, `worker show friend:rowan` positional
+but `card work --as friend:rowan`, `pitstop set --why` but `pitstop clear`
+refusing `--why`, `scope keep --streams a|b` with a pipe while every other
+list is a comma, `BASE:` uppercase but `base-sha:` lowercase, `-h` listing
+flags with empty descriptions (nova-tools#4352 A; Glenn: "Simpler. Cleaner.
+more pleasant to use. Feel joy while you are using it. Make it feel
+natural."). Glenn widened it the same day to every tool: "Try to establish a
+familiar style for nova tool verbs and flags so they feel nice to use, across
+all tools you are using. Fix the inconsistencies. Make everything
+predictable."
+**The test.** `TestCLIStyleOneGrammar` (`internal/ci/clistyle_class_test.go`)
+walks every `cmd/nova-*` package and the internal packages a tool imports that
+build a flag set, reads each flag definition off the source by the flag
+package's definer shape (`String`/`Bool`/`Int`/`Duration`/`Func`: name,
+default, help; the `*Var` forms: target, name, default, help; `Var`: target,
+name, help) without running a tool, and reports each finding as
+`tool rule verb flag` under the rules `empty-help`, `retired`, `vocabulary`,
+`alias`, `root-flags` and `positional`. `TestCLIStyleAllowlistHasNoSprintRows`
+pins that nova-sprint takes no exception; `TestCLIStyleRetiredSpellingsMapToVocabulary`
+holds the retired table to current spellings only.
+**Its allowlist.** `internal/ci/testdata/cli-style_allowlist.txt`, one row per
+finding the other tools carry today (592 rows on 2026-09-26: nova-swarm 137,
+nova-wake 89, nova-tokens 58, nova-review 57, nova-merge 57, nova-board 45,
+nova-work 39, nova-secrets 25, nova-check 15, nova-bus 14, nova-decide 11,
+nova-version 10, nova-update 10, nova-post 8, nova-ci 5, nova-memory 4,
+nova-cairn 4, nova-test 2, nova-redis 2, nova-play 2, nova-self-talk 1,
+nova-fuse 1), keyed by the whole row through the one reader, ceiling-only: an
+unlisted finding is red, a stale row is red, and nova-sprint may never have a
+row. One card per tool empties it.
+**Its remedy line.** `outside the one grammar: <tool> <rule> <verb> <flag> #
+<file:line>`; a stale row prints `stale allowlist row (the finding has left;
+delete it, or NOVA_CI_UPDATE=1 drops it)`.
+**Its narrowings.** The walk is syntactic: a flag defined through a helper
+whose name it cannot see, or on a receiver it cannot attribute to a verb, is
+keyed by the enclosing function's name rather than the verb's. A positional
+read counts only when `Args()`/`Arg(i)` is used as a value (assigned, ranged,
+indexed, passed on), not when it is measured in a condition or quoted in a
+refusal. A repeatable flag whose values may hold commas (`--unit-env`,
+`--job`) is not held to the comma-list rule; its help says so.
+
 ### Tests this spec demands
 
 This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.

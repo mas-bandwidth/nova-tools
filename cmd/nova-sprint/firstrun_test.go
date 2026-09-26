@@ -14,7 +14,7 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit %d, want 2", code)
 	}
-	for _, want := range []string{"flag provided but not defined: -refresh", "--redis <addr>", "--once", "run: nova-sprint help"} {
+	for _, want := range []string{"--refresh is not a flag of nova-sprint table", "--redis", "--once", "without it: nova-sprint table", "usage: nova-sprint table"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("missing %q in %s", want, stderr)
 		}

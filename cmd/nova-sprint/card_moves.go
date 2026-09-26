@@ -9,25 +9,26 @@
 //
 //	card deal  --to <consumer> [--n <k>] [--stream <s>] [--ids @file|a,b]
 //	card work  --as <consumer> (--fill | --n <k> | --ids @file|a,b)
-//	card end   (--id <copy> | --ids @file|a,b) (--ok [--pr <repo>#<n> --head <sha>] [--done-already <sha>] |
+//	card end   --ids <copy>[,<copy>]|@file (--ok [--pr <repo>#<n> --head <sha>] [--done-already <sha>] |
 //	           --score <N>/10 [--gates <g>] [--finding <text>] [--reader <who>] | --fail <why>) [--token <t>] [result flags]
 //	           (a --fail moves the primary to review, #4072; --exit <rc> is its evidence; see review.go)
-//	card assign --id <primary> --to <consumer> [--revoke] [--why <why>]
-//	card beat  --as <consumer> (--id <copy> | --ids ...)
+//	card assign --ids <primary> --to <consumer> [--revoke] [--why <why>]
+//	card beat  --as <consumer> --ids <copy>[,...]
 //	card land  --stream <s> --sha <merge sha>
-//	card cancel (--id <id> | --ids ...) --why <why> [--each]   (--each: every id on its own, #4309)
-//	card expire [--as <consumer>]...
+//	card cancel --ids <id>[,...] --why <why> [--each]   (--each: every id on its own, #4309)
+//	card expire [--as <consumer>[,...]]
 //	card fsck  [--repair]                 (no --sprint: the copy links; --sprint is the sprint card fsck)
-//	card table [--as <consumer>]...       the consumer cells: ready working done ok fail ok%
+//	card table [--as <consumer>[,...]]    the consumer cells: ready working done ok fail ok%
 //	card consumers [--add <consumer>] [--rm <consumer>]
-//	card render --id <copy>               the copy's card file (the bench runs it)
+//	card render --ids <copy>              the copy's card file (the bench runs it)
 //	card session --as bench:<b> [--wrapper <path>]   the bench harness's session start (#3998):
 //	                                      card work --fill, then one detached nova-card copy per copy
 //	(a friend's session pulls, ends and beats its copies through friend pull | done | beat,
 //	friend_copies.go, #4233: the same moves, the person's brief instead of the wrapper)
 //
-// every verb also takes --redis <addr> (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)
-// and --actor <a> (else NOVA_FRIEND, else nova-sprint).
+// every verb also takes --redis <addr> (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR);
+// the actor of a receipt is the seat (NOVA_FRIEND, else the login user), one
+// grammar (#4352 A): --actor and --id are retired.
 package main
 
 import (
@@ -54,23 +55,16 @@ var cardMoveVerbs = map[string]bool{"deal": true, "work": true, "land": true, "c
 	"table": true, "consumers": true, "render": true, "assign": true, "session": true}
 
 // isCardMove says whether a card call is a table move. end and beat are
-// the move form with --id, --ids or --as (the bench attempt form names a
-// label and --token); fsck is with no --sprint.
+// the move form unless --sprint is given (the bench attempt form, which
+// names --sprint --ids <label> --token); fsck is with no --sprint.
 func isCardMove(sub string, args []string) bool {
 	if cardMoveVerbs[sub] {
 		return true
 	}
 	has := func(names ...string) bool {
 		for _, a := range args {
-			n := strings.TrimLeft(a, "-")
-			if i := strings.IndexByte(n, '='); i >= 0 {
-				n = n[:i]
-			}
-			if !strings.HasPrefix(a, "-") {
-				continue
-			}
 			for _, want := range names {
-				if n == want {
+				if a == "--"+want || a == "-"+want || strings.HasPrefix(a, "--"+want+"=") || strings.HasPrefix(a, "-"+want+"=") {
 					return true
 				}
 			}
@@ -79,7 +73,7 @@ func isCardMove(sub string, args []string) bool {
 	}
 	switch sub {
 	case "end", "beat":
-		return has("id", "ids", "as")
+		return !has("sprint") // the bench attempt form (card_run.go) names --sprint; a move never does
 	case "fsck":
 		return !has("sprint")
 	}
@@ -88,13 +82,14 @@ func isCardMove(sub string, args []string) bool {
 
 // moveCmd is one table move's flags.
 type moveCmd struct {
-	redis, actor, to, as, stream, ids, id, why, sha *string
-	pr, head, doneAlready, score, gates, finding    *string
-	reader, fail, add, rm, token, wrapper           *string
-	n                                               *int
-	fill, ok, repair, revoke, brief, each           *bool
-	result                                          map[string]*string
-	consumers                                       multiFlag
+	redis, to, as, stream, ids, why, sha         *string
+	pr, head, doneAlready, score, gates, finding *string
+	reader, fail, add, rm, token, wrapper        *string
+	n                                            *int
+	fill, ok, repair, revoke, brief, each        *bool
+	result                                       map[string]*string
+	actor                                        string
+	consumers                                    []string
 }
 
 // resultFlags are card end's result fields (written onto the primary).
@@ -105,41 +100,38 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	verb := "card " + sub
 	fs := verbflag.New(verb) // -h prints the move's usage and flags, exit 2 (#3254)
 	m := &moveCmd{result: map[string]*string{}}
-	m.redis = fs.String("redis", redisDefault(), "")
-	m.actor = fs.String("actor", "", "")
-	m.to = fs.String("to", "", "")
-	m.stream = fs.String("stream", "", "")
-	m.ids = fs.String("ids", "", "")
-	m.id = fs.String("id", "", "")
-	m.why = fs.String("why", "", "")
-	m.sha = fs.String("sha", "", "")
-	m.pr = fs.String("pr", "", "")
-	m.head = fs.String("head", "", "")
-	m.doneAlready = fs.String("done-already", "", "")
-	m.score = fs.String("score", "", "")
-	m.gates = fs.String("gates", "", "")
-	m.finding = fs.String("finding", "", "")
-	m.reader = fs.String("reader", "", "")
-	m.fail = fs.String("fail", "", "")
-	m.add = fs.String("add", "", "")
-	m.rm = fs.String("rm", "", "")
-	m.token = fs.String("token", "", "")
-	m.wrapper = fs.String("wrapper", "", "")
-	m.revoke = fs.Bool("revoke", false, "")
-	m.n = fs.Int("n", 0, "")
-	m.fill = fs.Bool("fill", false, "")
-	m.ok = fs.Bool("ok", false, "")
-	m.repair = fs.Bool("repair", false, "")
-	m.brief = fs.Bool("brief", false, "")
-	m.each = fs.Bool("each", false, "")
-	if sub == "table" || sub == "expire" {
-		fs.Var(&m.consumers, "as", "")
-		m.as = new(string)
-	} else {
-		m.as = fs.String("as", "", "")
-	}
+	m.redis = fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	m.to = fs.String("to", "", verbflag.HelpTo)
+	m.stream = fs.String("stream", "", verbflag.HelpStream)
+	m.ids = fs.String("ids", "", verbflag.HelpIDs)
+	m.why = fs.String("why", "", verbflag.HelpWhy)
+	m.sha = fs.String("sha", "", "the merge commit's sha (land)")
+	m.pr = fs.String("pr", "", verbflag.HelpPR)
+	m.head = fs.String("head", "", "the PR's head sha (end --pr)")
+	m.doneAlready = fs.String("done-already", "", "the sha the work was already done at (end --ok)")
+	m.score = fs.String("score", "", "a read's score, <N>/10 (end)")
+	m.gates = fs.String("gates", "", "a read's gates, ci:<green|red>,base:<ok|behind>,scope:<ok|over> (end --score)")
+	m.finding = fs.String("finding", "", "a read's one-line finding (end --score)")
+	m.reader = fs.String("reader", "", "who read it, on the SCORE line (end --score)")
+	m.fail = fs.String("fail", "", "end the copy failed, with this why; the primary goes to review")
+	m.add = fs.String("add", "", "a worker to add to the consumers set (consumers)")
+	m.rm = fs.String("rm", "", "a worker to remove from the consumers set (consumers)")
+	m.token = fs.String("token", "", "the copy's lease token, the fence a stale end is refused by")
+	m.wrapper = fs.String("wrapper", "", "the nova-card the copy session starts (session; default beside this executable)")
+	m.revoke = fs.Bool("revoke", false, "take the assignment back (assign)")
+	m.n = fs.Int("n", 0, verbflag.HelpN)
+	m.fill = fs.Bool("fill", false, "work as many ready copies as the worker has free slots (work)")
+	m.ok = fs.Bool("ok", false, "end the copy ok (end)")
+	m.repair = fs.Bool("repair", false, "repair every drift found (fsck)")
+	m.brief = fs.Bool("brief", false, "render the friend brief instead of the card (render)")
+	m.each = fs.Bool("each", false, "every id on its own: a receipt per id, exit 1 when any refused (cancel)")
+	m.as = fs.String("as", "", verbflag.HelpAs)
+	// --sprint is taken and changes nothing (#4352 A): a card's id is its
+	// task:<id> key in every sprint, and `card render --ids x --sprint S`
+	// was refused "-sprint not defined".
+	_ = fs.String("sprint", "", verbflag.HelpSprint)
 	for _, f := range resultFlags {
-		m.result[f] = fs.String(f, "", "")
+		m.result[f] = fs.String(f, "", "a result field written onto the primary at end: "+f)
 	}
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -147,15 +139,8 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	if fs.NArg() > 0 {
 		return refuse(errOut, verb, "takes flags, not positional arguments")
 	}
-	if *m.actor == "" {
-		*m.actor = os.Getenv(seatEnv)
-	}
-	if seat := os.Getenv(seatEnv); seat != "" && *m.actor != seat {
-		return refuse(errOut, verb, fmt.Sprintf("--actor %s is not the seat (%s=%s)", *m.actor, seatEnv, seat))
-	}
-	if *m.actor == "" {
-		*m.actor = "nova-sprint"
-	}
+	m.actor = seatActor()
+	m.consumers = verbflag.List(*m.as)
 	ids, err := m.idList()
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -173,13 +158,10 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	return m.run(ctx, st.Client(), sub, ids, out, errOut)
 }
 
-// idList is --id and --ids (a,b,c or @file of ids, one per line or space
-// separated), in order.
+// idList is --ids (a,b,c or @file of ids, one per line or space separated),
+// in order.
 func (m *moveCmd) idList() ([]string, error) {
 	var ids []string
-	if *m.id != "" {
-		ids = append(ids, *m.id)
-	}
 	v := *m.ids
 	if strings.HasPrefix(v, "@") {
 		b, err := os.ReadFile(v[1:])
@@ -216,7 +198,7 @@ func (m *moveCmd) usage(sub string, ids []string) string {
 		}
 	case "end":
 		if len(ids) == 0 {
-			return "end wants --id <copy> or --ids"
+			return "end wants --ids <copy>[,...]"
 		}
 		n := 0
 		for _, on := range []bool{*m.ok, *m.fail != "", *m.score != ""} {
@@ -232,7 +214,7 @@ func (m *moveCmd) usage(sub string, ids []string) string {
 		}
 	case "beat":
 		if *m.as == "" || len(ids) == 0 {
-			return "beat wants --as <consumer> and --id <copy> or --ids"
+			return "beat wants --as <consumer> and --ids <copy>[,...]"
 		}
 	case "land":
 		if *m.stream == "" || *m.sha == "" {
@@ -240,15 +222,15 @@ func (m *moveCmd) usage(sub string, ids []string) string {
 		}
 	case "cancel":
 		if len(ids) == 0 || *m.why == "" {
-			return "cancel wants --id <id> or --ids, and --why <why>"
+			return "cancel wants --ids <id>[,...] and --why <why>"
 		}
 	case "render":
 		if len(ids) != 1 {
-			return "render wants --id <copy>|<primary> [--brief [--model <m>]]"
+			return "render wants --ids <copy>|<primary> [--brief [--model <m>]]"
 		}
 	case "assign":
 		if len(ids) != 1 || *m.to == "" {
-			return "assign wants --id <primary> --to bench:<b>|friend:<f> [--revoke]"
+			return "assign wants --ids <primary> --to bench:<b>|friend:<f> [--revoke]"
 		}
 	case "consumers":
 		if *m.add != "" && *m.rm != "" {
@@ -304,7 +286,7 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		if err != nil {
 			return refuse(errOut, "card deal", err.Error())
 		}
-		d, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: to, N: *m.n, Stream: *m.stream, IDs: ids, By: *m.actor})
+		d, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: to, N: *m.n, Stream: *m.stream, IDs: ids, By: m.actor})
 		if err != nil {
 			return refused(err, "to="+to.String())
 		}
@@ -319,7 +301,7 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		if err != nil {
 			return refuse(errOut, "card work", err.Error())
 		}
-		w, err := taskcard.Work(ctx, c, as, *m.actor, *m.n, *m.fill, ids...)
+		w, err := taskcard.Work(ctx, c, as, m.actor, *m.n, *m.fill, ids...)
 		if err != nil {
 			return refused(err, "as="+as.String())
 		}
@@ -327,14 +309,19 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		return 0
 	case "end":
 		r := taskcard.EndRequest{IDs: ids, OK: *m.fail == "", Why: *m.fail, Head: *m.head, DoneAlready: *m.doneAlready,
-			Gates: *m.gates, Finding: *m.finding, Reader: *m.reader, Token: *m.token, By: *m.actor}
+			Gates: *m.gates, Finding: *m.finding, Reader: *m.reader, Token: *m.token, By: m.actor}
 		if *m.why != "" && r.Why == "" {
 			r.Why = *m.why
 		}
 		if *m.pr != "" {
 			repo, n, ok := strings.Cut(*m.pr, "#")
-			if !ok || repo == "" || n == "" {
-				return refuse(errOut, "card end", "--pr wants <repo>#<n>")
+			if !ok && len(ids) > 0 {
+				// --pr is the PR number (the vocabulary's): the repo is
+				// the card's own (#4399), as task done reads it.
+				repo, n = c.HGet(ctx, taskcard.Key(ids[0]), "repo").Val(), *m.pr
+			}
+			if repo == "" || n == "" {
+				return refuse(errOut, "card end", "--pr wants the PR number of a card that names its repo, or <repo>#<n>")
 			}
 			r.Repo, r.PR = repo, n
 		}
@@ -362,7 +349,7 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		if err != nil {
 			return refuse(errOut, "card assign", err.Error())
 		}
-		a, err := taskcard.Assign(ctx, c, to, ids[0], *m.revoke, *m.actor, *m.why)
+		a, err := taskcard.Assign(ctx, c, to, ids[0], *m.revoke, m.actor, *m.why)
 		if err != nil {
 			return refused(err, "id="+ids[0])
 		}
@@ -380,7 +367,7 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		fmt.Fprintf(out, "CARD BEAT as=%s n=%d lease_until=%d ms=%d\n", as, len(ids), until, ms())
 		return 0
 	case "land":
-		l, err := taskcard.LandStream(ctx, c, *m.stream, *m.sha, *m.actor, *m.why)
+		l, err := taskcard.LandStream(ctx, c, *m.stream, *m.sha, m.actor, *m.why)
 		if err != nil {
 			return refuse(errOut, "card land", err.Error())
 		}
@@ -404,7 +391,7 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		// --each (#4309): every id on its own, a receipt per id, exit 1 when
 		// any refused; without it the batch is all or nothing.
 		if *m.each {
-			r, err := taskcard.CancelEach(ctx, c, *m.actor, *m.why, ids...)
+			r, err := taskcard.CancelEach(ctx, c, m.actor, *m.why, ids...)
 			if err != nil {
 				return refused(err, "ids="+strings.Join(ids, ","))
 			}
@@ -424,7 +411,7 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 			}
 			return 0
 		}
-		e, err := taskcard.CancelCards(ctx, c, *m.actor, *m.why, ids...)
+		e, err := taskcard.CancelCards(ctx, c, m.actor, *m.why, ids...)
 		if err != nil {
 			return refused(err, "ids="+strings.Join(ids, ","))
 		}
@@ -442,7 +429,7 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 			}
 			ks = append(ks, k)
 		}
-		e, err := taskcard.ExpireCopies(ctx, c, *m.actor, ks...)
+		e, err := taskcard.ExpireCopies(ctx, c, m.actor, ks...)
 		if err != nil {
 			return refuse(errOut, "card expire", err.Error())
 		}
@@ -535,7 +522,7 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		if err != nil {
 			return refuse(errOut, "card session", err.Error())
 		}
-		s, err := card.OpenCopySession(ctx, c, as.Name, *m.actor, func(l card.CopyLaunch) error {
+		s, err := card.OpenCopySession(ctx, c, as.Name, m.actor, func(l card.CopyLaunch) error {
 			_, err := launch.LaunchCopy(wrapper, launch.CopyLine{Copy: l.Copy, Token: l.Token}, launch.DefaultBudget)
 			return err
 		})

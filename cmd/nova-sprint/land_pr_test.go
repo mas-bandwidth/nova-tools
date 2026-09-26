@@ -51,14 +51,14 @@ func TestLandPRVerb(t *testing.T) {
 	key := "ci:r:" + strings.Repeat("a", 40) + ":gh"
 
 	srv := landPRFake(t)
-	code, out, errOut := runSprint("land", "pr", "12", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL)
+	code, out, errOut := runSprint("land", "pr", "--pr", "12", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL)
 	if code != 3 || !strings.Contains(out, "PR 12 WAITING "+key+" has gh=-") ||
 		!strings.Contains(out, "LAND PR repo=o/r pr=#12 state=waiting head=aaaaaaaa ci=- merge=- failed=- rest_calls=1\n") {
 		t.Fatalf("waiting: exit %d\n%s%s", code, out, errOut)
 	}
 
 	c.HSet(context.Background(), key, "gh", "green", "check:lint", "green 1 x")
-	code, out, errOut = runSprint("land", "pr", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL, "#12")
+	code, out, errOut = runSprint("land", "pr", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL, "--pr", "#12")
 	want := "PR 12 CHECKS green 1/1 head=aaaaaaaa\nPR 12 MERGED " + strings.Repeat("b", 40) + "\n" +
 		"LAND PR repo=o/r pr=#12 state=merged head=aaaaaaaa ci=green merge=bbbbbbbb failed=- rest_calls=2\n"
 	if code != 0 || out != want {
@@ -66,7 +66,7 @@ func TestLandPRVerb(t *testing.T) {
 	}
 
 	c.HSet(context.Background(), key, "gh", "red", "gh_fail", "check:lint", "check:lint", "red 1 x")
-	code, out, _ = runSprint("land", "pr", "12", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL)
+	code, out, _ = runSprint("land", "pr", "--pr", "12", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL)
 	if code != 1 || !strings.Contains(out, "PR 12 FAILED check:lint\nLAND PR repo=o/r pr=#12 state=failed head=aaaaaaaa ci=red merge=- failed=check:lint rest_calls=1\n") {
 		t.Fatalf("red: exit %d\n%s", code, out)
 	}
@@ -74,7 +74,7 @@ func TestLandPRVerb(t *testing.T) {
 	prev := landStreamToken
 	landStreamToken = func() (string, error) { return "", nil }
 	t.Cleanup(func() { landStreamToken = prev })
-	code, out, errOut = runSprint("land", "pr", "12", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL)
+	code, out, errOut = runSprint("land", "pr", "--pr", "12", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL)
 	if code != 2 || out != "" || !strings.Contains(errOut, "REFUSED no GitHub token remedy=name the seat's GitHub token env in its seats.tsv row") {
 		t.Fatalf("no token: exit %d %q %q", code, out, errOut)
 	}

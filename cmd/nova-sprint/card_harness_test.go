@@ -30,11 +30,11 @@ func TestCardRunRefusesABadArgv(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{"no flags", nil, nil, "wants --sprint, --label and --attempt (a positive integer); run wants --sprint <S> --label <L> --attempt <a>"},
-		{"attempt zero", []string{"--sprint", "s", "--label", "l", "--attempt", "0"}, nil, "wants --sprint, --label and --attempt (a positive integer)"},
-		{"positional", []string{"--sprint", "s", "--label", "l", "--attempt", "1", "extra"}, nil, "takes flags, not positional arguments"},
-		{"unknown flag", []string{"--sprint", "s", "--label", "l", "--attempt", "1", "--model", "x"}, nil, "flag provided but not defined: -model"},
-		{"no card.env", []string{"--sprint", "s", "--label", "l", "--attempt", "1"},
+		{"no flags", nil, nil, "wants --sprint, --ids <label> and --attempt (a positive integer); usage: nova-sprint card run --sprint <S>"},
+		{"attempt zero", []string{"--sprint", "s", "--ids", "l", "--attempt", "0"}, nil, "wants --sprint, --ids <label> and --attempt (a positive integer)"},
+		{"positional", []string{"--sprint", "s", "--ids", "l", "--attempt", "1", "extra"}, nil, "takes flags, not positional arguments"},
+		{"unknown flag", []string{"--sprint", "s", "--ids", "l", "--attempt", "1", "--model", "x"}, nil, "--model is not a flag of nova-sprint card run"},
+		{"no card.env", []string{"--sprint", "s", "--ids", "l", "--attempt", "1"},
 			map[string]string{"NOVA_CARD_HARNESS_BIN": "", "NOVA_CARD_TOKENS": "", "NOVA_CARD_REDIS": "", "NOVA_CARD_OUT": "", "NOVA_CARD_JOB": ""},
 			"missing NOVA_CARD_HARNESS_BIN, NOVA_CARD_TOKENS, NOVA_CARD_REDIS (or --redis), NOVA_CARD_OUT (or --out), NOVA_CARD_JOB (or --job)"},
 	}
@@ -49,7 +49,7 @@ func TestCardRunRefusesABadArgv(t *testing.T) {
 	}
 	// The verb is reachable through card: `nova-sprint card run` with no flags is the same refusal.
 	var out, errOut bytes.Buffer
-	if code := runCard(context.Background(), []string{"run"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "nova-sprint card: ") {
+	if code := runCard(context.Background(), []string{"run"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "nova-sprint card run: ") {
 		t.Fatalf("card run: code %d stderr %q", code, errOut.String())
 	}
 }
@@ -61,7 +61,7 @@ func TestCardRunRefusesARedisItCannotReach(t *testing.T) {
 	// the out dir, so the dirs are the test's own.
 	dir := t.TempDir()
 	var out, errOut bytes.Buffer
-	code := runCardRunEnv(context.Background(), []string{"--sprint", "s", "--label", "l", "--attempt", "1"}, &out, &errOut,
+	code := runCardRunEnv(context.Background(), []string{"--sprint", "s", "--ids", "l", "--attempt", "1"}, &out, &errOut,
 		cardRunEnv(map[string]string{"NOVA_CARD_OUT": dir + "/out", "NOVA_CARD_JOB": dir + "/job", "HOME": dir}))
 	if code != card.RunExitRefused || !strings.HasPrefix(out.String(), `REFUSED card run s/l/1 code=2 why="redis: `) {
 		t.Fatalf("code %d stdout %q stderr %q", code, out.String(), errOut.String())

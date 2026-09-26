@@ -69,8 +69,8 @@ func TestFriendPullDoneBeat(t *testing.T) {
 	}
 
 	for _, bad := range [][]string{{"pull", "--as", "rowan"}, {"pull", "--as", "bench:b"}, {"beat", "--as", "rowan", "--once"},
-		{"done", "--as", "rowan", "--id", mine, "--ok"}, {"done", "--as", "friend:" + me, "--id", "q1", "--ok"},
-		{"done", "--as", "friend:" + me, "--id", mine}} {
+		{"done", "--as", "rowan", "--ids", mine, "--ok"}, {"done", "--as", "friend:" + me, "--ids", "q1", "--ok"},
+		{"done", "--as", "friend:" + me, "--ids", mine}} {
 		if code, out, errOut := run(bad...); code == 0 || !strings.HasPrefix(errOut, "nova-sprint friend ") {
 			t.Fatalf("%v: exit %d %q %q; want a refusal that prints", bad, code, out, errOut)
 		}
@@ -93,7 +93,7 @@ func TestFriendPullDoneBeat(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"\nCOPY: " + mine + "\n", "FRIEND: friend:" + me + " owns this copy end to end",
-		"nova-sprint friend done --as friend:" + me + " --id " + mine + " --ok --pr nova-tools#<n> --head <sha>", "\n> the issue\n"} {
+		"nova-sprint friend done --as friend:" + me + " --ids " + mine + " --ok --pr nova-tools#<n> --head <sha>", "\n> the issue\n"} {
 		if !strings.Contains(string(brief), want) {
 			t.Fatalf("brief lacks %q:\n%s", want, brief)
 		}
@@ -127,17 +127,17 @@ func TestFriendPullDoneBeat(t *testing.T) {
 		t.Fatalf("lease not renewed: %d -> %d", before, after)
 	}
 
-	if code, out, _ := run("done", "--as", "friend:"+me, "--id", theirs, "--ok"); code != 1 || !strings.Contains(out, "FRIEND DONE REFUSED id="+theirs+" why=\"NOTMINE ") {
+	if code, out, _ := run("done", "--as", "friend:"+me, "--ids", theirs, "--ok"); code != 1 || !strings.Contains(out, "FRIEND DONE REFUSED id="+theirs+" why=\"NOTMINE ") {
 		t.Fatalf("ending emma's copy: exit %d %s", code, out)
 	}
-	if code, out, _ := run("done", "--as", "friend:"+me, "--id", mine, "--ok", "--token", "stale@1"); code != 3 || !strings.Contains(out, "why=\"FENCED ") {
+	if code, out, _ := run("done", "--as", "friend:"+me, "--ids", mine, "--ok", "--token", "stale@1"); code != 3 || !strings.Contains(out, "why=\"FENCED ") {
 		t.Fatalf("a stale token: exit %d %s", code, out)
 	}
 	// nothing pre-records the PR: friend done --ok --pr records it (as the
 	// wrapper's harvest does) before the end, which card end would refuse
 	// NOPR without the record
 	head := strings.Repeat("cd", 20)
-	code, out, errOut = run("done", "--as", "friend:"+me, "--id", mine, "--ok", "--pr", "nova-tools#4400", "--head", head, "--token", token)
+	code, out, errOut = run("done", "--as", "friend:"+me, "--ids", mine, "--ok", "--pr", "nova-tools#4400", "--head", head, "--token", token)
 	if code != 0 || !strings.HasPrefix(out, "RECORDED pr=nova-tools#4400 head="+head+" branch=nova/copies/q1-c1-a1\nENDED "+mine+" primary=q1 from=working to=review next=-\n") ||
 		!strings.Contains(out, "FRIEND DONE as=friend:"+me+" n=1 ") {
 		t.Fatalf("friend done exit %d %q %s", code, out, errOut)
@@ -152,7 +152,7 @@ func TestFriendPullDoneBeat(t *testing.T) {
 	if got := c.HGet(ctx, taskcard.Key("q1"), "where").Val(); got != "review" {
 		t.Fatalf("q1 is %s, want review", got)
 	}
-	if code, out, _ := run("done", "--as", "friend:"+me, "--id", mine, "--ok", "--pr", "nova-tools#4400", "--head", head); code != 0 || !strings.Contains(out, "ALREADY "+mine+" ") {
+	if code, out, _ := run("done", "--as", "friend:"+me, "--ids", mine, "--ok", "--pr", "nova-tools#4400", "--head", head); code != 0 || !strings.Contains(out, "ALREADY "+mine+" ") {
 		t.Fatalf("the same end again: exit %d %s", code, out)
 	}
 }

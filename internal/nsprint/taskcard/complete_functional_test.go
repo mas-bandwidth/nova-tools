@@ -26,7 +26,7 @@ const (
 // through prose, DONE-WHEN last, and prose lines that look like keys only
 // behind a quote.
 func issueText(n int, paths string) string {
-	lines := []string{"STREAM: " + cardStream, "WHO: any", "BASE: dev", "base-sha: " + issueBaseSHA}
+	lines := []string{"STREAM: " + cardStream, "WHO: any", "BASE: dev", "BASE-SHA: " + issueBaseSHA}
 	if paths != "" {
 		lines = append(lines, "PATHS: "+paths)
 	}

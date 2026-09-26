@@ -10,7 +10,7 @@ package card
 //	session start  card work --as bench:<b> --fill   (OpenCopySession: ready -> working,
 //	                                                  one call, a token per copy)
 //	while it runs  card beat --as bench:<b> --ids    (CopyLedger.Launched and Beat)
-//	at its end     card end --id <copy>              (CopyLedger.End: the wrapper's
+//	at its end     card end --ids <copy>              (CopyLedger.End: the wrapper's
 //	                                                  end, never the model's)
 //
 // A work copy's end is the boundary step too (#4227): on a DONE harness with
@@ -193,7 +193,7 @@ func (l *CopyLedger) Beat(ctx context.Context) (int, error) {
 	return 0, nil
 }
 
-// End is card end --id <copy>, the copy's end as the wrapper writes it. A
+// End is card end --ids <copy>, the copy's end as the wrapper writes it. A
 // copy that already ended (a review verdict, a head move, an expiry) is
 // ok|fail and End writes nothing.
 //

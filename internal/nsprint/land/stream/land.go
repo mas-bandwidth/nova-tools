@@ -213,7 +213,7 @@ func removeWorkdir(dir string) {
 func PRBody(l Landing, test string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "STREAM: %s\n", l.Streams)
-	fmt.Fprintf(&b, "BASE: %s\nbase-sha: %s\nDEPENDS-ON: none\n", l.Base, l.BaseSHA)
+	fmt.Fprintf(&b, "BASE: %s\nBASE-SHA: %s\nDEPENDS-ON: none\n", l.Base, l.BaseSHA)
 	b.WriteString("WHY: the members of one work stream, merged --no-ff oldest first (pr_ready_at) onto this branch off the base tip and tested once as a batch.\n\n")
 	b.WriteString("Members (oldest first):\n")
 	for _, m := range l.Members {

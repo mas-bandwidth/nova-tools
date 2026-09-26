@@ -177,7 +177,7 @@ func TestCardCutParentDryRunAndMoreChildren(t *testing.T) {
 	plans := &fakePlanStore{facts: map[string]planFacts{"nova-tools-4317": facts}}
 	d := cutDeps(forge, st)
 	d.Plan, d.Bind = plans.plan, plans.bind
-	rows := "title\tpaths\tdone-when\nthe docs\tdocs/CLI.md\tdocumented\n"
+	rows := "title\tpaths\tdone-when\tdepends-on\nthe docs\tdocs/CLI.md\tdocumented\tnone\n"
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows), Parent: "nova-tools-4317", DryRun: true, NoGitHub: true, StitchRoute: "friend", StitchEst: "2 h"}, d)
 	if code != 0 {
 		t.Fatalf("dry run exit %d:\n%s", code, out)
@@ -216,8 +216,8 @@ func TestCardCutParentFlags(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"card", "cut", "--parent", "p", "--issue", "4"}, "cut --parent <id> wants --from <children.tsv|->"},
-		{[]string{"card", "cut", "--parent", "p", "--from", "x.tsv", "--stream", "s"}, "cut --parent takes no --stream"},
+		{[]string{"card", "cut", "--parent", "p", "--issue", "4"}, "--parent <id> wants --from <children.tsv|->"},
+		{[]string{"card", "cut", "--parent", "p", "--from", "x.tsv", "--stream", "s"}, "--parent takes no --stream"},
 		{[]string{"card", "cut", "--parent", "p~1", "--from", "x.tsv"}, "--parent wants a task id"},
 		{[]string{"card", "cut", "--parent", "p", "--from", "x.tsv", "--stitch-route", "gpu"}, "--stitch-route wants"},
 		{[]string{"card", "cut", "--parent", "p", "--from", "x.tsv", "--stitch-est", "soon"}, "--stitch-est wants minutes"},

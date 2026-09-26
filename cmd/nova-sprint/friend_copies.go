@@ -12,9 +12,9 @@
 //	    copy's brief (card.RenderCopy: the person's brief for a friend)
 //	    written to <d>/<copy label>.card; one PULLED line per copy naming
 //	    the path, the leg and the token, then the receipt.
-//	friend done --as friend:<f> --id <copy> (--ok [--pr <repo>#<n> --head <sha> [--branch <b>]] [--done-already <sha>]
+//	friend done --as friend:<f> --ids <copy> (--ok [--pr <repo>#<n> --head <sha> [--branch <b>]] [--done-already <sha>]
 //	    | --score N/10 [--gates <g>] [--finding <text>] | --fail <why>) [--token <t>]
-//	    card end --id <copy> with the same evidence, refused (NOTMINE) for a
+//	    card end --ids <copy> with the same evidence, refused (NOTMINE) for a
 //	    copy that is not this friend's. --ok --pr first records the PR
 //	    (card.RecordPR, what the wrapper's harvest writes) so the end is
 //	    not refused NOPR; --branch is the PR's branch when it is not the
@@ -86,10 +86,10 @@ func friendCardsDir(friend string) (string, error) {
 func runFriendPull(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend pull"
 	fs := verbflag.New(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	as := fs.String("as", "", "")
-	n := fs.Int("n", 0, "")
-	dir := fs.String("dir", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	as := fs.String("as", "", verbflag.HelpAs)
+	n := fs.Int("n", 0, verbflag.HelpN)
+	dir := fs.String("dir", "", "the directory the copies' briefs are written to (default ~/nova-bench/cards/<f>)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -171,25 +171,27 @@ func runFriendPull(ctx context.Context, args []string, out, errOut io.Writer) in
 func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend done"
 	fs := verbflag.New(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	as := fs.String("as", "", "")
-	id := fs.String("id", "", "")
-	ok := fs.Bool("ok", false, "")
-	pr := fs.String("pr", "", "")
-	head := fs.String("head", "", "")
-	doneAlready := fs.String("done-already", "", "")
-	branch := fs.String("branch", "", "")
-	score := fs.String("score", "", "")
-	gates := fs.String("gates", "", "")
-	finding := fs.String("finding", "", "")
-	fail := fs.String("fail", "", "")
-	token := fs.String("token", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	as := fs.String("as", "", verbflag.HelpAs)
+	ids := fs.String("ids", "", verbflag.HelpIDs)
+	ok := fs.Bool("ok", false, "end the copy ok")
+	pr := fs.String("pr", "", verbflag.HelpPR)
+	head := fs.String("head", "", "the PR's head sha (with --pr)")
+	doneAlready := fs.String("done-already", "", "the sha the work was already done at (with --ok)")
+	branch := fs.String("branch", "", "the PR's branch when it is not the brief's (with --pr)")
+	score := fs.String("score", "", "a read's score, N/10")
+	gates := fs.String("gates", "", "a read's gates, ci:<green|red>,base:<ok|behind>,scope:<ok|over> (with --score)")
+	finding := fs.String("finding", "", "a read's one-line finding (with --score)")
+	fail := fs.String("fail", "", "end the copy failed, with this why")
+	token := fs.String("token", "", "the copy's lease token, the fence a stale end is refused by")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
 	if fs.NArg() != 0 {
 		return refuse(errOut, verb, "takes flags, not positional arguments")
 	}
+	id := new(string)
+	*id = oneID(*ids)
 	k, err := friendConsumer(*as)
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -199,7 +201,7 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, verb, err.Error())
 	}
 	if *id == "" || !taskcard.IsCopy(*id) {
-		return refuse(errOut, verb, "--id wants a copy id <primary>~<n>")
+		return refuse(errOut, verb, "--ids wants a copy id <primary>~<n>")
 	}
 	ways := 0
 	for _, on := range []bool{*ok, *fail != "", *score != ""} {
@@ -219,9 +221,14 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 	r := taskcard.EndRequest{IDs: []string{*id}, OK: *fail == "", Why: *fail, Head: *head, DoneAlready: *doneAlready,
 		Gates: *gates, Finding: *finding, Reader: k.Name, Token: *token, By: by}
 	if *pr != "" {
+		// --pr is the PR number (the vocabulary's), the repo the copy's own
+		// (#4399), or <repo>#<n>.
 		repo, n, ok := strings.Cut(*pr, "#")
-		if !ok || repo == "" || n == "" {
-			return refuse(errOut, verb, "--pr wants <repo>#<n>")
+		if !ok {
+			repo, n = "", *pr
+		}
+		if (ok && repo == "") || n == "" {
+			return refuse(errOut, verb, "--pr wants the PR number, or <repo>#<n>")
 		}
 		r.Repo, r.PR = repo, n
 	}
@@ -256,6 +263,11 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 	case holder != k.String():
 		fmt.Fprintf(out, "FRIEND DONE REFUSED id=%s why=%s ms=%d\n", *id, quoteField("NOTMINE task:"+*id+" is "+holder+"'s copy, not "+k.String()+"'s"), ms())
 		return 1
+	}
+	if r.PR != "" && r.Repo == "" {
+		if r.Repo = rec["repo"]; r.Repo == "" {
+			return refuse(errOut, verb, "--pr "+r.PR+": task:"+*id+" names no repo; pass --pr <repo>#<n>")
+		}
 	}
 	if r.PR != "" {
 		// The PR the friend opened is recorded before the end, as the
@@ -302,10 +314,10 @@ func friendBeatOnce(ctx context.Context, st *store.Store, k taskcard.Consumer, h
 func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend beat"
 	fs := verbflag.New(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	as := fs.String("as", "", "")
-	host := fs.String("host", "", "")
-	once := fs.Bool("once", false, "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	as := fs.String("as", "", verbflag.HelpAs)
+	host := fs.String("host", "", "the host this session runs on (default the hostname)")
+	once := fs.Bool("once", false, "one tick, then return; no loop")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}

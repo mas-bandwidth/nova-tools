@@ -52,9 +52,11 @@ func CardRepoURL(value string) string {
 // ReadCardBase is THE reader of which repository a card works in, at which sha: staging
 // (StageCard) and the push-time lint (internal/nsprint/card) both call it, so the repo a card
 // is admitted with is the repo it is staged from. It reads the first 40 lines. Precedence:
-// `base-repo: <url>`, then `REPO: <owner>/<name>` (the header every pushed card carries), then
-// the first github clone URL anywhere in the card (CardCloneRepos). The sha is `base-sha:`,
-// else the sha of `BASE: <ref>@<sha40>`; the ref is BASE:'s value before any @.
+// `BASE-REPO: <url>`, then `REPO: <owner>/<name>` (the header every pushed card carries), then
+// the first github clone URL anywhere in the card (CardCloneRepos). The sha is `BASE-SHA:`,
+// else the sha of `BASE: <ref>@<sha40>`; the ref is BASE:'s value before any @. The retired
+// lowercase spellings (base-repo:, base-sha:) are still read, so a card cut before
+// nova-tools#4352 A stages.
 func ReadCardBase(card []byte) CardBase {
 	lines := strings.Split(string(card), "\n")
 	if len(lines) > 40 {
@@ -66,9 +68,13 @@ func ReadCardBase(card []byte) CardBase {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		switch {
-		case strings.HasPrefix(trimmed, "base-repo:"):
+		case strings.HasPrefix(trimmed, "BASE-REPO:"):
+			baseRepo = strings.TrimSpace(strings.TrimPrefix(trimmed, "BASE-REPO:"))
+		case strings.HasPrefix(trimmed, "base-repo:"): // the retired spelling, still read (#4352 A)
 			baseRepo = strings.TrimSpace(strings.TrimPrefix(trimmed, "base-repo:"))
-		case strings.HasPrefix(trimmed, "base-sha:"):
+		case strings.HasPrefix(trimmed, "BASE-SHA:"):
+			b.Sha = strings.TrimSpace(strings.TrimPrefix(trimmed, "BASE-SHA:"))
+		case strings.HasPrefix(trimmed, "base-sha:"): // the retired spelling, still read
 			b.Sha = strings.TrimSpace(strings.TrimPrefix(trimmed, "base-sha:"))
 		case strings.HasPrefix(trimmed, "REPO:") && !sawRepoLine:
 			sawRepoLine = true

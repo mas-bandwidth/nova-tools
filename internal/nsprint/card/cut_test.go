@@ -33,13 +33,32 @@ func TestCutDependsVocabulary(t *testing.T) {
 func TestIssueFieldsFirstLineWins(t *testing.T) {
 	t.Parallel()
 
-	f := IssueFields("intro\n- **DONE-WHEN:** `go test ./x` fails red\nbase-sha: `0123`\nSTREAM: a\nSTREAM: b\nWHY: none of it\n")
-	for k, v := range map[string]string{"DONE-WHEN": "`go test ./x` fails red", "base-sha": "0123", "STREAM": "a", "WHY": "none of it"} {
+	f := IssueFields("intro\n- **DONE-WHEN:** `go test ./x` fails red\nBASE-SHA: `0123`\nSTREAM: a\nSTREAM: b\nWHY: none of it\n")
+	for k, v := range map[string]string{"DONE-WHEN": "`go test ./x` fails red", "BASE-SHA": "0123", "STREAM": "a", "WHY": "none of it"} {
 		if f[k] != v {
 			t.Errorf("%s = %q, want %q", k, f[k], v)
 		}
 	}
 	if _, ok := f["PATHS"]; ok {
 		t.Error("PATHS read from an issue that has none")
+	}
+}
+
+// TestRetiredHeaderKeyIsRefusedNamingTheNewOne (nova-tools#4352 A): header
+// keys are one case; the lowercase base-sha: of the launcher era is refused
+// naming BASE-SHA:, on a plain line and as a list item.
+func TestRetiredHeaderKeyIsRefusedNamingTheNewOne(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{"BASE: dev\nbase-sha: 0123\n", "- **base-sha:** 0123\n", "> base-sha: 0123\n"} {
+		err := RetiredHeaderKey(body)
+		if err == nil || err.Error() != "base-sha: is spelled BASE-SHA:" {
+			t.Errorf("%q: got %v; want base-sha: is spelled BASE-SHA:", body, err)
+		}
+	}
+	if err := RetiredHeaderKey("BASE: dev\nBASE-SHA: 0123\nbase-repo-ish: no\n"); err != nil {
+		t.Errorf("the one-case header is refused: %v", err)
+	}
+	if err := RetiredHeaderKey("base-repo: https://example.com/o/r.git\n"); err == nil || err.Error() != "base-repo: is spelled BASE-REPO:" {
+		t.Errorf("base-repo: got %v", err)
 	}
 }

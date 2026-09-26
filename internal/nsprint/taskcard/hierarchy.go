@@ -97,7 +97,7 @@ type Plan struct {
 
 // Stuck is the derived state of a plan whose stitch can never be released:
 // a child ended done/fail (its edge is never met), so the plan needs a hand:
-// `card stitch --id <parent> --drop <child>` drops the child from the plan
+// `card stitch --drop <child>` drops the child from the plan
 // (DropChild: the stitch's edge with it), or `card cut --parent` cuts a
 // replacement. Plan.Remedy names it.
 const Stuck = "stuck"
@@ -159,8 +159,8 @@ func (p Plan) Remedy() string {
 		return ""
 	}
 	f := p.Failed()
-	return fmt.Sprintf("stuck: %s ended done/fail and the stitch waits on it; nova-sprint card stitch --id %s --drop %s drops it from the plan, or nova-sprint card cut --parent %s --from <children.tsv> cuts a replacement (then drop the failed one)",
-		strings.Join(f, ","), p.ID, f[0], p.ID)
+	return fmt.Sprintf("stuck: %s ended done/fail and the stitch waits on it; nova-sprint card stitch --drop %s drops it from the plan, or nova-sprint card cut --parent %s --from <children.tsv> cuts a replacement (then drop the failed one)",
+		strings.Join(f, ","), f[0], p.ID)
 }
 
 // Counts folds the children by where (the table's six live states, then

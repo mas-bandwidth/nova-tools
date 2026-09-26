@@ -196,7 +196,7 @@ func TestLandPRWaitsRedAndDone(t *testing.T) {
 		rdb  redis.Cmdable
 		n    int
 		want string
-	}{{c, 0, "wants <n>"}, {nil, 7, "has no store"}} {
+	}{{c, 0, "wants --pr <n>"}, {nil, 7, "has no store"}} {
 		_, err := LandPR(context.Background(), gh, tc.rdb, LandPROptions{Repo: "o/r", N: tc.n})
 		if _, ok := err.(*Refusal); !ok || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("refusal %q: %v (%T)", tc.want, err, err)

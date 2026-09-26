@@ -3,7 +3,7 @@ package card
 // run.go is the bench-side card harness (#3681): what rowan-tools' bash
 // nova-card-harness did on every bench, as Go with Redis state. It is one
 // function, Run, reached two ways: `nova-sprint card run --sprint <S>
-// --label <L> --attempt <a>` by hand, and in-process from the card wrapper
+// --ids <L> --attempt <a>` by hand, and in-process from the card wrapper
 // (WrapperConfig.InProcess) when the bench declares no NOVA_CARD_HARNESS
 // program. Glenn 2026-09-24: "don't fix it in the garbage scripts. convert
 // to golang + redis, then fix."
@@ -355,7 +355,7 @@ func Run(ctx context.Context, st *store.Store, cfg RunConfig) RunReport {
 	}
 	row, _, err := tab.Pick(tier, cfg.Label)
 	if err != nil {
-		return refuse(fmt.Sprintf("no spread route for tier %s label %s (nova-sprint routes --tier %s --label %s): %s", tier, cfg.Label, tier, cfg.Label, err))
+		return refuse(fmt.Sprintf("no spread route for tier %s label %s (nova-sprint routes --tier %s --ids %s): %s", tier, cfg.Label, tier, cfg.Label, err))
 	}
 	model := row.Launch()
 	rep.Tier, rep.Route, rep.Model = tier, row.Route, model
