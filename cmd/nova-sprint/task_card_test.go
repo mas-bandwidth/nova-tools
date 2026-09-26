@@ -12,6 +12,14 @@ import (
 
 // TestTaskCardDispatch: the card form is chosen by its flags, and the one
 // task store's and the batch forms keep theirs.
+// runCLI runs one nova-sprint argv and returns its exit code, stdout and
+// stderr.
+func runCLI(args ...string) (int, string, string) {
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
+	return code, stdout.String(), stderr.String()
+}
+
 // runTaskCLI runs one task verb argv and returns its exit code, stdout and
 // stderr.
 func runTaskCLI(args ...string) (int, string, string) {

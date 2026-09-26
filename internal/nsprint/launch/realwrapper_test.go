@@ -57,38 +57,6 @@ func waitJobsEmpty(dir string, bound time.Duration) []string {
 	}
 }
 
-// TestWaitJobsEmptyStillFailsWhenNothingDeletes is the control for the poll
-// above: a job dir the wrapper never removes is still reported left behind,
-// and one removed mid-wait is not.
-func TestWaitJobsEmptyStillFailsWhenNothingDeletes(t *testing.T) {
-	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-
-	jobs := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(jobs, "adopt-real", "card-real-wrapper", "1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if left := waitJobsEmpty(jobs, 100*time.Millisecond); len(left) != 1 || left[0] != "adopt-real" {
-		t.Fatalf("never-deleted job dir: left %v, want [adopt-real]", left)
-	}
-
-	removed := make(chan error, 1)
-	go func() {
-		// The deleter runs a few probes after the poll starts.
-		time.Sleep(60 * time.Millisecond)
-		removed <- os.RemoveAll(filepath.Join(jobs, "adopt-real"))
-	}()
-	if left := waitJobsEmpty(jobs, jobsGoneWait); len(left) != 0 {
-		t.Fatalf("job dir removed mid-wait still reported: %v", left)
-	}
-	if err := <-removed; err != nil {
-		t.Fatal(err)
-	}
-}
-
 // buildRealWrapper builds cmd/nova-card from this module into a temp dir.
 func buildRealWrapper(t *testing.T) string {
 	t.Helper()

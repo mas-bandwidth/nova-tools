@@ -90,7 +90,7 @@ func TestCIOneBenchRunner(t *testing.T) {
 	for _, s := range sites {
 		found[s.Key()] = true
 		if _, ok := allow.rows[s.Key()]; !ok {
-			t.Errorf("%s:%d: %s runs ssh itself; run bench scripts through internal/benchsh (`bash -s --`, script on stdin; #2932, #3291), never a new row in %s",
+			t.Errorf("%s:%d: %s runs ssh itself; the fleet plays reach benches, never a new row in %s",
 				s.File, s.Line, s.Func, BenchRunnerAllowPath)
 		}
 	}
@@ -99,7 +99,7 @@ func TestCIOneBenchRunner(t *testing.T) {
 			t.Errorf("%s lists %s, which is no longer an ssh exec site: delete the row (and its benchRunnerAtBase entry; the list only shrinks)", BenchRunnerAllowPath, k)
 		}
 		if !base[k] {
-			t.Errorf("%s row %s was added after %s: the allow file may only shrink; use internal/benchsh", BenchRunnerAllowPath, k, benchRunnerBaseSHA)
+			t.Errorf("%s row %s was added after %s: the allow file may only shrink", BenchRunnerAllowPath, k, benchRunnerBaseSHA)
 		}
 	}
 

@@ -10,7 +10,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/harvest"
 )
 
 // routeFixture is a throwaway Redis with the library loaded, the host seams
@@ -27,12 +26,8 @@ func routeFixture(t *testing.T, S string) (context.Context, *redis.Client, strin
 	ssh := &verbSSH{}
 	seams := reconcileSeams
 	reconcileSeams = func() (deal.Dialer, deal.PRs) { return ssh, verbForge{} }
-	hseams := consumeHarvestSeams
-	consumeHarvestSeams = func() (harvest.Forge, harvest.Pusher) {
-		return &consumeForge{prs: map[string]harvest.PR{}}, &consumePusher{pushes: map[string]int{}}
-	}
 	readers := reconcileReaders
-	t.Cleanup(func() { reconcileSeams, consumeHarvestSeams, reconcileReaders = seams, hseams, readers })
+	t.Cleanup(func() { reconcileSeams, reconcileReaders = seams, readers })
 	pipe := c.TxPipeline()
 	pipe.SAdd(ctx, "sprints", S)
 	pipe.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: S})
@@ -101,7 +96,7 @@ func TestReconcileOnceDealsPooledCard(t *testing.T) {
 	if l := dutyLine(t, out, "refill"); !strings.Contains(l, "dealt=1") || !strings.HasSuffix(l, "err=") {
 		t.Fatalf("refill receipt: %q", l)
 	}
-	for _, d := range []string{"ok-to-friend", "harvest", "expire", "route"} {
+	for _, d := range []string{"ok-to-friend", "expire", "route"} {
 		if l := dutyLine(t, out, d); !strings.HasSuffix(l, "err=") {
 			t.Fatalf("%s receipt: %q", d, l)
 		}

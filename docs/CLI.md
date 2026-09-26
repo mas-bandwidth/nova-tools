@@ -4047,26 +4047,6 @@ creates the archive when needed; cards never load it. If interrupted between
 those writes, retry recognizes the archived row and finishes the removal.
 Archived IDs remain reserved, and an identical supersede retry is unchanged.
 
-### xy
-
-The one line under the sprint table, `x/y z% -> ~eta`. It does not render the table.
-
-x, y and the percent are the stdout of `nova-work set check --evaluate`: `SET OK units=<y>` and `SET DONE done=<x> percent=<p>`. The percent is printed as that tool printed it. A `:status "done"` or `:status "landed"` in the work-set is not counted; those are the hand-marked receipts the old sprint-xy bash grepped.
-
-eta is the sprint's wall. `--calibration-out` is a file of `SUGGEST <kind> <n>m` lines, the mean lease-to-done actual for that kind, and each still-open task is charged that instead of its stored estimate when the task names a kind. The wall is one lane per owner, or per the route's consumer when the owner is clear, with real dependencies waited on. It is not the sum of the work, and it is not `open * 10/3 + 12`. `--open` is a file of `TASK` lines, or a verbose sprint status: C/O/W rows (`Open` or `Working`, `owner=`, `route=`, `est=` as `~Nh` or `~Nm`, `kind=`, `depends=`). `depends=-` is no edge. A row without `kind=` or `depends=` is a refusal: the printed estimate alone is not the calibrated wall.
-
-Run from the repo root. The three files are captured tool output and the open tasks. `--set` is a work-set whose receipts are already marked done; the line does not move.
-
-```text
-nova-sprint xy --evaluate-out cmd/nova-sprint/testdata/evaluate.txt --calibration-out cmd/nova-sprint/testdata/calibration.txt --open cmd/nova-sprint/testdata/open.tsv --set cmd/nova-sprint/testdata/set.sexp
-# prints
-26/42 61% -> ~3h
-```
-
-**Reading it.** `26/42` is `SET DONE done=26` over `SET OK units=42`. `61%` is the tool's `percent=`, not a recomputation. `~3h` is two open `fix` tasks on different owners, one depending on the other, each charged the calibrated 90 minutes rather than the stored 120. `evaluate.txt` also has a criterion `holds=yes`; that is not the count. `set.sexp` marks three receipts done or landed; that is not the count either.
-
-**What a first run gets wrong.** Leaving the flags off is one refusal that names each missing source. Pointing `--set` at a sexp full of `:status "done"` and reading those marks as x is the old count; this line will not do it. xy runs no sprint verb: `--calibration-out` and `--open` are files, and `--store`, `--name` and `--nova-pulse` are usage errors since nova-pulse was deleted (#3801). An `--open` status that prints a fraction and no open row is a refusal: that fraction is the sprint store's own x/y, and eta reads the verbose rows.
-
 ### pitstop
 
 `nova-sprint pitstop set|clear|status --sprint <S> [--scope all|<stream>]... [--why <text>] [--by <who>] [--force] [--redis <addr>]`
@@ -4229,14 +4209,6 @@ after `--`, or a seat that cannot be read, named with its remedy).
 nova-sprint table --seat studio --redis 100.115.99.19:6380 --once
 nova-sprint redis-cli --seat studio --redis 100.115.99.19:6380 -- ZCARD sprint:S:cards
 ```
-
-### `nova-sprint bench reset`
-
-`nova-sprint bench reset --bench <bench> [--keep-queue] [--grace 5s] [--redis <addr>] [--actor <seat>] [--idem <key>]` stops the bench's in-flight card process groups in one SSH session and returns stopped attempts to their sprint pools without charging a retry. A persistent reset record blocks the dealer until every process is gone. An SSH refusal or surviving process leaves the record held and the command exits 1.
-
-Recover by rerunning the command, or clear a held record with an operator receipt: `nova-sprint bench reset --bench <bench> --clear --why '<reason>' [--actor <seat>]`. A fresh running reset cannot be cleared. Reset does not restart services, modify fleet UP/DOWN state, or delete job storage.
-
-The bench-side command is `nova-sprint card stop --stdin --grace <duration>`. Its input is one `<sprint> <label> <attempt>` per line. It prints `STOPPED`, `GONE`, or `ALIVE` for the exact `nova-card <sprint>/<label>/<attempt>` process group, one line per card and nothing else on stdout; the `STOP stopped= gone= alive=` summary goes to stderr. It exits 0 whenever the protocol completed, ALIVE included (the reset holds on ALIVE); a non-zero exit means the session failed and the reset holds with `why=ssh:...`. A beat error that is not a takeover holds the record with `why=beat:...`.
 
 ### `nova-sprint fleet build`
 

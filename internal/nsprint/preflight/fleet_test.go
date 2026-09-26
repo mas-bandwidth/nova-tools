@@ -104,7 +104,7 @@ func allLoaded() Loaded {
 
 func upBench(name string, desired int) BenchState {
 	return BenchState{Name: name, Desired: desired, BeatPresent: true, BeatAge: 500 * time.Millisecond,
-		Launcher: BatchLauncherName, HarvestLease: true}
+		Launcher: BatchLauncherName}
 }
 
 func TestPreflightOneSessionPerBatch(t *testing.T) {
@@ -378,9 +378,6 @@ func TestPreflightFleetChecksInOrder(t *testing.T) {
 	t.Run("7.5 missing beat without pause", func(t *testing.T) {
 		red(t, func(in *FleetInput) { in.Benches[0].BeatPresent = false }, "7.5", "ctl-a beat missing without a pause")
 	})
-	t.Run("7.8 UP bench without harvest lease", func(t *testing.T) {
-		red(t, func(in *FleetInput) { in.Benches[0].HarvestLease = false }, "7.8", "ctl-a has no harvest worker lease")
-	})
 	t.Run("7.8 consumer group pending too long", func(t *testing.T) {
 		red(t, func(in *FleetInput) {
 			in.Consumers = []ConsumerGroup{{Name: "ok-to-friend", OldestPending: 90 * time.Second}}
@@ -455,7 +452,7 @@ func TestPreflightUnreadInputRefuses(t *testing.T) {
 			CheckBatchLauncher(FleetInput{}),
 			CheckBeats(FleetInput{}),
 			CheckOneSessionPerBatch(ctx, FleetInput{Dialer: &fakeSSHD{}, Launcher: batchLauncher{}}),
-			CheckHarvestAndConsumers(FleetInput{}),
+			CheckConsumers(FleetInput{}),
 			CheckTwoSchedulers(FleetInput{}),
 			CheckOrphanEffects(FleetInput{}),
 			CheckFriendWake(FleetInput{}),
@@ -487,7 +484,7 @@ func TestPreflightUnreadInputRefuses(t *testing.T) {
 		checks []string
 		name   string
 	}{
-		{func(l *Loaded) { l.Benches = false }, []string{"7.4", "7.5", "7.6", "7.8"}, "benches"},
+		{func(l *Loaded) { l.Benches = false }, []string{"7.4", "7.5", "7.6"}, "benches"},
 		{func(l *Loaded) { l.Consumers = false }, []string{"7.8"}, "consumer groups"},
 		{func(l *Loaded) { l.Profiles = false }, []string{"7.16"}, "bench profiles"},
 		{func(l *Loaded) { l.Workflows = false }, []string{"7.16"}, "workflows"},

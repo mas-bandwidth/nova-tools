@@ -5,7 +5,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/disposition"
@@ -121,44 +120,5 @@ func TestReconcileRoutesHoldToFix(t *testing.T) {
 	}
 	if ids := e.fixIDs(); len(ids) != 1 {
 		t.Fatalf("fix tasks after reconcile: %v", ids)
-	}
-}
-
-// TestRouteVerbRunsHoldToFix is nova-tools #3799 for `nova-sprint route`:
-// the start line names hold-to-fix among the rules and classify alone as not
-// wired, and the running router turns a HOLD into its fix task.
-func TestRouteVerbRunsHoldToFix(t *testing.T) {
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-	const S, pr = "control-3799r", 38
-	_, c, addr, _ := routeFixture(t, S)
-	e := &holdEnv{t: t, c: c, addr: addr, S: S}
-	e.friends("stella", "johnny", "rowan")
-	e.policy("rowan", "stella")
-	e.unit(pr, headA, "johnny")
-	e.mustIngest(pr, typed("stella", headA, "HOLD", 5, substance), "RECORD hold")
-	fix := disposition.FixID("38", "stella", headA)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	var out, errOut bytes.Buffer
-	done := make(chan int, 1)
-	go func() { done <- runRoute(ctx, []string{"--redis", addr, "--sprint", S}, &out, &errOut) }()
-	deadline := time.Now().Add(holdWait())
-	for time.Now().Before(deadline) && c.Exists(context.Background(), "task:"+fix).Val() == 0 {
-		time.Sleep(50 * time.Millisecond)
-	}
-	cancel()
-	code := <-done
-	if code != 0 {
-		t.Fatalf("route: exit %d err %q", code, errOut.String())
-	}
-	start := strings.SplitN(out.String(), "\n", 2)[0]
-	if !strings.Contains(start, ",hold-to-fix") || !strings.HasSuffix(start, "not-wired=classify(#3076)") {
-		t.Fatalf("route start line %q", start)
-	}
-	if ids := e.fixIDs(); len(ids) != 1 || ids[0] != fix {
-		t.Fatalf("fix tasks %v, want [%s]\nout: %s", ids, fix, out.String())
 	}
 }

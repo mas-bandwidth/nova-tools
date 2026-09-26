@@ -161,6 +161,19 @@ func firstOf(vals ...string) string {
 	return ""
 }
 
+func init() {
+	register(Verb{
+		Name:    "route",
+		Summary: "route report --sprint <S> prints per-model ok/crash/refused/wall/fail/open and mean wall from the sprint's cards",
+		Run: func(ctx context.Context, args []string, out, errOut io.Writer) int {
+			if len(args) == 0 || args[0] != "report" {
+				return refuse(errOut, "route", "want report --sprint <S>")
+			}
+			return runRouteReport(ctx, args[1:], out, errOut)
+		},
+	})
+}
+
 func runRouteReport(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("route report")
 	sprint := fs.String("sprint", "", "")
