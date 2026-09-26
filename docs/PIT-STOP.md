@@ -41,6 +41,28 @@ A contraction phase is bugs only (SPEC-PULSE **Rate and convergence** 7):
 - one line per fault on the record — the issue, the test, the PR — so the stop is
   auditable when it is over.
 
+## The system's stop: by=progress
+
+The reconciler's progress duty (nova-tools #4319; docs/CLI.md, **reconcile: the progress
+duty**) calls a stop by measurement, never by feel. Per stream, every `cfg:progress every_s`
+(10 s), it prints `PROGRESS <stream> left= delta= ready= landed_h= retries_h= oldest= blocked=
+window= status=converging|idle|stalled`. A stream in play (a card working, or a ready card with a
+consumer that has room) for the whole `window_s` (30 min) with no card leaving it is stalled;
+so is a duty error repeating past `refusals` passes, or a release probe failing twice. The
+duty then sets the sprint's stop with `by=progress` and the diagnosis as the why, which
+`nova-sprint pitstop status --sprint <S>` shows:
+
+```text
+PROGRESS STALLED autonomy stall blocked=30m0s window=30m0s left=1 ready=1 landed_h=0 retries_h=0
+```
+
+A stall stops only that stream; the other two causes stop the sprint (`scope=all`). One
+`EVENT` line prints, the table shows it on its `EVENTS n= refused= last=` line, and one wake note
+per `cfg:progress ask` name goes through `friend:outbox`. It asks once per episode; a stop
+already set (a human's) is not overwritten, the duty prints `PROGRESS REFUSED pitstop set ...
+why="already stopped by=..."` and still sends the EVENT. The human reads the numbers in the why,
+fixes the cause, and clears the stop by scope as for any stop.
+
 ## The exit gate: the trust batch
 
 The stop ends by evidence, not by feeling. The fix cards of the stop, plus one known-answer

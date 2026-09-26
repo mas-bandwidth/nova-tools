@@ -193,3 +193,33 @@ func TestWaitingResolveStopsAtLeaseMargin(t *testing.T) {
 		t.Fatal("B2 moved under a fenced lease")
 	}
 }
+
+// TestWaitingResolveCountsRefusedMoves (the cold read of #4361, item 3): a
+// move ns_ws_move_many refuses reaches Counts.Refused once, so the DUTY
+// line and proc:progress carry it, and the duty's error names it.
+func TestWaitingResolveCountsRefusedMoves(t *testing.T) {
+	t.Parallel()
+
+	_, c := wstest.Start(t)
+	ctx := context.Background()
+	wrTask(t, c, "A", "landed", 1000)
+	wrTask(t, c, "B", "waiting", 2000, "blocked_on", "task:A")
+	// R is met but its record names no stream: the one move refuses it.
+	if err := c.HSet(ctx, "task:R", "blocked_on", "task:A").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ZAdd(ctx, ws.Key(wrStream, "waiting"), redis.Z{Score: float64(cardEpoch + 2001), Member: "R"}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := reconcile.Acquire(ctx, store.New(c), reconcile.AcquireOptions{Host: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts, err := (&reconcile.WaitingResolve{Client: c}).Run(ctx, lease)
+	if counts.Routed != 1 || counts.Refused != 1 {
+		t.Fatalf("routed %d refused %d, want 1 and 1", counts.Routed, counts.Refused)
+	}
+	if err == nil || !strings.Contains(err.Error(), "R refused: task R has no stream") {
+		t.Fatalf("err %v, want the refusal named", err)
+	}
+}
