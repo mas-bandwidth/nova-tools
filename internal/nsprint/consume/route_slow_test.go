@@ -14,7 +14,6 @@ package consume
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 
