@@ -24,6 +24,7 @@
 //
 //	CARD CUT row=<n> id=<id> ref=<owner/name#n|-> stream=<s> to=waiting|already depends=<ids|none>
 //	CARD CUT REFUSED row=<n> line=<l> id=<id|-> why=<why>
+//	REFUSED card-lint rule=<name> line="<the offending line>" remedy="<exact command>" row=<n>
 //	CARD CUT DRY row=<n> id=<id|-> stream=<s> who=<w> route=<r> est=<e> depends=<d> title=<t>
 //	CARD CUT FROM file=<f> rows=<n> cut=<k> already=<a> refused=<r> filed=<f> reused=<u> github=on|off ms=<ms>
 //
@@ -34,6 +35,11 @@
 // twice: a row the ledger holds takes its issue from there (reused=), and
 // its card, when an earlier run pushed it, is to=already (#4352 N: running
 // a verb twice is not a refusal).
+//
+// ONE INVARIANT (#4396). Every row is linted as one card
+// (cardhdr.LintOneInvariant over its PATHS and DONE-WHEN cells and its body,
+// which carries the INVARIANT, CLASS-TEST and PLATFORMS lines): a row that is
+// not one invariant is refused with one REFUSED card-lint line per rule.
 //
 // A cell writes a newline as \n, a tab as \t and a backslash as \\. A row's
 // id is <repo name>-<issue n> (the card cut label), or with --no-github a
@@ -77,6 +83,7 @@ type cutFromOpts struct {
 	Text                                       []byte
 	Repo, Stream, Sprint, Base, BaseSHA, Actor string
 	DryRun, NoGitHub                           bool
+	goFiles                                    []string // the repo at --base-sha, for the one-invariant lint
 }
 
 // cutFromDeps are the verb's seams: the one GitHub writer, the one-pipeline
@@ -88,6 +95,7 @@ type cutFromDeps struct {
 	LedgerRead  func(ctx context.Context, key string) (taskcard.CutLedger, error)
 	LedgerWrite func(ctx context.Context, key, repo string, row, issue int) error
 	BaseSHA     func(repo, base string) (string, error)
+	GoFiles     func(repo, sha string) []string // the .go files at sha (card.GoFilesAt); nil reads PATHS by shape
 	Now         func() time.Time
 }
 
@@ -96,12 +104,13 @@ type cutRow struct {
 	n, line                                   int
 	title, stream, who, paths, doneWhen, body string
 	route, est, id                            string
-	deps                                      []string // entries as written, none dropped
-	depRow                                    []int    // per entry: the row its id names, 0 outside the file
-	rowDeps                                   []int    // the rows this row depends on
-	why                                       string   // a refusal
-	ref, origin                               string   // the filed issue
-	fromLedger, already                       bool     // the issue came from the ledger; the card was pushed before
+	deps                                      []string         // entries as written, none dropped
+	depRow                                    []int            // per entry: the row its id names, 0 outside the file
+	rowDeps                                   []int            // the rows this row depends on
+	why                                       string           // a refusal
+	lint                                      cardhdr.Refusals // the one-invariant refusals (#4396), printed under why
+	ref, origin                               string           // the filed issue
+	fromLedger, already                       bool             // the issue came from the ledger; the card was pushed before
 }
 
 var (
@@ -323,12 +332,26 @@ func checkCutRow(r *cutRow, byID, slugs map[string]int, o cutFromOpts) {
 			fail("no id: the title has no letter or digit for one; add an id cell")
 		}
 	}
+	if r.why == "" {
+		if rs := cardhdr.LintOneInvariant(cardhdr.Card{Text: cutLintText(r), GoFiles: o.goFiles}); rs != nil {
+			r.lint = rs
+			fail("card-lint " + rs.Rules() + ": not one invariant")
+		}
+	}
 	if r.why == "" && r.route != taskcard.RouteFriend {
 		s := cutSpec(r, o, "")
 		if missing := s.Complete("", ""); len(missing) > 0 {
 			fail("a " + r.route + " card lacks " + strings.Join(missing, ", "))
 		}
 	}
+}
+
+// cutLintText is the card a row is linted as (#4396): its PATHS and
+// DONE-WHEN cells as the issue writes them, then its body (which carries the
+// INVARIANT, CLASS-TEST and PLATFORMS lines).
+func cutLintText(r *cutRow) string {
+	return "PATHS: " + strings.ReplaceAll(r.paths, "\n", " ") + "\nDONE-WHEN: " + strings.ReplaceAll(r.doneWhen, "\n", " ") +
+		"\n\n" + r.body + "\n"
 }
 
 // orderCutRows is the push order: file order, except that a row comes
@@ -451,6 +474,9 @@ func cutField(s string) string {
 
 func cutRefused(out io.Writer, r *cutRow) {
 	fmt.Fprintf(out, "CARD CUT REFUSED row=%d line=%d id=%s why=%s\n", r.n, r.line, cutField(r.id), cutField(r.why))
+	for _, l := range r.lint {
+		fmt.Fprintf(out, "%s row=%d\n", l, r.n)
+	}
 }
 
 // cardCutFrom is the verb below its flags.
@@ -484,6 +510,9 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 			o.BaseSHA = sha
 			break
 		}
+	}
+	if d.GoFiles != nil {
+		o.goFiles = d.GoFiles(o.Repo, o.BaseSHA)
 	}
 	// The id cells name rows for DEPENDS-ON (the first of a repeated id;
 	// the repeat is refused below). With --no-github a row without one is
@@ -697,7 +726,7 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 	if err != nil {
 		return refuse(stderr, verb, "cannot read --from: "+err.Error())
 	}
-	d := cutFromDeps{Now: time.Now, BaseSHA: card.MirrorBranchSHA}
+	d := cutFromDeps{Now: time.Now, BaseSHA: card.MirrorBranchSHA, GoFiles: card.GoFilesAt}
 	if !o.DryRun {
 		if o.Actor = quackActor(o.Actor); o.Actor == "" {
 			return refuse(stderr, verb, "--actor is required when "+seatEnv+" is empty")

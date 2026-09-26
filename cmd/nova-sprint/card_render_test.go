@@ -31,7 +31,8 @@ func cardRenderFromIssuePush(t *testing.T) {
 	t.Setenv("NOVA_MIRROR_ROOT", mirror)
 	dir := t.TempDir()
 	issue := filepath.Join(dir, "issue.md")
-	text := "STREAM: swarm: cards\nWHO: any\nPATHS: internal/x/x.go\n\nBuild x.\n\nDONE-WHEN: `go test ./internal/x -run TestX` passes."
+	const inv = "INVARIANT: x holds.\nCLASS-TEST: TestX\n"
+	text := "STREAM: swarm: cards\nWHO: any\nPATHS: internal/x/x.go\n" + inv + "\nBuild x.\n\nDONE-WHEN: `go test ./internal/x -run TestX` passes."
 	if err := os.WriteFile(issue, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -66,13 +67,27 @@ func cardRenderFromIssuePush(t *testing.T) {
 	}
 	// pro from an issue with no PATHS line: refused at push, naming it.
 	bare := filepath.Join(dir, "bare.md")
-	if err := os.WriteFile(bare, []byte("STREAM: swarm: cards\n\nDONE-WHEN: it works."), 0o644); err != nil {
+	if err := os.WriteFile(bare, []byte("STREAM: swarm: cards\n"+inv+"\nDONE-WHEN: it works."), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, out, _ = runTaskCLI("push", "--actor", "rowan", "--id", "p1", "--waiting", "--ref", "mas-bandwidth/nova-tools#1",
 		"--issue", bare, "--route", "pro", "--base", "dev", "--base-sha", sha)
 	if code != 1 || !strings.Contains(out, "REFUSED") || !strings.Contains(out, "PATHS") {
 		t.Errorf("pro push without PATHS = %d %q", code, out)
+	}
+	// not one invariant (#4396): refused before any write, one line per rule
+	list := filepath.Join(dir, "list.md")
+	if err := os.WriteFile(list, []byte("STREAM: swarm: cards\nPATHS: internal/x/x.go\n"+inv+"DONE-WHEN: x passes. y passes."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = runTaskCLI("push", "--actor", "rowan", "--id", "l1", "--waiting", "--ref", "mas-bandwidth/nova-tools#1",
+		"--issue", list, "--route", "pro", "--base", "dev", "--base-sha", sha)
+	lint := `REFUSED card-lint rule=done-when-sentences line="DONE-WHEN: x passes. y passes." remedy="cut as a parent with children: card cut --parent" card="l1"` + "\n"
+	if code != 1 || !strings.HasPrefix(out, `TASK push REFUSED id=l1 why="card-lint done-when-sentences" ms=`) || !strings.HasSuffix(out, "\n"+lint) {
+		t.Errorf("push of a two-sentence DONE-WHEN = %d %q", code, out)
+	}
+	if code, out, _ := render("--id", "l1"); code != 1 || !strings.Contains(out, "NOTASK") {
+		t.Errorf("a refused push left a record: render = %d %q", code, out)
 	}
 	if code, out, _ := push("fr1", "friend"); code != 0 {
 		t.Fatalf("push friend = %d %q", code, out)
