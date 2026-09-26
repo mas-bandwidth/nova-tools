@@ -491,6 +491,11 @@ func setDesiredWith(ctx context.Context, st *store.Store, kind, name, machine st
 	return parseDesiredReply(reply, kind, name, machine, slots)
 }
 
+// SetMachine writes machine:<m>:ceiling and sets budget if resources are provided.
+func SetMachine(ctx context.Context, st *store.Store, machine string, slots, cores, memGB int, actor, idem string) (Result, error) {
+	return SetMachineBudget(ctx, st, machine, slots, cores, memGB, 0, 0, actor, idem)
+}
+
 // SetMachineBudget writes machine:<m>:ceiling and machine:<m>:budget (spec 5.1).
 func SetMachineBudget(ctx context.Context, st *store.Store, machine string, slots, cores, memGB, cpuMilli, memMB int, actor, idem string) (Result, error) {
 	if st == nil {
