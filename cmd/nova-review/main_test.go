@@ -983,7 +983,7 @@ func TestLaneRefusalNamesRemedy(t *testing.T) {
 	if code := run([]string{"packet", "--lane", plain, "--branch", "feature", "--who", "emma", "--out", filepath.Join(plain, "p.md")}, &out, &errb); code != 2 {
 		t.Fatalf("plain checkout code=%d, want 2", code)
 	}
-	want := "a lane is a directory made by nova-merge init --lane <dir> --repo <owner/name> --base <branch> --lane-branch <name>"
+	want := merge.LaneByHand(plain)
 	if !strings.Contains(errb.String(), want) {
 		t.Fatalf("refusal does not name the remedy; got %q want %q", errb.String(), want)
 	}

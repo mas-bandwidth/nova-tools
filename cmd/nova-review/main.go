@@ -166,7 +166,7 @@ func packet(args []string, out, errOut io.Writer) int {
 	st, err := merge.Load(*lane)
 	if err != nil {
 		if errors.Is(err, merge.ErrNotALane) {
-			return refuse(errOut, fmt.Sprintf("--lane %s is not a lane; a lane is a directory made by nova-merge init --lane <dir> --repo <owner/name> --base <branch> --lane-branch <name>", *lane))
+			return refuse(errOut, fmt.Sprintf("--lane %s is not a lane (no %s); %s", *lane, merge.StatePath(*lane), merge.LaneByHand(*lane)))
 		}
 		return refuse(errOut, fmt.Sprintf("could not read lane: %v", err))
 	}
@@ -1772,7 +1772,7 @@ func dedupe(args []string, out, errOut io.Writer) int {
 	st, err := merge.Load(*lane)
 	if err != nil {
 		if errors.Is(err, merge.ErrNotALane) {
-			return refuse(errOut, fmt.Sprintf("--lane %s is not a lane; a lane is a directory made by nova-merge init --lane <dir> --repo <owner/name> --base <branch> --lane-branch <name>", *lane))
+			return refuse(errOut, fmt.Sprintf("--lane %s is not a lane (no %s); %s", *lane, merge.StatePath(*lane), merge.LaneByHand(*lane)))
 		}
 		return refuse(errOut, fmt.Sprintf("could not read lane: %v", err))
 	}

@@ -356,3 +356,39 @@ func TestExhaustedReplaceReturnsTheRenameErrorAndLeavesStateParseable(t *testing
 		t.Errorf("a refused replace must leave the prior state byte-identical; was it replaced? fi=%+v", fi)
 	}
 }
+
+// TestLaneByHandMakesALane (FG-A fix 2): no verb writes state.json (init is retired),
+// so every not-a-lane refusal carries the file to write by hand. The template it
+// carries, written verbatim, loads as a lane, and so does the template with its three
+// placeholders filled in.
+func TestLaneByHandMakesALane(t *testing.T) {
+	t.Parallel()
+	for name, body := range map[string]string{
+		"verbatim": LaneTemplate,
+		"filled":   strings.NewReplacer("<owner>/<name>", "mas-bandwidth/nova-tools", "<branch>", "dev", "<name>", "rowan/lane").Replace(LaneTemplate),
+	} {
+		lane := filepath.Join(t.TempDir(), name)
+		if err := os.MkdirAll(lane, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(StatePath(lane), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		st, err := Load(lane)
+		if err != nil {
+			t.Fatalf("%s: the template the refusal spells does not load as a lane: %v", name, err)
+		}
+		if st.Version != Version || st.Repo == "" || st.Base == "" || st.LaneBranch == "" {
+			t.Fatalf("%s: loaded %+v", name, st)
+		}
+		refusal := NotALaneRefusal("read", lane)
+		for _, want := range []string{"nova-merge read runs once", StatePath(lane), LaneTemplate, "init is retired"} {
+			if !strings.Contains(refusal, want) {
+				t.Fatalf("refusal %q does not carry %q", refusal, want)
+			}
+		}
+		if strings.Contains(refusal, "nova-merge init --lane") {
+			t.Fatalf("refusal still sends the reader to a retired verb: %q", refusal)
+		}
+	}
+}

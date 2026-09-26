@@ -242,7 +242,7 @@ func Decode(raw []byte) (*State, error) {
 		return nil, fmt.Errorf("this lane's state.json does not parse as JSON: %w", err)
 	}
 	if probe.Version == nil {
-		return nil, errors.New("this lane's state.json has no version; a lane is created by nova-merge init, which writes \"version\": 1")
+		return nil, errors.New("this lane's state.json has no version; write \"version\": 1 into it by hand (" + noInitVerb + ")")
 	}
 	if *probe.Version != Version {
 		return nil, fmt.Errorf("this lane's state.json is version %d and this nova-merge knows version %d; the lane was written by another build", *probe.Version, Version)
@@ -264,13 +264,13 @@ func Decode(raw []byte) (*State, error) {
 // them does not decode (rules 18, 19 and 21).
 func (s *State) validate() error {
 	if strings.TrimSpace(s.Repo) == "" {
-		return errors.New("this lane's state.json has no repo; a lane is created by nova-merge init --repo <owner>/<name>")
+		return errors.New("this lane's state.json has no repo; write \"repo\": \"<owner>/<name>\" into it by hand (" + noInitVerb + ")")
 	}
 	if strings.TrimSpace(s.Base) == "" {
-		return errors.New("this lane's state.json has no base; a lane is created by nova-merge init --base <branch>")
+		return errors.New("this lane's state.json has no base; write \"base\": \"<branch>\" into it by hand (" + noInitVerb + ")")
 	}
 	if strings.TrimSpace(s.LaneBranch) == "" {
-		return errors.New("this lane's state.json has no lane_branch; a lane is created by nova-merge init --lane-branch <name>")
+		return errors.New("this lane's state.json has no lane_branch; write \"lane_branch\": \"<name>\" into it by hand (" + noInitVerb + ")")
 	}
 	// AN UNKNOWN POLICY IS A REFUSAL AND NEVER AN ARM. Absent is the stronger arm
 	// (HostedRedBlocks); "block", "yes", "true" or "Names" would otherwise be read as the
@@ -524,13 +524,28 @@ func readState(path string) ([]byte, error) {
 	}
 }
 
-// ErrNotALane is the one error every verb but init turns into the same refusal: exit 2,
-// refusing to guess, with the init command in it.
+// ErrNotALane is the one error every lane verb turns into the same refusal: exit 2,
+// refusing to guess, with the way to make a lane in it.
 var ErrNotALane = errors.New("this is not a lane")
 
-// NotALaneRefusal is that sentence, in one place so the ten verbs cannot drift.
-func NotALaneRefusal(lane string) string {
-	return fmt.Sprintf("refusing to guess: this is not a lane; nova-merge init --lane %s --repo <owner>/<name> --base <branch> --lane-branch <name>", lane)
+// noInitVerb is the fact every lane remedy states: nova-merge init left with the
+// per-PR lander role (see cmd/nova-merge usage), and no verb writes state.json now.
+const noInitVerb = "no verb writes state.json: nova-merge init is retired"
+
+// LaneByHand is the exact manual step that makes a lane, since no verb does: the
+// state.json Init would have written, with the three values the caller fills in. The
+// template decodes as a lane as written (TestLaneByHandMakesALane).
+func LaneByHand(lane string) string {
+	return fmt.Sprintf("%s; mkdir -p %s and write %s as %s", noInitVerb, lane, StatePath(lane), LaneTemplate)
+}
+
+// LaneTemplate is the state.json of a fresh lane, as Init writes it, with placeholders.
+const LaneTemplate = `{"version":1,"repo":"<owner>/<name>","base":"<branch>","lane_branch":"<name>","prs":[],"branches":[],"gates":[]}`
+
+// NotALaneRefusal is that sentence, in one place so the lane verbs cannot drift: the
+// verb that refused runs once the lane exists, and the lane is made by hand.
+func NotALaneRefusal(verb, lane string) string {
+	return fmt.Sprintf("refusing to guess: this is not a lane (no %s); nova-merge %s runs once that file exists; %s", StatePath(lane), verb, LaneByHand(lane))
 }
 
 // SaveTo writes the state through the fixed temp name and one rename (rule 1). NOTHING

@@ -22,7 +22,7 @@ import (
 func openLane(verb, lane string, stderr io.Writer) (*merge.State, int) {
 	st, err := merge.Load(lane)
 	if errors.Is(err, merge.ErrNotALane) {
-		fmt.Fprintf(stderr, "nova-merge %s: %s\n", verb, oneline.Escape(merge.NotALaneRefusal(lane)))
+		fmt.Fprintf(stderr, "nova-merge %s: %s\n", verb, oneline.Escape(merge.NotALaneRefusal(verb, lane)))
 		return nil, 2
 	}
 	if err != nil {

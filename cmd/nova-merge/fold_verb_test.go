@@ -315,7 +315,7 @@ func TestFoldRefusalsNameTheirRemedy(t *testing.T) {
 		t.Fatalf("a directory that is not a lane: exit %d, want 2\n%s", exit, stderr)
 	}
 	contains(t, stderr, "refusing to guess")
-	contains(t, stderr, "nova-merge init")
+	contains(t, stderr, "nova-merge init is retired")
 }
 
 // Demanded test 8. The layout test of #560 runs after every merge; a fake run that fails

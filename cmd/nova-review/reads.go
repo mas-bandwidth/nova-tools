@@ -750,7 +750,7 @@ func reads(args []string, out, errOut io.Writer) int {
 	st, err := merge.Load(*lane)
 	if err != nil {
 		if errors.Is(err, merge.ErrNotALane) {
-			return readsRefuse(errOut, fmt.Sprintf("--lane %s is not a lane; a lane is a directory made by nova-merge init --lane <dir> --repo <owner/name> --base <branch> --lane-branch <name>", oneline.Field(*lane)))
+			return readsRefuse(errOut, fmt.Sprintf("--lane %s is not a lane (no %s); %s", oneline.Field(*lane), oneline.Field(merge.StatePath(*lane)), oneline.Escape(merge.LaneByHand(*lane))))
 		}
 		return readsRefuse(errOut, fmt.Sprintf("could not read lane: %v", err))
 	}

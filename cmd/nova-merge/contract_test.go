@@ -13,8 +13,8 @@ import (
 // structural refusals, the capped listing, and the properties a source test is the only
 // way to assert.
 
-// Demanded test 20: init is the ONE creation verb, and every other verb refuses a
-// directory that is not a lane -- with the init command in the refusal, and nothing
+// Demanded test 20: every verb refuses a directory that is not a lane -- with the way
+// to make one in the refusal (by hand: init is retired, FG-A fix 2), and nothing
 // written on the way past.
 func TestEveryOtherVerbRefusesADirectoryThatIsNotALane(t *testing.T) {
 	t.Parallel()
@@ -36,7 +36,8 @@ func TestEveryOtherVerbRefusesADirectoryThatIsNotALane(t *testing.T) {
 				t.Fatalf("exit %d, want 2\n%s\n%s", exit, stdout, stderr)
 			}
 			contains(t, stderr, "refusing to guess: this is not a lane")
-			contains(t, stderr, "nova-merge init --lane")
+			contains(t, stderr, "nova-merge init is retired")
+			contains(t, stderr, merge.LaneTemplate)
 			if entries, _ := os.ReadDir(empty); len(entries) != 0 {
 				t.Errorf("a refusal writes nothing on the way past; the directory holds %v", entries)
 			}
@@ -60,5 +61,36 @@ func TestASecondInitIsRefusedAndTheStateIsByteIdentical(t *testing.T) {
 	after, _ := os.ReadFile(merge.StatePath(l.lane))
 	if string(before) != string(after) {
 		t.Error("a refused init leaves the state byte-identical")
+	}
+}
+
+// TestNotALaneRemedyRunThroughTheBinary (FG-A fix 2): the refusal's manual step,
+// followed verbatim -- write the template it prints as <lane>/state.json -- makes a lane
+// the same verb then reads. The verb it names to run next exists (the audit probe
+// TestRowanAuditLaneRemedyVerbExists runs it with -h).
+func TestNotALaneRemedyRunThroughTheBinary(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	lane := filepath.Join(l.dir, "by-hand")
+	if err := os.MkdirAll(lane, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"read", "--lane", lane, "--pr", "1", "--who", "emma", "--head", strings.Repeat("a", 40), "--verdict", "approve"}
+	exit, _, stderr := l.run(args...)
+	if exit != 2 || !strings.Contains(stderr, "this is not a lane") {
+		t.Fatalf("exit %d\n%s", exit, stderr)
+	}
+	// The step, as printed: "... and write <path> as <json>".
+	_, step, ok := strings.Cut(stderr, " and write "+merge.StatePath(lane)+" as ")
+	if !ok {
+		t.Fatalf("the refusal carries no write step: %q", stderr)
+	}
+	body := strings.TrimSpace(step)
+	if err := os.WriteFile(merge.StatePath(lane), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exit, _, stderr = l.run(args...)
+	if strings.Contains(stderr, "this is not a lane") {
+		t.Fatalf("after the manual step the directory is still not a lane: exit %d\n%s", exit, stderr)
 	}
 }
