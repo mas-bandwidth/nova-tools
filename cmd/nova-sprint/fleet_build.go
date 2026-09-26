@@ -98,7 +98,7 @@ func runFleetBuild(ctx context.Context, args []string, out, errOut io.Writer) in
 		return runFleetBuildCompile(ctx, args[1:], out, errOut)
 	}
 	fs := verbflag.New("fleet build")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	benches := fs.String("bench", "", "")
 	buildCmd := fs.String("build-cmd", fleetBuildCmd(), "")
 	machines := fs.String("machines", "", "")

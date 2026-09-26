@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -73,7 +72,7 @@ func cmdRoutes(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	tier := fs.String("tier", "", "")
 	label := fs.String("label", "", "")
 	spread := fs.Bool("spread", false, "")
-	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, "routes", err.Error()+"; it takes --rung, --type, --check <route>, --preamble <route>, --tier flash|pro [--label <card>], --spread and --redis <host:port>")
 	}

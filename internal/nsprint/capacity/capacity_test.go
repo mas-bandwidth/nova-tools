@@ -101,7 +101,7 @@ func TestControl27MachineCeiling(t *testing.T) {
 func TestWidthAccounting(t *testing.T) {
 	t.Parallel()
 
-	got := task.WidthFrom(32, 8)
+	got := task.WidthFrom(32, 8, 0)
 	want := task.Width{Desired: 32, Leased: 8, Free: 24}
 	if got != want {
 		t.Fatalf("WidthFrom = %+v want %+v", got, want)

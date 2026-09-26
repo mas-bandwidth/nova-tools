@@ -2386,6 +2386,14 @@ end
 -- and end refuse NOTWORKING), and can never make a current cell non-zero.
 function TM.key(c, col) return cm_ckey(cm_epoch(), c, col) end
 
+-- TM.ci_legs: the CI legs running on the machine consumer c runs on, as
+-- its beat's ci field counts them (<consumer>:beat, a bench's or a
+-- friend's; nova-tools#4293: the Studio hosts friends and CI both), 0 for
+-- an unmeasured beat. Each holds a slot while it runs.
+function TM.ci_legs(c)
+  return tonumber(redis.call('HGET', c .. ':beat', 'ci')) or 0
+end
+
 -- TM.set: the name list of a comma or space separated field, as a set; nil
 -- when the field is empty (no restriction).
 function TM.set(v)
@@ -2656,15 +2664,17 @@ function TM.deal(c, by, k, stream, ids)
 end
 
 -- TM.work(c, by, k, fill, ids): consumer ready -> working, k = min(free,
--- |ready copies|) (fill; else also at most k), free = slots - |working|;
--- named copies all or nothing. Each starts a lease its holder renews with
+-- |ready copies|) (fill; else also at most k), free = slots - ci -
+-- |working|, ci the CI legs running on the consumer's machine as its beat
+-- counts them (nova-tools#4293: a copy is never put beside a leg it would
+-- slow); named copies all or nothing. Each starts a lease its holder renews with
 -- card beat, and a token its end may present (a stale one is FENCED).
 -- Returns the reply WORKED n free, then per copy its id and token.
 function TM.work(c, by, k, fill, ids)
   if not TM.parse(c) then return { 'REFUSED', 'CONSUMER ' .. TK.str(c) .. ' is not bench:<b> or friend:<f>' } end
   local d = TM.desired(c)
   if not d.slots then return { 'REFUSED', 'SLOTS ' .. c .. ':desired has no slots; run nova-sprint capacity' } end
-  local free = d.slots - redis.call('ZCARD', TM.key(c, 'working'))
+  local free = d.slots - TM.ci_legs(c) - redis.call('ZCARD', TM.key(c, 'working'))
   local take = {}
   if #ids > 0 then
     local seen = {}
@@ -3198,12 +3208,11 @@ function TM.ci_final(repo, pr, head)
   return word, ''
 end
 
--- TM.live: the consumer's beat (its bench beat, or its friend row) is
--- within TM.LIVE_MS.
+-- TM.live: the consumer's own beat (<c>:beat at, a bench's or a friend's
+-- alike, #4233: friend beat writes it; the friend:<f> row is never a
+-- liveness source) is within TM.LIVE_MS.
 function TM.live(c)
-  local key = c
-  if TM.parse(c) == 'bench' then key = c .. ':beat' end
-  local at = TK.ms(redis.call('HGET', key, 'at'))
+  local at = TK.ms(redis.call('HGET', c .. ':beat', 'at'))
   return at ~= nil and math.abs(cm_now() - at) < TM.LIVE_MS
 end
 
@@ -3216,12 +3225,13 @@ function TM.role(name, role)
   return false
 end
 
--- TM.room: consumer c's desired slots less its working and ready copies,
--- and whether it may be dealt at all (slots declared, not paused, not
--- down, its beat live).
+-- TM.room: consumer c's desired slots less the CI legs running on it
+-- (TM.ci_legs, nova-tools#4293) less its working and ready copies, and
+-- whether it may be dealt at all (slots declared, not paused, not down, its
+-- beat live).
 function TM.room(c, d)
   if not d.slots or d.paused or redis.call('EXISTS', c .. ':down') == 1 or not TM.live(c) then return nil end
-  return d.slots - redis.call('ZCARD', TM.key(c, 'working')) - redis.call('ZCARD', TM.key(c, 'ready'))
+  return d.slots - TM.ci_legs(c) - redis.call('ZCARD', TM.key(c, 'working')) - redis.call('ZCARD', TM.key(c, 'ready'))
 end
 
 -- TM.read_route(id): the consumers primary id's read copies go to (#4094):
@@ -3708,6 +3718,12 @@ end
 -- copies all or nothing. Returns BEAT n lease_until.
 function TM.beat(c, ids)
   local at = cm_now()
+  if #ids == 0 then
+    -- no id: every copy the consumer holds working (#4233: the friend
+    -- beat's one round trip renews its whole working set here)
+    if not TM.parse(c) then return { 'REFUSED', 'CONSUMER ' .. TK.str(c) .. ' is not bench:<b> or friend:<f>' } end
+    ids = redis.call('ZRANGE', TM.key(c, 'working'), 0, -1)
+  end
   for _, id in ipairs(ids) do
     if not TK.copy_id(id) or not redis.call('ZSCORE', TM.key(c, 'working'), id) then
       return { 'REFUSED', 'NOTWORKING ' .. TK.str(id) .. ' is not in ' .. TM.key(c, 'working') }
@@ -3765,9 +3781,7 @@ function TM.expire(by, consumers)
   for _, c in ipairs(consumers) do
     -- a consumer whose beat is older than a lease holds no ready copy: each
     -- goes back to its primary (no attempt counted)
-    local key = c
-    if TM.parse(c) == 'bench' then key = c .. ':beat' end
-    local at = TK.ms(redis.call('HGET', key, 'at'))
+    local at = TK.ms(redis.call('HGET', c .. ':beat', 'at'))
     if at and now - at > TM.LEASE then
       for _, id in ipairs(redis.call('ZRANGE', TM.key(c, 'ready'), 0, -1)) do
         if TK.copy_id(id) then
@@ -3986,7 +4000,8 @@ redis.register_function('ns_sprint_clear', function(keys, args)
   return TM.sprint_clear(TK.str(args[1]), args[2], args[3] == '1')
 end)
 
--- ns_cm_beat(consumer, id...) -> BEAT n lease_until | REFUSED <why>.
+-- ns_cm_beat(consumer, id...) -> BEAT n lease_until | REFUSED <why>; with
+-- no id, every copy in <consumer>:cards:working.
 redis.register_function('ns_cm_beat', function(keys, args) return TM.beat(args[1], TM.ids(args, 2)) end)
 
 -- ns_cm_expire(by, consumer...) -> EXPIRED n, then per copy: id, where.

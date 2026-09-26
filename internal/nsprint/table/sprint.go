@@ -35,9 +35,11 @@
 // consumer's own beat (<kind>:<name>:beat at, ms) is under a minute old and
 // <kind>:<name>:down does not exist, else down (the row still shows its
 // cards); an up consumer whose desired hash has paused 1 (worker pause,
-// #4308) prints paused instead; load is the beat's load1 (a bench's; - when
-// the beat has none).
-// The old friend:<f> row hash and bench:<b> hash are never read.
+// #4308) prints paused instead; load is the beat's cpu or load1 (a bench
+// beat's, or a friend beat's, which `nova-sprint friend beat` measures on
+// the machine the friend's session runs on, #4233; - when the beat has
+// none). The old friend:<f> row hash and bench:<b> hash are never read, and
+// no friend's load is read from another consumer's beat.
 //
 // Keys, every one read in ONE pipelined round trip per tick (a second round
 // trip only on the tick a membership set changed; never KEYS, never SCAN):
@@ -201,10 +203,6 @@ func okPct(ok, done int64) string {
 	}
 	return strconv.FormatInt(100*ok/done, 10) + "%"
 }
-
-// FriendHostBeatKey is the beat of the machine every friend lives on today
-// (the Studio; hardcoded, see readOnce).
-const FriendHostBeatKey = "bench:studio:beat"
 
 // loadValue is the row's load as a percent of every core: the beat's cpu
 // (CPU busy percent over the beat interval, what Activity Monitor and top
@@ -433,12 +431,6 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		cmds[i].down = pipe.Exists(ctx, c.ID()+":down")
 		cmds[i].paused = pipe.HGet(ctx, c.ID()+":desired", "paused")
 	}
-	// HARDCODED (Glenn 2026-09-25 11:25 PM ET, "everybody is on studio"): a
-	// friend's load is the load of the machine it lives on, and today every
-	// friend lives on the Studio, so friend rows show bench:studio:beat's
-	// load1. The proper fix is the friend beat carrying its own machine's
-	// load1 like the bench beat does; then this read goes.
-	studio := pipe.HMGet(ctx, FriendHostBeatKey, "load1", "ncpu", "cpu")
 	progress := pipe.HGetAll(ctx, ProgressKey)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, false, fmt.Errorf("pipeline: %w", err)
@@ -543,7 +535,6 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 		snap.Streams = append(snap.Streams, row)
 	}
-	studioNoted := false
 	for i, c := range roster {
 		row := ConsumerRow{Consumer: c, Load: "-"}
 		cells := []*int64{&row.Ready, &row.Working, &row.OK, &row.Fail}
@@ -552,15 +543,10 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			*cells[j], row.Unread[j] = n, err != nil
 		}
 		if got, err := cmds[i].beat.Result(); err == nil && len(got) == 4 {
+			// A friend's load is its own beat's too (#4233: friend beat
+			// measures the machine the friend's session runs on); the
+			// hardcoded bench:studio:beat fallback of 2026-09-25 is gone.
 			v, raw, ok := loadValue(pipeValue(got[3]), pipeValue(got[0]), pipeValue(got[2]))
-			if !ok && c.Kind == "friend" {
-				if got, err := studio.Result(); err == nil && len(got) == 3 {
-					v, raw, ok = loadValue(pipeValue(got[2]), pipeValue(got[0]), pipeValue(got[1]))
-				} else if err != nil && !errors.Is(err, redis.Nil) && !studioNoted {
-					studioNoted = true
-					snap.Errors = append(snap.Errors, FriendHostBeatKey+" not read (friend loads unknown): "+err.Error())
-				}
-			}
 			switch {
 			case ok && raw != "":
 				row.Load = raw

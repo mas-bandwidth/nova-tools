@@ -83,7 +83,7 @@ var landerClock land.Clock = land.WallClock{}
 
 func runLander(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("lander")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	repo := fs.String("repo", "", "")
 	batchName := fs.String("batch", "", "")

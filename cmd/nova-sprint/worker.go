@@ -72,7 +72,7 @@ func runWorkerPause(ctx context.Context, paused bool, args []string, out, errOut
 		verb = "worker pause"
 	}
 	fs := capacityFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	actor := new(string)
 	fs.StringVar(actor, "as", "", "")
 	fs.StringVar(actor, "actor", "", "")
@@ -111,7 +111,7 @@ func runWorkerPause(ctx context.Context, paused bool, args []string, out, errOut
 func runWorkerShow(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "worker show"
 	fs := capacityFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}

@@ -32,6 +32,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 )
 
 // DefaultAPI is the GitHub REST root the verb posts to.
@@ -80,7 +81,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, d Deps) 
 	pushTo := fs.String("push-to", "", "")
 	front := fs.Bool("front", false, "")
 	sprint := fs.String("sprint", "", "")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", seatcred.Addr(), "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, err.Error())
 	}

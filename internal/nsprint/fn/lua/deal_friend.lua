@@ -54,6 +54,14 @@ function DF.slots(f)
   return v
 end
 
+-- DF.ci is the CI legs running on the machine friend f's session runs on,
+-- as its beat counts them (friend:<f>:beat ci, nova-tools#4293: the Studio
+-- hosts friends and CI both); 0 when the beat carries none. Each holds a
+-- slot while it runs.
+function DF.ci(f)
+  return tonumber(redis.call('HGET', 'friend:' .. f .. ':beat', 'ci')) or 0
+end
+
 -- DF.ready checks the double link of one id that must be ready. It returns
 -- the stream and the score (the card's age), or nil and the refusal. Ready
 -- is the record's where (a record from before the where field: its state
@@ -105,7 +113,7 @@ local function deal_friend(keys, args)
     return { 'REFUSED', 'friend ' .. f .. ' has no slots' }
   end
   local fk = 'friend:' .. f .. ':cards:working'
-  local open = slots - redis.call('ZCARD', fk)
+  local open = slots - DF.ci(f) - redis.call('ZCARD', fk)
   if open < 0 then
     open = 0
   end
@@ -177,14 +185,14 @@ function DF.admits(who, g)
   return false
 end
 
--- DF.open is g's open slots for a moved card: its slots minus its working
--- and ready sets (a queue is never filled past its slots); nil when g has
--- no slots or is down.
+-- DF.open is g's open slots for a moved card: its slots minus the CI legs
+-- on its machine (DF.ci) minus its working and ready sets (a queue is
+-- never filled past its slots); nil when g has no slots or is down.
 function DF.open(g)
   if redis.call('EXISTS', 'friend:' .. g .. ':down') == 1 then return nil end
   local slots = DF.slots(g)
   if not slots then return nil end
-  return slots - redis.call('ZCARD', 'friend:' .. g .. ':cards:working') -
+  return slots - DF.ci(g) - redis.call('ZCARD', 'friend:' .. g .. ':cards:working') -
     redis.call('ZCARD', 'friend:' .. g .. ':cards:ready')
 end
 

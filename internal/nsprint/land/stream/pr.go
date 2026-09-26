@@ -30,8 +30,9 @@ import (
 // verb returns at once and a later run, after the webhook writes green,
 // merges. Three GitHub calls at most, and none of them a check-state read.
 
-// ErrNoToken is the typed refusal when no GitHub token is in the environment.
-var ErrNoToken = &Refusal{Why: "no GitHub token", Remedy: "export GH_TOKEN (or GITHUB_TOKEN) for the seat that lands"}
+// ErrNoToken is the typed refusal when no GitHub token is in the seat or the
+// environment (nova-tools#4330).
+var ErrNoToken = &Refusal{Why: "no GitHub token", Remedy: "name the seat's GitHub token env in its seats.tsv row (the seventh column) and pass --seat, or export GH_TOKEN (or GITHUB_TOKEN) for the seat that lands"}
 
 // LandPROptions is one land pr pass.
 type LandPROptions struct {

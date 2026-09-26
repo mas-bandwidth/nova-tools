@@ -291,6 +291,10 @@ type WrapperConfig struct {
 	Attempt int
 	Bench   string
 
+	// Yield steps this process down to yield.Nice before anything runs
+	// (nova-tools#4293); nil is the real setpriority (yieldToCI). A test
+	// gives its own; production never sets it.
+	Yield func() error
 	// Harness is the absolute path of the harness program, exec'd in the job
 	// dir; or, with no program, InProcess is the Go harness (run.go, #3681)
 	// called in this process with Store, the wrapper's own connection.
@@ -403,6 +407,17 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	}
 	if err := cfg.check(); err != nil {
 		return refuse(WrapperExitUsage, err.Error())
+	}
+	// CI over work (nova-tools#4293): this process and every process it
+	// starts (the harness program, or the in-process harness's runner) run
+	// at yield.Nice from here on. Before anything is claimed or written, so a
+	// wrapper that cannot yield refuses with nothing to undo.
+	yield := cfg.Yield
+	if yield == nil {
+		yield = yieldToCI
+	}
+	if err := yield(); err != nil {
+		return refuse(WrapperExitCouldNot, "yield to CI: "+err.Error())
 	}
 	now, after, tick := cfg.Now, cfg.After, cfg.Tick
 	if now == nil {

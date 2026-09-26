@@ -18,9 +18,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -220,7 +222,7 @@ func newLDFixture(t *testing.T) *ldFixture {
 	for _, f := range []string{"emma", "rowan", "stella"} {
 		c.SAdd(ctx, "friends", f)
 		c.HSet(ctx, "friend:"+f+":desired", "slots", 4, "paused", "0")
-		c.HSet(ctx, "friend:"+f+":beat", "host", "fixture")
+		c.HSet(ctx, "friend:"+f+":beat", "host", "fixture", "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
 	}
 	fx.forge = newLDForge(t)
 	fx.d = &reconcile.LandDuty{

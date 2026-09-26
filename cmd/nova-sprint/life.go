@@ -31,7 +31,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "friend",
-		Summary: "hello, bye, wake, row and roles for a friend; report a friend state, show friends, or run one ladder sweep; declare the wake registry from the fleet file; wake-health [--repair]",
+		Summary: "pull, done and beat: a friend works its own copies (#4233); hello, bye, wake, row and roles for a friend; report a friend state, show friends, or run one ladder sweep; declare the wake registry from the fleet file; wake-health [--repair]",
 		Run:     runFriend,
 	})
 	register(Verb{
@@ -48,9 +48,15 @@ func init() {
 
 func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "friend", "want hello, bye, wake, row, roles, report, show, sweep, down, up, declare or wake-health")
+		return refuse(errOut, "friend", "want pull, done, beat, hello, bye, wake, row, roles, report, show, sweep, down, up, declare or wake-health")
 	}
 	switch args[0] {
+	case "pull":
+		return runFriendPull(ctx, args[1:], out, errOut)
+	case "done":
+		return runFriendDone(ctx, args[1:], out, errOut)
+	case "beat":
+		return runFriendBeat(ctx, args[1:], out, errOut)
 	case "hello":
 		return runFriendHello(ctx, args[1:], out, errOut)
 	case "bye":
@@ -76,7 +82,7 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	case "wake-health":
 		return runFriendWakeHealth(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, wake, row, roles, report, show, sweep, down, up, declare or wake-health", args[0]))
+		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want pull, done, beat, hello, bye, wake, row, roles, report, show, sweep, down, up, declare or wake-health", args[0]))
 	}
 }
 
@@ -103,7 +109,7 @@ func runBench(ctx context.Context, args []string, out, errOut io.Writer) int {
 // then the local test endpoint. A real production host is never hardcoded.
 func lifeFlags(name string) (*flag.FlagSet, *string) {
 	fs := verbflag.New(name)
-	addr := fs.String("redis", "", "redis address (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
+	addr := fs.String("redis", redisDefault(), "redis address (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
 	return fs, addr
 }
 
@@ -261,7 +267,6 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	user := fs.String("user", "", "bench user")
 	load1 := fs.String("load1", "", "one minute load")
 	ssh := fs.String("ssh", "", "ssh endpoint")
-	probe := fs.String("probe", "", "probe endpoint")
 	launcher := fs.String("launcher", life.BatchLauncher, "launcher identity the beat names (preflight 7.4)")
 	why := fs.String("why", "", "why the bench is live")
 	session := fs.String("session", "", "fenced owner session identity")
@@ -306,7 +311,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 
 	req := life.BenchRequest{
 		Bench: *bench, Host: *host, User: *user, Load1: *load1, SSH: *ssh,
-		Probe: *probe, Launcher: *launcher, Why: *why, Session: *session,
+		Launcher: *launcher, Why: *why, Session: *session,
 		Live: splitLive(*live), Actor: "bench", Facts: life.MeasureBench(*root),
 		RowAt: time.Now(), NCPU: runtime.NumCPU(),
 	}
@@ -316,6 +321,8 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 		req.Load1 = life.Load1Now()
 	}
 	req.CPU = life.CPUBusyNow()
+	req.CI = life.CILegsNow()
+	req.PS = life.ProcsNow()
 	res, err := life.BenchBeat(ctx, st, req)
 	if err != nil {
 		return refuse(errOut, "bench beat", err.Error())
@@ -369,6 +376,8 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 				req.Load1 = life.Load1Now()
 			}
 			req.CPU = life.CPUBusyNow()
+			req.CI = life.CILegsNow()
+			req.PS = life.ProcsNow()
 			res, err := life.BenchBeat(ctx, st, req)
 			if beats++; err == nil && res.Accepted && beats%life.WakeRepairEvery == 0 {
 				benchWakeRepair(ctx, st, wakeOn, *session, errOut)
@@ -591,8 +600,12 @@ type presenceSteps struct {
 
 func livePresenceSteps(st *store.Store, p life.Presence, sprint string) presenceSteps {
 	return presenceSteps{
-		now:  time.Now,
-		beat: func(ctx context.Context) error { return life.Beat(ctx, st, p) },
+		now: time.Now,
+		beat: func(ctx context.Context) error {
+			q := p
+			q.CI = life.CILegsNow() // the CI legs on this machine, each a slot (nova-tools#4293)
+			return life.Beat(ctx, st, q)
+		},
 		// The process beat as a lifecycle event (#3153). p.Friend is the
 		// initiator: hello refused any --as != NOVA_FRIEND.
 		event: func(ctx context.Context, at time.Time) error {

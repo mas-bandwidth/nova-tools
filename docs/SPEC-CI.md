@@ -2211,6 +2211,39 @@ rest; a wrapper around any other nova tool (`nova-tokens`, `nova-decide`,
 `nova-redis serve`) is not flagged until that tool takes `--seat`; and only
 `docs/` Markdown is read, so a README elsewhere is not.
 
+### `seatredis` — no nova-sprint verb refuses an empty `--redis` while a seat is selected
+
+**The rule.** Every `--redis` flag in `cmd/nova-sprint` and `internal/nsprint`
+(and `--store`, nova-sprint's `note`) defaults to a seat-aware expression:
+`redisDefault(...)`, `redisOr(...)`, `redisDefaultFrom(...)`,
+`rawAddrDefault(...)` or, outside cmd/nova-sprint, `seatcred.Addr()`. Each of
+these is the verb's own environment default first, then the selected seat
+row's address from seats.tsv. A `--redis` read by hand (a `["redis"]` index or
+`flagValues(..., "redis")`) sits in a function that calls `redisOr`.
+**The hurt.** #4357 gave nova-sprint `--seat coordinator` and a seats.tsv row
+naming its Redis, but the cold read found that `table`, `census`, `digest` and
+`fn load` declared `--redis` with no default and refused the empty address
+before `store.Open` could fall back to the seat. So a session still typed
+`--redis` on every line, doing by hand what the retired wrapper script did
+(nova-tools#4330).
+**The test.** `TestNoVerbRefusesAnEmptyRedisUnderASeat`, with its control
+`TestSeatRedisRuleSeesEachShape` (`internal/ci/seatredis_class_test.go`). It
+reads the shared AST and fails when it finds fewer than 100 flags, so it cannot
+pass by matching nothing. The control pins `""`, `os.Getenv(...)`, a
+`StringVar` with `""`, a bare `flags["redis"]` and nova-sprint's `--store` as
+red, and the seat-aware spellings as green. The functional
+`TestSeatRowDrivesVerbsWithNoWrapper` (`cmd/nova-sprint`) runs `table --once`,
+`census`, `digest`, `fn load` and `fn check` on the seat row with no `--redis`.
+**Its allowlist.** None.
+**Its remedy line.** `default the flag to redisDefault() (or
+redisDefault("ENV")), wrap a hand-parsed one in redisOr, or use
+seatcred.Addr() outside cmd/nova-sprint`.
+**Its narrowings.** Only `String`, `StringVar` and the two hand-parse shapes
+are read. A flag named anything other than `redis` (or nova-sprint's `store`)
+is not held, and neither are other tools (`nova-work`, `nova-tokens`,
+`nova-post`, `nova-merge`). A hand-parsed read counts as covered when its
+function calls `redisOr` anywhere, not necessarily on that value.
+
 ### Tests this spec demands
 
 This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.
@@ -2256,6 +2289,8 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 40. `TestTaskCardsHaveOneWriter` — no non-test Go file under `cmd/` or `internal/` writes a task card's sets or record (`ws:<stream>:<where>`, `friend:<f>:cards:<where>`, the friend-queue idx sets, `task:<id>`) with a direct Redis call; every move is one FCALL of the one writer, `ns_tcard_move` in `internal/nsprint/fn/lua/02_card_move.lua` (#3778, Glenn 2026-09-25: "a card can only ever be in no set, or one of these sets"; the 07:46 table read 143/143 left after a night that landed 27 PRs because four writers kept the sets). Fixtures that seed a throwaway store (a `*fixture*.go` file, `internal/nsprint/ws/wstest`) are the only exceptions; the remedy is `internal/nsprint/taskcard`. Its Lua twin is `TestTaskCardOneWriter` in `internal/nsprint/fn`.
 41. `TestTableSetsHaveOneWriter` / `TestTableSetsRuleCatchesAnInjectedWriter` — nothing but the one move file, `internal/nsprint/fn/lua/02_card_move.lua`, writes a set behind the three tables: `ws:<stream>:<where>` (the stream table's primaries), `bench:<b>:cards:<col>` and `friend:<f>:cards:<col>` (the host and friend tables' copies), and the bench lease ledgers `bench:<b>:living|starting` being folded into `bench:<b>:cards:working` (#3929, the table moves; Glenn 2026-09-25: "it's YOUR JOB to make sure that these links are always valid"). **The hurt:** the table printed counts no card record could account for, because several files each kept their own copy of a set, so a move in one left a stale member in another. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (a ZADD, ZREM, SADD, SREM, SMOVE, pop, range removal, store, DEL, UNLINK or RENAME of one of those keys, directly or through a local bound to one) and every non-test Go file under `cmd/` and `internal/` (the go-redis write methods and raw command lists on the same keys). **The allowlist:** fixtures (`*fixture*.go`) seed a throwaway store; the legacy ledger writers were a ratchet (`legacyLedgerWriters` in `internal/ci/tablemoves_class_test.go`), now empty since the fold landed (#3998): any write of an old ledger fails. **The remedy line:** `a second writer of a table set (the one writer is 02_card_move.lua; verbs call it: nova-sprint card deal|work|end|land|cancel): <file>:<line>`, or the ratchet's `lower legacyLedgerWriters[...]`. **The control:** `TestTableSetsRuleCatchesAnInjectedWriter` feeds the scanner Lua and Go writers of the table sets and the ledgers and wants each found, and wants the move file, a fixture and a ZCARD read left alone.
 42. `TestNoOldLeaseLedgerLeft` — nothing reads or writes the old lease ledgers `bench:<b>:living|starting` and `friend:<f>:living|starting` any more, in the Lua library or in any non-test Go file: they fold into `<consumer>:cards:working`, the one lease ledger, and the width in use is its ZCARD (#3998, #3877's other half). **The hurt:** a bench or friend kept two ledgers beside its working set, so the width a table printed, the width a take was refused at and the width the dealer reserved against could each read a different set. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (code before a `--` comment) and every non-test Go file under `cmd/` and `internal/`, for a string spelling of a bench or friend key ending `:living` or `:starting`. **No allowlist:** fixtures seed the consumer sets. **The remedy line:** `an old lease ledger key (folded into <consumer>:cards:working, #3998): <file>:<line>: <line>`; hold and drop a friend-queue lease with `NS.moves.hold` / `NS.moves.drop` (02_card_move.lua) and read width as ZCARD `<consumer>:cards:working`. **The control:** the test feeds the pattern a Lua ZCARD of a friend's `:starting`, a Go ZCard of a bench's `:living` and a fixture ZADD of a friend's `:living` and wants each found, and wants `bench:<b>:cards:working` left alone.
+43. `TestCopiesRunNiced` — every path that execs a copy's harness, or a coordinator child's local test run, steps its OWN process down to nice 15 (`internal/yield`, `Nice = 15`: `setpriority(PRIO_PROCESS, 0, n)` on darwin, where a nice belongs to the process, and on Linux, where a nice belongs to a THREAD and a child forked from an un-niced thread inherits 0, `setpriority(PRIO_PROCESS, tid, n)` over every thread in `/proc/self/task`, repeated until a pass sets none — measured on hetzner 2026-09-26: the one-thread form left 31 of 32 children of a wrapper at nice 0) BEFORE the exec: `RunWrapper` (`internal/nsprint/card/wrapper.go`, before `proc.start()`), `Run` (`internal/nsprint/card/run.go`, before `cmd.Start()`) and `cmdLocal` (`cmd/nova-ci/local.go`, before its first `localCapture(`; its `nice -n` is pinned to `yield.Nice`); the card paths default their `Yield` seam to the package's `yieldToCI` (`yield = yieldToCI`, assigned once in `nice.go` to `yield.ToCI`), and no production caller sets a `Yield` of its own (nova-tools#4293, Glenn 2026-09-26 ~12:00 PM ET: "CI over work is a permanent setting. It's a GOOD idea. because work creates more CI, so without this, it is unstable"). **The hurt:** the morning of 2026-09-26, with slots raised to hulk 24, space 12 and vision 24, one-minute load per core reached 5.0, 4.1 and 3.8 while the PR CI shards ran on the same machines and the darwin shard on the Studio reached 1m53s against the two-minute cap; copies at nice 0 shared the cores evenly with the legs, so more work meant slower CI meant more work waiting. **The sweep:** the three named exec paths, read as text: the yield call's index in the function body against the exec call's. **No allowlist:** a new worker kind gets its nice by calling `yield.ToCI` before its exec and joining the list. **The remedy line:** `<file> <func>: no <yield> call: a copy or a local test run must yield to CI before it execs`, or `<yield> stands after <exec>: a yield after the exec yields nothing`, or `production may set the wrapper's yield only in nice.go, to yield.ToCI`, or `nice_linux.go: the one-thread form setpriority(PRIO_PROCESS, 0, n) nices the calling thread only`. **The control:** `internal/nsprint/card/nice_test.go` gives the wrapper a recording `Yield` and wants it called once, before the ledger's first read, and wants a failing one refused with `yield to CI: ...`; `internal/yield/yield_test.go` reads the process's own priority back after `ToCI`; `internal/yield/child_test.go` starts sixteen children from fresh goroutines after `ToCI` and wants each to read its own nice as 15 (the one-thread form fails it: 15 of 16 at 0 on hetzner).
+44. `TestSlotsShrinkByCILegs` — no slot computation, a bench's or a friend's, ignores the CI legs running on the machine: the bench beat and the friend beat write the count measured there as `ci` every beat (`ns_bench_beat` args[21] and `ns_friend_beat` args[5] in `presence.lua`; `cmd/nova-sprint/life.go` measures it with `life.CILegsNow`, one `Runner.Worker` process per running job; a friend is not free of legs, the Studio hosts friends and CI both), and every slot subtraction in Go and Lua under `internal/nsprint` and `cmd/nova-sprint` — `slots - ...`, or the desired hash's slots read as a number and subtracted from, the form `ns_card_deal`'s in-Redis re-check used (`deal.lua`) — names `ci`, `CI` or `TM.ci_legs(`: `deal.Bench.Free`, `taskcard.FreeSlots` (the deal pass and the progress duty's room), `ns_cm_work`'s fill and `TM.room`'s read route in `02_card_move.lua`, `ns_card_deal`'s re-check, `DF.take` and `DF.open` in `deal_friend.lua`, `task.WidthFrom`, the friend ladder's underfull, and `preflight`'s fleet rows (nova-tools#4293: "a bench's free slots = declared slots minus the CI legs running on it"). **The hurt:** the same morning: the deal filled every bench to its declared slots whether or not a CI leg was already on it, so a leg landed beside a full bench and the copies took its cores. **The sweep:** every non-test `.go` and `.lua` under the two trees, code lines only (a `//` or `--` line is not a computation), for `[sS]lots\s*-\s*<name or paren>` or `desired ... ) - <name or paren>`; at least eight such lines must be found, or one has moved out of reach. **No allowlist:** a friend's slots shrink by its own beat's `ci` like a bench's. **The remedy line:** `<file>:<line>: "<line>" computes free slots without the CI legs running on the bench (nova-tools#4293)`, or `the beat must write the CI leg count as ci (args[21]) every beat`. **The control:** `TestBenchFreeShrinksByCILegs` (deal), `TestFreeSlotsShrinkByCILegs` (taskcard) and `TestCountCILegsCountsRunnerWorkers` (life) pin the arithmetic and the count; `TestDealAndFillTakeCILegsOffABenchsSlots` and `TestBenchBeatCarriesCILegs` (`-tags functional`) prove it in Redis.
 
 ### `cap` — every job two minutes, permanently, on every platform
 
@@ -2323,6 +2358,43 @@ continuation is not seen. A package list spelled out by hand, however long, is
 not read, nor is one tool's own subtree (`./cmd/nova-ci/...`), and neither are
 the Makefile's `test-full` and `test-slow` targets, which CI's whole-tree runs
 call.
+### `ci-receipt` — ci-ok reports every run to Redis from the runner
+
+**The rule.** The `ci-ok` job of `.github/workflows/ci.yml` has exactly one
+step that runs `nova-sprint ci github --from-runner`, under `if: always()`,
+with `set -euo pipefail` and no `|| true` or `continue-on-error`, and that
+step passes every field of the record from the run's own context — `--repo`,
+`--sha` (the PR head, else `github.sha`), `--run-id`, `--event`,
+`--head-branch`, `--base-branch`, `--pr`, `--workflow`, `--conclusion`
+(`job.status`) — plus one `--job <name>=${{ needs.<name>.result }}` for every
+job in ci-ok's `needs` and none it does not need, as the bench seat
+(`nova-secrets exec … --require NOVA_REDIS_BENCH_PASSWORD`,
+`NOVA_SPRINT_REDIS_USER=bench`, `--redis "$NOVA_CARD_REDIS"`), never
+`curl`, `gh api` or `api.github.com`, and with the bench's installed
+nova-sprint as the writer (`$HOME/.local/bin/nova-sprint`); `go run` of the
+tree under test is the one bootstrap, taken only when the installed binary
+refuses the verb's flag, and announced as `BOOTSTRAP:`.
+**The hurt.** Measured 2026-09-26 12:38 PM ET: `ev:github` XLEN 0 and zero
+`ci:*:gh` keys, so `nova-sprint land pr` (#4326) could only print WAITING.
+The signed webhook receiver sits behind a tailscale funnel kept off by
+design, and no nova-sprint path may poll GitHub for a check state
+(`TestNoPollingPathsRemain`). The runners are ours and run as the bench
+seat, so the run reports itself; a receipt that silently did not happen
+would leave a landing waiting forever, which is why the step must fail the
+job. And never build the thing with itself: a PR that changes the writer
+must not write the check that lands it, which is why the installed binary
+writes and the tree only bootstraps.
+**The test.** `TestCIOKReportsEveryRunToRedisFromTheRunner`
+(`internal/ci/ciok_receipt_class_test.go`), reading the job as YAML.
+**Its allowlist.** None: one step, every field, no exceptions.
+**Its remedy line.** Each red names the flag, the expression or the guard
+the step is missing, e.g. `the receipt step does not pass --job
+"lisp=${{ needs.lisp.result }}"`; the fix is the step, never the test.
+**Its narrowings.** It reads the step's text: an expression that names the
+right context but is quoted differently passes as long as the flag and the
+expression are adjacent, and it does not run the step, so a bench with no
+`card.env` is found by the run itself (the step's own refusal names the
+rowan-tools bench play), not here.
 
 ### `silent` — no silent failure on the copy model's live path
 
@@ -2371,38 +2443,64 @@ The go-redis pipeline shape has its own remedy rather than a rule:
 `internal/nsprint/pipeerr.Exec` walks every command of a pipeline whose fields
 may be absent and returns the first error that is not `redis.Nil`.
 
-### `classtests` — no merge deletes a class test file dev had
+### `classtests` — no merge deletes a test file or a list undeclared
 
-**The rule.** Every `internal/ci/*_class_test.go` is a row of
-`internal/ci/testdata/class-tests.txt`, and every row's file is in the tree.
-The list only grows: a new class test adds its row, and a row is never removed
-by an update. A class test is a rule this repository keeps by structure; a
-tree that lacks the file lacks the rule, and nothing else notices.
-**The hurt.** 2026-09-26: #4346 (`rowan/functional-tag`) was built on a base
-older than #4344 and its squash put a tree on dev that lacked the four files
-#4344 had added an hour before — the `silent` class test, its allowlist and
-two of its controls — and undid #4344's forty live-path fixes with them. Every
-check on the merge was green, because a rule that is not there cannot fail;
-the loss was found by a reader, not by CI.
-**The test.** `TestNoMergeDeletesAClassTest`
-(`internal/ci/classtests_class_test.go`): every row's file must be in the
-tree; a file the tree lacks is a red run naming the commit that deleted it
-(`git log --first-parent -m --diff-filter=D -- <file>` from the checkout), and
-the list is not handed to the helper while a row is missing, so no update can
-drop the row instead of the finding. `TestClassTestFileReadsThePath` pins the
-shape it reads (this package's `*_class_test.go` only).
-**Its allowlist.** `internal/ci/testdata/class-tests.txt`, the list itself:
-grow-only, no ceiling, `NOVA_CI_UPDATE=1` appends a new class test's row.
-**Its remedy lines.** `<list> lists <file> and the tree lacks it: deleted by
-<sha> <subject>. A merge never deletes a class test; restore the file from the
-commit before that one`; `<file> is a class test <list> does not list; add its
-row (NOVA_CI_UPDATE=1 does; the list only grows)`.
-**Its narrowings.** It reads `internal/ci` only, by file name; a class test kept
-elsewhere (`internal/nsprint/land/guard`) is not held here, and a class test
-emptied of its `Test…` functions but left on disk is `internal/docs`' index
-test's finding, not this one's. On a shallow checkout the deleting commit may
-be outside the fetched history; the finding says so and the file is still
-missing.
+**The rule.** What a change takes away from its first parent's tree is read
+out of git and compared with what the same change declares. Every `_test.go`
+and every list under `internal/ci/testdata` that HEAD's first parent had and
+HEAD lacks (renames excluded) is a red run unless a `<path> <why>` row for it
+was ADDED to `internal/ci/testdata/deleted-tests.txt` in the same change; a
+row that names no deletion of the change is red too. On a pull request the
+checkout is the merge ref and the first parent is dev's tip, so the set is
+exactly what merging the change deletes from dev; in the merge queue the
+same; on dev, a squash's own effect.
+**The hurt.** 2026-09-26: #4346 (`rowan/functional-tag`) was rebased onto
+#4344 with a tree that lacked the four files #4344 had added an hour before
+— the `silent` class test, its allowlist and two of its controls — and undid
+#4344's forty live-path fixes with them. Every check on the merge was green,
+because a rule that is not there cannot fail; the loss was found by a
+reader, not by CI. The first repair (#4381) kept a list of class tests in
+the tree, and a squash overwrites the tree, list and all: deleting the file
+and its row together stayed green. Hence git, not the tree, as the base of
+the comparison, and a declaration that only counts when the same change
+adds it — a stale tree's old rows declare nothing.
+**The test.** `TestNoMergeDeletesATestFileUndeclared`
+(`internal/ci/classtests_class_test.go`): HEAD's first parent from the raw
+commit object (a shallow checkout grafts parents away in traversal and keeps
+them in the object), `git diff -M --diff-filter=D --name-only <parent> HEAD`
+for the deletions, `git diff <parent> HEAD -- deleted-tests.txt` for the
+rows this change adds. `TestMergeRuleReadsTheDeletionOutOfGit` proves it over
+a repository it builds: the stale-base squash shape red for the test file and
+the list and silent for a source file, a rename not a deletion, a same-change
+row green, a row naming no deletion red, an old row declaring nothing.
+`TestGuardedByMergeRuleReadsThePath` and
+`TestDeclaredRowsAddedReadsOnlyTheAddedRows` pin the two readers. Every
+workflow checks out with `fetch-depth: 2` so the first parent is in every
+checkout;
+a checkout without it is a red run naming the fetch depth, never a pass.
+**Its allowlist.** `internal/ci/testdata/deleted-tests.txt`, a log: a row
+is a declaration, not an exception, and it counts only in the change that
+adds it, so old rows may be trimmed and trimming weakens nothing.
+**Its remedy lines.** `<sha> (<subject>) deletes <file>, which its first
+parent <sha> had, and no row of internal/ci/testdata/deleted-tests.txt added
+in the same change declares it: restore the file (git checkout <parent> --
+<file>), or, if the deletion is meant, add the row <file> <why> to
+internal/ci/testdata/deleted-tests.txt in this change`; `<sha> adds the row
+<path> ..., but the change deletes no such file`.
+**Its narrowings.** What it catches: a file the merge removes from dev's
+tree with nothing in the change saying so — the #4346 shape, whether the
+list of rules went with it or not. What it does not catch: a file emptied of
+its tests but left on disk (`internal/docs`' index test holds a `Test…` name
+SPEC-CI names; a control with no SPEC entry, nothing does); a deletion
+declared with a row, however wrong the why (a reader's eye); a squash that
+reverts live code, docs or a Lua function without deleting a guarded file
+(the `silent` rule holds its own live path, nothing holds the rest); a
+rename git's default similarity (50%) does not see, which reads as a
+deletion and wants a row; a list under a subdirectory of `testdata`, or a
+fixture that is not `_test.go`; and one merge only — HEAD against its first
+parent, never the merges before it, so a deletion that landed before this
+rule is not found by it. A local run reads the last commit on the branch,
+which is the developer's own; a root commit is a red run, not a pass.
 
 ## Parked class tests
 

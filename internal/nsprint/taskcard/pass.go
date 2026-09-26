@@ -35,14 +35,16 @@ import (
 // Live is how recent a consumer's beat must be for it to be dealt.
 const Live = 90 * time.Second
 
-// BeatKey is the hash whose at field is the consumer's beat: the bench's
-// own beat (bench:<b>:beat) or the friend's row (friend:<f>).
-func (c Consumer) BeatKey() string {
-	if c.Kind == "bench" {
-		return c.String() + ":beat"
-	}
-	return c.String()
-}
+// BeatKey is the hash whose at field is the consumer's beat, <kind>:<name>:beat
+// for a bench and a friend alike (#4233: bench beat and friend beat each
+// write their own; the friend:<f> row is ns_friend_row's and is never a
+// liveness source).
+func (c Consumer) BeatKey() string { return c.String() + ":beat" }
+
+// MachineBeatKey is the hash the consumer's own beat writes about the
+// machine it runs on: <consumer>:beat for a bench and a friend alike (host,
+// load1, ncpu, cpu, and ci, the CI legs running there, nova-tools#4293).
+func (c Consumer) MachineBeatKey() string { return c.String() + ":beat" }
 
 // BeatAt is beatAt for another duty that measures room the way the deal
 // pass does (the progress duty, #4319).
@@ -87,8 +89,20 @@ type passRow struct {
 	k            Consumer
 	free, need   int
 	ready, slots int64
+	ci           int64 // CI legs on the bench, from its beat (nova-tools#4293)
 	down, paused bool
 	live         bool
+}
+
+// FreeSlots is a consumer's free slots: its declared slots minus the CI
+// legs running on it minus the copies working, never negative
+// (nova-tools#4293: "a bench's free slots = declared slots minus the CI legs
+// running on it"). ns_cm_work's fill computes the same in Redis.
+func FreeSlots(slots, working, ci int64) int {
+	if f := slots - ci - working; f > 0 {
+		return int(f)
+	}
+	return 0
 }
 
 // DealPass is one pass of the deal duty at now.
@@ -127,7 +141,7 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 		desired        *redis.SliceCmd
 		ready, working *redis.IntCmd
 		down           *redis.IntCmd
-		at             *redis.StringCmd
+		at, ci         *redis.StringCmd
 	}
 	cs := make([]cmds, len(roster))
 	for i, k := range roster {
@@ -135,9 +149,9 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 			desired: pipe.HMGet(ctx, k.DesiredKey(), "slots", "paused"),
 			ready:   pipe.ZCard(ctx, k.KeyAt(epoch, "ready")),
 			working: pipe.ZCard(ctx, k.KeyAt(epoch, "working")),
-
-			down: pipe.Exists(ctx, k.DownKey()),
-			at:   pipe.HGet(ctx, k.BeatKey(), "at"),
+			down:    pipe.Exists(ctx, k.DownKey()),
+			at:      pipe.HGet(ctx, k.BeatKey(), "at"),
+			ci:      pipe.HGet(ctx, k.MachineBeatKey(), "ci"),
 		}
 	}
 	if err := pipeerr.Exec(ctx, pipe); err != nil {
@@ -156,7 +170,10 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 		t, ok := beatAt(cs[i].at.Val())
 		r := passRow{k: k, slots: slots, ready: cs[i].ready.Val(), down: cs[i].down.Val() > 0,
 			paused: fmt.Sprint(valueAt(d, 1)) == "1", live: ok && now.Sub(t) < Live && t.Sub(now) < Live}
-		r.free = int(slots - cs[i].working.Val())
+		// The CI legs on the consumer's machine (a friend's too: the Studio
+		// hosts friends and CI both) each hold a slot while they run.
+		r.ci, _ = strconv.ParseInt(cs[i].ci.Val(), 10, 64)
+		r.free = FreeSlots(slots, cs[i].working.Val(), r.ci)
 		r.need = r.free - int(r.ready)
 		if r.live && !r.down && !r.paused && r.free > 0 {
 			rows = append(rows, r)
@@ -186,7 +203,7 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 		// nothing (the first copy-model quack, 2026-09-25 10:41 PM ET: copy
 		// worked "by reconciler why work", no process on the bench).
 		if dealt > 0 {
-			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s dealt=%d free=%d", r.k, dealt, r.free))
+			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s dealt=%d free=%d ci=%d", r.k, dealt, r.free, r.ci))
 		}
 	}
 	return res, nil

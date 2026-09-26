@@ -39,7 +39,7 @@ func seedHealthy(t *testing.T, c *redis.Client) {
 	pipe.SAdd(ctx, "benches", "m1")
 	pipe.HSet(ctx, "bench:m1:desired", "role", "fleet", "legs", "go")
 	pipe.HSet(ctx, "bench:m1:beat", "at", at)
-	pipe.XAdd(ctx, &redis.XAddArgs{Stream: "ev:github", ID: at + "-0", Values: []string{"kind", "ping"}})
+	pipe.XAdd(ctx, &redis.XAddArgs{Stream: "ev:github", ID: at + "-0", Values: []string{"kind", "ping", "sender", "glenn"}})
 	pipe.XGroupCreate(ctx, "ev:github", "ci-github", "$")
 	pipe.SAdd(ctx, "sprints", "s1", "old")
 	pipe.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: "s1"})
@@ -93,7 +93,8 @@ func TestDoctorGreenStoreIsTwoTrips(t *testing.T) {
 	if !strings.HasPrefix(lines[8], "DOCTOR OK checks=8 trips=2 ms=") {
 		t.Fatalf("summary %q", lines[8])
 	}
-	for _, want := range []string{"DOCTOR sprint OK sprint=s1 epoch=7", "DOCTOR runners OK bench=m1 role=fleet legs=go beat=",
+	for _, want := range []string{"DOCTOR sprint OK sprint=s1 epoch=7", "DOCTOR ingest OK stream=ev:github last=",
+		" sender=glenn source=hook group=ci-github lag=0 pending=0\n", "DOCTOR runners OK bench=m1 role=fleet legs=go beat=",
 		"DOCTOR version OK have=v0.16.0-dev.c839379e tip=c839379e4eab", "DOCTOR seat OK seat=none user=default"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in\n%s", want, out)
@@ -119,9 +120,9 @@ func TestDoctorGreenStoreIsTwoTrips(t *testing.T) {
 		`DOCTOR fn FIX MISSING want=`,
 		`remedy="NOVA_SPRINT_REDIS_USER=admin NOVA_SPRINT_REDIS_PASSWORD_ENV=NS_ADMIN nova-sprint fn deploy --redis ` + addr + `"`,
 		`DOCTOR pitstop FIX sprint=s1 by=glenn`,
-		`remedy="nova-sprint pitstop clear --sprint s1 --by <you> --redis ` + addr + `"`,
-		`DOCTOR ingest FIX stream=ev:github last=0s group=ci-github lag=1`,
-		`DOCTOR sprint FIX open=2 sprints=s1,s2 remedy="nova-sprint sprint close --sprint s2 --redis ` + addr + `"`,
+		`remedy="nova-sprint pitstop clear --sprint s1 --by m1 --redis ` + addr + `"`,
+		`DOCTOR ingest FIX stream=ev:github last=0s sender=- source=none group=ci-github lag=1`,
+		`DOCTOR sprint FIX open=2 sprints=s1,s2 why="one active sprint, many streams: close the other" remedy="nova-sprint sprint close --sprint s2 --redis ` + addr + `"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in\n%s", want, out)
@@ -155,7 +156,7 @@ func TestDoctorSeatOnTheFleetShape(t *testing.T) {
 	}
 
 	code, out, errOut = runDoctorWith(t, env, nil, "--redis", addr, "--bench", "m1")
-	if code != 1 || !strings.Contains(out, `DOCTOR seat FIX seat=none err="NOAUTH`) || !strings.Contains(out, `held=studio remedy="export NOVA_SPRINT_SEAT=studio"`) ||
+	if code != 1 || !strings.Contains(out, `DOCTOR seat FIX seat=none err="NOAUTH`) || !strings.Contains(out, `held=studio why="the store wants a login and no seat is named" remedy="export NOVA_SPRINT_SEAT=studio"`) ||
 		!strings.Contains(out, "DOCTOR redis SKIP needs=seat\n") || !strings.Contains(out, "DOCTOR FIX fixes=1 skipped=7 checks=8") {
 		t.Fatalf("no seat: exit %d stderr %q\n%s", code, errOut, out)
 	}

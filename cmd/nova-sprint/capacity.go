@@ -68,7 +68,7 @@ func capacityFlags(name string) *flag.FlagSet {
 
 func runCapacityDesired(ctx context.Context, kind string, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity " + kind)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	machine := fs.String("machine", "", "")
 	actor := new(string)
 	fs.StringVar(actor, "as", "", "")
@@ -200,7 +200,7 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 
 func runCapacityMachine(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity machine")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	cores := fs.Int("cores", 0, "")
 	memGB := fs.Int("mem-gb", 0, "")
 	cpuMilli := fs.Int("cpu-milli", 0, "")
@@ -241,7 +241,7 @@ func runCapacityMachine(ctx context.Context, args []string, out, errOut io.Write
 
 func runCapacityBudget(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity budget")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	actor := new(string)
 	fs.StringVar(actor, "as", "", "")
 	fs.StringVar(actor, "actor", "", "")
@@ -279,7 +279,7 @@ func runCapacityBudget(ctx context.Context, args []string, out, errOut io.Writer
 
 func runCapacityTake(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity take")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	machine := fs.String("machine", "", "")
 	consumer := fs.String("consumer", "", "")
 	cpuMilli := fs.Int("cpu-milli", 0, "")
@@ -331,7 +331,7 @@ func runCapacityTake(ctx context.Context, args []string, out, errOut io.Writer) 
 
 func runCapacityGive(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity give")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	machine := fs.String("machine", "", "")
 	consumer := fs.String("consumer", "", "")
 	pgid := fs.Int("pgid", 0, "")
@@ -370,7 +370,7 @@ func runCapacityGive(ctx context.Context, args []string, out, errOut io.Writer) 
 
 func runCapacityRenew(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity renew")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	machine := fs.String("machine", "", "")
 	consumer := fs.String("consumer", "", "")
 	pgid := fs.Int("pgid", 0, "")
@@ -398,7 +398,7 @@ func runCapacityRenew(ctx context.Context, args []string, out, errOut io.Writer)
 
 func runCapacityReap(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity reap")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	machine := fs.String("machine", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity reap", err.Error())
@@ -426,7 +426,7 @@ func runCapacityReap(ctx context.Context, args []string, out, errOut io.Writer) 
 
 func runCapacityHook(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("capacity hook")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	machine := fs.String("machine", "", "")
 	consumer := fs.String("consumer", "", "")
 	cpuMilli := fs.Int("cpu-milli", 0, "")

@@ -55,7 +55,7 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 	}
 	verb := "sprint " + sub
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	name := fs.String("sprint", "", "")
 	from := fs.String("from", "", "")
 	nowUnix := fs.Int64("now", 0, "")
@@ -406,7 +406,7 @@ func runSprintOpen(ctx context.Context, st *store.Store, name, from string, plan
 func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "sprint clear"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	why := fs.String("why", "", "")
 	by := fs.String("by", "", "")
 	force := fs.Bool("force", false, "")

@@ -76,9 +76,9 @@ func TestProgressStepIdleWhenNothingCanBePushed(t *testing.T) {
 		s    reconcile.Sample
 		room bool
 	}{
-		"nothing ready":  {reconcile.Sample{Stream: "s", Working: 3}, true},
-		"no worker room": {reconcile.Sample{Stream: "s", Ready: 3}, false},
-		"held by a stop": {reconcile.Sample{Stream: "s", Ready: 3, Held: true}, true},
+		"nothing in play": {reconcile.Sample{Stream: "s", Review: 3}, true},
+		"no worker room":  {reconcile.Sample{Stream: "s", Ready: 3}, false},
+		"held by a stop":  {reconcile.Sample{Stream: "s", Ready: 3, Working: 1, Held: true}, true},
 	} {
 		st := reconcile.Step(blocked, c.s, c.room, t0.Add(2*window), window)
 		if st.Status != reconcile.StatusIdle || st.BlockedSince != 0 || st.NeedsAsk() {
@@ -89,6 +89,46 @@ func TestProgressStepIdleWhenNothingCanBePushed(t *testing.T) {
 	st := reconcile.Step(blocked, reconcile.Sample{Stream: "s", Landed: 3}, true, t0.Add(2*window), window)
 	if st.Status != reconcile.StatusIdle || st.Left != 0 {
 		t.Fatalf("all landed: %+v", st)
+	}
+}
+
+// The cold read of #4361, item 1: a card that churns working -> ready ->
+// working with no fall kept the stream idle (nothing ready half the time,
+// no room the other half), so it never stalled. Working is in play: the
+// blocked clock runs through the churn and the stream stalls at the window,
+// the samples 10 s apart on the injected clock.
+func TestProgressChurnWithNoFallStallsWithinTheWindow(t *testing.T) {
+	t.Parallel()
+	working := reconcile.Sample{Stream: "s", Working: 1, RetriesHour: 3}
+	ready := reconcile.Sample{Stream: "s", Ready: 1, RetriesHour: 3}
+	var st reconcile.State
+	var stalledAt time.Duration
+	for at := time.Duration(0); at <= window; at += 10 * time.Second {
+		s, room := working, false // the one worker's slot is the churning card's
+		if (at/(10*time.Second))%2 == 1 {
+			s, room = ready, true // back in ready: the slot is free again
+		}
+		st = reconcile.Step(st, s, room, t0.Add(at), window)
+		if st.Status == reconcile.StatusIdle {
+			t.Fatalf("churn read as idle at %s: %+v", at, st)
+		}
+		if st.Status == reconcile.StatusStalled && stalledAt == 0 {
+			stalledAt = at
+		}
+	}
+	if stalledAt != window || !st.NeedsAsk() || st.Blocked(t0.Add(window)) != window {
+		t.Fatalf("stalled at %s, want %s: %+v", stalledAt, window, st)
+	}
+	// Every card working with no room and no fall: in play, stalls too.
+	all := reconcile.Step(reconcile.State{}, reconcile.Sample{Stream: "w", Working: 4}, false, t0, window)
+	all = reconcile.Step(all, reconcile.Sample{Stream: "w", Working: 4}, false, t0.Add(window), window)
+	if all.Status != reconcile.StatusStalled {
+		t.Fatalf("all working, no fall: %+v", all)
+	}
+	// A fall still resets the clock mid-churn.
+	st = reconcile.Step(st, reconcile.Sample{Stream: "s"}, true, t0.Add(window+10*time.Second), window)
+	if st.BlockedSince != 0 || st.Status != reconcile.StatusIdle {
+		t.Fatalf("the card landed: %+v", st)
 	}
 }
 

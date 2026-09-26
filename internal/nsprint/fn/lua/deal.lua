@@ -184,8 +184,10 @@ local function card_deal(keys, args)
     return { 'NONE', 'paused' }
   end
   -- the bench's width in use is its one working set (#3998): its dealt,
-  -- launched and running sprint cards and its working copies
-  local free = (tonumber(desired[1]) or 0) - NS.moves.held('bench:' .. bench)
+  -- launched and running sprint cards and its working copies; the CI legs
+  -- its beat counts (ci, nova-tools#4293) hold a slot each while they run
+  local ci = tonumber(redis.call('HGET', 'bench:' .. bench .. ':beat', 'ci')) or 0
+  local free = (tonumber(desired[1]) or 0) - ci - NS.moves.held('bench:' .. bench)
   if free <= 0 then
     return { 'NONE', 'full' }
   end

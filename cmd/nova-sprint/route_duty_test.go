@@ -5,8 +5,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -123,7 +125,7 @@ func TestReconcileOnceRoutesReadFixMerging(t *testing.T) {
 	for _, f := range []string{"rowan", "emma", "stella"} {
 		pipe.SAdd(ctx, "friends", f)
 		pipe.HSet(ctx, "friend:"+f+":desired", "slots", "8", "paused", "0")
-		pipe.HSet(ctx, "friend:"+f+":beat", "harness", "ctl", "at", "1")
+		pipe.HSet(ctx, "friend:"+f+":beat", "harness", "ctl", "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
 	}
 	pipe.SAdd(ctx, "friends", "ghost") // registered, no beat: never dealt a read
 	pipe.SAdd(ctx, "readers", "rowan", "emma", "ghost")

@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,6 +59,7 @@ type reading struct {
 	paused bool
 	slots  int
 	leased int
+	ci     int // CI legs on the friend's machine, its beat's ci (nova-tools#4293)
 	open   int
 	// life: the life classifier applies to this friend (#3153): its wake
 	// mode is declared (a firing receipt proved the deliver and turn
@@ -114,7 +117,8 @@ func (l *Ladder) Sweep(ctx context.Context) (SweepResult, error) {
 		case r.paused || r.open == 0:
 		case r.leased == 0:
 			obs.State = StateIdle
-		case r.leased < r.slots:
+		case r.leased+r.ci < r.slots:
+			// underfull is measured against what the CI legs leave
 			obs.State, obs.Ticks = StateUnderfull, policy.UnderfullTicks
 		}
 		step, err := Observe(ctx, l.Store, obs, l.Actor, idem+":"+r.friend)
@@ -184,11 +188,12 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 		return nil, err
 	}
 	type cmds struct {
-		beat     *redis.IntCmd
+		beat     *redis.StringCmd
 		desired  *redis.SliceCmd
 		working  *redis.IntCmd
 		wakemode *redis.IntCmd
 		idem     *redis.SliceCmd
+		ci       *redis.SliceCmd
 		open     []*redis.IntCmd
 	}
 	epoch, err := ws.Epoch(ctx, client)
@@ -199,10 +204,10 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 	all := make([]cmds, len(friends))
 	for i, f := range friends {
 		c := cmds{
-			beat:    pipe.Exists(ctx, "friend:"+f+":beat"),
-			desired: pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "paused"),
-			working: pipe.ZCard(ctx, ws.ConsumerKeyAt(epoch, "friend:"+f, "working")),
-
+			beat:     beat.Read(ctx, pipe, f),                    // up is the beat's at under a minute (#4233), never EXISTS
+			ci:       pipe.HMGet(ctx, "friend:"+f+":beat", "ci"), // HMGet: an absent field is nil, never redis.Nil
+			desired:  pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "paused"),
+			working:  pipe.ZCard(ctx, ws.ConsumerKeyAt(epoch, "friend:"+f, "working")),
 			wakemode: pipe.Exists(ctx, WakeModeKey(f)),
 			idem:     pipe.HMGet(ctx, StateKey(f), "idem"),
 		}
@@ -212,14 +217,15 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 		all[i] = c
 	}
 	if len(friends) > 0 {
-		if _, err := pipe.Exec(ctx); err != nil {
+		// redis.Nil is a friend with no beat (its HGET), not a failed read
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 			return nil, fmt.Errorf("friend: read: %w", err)
 		}
 	}
 	out := make([]reading, len(friends))
 	for i, f := range friends {
 		c := all[i]
-		r := reading{friend: f, up: c.beat.Val() == 1}
+		r := reading{friend: f, up: beat.UpCmd(c.beat, time.Now())}
 		vals := c.desired.Val()
 		if len(vals) == 2 {
 			if s, ok := vals[0].(string); ok {
@@ -228,6 +234,11 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 			r.paused = vals[1] == "1"
 		}
 		r.leased = int(c.working.Val())
+		if v := c.ci.Val(); len(v) == 1 {
+			if s, ok := v[0].(string); ok {
+				r.ci, _ = strconv.Atoi(s)
+			}
+		}
 		idemVal := ""
 		if v := c.idem.Val(); len(v) == 1 {
 			idemVal, _ = v[0].(string)

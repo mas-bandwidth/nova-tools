@@ -142,8 +142,12 @@ type Bench struct {
 	Legs   []string // the bench profile; empty runs every leg
 	Slots  int      // bench:<b>:desired slots
 	Leased int      // ZCARD bench:<b>:cards:working, the one lease ledger (#3998)
-	SSH    string   // the pass's last ssh state for this bench
-	SSHAt  time.Time
+	// CI is the count of CI legs running on the bench, from its beat's ci
+	// field (nova-tools#4293): each takes one slot while it runs, so a copy
+	// is never dealt beside a leg it would slow. Unmeasured reads as 0.
+	CI    int
+	SSH   string // the pass's last ssh state for this bench
+	SSHAt time.Time
 	// Role is the registry role column (#3634): benchrole.Friends is dealt
 	// no swarm card; empty or benchrole.Fleet is the fleet.
 	Role string
@@ -153,9 +157,11 @@ type Bench struct {
 	Enrolled bool
 }
 
-// Free is desired minus leased, never negative.
+// Free is desired minus the CI legs running minus leased, never negative
+// (nova-tools#4293: "a bench's free slots = declared slots minus the CI
+// legs running on it").
 func (b Bench) Free() int {
-	if f := b.Slots - b.Leased; f > 0 {
+	if f := b.Slots - b.CI - b.Leased; f > 0 {
 		return f
 	}
 	return 0
@@ -904,6 +910,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	for i, name := range names {
 		d, beat, ssh := bc[i].desired.Val(), bc[i].beat.Val(), bc[i].ssh.Val()
 		slots, _ := strconv.Atoi(d["slots"])
+		ci, _ := strconv.Atoi(beat["ci"])
 		b := Bench{
 			Name:   name,
 			Host:   beat["host"],
@@ -913,6 +920,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			Legs:   splitList(d["legs"]),
 			Slots:  slots,
 			Leased: int(bc[i].working.Val()),
+			CI:     ci,
 			SSH:    ssh["state"],
 			Role:   d[benchrole.Field],
 		}

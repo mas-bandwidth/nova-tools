@@ -207,8 +207,11 @@ local function task_take(keys, args)
   if DEP.down(friend) then
     return { 'DOWN' }
   end
+  -- up is the beat's at under a minute old (#4233: the beat has no TTL,
+  -- so its existence says nothing)
+  local beat_at = tonumber(redis.call('HGET', 'friend:' .. friend .. ':beat', 'at') or '')
   if redis.call('SISMEMBER', 'friends', friend) == 0 or
-      redis.call('EXISTS', 'friend:' .. friend .. ':beat') == 0 then
+      not beat_at or now_ms() - beat_at > 60000 then
     return { 'DOWN' }
   end
   local desired_key = 'friend:' .. friend .. ':desired'

@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -329,7 +330,7 @@ func TestAcceptance3048(t *testing.T) {
 
 	for _, f := range []string{"unit_booted_out", "bus_behind_3", "upstream_stale_3", "fetch_fails",
 		"unit_fails_twice", "keeper_behind_2", "keeper_stuck_2"} {
-		if err := c.HSet(ctx, "friend:"+f+":beat", "harness", "claude", "host", host, "at", "1").Err(); err != nil {
+		if err := c.HSet(ctx, "friend:"+f+":beat", "harness", "claude", "host", host, "at", strconv.FormatInt(time.Now().UnixMilli(), 10)).Err(); err != nil {
 			t.Fatal(err)
 		}
 	}

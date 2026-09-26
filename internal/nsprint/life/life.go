@@ -138,6 +138,10 @@ type Presence struct {
 	Harness string
 	Host    string
 	Session string
+	// CI is the count of CI legs running on the friend's machine
+	// (CILegsNow; nova-tools#4293), on the beat as ci; empty when
+	// unmeasured. The deal takes them off the friend's slots.
+	CI string
 }
 
 // Beat refreshes one live friend's beat. A friend that is not registered
@@ -147,7 +151,7 @@ func Beat(ctx context.Context, st *store.Store, p Presence) error {
 		return fmt.Errorf("friend beat: store and friend are required")
 	}
 	reply, err := st.Client().FCall(ctx, FunctionBeat, nil,
-		p.Friend, p.Harness, p.Host, p.Session).Result()
+		p.Friend, p.Harness, p.Host, p.Session, p.CI).Result()
 	if err != nil {
 		return fmt.Errorf("friend beat %s: %w", p.Friend, err)
 	}
@@ -265,6 +269,13 @@ type BenchRequest struct {
 	// CPU is the machine's CPU busy percent over the last beat interval
 	// (CPUBusyNow); empty when the platform cannot measure.
 	CPU string
+	// CI is the count of CI legs running on the bench (CILegsNow, one per
+	// Runner.Worker process; nova-tools#4293), on the beat as ci: the deal
+	// takes them off the bench's slots. Empty when unmeasured.
+	CI string
+	// PS is the process sample (ProcsNow, #4338): the beat's ps field, JSON
+	// fleet.PSSample. Empty leaves the field as it is.
+	PS string
 }
 
 // BenchResult is one bench beat. Accepted is false when another live session
@@ -307,7 +318,7 @@ func BenchBeat(ctx context.Context, st *store.Store, req BenchRequest) (BenchRes
 		launcher, strings.Join(req.Live, liveSeparator), req.Why,
 		req.Session, req.Actor, req.Idem, build,
 		req.Facts.Harness, req.Facts.Mirrors, req.Facts.DiskGiB, ttl.Milliseconds(),
-		rowAt, ncpu, req.CPU).Result()
+		rowAt, ncpu, req.CPU, req.CI, req.PS).Result()
 	if err != nil {
 		return BenchResult{}, fmt.Errorf("bench beat %s: %w", req.Bench, err)
 	}

@@ -49,6 +49,10 @@ func TestReadCopyDealtToBenchRendersALintedCard(t *testing.T) {
 	if err := card.LintCard(ctx, work); err != nil {
 		t.Fatalf("work copy card refused: %v\n%s", err, work)
 	}
+	// dealt to a friend, the linted card is the person's brief (#4233)
+	if !strings.Contains(string(work), "FRIEND: friend:f owns this copy end to end") || !strings.Contains(string(work), "nova-sprint friend done --as friend:f --id "+d[0].Copy+" --ok --pr nova-tools#<n> --head <sha>") {
+		t.Fatalf("the friend's work copy is not the person's brief:\n%s", work)
+	}
 	if _, err := taskcard.Work(ctx, c, author, "f", 1, false); err != nil {
 		t.Fatal(err)
 	}

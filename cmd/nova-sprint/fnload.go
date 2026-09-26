@@ -63,7 +63,7 @@ func runFn(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "fn", "unknown subverb "+sub+"; want load, check, deploy or sum")
 	}
 	fs := capacityFlags("fn " + sub)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, "fn "+sub, err.Error())
 	}
@@ -130,7 +130,7 @@ func runFnSum(args []string, out, errOut io.Writer) int {
 
 func runFnDeploy(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("fn deploy")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	want := fs.String("want", "", "")
 	dry := fs.Bool("dry-run", false, "")
 	if err := fs.Parse(args); err != nil {

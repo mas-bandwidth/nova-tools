@@ -37,6 +37,7 @@ func healthyFacts() doctorFacts {
 		BeatAt:     msOf(doctorNow.Add(-time.Second)),
 		Groups:     []redis.XInfoGroup{{Name: "ci-github", Lag: 0, Pending: 0}},
 		LastID:     msOf(doctorNow.Add(-40*time.Second)) + "-0",
+		LastSender: "glenn",
 		Sprints:    []doctorSprint{{Name: "s1", Status: "open"}, {Name: "control-1", Status: "open"}},
 		Epoch:      "7",
 		Trips:      2, MS: 9,
@@ -56,6 +57,27 @@ func lineOf(t *testing.T, lines []doctorLine, check string) doctorLine {
 	return doctorLine{}
 }
 
+// assertOneCommand holds the remedy grammar: a FIX carries a why and ONE
+// command a person pastes, never prose, alternatives or a second step, and
+// an ansible fix names the fleet directory in full.
+func assertOneCommand(t *testing.T, name string, l doctorLine) {
+	t.Helper()
+	if l.State != "FIX" {
+		return
+	}
+	if l.Remedy == "" || l.Why == "" {
+		t.Errorf("%s: %q; want a why and a remedy", name, l.String())
+	}
+	for _, prose := range []string{"; ", " (", ", then", " if ", " or ", " with the ", "rowan-tools)", "make -C fleet"} {
+		if strings.Contains(l.Remedy, prose) {
+			t.Errorf("%s: remedy %q holds %q: prose belongs in why=", name, l.Remedy, prose)
+		}
+	}
+	if strings.HasPrefix(l.Remedy, "make ") && !strings.HasPrefix(l.Remedy, "make -C "+fleetDir+" ") {
+		t.Errorf("%s: remedy %q; want make -C %s", name, l.Remedy, fleetDir)
+	}
+}
+
 // TestDoctorAllGreenIsEightOKLines: a healthy store is eight OK lines in the
 // fixed order, no remedy anywhere, and the summary is DOCTOR OK.
 func TestDoctorAllGreenIsEightOKLines(t *testing.T) {
@@ -70,7 +92,7 @@ func TestDoctorAllGreenIsEightOKLines(t *testing.T) {
 		"DOCTOR fn OK sha=0123456789abcdef ping=PONG",
 		"DOCTOR version OK have=v0.16.0-dev.c839379e tip=c839379e4eab",
 		"DOCTOR runners OK bench=studio role=friends legs=- beat=1s",
-		"DOCTOR ingest OK stream=ev:github last=40s group=ci-github lag=0 pending=0",
+		"DOCTOR ingest OK stream=ev:github last=40s sender=glenn source=hook group=ci-github lag=0 pending=0",
 		"DOCTOR pitstop OK none sprints=2",
 		"DOCTOR sprint OK sprint=s1 epoch=7",
 	}
@@ -103,25 +125,24 @@ func TestDoctorEveryFixNamesItsCommand(t *testing.T) {
 		}, "fn", "MISSING", "nova-sprint self update --sha c839379e4eab"},
 		{"library noping", func(f *doctorFacts) { f.Lib.Ping = "ERR boom" }, "fn", `NOPING`, "fn deploy --redis h:6380"},
 		{"binary behind on the coordinator", func(f *doctorFacts) { f.Have = "v0.16.0-dev.aaaaaaaa" },
-			"version", "why=behind-or-ahead", "nova-sprint self update --sha c839379e4eab"},
+			"version", `why="this build is not the dev tip"`, "nova-sprint self update --sha c839379e4eab"},
 		{"binary behind on a bench", func(f *doctorFacts) { f.Have, f.Machine = "20260926154704-aaaaaaaaaaaa", "hetzner" },
-			"version", "why=behind-or-ahead", "nova-sprint fleet build --bench hetzner --redis h:6380"},
-		{"binary dirty", func(f *doctorFacts) { f.Have = "20260926154704-c839379e4eab-dirty" }, "version", "why=dirty", "self update"},
-		{"binary devel", func(f *doctorFacts) { f.Have = "devel" }, "version", "why=no-revision", "self update"},
+			"version", `why="this build is not the dev tip"`, "nova-sprint fleet build --bench hetzner --redis h:6380"},
+		{"binary dirty", func(f *doctorFacts) { f.Have = "20260926154704-c839379e4eab-dirty" }, "version", `why="this build is from an edited tree"`, "self update"},
+		{"binary devel", func(f *doctorFacts) { f.Have = "devel" }, "version", `why="this build names no commit"`, "self update"},
 		{"no dev tip", func(f *doctorFacts) { f.Release = map[string]string{} }, "version", "tip=none", "nova-sprint fleet build set version="},
-		{"not registered", func(f *doctorFacts) { f.Registered = false }, "runners", "registered=no", "make -C fleet bench-register"},
+		{"not registered", func(f *doctorFacts) { f.Machine, f.Registered = "hetzner", false }, "runners", "registered=no",
+			"make -C ~/rowan-working/rowan-tools/fleet bench-register"},
 		{"no beat", func(f *doctorFacts) { f.BeatAt = "" }, "runners", "beat=none", "launchctl kickstart -k gui/501/com.nova.loop.nova-sprint-bench-beat"},
 		{"stale beat on linux", func(f *doctorFacts) {
 			f.BeatAt, f.GOOS = msOf(doctorNow.Add(-3*time.Minute)), "linux"
 		}, "runners", "beat=3m", "systemctl --user restart nova-loop-nova-sprint-bench-beat.service"},
 		{"held bench", func(f *doctorFacts) { f.Desired["paused"] = "1" }, "runners", "paused=1", "nova-sprint fleet release --bench studio --redis h:6380"},
-		{"no ev:github", func(f *doctorFacts) { f.GroupsErr, f.LastID = errors.New("ERR no such key"), "" }, "ingest", "last=none", "make -C fleet hook"},
-		{"quiet receiver", func(f *doctorFacts) { f.LastID = msOf(doctorNow.Add(-2*time.Hour)) + "-0" }, "ingest", "last=2h quiet=30m", "nova-post hook probe"},
-		{"no ci-github group", func(f *doctorFacts) { f.Groups = nil }, "ingest", "group=none", "nova-sprint ci github --redis h:6380 --once"},
-		{"ingest lag", func(f *doctorFacts) { f.Groups[0].Lag, f.Groups[0].Pending = 5, 2 }, "ingest", "lag=5 pending=2", "ci github --redis h:6380 --once"},
+		{"ingest lag", func(f *doctorFacts) { f.Groups[0].Lag, f.Groups[0].Pending = 5, 2 }, "ingest", "lag=5 pending=2", "nova-sprint ci github --redis h:6380 --once"},
+		{"ingest pending", func(f *doctorFacts) { f.Groups[0].Pending = 1 }, "ingest", "lag=0 pending=1", "nova-sprint ci github --redis h:6380 --once"},
 		{"pit stop held", func(f *doctorFacts) {
 			f.Sprints[0].Stop = pitstop.Stop{Sprint: "s1", Set: true, By: "glenn", Why: "rest", At: doctorNow.Add(-10 * time.Minute).UnixMilli()}
-		}, "pitstop", `sprint=s1 by=glenn age=10m why="rest" held=1`, "nova-sprint pitstop clear --sprint s1 --by rowan --redis h:6380"},
+		}, "pitstop", `sprint=s1 by=glenn age=10m reason="rest" held=1`, "nova-sprint pitstop clear --sprint s1 --by rowan --redis h:6380"},
 		{"legacy pit stop", func(f *doctorFacts) { f.Sprints[0].Legacy = true }, "pitstop", "by=legacy key=sprint:s1:pitstop", "pitstop clear --sprint s1"},
 		{"no open sprint", func(f *doctorFacts) { f.Sprints = f.Sprints[1:] }, "sprint", "open=0", "nova-sprint sprint open --sprint <name> --from <work-set.lisp>"},
 		{"two open sprints", func(f *doctorFacts) { f.Sprints = append(f.Sprints, doctorSprint{Name: "s2", Status: "open"}) },
@@ -135,6 +156,7 @@ func TestDoctorEveryFixNamesItsCommand(t *testing.T) {
 		if l.State != "FIX" || !strings.Contains(l.String(), c.words) || !strings.Contains(l.Remedy, c.remedy) {
 			t.Errorf("%s: %q; want FIX with %q and a remedy naming %q", c.name, l.String(), c.words, c.remedy)
 		}
+		assertOneCommand(t, c.name, l)
 		fixes := 0
 		for _, x := range lines {
 			if x.State == "FIX" {
@@ -152,7 +174,7 @@ func TestDoctorEveryFixNamesItsCommand(t *testing.T) {
 func TestDoctorSeatAndRedisFailuresSkipTheRest(t *testing.T) {
 	t.Parallel()
 	f := healthyFacts()
-	f.Seat = doctorSeat{Name: "nobody", Err: errors.New("seat nobody: store file x is absent"), Remedy: "nova-secrets check --as nobody"}
+	f.Seat = doctorSeat{Name: "nobody", Err: errors.New("seat nobody: store file x is absent"), Remedy: "nova-secrets check --as nobody", Why: "names it"}
 	lines := doctorLines(f)
 	if l := lineOf(t, lines, "seat"); l.State != "FIX" || l.Remedy != "nova-secrets check --as nobody" {
 		t.Fatalf("seat %q", l.String())
@@ -171,6 +193,8 @@ func TestDoctorSeatAndRedisFailuresSkipTheRest(t *testing.T) {
 	lines = doctorLines(f)
 	if l := lineOf(t, lines, "seat"); l.State != "FIX" || l.Remedy != "export NOVA_SPRINT_SEAT=studio" || !strings.Contains(l.String(), "held=studio,swarm-studio") {
 		t.Fatalf("seat %q", l.String())
+	} else {
+		assertOneCommand(t, "no seat", l)
 	}
 	if l := lineOf(t, lines, "redis"); l.State != "SKIP" {
 		t.Fatalf("redis %q", l.String())
@@ -180,24 +204,32 @@ func TestDoctorSeatAndRedisFailuresSkipTheRest(t *testing.T) {
 	f = healthyFacts()
 	f.PingErr = errors.New("WRONGPASS invalid username-password pair")
 	l := lineOf(t, doctorLines(f), "redis")
-	if l.State != "FIX" || l.Remedy != "nova-secrets seal --as studio --name NOVA_REDIS_COORDINATOR_PASSWORD (the seat's password is not the store's)" {
+	if l.State != "FIX" || l.Remedy != "nova-secrets seal --store ~/nova-bench/secrets --as studio --key ~/.config/nova-secrets/studio.key --sops $(command -v sops) --name NOVA_REDIS_COORDINATOR_PASSWORD" {
 		t.Fatalf("redis %q", l.String())
+	}
+	assertOneCommand(t, "wrongpass", l)
+	f.Seat.Seal = "nova-secrets seal --store /s --as studio --key /k --sops /bin/sops --name NOVA_REDIS_COORDINATOR_PASSWORD"
+	if l := lineOf(t, doctorLines(f), "redis"); l.Remedy != f.Seat.Seal {
+		t.Fatalf("redis %q; want the seat's own seal line", l.String())
 	}
 
 	// No address at all.
 	f = healthyFacts()
 	f.Addr = ""
 	l = lineOf(t, doctorLines(f), "redis")
-	if l.State != "FIX" || !strings.Contains(l.Remedy, "export NOVA_SPRINT_REDIS=") {
+	if l.State != "FIX" || l.Remedy != "export NOVA_SPRINT_REDIS=<host:port>" {
 		t.Fatalf("redis %q", l.String())
 	}
+	assertOneCommand(t, "no address", l)
 
 	// Unreachable.
 	f = healthyFacts()
 	f.PingErr = errors.New("dial tcp 127.0.0.1:1: connect: connection refused")
 	lines = doctorLines(f)
-	if l := lineOf(t, lines, "redis"); l.State != "FIX" || !strings.Contains(l.Remedy, "make -C fleet store") {
+	if l := lineOf(t, lines, "redis"); l.State != "FIX" || l.Remedy != "make -C ~/rowan-working/rowan-tools/fleet store" {
 		t.Fatalf("redis %q", l.String())
+	} else {
+		assertOneCommand(t, "unreachable", l)
 	}
 	for _, c := range doctorChecks[2:] {
 		if l := lineOf(t, lines, c); l.String() != "DOCTOR "+c+" SKIP needs=redis" {
@@ -218,6 +250,66 @@ func TestDoctorNoSeatOnAnOpenStoreIsOK(t *testing.T) {
 	}
 	if l := lineOf(t, lines, "redis"); l.String() != "DOCTOR redis OK addr=h:6380 user=default" {
 		t.Fatalf("redis %q", l.String())
+	}
+}
+
+// TestDoctorCoordinatorsMachineIsRegistered: fleet:release self beats as a
+// bench outside `benches` by design, so its runners line is judged on the
+// beat alone (the 2026-09-26 cold read's false FIX).
+func TestDoctorCoordinatorsMachineIsRegistered(t *testing.T) {
+	t.Parallel()
+	f := healthyFacts()
+	f.Registered = false
+	if l := lineOf(t, doctorLines(f), "runners"); l.String() != "DOCTOR runners OK bench=studio self=yes role=friends legs=- beat=1s" {
+		t.Fatalf("runners %q", l.String())
+	}
+	f.BeatAt = ""
+	if l := lineOf(t, doctorLines(f), "runners"); l.State != "FIX" || !strings.Contains(l.String(), "beat=none") {
+		t.Fatalf("self with no beat %q; want the beat fix", l.String())
+	}
+}
+
+// TestDoctorIngestAgeIsInformation: a quiet stream, a missing stream and a
+// missing group are information, never a fix; only lag or pending is.
+func TestDoctorIngestAgeIsInformation(t *testing.T) {
+	t.Parallel()
+	for name, change := range map[string]func(*doctorFacts){
+		"quiet evening": func(f *doctorFacts) { f.LastID = msOf(doctorNow.Add(-9*time.Hour)) + "-0" },
+		"no stream":     func(f *doctorFacts) { f.GroupsErr, f.LastID, f.LastSender = errors.New("ERR no such key"), "", "" },
+		"no group":      func(f *doctorFacts) { f.Groups = nil },
+	} {
+		f := healthyFacts()
+		change(&f)
+		if l := lineOf(t, doctorLines(f), "ingest"); l.State != "OK" {
+			t.Errorf("%s: %q; want OK", name, l.String())
+		}
+	}
+	f := healthyFacts()
+	f.GroupsErr, f.LastID, f.LastSender, f.Groups = errors.New("ERR no such key"), "", "", nil
+	if l := lineOf(t, doctorLines(f), "ingest"); l.String() != "DOCTOR ingest OK stream=ev:github last=none sender=- source=none group=none" {
+		t.Fatalf("no stream: %q", l.String())
+	}
+}
+
+// TestDoctorMeIsNeverAPlaceholder: the --by a remedy prints is NOVA_FRIEND,
+// else the Redis user (coordinator under the wrapper's environment), else the
+// seat, else the machine.
+func TestDoctorMeIsNeverAPlaceholder(t *testing.T) {
+	t.Parallel()
+	env := func(kv map[string]string) func(string) string { return func(k string) string { return kv[k] } }
+	for _, c := range []struct {
+		env  map[string]string
+		seat doctorSeat
+		want string
+	}{
+		{map[string]string{"NOVA_FRIEND": "rowan"}, doctorSeat{User: "coordinator"}, "rowan"},
+		{map[string]string{}, doctorSeat{User: "coordinator"}, "coordinator"},
+		{map[string]string{}, doctorSeat{Name: "studio"}, "studio"},
+		{map[string]string{}, doctorSeat{}, "studio-mac"},
+	} {
+		if got := doctorMe(env(c.env), c.seat, "studio-mac"); got != c.want {
+			t.Errorf("doctorMe(%v, %+v) = %q, want %q", c.env, c.seat, got, c.want)
+		}
 	}
 }
 

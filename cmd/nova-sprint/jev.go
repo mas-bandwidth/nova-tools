@@ -70,7 +70,7 @@ func runJev(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	const verb = "jev mech"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	n := fs.Int("n", 0, "")
 	bodyFile := fs.String("body-file", "", "")

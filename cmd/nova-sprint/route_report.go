@@ -23,7 +23,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -177,7 +176,7 @@ func init() {
 func runRouteReport(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("route report")
 	sprint := fs.String("sprint", "", "")
-	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *sprint == "" || *addr == "" {
 		return refuse(errOut, "route", "report needs --sprint <S> and --redis <addr> (or NOVA_SPRINT_REDIS)")
 	}

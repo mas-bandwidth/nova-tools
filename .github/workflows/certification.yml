@@ -47,6 +47,8 @@ jobs:
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -118,6 +120,8 @@ jobs:
       BIN: ${{ github.workspace }}/nova-check${{ startsWith(matrix.os, 'windows') && '.exe' || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
       - name: download the cross-built binaries
         id: download
@@ -383,6 +387,8 @@ jobs:
       GOFLAGS: -trimpath
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -959,6 +965,8 @@ jobs:
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod

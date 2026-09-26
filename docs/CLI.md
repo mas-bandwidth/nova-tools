@@ -3150,6 +3150,7 @@ through the child environment. Drafting and showing do not authorize a send.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
+Reads Go test events and reports packages whose accumulated elapsed time exceeds
 a budget. It also reports its own build with `nova-ci version`.
 
 ```sh
@@ -3836,6 +3837,8 @@ writing and acking in one `ns_ci_github` call. `ci status --repo --sha`
 prints the leg under our own record. Nothing in nova-sprint reads a check
 state from GitHub or asks it to rerun one; a rerun is `ci request --again`.
 
+`ci github --from-runner --redis <addr> --repo owner/name --sha <head> --run-id <n> --event <ev> --workflow <name> --conclusion <job.status> [--head-branch <b>] [--base-branch <b>] [--pr <n>] [--at <rfc3339>] --job <name>=<result>...` (card gh-ci-receipts) is the runner as the event source: the ci-ok job of `.github/workflows/ci.yml` calls it at the end of every run, as the bench seat and with the bench's installed nova-sprint (never this tree: `go run` is the one bootstrap while the installed binary lacks the verb), and it writes what the receiver path would have: one `ev:github` workflow_run row with sender `runner`, and `ci:<repo>:<sha>:gh` through `ns_ci_github` with `wf:<workflow>`, one `check:<job>` per `--job` (the run id as the id, so an older run's receipt is KEPT), `source=runner`, and the `--pr` number on the record's `pr` field. It writes no other key: `pr:<repo>:<n>` is the lander's (its stream, head and CI request go through `pr record`). Measured 2026-09-26 12:38 PM ET before it: `ev:github` XLEN 0 and no `ci:*:gh` key, because the signed receiver sits behind a tailscale funnel kept off by design, so `land pr` could only print WAITING. One `CIGH RUNNER <key> gh=<word> fail=<f> runs=<n> applied=<n> ev=<id>` line; exit 0 written, 1 the store refused the write (which reddens ci-ok), 2 usage. `webhook.Source(record)` says runner, hook or none for a record, `webhook.SourceOf(sender)` the same for an `ev:github` row, which `doctor`'s ingest line prints as `source=`.
+
 `read digest --repo <r> --n <n>` records the diff identity of the head a
 typed line is taken at (`diff_sha256` on the unit record; the reader runs
 it at read time). `read carry --repo <r> --n <n>` compares it with the
@@ -3922,8 +3925,9 @@ REPAIR, SPEC, SPEC-WRITTEN, CLOSE or JEV-DIFF and the first line carries
 `score=<0..10>`, no head, see `spec` below), or the line is refused. It RPUSHes the line
 onto `pr:<repo>:<n>:lines` and stamps `last_line` and `last_line_at` on the
 record in one MULTI, then mirrors it as one
-REST comment (`POST /repos/<owner>/<repo>/issues/<n>/comments`, the token from
-`GH_TOKEN` or `GITHUB_TOKEN`, the base URL from `GITHUB_API_URL`). `--no-github`
+REST comment (`POST /repos/<owner>/<repo>/issues/<n>/comments`, the token the
+seat's seats.tsv row names, else `GH_TOKEN` or `GITHUB_TOKEN`, the base URL from
+`GITHUB_API_URL`). `--no-github`
 is Redis only (the tests count HTTP calls: 0 with it, exactly 1 without). A
 comment that fails after the Redis write is `READ POST REFUSED ... redis=ok
 github=<why>` (exit 1): the line is in Redis, which is the record.
@@ -4202,6 +4206,33 @@ nova-sprint pitstop clear --sprint nova-sprint-0924 --by rowan --scope nova-work
 PITSTOP NARROW sprint=nova-sprint-0924 by=rowan at=1790000060000 lifted="nova-work" was_by=rowan was_at=1790000000000 was_why="Glenn 8:00 PM: rest tonight"
 ```
 
+### reconcile: the progress duty
+
+`nova-sprint reconcile` runs the progress duty (nova-tools #4319; internal/nsprint/reconcile/progress.go) with its other duties: it measures whether each stream of `ws:order` is converging, and when one is not it stops that stream and asks for help. It reads `cfg:progress` (a hash; a missing or non-positive field keeps its default): `window_s` (1800, the stall window), `every_s` (10, the cadence), `refusals` (20, passes a duty error may repeat unchanged) and `ask` (`glenn,rowan`, who the wake note goes to). The `every_s` gate comes before any read: a gated pass costs no round trip and a run three (the index, the measurement, the record); a changed `every_s` applies from the next run.
+
+Per stream, `left` is waiting + ready + working + review + merging; the stream is **in play** when no pit stop holds it and a card is working or a ready card has a consumer with room (live beat, not down, not paused, a free slot). It is `converging` while in play inside the window since it last fell, `idle` when not in play, and `stalled` when in play for the whole window with no fall. A card that churns working -> ready -> working never falls, so it stalls the stream. Each run prints one line per stream whose numbers changed:
+
+```text
+PROGRESS autonomy left=1 delta=0 ready=1 landed_h=0 retries_h=0 oldest=1h0m0s blocked=30m0s window=30m0s status=stalled
+```
+
+`landed_h` and `retries_h` are the last hour of `ws:log` (moves to landed; working back to ready or waiting), `oldest` the age of the oldest card not landed, `blocked` how long the stream has been in play with no fall.
+
+The one ask path: a stalled stream, a duty error repeating unchanged past `refusals` passes, or a release probe failing twice. The duty sets the open sprint's pit stop `by=progress` with the diagnosis as its why (scoped to the stream for a stall, `scope=all` otherwise), prints one `EVENT` line, and writes one `friend:outbox` note (`kind=notice`, `actor=progress`) per `ask` name. An episode asks once: a stall again only after the stream fell or was lifted and stalled anew, a refusal once per text.
+
+```text
+EVENT PROGRESS STALLED autonomy stall blocked=30m0s window=30m0s left=1 ready=1 landed_h=0 retries_h=0 sprint=sprint-4319 at=1790000000000
+PROGRESS REFUSED pitstop set sprint=sprint-4319 why="already stopped by=rowan why=\"looking\""
+```
+
+Every refusal of its own (no open sprint, a stop already set, a wake that did not write) is one `PROGRESS REFUSED` line and counts as `refused=` on the pass's `DUTY` line, as every duty's refusals do (the waiting-resolve duty counts the moves `ns_ws_move_many` refused). State: `proc:progress:<stream>` {left, ref_left, ref_at, fell_at, blocked_since, asked_at, status, at}, so a restarted reconciler continues the window; `proc:progress` {events, event, event_at, refused, asked:<duty>, at}, where `refused` is the other duties' refusals of the last pass plus this run's own, each counted once. `nova-sprint table` prints one line from `proc:progress`, only when a count is non-zero:
+
+```text
+EVENTS n=1 refused=0 last=EVENT PROGRESS STALLED autonomy stall blocked=30m0s window=30m0s left=1 ready=1 landed_h=0 retries_h=0 sprint=sprint-4319 at=1790000000000
+```
+
+The stop is cleared like any other: `nova-sprint pitstop clear --sprint <S> --scope <stream> --by <who>` once the cause is fixed (docs/PIT-STOP.md, **The system's stop**).
+
 ### quack cut, quack run
 
 `nova-sprint quack cut --n <N> --repo <owner/name> --stream <s> --sprint <S> [--tiers flash,pro] [--base dev] [--base-sha <sha40>] [--ref <owner/name#n>] [--actor <a>] [--redis <addr>]`
@@ -4227,7 +4258,7 @@ QUACK RUN sprint=quack-0926 benches=2 refused=0 pitstop=lifted ms=9
 
 `nova-sprint land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]`
 
-One pull request to its merge commit in one pass (#4311; the scratch script that ran about twenty times on 2026-09-26, as a verb). It reads the PR by REST (one call), then reads its head's check state from Redis, `ci:<repo>:<head>:gh`, which the webhook ingest writes from GitHub's `check_run` and `workflow_run` deliveries (internal/nsprint/webhook); it never reads the check-runs or workflow-runs endpoints and never calls GraphQL (nova-sprint is REST only, and GitHub is events only). It prints `PR <n> CHECKS <word> <pass>/<total> head=<sha8>`. Green: it merges the PR by REST at exactly that head (GitHub refuses when the head moved), skipping the merge queue whose run re-proves the same tree (Glenn 2026-09-26), and prints `MERGED <sha>`. Red: `FAILED <first red run>` (`kind:name`). Pending or nothing recorded yet: `WAITING` and it returns at once; there is no loop and no sleep, so run it again once the webhook has written green. A merged PR is `MERGED <sha>`, a closed one `FAILED closed without a merge`, and `mergeable_state=dirty` is `FAILED conflict`. A final `LAND PR` line carries the state, head, check word, merge sha and REST calls made (at most two; the budget is three). The token comes from the environment (`GH_TOKEN`, then `GITHUB_TOKEN`, as the lander reads it); it never runs `gh`. No token is the typed refusal `REFUSED no GitHub token remedy=...`. `--repo` defaults to `mas-bandwidth/nova-tools`; `--redis` defaults to `NOVA_REDIS_ADDR`. Exit 0 merged, 1 failed, closed or in conflict, 2 usage or refused, 3 waiting, 6 no Redis.
+One pull request to its merge commit in one pass (#4311; the scratch script that ran about twenty times on 2026-09-26, as a verb). It reads the PR by REST (one call), then reads its head's check state from Redis, `ci:<repo>:<head>:gh`, which the webhook ingest writes from GitHub's `check_run` and `workflow_run` deliveries (internal/nsprint/webhook); it never reads the check-runs or workflow-runs endpoints and never calls GraphQL (nova-sprint is REST only, and GitHub is events only). It prints `PR <n> CHECKS <word> <pass>/<total> head=<sha8>`. Green: it merges the PR by REST at exactly that head (GitHub refuses when the head moved), skipping the merge queue whose run re-proves the same tree (Glenn 2026-09-26), and prints `MERGED <sha>`. Red: `FAILED <first red run>` (`kind:name`). Pending or nothing recorded yet: `WAITING` and it returns at once; there is no loop and no sleep, so run it again once the webhook has written green. A merged PR is `MERGED <sha>`, a closed one `FAILED closed without a merge`, and `mergeable_state=dirty` is `FAILED conflict`. A final `LAND PR` line carries the state, head, check word, merge sha and REST calls made (at most two; the budget is three). The token is the seat's when its seats.tsv row names one (#4330), else the environment's (`GH_TOKEN`, then `GITHUB_TOKEN`, as the lander reads it). No token is the typed refusal `REFUSED no GitHub token remedy=...`. `--repo` defaults to `mas-bandwidth/nova-tools`; `--redis` defaults to `NOVA_REDIS_ADDR`. Exit 0 merged, 1 failed, closed or in conflict, 2 usage or refused, 3 waiting, 6 no Redis.
 
 ```text
 nova-sprint land pr 4304
@@ -4335,7 +4366,7 @@ before, from its environment.
 one `redis-cli` command under the seat's login for the rare hand read:
 `redis-cli -h <host> -p <port> --user <user> --no-auth-warning <cmd...>`, with
 the password as `REDISCLI_AUTH` in that child's environment only. `--redis`
-defaults to `NOVA_REDIS_ADDR`. stdout is redis-cli's; the receipt is one line on
+defaults to `NOVA_REDIS_ADDR`, else the seat row's address. stdout is redis-cli's; the receipt is one line on
 stderr, `REDIS-CLI seat=<s> user=<u> key=<k> addr=<a> cmd=<c> exit=<n>`. Exit 0
 the command ran, 1 redis-cli failed, 2 refused (no seat, no address, no command
 after `--`, or a seat that cannot be read, named with its remedy).
@@ -4350,24 +4381,38 @@ nova-sprint redis-cli --seat studio --redis 100.115.99.19:6380 -- ZCARD sprint:S
 The seat is a fact of the machine, not of the shell (nova-tools #4330). The
 fleet play writes `$XDG_CONFIG_HOME/nova-sprint/seats.tsv` (else
 `~/.config/nova-sprint/seats.tsv`), one tab-separated row per seat: name, redis
-addr, redis user, secret env, store, key. Blank lines and `#` lines are
-skipped; a leading `~/` in store or key is `$HOME`. The key's file name names
-the seat's file in the store (`studio.key` opens `<store>/studio.yaml`).
+addr, redis user, secret env, store, key, and an optional seventh column, the
+GitHub token env. Blank lines and `#` lines are skipped; a leading `~/` in store
+or key is `$HOME`. The key's file name names the seat's file in the store
+(`studio.key` opens `<store>/studio.yaml`).
 
 ```
-coordinator	100.115.99.19:6380	coordinator	NOVA_REDIS_COORDINATOR_PASSWORD	~/nova-bench/secrets	~/.config/nova-secrets/studio.key
+coordinator	100.115.99.19:6380	coordinator	NOVA_REDIS_COORDINATOR_PASSWORD	~/nova-bench/secrets	~/.config/nova-secrets/studio.key	GH_GATE_TOKEN
 ```
 
 `nova-sprint --seat coordinator <verb>` (or `NOVA_SPRINT_SEAT=coordinator`,
 which wins over `NOVA_SEAT`) reads the row: the verb logs in as the row's user
 with the password the seat's file holds under the row's secret env, read in
 process through `internal/seatcred` as above (never printed, never in the
-environment). The row's address becomes the default of every verb whose
-`--redis` falls back to `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR` or `NOVA_REDIS`,
-and the address a store dial uses when its verb names none; a `--redis` on the
-line still wins. A seat with no row is the #4052 seat above; when that does not
-open either, the refusal names `seats.tsv` and the row it wants. A malformed
-row is refused before any verb runs, as `seats.tsv:<line>`, exit 2.
+environment). The row's address is every verb's `--redis` default: a verb
+given no `--redis` dials it (`nova-sprint --seat coordinator table --once`,
+`census`, `digest`, `fn load` included), after the verb's own environment
+default (`NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`, `NOVA_REDIS`, which the row
+also sets); a `--redis` on the line still wins. The class test
+`internal/ci/seatredis_class_test.go` holds every `--redis` flag in
+cmd/nova-sprint and internal/nsprint to that default. A seat with no row is the
+#4052 seat above; when that does not open either, the refusal names `seats.tsv`
+and the row it wants. A malformed row is refused before any verb runs, as
+`seats.tsv:<line>`, exit 2.
+
+The seventh column names the key of the seat's file that holds its GitHub
+token. The GitHub verbs (`land`, `ci compare`, `read post`, `file`, `pr reap`,
+`card cut-from`) read the token from the seat's file in process, so no session
+exports `GH_TOKEN`; a file without that key is refused naming the file and the
+`nova-secrets seal` remedy. A six-column row (or a seat with no row) keeps the
+old behaviour, `GH_TOKEN` then `GITHUB_TOKEN` from the environment, and says so
+once per process on stderr:
+`nova-sprint: seat <s>: its seats.tsv row names no GitHub token env (the seventh column), so GitHub verbs read GH_TOKEN from the session as before`.
 
 `nova-sprint [--seat <name>] redis [--redis <host:port>] [--] <cmd...>` sends
 one raw command over the same dial (no redis-cli, the password never leaves the
@@ -4386,15 +4431,15 @@ NOVA_SPRINT_SEAT=coordinator nova-sprint sprint status
 
 ### `nova-sprint doctor`
 
-`nova-sprint doctor [--seat <name>] [--redis <addr>] [--bench <name>]` (nova-tools #4352 item L) is the five hand checks of 2026-09-26 (`fn check`, `version`, `fn deploy`, `pitstop status`, a `ps`) as one verb. It prints one line per check, in this order, each `OK` or `FIX` with `remedy="<the exact command>"`, or `SKIP needs=<check>` when the check it needs is not OK (a SKIP is not a fix):
+`nova-sprint doctor [--seat <name>] [--redis <addr>] [--bench <name>]` (nova-tools #4352 item L) is the five hand checks of 2026-09-26 (`fn check`, `version`, `fn deploy`, `pitstop status`, a `ps`) as one verb. It prints one line per check, in this order, each `OK` or `FIX` with `why="<prose>"` and `remedy="<one command to paste>"` (never prose, alternatives or a second step; an ansible fix is `make -C ~/rowan-working/rowan-tools/fleet <target>`), or `SKIP needs=<check>` when the check it needs is not OK (a SKIP is not a fix):
 
 - `seat`: `--seat`, else `NOVA_SPRINT_SEAT`, then `NOVA_SEAT`, resolved in this process (its `seats.tsv` row when it has one) (the key, the store file, the Redis password); with no seat, the environment's login, or the default user when the store lets it in. A seat that does not resolve names its `nova-secrets seal` or `nova-secrets check` line; no seat on a store that wants one names `export NOVA_SPRINT_SEAT=<seat>` for a seat whose key is in `~/.config/nova-secrets`.
 - `redis`: `PING` as that login (`--redis`, else the seat row's address, `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`); one dial bounded by a second and no retries.
 - `fn`: the loaded `nova_sprint` library against the one this binary embeds, fn check's own verdict (`fn.Judge`), then `ns_ping` only when the code is ours. The remedy is `fn deploy` as the admin user, or, when this binary is not the dev tip, the version remedy (deploying an older binary's library would roll the store back).
 - `version`: this binary's build identity against `fleet:release commit`, the dev tip every landing into dev writes; the remedy is `self update --sha <sha>` on the coordinator's machine (`fleet:release self`), `fleet build --bench <b>` on a bench.
-- `runners`: this machine (`--bench`, else the short hostname) in the `benches` registry, its role, CI legs and hold (`bench:<b>:desired`), and its beat's age against the preflight's 2 s; the remedy restarts the beat unit.
-- `ingest`: `ev:github`, the stream the webhook receiver writes: its last entry's age (older than 30 minutes is a dead receiver: `make -C fleet hook`) and the `ci-github` group's lag (`ci github --once` drains it).
-- `pitstop`: every sprint not closed, its `s:<S>:pitstop` (or the legacy key); a held stop names who set it, when, why, and the `pitstop clear` line.
+- `runners`: this machine (`--bench`, else the short hostname) in the `benches` registry (`fleet:release self`, the coordinator's machine, beats as a bench outside it by design and counts, printed `self=yes`), its role, CI legs and hold (`bench:<b>:desired`), and its beat's age against the preflight's 2 s; the remedy restarts the beat unit.
+- `ingest`: `ev:github`: its last entry's age and sender, printed as information (a quiet stream is not a dead receiver: the stream also carries runner receipts, and evenings are quiet); a fix only when the `ci-github` group lags or holds pending entries (`ci github --once` drains it).
+- `pitstop`: every sprint not closed, its `s:<S>:pitstop` (or the legacy key); a held stop names who set it, when and its `reason=`, and the `pitstop clear` line, whose `--by` is `NOVA_FRIEND`, else the Redis user, else the seat, else the machine.
 - `sprint`: the one open sprint (control sprints aside) and `sprint:epoch`; none or more than one is a fix.
 
 The last line is `DOCTOR OK checks=8 trips=<n> ms=<n>` (exit 0) or `DOCTOR FIX fixes=<n> skipped=<n> checks=8 trips=<n> ms=<n>` (exit 1); 2 is usage. No ssh, no GitHub, no model: everything past the seat is one pipeline, and a second only for the sprints and `ns_ping`, so `trips=` is at most 2.
@@ -4406,8 +4451,8 @@ DOCTOR redis OK addr=100.115.99.19:6380 user=coordinator
 DOCTOR fn OK sha=0123456789abcdef ping=PONG
 DOCTOR version OK have=v0.16.0-dev.c839379e tip=c839379e4eab
 DOCTOR runners OK bench=studio role=friends legs=- beat=1s
-DOCTOR ingest OK stream=ev:github last=40s group=ci-github lag=0 pending=0
-DOCTOR pitstop FIX sprint=s1 by=glenn age=10m why="rest" held=1 remedy="nova-sprint pitstop clear --sprint s1 --by rowan --redis 100.115.99.19:6380"
+DOCTOR ingest OK stream=ev:github last=40s sender=glenn group=ci-github lag=0 pending=0
+DOCTOR pitstop FIX sprint=s1 by=glenn age=10m reason="rest" held=1 why="a pit stop idles every automatic duty; lift it when the stop is done" remedy="nova-sprint pitstop clear --sprint s1 --by rowan --redis 100.115.99.19:6380"
 DOCTOR sprint OK sprint=s1 epoch=7
 DOCTOR FIX fixes=1 skipped=0 checks=8 trips=2 ms=61
 ```
@@ -4458,6 +4503,10 @@ ACL CHECK DRIFT store=127.0.0.1:6380 redis=8.0.5 drifted=4 users=12 rows=/var/li
 ```
 
 `missing` is what the row grants and the live user lacks, `extra` what the live user holds beyond the row; a run of commands that is a whole category of the server prints as `+@<category>`. No drift is `ACL CHECK OK store=<addr> redis=<version> users=<n> rows=<file>`. `acl check --fix` is refused, `REFUSED acl check --fix: the play is the only writer of the store's ACL, never a hand ACL SETUSER; run: make -C rowan-tools/fleet store`: the play writes `users.acl` from the declared users and applies it with `ACL LOAD`. A rows file, password or store that cannot be read is `ACL CHECK REFUSED ... reason=... remedy=...` on standard error. Exit 0 no drift, 1 drift, 2 could not check (or `--fix`).
+
+### `nova-sprint fleet ps`
+
+`nova-sprint fleet ps [--redis <addr>] [--bench <b>] [--stray] [--since <RFC 3339 | duration>]` is what runs on every bench, read from the beats with no ssh (nova-tools #4338; internal/nsprint/fleet/ps.go): the scan rowan-tools probe-fleet.py did over ssh with ps and top. The bench beat (`nova-sprint bench beat`) reads ps at most once per 10 s (`ps -eww -o pid=,ppid=,etimes=,pcpu=,uid=,args=` on linux, `ps -Aww -o pid=,ppid=,etime=,pcpu=,uid=,args=` on darwin; pcpu is ps's own: recent on darwin, lifetime on linux) and its nova unit files (`com.nova.*.plist` in ~/Library/LaunchAgents and /Library/LaunchDaemons, `nova-*.service` in ~/.config/systemd/user and /etc/systemd/system), and writes one bounded JSON sample as the beat's `ps` field: the top 5 processes by CPU, the nova units each `declared` (the file names the fleet play that wrote it, `fleet/<play>.yml`) or `undeclared`, and the 12 oldest of the bench user's processes outside every declared unit (a process runs a declared unit's command, or the command after its `--`, maybe behind an interpreter, or descends from one that does; system daemons, apps, login shells and ssh-agent are left out), each command capped at 120 bytes, with the totals before the cut. A ps that fails is a sample carrying its error. Per registered bench (`SMEMBERS benches`, sorted; `--bench` one), ps prints `<bench> load1=<l> ncpu=<n> cpu=<pct> sample=<age>`, one `<bench> top pid=<pid> cpu=<pct> user=<u> age=<age> cmd=<cmd>` per top process, one `<bench> unit <name> undeclared` per undeclared unit, and last `PS <bench> top=<n> units=<n> undeclared=<n>`. `--stray` prints only the undeclared units and one `<bench> old pid=... cmd=...` per process outside every declared unit that started before the last play, then `STRAY <bench> units=<n> old=<n> play=<t>`; the last play is the bench's last deploy (`bench:<b> build_at`), or `--since` (an RFC 3339 time, or a duration back from now) for every bench. A bench with no beat (`NOBEAT`), a beat with no sample (`NOSAMPLE`, a build from before #4338), a failed sample (`FAIL <why>`) or no last play (`old=? no last play`) prints its line and is never read as clean. Exit 0 every bench read (with `--stray`, and nothing stray); 1 a bench could not be read, or `--stray` found a stray; 2 usage; 5 store unreachable.
 
 ### Cutting a card from an issue: `nova-sprint card cut`
 

@@ -87,7 +87,7 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	mode := args[1]
 	fs := taskFlags("consume " + group)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	consumer := fs.String("consumer", "", "")
 	actor := fs.String("actor", group, "")

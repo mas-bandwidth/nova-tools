@@ -24,7 +24,7 @@ func runLandWriter(ctx context.Context, args []string, out, errOut io.Writer) in
 	repo := fs.String("repo", "", "")
 	base := fs.String("base", "", "")
 	to := fs.String("to", "", "")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	by := fs.String("by", "", "")
 	inflight := fs.Int("inflight", -1, "")
 

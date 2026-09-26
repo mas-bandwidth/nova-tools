@@ -34,7 +34,7 @@ func runCost(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("cost import")
 	provider := fs.String("provider", "", "")
 	file := fs.String("file", "", "")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, "cost import", err.Error())
 	}

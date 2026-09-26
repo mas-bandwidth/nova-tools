@@ -184,9 +184,12 @@ do
     if nhave < need then
       for _, f in ipairs(redis.call('SMEMBERS', 'friends')) do
         if not authors[f] and not have[f] and redis.call('EXISTS', 'friend:' .. f .. ':down') == 0 then
-          local r = redis.call('HMGET', 'friend:' .. f, 'up', 'ready', 'working')
-          if r[1] == '1' then
-            pool[#pool + 1] = { f, (tonumber(r[2] or '0') or 0) + (tonumber(r[3] or '0') or 0) }
+          -- up is the friend's own beat under a minute old (#4233: the
+          -- row's up field is ns_friend_row's and never a liveness source)
+          local beat_at = tonumber(redis.call('HGET', 'friend:' .. f .. ':beat', 'at') or '')
+          local r = redis.call('HMGET', 'friend:' .. f, 'ready', 'working')
+          if beat_at and now_ms() - beat_at <= 60000 then
+            pool[#pool + 1] = { f, (tonumber(r[1] or '0') or 0) + (tonumber(r[2] or '0') or 0) }
           end
         end
       end

@@ -55,7 +55,7 @@ func newWSCmd(name string, out, errOut io.Writer) *wsCmd {
 	return &wsCmd{
 		name:  name,
 		fs:    fs,
-		redis: fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), ""),
+		redis: fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), ""),
 		by:    fs.String("as", by, ""),
 		why:   fs.String("why", "", ""),
 		out:   out,

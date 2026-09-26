@@ -31,6 +31,9 @@
 -- are concatenated into one chunk whose main function allows 200 locals.
 do
 local PL_BEAT_MS = 5000
+-- PL_ROW_UP_MS is how old a friend's beat may be for its row to read up
+-- (the consumer table's own minute, #4233).
+local PL_ROW_UP_MS = 60000
 local PL_LIVE_SEP = '\31'
 
 local function pl_now_ms()
@@ -122,6 +125,9 @@ end
 
 -- friend_beat refreshes one live friend's beat. A friend that is not
 -- registered returns DOWN, never a silent re-registration.
+-- args[5] is the count of CI legs running on the friend's machine (one
+-- Runner.Worker per running job, nova-tools#4293), on the beat as ci every
+-- beat; the deal takes them off the friend's slots. Empty when unmeasured.
 local function friend_beat(keys, args)
   local friend, harness, host, session = args[1], args[2], args[3], args[4]
   if not friend or friend == '' then
@@ -137,7 +143,7 @@ local function friend_beat(keys, args)
   local at = pl_now_ms()
   redis.call('HSET', beat_key,
     'harness', harness or '', 'host', host or '', 'session', session,
-    'at', tostring(at))
+    'ci', args[5] or '', 'at', tostring(at))
   redis.call('PEXPIRE', beat_key, PL_BEAT_MS)
   return { 'OK' }
 end
@@ -234,7 +240,13 @@ end
 -- #3372); a missing or non-positive value keeps PL_BEAT_MS. args[18] is the
 -- host row's at (RFC 3339 UTC) and args[19] the bench's ncpu; an empty
 -- args[18] writes no row (#3440). args[20] is the CPU busy percent over the
--- beat interval, on the beat as cpu (empty when unmeasured).
+-- beat interval, on the beat as cpu (empty when unmeasured). args[21] is the
+-- count of CI legs running on the bench (one Runner.Worker per running job,
+-- nova-tools#4293), on the beat as ci every beat: the deal passes and
+-- ns_cm_work's fill take it off the bench's slots, so a copy is never put
+-- beside a leg it would slow; empty when unmeasured (nothing is taken off).
+-- args[22] is the process sample, on the beat as ps (#4338; empty leaves it
+-- as it is).
 local function bench_beat(keys, args)
   local bench = args[1]
   if not bench or bench == '' then
@@ -276,7 +288,7 @@ local function bench_beat(keys, args)
     'live', '0', 'why', why or '', 'build', build or '',
     'harness', harness or '', 'mirrors', mirrors or '', 'disk_gib', disk_gib or '',
     'epoch', tostring(NS.card.epoch()),
-    'at', tostring(at))
+    'ci', args[21] or '', 'at', tostring(at))
   -- probe is the bench's last probe result, written by fleet build after an
   -- install (nova-tools#4237: a probe's result lives here, never in the
   -- consumer sets); a beat that names none leaves it as it is.
@@ -311,6 +323,14 @@ local function bench_beat(keys, args)
     -- every core (Glenn 2026-09-26 8:33 AM ET); the beat is the row the
     -- table reads, never the host row
     redis.call('HSET', 'bench:' .. bench .. ':beat', 'ncpu', ncpu or '', 'cpu', args[20] or '')
+  end
+  -- The process sample (#4338): top processes by CPU, the nova units
+  -- declared|undeclared and the oldest processes outside every declared unit,
+  -- JSON, bounded by the bench (fleet.PSSample); `fleet ps` reads it. A caller
+  -- that predates it passes nothing and the field is left as it is.
+  local ps = args[22]
+  if ps and ps ~= '' then
+    redis.call('HSET', 'bench:' .. bench .. ':beat', 'ps', ps)
   end
   if first == 0 then
     pl_caplog('bench-up', bench, '', actor, idem, at)
@@ -353,7 +373,13 @@ local function friend_row(keys, args)
   if type(slots) ~= 'string' or not string.match(slots, '^[0-9]+$') then
     slots = ''
   end
-  local up = redis.call('EXISTS', 'friend:' .. friend .. ':beat')
+  -- up is reader-judged from the beat's at (#4233: a friend beat has no
+  -- TTL; keys do not expire): under PL_ROW_UP_MS old is up, else down.
+  local up = 0
+  local beat_at = tonumber(redis.call('HGET', 'friend:' .. friend .. ':beat', 'at') or '')
+  if beat_at and pl_now_ms() - beat_at <= PL_ROW_UP_MS then
+    up = 1
+  end
   local row = 'friend:' .. friend
   local kind = redis.call('TYPE', row)
   if type(kind) == 'table' then

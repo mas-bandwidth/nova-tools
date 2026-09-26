@@ -127,15 +127,17 @@ func SprintFixture() [][]string {
 		cmds = append(cmds, ConsumerCards("bench:"+b.name, [4]int{b.ready, b.working, b.ok, b.fail})...)
 		cmds = append(cmds, []string{"ZADD", "bench:" + b.name + ":cards:ok", ms(-4 * time.Hour), b.name + "-before-open~1"})
 	}
-	// Friends: rowan up, johnny's beat fresh but a down flag, emma up,
-	// stella with no beat (its 5 s TTL lapsed); the friends SET also names
-	// ghost, who is not in the roster. The consumers SET names two members
-	// already on the table (each shows once). The friend:<f> row hashes
-	// disagree with every cell and are never read.
+	// Friends: rowan up, beating from its own laptop with a load (friend
+	// beat, #4233: a friend's load is its own beat's, never studio's 3.00),
+	// johnny's beat fresh but a down flag, emma up with no load on her
+	// beat, stella with no beat (its 5 s TTL lapsed); the friends SET also
+	// names ghost, who is not in the roster. The consumers SET names two
+	// members already on the table (each shows once). The friend:<f> row
+	// hashes disagree with every cell and are never read.
 	cmds = append(cmds,
 		[]string{"SADD", "friends", "rowan", "johnny", "emma", "stella", "ghost"},
 		[]string{"SADD", "consumers", "friend:rowan", "bench:hetzner"},
-		[]string{"HSET", "friend:rowan:beat", "at", ms(-1 * time.Second), "session", "r"},
+		[]string{"HSET", "friend:rowan:beat", "at", ms(-1 * time.Second), "host", "laptop", "load1", "0.50", "harness", "friend beat"},
 		[]string{"HSET", "friend:johnny:beat", "at", ms(-1 * time.Second), "session", "j"},
 		[]string{"SET", "friend:johnny:down", "out-of-credits@2026-09-24T23:00Z"},
 		[]string{"HSET", "friend:emma:beat", "at", ms(-2 * time.Second), "session", "e"},

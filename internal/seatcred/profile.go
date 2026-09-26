@@ -23,9 +23,11 @@ import (
 // ProfileFile is the profile's name under $XDG_CONFIG_HOME/<tool>/.
 const ProfileFile = "seats.tsv"
 
-// ProfileColumns names the six tab-separated columns, in order; a refusal
-// about a row prints it so the fix needs no doc.
-const ProfileColumns = "name, redis addr, redis user, secret env, store, key"
+// ProfileColumns names the tab-separated columns, in order; a refusal about a
+// row prints it so the fix needs no doc. The seventh, the GitHub token env, is
+// optional: a six-column row is the #4330 row, and its GitHub verbs read
+// GH_TOKEN from the session as before.
+const ProfileColumns = "name, redis addr, redis user, secret env, store, key[, github token env]"
 
 // Profile is one seats.tsv row.
 type Profile struct {
@@ -35,6 +37,7 @@ type Profile struct {
 	SecretEnv string // the key of the seat's file that holds User's password
 	Store     string // the nova-secrets store directory
 	Key       string // the age key that opens the seat's file; <as>.key names the file <as>.yaml
+	GitHubEnv string // optional seventh column: the key of the seat's file that holds its GitHub token, "" when none
 }
 
 // ProfilePath is $XDG_CONFIG_HOME/<tool>/seats.tsv, else
@@ -79,7 +82,7 @@ func LoadProfile(path, seat, home string) (Profile, error) {
 		}
 		p, err := parseProfileRow(line, home)
 		if err != nil {
-			return Profile{}, fmt.Errorf("seat profile %s:%d: %v; a row is six tab-separated columns (%s)", path, n, err, ProfileColumns)
+			return Profile{}, fmt.Errorf("seat profile %s:%d: %v; a row is six or seven tab-separated columns (%s)", path, n, err, ProfileColumns)
 		}
 		if p.Name == seat {
 			if found != nil {
@@ -99,13 +102,19 @@ func LoadProfile(path, seat, home string) (Profile, error) {
 
 func parseProfileRow(line, home string) (Profile, error) {
 	cols := strings.Split(line, "\t")
-	if len(cols) != 6 {
-		return Profile{}, fmt.Errorf("%d columns, want 6", len(cols))
+	if len(cols) != 6 && len(cols) != 7 {
+		return Profile{}, fmt.Errorf("%d columns, want 6 or 7", len(cols))
 	}
 	for i := range cols {
 		cols[i] = strings.TrimSpace(cols[i])
 	}
 	p := Profile{Name: cols[0], Addr: cols[1], User: cols[2], SecretEnv: cols[3], Store: tilde(cols[4], home), Key: tilde(cols[5], home)}
+	if len(cols) == 7 {
+		p.GitHubEnv = cols[6]
+		if !secretEnvName.MatchString(p.GitHubEnv) {
+			return Profile{}, fmt.Errorf("github token env %q must match [A-Z_][A-Z0-9_]*", p.GitHubEnv)
+		}
+	}
 	if !secrets.IsValidAsName(p.Name) {
 		return Profile{}, fmt.Errorf("name %q must match [A-Za-z0-9_-]+", p.Name)
 	}
@@ -142,9 +151,11 @@ func (p Profile) AsName() string {
 
 // ResolveProfile opens the row's seat file through secrets.OpenSeatFile --
 // the store, key and checks nova-secrets exec uses -- and returns the row's
-// login: User with the password held under SecretEnv. sops is SopsEnv's, else
-// the one on PATH. A refusal names the seat, the row's file and the remedy,
-// never a value.
+// login: User with the password held under SecretEnv, and, when the row names
+// a GitHub token env, the token held under it (a file without it is GitHubErr,
+// refused only when a GitHub verb asks). sops is SopsEnv's, else the one on
+// PATH. A refusal names the seat, the row's file and the remedy, never a
+// value.
 func ResolveProfile(p Profile, getenv func(string) string) (Cred, error) {
 	sops := getenv(SopsEnv)
 	if sops == "" {
@@ -159,7 +170,15 @@ func ResolveProfile(p Profile, getenv func(string) string) (Cred, error) {
 		return Cred{}, fmt.Errorf("seat %s: %w", p.Name, err)
 	}
 	if pw, ok := sf.Secrets[p.SecretEnv]; ok && pw.Loaded() && !pw.Empty() {
-		return Cred{Seat: p.Name, User: p.User, Key: p.SecretEnv, Password: pw}, nil
+		c := Cred{Seat: p.Name, User: p.User, Key: p.SecretEnv, Password: pw, GitHubKey: p.GitHubEnv}
+		if p.GitHubEnv != "" {
+			if tok, ok := sf.Secrets[p.GitHubEnv]; ok && tok.Loaded() && !tok.Empty() {
+				c.GitHub = tok
+			} else {
+				c.GitHubErr = fmt.Errorf("seat %s: %s holds no %s, the GitHub token its seats.tsv row names; seal it with nova-secrets seal --as %s --name %s", p.Name, sf.Path, p.GitHubEnv, p.AsName(), p.GitHubEnv)
+			}
+		}
+		return c, nil
 	}
 	return Cred{}, fmt.Errorf("seat %s: %s holds no %s; seal it with nova-secrets seal --as %s --name %s", p.Name, sf.Path, p.SecretEnv, p.AsName(), p.SecretEnv)
 }

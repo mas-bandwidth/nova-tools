@@ -50,3 +50,12 @@ func Land(ctx context.Context, client *redis.Client, sprint, label, mergeSHA str
 		return refused(fmt.Sprintf("card land reply %q", reply))
 	}
 }
+
+// The wrapper's default yield-to-CI (nova-tools#4293) is setpriority on the
+// calling process. In this package's tests the default is a no-op, so a
+// test that sets no Yield of its own leaves the test binary at its
+// priority; nice_test.go gives its own Yield and asserts the call and where
+// it stands, and internal/yield tests the real setpriority.
+func init() {
+	yieldToCI = func() error { return nil }
+}

@@ -17,10 +17,10 @@ total                     |     559 |    15 |       8 |      7 |       3 |      
 
 worker                    | ready | working |  done |  ok% | status | load
 --------------------------+-------+---------+-------+------+--------+------
-rowan                     |     0 |      12 |    14 |  71% | up     | 3.00
-johnny                    |     2 |       0 |     3 | 100% | down   | 3.00
-emma                      |     1 |       4 |     5 |  80% | up     | 3.00
-stella                    |     0 |       1 |     5 | 100% | down   | 3.00
+rowan                     |     0 |      12 |    14 |  71% | up     | 0.50
+johnny                    |     2 |       0 |     3 | 100% | down   | -
+emma                      |     1 |       4 |     5 |  80% | up     | -
+stella                    |     0 |       1 |     5 | 100% | down   | -
 batman                    |     0 |       0 |     1 | 100% | up     | 0.89
 hetzner                   |     2 |       3 |     5 |  80% | up     | 0.19
 hulk                      |     7 |       0 |     3 | 100% | up     | 0.40
