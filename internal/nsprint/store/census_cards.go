@@ -45,6 +45,15 @@ import (
 //
 // round_trips counts the pipeline flushes the census issued (one); ms is the
 // wall time of the whole census, reads and rendering.
+//
+// The family it reads, s:<S>:card:<label> with its index s:<S>:idx:card:<state>
+// and roster sprint:<S>:cards, is the card store that the one task store
+// (task:<id> in the ws index, nova-tools #3778) replaced for sprint tasks:
+// on 2026-09-26 13:32 EDT `census --sprint quack-0926` printed cards=0 sets=12
+// while the ws index held 126 cards of the sprint. The same pipeline reads
+// the roster's ZCARD; a sprint the family never held a card of (roster 0)
+// and whose named indexes are empty is refused with ErrRetiredFamily, the
+// remedy being `nova-sprint ws counts`, never a quiet cards=0.
 
 // CardStates is the default named key set: every card index state the
 // nova_sprint library writes, in the order a card moves through them.
@@ -52,6 +61,11 @@ var CardStates = []string{
 	"queued", "dealt", "launched", "running", "ended", "reconcile-required",
 	"orphan-effect", "harvested", "refused", "review-ready", "land-ready", "landed",
 }
+
+// ErrRetiredFamily is the refusal of a census whose sprint has no card in the
+// s:<S>:card family (sprint:<S>:cards is empty and every named index is): its
+// cards, if any, are task:<id> records in the ws index.
+var ErrRetiredFamily = errors.New(`census reads a retired key family; remedy="nova-sprint ws counts"`)
 
 // CensusReadFunction is the library function that reads one card index with
 // the named hash fields of each member (census.lua).
@@ -181,6 +195,7 @@ func (s *Store) CardCensus(ctx context.Context, req CardCensusRequest) ([]CardCe
 	states := req.states()
 	pipe := s.client.Pipeline()
 	clock := pipe.Time(ctx)
+	roster := pipe.ZCard(ctx, "sprint:"+req.Sprint+":cards")
 	reads := make([]*redis.Cmd, len(states))
 	for i, st := range states {
 		args := make([]any, 0, len(cardCensusFields)+2)
@@ -232,6 +247,9 @@ func (s *Store) CardCensus(ctx context.Context, req CardCensusRequest) ([]CardCe
 		}
 	}
 	sum.Cards = len(rows)
+	if n, err := roster.Result(); err == nil && n == 0 && sum.Cards == 0 {
+		return nil, CardCensusSummary{}, ErrRetiredFamily
+	}
 	return rows, sum, nil
 }
 

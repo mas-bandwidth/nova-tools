@@ -31,6 +31,10 @@ func init() {
 	register(Verb{Name: "stream", Summary: "list, order or rename the work streams; open, rebase, pr, status or close a stream branch", Run: runStream})
 }
 
+// countsNow is the instant ws counts and the table's one-shot read for (the
+// ETA's hour of ws:log); a test pins it.
+var countsNow = time.Now
+
 // wsStdin is what `--ids @-` reads; a test replaces it.
 var wsStdin io.Reader = os.Stdin
 
@@ -200,18 +204,11 @@ func runWSCounts(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return code
 	}
 	defer st.Close()
-	rows, err := ws.Counts(ctx, st.Client())
-	var t ws.Count
-	for _, r := range rows {
-		t.Waiting += r.Waiting
-		t.Ready += r.Ready
-		t.Working += r.Working
-		t.Merging += r.Merging
-		t.Landed += r.Landed
-		t.Parked += r.Parked
-	}
-	return w.done(err, fmt.Sprintf("COUNTS streams=%d waiting=%d ready=%d working=%d merging=%d landed=%d parked=%d",
-		len(rows), t.Waiting, t.Ready, t.Working, t.Merging, t.Landed, t.Parked))
+	// The one count (ws.Counts), the numbers sprint status and the table
+	// print: the six stream sets per state, parked beside them, the total,
+	// done=landed/total, left and the eta.
+	c, err := (&ws.CountsReader{}).Read(ctx, st.Client(), countsNow())
+	return w.done(err, c.Receipt())
 }
 
 func runWSCheckpoint(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -387,15 +384,18 @@ func runScopeUnpark(ctx context.Context, args []string, out, errOut io.Writer) i
 
 // scopeOf is a stream's place in the scope: parked (everything not yet
 // started is parked), kept (nothing parked) or partial.
-func scopeOf(r ws.Count) string {
+func scopeOf(r ws.StreamCounts) string {
 	switch {
 	case r.Parked == 0:
 		return "kept"
-	case r.Waiting+r.Ready == 0:
+	case r.Cell(ws.Waiting)+r.Cell(ws.Ready) == 0:
 		return "parked"
 	}
 	return "partial"
 }
+
+// active is a stream's cards not parked, landed or closed.
+func active(r ws.StreamCounts) int64 { return r.Sum() - r.Cell(ws.Landed) }
 
 func runScopeLs(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("scope ls", out, errOut)
@@ -407,14 +407,14 @@ func runScopeLs(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return code
 	}
 	defer st.Close()
-	rows, err := ws.Counts(ctx, st.Client())
+	c, err := ws.Counts(ctx, st.Client(), "")
 	n := map[string]int{}
-	for _, r := range rows {
+	for _, r := range c.Streams {
 		s := scopeOf(r)
 		n[s]++
-		fmt.Fprintf(out, "%s %s active=%d parked=%d\n", s, strconv.Quote(r.Stream), r.Active(), r.Parked)
+		fmt.Fprintf(out, "%s %s active=%d parked=%d\n", s, strconv.Quote(r.Stream), active(r), r.Parked)
 	}
-	return w.done(err, fmt.Sprintf("SCOPE streams=%d kept=%d parked=%d partial=%d", len(rows), n["kept"], n["parked"], n["partial"]))
+	return w.done(err, fmt.Sprintf("SCOPE streams=%d kept=%d parked=%d partial=%d", len(c.Streams), n["kept"], n["parked"], n["partial"]))
 }
 
 func runStream(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -446,12 +446,12 @@ func runStreamLs(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return code
 	}
 	defer st.Close()
-	rows, err := ws.Counts(ctx, st.Client())
-	for _, r := range rows {
-		fmt.Fprintf(out, "%d %s waiting=%d ready=%d working=%d merging=%d landed=%d parked=%d\n",
-			r.Rank, strconv.Quote(r.Stream), r.Waiting, r.Ready, r.Working, r.Merging, r.Landed, r.Parked)
+	c, err := ws.Counts(ctx, st.Client(), "")
+	for i, r := range c.Streams {
+		fmt.Fprintf(out, "%d %s waiting=%d ready=%d working=%d review=%d merging=%d landed=%d parked=%d\n",
+			i+1, strconv.Quote(r.Stream), r.Cells[0], r.Cells[1], r.Cells[2], r.Cells[3], r.Cells[4], r.Cells[5], r.Parked)
 	}
-	return w.done(err, fmt.Sprintf("STREAMS n=%d", len(rows)))
+	return w.done(err, fmt.Sprintf("STREAMS n=%d", len(c.Streams)))
 }
 
 func runStreamOrder(ctx context.Context, args []string, out, errOut io.Writer) int {

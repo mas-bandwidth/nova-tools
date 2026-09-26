@@ -70,7 +70,7 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 	if *from != "" && sub != "open" {
 		return refuse(errOut, verb, "--from is for open only")
 	}
-	now := time.Now()
+	now := countsNow()
 	if *nowUnix > 0 {
 		now = time.Unix(*nowUnix, 0)
 	}

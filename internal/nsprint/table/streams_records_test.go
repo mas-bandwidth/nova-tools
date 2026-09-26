@@ -74,7 +74,7 @@ func TestStreamsTableFromRecords(t *testing.T) {
 	}
 	out := snap.Render(now)
 	rule := "--------------------------+---------+-------+---------+--------+---------+-------\n"
-	want := "SPRINT TABLE\n\n100/106 left, 5% done -> ~6000m gh 0/h\n\n" +
+	want := "SPRINT TABLE\n\n6/106 done 5%, left 100, eta ? gh 0/h\n\n" +
 		"stream                    | waiting | ready | working | review | merging | landed\n" + rule +
 		"nova-sprint + merge + bus |      56 |    12 |       3 |      4 |       2 |      1\n" +
 		"swarm: cards              |       4 |     0 |       7 |      2 |       0 |      5\n" +

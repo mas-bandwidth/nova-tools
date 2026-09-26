@@ -192,7 +192,7 @@ func TestStreamTableReviewColumn(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := snap.Render(now)
-	want := "3/4 left, 25% done -> ~180m gh 0/h\n\n" +
+	want := "1/4 done 25%, left 3, eta ? gh 0/h\n\n" +
 		"stream                    | waiting | ready | working | review | merging | landed\n" +
 		"--------------------------+---------+-------+---------+--------+---------+-------\n" +
 		"swarm: cards              |       0 |     0 |       1 |      2 |       0 |      1\n" +

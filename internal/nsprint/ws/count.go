@@ -8,9 +8,10 @@ import (
 
 // The one count of a stream set's cards (#4318): the set's ZCARD less the
 // stream's sentinel when it is in that set. The sentinel is the stream's
-// stop, not one of its cards, so every reader that counts cards (the sprint
-// table, the progress duty, ns_ws_counts in Lua, the tests) counts through
-// here and no column ever shows it.
+// stop, not one of its cards, for the readers that decide on live cards (the
+// waiting resolver, the progress duty's stall watch). The printed counts of
+// the sprint (sprint status, the table, ws counts) are Counts (progress.go),
+// where the sentinel counts like any card of its stream.
 
 // CardCountCmd is one queued card count: the ZCARD and the sentinel's ZSCORE
 // on the same set, read in the caller's pipeline.

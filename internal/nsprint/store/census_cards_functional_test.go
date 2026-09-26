@@ -154,12 +154,12 @@ func TestCensusSprintCardsOneRoundTrip(t *testing.T) {
 		t.Fatalf("census --sprint used %d flushes; want exactly 1 for all %d cards", got, censusCards)
 	}
 	sent := names.take()
-	wantSent := []string{"time"}
+	wantSent := []string{"time", "zcard"} // the clock, the roster sprint:<S>:cards
 	for range store.CardStates {
 		wantSent = append(wantSent, "fcall_ro")
 	}
 	if strings.Join(sent, " ") != strings.Join(wantSent, " ") {
-		t.Fatalf("census --sprint sent %v; want %v (TIME, then one FCALL_RO %s per index, no SORT)", sent, wantSent, store.CensusReadFunction)
+		t.Fatalf("census --sprint sent %v; want %v (TIME, the roster ZCARD, then one FCALL_RO %s per index, no SORT)", sent, wantSent, store.CensusReadFunction)
 	}
 	if got := serverSorts(t, client); got != "" {
 		t.Fatalf("the server counted SORT calls: %s", got)

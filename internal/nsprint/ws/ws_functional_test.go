@@ -62,14 +62,14 @@ func check(t *testing.T, c *redis.Client, ids []string) {
 	}
 }
 
-func counts(t *testing.T, c *redis.Client) map[string]ws.Count {
+func counts(t *testing.T, c *redis.Client) map[string]ws.StreamCounts {
 	t.Helper()
-	rows, err := ws.Counts(context.Background(), c)
+	got, err := ws.Counts(context.Background(), c, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := map[string]ws.Count{}
-	for _, r := range rows {
+	m := map[string]ws.StreamCounts{}
+	for _, r := range got.Streams {
 		m[r.Stream] = r
 	}
 	return m
@@ -85,7 +85,7 @@ func TestFixtureHoldsTheInvariants(t *testing.T) {
 	if len(m) != 10 {
 		t.Fatalf("%d streams, want 10", len(m))
 	}
-	want := ws.Count{Stream: wstest.StreamName(3), Rank: 4, Waiting: 40, Ready: 20, Working: 15, Merging: 10, Landed: 10}
+	want := ws.StreamCounts{Stream: wstest.StreamName(3), Cells: [ws.CountsCells]int64{40, 20, 15, 0, 10, 10}}
 	if got := m[wstest.StreamName(3)]; got != want {
 		t.Fatalf("counts %+v, want %+v", got, want)
 	}
@@ -135,7 +135,7 @@ func TestEveryOperationIsOneRoundTripUnderOneSecond(t *testing.T) {
 		}
 		return fmt.Sprint(n)
 	})
-	if got := counts(t, c)[s(2)]; got.Waiting != 40 || got.Ready != 20 || got.Parked != 0 {
+	if got := counts(t, c)[s(2)]; got.Cell(ws.Waiting) != 40 || got.Cell(ws.Ready) != 20 || got.Parked != 0 {
 		t.Fatalf("unpark did not restore waiting/ready: %+v", got)
 	}
 	if score, err := c.ZScore(ctx, ws.Key(s(2), "ready"), "t00082").Result(); err != nil || score != float64(wstest.Created(82)) {
@@ -165,11 +165,18 @@ func TestEveryOperationIsOneRoundTripUnderOneSecond(t *testing.T) {
 		}
 		return fmt.Sprint(n)
 	})
+	// The one count (ws.Counts) learns ws:order in its first read; a primed
+	// reader (the table's tick) then reads every count in one pipeline.
+	cr := &ws.CountsReader{}
+	if _, err := cr.Read(ctx, c, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	step("counts", func() string {
-		rows, err := ws.Counts(ctx, c)
+		got, err := cr.Read(ctx, c, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
+		rows := got.Streams
 		if rows[0].Stream != s(9) || rows[1].Stream != "swarm: renamed" || rows[1].Parked != 60 || rows[2].Stream != s(0) {
 			t.Fatalf("counts order %+v", rows[:3])
 		}

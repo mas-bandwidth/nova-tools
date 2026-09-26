@@ -53,7 +53,7 @@ func TestWSVerbsOnAThousandTasks(t *testing.T) {
 		want  string
 		lines int
 	}{
-		{[]string{"ws", "counts"}, "COUNTS streams=10 waiting=400 ready=200 working=150 merging=100 landed=100 parked=0 ", 1},
+		{[]string{"ws", "counts"}, `COUNTS sprint=- streams=10 waiting=400 ready=200 working=150 review=0 merging=100 landed=100 parked=0 total=950 done=100/950 pct=10 left=850 eta="?" `, 1},
 		{[]string{"stream", "ls"}, "STREAMS n=10 ", 11},
 		{[]string{"scope", "keep", "--streams", s(0) + "|" + s(1)}, "KEPT streams=2 parked_streams=8 parked=480 checkpoint=" + cpDir + "/ws-", 1},
 		{[]string{"scope", "ls"}, "SCOPE streams=10 kept=2 parked=8 partial=0 ", 11},

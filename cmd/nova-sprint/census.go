@@ -5,7 +5,10 @@
 // line. With --sprint it reads the sprint's card index sets (all of them, or
 // the states --keys names) in one round trip and prints TSV (label, state,
 // bench, route, attempt, age) and a CENSUS line with round_trips and ms. It is
-// read-only. The rows and counts come from internal/nsprint/store/census.go
+// read-only. A sprint the s:<S>:card family holds nothing of (its cards are
+// task records in the ws index) is refused, one line, exit 1:
+// REFUSED census reads a retired key family; remedy="nova-sprint ws counts".
+// The rows and counts come from internal/nsprint/store/census.go
 // and internal/nsprint/store/census_cards.go; this file only parses flags.
 //
 //	nova-sprint census --redis <addr> --sprint <S> [--keys queued,dealt,...]
@@ -15,6 +18,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -110,6 +114,12 @@ func runCardCensus(ctx context.Context, addr, sprint, keys string, out, errOut i
 	}
 	defer st.Close()
 	if _, err := store.RunCardCensus(ctx, st, req, out); err != nil {
+		if errors.Is(err, store.ErrRetiredFamily) {
+			// the sprint's cards are task records in the ws index: one line,
+			// exit 1, and the verb that counts them
+			fmt.Fprintf(out, "REFUSED %s\n", err.Error())
+			return 1
+		}
 		fmt.Fprintf(errOut, "nova-sprint census: REFUSED %s; load the nova_sprint library (nova-sprint fn load) and keep each s:%s:idx:card:<state> a set of card labels\n", oneline.Escape(err.Error()), sprint)
 		return 1
 	}

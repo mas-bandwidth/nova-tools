@@ -4,11 +4,13 @@ package table_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
 	"github.com/redis/go-redis/v9"
 )
@@ -65,13 +67,21 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 	}
 	for i, row := range after.Streams {
 		b := before.Streams[i]
-		if row.Landed != 0 || row.Waiting != b.Waiting || row.Ready != b.Ready || row.Working != b.Working || row.Review != b.Review ||
-			row.Merging != b.Merging {
+		// The clear's move registers a stream it touches, which creates the
+		// stream's sentinel in waiting (#4318); the one count counts it
+		// like any card, so waiting may grow by that one card.
+		stop := int64(0)
+		if _, err := client.ZScore(ctx, ws.Key(row.Name, ws.Waiting), ws.SentinelID(row.Name)).Result(); err == nil {
+			stop = 1
+		}
+		if row.Landed != 0 || (row.Waiting != b.Waiting && row.Waiting != b.Waiting+stop) || row.Ready != b.Ready || row.Working != b.Working ||
+			row.Review != b.Review || row.Merging != b.Merging {
 			t.Fatalf("stream %q after clear %+v, before %+v", row.Name, row, b)
 		}
 	}
 	got := after.Render(now)
-	if !strings.Contains(got, "\n592/592 left, 0% done -> ~11840m gh 0/h\n") {
+	all := after.Counts.All()
+	if after.Counts.Done() != 0 || !strings.Contains(got, fmt.Sprintf("\n0/%d done 0%%, left %d, eta ", all, all)) {
 		t.Fatalf("after clear:\n%s", got)
 	}
 	if b, a := before.Render(now), got; b[strings.Index(b, "\nworker "):] != a[strings.Index(a, "\nworker "):] {

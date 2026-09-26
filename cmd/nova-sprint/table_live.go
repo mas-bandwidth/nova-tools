@@ -60,12 +60,13 @@ func cmdTableLive(opts tableOpts, stdout, stderr io.Writer) int {
 			return tableRefuse(stderr, err.Error())
 		}
 		defer st.Close()
-		snap, err := table.NewSprintReader(st.Client(), cfg).Read(ctx, time.Now())
+		now := countsNow()
+		snap, err := table.NewSprintReader(st.Client(), cfg).Read(ctx, now)
 		if err != nil {
 			return tableRefuse(stderr, err.Error())
 		}
-		snap.LastGood = time.Now()
-		return publishTable(opts.out, snap.Render(time.Now()), stdout, stderr)
+		snap.LastGood = now
+		return publishTable(opts.out, snap.Render(now), stdout, stderr)
 	}
 	return loopTable(ctx, addr, cfg, opts, stdout, stderr)
 }
