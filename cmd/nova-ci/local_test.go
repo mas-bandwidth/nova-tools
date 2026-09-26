@@ -208,20 +208,22 @@ func TestLocalBuildFailureIsRed(t *testing.T) {
 	}
 }
 
-// Green tests over the unit budgets fail make test with no red test: the
-// CI-SLOW line is printed and the verb exits 2, as slowtests does.
-func TestLocalOverBudgetExitsTwo(t *testing.T) {
+// A SLEEPS skip off the ledger fails make test with no red test: the
+// CI-SLEEPS line is printed and the verb exits 2, as slowtests does on every
+// leg. (A CI-SLOW line alone exits make 0 now: it is a measurement.)
+func TestLocalSleepsOffTheLedgerExitsTwo(t *testing.T) {
 	t.Parallel()
-	stream := `{"Action":"pass","Package":"example.com/m/cmd/a","Test":"TestSlow","Elapsed":3.1}
-{"Action":"pass","Package":"example.com/m/cmd/a","Elapsed":3.2}
-CI-SLOW test=TestSlow package=example.com/m/cmd/a seconds=3.1s budget=1s
+	stream := `{"Action":"output","Package":"example.com/m/cmd/a","Test":"TestSleeps","Output":"SLEEPS: waits\n"}
+{"Action":"skip","Package":"example.com/m/cmd/a","Test":"TestSleeps","Elapsed":0}
+{"Action":"pass","Package":"example.com/m/cmd/a","Elapsed":0.2}
+CI-SLEEPS test=TestSleeps package=example.com/m/cmd/a: skipped for a wall-clock wait and not on internal/ci/sleeps-skips_allowlist.txt; inject a clock or tag it //go:build functional
 `
 	f := localFixture(t, "./cmd/a\n", localReply{prefix: "nice -n 15 make test ", stdout: stream, code: 2})
 	code, stdout, _ := runLocal(t, f)
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2\n%s", code, stdout)
 	}
-	for _, want := range []string{"CI-SLOW test=TestSlow", "red=0 make-exit=2", "over the unit budgets"} {
+	for _, want := range []string{"CI-SLEEPS test=TestSleeps", "red=0 make-exit=2", "a SLEEPS skip off the ledger"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, stdout)
 		}

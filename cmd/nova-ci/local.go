@@ -114,8 +114,10 @@ func localCapture(runner localRunner, dir string, env []string, argv ...string) 
 }
 
 // cmdLocal is `nova-ci local [--base <ref>] [--functional]`. Exit 0 is CI's
-// green; 1 a red test or a package that did not build; 2 a CI-SLOW over the
-// unit budgets, a step that could not run, or a refusal.
+// green; 1 a red test or a package that did not build; 2 a CI-SLEEPS line (a
+// SLEEPS skip off the ledger), a step that could not run, or a refusal. A
+// CI-SLOW line is printed and, as on every CI leg but the nightly one, is not
+// a verdict.
 func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
 	fs := flag.NewFlagSet("local", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -292,7 +294,7 @@ type localPkg struct {
 
 // localCollector reads make test's stdout: a `go test -json` TestEvent line is
 // folded into its package, and anything else (make's own lines, slowtests'
-// CI-SLOW verdict) is printed as it came.
+// CI-SLOW, CI-SLEEPS and CI-LOAD lines) is printed as it came.
 type localCollector struct {
 	out   io.Writer
 	order []string
@@ -409,7 +411,7 @@ func (c *localCollector) finish(makeCode int) int {
 	case reds > 0:
 		return 1
 	default:
-		fmt.Fprintln(c.out, "nova-ci local: make test failed with no red test: a CI-SLOW line above is over the unit budgets, or a step could not run (its words are above)")
+		fmt.Fprintln(c.out, "nova-ci local: make test failed with no red test: a CI-SLEEPS line above is a SLEEPS skip off the ledger, or a step could not run (its words are above)")
 		return 2
 	}
 }
