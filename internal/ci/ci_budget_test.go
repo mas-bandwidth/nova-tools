@@ -580,3 +580,18 @@ func TestPushOfAProvedShaSkipsTheShards(t *testing.T) {
 		}
 	}
 }
+
+// TestRunnerWorkspacesAreCleanedInPlace (Glenn 2026-09-26 10:20 AM ET, fs_usage
+// on the Studio: the four per-job `rm -rf` sweeps and the re-seeds behind
+// them were the file-event storm; "lots of tiny files is a really slow way
+// to work"): every sweep step in ci.yml resets the checkout in place and
+// empties the tree only when git cannot.
+func TestRunnerWorkspacesAreCleanedInPlace(t *testing.T) {
+	t.Parallel()
+	ci := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	sweeps := strings.Count(ci, `find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf`)
+	inPlace := strings.Count(ci, `clean -ffdxq; then`)
+	if sweeps == 0 || sweeps != inPlace {
+		t.Fatalf("%d workspace sweeps, %d of them clean in place first; every sweep resets and cleans the checkout before it may empty the tree", sweeps, inPlace)
+	}
+}
