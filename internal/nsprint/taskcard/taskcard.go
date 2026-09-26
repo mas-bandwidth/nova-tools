@@ -427,8 +427,22 @@ func Land(ctx context.Context, c redis.Cmdable, id, by, sha, why string) (Result
 	return Move(ctx, c, id, "landed", Opts{By: by, Why: why, Sha: sha})
 }
 
-// Cancel ends a task that will not be done: done/fail with the why.
+// Cancel ends a task that will not be done: done/fail with the why. A plan
+// (nova-tools#4317) cascades: its live children and stitch are cancelled
+// first, oldest first, then the plan; a child in flight (working, review,
+// merging: a copy or a PR is out) refuses the whole cancel by name, before
+// any write, so nothing is half-cancelled.
 func Cancel(ctx context.Context, c redis.Cmdable, id, by, why string) (Result, error) {
+	if first, err := planCascade(ctx, c, id); err != nil {
+		return Result{}, err
+	} else if len(first) > 0 {
+		for _, cid := range first {
+			if _, err := Move(ctx, c, cid, "done", Opts{By: by, Why: "plan " + id + " cancelled: " + why, OK: "fail",
+				Fields: []string{"evidence", "plan " + id + " cancelled: " + why}}); err != nil {
+				return Result{}, fmt.Errorf("cancel %s of plan %s: %w", cid, id, err)
+			}
+		}
+	}
 	return Move(ctx, c, id, "done", Opts{By: by, Why: why, OK: "fail", Fields: []string{"evidence", why}})
 }
 

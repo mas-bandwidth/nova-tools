@@ -1441,13 +1441,39 @@ function TK.edge(id, cur, nxt, ok, o)
   if to == 'review' and from ~= 'review' and not o.review and o.copy == nil then
     return 'OFFGRAPH ' .. (from == '' and 'null' or from) .. ' -> review is a copy\'s end (card end --ok --pr, or --fail)'
   end
+  -- a plan (nova-tools#4317) is never ready: it waits on its stitch and
+  -- lands with it (the resolver skips it; any other door is refused here)
+  if cur.kind == 'plan' and to == 'ready' and from ~= 'ready' then
+    return 'PLAN task:' .. id .. ' is a plan: it waits on its stitch and lands with it, never ready'
+  end
+  -- a plan ends only after its children and stitch: card cancel of a plan
+  -- cascades (taskcard.Cancel); a hand move names what is still live
+  if cur.kind == 'plan' and to == 'done' and from ~= 'done' then
+    local live = TK.plan_live(id)
+    if live ~= '' then
+      return 'PLAN task:' .. id .. ' has live ' .. live .. ': nova-sprint task cancel --id ' .. id .. ' cancels them first, then the plan'
+    end
+  end
   if from == to then
     if nxt.friend ~= cur.friend and not TK.REPLACE[to] then
       return 'OFFGRAPH a ' .. to .. ' task keeps its friend'
     end
     return nil
   end
-  if not (TK.GRAPH[from] and TK.GRAPH[from][to]) then
+  -- a plan (nova-tools#4317, kind plan: never dealt, its children are)
+  -- lands from waiting or ready at its stitch's merge sha, once the stitch
+  -- has landed; the one edge off the graph, refused by name until then
+  local plan = to == 'landed' and (from == 'waiting' or from == 'ready') and cur.kind == 'plan'
+  if plan then
+    local stitch = TK.str(redis.call('HGET', 'task:' .. id, 'stitch'))
+    if stitch == '' then
+      return 'PLAN task:' .. id .. ' has no stitch: nova-sprint card cut --parent ' .. id .. ' --from <children.tsv>'
+    end
+    local sw = TK.str(redis.call('HGET', 'task:' .. stitch, 'where'))
+    if sw ~= 'landed' then
+      return 'PLAN task:' .. id .. ' lands when its stitch ' .. stitch .. ' lands (now ' .. (sw == '' and 'null' or sw) .. ')'
+    end
+  elseif not (TK.GRAPH[from] and TK.GRAPH[from][to]) then
     if from == '' then return 'OFFGRAPH a new task starts in waiting or ready' end
     return 'OFFGRAPH ' .. from .. ' -> ' .. to
   end
@@ -1492,6 +1518,42 @@ function TK.edge(id, cur, nxt, ok, o)
     return 'OWNER task:' .. id .. ' is ' .. cur.friend .. "'s, not " .. o.as .. "'s"
   end
   return nil
+end
+
+-- TK.plan_live(id): a plan's children and stitch that are not landed or
+-- done, as 'children a,b and stitch s' ('' when none): what a cancel of
+-- the plan must end first.
+function TK.plan_live(id)
+  local f = redis.call('HMGET', 'task:' .. id, 'children', 'stitch')
+  local live = {}
+  for cid in string.gmatch(TK.str(f[1]), '%S+') do
+    local w = TK.str(redis.call('HGET', 'task:' .. cid, 'where'))
+    if w ~= 'landed' and w ~= 'done' and w ~= '' then live[#live + 1] = cid end
+  end
+  local out = ''
+  if #live > 0 then out = 'children ' .. table.concat(live, ',') end
+  local s = TK.str(f[2])
+  if s ~= '' then
+    local w = TK.str(redis.call('HGET', 'task:' .. s, 'where'))
+    if w ~= 'landed' and w ~= 'done' and w ~= '' then out = out .. (out ~= '' and ' and ' or '') .. 'stitch ' .. s end
+  end
+  return out
+end
+
+-- TK.land_parent(id, o): a stitch that landed lands its plan (nova-tools
+-- #4317) at the same sha, from waiting or ready, in the same call, by any
+-- door (the stream landing, task land --id <stitch>, a verdict). A parent
+-- already terminal (landed, done, parked) is left as it is. Returns the
+-- parent id landed, or nil.
+function TK.land_parent(id, o)
+  local f = redis.call('HMGET', 'task:' .. id, 'phase', 'parent')
+  if TK.str(f[1]) ~= 'stitch' or TK.str(f[2]) == '' then return nil end
+  local parent = TK.str(f[2])
+  local w = TK.str(redis.call('HGET', 'task:' .. parent, 'where'))
+  if w ~= 'waiting' and w ~= 'ready' then return nil end
+  local err = TK.move(parent, 'landed', { by = o.by, why = 'stitch ' .. id .. ' landed: ' .. TK.str(o.why), sha = o.sha })
+  if err then return nil, err end
+  return parent
 end
 
 -- TK.move(id, to, o): the one move. Returns nil and {from, to, xid} when
@@ -1656,13 +1718,21 @@ function TK.move(id, to, o)
     herr, cut = TK.hook(id, cur, to, o)
     if herr then return 'DRIFT-AFTER ' .. herr .. ' task:' .. id end
   end
+  -- a landed stitch lands its plan (nova-tools#4317), whichever door landed
+  -- it; the plan's own landing may in turn land the stream's stop below
+  local parent
+  if to == 'landed' and cur.where ~= 'landed' then
+    local perr
+    parent, perr = TK.land_parent(id, o)
+    if perr then return 'DRIFT-AFTER plan of ' .. id .. ': ' .. perr end
+  end
   -- Landing by structure (#4318): the last live card's landing lands the
   -- stream's sentinel at the same sha, in this call.
   local stop
   if to == 'landed' and cur.where ~= 'landed' and not TK.is_sentinel(id) and nxt.stream ~= '' then
     stop = TK.land_stop(nxt.stream, o.sha, o.by, 'last card ' .. id .. ' landed')
   end
-  return nil, { from = cur.where, to = to, xid = xid, cut = cut, stop = stop }
+  return nil, { from = cur.where, to = to, xid = xid, cut = cut, stop = stop, parent = parent }
 end
 
 -- TK.land_stop(stream, sha, by, why): the stream's sentinel lands when it is
@@ -2275,14 +2345,17 @@ end)
 -- member: id, why. The stream lander's merge (Glenn 08:50 AM ET: merging ->
 -- landed at the one merge sha, then the lander closes each member's PR and
 -- origin issue with the CLOSE line): every member of ws:<stream>:merging
--- moves to landed through the one move, oldest first.
+-- moves to landed through the one move, oldest first. A landed member that
+-- is a plan's stitch (phase stitch, parent set; nova-tools#4317) lands its
+-- parent too, from waiting or ready at the same sha (TK.edge's plan door),
+-- and the parent is in the reply so the lander closes its issue.
 redis.register_function('ns_tcard_land_stream', function(keys, args)
   local stream, sha, by, why = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
   if why == '' then why = 'stream merged ' .. sha end
-  local landed, refused = {}, {}
+  local landed, refused, parents = {}, {}, {}
   for _, id in ipairs(redis.call('ZRANGE', 'ws:' .. stream .. ':merging', 0, -1)) do
     if not TK.card_id(id) then
-      local err = TK.move(id, 'landed', { by = by, why = why, sha = sha })
+      local err, info = TK.move(id, 'landed', { by = by, why = why, sha = sha })
       if err then
         refused[#refused + 1] = id
         refused[#refused + 1] = err
@@ -2293,8 +2366,17 @@ redis.register_function('ns_tcard_land_stream', function(keys, args)
         landed[#landed + 1] = id
         landed[#landed + 1] = ref
         landed[#landed + 1] = TK.str(f[4])
+        -- the plan the move landed with its stitch (TK.land_parent): in the
+        -- reply, so the lander closes its issue; a terminal parent is skipped
+        if info.parent then parents[#parents + 1] = info.parent end
       end
     end
+  end
+  for _, p in ipairs(parents) do
+    local f = redis.call('HMGET', 'task:' .. p, 'ref', 'origin')
+    landed[#landed + 1] = p
+    landed[#landed + 1] = TK.str(f[1])
+    landed[#landed + 1] = TK.str(f[2])
   end
   local out = { 'LANDED', tostring(#landed / 3), tostring(#refused / 2) }
   for _, v in ipairs(landed) do out[#out + 1] = v end
@@ -2529,6 +2611,8 @@ function TM.leg(id, p)
   if p.copy ~= '' then return nil, 'LIVECOPY task:' .. id .. ' has live copy ' .. p.copy end
   if p.reads ~= '' then return nil, 'LIVECOPY task:' .. id .. ' has live read copies ' .. p.reads end
   if p.friend ~= '' then return nil, 'OWNED task:' .. id .. ' is ' .. p.friend .. "'s friend-queue task, not a primary" end
+  -- a plan (nova-tools#4317) is never dealt: its children are, and its stitch lands it
+  if p.kind == 'plan' then return nil, 'PLAN task:' .. id .. ' is a plan: its children are dealt and its stitch lands it' end
   if p.where == 'review' then
     if TM.pending(id) then
       return nil, 'VERDICT task:' .. id .. ' is in review for its verdict: nova-sprint review post --verdict recut|redeal|reassign:<consumer>|drop'
