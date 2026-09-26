@@ -443,15 +443,18 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
             SPACE_SHARDS=4
-            # EIGHT since 2026-09-25 (the two-minute cap, every job): at two darwin
+            # FOUR since 2026-09-25 (the two-minute cap, every job): at two darwin
             # shards, shard 2/2 of PR run 36206229467 held cmd/nova-sprint,
             # cmd/nova-wake and cmd/nova-review together and crossed the cap on
-            # the Studio; the Studio carries eight runners (fleet/runners.tsv),
-            # one wave per PR. The 2026-09-24 note below is history.
-            STUDIO_SHARDS=8 # 14:55Z 2026-09-24: 16/16 Studio ARM64 runners busy, 12 runs queued, six PR runs at 4 studio shards each (24 jobs for 16 runners) held dev's push runs 10+ min; a shard's tests run 0.7-4.0 min since #3492 (run 36003142070); was 4
+            # the Studio; at eight, sixteen darwin jobs of one queue run shared
+            # eight runners and the merge legs crossed it. Glenn: "we cannot run
+            # CI as parallel as we are used to, and still get reliable < 2m";
+            # "reduce the number of runners". The Studio carries four runners
+            # (fleet/runners.tsv), one wave per PR. The 2026-09-24 note below is history.
+            STUDIO_SHARDS=4 # 14:55Z 2026-09-24: 16/16 Studio ARM64 runners busy, 12 runs queued, six PR runs at 4 studio shards each (24 jobs for 16 runners) held dev's push runs 10+ min; a shard's tests run 0.7-4.0 min since #3492 (run 36003142070); was 4
           elif [ "${{ github.event_name }}" = "merge_group" ]; then
             base="${{ github.event.merge_group.base_sha }}"
-            STUDIO_SHARDS=8
+            STUDIO_SHARDS=4
           fi
           if [ -n "$base" ]; then
             while IFS= read -r pkg; do
@@ -1017,7 +1020,7 @@ jobs:
           base="${{ github.event.merge_group.base_sha }}"
           git fetch -q --depth=1 origin "$base" 2>/dev/null || true
           slots=$(bash .github/scripts/plan-merge-slots.sh "$base" HEAD)
-          case "$slots" in 1) shards='[0]';; 3) shards='[0,1,2]';; *) slots=6; shards='[0,1,2,3,4,5]';; esac
+          case "$slots" in 1) shards='[0]';; 3) shards='[0,1,2]';; 12) shards='[0,1,2,3,4,5,6,7,8,9,10,11]';; *) slots=6; shards='[0,1,2,3,4,5]';; esac
           echo "plan-merge: slots=$slots"
           echo "slots=$slots" >> "$GITHUB_OUTPUT"
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
@@ -1052,20 +1055,12 @@ jobs:
         leg:
           - name: linux
             runner: ubuntu-latest
-          - name: darwin
-            # A label array, carried as a JSON string: a runs-on expression must
-            # resolve to a single string, so the job parses this one with fromJSON.
-            # The Intel Macs, batman and superman (X64; the Studio left CI 2026-09-24,
-            # nova-tools#3634), and whatever x64 Mac joins next. The Go tests do not care
-            # which, and one machine as the only darwin runner made it the clock of the
-            # whole merge queue.
-            # ARM64, ON THE STUDIO FOR NOW (Glenn 2026-09-25 8:40 PM ET, see the PR
-            # shards above): the x64 iMac Pros spent the leg's minutes compiling
-            # one package at a time; the Studio compiles the same set in seconds.
-            labels: '["self-hosted","macOS","ARM64","studio"]'
-            # No per-leg cap: every job is timeout-minutes 2, every platform,
-            # permanently (Glenn 2026-09-25: "we fix or it doesn't land"; the cap
-            # is what keeps fixing fast enough to iterate).
+        # THERE IS NO DARWIN LEG HERE SINCE 2026-09-25: the merge group's darwin
+        # coverage is the `test (n/N darwin-arm64)` shards, which run the full
+        # suite on the group commit on the same Studio runners; a second darwin
+        # leg re-ran the same suite beside them and both crossed the two-minute
+        # cap (run 36207910988). Glenn: "the correct action to take is to
+        # optimize the tests. And to reduce the number of runners."
         # THERE IS NO WINDOWS LEG (2026-09-18, Glenn: "drop the native windows
         # CI runners. WSL only from now on."). It was a third entry here,
         # windows-latest at a twelve-minute hang-detector cap, dealing its
@@ -1252,15 +1247,7 @@ jobs:
           shard=${{ matrix.shard }}
           slots=${{ needs.plan-merge.outputs.slots }}
           sizes=$(cat testdata/ci/package-sizes.tsv)
-          darwin=$(cat testdata/ci/package-sizes-darwin.tsv)
           leg=${{ matrix.leg.name }}
-          if [ "$leg" = "darwin" ]; then
-            # One place holds the darwin ceiling: the Makefile. `?=` there lets
-            # this exported value win over the linux default of 100 s.
-            MERGE_TIMEOUT=$(make -s darwin-timeout)
-            export MERGE_TIMEOUT
-            echo "darwin leg: per-package ceiling $MERGE_TIMEOUT, shards dealt from testdata/ci/package-sizes-darwin.tsv"
-          fi
           # Whole packages first (2026-09-25, the two-minute rule): a package
           # that needs no test-name split is dealt whole to one slot, and each
           # slot runs its whole packages in ONE go test call, which builds and
@@ -1273,11 +1260,7 @@ jobs:
           split=""
           w=0
           for pkg in ${{ steps.pkgs.outputs.pkgs }}; do
-            if [ "$leg" = "darwin" ]; then
-              secs=$(printf '%s\n' "$darwin" | awk -F '\t' -v p="$pkg" '$1 == p { print $3; exit }')
-            else
-              secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
-            fi
+            secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
             case "$secs" in
               ''|'-'|*+) split="$split $pkg" ;;
               *)
@@ -1297,35 +1280,12 @@ jobs:
             make test-merge PKGS="$whole"
           fi
           for pkg in $split; do
-            if [ "$leg" = "darwin" ]; then
-              # Column 3 is the FULL size, which is what this leg runs. Three
-              # cases, and run 35369433950 is what dealing darwin by the Linux
-              # number costs.
-              secs=$(printf '%s\n' "$darwin" | awk -F '\t' -v p="$pkg" '$1 == p { print $3; exit }')
-              case "$secs" in
-                ''|'-')
-                  echo "$pkg: no full darwin measurement, dealt across all $slots slot(s)"
-                  n=$slots
-                  ;;
-                *+)
-                  echo "$pkg: darwin full ${secs} (censored: at least that), dealt across all $slots slot(s)"
-                  n=$slots
-                  ;;
-                *)
-                  if awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then n=6; else n=3; fi
-                  echo "$pkg: darwin full ${secs}s, $n shard(s)"
-                  ;;
-              esac
+            secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
+            if [ -n "$secs" ] && awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then
+              n=6
             else
-              secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
-              if [ -n "$secs" ] && awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then
-                n=6
-              else
-                n=3
-              fi
+              n=3
             fi
-            # Never deal over more slots than the plan opened, or tests would
-            # land in a slot that does not exist and never run.
             if [ "$n" -gt "$slots" ]; then n=$slots; fi
             list=$(go test -list '.*' "$pkg") || exit 1
             tests=$(printf '%s\n' "$list" | grep '^Test' | sort || true)

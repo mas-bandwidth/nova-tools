@@ -141,8 +141,8 @@ func TestMacOSShardsRunOnTheStudioForNow(t *testing.T) {
 	if found == 0 {
 		t.Error("test-packages emits no macOS shard entry this test can read")
 	}
-	if !strings.Contains(jobBody(src, "test-hosted-merge"), `"self-hosted","macOS","ARM64","studio"`) {
-		t.Error("the merge group's darwin leg does not select the Studio's ARM64 runners")
+	if strings.Contains(jobBody(src, "test-hosted-merge"), "name: darwin") {
+		t.Error("the merge group carries a darwin leg again; since 2026-09-25 its darwin coverage is the test (darwin-arm64) shards on the group commit, and a second leg on the same runners crossed the cap (run 36207910988)")
 	}
 }
 

@@ -7,7 +7,11 @@ set -euo pipefail
 base=$1; head=$2
 mod=$(awk '$1=="module"{print $2; exit}' go.mod)
 changed=$(git diff --name-only "$base" "$head")
-if printf '%s\n' "$changed" | grep -q -E '^(go\.mod|go\.sum)$'; then echo 6; exit 0; fi
+# A whole-tree group (go.mod or go.sum changed) deals twelve hosted slots: six
+# crossed the two-minute cap on run 36207910988 (shard 0 finished 102 of 160
+# packages). Hosted Linux runners do not share a machine, so more slots is not
+# more contention there.
+if printf '%s\n' "$changed" | grep -q -E '^(go\.mod|go\.sum)$'; then echo 12; exit 0; fi
 dirs=$(printf '%s\n' "$changed" | grep -E '\.go$' | xargs -r -n1 dirname | sort -u || true)
 [ -n "$dirs" ] || { echo 1; exit 0; }
 sum=0; big=0
