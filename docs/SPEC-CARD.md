@@ -387,7 +387,7 @@ fixture, D.
 
 ### The fixtures
 
-All three live at `cmd/nova-pulse/testdata/card-contract-2608/` and are called at both entry points:
+All three lived at `cmd/nova-pulse/testdata/card-contract-2608/` (nova-pulse is deleted; the consumer's lint keeps the rule) and were called at both entry points:
 the producer's validator (`pulse.ValidateCardV2` + `OperativeRegion`) and the consumer's lint
 (`swarm.LintCardHeader` + `lintCard`, on the command line `nova-swarm lint --card <file> --typed`).
 The class test calls the functions; a file-taking producer command (`nova-pulse cut --validate

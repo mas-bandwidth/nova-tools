@@ -1588,14 +1588,14 @@ serialize runtimes.
 ## nova-pulse
 
 Deleted (nova-tools #3801). It was frozen on 2026-09-23 and superseded by
-`nova-sprint`; its last three verbs moved there:
+`nova-sprint`; its last three verbs moved there, and the harvest has since gone
+with the copy model (2026-09-26):
 
 | nova-pulse verb | now |
 | --- | --- |
 | `cut` | `nova-sprint card cut` (#3789): one issue becomes one card record in Redis |
-| `harvest` | `nova-sprint card harvest`: push, find-or-open the PR, verify the head |
+| `harvest` | `nova-sprint card harvest`, itself deleted 2026-09-26: a work copy's wrapper pushes its branch and opens its PR (#4227) |
 | `status` | `nova-sprint table`: the sprint table from Redis |
-
 
 ## nova-review
 
@@ -3670,7 +3670,7 @@ itself signals only the unit's pid.
 watches (#3530): the headline (`SPRINT TABLE *** PIT STOP ***` while
 `s:<name>:pitstop` or `sprint:<name>:pitstop` exists), the
 `<left>/<y> left, <z>% done -> ~<eta>m` line, the streams block and the
-consumer table, one blank line between them. The streams are the
+worker table, one blank line between them. The streams are the
 rows of `ws:order` (the ws index, #3662) with
 the ZCARDs of their `waiting`, `ready`, `working`, `review`, `reading`,
 `merging` and `landed` sets (`ws:<stream>:<where>`), one column each in that
@@ -3683,16 +3683,16 @@ in the last hour of `ws:log` (at least one an hour). Below the total, one
 `LAND` line per open landing and one `REVIEW stream=<s> over=<n>
 oldest=<id> age=<d> max=<d>` line per stream holding cards in review longer
 than `cfg:review max_age` (seconds; one hour when unset; a card with no
-`review_at` counts as over). The consumer table (#4071) is ONE table for
+`review_at` counts as over). The worker table (#4071) is ONE table for
 friends and benches: `consumer | ready | working | done | ok | fail | ok% |
-status | load`, one row per consumer named `<kind>:<name>` (`friend:emma`,
+status | load`, one row per worker named `<kind>:<name>` (`friend:emma`,
 `bench:hetzner`): the friends (the `--friends` roster, else the `friends`
 SET sorted), then the `benches` SET, then any other member of the
 `consumers` SET, each once, and a total row. Every cell is one ZCARD of
 `<kind>:<name>:cards:<set>` for set = `ready`, `working`, `ok`, `fail`; done
 is ok + fail and ok% is ok over done, derived, with no sprint window and no
 base from a `table clear`; a set that does not read prints `?`, never 0.
-status is `up` when the consumer's own beat (`<kind>:<name>:beat` at, ms)
+status is `up` when the worker's own beat (`<kind>:<name>:beat` at, ms)
 is under a minute old and `<kind>:<name>:down` does not exist, else `down`
 (the row still shows its cards); an up consumer whose desired hash has
 `paused` 1 (`worker pause`, #4308) prints `paused` instead; load is the
@@ -3715,7 +3715,7 @@ done count) and prints `CHECKPOINT`, then in one MULTI/EXEC moves every
 `ws:<s>:landed` member to closed (`task:<id>` state, one `ws:log` entry
 each), stores the done counts in `ws:done0` (which the table no longer
 reads) and the receipt in `ws:checkpoint`, and prints `CLEARED ... ms=<n>`.
-Waiting, ready, working, review, reading and merging and the consumer table
+Waiting, ready, working, review, reading and merging and the worker table
 are untouched.
 
 `review post --id <primary> --verdict recut|redeal|reassign:<consumer>|drop
@@ -3907,7 +3907,7 @@ REPAIR, SPEC, SPEC-WRITTEN, CLOSE or JEV-DIFF and the first line carries
 `who=<name>` and `head=<sha>` (a SPEC line: `who=`, `rev=<k>` and
 `score=<0..10>`, no head, see `spec` below), or the line is refused. It RPUSHes the line
 onto `pr:<repo>:<n>:lines` and stamps `last_line` and `last_line_at` on the
-record in one MULTI, then, until #3595 retires PR comments, mirrors it as one
+record in one MULTI, then mirrors it as one
 REST comment (`POST /repos/<owner>/<repo>/issues/<n>/comments`, the token from
 `GH_TOKEN` or `GITHUB_TOKEN`, the base URL from `GITHUB_API_URL`). `--no-github`
 is Redis only (the tests count HTTP calls: 0 with it, exactly 1 without). A
@@ -4174,10 +4174,7 @@ verb's 7. Exits 7 and 8 never print `nothing written`.
 bench: a leading `/`, not `//` (a network share), no backslash, no `..`
 segment; a drive root (`C:\x`, `C:/x`) or a scheme is refused. `card end`
 exits 1 (USAGE) on anything else before it opens Redis, `ns_card_end` applies
-the same rule (so nothing is written), and harvest refuses it before ssh. `nova-sprint card harvest` pushes from
-`<results>/repo` on the bench as read from that field; there is no
-`--results-root` (it is refused as an unknown flag that names the field),
-because no worker needs to know a bench's layout (#3329).
+the same rule (so nothing is written).
 
 ### `--seat` and `nova-sprint redis-cli`
 

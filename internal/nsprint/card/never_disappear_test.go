@@ -298,16 +298,6 @@ func TestCardsNeverDisappear(t *testing.T) {
 		t.Fatalf("after an invalid result: %v", c)
 	}
 
-	// A harvest refusal: nd-a done/ok -> refused, done/fail.
-	if got, err := client.FCall(ctx, "ns_harvest_refuse", nil, ndSprint, "nd-a", ndBench, "hv", "hv-token", "KIND", "malformed").Text(); err != nil || got != "OK" {
-		t.Fatalf("refuse = %q, %v", got, err)
-	}
-	c = oneTable(t, ctx, client, "refuse", 5)
-	if c["ok"] != 0 || c["fail"] != 3 {
-		t.Fatalf("after refuse: %v", c)
-	}
-	assertHostRow(t, ctx, client, "refuse")
-
 	// nd-d never launched: its reservation goes back (working -> ready).
 	if got, err := client.FCall(ctx, "ns_card_undeal", nil, ndBench, ndFence, "spawn-timeout", "test", "3692u",
 		ndSprint, "nd-d", "1").StringSlice(); err != nil || strings.Join(got, " ") != "UNDEALT 1" {
@@ -326,7 +316,7 @@ func TestCardsNeverDisappear(t *testing.T) {
 		t.Fatalf("release: %+v", res2)
 	}
 	c = oneTable(t, ctx, client, "release", 5)
-	if c["ready"] != 1 || c["waiting"] != 0 || c["done"] != 4 || c["ok"] != 1 || c["fail"] != 3 {
+	if c["ready"] != 1 || c["waiting"] != 0 || c["done"] != 4 || c["ok"] != 2 || c["fail"] != 2 {
 		t.Fatalf("final: %v", c)
 	}
 	assertHostRow(t, ctx, client, "final")

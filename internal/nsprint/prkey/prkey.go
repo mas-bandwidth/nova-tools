@@ -3,9 +3,8 @@
 // key function every writer and reader of the record calls: the pr verb and
 // the stream lander (internal/nsprint/land/stream, whose land_stream.lua
 // mirrors Key), read, ci run (ci_run.lua copies the summary under the same
-// key), card harvest (internal/nsprint/harvest, RecordKey; harvest.lua's
-// hv_prkey mirrors Key for a card repo in owner/name form, #3740) and the
-// reconciler's PR legs. Before it, pr record wrote
+// key), a work copy's wrapper (harvestcopy, for a card repo in owner/name
+// form, #3740) and the reconciler's PR legs. Before it, pr record wrote
 // pr:mas-bandwidth/rowan-tools:375 while read post and ci read
 // pr:rowan-tools:375, so a recorded PR could never be read.
 //

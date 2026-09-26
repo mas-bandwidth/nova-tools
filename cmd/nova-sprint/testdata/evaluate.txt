@@ -1,4 +1,0 @@
-SET EVAL unit=tools-2547 criterion=c1 kind=landed subject=pr:mas-bandwidth/nova-tools#2598 holds=yes why=merged
-SET EVAL unit=gate-fix-holds criterion=c1 kind=landed subject=pr:mas-bandwidth/nova-tools#2660 holds=no why=open
-SET OK units=42 ready=7 blocked=9 owned=0
-SET DONE done=26 percent=61

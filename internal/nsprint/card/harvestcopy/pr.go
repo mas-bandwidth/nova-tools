@@ -13,7 +13,7 @@ import (
 )
 
 // TitleMax is how much of a DONE-WHEN a title made from one carries
-// (internal/nsprint/harvest body.go's TitleMax).
+// (the retired card harvest's TitleMax, kept here).
 const TitleMax = 70
 
 // pull is the part of GitHub's pull object the harvest reads.

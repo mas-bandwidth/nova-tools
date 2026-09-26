@@ -355,7 +355,7 @@ func CheckLine(line string) error {
 }
 
 // Poster mirrors one typed line as a PR comment through one REST call.
-// It is nil when --no-github is given, and it goes when #3595 lands.
+// It is nil when --no-github is given.
 type Poster struct {
 	BaseURL string // GITHUB_API_URL or https://api.github.com
 	Owner   string

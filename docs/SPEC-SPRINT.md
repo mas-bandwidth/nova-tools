@@ -1,6 +1,8 @@
 # SPEC-SPRINT.md — the bounded set, its wall, and where each task goes
 
-Normative for `nova-pulse sprint` (nova-tools #2593). Where this document and
+Normative for the sprint table (nova-tools #2593; its first host, `nova-pulse
+sprint`, is deleted, and the live model is nova-sprint's copy model: primaries
+fanned out as worker copies, each worker pulling from its own ready set). Where this document and
 the code disagree, one of them has a bug and the tests decide which.
 
 A **SPRINT** is any current bounded set of tasks toward a goal: friends, friends
@@ -22,7 +24,8 @@ task:<id>            hash    {kind, ref, owner, route, route_reason, state,
                               evidence, depends_on, paths, leg, locality,
                               isolation, routes, cost_ceiling_usd, repo, base,
                               reader, priority, created_at}
-q:<consumer>         stream  the consumer reads it; q:<consumer>:front is priority
+q:<consumer>         stream  retired with the friend queues: a worker now pulls
+                             its copies from <consumer>:cards:ready
 friend:<name>        string  the heartbeat, TTL 90s, written by the friend's harness
 bench:<name>         hash    the bench's own row, TTL 5s, written by its own seat
 ```
@@ -104,8 +107,9 @@ level, the dependency wave, whether the task calls a model at all, and cost.
 
 So every task carries REQUIREMENT fields and every consumer carries CAPABILITY
 fields; the match is a field-by-field comparison; and the stream is
-`q:<consumer>` where the consumer is the match's **output**. Adding an axis is
-adding a field to both sides, never a new stream. The model **tier** is a field
+`q:<consumer>` where the consumer is the match's **output** (that stream is the
+retired friend-queue shape; the live output is the worker's `cards:ready` set).
+Adding an axis is adding a field to both sides, never a new stream. The model **tier** is a field
 on the task (`routes`) that the launcher reads.
 
 | requirement (task) | capability (consumer) | refusal when they disagree |
