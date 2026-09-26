@@ -106,8 +106,16 @@ func TestReadPostEventsMoveTasks(t *testing.T) {
 	if st := stateOf(t, c, "build-45-other"); st != "working" {
 		t.Fatalf("a task naming another issue moved: %s", st)
 	}
-	if n := c.ZCard(ctx, ws.Key(s, "landed")).Val(); n != 2 {
-		t.Fatalf("ws:%s:landed = %d, want 2", s, n)
+	// the two cards; the stream's stop landed by structure with its last
+	// card at the same sha (#4318), and is counted apart: it is not a card
+	if n, err := ws.CardCount(ctx, c, s, "landed"); err != nil || n != 2 {
+		t.Fatalf("ws:%s:landed = %d cards, want 2 (%v)", s, n, err)
+	}
+	if h := c.HGetAll(ctx, "task:"+ws.SentinelID(s)).Val(); h["where"] != "landed" || !strings.HasPrefix(h["merge_sha"], merge) {
+		t.Fatalf("%s's stop after its last card landed: %v", s, h)
+	}
+	if w := c.HGet(ctx, "task:"+ws.SentinelID("swarm: cards"), "where").Val(); w != "waiting" {
+		t.Fatalf("swarm: cards has a working card and its stop is %q, want waiting", w)
 	}
 	check("close")
 
