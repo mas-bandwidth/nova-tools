@@ -113,8 +113,9 @@ func findOutcome(pl Plan, typ, subject string) (Outcome, bool) {
 // its declared tier, else flash) and a work-type decision, both asked of Jev;
 // a TYPE the card declares is the work type's outcome. A friend-queue task is
 // not a primary and makes no row; a row already there is not made again. A
-// stream's sentinel, created by registration and landed with the stream's
-// last card, is the stream's stop and no decision (#4318).
+// stream's sentinel, created by registration and landed by the
+// coordinator's acceptance, is a mechanical card and no decision (#4318,
+// #4412).
 func TestPlanCutIsTierAndWorkType(t *testing.T) {
 	t.Parallel()
 
@@ -124,7 +125,7 @@ func TestPlanCutIsTierAndWorkType(t *testing.T) {
 		ev("3-0", "id", "f1", "from", "", "to", "ready"),
 		ev("4-0", "id", "p3", "from", "", "to", "waiting"),
 		ev("5-0", "id", "swarm-cards:sentinel", "from", "", "to", "waiting", "by", "ws", "why", "sentinel"),
-		ev("6-0", "id", "swarm-cards:sentinel", "from", "waiting", "to", "landed", "by", "rowan", "why", "stop"),
+		ev("6-0", "id", "swarm-cards:sentinel", "from", "waiting", "to", "landed", "by", "rowan", "why", "accepted"),
 	}
 	recs := map[string]map[string]string{
 		"p1":                   {"title": "a verb", "route": "pro", "type": "verb", "paths": "cmd/x.go", "done_when": "go test passes"},

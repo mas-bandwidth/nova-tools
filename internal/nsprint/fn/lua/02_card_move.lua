@@ -1545,8 +1545,11 @@ end
 -- land/stream.Slug say the same), created at registration (cm_register) in
 -- the stream's waiting set. It is the stream's stop: it lands (task land,
 -- with the merge sha) only when every other card of the stream is landed
--- or done, it is never dealt (TM.leg), and it moves nowhere else but parked
--- and done. A card in another stream that must wait for this whole stream
+-- or done AND by the coordinator's acceptance (TK.accepts: the actor holds
+-- the coordinator role; Glenn 2026-09-26 via Stella, "sentinels wait for
+-- the coordinator's review and merge", nova-tools#4412), never by structure
+-- with the last card; it is never dealt (TM.leg), and it moves nowhere else
+-- but parked and done. A card in another stream that must wait for this whole stream
 -- names it in DEPENDS-ON like any card edge (<slug>:sentinel or
 -- task:<slug>:sentinel); the waiting resolver treats it as any task id.
 function TK.slug(s)
@@ -1564,6 +1567,21 @@ end
 
 function TK.is_sentinel(id)
   return type(id) == 'string' and string.match(id, '^[a-z0-9][a-z0-9%-]*:sentinel$') ~= nil
+end
+
+-- TK.role: friend name holds role in its friend:<f>:roles csv (reader,
+-- builder, coordinator, may-hold); TM.role is this.
+function TK.role(name, role)
+  for x in string.gmatch(TK.str(redis.call('HGET', 'friend:' .. TK.str(name) .. ':roles', 'roles')), '[^,%s]+') do
+    if x == role then return true end
+  end
+  return false
+end
+
+-- TK.accepts(by): the actor is the coordinator seat, the one that accepts a
+-- stream by landing its sentinel (nova-tools#4412).
+function TK.accepts(by)
+  return TK.str(by) ~= '' and TK.role(by, 'coordinator')
 end
 
 -- TK.slug_clash: the refusal when stream's slug already belongs to another
@@ -1758,7 +1776,9 @@ function TK.edge(id, cur, nxt, ok, o)
   -- The stream sentinel's graph is structure (#4318), checked before the
   -- from == to shortcut so no verb changes its outcome or owner in place:
   -- null -> waiting (registration, o.sentinel); waiting -> landed at the
-  -- merge sha once no other card of the stream is live; waiting <-> parked
+  -- merge sha once no other card of the stream is live, by the coordinator's
+  -- acceptance (TK.accepts) or a rename carrying a landing already accepted
+  -- (o.rename); waiting <-> parked
   -- with its stream; done or landed -> waiting when the stream starts again
   -- (registration, o.restart); waiting or parked -> done/fail by a rename
   -- alone (o.rename). Nothing else: not ready, working, review or merging,
@@ -1793,6 +1813,10 @@ function TK.edge(id, cur, nxt, ok, o)
           ' (first ' .. live[1][1] .. ' ' .. live[1][2] .. ')'
       end
       if TK.str(o.sha) == '' then return 'SHA landed needs the merge sha' end
+      if not o.rename and not TK.accepts(o.by) then
+        return 'SENTINEL task:' .. id .. ' lands by the coordinator\'s acceptance alone: ' .. TK.str(o.by) ..
+          ' does not hold the coordinator role (friend:<f>:roles)'
+      end
       return nil
     end
     if to == 'parked' and from == 'waiting' then return nil end
@@ -1806,7 +1830,7 @@ function TK.edge(id, cur, nxt, ok, o)
       if o.rename and ok == 'fail' and (from == 'waiting' or from == 'parked') then return nil end
       if o.rename and ok == 'ok' and from == 'landed' then return nil end
       return 'SENTINEL task:' .. id .. ' ends only when its stream is renamed (nova-sprint stream rename); it lands ' ..
-        '(task land --id ' .. id .. ' --sha <merge sha>) once every other card of stream ' .. cur.stream .. ' has'
+        '(the coordinator\'s task land --id ' .. id .. ' --sha <merge sha>) once every other card of stream ' .. cur.stream .. ' has'
     end
     return 'SENTINEL task:' .. id .. ' is the stream stop: it moves to landed (after every other card of stream ' ..
       cur.stream .. '), parked or waiting, never ' .. to
@@ -2116,34 +2140,19 @@ function TK.move(id, to, o)
     if herr then return 'DRIFT-AFTER ' .. herr .. ' task:' .. id end
   end
   -- a landed stitch lands its plan (nova-tools#4317), whichever door landed
-  -- it; the plan's own landing may in turn land the stream's stop below
+  -- it (never the stream's stop: that is the coordinator's acceptance)
   local parent
   if to == 'landed' and cur.where ~= 'landed' then
     local perr
     parent, perr = TK.land_parent(id, o)
     if perr then return 'DRIFT-AFTER plan of ' .. id .. ': ' .. perr end
   end
-  -- Landing by structure (#4318): the last live card's landing lands the
-  -- stream's sentinel at the same sha, in this call.
-  local stop
-  if to == 'landed' and cur.where ~= 'landed' and not TK.is_sentinel(id) and nxt.stream ~= '' then
-    stop = TK.land_stop(nxt.stream, o.sha, o.by, 'last card ' .. id .. ' landed')
-  end
-  return nil, { from = cur.where, to = to, xid = xid, cut = cut, stop = stop, parent = parent }
-end
-
--- TK.land_stop(stream, sha, by, why): the stream's sentinel lands when it is
--- waiting and no other card of the stream is live; returns its id when it
--- landed, else nil. A refusal here is drift in this file: the live check
--- just passed.
-function TK.land_stop(stream, sha, by, why)
-  local sid = TK.sentinel_id(stream)
-  if sid == '' or TK.str(sha) == '' then return nil end
-  if TK.str(redis.call('HGET', 'task:' .. sid, 'where')) ~= 'waiting' then return nil end
-  if #TK.live_siblings(stream, sid) > 0 then return nil end
-  local err = TK.move(sid, 'landed', { by = by, why = why, sha = sha })
-  if err then return nil end
-  return sid
+  -- No landing by structure (nova-tools#4412, Glenn 2026-09-26 via Stella:
+  -- "sentinels wait for the coordinator's review and merge"): the last live
+  -- card's landing leaves the stream's sentinel in waiting; the
+  -- waiting-resolve duty prints its SENTINEL ... ready-to-land receipt and
+  -- the coordinator's task land --id <slug>:sentinel lands it (TK.edge).
+  return nil, { from = cur.where, to = to, xid = xid, cut = cut, parent = parent }
 end
 
 -- TK.create(id, fields, o): a new record (where null) and its first move to
@@ -2912,7 +2921,7 @@ end
 function TM.leg(id, p)
   if not p then return nil, 'NOTASK task:' .. id end
   if TK.is_sentinel(id) then
-    return nil, 'SENTINEL task:' .. id .. ' is the stream stop, never dealt: it lands (task land) when every other card of its stream has'
+    return nil, 'SENTINEL task:' .. id .. ' is the stream stop, never dealt: it lands by the coordinator\'s acceptance (task land) when every other card of its stream has'
   end
   if p.copy ~= '' then return nil, 'LIVECOPY task:' .. id .. ' has live copy ' .. p.copy end
   if p.reads ~= '' then return nil, 'LIVECOPY task:' .. id .. ' has live read copies ' .. p.reads end
@@ -3672,14 +3681,8 @@ function TM.live(c)
   return at ~= nil and math.abs(cm_now() - at) < TM.LIVE_MS
 end
 
--- TM.role: friend name holds role in its friend:<f>:roles csv (reader,
--- builder, coordinator, may-hold).
-function TM.role(name, role)
-  for x in string.gmatch(TK.str(redis.call('HGET', 'friend:' .. name .. ':roles', 'roles')), '[^,%s]+') do
-    if x == role then return true end
-  end
-  return false
-end
+-- TM.role: friend name holds role in its friend:<f>:roles csv (TK.role).
+TM.role = TK.role
 
 -- TM.room: consumer c's desired slots less the CI legs running on it
 -- (TM.ci_legs, nova-tools#4293) less its working and ready copies, and

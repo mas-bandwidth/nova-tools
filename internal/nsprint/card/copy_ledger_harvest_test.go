@@ -75,9 +75,10 @@ func doneEnd(t *testing.T, sha string) card.WrapperEnd {
 
 // TestCopyEndHarvestsAndEndsOkWithThePR is #4227's DONE-WHEN on the ledger:
 // a work copy's DONE with a commit calls Harvest with the commit, the copy's
-// branch, the primary's repo, BASE, title, stream, origin and DONE-WHEN and
-// the push credential; then the PR record is at the head, the copy is ok
-// with the PR and the head, and the primary is in review with them.
+// branch, the primary's repo, BASE, title, stream, origin and DONE-WHEN, the
+// push credential and the ledger's own store client (the same one); then the
+// PR record is at the head, the copy is ok with the PR and the head, and the
+// primary is in review with them.
 func TestCopyEndHarvestsAndEndsOkWithThePR(t *testing.T) {
 	t.Parallel()
 	c, primary, l := workCopyOnBench(t)
@@ -101,7 +102,7 @@ func TestCopyEndHarvestsAndEndsOkWithThePR(t *testing.T) {
 	branch := card.WrapperBranch(card.CopySprint, card.CopyCardLabel(l.Copy), 1)
 	want := harvestcopy.Request{RepoDir: end.RepoDir, SHA: sha, Branch: branch, Repo: "nova-tools", Base: "dev",
 		Title: "copy model: push and open the PR at the boundary", Stream: "swarm: cards", Origin: "issue:nova-tools#4227",
-		DoneWhen: "a work copy reaches ok with a PR open", Token: "ghp-bench"}
+		DoneWhen: "a work copy reaches ok with a PR open", Token: "ghp-bench", Redis: c}
 	if calls != 1 || got != want {
 		t.Fatalf("harvest called %d times with\n%+v\nwant\n%+v", calls, got, want)
 	}

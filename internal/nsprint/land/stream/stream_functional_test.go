@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
@@ -273,21 +274,21 @@ func TestSaveBuiltParksAndLandMembersLands(t *testing.T) {
 	if recs[1].Closes != "-" {
 		t.Fatalf("#1 closes %q, want the - it was given", recs[1].Closes)
 	}
-	// one park, the landing, the stream's registration by the first land
-	// through the one move (it creates the stream's stop in waiting, #4318),
-	// two lands; the stop stays in waiting while the parked t2 is live
-	log, _ := c.XRange(ctx, "ws:log", "-", "+").Result()
-	if len(log) != 5 {
-		t.Fatalf("ws:log has %d entries, want 5", len(log))
-	}
-	if !strings.HasPrefix(fmt.Sprint(log[1].Values["why"]), "LANDED "+repo+"#900") {
-		t.Fatalf("landing entry %v", log[1].Values)
-	}
-	if log[2].Values["id"] != ws.SentinelID(strm) || log[2].Values["to"] != "waiting" {
-		t.Fatalf("registration entry %v, want the stop into waiting", log[2].Values)
-	}
-	if w := c.HGet(ctx, "task:"+ws.SentinelID(strm), "where").Val(); w != "waiting" {
-		t.Fatalf("the stop is %q with t2 parked, want waiting", w)
+	// the rows by identity and order: the park, the landing, the stream's
+	// registration by the first land through the one move (it creates the
+	// stream's sentinel in waiting, #4318), the two lands; the sentinel stays
+	// in waiting (t2 is live, and it lands by the coordinator's acceptance
+	// alone, #4412)
+	sid := ws.SentinelID(strm)
+	wantLog(t, c, []logRow{
+		{"t2", "merging", "working", "rowan", "PARKED " + repo + "#2 red:TestX"},
+		{"land:" + repo + ":" + l.Slug, "merging", "landed", "rowan", "LANDED " + repo + "#900"},
+		{sid, "", "waiting", "ws", "sentinel"},
+		{"t1", "merging", "landed", "rowan", "landed with nova-tools#900"},
+		{"t3", "merging", "landed", "rowan", "landed with nova-tools#900"},
+	})
+	if w := c.HGet(ctx, "task:"+sid, "where").Val(); w != "waiting" {
+		t.Fatalf("the sentinel is %q with t2 parked, want waiting", w)
 	}
 	if err := ws.Check(ctx, c, ids); err != nil {
 		t.Fatalf("after land: %v", err)
@@ -360,13 +361,118 @@ func TestRedisPartsForAThousandAreFixedRoundTrips(t *testing.T) {
 	if rt.n != 7 { // members 3 (merging, task pr, records), built 1, load 1, landed 1, land members 1
 		t.Fatalf("%d round trips for 1,000 members, want 7", rt.n)
 	}
-	// the thousand cards; the stream's stop landed by structure with the
-	// last of them (#4318), counted apart: it is not a card
-	if n, err := ws.CardCount(ctx, c, strm, "landed"); err != nil || n != 1000 {
-		t.Fatalf("landed %d cards %v", n, err)
+	// the thousand members by identity are the landed set, and nothing
+	// else: the stream's sentinel waits for the coordinator's acceptance
+	// (#4412), it does not land with the last member
+	landed, err := c.ZRange(ctx, WSKey(strm, "landed"), 0, -1).Result()
+	if err != nil || len(landed) != 1000 {
+		t.Fatalf("landed %d %v, want the 1,000 members", len(landed), err)
 	}
-	if w := c.HGet(ctx, "task:"+ws.SentinelID(strm), "where").Val(); w != "landed" {
-		t.Fatalf("the stop is %q after the last card landed, want landed", w)
+	in := make(map[string]bool, len(landed))
+	for _, id := range landed {
+		in[id] = true
+	}
+	for n := 1; n <= 1000; n++ {
+		if !in[fmt.Sprintf("t%d", n)] {
+			t.Fatalf("t%d is not landed", n)
+		}
+	}
+	if h := c.HGetAll(ctx, "task:"+ws.SentinelID(strm)).Val(); h["where"] != "waiting" || h["merge_sha"] != "" {
+		t.Fatalf("the sentinel after the last member landed: %v, want waiting for acceptance", h)
+	}
+}
+
+// TestSentinelWaitsForTheCoordinatorsAcceptance (#4412; Glenn 2026-09-26 via
+// Stella, "sentinels wait for the coordinator's review and merge"): the last
+// member's landing leaves the stream's sentinel in waiting with no landed
+// row; task land of the sentinel by a seat without the coordinator role is
+// refused and writes nothing; the coordinator's task land lands it at the
+// merge sha, one row.
+func TestSentinelWaitsForTheCoordinatorsAcceptance(t *testing.T) {
+	t.Parallel()
+
+	c := newRedis(t)
+	ctx := context.Background()
+	for n := 1; n <= 2; n++ {
+		seed(t, c, n, fmt.Sprintf("%040d", n), int64(n), score("rowan", fmt.Sprintf("%040d", n), 10))
+	}
+	if err := c.HSet(ctx, "friend:rowan:roles", "roles", "builder,coordinator").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.HSet(ctx, "friend:stella:roles", "roles", "reader,builder").Err(); err != nil {
+		t.Fatal(err)
+	}
+	ms, _, err := Members(ctx, c, repo, []string{strm}, 8)
+	if err != nil || len(ms) != 2 {
+		t.Fatalf("members %+v %v", ms, err)
+	}
+	l := Landing{Repo: repo, Slug: "a", Streams: strm, Base: "dev", Branch: "stream/a", Head: strings.Repeat("c", 40),
+		Members: ms, PR: 78, State: "open"}
+	if _, err := SaveBuilt(ctx, c, l, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ := LoadLanding(ctx, c, repo, "a")
+	sha := strings.Repeat("e", 40)
+	if _, err := SaveLanded(ctx, c, got, "rowan", sha); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := LandMembers(ctx, c, got, "rowan", sha, nil); err != nil || res.Moved != 2 {
+		t.Fatalf("land members %+v %v", res, err)
+	}
+	sid := ws.SentinelID(strm)
+	rows := []logRow{
+		{"land:" + repo + ":a", "merging", "landed", "rowan", "LANDED " + repo + "#78"},
+		{sid, "", "waiting", "ws", "sentinel"},
+		{"t1", "merging", "landed", "rowan", "landed with nova-tools#78"},
+		{"t2", "merging", "landed", "rowan", "landed with nova-tools#78"},
+	}
+	wantLog(t, c, rows)
+	if h := c.HGetAll(ctx, "task:"+sid).Val(); h["where"] != "waiting" || h["merge_sha"] != "" {
+		t.Fatalf("the sentinel after its last member landed: %v, want waiting for acceptance", h)
+	}
+
+	// a seat without the coordinator role: refused by name, nothing written
+	for _, by := range []string{"stella", "b", ""} {
+		_, err := taskcard.Land(ctx, c, sid, by, sha, "accept")
+		if err == nil || !strings.Contains(err.Error(), "SENTINEL task:"+sid+" lands by the coordinator's acceptance alone") {
+			t.Fatalf("task land by %q: %v, want the acceptance refusal", by, err)
+		}
+	}
+	wantLog(t, c, rows)
+
+	// the coordinator's acceptance lands it at the merge sha: one row
+	if r, err := taskcard.Land(ctx, c, sid, "rowan", sha, "accepted: stream "+strm); err != nil || r.From != "waiting" || r.To != "landed" {
+		t.Fatalf("the coordinator's task land %+v %v", r, err)
+	}
+	wantLog(t, c, append(rows, logRow{sid, "waiting", "landed", "rowan", "accepted: stream " + strm}))
+	if h := c.HGetAll(ctx, "task:"+sid).Val(); h["where"] != "landed" || h["merge_sha"] != sha {
+		t.Fatalf("the sentinel after acceptance: %v", h)
+	}
+}
+
+// logRow is one ws:log entry by identity: the id, the move, who, and the
+// why's prefix.
+type logRow struct{ id, from, to, by, why string }
+
+// wantLog fails unless ws:log holds exactly rows, in order.
+func wantLog(t *testing.T, c *redis.Client, rows []logRow) {
+	t.Helper()
+	log, err := c.XRange(context.Background(), "ws:log", "-", "+").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]logRow, 0, len(log))
+	for _, e := range log {
+		v := func(k string) string { s, _ := e.Values[k].(string); return s }
+		got = append(got, logRow{v("id"), v("from"), v("to"), v("by"), v("why")})
+	}
+	ok := len(got) == len(rows)
+	for i := 0; ok && i < len(rows); i++ {
+		w, g := rows[i], got[i]
+		ok = g.id == w.id && g.from == w.from && g.to == w.to && g.by == w.by && strings.HasPrefix(g.why, w.why)
+	}
+	if !ok {
+		t.Fatalf("ws:log is\n%+v\nwant\n%+v", got, rows)
 	}
 }
 
@@ -414,18 +520,18 @@ func TestLuaOnRealRedis(t *testing.T) {
 	if res, err := LandMembers(ctx, c, got, "rowan", "m", nil); err != nil || res.Moved != 1 {
 		t.Fatalf("land members %+v %v", res, err)
 	}
-	// the park, the landing, the stream's registration by the land through
-	// the one move (the stop into waiting, #4318), the land; the parked
-	// member is live, so the stop does not land
-	log, _ := c.XRange(ctx, "ws:log", "-", "+").Result()
-	if len(log) != 4 {
-		t.Fatalf("ws:log %d entries, want 4", len(log))
-	}
-	if log[2].Values["id"] != ws.SentinelID(strm) || log[2].Values["to"] != "waiting" {
-		t.Fatalf("registration entry %v, want the stop into waiting", log[2].Values)
-	}
-	if w := c.HGet(ctx, "task:"+ws.SentinelID(strm), "where").Val(); w != "waiting" {
-		t.Fatalf("the stop is %q with the parked member live, want waiting", w)
+	// the rows by identity and order: the park, the landing, the stream's
+	// registration by the land through the one move (the sentinel into
+	// waiting, #4318), the land; the sentinel waits
+	sid := ws.SentinelID(strm)
+	wantLog(t, c, []logRow{
+		{"t2", "merging", "working", "rowan", "PARKED " + repo + "#2 red:TestY"},
+		{"land:" + repo + ":r", "merging", "landed", "rowan", "LANDED " + repo + "#77"},
+		{sid, "", "waiting", "ws", "sentinel"},
+		{"t1", "merging", "landed", "rowan", "landed with nova-tools#77"},
+	})
+	if w := c.HGet(ctx, "task:"+sid, "where").Val(); w != "waiting" {
+		t.Fatalf("the sentinel is %q with the parked member live, want waiting", w)
 	}
 }
 
