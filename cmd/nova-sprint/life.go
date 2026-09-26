@@ -31,7 +31,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "friend",
-		Summary: "hello, bye, serve, wake, row and roles for a friend; report a friend state, show friends, or run one ladder sweep; declare the wake registry from the fleet file; wake-health [--repair]",
+		Summary: "hello, bye, wake, row and roles for a friend; report a friend state, show friends, or run one ladder sweep; declare the wake registry from the fleet file; wake-health [--repair]",
 		Run:     runFriend,
 	})
 	register(Verb{
@@ -48,21 +48,14 @@ func init() {
 
 func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "friend", "want hello, bye, serve, wake, row, roles, report, show, sweep, down, up, declare or wake-health")
+		return refuse(errOut, "friend", "want hello, bye, wake, row, roles, report, show, sweep, down, up, declare or wake-health")
 	}
 	switch args[0] {
 	case "hello":
 		return runFriendHello(ctx, args[1:], out, errOut)
 	case "bye":
 		return runFriendBye(ctx, args[1:], out, errOut)
-	case "serve":
-		return runFriendServe(ctx, args[1:], out, errOut, false)
 	case "wake":
-		// `friend wake --as <f>` is one serve pass on the seat (#2938);
-		// `friend wake <f>` routes a wake through the reconciler's list.
-		if hasAsFlag(args[1:]) {
-			return runFriendServe(ctx, args[1:], out, errOut, true)
-		}
 		return runFriendWake(ctx, args[1:], out, errOut)
 	case "row":
 		return runFriendRow(ctx, args[1:], out, errOut)
@@ -83,7 +76,7 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	case "wake-health":
 		return runFriendWakeHealth(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, serve, wake, row, roles, report, show, sweep, down, up, declare or wake-health", args[0]))
+		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, wake, row, roles, report, show, sweep, down, up, declare or wake-health", args[0]))
 	}
 }
 

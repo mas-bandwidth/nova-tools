@@ -2,8 +2,6 @@ package taskcard_test
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,24 +11,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 )
-
-// TestWiringHelper is the fake friend harness the wiring test's serve
-// dispatches: this test binary with NOVA_WIRING_FAKE set. Without it, an
-// empty test.
-func TestWiringHelper(t *testing.T) {
-	t.Parallel()
-	switch os.Getenv("NOVA_WIRING_FAKE") {
-	case "":
-		return
-	case "done":
-		fmt.Printf("working on %s\nDONE built %s done-already=c0ffee12\n", os.Getenv(life.ServeEnvCopy),
-			os.Getenv(life.ServeEnvCopy))
-	}
-}
 
 // TestConsumerWiringEndToEnd is the #3998 DONE-WHEN: the production harnesses
 // run COPIES through the table moves and nothing else. A fake bench session
@@ -38,9 +20,8 @@ func TestWiringHelper(t *testing.T) {
 // runs once) takes its copies with one `card work --fill` call, and each
 // copy's ledger (card.CopyLedger, what nova-card copy runs) beats it and
 // ends it: one the card ended itself, one a crashed harness, one a DONE
-// with no card end. A fake friend serve (life.ServeOnce) takes its copies
-// with `card work --fill`, beats them and ends them from the children's
-// typed lines. The host and friend tables then print ready/working/done/ok/
+// with no card end. The friend takes its copies with the same `card work
+// --fill` and ends them under their tokens. The host and friend tables then print ready/working/done/ok/
 // fail from the consumer sets alone, no old lease ledger key exists, both
 // fsck walks are clean, and the Lua library names the old ledgers only in
 // the move file.
@@ -141,14 +122,17 @@ func TestConsumerWiringEndToEnd(t *testing.T) {
 	}
 	cleanMoves(t, c, "bench ended")
 
-	// The friend serve: card work --fill at spawn, a beat per tick, card end
-	// at each child's exit from its typed line.
-	cfg := life.ServeConfig{Friend: "f", Session: "sess-f", Host: "h", Harness: "fake", Width: 2,
-		Dispatch: []string{os.Args[0], "-test.run=^TestWiringHelper$"}, Dir: t.TempDir(),
-		Env: []string{"NOVA_WIRING_FAKE=done"}, Out: io.Discard}
-	res, err := life.ServeOnce(ctx, store.New(c), cfg)
-	if err != nil || res.Taken != 2 || res.Closed != 2 || res.Live != 0 {
-		t.Fatalf("serve %+v %v", res, err)
+	// The friend: the same card work --fill a seat runs at spawn, then card
+	// end under each copy's token from the child's typed line.
+	w, err := taskcard.Work(ctx, c, friend, "f", 2, true)
+	if err != nil || len(w.IDs) != 2 {
+		t.Fatalf("friend card work --fill %+v %v", w, err)
+	}
+	for i, id := range w.IDs {
+		if _, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{id}, OK: true,
+			DoneAlready: "c0ffee12", Token: w.Tokens[i], By: "f", Fields: []string{"evidence", "DONE built " + id}}); err != nil {
+			t.Fatalf("friend copy %s end: %v", id, err)
+		}
 	}
 	wantCells(t, cellsOf(t, c, friend), "friend ended", 0, 0, 2, 0)
 	cleanMoves(t, c, "friend ended")

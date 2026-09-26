@@ -41,7 +41,7 @@ var helpCases = [][]string{
 	{"fleet-live"}, {"fleet-state"},
 	{"fn", "load"}, {"fn", "check"}, {"fn", "deploy"},
 	{"fold"},
-	{"friend", "hello"}, {"friend", "bye"}, {"friend", "serve"}, {"friend", "wake"}, {"friend", "row"},
+	{"friend", "hello"}, {"friend", "bye"}, {"friend", "wake"}, {"friend", "row"},
 	{"friend", "roles"}, {"friend", "report"}, {"friend", "show"}, {"friend", "sweep"},
 	{"friend", "down"}, {"friend", "up"}, {"friend", "declare"}, {"friend", "wake-health"},
 	{"hold", "ingest"}, {"hold", "show"}, {"hold", "release"}, {"hold", "route"},

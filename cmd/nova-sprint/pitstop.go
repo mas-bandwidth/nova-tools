@@ -2,7 +2,7 @@
 // one Redis state, s:<S>:pitstop {by, why, at, scope}, never a bus note; every
 // automatic actor on the sprint table honours it (pitstop.Held, Glenn
 // 2026-09-25 5:50 PM ET): the reconciler skips its duties, the route loop
-// passes no rule, friend serve takes nothing; beats and the table go on. set and clear are one FCALL each
+// passes no rule; beats and the table go on. set and clear are one FCALL each
 // (ns_pitstop_set, ns_pitstop_clear) with a receipt on s:<S>:log; status is
 // one HGETALL. --scope (repeatable; set and clear) names streams: set
 // --scope <stream>... stops only those (default all); clear --scope
@@ -29,7 +29,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "pitstop",
-		Summary: "set|clear|status --sprint <S> [--scope all|<stream>]... [--why <text>] [--by <who>] [--force]: the sprint's pit stop, one Redis key every automatic duty, the route loop and friend serve honour",
+		Summary: "set|clear|status --sprint <S> [--scope all|<stream>]... [--why <text>] [--by <who>] [--force]: the sprint's pit stop, one Redis key every automatic duty and the route loop honour",
 		Run:     runPitstop,
 	})
 }
