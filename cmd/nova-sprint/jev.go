@@ -20,6 +20,13 @@
 // Exit 0 recorded with gate=ok; 1 recorded with gate=fail (the remedy on
 // the line), or refused (no record, no Redis); 2 usage, before Redis is
 // touched.
+//
+// The decision ledger (nova-tools #4316) is the other subverbs, in
+// internal/nsprint/jev: jev sync (the decision points ws:log records, as
+// rows, with their outcomes), jev ask (TypeSafe Jev's shadow answer on each
+// row, one typed call per row), jev report (agreement with outcomes per
+// type, source and prompt version) and jev outcome (the coordinator's
+// confirm or override, by hand).
 package main
 
 import (
@@ -32,6 +39,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/jev"
+	ledger "github.com/mas-bandwidth/nova-tools/internal/nsprint/jev"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
@@ -42,17 +50,21 @@ import (
 
 func init() {
 	register(Verb{
-		Name:    "jev",
-		Summary: "mech --repo <r> --n <n> --body-file <f>: Jev's mechanical passes (lint, scope, base) as one JEV line on the PR record, before any friend read; never a read",
-		Run:     runJev,
+		Name: "jev",
+		Summary: "mech --repo <r> --n <n> --body-file <f>: Jev's mechanical passes (lint, scope, base) as one JEV line on the PR record, before any friend read; never a read. " +
+			ledger.Usage + ": the Jev decision ledger (#4316), every decision a row, Jev's shadow answer, agreement with outcomes",
+		Run: runJev,
 	})
 }
 
 const jevUsage = "want mech --repo <owner/name|name> --n <n> --body-file <f> [--mirror <dir>] [--redis <addr>]"
 
 func runJev(ctx context.Context, args []string, out, errOut io.Writer) int {
-	if len(args) == 0 || args[0] != "mech" {
-		return refuse(errOut, "jev", jevUsage)
+	if len(args) > 0 && args[0] != "mech" {
+		return ledger.Main(ctx, args, out, errOut)
+	}
+	if len(args) == 0 {
+		return refuse(errOut, "jev", jevUsage+", or "+ledger.Usage)
 	}
 	const verb = "jev mech"
 	fs := taskFlags(verb)

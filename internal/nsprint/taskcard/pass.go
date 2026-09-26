@@ -43,6 +43,10 @@ func (c Consumer) BeatKey() string {
 	return c.String()
 }
 
+// BeatAt is beatAt for another duty that measures room the way the deal
+// pass does (the progress duty, #4319).
+func BeatAt(at string) (time.Time, bool) { return beatAt(at) }
+
 // beatAt reads a beat's at: epoch ms or seconds, RFC 3339, or the
 // friend-row form whose digits are YYYYMMDDHHMMSS.
 func beatAt(at string) (time.Time, bool) {

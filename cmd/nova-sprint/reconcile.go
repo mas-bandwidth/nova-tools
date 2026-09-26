@@ -200,7 +200,14 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 		// Per-duty receipts (#3199): every pass under --once, so the probe
 		// says what each duty did; in the loop only a duty that moved
 		// something or failed, so an idle second prints nothing.
-		AfterPass: func(reconcile.PassResult) { named.report(out, *once) },
+		AfterPass: func(res reconcile.PassResult) {
+			named.report(out, *once)
+			if progressDuty != nil {
+				// The progress duty's refusal trigger (#4319 item 3): the
+				// pass's refusal sum and every duty error repeating unchanged.
+				progressDuty.NotePass(res.Counts.Refused, named.repeats())
+			}
+		},
 	}
 	if *once {
 		loop.Passes = 1
@@ -290,13 +297,29 @@ type namedDuties struct {
 	names  []string                    // duty names in pass order
 	counts map[string]reconcile.Counts // duty name -> its counts in the current pass
 	last   map[string]string           // duty name -> its last error text ("" when clean)
+	streak map[string]int              // duty name -> passes in a row its error text stood unchanged
 	any    bool                        // any duty errored in any pass
+}
+
+// repeats is every duty whose error text has stood unchanged for one or
+// more passes in a row, for the progress duty's refusal trigger (#4319).
+func (n *namedDuties) repeats() []reconcile.Repeat {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	var out []reconcile.Repeat
+	for _, name := range n.names {
+		if k := n.streak[name]; k > 0 {
+			out = append(out, reconcile.Repeat{Duty: name, Text: n.last[name], Passes: k})
+		}
+	}
+	return out
 }
 
 func (n *namedDuties) wrap(duties []reconcile.Duty, names []string) []reconcile.Duty {
 	n.names = names
 	n.last = map[string]string{}
 	n.counts = map[string]reconcile.Counts{}
+	n.streak = map[string]int{}
 	out := make([]reconcile.Duty, len(duties))
 	for i, d := range duties {
 		d, name := d, names[i]
@@ -322,6 +345,15 @@ func (n *namedDuties) note(name string, c reconcile.Counts, err error) {
 	n.counts[name] = c
 	if err != nil {
 		n.any = true
+	}
+	// The streak: passes in a row the same non-empty error text stood.
+	switch {
+	case text == "":
+		n.streak[name] = 0
+	case n.last[name] == text:
+		n.streak[name]++
+	default:
+		n.streak[name] = 1
 	}
 	if n.last[name] == text {
 		return
