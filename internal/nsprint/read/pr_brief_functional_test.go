@@ -167,6 +167,25 @@ func TestReadBriefPRRefusesAMissingRecord(t *testing.T) {
 	}
 }
 
+// TestReadBriefPRRefusesAStaleRecord (card pr-record-follows-github): a
+// record whose head is not the head GitHub last named (gh_head, written by
+// every delivery and runner receipt) is refused with the typed STALE line,
+// exit 1, nothing on stdout: the measured #4377 was scored at 537c3e22 while
+// GitHub's head was ee0191c4.
+func TestReadBriefPRRefusesAStaleRecord(t *testing.T) {
+	t.Parallel()
+	c := client(t)
+	ctx := context.Background()
+	c.HSet(ctx, "pr:nova-tools:4377", "head", strings.Repeat("5", 40), "state", "open",
+		"gh_head", strings.Repeat("e", 40), "gh_src", "runner", "gh_ev", "1790443327311-0")
+	var out, errb strings.Builder
+	code := read.BriefPR(ctx, c, read.PRBriefOptions{Repo: "nova-tools", N: "4377", Mirror: t.TempDir()}, &out, &errb)
+	if code != 1 || out.Len() != 0 || !strings.Contains(errb.String(),
+		"READ BRIEF REFUSED repo=nova-tools n=4377 why=STALE pr:nova-tools:4377 head=55555555 github=eeeeeeee src=runner ev=1790443327311-0 remedy=") {
+		t.Fatalf("exit %d out %q err %q", code, out.String(), errb.String())
+	}
+}
+
 // TestReadPostFileIntoTheLineStore: two good rows land in the store with a
 // receipt each; a malformed line and a bad row are refused and printed; the
 // tally counts all four.

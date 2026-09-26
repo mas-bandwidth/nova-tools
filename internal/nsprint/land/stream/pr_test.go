@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -105,7 +106,7 @@ func TestLandPRMergesOnGreen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "PR 7 CHECKS green 3/3 head=hhhhhhhh\nPR 7 MERGED " + f.mergeSHA + "\n"
+	want := "PR 7 CHECKS green 3/3 head=hhhhhhhh\nPR 7 MERGED " + f.mergeSHA + "\nPR 7 CARD none (pr:r:7 names no card)\n"
 	if log != want {
 		t.Fatalf("log:\n%s\nwant:\n%s", log, want)
 	}
@@ -157,7 +158,7 @@ func TestLandPRWaitsRedAndDone(t *testing.T) {
 		state string
 		line  string
 	}{
-		{map[string]any{"state": "closed", "merged": true, "merge_commit_sha": strings.Repeat("b", 40), "head": map[string]any{"sha": prHead}}, "merged", "PR 7 MERGED " + strings.Repeat("b", 40) + "\n"},
+		{map[string]any{"state": "closed", "merged": true, "merge_commit_sha": strings.Repeat("b", 40), "head": map[string]any{"sha": prHead}}, "merged", "PR 7 MERGED " + strings.Repeat("b", 40) + "\nPR 7 CARD none (pr:r:7 names no card)\n"},
 		{map[string]any{"state": "closed", "merged": false, "head": map[string]any{"sha": prHead}}, "closed", "PR 7 FAILED closed without a merge\n"},
 		{map[string]any{"state": "open", "mergeable_state": "dirty", "head": map[string]any{"sha": prHead}}, "conflict", "PR 7 FAILED conflict with the base (mergeable_state=dirty)\n"},
 	} {
@@ -302,5 +303,44 @@ func TestLandPRWaitBlocksOnTheHeadsEvent(t *testing.T) {
 	rep, err = LandPRWait(context.Background(), gh3, c3, o3)
 	if err != nil || rep.State != "waiting" || n != 3 || len(f3.merges) != 0 || gh3.Calls != 1 {
 		t.Fatalf("deadline: %v %+v waits=%d calls=%d (30s, 30s, then the 10s left; one call)", err, rep, n, gh3.Calls)
+	}
+}
+
+// TestLandPRRefusesAStaleRecordAndFindsTheCard (card
+// pr-record-follows-github): green at GitHub's head, but the PR record holds
+// another head (the reads scored it) or a head the newest delivery did not
+// name: REFUSED STALE before any merge. With the record at GitHub's head the
+// merge marks the record merged and finds the card through the record's
+// stream (the measured #4371: its record named no task, its card gh-client
+// sat in ws:github:review); a card already landed is said so, not moved.
+func TestLandPRRefusesAStaleRecordAndFindsTheCard(t *testing.T) {
+	t.Parallel()
+
+	f, c := newFakeForge(), prRedis(t)
+	ctx := context.Background()
+	ghLeg(t, c, "gh", "green", "wf:ci", "green 3 x")
+	c.HSet(ctx, "pr:r:7", "head", strings.Repeat("0", 40), "state", "open", "stream", "github")
+	_, log, _, err := runLandPR(t, f, c)
+	var ref *Refusal
+	if !errors.As(err, &ref) || !strings.HasPrefix(ref.Why, "STALE pr:r:7 head=00000000 github=hhhhhhhh src=rest") || len(f.merges) != 0 {
+		t.Fatalf("stale at rest: %v merges=%d\n%s", err, len(f.merges), log)
+	}
+	c.HSet(ctx, "pr:r:7", "head", prHead, "gh_head", strings.Repeat("9", 40), "gh_src", "runner", "gh_ev", "5-0")
+	if _, _, _, err = runLandPR(t, f, c); !errors.As(err, &ref) || ref.Why != "STALE pr:r:7 head=hhhhhhhh github=99999999 src=runner ev=5-0" || len(f.merges) != 0 {
+		t.Fatalf("stale at delivery: %v", err)
+	}
+
+	c.HSet(ctx, "pr:r:7", "gh_head", prHead)
+	c.ZAdd(ctx, "ws:github:review", redis.Z{Score: 1, Member: "other"}, redis.Z{Score: 2, Member: "gh-client"})
+	c.HSet(ctx, "task:other", "repo", "o/r", "pr", "8", "where", "review")
+	c.HSet(ctx, "task:gh-client", "repo", "o/r", "pr", "7", "where", "landed")
+	rep, log, _, err := runLandPR(t, f, c)
+	if err != nil || rep.State != "merged" || rep.Record != "merged" || rep.Card != "gh-client" || rep.CardMove != "already landed" ||
+		!strings.HasSuffix(log, "PR 7 CARD gh-client already landed\n") {
+		t.Fatalf("merged: %v %+v\n%s", err, rep, log)
+	}
+	rec := c.HGetAll(ctx, "pr:r:7").Val()
+	if rec["state"] != "merged" || rec["merge_sha"] != f.mergeSHA || rec["merged_head"] != prHead {
+		t.Fatalf("record after the merge: %v", rec)
 	}
 }

@@ -53,21 +53,32 @@ func TestLandPRVerb(t *testing.T) {
 	srv := landPRFake(t)
 	code, out, errOut := runSprint("land", "pr", "12", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL)
 	if code != 3 || !strings.Contains(out, "PR 12 WAITING "+key+" has gh=-") ||
-		!strings.Contains(out, "LAND PR repo=o/r pr=#12 state=waiting head=aaaaaaaa ci=- merge=- failed=- rest_calls=1\n") {
+		!strings.Contains(out, "LAND PR repo=o/r pr=#12 state=waiting head=aaaaaaaa ci=- merge=- failed=- record=- card=- card_move=- rest_calls=1\n") {
 		t.Fatalf("waiting: exit %d\n%s%s", code, out, errOut)
 	}
 
 	c.HSet(context.Background(), key, "gh", "green", "check:lint", "green 1 x")
+
+	// A PR record whose head is not GitHub's is refused before the merge:
+	// the reads scored another head (card pr-record-follows-github).
+	c.HSet(context.Background(), "pr:r:12", "head", strings.Repeat("c", 40), "state", "open")
+	code, out, errOut = runSprint("land", "pr", "12", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL)
+	if code != 2 || !strings.Contains(errOut, "REFUSED STALE pr:r:12 head=cccccccc github=aaaaaaaa src=rest ev=-") || strings.Contains(out, "MERGED") {
+		t.Fatalf("stale: exit %d\n%s%s", code, out, errOut)
+	}
+	c.Del(context.Background(), "pr:r:12")
+
 	code, out, errOut = runSprint("land", "pr", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL, "#12")
 	want := "PR 12 CHECKS green 1/1 head=aaaaaaaa\nPR 12 MERGED " + strings.Repeat("b", 40) + "\n" +
-		"LAND PR repo=o/r pr=#12 state=merged head=aaaaaaaa ci=green merge=bbbbbbbb failed=- rest_calls=2\n"
+		"PR 12 CARD none (pr:r:12 names no card)\n" +
+		"LAND PR repo=o/r pr=#12 state=merged head=aaaaaaaa ci=green merge=bbbbbbbb failed=- record=none card=- card_move=none rest_calls=2\n"
 	if code != 0 || out != want {
 		t.Fatalf("green: exit %d\n%s\nwant:\n%s%s", code, out, want, errOut)
 	}
 
 	c.HSet(context.Background(), key, "gh", "red", "gh_fail", "check:lint", "check:lint", "red 1 x")
 	code, out, _ = runSprint("land", "pr", "12", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL)
-	if code != 1 || !strings.Contains(out, "PR 12 FAILED check:lint\nLAND PR repo=o/r pr=#12 state=failed head=aaaaaaaa ci=red merge=- failed=check:lint rest_calls=1\n") {
+	if code != 1 || !strings.Contains(out, "PR 12 FAILED check:lint\nLAND PR repo=o/r pr=#12 state=failed head=aaaaaaaa ci=red merge=- failed=check:lint record=- card=- card_move=- rest_calls=1\n") {
 		t.Fatalf("red: exit %d\n%s", code, out)
 	}
 

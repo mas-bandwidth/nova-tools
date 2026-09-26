@@ -13,6 +13,11 @@
 // lander reads it; internal/nsprint/land/stream); no child process. A
 // missing token is the typed refusal REFUSED no GitHub token remedy=...
 //
+// After MERGED (card pr-record-follows-github) the PR record is marked
+// merged and the card it names lands at the merge commit (PR <n> CARD <id>
+// <from>->landed, and record=, card=, card_move= on the LAND PR line); a
+// record whose head is not GitHub's is REFUSED STALE before the merge.
+//
 // Exit 0 merged, 1 failed, closed or in conflict, 2 usage or refused,
 // 3 waiting (not yet green; run again), 6 no Redis.
 package main
@@ -92,9 +97,10 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return landExit(errOut, verb, err)
 	}
-	fmt.Fprintf(out, "LAND PR repo=%s pr=#%d state=%s head=%s ci=%s merge=%s failed=%s rest_calls=%d\n",
+	token := func(s string) string { return orDash(strings.Join(strings.Fields(s), "_")) }
+	fmt.Fprintf(out, "LAND PR repo=%s pr=#%d state=%s head=%s ci=%s merge=%s failed=%s record=%s card=%s card_move=%s rest_calls=%d\n",
 		*repo, n, rep.State, orDash(stream.Short(rep.Head)), orDash(rep.CI), orDash(stream.Short(rep.MergeSHA)),
-		orDash(strings.Join(rep.Failed, ",")), c.Calls)
+		orDash(strings.Join(rep.Failed, ",")), token(rep.Record), token(rep.Card), token(rep.CardMove), c.Calls)
 	switch rep.State {
 	case "merged":
 		return 0
