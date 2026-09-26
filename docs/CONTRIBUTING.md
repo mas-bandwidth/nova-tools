@@ -271,7 +271,8 @@ with its sweep of the tree or it does not land.
     `os.TempDir()`, and every path a tool writes is named there
     (`testoutpath`, `sharedtemp`).
 
-**The rest of the index, by name.** `templates`, `goenv`, `pathassert`, `busprogress`,
+**The rest of the index, by name.** `cap` (every job two minutes, permanently, every platform),
+`templates`, `goenv`, `pathassert`, `busprogress`,
 `outputs`, `windows-pr`, `windows-sizes`, `windows-table`, `one-windows-leg`,
 `darwin-sizes`, `darwin-table`, `cache`, `pinned-actions`, `ci-ok`, `failed`,
 `benchname`, `nightly-tags`, `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,

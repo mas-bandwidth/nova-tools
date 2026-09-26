@@ -2303,6 +2303,35 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 41. `TestTableSetsHaveOneWriter` / `TestTableSetsRuleCatchesAnInjectedWriter` — nothing but the one move file, `internal/nsprint/fn/lua/02_card_move.lua`, writes a set behind the three tables: `ws:<stream>:<where>` (the stream table's primaries), `bench:<b>:cards:<col>` and `friend:<f>:cards:<col>` (the host and friend tables' copies), and the bench lease ledgers `bench:<b>:living|starting` being folded into `bench:<b>:cards:working` (#3929, the table moves; Glenn 2026-09-25: "it's YOUR JOB to make sure that these links are always valid"). **The hurt:** the table printed counts no card record could account for, because several files each kept their own copy of a set, so a move in one left a stale member in another. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (a ZADD, ZREM, SADD, SREM, SMOVE, pop, range removal, store, DEL, UNLINK or RENAME of one of those keys, directly or through a local bound to one) and every non-test Go file under `cmd/` and `internal/` (the go-redis write methods and raw command lists on the same keys). **The allowlist:** fixtures (`*fixture*.go`) seed a throwaway store; the legacy ledger writers were a ratchet (`legacyLedgerWriters` in `internal/ci/tablemoves_class_test.go`), now empty since the fold landed (#3998): any write of an old ledger fails. **The remedy line:** `a second writer of a table set (the one writer is 02_card_move.lua; verbs call it: nova-sprint card deal|work|end|land|cancel): <file>:<line>`, or the ratchet's `lower legacyLedgerWriters[...]`. **The control:** `TestTableSetsRuleCatchesAnInjectedWriter` feeds the scanner Lua and Go writers of the table sets and the ledgers and wants each found, and wants the move file, a fixture and a ZCARD read left alone.
 42. `TestNoOldLeaseLedgerLeft` — nothing reads or writes the old lease ledgers `bench:<b>:living|starting` and `friend:<f>:living|starting` any more, in the Lua library or in any non-test Go file: they fold into `<consumer>:cards:working`, the one lease ledger, and the width in use is its ZCARD (#3998, #3877's other half). **The hurt:** a bench or friend kept two ledgers beside its working set, so the width a table printed, the width a take was refused at and the width the dealer reserved against could each read a different set. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (code before a `--` comment) and every non-test Go file under `cmd/` and `internal/`, for a string spelling of a bench or friend key ending `:living` or `:starting`. **No allowlist:** fixtures seed the consumer sets. **The remedy line:** `an old lease ledger key (folded into <consumer>:cards:working, #3998): <file>:<line>: <line>`; hold and drop a friend-queue lease with `NS.moves.hold` / `NS.moves.drop` (02_card_move.lua) and read width as ZCARD `<consumer>:cards:working`. **The control:** the test feeds the pattern a Lua ZCARD of a friend's `:starting`, a Go ZCard of a bench's `:living` and a fixture ZADD of a friend's `:living` and wants each found, and wants `bench:<b>:cards:working` left alone.
 
+### `cap` — every job two minutes, permanently, on every platform
+
+**The rule.** Every job in every workflow under `.github/workflows/` declares
+`timeout-minutes: 2`, literally: no expression, no per-leg ceiling in a matrix,
+no tier that is exempt (nightly, certification and release included), on every
+platform. Work that needs longer is split into parallel functional test programs,
+each its own job under the cap. Raising the cap is never the fix.
+
+**The hurt.** The exceptions this rule replaces were "hang detectors with room":
+the merge gate at five and ten minutes, the lisp job at fifteen, the push studio
+shards at twenty, the hosted tree at fifteen. Under them a nine-minute darwin leg
+ran to completion on 2026-09-25 and was treated as normal, and fixes to it took
+ten minutes per iteration. Glenn: "cap all five at 2 minutes now. we fix or it
+doesn't land. that's the right posture. nothing else will stop the test creep";
+"previously, you keep adding tests while working, and before we know it, it's 30
+minute long pauses before every check in. this is the only way to enforce."
+
+**The test.** `TestEveryCIJobIsCappedAtTwoMinutes` (`internal/ci/ci_budget_test.go`)
+reads every workflow file and refuses a job over the cap, a job with no literal
+cap, or a `timeout-minutes` expression. `TestShardGoTestTimeoutIsUnderTheJobCap`
+keeps `go test -timeout` (the workflow's `GOTEST_TIMEOUT` and the Makefile's
+`GOTEST_TIMEOUT`, `MERGE_TIMEOUT`, `DARWIN_TIMEOUT`) under the cap, so a run ends
+with a Go stack before the job cap kills it without one.
+
+**The remedy line.** Split the job (shards by measured package size, or one job
+per functional program), move a process-in-the-loop test behind the `slow` tag
+into the nightly functional matrix, or put the leg on a machine that compiles the
+set in seconds. Never a larger number.
+
 ## Parked class tests
 
 A parked rule is one this repository decided to stop enforcing, kept here with

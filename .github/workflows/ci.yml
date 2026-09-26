@@ -443,10 +443,15 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
             SPACE_SHARDS=4
-            STUDIO_SHARDS=2 # 14:55Z 2026-09-24: 16/16 Studio ARM64 runners busy, 12 runs queued, six PR runs at 4 studio shards each (24 jobs for 16 runners) held dev's push runs 10+ min; a shard's tests run 0.7-4.0 min since #3492 (run 36003142070); was 4
+            # EIGHT since 2026-09-25 (the two-minute cap, every job): at two darwin
+            # shards, shard 2/2 of PR run 36206229467 held cmd/nova-sprint,
+            # cmd/nova-wake and cmd/nova-review together and crossed the cap on
+            # the Studio; the Studio carries eight runners (fleet/runners.tsv),
+            # one wave per PR. The 2026-09-24 note below is history.
+            STUDIO_SHARDS=8 # 14:55Z 2026-09-24: 16/16 Studio ARM64 runners busy, 12 runs queued, six PR runs at 4 studio shards each (24 jobs for 16 runners) held dev's push runs 10+ min; a shard's tests run 0.7-4.0 min since #3492 (run 36003142070); was 4
           elif [ "${{ github.event_name }}" = "merge_group" ]; then
             base="${{ github.event.merge_group.base_sha }}"
-            STUDIO_SHARDS=2
+            STUDIO_SHARDS=8
           fi
           if [ -n "$base" ]; then
             while IFS= read -r pkg; do
