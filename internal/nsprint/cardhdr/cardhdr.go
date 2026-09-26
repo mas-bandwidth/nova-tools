@@ -134,7 +134,7 @@ func (t TestLine) String() string {
 }
 
 // GoPackage is Package as go test takes it: a repository-relative
-// package (`internal/x`) is `./internal/x`.
+// package gets a leading ./ (a ./-relative one is kept as it is).
 func (t TestLine) GoPackage() string {
 	if strings.HasPrefix(t.Package, ".") {
 		return t.Package
