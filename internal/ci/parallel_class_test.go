@@ -44,7 +44,7 @@ const serialTestsAllowlistPath = "testdata/serial-tests_allowlist.txt"
 // card TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the
 // redis stream (seat and #3277 tests on t.Setenv); each owes a per-test seam,
 // and the list only shrinks from here.
-const serialTestsCeiling = 878
+const serialTestsCeiling = 877
 
 func TestEveryTestOpensWithTParallel(t *testing.T) {
 	t.Parallel()

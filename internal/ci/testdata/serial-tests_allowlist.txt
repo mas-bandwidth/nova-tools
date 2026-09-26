@@ -881,7 +881,6 @@ internal/presence/issue3277_test.go:TestOpenSendsNoCommand3277 serial: t.Setenv
 internal/presence/seat_test.go:TestOpenLogsInAsTheSeat serial: t.Setenv
 internal/seatcred/seatcred_test.go:TestResolveReadsTheSeatThroughTheSecretsLibrary serial: t.Setenv
 cmd/nova-sprint/jev_test.go:TestJevMechRecordsOneLine serial: t.Setenv (through a helper)
-internal/nsprint/reconcile/rebalance_test.go:TestRedistributeFromMovesDownFriendsQueue serial: t.Setenv (through a helper)
 internal/nsprint/reconcile/rebalance_test.go:TestFriendRebalanceNeverSilentZero serial: t.Setenv (through a helper)
 internal/seatcred/seatcred_test.go:TestChildEnvHandsThePasswordToTheChildOnly serial: t.Setenv (through a helper)
 internal/seatcred/seatcred_test.go:TestActiveResolvesOnceAndOnlyWhenSelected serial: t.Setenv (through a helper)
