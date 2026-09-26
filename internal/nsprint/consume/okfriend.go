@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"sort"
 	"strconv"
 	"strings"
@@ -520,7 +521,7 @@ func (o *OkFriend) census(ctx context.Context) (*readerCensus, error) {
 	c.secPrefixes = strings.FieldsFunc(policy["security_paths"], func(r rune) bool { return r == ' ' || r == ',' })
 	pipe := client.Pipeline()
 	type row struct {
-		beat    *redis.IntCmd
+		beat    *redis.StringCmd
 		desired *redis.SliceCmd
 		working *redis.IntCmd
 		open    *redis.IntCmd
@@ -528,7 +529,7 @@ func (o *OkFriend) census(ctx context.Context) (*readerCensus, error) {
 	rows := make([]row, len(names))
 	for i, f := range names {
 		rows[i] = row{
-			beat:    pipe.Exists(ctx, "friend:"+f+":beat"),
+			beat:    beat.Read(ctx, pipe, f), // up is the beat's at under a minute (#4233), never EXISTS
 			desired: pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "paused"),
 			working: pipe.ZCard(ctx, "friend:"+f+":cards:working"),
 			open:    pipe.ZCard(ctx, "s:"+o.Sprint+":open:"+f),
@@ -541,7 +542,7 @@ func (o *OkFriend) census(ctx context.Context) (*readerCensus, error) {
 	}
 	for i, f := range names {
 		r := rows[i]
-		if r.beat.Val() == 0 || f == "jev" {
+		if !beat.UpCmd(r.beat, time.Now()) || f == "jev" {
 			continue
 		}
 		d := r.desired.Val()

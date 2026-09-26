@@ -31,6 +31,9 @@
 -- are concatenated into one chunk whose main function allows 200 locals.
 do
 local PL_BEAT_MS = 5000
+-- PL_ROW_UP_MS is how old a friend's beat may be for its row to read up
+-- (the consumer table's own minute, #4233).
+local PL_ROW_UP_MS = 60000
 local PL_LIVE_SEP = '\31'
 
 local function pl_now_ms()
@@ -354,7 +357,13 @@ local function friend_row(keys, args)
   if type(slots) ~= 'string' or not string.match(slots, '^[0-9]+$') then
     slots = ''
   end
-  local up = redis.call('EXISTS', 'friend:' .. friend .. ':beat')
+  -- up is reader-judged from the beat's at (#4233: a friend beat has no
+  -- TTL; keys do not expire): under PL_ROW_UP_MS old is up, else down.
+  local up = 0
+  local beat_at = tonumber(redis.call('HGET', 'friend:' .. friend .. ':beat', 'at') or '')
+  if beat_at and pl_now_ms() - beat_at <= PL_ROW_UP_MS then
+    up = 1
+  end
   local row = 'friend:' .. friend
   local kind = redis.call('TYPE', row)
   if type(kind) == 'table' then

@@ -102,9 +102,12 @@ func TestCardMovesCLI(t *testing.T) {
 	if code != 0 || !strings.HasPrefix(out, "CARD DEAL to=friend:emma n=1 copies=c0~2 ms=") {
 		t.Fatalf("read deal = %d %q", code, out)
 	}
+	// a friend's copy renders the person's brief (#4233): the friend reads
+	// and ends the copy itself with card end --score (a bench's read copy
+	// writes RESULT.md for its wrapper instead, #4270)
 	code, out, _ = runCLI("card", "render", "--id", "c0~2")
-	if code != 0 || !strings.Contains(out, "\nKIND: read\n") || !strings.Contains(out, "line 2 is exactly\n  SCORE N/10 ") ||
-		strings.Contains(out, "card end") {
+	if code != 0 || !strings.Contains(out, "\nKIND: read\n") || !strings.Contains(out, "FRIEND: friend:emma reads this PR itself") ||
+		!strings.Contains(out, "nova-sprint card end --id c0~2 --score N/10") || strings.Contains(out, "RESULT.md") {
 		t.Fatalf("render = %d %q", code, out)
 	}
 	code, out, _ = runTaskCLI("take", "--actor", "emma")

@@ -29,6 +29,16 @@ import (
 // and the finding; ABSTAIN or no line is a typed fail); a fix copy's commit
 // on the PR's branch (push it to that branch, end with the PR and the new
 // head).
+//
+// A copy dealt to a FRIEND (consumer friend:<f>; nova-tools #4233, Glenn
+// 2026-09-26 9:03 AM ET: "friends are running themselves, and pull from
+// their ready queue") has no wrapper and no bench: RenderCopy renders the
+// person's brief instead, the same header, and the body tells the friend to
+// clone the repo at BASE/base_sha, branch, commit, push, open the PR under
+// its own GitHub identity and end the copy itself with `nova-sprint card
+// end --id <copy> --ok --pr <repo>#<n> --head <sha>` (or --fail, or --score
+// for a read), renewing its lease with `nova-sprint friend beat` meanwhile.
+// `nova-sprint friend pull` writes these briefs into the friend's own dir.
 
 // CopyCard is the fields of a copy's record the card renders from.
 type CopyCard struct {
@@ -120,6 +130,57 @@ func copyKind(c CopyCard) string {
 	return KindModel
 }
 
+// IsFriendCopy says whether the copy's consumer is a friend (friend:<f>),
+// whose card is the person's brief rather than the wrapper's.
+func (c CopyCard) IsFriendCopy() bool {
+	return strings.HasPrefix(strings.TrimSpace(c.Consumer), "friend:")
+}
+
+// friendBody is the brief a friend works a copy from (#4233): the friend
+// does what the bench wrapper does around the model (clone, branch, push,
+// PR, card end) itself, so every step names its command.
+func friendBody(c CopyCard, full, label, prRef, branch string) string {
+	who := strings.TrimSpace(c.Consumer)
+	endOK := fmt.Sprintf("nova-sprint card end --id %s --ok --pr %s#<n> --head <sha>", c.ID, prkey.Name(c.Repo))
+	endFail := fmt.Sprintf("nova-sprint card end --id %s --fail '<why>'", c.ID)
+	beat := fmt.Sprintf("BEAT: nova-sprint friend beat --as %s --once at least once a minute while you work (or leave nova-sprint friend beat --as %s ticking); a lapsed lease returns this copy as a fail.\n", who, who)
+	var sb strings.Builder
+	switch c.Leg {
+	case "read":
+		fmt.Fprintf(&sb, "FRIEND: %s reads this PR itself (#4233): no wrapper, no bench; you read it and end this copy.\n", who)
+		fmt.Fprintf(&sb, "DO: read %s at head %s against %s@%s: CI at head, base, scope, then a score 1-10. "+
+			"A score under 10 names each gap and the work that closes it. A read edits nothing inside PATHS.\n",
+			prRef, c.Head, c.Base, c.BaseSHA)
+		fmt.Fprintf(&sb, "END: nova-sprint card end --id %s --score N/10 --gates ci:<green|red>,base:<ok|behind>,scope:<ok|over> --finding '<one line>'; "+
+			"when you could not read it: nova-sprint card end --id %s --fail 'ABSTAIN <why>'.\n", c.ID, c.ID)
+	case "fix":
+		onto := oneLine(c.Branch)
+		if onto == "" {
+			onto = "the PR's branch"
+		}
+		fmt.Fprintf(&sb, "FRIEND: %s fixes this PR itself (#4233): no wrapper, no bench; you clone, commit, push and end this copy.\n", who)
+		sb.WriteString("TESTS: " + taskcard.LineTests + "\n")
+		fmt.Fprintf(&sb, "CLONE: git clone --depth 50 --single-branch --branch %s https://github.com/%s %s (from your mirror when you keep one), then git -C %s checkout %s.\n",
+			onto, full, label, label, c.Head)
+		fmt.Fprintf(&sb, "DO: fix %s at head %s: the read found: %s. Change only PATHS, close the finding, commit on top of %s with the finding's summary as the first line, and push to %s under your own GitHub identity.\n",
+			prRef, c.Head, oneLine(c.Finding), c.Head, onto)
+		fmt.Fprintf(&sb, "END: %s (the PR's number and your new head); when you cannot: %s.\n", endOK, endFail)
+		sb.WriteString(beat)
+	default:
+		fmt.Fprintf(&sb, "FRIEND: %s owns this copy end to end (#4233): no wrapper, no bench; you clone, branch, commit, push, open the PR under your own GitHub identity and end this copy yourself.\n", who)
+		sb.WriteString("TESTS: " + taskcard.LineTests + "\n")
+		fmt.Fprintf(&sb, "CLONE: git clone --depth 50 --single-branch --branch %s https://github.com/%s %s (from your mirror when you keep one), then git -C %s checkout %s and git -C %s checkout -b %s.\n",
+			c.Base, full, label, label, c.BaseSHA, label, branch)
+		fmt.Fprintf(&sb, "DO: the work is the issue text quoted below (%s): change only PATHS, make DONE-WHEN hold, commit on %s with the DONE-WHEN summary as the first line, push %s and open the PR against %s with the DONE-WHEN in its body.\n",
+			oneLine(c.Origin), branch, branch, c.Base)
+		fmt.Fprintf(&sb, "END: %s (the PR's number and its head commit); when you cannot: %s.\n", endOK, endFail)
+		sb.WriteString(beat)
+		sb.WriteString("\n---\n")
+		sb.WriteString(taskcard.Quote(strings.TrimSpace(c.Body)))
+	}
+	return sb.String()
+}
+
 // RenderCopy is the card file of a copy. It refuses a record that lacks
 // what the card needs (#3911: the primary carries it from push and from
 // its work copy's end), never guessing a field.
@@ -154,9 +215,23 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 	// base-sha): the primary's base, or the PR's head for a fix copy, which
 	// commits on top of the PR.
 	baseSHA := c.BaseSHA
+	n, _ := CopyNumber(c.ID)
+	branch := WrapperBranch(CopySprint, CopyCardLabel(c.ID), n)
 	var body string
-	switch c.Leg {
-	case "read":
+	switch {
+	case c.IsFriendCopy():
+		// The friend ends the copy itself (#4233): the DONE-WHEN of a read
+		// or fix leg names that end; a work leg keeps the primary's.
+		switch c.Leg {
+		case "read":
+			done = fmt.Sprintf("this copy is ended with the score of %s at head %s: nova-sprint card end --id %s --score N/10", prRef, c.Head, c.ID)
+		case "fix":
+			baseSHA = c.Head
+			done = fmt.Sprintf("the fix is committed on top of %s's head %s, pushed to its branch, and this copy is ended with the new head: nova-sprint card end --id %s --ok --pr %s --head <sha>",
+				prRef, c.Head, c.ID, prRef)
+		}
+		body = friendBody(c, full, label, prRef, branch)
+	case c.Leg == "read":
 		// The model writes one typed line and never runs nova-sprint
 		// (#4270): the wrapper (CopyLedger.End) records the SCORE line on
 		// the PR record at the head and ends the copy from RESULT.md.
@@ -170,7 +245,7 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 			"  ABSTAIN <why>\n"+
 			"Write RESULT.md and exit. Never run nova-sprint, never push, never comment on the PR: the wrapper reads line 2 and ends this copy.\n",
 			prRef, c.Head, c.Base, c.BaseSHA, ScoreLine)
-	case "fix":
+	case c.Leg == "fix":
 		// The model commits the fix on the PR's branch in repo/ and exits
 		// (#4270): repo/ is staged at the PR's head (base-sha below), the
 		// wrapper pushes the commit to the PR's branch and ends the copy
@@ -199,8 +274,6 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		// push, PR, card end --ok --pr --head), so the model is not told to
 		// run card end, which a sandboxed swarm model cannot; the COMMIT
 		// line is its whole contract.
-		n, _ := CopyNumber(c.ID)
-		branch := WrapperBranch(CopySprint, CopyCardLabel(c.ID), n)
 		var sb strings.Builder
 		sb.WriteString("NO-SUBAGENTS: " + taskcard.LineNoSubagents + "\n")
 		sb.WriteString("WALL: " + taskcard.LineWall + "\n")
