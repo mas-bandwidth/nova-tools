@@ -18,9 +18,12 @@ import (
 )
 
 // The play's shape end to end on a throwaway redis-server: users.acl written
-// from the mirror rows (`user <name> on #<sha256> <rules>`, default off), the
-// verb reads ACL LIST as admin and finds no drift; a hand ACL SETUSER is
-// drift; ACL LOAD of the same users.acl (the play's apply) converges it.
+// from the mirror rows (`user <name> on #<sha256> <rules>`, default off), so
+// the rules the verb reads back are the ones THIS server rendered, in its own
+// version's form (8.x prints them as written, 7.0 a compaction); the verb
+// reads ACL LIST and ACL CAT as admin and finds no drift. A hand ACL SETUSER
+// is drift; ACL LOAD of the same users.acl (the play's apply) converges it.
+// The receipt names the redis-server version it ran against.
 func TestACLCheckAgainstALiveStore(t *testing.T) {
 	t.Parallel()
 
@@ -50,20 +53,22 @@ func TestACLCheckAgainstALiveStore(t *testing.T) {
 	}
 	addr := testutil.Start(t, "--aclfile", aclFile)
 	check := func() (int, string, string) {
-		return runACLCheck(aclEnv("pw"), redisACLList, "check", "--redis", addr, "--rows", aclRowsFixture)
+		return runACLCheck(aclEnv("pw"), redisACLRead, "check", "--redis", addr, "--rows", aclRowsFixture)
 	}
-	if code, stdout, stderr := check(); code != 0 || stderr != "" || !strings.HasPrefix(stdout, "ACL CHECK OK ") {
+	code, stdout, stderr := check()
+	if code != 0 || stderr != "" || !strings.HasPrefix(stdout, "ACL CHECK OK ") || !strings.Contains(stdout, " redis=") {
 		t.Fatalf("fresh store: exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
+	t.Logf("RECEIPT %s", strings.TrimSpace(stdout))
 
 	ctx := context.Background()
 	c := redis.NewClient(&redis.Options{Addr: addr, Username: "admin", Password: "pw"})
 	defer c.Close()
-	if err := c.Do(ctx, "ACL", "SETUSER", "bench", "-@write", "~stray:*").Err(); err != nil {
+	if err := c.Do(ctx, "ACL", "SETUSER", "bench", "-hset", "~stray:*").Err(); err != nil {
 		t.Fatal(err)
 	}
-	code, stdout, stderr := check()
-	want := `ACL DRIFT user=bench missing="+@write" extra="-@write ~stray:*"`
+	code, stdout, stderr = check()
+	want := `ACL DRIFT user=bench missing="+hset" extra="~stray:*"`
 	if code != 1 || stderr != "" || !strings.HasPrefix(stdout, want+"\n") || !strings.Contains(stdout, "ACL CHECK DRIFT ") {
 		t.Fatalf("hand edit: exit %d stdout %q stderr %q; want %s", code, stdout, stderr, want)
 	}
