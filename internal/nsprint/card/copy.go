@@ -37,8 +37,9 @@ import (
 // clone the repo at BASE/base_sha, branch, commit, push, open the PR under
 // its own GitHub identity and end the copy itself with `nova-sprint friend
 // done --id <copy> --ok --pr <repo>#<n> --head <sha>` (card end after the PR
-// record; or --fail, or --score for a read), its session's `nova-sprint
-// friend beat` renewing the lease meanwhile.
+// record; or --fail, or --score for a read), the friend's one beat loop
+// (`nova-sprint friend beat --loop`, which friend pull started) renewing
+// the lease meanwhile.
 // `nova-sprint friend pull` writes these briefs into the friend's own dir.
 
 // CopyCard is the fields of a copy's record the card renders from.
@@ -47,6 +48,13 @@ type CopyCard struct {
 	Repo, PR, Head, Base, BaseSHA    string
 	Paths, DoneWhen, Title, Origin   string
 	Stream, Finding, Route, Consumer string
+	// Test is the primary's TEST line (#4313): `<package> <TestName>`, the
+	// class test the wrapper runs at base-sha and at the copy's head, or
+	// `none <why>`, which the copy's card and its PR body carry so the
+	// reader sees why. TM.CARRY takes it to the copy. A fix copy is not
+	// held to it (it is green at the PR head already): its gate is the
+	// finding test the fix names (GateTest).
+	Test string
 	// Review is the REVIEW line of the verdict that moved the primary out
 	// of review (#4072), carried to its next copy; "" when it never failed.
 	Review string
@@ -56,6 +64,10 @@ type CopyCard struct {
 	// carries once its PR is open (TM.CARRY takes it to the copy): what a
 	// fix copy commits on and the wrapper pushes to.
 	Branch string
+	// Model, Harness and Child are who works the copy (taskcard.Who: what
+	// card work and friend pull record); the card's WORKER line (not WHO,
+	// which is the primary's who-may-do-it header, cut.go cutKeys).
+	Model, Harness, Child string
 }
 
 // CopyCardFrom reads a copy's record (HGETALL task:<copy>) as a CopyCard.
@@ -64,7 +76,44 @@ func CopyCardFrom(id string, rec map[string]string) CopyCard {
 		PR: rec["pr"], Head: rec["head"], Base: rec["base"], BaseSHA: rec["base_sha"], Paths: rec["paths"],
 		DoneWhen: rec["done_when"], Title: rec["title"], Origin: rec["origin"], Stream: rec["stream"],
 		Finding: rec["finding"], Route: rec["route"], Consumer: rec["consumer"], Review: rec["review"], Body: rec["body"],
-		Branch: rec["branch"]}
+		Branch: rec["branch"], Model: rec["model"], Harness: rec["harness"], Child: rec["child"], Test: rec["test"]}
+}
+
+// WorkerLine is the copy's WORKER value: model=<m> harness=<h> child=<c>, each
+// only when recorded; "" when none is.
+func (c CopyCard) WorkerLine() string {
+	var parts []string
+	for _, kv := range [][2]string{{"model", c.Model}, {"harness", c.Harness}, {"child", c.Child}} {
+		if v := oneLine(kv[1]); v != "" {
+			parts = append(parts, kv[0]+"="+v)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// FindingTestLine is what a fix copy is told of its gate: the primary's
+// TEST is green at the PR head already, so the fix carries its own red test
+// and names it (nova-tools#4313 fix round).
+const FindingTestLine = "the fix carries its own test for the finding: it fails at the PR head and passes at your commit; name it on RESULT.md line 3 as TEST: [-tags <tags>] <package> <TestName> (a finding test is never none: the finding is a defect, and its test proves the fix); the gate runs that test, not the primary's, before the push."
+
+// GateTest is the TEST a copy's commit is held to: a fix copy's is the
+// finding test the fix names (finding), since the primary's TEST is green
+// at the PR head already and can never be red there; every other leg's is
+// the copy's own (the primary's).
+func (c CopyCard) GateTest(finding string) string {
+	if c.Leg == "fix" {
+		return strings.TrimSpace(finding)
+	}
+	return c.Test
+}
+
+// GateBase is the sha a copy's commit sits on: the PR's head for a fix
+// (it commits on top of the PR), else the copy's base-sha.
+func (c CopyCard) GateBase() string {
+	if c.Leg == "fix" && c.Head != "" {
+		return c.Head
+	}
+	return c.BaseSHA
 }
 
 // ScoreLine is the read copy's one typed line, RESULT.md line 2 (#4270):
@@ -144,9 +193,13 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 	who := strings.TrimSpace(c.Consumer)
 	// friend done (friend_copies.go) records the PR before card end, which
 	// refuses an ok whose PR record is missing (NOPR).
-	endOK := fmt.Sprintf("nova-sprint friend done --as %s --id %s --ok --pr %s#<n> --head <sha>", who, c.ID, prkey.Name(c.Repo))
+	endOK := fmt.Sprintf("nova-sprint friend done --as %s --id %s --ok --pr %s#<n> --head <sha> --repo <your checkout at that head>", who, c.ID, prkey.Name(c.Repo))
+	if c.Leg == "fix" {
+		endOK += " --test '<package> <TestName>'"
+	}
 	endFail := fmt.Sprintf("nova-sprint friend done --as %s --id %s --fail '<why>'", who, c.ID)
-	beat := fmt.Sprintf("BEAT: your session's nova-sprint friend beat --as %s renews this copy's lease every second; a lapsed lease returns this copy as a fail.\n", who)
+	beat := fmt.Sprintf("BEAT: %s's one beat loop (nova-sprint friend beat --as %s --loop, lease %s:beatloop) renews this copy's lease every second; "+
+		"friend pull, card work and task take start it when none runs, so run no beat yourself; a lapsed lease returns this copy as a fail.\n", who, who, who)
 	about := oneLine(c.Origin)
 	if about == "" {
 		about = "primary " + c.Primary
@@ -171,7 +224,8 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 			onto, full, label, label, c.Head)
 		fmt.Fprintf(&sb, "DO: fix %s at head %s: the read found: %s. Change only PATHS, close the finding, commit on top of %s with the finding's summary as the first line, and push to %s under your own GitHub identity.\n",
 			prRef, c.Head, oneLine(c.Finding), c.Head, onto)
-		fmt.Fprintf(&sb, "END: %s (the PR's number and your new head); when you cannot: %s.\n", endOK, endFail)
+		fmt.Fprintf(&sb, "FINDING-TEST: your fix carries its own test for the finding: it fails at the PR head %s and passes at your commit; friend done --ok runs it there (--test, the finding test, not the primary's) with nova-ci local before it records anything, and refuses the end on a red.\n", c.Head)
+		fmt.Fprintf(&sb, "END: %s (the PR's number, your new head, your checkout and the finding test); when you cannot: %s.\n", endOK, endFail)
 		sb.WriteString(beat)
 	default:
 		fmt.Fprintf(&sb, "FRIEND: %s owns this copy end to end (#4233): no wrapper, no bench; you clone, branch, commit, push, open the PR under your own GitHub identity and end this copy yourself.\n", who)
@@ -180,7 +234,8 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 			c.Base, full, label, label, c.BaseSHA, label, branch)
 		fmt.Fprintf(&sb, "DO: the work is the issue text quoted below (%s): change only PATHS, make DONE-WHEN hold, commit on %s with the DONE-WHEN summary as the first line, push %s and open the PR against %s with the DONE-WHEN in its body.\n",
 			about, branch, branch, c.Base)
-		fmt.Fprintf(&sb, "END: %s (the PR's number and its head commit); when you cannot: %s.\n", endOK, endFail)
+		fmt.Fprintf(&sb, "GATE: friend done --ok runs TEST at base-sha %s (it must fail) and at your head (it must pass) in --repo, then nova-ci local, before it records anything, and refuses the end on a red.\n", c.BaseSHA)
+		fmt.Fprintf(&sb, "END: %s (the PR's number, its head commit and your checkout); when you cannot: %s.\n", endOK, endFail)
 		sb.WriteString(beat)
 		sb.WriteString("\n---\n")
 		sb.WriteString(taskcard.Quote(strings.TrimSpace(c.Body)))
@@ -234,7 +289,7 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 			done = fmt.Sprintf("this copy is ended with the score of %s at head %s: nova-sprint friend done --as %s --id %s --score N/10", prRef, c.Head, strings.TrimSpace(c.Consumer), c.ID)
 		case "fix":
 			baseSHA = c.Head
-			done = fmt.Sprintf("the fix is committed on top of %s's head %s, pushed to its branch, and this copy is ended with the new head: nova-sprint friend done --as %s --id %s --ok --pr %s --head <sha>",
+			done = fmt.Sprintf("the fix is committed on top of %s's head %s, pushed to its branch, and this copy is ended with the new head, the gate run in your checkout on the finding test (never none): nova-sprint friend done --as %s --id %s --ok --pr %s --head <sha> --repo <your checkout at that head> --test '<package> <TestName>'",
 				prRef, c.Head, strings.TrimSpace(c.Consumer), c.ID, prRef)
 		}
 		body = friendBody(c, full, label, prRef, branch)
@@ -269,10 +324,12 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		sb.WriteString("NO-SUBAGENTS: " + taskcard.LineNoSubagents + "\n")
 		sb.WriteString("WALL: " + taskcard.LineWall + "\n")
 		sb.WriteString("TESTS: " + taskcard.LineTests + "\n")
+		sb.WriteString("GATE: " + taskcard.LineGate + "\n")
+		sb.WriteString("FINDING-TEST: " + FindingTestLine + "\n")
 		sb.WriteString("UNATTENDED: " + taskcard.LineUnattended + "\n")
 		fmt.Fprintf(&sb, "COMMIT: repo/ is checked out at the PR's head %s, which is %s; change only PATHS, close the finding and commit on top of that head with the finding's summary as the first line; never push and never open a PR; the wrapper pushes your commit to %s and ends this copy with the new head; an uncommitted change counts as NO-COMMIT and the card fails.\n",
 			c.Head, branch, branch)
-		sb.WriteString("RESULT-FORMAT: RESULT.md in the job dir, outside repo/: line 1 is line 1 of this card verbatim; line 2 is DONE, ABSTAIN <why> or BLOCKED <why>.\n")
+		sb.WriteString("RESULT-FORMAT: RESULT.md in the job dir, outside repo/: line 1 is line 1 of this card verbatim; line 2 is DONE, ABSTAIN <why> or BLOCKED <why>; line 3 is TEST: <package> <TestName>, the finding test.\n")
 		body = sb.String()
 	default:
 		// The work copy's card is the primary's harness card (#3911): the
@@ -285,6 +342,7 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		sb.WriteString("NO-SUBAGENTS: " + taskcard.LineNoSubagents + "\n")
 		sb.WriteString("WALL: " + taskcard.LineWall + "\n")
 		sb.WriteString("TESTS: " + taskcard.LineTests + "\n")
+		sb.WriteString("GATE: " + taskcard.LineGate + "\n")
 		sb.WriteString("UNATTENDED: " + taskcard.LineUnattended + "\n")
 		sb.WriteString("OUTPUT: " + taskcard.LineOutput + "\n")
 		fmt.Fprintf(&sb, "COMMIT: make your change in repo/ on a new branch %s (git checkout -b %s) and commit it there with the DONE-WHEN summary as the first line; never push and never open a PR; the wrapper pushes the branch and opens the PR from your commit; an uncommitted change counts as NO-COMMIT and the card fails.\n", branch, branch)
@@ -322,6 +380,10 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 	line("base-repo", "https://github.com/"+full)
 	line("base-sha", baseSHA)
 	line("PATHS", c.Paths)
+	if c.Leg != "read" && c.Leg != "fix" {
+		// a fix copy's TEST is the finding test it names (FindingTestLine)
+		line("TEST", c.Test)
+	}
 	line("DEPENDS-ON", "none")
 	line("DONE-WHEN", done)
 	line("ROUTE", route)
@@ -337,6 +399,7 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 	if c.Leg == "fix" {
 		line("BRANCH", c.Branch)
 	}
+	line("WORKER", c.WorkerLine())
 	b.WriteString("\n")
 	b.WriteString(body)
 	if r := oneLine(c.Review); r != "" {

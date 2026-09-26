@@ -8,7 +8,8 @@
 //	TASK <verb> id=<id> from=<w> to=<w> ms=<n>
 //	TASK <verb> REFUSED id=<id> why=<why> ms=<n>
 //
-// Exit 0 done, 1 refused (nothing written) or drift found, 2 could not run.
+// Exit 0 done, 1 refused (nothing written) or drift found, 2 could not run
+// or a push refused card-lint (nothing written, #4396).
 // They are the card form of the task subverbs: push with --actor, take with
 // --actor and no --as;
 // done, cancel, block, unblock, front, move and beat with --actor and --id and
@@ -26,9 +27,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -38,7 +42,7 @@ usage:
   nova-sprint task push    --actor <a> --id <id> [--stream <s>] [--friend|--to <f>] [--waiting | --depends-on <c>]
                            [--kind <k>] [--ref <repo#n>] [--origin <url>] [--title <t>] [--head <sha>] [--pr <n>] [--repo <r>] [--front]
                            [--issue <file|->] [--route pro|flash|friend] [--base <b>] [--base-sha <sha>] [--paths <p>]
-  nova-sprint task take    --actor <f> [--id <id>] [--n <k>]
+  nova-sprint task take    --actor <f> [--id <id>] [--n <k>] [--model <m>] [--harness <h>] [--child <id>]
   nova-sprint task beat    --actor <f> --id <id>
   nova-sprint task done    --actor <a> --id <id> --evidence <text> [--pr <n>]
   nova-sprint task land    --actor <a> (--id <id> | --stream <s>) --sha <merge sha8>
@@ -58,7 +62,10 @@ done moves working -> merging when the task names a PR (its pr field or --pr), e
 take, done, beat and cancel are card work, end, beat and cancel for a friend's consumer copies
 (<primary>~<n>, #3929): take works the friend's ready copies first, then takes friend-queue
 tasks; done of a copy returns it to its primary (--pr <n> --head <sha>: the primary is review).
-land moves merging (or working) -> landed at the merge sha; land --stream moves every
+take records --model, --harness and --child on each copy it works and keeps the friend's one
+beat loop running (a BEATLOOP line, as friend pull and card work print).
+land moves merging (or working) -> landed at the merge sha; a stitch's land lands its plan
+and the receipt adds parent=<plan> ref=<repo#n> origin=<url>; land --stream moves every
 member of ws:<s>:merging and prints LANDED <id> ref=<repo#n> origin=<url> per member (the
 lander closes those PRs and issues with the CLOSE line). take starts a lease the child
 renews with beat every 60 s; expire moves a working task whose lease lapsed back to ready and unlinks a finished task left in a friend's working set.
@@ -121,7 +128,8 @@ type cardCmd struct {
 	kind, ref, origin, title, head, pr, repo, on    *string
 	evidence, sha, where, toFriend, toStream, toWhr *string
 	ok                                              *string
-	issue, route, base, baseSHA, paths              *string
+	issue, route, base, baseSHA, paths, join        *string
+	model, harness, child                           *string
 	n                                               *int
 	waiting, front, help, repair                    *bool
 	friends                                         multiFlag
@@ -158,6 +166,10 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	c.base = fs.String("base", "", "")
 	c.baseSHA = fs.String("base-sha", "", "")
 	c.paths = fs.String("paths", "", "")
+	c.model = fs.String("model", "", "")
+	c.harness = fs.String("harness", "", "")
+	c.child = fs.String("child", "", "")
+	c.join = fs.String("join", "", "")
 	c.n = fs.Int("n", 1, "")
 	c.waiting = fs.Bool("waiting", false, "")
 	c.repair = fs.Bool("repair", false, "")
@@ -202,6 +214,11 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	return c.run(ctx, st, sub, out, errOut)
 }
 
+// who is take's --model, --harness and --child: who works the copies.
+func (c *cardCmd) who() taskcard.Who {
+	return taskcard.Who{Model: *c.model, Harness: *c.harness, Child: *c.child}
+}
+
 // missing names the first required flag a verb lacks, or "".
 func (c *cardCmd) missing(sub string) string {
 	need := func(v *string, name string) string {
@@ -221,6 +238,9 @@ func (c *cardCmd) missing(sub string) string {
 		}
 	case "take", "expire":
 		checks = append(checks, need(c.actor, "actor"))
+		if err := c.who().Check(); err != nil {
+			checks = append(checks, err.Error())
+		}
 	case "fsck":
 		checks = append(checks, need(c.sprint, "sprint"))
 	case "ls":
@@ -265,6 +285,14 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 	ms := func() int64 { return time.Since(start).Milliseconds() }
 	refused := func(err error) int {
 		if why, ok := taskcard.IsRefused(err); ok {
+			// the paths gate's refusal (SP.gate, #4322) is its one receipt line
+			if no, ok := ws.ParseRefusal(why); ok {
+				if sub != "push" {
+					no.Remedy = moveRemedy(no.Stream)
+				}
+				_, _ = fmt.Fprintf(out, "%s id=%s ms=%d\n", no.Receipt(), *c.id, ms())
+				return 1
+			}
 			_, _ = fmt.Fprintf(out, "TASK %s REFUSED id=%s why=%s ms=%d\n", sub, *c.id, quoteField(why), ms())
 			return 1
 		}
@@ -278,7 +306,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if from == "" {
 			from = "-"
 		}
-		_, _ = fmt.Fprintf(out, "TASK %s id=%s from=%s to=%s ms=%d\n", sub, *c.id, from, r.To, ms())
+		// a stitch's landing landed its plan (#4317): the receipt names the
+		// plan and its issue, so whoever landed the stitch closes the plan's
+		plan := ""
+		if r.Parent != "" {
+			plan = fmt.Sprintf(" parent=%s ref=%s origin=%s", r.Parent, quoteField(dashIf(r.ParentRef)), quoteField(dashIf(r.ParentOrigin)))
+		}
+		_, _ = fmt.Fprintf(out, "TASK %s id=%s from=%s to=%s%s ms=%d\n", sub, *c.id, from, r.To, plan, ms())
 		return 0
 	}
 	o := taskcard.Opts{By: *c.actor, Why: *c.why, Sprint: *c.sprint}
@@ -288,10 +322,27 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if err != nil {
 			return refuse(errOut, c.verb, err.Error())
 		}
+		// A push that carries a card is one invariant (#4396), and every
+		// push, a card or none, keeps the title-and-kind lint (no stitch, no
+		// plan with no card, no "build issue #N as written" title): refused
+		// before any write, the receipt on stdout, one REFUSED card-lint line
+		// per rule on stderr, exit 2 (as card push).
+		var rs cardhdr.Refusals
+		kind := *c.kind
+		if spec != nil {
+			kind = firstOf(kind, spec.Kind)
+			repo := firstOf(*c.repo, spec.Repo)
+			rs = cardhdr.LintOneInvariant(cardhdr.Card{Text: taskLintText(*c.kind, spec), Files: card.FilesAt(repo, spec.BaseSHA)})
+		}
+		if rs = rs.Merge(cardhdr.LintTitleKind(kind, *c.title, spec != nil)); rs != nil {
+			_, _ = fmt.Fprintf(out, "TASK push REFUSED id=%s why=%s ms=%d\n", *c.id, quoteField("card-lint "+rs.Rules()), ms())
+			_, _ = fmt.Fprint(errOut, card.LintLines(*c.id, rs))
+			return 2
+		}
 		r, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: *c.id, Stream: *c.stream, Friend: *c.friend,
 			Sprint: *c.sprint, Kind: *c.kind, Ref: *c.ref, Origin: *c.origin, Title: *c.title, Head: *c.head,
 			PR: *c.pr, Repo: *c.repo, DependsOn: *c.on, Front: *c.front, By: *c.actor, Why: *c.why,
-			Where: map[bool]string{true: "waiting", false: ""}[*c.waiting], Spec: spec})
+			Where: map[bool]string{true: "waiting", false: ""}[*c.waiting], Spec: spec, Join: *c.join})
 		if err != nil {
 			return refused(err)
 		}
@@ -305,9 +356,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		// task take is card work for a friend harness (#3929): the friend's
 		// ready copies first (card work --as friend:<f>), then friend-queue
 		// tasks for what is left of --n.
+		// who works the copies goes onto each one's record in the move
+		// (ns_cm_work), as card work --model --harness --child does
+		who := c.who() // one word each: missing refused it before the store
+		k := taskcard.Consumer{Kind: "friend", Name: *c.actor}
 		var got []string
 		if *c.id == "" || taskcard.IsCopy(*c.id) {
-			w, err := taskcard.Work(ctx, cl, taskcard.Consumer{Kind: "friend", Name: *c.actor}, *c.actor, *c.n, false, ids...)
+			w, err := taskcard.WorkAs(ctx, cl, k, *c.actor, *c.n, false, who, ids...)
 			if err != nil {
 				// a friend with no declared slots holds no copies: the friend queue only
 				if why, ok := taskcard.IsRefused(err); !ok || *c.id != "" || !strings.HasPrefix(why, "SLOTS") {
@@ -323,8 +378,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			}
 			got = append(got, more...)
 		}
+		// the friend's one beat loop, as friend pull and card work keep it
+		code := 0
+		if !printFriendBeat(ctx, cl, k, redisArg(*c.redis), out) {
+			code = 1
+		}
 		_, _ = fmt.Fprintf(out, "TASK take n=%d ids=%s ms=%d\n", len(got), strings.Join(got, ","), ms())
-		return 0
+		return code
 	case "beat":
 		beat := taskcard.Beat
 		if taskcard.IsCopy(*c.id) { // card beat --as friend:<f> (#3929)
@@ -342,6 +402,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if taskcard.IsCopy(*c.id) {
 			// task done of a copy is card end (#3929): the copy returns to its
 			// primary (ok; with --pr <n> --head <sha> the primary moves to review).
+			// A code copy's ok with a PR is held to its spec first
+			// (#4313): this door has no checkout, so it names the ones
+			// that run the gate (nova-tools#4401 read, DOORS).
+			if *c.pr != "" && cl.HGet(ctx, taskcard.Key(*c.id), "leg").Val() != "read" {
+				return refused(&taskcard.Refused{Why: card.GateNoTest + " task done --pr of a code copy skips the spec gate: nova-sprint friend done --as friend:<f> --id " + *c.id +
+					" --ok --pr <repo>#<n> --head <sha> --repo <your checkout at that head> [--test <finding test>] runs it before the end"})
+			}
 			r := taskcard.EndRequest{IDs: []string{*c.id}, OK: true, PR: *c.pr, Head: *c.head, By: *c.actor,
 				Fields: []string{"evidence", *c.evidence}}
 			if *c.pr != "" {
@@ -354,7 +421,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			_, _ = fmt.Fprintf(out, "TASK done id=%s from=working to=ok primary=%s primary_to=%s ms=%d\n", *c.id, e[0].Primary, e[0].To, ms())
 			return 0
 		}
-		return moved(taskcard.Done(ctx, cl, *c.id, *c.actor, *c.evidence, *c.pr))
+		// done with no PR ends a card done (#4317): a stitch or child so
+		// ended leaves its plan stuck, and the receipt names the way on
+		code := moved(taskcard.Done(ctx, cl, *c.id, *c.actor, *c.evidence, *c.pr))
+		if code == 0 {
+			c.planAfter(ctx, cl, out)
+		}
+		return code
 	case "land":
 		if *c.stream == "" {
 			return moved(taskcard.Land(ctx, cl, *c.id, *c.actor, *c.sha, *c.why))
@@ -390,7 +463,11 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			_, _ = fmt.Fprintf(out, "TASK cancel id=%s from=working to=fail primary_to=%s ms=%d\n", *c.id, e[0].To, ms())
 			return 0
 		}
-		return moved(taskcard.Cancel(ctx, cl, *c.id, *c.actor, *c.why))
+		code := moved(taskcard.Cancel(ctx, cl, *c.id, *c.actor, *c.why))
+		if code == 0 {
+			c.planAfter(ctx, cl, out)
+		}
+		return code
 	case "block":
 		why := *c.why
 		if why == "" {
@@ -494,6 +571,20 @@ func (c *cardCmd) spec() (*taskcard.Spec, error) {
 	return &s, nil
 }
 
+// taskLintText is the card a task push is linted as (#4396): the KIND,
+// PATHS and DONE-WHEN it is pushed with (a flag over the issue's line), then
+// the issue text.
+func taskLintText(kind string, s *taskcard.Spec) string {
+	var b strings.Builder
+	for _, kv := range [][2]string{{"KIND", firstOf(kind, s.Kind)}, {"PATHS", s.Paths}, {"DONE-WHEN", s.DoneWhen}} {
+		if kv[1] != "" {
+			fmt.Fprintf(&b, "%s: %s\n", kv[0], kv[1])
+		}
+	}
+	b.WriteString("\n" + s.Body + "\n")
+	return b.String()
+}
+
 // replace is front and move: the one move to the task's own where (front,
 // --to-friend, --to-stream) or to --to-where.
 func (c *cardCmd) replace(ctx context.Context, st *store.Store, sub string, o taskcard.Opts, moved func(taskcard.Result, error) int) int {
@@ -568,4 +659,33 @@ func init() {
 	registerReconcileDuty("task-lease", func(st *store.Store) (reconcileDuty, error) {
 		return &taskLeaseDuty{st: st}, nil
 	})
+}
+
+// planAfter prints the plan of a child or stitch just ended when that left
+// the plan stuck (nova-tools#4317): PLAN id=<p> state=stuck remedy=<the way
+// on>, so the door that ended it names what moves the plan on. Nothing for
+// a card of no plan, or a plan that is not stuck; a read error is silent
+// (the move itself is done and its receipt printed).
+func (c *cardCmd) planAfter(ctx context.Context, cl redis.Cmdable, out io.Writer) {
+	rec, err := cl.HMGet(ctx, taskcard.Key(*c.id), taskcard.FieldParent, taskcard.FieldPhase).Result()
+	if err != nil {
+		return
+	}
+	parent, _ := rec[0].(string)
+	phase, _ := rec[1].(string)
+	if parent == "" || (phase != taskcard.PhaseChild && phase != taskcard.PhaseStitch) {
+		return
+	}
+	p, err := taskcard.ReadPlan(ctx, cl, parent)
+	if err != nil || p.State() != taskcard.Stuck {
+		return
+	}
+	_, _ = fmt.Fprintf(out, "PLAN id=%s state=%s remedy=%s\n", p.ID, p.State(), quoteField(p.Remedy()))
+}
+
+func dashIf(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }

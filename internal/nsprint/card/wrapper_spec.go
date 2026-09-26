@@ -1,0 +1,604 @@
+package card
+
+// wrapper_spec.go is the spec gate (nova-tools#4313). Glenn 2026-09-26 ~11:05
+// AM ET, the quality lens: "how can I make the quality of the friends+swarm
+// work as good as, or better than software built yourself?" The contrast with
+// the day's child builds: the worker ran the touched tests before pushing and
+// the change carried its red test. The card is a spec, and the wrapper holds
+// a DONE code card to it between the commit step and the push:
+//
+//   - the class test: the card's TEST line names one test (`<package>
+//     <TestName>`, cardhdr.ParseTest); the diff adds or changes at least one
+//     _test.go file; the wrapper runs TEST at HEAD (it passes: GREEN) and at
+//     BASE with the diff's test files checked out over it (it fails: RED, the
+//     named test's own fail event, or its package failing to build only when
+//     the diff's test files add or change the named test; a pass of the named
+//     test at base is never red). A
+//     card whose TEST is `none <why>` is excused from the class test, not from
+//     CI, and the why is on the card, in RESULT.md and in the PR body, so the
+//     reader sees it. A bare `none` or no TEST line is refused: the reader
+//     must see why.
+//   - CI's own answer: `nova-ci local --base <base>` in the checkout (#4360:
+//     exactly the unit tier CI runs for the diff, on the touched packages, at
+//     -p 2, niced). Exit 1 is a red, and its RED lines are the names. Where
+//     the verb cannot run (not on PATH, or a repository with no CI selection
+//     to match, its exit 2), the wrapper runs the touched packages itself,
+//     `go test -json -p 2 -count=1`, and reads the red names from the events.
+//
+// A red refuses the push: the copy ends FAILED with the typed reason
+// (no-test, test-not-green, test-not-red, ci-red), the why names the red and
+// the remedy, and the rows, red names included, go under `## Gates` in
+// RESULT.md. No PR is opened from a red. Every child process runs through
+// the wrapper's Runner (execRun), beating the card's lease while it runs, so
+// the unit tests drive the gate with a fake and start nothing.
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+)
+
+// The gate's typed reasons: the end's reason word of a refused card.
+const (
+	GateNoTest   = "no-test"        // no TEST, a bare none, or no test file in the diff
+	GateNotGreen = "test-not-green" // TEST fails at HEAD
+	GateNotRed   = "test-not-red"   // TEST passes at BASE with the diff's tests
+	GateCIRed    = "ci-red"         // nova-ci local (or the touched packages) red
+	GatePass     = "pass"
+	// GateSprintReason is a sprint card's end reason on a red gate: the
+	// reason ns_card_end already takes for a FAILED end whose tests are
+	// red (the copy moves take the typed reasons above).
+	GateSprintReason = "tests-red"
+)
+
+// GateInput is what the gate runs on.
+type GateInput struct {
+	// Repo is the commit step's checkout, <job>/out/repo, at Head.
+	Repo string
+	// Base is the sha repo/ was staged at: the card's base-sha, or the PR's
+	// head for a fix copy. Head is the commit the step made.
+	Base, Head string
+	// Test is the card's TEST line; for a fix (Fix), the finding test the
+	// fix names.
+	Test string
+	// Fix is a fix copy's gate: Test is the finding test, and its absence
+	// is told the fix's remedy (FindingTestLine).
+	Fix bool
+	// Paths are the files the commit changed (ChangedPaths(Repo, Base)).
+	Paths []string
+	// Timeout bounds each command; zero is DefaultCheckTimeout. Ticks and
+	// Beat keep the lease live while a command runs.
+	Timeout time.Duration
+	Ticks   <-chan time.Time
+	Beat    func()
+	// Run is the Runner; nil is execRun.
+	Run Runner
+	// BaseDir is where the base worktree goes; "" is <dir of Repo>/base,
+	// the job's own out dir. A checkout that is not a job's (a friend's)
+	// passes a directory of its own, so nothing beside it is touched.
+	BaseDir string
+}
+
+// GateResult is what the gate found.
+type GateResult struct {
+	// Reason is GatePass, or the typed reason the card is refused for.
+	Reason string
+	// Why is the refusal, one line with its remedy; "" on pass.
+	Why string
+	// Reds are the red names as nova-ci local prints them:
+	// `RED package=<p> test=<t>`.
+	Reds []string
+	// Rows are the Gates rows, in order: TEST at head, TEST at base, CI.
+	Rows []string
+	// Check is TEST at head (pass, fail, not-run); Green its GREEN line and
+	// Red the RED line (TEST failing at base), for the typed record.
+	Check, Green, Red string
+}
+
+// Passed reports a green gate.
+func (r GateResult) Passed() bool { return r.Reason == GatePass }
+
+// Line is the gate's receipt: `gate=<pass|reason> red=<names|->`.
+func (r GateResult) Line() string {
+	red := "-"
+	if len(r.Reds) > 0 {
+		red = strings.Join(r.Reds, ";")
+	}
+	return "gate=" + r.Reason + " red=" + red
+}
+
+// nice is how every test process the gate starts is started: the bench's
+// real work comes first (nova-ci local nices itself the same way).
+var nice = []string{"nice", "-n", "15"}
+
+// RunSpecGate holds a DONE code card to its spec (the file comment).
+func RunSpecGate(ctx context.Context, in GateInput) GateResult {
+	run := in.Run
+	if run == nil {
+		run = execRun
+	}
+	res := GateResult{Reason: GatePass, Check: "not-run"}
+	refuse := func(reason, why string) GateResult {
+		res.Reason, res.Why = reason, oneField(why)
+		return res
+	}
+	tl, why := cardhdr.ParseTest(in.Test)
+	switch {
+	case why != "" && in.Fix:
+		why = "a fix names its finding test: " + why + "; " + FindingTestLine
+	case in.Fix && tl.None:
+		// a finding is a defect at the PR head: its test fails there and
+		// passes at the fix (nova-tools#4401 read, item 4)
+		why = "a fix's finding test is never none (" + tl.Why + "): the finding is a defect at the PR head " + short(in.Base) + ", so its test fails there; " + FindingTestLine
+	}
+	if why != "" {
+		res.Rows = append(res.Rows, "TEST: refused ("+why+")")
+		return refuse(GateNoTest, why)
+	}
+	if tl.None {
+		res.Rows = append(res.Rows, "TEST: none ("+tl.Why+"); no class test required")
+	} else {
+		tests := testFiles(in.Repo, in.Paths)
+		if len(tests) == 0 {
+			res.Rows = append(res.Rows, "TEST "+in.Test+": not-run (the diff adds or changes no test file)")
+			return refuse(GateNoTest, "the diff adds or changes no test file: add or change one test that fails at base-sha "+short(in.Base)+" and passes at your head, the one TEST names ("+in.Test+")")
+		}
+		head := runCheck(ctx, run, in.Repo, in.Test, in.Timeout, in.Ticks, in.Beat)
+		res.Check, res.Green = head.Check, head.Green
+		res.Rows = append(res.Rows, "TEST "+in.Test+" at head "+short(in.Head)+": "+strings.TrimPrefix(head.Gate, head.Cmd+": "))
+		if head.Check != "pass" {
+			return refuse(GateNotGreen, "TEST "+in.Test+" is not green at head "+short(in.Head)+": "+head.Gate+"; make it pass before you commit")
+		}
+		red, baseFunc, stage := runAtBase(ctx, run, in, tests)
+		if stage != "" {
+			res.Rows = append(res.Rows, "TEST "+in.Test+" at base "+short(in.Base)+": not-run ("+stage+")")
+			return refuse(GateNotRed, "TEST "+in.Test+" could not run at base-sha "+short(in.Base)+": "+stage)
+		}
+		row := "TEST " + in.Test + " at base " + short(in.Base) + " with the diff's tests: " + strings.TrimPrefix(red.Gate, red.Cmd+": ")
+		// A package that does not build at base is the named test's red
+		// only when the diff's test files add or change that test: an old
+		// test beside a new file that calls new code, or a base that does
+		// not compile, proves nothing about it (nova-tools#4401 read, item 1).
+		buildRed := red.BuildFailed && diffDefinesTest(in.Repo, tests, tl, baseFunc)
+		if buildRed {
+			row += " (the package does not build: your test files add or change " + tl.Name + ")"
+		}
+		res.Rows = append(res.Rows, row)
+		switch {
+		case red.Check == "pass" || red.Passed:
+			return refuse(GateNotRed, "TEST "+in.Test+" passes at base-sha "+short(in.Base)+" with your test files ("+strings.Join(tests, " ")+"): the test does not fail without the change; write one that does")
+		case red.BuildFailed && !buildRed:
+			return refuse(GateNotRed, "TEST "+in.Test+"'s package does not build at base-sha "+short(in.Base)+" with your test files ("+strings.Join(tests, " ")+"), and they do not add or change "+tl.Name+": a build failure is its red only when your test files define it; name the test the change adds, or make "+tl.Name+" itself fail at base")
+		case !red.Red && !buildRed:
+			return refuse(GateNotRed, "TEST "+in.Test+" did not run at base-sha "+short(in.Base)+" with your test files ("+strings.Join(tests, " ")+"): "+red.Gate+"; a red is the named test's own fail (or its package failing to build when your test files add or change it), never a test that is not there")
+		}
+		res.Red = red.Gate
+	}
+	rows, reds, reason, why := runCI(ctx, run, in)
+	res.Rows = append(res.Rows, rows...)
+	res.Reds = reds
+	if reason != "" {
+		return refuse(reason, why)
+	}
+	return res
+}
+
+// FriendGate is a code copy a friend ends itself (friend done --ok --pr):
+// no wrapper ran the spec gate, so the verb runs it in the friend's
+// checkout before it records the PR or ends the copy (nova-tools#4401 fix
+// round, item 3).
+type FriendGate struct {
+	Copy CopyCard
+	// Finding is a fix copy's finding test (friend done --test).
+	Finding string
+	// Repo is the friend's checkout, at Head.
+	Repo, Head string
+	Timeout    time.Duration
+	Run        Runner
+}
+
+// GateFriendCopy runs the spec gate on a friend's copy: the checkout must be
+// at Head (the commit the PR carries), the base is the copy's (GateBase),
+// the test the copy's (GateTest, a fix's own finding test), and the base
+// worktree goes in a temporary directory of its own, removed after. An
+// error is a gate that could not run.
+func GateFriendCopy(ctx context.Context, fg FriendGate) (GateResult, error) {
+	run := fg.Run
+	if run == nil {
+		run = execRun
+	}
+	repo, err := filepath.Abs(fg.Repo)
+	if err != nil {
+		return GateResult{}, err
+	}
+	if fi, err := os.Stat(filepath.Join(repo, ".git")); err != nil || fi == nil {
+		return GateResult{}, fmt.Errorf("--repo %s is not a git checkout", fg.Repo)
+	}
+	var at lineBuffer
+	if exit, err := run(ctx, Cmd{Dir: repo, Argv: []string{"git", "rev-parse", "HEAD"}, Out: &at, Timeout: fg.Timeout}); err != nil || exit != 0 {
+		return GateResult{}, fmt.Errorf("git rev-parse HEAD in %s: exit %d%s", fg.Repo, exit, errSuffix(err))
+	}
+	head := strings.TrimSpace(at.tail(1))
+	if fg.Head == "" || !strings.HasPrefix(head, strings.TrimSpace(fg.Head)) {
+		return GateResult{}, fmt.Errorf("--repo %s is at %s, not --head %s: check out the head the PR carries", fg.Repo, short(head), short(fg.Head))
+	}
+	base := fg.Copy.GateBase()
+	paths, err := ChangedPaths(repo, base)
+	if err != nil {
+		return GateResult{}, err
+	}
+	tmp, err := os.MkdirTemp("", "friend-gate-")
+	if err != nil {
+		return GateResult{}, err
+	}
+	defer func() { _ = safepath.RemoveUnder(filepath.Dir(tmp), tmp) }()
+	return RunSpecGate(ctx, GateInput{Repo: repo, Base: base, Head: head, Test: fg.Copy.GateTest(fg.Finding), Fix: fg.Copy.Leg == "fix",
+		Paths: paths, Timeout: fg.Timeout, Run: run, BaseDir: filepath.Join(tmp, "base")}), nil
+}
+
+// FindingTestOf is the finding test a fix copy's model named in <out>/RESULT.md:
+// the first `TEST: ` line after line 2 and before the first section, "" when
+// there is none.
+func FindingTestOf(out string) string {
+	raw, err := os.ReadFile(filepath.Join(out, "RESULT.md"))
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+	for i := 2; i < len(lines); i++ {
+		l := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(l, "## ") {
+			break
+		}
+		if v, ok := strings.CutPrefix(l, "TEST:"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// testFiles are the changed paths that are Go test files still present in
+// repo (a deleted test cannot be checked out over base).
+func testFiles(repo string, paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		if !strings.HasSuffix(p, "_test.go") {
+			continue
+		}
+		if fi, err := os.Stat(filepath.Join(repo, filepath.FromSlash(p))); err == nil && fi.Mode().IsRegular() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// runAtBase stages Base in a worktree beside repo (<out>/base), checks the
+// diff's test files out of Head over it and runs TEST there. baseFunc is the
+// named test's source at base, read before the checkout ("" when base has
+// none). stage names the step that could not run; the worktree is removed
+// either way.
+func runAtBase(ctx context.Context, run Runner, in GateInput, tests []string) (_ CheckRun, baseFunc, stage string) {
+	base := in.BaseDir
+	if base == "" {
+		base = filepath.Join(filepath.Dir(in.Repo), "base")
+	}
+	git := func(dir string, argv ...string) string {
+		var out tailBuffer
+		argv = append([]string{"git", "-c", "core.hooksPath=/dev/null"}, argv...)
+		exit, err := run(ctx, Cmd{Dir: dir, Argv: argv, Out: &out, Timeout: in.Timeout, Ticks: in.Ticks, Beat: in.Beat})
+		switch {
+		case err != nil:
+			return "git " + strings.Join(argv[3:], " ") + ": " + oneField(err.Error())
+		case exit != 0:
+			return fmt.Sprintf("git %s: exit %d: %s", strings.Join(argv[3:], " "), exit, out.tail(2))
+		}
+		return ""
+	}
+	out := filepath.Dir(base)
+	_ = safepath.RemoveUnder(out, base)
+	if why := git(in.Repo, "worktree", "add", "--detach", "--force", base, in.Base); why != "" {
+		return CheckRun{}, "", why
+	}
+	defer func() {
+		_ = git(in.Repo, "worktree", "remove", "--force", base)
+		_ = safepath.RemoveUnder(out, base)
+		_ = git(in.Repo, "worktree", "prune")
+	}()
+	tl, _ := cardhdr.ParseTest(in.Test)
+	baseFunc = testFuncIn(filepath.Join(base, filepath.FromSlash(testPkgDir(tl))), tl.Name)
+	if why := git(base, append([]string{"checkout", in.Head, "--"}, tests...)...); why != "" {
+		return CheckRun{}, "", why
+	}
+	return runCheck(ctx, run, base, in.Test, in.Timeout, in.Ticks, in.Beat), baseFunc, ""
+}
+
+// testPkgDir is TEST's package as a repository-relative directory: `./x/`
+// and `x` are `x`, `.` is `.`.
+func testPkgDir(tl cardhdr.TestLine) string {
+	return path.Clean(tl.Package)
+}
+
+// diffDefinesTest reports whether the diff's test files in TEST's package
+// define the named test at head with source that base does not have
+// (baseFunc, the test's source at base, "" when absent): the test is new or
+// changed, so its package failing to build at base is the test's own red.
+func diffDefinesTest(repo string, tests []string, tl cardhdr.TestLine, baseFunc string) bool {
+	dir := testPkgDir(tl)
+	for _, p := range tests {
+		if path.Dir(p) != dir {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(p)))
+		if err != nil {
+			continue
+		}
+		if head := funcSource(src, tl.Name); head != "" && head != baseFunc {
+			return true
+		}
+	}
+	return false
+}
+
+// testFuncIn is the source of the top-level func name in the _test.go files
+// of dir, "" when none defines it.
+func testFuncIn(dir, name string) string {
+	files, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	sort.Strings(files)
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		if s := funcSource(src, name); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// funcSource is the source text of the top-level func name (no receiver) in
+// one Go file, "" when the file does not declare it or does not parse that
+// far.
+func funcSource(src []byte, name string) string {
+	fset := token.NewFileSet()
+	f, _ := parser.ParseFile(fset, "", src, parser.SkipObjectResolution)
+	if f == nil {
+		return ""
+	}
+	for _, d := range f.Decls {
+		fd, ok := d.(*ast.FuncDecl)
+		if !ok || fd.Recv != nil || fd.Name == nil || fd.Name.Name != name || fd.Body == nil {
+			continue
+		}
+		from, to := fset.Position(fd.Pos()).Offset, fset.Position(fd.End()).Offset
+		if from >= 0 && to <= len(src) && from < to {
+			return string(src[from:to])
+		}
+	}
+	return ""
+}
+
+// redLineMark is how nova-ci local prints a red test.
+const redLineMark = "RED package="
+
+// runCI is CI's answer for the diff: nova-ci local, else the touched packages.
+// It returns the rows, the red names, and the reason and why of a refusal.
+func runCI(ctx context.Context, run Runner, in GateInput) (rows, reds []string, reason, why string) {
+	var out lineBuffer
+	exit, err := run(ctx, Cmd{Dir: in.Repo, Argv: []string{"nova-ci", "local", "--base", in.Base}, Out: &out,
+		Timeout: in.Timeout, Ticks: in.Ticks, Beat: in.Beat})
+	for _, l := range out.lines {
+		if strings.HasPrefix(l, redLineMark) {
+			reds = append(reds, l)
+		}
+	}
+	summary := out.last("nova-ci local: packages=")
+	switch {
+	case err == nil && exit == 0:
+		if summary == "" {
+			summary = "nova-ci local: green"
+		}
+		return []string{summary}, nil, "", ""
+	case err == nil && exit == 1:
+		if summary == "" {
+			summary = "nova-ci local: red"
+		}
+		rows = append([]string{summary}, reds...)
+		if len(reds) == 0 {
+			reds = []string{"RED package=- test=- (nova-ci local exit 1 with no RED line: " + out.tail(1) + ")"}
+			rows = append(rows, reds...)
+		}
+		return rows, reds, GateCIRed, "nova-ci local red: " + strings.Join(reds, "; ") + "; fix the red, never the budget"
+	case err == context.DeadlineExceeded:
+		return []string{"nova-ci local: fail timeout after " + in.Timeout.String()}, nil, GateCIRed, "nova-ci local did not finish in " + in.Timeout.String() + ": a red at the cap is your defect to fix"
+	}
+	// The verb could not run here (not on PATH, or a repository with no CI
+	// selection to match): the touched packages, the way its refusal says.
+	could := out.tail(1)
+	if err != nil {
+		could = oneField(err.Error())
+	}
+	pkgs := goPackages(in.Paths)
+	if len(pkgs) == 0 {
+		return []string{"nova-ci local: not-run (" + could + "); no Go package touched"}, nil, "", ""
+	}
+	argv := append(append([]string{}, nice...), "go", "test", "-json", "-p", "2", "-count=1")
+	argv = append(argv, pkgs...)
+	var ev lineBuffer
+	exit, err = run(ctx, Cmd{Dir: in.Repo, Argv: argv, Out: &ev, Timeout: in.Timeout, Ticks: in.Ticks, Beat: in.Beat})
+	cmdline := "go test -p 2 -count=1 " + strings.Join(pkgs, " ")
+	reds = redEvents(ev.lines)
+	switch {
+	case err == context.DeadlineExceeded:
+		return []string{"nova-ci local: not-run (" + could + ")", cmdline + ": fail timeout after " + in.Timeout.String()}, nil,
+			GateCIRed, cmdline + " did not finish in " + in.Timeout.String() + ": a red at the cap is your defect to fix"
+	case err != nil:
+		return []string{"nova-ci local: not-run (" + could + ")", cmdline + ": not-run (" + oneField(err.Error()) + ")"}, nil,
+			GateCIRed, "CI could not run for the diff: nova-ci local " + could + "; " + cmdline + ": " + oneField(err.Error())
+	case exit == 0:
+		return []string{"nova-ci local: not-run (" + could + ")", cmdline + ": pass"}, nil, "", ""
+	}
+	if len(reds) == 0 {
+		reds = []string{"RED package=- test=- (" + cmdline + " exit " + fmt.Sprint(exit) + ": " + ev.tail(1) + ")"}
+	}
+	rows = append([]string{"nova-ci local: not-run (" + could + ")", cmdline + ": red"}, reds...)
+	return rows, reds, GateCIRed, cmdline + " red: " + strings.Join(reds, "; ") + "; fix the red, never the budget"
+}
+
+// goPackages are the ./-relative packages of the changed Go files, sorted.
+func goPackages(paths []string) []string {
+	seen := map[string]bool{}
+	for _, p := range paths {
+		if !strings.HasSuffix(p, ".go") {
+			continue
+		}
+		dir := filepath.ToSlash(filepath.Dir(p))
+		if dir == "." {
+			seen["."] = true
+			continue
+		}
+		seen["./"+dir] = true
+	}
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// redEvents reads a `go test -json` stream: a failed test is `RED
+// package=<p> test=<t>`; a package that failed with no failed test (a build
+// error, a panic, TestMain) is `test=-`, once.
+func redEvents(lines []string) []string {
+	var reds []string
+	failed := map[string]bool{}
+	var pkgFail []string
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if t == "" || t[0] != '{' {
+			continue
+		}
+		var ev slowtests.Event
+		if err := json.Unmarshal([]byte(t), &ev); err != nil || ev.Package == "" {
+			continue
+		}
+		switch {
+		case ev.Action == "fail" && ev.Test != "":
+			reds = append(reds, "RED package="+oneField(ev.Package)+" test="+oneField(ev.Test))
+			failed[ev.Package] = true
+		case (ev.Action == "fail" || ev.Action == "build-fail") && ev.Test == "":
+			pkgFail = append(pkgFail, ev.Package)
+		}
+	}
+	for _, p := range pkgFail {
+		if !failed[p] {
+			failed[p] = true
+			reds = append(reds, "RED package="+oneField(p)+" test=- (the package failed outside a test: a build error, a panic, TestMain or the -timeout)")
+		}
+	}
+	return reds
+}
+
+// lineBuffer keeps a command's output as lines (the last 4096 of them).
+type lineBuffer struct {
+	buf   []byte
+	lines []string
+}
+
+func (l *lineBuffer) Write(p []byte) (int, error) {
+	l.buf = append(l.buf, p...)
+	for {
+		i := bytes.IndexByte(l.buf, '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		l.add(string(l.buf[:i]))
+		l.buf = l.buf[i+1:]
+	}
+}
+
+func (l *lineBuffer) add(s string) {
+	if s = strings.TrimRight(s, "\r"); strings.TrimSpace(s) == "" {
+		return
+	}
+	l.lines = append(l.lines, s)
+	if len(l.lines) > 4096 {
+		l.lines = l.lines[len(l.lines)-4096:]
+	}
+}
+
+// last is the last line with prefix, or "".
+func (l *lineBuffer) last(prefix string) string {
+	if len(l.buf) > 0 {
+		l.add(string(l.buf))
+		l.buf = nil
+	}
+	for i := len(l.lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(l.lines[i], prefix) {
+			return oneField(l.lines[i])
+		}
+	}
+	return ""
+}
+
+// all is every line kept.
+func (l *lineBuffer) all() []string {
+	if len(l.buf) > 0 {
+		l.add(string(l.buf))
+		l.buf = nil
+	}
+	return l.lines
+}
+
+// tail is the last n lines, joined with " | ".
+func (l *lineBuffer) tail(n int) string {
+	if len(l.buf) > 0 {
+		l.add(string(l.buf))
+		l.buf = nil
+	}
+	rows := l.lines
+	if len(rows) > n {
+		rows = rows[len(rows)-n:]
+	}
+	return oneField(strings.Join(rows, " | "))
+}
+
+// AppendGates writes the gate's rows under `## Gates` at the end of
+// <out>/RESULT.md, the model's file, before the wrapper copies it out: the
+// reader sees the red names beside the model's word. A card that wrote no
+// RESULT.md gets none (the record says w_result=absent).
+func AppendGates(out string, rows []string) error {
+	path := filepath.Join(out, "RESULT.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var b strings.Builder
+	b.Write(raw)
+	if len(raw) > 0 && raw[len(raw)-1] != '\n' {
+		b.WriteByte('\n')
+	}
+	b.WriteString("## Gates\n")
+	for _, r := range rows {
+		b.WriteString("- " + oneField(r) + "\n")
+	}
+	return os.WriteFile(path, []byte(b.String()), 0o644)
+}

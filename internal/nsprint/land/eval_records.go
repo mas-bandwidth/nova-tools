@@ -268,6 +268,7 @@ const (
 type InboundResult struct {
 	Entries  int    // entries read and acknowledged
 	Heads    int    // unit heads written from the mirror after a delivery
+	Records  int    // PR records created or moved by a pull_request delivery (RecordPRHead)
 	Holds    int    // inbound objections recorded as login:<x> holds
 	Released int    // login:<x> holds released by the same login
 	NoBody   int    // comment or review entries that carried no body to classify
@@ -276,7 +277,9 @@ type InboundResult struct {
 }
 
 // ConsumeInbound drains ev:github for repo as consumer group "land" (§3.1,
-// 3.2, 3.4): a pull_request opened/synchronize/reopened delivery fetches the
+// 3.2, 3.4): every pull_request opened/synchronize/reopened/closed delivery
+// moves the PR record pr:<name>:<n> (RecordPRHead); for a sprint unit, an
+// opened/synchronize/reopened delivery also fetches the
 // unit's branch into the mirror and writes the head from git (never from the
 // payload alone); an issue_comment, pull_request_review or pull_request whose
 // body opens with the hold keyword records a login:<sender> hold; a comment
@@ -364,6 +367,18 @@ func inboundEntry(ctx context.Context, c *redis.Client, sprint, repo, mirrorDir 
 	n, err := strconv.Atoi(v("number"))
 	if err != nil || n <= 0 {
 		return nil
+	}
+	// The PR record follows every pull_request delivery, card or none,
+	// mirror or none (card pr-record-follows-github: the unit head below is
+	// written only for a sprint unit with a mirror, and was the only write).
+	if claim, ok := ClaimOf(m); ok {
+		pr, err := RecordPRHead(ctx, c, claim, nil)
+		if err != nil {
+			return err
+		}
+		if pr.Outcome == "created" || pr.Outcome == "moved" {
+			res.Records++
+		}
 	}
 	unit, err := c.Get(ctx, PRUnitKey(sprint, repo, n)).Result()
 	if errors.Is(err, redis.Nil) || unit == "" {

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/redis/go-redis/v9"
 )
 
 func gitIn(t *testing.T, dir string, args ...string) string {
@@ -113,11 +114,13 @@ func TestWrapperCommitsOutputOnCardBranch(t *testing.T) {
 		id := card.Identity{Sprint: "control-commit", Label: "card-x", BaseSHA: "0123abcd", Bench: "wrap-bench", Attempt: 1}
 		token := attemptToken(1, strings.Repeat("c", 32))
 		seedCard(t, ctx, client, id, "dealt", token)
+		sprintCardNoTest(t, ctx, client, id)
 		gate := filepath.Join(t.TempDir(), "gate")
 		t.Setenv(fakeHarnessEnv, "repo")
 		t.Setenv(fakeGateEnv, gate)
 		t.Setenv(fakeOriginEnv, newOrigin(t))
 		h := newHarnessRun(t, id, self)
+		h.cfg.Run = ciGreen
 		ledger := &observed{inner: &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token}, events: make(chan string, 64)}
 		// #4227: the end names the checkout the commit lives in, and that
 		// checkout is still on disk when the ledger ends (a copy's ledger
@@ -214,6 +217,7 @@ func TestWrapperCommitsNativeJobRepo(t *testing.T) {
 			id := card.Identity{Sprint: "flash-0924", Label: "quack-fix", BaseSHA: "0123abcd", Bench: "wrap-bench", Attempt: 1}
 			token := attemptToken(1, strings.Repeat("d", 32))
 			seedCard(t, ctx, client, id, "dealt", token)
+			sprintCardNoTest(t, ctx, client, id)
 			slot := filepath.Join(t.TempDir(), "nc-flash-0924-quack-fix-1")
 			gate := filepath.Join(t.TempDir(), "gate")
 			t.Setenv(fakeHarnessEnv, tc.mode)
@@ -221,6 +225,7 @@ func TestWrapperCommitsNativeJobRepo(t *testing.T) {
 			t.Setenv(fakeOriginEnv, newBaseOrigin(t))
 			t.Setenv(fakeSlotEnv, slot)
 			h := newHarnessRun(t, id, self)
+			h.cfg.Run = ciGreen
 			ledger := &observed{inner: &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token}, events: make(chan string, 64)}
 			got := make(chan card.WrapperReport, 1)
 			go func() { got <- card.RunWrapper(ctx, h.cfg, ledger) }()
@@ -271,4 +276,20 @@ func TestWrapperCommitsNativeJobRepo(t *testing.T) {
 			}
 		})
 	}
+}
+
+// sprintCardNoTest gives a sprint card the TEST a text-only fixture carries,
+// none with its why: the spec gate (#4401 fix round, item 3) holds every
+// code card's commit, and these tests are about the commit step.
+func sprintCardNoTest(t *testing.T, ctx context.Context, client *redis.Client, id card.Identity) {
+	t.Helper()
+	if err := client.HSet(ctx, card.CardKey(id.Sprint, id.Label), "test", "none the fixture's work is a text file").Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ciGreen is the gate's Runner for a fixture whose TEST is none: nova-ci
+// local answers green and nothing starts.
+func ciGreen(ctx context.Context, c card.Cmd) (int, error) {
+	return (&gateFake{ci: gateAnswer{exit: 0, out: "nova-ci local: packages=0 seconds=0 red=0 make-exit=0\n"}}).run(ctx, c)
 }

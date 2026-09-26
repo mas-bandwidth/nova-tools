@@ -132,6 +132,10 @@ func runLine(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 		fmt.Fprintf(out, "LINE POST %s kind=%s who=%s head=%s gates=%s measured=%s lines=%d github_calls=0\n",
 			p.Key, l.Kind, l.Who, shortSHA(p.Head), dash(p.Gates), dash(p.Measured), p.Lines)
+		// a CLOSE line that landed a stitch landed its plan (#4317)
+		for _, plan := range p.Plans {
+			fmt.Fprintf(out, "LINE POST PLAN %s\n", plan)
+		}
 		return 0
 	case "list":
 		full, recs, err := line.List(ctx, c, name, *n, *head)

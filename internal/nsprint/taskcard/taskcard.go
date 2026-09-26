@@ -121,9 +121,12 @@ func IsRefused(err error) (string, bool) {
 }
 
 // Result is one move: Status MOVED (From -> To) or SAME (already there,
-// nothing to change).
+// nothing to change). Parent, ParentRef and ParentOrigin are set when the
+// move landed a plan's stitch and so the plan (nova-tools#4317): the plan's
+// id and the issue ref and origin its lander closes.
 type Result struct {
-	Status, From, To string
+	Status, From, To                string
+	Parent, ParentRef, ParentOrigin string
 }
 
 func str(reply any) (string, error) {
@@ -151,12 +154,29 @@ func parseMove(fn, s string) (Result, error) {
 	switch {
 	case strings.HasPrefix(s, "REFUSED "):
 		return Result{}, &Refused{Why: strings.TrimPrefix(s, "REFUSED ")}
-	case len(f) == 3 && f[0] == "MOVED":
+	case len(f) >= 3 && f[0] == "MOVED":
 		from := f[1]
 		if from == "-" {
 			from = ""
 		}
-		return Result{Status: f[0], From: from, To: f[2]}, nil
+		r := Result{Status: f[0], From: from, To: f[2]}
+		for _, kv := range f[3:] {
+			k, v, ok := strings.Cut(kv, "=")
+			if v == "-" {
+				v = ""
+			}
+			switch {
+			case ok && k == "parent":
+				r.Parent = v
+			case ok && k == "ref":
+				r.ParentRef = v
+			case ok && k == "origin":
+				r.ParentOrigin = v
+			default:
+				return Result{}, fmt.Errorf("%s: unexpected reply %q", fn, s)
+			}
+		}
+		return r, nil
 	case len(f) == 2 && f[0] == "SAME":
 		return Result{Status: f[0], From: f[1], To: f[1]}, nil
 	}
@@ -194,6 +214,12 @@ type PushRequest struct {
 	// Spec, when set, is the card content (#3911): its fields go on the
 	// record, and a swarm route lacking one is refused at push, named.
 	Spec *Spec
+
+	// Join (--join, nova-tools#4322) names the one open stream whose paths
+	// the task's PATHS may overlap: it is pushed onto that stream instead.
+	// The push is gated in its FCALL (SP.gate): an overlap otherwise is a
+	// *Refused whose why ws.ParseRefusal reads.
+	Join string
 }
 
 // PushResult is where the task was placed and its ready entry (q:<friend>).
@@ -300,12 +326,28 @@ func (r *PushRequest) args() ([]any, error) {
 	}
 	o.Fields = append(o.Fields, r.Fields...)
 	o.Fields = append(o.Fields, spec...)
+	// stream_paths (nova-tools#4322): the record's PATHS as its stream holds
+	// them; the move into a live set adds them to ws:paths[<stream>].
+	// The last paths pair is the one HSET keeps.
+	var paths []string
+	for i := 0; i+1 < len(o.Fields); i += 2 {
+		if o.Fields[i] == "paths" {
+			paths = ws.SplitPaths(o.Fields[i+1])
+		}
+	}
+	if len(paths) > 0 {
+		o.Fields = append(o.Fields, ws.PathsField, ws.JoinPaths(paths))
+	}
 	front := "0"
 	if r.Front {
 		front = "1"
 	}
 	o.Fields = append(o.Fields, "front", front)
-	return append(args, o.args()...), nil
+	args = append(args, o.args()...)
+	if r.Join != "" {
+		args = append(args, "join", r.Join)
+	}
+	return args, nil
 }
 
 // parsePush reads one ns_tcard_push reply.
