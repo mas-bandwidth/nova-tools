@@ -4,44 +4,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
-// A friend's beat (nova-tools #4233; Glenn 2026-09-26 8:58 AM ET: friends
-// may run on any bench, 9:03 AM: "friends are running themselves"): the
-// friend's own harness ticks `nova-sprint friend beat --as friend:<f>` at
-// zero tokens, and that one tick, ONE round trip, is the friend's presence
-// on every table and the lease of every copy it holds:
-//
-//	friend:<f>:beat   host, at (ms), load1, ncpu, cpu: the consumer table's
-//	                  status (up under a minute old) and load, measured on
-//	                  the machine the friend's session runs on; the deal
-//	                  duty's liveness (taskcard.Consumer.BeatKey) and the
-//	                  reader pool's up (review.lua) read the same at
-//	ns_cm_beat        friend:<f> with no id: every copy in
-//	                  friend:<f>:cards:working gets a fresh lease, in the
-//	                  same pipeline, so no copy can end between a read of
-//	                  the set and its beat; a friend-queue task in the set
-//	                  (task take) is skipped and named (Skipped)
-//	friend:<f>:beat   models: the distinct models of the copies it holds in
-//	models            working (task:<copy> model, what card work --model
-//	                  and friend pull --model record), comma joined, in the
-//	                  same pipeline; removed when none names one. The
-//	                  table's friend row prints it beside the name.
-//
-// No TTL is set and any TTL a `friend hello` loop left is removed: keys do
-// not expire, at is reader-judged (Glenn 2026-09-23). The friend:<f> row is
-// not written here: ns_friend_row (`friend row`) is its one writer, and a
-// beat that wrote up=1 there would never write the 0. The session field of
-// the beat is left alone, so a hello loop of the same friend keeps beating
-// beside this one.
+// A detached friend's beat is evidence of observed copy owners, not of the
+// daemon itself. Each working copy binds an immutable process identity to its
+// lease token. Only a fresh independent observation of that owner renews it;
+// the store rechecks membership, token, identity and freshness atomically.
+// Unknown/dead copies remain visible and lapse normally. Friend presence is
+// refreshed only if this pass actually renews at least one live owner.
 
 // FriendBeatRequest is one friend beat.
 type FriendBeatRequest struct {
@@ -54,6 +33,11 @@ type FriendBeatRequest struct {
 	CPU   string
 	// At is the beat's clock; zero means now.
 	At time.Time
+	// Process and ObserverHost are observation seams. Production uses the
+	// kernel probe and the actual local hostname, independently of Host's
+	// presentation label.
+	Process      func(int) ProcessSample
+	ObserverHost string
 }
 
 // FriendBeatResult is what one beat wrote.
@@ -64,20 +48,29 @@ type FriendBeatResult struct {
 	// lease they now hold (ms; 0 with none).
 	Working    int
 	LeaseUntil int64
-	// Models is the models field the beat wrote ("" when it removed it).
+	// Models names observed live owners; presence is untouched with none.
 	Models string
-	// Skipped is each member of the working set ns_cm_beat left alone as
-	// no copy: a friend-queue task (task take), which task beat renews.
+	// Dead and Unknown name copies that were not renewed. Changed contains
+	// only new states, so a loop can report a lapse once instead of each tick.
+	Dead, Unknown, Changed []string
+	// Refused preserves the store's reason per copy, separately from an OS
+	// observation whose state could not be established.
+	Refused []OwnerRefusal
+	// Skipped names legacy friend-queue tasks, which task beat renews.
 	Skipped []string
+}
+
+type OwnerRefusal struct {
+	ID, Why string
 }
 
 // FriendBeatHarness is the harness field a friend beat writes, naming its
 // producer beside a hello loop's harness.
 const FriendBeatHarness = "friend beat"
 
-// FriendBeat writes the friend's beat and renews its working copies' leases
-// in one pipeline, then (when it holds copies or had models) the models. A refused lease renewal (ns_cm_beat REFUSED) is the
-// error, so the verb's loop backs off and says why.
+// FriendBeat observes each local owner and renews only current live copies.
+// It ignores legacy friend-queue tasks and preserves another producer's
+// presence when none of this daemon's owners can be observed alive.
 func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (FriendBeatResult, error) {
 	friend := strings.ToLower(strings.TrimSpace(req.Friend))
 	host := strings.TrimSpace(req.Host)
@@ -100,64 +93,128 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 		fields = append(fields, "cpu", v)
 	}
 	beat := "friend:" + friend + ":beat"
-	pipe := st.Client().Pipeline()
-	pipe.HSet(ctx, beat, fields...)
-	pipe.Persist(ctx, beat)
-	leases := pipe.FCall(ctx, "ns_cm_beat", nil, "friend:"+friend)
-	// the working set is the current epoch's (nova-tools#4238): its members
-	// through ns_cell_zrange in this pipeline, and the epoch beside them
-	// names the set for the models call
-	held := ws.CellRange(ctx, pipe, "friend:"+friend, "working")
-	epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
-	had := pipe.HGet(ctx, beat, "models")
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return FriendBeatResult{}, fmt.Errorf("friend beat %s: %w", friend, err)
-	}
-	epoch, err := ws.ParseEpoch(epochCmd.Val())
+	c := st.Client()
+	as := taskcard.Consumer{Kind: "friend", Name: friend}
+	ids, err := ws.IDs(ws.CellRange(ctx, c, as.String(), "working"))
 	if err != nil {
-		return FriendBeatResult{}, fmt.Errorf("friend beat %s: %w", friend, err)
+		return FriendBeatResult{}, err
 	}
-	working := ws.ConsumerKeyAt(epoch, "friend:"+friend, "working")
-	reply, err := leases.Slice()
-	if err != nil {
-		return FriendBeatResult{}, fmt.Errorf("friend beat %s: leases: %w", friend, err)
+	probe := req.Process
+	if probe == nil {
+		probe = ProbeProcess
 	}
-	words := make([]string, len(reply))
-	for i, v := range reply {
-		words[i] = fmt.Sprint(v)
+	observer := req.ObserverHost
+	if observer == "" {
+		observer, err = os.Hostname()
+		if err != nil {
+			return FriendBeatResult{}, err
+		}
 	}
-	if len(words) == 2 && words[0] == "REFUSED" {
-		return FriendBeatResult{}, fmt.Errorf("friend beat %s: leases: %s", friend, words[1])
+	rep := FriendBeatResult{Friend: friend, AtMS: ms}
+	// Read only renewal metadata, never the potentially large card prompt.
+	p := c.Pipeline()
+	records := make(map[string]*redis.SliceCmd, len(ids))
+	for _, id := range ids {
+		if !taskcard.IsCopy(id) {
+			rep.Skipped = append(rep.Skipped, id)
+			continue
+		}
+		records[id] = p.HMGet(ctx, taskcard.Key(id), "consumer", "where", "token", "owner_host", "owner_pid", "owner_start", "owner_token", "model")
 	}
-	if len(words) < 3 || words[0] != "BEAT" {
-		return FriendBeatResult{}, fmt.Errorf("friend beat %s: leases: unexpected reply %v", friend, words)
+	// Sample server time before any OS observation, so delayed work fails closed.
+	stamp := p.Time(ctx)
+	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return FriendBeatResult{}, err
 	}
-	n, _ := strconv.Atoi(words[1])
-	until, _ := strconv.ParseInt(words[2], 10, 64)
-	if n == 0 {
-		until = 0
+	checks := []taskcard.OwnerCheck{}
+	modelsByID := map[string]string{}
+	samples := map[int]ProcessSample{}
+	cachedProbe := func(pid int) ProcessSample {
+		if v, ok := samples[pid]; ok {
+			return v
+		}
+		v := probe(pid)
+		samples[pid] = v
+		return v
 	}
-	// The models are a second round trip, only when there is something to
-	// write or remove: ns_friend_models declares every key it reads (the
-	// beat, the working set, task:<copy> for each copy the first trip saw).
-	skipped := words[3:]
-	ids, err := ws.IDs(held)
-	if err != nil {
-		return FriendBeatResult{}, fmt.Errorf("friend beat %s: working: %w", friend, err)
-	}
-	m := had.Val()
-	if len(ids) > 0 || m != "" {
-		keys := []string{beat, working}
-		for _, id := range ids {
-			if !slices.Contains(skipped, id) {
-				keys = append(keys, "task:"+id)
+	for _, id := range ids {
+		rec := records[id]
+		if rec == nil {
+			continue
+		}
+		values := rec.Val()
+		field := func(i int) string {
+			if v, ok := values[i].(string); ok {
+				return v
 			}
+			return ""
 		}
-		if m, err = st.Client().FCall(ctx, FnFriendModels, keys).Text(); err != nil {
-			return FriendBeatResult{}, fmt.Errorf("friend beat %s: models: %w", friend, err)
+		if field(0) != as.String() || field(1) != "working" {
+			continue
+		}
+		token := field(2)
+		if token == "" {
+			rep.Unknown = append(rep.Unknown, id)
+			continue
+		}
+		pid, _ := strconv.Atoi(field(4))
+		owner := taskcard.ProcessOwner{Host: field(3), PID: pid, Start: field(5)}
+		if field(6) != token {
+			owner = taskcard.ProcessOwner{}
+		}
+		state := OwnerState(owner, observer, cachedProbe)
+		checks = append(checks, taskcard.OwnerCheck{ID: id, Token: token,
+			Observation: taskcard.OwnerObservation{Owner: owner, State: state, At: stamp.Val()}})
+		modelsByID[id] = field(7)
+	}
+	outcomes, err := taskcard.ObserveOwners(ctx, c, as, checks)
+	if err != nil {
+		return FriendBeatResult{}, err
+	}
+	models := []string{}
+	seen := map[string]bool{}
+	for i, out := range outcomes {
+		id := checks[i].ID
+		if out.Err != nil {
+			if _, refused := taskcard.IsRefused(out.Err); !refused {
+				return FriendBeatResult{}, out.Err
+			}
+			rep.Unknown = append(rep.Unknown, id)
+			rep.Refused = append(rep.Refused, OwnerRefusal{ID: id, Why: out.Err.Error()})
+			continue
+		}
+		got := out.Receipt
+		if got.Changed {
+			rep.Changed = append(rep.Changed, id+":"+got.State)
+		}
+		switch got.State {
+		case "live":
+			rep.Working++
+			rep.LeaseUntil = max(rep.LeaseUntil, got.LeaseUntil)
+			if m := modelsByID[id]; m != "" && !seen[m] {
+				seen[m] = true
+				models = append(models, m)
+			}
+		case "dead":
+			rep.Dead = append(rep.Dead, id)
+		default:
+			rep.Unknown = append(rep.Unknown, id)
 		}
 	}
-	return FriendBeatResult{Friend: friend, AtMS: ms, Working: n, LeaseUntil: until, Models: m, Skipped: skipped}, nil
+	rep.Models = strings.Join(models, ",")
+	// A maintenance daemon cannot manufacture friend presence from stale
+	// working records. Other presence producers (hello/session) own their own
+	// observations; don't delete them when this loop has nothing live.
+	if rep.Working > 0 {
+		fields = append(fields, "models", rep.Models)
+		p := c.Pipeline()
+		p.HSet(ctx, beat, fields...)
+		p.Persist(ctx, beat)
+		if _, err := p.Exec(ctx); err != nil {
+			return FriendBeatResult{}, err
+		}
+	}
+	return rep, nil
 }
 
 // FnFriendModels writes the beat's models field from the named working
