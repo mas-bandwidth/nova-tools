@@ -1,0 +1,631 @@
+// card cut --from (nova-tools#4340): many cards from one file, one receipt
+// per row.
+//
+//	nova-sprint card cut --from <cards.tsv|-> --repo <owner/name> [--stream <s>] [--sprint <S>]
+//	    [--base dev] [--base-sha <sha40>] [--actor <a>] [--redis <addr>] [--dry-run] [--no-github]
+//
+// THE HURT (2026-09-26). Issues were filed in batches by a python script
+// over `gh issue create`, then each became a card by `task push --actor`,
+// once per card at 400 ms each and in two passes so a card's dependency was
+// pushed before it: 32 cards took minutes of hand steps.
+//
+// THE VERB. Each row of the file is one card: title, stream, who, paths,
+// done-when, body, depends-on, route, est (and an optional id), tab
+// separated, in that order or in the order a header row names. Every row is
+// read and checked before anything is written: a bad row is named with its
+// line and why, and then nothing is filed or pushed (a rerun after the fix
+// files no duplicate). Then, in dependency order (a row whose DEPENDS-ON
+// names row:<n> comes after row n), each row's issue is filed through the
+// one GitHub writer (nova-sprint file's REST create and read-back) and the
+// cards are pushed as task cards (taskcard.PushMany: one ns_tcard_push per
+// card, all in one pipeline) onto their stream's waiting set. One receipt
+// line per row, every refusal printed, and one summary line:
+//
+//	CARD CUT row=<n> id=<id> ref=<owner/name#n|-> stream=<s> to=waiting depends=<ids|none>
+//	CARD CUT REFUSED row=<n> line=<l> id=<id|-> why=<why>
+//	CARD CUT DRY row=<n> id=<id|-> stream=<s> who=<w> route=<r> est=<e> depends=<d> title=<t>
+//	CARD CUT FROM file=<f> rows=<n> cut=<k> refused=<r> filed=<f> github=on|off ms=<ms>
+//
+// A cell writes a newline as \n, a tab as \t and a backslash as \\. A row's
+// id is <repo name>-<issue n> (the card cut label), or with --no-github a
+// slug of its title; an id cell names it. DEPENDS-ON entries are row:<n>
+// (the n-th card row of this file, header and # comment lines not counted),
+// #<n> (an issue of --repo), owner/name#n, or a task id; none or - is none.
+// The issue carries row:<n> as that row's issue ref; the card's blocked_on
+// carries it as that row's task id, which the waiting-resolve duty reads.
+//
+// Exit 0 every row cut, 1 a row refused (named), 2 usage.
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/file"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+)
+
+// cutColumns are a row's cells in the default order; id is optional.
+var cutColumns = []string{"title", "stream", "who", "paths", "done-when", "body", "depends-on", "route", "est"}
+
+// cutFromOpts are card cut --from's inputs; Text is the file's bytes.
+type cutFromOpts struct {
+	From                                       string
+	Text                                       []byte
+	Repo, Stream, Sprint, Base, BaseSHA, Actor string
+	DryRun, NoGitHub                           bool
+}
+
+// cutFromDeps are the verb's seams: the one GitHub writer, the one-pipeline
+// push, the mirror's tip and the clock. Tests pass fakes; nothing here
+// reaches GitHub or Redis on its own.
+type cutFromDeps struct {
+	File    func(ctx context.Context, repo, title, body string) (int, string, error)
+	Push    func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error)
+	BaseSHA func(repo, base string) (string, error)
+	Now     func() time.Time
+}
+
+// cutRow is one card row.
+type cutRow struct {
+	n, line                                   int
+	title, stream, who, paths, doneWhen, body string
+	route, est, id                            string
+	deps                                      []string // entries as written, none dropped
+	rowDeps                                   []int    // the row:<n> entries
+	why                                       string   // a refusal
+	ref, origin                               string   // the filed issue
+}
+
+var (
+	cutIDRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	cutRowRE   = regexp.MustCompile(`^row:([0-9]+)$`)
+	cutIssueRE = regexp.MustCompile(`^#([1-9][0-9]*)$`)
+	cutRefRE   = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*/)?[A-Za-z0-9][A-Za-z0-9._-]*#[1-9][0-9]*$`)
+	cutEstRE   = regexp.MustCompile(`^[1-9][0-9]*(\s*(m|min|mins|minutes|h|hr|hrs|hours))?$`)
+	cutSlugRE  = regexp.MustCompile(`[^a-z0-9]+`)
+	cutSHARE   = regexp.MustCompile(`^[0-9a-f]{40}$`)
+)
+
+// cutHeader reads a header row: every cell a column name (done_when and
+// DONE-WHEN spell done-when), title among them. ok is false for a card row.
+func cutHeader(cells []string) (cols []string, ok bool, err error) {
+	known := map[string]bool{"id": true}
+	for _, c := range cutColumns {
+		known[c] = true
+	}
+	seen := map[string]bool{}
+	for _, c := range cells {
+		name := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(c)), "_", "-")
+		if !known[name] {
+			return nil, false, nil
+		}
+		if seen[name] {
+			return nil, false, fmt.Errorf("the header names %s twice", name)
+		}
+		seen[name] = true
+		cols = append(cols, name)
+	}
+	if !seen["title"] {
+		return nil, false, fmt.Errorf("the header names no title column")
+	}
+	return cols, true, nil
+}
+
+// cutUnescape reads a cell: \n a newline, \t a tab, \\ a backslash.
+func cutUnescape(s string) string {
+	if !strings.Contains(s, `\`) {
+		return strings.TrimSpace(s)
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case 'n':
+				b.WriteByte('\n')
+				i++
+				continue
+			case 't':
+				b.WriteByte('\t')
+				i++
+				continue
+			case '\\':
+				b.WriteByte('\\')
+				i++
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// parseCutRows reads the file into rows; the error is the whole file's.
+func parseCutRows(text []byte) ([]*cutRow, error) {
+	cols := cutColumns
+	var rows []*cutRow
+	sc := bufio.NewScanner(bytes.NewReader(text))
+	sc.Buffer(make([]byte, 0, 64*1024), 4<<20)
+	line, first := 0, true
+	for sc.Scan() {
+		line++
+		raw := strings.TrimRight(sc.Text(), "\r")
+		if strings.TrimSpace(raw) == "" || strings.HasPrefix(raw, "#") {
+			continue
+		}
+		cells := strings.Split(raw, "\t")
+		if first {
+			first = false
+			h, ok, err := cutHeader(cells)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: %v", line, err)
+			}
+			if ok {
+				cols = h
+				continue
+			}
+		}
+		r := &cutRow{n: len(rows) + 1, line: line}
+		if len(cells) > len(cols) {
+			r.why = fmt.Sprintf("%d cells where the columns are %d (%s); a tab inside a cell is written \\t", len(cells), len(cols), strings.Join(cols, ","))
+		}
+		get := map[string]string{}
+		for i, c := range cells {
+			if i < len(cols) {
+				get[cols[i]] = cutUnescape(c)
+			}
+		}
+		r.title, r.stream, r.who, r.paths = get["title"], get["stream"], get["who"], get["paths"]
+		r.doneWhen, r.body, r.route, r.est, r.id = get["done-when"], get["body"], strings.ToLower(get["route"]), get["est"], get["id"]
+		r.deps = strings.FieldsFunc(get["depends-on"], func(c rune) bool {
+			return c == ',' || c == ';' || c == ' ' || c == '\t' || c == '\n'
+		})
+		if len(r.deps) == 1 && (r.deps[0] == "none" || r.deps[0] == "-") {
+			r.deps = nil
+		}
+		rows = append(rows, r)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("line %d: %v", line+1, err)
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("no card rows")
+	}
+	return rows, nil
+}
+
+// cutWhoOK is WHO's grammar as the deal reads it (TM.admits): any, only
+// <names> or except <names>.
+func cutWhoOK(who string) bool {
+	f := strings.Fields(who)
+	if len(f) == 0 {
+		return false
+	}
+	switch f[0] {
+	case "any":
+		return len(f) == 1
+	case "only", "except":
+		return len(f) > 1
+	}
+	return false
+}
+
+// cutSlug is a --no-github row's id from its title.
+func cutSlug(title string) string {
+	s := strings.Trim(cutSlugRE.ReplaceAllString(strings.ToLower(title), "-"), "-")
+	if len(s) > 48 {
+		s = strings.TrimRight(s[:48], "-")
+	}
+	return s
+}
+
+// checkCutRow fills a row's defaults and names what is wrong with it.
+func checkCutRow(r *cutRow, rows int, o cutFromOpts) {
+	fail := func(why string) {
+		if r.why == "" {
+			r.why = why
+		}
+	}
+	if r.stream == "" {
+		r.stream = strings.TrimSpace(o.Stream)
+	}
+	if r.who == "" {
+		r.who = "any"
+	}
+	if r.route == "" {
+		r.route = taskcard.RouteFriend
+	}
+	if r.est == "" {
+		r.est = "30"
+	}
+	switch {
+	case r.title == "":
+		fail("no title")
+	case strings.ContainsAny(r.title, "\n\t"):
+		fail("the title is one line")
+	case strings.HasPrefix(r.title, "@") || strings.HasPrefix(r.body, "@"):
+		fail("a cell starts with @ (a literal @path, not its text)")
+	case r.stream == "":
+		fail("no stream (a stream cell, or --stream)")
+	case len(r.stream) > 64 || strings.ContainsAny(r.stream, "|\n\t"):
+		fail(fmt.Sprintf("stream %q is not a stream name (64 bytes at most, no |)", r.stream))
+	case !cutWhoOK(r.who):
+		fail(fmt.Sprintf("who %q is not any, only <names> or except <names>", r.who))
+	case r.paths == "":
+		fail("no paths")
+	case r.doneWhen == "":
+		fail("no done-when")
+	case r.route != taskcard.RouteFriend && !cardhdr.IsRoute(r.route):
+		fail(fmt.Sprintf("route %q is not %s, or friend", r.route, cardhdr.RouteList))
+	case !cutEstRE.MatchString(r.est):
+		fail(fmt.Sprintf("est %q is not minutes (30, 45 min, 2 h)", r.est))
+	case r.id != "" && (!cutIDRE.MatchString(r.id) || taskcard.IsCopy(r.id)):
+		fail(fmt.Sprintf("id %q is not a task id ([A-Za-z0-9._-], no ~<n>)", r.id))
+	}
+	for _, d := range r.deps {
+		if m := cutRowRE.FindStringSubmatch(d); m != nil {
+			k, _ := strconv.Atoi(m[1])
+			switch {
+			case k < 1 || k > rows:
+				fail(fmt.Sprintf("depends-on %s names no row (the file has %d)", d, rows))
+			case k == r.n:
+				fail(fmt.Sprintf("depends-on %s names the row itself", d))
+			default:
+				r.rowDeps = append(r.rowDeps, k)
+			}
+			continue
+		}
+		if !cutIssueRE.MatchString(d) && !cutRefRE.MatchString(d) && !cutIDRE.MatchString(strings.TrimPrefix(d, "task:")) {
+			fail(fmt.Sprintf("depends-on %q is not row:<n>, #<n>, owner/name#<n> or a task id", d))
+		}
+	}
+	if r.id == "" && o.NoGitHub {
+		if r.id = cutSlug(r.title); r.id == "" {
+			fail("no id: the title has no letter or digit for one; add an id cell")
+		}
+	}
+	if r.why == "" && r.route != taskcard.RouteFriend {
+		s := cutSpec(r, o, "")
+		if missing := s.Complete("", ""); len(missing) > 0 {
+			fail("a " + r.route + " card lacks " + strings.Join(missing, ", "))
+		}
+	}
+}
+
+// orderCutRows is the push order: file order, except that a row comes
+// after every row its DEPENDS-ON names. Rows on a cycle are refused.
+func orderCutRows(rows []*cutRow) []*cutRow {
+	placed := make([]bool, len(rows)+1)
+	var order []*cutRow
+	for len(order) < len(rows) {
+		moved := false
+		for _, r := range rows {
+			if placed[r.n] {
+				continue
+			}
+			ready := true
+			for _, k := range r.rowDeps {
+				if !placed[k] {
+					ready = false
+					break
+				}
+			}
+			if ready {
+				placed[r.n] = true
+				order = append(order, r)
+				moved = true
+				break // the earliest ready row first, then look again from the top
+			}
+		}
+		if !moved {
+			var stuck []string
+			for _, r := range rows {
+				if !placed[r.n] {
+					stuck = append(stuck, "row:"+strconv.Itoa(r.n))
+				}
+			}
+			for _, r := range rows {
+				if !placed[r.n] {
+					placed[r.n] = true
+					if r.why == "" {
+						r.why = "depends-on is a cycle among " + strings.Join(stuck, ",")
+					}
+					order = append(order, r)
+				}
+			}
+		}
+	}
+	return order
+}
+
+// cutDepends renders a row's DEPENDS-ON: issue is true for the issue text
+// (row:<n> as that row's ref), false for the card's blocked_on (row:<n> as
+// that row's task id). "none" when it has none.
+func cutDepends(r *cutRow, rows []*cutRow, repo string, issue bool) string {
+	var out []string
+	for _, d := range r.deps {
+		switch {
+		case cutRowRE.MatchString(d):
+			k, _ := strconv.Atoi(d[len("row:"):])
+			dep := rows[k-1]
+			if issue && dep.ref != "" {
+				out = append(out, dep.ref)
+			} else {
+				out = append(out, dep.id)
+			}
+		case cutIssueRE.MatchString(d):
+			out = append(out, repo+d)
+		default:
+			out = append(out, d)
+		}
+	}
+	if len(out) == 0 {
+		return "none"
+	}
+	return strings.Join(out, ",")
+}
+
+// cutIssueText is the issue a row files and the body its card carries: the
+// card lines first (so a cell wins over a like-named line in the body), then
+// the body.
+func cutIssueText(r *cutRow, rows []*cutRow, o cutFromOpts) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "STREAM: %s\nWHO: %s\nROUTE: %s\nPATHS: %s\nDEPENDS-ON: %s\nEST: %s\nBASE: %s\n",
+		r.stream, r.who, r.route, strings.ReplaceAll(r.paths, "\n", " "), cutDepends(r, rows, o.Repo, true), r.est, o.Base)
+	if r.route != taskcard.RouteFriend {
+		fmt.Fprintf(&b, "base-sha: %s\n", o.BaseSHA)
+	}
+	fmt.Fprintf(&b, "DONE-WHEN: %s\n", strings.ReplaceAll(r.doneWhen, "\n", " "))
+	if r.body != "" {
+		b.WriteString("\n" + r.body + "\n")
+	}
+	return b.String()
+}
+
+// cutSpec is a row's card content: the issue text through the one parser,
+// with the repo and base the cut names.
+func cutSpec(r *cutRow, o cutFromOpts, text string) taskcard.Spec {
+	var s taskcard.Spec
+	if text != "" {
+		s = taskcard.ParseIssue(text)
+	} else {
+		s = taskcard.Spec{Route: r.route, Who: r.who, Paths: r.paths, DoneWhen: r.doneWhen, Est: r.est, Task: r.title}
+	}
+	s.Repo, s.Base = o.Repo, o.Base
+	if r.route != taskcard.RouteFriend {
+		s.BaseSHA = o.BaseSHA
+	}
+	return s
+}
+
+// cutField is a receipt field: - when empty, quoted when it has a space.
+func cutField(s string) string {
+	if s == "" {
+		return "-"
+	}
+	if strings.ContainsAny(s, " \t\"\n\r=") {
+		return strconv.Quote(s)
+	}
+	return s
+}
+
+func cutRefused(out io.Writer, r *cutRow) {
+	fmt.Fprintf(out, "CARD CUT REFUSED row=%d line=%d id=%s why=%s\n", r.n, r.line, cutField(r.id), cutField(r.why))
+}
+
+// cardCutFrom is the verb below its flags.
+func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Writer) int {
+	start := d.Now()
+	github := "on"
+	if o.NoGitHub {
+		github = "off"
+	}
+	summary := func(rows, cut, refused, filed int) {
+		fmt.Fprintf(out, "CARD CUT FROM file=%s rows=%d cut=%d refused=%d filed=%d github=%s ms=%d\n",
+			cutField(o.From), rows, cut, refused, filed, github, d.Now().Sub(start).Milliseconds())
+	}
+	rows, err := parseCutRows(o.Text)
+	if err != nil {
+		fmt.Fprintf(out, "CARD CUT REFUSED file=%s why=%s\n", cutField(o.From), cutField(err.Error()))
+		summary(0, 0, 1, 0)
+		return 1
+	}
+	// The base sha is read once, and only when a row runs on the swarm.
+	for _, r := range rows {
+		if cardhdr.IsRoute(r.route) && o.BaseSHA == "" {
+			sha, err := d.BaseSHA(o.Repo, o.Base)
+			if err != nil {
+				fmt.Fprintf(out, "CARD CUT REFUSED file=%s why=%s remedy=%s\n", cutField(o.From), cutField(err.Error()),
+					cutField("pass --base-sha <sha40>, or nova-sprint mirror refresh so the mirror holds "+o.Base))
+				summary(len(rows), 0, len(rows), 0)
+				return 1
+			}
+			o.BaseSHA = sha
+			break
+		}
+	}
+	ids := map[string]int{}
+	for _, r := range rows {
+		checkCutRow(r, len(rows), o)
+		if r.id != "" && r.why == "" {
+			if k, ok := ids[r.id]; ok {
+				r.why = fmt.Sprintf("id %s is row:%d's too", r.id, k)
+			}
+			ids[r.id] = r.n
+		}
+	}
+	order := orderCutRows(rows)
+	refused := 0
+	for _, r := range rows {
+		if r.why != "" {
+			refused++
+			cutRefused(out, r)
+		}
+	}
+	if refused > 0 {
+		// Nothing is filed or pushed while a row is bad: the fixed file
+		// reruns whole, with no duplicate issue.
+		summary(len(rows), 0, refused, 0)
+		return 1
+	}
+	if o.DryRun {
+		for _, r := range order {
+			fmt.Fprintf(out, "CARD CUT DRY row=%d id=%s stream=%s who=%s route=%s est=%s depends=%s title=%s\n", r.n, cutField(r.id),
+				cutField(r.stream), cutField(r.who), r.route, cutField(r.est), cutField(cutDepends(r, rows, o.Repo, false)), cutField(r.title))
+		}
+		summary(len(rows), 0, 0, 0)
+		return 0
+	}
+
+	// File each issue in dependency order through the one writer; the first
+	// failure stops the filing (a forge that refused one refuses the next),
+	// and the rows behind it are named, never filed.
+	filed := 0
+	stopped := ""
+	name := o.Repo[strings.IndexByte(o.Repo, '/')+1:]
+	for _, r := range order {
+		if o.NoGitHub {
+			break
+		}
+		if stopped != "" {
+			r.why = "not filed: the filing stopped at " + stopped
+			continue
+		}
+		n, url, err := d.File(ctx, o.Repo, r.title, cutIssueText(r, rows, o))
+		if err != nil {
+			r.why = "file: " + err.Error()
+			if n > 0 {
+				r.why += fmt.Sprintf("; %s#%d exists without a card", o.Repo, n)
+			}
+			stopped = "row:" + strconv.Itoa(r.n)
+			continue
+		}
+		filed++
+		r.ref, r.origin = fmt.Sprintf("%s#%d", o.Repo, n), url
+		if r.id == "" {
+			r.id = fmt.Sprintf("%s-%d", name, n)
+		}
+	}
+
+	// Push every filed row as a task card, in one pipeline, in order.
+	var push []*cutRow
+	var reqs []taskcard.PushRequest
+	for _, r := range order {
+		if r.why != "" {
+			continue
+		}
+		text := cutIssueText(r, rows, o)
+		spec := cutSpec(r, o, text)
+		blocked := cutDepends(r, rows, o.Repo, false)
+		if blocked == "none" {
+			blocked = ""
+		}
+		push = append(push, r)
+		reqs = append(reqs, taskcard.PushRequest{ID: r.id, Where: "waiting", Stream: r.stream, Sprint: o.Sprint,
+			Ref: r.ref, Origin: r.origin, Title: r.title, Repo: o.Repo, DependsOn: blocked,
+			By: o.Actor, Why: "card cut --from", Spec: &spec})
+	}
+	var outcomes []taskcard.PushOutcome
+	if len(reqs) > 0 {
+		outcomes, err = d.Push(ctx, reqs)
+		if err != nil {
+			for _, r := range push {
+				r.why = "push: " + err.Error()
+			}
+			outcomes = nil
+		}
+	}
+	for i, oc := range outcomes {
+		r := push[i]
+		if oc.Err != nil {
+			if why, ok := taskcard.IsRefused(oc.Err); ok {
+				r.why = "push refused: " + why
+			} else {
+				r.why = "push: " + oc.Err.Error()
+			}
+		} else if oc.Result.Where != "waiting" {
+			r.why = "push placed it in " + oc.Result.Where + ", not waiting"
+		}
+	}
+	cut := 0
+	for _, r := range order {
+		if r.why != "" {
+			cutRefused(out, r)
+			continue
+		}
+		cut++
+		fmt.Fprintf(out, "CARD CUT row=%d id=%s ref=%s stream=%s to=waiting depends=%s\n", r.n, r.id, cutField(r.ref),
+			cutField(r.stream), cutField(cutDepends(r, rows, o.Repo, false)))
+	}
+	summary(len(rows), cut, len(rows)-cut, filed)
+	if cut < len(rows) {
+		return 1
+	}
+	return 0
+}
+
+// cmdCardCutFrom wires card cut --from: the file, the task store (opened
+// before any issue is filed, so a store that is down files nothing) and the
+// one GitHub writer (nova-sprint file's Issuer).
+func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, stderr io.Writer) int {
+	const verb = "card cut"
+	if !landRepoOK(o.Repo) {
+		return refuse(stderr, verb, "--from wants --repo <owner/name>: the repo the issues are filed on and the cards name")
+	}
+	if o.Base == "" {
+		o.Base = "dev"
+	}
+	if o.BaseSHA != "" && !cutSHARE.MatchString(o.BaseSHA) {
+		return refuse(stderr, verb, "--base-sha wants 40 hex digits, not "+strconv.Quote(o.BaseSHA))
+	}
+	if o.Sprint != "" && !sprint.ValidName(o.Sprint) {
+		return refuse(stderr, verb, "--sprint must match [a-z0-9-]{1,40}")
+	}
+	var err error
+	if o.From == "-" {
+		o.Text, err = io.ReadAll(os.Stdin)
+	} else {
+		o.Text, err = os.ReadFile(o.From)
+	}
+	if err != nil {
+		return refuse(stderr, verb, "cannot read --from: "+err.Error())
+	}
+	d := cutFromDeps{Now: time.Now, BaseSHA: card.MirrorBranchSHA}
+	if !o.DryRun {
+		if o.Actor = quackActor(o.Actor); o.Actor == "" {
+			return refuse(stderr, verb, "--actor is required when "+seatEnv+" is empty")
+		}
+		raddr := taskAddr(addr)
+		if raddr == "" {
+			return refuse(stderr, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")
+		}
+		st, err := store.Open(ctx, raddr)
+		if err != nil {
+			return refuse(stderr, verb, "redis: "+err.Error()+"; nothing filed")
+		}
+		defer func() { _ = st.Close() }()
+		d.Push = func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
+			return taskcard.PushMany(ctx, st.Client(), reqs)
+		}
+		if !o.NoGitHub {
+			is, err := file.NewIssuer(file.Deps{Token: githubToken})
+			if err != nil {
+				return refuse(stderr, verb, err.Error()+"; nothing filed (--no-github pushes the cards alone)")
+			}
+			d.File = is.Post
+		}
+	}
+	return cardCutFrom(ctx, o, d, stdout)
+}
