@@ -1269,7 +1269,7 @@ end
 function TK.stream_refusal(s)
   if not TK.valid_stream(s) then return 'STREAM bad name ' .. s end
   if string.find(s, '^%d+:') then
-    return 'STREAM bad name ' .. s .. ': a leading <digits>: is the sprint epoch segment of the set names (ws:<e>:<stream>:<where>)'
+    return 'STREAM bad name ' .. s .. ': a leading <digits>: is the sprint epoch segment of the set names'
   end
   return nil
 end

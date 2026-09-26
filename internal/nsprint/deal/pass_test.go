@@ -462,6 +462,54 @@ func (perCardLauncher) Launch(ctx context.Context, open Opener, _ Bench, res []R
 
 var lineRE = regexp.MustCompile(`^control-0000c012 card-\d\d 1 1\.[0-9a-f]{32}$`)
 
+// TestControl12FixtureSSHDAllowsTwoSessions is control 12's positive control
+// on the fixture itself (#2756), its own test so each stays under the unit
+// tier's 1 s budget (#4328).
+func TestControl12FixtureSSHDAllowsTwoSessions(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	// The positive control on the fixture itself: sessions at once, the
+	// old launcher's shape, are closed before the command past the two
+	// it allows. The two it accepts hold until every other one is
+	// refused, so the control is exact (8 of 10) and waits on no clock
+	// (ten, not fifty: the unit tier's 1 s budget, #4328).
+	f := newFixture(t)
+	r := f.remote()
+	b := upBench("ctl-probe", 64)
+	f.set(t, b.Name, "sleep", "0")
+	f.set(t, b.Name, "hold", "")
+	hold := filepath.Join(f.dir, b.Name, "hold")
+	const sessions = 10
+	results := make(chan error, sessions)
+	for i := 0; i < sessions; i++ {
+		go func() { results <- r.Dial(b).Run(ctx, []byte("x\n")) }()
+	}
+	bound := time.NewTimer(guard)
+	defer bound.Stop()
+	refused := 0
+	for got := 0; got < sessions; got++ {
+		select {
+		case err := <-results:
+			var se *SessionError
+			if !errors.As(err, &se) || se.State != SSHRefused {
+				continue
+			}
+			if refused++; refused == sessions-2 {
+				if err := os.Remove(hold); err != nil {
+					t.Fatal(err)
+				}
+			}
+		case <-bound.C:
+			_ = os.Remove(hold)
+			t.Fatalf("fixture refused %d of %d concurrent sessions within %s; it must allow only two", refused, sessions, guard)
+		}
+	}
+	if refused != sessions-2 {
+		t.Fatalf("fixture refused %d of %d concurrent sessions; it must allow exactly two", refused, sessions)
+	}
+}
+
 // TestControl12FiftyCardsOneSession is #2756 control 12 (#2743): a 50-card
 // batch to a bench whose sshd allows two sessions launches over ONE session;
 // a launcher that opens a session per card is refused; a wedged sshd shows
@@ -471,46 +519,6 @@ func TestControl12FiftyCardsOneSession(t *testing.T) {
 
 	const sprint = "control-0000c012"
 	ctx := context.Background()
-
-	t.Run("fixture sshd allows two sessions", func(t *testing.T) {
-		// The positive control on the fixture itself: 50 sessions at once,
-		// the old launcher's shape, are mostly closed before the command.
-		// The two sessions it accepts hold until every other one is refused,
-		// so the control is exact (48 of 50) and waits on no clock.
-		f := newFixture(t)
-		r := f.remote()
-		b := upBench("ctl-probe", 64)
-		f.set(t, b.Name, "sleep", "0")
-		f.set(t, b.Name, "hold", "")
-		hold := filepath.Join(f.dir, b.Name, "hold")
-		results := make(chan error, 50)
-		for i := 0; i < 50; i++ {
-			go func() { results <- r.Dial(b).Run(ctx, []byte("x\n")) }()
-		}
-		bound := time.NewTimer(guard)
-		defer bound.Stop()
-		refused := 0
-		for got := 0; got < 50; got++ {
-			select {
-			case err := <-results:
-				var se *SessionError
-				if !errors.As(err, &se) || se.State != SSHRefused {
-					continue
-				}
-				if refused++; refused == 48 {
-					if err := os.Remove(hold); err != nil {
-						t.Fatal(err)
-					}
-				}
-			case <-bound.C:
-				_ = os.Remove(hold)
-				t.Fatalf("fixture refused %d of 50 concurrent sessions within %s; it must allow only two", refused, guard)
-			}
-		}
-		if refused != 48 {
-			t.Fatalf("fixture refused %d of 50 concurrent sessions; it must allow exactly two", refused)
-		}
-	})
 
 	t.Run("fifty cards launch over one session", func(t *testing.T) {
 		f := newFixture(t)
