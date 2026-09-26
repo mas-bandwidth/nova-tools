@@ -275,7 +275,8 @@ func TestFixCopyEndPushesOntoThePRBranch(t *testing.T) {
 	}
 	want := harvestcopy.Request{RepoDir: end.RepoDir, SHA: sha, Branch: readBranch, Onto: readHead, Repo: "nova-tools", Base: "dev",
 		Title: "read copies: the wrapper ends the copy from the SCORE line", Stream: "swarm: cards", Origin: "issue:nova-tools#4270",
-		DoneWhen: "a read copy ends ok with a SCORE line and no nova-sprint call by the model", Token: "ghp-bench"}
+		DoneWhen: "a read copy ends ok with a SCORE line and no nova-sprint call by the model", Token: "ghp-bench", Redis: c}
+	// #4371: the fix copy's harvest counts its REST calls in the copy end's store.
 	if got != want {
 		t.Fatalf("harvest called with\n%+v\nwant\n%+v", got, want)
 	}
