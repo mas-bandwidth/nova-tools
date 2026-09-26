@@ -123,9 +123,10 @@ func TestConsumerTableStatusAndOrder(t *testing.T) {
 }
 
 // TestConsumerTableKeyAllowlist: a steady tick reads, per consumer, only
-// the ZCARDs of its four sets, its beat (HMGET) and its down key (EXISTS);
-// never the old friend:<f> or bench:<b> row hash, ws:done0, a sprint's
-// opened_at or its cards, and never a ZCOUNT window.
+// the ZCARDs of its four sets, its beat (HMGET), its down key (EXISTS) and
+// its desired hash's paused flag (HGET, #4308); never the old friend:<f>
+// or bench:<b> row hash, ws:done0, a sprint's opened_at or its cards, and
+// never a ZCOUNT window.
 func TestConsumerTableKeyAllowlist(t *testing.T) {
 	t.Parallel()
 	now := table.SprintFixtureNow()
@@ -157,6 +158,7 @@ func TestConsumerTableKeyAllowlist(t *testing.T) {
 	sort.Strings(consumerKeys)
 	want := []string{
 		"EXISTS bench:hetzner:down", "EXISTS friend:emma:down",
+		"HGET bench:hetzner:desired", "HGET friend:emma:desired",
 		"HMGET bench:hetzner:beat",
 		"HMGET bench:studio:beat", // every friend lives on the Studio today: its load (hardcoded, see readOnce)
 		"HMGET friend:emma:beat",
@@ -198,5 +200,47 @@ func TestStreamTableReviewColumn(t *testing.T) {
 		"\n"
 	if !strings.Contains(got, want) {
 		t.Fatalf("stream table:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestConsumerTablePausedStatus (#4308): an up worker whose desired hash
+// has paused 1 prints paused in status, a bench's and a friend's alike; a
+// paused worker that is down still prints down; paused 0 or no hash is up.
+func TestConsumerTablePausedStatus(t *testing.T) {
+	t.Parallel()
+	now := table.SprintFixtureNow()
+	ms := func(d time.Duration) string { return strconv.FormatInt(now.Add(d).UnixMilli(), 10) }
+	client, _ := consumerStore(t, [][]string{
+		{"SADD", "friends", "emma", "rowan"},
+		{"SADD", "benches", "hetzner", "hulk"},
+		{"HSET", "friend:emma:beat", "at", ms(-time.Second)},
+		{"HSET", "friend:emma:desired", "slots", "4", "paused", "1"},
+		{"HSET", "friend:rowan:beat", "at", ms(-time.Second)},
+		{"HSET", "friend:rowan:desired", "slots", "4", "paused", "0"},
+		{"HSET", "bench:hetzner:beat", "load1", "0.19", "at", ms(-time.Second)},
+		{"HSET", "bench:hetzner:desired", "slots", "8", "paused", "1"},
+		{"HSET", "bench:hulk:beat", "load1", "0.40", "at", ms(-2 * time.Minute)},
+		{"HSET", "bench:hulk:desired", "slots", "8", "paused", "1"},
+		{"ZADD", "bench:hetzner:cards:working", "1", "a~1"},
+	})
+	snap, err := table.NewSprintReader(client, table.SprintConfig{}).Read(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := consumerBlock(t, snap.Render(now))
+	want := []string{
+		"emma                      |     0 |       0 |     0 |    - | paused | -",
+		"rowan                     |     0 |       0 |     0 |    - | up     | -",
+		"hetzner                   |     0 |       1 |     0 |    - | paused | 0.19",
+		"hulk                      |     0 |       0 |     0 |    - | down   | 0.40",
+	}
+	rows := strings.Split(block, "\n")[2:6]
+	if strings.Join(rows, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("rows:\n%s\nwant:\n%s", strings.Join(rows, "\n"), strings.Join(want, "\n"))
+	}
+	for _, r := range snap.Consumers {
+		if (r.Name == "emma" || r.Name == "hetzner") != (r.Status() == "paused") {
+			t.Errorf("%s status %s paused=%v up=%v", r.ID(), r.Status(), r.Paused, r.Up)
+		}
 	}
 }

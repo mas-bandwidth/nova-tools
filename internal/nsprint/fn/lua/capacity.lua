@@ -126,7 +126,8 @@ end
 -- capacity_desired: set friend:<f>:desired or bench:<b>:desired under the
 -- machine ceiling. args = kind, name, slots, machine, actor, idem, and (#3206
 -- rev 4 PR A, both optional so six-arg callers are unchanged) paused ('' keeps
--- the stored value, '0' or '1' sets it) and register ('1' is accepted and
+-- the stored value, '0' or '1' sets it; a friend's or a bench's, #4308: the
+-- one flag worker pause|resume sets) and register ('1' is accepted and
 -- implied: since #2934 every write adds the name to its registry; no beat is
 -- written) and (#3349, optional ninth) legs: a bench's CI legs, comma
 -- separated, '' keeps the stored list; a friend has none. (#3634, optional
@@ -633,7 +634,88 @@ local function cap_budget_debits(keys, args)
   return result
 end
 
+-- worker_pause (#4308): set or clear the paused flag on a worker's desired
+-- hash, friend and bench alike, in one call. args = kind, name, paused
+-- ('1' pauses, '0' resumes), actor, idem. A worker is a name its registry
+-- (friends, benches) holds or one with a desired hash; anything else is
+-- UNKNOWN. The deal pass and TM.room read the flag, so a paused worker is
+-- dealt nothing until it is resumed; the table prints paused in status.
+-- Returns PAUSED|RESUMED <kind>:<name> <changed 1|0>; a flag already at the
+-- value writes nothing (changed 0) and no receipt.
+local function worker_pause(keys, args)
+  local kind, name, paused = args[1], args[2], args[3]
+  local actor, idem = args[4] or '', args[5] or ''
+  if (kind ~= 'friend' and kind ~= 'bench') or not name or name == '' then
+    return { 'INVALID', 'worker is bench:<b> or friend:<f>' }
+  end
+  if paused ~= '0' and paused ~= '1' then
+    return { 'INVALID', 'paused is 0 or 1' }
+  end
+  local id = kind .. ':' .. name
+  local key = desired_key(kind, name)
+  if redis.call('SISMEMBER', registry_set(kind), name) == 0 and redis.call('EXISTS', key) == 0 then
+    return { 'UNKNOWN', id }
+  end
+  local word = paused == '1' and 'PAUSED' or 'RESUMED'
+  if (redis.call('HGET', key, 'paused') or '0') == paused then
+    return { word, id, '0' }
+  end
+  local at = now_ms()
+  redis.call('HSET', key, 'paused', paused, 'at', tostring(at))
+  local slots = tonumber(redis.call('HGET', key, 'slots') or '0') or 0
+  receipt('worker ' .. (paused == '1' and 'pause' or 'resume'), id,
+    redis.call('HGET', key, 'machine') or '', slots, actor, idem, at)
+  return { word, id, '1' }
+end
+
+-- worker_show (#4308): the desired record of every worker, or of the one
+-- named. args = kind, name (both '' for every worker). The roster is the
+-- friends and benches registries plus the consumers SET (what the table
+-- rows), each once, sorted by <kind>:<name>. Returns WORKERS n, then per
+-- worker: id, slots, paused, tiers, kinds, machine ('' for a field the hash
+-- lacks); a named worker that is neither registered nor has a hash is
+-- UNKNOWN <id>.
+local function worker_show(keys, args)
+  local kind, name = args[1] or '', args[2] or ''
+  local ids, seen = {}, {}
+  local function add(k, n)
+    local id = k .. ':' .. n
+    if not seen[id] then
+      seen[id] = true
+      ids[#ids + 1] = id
+    end
+  end
+  if name ~= '' then
+    if kind ~= 'friend' and kind ~= 'bench' then
+      return { 'INVALID', 'worker is bench:<b> or friend:<f>' }
+    end
+    if redis.call('SISMEMBER', registry_set(kind), name) == 0 and
+        redis.call('EXISTS', desired_key(kind, name)) == 0 then
+      return { 'UNKNOWN', kind .. ':' .. name }
+    end
+    add(kind, name)
+  else
+    for _, k in ipairs({ 'friend', 'bench' }) do
+      for _, n in ipairs(redis.call('SMEMBERS', registry_set(k))) do add(k, n) end
+    end
+    for _, id in ipairs(redis.call('SMEMBERS', 'consumers')) do
+      local k, n = string.match(id, '^(%a+):(.+)$')
+      if k == 'friend' or k == 'bench' then add(k, n) end
+    end
+    table.sort(ids)
+  end
+  local out = { 'WORKERS', tostring(#ids) }
+  for _, id in ipairs(ids) do
+    local d = redis.call('HMGET', id .. ':desired', 'slots', 'paused', 'tiers', 'kinds', 'machine')
+    out[#out + 1] = id
+    for i = 1, 5 do out[#out + 1] = d[i] or '' end
+  end
+  return out
+end
+
 redis.register_function('ns_capacity_desired', capacity_desired)
+redis.register_function('ns_worker_pause', worker_pause)
+redis.register_function{ function_name = 'ns_worker_show', callback = worker_show, flags = { 'no-writes' } }
 redis.register_function('ns_capacity_machine', capacity_machine)
 redis.register_function{ function_name = 'ns_capacity_consumers', callback = capacity_consumers, flags = { 'no-writes' } }
 redis.register_function('ns_budget_set', cap_budget_set)

@@ -43,18 +43,20 @@ import (
 
 // The table move functions (fn/lua/02_card_move.lua, TM).
 const (
-	FnDeal     = "ns_cm_deal"
-	FnWork     = "ns_cm_work"
-	FnEnd      = "ns_cm_end"
-	FnCancel   = "ns_cm_cancel"
-	FnBeatCopy = "ns_cm_beat"
-	FnExpireCp = "ns_cm_expire"
-	FnFsckMove = "ns_cm_fsck"
-	FnRepair   = "ns_cm_repair"
-	FnAssign   = "ns_cm_assign"
-	FnHead     = "ns_cm_head"
-	FnReads    = "ns_cm_reads"
-	FnReview   = "ns_cm_review"
+	FnDeal   = "ns_cm_deal"
+	FnWork   = "ns_cm_work"
+	FnEnd    = "ns_cm_end"
+	FnCancel = "ns_cm_cancel"
+	// FnCancelEach is card cancel --each (#4309): every id on its own.
+	FnCancelEach = "ns_cm_cancel_each"
+	FnBeatCopy   = "ns_cm_beat"
+	FnExpireCp   = "ns_cm_expire"
+	FnFsckMove   = "ns_cm_fsck"
+	FnRepair     = "ns_cm_repair"
+	FnAssign     = "ns_cm_assign"
+	FnHead       = "ns_cm_head"
+	FnReads      = "ns_cm_reads"
+	FnReview     = "ns_cm_review"
 )
 
 // Verdicts are the typed ways out of review (#4072); reassign names its
@@ -344,6 +346,39 @@ func CancelCards(ctx context.Context, c redis.Cmdable, by, why string, ids ...st
 		return nil, err
 	}
 	return parseEnded(FnCancel, "CANCELLED", out, 2)
+}
+
+// Cancelled is one id of card cancel --each: To is where it went when it
+// was cancelled, Why the refusal when it was not (one of the two is set).
+type Cancelled struct{ ID, To, Why string }
+
+// CancelEach is card cancel --each (#4309): every id is cancelled on its
+// own in one call, so a refusal names its id and the rest still move. The
+// only whole-call refusal is a missing why.
+func CancelEach(ctx context.Context, c redis.Cmdable, by, why string, ids ...string) ([]Cancelled, error) {
+	args := []any{by, why}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	out, err := fcall(ctx, c, FnCancelEach, args...)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) < 3 || out[0] != "CANCEL" || (len(out)-3)%3 != 0 {
+		return nil, fmt.Errorf("%s: unexpected reply %v", FnCancelEach, out)
+	}
+	var r []Cancelled
+	for i := 3; i+2 < len(out); i += 3 {
+		switch out[i+1] {
+		case "CANCELLED":
+			r = append(r, Cancelled{ID: out[i], To: out[i+2]})
+		case "REFUSED":
+			r = append(r, Cancelled{ID: out[i], Why: out[i+2]})
+		default:
+			return nil, fmt.Errorf("%s: unexpected reply %v", FnCancelEach, out)
+		}
+	}
+	return r, nil
 }
 
 // BeatCopies renews as's working copies' leases; it returns the new

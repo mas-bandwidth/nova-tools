@@ -3629,6 +3629,25 @@ stored is treated as `flash,pro`, so a frontier card only reaches a worker
 that said `frontier`. A read is always pro. Nothing in code names a worker;
 see [nova-sprint/copies.md](nova-sprint/copies.md).
 
+**Pausing a worker (#4308).** `worker pause <bench:<b>|friend:<f>> [--as
+<actor>] [--idem <k>] [--redis <addr>]` sets the `paused` flag on the
+worker's desired hash (`<kind>:<name>:desired`) in one call and prints
+`PAUSED <worker>`; `worker resume <worker>` clears it and prints `RESUMED
+<worker>`; a flag already at the value prints the same word and writes
+nothing. It is the one verb for benches and friends (it replaces `capacity
+bench <b> 0` and `capacity friend --paused 1` as the way to pause, though
+`--paused 0|1` still works on either kind). The deal pass deals a paused
+worker nothing; it keeps working what it already holds, so a pause is
+never a cancel. The sprint table prints `paused` in the worker's status
+column while it is up (down wins). A worker neither registry holds prints
+`WORKER PAUSE REFUSED <worker> why="UNKNOWN ..."`, exit 1; a name that is
+not `bench:<b>` or `friend:<f>` is a usage refusal, exit 2. `worker show
+[<worker>]` prints one `WORKER <kind>:<name> slots=<n|-> paused=<0|1>
+tiers=<list|-> kinds=<list|-> machine=<m|->` line per worker, the
+`friends` and `benches` registries plus the `consumers` SET each once,
+sorted by id, from the desired record alone (one read-only call), or the
+one line for the worker named.
+
 Renders the sprint table from Redis. `table --redis <addr>` makes one
 `FCALL_RO ns_snapshot` per render over the `s:<S>:*`, `bench:*` and
 `friend:*` keys and prints the table to standard output; `--once` renders one,
@@ -3675,8 +3694,9 @@ is ok + fail and ok% is ok over done, derived, with no sprint window and no
 base from a `table clear`; a set that does not read prints `?`, never 0.
 status is `up` when the consumer's own beat (`<kind>:<name>:beat` at, ms)
 is under a minute old and `<kind>:<name>:down` does not exist, else `down`
-(the row still shows its cards); load is the beat's load1 (`-` for a beat
-with none, a friend's). The old `friend:<f>` row hash and `bench:<b>` hash
+(the row still shows its cards); an up consumer whose desired hash has
+`paused` 1 (`worker pause`, #4308) prints `paused` instead; load is the
+beat's load1 (`-` for a beat with none, a friend's). The old `friend:<f>` row hash and `bench:<b>` hash
 are not read. Every tick is ONE
 pipeline (a second one only on the tick a set's membership changed), never
 KEYS or SCAN, zero GitHub. `--redis` defaults to `NOVA_SPRINT_REDIS`, then
@@ -3715,7 +3735,13 @@ failure shape (`review_shape`: `exit-<rc>`, `lease-lapsed`, `read-fail`,
 suggest=<verdict>` line (`review_jev`), a suggestion, never a verdict. A copy
 given back (`card cancel`, `card assign --revoke`, a down consumer's ready
 copies) is not a fail: its card returns. Nothing else moves a card out of
-review (a deal, a task move and a cancel are refused). The verdict is typed
+review (a deal, a task move and a cancel are refused). `card cancel --ids
+a,b,c --why <why>` is all or nothing: one bad id refuses the batch and
+writes nothing. With `--each` (#4309) every id is cancelled on its own in
+the same one call, so a refusal names its id and the rest still move:
+`CANCELLED <id> to=<where>` or `REFUSED <id> why=<why>` per id in order,
+then the count line `CARD CANCEL n=<ok> refused=<n> ms=<n>` last, exit 1
+when any id was refused. The verdict is typed
 (anything else is a usage refusal, exit 2) and applied through the one move
 (`ns_cm_review`): `recut` returns the card to waiting, `redeal` to ready,
 `reassign:<consumer>` (or `--to`) cuts its copy on that consumer, `drop`

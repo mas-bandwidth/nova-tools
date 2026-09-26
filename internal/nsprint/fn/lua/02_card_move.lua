@@ -3314,7 +3314,8 @@ end
 -- TM.cancel(by, why, ids): a copy is given back (copy -> fail, its primary
 -- returns: waiting for a work or fix copy, review for a read copy, no
 -- attempt counted); a primary is cancelled (done/fail with the why) and its
--- live copy, if any, retired to fail. All checked before any is written.
+-- live copy, if any, retired to fail. All checked before any is written:
+-- the batch is all or nothing (TM.cancel_each is the per-id form).
 function TM.cancel(by, why, ids)
   if TK.str(why) == '' then return { 'REFUSED', 'WHY card cancel needs a why' } end
   local out = { 'CANCELLED', tostring(#ids) }
@@ -3351,6 +3352,31 @@ function TM.cancel(by, why, ids)
       end
     end
   end
+  return out
+end
+
+-- TM.cancel_each(by, why, ids) (#4309, card cancel --each): every id is
+-- cancelled on its own, TM.cancel over one id at a time, so a refusal
+-- names the id it is about and the rest still move (on superman a 32-id
+-- batch refused as a whole and named nothing usable). Returns CANCEL ok
+-- refused, then per id in order: id, CANCELLED <where> | REFUSED <why>.
+function TM.cancel_each(by, why, ids)
+  if TK.str(why) == '' then return { 'REFUSED', 'WHY card cancel needs a why' } end
+  local out, ok, refused = { 'CANCEL', '0', '0' }, 0, 0
+  for _, id in ipairs(ids) do
+    local r = TM.cancel(by, why, { id })
+    out[#out + 1] = id
+    if r[1] == 'REFUSED' then
+      refused = refused + 1
+      out[#out + 1] = 'REFUSED'
+      out[#out + 1] = r[2]
+    else
+      ok = ok + 1
+      out[#out + 1] = 'CANCELLED'
+      out[#out + 1] = r[4] or ''
+    end
+  end
+  out[2], out[3] = tostring(ok), tostring(refused)
   return out
 end
 
@@ -3674,9 +3700,16 @@ redis.register_function('ns_cm_end', function(keys, args)
     score = TK.str(args[5]) ~= '' and args[5] or nil, reader = args[6], token = args[7], by = args[1], fields = fields })
 end)
 
--- ns_cm_cancel(by, why, id...) -> CANCELLED n, then per id: id, where.
+-- ns_cm_cancel(by, why, id...) -> CANCELLED n, then per id: id, where
+-- (all or nothing).
 redis.register_function('ns_cm_cancel', function(keys, args)
   return TM.cancel(TK.str(args[1]), args[2], TM.ids(args, 3))
+end)
+
+-- ns_cm_cancel_each(by, why, id...) -> CANCEL ok refused, then per id: id,
+-- CANCELLED where | REFUSED why (#4309: each id on its own).
+redis.register_function('ns_cm_cancel_each', function(keys, args)
+  return TM.cancel_each(TK.str(args[1]), args[2], TM.ids(args, 3))
 end)
 
 -- ns_sprint_clear(by, why, force) -> CLEARED streams cards copies consumers,

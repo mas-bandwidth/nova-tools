@@ -344,7 +344,8 @@ func SetBench(ctx context.Context, st *store.Store, name, machine string, slots 
 
 // DesiredOpts are the optional seventh and eighth args of
 // ns_capacity_desired (#3206 rev 4 PR A). Paused "" keeps the stored value,
-// "0" or "1" sets it. Register is accepted and implied: since #2934 every
+// "0" or "1" sets it, on a friend or a bench (#4308: worker pause|resume is
+// the verb over it). Register is accepted and implied: since #2934 every
 // desired write adds the friend to `friends` (no beat is written). The zero
 // value is the six-arg call.
 type DesiredOpts struct {
