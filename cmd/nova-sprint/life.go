@@ -253,10 +253,25 @@ func runFriendWake(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, "friend wake", err.Error())
 	}
 	defer st.Close()
+	// The wake is a queued record the friend's own loop reads (life.Wake):
+	// the receipt says queued, never delivered. A friend nobody declared
+	// (not in the friends registry) has no loop to read it: the wake is
+	// still queued (the record is the same), the line says so and names the
+	// verb that declares the friend, and the exit is 1.
+	declared, err := st.Client().SIsMember(ctx, life.FriendsKey, *friend).Result()
+	if err != nil {
+		return refuse(errOut, "friend wake", err.Error())
+	}
 	if err := life.Wake(ctx, st, *friend, *reason, "reconciler", ""); err != nil {
 		return refuse(errOut, "friend wake", err.Error())
 	}
-	fmt.Fprintf(out, "%s woken reason=%s\n", *friend, *reason)
+	if !declared {
+		a := lifeAddr(*addr)
+		fmt.Fprintf(out, "WAKE QUEUED friend=%s reason=%s undeclared=1: %s is not in the friends registry, no loop reads this wake; declare it: nova-sprint capacity machine --as <actor> --redis %s <machine> <slots> (once per machine), then nova-sprint capacity friend --as <actor> --machine <machine> --redis %s %s <slots>, then nova-sprint friend wake-health --redis %s\n",
+			*friend, *reason, *friend, a, a, *friend, a)
+		return 1
+	}
+	fmt.Fprintf(out, "WAKE QUEUED friend=%s reason=%s\n", *friend, *reason)
 	return 0
 }
 

@@ -139,5 +139,10 @@ func runWorkerShow(ctx context.Context, args []string, out, errOut io.Writer) in
 	for _, r := range rows {
 		fmt.Fprintln(out, r.Line())
 	}
+	if k.Name == "" {
+		// Every worker listed ends with its count, so an empty registry is
+		// a line and not silence (fg-b).
+		fmt.Fprintf(out, "WORKERS n=%d registries=friends,benches,consumers\n", len(rows))
+	}
 	return 0
 }

@@ -39,7 +39,8 @@ func TestWorkerPauseResumeShowCLI(t *testing.T) {
 	}
 	code, out, _ = runVerb(t, "worker", "show", "--redis", addr)
 	want := "WORKER bench:hetzner slots=8 paused=1 tiers=flash,pro kinds=- machine=hetzner\n" +
-		"WORKER friend:emma slots=4 paused=1 tiers=- kinds=- machine=studio\n"
+		"WORKER friend:emma slots=4 paused=1 tiers=- kinds=- machine=studio\n" +
+		"WORKERS n=2 registries=friends,benches,consumers\n"
 	if code != 0 || out != want {
 		t.Fatalf("show = %d\n%s\nwant:\n%s", code, out, want)
 	}

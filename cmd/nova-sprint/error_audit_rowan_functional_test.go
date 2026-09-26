@@ -314,6 +314,20 @@ func TestRowanAuditMissingFunctionNamesFnLoad(t *testing.T) {
 	}
 }
 
+// TestRowanAuditFriendWakeUndeclaredIsNotWoken: friend wake on a friend
+// nobody declared prints "<f> woken reason=" and exits 0 (life.go:259); the
+// wake is a queued record no loop will read. The receipt should say the wake
+// was queued, not delivered, and flag an undeclared friend (friend
+// wake-health already knows: "wake: undeclared").
+func TestRowanAuditFriendWakeUndeclaredIsNotWoken(t *testing.T) {
+	t.Parallel()
+	addr := rowanStore(t)
+	code, out, errOut := runSprint("friend", "wake", "ghost", "--redis", addr, "--reason", "audit")
+	if code == 0 && strings.Contains(out, "woken") {
+		t.Errorf("friend wake on an undeclared friend: exit=%d stdout=%q stderr=%q; want QUEUED (not woken) and the undeclared wake named", code, out, errOut)
+	}
+}
+
 // TestRowanAuditHoldReleaseNoUnitNamesTheUnit: hold release on a unit with no
 // record prints `REFUSED no-unit`, exit 2, with no unit, sprint, or next verb.
 func TestRowanAuditHoldReleaseNoUnitNamesTheUnit(t *testing.T) {
@@ -323,6 +337,17 @@ func TestRowanAuditHoldReleaseNoUnitNamesTheUnit(t *testing.T) {
 		"nova-tools#9", "stella", "--head", "0123456789abcdef0123456789abcdef01234567", "--evidence", "evidence-1")
 	if !strings.Contains(out+errOut, "nova-tools#9") || !strings.Contains(out+errOut, "why ") && !strings.Contains(out+errOut, "hold show") {
 		t.Errorf("hold release on a missing unit: exit=%d stdout=%q stderr=%q; want the unit and sprint named and an inspect verb (why / hold show)", code, out, errOut)
+	}
+}
+
+// TestRowanAuditWorkerShowNoArgIsRefused: worker show with no worker prints
+// nothing and exits 0.
+func TestRowanAuditWorkerShowNoArgIsRefused(t *testing.T) {
+	t.Parallel()
+	addr := rowanStore(t)
+	code, out, errOut := runSprint("worker", "show", "--redis", addr)
+	if code == 0 && strings.TrimSpace(out) == "" {
+		t.Errorf("worker show with no worker: exit 0, empty stdout, stderr=%q; want a refusal (one worker, bench:<b> or friend:<f>) or every worker listed", errOut)
 	}
 }
 
