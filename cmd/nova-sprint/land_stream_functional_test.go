@@ -326,12 +326,12 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if cl := c.HGet(ctx, "pr:nova-tools:1", "closes").Val(); cl != "101" {
 		t.Fatalf("#1 closes %q, want 101 from its body", cl)
 	}
-	// the rows by identity and order: the refused run's park and the
-	// --partial run's park (#4324), the landing, five lands walked step by
-	// step through the one move (#3778: a ready member goes ready -> working
-	// -> landed, one receipt each), the two streams' sentinels created at
-	// registration (#4318), and no sentinel landed: the swarm's waits for
-	// the coordinator's acceptance (#4412)
+	// the rows by identity and order: the refused run's park, the --partial
+	// run's park, the landing, five lands walked step by step through the one
+	// move (#3778: a ready member goes ready -> working -> landed, one
+	// receipt each), the two streams' sentinels created at registration
+	// (#4318), and no sentinel landed: the swarm's waits for the
+	// coordinator's acceptance (#4412)
 	var rows []string
 	for _, e := range c.XRange(ctx, "ws:log", "-", "+").Val() {
 		rows = append(rows, fmt.Sprintf("%v %v->%v", e.Values["id"], e.Values["from"], e.Values["to"]))

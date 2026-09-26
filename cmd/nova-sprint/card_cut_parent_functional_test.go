@@ -358,8 +358,7 @@ func TestCancelledStitchIsStuckThenRecutLandsThePlan(t *testing.T) {
 		t.Fatalf("bare cut on a waiting stitch (exit %d):\n%s", code, out)
 	}
 	// The re-cut stitch lands by task land --id: the plan lands with it and
-	// the receipt names it, its ref and origin; the stream's stop waits for
-	// the coordinator's acceptance (no landing by structure, nova-tools#4412).
+	// the receipt names it, its ref and origin.
 	walk("pc-stitch-2", "82")
 	code, out, _ = run("task", "land", "--id", "pc-stitch-2", "--sha", sha(2), "--actor", "rowan")
 	if code != 0 || !strings.Contains(out, "TASK land id=pc-stitch-2 from=merging to=landed parent=pc ref="+ref+" origin="+origin+" ms=") {
@@ -369,12 +368,25 @@ func TestCancelledStitchIsStuckThenRecutLandsThePlan(t *testing.T) {
 	if rec["where"] != "landed" || rec["merge_sha"] != sha(2) || rec["ref"] != ref || rec["origin"] != origin {
 		t.Fatalf("parent after the stitch landed: where=%s merge_sha=%s ref=%s origin=%s", rec["where"], rec["merge_sha"], rec["ref"], rec["origin"])
 	}
+	// the stream's stop waits for the coordinator's acceptance (#4412): no
+	// card's landing, the stitch's included, lands it
 	if w := c.HGet(ctx, taskcard.Key(stream+":sentinel"), "where").Val(); w != "waiting" {
 		t.Fatalf("the stream's stop is %s, want waiting for the coordinator's acceptance", w)
 	}
 	// A plain card's land receipt names no plan.
 	if _, out, _ := run("task", "land", "--id", "e1", "--sha", sha(1), "--actor", "rowan"); strings.Contains(out, "parent=") {
 		t.Fatalf("a child's land names a plan:\n%s", out)
+	}
+	// Every card of the stream landed: the stop lands by the coordinator's
+	// acceptance alone (#4412), through the same task land.
+	if err := c.HSet(ctx, "friend:rowan:roles", "roles", "coordinator").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, _ := run("task", "land", "--id", stream+":sentinel", "--sha", sha(2), "--actor", "rowan"); code != 0 || !strings.Contains(out, "TASK land id="+stream+":sentinel from=waiting to=landed ") {
+		t.Fatalf("the coordinator's acceptance (exit %d):\n%s", code, out)
+	}
+	if w := c.HGet(ctx, taskcard.Key(stream+":sentinel"), "where").Val(); w != "landed" {
+		t.Fatalf("the stream's stop after the acceptance is %s, want landed", w)
 	}
 }
 

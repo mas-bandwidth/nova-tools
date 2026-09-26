@@ -162,7 +162,7 @@ func TestLandWatchCrossStreamWaitsOnTheRealSentinel(t *testing.T) {
 		t.Fatalf("the duty's claim before the stop: %v", err)
 	}
 	// Beta's last card goes; its stop lands through the one move, by the
-	// coordinator's acceptance (rowan holds the role, nova-tools#4412).
+	// coordinator's acceptance alone (#4412; rowan holds the role above).
 	c.ZRem(ctx, "ws:"+b+":working", "b1")
 	c.Del(ctx, "task:b1")
 	if _, err := taskcard.Land(ctx, c, ws.SentinelID(b), "rowan", strings.Repeat("d", 40), ""); err != nil {
