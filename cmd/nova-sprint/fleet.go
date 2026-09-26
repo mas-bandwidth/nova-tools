@@ -17,7 +17,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "fleet",
-		Summary: "fleet state, is-up, hold, release, config, and build (the deploy)",
+		Summary: "fleet state, is-up, hold, release (a held bench, or <sha>: the whole deploy), config, build, and churn (the process-age sample)",
 		Run:     runFleet,
 	})
 }
@@ -59,7 +59,7 @@ func unreachable(stderr io.Writer, verb, what string) int {
 
 func runFleet(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "fleet", "wants state, is-up, hold, release, config, or build")
+		return refuse(errOut, "fleet", "wants state, is-up, hold, release, config, build, or churn")
 	}
 	switch args[0] {
 	case "state":
@@ -74,8 +74,10 @@ func runFleet(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runFleetConfig(ctx, args[1:], out, errOut)
 	case "build":
 		return runFleetBuild(ctx, args[1:], out, errOut)
+	case "churn":
+		return runFleetChurn(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "fleet", fmt.Sprintf("unknown subverb %s; want state, is-up, hold, release, config, or build", args[0]))
+		return refuse(errOut, "fleet", fmt.Sprintf("unknown subverb %s; want state, is-up, hold, release, config, build, or churn", args[0]))
 	}
 }
 
@@ -188,37 +190,6 @@ func runFleetHold(ctx context.Context, args []string, out, errOut io.Writer) int
 			return refuse(errOut, "fleet hold", "unregistered bench "+*bench)
 		}
 		return fleetRefuse(errOut, "fleet hold", err)
-	}
-	return 0
-}
-
-func runFleetRelease(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := verbflag.New("fleet release")
-	redisAddr := fs.String("redis", "", "")
-	bench := fs.String("bench", "", "")
-	if err := fs.Parse(args); err != nil {
-		return refuse(errOut, "fleet release", err.Error())
-	}
-	if fs.NArg() != 0 {
-		return refuse(errOut, "fleet release", "takes no positional arguments")
-	}
-	if *bench == "" {
-		return refuse(errOut, "fleet release", "--bench is required")
-	}
-	st, err := openFleetStore(ctx, *redisAddr)
-	if err != nil {
-		return unreachable(errOut, "fleet release", err.Error())
-	}
-	defer st.Close()
-
-	if err := fleet.Release(ctx, st.Client(), *bench); err != nil {
-		if errors.Is(err, fleet.ErrNotHeld) {
-			return refuse(errOut, "fleet release", "bench "+*bench+" is not held")
-		}
-		if errors.Is(err, fleet.ErrUnregistered) {
-			return refuse(errOut, "fleet release", "unregistered bench "+*bench)
-		}
-		return fleetRefuse(errOut, "fleet release", err)
 	}
 	return 0
 }
