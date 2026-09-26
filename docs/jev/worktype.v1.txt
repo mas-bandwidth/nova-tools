@@ -1,0 +1,13 @@
+VERSION: worktype-v1
+
+Classify the card into the one work type that best describes the change it asks for. Read the title, the PATHS, the DONE-WHEN and the issue text; judge the work, not the words.
+
+OPTIONS:
+- docs: documentation only
+- fixture: a test fixture, a test file or test data only; no production code changes
+- lua: a Redis Function (Lua) changed with its Go caller: moves, sets, indexes
+- read: read and judge existing work (a PR, a spec, a finding); no change produced
+- refactor: one change across several packages: renames, moves, dead code, a shared helper
+- spec: a design or specification decided and written down; little or no code
+- test-fix: a failing or flaky test repaired, with the smallest production change it needs
+- verb: a command-line verb or flag added or changed in one package, with its tests

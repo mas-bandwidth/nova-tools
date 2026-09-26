@@ -98,7 +98,7 @@ func TestFleetReleaseShaVerb(t *testing.T) {
 	for _, l := range lines {
 		heads = append(heads, strings.Fields(l)[0])
 	}
-	want := "SOURCE BUILT MOVED KICKSTARTED KICKSTARTED KICKSTARTED FN FLEET CONVERGED BUILD MANIFEST OK FN BEAT ROLLED FLEET"
+	want := "SOURCE BUILT MOVED KICKSTARTED KICKSTARTED KICKSTARTED FN FLEET CONVERGED BUILD MANIFEST OK PROBE FN BEAT ROLLED FLEET"
 	if strings.Join(heads, " ") != want {
 		t.Fatalf("receipts:\n%s\nwant heads: %s", out.String(), want)
 	}

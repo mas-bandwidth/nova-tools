@@ -1,12 +1,13 @@
 package ci
 
 import (
-	"bufio"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // benchRunnerBaseSHA is the nova-tools dev commit the inventory was derived
@@ -16,8 +17,10 @@ const benchRunnerBaseSHA = "ce8631be6"
 // benchRunnerAtBase is the site set derived at benchRunnerBaseSHA (the 18
 // rows of the #2932 rev 4 inventory plus cmd/nova-sprint/expire.go, which
 // landed after it; harvest.SSHPusher moved onto internal/benchsh in the same
-// build and has no row). It may only shrink: a site retired by #3350 or #3291
-// leaves this list and the allow file together.
+// build and has no row). It is the allow file's ceiling: every row and every
+// site the rule finds is one of these, so nothing is added after the base. A
+// site retired by #3350 or #3291 leaves the allow file (NOVA_CI_UPDATE=1 drops
+// the row); it may stay here, where it allows nothing.
 var benchRunnerAtBase = []string{
 	"cmd/nova-sprint/expire.go sshProber.Probe",
 	"internal/nsprint/deal/ssh.go remoteSession.Run",
@@ -30,43 +33,26 @@ var benchRunnerAtBase = []string{
 	"internal/swarm/benchpull.go sshRun",
 }
 
-type benchRunnerAllow struct {
-	header string
-	rows   map[string]string // key -> "shape\tissue"
-}
+// benchRunnerAllowOptions keys a row of the allow file by `<file> <func>`, the
+// text before its first tab; the file only shrinks.
+var benchRunnerAllowOptions = allowlist.Options{Key: allowlist.Fields(2), Ceiling: true}
 
-func readBenchRunnerAllow(t *testing.T) benchRunnerAllow {
+func readBenchRunnerAllow(t *testing.T) *allowlist.List {
 	t.Helper()
-	f, err := os.Open(BenchRunnerAllowPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = f.Close() }()
-	a := benchRunnerAllow{rows: map[string]string{}}
-	sc := bufio.NewScanner(f)
-	first := true
-	for sc.Scan() {
-		line := sc.Text()
-		if first {
-			a.header, first = line, false
-		}
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.Split(line, "\t")
+	allow := loadAllowlist(t, BenchRunnerAllowPath, benchRunnerAllowOptions)
+	first := map[string]bool{}
+	for _, row := range allow.Rows() {
+		parts := strings.Split(row.Text, "\t")
 		if len(parts) != 3 || strings.Count(parts[0], " ") != 1 || parts[1] == "" || !strings.HasPrefix(parts[2], "#") {
-			t.Errorf("%s: row %q is not `<file> <func>\\t<shape>\\t<retiring issue>`", BenchRunnerAllowPath, line)
+			t.Errorf("%s: row %q is not `<file> <func>\\t<shape>\\t<retiring issue>`", BenchRunnerAllowPath, row.Text)
 			continue
 		}
-		if _, dup := a.rows[parts[0]]; dup {
-			t.Errorf("%s: %s listed twice", BenchRunnerAllowPath, parts[0])
+		if first[row.Key] {
+			t.Errorf("%s: %s listed twice", BenchRunnerAllowPath, row.Key)
 		}
-		a.rows[parts[0]] = parts[1] + "\t" + parts[2]
+		first[row.Key] = true
 	}
-	if err := sc.Err(); err != nil {
-		t.Fatal(err)
-	}
-	return a
+	return allow
 }
 
 // TestCIOneBenchRunner (#2932 control 4): every ssh exec site outside
@@ -89,33 +75,37 @@ func TestCIOneBenchRunner(t *testing.T) {
 	found := map[string]bool{}
 	for _, s := range sites {
 		found[s.Key()] = true
-		if _, ok := allow.rows[s.Key()]; !ok {
+		if !allow.Has(s.Key()) {
 			t.Errorf("%s:%d: %s runs ssh itself; the fleet plays reach benches, never a new row in %s",
 				s.File, s.Line, s.Func, BenchRunnerAllowPath)
 		}
 	}
-	for k := range allow.rows {
-		if !found[k] {
-			t.Errorf("%s lists %s, which is no longer an ssh exec site: delete the row (and its benchRunnerAtBase entry; the list only shrinks)", BenchRunnerAllowPath, k)
+	for _, row := range allow.Rows() {
+		if !base[row.Key] {
+			t.Errorf("%s row %s was added after %s: the allow file may only shrink", BenchRunnerAllowPath, row.Key, benchRunnerBaseSHA)
 		}
-		if !base[k] {
-			t.Errorf("%s row %s was added after %s: the allow file may only shrink", BenchRunnerAllowPath, k, benchRunnerBaseSHA)
-		}
+	}
+	for _, row := range allowlist.Check(t, allow, found).Stale {
+		t.Errorf("%s lists %s, which is no longer an ssh exec site: delete the row (the list only shrinks; NOVA_CI_UPDATE=1 drops it)", BenchRunnerAllowPath, row.Key)
 	}
 
 	t.Run("inventory-at-base", func(t *testing.T) {
-		if !strings.Contains(allow.header, "derived at nova-tools dev "+benchRunnerBaseSHA) {
-			t.Fatalf("%s line 1 %q does not name the base-sha %s", BenchRunnerAllowPath, allow.header, benchRunnerBaseSHA)
+		header, _, _ := strings.Cut(allow.Text(), "\n")
+		if !strings.Contains(header, "derived at nova-tools dev "+benchRunnerBaseSHA) {
+			t.Fatalf("%s line 1 %q does not name the base-sha %s", BenchRunnerAllowPath, header, benchRunnerBaseSHA)
 		}
-		var got []string
+		// Every site the rule finds was in the inventory derived at the base: a
+		// site outside it is new, and a site the rule misses leaves its row
+		// stale above, which is red too.
+		var outside []string
 		for _, s := range sites {
-			got = append(got, s.Key())
+			if !base[s.Key()] {
+				outside = append(outside, s.Key())
+			}
 		}
-		want := append([]string(nil), benchRunnerAtBase...)
-		sort.Strings(want)
-		if strings.Join(got, "\n") != strings.Join(want, "\n") {
-			t.Fatalf("the rule finds\n%s\nwant exactly the %d rows derived at %s\n%s\n(a site the rule misses is a red test)",
-				strings.Join(got, "\n"), len(want), benchRunnerBaseSHA, strings.Join(want, "\n"))
+		sort.Strings(outside)
+		if len(outside) > 0 {
+			t.Fatalf("the rule finds\n%s\noutside the %d rows derived at %s", strings.Join(outside, "\n"), len(benchRunnerAtBase), benchRunnerBaseSHA)
 		}
 	})
 

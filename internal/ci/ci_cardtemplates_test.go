@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -323,9 +324,11 @@ func TestNoCardTemplateCarriesAnOSSpecificCommand(t *testing.T) {
 	}
 	for _, f := range res.Findings {
 		t.Errorf("%s", f.Render())
+		res.Measured[f.Key()] = true // the swarm templates' findings too
 	}
-	for _, s := range res.Stale {
-		t.Errorf("%s", s.Render())
+	list := loadAllowlist(t, cardTemplateAllowlistPath, FileLineListOptions)
+	for _, row := range allowlist.Check(t, list, res.Measured).Stale {
+		t.Errorf("%s:%d: %q names no offender on the tree; delete the stale row; this list only shrinks", cardTemplateAllowlistPath, row.Line, row.Text)
 	}
 	if res.Refused() > 0 {
 		t.Fatalf("%s", res.FailLine())

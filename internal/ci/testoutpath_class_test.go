@@ -5,11 +5,12 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // testoutpath_class_test.go is the class rule behind the deps.json defect: `go
@@ -86,7 +87,7 @@ func TestToolRunsInTestsWriteIntoATempDir(t *testing.T) {
 	t.Parallel()
 
 	tree := repoTree(t)
-	allow := readTestOutPathAllowlist(t)
+	allow := loadAllowlist(t, testOutPathAllowlistPath, shrinkOnly)
 	seen := map[string]bool{}
 	var violations []string
 
@@ -103,18 +104,17 @@ func TestToolRunsInTestsWriteIntoATempDir(t *testing.T) {
 			for _, f := range relativeOutputPathsIn(src.Rel, tree.FSet, src.AST) {
 				key := f.File + ":" + f.Func
 				seen[key] = true
-				if !allow[key] {
+				if !allow.Has(key) {
 					violations = append(violations, f.String()+"\n  (or add "+key+" to internal/ci/"+testOutPathAllowlistPath+" with a reason)")
 				}
 			}
 		}
 	}
-	for key := range allow {
-		if !seen[key] {
-			violations = append(violations, fmt.Sprintf(
-				"%s lists %s, but no relative output path is there any more; delete the stale entry (the list only shrinks)",
-				testOutPathAllowlistPath, key))
-		}
+	for _, row := range allowlist.Check(t, allow, seen).Stale {
+		key := row.Key
+		violations = append(violations, fmt.Sprintf(
+			"%s lists %s, but no relative output path is there any more; delete the stale entry (the list only shrinks)",
+			testOutPathAllowlistPath, key))
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
@@ -317,24 +317,4 @@ func chdirs(body *ast.BlockStmt) bool {
 		return !found
 	})
 	return found
-}
-
-func readTestOutPathAllowlist(t *testing.T) map[string]bool {
-	t.Helper()
-	raw, err := os.ReadFile(testOutPathAllowlistPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allow := map[string]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if i := strings.Index(line, " #"); i >= 0 {
-			line = strings.TrimSpace(line[:i])
-		}
-		allow[line] = true
-	}
-	return allow
 }

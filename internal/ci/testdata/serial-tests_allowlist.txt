@@ -8,7 +8,21 @@
 # The way off this list is a per-test seam: cmd.Env for a child, a field on the
 # value under test for a clock or a dialer, t.TempDir for a path. The list only
 # shrinks: a test that opens with t.Parallel() while listed, or a listed test
-# that is gone, is a red run, and serialTestsCeiling caps the count.
+# that is gone, is a red run, and the ceiling line below caps the count.
+#
+# The ceiling is the row count; it only comes down. NOVA_CI_UPDATE=1 drops the
+# stale rows and lowers it in the same write, and never raises it (#4339).
+# History: 877 on the day the rule landed; 2026-09-25 evening it rose by nine for
+# tests the fleet, redis, nova-sprint and swarm streams landed after the
+# measurement with t.Setenv or a package-var seam (card_moves TestCardSessionCLI
+# and TestCardMovesCLI, fleet_build TestFleetBuildCompileVerb and
+# ...ExecGivesGoItsOwnCaches, jev TestJevMechRefusals, lander_unit
+# TestLanderLoadsMembersFromUnitRecords, line TestLineVerbPostListImport,
+# task_card TestTaskMoveRefusesAPrimaryUnread, card
+# TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
+# stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
+# from the serialTestsCeiling constant into this file at 876, the count that day.
+# ceiling: 876
 cmd/nova-board/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-board/fold_test.go:TestABrokenRandomSourceIsRefusedInBothBackends serial: t.Setenv
 cmd/nova-board/fold_test.go:TestAnIdRetryUnderIssueIsTheSameFilingOrARefusal serial: t.Setenv

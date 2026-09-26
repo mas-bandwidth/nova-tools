@@ -1,7 +1,9 @@
 // fleet build (#3310) is the deploy: the builder builds the release named in
 // fleet:release, every bench in the benches set and this machine install it,
 // each bench that answers the release version gets its bench:<b> build
-// receipt, and the new nova-sprint here runs fn deploy. It replaces the
+// receipt, every target's probe result goes on its beat (bench:<b>:beat
+// probe, never a consumer's cards: nova-tools#4237), and the new nova-sprint
+// here runs fn deploy. It replaces the
 // coordinator's deploy chain and rowan-tools fleet-install-tools.sh; the plan
 // lives in Redis (internal/nsprint/fleetbuild).
 //

@@ -25,7 +25,13 @@
 // named <kind>:<name> (friend:emma, bench:hetzner) so the kind shows. Every
 // cell is one ZCARD of <kind>:<name>:cards:<set> for set = ready, working,
 // ok, fail; done = ok + fail and ok% = ok / done are derived, never stored,
-// with no sprint window and no base from a clear. status is up when the
+// with no sprint window and no base from a clear. The cells count consumer
+// work only, by structure (nova-tools#4237): a record naming a probe is
+// refused by every move into <kind>:<name>:cards:<set> (cm_zadd and the
+// move gates in 02_card_move.lua), and a probe's result lives on the bench
+// beat (bench:<b>:beat probe, fleet build), which this table never counts;
+// after sprint clear and a fleet roll every row reads 0 | 0 | 0 | -.
+// status is up when the
 // consumer's own beat (<kind>:<name>:beat at, ms) is under a minute old and
 // <kind>:<name>:down does not exist, else down (the row still shows its
 // cards); an up consumer whose desired hash has paused 1 (worker pause,
@@ -111,6 +117,10 @@ type SprintSnapshot struct {
 	Streams    []StreamRow
 	LandedHour int64 // ws:log moves to landed in the hour before the read
 	GHHour     int64 // GitHub calls in the hour before the read (gh:calls:all, #4343)
+	// Events is proc:progress as the progress duty wrote it (#4319): the
+	// asks so far, the last EVENT line, and the last pass's duty refusals.
+	// The table prints one EVENTS line from it only when non-zero.
+	Events ProgressEvents
 	// Consumers are the consumer table's rows, in display order (#4071).
 	Consumers []ConsumerRow
 	// RoundTrips is how many pipelines the read took: 1 in steady state.
@@ -403,6 +413,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	// load1. The proper fix is the friend beat carrying its own machine's
 	// load1 like the bench beat does; then this read goes.
 	studio := pipe.HMGet(ctx, FriendHostBeatKey, "load1", "ncpu", "cpu")
+	progress := pipe.HGetAll(ctx, ProgressKey)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, false, fmt.Errorf("pipeline: %w", err)
 	}
@@ -460,6 +471,12 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		if n, err := lock.Int64(); err != nil || n == 0 {
 			snap.LockLost = true
 		}
+	}
+	if h, err := progress.Result(); err != nil && !errors.Is(err, redis.Nil) {
+		// An EVENTS line that could not be read is said, never a quiet none.
+		snap.Events = ProgressEvents{Unread: err.Error()}
+	} else {
+		snap.Events = ParseProgressEvents(h)
 	}
 	for i, s := range r.streams {
 		row := StreamRow{Name: s}
@@ -567,6 +584,11 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 
 	s.renderStreams(&b)
 	writeConsumerTable(&b, s.Consumers)
+	if line := s.Events.Line(); line != "" {
+		// One EVENTS line, only when there is one to show (#4319 item 4:
+		// less is more).
+		b.WriteString(line + "\n")
+	}
 	if s.Stale {
 		fmt.Fprintf(&b, "stale: %ds (Redis did not answer; rows are the last good read)\n", now.Unix()-s.LastGood.Unix())
 	}
