@@ -150,6 +150,7 @@ func TestIssueOf(t *testing.T) {
 // is its sentinel orders to [sentinel] with no error and takes the
 // sentinel's age.
 func TestOrderBaseSkipsTheSentinel(t *testing.T) {
+	t.Parallel()
 	created := map[string]float64{"s:sentinel": 1000, "a": 0, "b": 9400, "c": 9500, "d": 9600, "e": 9450}
 	cards := orderFixture()[1:] // a landed: b c d e and the stop
 	out, _, err := Order(cards)
@@ -175,6 +176,7 @@ func TestOrderBaseSkipsTheSentinel(t *testing.T) {
 // gone stale (the oldest card landed), a record with no order_score, or a
 // hand score is Stale; the written order is not; a cycle is never Stale.
 func TestStaleReadsScoresNotJustTheSequence(t *testing.T) {
+	t.Parallel()
 	order := []Ordered{{OrderCard: OrderCard{ID: "b"}, Rank: 1}, {OrderCard: OrderCard{ID: "s:sentinel", Sentinel: true}, Rank: 2}}
 	fresh := func() StreamOrder {
 		return StreamOrder{Order: order, Scores: []float64{9400, 9401},
@@ -208,6 +210,7 @@ func TestStaleReadsScoresNotJustTheSequence(t *testing.T) {
 // TestStreamOfTitleIsTKStreamOf: --stream wins, else the title's
 // "STREAM: <s> |" prefix, else none (TK.stream_of's rule).
 func TestStreamOfTitleIsTKStreamOf(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ stream, title, want string }{
 		{"s1", "STREAM: s2 | x", "s1"},
 		{"", "  STREAM:  q: order  | fix it", "q: order"},
@@ -224,6 +227,7 @@ func TestStreamOfTitleIsTKStreamOf(t *testing.T) {
 // TestScoreTextKeepsTheFraction: ws check's INVARIANTS lines print a
 // score with every digit it has (the cold read's minor: %.0f hid 1.5).
 func TestScoreTextKeepsTheFraction(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[float64]string{1.5: "1.5", 1758900000123: "1758900000123", 0: "0"} {
 		if got := ScoreText(in); got != want {
 			t.Errorf("ScoreText(%v) = %q, want %q", in, got, want)
