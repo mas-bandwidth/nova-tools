@@ -51,7 +51,7 @@ func parseSince(s string, now time.Time) (time.Time, error) {
 
 func runFleetPSAt(ctx context.Context, args []string, out, errOut io.Writer, clock func() time.Time) int {
 	fs := verbflag.New("fleet ps")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	bench := fs.String("bench", "", "")
 	stray := fs.Bool("stray", false, "")
 	sinceFlag := fs.String("since", "", "")

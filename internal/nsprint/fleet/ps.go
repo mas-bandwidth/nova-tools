@@ -12,9 +12,10 @@ package fleet
 // A nova unit is a launchd job com.nova.<x>.plist (~/Library/LaunchAgents,
 // /Library/LaunchDaemons) or a systemd unit nova-<x>.service
 // (~/.config/systemd/user, /etc/systemd/system). It is declared when its file
-// names the fleet play that wrote it (fleet/loops.yml, fleet/runners.yml,
-// fleet/monitoring.yml, ...: every rowan-tools template carries the line), and
-// undeclared otherwise: a unit written by hand is a stray.
+// names the rowan-tools fleet play that wrote it (fleet/loops.yml for the
+// loops; the runner, monitoring and hook plays name theirs the same way: every
+// template carries the line), and undeclared otherwise: a unit written by
+// hand is a stray.
 //
 // A process belongs to a declared unit when its command line is the unit's
 // command (or the command after a `--`, which nova-loop and nova-secrets exec

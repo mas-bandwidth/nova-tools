@@ -15,7 +15,7 @@ var psAt = time.Unix(1_800_000_000, 0)
 const loopPlist = `<?xml version="1.0" encoding="UTF-8"?>
 
 <!-- ~/Library/LaunchAgents/com.nova.loop.mirror-refresh.plist -- managed by Ansible (fleet/loops.yml). -->
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plist>
 <plist version="1.0">
 <dict>
 	<key>Label</key>
