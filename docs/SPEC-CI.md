@@ -2388,8 +2388,8 @@ the step is missing, e.g. `the receipt step does not pass --job
 **Its narrowings.** It reads the step's text: an expression that names the
 right context but is quoted differently passes as long as the flag and the
 expression are adjacent, and it does not run the step, so a bench with no
-`card.env` is found by the run itself (the step's own refusal names
-`fleet/bench.yml`), not here.
+`card.env` is found by the run itself (the step's own refusal names the
+rowan-tools bench play), not here.
 
 ### `silent` — no silent failure on the copy model's live path
 
