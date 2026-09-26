@@ -38,21 +38,25 @@ var listFilePatterns = []string{"*allowlist*.txt", "*.allow", "*_examples.txt"}
 
 // TestEveryAllowlistIsReadThroughTheOneHelper is the class test of #4339: every
 // list file under internal/ci/testdata is loaded by a call to loadAllowlist or
-// allowlist.Load somewhere in internal/ci, and nothing there reads one with
-// os.ReadFile, os.Open or readFile. A list the helper does not read has no
-// NOVA_CI_UPDATE=1 path, and a script would be back to editing it by hand.
+// allowlist.Load somewhere in the tree, and no Go file anywhere in the tree reads
+// one with os.ReadFile, os.Open or readFile. A list the helper does not read has
+// no NOVA_CI_UPDATE=1 path, and a script would be back to editing it by hand; a
+// second reader outside internal/ci (the lander's guard reads
+// namedpaths_allowlist.txt) is a second parser of the same format.
 //
-// The walk is syntactic. A call's path argument is resolved through string
-// literals (filepath.Join parts included), package constants, a local variable
-// assigned in the same function, and one level of function parameter (every
-// call site's argument); a path computed any other way is not seen.
+// The walk is syntactic and per package. A call's path argument is resolved
+// through string literals (filepath.Join parts included), package constants, a
+// local variable assigned in the same function, and one level of function
+// parameter (every call site's argument); a path computed any other way is not
+// seen. A package none of whose files spells a list file's name is not parsed:
+// the resolver could not reach a list from it.
 func TestEveryAllowlistIsReadThroughTheOneHelper(t *testing.T) {
 	t.Parallel()
 
-	dir := filepath.Join(repoRoot(t), "internal", "ci")
+	root := repoRoot(t)
 	lists := map[string]bool{}
 	for _, pat := range listFilePatterns {
-		matches, err := filepath.Glob(filepath.Join(dir, "testdata", pat))
+		matches, err := filepath.Glob(filepath.Join(root, "internal", "ci", "testdata", pat))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -64,7 +68,7 @@ func TestEveryAllowlistIsReadThroughTheOneHelper(t *testing.T) {
 		t.Fatal("no list file under internal/ci/testdata; the walk is looking in the wrong place")
 	}
 
-	loaded, raw := helperReads(t, dir, lists)
+	loaded, raw := treeHelperReads(t, root, lists)
 	for _, name := range mapKeysSorted(lists) {
 		if !loaded[name] {
 			t.Errorf("internal/ci/testdata/%s is not read through allowlist.Load (loadAllowlist in a test); its class test has no %s=1 path, so a removal would edit it by hand",
@@ -76,21 +80,72 @@ func TestEveryAllowlistIsReadThroughTheOneHelper(t *testing.T) {
 	}
 }
 
-// helperReads parses the Go files of dir and returns the list files a helper
-// call loads and every raw read of one.
-func helperReads(t *testing.T, dir string, lists map[string]bool) (map[string]bool, []string) {
+// treeHelperReads walks every Go package under root (skipping .git, testdata and
+// vendor) and returns the list files a helper call loads and every raw read of
+// one, each read named by its path relative to root.
+func treeHelperReads(t *testing.T, root string, lists map[string]bool) (map[string]bool, []string) {
 	t.Helper()
-	fset := token.NewFileSet()
-	entries, err := os.ReadDir(dir)
+	pkgs := map[string][]string{}
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "testdata", "vendor", "node_modules":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(p, ".go") {
+			pkgs[filepath.Dir(p)] = append(pkgs[filepath.Dir(p)], p)
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var files []*ast.File
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+	loaded := map[string]bool{}
+	var raw []string
+	for _, paths := range pkgs {
+		srcs, names := map[string][]byte{}, false
+		for _, p := range paths {
+			src, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rel, err := filepath.Rel(root, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srcs[filepath.ToSlash(rel)] = src
+			for name := range lists {
+				if strings.Contains(string(src), name) {
+					names = true
+				}
+			}
+		}
+		if !names {
 			continue
 		}
-		f, err := parser.ParseFile(fset, filepath.Join(dir, e.Name()), nil, 0)
+		l, r := helperReads(t, srcs, lists)
+		for name := range l {
+			loaded[name] = true
+		}
+		raw = append(raw, r...)
+	}
+	sort.Strings(raw)
+	return loaded, raw
+}
+
+// helperReads parses one package's Go files (path -> source) and returns the
+// list files a helper call loads and every raw read of one.
+func helperReads(t *testing.T, srcs map[string][]byte, lists map[string]bool) (map[string]bool, []string) {
+	t.Helper()
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, name := range mapKeysSortedBytes(srcs) {
+		f, err := parser.ParseFile(fset, name, srcs[name], parser.SkipObjectResolution)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -158,6 +213,17 @@ func helperReads(t *testing.T, dir string, lists map[string]bool) (map[string]bo
 	}
 	sort.Strings(raw)
 	return loaded, raw
+}
+
+// mapKeysSortedBytes returns the keys of m in order, so a parse error names the
+// same file on every run.
+func mapKeysSortedBytes(m map[string][]byte) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // callName spells a call's function as `name` or `pkg.name`.

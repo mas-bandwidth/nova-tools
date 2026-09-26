@@ -30,18 +30,26 @@ usage:
                       print one CI-SLOW line per package whose total elapsed
                       time is over --budget (default 60); exit 2 when any
                       package is over, 0 when none is.
-  nova-ci local [-p N] <pkg>...
-                      a coordinator child's test run: step this process down to
-                      nice 15 (CI over work, nova-tools#4293), then go vet and
-                      go test -p N -count=1 (N default 2) on the packages named,
-                      never the whole tree; exit with the first non-zero code.
+  nova-ci local [--base origin/dev] [--functional]
+                      the unit tier CI runs for this diff, on this machine:
+                      the packages .github/scripts/select-packages.sh picks
+                      against the merge base of --base and HEAD, run through
+                      the Makefile's test target (its go test flags and its
+                      slowtests budgets) under nice -n 15 at -p 2, GOMAXPROCS=2
+                      and -count=1; one PKG line per package with its seconds,
+                      one RED line per failing test with its output.
+                      --functional adds the functional build tag, as CI's
+                      merge-group and push legs do (GOTEST_TAGS=functional).
+                      Exit 0 green, 1 a red test or build, 2 over the
+                      budgets or could not run.
   nova-ci new-rule [--root <checkout>] <rule-name>
                       scaffold a new class rule skeleton: class test, fixture, and makefile
   nova-ci new-verb [--root <checkout>] <tool> <verb>
                       scaffold a new CLI verb skeleton: command, test, fixture, and makefile
 
 exit codes: 0 inside budget, 2 a package is over budget or the invocation
-            could not run (bad flag, unreadable stdin).
+            could not run (bad flag, unreadable stdin); local adds 1 for a red
+            test or a package that did not build.
 
 example:
   nova-ci help
@@ -71,7 +79,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "slowtests":
 		return cmdSlowtests(args[1:], stdin, stdout, stderr)
 	case "local":
-		return cmdLocal(args[1:], stdout, stderr)
+		return cmdLocal(args[1:], stdout, stderr, execLocal)
 	case "new-rule":
 		return cmdNewRule(args[1:], stdout, stderr)
 	case "new-verb":

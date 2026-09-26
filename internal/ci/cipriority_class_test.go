@@ -30,7 +30,7 @@ import (
 var niceExecPaths = []struct{ file, fn, yield, exec string }{
 	{"internal/nsprint/card/wrapper.go", "func RunWrapper(", "yield()", "proc.start()"},
 	{"internal/nsprint/card/run.go", "func Run(", "yield()", "cmd.Start()"},
-	{"cmd/nova-ci/local.go", "func cmdLocal(", "yield.ToCI()", "runLocal("},
+	{"cmd/nova-ci/local.go", "func cmdLocal(", "yield.ToCI()", "localCapture("},
 }
 
 // wrapperDefault is how the two card paths reach the real setpriority: the
@@ -46,11 +46,24 @@ func TestCopiesRunNiced(t *testing.T) {
 	if !strings.Contains(y, "const Nice = 15") {
 		t.Errorf("internal/yield/yield.go: want `const Nice = 15` (nova-tools#4293 names fifteen)")
 	}
-	for _, goos := range []string{"darwin", "linux"} {
-		f := readFile(t, filepath.Join(root, "internal/yield/nice_"+goos+".go"))
-		if !strings.Contains(f, "syscall.Setpriority(syscall.PRIO_PROCESS, 0, n)") {
-			t.Errorf("internal/yield/nice_%s.go: want setpriority(PRIO_PROCESS, 0, n) on this process", goos)
-		}
+	// darwin: a nice belongs to the process, so 0 (this process) is the
+	// whole of it. Linux: a nice belongs to a THREAD, and a child forked
+	// from an un-niced thread inherits 0 (hetzner, 2026-09-26: 31 of 32
+	// children at nice 0 under the one-thread form), so every thread in
+	// /proc/self/task is set, repeatedly until a pass sets none.
+	d := readFile(t, filepath.Join(root, "internal/yield/nice_darwin.go"))
+	if !strings.Contains(d, "syscall.Setpriority(syscall.PRIO_PROCESS, 0, n)") {
+		t.Errorf("internal/yield/nice_darwin.go: want setpriority(PRIO_PROCESS, 0, n) on this process")
+	}
+	l := readFile(t, filepath.Join(root, "internal/yield/nice_linux.go"))
+	if !strings.Contains(l, `"/proc/self/task"`) || !strings.Contains(l, "syscall.Setpriority(syscall.PRIO_PROCESS, tid, n)") {
+		t.Errorf("internal/yield/nice_linux.go: want setpriority(PRIO_PROCESS, tid, n) over every thread in /proc/self/task (a Linux nice is per thread)")
+	}
+	if strings.Contains(l, "syscall.Setpriority(syscall.PRIO_PROCESS, 0, n)") {
+		t.Errorf("internal/yield/nice_linux.go: the one-thread form setpriority(PRIO_PROCESS, 0, n) nices the calling thread only; children forked from the others run at 0")
+	}
+	if !strings.Contains(readFile(t, filepath.Join(root, "cmd/nova-ci/local.go")), "yield.Nice-15") {
+		t.Errorf("cmd/nova-ci/local.go: localNice must be pinned to yield.Nice")
 	}
 
 	// 2. Every exec path yields first, in the same function, before the exec.
@@ -123,20 +136,15 @@ func TestCopiesRunNiced(t *testing.T) {
 	}
 }
 
-// slotSubtraction finds a slot computation: `slots - <something>`, in Go
-// (slots, Slots) or Lua (d.slots).
-var slotSubtraction = regexp.MustCompile(`\b[sS]lots\s*-\s*[A-Za-z(]`)
+// slotSubtraction finds a slot computation: `slots - <something>` in Go
+// (slots, Slots) or Lua (d.slots), or the desired hash's slots field read
+// as a number and subtracted from (`(tonumber(desired[1]) or 0) -`, the
+// form deal.lua's in-Redis re-check used and the first pattern missed).
+var slotSubtraction = regexp.MustCompile(`\b[sS]lots\s*-\s*[A-Za-z(]|\bdesired\b[^\n]*\)\s*-\s*[A-Za-z(]`)
 
 // namesCILegs is what a slot computation must name to be taking the CI legs
 // off: the Go field or variable ci/CI, or the Lua TM.ci_legs.
 var namesCILegs = regexp.MustCompile(`\bci\b|\bCI\b|TM\.ci_legs\(`)
-
-// friendOnlyFiles compute a FRIEND's slots and nothing else: a friend is a
-// seat on a machine of its own with no CI runner, so it has no legs to take
-// off. A file here that grows a bench computation must leave this list.
-var friendOnlyFiles = map[string]bool{
-	"internal/nsprint/fn/lua/deal_friend.lua": true, // the friend queue deal (#3441)
-}
 
 func TestSlotsShrinkByCILegs(t *testing.T) {
 	t.Parallel()
@@ -146,6 +154,9 @@ func TestSlotsShrinkByCILegs(t *testing.T) {
 	lua := readFile(t, filepath.Join(root, "internal/nsprint/fn/lua/presence.lua"))
 	if !strings.Contains(funcBody(t, "presence.lua", lua, "local function bench_beat("), "'ci', args[21] or ''") {
 		t.Errorf("presence.lua bench_beat: the beat must write the CI leg count as ci (args[21]) every beat")
+	}
+	if !strings.Contains(funcBody(t, "presence.lua", lua, "local function friend_beat("), "'ci', args[5] or ''") {
+		t.Errorf("presence.lua friend_beat: a friend's beat must write the CI leg count of its machine as ci (args[5]) every beat")
 	}
 	life := readFile(t, filepath.Join(root, "cmd/nova-sprint/life.go"))
 	if strings.Count(life, "req.CI = life.CILegsNow()") < 2 {
@@ -164,9 +175,6 @@ func TestSlotsShrinkByCILegs(t *testing.T) {
 				return nil
 			}
 			rel, _ := filepath.Rel(root, path)
-			if friendOnlyFiles[filepath.ToSlash(rel)] {
-				return nil
-			}
 			src := readFile(t, path)
 			for i, line := range strings.Split(src, "\n") {
 				code := strings.TrimSpace(line)
@@ -184,10 +192,13 @@ func TestSlotsShrinkByCILegs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// The four the rule was written against: the two deal passes, the fill
-	// and the read route. Fewer means one moved out of the sweep's reach.
-	if checked < 4 {
-		t.Errorf("found %d slot computations under internal/nsprint and cmd/nova-sprint, want at least 4 (deal, taskcard, ns_cm_work, TM.room)", checked)
+	// The eight the rule was written against: the two deal passes, the
+	// fill, the read route, deal.lua's re-check, the friend deal's two, and
+	// task width. Fewer means one moved out of the sweep's reach. A friend
+	// is not free of legs: the Studio hosts friends and CI both, so a
+	// friend's slots shrink by its own beat's ci like a bench's.
+	if checked < 8 {
+		t.Errorf("found %d slot computations under internal/nsprint and cmd/nova-sprint, want at least 8 (deal, taskcard, ns_cm_work, TM.room, ns_card_deal, DF x2, width)", checked)
 	}
 }
 

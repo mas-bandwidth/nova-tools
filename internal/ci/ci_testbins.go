@@ -3,7 +3,6 @@ package ci
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -120,7 +119,7 @@ func CheckTestbins(root, allowlistPath string) (TestbinsResult, error) {
 			}
 			return res, statErr
 		}
-		err = filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
+		err = walkSourceDir(base, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
@@ -134,7 +133,7 @@ func CheckTestbins(root, allowlistPath string) (TestbinsResult, error) {
 			if !strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
-			raw, readErr := os.ReadFile(path)
+			raw, readErr := readSourceFile(path)
 			if readErr != nil {
 				return readErr
 			}
@@ -209,8 +208,7 @@ func matchTestbinAllow(entries []waitAllow, used []bool, f TestbinFinding) int {
 // that is not Go cannot carry the shapes this check reads, and a fixture
 // deliberately holding a broken literal is not the offender itself.
 func scanTestbinFile(rel string, src []byte) ([]TestbinFinding, bool) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, rel, src, 0)
+	fset, file, err := parseSource(rel, src, 0)
 	if err != nil {
 		return nil, false
 	}

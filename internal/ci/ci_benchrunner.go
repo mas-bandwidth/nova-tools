@@ -2,10 +2,8 @@ package ci
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -60,7 +58,7 @@ func (s BenchRunnerSite) Key() string { return s.File + " " + s.Func }
 func FindBenchRunners(root string) ([]BenchRunnerSite, error) {
 	var sites []BenchRunnerSite
 	for _, dir := range []string{"cmd", "internal"} {
-		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+		err := walkSourceDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -80,7 +78,7 @@ func FindBenchRunners(root string) ([]BenchRunnerSite, error) {
 			if strings.Contains(rel, "/testdata/") {
 				return nil
 			}
-			raw, err := os.ReadFile(path)
+			raw, err := readSourceFile(path)
 			if err != nil {
 				return err
 			}
@@ -101,8 +99,7 @@ func FindBenchRunners(root string) ([]BenchRunnerSite, error) {
 
 // BenchRunnersInSource finds the sites in one file's source.
 func BenchRunnersInSource(rel string, src []byte) ([]BenchRunnerSite, error) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, rel, src, 0)
+	fset, file, err := parseSource(rel, src, 0)
 	if err != nil {
 		return nil, err
 	}

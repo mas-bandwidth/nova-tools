@@ -15,7 +15,8 @@ import (
 // TestDealAndFillTakeCILegsOffABenchsSlots (nova-tools#4293, in Redis): a
 // bench with 8 slots whose beat counts 4 CI legs is dealt 4 and filled to
 // 4, not 8; when the legs end (ci 0) the next pass fills the other 4; a
-// friend's slots are never shrunk (a friend has no legs).
+// friend's slots shrink by its own beat's ci the same way (the Studio
+// hosts friends and CI both).
 func TestDealAndFillTakeCILegsOffABenchsSlots(t *testing.T) {
 	t.Parallel()
 
@@ -30,7 +31,8 @@ func TestDealAndFillTakeCILegsOffABenchsSlots(t *testing.T) {
 		}
 	}
 	c.HSet(ctx, b.BeatKey(), "at", at, "ci", "4")
-	c.HSet(ctx, f.BeatKey(), "at", at, "ci", "4") // a friend's ci is ignored
+	c.HSet(ctx, f.BeatKey(), "at", at)
+	c.HSet(ctx, f.MachineBeatKey(), "ci", "1") // one leg beside the friend: one of its two slots
 	c.HSet(ctx, b.DesiredKey(), "slots", "8")
 	c.HSet(ctx, f.DesiredKey(), "slots", "2")
 	pushPrimaries(t, c, 20)
@@ -39,10 +41,10 @@ func TestDealAndFillTakeCILegsOffABenchsSlots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Dealt != 6 {
-		t.Fatalf("dealt %d, want 4 to the bench (8 slots - 4 legs) + 2 to the friend: %v", r.Dealt, r.Lines)
+	if r.Dealt != 5 {
+		t.Fatalf("dealt %d, want 4 to the bench (8 slots - 4 legs) + 1 to the friend (2 - 1): %v", r.Dealt, r.Lines)
 	}
-	if !hasLine(r.Lines, "DEAL bench:b dealt=4 free=4 ci=4") || !hasLine(r.Lines, "DEAL friend:f dealt=2 free=2 ci=0") {
+	if !hasLine(r.Lines, "DEAL bench:b dealt=4 free=4 ci=4") || !hasLine(r.Lines, "DEAL friend:f dealt=1 free=1 ci=1") {
 		t.Fatalf("lines %v", r.Lines)
 	}
 	// The bench's own fill (card work --fill) computes the same in Redis.

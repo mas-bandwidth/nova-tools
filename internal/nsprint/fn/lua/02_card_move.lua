@@ -2241,11 +2241,11 @@ end
 
 function TM.key(c, col) return c .. ':cards:' .. col end
 
--- TM.ci_legs: the CI legs running on bench c as its beat's ci field counts
--- them (nova-tools#4293), 0 for a friend or an unmeasured beat.
+-- TM.ci_legs: the CI legs running on the machine consumer c runs on, as
+-- its beat's ci field counts them (<consumer>:beat, a bench's or a
+-- friend's; nova-tools#4293: the Studio hosts friends and CI both), 0 for
+-- an unmeasured beat. Each holds a slot while it runs.
 function TM.ci_legs(c)
-  local kind = TM.parse(c)
-  if kind ~= 'bench' then return 0 end
   return tonumber(redis.call('HGET', c .. ':beat', 'ci')) or 0
 end
 
@@ -2514,9 +2514,9 @@ end
 
 -- TM.work(c, by, k, fill, ids): consumer ready -> working, k = min(free,
 -- |ready copies|) (fill; else also at most k), free = slots - ci -
--- |working|, ci the CI legs running on a bench as its beat counts them
--- (nova-tools#4293: a copy is never put beside a leg it would slow; a
--- friend has no legs); named copies all or nothing. Each starts a lease its holder renews with
+-- |working|, ci the CI legs running on the consumer's machine as its beat
+-- counts them (nova-tools#4293: a copy is never put beside a leg it would
+-- slow); named copies all or nothing. Each starts a lease its holder renews with
 -- card beat, and a token its end may present (a stale one is FENCED).
 -- Returns the reply WORKED n free, then per copy its id and token.
 function TM.work(c, by, k, fill, ids)

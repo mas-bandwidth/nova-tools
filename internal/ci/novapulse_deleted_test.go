@@ -26,7 +26,7 @@ func TestTheNovaPulseCommandIsDeleted(t *testing.T) {
 			t.Errorf("%s still exists; nova-pulse is deleted (#3801)", gone)
 		}
 	}
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := walkSourceDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -41,9 +41,12 @@ func TestTheNovaPulseCommandIsDeleted(t *testing.T) {
 		if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") {
 			return nil
 		}
-		b, err := os.ReadFile(path)
+		b, err := readSourceFile(path)
 		if err != nil {
 			return err
+		}
+		if !strings.Contains(string(b), `"nova-pulse"`) {
+			return nil // every novaPulseRun match names the binary in quotes
 		}
 		for n, line := range strings.Split(string(b), "\n") {
 			if novaPulseRun.MatchString(line) {

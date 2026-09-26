@@ -14,15 +14,15 @@ var DefaultCatalog = []Entry{
 	E(".github", "CI workflows and automation", "go test ./internal/ci", "make test"),
 	E("assets", "static assets and schemas", "none", "none"),
 	E("fleet", "fleet loop units and bench templates", "none", "none"),
-	Page("cmd", "26 nova command-line tools", "go test ./cmd/...", "make build"),
+	Page("cmd", "26 nova command-line tools", "nova-ci local", "make build"),
 	Page("docs", "specs, guides, and proposals", "go test ./internal/docs", "go test ./internal/docs"),
 	E("infra", "runner images and scripts", "none", "none"),
-	Page("internal", "packages and libraries", "go test ./internal/...", "make test"),
+	Page("internal", "packages and libraries", "nova-ci local", "make test"),
 	E("lisp", "nova-work lisp kernel", "go test ./internal/ci", "make test-lisp"),
 	E("profiles", "swarm worker profiles", "go test ./internal/swarm", "nova-swarm lint"),
 	E("scripts", "maintenance and operational scripts", "none", "none"),
 	E("testdata", "shared test fixtures and data", "go test ./internal/ci", "make test"),
-	Page("tools", "developer and bench tools", "go test ./tools/...", "make map"),
+	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
 
 	// cmd/
 	E("cmd/nova-board", "board viewer and coordinator CLI", "go test ./cmd/nova-board", "go test ./cmd/nova-board"),

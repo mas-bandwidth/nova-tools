@@ -138,6 +138,10 @@ type Presence struct {
 	Harness string
 	Host    string
 	Session string
+	// CI is the count of CI legs running on the friend's machine
+	// (CILegsNow; nova-tools#4293), on the beat as ci; empty when
+	// unmeasured. The deal takes them off the friend's slots.
+	CI string
 }
 
 // Beat refreshes one live friend's beat. A friend that is not registered
@@ -147,7 +151,7 @@ func Beat(ctx context.Context, st *store.Store, p Presence) error {
 		return fmt.Errorf("friend beat: store and friend are required")
 	}
 	reply, err := st.Client().FCall(ctx, FunctionBeat, nil,
-		p.Friend, p.Harness, p.Host, p.Session).Result()
+		p.Friend, p.Harness, p.Host, p.Session, p.CI).Result()
 	if err != nil {
 		return fmt.Errorf("friend beat %s: %w", p.Friend, err)
 	}

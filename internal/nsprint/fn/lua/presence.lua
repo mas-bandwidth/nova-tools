@@ -122,6 +122,9 @@ end
 
 -- friend_beat refreshes one live friend's beat. A friend that is not
 -- registered returns DOWN, never a silent re-registration.
+-- args[5] is the count of CI legs running on the friend's machine (one
+-- Runner.Worker per running job, nova-tools#4293), on the beat as ci every
+-- beat; the deal takes them off the friend's slots. Empty when unmeasured.
 local function friend_beat(keys, args)
   local friend, harness, host, session = args[1], args[2], args[3], args[4]
   if not friend or friend == '' then
@@ -137,7 +140,7 @@ local function friend_beat(keys, args)
   local at = pl_now_ms()
   redis.call('HSET', beat_key,
     'harness', harness or '', 'host', host or '', 'session', session,
-    'at', tostring(at))
+    'ci', args[5] or '', 'at', tostring(at))
   redis.call('PEXPIRE', beat_key, PL_BEAT_MS)
   return { 'OK' }
 end

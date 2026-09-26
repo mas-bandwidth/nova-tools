@@ -43,6 +43,11 @@ func (c Consumer) BeatKey() string {
 	return c.String()
 }
 
+// MachineBeatKey is the hash the consumer's own beat writes about the
+// machine it runs on: <consumer>:beat for a bench and a friend alike (host,
+// load1, ncpu, cpu, and ci, the CI legs running there, nova-tools#4293).
+func (c Consumer) MachineBeatKey() string { return c.String() + ":beat" }
+
 // BeatAt is beatAt for another duty that measures room the way the deal
 // pass does (the progress duty, #4319).
 func BeatAt(at string) (time.Time, bool) { return beatAt(at) }
@@ -139,7 +144,7 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 			working: pipe.ZCard(ctx, k.Key("working")),
 			down:    pipe.Exists(ctx, k.DownKey()),
 			at:      pipe.HGet(ctx, k.BeatKey(), "at"),
-			ci:      pipe.HGet(ctx, k.BeatKey(), "ci"),
+			ci:      pipe.HGet(ctx, k.MachineBeatKey(), "ci"),
 		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
@@ -155,10 +160,9 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 		t, ok := beatAt(cs[i].at.Val())
 		r := passRow{k: k, slots: slots, ready: cs[i].ready.Val(), down: cs[i].down.Val() > 0,
 			paused: fmt.Sprint(valueAt(d, 1)) == "1", live: ok && now.Sub(t) < Live && t.Sub(now) < Live}
-		if k.Kind == "bench" {
-			// A friend has no CI legs; only a bench's beat counts them.
-			r.ci, _ = strconv.ParseInt(cs[i].ci.Val(), 10, 64)
-		}
+		// The CI legs on the consumer's machine (a friend's too: the Studio
+		// hosts friends and CI both) each hold a slot while they run.
+		r.ci, _ = strconv.ParseInt(cs[i].ci.Val(), 10, 64)
 		r.free = FreeSlots(slots, cs[i].working.Val(), r.ci)
 		r.need = r.free - int(r.ready)
 		if r.live && !r.down && !r.paused && r.free > 0 {

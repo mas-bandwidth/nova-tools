@@ -1115,18 +1115,21 @@ the pure-Go SQLite driver the event fold writes with (`modernc.org/sqlite`, no c
 `github.com/alicebob/miniredis/v2`, which only the tests link.
 
 ```
-go build ./...
-go test ./...
+make build
+nova-ci local
 ```
 
-`go test ./...` runs the ordinary suite; duration depends on the host and load. CI also runs the race detector. Some tests are
-held back from it by a build tag -- today that is `cmd/nova-bus/timing_test.go`, whose two
+`nova-ci local` runs the unit tier CI runs for your change: the packages
+`.github/scripts/select-packages.sh` picks against `origin/dev`, through `make test` at
+`-p 2` under `nice`, with the unit budgets ([TESTING.md](../TESTING.md)). Never run the whole
+tree on a shared bench; CI runs it on every push to dev. CI also runs the race detector. Some tests are
+held back from the per-change run by a build tag -- today that is `cmd/nova-bus/timing_test.go`, whose two
 tests assert WALL-CLOCK bounds and
 therefore answer differently depending on what else the machine is doing. CI runs them on a
 nightly schedule; run them yourself with
 
 ```
-go test -tags perf -p 1 -parallel 1 ./...
+go test -tags perf -p 1 -parallel 1 ./cmd/nova-bus
 ```
 
 The tag rather than a test name, and one test at a time: the rest of the suite runs its
@@ -3147,27 +3150,30 @@ through the child environment. Drafting and showing do not authorize a send.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
-a budget. It also reports its own build with `nova-ci version`, and runs a
-coordinator child's local tests behind CI with `nova-ci local`.
+Reads Go test events and reports packages whose accumulated elapsed time exceeds
+a budget. It also reports its own build with `nova-ci version`.
 
 ```sh
 nova-ci slowtests --budget 60 < ./test-events.jsonl
 nova-ci version
-nova-ci local ./internal/nsprint/deal ./internal/nsprint/taskcard
 ```
-
-`local [-p N] <pkg>...` is the child's test run under the CI-over-work rule
-(nova-tools#4293, permanent on every bench): it steps its own process down to
-nice 15 first, the way every copy the card wrapper starts does, then runs
-`go vet` and `go test -p N -count=1` (N default 2) on the packages named and
-exits with the first non-zero code. It refuses the whole tree (`./...`): name
-the packages you touched.
 
 Save `go test -json` output in the input file and check that test run's exit status
 separately. `slowtests` checks timing, not whether the tests passed. The default
 budget is 60 seconds per package; exit 2 means an over-budget package or unusable
 input, and exit 0 means no package exceeded the budget. CI exceptions belong in
 the dated project policy, not in an assumed higher tool default.
+
+`nova-ci local [--base origin/dev] [--functional]` runs, on your machine, exactly
+the unit tier CI runs for your change: the packages
+`.github/scripts/select-packages.sh` picks against the merge base of `--base` and
+`HEAD`, through the Makefile's `test` target (its go test flags and slowtests
+budgets) under `nice -n 15` with `GOMAXPROCS=2`, `GOTEST_P=2` and `-count=1`. It
+prints one `PKG` line per package with its seconds and one `RED` line per failing
+test with its output; exit 0 is green, 1 a red test or build, 2 over the budgets
+or a step that could not run. `--functional` adds the functional build tag
+(`GOTEST_TAGS=functional`), as CI's merge-group and push legs do
+([TESTING.md](../TESTING.md)).
 
 See [SPEC-CI.md](SPEC-CI.md).
 
@@ -4270,6 +4276,10 @@ Since nova-tools #4050 nothing in the plan is typed. `land merge` of nova-tools 
 ### `nova-sprint self update`
 
 `nova-sprint self update [--sha <sha>] [--from <checkout>] [--allow-branch]` rebuilds this machine's own nova-sprint and installs it by rename (nova-tools #4337; internal/nsprint/fleetbuild/selfupdate.go): the coordinator's hand rebuild after every landing, as one verb. The fleet play does the benches; this verb does the machine it runs on. With no `--from` it builds in the release clone `fleet release` uses (`~/nova-bench/release-src/nova-tools`, fetched from dev) at `--sha`, or at dev's tip when none is given; with `--from <checkout>` it builds that checkout as it stands (it runs `git fetch origin dev` there and never checks anything out), and a `--sha` that is not the checkout's HEAD is refused. The receipt lines: `SOURCE <dir> <sha40>`; `TOOLCHAIN <go> from <go.mod>` (the module's pinned Go: its `toolchain` line, else its `go` line, handed to the build as `GOTOOLCHAIN`); `BUILT <v> <temp>` (`go build -trimpath -ldflags "-X main.version=<v>" ./cmd/nova-sprint` into a temp file beside the live binary, which must answer `<v>` before anything is installed); `MOVED ~/.local/bin/nova-sprint <v>` (the temp file renamed over the live binary, then the binary must answer `<v>`). The install is a rename and nothing else, so a process running the old binary keeps its file; the verb holds no code that writes into the live binary, and a class test keeps it that way. `<v>` is `v0.16.0-dev.<sha8>` for a commit on origin/dev (the version `fleet release` stamps, so it sees this machine already current); a commit off dev, or a `--from` tree with uncommitted edits, is refused unless `--allow-branch`, which stamps `-branch.<sha8>` and `-dirty`. A live binary already answering `<v>` is not rebuilt: `SELF UPDATE SKIPPED <bin> already answers <v> commit=<sha12>`. The last line is `SELF UPDATE OK <old> -> <new> commit=<sha12> toolchain=<go> bin=<bin>` (exit 0; `<old>` is `none` when no binary answered), or `SELF UPDATE REFUSED: <why> (<remedy>)` on standard error (exit 1, nothing installed); 2 is usage. The loops on this machine keep running the old binary until kickstarted; `fleet release <sha> --studio-only` builds, moves and kickstarts.
+
+### `nova-sprint fleet roll`
+
+`nova-sprint fleet roll [--to <sha>] [--redis <addr>] [--machines <file>] [--benches <a,b,...>] [--play-dir <dir>] [--play tools.yml] [--wait 60s] [--admin-password-env NAME]` is fleet-roll.sh as one verb (nova-tools #4332; internal/nsprint/fleetbuild/roll.go): release, converge, verify. Without `--to` the sha is dev's tip (`git ls-remote git@github.com:mas-bandwidth/nova-tools.git refs/heads/dev`, `DEV TIP <sha40>`). Then, in order: `fleet release <sha>` with every receipt it prints and its `FLEET RELEASE OK|FAIL ...` line (the Studio, fn deploy and the bench roll; a release refusal stops the roll); the fleet play through ansible, never ssh by hand (`ansible-playbook -i inventory.py <play> --forks 16 --diff -e nova_build=<v> [--limit <benches>]` run in the play directory, `--play-dir`, else `$NOVA_FLEET_PLAY_DIR`, else `~/rowan-working/rowan-tools/fleet`, with `ANSIBLE_NOCOWS=1 ANSIBLE_HOST_KEY_CHECKING=True FLEET_REGISTRY=<the machines registry>` so the inventory reads the same registry, `--machines <file>` else `$NOVA_FLEET_MACHINES`, required), one `RECAP <host> : ok=... failed=...` line per host and `PLAY OK <play> version=<v>` or `PLAY FAIL <play> version=<v> err=<exit> last=<line>`; then the verify, which reads every bench's beat version field (`bench:<b>:beat build`, one pipelined read, no ssh), re-read every 5 s until every bench names `<v>` or `--wait` is spent, and prints `VERIFY <bench> want=<v> have=<v>|none ok|behind` per bench (a bench with no beat is `have=none`, behind). A failed play or a refused FN still runs the verify. The benches are `--benches`, else every registry machine with the `bench` role. The last line is `FLEET ROLL OK|BEHIND|FAIL version=<v> commit=<sha12> fn=ok|refused play=ok|failed benches=<n> behind=<list>|-`: exit 0 OK (every bench beat on the release), 1 a bench behind (named on the line), a failed play, fn refused, or `FLEET ROLL REFUSED: <why>` on standard error (no registry, no play directory, no `inventory.py` or play file in it, no benches, a bad sha, or the release's own refusal, each before any child it would have run), 2 usage, 5 the store unreachable.
 
 ### `nova-sprint fleet churn`
 
