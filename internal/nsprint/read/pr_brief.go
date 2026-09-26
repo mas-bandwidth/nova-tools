@@ -158,11 +158,12 @@ func ParseNumstat(out string) []FileStat {
 	return fs
 }
 
-var issueRefRx = regexp.MustCompile(`^(?:https?://github\.com/)?(?:([A-Za-z0-9][A-Za-z0-9._-]*)/)?([A-Za-z0-9][A-Za-z0-9._-]*)(?:#|/issues/)([1-9][0-9]*)$`)
+var issueRefRx = regexp.MustCompile(`^(?:([A-Za-z0-9][A-Za-z0-9._-]*)/)?([A-Za-z0-9][A-Za-z0-9._-]*)#([1-9][0-9]*)$`)
 
-// IssueRef reads n or #n (in defaultRepo), name#n, owner/name#n (each
-// optionally prefixed issue:, a card's ORIGIN) or a github.com issue URL; ok false when s names no issue. A bare name's owner
-// is defaultRepo's when the names match, else prkey.DefaultOwner.
+// IssueRef reads n or #n (in defaultRepo), name#n or owner/name#n, each
+// optionally prefixed issue: (a card's ORIGIN); ok false when s names no
+// issue. A bare name's owner is defaultRepo's when the names match, else
+// prkey.DefaultOwner.
 func IssueRef(s, defaultRepo string) (owner, name, n string, ok bool) {
 	s = strings.TrimPrefix(strings.TrimSpace(s), "issue:") // a card's ORIGIN: issue:<name>#<n>
 	dOwner, dName, _ := prkey.Split(defaultRepo)

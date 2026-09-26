@@ -42,10 +42,9 @@ func TestIssueRefEveryShape(t *testing.T) {
 		{"nova-tools#4321", "mas-bandwidth/nova-tools", "mas-bandwidth/nova-tools#4321"},
 		{"rowan-tools#12", "someone/nova-tools", "mas-bandwidth/rowan-tools#12"},
 		{"acme/widgets#7", "nova-tools", "acme/widgets#7"},
-		{"https://github.com/acme/widgets/issues/9", "nova-tools", "acme/widgets#9"},
 		{"issue:nova-tools#4227", "nova-tools", "mas-bandwidth/nova-tools#4227"}, // a card's ORIGIN
-		{"https://github.com/acme/widgets/pull/9", "nova-tools", ""},
 		{"issue", "nova-tools", ""},
+		{"acme/widgets/issues/9", "nova-tools", ""},
 		{"0", "nova-tools", ""},
 		{"", "nova-tools", ""},
 	} {
