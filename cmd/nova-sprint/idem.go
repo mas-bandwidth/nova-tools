@@ -6,7 +6,7 @@
 // A friend looks, then:
 //
 //	nova-sprint idem resolve --redis <addr> --sprint <S> --key <k> \
-//	    --was <ambiguous:who:at_ms> (--url <u> | --none) --who <friend>
+//	    --was <ambiguous:who:at_ms> (--url <u> | --none) --as <friend>
 //
 // --url records the PR (one receipt, the item deleted); --none deletes the
 // key and the item, so the next open begins fresh and opens once. The fence
@@ -23,6 +23,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"strings"
 
@@ -38,7 +39,7 @@ func init() {
 	})
 }
 
-const idemResolveUsage = "--redis <addr> --sprint <S> --key <k> --was <ambiguous:who:at_ms> (--url <u> | --none) --who <friend>"
+const idemResolveUsage = "--redis <addr> --sprint <S> --key <k> --was <ambiguous:who:at_ms> (--url <u> | --none) --as <friend>"
 
 func runIdem(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -53,13 +54,13 @@ func runIdem(ctx context.Context, args []string, out, errOut io.Writer) int {
 func runIdemResolve(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "idem resolve"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	key := fs.String("key", "", "")
-	was := fs.String("was", "", "")
-	url := fs.String("url", "", "")
-	none := fs.Bool("none", false, "")
-	who := fs.String("who", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	key := fs.String("key", "", "the idempotency key resolved")
+	was := fs.String("was", "", "the ambiguous value the key held, ambiguous:<who>:<at_ms>")
+	url := fs.String("url", "", "the PR that was opened")
+	none := fs.Bool("none", false, "no PR was opened: delete the key and the item")
+	who := fs.String("as", "", verbflag.HelpAs)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error()+"; want "+idemResolveUsage)
 	}
@@ -73,7 +74,7 @@ func runIdemResolve(ctx context.Context, args []string, out, errOut io.Writer) i
 	case fs.NArg() > 0:
 		return refuse(errOut, verb, "takes flags, not positional arguments: "+idemResolveUsage)
 	case redisStr == "" || sprintStr == "" || keyStr == "" || whoStr == "":
-		return refuse(errOut, verb, "--redis, --sprint, --key and --who are required: "+idemResolveUsage)
+		return refuse(errOut, verb, "--redis, --sprint, --key and --as are required: "+idemResolveUsage)
 	case wasStr == "":
 		return refuse(errOut, verb, "--was is required: the ambiguous:<who>:<at_ms> value a STATE line printed")
 	case (urlStr == "") == !*none:
