@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,20 +13,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
-
-// closedAddr is a loopback port with nothing listening: Redis unreachable.
-func closedAddr(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	if err := ln.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return addr
-}
 
 // TestRefusalLeavesARecord is the DONE-WHEN control of #3420: a detached
 // wrapper's stdout is /dev/null, so a refusal before `launched` (exit 1

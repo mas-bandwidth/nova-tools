@@ -1,0 +1,10 @@
+# The silent shapes the live path still permits outright, one file:function per
+# line (internal/ci/silent_class_test.go, the silent rule): a bare _ = err, or a
+# || true inside a Go string literal, in cmd/nova-sprint, cmd/nova-card and the
+# internal/nsprint packages of the copy model. It is EMPTY: every one was fixed on
+# 2026-09-26 (Glenn: no verb on the live path fails silently). This list only
+# shrinks: the class test fails on an entry whose shape has left as well as on a
+# shape that is not listed, so a new row is a refusal, not a parking place. A row
+# is `file:function <why it is judged not silent>`; NOVA_CI_UPDATE=1 drops a stale
+# row and never adds one.
+# ceiling: 0
