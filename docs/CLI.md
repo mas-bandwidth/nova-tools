@@ -1115,18 +1115,21 @@ the pure-Go SQLite driver the event fold writes with (`modernc.org/sqlite`, no c
 `github.com/alicebob/miniredis/v2`, which only the tests link.
 
 ```
-go build ./...
-go test ./...
+make build
+nova-ci local
 ```
 
-`go test ./...` runs the ordinary suite; duration depends on the host and load. CI also runs the race detector. Some tests are
-held back from it by a build tag -- today that is `cmd/nova-bus/timing_test.go`, whose two
+`nova-ci local` runs the unit tier CI runs for your change: the packages
+`.github/scripts/select-packages.sh` picks against `origin/dev`, through `make test` at
+`-p 2` under `nice`, with the unit budgets ([TESTING.md](../TESTING.md)). Never run the whole
+tree on a shared bench; CI runs it on every push to dev. CI also runs the race detector. Some tests are
+held back from the per-change run by a build tag -- today that is `cmd/nova-bus/timing_test.go`, whose two
 tests assert WALL-CLOCK bounds and
 therefore answer differently depending on what else the machine is doing. CI runs them on a
 nightly schedule; run them yourself with
 
 ```
-go test -tags perf -p 1 -parallel 1 ./...
+go test -tags perf -p 1 -parallel 1 ./cmd/nova-bus
 ```
 
 The tag rather than a test name, and one test at a time: the rest of the suite runs its
@@ -3159,6 +3162,16 @@ separately. `slowtests` checks timing, not whether the tests passed. The default
 budget is 60 seconds per package; exit 2 means an over-budget package or unusable
 input, and exit 0 means no package exceeded the budget. CI exceptions belong in
 the dated project policy, not in an assumed higher tool default.
+
+`nova-ci local [--base origin/dev] [--functional]` runs, on your machine, exactly
+the unit tier CI runs for your change: the packages
+`.github/scripts/select-packages.sh` picks against the merge base of `--base` and
+`HEAD`, through the Makefile's `test` target (its go test flags and slowtests
+budgets) under `nice -n 15` with `GOMAXPROCS=2`, `GOTEST_P=2` and `-count=1`. It
+prints one `PKG` line per package with its seconds and one `RED` line per failing
+test with its output; exit 0 is green, 1 a red test or build, 2 over the budgets
+or a step that could not run. `--functional` adds `make test-functional` over the
+same packages ([TESTING.md](../TESTING.md)).
 
 See [SPEC-CI.md](SPEC-CI.md).
 

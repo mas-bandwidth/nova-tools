@@ -1628,13 +1628,13 @@ words is not seen.
 
 **The rule.** Every opt-in build tag a `_test.go` carries is named by a
 SCHEDULED workflow, either literally on a `go test`/`go vet` line
-(`go test -tags perf ./...`) or as a `tag:` entry of a job's matrix the step
-then expands (`go test -tags ${{ matrix.tag }} ./...`). Platform and toolchain
+(`go test -tags perf` over the tree) or as a `tag:` entry of a job's matrix the
+step then expands (`go test -tags ${{ matrix.tag }}` over the tree). Platform and toolchain
 constraints are not opt-ins and are out of scope: `//go:build darwin` says where
 a test runs, not whether it runs, and a negation (`!windows`) is on by default
 everywhere else.
 **The hurt.** A build tag is how this tree takes a test off the per-change path,
-and `go test ./...` without the tag compiles the file away silently. So a tag no
+and a plain `go test` over the tree compiles the file away silently. So a tag no
 scheduled job passes to `go test -tags` is not a slower tier, it is a deleted
 test that still looks like a test in the tree. One tag was in exactly that
 state: `//go:build darwin && novadisk`
@@ -2284,6 +2284,38 @@ with a Go stack before the job cap kills it without one.
 per functional program), move a process-in-the-loop test behind the `slow` tag
 into the nightly functional matrix, or put the leg on a machine that compiles the
 set in seconds. Never a larger number.
+
+### `wholetree` — no doc and no card tells anyone to test the whole tree
+
+**The rule.** No Markdown file in the tree outside `testdata/` (the docs,
+`AGENTS.md`, `TESTING.md`, the READMEs), no card template (`CardTemplateDirs`),
+no brief source (the `briefSources` the no-gh rule reads) and neither Go file
+that writes a harness card's standard lines (`internal/nsprint/taskcard/complete.go`,
+`internal/nsprint/card/copy.go`) spells `go test`, with any flags, over `./...`.
+The door is `nova-ci local` (nova-tools#4336): the packages
+`.github/scripts/select-packages.sh` picks against the merge base of the base
+and `HEAD`, run through the Makefile's `test` target under `nice -n 15` at
+`-p 2`, with the unit budgets, exiting as CI would ([TESTING.md](../TESTING.md)).
+**The hurt.** Glenn 2026-09-26 10:08 AM ET, "CPU is for real work": children
+test the packages they touched and nothing else. The day's children each
+invented a way to test what they changed (a sharding script under `timeout 95`,
+a six-pass loop hunting t.Parallel violations, hand timing scripts) and several
+ran the whole tree on the benches the real work shares. A doc that spells the
+whole-tree run teaches the next child to do it again.
+**The test.** `TestNoWholeTreeGoTestInDocs`, with its control
+`TestWholeTreeRuleSeesEachSpelling` (`internal/ci/wholetree_class_test.go`),
+which pins the bare, flagged, piped and table-cell spellings as red and
+`nova-ci local`, a named package, `./internal/...`, `go vet ./...` and prose as
+green.
+**Its allowlist.** None. The offenders in the tree when the rule landed (the
+build sections of `docs/CLI.md` and `docs/USAGE.md`, two sentences of this
+spec, one release note) were rewritten.
+**Its remedy line.** `run nova-ci local (the unit tier CI runs for this diff)
+or name the packages you touched: nice -n 15 go test -p 2 -count=1 ./cmd/<tool>`.
+**Its narrowings.** One line at a time: a command split across a backslash
+continuation is not seen. `go test ./cmd/...` and `./internal/...` are not
+read (they are subtrees, not the tree), and neither are the Makefile's
+`test-full` and `test-slow` targets, which CI's whole-tree runs call.
 
 ## Parked class tests
 

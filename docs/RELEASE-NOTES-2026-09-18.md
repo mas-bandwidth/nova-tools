@@ -13,8 +13,8 @@ saving that was not measured.
 
 ## Batch 1 — #1302: simulate, the slow packages, the spec slices
 
-Ten members, built on `hulk` from `dev` at 327d26bb; `go build ./... && go vet ./...
-&& go test ./...` clean and the nova-work acceptance suite 327/327 green on the
+Ten members, built on `hulk` from `dev` at 327d26bb; the whole-tree build, vet
+and test clean and the nova-work acceptance suite 327/327 green on the
 merged tree before the batch was pushed.
 
 - **#1267** — **new verb `nova-merge simulate`**: squash-merges a queue's entries onto
