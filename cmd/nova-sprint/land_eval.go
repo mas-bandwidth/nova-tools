@@ -87,10 +87,19 @@ func runLandEval(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	defer st.Close()
 
-	// Sync policy to Redis if available
+	// Sync policy to Redis if available. A sync that fails stops the pass
+	// before any unit is evaluated: a unit judged against a policy record
+	// the store refused to write is judged against a record nobody wrote.
 	if polRepo != nil {
 		for _, bp := range polRepo.Bases {
-			_ = land.SyncPolicyToRedis(ctx, st.Client(), *repo, bp)
+			if err := land.SyncPolicyToRedis(ctx, st.Client(), *repo, bp); err != nil {
+				err = fmt.Errorf("policy sync base %s (ns_policy_set on %s): %w; nothing evaluated, no unit changed; fix the key, then run land eval again",
+					bp.Base, land.PolicyKey(*repo, bp.Base), err)
+				if storeDown(errOut, "land eval", err) {
+					return 6
+				}
+				return refuse(errOut, "land eval", err.Error())
+			}
 		}
 	}
 

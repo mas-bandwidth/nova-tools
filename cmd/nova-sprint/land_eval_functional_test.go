@@ -6,10 +6,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
@@ -72,4 +75,36 @@ func (f *failingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		f.onCall(req)
 	}
 	return nil, fmt.Errorf("TestNoStateAPI: external HTTP call strictly forbidden: %s", req.URL.String())
+}
+
+// TestLandEvalPolicySyncFailureIsNamed (FG-A fix 1, land_eval.go policy
+// sync): a policy record the store refuses to write (WRONGTYPE) stops the
+// pass naming the base, the key and the store's error, and evaluates
+// nothing; it is not a silent pass over an unwritten policy.
+func TestLandEvalPolicySyncFailureIsNamed(t *testing.T) {
+	t.Parallel()
+
+	addr := landEvalRedis(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	pkey := land.PolicyKey("nova-tools", "dev")
+	if err := c.Set(context.Background(), pkey, "not a hash", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	pol := filepath.Join(t.TempDir(), "nova-tools.yml")
+	if err := os.WriteFile(pol, []byte("repo: nova-tools\nbases:\n  dev:\n    required_steps: [build]\n    land_bar: 10\n    readers: 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runSprint("land", "eval", "--repo", "nova-tools", "--redis", addr, "--sprint", "sprint-sync", "--mirror", "none", "--policy", pol)
+	if code != 2 {
+		t.Fatalf("exit %d, want 2; stdout %q stderr %q", code, stdout, stderr)
+	}
+	for _, want := range []string{"policy sync base dev", pkey, "WRONGTYPE", "nothing evaluated"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr %q does not name %q", stderr, want)
+		}
+	}
+	if strings.Contains(stdout, "EVAL repo=") {
+		t.Fatalf("a failed policy sync still printed a pass summary: %q", stdout)
+	}
 }

@@ -2,6 +2,7 @@ package land
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -83,13 +84,26 @@ func EvaluateUnit(ctx context.Context, c *redis.Client, sprint, unit string, pol
 		return nil, fmt.Errorf("supersede %s: %w", unit, err)
 	}
 	if superseded > 0 {
-		u["holds_open"] = c.HGet(ctx, ukey, "holds_open").Val()
+		// The count moved under the release; it is read again, and a store
+		// that does not answer is a closed verdict, never zero holds. Only
+		// redis.Nil is absent (no hold was ever recorded), and absent is 0.
+		raw, err := c.HGet(ctx, ukey, "holds_open").Result()
+		switch {
+		case errors.Is(err, redis.Nil):
+			raw = ""
+		case err != nil:
+			return closedOnStore(res, "HGET", ukey+" holds_open", err)
+		}
+		u["holds_open"] = raw
 	}
 
 	// 1. CI receipt for expected identity (GID lookup, §3.3 / §3.7 / L31b)
 	pkey := PolicyKey(repo, base)
 	pRec, err := c.HGetAll(ctx, pkey).Result()
-	if err != nil || len(pRec) == 0 {
+	if err != nil {
+		return closedOnStore(res, "HGETALL", pkey, err)
+	}
+	if len(pRec) == 0 {
 		res.Landable = false
 		res.CIStatus = "nopolicy"
 		res.Reason = "ci nopolicy"
@@ -106,7 +120,11 @@ func EvaluateUnit(ctx context.Context, c *redis.Client, sprint, unit string, pol
 
 	ciRecKey := CIKey(repo, head, expectedGID)
 	ciRec, err := c.HGetAll(ctx, ciRecKey).Result()
-	if err == nil && len(ciRec) > 0 {
+	if err != nil {
+		// Not "ci missing": a receipt nobody could read queues no CI single.
+		return closedOnStore(res, "HGETALL", ciRecKey, err)
+	}
+	if len(ciRec) > 0 {
 		verdict := ciRec["verdict"]
 		if verdict == "OK" {
 			res.CIStatus = "OK"
@@ -120,7 +138,10 @@ func EvaluateUnit(ctx context.Context, c *redis.Client, sprint, unit string, pol
 	} else {
 		// Key absent. Check if any GIDs exist for this head (stale vs missing)
 		gidsKey := CIGIDsKey(repo, head)
-		gids, _ := c.SMembers(ctx, gidsKey).Result()
+		gids, err := c.SMembers(ctx, gidsKey).Result()
+		if err != nil {
+			return closedOnStore(res, "SMEMBERS", gidsKey, err)
+		}
 		if len(gids) > 0 {
 			res.CIStatus = "stale"
 			res.Reason = fmt.Sprintf("ci stale have=%s", strings.Join(gids, ","))
@@ -161,8 +182,17 @@ func EvaluateUnit(ctx context.Context, c *redis.Client, sprint, unit string, pol
 		return res, nil
 	}
 
-	// 3. holds_open = 0 (§3.3)
-	holdsOpen, _ := strconv.Atoi(u["holds_open"])
+	// 3. holds_open = 0 (§3.3). A count nobody can read is not zero: the unit
+	// is refused naming the field and its raw value, and ns_unit_eval, which
+	// never looks at holds again, is not called.
+	holdsOpen, err := parseCount(u["holds_open"])
+	if err != nil {
+		res.Landable = false
+		res.Reason = fmt.Sprintf("holds_open unreadable: unit %s key %s field holds_open raw %q: %v; never landable until the field is a count (nova-sprint hold show --sprint %s)",
+			unit, ukey, u["holds_open"], err, sprint)
+		res.WhoCanMove = "coordinator"
+		return res, nil
+	}
 	res.HoldsOpen = holdsOpen
 	if holdsOpen > 0 {
 		res.Landable = false
@@ -176,7 +206,11 @@ func EvaluateUnit(ctx context.Context, c *redis.Client, sprint, unit string, pol
 	doneFlag := u["done"]
 	if cardDone != head && doneFlag != "1" {
 		// Check key card:<unit>:done
-		hasDoneKey, _ := c.Exists(ctx, fmt.Sprintf("card:%s:done", unit)).Result()
+		doneKey := fmt.Sprintf("card:%s:done", unit)
+		hasDoneKey, err := c.Exists(ctx, doneKey).Result()
+		if err != nil {
+			return closedOnStore(res, "EXISTS", doneKey, err)
+		}
 		if hasDoneKey == 0 {
 			res.Landable = false
 			res.Reason = "card not done at head"
@@ -193,12 +227,26 @@ func EvaluateUnit(ctx context.Context, c *redis.Client, sprint, unit string, pol
 		if strings.HasPrefix(stackParent, "#") {
 			prStr := strings.TrimPrefix(stackParent, "#")
 			if prNum, err := strconv.Atoi(prStr); err == nil {
-				if pu := c.Get(ctx, PRUnitKey(sprint, repo, prNum)).Val(); pu != "" {
+				puKey := PRUnitKey(sprint, repo, prNum)
+				pu, err := c.Get(ctx, puKey).Result()
+				switch {
+				case errors.Is(err, redis.Nil):
+					// absent: the parent is named by PR and has no unit yet
+				case err != nil:
+					return closedOnStore(res, "GET", puKey, err)
+				case pu != "":
 					resolvedParent = pu
 				}
 			}
 		}
-		parentState := c.HGet(ctx, UnitKey(sprint, resolvedParent), "state").Val()
+		parentKey := UnitKey(sprint, resolvedParent)
+		parentState, err := c.HGet(ctx, parentKey, "state").Result()
+		switch {
+		case errors.Is(err, redis.Nil):
+			parentState = "no unit record " + parentKey
+		case err != nil:
+			return closedOnStore(res, "HGET", parentKey+" state", err)
+		}
 		if parentState != "landed" {
 			res.Landable = false
 			res.Reason = fmt.Sprintf("stack parent %s (%s)", stackParent, parentState)
@@ -208,9 +256,12 @@ func EvaluateUnit(ctx context.Context, c *redis.Client, sprint, unit string, pol
 	}
 
 	// All conditions met: promote to landable via ns_unit_eval!
-	tier := 0
-	if tStr := u["tier"]; tStr != "" {
-		tier, _ = strconv.Atoi(tStr)
+	tier, err := parseCount(u["tier"])
+	if err != nil {
+		res.Landable = false
+		res.Reason = fmt.Sprintf("tier unreadable: unit %s key %s field tier raw %q: %v", unit, ukey, u["tier"], err)
+		res.WhoCanMove = "coordinator"
+		return res, nil
 	}
 	_, err = CallUnitEval(ctx, c, sprint, unit, repo, base, tier)
 	if err != nil {
@@ -222,6 +273,34 @@ func EvaluateUnit(ctx context.Context, c *redis.Client, sprint, unit string, pol
 	res.Landable = true
 	res.Reason = "landable"
 	return res, nil
+}
+
+// closedOnStore is the closed verdict for a store that did not answer a
+// lookup: the operation, the key and the error, never landable, and the
+// coordinator moves. The store's answer is unknown, which is neither absent
+// (redis.Nil) nor zero.
+func closedOnStore(res *UnitEvalResult, op, key string, err error) (*UnitEvalResult, error) {
+	res.Landable = false
+	res.Reason = fmt.Sprintf("store %s %s: %v; the unit is not evaluated until the store answers", op, key, err)
+	res.WhoCanMove = "coordinator"
+	return res, nil
+}
+
+// parseCount reads a unit hash count. An absent field ("") is 0: no hold
+// was ever recorded, no tier was set. Anything else that is not a
+// non-negative integer is an error the caller names, never 0.
+func parseCount(raw string) (int, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, err
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("negative count %d", n)
+	}
+	return n, nil
 }
 
 // QueueCISingle queues the one ci single for a unit's expected identity
