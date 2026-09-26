@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 const cutFromSHA = "0123456789abcdef0123456789abcdef01234567"
@@ -42,6 +43,16 @@ type fakeCutStore struct {
 	pushed  map[string]bool
 	ledger  map[string]map[string]string
 	noWrite error
+	// paths is ws:paths, every open stream's paths (#4322); nil gates nothing.
+	paths ws.StreamPaths
+}
+
+func (f *fakeCutStore) streamPaths(context.Context) (ws.StreamPaths, error) {
+	out := ws.StreamPaths{}
+	for s, p := range f.paths {
+		out[s] = p
+	}
+	return out, nil
 }
 
 func (f *fakeCutStore) push(_ context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
@@ -93,6 +104,9 @@ func cutDeps(forge *fakeCutForge, st *fakeCutStore) cutFromDeps {
 	}
 	if st != nil {
 		d.Push, d.LedgerRead, d.LedgerWrite = st.push, st.ledgerRead, st.ledgerWrite
+		if st.paths != nil {
+			d.StreamPaths = st.streamPaths
+		}
 	}
 	return d
 }

@@ -300,6 +300,18 @@ func (r *PushRequest) args() ([]any, error) {
 	}
 	o.Fields = append(o.Fields, r.Fields...)
 	o.Fields = append(o.Fields, spec...)
+	// stream_paths (nova-tools#4322): the record's PATHS as its stream holds
+	// them; the move into a live set adds them to ws:paths[<stream>].
+	// The last paths pair is the one HSET keeps.
+	var paths []string
+	for i := 0; i+1 < len(o.Fields); i += 2 {
+		if o.Fields[i] == "paths" {
+			paths = ws.SplitPaths(o.Fields[i+1])
+		}
+	}
+	if len(paths) > 0 {
+		o.Fields = append(o.Fields, ws.PathsField, ws.JoinPaths(paths))
+	}
 	front := "0"
 	if r.Front {
 		front = "1"

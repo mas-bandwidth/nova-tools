@@ -66,6 +66,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // cutColumns are a row's cells in the default order; id is optional.
@@ -77,6 +78,9 @@ type cutFromOpts struct {
 	Text                                       []byte
 	Repo, Stream, Sprint, Base, BaseSHA, Actor string
 	DryRun, NoGitHub                           bool
+	// Join names an open stream a row's PATHS may overlap: the row is cut
+	// onto it instead of its own stream (#4322).
+	Join string
 }
 
 // cutFromDeps are the verb's seams: the one GitHub writer, the one-pipeline
@@ -89,6 +93,9 @@ type cutFromDeps struct {
 	LedgerWrite func(ctx context.Context, key, repo string, row, issue int) error
 	BaseSHA     func(repo, base string) (string, error)
 	Now         func() time.Time
+	// StreamPaths reads every open stream's paths (ws.ReadStreamPaths); nil
+	// (a dry run) gates nothing.
+	StreamPaths func(ctx context.Context) (ws.StreamPaths, error)
 }
 
 // cutRow is one card row.
@@ -526,6 +533,35 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		summary(len(rows), refused)
 		return 1
 	}
+	// No path belongs to two open streams (nova-tools #4322): every row is
+	// gated, in file order, against every OTHER open stream's paths and the
+	// rows before it, before any issue is filed; --join names the one stream
+	// a row may join instead of its own.
+	if d.StreamPaths != nil {
+		open, err := d.StreamPaths(ctx)
+		if err != nil {
+			fmt.Fprintf(out, "CARD CUT REFUSED file=%s why=%s remedy=%s\n", cutField(o.From), cutField(err.Error()),
+				cutField("check --redis or NOVA_SPRINT_REDIS and rerun; nothing was filed"))
+			summary(len(rows), len(rows))
+			return 1
+		}
+		bad := 0
+		for _, r := range rows {
+			paths := ws.SplitPaths(r.paths)
+			to, no := open.Gate(r.stream, paths, o.Join)
+			if no != nil {
+				fmt.Fprintf(out, "%s row=%d line=%d id=%s\n", no.Receipt(), r.n, r.line, cutField(r.id))
+				bad++
+				continue
+			}
+			r.stream = to
+			open.Add(to, paths)
+		}
+		if bad > 0 {
+			summary(len(rows), bad)
+			return 1
+		}
+	}
 	if o.DryRun {
 		for _, r := range order {
 			fmt.Fprintf(out, "CARD CUT DRY row=%d id=%s stream=%s who=%s route=%s est=%s depends=%s title=%s\n", r.n, cutField(r.id),
@@ -713,6 +749,9 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 		defer func() { _ = st.Close() }()
 		d.Push = func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
 			return taskcard.PushMany(ctx, st.Client(), reqs)
+		}
+		d.StreamPaths = func(ctx context.Context) (ws.StreamPaths, error) {
+			return ws.ReadStreamPaths(ctx, st.Client())
 		}
 		d.LedgerRead = func(ctx context.Context, key string) (taskcard.CutLedger, error) {
 			return taskcard.ReadCutLedger(ctx, st.Client(), key)

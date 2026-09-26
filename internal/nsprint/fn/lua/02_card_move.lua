@@ -258,6 +258,73 @@ local function cm_registered(stream)
   return redis.call('SISMEMBER', 'ws:names', stream) == 1 and redis.call('ZSCORE', 'ws:order', stream) ~= false
 end
 
+-- SP: the stream's paths (nova-tools #4322): no path belongs to two open
+-- streams. ws:paths is a HASH, field <stream>, value the union of its live
+-- cards' stream_paths (each record's PATHS as internal/nsprint/ws.SplitPaths
+-- reads them, written by the pusher), sorted and comma-joined; a stream with
+-- none has no field. SP.moved is its one writer, called by card_move and
+-- TK.move after every move: a record entering a live set of its stream adds
+-- its paths (SP.add); one leaving recomputes the union from the records
+-- still live (SP.recompute), so a landing or a cancel frees its paths.
+-- Push reads the hash (one HGETALL) and refuses a card whose paths overlap
+-- another stream's; ws check recomputes it from the records.
+local SP = { KEY = 'ws:paths', FIELD = 'stream_paths',
+  WHERE = { 'waiting', 'ready', 'working', 'review', 'merging' },
+  LIVE = { waiting = true, ready = true, working = true, review = true, merging = true } }
+
+-- SP.key(m): the record of a ws set member (a card id is its own record).
+function SP.key(m)
+  if string.match(m, '^s:[-a-z0-9]+:card:') then return m end
+  return 'task:' .. m
+end
+
+function SP.put(stream, seen)
+  local out = {}
+  for p in pairs(seen) do out[#out + 1] = p end
+  if #out == 0 then
+    redis.call('HDEL', SP.KEY, stream)
+    return
+  end
+  table.sort(out)
+  redis.call('HSET', SP.KEY, stream, table.concat(out, ','))
+end
+
+function SP.into(seen, csv)
+  if type(csv) ~= 'string' then return end
+  for p in string.gmatch(csv, '[^,]+') do seen[p] = true end
+end
+
+-- SP.recompute(stream): the union over every record in the stream's live sets.
+function SP.recompute(stream)
+  if type(stream) ~= 'string' or stream == '' then return end
+  local seen = {}
+  for _, w in ipairs(SP.WHERE) do
+    for _, m in ipairs(redis.call('ZRANGE', 'ws:' .. stream .. ':' .. w, 0, -1)) do
+      SP.into(seen, redis.call('HGET', SP.key(m), SP.FIELD))
+    end
+  end
+  SP.put(stream, seen)
+end
+
+-- SP.add(stream, key): the record's paths joined into its stream's.
+function SP.add(stream, key)
+  local mine = redis.call('HGET', key, SP.FIELD)
+  if type(mine) ~= 'string' or mine == '' then return end
+  local seen = {}
+  SP.into(seen, redis.call('HGET', SP.KEY, stream))
+  SP.into(seen, mine)
+  SP.put(stream, seen)
+end
+
+-- SP.moved(key, s0, w0, s1, w1): record key moved from stream s0 set w0 to
+-- stream s1 set w1.
+function SP.moved(key, s0, w0, s1, w1)
+  local l0 = s0 ~= '' and SP.LIVE[w0] == true
+  local l1 = s1 ~= '' and SP.LIVE[w1] == true
+  if l0 and (not l1 or s0 ~= s1) then SP.recompute(s0) end
+  if l1 and (not l0 or s0 ~= s1) then SP.add(s1, key) end
+end
+
 -- The pool's members are labels (not a table set of ids): added as they are.
 -- A card-id view goes through card_add; a refusal there leaves the view
 -- unlinked, which card_move's after-check names (DRIFT-AFTER). A stream view
@@ -521,6 +588,7 @@ local function card_move(id, to, o)
   for _, e in ipairs(old) do
     if not keep[e.k] and cm_has(e) then return 'DRIFT-AFTER twice ' .. e.k .. ' ' .. id end
   end
+  SP.moved(id, cur.stream, cur.where, nxt.stream, to)
   if to ~= cur.where or ok ~= cur.ok then
     local from = cur.where
     if from == 'done' then from = 'done/' .. cur.ok end
@@ -1631,6 +1699,7 @@ function TK.move(id, to, o)
   for _, k in ipairs(old) do
     if not keep[k] and redis.call('ZSCORE', k, id) then return 'DRIFT-AFTER twice ' .. k .. ' task:' .. id end
   end
+  SP.moved('task:' .. id, cur.stream, cur.where, nxt.stream, to)
   local from, dest = cur.where, to
   if from == 'done' then from = 'done/' .. cur.ok end
   if to == 'done' then dest = 'done/' .. ok end

@@ -63,6 +63,10 @@ redis.register_function('ns_card_push', function(keys, args)
   -- leg (#3255): the one leg a bench profile must carry (deal leg filter),
   -- a record field CARD.create stores with the rest.
   local leg = args[19]
+  -- stream_paths (arg 20, nova-tools#4322): the card's PATHS as the stream
+  -- compares them (ws.SplitPaths, comma-joined); the move into waiting adds
+  -- them to ws:paths[<stream>] (SP, 02_card_move.lua). Empty: not stored.
+  local stream_paths = args[20]
   if type(depends_on) ~= 'string' then
     depends_on = ''
   end
@@ -129,6 +133,10 @@ redis.register_function('ns_card_push', function(keys, args)
   if origin ~= '' then
     table.insert(fields, 'origin')
     table.insert(fields, origin)
+  end
+  if type(stream_paths) == 'string' and stream_paths ~= '' then
+    table.insert(fields, 'stream_paths')
+    table.insert(fields, stream_paths)
   end
   local err = CARD.create(card, fields, { bench = bench, stream = stream, by = 'card-push' })
   if not err and place == 'pool' then

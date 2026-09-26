@@ -22,11 +22,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 )
 
 func init() {
-	register(Verb{Name: "ws", Summary: "the ws index: counts, checkpoint to TSV, show --order (every stream's cards with their DEPENDS-ON edges and sentinel)", Run: runWS})
+	register(Verb{Name: "ws", Summary: "the ws index: counts, checkpoint to TSV, show --order (every stream's cards with their DEPENDS-ON edges and sentinel), check (PATHS OVERLAP between open streams; --repair the stream paths)", Run: runWS})
 	register(Verb{Name: "scope", Summary: "keep, park, unpark or list the streams in the sprint's scope", Run: runScope})
 	register(Verb{Name: "stream", Summary: "list, order or rename the work streams; open, rebase, pr, status or close a stream branch", Run: runStream})
 }
@@ -114,11 +115,13 @@ func subverb(args []string, verb, want string, errOut io.Writer) (string, []stri
 }
 
 func runWS(ctx context.Context, args []string, out, errOut io.Writer) int {
-	sub, rest, code, ok := subverb(args, "ws", "counts, checkpoint or show", errOut)
+	sub, rest, code, ok := subverb(args, "ws", "counts, checkpoint, show or check", errOut)
 	if !ok {
 		return code
 	}
 	switch sub {
+	case "check":
+		return runWSCheck(ctx, rest, out, errOut)
 	case "counts":
 		return runWSCounts(ctx, rest, out, errOut)
 	case "checkpoint":
@@ -126,7 +129,51 @@ func runWS(ctx context.Context, args []string, out, errOut io.Writer) int {
 	case "show":
 		return runWSShow(ctx, rest, out, errOut)
 	}
-	return refuse(errOut, "ws", "unknown subverb "+sub+"; want counts, checkpoint or show")
+	return refuse(errOut, "ws", "unknown subverb "+sub+"; want counts, checkpoint, show or check")
+}
+
+// runWSCheck is `ws check [--repair]` (nova-tools #4322): no path belongs to
+// two open streams. It recomputes every stream's paths from its live cards'
+// records (ws.LivePaths, three pipelined reads) and prints one PATHS
+// OVERLAP line per pair of streams sharing a path and one PATHS STALE line
+// per stream whose record (ws:paths) differs; --repair writes the records
+// (ws.RepairPaths, one pipeline). Then one receipt. Exit 0 clean (or
+// repaired with no overlap), 1 an overlap or an unrepaired stale record.
+func runWSCheck(ctx context.Context, args []string, out, errOut io.Writer) int {
+	w := newWSCmd("ws check", out, errOut)
+	repair := w.fs.Bool("repair", false, "")
+	if _, code, ok := w.parse(args, 0, "ws check --redis <addr> [--repair]"); !ok {
+		return code
+	}
+	st, code, ok := w.open(ctx)
+	if !ok {
+		return code
+	}
+	defer st.Close()
+	live, stored, cards, err := ws.LivePaths(ctx, st.Client())
+	if err != nil {
+		return w.done(err, "")
+	}
+	pairs := live.Overlaps()
+	for _, p := range pairs {
+		fmt.Fprintln(out, p.Line())
+	}
+	stale := ws.Stale(live, stored)
+	for _, s := range stale {
+		fmt.Fprintf(out, "PATHS STALE stream=%s record=%d live=%d\n", oneline.Field(s), len(stored[s]), len(live[s]))
+	}
+	streams, records := 0, 0
+	if *repair {
+		if streams, records, err = ws.RepairPaths(ctx, st.Client(), live, stored, cards); err != nil {
+			return w.done(err, "")
+		}
+	}
+	fmt.Fprintf(out, "CHECK streams=%d cards=%d overlaps=%d stale=%d repaired=%d records=%d ms=%s\n",
+		len(live), len(cards), len(pairs), len(stale), streams, records, w.ms())
+	if len(pairs) > 0 || (len(stale) > 0 && !*repair) {
+		return 1
+	}
+	return 0
 }
 
 // runWSShow is `ws show --order [--stream <s>]` (nova-tools #4318): every
@@ -447,9 +494,14 @@ func runStreamLs(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	defer st.Close()
 	rows, err := ws.Counts(ctx, st.Client())
+	if err != nil {
+		return w.done(err, "")
+	}
+	// paths: the count of the stream record's paths (ws:paths, #4322)
+	paths, err := ws.ReadStreamPaths(ctx, st.Client())
 	for _, r := range rows {
-		fmt.Fprintf(out, "%d %s waiting=%d ready=%d working=%d merging=%d landed=%d parked=%d\n",
-			r.Rank, strconv.Quote(r.Stream), r.Waiting, r.Ready, r.Working, r.Merging, r.Landed, r.Parked)
+		fmt.Fprintf(out, "%d %s waiting=%d ready=%d working=%d merging=%d landed=%d parked=%d paths=%d\n",
+			r.Rank, strconv.Quote(r.Stream), r.Waiting, r.Ready, r.Working, r.Merging, r.Landed, r.Parked, len(paths[r.Stream]))
 	}
 	return w.done(err, fmt.Sprintf("STREAMS n=%d", len(rows)))
 }

@@ -68,6 +68,7 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	index := fs.String("index", "", "")
 	stream := fs.String("stream", "", "")
 	base := fs.String("base", "", "")
+	join := fs.String("join", "", "")
 	from := fs.String("from", "", "")
 	dryRun := fs.Bool("dry-run", false, "")
 	noGitHub := fs.Bool("no-github", false, "")
@@ -83,10 +84,10 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 			return 2
 		}
 		return cmdCardCutFrom(ctx, cutFromOpts{From: *from, Repo: *repo, Stream: *stream, Sprint: *sprint, Base: *base,
-			BaseSHA: *baseSHA, Actor: *actor, DryRun: *dryRun, NoGitHub: *noGitHub}, *addr, stdout, stderr)
+			BaseSHA: *baseSHA, Actor: *actor, DryRun: *dryRun, NoGitHub: *noGitHub, Join: *join}, *addr, stdout, stderr)
 	}
 	if *sprint == "" || *addr == "" || *repo == "" || *issue <= 0 || *spec < 0 || fs.NArg() > 0 || *dryRun || *noGitHub || *baseSHA != "" || *actor != "" {
-		fmt.Fprintln(stderr, "nova-sprint card: cut wants --sprint <S> --repo <owner/name> --issue <n> and --redis <addr> (or NOVA_SPRINT_REDIS), optional --spec <n> --index <ctxindex dir> --stream <name> --base <branch>; or many cards: --from <cards.tsv|-> --repo <owner/name> [--stream <s>] [--sprint <S>] [--base dev] [--base-sha <sha40>] [--actor <a>] [--dry-run] [--no-github]; run: nova-sprint help")
+		fmt.Fprintln(stderr, "nova-sprint card: cut wants --sprint <S> --repo <owner/name> --issue <n> and --redis <addr> (or NOVA_SPRINT_REDIS), optional --spec <n> --index <ctxindex dir> --stream <name> --base <branch> --join <stream>; or many cards: --from <cards.tsv|-> --repo <owner/name> [--stream <s>] [--sprint <S>] [--base dev] [--base-sha <sha40>] [--actor <a>] [--join <stream>] [--dry-run] [--no-github]; run: nova-sprint help")
 		return 2
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -99,10 +100,15 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	}
 	defer st.Close()
 	c, res, err := card.Cut(ctx, st.Client(), cardCutSource(st), card.CutInput{
-		Sprint: *sprint, Repo: *repo, Issue: *issue, Spec: *spec, Index: *index, Stream: *stream, Base: *base,
+		Sprint: *sprint, Repo: *repo, Issue: *issue, Spec: *spec, Index: *index, Stream: *stream, Base: *base, Join: *join,
 	})
 	if err != nil {
 		fmt.Fprintf(stdout, "REFUSED card cut %s why=%s\n", who, oneline.Field(err.Error()))
+		return 1
+	}
+	if res.Code != 0 && strings.HasPrefix(res.Stdout, "REFUSED ") {
+		// the push's own receipt (PATHS overlap, #4322), its remedy on the line
+		fmt.Fprintf(stdout, "%s issue=%s\n", strings.TrimSpace(res.Stdout), who)
 		return 1
 	}
 	if res.Code != 0 {
@@ -129,8 +135,9 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	stdin := fs.Bool("stdin", false, "")
 	dir := fs.String("dir", "", "")
 	mapKind := fs.Bool("map-kind", false, "")
+	join := fs.String("join", "", "")
 	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" {
-		return refuse(stderr, "card", "push needs --sprint <name>, --redis <addr>, and card files (or --dir <cards/>, or --stdin); --map-kind pushes a classification KIND as its RESULT kind")
+		return refuse(stderr, "card", "push needs --sprint <name>, --redis <addr>, and card files (or --dir <cards/>, or --stdin); --map-kind pushes a classification KIND as its RESULT kind; --join <stream> pushes a card whose PATHS overlap that open stream onto it")
 	}
 	sources := 0
 	for _, on := range []bool{*stdin, *dir != "", fs.NArg() > 0} {
@@ -156,7 +163,7 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	}
 	defer client.Close()
 	first := 0
-	for _, res := range card.PushBatch(ctx, client, *sprint, files, card.PushOptions{MapKind: *mapKind}) {
+	for _, res := range card.PushBatch(ctx, client, *sprint, files, card.PushOptions{MapKind: *mapKind, Join: *join}) {
 		if wrote := writeCardResult(stdout, stderr, res); wrote != 0 && first == 0 {
 			first = wrote
 		}
@@ -226,6 +233,11 @@ func openCardRedis(ctx context.Context, addr string, stderr io.Writer) (*redis.C
 }
 
 func writeCardResult(stdout, stderr io.Writer, res card.VerbResult) int {
+	if res.Code != 0 && strings.HasPrefix(res.Stdout, "REFUSED ") {
+		// a refusal with its own receipt line (PATHS overlap, #4322)
+		_, _ = io.WriteString(stdout, res.Stdout)
+		return res.Code
+	}
 	if res.Code != 0 {
 		fmt.Fprintf(stderr, "nova-sprint card: %s; run: nova-sprint help\n", oneline.Escape(strings.TrimSpace(res.Stderr)))
 		return res.Code
