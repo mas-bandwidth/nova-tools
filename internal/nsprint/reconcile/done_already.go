@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -208,6 +210,10 @@ func (d *DoneAlready) one(ctx context.Context, token, s string, c doneAlreadyCar
 	case "wait":
 		o.Action, o.Why = "WAIT", why
 		return o, nil
+	case "error":
+		// The mirror did not answer: the card's error, named in the pass
+		// error, never a WAIT that reads as "not fetched yet" for ever.
+		return o, fmt.Errorf("done-already %s/%s: %s", s, c.label, why)
 	}
 	evidence := fmt.Sprintf("DONE-ALREADY: %s on %s (card %s, bench %s)", sha, base, c.label, c.bench)
 	if d.Forge == nil {
@@ -252,8 +258,12 @@ func (d *DoneAlready) record(ctx context.Context, token, s string, c doneAlready
 	return o, nil
 }
 
-// onBase is yes, no (the sha is in the mirror and not on base) or wait (no
-// mirror, or the mirror does not know the sha or the base yet), with why.
+// onBase is yes, no (the sha is in the mirror and not on base), wait (no
+// mirror, or the mirror does not know the sha or the base yet) or error (git
+// itself did not answer: a mirror it cannot open, no git, the time limit),
+// with why. Only git's own exit 1 (rev-parse --verify -q, cat-file -e) means
+// the sha is absent; anything else names the mirror, the git command and its
+// stderr, and the next verb.
 func (d *DoneAlready) onBase(ctx context.Context, repo, sha, base string) (string, string) {
 	mirror := ""
 	if d.Mirror != nil {
@@ -263,7 +273,10 @@ func (d *DoneAlready) onBase(ctx context.Context, repo, sha, base string) (strin
 		return "wait", "no mirror of " + repo + " on this host"
 	}
 	if _, err := os.Stat(filepath.Join(mirror, "objects")); err != nil {
-		return "wait", "no mirror of " + repo + " at " + mirror
+		if errors.Is(err, os.ErrNotExist) {
+			return "wait", "no mirror of " + repo + " at " + mirror
+		}
+		return "error", "the mirror of " + repo + " at " + mirror + " cannot be read: " + err.Error() + "; " + mirrorRepair
 	}
 	limit := d.Git
 	if limit <= 0 {
@@ -271,26 +284,83 @@ func (d *DoneAlready) onBase(ctx context.Context, repo, sha, base string) (strin
 	}
 	gctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	git := func(args ...string) error {
-		cmd := exec.CommandContext(gctx, "git", append([]string{"--git-dir", mirror}, args...)...)
+	// git runs one command against the mirror: exit 0, exit 1 (the command's own
+	// "no"), or a failure that names the command and its stderr.
+	gitOut := func(args ...string) (out, why string, ok bool) {
+		argv := append([]string{"--git-dir", mirror}, args...)
+		cmd := exec.CommandContext(gctx, "git", argv...)
 		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-		return cmd.Run()
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		if err == nil {
+			return strings.TrimSpace(stdout.String()), "", true
+		}
+		cause := err.Error()
+		if gctx.Err() != nil {
+			cause = "did not finish within " + limit.String() + " (" + cause + ")"
+		}
+		return "", "git " + strings.Join(argv, " ") + " in the mirror of " + repo + ": " + cause +
+			": " + oneline.Escape(strings.TrimSpace(stderr.String())) + "; " + mirrorRepair, false
+	}
+	git := func(args ...string) (code int, why string) {
+		argv := append([]string{"--git-dir", mirror}, args...)
+		cmd := exec.CommandContext(gctx, "git", argv...)
+		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		err := cmd.Run()
+		var exit *exec.ExitError
+		switch {
+		case err == nil:
+			return 0, ""
+		case errors.As(err, &exit) && exit.ExitCode() == 1:
+			return 1, ""
+		}
+		cause := err.Error()
+		if gctx.Err() != nil {
+			cause = "did not finish within " + limit.String() + " (" + cause + ")"
+		}
+		return -1, "git " + strings.Join(argv, " ") + " in the mirror of " + repo + ": " + cause +
+			": " + oneline.Escape(strings.TrimSpace(stderr.String())) + "; " + mirrorRepair
 	}
 	ref := "refs/heads/" + base
-	if git("cat-file", "-e", sha+"^{commit}") != nil {
+	// Absent is git's own exit 1, twice: rev-parse --verify -q for an
+	// abbreviated sha the mirror cannot resolve (a full sha always parses),
+	// then cat-file -e for a full sha the mirror does not hold. A peel
+	// (^{commit}) would turn absent into exit 128, the same as a broken mirror.
+	switch code, why := git("rev-parse", "--verify", "-q", sha); code {
+	case 1:
 		return "wait", sha + " is not in the mirror of " + repo + " yet"
+	case -1:
+		return "error", why
 	}
-	if git("rev-parse", "--verify", "-q", ref) != nil {
+	switch code, why := git("cat-file", "-e", sha); code {
+	case 1:
+		return "wait", sha + " is not in the mirror of " + repo + " yet"
+	case -1:
+		return "error", why
+	}
+	if kind, why, ok := gitOut("cat-file", "-t", sha); !ok {
+		return "error", why
+	} else if kind != "commit" {
+		return "no", sha + " is a " + kind + ", not a commit, in the mirror of " + repo
+	}
+	switch code, why := git("rev-parse", "--verify", "-q", ref); code {
+	case 1:
 		return "wait", "the mirror of " + repo + " has no " + base
+	case -1:
+		return "error", why
 	}
-	err := git("merge-base", "--is-ancestor", sha, ref)
-	var exit *exec.ExitError
-	switch {
-	case err == nil:
+	switch code, why := git("merge-base", "--is-ancestor", sha, ref); code {
+	case 0:
 		return "yes", ""
-	case errors.As(err, &exit) && exit.ExitCode() == 1:
+	case 1:
 		return "no", sha + " is not on " + base + " in the mirror of " + repo
 	default:
-		return "wait", "git merge-base: " + err.Error()
+		return "error", why
 	}
 }
+
+// mirrorRepair is the next action when the mirror itself did not answer.
+const mirrorRepair = "run: nova-sprint mirror check, then nova-sprint mirror refresh"
