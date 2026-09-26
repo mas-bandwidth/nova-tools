@@ -46,6 +46,11 @@ func TestIdleLogProgress(t *testing.T) {
 
 func TestIdleWatchEndsACardThatOnlyDribblesIntoItsLog(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (a 30 s poll for the card's start; it
+	// waited it out under load on the 2026-09-25 Studio run). Skipped 2026-09-25 by
+	// Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	t.Run("one byte at a time", func(t *testing.T) {
 		dir := t.TempDir()
@@ -145,6 +150,10 @@ func TestIdleWatchEndsACardThatOnlyDribblesIntoItsLog(t *testing.T) {
 // pinned constant so only the log reading is on trial.
 func TestIdleWatchKeepsACardWhoseLogGrowsAPage(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")

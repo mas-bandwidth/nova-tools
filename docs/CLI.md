@@ -1596,7 +1596,6 @@ Deleted (nova-tools #3801). It was frozen on 2026-09-23 and superseded by
 | `harvest` | `nova-sprint card harvest`: push, find-or-open the PR, verify the head |
 | `status` | `nova-sprint table`: the sprint table from Redis |
 
-The engine it drove is still `internal/pulse`, reached by no command.
 
 ## nova-review
 

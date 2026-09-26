@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -232,35 +231,8 @@ func TestUnrecordedUnknownIsStillAHarvestHold(t *testing.T) {
 		t.Fatalf("the refusal returned before the unknown verdict:\n%s\n%s", stdout.String(), stderr.String())
 	}
 
-	harvestRoot := t.TempDir()
-	job := filepath.Join(harvestRoot, "1", "jobs", label)
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(job, "harness.log"), stdout.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	card := filepath.Join(harvestRoot, label+".md")
-	if err := os.WriteFile(card, []byte("RESULT "+label+" sha=u\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(harvestRoot, "cards.tsv"), []byte(label+"\t1\tflash\t"+card+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var hout, herr bytes.Buffer
-	hcode := pulse.Harvest(pulse.HarvestInput{
-		ID: "p1", Root: harvestRoot, Templates: harvestRoot, MaxBodyBytes: 4096, Max: 20,
-		Stdout: &hout, Stderr: &herr, Now: time.Now,
-	})
-	if hcode == 0 && !strings.Contains(herr.String(), "HARVEST HOLD") {
-		t.Fatalf("harvest did not hold the unrecorded run:\ncode=%d\n%s\n%s", hcode, hout.String(), herr.String())
-	}
-	if raw, err := os.ReadFile(filepath.Join(harvestRoot, "retry.tsv")); err == nil && strings.Contains(string(raw), label) {
-		t.Fatalf("harvest retried the unrecorded unknown:\n%s", raw)
-	}
-	if !strings.Contains(herr.String(), "unknown-acceptance") {
-		t.Fatalf("harvest did not name the unknown:\n%s\n%s", hout.String(), herr.String())
-	}
+	// The nova-pulse harvest hold that followed here left with internal/pulse (deleted 2026-09-25, #3969);
+	// the native refusal above is the property that remains.
 }
 
 func TestPersistUnknownFailsWhenNothingCanBeWritten(t *testing.T) {

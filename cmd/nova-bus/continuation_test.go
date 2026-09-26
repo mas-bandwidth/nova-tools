@@ -260,6 +260,10 @@ func TestContinuationSurvivesOrdinaryCursorAdvance(t *testing.T) {
 // item in the range refuses and writes nothing.
 func TestRetryAfterAPartialResumesAtNext(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	if testing.Short() {
 		t.Skip("slow: retries a send over repeated attempts; runs on the self-hosted legs and nightly")
@@ -487,6 +491,10 @@ func TestASingleOversizeBodyIsANamedGapAndNeverALoop(t *testing.T) {
 // page, and the cursor never crosses the commit it is in.
 func TestEarlierGapSurvivesLaterPages(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	checkout := settledBus(t)
 	commitFiles(t, checkout, "c1", busFile{"from-bo/g-a.md", noteFrom("nA", "a", fill(2048))})
 	c1 := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD"))
@@ -604,6 +612,10 @@ func makeNonAncestorToken(t *testing.T, checkout string) string {
 // one shape, and none of them confers any authority.
 func TestSnapshotTokenValidationAndBound(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	checkout := settledBus(t)
 	commitFiles(t, checkout, "v1", busFile{"from-bo/v1.md", noteFrom("nV1", "v1", fill(100))})
 	commitFiles(t, checkout, "v2", busFile{"from-bo/v2.md", noteFrom("nV2", "v2", fill(100))})

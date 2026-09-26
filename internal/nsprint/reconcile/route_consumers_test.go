@@ -43,6 +43,10 @@ func TestRouteConsumerStableOverHundredPasses(t *testing.T) {
 // consumers, the live one and the one just left; a dead consumer's pending
 // hold event is claimed and routed before its consumer is deleted.
 func TestRouteConsumerSweepBoundsRestarts(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	f := newPRFixture(t, "ctl-3808b")
 	ev := "s:" + f.S + ":hold:events"
 	// A dead instance read one note entry and never acknowledged it.

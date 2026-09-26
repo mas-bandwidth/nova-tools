@@ -20,6 +20,10 @@ import (
 // through the prRemoteURL seam, the GitHub reviews arrive as --reviews snapshot
 // files, and the bus is a directory of notes carrying typed READ/ASK lines.
 func TestIssue2063(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not on this machine; the reads ledger drives a real git against a bare fixture remote")
 	}

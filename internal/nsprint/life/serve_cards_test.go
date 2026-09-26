@@ -50,6 +50,10 @@ func receiptCount(t *testing.T, client *redis.Client, kind string) int {
 // its record by kind and each card ends with its child's typed line.
 func TestServeCardsWidthTwoFinishesFiveWithNoHandCall(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	st, client := seedSeat(t, 2)
 	ctx := context.Background()
@@ -200,6 +204,10 @@ func TestServeCardWithoutTypedLineFails(t *testing.T) {
 // ready, the one move), so no card sits in working without a child.
 func TestServeStopGivesCardBack(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	st, client := seedSeat(t, 1)
 	ctx := context.Background()

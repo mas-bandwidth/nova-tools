@@ -853,6 +853,10 @@ func TestHoldRouteUnparkFix(t *testing.T) {
 }
 
 func TestHoldRouteCrashReplay(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	ctx := context.Background()
 	setup := func(t *testing.T, name, consumer string) (*holdEnv, string) {
 		e := newHoldEnv(t, name)

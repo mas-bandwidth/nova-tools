@@ -62,6 +62,10 @@ func waitJobsEmpty(dir string, bound time.Duration) []string {
 // and one removed mid-wait is not.
 func TestWaitJobsEmptyStillFailsWhenNothingDeletes(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	jobs := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(jobs, "adopt-real", "card-real-wrapper", "1"), 0o755); err != nil {

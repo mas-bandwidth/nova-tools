@@ -92,6 +92,10 @@ func TestSilentBodyAfterHeadersIsOneUpstreamRequest(t *testing.T) {
 // than the gap, then the body. That is success. Nothing is marked lost.
 func TestBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	var upstream atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +293,10 @@ func TestNoHeadersIsOneUpstreamRequestAndUnknown(t *testing.T) {
 // through unchanged. Nothing is marked lost.
 func TestDelayedHeadersInsideTheWaitPassThrough(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	var upstream atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

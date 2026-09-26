@@ -18,7 +18,6 @@ All squeezes below were run on hulk (`~/rowan-working/tmp/lane-flakes/repo`, Go 
 
 | Test | Cause | Fix | Squeeze |
 | --- | --- | --- | --- |
-| `cmd/nova-review` `TestMutateVerbPrintsOneLineAndExitsZeroWhenTheTestIsRed`, `TestMutateVerbIgnoresTheCallersGOFLAGS`, `TestMutateVerbExitsOneAndNamesTheGreenTest`, `TestMutateGreenListingIsBounded` (one root cause) | `internal/review`'s `runUnits` read the verdict off the inner `go test`'s EXIT CODE when the run named no failing test: "exited non-zero, no `--- FAIL:` line, so every unit is red". A run the caller's `--timeout` killed exits non-zero and names nothing, so a loaded bench turned `red=1 green=1 PASS` into `red=2 green=0` — the same wrong counts three legs of integration-4 got from `GOFLAGS=-json`, arriving by the other road. | `runVerdict` (the decision, now a pure function of what a finished run leaves behind) asks `budgetEnded` FIRST: a run the context ended is a named SKIP and never a red unit. A skip never makes a verdict PASS, so the tool now says it could not answer instead of answering wrongly. `TestARunTheBudgetEndedIsASkipAndNeverARedUnit` pins it with no clock and no subprocess. | `GOMAXPROCS=1 taskset -c 12 go test ./cmd/nova-review/ -run TestMutate -count=20 -cpu 1 -parallel 8` with three `GOMAXPROCS=1 taskset -c 12 go test ./internal/pulse/ -count=3` on the same core — `ok … 337.680s`, 20/20 |
 
 ### The reproduction log for that one
 

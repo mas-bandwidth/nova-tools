@@ -104,7 +104,6 @@ var DefaultCatalog = []Entry{
 	E("internal/post", "GitHub PR and issue client", "go test ./internal/post", "go test ./internal/post"),
 	E("internal/prereview", "mechanical first pass over one pull request", "go test ./internal/prereview", "go test ./internal/prereview"),
 	E("internal/presence", "friend heartbeat keys with a TTL", "go test ./internal/presence", "go test ./internal/presence"),
-	E("internal/pulse", "the frozen nova-pulse engine (status, cut, harvest); no command has reached it since #3801", "go test ./internal/pulse", "go test ./internal/pulse"),
 	E("internal/record", "decision and execution records", "go test ./internal/record", "go test ./internal/record"),
 	E("internal/records", "database models and record formats", "go test ./internal/records", "go test ./internal/records"),
 	E("internal/redisq", "Redis transport queue", "go test ./internal/redisq", "go test ./internal/redisq"),

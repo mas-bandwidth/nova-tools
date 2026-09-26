@@ -21,8 +21,6 @@ const benchRunnerBaseSHA = "ce8631be6"
 var benchRunnerAtBase = []string{
 	"cmd/nova-sprint/expire.go sshProber.Probe",
 	"internal/nsprint/deal/ssh.go remoteSession.Run",
-	"internal/pulse/fleet.go fleetSSH",
-	"internal/pulse/harvestbench.go sshShell.Run",
 	"internal/release/edges.go ExecSSH.Fetch",
 	"internal/release/edges.go ExecSSH.Run",
 	"internal/release/edges.go ExecSSH.Send",

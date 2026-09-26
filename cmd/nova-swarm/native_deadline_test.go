@@ -69,6 +69,10 @@ func TestNativeDeadlineKillsTheWholeTree(t *testing.T) {
 // on a clock: a grandchild with five minutes of sleep left is alive the instant the run
 // returns, or the observable above could not tell the fix from the defect.
 func TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	windowsIsNotABench(t)
 	realKill := nativeKillGroup
 	t.Cleanup(func() { nativeKillGroup = realKill })
@@ -185,6 +189,10 @@ func pidGoneWithin(pid int, bound time.Duration) bool {
 // never a silent exit that loses the spend.
 func TestNativeTermFromOutsideWritesUsage(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	windowsIsNotABench(t)
 	tool, _ := builtBinaries(t)

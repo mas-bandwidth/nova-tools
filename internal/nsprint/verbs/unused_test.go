@@ -242,6 +242,10 @@ func (f *fixture) hand(sha string, verbs []string, resolved map[string]string, p
 
 func TestVerbsUnused(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	day := 24 * time.Hour
 	all := []string{"nova-check help", "nova-fix", "nova-fix links", "nova-sprint help", "nova-sprint land eval"}

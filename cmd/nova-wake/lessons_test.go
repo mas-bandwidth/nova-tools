@@ -81,6 +81,10 @@ func TestNoFalseWakeOnReload(t *testing.T) {
 // the most expensive model in the fleet, spent learning that the world was
 // exactly as it had been left.
 func TestBlocksRatherThanTicks(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	busDir, _ := fakes(t)
 	write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
 	state := filepath.Join(t.TempDir(), "wake.state")

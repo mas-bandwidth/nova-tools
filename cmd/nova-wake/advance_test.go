@@ -235,6 +235,10 @@ func advanceArgs(state, bus string, rest ...string) []string {
 // under it -- once --advance has moved the cursor past a note, a plain inbox
 // prints INBOX OPEN carrying=<n> and no NOTE line for it.
 func TestTheRealBusRelaysNewMailWithinTwoAdvancingPolls(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	if testing.Short() {
 		t.Skip("slow: spawns repeated watcher and bus processes; runs on the self-hosted legs and nightly")
 	}
@@ -349,6 +353,10 @@ func TestTheRealBusCursorWaitsBehindThePrint(t *testing.T) {
 // are on the reader's OPEN list and on no listing a plain inbox makes. Only the
 // recovery reaches them.
 func TestTheRealBusAdvanceRecoversAnInterruptedRead(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	if testing.Short() {
 		t.Skip("slow: pushes twenty-five notes in a loop and replays a recovery; runs on the self-hosted legs and nightly")
 	}
@@ -454,6 +462,10 @@ func assertOpenMax(t *testing.T, calls []string, want int) {
 // The other half of "never a constant": a second recovery, carrying a different
 // number. A hardcoded --open-max of ANY value fails one of the two.
 func TestTheRecoveryReadsTheCountAndNeverAConstant(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	if testing.Short() {
 		t.Skip("slow: pushes carried notes in a loop over two recoveries; runs on the self-hosted legs and nightly")
 	}

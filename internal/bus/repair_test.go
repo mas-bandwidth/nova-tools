@@ -64,6 +64,10 @@ func TestClearStaleIndexLockAgeBoundary(t *testing.T) {
 
 func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	hermetic(t)
 	dir := cloneBus(t, bareBus(t))
 	lock, err := indexLockPath(dir)
@@ -226,6 +230,10 @@ func assertLockKept(t *testing.T, lock string, cleared bool, err error) {
 // The old lock stays. A scan that claims to have looked and did not see it is a failure.
 func TestStaleLockStaysForCwdGitWithoutDashC(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	hermetic(t)
 	dir, lock := oldIndexLock(t)
 	cmd := exec.Command("git", "cat-file", "--batch")

@@ -736,6 +736,10 @@ func TestSendPreparedRecoveryHelper(t *testing.T) {
 
 func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep; measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	modes := []string{"before-note-write", "after-note-write", "after-index-write", "after-note-commit", "after-commit"}
 
@@ -827,6 +831,10 @@ func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 // remains owed and is named in the PR.
 func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	hermetic(t)
 	bare := bareBus(t)
