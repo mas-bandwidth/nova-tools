@@ -37,8 +37,9 @@ import (
 // clone the repo at BASE/base_sha, branch, commit, push, open the PR under
 // its own GitHub identity and end the copy itself with `nova-sprint friend
 // done --id <copy> --ok --pr <repo>#<n> --head <sha>` (card end after the PR
-// record; or --fail, or --score for a read), its session's `nova-sprint
-// friend beat` renewing the lease meanwhile.
+// record; or --fail, or --score for a read), the friend's one beat loop
+// (`nova-sprint friend beat --loop`, which friend pull started) renewing
+// the lease meanwhile.
 // `nova-sprint friend pull` writes these briefs into the friend's own dir.
 
 // CopyCard is the fields of a copy's record the card renders from.
@@ -63,6 +64,10 @@ type CopyCard struct {
 	// carries once its PR is open (TM.CARRY takes it to the copy): what a
 	// fix copy commits on and the wrapper pushes to.
 	Branch string
+	// Model, Harness and Child are who works the copy (taskcard.Who: what
+	// card work and friend pull record); the card's WORKER line (not WHO,
+	// which is the primary's who-may-do-it header, cut.go cutKeys).
+	Model, Harness, Child string
 }
 
 // CopyCardFrom reads a copy's record (HGETALL task:<copy>) as a CopyCard.
@@ -71,7 +76,19 @@ func CopyCardFrom(id string, rec map[string]string) CopyCard {
 		PR: rec["pr"], Head: rec["head"], Base: rec["base"], BaseSHA: rec["base_sha"], Paths: rec["paths"],
 		DoneWhen: rec["done_when"], Title: rec["title"], Origin: rec["origin"], Stream: rec["stream"],
 		Finding: rec["finding"], Route: rec["route"], Consumer: rec["consumer"], Review: rec["review"], Body: rec["body"],
-		Branch: rec["branch"], Test: rec["test"]}
+		Branch: rec["branch"], Model: rec["model"], Harness: rec["harness"], Child: rec["child"], Test: rec["test"]}
+}
+
+// WorkerLine is the copy's WORKER value: model=<m> harness=<h> child=<c>, each
+// only when recorded; "" when none is.
+func (c CopyCard) WorkerLine() string {
+	var parts []string
+	for _, kv := range [][2]string{{"model", c.Model}, {"harness", c.Harness}, {"child", c.Child}} {
+		if v := oneLine(kv[1]); v != "" {
+			parts = append(parts, kv[0]+"="+v)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // FindingTestLine is what a fix copy is told of its gate: the primary's
@@ -181,7 +198,8 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 		endOK += " --test '<package> <TestName>'"
 	}
 	endFail := fmt.Sprintf("nova-sprint friend done --as %s --id %s --fail '<why>'", who, c.ID)
-	beat := fmt.Sprintf("BEAT: your session's nova-sprint friend beat --as %s renews this copy's lease every second; a lapsed lease returns this copy as a fail.\n", who)
+	beat := fmt.Sprintf("BEAT: %s's one beat loop (nova-sprint friend beat --as %s --loop, lease %s:beatloop) renews this copy's lease every second; "+
+		"friend pull, card work and task take start it when none runs, so run no beat yourself; a lapsed lease returns this copy as a fail.\n", who, who, who)
 	about := oneLine(c.Origin)
 	if about == "" {
 		about = "primary " + c.Primary
@@ -381,6 +399,7 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 	if c.Leg == "fix" {
 		line("BRANCH", c.Branch)
 	}
+	line("WORKER", c.WorkerLine())
 	b.WriteString("\n")
 	b.WriteString(body)
 	if r := oneLine(c.Review); r != "" {

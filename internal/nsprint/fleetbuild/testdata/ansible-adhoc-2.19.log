@@ -1,0 +1,17 @@
+[DEPRECATION WARNING]: `something_old` is deprecated. This feature will be removed from ansible-core version 2.23.
+[ERROR]: Task failed: Module failed: non-zero return code
+Origin: <adhoc 'ansible.builtin.shell' task>
+
+{'action': 'ansible.builtin.shell', 'args': {'_raw_params': 'if [ "$(uname)" = Darwin ]; then sudo -n launchctl kickstart -k system/com.nova.loop.nova-sprint-bench-beat; else systemctl --user restart nova-loop-nova-sprint-bench-beat.service; fi'}, 'timeout': 0, 'async_val': 0, 'poll': 15}
+
+superman | FAILED | rc=113 >>
+Could not find service "com.nova.loop.nova-sprint-bench-beat" in domain for system
+[ERROR]: Task failed: Module failed: non-zero return code
+Origin: <adhoc 'ansible.builtin.shell' task>
+
+{'action': 'ansible.builtin.shell', 'args': {'_raw_params': 'if [ "$(uname)" = Darwin ]; then sudo -n launchctl kickstart -k system/com.nova.loop.nova-sprint-bench-beat; else systemctl --user restart nova-loop-nova-sprint-bench-beat.service; fi'}, 'timeout': 0, 'async_val': 0, 'poll': 15}
+
+space | FAILED | rc=5 >>
+Failed to restart nova-loop-nova-sprint-bench-beat.service: Unit nova-loop-nova-sprint-bench-beat.service not found.
+hulk | CHANGED | rc=0 >>
+

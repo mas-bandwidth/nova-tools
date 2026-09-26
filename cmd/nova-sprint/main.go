@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -135,14 +136,42 @@ func cmdRefresh(args []string, stdout, stderr io.Writer) int {
 	if len(argv) == 0 {
 		return refuse(stderr, "refresh", "needs a command after --; that command is what survives the unit restart")
 	}
-	cmd := exec.Command(argv[0], argv[1:]...)
-	if err := sprinttable.ApplyOwnSession(cmd); err != nil {
+	pid, err := startOwnSession(argv)
+	if err != nil {
 		return refuse(stderr, "refresh", err.Error())
 	}
+	fmt.Fprintf(stdout, "REFRESH SESSION pid=%d\n", pid)
+	return 0
+}
+
+// startOwnSession is refresh's start: argv in its own session (POSIX
+// setsid), not waited for, so neither a unit restart nor the end of the
+// session that ran the verb kills it.
+func startOwnSession(argv []string) (int, error) { return startOwnSessionLog(argv, "") }
+
+// startOwnSessionLog is startOwnSession with the started process's stdout
+// and stderr appended to log (its directory made) when log is not "": friend
+// pull, card work and task take start a friend's beat loop through it, so a
+// loop that backs off says why somewhere (seat-keeps-beat).
+func startOwnSessionLog(argv []string, log string) (int, error) {
+	cmd := exec.Command(argv[0], argv[1:]...)
+	if err := sprinttable.ApplyOwnSession(cmd); err != nil {
+		return 0, err
+	}
+	if log != "" {
+		if err := os.MkdirAll(filepath.Dir(log), 0o755); err != nil {
+			return 0, fmt.Errorf("log %s: %v", log, err)
+		}
+		f, err := os.OpenFile(log, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return 0, fmt.Errorf("log %s: %v", log, err)
+		}
+		defer func() { _ = f.Close() }() // the child holds its own descriptor
+		cmd.Stdout, cmd.Stderr = f, f
+	}
 	if err := cmd.Start(); err != nil {
-		return refuse(stderr, "refresh", "cannot start "+argv[0]+": "+err.Error())
+		return 0, fmt.Errorf("cannot start %s: %v", argv[0], err)
 	}
 	go func() { _ = cmd.Wait() }()
-	fmt.Fprintf(stdout, "REFRESH SESSION pid=%d\n", cmd.Process.Pid)
-	return 0
+	return cmd.Process.Pid, nil
 }
