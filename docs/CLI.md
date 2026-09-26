@@ -3749,9 +3749,9 @@ moves it to landed with `outcome=dropped` and closes its origin issue with
 the `REVIEW verdict=<v> by=<actor>: <why>` line. That line is on the record
 (`review`) and is carried to the card's next copy, whose card file says why
 it is back. One receipt line: `REVIEW POST id=<id> verdict=<v> to=<where>
-copy=<copy|-> [issue=<repo#n|-> closed=yes|no] ms=<n>`, or `REVIEW POST
-REFUSED id=<id> why=<why>` with exit 1 (a card not in review, a consumer
-with no slots).
+copy=<copy|-> [issue=<repo#n|-> closed=yes|no [err=<why>]] ms=<n>` (a close
+the forge refused says why, exit 1), or `REVIEW POST REFUSED id=<id>
+why=<why>` with exit 1 (a card not in review, a consumer with no slots).
 
 `table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...>`
 renders the #2674 port of rowan-tools `bin/sprint-table-redis` (the keys
