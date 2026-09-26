@@ -29,6 +29,7 @@ package main
 
 import (
 	"context"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"regexp"
 	"time"
@@ -63,7 +64,7 @@ func runFn(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "fn", "unknown subverb "+sub+"; want load, check, deploy or sum")
 	}
 	fs := capacityFlags("fn " + sub)
-	redisAddr := fs.String("redis", redisDefault(), "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, "fn "+sub, err.Error())
 	}
@@ -130,9 +131,9 @@ func runFnSum(args []string, out, errOut io.Writer) int {
 
 func runFnDeploy(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := capacityFlags("fn deploy")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	want := fs.String("want", "", "")
-	dry := fs.Bool("dry-run", false, "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	want := fs.String("want", "", "the library sha wanted (default the embedded one)")
+	dry := fs.Bool("dry-run", false, verbflag.HelpDryRun)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fn deploy", err.Error())
 	}
