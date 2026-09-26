@@ -33,7 +33,7 @@
 //	         registry (fleet:release self, the coordinator's machine, is
 //	         outside it by design and counts), its desired role, CI legs and
 //	         hold, and its beat's age against preflight.BeatFresh
-//	ingest   ev:github: its last entry's age and sender, as information;
+//	ingest   ev:github: its last entry's age, sender and source (runner|hook|none), as information;
 //	         a fix only when the ci-github group lags or holds pending
 //	         entries
 //	pitstop  every sprint not closed: its s:<S>:pitstop (or the legacy key)
@@ -874,7 +874,14 @@ func ingestLine(f doctorFacts) doctorLine {
 			sender = f.LastSender
 		}
 	}
-	l.Words = append(l.Words, "last="+last, "sender="+oneline.Field(sender))
+	// source: which path appended the newest row (webhook.SourceOf): the
+	// runner's own receipt (ci-ok, card gh-ci-receipts), the signed hook
+	// (a GitHub login), or none.
+	source := webhook.SourceNone
+	if last != "none" {
+		source = webhook.SourceOf(f.LastSender)
+	}
+	l.Words = append(l.Words, "last="+last, "sender="+oneline.Field(sender), "source="+source)
 	var group *redis.XInfoGroup
 	for i := range f.Groups {
 		if f.Groups[i].Name == webhook.Group {

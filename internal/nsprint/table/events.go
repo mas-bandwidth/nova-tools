@@ -19,7 +19,7 @@ const ProgressKey = "proc:progress"
 // ProgressEvents is proc:progress as read.
 type ProgressEvents struct {
 	Events  int64  // asks the system made (pit stop set with a diagnosis)
-	Refused int64  // the last pass's duty refusals
+	Refused int64  // the duty refusals of the last pass, each counted once
 	Last    string // the last EVENT line
 	// Unread is the read error when proc:progress did not come back: the
 	// line then says so rather than showing a quiet none.

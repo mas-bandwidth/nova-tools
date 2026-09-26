@@ -1,0 +1,10 @@
+# A change that means to delete a test file (any *_test.go) or a list under
+# internal/ci/testdata declares it here, one `<path> <why>` row, in the SAME
+# change (internal/ci/classtests_class_test.go, the classtests rule). The rule
+# reads the declaration out of git, not out of the tree: only a row this merge
+# ADDS declares a deletion this merge makes, so a stale tree's old rows declare
+# nothing, and a squash from a stale base that drops a file dev had is red.
+# 2026-09-26: #4346 was that squash; it deleted the silent class test, its
+# allowlist and two of its controls with every check green. Rows are a log and
+# may be trimmed once old; trimming weakens nothing.
+internal/ci/testdata/class-tests.txt the tree-resident list of class tests went with the tree a stale-base squash overwrites (#4381's guard); the classtests rule now reads the merge's deletions out of git

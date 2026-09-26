@@ -94,7 +94,7 @@ func TestDoctorGreenStoreIsTwoTrips(t *testing.T) {
 		t.Fatalf("summary %q", lines[8])
 	}
 	for _, want := range []string{"DOCTOR sprint OK sprint=s1 epoch=7", "DOCTOR ingest OK stream=ev:github last=",
-		" sender=glenn group=ci-github lag=0 pending=0\n", "DOCTOR runners OK bench=m1 role=fleet legs=go beat=",
+		" sender=glenn source=hook group=ci-github lag=0 pending=0\n", "DOCTOR runners OK bench=m1 role=fleet legs=go beat=",
 		"DOCTOR version OK have=v0.16.0-dev.c839379e tip=c839379e4eab", "DOCTOR seat OK seat=none user=default"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in\n%s", want, out)
@@ -121,7 +121,7 @@ func TestDoctorGreenStoreIsTwoTrips(t *testing.T) {
 		`remedy="NOVA_SPRINT_REDIS_USER=admin NOVA_SPRINT_REDIS_PASSWORD_ENV=NS_ADMIN nova-sprint fn deploy --redis ` + addr + `"`,
 		`DOCTOR pitstop FIX sprint=s1 by=glenn`,
 		`remedy="nova-sprint pitstop clear --sprint s1 --by m1 --redis ` + addr + `"`,
-		`DOCTOR ingest FIX stream=ev:github last=0s sender=- group=ci-github lag=1`,
+		`DOCTOR ingest FIX stream=ev:github last=0s sender=- source=none group=ci-github lag=1`,
 		`DOCTOR sprint FIX open=2 sprints=s1,s2 why="one active sprint, many streams: close the other" remedy="nova-sprint sprint close --sprint s2 --redis ` + addr + `"`,
 	} {
 		if !strings.Contains(out, want) {

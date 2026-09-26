@@ -45,6 +45,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 )
 
 const (
@@ -363,11 +365,11 @@ func lastLine(s string) string {
 }
 
 // BeatKey is a bench's beat, where its probe result lives (nova-tools#4237);
-// BeatTTL bounds a probe write that finds the beat just expired (the beat's
-// own life, life.BenchBeatTTL).
+// BeatTTL bounds a probe write that finds the beat just expired: the beat's
+// own life, life.BenchBeatTTL, the one beat TTL.
 func BeatKey(bench string) string { return "bench:" + bench + ":beat" }
 
-const BeatTTL = 3 * time.Second
+const BeatTTL = life.BenchBeatTTL
 
 // ProbeResult is the beat's probe field after an install: the probe's
 // status (OK, MISMATCH, FAIL), the release it probed for and when.

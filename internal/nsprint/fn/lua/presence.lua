@@ -31,6 +31,9 @@
 -- are concatenated into one chunk whose main function allows 200 locals.
 do
 local PL_BEAT_MS = 5000
+-- PL_ROW_UP_MS is how old a friend's beat may be for its row to read up
+-- (the consumer table's own minute, #4233).
+local PL_ROW_UP_MS = 60000
 local PL_LIVE_SEP = '\31'
 
 local function pl_now_ms()
@@ -242,6 +245,8 @@ end
 -- nova-tools#4293), on the beat as ci every beat: the deal passes and
 -- ns_cm_work's fill take it off the bench's slots, so a copy is never put
 -- beside a leg it would slow; empty when unmeasured (nothing is taken off).
+-- args[22] is the process sample, on the beat as ps (#4338; empty leaves it
+-- as it is).
 local function bench_beat(keys, args)
   local bench = args[1]
   if not bench or bench == '' then
@@ -316,6 +321,14 @@ local function bench_beat(keys, args)
     -- table reads, never the host row
     redis.call('HSET', 'bench:' .. bench .. ':beat', 'ncpu', ncpu or '', 'cpu', args[20] or '')
   end
+  -- The process sample (#4338): top processes by CPU, the nova units
+  -- declared|undeclared and the oldest processes outside every declared unit,
+  -- JSON, bounded by the bench (fleet.PSSample); `fleet ps` reads it. A caller
+  -- that predates it passes nothing and the field is left as it is.
+  local ps = args[22]
+  if ps and ps ~= '' then
+    redis.call('HSET', 'bench:' .. bench .. ':beat', 'ps', ps)
+  end
   if first == 0 then
     pl_caplog('bench-up', bench, '', actor, idem, at)
   end
@@ -354,7 +367,13 @@ local function friend_row(keys, args)
   if type(slots) ~= 'string' or not string.match(slots, '^[0-9]+$') then
     slots = ''
   end
-  local up = redis.call('EXISTS', 'friend:' .. friend .. ':beat')
+  -- up is reader-judged from the beat's at (#4233: a friend beat has no
+  -- TTL; keys do not expire): under PL_ROW_UP_MS old is up, else down.
+  local up = 0
+  local beat_at = tonumber(redis.call('HGET', 'friend:' .. friend .. ':beat', 'at') or '')
+  if beat_at and pl_now_ms() - beat_at <= PL_ROW_UP_MS then
+    up = 1
+  end
   local row = 'friend:' .. friend
   local kind = redis.call('TYPE', row)
   if type(kind) == 'table' then

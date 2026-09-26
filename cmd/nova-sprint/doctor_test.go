@@ -92,7 +92,7 @@ func TestDoctorAllGreenIsEightOKLines(t *testing.T) {
 		"DOCTOR fn OK sha=0123456789abcdef ping=PONG",
 		"DOCTOR version OK have=v0.16.0-dev.c839379e tip=c839379e4eab",
 		"DOCTOR runners OK bench=studio role=friends legs=- beat=1s",
-		"DOCTOR ingest OK stream=ev:github last=40s sender=glenn group=ci-github lag=0 pending=0",
+		"DOCTOR ingest OK stream=ev:github last=40s sender=glenn source=hook group=ci-github lag=0 pending=0",
 		"DOCTOR pitstop OK none sprints=2",
 		"DOCTOR sprint OK sprint=s1 epoch=7",
 	}
@@ -286,7 +286,7 @@ func TestDoctorIngestAgeIsInformation(t *testing.T) {
 	}
 	f := healthyFacts()
 	f.GroupsErr, f.LastID, f.LastSender, f.Groups = errors.New("ERR no such key"), "", "", nil
-	if l := lineOf(t, doctorLines(f), "ingest"); l.String() != "DOCTOR ingest OK stream=ev:github last=none sender=- group=none" {
+	if l := lineOf(t, doctorLines(f), "ingest"); l.String() != "DOCTOR ingest OK stream=ev:github last=none sender=- source=none group=none" {
 		t.Fatalf("no stream: %q", l.String())
 	}
 }

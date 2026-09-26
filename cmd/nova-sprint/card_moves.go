@@ -23,6 +23,8 @@
 //	card render --id <copy>               the copy's card file (the bench runs it)
 //	card session --as bench:<b> [--wrapper <path>]   the bench harness's session start (#3998):
 //	                                      card work --fill, then one detached nova-card copy per copy
+//	(a friend's session pulls, ends and beats its copies through friend pull | done | beat,
+//	friend_copies.go, #4233: the same moves, the person's brief instead of the wrapper)
 //
 // every verb also takes --redis <addr> (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)
 // and --actor <a> (else NOVA_FRIEND, else nova-sprint).
@@ -254,13 +256,36 @@ func (m *moveCmd) usage(sub string, ids []string) string {
 		}
 	case "session":
 		if !strings.HasPrefix(*m.as, "bench:") {
-			return "session wants --as bench:<b> (a friend takes its copies through card work)"
+			return "session wants --as bench:<b> (a friend takes its copies through friend pull)"
 		}
 	}
 	return ""
 }
 
 func consumerArg(s string) (taskcard.Consumer, error) { return taskcard.ParseConsumer(s) }
+
+// moveRefusedCode is a move refusal's exit: 3 FENCED, 4 CONFLICT, else 1.
+func moveRefusedCode(why string) int {
+	switch {
+	case strings.HasPrefix(why, "FENCED"):
+		return 3
+	case strings.HasPrefix(why, "CONFLICT"):
+		return 4
+	}
+	return 1
+}
+
+// printEnded prints card end's lines, one per copy: ENDED with the
+// primary's move, or ALREADY for the same end again.
+func printEnded(out io.Writer, e []taskcard.Ended) {
+	for _, x := range e {
+		if x.To == "already" {
+			fmt.Fprintf(out, "ALREADY %s primary=%s ended=%s\n", x.Copy, x.Primary, x.From)
+			continue
+		}
+		fmt.Fprintf(out, "ENDED %s primary=%s from=%s to=%s next=%s\n", x.Copy, x.Primary, x.From, x.To, dash(x.Next))
+	}
+}
 
 func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []string, out, errOut io.Writer) int {
 	start := time.Now()
@@ -269,13 +294,7 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 	refused := func(err error, what string) int {
 		if why, ok := taskcard.IsRefused(err); ok {
 			fmt.Fprintf(out, "%s REFUSED %s why=%s ms=%d\n", verb, what, quoteField(why), ms())
-			switch {
-			case strings.HasPrefix(why, "FENCED"):
-				return 3
-			case strings.HasPrefix(why, "CONFLICT"):
-				return 4
-			}
-			return 1
+			return moveRefusedCode(why)
 		}
 		return refuse(errOut, "card "+sub, err.Error())
 	}
@@ -335,13 +354,7 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		if err != nil {
 			return refused(err, "ids="+strings.Join(ids, ","))
 		}
-		for _, x := range e {
-			if x.To == "already" {
-				fmt.Fprintf(out, "ALREADY %s primary=%s ended=%s\n", x.Copy, x.Primary, x.From)
-				continue
-			}
-			fmt.Fprintf(out, "ENDED %s primary=%s from=%s to=%s next=%s\n", x.Copy, x.Primary, x.From, x.To, dash(x.Next))
-		}
+		printEnded(out, e)
 		fmt.Fprintf(out, "CARD END n=%d ms=%d\n", len(e), ms())
 		return 0
 	case "assign":

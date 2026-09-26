@@ -81,12 +81,17 @@ type Record struct {
 	Fail  string // gh_fail: the first red run as kind:name
 	At    string // gh_at
 	PR    string
-	Runs  []Run // in field order (kind, then name)
+	EvID  string // ev_id: the ev:github entry last applied
+	// Source is who stamped the record: SourceRunner from the ci-ok job's own
+	// receipt (runner.go); "" when only the consumer wrote it. Source() folds
+	// it with EvID into runner, hook or none.
+	Source string
+	Runs   []Run // in field order (kind, then name)
 }
 
 // Parse reads a Record from the hash's fields (an HGETALL answer).
 func Parse(m map[string]string) Record {
-	r := Record{Found: len(m) > 0, Word: m["gh"], Fail: m["gh_fail"], At: m["gh_at"], PR: m["pr"]}
+	r := Record{Found: len(m) > 0, Word: m["gh"], Fail: m["gh_fail"], At: m["gh_at"], PR: m["pr"], EvID: m["ev_id"], Source: m["source"]}
 	for f, v := range m {
 		kind, name, ok := strings.Cut(f, ":")
 		if !ok || (kind != "check" && kind != "wf") {
@@ -288,9 +293,10 @@ func resultOf(m redis.XMessage) (result, bool) {
 // foldRef keeps the Redis copy of a reference's state (gh:ref, #4343)
 // current from the deliveries that change it, in the same pipeline that
 // acks them: an issues entry writes the issue's state; a pull_request
-// closed entry drops the PR's copy (the delivery does not say whether it
-// merged), so the next dealer read is one counted call that caches a
-// terminal answer. Every other kind is left alone.
+// closed or reopened entry drops the PR's copy (the closed delivery does
+// not say whether it merged; a reopened one moves a copy that read closed),
+// so the next dealer read is one counted call. Every other kind is left
+// alone.
 func foldRef(ctx context.Context, pipe redis.Pipeliner, m redis.XMessage) {
 	v := func(k string) string { s, _ := m.Values[k].(string); return strings.TrimSpace(s) }
 	n, err := strconv.Atoi(v("number"))
@@ -304,7 +310,7 @@ func foldRef(ctx context.Context, pipe redis.Pipeliner, m redis.XMessage) {
 				"at": strings.Join(strings.Fields(v("at")), "")})
 		}
 	case "pull_request":
-		if v("action") == "closed" {
+		if a := v("action"); a == "closed" || a == "reopened" {
 			pipe.Del(ctx, gh.RefKey(v("repo"), n))
 		}
 	}

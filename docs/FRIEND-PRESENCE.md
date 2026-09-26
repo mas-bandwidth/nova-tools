@@ -49,6 +49,29 @@ answer; when it changes, re-run the beat with the new number. Omitting either
 flag does not write that field and does not fail the beat. `presence` prints
 `window=` and `width=` on your phrase when the fields are there.
 
+## Your copies: pull, beat, done (nova-tools #4233)
+
+Copies dealt to `friend:<you>` are worked from your own session, on whatever
+machine it runs (Glenn 2026-09-26: friends run themselves and pull from their
+ready queue; the coordinator never launches a friend's model, and `friend
+serve` is gone). Three verbs, each a copy-model move and nothing beside it:
+
+```bash
+nova-sprint friend beat --as friend:<you> &          # zero tokens, once a second:
+                                                     # your beat (host, at, load) and every held copy's lease, one round trip
+nova-sprint friend pull --as friend:<you> [--n k]    # card work: ready -> working; one brief per copy under
+                                                     # ~/.nova-sprint/friend/<you>/cards (--dir), one PULLED line each
+nova-sprint friend done --as friend:<you> --id <copy> --ok --pr <repo>#<n> --head <sha>   # card end
+nova-sprint friend done --as friend:<you> --id <copy> --fail '<why>'                     # or --score N/10 for a read
+```
+
+The brief tells you the rest: clone at BASE/base-sha, branch as the wrapper
+would (`nova/copies/<label>-a<n>`), make DONE-WHEN hold inside PATHS, commit,
+push and open the PR under your own GitHub identity. Pull again on every
+completion. The consumer table shows your load from your own beat, and the deal
+duty deals to you by the tiers you advertise (`capacity friend --tiers`)
+exactly as to a bench.
+
 ## The seat, and why it is the same one for everybody
 
 The password is never a flag, a file you open, or a word you paste.

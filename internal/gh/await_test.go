@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
 	"github.com/redis/go-redis/v9"
@@ -60,5 +61,35 @@ func TestAwaitWakesOnTheHeadsEvent(t *testing.T) {
 	tip5, hit, err := Await(ctx, rdb, tip4, 0, PREvent("o/r", "1"))
 	if err != nil || hit || tip5 != tip4 {
 		t.Fatalf("drained: %q hit=%v err=%v", tip5, hit, err)
+	}
+}
+
+// TestAwaitReturnsUnderAMillisecond: with less than a millisecond of block
+// left the wait returns instead of asking for BLOCK 0 (forever); the
+// deadline is the injected clock's, and a matching batch still wins first.
+func TestAwaitReturnsUnderAMillisecond(t *testing.T) {
+	t.Parallel()
+	rdb := newStore(t)
+	ctx := context.Background()
+	now := t0
+	clock := func() time.Time { return now }
+	head := strings.Repeat("a", 40)
+	tip, hit, err := AwaitAt(ctx, rdb, "0-0", 500*time.Microsecond, HeadEvent(head), clock)
+	if err != nil || hit || tip != "0-0" {
+		t.Fatalf("under a millisecond: tip %q hit=%v err=%v", tip, hit, err)
+	}
+	// A block of one second whose clock is already past it: no read at all,
+	// even with a matching entry waiting (the cursor stands).
+	add(t, rdb, "check_run", "o/r", "1", head)
+	now = t0.Add(2 * time.Second)
+	deadlineClock := func() time.Time { now = now.Add(time.Second); return now }
+	tip, hit, err = AwaitAt(ctx, rdb, "0-0", time.Second, HeadEvent(head), deadlineClock)
+	if err != nil || hit || tip != "0-0" {
+		t.Fatalf("past the deadline: tip %q hit=%v err=%v", tip, hit, err)
+	}
+	// With time left and no block needed for the read, the entry matches.
+	tip, hit, err = AwaitAt(ctx, rdb, "0-0", time.Hour, HeadEvent(head), func() time.Time { return t0 })
+	if err != nil || !hit || tip == "0-0" {
+		t.Fatalf("with time left: tip %q hit=%v err=%v", tip, hit, err)
 	}
 }

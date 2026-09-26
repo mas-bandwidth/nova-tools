@@ -32,20 +32,30 @@ func Tip(ctx context.Context, rdb redis.Cmdable) (string, error) {
 	return msgs[0].ID, nil
 }
 
+// Clock is the wall for Await; a test injects its own.
+var Clock = time.Now
+
 // Await reads ev:github after tip until an entry matches or block passes
 // (block <= 0 reads what is there and does not block): a batch of entries
 // that match nothing keeps the wait blocking for the time left. It returns
 // the cursor to continue from and whether an entry matched; entries after
-// the match are left for the next wait.
+// the match are left for the next wait. The deadline is Clock's; under a
+// millisecond left the wait returns, since go-redis sends a sub-millisecond
+// BLOCK as BLOCK 0, which is forever.
 func Await(ctx context.Context, rdb redis.Cmdable, tip string, block time.Duration, match Match) (string, bool, error) {
+	return AwaitAt(ctx, rdb, tip, block, match, Clock)
+}
+
+// AwaitAt is Await on the given clock.
+func AwaitAt(ctx context.Context, rdb redis.Cmdable, tip string, block time.Duration, match Match, now func() time.Time) (string, bool, error) {
 	if tip == "" {
 		tip = "0-0"
 	}
-	deadline := time.Now().Add(block)
+	deadline := now().Add(block)
 	for {
 		left := time.Duration(-1) // go-redis: no BLOCK
 		if block > 0 {
-			if left = time.Until(deadline); left <= 0 {
+			if left = deadline.Sub(now()); left < time.Millisecond {
 				return tip, false, nil
 			}
 		}

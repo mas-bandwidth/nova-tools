@@ -105,7 +105,10 @@ func TestControl3440RowVerbsRenderTheBashTable(t *testing.T) {
 		}
 		client.HSet(ctx, "friend:"+name+":desired", "slots", f["slots"], "machine", "studio")
 		if f["up"] == "1" {
-			client.HSet(ctx, "friend:"+name+":beat", "harness", "claude", "host", "studio", "session", name, "at", "1")
+			// up is the beat's at under a minute old (#4233), on the
+			// server's clock (ns_friend_row reads TIME)
+			client.HSet(ctx, "friend:"+name+":beat", "harness", "claude", "host", "studio", "session", name,
+				"at", strconv.FormatInt(time.Now().UnixMilli(), 10))
 		}
 	}
 	for _, name := range benchOrder {

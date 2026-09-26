@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
@@ -451,7 +453,7 @@ func TestControl33PrToRead(t *testing.T) {
 		}
 		must(t, f.client.SAdd(f.ctx, "friends", "jev").Err())
 		must(t, f.client.HSet(f.ctx, "friend:jev:desired", "slots", "8", "paused", "0").Err())
-		must(t, f.client.HSet(f.ctx, "friend:jev:beat", "harness", "ctl", "at", "1").Err())
+		must(t, f.client.HSet(f.ctx, "friend:jev:beat", "harness", "ctl", "at", strconv.FormatInt(time.Now().UnixMilli(), 10)).Err())
 		f.seedPR(7, "ctl-a", "false", "opened")
 		out := f.pass()
 		if !strings.Contains(out, fmt.Sprintf("WAIT %s#7 no readers", c33Short)) || strings.Contains(out, "ADOPT") {

@@ -3065,12 +3065,11 @@ function TM.ci_final(repo, pr, head)
   return word, ''
 end
 
--- TM.live: the consumer's beat (its bench beat, or its friend row) is
--- within TM.LIVE_MS.
+-- TM.live: the consumer's own beat (<c>:beat at, a bench's or a friend's
+-- alike, #4233: friend beat writes it; the friend:<f> row is never a
+-- liveness source) is within TM.LIVE_MS.
 function TM.live(c)
-  local key = c
-  if TM.parse(c) == 'bench' then key = c .. ':beat' end
-  local at = TK.ms(redis.call('HGET', key, 'at'))
+  local at = TK.ms(redis.call('HGET', c .. ':beat', 'at'))
   return at ~= nil and math.abs(cm_now() - at) < TM.LIVE_MS
 end
 
@@ -3593,6 +3592,12 @@ end
 -- copies all or nothing. Returns BEAT n lease_until.
 function TM.beat(c, ids)
   local at = cm_now()
+  if #ids == 0 then
+    -- no id: every copy the consumer holds working (#4233: the friend
+    -- beat's one round trip renews its whole working set here)
+    if not TM.parse(c) then return { 'REFUSED', 'CONSUMER ' .. TK.str(c) .. ' is not bench:<b> or friend:<f>' } end
+    ids = redis.call('ZRANGE', TM.key(c, 'working'), 0, -1)
+  end
   for _, id in ipairs(ids) do
     if not TK.copy_id(id) or not redis.call('ZSCORE', TM.key(c, 'working'), id) then
       return { 'REFUSED', 'NOTWORKING ' .. TK.str(id) .. ' is not in ' .. TM.key(c, 'working') }
@@ -3650,9 +3655,7 @@ function TM.expire(by, consumers)
   for _, c in ipairs(consumers) do
     -- a consumer whose beat is older than a lease holds no ready copy: each
     -- goes back to its primary (no attempt counted)
-    local key = c
-    if TM.parse(c) == 'bench' then key = c .. ':beat' end
-    local at = TK.ms(redis.call('HGET', key, 'at'))
+    local at = TK.ms(redis.call('HGET', c .. ':beat', 'at'))
     if at and now - at > TM.LEASE then
       for _, id in ipairs(redis.call('ZRANGE', TM.key(c, 'ready'), 0, -1)) do
         if TK.copy_id(id) then
@@ -3869,7 +3872,8 @@ redis.register_function('ns_sprint_clear', function(keys, args)
   return TM.sprint_clear(TK.str(args[1]), args[2], args[3] == '1')
 end)
 
--- ns_cm_beat(consumer, id...) -> BEAT n lease_until | REFUSED <why>.
+-- ns_cm_beat(consumer, id...) -> BEAT n lease_until | REFUSED <why>; with
+-- no id, every copy in <consumer>:cards:working.
 redis.register_function('ns_cm_beat', function(keys, args) return TM.beat(args[1], TM.ids(args, 2)) end)
 
 -- ns_cm_expire(by, consumer...) -> EXPIRED n, then per copy: id, where.

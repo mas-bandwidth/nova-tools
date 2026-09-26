@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -239,7 +241,7 @@ func seedFriend(t *testing.T, client *redis.Client, friend string, slots int) {
 	if err := client.HSet(ctx, "friend:"+friend+":desired", "slots", slots, "paused", "0").Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.HSet(ctx, "friend:"+friend+":beat", "host", "fixture").Err(); err != nil {
+	if err := client.HSet(ctx, "friend:"+friend+":beat", "host", "fixture", "at", strconv.FormatInt(time.Now().UnixMilli(), 10)).Err(); err != nil {
 		t.Fatal(err)
 	}
 }

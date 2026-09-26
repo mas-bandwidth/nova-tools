@@ -8,14 +8,14 @@ package reconcile
 //
 // A friend is down when friend:<f>:down exists or its row's beat (friend:<f>
 // at) is older than FriendLive, the window the deal duty uses; else up. The
-// targets are the friends the deal duty would deal: no marker, a live beat. The
-// deal duty keeps each friend's last seen status in SeenKey and, at the top of
-// every pass, calls ns_friend_rebalance (deal_friend.lua) for every friend
-// whose status changed since the last pass, and for any down friend with
-// cards still on its ready or working set: its ready cards and lapsed leases move to the up friends with
-// open slots, else back to the stream's ready set, where the same pass deals
-// them. `nova-sprint friend down|up` calls RebalanceFriend right after it
-// writes friend:<f>:down, so the verb and the duty print the same line:
+// targets are the friends the deal duty would deal: no marker, a live beat.
+// ns_friend_rebalance (deal_friend.lua) moves a down friend's ready cards and
+// lapsed leases to the up friends with open slots, else back to the stream's
+// ready set. On dev no reconciler duty calls it since the friend deal duty
+// went (#4320) and `nova-sprint friend down|up` writes the marker through
+// ns_friend_down, so RebalanceFriend has no caller and its Refused reaches no
+// DUTY line (the cold read of #4361, item 3); a duty that calls it again
+// counts len(Refused) as Counts.Refused. The line it prints:
 //
 //	REBALANCE friend=<f> from=<old> to=<new> moved=<n> <id>:<dest>...
 //	    [refused=<n> <id>:<why>...] [REFUSED <reason>]

@@ -45,7 +45,8 @@ type FriendRowResult struct {
 // FriendRow writes friend:<f>, the friend's sprint-table row, in one Redis
 // Function call (ns_friend_row): the counts are the SCARDs of the friend-queue
 // index sets sprint:<S>:idx:<f>:open|working|waiting|closed, up is the seat's
-// own beat, and the whole row is one HSET with one at (#3281). It replaces
+// own beat (friend:<f>:beat at under a minute old, #4233: the beat `friend
+// beat` writes has no TTL), and the whole row is one HSET with one at (#3281). It replaces
 // the bash row loop rowan-tools bin/friend-row.
 func FriendRow(ctx context.Context, st *store.Store, req FriendRowRequest) (FriendRowResult, error) {
 	friend := strings.ToLower(strings.TrimSpace(req.Friend))
