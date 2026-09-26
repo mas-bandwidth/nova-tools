@@ -226,21 +226,21 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 // the bench harness picks its model from (nova-sprint routes --tier <route>,
 // first allowed route). A card with no ROUTE line is flash.
 const (
-	RouteFlash = cardhdr.RouteFlash
-	RoutePro   = cardhdr.RoutePro
+	RouteFrontier = cardhdr.RouteFrontier
+	RouteFlash    = cardhdr.RouteFlash
+	RoutePro      = cardhdr.RoutePro
 )
 
-// parseRoute accepts ROUTE: pro or ROUTE: flash. An absent line is flash; an
-// empty ROUTE: line or any other value is refused, never guessed.
+// parseRoute accepts ROUTE: frontier, pro or flash. An absent line is flash;
+// an empty ROUTE: line or any other value is refused, never guessed.
 func parseRoute(value string, declared bool) (string, error) {
 	if !declared {
 		return RouteFlash, nil
 	}
-	switch value {
-	case RouteFlash, RoutePro:
+	if cardhdr.IsRoute(value) {
 		return value, nil
 	}
-	return "", fmt.Errorf("ROUTE: %q is not pro or flash", value)
+	return "", fmt.Errorf("ROUTE: %q is not %s", value, cardhdr.RouteList)
 }
 
 // parsePriority accepts PRIORITY: <integer>, the ZADD score card push gives

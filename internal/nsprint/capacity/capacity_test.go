@@ -3,6 +3,7 @@ package capacity_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/capacity"
@@ -160,5 +161,25 @@ func TestWidthAccounting(t *testing.T) {
 	want := task.Width{Desired: 32, Leased: 8, Free: 24}
 	if got != want {
 		t.Fatalf("WidthFrom = %+v want %+v", got, want)
+	}
+}
+
+// TestNormalizeTiersIsTheThreeModelTypes: --tiers is what a worker
+// advertises it can run, each name one of frontier, pro, flash (Glenn
+// 2026-09-26); duplicates drop, "" clears, any other word is refused naming
+// the three.
+func TestNormalizeTiersIsTheThreeModelTypes(t *testing.T) {
+	t.Parallel()
+	for raw, want := range map[string]string{"frontier,pro": "frontier,pro", "frontier pro flash": "frontier,pro,flash",
+		"pro, pro": "pro", "flash": "flash", "": capacity.Clear, "  ": capacity.Clear} {
+		got, err := capacity.NormalizeTiers(raw)
+		if err != nil || got != want {
+			t.Errorf("NormalizeTiers(%q) = %q, %v; want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"turbo", "pro,turbo", "Frontier", "pro;rm"} {
+		if got, err := capacity.NormalizeTiers(raw); err == nil || got != "" || !strings.Contains(err.Error(), "frontier, pro or flash") {
+			t.Errorf("NormalizeTiers(%q) = %q, %v; want a refusal naming frontier, pro or flash", raw, got, err)
+		}
 	}
 }

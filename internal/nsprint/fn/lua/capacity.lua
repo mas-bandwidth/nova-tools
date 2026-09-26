@@ -110,12 +110,15 @@ local function write_desired(kind, name, slots, machine, actor, idem, at, legacy
 end
 
 -- filter_ok: a kinds or tiers value is '' (keep), '-' (clear) or a comma
--- list of names; a kinds name is work, read or fix.
+-- list of names; a kinds name is work, read or fix; a tiers name is one of
+-- the three model types, frontier, pro or flash (what the worker advertises
+-- it can run; TM.MODEL_TYPES in the move file).
 local function filter_ok(v, kinds)
   if v == '' or v == '-' then return true end
   if not string.match(v, '^[%w_,-]+$') then return false end
   for n in string.gmatch(v, '[^,]+') do
     if kinds and n ~= 'work' and n ~= 'read' and n ~= 'fix' then return false end
+    if not kinds and n ~= 'frontier' and n ~= 'pro' and n ~= 'flash' then return false end
   end
   return true
 end
@@ -132,7 +135,7 @@ end
 -- bench whose role is or becomes friends returns ROLE friends and writes
 -- nothing. (#4270, optional eleventh and twelfth) kinds and tiers: the
 -- consumer's copy filters, comma lists TM.may reads (kinds of work, read,
--- fix; tiers by name); '' keeps the stored value, '-' clears it. The same
+-- fix; tiers frontier, pro, flash); '' keeps the stored value, '-' clears it. The same
 -- slots, machine, paused, legs, role, kinds and tiers as stored return
 -- SAME and write nothing.
 local function capacity_desired(keys, args)

@@ -391,6 +391,25 @@ func TestCapacityWritesKindsAndTiers(t *testing.T) {
 	if code, _, errOut := run("bench", "--tiers", "pro;rm", "b", "6"); code != 2 || !strings.Contains(errOut, "--tiers") {
 		t.Fatalf("malformed --tiers: code=%d err=%q; want a refusal naming --tiers", code, errOut)
 	}
+	// the three model types (Glenn 2026-09-26): frontier joins pro and flash;
+	// any other word is refused naming the three, and the Lua refuses it too
+	if code, _, errOut := run("bench", "--tiers", "turbo", "b", "6"); code != 2 || !strings.Contains(errOut, "--tiers") ||
+		!strings.Contains(errOut, "frontier, pro or flash") {
+		t.Fatalf("--tiers turbo: code=%d err=%q; want a refusal naming --tiers and the three types", code, errOut)
+	}
+	if code, out, errOut := run("bench", "--tiers", "frontier, pro", "b", "6"); code != 0 || !strings.Contains(out, " tiers=frontier,pro ") {
+		t.Fatalf("--tiers frontier,pro: code=%d out=%q err=%q", code, out, errOut)
+	}
+	if _, tr := desired(); tr != "frontier,pro" {
+		t.Fatalf("bench:b:desired tiers=%q; want frontier,pro", tr)
+	}
+	if r, err := client.FCall(ctx, "ns_capacity_desired", nil, "bench", "b", "6", "m", "ops", "idem-turbo", "", "", "", "", "", "turbo").Slice(); err != nil ||
+		len(r) == 0 || r[0] != "INVALID" {
+		t.Fatalf("ns_capacity_desired tiers=turbo: %v %v; want INVALID", r, err)
+	}
+	if _, tr := desired(); tr != "frontier,pro" {
+		t.Fatalf("after the refused Lua write tiers=%q; want frontier,pro kept", tr)
+	}
 	if code, out, errOut := run("friend", "--kinds", "read", "f", "4"); code != 0 || !strings.Contains(out, " kinds=read ") {
 		t.Fatalf("capacity friend --kinds code=%d out=%q err=%q", code, out, errOut)
 	}

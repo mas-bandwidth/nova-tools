@@ -41,6 +41,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -272,13 +273,13 @@ func Run(ctx context.Context, st *store.Store, cfg RunConfig) RunReport {
 			return refuse(err.Error())
 		}
 		tier := rec["tier"]
-		if tier != RoutePro && tier != RouteFlash {
+		if !cardhdr.IsRoute(tier) {
 			tier = rec["route"]
 		}
 		if rec["leg"] == "read" {
 			tier = RoutePro
 		}
-		if tier != RoutePro && tier != RouteFlash {
+		if !cardhdr.IsRoute(tier) {
 			tier = ""
 		}
 		vals := []string{"", tier, rec["repo"], rec["base"], rec["base_sha"], rec["est"]}
@@ -323,13 +324,13 @@ func Run(ctx context.Context, st *store.Store, cfg RunConfig) RunReport {
 
 	// 3. The route: the card's ROUTE tier and label pick from the spread.
 	tier := field(1)
-	switch tier {
-	case "pro", "flash":
-	case "":
+	switch {
+	case cardhdr.IsRoute(tier):
+	case tier == "":
 		log("ROUTE none on %s, running the flash tier", cardKey)
-		tier = "flash"
+		tier = RouteFlash
 	default:
-		return refuse(fmt.Sprintf("route '%s' on %s is not pro or flash", tier, cardKey))
+		return refuse(fmt.Sprintf("route '%s' on %s is not %s", tier, cardKey, cardhdr.RouteList))
 	}
 	tab := cfg.Routes
 	if tab == nil {

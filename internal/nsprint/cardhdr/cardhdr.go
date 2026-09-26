@@ -52,13 +52,42 @@ func IsRunnerKind(kind string) bool {
 	return false
 }
 
-// The routes a card may carry: the rung of internal/nsprint/route/routes.yaml
-// the bench harness picks its model from (nova-sprint routes --tier <route>,
-// first allowed route). A card with no ROUTE line is flash.
+// The routes a card may carry: the three model types (Glenn 2026-09-26).
+// frontier is the most recent Astra or Fable model only; pro and flash are
+// the rungs of internal/nsprint/route/routes.yaml the bench harness picks
+// its model from (nova-sprint routes --tier <route>, first allowed route). A
+// card with no ROUTE line is flash. Every worker (a friend or a bench)
+// advertises the types it runs on its desired record's tiers field
+// (nova-sprint capacity friend|bench --tiers ...); the dealer matches a
+// card's route against that, and a worker advertising nothing is flash,pro.
+// Nothing in code names a worker.
 const (
-	RouteFlash = "flash"
-	RoutePro   = "pro"
+	RouteFrontier = "frontier"
+	RoutePro      = "pro"
+	RouteFlash    = "flash"
 )
+
+// Routes is the three model types in rank order, the set every ROUTE parse
+// and list draws on.
+var Routes = []string{RouteFrontier, RoutePro, RouteFlash}
+
+// RouteList is the three types as a refusal names them.
+const RouteList = "frontier, pro or flash"
+
+// DefaultTiers is what a worker with no tiers advertised is treated as: the
+// two swarm rungs, so a frontier card never goes to a worker that did not
+// advertise frontier.
+const DefaultTiers = "flash,pro"
+
+// IsRoute reports whether s is one of the three model types.
+func IsRoute(s string) bool {
+	for _, r := range Routes {
+		if r == s {
+			return true
+		}
+	}
+	return false
+}
 
 // KeyRE is the header line's shape: a key word at column 0, then a colon.
 var KeyRE = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$`)

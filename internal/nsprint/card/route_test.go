@@ -29,6 +29,7 @@ func TestCardPushStoresRoute(t *testing.T) {
 		lines []string
 		want  string
 	}{
+		{"route-frontier", []string{"ROUTE: frontier"}, "frontier"},
 		{"route-pro", []string{"ROUTE: pro"}, "pro"},
 		{"route-flash", []string{"ROUTE: flash"}, "flash"},
 		{"route-absent", nil, "flash"},
@@ -52,7 +53,7 @@ func TestCardLintRefusesBadRoute(t *testing.T) {
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
-	for i, line := range []string{"ROUTE: turbo", "ROUTE: PRO", "ROUTE: pro flash", "ROUTE: ocflash", "ROUTE:"} {
+	for i, line := range []string{"ROUTE: turbo", "ROUTE: PRO", "ROUTE: pro flash", "ROUTE: ocflash", "ROUTE: FRONTIER", "ROUTE:"} {
 		f := validCard(srv.URL + "/acme/public.git")
 		f.label = "bad-route-" + string(rune('a'+i))
 		res := card.Push(ctx, client, sprint, withHeader(f, line))
