@@ -267,7 +267,9 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		sprintOrder = pipe.ZRange(ctx, "sprint:order", 0, -1)
 		states = make([]*redis.StringCmd, len(r.sprints))
 		for i, name := range r.sprints {
-			states[i] = pipe.HGet(ctx, "s:"+name+":status", "state")
+			// the sprint's status field on s:<S> (what sprint open, close
+			// and pitstop.read use): "closed" is out, anything else is open
+			states[i] = pipe.HGet(ctx, "s:"+name, "status")
 		}
 		pitSprint = r.openSprint
 	}
@@ -331,7 +333,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	if sprintOrder != nil {
 		gotSprints = sprintOrder.Val()
 		for i, name := range r.sprints {
-			if i < len(states) && states[i] != nil && states[i].Val() != "closed" && states[i].Val() != "" {
+			if i < len(states) && states[i] != nil && states[i].Err() == nil && states[i].Val() != "closed" {
 				open = name
 			}
 		}

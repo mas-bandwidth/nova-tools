@@ -46,9 +46,9 @@ func TestPitstopOfTheOpenSprintWithoutAFlag(t *testing.T) {
 	now := table.SprintFixtureNow()
 	client, _ := consumerStore(t, [][]string{
 		{"ZADD", "sprint:order", "1", "old", "2", "cur"},
-		{"HSET", "s:old:status", "state", "closed"},
+		{"HSET", "s:old", "status", "closed", "opened_at", "1"},
 		{"HSET", "s:old:pitstop", "by", "rowan"},
-		{"HSET", "s:cur:status", "state", "open"},
+		{"HSET", "s:cur", "status", "open", "opened_at", "2"},
 	})
 	r := table.NewSprintReader(client, table.SprintConfig{})
 	snap, err := r.Read(context.Background(), now)

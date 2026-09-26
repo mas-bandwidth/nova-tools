@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 )
@@ -56,5 +57,25 @@ func TestBenchBeatCarriesFacts(t *testing.T) {
 	beat := client.HGetAll(ctx, "bench:b1:beat").Val()
 	if beat["harness"] != f.Harness || beat["mirrors"] != f.Mirrors || beat["disk_gib"] != f.DiskGiB {
 		t.Fatalf("beat %v does not carry the facts %+v", beat, f)
+	}
+}
+
+// TestBenchBeatCarriesNCPU (Glenn 2026-09-26 8:33 AM ET: load as a percent
+// of every core): the beat hash the table reads carries ncpu beside load1,
+// so the table needs no host row.
+func TestBenchBeatCarriesNCPU(t *testing.T) {
+	t.Parallel()
+	st, client, _ := controlRedis(t)
+	ctx := context.Background()
+	res, err := life.BenchBeat(ctx, st, life.BenchRequest{
+		Bench: "b2", Host: "host-b", Session: "sess-b", Actor: "bench", Load1: "3.20",
+		RowAt: time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC), NCPU: 16,
+	})
+	if err != nil || !res.Accepted {
+		t.Fatalf("bench beat: %+v %v", res, err)
+	}
+	beat := client.HMGet(ctx, "bench:b2:beat", "load1", "ncpu").Val()
+	if beat[0] != "3.20" || beat[1] != "16" {
+		t.Fatalf("beat load1/ncpu = %v, want 3.20 and 16", beat)
 	}
 }

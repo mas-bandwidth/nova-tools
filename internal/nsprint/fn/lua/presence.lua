@@ -297,6 +297,10 @@ local function bench_beat(keys, args)
   if row_at and row_at ~= '' then
     redis.call('HSET', 'bench:' .. bench,
       'host', bench, 'load1', load1 or '', 'ncpu', ncpu or '', 'at', row_at)
+    -- ncpu on the beat too: the table prints load1 / ncpu as a percent of
+    -- every core (Glenn 2026-09-26 8:33 AM ET); the beat is the row the
+    -- table reads, never the host row
+    redis.call('HSET', 'bench:' .. bench .. ':beat', 'ncpu', ncpu or '')
   end
   if first == 0 then
     pl_caplog('bench-up', bench, '', actor, idem, at)
