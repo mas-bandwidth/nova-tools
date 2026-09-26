@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ctxindex"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
@@ -22,7 +24,8 @@ import (
 //
 // The retired pulse cutter rendered a card file into a queue directory; card cut reads
 // the issue, renders the card body in the card-push shape (WHO, STREAM,
-// DEPENDS-ON and WHY, PATHS, DONE-WHEN, BASE, base-sha, EST, ORIGIN), inlines
+// DEPENDS-ON and WHY, PATHS, DONE-WHEN, INVARIANT, CLASS-TEST, PLATFORMS,
+// BASE, base-sha, EST, ORIGIN), inlines
 // the S2 context block (internal/ctxindex) when an index is named, stores the
 // body's exact bytes at BodyKey before the card is published, and pushes the
 // card with PushBatch, the one card writer. No file, no queue directory.
@@ -50,6 +53,7 @@ type CutInput struct {
 	Index  string // a ctxindex directory; "" inlines no context
 	Stream string // overrides the issue's STREAM: line
 	Base   string // overrides the issue's BASE: line
+	Join   string // the open stream the card may join when its PATHS overlap it (PushOptions.Join, #4322)
 }
 
 // CutCard is what a cut rendered: the card's label and exact bytes, and the
@@ -95,6 +99,19 @@ func RenderCut(ctx context.Context, src IssueSource, in CutInput) (CutCard, erro
 		if fields[key] == "" {
 			return CutCard{}, fmt.Errorf("%s#%d has no %s: line", in.Repo, in.Issue, key)
 		}
+	}
+	// The card is a spec (#4313): its DONE-WHEN names the test that proves
+	// it, or its TEST line does, or the card says why it has none. A card
+	// whose DONE-WHEN cannot be turned into a test is refused here, before
+	// any write, with the remedy.
+	test := fields["TEST"]
+	if test == "" {
+		if test = taskcard.TestFromDoneWhen(fields["DONE-WHEN"]); test == "none" {
+			test = "" // no TEST line and no test in DONE-WHEN: the refusal says so
+		}
+	}
+	if _, why := cardhdr.ParseTest(test); why != "" {
+		return CutCard{}, fmt.Errorf("%s#%d: %s", in.Repo, in.Issue, why)
 	}
 	name := in.Repo[strings.IndexByte(in.Repo, '/')+1:]
 	label := fmt.Sprintf("%s-%d", name, in.Issue)
@@ -148,9 +165,13 @@ func RenderCut(ctx context.Context, src IssueSource, in CutInput) (CutCard, erro
 		{"BASE", base},
 		{"base-sha", baseSHA},
 		{"PATHS", fields["PATHS"]},
+		{"TEST", test},
 		{"DEPENDS-ON", depends},
 		{"WHY", why},
 		{"DONE-WHEN", fields["DONE-WHEN"]},
+		{"INVARIANT", fields["INVARIANT"]},
+		{"CLASS-TEST", fields["CLASS-TEST"]},
+		{"PLATFORMS", fields["PLATFORMS"]},
 		{"WHO", who},
 		{"STREAM", stream},
 		{"EST", fields["EST"]},
@@ -212,7 +233,18 @@ func sealContract(card string) string {
 }
 
 // cutKeys are the issue lines a cut reads, first occurrence wins.
-var cutKeys = []string{"STREAM", "PATHS", "DEPENDS-ON", "WHY", "DONE-WHEN", "BASE", "base-sha", "EST", "WHO"}
+var cutKeys = []string{"STREAM", "PATHS", "TEST", "DEPENDS-ON", "WHY", "DONE-WHEN", "BASE", "base-sha", "EST", "WHO",
+	"INVARIANT", "CLASS-TEST", "PLATFORMS"}
+
+// contractSHA is the base-sha: line of a rendered card ("" when none).
+func contractSHA(body []byte) string {
+	for _, line := range strings.Split(string(body), "\n") {
+		if v, ok := strings.CutPrefix(line, "base-sha: "); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
 
 // IssueFields reads the card's lines from an issue body: the first line of
 // each key in cutKeys, anywhere in the body, after list markers and Markdown
@@ -299,11 +331,15 @@ func Cut(ctx context.Context, client *redis.Client, src IssueSource, in CutInput
 	if err != nil {
 		return CutCard{}, VerbResult{}, err
 	}
+	// One card, one invariant (#4396): refused before the body is stored.
+	if rs := LintOneInvariant(in.Repo, contractSHA(c.Body), c.Body); rs != nil {
+		return c, VerbResult{}, rs
+	}
 	sum := sha256.Sum256(c.Body)
 	if err := client.SetNX(ctx, BodyKey(in.Sprint, hex.EncodeToString(sum[:])), c.Body, BodyTTL).Err(); err != nil {
 		return c, VerbResult{}, fmt.Errorf("store body: %v", err)
 	}
-	res := PushBatch(ctx, client, in.Sprint, []CardFile{{Name: c.Label, Body: c.Body}}, PushOptions{})[0]
+	res := PushBatch(ctx, client, in.Sprint, []CardFile{{Name: c.Label, Body: c.Body}}, PushOptions{Join: in.Join})[0]
 	return c, res, nil
 }
 
