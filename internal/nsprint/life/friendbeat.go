@@ -52,8 +52,15 @@ type FriendBeatResult struct {
 	// Dead and Unknown name copies that were not renewed. Changed contains
 	// only new states, so a loop can report a lapse once instead of each tick.
 	Dead, Unknown, Changed []string
+	// Refused preserves the store's reason per copy, separately from an OS
+	// observation whose state could not be established.
+	Refused []OwnerRefusal
 	// Skipped names legacy friend-queue tasks, which task beat renews.
 	Skipped []string
+}
+
+type OwnerRefusal struct {
+	ID, Why string
 }
 
 // FriendBeatHarness is the harness field a friend beat writes, naming its
@@ -172,6 +179,7 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 				return FriendBeatResult{}, out.Err
 			}
 			rep.Unknown = append(rep.Unknown, id)
+			rep.Refused = append(rep.Refused, OwnerRefusal{ID: id, Why: out.Err.Error()})
 			continue
 		}
 		got := out.Receipt

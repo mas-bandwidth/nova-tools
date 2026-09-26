@@ -428,9 +428,10 @@ func CancelEach(ctx context.Context, c redis.Cmdable, by, why string, ids ...str
 	return r, nil
 }
 
-// BeatCopies renews as's working copies' leases; it returns the new
-// lease_until (ms). With no id it renews every copy in working, and a
-// friend-queue task there is skipped (ns_cm_beat names it after the lease).
+// BeatCopies renews a bench's working copies and returns lease_until (ms).
+// With no id it renews every copy in working. Friend copies refuse with
+// guidance to friend beat: only ObserveOwner carries independent evidence
+// that a friend's executing process is still alive.
 func BeatCopies(ctx context.Context, c redis.Cmdable, as Consumer, ids ...string) (int64, error) {
 	args := []any{as.String()}
 	for _, id := range ids {

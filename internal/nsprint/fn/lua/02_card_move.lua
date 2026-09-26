@@ -4218,6 +4218,12 @@ function TM.beat(c, ids)
       return { 'REFUSED', 'NOTWORKING ' .. TK.str(id) .. ' is not in ' .. TM.key(c, 'working') }
     end
   end
+  -- Only ns_cm_owner carries a fresh, fenced process observation. A cached
+  -- live state is insufficient here: repeated plain beats could keep a dead
+  -- owner alive forever. This also covers task beat's copy path.
+  if #ids > 0 and TM.parse(c) == 'friend' then
+    return { 'REFUSED', 'OWNER ' .. c .. ' copies require an observed owner; no leases renewed; run: nova-sprint friend beat --as ' .. c .. ' --once' }
+  end
   for _, id in ipairs(ids) do
     redis.call('HSET', 'task:' .. id, 'lease_until', tostring(at + TM.LEASE), 'beat_at', tostring(at))
   end

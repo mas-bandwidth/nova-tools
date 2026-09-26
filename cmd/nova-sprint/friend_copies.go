@@ -508,6 +508,7 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, verb, err.Error())
 	}
 	printBeatSkipped(out, k, res.Skipped)
+	printOwnerRefusals(out, k, res.Refused, nil)
 	for _, id := range res.Dead {
 		fmt.Fprintf(out, "FRIEND OWNER id=%s state=dead renewed=false\n", id)
 	}
@@ -524,6 +525,10 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 	defer stop()
 	var backoff time.Duration
 	var next time.Time
+	ownerRefusals := map[string]string{}
+	for _, r := range res.Refused {
+		ownerRefusals[r.ID] = r.Why
+	}
 	for {
 		select {
 		case <-signalCtx.Done():
@@ -532,7 +537,9 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 			if now.Before(next) {
 				continue
 			}
-			if _, err := friendBeatOnce(signalCtx, st, k, *host, now); err != nil {
+			res, err := friendBeatOnce(signalCtx, st, k, *host, now)
+			printOwnerRefusals(out, k, res.Refused, ownerRefusals)
+			if err != nil {
 				if signalCtx.Err() != nil {
 					return 0
 				}
@@ -542,6 +549,25 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 				continue
 			}
 			backoff, next = 0, time.Time{}
+		}
+	}
+}
+
+// printOwnerRefusals keeps a raced or stale observation distinguishable from
+// unknown process liveness. The loop reports each change in refusal reason.
+func printOwnerRefusals(out io.Writer, k taskcard.Consumer, refusals []life.OwnerRefusal, previous map[string]string) {
+	current := make(map[string]string, len(refusals))
+	for _, r := range refusals {
+		current[r.ID] = r.Why
+		if previous != nil && previous[r.ID] == r.Why {
+			continue
+		}
+		fmt.Fprintf(out, "FRIEND OWNER REFUSED as=%s id=%s renewed=false why=%s next=%s\n", k, r.ID, quoteField(r.Why), quoteField("inspect the current copy and owner binding before retrying friend beat"))
+	}
+	if previous != nil {
+		clear(previous)
+		for id, why := range current {
+			previous[id] = why
 		}
 	}
 }
@@ -575,9 +601,11 @@ func runFriendBeatLoop(ctx context.Context, st *store.Store, k taskcard.Consumer
 			return 0
 		}
 	}
+	ownerRefusals := map[string]string{}
 	l := &life.BeatLoop{Lease: life.StoreLease{Client: c, Friend: k.Name, Me: me}, Friend: k.Name,
 		Tick: func(ctx context.Context, now time.Time) (int, error) {
 			res, err := friendBeatOnce(ctx, st, k, host, now)
+			printOwnerRefusals(out, k, res.Refused, ownerRefusals)
 			for _, change := range res.Changed {
 				fmt.Fprintf(out, "OWNER as=%s copy_state=%s\n", k, change)
 			}
