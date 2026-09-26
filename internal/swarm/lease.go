@@ -413,7 +413,7 @@ func writeJobLeaseTemp(dir, body string) (string, error) {
 		_ = os.Remove(tmp)
 		return "", fmt.Errorf("the job lease could not be written under %s: %w", dir, err)
 	}
-	if err := f.Sync(); err != nil {
+	if err := syncFile(f); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)
 		return "", fmt.Errorf("the job lease could not be flushed under %s: %w", dir, err)

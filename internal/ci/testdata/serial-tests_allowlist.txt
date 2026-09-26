@@ -318,7 +318,7 @@ cmd/nova-sprint/land_run_test.go:TestLandSkipsOpenHold serial: swaps package var
 cmd/nova-sprint/land_run_test.go:TestLandStreamPRLivesOnUnitRecord serial: swaps package var http.DefaultTransport, t.Setenv
 cmd/nova-sprint/land_run_test.go:TestLandTakesStreamPRsOldestFirst serial: swaps package var http.DefaultTransport, t.Chdir, t.Setenv
 cmd/nova-sprint/land_run_test.go:TestLandedOnlyOnMergeCommit serial: swaps package var http.DefaultTransport, t.Setenv
-cmd/nova-sprint/land_stream_test.go:TestLandStreamConflictStops serial: swaps package var main.landStreamToken
+cmd/nova-sprint/land_stream_functional_test.go:TestLandStreamConflictStops serial: swaps package var main.landStreamToken
 cmd/nova-sprint/land_stream_functional_test.go:TestLandStreamEndToEnd serial: swaps package var main.landStreamToken
 cmd/nova-sprint/land_whole_functional_test.go:TestLandBatchMergesOldestFirst serial: swaps package var main.landRunSleep, swaps package var main.landStreamToken
 cmd/nova-sprint/land_whole_functional_test.go:TestLandPushesDevOnce serial: swaps package var main.landRunSleep, swaps package var main.landStreamToken
@@ -651,6 +651,7 @@ internal/bus/replydraft_test.go:TestTheSecondPublishIsUsedWhenTheFirstIsNotAvail
 internal/bus/timeout_test.go:TestAGitThatHangsIsKilledAndNamed serial: t.Setenv
 internal/check/corpus_test.go:TestARelativeRootIsNotReadAsASymlinkEscape serial: t.Chdir
 internal/ci/redis_ci_test.go:TestRedisBackedTestsDoNotSkipUnderCI serial: t.Setenv
+internal/ci/source_functional_test.go:TestTheSourceSeamsAnswerAsTheDiskDoes serial: swaps package var ci.walkSourceDir, ci.readSourceFile, ci.parseSource
 internal/ctxindex/ctxindex_test.go:TestLookupReadsOnlyItsBucket serial: swaps package var ctxindex.BucketSize
 internal/ctxindex/ctxindex_test.go:TestPartialBuildLeavesThePreviousIndexWhole serial: swaps package var ctxindex.afterBuckets
 internal/decide/answers_test.go:TestChoiceAnswerOutsideTheCriteriaIsAProviderError serial: t.Setenv
@@ -773,37 +774,36 @@ internal/sprinttable/session_unix_test.go:TestRefreshSurvivesUnitProcessGroupKil
 internal/swarm/admitrepo_test.go:TestAdmitAcceptsPublicRepo serial: swaps package var swarm.probeClient
 internal/swarm/admitrepo_test.go:TestAdmitRefusesPrivateRepo serial: swaps package var swarm.probeClient
 internal/swarm/admitrepo_test.go:TestAdmitRefusesWhenProbeFails serial: swaps package var swarm.probeClient
-internal/swarm/batch_clock_test.go:TestIssue1983 serial: t.Setenv
-internal/swarm/batch_test.go:TestBatchRelativeRootIsAbsolutized serial: os.Chdir
-internal/swarm/batch_tokens_13d_test.go:TestBatchCardsPutsTheWordInTheRemoteNativeArgv serial: t.Setenv
-internal/swarm/bench_test.go:TestBatchCopiesCardOnly serial: t.Setenv
-internal/swarm/bench_test.go:TestBatchPinsSlotToCore serial: t.Setenv
+internal/swarm/batch_functional_test.go:TestBatchRelativeRootIsAbsolutized serial: os.Chdir
+internal/swarm/batch_tokens_13d_functional_test.go:TestBatchCardsPutsTheWordInTheRemoteNativeArgv serial: t.Setenv
+internal/swarm/bench_functional_test.go:TestBatchCopiesCardOnly serial: t.Setenv
+internal/swarm/bench_functional_test.go:TestBatchPinsSlotToCore serial: t.Setenv
 internal/swarm/bench_test.go:TestBatchRefusesMoreSlotsThanCores serial: t.Setenv
-internal/swarm/bench_test.go:TestRemoteRunSlotIsTheSlotDir serial: t.Setenv
-internal/swarm/benchpull_test.go:TestPullCopiesResultUpFromRepo serial: t.Setenv
-internal/swarm/benchpull_test.go:TestPullScoresBenchUnreachable serial: t.Setenv
-internal/swarm/benchpull_test.go:TestPullWaitsForResult serial: t.Setenv
+internal/swarm/bench_functional_test.go:TestRemoteRunSlotIsTheSlotDir serial: t.Setenv
+internal/swarm/benchpull_functional_test.go:TestPullCopiesResultUpFromRepo serial: t.Setenv
+internal/swarm/benchpull_functional_test.go:TestPullScoresBenchUnreachable serial: t.Setenv
+internal/swarm/benchpull_functional_test.go:TestPullWaitsForResult serial: t.Setenv
 internal/swarm/decide_triage_test.go:TestTriageDecideReasonProviderError serial: t.Setenv
 internal/swarm/hostguard_test.go:TestCopyCardToBenchPanicsUnderTheGuard serial: t.Setenv
 internal/swarm/hostguard_test.go:TestHostGuardCleanupRestoresCachedState serial: t.Setenv
 internal/swarm/hostguard_test.go:TestSCPFilePanicsUnderTheGuard serial: t.Setenv
 internal/swarm/hostguard_test.go:TestSSHOutputPanicsUnderTheGuard serial: t.Setenv
 internal/swarm/hostguard_test.go:TestSSHRunPanicsUnderTheGuard serial: t.Setenv
-internal/swarm/launch_bound_test.go:TestTheLaunchHandshakeEndsAtItsOwnTimeoutWhenEveryReadCollides serial: swaps package var swarm.forceTransientIO
+internal/swarm/launch_bound_functional_test.go:TestTheLaunchHandshakeEndsAtItsOwnTimeoutWhenEveryReadCollides serial: swaps package var swarm.forceTransientIO
 internal/swarm/launchfail_test.go:TestProviderRetryDelayBands serial: os.Unsetenv
-internal/swarm/opencode_numeric_test.go:TestOpenCodeInvalidNumericUsageIsAReadFailure serial: t.Setenv
-internal/swarm/opencode_numeric_test.go:TestOpenCodeNumericBoundsPreserveZeroAndAbsence serial: t.Setenv
-internal/swarm/opencode_test.go:TestAnAbsentOpenCodeDatabaseIsNotAnError serial: t.Setenv
-internal/swarm/opencode_test.go:TestAnUnreadableOpenCodeDatabaseIsAnError serial: t.Setenv
+internal/swarm/opencode_numeric_functional_test.go:TestOpenCodeInvalidNumericUsageIsAReadFailure serial: t.Setenv
+internal/swarm/opencode_numeric_functional_test.go:TestOpenCodeNumericBoundsPreserveZeroAndAbsence serial: t.Setenv
+internal/swarm/opencode_functional_test.go:TestAnAbsentOpenCodeDatabaseIsNotAnError serial: t.Setenv
+internal/swarm/opencode_functional_test.go:TestAnUnreadableOpenCodeDatabaseIsAnError serial: t.Setenv
 internal/swarm/opencode_test.go:TestNoSQLiteOnPathIsAnError serial: t.Setenv
-internal/swarm/opencode_test.go:TestOpenCodeSourceFindsTheLocalShareStore serial: t.Setenv
-internal/swarm/opencode_test.go:TestOpenCodeSourceWaitsOutAWriteAheadLog serial: t.Setenv
+internal/swarm/opencode_functional_test.go:TestOpenCodeSourceFindsTheLocalShareStore serial: t.Setenv
+internal/swarm/opencode_functional_test.go:TestOpenCodeSourceWaitsOutAWriteAheadLog serial: t.Setenv
 internal/swarm/opencode_test.go:TestOpenCodeSourceWithoutSQLiteIsANamedRefusal serial: t.Setenv
-internal/swarm/opencode_test.go:TestTheOpenCodeSourceSumsTheMessageRows serial: t.Setenv
-internal/swarm/prewarm_test.go:TestPrewarmGitChildrenDropSecrets serial: t.Setenv
-internal/swarm/publicbatch_test.go:TestBatchPublicGateListedRunsUnlistedRefused serial: swaps package var swarm.probeClient
+internal/swarm/opencode_functional_test.go:TestTheOpenCodeSourceSumsTheMessageRows serial: t.Setenv
+internal/swarm/prewarm_functional_test.go:TestPrewarmGitChildrenDropSecrets serial: t.Setenv
+internal/swarm/publicbatch_functional_test.go:TestBatchPublicGateListedRunsUnlistedRefused serial: swaps package var swarm.probeClient
 internal/swarm/pullworker_test.go:TestExecuteContainerRefusesSeatWithoutNovaSecrets serial: t.Setenv
-internal/swarm/pullworker_test.go:TestExecuteContainerRunsThroughNovaSecrets serial: t.Setenv
+internal/swarm/pullworker_functional_test.go:TestExecuteContainerRunsThroughNovaSecrets serial: t.Setenv
 internal/swarm/queue_test.go:TestStealWaitsOutAReplaceCollision serial: swaps package var swarm.forceTransientIO
 internal/swarm/queue_test.go:TestTakeCardWaitsOutAReplaceCollision serial: swaps package var swarm.forceTransientIO
 internal/swarm/result_collision_test.go:TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent serial: swaps package var swarm.forceTransientIO
@@ -812,11 +812,11 @@ internal/swarm/result_collision_test.go:TestTheCollisionSeamCountsOnlyReadsOfThe
 internal/swarm/routeladder_test.go:TestRouteCardBelowTheFloorKeepsTodaysModel serial: t.Setenv
 internal/swarm/routeladder_test.go:TestRouteCardFollowsTheAnswer serial: t.Setenv
 internal/swarm/routeladder_test.go:TestRouteCardKeepsTodaysModelWhenTheProviderRefuses serial: t.Setenv
-internal/swarm/stage_test.go:TestStageUsesTheBenchMirrorAndTimesOut serial: t.Setenv
-internal/swarm/staging_test.go:TestWorkerClonesAfterLaunchCarriesPoolIdentity serial: t.Setenv
+internal/swarm/stage_functional_test.go:TestStageUsesTheBenchMirrorAndTimesOut serial: t.Setenv
+internal/swarm/staging_functional_test.go:TestWorkerClonesAfterLaunchCarriesPoolIdentity serial: t.Setenv
 internal/swarm/toolchain_test.go:TestToolchainVersionDirReadsTheVersionOffTheLauncher serial: t.Setenv
-internal/swarm/usagecard_test.go:TestUsageRowWithoutSqlite serial: t.Setenv
-internal/swarm/warm_test.go:TestAClipResetsTheWorktreeToBase serial: t.Setenv
+internal/swarm/usagecard_functional_test.go:TestUsageRowWithoutSqlite serial: t.Setenv
+internal/swarm/warm_functional_test.go:TestAClipResetsTheWorktreeToBase serial: t.Setenv
 internal/testbin/testbin_test.go:TestPlaceFallsBackToCopyWhenLinkFails serial: swaps package var testbin.link
 internal/testguard/testguard_test.go:TestAFakeOnPATHIsNotAHost serial: os.Unsetenv, t.Setenv
 internal/testguard/testguard_test.go:TestAllowHostsIsScopedAndNests serial: os.Unsetenv, t.Setenv

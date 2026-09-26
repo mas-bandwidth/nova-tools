@@ -298,8 +298,11 @@ func HelpBannerExamples(root string) (map[string]string, error) {
 				continue
 			}
 			rel := filepath.ToSlash(strings.TrimPrefix(f, root+string(filepath.Separator)))
-			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, f, nil, parser.SkipObjectResolution)
+			src, err := readSourceFile(f)
+			if err != nil {
+				return nil, fmt.Errorf("help banners: %w", err)
+			}
+			_, file, err := parseSource(f, src, parser.SkipObjectResolution)
 			if err != nil {
 				return nil, fmt.Errorf("help banners: %w", err)
 			}

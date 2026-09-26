@@ -1,3 +1,5 @@
+//go:build functional
+
 package ci
 
 import (
@@ -11,6 +13,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// ci_gosetup_functional_test.go runs every copy of ci.yml's Go setup step
+// under bash, twenty-four processes: exec of whole programs is the functional
+// tier's (Glenn 2026-09-26, nova-tools#4328: unit tests under 2 s).
 
 // goSetupMarker is the line every copy of ci.yml's Go setup step carries: the
 // newest-Go-under-~/sdk fallback.

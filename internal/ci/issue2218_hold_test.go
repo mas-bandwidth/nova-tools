@@ -167,7 +167,10 @@ func runTranscript(t *testing.T, doc string) {
 
 // rowan hold 3 at d3f2ddf5, item 1: the list is compared with its copy at the
 // change's base, and a row the change adds fails. The control is the hold's
-// own: a new doc example appended with the same row appended to the list.
+// own: a new doc example appended with the same row appended to the list. The
+// half that reads the base's list out of a real git history is
+// TestIssue2218ChangeBaseReadsTheBasesList (issue2218_hold_functional_test.go:
+// it runs git, the functional tier's, nova-tools#4328).
 func TestIssue2218AddedUnexecutedRowFails(t *testing.T) {
 	t.Parallel()
 
@@ -178,51 +181,6 @@ func TestIssue2218AddedUnexecutedRowFails(t *testing.T) {
 		t.Errorf("AddedListRows on a shrink = %q; want none", got)
 	}
 
-	root := t.TempDir()
-	git := func(args ...string) string {
-		t.Helper()
-		out, err := gitOut(root, append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return strings.TrimSpace(out)
-	}
-	git("init", "-q", "-b", "dev")
-	writeGo(t, root, "docs/CLI.md", "```\n$ nova-foo run\n```\n")
-	writeGo(t, root, UnexecutedListPath, "# list\n$ nova-foo run\n")
-	git("add", "-A")
-	git("commit", "-q", "-m", "base")
-	base := git("rev-parse", "HEAD")
-	git("checkout", "-q", "-b", "pr")
-	writeGo(t, root, "docs/CLI.md", "```\n$ nova-foo run\n$ nova-foo newverb --x 1\n```\n")
-	writeGo(t, root, UnexecutedListPath, "# list\n$ nova-foo run\n$ nova-foo newverb --x 1\n")
-	git("commit", "-q", "-am", "adds an unexecuted example")
-
-	event := filepath.Join(t.TempDir(), "event.json")
-	if err := os.WriteFile(event, []byte(`{"pull_request":{"base":{"sha":"`+base+`"}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for name, env := range map[string]map[string]string{
-		"pull_request event": {"GITHUB_EVENT_PATH": event},
-		"local merge base":   {"GITHUB_BASE_REF": "dev"},
-	} {
-		got, err := ChangeBase(root, func(k string) string { return env[k] })
-		if err != nil || got != base {
-			t.Errorf("%s: ChangeBase = %q, %v; want %s", name, got, err, base)
-			continue
-		}
-		baseList, present, err := ListAtCommit(root, got, UnexecutedListPath)
-		if err != nil || !present {
-			t.Fatalf("%s: ListAtCommit = present %v, %v; want the base's list", name, present, err)
-		}
-		head := loadAllowlist(t, filepath.Join(root, UnexecutedListPath), unexecutedListOptions)
-		if added := AddedListRows(baseList, head.Text()); !slices.Equal(added, []string{"$ nova-foo newverb --x 1"}) {
-			t.Errorf("%s: added rows = %q; want the appended row, which fails the class test", name, added)
-		}
-	}
-	if _, present, err := ListAtCommit(root, base, "internal/ci/testdata/absent.txt"); err != nil || present {
-		t.Errorf("ListAtCommit of a file the base lacks = present %v, %v; want introduced (false, nil)", present, err)
-	}
 	if !changeEventMustCompare("pull_request") || !changeEventMustCompare("merge_group") || changeEventMustCompare("schedule") {
 		t.Error("changeEventMustCompare: a pull_request or merge_group run must compare with its base; a scheduled run need not")
 	}

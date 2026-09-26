@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,12 +32,6 @@ func testWait() time.Duration {
 	}
 	return 30 * time.Second
 }
-
-// quietNoEvent is how long a test waits to be sure a message did NOT arrive.
-func quietNoEvent() time.Duration { return 200 * time.Millisecond }
-
-// reactorDeadline is the bound for a test that only proves the loop returns at one.
-func reactorDeadline() time.Duration { return 500 * time.Millisecond }
 
 // newBus starts a miniredis and returns a client and a cancel for it.
 func newBus(t *testing.T) (*miniredis.Miniredis, *redis.Client, context.Context) {
@@ -77,13 +72,26 @@ func recvBy(t *testing.T, ch <-chan *redis.Message, channel string) string {
 	}
 }
 
-// noMessage fails if any message arrives on the channel within the quiet window.
-func noMessage(t *testing.T, ch <-chan *redis.Message, channel string) {
+// noMessage proves nothing was published to the subscription before now, and waits
+// out no quiet window to do it (nova-tools#4328: unit tests never wait on the wall
+// clock). It publishes a sentinel on channel and requires the sentinel to be the next
+// message on ch. Whatever the code under test published had its reply before this
+// call, so Redis delivered it to the subscription ahead of the sentinel, in order;
+// the bound below is only how long a broken bus is given to deliver the sentinel.
+func noMessage(t *testing.T, rdb *redis.Client, ctx context.Context, ch <-chan *redis.Message, channel string) {
 	t.Helper()
+	const sentinel = "noMessage-sentinel"
+	if err := rdb.Publish(ctx, channel, sentinel).Err(); err != nil {
+		t.Fatalf("publishing the %s sentinel: %v", channel, err)
+	}
+	wait := testWait()
 	select {
 	case msg := <-ch:
-		t.Fatalf("unexpected %s message: %s", msg.Channel, msg.Payload)
-	case <-time.After(quietNoEvent()):
+		if msg.Channel != channel || msg.Payload != sentinel {
+			t.Fatalf("unexpected %s message: %s", msg.Channel, msg.Payload)
+		}
+	case <-time.After(wait):
+		t.Fatalf("the %s sentinel did not arrive within %s", channel, wait)
 	}
 }
 
@@ -169,7 +177,7 @@ func TestProducerAnnouncesOnlyACardsEnd(t *testing.T) {
 	if got.Card != "card-41" {
 		t.Errorf("card-done card = %q, want card-41", got.Card)
 	}
-	noMessage(t, sub.Channel(), ChannelCardDone)
+	noMessage(t, rdb, ctx, sub.Channel(), ChannelCardDone)
 	pending, err := rdb.XPending(ctx, StreamCardsDone, GroupEvents).Result()
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +217,7 @@ func TestProducerPublishesPRChecksDoneOnlyOnChange(t *testing.T) {
 	if n, err = p.PollOnce(ctx); err != nil || n != 0 {
 		t.Fatalf("a second poll of an unchanged suite published %d (err %v), want 0", n, err)
 	}
-	noMessage(t, sub.Channel(), ChannelPRChecksDone)
+	noMessage(t, rdb, ctx, sub.Channel(), ChannelPRChecksDone)
 }
 
 // 3. dev-moved is published on the first poll and again only when the base head moves.
@@ -235,7 +243,7 @@ func TestProducerPublishesDevMovedOnlyOnChange(t *testing.T) {
 	if n, err := p.PollOnce(ctx); err != nil || n != 0 {
 		t.Fatalf("an unchanged base published %d (err %v), want 0", n, err)
 	}
-	noMessage(t, sub.Channel(), ChannelDevMoved)
+	noMessage(t, rdb, ctx, sub.Channel(), ChannelDevMoved)
 
 	forge.snap.Base = "base-2"
 	if n, err := p.PollOnce(ctx); err != nil || n != 1 {
@@ -413,12 +421,12 @@ func TestReactorPublishesRebaseWantedForDirtyPRs(t *testing.T) {
 	if got.Number != 7 || got.Head != "d7" {
 		t.Errorf("rebase-wanted = %+v, want number 7 head d7", got)
 	}
-	noMessage(t, sub.Channel(), ChannelRebaseWanted)
+	noMessage(t, rdb, ctx, sub.Channel(), ChannelRebaseWanted)
 
 	if err := r.Handle(ctx, ChannelDevMoved, `{"sha":"base-2"}`); err != nil {
 		t.Fatal(err)
 	}
-	noMessage(t, sub.Channel(), ChannelRebaseWanted)
+	noMessage(t, rdb, ctx, sub.Channel(), ChannelRebaseWanted)
 }
 
 // 9. card-done publishes nothing: the recorder and the harvester read the stream directly.
@@ -438,19 +446,63 @@ func TestReactorCardDonePublishesNothing(t *testing.T) {
 	if len(enqueued) != 0 {
 		t.Fatalf("card-done enqueued: %v", enqueued)
 	}
-	noMessage(t, sub.Channel(), ChannelPRChecksDone)
+	noMessage(t, rdb, ctx, sub.Channel(), ChannelPRChecksDone)
 }
 
-// 10. The loop form returns at its deadline rather than blocking forever.
+// 10. The loop form returns at its deadline rather than blocking forever. The deadline
+// is the test's to reach: it passes once the reactor has subscribed, never after a
+// timer (nova-tools#4328).
 func TestReactorRunReturnsAtItsDeadline(t *testing.T) {
 	t.Parallel()
 
 	_, rdb, ctx := newBus(t)
-	deadline, cancel := context.WithTimeout(ctx, reactorDeadline())
-	defer cancel()
+	deadline := newTestDeadline(ctx)
+	subscribed := make(chan struct{})
 	r := NewReactor(rdb, &fakeForge{}, openGate{}, func(context.Context, int, string) error { return nil }, nil)
-	if err := r.Run(deadline); err != context.DeadlineExceeded {
-		t.Fatalf("Run returned %v, want the deadline", err)
+	r.subscribed = func() { close(subscribed) }
+	done := make(chan error, 1)
+	go func() { done <- r.Run(deadline) }()
+	wait := testWait()
+	select {
+	case <-subscribed:
+	case err := <-done:
+		t.Fatalf("Run returned %v before it subscribed", err)
+	case <-time.After(wait):
+		t.Fatalf("Run did not subscribe within %s", wait)
+	}
+	deadline.pass()
+	select {
+	case err := <-done:
+		if err != context.DeadlineExceeded {
+			t.Fatalf("Run returned %v, want the deadline", err)
+		}
+	case <-time.After(wait):
+		t.Fatalf("Run did not return within %s of its deadline passing", wait)
+	}
+}
+
+// testDeadline is a context whose deadline passes when the test says so: Done closes
+// and Err is context.DeadlineExceeded, the way a real deadline ends a context.
+type testDeadline struct {
+	context.Context
+	done chan struct{}
+	once sync.Once
+}
+
+func newTestDeadline(parent context.Context) *testDeadline {
+	return &testDeadline{Context: parent, done: make(chan struct{})}
+}
+
+func (d *testDeadline) pass() { d.once.Do(func() { close(d.done) }) }
+
+func (d *testDeadline) Done() <-chan struct{} { return d.done }
+
+func (d *testDeadline) Err() error {
+	select {
+	case <-d.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
 	}
 }
 

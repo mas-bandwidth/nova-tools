@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"bytes"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -298,6 +299,11 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 			// only there does a short deadline/idle literal reach a real process.
 			// A file drives the batch when it builds a BatchInput -- through the
 			// runBatch/runBatchIdle helpers or a direct BatchInput literal.
+			// Both shapes below need a time.Second on the line; a file without
+			// one is not split into lines at all (nova-tools#4328).
+			if !bytes.Contains(raw, []byte(wallSecondToken)) {
+				continue
+			}
 			batchFile := strings.Contains(string(raw), "runBatch") || strings.Contains(string(raw), "BatchInput{")
 			for i, line := range strings.Split(string(raw), "\n") {
 				if strings.Contains(line, "// wall-ok:") {
@@ -306,6 +312,9 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 				code := line
 				if j := strings.Index(code, "//"); j >= 0 && (j == 0 || code[j-1] == ' ' || code[j-1] == '\t') {
 					code = code[:j]
+				}
+				if !strings.Contains(code, wallSecondToken) {
+					continue
 				}
 				if batchFile && wallSecondsUnderTen(secLitRe, code) {
 					t.Errorf("%s:%d: batch-driving test carries a wall-clock literal under ten seconds (use thirty seconds or more, or an injected clock with // wall-ok: <reason>): %q", rel, i+1, strings.TrimSpace(line))
@@ -326,6 +335,10 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 		}
 	}
 }
+
+// wallSecondToken is the text both wall-clock shapes need on a line, spelled so
+// that this file's own prefilter is not a match for the rule it speeds up.
+const wallSecondToken = "time" + ".Second"
 
 // wallSecondsUnderTen reports whether code carries a time.Second literal of
 // fewer than ten seconds: a bare time.Second is one, and `n * time.Second` is n.

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
@@ -101,6 +103,19 @@ func isNoAuth(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "NOAUTH")
 }
 
+// noRetryWaits is set by NoRetryWaits and never cleared.
+var noRetryWaits atomic.Bool
+
+// NoRetryWaits makes every client Open and OpenSingle build from now on retry a
+// refused dial or command WITHOUT WAITING between attempts. It is for test
+// binaries: go-redis waits 100 ms between each of five dial attempts and backs
+// off between four command attempts, so a verb pointed at a closed port spent
+// 1.7 s of wall clock before it could refuse, and a test asserting that refusal
+// waited it out (nova-tools#4328, Glenn 2026-09-26: unit tests under 2 s and
+// never waiting on the wall clock). The number of attempts and the error are
+// unchanged. Production never calls it.
+func NoRetryWaits() { noRetryWaits.Store(true) }
+
 func Open(ctx context.Context, addr string) (*Store, error) {
 	return open(ctx, addr, 0, seatcred.Process())
 }
@@ -134,7 +149,13 @@ func open(ctx context.Context, addr string, poolSize int, sel *seatcred.Selectio
 	}
 	// No PING (#3277): go-redis dials on the first command, so the caller's
 	// first pipeline is the probe and an unreachable store fails there.
-	client := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password, PoolSize: poolSize})
+	opts := &redis.Options{Addr: addr, Username: user, Password: password, PoolSize: poolSize}
+	if noRetryWaits.Load() {
+		// The attempts are go-redis's own; only the waits between them go.
+		opts.MinRetryBackoff, opts.MaxRetryBackoff = -1, -1
+		opts.DialerRetryBackoff = func(int) time.Duration { return 0 }
+	}
+	client := redis.NewClient(opts)
 	if user == "" && os.Getenv(DefaultPasswordEnv) != "" {
 		client.AddHook(noUserHook{addr: addr})
 	}

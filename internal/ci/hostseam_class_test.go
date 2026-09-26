@@ -3,7 +3,6 @@ package ci
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -75,7 +74,7 @@ func TestNoTestReachesAHostThroughAnUnfakedSeam(t *testing.T) {
 
 	for _, dir := range []string{"cmd", "internal"} {
 		base := filepath.Join(root, dir)
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+		err := walkSourceDir(base, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -90,12 +89,11 @@ func TestNoTestReachesAHostThroughAnUnfakedSeam(t *testing.T) {
 			if strings.HasPrefix(rel, testguardPkgDir+"/") {
 				return nil
 			}
-			raw, err := os.ReadFile(path)
+			raw, err := readSourceFile(path)
 			if err != nil {
 				return err
 			}
-			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, path, raw, 0)
+			fset, file, err := parseSource(rel, raw, 0)
 			if err != nil {
 				return err
 			}
