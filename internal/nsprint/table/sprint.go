@@ -158,6 +158,24 @@ func okPct(ok, done int64) string {
 // (the Studio; hardcoded, see readOnce).
 const FriendHostBeatKey = "bench:studio:beat"
 
+// loadPercent is the load cell: the beat's load1 over its ncpu as a percent
+// of every core busy, one decimal (Glenn 2026-09-26 8:33 AM ET: "normalize it
+// so that 100% is total usage of all cores at 100%"; 8:38 AM: "show the load
+// as 1.1%, we don't need 2 fractional values"). With no ncpu on the beat the
+// raw load1 prints as before; with no load1, "".
+func loadPercent(load1, ncpu string) string {
+	load := sanitize(load1)
+	if load == "" {
+		return ""
+	}
+	l, err := strconv.ParseFloat(load, 64)
+	n, err2 := strconv.ParseFloat(strings.TrimSpace(ncpu), 64)
+	if err != nil || err2 != nil || n <= 0 {
+		return load
+	}
+	return fmt.Sprintf("%.1f%%", l/n*100)
+}
+
 // hostBeatStale is how old a consumer beat's own at may be before its row
 // prints down, for a beat key that outlived its TTL (a machine's load in
 // lines.go reads the same bound).
@@ -168,7 +186,11 @@ type SprintReader struct {
 	Client                               redis.UniversalClient
 	Config                               SprintConfig
 	streams, benches, friends, consumers []string
-	primed                               bool
+	// sprints is sprint:order and openSprint its one member not closed:
+	// the pit stop shown when Config.Sprint is empty.
+	sprints    []string
+	openSprint string
+	primed     bool
 }
 
 // NewSprintReader is a reader with no membership yet: its first Read takes
@@ -234,9 +256,24 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	if len(cfg.Friends) == 0 {
 		friendSet = pipe.SMembers(ctx, "friends")
 	}
+	// The pit stop is the named sprint's, else the one open sprint's (Glenn
+	// 2026-09-26 8:50 AM ET: "There is only one sprint active at a current
+	// time"): sprint:order and each member's state are read every tick in
+	// the same pipeline, and the open one's stop key with them on the next.
+	var sprintOrder *redis.StringSliceCmd
+	var states []*redis.StringCmd
+	pitSprint := cfg.Sprint
+	if pitSprint == "" {
+		sprintOrder = pipe.ZRange(ctx, "sprint:order", 0, -1)
+		states = make([]*redis.StringCmd, len(r.sprints))
+		for i, name := range r.sprints {
+			states[i] = pipe.HGet(ctx, "s:"+name+":status", "state")
+		}
+		pitSprint = r.openSprint
+	}
 	var pit *redis.IntCmd
-	if cfg.Sprint != "" {
-		pit = pipe.Exists(ctx, "s:"+cfg.Sprint+":pitstop", "sprint:"+cfg.Sprint+":pitstop")
+	if pitSprint != "" {
+		pit = pipe.Exists(ctx, "s:"+pitSprint+":pitstop", "sprint:"+pitSprint+":pitstop")
 	}
 	hourAgo := now.Add(-time.Hour).UnixMilli()
 	log := pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(hourAgo, 10), "+", logWindowMax)
@@ -261,7 +298,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		for j, set := range ConsumerSets {
 			cmds[i].cells[j] = pipe.ZCard(ctx, c.ID()+":cards:"+set)
 		}
-		cmds[i].beat = pipe.HMGet(ctx, c.ID()+":beat", "load1", "at")
+		cmds[i].beat = pipe.HMGet(ctx, c.ID()+":beat", "load1", "at", "ncpu")
 		cmds[i].down = pipe.Exists(ctx, c.ID()+":down")
 	}
 	// HARDCODED (Glenn 2026-09-25 11:25 PM ET, "everybody is on studio"): a
@@ -269,7 +306,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	// friend lives on the Studio, so friend rows show bench:studio:beat's
 	// load1. The proper fix is the friend beat carrying its own machine's
 	// load1 like the bench beat does; then this read goes.
-	studio := pipe.HMGet(ctx, FriendHostBeatKey, "load1")
+	studio := pipe.HMGet(ctx, FriendHostBeatKey, "load1", "ncpu")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, false, fmt.Errorf("pipeline: %w", err)
 	}
@@ -289,11 +326,23 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	if friendSet != nil {
 		gotFriends = sorted(friendSet)
 	}
+	var gotSprints []string
+	open := ""
+	if sprintOrder != nil {
+		gotSprints = sprintOrder.Val()
+		for i, name := range r.sprints {
+			if i < len(states) && states[i] != nil && states[i].Val() != "closed" && states[i].Val() != "" {
+				open = name
+			}
+		}
+	}
 	changed := !r.primed || !slices.Equal(gotOrder, r.streams) || !slices.Equal(gotBenches, r.benches) ||
-		!slices.Equal(gotConsumers, r.consumers) || (friendSet != nil && !slices.Equal(gotFriends, r.friends))
+		!slices.Equal(gotConsumers, r.consumers) || (friendSet != nil && !slices.Equal(gotFriends, r.friends)) ||
+		!slices.Equal(gotSprints, r.sprints) || open != r.openSprint
 	r.primed = true
 	if changed {
 		r.streams, r.benches, r.consumers, r.friends = gotOrder, gotBenches, gotConsumers, gotFriends
+		r.sprints, r.openSprint = gotSprints, open
 		return nil, true, nil
 	}
 
@@ -328,13 +377,13 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			n, err := cmd.Result()
 			*cells[j], row.Unread[j] = n, err != nil
 		}
-		if got, err := cmds[i].beat.Result(); err == nil && len(got) == 2 {
-			if load := sanitize(pipeValue(got[0])); load != "" {
+		if got, err := cmds[i].beat.Result(); err == nil && len(got) == 3 {
+			if load := loadPercent(pipeValue(got[0]), pipeValue(got[2])); load != "" {
 				row.Load = load
 			}
 			if c.Kind == "friend" && row.Load == "-" {
-				if got, err := studio.Result(); err == nil && len(got) == 1 {
-					if load := sanitize(pipeValue(got[0])); load != "" {
+				if got, err := studio.Result(); err == nil && len(got) == 2 {
+					if load := loadPercent(pipeValue(got[0]), pipeValue(got[1])); load != "" {
 						row.Load = load
 					}
 				}
@@ -414,14 +463,19 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 }
 
 // consumerRule is the consumer table's rule line.
-const consumerRule = "--------------------------+-------+---------+-------+-------+-------+------+--------+------\n"
+const consumerRule = "--------------------------+-------+---------+-------+------+--------+------\n"
 
 // writeConsumerTable is the one consumer table (#4071): consumer | ready |
-// working | done | ok | fail | ok% | status | load, then a total row whose
-// ok% is derived from the totals. A cell whose ZCARD did not come back
-// prints "?" (and so do done and ok% when ok or fail is one), never a false 0.
+// working | done | ok% | status | load, then a total row whose ok% is
+// derived from the totals. done is one visible cell, <ok>/<ok + fail>
+// (Glenn 2026-09-26 9:12 AM ET: "merge ok/fail columns for consumers into
+// one VISIBLE column (not logical, visible only), that prints this x/y";
+// "do not refactor the internals. this is just for display only"): the
+// ok and fail sets are still read and counted apart. A cell whose ZCARD did
+// not come back prints "?" (and so do done and ok% when ok or fail is
+// one), never a false 0.
 func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
-	fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %5s | %5s | %4s | %-6s | %s\n", "consumer", "ready", "working", "done", "ok", "fail",
+	fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %4s | %-6s | %s\n", "consumer", "ready", "working", "done",
 		"ok%", "status", "load")
 	b.WriteString(consumerRule)
 	// The row is the name alone (Glenn 2026-09-25 11:20 PM ET: the friend:/bench:
@@ -447,7 +501,7 @@ func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
 			}
 			tot[j] += n
 		}
-		done, pct := strconv.FormatInt(r.Done(), 10), okPct(r.OK, r.Done())
+		done, pct := cell[2]+"/"+strconv.FormatInt(r.Done(), 10), okPct(r.OK, r.Done())
 		if r.Unread[2] || r.Unread[3] {
 			done, pct = "?", "?"
 		}
@@ -455,8 +509,7 @@ func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
 		if r.Up {
 			status = "up"
 		}
-		fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %5s | %5s | %4s | %-6s | %s\n", name, cell[0], cell[1], done, cell[2], cell[3],
-			pct, status, r.Load)
+		fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %4s | %-6s | %s\n", name, cell[0], cell[1], done, pct, status, r.Load)
 	}
 	b.WriteString(consumerRule)
 	cell := [4]string{}
@@ -466,11 +519,11 @@ func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
 			cell[j] = "?"
 		}
 	}
-	done, pct := strconv.FormatInt(tot[2]+tot[3], 10), okPct(tot[2], tot[2]+tot[3])
+	done, pct := cell[2]+"/"+strconv.FormatInt(tot[2]+tot[3], 10), okPct(tot[2], tot[2]+tot[3])
 	if unread[2] || unread[3] {
 		done, pct = "?", "?"
 	}
-	fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %5s | %5s | %4s |\n", "total", cell[0], cell[1], done, cell[2], cell[3], pct)
+	fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %4s |\n", "total", cell[0], cell[1], done, pct)
 }
 
 // The writer's lock: one table writer per key, fleet-wide. AcquireLock takes
