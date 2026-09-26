@@ -445,16 +445,18 @@ func (d *Deployer) printf(format string, a ...any) {
 	}
 }
 
-// Deploy builds, installs on every target at once, writes the receipts, and
-// runs fn deploy with this machine's new nova-sprint.
-func (d *Deployer) Deploy(ctx context.Context, p Plan) (Result, error) {
-	var r Result
+// Build runs the one build command on the builder, which publishes
+// <ReleaseRoot>/<V>/<platform>/ for every platform of the plan, then reads the
+// release manifest and records its tools on fleet:release. It returns the
+// tools, or nil when the build or the manifest failed (its line printed);
+// an error is the store failing.
+func (d *Deployer) Build(ctx context.Context, p Plan) ([]string, error) {
 	bctx, cancel := context.WithTimeout(ctx, BuildTimeout)
 	out, err := d.Runner.Run(bctx, d.BuildArgv(p))
 	cancel()
 	if err != nil {
 		d.printf("BUILD FAIL builder=%s version=%s: %v: %s\n", p.Builder, p.Version, err, lastLine(out))
-		return r, nil
+		return nil, nil
 	}
 	d.printf("BUILD OK builder=%s version=%s platforms=%s: %s\n", p.Builder, p.Version, strings.Join(p.BuildPlatforms, ","), lastLine(out))
 	// The tools are the release manifest's (#4050): every nova-* the build
@@ -462,14 +464,25 @@ func (d *Deployer) Deploy(ctx context.Context, p Plan) (Result, error) {
 	tools, err := d.Manifest(ctx, p)
 	if err != nil {
 		d.printf("MANIFEST FAIL builder=%s version=%s: %v\n", p.Builder, p.Version, err)
-		return r, nil
+		return nil, nil
+	}
+	if err := d.Client.HSet(ctx, ConfigKey, "tools", strings.Join(tools, ",")).Err(); err != nil {
+		return nil, fmt.Errorf("record tools: %w", err)
+	}
+	d.printf("MANIFEST tools=%d %s\n", len(tools), strings.Join(tools, ","))
+	return tools, nil
+}
+
+// Deploy builds, installs on every target at once, writes the receipts, and
+// runs fn deploy with this machine's new nova-sprint.
+func (d *Deployer) Deploy(ctx context.Context, p Plan) (Result, error) {
+	var r Result
+	tools, err := d.Build(ctx, p)
+	if err != nil || tools == nil {
+		return r, err
 	}
 	p.Tools = tools
-	if err := d.Client.HSet(ctx, ConfigKey, "tools", strings.Join(tools, ",")).Err(); err != nil {
-		return r, fmt.Errorf("record tools: %w", err)
-	}
 	r.Built, r.Tools = true, tools
-	d.printf("MANIFEST tools=%d %s\n", len(tools), strings.Join(tools, ","))
 
 	r.Lines = make([]Line, len(p.Targets))
 	var wg sync.WaitGroup
@@ -544,7 +557,7 @@ func (d *Deployer) Deploy(ctx context.Context, p Plan) (Result, error) {
 		d.printf("%s\n", r.FnLine)
 		return r, nil
 	}
-	out, err = d.Runner.Run(ctx, []string{filepath.Join(d.Home, BinDir, "nova-sprint"), "fn", "deploy", "--redis", d.Redis})
+	out, err := d.Runner.Run(ctx, []string{filepath.Join(d.Home, BinDir, "nova-sprint"), "fn", "deploy", "--redis", d.Redis})
 	r.FnLine = lastLine(out)
 	r.FnOK = err == nil
 	if err != nil {

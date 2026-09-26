@@ -1,31 +1,15 @@
 package fleetbuild
 
-// Roll (#4332) is `nova-sprint fleet roll [--to <sha>]`: the rest of
-// fleet-roll.sh as one verb. Three steps, one receipt line each:
-//
-//	RELEASE  Release.Run of the sha (--to, else dev's tip by git ls-remote):
-//	         the Studio, fn deploy and the bench roll, its own receipts and
-//	         its FLEET RELEASE line
-//	PLAY     the fleet play through ansible, never ssh by hand
-//	         (fleet-changes-only-through-ansible): ansible-playbook -i
-//	         inventory.py <play> --forks 16 --diff -e nova_build=<v> in the
-//	         play directory, FLEET_REGISTRY naming the machines registry the
-//	         inventory reads; the recap per host, then PLAY OK|FAIL
-//	VERIFY   each bench's beat version field (bench:<b>:beat build, one
-//	         pipelined read, no ssh) against the released version, re-read
-//	         until every bench is on it or the wait is spent; one VERIFY
-//	         line per bench (bench, want, have, ok|behind)
-//
-// The last line is FLEET ROLL OK, or FLEET ROLL BEHIND|FAIL naming the benches
-// behind. A failed play or a refused FN does not stop the verify: the beats
-// are the evidence, and the verify reads them either way.
+// The pieces of the roll (#4332) that fleet release (#4356 A) runs after the
+// build: dev's tip, the bench play through ansible, the beat restart through
+// ansible, and the verify from the beats. None of them reaches a host by
+// ssh: the play and the restart go through the play directory's inventory
+// (fleet-changes-only-through-ansible), the verify reads the store.
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -49,8 +33,9 @@ const (
 	PlayRegistry  = "FLEET_REGISTRY"
 	// PlayForks is the play's parallelism (the tools target's --forks 16).
 	PlayForks = 16
-	// PlayTimeout bounds one play.
-	PlayTimeout = 15 * time.Minute
+	// PlayTimeout bounds one play; RestartTimeout the beat restart.
+	PlayTimeout    = 15 * time.Minute
+	RestartTimeout = 2 * time.Minute
 	// DefaultVerifyWait is how long the verify re-reads the beats after the
 	// play (a restarted beat writes its build within a tick or two);
 	// DefaultVerifyPoll is the pause between reads.
@@ -99,6 +84,17 @@ func VerifyBeats(ctx context.Context, c *redis.Client, benches []string, want st
 		out[i] = BeatCheck{Bench: b, Want: want, Have: beatVersion(cmds[i].Val())}
 	}
 	return out, nil
+}
+
+// behind names the checks whose beat is not on the release.
+func behind(checks []BeatCheck) []string {
+	var out []string
+	for _, c := range checks {
+		if !c.OK() {
+			out = append(out, c.Bench)
+		}
+	}
+	return out
 }
 
 // beatVersion is the version a beat's build field names: field two of a
@@ -159,186 +155,33 @@ func Recap(out string) []string {
 	return rows
 }
 
-// Roll is one fleet roll.
-type Roll struct {
-	Release  *Release // the deploy; its Runner, Client, Machines, Benches and Out serve the roll too
-	PlayDir  string
-	Play     string // "" is DefaultPlay
-	Registry string // the machines registry path the play's inventory reads
-	RepoURL  string // where dev's tip is asked; "" is ReleaseRepoURL
-	Wait     time.Duration
-	Poll     time.Duration
-	// Sleep pauses between verify reads; nil sleeps on a timer. Tests hand
-	// in a fake, so no test waits on the clock.
-	Sleep func(ctx context.Context, d time.Duration) error
+// BeatRestartScript restarts the bench beat whatever the bench's OS: the
+// LaunchDaemon's kickstart on darwin, the systemd user unit on linux (the
+// two RestartArgv lines a bench takes).
+func BeatRestartScript() string {
+	darwin, _ := RestartArgv("darwin", "system", BeatUnit, true)
+	linux, _ := RestartArgv("linux", "", BeatUnit, false)
+	return `if [ "$(uname)" = Darwin ]; then ` + strings.Join(darwin, " ") + `; else ` + strings.Join(linux, " ") + `; fi`
 }
 
-// RollResult is what a roll did.
-type RollResult struct {
-	Release ReleaseResult
-	Play    string // ok or failed
-	Checks  []BeatCheck
+// RestartBeatsArgv restarts the beat on benches through ansible's ad hoc
+// shell module, over the same inventory the play reads: one run, every bench
+// at once, no ssh by hand.
+func RestartBeatsArgv(benches []string) []string {
+	return []string{"ansible", strings.Join(benches, ","), "-i", PlayInventory, "--forks", fmt.Sprint(PlayForks),
+		"-m", "ansible.builtin.shell", "-a", BeatRestartScript()}
 }
 
-// Behind names the benches whose beat is not on the release.
-func (r RollResult) Behind() []string {
-	var out []string
-	for _, c := range r.Checks {
-		if !c.OK() {
-			out = append(out, c.Bench)
+// ParseAdhoc reads ansible's ad hoc output: host -> its status word
+// (CHANGED, SUCCESS, FAILED, UNREACHABLE!) from each `<host> | <STATUS> ...`
+// header line.
+func ParseAdhoc(out string) map[string]string {
+	st := map[string]string{}
+	for _, l := range strings.Split(out, "\n") {
+		f := strings.Fields(l)
+		if len(f) >= 3 && f[1] == "|" && !strings.HasPrefix(l, " ") {
+			st[f[0]] = f[2]
 		}
 	}
-	return out
-}
-
-// OK is true when the release answered, the play passed and every bench beat
-// names the version.
-func (r RollResult) OK() bool {
-	return r.Release.OK() && r.Play == "ok" && len(r.Checks) > 0 && len(r.Behind()) == 0
-}
-
-// Line is the roll's last receipt.
-func (r RollResult) Line() string {
-	word := "OK"
-	behind := r.Behind()
-	switch {
-	case len(behind) > 0:
-		word = "BEHIND"
-	case !r.OK():
-		word = "FAIL"
-	}
-	list := "-"
-	if len(behind) > 0 {
-		list = strings.Join(behind, ",")
-	}
-	commit := r.Release.Commit
-	if len(commit) > 12 {
-		commit = commit[:12]
-	}
-	return fmt.Sprintf("FLEET ROLL %s version=%s commit=%s fn=%s play=%s benches=%d behind=%s",
-		word, r.Release.Version, commit, r.Release.Fn, r.Play, len(r.Checks), list)
-}
-
-func (r *Roll) printf(format string, a ...any) { r.Release.printf(format, a...) }
-
-func (r *Roll) play() string {
-	if r.Play != "" {
-		return r.Play
-	}
-	return DefaultPlay
-}
-
-func (r *Roll) sleep(ctx context.Context, d time.Duration) error {
-	if r.Sleep != nil {
-		return r.Sleep(ctx, d)
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.C:
-		return nil
-	}
-}
-
-// check refuses what would stop the roll halfway, before anything runs.
-func (r *Roll) check() error {
-	if r.Release == nil || r.Release.Runner == nil {
-		return refused("fleet roll has no release to run")
-	}
-	if r.Release.Client == nil {
-		return refused("fleet roll needs the fleet store (--redis <addr>) for the roll and the verify")
-	}
-	if r.Release.StudioOnly || r.Release.BenchesOnly {
-		return refused("fleet roll is the whole deploy; --studio-only and --benches-only belong to fleet release")
-	}
-	if r.Registry == "" {
-		return refused("the play's inventory reads the machines registry: --machines <file>, or %s", MachinesEnv)
-	}
-	if r.PlayDir == "" {
-		return refused("no fleet play directory: --play-dir <dir>, or %s", PlayDirEnv)
-	}
-	for _, f := range []string{PlayInventory, r.play()} {
-		if _, err := os.Stat(filepath.Join(r.PlayDir, f)); err != nil {
-			return refused("the fleet play directory %s has no %s (--play-dir <dir>, or %s)", r.PlayDir, f, PlayDirEnv)
-		}
-	}
-	if len(r.Release.rollList()) == 0 {
-		return refused("no benches to roll: --benches <a,b,...>, or a machines registry with bench roles")
-	}
-	return nil
-}
-
-// Run resolves the sha (dev's tip when empty), releases it, runs the play
-// and verifies the beats. An error is a refusal (ErrRefused) or the store
-// failing; a failed play or benches behind are in the result.
-func (r *Roll) Run(ctx context.Context, sha string) (RollResult, error) {
-	var res RollResult
-	if err := r.check(); err != nil {
-		return res, err
-	}
-	sha = strings.TrimSpace(sha)
-	if sha == "" {
-		repo := r.RepoURL
-		if repo == "" {
-			repo = ReleaseRepoURL
-		}
-		out, err := r.Release.run(ctx, "", nil, DevTipArgv(repo)...)
-		if err != nil {
-			return res, refused("git ls-remote %s %s: %v: %s (--to <sha> names the commit)", repo, ReleaseBase, err, lastLine(out))
-		}
-		tip, ok := ParseDevTip(out)
-		if !ok {
-			return res, refused("git ls-remote %s answered %q, not a %s tip (--to <sha> names the commit)", repo, lastLine(out), ReleaseBase)
-		}
-		r.printf("DEV TIP %s\n", tip)
-		sha = tip
-	}
-	rel, err := r.Release.Run(ctx, sha)
-	res.Release = rel
-	if err != nil {
-		return res, err
-	}
-	r.printf("%s\n", rel.Line())
-
-	res.Play = "ok"
-	pctx, cancel := context.WithTimeout(ctx, PlayTimeout)
-	out, err := r.Release.run(pctx, r.PlayDir, PlayEnv(r.Registry), PlayArgv(r.play(), rel.Version, r.Release.Benches)...)
-	cancel()
-	for _, row := range Recap(out) {
-		r.printf("RECAP %s\n", row)
-	}
-	if err != nil {
-		res.Play = "failed"
-		r.printf("PLAY FAIL %s version=%s err=%s last=%s\n", r.play(), rel.Version, strings.Join(strings.Fields(err.Error()), "_"), lastLine(out))
-	} else {
-		r.printf("PLAY OK %s version=%s\n", r.play(), rel.Version)
-	}
-
-	wait, poll := r.Wait, r.Poll
-	if poll <= 0 {
-		poll = DefaultVerifyPoll
-	}
-	if wait < 0 {
-		wait = 0
-	}
-	benches := r.Release.rollList()
-	for reads := int(wait / poll); ; reads-- {
-		checks, err := VerifyBeats(ctx, r.Release.Client, benches, rel.Version)
-		if err != nil {
-			return res, err
-		}
-		res.Checks = checks
-		if reads <= 0 || len(res.Behind()) == 0 {
-			break
-		}
-		if err := r.sleep(ctx, poll); err != nil {
-			return res, err
-		}
-	}
-	for _, c := range res.Checks {
-		r.printf("%s\n", c.Line())
-	}
-	return res, nil
+	return st
 }
