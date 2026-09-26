@@ -129,8 +129,8 @@ func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int 
 		}
 		*baseSHA = sha
 	}
-	// Every card is rendered before Redis is touched: a bad input refuses
-	// with nothing written.
+	// Every card is rendered and linted before Redis is touched: a bad
+	// input refuses with nothing written.
 	type cut struct {
 		id, tier string
 		spec     taskcard.Spec
@@ -142,6 +142,12 @@ func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int 
 			Repo: *repo, Base: *base, BaseSHA: *baseSHA})
 		if err != nil {
 			return refuse(errOut, verb, err.Error())
+		}
+		// A generated card is one invariant like a written one (#4396):
+		// refused before Redis is touched, one card-lint line per rule.
+		if rs := card.LintOneInvariant(*repo, *baseSHA, []byte(text)); rs != nil {
+			fmt.Fprint(errOut, card.LintLines(id, rs))
+			return 2
 		}
 		cuts = append(cuts, cut{id: id, tier: tier, spec: taskcard.ParseIssue(text)})
 	}

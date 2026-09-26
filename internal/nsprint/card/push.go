@@ -53,7 +53,8 @@ type CardFile struct {
 // (#3551), and a missing function is refused with the remedy nova-sprint fn
 // load.
 //
-// A missing required line, a KIND that is not a RESULT or runner kind
+// A card that is not one invariant (cardhdr.LintOneInvariant, #4396), a
+// missing required line, a KIND that is not a RESULT or runner kind
 // (kinds.go), a private repository, a card, task or stream dependency with no
 // record (neither in the sprint nor pushed earlier in this batch), or a dead
 // task dependency refuses the whole batch before any write: the result is
@@ -81,6 +82,11 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 		doc, err := lint(ctx, body)
 		if err != nil {
 			return []VerbResult{refused(named(f.Name, err.Error()))}
+		}
+		// One card, one invariant (#4396): a card that is a list, or a
+		// pointer to an issue, is refused before any write.
+		if rs := LintOneInvariant(doc.Repo, doc.BaseSHA, body); rs != nil {
+			return []VerbResult{{Code: exitRefused, Stderr: LintLines(f.Name, rs), Lines: true}}
 		}
 		docs[i] = doc
 		bodies[i] = body

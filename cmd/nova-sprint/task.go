@@ -15,6 +15,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/disposition"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -128,6 +130,12 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	if *kind == "build" {
 		return refuse(errOut, "task push", "--kind build: want work")
+	}
+	// #4396: the friend-queue push keeps the title-and-kind lint every task
+	// push keeps, before any dial: one REFUSED card-lint line per rule, exit 2.
+	if rs := cardhdr.LintTitleKind(*kind, *title, false); rs != nil {
+		_, _ = fmt.Fprint(errOut, card.LintLines(*id, rs))
+		return 2
 	}
 	st, err := openTaskStore(ctx, taskAddr(*redisAddr))
 	if err != nil {

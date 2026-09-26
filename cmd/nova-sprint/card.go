@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/launch"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -57,9 +59,10 @@ var cardCutSource = func(st *store.Store) card.IssueSource {
 // becomes one card record in Redis (card.Cut: render, store the body at its
 // content address, push with the one card writer), with the S2 context block
 // inlined when --index names a ctxindex directory. It refuses an issue with no
-// STREAM (and no --stream), an unparsable DEPENDS-ON, and a missing PATHS or
-// DONE-WHEN before any write. One receipt line; exit 0 cut, 1 refused with
-// the remedy named, 2 usage.
+// STREAM (and no --stream), an unparsable DEPENDS-ON, a missing PATHS or
+// DONE-WHEN, and a card that is not one invariant (cardhdr.LintOneInvariant,
+// one REFUSED card-lint line per rule on stderr, exit 2 as card push, #4396) before any write. One receipt line; exit 0
+// cut, 1 refused with the remedy named, 2 usage or card-lint.
 func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card cut")
 	sprint := fs.String("sprint", "", "")
@@ -115,6 +118,13 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	c, res, err := card.Cut(ctx, st.Client(), cardCutSource(st), card.CutInput{
 		Sprint: *sprint, Repo: *repo, Issue: *issue, Spec: *spec, Index: *index, Stream: *stream, Base: *base,
 	})
+	var lint cardhdr.Refusals
+	if errors.As(err, &lint) {
+		// one card, one invariant (#4396): each refusal is its own line,
+		// on stderr as card push prints them
+		fmt.Fprint(stderr, card.LintLines(c.Label, lint))
+		return 2
+	}
 	if err != nil {
 		fmt.Fprintf(stdout, "REFUSED card cut %s why=%s\n", who, oneline.Field(err.Error()))
 		return 1
@@ -240,6 +250,11 @@ func openCardRedis(ctx context.Context, addr string, stderr io.Writer) (*redis.C
 }
 
 func writeCardResult(stdout, stderr io.Writer, res card.VerbResult) int {
+	if res.Code != 0 && res.Lines {
+		// one REFUSED card-lint line per rule (#4396), as written
+		_, _ = io.WriteString(stderr, res.Stderr)
+		return res.Code
+	}
 	if res.Code != 0 {
 		fmt.Fprintf(stderr, "nova-sprint card: %s; run: nova-sprint help\n", oneline.Escape(strings.TrimSpace(res.Stderr)))
 		return res.Code

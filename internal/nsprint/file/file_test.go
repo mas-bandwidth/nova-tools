@@ -261,6 +261,9 @@ func TestCommentPostsAndReadsBack(t *testing.T) {
 	}
 }
 
+// pushBody is goodBody made one invariant (#4396): the card --push-to queues.
+const pushBody = goodBody + "INVARIANT: every issue is filed through one verb that reads it back.\nCLASS-TEST: TestControl50File\n"
+
 func TestPushToQueuesTheBuildTask(t *testing.T) {
 	t.Parallel()
 
@@ -270,7 +273,7 @@ func TestPushToQueuesTheBuildTask(t *testing.T) {
 		got = req
 		return task.PushResult{Status: task.PushCreated}, nil
 	}}
-	p := writeBody(t, goodBody)
+	p := writeBody(t, pushBody)
 	r := runFile(t, fake, d, "--repo", "o/r", "--title", "nova-sprint file", "--body-file", p,
 		"--push-to", "rowan", "--front", "--sprint", "v6", "--redis", "127.0.0.1:1")
 	if r.code != 0 {
@@ -286,6 +289,20 @@ func TestPushToQueuesTheBuildTask(t *testing.T) {
 		if !strings.Contains(got.Title, want) {
 			t.Fatalf("title %q lacks %q", got.Title, want)
 		}
+	}
+	// A push-to of a body that is not one invariant (no INVARIANT, no
+	// CLASS-TEST) is refused before anything is posted or pushed (#4396).
+	fake4, pushed := newFake(), 0
+	d4 := Deps{Push: func(context.Context, string, task.PushRequest) (task.PushResult, error) {
+		pushed++
+		return task.PushResult{Status: task.PushCreated}, nil
+	}}
+	p4 := writeBody(t, goodBody)
+	r = runFile(t, fake4, d4, "--repo", "o/r", "--title", "t", "--body-file", p4, "--push-to", "rowan", "--sprint", "v6", "--redis", "127.0.0.1:1")
+	wantErr := `REFUSED card-lint rule=invariant-missing line="" remedy="add INVARIANT: <the one sentence the class test proves>" card=` + strconv.Quote(p4) + "\n" +
+		`REFUSED card-lint rule=class-test-missing line="" remedy="add CLASS-TEST: Test<Name>, the one Go test that proves the invariant" card=` + strconv.Quote(p4) + "\n"
+	if r.code != 2 || fake4.postCount() != 0 || pushed != 0 || r.stdout != "" || r.stderr != wantErr {
+		t.Fatalf("push-to of a card that is not one invariant: code=%d posts=%d pushed=%d stdout=%q stderr\n%s\nwant\n%s", r.code, fake4.postCount(), pushed, r.stdout, r.stderr, wantErr)
 	}
 	// A push-to without a sprint is refused before anything is posted.
 	fake2 := newFake()

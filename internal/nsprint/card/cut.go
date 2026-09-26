@@ -22,7 +22,8 @@ import (
 //
 // The retired pulse cutter rendered a card file into a queue directory; card cut reads
 // the issue, renders the card body in the card-push shape (WHO, STREAM,
-// DEPENDS-ON and WHY, PATHS, DONE-WHEN, BASE, base-sha, EST, ORIGIN), inlines
+// DEPENDS-ON and WHY, PATHS, DONE-WHEN, INVARIANT, CLASS-TEST, PLATFORMS,
+// BASE, base-sha, EST, ORIGIN), inlines
 // the S2 context block (internal/ctxindex) when an index is named, stores the
 // body's exact bytes at BodyKey before the card is published, and pushes the
 // card with PushBatch, the one card writer. No file, no queue directory.
@@ -151,6 +152,9 @@ func RenderCut(ctx context.Context, src IssueSource, in CutInput) (CutCard, erro
 		{"DEPENDS-ON", depends},
 		{"WHY", why},
 		{"DONE-WHEN", fields["DONE-WHEN"]},
+		{"INVARIANT", fields["INVARIANT"]},
+		{"CLASS-TEST", fields["CLASS-TEST"]},
+		{"PLATFORMS", fields["PLATFORMS"]},
 		{"WHO", who},
 		{"STREAM", stream},
 		{"EST", fields["EST"]},
@@ -212,7 +216,18 @@ func sealContract(card string) string {
 }
 
 // cutKeys are the issue lines a cut reads, first occurrence wins.
-var cutKeys = []string{"STREAM", "PATHS", "DEPENDS-ON", "WHY", "DONE-WHEN", "BASE", "base-sha", "EST", "WHO"}
+var cutKeys = []string{"STREAM", "PATHS", "DEPENDS-ON", "WHY", "DONE-WHEN", "BASE", "base-sha", "EST", "WHO",
+	"INVARIANT", "CLASS-TEST", "PLATFORMS"}
+
+// contractSHA is the base-sha: line of a rendered card ("" when none).
+func contractSHA(body []byte) string {
+	for _, line := range strings.Split(string(body), "\n") {
+		if v, ok := strings.CutPrefix(line, "base-sha: "); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
 
 // IssueFields reads the card's lines from an issue body: the first line of
 // each key in cutKeys, anywhere in the body, after list markers and Markdown
@@ -298,6 +313,10 @@ func Cut(ctx context.Context, client *redis.Client, src IssueSource, in CutInput
 	c, err := RenderCut(ctx, src, in)
 	if err != nil {
 		return CutCard{}, VerbResult{}, err
+	}
+	// One card, one invariant (#4396): refused before the body is stored.
+	if rs := LintOneInvariant(in.Repo, contractSHA(c.Body), c.Body); rs != nil {
+		return c, VerbResult{}, rs
 	}
 	sum := sha256.Sum256(c.Body)
 	if err := client.SetNX(ctx, BodyKey(in.Sprint, hex.EncodeToString(sum[:])), c.Body, BodyTTL).Err(); err != nil {

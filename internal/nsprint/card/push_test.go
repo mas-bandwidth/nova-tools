@@ -261,6 +261,9 @@ func (f cardFix) render() []byte {
 	write("PATHS", f.paths)
 	write("DEPENDS-ON", f.depends)
 	write("DONE-WHEN", f.done)
+	// one invariant (#4396): every card push lints it
+	write("INVARIANT", "card push admits a card of one invariant")
+	write("CLASS-TEST", "TestCardPushRefusesWithoutDoneWhen")
 	return []byte(b.String())
 }
 

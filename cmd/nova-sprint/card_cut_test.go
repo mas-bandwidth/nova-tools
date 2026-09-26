@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,7 +75,9 @@ const cutIssueBody = "What: `nova-sprint card cut` writes the card.\r\n\r\n" +
 	"STREAM: swarm: cards\r\n" +
 	"BASE: dev\r\n" +
 	"base-sha: " + cutBaseSHA + "\r\n" +
-	"EST: 45 min\r\n"
+	"EST: 45 min\r\n" +
+	"INVARIANT: card cut writes one card record per issue.\r\n" +
+	"CLASS-TEST: TestCardCutWritesRecord\r\n"
 
 // TestCardCutWritesRecord is nova-tools#3623: `nova-sprint card cut --repo
 // <r> --issue <n>` reads the issue and writes the card record into Redis in
@@ -86,7 +90,8 @@ func TestCardCutWritesRecord(t *testing.T) {
 	client, addr, src := cutFixture(t, map[int]card.Issue{
 		9001: {Title: "card cut writes the record", Body: cutIssueBody},
 		9002: {Title: "second card", Body: "DONE-WHEN: the second test fails red\nPATHS: docs/CLI.md\n" +
-			"DEPENDS-ON: #9001 (WHY: the cut verb), nova-tools#3502\nSTREAM: swarm: cards\nBASE: dev\n"},
+			"DEPENDS-ON: #9001 (WHY: the cut verb), nova-tools#3502\nSTREAM: swarm: cards\nBASE: dev\n" +
+			"INVARIANT: the second card waits for the first.\nCLASS-TEST: TestCardCutWritesRecord\n"},
 	})
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -117,7 +122,8 @@ func TestCardCutWritesRecord(t *testing.T) {
 	if sum := sha256.Sum256(body); hex.EncodeToString(sum[:]) != rec["payload_sha"] {
 		t.Fatal("the stored body is not the pushed payload")
 	}
-	for _, line := range []string{"WHO: any\n", "STREAM: swarm: cards\n", "DEPENDS-ON: none\n", "ORIGIN: " + origin + "\n",
+	for _, line := range []string{"WHO: any\n", "STREAM: swarm: cards\n",
+		"INVARIANT: card cut writes one card record per issue.\n", "CLASS-TEST: TestCardCutWritesRecord\n", "DEPENDS-ON: none\n", "ORIGIN: " + origin + "\n",
 		"> What: `nova-sprint card cut` writes the card.\n", "> base-sha: " + cutBaseSHA + "\n"} {
 		if !strings.Contains(string(body), line) {
 			t.Errorf("card body lacks %q:\n%s", line, body)
@@ -155,14 +161,18 @@ func TestCardCutWritesRecord(t *testing.T) {
 
 // TestCardCutRefusesNoStream is nova-tools#3623: an issue with no STREAM
 // (and no --stream), or with a DEPENDS-ON that is not the card vocabulary, is
-// refused with exit 1 before any write; --stream supplies a missing stream.
+// refused with exit 1 before any write, and so is an issue that is not one
+// invariant (#4396, its card-lint lines on stderr); --stream supplies a
+// missing stream.
 func TestCardCutRefusesNoStream(t *testing.T) {
 	ctx := context.Background()
 	noStream := strings.Replace(cutIssueBody, "STREAM: swarm: cards\r\n", "", 1)
 	badDeps := strings.Replace(cutIssueBody, "DEPENDS-ON: none", "DEPENDS-ON: after the harvest lands", 1)
+	pointer := strings.Replace(cutIssueBody, "INVARIANT: card cut writes one card record per issue.\r\n", "Build issue #4396 as written.\r\n", 1)
 	client, addr, _ := cutFixture(t, map[int]card.Issue{
 		9101: {Title: "no stream", Body: noStream},
 		9102: {Title: "bad deps", Body: badDeps},
+		9103: {Title: "a pointer to an issue", Body: pointer},
 	})
 	before, err := client.DBSize(ctx).Result()
 	if err != nil {
@@ -176,10 +186,18 @@ func TestCardCutRefusesNoStream(t *testing.T) {
 			t.Fatalf("issue %s: exit %d stderr %q out %q, want exit 1 naming %s", c.issue, code, errOut, out, c.why)
 		}
 	}
+	// one invariant (#4396): refused before the body is stored, one line per
+	// rule on stderr (as card push prints them), nothing on stdout, exit 2;
+	// the key count is asserted unchanged below
+	code, out, errOut := runSprint("card", "cut", "--redis", addr, "--sprint", "cut-r", "--repo", "mas-bandwidth/nova-tools", "--issue", "9103")
+	if want := `REFUSED card-lint rule=invariant-missing line="" remedy="add INVARIANT: <the one sentence the class test proves>" card="nova-tools-9103"` + "\n" +
+		`REFUSED card-lint rule=build-issue line="Build issue #4396 as written." remedy="cut as a parent with children: card cut --parent" card="nova-tools-9103"` + "\n"; code != 2 || out != "" || errOut != want {
+		t.Fatalf("issue 9103: exit %d stdout %q stderr\n%s\nwant exit 2 and\n%s", code, out, errOut, want)
+	}
 	if after, _ := client.DBSize(ctx).Result(); after != before {
 		t.Fatalf("a refused cut wrote %d keys", after-before)
 	}
-	code, out, errOut := runSprint("card", "cut", "--redis", addr, "--sprint", "cut-r", "--repo", "mas-bandwidth/nova-tools", "--issue", "9101", "--stream", "swarm: cards")
+	code, out, errOut = runSprint("card", "cut", "--redis", addr, "--sprint", "cut-r", "--repo", "mas-bandwidth/nova-tools", "--issue", "9101", "--stream", "swarm: cards")
 	if code != 0 || !strings.Contains(out, "stream=swarm:\\x20cards") {
 		t.Fatalf("--stream: exit %d stderr %q out %q", code, errOut, out)
 	}
@@ -238,5 +256,50 @@ func TestCardCutInlinesIndex(t *testing.T) {
 	}
 	if code, out, _ := runSprint("card", "cut", "--redis", addr, "--sprint", "cut-i", "--repo", "mas-bandwidth/nova-tools", "--issue", "9201", "--index", filepath.Join(t.TempDir(), "none")); code != 1 || !strings.Contains(out, "--index") {
 		t.Fatalf("a missing index: exit %d out %q, want a refusal naming --index", code, out)
+	}
+}
+
+// TestCardPushPrintsOneLintLinePerRule (#4396): card push of a card that is
+// not one invariant (no INVARIANT, a BUILD: list lettered A. to F., the
+// #4352 shape) exits 2 with one REFUSED card-lint line per rule on stderr,
+// each as written (no nova-sprint card: prefix, no escaped newline), nothing
+// on stdout, and writes nothing; the same card made one invariant is pushed.
+// The base-repo is a local fake that answers public (httptest).
+func TestCardPushPrintsOneLintLinePerRule(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	repo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	t.Cleanup(repo.Close)
+	path := filepath.Join(t.TempDir(), "list.md")
+	body := "RESULT: card-4352 sha=0123456789ab\nKIND: fix\nBASE: dev\nbase-repo: " + repo.URL + "/acme/public.git\n" +
+		"base-sha: " + cutBaseSHA + "\nPATHS: internal/nsprint/card/push.go\nDEPENDS-ON: none\n" +
+		"DONE-WHEN: `go test ./internal/nsprint/card -run TestX` passes.\nCLASS-TEST: TestX\n\n" +
+		"BUILD:\nA. the parser.\nB. the linter.\nC. the push path.\nD. the cut path.\nE. the task path.\nF. the docs.\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := client.DBSize(ctx).Val()
+	code, out, errOut := runSprint("card", "push", "--redis", addr, "--sprint", "push-lint", path)
+	want := `REFUSED card-lint rule=invariant-missing line="" remedy="add INVARIANT: <the one sentence the class test proves>" card=` + fmt.Sprintf("%q", path) + "\n" +
+		`REFUSED card-lint rule=build-list line="BUILD:" remedy="cut as a parent with children: card cut --parent" card=` + fmt.Sprintf("%q", path) + "\n"
+	if code != 2 || out != "" || errOut != want {
+		t.Fatalf("exit %d stdout %q stderr\n%s\nwant exit 2 and\n%s", code, out, errOut, want)
+	}
+	if after := client.DBSize(ctx).Val(); after != before {
+		t.Fatalf("a refused push wrote %d keys", after-before)
+	}
+	fixed := strings.Replace(body, "CLASS-TEST: TestX\n", "CLASS-TEST: TestX\nINVARIANT: card push admits one invariant.\n", 1)
+	fixed = fixed[:strings.Index(fixed, "B. the linter")]
+	if err := os.WriteFile(path, []byte(fixed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := runSprint("card", "push", "--redis", addr, "--sprint", "push-lint", path); code != 0 || !strings.Contains(out, "place=") {
+		t.Fatalf("the one-invariant card: exit %d stdout %q stderr %q", code, out, errOut)
 	}
 }

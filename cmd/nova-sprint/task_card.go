@@ -8,7 +8,8 @@
 //	TASK <verb> id=<id> from=<w> to=<w> ms=<n>
 //	TASK <verb> REFUSED id=<id> why=<why> ms=<n>
 //
-// Exit 0 done, 1 refused (nothing written) or drift found, 2 could not run.
+// Exit 0 done, 1 refused (nothing written) or drift found, 2 could not run
+// or a push refused card-lint (nothing written, #4396).
 // They are the card form of the task subverbs: push with --actor, take with
 // --actor and no --as;
 // done, cancel, block, unblock, front, move and beat with --actor and --id and
@@ -26,6 +27,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
@@ -288,6 +291,23 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if err != nil {
 			return refuse(errOut, c.verb, err.Error())
 		}
+		// A push that carries a card is one invariant (#4396), and every
+		// push, a card or none, keeps the title-and-kind lint (no stitch, no
+		// plan with no card, no "build issue #N as written" title): refused
+		// before any write, the receipt on stdout, one REFUSED card-lint line
+		// per rule on stderr, exit 2 (as card push).
+		var rs cardhdr.Refusals
+		kind := *c.kind
+		if spec != nil {
+			kind = firstOf(kind, spec.Kind)
+			repo := firstOf(*c.repo, spec.Repo)
+			rs = cardhdr.LintOneInvariant(cardhdr.Card{Text: taskLintText(*c.kind, spec), Files: card.FilesAt(repo, spec.BaseSHA)})
+		}
+		if rs = rs.Merge(cardhdr.LintTitleKind(kind, *c.title, spec != nil)); rs != nil {
+			_, _ = fmt.Fprintf(out, "TASK push REFUSED id=%s why=%s ms=%d\n", *c.id, quoteField("card-lint "+rs.Rules()), ms())
+			_, _ = fmt.Fprint(errOut, card.LintLines(*c.id, rs))
+			return 2
+		}
 		r, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: *c.id, Stream: *c.stream, Friend: *c.friend,
 			Sprint: *c.sprint, Kind: *c.kind, Ref: *c.ref, Origin: *c.origin, Title: *c.title, Head: *c.head,
 			PR: *c.pr, Repo: *c.repo, DependsOn: *c.on, Front: *c.front, By: *c.actor, Why: *c.why,
@@ -492,6 +512,20 @@ func (c *cardCmd) spec() (*taskcard.Spec, error) {
 		}
 	}
 	return &s, nil
+}
+
+// taskLintText is the card a task push is linted as (#4396): the KIND,
+// PATHS and DONE-WHEN it is pushed with (a flag over the issue's line), then
+// the issue text.
+func taskLintText(kind string, s *taskcard.Spec) string {
+	var b strings.Builder
+	for _, kv := range [][2]string{{"KIND", firstOf(kind, s.Kind)}, {"PATHS", s.Paths}, {"DONE-WHEN", s.DoneWhen}} {
+		if kv[1] != "" {
+			fmt.Fprintf(&b, "%s: %s\n", kv[0], kv[1])
+		}
+	}
+	b.WriteString("\n" + s.Body + "\n")
+	return b.String()
 }
 
 // replace is front and move: the one move to the task's own where (front,

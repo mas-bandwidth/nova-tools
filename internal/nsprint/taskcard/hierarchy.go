@@ -39,13 +39,14 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // The hierarchy's kinds, phases and field names.
 const (
-	KindPlan    = "plan"
-	KindStitch  = "stitch"
+	KindPlan    = cardhdr.KindPlan   // the one-invariant lint's plan exemption (#4396)
+	KindStitch  = cardhdr.KindStitch // the one-invariant lint's stitch exemption (#4396)
 	PhaseChild  = "child"
 	PhaseStitch = "stitch"
 
