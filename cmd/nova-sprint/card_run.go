@@ -25,7 +25,7 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runCardMove(ctx, args[0], args[1:], stdout, stderr) // the table moves (#3929): card_moves.go
 	}
 	if len(args) > 0 && (args[0] == "cut" || args[0] == "push" || args[0] == "release" || args[0] == "stop" || args[0] == "show" ||
-		args[0] == "fsck" || args[0] == "ls") {
+		args[0] == "fsck" || args[0] == "ls" || args[0] == "stitch") {
 		return runCardPool(ctx, args, stdout, stderr)
 	}
 	if len(args) > 0 && args[0] == "run" {
