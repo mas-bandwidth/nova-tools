@@ -68,6 +68,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
@@ -258,6 +259,7 @@ type wrWaiter struct {
 	id, stream, blockedOn string
 	deps                  []wrDep
 	none                  bool
+	stitch                bool // a plan's stitch (#4317): its brief is rewritten on release
 }
 
 // Pass resolves every stream's waiting set once and returns one line per
@@ -318,18 +320,35 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		return nil, nil
 	}
 
-	// Round 3: each waiting task's blocked_on.
+	// Round 3: each waiting task's blocked_on (and its phase: a stitch's
+	// brief is regenerated when it is released).
 	pipe = c.Pipeline()
-	boCmds := make([]*redis.StringCmd, len(waiters))
+	boCmds := make([]*redis.SliceCmd, len(waiters))
 	for i, w := range waiters {
-		boCmds[i] = pipe.HGet(ctx, "task:"+w.id, "blocked_on")
+		boCmds[i] = pipe.HMGet(ctx, "task:"+w.id, "blocked_on", taskcard.FieldPhase, "kind")
 	}
 	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("waiting-resolve: blocked_on: %w", err)
 	}
 	taskDeps, refDeps := map[string]wrStatus{}, map[string]wrStatus{}
+	// A plan (kind plan, #4317) is never released: it waits on its stitch
+	// and lands with it, so it is not a waiter here.
+	kept := waiters[:0]
+	keptCmds := boCmds[:0]
 	for i, w := range waiters {
-		w.blockedOn = strings.TrimSpace(boCmds[i].Val())
+		if wrStr(boCmds[i].Val(), 2) == taskcard.KindPlan {
+			continue
+		}
+		kept = append(kept, w)
+		keptCmds = append(keptCmds, boCmds[i])
+	}
+	waiters, boCmds = kept, keptCmds
+	if len(waiters) == 0 {
+		return nil, nil
+	}
+	for i, w := range waiters {
+		w.blockedOn = strings.TrimSpace(wrStr(boCmds[i].Val(), 0))
+		w.stitch = wrStr(boCmds[i].Val(), 1) == taskcard.PhaseStitch
 		w.deps, w.none = wrParse(w.blockedOn)
 		for _, dep := range w.deps {
 			switch dep.kind {
@@ -428,8 +447,8 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		}
 	}
 	type group struct {
-		stream, why string
-		ids         []string
+		stream, why   string
+		ids, stitches []string
 	}
 	var groups []*group
 	groupOf := map[string]*group{}
@@ -482,6 +501,9 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 			groups = append(groups, g)
 		}
 		g.ids = append(g.ids, w.id)
+		if w.stitch {
+			g.stitches = append(g.stitches, w.id)
+		}
 	}
 
 	// The moves, each bounded by the lease.
@@ -519,6 +541,17 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 				continue
 			}
 			r.Ready = append(r.Ready, id)
+		}
+		// A released stitch starts with the whole picture (#4317): its body's
+		// generated section is every child's PR, RESULT.md summary and read
+		// score as the records hold them now, after every child landed.
+		for _, id := range g.stitches {
+			if refused[id] {
+				continue
+			}
+			if _, _, err := taskcard.WriteStitchBrief(ctx, c, id); err != nil {
+				errs = append(errs, fmt.Sprintf("stream %s: stitch %s brief: %v", g.stream, id, err))
+			}
 		}
 	}
 	for i := range lines {
