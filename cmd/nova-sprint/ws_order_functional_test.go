@@ -33,8 +33,14 @@ func TestWSOrderVerbs(t *testing.T) {
 		{"d", "#40", "internal/x", "b,c"},
 		{"e", "#45", "internal/x/e.go", ""},
 	} {
+		// a push carrying PATHS carries a card, and a card is one invariant
+		// (#4396): the body rides on --issue <file>
+		body := filepath.Join(t.TempDir(), p.id+".md")
+		if err := os.WriteFile(body, []byte("DONE-WHEN: "+p.id+" holds\nINVARIANT: "+p.id+" holds one thing.\nCLASS-TEST: TestOrder"+p.id+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		args := []string{"task", "push", "--redis", addr, "--actor", "test", "--id", p.id, "--stream", stream,
-			"--kind", "build", "--title", p.id, "--ref", "mas-bandwidth/nova-tools" + p.ref, "--paths", p.paths}
+			"--kind", "build", "--title", p.id, "--ref", "mas-bandwidth/nova-tools" + p.ref, "--paths", p.paths, "--issue", body}
 		if p.on != "" {
 			args = append(args, "--on", p.on)
 		}
@@ -61,7 +67,7 @@ func TestWSOrderVerbs(t *testing.T) {
 	}
 
 	code, stdout, _ = runSprint("ws", "check", "--redis", addr)
-	if code != 0 || !strings.HasPrefix(stdout, "CHECK streams=1 cards=6 overlaps=0 stale=0 repaired=0 records=0 unbuilt=0 refused=0 drift=0 cycles=0 invariants=ok ") {
+	if code != 0 || !strings.HasPrefix(stdout, "CHECK streams=1 cards=5 overlaps=0 stale=0 repaired=0 records=0 unbuilt=0 refused=0 drift=0 cycles=0 invariants=ok ") {
 		t.Fatalf("ws check clean: exit %d %q", code, stdout)
 	}
 	t.Logf("ws check: %s", strings.TrimSpace(stdout))
@@ -73,7 +79,7 @@ func TestWSOrderVerbs(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
 	wantDrift := `ORDER DRIFT stream="land: order" stored=e,a,b,c,d,land-order:sentinel computed=a,b,c,d,e,land-order:sentinel`
 	if code != 1 || len(lines) != 3 || !strings.HasPrefix(lines[0], "INVARIANTS ") || lines[1] != wantDrift ||
-		!strings.HasPrefix(lines[2], "CHECK streams=1 cards=6 overlaps=0 stale=0 repaired=0 records=0 unbuilt=0 refused=0 drift=1 cycles=0 invariants=bad ") {
+		!strings.HasPrefix(lines[2], "CHECK streams=1 cards=5 overlaps=0 stale=0 repaired=0 records=0 unbuilt=0 refused=0 drift=1 cycles=0 invariants=bad ") {
 		t.Fatalf("ws check after a hand zadd: exit %d\n%s", code, stdout)
 	}
 
@@ -92,7 +98,7 @@ func TestWSOrderVerbs(t *testing.T) {
 	card := func(name, origin, depends string) string {
 		path := filepath.Join(dir, name+".md")
 		body := "LABEL: " + name + "\nREPO: mas-bandwidth/nova-tools\nBASE: dev\nbase-sha: " + strings.Repeat("ab", 20) + "\nPATHS: internal/y\nDEPENDS-ON: " + depends +
-			"\nDONE-WHEN: go test passes\nSTREAM: cards: order\nORIGIN: mas-bandwidth/nova-tools#" + origin + "\n\nwhat and why\n"
+			"\nDONE-WHEN: go test passes\nSTREAM: cards: order\nORIGIN: mas-bandwidth/nova-tools#" + origin + "\nINVARIANT: the card holds one thing.\nCLASS-TEST: TestTheCard\n\nwhat and why\n"
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}

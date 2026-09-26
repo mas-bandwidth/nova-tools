@@ -39,7 +39,7 @@ func cycleCard(t *testing.T, dir, s, name, origin, depends string) string {
 	path := filepath.Join(dir, name+".md")
 	body := "LABEL: " + name + "\nREPO: mas-bandwidth/nova-tools\nBASE: dev\nbase-sha: " + strings.Repeat("ab", 20) +
 		"\nPATHS: internal/" + name + "\nDEPENDS-ON: " + depends + "\nDONE-WHEN: go test passes\nSTREAM: " + s +
-		"\nORIGIN: mas-bandwidth/nova-tools#" + origin + "\n\nwhat and why\n"
+		"\nORIGIN: mas-bandwidth/nova-tools#" + origin + "\nINVARIANT: the card holds one thing.\nCLASS-TEST: TestTheCard\n\nwhat and why\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func cutFile(t *testing.T, dir, name, s string, rows ...[2]string) string {
 	var b strings.Builder
 	b.WriteString("id\ttitle\tstream\twho\tpaths\tdone-when\tbody\tdepends-on\troute\test\n")
 	for _, r := range rows {
-		fmt.Fprintf(&b, "%s\tcard %s\t%s\tany\tinternal/%s.go\tgo test passes\twhy\t%s\tfriend\t30\n", r[0], r[0], s, r[0], r[1])
+		fmt.Fprintf(&b, "%s\tcard %s\t%s\tany\tinternal/%s.go\tgo test passes\t%s\t%s\tfriend\t30\n", r[0], r[0], s, r[0], cutInv, r[1])
 	}
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
@@ -161,12 +161,13 @@ func TestOrderSeededCycleTakesUnrelatedPushes(t *testing.T) {
 	// p -> p-stitch -> pc -> p and is refused, the parent unchanged.
 	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "p", Where: "waiting", Stream: s, Kind: "build",
 		Ref: "mas-bandwidth/nova-tools#4322", Title: "the parent", Repo: "mas-bandwidth/nova-tools", By: "rowan",
-		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "internal/p", "done_when", "the plan holds"}}); err != nil {
+		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "internal/p", "done_when", "the plan holds",
+			"test", "./cmd/nova-sprint TestOrderSeededCycleTakesUnrelatedPushes"}}); err != nil {
 		t.Fatal(err)
 	}
 	parent := c.HGetAll(ctx, "task:p").Val()
 	tsv := filepath.Join(dir, "children.tsv")
-	if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\tdepends-on\troute\npc\tthe child\tinternal/pc.go\tgo test passes\ttask:p\tfriend\n"), 0o644); err != nil {
+	if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\tbody\tdepends-on\troute\npc\tthe child\tinternal/pc.go\tgo test passes\t"+cutInv+"\ttask:p\tfriend\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, out, errOut = run("card", "cut", "--parent", "p", "--from", tsv, "--no-github", "--repo", "mas-bandwidth/nova-tools", "--actor", "rowan")

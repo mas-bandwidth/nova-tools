@@ -65,7 +65,8 @@ take, done, beat and cancel are card work, end, beat and cancel for a friend's c
 tasks; done of a copy returns it to its primary (--pr <n> --head <sha>: the primary is review).
 take records --model, --harness and --child on each copy it works and keeps the friend's one
 beat loop running (a BEATLOOP line, as friend pull and card work print).
-land moves merging (or working) -> landed at the merge sha; land --stream moves every
+land moves merging (or working) -> landed at the merge sha; a stitch's land lands its plan
+and the receipt adds parent=<plan> ref=<repo#n> origin=<url>; land --stream moves every
 member of ws:<s>:merging and prints LANDED <id> ref=<repo#n> origin=<url> per member (the
 lander closes those PRs and issues with the CLOSE line). take starts a lease the child
 renews with beat every 60 s; expire moves a working task whose lease lapsed back to ready and unlinks a finished task left in a friend's working set.
@@ -333,7 +334,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if from == "" {
 			from = "-"
 		}
-		_, _ = fmt.Fprintf(out, "TASK %s id=%s from=%s to=%s ms=%d\n", sub, *c.id, from, r.To, ms())
+		// a stitch's landing landed its plan (#4317): the receipt names the
+		// plan and its issue, so whoever landed the stitch closes the plan's
+		plan := ""
+		if r.Parent != "" {
+			plan = fmt.Sprintf(" parent=%s ref=%s origin=%s", r.Parent, quoteField(dashIf(r.ParentRef)), quoteField(dashIf(r.ParentOrigin)))
+		}
+		_, _ = fmt.Fprintf(out, "TASK %s id=%s from=%s to=%s%s ms=%d\n", sub, *c.id, from, r.To, plan, ms())
 		reorderLines(ctx, cl, []string{before, *c.toStream}, *c.actor, out)
 		return 0
 	}
@@ -377,8 +384,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			return refused(err)
 		}
 		// The stream's work order is current after every push (#4322):
-		// the same ws.Reorder as ws reorder, measured in the receipt.
-		order := pushReorder(ctx, cl, *c.stream, *c.id, *c.actor, out)
+		// the same ws.Reorder as ws reorder, measured in the receipt. A
+		// --join push landed on the joined stream: its record names it.
+		ordered := *c.stream
+		if *c.join != "" {
+			ordered = ""
+		}
+		order := pushReorder(ctx, cl, ordered, *c.id, *c.actor, out)
 		_, _ = fmt.Fprintf(out, "TASK push id=%s from=- to=%s %s ms=%d\n", *c.id, r.Where, order, ms())
 		return 0
 	case "take":
@@ -454,7 +466,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			_, _ = fmt.Fprintf(out, "TASK done id=%s from=working to=ok primary=%s primary_to=%s ms=%d\n", *c.id, e[0].Primary, e[0].To, ms())
 			return 0
 		}
-		return moved(taskcard.Done(ctx, cl, *c.id, *c.actor, *c.evidence, *c.pr))
+		// done with no PR ends a card done (#4317): a stitch or child so
+		// ended leaves its plan stuck, and the receipt names the way on
+		code := moved(taskcard.Done(ctx, cl, *c.id, *c.actor, *c.evidence, *c.pr))
+		if code == 0 {
+			c.planAfter(ctx, cl, out)
+		}
+		return code
 	case "land":
 		if *c.stream == "" {
 			return moved(taskcard.Land(ctx, cl, *c.id, *c.actor, *c.sha, *c.why))
@@ -498,7 +516,11 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			_, _ = fmt.Fprintf(out, "TASK cancel id=%s from=working to=fail primary_to=%s ms=%d\n", *c.id, e[0].To, ms())
 			return 0
 		}
-		return moved(taskcard.Cancel(ctx, cl, *c.id, *c.actor, *c.why))
+		code := moved(taskcard.Cancel(ctx, cl, *c.id, *c.actor, *c.why))
+		if code == 0 {
+			c.planAfter(ctx, cl, out)
+		}
+		return code
 	case "block":
 		why := *c.why
 		if why == "" {
@@ -690,4 +712,33 @@ func init() {
 	registerReconcileDuty("task-lease", func(st *store.Store) (reconcileDuty, error) {
 		return &taskLeaseDuty{st: st}, nil
 	})
+}
+
+// planAfter prints the plan of a child or stitch just ended when that left
+// the plan stuck (nova-tools#4317): PLAN id=<p> state=stuck remedy=<the way
+// on>, so the door that ended it names what moves the plan on. Nothing for
+// a card of no plan, or a plan that is not stuck; a read error is silent
+// (the move itself is done and its receipt printed).
+func (c *cardCmd) planAfter(ctx context.Context, cl redis.Cmdable, out io.Writer) {
+	rec, err := cl.HMGet(ctx, taskcard.Key(*c.id), taskcard.FieldParent, taskcard.FieldPhase).Result()
+	if err != nil {
+		return
+	}
+	parent, _ := rec[0].(string)
+	phase, _ := rec[1].(string)
+	if parent == "" || (phase != taskcard.PhaseChild && phase != taskcard.PhaseStitch) {
+		return
+	}
+	p, err := taskcard.ReadPlan(ctx, cl, parent)
+	if err != nil || p.State() != taskcard.Stuck {
+		return
+	}
+	_, _ = fmt.Fprintf(out, "PLAN id=%s state=%s remedy=%s\n", p.ID, p.State(), quoteField(p.Remedy()))
+}
+
+func dashIf(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }

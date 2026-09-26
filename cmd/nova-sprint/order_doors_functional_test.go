@@ -155,7 +155,7 @@ func TestOrderDoorsCLI(t *testing.T) {
 		path := filepath.Join(dir, name+".md")
 		body := "LABEL: " + name + "\nREPO: mas-bandwidth/nova-tools\nBASE: dev\nbase-sha: " + strings.Repeat("ab", 20) +
 			"\nPATHS: internal/" + name + "\nDEPENDS-ON: " + depends + "\nDONE-WHEN: go test passes\nSTREAM: " + s +
-			"\nORIGIN: mas-bandwidth/nova-tools#" + origin + "\n\nwhat and why\n"
+			"\nORIGIN: mas-bandwidth/nova-tools#" + origin + "\nINVARIANT: the card holds one thing.\nCLASS-TEST: TestTheCard\n\nwhat and why\n"
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}

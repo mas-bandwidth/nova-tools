@@ -198,7 +198,7 @@ func runWSReorder(ctx context.Context, args []string, out, errOut io.Writer) int
 // `INVARIANTS <what>`; --stream limits the order check to one stream. Then
 // one receipt: CHECK streams=<n> cards=<n> overlaps=<n> stale=<n>
 // repaired=<n> records=<n> unbuilt=<n> refused=<n> drift=<n> cycles=<n>
-// invariants=ok|bad. Exit 0 clean (or repaired with no finding), 1 with any
+// invariants=ok|bad (streams counts the streams holding live cards). Exit 0 clean (or repaired with no finding), 1 with any
 // finding: an overlap is reported until one side is parked, cancelled or
 // lands.
 func runWSCheck(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -274,7 +274,7 @@ func runWSCheck(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 	}
 	fmt.Fprintf(out, "CHECK streams=%d cards=%d overlaps=%d stale=%d repaired=%d records=%d unbuilt=%d refused=%d drift=%d cycles=%d invariants=%s ms=%s\n",
-		len(streams), len(cards), len(pairs), len(stale), r.Streams, r.Records, r.Unbuilt, len(r.Refused), drift, cycles, invariants, w.ms())
+		len(live), len(cards), len(pairs), len(stale), r.Streams, r.Records, r.Unbuilt, len(r.Refused), drift, cycles, invariants, w.ms())
 	if len(pairs) > 0 || len(stale) > 0 || len(r.Refused) > 0 || drift+cycles > 0 || invariants != "ok" {
 		return 1
 	}

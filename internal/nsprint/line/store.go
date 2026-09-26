@@ -145,7 +145,11 @@ type Posted struct {
 	Cut      int      // copies the SCORE cut: a fix copy, fresh reads (#4094)
 	Same     int      // tasks already where the event puts them
 	Skipped  []string // "<id>: <why>" per task the move refused
-	Line     Line
+	// Plans are the plans a CLOSE line's landing landed with their stitch
+	// (nova-tools#4317), each "parent=<id> ref=<repo#n|-> origin=<url|->",
+	// from the reply's "PLAN ..." notes (TE.plan_note).
+	Plans []string
+	Line  Line
 }
 
 // LineKey is one line record: pr:<name>:<n>:line:<head>:<who>:<kind>.
@@ -190,7 +194,13 @@ func post(ctx context.Context, c redis.Cmdable, mode, repo, n, text string, scop
 		p.Moved, _ = strconv.Atoi(res[6])
 		p.Same, _ = strconv.Atoi(res[7])
 		p.Cut, _ = strconv.Atoi(res[9])
-		p.Skipped = res[10:]
+		for _, note := range res[10:] {
+			if plan, ok := strings.CutPrefix(note, "PLAN "); ok {
+				p.Plans = append(p.Plans, plan)
+				continue
+			}
+			p.Skipped = append(p.Skipped, note)
+		}
 	case p.Status == "REFUSED" && len(res) == 2:
 		p.Why = res[1]
 	case (p.Status == "MISSING" || p.Status == "EXISTS") && len(res) == 2:
