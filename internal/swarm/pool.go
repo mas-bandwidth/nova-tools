@@ -269,10 +269,29 @@ func (p *Pool) Claim(id, from, to string) error {
 		return err
 	}
 	// The sidecar follows its task. A failure here leaves the claim standing, which is
-	// right: the task is this dispatcher's, and a sidecar it can rewrite.
-	_ = os.Rename(p.sidecarFile(from, id), p.sidecarFile(to, id))
+	// right: the task is this dispatcher's, and a sidecar it can rewrite. It is not
+	// silent: the caller gets a *SidecarStayed naming the path, so a task in to/ whose
+	// record is still in from/ is written down rather than found later by a reader
+	// that cannot open it. A task that never had a sidecar has none to move.
+	if err := os.Rename(p.sidecarFile(from, id), p.sidecarFile(to, id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return &SidecarStayed{ID: id, From: from, To: to, Path: p.sidecarFile(from, id), Err: err}
+	}
 	return nil
 }
+
+// SidecarStayed is Claim's report that the task moved and its sidecar did
+// not: the task is in To/, the record is still at Path. It is an error the
+// caller has to look at, never a failed claim.
+type SidecarStayed struct {
+	ID, From, To, Path string
+	Err                error
+}
+
+func (e *SidecarStayed) Error() string {
+	return fmt.Sprintf("task %s moved to %s/ but its sidecar stayed at %s: %v", e.ID, e.To, e.Path, e.Err)
+}
+
+func (e *SidecarStayed) Unwrap() error { return e.Err }
 
 // ClaimNext claims the oldest pending task, or reports that there is none.
 func (p *Pool) ClaimNext() (Sidecar, []byte, bool, error) {
@@ -281,17 +300,21 @@ func (p *Pool) ClaimNext() (Sidecar, []byte, bool, error) {
 		return Sidecar{}, nil, false, err
 	}
 	for _, sc := range pending {
+		var stayed *SidecarStayed
 		switch err := p.Claim(sc.ID, Pending, Running); {
-		case err == nil:
-			text, err := p.Text(Running, sc.ID)
-			if err != nil {
-				return Sidecar{}, nil, false, err
+		case err == nil, errors.As(err, &stayed):
+			// The task is this dispatcher's either way. When its sidecar stayed in
+			// pending/ the listed one is what the task is run from, and the report goes
+			// back with the claim so the caller can write it down.
+			text, terr := p.Text(Running, sc.ID)
+			if terr != nil {
+				return Sidecar{}, nil, false, terr
 			}
-			fresh, err := p.ReadSidecar(Running, sc.ID)
-			if err == nil {
+			fresh, rerr := p.ReadSidecar(Running, sc.ID)
+			if rerr == nil {
 				sc = fresh
 			}
-			return sc, text, true, nil
+			return sc, text, true, err
 		case errors.Is(err, os.ErrNotExist):
 			continue // another dispatcher won the rename; take the next one
 		default:

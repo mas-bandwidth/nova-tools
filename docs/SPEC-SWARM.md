@@ -2380,6 +2380,8 @@ RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|
 RUN WAIT slots owner=<owner> holders=<owner:count,...>
 RUN ROUTED-OUT id=<id> dest=<routed-out> rung=<name> why=<rung-is-asked-not-run>
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
+RUN WRITE-FAILED id=<id> what=<sidecar|sidecar-move|claim|route|launch-record|pid|slot-free> path=<path> [from=<state> to=<state>]: <reason>
+RUN CLAIM-FAILED: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
 RUN MALFORMED id=<id> slot=<n> line=<n> dest=failed
@@ -2393,6 +2395,7 @@ RUN OK started=<n> done=<n> failed=<n> killed=<n> pending=<n> recovered=<n> auto
 RUN NOTE <the one remedy line>
 RUN UNSANDBOXED id=<id> slot=<n>: no OS containment; every read and write this job makes is yours
 SUPERVISE FAILED slot=<n> id=<id>: <reason>
+SUPERVISE WRITE-FAILED slot=<n> id=<id> what=<pid|slot> path=<path>: <reason>
 RUN REFUSED: <reason>
 RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 NATIVE REFUSED: <reason>

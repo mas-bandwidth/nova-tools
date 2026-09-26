@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // THE SUPERVISOR: the child the runner forks, and the process that owns a job.
@@ -46,6 +48,11 @@ type SuperviseInput struct {
 	// is a seam beside Now so a test can run the bounded drain and grace waits to their
 	// ends without holding the machine's clock; nil is time.Sleep.
 	Sleep func(time.Duration)
+	// afterStart, when set, runs once the harness has started and before its
+	// identity is recorded: the one instant a test can make the job directory
+	// or the slot directory unwritable for exactly those two writes. nil in
+	// production.
+	afterStart func()
 	// Term fires when this supervisor should end from outside (SIGTERM in the process
 	// that runs `supervise`). Nil never fires. A closed or signalled channel reaps the
 	// harness group and returns; default Go death of this process would leave that group.
@@ -174,14 +181,28 @@ func Supervise(in SuperviseInput) int {
 	// whether the pid they hold is still the process they meant. It travels WITH the pid,
 	// into the job's own records and into every call below.
 	jobStarted := StartStamp(jobPgid)
-	_ = WriteJSON(PidPath(jobDir), PidRecord{
+	if in.afterStart != nil {
+		in.afterStart()
+	}
+	// THE TWO RECORDS OF THE HARNESS'S IDENTITY are written after its start, and a
+	// write that fails is said on this supervisor's own log (Stella's note, the
+	// failure-guidance audit of 2026-09-26): a pid record or slot file without the job's
+	// group is a survivor check and a kill that ask about the wrong process, and
+	// nothing else would have named the path.
+	if err := WriteJSON(PidPath(jobDir), PidRecord{
 		Job: in.Task, Slot: in.Slot, State: SlotLaunched, Pid: self, Pgid: pgidOf(self), JobPgid: jobPgid,
 		PidStarted: identity.PidStarted, JobStarted: jobStarted, Started: Stamp(started),
-	})
-	_ = p.UpdateSlot(in.Slot, in.Nonce, func(sf SlotFile) SlotFile {
+	}); err != nil {
+		fmt.Fprintf(in.Stderr, "SUPERVISE WRITE-FAILED slot=%d id=%s what=pid path=%s: %s\n",
+			in.Slot, oneline.Field(in.Task), oneline.Field(PidPath(jobDir)), oneline.Escape(redactedReason(err)))
+	}
+	if err := p.UpdateSlot(in.Slot, in.Nonce, func(sf SlotFile) SlotFile {
 		sf.JobPgid, sf.JobStarted = jobPgid, jobStarted
 		return sf
-	})
+	}); err != nil {
+		fmt.Fprintf(in.Stderr, "SUPERVISE WRITE-FAILED slot=%d id=%s what=slot path=%s: %s\n",
+			in.Slot, oneline.Field(in.Task), oneline.Field(p.slotPath(in.Slot)), oneline.Escape(redactedReason(err)))
+	}
 	CheckKillPoint("supervisor-after-release")
 
 	record := watch(in, cmd, jobDir, jobPgid, jobStarted, started)

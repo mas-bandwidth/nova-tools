@@ -2,6 +2,7 @@ package swarm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -95,6 +96,30 @@ const (
 	launchBroken  = 1 // RUN LAUNCH-FAILED: the launch broke down
 	launchRefused = 2 // RUN INPUT-LIMIT: the task was refused before the launch, and is in failed/
 )
+
+// writeFailed is the one line for a pool or job write this dispatcher could
+// not make (Glenn's failure-guidance requirement, 2026-09-26: no swarm state
+// write fails silently). It names what was being written, for which task, at
+// which path, and the scrubbed cause. The state after it is whatever the
+// failed write left, and the line says nothing else happened: a sidecar that
+// stayed as it was, a record that is not there.
+func (in RunInput) writeFailed(id, what, path string, err error) {
+	fmt.Fprintf(in.Stderr, "RUN WRITE-FAILED id=%s what=%s path=%s: %s\n",
+		oneline.Field(id), oneline.Field(what), oneline.Field(path), oneline.Escape(redactedReason(err)))
+}
+
+// claimFailed is writeFailed for a task move: the task stays in from/, and a
+// reader of the pool must not be told it went anywhere.
+func (in RunInput) claimFailed(id, from, to string, err error) {
+	var stayed *SidecarStayed
+	if errors.As(err, &stayed) {
+		in.writeFailed(id, "sidecar-move", stayed.Path, stayed.Err)
+		return
+	}
+	fmt.Fprintf(in.Stderr, "RUN WRITE-FAILED id=%s what=claim path=%s from=%s to=%s: %s; the task stays in %s/\n",
+		oneline.Field(id), oneline.Field(in.Pool.taskFile(to, id)), oneline.Field(from), oneline.Field(to),
+		oneline.Escape(redactedReason(err)), oneline.Field(from))
+}
 
 // running is one job this dispatcher is watching.
 type running struct {
@@ -232,12 +257,16 @@ func Run(in RunInput) int {
 				sc.Malformed = fin.MalformedLine
 			}
 			dest := destinationFor(end, fin.Class, rec.RC)
-			_ = p.WriteSidecar(Running, sc)
+			if err := p.WriteSidecar(Running, sc); err != nil {
+				in.writeFailed(sc.ID, "sidecar", p.sidecarFile(Running, sc.ID), err)
+			}
 			requeued := false
 			if end == EndKilled && !in.NoAutoRetry {
 				requeued = in.requeue(sc, now())
 			}
-			_ = p.Claim(sc.ID, Running, dest)
+			if err := p.Claim(sc.ID, Running, dest); err != nil {
+				in.claimFailed(sc.ID, Running, dest, err)
+			}
 			// A DATA HOME THAT MAY STILL HAVE A WRITER IN IT IS NOT FREE: rule 11's
 			// aftermath retires the slot on the live path (finish.go), and a recovered
 			// violation is the same fact about the same data home.
@@ -405,8 +434,20 @@ func Run(in RunInput) int {
 				}
 			}
 			sc, text, claimed, err := p.ClaimNext()
-			if err != nil || !claimed {
+			if err != nil && !claimed {
+				// A pending task this dispatcher could not claim or read is
+				// said, not skipped: the loop breaks here on every pass and
+				// the task sits in pending/ with nothing naming why.
+				said = true
+				fmt.Fprintf(errOut, "RUN CLAIM-FAILED: %s\n", oneline.Escape(redactedReason(err)))
 				break
+			}
+			if !claimed {
+				break
+			}
+			if err != nil {
+				// Claimed: the task is in running/, its sidecar is not.
+				in.claimFailed(sc.ID, Pending, Running, err)
 			}
 			// THE PUBLIC-CLASS GATE (CARD-8390): a public-class worker never
 			// sees a card that clones an unlisted repo. The card is refused
@@ -416,8 +457,12 @@ func Run(in RunInput) int {
 				line := "CARD REFUSED " + PublicRefusalWhy(repo, in.Worker.Name)
 				fmt.Fprintln(errOut, line)
 				sc.End, sc.RC, sc.Ended = EndFailed, -1, Stamp(now())
-				_ = p.WriteSidecar(Running, sc)
-				_ = p.Claim(sc.ID, Running, Failed)
+				if err := p.WriteSidecar(Running, sc); err != nil {
+					in.writeFailed(sc.ID, "sidecar", p.sidecarFile(Running, sc.ID), err)
+				}
+				if err := p.Claim(sc.ID, Running, Failed); err != nil {
+					in.claimFailed(sc.ID, Running, Failed, err)
+				}
 				said = true
 				failed++
 				tasks.Line(line)
@@ -437,9 +482,15 @@ func Run(in RunInput) int {
 				res, park := in.routeTask(sc, text)
 				fmt.Fprintf(errOut, "ROUTE %s %s\n", oneline.Field(routeTaskLabel(sc)), res.Receipt)
 				if park {
-					_ = p.WriteSidecar(Running, sc)
-					_ = p.Claim(sc.ID, Running, RoutedOut)
-					_ = os.WriteFile(p.Path(RoutedOut, sc.ID+".route"), []byte(res.Receipt+"\n"), 0o644)
+					if err := p.WriteSidecar(Running, sc); err != nil {
+						in.writeFailed(sc.ID, "sidecar", p.sidecarFile(Running, sc.ID), err)
+					}
+					if err := p.Claim(sc.ID, Running, RoutedOut); err != nil {
+						in.claimFailed(sc.ID, Running, RoutedOut, err)
+					}
+					if err := os.WriteFile(p.Path(RoutedOut, sc.ID+".route"), []byte(res.Receipt+"\n"), 0o644); err != nil {
+						in.writeFailed(sc.ID, "route", p.Path(RoutedOut, sc.ID+".route"), err)
+					}
 					fmt.Fprintf(out, "RUN ROUTED-OUT id=%s dest=%s rung=%s why=%s\n",
 						oneline.Field(sc.ID), oneline.Field(RoutedOut), oneline.Field(res.Rung), oneline.Field(res.Why))
 					continue
@@ -454,7 +505,9 @@ func Run(in RunInput) int {
 				if lerr != nil {
 					said = true
 					haltAdmissions = true
-					_ = p.Claim(sc.ID, Running, Pending)
+					if err := p.Claim(sc.ID, Running, Pending); err != nil {
+						in.claimFailed(sc.ID, Running, Pending, err)
+					}
 					fmt.Fprintf(errOut, "RUN REFUSED reason=slots: the slot store could not be read: %s\n", oneline.Escape(redactedReason(lerr)))
 					break
 				}
@@ -462,7 +515,9 @@ func Run(in RunInput) int {
 					// THE TASK GOES BACK WHERE IT CAME FROM while the wait lasts: it is
 					// not running, and a task sitting in running/ with no slot would read
 					// as one to `status` and to the next dispatcher.
-					_ = p.Claim(sc.ID, Running, Pending)
+					if err := p.Claim(sc.ID, Running, Pending); err != nil {
+						in.claimFailed(sc.ID, Running, Pending, err)
+					}
 					if slotWaitTask != sc.ID {
 						slotWaitTask = sc.ID
 						slotWaitStart = now()
@@ -780,14 +835,20 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		// token has one meaning (lesson 119). This task is not pending; it cannot run as
 		// written, and `end=input-limit` is why.
 		sc.End, sc.Limit = EndInputLimit, reason
-		_ = p.WriteSidecar(Running, sc)
-		_ = p.Claim(sc.ID, Running, Failed)
+		if err := p.WriteSidecar(Running, sc); err != nil {
+			in.writeFailed(sc.ID, "sidecar", p.sidecarFile(Running, sc.ID), err)
+		}
+		if err := p.Claim(sc.ID, Running, Failed); err != nil {
+			in.claimFailed(sc.ID, Running, Failed, err)
+		}
 		return nil, fmt.Sprintf("RUN INPUT-LIMIT id=%s slot=%d after=0s input=%s max=%s dest=failed: %s",
 			oneline.Field(sc.ID), slot, oneline.Field(promptSizeWord(jobDir)), oneline.Field(maxInputWord(sc)),
 			oneline.Escape(oneline.Cap(reason, oneline.TailBytes))), launchRefused
 	}
 	sc.Job, sc.Slot, sc.Started = jobDir, slot, Stamp(in.Now())
-	_ = p.WriteSidecar(Running, sc)
+	if err := p.WriteSidecar(Running, sc); err != nil {
+		in.writeFailed(sc.ID, "sidecar", p.sidecarFile(Running, sc.ID), err)
+	}
 
 	usageEveryNS := in.UsageInterval
 	if usageEveryNS <= 0 {
@@ -818,7 +879,9 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		Sandbox:      in.Sandbox,
 		UsageEveryNS: strconv.FormatInt(usageEveryNS.Nanoseconds(), 10),
 	}
-	_ = PublishLaunchRecord(evidenceRoot, sc.ID, nonce, r)
+	if err := PublishLaunchRecord(evidenceRoot, sc.ID, nonce, r); err != nil {
+		in.writeFailed(sc.ID, "launch-record", LaunchRecordPath(evidenceRoot, sc.ID, nonce), err)
+	}
 
 	// The SUPERVISOR is the process that samples usage, so the interval has to reach it:
 	// before this, `--usage-interval` was decoded, carried into RunInput and dropped at the
@@ -845,16 +908,28 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(err.Error())), launchBroken
 	}
 	cmd := exec.Command(in.Supervisor, supervisorArgs...)
-	cmd.Stdout, cmd.Stderr = nil, nil
 	// The bench's own git config stops at the job boundary: the supervisor and
 	// everything it spawns read the staged clone's local config, never the
 	// bench's (SPEC-TOOLWORK §3 rule 1, #1665), and export the pool's identity
 	// so a worker cloning after launch commits under the pool's name.
 	cmd.Env = append(os.Environ(), StagingGitEnv(id)...)
-	if log, err := os.OpenFile(filepath.Join(jobDir, "supervisor.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); err == nil {
-		cmd.Stdout, cmd.Stderr = log, log
-		defer log.Close()
+	// THE SUPERVISOR'S OUTPUT HAS ONE HOME, <job>/supervisor.log, and a job whose
+	// log cannot be opened is not launched: with Stdout and Stderr nil its every
+	// line -- SUPERVISE FAILED, the wall line, a write it could not make -- went
+	// to /dev/null and the job ran unwatched (Glenn's failure-guidance
+	// requirement, 2026-09-26). The slot is freed as for a supervisor that
+	// would not start; the task stays in running/ and the line names the path.
+	logPath := filepath.Join(jobDir, "supervisor.log")
+	log, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		if ferr := p.Free(slot); ferr != nil {
+			in.writeFailed(sc.ID, "slot-free", p.slotPath(slot), ferr)
+		}
+		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: the supervisor log %s could not be opened: %s",
+			oneline.Field(sc.ID), slot, oneline.Field(logPath), oneline.Escape(redactedReason(err))), launchBroken
 	}
+	cmd.Stdout, cmd.Stderr = log, log
+	defer log.Close()
 	ownGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		_ = p.Free(slot)
@@ -864,7 +939,9 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	// in doubt and carried to the one place that may end it. It is never stored by pid:
 	// see proc_windows.go.
 	childStarted := StartStamp(cmd.Process.Pid)
-	_ = os.WriteFile(filepath.Join(jobDir, "supervisor.pid"), []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(jobDir, "supervisor.pid"), []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644); err != nil {
+		in.writeFailed(sc.ID, "pid", filepath.Join(jobDir, "supervisor.pid"), err)
+	}
 	CheckKillPoint("after-spawn")
 	// THE SUPERVISOR'S OWN END IS AN OBSERVABLE, and the handshake below waits on it as
 	// well as on the identity. A supervisor that DIED before it identified itself -- it
@@ -901,9 +978,15 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	waited := time.Since(start)
 	KillGroup(cmd.Process.Pid, childStarted)
 	sc.Launch = "failed"
-	_ = p.WriteSidecar(Running, sc)
-	_ = p.Claim(sc.ID, Running, Failed)
-	_ = p.Free(slot)
+	if err := p.WriteSidecar(Running, sc); err != nil {
+		in.writeFailed(sc.ID, "sidecar", p.sidecarFile(Running, sc.ID), err)
+	}
+	if err := p.Claim(sc.ID, Running, Failed); err != nil {
+		in.claimFailed(sc.ID, Running, Failed, err)
+	}
+	if err := p.Free(slot); err != nil {
+		in.writeFailed(sc.ID, "slot-free", p.slotPath(slot), err)
+	}
 	if supervisorGone {
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=%s: the supervisor exited without writing an identity%s",
 			oneline.Field(sc.ID), slot, trimDuration(waited), abortedReason(jobDir, nonce)), launchBroken

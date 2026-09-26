@@ -229,7 +229,9 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	} else {
 		_ = p.Free(r.slot)
 	}
-	_ = p.Claim(sc.ID, Running, dest)
+	if err := p.Claim(sc.ID, Running, dest); err != nil {
+		in.claimFailed(sc.ID, Running, dest, err)
+	}
 
 	after := trimDuration(now.Sub(r.started))
 	budget := budgetWord(sc, rec)
