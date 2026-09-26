@@ -1,6 +1,6 @@
 // The spec verb (nova-tools#3370, part of #3364): the specs table in Redis.
 //
-//	nova-sprint spec mark <repo>#<n> --rev <k> --who <friend> --score <s> [--stream <name>] [--sprint <S>] [--redis <addr>]
+//	nova-sprint spec mark --ref <repo>#<n> --rev <k> --as <friend> --score <s> [--stream <name>] [--sprint <S>] [--redis <addr>]
 //	nova-sprint spec list [--stream <name>] [--redis <addr>]
 //
 // mark stores the line `SPEC who=<friend> rev=<k> score=<s>` on
@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"strconv"
@@ -33,23 +34,27 @@ func init() {
 	})
 }
 
-const specUsage = "want mark <repo>#<n> --rev <k> --who <friend> --score <s> [--stream <name>] [--sprint <S>] [--redis <addr>] or list [--stream <name>] [--redis <addr>]"
+const specUsage = "want mark --ref <repo>#<n> --rev <k> --as <friend> --score <s> [--stream <name>] [--sprint <S>] [--redis <addr>] or list [--stream <name>] [--redis <addr>]"
 
 func runSpec(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 || (args[0] != "mark" && args[0] != "list") {
 		return refuse(errOut, "spec", specUsage)
 	}
 	sub := args[0]
-	pos, flags := holdSplitArgs(args[1:], map[string]bool{"rev": true, "who": true, "score": true, "stream": true, "sprint": true, "redis": true})
 	fs := taskFlags("spec " + sub)
-	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
-	rev := fs.Int("rev", 0, "")
-	who := fs.String("who", "", "")
-	score := fs.Int("score", -1, "")
-	stream := fs.String("stream", "", "")
-	sprint := fs.String("sprint", "", "")
-	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 {
+	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	ref := fs.String("ref", "", "the spec issue, <repo>#<n> (mark)")
+	rev := fs.Int("rev", 0, "the spec revision the score is of (mark)")
+	who := fs.String("as", "", verbflag.HelpAs)
+	score := fs.Int("score", -1, "the score, 0-10 (mark)")
+	stream := fs.String("stream", "", verbflag.HelpStream)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return refuse(errOut, "spec "+sub, specUsage)
+	}
+	var pos []string
+	if *ref != "" {
+		pos = []string{*ref}
 	}
 	if *redisAddr == "" {
 		*redisAddr = os.Getenv("NOVA_REDIS_ADDR")

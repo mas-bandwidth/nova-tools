@@ -61,7 +61,7 @@ func TestSpecMarkDoneOnTwoTensFiresSpecUnblock(t *testing.T) {
 	}
 	state := func() string { return c.HGet(ctx, "task:b1", "state").Val() } // one task store (#3907)
 	mark := func(who, rev, score string) (int, string, string) {
-		return runSpecArgs(t, "mark", "mas-bandwidth/nova-tools#3370", "--rev", rev, "--who", who, "--score", score, "--stream", "nova-sprint", "--redis", addr)
+		return runSpecArgs(t, "mark", "mas-bandwidth/nova-tools#3370", "--rev", rev, "--as", who, "--score", score, "--stream", "nova-sprint", "--redis", addr)
 	}
 
 	// A 10 at an older rev never counts toward the current rev.
