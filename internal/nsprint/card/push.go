@@ -31,6 +31,10 @@ type PushOptions struct {
 	// (MapKind, kinds.go) before lint, so the payload sha is the sha of the
 	// card as stored, KIND line included.
 	MapKind bool
+	// Join names an open stream a card's PATHS may overlap (nova-tools
+	// #4322): a card overlapping it is pushed onto it instead of its own
+	// STREAM; "" joins none, and an overlap refuses that card.
+	Join string
 }
 
 // PushWith is PushBatch of one card under opts: its one result.
@@ -85,6 +89,14 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 		docs[i] = doc
 		bodies[i] = body
 	}
+	// No path belongs to two open streams (nova-tools #4322): each card's
+	// PATHS as its stream holds them go with its FCALL, and ns_card_push
+	// gates it there (SP.gate, before any write, in the same call as the
+	// write), against every other open stream's paths and the cards before
+	// it in this batch; --join names the one stream it may join instead.
+	for i := range docs {
+		docs[i].StreamPaths = ws.JoinPaths(ws.SplitPaths(docs[i].Paths))
+	}
 	ready, i, err := batchDependenciesReady(ctx, client, sprint, docs)
 	if err != nil {
 		return []VerbResult{refused(named(files[i].Name, err.Error()))}
@@ -106,11 +118,12 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 			keyIdx(sprint, "queued"),
 		}
 		// Arguments 14-18 are bench, est, test, stream and origin (#3650,
-		// #3653, #3689, #3692); 19 is leg (#3255).
+		// #3653, #3689, #3692); 19 is leg (#3255); 20 is stream_paths, the
+		// card's PATHS as its stream holds them, and 21 join (#4322).
 		cmds[i] = pipe.FCall(ctx, "ns_card_push", keys,
 			doc.Label, doc.Payload, doc.Priority, doc.Base, doc.BaseSHA, doc.Paths, doc.Repo, doc.Kind,
 			doc.DependsOn, doc.Type, doc.TypedDependsOn, boolString(ready[i]), doc.Route, doc.Bench, doc.Est, doc.Test,
-			doc.Stream, doc.Origin, doc.Leg,
+			doc.Stream, doc.Origin, doc.Leg, doc.StreamPaths, opts.Join,
 		)
 		// Then, in the same pipeline, ns_card_header writes the card's
 		// DONE-WHEN line (harvest's PR body, #2932) and its TASK line (the
@@ -128,6 +141,12 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 		}
 		if err == nil && reply == "NOBENCH" {
 			out[i] = refused(named(files[i].Name, unregisteredBench(ctx, client, doc.Bench)))
+			continue
+		}
+		if no, ok := ws.ParseRefusal(reply); err == nil && ok {
+			// #4322: the gate's typed refusal, nothing written; one receipt line
+			out[i] = VerbResult{Code: exitRefused, Stdout: no.Receipt() + " card=" + oneline.Field(doc.Label) + "\n",
+				Stderr: oneline.Escape(named(files[i].Name, no.Receipt())) + "\n"}
 			continue
 		}
 		if err == nil && strings.HasPrefix(reply, "ROLE ") {

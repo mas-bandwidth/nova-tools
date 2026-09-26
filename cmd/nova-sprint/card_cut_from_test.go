@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 const cutFromSHA = "0123456789abcdef0123456789abcdef01234567"
@@ -42,6 +43,17 @@ type fakeCutStore struct {
 	pushed  map[string]bool
 	ledger  map[string]map[string]string
 	noWrite error
+	// paths is ws:paths, every open stream's paths (#4322); nil gates nothing.
+	paths ws.StreamPaths
+}
+
+func (f *fakeCutStore) streamPaths(context.Context) (ws.GateView, error) {
+	v := ws.GateView{Paths: ws.StreamPaths{}, Open: map[string]bool{}}
+	for s, p := range f.paths {
+		v.Paths[s] = p
+		v.Open[s] = true
+	}
+	return v, nil
 }
 
 func (f *fakeCutStore) push(_ context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
@@ -93,6 +105,9 @@ func cutDeps(forge *fakeCutForge, st *fakeCutStore) cutFromDeps {
 	}
 	if st != nil {
 		d.Push, d.LedgerRead, d.LedgerWrite = st.push, st.ledgerRead, st.ledgerWrite
+		if st.paths != nil {
+			d.StreamPaths = st.streamPaths
+		}
 	}
 	return d
 }
@@ -280,6 +295,7 @@ func TestCardCutFromDryRun(t *testing.T) {
 	}
 	want := "CARD CUT DRY row=2 id=first-id stream=s who=any route=friend est=30 depends=mas-bandwidth/nova-tools#12 title=first\n" +
 		"CARD CUT DRY row=1 id=second stream=s who=\"only rowan,stella\" route=flash est=\"45 min\" depends=first-id title=second\n" +
+		"CARD CUT DRY PATHS unchecked rows=2 why=\"no --redis: the paths gate reads the store\" remedy=\"pass --redis <addr>\"\n" +
 		"CARD CUT FROM file=cards.tsv rows=2 cut=0 already=0 refused=0 filed=0 reused=0 github=off ms=0\n"
 	if out != want {
 		t.Fatalf("dry run:\n%s\nwant:\n%s", out, want)
