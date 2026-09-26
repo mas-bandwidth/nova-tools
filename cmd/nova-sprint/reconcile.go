@@ -67,6 +67,13 @@ type reconcileDutyBuilder struct {
 var reconcileDuties []reconcileDutyBuilder
 
 // registerReconcileDuty adds a duty to every `nova-sprint reconcile` loop.
+// reconcileOut is the verb's stdout, set before the duties are built (the
+// friend deal duty that declared it left on 2026-09-25: it dealt primaries
+// into friend queues as tasks, the pre-copy model, and dealt the first
+// copy-model quack to a friend that was down; friends receive copies through
+// card deal now, #4191 deletes the type).
+var reconcileOut io.Writer
+
 func registerReconcileDuty(name string, build func(st *store.Store) (reconcileDuty, error)) {
 	reconcileDuties = append(reconcileDuties, reconcileDutyBuilder{Name: name, Build: build})
 }
