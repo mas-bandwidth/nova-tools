@@ -69,10 +69,18 @@ func TestReadCopyDealtToBenchRendersALintedCard(t *testing.T) {
 	if err := card.LintCard(ctx, body); err != nil {
 		t.Fatalf("read copy card refused: %v\n%s", err, body)
 	}
+	// #4270: the read card asks for the SCORE line in RESULT.md and never
+	// for nova-sprint (a sandboxed swarm model cannot run it)
 	for _, want := range []string{"RESULT: r1.c2 ", "\nKIND: read\n", "\nROUTE: pro\n", "\nHEAD: " + strings.Repeat("cd", 20) + "\n",
-		"nova-sprint card end --id r1~2 --score N/10"} {
+		"line 2 is exactly\n  " + card.ScoreLine + "\n", "\n  ABSTAIN <why>\n", "A read edits nothing inside PATHS",
+		"against dev@" + strings.Repeat("ab", 20) + ": CI at head, base, scope, then a score 1-10"} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("read card lacks %q:\n%s", want, body)
+		}
+	}
+	for _, never := range []string{"card end", "nova-sprint card", "--score"} {
+		if strings.Contains(string(body), never) {
+			t.Fatalf("read card tells the model to run %q:\n%s", never, body)
 		}
 	}
 	// a record missing what the card needs is refused, never guessed

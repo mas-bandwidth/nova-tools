@@ -129,7 +129,8 @@ func TestCardMovesCLI(t *testing.T) {
 		t.Fatalf("read deal = %d %q", code, out)
 	}
 	code, out, _ = runCLI("card", "render", "--id", "c0~2")
-	if code != 0 || !strings.Contains(out, "\nKIND: read\n") || !strings.Contains(out, "card end --id c0~2 --score N/10") {
+	if code != 0 || !strings.Contains(out, "\nKIND: read\n") || !strings.Contains(out, "line 2 is exactly\n  SCORE N/10 ") ||
+		strings.Contains(out, "card end") {
 		t.Fatalf("render = %d %q", code, out)
 	}
 	code, out, _ = runTaskCLI("take", "--actor", "emma")

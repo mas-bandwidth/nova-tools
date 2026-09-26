@@ -14,8 +14,10 @@ import (
 // pushBranch is the push script of internal/nsprint/harvest/remote.go in Go,
 // in the local repo dir: the branch is under nova/, the commit exists, a
 // remote branch already at the sha is "already", a remote branch at another
-// sha is ErrBranchMoved, else one `git push <remote> <sha>:refs/heads/<branch>`
-// (never force) and the tip read back, which must be the sha.
+// sha is ErrBranchMoved (unless it is at req.Onto, the head a fix copy built
+// on: the branch moves forward), else one `git push <remote>
+// <sha>:refs/heads/<branch>` (never force) and the tip read back, which
+// must be the sha.
 func pushBranch(ctx context.Context, req Request, remote string) (string, error) {
 	if !strings.HasPrefix(req.Branch, "nova/") {
 		return "", fmt.Errorf("%w: branch %q is not under nova/", ErrPushRefused, req.Branch)
@@ -69,8 +71,16 @@ func pushBranch(ctx context.Context, req Request, remote string) (string, error)
 	switch {
 	case before == req.SHA:
 		return "already", nil
-	case before != "":
-		return "", fmt.Errorf("%w: %w: %s at %s, not %s", ErrPushRefused, ErrBranchMoved, req.Branch, short(before), short(req.SHA))
+	case before != req.Onto:
+		got := before
+		if got == "" {
+			got = "nothing"
+		}
+		want := short(req.SHA)
+		if req.Onto != "" {
+			want = short(req.Onto) + " (the head the fix built on)"
+		}
+		return "", fmt.Errorf("%w: %w: %s at %s, not %s", ErrPushRefused, ErrBranchMoved, req.Branch, short(got), want)
 	}
 	if _, err := run("push", "-q", remote, req.SHA+":refs/heads/"+req.Branch); err != nil {
 		return "", fmt.Errorf("%w: %v", ErrPushRefused, err)

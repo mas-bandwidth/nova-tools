@@ -84,8 +84,30 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	// #3634: --role friends|fleet is the bench registry's role column
 	// (omitted keeps it; a bench with none reads as fleet).
 	roleFlag := fs.String("role", "", "")
+	// #4270: --kinds work|read|fix,... and --tiers <t>,... are the consumer's
+	// copy filters on its desired hash (what the card moves' TM.may reads);
+	// omitted keeps them, an empty value clears.
+	kindsFlag := fs.String("kinds", "", "")
+	tiersFlag := fs.String("tiers", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity "+kind, err.Error())
+	}
+	given := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	kinds, tiers := "", ""
+	if given["kinds"] {
+		normalized, err := capacity.NormalizeKinds(*kindsFlag)
+		if err != nil {
+			return refuse(errOut, "capacity "+kind, "--kinds: "+err.Error())
+		}
+		kinds = normalized
+	}
+	if given["tiers"] {
+		normalized, err := capacity.NormalizeTiers(*tiersFlag)
+		if err != nil {
+			return refuse(errOut, "capacity "+kind, "--tiers: "+err.Error())
+		}
+		tiers = normalized
 	}
 	role, err := benchrole.ParseFlag(*roleFlag)
 	if err != nil {
@@ -141,10 +163,10 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	var result capacity.Result
 	if kind == capacity.KindBench {
 		result, err = capacity.SetBenchWith(ctx, st, name, resolved, slots, *actor, *idem,
-			capacity.DesiredOpts{Legs: legs, Role: role})
+			capacity.DesiredOpts{Legs: legs, Role: role, Kinds: kinds, Tiers: tiers})
 	} else {
 		result, err = capacity.SetFriendWith(ctx, st, name, resolved, slots, *actor, *idem,
-			capacity.DesiredOpts{Paused: *paused, Register: *register})
+			capacity.DesiredOpts{Paused: *paused, Register: *register, Kinds: kinds, Tiers: tiers})
 	}
 	if err != nil {
 		return refuseCapacity(errOut, "capacity "+kind, err)
@@ -161,6 +183,15 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	}
 	if role != "" {
 		legsNote += " role=" + role
+	}
+	for _, f := range []struct{ name, v string }{{"kinds", kinds}, {"tiers", tiers}} {
+		switch f.v {
+		case "":
+		case capacity.Clear:
+			legsNote += " " + f.name + "=-"
+		default:
+			legsNote += " " + f.name + "=" + f.v
+		}
 	}
 	_, _ = fmt.Fprintf(out, "%s %s %s machine=%s slots=%d desired=%d/%d%s trips=%d\n",
 		status, kind, name, resolved, result.Slots, result.Sum, result.Ceiling, legsNote, trips.N())

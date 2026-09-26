@@ -11,7 +11,10 @@
 //     remote branch already at the sha is success, a branch at any other sha
 //     is the typed refusal ErrBranchMoved (the rules of the card harvest's
 //     push script, internal/nsprint/harvest/remote.go), and the tip is read
-//     back after the push so "pushed" means ls-remote showed it;
+//     back after the push so "pushed" means ls-remote showed it. A fix copy
+//     (#4270) names the head it built on (Request.Onto): the PR's branch at
+//     that head moves forward to the commit, at any other sha it is
+//     ErrBranchMoved;
 //  2. opens the PR with the GitHub REST API (net/http, a bearer token): an
 //     open PR for that head already on the repository is success, else one
 //     POST with the primary's BASE as base, its title, and a body carrying
@@ -91,6 +94,12 @@ type Request struct {
 	RepoDir string
 	// SHA is the commit to push; Branch is the copy's branch (under nova/).
 	SHA, Branch string
+	// Onto is the sha the remote branch is expected at before the push: ""
+	// for a work copy (the branch does not exist yet), the PR's head for a
+	// fix copy (#4270: the fix commits on top of the PR's head and the push
+	// moves the PR's own branch forward, never with force). A branch at
+	// any other sha is ErrBranchMoved either way.
+	Onto string
 	// Repo is the primary's repository, owner/name or a bare name under
 	// prkey.DefaultOwner.
 	Repo string

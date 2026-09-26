@@ -56,13 +56,18 @@ printed, passed to the harness, or written to a receipt (token_sha only).
 A consumer copy (#3998) runs the same way under ` + "`nova-card copy <copy>`" + `, started
 by the bench's copy session (` + "`nova-sprint card session --as bench:<b>`" + `) after
 one ` + "`card work --fill`" + `: its stdin line is <copy> <token>, its card is rendered
-from task:<copy>, it beats with card beat and ends with card end --id <copy>
-(unless the card ended itself). Its job and results paths use the sprint
-` + "`copies`" + ` and the label <primary>-c<n>. A WORK copy's DONE with a commit is
-the boundary step (#4227): the wrapper pushes the copy's branch to the
-primary's repository (never force), opens the PR against its BASE (or finds
-it open), records the PR and ends the copy --ok --pr --head itself; the
-model never pushes and never runs card end. That push and PR use
+from task:<copy>, it beats with card beat and the wrapper ends it with card
+end --id <copy>; no copy's model runs card end (#4227, #4270). Its job and
+results paths use the sprint ` + "`copies`" + ` and the label <primary>-c<n>. A
+WORK copy's DONE with a commit is the boundary step (#4227): the wrapper
+pushes the copy's branch to the primary's repository (never force), opens
+the PR against its BASE (or finds it open), records the PR and ends the
+copy --ok --pr --head itself; the model never pushes and never runs card
+end. A READ copy's DONE is its RESULT.md line 2 (#4270): a SCORE line
+(SCORE N/10 gates=... finding=...) ends the copy with the score, ABSTAIN
+<why> ends it fail reason abstain, anything else fail reason no-score. A
+FIX copy's DONE with a commit on top of the PR's head pushes the PR's own
+branch forward and ends the copy at the new head. That push and PR use
 GH_PUSH_TOKEN, the bench's push credential in this process's
 environment, through git askpass (this binary re-run with
 NOVA_CARD_ASKPASS=1): never in argv, never on disk, never in the harness's or

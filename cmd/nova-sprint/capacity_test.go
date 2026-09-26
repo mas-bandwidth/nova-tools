@@ -326,3 +326,75 @@ func TestCapacityRefusesMappedLogin(t *testing.T) {
 		t.Fatalf("capacity friend alice: exit %d %q", code, errOut.String())
 	}
 }
+
+// TestCapacityWritesKindsAndTiers (#4270): `capacity bench --kinds
+// work,read --tiers pro <b> <slots>` writes the copy filters the card moves
+// read (TM.may) on bench:<b>:desired; a write without the flags keeps them,
+// the same again is SAME, an empty value clears, and a kind that is not
+// work, read or fix is refused. A friend takes the same flags.
+func TestCapacityWritesKindsAndTiers(t *testing.T) {
+	t.Parallel()
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	client.HSet(ctx, "machine:m:ceiling", "slots", 40)
+	run := func(kind string, args ...string) (int, string, string) {
+		var out, errOut bytes.Buffer
+		code := runCapacity(ctx, append([]string{kind, "--redis", addr, "--as", "ops", "--machine", "m"}, args...), &out, &errOut)
+		return code, out.String(), errOut.String()
+	}
+	desired := func() (string, string) {
+		v := client.HMGet(ctx, "bench:b:desired", "kinds", "tiers").Val()
+		s := func(x any) string {
+			if x == nil {
+				return "<none>"
+			}
+			return x.(string)
+		}
+		return s(v[0]), s(v[1])
+	}
+	if code, out, errOut := run("bench", "--kinds", "work, read", "--tiers", "pro", "b", "8"); code != 0 ||
+		!strings.HasPrefix(out, "SET bench b ") || !strings.Contains(out, " kinds=work,read tiers=pro ") {
+		t.Fatalf("capacity bench --kinds --tiers code=%d out=%q err=%q", code, out, errOut)
+	}
+	if k, tr := desired(); k != "work,read" || tr != "pro" {
+		t.Fatalf("bench:b:desired kinds=%q tiers=%q; want work,read and pro", k, tr)
+	}
+	if code, out, _ := run("bench", "--kinds", "work,read", "--tiers", "pro", "b", "8"); code != 0 || !strings.HasPrefix(out, "SAME bench b ") {
+		t.Fatalf("the same filters again code=%d out=%q; want SAME", code, out)
+	}
+	if code, _, _ := run("bench", "b", "6"); code != 0 {
+		t.Fatalf("capacity bench without the flags code=%d", code)
+	}
+	if k, tr := desired(); k != "work,read" || tr != "pro" {
+		t.Fatalf("a write without the flags changed kinds=%q tiers=%q; want kept", k, tr)
+	}
+	if code, out, _ := run("bench", "--kinds", "work", "b", "6"); code != 0 || !strings.Contains(out, " kinds=work ") || strings.Contains(out, "tiers=") {
+		t.Fatalf("narrowed kinds code=%d out=%q", code, out)
+	}
+	if k, tr := desired(); k != "work" || tr != "pro" {
+		t.Fatalf("kinds=%q tiers=%q; want work and pro kept", k, tr)
+	}
+	if code, out, _ := run("bench", "--kinds", "", "--tiers", "", "b", "6"); code != 0 || !strings.Contains(out, " kinds=- tiers=- ") {
+		t.Fatalf("clear code=%d out=%q", code, out)
+	}
+	if k, tr := desired(); k != "<none>" || tr != "<none>" {
+		t.Fatalf("after clearing: kinds=%q tiers=%q; want neither field", k, tr)
+	}
+	if code, _, errOut := run("bench", "--kinds", "work,report", "b", "6"); code != 2 || !strings.Contains(errOut, "--kinds") {
+		t.Fatalf("a kind that is not work, read or fix: code=%d err=%q; want a refusal naming --kinds", code, errOut)
+	}
+	if code, _, errOut := run("bench", "--tiers", "pro;rm", "b", "6"); code != 2 || !strings.Contains(errOut, "--tiers") {
+		t.Fatalf("malformed --tiers: code=%d err=%q; want a refusal naming --tiers", code, errOut)
+	}
+	if code, out, errOut := run("friend", "--kinds", "read", "f", "4"); code != 0 || !strings.Contains(out, " kinds=read ") {
+		t.Fatalf("capacity friend --kinds code=%d out=%q err=%q", code, out, errOut)
+	}
+	if got := client.HGet(ctx, "friend:f:desired", "kinds").Val(); got != "read" {
+		t.Fatalf("friend:f:desired kinds=%q; want read", got)
+	}
+}
