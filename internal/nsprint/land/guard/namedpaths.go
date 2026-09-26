@@ -10,6 +10,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // NamedPathsAllowlist is the shrink-only list of names that look like a
@@ -53,7 +55,7 @@ func namedPaths(_ context.Context, root string) Result {
 		for i, text := range strings.Split(string(raw), "\n") {
 			for _, name := range namedPathsIn(text) {
 				checked++
-				if allow[name] || namedPathExists(root, testdataDirs, name) {
+				if allow.Has(name) || namedPathExists(root, testdataDirs, name) {
 					continue
 				}
 				return Result{OK: false, File: fmt.Sprintf("%s:%d", relPath, i+1), Why: name + " names no file or directory in this tree; correct the path or list it in " + NamedPathsAllowlist + " with the reason"}
@@ -63,24 +65,11 @@ func namedPaths(_ context.Context, root string) Result {
 	return Result{OK: true, Why: fmt.Sprintf("%d names in %d files exist", checked, len(files))}
 }
 
-func readNamedPathAllowlist(root string) (map[string]bool, error) {
-	allow := map[string]bool{}
-	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(NamedPathsAllowlist)))
-	if os.IsNotExist(err) {
-		return allow, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		name, _, _ := strings.Cut(line, " ")
-		allow[name] = true
-	}
-	return allow, nil
+// readNamedPathAllowlist reads the list through internal/ci/allowlist, the one
+// reader of every allowlist (nova-tools#4339); a tree without the file has
+// nothing parked in it.
+func readNamedPathAllowlist(root string) (*allowlist.List, error) {
+	return allowlist.Load(filepath.Join(root, filepath.FromSlash(NamedPathsAllowlist)), allowlist.Options{MissingIsEmpty: true})
 }
 
 // namedPathsIn returns the repository paths one line of text names.

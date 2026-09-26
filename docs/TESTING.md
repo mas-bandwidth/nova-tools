@@ -62,5 +62,5 @@ the lists now match the tree.
 | `transcripts_allowlist.txt` | `TestEveryTranscriptIsExecutedLineForLine` |
 
 `TestEveryAllowlistIsReadThroughTheOneHelper` holds the table's promise: every
-list file there is loaded through the helper, and nothing in `internal/ci` reads
-one with `os.ReadFile`, `os.Open` or `readFile`.
+list file there is loaded through the helper, and nothing anywhere in the tree
+reads one with `os.ReadFile`, `os.Open` or `readFile`.
