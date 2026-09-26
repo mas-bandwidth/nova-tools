@@ -9,6 +9,7 @@ Rules, all hard:
 - Read at the exact head: CI at head, base, scope, then a score 1-10; a score under 10 names each gap and the work that closes it.
 - A read edits nothing inside PATHS; it runs the DONE-WHEN command and reports what it printed.
 - LESSON-HOOK: When a resolved defect yields a concrete preventive lesson, propose it with evidence; after owner review, append it with `nova-sprint lesson append`.
+- TESTS (hard rules, 2026-09-25): a PR whose new or changed tests sleep, poll real time, call a service or spawn a process on the per-commit path, or lack `t.Parallel()`, scores under 8, naming the test and the rule it breaks.
 - Never rm -rf anything but your own workspace path spelled out literally.
 - Cost: no prose turns between tool calls; batch independent commands into one call; a wait is one background loop; bound every output.
 - Any commit you make carries the co-author line below, exactly as written; the task's MODEL decides it.
