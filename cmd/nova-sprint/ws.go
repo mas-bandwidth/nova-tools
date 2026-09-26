@@ -26,7 +26,7 @@ import (
 )
 
 func init() {
-	register(Verb{Name: "ws", Summary: "the ws index: migrate from task:*, counts, checkpoint to TSV", Run: runWS})
+	register(Verb{Name: "ws", Summary: "the ws index: counts, checkpoint to TSV", Run: runWS})
 	register(Verb{Name: "scope", Summary: "keep, park, unpark or list the streams in the sprint's scope", Run: runScope})
 	register(Verb{Name: "stream", Summary: "list, order or rename the work streams; open, rebase, pr, status or close a stream branch", Run: runStream})
 }
@@ -114,62 +114,17 @@ func subverb(args []string, verb, want string, errOut io.Writer) (string, []stri
 }
 
 func runWS(ctx context.Context, args []string, out, errOut io.Writer) int {
-	sub, rest, code, ok := subverb(args, "ws", "migrate, counts or checkpoint", errOut)
+	sub, rest, code, ok := subverb(args, "ws", "counts or checkpoint", errOut)
 	if !ok {
 		return code
 	}
 	switch sub {
-	case "migrate":
-		return runWSMigrate(ctx, rest, out, errOut)
 	case "counts":
 		return runWSCounts(ctx, rest, out, errOut)
 	case "checkpoint":
 		return runWSCheckpoint(ctx, rest, out, errOut)
 	}
-	return refuse(errOut, "ws", "unknown subverb "+sub+"; want migrate, counts or checkpoint")
-}
-
-// runWSMigrate walks task:* one SCAN page per ns_ws_migrate call until the
-// cursor is 0 (or one page with --once). --sprint names the friend-queue idx
-// sets to read (default $FRIEND_QUEUE_SPRINT, the friend-queue's own knob).
-func runWSMigrate(ctx context.Context, args []string, out, errOut io.Writer) int {
-	w := newWSCmd("ws migrate", out, errOut)
-	cursor := w.fs.String("cursor", "0", "")
-	sprint := w.fs.String("sprint", os.Getenv("FRIEND_QUEUE_SPRINT"), "")
-	count := w.fs.Int("count", 1000, "")
-	once := w.fs.Bool("once", false, "")
-	const want = "ws migrate --redis <addr> [--sprint <S>] [--cursor <n>] [--count <n>] [--once]"
-	if _, code, ok := w.parse(args, 0, want); !ok {
-		return code
-	}
-	if *count < 1 || *count > 100000 {
-		return refuse(errOut, w.name, "--count wants 1..100000")
-	}
-	if _, err := strconv.ParseUint(*cursor, 10, 64); err != nil {
-		return refuse(errOut, w.name, "--cursor wants the number a previous run printed")
-	}
-	st, code, ok := w.open(ctx)
-	if !ok {
-		return code
-	}
-	defer st.Close()
-	var total ws.MigrateResult
-	pages := 0
-	next := *cursor
-	for {
-		r, err := ws.Migrate(ctx, st.Client(), next, *sprint, *count, *w.by)
-		if err != nil {
-			return w.done(err, "")
-		}
-		pages++
-		total.Add(r)
-		next = r.Cursor
-		if next == "0" || *once {
-			break
-		}
-	}
-	return w.done(nil, fmt.Sprintf("MIGRATED scanned=%d placed=%d same=%d nostream=%d skipped=%d pages=%d cursor=%s",
-		total.Scanned, total.Placed, total.Same, total.NoStream, total.Skipped, pages, next))
+	return refuse(errOut, "ws", "unknown subverb "+sub+"; want counts or checkpoint")
 }
 
 func runWSCounts(ctx context.Context, args []string, out, errOut io.Writer) int {

@@ -472,37 +472,3 @@ redis.register_function('ns_card_gate', card_gate)
 redis.register_function('ns_card_undeal', card_undeal)
 redis.register_function('ns_card_deal_fail', card_deal_fail)
 redis.register_function('ns_bench_ssh', bench_ssh)
-
--- ns_deal_status_list(S) is `deal status` list mode (#3605): one row per
--- member of benches, sorted by name, each {bench, beat exists, desired slots,
--- desired paused, ready, working, sprint queue, ssh state, ssh at}: ready
--- and working are ZCARDs of bench:<b>:cards:ready|working (#3998). Read
--- only (no-writes, called with FCALL_RO), so the bench seat, which may FCALL
--- but never EVAL, runs it. Its callers line for rowan-tools redis-acl-gen:
--- ns_deal_status_list internal/nsprint/deal/status.go ns-bench ns-coordinator
-redis.register_function{
-  function_name = 'ns_deal_status_list',
-  flags = { 'no-writes' },
-  callback = function(keys, args)
-    local S = args[1]
-    local benches = redis.call('SMEMBERS', 'benches')
-    table.sort(benches)
-    local res = {}
-    for _, b in ipairs(benches) do
-      local des = redis.call('HMGET', 'bench:' .. b .. ':desired', 'slots', 'paused', 'legs')
-      local ssh = redis.call('HMGET', 'bench:' .. b .. ':ssh', 'state', 'at')
-      res[#res + 1] = {
-        b,
-        redis.call('EXISTS', 'bench:' .. b .. ':beat'),
-        des[1] or '0',
-        des[2] or '',
-        redis.call('ZCARD', 'bench:' .. b .. ':cards:ready'),
-        redis.call('ZCARD', 'bench:' .. b .. ':cards:working'),
-        redis.call('ZCARD', 's:' .. S .. ':bench:' .. b .. ':queue'),
-        ssh[1] or '',
-        ssh[2] or '',
-      }
-    end
-    return res
-  end,
-}

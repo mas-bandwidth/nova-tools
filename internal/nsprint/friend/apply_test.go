@@ -163,18 +163,9 @@ func TestApplyConditionalOnRead(t *testing.T) {
 	})
 }
 
-// apTick is one reconciler tick: ApplyLife, then one redistribute call.
-func apTick(t *testing.T, st *store.Store, ms int64) (friend.ApplyResult, *life.Move) {
-	t.Helper()
-	res := apApply(t, st, "ada", ms, nil)
-	moves, err := life.Redistribute(context.Background(), st, fsRoster, "reconciler", "tick-"+strconv.FormatInt(ms, 10))
-	fsMust(t, err)
-	return res, fsMoveOf(moves, "ada")
-}
-
 // apRecoverFixture: ada beats throughout with one open task; D1 at 0 s is
-// never answered, so the 121 s tick writes wake-missed and moves the task.
-// It returns D1's id and the outbox length after that tick.
+// never answered, so the 121 s tick writes wake-missed. It returns D1's id
+// and the outbox length after that tick.
 func apRecoverFixture(t *testing.T, st *store.Store, client *redis.Client) (string, int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -183,23 +174,16 @@ func apRecoverFixture(t *testing.T, st *store.Store, client *redis.Client) (stri
 	apBeats(t, client, "ada", 0, 0)
 	d1 := fsEvent(t, client, "ada", life.EventDeliver, "", apBase)
 	apBeats(t, client, "ada", 10, 120)
-	res, move := apTick(t, st, 121000)
+	res := apApply(t, st, "ada", 121000, nil)
 	if res.Status != "OK" || res.State != friend.StateWakeMissed {
 		t.Fatalf("121 s: %+v", res)
-	}
-	if move == nil || move.Moved != 1 {
-		t.Fatalf("121 s moved %+v", move)
-	}
-	marker := "[moved from ada: wake-missed]"
-	if title := client.HGet(ctx, "task:build-1", "title").Val(); strings.Count(title, marker) != 1 {
-		t.Fatalf("title %q, want one %q", title, marker)
 	}
 	return d1, client.XLen(ctx, friend.OutboxKey).Val()
 }
 
 // TestApplyRecoversFromWakeMissed is Stella's sequence through the real
-// Functions: D1 missed (tasks move), D2 pending (no write, no second wake,
-// no move), D2 answered (UP clears the classifier's own wake-missed).
+// Functions: D1 missed, D2 pending (no write, no second wake), D2 answered
+// (UP clears the classifier's own wake-missed).
 func TestApplyRecoversFromWakeMissed(t *testing.T) {
 	t.Parallel()
 
@@ -221,15 +205,9 @@ func TestApplyRecoversFromWakeMissed(t *testing.T) {
 	if fsState(client, "ada")["state"] != friend.StateWakeMissed {
 		t.Fatalf("330 s state %v", fsState(client, "ada"))
 	}
-	moves, err := life.Redistribute(ctx, st, fsRoster, "reconciler", "tick-330")
-	fsMust(t, err)
-	if m := fsMoveOf(moves, "ada"); m != nil && m.Moved != 0 {
-		t.Fatalf("330 s moved %+v", m)
-	}
-
 	fsEvent(t, client, "ada", life.EventTurnStart, d2id, apBase+360000)
 	apBeats(t, client, "ada", 340, 360)
-	res, move := apTick(t, st, 361000)
+	res = apApply(t, st, "ada", 361000, nil)
 	if res.Status != "OK" || len(res.Values) < 2 || res.Values[1] != "up" {
 		t.Fatalf("361 s: %+v, want OK up", res)
 	}
@@ -238,9 +216,6 @@ func TestApplyRecoversFromWakeMissed(t *testing.T) {
 	}
 	if client.XLen(ctx, friend.OutboxKey).Val() != w {
 		t.Fatal("a duplicate wake")
-	}
-	if move != nil {
-		t.Fatalf("361 s redistribute row for ada: %+v", move)
 	}
 
 	for _, tc := range []struct {
@@ -306,7 +281,7 @@ func TestSweepAppliesLifeOnlyWhenAdopted(t *testing.T) {
 	for i := int64(10); i >= 1; i-- {
 		fsEvent(t, client, "ada", life.EventBeat, "", now-i*10000)
 	}
-	l := &friend.Ladder{Store: st, Roster: fsRoster, Actor: "reconciler"}
+	l := &friend.Ladder{Store: st, Actor: "reconciler"}
 	res, err := l.Sweep(ctx)
 	fsMust(t, err)
 	if len(res.Life) != 0 || fsState(client, "ada")["state"] == friend.StateOfflineModel {

@@ -60,10 +60,6 @@ func TestWSVerbsOnAThousandTasks(t *testing.T) {
 		{[]string{"stream", "rename", s(4), "swarm: cards"}, `RENAMED from="s4: work" to="swarm: cards" members=100 `, 1},
 		{[]string{"stream", "order", "swarm: cards", s(9)}, `ORDERED streams=10 first="swarm: cards" `, 1},
 		{[]string{"ws", "checkpoint", "--out", cp}, "CHECKPOINT path=" + cp + " streams=10 rows=1000 ", 1},
-		// the fixture is already the task card shape (#3778): migrate keeps
-		// every place but the 150 working rows no child beats (back to ready)
-		{[]string{"ws", "migrate"}, "MIGRATED scanned=1000 placed=150 same=850 nostream=0 skipped=0 pages=", 1},
-		{[]string{"ws", "migrate"}, "MIGRATED scanned=1000 placed=0 same=1000 nostream=0 skipped=0 pages=", 1},
 	} {
 		args := append(append([]string{}, tc.args...), "--redis", addr)
 		if tc.args[1] == "rename" || tc.args[1] == "order" {
@@ -130,7 +126,6 @@ func TestWSVerbsRefuseHelpAndUsage(t *testing.T) {
 		{"scope", "park", "--redis", "127.0.0.1:1"},
 		{"stream", "rename", "--redis", "127.0.0.1:1", "only-one"},
 		{"stream", "order", "--redis", "127.0.0.1:1"},
-		{"ws", "migrate", "--redis", "127.0.0.1:1", "--count", "0"},
 	} {
 		t.Setenv("NOVA_SPRINT_REDIS", "")
 		code, stdout, stderr := runSprint(args...)
@@ -139,7 +134,7 @@ func TestWSVerbsRefuseHelpAndUsage(t *testing.T) {
 		}
 	}
 	for _, args := range [][]string{
-		{"ws", "migrate", "--help"}, {"ws", "counts", "--help"}, {"ws", "checkpoint", "--help"},
+		{"ws", "counts", "--help"}, {"ws", "checkpoint", "--help"},
 		{"scope", "keep", "--help"}, {"scope", "park", "--help"}, {"scope", "unpark", "--help"}, {"scope", "ls", "--help"},
 		{"stream", "ls", "--help"}, {"stream", "order", "--help"}, {"stream", "rename", "--help"},
 	} {

@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
@@ -140,16 +139,13 @@ func runFriendSweep(ctx context.Context, args []string, out, errOut io.Writer) i
 	fs := capacityFlags(verb)
 	redisAddr := fs.String("redis", "", "")
 	as := fs.String("as", "", "")
-	mayHold := fs.String("may-hold", "", "")
-	builders := fs.String("builders", "", "")
-	coordinator := fs.String("coordinator", "", "")
 	idleTicks := fs.Int("idle-ticks", friend.DefaultPolicy.IdleTicks, "")
 	underfullTicks := fs.Int("underfull-ticks", friend.DefaultPolicy.UnderfullTicks, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
 	if *as == "" || len(fs.Args()) != 0 {
-		return refuse(errOut, verb, "want --as <actor>; the roster is --may-hold, --builders, --coordinator")
+		return refuse(errOut, verb, "want --as <actor>")
 	}
 	if *idleTicks < 1 || *underfullTicks < 1 {
 		return refuse(errOut, verb, "--idle-ticks and --underfull-ticks must be at least 1")
@@ -162,7 +158,6 @@ func runFriendSweep(ctx context.Context, args []string, out, errOut io.Writer) i
 	l := &friend.Ladder{
 		Store:  st,
 		Policy: friend.Policy{IdleTicks: *idleTicks, UnderfullTicks: *underfullTicks},
-		Roster: life.Roster{MayHold: splitNames(*mayHold), Builders: splitNames(*builders), Coordinator: *coordinator},
 		Actor:  *as,
 	}
 	res, err := l.Sweep(ctx)
@@ -172,13 +167,10 @@ func runFriendSweep(ctx context.Context, args []string, out, errOut io.Writer) i
 	for _, s := range res.Steps {
 		fmt.Fprintln(out, s.Line())
 	}
-	for _, m := range res.Moves {
-		fmt.Fprintln(out, m.Line())
-	}
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
-	fmt.Fprintf(out, "SWEEP idem=%s steps=%d moves=%d\n", res.Idem, len(res.Steps), len(res.Moves))
+	fmt.Fprintf(out, "SWEEP idem=%s steps=%d\n", res.Idem, len(res.Steps))
 	return 0
 }
 

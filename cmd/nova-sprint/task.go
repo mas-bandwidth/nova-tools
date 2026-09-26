@@ -24,7 +24,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "task",
-		Summary: "push, take, beat, done, cancel, list, width, move, close, front, depends, resolve, fill, counts, owners and rebalance tasks; cancel|block|unblock|move|front --ids @file|--stream <s>|--set <key> and sweep --friend <f> on the ws index; the task card verbs (--actor): push, take, beat, done, land, cancel, block, unblock, front, move, expire, ls, fsck, migrate",
+		Summary: "push, take, beat, done, cancel, list and width tasks; the task card verbs (--actor): push, take, beat, done, land, cancel, block, unblock, front, move, expire, ls, fsck",
 		Run:     runTask,
 	})
 }
@@ -33,9 +33,6 @@ func init() {
 func openTaskStore(ctx context.Context, addr string) (*store.Store, error) {
 	return store.Open(ctx, addr)
 }
-
-// queueSubs are the one task store's subverbs (#3206 PR A, task_queue.go).
-const queueSubs = "move, close, front, depends, resolve, fill, counts, owners, rebalance, block, unblock or sweep"
 
 // seatEnv names the seat's friend (#2929): the initiator of every task push and
 // take. bin/friend-harness exports it; a shell outside a harness has none and
@@ -69,15 +66,11 @@ func refuseSeat(errOut io.Writer, verb, initiator string, err error) int {
 
 func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "task", "want push, take, beat, done, cancel, list, width, "+queueSubs)
+		return refuse(errOut, "task", "want push, take, beat, done, cancel, list or width")
 	}
 	if isTaskCard(args[0], args[1:]) {
 		// #3778: the task card verbs (task_card.go).
 		return runTaskCard(ctx, args[0], args[1:], out, errOut)
-	}
-	if isTaskBatch(args[0], args[1:]) {
-		// #3661: the batch verbs on the ws index (task_batch.go).
-		return runTaskBatch(ctx, args[0], args[1:], out, errOut)
 	}
 	switch args[0] {
 	case "push":
@@ -94,11 +87,8 @@ func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runTaskList(ctx, args[1:], out, errOut)
 	case "width":
 		return runTaskWidth(ctx, args[1:], out, errOut)
-	case "move", "close", "front", "depends", "resolve", "fill", "counts", "owners", "rebalance":
-		// #3206 PR A: the one task store's subverbs (task_queue.go).
-		return runTaskQueueSub(ctx, args[0], args[1:], out, errOut)
 	default:
-		return refuse(errOut, "task", fmt.Sprintf("unknown subverb %s; want push, take, beat, done, cancel, list, width, %s", args[0], queueSubs))
+		return refuse(errOut, "task", fmt.Sprintf("unknown subverb %s; want push, take, beat, done, cancel, list or width", args[0]))
 	}
 }
 
@@ -126,18 +116,13 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 	payloadSHA := fs.String("payload-sha", "", "")
 	idem := fs.String("idem", "", "")
 	est := fs.String("est", "", "")
-	// #3206 PR A: DEPENDS-ON (--on is friend-queue's spelling), the read
-	// rule's author, and push --move (re-own an existing task).
+	// #3206 PR A: DEPENDS-ON (--on is friend-queue's spelling) and the read
+	// rule's author.
 	dependsOn := fs.String("depends-on", "", "")
 	fs.StringVar(dependsOn, "on", "", "")
 	author := fs.String("author", "", "")
-	move := fs.Bool("move", false, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "task push", err.Error())
-	}
-	if *move {
-		moveArgs := []string{"--id", *id, "--to", *to, "--sprint", *sprint, "--redis", *redisAddr, "--idem", *idem}
-		return runTaskQueueSub(ctx, "move", moveArgs, out, errOut)
 	}
 	if fs.NArg() > 0 {
 		return refuse(errOut, "task push", "takes flags, not positional arguments")

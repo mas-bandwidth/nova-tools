@@ -15,7 +15,6 @@ import (
 // listed here (#3254).
 var helpCases = [][]string{
 	{"adopt", "receipt"}, {"adopt", "matrix"}, {"adopt", "status"},
-	{"assign"}, {"redistribute"},
 	{"backpressure", "check"},
 	{"bench", "beat"}, {"bench", "release"}, {"bench", "reset"}, {"bench", "reindex"}, {"bench", "ls"},
 	{"brief", "render"}, {"brief", "lint"},
@@ -32,7 +31,6 @@ var helpCases = [][]string{
 	{"consume", "ok-to-friend", "once"}, {"consume", "harvest", "once"},
 	{"consume", "pr-to-read", "once"},
 	{"cost", "import"},
-	{"deal", "status"},
 	{"digest"},
 	{"dev-red", "status"}, {"dev-red", "check"}, {"dev-red", "watch"}, {"dev-red", "unwatch"},
 	{"drain"}, {"est"}, {"file"},
@@ -71,13 +69,11 @@ var helpCases = [][]string{
 	{"stream", "ls"}, {"stream", "order"}, {"stream", "rename"},
 	{"table"}, {"table", "clear"},
 	{"task", "push"}, {"task", "take"}, {"task", "beat"}, {"task", "done"}, {"task", "cancel"},
-	{"task", "list"}, {"task", "width"}, {"task", "move"}, {"task", "close"}, {"task", "front"},
-	{"task", "depends"}, {"task", "resolve"}, {"task", "fill"}, {"task", "counts"}, {"task", "owners"},
-	{"task", "rebalance"}, {"task", "block"}, {"task", "unblock"}, {"task", "sweep"},
+	{"task", "list"}, {"task", "width"},
 	{"verbs", "unused"},
-	{"why"}, {"width"}, {"width", "fill"},
+	{"why"}, {"width"},
 	{"worker", "pause"}, {"worker", "resume"}, {"worker", "show"},
-	{"ws", "migrate"}, {"ws", "counts"}, {"ws", "checkpoint"},
+	{"ws", "counts"}, {"ws", "checkpoint"},
 	{"xy"},
 }
 
@@ -88,9 +84,7 @@ var ownHelp = map[string]struct {
 	code  int
 	probe []string
 }{
-	"file":        {2, []string{"file", "--repo", "r"}},
-	"task cancel": {0, nil}, "task move": {0, nil}, "task front": {0, nil},
-	"task block": {0, nil}, "task unblock": {0, nil}, "task sweep": {0, nil},
+	"file": {2, []string{"file", "--repo", "r"}},
 }
 
 // helpFlagSet runs the verb with -h below the dispatcher and returns the

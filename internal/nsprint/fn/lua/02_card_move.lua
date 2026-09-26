@@ -755,39 +755,6 @@ redis.register_function({ function_name = 'ns_card_members', flags = { 'no-write
   callback = function(keys, args) return card_members(false, '') end })
 redis.register_function('ns_card_members_repair', function(keys, args) return card_members(true, args[1]) end)
 
--- ns_card_counts(S): every table cell as a ZCARD in one reply, read-only:
--- {cards, n}, then {stream, name, waiting, ready, working, done, parked} per
--- ws:order stream, {bench, name, waiting, ready, working, done, parked, ok,
--- fail} per registered bench and _pool, {friend, name, waiting, ready,
--- working, done, parked} per member of friends.
-redis.register_function({ function_name = 'ns_card_counts', flags = { 'no-writes' },
-  callback = function(keys, args)
-    local out = { { 'cards', tostring(redis.call('ZCARD', 'sprint:' .. tostring(args[1]) .. ':cards')) } }
-    for _, s in ipairs(redis.call('ZRANGE', 'ws:order', 0, -1)) do
-      local row = { 'stream', s }
-      for _, w in ipairs(CM_WHERE) do row[#row + 1] = tostring(redis.call('ZCARD', 'ws:' .. s .. ':' .. w)) end
-      out[#out + 1] = row
-    end
-    local benches = redis.call('SMEMBERS', 'benches')
-    table.sort(benches)
-    benches[#benches + 1] = '_pool'
-    for _, b in ipairs(benches) do
-      local row = { 'bench', b }
-      for _, w in ipairs(CM_WHERE) do row[#row + 1] = tostring(redis.call('ZCARD', 'bench:' .. b .. ':cards:' .. w)) end
-      row[#row + 1] = tostring(redis.call('ZCARD', 'bench:' .. b .. ':cards:ok'))
-      row[#row + 1] = tostring(redis.call('ZCARD', 'bench:' .. b .. ':cards:fail'))
-      out[#out + 1] = row
-    end
-    local friends = redis.call('SMEMBERS', 'friends')
-    table.sort(friends)
-    for _, f in ipairs(friends) do
-      local row = { 'friend', f }
-      for _, w in ipairs(CM_WHERE) do row[#row + 1] = tostring(redis.call('ZCARD', 'friend:' .. f .. ':cards:' .. w)) end
-      out[#out + 1] = row
-    end
-    return out
-  end })
-
 -- card_purge(S): the one place a card record is deleted, and only for a
 -- control sprint (control-<id>), whose whole run nova-sprint drain --control
 -- tears down (#3442). A real sprint's cards never disappear: any other S is
@@ -1930,18 +1897,6 @@ redis.register_function('ns_tcard_expire', function(keys, args)
   return out
 end)
 
--- ns_tcard_place(by, sprint, [id, where, ok, stream]...) -> per id: the
--- where placed, or 'skip <why>'. task migrate's one-time writer.
-redis.register_function('ns_tcard_place', function(keys, args)
-  local by, S = args[1], args[2]
-  local out = {}
-  for i = 3, #args - 3, 4 do
-    local w, why = TK.place(args[i], args[i + 1], args[i + 2], { by = by, sprint = S, stream = args[i + 3] })
-    if w then out[#out + 1] = w else out[#out + 1] = 'skip ' .. why end
-  end
-  return out
-end)
-
 -- ns_tcard_land_stream(stream, sha, by, why) -> LANDED n refused, then per
 -- landed member: id, repo#pr (its ref or pr), origin; then per refused
 -- member: id, why. The stream lander's merge (Glenn 08:50 AM ET: merging ->
@@ -1971,32 +1926,6 @@ redis.register_function('ns_tcard_land_stream', function(keys, args)
   local out = { 'LANDED', tostring(#landed / 3), tostring(#refused / 2) }
   for _, v in ipairs(landed) do out[#out + 1] = v end
   for _, v in ipairs(refused) do out[#out + 1] = v end
-  return out
-end)
-
--- ns_tcard_fold(by, [S, id]...) -> per pair: the where placed, 'skip
--- <why>' or 'held' (task:<id> already holds another task). task migrate's
--- one-time fold of the sprint store into the one store (ruling 2026-09-25
--- 09:35 ET): the record s:<S>:task:<id> becomes task:<id> (RENAME: the
--- record moves, it never disappears) with sprint=S, then TK.place links it.
--- After it nothing writes s:<S>:task:* (the fn and ci one-writer rules).
-redis.register_function('ns_tcard_fold', function(keys, args)
-  local by = args[1] or ''
-  local out = {}
-  for i = 2, #args - 1, 2 do
-    local S, id = args[i], args[i + 1]
-    local old = 's:' .. S .. ':task:' .. id
-    if redis.call('EXISTS', old) == 0 then
-      out[#out + 1] = 'skip gone'
-    elseif redis.call('EXISTS', 'task:' .. id) == 1 then
-      out[#out + 1] = 'held'
-    else
-      redis.call('RENAME', old, 'task:' .. id)
-      redis.call('HSET', 'task:' .. id, 'sprint', S)
-      local w, why = TK.place(id, nil, nil, { by = by, sprint = S, why = 'fold s:' .. S .. ':task' })
-      if w then out[#out + 1] = w else out[#out + 1] = 'skip ' .. why end
-    end
-  end
   return out
 end)
 

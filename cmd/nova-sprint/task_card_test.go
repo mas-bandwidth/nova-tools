@@ -1,9 +1,8 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -13,6 +12,14 @@ import (
 
 // TestTaskCardDispatch: the card form is chosen by its flags, and the one
 // task store's and the batch forms keep theirs.
+// runTaskCLI runs one task verb argv and returns its exit code, stdout and
+// stderr.
+func runTaskCLI(args ...string) (int, string, string) {
+	var out, errOut bytes.Buffer
+	code := runTask(context.Background(), args, &out, &errOut)
+	return code, out.String(), errOut.String()
+}
+
 func TestTaskCardDispatch(t *testing.T) {
 	t.Parallel()
 
@@ -34,7 +41,6 @@ func TestTaskCardDispatch(t *testing.T) {
 		{[]string{"land", "--id", "x"}, true},
 		{[]string{"fsck"}, true},
 		{[]string{"ls"}, true},
-		{[]string{"migrate"}, true},
 		{[]string{"list", "--actor", "a"}, false},
 	} {
 		if got := isTaskCard(tc.args[0], tc.args[1:]); got != tc.want {
@@ -99,22 +105,6 @@ func TestTaskCardCLI(t *testing.T) {
 	}
 	c.ZRem(ctx, "ws:"+s+":ready", "build-1")
 
-	// migrate over a truth file, then fsck clean.
-	c.HSet(ctx, "task:old-1", "kind", "read", "ref", "nova-tools#1", "title", "STREAM: "+s+" | read", "owner", "b", "state", "open", "created_at", "2026-09-25T07:00:00Z")
-	c.SAdd(ctx, "sprint:"+seatSprint+":idx:b:open", "old-1")
-	truth := filepath.Join(t.TempDir(), "truth.txt")
-	if err := os.WriteFile(truth, []byte(s+"|ready|old-1|read|nova-tools#1|merged\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	code, out, errOut = runTaskCLI("migrate", "--actor", "rowan", "--sprint", seatSprint, "--truth", truth)
-	if code != 0 || !strings.HasPrefix(out, "TASK migrate scanned=") || !strings.Contains(out, " landed=2 ") {
-		t.Fatalf("migrate = %d %q %q", code, out, errOut)
-	}
-	if code, out, _ = runTaskCLI("fsck", "--sprint", seatSprint); code != 0 {
-		t.Fatalf("fsck after migrate = %d %q", code, out)
-	}
-
-	// Usage.
 	if code, out, _ = runTaskCLI("land", "--help"); code != 0 || !strings.Contains(out, "nova-sprint task land") {
 		t.Fatalf("help = %d %q", code, out)
 	}

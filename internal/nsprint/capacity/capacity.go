@@ -340,12 +340,11 @@ func SetFriend(ctx context.Context, st *store.Store, name, machine string, slots
 // DesiredOpts are the optional seventh and eighth args of
 // ns_capacity_desired (#3206 rev 4 PR A). Paused "" keeps the stored value,
 // "0" or "1" sets it, on a friend or a bench (#4308: worker pause|resume is
-// the verb over it). Register is accepted and implied: since #2934 every
+// the verb over it); the eighth arg (register) is always 0: since #2934 every
 // desired write adds the friend to `friends` (no beat is written). The zero
 // value is the six-arg call.
 type DesiredOpts struct {
-	Paused   string
-	Register bool
+	Paused string
 	// Legs (#3349) is a bench's declared CI legs, the ninth arg, already
 	// normalized by NormalizeLegs; "" keeps the stored list.
 	Legs string
@@ -468,12 +467,8 @@ func setDesiredWith(ctx context.Context, st *store.Store, kind, name, machine st
 	}
 	fargs := []any{kind, name, strconv.Itoa(slots), machine, actor, idem}
 	filters := opts.Kinds != "" || opts.Tiers != ""
-	if opts.Paused != "" || opts.Register || opts.Legs != "" || opts.Role != "" || filters {
-		register := "0"
-		if opts.Register {
-			register = "1"
-		}
-		fargs = append(fargs, opts.Paused, register)
+	if opts.Paused != "" || opts.Legs != "" || opts.Role != "" || filters {
+		fargs = append(fargs, opts.Paused, "0")
 		if opts.Legs != "" || opts.Role != "" || filters {
 			fargs = append(fargs, opts.Legs)
 		}

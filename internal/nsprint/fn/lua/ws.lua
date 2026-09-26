@@ -372,33 +372,6 @@ function W.migrate_one(id, sprint, by, now)
   return 'placed'
 end
 
--- ns_ws_migrate(cursor[, sprint[, count[, by]]]) -> next cursor, scanned,
--- placed, same, nostream, skipped. One SCAN page of task:* per call (the only
--- scan, run once); sprint names the friend-queue idx sets to read. Idempotent:
--- a second pass over the same keys places nothing.
-local function ws_migrate(keys, args)
-  local cursor, sprint, count, by = args[1] or '0', args[2] or '', tonumber(args[3]) or 1000, args[4] or ''
-  local now = W.now()
-  local page = redis.call('SCAN', cursor, 'MATCH', 'task:*', 'COUNT', count)
-  local tally = { placed = 0, same = 0, nostream = 0, skipped = 0 }
-  local scanned = 0
-  for _, key in ipairs(page[2]) do
-    local id = string.sub(key, 6)
-    local kind = redis.call('TYPE', key)
-    if type(kind) == 'table' then
-      kind = kind['ok']
-    end
-    scanned = scanned + 1
-    if kind == 'hash' and id ~= '' then
-      local r = W.migrate_one(id, sprint, by, now)
-      tally[r] = tally[r] + 1
-    else
-      tally.skipped = tally.skipped + 1
-    end
-  end
-  return { page[1], scanned, tally.placed, tally.same, tally.nostream, tally.skipped }
-end
-
 redis.register_function('ns_ws_move', ws_move)
 redis.register_function('ns_ws_move_many', ws_move_many)
 redis.register_function('ns_ws_park_stream', ws_park_stream)
@@ -408,4 +381,3 @@ redis.register_function('ns_ws_rename', ws_rename)
 redis.register_function('ns_ws_order', ws_order)
 redis.register_function{ function_name = 'ns_ws_counts', flags = { 'no-writes' },
   callback = ws_counts }
-redis.register_function('ns_ws_migrate', ws_migrate)

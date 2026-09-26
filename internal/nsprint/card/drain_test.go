@@ -2,8 +2,6 @@ package card_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -14,13 +12,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// TestDrainReleasesAndImportsOnce is the #3035 control. One drain puts parked
-// work back: three waiting cards whose parent landed are released, two cards
-// parked on a paused bench are resumed, and four card files left in a retired
-// fillloop queue dir are imported create-only with one receipt each. A second
-// drain finds nothing to do, writes no receipt, and exits 0. A queue-dir card
-// that fails lint is REFUSED and stays where it is.
-func TestDrainReleasesAndImportsOnce(t *testing.T) {
+// TestDrainResumesAndReleasesOnce: waiting cards whose parent landed are
+// released into the pool, and cards parked on a paused bench go back in
+// when the bench is resumed. A second drain finds nothing to do, writes no
+// receipt, and exits 0.
+func TestDrainResumesAndReleasesOnce(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -65,26 +61,7 @@ func TestDrainReleasesAndImportsOnce(t *testing.T) {
 		t.Fatalf("fixture pool has %d cards before drain, want 0", n)
 	}
 
-	// Four card files in a retired queue dir. They depend on a card that has
-	// not landed, so they import into waiting and the pool holds exactly the
-	// five released and resumed cards.
-	later := validCard(repo)
-	later.label = "later-3035"
-	mustPush(t, ctx, client, later.render(), "pool")
-	if err := client.ZRem(ctx, keyPool(), later.label).Err(); err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	var imported []string
-	for _, l := range []string{"queued-a-3035", "queued-b-3035", "queued-c-3035", "queued-d-3035"} {
-		c := validCard(repo)
-		c.label = l
-		c.depends = "later-3035"
-		writeCard(t, dir, l+".card", c.render())
-		imported = append(imported, l)
-	}
-
-	opts := card.DrainOptions{Resume: []string{bench}, QueueDirs: []string{dir}}
+	opts := card.DrainOptions{Resume: []string{bench}}
 	logBefore := client.XLen(ctx, keyLog()).Val()
 	res := card.Drain(ctx, client, sprint, opts)
 	if res.Code != 0 || res.Stderr != "" {
@@ -92,19 +69,11 @@ func TestDrainReleasesAndImportsOnce(t *testing.T) {
 	}
 	for _, want := range []string{
 		"DRAIN OK sprint=" + sprint + " item=resume member=" + bench + " moved=2 was_paused=1\n",
-		"DRAIN OK sprint=" + sprint + " item=release moved=3 waiting=4\n",
-		"DRAIN DONE sprint=" + sprint + " released=3 resumed=2 imported=4 refused=0 receipts=4\n",
+		"DRAIN OK sprint=" + sprint + " item=release moved=3 waiting=0\n",
+		"DRAIN DONE sprint=" + sprint + " released=3 resumed=2 refused=0 receipts=0\n",
 	} {
 		if !strings.Contains(res.Stdout, want) {
 			t.Fatalf("first drain stdout %q lacks %q", res.Stdout, want)
-		}
-	}
-	// waiting=4 pins the order resume, import, release: release saw the four
-	// imported cards (their parent has not landed) and moved only the three.
-	for _, l := range imported {
-		line := "DRAIN OK sprint=" + sprint + " item=import file=" + l + ".card label=" + l + " place=waiting receipt=1\n"
-		if !strings.Contains(res.Stdout, line) {
-			t.Fatalf("first drain stdout %q lacks %q", res.Stdout, line)
 		}
 	}
 
@@ -115,79 +84,32 @@ func TestDrainReleasesAndImportsOnce(t *testing.T) {
 	if strings.Join(pool, ",") != strings.Join(wantPool, ",") {
 		t.Fatalf("pool = %v, want %v", pool, wantPool)
 	}
-	for _, l := range imported {
-		assertPlace(t, ctx, client, l, false, true)
-	}
-	// #4054: the import adds to the table sets only through the one move, so
-	// every member of every set it wrote is the id of a record.
-	if mem, err := card.Members(ctx, client, false, ""); err != nil || mem.Bad != 0 || mem.Members == 0 {
-		t.Fatalf("members walk after the import = %+v, %v; want every member a record", mem, err)
-	}
 	if n := client.SCard(ctx, keyParked(bench)).Val(); n != 0 {
 		t.Fatalf("bench parked set still holds %d cards", n)
 	}
 	if client.SIsMember(ctx, keyPaused(), bench).Val() {
 		t.Fatalf("%s is still paused after drain resumed it", bench)
 	}
-	receipts := drainReceipts(t, ctx, client)
-	if len(receipts) != 4 {
-		t.Fatalf("receipts = %v, want one per imported card", receipts)
-	}
-	for _, l := range imported {
-		if receipts[l] != 1 {
-			t.Fatalf("card %s has %d receipts, want 1 (all: %v)", l, receipts[l], receipts)
-		}
-	}
-	if left := dirEntries(t, dir); len(left) != 0 {
-		t.Fatalf("queue dir not empty after drain: %v", left)
-	}
 	if client.XLen(ctx, keyLog()).Val() <= logBefore {
 		t.Fatalf("first drain wrote nothing to the sprint log")
 	}
 
-	// Second drain: nothing parked, nothing waiting on a landed parent, an
-	// empty queue dir. It writes no receipt and no log entry, and exits 0.
+	// Second drain: nothing parked, nothing waiting on a landed parent. It
+	// writes no log entry and exits 0.
 	logAfter := client.XLen(ctx, keyLog()).Val()
 	res = card.Drain(ctx, client, sprint, opts)
 	if res.Code != 0 || res.Stderr != "" {
 		t.Fatalf("second drain: exit %d stdout %q stderr %q", res.Code, res.Stdout, res.Stderr)
 	}
-	if want := "DRAIN DONE sprint=" + sprint + " released=0 resumed=0 imported=0 refused=0 receipts=0\n"; !strings.Contains(res.Stdout, want) {
+	if want := "DRAIN DONE sprint=" + sprint + " released=0 resumed=0 refused=0 receipts=0\n"; !strings.Contains(res.Stdout, want) {
 		t.Fatalf("second drain stdout %q lacks %q", res.Stdout, want)
 	}
 	if n := client.XLen(ctx, keyLog()).Val(); n != logAfter {
 		t.Fatalf("second drain wrote %d log entries, want 0", n-logAfter)
 	}
-	if n := len(drainReceipts(t, ctx, client)); n != 4 {
-		t.Fatalf("second drain changed the receipt count to %d", n)
-	}
-
-	// A queue-dir card that fails lint is REFUSED, left in place, and writes
-	// no receipt. The rest of the drain still runs and the exit is 2.
-	bad := validCard(repo)
-	bad.label = "bad-3035"
-	bad.omit = map[string]bool{"DONE-WHEN": true}
-	writeCard(t, dir, "bad-3035.card", bad.render())
-	res = card.Drain(ctx, client, sprint, opts)
-	if res.Code != 2 {
-		t.Fatalf("lint-failing card: exit %d stdout %q stderr %q, want exit 2", res.Code, res.Stdout, res.Stderr)
-	}
-	if !strings.Contains(res.Stdout, "DRAIN REFUSED sprint="+sprint+" item=import file=bad-3035.card reason=missing\\x20DONE-WHEN\n") {
-		t.Fatalf("lint-failing card: stdout %q lacks the REFUSED line", res.Stdout)
-	}
-	if left := dirEntries(t, dir); len(left) != 1 || left[0] != "bad-3035.card" {
-		t.Fatalf("refused card not left in place: %v", left)
-	}
-	assertAbsent(t, ctx, client, "bad-3035")
-	if n := len(drainReceipts(t, ctx, client)); n != 4 {
-		t.Fatalf("refused card wrote a receipt: %d receipts", n)
-	}
-	if n := client.XLen(ctx, keyLog()).Val(); n != logAfter {
-		t.Fatalf("refused drain wrote %d log entries, want 0", n-logAfter)
-	}
-	// #3419: resume and the import receipt are library Functions (FCALL);
-	// the server counts no EVAL, EVALSHA or SCRIPT from any client, over the
-	// pushes, the land and all three drains.
+	// #3419: resume is a library Function (FCALL); the server counts no
+	// EVAL, EVALSHA or SCRIPT from any client, over the pushes, the land
+	// and both drains.
 	if hits := adHocScriptCalls(t, ctx, client); len(hits) != 0 {
 		t.Fatalf("drain sent ad-hoc scripting commands: %v", hits)
 	}
@@ -215,7 +137,7 @@ func adHocScriptCalls(t *testing.T, ctx context.Context, client *redis.Client) [
 }
 
 // TestDrainRefusesBadInput is the negative control for the arguments: a bad
-// sprint, a member that is neither bench: nor friend:, and a missing queue dir.
+// sprint and a member that is neither bench: nor friend:.
 func TestDrainRefusesBadInput(t *testing.T) {
 	t.Parallel()
 
@@ -227,53 +149,11 @@ func TestDrainRefusesBadInput(t *testing.T) {
 	if res := card.Drain(ctx, client, sprint, card.DrainOptions{Resume: []string{"studio"}}); res.Code != 2 || !strings.Contains(res.Stderr, "bench:<b> or friend:<f>") {
 		t.Fatalf("bare member: exit %d stderr %q", res.Code, res.Stderr)
 	}
-	missing := filepath.Join(t.TempDir(), "gone")
-	res := card.Drain(ctx, client, sprint, card.DrainOptions{QueueDirs: []string{missing}})
-	if res.Code != 2 || !strings.Contains(res.Stdout, "DRAIN REFUSED sprint="+sprint+" item=queue-dir") {
-		t.Fatalf("missing queue dir: exit %d stdout %q stderr %q", res.Code, res.Stdout, res.Stderr)
-	}
 }
 
 func keyParked(member string) string { return "s:" + sprint + ":parked:" + member }
 func keyPaused() string              { return "s:" + sprint + ":paused" }
 func keyLog() string                 { return "s:" + sprint + ":log" }
-
-func writeCard(t *testing.T, dir, name string, body []byte) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func dirEntries(t *testing.T, dir string) []string {
-	t.Helper()
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, e := range ents {
-		names = append(names, e.Name())
-	}
-	return names
-}
-
-// drainReceipts counts the drain-import entries in the sprint log per card.
-func drainReceipts(t *testing.T, ctx context.Context, client *redis.Client) map[string]int {
-	t.Helper()
-	msgs, err := client.XRange(ctx, keyLog(), "-", "+").Result()
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := map[string]int{}
-	for _, m := range msgs {
-		if m.Values["actor"] == "drain-import" {
-			id, _ := m.Values["id"].(string)
-			out[id]++
-		}
-	}
-	return out
-}
 
 // TestDrainControlRestoresKeyspace is the #3442 control. A control run
 // (control-<id>) against a throwaway store that already holds a real fleet

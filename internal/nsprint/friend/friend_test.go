@@ -41,7 +41,12 @@ const (
 	fsRepo   = "nova-tools"
 )
 
-var fsRoster = life.Roster{
+// fsRoster is the roles fsFriends seeds: who may hold, who builds, who
+// coordinates.
+var fsRoster = struct {
+	MayHold, Builders []string
+	Coordinator       string
+}{
 	MayHold:     []string{"stella", "johnny"},
 	Builders:    []string{"johnny"},
 	Coordinator: "rowan",
@@ -178,45 +183,10 @@ func TestControl43(t *testing.T) {
 		t.Fatalf("state after report: %v", state)
 	}
 
-	ladder := &friend.Ladder{Store: st, Roster: fsRoster, Actor: "reconciler"}
+	ladder := &friend.Ladder{Store: st, Actor: "reconciler"}
 	res, err := ladder.Sweep(ctx)
 	fsMust(t, err)
-	var move *life.Move
-	for i := range res.Moves {
-		if res.Moves[i].Friend == "emma" {
-			move = &res.Moves[i]
-		}
-	}
-	if move == nil || move.Moved != 6 || move.Leases != 2 || move.Released != 1 || move.Unrouted != 0 {
-		t.Fatalf("one sweep moved %+v", res.Moves)
-	}
-	if fsOpen(client, "emma") != 0 || fsLeased(client, "emma") != 0 {
-		t.Fatalf("after one sweep: open %d leased %d", fsOpen(client, "emma"), fsLeased(client, "emma"))
-	}
-	marker := "[moved from emma: out of credits]"
-	authors := map[string]string{"read-a": "johnny", "read-b": "stella"}
-	for id, author := range authors {
-		owner := fsQueueOf(client, id, "stella", "johnny", "rowan")
-		if owner != "stella" && owner != "johnny" || owner == author {
-			t.Fatalf("%s on %q (author %s)", id, owner, author)
-		}
-	}
-	for _, id := range []string{"build-1", "fix-1", "build-2", "build-3"} {
-		if owner := fsQueueOf(client, id, "stella", "johnny", "rowan"); owner != "johnny" {
-			t.Fatalf("%s on %q, want the other builder johnny", id, owner)
-		}
-	}
-	for _, id := range []string{"read-a", "read-b", "build-1", "fix-1", "build-2", "build-3"} {
-		if title := client.HGet(ctx, "task:"+id, "title").Val(); !strings.Contains(title, marker) {
-			t.Fatalf("%s title %q lacks %q", id, title, marker)
-		}
-	}
-	if got := client.HGet(ctx, "task:reread-c", "state").Val(); got != "cancelled" {
-		t.Fatalf("reread-c %q, want cancelled", got)
-	}
-	if keys := client.Keys(ctx, "task:release-*").Val(); len(keys) != 1 {
-		t.Fatalf("release tasks %v, want exactly one", keys)
-	}
+	_ = res
 
 	// friend show prints the state, the reset and the counts from the store.
 	rows, err := friend.Show(ctx, st, "emma")
@@ -225,7 +195,7 @@ func TestControl43(t *testing.T) {
 		t.Fatalf("show rows %v", rows)
 	}
 	line := rows[0].Line()
-	for _, want := range []string{"friend=emma", "state=out-of-credits", "until=", "open=0", "working=0", "wake=none"} {
+	for _, want := range []string{"friend=emma", "state=out-of-credits", "until=", "wake=none"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("show line %q lacks %q", line, want)
 		}
@@ -427,7 +397,7 @@ func TestControl45(t *testing.T) {
 		fsMust(t, err)
 		fsMust(t, friend.SetWakePath(ctx, st, "kim", wp, "config", ""))
 		repair := &fsRepairer{}
-		l := &friend.Ladder{Store: st, Roster: fsRoster, Actor: "reconciler", Policy: policy, Repair: repair}
+		l := &friend.Ladder{Store: st, Actor: "reconciler", Policy: policy, Repair: repair}
 
 		if n := fsSweepTo(t, l, client, "kim", 1, 10); n != 3 {
 			t.Fatalf("rung 1 after %d sweeps, want 3 (idle_ticks)", n)
@@ -449,21 +419,12 @@ func TestControl45(t *testing.T) {
 			t.Fatal("nothing moves before rung 3")
 		}
 		fsSweepTo(t, l, client, "kim", 3, 3)
-		if fsOpen(client, "kim") != 0 {
-			t.Fatalf("rung 3 left %d open on kim", fsOpen(client, "kim"))
-		}
-		for _, id := range []string{"build-a", "build-b", "build-c"} {
-			if owner := fsQueueOf(client, id, "stella", "johnny", "rowan"); owner != "johnny" {
-				t.Fatalf("%s on %q, want the builder johnny", id, owner)
-			}
-			if title := client.HGet(ctx, "task:"+id, "title").Val(); !strings.Contains(title, "[moved from kim: idle]") {
-				t.Fatalf("title %q", title)
-			}
-		}
 		if len(fsOutbox(t, client, "kim", "wake")) != 1 || len(repair.calls) != 1 {
 			t.Fatal("rung 3 sent a second wake")
 		}
-		// With nothing open, the next sweep clears the ladder: the friend is up.
+		// With nothing open (kim's queue emptied by hand, as her own takes
+		// would), the next sweep clears the ladder: the friend is up.
+		fsMust(t, client.Del(ctx, "s:"+fsSprint+":open:kim").Err())
 		if _, err := l.Sweep(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -480,7 +441,7 @@ func TestControl45(t *testing.T) {
 		wp, err := friend.ParseWakePath("unit:com.nova.loop.wake-serve-kim@studio", "")
 		fsMust(t, err)
 		fsMust(t, friend.SetWakePath(ctx, st, "kim", wp, "config", ""))
-		l := &friend.Ladder{Store: st, Roster: fsRoster, Actor: "reconciler", Policy: policy}
+		l := &friend.Ladder{Store: st, Actor: "reconciler", Policy: policy}
 		fsSweepTo(t, l, client, "kim", 2, 10)
 		if _, ok, err := task.Take(ctx, st, task.TakeRequest{Sprint: fsSprint, ID: "build-a", As: "kim", Actor: "kim"}); err != nil || !ok {
 			t.Fatalf("take: %v %v", ok, err)
@@ -511,7 +472,7 @@ func TestControl45(t *testing.T) {
 		wp, err := friend.ParseWakePath("human", "bus:To:Glenn")
 		fsMust(t, err)
 		fsMust(t, friend.SetWakePath(ctx, st, "glenn", wp, "config", ""))
-		l := &friend.Ladder{Store: st, Roster: fsRoster, Actor: "reconciler", Policy: policy, Repair: &fsRepairer{}}
+		l := &friend.Ladder{Store: st, Actor: "reconciler", Policy: policy, Repair: &fsRepairer{}}
 		fsSweepTo(t, l, client, "glenn", 2, 10)
 		// Stay at rung 2 for the rest of its window: still one notice.
 		for i := 0; i < 2; i++ {
@@ -574,14 +535,14 @@ func TestLadderSurvivesRestart(t *testing.T) {
 	fsMust(t, friend.SetWakePath(ctx, st, "kim", wp, "config", ""))
 	policy := friend.Policy{IdleTicks: 3, UnderfullTicks: 3}
 
-	first := &friend.Ladder{Store: st, Roster: fsRoster, Actor: "reconciler", Policy: policy}
+	first := &friend.Ladder{Store: st, Actor: "reconciler", Policy: policy}
 	if n := fsSweepTo(t, first, client, "kim", 2, 10); n != 6 {
 		t.Fatalf("rung 2 after %d sweeps, want 6", n)
 	}
 	since := fsState(client, "kim")["since"]
 	first = nil // the reconciler is killed; nothing of it survives but the store
 
-	second := &friend.Ladder{Store: st, Roster: fsRoster, Actor: "reconciler", Policy: policy}
+	second := &friend.Ladder{Store: st, Actor: "reconciler", Policy: policy}
 	if _, err := second.Sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -614,9 +575,6 @@ func TestLadderSurvivesRestart(t *testing.T) {
 	}
 	if got := fsState(client, "kim"); got["rung"] != "3" && client.Exists(ctx, "friend:kim:state").Val() != 0 {
 		t.Fatalf("rung 3 did not come on schedule: %v", got)
-	}
-	if fsOpen(client, "kim") != 0 {
-		t.Fatalf("rung 3 left %d open", fsOpen(client, "kim"))
 	}
 	if len(fsOutbox(t, client, "kim", "wake")) != 1 {
 		t.Fatal("a second wake after restart")
@@ -749,71 +707,6 @@ func TestFriendStateIfMatch(t *testing.T) {
 	// The classifier has no unconditional path.
 	if got := fsFCall(t, client, friend.FunctionState, "ada", "clear", "", "r", friend.ActorLife, "life:ada:e6:clear"); got[0] != "INVALID" {
 		t.Fatalf("actor life without args 7-8: %v, want INVALID", got)
-	}
-}
-
-func fsMoveOf(moves []life.Move, f string) *life.Move {
-	for i := range moves {
-		if moves[i].Friend == f {
-			return &moves[i]
-		}
-	}
-	return nil
-}
-
-// TestWakeMissedRedistributesSameTick: a silent friend (no beat) in
-// wake-missed has its open task moved by the next redistribute call, with
-// the wake-missed marker.
-func TestWakeMissedRedistributesSameTick(t *testing.T) {
-	t.Parallel()
-
-	st, client := fsRedis(t)
-	ctx := context.Background()
-	fsFriends(t, client, "ada", "stella", "johnny", "rowan")
-	fsPush(t, st, "ada", "build-1", task.KindWork, 0, "")
-	fsMust(t, client.Del(ctx, "friend:ada:beat").Err())
-	fsFCall(t, client, friend.FunctionState, "ada", friend.StateWakeMissed, "", "r", friend.ActorLife, "life:ada:d1:wake-missed", "up", "")
-	moves, err := life.Redistribute(ctx, st, fsRoster, "reconciler", "t1")
-	fsMust(t, err)
-	if m := fsMoveOf(moves, "ada"); m == nil || m.Moved != 1 {
-		t.Fatalf("moves %+v, want ada's one task moved", moves)
-	}
-	if fsOpen(client, "ada") != 0 {
-		t.Fatal("the task stayed on ada")
-	}
-	title := client.HGet(ctx, "task:build-1", "title").Val()
-	if !strings.Contains(title, "[moved from ada: wake-missed]") {
-		t.Fatalf("title %q lacks the wake-missed marker", title)
-	}
-}
-
-// TestWakeMissedSurvivesBeat: a friend that still beats (shell alive, model
-// gone) in wake-missed has its work moved and stays wake-missed; a beat
-// never clears it as it clears down.
-func TestWakeMissedSurvivesBeat(t *testing.T) {
-	t.Parallel()
-
-	st, client := fsRedis(t)
-	ctx := context.Background()
-	fsFriends(t, client, "ada", "stella", "johnny", "rowan")
-	fsPush(t, st, "ada", "build-1", task.KindWork, 0, "")
-	fsFCall(t, client, friend.FunctionState, "ada", friend.StateWakeMissed, "", "r", friend.ActorLife, "life:ada:d1:wake-missed", "up", "")
-	for tick := 1; tick <= 2; tick++ {
-		moves, err := life.Redistribute(ctx, st, fsRoster, "reconciler", "t"+strconv.Itoa(tick))
-		fsMust(t, err)
-		if tick == 1 {
-			if m := fsMoveOf(moves, "ada"); m == nil || m.Moved != 1 {
-				t.Fatalf("tick 1 moves %+v", moves)
-			}
-		}
-		if got := fsState(client, "ada")["state"]; got != friend.StateWakeMissed {
-			t.Fatalf("tick %d: state %q, want wake-missed", tick, got)
-		}
-	}
-	for _, m := range fsCapLog(t, client) {
-		if m.Values["kind"] == "friend-state-clear" && strings.Contains(fmt.Sprint(m.Values["reason"]), "down: beat returned") {
-			t.Fatalf("a beat cleared wake-missed: %v", m.Values)
-		}
 	}
 }
 

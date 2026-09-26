@@ -264,22 +264,6 @@ redis.register_function('ns_card_resume', function(keys, args)
   return { was, moved, dropped }
 end)
 
--- ns_card_import_receipt writes drain's one import receipt for a card (#3035),
--- a Function since #3419. The fence is the label in s:<S>:drain:imported: a
--- re-run after a crash between the receipt and the file removal finds it and
--- writes nothing.
--- keys: imported, log; args: label, payload_sha, file, place
--- Returns 1 when it wrote the receipt, 0 when the fence already held it.
-redis.register_function('ns_card_import_receipt', function(keys, args)
-  if redis.call('HSETNX', keys[1], args[1], args[2]) == 0 then
-    return 0
-  end
-  redis.call('XADD', keys[2], '*',
-    'kind', 'card', 'id', args[1], 'actor', 'drain-import', 'reason', 'import',
-    'file', args[3], 'place', args[4], 'payload_sha', args[2], 'at', now_s())
-  return 1
-end)
-
 -- ns_card_header: the card's DONE-WHEN: line, written once at push
 -- (card.Push pipelines it after ns_card_push) so harvest's PR body carries
 -- it without the card file; the STREAM: line is the record's own stream

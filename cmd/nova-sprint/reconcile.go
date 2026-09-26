@@ -36,7 +36,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/width"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -49,8 +48,7 @@ func init() {
 }
 
 // reconcileDuty is one duty the production loop runs every pass after the
-// lease renew. *reconcile.Refill has this Run; so does the width tick's
-// width.Duty (#3071, #3086), which registers itself here.
+// lease renew. *reconcile.Refill has this Run.
 type reconcileDuty interface {
 	Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error)
 }
@@ -133,17 +131,13 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	redisAddr := fs.String("redis", "", "")
 	host := fs.String("host", "", "")
 	once := fs.Bool("once", false, "")
-	widthTicks := fs.Int("width-rebalance-ticks", 0, "")
-	widthReaders := fs.String("width-readers", "", "")
-	widthBuilders := fs.String("width-builders", "", "")
-	widthCoordinator := fs.String("width-coordinator", "", "")
 	metricsAddr := fs.String("metrics-addr", "", "")
 	readers := fs.String("readers", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "reconcile", err.Error())
 	}
 	if fs.NArg() > 0 {
-		return refuse(errOut, "reconcile", "takes flags, not positional arguments: --redis <addr> [--host <name>] [--once] [--readers a,b] [--width-rebalance-ticks n --width-readers a,b --width-builders c,d --width-coordinator e] [--metrics-addr <host:port>]")
+		return refuse(errOut, "reconcile", "takes flags, not positional arguments: --redis <addr> [--host <name>] [--once] [--readers a,b] [--metrics-addr <host:port>]")
 	}
 	reconcileReaders = splitNames(*readers)
 	reconcileOut = out
@@ -191,21 +185,6 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	fmt.Fprintf(out, "RECONCILER instance=%s host=%s token_sha=%s ttl=%s heartbeat=%s\n",
 		lease.Instance(), lease.Host(), lease.TokenSHA(), lease.TTL(), lease.Heartbeat())
 
-	// The width duty (#3071, #3086): one width tick per pass under the lease,
-	// and a completion's replacement dealt in the same pass. It needs the
-	// measured rebalance ticks (p95 take latency); without them it is off and
-	// the banner says so.
-	if *widthTicks > 0 {
-		duty := &width.Duty{Store: st, Policy: width.Policy{
-			RebalanceTicks: *widthTicks,
-			Readers:        splitNames(*widthReaders),
-			Builders:       splitNames(*widthBuilders),
-			Coordinator:    *widthCoordinator,
-		}, PRs: &deal.GH{}}
-		duties = append(duties, duty.Run)
-		names = append(names, "width")
-	}
-
 	fmt.Fprintf(out, "DUTIES %s\n", strings.Join(names, ","))
 
 	named := &namedDuties{errOut: errOut}
@@ -222,11 +201,6 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 		// says what each duty did; in the loop only a duty that moved
 		// something or failed, so an idle second prints nothing.
 		AfterPass: func(reconcile.PassResult) { named.report(out, *once) },
-	}
-	if *widthTicks > 0 {
-		fmt.Fprintf(out, "WIDTH on rebalance_ticks=%d\n", *widthTicks)
-	} else {
-		fmt.Fprintln(out, "WIDTH off: no --width-rebalance-ticks")
 	}
 	if *once {
 		loop.Passes = 1
