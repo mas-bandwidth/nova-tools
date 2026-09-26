@@ -356,6 +356,51 @@ type DesiredOpts struct {
 	// or benchrole.Fleet; "" keeps the stored role. Legs on a bench whose role
 	// is or becomes friends is refused with a *benchrole.Error.
 	Role string
+	// Kinds and Tiers (#4270) are the consumer's copy filters, the eleventh
+	// and twelfth args: comma lists the card moves' TM.may reads (kinds of
+	// work, read, fix; tiers by name). "" keeps the stored value, Clear
+	// ("-") clears it.
+	Kinds, Tiers string
+}
+
+// Clear is the DesiredOpts value that clears a stored filter (kinds, tiers).
+const Clear = "-"
+
+// NormalizeKinds turns a --kinds value ("work,read" or "work read") into the
+// comma list ns_capacity_desired stores: each name one of work, read, fix,
+// duplicates dropped; "" is Clear.
+func NormalizeKinds(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return Clear, nil
+	}
+	var kinds []string
+	seen := map[string]bool{}
+	for _, k := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }) {
+		switch k {
+		case "work", "read", "fix":
+		default:
+			return "", fmt.Errorf("kind %q: want work, read or fix", k)
+		}
+		if !seen[k] {
+			seen[k] = true
+			kinds = append(kinds, k)
+		}
+	}
+	return strings.Join(kinds, ","), nil
+}
+
+// NormalizeTiers turns a --tiers value into the comma list
+// ns_capacity_desired stores (names of letters, digits, _ or -, duplicates
+// dropped); "" is Clear.
+func NormalizeTiers(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return Clear, nil
+	}
+	tiers, err := NormalizeLegs(raw)
+	if err != nil {
+		return "", errors.New(strings.Replace(err.Error(), "leg ", "tier ", 1))
+	}
+	return tiers, nil
 }
 
 // NormalizeLegs turns a --legs value ("go,schema" or "go schema") into the
@@ -416,17 +461,21 @@ func setDesiredWith(ctx context.Context, st *store.Store, kind, name, machine st
 		return Result{}, &CeilingError{Machine: machine, Sum: plan.Sum, Ceiling: plan.Ceiling}
 	}
 	fargs := []any{kind, name, strconv.Itoa(slots), machine, actor, idem}
-	if opts.Paused != "" || opts.Register || opts.Legs != "" || opts.Role != "" {
+	filters := opts.Kinds != "" || opts.Tiers != ""
+	if opts.Paused != "" || opts.Register || opts.Legs != "" || opts.Role != "" || filters {
 		register := "0"
 		if opts.Register {
 			register = "1"
 		}
 		fargs = append(fargs, opts.Paused, register)
-		if opts.Legs != "" || opts.Role != "" {
+		if opts.Legs != "" || opts.Role != "" || filters {
 			fargs = append(fargs, opts.Legs)
 		}
-		if opts.Role != "" {
+		if opts.Role != "" || filters {
 			fargs = append(fargs, opts.Role)
+		}
+		if filters {
+			fargs = append(fargs, opts.Kinds, opts.Tiers)
 		}
 	}
 	reply, err := st.Client().FCall(ctx, FunctionDesired, nil, fargs...).Result()

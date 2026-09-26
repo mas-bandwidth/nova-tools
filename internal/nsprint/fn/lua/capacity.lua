@@ -79,7 +79,7 @@ end
 -- cap:log receipt. capacity_desired and ns_sprint_plan both call it. It does no
 -- ceiling check and registers no name: each caller has already checked
 -- everything, so a write phase built from it cannot refuse part way.
-local function write_desired(kind, name, slots, machine, actor, idem, at, legacy, set_paused, set_legs)
+local function write_desired(kind, name, slots, machine, actor, idem, at, legacy, set_paused, set_legs, set_kinds, set_tiers)
   local key = desired_key(kind, name)
   local paused = redis.call('HGET', key, 'paused')
   if not paused then
@@ -97,7 +97,27 @@ local function write_desired(kind, name, slots, machine, actor, idem, at, legacy
   if set_legs and set_legs ~= '' then
     redis.call('HSET', key, 'legs', set_legs)
   end
+  -- #4270: the kinds and tiers filters (what TM.may reads); '' or nil
+  -- keeps the stored value, '-' clears it.
+  for f, v in pairs({ kinds = set_kinds, tiers = set_tiers }) do
+    if v == '-' then
+      redis.call('HDEL', key, f)
+    elseif v and v ~= '' then
+      redis.call('HSET', key, f, v)
+    end
+  end
   receipt('capacity ' .. kind, kind .. ':' .. name, machine, slots, actor, idem, at, legacy)
+end
+
+-- filter_ok: a kinds or tiers value is '' (keep), '-' (clear) or a comma
+-- list of names; a kinds name is work, read or fix.
+local function filter_ok(v, kinds)
+  if v == '' or v == '-' then return true end
+  if not string.match(v, '^[%w_,-]+$') then return false end
+  for n in string.gmatch(v, '[^,]+') do
+    if kinds and n ~= 'work' and n ~= 'read' and n ~= 'fix' then return false end
+  end
+  return true
 end
 
 -- capacity_desired: set friend:<f>:desired or bench:<b>:desired under the
@@ -110,7 +130,10 @@ end
 -- tenth) role: a bench's registry role, friends or fleet, '' keeps the stored
 -- one (absent reads as fleet). A friends bench declares no CI legs: legs on a
 -- bench whose role is or becomes friends returns ROLE friends and writes
--- nothing. The same slots, machine, paused, legs and role as stored return
+-- nothing. (#4270, optional eleventh and twelfth) kinds and tiers: the
+-- consumer's copy filters, comma lists TM.may reads (kinds of work, read,
+-- fix; tiers by name); '' keeps the stored value, '-' clears it. The same
+-- slots, machine, paused, legs, role, kinds and tiers as stored return
 -- SAME and write nothing.
 local function capacity_desired(keys, args)
   local kind, name = args[1], args[2]
@@ -119,6 +142,8 @@ local function capacity_desired(keys, args)
   local set_paused = args[7] or ''
   local set_legs = args[9] or ''
   local set_role = args[10] or ''
+  local set_kinds = args[11] or ''
+  local set_tiers = args[12] or ''
 
   if kind ~= 'friend' and kind ~= 'bench' then
     return { 'INVALID', machine, '0', '0' }
@@ -133,6 +158,9 @@ local function capacity_desired(keys, args)
     return { 'INVALID', machine, '0', '0' }
   end
   if set_paused ~= '' and set_paused ~= '0' and set_paused ~= '1' then
+    return { 'INVALID', machine, '0', '0' }
+  end
+  if not filter_ok(set_kinds, true) or not filter_ok(set_tiers, false) then
     return { 'INVALID', machine, '0', '0' }
   end
   if set_role ~= '' and (kind ~= 'bench' or (set_role ~= 'friends' and set_role ~= 'fleet')) then
@@ -160,15 +188,21 @@ local function capacity_desired(keys, args)
   end
 
   local key = desired_key(kind, name)
-  local stored = redis.call('HMGET', key, 'slots', 'machine', 'paused', 'legs', 'role')
+  local stored = redis.call('HMGET', key, 'slots', 'machine', 'paused', 'legs', 'role', 'kinds', 'tiers')
   local want_paused = set_paused
   if want_paused == '' then
     want_paused = stored[3] or '0'
   end
   local same_legs = set_legs == '' or stored[4] == set_legs
   local same_role = set_role == '' or stored[5] == set_role
+  local function same_filter(set, have)
+    if set == '' then return true end
+    if set == '-' then return not have end
+    return have == set
+  end
   if stored[1] == tostring(slots) and stored[2] == machine and (stored[3] or '0') == want_paused and
-      same_legs and same_role and redis.call('SISMEMBER', registry_set(kind), name) == 1 then
+      same_legs and same_role and same_filter(set_kinds, stored[6]) and same_filter(set_tiers, stored[7]) and
+      redis.call('SISMEMBER', registry_set(kind), name) == 1 then
     return { 'SAME', machine, tostring(sum), tostring(ceiling) }
   end
 
@@ -178,7 +212,7 @@ local function capacity_desired(keys, args)
     legacy = redis.call('GET', 'friend:' .. name .. ':slots') or ''
   end
   redis.call('SADD', registry_set(kind), name)
-  write_desired(kind, name, slots, machine, actor, idem, at, legacy, set_paused, set_legs)
+  write_desired(kind, name, slots, machine, actor, idem, at, legacy, set_paused, set_legs, set_kinds, set_tiers)
   if set_role ~= '' then
     redis.call('HSET', key, 'role', set_role)
   end
