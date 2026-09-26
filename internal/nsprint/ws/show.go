@@ -95,8 +95,12 @@ func DepID(entry string) string {
 }
 
 // showLanded is whether a record's fields say landed (the waiting resolver's
-// rule): where landed, or done with where_ok not fail.
-func showLanded(where, whereOK string) bool {
+// rule): where landed, or done with where_ok not fail; a stream's sentinel
+// only when landed (its done is a rename's, never a landing).
+func showLanded(where, whereOK, id string) bool {
+	if IsSentinel(id) {
+		return where == Landed
+	}
 	return where == Landed || (where == Done && whereOK != "fail")
 }
 
@@ -194,25 +198,22 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 		okOf[id] = showStr(v, 1)
 	}
 
-	// The edges; a dependency in no stream is read in round 4.
+	// The edges, in two passes: the entries first, then (round 4) the
+	// records of the dependencies that are in no stream, and every edge is
+	// annotated from the one map (never a pointer into a slice still growing).
 	var strays []string
-	strayDeps := map[string][]*ShowDep{}
+	strayRead := map[string]bool{}
 	for i := range out {
 		for j := range out[i].Cards {
 			card := &out[i].Cards[j]
 			for _, raw := range SplitDeps(blockedOn[card.ID]) {
 				dep := ShowDep{Raw: raw, ID: DepID(raw)}
 				dep.Ref = dep.ID == ""
-				if w, ok := whereOf[dep.ID]; ok {
-					dep.Known, dep.Where, dep.Landed = true, w, showLanded(w, okOf[dep.ID])
+				if _, known := whereOf[dep.ID]; !dep.Ref && !known && !strayRead[dep.ID] {
+					strayRead[dep.ID] = true
+					strays = append(strays, dep.ID)
 				}
 				card.Deps = append(card.Deps, dep)
-				if !dep.Ref && !dep.Known {
-					if _, listed := strayDeps[dep.ID]; !listed {
-						strays = append(strays, dep.ID)
-					}
-					strayDeps[dep.ID] = append(strayDeps[dep.ID], &card.Deps[len(card.Deps)-1])
-				}
 			}
 		}
 	}
@@ -227,12 +228,18 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 		}
 		for i, id := range strays {
 			v := strayCmds[i].Val()
-			w := showStr(v, 0)
-			if w == "" {
-				continue
+			if w := showStr(v, 0); w != "" {
+				whereOf[id], okOf[id] = w, showStr(v, 1)
 			}
-			for _, dep := range strayDeps[id] {
-				dep.Known, dep.Where, dep.Landed = true, w, showLanded(w, showStr(v, 1))
+		}
+	}
+	for i := range out {
+		for j := range out[i].Cards {
+			deps := out[i].Cards[j].Deps
+			for k := range deps {
+				if w, ok := whereOf[deps[k].ID]; ok && !deps[k].Ref {
+					deps[k].Known, deps[k].Where, deps[k].Landed = true, w, showLanded(w, okOf[deps[k].ID], deps[k].ID)
+				}
 			}
 		}
 	}

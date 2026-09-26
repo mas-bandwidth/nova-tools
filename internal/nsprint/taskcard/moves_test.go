@@ -58,14 +58,10 @@ func wsCount(c *redis.Client, where string) int64 {
 	return wsCards(c, mvStream, where)
 }
 
-// wsCards is a stream set's cards: its members less the stream's sentinel
-// (#4318: the stop is not one of the cards; ns_ws_counts leaves it out too).
+// wsCards is a stream set's cards (ws.CardCount: its members less the
+// stream's sentinel, #4318, the one count the table uses).
 func wsCards(c *redis.Client, stream, where string) int64 {
-	ctx := context.Background()
-	n := c.ZCard(ctx, taskcard.StreamKey(stream, where)).Val()
-	if sid := ws.SentinelID(stream); sid != "" && c.ZScore(ctx, taskcard.StreamKey(stream, where), sid).Err() == nil {
-		n--
-	}
+	n, _ := ws.CardCount(context.Background(), c, stream, where)
 	return n
 }
 

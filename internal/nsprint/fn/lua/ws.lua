@@ -225,6 +225,10 @@ local function ws_rename(keys, args)
   if redis.call('SISMEMBER', 'ws:names', new) == 1 then
     return { 'REFUSED', 'stream ' .. new .. ' exists' }
   end
+  local serr = NS.task.slug_clash(new)
+  if serr then
+    return { 'REFUSED', serr }
+  end
   for _, state in ipairs(W.WHERE) do
     if redis.call('EXISTS', W.key(new, state)) == 1 then
       return { 'REFUSED', 'key ' .. W.key(new, state) .. ' exists' }
@@ -248,7 +252,7 @@ local function ws_rename(keys, args)
     for _, id in ipairs(redis.call('ZRANGE', W.key(old, state), 0, -1)) do
       local err
       if NS.task.is_sentinel(id) and (state == 'waiting' or state == 'parked') then
-        err = NS.task.move(id, 'done', { by = by, ok = 'fail', stream = new,
+        err = NS.task.move(id, 'done', { by = by, ok = 'fail', stream = new, rename = true,
           why = 'rename: stream ' .. old .. ' is ' .. new .. '; its sentinel is ' .. NS.task.sentinel_id(new) })
       else
         err = NS.task.move(id, state, { by = by, why = 'rename', stream = new })
@@ -260,6 +264,9 @@ local function ws_rename(keys, args)
     end
   end
   local rank = redis.call('ZSCORE', 'ws:order', old)
+  if NS.task.slug(old) ~= '' and redis.call('GET', 'ws:slug:' .. NS.task.slug(old)) == old then
+    redis.call('DEL', 'ws:slug:' .. NS.task.slug(old))
+  end
   redis.call('SREM', 'ws:names', old)
   redis.call('SADD', 'ws:names', new)
   redis.call('ZREM', 'ws:order', old)
@@ -285,6 +292,10 @@ local function ws_order(keys, args)
   end
   if #list == 0 then
     return { 'REFUSED', 'name at least one stream' }
+  end
+  -- ordering registers each named stream (its sentinel exists, #4318)
+  for _, s in ipairs(list) do
+    W.place(s)
   end
   for _, s in ipairs(redis.call('ZRANGE', 'ws:order', 0, -1)) do
     if not seen[s] then

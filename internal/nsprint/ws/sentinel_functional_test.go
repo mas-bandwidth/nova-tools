@@ -186,3 +186,103 @@ func TestShowOrderListsCardsWithEdges(t *testing.T) {
 		t.Fatalf("counts %+v", rows)
 	}
 }
+
+// TestSentinelIsStructure (#4318, the cold read's verdict): the stop's graph
+// is in the one move, not in the verbs. task done, cancel, a move to ready,
+// working, review or merging, a done/ok, a friend, a create of a sentinel
+// id, and a second stream name with the same slug are refused by name and
+// write nothing; sprint clear leaves it; it lands by structure with the
+// last card at that sha; stream order registers a stream that was written
+// straight into the keys.
+func TestSentinelIsStructure(t *testing.T) {
+	t.Parallel()
+	_, c := wstest.Start(t)
+	ctx := context.Background()
+	snPush(t, c, "A", snStream, "")
+	dump := func() string { return c.Dump(ctx, "task:"+snSentinel).Val() }
+	before := dump()
+	for name, err := range map[string]error{
+		"task done":   func() error { _, err := taskcard.Done(ctx, c, snSentinel, "test", "x", ""); return err }(),
+		"task cancel": func() error { _, err := taskcard.Cancel(ctx, c, snSentinel, "test", "not needed"); return err }(),
+		"move to done ok": func() error {
+			_, err := taskcard.Move(ctx, c, snSentinel, "done", taskcard.Opts{By: "test", Why: "x", OK: "ok"})
+			return err
+		}(),
+		"move to ready": func() error { _, err := ws.Move(ctx, c, snSentinel, "ready", "test", "x"); return err }(),
+		"move to working": func() error {
+			_, err := taskcard.Move(ctx, c, snSentinel, "working", taskcard.Opts{By: "test", As: "f1", Friend: "f1", SetFriend: true})
+			return err
+		}(),
+		"move to review":  func() error { _, err := ws.Move(ctx, c, snSentinel, "review", "test", "x"); return err }(),
+		"move to merging": func() error { _, err := ws.Move(ctx, c, snSentinel, "merging", "test", "x"); return err }(),
+		"a friend": func() error {
+			_, err := taskcard.Move(ctx, c, snSentinel, "waiting", taskcard.Opts{By: "test", Friend: "f1", SetFriend: true})
+			return err
+		}(),
+		"land with a live card": func() error { _, err := taskcard.Land(ctx, c, snSentinel, "test", snSHA, ""); return err }(),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "SENTINEL task:"+snSentinel) {
+			t.Errorf("%s: %v, want a SENTINEL refusal", name, err)
+		}
+	}
+	if dump() != before {
+		t.Fatal("a refused move wrote the stop's record")
+	}
+	// a sentinel id is registration's alone; a second name with the slug is refused
+	_, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "x:sentinel", Where: "waiting", Stream: snStream, By: "test", Title: "t"})
+	if err == nil || !strings.Contains(err.Error(), "SENTINEL x:sentinel is a stream sentinel id") {
+		t.Fatalf("create of a sentinel id: %v", err)
+	}
+	_, err = taskcard.Push(ctx, c, taskcard.PushRequest{ID: "Z", Where: "waiting", Stream: "swarm cards", By: "test", Title: "t"})
+	if err == nil || !strings.Contains(err.Error(), `SLUG stream "swarm cards" has the slug swarm-cards of stream "swarm: cards"`) {
+		t.Fatalf("slug clash: %v", err)
+	}
+	if n, _ := c.Exists(ctx, "task:Z", "task:x:sentinel").Result(); n != 0 {
+		t.Fatal("a refused push wrote a record")
+	}
+	// landing by structure: A lands, the stop lands with it at the sha
+	if _, err := taskcard.Move(ctx, c, "A", "ready", taskcard.Opts{By: "test", Why: "deps met"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Move(ctx, c, "A", "working", taskcard.Opts{By: "test", As: "f1", Friend: "f1", SetFriend: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Land(ctx, c, "A", "test", snSHA, "merged"); err != nil {
+		t.Fatal(err)
+	}
+	if h := c.HGetAll(ctx, "task:"+snSentinel).Val(); h["where"] != "landed" || h["merge_sha"] != snSHA || h["why"] != "last card A landed" {
+		t.Fatalf("the stop after the last landing: %v", h)
+	}
+	if err := ws.Check(ctx, c, []string{"A", snSentinel}); err != nil {
+		t.Fatalf("invariant: %v", err)
+	}
+	// sprint clear zeros the cards and leaves the stop with its stream
+	if _, err := c.FCall(ctx, "ns_sprint_clear", nil, "test", "fresh run", "1").Result(); err != nil {
+		t.Fatalf("sprint clear: %v", err)
+	}
+	if w, _ := c.HGet(ctx, "task:A", "where").Result(); w != "done" {
+		t.Fatalf("A after the clear: %q", w)
+	}
+	if w, _ := c.HGet(ctx, "task:"+snSentinel, "where").Result(); w != "landed" {
+		t.Fatalf("the stop after the clear: %q, want landed (left with its stream)", w)
+	}
+	// a stream written straight into the keys has no stop until it is
+	// registered: stream order registers it
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(c.SAdd(ctx, "ws:names", "fleet").Err())
+	must(c.ZAdd(ctx, "ws:order", redis.Z{Score: 2, Member: "fleet"}).Err())
+	if n, _ := c.Exists(ctx, "task:fleet:sentinel").Result(); n != 0 {
+		t.Fatal("a fixture stream has a stop before registration")
+	}
+	if _, err := ws.Order(ctx, c, []string{"fleet"}); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := c.HGet(ctx, "task:fleet:sentinel", "where").Result(); w != "waiting" {
+		t.Fatalf("stream order registered fleet: stop where %q, want waiting", w)
+	}
+}

@@ -240,7 +240,10 @@ end
 -- "every stream ends in a landed sentinel card"): registration creates the
 -- stream's one sentinel card, task:<slug>:sentinel, in ws:<stream>:waiting,
 -- when it has none (cm_sentinel, assigned below TK: the task path's create).
-local cm_sentinel
+-- ws:slug:<slug> names the one stream a slug belongs to (two names with one
+-- slug would share a sentinel id: refused before any write by cm_slug_check,
+-- assigned below TK, at every door a stream enters through).
+local cm_sentinel, cm_slug_check
 local function cm_register(stream)
   if type(stream) ~= 'string' or stream == '' then return end
   redis.call('SADD', 'ws:names', stream)
@@ -449,6 +452,10 @@ local function card_move(id, to, o)
   end
   local cur = cm_read(id)
   if not cur then return 'NOCARD ' .. id end
+  if cm_slug_check then
+    local serr = cm_slug_check(cur.stream)
+    if serr then return serr end
+  end
   if not cur.linked then
     local err = cm_adopt(id, S, label)
     if err then return err end
@@ -542,6 +549,14 @@ local function card_create(id, fields, o)
       return 'PROBE ' .. id .. ' is a probe (probe=' .. tostring(fields[i + 1]) ..
         '); a card is consumer work only: a probe result goes on bench:<b>:beat probe (nova-tools#4237)'
     end
+  end
+  local cstream = o.stream
+  for i = 1, #fields, 2 do
+    if fields[i] == 'stream' and (cstream == nil or cstream == '') then cstream = fields[i + 1] end
+  end
+  if cm_slug_check then
+    local serr = cm_slug_check(cstream)
+    if serr then return serr end
   end
   local created = cm_now()
   local h = { id }
@@ -1165,6 +1180,21 @@ function TK.is_sentinel(id)
   return type(id) == 'string' and string.match(id, '^[a-z0-9][a-z0-9%-]*:sentinel$') ~= nil
 end
 
+-- TK.slug_clash: the refusal when stream's slug already belongs to another
+-- stream (ws:slug:<slug>), else nil. Checked before any write at every door
+-- a stream enters through (TK.create, TK.move, card_move, card_create,
+-- ns_ws_rename), so two names never share a sentinel id.
+function TK.slug_clash(stream)
+  local w = TK.slug(stream)
+  if w == '' then return nil end
+  local owner = redis.call('GET', 'ws:slug:' .. w)
+  if owner and owner ~= stream then
+    return 'SLUG stream "' .. TK.str(stream) .. '" has the slug ' .. w .. ' of stream "' .. owner ..
+      '": their sentinel ids would collide; rename one first (nova-sprint stream rename)'
+  end
+  return nil
+end
+
 -- TK.live_siblings: every card of stream in a live set (waiting, ready,
 -- working, review, merging, parked) other than id, as {id, where} rows,
 -- oldest first per set.
@@ -1256,6 +1286,8 @@ end
 -- are cleared.
 function TK.legacy(id, S, cur, nxt, front, at, prio)
   local h, clear = {}, false
+  -- the stream stop (#4318) is in no sprint roster, index or queue
+  if TK.is_sentinel(id) then return h, clear end
   if S ~= '' then
     -- The sprint store's ready queues (#3206, read by the take, the ranker,
     -- width and redistribute): s:<S>:open:<friend>, or s:<S>:ready for a
@@ -1337,6 +1369,52 @@ end
 -- TK.edge: nil when cur -> nxt is on the graph, else the refusal.
 function TK.edge(id, cur, nxt, ok, o)
   local from, to = cur.where, nxt.where
+  -- The stream sentinel's graph is structure (#4318), checked before the
+  -- from == to shortcut so no verb changes its outcome or owner in place:
+  -- null -> waiting (registration, o.sentinel); waiting -> landed at the
+  -- merge sha once no other card of the stream is live; waiting <-> parked
+  -- with its stream; done or landed -> waiting when the stream starts again
+  -- (registration, o.restart); waiting or parked -> done/fail by a rename
+  -- alone (o.rename). Nothing else: not ready, working, review or merging,
+  -- not done by task done, cancel or sprint clear, and no friend.
+  if TK.is_sentinel(id) then
+    if nxt.friend ~= '' then return 'SENTINEL task:' .. id .. ' is nobody\'s: the stream stop has no friend' end
+    if from == to then
+      if to == 'done' and ok ~= cur.ok then return 'SENTINEL task:' .. id .. ' keeps its outcome (' .. cur.ok .. ')' end
+      return nil
+    end
+    if from == '' then
+      if not o.sentinel then return 'SENTINEL task:' .. id .. ' is created by registration alone' end
+      if to ~= 'waiting' then return 'SENTINEL task:' .. id .. ' starts in waiting' end
+      return nil
+    end
+    if to == 'landed' then
+      if from ~= 'waiting' then
+        return 'SENTINEL task:' .. id .. ' lands from waiting, not ' .. from
+      end
+      local live = TK.live_siblings(cur.stream, id)
+      if #live > 0 then
+        return 'SENTINEL task:' .. id .. ' lands after the ' .. #live .. ' live card(s) of stream ' .. cur.stream ..
+          ' (first ' .. live[1][1] .. ' ' .. live[1][2] .. ')'
+      end
+      if TK.str(o.sha) == '' then return 'SHA landed needs the merge sha' end
+      return nil
+    end
+    if to == 'parked' and from == 'waiting' then return nil end
+    if to == 'waiting' then
+      if from == 'parked' then return nil end
+      if (from == 'done' or from == 'landed') and o.restart then return nil end
+      return 'SENTINEL task:' .. id .. ' returns to waiting from parked, or when its stream starts again after it ' ..
+        'ended or landed (a push into the stream), not from ' .. from
+    end
+    if to == 'done' then
+      if o.rename and ok == 'fail' and (from == 'waiting' or from == 'parked') then return nil end
+      return 'SENTINEL task:' .. id .. ' ends only when its stream is renamed (nova-sprint stream rename); it lands ' ..
+        '(task land --id ' .. id .. ' --sha <merge sha>) once every other card of stream ' .. cur.stream .. ' has'
+    end
+    return 'SENTINEL task:' .. id .. ' is the stream stop: it moves to landed (after every other card of stream ' ..
+      cur.stream .. '), parked or waiting, never ' .. to
+  end
   -- review (#4072): a copy's fail enters it (o.review, TM.finish), and a
   -- typed verdict (o.verdict, TM.review) is the only way out
   -- review has two doors in and two out: a copy's end enters it (card end
@@ -1358,32 +1436,6 @@ function TK.edge(id, cur, nxt, ok, o)
       return 'OFFGRAPH a ' .. to .. ' task keeps its friend'
     end
     return nil
-  end
-  -- the stream sentinel (#4318): waiting -> landed after every other card,
-  -- else only parked (with its stream) or done (a cancel)
-  if TK.is_sentinel(id) then
-    -- the stream starts again after its stop ended or landed: a push into
-    -- it puts the sentinel back in waiting (cm_sentinel)
-    if to == 'waiting' and (from == 'done' or from == 'landed') then
-      if TK.str(o.why) == '' then return 'WHY ' .. from .. ' -> waiting needs a why' end
-      return nil
-    end
-    if to == 'landed' then
-      if from ~= 'waiting' then
-        return 'SENTINEL task:' .. id .. ' lands from waiting, not ' .. from
-      end
-      local live = TK.live_siblings(cur.stream, id)
-      if #live > 0 then
-        return 'SENTINEL task:' .. id .. ' lands after the ' .. #live .. ' live card(s) of stream ' .. cur.stream ..
-          ' (first ' .. live[1][1] .. ' ' .. live[1][2] .. ')'
-      end
-      if TK.str(o.sha) == '' then return 'SHA landed needs the merge sha' end
-      return nil
-    end
-    if to ~= 'parked' and to ~= 'waiting' and to ~= 'done' then
-      return 'SENTINEL task:' .. id .. ' is the stream stop: it moves to landed (task land, after every other card of stream ' ..
-        cur.stream .. '), parked or done, not ' .. to
-    end
   end
   if not (TK.GRAPH[from] and TK.GRAPH[from][to]) then
     if from == '' then return 'OFFGRAPH a new task starts in waiting or ready' end
@@ -1465,6 +1517,10 @@ function TK.move(id, to, o)
   if o.friend ~= nil then nxt.friend = o.friend end
   if to == 'working' and nxt.friend == '' and o.as and o.as ~= '' then nxt.friend = o.as end
   if not TK.valid_stream(nxt.stream) then return 'STREAM bad name ' .. nxt.stream end
+  if nxt.stream ~= cur.stream or cur.where == '' then
+    local serr = TK.slug_clash(nxt.stream)
+    if serr then return serr end
+  end
   local ok = '-'
   if to == 'landed' then ok = 'ok' end
   if to == 'done' then
@@ -1507,6 +1563,7 @@ function TK.move(id, to, o)
   if nxt.stream ~= cur.stream then TK.register(nxt.stream) end
   local at = cm_now()
   local S = TK.sprint(cur, o)
+  if TK.is_sentinel(id) then S = '' end
   if front == '' then front = cur.front end
   local prio = cur.priority
   for i = 1, #fields, 2 do
@@ -1589,7 +1646,27 @@ function TK.move(id, to, o)
     herr, cut = TK.hook(id, cur, to, o)
     if herr then return 'DRIFT-AFTER ' .. herr .. ' task:' .. id end
   end
-  return nil, { from = cur.where, to = to, xid = xid, cut = cut }
+  -- Landing by structure (#4318): the last live card's landing lands the
+  -- stream's sentinel at the same sha, in this call.
+  local stop
+  if to == 'landed' and cur.where ~= 'landed' and not TK.is_sentinel(id) and nxt.stream ~= '' then
+    stop = TK.land_stop(nxt.stream, o.sha, o.by, 'last card ' .. id .. ' landed')
+  end
+  return nil, { from = cur.where, to = to, xid = xid, cut = cut, stop = stop }
+end
+
+-- TK.land_stop(stream, sha, by, why): the stream's sentinel lands when it is
+-- waiting and no other card of the stream is live; returns its id when it
+-- landed, else nil. A refusal here is drift in this file: the live check
+-- just passed.
+function TK.land_stop(stream, sha, by, why)
+  local sid = TK.sentinel_id(stream)
+  if sid == '' or TK.str(sha) == '' then return nil end
+  if TK.str(redis.call('HGET', 'task:' .. sid, 'where')) ~= 'waiting' then return nil end
+  if #TK.live_siblings(stream, sid) > 0 then return nil end
+  local err = TK.move(sid, 'landed', { by = by, why = why, sha = sha })
+  if err then return nil end
+  return sid
 end
 
 -- TK.create(id, fields, o): a new record (where null) and its first move to
@@ -1609,6 +1686,11 @@ function TK.create(id, fields, o)
   end
   local stream = TK.stream_of(o.stream, title)
   if not TK.valid_stream(stream) then return 'STREAM bad name ' .. stream end
+  if TK.is_sentinel(id) and not (o.sentinel and TK.sentinel_id(stream) == id) then
+    return 'SENTINEL ' .. id .. ' is a stream sentinel id: registration creates a stream\'s own (the first push into it); pick another id'
+  end
+  local serr = TK.slug_clash(stream)
+  if serr then return serr end
   local where = o.where or 'waiting'
   if where ~= 'waiting' and where ~= 'ready' then return 'OFFGRAPH a new task starts in waiting or ready' end
   -- a probe never enters a consumer set (nova-tools#4237): refused before any write
@@ -1631,7 +1713,7 @@ function TK.create(id, fields, o)
   redis.call('HSET', unpack(h))
   TK.register(stream)
   return TK.move(id, where, { by = o.by, why = o.why or 'push', front = o.front, sprint = o.sprint, state = o.state,
-    qscore = o.qscore })
+    qscore = o.qscore, sentinel = o.sentinel })
 end
 
 -- TK.derive: the place a record's own facts imply, for adoption and
@@ -1922,6 +2004,15 @@ function TK.fsck(S)
   end
   for _, s in ipairs(streams) do
     for _, w in ipairs(TK.WHERE) do sweep('ws:' .. s .. ':' .. w, 'stream', s, w) end
+    -- the stream's stop (#4318): waiting, parked or landed, else missing
+    local sid = TK.sentinel_id(s)
+    if sid ~= '' then
+      local w = TK.str(redis.call('HGET', 'task:' .. sid, 'where'))
+      if w ~= 'waiting' and w ~= 'parked' and w ~= 'landed' then
+        note('NOSENTINEL stream=' .. s .. ' id=' .. sid .. (w == '' and ' (no record' or ' (' .. w) ..
+          '; nova-sprint task fsck --repair creates it)')
+      end
+    end
   end
   for _, f in ipairs(friends) do
     for _, w in ipairs(TK.WHERE) do sweep('friend:' .. f .. ':cards:' .. w, 'friend', f, w) end
@@ -4052,7 +4143,8 @@ NS.tm = { score = TM.score }
 NS.task = { move = TK.move, create = TK.create, place = TK.place, read = TK.read, stream_of = TK.stream_of,
   ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF, unread = TK.unread,
   -- the stream sentinel (#4318): its id for a stream, and whether an id is one
-  sentinel_id = TK.sentinel_id, is_sentinel = TK.is_sentinel,
+  sentinel_id = TK.sentinel_id, is_sentinel = TK.is_sentinel, slug = TK.slug, slug_clash = TK.slug_clash,
+  live_siblings = TK.live_siblings,
   -- set(id, state, o): the move to the where a fine state names (cancelled is
   -- done/fail), writing that state: the sprint store's transitions.
   -- renew(id, at): a live holder's beat renews the task's lease.
@@ -4083,9 +4175,12 @@ NS.task = { move = TK.move, create = TK.create, place = TK.place, read = TK.read
 cm_sentinel = function(stream)
   local id = TK.sentinel_id(stream)
   if id == '' then return end
+  local owner = redis.call('GET', 'ws:slug:' .. TK.slug(stream))
+  if owner and owner ~= stream then return end -- refused before this write by TK.slug_clash
+  if not owner then redis.call('SET', 'ws:slug:' .. TK.slug(stream), stream) end
   if redis.call('EXISTS', 'task:' .. id) == 0 then
     TK.create(id, { 'title', 'STREAM: ' .. stream .. ' | sentinel', 'kind', 'sentinel', 'blocked_on', '' },
-      { stream = stream, by = 'ws', why = 'sentinel', where = 'waiting' })
+      { stream = stream, by = 'ws', why = 'sentinel', where = 'waiting', sentinel = true })
     return
   end
   -- a stream whose stop ended or landed starts again: its sentinel waits
@@ -4093,6 +4188,44 @@ cm_sentinel = function(stream)
   -- reused; the ws:log holds its history)
   local w = TK.str(redis.call('HGET', 'task:' .. id, 'where'))
   if w == 'done' or w == 'landed' then
-    TK.move(id, 'waiting', { by = 'ws', why = 'sentinel: the stream starts again', stream = stream })
+    TK.move(id, 'waiting', { by = 'ws', why = 'sentinel: the stream starts again', stream = stream, restart = true })
   end
 end
+
+cm_slug_check = TK.slug_clash
+
+-- ns_tcard_sentinels(write) -> SENTINELS missing created, then per missing
+-- stream its name and sentinel id: every registered stream without a
+-- waiting, parked or landed sentinel; with write=1 each is created (or
+-- restarted) through registration. task fsck --repair's step (#4318).
+redis.register_function('ns_tcard_sentinels', function(keys, args)
+  local write = args[1] == '1'
+  local list, seen = {}, {}
+  for _, s in ipairs(redis.call('ZRANGE', 'ws:order', 0, -1)) do
+    if not seen[s] then seen[s] = true; list[#list + 1] = s end
+  end
+  local rest = {}
+  for _, s in ipairs(redis.call('SMEMBERS', 'ws:names')) do
+    if not seen[s] then seen[s] = true; rest[#rest + 1] = s end
+  end
+  table.sort(rest)
+  for _, s in ipairs(rest) do list[#list + 1] = s end
+  local missing, created = {}, 0
+  for _, s in ipairs(list) do
+    local sid = TK.sentinel_id(s)
+    if sid ~= '' then
+      local w = TK.str(redis.call('HGET', 'task:' .. sid, 'where'))
+      if w ~= 'waiting' and w ~= 'parked' and w ~= 'landed' then
+        missing[#missing + 1] = s
+        missing[#missing + 1] = sid
+        if write and not TK.slug_clash(s) then
+          cm_sentinel(s)
+          if TK.str(redis.call('HGET', 'task:' .. sid, 'where')) == 'waiting' then created = created + 1 end
+        end
+      end
+    end
+  end
+  local out = { 'SENTINELS', tostring(#missing / 2), tostring(created) }
+  for _, v in ipairs(missing) do out[#out + 1] = v end
+  return out
+end)

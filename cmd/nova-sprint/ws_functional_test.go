@@ -62,10 +62,11 @@ func TestWSVerbsOnAThousandTasks(t *testing.T) {
 		{[]string{"scope", "park", "--stream", s(0)}, `PARKED stream="s0: work" parked=60 `, 1},
 		{[]string{"stream", "rename", s(4), "swarm: cards"}, `RENAMED from="s4: work" to="swarm: cards" members=100 `, 1},
 		{[]string{"stream", "order", "swarm: cards", s(9)}, `ORDERED streams=10 first="swarm: cards" `, 1},
-		// 1,001 rows: the rename registered "swarm: cards" through the one
-		// move, which created its sentinel (#4318); the fixture's streams
-		// were written straight into the keys and have none.
-		{[]string{"ws", "checkpoint", "--out", cp}, "CHECKPOINT path=" + cp + " streams=10 rows=1001 ", 1},
+		// 1,002 rows: the rename registered "swarm: cards" through the one
+		// move and stream order registered s9, each creating its sentinel
+		// (#4318); the other fixture streams were written straight into the
+		// keys and have none until task fsck --repair.
+		{[]string{"ws", "checkpoint", "--out", cp}, "CHECKPOINT path=" + cp + " streams=10 rows=1002 ", 1},
 	} {
 		args := append(append([]string{}, tc.args...), "--redis", addr)
 		if tc.args[1] == "rename" || tc.args[1] == "order" {
@@ -89,7 +90,7 @@ func TestWSVerbsOnAThousandTasks(t *testing.T) {
 	if n, _ := filepath.Glob(filepath.Join(cpDir, "ws-*.tsv")); len(n) != 2 {
 		t.Fatalf("default checkpoints %v, want one each for scope keep and scope park", n)
 	}
-	if got, _ := c.Get(ctx, ws.CheckpointKey).Result(); !strings.Contains(got, "path="+cp+" rows=1001") {
+	if got, _ := c.Get(ctx, ws.CheckpointKey).Result(); !strings.Contains(got, "path="+cp+" rows=1002") {
 		t.Fatalf("ws:checkpoint %q", got)
 	}
 }

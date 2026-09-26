@@ -255,7 +255,8 @@ func unquoteCode(v string) string {
 // "none" stays none; "#<n>" and "<name>#<n>" become owner/name#n in repo's
 // owner; a parenthetical "(WHY: ...)" is returned as the why and every other
 // parenthetical is dropped. An entry that is still not a card id,
-// owner/repo#n, stream/<slug> or task:<id> is refused.
+// owner/repo#n, <slug>:sentinel or task:<id> (stream/<slug>, the older
+// spelling of a stream edge, is its sentinel) is refused.
 func CutDepends(repo, value string) (string, string, error) {
 	why := ""
 	value = parenRE.ReplaceAllStringFunc(value, func(p string) string {
@@ -282,7 +283,7 @@ func CutDepends(repo, value string) (string, string, error) {
 			entry = owner + "/" + m[1] + "#" + m[2]
 		}
 		if _, err := parseDependency(entry); err != nil || strings.ContainsAny(entry, " \t") {
-			return "", "", fmt.Errorf("DEPENDS-ON: %q is not a card id, owner/repo#n, stream/<slug> or task:<id>", entry)
+			return "", "", fmt.Errorf("DEPENDS-ON: %q is not a card id, owner/repo#n, <slug>:sentinel or task:<id>", entry)
 		}
 		entries = append(entries, entry)
 	}
