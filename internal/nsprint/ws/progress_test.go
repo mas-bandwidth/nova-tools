@@ -2,6 +2,7 @@ package ws_test
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -76,3 +77,56 @@ func TestCountsLeaveEverySentinelOut(t *testing.T) {
 }
 
 func formatMs(t time.Time) string { return strconv.FormatInt(t.UnixMilli(), 10) + "-0" }
+
+// TestCountsRefuseASprintNotOpen (#4411): a CountsReader naming a sprint
+// that is not the open one returns *ws.NotOpen naming the open sprint (or
+// "-" with none open), never the ws index's counts under the other name; the
+// open sprint's own name reads them, and so does a primed reader (the live
+// layout's SCAN trip) on its first pipeline.
+func TestCountsRefuseASprintNotOpen(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	now := time.Date(2026, 9, 26, 18, 0, 0, 0, time.UTC)
+	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: "alpha"})
+	c.ZAdd(ctx, ws.Key("alpha", ws.Landed), redis.Z{Score: 1, Member: "a1"})
+	c.ZAdd(ctx, ws.Key("alpha", ws.Ready), redis.Z{Score: 1, Member: "a2"})
+
+	notOpen := func(name, wantOpen string) {
+		t.Helper()
+		_, err := (&ws.CountsReader{Sprint: name}).Read(ctx, c, now)
+		var e *ws.NotOpen
+		if !errors.As(err, &e) || e.Name != name || e.Open != wantOpen {
+			t.Fatalf("--sprint %s: %v; want NotOpen open=%q", name, err, wantOpen)
+		}
+	}
+	notOpen("s1", "") // no sprint open at all
+	if _, err := (&ws.CountsReader{Sprint: "s1"}).Read(ctx, c, now); err == nil ||
+		err.Error() != "--sprint s1: not the open sprint; open=-" {
+		t.Fatalf("the refusal's words: %v", err)
+	}
+	c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: "old"}, redis.Z{Score: 2, Member: "s1"})
+	c.HSet(ctx, "s:old", "status", "closed")
+	c.HSet(ctx, "s:s1", "status", "open")
+	notOpen("old", "s1") // closed
+	notOpen("other", "s1")
+	got, err := (&ws.CountsReader{Sprint: "s1"}).Read(ctx, c, now)
+	if err != nil || got.Sprint != "s1" || got.Status != "open" || got.Header() != "1/2 done 50%, left 1, eta ?" {
+		t.Fatalf("--sprint s1 (open): %+v %v", got, err)
+	}
+	// primed: the memberships from an earlier trip, then one pipeline
+	r := &ws.CountsReader{Sprint: "other"}
+	pipe := c.Pipeline()
+	order, sprints := r.QueueMembers(ctx, pipe)
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Prime(order, sprints); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Read(ctx, c, now); !errors.As(err, new(*ws.NotOpen)) {
+		t.Fatalf("primed --sprint other: %v; want NotOpen", err)
+	}
+}

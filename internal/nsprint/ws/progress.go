@@ -89,8 +89,7 @@ type SprintCounts struct {
 	// Sprint is the sprint named, or the open one (the last member of
 	// sprint:order whose status is not closed); "" when there is none.
 	Sprint string
-	// Status is the open sprint's s:<S> status when the read found it (no
-	// sprint named); "" otherwise.
+	// Status is the open sprint's s:<S> status; "" when none is open.
 	Status string
 	// Streams are ws:order's streams in rank order; Total is their column
 	// sums (Stream "total").
@@ -205,10 +204,29 @@ func (c SprintCounts) Receipt() string {
 	return fmt.Sprintf("%s total=%d done=%d/%d pct=%d left=%d eta=%q", head, c.All(), c.Done(), c.All(), c.Pct(), c.Left(), c.ETA())
 }
 
+// NotOpen is a read for a named sprint that is not the open one (#4411): the
+// ws index holds the open sprint's streams only, so its counts are never
+// returned under another name. Open is "" when no sprint is open.
+type NotOpen struct {
+	Name string // the sprint named
+	Open string // the open sprint
+}
+
+// Error names both: --sprint <name>: not the open sprint; open=<open|->.
+func (e *NotOpen) Error() string {
+	open := e.Open
+	if open == "" {
+		open = "-"
+	}
+	return fmt.Sprintf("--sprint %s: not the open sprint; open=%s", e.Name, open)
+}
+
 // CountsReader reads SprintCounts, keeping the memberships across reads so a
 // reader that reads again (the table's tick) takes one pipeline.
 type CountsReader struct {
-	// Sprint names the sprint; "" reads the open one.
+	// Sprint names the sprint; "" reads the open one. A named sprint that is
+	// not the open one is refused with *NotOpen: the open sprint is read
+	// either way (sprint:order and each member's status, in the pipeline).
 	Sprint string
 
 	streams []string
@@ -231,13 +249,12 @@ type CountsCmd struct {
 // Queue queues the read made for now on pipe.
 func (r *CountsReader) Queue(ctx context.Context, pipe redis.Pipeliner, now time.Time) *CountsCmd {
 	q := &CountsCmd{r: r, at: now, order: pipe.ZRange(ctx, "ws:order", 0, -1)}
-	if r.Sprint == "" {
-		q.sprintQ = pipe.ZRange(ctx, "sprint:order", 0, -1)
-		for _, name := range r.sprints {
-			// the status field on s:<S> (what sprint open, close and the
-			// pit stop use): closed is out, any other status is open
-			q.states = append(q.states, pipe.HGet(ctx, "s:"+name, "status"))
-		}
+	// the open sprint, named or not: a named one is checked against it
+	q.sprintQ = pipe.ZRange(ctx, "sprint:order", 0, -1)
+	for _, name := range r.sprints {
+		// the status field on s:<S> (what sprint open, close and the
+		// pit stop use): closed is out, any other status is open
+		q.states = append(q.states, pipe.HGet(ctx, "s:"+name, "status"))
 	}
 	hourAgo := now.Add(-time.Hour).UnixMilli()
 	q.log = pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(hourAgo, 10), "+", LogWindowMax)
@@ -248,16 +265,12 @@ func (r *CountsReader) Queue(ctx context.Context, pipe redis.Pipeliner, now time
 }
 
 // QueueMembers queues the membership reads a caller makes in its own earlier
-// round trip (ws:order, and sprint:order when no sprint is named); Prime
+// round trip (ws:order and sprint:order); Prime
 // takes their answers, so the caller's next pipeline carries every count and
 // a cold read needs no round trip of its own (the live layout's SCAN trip
 // carries them).
 func (r *CountsReader) QueueMembers(ctx context.Context, pipe redis.Pipeliner) (order, sprints *redis.StringSliceCmd) {
-	order = pipe.ZRange(ctx, "ws:order", 0, -1)
-	if r.Sprint == "" {
-		sprints = pipe.ZRange(ctx, "sprint:order", 0, -1)
-	}
-	return order, sprints
+	return pipe.ZRange(ctx, "ws:order", 0, -1), pipe.ZRange(ctx, "sprint:order", 0, -1)
 }
 
 // Prime sets the memberships QueueMembers read. A read that finds them moved
@@ -295,29 +308,30 @@ func (q *CountsCmd) Result() (SprintCounts, bool, error) {
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return SprintCounts{}, false, fmt.Errorf("zrange ws:order: %w", err)
 	}
-	var sprints []string
+	sprints, err := q.sprintQ.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return SprintCounts{}, false, fmt.Errorf("zrange sprint:order: %w", err)
+	}
+	// the open sprint: the last of sprint:order whose status is not closed
+	// (Glenn 2026-09-26 8:50 AM ET: one sprint active at a time)
 	open, status := "", ""
-	if q.sprintQ != nil {
-		if sprints, err = q.sprintQ.Result(); err != nil && !errors.Is(err, redis.Nil) {
-			return SprintCounts{}, false, fmt.Errorf("zrange sprint:order: %w", err)
-		}
-		// the open sprint: the last of sprint:order whose status is not
-		// closed (Glenn 2026-09-26 8:50 AM ET: one sprint active at a time)
-		for i, name := range r.sprints {
-			if st, err := q.states[i].Result(); err == nil && st != "closed" {
-				open, status = name, st
-			}
+	for i, name := range r.sprints {
+		if st, err := q.states[i].Result(); err == nil && st != "closed" {
+			open, status = name, st
 		}
 	}
 	// The open sprint only names the counts; it is taken from this read's
 	// statuses whenever sprint:order held still (a caller keying other
 	// reads on it compares SprintName before and after).
-	changed := !r.primed || !slices.Equal(order, r.streams) || (q.sprintQ != nil && !slices.Equal(sprints, r.sprints))
+	changed := !r.primed || !slices.Equal(order, r.streams) || !slices.Equal(sprints, r.sprints)
 	r.primed = true
 	r.open = open
 	if changed {
 		r.streams, r.sprints = order, sprints
 		return SprintCounts{}, true, nil
+	}
+	if r.Sprint != "" && r.Sprint != open {
+		return SprintCounts{}, false, &NotOpen{Name: r.Sprint, Open: open}
 	}
 	rows := make([]StreamCounts, 0, len(r.streams))
 	for i, s := range r.streams {

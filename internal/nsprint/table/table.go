@@ -47,11 +47,12 @@ type Row struct {
 // derived, never read from a sidecar key (6.5).
 func (r Row) Width() int64 { return r.Working + r.Stale }
 
-// Pipeline is one sprint's counts (6.4).
+// Pipeline is one sprint's cells of the retired card family (6.4), as
+// ns_snapshot returns them; Render never prints them (RetiredPipeline).
 type Pipeline struct {
 	Sprint       string
 	Cards        map[string]int64
-	Pool         int64 // s:<S>:pool: queued cards whose every DEPENDS-ON is landed; printed ready= (#3066)
+	Pool         int64 // s:<S>:pool: queued cards whose every DEPENDS-ON is landed (#3066)
 	Waiting      int64 // s:<S>:waiting: queued cards with a DEPENDS-ON not yet merged on their base
 	Backpressure int64
 	Orphan       int64
@@ -296,42 +297,19 @@ func rowLine(kind string, r Row) string {
 	return strings.Join(cells, " | ")
 }
 
-// RetiredPipeline is the wide table's pipeline row for a sprint the retired
-// card family (s:<S>:idx:card:<state>, s:<S>:pool, s:<S>:waiting) holds
-// nothing of: its cards, if any, are task records in the ws index, counted
-// by the one count (ws.Counts). The row refuses the way census does, never a
-// row of zeros beside the one count's numbers.
+// RetiredPipeline is the wide table's pipeline row, always (#4411): the
+// row's cells were the retired card family (s:<S>:idx:card:<state>,
+// s:<S>:pool, s:<S>:waiting), which is not a count of the sprint's work (its
+// cards are task records in the ws index, counted by the one count,
+// ws.Counts). card push and 02_card_move.lua still write that family, so a
+// number there would print beside the one count and disagree with it; the
+// row refuses whatever the family holds, the way census does, and names the
+// verb that counts. ns_snapshot still returns the cells (the reply's shape);
+// they are parsed and never printed.
 const RetiredPipeline = `REFUSED pipeline reads a retired key family; remedy="nova-sprint ws counts"`
 
-// Retired is a pipeline whose every cell is 0: the retired family holds
-// nothing of the sprint.
-func (p Pipeline) Retired() bool {
-	for _, n := range p.Cards {
-		if n != 0 {
-			return false
-		}
-	}
-	return p.Pool == 0 && p.Waiting == 0 && p.Backpressure == 0 && p.Orphan == 0 && p.Reconcile == 0
-}
-
 func pipelineLine(p Pipeline) string {
-	if p.Retired() {
-		return "pipeline " + p.Sprint + " " + RetiredPipeline
-	}
-	parts := []string{"pipeline", p.Sprint}
-	for _, state := range pipelineState {
-		parts = append(parts, state+"="+strconv.FormatInt(p.Cards[state], 10))
-	}
-	parts = append(parts,
-		// The pool is the ready antichain: the deal pass moves every queued
-		// card whose DEPENDS-ON is not merged on its base to waiting (#3066).
-		"ready="+strconv.FormatInt(p.Pool, 10),
-		"waiting="+strconv.FormatInt(p.Waiting, 10),
-		"backpressure="+strconv.FormatInt(p.Backpressure, 10),
-		"orphan-effect="+strconv.FormatInt(p.Orphan, 10),
-		"reconcile-required="+strconv.FormatInt(p.Reconcile, 10),
-	)
-	return strings.Join(parts, " ")
+	return "pipeline " + p.Sprint + " " + RetiredPipeline
 }
 
 func procLine(p Proc) string {

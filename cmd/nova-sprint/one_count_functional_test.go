@@ -288,15 +288,21 @@ func probePrinters(t *testing.T, addr string, c *redis.Client, p *reconcile.Prog
 	return out.String()
 }
 
-// TestOneCountSentinelProbe (#4411, the cold read's probes): with a sentinel
-// in every stream, a parked, a cancelled and a review card, every printer
-// (sprint status, ws counts, table --layout live --once and the live tick's
-// headline and total row, ws show, stream ls, PROGRESS left=) says 1/8;
-// the default table --once refuses the retired pipeline row; sprint status
-// --sprint other-sprint is REFUSED naming the open sprint; sprint clear
-// --force prints cards=8, and afterwards every printer says 0/0 with eta -.
-func TestOneCountSentinelProbe(t *testing.T) {
-	t.Parallel()
+// probeStore is the sentinel probe's fixture, pushed through the library on
+// a throwaway redis-server: the sprint open, probeCards placed (1/8), a
+// reconcile lease and the progress duty with a clock the test moves.
+type probeStore struct {
+	addr  string
+	c     *redis.Client
+	st    *store.Store
+	p     *reconcile.Progress
+	l     *reconcile.Lease
+	out   *strings.Builder
+	clock *time.Time
+}
+
+func newProbeStore(t *testing.T) *probeStore {
+	t.Helper()
 	addr, c := wstest.Start(t)
 	ctx := context.Background()
 	st := store.New(c)
@@ -329,11 +335,32 @@ func TestOneCountSentinelProbe(t *testing.T) {
 		t.Fatalf("acquire: %v", err)
 	}
 	t.Cleanup(func() { _ = l.Release(ctx) })
-	var out strings.Builder
-	clock := time.Now()
-	p := &reconcile.Progress{Client: c, Out: &out, Now: func() time.Time { return clock }}
+	ps := &probeStore{addr: addr, c: c, st: st, l: l, out: &strings.Builder{}, clock: new(time.Time)}
+	*ps.clock = time.Now()
+	ps.p = &reconcile.Progress{Client: c, Out: ps.out, Now: func() time.Time { return *ps.clock }}
+	return ps
+}
 
-	lines := probePrinters(t, addr, c, p, l, &out, 1, 8)
+// printers runs probePrinters against the fixture: every printer says
+// done/total.
+func (ps *probeStore) printers(t *testing.T, done, total int) string {
+	t.Helper()
+	return probePrinters(t, ps.addr, ps.c, ps.p, ps.l, ps.out, done, total)
+}
+
+// TestOneCountSentinelProbe (#4411, the cold read's probes): with a sentinel
+// in every stream, a parked, a cancelled and a review card, every printer
+// (sprint status, ws counts, table --layout live --once and the live tick's
+// headline and total row, ws show, stream ls, PROGRESS left=) says 1/8;
+// the default table --once refuses the retired pipeline row; sprint status
+// --sprint other-sprint is REFUSED naming the open sprint; sprint clear
+// --force prints cards=8, and afterwards every printer says 0/0 with eta -.
+func TestOneCountSentinelProbe(t *testing.T) {
+	t.Parallel()
+	ps := newProbeStore(t)
+	addr := ps.addr
+
+	lines := ps.printers(t, 1, 8)
 	t.Logf("PROGRESS before the clear:\n%s", lines)
 
 	code, stdout, _ := runSprint("sprint", "status", "--redis", addr, "--sprint", "other-sprint")
@@ -347,7 +374,93 @@ func TestOneCountSentinelProbe(t *testing.T) {
 	}
 	t.Logf("%s", strings.SplitN(stdout, "\n", 2)[0])
 
-	clock = clock.Add(time.Minute) // past the duty's every_s gate
-	lines = probePrinters(t, addr, c, p, l, &out, 0, 0)
+	*ps.clock = ps.clock.Add(time.Minute) // past the duty's every_s gate
+	lines = ps.printers(t, 0, 0)
 	t.Logf("PROGRESS after the clear:\n%s", lines)
+}
+
+// TestOneCountRetiredFamilyProbe (#4411, the cold read's probe run
+// verbatim): one SADD s:<S>:idx:card:landed old1 plus its roster entry in
+// sprint:<S>:cards, the family card push and 02_card_move.lua still write.
+// Every printer of the one count still says 1/8; the wide table --once's
+// pipeline row and census --sprint are both REFUSED with the ws counts
+// remedy, never landed=1 or cards=1; card fsck's counts carry the family's
+// label.
+func TestOneCountRetiredFamilyProbe(t *testing.T) {
+	t.Parallel()
+	ps := newProbeStore(t)
+	ctx := context.Background()
+	if err := ps.c.SAdd(ctx, "s:"+oneCountSprint+":idx:card:landed", "old1").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ps.c.ZAdd(ctx, "sprint:"+oneCountSprint+":cards", redis.Z{Score: 1, Member: "s:" + oneCountSprint + ":card:old1"}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	ps.printers(t, 1, 8) // the wide row refused among them
+
+	code, wide, stderr := runSprint("table", "--once", "--redis", ps.addr)
+	if want := "pipeline " + oneCountSprint + " " + table.RetiredPipeline + "\n"; code != 0 || !strings.Contains(wide, want) ||
+		regexp.MustCompile(`(?m)^pipeline .*=\d`).MatchString(wide) {
+		t.Fatalf("table --once: exit %d\n%s%s\nwant %q and no pipeline number", code, wide, stderr, want)
+	}
+	code, census, stderr := runSprint("census", "--redis", ps.addr, "--sprint", oneCountSprint)
+	if want := `REFUSED census reads a retired key family; remedy="nova-sprint ws counts"` + "\n"; code != 1 || census != want {
+		t.Fatalf("census --sprint: exit %d %q %q; want 1 %q", code, census, stderr, want)
+	}
+	_, fsck, stderr := runSprint("card", "fsck", "--redis", ps.addr, "--sprint", oneCountSprint)
+	if !strings.HasPrefix(fsck, "CARD FSCK sprint="+oneCountSprint+" family=retired cards=") {
+		t.Fatalf("card fsck: %q %q; want its counts labelled family=retired", fsck, stderr)
+	}
+	t.Logf("%s%s%s", regexp.MustCompile(`(?m)^pipeline .*\n`).FindString(wide), census, strings.SplitN(fsck, "\n", 2)[0])
+}
+
+// TestOneCountLiveTableNotOpenProbe (#4411): table --layout live --once
+// --sprint naming a sprint that is not the open one is REFUSED on stdout,
+// exit 1, naming the open sprint (as sprint status is), and so is the loop
+// on its first tick; the open sprint's own name renders the one count.
+func TestOneCountLiveTableNotOpenProbe(t *testing.T) {
+	t.Parallel()
+	ps := newProbeStore(t)
+	want := `REFUSED table --layout live --sprint other: not the open sprint; open=` + oneCountSprint + ` remedy="nova-sprint table --layout live"` + "\n"
+	for _, args := range [][]string{
+		{"table", "--layout", "live", "--once", "--sprint", "other", "--redis", ps.addr},
+		{"table", "--layout", "live", "--loop", "1", "--sprint", "other", "--redis", ps.addr},
+	} {
+		if code, stdout, stderr := runSprint(args...); code != 1 || stdout != want {
+			t.Fatalf("%v: exit %d %q %q; want 1 %q", args, code, stdout, stderr, want)
+		}
+	}
+	code, stdout, stderr := runSprint("table", "--layout", "live", "--once", "--sprint", oneCountSprint, "--redis", ps.addr)
+	if code != 0 || !strings.Contains(stdout, "\n1/8 done 12%, left 7, eta ") {
+		t.Fatalf("--sprint %s: exit %d %q %q; want the one count 1/8", oneCountSprint, code, stdout, stderr)
+	}
+	t.Logf("%s", want)
+}
+
+// TestOneCountClearKeepsParked (#4411): a parked card is not work in flight
+// and not landed, and a clear is not a cancel. After sprint clear --force
+// with one parked card (pa6), every printer says 0/0, the CLEARED receipt
+// says parked_kept=1, ws counts still reads parked=1 (outside the x/y) and
+// stream ls alpha parked=1.
+func TestOneCountClearKeepsParked(t *testing.T) {
+	t.Parallel()
+	ps := newProbeStore(t)
+	code, stdout, stderr := runSprint("sprint", "clear", "--redis", ps.addr, "--why", "probe", "--force")
+	if code != 0 || !strings.HasPrefix(stdout, "CLEARED streams=3 cards=8 ") || !strings.Contains(stdout, " parked_kept=1 by=") {
+		t.Fatalf("clear: exit %d\n%s%s; want CLEARED streams=3 cards=8 ... parked_kept=1", code, stdout, stderr)
+	}
+	*ps.clock = ps.clock.Add(time.Minute)
+	ps.printers(t, 0, 0)
+	_, counts, _ := runSprint("ws", "counts", "--redis", ps.addr)
+	if !strings.Contains(counts, " landed=0 parked=1 total=0 done=0/0 ") {
+		t.Fatalf("ws counts after the clear %q; want parked=1 beside total=0 done=0/0", counts)
+	}
+	_, ls, _ := runSprint("stream", "ls", "--redis", ps.addr)
+	if !regexp.MustCompile(`(?m)^\d+ "alpha" waiting=0 ready=0 working=0 review=0 merging=0 landed=0 parked=1$`).MatchString(ls) {
+		t.Fatalf("stream ls after the clear:\n%s\nwant alpha parked=1 and zeros", ls)
+	}
+	if n, err := ps.c.ZScore(context.Background(), ws.Key("alpha", ws.Parked), "pa6").Result(); err != nil || n == 0 {
+		t.Fatalf("pa6 is not in ws:alpha:parked after the clear: %v", err)
+	}
+	t.Logf("%s", strings.SplitN(stdout, "\n", 2)[0])
 }

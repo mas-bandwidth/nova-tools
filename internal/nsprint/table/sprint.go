@@ -19,8 +19,9 @@
 // card whose PR waits for its read; the old reading set and the merging
 // <read>/<unread> split (#3900, #3929) are gone). Every cell is one plain
 // ZCARD; it is left, never done. The headline and the stream block are one
-// read of ws.Counts (the one count, #one-count): the headline's total is the
-// total row's sum, the stream's sentinel counted like any card.
+// read of ws.Counts (the one count, #4411): the headline's total is the
+// total row's sum, and each stream's sentinel is counted nowhere (it is the
+// stream's stop, not work: in no cell, no total, no x/y and no left).
 //
 // The consumer table is ONE table (#4071, Glenn 2026-09-25 2:40 PM: "friends
 // can fuck up cards too"): a row per consumer, friends and benches alike,

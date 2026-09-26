@@ -217,6 +217,7 @@ func TestCardsNeverDisappear(t *testing.T) {
 	repo := srv.URL + "/acme/public.git"
 	for _, cmd := range [][]any{
 		{"HSET", "s:" + ndSprint, "status", "open"},
+		{"ZADD", "sprint:order", "1", ndSprint}, // the open sprint the table's one count reads (#4411)
 		{"HSET", "lease:reconciler", "token", ndFence},
 		{"SADD", "benches", ndBench},
 		{"HSET", "bench:" + ndBench + ":state", "state", "UP"},
@@ -418,6 +419,7 @@ func ndSetup(t *testing.T, ctx context.Context, client *redis.Client) {
 	t.Helper()
 	for _, cmd := range [][]any{
 		{"HSET", "s:" + ndSprint, "status", "open"},
+		{"ZADD", "sprint:order", "1", ndSprint}, // the open sprint the table's one count reads (#4411)
 		{"HSET", "lease:reconciler", "token", ndFence},
 		{"SADD", "benches", ndBench},
 		{"HSET", "bench:" + ndBench + ":state", "state", "UP"},

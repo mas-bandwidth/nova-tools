@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 876
+# ceiling: 875
 cmd/nova-board/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-board/fold_test.go:TestABrokenRandomSourceIsRefusedInBothBackends serial: t.Setenv
 cmd/nova-board/fold_test.go:TestAnIdRetryUnderIssueIsTheSameFilingOrARefusal serial: t.Setenv
@@ -269,7 +269,6 @@ cmd/nova-sprint/card_cut_test.go:TestCardCutInlinesIndex serial: swaps package v
 cmd/nova-sprint/card_cut_test.go:TestCardCutRefusesNoStream serial: swaps package var main.cardCutSource, t.Setenv
 cmd/nova-sprint/card_cut_test.go:TestCardCutWritesRecord serial: swaps package var main.cardCutSource, t.Chdir, t.Setenv
 cmd/nova-sprint/card_harness_functional_test.go:TestCardRunEndToEnd serial: t.Setenv
-cmd/nova-sprint/census_test.go:TestCensusSprintVerb serial: t.Setenv
 cmd/nova-sprint/control42_redis_test.go:TestControl42Redis serial: t.Setenv
 cmd/nova-sprint/cost_test.go:TestCostImportExitCodes serial: t.Setenv
 cmd/nova-sprint/expire_test.go:TestExpireDutyReplacesSprintRequeue serial: swaps package var main.expireProber, swaps package var main.reconcileDuties, swaps package var main.reconcileSeams

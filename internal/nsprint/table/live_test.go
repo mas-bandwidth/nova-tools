@@ -228,7 +228,7 @@ func TestTableShowsStaleBenchRowNotAbsent(t *testing.T) {
 		row("slow", at(3*time.Second)),
 		row("dead", at(10*time.Minute)),
 	}, now))
-	cfg := table.LiveConfig{Friends: []string{"rowan"}, Sprint: "s1"}
+	cfg := table.LiveConfig{Friends: []string{"rowan"}}
 	snap, err := table.ReadLive(context.Background(), client, cfg)
 	if err != nil {
 		t.Fatal(err)

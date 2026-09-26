@@ -125,7 +125,9 @@ func TestConsumerTableStatusAndOrder(t *testing.T) {
 // TestConsumerTableKeyAllowlist: a steady tick reads, per consumer, only
 // the ZCARDs of its four sets, its beat (HMGET), its down key (EXISTS) and
 // its desired hash's paused flag (HGET, #4308), and a bench's last fleet
-// play result (HGET bench:<b>:play, #4356; a friend has none); never the old friend:<f>
+// play result (HGET bench:<b>:play, #4356; a friend has none); of the
+// sprint only sprint:order and its status (the open-sprint check, #4411);
+// never the old friend:<f>
 // or bench:<b> row hash, ws:done0, a sprint's opened_at or its cards, never
 // a ZCOUNT window, and never another consumer's beat for a friend's load
 // (the bench:studio:beat hardcode, retired by #4233).
@@ -137,7 +139,7 @@ func TestConsumerTableKeyAllowlist(t *testing.T) {
 		{"SADD", "benches", "hetzner"},
 		{"SADD", "consumers", "friend:emma"},
 		{"ZADD", "sprint:order", "1", "S1"},
-		{"HSET", "s:S1", "opened_at", "1"},
+		{"HSET", "s:S1", "status", "open", "opened_at", "1"},
 	})
 	r := table.NewSprintReader(client, table.SprintConfig{Sprint: "S1"})
 	if _, err := r.Read(context.Background(), now); err != nil {
@@ -150,7 +152,11 @@ func TestConsumerTableKeyAllowlist(t *testing.T) {
 	var consumerKeys []string
 	for k := range log.keysRead() {
 		name, key, _ := strings.Cut(k, " ")
-		if name == "ZCOUNT" || key == "ws:done0" || key == "s:S1" || strings.HasPrefix(key, "sprint:S1:") || key == "sprint:order" {
+		// ZRANGE sprint:order and HGET s:S1 (its status) are the one count's
+		// check that the named sprint is the open one (#4411); no other read
+		// of the sprint
+		if name == "ZCOUNT" || key == "ws:done0" || (key == "s:S1" && name != "HGET") || strings.HasPrefix(key, "sprint:S1:") ||
+			(key == "sprint:order" && name != "ZRANGE") {
 			t.Errorf("the tick read %s", k)
 		}
 		if strings.HasPrefix(key, "friend:") || strings.HasPrefix(key, "bench:") {

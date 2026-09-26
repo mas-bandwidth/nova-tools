@@ -2,6 +2,7 @@ package table_test
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -22,51 +23,40 @@ func seedCommands(t *testing.T, client *redis.Client, cmds [][]string) {
 	}
 }
 
-// TestPipelineCountsOnlyReadyCards is #3066's table half: the pipeline's ready
-// cell is the pool, which holds only queued cards whose every DEPENDS-ON is
-// merged on their base; a card still waiting on a dependency is counted in
-// waiting and never in ready.
-func TestPipelineCountsOnlyReadyCards(t *testing.T) {
+// TestPipelineRowRefusesWhateverTheFamilyHolds (#4411, the cold read's
+// probe: one SADD s:<S>:idx:card:landed made the row print landed=1 beside
+// the one count's 1/8): the wide table's pipeline row prints the census
+// refusal and its remedy for a sprint whose retired card family is empty,
+// holds one landed card, or holds a ready pool, never a number; `table
+// --check` names the refusal as one cell.
+func TestPipelineRowRefusesWhateverTheFamilyHolds(t *testing.T) {
 	t.Parallel()
-
-	raw := []any{"time", "1", "pipeline", "s1", "3", "0", "0", "0", "0", "0", "0", "0", "2", "1", "0", "0", "0"}
-	snap, err := table.Parse(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := snap.Render()
-	if !strings.Contains(got, " ready=2 waiting=1 ") || strings.Contains(got, "pool=") {
-		t.Fatalf("pipeline line %q: want ready=2 waiting=1 and no pool= cell", got)
-	}
-}
-
-// TestRetiredPipelineRowRefuses (#4411): a sprint the retired card family
-// holds nothing of prints the census refusal and its remedy, never a row of
-// zeros beside the one count; a sprint with a card there keeps its row, and
-// `table --check` names the refusal as one cell.
-func TestRetiredPipelineRowRefuses(t *testing.T) {
-	t.Parallel()
-	zero := []any{"time", "1", "pipeline", "probe", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"}
-	snap, err := table.Parse(zero)
-	if err != nil {
-		t.Fatal(err)
-	}
 	want := "pipeline probe " + table.RetiredPipeline + "\n"
-	if got := snap.Render(); !strings.Contains(got, want) || strings.Contains(got, "landed=0") {
-		t.Fatalf("retired row %q; want %q", got, want)
-	}
 	if want != `pipeline probe REFUSED pipeline reads a retired key family; remedy="nova-sprint ws counts"`+"\n" {
 		t.Fatalf("the refusal changed: %q", want)
+	}
+	zero := []any{"time", "1", "pipeline", "probe", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"}
+	for name, set := range map[string]func([]any){
+		"empty":        func([]any) {},
+		"landed=1":     func(r []any) { r[11] = "1" }, // the reader's SADD s:probe:idx:card:landed old1
+		"queued=3":     func(r []any) { r[4] = "3" },
+		"ready pool=2": func(r []any) { r[12], r[13] = "2", "1" },
+	} {
+		raw := append([]any{}, zero...)
+		set(raw)
+		snap, err := table.Parse(raw)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got := snap.Render()
+		if !strings.Contains(got, want) || regexp.MustCompile(`pipeline probe .*=\d`).MatchString(got) {
+			t.Fatalf("%s: row %q; want %q and no number", name, got, want)
+		}
 	}
 	if d := table.DiffCells("name | up\n"+want, "name | up\n"+want); d != "" {
 		t.Fatalf("an equal refused row differs: %s", d)
 	}
-	one := append([]any{}, zero...)
-	one[4] = "1" // one queued card in the family
-	if snap, err = table.Parse(one); err != nil {
-		t.Fatal(err)
-	}
-	if got := snap.Render(); !strings.Contains(got, "pipeline probe queued=1 ") {
-		t.Fatalf("a sprint with a card lost its row: %q", got)
+	if d := table.DiffCells("name | up\npipeline probe queued=1\n", "name | up\n"+want); d == "" {
+		t.Fatal("a file with a pipeline number matched the refused row")
 	}
 }

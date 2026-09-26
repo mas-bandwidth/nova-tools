@@ -84,7 +84,7 @@ func TestHostRowReadsCardViews(t *testing.T) {
 		{"ZADD", "bench:alpha:cards:fail", "2", "s:x:card:d2", "3", "s:x:card:d3"},
 		{"HSET", "bench:beta", "host", "beta", "at", at, "queue", "5", "working", "5", "done", "5", "ok", "5", "fail", "0"},
 	})
-	snap, err := table.ReadLive(context.Background(), client, table.LiveConfig{Friends: []string{"rowan"}, Sprint: "x"})
+	snap, err := table.ReadLive(context.Background(), client, table.LiveConfig{Friends: []string{"rowan"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestHostRowPrintsUnreadCountsAsQuestionMarks(t *testing.T) {
 		{"HSET", "bench:beta", "host", "beta", "at", at},
 		{"ZADD", "bench:beta:cards:working", "1", "s:x:card:w9"},
 	})
-	snap, err := table.ReadLive(context.Background(), client, table.LiveConfig{Friends: []string{"rowan"}, Sprint: "x"})
+	snap, err := table.ReadLive(context.Background(), client, table.LiveConfig{Friends: []string{"rowan"}})
 	if err != nil {
 		t.Fatal(err)
 	}

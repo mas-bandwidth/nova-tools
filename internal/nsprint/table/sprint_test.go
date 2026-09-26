@@ -227,6 +227,10 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 	ctx, now := context.Background(), table.SprintFixtureNow()
 	cfg := table.SprintFixtureConfig()
 	cfg.Sprint = ""
+	// no sprint named and none open: the fixture's s:fix leaves sprint:order
+	if err := client.Del(ctx, "sprint:order").Err(); err != nil {
+		t.Fatal(err)
+	}
 	snap, err := table.NewSprintReader(client, cfg).Read(ctx, now)
 	if err != nil {
 		t.Fatal(err)

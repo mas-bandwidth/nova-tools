@@ -106,6 +106,9 @@ func SprintFixture() [][]string {
 	// counts, there is no sprint window), its load its beat; the bash hash
 	// bench:<b> says 9/9/9.99 and must not show.
 	cmds = append(cmds, []string{"HSET", "s:fix", "status", "open", "opened_at", ms(-3 * time.Hour)})
+	// s:fix is the open sprint the ws index counts: the table's --sprint
+	// names it, and a name that is not the open sprint is refused (#4411)
+	cmds = append(cmds, []string{"ZADD", "sprint:order", "1", "fix"})
 	for _, b := range []struct {
 		name                     string
 		ready, working, ok, fail int

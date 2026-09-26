@@ -211,3 +211,30 @@ func TestXYFileRetired(t *testing.T) {
 		}
 	}
 }
+
+// TestTableNotOpenRefusal (#4411): the live table's refusal of a sprint that
+// is not the open one names where the name came from and the remedy that
+// drops it (--sprint, or the NOVA_SPRINT environment), and passes any other
+// error through untouched.
+func TestTableNotOpenRefusal(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		err   error
+		named string
+		want  string
+	}{
+		{&ws.NotOpen{Name: "other", Open: "s1"}, "--sprint",
+			`REFUSED table --layout live --sprint other: not the open sprint; open=s1 remedy="nova-sprint table --layout live"` + "\n"},
+		{fmt.Errorf("read: %w", &ws.NotOpen{Name: "old"}), "NOVA_SPRINT",
+			`REFUSED table --layout live NOVA_SPRINT=old: not the open sprint; open=- remedy="unset NOVA_SPRINT"` + "\n"},
+	} {
+		var out strings.Builder
+		if code, ok := tableNotOpen(c.err, c.named, &out); !ok || code != 1 || out.String() != c.want {
+			t.Fatalf("%v: %d %v %q; want 1 %q", c.err, code, ok, out.String(), c.want)
+		}
+	}
+	var out strings.Builder
+	if _, ok := tableNotOpen(fmt.Errorf("pipeline: EOF"), "--sprint", &out); ok || out.Len() != 0 {
+		t.Fatalf("another error refused as not open: %q", out.String())
+	}
+}

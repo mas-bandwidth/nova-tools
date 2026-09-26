@@ -96,6 +96,9 @@ func TestControl3440RowVerbsRenderTheBashTable(t *testing.T) {
 			t.Fatalf("seed %v: %v", cmd, err)
 		}
 	}
+	// the config's sprint is the open one the one count reads (#4411)
+	client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: cfg.Sprint})
+	client.HSet(ctx, "s:"+cfg.Sprint, "status", "open")
 	ix := "sprint:" + cfg.Sprint + ":idx:"
 	for name, f := range friends {
 		for set, field := range map[string]string{"open": "ready", "working": "working", "closed": "done"} {
