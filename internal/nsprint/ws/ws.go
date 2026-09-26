@@ -33,9 +33,35 @@ const (
 	FnMigrate      = "ns_ws_migrate"
 )
 
-// States are the six sets a stream has, in the table's column order; the
-// first five are the stream table (Count.Waiting .. Count.Landed).
-var States = []string{"waiting", "ready", "working", "merging", "landed", "parked"}
+// The stream line (Glenn 2026-09-26): waiting -> ready -> working -> review
+// -> merging -> landed, then done and parked as the two sets a card ends in.
+// This is THE list. taskcard.Wheres, table.WSStates and taskbatch.States are
+// views of it, and 02_card_move.lua's WHERE is the same eight in the same
+// order; a state added here is added there in the same change.
+const (
+	Waiting = "waiting"
+	Ready   = "ready"
+	Working = "working"
+	Review  = "review"
+	Merging = "merging"
+	Landed  = "landed"
+	Done    = "done"
+	Parked  = "parked"
+)
+
+// Stream is the six live states, in the table's column order.
+var Stream = []string{Waiting, Ready, Working, Review, Merging, Landed}
+
+// Terminal are the two sets a card ends in.
+var Terminal = []string{Done, Parked}
+
+// Wheres is every set a stream has: Stream then Terminal, in the fsck reply's
+// order (ns_task_fsck counts them in this order).
+var Wheres = append(append([]string{}, Stream...), Terminal...)
+
+// States are the sets ns_ws_move moves a task between: Stream and parked.
+// Done is the verbs' closed, which no move names.
+var States = append(append([]string{}, Stream...), Parked)
 
 // Closed is the state in no set.
 const Closed = "closed"

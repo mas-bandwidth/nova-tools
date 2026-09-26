@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"strconv"
 	"strings"
 
@@ -47,8 +48,8 @@ const (
 	FnFsck       = "ns_tcard_fsck"
 )
 
-// Wheres are the sets a task can be in, in the fsck reply's order.
-var Wheres = []string{"waiting", "ready", "working", "review", "merging", "landed", "done", "parked"}
+// Wheres are the sets a task can be in, in the fsck reply's order: ws.Wheres.
+var Wheres = ws.Wheres
 
 // Key is a task's record.
 func Key(id string) string { return "task:" + id }

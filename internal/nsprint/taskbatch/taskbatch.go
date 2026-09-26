@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"io"
 	"strings"
 
@@ -35,8 +36,9 @@ const (
 	MoveFriend = "move-friend"
 )
 
-// States are the ws states a task can be moved to (closed is in no ZSET).
-var States = []string{"waiting", "ready", "working", "merging", "landed", "parked", "closed"}
+// States are the ws states a task can be moved to: ws.States and closed
+// (which is in no ZSET).
+var States = append(append([]string{}, ws.States...), "closed")
 
 // Caller runs one Redis Function with no keys. FCall is the production one; a
 // test may run the same source another way.

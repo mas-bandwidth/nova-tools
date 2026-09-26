@@ -59,6 +59,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"slices"
 	"sort"
 	"strconv"
@@ -69,9 +70,9 @@ import (
 )
 
 // WSStates are the six per-stream sets the table counts, in reply order:
-// the stream line waiting -> ready -> working -> review -> merging -> landed
-// (Glenn 2026-09-26). review is where a card waits for a verdict or a read.
-var WSStates = []string{"waiting", "ready", "working", "review", "merging", "landed"}
+// the stream line ws.Stream (Glenn 2026-09-26). review is where a card waits
+// for a verdict or a read.
+var WSStates = ws.Stream
 
 // ConsumerSets are the four <kind>:<name>:cards:<set> sets a consumer row
 // counts, in column order (done = ok + fail is derived).
