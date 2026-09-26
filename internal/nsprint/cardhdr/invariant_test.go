@@ -100,7 +100,8 @@ func TestLintOneInvariantRefusesEachRule(t *testing.T) {
 }
 
 // TestLintOneInvariantReadsIssueText: a card cut from an issue quotes it under
-// "> ", and a line inside a code fence is not a card line.
+// "> ", and a line inside a code fence is not a card line, except that a
+// BUILD list inside one is a BUILD list (the third read).
 func TestLintOneInvariantReadsIssueText(t *testing.T) {
 	t.Parallel()
 	quoted := "RESULT: x sha=0\nKIND: fix\n" + strings.Join(goodCardLines[2:7], "\n") + "\n\n> BUILD:\n> 1. one\n> 2. two\n"
@@ -108,8 +109,8 @@ func TestLintOneInvariantReadsIssueText(t *testing.T) {
 		t.Errorf("quoted BUILD list: rules %q, want build-list", got.Rules())
 	}
 	fenced := cardWith("", "") + "```\nBUILD:\n- one\n- two\nbuild issue #1 as written\n```\n"
-	if got := LintOneInvariant(Card{Text: fenced}); got != nil {
-		t.Errorf("a fenced block was read as card lines: %v", got)
+	if got := LintOneInvariant(Card{Text: fenced}); got.Rules() != RuleBuildList {
+		t.Errorf("a fenced block: rules %q, want build-list alone (a fenced build-issue line is no card line)", got.Rules())
 	}
 }
 
@@ -369,4 +370,123 @@ func TestLintOneInvariantOverTreeFixtures(t *testing.T) {
 		return nil
 	})
 	t.Logf("card fixtures=%d refused=%d", cards, refusedCards)
+}
+
+// TestSentencesEndAtClosingQuoteOrBracket (#4396, the third read's probes):
+// . ! or ? then a closing quote or bracket then a space ends a sentence, and
+// a backtick with no closing backtick on its line hides nothing after it.
+func TestSentencesEndAtClosingQuoteOrBracket(t *testing.T) {
+	t.Parallel()
+	for s, want := range map[string]int{
+		`A prints "done." B prints ok.`:  2,
+		`A passes (see x.) B passes.`:    2,
+		`A says 'ok!' B says 'no?' C.`:   3,
+		`A prints "done."`:               1,
+		`A passes (see x.)`:              1,
+		`A prints "done.")`:              1,
+		`A prints "v1.2" and holds.`:     1,
+		"A holds `x. B holds.":           2,
+		"A holds `x.\nB holds. C` holds": 3,
+		"A holds `x. y` then.":           1,
+	} {
+		if got := Sentences(s); got != want {
+			t.Errorf("Sentences(%q) = %d, want %d", s, got, want)
+		}
+	}
+	for _, done := range []string{`DONE-WHEN: A prints "done." B prints ok.`, "DONE-WHEN: A passes (see x.) B passes.",
+		"DONE-WHEN: `go test ./x passes. B holds."} {
+		if got := LintOneInvariant(Card{Text: cardWith("DONE-WHEN:", done)}); got.Rules() != RuleDoneWhenSentences {
+			t.Errorf("%q: rules %q, want done-when-sentences", done, got.Rules())
+		}
+	}
+}
+
+// TestLintOneInvariantReadsContinuationLines: a line after DONE-WHEN: or
+// INVARIANT: (up to a blank line, a KEY: line, a list item, a heading, a
+// rule or a fence) continues it, so a second sentence there is refused.
+func TestLintOneInvariantReadsContinuationLines(t *testing.T) {
+	t.Parallel()
+	done := "DONE-WHEN: `go test ./internal/nsprint/cardhdr -run TestX` passes."
+	inv := goodCardLines[2]
+	for name, c := range map[string]struct {
+		text, rules string
+	}{
+		"done-when next line": {strings.Replace(cardWith("DONE-WHEN:", done), done, done+"\nThe CLI prints one line.", 1), RuleDoneWhenSentences},
+		"invariant next line": {strings.Replace(cardWith("", ""), inv, inv+"\nIt names the rule.", 1), RuleInvariantSentences},
+		"one sentence wrapped": {strings.Replace(cardWith("DONE-WHEN:", "DONE-WHEN: `go test ./x -run TestX`"), "-run TestX`",
+			"-run TestX`\npasses in under 2 s.", 1), ""},
+		"blank line then prose": {cardWith("DONE-WHEN:", done+"\n\nA note follows. It is prose."), ""},
+		"list after":            {cardWith("DONE-WHEN:", done+"\n- one receipt line."), ""},
+		"key after":             {cardWith("DONE-WHEN:", done+"\nNOTE: a note. Two."), ""},
+	} {
+		if got := LintOneInvariant(Card{Text: c.text}); got.Rules() != c.rules {
+			t.Errorf("%s: rules %q, want %q\n%s", name, got.Rules(), c.rules, c.text)
+		}
+	}
+}
+
+// TestLintOneInvariantReadsBuildListAnyForm (#4396, the third read's
+// probes): a BUILD list inside a ``` fence, under a Build: header in any
+// letter case, or numbered on the BUILD: line itself is a BUILD list.
+func TestLintOneInvariantReadsBuildListAnyForm(t *testing.T) {
+	t.Parallel()
+	for name, list := range map[string]string{
+		"fenced items":  "BUILD:\n```\n1. the parser\n2. the linter\n```",
+		"fenced header": "```\nBUILD:\n- the parser\n- the linter\n```",
+		"Build:":        "Build:\n- the parser\n- the linter",
+		"build:":        "build:\n1. the parser\n2. the linter",
+		"bUiLd:":        "bUiLd:\n- the parser\n- the linter",
+		"one line":      "BUILD: 1. a 2. b",
+		"one line (1)":  "BUILD: (1) the parser (2) the linter",
+		"line and list": "BUILD: 1. the parser\n2. the linter",
+	} {
+		if got := LintOneInvariant(Card{Text: cardWith("BUILD:", list)}); got.Rules() != RuleBuildList {
+			t.Errorf("%s: rules %q, want build-list", name, got.Rules())
+		}
+	}
+	for _, one := range []string{"Build: the parser, go 1.27.", "BUILD: 1. the parser", "```\nBuild:\n- the parser\n```"} {
+		if got := LintOneInvariant(Card{Text: cardWith("BUILD:", one)}); got != nil {
+			t.Errorf("%q: refused %q, want accepted (one item)", one, got.Rules())
+		}
+	}
+	// a plan's children may sit on its BUILD: line
+	if got := LintOneInvariant(Card{Text: "KIND: plan\nINVARIANT: x holds.\n\nBuild: 1. child-a 2. child-b\n"}); got != nil {
+		t.Errorf("plan with inline children: refused %q", got.Rules())
+	}
+}
+
+// TestLintTitleKind (#4396, the third read's task push probes): KIND stitch
+// is refused on every task push (card cut --parent is its one writer), KIND
+// plan with no card is refused plan-children, and a title that says "build
+// issue #N as written" is refused build-issue; the card's own rules and
+// these merge to one line per rule.
+func TestLintTitleKind(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		kind, title string
+		card        bool
+		rules       string
+	}{
+		{"stitch", "stitch", false, RuleStitchWriter},
+		{"stitch", "stitch", true, RuleStitchWriter},
+		{"plan", "the plan", false, RulePlanChildren},
+		{"plan", "the plan", true, ""},
+		{"work", "Build issue #4352 as written", false, RuleBuildIssue},
+		{"stitch", "build nova-tools#4352, as written", false, RuleStitchWriter + "," + RuleBuildIssue},
+		{"work", "the parser refuses a list", false, ""},
+		{"", "", false, ""},
+		{"fix", "Rebuild issue #4352 as written", false, ""},
+	} {
+		if got := LintTitleKind(c.kind, c.title, c.card); got.Rules() != c.rules {
+			t.Errorf("LintTitleKind(%q, %q, %v) = %q, want %q", c.kind, c.title, c.card, got.Rules(), c.rules)
+		}
+	}
+	rs := LintTitleKind("work", "Build issue #1 as written", false)
+	if want := `REFUSED card-lint rule=build-issue line="--title Build issue #1 as written" remedy="cut as a parent with children: card cut --parent"`; rs.Error() != want {
+		t.Errorf("line %q, want %q", rs.Error(), want)
+	}
+	body := LintOneInvariant(Card{Text: cardWith("BUILD:", "Build issue #1 as written.")})
+	if got := body.Merge(rs).Rules(); got != RuleBuildIssue {
+		t.Errorf("merge = %q, want one build-issue", got)
+	}
 }

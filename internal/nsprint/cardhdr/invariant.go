@@ -17,6 +17,10 @@ package cardhdr
 // A KIND stitch is linted like any card: the one stitch no rule reads is the
 // row card cut --parent generates, which that writer never lints (its row
 // check returns before the lint); a KIND: stitch header is no exemption.
+// LintTitleKind is the check every task push runs on its --kind and --title,
+// with a card or none: a stitch is refused (card cut --parent is its one
+// writer), a plan with no card is refused plan-children, and a title that
+// says "build issue #N as written" is refused build-issue.
 
 import (
 	"fmt"
@@ -74,6 +78,7 @@ const (
 	RuleBuildIssue         = "build-issue"
 	RuleBuildList          = "build-list"
 	RulePlanChildren       = "plan-children"
+	RuleStitchWriter       = "stitch-writer"
 )
 
 // Refusal is one broken rule: its name, the offending line as written ("" when
@@ -135,25 +140,41 @@ func abbreviationAt(s string, i int) bool {
 	return abbreviations[strings.ToLower(s[j:i])]
 }
 
-// Sentences counts the sentences in s: a sentence ends in . ! or ? followed
-// by a space or the end, and a `code span` is opaque (a period inside one ends
-// nothing); the period of e.g., i.e., vs. or etc. ends nothing. Text after the
-// last end is one more sentence; "" is none.
+// Sentences counts the sentences in s: a sentence ends in . ! or ? followed,
+// after any closing quotes or brackets ("done." or (see x.)), by a space or
+// the end. A `code span` is opaque (a period inside one ends nothing), and a
+// backtick with no closing backtick on its line is a plain character. The
+// period of e.g., i.e., vs. or etc. ends nothing. Text after the last end is
+// one more sentence; "" is none.
 func Sentences(s string) int {
 	s = strings.TrimSpace(s)
-	n, open, pending := 0, false, false
+	n, pending := 0, false
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch {
 		case c == '`':
-			open = !open
 			pending = true
-		case open:
+			line := s[i+1:]
+			if nl := strings.IndexByte(line, '\n'); nl >= 0 {
+				line = line[:nl]
+			}
+			if end := strings.IndexByte(line, '`'); end >= 0 {
+				i += end + 1 // the span, closing backtick included
+			}
 		case c == '.' && abbreviationAt(s, i):
 			pending = true
-		case (c == '.' || c == '!' || c == '?') && (i+1 == len(s) || s[i+1] == ' ' || s[i+1] == '\t' || s[i+1] == '\n'):
-			n++
-			pending = false
+		case c == '.' || c == '!' || c == '?':
+			j := i + 1
+			for j < len(s) && strings.IndexByte(closers, s[j]) >= 0 {
+				j++
+			}
+			if j == len(s) || s[j] == ' ' || s[j] == '\t' || s[j] == '\n' {
+				n++
+				pending = false
+				i = j - 1
+			} else {
+				pending = true
+			}
 		case c != ' ' && c != '\t' && c != '\n':
 			pending = true
 		}
@@ -163,6 +184,10 @@ func Sentences(s string) int {
 	}
 	return n
 }
+
+// closers are the characters that may follow a sentence's end before the
+// space: closing quotes and brackets.
+const closers = "\"')]}"
 
 // ParseInvariant reads an INVARIANT line's value: one sentence.
 func ParseInvariant(value string) (string, error) {
@@ -270,15 +295,23 @@ func Packages(paths string, files []string) []string {
 	return out
 }
 
-// cardLine is one KEY: value line the linter read, as written.
+// cardLine is one KEY: value line the linter read, as written; more is the
+// lines that continue it (up to a blank line, a KEY: line, a list item, a
+// heading, a rule or a fence), read with the value as its sentences.
 type cardLine struct {
-	value, text string
+	value, text, more string
+}
+
+// sentences is the line's sentence count, its continuation lines included.
+func (l cardLine) sentences() int {
+	return Sentences(l.value + "\n" + l.more)
 }
 
 // lintCard is the card as the rules read it.
 type lintCard struct {
 	keys  map[string]cardLine // the first line of each key
 	lines []string            // every line, a quote prefix ("> ") dropped, fences dropped
+	all   []string            // every line, fenced lines kept (the fence lines dropped)
 	kind  string
 	files []string
 }
@@ -295,20 +328,34 @@ func unquote(line string) string {
 func readCard(c Card) *lintCard {
 	lc := &lintCard{keys: map[string]cardLine{}, files: c.Files}
 	fenced := false
+	cont := "" // the key whose continuation lines are being read
 	for _, raw := range strings.Split(strings.ReplaceAll(c.Text, "\r\n", "\n"), "\n") {
 		line := unquote(strings.TrimRight(raw, " \t\r"))
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			fenced = !fenced
+			fenced, cont = !fenced, ""
 			continue
 		}
+		lc.all = append(lc.all, line)
 		if fenced {
 			continue
 		}
 		lc.lines = append(lc.lines, line)
 		if k, v, ok := KeyValue(line); ok {
+			cont = ""
 			if _, seen := lc.keys[k]; !seen {
 				lc.keys[k] = cardLine{value: v, text: line}
+				cont = k
 			}
+			continue
+		}
+		t := strings.TrimSpace(line)
+		if t == "" || t == "---" || strings.HasPrefix(t, "#") || listItemRE.MatchString(line) {
+			cont = ""
+		}
+		if cont != "" {
+			l := lc.keys[cont]
+			l.more += line + "\n"
+			lc.keys[cont] = l
 		}
 	}
 	lc.kind = strings.TrimSpace(lc.keys[keyKind].value)
@@ -332,6 +379,8 @@ var (
 	// (upper or lower case: the #4352 A-F shape, a. b.) or a roman numeral
 	// (i. ii., I. II.) written 1. or 1) or (1).
 	listItemRE = regexp.MustCompile(`^\s*(?:[-*+]|(?:\d+|[A-Za-z]|[ivx]+|[IVX]+)[.)]|\((?:\d+|[A-Za-z]|[ivx]+|[IVX]+)\))\s+\S`)
+	// inlineItemRE is one numbered item on a BUILD: line itself: 1. 1) (1).
+	inlineItemRE = regexp.MustCompile(`\s(?:\d+[.)]|\(\d+\))\s+\S`)
 )
 
 const (
@@ -353,7 +402,7 @@ var rules = []rule{
 		return nil
 	}},
 	{RuleInvariantSentences, func(lc *lintCard) *Refusal {
-		if l, ok := lc.keys[KeyInvariant]; ok && Sentences(l.value) > 1 {
+		if l, ok := lc.keys[KeyInvariant]; ok && l.sentences() > 1 {
 			return &Refusal{Line: l.text, Remedy: RemedyParent}
 		}
 		return nil
@@ -366,7 +415,7 @@ var rules = []rule{
 		return nil
 	}},
 	{RuleDoneWhenSentences, func(lc *lintCard) *Refusal {
-		if l, ok := lc.keys[keyDoneWhen]; ok && !lc.plan() && Sentences(l.value) > 1 {
+		if l, ok := lc.keys[keyDoneWhen]; ok && !lc.plan() && l.sentences() > 1 {
 			return &Refusal{Line: l.text, Remedy: RemedyParent}
 		}
 		return nil
@@ -431,17 +480,20 @@ var rules = []rule{
 	}},
 }
 
-// buildList is the card's longest BUILD: list: the BUILD: line and its list
-// items (listItemRE), read up to the next KEY: line, heading or rule; ""
+// buildList is the card's longest BUILD: list: the BUILD: line (any letter
+// case: Build:, build:) and its items, fenced lines included: the items on
+// the BUILD: line itself (BUILD: 1. a 2. b, inlineItemRE) and the list items
+// (listItemRE) below it, read up to the next KEY: line, heading or rule; ""
 // and 0 when no BUILD: line has an item.
 func (lc *lintCard) buildList() (string, int) {
 	best, most := "", 0
-	for i, line := range lc.lines {
-		if k, _, ok := KeyValue(line); !ok || k != KeyBuild {
+	for i, line := range lc.all {
+		k, v, ok := KeyValue(line)
+		if !ok || !strings.EqualFold(k, KeyBuild) {
 			continue
 		}
-		items := 0
-		for _, next := range lc.lines[i+1:] {
+		items := len(inlineItemRE.FindAllString(" "+v, -1))
+		for _, next := range lc.all[i+1:] {
 			if listItemRE.MatchString(next) {
 				items++
 				continue
@@ -475,4 +527,43 @@ func lintWith(c Card, rs []rule) Refusals {
 		}
 	}
 	return out
+}
+
+// remedyStitch: a stitch has one writer, the plan's cut.
+const remedyStitch = "a stitch is cut with its plan: card cut --parent <plan id> (no other push writes KIND stitch)"
+
+// LintTitleKind is the refusals every task push runs on its --kind and
+// --title (#4396), a card pushed with it (card true) or none: KIND stitch is
+// refused stitch-writer (card cut --parent, which pushes no task push, is its
+// one writer), KIND plan with no card is refused plan-children (no BUILD:
+// names a child), and a title that says "build issue #N as written" is
+// refused build-issue. nil when the push keeps them.
+func LintTitleKind(kind, title string, card bool) Refusals {
+	var out Refusals
+	kind = strings.TrimSpace(kind)
+	if kind == KindStitch {
+		out = append(out, Refusal{Rule: RuleStitchWriter, Line: "--kind " + kind, Remedy: remedyStitch})
+	}
+	if kind == KindPlan && !card {
+		out = append(out, Refusal{Rule: RulePlanChildren, Line: "--kind " + kind, Remedy: remedyPlanChildren})
+	}
+	if buildIssueRE.MatchString(title) {
+		out = append(out, Refusal{Rule: RuleBuildIssue, Line: "--title " + title, Remedy: RemedyParent})
+	}
+	return out
+}
+
+// Merge is rs and then each refusal of more whose rule rs does not name, so
+// a rule is one line.
+func (rs Refusals) Merge(more Refusals) Refusals {
+	for _, m := range more {
+		seen := false
+		for _, r := range rs {
+			seen = seen || r.Rule == m.Rule
+		}
+		if !seen {
+			rs = append(rs, m)
+		}
+	}
+	return rs
 }

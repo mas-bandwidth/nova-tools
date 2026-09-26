@@ -291,17 +291,22 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if err != nil {
 			return refuse(errOut, c.verb, err.Error())
 		}
-		// A push that carries a card is one invariant (#4396): refused
-		// before any write, the receipt on stdout, one REFUSED card-lint
-		// line per rule on stderr, exit 2 (as card push). KIND: stitch is
-		// linted like any kind.
+		// A push that carries a card is one invariant (#4396), and every
+		// push, a card or none, keeps the title-and-kind lint (no stitch, no
+		// plan with no card, no "build issue #N as written" title): refused
+		// before any write, the receipt on stdout, one REFUSED card-lint line
+		// per rule on stderr, exit 2 (as card push).
+		var rs cardhdr.Refusals
+		kind := *c.kind
 		if spec != nil {
+			kind = firstOf(kind, spec.Kind)
 			repo := firstOf(*c.repo, spec.Repo)
-			if rs := cardhdr.LintOneInvariant(cardhdr.Card{Text: taskLintText(*c.kind, spec), Files: card.FilesAt(repo, spec.BaseSHA)}); rs != nil {
-				_, _ = fmt.Fprintf(out, "TASK push REFUSED id=%s why=%s ms=%d\n", *c.id, quoteField("card-lint "+rs.Rules()), ms())
-				_, _ = fmt.Fprint(errOut, card.LintLines(*c.id, rs))
-				return 2
-			}
+			rs = cardhdr.LintOneInvariant(cardhdr.Card{Text: taskLintText(*c.kind, spec), Files: card.FilesAt(repo, spec.BaseSHA)})
+		}
+		if rs = rs.Merge(cardhdr.LintTitleKind(kind, *c.title, spec != nil)); rs != nil {
+			_, _ = fmt.Fprintf(out, "TASK push REFUSED id=%s why=%s ms=%d\n", *c.id, quoteField("card-lint "+rs.Rules()), ms())
+			_, _ = fmt.Fprint(errOut, card.LintLines(*c.id, rs))
+			return 2
 		}
 		r, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: *c.id, Stream: *c.stream, Friend: *c.friend,
 			Sprint: *c.sprint, Kind: *c.kind, Ref: *c.ref, Origin: *c.origin, Title: *c.title, Head: *c.head,

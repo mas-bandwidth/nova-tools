@@ -116,8 +116,8 @@ func cardRenderFromIssuePush(t *testing.T) {
 	if code, out, _ := pushPlan("pl2"); code != 2 || !strings.HasPrefix(out, `TASK push REFUSED id=pl2 why="card-lint done-when-sentences,class-test-missing,paths-packages,build-list" ms=`) {
 		t.Errorf("push of the plan card as KIND: fix = %d %q", code, out)
 	}
-	// a hand-written KIND: stitch is linted like any card (#4396): only card
-	// cut --parent's own stitch row goes unlinted, by its writer.
+	// a hand-written KIND: stitch is linted like any card and refused
+	// stitch-writer (#4396): only card cut --parent writes a stitch.
 	stitchText := "KIND: stitch\nSTREAM: swarm: cards\nPATHS: internal/a/a.go internal/b/ internal/c/ internal/d/ internal/e/\n" +
 		"DONE-WHEN: the children land.\n\nBuild issue #4352, as written.\n\nBUILD:\n- the parser\n- the linter\n"
 	if err := os.WriteFile(plan, []byte(stitchText), 0o644); err != nil {
@@ -125,8 +125,8 @@ func cardRenderFromIssuePush(t *testing.T) {
 	}
 	keys = seat.client.DBSize(context.Background()).Val()
 	if code, out, errOut := pushPlan("st1"); code != 2 ||
-		!strings.HasPrefix(out, `TASK push REFUSED id=st1 why="card-lint invariant-missing,class-test-missing,paths-packages,build-issue,build-list" ms=`) ||
-		strings.Count(errOut, "REFUSED card-lint rule=") != 5 {
+		!strings.HasPrefix(out, `TASK push REFUSED id=st1 why="card-lint invariant-missing,class-test-missing,paths-packages,build-issue,build-list,stitch-writer" ms=`) ||
+		strings.Count(errOut, "REFUSED card-lint rule=") != 6 {
 		t.Errorf("push of a hand-written KIND: stitch = %d stdout %q stderr %q", code, out, errOut)
 	}
 	if n := seat.client.DBSize(context.Background()).Val(); n != keys {
@@ -151,5 +151,50 @@ func cardRenderFromIssuePush(t *testing.T) {
 	}
 	if code, _, _ := render(); code != 2 {
 		t.Errorf("render with no --id = %d, want 2", code)
+	}
+	taskPushTitleKindLint(t, seat)
+}
+
+// taskPushTitleKindLint (#4396, the third read's task push probes) runs at
+// the end of cardRenderFromIssuePush on its serial seat: a task push with no
+// card (--kind and --title only) keeps the title-and-kind lint on both
+// doors, the card form (--actor) and the friend-queue form (NOVA_FRIEND
+// set, no --actor). Each probe the reader saw accepted is refused exit 2
+// with one REFUSED card-lint line and the key count unchanged; a plain work
+// push is still accepted.
+func taskPushTitleKindLint(t *testing.T, seat *seatFixture) {
+	t.Helper()
+	ctx := context.Background()
+	if code, out, errOut := runTaskCLI("push", "--actor", "rowan", "--id", "t0", "--waiting", "--kind", "work", "--title", "the parser refuses a list"); code != 0 || !strings.Contains(out, "to=waiting") {
+		t.Fatalf("plain work push = %d %q %q", code, out, errOut)
+	}
+	for _, c := range []struct {
+		id, rule, line string
+		args           []string
+	}{
+		{"t3", "stitch-writer", "--kind stitch", []string{"--kind", "stitch", "--title", "stitch"}},
+		{"t4", "plan-children", "--kind plan", []string{"--kind", "plan", "--title", "the plan"}},
+		{"t5", "build-issue", "--title Build issue #4352 as written", []string{"--title", "Build issue #4352 as written", "--kind", "work"}},
+	} {
+		keys := seat.client.DBSize(ctx).Val()
+		code, out, errOut := runTaskCLI(append([]string{"push", "--actor", "rowan", "--id", c.id, "--waiting"}, c.args...)...)
+		if code != 2 || !strings.HasPrefix(out, `TASK push REFUSED id=`+c.id+` why="card-lint `+c.rule+`" ms=`) ||
+			!strings.HasPrefix(errOut, `REFUSED card-lint rule=`+c.rule+` line="`+c.line+`" `) || strings.Count(errOut, "\n") != 1 {
+			t.Errorf("card-form push %v = %d stdout %q stderr %q", c.args, code, out, errOut)
+		}
+		if n := seat.client.DBSize(ctx).Val(); n != keys {
+			t.Errorf("card-form push %v changed the key count %d -> %d", c.args, keys, n)
+		}
+	}
+	// the friend-queue form: the seat is the initiator, no --actor
+	t.Setenv("NOVA_FRIEND", "rowan")
+	defer t.Setenv("NOVA_FRIEND", "")
+	keys := seat.client.DBSize(ctx).Val()
+	code, out, errOut := runTaskCLI("push", "--id", "q1", "--to", "emma", "--title", "Build issue #4352 as written")
+	if code != 2 || out != "" || errOut != `REFUSED card-lint rule=build-issue line="--title Build issue #4352 as written" remedy="cut as a parent with children: card cut --parent" card="q1"`+"\n" {
+		t.Errorf("friend-queue push of a build-issue title = %d stdout %q stderr %q", code, out, errOut)
+	}
+	if n := seat.client.DBSize(ctx).Val(); n != keys {
+		t.Errorf("friend-queue push changed the key count %d -> %d", keys, n)
 	}
 }
