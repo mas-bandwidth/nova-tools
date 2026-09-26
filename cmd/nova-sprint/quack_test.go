@@ -61,8 +61,8 @@ func TestQuackCut(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("a clean cut prints one line, got:\n%s", out)
 	}
-	if stop, err := pitstop.Read(ctx, client, S); err != nil || !stop.Set || stop.By != "rowan" || !strings.Contains(stop.Why, "cutting 5 quack cards") {
-		t.Fatalf("pit stop %+v %v, want set by rowan for the cut", stop, err)
+	if stop, err := pitstop.Read(ctx, client, S); err != nil || !stop.Set || stop.By != seatActor() || !strings.Contains(stop.Why, "cutting 5 quack cards") {
+		t.Fatalf("pit stop %+v %v, want set by the seat (%s) for the cut", stop, err, seatActor())
 	}
 	ids, err := client.ZRange(ctx, "ws:quack:waiting", 0, -1).Result()
 	ids = slices.DeleteFunc(ids, ws.IsSentinel) // the stream's stop (#4318) beside its cards
@@ -147,10 +147,10 @@ func TestQuackRun(t *testing.T) {
 		t.Fatalf("exit %d, want 1 (ghost refused)\n%s%s", code, out, errOut)
 	}
 	for _, want := range []string{
-		"SLOTS REFUSED bench=ghost slots=2 why=no-machine remedy=\"nova-sprint capacity bench --as rowan --machine <m> ghost 2\"\n",
+		"SLOTS REFUSED bench=ghost slots=2 why=no-machine remedy=\"nova-sprint capacity bench --as ghost --machine <m> --slots 2\"\n",
 		"SLOTS SET bench=hetzner machine=m slots=8 desired=8/40\n",
 		"SLOTS SET bench=hulk machine=m slots=16 desired=24/40\n",
-		"PITSTOP CLEAR sprint=quack-t2 by=rowan at=",
+		"PITSTOP CLEAR sprint=quack-t2 by=" + seatActor() + " at=",
 		" was_by=rowan was_why=\"quack cut: cutting 2 quack cards into quack\"\n",
 		"QUACK RUN sprint=quack-t2 benches=2 refused=1 pitstop=lifted ms=",
 	} {

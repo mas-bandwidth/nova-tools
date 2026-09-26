@@ -64,7 +64,7 @@ func TestLandWriterCutoverAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if vals["gen"] != "1" || vals["owner"] != "nova-sprint" || vals["by"] != "rowan" || vals["since"] == "" {
+	if vals["gen"] != "1" || vals["owner"] != "nova-sprint" || vals["by"] != seatActor() || vals["since"] == "" {
 		t.Fatalf("writer hash mismatch: %+v", vals)
 	}
 
@@ -78,7 +78,7 @@ func TestLandWriterCutoverAndRollback(t *testing.T) {
 		t.Fatalf("expected events in %s, got none", eventsKey)
 	}
 	f := xmsgs[0].Values
-	if f["event"] != "WRITER" || f["gen"] != "1" || f["owner"] != "nova-sprint" || f["by"] != "rowan" {
+	if f["event"] != "WRITER" || f["gen"] != "1" || f["owner"] != "nova-sprint" || f["by"] != seatActor() {
 		t.Fatalf("event record mismatch: %+v", f)
 	}
 
@@ -128,7 +128,7 @@ func TestLandWriterCutoverAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if vals["gen"] != "2" || vals["owner"] != "old-loop" || vals["by"] != "emma" {
+	if vals["gen"] != "2" || vals["owner"] != "old-loop" || vals["by"] != seatActor() {
 		t.Fatalf("rollback hash mismatch: %+v", vals)
 	}
 }

@@ -91,7 +91,7 @@ func TestLanderLoadsMembersFromUnitRecords(t *testing.T) {
 		var out, errOut bytes.Buffer
 		args := []string{"--redis", addr, "--sprint", S, "--repo", repo, "--batch", "b-3611",
 			"--gate", "g", "--bisect", "b", "--land", "l", "--file", "f"}
-		code := runLander(ctx, append(args, members...), &out, &errOut)
+		code := runLander(ctx, append(args, "--pr", strings.Join(members, ",")), &out, &errOut)
 		return code, out.String(), errOut.String()
 	}
 

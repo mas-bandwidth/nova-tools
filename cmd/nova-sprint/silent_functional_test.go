@@ -57,7 +57,7 @@ func silentClosedAddr(t *testing.T) string {
 // Redis error on stderr, exit 2.
 func TestCardRenderNamesTheStoreNotNOTASK(t *testing.T) {
 	t.Parallel()
-	code, out, errOut := runCLI("card", "render", "--id", "c0~1", "--redis", silentClosedAddr(t), "--actor", seat())
+	code, out, errOut := runCLI("card", "render", "--ids", "c0~1", "--redis", silentClosedAddr(t))
 	if code != 2 || out != "" || strings.Contains(errOut, "NOTASK") || strings.Contains(errOut, "NOCOPY") ||
 		!strings.Contains(errOut, "nova-sprint card render:") || !strings.Contains(errOut, "connect") {
 		t.Fatalf("render on a dead store = %d %q %q; want exit 2 with the dial error, never NOTASK", code, out, errOut)
@@ -74,21 +74,21 @@ func TestCardExpireNamesTheCopyItCouldNotEnd(t *testing.T) {
 	addr, c := silentRedis(t)
 	ctx := context.Background()
 	c.HSet(ctx, "bench:b:desired", "slots", "2")
-	if code, out, errOut := runTaskCLI("push", "--redis", addr, "--actor", seat(), "--id", "sx0", "--stream", "swarm: cards", "--waiting",
+	if code, out, errOut := runTaskCLI("push", "--redis", addr, "--as", seat(), "--ids", "sx0", "--stream", "swarm: cards", "--waiting",
 		"--kind", "build", "--repo", "mas-bandwidth/nova-tools", "--title", "t"); code != 0 {
 		t.Fatalf("push %d %q %q", code, out, errOut)
 	}
-	if code, out, _ := runCLI("card", "deal", "--redis", addr, "--to", "bench:b", "--ids", "sx0", "--actor", seat()); code != 0 {
+	if code, out, _ := runCLI("card", "deal", "--redis", addr, "--to", "bench:b", "--ids", "sx0"); code != 0 {
 		t.Fatalf("deal = %d %q", code, out)
 	}
-	if code, out, _ := runCLI("card", "work", "--redis", addr, "--as", "bench:b", "--fill", "--actor", seat()); code != 0 {
+	if code, out, _ := runCLI("card", "work", "--redis", addr, "--as", "bench:b", "--fill"); code != 0 {
 		t.Fatalf("work = %d %q", code, out)
 	}
 	// The copy's record vanishes while it works; its lease lapses.
 	if err := c.Del(ctx, "task:sx0~1").Err(); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errOut := runCLI("card", "expire", "--redis", addr, "--as", "bench:b", "--actor", seat())
+	code, out, errOut := runCLI("card", "expire", "--redis", addr, "--as", "bench:b")
 	if code != 1 || !strings.Contains(out, "EXPIRE sx0~1 REFUSED why=\"NOCOPY task:sx0~1\"") ||
 		!regexp.MustCompile(`CARD EXPIRE n=0 refused=1 ms=\d+\n$`).MatchString(out) {
 		t.Fatalf("expire = %d %q %q; want the refused copy named and exit 1", code, out, errOut)
@@ -156,7 +156,7 @@ func TestDealDutySaysWhichConsumerItSkipped(t *testing.T) {
 // dial error.
 func TestCapacityRefusesWhenTheDesiredHashCannotBeRead(t *testing.T) {
 	t.Parallel()
-	code, out, errOut := runCLI("capacity", "bench", "--redis", silentClosedAddr(t), "--as", "rowan", "b1", "2")
+	code, out, errOut := runCLI("capacity", "bench", "--redis", silentClosedAddr(t), "--as", "b1", "--slots", "2")
 	if code != 2 || out != "" || strings.Contains(errOut, "machine is required") || !strings.Contains(errOut, "read bench:b1:desired machine:") {
 		t.Fatalf("capacity bench on a dead store = %d %q %q; want the read error, never 'machine is required'", code, out, errOut)
 	}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -42,7 +43,8 @@ func TestCardPushRefusesWithoutDoneWhen(t *testing.T) {
 				t.Fatalf("stderr %q, want missing %s", res.Stderr, key)
 			}
 			for _, other := range []string{"BASE", "BASE-SHA", "PATHS", "DEPENDS-ON", "DONE-WHEN"} {
-				if other != key && strings.Contains(res.Stderr, "missing "+other) {
+				// "missing BASE-SHA" is not "missing BASE": the key ends where a key character does not follow
+				if other != key && regexp.MustCompile(`missing `+regexp.QuoteMeta(other)+`([^A-Z-]|$)`).MatchString(res.Stderr) {
 					t.Fatalf("stderr %q also says missing %s", res.Stderr, other)
 				}
 			}
@@ -256,7 +258,7 @@ func (f cardFix) render() []byte {
 	}
 	write("KIND", "fix")
 	write("BASE", f.base)
-	write("base-repo", f.repoURL)
+	write("BASE-REPO", f.repoURL)
 	write("BASE-SHA", f.baseSHA)
 	write("PATHS", f.paths)
 	write("DEPENDS-ON", f.depends)

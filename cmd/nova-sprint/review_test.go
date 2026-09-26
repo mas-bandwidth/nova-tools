@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -73,13 +72,9 @@ func failOnce(t *testing.T, c *redis.Client, id string) {
 	}
 }
 
-// seat is the --actor the seat check accepts in this environment.
-func seat() string {
-	if s := os.Getenv(seatEnv); s != "" {
-		return s
-	}
-	return "rowan"
-}
+// seat is who the receipts name in this environment: the seat (#4352 A),
+// and the --as the seat check accepts.
+func seat() string { return seatActor() }
 
 // TestReviewPostCLI (#4072): `nova-sprint review post --id <primary>
 // --verdict recut|redeal|reassign:<consumer>|drop --why <text>` is typed

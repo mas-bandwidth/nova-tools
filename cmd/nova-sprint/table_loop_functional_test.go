@@ -148,7 +148,7 @@ func TestControl3637ClearVerb(t *testing.T) {
 	// friends=5: every member of the friends SET has a done set, ghost's
 	// empty (a ZCARD of 0), so each gets a base.
 	if len(lines) != 2 || !strings.HasPrefix(lines[0], "CHECKPOINT at=") || !strings.Contains(lines[0], " landed=6 friends=5") ||
-		!strings.HasPrefix(lines[1], "CLEARED landed=6 streams=3 friends=5 by=rowan ms=") {
+		!strings.HasPrefix(lines[1], "CLEARED landed=6 streams=3 friends=5 by="+seatActor()+" ms=") {
 		t.Fatalf("stdout:\n%s", stdout)
 	}
 	b, err := os.ReadFile(cp)

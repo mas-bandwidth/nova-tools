@@ -165,7 +165,7 @@ SHOW streams=2 cards=5 edges=5 ms=`
 	if code != 2 || !strings.Contains(stderr, "want --order: ws show --redis <addr> --order [--stream <s>]") {
 		t.Fatalf("no --order: exit %d %q", code, stderr)
 	}
-	code, _, stderr = runSprint("stream", "order", "--redis", addr, "--show", "ci")
+	code, _, stderr = runSprint("stream", "order", "--redis", addr, "--show", "--stream", "ci")
 	if code != 2 || !strings.Contains(stderr, "--show lists the streams; it ranks nothing") {
 		t.Fatalf("--show with names: exit %d %q", code, stderr)
 	}

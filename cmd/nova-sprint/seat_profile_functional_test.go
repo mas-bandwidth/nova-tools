@@ -124,7 +124,7 @@ func TestSeatRowDrivesVerbsWithNoWrapper(t *testing.T) {
 	}))
 	defer api.Close()
 	emptyGH := []string{"GH_CONFIG_DIR=" + t.TempDir()}
-	if _, _, errOut := ns(emptyGH, "--seat", "coordinator", "land", "pr", "1", "--repo", "o/r", "--api", api.URL); strings.Contains(errOut, "no GitHub token") {
+	if _, _, errOut := ns(emptyGH, "--seat", "coordinator", "land", "pr", "--pr", "1", "--repo", "o/r", "--api", api.URL); strings.Contains(errOut, "no GitHub token") {
 		t.Fatalf("land pr under a seven-column row: %q; want the seat's token sent", errOut)
 	}
 	mu.Lock()
@@ -133,7 +133,7 @@ func TestSeatRowDrivesVerbsWithNoWrapper(t *testing.T) {
 	if len(sent) == 0 || sent[0] != "Bearer "+tok {
 		t.Fatalf("land pr sent %d request(s); want the first to carry the seat's token", len(sent))
 	}
-	if _, _, errOut := ns(emptyGH, "--seat", "reader", "land", "pr", "1", "--repo", "o/r", "--api", api.URL); strings.Count(errOut, "names no GitHub token env") != 1 {
+	if _, _, errOut := ns(emptyGH, "--seat", "reader", "land", "pr", "--pr", "1", "--repo", "o/r", "--api", api.URL); strings.Count(errOut, "names no GitHub token env") != 1 {
 		t.Fatalf("land pr under a six-column row: stderr %q; want the old-behaviour line once", errOut)
 	}
 	seatEnv := []string{SprintSeatEnv + "=coordinator"}

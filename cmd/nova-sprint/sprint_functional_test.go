@@ -17,6 +17,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
@@ -50,7 +51,7 @@ func TestSprintOpenLetsTaskTakeClaim(t *testing.T) {
 
 	step := func(want string, args ...string) {
 		t.Helper()
-		code, out, errOut := runSprint(args...)
+		code, out, errOut := runSprintOrTake(args...)
 		if code != 0 || out != want+"\n" {
 			t.Fatalf("%s: code=%d out=%q stderr=%q; want 0 %q", strings.Join(args, " "), code, out, errOut, want)
 		}
@@ -73,7 +74,7 @@ func TestSprintOpenLetsTaskTakeClaim(t *testing.T) {
 	}
 	step(s+" open 0/1 0% -> eta ?", "sprint", "status", "--redis", addr, "--sprint", s)
 
-	code, out, errOut := runSprint("task", "take", "--redis", addr, "--as", "ctl-open")
+	code, out, errOut := runSprintOrTake("task", "take", "--redis", addr, "--as", "ctl-open")
 	// #3261: the take names its round trips, one pipeline and one FCALL.
 	if code != 0 || !strings.HasPrefix(out, "CLAIMED "+s+"/t1 attempt=1 ") || !strings.Contains(out, " trips=2\n") {
 		t.Fatalf("take after open: code=%d out=%q stderr=%q; want CLAIMED %s/t1", code, out, errOut, s)
@@ -224,18 +225,65 @@ func openArgs(addr, s, from string) []string {
 // expect runs the verb and requires the exit code and the exact stdout.
 func expect(t *testing.T, code int, stdout string, args ...string) string {
 	t.Helper()
-	got, out, errOut := runSprint(args...)
+	got, out, errOut := runSprintOrTake(args...)
 	if got != code || out != stdout {
 		t.Fatalf("%s:\n code=%d out=%q stderr=%q\n want %d %q", strings.Join(args, " "), got, out, errOut, code, stdout)
 	}
 	return errOut
 }
 
+// runSprintOrTake is runSprint, except that `task take` is the one task
+// store's take (task.TakeAvailable, a sprint's claims), which has had no verb
+// since nova-tools#4352 A made `task take` the card form: these tests of
+// sprint open claim through the function and print what the verb printed.
+func runSprintOrTake(args ...string) (int, string, string) {
+	if len(args) < 2 || args[0] != "task" || args[1] != "take" {
+		return runSprint(args...)
+	}
+	flag := func(name string) string {
+		for i := 2; i+1 < len(args); i++ {
+			if args[i] == "--"+name {
+				return args[i+1]
+			}
+		}
+		return ""
+	}
+	n, _ := strconv.Atoi(flag("n"))
+	initiator, as := os.Getenv(seatEnv), flag("as")
+	if initiator == "" || as == "" {
+		return 2, "", "task take: " + seatEnv + " and --as are required\n"
+	}
+	ctx := context.Background()
+	st, err := store.Open(ctx, flag("redis"))
+	if err != nil {
+		return 2, "", err.Error() + "\n"
+	}
+	defer st.Close()
+	trips := st.CountTrips()
+	claims, err := task.TakeAvailable(ctx, st, as, flag("sprint"), flag("ids"), n, initiator, flag("idem"))
+	var blocked *task.BlockedError
+	if errors.As(err, &blocked) {
+		return 7, "BLOCKED needs " + strings.Join(blocked.Needs, " ") + "\n", ""
+	}
+	if err != nil {
+		return 2, "", err.Error() + "\n"
+	}
+	if len(claims) == 0 {
+		return 0, fmt.Sprintf("NONE trips=%d\n", trips.N()), ""
+	}
+	var out strings.Builder
+	for _, c := range claims {
+		fmt.Fprintf(&out, "CLAIMED %s/%s attempt=%d token=%s trips=%d\n", c.Sprint, c.ID, c.Attempt, c.Token, trips.N())
+		fmt.Fprintf(&out, "TASK %s kind=%s ref=%s title=%s\n", c.ID, c.Kind, c.Ref, strconv.Quote(c.Title))
+	}
+	return 0, out.String(), ""
+}
+
 // takeOne is f's take of one task; it returns stdout.
 func takeOne(t *testing.T, addr string, extra ...string) string {
 	t.Helper()
 	args := append([]string{"task", "take", "--redis", addr, "--as", fxFriend, "--n", "1"}, extra...)
-	code, out, errOut := runSprint(args...)
+	code, out, errOut := runSprintOrTake(args...)
 	if code != 0 {
 		t.Fatalf("take: code=%d out=%q stderr=%q", code, out, errOut)
 	}
@@ -425,7 +473,7 @@ func TestControl22(t *testing.T) {
 		t.Fatalf("s:%s:task:b needs=%q want a", s, got)
 	}
 
-	code, out, errOut := runSprint("task", "take", "--redis", addr, "--sprint", s, "--as", fxFriend)
+	code, out, errOut := runSprintOrTake("task", "take", "--redis", addr, "--sprint", s, "--as", fxFriend)
 	// #2929 rev 6: a claim prints its CLAIMED line and one TASK line.
 	if code != 0 || strings.Count(out, "\n") != 2 || !strings.HasPrefix(out, "CLAIMED "+s+"/a attempt=1 ") ||
 		!strings.Contains(out, "\nTASK a ") {
@@ -438,7 +486,7 @@ func TestControl22(t *testing.T) {
 	expect(t, 7, "BLOCKED needs a\n", "task", "take", "--redis", addr, "--sprint", s, "--as", fxFriend, "--ids", "b")
 	expect(t, 0, "DONE DONE id=a\n", "task", "done", "--redis", addr, "--sprint", s, "--ids", "a",
 		"--token", token, "--evidence", "fixture done")
-	code, out, errOut = runSprint("task", "take", "--redis", addr, "--sprint", s, "--as", fxFriend, "--ids", "b")
+	code, out, errOut = runSprintOrTake("task", "take", "--redis", addr, "--sprint", s, "--as", fxFriend, "--ids", "b")
 	if code != 0 || !strings.HasPrefix(out, "CLAIMED "+s+"/b attempt=1 ") {
 		t.Fatalf("take --id b after done a: code=%d out=%q stderr=%q", code, out, errOut)
 	}

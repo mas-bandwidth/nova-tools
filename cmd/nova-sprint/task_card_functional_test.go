@@ -40,7 +40,7 @@ var cardLine = regexp.MustCompile(`^TASK (\w+) id=(\S+) from=(\S+) to=(\S+) ms=\
 func TestTaskCardCLI(t *testing.T) {
 	f := newSeat(t)
 	t.Setenv("FRIEND_QUEUE_SPRINT", seatSprint)
-	t.Setenv("NOVA_FRIEND", "") // a coordinator shell: --actor names itself
+	t.Setenv("NOVA_FRIEND", "") // a coordinator shell: --as names the worker it acts as
 	ctx := context.Background()
 	c := f.client
 	const s = "nova-sprint + merge + bus"
@@ -91,7 +91,7 @@ func TestTaskCardCLI(t *testing.T) {
 	}
 	c.ZRem(ctx, "ws:"+s+":ready", "build-1")
 
-	if code, out, _ = runTaskCLI("land", "--help"); code != 0 || !strings.Contains(out, "nova-sprint task land") {
+	if code, out, _ = runSprint("task", "land", "--help"); code != 2 || !strings.Contains(out, "usage: nova-sprint task land") {
 		t.Fatalf("help = %d %q", code, out)
 	}
 	if code, _, errOut = runTaskCLI("land", "--as", "a", "--ids", "x"); code != 2 || !strings.Contains(errOut, "--sha is required") {

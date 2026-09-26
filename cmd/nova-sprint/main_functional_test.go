@@ -117,7 +117,7 @@ func TestResultsPathUnixAbsolute(t *testing.T) {
 			}
 			want := "absolute"
 			if results == "" {
-				want = "missing value for --results" // the flag parser refuses it first
+				want = "missing --results" // an empty --results is no results directory
 			}
 			if !strings.Contains(stderr, want) {
 				t.Fatalf("stderr %q lacks %q", stderr, want)

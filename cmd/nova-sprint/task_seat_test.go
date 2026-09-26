@@ -202,8 +202,8 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 		f.as("a")
 		f.push("a", "g1")
 		before := f.xlen()
-		// the retired --actor is refused naming --as; --as must be the seat
-		f.run(2, "--actor is spelled --as", "task", "push", "--to", "b", "--ids", "g2", "--kind", "work", "--ref", "r", "--title", "T", "--actor", "b")
+		// the retired --actor is refused (task push takes no --as: the actor is the seat); --as must be the seat
+		f.run(2, "--actor is retired", "task", "push", "--to", "b", "--ids", "g2", "--kind", "work", "--ref", "r", "--title", "T", "--actor", "b")
 		f.run(2, "is not the seat", "task", "take", "--as", "b", "--ids", "g1")
 		if got := f.xlen(); got != before {
 			t.Fatalf("log grew by %d; want unchanged", got-before)

@@ -37,7 +37,7 @@ func cardRenderFromIssuePush(t *testing.T) {
 	}
 	sha := strings.Repeat("ab", 20)
 	push := func(id, route string, extra ...string) (int, string, string) {
-		args := append([]string{"push", "--ids", id, "--waiting", "--ref", "mas-bandwidth/nova-tools#3911",
+		args := append([]string{"push", "--as", seat(), "--ids", id, "--waiting", "--ref", "mas-bandwidth/nova-tools#3911",
 			"--title", "card " + id, "--issue", issue, "--route", route, "--base", "dev", "--base-sha", sha}, extra...)
 		return runTaskCLI(args...)
 	}

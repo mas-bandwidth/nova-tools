@@ -42,6 +42,7 @@ func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 	}
 
 	var out, errOut bytes.Buffer
+	actor := seatActor() // the receipt's actor is the seat (#4352 A)
 	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "f", "--machine", "m", "--slots", "32"}, &out, &errOut); code != 0 {
 		t.Fatalf("capacity friend code=%d stderr=%q", code, errOut.String())
 	}
@@ -59,7 +60,7 @@ func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 		t.Fatal("capacity friend left legacy width")
 	}
 	entries := client.XRange(ctx, "cap:log", "-", "+").Val()
-	if len(entries) != 1 || entries[0].Values["actor"] != "ops" || entries[0].Values["legacy"] != "32" {
+	if len(entries) != 1 || entries[0].Values["actor"] != actor || entries[0].Values["legacy"] != "32" {
 		t.Fatalf("cap:log=%v", entries)
 	}
 	if line := ceiling(); line.Red {
@@ -94,9 +95,10 @@ func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 	}
 }
 
-// TestCapacityAsActorControlReceipt exercises the specified --as control flag
-// through the CLI, not merely through the Go capacity API. The actor must be
-// preserved in the server-timed cap:log receipt.
+// TestCapacityAsActorControlReceipt exercises the receipt's actor through
+// the CLI, not merely through the Go capacity API: the actor is the seat
+// (#4352 A; --as names the worker), preserved in the server-timed cap:log
+// receipt.
 func TestCapacityAsActorControlReceipt(t *testing.T) {
 	t.Parallel()
 
@@ -125,7 +127,7 @@ func TestCapacityAsActorControlReceipt(t *testing.T) {
 		t.Fatalf("receipts=%d want 2", len(entries))
 	}
 	for _, entry := range entries {
-		if entry.Values["actor"] != "operator" {
+		if entry.Values["actor"] != seatActor() {
 			t.Fatalf("receipt actor=%v", entry.Values["actor"])
 		}
 	}
@@ -160,7 +162,7 @@ func TestL20bRunnerHooks(t *testing.T) {
 		"--as", "ci-runner-job-123",
 		"--cpu-milli", "4000",
 		"--mem-mb", "8192",
-		"job-started",
+		"--event", "job-started",
 	}, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("hook job-started code=%d stderr=%q", code, errOut.String())
@@ -199,7 +201,7 @@ func TestL20bRunnerHooks(t *testing.T) {
 		"hook", "--redis", addr,
 		"--machine", "ctl-machine",
 		"--as", "ci-runner-job-123",
-		"job-completed",
+		"--event", "job-completed",
 	}, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("hook job-completed code=%d stderr=%q", code, errOut.String())

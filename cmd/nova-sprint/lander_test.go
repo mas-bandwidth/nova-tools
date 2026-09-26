@@ -124,7 +124,7 @@ func TestLanderVerbServesMetrics(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := runLander(ctx, []string{"--redis", addr, "--sprint", S, "--repo", repo, "--batch", "b-2720",
 		"--gate", "gate", "--bisect", "bisect", "--land", "land", "--file", "file",
-		"--metrics-addr", "127.0.0.1:0", "11", "12", "13"}, &out, &errOut)
+		"--metrics-addr", "127.0.0.1:0", "--pr", "11,12,13"}, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("lander exit %d, want 0; stdout %q stderr %q", code, out.String(), errOut.String())
 	}
@@ -166,7 +166,7 @@ func TestLanderRefusesAMemberWithNoRecord(t *testing.T) {
 	t.Cleanup(func() { landerSeams = seams })
 	var out, errOut bytes.Buffer
 	code := runLander(context.Background(), []string{"--redis", addr, "--sprint", "control-none", "--repo", "nova-tools",
-		"--batch", "b", "--gate", "g", "--bisect", "b", "--land", "l", "--file", "f", "99"}, &out, &errOut)
+		"--batch", "b", "--gate", "g", "--bisect", "b", "--land", "l", "--file", "f", "--pr", "99"}, &out, &errOut)
 	if code != 2 || !strings.Contains(errOut.String(), "nova-tools#99 has no head") {
 		t.Fatalf("exit %d stderr %q, want 2 and the missing record named", code, errOut.String())
 	}
@@ -241,7 +241,7 @@ func TestLanderShadowNeedsNoPrograms(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	code := runLander(context.Background(), []string{"--shadow", "--redis", addr, "--repo", "mas-bandwidth/nova-tools",
-		"1", "2", "3", "4", "5", "6"}, &out, &errOut)
+		"--pr", "1,2,3,4,5,6"}, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("lander --shadow exit %d, want 0; stdout %q stderr %q", code, out.String(), errOut.String())
 	}
@@ -294,7 +294,7 @@ func TestLanderShadowWritesNothing(t *testing.T) {
 	}
 
 	var out, errOut bytes.Buffer
-	code := runLander(ctx, []string{"--shadow", "--redis", addr, "--repo", "nova-tools", "1", "2", "3", "4", "5", "6", "77"}, &out, &errOut)
+	code := runLander(ctx, []string{"--shadow", "--redis", addr, "--repo", "nova-tools", "--pr", "1,2,3,4,5,6,77"}, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("lander --shadow exit %d, want 0; stdout %q stderr %q", code, out.String(), errOut.String())
 	}
@@ -335,7 +335,7 @@ func TestLanderShadowNoRecordIsALine(t *testing.T) {
 	seedShadow(t, c, "nova-tools", map[int][]string{8: {"state", "open", "ci", "green"}})
 
 	var out, errOut bytes.Buffer
-	code := runLander(context.Background(), []string{"--shadow", "--redis", addr, "--repo", "nova-tools", "99", "#1", "8"}, &out, &errOut)
+	code := runLander(context.Background(), []string{"--shadow", "--redis", addr, "--repo", "nova-tools", "--pr", "99,#1,8"}, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("lander --shadow exit %d, want 0 with a member missing; stdout %q stderr %q", code, out.String(), errOut.String())
 	}

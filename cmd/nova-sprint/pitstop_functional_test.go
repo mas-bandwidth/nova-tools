@@ -21,8 +21,8 @@ func pitOneLine(t *testing.T, s string) {
 
 // TestPitstopVerbEveryBranch is the verb over the real functions (a throwaway
 // redis-server: miniredis has no FCALL): set, status, set refused, set
-// --force, clear, clear refused, unknown sprint, and --by defaulting to the
-// seat. Each prints one line with exit 0, or one REFUSED line naming the
+// --force, clear, clear refused, unknown sprint, and the seat as who set
+// it (#4352 A: no --by). Each prints one line with exit 0, or one REFUSED line naming the
 // remedy with exit 1.
 func TestPitstopVerbEveryBranch(t *testing.T) {
 	const S = "control-00003371"
@@ -64,12 +64,12 @@ func TestPitstopVerbEveryBranch(t *testing.T) {
 	}
 	pitOneLine(t, errOut)
 
-	code, out, _ = runPit(t, "rowan", "set", "--redis", addr, "--sprint", S, "--why", "again", "--force")
+	code, out, _ = runPit(t, "stella", "set", "--redis", addr, "--sprint", S, "--why", "again", "--force")
 	if code != 0 || !strings.Contains(out, "by=stella") || !strings.Contains(out, `replaced_by=rowan replaced_why="Glenn: rest tonight"`) {
 		t.Fatalf("set --force: %d %q", code, out)
 	}
 	if got := c.HGet(ctx, "s:"+S+":pitstop", "by").Val(); got != "stella" {
-		t.Fatalf("--by did not win over the seat: by=%q", got)
+		t.Fatalf("the seat did not set it: by=%q", got)
 	}
 
 	code, out, _ = runPit(t, "rowan", "clear", "--redis", addr, "--sprint", S)
@@ -150,7 +150,7 @@ func TestPitstopClearNarrowsScope(t *testing.T) {
 
 	// Named-scope stop: only those streams, lifted one by one.
 	code, out, errOut = runPit(t, "rowan", "set", "--redis", addr, "--sprint", S, "--why", "land first",
-		"--stream", redisStream, "--stream", "nova-sprint")
+		"--stream", redisStream+",nova-sprint")
 	if code != 0 || !strings.Contains(out, ` scope="redis: store + bus","nova-sprint" why="land first"`) {
 		t.Fatalf("set streams: %d %q %q", code, out, errOut)
 	}
@@ -181,7 +181,7 @@ func TestPitstopClearNarrowsScope(t *testing.T) {
 	// Usage: --scope all stands alone and only on set; status takes none.
 	for _, args := range [][]string{
 		{"clear", "--sprint", S, "--stream", "all"},
-		{"set", "--sprint", S, "--stream", "all", "--stream", "nova-work"},
+		{"set", "--sprint", S, "--stream", "all,nova-work"},
 		{"status", "--sprint", S, "--stream", "nova-work"},
 		{"set", "--sprint", S, "--stream", " "},
 	} {

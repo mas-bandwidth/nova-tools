@@ -26,7 +26,7 @@ func TestWorkerPauseResumeShowCLI(t *testing.T) {
 	c.HSet(ctx, "bench:hetzner:desired", "slots", "8", "machine", "hetzner", "tiers", "flash,pro")
 	c.HSet(ctx, "friend:emma:desired", "slots", "4", "machine", "studio")
 
-	code, out, errOut := runVerb(t, "worker", "pause", "--redis", addr, "--as", "rowan", "bench:hetzner")
+	code, out, errOut := runVerb(t, "worker", "pause", "--redis", addr, "--as", "bench:hetzner")
 	if code != 0 || out != "PAUSED bench:hetzner\n" || errOut != "" {
 		t.Fatalf("pause bench = %d %q %q", code, out, errOut)
 	}
