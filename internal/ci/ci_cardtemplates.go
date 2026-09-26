@@ -22,12 +22,13 @@ package ci
 // ever get shorter.
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // CardTemplatesVerbLine is the help line the class test is entered under, word
@@ -72,6 +73,9 @@ type CardTemplatesResult struct {
 	Allowlisted int
 	Findings    []CardTemplateFinding
 	Stale       []CardTemplateFinding
+	// Measured is the set the allowlist must hold (allowlist.Check): the key of
+	// every row a finding used and of every finding no row allows.
+	Measured map[string]bool
 }
 
 // Refused is the number of lines a run would print: offenders plus stale rows.
@@ -348,8 +352,10 @@ func CheckCardTemplates(root string, dirs []string, allowlistPath string) (CardT
 		remaining = append(remaining, f)
 	}
 	res.Findings = remaining
+	res.Measured = map[string]bool{}
 	for i, e := range entries {
 		if matched[i] {
+			res.Measured[e.key] = true
 			continue
 		}
 		res.Stale = append(res.Stale, CardTemplateFinding{
@@ -358,6 +364,9 @@ func CheckCardTemplates(root string, dirs []string, allowlistPath string) (CardT
 			Only:   "allowlist",
 			Remedy: "delete the stale row; this list only shrinks",
 		})
+	}
+	for _, f := range res.Findings {
+		res.Measured[f.Key()] = true
 	}
 	return res, nil
 }
@@ -433,37 +442,33 @@ func boundCardTemplateLine(s string) string {
 type cardTemplateAllow struct {
 	file  string
 	spell string
+	key   string // the row's key in its list: `file spell`
 }
 
-// readCardTemplateAllowlist parses `file spell date reason` rows, ignoring
-// blank lines and # comments. A missing file is an empty allowlist, never an
-// error: a tree with nothing parked in it is the goal.
+// Key is the finding's key in the card template list: `file spell`, the first
+// two fields of the row that would allow it.
+func (f CardTemplateFinding) Key() string { return f.File + " " + f.Spell }
+
+// readCardTemplateAllowlist parses `file spell date reason` rows through the
+// one allowlist reader. A missing file is an empty allowlist, never an error: a
+// tree with nothing parked in it is the goal.
 func readCardTemplateAllowlist(path string) ([]cardTemplateAllow, error) {
 	if path == "" {
 		return nil, nil
 	}
-	f, err := os.Open(path)
+	list, err := allowlist.Load(path, FileLineListOptions)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	defer f.Close()
 	var out []cardTemplateAllow
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
+	for _, row := range list.Rows() {
+		fields := strings.Fields(row.Text)
 		if len(fields) < 2 {
 			continue
 		}
-		out = append(out, cardTemplateAllow{file: fields[0], spell: fields[1]})
+		out = append(out, cardTemplateAllow{file: fields[0], spell: fields[1], key: row.Key})
 	}
-	return out, sc.Err()
+	return out, nil
 }
 
 // matchCardTemplateAllow returns the index of the row naming this finding, or -1.

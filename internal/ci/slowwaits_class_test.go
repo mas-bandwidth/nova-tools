@@ -1,20 +1,18 @@
 package ci
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // slowwaits_class_test.go is Glenn's ceiling on 2026-09-25: a per-commit run
@@ -93,19 +91,17 @@ func TestNoTestSleepsOverASecondOrWaitsOutADeadlineOverFive(t *testing.T) {
 	for _, h := range hits {
 		key := h.Rel + ":" + h.Func
 		seen[key] = true
-		if _, ok := allow[key]; ok {
+		if allow.Has(key) {
 			continue
 		}
 		violations = append(violations, fmt.Sprintf(
 			"%s:%d: %s %s in a per-commit test; inject a short one through the seam (200 ms proves a deadline as well as 10 s does), wait on the event instead of the clock, or move the test behind //go:build slow (nightly-slow.yml runs it)",
 			h.Rel, h.Line, h.Func, h.What))
 	}
-	for key := range allow {
-		if !seen[key] {
-			violations = append(violations, fmt.Sprintf(
-				"%s lists %s, but it has no slow wait left; delete the stale entry (the list only shrinks)",
-				slowWaitsAllowlistPath, key))
-		}
+	for _, row := range allowlist.Check(t, allow, seen).Stale {
+		violations = append(violations, fmt.Sprintf(
+			"%s lists %s, but it has no slow wait left; delete the stale entry (the list only shrinks)",
+			slowWaitsAllowlistPath, row.Key))
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
@@ -267,24 +263,13 @@ func stringLit(e ast.Expr) (string, bool) {
 }
 
 // readSlowWaitsAllowlist reads `path:Func <reason>` lines.
-func readSlowWaitsAllowlist(t *testing.T) map[string]string {
+func readSlowWaitsAllowlist(t *testing.T) *allowlist.List {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.FromSlash(slowWaitsAllowlistPath))
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := map[string]string{}
-	sc := bufio.NewScanner(bytes.NewReader(raw))
-	for sc.Scan() {
-		text := strings.TrimSpace(sc.Text())
-		if text == "" || strings.HasPrefix(text, "#") {
-			continue
+	allow := loadAllowlist(t, slowWaitsAllowlistPath, shrinkOnly)
+	for _, row := range allow.Rows() {
+		if _, reason, _ := strings.Cut(row.Text, " "); strings.TrimSpace(reason) == "" {
+			t.Errorf("%s: %q carries no reason", slowWaitsAllowlistPath, row.Text)
 		}
-		key, reason, _ := strings.Cut(text, " ")
-		if strings.TrimSpace(reason) == "" {
-			t.Errorf("%s: %q carries no reason", slowWaitsAllowlistPath, text)
-		}
-		out[key] = reason
 	}
-	return out
+	return allow
 }

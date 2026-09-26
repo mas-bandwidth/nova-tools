@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // lisptemppath_class_test.go polices the Lisp acceptance tree from here, the way
@@ -222,32 +224,12 @@ func lispTestFiles(t *testing.T, root string) []string {
 	return out
 }
 
-func readLispAllowlist(t *testing.T, path string) map[string]bool {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allow := map[string]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if i := strings.Index(line, " #"); i >= 0 {
-			line = strings.TrimSpace(line[:i])
-		}
-		allow[line] = true
-	}
-	return allow
-}
-
 // checkLispRule is rules A and B: an unlisted finding fails, and a listed entry
 // that no longer names a finding fails too.
 func checkLispRule(t *testing.T, pats []*regexp.Regexp, allowPath, rule, remedy string) {
 	t.Helper()
 	root := repoRoot(t)
-	allow := readLispAllowlist(t, allowPath)
+	allow := loadAllowlist(t, allowPath, shrinkOnly)
 	seen := map[string]bool{}
 	var violations []string
 
@@ -255,18 +237,17 @@ func checkLispRule(t *testing.T, pats []*regexp.Regexp, allowPath, rule, remedy 
 		src := readFile(t, filepath.Join(root, filepath.FromSlash(rel)))
 		for _, f := range lispFindings(rel, src, pats) {
 			seen[f.key()] = true
-			if !allow[f.key()] {
+			if !allow.Has(f.key()) {
 				violations = append(violations, f.String(rule, remedy)+
 					"\n  (or add "+f.key()+" to internal/ci/"+allowPath+" with the reason it cannot use the helper)")
 			}
 		}
 	}
-	for key := range allow {
-		if !seen[key] {
-			violations = append(violations, fmt.Sprintf(
-				"%s lists %s, but nothing there does that any more; delete the stale entry (the list only shrinks)",
-				allowPath, key))
-		}
+	for _, row := range allowlist.Check(t, allow, seen).Stale {
+		key := row.Key
+		violations = append(violations, fmt.Sprintf(
+			"%s lists %s, but nothing there does that any more; delete the stale entry (the list only shrinks)",
+			allowPath, key))
 	}
 	sort.Strings(violations)
 	for _, v := range violations {

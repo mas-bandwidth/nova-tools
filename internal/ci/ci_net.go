@@ -63,6 +63,9 @@ type NetResult struct {
 	Allowlisted int
 	Findings    []NetFinding
 	Stale       []NetFinding
+	// Measured is the set the allowlist must hold (allowlist.Check): the key of
+	// every row a finding used and of every finding no row allows.
+	Measured map[string]bool
 }
 
 // Refused is the number of lines the run would print: offenders plus stale
@@ -125,11 +128,15 @@ func CheckNet(root, allowlistPath string) (NetResult, error) {
 		remaining = append(remaining, f)
 	}
 	res.Findings = remaining
+	res.Measured = usedRowKeys(entries, matched)
 	for i, e := range entries {
 		if matched[i] {
 			continue
 		}
 		res.Stale = append(res.Stale, NetFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: NetRemedyAllow})
+	}
+	for _, f := range res.Findings {
+		res.Measured[FileLineKey(f.File, f.Line, f.Kind)] = true
 	}
 	return res, nil
 }
