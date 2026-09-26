@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleet"
@@ -45,6 +46,9 @@ type releaseDeps struct {
 	UID    int
 	GOOS   string
 	Open   func(ctx context.Context, addr string) (*store.Store, error)
+	// Sleep is fleet roll's pause between verify reads; nil sleeps on a
+	// timer, a test hands in a fake.
+	Sleep func(ctx context.Context, d time.Duration) error
 }
 
 // releaseExec runs one child in dir with the sanitized environment plus env.
@@ -134,14 +138,11 @@ func runFleetReleaseWith(ctx context.Context, args []string, out, errOut io.Writ
 	if err != nil {
 		return unreachable(errOut, "fleet release", err.Error())
 	}
-	word := "OK"
-	code := 0
+	fmt.Fprintln(out, res.Line())
 	if !res.OK() {
-		word, code = "FAIL", 1
+		return 1
 	}
-	fmt.Fprintf(out, "FLEET RELEASE %s version=%s commit=%s studio=%s fn=%s rolled=%d skipped=%d\n",
-		word, res.Version, res.Commit[:12], strings.ToLower(res.Studio), res.Fn, len(res.Rolled), len(res.Skipped))
-	return code
+	return 0
 }
 
 // runFleetReleaseHeld is `fleet release --bench <b>`: the held bench is
