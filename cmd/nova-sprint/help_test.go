@@ -34,7 +34,7 @@ var helpCases = [][]string{
 	{"dev-red", "status"}, {"dev-red", "check"}, {"dev-red", "watch"}, {"dev-red", "unwatch"},
 	{"drain"}, {"est"}, {"file"},
 	{"fleet", "state"}, {"fleet", "is-up"}, {"fleet", "hold"}, {"fleet", "release"}, {"fleet", "config"},
-	{"fleet", "build"}, {"fleet", "build", "set"}, {"fleet", "build", "compile"}, {"fleet", "build", "duty"}, {"fleet", "churn"},
+	{"fleet", "build"}, {"fleet", "build", "set"}, {"fleet", "build", "compile"}, {"fleet", "build", "duty"}, {"fleet", "churn"}, {"fleet", "ps"},
 	{"fn", "load"}, {"fn", "check"}, {"fn", "deploy"},
 	{"fold"},
 	{"friend", "hello"}, {"friend", "bye"}, {"friend", "wake"}, {"friend", "row"},

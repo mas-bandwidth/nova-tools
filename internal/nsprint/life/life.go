@@ -273,6 +273,9 @@ type BenchRequest struct {
 	// Runner.Worker process; nova-tools#4293), on the beat as ci: the deal
 	// takes them off the bench's slots. Empty when unmeasured.
 	CI string
+	// PS is the process sample (ProcsNow, #4338): the beat's ps field, JSON
+	// fleet.PSSample. Empty leaves the field as it is.
+	PS string
 }
 
 // BenchResult is one bench beat. Accepted is false when another live session
@@ -315,7 +318,7 @@ func BenchBeat(ctx context.Context, st *store.Store, req BenchRequest) (BenchRes
 		launcher, strings.Join(req.Live, liveSeparator), req.Why,
 		req.Session, req.Actor, req.Idem, build,
 		req.Facts.Harness, req.Facts.Mirrors, req.Facts.DiskGiB, ttl.Milliseconds(),
-		rowAt, ncpu, req.CPU, req.CI).Result()
+		rowAt, ncpu, req.CPU, req.CI, req.PS).Result()
 	if err != nil {
 		return BenchResult{}, fmt.Errorf("bench beat %s: %w", req.Bench, err)
 	}

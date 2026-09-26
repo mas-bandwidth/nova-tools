@@ -242,6 +242,8 @@ end
 -- nova-tools#4293), on the beat as ci every beat: the deal passes and
 -- ns_cm_work's fill take it off the bench's slots, so a copy is never put
 -- beside a leg it would slow; empty when unmeasured (nothing is taken off).
+-- args[22] is the process sample, on the beat as ps (#4338; empty leaves it
+-- as it is).
 local function bench_beat(keys, args)
   local bench = args[1]
   if not bench or bench == '' then
@@ -315,6 +317,14 @@ local function bench_beat(keys, args)
     -- every core (Glenn 2026-09-26 8:33 AM ET); the beat is the row the
     -- table reads, never the host row
     redis.call('HSET', 'bench:' .. bench .. ':beat', 'ncpu', ncpu or '', 'cpu', args[20] or '')
+  end
+  -- The process sample (#4338): top processes by CPU, the nova units
+  -- declared|undeclared and the oldest processes outside every declared unit,
+  -- JSON, bounded by the bench (fleet.PSSample); `fleet ps` reads it. A caller
+  -- that predates it passes nothing and the field is left as it is.
+  local ps = args[22]
+  if ps and ps ~= '' then
+    redis.call('HSET', 'bench:' .. bench .. ':beat', 'ps', ps)
   end
   if first == 0 then
     pl_caplog('bench-up', bench, '', actor, idem, at)
