@@ -173,6 +173,31 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 			rows = append(rows, r)
 		}
 	}
+	// A ready copy the dependency rule holds (its primary's edge returned to
+	// unmet after the deal) is not a candidate and holds no slot: need
+	// counts only the ready copies that could start, so the pass deals the
+	// next eligible card (#4414). One read-only call names them, with the
+	// line ready --why prints.
+	var held []any
+	for _, r := range rows {
+		if r.ready > 0 {
+			held = append(held, r.k.String())
+		}
+	}
+	if len(held) > 0 {
+		reply, err := c.FCallRO(ctx, FnBlocked, nil, held...).StringSlice()
+		if err != nil {
+			return res, fmt.Errorf("deal pass: %s: %w", FnBlocked, err)
+		}
+		skipped := map[string]int{}
+		for i := 0; i+2 < len(reply); i += 3 {
+			skipped[reply[i]]++
+			res.Lines = append(res.Lines, fmt.Sprintf("DEAL skipped=%s why=%s", reply[i+1], reply[i+2]))
+		}
+		for i := range rows {
+			rows[i].need += skipped[rows[i].k.String()]
+		}
+	}
 	sort.SliceStable(rows, func(a, b int) bool {
 		if rows[a].free != rows[b].free {
 			return rows[a].free > rows[b].free

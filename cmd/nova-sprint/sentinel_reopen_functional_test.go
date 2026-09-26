@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -394,4 +395,62 @@ func TestReopenedSentinelEveryDoorPrintsReaderLine(t *testing.T) {
 	door("card deal", "F", err)
 	_, err = taskcard.Work(ctx, c, as, "test", 1, false, dd[0].Copy)
 	door("card work", dd[0].Copy, err)
+}
+
+// TestDealPassNamesTheHeldCopy: with alpha reopened, friend:f1 (one slot)
+// holds C~1 in ready, which the rule holds; the deal pass names it with the
+// line ready --why prints (DEAL skipped=C~1 why=WAIT task:alpha:sentinel
+// waiting), counts no slot for it and deals the eligible A2 instead, and
+// card work starts A2's copy past C~1.
+func TestDealPassNamesTheHeldCopy(t *testing.T) {
+	t.Parallel()
+	c, st := sdStore(t)
+	ctx := context.Background()
+	as, err := taskcard.ParseConsumer("friend:f1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := taskcard.Enroll(ctx, c, as, true); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := c.HSet(ctx, as.DesiredKey(), "slots", 1, "paused", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.HSet(ctx, as.BeatKey(), "at", now.UnixMilli()).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sdCard(t, c, "A1", "alpha", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := sdCard(t, c, "C", "beta", "alpha:sentinel"); err != nil {
+		t.Fatal(err)
+	}
+	sdLand(t, c, "A1")
+	if _, _, err := sdResolve(c, sdLease(t, st)); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: as, N: 1, IDs: []string{"C"}, By: "test"}); err != nil || len(d) != 1 {
+		t.Fatalf("deal C: %+v %v", d, err)
+	}
+	if err := sdCard(t, c, "A2", "alpha", ""); err != nil {
+		t.Fatal(err)
+	}
+	pass, err := taskcard.DealPass(ctx, c, "test", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "DEAL skipped=C~1 why=WAIT task:alpha:sentinel waiting"
+	found := false
+	for _, l := range pass.Lines {
+		found = found || l == want
+	}
+	if !found || pass.Dealt != 1 {
+		t.Fatalf("deal pass: dealt %d lines %q; want %q and A2 dealt", pass.Dealt, pass.Lines, want)
+	}
+	work, err := taskcard.Work(ctx, c, as, "test", 1, false)
+	if err != nil || len(work.IDs) != 1 || sdField(t, c, work.IDs[0], "primary") != "A2" {
+		t.Fatalf("work: %+v %v; want A2's copy", work, err)
+	}
+	t.Logf("deal pass: %q; worked %s", pass.Lines, work.IDs[0])
 }

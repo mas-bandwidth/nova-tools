@@ -44,10 +44,12 @@ import (
 
 // The table move functions (fn/lua/02_card_move.lua, TM).
 const (
-	FnDeal   = "ns_cm_deal"
-	FnWork   = "ns_cm_work"
-	FnEnd    = "ns_cm_end"
-	FnCancel = "ns_cm_cancel"
+	FnDeal = "ns_cm_deal"
+	FnWork = "ns_cm_work"
+	// FnBlocked names the ready copies the dependency rule holds (read only).
+	FnBlocked = "ns_cm_blocked"
+	FnEnd     = "ns_cm_end"
+	FnCancel  = "ns_cm_cancel"
 	// FnCancelEach is card cancel --each (#4309): every id on its own.
 	FnCancelEach = "ns_cm_cancel_each"
 	FnBeatCopy   = "ns_cm_beat"

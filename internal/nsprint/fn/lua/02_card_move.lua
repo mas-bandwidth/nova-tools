@@ -4256,6 +4256,28 @@ redis.register_function('ns_cm_work', function(keys, args)
   return TM.work(args[1], TK.str(args[2]), tonumber(args[3]) or 0, args[3] == 'fill', TM.ids(args, 4))
 end)
 
+-- ns_cm_blocked(consumer...) -> per ready copy the dependency rule holds
+-- (TM.dep_line, the line ready --why prints): consumer, copy, line, flat.
+-- The deal pass reads it so a held copy is not a candidate and holds no
+-- slot: the pass deals the next eligible card instead (#4414, Stella's
+-- reopened copy that starved its prerequisite). Read only.
+redis.register_function{ function_name = 'ns_cm_blocked', flags = { 'no-writes' }, callback = function(keys, args)
+  local out = {}
+  for _, c in ipairs(args) do
+    for _, id in ipairs(redis.call('ZRANGE', TM.key(c, 'ready'), 0, -1)) do
+      if TK.copy_id(id) then
+        local line = TM.dep_line(id)
+        if line then
+          out[#out + 1] = c
+          out[#out + 1] = id
+          out[#out + 1] = line
+        end
+      end
+    end
+  end
+  return out
+end }
+
 -- ns_cm_end(by, ok|fail, why, sha, score, reader, token, nfields, k, v...,
 -- id...) -> ENDED n, then per copy: copy, primary, from, to (already: the
 -- same end again, nothing moved), next copy | REFUSED <why> (CONFLICT,
