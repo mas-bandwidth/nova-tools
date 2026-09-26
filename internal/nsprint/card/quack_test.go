@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 )
 
@@ -14,7 +15,9 @@ import (
 // reads (taskcard.ParseIssue completes it with nothing missing for a swarm
 // route), its one fixture path and line name the sprint and the id, the DO
 // and DONE-WHEN lines quote that same line, and a bad tier, id or base-sha is
-// refused before anything is rendered.
+// refused before anything is rendered. The card is one invariant (#4396):
+// its INVARIANT names the fixture and its line, its CLASS-TEST is this test,
+// and cardhdr.LintOneInvariant accepts it.
 func TestQuackIssue(t *testing.T) {
 	t.Parallel()
 
@@ -46,6 +49,14 @@ func TestQuackIssue(t *testing.T) {
 		if !strings.Contains(text, s) {
 			t.Fatalf("missing %q in:\n%s", s, text)
 		}
+	}
+	for _, s := range []string{"INVARIANT: the file " + path + " holds exactly the line " + strconv.Quote(line) + ".\n", "CLASS-TEST: TestQuackIssue\n"} {
+		if !strings.Contains(text, s) {
+			t.Fatalf("missing %q in:\n%s", s, text)
+		}
+	}
+	if rs := cardhdr.LintOneInvariant(cardhdr.Card{Text: text}); rs != nil {
+		t.Fatalf("the quack card is not one invariant:\n%v", rs)
 	}
 	if card.QuackTitle("quack-007", "flash") != "quack quack-007 flash" || card.QuackID(100) != "quack-100" {
 		t.Fatal("title or id shape")

@@ -52,7 +52,7 @@
 //	consumers               when given; then the benches; then any other
 //	                        enrolled consumer), each once
 //	<c>:cards:<set>         ZCARD for set = ready, working, ok, fail
-//	<c>:beat                HMGET load1 at
+//	<c>:beat                HMGET load1 at ncpu cpu models
 //	<c>:down                EXISTS (a string or a hash; either means down)
 //	<c>:desired             HGET paused (1: the status reads paused while up)
 //	bench:<b>:play          HGET result (failed:<role>: the status reads behind: <role>)
@@ -183,6 +183,10 @@ type ConsumerRow struct {
 	Paused                   bool
 	Behind                   string
 	Load                     string
+	// Models is a friend beat's models field: the models of the copies it
+	// holds in working (life.FriendBeat); the row prints it beside the name
+	// while the row is up and working.
+	Models string
 }
 
 // Status is the row's status cell: down, behind: <role> (up, its last
@@ -445,7 +449,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		for j, set := range ConsumerSets {
 			cmds[i].cells[j] = pipe.ZCard(ctx, c.ID()+":cards:"+set)
 		}
-		cmds[i].beat = pipe.HMGet(ctx, c.ID()+":beat", "load1", "at", "ncpu", "cpu")
+		cmds[i].beat = pipe.HMGet(ctx, c.ID()+":beat", "load1", "at", "ncpu", "cpu", "models")
 		cmds[i].down = pipe.Exists(ctx, c.ID()+":down")
 		cmds[i].paused = pipe.HGet(ctx, c.ID()+":desired", "paused")
 		if c.Kind == "bench" {
@@ -557,7 +561,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			n, err := cmd.Result()
 			*cells[j], row.Unread[j] = n, err != nil
 		}
-		if got, err := cmds[i].beat.Result(); err == nil && len(got) == 4 {
+		if got, err := cmds[i].beat.Result(); err == nil && len(got) == 5 {
 			// A friend's load is its own beat's too (#4233: friend beat
 			// measures the machine the friend's session runs on); the
 			// hardcoded bench:studio:beat fallback of 2026-09-25 is gone.
@@ -571,6 +575,15 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			}
 			if atMS, err := strconv.ParseInt(pipeValue(got[1]), 10, 64); err == nil && now.UnixMilli()-atMS <= hostBeatStale.Milliseconds() {
 				row.Up = true
+			}
+			if c.Kind == "friend" {
+				var ms []string
+				for _, m := range strings.Split(pipeValue(got[4]), ",") {
+					if m = sanitize(m); m != "" {
+						ms = append(ms, m)
+					}
+				}
+				row.Models = strings.Join(ms, ",")
 			}
 		}
 		if n, err := cmds[i].down.Result(); err != nil || n > 0 {
@@ -700,6 +713,7 @@ func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
 		if kinds[r.Name] == 3 {
 			name = r.ID()
 		}
+		name = workerName(name, r)
 		cell := [4]string{}
 		for j, n := range []int64{r.Ready, r.Working, r.OK, r.Fail} {
 			cell[j] = strconv.FormatInt(n, 10)
@@ -728,6 +742,26 @@ func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
 		done, pct = "?", "?"
 	}
 	fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %4s |\n", "total", cell[0], cell[1], done, pct)
+}
+
+// nameWidth is the worker cell's width.
+const nameWidth = 25
+
+// workerName is the worker cell: the row's name, and for a friend that is
+// up with copies in working, the models its beat says work them (Glenn
+// 2026-09-26 13:32 EDT: the coordinator was the only worker and the row said
+// nothing of who worked its copies). It rides in the name cell, cut to the
+// cell's width, because a column would push the row past 80 and the status
+// cell (6 wide) has no room: the row stays as wide as it was.
+func workerName(name string, r ConsumerRow) string {
+	if r.Kind != "friend" || !r.Up || r.Working == 0 || r.Unread[1] || r.Models == "" {
+		return name
+	}
+	s := name + " " + r.Models
+	if len(s) > nameWidth {
+		s = s[:nameWidth]
+	}
+	return s
 }
 
 // The writer's lock: one table writer per key, fleet-wide. AcquireLock takes
