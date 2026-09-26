@@ -358,7 +358,8 @@ func TestCancelledStitchIsStuckThenRecutLandsThePlan(t *testing.T) {
 		t.Fatalf("bare cut on a waiting stitch (exit %d):\n%s", code, out)
 	}
 	// The re-cut stitch lands by task land --id: the plan lands with it and
-	// the receipt names it, its ref and origin; the stream's stop lands too.
+	// the receipt names it, its ref and origin; the stream's stop waits for
+	// the coordinator's acceptance (no landing by structure, nova-tools#4412).
 	walk("pc-stitch-2", "82")
 	code, out, _ = run("task", "land", "--id", "pc-stitch-2", "--sha", sha(2), "--actor", "rowan")
 	if code != 0 || !strings.Contains(out, "TASK land id=pc-stitch-2 from=merging to=landed parent=pc ref="+ref+" origin="+origin+" ms=") {
@@ -368,8 +369,8 @@ func TestCancelledStitchIsStuckThenRecutLandsThePlan(t *testing.T) {
 	if rec["where"] != "landed" || rec["merge_sha"] != sha(2) || rec["ref"] != ref || rec["origin"] != origin {
 		t.Fatalf("parent after the stitch landed: where=%s merge_sha=%s ref=%s origin=%s", rec["where"], rec["merge_sha"], rec["ref"], rec["origin"])
 	}
-	if w := c.HGet(ctx, taskcard.Key(stream+":sentinel"), "where").Val(); w != "landed" {
-		t.Fatalf("the stream's stop is %s, want landed with the plan", w)
+	if w := c.HGet(ctx, taskcard.Key(stream+":sentinel"), "where").Val(); w != "waiting" {
+		t.Fatalf("the stream's stop is %s, want waiting for the coordinator's acceptance", w)
 	}
 	// A plain card's land receipt names no plan.
 	if _, out, _ := run("task", "land", "--id", "e1", "--sha", sha(1), "--actor", "rowan"); strings.Contains(out, "parent=") {
@@ -585,6 +586,17 @@ func TestStitchDoneWithNoPRPrintsThePlanStuck(t *testing.T) {
 		}
 		if code, out, errOut := run("card", "cut", "--parent", p, "--from", tsv, "--no-github", "--actor", "rowan"); code != 0 {
 			t.Fatalf("cut exit %d:\n%s%s", code, out, errOut)
+		}
+		// the child lands first: the take door judges the stitch's
+		// DEPENDS-ON at the claim (nova-tools#4414)
+		if _, err := taskcard.Move(ctx, c, p+"-c", "ready", taskcard.Opts{By: "rowan", Why: "test"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := taskcard.Move(ctx, c, p+"-c", "working", taskcard.Opts{By: "rowan", As: "emma", Friend: "emma", SetFriend: true}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := taskcard.Land(ctx, c, p+"-c", "rowan", strings.Repeat("0", 39)+"1", "merged"); err != nil {
+			t.Fatal(err)
 		}
 		if _, err := taskcard.Move(ctx, c, p+"-stitch", "ready", taskcard.Opts{By: "rowan", Why: "test"}); err != nil {
 			t.Fatal(err)
