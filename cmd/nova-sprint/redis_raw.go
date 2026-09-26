@@ -41,7 +41,7 @@ func cmdRedisRaw(ctx context.Context, args []string, stdout, stderr io.Writer) i
 // redisRaw is the verb as sel's seat, its address default read from getenv.
 func redisRaw(ctx context.Context, sel *seatcred.Selection, getenv func(string) string, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("redis")
-	addr := fs.String("redis", rawAddrDefault(sel, getenv), "redis address (the seat's row, else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then NOVA_REDIS)")
+	addr := fs.String("redis", rawAddrDefault(sel, getenv), verbflag.HelpRedis)
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, "redis", redisRawWants)
 	}
