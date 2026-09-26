@@ -118,6 +118,16 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the card's PATHS header in a Redis task hash title, like prereview.go ParseCard, read before any RESULT exists"},
 	{file: "internal/jev/jev.go", fn: "fields", record: "PR-body", since: "04c639c1",
 		reason: "the PR body's typed PATHS: line Jev's lint pass checks (#3631), like nsprint/file/file.go requiredKeys, not a RESULT parse"},
+	{file: "internal/nsprint/jev/plan.go", fn: "CutState", record: "SPEC-CARD", since: "b27e5029",
+		reason: "renders the card's KIND/REPO/PATHS header lines from its Redis hash for Jev's cut question (#4316), a card writer like card/cut.go RenderCut, not a RESULT parse"},
+	{file: "internal/nsprint/jev/plan.go", fn: "ReviewState", record: "Redis-review", since: "b27e5029",
+		reason: "renders a failed copy's review fields (PR, PATHS) from its Redis hash for Jev's review question (#4316), a writer, not a RESULT parse"},
+	{file: "internal/nsprint/jev/plan.go", fn: "ReadState", record: "Redis-read", since: "b27e5029",
+		reason: "renders a read's HEAD line from its Redis hash for Jev's read question (#4316), a writer, not a RESULT parse"},
+	{file: "internal/nsprint/read/pr_brief.go", fn: "RenderPR", record: "SPEC-CARD", since: "587628fd",
+		reason: "renders the card's KIND/PATHS header lines from its Redis hash in read brief --pr (#4335), a card writer like card/cut.go RenderCut, not a RESULT parse"},
+	{file: "internal/nsprint/fleetbuild/play.go", fn: "cloneSha", record: "git-HEAD", since: "5c9588e0",
+		reason: "the HEAD revision in the argv of git rev-parse for fleet play's receipt sha (#4356 C), like secrets/seal.go RunSeal, not a RESULT field"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
