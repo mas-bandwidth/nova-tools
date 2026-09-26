@@ -20,6 +20,7 @@ import (
 //	ORDER WAIT stream=<s> before=<id> where=<set>[:<skip why>] held=<ids>
 //	ORDER CONFLICT stream=<s> why=cycle cycle=<a -> b -> a> held=<ids> escalate=coordinator
 //	ORDER CONFLICT stream=<s> why=never-finishes before=<id> where=<set> dep=<id> dep_where=done/fail held=<ids> escalate=coordinator
+//	ORDER CONFLICT stream=<s> why=sequence-changed was=<a,b> now=<b,a> escalate=coordinator (land merge: MergeGate)
 //
 // WAIT is ordinary: the predecessor is live and can still finish. CONFLICT
 // is an order that cannot be met (a DEPENDS-ON cycle, or a predecessor
@@ -34,10 +35,11 @@ const (
 type OrderHold struct {
 	Kind          string // OrderWait or OrderConflict
 	Stream        string
-	Why           string // CONFLICT: cycle | never-finishes
-	Before, Where string // the first unfinished predecessor and its live set
-	Cycle         string // why=cycle: the cycle ws.Order names
-	Dep, DepWhere string // why=never-finishes: the edge that is never met
+	Why           string   // CONFLICT: cycle | never-finishes | sequence-changed
+	Before, Where string   // the first unfinished predecessor and its live set
+	Cycle         string   // why=cycle: the cycle ws.Order names
+	Dep, DepWhere string   // why=never-finishes: the edge that is never met
+	Was, Now      []string // why=sequence-changed: the recorded and the current sequence
 	Held          []string
 }
 
@@ -57,7 +59,11 @@ func (h OrderHold) Line() string {
 	if h.Dep != "" {
 		fmt.Fprintf(&b, " dep=%s dep_where=%s", h.Dep, h.DepWhere)
 	}
-	fmt.Fprintf(&b, " held=%s", strings.Join(h.Held, ","))
+	if h.Why == "sequence-changed" {
+		fmt.Fprintf(&b, " was=%s now=%s", strings.Join(h.Was, ","), strings.Join(h.Now, ","))
+	} else {
+		fmt.Fprintf(&b, " held=%s", strings.Join(h.Held, ","))
+	}
 	if h.Kind == OrderConflict {
 		b.WriteString(" escalate=coordinator")
 	}
@@ -78,6 +84,14 @@ func OrderGate(ctx context.Context, c redis.Cmdable, streams []string, members [
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	return orderGate(ctx, c, streams, orders, members, skips)
+}
+
+// orderGate is OrderGate on orders already read. The kept members come
+// back as the computed SEQUENCE: streams in the order given, each stream's
+// members in its computed order (never the input slice's order), so the
+// build merges them, and the landing records them, in that sequence.
+func orderGate(ctx context.Context, c redis.Cmdable, streams []string, orders []ws.StreamOrder, members []Member, skips []Skip) ([]Member, []Skip, []OrderHold, error) {
 	skipWhy := map[string]string{}
 	for _, s := range skips {
 		skipWhy[s.Task] = s.Why
@@ -147,16 +161,77 @@ func OrderGate(ctx context.Context, c redis.Cmdable, streams []string, members [
 			}
 		}
 	}
-	var kept []Member
 	var out []Skip
+	byID := map[string]Member{}
 	for _, m := range members {
 		if why := held[m.Task]; why != "" {
 			out = append(out, Skip{Task: m.Task, N: m.N, Why: why})
 			continue
 		}
-		kept = append(kept, m)
+		byID[m.Stream+"\x00"+m.Task] = m
+	}
+	var kept []Member
+	for i, so := range orders {
+		for _, o := range so.Order {
+			k := streams[i] + "\x00" + o.ID
+			if m, ok := byID[k]; ok {
+				kept = append(kept, m)
+				delete(byID, k)
+			}
+		}
+	}
+	for _, m := range members { // a member no live order ranks (none today) keeps its place after them
+		if _, ok := byID[m.Stream+"\x00"+m.Task]; ok {
+			kept = append(kept, m)
+		}
 	}
 	return kept, out, holds, nil
+}
+
+// MergeGate is land merge's check immediately before the merge: the
+// landing's recorded SEQUENCE (its members in the order the build merged
+// them, the landing record's tasks field) against each stream's current
+// complete computed order, one read. The selected members' relative order
+// must be the same, element by element; any difference is
+// `ORDER CONFLICT stream=<s> why=sequence-changed was=<a,b> now=<b,a>
+// escalate=coordinator` (the branch was built in the old sequence: rebuild
+// or review, never merge it). Then the unselected-predecessor check
+// (orderGate): ORDER WAIT or ORDER CONFLICT. nil when the landing may merge.
+func MergeGate(ctx context.Context, c redis.Cmdable, streams []string, recorded []Member) (*OrderHold, error) {
+	if len(recorded) == 0 {
+		return nil, nil
+	}
+	orders, err := ws.ReadOrders(ctx, c, streams)
+	if err != nil {
+		return nil, err
+	}
+	for i, so := range orders {
+		var was []string
+		in := map[string]bool{}
+		for _, m := range recorded {
+			if m.Stream == streams[i] {
+				was = append(was, m.Task)
+				in[m.Task] = true
+			}
+		}
+		if len(was) == 0 || so.Err != nil {
+			continue // a cycle is orderGate's CONFLICT below
+		}
+		var now []string
+		for _, o := range so.Order {
+			if in[o.ID] {
+				now = append(now, o.ID)
+			}
+		}
+		if strings.Join(now, ",") != strings.Join(was, ",") {
+			return &OrderHold{Kind: OrderConflict, Stream: streams[i], Why: "sequence-changed", Was: was, Now: now}, nil
+		}
+	}
+	_, _, holds, err := orderGate(ctx, c, streams, orders, recorded, nil)
+	if err != nil || len(holds) == 0 {
+		return nil, err
+	}
+	return &holds[0], nil
 }
 
 // DepRec is one record's fields the never-finishes walk reads.
@@ -273,6 +348,9 @@ func neverFinishes(ctx context.Context, c redis.Cmdable, holds []OrderHold) erro
 // orderRefusal is the gate's refusal at land merge: the landing is no
 // longer a prefix of the live order.
 func orderRefusal(h OrderHold) *Refusal {
+	if h.Why == "sequence-changed" {
+		return &Refusal{Why: h.Line(), Remedy: "the stream branch was built in the old sequence: land stream again to rebuild it in the current order, or the coordinator reviews the order change; nothing is merged"}
+	}
 	if h.Kind == OrderConflict {
 		return &Refusal{Why: h.Line(), Remedy: "the coordinator resolves the order (the cycle, or the predecessor that cannot finish); nothing is merged or reordered"}
 	}

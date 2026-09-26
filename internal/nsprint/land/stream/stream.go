@@ -573,14 +573,17 @@ type Parked struct {
 // Landing is one land:<repo>:<slug> hash.
 type Landing struct {
 	Repo, Slug, Streams, Base, BaseSHA, Branch, Head string
-	Members                                          []Member
-	Parked                                           []Parked
-	PR                                               int
-	State                                            string
-	Tests                                            int
-	Workdir                                          string
-	At                                               string
-	MergeSHA                                         string
+	// Members is the recorded sequence (stored as tasks and members, in
+	// order): the computed order the build merged them in, which land
+	// merge's MergeGate compares with the current order element by element.
+	Members  []Member
+	Parked   []Parked
+	PR       int
+	State    string
+	Tests    int
+	Workdir  string
+	At       string
+	MergeSHA string
 	// CommitCloses is, per kept member, the issues its commit messages
 	// close; SaveBuilt stores it on the member's record (commit_closes).
 	CommitCloses map[int]string

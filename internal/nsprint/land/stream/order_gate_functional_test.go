@@ -112,6 +112,36 @@ func TestOrderGateWaitConflictAndMergeRevalidates(t *testing.T) {
 		}
 		t.Logf("%s; merging scores unchanged %s", rep.Order[0].Line(), before)
 	})
+	t.Run("sequence", func(t *testing.T) {
+		t.Parallel()
+		c := setup(t, "merging")
+		c.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: 50, Member: "t2"}) // stored scores read t2 first
+		rep := dry(t, c)
+		if len(rep.Members) != 2 || rep.Members[0].Task != "t1" || rep.Members[1].Task != "t2" {
+			t.Fatalf("selection is not the computed sequence t1,t2: %v", rep.Members)
+		}
+		l := Landing{Repo: repo, Slug: "landing-streams-lander", Streams: strm, Base: "dev", Branch: "stream/x", Head: head,
+			Members: rep.Members, PR: 900, State: "open"}
+		if _, err := SaveBuilt(ctx, c, l, "test"); err != nil {
+			t.Fatal(err)
+		}
+		slug, _ := Slug(strm)
+		c.HSet(ctx, LandKey(repo, slug), "state", "open", "pr", "900", "head", head)
+		if _, err := Record(ctx, c, repo, 900, RecordFields{Head: head, Base: "dev", CI: "green", Mergeable: "true"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := c.HGet(ctx, LandKey(repo, slug), "tasks").Val(); got != "t1 t2" {
+			t.Fatalf("recorded sequence %q", got)
+		}
+		c.HSet(ctx, "task:t1", "blocked_on", "t2") // after the build: the order is now t2, t1
+		_, err := Merge(ctx, c, MergeOptions{Repo: repo, Streams: []string{strm}, By: "test"})
+		var r *Refusal
+		want := "ORDER CONFLICT stream=" + q + " why=sequence-changed was=t1,t2 now=t2,t1 escalate=coordinator"
+		if !errors.As(err, &r) || r.Why != want {
+			t.Fatalf("land merge after the sequence changed: %v", err)
+		}
+		t.Logf("selected t1,t2 (stored scores read t2,t1); recorded tasks=t1 t2; land merge: %v", err)
+	})
 	t.Run("merge-revalidates", func(t *testing.T) {
 		t.Parallel()
 		c := setup(t, "merging")

@@ -389,14 +389,15 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 		case !r.MergeableOK():
 			return rep, &Refusal{Why: fmt.Sprintf("mergeable=%s on %s#%d", orDash(r.Mergeable), o.Repo, l.PR), Remedy: prCmd + " --mergeable true"}
 		}
-		// The work order again, immediately before the merge: a card that
-		// moved ahead of the landing's members since land stream selected
-		// them (a push, a DEPENDS-ON edit, a restart) refuses the merge,
-		// nothing merged and nothing reordered.
-		if _, _, holds, err := OrderGate(ctx, c, o.Streams, l.Members, nil); err != nil {
+		// The work order again, immediately before the merge (MergeGate): the
+		// landing's recorded sequence against the current order, element by
+		// element, then any card that moved ahead of its members since land
+		// stream selected them (a push, a DEPENDS-ON edit, a restart). Either
+		// refuses the merge, nothing merged and nothing reordered.
+		if h, err := MergeGate(ctx, c, o.Streams, l.Members); err != nil {
 			return rep, err
-		} else if len(holds) > 0 {
-			return rep, orderRefusal(holds[0])
+		} else if h != nil {
+			return rep, orderRefusal(*h)
 		}
 		if o.GH == nil {
 			return rep, &Refusal{Why: "no GitHub client", Remedy: "set GH_TOKEN"}
