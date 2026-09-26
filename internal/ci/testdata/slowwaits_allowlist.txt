@@ -6,7 +6,6 @@
 # hang that a short bound kills. A test that WAITS a deadline out goes behind
 # //go:build slow instead (the 26 moved that day are in the slow_test.go files
 # beside them). The list only shrinks: an entry with no hit left is a red run.
-cmd/nova-sprint/quack_test.go:TestQuackPassAndBars hands the code under test --timeout 20s; a ceiling the run never reaches: 0.23 s on hetzner at dev 64b9bec48
 cmd/nova-swarm/fixture_guards_test.go:TestTheDeadlineACappedJobIsMeasuredAgainstIsTheOneItRunsUnder hands the code under test --deadline 9s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
 cmd/nova-swarm/native_test.go:TestCmdNativeCLI hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
 cmd/nova-swarm/native_test.go:TestNativeAuthCopyIsGoneAfterTheRun hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48

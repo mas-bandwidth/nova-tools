@@ -2,25 +2,20 @@ package main
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
 const quackBase = "0123456789abcdef0123456789abcdef01234567"
 
-// quackFixture is a throwaway Redis with the library loaded, two registered
-// benches and a local mirror so the card's repo probe never leaves the host.
-// Nothing here dials a bench: the fake bench below writes the stage fields.
-func quackFixture(t *testing.T) (*redis.Client, string) {
+// quackFixture is a throwaway Redis with the library loaded and the sprint
+// open; nothing here dials a bench or a mirror (every cut names --base-sha).
+func quackFixture(t *testing.T, sprint string) (*redis.Client, string) {
 	t.Helper()
 	ctx := context.Background()
 	addr := testutil.Start(t)
@@ -29,157 +24,154 @@ func quackFixture(t *testing.T) (*redis.Client, string) {
 	if err := fn.Load(ctx, client); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.SAdd(ctx, "benches", "b1", "b2").Err(); err != nil {
-		t.Fatal(err)
-	}
-	mirror := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(mirror, "nova-tools.git", "objects"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("NOVA_MIRROR_ROOT", mirror)
+	client.HSet(ctx, "s:"+sprint, "status", "open")
 	return client, addr
 }
 
-// fakeBench replays the stage events of a quack sprint onto the card records,
-// as the dealer, the bench wrapper, harvest and pr-to-read write them: once
-// every probe card is pushed it stamps dealt_at +2 s, launched_at +3 s,
-// ended_at +end s, harvested_at +50 s (with pr and head) and a first read
-// task queued at +60 s, each from the card's own cut_at. A card in stall
-// stops at ended: harvest never comes.
-func fakeBench(t *testing.T, client *redis.Client, sprint string, labels []string, end int64, stall string) {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	t.Cleanup(func() { cancel(); <-done })
-	go func() {
-		defer close(done)
-		for ctx.Err() == nil {
-			pipe := client.Pipeline()
-			cuts := make([]*redis.StringCmd, len(labels))
-			for i, l := range labels {
-				cuts[i] = pipe.HGet(ctx, "s:"+sprint+":card:"+l, "cut_at")
-			}
-			_, _ = pipe.Exec(ctx)
-			ready := true
-			for _, c := range cuts {
-				ready = ready && c.Val() != ""
-			}
-			if !ready {
-				time.Sleep(10 * time.Millisecond)
-				continue
-			}
-			for i, l := range labels {
-				cut, _ := strconv.ParseInt(cuts[i].Val(), 10, 64)
-				base := cut * 1000
-				key := "s:" + sprint + ":card:" + l
-				ms := func(s int64) string { return strconv.FormatInt(base+s*1000, 10) }
-				client.HSet(ctx, key, "dealt_at", ms(2), "launched_at", ms(3), "ended_at", ms(end), "outcome", "DONE")
-				if l == stall {
-					continue
-				}
-				pr, head := strconv.Itoa(9000+i), strings.Repeat(strconv.Itoa(i%10), 40)
-				client.HSet(ctx, key, "harvested_at", ms(50), "pr", pr, "head", head)
-				id := "read-" + pr + "-" + head[:8]
-				client.HSet(ctx, "s:"+sprint+":reads:mas-bandwidth/nova-tools#"+pr+"@"+head, "emma", id)
-				client.HSet(ctx, "task:"+id, "created_at", time.UnixMilli(base+60000).UTC().Format(time.RFC3339))
-			}
-			return
-		}
-	}()
-}
+// TestQuackCut is the DONE-WHEN of nova-tools#4307's first half: one verb
+// sets the stop, pushes N primaries into the stream's waiting set from the
+// template (tiers round-robin, the card's REPO and base-sha on the record)
+// and prints the CUT line naming the stop; a second cut skips every id it
+// finds with a SKIPPED line and keeps the stop; a sprint nobody opened and a
+// repo with no mirror and no --base-sha are refused before anything is
+// written.
+func TestQuackCut(t *testing.T) {
+	t.Parallel()
 
-func quackLabels() []string {
-	return []string{card.QuackLabel("b1", "pro"), card.QuackLabel("b1", "flash"), card.QuackLabel("b2", "pro"), card.QuackLabel("b2", "flash")}
-}
-
-func quackRows(out string) []string {
-	var rows []string
-	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
-		if strings.HasPrefix(l, "b1 ") || strings.HasPrefix(l, "b2 ") {
-			rows = append(rows, l)
+	const S = "quack-t1"
+	client, addr := quackFixture(t, S)
+	ctx := context.Background()
+	code, out, errOut := runSprint("quack", "cut", "--redis", addr, "--n", "5", "--repo", "mas-bandwidth/quack", "--stream", "quack",
+		"--sprint", S, "--tiers", "flash,pro", "--base-sha", quackBase, "--ref", "mas-bandwidth/nova-tools#4232", "--actor", "rowan")
+	if code != 0 {
+		t.Fatalf("exit %d\nstdout:\n%s\nstderr: %s", code, out, errOut)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	last := lines[len(lines)-1]
+	for _, want := range []string{"CUT n=5 stream=quack sprint=quack-t1 repo=mas-bandwidth/quack tiers=flash,pro pushed=5 skipped=0 refused=0 base-sha=" + quackBase[:12] + " pitstop=set",
+		` lift="nova-sprint quack run --sprint quack-t1" ms=`} {
+		if !strings.Contains(last, want) {
+			t.Fatalf("CUT line %q lacks %q", last, want)
 		}
 	}
-	return rows
+	if len(lines) != 1 {
+		t.Fatalf("a clean cut prints one line, got:\n%s", out)
+	}
+	if stop, err := pitstop.Read(ctx, client, S); err != nil || !stop.Set || stop.By != "rowan" || !strings.Contains(stop.Why, "cutting 5 quack cards") {
+		t.Fatalf("pit stop %+v %v, want set by rowan for the cut", stop, err)
+	}
+	ids, err := client.ZRange(ctx, "ws:quack:waiting", 0, -1).Result()
+	if err != nil || strings.Join(ids, ",") != "quack-001,quack-002,quack-003,quack-004,quack-005" {
+		t.Fatalf("ws:quack:waiting=%v %v", ids, err)
+	}
+	for i, id := range ids {
+		tier := []string{"flash", "pro"}[i%2]
+		rec := client.HGetAll(ctx, "task:"+id).Val()
+		for k, want := range map[string]string{"where": "waiting", "stream": "quack", "sprint": S, "route": tier, "repo": "mas-bandwidth/quack",
+			"base": "dev", "base_sha": quackBase, "paths": "docs/fixtures/quack-" + S + "-" + id + ".txt", "title": "quack " + id + " " + tier,
+			"ref": "mas-bandwidth/nova-tools#4232", "kind": "fix", "task": id, "source": "quack", "priority": "100"} {
+			if rec[k] != want {
+				t.Fatalf("task:%s %s=%q, want %q", id, k, rec[k], want)
+			}
+		}
+		if !strings.Contains(rec["body"], "DONE-WHEN: the file docs/fixtures/quack-"+S+"-"+id+".txt exists") || !strings.Contains(rec["done_when"], "\"quack "+S+" "+id+"\"") {
+			t.Fatalf("task:%s body or done_when lacks the fixture line: %q", id, rec["done_when"])
+		}
+	}
+
+	// The same cut again: every id exists, each is SKIPPED, the stop is held.
+	code, out, _ = runSprint("quack", "cut", "--redis", addr, "--n", "6", "--repo", "mas-bandwidth/quack", "--stream", "quack",
+		"--sprint", S, "--base-sha", quackBase, "--actor", "rowan")
+	if code != 0 || strings.Count(out, "SKIPPED id=quack-00") != 5 || !strings.Contains(out, "SKIPPED id=quack-003 why=exists\n") {
+		t.Fatalf("second cut: exit %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "CUT n=6 stream=quack sprint=quack-t1 repo=mas-bandwidth/quack tiers=flash,pro pushed=1 skipped=5 refused=0 base-sha="+quackBase[:12]+" pitstop=held") {
+		t.Fatalf("second CUT line:\n%s", out)
+	}
+	if n := client.ZCard(ctx, "ws:quack:waiting").Val(); n != 6 {
+		t.Fatalf("waiting=%d, want 6", n)
+	}
+
+	// Refusals write nothing.
+	code, out, _ = runSprint("quack", "cut", "--redis", addr, "--n", "2", "--repo", "mas-bandwidth/quack", "--stream", "quack",
+		"--sprint", "quack-nobody-opened", "--base-sha", quackBase, "--actor", "rowan")
+	if code != 1 || !strings.HasPrefix(out, "CUT REFUSED sprint=quack-nobody-opened why=sprint-unknown remedy=") || client.Exists(ctx, "task:quack-001").Val() != 1 || client.Exists(ctx, "s:quack-nobody-opened:pitstop").Val() != 0 {
+		t.Fatalf("unknown sprint: exit %d %q", code, out)
+	}
+	code, out, _ = runSprint("quack", "cut", "--redis", addr, "--n", "2", "--repo", "example/no-such-mirror-4307", "--stream", "quack2",
+		"--sprint", S, "--actor", "rowan")
+	if code != 1 || !strings.HasPrefix(out, "CUT REFUSED sprint=quack-t1 repo=example/no-such-mirror-4307 why=") || !strings.Contains(out, "remedy=\"pass --base-sha <sha40>, or nova-sprint mirror refresh") || client.Exists(ctx, "ws:quack2:waiting").Val() != 0 {
+		t.Fatalf("no mirror, no --base-sha: exit %d %q", code, out)
+	}
+	for _, args := range [][]string{
+		{"--redis", addr, "--n", "0", "--repo", "o/r", "--stream", "q", "--sprint", S, "--base-sha", quackBase, "--actor", "a"},
+		{"--redis", addr, "--n", "2", "--repo", "o/r", "--stream", "q", "--sprint", S, "--base-sha", quackBase, "--actor", "a", "--tiers", "max"},
+		{"--redis", addr, "--n", "2", "--repo", "norepo", "--stream", "q", "--sprint", S, "--base-sha", quackBase, "--actor", "a"},
+		{"--redis", addr, "--n", "2", "--repo", "o/r", "--stream", "q", "--sprint", "Bad Name", "--base-sha", quackBase, "--actor", "a"},
+		{"--redis", addr, "--n", "2", "--repo", "o/r", "--stream", "q", "--sprint", S, "--base-sha", quackBase, "--actor", "a", "extra"},
+	} {
+		if code, _, errOut := runSprint(append([]string{"quack", "cut"}, args...)...); code != 2 || !strings.HasPrefix(errOut, "nova-sprint quack cut: ") {
+			t.Fatalf("%v: exit %d %q, want usage", args, code, errOut)
+		}
+	}
+	if code, _, errOut := runSprint("quack", "probe"); code != 2 || !strings.Contains(errOut, "want cut or run") {
+		t.Fatalf("unknown subverb: %d %q", code, errOut)
+	}
 }
 
-// TestQuack is the DONE-WHEN of nova-tools#3648: on a fixture store that
-// replays stage events for two benches x two tiers with one flash card
-// stalled at harvest, the verb prints four rows, the stalled one FAIL harvest
-// after the timeout, and exits 1.
-func TestQuack(t *testing.T) {
-	client, addr := quackFixture(t)
-	fakeBench(t, client, "quack-t1", quackLabels(), 40, card.QuackLabel("b2", "flash"))
-	code, out, errOut := runSprint("quack", "--redis", addr, "--sprint", "quack-t1", "--benches", "b1,b2",
-		"--tiers", "pro,flash", "--base-sha", quackBase, "--timeout", "1500ms", "--tick", "50ms")
+// TestQuackRun is the second half: the benches named by --slots get their
+// slots through the capacity path (a bench with no recorded machine is
+// refused naming the capacity verb), the pit stop is lifted, and a run with
+// no stop to lift says so.
+func TestQuackRun(t *testing.T) {
+	t.Parallel()
+
+	const S = "quack-t2"
+	client, addr := quackFixture(t, S)
+	ctx := context.Background()
+	client.HSet(ctx, "machine:m:ceiling", "slots", 40)
+	client.SAdd(ctx, "benches", "hetzner", "hulk")
+	client.HSet(ctx, "bench:hetzner:desired", "slots", 0, "machine", "m")
+	client.HSet(ctx, "bench:hulk:desired", "slots", 0, "machine", "m")
+	if _, err := pitstop.Set(ctx, client, S, "rowan", "quack cut: cutting 2 quack cards into quack", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := runSprint("quack", "run", "--redis", addr, "--sprint", S, "--slots", "hulk=16,hetzner=8,ghost=2", "--actor", "rowan")
 	if code != 1 {
-		t.Fatalf("exit %d, want 1\nstdout:\n%s\nstderr: %s", code, out, errOut)
+		t.Fatalf("exit %d, want 1 (ghost refused)\n%s%s", code, out, errOut)
 	}
-	t.Logf("the probe table:\n%s", out)
-	rows := quackRows(out)
-	if len(rows) != 4 {
-		t.Fatalf("%d rows, want 4:\n%s", len(rows), out)
-	}
-	for _, r := range rows {
-		stalled := strings.HasPrefix(r, "b2 flash ")
-		switch {
-		case stalled && !strings.Contains(r, " FAIL harvest"):
-			t.Fatalf("stalled row %q, want FAIL harvest", r)
-		case stalled && !strings.Contains(r, "end=40 harvest=- read=-"):
-			t.Fatalf("stalled row %q, want its stages to end and nothing after", r)
-		case !stalled && !strings.HasSuffix(r, " PASS"):
-			t.Fatalf("row %q, want PASS", r)
-		case !stalled && !strings.Contains(r, "push=0 deal=2 launch=3 end=40 harvest=50 read=60"):
-			t.Fatalf("row %q, want the replayed stage seconds", r)
+	for _, want := range []string{
+		"SLOTS REFUSED bench=ghost slots=2 why=no-machine remedy=\"nova-sprint capacity bench --as rowan --machine <m> ghost 2\"\n",
+		"SLOTS SET bench=hetzner machine=m slots=8 desired=8/40\n",
+		"SLOTS SET bench=hulk machine=m slots=16 desired=24/40\n",
+		"PITSTOP CLEAR sprint=quack-t2 by=rowan at=",
+		" was_by=rowan was_why=\"quack cut: cutting 2 quack cards into quack\"\n",
+		"QUACK RUN sprint=quack-t2 benches=2 refused=1 pitstop=lifted ms=",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "QUACK sprint=quack-t1 rows=4 pass=3 fail=1 timed_out=true") {
-		t.Fatalf("no receipt:\n%s", out)
+	if stop, _ := pitstop.Read(ctx, client, S); stop.Set {
+		t.Fatalf("stop still set: %+v", stop)
 	}
-	ctx := context.Background()
-	for _, b := range []string{"b1", "b2"} {
-		for _, tier := range []string{"pro", "flash"} {
-			rec := client.HMGet(ctx, "s:quack-t1:card:"+card.QuackLabel(b, tier), "bench", "route").Val()
-			if rec[0] != b || rec[1] != tier {
-				t.Fatalf("card %s bench=%v route=%v, want pinned to its bench and tier", card.QuackLabel(b, tier), rec[0], rec[1])
-			}
+	if got := client.HGet(ctx, "bench:hulk:desired", "slots").Val(); got != "16" {
+		t.Fatalf("hulk slots=%q", got)
+	}
+
+	code, out, _ = runSprint("quack", "run", "--redis", addr, "--sprint", S, "--slots", "hulk=16", "--actor", "rowan")
+	if code != 0 || !strings.Contains(out, "SLOTS SAME bench=hulk machine=m slots=16") || !strings.Contains(out, "PITSTOP NONE sprint=quack-t2\n") || !strings.Contains(out, "QUACK RUN sprint=quack-t2 benches=1 refused=0 pitstop=none") {
+		t.Fatalf("second run: exit %d\n%s", code, out)
+	}
+	for _, args := range [][]string{
+		{"--redis", addr, "--actor", "a"},
+		{"--redis", addr, "--sprint", S, "--actor", "a", "--slots", "hulk"},
+		{"--redis", addr, "--sprint", S, "--actor", "a", "--slots", "hulk=-1"},
+		{"--redis", addr, "--sprint", S, "--actor", "a", "--slots", "hulk=1,hulk=2"},
+	} {
+		if code, _, errOut := runSprint(append([]string{"quack", "run"}, args...)...); code != 2 || !strings.HasPrefix(errOut, "nova-sprint quack run: ") {
+			t.Fatalf("%v: exit %d %q, want usage", args, code, errOut)
 		}
-	}
-	if st, _ := client.HGet(ctx, "s:quack-t1", "status").Result(); st != "open" {
-		t.Fatalf("sprint status %q, want open (a fresh sprint the dealer deals)", st)
-	}
-}
-
-// TestQuackPassAndBars: every card through every stage exits 0 without
-// waiting for the timeout; cfg:quack's bars override the defaults, a stage
-// over its bar is FAIL <stage> over, a malformed bar is refused before any
-// write, and a sprint that already exists is refused (fresh only).
-func TestQuackPassAndBars(t *testing.T) {
-	client, addr := quackFixture(t)
-	ctx := context.Background()
-	fakeBench(t, client, "quack-t2", quackLabels(), 40, "")
-	code, out, errOut := runSprint("quack", "--redis", addr, "--sprint", "quack-t2", "--benches", "b1,b2",
-		"--base-sha", quackBase, "--timeout", "20s", "--tick", "50ms")
-	if code != 0 || len(quackRows(out)) != 4 || !strings.Contains(out, "pass=4 fail=0 timed_out=false") || !strings.Contains(out, "bars=default") {
-		t.Fatalf("exit %d, want 0 and four PASS rows\nstdout:\n%s\nstderr: %s", code, out, errOut)
-	}
-	if code, out, _ := runSprint("quack", "--redis", addr, "--sprint", "quack-t2", "--benches", "b1", "--base-sha", quackBase); code != 1 || !strings.Contains(out, "why=sprint-not-fresh") {
-		t.Fatalf("reused sprint: exit %d %q, want refused not fresh", code, out)
-	}
-
-	client.HSet(ctx, card.QuackBarsKey, "end", "30")
-	fakeBench(t, client, "quack-t3", quackLabels(), 40, "")
-	code, out, _ = runSprint("quack", "--redis", addr, "--sprint", "quack-t3", "--benches", "b1,b2",
-		"--base-sha", quackBase, "--timeout", "20s", "--tick", "50ms")
-	if code != 1 || strings.Count(out, "FAIL end over bar=30s") != 4 || !strings.Contains(out, "bars=cfg:quack") {
-		t.Fatalf("end bar 30 s: exit %d, want 1 and four FAIL end rows\n%s", code, out)
-	}
-
-	client.HSet(ctx, card.QuackBarsKey, "read", "soon")
-	code, out, _ = runSprint("quack", "--redis", addr, "--sprint", "quack-t4", "--benches", "b1", "--base-sha", quackBase)
-	if code != 1 || !strings.Contains(out, "REFUSED quack") || client.Exists(ctx, "s:quack-t4").Val() != 0 {
-		t.Fatalf("malformed bar: exit %d %q, want refused before the sprint is written", code, out)
-	}
-	if code, _, errOut := runSprint("quack", "--redis", addr, "--benches", "b1", "--tiers", "max", "--base-sha", quackBase); code != 2 || !strings.Contains(errOut, "not frontier, pro or flash") {
-		t.Fatalf("tier max: exit %d %q, want usage", code, errOut)
 	}
 }
