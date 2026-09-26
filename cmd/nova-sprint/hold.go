@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"os/signal"
@@ -63,26 +64,6 @@ func holdClient(addr string) (*redis.Client, error) {
 	return st.Client(), nil
 }
 
-// holdSplitArgs separates leading positional arguments from flags, so
-// `hold release --as x repo#n holder` and `hold release repo#n holder --as x`
-// both parse.
-func holdSplitArgs(args []string, flagsWithValue map[string]bool) (pos, flags []string) {
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if strings.HasPrefix(a, "-") {
-			flags = append(flags, a)
-			name := strings.TrimLeft(a, "-")
-			if !strings.Contains(name, "=") && flagsWithValue[name] && i+1 < len(args) {
-				flags = append(flags, args[i+1])
-				i++
-			}
-			continue
-		}
-		pos = append(pos, a)
-	}
-	return pos, flags
-}
-
 func parseRepoPR(s string) (string, int, error) {
 	i := strings.LastIndexByte(s, '#')
 	if i <= 0 {
@@ -97,10 +78,10 @@ func parseRepoPR(s string) (string, int, error) {
 
 func runHoldIngest(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs, addr := lifeFlags("hold ingest")
-	as := fs.String("as", "", "the friend running the ingest (required)")
-	sprint := fs.String("sprint", "", "sprint id (required)")
-	repo := fs.String("repo", "", "owner/repo")
-	pr := fs.Int("pr", 0, "pull request number")
+	as := fs.String("as", "", verbflag.HelpAs)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	pr := fs.Int("pr", 0, verbflag.HelpPR)
 	url := fs.String("url", "", "comment url")
 	bodyFile := fs.String("body-file", "", "the comment body as posted")
 	if err := fs.Parse(args); err != nil {
@@ -129,23 +110,24 @@ func runHoldIngest(ctx context.Context, args []string, out, errOut io.Writer) in
 }
 
 func runHoldRelease(ctx context.Context, args []string, out, errOut io.Writer) int {
-	pos, flags := holdSplitArgs(args, map[string]bool{"as": true, "sprint": true, "head": true, "evidence": true, "redis": true})
 	fs, addr := lifeFlags("hold release")
-	as := fs.String("as", "", "the releasing friend (required)")
-	sprint := fs.String("sprint", "", "sprint id (required)")
+	as := fs.String("as", "", verbflag.HelpAs)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	ref := fs.String("ref", "", "the pull request, <repo>#<n>")
+	holderFlag := fs.String("holder", "", "the friend whose hold is released (h:<f> or <f>)")
 	head := fs.String("head", "", "the unit's current head (40 hex)")
-	evidence := fs.String("evidence", "", "evidence url (required)")
-	if err := fs.Parse(flags); err != nil {
+	evidence := fs.String("evidence", "", "the evidence url the release records")
+	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "hold release", err.Error())
 	}
-	if len(pos) != 2 || *as == "" || *sprint == "" || *head == "" || *evidence == "" {
-		return refuse(errOut, "hold release", "usage: hold release --as <f> --sprint <S> <repo>#<n> <holder> --head <sha> --evidence <url>")
+	if fs.NArg() != 0 || *ref == "" || *holderFlag == "" || *as == "" || *sprint == "" || *head == "" || *evidence == "" {
+		return refuse(errOut, "hold release", "usage: hold release --as <f> --sprint <S> --ref <repo>#<n> --holder <f> --head <sha> --evidence <url>")
 	}
-	repo, n, err := parseRepoPR(pos[0])
+	repo, n, err := parseRepoPR(*ref)
 	if err != nil {
 		return refuse(errOut, "hold release", err.Error())
 	}
-	holder := strings.TrimPrefix(pos[1], "h:")
+	holder := strings.TrimPrefix(*holderFlag, "h:")
 	c, err := holdClient(*addr)
 	if err != nil {
 		return refuse(errOut, "hold release", err.Error())
@@ -164,10 +146,10 @@ func runHoldRelease(ctx context.Context, args []string, out, errOut io.Writer) i
 
 func runHoldRoute(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs, addr := lifeFlags("hold route")
-	sprint := fs.String("sprint", "", "sprint id (required)")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	once := fs.Bool("once", false, "run one tick and return")
 	reclaim := fs.Int64("reclaim-idle", disposition.DefaultReclaimIdle, "XAUTOCLAIM min-idle in ms")
-	consumer := fs.String("consumer", "hold-route", "consumer name in group hold-route")
+	consumer := fs.String("as", "hold-route", verbflag.HelpAs)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "hold route", err.Error())
 	}
@@ -284,16 +266,16 @@ func dropLease(ctx context.Context, c *redis.Client, token string) bool {
 }
 
 func runHoldShow(ctx context.Context, args []string, out, errOut io.Writer) int {
-	pos, flags := holdSplitArgs(args, map[string]bool{"sprint": true, "redis": true})
 	fs, addr := lifeFlags("hold show")
-	sprint := fs.String("sprint", "", "sprint id (required)")
-	if err := fs.Parse(flags); err != nil {
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	ref := fs.String("ref", "", "the pull request, <repo>#<n>")
+	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "hold show", err.Error())
 	}
-	if len(pos) != 1 || *sprint == "" {
-		return refuse(errOut, "hold show", "usage: hold show --sprint <S> <repo>#<n>")
+	if fs.NArg() != 0 || *ref == "" || *sprint == "" {
+		return refuse(errOut, "hold show", "usage: hold show --sprint <S> --ref <repo>#<n>")
 	}
-	repo, n, err := parseRepoPR(pos[0])
+	repo, n, err := parseRepoPR(*ref)
 	if err != nil {
 		return refuse(errOut, "hold show", err.Error())
 	}
