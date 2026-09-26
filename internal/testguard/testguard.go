@@ -20,7 +20,7 @@
 //
 // A TEST THAT WANTS A CHILD. A fake `ssh` written into t.TempDir() and put on
 // PATH is not a host, and this package can see that for itself: a program that
-// resolves INSIDE a temp directory is a fake, a program that resolves to
+// resolves INSIDE a temp directory (GOTMPDIR included) is a fake, a program that resolves to
 // /usr/bin/ssh is the fleet. So the tests that already fake the seam that way
 // -- and the tools they run as child processes, which inherit the variable --
 // keep working untouched. A test whose fake lives anywhere else says so out
@@ -144,12 +144,32 @@ func isFakeProgram(program string) bool {
 }
 
 // tempRoots are the directories a test's own files live under: the platform's
-// temp directory and, on a CI runner, the temp directory the workflow names.
+// temp directory, the temp directory a CI workflow names, and GOTMPDIR.
+//
+// GOTMPDIR is here because it is where t.TempDir() puts a test's files when it
+// is set, and os.TempDir() does not follow it: the testing package makes the
+// directory with `os.MkdirTemp(os.Getenv("GOTMPDIR"), pattern)`
+// (testing/testing.go, common.makeTempDir, go1.27.1). The root is reachable
+// only through the environment -- testing exposes no accessor, and cmd/go
+// starts the test binary with its own original environment, so the variable
+// the binary sees is the one t.TempDir() read. A runner whose unit sets
+// GOTMPDIR and not TMPDIR otherwise puts every fake a test wrote into its own
+// t.TempDir() outside every root here, and the guard calls it the fleet.
+//
+// A relative root is made absolute, because the program path it is compared
+// with has been.
 func tempRoots() []string {
 	roots := []string{os.TempDir()}
-	for _, env := range []string{"TMPDIR", "TMP", "TEMP", "RUNNER_TEMP"} {
+	for _, env := range []string{"TMPDIR", "TMP", "TEMP", "RUNNER_TEMP", "GOTMPDIR"} {
 		if v := os.Getenv(env); v != "" {
 			roots = append(roots, v)
+		}
+	}
+	for i, r := range roots {
+		if !filepath.IsAbs(r) {
+			if abs, err := filepath.Abs(r); err == nil {
+				roots[i] = abs
+			}
 		}
 	}
 	return roots
