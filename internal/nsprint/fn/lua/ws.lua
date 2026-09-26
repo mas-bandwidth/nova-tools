@@ -240,10 +240,19 @@ local function ws_rename(keys, args)
       end
     end
   end
+  -- The old name's sentinel (#4318, its id carries the old slug) ends as
+  -- done/fail under the new name; the new name's sentinel is created as the
+  -- first member's move registers the stream.
   local n = 0
   for _, state in ipairs(W.WHERE) do
     for _, id in ipairs(redis.call('ZRANGE', W.key(old, state), 0, -1)) do
-      local err = NS.task.move(id, state, { by = by, why = 'rename', stream = new })
+      local err
+      if NS.task.is_sentinel(id) and (state == 'waiting' or state == 'parked') then
+        err = NS.task.move(id, 'done', { by = by, ok = 'fail', stream = new,
+          why = 'rename: stream ' .. old .. ' is ' .. new .. '; its sentinel is ' .. NS.task.sentinel_id(new) })
+      else
+        err = NS.task.move(id, state, { by = by, why = 'rename', stream = new })
+      end
       if err then
         return { 'REFUSED', err }
       end
@@ -305,7 +314,9 @@ end
 
 -- ns_ws_counts() -> per stream in ws:order (then unranked names, by name):
 -- name, waiting, ready, working, merging, landed, parked. The first five
--- counts are the stream table's columns.
+-- counts are the stream table's columns. The stream's sentinel (#4318) is
+-- the stream's stop, not one of its cards: it is left out of every count
+-- (no new column; ws show --order lists it).
 local function ws_counts(keys, args)
   local out, seen, list = {}, {}, {}
   for _, s in ipairs(redis.call('ZRANGE', 'ws:order', 0, -1)) do
@@ -324,8 +335,11 @@ local function ws_counts(keys, args)
   end
   for _, s in ipairs(list) do
     out[#out + 1] = s
+    local sid = NS.task.sentinel_id(s)
     for _, state in ipairs(W.STATES) do
-      out[#out + 1] = redis.call('ZCARD', W.key(s, state))
+      local n = redis.call('ZCARD', W.key(s, state))
+      if sid ~= '' and redis.call('ZSCORE', W.key(s, state), sid) then n = n - 1 end
+      out[#out + 1] = n
     end
   end
   return out

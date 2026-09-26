@@ -397,10 +397,20 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	if cfg.LockKey != "" {
 		lock = pipe.Eval(ctx, lockRefreshScript, []string{cfg.LockKey}, cfg.LockToken, lockTTL(cfg).Milliseconds())
 	}
+	// The stream's sentinel (#4318) is its stop, not one of its cards: each
+	// cell is the set's ZCARD less the sentinel when it is in that set (the
+	// same rule as ns_ws_counts); no new column.
 	counts := make([][]*redis.IntCmd, len(r.streams))
+	stops := make([][]*redis.FloatCmd, len(r.streams))
 	for i, s := range r.streams {
+		sid := ws.SentinelID(s)
 		for _, state := range WSStates {
 			counts[i] = append(counts[i], pipe.ZCard(ctx, "ws:"+s+":"+state))
+			var stop *redis.FloatCmd
+			if sid != "" {
+				stop = pipe.ZScore(ctx, "ws:"+s+":"+state, sid)
+			}
+			stops[i] = append(stops[i], stop)
 		}
 	}
 	type consumerCmds struct {
@@ -509,6 +519,9 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		cells := []*int64{&row.Waiting, &row.Ready, &row.Working, &row.Review, &row.Merging, &row.Landed}
 		for j, c := range counts[i] {
 			n, err := c.Result()
+			if stop := stops[i][j]; stop != nil && stop.Err() == nil {
+				n-- // the stream's stop, not a card (#4318)
+			}
 			*cells[j], row.Unread[j] = n, err != nil && !errors.Is(err, redis.Nil)
 		}
 		snap.Streams = append(snap.Streams, row)

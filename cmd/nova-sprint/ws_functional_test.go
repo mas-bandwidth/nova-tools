@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
 )
@@ -61,7 +62,10 @@ func TestWSVerbsOnAThousandTasks(t *testing.T) {
 		{[]string{"scope", "park", "--stream", s(0)}, `PARKED stream="s0: work" parked=60 `, 1},
 		{[]string{"stream", "rename", s(4), "swarm: cards"}, `RENAMED from="s4: work" to="swarm: cards" members=100 `, 1},
 		{[]string{"stream", "order", "swarm: cards", s(9)}, `ORDERED streams=10 first="swarm: cards" `, 1},
-		{[]string{"ws", "checkpoint", "--out", cp}, "CHECKPOINT path=" + cp + " streams=10 rows=1000 ", 1},
+		// 1,001 rows: the rename registered "swarm: cards" through the one
+		// move, which created its sentinel (#4318); the fixture's streams
+		// were written straight into the keys and have none.
+		{[]string{"ws", "checkpoint", "--out", cp}, "CHECKPOINT path=" + cp + " streams=10 rows=1001 ", 1},
 	} {
 		args := append(append([]string{}, tc.args...), "--redis", addr)
 		if tc.args[1] == "rename" || tc.args[1] == "order" {
@@ -85,7 +89,7 @@ func TestWSVerbsOnAThousandTasks(t *testing.T) {
 	if n, _ := filepath.Glob(filepath.Join(cpDir, "ws-*.tsv")); len(n) != 2 {
 		t.Fatalf("default checkpoints %v, want one each for scope keep and scope park", n)
 	}
-	if got, _ := c.Get(ctx, ws.CheckpointKey).Result(); !strings.Contains(got, "path="+cp+" rows=1000") {
+	if got, _ := c.Get(ctx, ws.CheckpointKey).Result(); !strings.Contains(got, "path="+cp+" rows=1001") {
 		t.Fatalf("ws:checkpoint %q", got)
 	}
 }
@@ -113,5 +117,55 @@ func TestWSVerbRefusals(t *testing.T) {
 	}
 	if st, _ := c.HGet(context.Background(), "task:t00000", "state").Result(); st != "waiting" {
 		t.Fatalf("a refused park moved t00000 to %s", st)
+	}
+}
+
+// TestWSShowOrder (#4318): `ws show --order` and `stream order --show` print
+// every stream's cards in order with their edges and the sentinel last, then
+// one receipt; --stream narrows to one stream and refuses an unknown name
+// with the names it has; ws show without --order names the remedy.
+func TestWSShowOrder(t *testing.T) {
+	t.Parallel()
+	addr, c := wstest.Start(t)
+	ctx := context.Background()
+	push := func(id, stream, on string) {
+		t.Helper()
+		if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: id, Where: "waiting", Stream: stream, Kind: "build",
+			Title: "STREAM: " + stream + " | " + id, By: "test", DependsOn: on}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	push("A", "swarm: cards", "")
+	push("B", "swarm: cards", "A")
+	push("C", "ci", "swarm-cards:sentinel")
+	want := `STREAM 1 "swarm: cards" cards=3 live=2 landed=0 sentinel=waiting
+  waiting A
+  waiting B <- A(waiting)
+  waiting swarm-cards:sentinel <- every other card of the stream (live 2)
+STREAM 2 "ci" cards=2 live=1 landed=0 sentinel=waiting
+  waiting C <- swarm-cards:sentinel(waiting)
+  waiting ci:sentinel <- every other card of the stream (live 1)
+SHOW streams=2 cards=5 edges=5 ms=`
+	for _, args := range [][]string{{"ws", "show", "--redis", addr, "--order"}, {"stream", "order", "--redis", addr, "--show"}} {
+		code, stdout, stderr := runSprint(args...)
+		if code != 0 || stderr != "" || !strings.HasPrefix(stdout, want) {
+			t.Fatalf("%v: exit %d\n%s%s\nwant\n%s", args, code, stdout, stderr, want)
+		}
+	}
+	code, stdout, _ := runSprint("ws", "show", "--redis", addr, "--order", "--stream", "ci")
+	if code != 0 || !strings.HasPrefix(stdout, "STREAM 2 \"ci\" cards=2") || !strings.Contains(stdout, "SHOW streams=1 cards=2 edges=2 ms=") {
+		t.Fatalf("--stream ci: exit %d\n%s", code, stdout)
+	}
+	code, stdout, _ = runSprint("ws", "show", "--redis", addr, "--order", "--stream", "nope")
+	if code != 1 || !strings.HasPrefix(stdout, `REFUSED no stream "nope"; the index has "swarm: cards" "ci": nova-sprint stream ls --redis <addr> ms=`) {
+		t.Fatalf("--stream nope: exit %d %q", code, stdout)
+	}
+	code, _, stderr := runSprint("ws", "show", "--redis", addr)
+	if code != 2 || !strings.Contains(stderr, "want --order: ws show --redis <addr> --order [--stream <s>]") {
+		t.Fatalf("no --order: exit %d %q", code, stderr)
+	}
+	code, _, stderr = runSprint("stream", "order", "--redis", addr, "--show", "ci")
+	if code != 2 || !strings.Contains(stderr, "--show lists the streams; it ranks nothing") {
+		t.Fatalf("--show with names: exit %d %q", code, stderr)
 	}
 }

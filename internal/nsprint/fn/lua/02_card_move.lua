@@ -235,12 +235,19 @@ end
 -- ws:order, so stream ls, stream order, scope keep and the stream table did
 -- not know the stream. Every ws:<stream>:<where> add of a card (cm_add of a
 -- view that names its stream) registers the stream first.
+--
+-- The stream's sentinel (nova-tools #4318, Glenn 2026-09-26 ~11:55 AM ET:
+-- "every stream ends in a landed sentinel card"): registration creates the
+-- stream's one sentinel card, task:<slug>:sentinel, in ws:<stream>:waiting,
+-- when it has none (cm_sentinel, assigned below TK: the task path's create).
+local cm_sentinel
 local function cm_register(stream)
   if type(stream) ~= 'string' or stream == '' then return end
   redis.call('SADD', 'ws:names', stream)
   if not redis.call('ZSCORE', 'ws:order', stream) then
     redis.call('ZADD', 'ws:order', redis.call('ZCARD', 'ws:order') + 1, stream)
   end
+  if cm_sentinel then cm_sentinel(stream) end
 end
 
 -- cm_registered(stream): the stream is in ws:names and ranked in ws:order.
@@ -1131,6 +1138,46 @@ function TK.copy_id(id)
   return type(id) == 'string' and string.match(id, '^%S+~%d+$') ~= nil
 end
 
+-- The stream sentinel (nova-tools #4318). Every stream has one sentinel
+-- card, id <slug>:sentinel (TK.slug: the stream's display name lower-cased,
+-- every run of other bytes one '-', internal/nsprint/ws.Slug and
+-- land/stream.Slug say the same), created at registration (cm_register) in
+-- the stream's waiting set. It is the stream's stop: it lands (task land,
+-- with the merge sha) only when every other card of the stream is landed
+-- or done, it is never dealt (TM.leg), and it moves nowhere else but parked
+-- and done. A card in another stream that must wait for this whole stream
+-- names it in DEPENDS-ON like any card edge (<slug>:sentinel or
+-- task:<slug>:sentinel); the waiting resolver treats it as any task id.
+function TK.slug(s)
+  local w = string.gsub(string.lower(TK.str(s)), '[^a-z0-9]+', '-')
+  w = string.gsub(w, '^%-+', '')
+  w = string.gsub(w, '%-+$', '')
+  return w
+end
+
+function TK.sentinel_id(stream)
+  local w = TK.slug(stream)
+  if w == '' then return '' end
+  return w .. ':sentinel'
+end
+
+function TK.is_sentinel(id)
+  return type(id) == 'string' and string.match(id, '^[a-z0-9][a-z0-9%-]*:sentinel$') ~= nil
+end
+
+-- TK.live_siblings: every card of stream in a live set (waiting, ready,
+-- working, review, merging, parked) other than id, as {id, where} rows,
+-- oldest first per set.
+function TK.live_siblings(stream, id)
+  local out = {}
+  for _, w in ipairs({ 'waiting', 'ready', 'working', 'review', 'merging', 'parked' }) do
+    for _, m in ipairs(redis.call('ZRANGE', 'ws:' .. stream .. ':' .. w, 0, -1)) do
+      if m ~= id then out[#out + 1] = { m, w } end
+    end
+  end
+  return out
+end
+
 -- TK.read: the record's pointer and legacy fields; nil when there is no
 -- record. placed is false for a record that predates the where field.
 function TK.read(id)
@@ -1311,6 +1358,32 @@ function TK.edge(id, cur, nxt, ok, o)
       return 'OFFGRAPH a ' .. to .. ' task keeps its friend'
     end
     return nil
+  end
+  -- the stream sentinel (#4318): waiting -> landed after every other card,
+  -- else only parked (with its stream) or done (a cancel)
+  if TK.is_sentinel(id) then
+    -- the stream starts again after its stop ended or landed: a push into
+    -- it puts the sentinel back in waiting (cm_sentinel)
+    if to == 'waiting' and (from == 'done' or from == 'landed') then
+      if TK.str(o.why) == '' then return 'WHY ' .. from .. ' -> waiting needs a why' end
+      return nil
+    end
+    if to == 'landed' then
+      if from ~= 'waiting' then
+        return 'SENTINEL task:' .. id .. ' lands from waiting, not ' .. from
+      end
+      local live = TK.live_siblings(cur.stream, id)
+      if #live > 0 then
+        return 'SENTINEL task:' .. id .. ' lands after the ' .. #live .. ' live card(s) of stream ' .. cur.stream ..
+          ' (first ' .. live[1][1] .. ' ' .. live[1][2] .. ')'
+      end
+      if TK.str(o.sha) == '' then return 'SHA landed needs the merge sha' end
+      return nil
+    end
+    if to ~= 'parked' and to ~= 'waiting' and to ~= 'done' then
+      return 'SENTINEL task:' .. id .. ' is the stream stop: it moves to landed (task land, after every other card of stream ' ..
+        cur.stream .. '), parked or done, not ' .. to
+    end
   end
   if not (TK.GRAPH[from] and TK.GRAPH[from][to]) then
     if from == '' then return 'OFFGRAPH a new task starts in waiting or ready' end
@@ -2335,6 +2408,9 @@ end
 -- why not.
 function TM.leg(id, p)
   if not p then return nil, 'NOTASK task:' .. id end
+  if TK.is_sentinel(id) then
+    return nil, 'SENTINEL task:' .. id .. ' is the stream stop, never dealt: it lands (task land) when every other card of its stream has'
+  end
   if p.copy ~= '' then return nil, 'LIVECOPY task:' .. id .. ' has live copy ' .. p.copy end
   if p.reads ~= '' then return nil, 'LIVECOPY task:' .. id .. ' has live read copies ' .. p.reads end
   if p.friend ~= '' then return nil, 'OWNED task:' .. id .. ' is ' .. p.friend .. "'s friend-queue task, not a primary" end
@@ -3542,7 +3618,10 @@ function TM.sprint_clear(by, why, force)
       local key = 'ws:' .. s .. ':' .. w
       for _, id in ipairs(redis.call('ZRANGE', key, 0, -1)) do
         local p = (not TK.card_id(id) and not TK.copy_id(id)) and TK.read(id) or nil
-        if not p then
+        if TK.is_sentinel(id) then
+          -- the stream's stop stays with its stream (#4318): not a card
+          -- of the sprint, never counted
+        elseif not p then
           redis.call('ZREM', key, id)
         else
           if p.copy ~= '' then
@@ -3972,6 +4051,8 @@ NS.tm = { score = TM.score }
 
 NS.task = { move = TK.move, create = TK.create, place = TK.place, read = TK.read, stream_of = TK.stream_of,
   ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF, unread = TK.unread,
+  -- the stream sentinel (#4318): its id for a stream, and whether an id is one
+  sentinel_id = TK.sentinel_id, is_sentinel = TK.is_sentinel,
   -- set(id, state, o): the move to the where a fine state names (cancelled is
   -- done/fail), writing that state: the sprint store's transitions.
   -- renew(id, at): a live holder's beat renews the task's lease.
@@ -3993,3 +4074,25 @@ NS.task = { move = TK.move, create = TK.create, place = TK.place, read = TK.read
     o.dry = nil
     return err
   end }
+
+-- cm_sentinel(stream): the stream's sentinel card exists (#4318, TK.slug
+-- above): task:<slug>:sentinel in ws:<stream>:waiting, kind sentinel, created
+-- by the one create (its first move registers the stream again, which finds
+-- the record and returns). A stream whose name has no letter or digit has
+-- no slug and no sentinel.
+cm_sentinel = function(stream)
+  local id = TK.sentinel_id(stream)
+  if id == '' then return end
+  if redis.call('EXISTS', 'task:' .. id) == 0 then
+    TK.create(id, { 'title', 'STREAM: ' .. stream .. ' | sentinel', 'kind', 'sentinel', 'blocked_on', '' },
+      { stream = stream, by = 'ws', why = 'sentinel', where = 'waiting' })
+    return
+  end
+  -- a stream whose stop ended or landed starts again: its sentinel waits
+  -- again for the new cards (records are never deleted, so the one id is
+  -- reused; the ws:log holds its history)
+  local w = TK.str(redis.call('HGET', 'task:' .. id, 'where'))
+  if w == 'done' or w == 'landed' then
+    TK.move(id, 'waiting', { by = 'ws', why = 'sentinel: the stream starts again', stream = stream })
+  end
+end

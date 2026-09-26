@@ -15,7 +15,11 @@ package reconcile
 // against the records:
 //
 //   - task:<id> (or a bare id) is met when task:<id> is landed (state landed,
-//     or where landed, or where done with where_ok not fail);
+//     or where landed, or where done with where_ok not fail); a stream's
+//     sentinel, <slug>:sentinel (nova-tools #4318, ws.SentinelID), is a
+//     task id like any other, so a stream that must wait for another whole
+//     stream puts DEPENDS-ON <slug>:sentinel on its first card and that is
+//     the one kind of edge there is;
 //   - owner/repo#n is met when a task in a ws set whose pr, ref or origin
 //     names it is landed;
 //   - an entry with no record (no task:<id>; no task in any ws set naming the
@@ -23,6 +27,11 @@ package reconcile
 //     guessed: no evidence is not negative evidence;
 //   - blocked_on "none" or "-" has nothing to wait on and is met; an empty
 //     blocked_on is no evidence either way and the task stays waiting.
+//
+// A stream's own sentinel is never a waiter here: it waits in its stream
+// for every other card to land and lands by task land (TK.edge in
+// 02_card_move.lua refuses it before then); the duty leaves it out of the
+// counts.
 //
 // A task whose every entry is met moves waiting -> ready through
 // ns_ws_move_many (ws.MoveMany, the ws index's one writer), one call per
@@ -163,7 +172,8 @@ const (
 var (
 	wrRefRE = regexp.MustCompile(`^(?:([A-Za-z0-9_.-]+)/)?([A-Za-z0-9_.-]+)#([0-9]+)$`)
 	wrURLRE = regexp.MustCompile(`^https?://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/(?:issues|pull)/([0-9]+)(?:[/?#].*)?$`)
-	wrIDRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	// a task id, or a stream sentinel's (<slug>:sentinel, ws.IsSentinel)
+	wrIDRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$|^[a-z0-9][a-z0-9-]*:sentinel$`)
 )
 
 // wrRefKey is owner/repo#n (the owner defaulting to prkey.DefaultOwner),
@@ -185,21 +195,16 @@ func wrRefKey(s string) string {
 	return strings.ToLower(owner + "/" + m[2] + "#" + m[3])
 }
 
-// wrParse splits a blocked_on value. none is true for "none" or "-" alone;
-// an empty value returns no deps and none false.
+// wrParse splits a blocked_on value (ws.SplitDeps, the one splitter). none
+// is true for "none" or "-" alone; an empty value returns no deps and none
+// false.
 func wrParse(text string) (deps []wrDep, none bool) {
-	parts := strings.FieldsFunc(text, func(r rune) bool {
-		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
-	})
-	if len(parts) == 1 && (parts[0] == "none" || parts[0] == "-") {
-		return nil, true
+	parts := ws.SplitDeps(text)
+	if len(parts) == 0 {
+		t := strings.TrimSpace(text)
+		return nil, t == "none" || t == "-"
 	}
-	seen := map[string]bool{}
 	for _, p := range parts {
-		if seen[p] {
-			continue
-		}
-		seen[p] = true
 		dep := wrDep{raw: p}
 		if id, ok := strings.CutPrefix(p, "task:"); ok {
 			if wrIDRE.MatchString(id) {
@@ -271,6 +276,9 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	var waiters []*wrWaiter
 	for i, s := range streams {
 		for _, id := range waitCmds[i].Val() {
+			if ws.IsSentinel(id) {
+				continue // the stream's stop: task land's, not this duty's
+			}
 			waiters = append(waiters, &wrWaiter{id: id, stream: s})
 		}
 	}

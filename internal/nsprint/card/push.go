@@ -283,7 +283,10 @@ func localDependencyReady(kind dependencyKind, fields map[string]string) bool {
 		}
 		return fields["state"] == "ended" && fields["outcome"] == "DONE" && fields["pushed_sha"] == ""
 	case dependencyTask:
-		return fields["state"] == "closed" || fields["state"] == "done"
+		// a task record (task:<id>, the one task store): closed or done, or
+		// landed by its where (a stream sentinel lands, #4318)
+		return fields["state"] == "closed" || fields["state"] == "done" || fields["state"] == "landed" ||
+			fields["where"] == "landed" || (fields["where"] == "done" && fields["where_ok"] != "fail")
 	case dependencyStream:
 		return fields["state"] == "landed"
 	}

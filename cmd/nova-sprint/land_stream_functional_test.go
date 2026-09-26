@@ -261,7 +261,8 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	}
 	// park, the landing, five lands walked step by step through the one move
 	// (#3778: a ready member goes ready -> working -> landed, one receipt each)
-	if log, _ := c.XLen(ctx, "ws:log").Result(); log != 10 {
+	// (and the two streams' sentinels, created at registration, #4318)
+	if log, _ := c.XLen(ctx, "ws:log").Result(); log != 12 {
 		t.Fatalf("ws:log %d", log)
 	}
 	// The table reads the sets: the stream's landed cell is 2.

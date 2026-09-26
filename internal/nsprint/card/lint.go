@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -440,10 +441,15 @@ func parseDependency(entry string) (dependency, error) {
 		return dependency{Kind: dependencyStream, Value: slug}, nil
 	}
 	if id, ok := strings.CutPrefix(entry, "task:"); ok {
-		if !idRE.MatchString(id) {
+		if !idRE.MatchString(id) && !ws.IsSentinel(id) {
 			return dependency{}, fmt.Errorf("DEPENDS-ON: %s is not task:<id>", entry)
 		}
 		return dependency{Kind: dependencyTask, Value: id}, nil
+	}
+	// a stream's sentinel (nova-tools #4318): the task record the stream
+	// lands last, one edge like any other
+	if ws.IsSentinel(entry) {
+		return dependency{Kind: dependencyTask, Value: entry}, nil
 	}
 	if !idRE.MatchString(entry) {
 		return dependency{}, fmt.Errorf("DEPENDS-ON: %s is not a card id, owner/repo#n, stream/<slug>, or task:<id>", entry)

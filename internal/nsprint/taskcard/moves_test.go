@@ -12,6 +12,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/disposition"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -54,7 +55,18 @@ func cellsOf(t *testing.T, c *redis.Client, k taskcard.Consumer) taskcard.Cells 
 }
 
 func wsCount(c *redis.Client, where string) int64 {
-	return c.ZCard(context.Background(), taskcard.StreamKey(mvStream, where)).Val()
+	return wsCards(c, mvStream, where)
+}
+
+// wsCards is a stream set's cards: its members less the stream's sentinel
+// (#4318: the stop is not one of the cards; ns_ws_counts leaves it out too).
+func wsCards(c *redis.Client, stream, where string) int64 {
+	ctx := context.Background()
+	n := c.ZCard(ctx, taskcard.StreamKey(stream, where)).Val()
+	if sid := ws.SentinelID(stream); sid != "" && c.ZScore(ctx, taskcard.StreamKey(stream, where), sid).Err() == nil {
+		n--
+	}
+	return n
 }
 
 // clean asserts both fsck walks find zero drift: the primaries' own (task
