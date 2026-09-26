@@ -91,14 +91,14 @@ func TestReviewPostCLI(t *testing.T) {
 	addr, c := reviewStore(t, "rv1")
 	ctx := context.Background()
 	post := func(args ...string) (int, string, string) {
-		return runSprint(append([]string{"review", "post", "--redis", addr, "--actor", seat()}, args...)...)
+		return runSprint(append([]string{"review", "post", "--redis", addr}, args...)...)
 	}
 	for _, tc := range [][]string{
-		{"--id", "rv1", "--why", "x"},
-		{"--id", "rv1", "--verdict", "maybe", "--why", "x"},
-		{"--id", "rv1", "--verdict", "redeal"},
+		{"--ids", "rv1", "--why", "x"},
+		{"--ids", "rv1", "--verdict", "maybe", "--why", "x"},
+		{"--ids", "rv1", "--verdict", "redeal"},
 		{"--verdict", "redeal", "--why", "x"},
-		{"--id", "rv1", "--verdict", "reassign", "--why", "x"},
+		{"--ids", "rv1", "--verdict", "reassign", "--why", "x"},
 	} {
 		if code, out, errOut := post(tc...); code != 2 || out != "" || !strings.Contains(errOut, "nova-sprint review post:") {
 			t.Fatalf("review post %v = %d %q %q, want a usage refusal", tc, code, out, errOut)
@@ -107,11 +107,11 @@ func TestReviewPostCLI(t *testing.T) {
 	if w := c.HGet(ctx, taskcard.Key("rv1"), "where").Val(); w != "review" {
 		t.Fatalf("a refused verdict moved the card to %q", w)
 	}
-	code, out, errOut := post("--id", "rv1", "--verdict", "redeal", "--why", "transient")
+	code, out, errOut := post("--ids", "rv1", "--verdict", "redeal", "--why", "transient")
 	if code != 0 || !regexp.MustCompile(`^REVIEW POST id=rv1 verdict=redeal to=ready copy=- ms=\d+\n$`).MatchString(out) {
 		t.Fatalf("redeal = %d %q %q", code, out, errOut)
 	}
-	code, out, _ = post("--id", "rv1", "--verdict", "redeal", "--why", "again")
+	code, out, _ = post("--ids", "rv1", "--verdict", "redeal", "--why", "again")
 	if code != 1 || !strings.HasPrefix(out, `REVIEW POST REFUSED id=rv1 why="NOTREVIEW task:rv1 is ready, not review"`) {
 		t.Fatalf("a verdict on a ready card = %d %q", code, out)
 	}
@@ -119,7 +119,7 @@ func TestReviewPostCLI(t *testing.T) {
 	failOnce(t, c, "rv1")
 	forge := &closedIssues{}
 	reviewForge = func() reconcile.IssueCloser { return forge }
-	code, out, errOut = post("--id", "rv1", "--verdict", "drop", "--why", "superseded by #4100")
+	code, out, errOut = post("--ids", "rv1", "--verdict", "drop", "--why", "superseded by #4100")
 	if code != 0 || !regexp.MustCompile(`^REVIEW POST id=rv1 verdict=drop to=landed copy=- issue=mas-bandwidth/nova-tools#4000 closed=yes ms=\d+\n$`).MatchString(out) {
 		t.Fatalf("drop = %d %q %q", code, out, errOut)
 	}
