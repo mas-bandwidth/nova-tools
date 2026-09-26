@@ -39,8 +39,14 @@ var (
 // no ciphertext -- and, on the way back, on sops metadata in the file and on the
 // identity being one of the recipients that file records.
 const fakeSopsScript = `#!/bin/sh
-ARGS="__ARGS__"
-STDIN="__STDIN__"
+# Written ONCE per test binary (TestMain) and reached through a per-fixture
+# symlink, so no test writes an executable while another test forks: a child
+# between fork and exec still holds the writer's descriptor, and the exec then
+# fails with ETXTBSY ("text file busy", space shard 1/4 of run 36206780711).
+# $0 is the symlink's own path, so the fixture's files sit beside it.
+here=$(dirname "$0")
+ARGS="$here/sops.args"
+STDIN="$here/sops.stdin"
 if [ "$1" = "--version" ]; then echo "sops 3.13.3"; exit 0; fi
 printf '%s\n' "$@" >> "$ARGS"
 
@@ -133,9 +139,10 @@ func newSeatFixture(t *testing.T) *seatFixture {
 	f.airKey = filepath.Join(keyDir, "air.key")
 	mustWrite(t, f.airKey, "AGE-SECRET-KEY-1AIR\n# public key: "+pubAir+"\n", 0600)
 
-	script := strings.NewReplacer("__ARGS__", f.sopsArgs, "__STDIN__", f.sopsStdin).Replace(fakeSopsScript)
 	f.sopsPath = filepath.Join(dir, "sops")
-	mustWrite(t, f.sopsPath, script, 0755)
+	if err := os.Symlink(sharedFakeSops, f.sopsPath); err != nil {
+		t.Fatal(err)
+	}
 	return f
 }
 
@@ -150,6 +157,24 @@ func (f *seatFixture) options(t *testing.T, only string) SeatAddOptions {
 		KeyPath:  f.rowanKey,
 		SopsPath: f.sopsPath,
 	}
+}
+
+// sharedFakeSops is the one fake sops executable of this test binary, written
+// before any test runs (see fakeSopsScript for why).
+var sharedFakeSops string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "secrets-fake-sops")
+	if err != nil {
+		panic(err)
+	}
+	sharedFakeSops = filepath.Join(dir, "sops")
+	if err := os.WriteFile(sharedFakeSops, []byte(fakeSopsScript), 0o755); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func mustMkdir(t *testing.T, path string, perm os.FileMode) {
