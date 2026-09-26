@@ -706,12 +706,12 @@ func TestWidthControls(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		v, err := deal.ReadBackpressure(ctx, st, sprint)
+		bp, err := client.HGetAll(ctx, deal.BackpressureKey(sprint)).Result()
 		if err != nil {
-			t.Fatalf("ReadBackpressure failed: %v", err)
+			t.Fatalf("read %s: %v", deal.BackpressureKey(sprint), err)
 		}
-		if !v.Blocked {
-			t.Fatalf("ReadBackpressure Blocked = false; want true (READ-BOUND)")
+		if bp["state"] != "ON" && bp["read_bound"] != "1" {
+			t.Fatalf("%s = %v; want state ON or read_bound 1 (READ-BOUND)", deal.BackpressureKey(sprint), bp)
 		}
 
 		client.HSet(ctx, "s:"+sprint+":card:card-bulk",

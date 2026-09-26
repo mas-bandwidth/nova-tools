@@ -127,11 +127,6 @@ func Lint(ctx context.Context, body []byte) error {
 	return err
 }
 
-// KeyValue reads one `KEY: value` line by the header's own rule (the key is a
-// word at column 0 then a colon), so the issue parser that fills a task
-// record (taskcard.ParseIssue) and card push read a line the same way.
-func KeyValue(line string) (key, value string, ok bool) { return cardhdr.KeyValue(line) }
-
 func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	label, header, dups := parseHeader(body)
 	if len(dups) > 0 {

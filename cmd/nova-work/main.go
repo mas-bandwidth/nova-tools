@@ -651,17 +651,6 @@ func refuse(stderr io.Writer, where, what string) int {
 	return 2
 }
 
-func cmdVersion(args []string, stdout, stderr io.Writer) int {
-	if len(args) > 0 {
-		return refuse(stderr, " version", fmt.Sprintf("takes no flags and no arguments, got %d", len(args)))
-	}
-	// buildinfo.Line already renders each field through oneline.Field; Escape here is
-	// the source-level tripwire's proof that this print site is escaped, and it leaves
-	// the line's deliberate spaces between fields intact.
-	fmt.Fprintln(stdout, oneline.Escape(buildinfo.Line("nova-work", version)))
-	return 0
-}
-
 func cmdDependencies(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("dependencies", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)

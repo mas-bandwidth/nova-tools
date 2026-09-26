@@ -1,12 +1,10 @@
 package reconcile
 
 import (
-	"context"
 	"strconv"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
 // Policy is a sprint's reconciler policy, s:<S>:policy (#2930 rev 5). Its
@@ -23,10 +21,10 @@ type Policy struct {
 
 // DefaultPolicy is 60000/180000/1/60000/10000.
 var DefaultPolicy = Policy{
-	Start:       DefaultWindows.Start,
-	Beat:        DefaultWindows.Beat,
+	Start:       60 * time.Second,
+	Beat:        180 * time.Second,
 	RetryMax:    1,
-	Open:        2 * openDeadline,
+	Open:        60 * time.Second, // twice the 30 s PR-open deadline
 	ExpireEvery: 10 * time.Second,
 }
 
@@ -50,29 +48,6 @@ func ParsePolicy(h map[string]string) Policy {
 		p.RetryMax = v
 	}
 	return p
-}
-
-// Windows is the policy's reclaim windows.
-func (p Policy) Windows() Windows { return Windows{Start: p.Start, Beat: p.Beat} }
-
-// RetryRequest feeds one ended card back. RetryMax is the sprint policy's
-// retry_max (zero never retries). Fence is the reconciler lease token.
-type RetryRequest struct {
-	Sprint   string
-	Label    string
-	Fence    string
-	RetryMax int
-}
-
-// Retry runs ns_card_retry: a card ended FAILED with reason idle-killed, or
-// crash with exit -1, no pushed sha and retries below RetryMax goes back to
-// the pool (QUEUED, reason retry:<reason>, retry_of=<attempt>; the next deal
-// takes attempt+1) with one receipt under the idem key
-// retry:<S>/<label>/<attempt>. A replay returns OK with the first receipt;
-// any other card is NOTHING (a test failure, a timeout, BLOCKED, ABSTAIN, a
-// pushed sha, a finding: the child may have left an effect, so never again).
-func Retry(ctx context.Context, st *store.Store, req RetryRequest) (Result, error) {
-	return call(ctx, st, "card retry", req.Label, "ns_card_retry", req.Sprint, req.Label, req.Fence, req.RetryMax)
 }
 
 // Retryable is the expire sweep's filter over an ended card's fields

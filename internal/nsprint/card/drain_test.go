@@ -296,10 +296,16 @@ func TestDrainControlRestoresKeyspace(t *testing.T) {
 
 	// The fleet as it stands: a machine, a bench, a look-alike bench named
 	// past the control's prefix, and a real sprint with one ready card.
-	mustCap(t, func() error { _, err := capacity.SetMachine(ctx, st, "studio-host", 8, 0, 0, "test", ""); return err })
-	mustCap(t, func() error { _, err := capacity.SetBench(ctx, st, "studio", "studio-host", 4, "test", ""); return err })
 	mustCap(t, func() error {
-		_, err := capacity.SetBench(ctx, st, ctl+"x-studio", "studio-host", 1, "test", "")
+		_, err := capacity.SetMachineBudget(ctx, st, "studio-host", 8, 0, 0, 0, 0, "test", "")
+		return err
+	})
+	mustCap(t, func() error {
+		_, err := capacity.SetBenchWith(ctx, st, "studio", "studio-host", 4, "test", "", capacity.DesiredOpts{})
+		return err
+	})
+	mustCap(t, func() error {
+		_, err := capacity.SetBenchWith(ctx, st, ctl+"x-studio", "studio-host", 1, "test", "", capacity.DesiredOpts{})
 		return err
 	})
 	if err := client.SAdd(ctx, "sprints", real).Err(); err != nil {
@@ -311,9 +317,12 @@ func TestDrainControlRestoresKeyspace(t *testing.T) {
 	before := keyspace(t, ctx, client)
 
 	// The control run.
-	mustCap(t, func() error { _, err := capacity.SetMachine(ctx, st, ctl+"-host", 2, 0, 0, "test", ""); return err })
 	mustCap(t, func() error {
-		_, err := capacity.SetBench(ctx, st, ctl+"-studio", ctl+"-host", 1, "test", "")
+		_, err := capacity.SetMachineBudget(ctx, st, ctl+"-host", 2, 0, 0, 0, 0, "test", "")
+		return err
+	})
+	mustCap(t, func() error {
+		_, err := capacity.SetBenchWith(ctx, st, ctl+"-studio", ctl+"-host", 1, "test", "", capacity.DesiredOpts{})
 		return err
 	})
 	mustCap(t, func() error { _, err := capacity.SetFriend(ctx, st, ctl+"-a", ctl+"-host", 1, "test", ""); return err })

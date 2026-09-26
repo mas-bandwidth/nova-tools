@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"io"
 	"net"
 	"net/http"
@@ -203,20 +204,20 @@ func TestRouteTablePicksExactAndFallsBack(t *testing.T) {
 	def := filepath.Join(dir, "default.json")
 	routes := writeRouteFile(t, "routes.tsv",
 		"fix\t1\t"+muse+"\tpublic\nfix\t1\t"+paid+"\tpaid\nfeat\t1\t"+muse+"\tpublic\nfeat\t2\t"+mid+"\tpublic\n")
-	rows, err := parseRoutes(routes)
+	rows, err := swarm.ParseRoutes(routes)
 	if err != nil {
 		t.Fatalf("parseRoutes: %v", err)
 	}
-	if got := pickRoute(rows, "fix", 1, 0.1, def); got != muse {
+	if got := swarm.PickRoute(rows, "fix", 1, 0.1, def); got != muse {
 		t.Fatalf("fix/1 public card picked %q, want %q", got, muse)
 	}
-	if got := pickRoute(rows, "fix", 1, 0.9, def); got != paid {
+	if got := swarm.PickRoute(rows, "fix", 1, 0.9, def); got != paid {
 		t.Fatalf("private fix/1 card picked %q, want paid %q", got, paid)
 	}
-	if got := pickRoute(rows, "feat", 3, 0.1, def); got != mid {
+	if got := swarm.PickRoute(rows, "feat", 3, 0.1, def); got != mid {
 		t.Fatalf("feat/3 with no row picked %q, want lower %q", got, mid)
 	}
-	if got := pickRoute(rows, "port", 4, 0.1, def); got != def {
+	if got := swarm.PickRoute(rows, "port", 4, 0.1, def); got != def {
 		t.Fatalf("unknown kind picked %q, want default %q", got, def)
 	}
 }
@@ -225,7 +226,7 @@ func TestRouteTablePicksExactAndFallsBack(t *testing.T) {
 func TestRouteQuestionsHaveFourKinds(t *testing.T) {
 	t.Parallel()
 
-	qs := routeQuestions()
+	qs := swarm.RouteQuestions()
 	kind, ok := qs["kind"]
 	if !ok || kind.Choice["fix"] == "" || kind.Choice["probe"] == "" || kind.Choice["feat"] == "" || kind.Choice["port"] == "" {
 		t.Fatalf("kind question must be a choice with probe/read/spec/fix/feat/port: %+v", kind)

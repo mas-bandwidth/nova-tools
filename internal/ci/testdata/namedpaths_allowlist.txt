@@ -72,6 +72,13 @@ internal/swarm/pull SPEC-WORKLANG's example test subject `test:internal/swarm/pu
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
 
+internal/chat/allow.go internal/chat deleted 2026-09-26 (nothing imported it); SPEC-CHAT.md's file table names it as the plan
+internal/chat/session.go internal/chat deleted 2026-09-26 (nothing imported it); SPEC-CHAT.md's file table names it as the plan
+internal/chat/state.go internal/chat deleted 2026-09-26 (nothing imported it); SPEC-CHAT.md's file table names it as the plan
+internal/chat/transport.go internal/chat deleted 2026-09-26 (nothing imported it); SPEC-CHAT.md names it as the plan
+internal/fleetkube internal/fleetkube deleted 2026-09-26 (nothing imported it); SPEC-FLEET-KUBE.md carries its reference types
+internal/friendqueue/ internal/friendqueue deleted 2026-09-26 (nothing imported it); SPEC-WORK.md row (d) names it as where task push would go
+internal/outbound/ internal/outbound deleted 2026-09-26 (nothing imported it); SPEC-WORK.md row (h) names it as the cutover's dispatcher
 cmd/nova-merge/queue.go retired with the per-PR lander on 2026-09-24; internal/merge/queuegh.go names it as where its caller was
 docs/FIXED-FORM-OWED-ROWS.md SPEC-BOARD.md cites it in the SCHEMA repository, not here
 docs/PORTING.md the file `nova-review port` reads out of the pull request's own head, not out of this tree
@@ -86,7 +93,6 @@ fleet/group_vars/all.yml rowan-tools' Ansible inventory, named by internal/nspri
 fleet/launchd/com.rowan.fleet-certify.plist the launchd plist lives in the self repository; there is no fleet/ here
 internal/decide/questions/security.txt a retired phrase-table file: replaced whole by `--security-phrases <file>`
 internal/decide/questions/tamper.txt a retired phrase-table file: replaced by `--tamper <file>`
-internal/swarm/routehealth PR #2718's package, named by internal/nsprint/route/health.go as where the rules were proved; not on dev
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
 testdata/ci/package-sizes-windows.tsv retired with the native Windows legs on 2026-09-18; the measurements are in git at dev 65e86175
 tools/deploy/ a prefix in SPEC-SPRINT.md's live-or-security path list, kept in the list though no tools/deploy/ is in this tree

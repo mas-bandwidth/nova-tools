@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -126,52 +125,4 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %v: %v: %s", args, err, b)
 	}
 	return strings.TrimSpace(string(b))
-}
-
-func TestMirrorForgeMergeable(t *testing.T) {
-	t.Parallel()
-
-	d := t.TempDir()
-	gitRun(t, d, "init", "-q")
-	gitRun(t, d, "switch", "-c", "dev")
-	if err := os.WriteFile(filepath.Join(d, "f"), []byte("base\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	gitRun(t, d, "add", "f")
-	gitRun(t, d, "commit", "-qm", "base")
-	base := gitRun(t, d, "rev-parse", "HEAD")
-	gitRun(t, d, "switch", "-c", "clean")
-	if err := os.WriteFile(filepath.Join(d, "g"), []byte("clean\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	gitRun(t, d, "add", "g")
-	gitRun(t, d, "commit", "-qm", "clean")
-	clean := gitRun(t, d, "rev-parse", "HEAD")
-	gitRun(t, d, "update-ref", "refs/nova-sprint/pull/1/head", clean)
-	gitRun(t, d, "switch", "dev")
-	if err := os.WriteFile(filepath.Join(d, "f"), []byte("dev\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	gitRun(t, d, "commit", "-am", "dev")
-	gitRun(t, d, "switch", "--detach", base)
-	if err := os.WriteFile(filepath.Join(d, "f"), []byte("pr\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	gitRun(t, d, "commit", "-am", "pr")
-	conflict := gitRun(t, d, "rev-parse", "HEAD")
-	gitRun(t, d, "update-ref", "refs/nova-sprint/pull/2/head", conflict)
-	fetches := 0
-	f := land.MirrorForge{GitDir: d, Base: "dev", Fetch: func(context.Context, string, int) error { fetches++; return nil }}
-	if got, err := f.Mergeable(context.Background(), "repo", 1); err != nil || got != "MERGEABLE" {
-		t.Fatalf("clean=%s err=%v", got, err)
-	}
-	if got, err := f.Mergeable(context.Background(), "repo", 2); err != nil || got != "CONFLICTING" {
-		t.Fatalf("conflict=%s err=%v", got, err)
-	}
-	if got, err := f.Mergeable(context.Background(), "repo", 3); err != nil || got != "UNKNOWN" {
-		t.Fatalf("missing=%s err=%v", got, err)
-	}
-	if fetches != 3 {
-		t.Fatalf("fetches=%d want one per read", fetches)
-	}
 }

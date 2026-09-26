@@ -144,10 +144,6 @@ func CreatedMS(v string) (float64, bool) {
 	return 0, false
 }
 
-// Wheres are every set a stream has for tasks: States and done (where a
-// task card ends; the verbs' closed).
-var Wheres = append(append([]string{}, States...), "done")
-
 // isCardID says whether a ws set member is a card (s:<S>:card:<label>).
 func isCardID(id string) bool {
 	return strings.HasPrefix(id, "s:") && strings.Contains(id, ":card:")

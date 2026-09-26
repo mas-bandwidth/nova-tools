@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,7 +28,7 @@ import (
 // FriendDoneWheres are the friend card sets a clear's checkpoint counts as
 // a friend's done work (#3778): done, and merging and landed for a task that
 // named a PR.
-var FriendDoneWheres = []string{"done", "merging", "landed"}
+var FriendDoneWheres = []string{ws.Done, ws.Merging, ws.Landed}
 
 // FriendCardsKey is one friend's set of task ids at where.
 func FriendCardsKey(friend, where string) string { return "friend:" + friend + ":cards:" + where }

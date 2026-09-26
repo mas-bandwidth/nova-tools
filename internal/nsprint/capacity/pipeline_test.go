@@ -63,7 +63,7 @@ func TestCapacityFourFriendsElevenBenchesOnePipeline(t *testing.T) {
 
 	st, seed := redisControl(t)
 	ctx := context.Background()
-	if _, err := capacity.SetMachine(ctx, st, "m", 100, 0, 0, "test", ""); err != nil {
+	if _, err := capacity.SetMachineBudget(ctx, st, "m", 100, 0, 0, 0, 0, "test", ""); err != nil {
 		t.Fatal(err)
 	}
 	for i, f := range []string{"f1", "f2", "f3", "f4"} {

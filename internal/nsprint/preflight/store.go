@@ -631,3 +631,22 @@ func str(v []any, i int) string {
 	}
 	return ""
 }
+
+// Refusal extracts the named refusal substring (REFUSED <reason> remedy=...)
+// from a line if it is RED and carries one.
+func (l Line) Refusal() string {
+	if !l.Red {
+		return ""
+	}
+	idx := strings.Index(l.Why, "REFUSED ")
+	if idx < 0 {
+		return ""
+	}
+	sub := l.Why[idx:]
+	// If it contains a trailing detail following ": ", take only the refusal clause
+	// e.g. "REFUSED reason remedy=\"cmd\": details..." -> "REFUSED reason remedy=\"cmd\""
+	if colon := strings.Index(sub, "\": "); colon >= 0 {
+		return sub[:colon+1]
+	}
+	return sub
+}

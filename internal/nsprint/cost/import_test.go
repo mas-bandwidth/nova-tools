@@ -23,7 +23,7 @@ import (
 var t0 = time.Date(2026, 9, 24, 13, 0, 0, 0, time.UTC)
 
 // multiHook counts MULTI pipelines and lets a case act just before and just after one runs,
-// the way internal/benchcount's test counts HGETs.
+// the way a hook that counts HGETs would.
 type multiHook struct {
 	n      int
 	before func(n int)

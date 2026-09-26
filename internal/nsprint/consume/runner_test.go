@@ -11,6 +11,7 @@ package consume
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -817,4 +818,57 @@ func TestRunnerRowsResolveTheirBase(t *testing.T) {
 			t.Fatalf("a refused call wrote %v", keys)
 		}
 	})
+}
+
+// The runner-row oracle the control tests assert against. No verb reaches
+// these any more (the lander reads runner rows in Lua), so they live here.
+// Runner row states, as RunnerRow reads the stored latest attempt.
+const (
+	RunnerStateReady   = "READY"   // completed/success
+	RunnerStateFail    = "FAIL"    // completed/failure or completed/timed_out
+	RunnerStateMissing = "MISSING" // anything else, an absent field included
+)
+
+// ReadRunnerAttempt decodes field runner:<row> of a runners record; false when the
+// field is absent or not an attempt.
+func ReadRunnerAttempt(ci map[string]string, row string) (RunnerAttempt, bool) {
+	raw, ok := ci["runner:"+row]
+	if !ok || raw == "" {
+		return RunnerAttempt{}, false
+	}
+	var a RunnerAttempt
+	if err := json.Unmarshal([]byte(raw), &a); err != nil || a.CheckRunID == "" {
+		return RunnerAttempt{}, false
+	}
+	return a, true
+}
+
+// RunnerRow is one row's state from the stored latest attempt only: an older
+// success never counts once a newer attempt is stored.
+func RunnerRow(ci map[string]string, row string) string {
+	a, ok := ReadRunnerAttempt(ci, row)
+	if !ok || a.Status != "completed" {
+		return RunnerStateMissing
+	}
+	switch a.Conclusion {
+	case "success":
+		return RunnerStateReady
+	case "failure", "timed_out":
+		return RunnerStateFail
+	}
+	return RunnerStateMissing
+}
+
+// RunnerReady is the one readiness rule the lander and `land why` call over a
+// head's ci:<repo>:<head>:<gid>:runners record: ok only when every named row is READY;
+// missing names, in order, every row that is not (MISSING or FAIL; RunnerRow
+// says which).
+func RunnerReady(ci map[string]string, rows []string) (bool, []string) {
+	var missing []string
+	for _, row := range rows {
+		if RunnerRow(ci, row) != RunnerStateReady {
+			missing = append(missing, row)
+		}
+	}
+	return len(missing) == 0, missing
 }

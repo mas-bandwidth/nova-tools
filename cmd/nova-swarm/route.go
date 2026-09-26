@@ -23,18 +23,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
-// routeRow, parseRoutes, pickRoute and routeQuestions are the shared core,
-// named here so the verb's tests read as they did before the move.
-type routeRow = swarm.RouteRow
-
-func parseRoutes(path string) ([]routeRow, error) { return swarm.ParseRoutes(path) }
-
-func pickRoute(rows []routeRow, kind string, rounded int, private float64, def string) string {
-	return swarm.PickRoute(rows, kind, rounded, private, def)
-}
-
-func routeQuestions() map[string]decide.Question { return swarm.RouteQuestions() }
-
 func cmdRoute(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("route")
 	card := f.fs.String("card", "", "")

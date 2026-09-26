@@ -94,35 +94,6 @@ func str(v any) string {
 	return s
 }
 
-// ReconcileReruns is the reconciler's rerun policy (10.5 item 2): for every
-// ended ci card whose own latest attempt left FAIL or MISSING and that has
-// no rerun yet, cut the one rerun on another healthy bench. No friend and no
-// model decides it. It returns the results by label.
-func ReconcileReruns(ctx context.Context, st *store.Store, sprint string) (map[string]Result, error) {
-	cards, err := Cards(ctx, st, sprint)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]Result{}
-	for _, c := range cards {
-		if c.State != "ended" || !c.Owner || c.Blocked != "" {
-			continue
-		}
-		if c.Verdict != Fail && c.Verdict != Missing {
-			continue
-		}
-		r, err := Rerun(ctx, st, sprint, c.Label, "reconciler", "policy ci_reruns")
-		if err != nil {
-			return out, err
-		}
-		if r.Status == "SPENT" {
-			continue
-		}
-		out[c.Label] = r
-	}
-	return out, nil
-}
-
 // Status is the ci pipeline in one line (4.8): heads OK over heads required,
 // then cut, dealt, running, the verdicts at head, blocked and the oldest
 // age of a head without an OK. A head counts once however many attempts it

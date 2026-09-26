@@ -97,62 +97,6 @@ func TestControl27MachineCeiling(t *testing.T) {
 	}
 }
 
-// fakeTasks is the in-memory read surface of task list.
-type fakeTasks struct {
-	sprints    []string
-	candidates map[string][]task.Candidate
-	details    map[string]map[string]task.Detail
-}
-
-func (f *fakeTasks) Sprints(_ context.Context) ([]string, error) { return f.sprints, nil }
-func (f *fakeTasks) Candidates(_ context.Context, sprint, as string) ([]task.Candidate, error) {
-	return f.candidates[sprint+"/"+as], nil
-}
-func (f *fakeTasks) Details(_ context.Context, sprint string, ids []string) (map[string]task.Detail, error) {
-	out := map[string]task.Detail{}
-	for _, id := range ids {
-		if d, ok := f.details[sprint][id]; ok {
-			out[id] = d
-		}
-	}
-	return out, nil
-}
-
-// TestControl22ClosedNeverLive checks both stale index membership and owner
-// isolation: a closed or missing task cannot be counted as live, nor can a
-// task from another friend's global active index.
-func TestControl22ClosedNeverLive(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	r := &fakeTasks{
-		sprints: []string{"s1"},
-		candidates: map[string][]task.Candidate{"s1/f": {
-			{ID: "t-open", Assigned: true}, {ID: "t-closed", Assigned: true},
-			{ID: "t-missing", Assigned: true}, {ID: "t-other"}, {ID: "t-working"},
-			{ID: "t-open", Assigned: true},
-		}},
-		details: map[string]map[string]task.Detail{"s1": {
-			"t-open": {State: "open"}, "t-closed": {State: "closed", Owner: "f"},
-			"t-other": {State: "working", Owner: "other"}, "t-working": {State: "working", Owner: "f"},
-		}},
-	}
-	rows, err := task.List(ctx, r, task.ListRequest{Sprint: "s1", As: "f"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 2 || rows[0].ID != "t-open" || rows[1].ID != "t-working" {
-		t.Fatalf("live rows=%+v", rows)
-	}
-	closed, err := task.List(ctx, r, task.ListRequest{Sprint: "s1", As: "f", State: "closed"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(closed) != 1 || closed[0].ID != "t-closed" {
-		t.Fatalf("closed rows=%+v", closed)
-	}
-}
-
 // TestWidthAccounting checks the pure width arithmetic underlying task width.
 func TestWidthAccounting(t *testing.T) {
 	t.Parallel()

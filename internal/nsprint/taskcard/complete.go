@@ -11,14 +11,12 @@ package taskcard
 // (Deal: one pipeline of the one move).
 
 import (
-	"context"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
-	"github.com/redis/go-redis/v9"
 )
 
 // The routes a card can take out of waiting: a swarm tier (the bench harness
@@ -222,36 +220,6 @@ func ResultKind(kind string) (string, error) {
 		return typedrec.KindFix, nil
 	}
 	return "", fmt.Errorf("KIND %q is not a card kind", kind)
-}
-
-// Record reads one task record: one HGETALL. A missing record is a *Refused.
-func Record(ctx context.Context, c redis.Cmdable, id string) (map[string]string, error) {
-	recs, err := Records(ctx, c, id)
-	if err != nil {
-		return nil, err
-	}
-	return recs[0], nil
-}
-
-// Records reads the named records in one pipeline of HGETALLs.
-func Records(ctx context.Context, c redis.Cmdable, ids ...string) ([]map[string]string, error) {
-	pipe := c.Pipeline()
-	cmds := make([]*redis.MapStringStringCmd, len(ids))
-	for i, id := range ids {
-		cmds[i] = pipe.HGetAll(ctx, Key(id))
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return nil, err
-	}
-	out := make([]map[string]string, len(ids))
-	for i, cmd := range cmds {
-		m := cmd.Val()
-		if len(m) == 0 {
-			return nil, &Refused{Why: "NOTASK " + Key(ids[i])}
-		}
-		out[i] = m
-	}
-	return out, nil
 }
 
 // quote renders the issue text under a header: every line behind "> ", so no

@@ -71,6 +71,10 @@ func refuse(stderr io.Writer, what string) int {
 	return 2
 }
 
+// version is empty in every ordinary build; a release stamps it with
+// -ldflags "-X main.version=<tag>".
+var version string
+
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
