@@ -2483,7 +2483,7 @@ local TM = {
   LIVE_MS = 90000,
   -- the primary's fields a copy carries for its consumer's brief
   CARRY = { 'kind', 'ref', 'origin', 'title', 'repo', 'pr', 'head', 'base', 'base_sha', 'paths', 'done_when', 'tier',
-    'route', 'stream', 'review', 'body', 'branch' },
+    'route', 'stream', 'review', 'body', 'branch', 'test' },
   -- a card end's result fields (written onto the primary and the copy)
   RESULT = { line1 = true, line2 = true, check = true, paths = true, branch = true, commit = true, pr = true,
     repo = true, head = true, base = true, base_sha = true, model = true, route = true, wall = true, evidence = true,

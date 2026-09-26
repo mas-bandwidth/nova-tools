@@ -66,7 +66,7 @@ func QuackIssue(in QuackInput) (string, error) {
 	var b strings.Builder
 	for _, kv := range [][2]string{
 		{"STREAM", in.Stream}, {"WHO", "any"}, {"KIND", "fix"}, {"TYPE", "code"}, {"REPO", in.Repo},
-		{"BASE", in.Base}, {"base-sha", in.BaseSHA}, {"PATHS", path}, {"TEST", "none"}, {"DEPENDS-ON", "none"},
+		{"BASE", in.Base}, {"base-sha", in.BaseSHA}, {"PATHS", path}, {"TEST", "none the probe writes one fixture line; the wrapper's diff is the check"}, {"DEPENDS-ON", "none"},
 		{"PRIORITY", "100"}, {"ROUTE", in.Tier}, {"EST", "2"}, {"SOURCE", "quack"}, {"TASK", in.ID},
 	} {
 		b.WriteString(kv[0] + ": " + kv[1] + "\n")

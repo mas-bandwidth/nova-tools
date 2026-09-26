@@ -94,12 +94,13 @@ func TestCardCutFromLedgerFilesNothingTwice(t *testing.T) {
 	if err := fn.Load(ctx, client); err != nil {
 		t.Fatal(err)
 	}
-	rows := "id\ttitle\tstream\tpaths\tdone-when\tdepends-on\troute\n" +
-		"base\tBase\tledger\tp1.go\tgo test passes\t\tpro\n" +
-		"\tTwo\tledger\tp2.go\tgo test passes\tbase\tflash\n" +
-		"\tThree\tledger\tp3.go\tgo test passes\ttask:base\t\n" +
-		"\tFour\tledger\tp4.go\tgo test passes\t#12\t\n" +
-		"\tFive\tledger\tp5.go\tgo test passes\t\t\n"
+	// a swarm card names its test or says why it has none (#4313)
+	rows := "id\ttitle\tstream\tpaths\tdone-when\tdepends-on\troute\ttest\n" +
+		"base\tBase\tledger\tp1.go\tgo test passes\t\tpro\tnone the ledger fixture\n" +
+		"\tTwo\tledger\tp2.go\tgo test passes\tbase\tflash\tnone the ledger fixture\n" +
+		"\tThree\tledger\tp3.go\tgo test passes\ttask:base\t\tnone the ledger fixture\n" +
+		"\tFour\tledger\tp4.go\tgo test passes\t#12\t\tnone the ledger fixture\n" +
+		"\tFive\tledger\tp5.go\tgo test passes\t\t\tnone the ledger fixture\n"
 	forge := &fakeCutForge{failAt: 3}
 	d := cutDepsRedis(forge, client)
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows)}, d)

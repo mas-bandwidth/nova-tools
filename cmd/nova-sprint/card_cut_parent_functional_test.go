@@ -32,14 +32,15 @@ func TestCardCutParentEndToEnd(t *testing.T) {
 	const stream = "autonomy"
 	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "hier", Where: "waiting", Stream: stream, Kind: "build",
 		Ref: "mas-bandwidth/nova-tools#4317", Title: "work as a hierarchy", Repo: "mas-bandwidth/nova-tools", By: "rowan",
-		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "internal/nsprint/taskcard", "done_when", "the plan holds"}}); err != nil {
+		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "internal/nsprint/taskcard", "done_when", "the plan holds",
+			"test", "./cmd/nova-sprint TestCardCutParentEndToEnd"}}); err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
 	tsv := filepath.Join(dir, "children.tsv")
-	rows := "id\ttitle\tpaths\tdone-when\tdepends-on\troute\n" +
-		"the-model\tthe model\tinternal/nsprint/taskcard/hierarchy.go\tPlan.State is derived\tnone\tpro\n" +
-		"the-verb\tthe verb\tcmd/nova-sprint/card_cut_from.go\tcard cut --parent\tthe-model\tfriend\n"
+	rows := "id\ttitle\tpaths\tdone-when\tdepends-on\troute\ttest\n" +
+		"the-model\tthe model\tinternal/nsprint/taskcard/hierarchy.go\tPlan.State is derived\tnone\tpro\t./internal/nsprint/taskcard TestPlanStateIsDerived\n" +
+		"the-verb\tthe verb\tcmd/nova-sprint/card_cut_from.go\tcard cut --parent\tthe-model\tfriend\t\n"
 	if err := os.WriteFile(tsv, []byte(rows), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +231,7 @@ func TestCardCutParentGrowFilesNoSecondStitchIssue(t *testing.T) {
 	ctx := context.Background()
 	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "grow", Where: "waiting", Stream: "autonomy", Kind: "build",
 		Ref: "mas-bandwidth/nova-tools#4317", Title: "grow", Repo: "mas-bandwidth/nova-tools", By: "rowan",
-		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds"}}); err != nil {
+		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds", "test", "./x TestHolds"}}); err != nil {
 		t.Fatal(err)
 	}
 	forge := &fakeCutForge{}
@@ -239,7 +240,7 @@ func TestCardCutParentGrowFilesNoSecondStitchIssue(t *testing.T) {
 	d.Bind = func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error) {
 		return taskcard.BindPlan(ctx, c, parent, children, stitch, by)
 	}
-	first := "id\ttitle\tpaths\tdone-when\nc1\tone\ta.go\tholds\nc2\ttwo\tb.go\tholds\n"
+	first := "id\ttitle\tpaths\tdone-when\ttest\nc1\tone\ta.go\tholds\t./x TestOne\nc2\ttwo\tb.go\tholds\t./x TestTwo\n"
 	code, out := runCutFrom(cutFromOpts{Text: []byte(first), Parent: "grow"}, d)
 	if code != 0 || len(forge.titles) != 3 || forge.titles[2] != "stitch: grow" {
 		t.Fatalf("first cut exit %d filed %v:\n%s", code, forge.titles, out)
@@ -251,7 +252,7 @@ func TestCardCutParentGrowFilesNoSecondStitchIssue(t *testing.T) {
 		t.Fatalf("rerun exit %d filed %v:\n%s", code, forge.titles, out)
 	}
 	// Growing: one issue for the new child, none for the stitch.
-	code, out = runCutFrom(cutFromOpts{Text: []byte("id\ttitle\tpaths\tdone-when\nc3\tthree\tc.go\tholds\n"), Parent: "grow"}, d)
+	code, out = runCutFrom(cutFromOpts{Text: []byte("id\ttitle\tpaths\tdone-when\ttest\nc3\tthree\tc.go\tholds\t./x TestThree\n"), Parent: "grow"}, d)
 	if code != 0 || len(forge.titles) != 4 || forge.titles[3] != "three" ||
 		!strings.Contains(out, "CARD CUT row=stitch id=grow-stitch ref=mas-bandwidth/nova-tools#5002 stream=autonomy to=already depends=c3,c1,c2\n") {
 		t.Fatalf("grow exit %d filed %v:\n%s", code, forge.titles, out)
