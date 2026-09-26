@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"strconv"
 	"strings"
 
@@ -287,9 +288,9 @@ func (r *PushRequest) fillSpec() ([]string, error) {
 	}
 	missing := s.Complete(r.Ref, r.Origin)
 	switch s.Route {
-	case RoutePro, RouteFlash, RouteFriend:
+	case RouteFrontier, RoutePro, RouteFlash, RouteFriend:
 	default:
-		return nil, &Refused{Why: fmt.Sprintf("ROUTE %q is not pro, flash or friend", s.Route)}
+		return nil, &Refused{Why: fmt.Sprintf("ROUTE %q is not %s, or friend", s.Route, cardhdr.RouteList)}
 	}
 	if len(missing) > 0 {
 		return nil, &Refused{Why: fmt.Sprintf("INCOMPLETE task:%s route=%s lacks %s: a swarm card is complete at push (#3911)", r.ID, s.Route, strings.Join(missing, ", "))}

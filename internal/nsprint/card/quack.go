@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"strconv"
 	"strings"
 	"time"
@@ -60,8 +61,8 @@ func QuackLabel(bench, tier string) string { return "quack-" + bench + "-" + tie
 // QuackCard renders the probe card: a one-file change the model can do in one
 // turn (the v4 quack card), pinned to its bench and tier.
 func QuackCard(in QuackInput) (CardFile, error) {
-	if in.Tier != RouteFlash && in.Tier != RoutePro {
-		return CardFile{}, fmt.Errorf("tier %q is not pro or flash", in.Tier)
+	if !cardhdr.IsRoute(in.Tier) {
+		return CardFile{}, fmt.Errorf("tier %q is not %s", in.Tier, cardhdr.RouteList)
 	}
 	if !idRE.MatchString(in.Bench) {
 		return CardFile{}, fmt.Errorf("bench %q is not a bench name", in.Bench)

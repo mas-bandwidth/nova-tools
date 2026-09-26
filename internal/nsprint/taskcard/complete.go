@@ -24,9 +24,10 @@ import (
 // The routes a card can take out of waiting: a swarm tier (the bench harness
 // picks its model from routes.yaml by it) or a friend's ready queue.
 const (
-	RoutePro    = cardhdr.RoutePro
-	RouteFlash  = cardhdr.RouteFlash
-	RouteFriend = "friend"
+	RouteFrontier = cardhdr.RouteFrontier
+	RoutePro      = cardhdr.RoutePro
+	RouteFlash    = cardhdr.RouteFlash
+	RouteFriend   = "friend"
 )
 
 // Spec is the card content a record carries beside its pointer: every field
@@ -167,7 +168,7 @@ func (s *Spec) Complete(ref, origin string) []string {
 			s.Source = "issue"
 		}
 	}
-	if s.Route != RoutePro && s.Route != RouteFlash {
+	if !cardhdr.IsRoute(s.Route) {
 		return nil
 	}
 	var missing []string
@@ -293,7 +294,7 @@ func Quote(body string) string { return quote(body) }
 func RenderHeader(id string, rec map[string]string) ([]byte, error) {
 	s := specOf(rec)
 	missing := s.Complete(rec["ref"], rec["origin"])
-	if s.Route != RoutePro && s.Route != RouteFlash {
+	if !cardhdr.IsRoute(s.Route) {
 		missing = append(missing, "ROUTE")
 		if s.Route == "" {
 			s.Route = "-"

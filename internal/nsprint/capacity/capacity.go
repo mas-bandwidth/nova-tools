@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"strconv"
 	"strings"
 
@@ -389,18 +390,27 @@ func NormalizeKinds(raw string) (string, error) {
 	return strings.Join(kinds, ","), nil
 }
 
-// NormalizeTiers turns a --tiers value into the comma list
-// ns_capacity_desired stores (names of letters, digits, _ or -, duplicates
-// dropped); "" is Clear.
+// NormalizeTiers turns a --tiers value ("frontier,pro" or "frontier pro")
+// into the comma list ns_capacity_desired stores: each name one of the three
+// model types (cardhdr.Routes: frontier, pro, flash), duplicates dropped;
+// "" is Clear. The list is what the worker advertises it can run; a worker
+// with none stored is cardhdr.DefaultTiers.
 func NormalizeTiers(raw string) (string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return Clear, nil
 	}
-	tiers, err := NormalizeLegs(raw)
-	if err != nil {
-		return "", errors.New(strings.Replace(err.Error(), "leg ", "tier ", 1))
+	var tiers []string
+	seen := map[string]bool{}
+	for _, t := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }) {
+		if !cardhdr.IsRoute(t) {
+			return "", fmt.Errorf("tier %q: want %s", t, cardhdr.RouteList)
+		}
+		if !seen[t] {
+			seen[t] = true
+			tiers = append(tiers, t)
+		}
 	}
-	return tiers, nil
+	return strings.Join(tiers, ","), nil
 }
 
 // NormalizeLegs turns a --legs value ("go,schema" or "go schema") into the

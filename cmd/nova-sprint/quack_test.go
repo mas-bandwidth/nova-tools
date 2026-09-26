@@ -179,7 +179,7 @@ func TestQuackPassAndBars(t *testing.T) {
 	if code != 1 || !strings.Contains(out, "REFUSED quack") || client.Exists(ctx, "s:quack-t4").Val() != 0 {
 		t.Fatalf("malformed bar: exit %d %q, want refused before the sprint is written", code, out)
 	}
-	if code, _, errOut := runSprint("quack", "--redis", addr, "--benches", "b1", "--tiers", "max", "--base-sha", quackBase); code != 2 || !strings.Contains(errOut, "not pro or flash") {
+	if code, _, errOut := runSprint("quack", "--redis", addr, "--benches", "b1", "--tiers", "max", "--base-sha", quackBase); code != 2 || !strings.Contains(errOut, "not frontier, pro or flash") {
 		t.Fatalf("tier max: exit %d %q, want usage", code, errOut)
 	}
 }

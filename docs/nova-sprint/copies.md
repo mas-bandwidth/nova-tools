@@ -103,6 +103,27 @@ consumer's copy filters are on its desired hash and set by
 <name> <slots>`: omitted keeps them, an empty value clears; the move file's
 `TM.may` refuses a copy of a kind or tier the consumer does not take.
 
+## The three model types; a worker advertises what it runs
+
+A card's `ROUTE:` names one of three model types (`cardhdr.Routes`, Glenn
+2026-09-26 10:03 AM ET): `frontier`, the most recent Astra or Fable model
+only; `pro` and `flash`, the two rungs of `routes.yaml` the bench harness
+picks a provider from. A card with no `ROUTE:` line is flash. A read copy is
+always pro; a fix copy carries its primary's route.
+
+Every worker, `friend:<f>` or `bench:<b>` alike, advertises the types it
+can run on its desired record's `tiers` field:
+`nova-sprint capacity friend|bench --tiers frontier,pro,flash <name> <slots>`
+(any other word is refused naming the three; an empty value clears). The
+dealer (`TM.may`, on every leg: the deal pass, the read cut and the fix
+cut) matches the card's route against that list and never hands a card to a
+worker that did not advertise its type; the refusal reads
+`TIER <consumer> advertises <list>, not <type>`. A worker with no `tiers`
+stored is treated as `flash,pro` (`cardhdr.DefaultTiers`), so the fleet as
+it stands is unchanged and a frontier card never goes to a worker that did
+not say it runs frontier. Nothing in code names a worker: a swarm of
+frontier models is a set of benches advertising `frontier`.
+
 ## The push credential
 
 `GH_PUSH_TOKEN` is the bench's push credential, sealed in the secrets store

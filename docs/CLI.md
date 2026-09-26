@@ -3617,6 +3617,18 @@ dialling Redis. A mistyped flag stays the verb's one-line refusal on standard
 error. `file -h` prints its own usage text (exit 2); the batch `task` verbs
 (`cancel`, `move`, `front`, `block`, `unblock`, `sweep`) print theirs and exit 0.
 
+**Capacity and the three model types.** `capacity friend|bench [--tiers
+<t>,...] [--kinds work|read|fix,...] <name> <slots>` sets a worker's slot
+budget under its machine ceiling and what it advertises it can run. A card's
+`ROUTE:` names one of three model types, `frontier` (the most recent Astra or
+Fable model only), `pro` or `flash`; `--tiers` takes those three words and
+refuses any other, an empty value clears, omitted keeps the stored list. The
+dealer never hands a card to a worker that did not advertise its type
+(`TIER <consumer> advertises <list>, not <type>`); a worker with no tiers
+stored is treated as `flash,pro`, so a frontier card only reaches a worker
+that said `frontier`. A read is always pro. Nothing in code names a worker;
+see [nova-sprint/copies.md](nova-sprint/copies.md).
+
 Renders the sprint table from Redis. `table --redis <addr>` makes one
 `FCALL_RO ns_snapshot` per render over the `s:<S>:*`, `bench:*` and
 `friend:*` keys and prints the table to standard output; `--once` renders one,

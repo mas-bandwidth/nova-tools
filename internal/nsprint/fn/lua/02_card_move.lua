@@ -2139,10 +2139,30 @@ function TM.set(v)
   return s
 end
 
+-- The three model types a card's ROUTE names and a worker advertises on its
+-- desired tiers (cardhdr.Routes): frontier (the most recent Astra or Fable
+-- model only), pro and flash. A worker advertising no tiers is
+-- TM.DEFAULT_TIERS, the two swarm rungs, so a frontier card never goes to a
+-- worker that did not advertise frontier. Nothing here names a worker.
+TM.MODEL_TYPES = { frontier = true, pro = true, flash = true }
+TM.DEFAULT_TIERS = 'flash,pro'
+
+-- TM.list: a set's names as a sorted comma list.
+function TM.list(s)
+  local names = {}
+  for n in pairs(s) do names[#names + 1] = n end
+  table.sort(names)
+  return table.concat(names, ',')
+end
+
 -- TM.desired: the consumer's declared capacity and filters, one HMGET.
+-- tiers is what it advertises (TM.DEFAULT_TIERS when it declared none;
+-- declared says which).
 function TM.desired(c)
   local d = redis.call('HMGET', c .. ':desired', 'slots', 'paused', 'tiers', 'kinds')
-  return { slots = tonumber(d[1]), paused = TK.str(d[2]) == '1', tiers = TM.set(d[3]), kinds = TM.set(d[4]) }
+  local tiers = TM.set(d[3])
+  return { slots = tonumber(d[1]), paused = TK.str(d[2]) == '1', tiers = tiers or TM.set(TM.DEFAULT_TIERS),
+    declared = tiers ~= nil, kinds = TM.set(d[4]) }
 end
 
 -- TM.names: whether c is named in the name set s (by id, by name, or as
@@ -2214,12 +2234,17 @@ end
 -- TM.may: nil when consumer c (its desired d) may take primary id's leg,
 -- else why not. A work copy honours the primary's WHO, a read copy its
 -- read_who, the readers set when it has members, and never the author;
--- tiers and kinds declared on <c>:desired filter both. author, when given,
--- is the author a card end is about to write (the record does not name it
--- yet).
+-- tiers and kinds on <c>:desired filter both. The card's tier is its tier
+-- field, else its route when that names a model type (a cut card carries
+-- ROUTE); a read is pro; a fix copy carries the primary's. A model-type
+-- tier the consumer does not advertise is refused (advertising nothing is
+-- TM.DEFAULT_TIERS); any other tier word is refused only against tiers the
+-- consumer declared. author, when given, is the author a card end is about
+-- to write (the record does not name it yet).
 function TM.may(c, d, id, leg, author)
-  local f = redis.call('HMGET', 'task:' .. id, 'who', 'read_who', 'author', 'tier', 'kind')
+  local f = redis.call('HMGET', 'task:' .. id, 'who', 'read_who', 'author', 'tier', 'kind', 'route')
   local tier, kind = TK.str(f[4]), TK.str(f[5])
+  if tier == '' and TM.MODEL_TYPES[TK.str(f[6])] then tier = TK.str(f[6]) end
   if leg == 'read' then
     author = TK.str(author) ~= '' and author or TK.str(f[3])
     if author ~= '' and (author == c or select(2, TM.parse(c)) == (select(2, TM.parse(author)) or author)) then
@@ -2236,7 +2261,9 @@ function TM.may(c, d, id, leg, author)
   elseif not TM.admits(f[1], c) then
     return 'WHO task:' .. id .. ' is ' .. TK.str(f[1])
   end
-  if d.tiers and tier ~= '' and not d.tiers[tier] then return 'TIER ' .. c .. ' takes no ' .. tier .. ' card' end
+  if tier ~= '' and not d.tiers[tier] and (d.declared or TM.MODEL_TYPES[tier]) then
+    return 'TIER ' .. c .. ' advertises ' .. TM.list(d.tiers) .. ', not ' .. tier
+  end
   if d.kinds and kind ~= '' and not d.kinds[kind] then return 'KIND ' .. c .. ' takes no ' .. kind .. ' card' end
   return nil
 end

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"regexp"
 	"strconv"
 	"strings"
@@ -213,8 +214,10 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		sb.WriteString(taskcard.Quote(strings.TrimSpace(c.Body)))
 		body = sb.String()
 	}
+	// The copy carries the primary's route, one of the three model types
+	// (an unknown or absent one is flash); a read is always pro.
 	route := c.Route
-	if route != RoutePro {
+	if !cardhdr.IsRoute(route) {
 		route = RouteFlash
 	}
 	if c.Leg == "read" {

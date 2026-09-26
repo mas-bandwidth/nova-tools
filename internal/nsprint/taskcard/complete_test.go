@@ -277,3 +277,41 @@ func (r *roundTrips) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.P
 		return next(ctx, cmds)
 	}
 }
+
+// TestFrontierRouteIsCompleteAndRenders: ROUTE: frontier is the third model
+// type (Glenn 2026-09-26): a push with it lands the route on the record and
+// renders a harness header the card linter admits, ROUTE: frontier on it; a
+// route that is none of frontier, pro, flash or friend is refused naming
+// ROUTE and the three.
+func TestFrontierRouteIsCompleteAndRenders(t *testing.T) {
+	t.Parallel()
+	c := start(t)
+	ctx := context.Background()
+	if _, err := pushIssue(t, c, "frontier-4300", taskcard.RouteFrontier, "internal/nsprint/taskcard/complete.go"); err != nil {
+		t.Fatalf("frontier push: %v", err)
+	}
+	rec, err := taskcard.Record(ctx, c, "frontier-4300")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec["route"] != "frontier" || rec["where"] != "waiting" {
+		t.Fatalf("record route=%q where=%q; want frontier, waiting", rec["route"], rec["where"])
+	}
+	hdr, err := taskcard.RenderHeader("frontier-4300", rec)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if err := card.Lint(ctx, hdr); err != nil {
+		t.Fatalf("card lint refused the rendered header: %v\n%s", err, hdr)
+	}
+	if !strings.Contains(string(hdr), "\nROUTE: frontier\n") {
+		t.Fatalf("header lacks ROUTE: frontier:\n%s", hdr)
+	}
+	_, err = pushIssue(t, c, "turbo-4300", "turbo", "internal/nsprint/taskcard/complete.go")
+	if err == nil || !strings.Contains(err.Error(), "ROUTE") || !strings.Contains(err.Error(), "frontier, pro or flash") {
+		t.Fatalf("ROUTE turbo: %v; want a refusal naming ROUTE and frontier, pro or flash", err)
+	}
+	if n, _ := c.Exists(ctx, taskcard.Key("turbo-4300")).Result(); n != 0 {
+		t.Fatal("the refused push wrote a record")
+	}
+}
