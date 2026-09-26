@@ -467,7 +467,7 @@ func cutIssueText(r *cutRow, rows []*cutRow, o cutFromOpts) string {
 	fmt.Fprintf(&b, "STREAM: %s\nWHO: %s\nROUTE: %s\nPATHS: %s\nDEPENDS-ON: %s\nEST: %s\nBASE: %s\n",
 		r.stream, r.who, r.route, strings.ReplaceAll(r.paths, "\n", " "), cutDepends(r, rows, o.Repo, true), r.est, o.Base)
 	if r.route != taskcard.RouteFriend {
-		fmt.Fprintf(&b, "base-sha: %s\n", o.BaseSHA)
+		fmt.Fprintf(&b, "BASE-SHA: %s\n", o.BaseSHA)
 	}
 	if o.Parent != "" {
 		phase := taskcard.PhaseChild

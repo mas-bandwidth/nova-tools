@@ -437,7 +437,7 @@ func RenderPR(w io.Writer, b PRBrief) {
 	section(w, "CARD "+orDash(b.CardKey))
 	if b.Card != nil {
 		for _, kv := range [][2]string{{"TITLE", "title"}, {"KIND", "kind"}, {"ROUTE", "route"}, {"SOURCE", "source"},
-			{"PATHS", "paths"}, {"DEPENDS-ON", "depends_on"}, {"BASE", "base"}, {"base-sha", "base_sha"}, {"DONE-WHEN", "done_when"}, {"TEST", "test"}} {
+			{"PATHS", "paths"}, {"DEPENDS-ON", "depends_on"}, {"BASE", "base"}, {"BASE-SHA", "base_sha"}, {"DONE-WHEN", "done_when"}, {"TEST", "test"}} {
 			if v := oneLineOf(b.Card[kv[1]]); v != "" {
 				fmt.Fprintf(w, "%s: %s\n", kv[0], v)
 			}

@@ -320,7 +320,8 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 				return taskcard.BeatCopies(ctx, cl, taskcard.Consumer{Kind: "friend", Name: as}, id)
 			}
 		}
-		until, err := beat(ctx, cl, c.id, c.actor)
+		// the worker that took it (--as, else the seat), as take names it
+		until, err := beat(ctx, cl, c.id, asFriend)
 		if err != nil {
 			return refused(err)
 		}
@@ -342,7 +343,7 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			_, _ = fmt.Fprintf(out, "TASK done id=%s from=working to=ok primary=%s primary_to=%s ms=%d\n", c.id, e[0].Primary, e[0].To, ms())
 			return 0
 		}
-		return moved(taskcard.Done(ctx, cl, c.id, c.actor, *c.evidence, *c.pr))
+		return moved(taskcard.Done(ctx, cl, c.id, asFriend, *c.evidence, *c.pr))
 	case "land":
 		if *c.stream == "" {
 			return moved(taskcard.Land(ctx, cl, c.id, c.actor, *c.sha, *c.why))

@@ -67,6 +67,9 @@ func runPitstop(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, name, "--stream belongs to set and clear")
 	}
 	scope := verbflag.List(*scopeFlag)
+	if *scopeFlag != "" && len(scope) == 0 {
+		return refuse(errOut, name, "--stream is empty")
+	}
 	var streams []string
 	for _, v := range scope {
 		switch {

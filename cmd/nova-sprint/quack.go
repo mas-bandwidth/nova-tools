@@ -233,7 +233,7 @@ func runQuackRun(ctx context.Context, args []string, out, errOut io.Writer) int 
 		if machine == "" {
 			refused++
 			fmt.Fprintf(out, "SLOTS REFUSED bench=%s slots=%d why=no-machine remedy=%s\n", oneline.Field(b.name), b.slots,
-				oneline.Quote("nova-sprint capacity bench --as "+who+" --machine <m> "+b.name+" "+strconv.Itoa(b.slots)))
+				oneline.Quote("nova-sprint capacity bench --as "+b.name+" --machine <m> --slots "+strconv.Itoa(b.slots)))
 			continue
 		}
 		r, err := capacity.SetBenchWith(ctx, st, b.name, machine, b.slots, who, "quack-run-"+*name+"-"+b.name, capacity.DesiredOpts{})
