@@ -91,7 +91,7 @@ func TestTaskCardCLI(t *testing.T) {
 	}
 	c.ZRem(ctx, "ws:"+s+":ready", "build-1")
 
-	if code, out, _ = runSprint("task", "land", "--help"); code != 2 || !strings.Contains(out, "usage: nova-sprint task land") {
+	if code, out, _ = runSprint("task", "land", "--help"); code != 0 || !strings.Contains(out, "usage: nova-sprint task land") {
 		t.Fatalf("help = %d %q", code, out)
 	}
 	if code, _, errOut = runTaskCLI("land", "--as", "a", "--ids", "x"); code != 2 || !strings.Contains(errOut, "--sha is required") {

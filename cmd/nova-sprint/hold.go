@@ -121,7 +121,7 @@ func runHoldRelease(ctx context.Context, args []string, out, errOut io.Writer) i
 		return refuse(errOut, "hold release", err.Error())
 	}
 	if fs.NArg() != 0 || *ref == "" || *holderFlag == "" || *as == "" || *sprint == "" || *head == "" || *evidence == "" {
-		return refuse(errOut, "hold release", "usage: hold release --as <f> --sprint <S> --ref <repo>#<n> --holder <f> --head <sha> --evidence <url>")
+		return refuse(errOut, "hold release", "wants --as, --sprint, --ref, --holder, --head and --evidence")
 	}
 	repo, n, err := parseRepoPR(*ref)
 	if err != nil {
@@ -273,7 +273,7 @@ func runHoldShow(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return refuse(errOut, "hold show", err.Error())
 	}
 	if fs.NArg() != 0 || *ref == "" || *sprint == "" {
-		return refuse(errOut, "hold show", "usage: hold show --sprint <S> --ref <repo>#<n>")
+		return refuse(errOut, "hold show", "wants --sprint and --ref <repo>#<n>")
 	}
 	repo, n, err := parseRepoPR(*ref)
 	if err != nil {

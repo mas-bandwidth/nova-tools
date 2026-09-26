@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
@@ -124,7 +125,15 @@ func runFriendShow(ctx context.Context, args []string, out, errOut io.Writer) in
 	defer st.Close()
 	rows, err := friend.Show(ctx, st, name)
 	if err != nil {
-		return refuse(errOut, verb, err.Error())
+		// The store answered: a friend it does not hold is data, one line
+		// on stdout and exit 1, never a usage refusal (#4399).
+		why := strings.TrimPrefix(err.Error(), "friend show: ")
+		remedy := ""
+		if errors.Is(err, friend.ErrNotRegistered) {
+			remedy = " remedy=" + quoteField("nova-sprint friend show")
+		}
+		fmt.Fprintf(out, "FRIEND SHOW REFUSED as=%s why=%s%s\n", quoteField(name), quoteField(why), remedy)
+		return 1
 	}
 	for _, r := range rows {
 		fmt.Fprintln(out, r.Line())

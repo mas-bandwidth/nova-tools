@@ -78,18 +78,12 @@ func redisRaw(ctx context.Context, sel *seatcred.Selection, getenv func(string) 
 	return 0
 }
 
-// rawAddrDefault is the seat's row address, else the environment's, without
-// the loopback fallback: a raw command never goes to a Redis nobody named.
+// rawAddrDefault is the one resolver's address (seat.go redisDefaultFrom:
+// the address variables, else the seat's row), with no loopback fallback: a
+// raw command never goes to a Redis nobody named (#4399: the ninth door, a
+// second loop over seatAddrEnvs, is gone).
 func rawAddrDefault(sel *seatcred.Selection, getenv func(string) string) string {
-	if a := sel.Addr(); a != "" {
-		return a
-	}
-	for _, k := range seatAddrEnvs {
-		if v := getenv(k); v != "" {
-			return v
-		}
-	}
-	return ""
+	return redisDefaultFrom(sel, getenv)
 }
 
 // printRedisReply prints v as redis-cli does to a pipe.

@@ -105,17 +105,16 @@ func loadTarget(ctx context.Context, st *store.Store, sprint, unit string, id la
 }
 
 func runWhy(ctx context.Context, args []string, out, errOut io.Writer) int {
-	const usage = "why (--ids <unit> | --ref <repo>#<n>) --redis <addr> --sprint <S>"
 	addr, sprint, now, pos, err := readFlags("why", args)
 	if err != nil {
-		return refuse77(errOut, "why", "usage: "+err.Error(), usage)
+		return refuse(errOut, "why", err.Error())
 	}
 	if len(pos) != 1 {
-		return refuse77(errOut, "why", "usage: wants --ids <unit> or --ref <repo>#<n>", usage)
+		return refuse(errOut, "why", "wants --ids <unit> or --ref <repo>#<n>")
 	}
 	unit, id, isPR, err := whyTarget("why", pos[0])
 	if err != nil {
-		return refuse77(errOut, "why", "usage: "+err.Error(), usage)
+		return refuse(errOut, "why", err.Error())
 	}
 	st, err := store.Open(ctx, addr)
 	if err != nil {
@@ -132,7 +131,7 @@ func runWhy(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return 6
 	}
 	if err != nil {
-		return refuse77(errOut, "why", "read: "+err.Error(), usage)
+		return refuse(errOut, "why", "read: "+err.Error())
 	}
 	fmt.Fprintln(out, unitHeader(u))
 	for _, line := range land.Why(u, now) {
@@ -192,20 +191,19 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if args[0] != "status" {
 		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or pr or run or offer or list (land run is the fenced stream-PR lander, #2942; land pr --pr <n> merges one PR by REST once its check state in Redis is green, #4311)")
 	}
-	const usage = "land status [<unit>] --redis <addr> --sprint <S>"
 	addr, sprint, now, pos, err := readFlags("land status", args[1:])
 	if err != nil {
-		return refuse77(errOut, "land status", "usage: "+err.Error(), usage)
+		return refuse(errOut, "land status", err.Error())
 	}
 	if len(pos) > 1 {
-		return refuse77(errOut, "land status", "usage: takes at most one unit, not "+strconv.Quote(strings.Join(pos, " ")), usage)
+		return refuse(errOut, "land status", "takes at most one unit, not "+strconv.Quote(strings.Join(pos, " ")))
 	}
 	var unit string
 	var id land.ID
 	var isPR bool
 	if len(pos) == 1 {
 		if unit, id, isPR, err = whyTarget("land status", pos[0]); err != nil {
-			return refuse77(errOut, "land status", "usage: "+err.Error(), usage)
+			return refuse(errOut, "land status", err.Error())
 		}
 	}
 	st, err := store.Open(ctx, addr)
@@ -224,7 +222,7 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 			return 6
 		}
 		if err != nil {
-			return refuse77(errOut, "land status", "read: "+err.Error(), usage)
+			return refuse(errOut, "land status", "read: "+err.Error())
 		}
 		fmt.Fprintln(out, unitHeader(u))
 		for _, line := range land.Why(u, now) {
@@ -237,13 +235,13 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return 6
 	}
 	if err != nil {
-		return refuse77(errOut, "land status", "read: "+err.Error(), usage)
+		return refuse(errOut, "land status", "read: "+err.Error())
 	}
 	for _, line := range land.Status(snap, now) {
 		fmt.Fprintln(out, line)
 	}
 	if x, y, any, err := fenced.StreamsLanded(ctx, st.Client(), sprint); err != nil {
-		return refuse77(errOut, "land status", "read: "+err.Error(), usage)
+		return refuse(errOut, "land status", "read: "+err.Error())
 	} else if any {
 		fmt.Fprintf(out, "streams landed %d/%d\n", x, y)
 	}

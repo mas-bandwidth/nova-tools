@@ -2,7 +2,7 @@
 // (#3254, #4352 A). A parse error stays quiet and comes back from Parse, so the
 // verb prints its own one-line refusal; -h, -help or --help on a flag set that
 // does not define them instead unwinds to the dispatcher, which prints the
-// verb's usage line and every flag the set defines on stdout and exits 2.
+// verb's usage line and every flag the set defines on stdout and exits 0.
 //
 // One grammar (nova-tools #4352 A): `nova-sprint <noun> <verb> [--flags]
 // [positionals]`; the same flag means the same thing on every verb, lists are
@@ -304,5 +304,5 @@ func Recover(out io.Writer, prog string, code *int) {
 		panic(r)
 	}
 	WriteHelp(out, h.FS.Name(), h.FS)
-	*code = 2
+	*code = 0 // help that was asked for exits 0; a refused usage exits 2
 }

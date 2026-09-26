@@ -42,7 +42,7 @@ func helpAsked(args []string) bool {
 }
 
 // helpFor prints the usage of the path args spell (the noun and the
-// subverbs the table knows, flags and values dropped) and exits 2: the
+// subverbs the table knows, flags and values dropped) and exits 0: the
 // path's forms and examples from verbflag.Usages and the flags of the flag
 // set the path's own -h reaches.
 func helpFor(run runFunc, args []string, out io.Writer) int {
@@ -51,7 +51,7 @@ func helpFor(run runFunc, args []string, out io.Writer) int {
 		path = args[0]
 	}
 	verbflag.WriteHelp(out, path, helpFlags(run, path))
-	return 2
+	return 0 // asked for: exit 0; a usage the verb refused exits 2
 }
 
 // helpFlags runs the path's verb with only its subverb words and -h, and

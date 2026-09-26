@@ -48,11 +48,14 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
 
 func init() {
-	ledger.DefaultAddr = func() string { return redisDefault() } // the one resolver (seat.go)
+	ledger.DefaultAddrFrom = func(getenv func(string) string) string { // the one resolver (seat.go)
+		return redisDefaultFrom(seatcred.Process(), getenv)
+	}
 	register(Verb{
 		Name: "jev",
 		Summary: "mech --repo <r> --n <n> --body-file <f>: Jev's mechanical passes (lint, scope, base) as one JEV line on the PR record, before any friend read; never a read. " +

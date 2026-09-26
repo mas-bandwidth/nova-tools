@@ -187,11 +187,13 @@ func Tail(verb string) string {
 	return "usage: " + strings.Join(Lines(path), " | ")
 }
 
-// Final is whether a refusal's text already ends in a line to run or a
-// usage: a corrected line (RetiredError), a remedy or a usage. Tail is not
-// added to it.
+// Final is whether a refusal's text already ends in the exact line to run
+// (a RetiredError's corrected line, a remedy spelled "run: nova-sprint
+// ..."). Tail is not added to it. A usage is never Final: only Tail prints
+// one, so a hand-printed usage would print twice (and the class test
+// TestGrammarNoHandPrintedUsage refuses its literal).
 func Final(what string) bool {
-	return strings.Contains(what, "run: nova-sprint ") || strings.Contains(what, "usage: nova-sprint ")
+	return strings.Contains(what, "run: nova-sprint ")
 }
 
 // Refusal is the one refusal line of verb: `nova-sprint <verb>: <what>;

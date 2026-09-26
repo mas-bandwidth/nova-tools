@@ -19,24 +19,22 @@ func init() {
 	})
 }
 
-const backpressureUsage = "usage: nova-sprint backpressure check --sprint <name> [--redis <addr>]"
-
 // runBackpressure is `nova-sprint backpressure check --sprint <S> [--redis
 // <addr>]` (#3276). It reads the named backpressure keys in one pipeline and
 // prints one receipt line with the round-trip count: exit 0 OK, 1 when a
 // legacy key is present (the remedy names it), 2 usage or no store.
 func runBackpressure(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 || args[0] != "check" {
-		return refuse(errOut, "backpressure", "want the subverb check; "+backpressureUsage)
+		return refuse(errOut, "backpressure", "want the subverb check")
 	}
 	fs := taskFlags("backpressure check")
 	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	if err := fs.Parse(args[1:]); err != nil {
-		return refuse(errOut, "backpressure check", err.Error()+"; "+backpressureUsage)
+		return refuse(errOut, "backpressure check", err.Error())
 	}
 	if fs.NArg() > 0 || *sprint == "" {
-		return refuse(errOut, "backpressure check", "needs --sprint <name> and no positional arguments; "+backpressureUsage)
+		return refuse(errOut, "backpressure check", "needs --sprint <name> and no positional arguments")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

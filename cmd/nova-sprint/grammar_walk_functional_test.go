@@ -116,7 +116,7 @@ func TestGrammarColdWalk(t *testing.T) {
 				fail("want exit 0")
 			}
 		case "help":
-			if r.code != 2 || !strings.HasPrefix(r.out, "usage: nova-sprint "+strings.TrimSuffix(line, " -h")) || !strings.Contains(r.out, "example:\n") {
+			if r.code != 0 || !strings.HasPrefix(r.out, "usage: nova-sprint "+strings.TrimSuffix(line, " -h")) || !strings.Contains(r.out, "example:\n") {
 				fail("want its own usage and examples on stdout")
 			}
 		case "answer": // the store answered: exit 0 or 1, never a usage refusal
@@ -144,7 +144,7 @@ func TestGrammarColdWalk(t *testing.T) {
 				helpTail++
 			}
 			switch {
-			case kind == "next-h" && (r2.code != 2 || !strings.HasPrefix(r2.out, "usage: nova-sprint ")):
+			case kind == "next-h" && (r2.code != 0 || !strings.HasPrefix(r2.out, "usage: nova-sprint ")):
 				t.Errorf("%s: the printed line %q with -h: exit %d:\n%s", line, next, r2.code, r2.out+r2.err)
 			case kind != "next-h" && refusedAgain(r2):
 				t.Errorf("%s: the printed line %q was refused again: exit %d:\n%s", line, next, r2.code, r2.out+r2.err)

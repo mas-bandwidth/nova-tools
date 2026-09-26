@@ -26,7 +26,7 @@ func runRank(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "rank", err.Error())
 	}
 	if fs.NArg() > 0 {
-		return refuse(errOut, "rank", "takes flags, not positional arguments; usage: nova-sprint rank [--redis <addr>] [--sprint <name>] [--as <friend>]")
+		return refuse(errOut, "rank", "takes flags, not positional arguments")
 	}
 	st, err := openTaskStore(ctx, *redisAddr)
 	if err != nil {

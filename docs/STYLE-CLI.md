@@ -99,7 +99,9 @@ noun's subverbs, each with its forms, and one example each; `<noun> <verb>
 -h` prints `usage: <tool> <noun> <verb> <form>`, one line per flag its flag
 set defines (`--name <type>  <one sentence>`; every flag has one, the class
 test refuses an empty help), its examples and the exit codes, on stdout,
-exit 2, without dialling anything. A refusal ends in its path's own forms
+exit 0, without dialling anything: help that was asked for exits 0, a usage
+the verb refused exits 2, and a refusal from the store's data exits 1 with
+one data line. A refusal ends in its path's own forms
 (`usage: nova-sprint <noun> <verb> ...`), never in `run: <tool> help`; a
 retired spelling ends in the whole corrected line (above); an unknown flag
 names the flags the verb takes and the line without it. The class test

@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -53,6 +54,10 @@ func (r Row) Line() string {
 	return b.String()
 }
 
+// ErrNotRegistered is Show's answer for a friend the registry (the friends
+// set) does not hold: missing data, not a usage error.
+var ErrNotRegistered = errors.New("friend show")
+
 // Show reads one friend, or every registered friend when f is "".
 func Show(ctx context.Context, st *store.Store, f string) ([]Row, error) {
 	if st == nil {
@@ -69,7 +74,7 @@ func Show(ctx context.Context, st *store.Store, f string) ([]Row, error) {
 	} else if ok, err := client.SIsMember(ctx, "friends", f).Result(); err != nil {
 		return nil, fmt.Errorf("friend show: registry: %w", err)
 	} else if !ok {
-		return nil, fmt.Errorf("friend show: %s is not a registered friend", f)
+		return nil, fmt.Errorf("%w: %s is not a registered friend", ErrNotRegistered, f)
 	}
 	readings, err := read(ctx, st)
 	if err != nil {

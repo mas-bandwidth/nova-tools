@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"flag"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"os/exec"
@@ -91,7 +94,7 @@ func TestGrammarEveryPathHelpChild(t *testing.T) {
 	// noun -h: the noun's own usage and every subverb's forms, stdout, exit 2
 	for n := range nouns {
 		code, out, errOut := runSprint(n, "-h")
-		if code != 2 || errOut != "" || !strings.HasPrefix(out, "usage: nova-sprint "+n+" ") && !strings.HasPrefix(out, "usage: nova-sprint "+n+"\n") {
+		if code != 0 || errOut != "" || !strings.HasPrefix(out, "usage: nova-sprint "+n+" ") && !strings.HasPrefix(out, "usage: nova-sprint "+n+"\n") {
 			t.Errorf("%s -h: exit %d stderr %q stdout %q", n, code, errOut, head(out))
 			continue
 		}
@@ -110,7 +113,7 @@ func TestGrammarEveryPathHelpChild(t *testing.T) {
 		run, _ := helpRunner(words[0])
 		// path -h: its forms, its flags, its examples; its own set
 		code, out, errOut := runSprint(append(append([]string{}, words...), "-h")...)
-		if code != 2 || errOut != "" || !strings.HasPrefix(out, "usage: nova-sprint "+p) || !strings.Contains(out, "example:\n  nova-sprint "+p) {
+		if code != 0 || errOut != "" || !strings.HasPrefix(out, "usage: nova-sprint "+p) || !strings.Contains(out, "example:\n  nova-sprint "+p) {
 			t.Errorf("%s -h: exit %d stderr %q stdout %q", p, code, errOut, head(out))
 		}
 		fs := helpFlags(run, p)
@@ -242,30 +245,112 @@ func TestGrammarNoHelpTailInTheSource(t *testing.T) {
 	}
 }
 
-// TestGrammarOneRedisResolver (#4399 item 10): no verb reads a Redis address
-// variable itself; each goes through the one resolver (seat.go's
-// redisDefault and redisOr: the seat's, else NOVA_SPRINT_REDIS,
-// NOVA_REDIS_ADDR, NOVA_REDIS). The jev ledger's env is the one other
-// reader: a test passes its own env there, and the verb's registration sets
-// jev.DefaultAddr to the resolver.
+// TestGrammarOneRedisResolver (#4399 items 10 and 3): no verb reads a Redis
+// address variable itself; each goes through the one resolver (seat.go's
+// redisDefaultFrom: NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, NOVA_REDIS, else the
+// seat's row). Read from the syntax tree of every nova-sprint source file:
+//
+//   - the three names are spelled only in seat.go's seatAddrEnvs;
+//   - seatAddrEnvs is used only by redisDefaultFrom (the read) and
+//     selectSeat (the write of --seat's address): a second loop over it, as
+//     redis_raw.go's rawAddrDefault had (the ninth door), is red;
+//   - no Getenv of an address variable anywhere (the eighth door's shape).
 func TestGrammarOneRedisResolver(t *testing.T) {
 	t.Parallel()
-	read := regexp.MustCompile(`[gG]etenv\("NOVA_(SPRINT_)?REDIS(_ADDR)?"\)`)
-	allowed := map[string]bool{filepath.Join("..", "..", "internal", "nsprint", "jev", "main.go"): true}
+	names := map[string]bool{`"NOVA_SPRINT_REDIS"`: true, `"NOVA_REDIS_ADDR"`: true, `"NOVA_REDIS"`: true}
+	users := map[string]bool{"redisDefaultFrom": true, "selectSeat": true}
+	getenv := regexp.MustCompile(`[gG]etenv\("NOVA_(SPRINT_)?REDIS(_ADDR)?"\)`)
+	fset := token.NewFileSet()
 	for _, dir := range []string{".", filepath.Join("..", "..", "internal", "nsprint")} {
 		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || allowed[path] {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 				return err
 			}
+			f, err := parser.ParseFile(fset, path, nil, 0)
+			if err != nil {
+				return err
+			}
+			seat := path == "seat.go"
+			ast.Inspect(f, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.GenDecl:
+					for _, sp := range x.Specs {
+						if v, ok := sp.(*ast.ValueSpec); ok && seat && len(v.Names) == 1 && v.Names[0].Name == "seatAddrEnvs" {
+							return false // the one list of the names
+						}
+					}
+				case *ast.FuncDecl:
+					if x.Body == nil {
+						return false
+					}
+					ast.Inspect(x.Body, func(m ast.Node) bool {
+						if id, ok := m.(*ast.Ident); ok && id.Name == "seatAddrEnvs" && (!seat || !users[x.Name.Name]) {
+							t.Errorf("%s: %s reads seatAddrEnvs itself: a second resolver; call redisDefaultFrom", fset.Position(id.Pos()), x.Name.Name)
+						}
+						return true
+					})
+				case *ast.BasicLit:
+					if x.Kind == token.STRING && names[x.Value] {
+						t.Errorf("%s: spells %s outside seat.go's seatAddrEnvs: a second resolver", fset.Position(x.Pos()), x.Value)
+					}
+				}
+				return true
+			})
 			b, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
 			for i, line := range strings.Split(string(b), "\n") {
-				if read.MatchString(line) {
+				if getenv.MatchString(line) {
 					t.Errorf("%s:%d reads a Redis address itself, not through the one resolver: %s", path, i+1, strings.TrimSpace(line))
 				}
 			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestGrammarNoHandPrintedUsage (#4399 round 3): every refusal ends in
+// verbflag.Refusal's tail, the path's forms from the one table; no source
+// file outside internal/nsprint/verbflag spells a usage of its own. Every Go
+// string literal of nova-sprint's source is read off the syntax tree, and
+// one holding "usage:" is red, but for the top-level help text (main.go's
+// usage, what `nova-sprint help` prints) and a parser's "CPU usage:".
+func TestGrammarNoHandPrintedUsage(t *testing.T) {
+	t.Parallel()
+	fset := token.NewFileSet()
+	verbflagDir := filepath.Join("..", "..", "internal", "nsprint", "verbflag")
+	for _, dir := range []string{".", filepath.Join("..", "..", "internal", "nsprint")} {
+		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() && path == verbflagDir {
+				return filepath.SkipDir
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			f, err := parser.ParseFile(fset, path, nil, 0)
+			if err != nil {
+				return err
+			}
+			ast.Inspect(f, func(n ast.Node) bool {
+				if v, ok := n.(*ast.ValueSpec); ok && path == "main.go" && len(v.Names) == 1 && v.Names[0].Name == "usage" {
+					return false // the top-level help, asked for with nova-sprint help
+				}
+				lit, ok := n.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				if strings.Contains(lit.Value, "usage:") && !strings.Contains(lit.Value, "CPU usage:") {
+					t.Errorf("%s: a hand-printed usage %s: end the refusal with verbflag.Refusal (the one table)", fset.Position(lit.Pos()), lit.Value)
+				}
+				return true
+			})
 			return nil
 		})
 		if err != nil {

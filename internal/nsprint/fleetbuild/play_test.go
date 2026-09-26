@@ -305,7 +305,7 @@ func TestPlayRefusesBeforeThePlay(t *testing.T) {
 			"the rowan-tools clone " + playTop + " is 5 commits behind its upstream: git -C " + playTop + " pull --ff-only"},
 		{"no upstream", &playFake{noUpstream: true}, nil, "has no upstream branch: git -C " + playTop + " switch main"},
 		{"not a clone", &playFake{notClone: true}, nil, "is not in a git clone of rowan-tools"},
-		{"limit", &playFake{}, func(p *Play) { p.Limit = []string{"hulkk"} }, "--limit hulkk is not a machine in the registry /reg/machines.tsv"},
+		{"limit", &playFake{}, func(p *Play) { p.Limit = []string{"hulkk"} }, "--bench hulkk is not a machine in the registry /reg/machines.tsv"},
 		{"tag", &playFake{}, func(p *Play) { p.Tag = "../x" }, `"../x" is not a play name`},
 		{"no play file", &playFake{}, func(p *Play) { p.Tag = "tools" }, "has no tools.yml"},
 		{"no store", &playFake{}, func(p *Play) { p.Client = nil }, "--redis <addr>, or --dry-run"},

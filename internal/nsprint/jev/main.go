@@ -27,18 +27,11 @@ const Usage = "sync [--n <moves>] | ask [--n <rows>] [--key-env <VAR>] [--base-u
 type env struct {
 	newAsker func(baseURL, keyEnv string) (Asker, error)
 	getenv   func(string) string
-	resolve  func() string // the one resolver (DefaultAddr); nil in a test's env
 }
 
 var realEnv = env{
 	newAsker: func(baseURL, keyEnv string) (Asker, error) { return decide.New(baseURL, keyEnv) },
 	getenv:   os.Getenv,
-	resolve: func() string {
-		if DefaultAddr != nil {
-			return DefaultAddr()
-		}
-		return ""
-	},
 }
 
 // Main is `nova-sprint jev sync|ask|report|outcome` (nova-tools #4316):
@@ -88,23 +81,20 @@ func refused(out io.Writer, sub, why, remedy string) int {
 	return 1
 }
 
-// DefaultAddr is nova-sprint's one Redis resolver (cmd/nova-sprint/seat.go:
-// the seat's address, else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, NOVA_REDIS),
-// set by the verb's registration; nil in a test that passes its own env.
-var DefaultAddr func() string
+// DefaultAddrFrom is nova-sprint's one Redis resolver over an environment
+// (cmd/nova-sprint/seat.go redisDefaultFrom: NOVA_SPRINT_REDIS,
+// NOVA_REDIS_ADDR, NOVA_REDIS, else the seat's address), set by the verb's
+// registration (#4399: the eighth door). Nil, as in this package's tests,
+// --redis is the selected seat's address alone.
+var DefaultAddrFrom func(getenv func(string) string) string
 
-// addr is --redis, else the one resolver's address; with no resolver set,
-// NOVA_SPRINT_REDIS, else NOVA_REDIS_ADDR from e.
+// addr is --redis (its default the selected seat's address), else the one
+// resolver over e's environment.
 func (e env) addr(flagVal string) string {
-	if flagVal == "" && e.resolve != nil {
-		flagVal = e.resolve()
+	if flagVal == "" && DefaultAddrFrom != nil {
+		return DefaultAddrFrom(e.getenv)
 	}
-	for _, v := range []string{flagVal, e.getenv("NOVA_SPRINT_REDIS"), e.getenv("NOVA_REDIS_ADDR")} {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
+	return flagVal
 }
 
 func (e env) open(ctx context.Context, sub, flagVal string, out io.Writer) (*store.Store, int) {

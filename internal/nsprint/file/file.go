@@ -59,21 +59,6 @@ type Deps struct {
 	Open  func(ctx context.Context) (redis.Cmdable, func(), error)
 }
 
-// Usage is the verb's help text.
-const Usage = `usage:
-  nova-sprint file --repo <owner/name|name> --title <t> --body-file <f> [--push-to <friend> [--front] --sprint <s> --redis <addr>]
-  nova-sprint file --repo <owner/name|name> --comment <issue> --body-file <f>
-
-Reads the body from the FILE (never a literal @path), refuses before posting a
-body that starts with @ or is under 200 characters, and for an issue one that
-lacks What:, DONE-WHEN:, PATHS:, BASE:, DEPENDS-ON: or an owner:/reader:/est:
-line (reader must not be the owner). Posts by REST, reads the stored body back
-and compares it byte for byte. Prints FILED <repo>#<n> len=<k> or
-COMMENTED <repo>#<n> comment=<id> len=<k>. --push-to queues the build task
-(kind work) for that friend in the same call, after the read-back.
-exit codes: 0 filed and read back equal, 1 stored body differs, 2 refused or could not run.
-`
-
 var repoRx = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 
 // Main runs the verb. It never posts before every refusal has been checked.

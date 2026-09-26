@@ -65,8 +65,9 @@ plist sets AbandonProcessGroup (fleet/templates/nova-loop.plist.j2), which
 stops launchd from signalling the unit's process group; setsid is the
 refresh leaving that group itself.
 
--h on any verb or subverb prints its usage line and every flag it takes on
-stdout, and exits 2.
+-h on any verb or subverb prints its usage line, every flag it takes and its
+examples on stdout, and exits 0: help that was asked for exits 0, a usage
+the verb refused exits 2.
 
 exit codes: 0 ran, 2 could not run.
 
