@@ -36,7 +36,7 @@ func TestCardCutFromLandsHundredInWaiting(t *testing.T) {
 	if n := strings.Count("\n"+out, "\nCARD CUT row="); n != 100 {
 		t.Fatalf("%d receipts, want 100:\n%s", n, out)
 	}
-	if n := client.ZCard(ctx, taskcard.StreamKey("swarm: cards", "waiting")).Val(); n != 100 {
+	if n := client.ZCard(ctx, taskcard.StreamKeyAt(0, "swarm: cards", "waiting")).Val(); n != 100 {
 		t.Fatalf("ws:swarm: cards:waiting holds %d, want 100", n)
 	}
 	rec, err := client.HGetAll(ctx, taskcard.Key("nova-tools-5006")).Result() // row 2, filed seventh
@@ -56,7 +56,7 @@ func TestCardCutFromLandsHundredInWaiting(t *testing.T) {
 		!strings.Contains(out, "rows=100 cut=0 already=100 refused=0 filed=0 reused=100 ") {
 		t.Fatalf("rerun: exit %d filed %d, want 0, nothing filed and 100 already:\n%s", code, len(forge2.titles), out)
 	}
-	if n := client.ZCard(ctx, taskcard.StreamKey("swarm: cards", "waiting")).Val(); n != 100 {
+	if n := client.ZCard(ctx, taskcard.StreamKeyAt(0, "swarm: cards", "waiting")).Val(); n != 100 {
 		t.Fatalf("rerun left %d in waiting, want 100", n)
 	}
 }
@@ -136,7 +136,7 @@ func TestCardCutFromLedgerFilesNothingTwice(t *testing.T) {
 	if ttl := client.TTL(ctx, key).Val(); ttl != -1 {
 		t.Fatalf("%s has a TTL %v; keys do not expire", key, ttl)
 	}
-	if n := client.ZCard(ctx, taskcard.StreamKey("ledger", "waiting")).Val(); n != 5 {
+	if n := client.ZCard(ctx, taskcard.StreamKeyAt(0, "ledger", "waiting")).Val(); n != 5 {
 		t.Fatalf("ws:ledger:waiting holds %d, want 5", n)
 	}
 	for id, ref := range map[string]string{"base": "#5000", "nova-tools-5001": "#5001", "nova-tools-5004": "#5004"} {

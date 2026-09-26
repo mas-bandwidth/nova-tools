@@ -49,10 +49,14 @@ local function count_row(bucket, name, sprints, now_ms)
   local c = bucket .. ':' .. name
   local up = exists(c .. ':beat')
   local desired, missing = desired_of(c)
-  local ready = zcard(c .. ':cards:ready')
-  local leased = zcard(c .. ':cards:working')
+  -- the consumer's sets under the current epoch (#4238)
+  local e = NS.card.epoch()
+  local ready = zcard(NS.card.ckey(e, c, 'ready'))
+  local working_key = NS.card.ckey(e, c, 'working')
+  local leased = zcard(working_key)
   local stale = 0
-  for _, id in ipairs(redis.call('ZRANGE', c .. ':cards:working', 0, -1)) do
+  for _, id in ipairs(redis.call('ZRANGE', working_key, 0, -1)) do
+
     if string.match(id, '^%S+~%d+$') then
       local lease = tonumber(redis.call('HGET', 'task:' .. id, 'lease_until'))
       if lease and lease < now_ms then stale = stale + 1 end

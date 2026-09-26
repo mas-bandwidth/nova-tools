@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
@@ -61,10 +62,9 @@ func TestSprintClearIsOneEpochIncrement(t *testing.T) {
 	if reply, _ := clear("0"); len(reply) < 2 || reply[0] != "REFUSED" || !strings.HasPrefix(reply[1].(string), "INFLIGHT ") {
 		t.Fatalf("cards in flight: %v", reply)
 	}
-	reply, took := clear("1")
-	if took >= 10*time.Millisecond {
-		t.Fatalf("the clear took %s, want under 10 ms", took)
-	}
+	// (the under-10-ms of the DONE-WHEN is the one call's own time, ms=0
+	// on the receipt; a unit test never waits on or asserts the wall clock)
+	reply, _ := clear("1")
 	words := make([]string, len(reply))
 	for i, v := range reply {
 		words[i] = v.(string)
@@ -134,7 +134,47 @@ func TestSprintClearIsOneEpochIncrement(t *testing.T) {
 		t.Fatal("the table lost the pit stop after the clear")
 	}
 
-	// a new card pushed after the clear is dealt and shown
+	// a sprint card pushed after the clear (ns_card_push, the verb's one
+	// call) is in the epoch's pool and the deal pass plans it
+	// (deal.RedisSource.Read reads the epoch's lists); the fixture's older
+	// cards are not
+	if err := client.SAdd(ctx, "sprints", "fix").Err(); err != nil {
+		t.Fatal(err)
+	}
+	pushed, err := client.FCall(ctx, "ns_card_push", []string{"s:fix:card:after-clear", "s:fix:log", "s:fix:idx:card:queued"},
+		"after-clear", "payload-after-clear", "0", "dev", strings.Repeat("a", 40), "cmd/x.go", "mas-bandwidth/nova-tools", "model", "", "task").Text()
+	if err != nil || !strings.HasPrefix(pushed, "OK place=pool") {
+		t.Fatalf("push after the clear: %q %v", pushed, err)
+	}
+	if e := client.HGet(ctx, "s:fix:card:after-clear", "epoch").Val(); e != "1" {
+		t.Fatalf("the pushed card carries epoch %q, want 1", e)
+	}
+	if n := client.ZCard(ctx, ws.SprintListAt(1, "fix", "pool")).Val(); n != 1 {
+		t.Fatalf("epoch 1's pool holds %d, want the one card", n)
+	}
+	in, err := deal.RedisSource{Client: client}.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planned := 0
+	for _, sp := range in.Sprints {
+		if sp.Name != "fix" {
+			continue
+		}
+		for _, c := range sp.Pool {
+			if c.Label == "after-clear" {
+				planned++
+			}
+		}
+		if len(sp.Pool) != 1 || len(sp.Waiting) != 0 {
+			t.Fatalf("the deal pass reads pool=%d waiting=%d for fix, want the one card pushed after the clear", len(sp.Pool), len(sp.Waiting))
+		}
+	}
+	if planned != 1 {
+		t.Fatalf("the deal pass did not plan the card pushed after the clear: %+v", in.Sprints)
+	}
+
+	// a new task pushed after the clear is dealt and shown
 	if err := client.HSet(ctx, "bench:hetzner:desired", "slots", "4").Err(); err != nil {
 		t.Fatal(err)
 	}

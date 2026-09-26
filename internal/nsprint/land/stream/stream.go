@@ -71,12 +71,9 @@ func LandKey(repo, slug string) string { return "land:" + repo + ":" + slug }
 // IndexKey lists every slug with a land hash for the repo.
 func IndexKey(repo string) string { return "land:" + repo + ":streams" }
 
-// WSKey is one ws-index set of a stream at epoch 0 (the name before the
-// first sprint clear, nova-tools#4238); a reader keys by ws.Epoch through
-// WSKeyAt.
-func WSKey(stream, state string) string { return "ws:" + stream + ":" + state }
+// WSKeyAt is one ws-index set of a stream under epoch e (nova-tools#4238; a
+// reader keys by ws.Epoch).
 
-// WSKeyAt is WSKey under epoch e.
 func WSKeyAt(e uint64, stream, state string) string { return ws.KeyAt(e, stream, state) }
 
 // reserved slugs would collide with the lander's own land:<repo>:<word> keys.

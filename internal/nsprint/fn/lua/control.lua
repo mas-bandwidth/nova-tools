@@ -83,6 +83,11 @@ do
       cards = cards + n
       local base = 's:' .. S
       for _, s in ipairs(CT_SPRINT) do ct_del(dead, base .. s) end
+      -- the dealer's lists under the current epoch (#4238): base is s:<S>
+      local e = CARD.epoch()
+      if e ~= 0 then
+        for _, l in ipairs({ 'pool', 'waiting' }) do ct_del(dead, CARD.skey(e, string.sub(base, 3), l)) end
+      end
       for _, st in ipairs(CT_STATES) do ct_del(dead, base .. ':idx:card:' .. st) end
       for _, b in ipairs(benches) do
         ct_del(dead, base .. ':bench:' .. b .. ':queue')

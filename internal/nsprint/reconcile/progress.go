@@ -451,14 +451,19 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 		down    *redis.IntCmd
 		at      *redis.StringCmd
 	}
+	// the sets under the current epoch (nova-tools#4238)
+	epoch, err := ws.Epoch(ctx, p.Client)
+	if err != nil {
+		return ProgressRun{}, fmt.Errorf("progress: %w", err)
+	}
 	pipe := p.Client.Pipeline()
 	scs := make([]streamCmds, len(streams))
 	for i, s := range streams {
 		for j, state := range ws.Stream {
-			scs[i].counts[j] = pipe.ZCard(ctx, taskcard.StreamKey(s, state))
+			scs[i].counts[j] = pipe.ZCard(ctx, taskcard.StreamKeyAt(epoch, s, state))
 		}
 		for j, state := range notLanded {
-			scs[i].oldest[j] = pipe.ZRangeWithScores(ctx, taskcard.StreamKey(s, state), 0, 0)
+			scs[i].oldest[j] = pipe.ZRangeWithScores(ctx, taskcard.StreamKeyAt(epoch, s, state), 0, 0)
 		}
 		scs[i].state = pipe.HGetAll(ctx, ProgressStreamKey(s))
 	}
@@ -466,9 +471,10 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 	for i, k := range roster {
 		ccs[i] = consumerCmds{
 			desired: pipe.HMGet(ctx, k.DesiredKey(), "slots", "paused"),
-			working: pipe.ZCard(ctx, k.Key(ws.Working)),
-			down:    pipe.Exists(ctx, k.DownKey()),
-			at:      pipe.HGet(ctx, k.BeatKey(), "at"),
+			working: pipe.ZCard(ctx, k.KeyAt(epoch, ws.Working)),
+
+			down: pipe.Exists(ctx, k.DownKey()),
+			at:   pipe.HGet(ctx, k.BeatKey(), "at"),
 		}
 	}
 	status := make([]*redis.StringCmd, len(sprints))

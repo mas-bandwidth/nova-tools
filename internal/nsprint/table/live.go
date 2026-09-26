@@ -312,9 +312,8 @@ func quoteJoin(xs []string) string {
 
 // PoolViewKey is the undealt pool, the card move's bench view for cards with
 // no bench (card.BenchCardsKey("_pool", "ready")).
-const PoolViewKey = "bench:_pool:cards:ready"
+// PoolViewKeyAt is the undealt pool under epoch e (nova-tools#4238).
 
-// PoolViewKeyAt is the undealt pool under epoch e (PoolViewKey at 0).
 func PoolViewKeyAt(e uint64) string { return ws.ConsumerKeyAt(e, "bench:_pool", "ready") }
 
 // poolFromView sets the pool line from the undealt view (#2733): the dealer's

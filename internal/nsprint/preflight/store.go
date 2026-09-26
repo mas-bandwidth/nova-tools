@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -361,11 +362,16 @@ func checkLeases(ctx context.Context, c *redis.Client) Line {
 	if err != nil {
 		return redLine(n, name, err)
 	}
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return redLine(n, name, err)
+	}
 	pipe := c.Pipeline()
 	working := make([]*redis.StringSliceCmd, len(cs))
 	for i, k := range cs {
-		working[i] = pipe.ZRange(ctx, k.kind+":"+k.name+":cards:working", 0, -1)
+		working[i] = pipe.ZRange(ctx, ws.ConsumerKeyAt(epoch, k.kind+":"+k.name, "working"), 0, -1)
 	}
+
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return redLine(n, name, err)
 	}

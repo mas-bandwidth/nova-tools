@@ -107,8 +107,8 @@ func TestRequiredTimeoutEndsStuckCard(t *testing.T) {
 	if _, err := c.ZScore(ctx, "ws:"+stream+":done", id).Result(); err != nil {
 		t.Fatalf("the 12 h card is not in ws:%s:done: %v", stream, err)
 	}
-	if _, err := c.ZScore(ctx, card.BenchCardsKey(bench, "fail"), id).Result(); err != nil {
-		t.Fatalf("the 12 h card is not in %s: %v", card.BenchCardsKey(bench, "fail"), err)
+	if _, err := c.ZScore(ctx, card.BenchCardsKeyAt(0, bench, "fail"), id).Result(); err != nil {
+		t.Fatalf("the 12 h card is not in %s: %v", card.BenchCardsKeyAt(0, bench, "fail"), err)
 	}
 	moves, err := c.XRange(ctx, "sprint:"+S+":moves", "-", "+").Result()
 	must(err)

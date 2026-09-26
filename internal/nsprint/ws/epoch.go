@@ -71,8 +71,9 @@ func ParseEpoch(v string) (uint64, error) {
 // KeyAt is a stream's set at one state under epoch e (Key at epoch 0).
 func KeyAt(e uint64, stream, state string) string {
 	if e == 0 {
-		return Key(stream, state)
+		return key0(stream, state)
 	}
+
 	return "ws:" + strconv.FormatUint(e, 10) + ":" + stream + ":" + state
 }
 

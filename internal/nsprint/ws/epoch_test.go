@@ -15,7 +15,7 @@ func TestEpochKeyRule(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct{ got, want string }{
 		{ws.KeyAt(0, "swarm: cards", "ready"), "ws:swarm: cards:ready"},
-		{ws.KeyAt(0, "swarm: cards", "ready"), ws.Key("swarm: cards", "ready")},
+		{ws.KeyAt(0, "swarm: cards", "ready"), ws.KeyAt(0, "swarm: cards", "ready")},
 		{ws.KeyAt(1, "swarm: cards", "ready"), "ws:1:swarm: cards:ready"},
 		{ws.KeyAt(42, "docs", "landed"), "ws:42:docs:landed"},
 		{ws.ConsumerKeyAt(0, "bench:space", "done"), "bench:space:cards:done"},

@@ -69,7 +69,7 @@ func TestPushManyIsOneRoundTrip(t *testing.T) {
 	if pushed != 98 {
 		t.Fatalf("pushed %d, want 98", pushed)
 	}
-	if n := c.ZCard(ctx, taskcard.StreamKey(cardStream, "waiting")).Val(); n != 99 {
+	if n := c.ZCard(ctx, taskcard.StreamKeyAt(0, cardStream, "waiting")).Val(); n != 99 {
 		t.Fatalf("ws:%s:waiting holds %d, want 99 (98 and the one before)", cardStream, n)
 	}
 	rec, err := taskcard.Record(ctx, c, "pm-020")

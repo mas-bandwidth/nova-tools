@@ -92,12 +92,8 @@ func ParseConsumer(s string) (Consumer, error) {
 
 func (c Consumer) String() string { return c.Kind + ":" + c.Name }
 
-// Key is the consumer's set at col (ready, working, ok, fail) at epoch 0
-// (the name before the first sprint clear, nova-tools#4238); a reader keys
-// by ws.Epoch through KeyAt.
-func (c Consumer) Key(col string) string { return c.String() + ":cards:" + col }
-
-// KeyAt is Key under epoch e.
+// KeyAt is the consumer's set at col (ready, working, ok, fail) under epoch
+// e (nova-tools#4238; a reader keys by ws.Epoch).
 func (c Consumer) KeyAt(e uint64, col string) string { return ws.ConsumerKeyAt(e, c.String(), col) }
 
 // DesiredKey holds the consumer's slots (and paused, tiers, kinds).

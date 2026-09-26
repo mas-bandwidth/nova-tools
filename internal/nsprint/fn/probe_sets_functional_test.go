@@ -12,6 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
 	"github.com/redis/go-redis/v9"
 )
@@ -54,7 +55,7 @@ func cells(c *redis.Client, k taskcard.Consumer) [4]int64 {
 	ctx := context.Background()
 	var n [4]int64
 	for i, col := range []string{"ready", "working", "ok", "fail"} {
-		n[i] = c.ZCard(ctx, k.Key(col)).Val()
+		n[i] = c.ZCard(ctx, k.KeyAt(0, col)).Val()
 	}
 	return n
 }
@@ -126,8 +127,8 @@ func TestProbeLastGuardRaises(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "PROBE "+dealt[0].Copy+" is a probe (probe=lineup)") {
 		t.Fatalf("work of a probe copy: %v, want the PROBE raise", err)
 	}
-	if n := c.ZCard(ctx, b.Key("working")).Val(); n != 0 {
-		t.Fatalf("%s holds %d, want 0", b.Key("working"), n)
+	if n := c.ZCard(ctx, b.KeyAt(0, "working")).Val(); n != 0 {
+		t.Fatalf("%s holds %d, want 0", b.KeyAt(0, "working"), n)
 	}
 }
 
@@ -140,10 +141,10 @@ func TestProbeFsckNamesAndRepairs(t *testing.T) {
 	ctx := context.Background()
 	c.HSet(ctx, "task:quack-hetzner-flash~1", "card", "copy", "primary", "quack-hetzner-flash",
 		"consumer", b.String(), "where", "ok", "probe", "quack")
-	c.ZAdd(ctx, b.Key("ok"), redis.Z{Score: 1, Member: "quack-hetzner-flash~1"})
+	c.ZAdd(ctx, b.KeyAt(0, "ok"), redis.Z{Score: 1, Member: "quack-hetzner-flash~1"})
 
 	r, err := taskcard.FsckMoves(ctx, c, false)
-	if err != nil || r.Drift != 1 || len(r.Lines) != 1 || !strings.HasPrefix(r.Lines[0], "probe "+b.Key("ok")+" quack-hetzner-flash~1") {
+	if err != nil || r.Drift != 1 || len(r.Lines) != 1 || !strings.HasPrefix(r.Lines[0], "probe "+b.KeyAt(0, "ok")+" quack-hetzner-flash~1") {
 		t.Fatalf("fsck: %+v %v, want one probe line", r, err)
 	}
 	if r, err = taskcard.FsckMoves(ctx, c, true); err != nil || r.Fixed != 1 {
@@ -178,5 +179,40 @@ func TestBenchBeatKeepsTheProbe(t *testing.T) {
 	beat()
 	if got := c.HGet(ctx, "bench:"+b.Name+":beat", "probe").Val(); got != result {
 		t.Fatalf("beat probe after a beat = %q, want %q", got, result)
+	}
+}
+
+// TestProbeGuardHoldsAtEpochOne (nova-tools#4238): after a sprint clear the
+// consumer sets are <kind>:<name>:<e>:cards:<col>, and the probe guard of
+// #4237 must recognise that name too: a probe is still refused by the deal,
+// and cm_zadd still raises on a probe copy entering the epoch's working set.
+func TestProbeGuardHoldsAtEpochOne(t *testing.T) {
+	t.Parallel()
+
+	_, c, b := probeStore(t)
+	ctx := context.Background()
+	if err := c.HSet(ctx, ws.EpochKey, ws.EpochField, "1").Err(); err != nil {
+		t.Fatal(err)
+	}
+	pushPrimary(t, c, "probe-hetzner-flash", "probe", "fleet")
+	_, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: b, IDs: []string{"probe-hetzner-flash"}, By: "rowan"})
+	if why, ok := taskcard.IsRefused(err); !ok || !strings.HasPrefix(why, "PROBE probe-hetzner-flash is a probe (probe=fleet)") {
+		t.Fatalf("named deal of a probe at epoch 1: %v, want REFUSED PROBE", err)
+	}
+	pushPrimary(t, c, "work-1")
+	dealt, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: b, N: 4, By: "rowan"})
+	if err != nil || len(dealt) != 1 || dealt[0].Primary != "work-1" {
+		t.Fatalf("deal at epoch 1: %v %v, want the one consumer card", dealt, err)
+	}
+	if n := c.ZCard(ctx, b.KeyAt(1, "ready")).Val(); n != 1 {
+		t.Fatalf("%s holds %d, want the copy", b.KeyAt(1, "ready"), n)
+	}
+	c.HSet(ctx, "task:"+dealt[0].Copy, "probe", "lineup")
+	_, err = taskcard.Work(ctx, c, b, "rowan", 1, false, dealt[0].Copy)
+	if err == nil || !strings.Contains(err.Error(), "PROBE "+dealt[0].Copy+" is a probe (probe=lineup)") {
+		t.Fatalf("work of a probe copy at epoch 1: %v, want the PROBE raise", err)
+	}
+	if n := c.ZCard(ctx, b.KeyAt(1, "working")).Val(); n != 0 {
+		t.Fatalf("%s holds %d, want 0", b.KeyAt(1, "working"), n)
 	}
 }

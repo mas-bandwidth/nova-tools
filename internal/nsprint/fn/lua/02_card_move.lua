@@ -251,7 +251,9 @@ end
 -- probe would enter a consumer set: the last guard, never the path.
 local function cm_consumer_set(k)
   if type(k) ~= 'string' then return false end
-  local kind = string.match(k, '^(%l+):[^:]+:cards:%l+$')
+  -- <kind>:<name>:cards:<col> at epoch 0, <kind>:<name>:<e>:cards:<col> after
+  -- the first sprint clear (#4238): the guard holds at every epoch
+  local kind = string.match(k, '^(%l+):[^:]+:cards:%l+$') or string.match(k, '^(%l+):[^:]+:%d+:cards:%l+$')
   return kind == 'bench' or kind == 'friend'
 end
 
@@ -440,7 +442,7 @@ local function cm_derive(S, label, id)
   if state == 'queued' then
     if c[6] == 'waiting' or c[6] == 'ready' or c[6] == 'parked' then
       w = c[6]
-    elseif redis.call('SISMEMBER', 's:' .. S .. ':waiting', label) == 1 then
+    elseif redis.call('SISMEMBER', cm_skey(0, S, 'waiting'), label) == 1 then
       w = 'waiting'
     end
   end
@@ -479,18 +481,21 @@ local function cm_adopt(id, S, label)
     created = tonumber(c[2]) or cm_now()
     if created < 100000000000 then created = created * 1000 end
   end
-  local p = { where = w, ok = ok, bench = c[3] or '', stream = c[4] or '', owner = c[5] or '' }
+  -- an adopted record is placed under the current epoch (#4238); the
+  -- pre-model lists it may sit in are the epoch 0 names
+  local p = { where = w, ok = ok, bench = c[3] or '', stream = c[4] or '', owner = c[5] or '', epoch = cm_epoch() }
   -- A pre-model pool scored the card by its deal priority: that score moves
   -- to the record's priority field (when it has none) and the pool is
   -- re-scored by created_at like every view.
-  local legacy = redis.call('ZSCORE', 's:' .. S .. ':pool', label)
+  local legacy = redis.call('ZSCORE', cm_skey(0, S, 'pool'), label)
   if legacy and not c[7] then redis.call('HSET', id, 'priority', tostring(legacy)) end
   redis.call('ZADD', 'sprint:' .. S .. ':cards', created, id)
   for _, e in ipairs(cm_views(S, label, id, p)) do cm_add(e, created) end
-  if w ~= 'ready' then redis.call('ZREM', 's:' .. S .. ':pool', label) end
-  if w ~= 'waiting' then redis.call('SREM', 's:' .. S .. ':waiting', label) end
+  if w ~= 'ready' or p.epoch ~= 0 then redis.call('ZREM', cm_skey(0, S, 'pool'), label) end
+  if w ~= 'waiting' or p.epoch ~= 0 then redis.call('SREM', cm_skey(0, S, 'waiting'), label) end
   redis.call('SADD', cm_idx(S, c[6]), label)
-  redis.call('HSET', id, 'created_at', string.format('%.0f', created), 'where', w, 'where_ok', ok)
+  redis.call('HSET', id, 'created_at', string.format('%.0f', created), 'where', w, 'where_ok', ok,
+    'epoch', cm_estr(p.epoch))
   return nil
 end
 
@@ -1522,7 +1527,7 @@ function TK.move(id, to, o)
   if err then return err end
   -- a probe never enters a consumer set (nova-tools#4237): refused before any write
   if nxt.friend ~= '' then
-    err = cm_probe_refused('friend:' .. nxt.friend .. ':cards:' .. to, id)
+    err = cm_probe_refused(cm_ckey(cur.epoch, 'friend:' .. nxt.friend, to), id)
     if err then return err end
   end
   local front = TK.str(o.front)
@@ -1662,8 +1667,9 @@ function TK.create(id, fields, o)
   if TK.str(o.friend) ~= '' then
     for i = 1, #fields, 2 do
       if fields[i] == 'probe' and TK.str(fields[i + 1]) ~= '' then
-        return 'PROBE ' .. id .. ' is a probe (probe=' .. TK.str(fields[i + 1]) .. '); friend:' .. TK.str(o.friend) ..
-          ':cards:' .. where .. ' holds consumer work only: a probe result goes on bench:<b>:beat probe (nova-tools#4237)'
+        return 'PROBE ' .. id .. ' is a probe (probe=' .. TK.str(fields[i + 1]) .. '); ' ..
+          cm_ckey(cm_epoch(), 'friend:' .. TK.str(o.friend), where) ..
+          ' holds consumer work only: a probe result goes on bench:<b>:beat probe (nova-tools#4237)'
       end
     end
   end
@@ -1694,8 +1700,8 @@ function TK.derive(id, p)
   if p.stream ~= '' then
     local found
     for _, w in ipairs(TK.WHERE) do
-      if redis.call('ZSCORE', 'ws:' .. p.stream .. ':' .. w, id) then
-        if found then return nil, 'twice ws:' .. p.stream .. ':' .. found .. ' and :' .. w end
+      if redis.call('ZSCORE', cm_wskey(p.epoch, p.stream, w), id) then
+        if found then return nil, 'twice ' .. cm_wskey(p.epoch, p.stream, found) .. ' and :' .. w end
         found = w
       end
     end
@@ -1810,7 +1816,8 @@ function TK.place(id, where, ok, o)
       local rank = { parked = 1, waiting = 1, ready = 2, working = 3, merging = 4, done = 5, landed = 6 }
       w, k = nil, '-'
       for _, x in ipairs(TK.WHERE) do
-        if p.stream ~= '' and redis.call('ZSCORE', 'ws:' .. p.stream .. ':' .. x, id) and
+        if p.stream ~= '' and redis.call('ZSCORE', cm_wskey(p.epoch, p.stream, x), id) and
+
             (not w or rank[x] > rank[w]) then
           w = x
         end

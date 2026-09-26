@@ -318,15 +318,16 @@ local function bench_beat(keys, args)
   return { 'OK', session }
 end
 
--- pl_count is SCARD of a friend-queue index set; a missing key or a key of
--- another type counts 0, as bin/friend-row's cnt did.
-local function pl_count(key)
-  local n = redis.pcall('SCARD', key)
+-- pl_zcard is ZCARD of a table set; a missing key or a key of another type
+-- counts 0, as bin/friend-row's cnt did.
+local function pl_zcard(key)
+  local n = redis.pcall('ZCARD', key)
   if type(n) ~= 'number' then
     return 0
   end
   return n
 end
+
 
 -- friend_row writes one friend's sprint-table row (#3440, the atomic-row rule
 -- #3281): one read of the friend-queue index sets sprint:<S>:idx:<f>:open,
@@ -341,11 +342,13 @@ local function friend_row(keys, args)
       not sprint or sprint == '' or not at or at == '' then
     return { 'INVALID' }
   end
-  local ix = 'sprint:' .. sprint .. ':idx:' .. friend .. ':'
-  local ready = pl_count(ix .. 'open')
-  local working = pl_count(ix .. 'working')
-  local waiting = pl_count(ix .. 'waiting')
-  local done = pl_count(ix .. 'closed')
+  -- The counts are the friend's table sets under the current epoch
+  -- (nova-tools#4238): friend:<f>[:<e>]:cards:ready|working|waiting|done.
+  -- The friend-queue index sets sprint:<S>:idx:<f>:* carry no epoch and
+  -- would refill the row with old work after a clear.
+  local e = NS.card.epoch()
+  local function fc(col) return pl_zcard(NS.card.ckey(e, 'friend:' .. friend, col)) end
+  local ready, working, waiting, done = fc('ready'), fc('working'), fc('waiting'), fc('done')
   local slots = redis.pcall('HGET', 'friend:' .. friend .. ':desired', 'slots')
   if type(slots) ~= 'string' or not string.match(slots, '^[0-9]+$') then
     slots = ''

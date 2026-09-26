@@ -30,12 +30,9 @@ import (
 // named a PR.
 var FriendDoneWheres = []string{ws.Done, ws.Merging, ws.Landed}
 
-// FriendCardsKey is one friend's set of task ids at where, at epoch 0 (the
-// name before the first sprint clear); a reader keys by ws.Epoch through
-// FriendCardsKeyAt (nova-tools#4238).
-func FriendCardsKey(friend, where string) string { return "friend:" + friend + ":cards:" + where }
+// FriendCardsKeyAt is one friend's set of task ids at where under epoch e
+// (nova-tools#4238; a reader keys by ws.Epoch).
 
-// FriendCardsKeyAt is FriendCardsKey under epoch e.
 func FriendCardsKeyAt(e uint64, friend, where string) string {
 	return ws.ConsumerKeyAt(e, "friend:"+friend, where)
 }

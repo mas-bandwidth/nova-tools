@@ -13,8 +13,6 @@ import (
 )
 
 func keyCard(sprint, label string) string  { return "s:" + sprint + ":card:" + label }
-func keyPool(sprint string) string         { return "s:" + sprint + ":pool" }
-func keyWaiting(sprint string) string      { return "s:" + sprint + ":waiting" }
 func keyLog(sprint string) string          { return "s:" + sprint + ":log" }
 func keyIdx(sprint, state string) string   { return "s:" + sprint + ":idx:card:" + state }
 func keyTask(sprint, id string) string     { return "task:" + id }
@@ -98,11 +96,12 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 		// same pipeline, once (SETNX; the sha names the bytes), with the
 		// retired pusher's 7-day TTL (#3809).
 		pipe.SetNX(ctx, BodyKey(sprint, doc.Payload), bodies[i], BodyTTL)
+		// card, log, idx queued: the dealer's lists are the epoch's, derived
+		// by the function, never declared here (nova-tools#4238)
 		keys := []string{
 			keyCard(sprint, doc.Label),
-			keyPool(sprint),
-			keyWaiting(sprint),
 			keyLog(sprint),
+
 			keyIdx(sprint, "queued"),
 		}
 		// Arguments 14-18 are bench, est, test, stream and origin (#3650,

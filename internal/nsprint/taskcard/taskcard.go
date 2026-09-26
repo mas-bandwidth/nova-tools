@@ -53,18 +53,12 @@ var Wheres = ws.Wheres
 // Key is a task's record.
 func Key(id string) string { return "task:" + id }
 
-// StreamKey is a stream's set of tasks at one where, at epoch 0 (the name
-// before the first sprint clear, nova-tools#4238); a reader keys by
-// ws.Epoch through StreamKeyAt.
-func StreamKey(stream, where string) string { return "ws:" + stream + ":" + where }
-
-// StreamKeyAt is StreamKey under epoch e.
+// StreamKeyAt is a stream's set of tasks at one where under epoch e
+// (nova-tools#4238; a reader keys by ws.Epoch).
 func StreamKeyAt(e uint64, stream, where string) string { return ws.KeyAt(e, stream, where) }
 
-// FriendKey is a friend's set of tasks (and cards) at one where, at epoch 0.
-func FriendKey(friend, where string) string { return "friend:" + friend + ":cards:" + where }
-
-// FriendKeyAt is FriendKey under epoch e.
+// FriendKeyAt is a friend's set of tasks (and cards) at one where under
+// epoch e.
 func FriendKeyAt(e uint64, friend, where string) string {
 	return ws.ConsumerKeyAt(e, "friend:"+friend, where)
 }
@@ -504,14 +498,22 @@ func Reap(ctx context.Context, c redis.Cmdable, by string, friends ...string) (R
 	return Reaped{Expired: out[3 : 3+n], Unlinked: out[3+n:]}, nil
 }
 
-// Ls is one ZRANGE: a stream's tasks at a where, oldest first.
+// Ls is a stream's tasks at a where under the current epoch, oldest first.
 func Ls(ctx context.Context, c redis.Cmdable, stream, where string) ([]string, error) {
-	return c.ZRange(ctx, StreamKey(stream, where), 0, -1).Result()
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return c.ZRange(ctx, StreamKeyAt(epoch, stream, where), 0, -1).Result()
 }
 
-// LsFriend is one ZRANGE: a friend's tasks (and cards) at a where.
+// LsFriend is a friend's tasks (and cards) at a where under the current epoch.
 func LsFriend(ctx context.Context, c redis.Cmdable, friend, where string) ([]string, error) {
-	return c.ZRange(ctx, FriendKey(friend, where), 0, -1).Result()
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return c.ZRange(ctx, FriendKeyAt(epoch, friend, where), 0, -1).Result()
 }
 
 // FsckResult is ns_tcard_fsck's reply.

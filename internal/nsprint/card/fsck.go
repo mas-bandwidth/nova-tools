@@ -29,12 +29,9 @@ var Places = []string{"waiting", "ready", "working", "done", "parked"}
 // RosterKey is sprint:<S>:cards, every card of the sprint ever.
 func RosterKey(sprint string) string { return "sprint:" + sprint + ":cards" }
 
-// BenchCardsKey is the bench view of one place (or ok/fail),
-// bench:<b>:cards:<where>, at epoch 0 (the name before the first sprint
-// clear, nova-tools#4238); a reader keys by ws.Epoch through BenchCardsKeyAt.
-func BenchCardsKey(bench, where string) string { return "bench:" + bench + ":cards:" + where }
+// BenchCardsKeyAt is the bench view of one place (or ok/fail) under epoch e
+// (nova-tools#4238; a reader keys by ws.Epoch).
 
-// BenchCardsKeyAt is BenchCardsKey under epoch e.
 func BenchCardsKeyAt(e uint64, bench, where string) string {
 	return ws.ConsumerKeyAt(e, "bench:"+bench, where)
 }

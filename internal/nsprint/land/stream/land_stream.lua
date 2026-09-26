@@ -107,15 +107,26 @@ local function ci_request(repo, head, pr, now)
   redis.call('ZADD', 'ci:pool', tonumber(now_str) or 0, repo .. ':' .. head)
 end
 
+-- wskey(stream, w): the stream's set under the sprint epoch (nova-tools#4238):
+-- ws:<s>:<w> at epoch 0, ws:<e>:<s>:<w> after the first sprint clear. The
+-- rule of internal/nsprint/ws/epoch.go, repeated here because this script is
+-- not in the function library (it cannot reach NS.card.wskey).
+local function wskey(stream, w)
+  local e = redis.call('HGET', 'sprint:epoch', 'n')
+  if not e or e == '' or e == '0' then return 'ws:' .. stream .. ':' .. w end
+  return 'ws:' .. e .. ':' .. stream .. ':' .. w
+end
+
 -- move one task between two ws sets of its stream; returns 1 when it was in
 -- `from`. The score is the task's age and a move keeps it (ws-index).
 local function move(id, stream, from, to, by, why, at)
   if id == nil or id == '' or stream == nil or stream == '' then return 0 end
-  local fromkey = 'ws:' .. stream .. ':' .. from
+  local fromkey = wskey(stream, from)
   local score = redis.call('ZSCORE', fromkey, id)
   if not score then return 0 end
   redis.call('ZREM', fromkey, id)
-  redis.call('ZADD', 'ws:' .. stream .. ':' .. to, score, id)
+  redis.call('ZADD', wskey(stream, to), score, id)
+
   redis.call('HSET', 'task:' .. id, 'state', to, 'state_at', at)
   wslog(id, stream, from, to, by, why, at)
   return 1

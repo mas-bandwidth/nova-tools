@@ -150,7 +150,7 @@ func liveSets(s string) []string {
 	var keys []string
 	for _, b := range []string{ghBench, "_pool"} {
 		for _, p := range []string{"waiting", "ready", "working", "parked"} {
-			keys = append(keys, card.BenchCardsKey(b, p))
+			keys = append(keys, card.BenchCardsKeyAt(0, b, p))
 		}
 	}
 	for _, p := range []string{"waiting", "ready", "working", "parked"} {
@@ -214,7 +214,7 @@ func TestSprintCloseRetiresEveryCard(t *testing.T) {
 	w.end(t, s, "ca")                    // done/ok
 	fsckClean(t, w, s, "before close")
 	// the one lease ledger is the bench's cards:working (#3998)
-	if n := w.c.ZCard(w.ctx, card.BenchCardsKey(ghBench, "working")).Val(); n != 3 {
+	if n := w.c.ZCard(w.ctx, card.BenchCardsKeyAt(0, ghBench, "working")).Val(); n != 3 {
 		t.Fatalf("leases before close = %d, want 3 (cb, cc and cd working)", n)
 	}
 
@@ -317,7 +317,7 @@ func TestNoGhostCards(t *testing.T) {
 
 	// Fenced: another token reaps nothing. The one lease ledger is the
 	// bench's cards:working (#3998): gx, gy, gz and quack's qa.
-	working := card.BenchCardsKey(ghBench, "working")
+	working := card.BenchCardsKeyAt(0, ghBench, "working")
 	if _, err := reconcile.ReapLeases(w.ctx, w.c, "not-the-token", reconcile.LeaseStale); !errors.Is(err, reconcile.ErrFenced) {
 		t.Fatalf("reap with a stale token = %v, want ErrFenced", err)
 	}
@@ -355,8 +355,8 @@ func TestNoGhostCards(t *testing.T) {
 	// done card again in the stream's ready set.
 	qa := card.CardKey(q, "qa")
 	w.do(t,
-		[]any{"ZADD", card.BenchCardsKey(ghBench, "ready"), 1, qa},
-		[]any{"ZADD", card.BenchCardsKey(ghBench, "ready"), 2, "s:gone-0924:card:ghost-1"},
+		[]any{"ZADD", card.BenchCardsKeyAt(0, ghBench, "ready"), 1, qa},
+		[]any{"ZADD", card.BenchCardsKeyAt(0, ghBench, "ready"), 2, "s:gone-0924:card:ghost-1"},
 		[]any{"ZADD", "ws:" + ghStream + ":ready", 1, qa},
 	)
 	duty := &reconcile.Fsck{Client: w.c, Every: time.Nanosecond}
@@ -379,7 +379,7 @@ func TestNoGhostCards(t *testing.T) {
 			t.Fatalf("closed %s still in live sets:\n%s", sp, strings.Join(left, "\n"))
 		}
 	}
-	if zHas(t, w.ctx, w.c, card.BenchCardsKey(ghBench, "ready"), "s:gone-0924:card:ghost-1") {
+	if zHas(t, w.ctx, w.c, card.BenchCardsKeyAt(0, ghBench, "ready"), "s:gone-0924:card:ghost-1") {
 		t.Fatal("the unlisted sprint's ghost is still in the bench's ready set")
 	}
 	for _, sp := range []string{s, q, r} {
@@ -423,7 +423,7 @@ func hostEqualsRecords(t *testing.T, w *ghWorld, sprints ...string) {
 	}
 	for _, b := range []string{ghBench, "_pool"} {
 		for _, p := range append(append([]string{}, card.Places...), "ok", "fail") {
-			if got := w.c.ZCard(w.ctx, card.BenchCardsKey(b, p)).Val(); got != want[b+"/"+p] {
+			if got := w.c.ZCard(w.ctx, card.BenchCardsKeyAt(0, b, p)).Val(); got != want[b+"/"+p] {
 				t.Fatalf("host cell %s/%s ZCARD %d, records %d", b, p, got, want[b+"/"+p])
 			}
 		}

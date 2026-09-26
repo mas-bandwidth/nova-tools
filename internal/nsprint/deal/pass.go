@@ -947,8 +947,11 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 		// The pool is scored by age (created_at, #3692), not priority, so
 		// the whole pool is read (O(n)) and the priority comes from each
 		// record.
-		pools[i] = pipe.ZRangeWithScores(ctx, "s:"+s+":pool", 0, -1)
-		waits[i] = pipe.SMembers(ctx, "s:"+s+":waiting")
+		// the dealer's lists under the current epoch (nova-tools#4238): a
+		// card pushed after a clear is in the epoch's pool, an older one is not
+		pools[i] = pipe.ZRangeWithScores(ctx, ws.SprintListAt(epoch, s, "pool"), 0, -1)
+		waits[i] = pipe.SMembers(ctx, ws.SprintListAt(epoch, s, "waiting"))
+
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return Input{}, err

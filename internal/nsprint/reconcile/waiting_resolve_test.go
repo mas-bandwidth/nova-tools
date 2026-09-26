@@ -36,7 +36,7 @@ func wrTask(t *testing.T, c *redis.Client, id, state string, created int64, kv .
 	pipe.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: wrStream})
 	pipe.HSet(ctx, "task:"+id, fields...)
 	if state != "closed" {
-		pipe.ZAdd(ctx, ws.Key(wrStream, state), redis.Z{Score: float64(created), Member: id})
+		pipe.ZAdd(ctx, ws.KeyAt(0, wrStream, state), redis.Z{Score: float64(created), Member: id})
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatal(err)
@@ -45,7 +45,7 @@ func wrTask(t *testing.T, c *redis.Client, id, state string, created int64, kv .
 
 func wrMembers(t *testing.T, c *redis.Client, state string) map[string]float64 {
 	t.Helper()
-	zs, err := c.ZRangeWithScores(context.Background(), ws.Key(wrStream, state), 0, -1).Result()
+	zs, err := c.ZRangeWithScores(context.Background(), ws.KeyAt(0, wrStream, state), 0, -1).Result()
 	if err != nil {
 		t.Fatal(err)
 	}
