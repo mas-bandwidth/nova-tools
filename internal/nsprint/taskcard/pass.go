@@ -159,17 +159,14 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 			dealt = len(d)
 			res.Dealt += dealt
 		}
-		if r.ready == 0 && dealt == 0 {
-			continue
-		}
-		w, err := Work(ctx, c, r.k, by, 0, true)
-		if err != nil {
-			res.Lines = append(res.Lines, fmt.Sprintf("WORK %s REFUSED why=%s", r.k, err))
-			continue
-		}
-		res.Worked += len(w.IDs)
-		if dealt > 0 || len(w.IDs) > 0 {
-			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s dealt=%d worked=%d free=%d", r.k, dealt, len(w.IDs), w.Free))
+		// The dealer deals; it never takes a copy into working on a consumer's
+		// behalf. A bench's beat session and a friend's serve call card work
+		// themselves, then launch: a copy worked here by the reconciler has no
+		// launcher, its lease lapses, and the primary lands in review for
+		// nothing (the first copy-model quack, 2026-09-25 10:41 PM ET: copy
+		// worked "by reconciler why work", no process on the bench).
+		if dealt > 0 {
+			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s dealt=%d free=%d", r.k, dealt, r.free))
 		}
 	}
 	return res, nil
