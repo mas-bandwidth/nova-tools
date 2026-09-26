@@ -71,7 +71,6 @@ func init() {
 	})
 }
 
-
 func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
 		return refuse(errOut, "read", "wants a subverb")

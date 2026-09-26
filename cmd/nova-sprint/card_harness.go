@@ -27,7 +27,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
-
 func runCardRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return runCardRunEnv(ctx, args, stdout, stderr, os.Getenv)
 }

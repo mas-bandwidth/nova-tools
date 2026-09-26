@@ -26,7 +26,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-
 type tableOpts struct {
 	once    bool
 	redis   string

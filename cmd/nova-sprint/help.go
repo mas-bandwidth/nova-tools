@@ -20,7 +20,9 @@ func helpRunner(noun string) (runFunc, bool) {
 	case "table":
 		return func(_ context.Context, args []string, out, errOut io.Writer) int { return cmdTable(args, out, errOut) }, true
 	case "refresh":
-		return func(_ context.Context, args []string, out, errOut io.Writer) int { return cmdRefresh(args, out, errOut) }, true
+		return func(_ context.Context, args []string, out, errOut io.Writer) int {
+			return cmdRefresh(args, out, errOut)
+		}, true
 	}
 	v, ok := verbs[noun]
 	return v.Run, ok

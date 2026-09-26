@@ -17,7 +17,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-
 func cmdTableClear(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("table clear")
 	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)

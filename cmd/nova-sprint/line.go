@@ -46,7 +46,6 @@ func init() {
 	})
 }
 
-
 func runLine(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
 		return refuse(errOut, "line", "wants a subverb")

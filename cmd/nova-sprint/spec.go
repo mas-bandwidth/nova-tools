@@ -33,7 +33,6 @@ func init() {
 	})
 }
 
-
 func runSpec(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
 		return refuse(errOut, "spec", "wants a subverb")
