@@ -19,43 +19,6 @@ import (
 // It reads ci.yml as text, like ci_budget_test.go: the file is the contract and
 // there is no YAML library in go.mod.
 
-// TestMergeGroupRunsTheFullHostedLegs is the merge-queue's half of the two
-// tiers. ci-ok on a merge_group is THE gate that lands a PR, so it must run the
-// full hosted suite — the same legs a push to dev runs, without -short — over
-// the packages the group changes and their importers, so the leg stays inside
-// the budget. A hosted leg that runs -short on the group, or one that runs full
-// but unscoped over the whole tree, is not the gate the dev push is.
-func TestMergeGroupRunsTheFullHostedLegs(t *testing.T) {
-	t.Parallel()
-
-	root := repoRoot(t)
-	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
-	blocks := jobBlocks(src)
-	if len(blocks) == 0 {
-		t.Fatal("no jobs parsed from ci.yml; the parser is looking in the wrong place")
-	}
-
-	hostedLegs := 0
-	for name, block := range blocks {
-		if !runsOnHosted(block) {
-			continue
-		}
-		if !jobRunsOnEvent(block, "merge_group") {
-			continue
-		}
-		hostedLegs++
-		if jobUsesShort(block) {
-			t.Errorf("hosted job %q runs on merge_group but passes -short: a package with hosted-only tests cannot land on the -short result alone (Rule T, pit stop 4)", name)
-		}
-		if !strings.Contains(block, "merge_group.base_sha") {
-			t.Errorf("hosted job %q runs on merge_group without scoping to the packages the group changes (no merge_group.base_sha diff): the full hosted suite does not fit the budget unscoped", name)
-		}
-	}
-	if hostedLegs == 0 {
-		t.Error("no GitHub-hosted job runs on merge_group: the gate that lands a PR must run what the dev push runs (Rule T, pit stop 4)")
-	}
-}
-
 // TestSelfHostedShardsSelectThePackagesAChangeTouches pins the self-hosted
 // test fan-out's price law: on pull_request and merge_group the shards carry
 // only the packages the change touches and their in-module importers, while

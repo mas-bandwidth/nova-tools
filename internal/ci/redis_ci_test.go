@@ -70,7 +70,7 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 	if !strings.Contains(ci, `NOVA_CI: "1"`) {
 		t.Fatal("ci.yml does not set NOVA_CI=1; a missing redis-server would skip and the run would stay green")
 	}
-	for _, job := range []string{"test", "test-hosted", "test-hosted-merge"} {
+	for _, job := range []string{"test", "test-hosted"} {
 		body := jobBody(ci, job)
 		if body == "" {
 			t.Fatalf("ci.yml has no job %s", job)

@@ -1723,7 +1723,7 @@ every shard of every leg (ten runs across the windows legs of run 35354900090
 alone), so the append now sits in a `case` arm — a guard that prevents a
 DUPLICATE keeps the rule.
 **The test.** `TestSelectPackagesAlwaysAddsInternalCI` and
-`TestMergeGateAlwaysAppendsInternalCI` (`internal/ci/ci_selection_test.go`).
+TestMergeGateAlwaysAppendsInternalCI (deleted 2026-09-26 with the hosted merge leg; see Parked) (`internal/ci/ci_selection_test.go`).
 **Its allowlist.** None.
 **Its remedy line.** `select-packages.sh does not add ./internal/ci to want
 unconditionally; internal/ci scans the tree instead of importing what it guards,
@@ -2179,7 +2179,7 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 29. `TestEveryTestBuildTagIsRunBySomeScheduledJob` — every opt-in build tag a `_test.go` carries is named by a scheduled workflow's `go test -tags`.
 30. `TestTheNetworkExemptTagsHaveAHomeInTheSchedule` — the net checker's `nightly`/`soak` exempt tags have a scheduled leg.
 31. `TestSomeScheduledJobRunsTheRaceDetector` — some scheduled job actually passes `-race`.
-32. `TestSelectPackagesAlwaysAddsInternalCI` / `TestMergeGateAlwaysAppendsInternalCI` — `./internal/ci` is added to the package set on every selection, not only as a fallback.
+32. `TestSelectPackagesAlwaysAddsInternalCI` / TestMergeGateAlwaysAppendsInternalCI (deleted 2026-09-26 with the hosted merge leg; see Parked) — `./internal/ci` is added to the package set on every selection, not only as a fallback.
 33. `TestBenchStandardAndTheWallNameTheSameToolchainRoots` — the bench standard and the wall name one toolchain-root list per OS, each root with its kind, checked in both directions.
 34. `TestWorkspaceCleanupDoesNotFailBeforeCheckout` — the workspace-cleanup step refuses an empty `GITHUB_WORKSPACE`, continues over an absent directory and over a workspace with no `.git` (the belt), so it never fails a job before checkout.
 35. `TestSharedRepoTreeListsAndParsesTheRepository` — the shared tree is this repository, every `.go` file carries a usable syntax tree, and the loader runs exactly once.
@@ -2248,6 +2248,10 @@ that fits the two-minute law. Read `windows-sizes` below before writing either:
 its rule — a number in a table or a cap must come from a MEASUREMENT, and a
 measurement made at a cap is a floor and not a size — is the one that cost the
 most to learn and it is live today, one platform over, as `darwin-sizes`.
+
+### Parked 2026-09-26: the hosted merge leg (Rule T) and its package selection
+
+**Why parked.** The merge group's hosted legs (plan-merge, test-hosted-merge) re-ran the changed packages on two-core hosted runners and crossed the two-minute cap on four of the last five queue runs, each a full PR-plus-queue round lost. Glenn 2026-09-26: "We have to speed this shit up. Less dependency on github is my bet." The merge group's gate is the sharded `test` legs on our own benches on the group commit; the clean-image run moves to certification (#4219). Three tests are DELETED with the leg: `TestMergeGroupRunsTheFullHostedLegs` (a hosted job runs on merge_group), `TestMergeGateAlwaysAppendsInternalCI` and `TestMergeGateAlwaysAppendsInternalDocs` (the leg's package selection always carried internal/ci and internal/docs); their sections above keep the hurt.
 
 ### Parked 2026-09-25: the bench-name rule (`benchname`)
 

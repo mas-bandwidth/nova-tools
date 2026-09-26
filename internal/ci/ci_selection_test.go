@@ -76,26 +76,6 @@ func TestSelectPackagesAlwaysAddsInternalCI(t *testing.T) {
 	}
 }
 
-// TestMergeGateAlwaysAppendsInternalCI pins ci.yml's independent inline
-// selection: internal/ci is appended to $pkgs on every group, not only when the
-// group changed no Go package.
-func TestMergeGateAlwaysAppendsInternalCI(t *testing.T) {
-	t.Parallel()
-
-	root := repoRoot(t)
-	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
-	step := stepBody(src, "select the packages this group changes")
-	if strings.TrimSpace(step) == "" {
-		t.Fatal("no `select the packages this group changes` step in ci.yml; the merge gate's selection moved and this test is looking in the wrong place")
-	}
-	if !mergeAppendRe.MatchString(step) {
-		t.Errorf("the merge gate's selection does not always append ./internal/ci to $pkgs; internal/ci scans the tree, so a cmd/nova-swarm edit (PR #1073) leaves the leg green over a red class test")
-	}
-	if strings.Contains(step, mergeFallback) {
-		t.Errorf("the merge gate's selection still carries %q; internal/ci must be appended on every group, not chosen only when $pkgs is empty", mergeFallback)
-	}
-}
-
 // TestSelectPackagesAlwaysAddsInternalDocs pins the script: ./internal/docs is
 // added to `want` on every selection, not only when the diff touches .github/.
 func TestSelectPackagesAlwaysAddsInternalDocs(t *testing.T) {
@@ -105,23 +85,6 @@ func TestSelectPackagesAlwaysAddsInternalDocs(t *testing.T) {
 	src := readFile(t, filepath.Join(root, ".github", "scripts", "select-packages.sh"))
 	if !selectDocsAppendRe.MatchString(src) {
 		t.Errorf("select-packages.sh does not add ./internal/docs to want unconditionally; internal/docs scans the tree instead of importing what it guards, so a docs-only change that breaks TestAgentsPageNamesEveryClassRule (#1504) selects no shard to run it, and the red surfaces in an integration batch instead of on the PR (#1364 toolchainroots, #1409 hostseam)")
-	}
-}
-
-// TestMergeGateAlwaysAppendsInternalDocs pins ci.yml's independent inline
-// selection: internal/docs is appended to $pkgs on every group, not only when
-// the group changed no Go package.
-func TestMergeGateAlwaysAppendsInternalDocs(t *testing.T) {
-	t.Parallel()
-
-	root := repoRoot(t)
-	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
-	step := stepBody(src, "select the packages this group changes")
-	if strings.TrimSpace(step) == "" {
-		t.Fatal("no `select the packages this group changes` step in ci.yml; the merge gate's selection moved and this test is looking in the wrong place")
-	}
-	if !mergeDocsAppendRe.MatchString(step) {
-		t.Errorf("the merge gate's selection does not always append ./internal/docs to $pkgs; internal/docs scans the tree, so a docs-only change that breaks TestAgentsPageNamesEveryClassRule (#1504) leaves the leg green over a red class test, and the red surfaces in an integration batch instead of on the PR (#1364 toolchainroots, #1409 hostseam)")
 	}
 }
 

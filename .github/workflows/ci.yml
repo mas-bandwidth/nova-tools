@@ -982,334 +982,15 @@ jobs:
           # the shard travels in PKGS.
           make test-short PKGS="$(echo $pkgs)"
 
-  plan-merge:
-    # How many shard slots this merge group needs, decided before any leg starts.
-    # The matrix used to carry six slots per leg for every group: a group that
-    # changed one small package, or no Go at all (a spec PR), still took six
-    # runners per leg for checkout and Go setup, five of them to print "no
-    # tests". On the darwin leg that is the Studio: eight entries times six slots
-    # is forty-eight jobs a round on ten runners, and on 2026-09-17 the whole
-    # queue waited on it while sixty-one Linux runners sat idle. Slots: 6 when
-    # go.mod moves or a changed package is over 40 s in package-sizes.tsv, 1 when
-    # the changed packages sum under 20 s (or no Go changed), else 3. No Go
-    # toolchain needed: the table is keyed by import path, module path + dir.
-    name: plan-merge
-    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name == 'merge_group')
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    outputs:
-      shards: ${{ steps.plan.outputs.shards }}
-      slots: ${{ steps.plan.outputs.slots }}
-    steps:
-      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
-      # not redden a job. Attempt one tolerates its own failure ONLY so the
-      # retry below runs; the retry itself is not tolerated, so a checkout
-      # that fails twice still fails the job: fail-closed, not fail-open.
-      - name: checkout
-        id: checkout
-        continue-on-error: true
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: checkout retry
-        if: steps.checkout.outcome == 'failure'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: plan the shard slots
-        id: plan
-        shell: bash
-        run: |
-          set -euo pipefail
-          base="${{ github.event.merge_group.base_sha }}"
-          git fetch -q --depth=1 origin "$base" 2>/dev/null || true
-          slots=$(bash .github/scripts/plan-merge-slots.sh "$base" HEAD)
-          shards=$(seq -s, 0 $((slots - 1)))
-          shards="[$shards]"
-          echo "plan-merge: slots=$slots"
-          echo "slots=$slots" >> "$GITHUB_OUTPUT"
-          echo "shards=$shards" >> "$GITHUB_OUTPUT"
-
-  test-hosted-merge:
-    # RULE T (pit stop 4, 2026-09-16): the gate that lands a PR must run what
-    # the dev push runs. The -short hosted-pr leg passed #858 while the full
-    # Windows leg on the dev push failed three of its new tests (dev runs
-    # 35142587149, 35143418489), and a package with hosted-only tests cannot
-    # land on the -short result alone. So the merge queue's group commit runs
-    # the hosted legs FULL — no -short — for the packages the group changes,
-    # package-selected to stay inside the two-minute budget. test-hosted still
-    # runs the whole tree on push and nightly; this is the one hosted leg the
-    # merge group runs, and it runs only on the group's own commit. The darwin
-    # leg is the Studio (the same darwin arm64 as macos-latest, without the
-    # hosted concurrency wait): one hosted macOS job serialized every merge
-    # group while the sixteen Studio runners sat idle. Only the runner changes;
-    # the steps, timeout and package selection are the hosted ones. The matrix
-    # carries six shard slots, and each package's shard count comes from its
-    # measured idle-Linux size in testdata/ci/package-sizes.tsv: over 40 s gets
-    # six shards, everything else three. A package that a given slot has no
-    # tests for prints and exits 0, so six slots do not run a fast package six
-    # times. cmd/nova-swarm is the package that forced this: its full suite is
-    # 51 s idle and over three times that on a loaded Studio, where three
-    # shards each crossed the two-minute cap.
-    name: test-hosted-merge (${{ matrix.leg.name }}, ${{ matrix.shard }})
-    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name == 'merge_group')
-    needs: plan-merge
-    strategy:
-      fail-fast: false
-      matrix:
-        leg:
-          - name: linux
-            runner: ubuntu-latest
-        # THERE IS NO DARWIN LEG HERE SINCE 2026-09-25: the merge group's darwin
-        # coverage is the `test (n/N darwin-arm64)` shards, which run the full
-        # suite on the group commit on the same Studio runners; a second darwin
-        # leg re-ran the same suite beside them and both crossed the two-minute
-        # cap (run 36207910988). Glenn: "the correct action to take is to
-        # optimize the tests. And to reduce the number of runners."
-        # THERE IS NO WINDOWS LEG (2026-09-18, Glenn: "drop the native windows
-        # CI runners. WSL only from now on."). It was a third entry here,
-        # windows-latest at a twelve-minute hang-detector cap, dealing its
-        # shards from testdata/ci/package-sizes-windows.tsv's FULL column and
-        # taking its per-package ceiling from `make -s windows-timeout`. All
-        # three are gone with it, and the merge group is two platforms.
-        # Only the slots plan-merge says this group needs (1, 3 or 6).
-        shard: ${{ fromJSON(needs.plan-merge.outputs.shards) }}
-    # A runs-on expression must resolve to one value, so the darwin leg's label
-    # array is carried as a JSON string and parsed with fromJSON; the hosted legs
-    # carry their runner image as a plain string and are quoted as a JSON string
-    # in the same expression. Same steps, timeout and package selection below.
-    runs-on: ${{ fromJSON(matrix.leg.labels || format('"{0}"', matrix.leg.runner)) }}
-    # THE EXCEPTION to the two-minute law — the one allowed exception, and since
-    # 2026-09-18 one exception with two numbers. Every other job on the CL path stays at
-    # TWO, but this gate is not a small check — it runs the FULL hosted suite (no
-    # -short) of the packages a group changes, on both platforms, sharded by
-    # size. Under load (the Studio running sixteen self-hosted legs plus three
-    # friends) its darwin shards were cancelled at 2:44 on 2026-09-17, and a
-    # cancelled shard drops the whole group and restarts every group behind it,
-    # so the two-minute cap on this one job was the throughput limit of the whole
-    # fleet. Five minutes was the allowance that fixed it.
-    #
-    # PER LEG now, because the two platforms are two different measurements and
-    # one number for both of them censored the slower. In run 35354900090 the
-    # linux legs ran 41-94 s and the darwin legs 38-256 s, both comfortably
-    # inside five; darwin's five then did not survive batch 7, whose shards 0 and
-    # 1 were cancelled at exactly five minutes in run 35369433950. linux keeps
-    # the recorded five; darwin carries ten, for the reason written beside it in
-    # the matrix above. internal/ci's budget test reads both numbers out of the
-    # matrix and records why each is what it is. A third number lived here until
-    # 2026-09-18: twelve minutes for the windows leg, which is gone with the leg.
-    timeout-minutes: 2
-    steps:
-      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
-      # not redden a job. Attempt one tolerates its own failure ONLY so the
-      # retry below runs; the retry itself is not tolerated, so a checkout
-      # that fails twice still fails the job: fail-closed, not fail-open.
-      - name: checkout
-        id: checkout
-        continue-on-error: true
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: checkout retry
-        if: steps.checkout.outcome == 'failure'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          # This workflow manages caching explicitly; do not probe for a missing go.sum.
-          cache: false
-
-      - name: cache go build and module cache
-        if: runner.environment == 'github-hosted'
-        # Only on GitHub-hosted runners. A self-hosted runner is PERSISTENT: its Go build cache is
-        # already on disk, and this step's save phase tars the whole multi-GB cache on every job,
-        # outlives the job's timeout, and is orphaned still compressing (82 of them put the Studio
-        # at load 147 on 2026-09-17). internal/ci holds the class test.
-        # A GitHub-hosted runner is a fresh machine, so the cache pays for itself
-        # exactly as it does in test-hosted.
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: select the packages this group changes
-        id: pkgs
-        shell: bash
-        run: |
-          set -euo pipefail
-          # base_sha is the target branch the queue built the group on and HEAD
-          # is the group commit, so their diff is the group's whole change. A
-          # go.mod or go.sum change puts every package in scope.
-          base="${{ github.event.merge_group.base_sha }}"
-          git fetch -q --depth=1 origin "$base" 2>/dev/null || true
-          if git diff --name-only "$base" HEAD | grep -q -E '^(go\.mod|go\.sum)$'; then
-            # One line: $GITHUB_OUTPUT takes key=value per line, and go list
-            # prints one package per line. The first go.mod change since this
-            # step was written (#1272, go-redis) wrote a multi-line value and
-            # every leg of the group failed with "Invalid format" (2026-09-18).
-            pkgs=$(go list ./... | tr '\n' ' ')
-          else
-            pkgs=""
-            for d in $(git diff --name-only "$base" HEAD -- '*.go' | xargs -r -n1 dirname | sort -u); do
-              p=$(go list "./${d#./}" 2>/dev/null) || continue
-              pkgs="$pkgs $p"
-            done
-          fi
-          # The package that holds this file's own law is never named by the
-          # *.go diff: internal/ci scans the tree rather than importing what it
-          # guards, so a cmd/nova-swarm edit (PR #1073) selected no shard to run
-          # it. Always append it, so the leg is never green by doing nothing and
-          # never blind to the workflow's own law.
-          # Appended ONCE: when the diff already selected internal/ci, a bare
-          # append ran it twice in every shard of every leg (run 35354900090,
-          # ten runs of it across the windows legs alone).
-          case " $pkgs " in
-            *" ./internal/ci "*|*"/internal/ci "*) ;;
-            *) pkgs="$pkgs ./internal/ci" ;;
-          esac
-          # internal/docs holds the front page's contract: AGENTS.md must name
-          # every class rule indexed in docs/SPEC-CI.md. It reads the tree as
-          # text too, so a docs-only change can break its class test (#1504)
-          # without naming a dependent. Always append it, same guard as above,
-          # so the red surfaces on the PR and not in an integration batch
-          # (#1364, #1409).
-          case " $pkgs " in
-            *" ./internal/docs "*|*"/internal/docs "*) ;;
-            *) pkgs="$pkgs ./internal/docs" ;;
-          esac
-          echo "merge_group: full hosted on:${pkgs}"
-          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
-
-      - name: install redis-server
-        # #3113. The merge gate runs the changed packages in full, including a
-        # nova-sprint control when the group touches one. Same installer as the
-        # hosted row: apt on Linux, Homebrew on the Studio.
-        run: bash .github/scripts/install-redis-server.sh
-
-      - name: test (full, the packages this group changes, shard ${{ matrix.shard }} of ${{ needs.plan-merge.outputs.slots }})
-        # NOT -short: the group commit must answer the hosted-only tests the
-        # -short PR leg skips. Each shard runs the tests whose zero-based index
-        # in its package's sorted test list is congruent to the shard, so a
-        # loaded Studio answers inside the two-minute cap; MERGE_TIMEOUT is the
-        # per-package ceiling, not the target. How many shards a package gets is
-        # not fixed: testdata/ci/package-sizes.tsv records its measured Linux
-        # size, and a package over 40 s gets six shards where the rest get
-        # three. cmd/nova-swarm is the one that needed six; on the six-slot
-        # matrix the extra slots have no tests for a fast package and say so
-        # rather than run it again.
-        #
-        # A WINDOWS ARM LIVED HERE UNTIL 2026-09-18. It read
-        # testdata/ci/package-sizes-windows.tsv's FULL column and took its
-        # ceiling from `make -s windows-timeout`, because integration-4's group
-        # was dropped by dealing Windows from the Linux table. That lesson is not
-        # lost — it is the darwin arm below, which is the same rule one platform
-        # later — but the arm itself went with the leg when the native windows
-        # runners were dropped (Glenn: "WSL only from now on."), and so did the
-        # Windows table and WINDOWS_TIMEOUT.
-        #
-        # THE DARWIN LEG READS ITS OWN TABLE, for that same reason. In
-        # merge-group run 35369433950 (batch 7,
-        # PR #1360) darwin shards 0 and 1 were CANCELLED at the five-minute leg
-        # cap on superman. READ THE LOG BEFORE BELIEVING THE OBVIOUS STORY: no
-        # package came near the 100 s per-package ceiling. Shard 0 finished 27
-        # packages summing 211.8 s of `go test` between 16:36:43 and 16:41:24 and
-        # was killed partway through the rest, and its largest single invocation
-        # was cmd/nova-wake at 50.7 s. What ran out was the SHARD'S SUM — and the
-        # sum is decided by how many ways each package is dealt.
-        #
-        # That is what reading the Linux table cost here. A thirteen-member batch
-        # selects many packages, and FOUR of the five largest darwin packages sit
-        # under the 40 s budget on Linux, so each was dealt three ways instead of
-        # six: cmd/nova-wake 24.6 s on hulk against 120.3 s measured on superman,
-        # cmd/nova-merge 7.7 against 68.8, internal/swarm 17.4 against 64.4 and
-        # cmd/nova-bus 10.0 against 54.2. Six ways each is the difference between a
-        # shard that fits and a shard that drops the group. So darwin now deals
-        # from
-        # testdata/ci/package-sizes-darwin.tsv's FULL column, measured on the x64
-        # Macs that run this leg, and takes its per-package ceiling from the
-        # Makefile's DARWIN_TIMEOUT. Only the linux leg still reads
-        # package-sizes.tsv, which is its own measurement.
-        #
-        # THE TWO BRANCHES BELOW ARE DELIBERATELY NOT FACTORED INTO ONE. Each
-        # names its own table and its own column literally, because internal/ci's
-        # class tests read this step as TEXT and assert those literals; a shared
-        # awk parameterised by column would pass the tests by hiding the thing
-        # they check. Twenty lines of duplication is the price of a rule a
-        # reviewer can see.
-        #
-        # WHAT TO WATCH NEXT: how many slots a group opens is still plan-merge's
-        # decision off the Linux table, so "the maximum" is 1, 3 or 6 and a
-        # censored package can get no more than that. If a darwin shard is still
-        # killed at its ceiling the next move is plan-merge opening six slots for
-        # a group whose changed package has no darwin full measurement — which
-        # costs every leg, and so waits for the measurement that says it is
-        # needed.
-        shell: bash
-        run: |
-          set -euo pipefail
-          shard=${{ matrix.shard }}
-          slots=${{ needs.plan-merge.outputs.slots }}
-          sizes=$(cat testdata/ci/package-sizes.tsv)
-          leg=${{ matrix.leg.name }}
-          # Whole packages first (2026-09-25, the two-minute rule): a package
-          # that needs no test-name split is dealt whole to one slot, and each
-          # slot runs its whole packages in ONE go test call, which builds and
-          # runs them in parallel. The per-package loop below (one `go test
-          # -list` and one `make test-merge` each, serial) took merge-group run
-          # 20106054139's darwin shard 4 nine minutes for fifty packages whose
-          # tests summed under two; only the packages big enough to split by
-          # test name still go through it.
-          whole=""
-          split=""
-          w=0
-          for pkg in ${{ steps.pkgs.outputs.pkgs }}; do
-            secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
-            # Only a package MEASURED over 40 s splits by test name; an
-            # unmeasured package is dealt whole (queue run 36208535525: the
-            # table measured 8 of 160 packages and the other 152 went one at
-            # a time through the split loop, 81 of them on shard 0 before the
-            # cap).
-            if [ -n "$secs" ] && [ "$secs" != "-" ] && awk -v s="$secs" 'BEGIN { exit !(s + 0 > 40) }'; then
-              split="$split $pkg"
-            elif [ $((w % slots)) -eq "$shard" ]; then
-              whole="$whole $pkg"
-              w=$((w + 1))
-            else
-              w=$((w + 1))
-            fi
-          done
-          if [ -n "$whole" ]; then
-            echo "shard $shard of $slots: whole packages in one call:$whole"
-            make test-merge PKGS="$whole"
-          fi
-          for pkg in $split; do
-            secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
-            if [ -n "$secs" ] && awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then
-              n=6
-            else
-              n=3
-            fi
-            if [ "$n" -gt "$slots" ]; then n=$slots; fi
-            list=$(go test -list '.*' "$pkg") || exit 1
-            tests=$(printf '%s\n' "$list" | grep '^Test' | sort || true)
-            if [ -z "$tests" ]; then
-              if [ "$shard" -eq 0 ]; then
-                make test-merge PKGS="$pkg"
-              fi
-              continue
-            fi
-            names=""
-            i=0
-            for name in $tests; do
-              if [ $((i % n)) -eq "$shard" ]; then
-                if [ -n "$names" ]; then names="$names|$name"; else names="$name"; fi
-              fi
-              i=$((i + 1))
-            done
-            if [ -z "$names" ]; then
-              echo "shard $shard of $n: no tests from $pkg"
-              continue
-            fi
-            make test-merge PKGS="$pkg" RUN="^(${names})$"
-          done
+  # THERE IS NO HOSTED MERGE LEG SINCE 2026-09-26. The merge group's gate is the
+  # same sharded `test` legs the pull request ran, on our own benches, on the
+  # group commit (space and the Studio, under a minute each). The hosted legs
+  # (plan-merge + test-hosted-merge, Rule T of 2026-09-16) re-ran the changed
+  # packages on two-core hosted runners and crossed the two-minute cap on four
+  # of the last five queue runs (36207910988, 36208535525, 36209991791,
+  # 36211233173), each one a full PR-plus-queue round lost. Glenn 2026-09-26:
+  # "We have to speed this shit up. Less dependency on github is my bet." The
+  # clean-image property they carried moves to certification.yml (#4219).
 
   test-hosted-pr:
     # THE SANDBOX LEG, and since 2026-09-18 that is all it is. A PR that touches
@@ -1824,7 +1505,7 @@ jobs:
     # reference and the run was never created. test-hosted is skipped on a pull
     # request and ci-ok's `always()` still runs; the per-event steps below check
     # exactly the jobs that event actually ran.
-    needs: [lint, test, test-race-queue, e2e, lisp, test-hosted, test-hosted-pr, test-hosted-merge]
+    needs: [lint, test, test-race-queue, e2e, lisp, test-hosted, test-hosted-pr]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
@@ -1846,8 +1527,7 @@ jobs:
             "test-race-queue:${{ needs.test-race-queue.result }}" \
             "lisp:${{ needs.lisp.result }}" \
             "e2e:${{ needs.e2e.result }}" \
-            "test-hosted-pr:${{ needs.test-hosted-pr.result }}" \
-            "test-hosted-merge:${{ needs.test-hosted-merge.result }}"
+            "test-hosted-pr:${{ needs.test-hosted-pr.result }}"
           do
             job="${pair%:*}"; result="${pair##*:}"
             echo "$result	$job"
@@ -1863,14 +1543,13 @@ jobs:
             # is the full hosted evidence the queue's gate must see (Rule T).
             [ "$result" = "success" ] && continue
             # NOVA_CI_CARDS=on (#2925): these rows run as ci cards and the lander reads the ci verdict (#2842, #2924), so Actions skipping them is the design.
-            if [ "$cards" = on ] && [ "$result" = skipped ]; then case "$job" in test|test-race-queue|e2e|test-hosted-merge) continue ;; esac; fi
+            if [ "$cards" = on ] && [ "$result" = skipped ]; then case "$job" in test|test-race-queue|e2e) continue ;; esac; fi
             [ "$job" = "lisp" ] && [ "$result" = "skipped" ] && continue
             [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ] && continue
             # test-windows-pr was aggregated here until 2026-09-18, when the
             # native windows runners were dropped. The Windows guard is now the
             # lint job's `make vet-windows` step, so a GOOS=windows compile break
             # is a red `lint`, which this loop already reads.
-            [ "$job" = "test-hosted-merge" ] && [ "$result" = "skipped" ] && [ "${{ github.event_name }}" != "merge_group" ] && continue
             bad=$((bad + 1))
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }

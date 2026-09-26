@@ -141,8 +141,8 @@ func TestMacOSShardsRunOnTheStudioForNow(t *testing.T) {
 	if found == 0 {
 		t.Error("test-packages emits no macOS shard entry this test can read")
 	}
-	if strings.Contains(jobBody(src, "test-hosted-merge"), "name: darwin") {
-		t.Error("the merge group carries a darwin leg again; since 2026-09-25 its darwin coverage is the test (darwin-arm64) shards on the group commit, and a second leg on the same runners crossed the cap (run 36207910988)")
+	if jobBody(src, "test-hosted-merge") != "" || jobBody(src, "plan-merge") != "" {
+		t.Error("the merge group carries a hosted leg again; since 2026-09-26 its gate is the sharded test legs on our own benches (Glenn: \"Less dependency on github is my bet\")")
 	}
 }
 
@@ -427,6 +427,8 @@ func toSet(names []string) map[string]bool {
 // so the comparison must not need one.
 var splitMovedJobs = []string{
 	"test",
+	"test-hosted-merge",
+	"plan-merge",
 	"build-windows",
 	"windows-packages",
 	"test-windows",
@@ -451,9 +453,11 @@ var splitMovedJobs = []string{
 // certification-ok=failure). The Windows guard that remains is the cross-vet,
 // `GOOS=windows go vet`, which needs no Windows machine.
 var droppedByRuling = map[string]string{
-	"build-windows":    `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
-	"windows-packages": `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
-	"test-windows":     `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
+	"test-hosted-merge": `Glenn 2026-09-26: "We have to speed this shit up. Less dependency on github is my bet." The hosted merge leg crossed the two-minute cap on four of five queue runs; the merge group's gate is the sharded test legs on our own benches (#4219 carries the clean-image run to certification).`,
+	"plan-merge":        `Glenn 2026-09-26: with test-hosted-merge (above).`,
+	"build-windows":     `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
+	"windows-packages":  `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
+	"test-windows":      `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
 }
 
 // certificationOKNeeds returns the set of job names listed in certification-ok's
