@@ -1,0 +1,387 @@
+
+PLAY [the declared nova build in ~/.local/bin] *********************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [superman]
+ok: [batman]
+ok: [hulk]
+ok: [vision]
+ok: [space]
+ok: [hetzner]
+
+TASK [tools : this bench's platform and when its deploy started] ***************
+ok: [hulk]
+ok: [vision]
+ok: [space]
+ok: [batman]
+ok: [superman]
+ok: [hetzner]
+
+TASK [tools : the build now in ~/.local/bin (the downgrade guard reads it; it names the aside directory)] ***
+ok: [hulk]
+ok: [vision]
+ok: [superman]
+ok: [batman]
+ok: [space]
+ok: [hetzner]
+
+TASK [tools : the declared and installed builds' commits (v<x>.<y>.<z>-dev.<sha8>)] ***
+ok: [hulk]
+ok: [vision]
+ok: [space]
+ok: [batman]
+ok: [superman]
+ok: [hetzner]
+
+TASK [tools : is the installed build a descendant of the declared one (git merge-base --is-ancestor on the controller's mirror)] ***
+ok: [hulk -> localhost]
+ok: [vision -> localhost]
+ok: [space -> localhost]
+ok: [batman -> localhost]
+ok: [superman -> localhost]
+ok: [hetzner -> localhost]
+
+TASK [tools : keep a newer (or unordered) build on this bench] *****************
+ok: [hulk]
+ok: [vision]
+ok: [space]
+ok: [batman]
+ok: [superman]
+ok: [hetzner]
+
+TASK [tools : the receipt of a bench that keeps its build (nothing moves)] *****
+skipping: [hulk]
+skipping: [vision]
+skipping: [space]
+skipping: [batman]
+skipping: [superman]
+skipping: [hetzner]
+
+TASK [tools : a bench that keeps its build ends here] **************************
+skipping: [hulk]
+
+TASK [tools : a bench that keeps its build ends here] **************************
+skipping: [vision]
+
+TASK [tools : a bench that keeps its build ends here] **************************
+skipping: [space]
+
+TASK [tools : a bench that keeps its build ends here] **************************
+skipping: [batman]
+
+TASK [tools : a bench that keeps its build ends here] **************************
+skipping: [superman]
+
+TASK [tools : a bench that keeps its build ends here] **************************
+skipping: [hetzner]
+
+TASK [tools : space holds the declared build for this platform] ****************
+ok: [hulk]
+ok: [vision]
+ok: [space]
+ok: [batman]
+ok: [superman]
+ok: [hetzner]
+
+TASK [tools : this bench's release directory and its nearest cache] ************
+ok: [hulk]
+ok: [vision]
+ok: [space]
+ok: [batman]
+ok: [superman]
+ok: [hetzner]
+
+TASK [tools : a remote bench reaches space over its own alias (read only; runs under --check)] ***
+skipping: [hulk]
+skipping: [vision]
+skipping: [space]
+skipping: [batman]
+skipping: [superman]
+ok: [hetzner]
+
+TASK [tools : refuse a remote bench with no ssh path to space, naming the remedy] ***
+skipping: [hulk]
+skipping: [vision]
+skipping: [space]
+skipping: [batman]
+skipping: [superman]
+skipping: [hetzner]
+
+TASK [tools : the declared SHA256SUMS of every platform in the play, read from space by the controller (a few KB)] ***
+ok: [hulk -> localhost] => (item=darwin-amd64)
+ok: [hulk -> localhost] => (item=linux-amd64)
+
+TASK [tools : this bench's tools and their declared sha256 (<tool>=<sha256>)] ***
+ok: [hulk]
+ok: [vision]
+ok: [space]
+ok: [batman]
+ok: [superman]
+ok: [hetzner]
+
+TASK [tools : the SHA256SUMS is whole (every line <sha256>  nova-<name>, at least one)] ***
+ok: [hulk]
+ok: [vision]
+ok: [space]
+ok: [batman]
+ok: [superman]
+ok: [hetzner]
+
+TASK [tools : the local cache directories on the Studio (one per platform the Studio or a LAN bench installs)] ***
+--- before
++++ after
+@@ -1,4 +1,4 @@
+ {
+     "path": "/Users/glenn/nova-bench/release/v0.16.0-dev.dec7b954/darwin-amd64",
+-    "state": "absent"
++    "state": "directory"
+ }
+
+changed: [hulk -> localhost] => (item=darwin-amd64)
+--- before
++++ after
+@@ -1,4 +1,4 @@
+ {
+     "path": "/Users/glenn/nova-bench/release/v0.16.0-dev.dec7b954/linux-amd64",
+-    "state": "absent"
++    "state": "directory"
+ }
+
+changed: [hulk -> localhost] => (item=linux-amd64)
+
+TASK [tools : fill the local cache on the Studio by downloading from space (only changed files cross)] ***
+changed: [hulk -> localhost] => (item=darwin-amd64)
+changed: [hulk -> localhost] => (item=linux-amd64)
+
+TASK [tools : bench directories (the release directory, ~/.local/bin, the aside root)] ***
+--- before
++++ after
+@@ -1,4 +1,4 @@
+ {
+     "path": "/Users/nova/nova-bench/release/v0.16.0-dev.dec7b954/darwin-amd64",
+-    "state": "absent"
++    "state": "directory"
+ }
+
+changed: [superman] => (item=/Users/nova/nova-bench/release/v0.16.0-dev.dec7b954/darwin-amd64)
+--- before
++++ after
+@@ -1,4 +1,4 @@
+ {
+     "path": "/Users/nova/nova-bench/release/v0.16.0-dev.dec7b954/darwin-amd64",
+-    "state": "absent"
++    "state": "directory"
+ }
+
+changed: [batman] => (item=/Users/nova/nova-bench/release/v0.16.0-dev.dec7b954/darwin-amd64)
+--- before
++++ after
+@@ -1,4 +1,4 @@
+ {
+     "path": "/home/gaffer/nova-bench/release/v0.16.0-dev.dec7b954/linux-amd64",
+-    "state": "absent"
++    "state": "directory"
+ }
+
+changed: [hulk] => (item=/home/gaffer/nova-bench/release/v0.16.0-dev.dec7b954/linux-amd64)
+ok: [superman] => (item=/Users/nova/.local/bin)
+--- before
++++ after
+@@ -1,5 +1,5 @@
+ {
+-    "mode": "0775",
++    "mode": "0755",
+     "path": "/home/glenn/nova-bench/release/v0.16.0-dev.dec7b954/linux-amd64",
+-    "state": "absent"
++    "state": "directory"
+ }
+
+changed: [vision] => (item=/home/glenn/nova-bench/release/v0.16.0-dev.dec7b954/linux-amd64)
+ok: [hulk] => (item=/home/gaffer/.local/bin)
+ok: [vision] => (item=/home/glenn/.local/bin)
+ok: [superman] => (item=/Users/nova/.local/tools-aside)
+ok: [hulk] => (item=/home/gaffer/.local/tools-aside)
+ok: [batman] => (item=/Users/nova/.local/bin)
+ok: [vision] => (item=/home/glenn/.local/tools-aside)
+ok: [batman] => (item=/Users/nova/.local/tools-aside)
+ok: [space] => (item=/home/ubuntu/nova-bench/release/v0.16.0-dev.dec7b954/linux-amd64)
+--- before
++++ after
+@@ -1,5 +1,5 @@
+ {
+-    "mode": "0775",
++    "mode": "0755",
+     "path": "/home/nova/nova-bench/release/v0.16.0-dev.dec7b954/linux-amd64",
+-    "state": "absent"
++    "state": "directory"
+ }
+
+changed: [hetzner] => (item=/home/nova/nova-bench/release/v0.16.0-dev.dec7b954/linux-amd64)
+ok: [space] => (item=/home/ubuntu/.local/bin)
+ok: [space] => (item=/home/ubuntu/.local/tools-aside)
+ok: [hetzner] => (item=/home/nova/.local/bin)
+ok: [hetzner] => (item=/home/nova/.local/tools-aside)
+
+TASK [tools : a remote bench pulls the release from space (download; only changed files cross)] ***
+skipping: [hulk]
+skipping: [vision]
+skipping: [space]
+skipping: [batman]
+skipping: [superman]
+changed: [hetzner]
+
+TASK [tools : the Studio pushes its local cache to a LAN bench (10G; never to a host without lan true)] ***
+skipping: [space]
+skipping: [hetzner]
+changed: [vision -> localhost]
+changed: [hulk -> localhost]
+changed: [superman -> localhost]
+changed: [batman -> localhost]
+
+TASK [tools : the tools-aside verb on the bench (swap and the aside-reap verb)] ***
+ok: [vision]
+ok: [hulk]
+ok: [superman]
+ok: [batman]
+ok: [space]
+ok: [hetzner]
+
+TASK [tools : rename in only the tools not at their declared sha256 (previous file aside; --check runs it --dry-run)] ***
+changed: [hulk]
+changed: [hetzner]
+changed: [superman]
+changed: [batman]
+changed: [vision]
+changed: [space]
+
+TASK [tools : read back the running build] *************************************
+ok: [vision]
+ok: [hulk]
+ok: [superman]
+ok: [batman]
+ok: [space]
+ok: [hetzner]
+
+TASK [tools : the receipt, one line per bench] *********************************
+ok: [hulk] => {
+    "msg": "TOOLS host=hulk installed=v0.16.0-dev.dec7b954 replaced=25 unchanged=0 ms=134307 files=nova-board,nova-bus,nova-cairn,nova-card,nova-check,nova-ci,nova-decide,nova-fuse,nova-memory,nova-merge,nova-play,nova-post,nova-redis,nova-review,nova-sandbox,nova-secrets,nova-self-talk,nova-sprint,nova-swarm,nova-test,nova-tokens,nova-update,nova-version,nova-wake,nova-work from=studio"
+}
+ok: [vision] => {
+    "msg": "TOOLS host=vision installed=v0.16.0-dev.dec7b954 replaced=25 unchanged=0 ms=134305 files=nova-board,nova-bus,nova-cairn,nova-card,nova-check,nova-ci,nova-decide,nova-fuse,nova-memory,nova-merge,nova-play,nova-post,nova-redis,nova-review,nova-sandbox,nova-secrets,nova-self-talk,nova-sprint,nova-swarm,nova-test,nova-tokens,nova-update,nova-version,nova-wake,nova-work from=studio"
+}
+ok: [space] => {
+    "msg": "TOOLS host=space installed=v0.16.0-dev.dec7b954 replaced=25 unchanged=0 ms=134308 files=nova-board,nova-bus,nova-cairn,nova-card,nova-check,nova-ci,nova-decide,nova-fuse,nova-memory,nova-merge,nova-play,nova-post,nova-redis,nova-review,nova-sandbox,nova-secrets,nova-self-talk,nova-sprint,nova-swarm,nova-test,nova-tokens,nova-update,nova-version,nova-wake,nova-work from=space-local"
+}
+ok: [batman] => {
+    "msg": "TOOLS host=batman installed=v0.16.0-dev.dec7b954 replaced=25 unchanged=0 ms=134307 files=nova-board,nova-bus,nova-cairn,nova-card,nova-check,nova-ci,nova-decide,nova-fuse,nova-memory,nova-merge,nova-play,nova-post,nova-redis,nova-review,nova-sandbox,nova-secrets,nova-self-talk,nova-sprint,nova-swarm,nova-test,nova-tokens,nova-update,nova-version,nova-wake,nova-work from=studio"
+}
+ok: [superman] => {
+    "msg": "TOOLS host=superman installed=v0.16.0-dev.dec7b954 replaced=25 unchanged=0 ms=134306 files=nova-board,nova-bus,nova-cairn,nova-card,nova-check,nova-ci,nova-decide,nova-fuse,nova-memory,nova-merge,nova-play,nova-post,nova-redis,nova-review,nova-sandbox,nova-secrets,nova-self-talk,nova-sprint,nova-swarm,nova-test,nova-tokens,nova-update,nova-version,nova-wake,nova-work from=studio"
+}
+ok: [hetzner] => {
+    "msg": "TOOLS host=hetzner installed=v0.16.0-dev.dec7b954 replaced=25 unchanged=0 ms=134309 files=nova-board,nova-bus,nova-cairn,nova-card,nova-check,nova-ci,nova-decide,nova-fuse,nova-memory,nova-merge,nova-play,nova-post,nova-redis,nova-review,nova-sandbox,nova-secrets,nova-self-talk,nova-sprint,nova-swarm,nova-test,nova-tokens,nova-update,nova-version,nova-wake,nova-work from=space"
+}
+
+TASK [tools : move the stray backup copies aside (--check runs it --dry-run)] ***
+skipping: [hulk]
+skipping: [vision]
+skipping: [space]
+skipping: [batman]
+skipping: [superman]
+skipping: [hetzner]
+
+TASK [tools : reap asides older than tools_aside_keep_days (--check runs it --dry-run)] ***
+ok: [hulk]
+ok: [vision]
+ok: [superman]
+ok: [batman]
+ok: [space]
+ok: [hetzner]
+
+TASK [tools : strays and reaps, per bench] *************************************
+ok: [hulk] => {
+    "msg": [
+        "KEEP 20260924-stray (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.0c273c8e (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.10ff294b (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.1a461416 (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.545b2523 (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.aa87769b (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.b2e0a120 (newer than 14 days)",
+        "KEEP 20260925-v0.16.0-dev.c250d86a (newer than 14 days)",
+        "KEEP 20260926-v0.16.0-dev.1e0b94fb (newer than 14 days)"
+    ]
+}
+ok: [vision] => {
+    "msg": [
+        "KEEP 20260924-stray (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.0c273c8e (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.10ff294b (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.1a461416 (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.545b2523 (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.aa87769b (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.b2e0a120 (newer than 14 days)",
+        "KEEP 20260925-v0.16.0-dev.c250d86a (newer than 14 days)",
+        "KEEP 20260926-v0.16.0-dev.1e0b94fb (newer than 14 days)"
+    ]
+}
+ok: [space] => {
+    "msg": [
+        "KEEP 20260924-stray (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.0c273c8e (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.10ff294b (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.1a461416 (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.545b2523 (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.aa87769b (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.b2e0a120 (newer than 14 days)",
+        "KEEP 20260925-v0.16.0-dev.c250d86a (newer than 14 days)",
+        "KEEP 20260926-v0.16.0-dev.1e0b94fb (newer than 14 days)"
+    ]
+}
+ok: [batman] => {
+    "msg": [
+        "KEEP 20260924-stray (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.10ff294b (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.545b2523 (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.aa87769b (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.b2e0a120 (newer than 14 days)",
+        "KEEP 20260925-v0.16.0-dev.c250d86a (newer than 14 days)",
+        "KEEP 20260926-v0.16.0-dev.1e0b94fb (newer than 14 days)"
+    ]
+}
+ok: [superman] => {
+    "msg": [
+        "KEEP 20260924-stray (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.10ff294b (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.545b2523 (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.aa87769b (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.b2e0a120 (newer than 14 days)",
+        "KEEP 20260925-v0.16.0-dev.c250d86a (newer than 14 days)",
+        "KEEP 20260926-v0.16.0-dev.1e0b94fb (newer than 14 days)"
+    ]
+}
+ok: [hetzner] => {
+    "msg": [
+        "KEEP 20260924-stray (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.0c273c8e (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.10ff294b (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.1a461416 (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.545b2523 (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.aa87769b (newer than 14 days)",
+        "KEEP 20260924-v0.16.0-dev.b2e0a120 (newer than 14 days)",
+        "KEEP 20260925-v0.16.0-dev.c250d86a (newer than 14 days)",
+        "KEEP 20260926-v0.16.0-dev.1e0b94fb (newer than 14 days)"
+    ]
+}
+
+PLAY [the nova_sprint function library on the fleet store (fn load, then fn check, as the coordinator seat)] ***
+skipping: no hosts matched
+
+PLAY RECAP *********************************************************************
+batman                     : ok=18   changed=3    unreachable=0    failed=0    skipped=5    rescued=0    ignored=0   
+hetzner                    : ok=19   changed=3    unreachable=0    failed=0    skipped=4    rescued=0    ignored=0   
+hulk                       : ok=21   changed=5    unreachable=0    failed=0    skipped=5    rescued=0    ignored=0   
+space                      : ok=17   changed=1    unreachable=0    failed=0    skipped=6    rescued=0    ignored=0   
+superman                   : ok=18   changed=3    unreachable=0    failed=0    skipped=5    rescued=0    ignored=0   
+vision                     : ok=18   changed=3    unreachable=0    failed=0    skipped=5    rescued=0    ignored=0   
+

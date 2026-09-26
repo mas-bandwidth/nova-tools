@@ -70,15 +70,45 @@ type releaseDeps struct {
 }
 
 // releaseExec runs one child in dir with the sanitized environment plus env.
-type releaseExec struct{}
+// Environ, when set, is the environment in place of this process's, and the
+// program is looked up on its PATH: a test's fakes and HOME without
+// t.Setenv, so the test runs in parallel.
+type releaseExec struct{ Environ []string }
 
-func (releaseExec) Run(ctx context.Context, dir string, env []string, argv []string) (string, error) {
-	testguard.RefuseHosts(argv[0], argv[1:]...)
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+func (e releaseExec) Run(ctx context.Context, dir string, env []string, argv []string) (string, error) {
+	base, prog := e.Environ, argv[0]
+	if base == nil {
+		base = os.Environ()
+	} else {
+		prog = lookPathIn(base, prog)
+	}
+	testguard.RefuseHosts(prog, argv[1:]...)
+	cmd := exec.CommandContext(ctx, prog, argv[1:]...)
 	cmd.Dir = dir
-	cmd.Env = append(goenv.Clean(os.Environ()), env...)
+	cmd.Env = append(goenv.Clean(base), env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// lookPathIn is name's executable file on the last PATH environ sets, or
+// name itself when it holds a separator or no PATH directory has it.
+func lookPathIn(environ []string, name string) string {
+	if strings.ContainsRune(name, filepath.Separator) {
+		return name
+	}
+	path := ""
+	for _, kv := range environ {
+		if v, ok := strings.CutPrefix(kv, "PATH="); ok {
+			path = v
+		}
+	}
+	for _, d := range filepath.SplitList(path) {
+		p := filepath.Join(d, name)
+		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() && st.Mode()&0o111 != 0 {
+			return p
+		}
+	}
+	return name
 }
 
 // seatAdminSecret opens seat's file through seatcred (the store, key and sops
