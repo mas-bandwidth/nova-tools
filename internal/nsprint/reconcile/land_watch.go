@@ -184,9 +184,11 @@ type watchStream struct {
 func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 	c := w.Client
 	now := w.now()
-	streams, err := c.ZRange(ctx, "ws:order", 0, -1).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return Counts{}, fmt.Errorf("land watch: ws:order: %w", err)
+	// the streams and the sprint epoch (nova-tools#4238) in one round: every
+	// merging set below is the current epoch's
+	streams, epoch, err := orderAndEpoch(ctx, c)
+	if err != nil {
+		return Counts{}, fmt.Errorf("land watch: %w", err)
 	}
 	pipe := c.Pipeline()
 	zs := make([]*redis.ZSliceCmd, len(streams))
@@ -194,7 +196,7 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 	merges := make([]*redis.MapStringStringCmd, len(streams))
 	seens := make([]*redis.MapStringStringCmd, len(streams))
 	for i, s := range streams {
-		zs[i] = pipe.ZRangeWithScores(ctx, stream.WSKey(s, "merging"), 0, -1)
+		zs[i] = pipe.ZRangeWithScores(ctx, stream.WSKeyAt(epoch, s, "merging"), 0, -1)
 		slows[i] = pipe.HGetAll(ctx, LandSlowKey(s))
 		merges[i] = pipe.HGetAll(ctx, LandMergeKey(s))
 		seens[i] = pipe.HGetAll(ctx, LandMergingKey(s))
@@ -203,7 +205,7 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 	sprints := pipe.ZRange(ctx, "sprint:order", 0, 0)
 	streamNotes := make([]*redis.StringSliceCmd, len(streams))
 	for i, s := range streams {
-		streamNotes[i] = pipe.LRange(ctx, note.StreamKey(s), 0, -1)
+		streamNotes[i] = pipe.LRange(ctx, note.StreamNotesKey(s), 0, -1)
 	}
 	if err := execPipe(ctx, pipe); err != nil {
 		return Counts{}, fmt.Errorf("land watch: %w", err)
@@ -684,8 +686,8 @@ func (w *LandWatch) afterStops(ctx context.Context, self string, files []string)
 		return nil, nil
 	}
 	c := w.Client
-	streams, err := c.ZRange(ctx, "ws:order", 0, -1).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
+	streams, epoch, err := orderAndEpoch(ctx, c)
+	if err != nil {
 		return nil, err
 	}
 	pipe := c.Pipeline()
@@ -699,7 +701,7 @@ func (w *LandWatch) afterStops(ctx context.Context, self string, files []string)
 			continue
 		}
 		for _, wh := range liveWheres {
-			sets = append(sets, set{s, pipe.ZRange(ctx, stream.WSKey(s, wh), 0, -1)})
+			sets = append(sets, set{s, pipe.ZRange(ctx, stream.WSKeyAt(epoch, s, wh), 0, -1)})
 		}
 	}
 	if len(sets) == 0 {
@@ -773,8 +775,8 @@ func MergeTitle(m MergeCard) string {
 	}
 	land := fmt.Sprintf("nova-sprint land --repo %s --stream %q --card %s", m.Repo, m.Stream, m.ID)
 	if m.Escalate == "stuck" {
-		return fmt.Sprintf("STREAM: %s | stuck landing of %s: its merge card closed with the same %d members in merging (%s) | PATHS: %s | BASE: %s | DONE-WHEN: %s prints LANDED n=%d and ws:%s:merging is empty",
-			m.Stream, m.Stream, len(m.Members), strings.Join(strings.Fields(orDashStr(m.Reason)), " "), paths, m.Base, land, len(m.Members), m.Stream)
+		return fmt.Sprintf("STREAM: %s | stuck landing of %s: its merge card closed with the same %d members in merging (%s) | PATHS: %s | BASE: %s | DONE-WHEN: %s prints LANDED n=%d and the stream's merging set is empty",
+			m.Stream, m.Stream, len(m.Members), strings.Join(strings.Fields(orDashStr(m.Reason)), " "), paths, m.Base, land, len(m.Members))
 	}
 	if m.Reason != "" {
 		after := "none found"
@@ -784,8 +786,8 @@ func MergeTitle(m MergeCard) string {
 		return fmt.Sprintf("STREAM: %s | cross-stream landing of %s: %s | PATHS: %s | BASE: %s | AFTER: %s (the stream lands after these sentinels, #4318; only this card may land it before) | DONE-WHEN: one %s that builds and passes with every stream's DONE-WHEN; the stream heads are re-based on it and %s lands (%s prints LANDED)",
 			m.Stream, m.Stream, strings.Join(strings.Fields(m.Reason), " "), paths, m.Base, after, m.Base, m.Stream, land)
 	}
-	return fmt.Sprintf("STREAM: %s | land stream %s: %d members in work order into %s as one PR | PATHS: %s | BASE: %s | DONE-WHEN: %s prints LANDED n=%d and ws:%s:merging is empty; a conflict or red whose fix needs files outside PATHS ends BLOCKED cross-stream paths=<files>",
-		m.Stream, m.Stream, len(m.Members), m.Base, paths, m.Base, land, len(m.Members), m.Stream)
+	return fmt.Sprintf("STREAM: %s | land stream %s: %d members in work order into %s as one PR | PATHS: %s | BASE: %s | DONE-WHEN: %s prints LANDED n=%d and the stream's merging set is empty; a conflict or red whose fix needs files outside PATHS ends BLOCKED cross-stream paths=<files>",
+		m.Stream, m.Stream, len(m.Members), m.Base, paths, m.Base, land, len(m.Members))
 }
 
 // MergeBrief is the card's body: the members in work order with PR and
@@ -864,6 +866,22 @@ func seconds(v any, def time.Duration) time.Duration {
 }
 
 // execPipe runs a pipeline; a Nil reply inside it is not an error.
+// orderAndEpoch reads ws:order and the sprint epoch (nova-tools#4238) in one
+// round trip: the watch's stream sets are keyed by the epoch it read.
+func orderAndEpoch(ctx context.Context, c redis.Cmdable) ([]string, uint64, error) {
+	pipe := c.Pipeline()
+	order := pipe.ZRange(ctx, "ws:order", 0, -1)
+	epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, 0, fmt.Errorf("ws:order: %w", err)
+	}
+	epoch, err := ws.ParseEpoch(epochCmd.Val())
+	if err != nil {
+		return nil, 0, err
+	}
+	return order.Val(), epoch, nil
+}
+
 func execPipe(ctx context.Context, pipe redis.Pipeliner) error {
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return err

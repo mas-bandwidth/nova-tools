@@ -65,7 +65,7 @@ func TestEndRecordIsTheOnlyEnd(t *testing.T) {
 	fenced := attemptToken(1, "ffffffffffffffffffffffffffffffff")
 	seedCard(t, ctx, client, id, "dealt", token)
 	// the card's id is in the bench's one working set while it runs (#3998)
-	if err := client.ZAdd(ctx, card.BenchWorkingKey(bench), redis.Z{Score: 1, Member: card.CardKey(sprint, label)}).Err(); err != nil {
+	if err := client.ZAdd(ctx, card.BenchWorkingKeyAt(0, bench), redis.Z{Score: 1, Member: card.CardKey(sprint, label)}).Err(); err != nil {
 		t.Fatal(err)
 	}
 	job := filepath.Join(t.TempDir(), "job")
@@ -104,7 +104,7 @@ func TestEndRecordIsTheOnlyEnd(t *testing.T) {
 	if got.Code != 3 || got.Reason != "FENCED" || got.Resolved {
 		t.Fatalf("fenced beat: %+v", got)
 	}
-	if stateOf(t, ctx, client, sprint, label) != "launched" || !zHas(t, ctx, client, card.BenchWorkingKey(bench), card.CardKey(sprint, label)) {
+	if stateOf(t, ctx, client, sprint, label) != "launched" || !zHas(t, ctx, client, card.BenchWorkingKeyAt(0, bench), card.CardKey(sprint, label)) {
 		t.Fatal("fenced beat moved the card")
 	}
 
@@ -115,7 +115,7 @@ func TestEndRecordIsTheOnlyEnd(t *testing.T) {
 	if got.Code != 0 || !got.Resolved || stateOf(t, ctx, client, sprint, label) != "running" {
 		t.Fatalf("beat: %+v state %s", got, stateOf(t, ctx, client, sprint, label))
 	}
-	if !zHas(t, ctx, client, card.BenchWorkingKey(bench), card.CardKey(sprint, label)) {
+	if !zHas(t, ctx, client, card.BenchWorkingKeyAt(0, bench), card.CardKey(sprint, label)) {
 		t.Fatal("first beat took the card out of the bench's working set")
 	}
 	if !setHas(t, ctx, client, card.IdxKey(sprint, "running"), label) || setHas(t, ctx, client, card.IdxKey(sprint, "launched"), label) {
@@ -138,7 +138,7 @@ func TestEndRecordIsTheOnlyEnd(t *testing.T) {
 		if xlen(t, ctx, client, sprint) != baseline {
 			t.Fatalf("%s wrote a receipt", step)
 		}
-		if !zHas(t, ctx, client, card.BenchWorkingKey(bench), card.CardKey(sprint, label)) {
+		if !zHas(t, ctx, client, card.BenchWorkingKeyAt(0, bench), card.CardKey(sprint, label)) {
 			t.Fatalf("%s freed the slot", step)
 		}
 	}
@@ -219,7 +219,7 @@ func TestEndRecordIsTheOnlyEnd(t *testing.T) {
 	if body["state"] != "ended" || body["outcome"] != "DONE" || body["reason"] != "done" || body["exit"] != "0" || body["pushed_sha"] != pushed || body["results"] != results || body["end_receipt"] != got.Receipt {
 		t.Fatalf("ended hash = %+v", body)
 	}
-	if zHas(t, ctx, client, card.BenchWorkingKey(bench), card.CardKey(sprint, label)) {
+	if zHas(t, ctx, client, card.BenchWorkingKeyAt(0, bench), card.CardKey(sprint, label)) {
 		t.Fatal("end left the slot leased")
 	}
 	if !setHas(t, ctx, client, card.IdxKey(sprint, "ended"), label) || setHas(t, ctx, client, card.IdxKey(sprint, "running"), label) {
@@ -319,7 +319,7 @@ func TestEndAfterPushAndDealRecordsEnded(t *testing.T) {
 	if len(body["base_sha"]) != 40 || id.BaseSHA != body["base_sha"][:8] {
 		t.Fatalf("push/deal identity shape: base_sha=%q identity=%q", body["base_sha"], body["identity"])
 	}
-	if !zHas(t, ctx, client, card.BenchWorkingKey(bench), card.CardKey(sprint, label)) {
+	if !zHas(t, ctx, client, card.BenchWorkingKeyAt(0, bench), card.CardKey(sprint, label)) {
 		t.Fatal("deal did not lease the slot")
 	}
 
@@ -347,7 +347,7 @@ func TestEndAfterPushAndDealRecordsEnded(t *testing.T) {
 	if body["state"] != "ended" || body["results"] != results || body["pushed_sha"] != pushed {
 		t.Fatalf("ended card = %+v", body)
 	}
-	if zHas(t, ctx, client, card.BenchWorkingKey(bench), card.CardKey(sprint, label)) {
+	if zHas(t, ctx, client, card.BenchWorkingKeyAt(0, bench), card.CardKey(sprint, label)) {
 		t.Fatal("end left the bench slot leased")
 	}
 
@@ -455,7 +455,7 @@ func TestControl26OtherAttemptResolvesNothing(t *testing.T) {
 	if err := client.SAdd(ctx, card.IdxKey(sprint, "reconcile-required"), label).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.ZAdd(ctx, card.BenchWorkingKey(bench), redis.Z{Score: 2, Member: card.CardKey(sprint, label)}).Err(); err != nil {
+	if err := client.ZAdd(ctx, card.BenchWorkingKeyAt(0, bench), redis.Z{Score: 2, Member: card.CardKey(sprint, label)}).Err(); err != nil {
 		t.Fatal(err)
 	}
 	orphan := card.Identity{Sprint: sprint, Label: "stays-orphan", BaseSHA: base, Bench: bench, Attempt: 1}
@@ -484,7 +484,7 @@ func TestControl26OtherAttemptResolvesNothing(t *testing.T) {
 		if !setHas(t, ctx, client, card.IdxKey(sprint, "reconcile-required"), label) || setHas(t, ctx, client, card.IdxKey(sprint, "ended"), label) {
 			t.Fatalf("%s moved the index", step)
 		}
-		if !zHas(t, ctx, client, card.BenchWorkingKey(bench), card.CardKey(sprint, label)) {
+		if !zHas(t, ctx, client, card.BenchWorkingKeyAt(0, bench), card.CardKey(sprint, label)) {
 			t.Fatalf("%s freed the slot", step)
 		}
 		if xlen(t, ctx, client, sprint) != 0 {
@@ -546,7 +546,7 @@ func TestControl26OtherAttemptResolvesNothing(t *testing.T) {
 	if body["state"] != "ended" || body["outcome"] != "FAILED" || body["reason"] != "tests-red" || body["branch"] != branch || body["exit"] != "1" || body["pushed_sha"] != "-" {
 		t.Fatalf("matching record wrote %+v", body)
 	}
-	if zHas(t, ctx, client, card.BenchWorkingKey(bench), card.CardKey(sprint, label)) {
+	if zHas(t, ctx, client, card.BenchWorkingKeyAt(0, bench), card.CardKey(sprint, label)) {
 		t.Fatal("resolve left attempt 2 leased")
 	}
 	if setHas(t, ctx, client, card.IdxKey(sprint, "reconcile-required"), label) || !setHas(t, ctx, client, card.IdxKey(sprint, "ended"), label) {
@@ -582,7 +582,7 @@ func TestEndRecordInWrongDirectoryResolvesNothing(t *testing.T) {
 	if err := client.SAdd(ctx, card.IdxKey(sprint, "reconcile-required"), label).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.ZAdd(ctx, card.BenchWorkingKey(bench), redis.Z{Score: 2, Member: card.CardKey(sprint, label)}).Err(); err != nil {
+	if err := client.ZAdd(ctx, card.BenchWorkingKeyAt(0, bench), redis.Z{Score: 2, Member: card.CardKey(sprint, label)}).Err(); err != nil {
 		t.Fatal(err)
 	}
 	canonical := canonicalResults(t, id)
@@ -620,7 +620,7 @@ func TestEndRecordInWrongDirectoryResolvesNothing(t *testing.T) {
 	if !setHas(t, ctx, client, card.IdxKey(sprint, "reconcile-required"), label) || setHas(t, ctx, client, card.IdxKey(sprint, "ended"), label) {
 		t.Fatal("wrong directory moved the index")
 	}
-	if !zHas(t, ctx, client, card.BenchWorkingKey(bench), card.CardKey(sprint, label)) {
+	if !zHas(t, ctx, client, card.BenchWorkingKeyAt(0, bench), card.CardKey(sprint, label)) {
 		t.Fatal("wrong directory freed the slot")
 	}
 	if xlen(t, ctx, client, sprint) != 0 {

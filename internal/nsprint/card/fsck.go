@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -28,8 +29,12 @@ var Places = []string{"waiting", "ready", "working", "done", "parked"}
 // RosterKey is sprint:<S>:cards, every card of the sprint ever.
 func RosterKey(sprint string) string { return "sprint:" + sprint + ":cards" }
 
-// BenchCardsKey is the bench view of one place (or ok/fail), bench:<b>:cards:<where>.
-func BenchCardsKey(bench, where string) string { return "bench:" + bench + ":cards:" + where }
+// BenchCardsKeyAt is the bench view of one place (or ok/fail) under epoch e
+// (nova-tools#4238; a reader keys by ws.Epoch).
+
+func BenchCardsKeyAt(e uint64, bench, where string) string {
+	return ws.ConsumerKeyAt(e, "bench:"+bench, where)
+}
 
 // FsckReport is one ns_card_fsck or ns_card_repair reply.
 type FsckReport struct {
@@ -49,9 +54,18 @@ type FsckReport struct {
 // drift fixed registered.
 const FsckFields = 14
 
-// Line is the receipt: FSCK <S> cards=... drift=... fixed=... registered=....
+// FsckFamily labels every count of the FSCK line (#4411): they count the
+// s:<S>:card records of the roster sprint:<S>:cards, the card family the one
+// task store replaced for sprint work (card push and 02_card_move.lua still
+// write it), never the sprint's progress, which is the one count (`nova-sprint
+// ws counts`). The label rides in the line so its cards= never reads as a
+// number beside the one count.
+const FsckFamily = "family=retired"
+
+// Line is the receipt: <verb> sprint=<S> family=retired cards=... drift=...
+// fixed=... registered=....
 func (r FsckReport) Line(verb string) string {
-	return fmt.Sprintf("%s sprint=%s cards=%d null=%d waiting=%d ready=%d working=%d done=%d parked=%d ok=%d fail=%d drift=%d fixed=%d registered=%d",
+	return fmt.Sprintf("%s sprint=%s "+FsckFamily+" cards=%d null=%d waiting=%d ready=%d working=%d done=%d parked=%d ok=%d fail=%d drift=%d fixed=%d registered=%d",
 		verb, r.Sprint, r.Cards, r.Null, r.Waiting, r.Ready, r.Working, r.Done, r.Parked, r.OK, r.Fail, r.Drift, r.Fixed, r.Registered)
 }
 

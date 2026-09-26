@@ -65,13 +65,16 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 	}
 	for i, row := range after.Streams {
 		b := before.Streams[i]
-		if row.Landed != 0 || row.Waiting != b.Waiting || row.Ready != b.Ready || row.Working != b.Working || row.Review != b.Review ||
-			row.Merging != b.Merging {
+		// The sentinel is the stream's stop, not work (the one count leaves
+		// it out): a clear that registers a stream, creating its sentinel,
+		// moves no cell.
+		if row.Landed != 0 || row.Waiting != b.Waiting || row.Ready != b.Ready || row.Working != b.Working ||
+			row.Review != b.Review || row.Merging != b.Merging {
 			t.Fatalf("stream %q after clear %+v, before %+v", row.Name, row, b)
 		}
 	}
 	got := after.Render(now)
-	if !strings.Contains(got, "\n592/592 left, 0% done -> ~11840m gh 0/h\n") {
+	if !strings.Contains(got, "\n0/592 done 0%, left 592, eta ") {
 		t.Fatalf("after clear:\n%s", got)
 	}
 	if b, a := before.Render(now), got; b[strings.Index(b, "\nworker "):] != a[strings.Index(a, "\nworker "):] {

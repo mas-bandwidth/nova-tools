@@ -6,7 +6,7 @@
 //
 //	SPRINT TABLE [*** PIT STOP ***]
 //
-//	<left>/<y> left, <z>% done -> ~<eta>m
+//	<landed>/<total> done <z>%, left <l>, eta <HH:MM> ET gh <n>/h   (ws.SprintCounts.Header)
 //
 //	stream | waiting | ready | working | review | merging | landed   (rows in ws:order, all-zero rows hidden, total)
 //	REVIEW stream=<s> over=<n> oldest=<id> age=<d> max=<d>     (a stream with cards in review past cfg:review max_age, #4072)
@@ -18,7 +18,10 @@
 // whose consumer copy failed and waits for its typed verdict (#4072), and a
 // card whose PR waits for its read; the old reading set and the merging
 // <read>/<unread> split (#3900, #3929) are gone). Every cell is one plain
-// ZCARD; it is left, never done.
+// ZCARD; it is left, never done. The headline and the stream block are one
+// read of ws.Counts (the one count, #4411): the headline's total is the
+// total row's sum, and each stream's sentinel is counted nowhere (it is the
+// stream's stop, not work: in no cell, no total, no x/y and no left).
 //
 // The consumer table is ONE table (#4071, Glenn 2026-09-25 2:40 PM: "friends
 // can fuck up cards too"): a row per consumer, friends and benches alike,
@@ -46,8 +49,9 @@
 // trip only on the tick a membership set changed; never KEYS, never SCAN):
 //
 //	ws:order                ZRANGE, the streams in rank order (the ws index, #3662)
-//	ws:<s>:<state>          ZCARD for waiting, ready, working, review, merging, landed
+//	ws:<s>:<state>          ZCARD for waiting, ready, working, review, merging, landed, parked
 //	ws:log                  XRANGE over the last hour: the landed rate for the ETA
+//	sprint:order, s:<S>     ZRANGE and HGET status, no sprint named: the open sprint
 //	friends, benches,       SMEMBERS: the consumers (friends the --friends roster
 //	consumers               when given; then the benches; then any other
 //	                        enrolled consumer), each once
@@ -92,8 +96,8 @@ var ConsumerSets = []string{"ready", "working", "ok", "fail"}
 
 // SprintConfig is what the whole table is told; everything else is read.
 type SprintConfig struct {
-	// Sprint names the pit stop keys s:<Sprint>:pitstop and
-	// sprint:<Sprint>:pitstop; empty reads no pit stop.
+	// Sprint names the sprint: its pit stop keys s:<Sprint>:pitstop and
+	// sprint:<Sprint>:pitstop; empty reads the open one's.
 	Sprint string
 	// Friends is the friend rows' order; empty reads the friends SET,
 	// sorted by name.
@@ -130,11 +134,18 @@ func (r StreamRow) Total() int64 {
 
 // SprintSnapshot is one tick's read.
 type SprintSnapshot struct {
-	Config     SprintConfig
-	Pitstop    bool
-	Streams    []StreamRow
-	LandedHour int64 // ws:log moves to landed in the hour before the read
-	GHHour     int64 // GitHub calls in the hour before the read (gh:calls:all, #4343)
+	Config SprintConfig
+	// Epoch is the sprint epoch every cell of this snapshot was read under
+	// (nova-tools#4238): sprint:epoch, read in the same pipeline as the
+	// cells; a cell of another epoch is never shown.
+	Epoch   uint64
+	Pitstop bool
+	// Streams is Counts.Streams as rows, for readers of one stream's cells.
+	Streams []StreamRow
+	// Counts is the one count (ws.Counts) the headline, the stream rows and
+	// the total row all print from.
+	Counts ws.SprintCounts
+	GHHour int64 // GitHub calls in the hour before the read (gh:calls:all, #4343)
 	// Events is proc:progress as the progress duty wrote it (#4319): the
 	// asks so far, the last EVENT line, and the last pass's duty refusals.
 	// The table prints one EVENTS line from it only when non-zero.
@@ -289,14 +300,16 @@ const hostBeatStale = 60 * time.Second
 
 // SprintReader reads the whole table, keeping set membership across ticks.
 type SprintReader struct {
-	Client                               redis.UniversalClient
-	Config                               SprintConfig
-	streams, benches, friends, consumers []string
-	// sprints is sprint:order and openSprint its one member not closed:
-	// the pit stop shown when Config.Sprint is empty.
-	sprints    []string
-	openSprint string
-	primed     bool
+	Client                      redis.UniversalClient
+	Config                      SprintConfig
+	benches, friends, consumers []string
+	// counts keeps ws:order, and sprint:order with its one open member (the
+	// pit stop shown when Config.Sprint is empty), across ticks, and
+	// sprint:epoch: the stream cells and the consumer cells are keyed by
+	// its epoch, and a tick that reads another epoch is read once more,
+	// like a membership change (nova-tools#4238)
+	counts *ws.CountsReader
+	primed bool
 	// loads is each row's load samples of the last LoadWindow, newest last:
 	// the cell prints the highest of them (Glenn 2026-09-26 10:52 AM ET: "The
 	// CPU load updating every 1 sec is giving me anxiety. The way I usually
@@ -339,7 +352,7 @@ func (r *SprintReader) loadMax(id string, now time.Time, v float64) float64 {
 // NewSprintReader is a reader with no membership yet: its first Read takes
 // two round trips (the sets, then the values).
 func NewSprintReader(client redis.UniversalClient, cfg SprintConfig) *SprintReader {
-	return &SprintReader{Client: client, Config: cfg}
+	return &SprintReader{Client: client, Config: cfg, counts: &ws.CountsReader{Sprint: cfg.Sprint}}
 }
 
 // Read is one tick at now.
@@ -392,7 +405,11 @@ func (r *SprintReader) roster() []Consumer {
 func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnapshot, bool, error) {
 	cfg := r.Config
 	pipe := r.Client.Pipeline()
-	order := pipe.ZRange(ctx, "ws:order", 0, -1)
+	// The streams, the open sprint and every count: one ws.CountsReader
+	// queue, the one count the headline and the stream block print, keyed
+	// by the epoch of the last tick like the consumer cells below (#4238).
+	epoch := r.counts.Epoch()
+	counts := r.counts.Queue(ctx, pipe, now)
 	benchSet := pipe.SMembers(ctx, "benches")
 	consumerSet := pipe.SMembers(ctx, "consumers")
 	var friendSet *redis.StringSliceCmd
@@ -401,40 +418,18 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 	// The pit stop is the named sprint's, else the one open sprint's (Glenn
 	// 2026-09-26 8:50 AM ET: "There is only one sprint active at a current
-	// time"): sprint:order and each member's state are read every tick in
-	// the same pipeline, and the open one's stop key with them on the next.
-	var sprintOrder *redis.StringSliceCmd
-	var states []*redis.StringCmd
-	pitSprint := cfg.Sprint
-	if pitSprint == "" {
-		sprintOrder = pipe.ZRange(ctx, "sprint:order", 0, -1)
-		states = make([]*redis.StringCmd, len(r.sprints))
-		for i, name := range r.sprints {
-			// the sprint's status field on s:<S> (what sprint open, close
-			// and pitstop.read use): "closed" is out, anything else is open
-			states[i] = pipe.HGet(ctx, "s:"+name, "status")
-		}
-		pitSprint = r.openSprint
-	}
+	// time"): the counts reader reads sprint:order and each member's status
+	// every tick in the same pipeline, and the open one's stop key is read
+	// with them on the next.
+	pitSprint := r.counts.SprintName()
 	var pit *redis.IntCmd
 	if pitSprint != "" {
 		pit = pipe.Exists(ctx, "s:"+pitSprint+":pitstop", "sprint:"+pitSprint+":pitstop")
 	}
-	hourAgo := now.Add(-time.Hour).UnixMilli()
-	log := pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(hourAgo, 10), "+", logWindowMax)
 	ghAll := pipe.HGetAll(ctx, gh.TotalKey)
 	var lock *redis.Cmd
 	if cfg.LockKey != "" {
 		lock = pipe.Eval(ctx, lockRefreshScript, []string{cfg.LockKey}, cfg.LockToken, lockTTL(cfg).Milliseconds())
-	}
-	// Each cell is the set's cards: the ZCARD less the stream's sentinel
-	// when it is in that set (ws.QueueCardCount, #4318: the stop is not a
-	// card, no new column).
-	counts := make([][]*ws.CardCountCmd, len(r.streams))
-	for i, s := range r.streams {
-		for _, state := range WSStates {
-			counts[i] = append(counts[i], ws.QueueCardCount(ctx, pipe, s, state))
-		}
 	}
 	type consumerCmds struct {
 		cells  [4]*redis.IntCmd
@@ -447,7 +442,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	cmds := make([]consumerCmds, len(roster))
 	for i, c := range roster {
 		for j, set := range ConsumerSets {
-			cmds[i].cells[j] = pipe.ZCard(ctx, c.ID()+":cards:"+set)
+			cmds[i].cells[j] = pipe.ZCard(ctx, ws.ConsumerKeyAt(epoch, c.ID(), set))
 		}
 		cmds[i].beat = pipe.HMGet(ctx, c.ID()+":beat", "load1", "at", "ncpu", "cpu", "models")
 		cmds[i].down = pipe.Exists(ctx, c.ID()+":down")
@@ -457,14 +452,31 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 	}
 	progress := pipe.HGetAll(ctx, ProgressKey)
+	// THE EPOCH (nova-tools#4238): read once per tick, in the same pipeline
+	// and AFTER every cell: the cells are keyed by the epoch of the last
+	// tick, and a clear that lands anywhere before this read (before or
+	// between the cells) shows here as another epoch, so the tick is read
+	// again with the new one and never shows a frame of the old epoch's
+	// cells after the clear.
+	epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, false, fmt.Errorf("pipeline: %w", err)
 	}
 	// A dead connection fails every command; the order read standing is the
 	// tick's proof that Redis answered.
-	gotOrder, err := order.Result()
+	gotCounts, countsChanged, err := counts.Result()
+	if err != nil {
+		return nil, false, err
+	}
+	// An epoch that could not be read is not epoch 0: the tick fails
+	// rather than show another epoch's cells.
+	epochVal, err := epochCmd.Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		return nil, false, fmt.Errorf("zrange ws:order: %w", err)
+		return nil, false, fmt.Errorf("hget %s %s: %w", ws.EpochKey, ws.EpochField, err)
+	}
+	gotEpoch, err := ws.ParseEpoch(epochVal)
+	if err != nil {
+		return nil, false, err
 	}
 	// A membership set that did not come back would empty its rows without
 	// a word: the tick fails instead, and the loop publishes the last good
@@ -491,44 +503,31 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			return nil, false, err
 		}
 	}
-	var gotSprints []string
-	open := ""
-	if sprintOrder != nil {
-		gotSprints = sprintOrder.Val()
-		for i, name := range r.sprints {
-			if i < len(states) && states[i] != nil && states[i].Err() == nil && states[i].Val() != "closed" {
-				open = name
-			}
-		}
-	}
-	changed := !r.primed || !slices.Equal(gotOrder, r.streams) || !slices.Equal(gotBenches, r.benches) ||
+	// the pit stop key read was the open sprint's as of the last read: a
+	// sprint that opened or closed under it reads again; an epoch read after
+	// every cell that is not the one the cells were keyed by reads again
+	// under it (#4238)
+	changed := !r.primed || countsChanged || r.counts.SprintName() != pitSprint || !slices.Equal(gotBenches, r.benches) ||
 		!slices.Equal(gotConsumers, r.consumers) || (friendSet != nil && !slices.Equal(gotFriends, r.friends)) ||
-		!slices.Equal(gotSprints, r.sprints) || open != r.openSprint
+		gotEpoch != epoch
 	r.primed = true
 	if changed {
-		r.streams, r.benches, r.consumers, r.friends = gotOrder, gotBenches, gotConsumers, gotFriends
-		r.sprints, r.openSprint = gotSprints, open
+		r.benches, r.consumers, r.friends = gotBenches, gotConsumers, gotFriends
+		r.counts.PrimeEpoch(gotEpoch)
 		return nil, true, nil
 	}
 
-	snap := &SprintSnapshot{Config: cfg}
+	snap := &SprintSnapshot{Config: cfg, Epoch: gotEpoch, Counts: gotCounts}
+	if gotCounts.LogErr != nil {
+		// The ETA rate would read as none with no word.
+		snap.Errors = append(snap.Errors, "ws:log not read (eta rate unknown): "+gotCounts.LogErr.Error())
+	}
 	if pit != nil {
 		if n, err := pit.Result(); err != nil && !errors.Is(err, redis.Nil) {
 			// A stop that could not be read is not "no stop".
 			snap.Errors = append(snap.Errors, "pit stop s:"+pitSprint+":pitstop not read: "+err.Error())
 		} else if n > 0 {
 			snap.Pitstop = true
-		}
-	}
-	if msgs, err := log.Result(); err != nil && !errors.Is(err, redis.Nil) {
-		// The ETA rate would read as 1 an hour with no word.
-		snap.Errors = append(snap.Errors, "ws:log not read (eta rate unknown): "+err.Error())
-	} else {
-		for _, m := range msgs {
-			id, _ := m.Values["id"].(string)
-			if to, _ := m.Values["to"].(string); to == "landed" && !ws.IsSentinel(id) {
-				snap.LandedHour++ // a stream's stop landing is not a card landed
-			}
 		}
 	}
 	if m, err := ghAll.Result(); err == nil {
@@ -545,14 +544,8 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	} else {
 		snap.Events = ParseProgressEvents(h)
 	}
-	for i, s := range r.streams {
-		row := StreamRow{Name: s}
-		cells := []*int64{&row.Waiting, &row.Ready, &row.Working, &row.Review, &row.Merging, &row.Landed}
-		for j, c := range counts[i] {
-			n, err := c.Result()
-			*cells[j], row.Unread[j] = n, err != nil && !errors.Is(err, redis.Nil)
-		}
-		snap.Streams = append(snap.Streams, row)
+	for _, sc := range gotCounts.Streams {
+		snap.Streams = append(snap.Streams, streamRow(sc))
 	}
 	for i, c := range roster {
 		row := ConsumerRow{Consumer: c, Load: "-"}
@@ -602,9 +595,11 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	return snap, false, nil
 }
 
-// logWindowMax bounds the hour of ws:log one tick reads; a sprint moving more
-// than this many tasks an hour shows at least this rate.
-const logWindowMax = 5000
+// streamRow is one stream of the one count as the stream block's row.
+func streamRow(sc ws.StreamCounts) StreamRow {
+	c := sc.Cells
+	return StreamRow{Name: sc.Stream, Waiting: c[0], Ready: c[1], Working: c[2], Review: c[3], Merging: c[4], Landed: c[5], Unread: sc.Unread}
+}
 
 // FailedSprint is the tick whose read failed: last's rows (none when there
 // never was a good read) and a stale line.
@@ -618,27 +613,6 @@ func FailedSprint(cfg SprintConfig, last *SprintSnapshot) *SprintSnapshot {
 }
 
 const streamRule = "--------------------------+---------+-------+---------+--------+---------+-------\n"
-
-// XY is the headline's numbers: y is every task in the streams of ws:order,
-// left is y minus landed (a card in review or merging is not done),
-// eta is left over the landed rate of the last hour (at least 1 an hour, so
-// a stall shows as a big number, never infinity).
-func (s *SprintSnapshot) XY() (left, y, pct, eta int64) {
-	var landed int64
-	for _, r := range s.Streams {
-		y += r.Total()
-		landed += r.Landed
-	}
-	left = y - landed
-	if y > 0 {
-		pct = landed * 100 / y
-	}
-	rate := s.LandedHour
-	if rate < 1 {
-		rate = 1
-	}
-	return left, y, pct, left * 60 / rate
-}
 
 // Render prints the whole table at now.
 func (s *SprintSnapshot) Render(now time.Time) string {
@@ -658,8 +632,8 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 	// you can hide the status x/y z% etc. make sure there is not an extra
 	// newline left"): the title's blank line is then the gap before the
 	// worker table.
-	if left, y, pct, eta := s.XY(); y > 0 {
-		fmt.Fprintf(&b, "%d/%d left, %d%% done -> ~%dm gh %d/h\n\n", left, y, pct, eta, s.GHHour)
+	if s.Counts.All() > 0 || s.Counts.Unread() {
+		fmt.Fprintf(&b, "%s gh %d/h\n\n", s.Counts.Header(), s.GHHour)
 	}
 
 	s.renderStreams(&b)
@@ -814,8 +788,8 @@ func (s *SprintSnapshot) renderStreams(b *strings.Builder) {
 	// there is not an extra newline when it's hidden"): the headline's blank
 	// line is the only gap before the worker table.
 	any := false
-	for _, r := range s.Streams {
-		if r.Total() != 0 || r.AnyUnread() {
+	for _, r := range s.Counts.Streams {
+		if r.Sum() != 0 || r.AnyUnread() {
 			any = true
 			break
 		}
@@ -826,28 +800,25 @@ func (s *SprintSnapshot) renderStreams(b *strings.Builder) {
 	fmt.Fprintf(b, "%-25s | %7s | %5s | %7s | %6s | %7s | %6s\n", "stream", "waiting", "ready", "working", "review",
 		"merging", "landed")
 	b.WriteString(streamRule)
-	var tot StreamRow
-	for _, r := range s.Streams {
-		if r.Total() == 0 && !r.AnyUnread() {
+	for _, r := range s.Counts.Streams {
+		if r.Sum() == 0 && !r.AnyUnread() {
 			continue
 		}
-		vals := [6]int64{r.Waiting, r.Ready, r.Working, r.Review, r.Merging, r.Landed}
-		tots := []*int64{&tot.Waiting, &tot.Ready, &tot.Working, &tot.Review, &tot.Merging, &tot.Landed}
 		var cell [6]string
-		for j, v := range vals {
-			*tots[j] += v
+		for j, v := range r.Cells {
 			cell[j] = strconv.FormatInt(v, 10)
 			if r.Unread[j] {
 				// A ZCARD that did not come back prints "?", never a false 0.
-				cell[j], tot.Unread[j] = "?", true
+				cell[j] = "?"
 			}
 		}
-		fmt.Fprintf(b, "%-25s | %7s | %5s | %7s | %6s | %7s | %6s\n", r.Name, cell[0], cell[1], cell[2], cell[3], cell[4], cell[5])
+		fmt.Fprintf(b, "%-25s | %7s | %5s | %7s | %6s | %7s | %6s\n", r.Stream, cell[0], cell[1], cell[2], cell[3], cell[4], cell[5])
 	}
 	b.WriteString(streamRule)
-	totVals := [6]int64{tot.Waiting, tot.Ready, tot.Working, tot.Review, tot.Merging, tot.Landed}
+	// The total row is the one count's total, the headline's numbers.
+	tot := s.Counts.Total
 	var cell [6]string
-	for j, v := range totVals {
+	for j, v := range tot.Cells {
 		cell[j] = strconv.FormatInt(v, 10)
 		if tot.Unread[j] {
 			cell[j] = "?"

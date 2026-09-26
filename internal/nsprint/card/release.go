@@ -31,7 +31,12 @@ func ReleaseWith(ctx context.Context, client *redis.Client, sprint string, refs 
 	if err := ensure(ctx, client); err != nil {
 		return refused(err.Error())
 	}
-	ready, err := releasableCards(ctx, client, sprint, refs)
+	// the waiting list under the current epoch (nova-tools#4238)
+	epoch, err := ws.Epoch(ctx, client)
+	if err != nil {
+		return refused(err.Error())
+	}
+	ready, err := releasableCards(ctx, client, sprint, refs, epoch)
 	if err != nil {
 		return refused(err.Error())
 	}
@@ -40,9 +45,9 @@ func ReleaseWith(ctx context.Context, client *redis.Client, sprint string, refs 
 	for _, label := range ready {
 		args = append(args, label)
 	}
-	reply, err := client.FCall(ctx, "ns_card_release", []string{
-		keyWaiting(sprint), keyPool(sprint), keyLog(sprint),
-	}, args...).Text()
+	// log: the waiting list is the epoch's, derived by the function (#4238)
+	reply, err := client.FCall(ctx, "ns_card_release", []string{keyLog(sprint)}, args...).Text()
+
 	if err != nil {
 		return refused(err.Error())
 	}
@@ -61,8 +66,9 @@ type waitingCard struct {
 	deps  []dependency
 }
 
-func releasableCards(ctx context.Context, client *redis.Client, sprint string, refs deal.PRs) ([]string, error) {
-	labels, err := client.SMembers(ctx, keyWaiting(sprint)).Result()
+func releasableCards(ctx context.Context, client *redis.Client, sprint string, refs deal.PRs, epoch uint64) ([]string, error) {
+	labels, err := client.SMembers(ctx, ws.SprintListAt(epoch, sprint, "waiting")).Result()
+
 	if err != nil {
 		return nil, fmt.Errorf("read waiting cards: %w", err)
 	}

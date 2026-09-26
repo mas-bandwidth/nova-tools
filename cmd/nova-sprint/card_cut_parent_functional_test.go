@@ -256,7 +256,6 @@ func TestCardCutParentGrowFilesNoSecondStitchIssue(t *testing.T) {
 		t.Fatalf("rerun exit %d filed %v:\n%s", code, forge.titles, out)
 	}
 	// Growing: one issue for the new child, none for the stitch.
-	code, out = runCutFrom(cutFromOpts{Text: []byte("id\ttitle\tpaths\tdone-when\ttest\nc3\tthree\tc.go\tholds\t./x TestThree\n"), Parent: "grow"}, d)
 	code, out = runCutFrom(cutFromOpts{Text: []byte("id\ttitle\tpaths\tdone-when\tbody\nc3\tthree\tc.go\tholds\t" + cutInv + "\n"), Parent: "grow"}, d)
 	if code != 0 || len(forge.titles) != 4 || forge.titles[3] != "three" ||
 		!strings.Contains(out, "CARD CUT row=stitch id=grow-stitch ref=mas-bandwidth/nova-tools#5002 stream=autonomy to=already depends=c3,c1,c2\n") {

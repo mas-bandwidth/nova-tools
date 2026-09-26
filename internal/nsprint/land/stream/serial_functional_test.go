@@ -3,6 +3,7 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -28,14 +28,12 @@ import (
 func TestLandStreamSerialRecordHoldsTheParkedAndKeepsThePR(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	mr := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = c.Close() })
+	c := newRedis(t)
 	ctx := context.Background()
 	const slug = "landing-streams-lander"
 	for _, n := range []int{1, 2} {
 		id := fmt.Sprintf("t%d", n)
-		c.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: float64(n), Member: id})
+		c.ZAdd(ctx, WSKeyAt(0, strm, "merging"), redis.Z{Score: float64(n), Member: id})
 		c.HSet(ctx, "task:"+id, "pr", fmt.Sprintf("nova-tools#%d", n), "stream", strm, "state", "merging")
 		c.HSet(ctx, PRKey(repo, n), "repo", repo, "n", fmt.Sprint(n), "head", f.Head[n], "base", "dev", "stream", strm, "state", "open",
 			"reads", score("emma", f.Head[n], 9))
@@ -82,5 +80,63 @@ func TestLandStreamSerialRecordHoldsTheParkedAndKeepsThePR(t *testing.T) {
 	}
 	if l, _, _ := LoadLanding(ctx, c, repo, slug); l.State != "open" || l.PR != 900 || len(l.SerialLeft) != 0 {
 		t.Fatalf("landing after run 3: %+v", l)
+	}
+}
+
+// TestLandStreamRefusesSerial (nova-tools #4324): a stream with three
+// members in merging of which one has no read at head: land stream refuses
+// LAND-SERIAL naming the one left out before it clones or opens anything;
+// --dry-run prints the plan with the same line; --partial passes the gate
+// (the next refusal is the GitHub client) and prints the line as allowed.
+func TestLandStreamRefusesSerial(t *testing.T) {
+	t.Parallel()
+	// the members are read through ns_ws_zrange (the library, nova-tools#4238)
+	c := newRedis(t)
+	ctx := context.Background()
+	const repo, s = "mas-bandwidth/nova-tools", "swarm: cards"
+	head := func(n int) string { return strings.Repeat(fmt.Sprint(n), 40) }
+	for n, score := range map[int]float64{1: 10, 2: 20, 3: 30} {
+		id := fmt.Sprintf("t%d", n)
+		c.ZAdd(ctx, WSKeyAt(0, s, "merging"), redis.Z{Score: score, Member: id})
+		c.HSet(ctx, "task:"+id, "pr", fmt.Sprintf("nova-tools#%d", n), "stream", s)
+		fields := map[string]string{"repo": repo, "n": fmt.Sprint(n), "head": head(n), "base": "dev", "stream": s, "state": "open"}
+		if n != 3 {
+			fields["reads"] = fmt.Sprintf("SCORE who=emma head=%s score=9/10", head(n))
+		}
+		c.HSet(ctx, PRKey(repo, n), fields)
+	}
+	opts := Options{Repo: repo, Streams: []string{s}, Base: "dev"}
+	_, err := LandStream(ctx, c, opts)
+	var ref *Refusal
+	if !errors.As(err, &ref) || !strings.HasPrefix(ref.Why, "LAND-SERIAL stream=swarm:\\x20cards carrying=2 merging=3 left_out=#3:no-read-at-head") {
+		t.Fatalf("refusal: %v", err)
+	}
+	if !strings.Contains(ref.Remedy, "--partial") {
+		t.Fatalf("remedy: %q", ref.Remedy)
+	}
+	// The plan names the order (the ZSET score) and the members left out.
+	opts.DryRun = true
+	rep, err := LandStream(ctx, c, opts)
+	if err != nil || rep.State != "dry-run" || len(rep.Members) != 2 || rep.Members[0].N != 1 || rep.Members[1].N != 2 {
+		t.Fatalf("dry run: %+v %v", rep, err)
+	}
+	if len(rep.LeftOut) != 1 || rep.LeftOut[0].N != 3 || rep.Serial != ref.Why {
+		t.Fatalf("plan: left_out=%+v serial=%q", rep.LeftOut, rep.Serial)
+	}
+	// Partial: the gate passes with the line in the log.
+	var log bytes.Buffer
+	opts.DryRun, opts.Partial, opts.Log = false, true, &log
+	_, err = LandStream(ctx, c, opts)
+	if !errors.As(err, &ref) || ref.Why != "no GitHub client" {
+		t.Fatalf("partial: %v", err)
+	}
+	if !strings.Contains(log.String(), "LAND-SERIAL stream=swarm:\\x20cards carrying=2 merging=3 left_out=#3:no-read-at-head allowed=partial\n") {
+		t.Fatalf("log: %q", log.String())
+	}
+	// A stream whose members can all land has no line.
+	c.HSet(ctx, PRKey(repo, 3), "reads", fmt.Sprintf("SCORE who=emma head=%s score=10/10", head(3)))
+	opts.Partial, opts.DryRun = false, true
+	if rep, err := LandStream(ctx, c, opts); err != nil || rep.Serial != "" || len(rep.Members) != 3 {
+		t.Fatalf("all read: %+v %v", rep, err)
 	}
 }
