@@ -66,7 +66,7 @@ func TestControl4071OneConsumerTable(t *testing.T) {
 	if strings.Contains(got, "\nfriend     |") || strings.Contains(got, "\nhost       |") {
 		t.Fatalf("a separate friend or host block is still printed:\n%s", got)
 	}
-	want := "consumer                  | ready | working |  done |  ok% | status | load\n" +
+	want := "worker                    | ready | working |  done |  ok% | status | load\n" +
 		"--------------------------+-------+---------+-------+------+--------+------\n" +
 		"emma                      |     0 |       0 |     2 |  50% | up     | -\n" +
 		"hetzner                   |     0 |       0 |     2 |  50% | up     | 0.19\n" +

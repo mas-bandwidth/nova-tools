@@ -489,7 +489,10 @@ const consumerRule = "--------------------------+-------+---------+-------+-----
 // not come back prints "?" (and so do done and ok% when ok or fail is
 // one), never a false 0.
 func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
-	fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %4s | %-6s | %s\n", "consumer", "ready", "working", "done",
+	// The header says worker (Glenn 2026-09-26 9:58 AM ET: "rename consumer to
+	// worker, just in the display tables"); the record and the keys stay
+	// consumer.
+	fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %4s | %-6s | %s\n", "worker", "ready", "working", "done",
 		"ok%", "status", "load")
 	b.WriteString(consumerRule)
 	// The row is the name alone (Glenn 2026-09-25 11:20 PM ET: the friend:/bench:
