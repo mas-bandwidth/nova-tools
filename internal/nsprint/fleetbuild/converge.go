@@ -40,8 +40,23 @@ const MachinesEnv = "NOVA_FLEET_MACHINES"
 // Machine is the part of one machines-registry line convergence reads.
 type Machine struct {
 	Name     string
+	SSH      string // the ssh column: the host to reach it by, localhost for this machine
+	OSArch   string // the os/arch column as written
 	Platform string // <goos>-<goarch>, "" when the line's os/arch is not one we build
 	Roles    []string
+}
+
+// Host is the ssh host for m: the registry's ssh column, else its name.
+func (m Machine) Host() string {
+	if m.SSH != "" {
+		return m.SSH
+	}
+	return m.Name
+}
+
+// IsLocal says whether m is this machine (its ssh column names localhost).
+func (m Machine) IsLocal() bool {
+	return m.SSH == "localhost" || m.SSH == "127.0.0.1" || m.SSH == "::1"
 }
 
 // HasRole says whether m carries role.
@@ -91,7 +106,7 @@ func ParseMachines(r io.Reader) ([]Machine, error) {
 		if len(f) < 4 {
 			return nil, refused("machines line %d has %d columns, want name, ssh, os/arch, roles, ...", n, len(f))
 		}
-		m := Machine{Name: strings.TrimSpace(f[0]), Platform: platformOf(f[2])}
+		m := Machine{Name: strings.TrimSpace(f[0]), SSH: strings.TrimSpace(f[1]), OSArch: strings.TrimSpace(f[2]), Platform: platformOf(f[2])}
 		if !nameRe.MatchString(m.Name) {
 			return nil, refused("machines line %d names %q, not a bench name", n, m.Name)
 		}
