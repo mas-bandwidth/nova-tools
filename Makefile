@@ -188,9 +188,20 @@ preflight:
 # GOTEST_TIMEOUT is `go test -timeout` for this target; the default is Go's own
 # 10m. The workflow sets it per leg to fit the leg's job cap.
 GOTEST_TIMEOUT ?= 110s
+# GOTEST_COUNT_FLAG is go test's -count=1 by hand (every test runs, nothing
+# is taken from the cache), EMPTY in CI (.github/workflows/ci.yml passes
+# GOTEST_COUNT_FLAG=) so Go's test cache serves a package whose inputs did not
+# change: a landing runs the suite three times (pull request, merge group,
+# push to dev) on trees that differ by nothing, and -count=1 made every run
+# recompile and re-execute every shard (Glenn 2026-09-26 9:42 AM ET, the
+# Studio at 100% on its own PR: "We aren't doing anything that should be this
+# heavy in CPU use"). A cached pass is a real earlier pass on identical
+# inputs; Go keys the cache on the package, its files, the env it reads and
+# the files it opens.
+GOTEST_COUNT_FLAG ?= -count=1
 test: PKGS := $(CL_PKGS)
 test:
-	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test -count=1 $(PKGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
+	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
 
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)
