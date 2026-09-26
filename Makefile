@@ -199,9 +199,14 @@ GOTEST_TIMEOUT ?= 110s
 # inputs; Go keys the cache on the package, its files, the env it reads and
 # the files it opens.
 GOTEST_COUNT_FLAG ?= -count=1
+# GOTEST_LDFLAGS: empty by hand; CI passes -ldflags=-w so test binaries link
+# without DWARF: on darwin every test binary otherwise runs dsymutil (seen at
+# 51% CPU on the Studio, 2026-09-26 9:47 AM ET) and a debug-info-free binary
+# is smaller for the malware scan that follows every fresh executable.
+GOTEST_LDFLAGS ?=
 test: PKGS := $(CL_PKGS)
 test:
-	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
+	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
 
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)

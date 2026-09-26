@@ -546,6 +546,9 @@ func TestShardsUseTheGoTestCache(t *testing.T) {
 		if !strings.Contains(line, "GOTEST_COUNT_FLAG=") || strings.Contains(line, "GOTEST_COUNT_FLAG=-") {
 			t.Errorf("a shard step runs the suite with the cache off: %s", strings.TrimSpace(line))
 		}
+		if !strings.Contains(line, "GOTEST_LDFLAGS=-ldflags=-w") {
+			t.Errorf("a shard step links test binaries with DWARF (dsymutil per binary on darwin): %s", strings.TrimSpace(line))
+		}
 	}
 	if steps == 0 {
 		t.Fatal("no `make test` shard step in ci.yml")
