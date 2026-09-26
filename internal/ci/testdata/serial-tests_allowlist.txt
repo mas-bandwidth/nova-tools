@@ -948,3 +948,4 @@ internal/nsprint/reconcile/rebalance_test.go:TestFriendDownRebalancesInOneTick s
 internal/nsprint/reconcile/deal_friend_test.go:TestDealReceiptNamesEveryRefusal serial: t.Setenv (through a helper)
 internal/seatcred/seatcred_test.go:TestChildEnvHandsThePasswordToTheChildOnly serial: t.Setenv (through a helper)
 internal/seatcred/seatcred_test.go:TestActiveResolvesOnceAndOnlyWhenSelected serial: t.Setenv (through a helper)
+cmd/nova-sprint/sprint_clear_test.go:TestSprintClearZerosBothTables serial: t.Setenv

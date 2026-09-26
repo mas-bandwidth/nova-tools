@@ -16,8 +16,11 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
+	"github.com/redis/go-redis/v9"
 )
 
 func init() {
@@ -37,13 +40,15 @@ var sprintGate func(ctx context.Context, name string) (bool, string)
 var sprintStoreOpen = store.Open
 
 func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) int {
-	const want = "want open --sprint <S> [--from <work-set.lisp>], close --sprint <S>, fold --sprint <S> or status [--sprint <S>] [--now <unix>] [--redis host:port]"
+	const want = "want open --sprint <S> [--from <work-set.lisp>], close --sprint <S>, fold --sprint <S>, status [--sprint <S>] [--now <unix>] or clear --why <why> [--force] [--checkpoint <file>] [--redis host:port]"
 	if len(args) == 0 {
 		return refuse(errOut, "sprint", want)
 	}
 	sub := args[0]
 	switch sub {
 	case "open", "close", "status", "fold":
+	case "clear":
+		return runSprintClear(ctx, args[1:], out, errOut)
 	default:
 		return refuse(errOut, "sprint", fmt.Sprintf("unknown subverb %s; %s", sub, want))
 	}
@@ -381,4 +386,109 @@ func runSprintOpen(ctx context.Context, st *store.Store, name, from string, plan
 	}
 	fmt.Fprintf(out, "OPEN %s %s\n", name, counts)
 	return 0
+}
+
+// runSprintClear is `nova-sprint sprint clear` (Glenn 2026-09-26 8:40 AM ET,
+// "reset the sprint table. zeros everywhere"; 8:41 AM: "make sprint clearing
+// a verb. It should be simple and fast"): one Redis Function call,
+// ns_sprint_clear, moves every card of every stream to done (landed ->
+// done/ok, the rest done/fail with the why), retires their live copies and
+// deletes every consumer's ok and fail sets, so both tables read zero on the
+// next tick. Cards working or merging are in flight and refuse the clear
+// without --force. --checkpoint <file> writes every ws set's members before
+// anything moves. Prints CLEARED streams=<n> cards=<n> copies=<n>
+// consumers=<n> ms=<n>, then STREAM <name> cards=<n> per stream cleared.
+func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) int {
+	const verb = "sprint clear"
+	fs := taskFlags(verb)
+	redisAddr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	why := fs.String("why", "", "")
+	by := fs.String("by", "", "")
+	force := fs.Bool("force", false, "")
+	checkpoint := fs.String("checkpoint", "", "")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	if fs.NArg() > 0 {
+		return refuse(errOut, verb, "takes flags, not positional arguments")
+	}
+	if strings.TrimSpace(*why) == "" {
+		return refuse(errOut, verb, "needs --why <why>")
+	}
+	who := *by
+	if who == "" {
+		who = os.Getenv(seatEnv)
+	}
+	if who == "" {
+		who = "sprint-clear"
+	}
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	st, err := sprintStoreOpen(ctx, *redisAddr)
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	defer st.Close()
+	if *checkpoint != "" {
+		if err := writeClearCheckpoint(ctx, st.Client(), *checkpoint, start); err != nil {
+			return refuse(errOut, verb, "checkpoint: "+err.Error())
+		}
+	}
+	forceArg := "0"
+	if *force {
+		forceArg = "1"
+	}
+	reply, err := st.Client().FCall(ctx, "ns_sprint_clear", nil, who, *why, forceArg).Slice()
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	words := make([]string, len(reply))
+	for i, v := range reply {
+		words[i] = fmt.Sprint(v)
+	}
+	if len(words) == 0 || words[0] != "CLEARED" {
+		if len(words) >= 2 && words[0] == "REFUSED" {
+			fmt.Fprintf(errOut, "REFUSED %s: %s\n", verb, oneline.Escape(words[1]))
+			return 1
+		}
+		return refuse(errOut, verb, "unexpected reply "+oneline.Escape(strings.Join(words, " ")))
+	}
+	if len(words) < 5 {
+		return refuse(errOut, verb, "short reply "+oneline.Escape(strings.Join(words, " ")))
+	}
+	fmt.Fprintf(out, "CLEARED streams=%s cards=%s copies=%s consumers=%s by=%s ms=%d\n", words[1], words[2], words[3], words[4], who, time.Since(start).Milliseconds())
+	for i := 5; i+1 < len(words); i += 2 {
+		fmt.Fprintf(out, "STREAM %s cards=%s\n", oneline.Escape(words[i]), words[i+1])
+	}
+	return 0
+}
+
+// writeClearCheckpoint records every stream's set members, one line per
+// card (stream, where, id), before a clear moves them.
+func writeClearCheckpoint(ctx context.Context, client redis.UniversalClient, path string, at time.Time) error {
+	streams, err := client.ZRange(ctx, "ws:order", 0, -1).Result()
+	if err != nil {
+		return err
+	}
+	pipe := client.Pipeline()
+	cmds := map[string]*redis.StringSliceCmd{}
+	for _, s := range streams {
+		for _, w := range table.WSStates {
+			cmds[s+"\t"+w] = pipe.ZRange(ctx, "ws:"+s+":"+w, 0, -1)
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "# nova-sprint sprint clear checkpoint at=%s streams=%d\n", at.UTC().Format(time.RFC3339), len(streams))
+	for _, s := range streams {
+		for _, w := range table.WSStates {
+			for _, id := range cmds[s+"\t"+w].Val() {
+				fmt.Fprintf(&b, "%s\t%s\t%s\n", s, w, id)
+			}
+		}
+	}
+	return writeAtomic(path, b.String())
 }

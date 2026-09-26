@@ -1162,7 +1162,7 @@ function TK.edge(id, cur, nxt, ok, o)
   end
   -- a fail's review (a verdict pending) is left by its verdict alone: no
   -- cancel, no hand move (a review waiting for its read may be cancelled)
-  if from == 'review' and to ~= 'review' and not o.verdict and TK.str(o.copy) == '' and TK.pending(id) then
+  if from == 'review' and to ~= 'review' and not o.verdict and not o.clear and TK.str(o.copy) == '' and TK.pending(id) then
     return 'REVIEW task:' .. id .. ' waits for its verdict: nova-sprint review post --verdict recut|redeal|reassign:<consumer>|drop'
   end
   if to == 'review' and from ~= 'review' and not o.review and o.copy == nil then
@@ -3315,6 +3315,81 @@ function TM.cancel(by, why, ids)
   return out
 end
 
+-- TM.sprint_clear(by, why, force): the sprint table to zeros (Glenn
+-- 2026-09-26 8:40 AM ET: "reset the sprint table. zeros everywhere"). Every
+-- primary in every ws:<s>:{waiting,ready,working,review,merging,landed} goes
+-- to done: landed -> done/ok (what table clear did), the rest -> done/fail
+-- with the why; a primary's live copies are retired to fail first; then
+-- every consumer's ok and fail sets are deleted (the copies' records stay).
+-- A ghost (a card or copy id in a ws set) is removed. Cards working or
+-- merging are in flight: refused unless force. One call, one line back:
+-- CLEARED streams cards copies consumers, then per stream its name and
+-- count.
+function TM.sprint_clear(by, why, force)
+  if TK.str(why) == '' then return { 'REFUSED', 'WHY sprint clear needs a why' } end
+  local streams = TM.streams()
+  local inflight = 0
+  for _, s in ipairs(streams) do
+    for _, w in ipairs({ 'working', 'merging' }) do
+      inflight = inflight + redis.call('ZCARD', 'ws:' .. s .. ':' .. w)
+    end
+  end
+  if inflight > 0 and not force then
+    return { 'REFUSED', 'INFLIGHT ' .. inflight .. ' cards working or merging; sprint clear --force cancels them' }
+  end
+  local cards, copies, per = 0, 0, {}
+  for _, s in ipairs(streams) do
+    local n = 0
+    for _, w in ipairs({ 'waiting', 'ready', 'working', 'review', 'merging', 'landed' }) do
+      local key = 'ws:' .. s .. ':' .. w
+      for _, id in ipairs(redis.call('ZRANGE', key, 0, -1)) do
+        local p = (not TK.card_id(id) and not TK.copy_id(id)) and TK.read(id) or nil
+        if not p then
+          redis.call('ZREM', key, id)
+        else
+          if p.copy ~= '' then
+            local r = redis.call('HMGET', 'task:' .. p.copy, 'consumer', 'where', 'stream')
+            if r[1] and TM.LIVE[TK.str(r[2])] and redis.call('ZSCORE', TM.key(r[1], r[2]), p.copy) then
+              TM.retire(p.copy, r[1], r[2], 'fail', 'sprint clear: ' .. why, {}, by, r[3])
+              copies = copies + 1
+            end
+          end
+          if p.reads ~= '' then
+            copies = copies + #TM.words(p.reads)
+            TM.retire_reads(id, 'sprint clear: ' .. why, by)
+          end
+          local ok = w == 'landed' and 'ok' or 'fail'
+          local err = TK.move(id, 'done', { by = by, why = why, ok = ok, copy = '', clear = true })
+          if err then return { 'REFUSED', 'DRIFT-AFTER ' .. err } end
+          n = n + 1
+        end
+      end
+    end
+    cards = cards + n
+    per[#per + 1] = s
+    per[#per + 1] = tostring(n)
+  end
+  local consumers = TM.roster()
+  for _, c in ipairs(consumers) do
+    -- a copy still live on a consumer (its primary gone, or dealt outside
+    -- the streams) is retired; a live set member with no record is removed
+    for _, w in ipairs({ 'ready', 'working' }) do
+      for _, cid in ipairs(redis.call('ZRANGE', TM.key(c, w), 0, -1)) do
+        if TK.copy_id(cid) and redis.call('EXISTS', 'task:' .. cid) == 1 then
+          TM.retire(cid, c, w, 'fail', 'sprint clear: ' .. why, {}, by, TK.str(redis.call('HGET', 'task:' .. cid, 'stream')))
+          copies = copies + 1
+        else
+          redis.call('ZREM', TM.key(c, w), cid)
+        end
+      end
+    end
+    redis.call('DEL', TM.key(c, 'ok'), TM.key(c, 'fail'))
+  end
+  local out = { 'CLEARED', tostring(#streams), tostring(cards), tostring(copies), tostring(#consumers) }
+  for _, v in ipairs(per) do out[#out + 1] = v end
+  return out
+end
+
 -- TM.beat(c, ids): the holder renews its working copies' leases. Named
 -- copies all or nothing. Returns BEAT n lease_until.
 function TM.beat(c, ids)
@@ -3563,6 +3638,12 @@ end)
 -- ns_cm_cancel(by, why, id...) -> CANCELLED n, then per id: id, where.
 redis.register_function('ns_cm_cancel', function(keys, args)
   return TM.cancel(TK.str(args[1]), args[2], TM.ids(args, 3))
+end)
+
+-- ns_sprint_clear(by, why, force) -> CLEARED streams cards copies consumers,
+-- then per stream: name, cards | REFUSED <why>.
+redis.register_function('ns_sprint_clear', function(keys, args)
+  return TM.sprint_clear(TK.str(args[1]), args[2], args[3] == '1')
 end)
 
 -- ns_cm_beat(consumer, id...) -> BEAT n lease_until | REFUSED <why>.

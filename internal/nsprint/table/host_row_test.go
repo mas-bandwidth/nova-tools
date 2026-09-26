@@ -45,9 +45,9 @@ func TestControl2389HostRowFromBenchOwnKeys(t *testing.T) {
 	}
 	got := snap.Render(now)
 	for _, want := range []string{
-		"alpha                     |     2 |       1 |     0 |     0 |     0 |    - | up     | 0.50\n",
-		"beta                      |     1 |       0 |     0 |     0 |     0 |    - | down   | -\n",
-		"total                     |     3 |       1 |     0 |     0 |     0 |    - |\n",
+		"alpha                     |     2 |       1 |   0/0 |    - | up     | 0.50\n",
+		"beta                      |     1 |       0 |   0/0 |    - | down   | -\n",
+		"total                     |     3 |       1 |   0/0 |    - |\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("consumer table wants %q:\n%s", want, got)
@@ -97,8 +97,8 @@ func TestHostRowsFromBenchSets(t *testing.T) {
 	}
 	got := snap.Render(now)
 	for _, want := range []string{
-		"alpha                     |     0 |       1 |     5 |     4 |     1 |  80% | up     | 0.50\n",
-		"total                     |     0 |       1 |     5 |     4 |     1 |  80% |\n",
+		"alpha                     |     0 |       1 |   4/5 |  80% | up     | 0.50\n",
+		"total                     |     0 |       1 |   4/5 |  80% |\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("consumer table wants %q:\n%s", want, got)
@@ -120,7 +120,7 @@ func TestHostRowsFromBenchSets(t *testing.T) {
 	if snap.RoundTrips != 1 {
 		t.Fatalf("steady tick RoundTrips=%d, want 1", snap.RoundTrips)
 	}
-	if got := snap.Render(now); !strings.Contains(got, "alpha                     |     0 |       0 |     6 |     5 |     1 |  83% | up     | 0.50\n") {
+	if got := snap.Render(now); !strings.Contains(got, "alpha                     |     0 |       0 |   5/6 |  83% | up     | 0.50\n") {
 		t.Fatalf("after working -> ok:\n%s", got)
 	}
 
@@ -130,8 +130,8 @@ func TestHostRowsFromBenchSets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := snap.Render(now); !strings.Contains(got, "alpha                     |     0 |       0 |     ? |     5 |     ? |    ? | up     | 0.50\n") ||
-		!strings.Contains(got, "total                     |     0 |       0 |     ? |     5 |     ? |    ? |\n") {
+	if got := snap.Render(now); !strings.Contains(got, "alpha                     |     0 |       0 |     ? |    ? | up     | 0.50\n") ||
+		!strings.Contains(got, "total                     |     0 |       0 |     ? |    ? |\n") {
 		t.Fatalf("unread fail set:\n%s", got)
 	}
 }
