@@ -16,8 +16,6 @@ import (
 	"errors"
 	"testing"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 // TestRouteIsOneProcess is #3036 (#2756 section 11 row 2): the ok-to-friend,
