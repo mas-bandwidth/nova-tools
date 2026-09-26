@@ -609,8 +609,11 @@ func (s CopySession) FailureLines(bench string) []string {
 		if f.GaveBack {
 			outcome = "given back (primary to " + f.To + ")"
 		}
-		lines = append(lines, fmt.Sprintf("SESSION bench:%s copy=%s launch FAILED: %s; %s; next: fix the wrapper (--wrapper, or nova-card beside nova-sprint) and the next beat or `card session --as bench:%s` retakes the copy",
-			bench, f.Copy, oneline.Escape(f.Why), outcome, bench))
+		// The give-back cancels the copy and puts the primary back in
+		// waiting; nothing retakes it until a deal cuts a new copy, so the
+		// next action is the deal, naming the primary.
+		lines = append(lines, fmt.Sprintf("SESSION bench:%s copy=%s launch FAILED: %s; %s; next: fix the wrapper (--wrapper, or nova-card beside nova-sprint), then deal the primary again: nova-sprint card deal --to bench:%s --ids %s --actor bench:%s; the next beat or `card session --as bench:%s` then takes the new copy",
+			bench, f.Copy, oneline.Escape(f.Why), outcome, bench, taskcard.PrimaryOf(f.Copy), bench, bench))
 	}
 	return lines
 }

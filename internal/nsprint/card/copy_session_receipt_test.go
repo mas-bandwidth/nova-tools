@@ -22,7 +22,7 @@ func TestCopySessionFailureLinesNameCopyCauseOutcomeAndNext(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("lines %q", lines)
 	}
-	for _, want := range []string{"SESSION bench:b copy=p~1 launch FAILED: card launch: wrapper /x/nova-card MISSING; given back (primary to waiting); next: fix the wrapper"} {
+	for _, want := range []string{"SESSION bench:b copy=p~1 launch FAILED: card launch: wrapper /x/nova-card MISSING; given back (primary to waiting); next: fix the wrapper", "then deal the primary again: nova-sprint card deal --to bench:b --ids p --actor bench:b; the next beat or `card session --as bench:b` then takes the new copy"} {
 		if !strings.Contains(lines[0], want) {
 			t.Fatalf("line %q lacks %q", lines[0], want)
 		}
