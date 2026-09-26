@@ -55,6 +55,7 @@ func TestReader4414ClaimBeforeReopenQueue(t *testing.T) {
 	sdQueue(t, st, "B", stop)
 	sdQueue(t, st, "C", stop)
 	sdLand(t, c, "A1")
+	sdAccept(t, c, "alpha")
 	claimB, ok, err := task.Take(ctx, st, task.TakeRequest{Sprint: sdSprint, ID: "B", As: "f1"})
 	if err != nil || !ok {
 		t.Fatalf("take B while landed: %v %v", ok, err)
@@ -88,6 +89,7 @@ func TestReader4414ClaimBeforeReopenQueue(t *testing.T) {
 		t.Fatalf("CLI BLOCKED line not byte-identical to ready --why")
 	}
 	sdLand(t, c, "A2")
+	sdAccept(t, c, "alpha")
 	if _, ok, err := task.Take(ctx, st, task.TakeRequest{Sprint: sdSprint, ID: "C", As: "f1"}); err != nil || !ok {
 		t.Fatalf("take C after reland: %v %v", ok, err)
 	}
@@ -108,6 +110,7 @@ func TestReader4414ClaimBeforeReopenCards(t *testing.T) {
 		}
 	}
 	sdLand(t, c, "A1")
+	sdAccept(t, c, "alpha")
 	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test"})
 	if err != nil {
 		t.Fatal(err)
@@ -159,6 +162,7 @@ func TestReader4414SprintCardSentinelEdge(t *testing.T) {
 	sdSprintCard(t, c, "Q", "alpha:sentinel")
 	t.Logf("gate before land: %q", sdGate(t, c)["Q"])
 	sdLand(t, c, "A1")
+	sdAccept(t, c, "alpha")
 	t.Logf("gate after land: %q", sdGate(t, c)["Q"])
 	if err := sdCard(t, c, "A2", "alpha", ""); err != nil {
 		t.Fatal(err)

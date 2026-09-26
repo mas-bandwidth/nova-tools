@@ -42,6 +42,7 @@ func TestReopenedCopyDoesNotStarveItsPrerequisite_Stella(t *testing.T) {
 				t.Fatal(err)
 			}
 			sdLand(t, c, "A1")
+			sdAccept(t, c, "alpha")
 			lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test"})
 			if err != nil {
 				t.Fatal(err)

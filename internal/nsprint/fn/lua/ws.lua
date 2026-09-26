@@ -305,7 +305,10 @@ local function ws_rename(keys, args)
   if landed_sha and landed_sha ~= '' then
     local nsid = NS.task.sentinel_id(new)
     if redis.call('EXISTS', 'task:' .. nsid) == 1 then
-      local err = NS.task.move(nsid, 'landed', { by = by, sha = landed_sha, why = 'rename: landed as ' .. old })
+      -- the old name's landing was the coordinator's acceptance; the rename
+      -- carries it (o.rename), it is not a second acceptance
+      local err = NS.task.move(nsid, 'landed', { by = by, sha = landed_sha, why = 'rename: landed as ' .. old,
+        rename = true })
       if err then
         return { 'REFUSED', err }
       end

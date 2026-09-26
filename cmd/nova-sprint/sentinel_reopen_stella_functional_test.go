@@ -37,6 +37,7 @@ func TestReopenedSentinelBlocksQueueClaim_Stella(t *testing.T) {
 				t.Fatalf("push B: %+v", r)
 			}
 			sdLand(t, c, "A1")
+			sdAccept(t, c, "alpha")
 			if w := sdField(t, c, stop, "where"); w != "landed" {
 				t.Fatalf("stop after first landing: %s", w)
 			}
@@ -87,6 +88,7 @@ func TestReopenedSentinelBlocksUnifiedCopies_Stella(t *testing.T) {
 					t.Fatal(err)
 				}
 				sdLand(t, c, "A1")
+				sdAccept(t, c, "alpha")
 				lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test"})
 				if err != nil {
 					t.Fatal(err)

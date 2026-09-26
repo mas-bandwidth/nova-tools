@@ -93,6 +93,23 @@ func sdLand(t *testing.T, c *redis.Client, id string) {
 	}
 }
 
+// sdAccept is the coordinator's acceptance of stream (nova-tools#4412): its
+// sentinel lands (task land --id <slug>:sentinel --sha <sha>) by an actor
+// holding the coordinator role (friend:<f>:roles), never by the last card's
+// landing. Every test that means a stream complete calls it after the last
+// card's sdLand; TestSentinelDepReleasedWhenStopLands asserts the landing
+// alone leaves the sentinel and its dependents waiting.
+func sdAccept(t *testing.T, c *redis.Client, stream string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := c.HSet(ctx, "friend:rowan:roles", "roles", "coordinator").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Land(ctx, c, ws.SentinelID(stream), "rowan", sdSHA, "accepted"); err != nil {
+		t.Fatalf("accept %s: %v", stream, err)
+	}
+}
+
 // sdWhy is `ready --why <id>` (readyReport, the verb's body) on the
 // throwaway store with a map forge (no entry here is a PR): its one line and
 // exit code.
@@ -114,8 +131,9 @@ func sdField(t *testing.T, c *redis.Client, id, f string) string {
 // TestSentinelDepReleasedWhenStopLands is the card's DONE-WHEN: a queue task
 // B and a stream card C with DEPENDS-ON alpha:sentinel wait while alpha's
 // stop waits, ready --why names the sentinel, the dealer refuses C naming
-// it; alpha's last card lands, its stop lands by structure, B is released
-// in that same call and C by the resolver's pass. Probe 2 rides along: a
+// it; alpha's last card lands and nothing is released; the coordinator
+// accepts alpha (its stop lands), B is released in that same call and C by
+// the resolver's pass. Probe 2 rides along: a
 // landed card and a closed task meet an edge, a card done/fail does not;
 // and probe 1: a sentinel set done by hand (not landed) meets nothing.
 func TestSentinelDepReleasedWhenStopLands(t *testing.T) {
@@ -184,9 +202,22 @@ func TestSentinelDepReleasedWhenStopLands(t *testing.T) {
 		t.Fatalf("E after T closed: %q, want open", s)
 	}
 
-	// alpha's last card lands: its stop lands at the same sha, and B and D
-	// are released in that call.
+	// alpha's last card lands: D (on task:A1, a card edge) is released in
+	// that call; the stop stays waiting and so does B (no landing by
+	// structure, nova-tools#4412). The coordinator's acceptance lands the
+	// stop at the sha, and B is released in that call.
 	sdLand(t, c, "A1")
+	if w := sdField(t, c, stop, "where"); w != "waiting" {
+		t.Fatalf("alpha's stop after A1 landed alone: %q, want waiting", w)
+	}
+	if s, w := sdField(t, c, "B", "state"), sdField(t, c, "B", "waits_on"); s != "waiting" || w != "task:"+stop {
+		t.Fatalf("B after A1 landed alone: state %q waits_on %q, want waiting on task:%s", s, w, stop)
+	}
+	if s := sdField(t, c, "D", "state"); s != "open" {
+		t.Fatalf("D after A1 landed: %q, want open (task:A1 is a card edge)", s)
+	}
+	t.Logf("A1 landed alone: stop %s, B waits_on %s, D %s", sdField(t, c, stop, "where"), sdField(t, c, "B", "waits_on"), sdField(t, c, "D", "state"))
+	sdAccept(t, c, "alpha")
 	if w := sdField(t, c, stop, "where"); w != "landed" {
 		t.Fatalf("alpha's stop after A1 landed: %q", w)
 	}
@@ -368,6 +399,7 @@ func TestSentinelDepRaceReleasesOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 		sdLand(t, c, first)
+		sdAccept(t, c, a)
 		if err := lease.Renew(ctx); err != nil {
 			t.Fatal(err)
 		}

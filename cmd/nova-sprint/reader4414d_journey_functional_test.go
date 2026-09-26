@@ -46,6 +46,7 @@ func TestReader4414dJourney(t *testing.T) {
 	sdQueue(t, st, "B", "alpha:sentinel")
 	sdSprintCard(t, c, "Q", "alpha:sentinel") // the bare sentinel form on a sprint card
 	sdLand(t, c, "A1")
+	sdAccept(t, c, "alpha")
 	if _, _, err := sdResolve(c, lease); err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +100,7 @@ func TestReader4414dJourney(t *testing.T) {
 	}
 	// reland: A2 lands, the sentinel with it; all four proceed
 	sdLand(t, c, "A2")
+	sdAccept(t, c, "alpha")
 	if _, _, err := sdResolve(c, lease); err != nil {
 		t.Fatal(err)
 	}

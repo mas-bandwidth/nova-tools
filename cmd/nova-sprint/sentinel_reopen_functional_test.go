@@ -42,6 +42,7 @@ func TestReopenedEdgeStaysWaitingUntilReland(t *testing.T) {
 		t.Fatalf("push B: %+v", r)
 	}
 	sdLand(t, c, "A1")
+	sdAccept(t, c, "alpha")
 	if got := sdField(t, c, "B", "waits_on"); got != "task:T" {
 		t.Fatalf("B waits_on after alpha landed: %q, want task:T", got)
 	}
@@ -69,6 +70,7 @@ func TestReopenedEdgeStaysWaitingUntilReland(t *testing.T) {
 		t.Fatalf("ready --why B: exit %d %q", code, why)
 	}
 	sdLand(t, c, "A2")
+	sdAccept(t, c, "alpha")
 	if w := sdField(t, c, stop, "where"); w != "landed" {
 		t.Fatalf("stop after A2 landed: %s", w)
 	}
@@ -95,6 +97,7 @@ func TestReopenedSentinelTakePrintsReaderLine(t *testing.T) {
 		t.Fatalf("push B: %+v", r)
 	}
 	sdLand(t, c, "A1")
+	sdAccept(t, c, "alpha")
 	if err := sdCard(t, c, "A2", "alpha", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -149,6 +152,7 @@ func TestReopenRaceClaimNeverSeesUnmetEdge(t *testing.T) {
 			}
 		}
 		sdLand(t, c, stream+"-A1")
+		sdAccept(t, c, stream)
 		for _, r := range rows {
 			if s := sdField(t, c, r, "state"); s != "open" {
 				t.Fatalf("%s not released: %s", r, s)
@@ -234,6 +238,7 @@ func TestReopenRaceClaimNeverSeesUnmetEdge(t *testing.T) {
 				t.Fatalf("trial %d push B: %+v", i, r)
 			}
 			sdLand(t, c, a1)
+			sdAccept(t, c, stream)
 			var wg sync.WaitGroup
 			var ok bool
 			var takeErr, pushErr error
@@ -306,6 +311,7 @@ func TestSprintCardDealRefusesReopenedSentinel(t *testing.T) {
 	sdSprintCard(t, c, "Q", "task:alpha:sentinel")
 	sdSprintCard(t, c, "L", "Q9")
 	sdLand(t, c, "A1")
+	sdAccept(t, c, "alpha")
 	if err := sdCard(t, c, "A2", "alpha", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -325,6 +331,7 @@ func TestSprintCardDealRefusesReopenedSentinel(t *testing.T) {
 		t.Fatalf("Q after the refused deal: %s, want queued", s)
 	}
 	sdLand(t, c, "A2")
+	sdAccept(t, c, "alpha")
 	res, err = fns.Reserve(ctx, fence, bench, []deal.Card{{Sprint: sdSprint, Label: "Q"}})
 	if err != nil || len(res) != 1 {
 		t.Fatalf("ns_card_deal with alpha landed again: %+v %v", res, err)
@@ -354,6 +361,7 @@ func TestReopenedSentinelEveryDoorPrintsReaderLine(t *testing.T) {
 	}
 	sdQueue(t, st, "B", "alpha:sentinel")
 	sdLand(t, c, "A1")
+	sdAccept(t, c, "alpha")
 	if _, _, err := sdResolve(c, sdLease(t, st)); err != nil {
 		t.Fatal(err)
 	}
@@ -427,6 +435,7 @@ func TestDealPassNamesTheHeldCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	sdLand(t, c, "A1")
+	sdAccept(t, c, "alpha")
 	if _, _, err := sdResolve(c, sdLease(t, st)); err != nil {
 		t.Fatal(err)
 	}
