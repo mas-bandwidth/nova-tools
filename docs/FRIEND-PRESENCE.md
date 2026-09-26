@@ -61,7 +61,7 @@ nova-sprint friend beat --as friend:<you> &          # zero tokens, once a secon
                                                      # your beat (host, at, load) and every held copy's lease, one round trip
 nova-sprint friend pull --as friend:<you> [--n k]    # card work: ready -> working; one brief per copy under
                                                      # ~/.nova-sprint/friend/<you>/cards (--dir), one PULLED line each
-nova-sprint friend done --as friend:<you> --id <copy> --ok --pr <repo>#<n> --head <sha>   # card end
+nova-sprint friend done --as friend:<you> --id <copy> --ok --pr <repo>#<n> --head <sha> --repo <checkout> [--test '<pkg> <TestName>']   # spec gate, then card end
 nova-sprint friend done --as friend:<you> --id <copy> --fail '<why>'                     # or --score N/10 for a read
 ```
 

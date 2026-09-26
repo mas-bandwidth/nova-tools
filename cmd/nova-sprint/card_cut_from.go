@@ -131,7 +131,7 @@ type cutFromDeps struct {
 type cutRow struct {
 	n, line                                   int
 	title, stream, who, paths, doneWhen, body string
-	route, est, id                            string
+	route, est, id, test                      string
 	deps                                      []string // entries as written, none dropped
 	depRow                                    []int    // per entry: the row its id names, 0 outside the file
 	rowDeps                                   []int    // the rows this row depends on
@@ -153,9 +153,10 @@ var (
 )
 
 // cutHeader reads a header row: every cell a column name (done_when and
-// DONE-WHEN spell done-when), title among them. ok is false for a card row.
+// DONE-WHEN spell done-when), title among them; id and test are header-only
+// columns. ok is false for a card row.
 func cutHeader(cells []string) (cols []string, ok bool, err error) {
-	known := map[string]bool{"id": true}
+	known := map[string]bool{"id": true, "test": true}
 	for _, c := range cutColumns {
 		known[c] = true
 	}
@@ -241,7 +242,7 @@ func parseCutRows(text []byte) ([]*cutRow, error) {
 			}
 		}
 		r.title, r.stream, r.who, r.paths = get["title"], get["stream"], get["who"], get["paths"]
-		r.doneWhen, r.body, r.route, r.est, r.id = get["done-when"], get["body"], strings.ToLower(get["route"]), get["est"], get["id"]
+		r.doneWhen, r.body, r.route, r.est, r.id, r.test = get["done-when"], get["body"], strings.ToLower(get["route"]), get["est"], get["id"], get["test"]
 		r.deps = strings.FieldsFunc(get["depends-on"], func(c rune) bool {
 			return c == ',' || c == ';' || c == ' ' || c == '\t' || c == '\n'
 		})
@@ -333,7 +334,7 @@ func checkCutRow(r *cutRow, byID, slugs map[string]int, o cutFromOpts) {
 		if r.why == "" && r.route != taskcard.RouteFriend {
 			s := cutSpec(r, o, "")
 			if missing := s.Complete("", ""); len(missing) > 0 {
-				fail("the stitch (route " + r.route + ") lacks " + strings.Join(missing, ", ") + "; pass --base-sha, or --stitch-route friend")
+				fail("the stitch (route " + r.route + ") lacks " + strings.Join(missing, ", ") + "; the stitch carries the plan's TEST: give the plan one, pass --base-sha, or --stitch-route friend")
 			}
 		}
 		return
@@ -469,6 +470,9 @@ func cutIssueText(r *cutRow, rows []*cutRow, o cutFromOpts) string {
 	if r.route != taskcard.RouteFriend {
 		fmt.Fprintf(&b, "base-sha: %s\n", o.BaseSHA)
 	}
+	if r.test != "" {
+		fmt.Fprintf(&b, "TEST: %s\n", strings.ReplaceAll(r.test, "\n", " "))
+	}
 	if o.Parent != "" {
 		phase := taskcard.PhaseChild
 		if r.stitch {
@@ -490,7 +494,7 @@ func cutSpec(r *cutRow, o cutFromOpts, text string) taskcard.Spec {
 	if text != "" {
 		s = taskcard.ParseIssue(text)
 	} else {
-		s = taskcard.Spec{Route: r.route, Who: r.who, Paths: r.paths, DoneWhen: r.doneWhen, Est: r.est, Task: r.title}
+		s = taskcard.Spec{Route: r.route, Who: r.who, Paths: r.paths, DoneWhen: r.doneWhen, Est: r.est, Task: r.title, Test: r.test}
 	}
 	if r.stitch {
 		s.Kind = taskcard.KindStitch
@@ -608,6 +612,9 @@ func planRows(ctx context.Context, o *cutFromOpts, d cutFromDeps, rows []*cutRow
 	st := &cutRow{n: len(rows) + 1, stitch: true, id: stitch, title: "stitch: " + cutOneLine(rec["title"]),
 		stream: o.Stream, who: "any", route: strings.ToLower(o.StitchRoute), est: o.StitchEst,
 		paths: strings.Join(paths, " "), doneWhen: doneWhen, body: b.String(),
+		// the stitch is held to the plan's own TEST (#4313): the class test
+		// the plan's DONE-WHEN is proved by, once the children have landed
+		test:   strings.TrimSpace(rec["test"]),
 		fields: []string{taskcard.FieldParent, o.Parent, taskcard.FieldPhase, taskcard.PhaseStitch}}
 	if st.paths == "" {
 		st.paths = strings.TrimSpace(rec["paths"])

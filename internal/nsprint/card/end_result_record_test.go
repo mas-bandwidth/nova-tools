@@ -24,7 +24,10 @@ import (
 // result_line1, result_line2, check, red, paths, result_paths, branch,
 // commit_sha, wall_ms, model and provider, and its label is queued on
 // s:<S>:done-already for the reconciler; a DONE card with a commit ends
-// done/ok with commit_sha the pushed commit, and is not queued.
+// done/ok with commit_sha the pushed commit, and is not queued. A sprint
+// card is held to the spec gate (#4401 fix round, item 3): a DONE card whose
+// diff carries no test file for its TEST ends FAILED tests-red, the gate's
+// word leading its why, through the real ns_card_end.
 func TestCardEndStoresResultOnRecord(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
@@ -38,10 +41,13 @@ func TestCardEndStoresResultOnRecord(t *testing.T) {
 	}
 	const landed = "d20d73c4aa55"
 	for _, tc := range []struct {
-		name, mode string
+		name, mode, test string
 	}{
-		{"done-already", "native-done-already"},
-		{"done-with-commit", "native-two"},
+		{"done-already", "native-done-already", ". TestPass"},
+		// the fake's fix is one text file: TEST: none says why, and the
+		// gate is CI's answer
+		{"done-with-commit", "native-two", "none the fake native's fix is one text file"},
+		{"gate-red", "native-two", ". TestPass"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -53,7 +59,7 @@ func TestCardEndStoresResultOnRecord(t *testing.T) {
 			key := card.CardKey(id.Sprint, id.Label)
 			if err := client.HSet(ctx, key, map[string]string{
 				"kind": typedrec.KindFix, "repo": "mas-bandwidth/nova-tools", "base": "dev", "base_sha": base,
-				"test": ". TestPass", "paths": "base.txt", "origin": "mas-bandwidth/nova-tools#3804",
+				"test": tc.test, "paths": "base.txt", "origin": "mas-bandwidth/nova-tools#3804",
 			}).Err(); err != nil {
 				t.Fatal(err)
 			}
@@ -67,8 +73,19 @@ func TestCardEndStoresResultOnRecord(t *testing.T) {
 			t.Setenv(fakeSlotEnv, filepath.Join(t.TempDir(), "slot"))
 			t.Setenv(fakeDoneAlreadyEnv, landed)
 			h := newHarnessRun(t, id, self)
+			h.cfg.Run = (&gateFake{ci: gateAnswer{exit: 0, out: "nova-ci local: packages=0 seconds=0 red=0 make-exit=0\n"}}).run
 			rep := card.RunWrapper(ctx, h.cfg, &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token})
 			hs := hashOf(t, ctx, client, id.Sprint, id.Label)
+			if tc.name == "gate-red" {
+				if rep.Code != card.WrapperExitEnded || rep.Outcome != "FAILED" || rep.Reason != card.GateSprintReason {
+					t.Fatalf("report %s why=%q; want ENDED FAILED %s", rep.Line(), rep.Why, card.GateSprintReason)
+				}
+				if hs["state"] != "ended" || hs["outcome"] != "FAILED" || hs["reason"] != card.GateSprintReason || !strings.HasPrefix(hs["why"], "gate="+card.GateNoTest+": the diff adds or changes no test file") {
+					t.Fatalf("record state=%q outcome=%q reason=%q why=%q; want ended FAILED %s with the gate's word", hs["state"], hs["outcome"], hs["reason"], hs["why"], card.GateSprintReason)
+				}
+				h.assertNoJobDir()
+				return
+			}
 			line1 := "RESULT: " + id.Sprint + "/" + id.Label + "/1 sha=000000000000"
 			want := map[string]string{
 				"state": "ended", "where": "done", "result_line1": line1, "red": "not-run",
@@ -100,15 +117,12 @@ func TestCardEndStoresResultOnRecord(t *testing.T) {
 				}
 				for k, v := range map[string]string{
 					"outcome": "DONE", "reason": "done", "where_ok": "ok",
-					"result_line2": "DONE", "check": "pass", "result_paths": "base.txt",
+					"result_line2": "DONE", "check": "not-run", "result_paths": "base.txt",
 				} {
 					want[k] = v
 				}
 				if len(hs["pushed_sha"]) != 40 || hs["commit_sha"] != hs["pushed_sha"] {
 					t.Errorf("commit_sha %q pushed_sha %q, want the 40-hex commit on both", hs["commit_sha"], hs["pushed_sha"])
-				}
-				if !strings.Contains(hs["green"], "go test . -run ^TestPass$ -count=1: pass") {
-					t.Errorf("green %q, want the wrapper's passing run", hs["green"])
 				}
 				if queued {
 					t.Errorf("a DONE card was queued for the done-already leg")

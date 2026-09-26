@@ -1,6 +1,10 @@
 package card
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+)
 
 // TestCutDependsVocabulary: an issue's DEPENDS-ON becomes the card
 // vocabulary (#3623): #n and name#n are owner/name#n, a (WHY: ...) is the
@@ -41,5 +45,41 @@ func TestIssueFieldsFirstLineWins(t *testing.T) {
 	}
 	if _, ok := f["PATHS"]; ok {
 		t.Error("PATHS read from an issue that has none")
+	}
+}
+
+type cutIssues map[int]Issue
+
+func (c cutIssues) Issue(_ context.Context, _ string, n int) (Issue, error) { return c[n], nil }
+func (c cutIssues) BranchSHA(context.Context, string, string) (string, error) {
+	return strings.Repeat("ab", 20), nil
+}
+
+// TestRenderCutRefusesADoneWhenNoTestCanFail (#4313): a card whose DONE-WHEN
+// names no `go test <pkg> -run <TestName>`, with no TEST line or a bare TEST:
+// none, is refused at cut with the remedy, before any write; a DONE-WHEN with
+// the test, a TEST line, or TEST: none <why> is cut with its TEST line.
+func TestRenderCutRefusesADoneWhenNoTestCanFail(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	head := "STREAM: s\nPATHS: docs/CLI.md\nDEPENDS-ON: none\nBASE: dev\n"
+	src := cutIssues{
+		1: {Title: "no test", Body: head + "DONE-WHEN: the page reads right\n"},
+		2: {Title: "bare none", Body: head + "DONE-WHEN: the page reads right\nTEST: none\n"},
+		3: {Title: "from done-when", Body: head + "DONE-WHEN: `go test ./internal/x -run TestY` passes\n"},
+		4: {Title: "test line", Body: head + "TEST: ./internal/x TestY\nDONE-WHEN: the page reads right\n"},
+		5: {Title: "none with why", Body: head + "TEST: none one docs page; the reader checks it\nDONE-WHEN: the page reads right\n"},
+	}
+	for n, want := range map[int]string{1: "no TEST line", 2: "TEST: none says no why"} {
+		_, err := RenderCut(ctx, src, CutInput{Sprint: "s", Repo: "acme/repo", Issue: n})
+		if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "TEST: none <why") || strings.ContainsAny(err.Error(), "\n") {
+			t.Errorf("issue %d: err %v, want one line with %q and the remedy", n, err, want)
+		}
+	}
+	for n, want := range map[int]string{3: "TEST: ./internal/x TestY\n", 4: "TEST: ./internal/x TestY\n", 5: "TEST: none one docs page; the reader checks it\n"} {
+		c, err := RenderCut(ctx, src, CutInput{Sprint: "s", Repo: "acme/repo", Issue: n})
+		if err != nil || !strings.Contains(string(c.Body), "\n"+want) {
+			t.Errorf("issue %d: err %v body:\n%s\nwant %q", n, err, c.Body, want)
+		}
 	}
 }

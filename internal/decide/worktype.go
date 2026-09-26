@@ -36,6 +36,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -197,10 +198,13 @@ func readCardHeader(card string) cardHeader {
 
 func (h cardHeader) kind() string { return strings.ToLower(h.fields["KIND"]) }
 
-// testNone is TEST: none or no TEST line at all: the card demands no test.
+// testNone is TEST: none (bare, or `none <why>` as cardhdr.ParseTest, the
+// one TEST grammar, reads it; nova-tools#4401 read, item 3) or no TEST line
+// at all: the card demands no test.
 func (h cardHeader) testNone() bool {
 	v, ok := h.fields["TEST"]
-	return !ok || strings.EqualFold(strings.TrimSpace(v), "none") || strings.TrimSpace(v) == ""
+	tl, _ := cardhdr.ParseTest(v)
+	return !ok || tl.None || strings.EqualFold(strings.TrimSpace(v), "none") || strings.TrimSpace(v) == ""
 }
 
 // oneTestPath is PATHS naming exactly one path, and that path a test.

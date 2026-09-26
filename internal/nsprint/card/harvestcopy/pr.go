@@ -87,7 +87,7 @@ func prTitle(req Request) string {
 }
 
 // PRBody is the PR's body: the typed lines the lander and the readers read
-// (STREAM, ORIGIN, DONE-WHEN) and the Claude Code line last.
+// (STREAM, ORIGIN, DONE-WHEN, TEST) and the Claude Code line last.
 func PRBody(req Request) string {
 	var b strings.Builder
 	line := func(k, v string) {
@@ -98,6 +98,7 @@ func PRBody(req Request) string {
 	line("STREAM", req.Stream)
 	line("ORIGIN", req.Origin)
 	line("DONE-WHEN", req.DoneWhen)
+	line("TEST", req.Test)
 	b.WriteString("\n" + ClaudeLine + "\n")
 	return b.String()
 }

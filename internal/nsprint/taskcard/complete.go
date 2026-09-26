@@ -122,7 +122,6 @@ func ParseIssue(text string) Spec {
 var (
 	shaRE     = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	refRE     = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*)#[1-9][0-9]*$`)
-	goTestRE  = regexp.MustCompile("go test (?:-[a-z]+(?:=\\S+)? )*(\\./\\S+)\\s+(?:-[a-z]+(?:=\\S+)? )*-run[ =]'?\\^?(Test[A-Za-z0-9_]*)")
 	onelineRE = regexp.MustCompile(`\s+`)
 )
 
@@ -144,11 +143,9 @@ func (s *Spec) Complete(ref, origin string) []string {
 			s.Repo = m[1]
 		}
 	}
-	if s.Test == "" {
-		s.Test = "none"
-		if m := goTestRE.FindStringSubmatch(s.DoneWhen); m != nil {
-			s.Test = m[1] + " " + m[2]
-		}
+	derived := s.Test == ""
+	if derived {
+		s.Test = TestFromDoneWhen(s.DoneWhen)
 	}
 	def := func(p *string, v string) {
 		if *p == "" {
@@ -185,7 +182,115 @@ func (s *Spec) Complete(ref, origin string) []string {
 	if _, err := ResultKind(s.Kind); err != nil {
 		missing = append(missing, "KIND")
 	}
+	// The card is a spec (#4313): a swarm card names the test that proves
+	// it, or says why it has none, and the wrapper holds it to that. A card
+	// with no TEST line whose DONE-WHEN names no test is told so, not that
+	// its (derived) none says no why.
+	test := s.Test
+	if derived && test == "none" {
+		test = ""
+	}
+	if _, why := cardhdr.ParseTest(test); why != "" {
+		missing = append(missing, "TEST ("+why+")")
+	}
 	return missing
+}
+
+// TestFromDoneWhen is the TEST line a DONE-WHEN implies: `[-tags <tags>]
+// <package> <TestName>` from the first `go test ... <./pkg> ... -run
+// <TestName>` in the sentence, else none (with no why: the card must say
+// it, cardhdr.ParseTest). The command is read as go test reads it: a flag
+// that takes a value takes the next word (`-p 2`, `-tags functional`,
+// `-timeout 30s`) or its own `=value`, so a value is never read as the
+// package, and -tags travels to the TEST line.
+func TestFromDoneWhen(doneWhen string) string {
+	words := strings.Fields(doneWhen)
+	for i := 0; i+1 < len(words); i++ {
+		if trimWord(words[i]) != "go" || trimWord(words[i+1]) != "test" {
+			continue
+		}
+		if t := goTestLine(words[i+2:]); t != "" {
+			return t
+		}
+	}
+	return "none"
+}
+
+// goTestValueFlags are go test's (and go build's) flags that take a value.
+var goTestValueFlags = map[string]bool{
+	"p": true, "tags": true, "run": true, "skip": true, "timeout": true, "count": true, "parallel": true,
+	"cpu": true, "bench": true, "benchtime": true, "list": true, "shuffle": true, "fuzz": true, "fuzztime": true,
+	"fuzzminimizetime": true, "coverprofile": true, "coverpkg": true, "covermode": true, "o": true, "exec": true,
+	"ldflags": true, "gcflags": true, "asmflags": true, "gccgoflags": true, "mod": true, "modfile": true,
+	"vet": true, "C": true, "outputdir": true, "cpuprofile": true, "memprofile": true, "memprofilerate": true,
+	"blockprofile": true, "blockprofilerate": true, "mutexprofile": true, "mutexprofilefraction": true,
+	"trace": true, "overlay": true, "pgo": true, "pkgdir": true, "toolexec": true, "installsuffix": true,
+	"compiler": true, "buildvcs": true,
+}
+
+// goTestLine reads the words after `go test` up to the command's end (a
+// word that closes a backtick or ends in ; | &): the first
+// ./-relative package, -run's test name and -tags.
+func goTestLine(words []string) string {
+	var pkg, name, tags string
+	for i := 0; i < len(words); i++ {
+		w := words[i]
+		last := endsCommand(w)
+		w = trimWord(w)
+		if strings.HasPrefix(w, "-") {
+			flag, raw, hasVal := strings.Cut(strings.TrimLeft(strings.Trim(words[i], "`"), "-"), "=")
+			if !hasVal && goTestValueFlags[flag] && !last && i+1 < len(words) {
+				i++
+				last = endsCommand(words[i])
+				raw = words[i]
+			}
+			if openQuote(strings.Trim(raw, "`;|&")) {
+				return "" // a quoted value of more than one word is not a TEST line
+			}
+			val := trimWord(raw)
+			switch flag {
+			case "run":
+				name = strings.TrimSuffix(strings.TrimPrefix(strings.TrimRight(val, "."), "^"), "$")
+			case "tags":
+				tags = val
+			}
+		} else if pkg == "" && (strings.HasPrefix(w, "./") || w == ".") {
+			pkg = w
+		}
+		if last {
+			break
+		}
+	}
+	if pkg == "" || name == "" {
+		return ""
+	}
+	line := pkg + " " + name
+	if tags != "" {
+		line = "-tags " + tags + " " + line
+	}
+	if _, why := cardhdr.ParseTest(line); why != "" {
+		return ""
+	}
+	return line
+}
+
+// openQuote is a word that opens a quote it does not close.
+func openQuote(w string) bool {
+	if w == "" || (w[0] != '\'' && w[0] != '"') {
+		return false
+	}
+	return len(w) == 1 || w[len(w)-1] != w[0]
+}
+
+// endsCommand is a word that closes the command: a closing backtick or a
+// shell separator.
+func endsCommand(w string) bool {
+	return strings.HasSuffix(w, "`") || strings.HasSuffix(w, ";") || strings.HasSuffix(w, "|") || strings.HasSuffix(w, "&")
+}
+
+// trimWord drops the quoting a sentence puts around a command's words.
+func trimWord(w string) string {
+	return strings.Trim(w, "`'\";|&,()")
 }
 
 // fields are the record's HSET pairs for the spec (never a pointer field).
@@ -250,9 +355,12 @@ func dash(v string) string {
 const (
 	LineNoSubagents = "work in this session only; do not spawn an Explore, Task or child agent."
 	LineWall        = "read and write only inside the job dir; the repo clone is under it; never read $HOME or ~/rowan-working outside the job dir (the job dir itself sits under ~/rowan-working/tmp, so never walk above it); a read outside is refused by the wall and ends the card."
-	LineTests       = "every new Go test opens with t.Parallel(); no time.Sleep, no real-time poll, no real deadline (inject the clock); no service, process or socket in a unit test (mock the seam; a test that needs the real thing goes behind //go:build slow); keep the package's tests under one minute. Before you commit, run `nova-ci local` in repo/ (`go run ./cmd/nova-ci local` in a nova-tools clone): exactly the unit tier CI runs for your diff, at -p 2 with the budgets; outside nova-tools test only the packages you touched (nice -n 15 go test -p 2 -count=1 <packages>); never test the whole tree. Every CI job is capped at two minutes: a red at the cap is your defect to fix, never a number to raise."
-	LineUnattended  = "never ask a question and never offer to proceed; decide, and record the decision in RESULT.md."
-	LineOutput      = "RESULT.md, notes and scratch go in the job directory, outside repo/, and are never committed; the harness moves them to the results root at card end and deletes the job directory."
+	LineTests       = "the card is a spec: your diff adds or changes at least one test, the one TEST names, that fails at base-sha and passes at your head (a card with TEST: none <why> is excused from that, not from CI). Every new Go test opens with t.Parallel(); no time.Sleep, no real-time poll, no real deadline (inject the clock); no service, process or socket in a unit test (mock the seam; a test that needs the real thing goes behind //go:build slow); keep the package's tests under one minute. Before you commit, run `nova-ci local` in repo/ (`go run ./cmd/nova-ci local` in a nova-tools clone): exactly the unit tier CI runs for your diff, at -p 2 with the budgets; outside nova-tools test only the packages you touched (nice -n 15 go test -p 2 -count=1 <packages>); never test the whole tree. Every CI job is capped at two minutes: a red at the cap is your defect to fix, never a number to raise."
+	// LineGate is the wrapper's card only (never a friend's brief, which
+	// has no wrapper): what the spec gate (#4313) does with the commit.
+	LineGate       = "the wrapper runs TEST at base-sha (it must fail) and at your head (it must pass) and `nova-ci local` on the touched packages before it pushes, and refuses to open the PR on a red, naming the red tests under ## Gates in RESULT.md."
+	LineUnattended = "never ask a question and never offer to proceed; decide, and record the decision in RESULT.md."
+	LineOutput     = "RESULT.md, notes and scratch go in the job directory, outside repo/, and are never committed; the harness moves them to the results root at card end and deletes the job directory."
 )
 
 // Quote renders an issue text as the quoted block under a card's --- line.
@@ -306,6 +414,7 @@ func RenderHeader(id string, rec map[string]string) ([]byte, error) {
 	line("RESULT-FORMAT", fmt.Sprintf("RESULT.md in the job dir, outside repo/: line 1 is line 1 of this card verbatim; line 2 is DONE, ABSTAIN <why> or BLOCKED <why>; then SCHEMA: v2, KIND: %s, ATTEMPT: 1, CHECK: pass|fail|not-run, REPO: %s, BRANCH: <branch you committed>, PATHS: <space-separated paths changed>, RED: <the test failing on base-sha>, GREEN: <the same test passing at your head>; then a \"## Gates\" section and a \"## Left owed\" section, each with at least one \"- \" row.", kind, s.Repo))
 	line("COMMIT", fmt.Sprintf("make your change in repo/ on a new branch %s (git checkout -b %s) and commit it there with the DONE-WHEN summary as the first line; never push and never open a PR; harvest pushes the branch and opens the PR from your commit; an uncommitted change counts as NO-COMMIT and the card is refused.", branch, branch))
 	line("TESTS", LineTests)
+	line("GATE", LineGate)
 	line("UNATTENDED", LineUnattended)
 	line("OUTPUT", LineOutput)
 	line("PR-BODY", fmt.Sprintf("the PR body must carry `STREAM: %s` and the DONE-WHEN line above, verbatim; put both lines, verbatim, in the commit message body under line 1.", dash(rec["stream"])))

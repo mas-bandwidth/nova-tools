@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 )
 
 // JobRepo is the clone under a job directory: <job>/repo, the same name gather
@@ -257,23 +258,21 @@ func isGitCheckout(dir string) bool {
 	return err == nil && (g.IsDir() || g.Mode().IsRegular())
 }
 
-// cardTestPackage reads the TEST: package, so a card whose tests live beside
-// (or in) the named package still has that tree to run.
+// cardTestPackage reads the TEST: package through cardhdr.ParseTest, the one
+// TEST grammar, so a card whose tests live beside (or in) the named package
+// still has that tree to run. `none <why>`, a tagged line's -tags and a line
+// ParseTest refuses are read right: no package, or the package after the tags.
 func cardTestPackage(text string) string {
 	for _, line := range strings.Split(text, "\n") {
 		t := strings.TrimSpace(line)
 		if !strings.HasPrefix(t, "TEST:") {
 			continue
 		}
-		rest := strings.TrimSpace(strings.TrimPrefix(t, "TEST:"))
-		if rest == "" || rest == "none" {
+		tl, why := cardhdr.ParseTest(strings.TrimPrefix(t, "TEST:"))
+		if why != "" || tl.None {
 			return ""
 		}
-		fields := strings.Fields(rest)
-		if len(fields) == 0 {
-			return ""
-		}
-		return strings.Trim(fields[0], "/")
+		return strings.Trim(tl.Package, "/")
 	}
 	return ""
 }

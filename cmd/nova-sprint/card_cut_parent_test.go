@@ -31,13 +31,14 @@ func (f *fakePlanStore) bind(_ context.Context, parent string, children []string
 func planParent(where string) planFacts {
 	return planFacts{Rec: map[string]string{"where": where, "stream": "autonomy", "repo": "mas-bandwidth/nova-tools",
 		"base": "dev", "base_sha": cutFromSHA, "title": "work as a hierarchy", "ref": "mas-bandwidth/nova-tools#4317",
-		"done_when": "a parent card cuts children and a stitch; the parent lands when the stitch lands", "paths": "internal/nsprint/taskcard"}}
+		"done_when": "a parent card cuts children and a stitch; the parent lands when the stitch lands", "paths": "internal/nsprint/taskcard",
+		"test": "./cmd/nova-sprint TestCardCutParentCutsChildrenAndStitchInOneCall"}}
 }
 
-const childRows = "id\ttitle\tpaths\tdone-when\tbody\tdepends-on\troute\n" +
-	"h-model\tthe model\tinternal/nsprint/taskcard/hierarchy.go\tPlan.State is derived\tbuild it\tnone\tpro\n" +
-	"h-verb\tthe verb\tcmd/nova-sprint/card_cut_from.go internal/nsprint/taskcard/hierarchy.go\tcard cut --parent cuts children and stitch\tbuild it\th-model\tpro\n" +
-	"h-table\tthe table\tcmd/nova-sprint/ws.go\tstream ls --tree\tbuild it\tnone\tfriend\n"
+const childRows = "id\ttitle\tpaths\tdone-when\tbody\tdepends-on\troute\ttest\n" +
+	"h-model\tthe model\tinternal/nsprint/taskcard/hierarchy.go\tPlan.State is derived\tbuild it\tnone\tpro\t./internal/nsprint/taskcard TestPlanStateIsDerived\n" +
+	"h-verb\tthe verb\tcmd/nova-sprint/card_cut_from.go internal/nsprint/taskcard/hierarchy.go\tcard cut --parent cuts children and stitch\tbuild it\th-model\tpro\t./cmd/nova-sprint TestCardCutParentCutsChildrenAndStitchInOneCall\n" +
+	"h-table\tthe table\tcmd/nova-sprint/ws.go\tstream ls --tree\tbuild it\tnone\tfriend\tnone a friend's table row\n"
 
 // TestCardCutParentCutsChildrenAndStitchInOneCall is nova-tools#4317's
 // DONE-WHEN: one call cuts the rows as the parent's children (its stream,

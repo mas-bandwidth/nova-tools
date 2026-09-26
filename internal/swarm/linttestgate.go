@@ -3,6 +3,8 @@ package swarm
 import (
 	"fmt"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 )
 
 // A CARD'S TEST: LINE MUST NAME A GATE THAT RUNS IT (ideas #796).
@@ -47,14 +49,17 @@ func LintCardTestGate(raw []byte) []CardHeaderFinding {
 	if !t.found {
 		return nil // no TEST: line is test-named's finding, not this one
 	}
-	if t.value == "none" {
+	// read through cardhdr.ParseTest, the one TEST grammar (nova-tools#4401
+	// read, item 3): `-tags <tags> <package> <TestName>` names the package
+	// after the tags, and `none <why>` is a declaration like a bare none
+	tl, why := cardhdr.ParseTest(t.value)
+	if tl.None || strings.TrimSpace(t.value) == "none" {
 		return nil // a declaration of no Go anchor carries no gate obligation
 	}
-	fields := strings.Fields(t.value)
-	if len(fields) != 2 || !goTestNameRE.MatchString(fields[1]) {
+	if why != "" || !goTestNameRE.MatchString(tl.Name) {
 		return nil // a malformed TEST: line is test-named's, not a second token here
 	}
-	pkg, ok := cleanTestPkg(fields[0])
+	pkg, ok := cleanTestPkg(tl.Package)
 	if !ok {
 		return nil // an unwalkable package is test-named's (the same path rule it runs)
 	}

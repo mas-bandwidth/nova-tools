@@ -273,7 +273,7 @@ func TestCardCutFromDependedRowNeedsID(t *testing.T) {
 func TestCardCutFromDryRun(t *testing.T) {
 	t.Parallel()
 	rows := "id\ttitle\tstream\twho\tpaths\tdone-when\tbody\tdepends-on\troute\test\n" +
-		"\tsecond\ts\tonly rowan,stella\tp.go\tdone\tb\tfirst-id\tflash\t45 min\nfirst-id\tfirst\ts\t\tp.go\tdone\tb\t#12\t\t\n"
+		"\tsecond\ts\tonly rowan,stella\tp.go\tgo test ./p -run TestP passes\tb\tfirst-id\tflash\t45 min\nfirst-id\tfirst\ts\t\tp.go\tdone\tb\t#12\t\t\n"
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows), DryRun: true, NoGitHub: true}, cutDeps(nil, nil))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -432,5 +432,40 @@ func TestCardCutFromLedgerRefusals(t *testing.T) {
 	if code != 1 || len(forge.titles) != 1 || len(st.batches) != 0 || !strings.Contains(out, want) ||
 		!strings.Contains(out, "row=2 line=2 id=- why=\"not filed: the filing stopped at row 1\"") {
 		t.Fatalf("unwritable ledger: exit %d filed %d pushed %d:\n%s", code, len(forge.titles), len(st.batches), out)
+	}
+}
+
+// TestCardCutFromSwarmRowNeedsATest (#4313): a swarm row whose done-when
+// names no `go test <pkg> -run <TestName>` and whose test cell is empty or a
+// bare none is refused with the remedy, before anything is written; a test
+// cell of `<package> <TestName>` or `none <why>` is cut and its TEST line is
+// on the issue. A friend row is not held to it here.
+func TestCardCutFromSwarmRowNeedsATest(t *testing.T) {
+	t.Parallel()
+	head := "title\tpaths\tdone-when\troute\ttest\n"
+	for _, tc := range []struct{ row, want string }{
+		{"No test\tp.go\tthe page reads right\tflash\t", "no TEST line"},
+		{"Bare none\tp.go\tthe page reads right\tflash\tnone", "TEST: none says no why"},
+	} {
+		forge, st := &fakeCutForge{}, &fakeCutStore{}
+		code, out := runCutFrom(cutFromOpts{Text: []byte(head + tc.row + "\n"), Stream: "s", BaseSHA: cutFromSHA}, cutDeps(forge, st))
+		if code != 1 || len(forge.titles) != 0 || len(st.batches) != 0 || !strings.Contains(out, "CARD CUT REFUSED row=1 line=2 id=- why=\"a flash card lacks TEST (") ||
+			!strings.Contains(out, tc.want) || !strings.Contains(out, "TEST: none <why") {
+			t.Fatalf("%q: exit %d filed %d pushed %d:\n%s", tc.row, code, len(forge.titles), len(st.batches), out)
+		}
+	}
+	rows := head + "Named\tp.go\tthe page reads right\tflash\t./cmd/nova-sprint TestCardCutFromSwarmRowNeedsATest\n" +
+		"Excused\tp.md\tthe page reads right\tflash\tnone one docs page; the reader checks it\n" +
+		"Friend\tp.go\tthe page reads right\tfriend\t\n"
+	forge, st := &fakeCutForge{}, &fakeCutStore{}
+	code, out := runCutFrom(cutFromOpts{Text: []byte(rows), Stream: "s", BaseSHA: cutFromSHA}, cutDeps(forge, st))
+	if code != 0 || len(forge.titles) != 3 {
+		t.Fatalf("exit %d filed %d:\n%s", code, len(forge.titles), out)
+	}
+	for i, want := range []string{"TEST: ./cmd/nova-sprint TestCardCutFromSwarmRowNeedsATest\n", "TEST: none one docs page; the reader checks it\n", ""} {
+		body := forge.bodies[i]
+		if want == "" && strings.Contains(body, "TEST:") || want != "" && !strings.Contains(body, want) {
+			t.Errorf("issue %d body:\n%s\nwant %q", i+1, body, want)
+		}
 	}
 }
