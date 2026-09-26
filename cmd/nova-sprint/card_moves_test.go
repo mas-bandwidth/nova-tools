@@ -196,6 +196,9 @@ func TestCardMovesCLI(t *testing.T) {
 	if code, _, errOut := runCLI("card", "work", "--as", "bench:b"); code != 2 || !strings.Contains(errOut, "--fill") {
 		t.Fatalf("usage = %d %q", code, errOut)
 	}
+
+	// #3916's push-from-issue and render checks, sharing this test's serial seat.
+	cardRenderFromIssuePush(t)
 }
 
 // TestCardSessionCLI (#3998): `card session --as bench:<b>` is the bench

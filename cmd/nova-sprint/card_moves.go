@@ -38,6 +38,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/brief"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/launch"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -89,7 +90,7 @@ type moveCmd struct {
 	pr, head, doneAlready, score, gates, finding    *string
 	reader, fail, add, rm, token, wrapper           *string
 	n                                               *int
-	fill, ok, repair, revoke                        *bool
+	fill, ok, repair, revoke, brief                 *bool
 	result                                          map[string]*string
 	consumers                                       multiFlag
 }
@@ -127,6 +128,7 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	m.fill = fs.Bool("fill", false, "")
 	m.ok = fs.Bool("ok", false, "")
 	m.repair = fs.Bool("repair", false, "")
+	m.brief = fs.Bool("brief", false, "")
 	if sub == "table" || sub == "expire" {
 		fs.Var(&m.consumers, "as", "")
 		m.as = new(string)
@@ -239,7 +241,7 @@ func (m *moveCmd) usage(sub string, ids []string) string {
 		}
 	case "render":
 		if len(ids) != 1 {
-			return "render wants --id <copy>"
+			return "render wants --id <copy>|<primary> [--brief [--model <m>]]"
 		}
 	case "assign":
 		if len(ids) != 1 || *m.to == "" {
@@ -498,18 +500,35 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		}
 		return 0
 	case "render":
-		if !taskcard.IsCopy(ids[0]) {
-			return refuse(errOut, "card render", ids[0]+" is not a copy (<primary>~<n>)")
-		}
+		// A copy renders its card (RenderCopy: the leg's DO and end call); a
+		// primary renders the harness card its work copy would get (#3911:
+		// RenderHeader of the record, nothing generated) or, with --brief,
+		// the friend brief from the same record. stdout is exactly the
+		// card; the one receipt line goes to stderr.
 		rec, err := c.HGetAll(ctx, taskcard.Key(ids[0])).Result()
 		if err != nil || len(rec) == 0 {
-			return refused(&taskcard.Refused{Why: "NOCOPY task:" + ids[0]}, "id="+ids[0])
+			if taskcard.IsCopy(ids[0]) {
+				return refused(&taskcard.Refused{Why: "NOCOPY task:" + ids[0]}, "id="+ids[0])
+			}
+			return refused(&taskcard.Refused{Why: "NOTASK task:" + ids[0]}, "id="+ids[0])
 		}
-		body, err := card.RenderCopy(card.CopyCardFrom(ids[0], rec))
+		var body []byte
+		switch {
+		case taskcard.IsCopy(ids[0]):
+			body, err = card.RenderCopy(card.CopyCardFrom(ids[0], rec))
+		case *m.brief:
+			body, err = brief.RenderCard(ids[0], rec, *m.result["model"])
+		default:
+			body, err = taskcard.RenderHeader(ids[0], rec)
+		}
+		if why, ok := taskcard.IsRefused(err); ok {
+			return refused(&taskcard.Refused{Why: why}, "id="+ids[0])
+		}
 		if err != nil {
 			return refused(&taskcard.Refused{Why: err.Error()}, "id="+ids[0])
 		}
 		_, _ = out.Write(body)
+		fmt.Fprintf(errOut, "RENDERED card id=%s brief=%t bytes=%d ms=%d\n", ids[0], *m.brief, len(body), ms())
 		return 0
 	}
 	return refuse(errOut, "card "+sub, "unknown table move")

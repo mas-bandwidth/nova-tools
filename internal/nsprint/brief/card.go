@@ -33,7 +33,9 @@ var cardBlockFields = []string{"origin", "ref", "stream", "sprint", "repo", "pr"
 // read; ok is false for a kind with no template.
 func CardKind(kind string) (string, bool) {
 	switch kind {
-	case "work":
+	case "", "work", "model":
+		// A record with no kind, or the card grammar's model kind (a card
+		// with no KIND line is a model card), is work: the build brief.
 		kind = "build"
 	case "review":
 		kind = "read"
@@ -65,23 +67,34 @@ func RenderCard(id string, rec map[string]string, model string) ([]byte, error) 
 	if model == "" {
 		return nil, fmt.Errorf("BRIEF REFUSED card=%s field=model got=ABSENT (serve --model %s=<model>, or MODEL: in the title)", id, kind)
 	}
+	// The record's own spec fields (#3916: push fills paths, base, base_sha,
+	// depends_on, done_when, test from the issue) come first; the title
+	// grammar (#4095) fills what the record lacks.
 	f := fields{Model: model, Coauthor: coauthorName(model), Base: "-", BaseSHA: "-"}
-	f.Paths = orDash(task.TitleField(title, "PATHS"))
-	if base, ok := task.TitleField(title, "BASE"); ok {
+	recOrTitle := func(field, key string) (string, bool) {
+		if v := strings.TrimSpace(rec[field]); v != "" {
+			return v, true
+		}
+		return task.TitleField(title, key)
+	}
+	f.Paths = orDash(recOrTitle("paths", "PATHS"))
+	if base, ok := recOrTitle("base", "BASE"); ok {
 		if tok := strings.Fields(base); len(tok) > 0 {
 			f.Base = tok[0]
 		}
 	}
-	if m := baseSHARx.FindStringSubmatch(title); m != nil {
+	if v := strings.TrimSpace(rec["base_sha"]); v != "" {
+		f.BaseSHA = v
+	} else if m := baseSHARx.FindStringSubmatch(title); m != nil {
 		f.BaseSHA = m[1]
 	}
-	f.DependsOn = orDash(task.TitleField(title, "DEPENDS-ON"))
+	f.DependsOn = orDash(recOrTitle("depends_on", "DEPENDS-ON"))
 	if f.DependsOn == "-" && rec["blocked_on"] != "" {
 		f.DependsOn = oneLine(rec["blocked_on"])
 	}
-	f.DoneWhen = orDash(task.TitleField(title, "DONE-WHEN"))
+	f.DoneWhen = orDash(recOrTitle("done_when", "DONE-WHEN"))
 	f.Check = "the DONE-WHEN command above, exactly as written"
-	if c, ok := task.TitleField(title, "CHECK"); ok && c != "" {
+	if c, ok := recOrTitle("test", "CHECK"); ok && c != "" {
 		f.Check = oneLine(c)
 	}
 	f.Expect = "exit 0; every named test PASS; zero SKIP"
@@ -104,6 +117,14 @@ func RenderCard(id string, rec map[string]string, model string) ([]byte, error) 
 	for _, k := range cardBlockFields {
 		if v := oneLine(rec[k]); v != "" {
 			fmt.Fprintf(&b, "%s: %s\n", strings.ToUpper(k), v)
+		}
+	}
+	// The issue text the record carries (#3916), quoted, so the child reads
+	// the work as it was written and never a paraphrase.
+	if body := strings.TrimSpace(rec["body"]); body != "" {
+		b.WriteString("\n")
+		for _, l := range strings.Split(body, "\n") {
+			b.WriteString(strings.TrimRight("> "+l, " ") + "\n")
 		}
 	}
 	b.WriteString("\n" + CardContract + "\n")

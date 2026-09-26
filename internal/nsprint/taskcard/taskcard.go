@@ -189,6 +189,10 @@ type PushRequest struct {
 	// Fields are more record fields, name then value (never a pointer
 	// field): base, base_sha, paths, done_when, who, tier ... (#3911).
 	Fields []string
+
+	// Spec, when set, is the card content (#3911): its fields go on the
+	// record, and a swarm route lacking one is refused at push, named.
+	Spec *Spec
 }
 
 // PushResult is where the task was placed and its ready entry (q:<friend>).
@@ -198,16 +202,23 @@ type PushResult struct {
 
 // Push creates the record and makes its first move, in one call.
 func Push(ctx context.Context, c redis.Cmdable, r PushRequest) (PushResult, error) {
+	why := r.Why
+	if why == "" {
+		why = "push"
+	}
+	var spec []string
+	if r.Spec != nil {
+		var err error
+		if spec, err = r.fillSpec(); err != nil {
+			return PushResult{}, err
+		}
+	}
 	where := r.Where
 	if where == "" {
 		where = "ready"
 		if r.DependsOn != "" {
 			where = "waiting"
 		}
-	}
-	why := r.Why
-	if why == "" {
-		why = "push"
 	}
 	args := []any{r.ID, where, r.By, why}
 	o := Opts{Sprint: r.Sprint, Front: r.Front}
@@ -224,6 +235,7 @@ func Push(ctx context.Context, c redis.Cmdable, r PushRequest) (PushResult, erro
 		}
 	}
 	o.Fields = append(o.Fields, r.Fields...)
+	o.Fields = append(o.Fields, spec...)
 	front := "0"
 	if r.Front {
 		front = "1"
@@ -250,6 +262,50 @@ func Push(ctx context.Context, c redis.Cmdable, r PushRequest) (PushResult, erro
 		xid = ""
 	}
 	return PushResult{Where: f[1], XID: xid}, nil
+}
+
+// fillSpec merges the spec's header lines into the push (stream, origin,
+// kind, blocked_on when the push names none), completes it, and returns its
+// record fields; a swarm card that lacks a field is a *Refused naming it.
+func (r *PushRequest) fillSpec() ([]string, error) {
+	s := *r.Spec
+	if r.Stream == "" {
+		r.Stream = s.Stream
+	}
+	if r.Origin == "" {
+		r.Origin = s.Origin
+	}
+	if s.Kind == "" {
+		s.Kind = r.Kind
+	}
+	r.Kind = s.Kind
+	if s.Task == "" {
+		s.Task = r.Title
+	}
+	if s.Route == "" {
+		s.Route = RouteFriend
+	}
+	missing := s.Complete(r.Ref, r.Origin)
+	switch s.Route {
+	case RoutePro, RouteFlash, RouteFriend:
+	default:
+		return nil, &Refused{Why: fmt.Sprintf("ROUTE %q is not pro, flash or friend", s.Route)}
+	}
+	if len(missing) > 0 {
+		return nil, &Refused{Why: fmt.Sprintf("INCOMPLETE task:%s route=%s lacks %s: a swarm card is complete at push (#3911)", r.ID, s.Route, strings.Join(missing, ", "))}
+	}
+	if r.DependsOn == "" && s.DependsOn != "none" && s.DependsOn != "-" {
+		r.DependsOn = s.DependsOn
+	}
+	*r.Spec = s
+	var out []string
+	f := s.fields()
+	for i := 0; i+1 < len(f); i += 2 {
+		if f[i] != "kind" { // the push's own kind field carries it
+			out = append(out, f[i], f[i+1])
+		}
+	}
+	return out, nil
 }
 
 // Take moves the named ids (or, with none, the n oldest of

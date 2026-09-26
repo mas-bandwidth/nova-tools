@@ -747,14 +747,31 @@ func (s *Server) spawn(ctx context.Context, ch *child) error {
 	return nil
 }
 
-// writeBrief renders the task's brief through the one producer (brief.Render)
-// and, when render refuses the record (a kind without a template, a title
-// without PATHS), gives a read task the read brief from Redis and the mirror
-// (read.BriefTask: the PR record, lines and CI, and the diff saved beside the
-// brief, zero GitHub calls, nova-tools#3599); anything else, or a read the
-// mirror cannot brief yet, gets the record itself so the child is still
-// pointed at the work; the receipt says which.
+// writeBrief writes the task's brief. A task pushed as a complete card
+// (task:<id> carries its route, nova-tools#3911) gets the friend brief
+// rendered from that record (brief.RenderCard, the same record a bench's
+// card is rendered from; a refusal is the error, never hidden). Otherwise it renders through the one producer
+// (brief.Render) and, when render refuses the record (a kind without a
+// template, a title without PATHS), gives a read task the read brief from
+// Redis and the mirror (read.BriefTask: the PR record, lines and CI, and the
+// diff saved beside the brief, zero GitHub calls, nova-tools#3599); anything
+// else, or a read the mirror cannot brief yet, gets the record itself so the
+// child is still pointed at the work; the receipt says which.
 func (s *Server) writeBrief(ctx context.Context, ch *child, fields map[string]string) error {
+	rec, err := s.st.Client().HGetAll(ctx, taskcard.Key(ch.claim.ID)).Result()
+	if err != nil {
+		return fmt.Errorf("brief %s: %w", ch.claim.ID, err)
+	}
+	if rec["route"] != "" {
+		// A complete card: the brief is its record, by the one renderer; a
+		// refusal is returned, never papered over by another brief.
+		b, err := brief.RenderCard(ch.claim.ID, rec, s.model(ch.kind))
+		if err != nil {
+			return err
+		}
+		ch.briefSrc = "card"
+		return os.WriteFile(ch.brief, b, 0o644)
+	}
 	var stdout, stderr bytes.Buffer
 	if code := brief.Render(ctx, s.st, ch.claim.Sprint+"/"+ch.claim.ID, ch.brief, &stdout, &stderr); code == 0 {
 		ch.briefSrc = "render"

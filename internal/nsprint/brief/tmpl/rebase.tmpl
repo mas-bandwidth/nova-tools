@@ -9,6 +9,7 @@ Rules, all hard:
 - Fetch the PR branch at its head and bring it up to the BASE below with `git merge --no-edit`; the word is rebase, the act is a merge: never `git rebase`, never a force push.
 - Resolve every conflict inside PATHS and keep both sides' intent; a conflict outside PATHS is BLOCKED with the paths named, not a guess.
 - Test only what the diff touches (`nice -n 10 go test -p 2 ./<pkg>/...`) plus `go test ./internal/ci/` before the push; every call under 100 s.
+- TESTS (hard rules, 2026-09-25): every new Go test opens with `t.Parallel()`; no `time.Sleep`, no real-time poll, no real deadline (inject the clock); no service, process or socket in a unit test (mock the seam; a test that needs the real thing goes behind `//go:build slow`); keep the package's tests under one minute. Every CI job is capped at two minutes: a red at the cap is your defect to fix, never a cap to raise.
 - Never rm -rf anything but your own workspace path spelled out literally.
 - Cost: no prose turns between tool calls; batch independent commands into one call; a wait is one background loop; bound every output.
 - Commit the merge with the co-author line below, exactly as written; the task's MODEL decides it.
