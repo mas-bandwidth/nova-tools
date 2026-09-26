@@ -18,8 +18,8 @@ func TestLandWriterUsage(t *testing.T) {
 		t.Fatalf("positional arg: code=%d err=%q", code, errOut)
 	}
 
-	code, _, errOut = runSprint("land", "writer", "--repo", "o/n", "--base", "dev", "--to", "invalid", "--redis", "127.0.0.1:6379")
-	if code != 2 || !strings.Contains(errOut, "--to must be old-loop or nova-sprint") {
+	code, _, errOut = runSprint("land", "writer", "--repo", "o/n", "--base", "dev", "--writer", "invalid", "--redis", "127.0.0.1:6379")
+	if code != 2 || !strings.Contains(errOut, "--writer must be old-loop or nova-sprint") {
 		t.Fatalf("invalid --to: code=%d err=%q", code, errOut)
 	}
 

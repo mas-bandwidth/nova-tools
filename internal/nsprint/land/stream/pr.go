@@ -73,7 +73,7 @@ func LandPR(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions)
 		return rep, ErrNoToken
 	}
 	if o.N < 1 || !strings.Contains(o.Repo, "/") {
-		return rep, &Refusal{Why: "land pr wants <n> and --repo owner/name", Remedy: "nova-sprint land pr <n> --repo owner/name"}
+		return rep, &Refusal{Why: "land pr wants --pr <n> and --repo owner/name", Remedy: "nova-sprint land pr --pr <n> --repo owner/name"}
 	}
 	if rdb == nil {
 		return rep, &Refusal{Why: "land pr reads the check state from Redis and has no store", Remedy: "--redis <addr> or NOVA_REDIS_ADDR"}

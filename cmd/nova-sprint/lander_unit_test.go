@@ -26,7 +26,7 @@ func TestWhyReadsUnitRecordsOnly(t *testing.T) {
 		t.Fatalf("why printed the retired record:\n%s", out)
 	}
 
-	code, stdout, stderr := runSprint("why", "nova-tools#3201", "--redis", mr.Addr(), "--sprint", c35Sprint, "--now", strconv.FormatInt(c35Now, 10))
+	code, stdout, stderr := runSprint("why", "--ref", "nova-tools#3201", "--redis", mr.Addr(), "--sprint", c35Sprint, "--now", strconv.FormatInt(c35Now, 10))
 	want := "why nova-tools#3201: no unit record: MISSING s:" + c35Sprint + ":prunit:nova-tools:3201"
 	if code != 1 || !strings.Contains(stdout, want) {
 		t.Fatalf("exit %d stdout %q stderr %q, want 1 and %q", code, stdout, stderr, want)

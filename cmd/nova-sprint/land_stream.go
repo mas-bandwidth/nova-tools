@@ -1,11 +1,11 @@
 // The stream landing verbs (nova-tools#3598; #3611-#3613): the flow Rowan
 // lands by hand, as verbs with all state in Redis (internal/nsprint/land/stream).
 //
-//	nova-sprint land stream --repo <owner/repo> --stream <s> [--stream <s2>...] [--base dev] [--dry-run]
+//	nova-sprint land stream --repo <owner/repo> --stream <s> (comma-separated) [--base dev] [--dry-run]
 //	    [--redis <addr>] [--remote <url>] [--mirror <dir>|none] [--workdir <dir>] [--branch <b>]
-//	    [--test <cmd>] [--test-timeout 20m] [--min-score N] [--by rowan] [--api <url>] [--budget N]
+//	    [--test <cmd>] [--test-timeout 20m] [--min-score N] [--api <url>] [--budget N]
 //	nova-sprint land status --repo <owner/repo> [--redis <addr>]
-//	nova-sprint land merge --repo <owner/repo> --stream <s> [--by rowan] [--api <url>] [--budget N]
+//	nova-sprint land merge --repo <owner/repo> --stream <s> [--api <url>] [--budget N]
 //
 // land stream: members are ws:<s>:merging intersected with pr:<repo>:<n>
 // records read >= 8 at head (cfg:land min_score[:<repo>]), oldest
@@ -46,6 +46,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -101,25 +102,26 @@ func landExit(errOut io.Writer, verb string, err error) int {
 func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "land stream"
 	fs := taskFlags(verb)
-	var streams multiFlag
-	fs.Var(&streams, "stream", "")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	repo := fs.String("repo", "", "")
-	base := fs.String("base", "dev", "")
-	dry := fs.Bool("dry-run", false, "")
-	remote := fs.String("remote", "", "")
-	mirror := fs.String("mirror", "", "")
-	workdir := fs.String("workdir", "", "")
-	branch := fs.String("branch", "", "")
-	test := fs.String("test", "", "")
-	testTimeout := fs.Duration("test-timeout", 20*time.Minute, "")
-	minScore := fs.Int("min-score", -1, "")
-	by := fs.String("by", "rowan", "")
-	api := fs.String("api", "https://api.github.com", "")
-	budget := fs.Int("budget", 4, "")
+	streamsFlag := fs.String("stream", "", verbflag.HelpStream)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	base := fs.String("base", "dev", "the base branch the stream lands on")
+	dry := fs.Bool("dry-run", false, verbflag.HelpDryRun)
+	remote := fs.String("remote", "", "the git url pushed to (default the repo's GitHub url)")
+	mirror := fs.String("mirror", "", "the bench mirror of the repo (default ~/nova-bench/mirror/<repo>.git)")
+	workdir := fs.String("workdir", "", "the working directory the clone is made in (default a fresh one)")
+	branch := fs.String("branch", "", "the stream branch name (default stream/<slug>)")
+	test := fs.String("test", "", "the test command the batch runs once")
+	testTimeout := fs.Duration("test-timeout", 20*time.Minute, "how long the batch test may run")
+	minScore := fs.Int("min-score", -1, "the read score a member needs to land (default cfg:land min_score)")
+	actor := seatActor()
+	by := &actor
+	api := fs.String("api", "https://api.github.com", "the forge's REST base url")
+	budget := fs.Int("budget", 4, "the most forge writes one run makes")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
+	streams := verbflag.List(*streamsFlag)
 	if fs.NArg() > 0 {
 		return refuse(errOut, verb, "takes flags, not "+strconv.Quote(fs.Arg(0)))
 	}
@@ -222,8 +224,8 @@ func memberIndex(ms []stream.Member, n int) int {
 func runLandStreamStatus(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "land status"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	repo := fs.String("repo", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -278,16 +280,17 @@ func runLandStreamStatus(ctx context.Context, args []string, out, errOut io.Writ
 func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "land merge"
 	fs := taskFlags(verb)
-	var streams multiFlag
-	fs.Var(&streams, "stream", "")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	repo := fs.String("repo", "", "")
-	by := fs.String("by", "rowan", "")
-	api := fs.String("api", "https://api.github.com", "")
-	budget := fs.Int("budget", 64, "")
+	streamsFlag := fs.String("stream", "", verbflag.HelpStream)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	actor := seatActor()
+	by := &actor
+	api := fs.String("api", "https://api.github.com", "the forge's REST base url")
+	budget := fs.Int("budget", 64, "the most forge writes one run makes")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
+	streams := verbflag.List(*streamsFlag)
 	if fs.NArg() > 0 || !landRepoOK(*repo) || len(streams) == 0 {
 		return refuse(errOut, verb, "needs --repo <owner/repo> and --stream <s>")
 	}

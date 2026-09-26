@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"strconv"
@@ -21,12 +22,11 @@ import (
 // (REFUSED pub=<batch>) while land:<repo>:<base>:pub:active names an unresolved intent.
 func runLandWriter(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("land writer")
-	repo := fs.String("repo", "", "")
-	base := fs.String("base", "", "")
-	to := fs.String("to", "", "")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	by := fs.String("by", "", "")
-	inflight := fs.Int("inflight", -1, "")
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	base := fs.String("base", "", "the base branch")
+	to := fs.String("writer", "", "the writer to hand the lane to: old-loop or nova-sprint")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	inflight := fs.Int("inflight", -1, "the in-flight cap the writer records")
 
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "land writer", err.Error())
@@ -38,8 +38,10 @@ func runLandWriter(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, "land writer", "needs --repo <repo> and --base <base>")
 	}
 	if *to != "" && *to != "old-loop" && *to != "nova-sprint" {
-		return refuse(errOut, "land writer", fmt.Sprintf("--to must be old-loop or nova-sprint, got %q", *to))
+		return refuse(errOut, "land writer", fmt.Sprintf("--writer must be old-loop or nova-sprint, got %q", *to))
 	}
+	by := new(string)
+	*by = seatActor()
 
 	addr := *redisAddr
 	if addr == "" {

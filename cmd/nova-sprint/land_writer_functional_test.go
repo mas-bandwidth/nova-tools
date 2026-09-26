@@ -32,7 +32,7 @@ func TestLandWriterCutoverAndRollback(t *testing.T) {
 	}
 
 	// 2. Cutover with inflight > 0 refused via --inflight flag
-	code, out, errOut = runSprint("land", "writer", "--repo", repo, "--base", base, "--to", "nova-sprint", "--redis", addr, "--inflight", "2")
+	code, out, errOut = runSprint("land", "writer", "--repo", repo, "--base", base, "--writer", "nova-sprint", "--redis", addr, "--inflight", "2")
 	if code != 2 || !strings.Contains(errOut, "REFUSED inflight count=2") {
 		t.Fatalf("cutover with --inflight 2: code=%d out=%q err=%q", code, out, errOut)
 	}
@@ -42,14 +42,14 @@ func TestLandWriterCutoverAndRollback(t *testing.T) {
 	if err := client.Set(ctx, inflightKey, "1", 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errOut = runSprint("land", "writer", "--repo", repo, "--base", base, "--to", "nova-sprint", "--redis", addr)
+	code, out, errOut = runSprint("land", "writer", "--repo", repo, "--base", base, "--writer", "nova-sprint", "--redis", addr)
 	if code != 2 || !strings.Contains(errOut, "REFUSED inflight count=1") {
 		t.Fatalf("cutover with inflight key: code=%d out=%q err=%q", code, out, errOut)
 	}
 	_ = client.Del(ctx, inflightKey)
 
 	// 4. Cutover to nova-sprint succeeds
-	code, out, errOut = runSprint("land", "writer", "--repo", repo, "--base", base, "--to", "nova-sprint", "--redis", addr, "--by", "rowan")
+	code, out, errOut = runSprint("land", "writer", "--repo", repo, "--base", base, "--writer", "nova-sprint", "--redis", addr)
 	if code != 0 {
 		t.Fatalf("cutover code=%d err=%q", code, errOut)
 	}
@@ -99,7 +99,7 @@ func TestLandWriterCutoverAndRollback(t *testing.T) {
 	if err := client.HSet(ctx, pubB1, "state", "intent").Err(); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errOut = runSprint("land", "writer", "--repo", repo, "--base", base, "--to", "old-loop", "--redis", addr, "--by", "emma")
+	code, out, errOut = runSprint("land", "writer", "--repo", repo, "--base", base, "--writer", "old-loop", "--redis", addr)
 	if code != 2 || out != "" || !strings.Contains(errOut, "REFUSED pub=b1 ") {
 		t.Fatalf("rollback with unresolved intent: code=%d out=%q err=%q", code, out, errOut)
 	}
@@ -115,7 +115,7 @@ func TestLandWriterCutoverAndRollback(t *testing.T) {
 	}
 
 	// 6. Rollback to old-loop succeeds and bumps gen
-	code, out, errOut = runSprint("land", "writer", "--repo", repo, "--base", base, "--to", "old-loop", "--redis", addr, "--by", "emma")
+	code, out, errOut = runSprint("land", "writer", "--repo", repo, "--base", base, "--writer", "old-loop", "--redis", addr)
 	if code != 0 {
 		t.Fatalf("rollback code=%d err=%q", code, errOut)
 	}

@@ -1,7 +1,7 @@
 // land pr (nova-tools#4311): one pull request to its merge commit in one
 // pass, the scratch script of 2026-09-26 as a verb.
 //
-//	nova-sprint land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]
+//	nova-sprint land pr --pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]
 //
 // It reads the PR by REST, reads its head's check state from Redis
 // (ci:<repo>:<head>:gh, written by the webhook ingest; never the check-runs
@@ -20,6 +20,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"strconv"
 	"strings"
@@ -31,29 +32,20 @@ import (
 func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "land pr"
 	fs := taskFlags(verb)
-	repo := fs.String("repo", "mas-bandwidth/nova-tools", "")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	api := fs.String("api", "https://api.github.com", "")
-	// The one positional <n> may come before or after the flags.
-	var pos []string
-	for len(args) > 0 {
-		if !strings.HasPrefix(args[0], "-") {
-			pos = append(pos, args[0])
-			args = args[1:]
-			continue
-		}
-		if err := fs.Parse(args); err != nil {
-			return refuse(errOut, verb, err.Error())
-		}
-		args = fs.Args()
+	repo := fs.String("repo", "mas-bandwidth/nova-tools", verbflag.HelpRepo)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	api := fs.String("api", "https://api.github.com", "the forge's REST base url")
+	prFlag := fs.String("pr", "", verbflag.HelpPR)
+	const usage = "land pr --pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]"
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, verb, err.Error())
 	}
-	const usage = "land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]"
-	if len(pos) != 1 {
+	if fs.NArg() > 0 || *prFlag == "" {
 		return refuse(errOut, verb, "wants one pull request number: "+usage)
 	}
-	n, err := strconv.Atoi(strings.TrimPrefix(pos[0], "#"))
+	n, err := strconv.Atoi(strings.TrimPrefix(*prFlag, "#"))
 	if err != nil || n < 1 {
-		return refuse(errOut, verb, strconv.Quote(pos[0])+" is not a pull request number: "+usage)
+		return refuse(errOut, verb, strconv.Quote(*prFlag)+" is not a pull request number: "+usage)
 	}
 	if !landRepoOK(*repo) {
 		return refuse(errOut, verb, "--repo wants owner/name: "+usage)

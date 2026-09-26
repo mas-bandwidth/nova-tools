@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,13 +15,13 @@ import (
 
 func runLandEval(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("land eval")
-	redisAddr := fs.String("redis", redisDefault(), "Redis address")
-	sprint := fs.String("sprint", "", "Sprint ID")
-	repo := fs.String("repo", "", "Target repository")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
 	policyPath := fs.String("policy", "", "Path to repo policy file")
 	once := fs.Bool("once", true, "Run single evaluation pass")
 	mirror := fs.String("mirror", "", "bench mirror of the repo (default ~/nova-bench/mirror/<repo>.git when present; \"none\": no mirror reads)")
-	consumer := fs.String("consumer", "eval", "consumer name in ev:github group land")
+	consumer := fs.String("as", "eval", verbflag.HelpAs)
 	shadow := fs.Bool("shadow", false, "compare SHADOW lines on stdin (lander --shadow) with the hand lander's CLOSE records, per PR (#3800)")
 
 	if err := fs.Parse(args); err != nil {

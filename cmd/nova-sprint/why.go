@@ -5,8 +5,8 @@
 // in internal/nsprint/land (doc.go, 2.2); the PR form resolves through
 // s:<S>:prunit:<repo>:<n>, never the retired s:<S>:pr:<repo>:<n>.
 //
-//	nova-sprint why <unit>|<repo>#<n> --redis <addr> --sprint <S> [--now <unix>]
-//	nova-sprint land status [<unit>] --redis <addr> --sprint <S> [--now <unix>]
+//	nova-sprint why (--ids <unit> | --ref <repo>#<n>) --redis <addr> --sprint <S> [--now <unix>]
+//	nova-sprint land status [--ids <unit> | --ref <repo>#<n>] --redis <addr> --sprint <S> [--now <unix>]
 //
 // land status --repo <owner/repo> is the stream form (land_stream.go).
 //
@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"strconv"
 	"strings"
@@ -31,7 +32,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "why",
-		Summary: "why <unit>|<repo>#<n> --redis <addr> --sprint <S>: one line per landable condition from the unit records (exit 1 no record)",
+		Summary: "why (--ids <unit> | --ref <repo>#<n>) --redis <addr> --sprint <S>: one line per landable condition from the unit records (exit 1 no record)",
 		Run:     runWhy,
 	})
 	register(Verb{
@@ -45,19 +46,26 @@ func init() {
 // positional argument, which may come before or after the flags.
 func readFlags(name string, args []string) (redisAddr, sprint string, now time.Time, pos []string, err error) {
 	fs := taskFlags(name)
-	r := fs.String("redis", redisDefault(), "")
-	s := fs.String("sprint", "", "")
-	n := fs.Int64("now", 0, "")
-	for len(args) > 0 {
-		if !strings.HasPrefix(args[0], "-") {
-			pos = append(pos, args[0])
-			args = args[1:]
-			continue
+	r := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	s := fs.String("sprint", "", verbflag.HelpSprint)
+	n := fs.Int64("now", 0, "the clock to read ages against, unix seconds (default now)")
+	ids := fs.String("ids", "", verbflag.HelpIDs)
+	ref := fs.String("ref", "", "the pull request, <repo>#<n>")
+	if err = fs.Parse(args); err != nil {
+		return
+	}
+	if fs.NArg() > 0 {
+		err = errors.New("takes flags, not positional arguments: the unit is --ids <unit> or --ref <repo>#<n>")
+		return
+	}
+	if *ids != "" && *ref != "" {
+		err = errors.New("wants one of --ids <unit> and --ref <repo>#<n>")
+		return
+	}
+	for _, v := range []string{*ids, *ref} {
+		if v != "" {
+			pos = append(pos, v)
 		}
-		if err = fs.Parse(args); err != nil {
-			return
-		}
-		args = fs.Args()
 	}
 	if *r == "" || *s == "" {
 		err = errors.New("needs --redis <addr> and --sprint <S>")
@@ -75,8 +83,8 @@ func refuse77(errOut io.Writer, verb, reason, remedy string) int {
 	return refuse(errOut, verb, "REFUSED "+reason+" remedy="+remedy)
 }
 
-// whyTarget is the one positional argument of why and land status <unit>:
-// <repo>#<n> is the PR form, anything with a slash is a unit id (2.1).
+// whyTarget is the unit of why and land status: --ref <repo>#<n> is the PR
+// form, --ids names a unit id (2.1).
 func whyTarget(verb, arg string) (unit string, id land.ID, isPR bool, err error) {
 	if strings.Contains(arg, "#") {
 		id, err = land.ParseID(arg)
@@ -97,13 +105,13 @@ func loadTarget(ctx context.Context, st *store.Store, sprint, unit string, id la
 }
 
 func runWhy(ctx context.Context, args []string, out, errOut io.Writer) int {
-	const usage = "why <unit>|<repo>#<n> --redis <addr> --sprint <S>"
+	const usage = "why (--ids <unit> | --ref <repo>#<n>) --redis <addr> --sprint <S>"
 	addr, sprint, now, pos, err := readFlags("why", args)
 	if err != nil {
 		return refuse77(errOut, "why", "usage: "+err.Error(), usage)
 	}
 	if len(pos) != 1 {
-		return refuse77(errOut, "why", "usage: takes exactly one unit or <repo>#<n>", usage)
+		return refuse77(errOut, "why", "usage: wants --ids <unit> or --ref <repo>#<n>", usage)
 	}
 	unit, id, isPR, err := whyTarget("why", pos[0])
 	if err != nil {
@@ -144,7 +152,7 @@ func unitHeader(u *land.Unit) string {
 
 func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or pr or run or offer or list (land run is the fenced stream-PR lander, #2942; land pr <n> merges one PR by REST once its check state in Redis is green, #4311)")
+		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or pr or run or offer or list (land run is the fenced stream-PR lander, #2942; land pr --pr <n> merges one PR by REST once its check state in Redis is green, #4311)")
 	}
 	if strings.HasPrefix(args[0], "-") {
 		return runLandWhole(ctx, args, out, errOut) // the whole stream landing, #3598
@@ -182,7 +190,7 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runLandStreamStatus(ctx, args[1:], out, errOut)
 	}
 	if args[0] != "status" {
-		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or pr or run or offer or list (land run is the fenced stream-PR lander, #2942; land pr <n> merges one PR by REST once its check state in Redis is green, #4311)")
+		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or pr or run or offer or list (land run is the fenced stream-PR lander, #2942; land pr --pr <n> merges one PR by REST once its check state in Redis is green, #4311)")
 	}
 	const usage = "land status [<unit>] --redis <addr> --sprint <S>"
 	addr, sprint, now, pos, err := readFlags("land status", args[1:])

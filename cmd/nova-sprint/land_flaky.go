@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"strings"
 
@@ -27,8 +28,8 @@ func runLandFlaky(ctx context.Context, args []string, out, errOut io.Writer) int
 
 func runLandFlakyList(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("land flaky list")
-	addr := fs.String("redis", redisDefault(), "")
-	repo := fs.String("repo", "", "")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "land flaky list", err.Error())
 	}
@@ -57,13 +58,13 @@ func runLandFlakyList(ctx context.Context, args []string, out, errOut io.Writer)
 
 func runLandFlakyObserve(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("land flaky observe")
-	addr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	repo := fs.String("repo", "", "")
-	pkg := fs.String("pkg", "", "")
-	test := fs.String("test", "", "")
-	lane := fs.String("lane", "", "")
-	api := fs.String("forge-api", "https://api.github.com", "")
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	pkg := fs.String("pkg", "", "the Go package the flaky test is in")
+	test := fs.String("test", "", "the flaky test's name")
+	lane := fs.String("lane", "", "the lane that observed it")
+	api := fs.String("forge-api", "https://api.github.com", "the forge's REST base url")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "land flaky observe", err.Error())
 	}

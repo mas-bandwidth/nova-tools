@@ -3,7 +3,7 @@
 //
 //	nova-sprint land run --sprint <S> --repo <owner/name> --base <branch> [--max 8]
 //	    [--interval 1s | --once] [--mirror <bare git dir>] [--remote <git url>] [--dry-run] [--redis <addr>]
-//	nova-sprint land offer <owner/name>#<n> --sprint <S> --stream <slug> --base <branch>
+//	nova-sprint land offer --ref <owner/name>#<n> --sprint <S> --stream <slug> --base <branch>
 //	    --created <RFC 3339> --body-first "<line>" --as <friend> [--withdraw] [--redis <addr>]
 //	nova-sprint land list --sprint <S> [--repo <owner/name>] [--base <branch>] [--redis <addr>]
 //
@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"path/filepath"
@@ -117,16 +118,16 @@ func landOpen(ctx context.Context, verb, addr string, errOut io.Writer) (*store.
 func runLandRun(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "land run"
 	fs := taskFlags(verb)
-	sprint := fs.String("sprint", "", "")
-	repo := fs.String("repo", "", "")
-	base := fs.String("base", "", "")
-	max := fs.Int("max", 8, "")
-	interval := fs.Duration("interval", time.Second, "")
-	once := fs.Bool("once", false, "")
-	mirror := fs.String("mirror", "", "")
-	remote := fs.String("remote", "", "")
-	dry := fs.Bool("dry-run", false, "")
-	redisAddr := fs.String("redis", redisDefault(), "")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	base := fs.String("base", "", "the base branch the stream PRs land on")
+	max := fs.Int("max", 8, "the most PRs one pass lands")
+	interval := fs.Duration("interval", time.Second, "how long between passes (with no --once)")
+	once := fs.Bool("once", false, "one pass, then return; no loop")
+	mirror := fs.String("mirror", "", "the bare git dir the clone references")
+	remote := fs.String("remote", "", "the git url pushed to")
+	dry := fs.Bool("dry-run", false, verbflag.HelpDryRun)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -223,47 +224,28 @@ func runLandRun(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 }
 
-// landSplitArgs takes the one positional argument out of args.
-func landSplitArgs(args []string, valued map[string]bool) (pos []string, flags []string) {
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if !strings.HasPrefix(a, "-") {
-			pos = append(pos, a)
-			continue
-		}
-		flags = append(flags, a)
-		name := strings.TrimLeft(a, "-")
-		if !strings.Contains(name, "=") && valued[name] && i+1 < len(args) {
-			flags = append(flags, args[i+1])
-			i++
-		}
-	}
-	return pos, flags
-}
-
 func runLandOffer(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "land offer"
-	const usage = "land offer <owner/name>#<n> --sprint <S> --stream <slug> --base <branch> --created <RFC 3339> --body-first \"<line>\" --as <friend> [--withdraw]"
-	pos, flags := landSplitArgs(args, map[string]bool{"sprint": true, "stream": true, "base": true,
-		"created": true, "body-first": true, "as": true, "redis": true})
+	const usage = "land offer --ref <owner/name>#<n> --sprint <S> --stream <slug> --base <branch> --created <RFC 3339> --body-first \"<line>\" --as <friend> [--withdraw]"
 	fs := taskFlags(verb)
-	sprint := fs.String("sprint", "", "")
-	stream := fs.String("stream", "", "")
-	base := fs.String("base", "", "")
-	created := fs.String("created", "", "")
-	body := fs.String("body-first", "", "")
-	as := fs.String("as", "", "")
-	withdraw := fs.Bool("withdraw", false, "")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	if err := fs.Parse(flags); err != nil {
+	ref := fs.String("ref", "", "the pull request, <owner/name>#<n>")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	stream := fs.String("stream", "", verbflag.HelpStream)
+	base := fs.String("base", "", "the base branch the PR lands on")
+	created := fs.String("created", "", "when the PR was opened, RFC 3339 (the landing order)")
+	body := fs.String("body-first", "", "the PR body's first line")
+	as := fs.String("as", "", verbflag.HelpAs)
+	withdraw := fs.Bool("withdraw", false, "withdraw the offer instead of making it")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
-	if len(pos) != 1 {
+	if fs.NArg() > 0 || *ref == "" {
 		return refuse(errOut, verb, usage)
 	}
-	repo, n, ok := strings.Cut(pos[0], "#")
+	repo, n, ok := strings.Cut(*ref, "#")
 	if _, err := strconv.Atoi(n); !ok || err != nil || !landRepoFull(repo) {
-		return refuse(errOut, verb, "want <owner/name>#<n>, not "+strconv.Quote(pos[0]))
+		return refuse(errOut, verb, "want --ref <owner/name>#<n>, not "+strconv.Quote(*ref))
 	}
 	if *sprint == "" || *base == "" || *as == "" {
 		return refuse(errOut, verb, usage)
@@ -305,10 +287,10 @@ func runLandOffer(ctx context.Context, args []string, out, errOut io.Writer) int
 func runLandList(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "land list"
 	fs := taskFlags(verb)
-	sprint := fs.String("sprint", "", "")
-	repo := fs.String("repo", "", "")
-	base := fs.String("base", "", "")
-	redisAddr := fs.String("redis", redisDefault(), "")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	base := fs.String("base", "", "list only the offers on this base")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
