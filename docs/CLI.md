@@ -1372,6 +1372,19 @@ $ nova-wake serve --bus ./bus --as rowan --on-note ./wake-me --interval 60s \
     --receipt-max-words 40
 ```
 
+Handler stdout and stderr are retained in a private log under `<state>.logs`;
+`WAKE HANDLER` names the file and note IDs. Each log is capped at 1 MiB,
+with a truncation marker, and stays available after `serve` exits. Inspect or
+remove these logs according to the sensitivity of the work they contain.
+
+A failed state save stops dispatch and ends with `WAKE BROKEN` (exit 2).
+Failure before launch starts no handler. Failure after the handler returns
+leaves its outcome uncertain and withholds the bus receipt: reconcile that
+attempt before redelivery. A failed bus receipt reports the actual cause and
+a receipt-only retry command; it never requires running accepted work again.
+The final `receipt_unconfirmed=` count names notes whose receipt publication
+could not be confirmed during this run.
+
 Every flag above is required, and `serve` names **all** of the missing ones in
 one refusal rather than one per run:
 

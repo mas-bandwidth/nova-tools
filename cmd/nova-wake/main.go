@@ -119,7 +119,9 @@ NOVA_REDIS_BENCH_PASSWORD, through nova-secrets exec --only and no other way.
 serve FETCHES every --interval, which is why --remote and --branch are its own
 flags and not --receipt's, and its --on-note command is started as
 <command> <id> [<id>...]: note ids and nothing else, no stdin, no environment,
-its output discarded. Its last line is WAKE SERVE, and a note whose command
+its output kept in a private bounded log under <state>.logs (the WAKE HANDLER
+line names it). Its last line is WAKE SERVE, or WAKE BROKEN with exit 2 if
+state cannot be persisted. A note whose command
 exited non-zero is uncertain and waits for a person's --redeliver, counted
 failed= there.
 

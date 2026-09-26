@@ -2066,7 +2066,26 @@ spec forbids**.
     else: `queued|<stamp>` when the note is first seen; `dispatching|<stamp>|
     attempt=<n>` written **before** the spawn, for every id in the batch;
     `delivered|<stamp>|rc=0|redelivered=<0|1>` written **after** the
-    command exits 0, for every id in the batch. Exit 0 is
+    command exits 0, for every id in the batch. A failed save is a hard stop:
+    no spawn after an unpersisted intent; after execution, no receipt or
+    accepted-result line without the persisted result. The latter is reported
+    uncertain and must be reconciled before redelivery. `WAKE BROKEN` and exit 2
+    end a serve whose state could not be saved. The failure-guidance regression
+    `TestStellaServeFailureGuidance` covers a real reload of the last queued
+    state, failed result persistence, a refused log open, lost receipt exits,
+    and a handler's diagnostic output.
+
+    Handler output lives in a private file under `<state>.logs`; `WAKE HANDLER`
+    names its path and note IDs. Output is capped at 1 MiB with an explicit
+    truncation marker, continues draining beyond the cap, and a recording
+    failure is named separately from the handler outcome. `TestServeLogBoundsOutputWithoutStoppingHandler`
+    and `TestServeLogRetainsWriteFailureWhileDraining` cover those limits.
+    Receipt publication failure retains the bus exit, cause and IDs and gives
+    a receipt-only command; accepted handler work is never rerun to fix a
+    receipt. The serve summary counts `receipt_unconfirmed=` for this run.
+    Logs are retained for operator inspection and removal, never replayed as instructions.
+
+    Exit 0 is
     the one acceptance boundary an arbitrary command offers, so `delivered
     rc=0` is *accepted* and there is no separate *completed*. A command that
     does not exit 0 has not accepted the note: the batch becomes

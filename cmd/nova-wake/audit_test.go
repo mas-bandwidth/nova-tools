@@ -78,6 +78,8 @@ var wakeAudit = audit.Config{
 		// prints nothing and shadows nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/dispatch"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
+		// HandlerLog writes raw subprocess bytes only to a private file;
+		// serve prints its returned path through oneline.Field, never the bytes.
 		`"github.com/mas-bandwidth/nova-tools/internal/wake"`,
 		// internal/presence is the friend heartbeat of #2610: the beat's keys
 		// and the line read back from them. It writes to the store, never to

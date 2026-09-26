@@ -218,6 +218,8 @@ type server struct {
 
 	fired, notes, redelivered, cc int
 	failed                        int
+	broken                        bool
+	receiptUnconfirmed            int
 	maxWait                       time.Duration
 	saidBlocked                   bool
 
@@ -249,7 +251,7 @@ func (s *server) loop(ctx context.Context, every, hours time.Duration) int {
 	// one.
 	s.recover(ctx)
 
-	for {
+	for !s.broken {
 		now := s.clock.Now()
 		if !now.Before(end) {
 			break
@@ -283,9 +285,13 @@ func (s *server) loop(ctx context.Context, every, hours time.Duration) int {
 	// The count line prints on FAILURE too: a dispatch whose command exited 7
 	// is not a fire that worked, and a reader of this line must not have to
 	// infer it from the absence of anything else.
-	fmt.Fprintf(s.stdout, "WAKE SERVE fired=%d notes=%d redelivered=%d uncertain=%d queued=%d cc=%d failed=%d max_wait=%s idle=%s\n",
-		s.fired, s.notes, s.redelivered, uncertain, queued, s.cc, s.failed,
+	fmt.Fprintf(s.stdout, "WAKE SERVE fired=%d notes=%d redelivered=%d uncertain=%d queued=%d cc=%d failed=%d receipt_unconfirmed=%d max_wait=%s idle=%s\n",
+		s.fired, s.notes, s.redelivered, uncertain, queued, s.cc, s.failed, s.receiptUnconfirmed,
 		oneline.Field(wake.Dur(s.maxWait)), oneline.Field(wake.Dur(s.clock.Now().Sub(start))))
+	if s.broken {
+		fmt.Fprintf(s.stdout, "WAKE BROKEN state=%s: durable dispatch state could not be saved; dispatch stopped; inspect the state error before restarting\n", oneline.Field(s.statePath))
+		return 2
+	}
 	return 0
 }
 
@@ -300,6 +306,9 @@ func (s *server) recover(ctx context.Context) {
 		}
 		_ = stamp
 		s.ledger.Recover(id, wake.Stamp(s.clock.Now()), attempt)
+		if !s.save() {
+			return
+		}
 		fmt.Fprintf(s.stdout, "WAKE UNCERTAIN id=%s attempt=%d: dispatch interrupted; %s\n",
 			oneline.Field(id), attempt, oneline.Escape(s.remedy(id)))
 		if s.idempotent && attempt == 1 {
@@ -523,11 +532,17 @@ func (s *server) blockedOnce(id string, queued int) {
 // the spawn, for every id in the batch; the spawn; `delivered` with the exit
 // code AFTER the command returns, for every id in the batch.
 func (s *server) runBatch(ctx context.Context, ids []string, attempt int, redelivered bool) {
+	if s.broken {
+		return
+	}
 	stamp := wake.Stamp(s.clock.Now())
 	for _, id := range ids {
 		s.ledger.MarkDispatching(id, stamp, attempt)
 	}
-	s.save()
+	if !s.save() {
+		fmt.Fprintf(s.stdout, "WAKE NOTSTARTED ids=%s: dispatch intent was not persisted; no handler started; repair the state path and restart serve\n", oneline.Field(strings.Join(ids, ",")))
+		return
+	}
 	if serveKillPoint == "before-spawn" {
 		return
 	}
@@ -563,8 +578,15 @@ func (s *server) runBatch(ctx context.Context, ids []string, attempt int, redeli
 		}
 		s.ledger.MarkDelivered(id, done, rc, redelivered)
 	}
-	s.save()
 	s.fired++
+	if !s.save() {
+		for _, id := range ids {
+			s.ledger.MarkUncertain(id, done, attempt, rc)
+		}
+		s.failed++
+		fmt.Fprintf(s.stdout, "WAKE UNCERTAIN ids=%s rc=%d: handler returned but result was not persisted; receipt withheld and dispatch stopped; reconcile this attempt before redelivery\n", oneline.Field(strings.Join(ids, ",")), rc)
+		return
+	}
 	fmt.Fprintf(s.stdout, "WAKE FIRED ids=%d first=%s rc=%d redelivered=%s\n",
 		len(ids), oneline.Field(ids[0]), rc, oneline.Field(mark))
 	if serveKillPoint == "after-delivered" {
@@ -601,9 +623,19 @@ func (s *server) spawn(ctx context.Context, ids []string) int {
 		return refused(s.stderr, "on-note: --on-note carries no command, so there is nothing to start")
 	}
 	cmd := exec.CommandContext(ctx, fields[0], append(append([]string{}, fields[1:]...), ids...)...)
-	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	log, err := wake.OpenHandlerLog(s.statePath, ids)
+	if err != nil {
+		fmt.Fprintf(s.stderr, "WAKE HANDLER NOTSTARTED ids=%s: create diagnostic log: %s; repair the state log directory before redelivery\n", oneline.Field(strings.Join(ids, ",")), oneline.Err(err))
+		return 127
+	}
+	fmt.Fprintf(s.stdout, "WAKE HANDLER ids=%s log=%s limit_bytes=%d\n", oneline.Field(strings.Join(ids, ",")), oneline.Field(log.Path()), wake.HandlerLogLimit)
+	cmd.Stdout, cmd.Stderr = log, log
 	cmd.Stdin = nil
-	if err := cmd.Run(); err != nil {
+	runErr := cmd.Run()
+	if err := log.Close(); err != nil {
+		fmt.Fprintf(s.stderr, "WAKE LOG FAILED ids=%s log=%s: %s; diagnostic output is incomplete; inspect the handler outcome before any retry\n", oneline.Field(strings.Join(ids, ",")), oneline.Field(log.Path()), oneline.Err(err))
+	}
+	if err := runErr; err != nil {
 		var ee *exec.ExitError
 		if asExitErr(err, &ee) {
 			return ee.ExitCode()
@@ -622,8 +654,18 @@ func (s *server) sendReceipts(ctx context.Context, ids []string) {
 		args = append(args, "--note", id)
 	}
 	args = append(args, "--remote", s.remote, "--branch", s.branch)
-	if _, _, err := s.runBus(ctx, args); err != nil {
-		fmt.Fprintf(s.stderr, "WAKE POLL receipt: %s\n", oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)))
+	raw, code, err := s.runBus(ctx, args)
+	if err != nil || code != 0 {
+		s.receiptUnconfirmed += len(ids)
+		why := oneLine(raw)
+		if err != nil {
+			why = err.Error() + ": " + why
+		}
+		quoted := make([]string, len(args))
+		for i, arg := range args {
+			quoted[i] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
+		}
+		fmt.Fprintf(s.stderr, "WAKE RECEIPT FAILED ids=%s rc=%d why=%s; handler already accepted; receipt publication unconfirmed; inspect/retry only the receipt, never redispatch the handler; next: nova-bus %s\n", oneline.Field(strings.Join(ids, ",")), code, oneline.Escape(oneline.Cap(why, oneline.TailBytes)), oneline.Escape(strings.Join(quoted, " ")))
 	}
 }
 
@@ -637,6 +679,9 @@ func (s *server) redeliverOne(ctx context.Context, id string) int {
 	}
 	s.runBatch(ctx, []string{id}, attempt+1, true)
 	s.save()
+	if s.broken {
+		return 2
+	}
 	return 0
 }
 
@@ -677,10 +722,16 @@ func (s *server) stateOf(id string) string {
 	return s.ledger.StateOf(id)
 }
 
-func (s *server) save() {
-	if err := s.st.Save(s.statePath); err != nil {
-		fmt.Fprintf(s.stderr, "WAKE POLL state: %s\n", oneline.Err(err))
+func (s *server) save() bool {
+	if s.broken {
+		return false
 	}
+	if err := s.st.Save(s.statePath); err != nil {
+		s.broken = true
+		fmt.Fprintf(s.stderr, "WAKE POLL state: %s; state=%s was not updated; dispatch stopped; inspect filesystem access and available space before restart\n", oneline.Err(err), oneline.Field(s.statePath))
+		return false
+	}
+	return true
 }
 
 // runBus starts nova-bus under the timeout. It is the same one program the
