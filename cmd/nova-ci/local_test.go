@@ -30,7 +30,7 @@ type localFake struct {
 	calls   []localCmd
 }
 
-func (f *localFake) run(c localCmd) (int, error) {
+func (f *localFake) answer(c localCmd) (int, error) {
 	f.calls = append(f.calls, c)
 	line := strings.Join(c.Argv, " ")
 	if line == "git rev-parse --show-toplevel" {
@@ -105,7 +105,7 @@ func localFixture(t *testing.T, selected string, replies ...localReply) *localFa
 func runLocal(t *testing.T, f *localFake, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code := cmdLocal(args, &out, &errb, f.run)
+	code := cmdLocal(args, &out, &errb, f.answer)
 	return code, out.String(), errb.String()
 }
 
