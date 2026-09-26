@@ -3976,7 +3976,87 @@ JEV RECORDED pr:nova-tools:7 head=b7628a80 gate=ok lint=ok scope=ok base=ok
 
 Exit 0 recorded with gate=ok; 1 recorded with gate=fail (`why=` and
 `remedy=` on the receipt), or refused (no record, no Redis: `JEV REFUSED`
-on stderr); 2 usage, before Redis is touched.
+on stderr); 2 usage, before Redis is touched. A new line (`JEV RECORDED`) is
+also a `gate` row in the decision ledger below, at
+`jev:row:gate:<repo>#<n>@<head12>` with the gate word as its rules answer;
+`land merge` joins `outcome=ok` to the row of every member head it lands
+(by `landed`), and prints `JEV REFUSED land-gate pr=#<n> why=... remedy=...`
+on stderr when the join fails (the land stands).
+
+#### The decision ledger: jev sync | ask | report | outcome
+
+Every decision the card model makes is one row (nova-tools #4316,
+`internal/nsprint/jev`): `jev:row:<type>:<subject>` holds `state` (the exact
+text Jev reads), `input_sha`, `rules` (the answer the structure acts on
+today), Jev's shadow answer (`jev`, `jev_conf`, `prompt_version`, `tokens`,
+`cost`, `ms`) and the `outcome` (`outcome_by`, `outcome_why`,
+`outcome_at`). Rows are indexed by `jev:rows:<type>` (scored by the
+decision's ms) and every decision, answer and outcome is appended to the
+stream `jev:decisions`, the training set. The built-in prompts are
+`docs/jev/<type>.<version>.txt`.
+
+| type | subject | decided at | rules | outcome |
+|---|---|---|---|---|
+| `tier` | primary | push | the declared tier, else `flash` | at merging: the tier of the work or fix copy whose PR read 8+ (that copy's record at its ok) |
+| `worktype` | primary | push | - | the card's TYPE line, when it is one of Jev's types |
+| `review` | `<primary>@<at>` | a failed copy's move into review (`at` is that move's, the same ms as `review_at`) | REVIEW-JEV `suggest=` | the posted verdict (a read reassign too) |
+| `readsane` | read copy | the read's end with a score | a pass with a failing gate, or an under-10 naming no work, is `suspect` | at land or close from merging: `trust` when the read's pass or fail matched the head's fate |
+| `gate` | `<repo>#<n>@<head12>` | `jev mech` | `ok` or `fail` | `ok` when the head lands |
+
+`jev sync [--n <moves>] [--redis <addr>]` reads up to `--n` (default 1000)
+entries of `ws:log` after `jev:cursor` and writes the rows and outcomes those
+moves are, and the new cursor, in one MULTI. Nothing on the copy model's live
+path writes a jev key. A review move whose record has already moved on to a
+later review makes no row (its fields are not that move's); it is counted and
+printed. A cursor older than the log's first entry is a possible gap:
+
+```
+JEV SYNC GAP between=<cursor>..<first id> why=ws:log was trimmed past jev:cursor remedy=run jev sync more often than ws:log turns over
+JEV SYNC MOVED review <primary>@<at> why=the record moved on to a later review before sync read it remedy=...
+JEV SYNC moves=<n> decisions=<d> outcomes=<o> moved=<m> from=<id|-> cursor=<id|->
+```
+
+`jev ask [--n <rows, 1-256>] [--key-env <VAR>] [--base-url <url>] [--redis
+<addr>]` claims up to `--n` (default 16) rows off `jev:pending` with SMOVE to
+`jev:asking`, asks TypeSafe Jev each (one typed call per row, the key from
+`--key-env`, default `JEV_API_KEY`), and in one MULTI writes the answers,
+returns the rows the provider failed on to `jev:pending` and removes the rest
+from `jev:asking`. Those writes run without the caller's cancel, so a
+cancelled ask still writes what it paid for and puts back what it claimed;
+when even that fails, the refusal names the rows left in `jev:asking`.
+
+```
+JEV ASKED <type> <subject> answer=<a> conf=<0.00> version=<v> ms=<ms> cost=<$|->
+JEV REFUSED ask <type> <subject> why=<error> remedy=back on jev:pending; the next jev ask asks it again
+JEV ASK asked=<n> answered=<a> failed=<f> pending=<p> asking=<k>
+```
+
+`jev report [--type <t>] [--version <v>] [--redis <addr>]` prints one line
+per type, source (`rules`, `jev`) and prompt version: `answers`,
+`outcomes`, `agree`, `agreement` (of outcomes), `open` (no outcome yet),
+`overrides` (outcomes a person recorded, not `card`, `merging`, `landed` or
+`closed`) and `override_agreement`; a `jev` line adds `cost` (sum) and `ms`
+(mean). A ratio with nothing under it prints `-`. `--version` keeps that
+prompt version's lines and the same types' rules lines beside them.
+
+```
+JEV REPORT rows=<n> pending=<p> lines=<l>
+JEV type=tier source=jev version=tier-v1 answers=38 outcomes=30 agree=26 agreement=87% open=8 overrides=0 override_agreement=- cost=$0.001200 ms=640
+```
+
+`jev outcome --type <t> --subject <s> --outcome <o> --why <text> [--by
+<who>] [--redis <addr>]` joins an outcome by hand (the coordinator's confirm
+or override; `--by` defaults to `NOVA_FRIEND`); an outcome with no decision
+row is refused.
+
+```
+JEV OUTCOME <type> <subject> outcome=<o> by=<who>
+JEV REFUSED <verb> why=<why> remedy=<remedy>
+```
+
+Exit 0 done, 1 refused (Redis, Jev, no row, a failed ask), 2 usage. A
+decision point another stream builds records its row with `jev.Record` and
+its outcome with `jev.Join`, one call each.
 
 ### spec
 

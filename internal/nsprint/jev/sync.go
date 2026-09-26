@@ -15,6 +15,9 @@ import (
 type SyncResult struct {
 	Events, Decisions, Outcomes int
 	From, Cursor                string
+	// Moved is the review moves whose record had moved on to a later review
+	// before sync read it: counted, printed, no row.
+	Moved []string
 	// Gap is set when ws:log was trimmed past the cursor (its first entry
 	// is after it) before sync read it: moves in between may be missing.
 	Gap string
@@ -66,11 +69,18 @@ func Sync(ctx context.Context, c redis.Cmdable, max int64) (SyncResult, error) {
 	if err := hgetAll(ctx, c, ids, func(id string) string { return "task:" + id }, snap.Records); err != nil {
 		return res, err
 	}
-	rows, waits := Then(events, snap.Records)
+	rows, waits, opens, builts := Then(events)
 	ex := make([]*redis.IntCmd, len(rows))
+	var openV, builtV *redis.SliceCmd
 	if _, err := c.Pipelined(ctx, func(p redis.Pipeliner) error {
 		for i, k := range rows {
 			ex[i] = p.Exists(ctx, k)
+		}
+		if len(opens) > 0 {
+			openV = p.HMGet(ctx, KeyOpenReview, opens...)
+		}
+		if len(builts) > 0 {
+			builtV = p.HMGet(ctx, KeyBuilt, builts...)
 		}
 		return nil
 	}); err != nil {
@@ -79,6 +89,7 @@ func Sync(ctx context.Context, c redis.Cmdable, max int64) (SyncResult, error) {
 	for i, k := range rows {
 		snap.Rows[k] = ex[i].Val() == 1
 	}
+	snap.Open, snap.Built = fields(opens, openV), fields(builts, builtV)
 	if err := hgetAll(ctx, c, waits, ReadsKey, snap.Reads); err != nil {
 		return res, err
 	}
@@ -98,12 +109,24 @@ func Sync(ctx context.Context, c redis.Cmdable, max int64) (SyncResult, error) {
 		for _, id := range pl.Settled {
 			p.Del(ctx, ReadsKey(id))
 		}
+		for _, h := range []struct {
+			key string
+			m   map[string]string
+		}{{KeyOpenReview, pl.Open}, {KeyBuilt, pl.Built}} {
+			for _, id := range sortedKeys(h.m) {
+				if v := h.m[id]; v == "" {
+					p.HDel(ctx, h.key, id)
+				} else {
+					p.HSet(ctx, h.key, id, v)
+				}
+			}
+		}
 		p.Set(ctx, KeyCursor, pl.Cursor, 0)
 		return nil
 	}); err != nil {
 		return res, fmt.Errorf("write the ledger: %w", err)
 	}
-	res.Decisions, res.Outcomes, res.Cursor = len(pl.Decisions), len(pl.Outcomes), pl.Cursor
+	res.Decisions, res.Outcomes, res.Cursor, res.Moved = len(pl.Decisions), len(pl.Outcomes), pl.Cursor, pl.Moved
 	return res, nil
 }
 
@@ -128,6 +151,20 @@ func hgetAll(ctx context.Context, c redis.Cmdable, ids []string, key func(string
 		}
 	}
 	return nil
+}
+
+// fields reads an HMGET reply against its field names; nil is empty.
+func fields(names []string, cmd *redis.SliceCmd) map[string]string {
+	out := map[string]string{}
+	if cmd == nil {
+		return out
+	}
+	for i, v := range cmd.Val() {
+		if sv, ok := v.(string); ok && i < len(names) {
+			out[names[i]] = sv
+		}
+	}
+	return out
 }
 
 // streamID is a stream entry id's two parts.

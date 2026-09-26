@@ -65,7 +65,7 @@ const (
 
 // Types is the report's order; a type a hook records that is not here
 // follows, sorted.
-var Types = []string{TypeWorkType, TypeTier, TypeReview, TypeReadSane, TypeOrder, TypeSentinel}
+var Types = []string{TypeWorkType, TypeTier, TypeReview, TypeReadSane, TypeGate, TypeOrder, TypeSentinel}
 
 // The ledger's keys.
 const (
@@ -73,6 +73,14 @@ const (
 	KeyPending   = "jev:pending"
 	KeyTypes     = "jev:types"
 	KeyCursor    = "jev:cursor"
+	// KeyAsking holds the rows an ask has claimed off jev:pending (SMOVE)
+	// until their answers are written.
+	KeyAsking = "jev:asking"
+	// KeyOpenReview is each primary's review row a verdict will join.
+	KeyOpenReview = "jev:review:open"
+	// KeyBuilt is the tier each primary's last work or fix copy ran at:
+	// "<tier> <copy> <model>", the tier row's outcome when it merges.
+	KeyBuilt = "jev:built"
 	// KeyMoves is the move log sync reads (TK.move and TM.log write it).
 	KeyMoves = "ws:log"
 	// LogMax trims jev:decisions like ws:log is trimmed.
@@ -186,6 +194,9 @@ type Decision struct {
 	Ask           bool
 	Prompt        *Prompt
 	Fields        map[string]string
+	// At is the decision's ms (the move's, from sync), the row's at and its
+	// index score; 0 is when it is recorded.
+	At int64
 }
 
 var (
@@ -266,6 +277,9 @@ func pendingMember(t, subject string) string { return t + " " + subject }
 // recordCmds queues one decision: the row (a new decision replaces the old
 // row), its index, the type, the log entry and, when asked, the pending ask.
 func recordCmds(ctx context.Context, p redis.Pipeliner, d Decision, at int64) {
+	if d.At > 0 {
+		at = d.At
+	}
 	state := capState(d.State)
 	key := RowKey(d.Type, d.Subject)
 	h := []any{"type", d.Type, "subject", d.Subject, "at", strconv.FormatInt(at, 10), "state", state,
