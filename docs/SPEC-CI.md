@@ -2291,7 +2291,9 @@ set in seconds. Never a larger number.
 `AGENTS.md`, `TESTING.md`, the READMEs), no card template (`CardTemplateDirs`),
 no brief source (the `briefSources` the no-gh rule reads) and neither Go file
 that writes a harness card's standard lines (`internal/nsprint/taskcard/complete.go`,
-`internal/nsprint/card/copy.go`) spells `go test`, with any flags, over `./...`.
+`internal/nsprint/card/copy.go`) spells `go test`, with any flags, over `./...`
+or over one of the three trees that are most of it (`./cmd/...`,
+`./internal/...`, `./tools/...`).
 The door is `nova-ci local` (nova-tools#4336): the packages
 `.github/scripts/select-packages.sh` picks against the merge base of the base
 and `HEAD`, run through the Makefile's `test` target under `nice -n 15` at
@@ -2304,18 +2306,22 @@ ran the whole tree on the benches the real work shares. A doc that spells the
 whole-tree run teaches the next child to do it again.
 **The test.** `TestNoWholeTreeGoTestInDocs`, with its control
 `TestWholeTreeRuleSeesEachSpelling` (`internal/ci/wholetree_class_test.go`),
-which pins the bare, flagged, piped and table-cell spellings as red and
-`nova-ci local`, a named package, `./internal/...`, `go vet ./...` and prose as
+which pins the bare, flagged, piped and table-cell spellings and the
+`./cmd/...`, `./internal/...` and `./tools/...` trees as red, and `nova-ci
+local`, a named package, one tool's own subtree, `go vet ./...` and prose as
 green.
 **Its allowlist.** None. The offenders in the tree when the rule landed (the
 build sections of `docs/CLI.md` and `docs/USAGE.md`, two sentences of this
-spec, one release note) were rewritten.
+spec, one release note, and the `cmd/`, `internal/` and `tools/` guard cells
+of `AGENTS.md`, now `nova-ci local` in `internal/docs/catalog.go`) were
+rewritten.
 **Its remedy line.** `run nova-ci local (the unit tier CI runs for this diff)
 or name the packages you touched: nice -n 15 go test -p 2 -count=1 ./cmd/<tool>`.
 **Its narrowings.** One line at a time: a command split across a backslash
-continuation is not seen. `go test ./cmd/...` and `./internal/...` are not
-read (they are subtrees, not the tree), and neither are the Makefile's
-`test-full` and `test-slow` targets, which CI's whole-tree runs call.
+continuation is not seen. A package list spelled out by hand, however long, is
+not read, nor is one tool's own subtree (`./cmd/nova-ci/...`), and neither are
+the Makefile's `test-full` and `test-slow` targets, which CI's whole-tree runs
+call.
 
 ## Parked class tests
 

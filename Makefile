@@ -221,9 +221,16 @@ GOTEST_LDFLAGS ?=
 # lands (ci.yml's merge-group and push-to-dev legs, and `make check`, the
 # stream lander's batch test). nova-tools #4328.
 GOTEST_TAGS ?=
+#
+# GOTEST_P IS THE LEG'S CORES: `go test -p` (packages at once) and `-parallel`
+# (tests at once in a package) are both held to it when it is set. `nova-ci
+# local` sets it to 2 (nova-tools#4336), with GOMAXPROCS=2, so a child's run
+# takes at most two cores of a shared bench; empty here, and in CI until a leg
+# sets it, Go's own default (GOMAXPROCS) stands.
+GOTEST_P ?=
 test: PKGS := $(CL_PKGS)
 test:
-	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) -tags=$(GOTEST_TAGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
+	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) $(if $(GOTEST_P),-p $(GOTEST_P) -parallel $(GOTEST_P)) -tags=$(GOTEST_TAGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
 
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)

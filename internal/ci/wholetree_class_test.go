@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-// THE CLASS RULE: NO DOC AND NO CARD TELLS ANYONE TO RUN `go test ./...`
-// (nova-tools#4336).
+// THE CLASS RULE: NO DOC AND NO CARD TELLS ANYONE TO RUN `go test ./...`, OR
+// OVER ./cmd/..., ./internal/... OR ./tools/... (nova-tools#4336).
 //
 // Glenn 2026-09-26 10:08 AM ET: "CPU is for real work"; children test the
 // packages they touched and nothing else. The day's children each invented a
@@ -36,9 +36,11 @@ var wholeTreeCardSources = []string{
 }
 
 // wholeTreeGoTestRe is `go test`, any flags (a flag may take one value that is
-// not a path), then `./...` as the package pattern. `go test ./cmd/nova-ci`,
-// `go vet ./...` and prose that says "go test" near a `./...` are not it.
-var wholeTreeGoTestRe = regexp.MustCompile(`\bgo test(?:\s+-\S+(?:\s+[^\s\-./` + "`" + `|][^\s` + "`" + `|]*)?)*\s+\./\.\.\.(?:[^\w/]|$)`)
+// not a path), then `./...` or one of the three trees that are most of it
+// (`./cmd/...`, `./internal/...`, `./tools/...`) as the package pattern.
+// `go test ./cmd/nova-ci`, one tool's `./cmd/nova-ci/...`, `go vet ./...` and
+// prose that says "go test" near a `./...` are not it.
+var wholeTreeGoTestRe = regexp.MustCompile(`\bgo test(?:\s+-\S+(?:\s+[^\s\-./` + "`" + `|][^\s` + "`" + `|]*)?)*\s+\./(?:(?:cmd|internal|tools)/)?\.\.\.(?:[^\w/]|$)`)
 
 // wholeTreeRemedy is the one thing to do instead.
 const wholeTreeRemedy = "run `nova-ci local` (the unit tier CI runs for this diff: select-packages.sh, make test at -p 2, the budgets) or name the packages you touched: nice -n 15 go test -p 2 -count=1 ./cmd/<tool>"
@@ -140,6 +142,9 @@ func TestWholeTreeRuleSeesEachSpelling(t *testing.T) {
 		"go test -tags perf -p 1 -parallel 1 ./...",
 		"GOFLAGS=-json go test -count=1 ./... | tee out.json",
 		"| go test ./... | pass | 3 |",
+		"| `go test ./cmd/...` | `make build` |",
+		"go test ./internal/...",
+		"go test -count=1 ./tools/...",
 	} {
 		if v := wholeTreeViolations([]byte("fine\n" + bad + "\n")); len(v) != 1 || !strings.HasPrefix(v[0], "2: ") {
 			t.Errorf("%q: violations %q, want one at line 2", bad, v)
@@ -152,7 +157,7 @@ func TestWholeTreeRuleSeesEachSpelling(t *testing.T) {
 		"nice -n 15 go test -p 2 -count=1 ./internal/ci ./cmd/nova-ci/...",
 		"go vet ./...",
 		"go test on the touched packages, never ./... on a shared bench",
-		"go test ./internal/...",
+		"go test ./cmd/nova-ci/...",
 	} {
 		if v := wholeTreeViolations([]byte(good + "\n")); len(v) != 0 {
 			t.Errorf("%q flagged: %q", good, v)

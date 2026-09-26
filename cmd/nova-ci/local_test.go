@@ -336,3 +336,27 @@ func TestLocalRefusalsPrint(t *testing.T) {
 		})
 	}
 }
+
+// The GOTEST_P=2 the verb passes is a knob the Makefile's test target reads:
+// a variable nothing consumes would leave -p 2 resting on GOMAXPROCS alone
+// while the help and the printed command claimed it.
+func TestMakefileTestTargetTakesGOTEST_P(t *testing.T) {
+	t.Parallel()
+	mk, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recipe string
+	lines := strings.Split(string(mk), "\n")
+	for i, line := range lines {
+		if line == "test:" && i+1 < len(lines) {
+			recipe = lines[i+1]
+		}
+	}
+	if recipe == "" {
+		t.Fatal("the Makefile has no `test:` rule followed by its recipe")
+	}
+	if !strings.Contains(recipe, "-p $(GOTEST_P)") {
+		t.Errorf("make test does not pass -p $(GOTEST_P); nova-ci local's GOTEST_P=%s would be a phantom:\n%s", localCores, recipe)
+	}
+}
