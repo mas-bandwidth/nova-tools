@@ -26,7 +26,17 @@ const childMode = "NOVA_TESTGUARD_CHILD"
 // the child's combined output.
 func runChild(t *testing.T, mode string) (gotmp string, out string, err error) {
 	t.Helper()
-	gotmp, other := t.TempDir(), t.TempDir()
+	gotmp = t.TempDir()
+	out, err = runChildIn(t, mode, "", gotmp)
+	return gotmp, out, err
+}
+
+// runChildIn is runChild with the child's working directory and its GOTMPDIR
+// given as they are, so GOTMPDIR may be relative to dir. An empty dir keeps
+// this process's working directory.
+func runChildIn(t *testing.T, mode, dir, gotmp string) (string, error) {
+	t.Helper()
+	other := t.TempDir()
 	var env []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
@@ -42,12 +52,17 @@ func runChild(t *testing.T, mode string) (gotmp string, out string, err error) {
 		EnvNoHost+"=1",
 		childMode+"="+mode,
 	)
-	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestGuardChildProcess$", "-test.count=1", "-test.v")
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(t.Context(), bin, "-test.run=^TestGuardChildProcess$", "-test.count=1", "-test.v")
 	cmd.Env = env
+	cmd.Dir = dir
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
 	err = cmd.Run()
-	return gotmp, buf.String(), err
+	return buf.String(), err
 }
 
 // TestFakeUnderGOTMPDIRIsAFake is the CI runner of 2026-09-26: GOTMPDIR set,
@@ -73,6 +88,32 @@ func TestFakeUnderGOTMPDIRIsAFake(t *testing.T) {
 	}
 }
 
+// TestRelativeGOTMPDIRIsAFake pins tempRoots' relative-root handling: GOTMPDIR
+// is "rgotmp", relative to the child's working directory, so t.TempDir() and
+// the fake written into it are relative too. isFakeProgram makes the program
+// absolute; the root must be made absolute to match, or the fake is refused as
+// a host. With the Abs loop in tempRoots removed this test is red.
+func TestRelativeGOTMPDIRIsAFake(t *testing.T) {
+	t.Parallel()
+	const rel = "rgotmp"
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, rel), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runChildIn(t, "gotmpdir", dir, rel)
+	if err != nil {
+		t.Fatalf("a fake in t.TempDir() under a relative GOTMPDIR %q was refused as a host: %v\n%s", rel, err, out)
+	}
+	_, rest, ok := strings.Cut(out, "FAKE-OK ")
+	if !ok {
+		t.Fatalf("the child never reached the seam:\n%s", out)
+	}
+	fake, _, _ := strings.Cut(rest, "\n")
+	if !strings.HasPrefix(fake, rel+string(filepath.Separator)) {
+		t.Fatalf("the child's fake %s is not under the relative GOTMPDIR %s; the toolchain no longer joins GOTMPDIR as given and this test reads nothing", fake, rel)
+	}
+}
+
 // TestRealSSHIsNotAFake is the other half: adding GOTMPDIR to the roots must
 // not make the fleet's ssh a fake. Under the same child environment, the
 // system ssh is still refused.
@@ -91,13 +132,13 @@ func TestRealSSHIsNotAFake(t *testing.T) {
 	}
 }
 
-// TestGuardChildProcess is the child half of the two tests above. Run on its
+// TestGuardChildProcess is the child half of the three tests above. Run on its
 // own it skips; it only does work when a parent starts it with childMode set.
 func TestGuardChildProcess(t *testing.T) {
 	t.Parallel()
 	switch mode := os.Getenv(childMode); mode {
 	case "":
-		t.Skip("child half of TestFakeUnderGOTMPDIRIsAFake and TestRealSSHIsNotAFake; runs only when started by them")
+		t.Skip("child half of TestFakeUnderGOTMPDIRIsAFake, TestRelativeGOTMPDIRIsAFake and TestRealSSHIsNotAFake; runs only when started by them")
 	case "gotmpdir":
 		if !Refusing() {
 			t.Fatalf("the child must run under %s=1", EnvNoHost)

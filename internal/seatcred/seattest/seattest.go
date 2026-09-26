@@ -78,8 +78,17 @@ func Env(t *testing.T, home string) {
 	}
 	// Home may find sops outside PATH (for example the macOS runner).
 	// Read the fixture with the same discovery rule used to encrypt it.
-	t.Setenv(seatcred.SopsEnv, lookTool(t, "sops"))
+	t.Setenv(seatcred.SopsEnv, Sops(t))
 	t.Cleanup(func() { seatcred.Select("") })
+}
+
+// Sops is the sops Home seals with: the one on PATH, else Homebrew's, else the
+// test is skipped. A parallel test that hands seatcred its own getenv answers
+// seatcred.SopsEnv with it, so the fixture is read by the binary that wrote it
+// on a machine whose PATH names no /opt/homebrew.
+func Sops(t *testing.T) string {
+	t.Helper()
+	return lookTool(t, "sops")
 }
 
 func lookTool(t *testing.T, name string) string {
