@@ -1,9 +1,9 @@
 # acl-rows.tsv: the store's declared Redis users, one `<user> TAB <rules>` per line (nova-tools #4333,
 # internal/nsprint/acl). <rules> is the ACL SETUSER rule list after the password; a leading on|off is the
 # state (default on). No password token ever appears here: passwords stay on the store.
-# This file mirrors rowan-tools fleet/redis.yml at main 2026-09-26: the default user the play writes first
+# This file mirrors rowan-tools/fleet/redis.yml at main 2026-09-26: the default user the play writes first
 # (tasks/store-acl.yml), redis_users (bench, coordinator, viewer, admin) and every line of
-# fleet/templates/redis-acl.rules (the ns-* actors). The play installs its own export as
+# rowan-tools/fleet/templates/redis-acl.rules (the ns-* actors). The play installs its own export as
 # /var/lib/nova-redis/acl-rows.tsv; `nova-sprint acl check` reads that, or --rows <file>.
 default	off ~* &* +@all
 bench	~bench:* ~card:* ~lease:* ~q:* ~ev:* ~cards:* ~friend:* ~sprint:* ~task:* ~s:* ~cap:* ~machine:* ~proc:* ~flaky:* ~tokens:ledger:* ~friends ~friends:login ~cfg:friend:* ~benches ~sprints ~ci:* ~cfg:ci:* ~cfg:ci ~cfg:deal ~pr:* ~ws:* &wake:* +@read +@write +@stream +@hash +@string +multi +exec +@pubsub +@connection +fcall +fcall_ro +time -@dangerous

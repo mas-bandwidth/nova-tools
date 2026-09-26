@@ -22,6 +22,8 @@ import (
 // verb reads ACL LIST as admin and finds no drift; a hand ACL SETUSER is
 // drift; ACL LOAD of the same users.acl (the play's apply) converges it.
 func TestACLCheckAgainstALiveStore(t *testing.T) {
+	t.Parallel()
+
 	f, err := os.Open(aclRowsFixture)
 	if err != nil {
 		t.Fatal(err)
@@ -47,10 +49,8 @@ func TestACLCheckAgainstALiveStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := testutil.Start(t, "--aclfile", aclFile)
-	t.Setenv("NS_ADMIN", "pw")
-
 	check := func() (int, string, string) {
-		return runSprint("acl", "check", "--redis", addr, "--rows", aclRowsFixture)
+		return runACLCheck(aclEnv("pw"), redisACLList, "check", "--redis", addr, "--rows", aclRowsFixture)
 	}
 	if code, stdout, stderr := check(); code != 0 || stderr != "" || !strings.HasPrefix(stdout, "ACL CHECK OK ") {
 		t.Fatalf("fresh store: exit %d stdout %q stderr %q", code, stdout, stderr)

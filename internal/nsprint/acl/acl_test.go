@@ -39,8 +39,10 @@ func lines(ds []Drift) string {
 	return strings.Join(out, "\n")
 }
 
-// The mirror of fleet/redis.yml parses: every declared user, the default one off.
+// The mirror of rowan-tools/fleet/redis.yml parses: every declared user, the default one off.
 func TestMirrorRowsParse(t *testing.T) {
+	t.Parallel()
+
 	rows := mirror(t)
 	var names []string
 	for _, u := range rows {
@@ -58,6 +60,8 @@ func TestMirrorRowsParse(t *testing.T) {
 // Redis's own rendering of the declared rules is no drift: canonical order,
 // %RW~ as ~, resetchannels and a leading -@all spelled out, selectors included.
 func TestRealListingOfTheRowsIsNoDrift(t *testing.T) {
+	t.Parallel()
+
 	live, err := ParseList(listing(t))
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +74,8 @@ func TestRealListingOfTheRowsIsNoDrift(t *testing.T) {
 // A hand edit on the live server is one line per user naming the missing and
 // extra tokens; a user off, a user gone and an undeclared user each print.
 func TestDriftLines(t *testing.T) {
+	t.Parallel()
+
 	var ls []string
 	for _, l := range listing(t) {
 		switch {
@@ -102,6 +108,8 @@ func TestDriftLines(t *testing.T) {
 }
 
 func TestReduceSpellings(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct{ a, b string }{
 		{"allkeys allchannels allcommands", "~* &* +@all"},
 		{"resetkeys resetchannels -@all +GET %RW~k", "+get ~k"},
@@ -130,6 +138,8 @@ func TestReduceSpellings(t *testing.T) {
 
 // Every refusal of the rows file names its line; a password never belongs there.
 func TestRowsRefusals(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct{ rows, want string }{
 		{"bench ~* +@all\n", "rows line 1: want <user> TAB <rules>"},
 		{"bench\t~*\nbench\t~*\n", "rows line 2: user bench already declared on line 1"},

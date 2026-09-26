@@ -28,15 +28,24 @@ func init() {
 	})
 }
 
-// aclList is the one read of the store: ACL LIST as the admin user. A test
-// swaps it for a canned listing; the functional test runs the real one.
-var aclList = func(ctx context.Context, addr, user, password string) ([]string, error) {
+// aclLister is the one read of the store: ACL LIST as the given user.
+type aclLister func(ctx context.Context, addr, user, password string) ([]string, error)
+
+// redisACLList is the real read. A test hands aclCheck a canned listing
+// instead; the functional test runs this one.
+func redisACLList(ctx context.Context, addr, user, password string) ([]string, error) {
 	c := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password, MaxRetries: -1})
 	defer c.Close()
 	return c.Do(ctx, "ACL", "LIST").StringSlice()
 }
 
 func runACL(ctx context.Context, args []string, out, errOut io.Writer) int {
+	return aclCheck(ctx, args, out, errOut, os.Getenv, redisACLList)
+}
+
+// aclCheck is the verb with its two seams, the environment and the store
+// read, passed in so a test sets neither process state nor a package var.
+func aclCheck(ctx context.Context, args []string, out, errOut io.Writer, getenv func(string) string, list aclLister) int {
 	if len(args) == 0 {
 		return refuse(errOut, "acl", "want check")
 	}
@@ -72,13 +81,13 @@ func runACL(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return 2
 	}
 	store := lifeAddr(*addr)
-	password := os.Getenv(*adminEnv)
+	password := getenv(*adminEnv)
 	if password == "" {
 		fmt.Fprintf(errOut, "ACL CHECK REFUSED store=%s reason=no-admin-password env=%s remedy=export %s=$(ssh <store host> 'sudo cat /var/lib/nova-redis/admin.pass'), then rerun\n",
 			oneline.Field(store), oneline.Field(*adminEnv), oneline.Field(*adminEnv))
 		return 2
 	}
-	lines, err := aclList(ctx, store, "admin", password)
+	lines, err := list(ctx, store, "admin", password)
 	if err != nil {
 		fmt.Fprintf(errOut, "ACL CHECK REFUSED store=%s reason=%s remedy=the admin user reads ACL LIST; check the address and %s\n",
 			oneline.Field(store), oneline.Field(strings.TrimSpace(err.Error())), oneline.Field(*adminEnv))

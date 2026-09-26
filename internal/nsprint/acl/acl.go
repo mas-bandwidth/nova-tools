@@ -2,8 +2,8 @@
 // Redis ACL (ACL LIST, read as the admin user) against the declared rows, one
 // drift line per user whose rules differ. Before it, apply-acl.sh and
 // fix-acl.py rewrote users by hand and nothing compared the running server
-// with rowan-tools fleet/redis.yml, so drift was silent until a NOPERM. The
-// verb never writes: the play (rowan-tools fleet/redis.yml, users.acl and
+// with rowan-tools/fleet/redis.yml, so drift was silent until a NOPERM. The
+// verb never writes: the play (rowan-tools/fleet/redis.yml, users.acl and
 // ACL LOAD) is the only writer, and --fix is refused with its command.
 //
 // THE ROWS FILE (acl-rows.tsv) is the declared users, one per line:
@@ -11,14 +11,14 @@
 //	<user> TAB <rules>
 //
 // <rules> is the rule list exactly as ACL SETUSER takes it after the
-// password: fleet/redis.yml's redis_users `rules` and one line of
-// fleet/templates/redis-acl.rules (whose `<name> <rules>` becomes
+// password: rowan-tools/fleet/redis.yml's redis_users `rules` and one line of
+// rowan-tools/fleet/templates/redis-acl.rules (whose `<name> <rules>` becomes
 // `<name>\t<rules>`), plus the default user the play writes first. A leading
 // `on` or `off` is the user's state (default on). A line starting with # and
 // a blank line are skipped. A password token (>..., <..., #<hash>, !<hash>,
 // nopass, resetpass) is refused: passwords live on the store, never in the
 // rows. The play installs the file beside the server as DefaultRowsPath;
-// testdata/acl-rows.tsv is the mirror of fleet/redis.yml at rowan-tools
+// testdata/acl-rows.tsv is the mirror of rowan-tools/fleet/redis.yml at rowan-tools
 // main 2026-09-26.
 //
 // COMPARISON is by rule tokens, not text: ACL LIST prints the rules in its own
@@ -42,11 +42,11 @@ import (
 )
 
 // DefaultRowsPath is where the play installs the rows file: the store's
-// redis_dir (fleet/redis.yml), beside users.acl.
+// redis_dir (rowan-tools/fleet/redis.yml), beside users.acl.
 const DefaultRowsPath = "/var/lib/nova-redis/acl-rows.tsv"
 
-// PlayCommand converges the store's ACL: rowan-tools fleet/Makefile `store`,
-// which runs fleet/redis.yml (users.acl from the declared users, ACL LOAD).
+// PlayCommand converges the store's ACL: rowan-tools/fleet/Makefile `store`,
+// which runs rowan-tools/fleet/redis.yml (users.acl from the declared users, ACL LOAD).
 const PlayCommand = "make -C rowan-tools/fleet store"
 
 // User is one user's rules reduced to tokens: On is its state, Rules its
