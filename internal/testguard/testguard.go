@@ -150,7 +150,7 @@ func isFakeProgram(program string) bool {
 // is set, and os.TempDir() does not follow it: the testing package makes the
 // directory with `os.MkdirTemp(os.Getenv("GOTMPDIR"), pattern)`
 // (testing/testing.go, common.makeTempDir, go1.27.1). The root is reachable
-// only through the environment -- testing exposes no accessor, and cmd/go
+// only through the environment -- testing exposes no accessor, and the go command
 // starts the test binary with its own original environment, so the variable
 // the binary sees is the one t.TempDir() read. A runner whose unit sets
 // GOTMPDIR and not TMPDIR otherwise puts every fake a test wrote into its own
