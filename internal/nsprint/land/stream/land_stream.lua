@@ -20,6 +20,9 @@
 --            commit_closes[{n,closes}] (each kept member's commit-message closes, on its record)}
 --   landed  {repo,slug,now,by,merge_sha,why,members[{task,stream,n,close}],pr,
 --            release{key,train,landed}? (a landing into the release branch)}
+--   claim   {keys[land:merge:<stream>...],owner,now,until}  take every stream for owner, or
+--            HELD <key> <holder> naming the live one (nothing written)
+--   release {keys[...],owner}                  drop the claim where owner still holds it
 --
 -- landed marks the landing and the records merged and, for a landing into
 -- the release branch, writes the release in the same call (#4050): version
@@ -223,6 +226,73 @@ if op == 'landed' then
     return {'OK', version}
   end
   return {'OK'}
+end
+
+-- The one writer per stream (nova-tools #4324): land:merge:<stream> owner
+-- names who lands the stream now, taken atomically before any build, push
+-- or merge and refused to anyone else while it is live:
+--   card:<task id>        a merge or escalation card: live while its task is
+--                         not closed, and for owner_until while its task is
+--                         being pushed (no record yet)
+--   duty:<repo>:<token>   the land duty: live while lease:land:<repo> holds
+--                         that token (the lease is renewed; a dead worker's
+--                         claim frees with its lease)
+--   anything else         a hand run of nova-sprint land: live until
+--                         owner_until (renewed while it runs)
+-- A claim with no owner but a task field (a card cut before the field) reads
+-- as card:<task>. after names the sentinel ids (<slug>:sentinel, #4318) a
+-- cross-stream end waits on: until each is landed only the stream's
+-- escalation card (card:<escalation>) may claim.
+local function owner_live(cur, until_ms, now)
+  local kind, rest = string.match(cur, '^(%a+):(.*)$')
+  if kind == 'card' then
+    local st = redis.call('HGET', 'task:' .. rest, 'state')
+    if st and st ~= '' then return st ~= 'closed' end
+    return (tonumber(until_ms) or 0) > now
+  elseif kind == 'duty' then
+    local repo, tok = string.match(rest, '^(.+):(%x+)$')
+    if not repo then return false end
+    return redis.call('HGET', 'lease:land:' .. repo, 'token') == tok
+  end
+  return (tonumber(until_ms) or 0) > now
+end
+
+local function stop_landed(id)
+  local st = redis.call('HMGET', 'task:' .. id, 'state', 'where')
+  return st[1] == 'landed' or st[2] == 'landed'
+end
+
+if op == 'claim' then
+  local now = tonumber(p.now) or 0
+  for _, k in ipairs(p.keys or {}) do
+    local h = redis.call('HMGET', k, 'owner', 'owner_until', 'task', 'escalation', 'after')
+    local cur = h[1]
+    if (not cur or cur == '') and h[3] and h[3] ~= '' then cur = 'card:' .. h[3] end
+    if cur and cur ~= '' and cur ~= p.owner and owner_live(cur, h[2], now) then
+      return {'HELD', k, cur}
+    end
+    local esc = h[4]
+    if h[5] and h[5] ~= '' and not (esc and esc ~= '' and p.owner == 'card:' .. esc) then
+      for sid in string.gmatch(h[5], '%S+') do
+        if not stop_landed(sid) then return {'HELD', k, 'after:' .. sid} end
+      end
+    end
+  end
+  for _, k in ipairs(p.keys or {}) do
+    redis.call('HSET', k, 'owner', p.owner, 'owner_until', tostring(p['until'] or '0'), 'owner_at', tostring(p.now or '0'))
+  end
+  return {'OK', tostring(#(p.keys or {}))}
+end
+
+if op == 'release' then
+  local n = 0
+  for _, k in ipairs(p.keys or {}) do
+    if redis.call('HGET', k, 'owner') == p.owner then
+      redis.call('HDEL', k, 'owner', 'owner_until', 'owner_at')
+      n = n + 1
+    end
+  end
+  return {'OK', tostring(n)}
 end
 
 return {'REFUSED', 'unknown op ' .. tostring(op)}

@@ -1,11 +1,18 @@
 // The stream landing verbs (nova-tools#3598; #3611-#3613): the flow Rowan
 // lands by hand, as verbs with all state in Redis (internal/nsprint/land/stream).
 //
-//	nova-sprint land stream --repo <owner/repo> --stream <s> [--stream <s2>...] [--base dev] [--dry-run] [--partial]
+//	nova-sprint land stream --repo <owner/repo> --stream <s> [--stream <s2>...] [--base dev] [--dry-run] [--partial] [--card <id>]
 //	    [--redis <addr>] [--remote <url>] [--mirror <dir>|none] [--workdir <dir>] [--branch <b>]
 //	    [--test <cmd>] [--test-timeout 20m] [--min-score N] [--by rowan] [--api <url>] [--budget N]
 //	nova-sprint land status --repo <owner/repo> [--redis <addr>]
-//	nova-sprint land merge --repo <owner/repo> --stream <s> [--by rowan] [--api <url>] [--budget N]
+//	nova-sprint land merge --repo <owner/repo> --stream <s> [--by rowan] [--api <url>] [--budget N] [--card <id>]
+//
+// One writer per stream (#4324): a run that builds, pushes or merges first
+// claims land:merge:<stream> owner (stream.Claim): --card <id> for a live
+// merge or escalation card's child (the claim stays the card's), else a
+// hand claim renewed while the run lasts. Another writer's live claim (the
+// land duty's pass, a card, another run, a cross-stream wait) refuses the
+// run: REFUSED LAND-OWNER stream=<s> owner=<o> (exit 2).
 //
 // land stream: members are ws:<s>:merging intersected with pr:<repo>:<n>
 // records read >= 8 at head (cfg:land min_score[:<repo>]), in the work
@@ -127,6 +134,7 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 	api := fs.String("api", gh.DefaultAPI, "")
 	budget := fs.Int("budget", 4, "")
 	partial := fs.Bool("partial", false, "")
+	card := fs.String("card", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -178,6 +186,13 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 	defer st.Close()
 	if opts.GH != nil {
 		opts.GH.Redis = st.Client() // the calls are counted in the store (#4343)
+	}
+	if !*dry {
+		release, err := landHold(ctx, st.Client(), streams, *card, *by)
+		if err != nil {
+			return landExit(errOut, verb, err)
+		}
+		defer release()
 	}
 	rep, err := stream.LandStream(ctx, st.Client(), opts)
 	if rep.State == "dry-run" && err == nil {
@@ -314,6 +329,7 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 	by := fs.String("by", "rowan", "")
 	api := fs.String("api", gh.DefaultAPI, "")
 	budget := fs.Int("budget", 64, "")
+	card := fs.String("card", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -330,6 +346,11 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 		return 6
 	}
 	defer st.Close()
+	release, err := landHold(ctx, st.Client(), streams, *card, *by)
+	if err != nil {
+		return landExit(errOut, verb, err)
+	}
+	defer release()
 	// The token is needed only past the Redis gates; refuse on them first.
 	gh, tokErr := landGitHub(verb, *api, *budget, st.Client())
 	o := stream.MergeOptions{Repo: *repo, Streams: streams, By: *by}
@@ -383,4 +404,39 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 		return 1
 	}
 	return 0
+}
+
+// landHold claims the streams for this run (nova-tools #4324: one writer per
+// stream). With --card the card must be live and its claim stays the card's
+// (released when the card's episode ends); without it a hand claim is
+// renewed while the run lasts and released at its end. Another writer's
+// live claim is a refusal naming it.
+func landHold(ctx context.Context, c stream.Client, streams []string, card, by string) (release func(), err error) {
+	owned := func(err error) error {
+		var o *stream.OwnedError
+		if errors.As(err, &o) {
+			return &stream.Refusal{Why: o.Error(), Remedy: "the stream is " + o.Owner + "'s while it is live: its card's child runs with --card <id>; wait for the duty's pass or the other run"}
+		}
+		return err
+	}
+	if card != "" {
+		state, err := c.HGet(ctx, "task:"+card, "state").Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, err
+		}
+		if state == "" || state == "closed" {
+			return nil, &stream.Refusal{Why: fmt.Sprintf("--card %s is not a live card (state=%s)", card, orDash(state)),
+				Remedy: "the stream's card is land:merge:<stream> task; without --card the run claims by hand"}
+		}
+		now := time.Now()
+		if err := stream.Claim(ctx, c, streams, stream.CardOwner(card), now, now.Add(stream.DefaultHandTTL)); err != nil {
+			return nil, owned(err)
+		}
+		return func() {}, nil
+	}
+	rel, err := stream.Hold(ctx, c, streams, stream.HandOwner(by), 0, nil)
+	if err != nil {
+		return nil, owned(err)
+	}
+	return rel, nil
 }

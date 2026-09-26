@@ -128,7 +128,17 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	// would carry fewer members than the stream has in merging is refused
 	// with the members left out, or, with Partial, opened with the same
 	// line in the log.
-	rep.LeftOut = LeftOut(rep.Skips)
+	prev, hadPrev, err := LoadLanding(ctx, c, o.Repo, slug)
+	if err != nil {
+		return rep, err
+	}
+	// A build refused LAND-SERIAL parked members out of merging: until each
+	// is back (or landed, or gone), the rest is still one at a time.
+	notBack, err := NotBack(ctx, c, prev, rep.Members, rep.Skips)
+	if err != nil {
+		return rep, err
+	}
+	rep.LeftOut = LeftOut(append(append([]Skip(nil), rep.Skips...), notBack...))
 	if len(rep.LeftOut) > 0 {
 		rep.Serial = SerialLine(o.Streams, len(rep.Members), rep.LeftOut)
 	}
@@ -149,11 +159,10 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 		rep.State = "empty"
 		return rep, nil
 	}
-	prev, hadPrev, err := LoadLanding(ctx, c, o.Repo, slug)
-	if err != nil {
-		return rep, err
-	}
-	if hadPrev && prev.State == "open" && prev.PR > 0 && prev.Branch != rep.Branch {
+	// An open stream PR (a serial record keeps it) is reused, never opened
+	// twice on one branch.
+	openPR := hadPrev && (prev.State == "open" || prev.State == "serial") && prev.PR > 0
+	if openPR && prev.Branch != rep.Branch {
 		return rep, &Refusal{Why: fmt.Sprintf("land:%s:%s is open as #%d on %s", o.Repo, slug, prev.PR, prev.Branch),
 			Remedy: "land merge it, or pass --branch " + prev.Branch}
 	}
@@ -203,13 +212,17 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 		if !o.Partial {
 			l.State = "serial"
 			l.Serial = rep.Serial
+			l.SerialLeft = rep.LeftOut
+			if openPR {
+				l.PR = prev.PR // the open stream PR stays this landing's
+			}
 			rep.State = l.State
 			rep.ParkedMoved, err = SaveBuilt(ctx, c, l, o.By)
 			if err != nil {
 				return rep, err
 			}
 			removeWorkdir(o.Workdir)
-			return rep, &Refusal{Why: rep.Serial + " (after the build)", Remedy: "the parked members left merging with their receipts; the stream lands whole on the next run, or --partial"}
+			return rep, &Refusal{Why: rep.Serial + " (after the build)", Remedy: "the parked members left merging with their receipts; the next run refuses until each is back in merging, then the stream lands whole; or --partial"}
 		}
 		if o.Log != nil {
 			fmt.Fprintf(o.Log, "%s allowed=partial\n", rep.Serial)
@@ -247,7 +260,7 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 		return rep, err
 	}
 	steps.Line("PUSHED %s head=%s members=%d", rep.Branch, short(res.Head), len(res.Kept))
-	if hadPrev && prev.State == "open" && prev.PR > 0 {
+	if openPR {
 		rep.PR, rep.Reused = prev.PR, true
 		steps.Line("PR #%d reused base=%s", rep.PR, o.Base)
 	} else {

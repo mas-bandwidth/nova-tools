@@ -166,8 +166,26 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if code, out, _ := runSprint("land", "status", "--redis", addr, "--repo", lsRepo); code != 0 || !strings.Contains(out, "state=serial") || !strings.Contains(out, " serial=LAND-SERIAL") {
 		t.Fatalf("status after the refusal: %d\n%s", code, out)
 	}
-	// t2 is back in merging for the --partial run: the same build, the
-	// line printed as allowed and kept on the landing record.
+	// The serial record holds the parked member: while t2 is in working a
+	// run is refused before any build (#4324), never landing the rest one
+	// at a time with no line.
+	code, out, errOut = runSprint("land", "stream", "--redis", addr, "--repo", lsRepo, "--stream", lsStream,
+		"--remote", url, "--mirror", "none", "--workdir", filepath.Join(t.TempDir(), "clone-nb"), "--api", gh.srv.URL)
+	if code != 2 || !strings.Contains(errOut, "left_out=#2:not-back:working") || strings.Contains(errOut, "after the build") || len(gh.Calls()) != 0 {
+		t.Fatalf("land stream with t2 not back: %d\n%s\n%s calls=%v", code, out, errOut, gh.Calls())
+	}
+	// One writer per stream: a live merge card holds the stream; a run
+	// without its --card is refused naming it, and no claim is left.
+	c.HSet(ctx, "task:merge-ls-1", "state", "open", "kind", "merge")
+	c.HSet(ctx, "land:merge:"+lsStream, "task", "merge-ls-1", "owner", "card:merge-ls-1")
+	code, out, errOut = runSprint("land", "stream", "--redis", addr, "--repo", lsRepo, "--stream", lsStream,
+		"--remote", url, "--mirror", "none", "--workdir", filepath.Join(t.TempDir(), "clone-own"), "--api", gh.srv.URL, "--partial")
+	if code != 2 || !strings.Contains(errOut, "REFUSED LAND-OWNER stream=") || !strings.Contains(errOut, "owner=card:merge-ls-1") || len(gh.Calls()) != 0 {
+		t.Fatalf("land stream with a live merge card: %d\n%s\n%s", code, out, errOut)
+	}
+	// t2 is back in merging for the --partial run, as the card's child
+	// (--card): the same build, the line printed as allowed and kept on
+	// the landing record.
 	// (Seeded the way the fixture seeds: the one move refuses a primary
 	// into merging outside a read copy's end, NOCOPY.)
 	c.ZRem(ctx, "ws:"+lsStream+":working", "t2")
@@ -177,9 +195,12 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	fsck("t2 back in merging")
 	work = filepath.Join(t.TempDir(), "clone2")
 	code, out, errOut = runSprint("land", "stream", "--redis", addr, "--repo", lsRepo, "--stream", lsStream,
-		"--remote", url, "--mirror", "none", "--workdir", work, "--api", gh.srv.URL, "--partial")
+		"--remote", url, "--mirror", "none", "--workdir", work, "--api", gh.srv.URL, "--partial", "--card", "merge-ls-1")
 	if code != 0 {
 		t.Fatalf("land stream: %d\n%s\n%s", code, out, errOut)
+	}
+	if o := c.HGet(ctx, "land:merge:"+lsStream, "owner").Val(); o != "card:merge-ls-1" {
+		t.Fatalf("the card's claim after its child's run: %q", o)
 	}
 	if !strings.Contains(out, "members=#3,#1 parked=#2:red:batch-test moved=1 tests=5 pr=#900 reused=false state=open") {
 		t.Fatalf("receipt:\n%s", out)
@@ -213,7 +234,7 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	}
 
 	// Merge refuses while ci is pending, and calls nothing.
-	code, _, errOut = runSprint("land", "merge", "--redis", addr, "--repo", lsRepo, "--stream", lsStream, "--api", gh.srv.URL)
+	code, _, errOut = runSprint("land", "merge", "--redis", addr, "--repo", lsRepo, "--stream", lsStream, "--api", gh.srv.URL, "--card", "merge-ls-1")
 	if code != 2 || !strings.Contains(errOut, "REFUSED ci=pending") {
 		t.Fatalf("merge on pending: %d %s", code, errOut)
 	}
@@ -226,7 +247,7 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if code, out, errOut := runSprint("pr", "record", "--redis", addr, "--repo", lsRepo, "--n", "900", "--ci", "green", "--mergeable", "true"); code != 0 {
 		t.Fatalf("pr record ci: %d %s %s", code, out, errOut)
 	}
-	code, out, errOut = runSprint("land", "merge", "--redis", addr, "--repo", lsRepo, "--stream", lsStream, "--api", gh.srv.URL)
+	code, out, errOut = runSprint("land", "merge", "--redis", addr, "--repo", lsRepo, "--stream", lsStream, "--api", gh.srv.URL, "--card", "merge-ls-1")
 	if code != 0 || !strings.Contains(out, "LAND MERGE repo="+lsRepo+" stream="+lsSlug+" pr=#900") ||
 		!strings.Contains(out, "members=2 moved=5 missing=0 already=false closed=#3,#1 unclosed=- rest_calls=12 close_lines=2 skipped=0 closes_unread=- issues_closed=#103,#7,#101 issues_unclosed=-") {
 		t.Fatalf("merge: %d\n%s\n%s", code, out, errOut)
@@ -311,7 +332,7 @@ func TestLandStreamEndToEnd(t *testing.T) {
 		t.Fatalf("table:\n%s", got)
 	}
 	// A re-run is ALREADY and closes nothing twice.
-	code, out, _ = runSprint("land", "merge", "--redis", addr, "--repo", lsRepo, "--stream", lsStream, "--api", gh.srv.URL)
+	code, out, _ = runSprint("land", "merge", "--redis", addr, "--repo", lsRepo, "--stream", lsStream, "--api", gh.srv.URL, "--card", "merge-ls-1")
 	if code != 0 || !strings.Contains(out, "moved=0 missing=0 already=true closed=- unclosed=- rest_calls=0 close_lines=0 skipped=0 closes_unread=- issues_closed=- issues_unclosed=- release=-") {
 		t.Fatalf("re-run: %d\n%s", code, out)
 	}

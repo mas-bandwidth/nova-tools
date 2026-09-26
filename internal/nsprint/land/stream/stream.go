@@ -601,6 +601,10 @@ type Landing struct {
 	// and PartialAt say who allowed it (--partial) and when. State serial
 	// is a build the line refused after the parks.
 	Serial, PartialBy, PartialAt string
+	// SerialLeft is the members a serial record left out (stored as
+	// serial_left, <n>:<task> each): the next run refuses while any of them
+	// is live outside merging (NotBack).
+	SerialLeft []Skip
 }
 
 func (l Landing) fields() map[string]string {
@@ -625,6 +629,13 @@ func (l Landing) fields() map[string]string {
 	if l.Serial != "" {
 		f["serial"], f["partial_by"], f["partial_at"] = l.Serial, l.PartialBy, l.PartialAt
 	}
+	if len(l.SerialLeft) > 0 {
+		left := make([]string, 0, len(l.SerialLeft))
+		for _, sk := range l.SerialLeft {
+			left = append(left, fmt.Sprintf("%d:%s", sk.N, sk.Task))
+		}
+		f["serial_left"] = strings.Join(left, " ")
+	}
 	return f
 }
 
@@ -648,6 +659,11 @@ func landingFrom(repo string, m map[string]string) Landing {
 			mb.Stream = streams[i]
 		}
 		l.Members = append(l.Members, mb)
+	}
+	for _, w := range strings.Fields(m["serial_left"]) {
+		ns, task, _ := strings.Cut(w, ":")
+		n, _ := strconv.Atoi(ns)
+		l.SerialLeft = append(l.SerialLeft, Skip{Task: task, N: n})
 	}
 	for _, w := range strings.Fields(m["parked"]) {
 		ns, why, _ := strings.Cut(w, ":")
@@ -695,6 +711,48 @@ func LoadLandings(ctx context.Context, c redis.Cmdable, repo string) ([]Landing,
 	return out, nil
 }
 
+// NotBack is the members a serial landing record left out that are live
+// outside merging now (waiting, ready, working, review or parked): each is
+// a Skip with why not-back:<where>. A member in merging again (it is in
+// members or skips), landed, done or gone is back. One round trip, none
+// when prev is not a serial record.
+func NotBack(ctx context.Context, c redis.Cmdable, prev Landing, members []Member, skips []Skip) ([]Skip, error) {
+	if prev.State != "serial" || len(prev.SerialLeft) == 0 {
+		return nil, nil
+	}
+	here := map[string]bool{}
+	for _, m := range members {
+		here[m.Task] = true
+	}
+	for _, sk := range skips {
+		here[sk.Task] = true
+	}
+	var ask []Skip
+	pipe := c.Pipeline()
+	var cmds []*redis.StringCmd
+	for _, sk := range prev.SerialLeft {
+		if sk.Task == "" || here[sk.Task] {
+			continue
+		}
+		ask = append(ask, sk)
+		cmds = append(cmds, pipe.HGet(ctx, "task:"+sk.Task, "state"))
+	}
+	if len(ask) == 0 {
+		return nil, nil
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	var out []Skip
+	for i, sk := range ask {
+		switch st := cmds[i].Val(); st {
+		case "waiting", "ready", "working", "review", "parked":
+			out = append(out, Skip{Task: sk.Task, N: sk.N, Why: "not-back:" + st})
+		}
+	}
+	return out, nil
+}
+
 // SaveBuilt writes the landing hash, the stream PR's own record (when it has
 // a PR) and parks every bisected member (merging -> working, ws:log receipt,
 // its pr record state=parked) in one Lua call. It returns how many parked
@@ -719,7 +777,9 @@ func SaveBuilt(ctx context.Context, c redis.Scripter, l Landing, by string) (int
 		}
 	}
 	payload["commit_closes"] = commits
-	if l.PR > 0 {
+	// The stream PR's record follows an open landing's pushed head only: a
+	// serial record keeps the PR number but pushed nothing.
+	if l.PR > 0 && l.State == "open" {
 		payload["stream_pr"] = map[string]any{"n": strconv.Itoa(l.PR), "fields": map[string]string{
 			"repo": l.Repo, "n": strconv.Itoa(l.PR), "head": l.Head, "base": l.Base, "base_sha": l.BaseSHA,
 			"stream": l.Streams, "kind": "stream", "state": "open", "ci": "pending", "mergeable": "",

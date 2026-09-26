@@ -4,7 +4,12 @@
 //	nova-sprint land --repo <owner/repo> --stream <s> [--stream <s2>...] [--base dev]
 //	    [--redis <addr>] [--remote <url>] [--mirror <dir>|none] [--workdir <dir>] [--branch <b>]
 //	    [--test <cmd>] [--test-timeout 20m] [--min-score N] [--by rowan] [--api <url>] [--budget N]
-//	    [--ci-wait 45m] [--tick 10s] [--ci-url <url>] [--rebuild] [--partial]
+//	    [--ci-wait 45m] [--tick 10s] [--ci-url <url>] [--rebuild] [--partial] [--card <id>]
+//
+// One writer per stream (#4324): the run claims land:merge:<stream> owner
+// first (--card <id> for a merge card's child, else a hand claim renewed
+// while it runs) and is refused REFUSED LAND-OWNER while another writer
+// (the land duty's pass, a card, another run) holds it live.
 //
 // Every step prints one line with its wall (REBASED, PUSHED, PR opened,
 // BUILT, CI, MERGED, LANDED n= total_ms=; nova-tools #4324), and a stream
@@ -74,6 +79,7 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 	ciURL := fs.String("ci-url", "", "")
 	rebuild := fs.Bool("rebuild", false, "")
 	partial := fs.Bool("partial", false, "")
+	card := fs.String("card", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -144,6 +150,11 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 		}
 		return r.Status, nil
 	}
+	release, err := landHold(ctx, st.Client(), streams, *card, *by)
+	if err != nil {
+		return landExit(errOut, verb, err)
+	}
+	defer release()
 	rep, err := stream.Run(ctx, st.Client(), o)
 	for _, s := range rep.Build.Skips {
 		fmt.Fprintf(out, "SKIP task=%s pr=#%d why=%s\n", s.Task, s.N, oneline.Field(s.Why))

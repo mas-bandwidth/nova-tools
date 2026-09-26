@@ -144,6 +144,9 @@ type LandLine struct {
 	// Card is the stream's live merge card (nova-tools #4324): the duty
 	// leaves the stream to it (State merge-card); one writer per stream.
 	Card string
+	// Owner is the claim another writer holds on the stream (State owned):
+	// a hand run, another worker, or a cross-stream wait (after:<sentinel>).
+	Owner string
 }
 
 // String is the receipt line.
@@ -160,9 +163,9 @@ func (r LandLine) String() string {
 	if r.PR > 0 {
 		pr = "#" + strconv.Itoa(r.PR)
 	}
-	return fmt.Sprintf("LAND-DUTY repo=%s stream=%s state=%s pr=%s members=%s unread=%s skip=%s parked=%s rebase=%s ci=%s card=%s err=%s",
+	return fmt.Sprintf("LAND-DUTY repo=%s stream=%s state=%s pr=%s members=%s unread=%s skip=%s parked=%s rebase=%s ci=%s card=%s owner=%s err=%s",
 		r.Repo, wrField(r.Stream), r.State, pr, numList(r.Members), numList(r.Unread), wrList(skips),
-		oneline.Field(wrList(parked)), wrList(r.Rebase), orDashStr(r.CI), orDashStr(r.Card), oneline.Field(orDashStr(r.Err)))
+		oneline.Field(wrList(parked)), wrList(r.Rebase), orDashStr(r.CI), orDashStr(r.Card), oneline.Field(orDashStr(r.Owner)), oneline.Field(orDashStr(r.Err)))
 }
 
 func numList(ns []int) string {
@@ -397,7 +400,7 @@ func (d *LandDuty) Pass(ctx context.Context, instance, repo string) (LandPass, e
 			}
 		}
 	}()
-	lines, err := d.land(pctx, repo)
+	lines, err := d.land(pctx, repo, token)
 	cancel()
 	<-beat
 	p.Lines, p.Took = lines, time.Since(start)
@@ -441,8 +444,10 @@ func (d *LandDuty) Pass(ctx context.Context, instance, repo string) (LandPass, e
 
 // land runs the land sequence for every stream in ws:order with a landable
 // member or an open landing, oldest stream rank first. One stream's error is
-// on its line; the pass goes on to the next.
-func (d *LandDuty) land(ctx context.Context, repo string) ([]LandLine, error) {
+// on its line; the pass goes on to the next. token is the pass's
+// lease:land:<repo> token: the duty's claim on each stream it builds is
+// live while the lease holds it.
+func (d *LandDuty) land(ctx context.Context, repo, token string) ([]LandLine, error) {
 	c := d.Client
 	streams, err := c.ZRange(ctx, "ws:order", 0, -1).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
@@ -471,16 +476,6 @@ func (d *LandDuty) land(ctx context.Context, repo string) ([]LandLine, error) {
 			// A stream whose name makes no slug is on the pass line as an
 			// error, never skipped in silence.
 			out = append(out, LandLine{Repo: repo, Stream: s, State: "error", Err: "slug: " + err.Error()})
-			continue
-		}
-		// One writer per stream (nova-tools #4324): a live merge card's
-		// child lands the stream with `nova-sprint land`; the duty builds,
-		// pushes and merges nothing for it while the card is open.
-		if card, live, err := MergeCardLive(ctx, c, s); err != nil {
-			out = append(out, LandLine{Repo: repo, Stream: s, Slug: slug, State: "error", Err: "merge card: " + err.Error()})
-			continue
-		} else if live {
-			out = append(out, LandLine{Repo: repo, Stream: s, Slug: slug, State: "merge-card", Card: card})
 			continue
 		}
 		members, skips, err := stream.Members(ctx, c, repo, []string{s}, cfg.MinScore)
@@ -522,7 +517,30 @@ func (d *LandDuty) land(ctx context.Context, repo string) ([]LandLine, error) {
 				continue
 			}
 		}
-		out = append(out, d.landStream(ctx, repo, s, slug, gh, line, cfg.Partial))
+		// One writer per stream (nova-tools #4324): the duty claims the
+		// stream (land:merge:<stream> owner, atomic) before it builds and
+		// holds it for the whole landing; a live merge card, a hand run or
+		// a cross-stream wait holds it instead and the duty builds, pushes
+		// and merges nothing for it.
+		owner := stream.DutyOwner(repo, token)
+		now := time.Now()
+		if err := stream.Claim(ctx, c, []string{s}, owner, now, now); err != nil {
+			var held *stream.OwnedError
+			if !errors.As(err, &held) {
+				line.State, line.Err = "error", "claim: "+err.Error()
+			} else if card, ok := strings.CutPrefix(held.Owner, "card:"); ok {
+				line.State, line.Card = "merge-card", card
+			} else {
+				line.State, line.Owner = "owned", held.Owner
+			}
+			out = append(out, line)
+			continue
+		}
+		line = d.landStream(ctx, repo, s, slug, gh, line, cfg.Partial)
+		if _, err := stream.Release(context.WithoutCancel(ctx), c, []string{s}, owner); err != nil {
+			line.Err = strings.TrimPrefix(line.Err+"; ", "; ") + "release: " + err.Error()
+		}
+		out = append(out, line)
 	}
 	return out, nil
 }

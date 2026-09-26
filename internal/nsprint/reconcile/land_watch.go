@@ -39,14 +39,24 @@ package reconcile
 //     land:merge:<stream> names the card (task, to, cut_at, members; its seq
 //     field survives an episode so ids never repeat). When merging empties
 //     (the landing moved the members) the card fields, the brief and the
-//     slow record go. The land duty never lands a stream whose merge card
-//     is live (MergeCardLive): one writer per stream.
-//   - Escalation typed: a merge card closed with a reason naming
-//     cross-stream (the merge child could not land inside its stream's
-//     PATHS) cuts one escalation task to the coordinator (kind work, both
-//     the reason and the stream in its title) once per card, printed as
-//     LAND-CROSS. #4322's sentinel card replaces the task kind when it
-//     lands; the seam is Push.
+//     slow record go, and the card's claim is released.
+//   - One writer per stream: land:merge:<stream> owner is the atomic claim
+//     (stream.Claim, land_stream.lua) every writer of stream/<slug> takes
+//     first. The watch claims card:<id> before it pushes a card; the land
+//     duty claims duty:<repo>:<token> before it builds; nova-sprint land
+//     claims (--card <id> for the card's child). A claim held live by
+//     another is refused, so the watch cuts nothing while the duty builds
+//     and the duty builds nothing while a card is open.
+//   - Escalation typed, once per closed card: a merge card closed with a
+//     reason naming cross-stream (the merge child could not land inside its
+//     stream's PATHS) cuts one escalation to the coordinator (kind work,
+//     LAND-CROSS) and the #4318 sentinel edge: the streams whose live
+//     cards' PATHS hold the named paths=<files> are written as after=<slug>:
+//     sentinel on land:merge:<stream>, and until each of those sentinels
+//     lands only the escalation card claims the stream (no merge card, no
+//     duty). A merge card closed any other way with the same members still
+//     in merging cuts one escalation too (LAND-STUCK), never a new frontier
+//     card every close.
 //
 // Nothing here sleeps; the clock is injected.
 
@@ -55,6 +65,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,6 +78,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/note"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -88,7 +100,7 @@ const (
 // LandMergingKey is the watch's first-seen stamp per merging member (id ->
 // ms); LandBriefKey holds a merge card's brief.
 func LandSlowKey(stream string) string    { return "land:slow:" + stream }
-func LandMergeKey(stream string) string   { return "land:merge:" + stream }
+func LandMergeKey(s string) string        { return stream.OwnerKey(s) }
 func LandMergingKey(stream string) string { return "land:merging:" + stream }
 func LandBriefKey(card string) string     { return "land:brief:" + card }
 
@@ -101,12 +113,15 @@ type MergeMember struct {
 }
 
 // MergeCard is the card the watch cuts: Kind merge for a stream's landing,
-// or work for the cross-stream escalation (Reason set).
+// or work for an escalation to the coordinator (Reason set; Escalate cross
+// for a cross-stream end, whose After is the sentinels it waits on, or
+// stuck for a card closed with the same members in merging).
 type MergeCard struct {
 	ID, Kind, Stream, Slug, Repo, Base, To, Sprint, Paths string
 	Members                                               []MergeMember
 	Notes                                                 []string
-	Reason                                                string
+	Reason, Escalate                                      string
+	After                                                 []string
 	Now                                                   time.Time
 }
 
@@ -214,21 +229,23 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 	if v := sprints.Val(); len(v) > 0 {
 		sprint = v[0]
 	}
-	var ws []watchStream
+	var sts []watchStream
 	for i, s := range streams {
-		ws = append(ws, watchStream{name: s, members: zs[i].Val(), slow: slows[i].Val(), merge: merges[i].Val(), seen: seens[i].Val(),
+		sts = append(sts, watchStream{name: s, members: zs[i].Val(), slow: slows[i].Val(), merge: merges[i].Val(), seen: seens[i].Val(),
 			notes: streamNotes[i].Val()})
 	}
 
 	// Pipeline 2: stamp the first-seen ms on the watch's record and read
 	// every member's merging_at (the move's, when written), pr and paths;
-	// read each merge card's state and reason.
+	// read each merge card's state and reason, and each sentinel a
+	// cross-stream end waits on.
 	pipe = c.Pipeline()
 	reads := map[string]*redis.SliceCmd{}
 	firsts := map[string]*redis.StringCmd{}
 	cards := map[string]*redis.SliceCmd{}
+	stops := map[string]*redis.SliceCmd{}
 	nowMS := strconv.FormatInt(now.UnixMilli(), 10)
-	for _, st := range ws {
+	for _, st := range sts {
 		for _, z := range st.members {
 			id := fmt.Sprint(z.Member)
 			pipe.HSetNX(ctx, LandMergingKey(st.name), id, nowMS)
@@ -240,6 +257,9 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 		}
 		if esc := st.merge["escalation"]; esc != "" {
 			cards[esc] = pipe.HMGet(ctx, "task:"+esc, "state", "reason", "dest")
+		}
+		for _, sid := range strings.Fields(st.merge["after"]) {
+			stops[sid] = pipe.HMGet(ctx, "task:"+sid, "state", "where")
 		}
 	}
 	var sprintNotes *redis.StringSliceCmd
@@ -256,7 +276,7 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 
 	pipe = c.Pipeline()
 	var errs []string
-	for _, st := range ws {
+	for _, st := range sts {
 		if len(st.members) == 0 {
 			if len(st.slow) > 0 {
 				pipe.Del(ctx, LandSlowKey(st.name))
@@ -264,9 +284,16 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 			if len(st.merge) > 0 {
 				// The card fields go; seq stays so the next episode's id is
 				// new (task.Push answers CONFLICT or CLOSED to a repeated id).
-				pipe.HDel(ctx, LandMergeKey(st.name), "task", "to", "cut_at", "members", "escalated", "escalation")
+				pipe.HDel(ctx, LandMergeKey(st.name), "task", "to", "cut_at", "members", "escalated", "escalation", "after")
 				if mid := st.merge["task"]; mid != "" {
 					pipe.Del(ctx, LandBriefKey(mid))
+				}
+				// A card's claim goes with its episode (compare and delete:
+				// a claim another writer took since is kept).
+				if o := st.merge["owner"]; strings.HasPrefix(o, "card:") {
+					if _, err := stream.Release(ctx, c, []string{st.name}, o); err != nil {
+						errs = append(errs, st.name+": release: "+err.Error())
+					}
 				}
 			}
 			if len(st.seen) > 0 {
@@ -327,7 +354,7 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 		}
 		age := now.Sub(oldest.MergingAt)
 		w.watchSlow(ctx, pipe, st, oldest, age, slow, wall, notify, &errs)
-		if err := w.watchCard(ctx, pipe, st, cards, repo, sprint, members, paths, sprintNoteLines, now); err != nil {
+		if err := w.watchCard(ctx, pipe, st, cards, stops, repo, sprint, members, paths, sprintNoteLines, now); err != nil {
 			errs = append(errs, st.name+": "+err.Error())
 		}
 	}
@@ -381,24 +408,6 @@ func (w *LandWatch) watchSlow(ctx context.Context, pipe redis.Pipeliner, st watc
 	}
 	pipe.HSet(ctx, LandSlowKey(st.name), notedField, episode)
 	w.printf("LAND-NOTE %s %s oldest=%s age=%s sent=1", word, oneline.Field(st.name), oldest.Task, age.Truncate(time.Second))
-}
-
-// MergeCardLive reports the stream's merge card when one is cut and not
-// closed: the land duty then leaves the stream to it (one writer per
-// stream; the card's child runs `nova-sprint land`).
-func MergeCardLive(ctx context.Context, c redis.Cmdable, stream string) (id string, live bool, err error) {
-	id, err = c.HGet(ctx, LandMergeKey(stream), "task").Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return "", false, err
-	}
-	if id == "" {
-		return "", false, nil
-	}
-	state, err := c.HGet(ctx, "task:"+id, "state").Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return id, false, err
-	}
-	return id, state != "" && state != "closed", nil
 }
 
 func (w *LandWatch) notify(ctx context.Context, wake LandWake, notify string) error {
@@ -471,9 +480,17 @@ func (w *LandWatch) frontier(ctx context.Context) (string, error) {
 	return w.coordinator(ctx)
 }
 
-// watchCard keeps one live merge card per stream with members in merging,
-// and cuts the escalation once when the card ended cross-stream.
-func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watchStream, cards map[string]*redis.SliceCmd, repo, sprint string, members []MergeMember, paths []string, sprintNotes []string, now time.Time) error {
+// DefaultCardGrace is how long a card's claim is live before its task
+// record exists (the push that follows the claim).
+const DefaultCardGrace = time.Minute
+
+// watchCard keeps one live merge card per stream with members in merging.
+// A card that closed escalates once to the coordinator when it ended
+// cross-stream (with the sentinel edge) or left the same members in
+// merging; otherwise the next card is cut. Every cut claims the stream
+// first: a live claim of another writer (the land duty building, a hand
+// run) cuts nothing this pass.
+func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watchStream, cards, stops map[string]*redis.SliceCmd, repo, sprint string, members []MergeMember, paths []string, sprintNotes []string, now time.Time) error {
 	mid := st.merge["task"]
 	state, reason := "", ""
 	if mid != "" {
@@ -483,7 +500,6 @@ func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watc
 			reason, _ = v[1].(string)
 		}
 	}
-	live := mid != "" && state != "" && state != "closed"
 	notes := append(append([]string(nil), st.notes...), sprintNotes...)
 	base := w.Base
 	if base == "" {
@@ -491,48 +507,42 @@ func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watc
 	}
 	card := MergeCard{Kind: string(LandMergeKind), Stream: st.name, Slug: st.slug, Repo: repo, Base: base, Sprint: sprint,
 		Paths: strings.Join(paths, " "), Members: members, Notes: notes, Now: now}
-	if live {
+	if mid != "" && state != "" && state != "closed" {
 		// The brief follows the stream while the card waits for its friend.
 		if state != "working" {
+			card.ID = mid
 			pipe.Set(ctx, LandBriefKey(mid), MergeBrief(card), 0)
 		}
-		if strings.Contains(reason, "cross-stream") {
-			return nil
-		}
-	}
-	if mid != "" && state == "closed" && strings.Contains(reason, "cross-stream") && st.merge["escalated"] != mid {
-		to, err := w.coordinator(ctx)
-		if err != nil {
-			return err
-		}
-		if to == "" {
-			return errors.New("cross-stream: no coordinator to escalate to")
-		}
-		esc := card
-		esc.Kind = string(task.KindWork)
-		esc.To, esc.Reason = to, reason
-		esc.ID = "cross-" + strings.TrimPrefix(mid, "merge-")
-		id, err := w.push(ctx, esc)
-		if err != nil {
-			return fmt.Errorf("escalate %s: %w", mid, err)
-		}
-		pipe.HSet(ctx, LandMergeKey(st.name), "escalated", mid, "escalation", id)
-		w.printf("LAND-CROSS %s card=%s escalation=%s to=%s reason=%s", oneline.Field(st.name), mid, id, to, oneline.Field(reason))
 		return nil
 	}
-	if live {
-		return nil
+	if mid != "" && state == "closed" && st.merge["escalated"] != mid {
+		why := ""
+		switch {
+		case strings.Contains(reason, "cross-stream"):
+			why = "cross"
+		case sameMembers(st.merge["members"], members):
+			why = "stuck"
+		}
+		if why != "" {
+			return w.escalate(ctx, pipe, st, card, mid, reason, why, now)
+		}
 	}
 	if esc := st.merge["escalation"]; esc != "" && st.merge["escalated"] == mid {
-		// The coordinator holds the cross-stream escalation: no new merge
-		// card until it closes (its release re-heads the stream).
+		// The coordinator holds the escalation: no new merge card until it
+		// closes, and after a cross-stream end until every sentinel it
+		// waits on has landed (the claim refuses the same).
 		if cmd := cards[esc]; cmd != nil {
 			if es, _ := cmd.Val()[0].(string); es != "" && es != "closed" {
 				return nil
 			}
 		}
+		for _, sid := range strings.Fields(st.merge["after"]) {
+			if !stopLanded(stops[sid]) {
+				return nil
+			}
+		}
 	}
-	// No live card: cut one.
+	// No live card: claim the stream for the next one, then cut it.
 	to, err := w.frontier(ctx)
 	if err != nil {
 		return err
@@ -540,28 +550,211 @@ func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watc
 	if to == "" {
 		return errors.New("merge card: no friend advertises frontier and there is no coordinator")
 	}
-	seq, err := w.Client.HIncrBy(ctx, LandMergeKey(st.name), "seq", 1).Result()
-	if err != nil {
+	seq, _ := strconv.ParseInt(st.merge["seq"], 10, 64)
+	seq++
+	card.ID = fmt.Sprintf("merge-%s-%d", st.slug, seq)
+	card.To = to
+	if held, err := w.claim(ctx, st.name, card.ID, now); err != nil || held {
 		return err
 	}
 	if mid != "" {
 		pipe.Del(ctx, LandBriefKey(mid)) // the closed card's brief
 	}
-	card.ID = fmt.Sprintf("merge-%s-%d", st.slug, seq)
-	card.To = to
 	id, err := w.push(ctx, card)
 	if err != nil {
 		return fmt.Errorf("merge card %s: %w", card.ID, err)
 	}
+	pipe.HSet(ctx, LandMergeKey(st.name), "seq", strconv.FormatInt(seq, 10), "task", id, "to", to,
+		"cut_at", strconv.FormatInt(now.UnixMilli(), 10), "members", memberIDs(members))
+	pipe.Set(ctx, LandBriefKey(id), MergeBrief(card), 0)
+	w.printf("MERGE-CARD %s card=%s to=%s members=%d", oneline.Field(st.name), id, to, len(members))
+	return nil
+}
+
+// escalate cuts the one escalation of a closed card to the coordinator:
+// LAND-CROSS with the sentinel edge (after=) for a cross-stream end,
+// LAND-STUCK for a card that closed with the same members in merging.
+func (w *LandWatch) escalate(ctx context.Context, pipe redis.Pipeliner, st watchStream, card MergeCard, mid, reason, why string, now time.Time) error {
+	to, err := w.coordinator(ctx)
+	if err != nil {
+		return err
+	}
+	if to == "" {
+		return errors.New(why + ": no coordinator to escalate to")
+	}
+	esc := card
+	esc.Kind = string(task.KindWork)
+	esc.To, esc.Reason, esc.Escalate = to, reason, why
+	esc.ID = why + "-" + strings.TrimPrefix(mid, "merge-")
+	if why == "cross" {
+		if esc.After, err = w.afterStops(ctx, st.name, crossPaths(reason)); err != nil {
+			return err
+		}
+	}
+	if held, err := w.claim(ctx, st.name, esc.ID, now); err != nil || held {
+		return err
+	}
+	id, err := w.push(ctx, esc)
+	if err != nil {
+		return fmt.Errorf("escalate %s: %w", mid, err)
+	}
+	pipe.HSet(ctx, LandMergeKey(st.name), "escalated", mid, "escalation", id, "after", strings.Join(esc.After, " "))
+	word := "LAND-CROSS"
+	if why == "stuck" {
+		word = "LAND-STUCK"
+	}
+	w.printf("%s %s card=%s escalation=%s to=%s after=%s reason=%s", word, oneline.Field(st.name), mid, id, to,
+		orDashStr(strings.Join(esc.After, ",")), oneline.Field(orDashStr(reason)))
+	return nil
+}
+
+// claim takes the stream for card id; held is true (and nothing is cut)
+// when another writer's claim is live.
+func (w *LandWatch) claim(ctx context.Context, s, id string, now time.Time) (held bool, err error) {
+	err = stream.Claim(ctx, w.Client, []string{s}, stream.CardOwner(id), now, now.Add(DefaultCardGrace))
+	var owned *stream.OwnedError
+	if errors.As(err, &owned) {
+		return true, nil
+	}
+	return false, err
+}
+
+// sameMembers is whether the closed card's members (land:merge members,
+// space-joined) are the members in merging now.
+func sameMembers(was string, now []MergeMember) bool {
+	old := strings.Fields(was)
+	if len(old) == 0 || len(old) != len(now) {
+		return false
+	}
+	in := map[string]bool{}
+	for _, id := range old {
+		in[id] = true
+	}
+	for _, m := range now {
+		if !in[m.Task] {
+			return false
+		}
+	}
+	return true
+}
+
+func memberIDs(members []MergeMember) string {
 	ids := make([]string, 0, len(members))
 	for _, m := range members {
 		ids = append(ids, m.Task)
 	}
-	pipe.HSet(ctx, LandMergeKey(st.name), "task", id, "to", to, "cut_at", strconv.FormatInt(now.UnixMilli(), 10),
-		"members", strings.Join(ids, " "))
-	pipe.Set(ctx, LandBriefKey(id), MergeBrief(card), 0)
-	w.printf("MERGE-CARD %s card=%s to=%s members=%d", oneline.Field(st.name), id, to, len(members))
-	return nil
+	return strings.Join(ids, " ")
+}
+
+func stopLanded(cmd *redis.SliceCmd) bool {
+	if cmd == nil {
+		return false
+	}
+	v := cmd.Val()
+	st, _ := v[0].(string)
+	where, _ := v[1].(string)
+	return st == "landed" || where == "landed"
+}
+
+// crossPaths is the files a cross-stream end names: paths=<a>,<b> (commas
+// or spaces) in the card's reason.
+func crossPaths(reason string) []string {
+	_, rest, ok := strings.Cut(reason, "paths=")
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, f := range strings.FieldsFunc(rest, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+		if strings.Contains(f, "=") {
+			break // the next key=value of the reason
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// liveWheres are the ws sets of a live card.
+var liveWheres = []string{"waiting", "ready", "working", "review", "merging"}
+
+// afterStops is the sentinel ids (<slug>:sentinel, nova-tools #4318) of the
+// other streams whose live cards' PATHS hold one of files: the streams a
+// cross-stream end waits on. Two round trips, once per escalation.
+func (w *LandWatch) afterStops(ctx context.Context, self string, files []string) ([]string, error) {
+	if len(files) == 0 {
+		return nil, nil
+	}
+	c := w.Client
+	streams, err := c.ZRange(ctx, "ws:order", 0, -1).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	pipe := c.Pipeline()
+	type set struct {
+		stream string
+		cmd    *redis.StringSliceCmd
+	}
+	var sets []set
+	for _, s := range streams {
+		if s == self {
+			continue
+		}
+		for _, wh := range liveWheres {
+			sets = append(sets, set{s, pipe.ZRange(ctx, stream.WSKey(s, wh), 0, -1)})
+		}
+	}
+	if len(sets) == 0 {
+		return nil, nil
+	}
+	if err := execPipe(ctx, pipe); err != nil {
+		return nil, err
+	}
+	pipe = c.Pipeline()
+	type card struct {
+		stream string
+		paths  *redis.StringCmd
+	}
+	var cs []card
+	for _, st := range sets {
+		for _, id := range st.cmd.Val() {
+			cs = append(cs, card{st.stream, pipe.HGet(ctx, "task:"+id, "paths")})
+		}
+	}
+	if len(cs) == 0 {
+		return nil, nil
+	}
+	if err := execPipe(ctx, pipe); err != nil {
+		return nil, err
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, cd := range cs {
+		if seen[cd.stream] || !pathsHold(strings.Fields(cd.paths.Val()), files) {
+			continue
+		}
+		seen[cd.stream] = true
+		if sid := ws.SentinelID(cd.stream); sid != "" {
+			out = append(out, sid)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// pathsHold is whether a PATHS list holds one of files: the path itself, a
+// directory above it, or a glob matching it.
+func pathsHold(paths, files []string) bool {
+	for _, p := range paths {
+		dir := strings.TrimSuffix(p, "/") + "/"
+		for _, f := range files {
+			if f == p || strings.HasPrefix(f, dir) {
+				return true
+			}
+			if ok, _ := path.Match(p, f); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (w *LandWatch) push(ctx context.Context, m MergeCard) (string, error) {
@@ -578,12 +771,21 @@ func MergeTitle(m MergeCard) string {
 	if paths == "" {
 		paths = "-"
 	}
-	if m.Reason != "" {
-		return fmt.Sprintf("STREAM: %s | cross-stream landing of %s: %s | PATHS: %s | BASE: %s | DONE-WHEN: one %s that builds and passes with every stream's DONE-WHEN; the stream heads are re-based on it and %s lands (nova-sprint land --repo %s --stream %q prints LANDED)",
-			m.Stream, m.Stream, strings.Join(strings.Fields(m.Reason), " "), paths, m.Base, m.Base, m.Stream, m.Repo, m.Stream)
+	land := fmt.Sprintf("nova-sprint land --repo %s --stream %q --card %s", m.Repo, m.Stream, m.ID)
+	if m.Escalate == "stuck" {
+		return fmt.Sprintf("STREAM: %s | stuck landing of %s: its merge card closed with the same %d members in merging (%s) | PATHS: %s | BASE: %s | DONE-WHEN: %s prints LANDED n=%d and ws:%s:merging is empty",
+			m.Stream, m.Stream, len(m.Members), strings.Join(strings.Fields(orDashStr(m.Reason)), " "), paths, m.Base, land, len(m.Members), m.Stream)
 	}
-	return fmt.Sprintf("STREAM: %s | land stream %s: %d members in work order into %s as one PR | PATHS: %s | BASE: %s | DONE-WHEN: nova-sprint land --repo %s --stream %q prints LANDED n=%d and ws:%s:merging is empty; a conflict or red whose fix needs files outside PATHS ends BLOCKED cross-stream paths=<files>",
-		m.Stream, m.Stream, len(m.Members), m.Base, paths, m.Base, m.Repo, m.Stream, len(m.Members), m.Stream)
+	if m.Reason != "" {
+		after := "none found"
+		if len(m.After) > 0 {
+			after = strings.Join(m.After, ", ")
+		}
+		return fmt.Sprintf("STREAM: %s | cross-stream landing of %s: %s | PATHS: %s | BASE: %s | AFTER: %s (the stream lands after these sentinels, #4318; only this card may land it before) | DONE-WHEN: one %s that builds and passes with every stream's DONE-WHEN; the stream heads are re-based on it and %s lands (%s prints LANDED)",
+			m.Stream, m.Stream, strings.Join(strings.Fields(m.Reason), " "), paths, m.Base, after, m.Base, m.Stream, land)
+	}
+	return fmt.Sprintf("STREAM: %s | land stream %s: %d members in work order into %s as one PR | PATHS: %s | BASE: %s | DONE-WHEN: %s prints LANDED n=%d and ws:%s:merging is empty; a conflict or red whose fix needs files outside PATHS ends BLOCKED cross-stream paths=<files>",
+		m.Stream, m.Stream, len(m.Members), m.Base, paths, m.Base, land, len(m.Members), m.Stream)
 }
 
 // MergeBrief is the card's body: the members in work order with PR and
@@ -606,7 +808,7 @@ func MergeBrief(m MergeCard) string {
 	}
 	b.WriteString("\nRules (all hard; nova-tools #4324):\n")
 	b.WriteString("- One branch per work stream, members in work order, ONE PR into " + m.Base + ", never one member at a time and never a member merged by hand: `gh pr merge` on a member is refused; members land only through nova-sprint land stream.\n")
-	fmt.Fprintf(&b, "- First move, always: `nova-sprint land stream --repo %s --stream %q --dry-run` prints the plan (PLAN and ORDER lines). Then `nova-sprint land --repo %s --stream %q` runs the whole landing and prints one line per step with its wall (REBASED, PUSHED, PR opened, CI, MERGED, LANDED).\n", m.Repo, m.Stream, m.Repo, m.Stream)
+	fmt.Fprintf(&b, "- First move, always: `nova-sprint land stream --repo %s --stream %q --dry-run` prints the plan (PLAN and ORDER lines). Then `nova-sprint land --repo %s --stream %q --card %s` runs the whole landing and prints one line per step with its wall (REBASED, PUSHED, PR opened, CI, MERGED, LANDED). This card owns the stream (land:merge:<stream> owner): the land duty and every other run are refused while it is open, and a run without --card %s is refused too.\n", m.Repo, m.Stream, m.Repo, m.Stream, m.ID, m.ID)
 	b.WriteString("- LAND-SERIAL is a refusal: a member that cannot land (unread, held, no PR) is read, parked or released first; --partial only when the coordinator says so.\n")
 	b.WriteString("- Never behind " + m.Base + ": a conflict inside PATHS is resolved on the stream branch keeping both sides' intent. A conflict or red whose fix needs files outside PATHS ends this card BLOCKED cross-stream paths=<files>: the coordinator takes it from there.\n")
 	b.WriteString("- End with MERGE-NOTE lines for what the tree now expects (`nova-sprint note post --stream <s> --by <this card> \"<one line>\"`): a conflict you resolved, a wrong pattern you saw, an API that moved. They reach every copy dealt after you.\n")
