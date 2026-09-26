@@ -432,9 +432,11 @@ func runCICompare(ctx context.Context, args []string, out, errOut io.Writer) int
 //
 // The ci-ok job calls it at the end of every run (.github/workflows/ci.yml),
 // and it writes what the receiver path would have: one ev:github row and
-// the ci:<repo>:<sha>:gh record through ns_ci_github, nothing else (never
-// pr:<repo>:<n>, which is the lander's; internal/nsprint/webhook/runner.go).
-// One CIGH RUNNER line; exit 0 written, 1 the store refused the write (which
+// the ci:<repo>:<sha>:gh record through ns_ci_github; for a pull_request run
+// that was not cancelled, the PR record's head (land.RecordPRHead: one PR
+// HEAD line) and the final word on the records at that head (one CIGH FOLD
+// line; internal/nsprint/webhook/runner.go). One CIGH RUNNER line; exit 0
+// written, 1 the store refused the write (which
 // reddens ci-ok: a landing never waits on a receipt that silently did not
 // happen), 2 usage.
 func runCIGitHub(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -488,6 +490,12 @@ func runCIGitHub(ctx context.Context, args []string, out, errOut io.Writer) int 
 			return 1
 		}
 		fmt.Fprintln(out, w.Line())
+		if w.PR.Key != "" {
+			fmt.Fprintln(out, w.PR.Line())
+		}
+		if l := w.FoldLine(); l != "" {
+			fmt.Fprintln(out, l)
+		}
 		return 0
 	}
 	if fs.NArg() > 0 {
