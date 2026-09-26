@@ -312,8 +312,11 @@ func runHoldShow(ctx context.Context, args []string, out, errOut io.Writer) int 
 	unitKey := fmt.Sprintf("s:%s:prunit:%s:%d", *sprint, short, n)
 	unit, err := c.Get(ctx, unitKey).Result()
 	if errors.Is(err, redis.Nil) {
-		return refuse(errOut, "hold show", fmt.Sprintf("no unit for %s#%d in sprint %s (%s is absent: nothing ingested for that PR there); check --sprint and <repo>#<n>, or ingest first: nova-sprint hold ingest --as <f> --sprint %s --repo <owner/repo> --pr %d --url <u> --body-file <f>",
-			short, n, *sprint, unitKey, *sprint, n))
+		// A unit is made only by land eval (ns_unit_head from the PR's
+		// branch, HeadFromGit); hold ingest resolves through this same key
+		// and refuses without it, so the remedy is land eval, not ingest.
+		return refuse(errOut, "hold show", fmt.Sprintf("no unit for %s#%d in sprint %s (%s is absent: no unit resolves that PR there); check --sprint and <repo>#<n>; a unit is made only by land eval from the PR's branch, so run: nova-sprint land eval --sprint %s --repo %s --mirror <bench mirror of %s> and rerun",
+			short, n, *sprint, unitKey, *sprint, short, short))
 	}
 	if err != nil {
 		if storeDown(errOut, "hold show", err) {
