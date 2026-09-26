@@ -3646,6 +3646,22 @@ dialling Redis. A mistyped flag stays the verb's one-line refusal on standard
 error. `file -h` prints its own usage text (exit 2); the batch `task` verbs
 (`cancel`, `move`, `front`, `block`, `unblock`, `sweep`) print theirs and exit 0.
 
+**The shared refusal.** Every verb's refusal is one line on standard error,
+`nova-sprint <verb>: <cause>; run: <next verb>`, and the store's own errors
+are read so the same cause gets the same remedy and the same exit code on
+every verb: `ERR Function not found` (the `nova_sprint` library is not on
+the store) ends `run: nova-sprint fn load --redis <addr>`, exit 2; a store
+that did not answer (a dial, a timeout, a dropped connection, a refused
+login) ends `check --redis <addr> (or NOVA_SPRINT_REDIS), then run:
+nova-sprint doctor --redis <addr>`, exit 6; `NOPERM` names the ACL user the
+store denied and ends `run: nova-sprint acl check --redis <addr>`, exit 6.
+The address is the one the process opened (`store.LastOpened`), since the
+Redis error names none. A verb that documents its own store code keeps it
+(`fleet` 5, `task push` DOWN 7); everything else that reaches the store is
+6 when it cannot. go-redis's own pool lines (`pool.go:762: ... failed to
+dial after 5 attempts`) are dropped for the process: the verb's line names
+the store, the library's does not.
+
 **Capacity and the three model types.** `capacity friend|bench [--tiers
 <t>,...] [--kinds work|read|fix,...] <name> <slots>` sets a worker's slot
 budget under its machine ceiling and what it advertises it can run. A card's
@@ -3895,7 +3911,7 @@ There is **no `quickstart` verb**. A one-word first run would have to invent a f
 
 **The deploy loads the library with one verb** (#2937). `nova-sprint fn deploy --redis <addr> [--want <sha>]` is what the rowan-tools fn-load play (the last play of `make -C fleet tools`) runs as the coordinator seat: `fn load`, then a read-back of the library the store holds and `FCALL ns_ping 0`, and one receipt line, `FN RECEIPT at=<utc> store=<addr> load=LOADED|UNCHANGED sha=<sha> version=<build> ping=PONG` (exit 0; the rerun is `UNCHANGED`). It refuses with one `FN REFUSED store=<addr> reason=digest-mismatch ... remedy=...` line and exit 1 when `--want` is not the digest this binary embeds (nothing is loaded: the coordinator runs another build than the declared one) or when the store holds another library after the load. `--dry-run` changes nothing: `FN OK` when the store is current, `FN WOULD-LOAD store=<addr> got=MISSING|STALE ...` when a deploy would load. `nova-sprint fn sum` prints `SUM nova_sprint sha=<sha>`, the digest this binary embeds, so a deploy reads its `--want` from the declared build's own binary.
 
-`nova-sprint backpressure check --sprint <name> [--redis <addr>]` (#3276) refuses a second backpressure source of truth beside `s:<S>:backpressure`. It reads the named keys only (the sprint's hash, the `proc:backpressure` beat and the legacy global `backpressure` hash) with one EXISTS pipeline, never SCAN or KEYS, and prints one receipt: `BACKPRESSURE CHECK OK sprint=<S> own=<0|1> beat=<0|1> legacy=0 round_trips=1` (exit 0), or `BACKPRESSURE CHECK REFUSED ... legacy=<keys> round_trips=1 remedy=...` (exit 1); usage or an unreachable store exits 2.
+`nova-sprint backpressure check --sprint <name> [--redis <addr>]` (#3276) refuses a second backpressure source of truth beside `s:<S>:backpressure`. It reads the named keys only (the sprint's hash, the `proc:backpressure` beat and the legacy global `backpressure` hash) with one EXISTS pipeline, never SCAN or KEYS, and prints one receipt: `BACKPRESSURE CHECK OK sprint=<S> own=<0|1> beat=<0|1> legacy=0 round_trips=1` (exit 0), or `BACKPRESSURE CHECK REFUSED ... legacy=<keys> round_trips=1 remedy=...` (exit 1); usage exits 2 and an unreachable store 6 (the shared refusal below).
 ### read
 
 A friend read makes zero GitHub calls (#3599, umbrella #3594: GitHub is a
@@ -4153,7 +4169,7 @@ Exit 0 written or already so (RECORDED, NEW_REV, DONE, SAME), 1 refused
 
 ### ws, scope, stream
 
-The ws index (#3662) is the sprint's work-stream data structure: `ws:names`, `ws:order` (rank), and per stream one ZSET per state, `ws:<stream>:waiting|ready|working|merging|landed|parked`, with `task:<id>` fields `stream` and `state` naming the one set a task is in (`closed` is in none) and every move receipted in the `ws:log` stream. Each verb is one FCALL of an `ns_ws_*` function (library file `internal/nsprint/fn/lua/ws.lua`, Go wrappers in `internal/nsprint/ws`), prints one receipt line ending `ms=<n>` (the list verbs print their rows first), and exits 0 done, 1 refused (`REFUSED <why>`, nothing written), 2 could not run. Every verb takes `--redis <addr>` (default `$NOVA_SPRINT_REDIS`) and `--as <actor>` (default `$USER`); the writing verbs take `--why <text>` for the log.
+The ws index (#3662) is the sprint's work-stream data structure: `ws:names`, `ws:order` (rank), and per stream one ZSET per state, `ws:<stream>:waiting|ready|working|merging|landed|parked`, with `task:<id>` fields `stream` and `state` naming the one set a task is in (`closed` is in none) and every move receipted in the `ws:log` stream. Each verb is one FCALL of an `ns_ws_*` function (library file `internal/nsprint/fn/lua/ws.lua`, Go wrappers in `internal/nsprint/ws`), prints one receipt line ending `ms=<n>` (the list verbs print their rows first), and exits 0 done, 1 refused (`REFUSED <why>`, nothing written), 2 could not run, 6 the store unreachable (the shared refusal). Every verb takes `--redis <addr>` (default `$NOVA_SPRINT_REDIS`) and `--as <actor>` (default `$USER`); the writing verbs take `--why <text>` for the log.
 
 - `nova-sprint ws counts` prints the totals over every stream; `nova-sprint ws checkpoint --out <path>` writes every stream's six sets with the task fields as TSV and records the receipt in `ws:checkpoint`.
 - `nova-sprint ws show --order [--stream <s>]` (also `stream order --show`; #4318) prints every stream's cards in order, one line each, `<where> <id> <- <edges>` (the card's DEPENDS-ON entries; one not landed carries its set in parentheses, one with no record `(no record)`), the stream's sentinel last, then `SHOW streams=<n> cards=<n> edges=<n>`.

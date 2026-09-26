@@ -25,8 +25,30 @@ func Unreachable(err error) bool {
 		errors.Is(err, redis.ErrClosed) || errors.Is(err, redis.ErrPoolTimeout) {
 		return true
 	}
-	s := err.Error()
-	for _, mark := range []string{"NOAUTH", "WRONGPASS", "failed to authenticate", "connection refused", "no such host", "i/o timeout"} {
+	return UnreachableText(err.Error())
+}
+
+// UnreachableText is Unreachable for an error already turned into text (a
+// refusal line's cause): the marks a dial, a timeout, a dropped connection
+// or a refused login leave in go-redis's and net's error strings.
+func UnreachableText(s string) bool { return NoAnswerText(s) || hasMark(s, authMarks) }
+
+// NoAnswerText is the network half of UnreachableText: the store did not
+// answer at all (a dial, a timeout, a dropped connection), never a login it
+// refused. The CLI's shared refusal answers this class with --redis and
+// doctor; a refused login keeps its own #3520 hint.
+func NoAnswerText(s string) bool {
+	return hasMark(s, netMarks) || strings.HasSuffix(s, ": EOF") || s == "EOF"
+}
+
+var (
+	authMarks = []string{"NOAUTH", "WRONGPASS", "failed to authenticate"}
+	netMarks  = []string{"connection refused", "no such host", "i/o timeout", "dial tcp", "connection reset",
+		"broken pipe", "unexpected EOF", "redis: client is closed", "redis: connection pool timeout"}
+)
+
+func hasMark(s string, marks []string) bool {
+	for _, mark := range marks {
 		if strings.Contains(s, mark) {
 			return true
 		}

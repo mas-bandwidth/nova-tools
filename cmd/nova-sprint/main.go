@@ -10,14 +10,20 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -72,7 +78,9 @@ refresh leaving that group itself.
 -h on any verb or subverb prints its usage line and every flag it takes on
 stdout, and exits 2.
 
-exit codes: 0 ran, 2 could not run.
+exit codes: 0 ran, 2 could not run, 6 the store did not answer or its ACL
+refused the seat's user (a verb that documents its own store code, fleet's 5
+and task push's 7, keeps it).
 
 example:
   nova-sprint table --redis 127.0.0.1:6379 --once
@@ -85,6 +93,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 func run(args []string, stdout, stderr io.Writer) (code int) {
 	// -h on any verb or subverb: its usage line and flags on stdout, exit 2 (#3254).
 	defer verbflag.Recover(stdout, "nova-sprint", &code)
+	quietRedisOnce.Do(func() { redis.SetLogger(quietRedis{}) })
 	// --seat <name> (or NOVA_SPRINT_SEAT, then NOVA_SEAT) anywhere before a
 	// "--": every verb reads its Redis login from that seat through
 	// nova-secrets' library (#4052), and its address and user from the seat's
@@ -121,10 +130,36 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	}
 }
 
+// quietRedis drops go-redis's own pool lines ("pool.go:762: redis: connection
+// pool: failed to dial after 5 attempts ..."), which the library printed to
+// stderr ahead of the verb's one refusal line on every store it could not
+// reach. The verb's line names the store and the remedy; the library's does
+// not. SetLogger writes a package variable, so it is written once per
+// process (nova-merge #1609, doctor did the same for itself).
+type quietRedis struct{}
+
+func (quietRedis) Printf(context.Context, string, ...interface{}) {}
+
+var quietRedisOnce sync.Once
+
+// exitStoreDown is the one exit code for a store that did not answer or
+// whose ACL refused the seat's user: the code land, consume, reconcile and
+// sprint open already used ("6 no Redis"), now every refuse caller's.
+const exitStoreDown = 6
+
+// noPermUser reads the ACL user out of Redis's own NOPERM line ("NOPERM User
+// audit has no permissions to run the 'fcall' command").
+var noPermUser = regexp.MustCompile(`NOPERM User (\S+) `)
+
+// causeAddr is the first host:port a cause names ("dial tcp 10.0.0.5:6379:
+// connect: connection refused", "redis at 127.0.0.1:6379: ...").
+var causeAddr = regexp.MustCompile(`(?:\d{1,3}(?:\.\d{1,3}){3}|localhost|[A-Za-z][\w.-]*\.[A-Za-z]\w*):\d{2,5}\b`)
+
 // refuse is the one refusal line every verb prints on stderr: the verb, the
 // cause, and the next verb. The cause is read for the store's own errors
-// (storeRefusal) so a missing function library is answered with the same
-// remedy on every verb; anything else ends with the help door and exit 2.
+// (storeRefusal) so a missing function library, a store that did not answer
+// and a seat the ACL refuses are each answered with the same remedy and the
+// same exit code on every verb; anything else ends with the help door, exit 2.
 func refuse(stderr io.Writer, verb, what string) int {
 	where := ""
 	if verb != "" {
@@ -138,11 +173,19 @@ func refuse(stderr io.Writer, verb, what string) int {
 // storeRefusal reads a refusal's cause for the store's own errors and gives
 // each class one remedy and one exit code, whichever verb hit it: the
 // nova_sprint function library not loaded on the store ("ERR Function not
-// found") is `nova-sprint fn load --redis <addr>`, exit 2. The address is the
-// one this process last opened (store.LastOpened), since Redis's error names
-// none; with no open yet the remedy spells the flag.
+// found") is `nova-sprint fn load --redis <addr>`, exit 2; a store that did
+// not answer (store.UnreachableText) is `--redis` / `nova-sprint doctor`,
+// exit 6; the seat's ACL user denied (NOPERM) names that user and
+// `nova-sprint acl check`, exit 6. The address is the one this process last
+// opened (store.LastOpened), since Redis's error names none; with no open
+// yet the remedy spells the flag.
 func storeRefusal(what string) (string, int) {
+	// The cause's own address wins (a dial error carries it); a Redis reply
+	// does not, so the process's last open is the store it was talking to.
 	addr := store.LastOpened()
+	if m := causeAddr.FindString(what); m != "" {
+		addr = m
+	}
 	flag := "--redis <addr>"
 	at := "the store"
 	if addr != "" {
@@ -152,6 +195,17 @@ func storeRefusal(what string) (string, int) {
 	case strings.Contains(what, "Function not found"):
 		return what + "; the nova_sprint function library is not loaded on " + at +
 			"; run: nova-sprint fn load " + flag + " (nova-sprint doctor " + flag + " shows the store)", 2
+	case strings.Contains(what, "NOPERM"):
+		user := "the seat's ACL user"
+		if m := noPermUser.FindStringSubmatch(what); m != nil {
+			user = "ACL user " + m[1]
+		} else if u := os.Getenv(redisauth.UserEnv); u != "" {
+			user = "ACL user " + u + " (" + redisauth.UserEnv + ")"
+		}
+		return what + "; " + at + " denies " + user + " (the seat's row in seats.tsv, else " + redisauth.UserEnv +
+			"); run: nova-sprint acl check " + flag + " (the play writes the rows), or nova-sprint doctor " + flag, exitStoreDown
+	case store.NoAnswerText(what):
+		return what + "; " + at + " did not answer; check " + flag + " (or NOVA_SPRINT_REDIS), then run: nova-sprint doctor " + flag, exitStoreDown
 	}
 	return what + "; run: nova-sprint help", 2
 }

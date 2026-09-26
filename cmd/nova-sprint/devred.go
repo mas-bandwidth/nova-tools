@@ -161,6 +161,9 @@ func runDevRed(ctx context.Context, args []string, out, errOut io.Writer) int {
 		} else {
 			n, err = c.SRem(ctx, reconcile.BasesKey, member).Result()
 		}
+		if storeDown(errOut, name, err) {
+			return 6
+		}
 		if err != nil {
 			fmt.Fprintf(errOut, "nova-sprint %s: %v\n", name, err)
 			return 1

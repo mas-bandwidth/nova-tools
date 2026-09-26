@@ -70,7 +70,9 @@ func TestDigestFlagsRefuseBeforeReading(t *testing.T) {
 	closed := ln.Addr().String()
 	_ = ln.Close()
 	code, stdout, stderr := runSprint("digest", "--redis", closed, "--since", digestSince)
-	if code != 2 || stdout != "" || !strings.HasPrefix(stderr, pre+"redis "+closed+": ") || !strings.HasSuffix(stderr, post) || strings.Count(stderr, "\n") != 1 {
+	// A store that did not answer is the shared refusal's exit 6 with the
+	// doctor remedy, not the help door.
+	if code != 6 || stdout != "" || !strings.HasPrefix(stderr, pre+"redis "+closed+": ") || !strings.HasSuffix(stderr, "; "+closed+" did not answer; check --redis "+closed+" (or NOVA_SPRINT_REDIS), then run: nova-sprint doctor --redis "+closed+"\n") || strings.Count(stderr, "\n") != 1 {
 		t.Fatalf("closed port: exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
 }
