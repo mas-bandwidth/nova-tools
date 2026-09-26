@@ -6,8 +6,10 @@ import (
 	"context"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -38,7 +40,7 @@ func newSeat(t *testing.T) *seatFixture {
 	for _, f := range []string{"a", "b"} {
 		client.SAdd(ctx, "friends", f)
 		client.HSet(ctx, "friend:"+f+":desired", "slots", 4, "paused", "0")
-		client.HSet(ctx, "friend:"+f+":beat", "host", "fixture")
+		client.HSet(ctx, "friend:"+f+":beat", "host", "fixture", "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
 	}
 	client.HSet(ctx, "s:"+seatSprint, "status", "open")
 	client.SAdd(ctx, "sprints", seatSprint)

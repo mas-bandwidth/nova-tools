@@ -231,11 +231,11 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		// or fix leg names that end; a work leg keeps the primary's.
 		switch c.Leg {
 		case "read":
-			done = fmt.Sprintf("this copy is ended with the score of %s at head %s: nova-sprint friend done --id %s --score N/10", prRef, c.Head, c.ID)
+			done = fmt.Sprintf("this copy is ended with the score of %s at head %s: nova-sprint friend done --as %s --id %s --score N/10", prRef, c.Head, strings.TrimSpace(c.Consumer), c.ID)
 		case "fix":
 			baseSHA = c.Head
-			done = fmt.Sprintf("the fix is committed on top of %s's head %s, pushed to its branch, and this copy is ended with the new head: nova-sprint friend done --id %s --ok --pr %s --head <sha>",
-				prRef, c.Head, c.ID, prRef)
+			done = fmt.Sprintf("the fix is committed on top of %s's head %s, pushed to its branch, and this copy is ended with the new head: nova-sprint friend done --as %s --id %s --ok --pr %s --head <sha>",
+				prRef, c.Head, strings.TrimSpace(c.Consumer), c.ID, prRef)
 		}
 		body = friendBody(c, full, label, prRef, branch)
 	case c.Leg == "read":

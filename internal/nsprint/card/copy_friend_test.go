@@ -47,7 +47,7 @@ func TestFriendCopyRendersThePersonsBrief(t *testing.T) {
 		}},
 		{"read", []string{
 			"\nKIND: read\n", "\nROUTE: pro\n", "\nPR: mas-bandwidth/nova-tools#4300\n",
-			"\nDONE-WHEN: this copy is ended with the score of nova-tools#4300 at head " + strings.Repeat("cd", 20) + ": nova-sprint friend done --id p1~2 --score N/10\n",
+			"\nDONE-WHEN: this copy is ended with the score of nova-tools#4300 at head " + strings.Repeat("cd", 20) + ": nova-sprint friend done --as friend:rowan --id p1~2 --score N/10\n",
 			"FRIEND: friend:rowan reads this PR itself (#4233)",
 			"DO: read nova-tools#4300 at head " + strings.Repeat("cd", 20) + " against dev@" + strings.Repeat("ab", 20),
 			"END: nova-sprint friend done --as friend:rowan --id p1~2 --score N/10 --gates ci:<green|red>,base:<ok|behind>,scope:<ok|over> --finding '<one line>'",

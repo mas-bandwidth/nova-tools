@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"sort"
@@ -211,7 +212,8 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 		all[i] = c
 	}
 	if len(friends) > 0 {
-		if _, err := pipe.Exec(ctx); err != nil {
+		// redis.Nil is a friend with no beat (its HGET), not a failed read
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 			return nil, fmt.Errorf("friend: read: %w", err)
 		}
 	}

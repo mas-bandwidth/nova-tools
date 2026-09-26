@@ -86,7 +86,7 @@ func friendCardsDir(friend string) (string, error) {
 func runFriendPull(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend pull"
 	fs := verbflag.New(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	as := fs.String("as", "", "")
 	n := fs.Int("n", 0, "")
 	dir := fs.String("dir", "", "")
@@ -171,7 +171,7 @@ func runFriendPull(ctx context.Context, args []string, out, errOut io.Writer) in
 func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend done"
 	fs := verbflag.New(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	as := fs.String("as", "", "")
 	id := fs.String("id", "", "")
 	ok := fs.Bool("ok", false, "")
@@ -302,7 +302,7 @@ func friendBeatOnce(ctx context.Context, st *store.Store, k taskcard.Consumer, h
 func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend beat"
 	fs := verbflag.New(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	as := fs.String("as", "", "")
 	host := fs.String("host", "", "")
 	once := fs.Bool("once", false, "")

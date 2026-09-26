@@ -4,7 +4,9 @@ package taskcard_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -25,7 +27,7 @@ func TestFriendServeTakesAPushedCard(t *testing.T) {
 	p := c.Pipeline()
 	p.SAdd(ctx, "friends", "rowan")
 	p.HSet(ctx, "friend:rowan:desired", "slots", "4", "paused", "0")
-	p.HSet(ctx, "friend:rowan:beat", "host", "fixture")
+	p.HSet(ctx, "friend:rowan:beat", "host", "fixture", "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
 	p.HSet(ctx, "s:"+sprint, "status", "open")
 	p.SAdd(ctx, "sprints", sprint)
 	p.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
