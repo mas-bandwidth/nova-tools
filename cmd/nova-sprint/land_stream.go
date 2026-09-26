@@ -88,7 +88,13 @@ func hasRepoFlag(args []string) bool {
 // under verb in the store, paced, retrying a secondary limit; its retry and
 // refusal lines go to stderr.
 func landGitHub(verb, api string, budget int, rdb redis.Cmdable) (*stream.GitHub, error) {
-	tok, err := landStreamToken()
+	return landGitHubFrom(landStreamToken, verb, api, budget, rdb)
+}
+
+// landGitHubFrom is landGitHub with the token from token: the per-call seam
+// a parallel test passes its own token through (no package-level swap).
+func landGitHubFrom(token func() (string, error), verb, api string, budget int, rdb redis.Cmdable) (*stream.GitHub, error) {
+	tok, err := token()
 	if err != nil {
 		return nil, err
 	}
@@ -320,6 +326,12 @@ func runLandStreamStatus(ctx context.Context, args []string, out, errOut io.Writ
 }
 
 func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int {
+	return landMerge(ctx, args, out, errOut, landStreamToken)
+}
+
+// landMerge is land merge with its GitHub token from token (runLandMerge
+// passes landStreamToken; a parallel test passes its own).
+func landMerge(ctx context.Context, args []string, out, errOut io.Writer, token func() (string, error)) int {
 	const verb = "land merge"
 	fs := taskFlags(verb)
 	var streams multiFlag
@@ -352,7 +364,7 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 	}
 	defer release()
 	// The token is needed only past the Redis gates; refuse on them first.
-	gh, tokErr := landGitHub(verb, *api, *budget, st.Client())
+	gh, tokErr := landGitHubFrom(token, verb, *api, *budget, st.Client())
 	o := stream.MergeOptions{Repo: *repo, Streams: streams, By: *by}
 	if tokErr == nil {
 		o.GH = gh
@@ -393,6 +405,11 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 		*repo, l.Slug, l.PR, stream.Short(l.Head), stream.Short(rep.MergeSHA), rep.NotesDropped, len(l.Members), rep.Moved, rep.Missing, rep.Already,
 		orDash(strings.Join(closed, ",")), orDash(strings.Join(unclosed, ",")), calls, rep.Lines, len(rep.Skipped), orDash(strings.Join(unread, ",")),
 		issues(rep.IssuesClosed), issues(rep.IssuesUnclosed), orDash(rep.Release))
+	// a member's stitch landed its plan (#4317): the plan, its issue and
+	// origin, so the one who landed the stream closes the plan's issue too
+	for _, p := range rep.Plans {
+		fmt.Fprintf(out, "LAND MERGE PLAN %s\n", p)
+	}
 	for _, s := range rep.Skipped {
 		fmt.Fprintf(errOut, "LAND MERGE SKIPPED %s\n", oneline.Field(s))
 	}
