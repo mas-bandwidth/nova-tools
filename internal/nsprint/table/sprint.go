@@ -25,7 +25,13 @@
 // named <kind>:<name> (friend:emma, bench:hetzner) so the kind shows. Every
 // cell is one ZCARD of <kind>:<name>:cards:<set> for set = ready, working,
 // ok, fail; done = ok + fail and ok% = ok / done are derived, never stored,
-// with no sprint window and no base from a clear. status is up when the
+// with no sprint window and no base from a clear. The cells count consumer
+// work only, by structure (nova-tools#4237): a record naming a probe is
+// refused by every move into <kind>:<name>:cards:<set> (cm_zadd and the
+// move gates in 02_card_move.lua), and a probe's result lives on the bench
+// beat (bench:<b>:beat probe, fleet build), which this table never counts;
+// after sprint clear and a fleet roll every row reads 0 | 0 | 0 | -.
+// status is up when the
 // consumer's own beat (<kind>:<name>:beat at, ms) is under a minute old and
 // <kind>:<name>:down does not exist, else down (the row still shows its
 // cards); an up consumer whose desired hash has paused 1 (worker pause,
