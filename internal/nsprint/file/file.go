@@ -74,14 +74,14 @@ var repoRx = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 // Main runs the verb. It never posts before every refusal has been checked.
 func Main(ctx context.Context, args []string, stdout, stderr io.Writer, d Deps) int {
 	fs := verbflag.New("file")
-	repo := fs.String("repo", "", "")
-	title := fs.String("title", "", "")
-	bodyFile := fs.String("body-file", "", "")
-	comment := fs.Int("comment", 0, "")
-	pushTo := fs.String("push-to", "", "")
-	front := fs.Bool("front", false, "")
-	sprint := fs.String("sprint", "", "")
-	redisAddr := fs.String("redis", seatcred.Addr(), "")
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	title := fs.String("title", "", "the filed task's title")
+	bodyFile := fs.String("body-file", "", "the filed task's body, a file")
+	comment := fs.Int("comment", 0, "the issue comment number the task cites")
+	pushTo := fs.String("push-to", "", "the friend the filed task is pushed to")
+	front := fs.Bool("front", false, "queue it at the front")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	redisAddr := fs.String("redis", seatcred.Addr(), verbflag.HelpRedis)
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, err.Error())
 	}
