@@ -20,7 +20,7 @@ func TestLandVerbsRefuseUsage(t *testing.T) {
 		{"pr"},
 		{"pr", "record", "--repo", lsRepo, "--n", "1", "--ci", "blue", "--redis", "127.0.0.1:1"},
 		{"pr", "record", "--repo", lsRepo, "--n", "1", "--head", "xyz", "--redis", "127.0.0.1:1"},
-		{"pr", "lines", "--repo", lsRepo, "--n", "1", "--redis", "127.0.0.1:1"},
+		{"pr", "lines", "--repo", lsRepo, "--redis", "127.0.0.1:1"}, // no --n (without --add it lists, #4352 A)
 	} {
 		if code, _, errOut := runSprint(args...); code != 2 || strings.Count(errOut, "\n") != 1 {
 			t.Errorf("%v: exit %d, stderr %q", args, code, errOut)

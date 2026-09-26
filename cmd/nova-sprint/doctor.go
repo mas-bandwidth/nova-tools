@@ -196,6 +196,10 @@ func doctorRun(ctx context.Context, args []string, out, errOut io.Writer, d doct
 	fs := verbflag.New("doctor")
 	addrFlag := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	bench := fs.String("bench", "", "this machine's registry name (default: the short hostname)")
+	// --sprint is taken and changes nothing (#4352 A): doctor reads every
+	// sprint that is not closed, the named one among them, and
+	// `doctor --sprint quack-0926` was refused "-sprint not defined".
+	_ = fs.String("sprint", "", verbflag.HelpSprint)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "doctor", err.Error())
 	}
@@ -244,16 +248,14 @@ func doctorSummary(lines []doctorLine, trips, ms int64) string {
 	return fmt.Sprintf("DOCTOR FIX fixes=%d skipped=%d checks=%d trips=%d ms=%d", fixes, skipped, len(lines), trips, ms)
 }
 
-// doctorAddr is --redis, else the variables a seat row sets (taskAddr's
-// order), else the selected seat's own address, the order every store dial
-// uses.
+// doctorAddr is --redis, else the one resolver (redisDefaultFrom: the
+// variables a seat row sets, then the selected seat's own address), the
+// order every store dial uses.
 func doctorAddr(flag string, getenv func(string) string, sel *seatcred.Selection) string {
-	for _, a := range []string{flag, getenv("NOVA_SPRINT_REDIS"), getenv("NOVA_REDIS_ADDR")} {
-		if a != "" {
-			return a
-		}
+	if flag != "" {
+		return flag
 	}
-	return sel.Addr()
+	return redisDefaultFrom(sel, getenv)
 }
 
 // doctorMachine is --bench, else the short hostname, lower case.
@@ -611,7 +613,7 @@ func redisLine(f doctorFacts, seat doctorLine) doctorLine {
 	case f.Addr == "":
 		l.State, l.Words = "FIX", []string{"addr=none"}
 		l.Remedy = "export NOVA_SPRINT_REDIS=<host:port>"
-		l.Why = "no --redis, no seat row address and no NOVA_SPRINT_REDIS or NOVA_REDIS_ADDR"
+		l.Why = "no --redis, no NOVA_SPRINT_REDIS (or NOVA_REDIS_ADDR, NOVA_REDIS) and no seat row address"
 		return l
 	case seat.State != "OK":
 		l.State, l.Words = "SKIP", []string{"needs=seat"}

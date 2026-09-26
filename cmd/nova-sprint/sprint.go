@@ -55,7 +55,7 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 	}
 	verb := "sprint " + sub
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	name := fs.String("sprint", "", verbflag.HelpSprint)
 	from := fs.String("from", "", verbflag.HelpFrom)
 	nowUnix := fs.Int64("now", 0, "the clock to read against, unix seconds (default now)")
@@ -402,7 +402,7 @@ func runSprintOpen(ctx context.Context, st *store.Store, name, from string, plan
 func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "sprint clear"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	why := fs.String("why", "", verbflag.HelpWhy)
 	force := fs.Bool("force", false, "clear a sprint that still has working cards")
 	checkpoint := fs.String("checkpoint", "", "the TSV the cleared index is checkpointed to first (default a new file in the checkpoint directory)")

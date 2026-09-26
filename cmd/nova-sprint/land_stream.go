@@ -56,7 +56,7 @@ import (
 var landStreamToken = githubToken
 
 func landRedisAddr(flagVal string) string {
-	return redisOr(flagVal, "NOVA_REDIS_ADDR")
+	return redisOr(flagVal)
 }
 
 func landRepoOK(repo string) bool {
@@ -135,7 +135,7 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 	}
 	addr := landRedisAddr(*redisAddr)
 	if addr == "" {
-		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR")
+		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")
 	}
 	opts := stream.Options{Repo: *repo, Streams: streams, Base: *base, Branch: *branch, DryRun: *dry, Remote: *remote,
 		Test: *test, TestTimeout: *testTimeout, MinScore: *minScore, By: *by, Author: "Rowan <rowan@mas-bandwidth.com>", Log: out}
@@ -242,7 +242,7 @@ func runLandStreamStatus(ctx context.Context, args []string, out, errOut io.Writ
 	}
 	addr := landRedisAddr(*redisAddr)
 	if addr == "" {
-		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR")
+		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")
 	}
 	st, err := store.Open(ctx, addr)
 	if err != nil {
@@ -304,7 +304,7 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 	}
 	addr := landRedisAddr(*redisAddr)
 	if addr == "" {
-		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR")
+		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")
 	}
 	st, err := store.Open(ctx, addr)
 	if err != nil {

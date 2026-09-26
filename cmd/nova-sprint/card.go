@@ -63,7 +63,7 @@ var cardCutSource = func(st *store.Store) card.IssueSource {
 func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card cut")
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
-	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	repo := fs.String("repo", "", verbflag.HelpRepo)
 	issue := fs.Int("issue", 0, "the GitHub issue number the card is cut from")
 	spec := fs.Int("spec", 0, "the spec issue number the card belongs to")
@@ -138,7 +138,7 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card push")
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
-	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	stdin := fs.Bool("stdin", false, "read the card file(s) from stdin")
 	dir := fs.String("dir", "", "a directory of card files, pushed in name order")
 	mapKind := fs.Bool("map-kind", false, "push a classification KIND as the card's RESULT kind")
@@ -216,7 +216,7 @@ func readCardFiles(stdin bool, dir string, paths []string) ([]card.CardFile, err
 func cmdCardRelease(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card release")
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
-	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || fs.NArg() > 0 {
 		return refuse(stderr, "card", "release needs --sprint <name> and --redis <addr>, and no card file")
 	}
@@ -281,7 +281,7 @@ func cmdCardShow(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	fs := verbflag.New("card show")
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	ids := fs.String("ids", "", verbflag.HelpIDs)
-	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	err := fs.Parse(args)
 	label := oneID(*ids)
 	if err != nil || *sprint == "" || label == "" || *addr == "" || fs.NArg() > 0 {

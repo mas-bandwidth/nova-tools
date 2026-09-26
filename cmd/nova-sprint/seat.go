@@ -31,8 +31,13 @@ import (
 // over seatcred.SeatEnv (NOVA_SEAT), which every seat-aware tool reads.
 const SprintSeatEnv = "NOVA_SPRINT_SEAT"
 
-// seatAddrEnvs are the address variables verbs read their --redis default
-// from; a seat row sets all three.
+// seatAddrEnvs are THE address variables, in THE order, every verb reads its
+// Redis address from when it is given no --redis (redisDefaultFrom, the one
+// resolver); a seat row sets all three. Before nova-tools#4352 A each verb
+// named its own list (redisDefault(), redisDefault(),
+// redisOr(v, "NOVA_REDIS_ADDR")), so `friend show`, `width` and `census`
+// refused "redis address is required" with NOVA_SPRINT_REDIS set while
+// every other verb read it (the coordinator, 2026-09-26 13:27-13:45 EDT).
 var seatAddrEnvs = []string{"NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR", "NOVA_REDIS"}
 
 // selectSeat takes --seat out of args, selects the seat in sel (the process's
@@ -86,18 +91,19 @@ func selectSeat(sel *seatcred.Selection, args []string, getenv func(string) stri
 	return rest, nil
 }
 
-// redisDefault is every verb's --redis default (nova-tools#4330): the first
-// of envs that is set, else the selected seat's Redis address from its
-// seats.tsv row, else "". A verb given no --redis under --seat therefore
-// dials the seat's Redis instead of refusing an empty address; with no seat
-// it is the verb's own environment default, as before. The class test
+// redisDefault is every verb's --redis default (nova-tools#4330, #4352 A):
+// the one resolver. It reads extra first (a verb's own variable, only card
+// run's NOVA_CARD_REDIS), then seatAddrEnvs in their order, else the
+// selected seat's Redis address from its seats.tsv row, else "". A verb given
+// no --redis under --seat therefore dials the seat's Redis, and with no seat
+// it dials the environment's, the same on every verb. The class test
 // internal/ci/seatredis_class_test.go holds every --redis flag to it.
-func redisDefault(envs ...string) string {
-	return redisDefaultFrom(seatcred.Process(), os.Getenv, envs...)
+func redisDefault(extra ...string) string {
+	return redisDefaultFrom(seatcred.Process(), os.Getenv, extra...)
 }
 
-func redisDefaultFrom(sel *seatcred.Selection, getenv func(string) string, envs ...string) string {
-	for _, k := range envs {
+func redisDefaultFrom(sel *seatcred.Selection, getenv func(string) string, extra ...string) string {
+	for _, k := range append(append([]string{}, extra...), seatAddrEnvs...) {
 		if v := getenv(k); v != "" {
 			return v
 		}
@@ -105,13 +111,13 @@ func redisDefaultFrom(sel *seatcred.Selection, getenv func(string) string, envs 
 	return sel.Addr()
 }
 
-// redisOr is v, else redisDefault(envs...): the same default for a verb that
-// parses its flags by hand.
-func redisOr(v string, envs ...string) string {
+// redisOr is v, else redisDefault(extra...): the same resolver for a verb
+// that parses its flags by hand.
+func redisOr(v string, extra ...string) string {
 	if v != "" {
 		return v
 	}
-	return redisDefault(envs...)
+	return redisDefault(extra...)
 }
 
 // GitHub token through the seat (nova-tools#4330). A seats.tsv row's seventh

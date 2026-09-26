@@ -49,10 +49,14 @@ type wsCmd struct {
 
 func newWSCmd(name string, out, errOut io.Writer) *wsCmd {
 	fs := verbflag.New(name)
+	// --sprint is taken and changes nothing (#4352 A): the ws index is one
+	// per store, and `ws counts --sprint S` was refused "-sprint not
+	// defined".
+	_ = fs.String("sprint", "", verbflag.HelpSprint)
 	return &wsCmd{
 		name:  name,
 		fs:    fs,
-		redis: fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis),
+		redis: fs.String("redis", redisDefault(), verbflag.HelpRedis),
 		by:    fs.String("as", seatActor(), verbflag.HelpAs),
 		why:   fs.String("why", "", verbflag.HelpWhy),
 		out:   out,

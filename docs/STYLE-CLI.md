@@ -37,7 +37,7 @@ help line `internal/nsprint/verbflag` carries for it (`verbflag.Vocabulary`):
 | `--ids <a,b>` | the ids the verb acts on; `@<file>` or `@-` reads them one per line | |
 | `--stream <a,b>` | the work stream(s) | the card's stream (#4352 I) |
 | `--why <text>` | the reason a write records | |
-| `--n <N>` | how many | |
+| `--n <N>` | how many; on a verb that takes `--pr` and counts nothing, the pull request (`ci status --repo nova-tools --n 4371`) | |
 | `--to <friend:f\|bench:b>` | the target worker | |
 | `--from <path\|->` | the input: a file, a directory of files, or `-` for stdin | |
 | `--ref <repo>#<n>` | a forge ref: an issue or a pull request | |
@@ -49,6 +49,17 @@ help line `internal/nsprint/verbflag` carries for it (`verbflag.Vocabulary`):
 | `--since <10m\|2h\|1d>` | how far back | |
 | `--json` | one JSON object per line instead of the table | |
 | `-v` | the seat line and the rest of the chatter; success is one line without it | |
+
+The Redis address has one resolver (`cmd/nova-sprint/seat.go`,
+`redisDefault`): `--redis`, else `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`,
+`NOVA_REDIS` in that order, else the seat's row; no verb names a list of its
+own. `--sprint` is taken wherever a sprint is meaningful; on a verb whose data
+is one per store (`doctor`, the card moves, `ws`) it changes nothing, so the
+line a session types with it is never refused. `pr lines` without `--add`
+lists the record's typed lines. The class test
+`cmd/nova-sprint/grammar_class_test.go` runs the lines a cold session typed
+on 2026-09-26 against a store at `NOVA_SPRINT_REDIS` and holds each to
+reaching it.
 
 Lists are commas (`--ids a,b,c`, `--stream swarm-cards,console`), never a
 pipe and never a repeated flag; a value that may hold a comma (`KEY=VALUE`)

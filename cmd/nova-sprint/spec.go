@@ -42,7 +42,7 @@ func runSpec(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	sub := args[0]
 	fs := taskFlags("spec " + sub)
-	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	ref := fs.String("ref", "", "the spec issue, <repo>#<n> (mark)")
 	rev := fs.Int("rev", 0, "the spec revision the score is of (mark)")
 	who := fs.String("as", "", verbflag.HelpAs)

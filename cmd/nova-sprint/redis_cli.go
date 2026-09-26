@@ -33,7 +33,7 @@ const redisCLIWants = "wants [--seat <name>] [--redis <host:port>] -- <redis com
 
 func cmdRedisCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("redis-cli")
-	addr := fs.String("redis", redisDefault("NOVA_REDIS_ADDR"), verbflag.HelpRedis)
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	i := indexOf(args, "--")
 	if i < 0 || i == len(args)-1 {
 		// -h before the "--" still answers (verbflag); anything else is refused.
@@ -47,7 +47,7 @@ func cmdRedisCLI(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	}
 	host, port, err := net.SplitHostPort(strings.TrimSpace(*addr))
 	if err != nil || host == "" || port == "" {
-		return refuse(stderr, "redis-cli", "--redis <host:port> (or NOVA_REDIS_ADDR) is required; "+redisCLIWants)
+		return refuse(stderr, "redis-cli", "--redis <host:port> (or NOVA_SPRINT_REDIS) is required; "+redisCLIWants)
 	}
 	c, ok, err := seatcred.Active()
 	if !ok {

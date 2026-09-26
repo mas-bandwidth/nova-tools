@@ -29,8 +29,10 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 func init() {
@@ -213,12 +215,14 @@ func runCIStatus(ctx context.Context, args []string, out, errOut io.Writer) int 
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	repo := fs.String("repo", "", verbflag.HelpRepo)
 	sha := fs.String("sha", "", "the head whose request record and check rows are printed")
+	pr := fs.Int("pr", 0, verbflag.HelpPR)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci status", err.Error())
 	}
 	*repo = bareRepo(*repo)
-	if (*repo == "") != (*sha == "") {
-		return refuse(errOut, "ci status", "needs both --repo and --sha for one head, or --sprint")
+	oneHead := *sha != "" || *pr > 0
+	if (*repo == "") == oneHead || (*sha != "" && *pr > 0) {
+		return refuse(errOut, "ci status", "needs --repo with one of --sha <head> and --pr <n> (or --n <n>) for one head, or --sprint")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
@@ -226,6 +230,21 @@ func runCIStatus(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	defer st.Close()
 	if *repo != "" {
+		if *pr > 0 {
+			// The PR's head from its record (pr:<name>:<n>, the one the
+			// lander reads): `ci status --repo nova-tools --n 4371` is the
+			// line a session that learned `pr lines --n` types (#4352 A).
+			prs, err := stream.LoadPRs(ctx, st.Client(), *repo, []int{*pr})
+			if err != nil {
+				return refuse(errOut, "ci status", err.Error())
+			}
+			if *sha = prs[0].Head; *sha == "" {
+				fmt.Fprintf(out, "CI STATUS REFUSED pr=%s why=%s remedy=%s\n", stream.PRKey(*repo, *pr),
+					oneline.Field("no head recorded for the PR"),
+					oneline.Field(fmt.Sprintf("nova-sprint ci status --repo %s --sha <head>", *repo)))
+				return 1
+			}
+		}
 		rows, err := ci.ReadRows(ctx, st, *repo, *sha)
 		if err != nil {
 			return refuse(errOut, "ci status", err.Error())
@@ -459,7 +478,7 @@ func runCIGitHub(ctx context.Context, args []string, out, errOut io.Writer) int 
 		}
 		addr := landRedisAddr(*redisAddr)
 		if addr == "" {
-			return refuse(errOut, "ci github --from-runner", "needs --redis <addr> or NOVA_REDIS_ADDR: "+ciRunnerUsage)
+			return refuse(errOut, "ci github --from-runner", "needs --redis <addr> or NOVA_SPRINT_REDIS: "+ciRunnerUsage)
 		}
 		st, err := store.Open(ctx, addr)
 		if err != nil {

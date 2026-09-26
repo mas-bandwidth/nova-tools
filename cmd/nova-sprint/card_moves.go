@@ -126,6 +126,10 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	m.brief = fs.Bool("brief", false, "render the friend brief instead of the card (render)")
 	m.each = fs.Bool("each", false, "every id on its own: a receipt per id, exit 1 when any refused (cancel)")
 	m.as = fs.String("as", "", verbflag.HelpAs)
+	// --sprint is taken and changes nothing (#4352 A): a card's id is its
+	// task:<id> key in every sprint, and `card render --ids x --sprint S`
+	// was refused "-sprint not defined".
+	_ = fs.String("sprint", "", verbflag.HelpSprint)
 	for _, f := range resultFlags {
 		m.result[f] = fs.String(f, "", "a result field written onto the primary at end: "+f)
 	}

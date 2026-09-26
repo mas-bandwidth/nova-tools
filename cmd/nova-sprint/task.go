@@ -41,11 +41,11 @@ const seatEnv = "NOVA_FRIEND"
 // wantFriend is the one refusal for an empty or unregistered initiator.
 const wantFriend = "want NOVA_FRIEND in friends"
 
-// taskAddr is the Redis address of a seat verb: --redis, else
-// NOVA_SPRINT_REDIS, else NOVA_REDIS_ADDR, else empty, which store.Open
-// refuses (never a localhost default on a mutating verb).
+// taskAddr is the Redis address of a seat verb: --redis, else the one
+// resolver (seat.go), else empty, which store.Open refuses (never a
+// localhost default on a mutating verb).
 func taskAddr(flagAddr string) string {
-	return redisOr(flagAddr, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR")
+	return redisOr(flagAddr)
 }
 
 // refuseSeat maps the seat errors to their one line: ErrNotFriend is

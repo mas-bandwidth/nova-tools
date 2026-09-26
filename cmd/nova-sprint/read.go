@@ -79,7 +79,7 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	sub := args[0]
 	fs := taskFlags("read " + sub)
-	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	repo := fs.String("repo", "", verbflag.HelpRepo)
 	n := fs.String("n", "", verbflag.HelpN)
 	outDir := fs.String("out", "", "the directory the brief is written to")

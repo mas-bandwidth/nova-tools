@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -23,14 +22,8 @@ func init() {
 }
 
 func fleetAddr(addr string) string {
-	if addr != "" {
-		return addr
-	}
-	if v := os.Getenv("NOVA_SPRINT_REDIS"); v != "" {
-		return v
-	}
-	if v := os.Getenv("NOVA_REDIS_ADDR"); v != "" {
-		return v
+	if a := redisOr(addr); a != "" {
+		return a
 	}
 	return "127.0.0.1:6379"
 }

@@ -74,14 +74,9 @@ var landRunner = func() string {
 // landRunHooks are the engine's pause seams; only a control sets them.
 var landRunHooks fenced.Hooks
 
-// landRedis resolves --redis, then NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR.
+// landRedis is --redis, else the one resolver (seat.go).
 func landRedis(flagVal string) string {
-	for _, v := range []string{flagVal, os.Getenv("NOVA_SPRINT_REDIS"), os.Getenv("NOVA_REDIS_ADDR")} {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
+	return redisOr(flagVal)
 }
 
 // landRepoFull refuses anything but owner/name.

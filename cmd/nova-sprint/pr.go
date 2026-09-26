@@ -6,14 +6,14 @@
 //	    [--base-sha <sha>] [--ci green|red|pending] [--mergeable true|false]
 //	    [--state open|closed] [--task <id>] [--kind member|stream] [--closes <n,n>|-]
 //	    [--branch-gone <why>] [--redis <addr>]
-//	nova-sprint pr lines --repo <owner/name|name> --n <n> --add "<typed line>" [--redis <addr>]
+//	nova-sprint pr lines --repo <owner/name|name> --n <n> [--add "<typed line>"] [--redis <addr>]
 //
 // pr:<name>:<n> is a hash (internal/nsprint/land/stream) under the one PR
 // record key (internal/nsprint/prkey): --repo owner/name and --repo name
 // write the same record read and ci read. A new record needs
 // --head, --base and --stream; a new head resets ci to pending and mergeable
 // to unknown unless the same call names them; --closes records the issues
-// the PR's body closes (- for none), which the lander lands with it. pr lines appends one typed line
+// the PR's body closes (- for none), which the lander lands with it. pr lines lists the record's typed lines, or with --add appends one typed line
 // (SCORE who=<w> head=<sha> score=N/10 ..., DISPOSITION ..., HOLD ...) to reads.
 // --branch-gone marks the PR's head branch gone (branch_gone), one of the
 // three records pr reap (pr_reap.go) closes a PR on. A --head is the PR's
@@ -122,7 +122,7 @@ func runPRRecord(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	addr := landRedisAddr(*redisAddr)
 	if addr == "" {
-		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR")
+		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")
 	}
 	st, err := store.Open(ctx, addr)
 	if err != nil {
@@ -160,13 +160,13 @@ func runPRLines(ctx context.Context, args []string, out, errOut io.Writer) int {
 	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	repo := fs.String("repo", "", verbflag.HelpRepo)
 	n := fs.Int("n", 0, verbflag.HelpN)
-	add := fs.String("add", "", "the typed line to add to the record")
+	add := fs.String("add", "", "the typed line to add to the record (without it, the record's lines are listed)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
 	full, rerr := prkey.Full(*repo)
-	if fs.NArg() > 0 || rerr != nil || *n <= 0 || strings.TrimSpace(*add) == "" {
-		return refuse(errOut, verb, `needs --repo <owner/name|name> --n <n> --add "<typed line>"`)
+	if fs.NArg() > 0 || rerr != nil || *n <= 0 {
+		return refuse(errOut, verb, `needs --repo <owner/name|name> --n <n> [--add "<typed line>"]`)
 	}
 	*repo = full
 	if strings.ContainsAny(*add, "\r\n") {
@@ -174,7 +174,7 @@ func runPRLines(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	addr := landRedisAddr(*redisAddr)
 	if addr == "" {
-		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR")
+		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")
 	}
 	st, err := store.Open(ctx, addr)
 	if err != nil {
@@ -182,6 +182,23 @@ func runPRLines(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return 6
 	}
 	defer st.Close()
+	if strings.TrimSpace(*add) == "" {
+		// The listing (#4352 A): `pr lines --repo nova-tools --n 4373`
+		// printed a usage line instead of the lines. Every typed line of
+		// the record (its reads field, then its lines list, as the lander
+		// reads them), one per line, then the receipt.
+		prs, err := stream.LoadPRs(ctx, st.Client(), *repo, []int{*n})
+		if err != nil {
+			fmt.Fprintf(errOut, "nova-sprint %s: %v\n", verb, err)
+			return 6
+		}
+		p := prs[0]
+		for _, l := range p.Reads {
+			fmt.Fprintln(out, l)
+		}
+		fmt.Fprintf(out, "PR LINES %s lines=%d head=%s record=%t\n", stream.PRKey(*repo, *n), len(p.Reads), orDash(stream.Short(p.Head)), p.Exists)
+		return 0
+	}
 	k, err := stream.AddLine(ctx, st.Client(), *repo, *n, *add)
 	if err != nil {
 		return landExit(errOut, verb, err)

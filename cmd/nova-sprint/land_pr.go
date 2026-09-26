@@ -59,7 +59,7 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	addr := landRedisAddr(*redisAddr)
 	if addr == "" {
-		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR (the check state is read from Redis): "+usage)
+		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS (the check state is read from Redis): "+usage)
 	}
 	tok, err := landStreamToken()
 	if err != nil {

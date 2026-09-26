@@ -72,7 +72,7 @@ func cmdRoutes(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	tier := fs.String("tier", "", "the model type: flash or pro")
 	label := fs.String("ids", "", verbflag.HelpIDs)
 	spread := fs.Bool("spread", false, "spread the tiers over the providers round-robin")
-	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, "routes", err.Error()+"; it takes --rung, --type, --check <route>, --preamble <route>, --tier flash|pro [--ids <card>], --spread and --redis <host:port>")
 	}

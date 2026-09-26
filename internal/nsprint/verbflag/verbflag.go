@@ -58,7 +58,7 @@ const (
 	HelpIDs    = "the ids to act on, comma-separated; @<file> or @- reads them one per line"
 	HelpStream = "the work stream(s), comma-separated"
 	HelpWhy    = "the reason, recorded on the receipt"
-	HelpN      = "how many"
+	HelpN      = "how many; on a verb that names one pull request, its number (as --pr)"
 	HelpTo     = "the target worker: friend:<f> or bench:<b>"
 	HelpIdem   = "an idempotency key: the same key twice is one write, the second ALREADY"
 	HelpDryRun = "print what this would write, in receipt form, and write nothing"
@@ -118,7 +118,15 @@ const notDefined = "flag provided but not defined: -"
 // Parse parses args. An unknown flag whose spelling the grammar retired comes
 // back as `--old is spelled --new` when this set defines --new, else as
 // `--old is retired; nova-sprint <verb> -h lists the flags`.
+//
+// --n names the pull request on a verb that takes --pr and counts nothing
+// (nova-tools#4352 A): pr record and pr lines spell the PR number --n, so
+// a session that learned them types `ci status --repo nova-tools --n 4371`,
+// and that line is the one it meant, never a refusal.
 func (s *Set) Parse(args []string) error {
+	if s.Lookup("n") == nil && s.Lookup("pr") != nil {
+		args = PRFromN(args)
+	}
 	err := s.FlagSet.Parse(args)
 	if err == nil {
 		return nil
@@ -136,6 +144,26 @@ func (s *Set) Parse(args []string) error {
 		return fmt.Errorf("--%s is spelled --%s", old, now)
 	}
 	return fmt.Errorf("--%s is retired; nova-sprint %s -h lists the flags", old, s.Name())
+}
+
+// PRFromN is args with every --n (-n, --n=<v>, -n=<v>) before a "--"
+// spelled --pr: the rewrite Parse makes on a set that defines --pr and not
+// --n. It returns a new slice and leaves args alone.
+func PRFromN(args []string) []string {
+	out := make([]string, len(args))
+	copy(out, args)
+	for i, a := range out {
+		switch {
+		case a == "--":
+			return out
+		case a == "-n" || a == "--n":
+			out[i] = "--pr"
+		case strings.HasPrefix(a, "-n=") || strings.HasPrefix(a, "--n="):
+			_, v, _ := strings.Cut(a, "=")
+			out[i] = "--pr=" + v
+		}
+	}
+	return out
 }
 
 // List splits a comma-separated flag value into its items, trimmed, with

@@ -89,7 +89,7 @@ func runJev(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	addr := landRedisAddr(*redisAddr)
 	if addr == "" {
-		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR")
+		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")
 	}
 	st, err := store.Open(ctx, addr)
 	if err != nil {

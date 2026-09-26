@@ -177,7 +177,7 @@ func init() {
 func runRouteReport(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("route report")
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
-	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *sprint == "" || *addr == "" {
 		return refuse(errOut, "route", "report needs --sprint <S> and --redis <addr> (or NOVA_SPRINT_REDIS)")
 	}
