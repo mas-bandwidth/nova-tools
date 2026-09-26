@@ -18,11 +18,16 @@ package webhook
 //     id (the runner has no check-run ids without asking GitHub, and a rerun
 //     keeps the id with a later time, which the function orders on);
 //   - the source of the record (source=runner), so Source says which path
-//     is live;
-//   - pr:<repo>:<n>'s head, base and stream when the run names a pull
-//     request, with plain HSET: the bench seat may not EVAL land_stream.lua,
-//     and the fields a new record needs are written the way that script
-//     writes them.
+//     is live.
+//
+// It never writes pr:<repo>:<n> (read of #4375, 4/10): the record's stream
+// is the lander's (a rowan/x -> dev PR is a member of a stream its branch
+// names do not spell), its head and ci_request go through land_stream.lua's
+// record op, which the bench seat may not EVAL, and an older cancelled run's
+// ci-ok (always()) must not rewind a head. The PR number rides on the row and
+// on the record's pr field, as the receiver's does; ns_ci_github orders a
+// field by run id then time, so an older run's receipt is KEPT, never
+// applied over a newer one.
 //
 // A refused receipt names the field and the remedy in one line; a failed
 // write is an error the verb turns into a red ci-ok, because a landing must
@@ -32,7 +37,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -82,8 +86,10 @@ type Receipt struct {
 	PR         string // the pull request number, "" when the event names none
 	Workflow   string // github.workflow
 	Conclusion string // job.status of ci-ok: success, failure or cancelled
-	At         string // RFC3339; "" means now
+	At         string // RFC3339; "" means Now()
 	Jobs       []Job
+	// Now is the clock an empty At is stamped from; nil means time.Now.
+	Now func() time.Time
 }
 
 // Validate names the first field a receipt cannot be written from, with the
@@ -123,7 +129,11 @@ func (r *Receipt) Validate() error {
 	r.HeadBranch = branch(r.HeadBranch)
 	r.BaseBranch = branch(r.BaseBranch)
 	if r.At == "" {
-		r.At = time.Now().UTC().Format(time.RFC3339)
+		now := r.Now
+		if now == nil {
+			now = time.Now
+		}
+		r.At = now().UTC().Format(time.RFC3339)
 	}
 	if _, err := time.Parse(time.RFC3339, r.At); err != nil {
 		return fmt.Errorf("--at wants RFC3339, got %q", r.At)
@@ -159,19 +169,6 @@ func branch(ref string) string {
 	return ref
 }
 
-// Stream is the work stream a PR belongs to, from its branches: the head
-// branch stream/<s>, else the base branch stream/<s>, else the base branch.
-func Stream(headBranch, baseBranch string) string {
-	head, base := branch(headBranch), branch(baseBranch)
-	if s, ok := strings.CutPrefix(head, "stream/"); ok && s != "" {
-		return s
-	}
-	if s, ok := strings.CutPrefix(base, "stream/"); ok && s != "" {
-		return s
-	}
-	return base
-}
-
 // Written is the receipt as it landed.
 type Written struct {
 	Key     string // ci:<repo>:<sha>:gh
@@ -180,8 +177,6 @@ type Written struct {
 	Fail    string // gh_fail after the write
 	Runs    int    // fields written: the workflow and its jobs
 	Applied int    // of them, how many the function applied (the rest were older than the hash held)
-	PRKey   string // pr:<repo>:<n> refreshed, "" when the run names no PR
-	Stream  string // the stream written on that record
 }
 
 // Line is the receipt's one line.
@@ -192,14 +187,14 @@ func (w Written) Line() string {
 		}
 		return s
 	}
-	return fmt.Sprintf("CIGH RUNNER %s gh=%s fail=%s runs=%d applied=%d ev=%s pr=%s stream=%s",
-		w.Key, dash(w.Word), dash(w.Fail), w.Runs, w.Applied, dash(w.EntryID), dash(w.PRKey), dash(w.Stream))
+	return fmt.Sprintf("CIGH RUNNER %s gh=%s fail=%s runs=%d applied=%d ev=%s",
+		w.Key, dash(w.Word), dash(w.Fail), w.Runs, w.Applied, dash(w.EntryID))
 }
 
 // Write lands one receipt: the ev:github row, then in one pipeline the
-// function call per run, the source stamp and the PR record refresh. It
-// needs the nova_sprint function library on the store and a seat with
-// XADD on ev:github, FCALL, and HSET on ci:* and pr:*.
+// function call per run and the source stamp. It needs the nova_sprint
+// function library on the store and a seat with XADD on ev:github, FCALL
+// and HSET on ci:*. It touches no other key.
 func Write(ctx context.Context, rdb *redis.Client, r Receipt) (Written, error) {
 	var w Written
 	if rdb == nil {
@@ -220,20 +215,6 @@ func Write(ctx context.Context, rdb *redis.Client, r Receipt) (Written, error) {
 	}
 	w.EntryID = id
 
-	var pk, oldHead string
-	if r.PR != "" {
-		pk = prkey.KeyText(r.Repo, r.PR)
-		old, err := rdb.HMGet(ctx, pk, "head", "created_at").Result()
-		if err != nil && !errors.Is(err, redis.Nil) {
-			return w, fmt.Errorf("HMGET %s: %w", pk, err)
-		}
-		if len(old) > 0 {
-			oldHead, _ = old[0].(string)
-		}
-		w.PRKey = pk
-		w.Stream = Stream(r.HeadBranch, r.BaseBranch)
-	}
-
 	pipe := rdb.Pipeline()
 	var calls []*redis.Cmd
 	calls = append(calls, pipe.FCall(ctx, Function, []string{w.Key, ghevent.Stream},
@@ -243,19 +224,6 @@ func Write(ctx context.Context, rdb *redis.Client, r Receipt) (Written, error) {
 			Group, id, "check_run", j.Name, r.RunID, "completed", j.Result, r.At, r.PR))
 	}
 	pipe.HSet(ctx, w.Key, "source", SourceRunner, "run_id", r.RunID, "event", r.Event)
-	if pk != "" {
-		now := strconv.FormatInt(time.Now().UnixMilli(), 10)
-		fields := []any{"head", r.SHA, "base", r.BaseBranch, "stream", w.Stream, "updated_at", now}
-		if oldHead == "" {
-			// a new record, the fields land_stream.lua's record op gives one
-			fields = append(fields, "repo", r.Repo, "n", r.PR, "state", "open", "ci", "pending", "mergeable", "", "created_at", now)
-			pipe.HSetNX(ctx, pk, "reads", "")
-		} else if oldHead != r.SHA {
-			// a new head: the record's own CI and mergeable were for the old one
-			fields = append(fields, "ci", "pending", "mergeable", "")
-		}
-		pipe.HSet(ctx, pk, fields...)
-	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return w, fmt.Errorf("write %s: %w", w.Key, err)
 	}
@@ -270,6 +238,19 @@ func Write(ctx context.Context, rdb *redis.Client, r Receipt) (Written, error) {
 		}
 	}
 	return w, nil
+}
+
+// SourceOf says which path appended an ev:github row from its sender: the
+// runner names itself, the receiver carries the GitHub login, and no row is
+// none. doctor's ingest line reads it off the newest row it already holds.
+func SourceOf(sender string) string {
+	switch strings.TrimSpace(sender) {
+	case "":
+		return SourceNone
+	case Sender:
+		return SourceRunner
+	}
+	return SourceHook
 }
 
 // Source says which path wrote a record: runner when the runner stamped it,

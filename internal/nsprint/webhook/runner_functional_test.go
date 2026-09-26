@@ -47,8 +47,7 @@ func TestRunnerReceiptWritesWhatTheReceiverWould(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := webhook.Key(r.Repo, r.SHA)
-	if w.Key != key || w.Word != webhook.Green || w.Fail != "" || w.Runs != 3 || w.Applied != 3 || w.EntryID == "" ||
-		w.PRKey != "pr:nova-tools:4350" || w.Stream != "dev" {
+	if w.Key != key || w.Word != webhook.Green || w.Fail != "" || w.Runs != 3 || w.Applied != 3 || w.EntryID == "" {
 		t.Fatalf("written: %+v", w)
 	}
 
@@ -99,32 +98,24 @@ func TestRunnerReceiptWritesWhatTheReceiverWould(t *testing.T) {
 		t.Fatalf("after the consumer: %+v", after)
 	}
 
-	// The PR record: head, base, stream, and the fields a new record gets.
-	pr, err := c.HGetAll(ctx, "pr:nova-tools:4350").Result()
+	// No other key: the PR record is the lander's (its stream, its head and
+	// its ci_request go through land_stream.lua's record op), never the
+	// runner's, and an older run's receipt at the same head is KEPT.
+	if n, _ := c.Exists(ctx, "pr:nova-tools:4350").Result(); n != 0 {
+		t.Fatal("the runner wrote a PR record")
+	}
+	keys, _ := c.Keys(ctx, "*").Result()
+	if len(keys) != 2 {
+		t.Fatalf("keys after a receipt: %v, want the record and the stream only", keys)
+	}
+	older := goodReceipt()
+	older.RunID, older.Conclusion, older.Jobs = "36300000000", "failure", []webhook.Job{{Name: "lint", Result: "failure"}}
+	w2, err := webhook.Write(ctx, c, older)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for k, v := range map[string]string{"head": r.SHA, "base": "dev", "stream": "dev", "repo": r.Repo, "n": "4350",
-		"state": "open", "ci": "pending", "mergeable": "", "reads": ""} {
-		if pr[k] != v {
-			t.Errorf("pr record %s = %q, want %q", k, pr[k], v)
-		}
-	}
-	if pr["created_at"] == "" || pr["updated_at"] == "" {
-		t.Errorf("pr record stamps: %v", pr)
-	}
-
-	// A second run at a new head refreshes head and resets the record's own
-	// CI word; the old record's other fields stay.
-	c.HSet(ctx, "pr:nova-tools:4350", "ci", "green", "task", "t1")
-	r2 := goodReceipt()
-	r2.SHA, r2.RunID, r2.HeadBranch = strings.Repeat("b", 40), "36300000002", "stream/github"
-	if _, err := webhook.Write(ctx, c, r2); err != nil {
-		t.Fatal(err)
-	}
-	pr, _ = c.HGetAll(ctx, "pr:nova-tools:4350").Result()
-	if pr["head"] != r2.SHA || pr["ci"] != "pending" || pr["stream"] != "github" || pr["task"] != "t1" {
-		t.Fatalf("re-head: %v", pr)
+	if w2.Applied != 0 || w2.Word != webhook.Green {
+		t.Fatalf("an older run's receipt was applied over the newer: %+v", w2)
 	}
 }
 
@@ -140,11 +131,8 @@ func TestRunnerReceiptRedNamesTheFirstRedJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w.Word != webhook.Red || w.Fail != "check:e2e" || w.PRKey != "" || w.Stream != "" {
+	if w.Word != webhook.Red || w.Fail != "check:e2e" {
 		t.Fatalf("written: %+v", w)
-	}
-	if n, _ := c.Exists(ctx, "pr:nova-tools:").Result(); n != 0 {
-		t.Fatal("a run naming no PR wrote a PR record")
 	}
 }
 

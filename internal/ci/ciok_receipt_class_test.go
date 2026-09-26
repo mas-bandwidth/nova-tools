@@ -18,8 +18,11 @@ import (
 // ci-ok reports the run itself at its end, with `nova-sprint ci github
 // --from-runner`, and that step must carry every field the record needs and
 // must fail the job when the write fails: a landing never waits on a
-// receipt that silently did not happen. This test reads the step as YAML
-// and holds it to that shape.
+// receipt that silently did not happen. And it must run the bench's
+// installed nova-sprint, not this tree (never build the thing with itself:
+// a PR that changes the writer must not write the check that lands it);
+// go run of the tree is the one bootstrap while the installed binary lacks
+// the verb. This test reads the step as YAML and holds it to that shape.
 
 const runnerReceiptVerb = "ci github --from-runner"
 
@@ -116,6 +119,19 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 	}
 	if strings.Contains(run, "curl") || strings.Contains(run, "gh api") || strings.Contains(run, "api.github.com") {
 		t.Errorf("the receipt step calls GitHub; the run's own context has every field:\n%s", run)
+	}
+
+	// Never build the thing with itself: the installed nova-sprint writes the
+	// receipt; go run of this tree is the bootstrap only while the installed
+	// binary lacks the verb, detected by its own flag refusal, and it says so.
+	for _, want := range []string{`ns="$HOME/.local/bin/nova-sprint"`, `grep -q "flag provided but not defined"`, `writer=("$ns")`,
+		`echo "BOOTSTRAP:`, `writer=("$(command -v go)" run ./cmd/nova-sprint)`, `"${writer[@]}" ci github --from-runner`} {
+		if !strings.Contains(run, want) {
+			t.Errorf("the receipt step does not prefer the installed nova-sprint over this tree: missing %s", want)
+		}
+	}
+	if strings.Contains(run, "go build") || strings.Count(run, "go run") != 1 {
+		t.Errorf("the receipt step builds this tree more than the one bootstrap:\n%s", run)
 	}
 
 	// The bench seat: the password from nova-secrets exec, never a flag or a file.

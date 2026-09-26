@@ -8,6 +8,7 @@ package webhook_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
 )
@@ -55,13 +56,15 @@ func TestReceiptValidateNamesTheFieldAndRemedy(t *testing.T) {
 	}
 
 	// Normalisation: refs are stripped, a workflow name with spaces is one
-	// token (the hash field is '<word> <id> <at>'), an empty at is now.
+	// token (the hash field is '<word> <id> <at>'), an empty at is the
+	// receipt's clock, never the wall clock.
 	r := goodReceipt()
 	r.HeadBranch, r.BaseBranch, r.Workflow, r.At = "refs/heads/stream/github", "refs/heads/dev", "CI tests", ""
+	r.Now = func() time.Time { return time.Date(2026, 9, 26, 12, 38, 0, 0, time.FixedZone("ET", -4*3600)) }
 	if err := r.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if r.HeadBranch != "stream/github" || r.BaseBranch != "dev" || r.Workflow != "CI-tests" || r.At == "" {
+	if r.HeadBranch != "stream/github" || r.BaseBranch != "dev" || r.Workflow != "CI-tests" || r.At != "2026-09-26T16:38:00Z" {
 		t.Fatalf("normalised: %+v", r)
 	}
 }
@@ -76,23 +79,6 @@ func TestParseJob(t *testing.T) {
 	for _, bad := range []string{"lint", "=success", "lint=", "a b=success", "lint=ok"} {
 		if _, err := webhook.ParseJob(bad); err == nil {
 			t.Errorf("%q accepted", bad)
-		}
-	}
-}
-
-func TestStreamFromBranches(t *testing.T) {
-	t.Parallel()
-
-	cases := [][3]string{
-		{"stream/github", "dev", "github"},
-		{"refs/heads/stream/swarm", "dev", "swarm"},
-		{"rowan/ci-receipts", "stream/github", "github"},
-		{"rowan/ci-receipts", "refs/heads/dev", "dev"},
-		{"", "main", "main"},
-	}
-	for _, c := range cases {
-		if got := webhook.Stream(c[0], c[1]); got != c[2] {
-			t.Errorf("Stream(%q, %q) = %q, want %q", c[0], c[1], got, c[2])
 		}
 	}
 }
@@ -114,13 +100,18 @@ func TestSourceFoldsARecord(t *testing.T) {
 	if runner.EvID != "2-0" || runner.Source != "runner" {
 		t.Errorf("Parse keeps ev_id and source: %+v", runner)
 	}
+	for sender, want := range map[string]string{"": webhook.SourceNone, "runner": webhook.SourceRunner, "glenn": webhook.SourceHook, " runner ": webhook.SourceRunner} {
+		if got := webhook.SourceOf(sender); got != want {
+			t.Errorf("SourceOf(%q) = %q, want %q", sender, got, want)
+		}
+	}
 }
 
 func TestWrittenLine(t *testing.T) {
 	t.Parallel()
 
 	w := webhook.Written{Key: "ci:nova-tools:" + strings.Repeat("a", 40) + ":gh", Word: "green", Runs: 8, Applied: 8, EntryID: "1-0"}
-	want := "CIGH RUNNER ci:nova-tools:" + strings.Repeat("a", 40) + ":gh gh=green fail=- runs=8 applied=8 ev=1-0 pr=- stream=-"
+	want := "CIGH RUNNER ci:nova-tools:" + strings.Repeat("a", 40) + ":gh gh=green fail=- runs=8 applied=8 ev=1-0"
 	if got := w.Line(); got != want {
 		t.Fatalf("got %q\nwant %q", got, want)
 	}

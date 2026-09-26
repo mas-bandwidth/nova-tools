@@ -1878,24 +1878,37 @@ jobs:
       # loud here and reddens ci-ok: a landing must never wait on a receipt
       # that silently did not happen. The password never touches a flag or
       # a file: nova-secrets exec under the bench seat (card.env names it).
+      # NEVER BUILD THE THING WITH ITSELF: the receipt is written by the
+      # bench's installed, released nova-sprint (fleet release), not by this
+      # tree, so a PR that changes the writer cannot write the check that
+      # lands itself. `go run` of this tree is the one-time bootstrap while
+      # the installed binary predates the verb, and it says so in the log.
       - name: report this run to Redis from the runner
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           env_file="$HOME/nova-bench/launch/card.env"
-          [ -f "$env_file" ] || { echo "no $env_file on this runner: run fleet/bench.yml on $(hostname) (it writes the bench seat and store address)"; exit 1; }
+          [ -f "$env_file" ] || { echo "no $env_file on this runner: run the rowan-tools bench play on $(hostname) (it writes the bench seat and store address)"; exit 1; }
           # shellcheck disable=SC1090
           . "$env_file"
           : "${NOVA_BENCH_SEAT:?card.env names no NOVA_BENCH_SEAT}" "${NOVA_BENCH_SOPS:?card.env names no NOVA_BENCH_SOPS}" "${NOVA_CARD_REDIS:?card.env names no NOVA_CARD_REDIS}"
-          # go run: the build lands in the bench's Go cache the lint job already
-          # warmed for this sha (make build is `go build ./...` with no binary)
-          go=$(command -v go)
+          ns="$HOME/.local/bin/nova-sprint"
+          # the installed binary's own refusal of the verb's flag is the probe (its exit is 2 either way)
+          probe=""
+          if [ -x "$ns" ]; then probe=$("$ns" ci github --from-runner 2>&1; echo "exit=$?"); fi
+          if [ -x "$ns" ] && ! grep -q "flag provided but not defined" <<<"$probe"; then
+            echo "RECEIPT WRITER installed $("$ns" version 2>/dev/null | head -1)"
+            writer=("$ns")
+          else
+            echo "BOOTSTRAP: $ns is absent or predates ci github --from-runner; go run of this tree writes this one receipt; roll the release (nova-sprint fleet release dev) so the next run uses the installed binary"
+            writer=("$(command -v go)" run ./cmd/nova-sprint)
+          fi
           exec "$HOME/.local/bin/nova-secrets" exec --store "$HOME/nova-bench/secrets" --as "$NOVA_BENCH_SEAT" \
             --key "$HOME/.config/nova-secrets/$NOVA_BENCH_SEAT.key" --sops "$NOVA_BENCH_SOPS" \
             --only NOVA_REDIS_BENCH_PASSWORD --require NOVA_REDIS_BENCH_PASSWORD -- \
             /usr/bin/env NOVA_SPRINT_REDIS_USER=bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD \
-            "$go" run ./cmd/nova-sprint ci github --from-runner --redis "$NOVA_CARD_REDIS" \
+            "${writer[@]}" ci github --from-runner --redis "$NOVA_CARD_REDIS" \
             --repo "${{ github.repository }}" \
             --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
             --run-id "${{ github.run_id }}" \

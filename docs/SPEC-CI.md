@@ -2369,8 +2369,11 @@ step passes every field of the record from the run's own context — `--repo`,
 (`job.status`) — plus one `--job <name>=${{ needs.<name>.result }}` for every
 job in ci-ok's `needs` and none it does not need, as the bench seat
 (`nova-secrets exec … --require NOVA_REDIS_BENCH_PASSWORD`,
-`NOVA_SPRINT_REDIS_USER=bench`, `--redis "$NOVA_CARD_REDIS"`), and never
-`curl`, `gh api` or `api.github.com`.
+`NOVA_SPRINT_REDIS_USER=bench`, `--redis "$NOVA_CARD_REDIS"`), never
+`curl`, `gh api` or `api.github.com`, and with the bench's installed
+nova-sprint as the writer (`$HOME/.local/bin/nova-sprint`); `go run` of the
+tree under test is the one bootstrap, taken only when the installed binary
+refuses the verb's flag, and announced as `BOOTSTRAP:`.
 **The hurt.** Measured 2026-09-26 12:38 PM ET: `ev:github` XLEN 0 and zero
 `ci:*:gh` keys, so `nova-sprint land pr` (#4326) could only print WAITING.
 The signed webhook receiver sits behind a tailscale funnel kept off by
@@ -2378,7 +2381,9 @@ design, and no nova-sprint path may poll GitHub for a check state
 (`TestNoPollingPathsRemain`). The runners are ours and run as the bench
 seat, so the run reports itself; a receipt that silently did not happen
 would leave a landing waiting forever, which is why the step must fail the
-job.
+job. And never build the thing with itself: a PR that changes the writer
+must not write the check that lands it, which is why the installed binary
+writes and the tree only bootstraps.
 **The test.** `TestCIOKReportsEveryRunToRedisFromTheRunner`
 (`internal/ci/ciok_receipt_class_test.go`), reading the job as YAML.
 **Its allowlist.** None: one step, every field, no exceptions.
