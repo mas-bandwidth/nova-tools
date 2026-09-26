@@ -19,8 +19,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -288,6 +290,32 @@ func resultOf(m redis.XMessage) (result, bool) {
 	return r, true
 }
 
+// foldRef keeps the Redis copy of a reference's state (gh:ref, #4343)
+// current from the deliveries that change it, in the same pipeline that
+// acks them: an issues entry writes the issue's state; a pull_request
+// closed or reopened entry drops the PR's copy (the closed delivery does
+// not say whether it merged; a reopened one moves a copy that read closed),
+// so the next dealer read is one counted call. Every other kind is left
+// alone.
+func foldRef(ctx context.Context, pipe redis.Pipeliner, m redis.XMessage) {
+	v := func(k string) string { s, _ := m.Values[k].(string); return strings.TrimSpace(s) }
+	n, err := strconv.Atoi(v("number"))
+	if err != nil || n <= 0 || v("repo") == "" {
+		return
+	}
+	switch v("kind") {
+	case "issues":
+		if state := v("state"); state == "open" || state == "closed" {
+			pipe.HSet(ctx, gh.RefKey(v("repo"), n), map[string]any{"is_pr": "0", "merged": "0", "state": state, "base": "",
+				"at": strings.Join(strings.Fields(v("at")), "")})
+		}
+	case "pull_request":
+		if a := v("action"); a == "closed" || a == "reopened" {
+			pipe.Del(ctx, gh.RefKey(v("repo"), n))
+		}
+	}
+}
+
 // apply handles one batch in one pipeline: an FCALL per CI result (write and
 // ack in one call) and one XACK of every other entry. A failed pipeline
 // leaves the unacked entries pending for the next pass; the function is a
@@ -303,6 +331,7 @@ func (c *Consumer) apply(ctx context.Context, msgs []redis.XMessage) (Counts, er
 	for _, m := range msgs {
 		r, ok := resultOf(m)
 		if !ok {
+			foldRef(ctx, pipe, m)
 			skip = append(skip, m.ID)
 			continue
 		}

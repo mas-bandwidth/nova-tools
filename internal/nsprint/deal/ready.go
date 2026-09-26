@@ -40,15 +40,13 @@ package deal
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/redis/go-redis/v9"
 	"strconv"
 	"strings"
-	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // DepCard is what the gate needs of a card another card depends on: its
@@ -319,65 +317,42 @@ func Ready(ctx context.Context, in Input, prs PRs) (Input, map[string][]GateMove
 	return out, moves, blocked
 }
 
-// GHTimeout bounds one forge read. A forge that does not answer inside it
-// leaves the entry unknown and the card waiting.
-const GHTimeout = 60 * time.Second
-
-// GH is the real PRs seam: `gh api` over REST (never GraphQL), with the
-// caller's GH_CONFIG_DIR. repos/<r>/pulls/<n> answers a PR; a 404 there reads
-// the number as an issue.
+// GH is the real PRs seam (#4343): the state of <repo>#<n> from the Redis
+// copy first (the lander's own PR record pr:<name>:<n>, then gh:ref, which
+// the webhook ingest keeps current), and from GitHub through the one client
+// only when neither has an answer; that answer is written to the copy, so
+// the reconciler reads GitHub once per reference, never once per pass.
 type GH struct {
-	// Program is the gh binary; empty is "gh" on PATH.
-	Program string
+	Client *gh.Client
+	Redis  redis.Cmdable
 }
 
 // Ref implements PRs.
 func (g GH) Ref(ctx context.Context, repo string, n int) (Ref, error) {
-	out, err := g.api(ctx, fmt.Sprintf("repos/%s/pulls/%d", repo, n), "{merged: .merged, state: .state, base: .base.ref}")
-	if err == nil {
-		var pr struct {
-			Merged bool   `json:"merged"`
-			State  string `json:"state"`
-			Base   string `json:"base"`
+	if g.Redis != nil {
+		m, err := g.Redis.HMGet(ctx, prkey.Key(repo, n), "state", "base").Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return Ref{}, fmt.Errorf("HMGET %s: %w", prkey.Key(repo, n), err)
 		}
-		if err := json.Unmarshal(out, &pr); err != nil {
-			return Ref{}, fmt.Errorf("gh: %s#%d: %w", repo, n, err)
+		if len(m) == 2 {
+			state, _ := m[0].(string)
+			base, _ := m[1].(string)
+			switch state {
+			case "merged", "landed":
+				return Ref{IsPR: true, Merged: true, State: "closed", Base: base}, nil
+			case "closed":
+				return Ref{IsPR: true, State: "closed", Base: base}, nil
+			}
 		}
-		return Ref{IsPR: true, Merged: pr.Merged, State: pr.State, Base: pr.Base}, nil
 	}
-	if !strings.Contains(err.Error(), "404") && !strings.Contains(err.Error(), "Not Found") {
-		return Ref{}, err
+	if g.Client == nil {
+		return Ref{}, errors.New("deal: no GitHub client")
 	}
-	out, err = g.api(ctx, fmt.Sprintf("repos/%s/issues/%d", repo, n), ".state")
+	r, _, err := g.Client.CachedRef(ctx, repo, n)
 	if err != nil {
 		return Ref{}, err
 	}
-	return Ref{State: strings.TrimSpace(string(out))}, nil
-}
-
-// api runs one `gh api <path> --jq <jq>`. It reaches the forge, so it calls
-// the test guard first.
-func (g GH) api(ctx context.Context, path, jq string) ([]byte, error) {
-	program := g.Program
-	if program == "" {
-		program = "gh"
-	}
-	args := []string{"api", path, "--jq", jq}
-	testguard.RefuseHosts(program, args...)
-	ctx, cancel := context.WithTimeout(ctx, GHTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, program, args...)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return nil, fmt.Errorf("gh api %s: %s", path, oneLine(msg))
-	}
-	return out, nil
+	return Ref{IsPR: r.IsPR, Merged: r.Merged, State: r.State, Base: r.Base}, nil
 }
 
 func oneLine(s string) string {

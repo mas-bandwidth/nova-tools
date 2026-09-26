@@ -8,24 +8,25 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
-	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+	"github.com/redis/go-redis/v9"
 )
 
 // doneAlreadyForge is the duty's forge seam, swapped in tests (CI-NET: no
-// host in a test).
-var doneAlreadyForge = func() reconcile.IssueCloser { return ghIssueCloser{} }
+// host in a test). The store counts the calls (#4343).
+var doneAlreadyForge = func(st *store.Store) reconcile.IssueCloser {
+	return ghIssueCloser{verb: "reconcile done-already", rdb: st.Client()}
+}
 
 func init() {
 	registerReconcileDuty("done-already", func(st *store.Store) (reconcileDuty, error) {
 		return &doneAlreadyDuty{d: &reconcile.DoneAlready{
-			Client: st.Client(), Forge: doneAlreadyForge(), Mirror: card.MirrorPath,
+			Client: st.Client(), Forge: doneAlreadyForge(st), Mirror: card.MirrorPath,
 		}}, nil
 	})
 }
@@ -66,24 +67,27 @@ func (dd *doneAlreadyDuty) Run(ctx context.Context, l *reconcile.Lease) (reconci
 	return c, err
 }
 
-// ghIssueCloser closes an issue by REST (`gh api`): state closed
-// (completed), then the evidence comment. Closing a closed issue is a no-op,
-// so a retry after a failed comment posts the comment once.
-type ghIssueCloser struct{}
+// ghIssueCloser closes an issue through the one GitHub client
+// (internal/gh, #4343): state closed (completed), then the evidence
+// comment. Closing a closed issue is a no-op, so a retry after a failed
+// comment posts the comment once. Two writes, paced and counted under verb.
+type ghIssueCloser struct {
+	verb string
+	rdb  redis.Cmdable
+}
 
-func (ghIssueCloser) CloseIssue(ctx context.Context, repo string, number int, comment string) error {
+func (g ghIssueCloser) CloseIssue(ctx context.Context, repo string, number int, comment string) error {
 	if !strings.Contains(repo, "/") {
 		repo = devRedEnv("NOVA_GH_OWNER", devRedOwner) + "/" + repo
 	}
-	path := "repos/" + repo + "/issues/" + strconv.Itoa(number)
-	for _, args := range [][]string{
-		{"api", "-X", "PATCH", path, "-f", "state=closed", "-f", "state_reason=completed", "--silent"},
-		{"api", "-X", "POST", path + "/comments", "-f", "body=" + comment, "--silent"},
-	} {
-		testguard.RefuseHosts("gh", args...)
-		if out, err := exec.CommandContext(ctx, "gh", args...).CombinedOutput(); err != nil {
-			return fmt.Errorf("gh api %s %s: %w: %s", args[2], args[3], err, strings.TrimSpace(string(out)))
-		}
+	tok, err := gh.Token()
+	if err != nil {
+		return err
 	}
-	return nil
+	c := &gh.Client{Token: tok, Verb: g.verb, Redis: g.rdb, Log: os.Stderr}
+	if err := c.CloseIssue(ctx, repo, number); err != nil {
+		return err
+	}
+	_, err = c.Comment(ctx, repo, number, comment)
+	return err
 }

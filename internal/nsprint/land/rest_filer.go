@@ -1,32 +1,40 @@
 package land
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
+	"github.com/redis/go-redis/v9"
 )
 
+// RESTFiler files the flaky issue and finds one by its marker through the
+// one GitHub client (internal/gh, #4343). Redis, when set, counts the calls
+// under Verb (default land-flaky).
 type RESTFiler struct {
 	BaseURL string
 	Token   string
 	HTTP    *http.Client
+	Verb    string
+	Redis   redis.Cmdable
 }
 
-func (f RESTFiler) client() *http.Client {
-	if f.HTTP != nil {
-		return f.HTTP
+func (f RESTFiler) client() *gh.Client {
+	verb := f.Verb
+	if verb == "" {
+		verb = "land flaky"
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return &gh.Client{API: f.BaseURL, Token: f.Token, HTTP: f.HTTP, Verb: verb, Redis: f.Redis}
 }
 
-func (f RESTFiler) endpoint(repo, suffix string) (string, error) {
+func (f RESTFiler) repo(repo string) (string, error) {
 	owner, name, ok := strings.Cut(strings.Trim(repo, "/"), "/")
 	if !ok {
 		owner, name = "mas-bandwidth", strings.Trim(repo, "/")
@@ -34,80 +42,44 @@ func (f RESTFiler) endpoint(repo, suffix string) (string, error) {
 	if owner == "" || name == "" {
 		return "", fmt.Errorf("land: invalid repo %q", repo)
 	}
-	base := strings.TrimRight(f.BaseURL, "/")
-	if base == "" {
-		base = "https://api.github.com"
-	}
-	return base + "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/issues" + suffix, nil
+	return url.PathEscape(owner) + "/" + url.PathEscape(name), nil
 }
 
-func (f RESTFiler) do(ctx context.Context, method, endpoint string, body []byte) ([]byte, int, error) {
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, 0, err
+// status maps the client's non-2xx error to the store's HTTPStatusError,
+// which tells a definite rejection from an unknown outcome.
+func status(err error) error {
+	var herr *gh.HTTPError
+	if errors.As(err, &herr) {
+		return &HTTPStatusError{Code: herr.Status, Body: herr.Body}
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if f.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+f.Token)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := f.client().Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer resp.Body.Close()
-	b, readErr := io.ReadAll(resp.Body)
-	if readErr != nil {
-		return nil, resp.StatusCode, readErr
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return b, resp.StatusCode, &HTTPStatusError{Code: resp.StatusCode, Body: strings.TrimSpace(string(b))}
-	}
-	return b, resp.StatusCode, nil
+	return err
 }
 
 func (f RESTFiler) File(ctx context.Context, repo, title, body string) (int, error) {
-	ep, err := f.endpoint(repo, "")
+	r, err := f.repo(repo)
 	if err != nil {
 		return 0, err
 	}
-	payload, _ := json.Marshal(map[string]string{"title": title, "body": body})
-	b, _, err := f.do(ctx, http.MethodPost, ep, payload)
+	n, _, err := f.client().CreateIssue(ctx, r, title, body)
 	if err != nil {
-		return 0, err
+		return 0, status(err)
 	}
-	var v struct {
-		Number int `json:"number"`
-	}
-	if err := json.Unmarshal(b, &v); err != nil {
-		return 0, err
-	}
-	if v.Number <= 0 {
-		return 0, fmt.Errorf("land: issue response has number %d", v.Number)
-	}
-	return v.Number, nil
+	return n, nil
 }
 
 func (f RESTFiler) Find(ctx context.Context, repo, marker string, since time.Time) (int, bool, error) {
+	r, err := f.repo(repo)
+	if err != nil {
+		return 0, false, err
+	}
 	q := url.Values{"state": {"all"}, "sort": {"created"}, "direction": {"desc"}, "since": {since.UTC().Format(time.RFC3339)}, "per_page": {"100"}}
-	ep, err := f.endpoint(repo, "?"+q.Encode())
-	if err != nil {
-		return 0, false, err
-	}
-	b, _, err := f.do(ctx, http.MethodGet, ep, nil)
-	if err != nil {
-		return 0, false, err
-	}
 	var items []struct {
 		Number      int             `json:"number"`
 		Body        string          `json:"body"`
 		PullRequest json.RawMessage `json:"pull_request"`
 	}
-	if err := json.Unmarshal(b, &items); err != nil {
-		return 0, false, err
+	if err := f.client().Issues(ctx, r, q, &items); err != nil {
+		return 0, false, status(err)
 	}
 	best := 0
 	for _, item := range items {

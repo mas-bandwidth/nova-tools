@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
-	"errors"
+	"github.com/redis/go-redis/v9"
 	"io"
-	"os/exec"
-	"strings"
+	"os"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/file"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -35,21 +35,28 @@ func cmdFile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return file.Main(ctx, args, stdout, stderr, file.Deps{
 		Token: githubToken,
 		Push:  pushFiledTask,
+		Open:  openFileStore,
 	})
 }
 
 // githubToken is the seat's GitHub token when its seats.tsv row names one
-// (#4330), else GH_TOKEN, then GITHUB_TOKEN, then `gh auth token` (which
-// honours GH_CONFIG_DIR, the fleet's per-seat gh config).
+// (#4330), else GH_TOKEN, then GITHUB_TOKEN, then `gh auth token` through
+// internal/gh's one token read (#4343).
 func githubToken() (string, error) {
 	if v, err := envGitHubToken(); v != "" || err != nil {
 		return v, err
 	}
-	out, err := exec.Command("gh", "auth", "token").Output()
+	return gh.Token()
+}
+
+// openFileStore is the store the file verb counts its calls in (#4343):
+// NOVA_REDIS_ADDR, or the seat's address.
+func openFileStore(ctx context.Context) (redis.Cmdable, func(), error) {
+	st, err := store.Open(ctx, os.Getenv("NOVA_REDIS_ADDR"))
 	if err != nil {
-		return "", errors.New("no GH_TOKEN or GITHUB_TOKEN and no seat token, and gh auth token failed (" + strings.TrimSpace(err.Error()) + "); name the seat's GitHub token env in its seats.tsv row (the seventh column) and pass --seat")
+		return nil, nil, err
 	}
-	return strings.TrimSpace(string(out)), nil
+	return st.Client(), func() { _ = st.Close() }, nil
 }
 
 func pushFiledTask(ctx context.Context, addr string, req task.PushRequest) (task.PushResult, error) {

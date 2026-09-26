@@ -173,7 +173,7 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 				fmt.Fprintf(errOut, "READ POST REFUSED repo=%s n=%s why=no GH_TOKEN or GITHUB_TOKEN in the environment and no seat token for the comment mirror; pass --seat with a seats.tsv row naming the seat's GitHub token env (seventh column), or pass --no-github (Redis only)\n", *repo, *n)
 				return 1
 			}
-			poster = &read.Poster{BaseURL: os.Getenv("GITHUB_API_URL"), Owner: *owner, Token: token}
+			poster = &read.Poster{BaseURL: os.Getenv("GITHUB_API_URL"), Owner: *owner, Token: token, Redis: st.Client()}
 		}
 		return read.PostMeasured(ctx, st.Client(), *repo, *n, *typed, readMirror(*mirror, *repo), poster, out, errOut)
 	}
@@ -217,7 +217,7 @@ func runReadBriefPR(ctx context.Context, addr, repo, n, issue, mirror string, no
 	defer func() { _ = st.Close() }()
 	o := read.PRBriefOptions{Repo: repo, N: n, Issue: issue, Mirror: readMirror(mirror, name)}
 	if !noGitHub {
-		o.GitHub = &read.GitHub{BaseURL: os.Getenv("GITHUB_API_URL"), Token: ghToken()}
+		o.GitHub = &read.GitHub{BaseURL: os.Getenv("GITHUB_API_URL"), Token: ghToken(), Redis: st.Client()}
 	}
 	return read.BriefPR(ctx, st.Client(), o, out, errOut)
 }
@@ -246,7 +246,7 @@ func runReadPostFile(ctx context.Context, addr, file, mirror string, noGitHub bo
 	post := func(row read.Row, stdout, stderr io.Writer) int {
 		var poster *read.Poster
 		if !noGitHub {
-			poster = &read.Poster{BaseURL: os.Getenv("GITHUB_API_URL"), Owner: row.Owner, Token: token}
+			poster = &read.Poster{BaseURL: os.Getenv("GITHUB_API_URL"), Owner: row.Owner, Token: token, Redis: st.Client()}
 		}
 		return read.PostMeasured(ctx, st.Client(), row.Repo, row.N, row.Line, readMirror(mirror, row.Repo), poster, stdout, stderr)
 	}

@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +32,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	linestore "github.com/mas-bandwidth/nova-tools/internal/nsprint/line"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
@@ -357,47 +357,29 @@ func CheckLine(line string) error {
 // Poster mirrors one typed line as a PR comment through one REST call.
 // It is nil when --no-github is given.
 type Poster struct {
-	BaseURL string // GITHUB_API_URL or https://api.github.com
+	BaseURL string // GITHUB_API_URL or the client's root
 	Owner   string
 	Token   string
 	HTTP    *http.Client
+	Redis   redis.Cmdable // counts the call under read-post when set
 }
 
-// Comment is the one REST call: POST /repos/<owner>/<repo>/issues/<n>/comments.
+// Comment is the one REST call, through the one GitHub client
+// (internal/gh, #4343): POST /repos/<owner>/<repo>/issues/<n>/comments.
 func (p Poster) Comment(ctx context.Context, repo, n, body string) (int64, error) {
-	base := strings.TrimRight(p.BaseURL, "/")
-	if base == "" {
-		base = "https://api.github.com"
-	}
-	ep := base + "/repos/" + url.PathEscape(p.Owner) + "/" + url.PathEscape(repo) + "/issues/" + url.PathEscape(n) + "/comments"
-	payload, _ := json.Marshal(map[string]string{"body": body})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep, bytes.NewReader(payload))
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("Content-Type", "application/json")
-	if p.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+p.Token)
-	}
-	client := p.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("github %d", resp.StatusCode)
-	}
+	c := &gh.Client{API: p.BaseURL, Token: p.Token, HTTP: p.HTTP, Verb: "read post", Redis: p.Redis}
 	var v struct {
 		ID int64 `json:"id"`
 	}
-	_ = json.Unmarshal(b, &v)
+	_, err := c.Do(ctx, http.MethodPost, "/repos/"+url.PathEscape(p.Owner)+"/"+url.PathEscape(repo)+"/issues/"+url.PathEscape(n)+"/comments",
+		map[string]string{"body": body}, &v)
+	if err != nil {
+		var herr *gh.HTTPError
+		if errors.As(err, &herr) {
+			return 0, fmt.Errorf("github %d", herr.Status)
+		}
+		return 0, err
+	}
 	return v.ID, nil
 }
 
