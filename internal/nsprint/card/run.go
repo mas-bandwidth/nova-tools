@@ -109,7 +109,11 @@ type RunConfig struct {
 	JobDir string // NOVA_CARD_JOB: card.md is written here
 	Home   string // the bench user's home: slots under <Home>/rowan-working/tmp
 
-	Runner     string // the nova-swarm binary; "" is <Home>/.local/bin/nova-swarm
+	Runner string // the nova-swarm binary; "" is <Home>/.local/bin/nova-swarm
+	// Yield steps this process down to yield.Nice before the runner starts
+	// (nova-tools#4293); nil is the real setpriority (yieldToCI). A test
+	// gives its own; production never sets it.
+	Yield      func() error
 	HarnessBin string // NOVA_CARD_HARNESS_BIN, native --harness
 	Deadline   string // NOVA_CARD_DEADLINE, native --deadline, passed as declared
 	Tokens     string // NOVA_CARD_TOKENS, native --tokens, passed as declared
@@ -230,6 +234,17 @@ func Run(ctx context.Context, st *store.Store, cfg RunConfig) RunReport {
 	}
 	if err := cfg.check(); err != nil {
 		rep.Why = err.Error()
+		return rep
+	}
+	// CI over work (nova-tools#4293): `card run` by hand reaches here without
+	// the wrapper, so the harness yields for itself before the runner starts.
+	// Under the wrapper this is the second call and a no-op.
+	yield := cfg.Yield
+	if yield == nil {
+		yield = yieldToCI
+	}
+	if err := yield(); err != nil {
+		rep.Why = "yield to CI: " + err.Error()
 		return rep
 	}
 	if st == nil || st.Client() == nil {

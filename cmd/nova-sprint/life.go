@@ -316,6 +316,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 		req.Load1 = life.Load1Now()
 	}
 	req.CPU = life.CPUBusyNow()
+	req.CI = life.CILegsNow()
 	res, err := life.BenchBeat(ctx, st, req)
 	if err != nil {
 		return refuse(errOut, "bench beat", err.Error())
@@ -369,6 +370,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 				req.Load1 = life.Load1Now()
 			}
 			req.CPU = life.CPUBusyNow()
+			req.CI = life.CILegsNow()
 			res, err := life.BenchBeat(ctx, st, req)
 			if beats++; err == nil && res.Accepted && beats%life.WakeRepairEvery == 0 {
 				benchWakeRepair(ctx, st, wakeOn, *session, errOut)

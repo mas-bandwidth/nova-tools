@@ -3147,12 +3147,21 @@ through the child environment. Drafting and showing do not authorize a send.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
-a budget. It also reports its own build with `nova-ci version`.
+a budget. It also reports its own build with `nova-ci version`, and runs a
+coordinator child's local tests behind CI with `nova-ci local`.
 
 ```sh
 nova-ci slowtests --budget 60 < ./test-events.jsonl
 nova-ci version
+nova-ci local ./internal/nsprint/deal ./internal/nsprint/taskcard
 ```
+
+`local [-p N] <pkg>...` is the child's test run under the CI-over-work rule
+(nova-tools#4293, permanent on every bench): it steps its own process down to
+nice 15 first, the way every copy the card wrapper starts does, then runs
+`go vet` and `go test -p N -count=1` (N default 2) on the packages named and
+exits with the first non-zero code. It refuses the whole tree (`./...`): name
+the packages you touched.
 
 Save `go test -json` output in the input file and check that test run's exit status
 separately. `slowtests` checks timing, not whether the tests passed. The default

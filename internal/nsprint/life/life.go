@@ -265,6 +265,10 @@ type BenchRequest struct {
 	// CPU is the machine's CPU busy percent over the last beat interval
 	// (CPUBusyNow); empty when the platform cannot measure.
 	CPU string
+	// CI is the count of CI legs running on the bench (CILegsNow, one per
+	// Runner.Worker process; nova-tools#4293), on the beat as ci: the deal
+	// takes them off the bench's slots. Empty when unmeasured.
+	CI string
 }
 
 // BenchResult is one bench beat. Accepted is false when another live session
@@ -307,7 +311,7 @@ func BenchBeat(ctx context.Context, st *store.Store, req BenchRequest) (BenchRes
 		launcher, strings.Join(req.Live, liveSeparator), req.Why,
 		req.Session, req.Actor, req.Idem, build,
 		req.Facts.Harness, req.Facts.Mirrors, req.Facts.DiskGiB, ttl.Milliseconds(),
-		rowAt, ncpu, req.CPU).Result()
+		rowAt, ncpu, req.CPU, req.CI).Result()
 	if err != nil {
 		return BenchResult{}, fmt.Errorf("bench beat %s: %w", req.Bench, err)
 	}

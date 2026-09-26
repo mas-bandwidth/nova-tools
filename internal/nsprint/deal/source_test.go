@@ -18,7 +18,7 @@ func throwawayRedis(t *testing.T) *redis.Client {
 }
 
 // TestRedisSourceReadsTheSpecKeys reads the #2756 2.2/2.3 keys in pipelined
-// rounds: free is desired minus starting+living, a bench with no beat is down,
+// rounds: free is desired minus the beat's CI legs minus leased, a bench with no beat is down,
 // only open sprints in sprint:order deal, only queued pool cards are read, and
 // a missing backpressure hash applies the declared policy.
 func TestRedisSourceReadsTheSpecKeys(t *testing.T) {
@@ -28,7 +28,7 @@ func TestRedisSourceReadsTheSpecKeys(t *testing.T) {
 	ctx := context.Background()
 	c.SAdd(ctx, "benches", "ctl-a", "ctl-down")
 	c.HSet(ctx, "bench:ctl-a:desired", "slots", "8", "legs", "go,lua")
-	c.HSet(ctx, "bench:ctl-a:beat", "host", "ctl-a.tail", "user", "bench")
+	c.HSet(ctx, "bench:ctl-a:beat", "host", "ctl-a.tail", "user", "bench", "ci", "2")
 	c.HSet(ctx, "bench:ctl-a:state", "state", "UP", "at", "1")
 	c.ZAdd(ctx, "bench:ctl-a:cards:working", redis.Z{Score: 1, Member: "x/1"})
 	c.ZAdd(ctx, "bench:ctl-a:cards:working", redis.Z{Score: 1, Member: "x/2"}, redis.Z{Score: 1, Member: "x/3"})
@@ -52,7 +52,8 @@ func TestRedisSourceReadsTheSpecKeys(t *testing.T) {
 		t.Fatalf("benches %+v", in.Benches)
 	}
 	a, down := in.Benches[0], in.Benches[1]
-	if !a.Up || a.Free() != 5 || a.Target() != "bench@ctl-a.tail" || strings.Join(a.Legs, ",") != "go,lua" || a.SSH != SSHRefused || a.SSHAt.UnixMilli() != 1700000000000 {
+	// 8 slots, 2 CI legs on the beat (nova-tools#4293), 3 leased: 3 free.
+	if !a.Up || a.CI != 2 || a.Free() != 3 || a.Target() != "bench@ctl-a.tail" || strings.Join(a.Legs, ",") != "go,lua" || a.SSH != SSHRefused || a.SSHAt.UnixMilli() != 1700000000000 {
 		t.Fatalf("bench ctl-a read as %+v", a)
 	}
 	if down.Up {

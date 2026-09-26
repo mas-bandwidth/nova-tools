@@ -28,6 +28,9 @@
 #                             EIGHT CI runners share the Mac this tree is built on —
 #                             a hosted runner is a throwaway VM, which is exactly the
 #                             machine that test wants.
+#   functional ubuntu         the Redis-backed tests (`_functional_test.go`,
+#                             nova-tools#4293): a real redis-server, installed in
+#                             the leg; a test skips, named, where there is none.
 #
 # A RED run here does not block anything: it opens (or updates) a single issue
 # titled "nightly tagged suite red <date>" for the morning. No aggregate gate, no
@@ -66,6 +69,8 @@ jobs:
             tag: nightly
           - os: macos-latest
             tag: novadisk
+          - os: ubuntu-latest
+            tag: functional
     name: ${{ matrix.tag }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 2
@@ -74,6 +79,10 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+
+      - name: redis-server for the functional leg
+        if: matrix.tag == 'functional'
+        run: sudo apt-get install -y --no-install-recommends redis-server
 
       - name: tagged suite
         run: go test -tags ${{ matrix.tag }} -count=1 ./...

@@ -82,8 +82,20 @@ type passRow struct {
 	k            Consumer
 	free, need   int
 	ready, slots int64
+	ci           int64 // CI legs on the bench, from its beat (nova-tools#4293)
 	down, paused bool
 	live         bool
+}
+
+// FreeSlots is a consumer's free slots: its declared slots minus the CI
+// legs running on it minus the copies working, never negative
+// (nova-tools#4293: "a bench's free slots = declared slots minus the CI legs
+// running on it"). ns_cm_work's fill computes the same in Redis.
+func FreeSlots(slots, working, ci int64) int {
+	if f := slots - ci - working; f > 0 {
+		return int(f)
+	}
+	return 0
 }
 
 // DealPass is one pass of the deal duty at now.
@@ -117,7 +129,7 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 		desired        *redis.SliceCmd
 		ready, working *redis.IntCmd
 		down           *redis.IntCmd
-		at             *redis.StringCmd
+		at, ci         *redis.StringCmd
 	}
 	cs := make([]cmds, len(roster))
 	for i, k := range roster {
@@ -127,6 +139,7 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 			working: pipe.ZCard(ctx, k.Key("working")),
 			down:    pipe.Exists(ctx, k.DownKey()),
 			at:      pipe.HGet(ctx, k.BeatKey(), "at"),
+			ci:      pipe.HGet(ctx, k.BeatKey(), "ci"),
 		}
 	}
 	if err := pipeerr.Exec(ctx, pipe); err != nil {
@@ -145,7 +158,11 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 		t, ok := beatAt(cs[i].at.Val())
 		r := passRow{k: k, slots: slots, ready: cs[i].ready.Val(), down: cs[i].down.Val() > 0,
 			paused: fmt.Sprint(valueAt(d, 1)) == "1", live: ok && now.Sub(t) < Live && t.Sub(now) < Live}
-		r.free = int(slots - cs[i].working.Val())
+		if k.Kind == "bench" {
+			// A friend has no CI legs; only a bench's beat counts them.
+			r.ci, _ = strconv.ParseInt(cs[i].ci.Val(), 10, 64)
+		}
+		r.free = FreeSlots(slots, cs[i].working.Val(), r.ci)
 		r.need = r.free - int(r.ready)
 		if r.live && !r.down && !r.paused && r.free > 0 {
 			rows = append(rows, r)
@@ -175,7 +192,7 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 		// nothing (the first copy-model quack, 2026-09-25 10:41 PM ET: copy
 		// worked "by reconciler why work", no process on the bench).
 		if dealt > 0 {
-			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s dealt=%d free=%d", r.k, dealt, r.free))
+			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s dealt=%d free=%d ci=%d", r.k, dealt, r.free, r.ci))
 		}
 	}
 	return res, nil

@@ -30,6 +30,11 @@ usage:
                       print one CI-SLOW line per package whose total elapsed
                       time is over --budget (default 60); exit 2 when any
                       package is over, 0 when none is.
+  nova-ci local [-p N] <pkg>...
+                      a coordinator child's test run: step this process down to
+                      nice 15 (CI over work, nova-tools#4293), then go vet and
+                      go test -p N -count=1 (N default 2) on the packages named,
+                      never the whole tree; exit with the first non-zero code.
   nova-ci new-rule [--root <checkout>] <rule-name>
                       scaffold a new class rule skeleton: class test, fixture, and makefile
   nova-ci new-verb [--root <checkout>] <tool> <verb>
@@ -65,6 +70,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdVersion(args[1:], stdout, stderr)
 	case "slowtests":
 		return cmdSlowtests(args[1:], stdin, stdout, stderr)
+	case "local":
+		return cmdLocal(args[1:], stdout, stderr)
 	case "new-rule":
 		return cmdNewRule(args[1:], stdout, stderr)
 	case "new-verb":

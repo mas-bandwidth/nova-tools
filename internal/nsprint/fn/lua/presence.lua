@@ -234,7 +234,11 @@ end
 -- #3372); a missing or non-positive value keeps PL_BEAT_MS. args[18] is the
 -- host row's at (RFC 3339 UTC) and args[19] the bench's ncpu; an empty
 -- args[18] writes no row (#3440). args[20] is the CPU busy percent over the
--- beat interval, on the beat as cpu (empty when unmeasured).
+-- beat interval, on the beat as cpu (empty when unmeasured). args[21] is the
+-- count of CI legs running on the bench (one Runner.Worker per running job,
+-- nova-tools#4293), on the beat as ci every beat: the deal passes and
+-- ns_cm_work's fill take it off the bench's slots, so a copy is never put
+-- beside a leg it would slow; empty when unmeasured (nothing is taken off).
 local function bench_beat(keys, args)
   local bench = args[1]
   if not bench or bench == '' then
@@ -273,7 +277,7 @@ local function bench_beat(keys, args)
     'ssh', ssh or '', 'probe', probe or '', 'launcher', launcher or '',
     'live', '0', 'why', why or '', 'build', build or '',
     'harness', harness or '', 'mirrors', mirrors or '', 'disk_gib', disk_gib or '',
-    'at', tostring(at))
+    'ci', args[21] or '', 'at', tostring(at))
   redis.call('PEXPIRE', 'bench:' .. bench .. ':beat', ttl)
   redis.call('SET', owner_key, session, 'PX', ttl)
 
