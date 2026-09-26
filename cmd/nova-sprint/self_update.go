@@ -8,7 +8,7 @@
 //
 // With no --from it builds in the release clone fleet release uses, at --sha
 // or dev's tip. The loops on this machine keep running the old binary until
-// kickstarted; fleet release <sha> --studio-only does both.
+// kickstarted; fleet release <sha> does both as its self step.
 //
 // Exit 0 installed or already current (SELF UPDATE OK <old> -> <new>, or
 // SELF UPDATE SKIPPED); 1 a refusal (SELF UPDATE REFUSED: <why> (<remedy>));
