@@ -46,6 +46,11 @@ type SlotLease struct {
 	Until  time.Time
 	Weight int    // 0 means 1: a lease written before weights
 	Kind   string // optional card kind charged at admission
+	// Corrupt is why this lease directory could not be read as a lease: a
+	// lease file that is missing or malformed. A corrupt lease holds no seat
+	// anyone can name, so it is not counted, but it is never silent: `slots
+	// list` prints it as a CORRUPT row, and the next take reaps it.
+	Corrupt string
 }
 
 // Units is how many share units this lease occupies. Missing or zero weight is 1.
@@ -78,6 +83,10 @@ func (l SlotLease) State(now time.Time) string {
 
 // Line is the `slots list` row for this lease.
 func (l SlotLease) Line(now time.Time) string {
+	if l.Corrupt != "" {
+		return fmt.Sprintf("SLOT %s state=CORRUPT reason=%s: it holds no seat and is not counted; the next slots take reaps it",
+			oneline.Field(l.ID), oneline.Escape(l.Corrupt))
+	}
 	label := l.Label
 	if strings.TrimSpace(label) == "" {
 		label = "-"
@@ -100,6 +109,38 @@ func (l SlotLease) Line(now time.Time) string {
 
 func slotStoreDir(store string) string { return filepath.Join(store, "slots") }
 
+// SlotStoreMissingError is a --store that is not a slot store: no shares.tsv
+// under it. It is a refusal, never an empty store (Glenn's failure-guidance
+// requirement, 2026-09-26): a mistyped --store read as "nothing held" and
+// "freed" before this, and the remedy it names is `slots init`, which makes
+// one. Owner names the owner the remedy is written for when the caller knows
+// it; "<name>" otherwise.
+type SlotStoreMissingError struct {
+	Store string
+	Owner string
+}
+
+func (e *SlotStoreMissingError) Error() string {
+	owner := e.Owner
+	if owner == "" {
+		owner = "<name>"
+	}
+	return fmt.Sprintf("slot store %s is not a store: no %s under it; nova-swarm slots init --store %s --owner %s --capacity 1 --share 1 makes a one-seat store",
+		e.Store, filepath.Join(e.Store, "shares.tsv"), e.Store, owner)
+}
+
+// checkSlotStore refuses a store with no shares.tsv. Any other trouble
+// reading it is that error.
+func checkSlotStore(store, owner string) error {
+	if _, err := os.Stat(filepath.Join(store, "shares.tsv")); err != nil {
+		if os.IsNotExist(err) {
+			return &SlotStoreMissingError{Store: store, Owner: owner}
+		}
+		return fmt.Errorf("shares.tsv: %w", err)
+	}
+	return nil
+}
+
 func slotLeaseFile(store, id string) string {
 	return filepath.Join(slotStoreDir(store), id, "lease")
 }
@@ -111,6 +152,9 @@ func loadSlotShares(store string) (capacity, reserve int, shares map[string]int,
 	shares = map[string]int{}
 	raw, err := os.ReadFile(filepath.Join(store, "shares.tsv"))
 	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, 0, nil, &SlotStoreMissingError{Store: store}
+		}
 		return 0, 0, nil, fmt.Errorf("shares.tsv: %w", err)
 	}
 	haveCapacity := false
@@ -201,10 +245,16 @@ func readSlotLease(store, id string) (SlotLease, error) {
 	return parseSlotLease(id, raw)
 }
 
-// ListSlotLeases reads every lease in the store, in id order. A directory
-// with no parseable lease file holds no lease and is skipped: it is a
-// half-written take (Mkdir landed, the file never did), and take reaps it.
+// ListSlotLeases reads every lease in the store, in id order. A store with
+// no shares.tsv is refused (SlotStoreMissingError), never read as empty; a
+// store whose slots/ is not there yet is empty. A directory with no
+// parseable lease file is a CORRUPT row (SlotLease.Corrupt), never skipped:
+// it holds no seat anyone can name, so the counts leave it out, and the next
+// take reaps it.
 func ListSlotLeases(store string, now time.Time) ([]SlotLease, error) {
+	if err := checkSlotStore(store, ""); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(slotStoreDir(store))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -219,7 +269,7 @@ func ListSlotLeases(store string, now time.Time) ([]SlotLease, error) {
 		}
 		l, err := readSlotLease(store, e.Name())
 		if err != nil {
-			continue
+			l = SlotLease{ID: e.Name(), Corrupt: oneline.Err(err)}
 		}
 		out = append(out, l)
 	}
@@ -239,7 +289,7 @@ func SlotHoldings(store, owner string, now time.Time) (held, share int, err erro
 		return 0, 0, err
 	}
 	for _, l := range leases {
-		if l.Owner == owner {
+		if l.Corrupt == "" && l.Owner == owner {
 			held += l.Units()
 		}
 	}
@@ -346,7 +396,7 @@ func SlotUtilisation(store string, now time.Time) (capacity, reserve, held, free
 	}
 	heldBy = map[string]int{}
 	for _, l := range leases {
-		if !l.Until.After(now) && !Alive(l.Pid, "") {
+		if l.Corrupt != "" || !l.Until.After(now) && !Alive(l.Pid, "") {
 			continue
 		}
 		u := l.Units()
@@ -511,6 +561,12 @@ func ReleaseSlotLeases(store, owner, label string, all bool) (released, held int
 func ReleaseSlotLeasesForcing(store, owner, label string, all, force bool) (released, held, live int, err error) {
 	if strings.TrimSpace(owner) == "" {
 		return 0, 0, 0, fmt.Errorf("owner is required")
+	}
+	// A --store that is not a store is refused before the lock, which would
+	// otherwise make a lock file inside a directory nobody initialised;
+	// released=0 on a mistyped path is not "freed".
+	if err := checkSlotStore(store, owner); err != nil {
+		return 0, 0, 0, err
 	}
 	// Under the store lock (issue #1900), so that a release cannot interleave with a
 	// take's count-then-mkdir and leave the count the grant was made against wrong.

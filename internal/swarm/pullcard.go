@@ -195,7 +195,7 @@ func newestLeaseID(store, owner, label string) string {
 	}
 	id := ""
 	for _, l := range leases {
-		if l.Owner == owner && l.Label == label && l.ID > id {
+		if l.Corrupt == "" && l.Owner == owner && l.Label == label && l.ID > id {
 			id = l.ID
 		}
 	}
