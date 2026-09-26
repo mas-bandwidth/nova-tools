@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"os/signal"
@@ -73,38 +74,21 @@ func runCI(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 }
 
-// splitPositional lets a positional sha sit before or after the flags.
-func splitPositional(args []string) (flags []string, pos []string) {
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if strings.HasPrefix(a, "-") {
-			flags = append(flags, a)
-			if !strings.Contains(a, "=") && i+1 < len(args) {
-				flags = append(flags, args[i+1])
-				i++
-			}
-			continue
-		}
-		pos = append(pos, a)
-	}
-	return flags, pos
-}
-
 func runCICut(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci cut")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	repo := fs.String("repo", "", "")
-	pr := fs.Int("pr", 0, "")
-	sha := fs.String("sha", "", "")
-	base := fs.String("base", "", "")
-	baseRef := fs.String("base-ref", "", "")
-	leg := fs.String("leg", "go", "")
-	paths := fs.String("paths", "", "")
-	actor := fs.String("actor", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	pr := fs.Int("pr", 0, verbflag.HelpPR)
+	sha := fs.String("sha", "", "the PR's head sha the ci card tests")
+	base := fs.String("base", "", "the tested base tip sha, 40 hex")
+	baseRef := fs.String("base-ref", "", "the base ref (dev) the base sha is the tip of")
+	leg := fs.String("leg", "go", "the CI leg the card runs: go, schema, ...")
+	paths := fs.String("paths", "", "the paths the PR touches, comma-separated (picks the legs)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci cut", err.Error())
 	}
+	actor := seatActor()
 	if *sha == "" || *base == "" || *baseRef == "" {
 		return refuse(errOut, "ci cut", "needs --sha, --base and --base-ref: the head and base tip read by REST for the PR")
 	}
@@ -114,7 +98,7 @@ func runCICut(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	defer st.Close()
 	r, err := ci.Cut(ctx, st, ci.CutRequest{Sprint: *sprint, Repo: *repo, PR: *pr, Head: *sha,
-		Base: *base, BaseRef: *baseRef, Leg: *leg, Paths: *paths, Actor: *actor})
+		Base: *base, BaseRef: *baseRef, Leg: *leg, Paths: *paths, Actor: actor})
 	if err != nil {
 		return refuse(errOut, "ci cut", err.Error())
 	}
@@ -123,23 +107,23 @@ func runCICut(ctx context.Context, args []string, out, errOut io.Writer) int {
 }
 
 func runCIShow(ctx context.Context, args []string, out, errOut io.Writer) int {
-	flags, pos := splitPositional(args)
 	fs := taskFlags("ci show")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	repo := fs.String("repo", "nova-tools", "")
-	_ = fs.String("sprint", "", "")
-	if err := fs.Parse(flags); err != nil {
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "nova-tools", verbflag.HelpRepo)
+	sha := fs.String("sha", "", "the head sha the ci record is of")
+	_ = fs.String("sprint", "", verbflag.HelpSprint)
+	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci show", err.Error())
 	}
-	if len(pos) != 1 {
-		return refuse(errOut, "ci show", "needs one head sha")
+	if fs.NArg() > 0 || *sha == "" {
+		return refuse(errOut, "ci show", "needs --sha <head>")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
 		return refuse(errOut, "ci show", err.Error())
 	}
 	defer st.Close()
-	rec, err := ci.Read(ctx, st, *repo, pos[0])
+	rec, err := ci.Read(ctx, st, *repo, *sha)
 	if err != nil {
 		return refuse(errOut, "ci show", err.Error())
 	}
@@ -147,21 +131,21 @@ func runCIShow(ctx context.Context, args []string, out, errOut io.Writer) int {
 }
 
 func runCIRerun(ctx context.Context, args []string, out, errOut io.Writer) int {
-	flags, pos := splitPositional(args)
 	fs := taskFlags("ci rerun")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	repo := fs.String("repo", "nova-tools", "")
-	pr := fs.Int("pr", 0, "")
-	base := fs.String("base", "", "")
-	reason := fs.String("reason", "", "")
-	actor := fs.String("actor", "", "")
-	if err := fs.Parse(flags); err != nil {
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	repo := fs.String("repo", "nova-tools", verbflag.HelpRepo)
+	pr := fs.Int("pr", 0, verbflag.HelpPR)
+	sha := fs.String("sha", "", "the full head sha to rerun, 40 hex")
+	base := fs.String("base", "", "the full tested base tip sha (with --pr)")
+	why := fs.String("why", "", verbflag.HelpWhy)
+	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci rerun", err.Error())
 	}
-	if len(pos) != 1 || len(pos[0]) != 40 {
-		return refuse(errOut, "ci rerun", "needs one full head sha")
+	if fs.NArg() > 0 || len(*sha) != 40 {
+		return refuse(errOut, "ci rerun", "needs --sha <head>, the full head sha")
 	}
+	actor := seatActor()
 	if *pr > 0 && len(*base) != 40 {
 		return refuse(errOut, "ci rerun", "--pr needs --base, the full tested base tip sha: the label is ci-<pr>-<head8>-<base8>")
 	}
@@ -172,9 +156,9 @@ func runCIRerun(ctx context.Context, args []string, out, errOut io.Writer) int {
 	defer st.Close()
 	label := ""
 	if *pr > 0 {
-		label = ci.Label(*pr, pos[0], *base)
+		label = ci.Label(*pr, *sha, *base)
 	} else {
-		rec, err := ci.Read(ctx, st, *repo, pos[0])
+		rec, err := ci.Read(ctx, st, *repo, *sha)
 		if err != nil {
 			return refuse(errOut, "ci rerun", err.Error())
 		}
@@ -184,7 +168,7 @@ func runCIRerun(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 		label = l
 	}
-	r, err := ci.Rerun(ctx, st, *sprint, label, *actor, *reason)
+	r, err := ci.Rerun(ctx, st, *sprint, label, actor, *why)
 	if err != nil {
 		return refuse(errOut, "ci rerun", err.Error())
 	}
@@ -193,26 +177,26 @@ func runCIRerun(ctx context.Context, args []string, out, errOut io.Writer) int {
 }
 
 func runCIDispose(ctx context.Context, args []string, out, errOut io.Writer) int {
-	flags, pos := splitPositional(args)
 	fs := taskFlags("ci dispose")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	repo := fs.String("repo", "nova-tools", "")
-	disposition := fs.String("disposition", "", "")
-	friend := fs.String("as", "", "")
-	url := fs.String("url", "", "")
-	if err := fs.Parse(flags); err != nil {
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	repo := fs.String("repo", "nova-tools", verbflag.HelpRepo)
+	sha := fs.String("sha", "", "the head sha the disposition is of")
+	disposition := fs.String("disposition", "", "the typed DISPOSITION line's verdict")
+	friend := fs.String("as", "", verbflag.HelpAs)
+	url := fs.String("url", "", "the comment url the disposition was posted at")
+	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci dispose", err.Error())
 	}
-	if len(pos) != 1 {
-		return refuse(errOut, "ci dispose", "needs one head sha")
+	if fs.NArg() > 0 || *sha == "" {
+		return refuse(errOut, "ci dispose", "needs --sha <head>")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
 		return refuse(errOut, "ci dispose", err.Error())
 	}
 	defer st.Close()
-	r, err := ci.Dispose(ctx, st, *sprint, *repo, pos[0], *disposition, *friend, *url)
+	r, err := ci.Dispose(ctx, st, *sprint, *repo, *sha, *disposition, *friend, *url)
 	if err != nil {
 		return refuse(errOut, "ci dispose", err.Error())
 	}
@@ -224,10 +208,10 @@ func runCIDispose(ctx context.Context, args []string, out, errOut io.Writer) int
 // --repo and --sha print one head's request record and its check rows.
 func runCIStatus(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci status")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	repo := fs.String("repo", "", "")
-	sha := fs.String("sha", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	sha := fs.String("sha", "", "the head whose request record and check rows are printed")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci status", err.Error())
 	}
@@ -263,9 +247,9 @@ func runCIStatus(ctx context.Context, args []string, out, errOut io.Writer) int 
 // or under --min heads (the gate is n/n, n >= 20).
 func runCIParity(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci parity")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	minHeads := fs.Int("min", 20, "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	minHeads := fs.Int("min", 20, "the fewest heads the parity read needs before it reports")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci parity", err.Error())
 	}
@@ -287,13 +271,13 @@ func runCIParity(ctx context.Context, args []string, out, errOut io.Writer) int 
 // re-pools it (RESET), the one way back after a capped FAIL.
 func runCIRequest(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci request")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	repo := fs.String("repo", "", "")
-	sha := fs.String("sha", "", "")
-	pr := fs.Int("pr", 0, "")
-	url := fs.String("url", "", "")
-	checks := fs.String("checks", "", "")
-	again := fs.Bool("again", false, "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	sha := fs.String("sha", "", "the head requested into ci:pool")
+	pr := fs.Int("pr", 0, verbflag.HelpPR)
+	url := fs.String("url", "", "the PR url the request names")
+	checks := fs.String("checks", "", "the check names the request wants green, comma-separated")
+	again := fs.Bool("again", false, "request a head already requested once more")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci request", err.Error())
 	}
@@ -331,13 +315,13 @@ func runCIRequest(ctx context.Context, args []string, out, errOut io.Writer) int
 // request went back to the pool.
 func runCIRun(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci run")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	bench := fs.String("bench", "", "")
-	results := fs.String("results", "", "")
-	scratch := fs.String("scratch", "", "")
-	mirror := fs.String("mirror-root", "", "")
-	lease := fs.Duration("lease", 30*time.Minute, "")
-	timeout := fs.Duration("check-timeout", 20*time.Minute, "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	bench := fs.String("bench", "", "the bench running the pass")
+	results := fs.String("results", "", "the results directory the run writes")
+	scratch := fs.String("scratch", "", "the scratch directory the run clones into")
+	mirror := fs.String("mirror-root", "", "the bench mirror root the clone references")
+	lease := fs.Duration("lease", 30*time.Minute, "how long the run's lease on the head holds")
+	timeout := fs.Duration("check-timeout", 20*time.Minute, "how long one check may run")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci run", err.Error())
 	}
@@ -384,11 +368,11 @@ func runCIRun(ctx context.Context, args []string, out, errOut io.Writer) int {
 // check conclusions for the sha. Exit 0 when every check agrees.
 func runCICompare(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci compare")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	repo := fs.String("repo", "", "")
-	sha := fs.String("sha", "", "")
-	owner := fs.String("owner", "mas-bandwidth", "")
-	api := fs.String("forge-api", "https://api.github.com", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	sha := fs.String("sha", "", "the head compared against GitHub's check state")
+	owner := fs.String("owner", "mas-bandwidth", "the GitHub owner the repo lives under")
+	api := fs.String("forge-api", "https://api.github.com", "the forge's REST base url")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci compare", err.Error())
 	}
@@ -413,7 +397,7 @@ func runCICompare(ctx context.Context, args []string, out, errOut io.Writer) int
 
 // runCIGitHub is the ci-github consumer of ev:github (#3597):
 //
-//	nova-sprint ci github --redis <addr> [--consumer <seat>] [--once]
+//	nova-sprint ci github --redis <addr> [--as <seat>] [--once]
 //
 // Each check_run and workflow_run entry the webhook receiver appended
 // becomes one field of ci:<repo>:<sha>:gh, written and acked in one
@@ -438,23 +422,23 @@ func runCICompare(ctx context.Context, args []string, out, errOut io.Writer) int
 // happen), 2 usage.
 func runCIGitHub(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci github")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	consumer := fs.String("consumer", "", "")
-	once := fs.Bool("once", false, "")
-	fromRunner := fs.Bool("from-runner", false, "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	consumer := fs.String("as", "", verbflag.HelpAs)
+	once := fs.Bool("once", false, "drain what is queued and return, no loop")
+	fromRunner := fs.Bool("from-runner", false, "write one run's receipt from the CI runner instead of consuming the webhook stream")
 	var r webhook.Receipt
-	fs.StringVar(&r.Repo, "repo", "", "")
-	fs.StringVar(&r.SHA, "sha", "", "")
-	fs.StringVar(&r.RunID, "run-id", "", "")
-	fs.StringVar(&r.Event, "event", "", "")
-	fs.StringVar(&r.HeadBranch, "head-branch", "", "")
-	fs.StringVar(&r.BaseBranch, "base-branch", "", "")
-	fs.StringVar(&r.PR, "pr", "", "")
-	fs.StringVar(&r.Workflow, "workflow", "", "")
-	fs.StringVar(&r.Conclusion, "conclusion", "", "")
-	fs.StringVar(&r.At, "at", "", "")
+	fs.StringVar(&r.Repo, "repo", "", verbflag.HelpRepo)
+	fs.StringVar(&r.SHA, "sha", "", "the head sha the run tested (--from-runner)")
+	fs.StringVar(&r.RunID, "run-id", "", "the Actions run id (--from-runner)")
+	fs.StringVar(&r.Event, "event", "", "the event that started the run: push, pull_request (--from-runner)")
+	fs.StringVar(&r.HeadBranch, "head-branch", "", "the run's head branch (--from-runner)")
+	fs.StringVar(&r.BaseBranch, "base-branch", "", "the run's base branch (--from-runner)")
+	fs.StringVar(&r.PR, "pr", "", verbflag.HelpPR)
+	fs.StringVar(&r.Workflow, "workflow", "", "the workflow name (--from-runner)")
+	fs.StringVar(&r.Conclusion, "conclusion", "", "the run's conclusion: success, failure, cancelled (--from-runner)")
+	fs.StringVar(&r.At, "at", "", "when the run finished, RFC 3339 (--from-runner)")
 	var jobs multiFlag
-	fs.Var(&jobs, "job", "")
+	fs.Var(&jobs, "job", "one job of the run, <name>=<conclusion>; repeatable, since a name may hold commas (--from-runner)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci github", err.Error())
 	}
@@ -490,7 +474,7 @@ func runCIGitHub(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return 0
 	}
 	if fs.NArg() > 0 {
-		return refuse(errOut, "ci github", "takes --redis <addr> [--consumer <seat>] [--once], nothing positional")
+		return refuse(errOut, "ci github", "takes --redis <addr> [--as <seat>] [--once], nothing positional")
 	}
 	if *consumer == "" {
 		host, _ := os.Hostname()
