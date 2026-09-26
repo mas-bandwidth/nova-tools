@@ -109,11 +109,14 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 		switch status {
 		case TakeBlocked:
 			if id != "" {
-				classes := ""
+				classes, wait := "", ""
 				if len(values) > 4 {
 					classes = fmt.Sprint(values[4])
 				}
-				return claims, &BlockedError{Sprint: name, ID: taskID, Needs: strings.Fields(detail), Classes: classes}
+				if len(values) > 5 {
+					wait = fmt.Sprint(values[5])
+				}
+				return claims, &BlockedError{Sprint: name, ID: taskID, Needs: strings.Fields(detail), Classes: classes, Wait: wait}
 			}
 			// Without --id a task with unmet needs is passed over.
 		case "RETRY":
@@ -302,14 +305,17 @@ func Take(ctx context.Context, st *store.Store, req TakeRequest) (Claim, bool, e
 	case "NONE", "NOTFOUND":
 		return Claim{}, false, nil
 	case TakeBlocked:
-		needs, classes := "", ""
+		needs, classes, wait := "", "", ""
 		if len(values) > 1 {
 			needs = fmt.Sprint(values[1])
 		}
 		if len(values) > 2 {
 			classes = fmt.Sprint(values[2])
 		}
-		return Claim{}, false, &BlockedError{Sprint: req.Sprint, ID: req.ID, Needs: strings.Fields(needs), Classes: classes}
+		if len(values) > 3 {
+			wait = fmt.Sprint(values[3])
+		}
+		return Claim{}, false, &BlockedError{Sprint: req.Sprint, ID: req.ID, Needs: strings.Fields(needs), Classes: classes, Wait: wait}
 	case "DOWN", "FULL":
 		return Claim{}, false, fmt.Errorf("task take %s: friend %s is %s", req.ID, req.As, status)
 	case TakeClaimed:
@@ -367,6 +373,10 @@ type BlockedError struct {
 	// parked, dead or unknown) and where, joined by "; "; empty from a
 	// library that predates it.
 	Classes string
+	// Wait is set when the refusal is the task's DEPENDS-ON (nova-tools
+	// #4414): the line ready --why prints for its first unmet edge, WAIT
+	// <edge> <class> (NS.dep.first_blocker). A claim and the reader agree.
+	Wait string
 }
 
 // Unmet is each unmet need with its class, or the ids alone.
@@ -378,6 +388,9 @@ func (e *BlockedError) Unmet() string {
 }
 
 func (e *BlockedError) Error() string {
+	if e.Wait != "" {
+		return fmt.Sprintf("task take %s/%s: %s", e.Sprint, e.ID, e.Wait)
+	}
 	return fmt.Sprintf("task take %s/%s: blocked, needs %s", e.Sprint, e.ID, e.Unmet())
 }
 

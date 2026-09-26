@@ -217,6 +217,16 @@ local function task_take(keys, args)
     end
   end
 
+  -- The row's full DEPENDS-ON contract at the instant of the claim, by the
+  -- rule ready --why reads (NS.dep.first_blocker, nova-tools #4414): a task
+  -- released when its edge was met, whose edge has since returned to unmet
+  -- (a stream sentinel reopened by new work), is refused with the reader's
+  -- line, WAIT <edge> <class>, and nothing is written.
+  local dep_edge, dep_line = NS.dep.first_blocker(redis.call('HGET', key, 'depends_on') or '')
+  if dep_edge then
+    return { 'BLOCKED', dep_edge, dep_line, dep_line }
+  end
+
   -- Presence and capacity are global, shared by every open sprint. A down
   -- marker refuses the take like an absent beat (#3206 PR A).
   if DEP.down(friend) then

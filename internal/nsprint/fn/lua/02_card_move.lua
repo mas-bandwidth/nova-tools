@@ -2314,7 +2314,16 @@ redis.register_function('ns_tcard_take', function(keys, args)
     -- a consumer copy is card work's (the friend harness's task take works
     -- copies first, then takes friend-queue tasks)
     if named or not TK.copy_id(id) then
-      local err = TK.move(id, 'working', { by = by, why = 'take', as = as })
+      -- its DEPENDS-ON at the instant of the take (nova-tools #4414): an
+      -- edge returned to unmet refuses with ready --why's line
+      local dep = redis.call('HMGET', 'task:' .. id, 'blocked_on', 'depends_on')
+      local _, line = NS.dep.first_blocker(TK.str(dep[1]) .. ';' .. TK.str(dep[2]))
+      local err
+      if line then
+        err = 'DEPENDS task:' .. id .. ' ' .. line
+      else
+        err = TK.move(id, 'working', { by = by, why = 'take', as = as })
+      end
       if err and named then return { 'REFUSED', err } end
       if not err then out[#out + 1] = id end
     end
@@ -2714,7 +2723,14 @@ function TM.leg(id, p)
     end
     return 'read'
   end
-  if p.where == 'ready' then return 'work' end
+  if p.where == 'ready' then
+    -- released once, its DEPENDS-ON is judged again at the deal (nova-tools
+    -- #4414): an edge returned to unmet (a stream sentinel reopened by new
+    -- work) refuses with the line ready --why prints (NS.dep.first_blocker)
+    local e, line = NS.dep.first_blocker(TK.str(redis.call('HGET', 'task:' .. id, 'blocked_on')))
+    if e then return nil, 'DEPENDS task:' .. id .. ' ' .. line end
+    return 'work'
+  end
   if p.where == 'waiting' or not p.placed then
     local dep = TK.str(redis.call('HGET', 'task:' .. id, 'blocked_on'))
     if dep ~= '' and dep ~= '-' and dep ~= 'none' then
@@ -2903,6 +2919,18 @@ function TM.deal(c, by, k, stream, ids)
   return out
 end
 
+-- TM.dep_line(cid): nil when copy cid may start now, else the line ready
+-- --why prints for its primary's first unmet DEPENDS-ON edge (NS.dep.
+-- first_blocker, nova-tools #4414): a work or fix copy dealt before its
+-- primary's edge returned to unmet (a stream sentinel reopened by new work)
+-- does not start. A read copy reviews work already done and is not held.
+function TM.dep_line(cid)
+  local f = redis.call('HMGET', 'task:' .. cid, 'leg', 'primary')
+  if TK.str(f[1]) == 'read' or TK.str(f[2]) == '' then return nil end
+  local _, line = NS.dep.first_blocker(TK.str(redis.call('HGET', 'task:' .. f[2], 'blocked_on')))
+  return line
+end
+
 -- TM.work(c, by, k, fill, ids): consumer ready -> working, k = min(free,
 -- |ready copies|) (fill; else also at most k), free = slots - ci -
 -- |working|, ci the CI legs running on the consumer's machine as its beat
@@ -2924,6 +2952,8 @@ function TM.work(c, by, k, fill, ids)
       if not TK.copy_id(id) or not redis.call('ZSCORE', TM.key(c, 'ready'), id) then
         return { 'REFUSED', 'NOTREADY ' .. id .. ' is not a copy in ' .. TM.key(c, 'ready') }
       end
+      local line = TM.dep_line(id)
+      if line then return { 'REFUSED', 'DEPENDS task:' .. id .. ' ' .. line } end
       take[#take + 1] = id
     end
     if #take > free then return { 'REFUSED', 'FULL ' .. c .. ' has ' .. free .. ' free of ' .. d.slots .. ' slots' } end
@@ -2933,7 +2963,7 @@ function TM.work(c, by, k, fill, ids)
     if n > 0 then
       for _, id in ipairs(redis.call('ZRANGE', TM.key(c, 'ready'), 0, -1)) do
         if #take >= n then break end
-        if TK.copy_id(id) then take[#take + 1] = id end
+        if TK.copy_id(id) and not TM.dep_line(id) then take[#take + 1] = id end
       end
     end
   end

@@ -131,5 +131,34 @@ function DP.ids(text)
   return out
 end
 
+-- DP.LEAD: the first word ready --why prints for a class that blocks
+-- (internal/nsprint/ready taskBlocker, the same table).
+DP.LEAD = { waiting = 'WAIT', parked = 'WAIT', dead = 'DEAD', unknown = 'UNKNOWN', cycle = 'CYCLE' }
+
+-- DP.blocker(entry): nil when the DEPENDS-ON entry names no task (key:,
+-- owner/repo#n, ...) or its task edge is met now; else the line ready --why
+-- prints for it, '<LEAD> <entry> <class text>' (WAIT task:alpha:sentinel
+-- waiting). Every claim door calls this at the instant of the claim, in its
+-- own FCALL (nova-tools #4414, Stella's reopened sentinel): an edge met once
+-- and returned to unmet blocks again.
+function DP.blocker(e)
+  local id = DP.ids(e)[1]
+  if not id then return nil end
+  local class, detail = DP.class(id)
+  if class == 'met' then return nil end
+  return (DP.LEAD[class] or 'WAIT') .. ' ' .. e .. ' ' .. DP.text(class, detail)
+end
+
+-- DP.first_blocker(text): the first entry of a DEPENDS-ON value (split as
+-- DP.ids splits) with a blocker, as (entry, line); nil when none has one.
+function DP.first_blocker(text)
+  for e in string.gmatch(text or '', '[^,;%s]+') do
+    local line = DP.blocker(e)
+    if line then return e, line end
+  end
+  return nil
+end
+
 NS.dep = { is_sentinel = DP.is_sentinel, met_of = DP.met_of, met = DP.met, ids = DP.ids,
-  class_of = DP.class_of, class = DP.class, text = DP.text }
+  class_of = DP.class_of, class = DP.class, text = DP.text, blocker = DP.blocker,
+  first_blocker = DP.first_blocker }

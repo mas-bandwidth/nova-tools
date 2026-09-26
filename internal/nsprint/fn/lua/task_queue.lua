@@ -203,10 +203,50 @@ function DEP.release(S, id, key, actor, idem, at)
     actor, dest, 'depends-on met', redis.call('HGET', key, 'depends_on') or '', idem, at)
 end
 
+-- DEP.left(S, key, cond): every condition of the row's full contract that
+-- is unmet now, cond (the one resolving, already found met) excepted. The
+-- contract is its DEPENDS-ON (depends_on) and whatever waits_on still names
+-- (a row pushed before depends_on was stored). A task: edge is judged by the
+-- rule ready --why reads (NS.dep.blocker), so an edge met once and since
+-- returned to unmet (a stream sentinel reopened by new work) counts again
+-- (nova-tools #4414, Stella's second variant); key: by DEP.holds; any other
+-- kind is met only by an asserted resolve, so it is unmet while waits_on
+-- still names it.
+function DEP.left(S, key, cond)
+  local waits, conds, seen = {}, {}, {}
+  for c in string.gmatch(redis.call('HGET', key, 'waits_on') or '', '[^;]+') do
+    waits[c] = true
+  end
+  local listed = DEP.parse(redis.call('HGET', key, 'depends_on') or '')
+  for c in string.gmatch(redis.call('HGET', key, 'waits_on') or '', '[^;]+') do
+    listed[#listed + 1] = c
+  end
+  for _, c in ipairs(listed) do
+    if c ~= cond and not seen[c] then
+      seen[c] = true
+      local unmet
+      if string.sub(c, 1, 5) == 'task:' then
+        unmet = NS.dep.blocker(c) ~= nil
+      elseif string.sub(c, 1, 4) == 'key:' then
+        unmet = not DEP.holds(S, c)
+      else
+        unmet = waits[c] == true
+      end
+      if unmet then
+        conds[#conds + 1] = c
+      end
+    end
+  end
+  return conds
+end
+
 -- DEP.resolve settles one condition for every task waiting on it. A task:
 -- or key: condition is re-checked here; any other kind is met only when the
--- caller asserts it. A task whose last unmet condition goes is released.
--- Returns the number of tasks made ready.
+-- caller asserts it. Before a release every other condition of the row is
+-- re-evaluated (DEP.left), never only the one resolving: a row with an edge
+-- unmet again stays waiting, its waits_on names every unmet edge and the
+-- release index holds it under each, so the move that meets that edge
+-- releases it. Returns the number of tasks made ready.
 function DEP.resolve(S, cond, asserted, actor, idem, at)
   local met = DEP.holds(S, cond) or (asserted and string.sub(cond, 1, 5) ~= 'task:' and string.sub(cond, 1, 4) ~= 'key:')
   if not met then
@@ -219,17 +259,15 @@ function DEP.resolve(S, cond, asserted, actor, idem, at)
     local key = 'task:' .. id
     redis.call('SREM', 's:' .. S .. ':waits:' .. cond, id)
     if redis.call('HGET', key, 'state') == 'waiting' then
-      local left = {}
-      for c in string.gmatch(redis.call('HGET', key, 'waits_on') or '', '[^;]+') do
-        if c ~= cond then
-          left[#left + 1] = c
-        end
-      end
+      local left = DEP.left(S, key, cond)
       if #left == 0 then
         DEP.release(S, id, key, actor, idem, at)
         ready = ready + 1
       else
         redis.call('HSET', key, 'waits_on', table.concat(left, ';'))
+        for _, c in ipairs(left) do
+          redis.call('SADD', 's:' .. S .. ':waits:' .. c, id)
+        end
       end
     end
   end

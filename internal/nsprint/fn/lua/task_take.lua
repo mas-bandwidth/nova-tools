@@ -75,8 +75,9 @@ end
 -- guarded take, until n are claimed. A DOWN or FULL answer stops the batch;
 -- strict ('1', task take --id) also stops on BLOCKED. The reply lists every
 -- answer but NONE and NOTFOUND: a CLAIMED entry is ns_task_take's reply, any
--- other is { status, sprint, id, detail, classes } (classes: a BLOCKED
--- reply's unmet needs with their class, NS.dep). A RETRY (the attempt moved since
+-- other is { status, sprint, id, detail, classes, wait } (classes: a BLOCKED
+-- reply's unmet needs with their class, NS.dep; wait: a DEPENDS-ON refusal's
+-- ready --why line, NS.dep.first_blocker). A RETRY (the attempt moved since
 -- the view) is left for the Go side to take once more on its own.
 local function take_n(keys, args)
   local friend, n, strict = args[1], tonumber(args[2]) or 0, args[3] == '1'
@@ -92,7 +93,7 @@ local function take_n(keys, args)
       claimed = claimed + 1
       out[#out + 1] = reply
     elseif status ~= 'NONE' and status ~= 'NOTFOUND' then
-      out[#out + 1] = { status, S, tid, reply[2] or '', reply[3] or '' }
+      out[#out + 1] = { status, S, tid, reply[2] or '', reply[3] or '', reply[4] or '' }
       if status == 'DOWN' or status == 'FULL' or (strict and status == 'BLOCKED') then
         break
       end
