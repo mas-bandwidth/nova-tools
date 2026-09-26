@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -130,7 +131,12 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 	if err != nil || len(roster) == 0 {
 		return res, err
 	}
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return res, err
+	}
 	pipe := c.Pipeline()
+
 	type cmds struct {
 		desired        *redis.SliceCmd
 		ready, working *redis.IntCmd
@@ -141,8 +147,8 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 	for i, k := range roster {
 		cs[i] = cmds{
 			desired: pipe.HMGet(ctx, k.DesiredKey(), "slots", "paused"),
-			ready:   pipe.ZCard(ctx, k.Key("ready")),
-			working: pipe.ZCard(ctx, k.Key("working")),
+			ready:   pipe.ZCard(ctx, k.KeyAt(epoch, "ready")),
+			working: pipe.ZCard(ctx, k.KeyAt(epoch, "working")),
 			down:    pipe.Exists(ctx, k.DownKey()),
 			at:      pipe.HGet(ctx, k.BeatKey(), "at"),
 			ci:      pipe.HGet(ctx, k.MachineBeatKey(), "ci"),

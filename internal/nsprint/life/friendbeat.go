@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -103,12 +104,20 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 	pipe.HSet(ctx, beat, fields...)
 	pipe.Persist(ctx, beat)
 	leases := pipe.FCall(ctx, "ns_cm_beat", nil, "friend:"+friend)
-	working := "friend:" + friend + ":cards:working"
-	held := pipe.ZRange(ctx, working, 0, -1)
+	// the working set is the current epoch's (nova-tools#4238): its members
+	// through ns_cell_zrange in this pipeline, and the epoch beside them
+	// names the set for the models call
+	held := ws.CellRange(ctx, pipe, "friend:"+friend, "working")
+	epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
 	had := pipe.HGet(ctx, beat, "models")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return FriendBeatResult{}, fmt.Errorf("friend beat %s: %w", friend, err)
 	}
+	epoch, err := ws.ParseEpoch(epochCmd.Val())
+	if err != nil {
+		return FriendBeatResult{}, fmt.Errorf("friend beat %s: %w", friend, err)
+	}
+	working := ws.ConsumerKeyAt(epoch, "friend:"+friend, "working")
 	reply, err := leases.Slice()
 	if err != nil {
 		return FriendBeatResult{}, fmt.Errorf("friend beat %s: leases: %w", friend, err)
@@ -132,7 +141,11 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 	// write or remove: ns_friend_models declares every key it reads (the
 	// beat, the working set, task:<copy> for each copy the first trip saw).
 	skipped := words[3:]
-	ids, m := held.Val(), had.Val()
+	ids, err := ws.IDs(held)
+	if err != nil {
+		return FriendBeatResult{}, fmt.Errorf("friend beat %s: working: %w", friend, err)
+	}
+	m := had.Val()
 	if len(ids) > 0 || m != "" {
 		keys := []string{beat, working}
 		for _, id := range ids {

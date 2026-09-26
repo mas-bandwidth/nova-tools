@@ -43,10 +43,10 @@ func TestPostLoadForCopyAndDrop(t *testing.T) {
 	ctx := context.Background()
 	at := time.UnixMilli(1700000000000)
 	const s = "swarm: cards"
-	if n, err := Post(ctx, c, StreamKey(s), "merge-1", "conflict in a.go: keep both", at); err != nil || n != 1 {
+	if n, err := Post(ctx, c, StreamNotesKey(s), "merge-1", "conflict in a.go: keep both", at); err != nil || n != 1 {
 		t.Fatalf("post: %d %v", n, err)
 	}
-	if n, err := Post(ctx, c, StreamKey(s), "merge-1", "wrong pattern: no bash", at.Add(time.Second)); err != nil || n != 2 {
+	if n, err := Post(ctx, c, StreamNotesKey(s), "merge-1", "wrong pattern: no bash", at.Add(time.Second)); err != nil || n != 2 {
 		t.Fatalf("post 2: %d %v", n, err)
 	}
 	c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: "sp-1"})
@@ -65,14 +65,14 @@ func TestPostLoadForCopyAndDrop(t *testing.T) {
 		t.Fatalf("other stream: %v %v", got, err)
 	}
 	// The landing drops the stream's notes; the sprint's stay.
-	if n, err := Drop(ctx, c, StreamKey(s)); err != nil || n != 2 {
+	if n, err := Drop(ctx, c, StreamNotesKey(s)); err != nil || n != 2 {
 		t.Fatalf("drop: %d %v", n, err)
 	}
 	got, err = ForCopy(ctx, c, s, "sp-1")
 	if err != nil || len(got) != 1 {
 		t.Fatalf("after drop: %v %v", got, err)
 	}
-	if n, err := Drop(ctx, c, StreamKey("never")); err != nil || n != 0 {
+	if n, err := Drop(ctx, c, StreamNotesKey("never")); err != nil || n != 0 {
 		t.Fatalf("drop missing: %d %v", n, err)
 	}
 }
