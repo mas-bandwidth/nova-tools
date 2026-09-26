@@ -221,9 +221,14 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 	r := taskcard.EndRequest{IDs: []string{*id}, OK: *fail == "", Why: *fail, Head: *head, DoneAlready: *doneAlready,
 		Gates: *gates, Finding: *finding, Reader: k.Name, Token: *token, By: by}
 	if *pr != "" {
+		// --pr is the PR number (the vocabulary's), the repo the copy's own
+		// (#4399), or <repo>#<n>.
 		repo, n, ok := strings.Cut(*pr, "#")
-		if !ok || repo == "" || n == "" {
-			return refuse(errOut, verb, "--pr wants <repo>#<n>")
+		if !ok {
+			repo, n = "", *pr
+		}
+		if (ok && repo == "") || n == "" {
+			return refuse(errOut, verb, "--pr wants the PR number, or <repo>#<n>")
 		}
 		r.Repo, r.PR = repo, n
 	}
@@ -258,6 +263,11 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 	case holder != k.String():
 		fmt.Fprintf(out, "FRIEND DONE REFUSED id=%s why=%s ms=%d\n", *id, quoteField("NOTMINE task:"+*id+" is "+holder+"'s copy, not "+k.String()+"'s"), ms())
 		return 1
+	}
+	if r.PR != "" && r.Repo == "" {
+		if r.Repo = rec["repo"]; r.Repo == "" {
+			return refuse(errOut, verb, "--pr "+r.PR+": task:"+*id+" names no repo; pass --pr <repo>#<n>")
+		}
 	}
 	if r.PR != "" {
 		// The PR the friend opened is recorded before the end, as the

@@ -28,13 +28,16 @@ var (
 	refHashRx = regexp.MustCompile(`^(?:[^/\s#]+/)?([^/\s#]+)#(\d+)$`)
 )
 
-// TargetOf reads the target from a read task's hash fields. It refuses a
-// task that is not a read (kind read or review), one that names no PR and
-// one with no head: a read is always at one exact head.
+// TargetOf reads the target from a read task's hash fields: a read task
+// (kind read or review), or a card whose PR is up for its read (where review
+// or merging: #4399, the cold session's `read brief --ids <card>` after its
+// child ended with a PR). It refuses any other task, one that names no PR
+// and one with no head: a read is always at one exact head.
 func TargetOf(f map[string]string) (Target, error) {
 	var t Target
-	if k := f["kind"]; k != "read" && k != "review" {
-		return t, fmt.Errorf("kind %q is not a read (want read or review)", k)
+	k, w := f["kind"], f["where"]
+	if k != "read" && k != "review" && w != "review" && w != "merging" {
+		return t, fmt.Errorf("kind %q where %q is not a read: a read task (kind read or review) or a card in review or merging", k, w)
 	}
 	repo, n := strings.TrimSpace(f["repo"]), strings.TrimSpace(f["pr"])
 	if repo == "" || n == "" || n == "0" {

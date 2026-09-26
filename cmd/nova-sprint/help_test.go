@@ -64,6 +64,7 @@ var positionalPaths = map[string]bool{"redis": true, "redis-cli": true, "refresh
 var flagTokenRE = regexp.MustCompile(`^--?([A-Za-z0-9][A-Za-z0-9-]*)(=.*)?$`)
 
 func TestGrammarEveryPathHelpChild(t *testing.T) {
+	t.Parallel()
 	if os.Getenv(grammarChildEnv) == "" {
 		t.Skip("the child of TestGrammarEveryPathHelp")
 	}
@@ -231,6 +232,38 @@ func TestGrammarNoHelpTailInTheSource(t *testing.T) {
 			for i, line := range strings.Split(string(b), "\n") {
 				if tail.MatchString(line) {
 					t.Errorf("%s:%d spells the help tail: %s", path, i+1, strings.TrimSpace(line))
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestGrammarOneRedisResolver (#4399 item 10): no verb reads a Redis address
+// variable itself; each goes through the one resolver (seat.go's
+// redisDefault and redisOr: the seat's, else NOVA_SPRINT_REDIS,
+// NOVA_REDIS_ADDR, NOVA_REDIS). The jev ledger's env is the one other
+// reader: a test passes its own env there, and the verb's registration sets
+// jev.DefaultAddr to the resolver.
+func TestGrammarOneRedisResolver(t *testing.T) {
+	t.Parallel()
+	read := regexp.MustCompile(`[gG]etenv\("NOVA_(SPRINT_)?REDIS(_ADDR)?"\)`)
+	allowed := map[string]bool{filepath.Join("..", "..", "internal", "nsprint", "jev", "main.go"): true}
+	for _, dir := range []string{".", filepath.Join("..", "..", "internal", "nsprint")} {
+		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || allowed[path] {
+				return err
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			for i, line := range strings.Split(string(b), "\n") {
+				if read.MatchString(line) {
+					t.Errorf("%s:%d reads a Redis address itself, not through the one resolver: %s", path, i+1, strings.TrimSpace(line))
 				}
 			}
 			return nil

@@ -3936,16 +3936,20 @@ line naming the remedy (exit 1); a head the mirror's `refs/pull/<n>/head`
 has moved past is reported as `mirror_head=` and as a `HEAD MOVED` line in the
 brief, and the record head is what is read.
 
-`read brief --ids <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis
-<addr>]` is the same brief for a read task, so a friend holding one needs
+With no `--out` (#4399) nothing is written: the brief, then the diff, go to
+stdout and the receipt is the last line, with `out=- diff=-`.
+
+`read brief --ids <task> [--sprint <S>] [--out <dir>] [--mirror <dir>] [--redis
+<addr>]` is the same brief for a read task, or for a card whose child ended
+with a PR (where `review` or `merging`), so a friend holding one needs
 nothing but its id. It reads the task hash (`task:<id>`, and
 `s:<S>:task:<id>` with `--sprint`, in one pipeline), which names the PR by
 its `repo` and `pr` fields or by `ref` (the PR URL the first read pushes, or
 `<repo>#<n>`), and the head the task was queued at; the brief reads that head
 (its diff and its CI) even when the record has moved on, and the receipt adds
 `record_head=` then and `task=<id>` always. A task that is not a read (kind
-`read` or `review`), names no PR or has no head is one `READ BRIEF REFUSED
-task=<id> why=` line (exit 1).
+`read` or `review`, or a card in review or merging), names no PR or has no
+head is one `READ BRIEF REFUSED task=<id> why=` line (exit 1).
 
 `read post --repo <r> --n <n> --line "<typed line>" [--no-github] [--owner
 <o>] [--redis <addr>]` stores the line: the first word is one of SCORE, HOLD,

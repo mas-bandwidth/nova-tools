@@ -155,6 +155,28 @@ func TestReadBriefZeroGitHubCalls(t *testing.T) {
 	}
 }
 
+// TestReadBriefToStdoutWithoutOut (#4399 item 4): with no --out the brief,
+// then the diff, go to stdout and the receipt is the last line (out=-
+// diff=-); nothing is written to disk.
+func TestReadBriefToStdoutWithoutOut(t *testing.T) {
+	t.Parallel()
+	mirror, base, head := mirrorFixture(t, false)
+	c := client(t)
+	seedRecord(t, c, base, head)
+	var stdout, stderr strings.Builder
+	if code := read.Brief(context.Background(), c, "nova-tools", "7", mirror, "", &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	out := stdout.String()
+	brief, diff := strings.Index(out, "HEAD: "+head), strings.Index(out, "+func X() int { return 7 }")
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	last := lines[len(lines)-1]
+	if brief < 0 || diff < brief || !strings.HasPrefix(last, "READ BRIEF repo=nova-tools n=7 ") || !strings.Contains(last, " out=- diff=- ") ||
+		!strings.Contains(out, "the diff printed below this brief") {
+		t.Fatalf("want the brief, the diff, then the receipt:\n%s", out)
+	}
+}
+
 // TestReadBriefNamesFilesOutsidePaths: the scope gate is precomputed from
 // the mirror diff and PATHS, so the reader does not redo it by hand.
 func TestReadBriefNamesFilesOutsidePaths(t *testing.T) {

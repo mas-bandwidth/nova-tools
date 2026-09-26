@@ -28,10 +28,10 @@ var Usages = map[string]Usage{
 	"bench reindex": {Forms: []string{"--sprint <S>"}, Examples: []string{"bench reindex --sprint quack-0926"}},
 	"bench ls":      {Examples: []string{"bench ls"}},
 
-	"capacity friend": {Forms: []string{"--as <f> --slots <n> [--machine <m>] [--kinds <k,...>] [--tiers <t,...>]"},
-		Examples: []string{"capacity friend --as rowan --slots 32"}},
-	"capacity bench": {Forms: []string{"--as <b> --slots <n> [--machine <m>] [--kinds <k,...>] [--tiers <t,...>]"},
-		Examples: []string{"capacity bench --as studio --slots 8"}},
+	"capacity friend": {Forms: []string{"--as <f> --machine <m> --slots <n> [--kinds <k,...>] [--tiers <t,...>]"},
+		Examples: []string{"capacity friend --as rowan --machine studio --slots 32"}},
+	"capacity bench": {Forms: []string{"--as <b> --machine <m> --slots <n> [--kinds <k,...>] [--tiers <t,...>]"},
+		Examples: []string{"capacity bench --as studio --machine studio --slots 8"}},
 	"capacity machine": {Forms: []string{"--machine <m> [--cores <n>] [--mem-gb <n>] [--slots <n>]"}, Examples: []string{"capacity machine --machine studio --cores 24 --mem-gb 192"}},
 	"capacity budget":  {Forms: []string{"--machine <m> --cpu-milli <n> --mem-mb <n>"}, Examples: []string{"capacity budget --machine studio --cpu-milli 20000 --mem-mb 150000"}},
 	"capacity take":    {Forms: []string{"--as <worker> --machine <m> --pgid <n> [--cpu-milli <n>] [--mem-mb <n>]"}, Examples: []string{"capacity take --as friend:rowan --machine studio --pgid 4242"}},
@@ -53,8 +53,8 @@ var Usages = map[string]Usage{
 	"card launched": {Forms: []string{"--sprint <S> --ids <label> --token <t> --branch <b> --jobdir <d>"}, Examples: []string{"card launched --sprint quack-0926 --ids nova-tools-4352 --token t1 --branch swarm/4352 --jobdir /jobs/4352"}},
 	"card beat": {Forms: []string{"--ids <copy> [--as <worker>]", "--sprint <S> --ids <label> --token <t>"},
 		Examples: []string{"card beat --ids nova-tools-4352~1 --as friend:rowan"}},
-	"card end": {Forms: []string{"--ids <copy> (--ok | --score <N> | --fail <why>) [--pr <n> --head <sha>]", "--sprint <S> --ids <label> --token <t> --outcome <DONE|ABSTAIN|BLOCKED|FAILED> --why <code> --results <dir>"},
-		Examples: []string{"card end --ids nova-tools-4352~1 --ok --pr 4399 --head dcd918e6"}},
+	"card end": {Forms: []string{"--ids <copy> (--ok | --score <N> | --fail <why>) [--pr <n>|<repo>#<n> --head <sha>]", "--sprint <S> --ids <label> --token <t> --outcome <DONE|ABSTAIN|BLOCKED|FAILED> --why <code> --results <dir>"},
+		Examples: []string{"card end --ids nova-tools-4352~1 --ok --pr 4399 --head dcd918e6", "card end --ids nova-tools-4352~1 --ok --pr nova-tools#4399 --head dcd918e6"}},
 	"card ls":        {Forms: []string{"--unplaced --sprint <S>"}, Examples: []string{"card ls --unplaced --sprint quack-0926"}},
 	"card fsck":      {Forms: []string{"[--repair]", "--sprint <S> [--repair]"}, Examples: []string{"card fsck", "card fsck --sprint quack-0926"}},
 	"card launch":    {Forms: []string{"--stdin [--wrapper <path>]"}, Examples: []string{"card launch --stdin"}},
@@ -70,7 +70,8 @@ var Usages = map[string]Usage{
 	"card assign":    {Forms: []string{"--ids <primary> --to <worker>"}, Examples: []string{"card assign --ids nova-tools-4352 --to friend:emma"}},
 	"card session":   {Forms: []string{"--ids <copy> --as <worker>"}, Examples: []string{"card session --ids nova-tools-4352~1 --as friend:rowan"}},
 
-	"census": {Forms: []string{"[--sprint <S>] [--set <key> | --keys <k,...> | --keys-from <file>] [--fields <f,...>]"}, Examples: []string{"census --sprint quack-0926"}},
+	"census": {Forms: []string{"--sprint <S> [--keys <state,...>]", "--set <benches|friends|sprint:<S>:<state>> --fields <f,...>", "--keys-from <file|-> --fields <f,...>"},
+		Examples: []string{"census --sprint quack-0926", "census --set benches --fields host,at"}},
 
 	"ci request": {Forms: []string{"--repo <r> --sha <sha> [--pr <n>] [--checks <c,...>] [--again]"}, Examples: []string{"ci request --repo nova-tools --sha dcd918e6d --pr 4399"}},
 	"ci run":     {Forms: []string{"--bench <b> --results <dir> [--scratch <dir>] [--mirror-root <dir>]"}, Examples: []string{"ci run --bench hulk --results /srv/ci/results"}},
@@ -125,7 +126,7 @@ var Usages = map[string]Usage{
 	"fold": {Forms: []string{"--sprint <S> [--work <nova-work checkout>]"}, Examples: []string{"fold --sprint quack-0926"}},
 
 	"friend pull":        {Forms: []string{"[--as <f>] [--n <k>] [--dir <dir>]"}, Examples: []string{"friend pull --n 1"}},
-	"friend done":        {Forms: []string{"--ids <copy> (--ok | --score <N> | --fail <why>) [--pr <n> --head <sha>]"}, Examples: []string{"friend done --ids nova-tools-4352~1 --ok --pr 4399 --head dcd918e6"}},
+	"friend done":        {Forms: []string{"--ids <copy> (--ok | --score <N> | --fail <why>) [--pr <n>|<repo>#<n> --head <sha>]"}, Examples: []string{"friend done --ids nova-tools-4352~1 --ok --pr 4399 --head dcd918e6"}},
 	"friend beat":        {Forms: []string{"[--as <f>] [--once]"}, Examples: []string{"friend beat --once"}},
 	"friend hello":       {Forms: []string{"[--as <f>] [--slots <n>] [--harness <h>] [--once]"}, Examples: []string{"friend hello --slots 32 --once"}},
 	"friend bye":         {Forms: []string{"[--as <f>]"}, Examples: []string{"friend bye"}},
@@ -191,9 +192,9 @@ var Usages = map[string]Usage{
 	"note": {Forms: []string{"--rote <class> --as <mind> [--what <text>] [--mech <m>]"}, Examples: []string{"note --rote hand-merge --as rowan --what 'merged 4399 by hand'"}},
 	"rote": {Forms: []string{"[--sprint <S>] [--since <t>] [--until <t>]"}, Examples: []string{"rote --since 24h"}},
 
-	"pitstop set":    {Forms: []string{"--stream <s,...> --why <text> [--sprint <S>]"}, Examples: []string{"pitstop set --stream console --why 'dev red'"}},
-	"pitstop clear":  {Forms: []string{"--stream <s,...> --why <text> [--force]"}, Examples: []string{"pitstop clear --stream console --why 'dev green'"}},
-	"pitstop status": {Forms: []string{"[--stream <s,...>]"}, Examples: []string{"pitstop status"}},
+	"pitstop set":    {Forms: []string{"--sprint <S> --stream <s,...> --why <text>"}, Examples: []string{"pitstop set --sprint quack-0926 --stream console --why 'dev red'"}},
+	"pitstop clear":  {Forms: []string{"--sprint <S> --stream <s,...> --why <text> [--force]"}, Examples: []string{"pitstop clear --sprint quack-0926 --stream console --why 'dev green'"}},
+	"pitstop status": {Forms: []string{"--sprint <S>"}, Examples: []string{"pitstop status --sprint quack-0926"}},
 
 	"plan apply": {Forms: []string{"--sprint <S> --plan <file.tsv>"}, Examples: []string{"plan apply --sprint quack-0926 --plan plan.tsv"}},
 	"plan show":  {Forms: []string{"--sprint <S>"}, Examples: []string{"plan show --sprint quack-0926"}},

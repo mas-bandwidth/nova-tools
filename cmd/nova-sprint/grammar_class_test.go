@@ -50,6 +50,13 @@ func TestGrammarTheColdSessionLinesReachTheStore(t *testing.T) {
 		{"width", ""},
 		{"census --sprint quack-0926", ""},
 		{"pr lines --repo nova-tools --n 4373", "SCORE who=emma head=abcdef1 score=9/10\nPR LINES pr:nova-tools:4373 lines=1"},
+		// #4399 item 10: the verbs that read NOVA_REDIS_ADDR themselves
+		// (line.go, read.go, spec.go, land_writer.go) now read the one
+		// resolver, so NOVA_SPRINT_REDIS alone reaches the store
+		{"line list --repo nova-tools --n 4373", ""},
+		{"read digest --repo nova-tools --n 4371", ""},
+		{"spec list", ""},
+		{"land writer --repo nova-tools --base dev", ""},
 	} {
 		t.Run(c.line, func(t *testing.T) {
 			t.Parallel()

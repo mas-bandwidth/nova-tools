@@ -51,7 +51,7 @@ import (
 //	task front   --ids <id>
 //	task move    --ids <id> (--to friend:<f> | --stream <s> | --where <w> [--ok ok|fail] [--why <text>])
 //	task expire  [--as friend:<f>,...]
-//	task ls      (--stream <s> | --as friend:<f>) --where <w>
+//	task ls      [--stream <s> | --as friend:<f>] [--where <w>]   (bare: every stream, every live column)
 //	task fsck    --sprint <S> [--repair]
 //
 // under a harness (NOVA_FRIEND set) --as, when given, must be the seat.
@@ -299,6 +299,11 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		// copies; a bench has no friend queue, so nothing else is taken.
 		if k, err := taskcard.ParseConsumer(*c.as); err == nil && k.Kind == "bench" {
 			w, err := taskcard.Work(ctx, cl, k, c.actor, *c.n, false, ids...)
+			if why, ok := taskcard.IsRefused(err); ok && strings.HasPrefix(why, "SLOTS ") {
+				_, _ = fmt.Fprintf(out, "TASK take REFUSED as=%s why=%s remedy=%s ms=%d\n", k, quoteField(why),
+					quoteField("nova-sprint capacity bench --as "+k.Name+" --machine <m> --slots <n>"), ms())
+				return 1
+			}
 			if err != nil {
 				return refused(err)
 			}

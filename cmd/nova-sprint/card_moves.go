@@ -315,8 +315,13 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		}
 		if *m.pr != "" {
 			repo, n, ok := strings.Cut(*m.pr, "#")
-			if !ok || repo == "" || n == "" {
-				return refuse(errOut, "card end", "--pr wants <repo>#<n>")
+			if !ok && len(ids) > 0 {
+				// --pr is the PR number (the vocabulary's): the repo is
+				// the card's own (#4399), as task done reads it.
+				repo, n = c.HGet(ctx, taskcard.Key(ids[0]), "repo").Val(), *m.pr
+			}
+			if repo == "" || n == "" {
+				return refuse(errOut, "card end", "--pr wants the PR number of a card that names its repo, or <repo>#<n>")
 			}
 			r.Repo, r.PR = repo, n
 		}

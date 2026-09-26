@@ -140,9 +140,6 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, "card push", err.Error())
 	}
-	if *sprint == "" || *addr == "" {
-		return refuse(stderr, "card push", "needs --sprint <name> and --redis <addr> (or NOVA_SPRINT_REDIS)")
-	}
 	sources := 0
 	for _, on := range []bool{*stdin, *dir != "", fs.NArg() > 0} {
 		if on {
@@ -153,7 +150,16 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return refuse(stderr, "card push", "reads card files, --dir or --stdin, one of them")
 	}
 	if sources == 0 {
-		return refuse(stderr, "card push", "needs card files, --dir <cards/>, or --stdin: "+card.FileShape())
+		// #4399: what a card file is, and where its id and KIND lines are,
+		// in the refusal itself (the cold session found LABEL in the source).
+		need := "card files, --dir <cards/>, or --stdin"
+		if *sprint == "" {
+			need = "--sprint <S> and " + need
+		}
+		return refuse(stderr, "card push", "needs "+need+": "+card.FileShape())
+	}
+	if *sprint == "" || *addr == "" {
+		return refuse(stderr, "card push", "needs --sprint <name> and --redis <addr> (or NOVA_SPRINT_REDIS)")
 	}
 	files, err := readCardFiles(*stdin, *dir, fs.Args())
 	if err != nil {

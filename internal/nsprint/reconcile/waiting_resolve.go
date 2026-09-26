@@ -647,11 +647,14 @@ type Why struct {
 func Explain(ctx context.Context, c redis.Cmdable, id string) (w Why, found bool, err error) {
 	id = strings.TrimPrefix(strings.TrimSpace(id), "task:")
 	w.ID = id
-	v, err := c.HMGet(ctx, "task:"+id, "where", "stream", "blocked_on").Result()
+	v, err := c.HMGet(ctx, "task:"+id, "where", "stream", "blocked_on", "state").Result()
 	if err != nil {
 		return w, false, fmt.Errorf("why %s: %w", id, err)
 	}
 	w.Where, w.Stream, w.BlockedOn = wrStr(v, 0), wrStr(v, 1), strings.TrimSpace(wrStr(v, 2))
+	if w.Where == "" {
+		w.Where = wrStr(v, 3) // a record from before the where pointer names its set by state
+	}
 	if w.Where == "" {
 		return w, false, nil
 	}
