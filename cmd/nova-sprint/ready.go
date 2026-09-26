@@ -25,7 +25,7 @@ func init() {
 
 // readyForge is the forge seam; a test replaces it with a map (CI-NET).
 var readyForge = func(st *store.Store) deal.PRs {
-	return deal.GH{Client: &gh.Client{Verb: "ready", Redis: st.Client()}, Redis: st.Client()}
+	return deal.GH{Client: gh.New("ready", st.Client()), Redis: st.Client()}
 }
 
 func runReady(ctx context.Context, args []string, out, errOut io.Writer) int {

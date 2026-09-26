@@ -204,7 +204,7 @@ func TestBodyReadersAreImportAndLanded(t *testing.T) {
 // builds one; storeSet is the deferred form, when the store opens after the
 // token gate (the landing verbs).
 var (
-	clientLiteral = regexp.MustCompile(`(gh\.Client|stream\.GitHub|&GitHub|RESTFiler|RESTPRHost|read\.Poster|deal\.GH|card\.GHIssues)\{`)
+	clientLiteral = regexp.MustCompile(`(gh\.Client|stream\.GitHub|&GitHub|RESTFiler|RESTPRHost|read\.Poster|read\.GitHub|deal\.GH|card\.GHIssues)\{|gh\.New\(`)
 	storeSet      = regexp.MustCompile(`\.Redis = `)
 )
 
@@ -239,7 +239,7 @@ func TestEveryProductionClientHasAStore(t *testing.T) {
 					continue
 				}
 				n++
-				if strings.Contains(line, "Redis:") || storeSet.MatchString(body) {
+				if strings.Contains(line, "Redis:") || strings.Contains(line, "gh.New(") || storeSet.MatchString(body) {
 					continue
 				}
 				t.Errorf("client built without a store: %s:%d: %s", rel, i+1, strings.TrimSpace(line))

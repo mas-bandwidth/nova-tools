@@ -163,7 +163,7 @@ func runConformPublish(ctx context.Context, argv []string, marker string, stderr
 // /rate_limit through the one GitHub client, #4343), never by a GraphQL
 // call.
 func ghGraphQLRemaining(ctx context.Context, rdb redis.Cmdable) (int, error) {
-	c := &gh.Client{Verb: "lineup", Redis: rdb}
+	c := gh.New("lineup", rdb)
 	_, graphql, err := c.RateLimit(ctx)
 	return graphql, err
 }

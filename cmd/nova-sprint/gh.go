@@ -34,7 +34,7 @@ func runGH(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	const verb = "gh budget"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}

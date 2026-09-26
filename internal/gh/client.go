@@ -62,11 +62,13 @@ var ErrBudget = errors.New("REST budget spent")
 // and the refusal prints the reset time.
 var ErrQuota = errors.New("GitHub primary quota exhausted")
 
-// Client is the one GitHub client. A zero API is DefaultAPI; an empty
-// Token is read once by Token() on the first call; a nil HTTP is a 30 s
-// client; a nil Redis counts nothing and paces in-process (a test without
-// a store: every production client has one, TestEveryProductionClientHasAStore);
-// nil Now and Sleep are the wall clock; a nil Log is stderr.
+// Client is the one GitHub client. A zero API is DefaultAPI; a client from
+// New reads an empty Token once from the environment on its first call, a
+// literal one sends no Authorization (a test's fake forge); a nil HTTP is a
+// 30 s client; a nil Redis counts nothing and paces in-process (a test
+// without a store: every production client has one,
+// TestEveryProductionClientHasAStore); nil Now and Sleep are the wall
+// clock; a nil Log is stderr; a nil Env is os.Getenv.
 type Client struct {
 	API   string
 	Token string
@@ -88,12 +90,21 @@ type Client struct {
 	// Now and Sleep are the clock; a test injects both.
 	Now   func() time.Time
 	Sleep func(ctx context.Context, d time.Duration) error
-	// Log takes the retry and refusal lines; nil discards them.
+	// Log takes the retry and refusal lines; nil is stderr.
 	Log io.Writer
+	// Env reads the token environment; nil is os.Getenv.
+	Env func(string) string
 
 	mu     sync.Mutex
 	local  map[int64]int // the writer's pace when Redis is nil
-	tokErr error         // Token() failed once; every call after refuses the same way
+	lazy   bool          // New: read an empty Token once from Env
+	tokErr error         // that read failed once; every call after refuses the same way
+}
+
+// New is the production client of one verb over the store: its token is
+// read once from the environment (Token) on the first call.
+func New(verb string, rdb redis.Cmdable) *Client {
+	return &Client{Verb: verb, Redis: rdb, lazy: true}
 }
 
 // Response is one reply. Remaining is X-RateLimit-Remaining, -1 when the
@@ -149,18 +160,22 @@ func (c *Client) log() io.Writer {
 	return os.Stderr
 }
 
-// token is the bearer token, read once by Token() when the client was built
-// without one.
+// token is the bearer token, read once from the environment when the
+// client came from New without one.
 func (c *Client) token() (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.Token != "" {
+	if c.Token != "" || !c.lazy {
 		return c.Token, nil
 	}
 	if c.tokErr != nil {
 		return "", c.tokErr
 	}
-	tok, err := Token()
+	env := c.Env
+	if env == nil {
+		env = os.Getenv
+	}
+	tok, err := TokenFrom(env)
 	if err != nil {
 		c.tokErr = err
 		fmt.Fprintf(c.log(), "gh: REFUSED %s: %v\n", c.verb(), err)

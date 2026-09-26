@@ -82,7 +82,7 @@ func registerReconcileDuty(name string, build func(st *store.Store) (reconcileDu
 // (#4343). A test swaps in its fixture sshd and forge map (CI-NET: no host
 // in a test); nothing else in the loop changes.
 var reconcileSeams = func(st *store.Store) (deal.Dialer, deal.PRs) {
-	return deal.Remote{}, deal.GH{Client: &gh.Client{Verb: "reconcile", Redis: st.Client()}, Redis: st.Client()}
+	return deal.Remote{}, deal.GH{Client: gh.New("reconcile", st.Client()), Redis: st.Client()}
 }
 
 // stoppableDuty is a duty with work of its own past its Run (the harvest

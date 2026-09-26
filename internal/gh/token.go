@@ -13,9 +13,12 @@ import (
 // token` (which honours GH_CONFIG_DIR, the fleet's per-seat gh config). The
 // gh run here is the one gh shell-out in nova-sprint (TestOneGitHubClient)
 // and it makes no GitHub call: it reads the login gh stored.
-func Token() (string, error) {
+func Token() (string, error) { return TokenFrom(os.Getenv) }
+
+// TokenFrom is Token over the given environment.
+func TokenFrom(getenv func(string) string) (string, error) {
 	for _, k := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
-		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+		if v := strings.TrimSpace(getenv(k)); v != "" {
 			return v, nil
 		}
 	}

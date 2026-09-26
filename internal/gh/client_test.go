@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -344,23 +345,30 @@ func TestRetriesDoNotSpendTheBudget(t *testing.T) {
 	}
 }
 
-// TestEmptyTokenIsReadOnce: a client built without a token reads it once
-// from the environment; a client whose read fails refuses every call with
-// the same line and makes no request.
+// TestEmptyTokenIsReadOnce: a client from New reads its token once from
+// the environment; a literal client with an empty token sends no
+// Authorization and never reads one (a test's fake forge).
 func TestEmptyTokenIsReadOnce(t *testing.T) {
-	t.Setenv("GH_TOKEN", "env-tok")
-	t.Setenv("GITHUB_TOKEN", "")
+	t.Parallel()
 	ck := &clock{t: t0}
-	f := newForge(t, ok("", `{"body":"b"}`), ok("", `{"body":"b"}`))
-	c, _ := newClient(f, nil, ck, "x")
-	c.Token = ""
+	f := newForge(t, ok("", `{"body":"b"}`), ok("", `{"body":"b"}`), ok("", `{"body":"b"}`))
+	env := map[string]string{"GITHUB_TOKEN": "env-tok"}
+	reads := 0
+	c := New("x", nil)
+	c.API, c.HTTP, c.Now, c.Sleep, c.Log = f.srv.URL, f.srv.Client(), ck.Now, ck.Sleep, io.Discard
+	c.Env = func(k string) string { reads++; return env[k] }
 	for range 2 {
 		if _, err := c.PRBody(context.Background(), "o/r", 1); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if c.Token != "env-tok" || !strings.HasSuffix(f.reqs[1], "auth=Bearer env-tok") {
-		t.Fatalf("token %q reqs %v", c.Token, f.reqs)
+	if c.Token != "env-tok" || reads != 2 || !strings.HasSuffix(f.reqs[1], "auth=Bearer env-tok") {
+		t.Fatalf("token %q reads=%d reqs %v", c.Token, reads, f.reqs)
+	}
+	plain, _ := newClient(f, nil, ck, "x")
+	plain.Token = ""
+	if _, err := plain.PRBody(context.Background(), "o/r", 1); err != nil || !strings.HasSuffix(f.reqs[2], "auth=") {
+		t.Fatalf("a literal client with no token must not read one: %v %v", err, f.reqs)
 	}
 }
 

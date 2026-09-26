@@ -18,7 +18,7 @@ import (
 // BASE, an issue closed, a stream landed, or a task done. Unresolved cards stay
 // in the waiting set; the set is not copied into the pool.
 func Release(ctx context.Context, client *redis.Client, sprint string) VerbResult {
-	return ReleaseWith(ctx, client, sprint, deal.GH{Client: &gh.Client{Verb: "card release", Redis: client}, Redis: client})
+	return ReleaseWith(ctx, client, sprint, deal.GH{Client: gh.New("card release", client), Redis: client})
 }
 
 // ReleaseWith is Release with an explicit forge seam. One invocation is one

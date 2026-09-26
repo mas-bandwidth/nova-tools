@@ -48,7 +48,7 @@ func runCardPool(ctx context.Context, args []string, stdout, stderr io.Writer) i
 // cardCutSource is card cut's forge seam, the one GitHub client over the
 // store (#4343); tests replace it.
 var cardCutSource = func(st *store.Store) card.IssueSource {
-	return card.GHIssues{Client: &gh.Client{Verb: "card cut", Redis: st.Client()}}
+	return card.GHIssues{Client: gh.New("card cut", st.Client())}
 }
 
 // cmdCardCut is nova-tools#3623, the retired pulse cutter's job: one GitHub issue
