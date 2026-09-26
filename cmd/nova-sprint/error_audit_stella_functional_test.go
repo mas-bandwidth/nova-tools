@@ -67,7 +67,10 @@ func TestStellaBenchLaunchFailureNamesCopyAndCause(t *testing.T) {
 	var out, errOut bytes.Buffer
 	benchCopySession(st, "b", true, wrapper, nil, &out, &errOut)(ctx)
 	combined := out.String() + errOut.String()
-	if !strings.Contains(combined, "launch-audit.c1") || !strings.Contains(combined, wrapper) {
+	// The copy is the one the store dealt: dev spells copies <primary>~<n>
+	// (taskcard.copyRE), at Stella's checkout 1007d640 too; her literal
+	// "launch-audit.c1" was the one word of this probe changed (Rowan).
+	if !strings.Contains(combined, dealt[0].Copy) || !strings.Contains(combined, wrapper) {
 		t.Fatalf("launch failure hides copy or cause: stdout=%q stderr=%q", out.String(), errOut.String())
 	}
 }

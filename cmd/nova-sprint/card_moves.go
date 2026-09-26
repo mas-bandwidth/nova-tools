@@ -582,6 +582,9 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 			return refuse(errOut, "card session", err.Error())
 		}
 		fmt.Fprintf(out, "CARD %s ms=%d\n", s.Line(as.Name), ms())
+		for _, l := range s.FailureLines(as.Name) {
+			fmt.Fprintln(errOut, "nova-sprint card session: "+l)
+		}
 		if len(s.GivenBack) > 0 {
 			return 1
 		}

@@ -392,9 +392,11 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 // benchCopySession is the bench harness's session start on each beat
 // (#3998): when bench:<b> is enrolled in consumers, card work --as
 // bench:<b> --fill (one call) and one detached `nova-card copy <copy>` per
-// copy (card.OpenCopySession); a copy that cannot start is given back. A
-// session that took nothing prints nothing; an error prints once until it
-// changes, and never stops the beat.
+// copy (card.OpenCopySession); a copy that cannot start is given back, and
+// its failure receipt (the copy, the scrubbed cause, the give-back's outcome
+// and the next action) goes to stderr under the SESSION line. A session that
+// took nothing prints nothing; an error prints once until it changes, and
+// never stops the beat.
 func benchCopySession(st *store.Store, bench string, on bool, wrapperFlag string, launchEnv []string, out, errOut io.Writer) func(context.Context) {
 	if !on {
 		return func(context.Context) {}
@@ -419,6 +421,9 @@ func benchCopySession(st *store.Store, bench string, on bool, wrapperFlag string
 		last = ""
 		if len(s.Launched)+len(s.GivenBack) > 0 {
 			fmt.Fprintln(out, s.Line(bench))
+		}
+		for _, l := range s.FailureLines(bench) {
+			fmt.Fprintln(errOut, l)
 		}
 	}
 }

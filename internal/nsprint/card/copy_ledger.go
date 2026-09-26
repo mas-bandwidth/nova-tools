@@ -48,6 +48,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
@@ -570,7 +571,22 @@ type CopySession struct {
 	// GivenBack are the copies whose launch failed, given back to their
 	// primaries in one card cancel.
 	GivenBack []string
-	Free      int
+	// Failed is one entry per copy in GivenBack: the copy, the scrubbed
+	// launch failure and what the give-back did about it (Stella's audit
+	// stella-e6353bf80360, finding 3).
+	Failed []CopyFailure
+	Free   int
+}
+
+// CopyFailure is one copy a session could not start.
+type CopyFailure struct {
+	Copy string
+	// Why is the launch error with the copy's token scrubbed.
+	Why string
+	// To is where the primary went when the give-back ran ("" when it did
+	// not); GaveBack says the one card cancel took this copy.
+	To       string
+	GaveBack bool
 }
 
 // Line is the session's receipt.
@@ -580,6 +596,34 @@ func (s CopySession) Line(bench string) string {
 	}
 	return fmt.Sprintf("SESSION bench:%s worked=%d launched=%d given_back=%d free=%d", bench,
 		len(s.Launched)+len(s.GivenBack), len(s.Launched), len(s.GivenBack), s.Free)
+}
+
+// FailureLines are the per-copy failure receipts under Line, one per copy
+// that could not start: the copy, the scrubbed cause, the give-back's
+// outcome and the next action. Empty when every copy started.
+func (s CopySession) FailureLines(bench string) []string {
+	var lines []string
+	for _, f := range s.Failed {
+		outcome := "give back FAILED: the copy may still be working on bench:" + bench + " with no wrapper; inspect: nova-sprint card render --id " + f.Copy +
+			"; give it back by hand: nova-sprint card cancel --actor bench:" + bench + " --why launch --id " + f.Copy
+		if f.GaveBack {
+			outcome = "given back (primary to " + f.To + ")"
+		}
+		lines = append(lines, fmt.Sprintf("SESSION bench:%s copy=%s launch FAILED: %s; %s; next: fix the wrapper (--wrapper, or nova-card beside nova-sprint) and the next beat or `card session --as bench:%s` retakes the copy",
+			bench, f.Copy, oneline.Escape(f.Why), outcome, bench))
+	}
+	return lines
+}
+
+// scrubToken is err's text with the copy's token, the one secret a launch
+// carries, replaced, so a wrapper that echoes its stdin cannot put it in a
+// receipt.
+func scrubToken(err error, token string) string {
+	why := err.Error()
+	if token != "" {
+		why = strings.ReplaceAll(why, token, "<token>")
+	}
+	return why
 }
 
 // OpenCopySession is the bench harness's session start (#3998): when
@@ -606,15 +650,32 @@ func OpenCopySession(ctx context.Context, c redis.Cmdable, bench, by string, lau
 	for i, id := range w.IDs {
 		l := CopyLaunch{Copy: id, Token: w.Tokens[i]}
 		if err := launch(l); err != nil {
+			f := CopyFailure{Copy: id, Why: scrubToken(err, l.Token)}
 			s.GivenBack = append(s.GivenBack, id)
-			why = append(why, id+": "+err.Error())
+			s.Failed = append(s.Failed, f)
+			why = append(why, id+": "+f.Why)
 			continue
 		}
 		s.Launched = append(s.Launched, l)
 	}
 	if len(s.GivenBack) > 0 {
-		if _, err := taskcard.CancelCards(ctx, c, by, "launch: "+strings.Join(why, "; "), s.GivenBack...); err != nil {
-			return s, fmt.Errorf("session bench:%s: give back: %w", bench, err)
+		// One card cancel for every copy that did not start. When it fails
+		// the copies' state is unknown (still working on this bench, or
+		// given back); Failed says so per copy and the error names them
+		// with the way to inspect and repair.
+		ended, err := taskcard.CancelCards(ctx, c, by, "launch: "+strings.Join(why, "; "), s.GivenBack...)
+		if err != nil {
+			return s, fmt.Errorf("session bench:%s: give back of %s (launch failed: %s): %w; their state is unknown (still working on bench:%s with no wrapper, or given back); inspect: nova-sprint card render --id <copy>; give back by hand: nova-sprint card cancel --actor %s --why launch --ids %s",
+				bench, strings.Join(s.GivenBack, ","), strings.Join(why, "; "), err, bench, by, strings.Join(s.GivenBack, ","))
+		}
+		to := map[string]string{}
+		for _, e := range ended {
+			to[e.Copy] = e.To
+		}
+		for i := range s.Failed {
+			if where, ok := to[s.Failed[i].Copy]; ok {
+				s.Failed[i].To, s.Failed[i].GaveBack = where, true
+			}
 		}
 	}
 	return s, nil

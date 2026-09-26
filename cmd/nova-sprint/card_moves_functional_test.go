@@ -237,9 +237,16 @@ func TestCardSessionCLI(t *testing.T) {
 	if code, out, _ := runCLI("card", "deal", "--to", "bench:b", "--n", "1", "--actor", "rowan"); code != 0 {
 		t.Fatalf("deal = %d %q", code, out)
 	}
-	code, out, _ := runCLI("card", "session", "--as", "bench:b", "--wrapper", missing)
+	code, out, errOut := runCLI("card", "session", "--as", "bench:b", "--wrapper", missing)
 	if code != 1 || !strings.HasPrefix(out, "CARD SESSION bench:b worked=1 launched=0 given_back=1 free=1 ms=") {
 		t.Fatalf("session with no wrapper = %d %q", code, out)
+	}
+	// The failure receipt names the copy, the wrapper, the give-back and the
+	// next action (stella-e6353bf80360 finding 3).
+	for _, want := range []string{"nova-sprint card session: SESSION bench:b copy=s0~1 launch FAILED: card launch: wrapper " + missing + " MISSING", "given back (primary to waiting)", "next: fix the wrapper"} {
+		if !strings.Contains(errOut, want) {
+			t.Fatalf("session stderr %q lacks %q", errOut, want)
+		}
 	}
 	if n := c.ZCard(ctx, "bench:b:cards:working").Val(); n != 0 {
 		t.Fatalf("bench:b:cards:working holds %d after the give-back", n)
