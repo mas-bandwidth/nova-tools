@@ -95,7 +95,9 @@ func TestWebhookToEvGithub(t *testing.T) {
 				"repository":{"full_name":"mas-bandwidth/nova-tools"},"sender":{"login":"octocat"}}`,
 			want: map[string]string{"repo": "mas-bandwidth/nova-tools", "kind": "pull_request", "number": "42",
 				"head": "1111111111111111111111111111111111111111", "action": "synchronize",
-				"at": "2026-09-22T16:45:01Z", "sender": "octocat", "comment_id": ""},
+				"at": "2026-09-22T16:45:01Z", "sender": "octocat", "comment_id": "",
+				// pull_request adds branch, base and merged, empty included.
+				"branch": "", "base": "", "merged": ""},
 		},
 		{
 			event: "issue_comment",

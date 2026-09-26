@@ -107,6 +107,10 @@ func TestPullRequestCheckRunAndDispositionEachBecomeOneEntry(t *testing.T) {
 				"at":         "2026-09-22T16:45:01Z",
 				"sender":     "octocat",
 				"comment_id": "",
+				// pull_request adds its head branch, base and merged (closed only).
+				"branch": "johnny/ev-github-2685",
+				"base":   "",
+				"merged": "",
 			},
 		},
 		{

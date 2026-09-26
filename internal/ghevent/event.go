@@ -16,7 +16,8 @@
 //
 // Every entry has the fields repo, kind, number, head, action, at, sender,
 // comment_id. kind is the X-GitHub-Event header, which is not in the JSON
-// body. Three kinds add their own fields, always all of them, empty included:
+// body. Four kinds add their own fields, always all of them, empty included:
+// pull_request adds branch, base and merged (closed only: true or false);
 // issues adds labels (a JSON array of the issue's label names after the
 // change), body, state and state_reason; workflow_run adds run_id, workflow,
 // status and conclusion; check_run adds check (check_run.name), check_run_id
@@ -72,6 +73,13 @@ type Entry struct {
 	RunID    string
 	Workflow string
 
+	// pull_request only (card pr-record-follows-github): the head branch,
+	// the base branch and, on closed, "true" when the PR merged ("false"
+	// otherwise, "" on the other actions).
+	Branch string
+	Base   string
+	Merged string
+
 	// check_run only: the check's name and its id (a decimal string).
 	Check      string
 	CheckRunID string
@@ -114,6 +122,11 @@ func Decode(event string, payload []byte) (Entry, error) {
 		e.Number = firstID(p.PullRequest.Number, p.Number)
 		e.Head = strings.TrimSpace(p.PullRequest.Head.SHA)
 		e.At = pullAt(p.PullRequest)
+		e.Branch = strings.TrimSpace(p.PullRequest.Head.Ref)
+		e.Base = strings.TrimSpace(p.PullRequest.Base.Ref)
+		if e.Action == "closed" {
+			e.Merged = strconv.FormatBool(p.PullRequest.Merged)
+		}
 	case "issue_comment":
 		if p.Comment == nil {
 			return Entry{}, errMissing("comment")
@@ -226,7 +239,7 @@ func Publish(ctx context.Context, rdb *redis.Client, e Entry) (string, error) {
 }
 
 // Fields is the stream entry's key set for e: the eight common fields, plus
-// the issues, workflow_run or check_run fields for those kinds.
+// the issues, workflow_run, check_run or pull_request fields for those kinds.
 func Fields(e Entry) (map[string]interface{}, error) {
 	v := map[string]interface{}{
 		"repo":       e.Repo,
@@ -257,6 +270,10 @@ func Fields(e Entry) (map[string]interface{}, error) {
 		v["workflow"] = e.Workflow
 		v["status"] = e.Status
 		v["conclusion"] = e.Conclusion
+	case "pull_request":
+		v["branch"] = e.Branch
+		v["base"] = e.Base
+		v["merged"] = e.Merged
 	case "check_run":
 		v["check"] = e.Check
 		v["check_run_id"] = e.CheckRunID
@@ -479,9 +496,14 @@ type pullRequest struct {
 	Number    int64   `json:"number"`
 	UpdatedAt *string `json:"updated_at"`
 	CreatedAt *string `json:"created_at"`
+	Merged    bool    `json:"merged"`
 	Head      struct {
 		SHA string `json:"sha"`
+		Ref string `json:"ref"`
 	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
 }
 
 type checkHead struct {

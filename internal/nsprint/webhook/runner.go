@@ -20,14 +20,21 @@ package webhook
 //   - the source of the record (source=runner), so Source says which path
 //     is live.
 //
-// It never writes pr:<repo>:<n> (read of #4375, 4/10): the record's stream
-// is the lander's (a rowan/x -> dev PR is a member of a stream its branch
-// names do not spell), its head and ci_request go through land_stream.lua's
-// record op, which the bench seat may not EVAL, and an older cancelled run's
-// ci-ok (always()) must not rewind a head. The PR number rides on the row and
-// on the record's pr field, as the receiver's does; ns_ci_github orders a
-// field by run id then time, so an older run's receipt is KEPT, never
-// applied over a newer one.
+// The PR record (card pr-record-follows-github; measured 2026-09-26: #4377
+// and #4388 kept a head two pushes old and #4371 read ci=pending under a
+// green receipt, because ev:github carries no pull_request delivery while
+// the funnel is off, so the runner is the one source that sees each head):
+// a receipt of a pull_request run that was not cancelled is a claim of the
+// PR's head through land.RecordPRHead (plain HSET/SADD/SREM, which the bench
+// seat may do; it never touches an existing record's stream, which is the
+// lander's, and orders runner claims by run id, so an older run's receipt
+// never rewinds a head a newer run named). Then a final word (green or red)
+// is folded onto every open record whose head is the receipt's sha, through
+// the head index pr:<name>:head:<sha> (land.FoldCI), so ci on the record is
+// the receipt, not a pending that never moves. A cancelled run writes
+// neither: a newer push cancelled it. ns_ci_github orders a field by run id
+// then time, so an older run's receipt is KEPT, never applied over a newer
+// one.
 //
 // A refused receipt names the field and the remedy in one line; a failed
 // write is an error the verb turns into a red ci-ok, because a landing must
@@ -37,10 +44,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/redis/go-redis/v9"
 )
@@ -177,6 +186,19 @@ type Written struct {
 	Fail    string // gh_fail after the write
 	Runs    int    // fields written: the workflow and its jobs
 	Applied int    // of them, how many the function applied (the rest were older than the hash held)
+	// PR is the claim on the PR record (Key "" when the run is not a
+	// pull_request run or was cancelled); Folded the PR numbers whose record
+	// took the word at this head.
+	PR     land.PRHeadResult
+	Folded []string
+}
+
+// FoldLine is the receipt's second line when the word reached a PR record.
+func (w Written) FoldLine() string {
+	if len(w.Folded) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("CIGH FOLD %s ci=%s prs=%s", w.Key, w.Word, strings.Join(w.Folded, ","))
 }
 
 // Line is the receipt's one line.
@@ -192,9 +214,14 @@ func (w Written) Line() string {
 }
 
 // Write lands one receipt: the ev:github row, then in one pipeline the
-// function call per run and the source stamp. It needs the nova_sprint
-// function library on the store and a seat with XADD on ev:github, FCALL
-// and HSET on ci:*. It touches no other key.
+// function call per run and the source stamp; then, unless the run was
+// cancelled, the PR record's claim (a pull_request run) and the fold of a
+// final word onto the records at the sha. It needs the nova_sprint function
+// library on the store and a seat with XADD on ev:github, FCALL and HSET on
+// ci:*, HMGET, HSET, SADD, SREM and SMEMBERS on pr:*, and HMGET on task:*
+// (the card the head branch names, read when the record is new or names no
+// task: land.RecordPRHead). It writes no key outside ev:github, ci:* and
+// pr:*, and reads none outside those and task:*.
 func Write(ctx context.Context, rdb *redis.Client, r Receipt) (Written, error) {
 	var w Written
 	if rdb == nil {
@@ -236,6 +263,29 @@ func Write(ctx context.Context, rdb *redis.Client, r Receipt) (Written, error) {
 			w.Word, _ = reply[1].(string)
 			w.Fail, _ = reply[2].(string)
 		}
+	}
+	if r.Conclusion == "cancelled" {
+		return w, nil
+	}
+	var extra []string
+	if r.Event == "pull_request" && r.PR != "" {
+		n, _ := strconv.Atoi(r.PR)
+		claim := land.PRClaim{Repo: r.Repo, N: n, Head: r.SHA, Action: "run", Branch: r.HeadBranch, Base: r.BaseBranch,
+			Source: land.ClaimRunner, EvID: id, RunID: r.RunID}
+		if t, err := time.Parse(time.RFC3339, r.At); err == nil {
+			claim.At = t.UnixMilli()
+		}
+		if w.PR, err = land.RecordPRHead(ctx, rdb, claim, r.Now); err != nil {
+			return w, err
+		}
+		extra = []string{r.PR}
+	}
+	why := "gh " + w.Word + " run " + r.RunID
+	if w.Fail != "" {
+		why += " " + w.Fail
+	}
+	if w.Folded, err = land.FoldCI(ctx, rdb, r.Repo, r.SHA, w.Word, why, extra, r.Now); err != nil {
+		return w, err
 	}
 	return w, nil
 }

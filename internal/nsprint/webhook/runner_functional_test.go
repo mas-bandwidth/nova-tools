@@ -98,15 +98,18 @@ func TestRunnerReceiptWritesWhatTheReceiverWould(t *testing.T) {
 		t.Fatalf("after the consumer: %+v", after)
 	}
 
-	// No other key: the PR record is the lander's (its stream, its head and
-	// its ci_request go through land_stream.lua's record op), never the
-	// runner's, and an older run's receipt at the same head is KEPT.
-	if n, _ := c.Exists(ctx, "pr:nova-tools:4350").Result(); n != 0 {
-		t.Fatal("the runner wrote a PR record")
+	// A pull_request run's receipt is a claim of the PR's head (card
+	// pr-record-follows-github): the PR record at the run's head, indexed,
+	// with the green word folded on; no other key. An older run's receipt at
+	// the same head is KEPT, on the leg and on the record.
+	pr := c.HGetAll(ctx, "pr:nova-tools:4350").Val()
+	if pr["head"] != r.SHA || pr["ci"] != "green" || pr["gh_src"] != "runner" || pr["gh_run_id"] != r.RunID || pr["stream"] != "-" ||
+		w.PR.Outcome != "created" || strings.Join(w.Folded, ",") != "4350" {
+		t.Fatalf("the PR record after the receipt: %v %+v", pr, w)
 	}
 	keys, _ := c.Keys(ctx, "*").Result()
-	if len(keys) != 2 {
-		t.Fatalf("keys after a receipt: %v, want the record and the stream only", keys)
+	if len(keys) != 4 {
+		t.Fatalf("keys after a receipt: %v, want the leg, the stream, the PR record and its head index", keys)
 	}
 	older := goodReceipt()
 	older.RunID, older.Conclusion, older.Jobs = "36300000000", "failure", []webhook.Job{{Name: "lint", Result: "failure"}}
@@ -114,7 +117,7 @@ func TestRunnerReceiptWritesWhatTheReceiverWould(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w2.Applied != 0 || w2.Word != webhook.Green {
+	if w2.Applied != 0 || w2.Word != webhook.Green || w2.PR.Outcome != "kept" {
 		t.Fatalf("an older run's receipt was applied over the newer: %+v", w2)
 	}
 }
