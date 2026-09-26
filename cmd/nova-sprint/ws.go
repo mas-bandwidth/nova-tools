@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -483,10 +484,19 @@ func runStream(ctx context.Context, args []string, out, errOut io.Writer) int {
 	return refuse(errOut, "stream", "unknown subverb "+sub+"; want ls, order, rename, open, rebase, pr, status or close")
 }
 
+// runStreamLs prints each stream's rank and counts; --tree adds every plan
+// of the stream under it (nova-tools#4317), collapsed: one line per parent
+// with its derived state and its children's counts folded in; --expand
+// lists each child and the stitch under the parent.
 func runStreamLs(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("stream ls", out, errOut)
-	if _, code, ok := w.parse(args, 0, "stream ls --redis <addr>"); !ok {
+	tree := w.fs.Bool("tree", false, "")
+	expand := w.fs.Bool("expand", false, "")
+	if _, code, ok := w.parse(args, 0, "stream ls --redis <addr> [--tree [--expand]]"); !ok {
 		return code
+	}
+	if *expand && !*tree {
+		return refuse(errOut, w.name, "--expand goes with --tree")
 	}
 	st, code, ok := w.open(ctx)
 	if !ok {
@@ -494,14 +504,44 @@ func runStreamLs(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	defer st.Close()
 	rows, err := ws.Counts(ctx, st.Client())
-	if err != nil {
-		return w.done(err, "")
+	plans := map[string][]taskcard.Plan{}
+	n := 0
+	if err == nil && *tree {
+		names := make([]string, len(rows))
+		for i, r := range rows {
+			names[i] = r.Stream
+		}
+		var ps []taskcard.Plan
+		if ps, err = taskcard.Plans(ctx, st.Client(), names); err == nil {
+			for _, p := range ps {
+				plans[p.Stream] = append(plans[p.Stream], p)
+				n++
+			}
+		}
 	}
 	// paths: the count of the stream record's paths (ws:paths, #4322)
-	paths, err := ws.ReadStreamPaths(ctx, st.Client())
+	var paths ws.StreamPaths
+	if err == nil {
+		paths, err = ws.ReadStreamPaths(ctx, st.Client())
+	}
 	for _, r := range rows {
 		fmt.Fprintf(out, "%d %s waiting=%d ready=%d working=%d merging=%d landed=%d parked=%d paths=%d\n",
 			r.Rank, strconv.Quote(r.Stream), r.Waiting, r.Ready, r.Working, r.Merging, r.Landed, r.Parked, len(paths[r.Stream]))
+		for _, p := range plans[r.Stream] {
+			fmt.Fprintf(out, "  %s\n", p.Line())
+			if !*expand {
+				continue
+			}
+			for _, c := range p.Children {
+				fmt.Fprintf(out, "    child %s %s pr=%s score=%s\n", c.ID, orDash(c.Where), orDash(c.PRRef()), orDash(c.Score))
+			}
+			if p.Stitch.ID != "" {
+				fmt.Fprintf(out, "    stitch %s %s pr=%s\n", p.Stitch.ID, orDash(p.Stitch.Where), orDash(p.Stitch.PRRef()))
+			}
+		}
+	}
+	if *tree {
+		return w.done(err, fmt.Sprintf("STREAMS n=%d plans=%d", len(rows), n))
 	}
 	return w.done(err, fmt.Sprintf("STREAMS n=%d", len(rows)))
 }
