@@ -1,0 +1,10 @@
+{
+  "total_count": 5,
+  "jobs": [
+    {"id": 9001, "run_id": 777, "run_attempt": 1, "head_sha": "0123456789abcdef0123456789abcdef01234567", "name": "lint", "status": "completed", "conclusion": "success", "started_at": "2026-09-26T20:00:00Z", "completed_at": "2026-09-26T20:00:15Z", "steps": [{"name": "gofmt", "conclusion": "success", "started_at": "2026-09-26T20:00:01Z", "completed_at": "2026-09-26T20:00:14Z"}]},
+    {"id": 9002, "run_id": 777, "run_attempt": 1, "head_sha": "0123456789abcdef0123456789abcdef01234567", "name": "test (hulk)", "status": "completed", "conclusion": "failure", "started_at": "2026-09-26T20:00:00Z", "completed_at": "2026-09-26T20:00:42Z", "steps": [{"name": "make test", "conclusion": "failure", "started_at": "2026-09-26T20:00:05Z", "completed_at": "2026-09-26T20:00:41Z"}]},
+    {"id": 9003, "run_id": 777, "run_attempt": 2, "head_sha": "0123456789abcdef0123456789abcdef01234567", "name": "e2e", "status": "completed", "conclusion": "success", "started_at": "2026-09-26T20:05:00Z", "completed_at": "2026-09-26T20:05:33Z", "steps": []},
+    {"id": 9004, "run_id": 777, "run_attempt": 1, "head_sha": "0123456789abcdef0123456789abcdef01234567", "name": "lisp", "status": "completed", "conclusion": "skipped", "started_at": "2026-09-26T20:00:00Z", "completed_at": "2026-09-26T20:00:00Z", "steps": []},
+    {"id": 9005, "run_id": 777, "run_attempt": 1, "head_sha": "0123456789abcdef0123456789abcdef01234567", "name": "test-hosted", "status": "completed", "conclusion": "success", "started_at": "2026-09-26T20:00:00Z", "completed_at": "2026-09-26T20:01:00Z", "steps": []}
+  ]
+}

@@ -34,9 +34,11 @@ type FailedStep struct {
 type FailedJob struct {
 	ID         int64
 	Name       string
-	Conclusion string // success, failure, cancelled, timed_out, skipped, ...
-	Attempt    int    // the forge's run_attempt for this job; 1 is the first, 0 is absent
-	HeadSHA    string // the forge's head_sha for the run this job ran in
+	Conclusion string    // success, failure, cancelled, timed_out, skipped, ...
+	Attempt    int       // the forge's run_attempt for this job; 1 is the first, 0 is absent
+	HeadSHA    string    // the forge's head_sha for the run this job ran in
+	Started    time.Time // the forge's started_at; zero when it gave none
+	Completed  time.Time // the forge's completed_at; zero while the job runs, so the seconds are unknown
 	Steps      []FailedStep
 }
 
@@ -319,46 +321,65 @@ func (g *GHFailForge) Jobs(runID int64) ([]FailedJob, error) {
 		if err != nil {
 			return nil, fmt.Errorf("could not list the jobs of run %d: %w", runID, err)
 		}
-		var body struct {
-			Total int `json:"total_count"`
-			Jobs  []struct {
-				ID         int64  `json:"id"`
-				Name       string `json:"name"`
-				Conclusion string `json:"conclusion"`
-				Attempt    int    `json:"run_attempt"`
-				HeadSHA    string `json:"head_sha"`
-				Steps      []struct {
-					Name        string `json:"name"`
-					Conclusion  string `json:"conclusion"`
-					StartedAt   string `json:"started_at"`
-					CompletedAt string `json:"completed_at"`
-				} `json:"steps"`
-			} `json:"jobs"`
-		}
-		if err := json.Unmarshal([]byte(out), &body); err != nil {
+		total, pageJobs, err := ParseJobsPage([]byte(out))
+		if err != nil {
 			return nil, fmt.Errorf("gh did not answer JSON this tool can read for the job list: %w", err)
 		}
-		if len(body.Jobs) == 0 {
+		if len(pageJobs) == 0 {
 			break
 		}
-		for _, j := range body.Jobs {
-			job := FailedJob{ID: j.ID, Name: j.Name, Conclusion: j.Conclusion, Attempt: j.Attempt, HeadSHA: strings.TrimSpace(j.HeadSHA)}
-			for _, s := range j.Steps {
-				job.Steps = append(job.Steps, FailedStep{
-					Name:       s.Name,
-					Conclusion: s.Conclusion,
-					Started:    parseForgeTime(s.StartedAt),
-					Completed:  parseForgeTime(s.CompletedAt),
-				})
-			}
-			jobs = append(jobs, job)
-		}
-		if len(jobs) >= body.Total {
+		jobs = append(jobs, pageJobs...)
+		if len(jobs) >= total {
 			break
 		}
 	}
 	sort.SliceStable(jobs, func(i, j int) bool { return jobs[i].ID < jobs[j].ID })
 	return jobs, nil
+}
+
+// ParseJobsPage reads one page of the forge's job listing for a run (the body
+// of `repos/<owner>/<name>/actions/runs/<id>/jobs`): the forge's own
+// total_count and the jobs of the page, each with its name, conclusion,
+// run_attempt, head_sha, started_at, completed_at and steps. It is the one
+// reader of that shape: the failed verb pages through it here, and the COST
+// line (cost.go) is computed from the same jobs, so the two never disagree
+// about what a job is. Everything it returns is DATA from a host.
+func ParseJobsPage(raw []byte) (total int, jobs []FailedJob, err error) {
+	var body struct {
+		Total int `json:"total_count"`
+		Jobs  []struct {
+			ID          int64  `json:"id"`
+			Name        string `json:"name"`
+			Conclusion  string `json:"conclusion"`
+			Attempt     int    `json:"run_attempt"`
+			HeadSHA     string `json:"head_sha"`
+			StartedAt   string `json:"started_at"`
+			CompletedAt string `json:"completed_at"`
+			Steps       []struct {
+				Name        string `json:"name"`
+				Conclusion  string `json:"conclusion"`
+				StartedAt   string `json:"started_at"`
+				CompletedAt string `json:"completed_at"`
+			} `json:"steps"`
+		} `json:"jobs"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return 0, nil, err
+	}
+	for _, j := range body.Jobs {
+		job := FailedJob{ID: j.ID, Name: j.Name, Conclusion: j.Conclusion, Attempt: j.Attempt, HeadSHA: strings.TrimSpace(j.HeadSHA),
+			Started: parseForgeTime(j.StartedAt), Completed: parseForgeTime(j.CompletedAt)}
+		for _, s := range j.Steps {
+			job.Steps = append(job.Steps, FailedStep{
+				Name:       s.Name,
+				Conclusion: s.Conclusion,
+				Started:    parseForgeTime(s.StartedAt),
+				Completed:  parseForgeTime(s.CompletedAt),
+			})
+		}
+		jobs = append(jobs, job)
+	}
+	return body.Total, jobs, nil
 }
 
 // JobLog fetches one job's whole log. gh refuses to hand over a log holding terminal
