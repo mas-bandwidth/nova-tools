@@ -593,10 +593,9 @@ func (s *SprintSnapshot) renderStreams(b *strings.Builder, now time.Time) {
 	}
 	fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %6d | %7d | %7s | %6d\n", "total", tot.Waiting, tot.Ready, tot.Working, tot.Review,
 		tot.Reading, merging, tot.Landed)
-	// No LAND line (#4088): stream status carries the landings.
-	for _, r := range s.Reviews {
-		b.WriteString(r.Line())
-		b.WriteByte('\n')
-	}
+	// No LAND line (#4088), and no REVIEW line (Glenn 2026-09-26 8:03 AM ET,
+	// "Please remove this line"): the review column carries the count; a
+	// card past cfg:review max_age is an event to the coordinator, not a
+	// table row (s.Reviews stays for that path).
 	b.WriteByte('\n')
 }

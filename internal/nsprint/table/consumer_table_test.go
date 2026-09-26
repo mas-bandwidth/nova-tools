@@ -195,7 +195,7 @@ func TestStreamTableReviewColumn(t *testing.T) {
 		"swarm: cards                   |       0 |     0 |       1 |      2 |       0 |     0/0 |      1\n" +
 		"-------------------------------+---------+-------+---------+--------+---------+---------+-------\n" +
 		"total                          |       0 |     0 |       1 |      2 |       0 |     0/0 |      1\n" +
-		"REVIEW stream=\"swarm: cards\" over=1 oldest=r-old age=2h00m max=1h00m\n\n"
+		"\n"
 	if !strings.Contains(got, want) {
 		t.Fatalf("stream table:\n%s\nwant:\n%s", got, want)
 	}

@@ -83,7 +83,7 @@ func TestStreamsTableFromRecords(t *testing.T) {
 		"only ready                     |       0 |     9 |       0 |      0 |       0 |       0 |      0\n" +
 		"fleet, ci, secrets, jev        |       0 |     0 |       0 |      0 |       1 |       0 |      0\n" + rule +
 		"total                          |      60 |    21 |      10 |      2 |       5 |       2 |      6\n" +
-		"REVIEW stream=\"swarm: cards\" over=2 oldest=c1-review-0 age=- max=1h00m\n\n"
+		"\n"
 	if !strings.HasPrefix(out, want) {
 		t.Fatalf("streams block:\n%s\nwant prefix:\n%s", out, want)
 	}
