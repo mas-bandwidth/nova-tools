@@ -105,6 +105,13 @@ func orderGate(ctx context.Context, c redis.Cmdable, streams []string, orders []
 	}
 	held := map[string]string{} // task -> skip why
 	var holds []OrderHold
+	type pending struct {
+		stream        string
+		so            ws.StreamOrder
+		prefix, after []string
+		before        string
+	}
+	var pend []pending
 	for i, so := range orders {
 		s := streams[i]
 		if len(sel[s]) == 0 {
@@ -125,30 +132,58 @@ func orderGate(ctx context.Context, c redis.Cmdable, streams []string, orders []
 			holds = append(holds, h)
 			continue
 		}
+		// the prefix: the selected members before the first unselected
+		// live card (before); every selected member after it is held
+		var prefix, after []string
 		before := ""
-		var h OrderHold
 		for _, o := range so.Order {
 			switch {
 			case o.Sentinel:
+			case sel[s][o.ID] && before == "":
+				prefix = append(prefix, o.ID)
 			case sel[s][o.ID]:
-				if before != "" {
-					h.Held = append(h.Held, o.ID)
-				}
+				after = append(after, o.ID)
 			case before == "":
 				before = o.ID
 			}
 		}
-		if len(h.Held) == 0 {
-			continue
-		}
-		h.Kind, h.Stream, h.Before, h.Where = OrderWait, s, before, so.Where[before]
-		if w := skipWhy[before]; w != "" {
-			h.Where += ":" + w
-		}
-		holds = append(holds, h)
+		pend = append(pend, pending{stream: s, so: so, prefix: prefix, after: after, before: before})
 	}
-	if err := neverFinishes(ctx, c, holds); err != nil {
+	// never-finishes, walked from every prefix member and every blocker at
+	// once: a member whose own DEPENDS-ON can no longer be met is held with
+	// everything after it, as a predecessor that cannot finish is
+	var starts []string
+	for _, p := range pend {
+		starts = append(starts, p.prefix...)
+		if p.before != "" && len(p.after) > 0 {
+			starts = append(starts, p.before)
+		}
+	}
+	nf, err := NeverFinishesAll(starts, readDepRecs(ctx, c))
+	if err != nil {
 		return nil, nil, nil, err
+	}
+	for _, p := range pend {
+		h := OrderHold{Stream: p.stream}
+		for k, id := range p.prefix {
+			if nf[id] != "" {
+				h.Kind, h.Why, h.Before, h.Where, h.Dep, h.DepWhere = OrderConflict, "never-finishes", id, p.so.Where[id], nf[id], "done/fail"
+				h.Held = append(append([]string(nil), p.prefix[k:]...), p.after...)
+				break
+			}
+		}
+		if h.Kind == "" && len(p.after) > 0 {
+			h.Kind, h.Before, h.Where, h.Held = OrderWait, p.before, p.so.Where[p.before], p.after
+			if w := skipWhy[p.before]; w != "" {
+				h.Where += ":" + w
+			}
+			if nf[p.before] != "" {
+				h.Kind, h.Why, h.Dep, h.DepWhere = OrderConflict, "never-finishes", nf[p.before], "done/fail"
+			}
+		}
+		if h.Kind != "" {
+			holds = append(holds, h)
+		}
 	}
 	for _, h := range holds {
 		why := "order-wait:" + h.Before
@@ -259,32 +294,8 @@ func (r DepRec) satisfied() bool {
 // level of the walk (one pipelined round trip each); a satisfied record's
 // own edges are not walked.
 func NeverFinishes(start string, read func(ids []string) (map[string]DepRec, error)) (string, error) {
-	seen := map[string]bool{start: true}
-	level := []string{start}
-	for len(level) > 0 {
-		recs, err := read(level)
-		if err != nil {
-			return "", err
-		}
-		var next []string
-		for _, id := range level {
-			r := recs[id]
-			if r.Retired() {
-				return id, nil
-			}
-			if r.satisfied() {
-				continue
-			}
-			for _, d := range r.Deps {
-				if !seen[d] {
-					seen[d] = true
-					next = append(next, d)
-				}
-			}
-		}
-		level = next
-	}
-	return "", nil
+	out, err := NeverFinishesAll([]string{start}, read)
+	return out[start], err
 }
 
 // readDepRecs is NeverFinishes' read on the store: one pipeline per level.
@@ -325,24 +336,75 @@ func readDepRecs(ctx context.Context, c redis.Cmdable) func([]string) (map[strin
 	}
 }
 
-// neverFinishes turns a WAIT whose predecessor can never finish into a
-// CONFLICT (NeverFinishes on the store).
-func neverFinishes(ctx context.Context, c redis.Cmdable, holds []OrderHold) error {
-	read := readDepRecs(ctx, c)
-	for i := range holds {
-		h := &holds[i]
-		if h.Kind != OrderWait {
+// NeverFinishesAll is NeverFinishes for many starts at once, one read per
+// level of the joint walk (each record read once): start -> the retired
+// record it reaches ("" when none).
+func NeverFinishesAll(starts []string, read func(ids []string) (map[string]DepRec, error)) (map[string]string, error) {
+	out := map[string]string{}
+	cache := map[string]DepRec{}
+	type walk struct {
+		start string
+		seen  map[string]bool
+		level []string
+	}
+	var ws []*walk
+	for _, st := range starts {
+		if _, dup := out[st]; dup {
 			continue
 		}
-		dep, err := NeverFinishes(h.Before, read)
-		if err != nil {
-			return err
+		out[st] = ""
+		ws = append(ws, &walk{start: st, seen: map[string]bool{st: true}, level: []string{st}})
+	}
+	for {
+		var need []string
+		asked := map[string]bool{}
+		for _, w := range ws {
+			for _, id := range w.level {
+				if _, ok := cache[id]; !ok && !asked[id] {
+					asked[id] = true
+					need = append(need, id)
+				}
+			}
 		}
-		if dep != "" {
-			h.Kind, h.Why, h.Dep, h.DepWhere = OrderConflict, "never-finishes", dep, "done/fail"
+		if len(need) > 0 {
+			recs, err := read(need)
+			if err != nil {
+				return nil, err
+			}
+			for _, id := range need {
+				cache[id] = recs[id]
+			}
+		}
+		live := ws[:0]
+		for _, w := range ws {
+			var next []string
+			done := false
+			for _, id := range w.level {
+				r := cache[id]
+				if r.Retired() {
+					out[w.start], done = id, true
+					break
+				}
+				if r.satisfied() {
+					continue
+				}
+				for _, d := range r.Deps {
+					if !w.seen[d] {
+						w.seen[d] = true
+						next = append(next, d)
+					}
+				}
+			}
+			if !done && len(next) > 0 {
+				w.level = next
+				live = append(live, w)
+			}
+		}
+		ws = live
+		if len(ws) == 0 {
+			return out, nil
 		}
 	}
-	return nil
 }
 
 // orderRefusal is the gate's refusal at land merge: the landing is no
@@ -356,3 +418,55 @@ func orderRefusal(h OrderHold) *Refusal {
 	}
 	return &Refusal{Why: h.Line(), Remedy: "finish " + h.Before + " first (it is ahead in the work order), then land stream again"}
 }
+
+// StreamLandGate is `card land --stream` and `task card land --stream`'s
+// check before ns_tcard_land_stream moves anyone: the stream's merging
+// members (the tasks the call would land) must be a prefix of the stream's
+// whole live order, none of them unable to finish (orderGate). The first
+// hold, or nil. Nothing is written.
+func StreamLandGate(ctx context.Context, c redis.Cmdable, stream string) (*OrderHold, error) {
+	ids, err := c.ZRange(ctx, WSKey(stream, "merging"), 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+	var members []Member
+	for _, id := range ids {
+		if !strings.HasPrefix(id, "s:") { // the call lands tasks; a card keeps its own door
+			members = append(members, Member{Task: id, Stream: stream})
+		}
+	}
+	if len(members) == 0 {
+		return nil, nil
+	}
+	_, _, holds, err := OrderGate(ctx, c, []string{stream}, members, nil)
+	if err != nil || len(holds) == 0 {
+		return nil, err
+	}
+	return &holds[0], nil
+}
+
+// MemberHeadGate is `land pr <n>`'s check immediately before its merge: a
+// PR whose record makes it a stream MEMBER (a stream and a task, kind not
+// stream) merges only when its task is the head of the stream's current
+// live order and can finish; the stream PR itself (kind=stream) and a PR
+// with no stream pass as before. The hold (ORDER WAIT before=<head>, or
+// ORDER CONFLICT), or nil.
+func MemberHeadGate(ctx context.Context, c redis.Cmdable, repo string, n int) (*OrderHold, error) {
+	recs, err := LoadPRs(ctx, c, repo, []int{n})
+	if err != nil || len(recs) == 0 {
+		return nil, err
+	}
+	r := recs[0]
+	if !r.Exists || r.Kind == "stream" || r.Stream == "" || r.Task == "" {
+		return nil, nil
+	}
+	_, _, holds, err := OrderGate(ctx, c, []string{r.Stream}, []Member{{Task: r.Task, Stream: r.Stream, N: n}}, nil)
+	if err != nil || len(holds) == 0 {
+		return nil, err
+	}
+	return &holds[0], nil
+}
+
+// OrderRefusal is the gate's refusal for a hold (land merge, land pr, card
+// land --stream): the line as the reason, the remedy by its kind.
+func OrderRefusal(h OrderHold) *Refusal { return orderRefusal(h) }

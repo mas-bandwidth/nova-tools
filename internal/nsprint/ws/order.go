@@ -10,9 +10,9 @@ import (
 
 // The stream's work order (nova-tools #4322, #4324; card land-order-1). A
 // stream's order is the topological order of its cards' DEPENDS-ON edges,
-// ties broken by PATHS overlap (two cards sharing a path are ordered by issue
-// number, the lower first) and then by issue number (a card with no issue
-// number after every numbered one, by id), with the stream's sentinel last.
+// ties broken by PATHS overlap (two cards sharing a path are ordered by
+// Position, the earlier first) and then by Position (issue number, a card
+// with no issue placed by its created_at), with the stream's sentinel last.
 // Order is the one pure function: `ws reorder` and every push onto a stream
 // write it as the scores of the waiting, ready and merging sets
 // (reorder.go), `ws show --order` prints it with one reason per edge, and
@@ -23,7 +23,7 @@ import (
 const (
 	WhyDependsOn = "depends-on" // the card's DEPENDS-ON names the card before it
 	WhyPaths     = "paths"      // the two share a path; the lower issue goes first
-	WhyIssue     = "issue"      // no edge: the tie-break (issue number, then id)
+	WhyIssue     = "issue"      // no edge: the tie-break (Position: issue number, created_at for a card with none)
 	WhySentinel  = "sentinel"   // the stream's stop, after every other card
 )
 
@@ -34,6 +34,7 @@ type OrderCard struct {
 	Paths    []string // its PATHS entries
 	Deps     []string // the ids its DEPENDS-ON names; an id that is not a card of the input is not an edge here
 	Sentinel bool     // the stream's stop: always last
+	Created  float64  // its created_at (ms): the position of a card with no issue number
 }
 
 // Ordered is a card in the order and its 1-based rank.
@@ -68,15 +69,46 @@ func (e *CycleError) Error() string {
 	return "DEPENDS-ON cycle " + strings.Join(e.Cycle, " -> ")
 }
 
-// less is the tie-break: issue number (none last), then id.
-func (c OrderCard) less(o OrderCard) bool {
-	switch {
-	case c.Issue != o.Issue && c.Issue != 0 && o.Issue != 0:
-		return c.Issue < o.Issue
-	case (c.Issue == 0) != (o.Issue == 0):
-		return c.Issue != 0
+// Position is the tie-break, and every card has one (never "last" for want
+// of an issue): the numbered cards in issue order (then id) and the cards
+// with no issue in created_at order (then id) are merged into one sequence,
+// taking at each step the head with the older created_at (a tie goes to the
+// numbered card). The sentinels follow, by id. With no created_at anywhere
+// it is issue order, then the cards with no issue by id.
+func Position(cards []OrderCard) []OrderCard {
+	var num, none, stops []OrderCard
+	for _, c := range cards {
+		switch {
+		case c.Sentinel:
+			stops = append(stops, c)
+		case c.Issue != 0:
+			num = append(num, c)
+		default:
+			none = append(none, c)
+		}
 	}
-	return c.ID < o.ID
+	sort.SliceStable(num, func(a, b int) bool {
+		if num[a].Issue != num[b].Issue {
+			return num[a].Issue < num[b].Issue
+		}
+		return num[a].ID < num[b].ID
+	})
+	sort.SliceStable(none, func(a, b int) bool {
+		if none[a].Created != none[b].Created {
+			return none[a].Created < none[b].Created
+		}
+		return none[a].ID < none[b].ID
+	})
+	sort.SliceStable(stops, func(a, b int) bool { return stops[a].ID < stops[b].ID })
+	out := make([]OrderCard, 0, len(cards))
+	for len(num) > 0 || len(none) > 0 {
+		if len(none) == 0 || (len(num) > 0 && num[0].Created <= none[0].Created) {
+			out, num = append(out, num[0]), num[1:]
+		} else {
+			out, none = append(out, none[0]), none[1:]
+		}
+	}
+	return append(out, stops...)
 }
 
 // Topo is the order's core, and card cut --from's: Kahn's algorithm over n
@@ -135,8 +167,7 @@ func Topo(n int, before func(i int) []int, less func(a, b int) bool) (order, stu
 // depends-on and paths edge into a card, an issue edge to the card before it
 // when no edge explains that adjacency, and the sentinel's one reason.
 func Order(cards []OrderCard) ([]Ordered, []Reason, error) {
-	cs := append([]OrderCard(nil), cards...)
-	sort.SliceStable(cs, func(a, b int) bool { return cs[a].less(cs[b]) })
+	cs := Position(cards)
 	idx := make(map[string]int, len(cs))
 	var body []int // the non-sentinel cards, in tie-break order
 	var stops []int

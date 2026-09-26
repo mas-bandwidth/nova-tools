@@ -484,3 +484,43 @@ func TestRenameRefusedOnTheThirdTaskMovesNothing(t *testing.T) {
 	t.Logf("tasks in move order %v, third %s drifted; %s; store unchanged; wall %s", tasks, third[1],
 		strings.TrimSpace(out+errOut), time.Since(start).Round(time.Millisecond))
 }
+
+// TestCardLandStreamRunsTheOrderGate is the work order at `card land
+// --stream` and `task land --stream` (ns_tcard_land_stream moves every
+// merging member to landed): with t1 working ahead of t2 in merging, both
+// doors refuse ORDER WAIT before=t1 and move nobody; once t1 has landed,
+// card land --stream lands t2.
+func TestCardLandStreamRunsTheOrderGate(t *testing.T) {
+	t.Parallel()
+	start := time.Now()
+	addr, c := wstest.Start(t)
+	ctx := context.Background()
+	const s = "gate: doors"
+	c.SAdd(ctx, "ws:names", s)
+	c.ZAdd(ctx, ws.Key(s, "working"), redis.Z{Score: 100, Member: "t1"})
+	c.HSet(ctx, "task:t1", "stream", s, "where", "working", "state", "working", "created_at", "100", "ref", "nova-tools#1")
+	c.ZAdd(ctx, ws.Key(s, "merging"), redis.Z{Score: 200, Member: "t2"})
+	c.HSet(ctx, "task:t2", "stream", s, "where", "merging", "state", "merging", "created_at", "200", "ref", "nova-tools#2")
+	want := `ORDER WAIT stream=\"gate: doors\" before=t1 where=working held=t2`
+	sha := strings.Repeat("c", 40)
+	before := storeSnapshot(t, c)
+	for _, args := range [][]string{{"card", "land", "--redis", addr, "--stream", s, "--sha", sha, "--actor", "rowan"},
+		{"task", "land", "--redis", addr, "--stream", s, "--sha", sha, "--actor", "rowan"}} {
+		code, out, errOut := runSprint(args...)
+		if code == 0 || !strings.Contains(out+errOut, strings.ReplaceAll(want, `\"`, `"`)) {
+			t.Fatalf("%s %s --stream with t1 ahead: %d %q %q", args[0], args[1], code, out, errOut)
+		}
+		t.Logf("%s %s: exit %d, %s", args[0], args[1], code, strings.TrimSpace(out+errOut))
+	}
+	if after := storeSnapshot(t, c); after != before {
+		t.Fatalf("a refused land moved:\n%s---\n%s", before, after)
+	}
+	if _, err := taskcard.Land(ctx, c, "t1", "rowan", sha, ""); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runSprint("card", "land", "--redis", addr, "--stream", s, "--sha", sha, "--actor", "rowan")
+	if code != 0 || !strings.Contains(out, "LANDED t2 ") {
+		t.Fatalf("card land --stream once t1 landed: %d %q %q", code, out, errOut)
+	}
+	t.Logf("t1 landed, then: %s; wall %s", strings.ReplaceAll(strings.TrimSpace(out), "\n", " | "), time.Since(start).Round(time.Millisecond))
+}

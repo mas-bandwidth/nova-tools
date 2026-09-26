@@ -42,6 +42,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/brief"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/launch"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
@@ -380,6 +381,13 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		fmt.Fprintf(out, "CARD BEAT as=%s n=%d lease_until=%d ms=%d\n", as, len(ids), until, ms())
 		return 0
 	case "land":
+		// the work order first: nobody moves unless the merging members are
+		// the head of the stream's live order (stream.StreamLandGate)
+		if h, err := stream.StreamLandGate(ctx, c, *m.stream); err != nil {
+			return refuse(errOut, "card land", err.Error())
+		} else if h != nil {
+			return refuse(errOut, "card land", stream.OrderRefusal(*h).Error())
+		}
 		l, err := taskcard.LandStream(ctx, c, *m.stream, *m.sha, *m.actor, *m.why)
 		if err != nil {
 			return refuse(errOut, "card land", err.Error())

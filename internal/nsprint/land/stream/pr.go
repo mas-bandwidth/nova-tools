@@ -237,6 +237,13 @@ func LandPR(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions)
 		return rep, nil
 	}
 
+	// A stream member merges only as the head of its stream's live order
+	// (MemberHeadGate), checked immediately before the merge.
+	if h, err := MemberHeadGate(ctx, rdb, o.Repo, o.N); err != nil {
+		return rep, err
+	} else if h != nil {
+		return rep, orderRefusal(*h)
+	}
 	// Green at the head: the one merge, at exactly that sha.
 	title := fmt.Sprintf("Merge pull request #%d", o.N)
 	if pr.Title != "" {

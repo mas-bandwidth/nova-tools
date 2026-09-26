@@ -78,7 +78,7 @@ func orderCards(stream string, live []string, recs map[string]orderRec) []OrderC
 	cards := make([]OrderCard, 0, len(live))
 	for _, id := range live {
 		r := recs[id]
-		c := OrderCard{ID: id, Issue: IssueOf(r.ref, r.origin), Paths: SplitPaths(r.paths), Sentinel: id == sid}
+		c := OrderCard{ID: id, Issue: IssueOf(r.ref, r.origin), Paths: SplitPaths(r.paths), Sentinel: id == sid, Created: r.created}
 		for _, raw := range SplitDeps(r.deps) {
 			d := DepID(raw)
 			if d == "" {

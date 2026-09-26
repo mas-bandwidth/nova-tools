@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
@@ -401,6 +402,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		}
 		// the stream lander's step: every merging member, one call; the
 		// lines name what the lander closes with the CLOSE line
+		// the work order first: nobody moves unless the merging members are
+		// the head of the stream's live order (stream.StreamLandGate)
+		if h, err := stream.StreamLandGate(ctx, cl, *c.stream); err != nil {
+			return refuse(errOut, c.verb, err.Error())
+		} else if h != nil {
+			return refuse(errOut, c.verb, stream.OrderRefusal(*h).Error())
+		}
 		r, err := taskcard.LandStream(ctx, cl, *c.stream, *c.sha, *c.actor, *c.why)
 		if err != nil {
 			return refuse(errOut, c.verb, err.Error())

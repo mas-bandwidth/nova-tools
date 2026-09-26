@@ -84,6 +84,18 @@ func TestOrderGateWaitConflictAndMergeRevalidates(t *testing.T) {
 		}
 		t.Logf("a merging predecessor left out holds the rest: %s", rep.Order[0].Line())
 	})
+	t.Run("member-never-finishes", func(t *testing.T) {
+		t.Parallel()
+		c := setup(t, "merging")
+		c.HSet(ctx, "task:t2", "blocked_on", "x") // the selected member's own edge
+		c.HSet(ctx, "task:x", "where", "done", "where_ok", "fail", "state", "cancelled", "stream", "other")
+		rep := dry(t, c)
+		want := "ORDER CONFLICT stream=" + q + " why=never-finishes before=t2 where=merging dep=x dep_where=done/fail held=t2 escalate=coordinator"
+		if len(rep.Members) != 1 || rep.Members[0].Task != "t1" || len(rep.Order) != 1 || rep.Order[0].Line() != want {
+			t.Fatalf("members %v order %v", rep.Members, rep.Order)
+		}
+		t.Logf("t1 kept; %s", rep.Order[0].Line())
+	})
 	t.Run("done-dep-waits", func(t *testing.T) {
 		t.Parallel()
 		c := setup(t, "waiting")
