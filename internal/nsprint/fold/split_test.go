@@ -104,7 +104,7 @@ func TestControl55Unknown(t *testing.T) {
 
 		// The verb exits 1 on unknown outcomes (2 stays refusal).
 		var stdout, stderr bytes.Buffer
-		code := fold.Main(ctx, []string{fx.Sprint, "--store", mr.Addr(), "--work", work}, &stdout, &stderr)
+		code := fold.Main(ctx, []string{"--sprint", fx.Sprint, "--redis", mr.Addr(), "--work", work}, &stdout, &stderr)
 		if code != 1 || !strings.Contains(stdout.String(), "unknown 1") || !strings.Contains(stderr.String(), "unknown 1") {
 			t.Fatalf("Main on unknown outcomes: exit %d\nstdout %s\nstderr %s", code, stdout.String(), stderr.String())
 		}

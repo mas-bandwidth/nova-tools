@@ -12,12 +12,13 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 )
 
 // VerbSummary is the verb's line on nova-sprint help.
-const VerbSummary = "fold <S> --store <host:port> --work <nova-work checkout> [--path <rel>] [--as <actor>] [--calib <set.jsonl> --prompt-sha <sha> --jev-eval <cmd> [--candidate <sha>]] [--tools <dir of nova-* binaries at dev> --repo <nova-tools clone at dev> --receipts <dogfood receipts dir>]: landed, done, useful, $ per useful and per landed per route, Jev calibration per work type, one nova-work commit, then verbs unused and its check"
+const VerbSummary = "fold --sprint <S> --redis <host:port> --work <nova-work checkout> [--path <rel>] [--as <actor>] [--calib <set.jsonl> --prompt-sha <sha> --jev-eval <cmd> [--candidate <sha>]] [--tools <dir of nova-* binaries at dev> --repo <nova-tools clone at dev> --receipts <dogfood receipts dir>]: landed, done, useful, $ per useful and per landed per route, Jev calibration per work type, one nova-work commit, then verbs unused and its check"
 
-// Main is `nova-sprint fold <S> --store <host:port> --work <dir>`. Exit 0 the
+// Main is `nova-sprint fold --sprint <S> --redis <host:port> --work <dir>`. Exit 0 the
 // sprint is folded (now or before), 1 an outcome is unknown (a card with no end
 // record or a PR with no state; nothing committed), 2 refused or could not run,
 // 3 folded but the --candidate Jev prompt was refused (the current prompt stays),
@@ -25,34 +26,32 @@ const VerbSummary = "fold <S> --store <host:port> --work <nova-work checkout> [-
 // run (flags missing, or verbs unused refused or fenced). When more than one
 // applies every line prints and the exit is 3, else 5, else 4 (#3160).
 func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	var sprint string
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		sprint, args = args[0], args[1:]
-	}
 	fs := verbflag.New("fold")
-	addr := fs.String("store", "", "")
-	work := fs.String("work", "", "")
-	path := fs.String("path", "", "")
-	actor := fs.String("as", "nova-sprint", "")
-	calibPath := fs.String("calib", "", "")
-	promptSHA := fs.String("prompt-sha", "", "")
-	candidate := fs.String("candidate", "", "")
-	jevEval := fs.String("jev-eval", "", "")
-	tools := fs.String("tools", "", "")
-	repo := fs.String("repo", "", "")
-	receipts := fs.String("receipts", "", "")
+	sprintFlag := fs.String("sprint", "", verbflag.HelpSprint)
+	addr := fs.String("redis", seatcred.Addr(), verbflag.HelpRedis)
+	work := fs.String("work", "", "the nova-work checkout the fold commits into")
+	path := fs.String("path", "", "the path inside the nova-work checkout the fold writes under")
+	actor := fs.String("as", "nova-sprint", verbflag.HelpAs)
+	calibPath := fs.String("calib", "", "the Jev calibration set, a jsonl file")
+	promptSHA := fs.String("prompt-sha", "", "the sha of the current Jev prompt")
+	candidate := fs.String("candidate", "", "the sha of a candidate Jev prompt to score against the current one")
+	jevEval := fs.String("jev-eval", "", "the command that runs the Jev evaluation")
+	tools := fs.String("tools", "", "a directory of nova-* binaries built at dev (the verbs step)")
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	receipts := fs.String("receipts", "", "the dogfood receipts directory (the verbs step)")
 	if err := fs.Parse(args); err != nil {
-		return refuse(stderr, err.Error()+"; it wants fold <S> --store <host:port> --work <nova-work checkout>")
+		return refuse(stderr, err.Error()+"; it wants fold --sprint <S> --redis <host:port> --work <nova-work checkout>")
 	}
+	sprint := *sprintFlag
 	var problems []string
 	if sprint == "" {
-		problems = append(problems, "name the sprint first: fold <S>")
+		problems = append(problems, "name the sprint: fold --sprint <S>")
 	}
 	if fs.NArg() > 0 {
-		problems = append(problems, "one sprint per fold; extra arguments "+strings.Join(fs.Args(), " "))
+		problems = append(problems, "takes flags, not positional arguments: "+strings.Join(fs.Args(), " "))
 	}
 	if *addr == "" {
-		problems = append(problems, "--store <host:port> is the sprint's Redis")
+		problems = append(problems, "--redis <host:port> is the sprint's Redis")
 	}
 	if *work == "" {
 		problems = append(problems, "--work names the nova-work checkout the fold commits into")
@@ -112,7 +111,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return v
 		}
 		fmt.Fprintf(stderr, "nova-sprint fold: folded; the verbs step did not run; run: %s\n", oneline.Escape(fmt.Sprintf(
-			"nova-sprint verbs unused --store %s --tools %s --repo %s --receipts %s",
+			"nova-sprint verbs unused --redis %s --tools %s --repo %s --receipts %s",
 			*addr, or(*tools, "<dir of nova-* binaries at dev>"), or(*repo, "<nova-tools clone at dev>"), or(*receipts, "<dogfood receipts dir>"))))
 		code = 5
 	}
