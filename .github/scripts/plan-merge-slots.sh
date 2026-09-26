@@ -7,12 +7,13 @@ set -euo pipefail
 base=$1; head=$2
 mod=$(awk '$1=="module"{print $2; exit}' go.mod)
 changed=$(git diff --name-only "$base" "$head")
-# Slots scale with the group's package count: about ten packages per hosted
+# Slots scale with the group's package count: about five packages per hosted
 # slot, so a shard's one `go test` call (build and run, two hosted cores)
 # stays under the two-minute cap; a group that touches go.mod or go.sum is
 # the whole tree. Calibrated on queue run 36208535525 (2026-09-25): six slots
 # over 160 packages cancelled at the cap. Never fewer than the old plan gave
-# (1, 3 or 6), never more than 24.
+# (1, 3 or 6), never more than 24. Ten per slot lost two of sixteen shards at
+# the cap on run 36209991791 (hosted runners vary); five is the margin.
 if printf '%s\n' "$changed" | grep -q -E '^(go\.mod|go\.sum)$'; then
   n=$(go list ./... | wc -l | tr -d ' ')
 else
@@ -29,7 +30,7 @@ for d in ${dirs:-}; do
   sum=$(awk -v a="$sum" -v b="$secs" 'BEGIN { printf "%.1f", a + b }')
 done
 if [ "$big" = 1 ]; then floor=6; elif awk -v s="$sum" 'BEGIN { exit !(s < 20) }'; then floor=1; else floor=3; fi
-byCount=$(( (n + 9) / 10 ))
+byCount=$(( (n + 4) / 5 ))
 slots=$floor
 [ "$byCount" -gt "$slots" ] && slots=$byCount
 [ "$slots" -gt 24 ] && slots=24

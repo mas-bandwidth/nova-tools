@@ -46,11 +46,6 @@ type allowlistEntry struct {
 // less the two part=B entries, which part B deleted, leaving 21.
 var specAllowlist = []allowlistEntry{
 	// Card header (SPEC-CARD)
-	{file: "internal/pulse/cut_template.go", fn: "ValidateCardV2", record: "SPEC-CARD"},
-	{file: "internal/pulse/cut_template.go", fn: "ApplyDependsOn", record: "SPEC-CARD"},
-	{file: "internal/pulse/harvest.go", fn: "isV2CardContent", record: "SPEC-CARD"},
-	{file: "internal/pulse/manager.go", fn: "attemptOf", record: "SPEC-CARD"},
-	{file: "internal/pulse/harvestguard.go", fn: "cardRepo", record: "SPEC-CARD"},
 	{file: "internal/swarm/lintheader.go", fn: "cardKeyCheck", record: "SPEC-CARD"},
 	{file: "internal/swarm/lintheader.go", fn: "cardTypedKeys", record: "SPEC-CARD"},
 	{file: "internal/nsprint/card/lint.go", fn: "requiredKeys", record: "SPEC-CARD"},
@@ -705,8 +700,8 @@ func TestOneTypedParser(t *testing.T) {
 				partB++
 			}
 		}
-		if len(specAllowlist) != 18 || partB != 0 {
-			t.Errorf("spec allowlist: %d entries, %d part=B; want 18 and 0", len(specAllowlist), partB)
+		if len(specAllowlist) != 13 || partB != 0 {
+			t.Errorf("spec allowlist: %d entries, %d part=B; want 13 and 0", len(specAllowlist), partB)
 		}
 		// Every drift entry names the commit that added it and why it stays.
 		for _, a := range driftAllowlist {

@@ -303,6 +303,10 @@ func fakeBench(t *testing.T, novaSprint string) string {
 // identities exists, so every card answers GONE and nothing is signalled.
 func TestRemoteStopperDrivesRealCardStop(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	bin := filepath.Join(t.TempDir(), "nova-sprint")
 	build := exec.Command("go", "build", "-o", bin, "github.com/mas-bandwidth/nova-tools/cmd/nova-sprint")
@@ -386,6 +390,10 @@ exit 0
 // item 5).
 func TestBenchResetBeatErrorHolds(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	c := resetRedis(t)
 	seedResetCards(t, c, "running")

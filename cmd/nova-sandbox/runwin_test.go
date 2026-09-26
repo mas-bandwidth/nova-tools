@@ -678,6 +678,10 @@ func (p *hangingPlace) CloseJob(job winJob) error {
 // termination gave the child is what the receipt carries, and the receipt is what says how
 // the run ended.
 func TestWindowsHasNo128PlusN(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	b := newWinBench(t, 0)
 	old := runWinPlace
 	hang := &hangingPlace{fakeWinPlace: b.place}

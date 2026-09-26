@@ -22,6 +22,10 @@ import (
 
 func TestControl54CancelledLegRerunsOnceThenEndsRed(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	f := newRunFixture(t)
 	f.client.HSet(f.ctx, ci.PRKey(runRepo, 54), "head", f.sha)
@@ -81,6 +85,11 @@ func TestControl54CancelledLegRerunsOnceThenEndsRed(t *testing.T) {
 
 func TestControl54TimedOutLegRerunsOnceThenEndsRed(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test runs a real child and waits on the wall clock; it failed under
+	// the whole parallel suite on the 2026-09-25 Studio run and passes alone. Skipped
+	// 2026-09-25 by Glenn's rule ("unit tests must not have real sleeps or waits"): it
+	// becomes a mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	f := newRunFixture(t)
 	f.client.HSet(f.ctx, ci.ConfigKey(runRepo), "checks", "head,slow", "check:slow", "sleep 5")

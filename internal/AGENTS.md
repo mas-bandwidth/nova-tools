@@ -56,7 +56,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `post/` | GitHub PR and issue client | `go test ./internal/post` | `go test ./internal/post` |
 | `prereview/` | mechanical first pass over one pull request | `go test ./internal/prereview` | `go test ./internal/prereview` |
 | `presence/` | friend heartbeat keys with a TTL | `go test ./internal/presence` | `go test ./internal/presence` |
-| `pulse/` | the frozen nova-pulse engine (status, cut, harvest); no command has reached it since #3801 | `go test ./internal/pulse` | `go test ./internal/pulse` |
 | `record/` | decision and execution records | `go test ./internal/record` | `go test ./internal/record` |
 | `records/` | database models and record formats | `go test ./internal/records` | `go test ./internal/records` |
 | `redisq/` | Redis transport queue | `go test ./internal/redisq` | `go test ./internal/redisq` |

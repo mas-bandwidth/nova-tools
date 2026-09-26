@@ -64,7 +64,6 @@ is a red a change can answer for.
 | cmd/nova-secrets | 5.7 | - |
 | internal/update | 5.1 | - |
 | cmd/nova-review | 3.8 | - |
-| internal/pulse | 3.0 | - |
 | cmd/nova-tokens | 2.4 | - |
 | cmd/nova-board | 1.9 | - |
 | internal/review | 1.0 | - |
@@ -161,7 +160,6 @@ five of its tests are over 5 s and every one of them is a real `exec`.
 | cmd/nova-review | 16.6 | - |
 | internal/ci | 14.2 | TestEveryToolPrintsTheOneVersionLine 5.6 |
 | internal/update | 13.8 | - |
-| internal/pulse | 13.4 | - |
 | cmd/nova-secrets | 6.6 | - |
 | cmd/nova-sandbox | 6.1 | - |
 | cmd/nova-board | 5.9 | - |

@@ -29,6 +29,10 @@ import (
 // made. Red with Setpgid on the tool's child; green without it.
 func TestAForkedChildIsReapedWithTheCallersGroup(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	needDarwin(t)
 	j := newJob(t)

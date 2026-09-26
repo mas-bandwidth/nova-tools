@@ -206,6 +206,10 @@ INSERT INTO message (data, time_created) VALUES (json_object('role','assistant',
 // asserted rather than inferred: the loop is driven against a reader that is slower than
 // its own interval, and no two reads are ever in flight together.
 func TestLiveSamplerNeverRunsTwoReadsAtOnce(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	windowsIsNotABench(t)
 	needsSQLite(t)
 	dataHome := t.TempDir()
@@ -253,6 +257,10 @@ func TestLiveSamplerNeverRunsTwoReadsAtOnce(t *testing.T) {
 // unverifiable end, at the unit. A read that FAILS is not a source that reported nothing,
 // and "two failures and then an answer end nothing" is the reset this asserts.
 func TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	windowsIsNotABench(t)
 	dataHome := t.TempDir()
 	db := filepath.Join(dataHome, "opencode", "opencode.db")

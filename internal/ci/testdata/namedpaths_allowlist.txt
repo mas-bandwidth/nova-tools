@@ -67,7 +67,6 @@ docs/bus internal/bus/git.go's failure narrative: a bus directory pointed inside
 docs/bus/from-bo/x.md the path that same narrative says git reports from the repository root
 docs/history SPEC.md's `--allow docs/history` example for subdirectory enumeration
 internal/decide/entry.go internal/swarm/lintbase.go's class-9 story: the PATHS entry card-nx-f19 named that did not exist at its base
-internal/secrets/recovery_key_test.go internal/pulse/harveststale.go's #2547 story: the file a card was refused on 2026-09-22 as undeclared, never written
 internal/secretsanta/ SPEC-RELEASE.md's example of what prefix matching on `internal/secrets` would also catch
 internal/swarm/pull SPEC-WORKLANG's example test subject `test:internal/swarm/pull@HEAD`: the pull subverb as a package, pinned to a revision not a path
 
@@ -116,3 +115,28 @@ cmd/nova-pulse/testdata/card-contract-2608/ deleted by #3801 (card cut in nova-s
 cmd/nova-pulse/testdata/templates deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 cmd/nova-pulse/testdata deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 cmd/nova-pulse/testdata/templates/fix.md deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
+
+# internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, Glenn: "Yes it's dead. remove."); the specs cite its files at named commits as history.
+internal/pulse internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/cardheader.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/cut.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/cut_template.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/cut_test.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/cutkind.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/fleetstandard.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/gate.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/harvest.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/harvest_working.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/harvestbench.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/harveststale.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/harveststale_test.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/hygiene.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/kinds.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/layout560_test.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/ledger.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/manager.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/queue.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/queue_test.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/recut.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/run.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/statushtmlrows.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit

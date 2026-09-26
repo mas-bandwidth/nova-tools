@@ -253,6 +253,10 @@ func lineFor(t *testing.T, p reconcile.LandPass, s string) reconcile.LandLine {
 // rest. Beta's reads exist only in the lines list read post writes.
 func TestLandDutyLandsEveryReadStreamInOneBatch(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	fx := newLDFixture(t)
 	ctx, c := fx.ctx, fx.c
@@ -341,6 +345,10 @@ func TestLandDutyLandsEveryReadStreamInOneBatch(t *testing.T) {
 // their members to landed.
 func TestLandDutyOneWorkerPerRepoAndNextTickMerges(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	fx := newLDFixture(t)
 	ctx, c := fx.ctx, fx.c
