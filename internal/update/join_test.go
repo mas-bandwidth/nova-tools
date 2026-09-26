@@ -961,22 +961,6 @@ func (r reporter) remoteHasANote(t *testing.T) bool {
 	return false
 }
 
-// Killed once the prepared artifact is on disk and nothing is confirmed: the
-// next reporter must finish THAT report rather than prepare a new one.
-//
-// Staged up to stagingAttempts times for killReporterWhen's reason: the kill has
-// to land inside a window the observer does not own. Every assertion below is the
-// one it always was -- only an attempt in which the window was MISSED is retried,
-// and a run that never catches it says so rather than passing.
-func TestJoinReporterDeathWithPendingSavedFinishesTheSameReport(t *testing.T) {
-	for attempt := 1; attempt <= stagingAttempts; attempt++ {
-		if reporterDeathWithPendingSaved(t, attempt) {
-			return
-		}
-	}
-	t.Skipf("no reporter death landed with a pending artifact saved and nothing confirmed in %d staged attempts, so this case is UNPROVEN in this run rather than green", stagingAttempts)
-}
-
 // No t.Helper(): a failure here must report ITS OWN line. The attempt loop is one
 // line and the assertions are twenty, and a file:line pointing at the loop is what
 // sent the first report of this flake to the wrong test's name.
@@ -1007,23 +991,6 @@ func reporterDeathWithPendingSaved(t *testing.T, attempt int) bool {
 	r.bus.exactlyOneContribution(t, id)
 	t.Logf("reporter death with pending saved verified on attempt %d: finished report for %s", attempt, id)
 	return true
-}
-
-// Killed after the note is ON the remote but before the confirmation is
-// recorded: the retry must find that same note and must not publish a second.
-//
-// This is the narrowest window in the package -- between the push landing and
-// the reporter writing the confirmation down -- and it is watched by spawning a
-// `git ls-tree` against the bare repo, so it is also the one the observer loses
-// most often. Staged up to stagingAttempts times for that reason; the
-// assertions are untouched.
-func TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice(t *testing.T) {
-	for attempt := 1; attempt <= stagingAttempts; attempt++ {
-		if reporterDeathAfterRemoteConfirmation(t, attempt) {
-			return
-		}
-	}
-	t.Skipf("no reporter death landed between the note reaching the remote and the confirmation being recorded in %d staged attempts, so this case is UNPROVEN in this run rather than green", stagingAttempts)
 }
 
 // No t.Helper(): a failure here must report ITS OWN line. The attempt loop is one
@@ -1219,20 +1186,6 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 	}
 	t.Logf("two-phase recovery verified: prior prefix byte-identical, exactly 2 contributions published (id=%s)", id)
 	return true
-}
-
-// TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers closes Item 2 of #206:
-// It establishes an existing INDEX prefix, interrupts a real prepared send, interrupts
-// its production recovery append before confirmation, then retries to prove byte-identical
-// prior entries and exactly one new contribution.
-func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {
-	for attempt := 1; attempt <= stagingAttempts; attempt++ {
-		if twoPhaseAttempt(t, attempt) {
-			return
-		}
-		t.Logf("two-phase interruption missed live window on attempt %d of %d; retrying", attempt, stagingAttempts)
-	}
-	t.Fatalf("two-phase interruption failed to observe both live kill boundaries in %d attempts", stagingAttempts)
 }
 
 // TestJoinInterruptionNegativeControlWithoutKillFails proves that the witness

@@ -1,0 +1,96 @@
+# The SLEEPS ledger: pkg<TAB>TopLevelTest<TAB>where, one row per unit test that
+# skips itself with t.Skip("SLEEPS: ...") because it sleeps or waits on the wall
+# clock (Glenn 2026-09-25: "unit tests must not have real sleeps or waits";
+# nova-tools #4221). make test runs `nova-ci slowtests --sleeps` with this file: a
+# SLEEPS skip that is not a row here is a CI-SLEEPS line and a red leg AT ANY LOAD,
+# because a test that waits on the clock is what the test does, not how busy the
+# runner was. The rows are the skips of 2026-09-25 as the tree held them on dev
+# be3e5f8ef (2026-09-26); where is the measurement the skip's own comment names.
+# internal/ci's TestSleepsLedgerIsTheTreesSleepsSkips holds this file to the tree
+# both ways: a SLEEPS skip with no row, or a row whose test no longer skips, is red.
+# The remedy for a row is an injected clock or //go:build functional, then delete it.
+cmd/nova-bus	TestRetryAfterAPartialResumesAtNext	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-bus	TestEarlierGapSurvivesLaterPages	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-bus	TestSnapshotTokenValidationAndBound	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-bus	TestInboxParsesOnlyWhatIsNewSinceTheCursor	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-bus	TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor	#4221 calls time.Sleep
+cmd/nova-ci	TestNewVerbYieldsABuildingTestingSkeleton	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-redis	TestRestartOnTheSameDirKeepsTheStore	#4221 calls time.Sleep
+cmd/nova-review	TestIssue2063	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-review	TestMutateSeedFlagCombinationsAreRefused	#4221 calls time.Sleep
+cmd/nova-sandbox	TestTheCheckScriptPassesAgainstTheToolsProfile	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-sandbox	TestAForkedChildIsReapedWithTheCallersGroup	#4221 calls time.Sleep
+cmd/nova-sandbox	TestWindowsHasNo128PlusN	#4221 calls time.Sleep
+cmd/nova-sprint	TestHoldRouteCrashReplay	#4221 calls time.Sleep
+cmd/nova-sprint	TestLandTakesStreamPRsOldestFirst	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-sprint	TestLandGateAtHeadNoReadGate	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-sprint	TestBenchBeatReconnectsWithBackoff	#4221 calls time.Sleep
+cmd/nova-sprint	TestReconcileVerbDealsOnEvent	#4221 calls time.Sleep
+cmd/nova-sprint	TestRoutesCheckReadsFold	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-sprint	TestControl3530LoopPublishesOneWriter	#4221 calls time.Sleep
+cmd/nova-sprint	TestTableOutAtomic	#4221 calls time.Sleep
+cmd/nova-swarm	TestLiveSamplerNeverRunsTwoReadsAtOnce	#4221 calls time.Sleep
+cmd/nova-swarm	TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt	#4221 calls time.Sleep
+cmd/nova-swarm	TestNativeBudgetStopsTheCardAndKeepsWhatItPublished	#4221 calls time.Sleep
+cmd/nova-swarm	TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild	#4221 calls time.Sleep
+cmd/nova-swarm	TestNativeTermFromOutsideWritesUsage	#4221 calls time.Sleep
+cmd/nova-swarm	TestASecondNativeInOneSlotControlWithoutTheSlotLeaseIsAdmitted	#4221 calls time.Sleep
+cmd/nova-swarm	TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown	#4221 calls time.Sleep
+cmd/nova-swarm	TestProviderDelayedHeadersInsideTheWaitAreNotUnknown	#4221 calls time.Sleep
+cmd/nova-tokens	TestConcurrentWritersDoNotMutateTheBareRemote	#4221 calls time.Sleep
+cmd/nova-update	TestHelpExampleLinesRunAsPrinted	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-wake	TestTheRealBusRelaysNewMailWithinTwoAdvancingPolls	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-wake	TestTheRealBusAdvanceRecoversAnInterruptedRead	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-wake	TestTheRecoveryReadsTheCountAndNeverAConstant	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-wake	TestBlocksRatherThanTicks	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-wake	TestTheBoundedCorrelationRead	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-work	TestSetCheckEvaluateDerivesDoneFromCriteria	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/bus	TestTwoConcurrentRunsSerialiseOnOneCheckout	#4221 calls time.Sleep
+internal/bus	TestSendPreparedProcessDeathRecovery	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/bus	TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries	#4221 calls time.Sleep
+internal/bus	TestStaleIndexLockWithALiveGitIsLeftAlone	#4221 calls time.Sleep
+internal/bus	TestStaleLockStaysForCwdGitWithoutDashC	#4221 calls time.Sleep
+internal/bus	TestStellaPreparedAttributePrefixesPublishExactBytes	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/ci	TestWaitsRefusesFixedSleep	#4221 calls time.Sleep
+internal/ci	TestWaitsAllowlistSurvivesShiftedLines	#4221 calls time.Sleep
+internal/ci	TestSlowWaitsRuleSeesEveryShape	#4221 calls time.Sleep
+internal/nsprint/capacity	TestL20b	#4221 calls time.Sleep
+internal/nsprint/card	TestWrapperOwnsOneCardEndToEnd	#4221 calls time.Sleep
+internal/nsprint/card	TestWrapperFillsTheResult	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/nsprint/ci	TestControl54CancelledLegRerunsOnceThenEndsRed	#4221 calls time.Sleep
+internal/nsprint/ci	TestControl54TimedOutLegRerunsOnceThenEndsRed	#4221 waits on the wall clock, failed on a 2026-09-25 run
+internal/nsprint/ci	TestParityCountsEveryActionsPassedHead	#4221 calls time.Sleep
+internal/nsprint/land	TestL15	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/nsprint/land/guard	TestGuardsOnThisRepository	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/nsprint/life	TestBenchBeatSingleInstance	#4221 calls time.Sleep
+internal/nsprint/reconcile	TestControl09OneAssignmentOneReceipt	#4221 calls time.Sleep
+internal/nsprint/reconcile	TestHeartbeatHoldsLeaseThroughLongDuty	#4221 calls time.Sleep
+internal/nsprint/reconcile	TestLandDutyLandsEveryReadStreamInOneBatch	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/nsprint/reconcile	TestLandDutyOneWorkerPerRepoAndNextTickMerges	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/nsprint/reconcile	TestControl10StaleInstanceCannotDeal	#4221 calls time.Sleep
+internal/nsprint/reconcile	TestRouteConsumerSweepBoundsRestarts	#4221 calls time.Sleep
+internal/nsprint/verbs	TestVerbsUnused	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/nsprint/webhook	TestWorkflowRunEventWritesCI	#4221 calls time.Sleep
+internal/secrets	TestSealNoPRMakesNoGHCalls	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/sprinttable	TestRefreshInTheUnitGroupDiesWithTheUnit	#4221 calls time.Sleep
+internal/swarm	TestOSProcessTreeCPUAccrual	#4221 calls time.Sleep
+internal/swarm	TestBatchPrefixLine1WithLongerTailAccepted	#4221 waits on the wall clock, failed on a 2026-09-25 run
+internal/swarm	TestIdleWatchEndsACardThatOnlyDribblesIntoItsLog	#4221 waits on the wall clock, failed on a 2026-09-25 run
+internal/swarm	TestIdleWatchKeepsACardWhoseLogGrowsAPage	#4221 calls time.Sleep
+internal/swarm	TestABatchNeverExceedsItsRouteCap	#4221 calls time.Sleep
+internal/swarm	TestWithNoStallAfterASilentCardIsNotStalled	#4221 waits on the wall clock, failed on a 2026-09-25 run
+internal/swarm	TestBatchCardsPutsTheWordInTheLocalNativeArgv	#4221 waits on the wall clock, failed on a 2026-09-25 run
+internal/swarm	TestARouteNamesTheProfileNeverTheSecret	#4221 calls time.Sleep
+internal/swarm	TestPausePointThreadDirected	#4221 calls time.Sleep
+internal/swarm	TestJobLeaseHeartbeatsItsMtime	#4221 calls time.Sleep
+internal/swarm	TestBodyThatResumesInsideTheDeadlineIsNotUnknown	#4221 calls time.Sleep
+internal/swarm	TestDelayedHeadersInsideTheWaitPassThrough	#4221 calls time.Sleep
+internal/swarm	TestNoSlotIsEverHeldTwice	#4221 calls time.Sleep
+internal/swarm	TestConcurrentTakesKeepEveryTake	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/typedrec	TestEveryConsumerRefusesMissingFieldByName	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/update	TestMovedIsBoundedByTheClock	#4221 waits on the wall clock, failed on a 2026-09-25 run
+internal/update	TestRemoveStaleGitTransactionLocksNamesOnly	#4221 calls time.Sleep
+internal/update	TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp	#4221 calls time.Sleep
+internal/wake	TestTheBoundedReadSpendsWhatItSaysItSpends	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/wake	TestTheAnswerIsFoundOnThePollThatReachesIt	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/wake	TestSlotLeaseHeartbeatLoop	#4221 calls time.Sleep

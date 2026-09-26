@@ -3176,8 +3176,14 @@ or a step that could not run. `--functional` adds the functional build tag
 stream merges ([TESTING.md](../TESTING.md)).
 
 The unit tier (`make test`) passes `--package-budget 2 --test-budget 1 --allowlist
-internal/ci/slow-tests_allowlist.txt` instead: a package over 2 s or a top-level
-test over 1 s is a `CI-SLOW` line unless its allowlist row names more. `nova-ci
+internal/ci/slow-tests_allowlist.txt --sleeps internal/ci/sleeps-skips_allowlist.txt
+--max-load-per-cpu 0.25` instead: a package over 2 s or a top-level test over 1 s
+is a `CI-SLOW` line unless its allowlist row (`pkg<TAB>test<TAB>seconds<TAB>
+<measured>s@<where>`) names more. A `CI-LOAD load=<n> cpus=<n>` line follows;
+over 0.25 load a CPU, or with the load unreadable, the CI-SLOW lines are printed
+as measured and do not fail the run (`--load` and `--cpus` give the figures by
+hand). A test skipped with `t.Skip("SLEEPS: ...")` that `--sleeps` does not name
+is a `CI-SLEEPS` line and fails the run at any load. `nova-ci
 functional <package-dir>...` prints, for `make test-functional`, the packages
 that hold `//go:build functional` tests and a `-run` pattern naming exactly
 those tests; it prints nothing when there are none ([TESTING.md](TESTING.md), "The two tiers").

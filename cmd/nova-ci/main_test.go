@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,7 +131,7 @@ func TestSlowtestsUnitTierBudgetsReadTheAllowlist(t *testing.T) {
 	t.Parallel()
 
 	allow := filepath.Join(t.TempDir(), "allow.txt")
-	if err := os.WriteFile(allow, []byte("pkg\tTestA\t4.5\n"), 0o644); err != nil {
+	if err := os.WriteFile(allow, []byte("pkg\tTestA\t4.5\t3s@run1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stdin := `{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
@@ -150,6 +151,72 @@ func TestSlowtestsUnitTierBudgetsReadTheAllowlist(t *testing.T) {
 	code, _, stderr = runCI(t, []string{"slowtests", "--package-budget", "2", "--allowlist", filepath.Join(t.TempDir(), "absent")}, "")
 	if code != 2 || !strings.Contains(stderr, "--allowlist") {
 		t.Errorf("a missing allowlist: exit %d stderr %q, want a refusal naming --allowlist", code, stderr)
+	}
+}
+
+// The load gate end to end: --max-load-per-cpu with the load and CPUs given by
+// hand. A 1.4 s test at load 20 of 32 CPUs prints its CI-SLOW line and CI-LOAD
+// not enforced, exit 0; at load 2 exit 2; a SLEEPS skip missing from --sleeps
+// is exit 2 at load 20.
+func TestSlowtestsLoadGateWaivesTimeNotSleeps(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ledger := filepath.Join(dir, "sleeps.txt")
+	if err := os.WriteFile(ledger, []byte("pkg\tTestKnown\t#4221\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	slow := `{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":1.4}
+{"Action":"pass","Package":"example.com/pkg","Elapsed":1.5}
+`
+	args := func(load string) []string {
+		return []string{"slowtests", "--package-budget", "2", "--test-budget", "1", "--sleeps", ledger, "--max-load-per-cpu", "0.25", "--load", load, "--cpus", "32"}
+	}
+	code, stdout, stderr := runCI(t, args("20"), slow)
+	want := "CI-SLOW test=TestA package=example.com/pkg seconds=1.4s budget=1s\n" +
+		"CI-LOAD load=20.00 cpus=32: budgets measured, not enforced (0.62 a cpu, the gate is 0.25)\n"
+	if code != 0 || stdout != want {
+		t.Errorf("load 20: exit %d stdout %q stderr %q, want 0 and %q", code, stdout, stderr, want)
+	}
+	if code, stdout, _ = runCI(t, args("2"), slow); code != 2 || !strings.Contains(stdout, "budgets enforced") {
+		t.Errorf("load 2: exit %d stdout %q, want 2 with budgets enforced", code, stdout)
+	}
+	sleeps := `{"Action":"output","Package":"example.com/pkg","Test":"TestKnown","Output":"SLEEPS: x\n"}
+{"Action":"skip","Package":"example.com/pkg","Test":"TestKnown","Elapsed":0}
+{"Action":"output","Package":"example.com/pkg","Test":"TestNew","Output":"SLEEPS: x\n"}
+{"Action":"skip","Package":"example.com/pkg","Test":"TestNew","Elapsed":0}
+{"Action":"pass","Package":"example.com/pkg","Elapsed":0.1}
+`
+	code, stdout, _ = runCI(t, args("20"), sleeps)
+	if code != 2 || !strings.Contains(stdout, "CI-SLEEPS test=TestNew package=example.com/pkg") || strings.Contains(stdout, "TestKnown") {
+		t.Errorf("an unledgered SLEEPS skip at load 20: exit %d stdout %q, want 2 naming TestNew only", code, stdout)
+	}
+}
+
+// PROBE 1 at the read: a host whose load cannot be read (no sysctl, no
+// /proc/loadavg, a figure that does not parse) is Known=false with the reason,
+// which the gate turns into "measured, not enforced"; a readable one is the
+// larger of its 1- and 5-minute figures.
+func TestLoadFromAFailedReadIsUnknownWithItsReason(t *testing.T) {
+	t.Parallel()
+
+	failed := loadFrom("darwin", 32, func(string) (string, error) {
+		return "", errors.New(`sysctl -n vm.loadavg: exec: "sysctl": executable file not found in $PATH`)
+	})
+	if failed.Known || failed.CPUs != 32 || !strings.Contains(failed.Why, "sysctl") || failed.Enforced(0.25) {
+		t.Errorf("a failed read = %+v, want unknown, 32 CPUs, the reason, and not enforced", failed)
+	}
+	if got := loadFrom("windows", 8, readLoadAvg); got.Known || !strings.Contains(got.Why, "windows has no load average") {
+		t.Errorf("windows = %+v, want unknown with its reason", got)
+	}
+	if got := loadFrom("linux", 4, func(string) (string, error) { return "garbage", nil }); got.Known || got.Why == "" {
+		t.Errorf("an unparsable figure = %+v, want unknown with its reason", got)
+	}
+	for raw, want := range map[string]float64{"{ 17.36 21.31 19.56 }\n": 21.31, "0.52 0.48 0.59 1/467 12345\n": 0.52} {
+		got := loadFrom("x", 32, func(string) (string, error) { return raw, nil })
+		if !got.Known || got.Avg != want {
+			t.Errorf("loadFrom(%q) = %+v, want %g known", raw, got, want)
+		}
 	}
 }
 

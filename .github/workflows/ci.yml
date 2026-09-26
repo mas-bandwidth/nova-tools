@@ -964,11 +964,16 @@ jobs:
         # and 1 s test budgets with internal/ci/slow-tests_allowlist.txt. A
         # push or a manual run tests the WHOLE tree, which is not cut to those
         # budgets yet, so it keeps the old 60 s package budget, printed and not
-        # enforced as before; a push to dev is almost always proved by its
-        # merge-group run above and runs nothing.
+        # enforced as before, with the SLEEPS ledger so its log names only a
+        # new SLEEPS skip; a push to dev is almost always proved by its
+        # merge-group run above and runs nothing. On a pull request and in the
+        # merge group the Makefile's flags also carry --max-load-per-cpu 0.25:
+        # over that load a CI-SLOW line is printed with a CI-LOAD line and does
+        # not fail the leg (run 36261817989: eight red shards, no red test, the
+        # Studio at load 16-18 of 32 CPUs).
         env:
           NOVA_CI_PR_STUDIO: ${{ matrix.entry.group == 'macOS' && github.event_name == 'pull_request' && '1' || '' }}
-          WHOLE_TREE_SLOWTESTS: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && '--budget 60' || '' }}
+          WHOLE_TREE_SLOWTESTS: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && '--budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt' || '' }}
         # GOTEST_COUNT_FLAG= turns Go's test cache on (Makefile): a shard whose
         # packages did not change since the last run on this machine is
         # served from the cache instead of recompiled and re-executed.

@@ -45,10 +45,19 @@ usage:
                       Exit 0 green, 1 a red test or build, 2 over the
                       budgets or could not run.
   nova-ci slowtests --package-budget <s> --test-budget <s> [--allowlist <file>]
+                    [--sleeps <file>] [--max-load-per-cpu <n>] [--load <n> --cpus <n>]
                       the unit tier's budgets: a package over --package-budget
                       and a top-level test over --test-budget are each a CI-SLOW
-                      line, unless the allowlist (pkg<TAB>test<TAB>seconds, - in
-                      the test column for a package's own row) names a higher one.
+                      line, unless the allowlist (pkg<TAB>test<TAB>seconds<TAB>
+                      <measured>s@<where>, - in the test column for a package's
+                      own row) names a higher one. With --max-load-per-cpu the
+                      host's load average (the larger of its 1- and 5-minute
+                      figures, over its CPUs; --load and --cpus give them by
+                      hand) is printed as a CI-LOAD line, and above the gate the
+                      CI-SLOW lines are printed and do not fail the run. A test
+                      skipped with the SLEEPS marker and not on --sleeps
+                      (pkg<TAB>test<TAB>where) is a CI-SLEEPS line and fails the
+                      run at any load.
   nova-ci functional <package-dir>...
                       print the packages among these that hold functional tests
                       (a _test.go built only under the functional build tag) on
@@ -116,7 +125,11 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	budget := fs.Int("budget", 60, "whole seconds a package's tests may take before it is over budget")
 	packageBudget := fs.Float64("package-budget", 0, "seconds a package's tests may take; replaces --budget when set")
 	testBudget := fs.Float64("test-budget", 0, "seconds one top-level test may take; 0 judges packages only")
-	allowlist := fs.String("allowlist", "", "pkg<TAB>test<TAB>seconds rows that raise one package's or one test's budget")
+	allowlist := fs.String("allowlist", "", "pkg<TAB>test<TAB>seconds<TAB><measured>s@<where> rows that raise one package's or one test's budget")
+	sleeps := fs.String("sleeps", "", "pkg<TAB>test<TAB>where rows: the tests already skipped with the SLEEPS marker")
+	maxLoad := fs.Float64("max-load-per-cpu", 0, "above this load average a CPU the time budgets are measured, not enforced; 0 always enforces")
+	loadFlag := fs.Float64("load", -1, "the host's load average, instead of reading it")
+	cpusFlag := fs.Int("cpus", 0, "the host's logical CPUs, instead of runtime.NumCPU")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " slowtests", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -129,6 +142,9 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 
 	if *packageBudget < 0 || *testBudget < 0 {
 		return refuse(stderr, " slowtests", "--package-budget and --test-budget must be seconds greater than zero")
+	}
+	if *maxLoad < 0 || *cpusFlag < 0 {
+		return refuse(stderr, " slowtests", "--max-load-per-cpu and --cpus must not be negative")
 	}
 	budgets := slowtests.Budgets{Package: float64(*budget), Test: *testBudget}
 	if *packageBudget > 0 {
@@ -146,20 +162,43 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		}
 		budgets.Rows = rows
 	}
+	if *sleeps != "" {
+		f, err := os.Open(*sleeps)
+		if err != nil {
+			return refuse(stderr, " slowtests", fmt.Sprintf("--sleeps: %s", oneline.Err(err)))
+		}
+		rows, err := slowtests.ParseSleeps(f)
+		_ = f.Close()
+		if err != nil {
+			return refuse(stderr, " slowtests", fmt.Sprintf("--sleeps %s: %s", *sleeps, oneline.Err(err)))
+		}
+		budgets.Sleeps = rows
+	}
 
 	events, err := slowtests.Parse(stdin)
 	if err != nil {
 		return refuse(stderr, " slowtests", fmt.Sprintf("stdin is not newline-delimited go test -json: %s", oneline.Err(err)))
 	}
 	report := slowtests.Judge(events, budgets)
-	if report.ExitCode() == 0 {
-		fmt.Fprintln(stdout, report.OKLine())
-		return 0
+	var load slowtests.Load
+	if *maxLoad > 0 {
+		load = hostLoad()
+		if *loadFlag >= 0 {
+			load.Avg, load.Known, load.Why = *loadFlag, true, ""
+		}
+		if *cpusFlag > 0 {
+			load.CPUs = *cpusFlag
+		}
 	}
-	for _, line := range report.OverLines() {
+	ledger := *sleeps
+	if ledger == "" {
+		ledger = "the SLEEPS ledger (no --sleeps given)"
+	}
+	lines, code := slowtests.Verdict(report, load, *maxLoad, ledger)
+	for _, line := range lines {
 		fmt.Fprintln(stdout, line)
 	}
-	return 2
+	return code
 }
 
 // cmdFunctional prints the functional tier's selection for `make

@@ -195,13 +195,30 @@ preflight:
 # tests be < 2s (ideally <1) but also they must not be so aggressive that they
 # fill a whole machine cores"): a package over 2 s or a top-level test over 1 s
 # is a CI-SLOW line and a red leg, unless internal/ci/slow-tests_allowlist.txt
-# names a higher budget for exactly that row; that list only shrinks
-# (internal/ci: TestSlowAllowlistOnlyShrinks). SLOWTESTS_FLAGS is the whole
-# slowtests invocation, so the push run over the whole tree, which is not cut
-# to these budgets yet, passes the old package budget instead (ci.yml), with
-# SLOWTESTS_ENFORCE=0: its CI-SLOW lines print and do not fail the leg, as
-# before. Everywhere else a CI-SLOW line fails the target.
-SLOWTESTS_FLAGS ?= --package-budget 2 --test-budget 1 --allowlist internal/ci/slow-tests_allowlist.txt
+# names a higher budget for exactly that row, and every row there names the
+# time it was measured at and where (internal/ci:
+# TestSlowAllowlistRowsNameTheirMeasurement).
+#
+# A BUDGET FAILS A TEST FOR WHAT IT DOES, NEVER FOR A BUSY RUNNER: run
+# 36261817989 (PR #4409, 2026-09-26 14:15 ET) was red on all eight self-hosted
+# shards with no test failing, twelve cmd/nova-review and cmd/nova-bus tests at
+# 1.0-1.2 s that run near 0.9 s idle, on a Studio at load 16-18 of its 32 CPUs
+# (0.50-0.56 a CPU; four darwin runners and the children building beside
+# them). So slowtests reads the host's load average (the larger of its 1- and
+# 5-minute figures) over its CPUs, prints it as a CI-LOAD line, and above
+# --max-load-per-cpu 0.25 (half the 0.50 that already moved 0.9 s to 1.2 s)
+# prints every CI-SLOW line as measured and does not fail the leg on them.
+# What a test does stays red at any load: a failing test (the unit tier's
+# redis-server shim fails an unmocked redis), and a test skipped with the
+# SLEEPS marker that internal/ci/sleeps-skips_allowlist.txt does not name
+# (internal/ci: TestSleepsLedgerIsTheTreesSleepsSkips).
+#
+# SLOWTESTS_FLAGS is the whole slowtests invocation, so the push run over the
+# whole tree, which is not cut to these budgets yet, passes the old package
+# budget instead (ci.yml), with SLOWTESTS_ENFORCE=0: its CI-SLOW lines print
+# and do not fail the leg, as before. Everywhere else a CI-SLOW line fails the
+# target unless the CI-LOAD line says the box was over the gate.
+SLOWTESTS_FLAGS ?= --package-budget 2 --test-budget 1 --allowlist internal/ci/slow-tests_allowlist.txt --sleeps internal/ci/sleeps-skips_allowlist.txt --max-load-per-cpu 0.25
 SLOWTESTS_ENFORCE ?= 1
 #
 # GOTEST_P IS THE LEG'S CORES: `go test -p` (packages at once) and `-parallel`

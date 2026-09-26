@@ -69,6 +69,7 @@ type Report struct {
 	Packages  int
 	Over      []Package
 	OverTests []OverTest
+	Sleepers  []Sleeper
 	Slowest   Package
 	Budget    time.Duration
 }
@@ -76,20 +77,56 @@ type Report struct {
 // Budgets is what Judge holds a run to. Package is the default seconds for a
 // package's total; Test is the default seconds for one top-level test, zero
 // meaning tests are not judged one by one. Rows are the allowlist: a row whose
-// Test is empty is a package's own budget, any other row one test's.
+// Test is empty is a package's own budget, any other row one test's. Sleeps is
+// the ledger of the tests already skipped with the SLEEPS marker; a SLEEPS skip
+// not on it is a finding whatever the budgets or the load.
 type Budgets struct {
 	Package float64
 	Test    float64
 	Rows    []Row
+	Sleeps  []SleepRow
 }
 
-// Row is one allowlist line: `pkg<TAB>test<TAB>seconds`, with `-` in the test
-// column for a package's own row. Package is module-relative (internal/ci) and
-// matches an event's import path by its trailing path elements.
+// Row is one allowlist line: `pkg<TAB>test<TAB>seconds<TAB>measured`, with `-`
+// in the test column for a package's own row. Package is module-relative
+// (internal/ci) and matches an event's import path by its trailing path
+// elements. Seconds is the budget the row enforces; Measured is the time the row
+// was cut from and Where the run or machine that measured it, so no number on
+// the list is a guess: the measured column is `<seconds>s@<where>`, and the
+// budget may not exceed MaxHeadroom times the measurement.
 type Row struct {
+	Package  string
+	Test     string
+	Seconds  float64
+	Measured float64
+	Where    string
+}
+
+// MaxHeadroom is the most a row's budget may exceed its own measurement: three
+// times, the ratio run 36261817989 (2026-09-26) put on a busy Studio against the
+// same tests idle is 1.0-1.2 s over 0.9 s, well inside it, and the rows seeded
+// from #4345's runs sit at 1.5x.
+const MaxHeadroom = 3.0
+
+// SleepRow is one line of the SLEEPS ledger: `pkg<TAB>test<TAB>where`, a
+// top-level test that skips itself with the SLEEPS marker because it waits on
+// the wall clock, and the run or issue that found the wait.
+type SleepRow struct {
 	Package string
 	Test    string
-	Seconds float64
+	Where   string
+}
+
+// SleepsMarker is the text a unit test's t.Skip starts with when it is skipped
+// for a sleep or a wall-clock wait (nova-tools #4221); go test -json carries it
+// as an output event of the skipped test.
+const SleepsMarker = "SLEEPS:"
+
+// Sleeper is one test skipped with the SLEEPS marker that the ledger does not
+// name.
+type Sleeper struct {
+	Package string
+	Name    string
 }
 
 // testsKept is how many test-level rows a finding names. "A few" is three:
@@ -133,10 +170,13 @@ func Parse(r io.Reader) ([]Event, error) {
 	return events, nil
 }
 
-// ParseAllowlist reads `pkg<TAB>test<TAB>seconds` rows. Blank lines and lines
-// starting with # are skipped; `-` in the test column is the package's own row.
-// A malformed row, a budget that is not a positive number, or a row written
-// twice is an error naming its 1-based line.
+// ParseAllowlist reads `pkg<TAB>test<TAB>seconds<TAB>measured` rows. Blank
+// lines and lines starting with # are skipped; `-` in the test column is the
+// package's own row. The measured column is `<seconds>s@<where>`: the time the
+// row was cut from and where it was measured. A malformed row, a budget that is
+// not a positive number, a row with no measurement, a budget under its
+// measurement or over MaxHeadroom times it, or a row written twice is an error
+// naming its 1-based line.
 func ParseAllowlist(r io.Reader) ([]Row, error) {
 	sc := bufio.NewScanner(r)
 	var rows []Row
@@ -149,14 +189,21 @@ func ParseAllowlist(r io.Reader) ([]Row, error) {
 			continue
 		}
 		f := strings.Split(text, "\t")
-		if len(f) != 3 || f[0] == "" || f[1] == "" {
-			return nil, fmt.Errorf("line %d: want pkg<TAB>test<TAB>seconds, got %q", line, text)
+		if len(f) != 4 || f[0] == "" || f[1] == "" {
+			return nil, fmt.Errorf("line %d: want pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>, got %q", line, text)
 		}
 		secs, err := strconv.ParseFloat(f[2], 64)
 		if err != nil || secs <= 0 {
 			return nil, fmt.Errorf("line %d: budget %q is not a positive number of seconds", line, f[2])
 		}
-		row := Row{Package: f[0], Test: f[1], Seconds: secs}
+		measured, where, err := parseMeasured(f[3])
+		if err != nil {
+			return nil, fmt.Errorf("line %d: %w", line, err)
+		}
+		if secs < measured || secs > MaxHeadroom*measured+1e-9 {
+			return nil, fmt.Errorf("line %d: budget %gs is not between its measurement %gs and %g times it", line, secs, measured, MaxHeadroom)
+		}
+		row := Row{Package: f[0], Test: f[1], Seconds: secs, Measured: measured, Where: where}
 		if row.Test == "-" {
 			row.Test = ""
 		}
@@ -166,6 +213,51 @@ func ParseAllowlist(r io.Reader) ([]Row, error) {
 		}
 		seen[key] = line
 		rows = append(rows, row)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// parseMeasured reads `<seconds>s@<where>`: a positive time and a non-empty
+// name of the run or machine that measured it.
+func parseMeasured(field string) (float64, string, error) {
+	at := strings.Index(field, "s@")
+	if at <= 0 || at+2 >= len(field) {
+		return 0, "", fmt.Errorf("measured %q is not <seconds>s@<where>; a row names the time it was cut from and where", field)
+	}
+	secs, err := strconv.ParseFloat(field[:at], 64)
+	if err != nil || secs <= 0 {
+		return 0, "", fmt.Errorf("measured %q is not a positive number of seconds", field)
+	}
+	return secs, field[at+2:], nil
+}
+
+// ParseSleeps reads the SLEEPS ledger: `pkg<TAB>test<TAB>where` rows, blank
+// lines and # comments skipped. A malformed row or a row written twice is an
+// error naming its 1-based line.
+func ParseSleeps(r io.Reader) ([]SleepRow, error) {
+	sc := bufio.NewScanner(r)
+	var rows []SleepRow
+	seen := map[string]int{}
+	line := 0
+	for sc.Scan() {
+		line++
+		text := strings.TrimSpace(sc.Text())
+		if text == "" || strings.HasPrefix(text, "#") {
+			continue
+		}
+		f := strings.Split(text, "\t")
+		if len(f) != 3 || f[0] == "" || f[1] == "" || f[2] == "" || strings.Contains(f[1], "/") {
+			return nil, fmt.Errorf("line %d: want pkg<TAB>TopLevelTest<TAB>where, got %q", line, text)
+		}
+		key := f[0] + "\t" + f[1]
+		if first, dup := seen[key]; dup {
+			return nil, fmt.Errorf("line %d: %s %s is already on line %d", line, f[0], f[1], first)
+		}
+		seen[key] = line
+		rows = append(rows, SleepRow{Package: f[0], Test: f[1], Where: f[2]})
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err
@@ -189,6 +281,24 @@ func (b Budgets) budgetFor(pkg, test string, def float64) float64 {
 	return def
 }
 
+// ledgered reports whether the SLEEPS ledger names (pkg, test).
+func (b Budgets) ledgered(pkg, test string) bool {
+	for _, row := range b.Sleeps {
+		if row.Test == test && matches(row.Package, pkg) {
+			return true
+		}
+	}
+	return false
+}
+
+// topLevel is a test name's top-level test: a subtest's skip is its parent's.
+func topLevel(test string) string {
+	if i := strings.Index(test, "/"); i >= 0 {
+		return test[:i]
+	}
+	return test
+}
+
 // Sum folds the events into a report against one package budget and no
 // per-test budget: Judge with Budgets{Package: budget}.
 func Sum(events []Event, budget time.Duration) Report {
@@ -200,12 +310,27 @@ func Sum(events []Event, budget time.Duration) Report {
 // b.Package. With b.Test > 0 every top-level test (no "/" in its name: a
 // subtest's time is already its parent's) is judged against its row or b.Test.
 // Over-budget packages and tests are returned worst first, ties by name, so the
-// output never depends on map iteration.
+// output never depends on map iteration. A test that skips with the SLEEPS
+// marker in its output and is not on b.Sleeps is a Sleeper, in first-seen
+// order, one per top-level test.
 func Judge(events []Event, b Budgets) Report {
 	byPackage := map[string]*Package{}
 	var order []string
 	var overTests []OverTest
+	var sleepers []Sleeper
+	marked := map[string]bool{}
+	sleeperSeen := map[string]bool{}
 	for _, ev := range events {
+		if ev.Package != "" && ev.Test != "" && ev.Action == "output" && strings.Contains(ev.Output, SleepsMarker) {
+			marked[ev.Package+"\t"+ev.Test] = true
+		}
+		if ev.Package != "" && ev.Test != "" && ev.Action == "skip" && marked[ev.Package+"\t"+ev.Test] {
+			key := ev.Package + "\t" + topLevel(ev.Test)
+			if !sleeperSeen[key] && !b.ledgered(ev.Package, topLevel(ev.Test)) {
+				sleeperSeen[key] = true
+				sleepers = append(sleepers, Sleeper{Package: ev.Package, Name: topLevel(ev.Test)})
+			}
+		}
 		if ev.Package == "" || !terminalAction(ev.Action) {
 			continue
 		}
@@ -229,7 +354,7 @@ func Judge(events []Event, b Budgets) Report {
 		}
 	}
 
-	report := Report{Packages: len(order), Budget: time.Duration(b.Package * float64(time.Second)), OverTests: overTests}
+	report := Report{Packages: len(order), Budget: time.Duration(b.Package * float64(time.Second)), OverTests: overTests, Sleepers: sleepers}
 	sort.SliceStable(report.OverTests, func(i, j int) bool {
 		if report.OverTests[i].Seconds != report.OverTests[j].Seconds {
 			return report.OverTests[i].Seconds > report.OverTests[j].Seconds
@@ -277,9 +402,10 @@ func budgetText(seconds float64) string {
 	return strconv.FormatFloat(seconds, 'f', -1, 64) + "s"
 }
 
-// ExitCode is 2 when any package or test is over budget, 0 when none is.
+// ExitCode is 2 when any package or test is over budget or any test is an
+// unledgered SLEEPS skip, 0 when none is.
 func (r Report) ExitCode() int {
-	if len(r.Over) > 0 || len(r.OverTests) > 0 {
+	if len(r.Over) > 0 || len(r.OverTests) > 0 || len(r.Sleepers) > 0 {
 		return 2
 	}
 	return 0
@@ -298,6 +424,92 @@ func (r Report) OverLines() []string {
 			oneline.Field(test.Name), oneline.Field(test.Package), Seconds(test.Seconds), budgetText(test.Budget)))
 	}
 	return lines
+}
+
+// SleepsLines is one line per unledgered SLEEPS skip. It is red at any load: a
+// test skipped for a wall-clock wait is what the test does, not how busy the
+// runner was.
+func (r Report) SleepsLines(ledger string) []string {
+	lines := make([]string, 0, len(r.Sleepers))
+	for _, s := range r.Sleepers {
+		lines = append(lines, fmt.Sprintf("CI-SLEEPS test=%s package=%s: skipped for a wall-clock wait and not on %s; inject a clock or tag it //go:build functional",
+			oneline.Field(s.Name), oneline.Field(s.Package), oneline.Field(ledger)))
+	}
+	return lines
+}
+
+// Load is the host's run-queue load average and its logical CPU count at the
+// time a run is judged. Known is false when the host has no load average to
+// read (Windows) or the read failed; Why then says so, and a gated run
+// enforces no time budget on it (Enforced).
+type Load struct {
+	Avg   float64
+	CPUs  int
+	Known bool
+	Why   string
+}
+
+// PerCPU is the load over the CPUs, or 0 when unknown.
+func (l Load) PerCPU() float64 {
+	if !l.Known || l.CPUs <= 0 {
+		return 0
+	}
+	return l.Avg / float64(l.CPUs)
+}
+
+// Enforced reports whether the time budgets are a verdict at this load: always
+// when maxPerCPU is zero (no gate); under a gate, only when the load was read
+// and is at or under maxPerCPU a CPU. A load that could not be read is not
+// evidence of an idle box, so under a gate it enforces nothing: the time is
+// printed as measured and the CI-LOAD line says why.
+func (l Load) Enforced(maxPerCPU float64) bool {
+	if maxPerCPU <= 0 {
+		return true
+	}
+	return l.Known && l.CPUs > 0 && l.PerCPU() <= maxPerCPU
+}
+
+// LoadLine is the CI-LOAD line a gated run prints: the load it was judged at
+// and whether the time budgets were a verdict, or why the load is unknown.
+func (l Load) LoadLine(maxPerCPU float64) string {
+	gate := strconv.FormatFloat(maxPerCPU, 'f', -1, 64)
+	if !l.Known || l.CPUs <= 0 {
+		why := l.Why
+		if why == "" {
+			why = "no CPU count"
+		}
+		return fmt.Sprintf("CI-LOAD load=unknown cpus=%d: budgets measured, not enforced (the load could not be read: %s; the gate is %s a cpu)", l.CPUs, oneline.Escape(why), gate)
+	}
+	verdict := "budgets enforced"
+	if !l.Enforced(maxPerCPU) {
+		verdict = "budgets measured, not enforced"
+	}
+	return fmt.Sprintf("CI-LOAD load=%s cpus=%d: %s (%s a cpu, the gate is %s)",
+		strconv.FormatFloat(l.Avg, 'f', 2, 64), l.CPUs, verdict,
+		strconv.FormatFloat(l.PerCPU(), 'f', 2, 64), gate)
+}
+
+// Verdict is what the check prints and its exit code. Every CI-SLOW line is
+// printed whatever the load, so the time is always measured; with maxPerCPU
+// set the CI-LOAD line follows, and a CI-SLOW line fails the run only when the
+// load is enforced. An unledgered SLEEPS skip fails the run at any load.
+func Verdict(r Report, load Load, maxPerCPU float64, ledger string) ([]string, int) {
+	var lines []string
+	slow := r.OverLines()
+	lines = append(lines, slow...)
+	sleeps := r.SleepsLines(ledger)
+	lines = append(lines, sleeps...)
+	if len(slow) == 0 && len(sleeps) == 0 {
+		lines = append(lines, r.OKLine())
+	}
+	if maxPerCPU > 0 {
+		lines = append(lines, load.LoadLine(maxPerCPU))
+	}
+	code := 0
+	if len(sleeps) > 0 || (len(slow) > 0 && load.Enforced(maxPerCPU)) {
+		code = 2
+	}
+	return lines, code
 }
 
 // OKLine is the one line a run inside budget prints, naming the single slowest

@@ -837,9 +837,9 @@ internal/update/issue2288_test.go:TestMovedIsBoundedByTheClock serial: t.Setenv
 internal/update/issue2288_test.go:TestMovedNeverInfersARename serial: t.Setenv
 internal/update/issue2288_test.go:TestMovedReadsTheBuildNeverAList serial: t.Setenv
 internal/update/join_test.go:TestJoinInterruptionNegativeControlWithoutKillFails serial: t.Setenv
-internal/update/join_test.go:TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice serial: swaps package var update.jobMap, t.Setenv
-internal/update/join_test.go:TestJoinReporterDeathWithPendingSavedFinishesTheSameReport serial: swaps package var update.jobMap, t.Setenv
-internal/update/join_test.go:TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers serial: t.Setenv
+internal/update/process_functional_test.go:TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice serial: swaps package var update.jobMap, t.Setenv
+internal/update/process_functional_test.go:TestJoinReporterDeathWithPendingSavedFinishesTheSameReport serial: swaps package var update.jobMap, t.Setenv
+internal/update/process_functional_test.go:TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers serial: t.Setenv
 internal/update/rules_test.go:TestRule18EveryRefusalNamesARemedy serial: t.Setenv
 internal/update/rules_test.go:TestRule25SnapshotSurvivesAReporterKilledWhileWriting serial: t.Setenv
 internal/update/rules_test.go:TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked serial: t.Setenv
@@ -857,7 +857,7 @@ internal/update/update_test.go:TestApplyOnlyNamedEntryAndExactTarget serial: t.S
 internal/update/update_test.go:TestCheckCapsAndFilterActuallyAvoidsReads serial: t.Setenv
 internal/update/update_test.go:TestFourReadLimitAndOverallBudget serial: t.Setenv
 internal/update/update_test.go:TestHealthyCommandWithLingeringGrandchildStillReads serial: t.Setenv
-internal/update/update_test.go:TestHeldPipePastGraceIsNamedAndEchoesNoContent serial: t.Setenv
+internal/update/process_functional_test.go:TestHeldPipePastGraceIsNamedAndEchoesNoContent serial: t.Setenv
 internal/update/update_test.go:TestProcessFailuresAreDistinguishable serial: t.Setenv
 internal/update/update_test.go:TestProcessesAreBoundedAndRawSurvivesFailure serial: t.Setenv
 internal/update/update_test.go:TestReportLocalLocatorWithVersionStringInstalled serial: t.Setenv

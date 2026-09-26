@@ -278,12 +278,28 @@ nothing read it.
 internal/ci/slow-tests_allowlist.txt`: a package over 2 s is the line above,
 and a top-level test over 1 s is `CI-SLOW test=<name> package=<pkg>
 seconds=<s> budget=<b>`, both exit 2, unless an allowlist row
-(`pkg<TAB>test<TAB>seconds`, `-` in the test column for the package's own row)
-names a higher budget for exactly that package or test. The list was seeded
-from the CI-SLOW lines of #4345's run 36255893861 at two cores a leg, at 1.5x,
-and only shrinks
-(`TestSlowAllowlistOnlyShrinks`). A push or manual run over the whole tree,
-which is not yet cut to these budgets, keeps `--budget 60`.
+(`pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>`, `-` in the test column for
+the package's own row) names a higher budget for exactly that package or test.
+Every row names the time it was measured at and where, with a budget between
+that time and three times it; the reader refuses any other row, so the count
+rises only by a measured row (`TestSlowAllowlistRowsNameTheirMeasurement`,
+`TestSlowAllowlistRatchetRefusesAnUnmeasuredRow`). The list was seeded from the
+CI-SLOW lines of #4345's run 36255893861 at two cores a leg, at 1.5x.
+
+**A budget fails a test for what it does, never for a busy runner
+(2026-09-26).** Run 36261817989 (PR #4409) was red on all eight self-hosted
+shards with no test failing: twelve tests at 1.0-1.2 s that run near 0.9 s
+idle, on a Studio at load 16-18 of 32 CPUs. So `make test` also passes
+`--sleeps internal/ci/sleeps-skips_allowlist.txt --max-load-per-cpu 0.25`: the
+check reads the host's load average (the larger of its 1- and 5-minute
+figures, over its CPUs), prints `CI-LOAD load=<n> cpus=<n>: budgets
+enforced|budgets measured, not enforced`, and over the gate, or with the load
+unreadable (the line says why), prints every CI-SLOW line and does not fail on
+them. A test skipped with the SLEEPS marker that the ledger does not name is
+`CI-SLEEPS test=<name> package=<pkg>` and red at any load
+(`TestUnitBudgetsJudgeTheTestNotTheLoad`, `TestSleepsLedgerIsTheTreesSleepsSkips`).
+A push or manual run over the whole tree, which is not yet cut to these
+budgets, keeps `--budget 60`.
 
 **Red tests.** `internal/ci/slowtests/slowtests_test.go` feeds canned TestEvent
 lines through the parser and the summer, and `cmd/nova-ci/main_test.go` runs the
@@ -811,8 +827,9 @@ brings everything to a crawl.
 (`internal/ci/slowtests/slowtests_test.go`), with the verb run end to end in
 `cmd/nova-ci/main_test.go`.
 **Its allowlist.** `internal/ci/slow-tests_allowlist.txt`, one row per package
-or test allowed over the unit tier's 2 s / 1 s budgets, each at 1.5x its
-measured time at two cores a leg; it only shrinks (`TestSlowAllowlistOnlyShrinks`).
+or test allowed over the unit tier's 2 s / 1 s budgets, each naming its
+measured time and where, its budget at most three times that
+(`TestSlowAllowlistRowsNameTheirMeasurement`).
 **Its remedy lines.** `remedy="stdin is not newline-delimited go test -json"` and
 `remedy="--budget must be a whole number of seconds greater than zero"`.
 **Its narrowings.** It judges on the PACKAGE total only; the test-level rows are
@@ -1330,7 +1347,8 @@ redis-server is functional-only (build tag functional)` and exits 86, so
 tests of the selected packages, on `merge_group`, `schedule` and
 `workflow_dispatch`, never on `pull_request`, four space shards under the
 two-minute cap; `ci-ok` requires it when it ran. The unit budgets are 2 s a
-package and 1 s a test, with an allowlist that only shrinks.
+package and 1 s a test, with an allowlist whose every row names its
+measurement, enforced only on a box at or under 0.25 load a CPU.
 **The hurt.** "The constant bottleneck in our working process in CI. This is the
 real 'blocker' for merging." Four shards of every PR each took the whole of a
 box, 133 test files started a redis-server each, and 13 tests ran over a
@@ -1340,9 +1358,16 @@ and its line), `TestStartFailsClosedOnTheUnitTierShim` (functional-tagged, in
 `internal/ci/redis_ci_test.go`: `testutil.Start` against that shim fails
 closed), `TestUnitLegTakesAtMostTwoCores` (runs the share
 step with one runner on the box), `TestFunctionalTierRunsOnlyAsStreamsMerge` and
-`TestSlowAllowlistOnlyShrinks` (`internal/ci/unit_tier_class_test.go`).
-**Its allowlist.** `internal/ci/slow-tests_allowlist.txt`, capped by
-`slowAllowlistCeiling`, which only goes down.
+`TestSlowAllowlistRowsNameTheirMeasurement`,
+`TestSlowAllowlistRatchetRefusesAnUnmeasuredRow`,
+`TestUnitBudgetsJudgeTheTestNotTheLoad` (a 1.4 s test at load 20 of 32 CPUs is
+green with CI-LOAD, at load 2 red, with the load unread measured and not
+enforced; an unledgered SLEEPS skip red at all three) and
+`TestSleepsLedgerIsTheTreesSleepsSkips` (the ledger is exactly the tree's
+`t.Skip("SLEEPS: ...")` tests) (`internal/ci/unit_tier_class_test.go`).
+**Its allowlist.** `internal/ci/slow-tests_allowlist.txt`, every row naming its
+measurement (`<seconds>s@<where>`), and `internal/ci/sleeps-skips_allowlist.txt`,
+the SLEEPS ledger, held to the tree both ways.
 **Its remedy line.** Tag a test that needs a real server, binary or process
 `//go:build functional`; make a slow unit test fast, or delete its allowlist row
 once it is.
