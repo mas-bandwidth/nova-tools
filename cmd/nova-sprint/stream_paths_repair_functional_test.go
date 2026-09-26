@@ -145,3 +145,54 @@ func TestCardEndPathsNeverChangeTheStreams(t *testing.T) {
 		t.Fatalf("another stream takes evil/pkg: %d %q", code, out)
 	}
 }
+
+// TestPathsRefusalNeverSuggestsALoop is the reader's loop (#4322, fix round
+// 5): s1 holds lib/core and s2 lib/core/x.go (a pair ws check --repair
+// wrote); lib/core/x.go into s3 with --join s1, with --join s2 and with no
+// --join is refused each time naming both s1 and s2, with remedy scope park
+// and never --join, and nothing is written; lib/core/z.go, which s1 alone
+// holds, still gets --join s1, and that remedy run as printed passes; the
+// park remedy run as printed lets --join s1 take lib/core/x.go.
+func TestPathsRefusalNeverSuggestsALoop(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	c, push, cli := pathsStore(t)
+	for _, r := range [][3]string{{"a1", "s1", "lib/core"}, {"b1", "s2", "lib/b"}} {
+		if code, out := push(r[0], r[1], r[2]); code != 0 {
+			t.Fatalf("push %s: %d %q", r[0], code, out)
+		}
+	}
+	c.HSet(ctx, "task:b1", "paths", "lib/core/x.go")
+	for _, id := range []string{"a1", "b1"} {
+		c.HDel(ctx, "task:"+id, ws.PathsField)
+	}
+	c.Del(ctx, ws.PathsKey)
+	if code, out := cli("ws", "check", "--repair"); code != 1 || !strings.HasPrefix(out, "PATHS OVERLAP stream=s1 other=s2 paths=lib/core,lib/core/x.go\n") {
+		t.Fatalf("ws check --repair: %d %q", code, out)
+	}
+
+	want := `REFUSED PATHS overlap stream=s1 also=s2 paths=lib/core,lib/core/x.go remedy="nova-sprint scope park --stream s2" id=c1 ms=`
+	var park string
+	for _, join := range [][]string{{"--join", "s1"}, {"--join", "s2"}, nil} {
+		code, out := push("c1", "s3", "lib/core/x.go", join...)
+		if code != 1 || !strings.HasPrefix(out, want) || strings.Contains(out, "--join") || c.Exists(ctx, "task:c1").Val() != 0 {
+			t.Fatalf("lib/core/x.go into s3 %v: %d %q; want prefix %q, no --join and nothing written", join, code, out, want)
+		}
+		park = out
+	}
+
+	code, out := push("c2", "s3", "lib/core/z.go")
+	if want := `REFUSED PATHS overlap stream=s1 paths=lib/core,lib/core/z.go remedy="--join s1" id=c2 ms=`; code != 1 || !strings.HasPrefix(out, want) {
+		t.Fatalf("lib/core/z.go into s3: %d %q; want prefix %q", code, out, want)
+	}
+	if code, out := push("c2", "s3", "lib/core/z.go", remedyArgs(t, out)...); code != 0 || c.HGet(ctx, "task:c2", "stream").Val() != "s1" {
+		t.Fatalf("lib/core/z.go with its remedy: %d %q", code, out)
+	}
+
+	if code, out := cli(remedyArgs(t, park)...); code != 0 || !strings.Contains(out, "PARKED") {
+		t.Fatalf("the park remedy: %d %q", code, out)
+	}
+	if code, out := push("c1", "s3", "lib/core/x.go", "--join", "s1"); code != 0 || c.HGet(ctx, "task:c1", "stream").Val() != "s1" {
+		t.Fatalf("lib/core/x.go --join s1 after the park: %d %q", code, out)
+	}
+}

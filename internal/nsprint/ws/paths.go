@@ -199,9 +199,12 @@ const (
 )
 
 // Receipt is the one refusal line; the overlap's remedy is the flag that
-// pushes the card onto that stream instead. A card overlapping two streams
-// (a pair ws check --repair wrote overlapping) joins neither: the remedy
-// parks the second, after which --join the first passes.
+// pushes the card onto that stream instead, only when exactly one stream
+// holds the overlap. A card overlapping two streams (a pair ws check
+// --repair wrote overlapping), whichever one --join named, joins neither:
+// the gate names both (also=) and the remedy parks the second, after which
+// --join the first passes. It never suggests --join the other, which the
+// gate refuses naming the first.
 func (r *PathsRefusal) Receipt() string {
 	if r.Unbuilt {
 		return fmt.Sprintf("REFUSED PATHS unbuilt stream=%s remedy=%s", oneline.Field(r.Stream), strconv.Quote(RepairRemedy))
@@ -274,26 +277,31 @@ func (sp StreamPaths) Gate(stream string, paths []string, join string) (string, 
 	if join != "" && join != stream && OverlappingPaths(paths, sp[join]) != nil {
 		target = join
 	}
-	var no *PathsRefusal
-	var ovs []string
+	var hit, ovs []string
 	for _, s := range sp.names() {
 		if s == target {
 			continue
 		}
 		if ov := OverlappingPaths(paths, sp[s]); ov != nil {
-			if no == nil {
-				no = &PathsRefusal{Stream: s}
-			} else {
-				no.Also = append(no.Also, s)
-			}
+			hit = append(hit, s)
 			ovs = append(ovs, ov...)
 		}
 	}
-	if no != nil {
-		no.Paths = SplitPaths(JoinPaths(ovs))
-		return "", no
+	if len(hit) == 0 {
+		return target, nil
 	}
-	return target, nil
+	// a --join target the card overlaps is named with the rest: the card
+	// joins neither, and the remedy parks one (SP.gate's rule)
+	if target != stream {
+		hit = append(hit, target)
+		ovs = append(ovs, OverlappingPaths(paths, sp[target])...)
+		sort.Strings(hit)
+	}
+	no := &PathsRefusal{Stream: hit[0], Paths: SplitPaths(JoinPaths(ovs))}
+	if len(hit) > 1 {
+		no.Also = hit[1:]
+	}
+	return "", no
 }
 
 // GateView is what SP.gate reads, for a check in Go before a write that

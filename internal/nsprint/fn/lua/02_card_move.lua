@@ -382,7 +382,7 @@ end
 -- (the streams last, every one mine overlaps in name order, joined by '|':
 -- a name may hold a space, never a '|'; two streams whose paths overlap,
 -- written so by ws check --repair, are both named by a push into the
--- path they share). s0, when the record is live there, is compared
+-- path they share, with or without --join naming one of them). s0, when the record is live there, is compared
 -- without the record itself.
 -- A record with no paths, or entering no stream, is not gated.
 function SP.gate(member, mine, s0, w0, s1, join)
@@ -421,6 +421,14 @@ function SP.gate(member, mine, s0, w0, s1, join)
     end
   end
   if #hit > 0 then
+    -- a --join target mine overlaps is named with the rest: mine overlaps
+    -- two open streams and joins neither, so the refusal's remedy parks one
+    -- (never --join the other, which refuses naming this one)
+    if target ~= s1 then
+      hit[#hit + 1] = target
+      for _, p in ipairs(SP.overlap(paths, SP.list(have[target]))) do seen[p] = true end
+      table.sort(hit)
+    end
     local ov = {}
     for p in pairs(seen) do ov[#ov + 1] = p end
     table.sort(ov)
