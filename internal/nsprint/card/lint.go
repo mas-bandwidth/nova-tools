@@ -114,6 +114,7 @@ type cardDoc struct {
 	DoneWhen       string // DONE-WHEN: the sentence a test can fail; required, carried into the PR body (#2932)
 	Task           string // TASK: <sentence>, the PR title's sentence when present (#3712); "" is absent
 	Leg            string // LEG: <leg>, the toolchain a bench profile must carry (deal Bench.runs); absent is any bench
+	StreamPaths    string // PATHS as the stream holds them (ws.SplitPaths, comma-joined), set by push's gate (#4322)
 	Payload        string
 }
 

@@ -50,6 +50,7 @@ type CutInput struct {
 	Index  string // a ctxindex directory; "" inlines no context
 	Stream string // overrides the issue's STREAM: line
 	Base   string // overrides the issue's BASE: line
+	Join   string // the open stream the card may join when its PATHS overlap it (PushOptions.Join, #4322)
 }
 
 // CutCard is what a cut rendered: the card's label and exact bytes, and the
@@ -303,7 +304,7 @@ func Cut(ctx context.Context, client *redis.Client, src IssueSource, in CutInput
 	if err := client.SetNX(ctx, BodyKey(in.Sprint, hex.EncodeToString(sum[:])), c.Body, BodyTTL).Err(); err != nil {
 		return c, VerbResult{}, fmt.Errorf("store body: %v", err)
 	}
-	res := PushBatch(ctx, client, in.Sprint, []CardFile{{Name: c.Label, Body: c.Body}}, PushOptions{})[0]
+	res := PushBatch(ctx, client, in.Sprint, []CardFile{{Name: c.Label, Body: c.Body}}, PushOptions{Join: in.Join})[0]
 	return c, res, nil
 }
 

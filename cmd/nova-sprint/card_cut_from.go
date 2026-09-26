@@ -86,6 +86,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // cutColumns are a row's cells in the default order; id is optional.
@@ -97,6 +98,9 @@ type cutFromOpts struct {
 	Text                                       []byte
 	Repo, Stream, Sprint, Base, BaseSHA, Actor string
 	DryRun, NoGitHub                           bool
+	// Join names an open stream a row's PATHS may overlap: the row is cut
+	// onto it instead of its own stream (#4322).
+	Join string
 	// Parent makes the rows a plan's children (#4317); StitchRoute and
 	// StitchEst are the stitch card's ROUTE (frontier) and EST (60).
 	Parent, StitchRoute, StitchEst string
@@ -122,6 +126,15 @@ type cutFromDeps struct {
 	LedgerWrite func(ctx context.Context, key, repo string, row, issue int) error
 	BaseSHA     func(repo, base string) (string, error)
 	Now         func() time.Time
+	// StreamPaths reads what the paths gate reads (ws.ReadGateView); nil (a
+	// dry run with no --redis) gates nothing. The push's own FCALL gates
+	// each row again, atomically (SP.gate, #4322).
+	StreamPaths func(ctx context.Context) (ws.GateView, error)
+	// StoredPaths reads the PATHS of the records a rerun found pushed
+	// (EXISTS), id -> paths; a row whose PATHS differ is a CONFLICT, never
+	// to=already (#4322: a card's PATHS are fixed at its push). nil checks
+	// nothing.
+	StoredPaths func(ctx context.Context, ids []string) (map[string]string, error)
 	// Plan reads the parent (--parent); Bind makes it a plan after the push.
 	Plan func(ctx context.Context, id string) (planFacts, error)
 	Bind func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error)
@@ -514,6 +527,11 @@ func cutField(s string) string {
 }
 
 func cutRefused(out io.Writer, r *cutRow) {
+	if strings.HasPrefix(r.why, "REFUSED PATHS ") {
+		// the push's own paths gate (#4322): its receipt, as the check prints it
+		fmt.Fprintf(out, "%s row=%s line=%d id=%s\n", r.why, cutRowN(r), r.line, cutField(r.id))
+		return
+	}
 	fmt.Fprintf(out, "CARD CUT REFUSED row=%s line=%d id=%s why=%s\n", cutRowN(r), r.line, cutField(r.id), cutField(r.why))
 }
 
@@ -730,6 +748,36 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		summary(len(rows), refused)
 		return 1
 	}
+	// No path belongs to two open streams (nova-tools #4322): every row is
+	// gated, in file order, against every OTHER open stream's paths and the
+	// rows before it, before any issue is filed (and in a dry run with
+	// --redis, reported); --join names the one open stream a row may join
+	// instead of its own. The push's FCALL gates each row again, atomically.
+	if d.StreamPaths != nil {
+		open, err := d.StreamPaths(ctx)
+		if err != nil {
+			fmt.Fprintf(out, "CARD CUT REFUSED file=%s why=%s remedy=%s\n", cutField(o.From), cutField(err.Error()),
+				cutField("check --redis or NOVA_SPRINT_REDIS and rerun; nothing was filed"))
+			summary(len(rows), len(rows))
+			return 1
+		}
+		bad := 0
+		for _, r := range rows {
+			paths := ws.SplitPaths(r.paths)
+			to, no := open.Gate(r.stream, paths, o.Join)
+			if no != nil {
+				fmt.Fprintf(out, "%s row=%d line=%d id=%s\n", no.Receipt(), r.n, r.line, cutField(r.id))
+				bad++
+				continue
+			}
+			r.stream = to
+			open.Paths.Add(to, paths)
+		}
+		if bad > 0 {
+			summary(len(rows), bad)
+			return 1
+		}
+	}
 	if o.DryRun {
 		for _, r := range order {
 			fmt.Fprintf(out, "CARD CUT DRY row=%s id=%s stream=%s who=%s route=%s est=%s depends=%s title=%s\n", cutRowN(r), cutField(r.id),
@@ -737,6 +785,11 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		}
 		if o.Parent != "" {
 			fmt.Fprintf(out, "CARD CUT DRY PLAN parent=%s children=%d stitch=%s parent_to=waiting depends=%s\n", o.Parent, children, taskcard.StitchID(o.Parent), taskcard.StitchID(o.Parent))
+		}
+		if d.StreamPaths == nil {
+			// no store: the paths gate (#4322) read nothing, and says so
+			fmt.Fprintf(out, "CARD CUT DRY PATHS unchecked rows=%d why=%s remedy=%s\n", len(rows),
+				cutField("no --redis: the paths gate reads the store"), strconv.Quote("pass --redis <addr>"))
 		}
 		summary(len(rows), 0)
 		return 0
@@ -832,7 +885,7 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		}
 		reqs = append(reqs, taskcard.PushRequest{ID: r.id, Where: "waiting", Stream: r.stream, Sprint: o.Sprint,
 			Ref: r.ref, Origin: r.origin, Title: r.title, Repo: o.Repo, DependsOn: blocked,
-			By: o.Actor, Why: why, Fields: r.fields, Spec: &spec})
+			By: o.Actor, Why: why, Fields: r.fields, Spec: &spec, Join: o.Join})
 	}
 	var outcomes []taskcard.PushOutcome
 	if len(reqs) > 0 {
@@ -844,15 +897,20 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 			outcomes = nil
 		}
 	}
+	var rerun []*cutRow
 	for i, oc := range outcomes {
 		r := push[i]
 		if oc.Err != nil {
 			if why, ok := taskcard.IsRefused(oc.Err); ok {
 				if (r.fromLedger || facts.Children[r.id]) && strings.HasPrefix(why, "EXISTS ") {
 					r.already = true // an earlier run of this file cut it (or the plan lists it)
+					rerun = append(rerun, r)
 					continue
 				}
 				r.why = "push refused: " + why
+				if no, ok := ws.ParseRefusal(why); ok {
+					r.why = no.Receipt() // the push's own gate (SP.gate, #4322): a race the check above lost
+				}
 			} else {
 				r.why = "push: " + oc.Err.Error()
 			}
@@ -860,6 +918,7 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 			r.why = "push placed it in " + oc.Result.Where + ", not waiting"
 		}
 	}
+	cutRerunPaths(ctx, d, rerun)
 	var childIDs []string
 	stitchOK := false
 	for _, r := range order {
@@ -906,6 +965,41 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 	return 0
 }
 
+// cutRerunPaths checks the rows a rerun found pushed (to=already): a row
+// whose PATHS are not its record's is a CONFLICT naming both, never a
+// quiet already (#4322, the cold read of #4405: a rerun of card cut
+// --parent with changed PATHS printed to=already and kept the old ones).
+func cutRerunPaths(ctx context.Context, d cutFromDeps, rerun []*cutRow) {
+	if len(rerun) == 0 || d.StoredPaths == nil {
+		return
+	}
+	ids := make([]string, len(rerun))
+	for i, r := range rerun {
+		ids[i] = r.id
+	}
+	got, err := d.StoredPaths(ctx, ids)
+	for _, r := range rerun {
+		if err != nil {
+			r.already, r.why = false, "read back the pushed card's PATHS: "+err.Error()
+			continue
+		}
+		old, now := ws.SplitPaths(got[r.id]), ws.SplitPaths(r.paths)
+		if ws.SamePaths(old, now) {
+			continue
+		}
+		r.already = false
+		r.why = fmt.Sprintf("CONFLICT task:%s paths=%s new=%s: a card's PATHS are fixed at its push; cut the change as another card (its own id), or cancel task:%s and rerun",
+			r.id, cutPathsField(old), cutPathsField(now), r.id)
+	}
+}
+
+func cutPathsField(p []string) string {
+	if len(p) == 0 {
+		return "-"
+	}
+	return ws.JoinPaths(p)
+}
+
 // cmdCardCutFrom wires card cut --from: the file, the task store (opened
 // before any issue is filed, so a store that is down files nothing) and the
 // one GitHub writer (nova-sprint file's Issuer).
@@ -947,6 +1041,18 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 		return refuse(stderr, verb, "cannot read --from: "+err.Error())
 	}
 	d := cutFromDeps{Now: time.Now, BaseSHA: card.MirrorBranchSHA}
+	if raddr := taskAddr(addr); o.DryRun && o.Parent == "" && raddr != "" {
+		// a dry run with a store reports every row the paths gate would
+		// refuse (#4322); it reads, and writes nothing
+		st, err := store.Open(ctx, raddr)
+		if err != nil {
+			return refuse(stderr, verb, "redis: "+err.Error()+"; nothing filed")
+		}
+		defer func() { _ = st.Close() }()
+		d.StreamPaths = func(ctx context.Context) (ws.GateView, error) {
+			return ws.ReadGateView(ctx, st.Client())
+		}
+	}
 	if !o.DryRun || o.Parent != "" {
 		if !o.DryRun {
 			if o.Actor = quackActor(o.Actor); o.Actor == "" {
@@ -965,6 +1071,9 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 		d.Push = func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
 			return taskcard.PushMany(ctx, st.Client(), reqs)
 		}
+		d.StreamPaths = func(ctx context.Context) (ws.GateView, error) {
+			return ws.ReadGateView(ctx, st.Client())
+		}
 		d.LedgerRead = func(ctx context.Context, key string) (taskcard.CutLedger, error) {
 			return taskcard.ReadCutLedger(ctx, st.Client(), key)
 		}
@@ -973,6 +1082,9 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 		}
 		d.Plan = func(ctx context.Context, id string) (planFacts, error) {
 			return readPlanFacts(ctx, st.Client(), id)
+		}
+		d.StoredPaths = func(ctx context.Context, ids []string) (map[string]string, error) {
+			return readStoredPaths(ctx, st.Client(), ids)
 		}
 		d.Bind = func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error) {
 			return taskcard.BindPlan(ctx, st.Client(), parent, children, stitch, by)
@@ -989,6 +1101,23 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 		}
 	}
 	return cardCutFrom(ctx, o, d, stdout)
+}
+
+// readStoredPaths reads each task:<id>'s PATHS in one pipeline.
+func readStoredPaths(ctx context.Context, c redis.Cmdable, ids []string) (map[string]string, error) {
+	pipe := c.Pipeline()
+	cmds := make([]*redis.StringCmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = pipe.HGet(ctx, taskcard.Key(id), "paths")
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	out := make(map[string]string, len(ids))
+	for i, id := range ids {
+		out[id] = cmds[i].Val()
+	}
+	return out, nil
 }
 
 // readPlanFacts reads --parent's record and, when it has a stitch, where the
