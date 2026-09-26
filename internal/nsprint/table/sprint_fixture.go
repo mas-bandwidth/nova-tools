@@ -11,7 +11,7 @@ import (
 // The #3530 fixture: a whole-table keyspace of 10 streams, 6 benches and 4
 // friends, every stamp relative to SprintFixtureNow so the golden holds at
 // that instant. It exercises every rule the render applies: two all-zero
-// streams hidden, ready, review and reading in their own columns, landed
+// streams hidden, ready and review in their own columns, landed
 // moves in and out of the ETA's hour, cards in review past cfg:review
 // max_age (a REVIEW line), a bench outside the benches SET (studio) not
 // shown, a friend with a down flag, a friend with no beat, and the ONE
@@ -35,24 +35,24 @@ func SprintFixtureConfig() SprintConfig {
 }
 
 // SprintFixtureStreams are the fixture's streams in rank order with their
-// waiting, ready, working, review, reading, merging and landed counts.
+// waiting, ready, working, review, merging and landed counts.
 var SprintFixtureStreams = []FixtureStream{
-	{"swarm: cards", 150, 5, 6, 3, 0, 0, 0},
-	{"nova-sprint + merge + bus", 310, 6, 0, 0, 2, 1, 2},
-	{"nova sprint migration", 14, 0, 0, 0, 0, 0, 0},
-	{"fleet, ci, secrets, jev", 0, 0, 2, 1, 1, 0, 1},
-	{"redis: store + bus", 81, 0, 0, 0, 0, 0, 0},
-	{"nova-work", 0, 0, 0, 0, 0, 0, 0},
-	{"landing: streams + lander", 3, 0, 0, 0, 0, 2, 0},
-	{"docs", 0, 0, 0, 0, 0, 0, 0},
-	{"rowan-tools", 1, 0, 0, 0, 0, 0, 3},
-	{"harvest", 0, 4, 0, 0, 0, 0, 0},
+	{"swarm: cards", 150, 5, 6, 3, 0, 0},
+	{"nova-sprint + merge + bus", 310, 6, 0, 2, 1, 2},
+	{"nova sprint migration", 14, 0, 0, 0, 0, 0},
+	{"fleet, ci, secrets, jev", 0, 0, 2, 2, 0, 1},
+	{"redis: store + bus", 81, 0, 0, 0, 0, 0},
+	{"nova-work", 0, 0, 0, 0, 0, 0},
+	{"landing: streams + lander", 3, 0, 0, 0, 2, 0},
+	{"docs", 0, 0, 0, 0, 0, 0},
+	{"rowan-tools", 1, 0, 0, 0, 0, 3},
+	{"harvest", 0, 4, 0, 0, 0, 0},
 }
 
 // FixtureStream is one fixture stream's seven set sizes, in WSStates order.
 type FixtureStream struct {
-	Name                                                      string
-	Waiting, Ready, Working, Review, Reading, Merging, Landed int64
+	Name                                             string
+	Waiting, Ready, Working, Review, Merging, Landed int64
 }
 
 // fixtureReviewAges are how long each fixture card in review has waited,
@@ -70,7 +70,7 @@ func SprintFixture() [][]string {
 	var cmds [][]string
 	for i, s := range SprintFixtureStreams {
 		cmds = append(cmds, []string{"ZADD", "ws:order", strconv.Itoa(i + 1), s.Name})
-		counts := []int64{s.Waiting, s.Ready, s.Working, s.Review, s.Reading, s.Merging, s.Landed}
+		counts := []int64{s.Waiting, s.Ready, s.Working, s.Review, s.Merging, s.Landed}
 		for j, state := range WSStates {
 			for k := int64(0); k < counts[j]; k++ {
 				id := fmt.Sprintf("t%d-%s-%d", i+1, state, k)

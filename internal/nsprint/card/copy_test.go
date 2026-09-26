@@ -13,7 +13,7 @@ import (
 )
 
 // TestReadCopyDealtToBenchRendersALintedCard is the #3929 read-leg case: a
-// primary whose work copy ended ok with a PR is reading; card deal cuts a
+// primary whose work copy ended ok with a PR is review; card deal cuts a
 // READ copy onto bench:b; the copy's record renders a KIND: read card that
 // the card linter (the one card push runs) accepts, and that names the one
 // way it ends.
@@ -52,10 +52,10 @@ func TestReadCopyDealtToBenchRendersALintedCard(t *testing.T) {
 	}
 	head := strings.Repeat("cd", 20)
 	c.HSet(ctx, "pr:nova-tools:3950", "head", head, "base", "dev")
-	// the work copy's ok with a PR moves the primary to reading (no reader
+	// the work copy's ok with a PR moves the primary to review (no reader
 	// enrolled: no read copy yet, the deal cuts it)
 	if e, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{d[0].Copy}, OK: true, Repo: "nova-tools", PR: "3950",
-		Head: head, By: "f"}); err != nil || len(e) != 1 || e[0].To != "reading" || e[0].Next != "" {
+		Head: head, By: "f"}); err != nil || len(e) != 1 || e[0].To != "review" || e[0].Next != "" {
 		t.Fatalf("end ok with a PR %v %v", e, err)
 	}
 	r, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: bench, N: 1, By: "reconciler"})

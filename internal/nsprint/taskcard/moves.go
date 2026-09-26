@@ -6,18 +6,18 @@
 // of the TM functions in fn/lua/02_card_move.lua, the only writer of those
 // sets and of the copy and primary pointers:
 //
-//	Deal   primary waiting -> working (a work copy) or reading (a read copy);
+//	Deal   primary waiting -> working (a work copy) or review (a read copy);
 //	       the copy -> <consumer>:cards:ready
 //	Work   copy ready -> working, k = min(free, |ready|), free = slots - |working|
 //	End    copy working -> ok|fail and, in the same call, the primary's move
-//	       (reading, its read copies cut | landed | done | waiting for a work
-//	       copy; merging | reading + a fix copy | reading for a read copy;
-//	       reading + fresh read copies for a fix copy's new head)
-//	Rehead a PR's new head: its reading primaries' open copies retire and
+//	       (review, its read copies cut | landed | done | waiting for a work
+//	       copy; merging | review + a fix copy | review for a read copy;
+//	       review + fresh read copies for a fix copy's new head)
+//	Rehead a PR's new head: its review primaries' open copies retire and
 //	       fresh read copies are cut (pr record --head)
-//	EnsureReads the reading column's duty on each deal pass: a moved head
-//	       re-headed, a reading primary with no live copy given its reads
-//	       (reading | landed | done | review for a work copy; merging |
+//	EnsureReads the review reads duty on each deal pass: a moved head
+//	       re-headed, a review primary with no live copy given its reads
+//	       (review | landed | done for a work copy; merging |
 //	       working + a fix copy | review for a read copy)
 //	Cancel a copy given back, or a primary cancelled with its live copy
 //	Beat   a working copy's lease; Expire returns lapsed copies as fails
@@ -203,7 +203,7 @@ func Work(ctx context.Context, c redis.Cmdable, as Consumer, by string, n int, f
 // EndRequest is one card end over IDs (copies), each with the same result.
 // OK with PR (and Head, which the PR record pr:<name>:<n> must hold, on the
 // card's base) returns a work copy's primary to working to wait for CI at
-// that head (#3093: OK moves it to reading with a read copy, FAIL cuts a fix
+// that head (#3093: OK moves it to review with a read copy, FAIL cuts a fix
 // copy; a verdict already there applies at once); OK with DoneAlready (a
 // sha) moves it to landed; OK with neither to done/ok; a fail moves it to
 // review with Why and the evidence (#4072; Review is the way out). A read
@@ -230,7 +230,7 @@ type EndRequest struct {
 }
 
 // Ended is one copy returned: the primary's move and the next copies, comma
-// joined (the read copies a move into reading cut, a fix copy cut on the
+// joined (the read copies a move into review cut, a fix copy cut on the
 // author's queue, fresh reads at a fix's new head), if any.
 type Ended struct {
 	Copy, Primary, From, To, Next string
@@ -401,7 +401,7 @@ func parseRecut(fn, head string, out []string) ([]Recut, error) {
 }
 
 // Rehead is pr record --head's event (#4094): every primary of repo#n in
-// reading at another head than the PR record's has its live fix copy ended
+// review at another head than the PR record's has its live fix copy ended
 // ok (the new head is its result), its open read copies retired, and fresh
 // read copies cut at the new head; one call.
 func Rehead(ctx context.Context, c redis.Cmdable, repo string, n int, by string) ([]Recut, error) {
@@ -412,8 +412,8 @@ func Rehead(ctx context.Context, c redis.Cmdable, repo string, n int, by string)
 	return parseRecut(FnHead, "REHEAD", out)
 }
 
-// EnsureReads is the reading column's duty (#4094 DONE-WHEN 4), one call
-// per deal pass: a reading primary whose PR head moved is re-headed, and
+// EnsureReads is the review reads duty (#4094 DONE-WHEN 4), one call
+// per deal pass: a review primary whose PR head moved is re-headed, and
 // one with no live copy has its read copies cut.
 func EnsureReads(ctx context.Context, c redis.Cmdable, by string) ([]Recut, error) {
 	out, err := fcall(ctx, c, FnReads, by)

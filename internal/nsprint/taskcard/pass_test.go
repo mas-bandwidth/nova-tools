@@ -42,7 +42,7 @@ func TestDealPassFillsEveryConsumerInOnePass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// expire + the reading column (#4094) + (deal + work) per consumer
+	// expire + the review reads (#4094) + (deal + work) per consumer
 	// with room: 1 + 1 + 2 + 2
 	if n := countCalls(c) - calls; n != 4 {
 		t.Fatalf("pass took %d calls, want 4: %v", n, r.Lines)

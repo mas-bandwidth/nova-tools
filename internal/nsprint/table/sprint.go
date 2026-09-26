@@ -8,17 +8,17 @@
 //
 //	<left>/<y> left, <z>% done -> ~<eta>m
 //
-//	stream | waiting | ready | working | review | reading | merging | landed   (rows in ws:order, all-zero rows hidden, total)
+//	stream | waiting | ready | working | review | merging | landed   (rows in ws:order, all-zero rows hidden, total)
 //	REVIEW stream=<s> over=<n> oldest=<id> age=<d> max=<d>     (a stream with cards in review past cfg:review max_age, #4072)
 //
 //	consumer | ready | working | done | ok | fail | ok% | status | load   (one row per consumer, total)
 //
-// review is ZCARD ws:<s>:review (#4072): a card whose consumer copy failed,
-// waiting for its typed verdict (nova-sprint review post); it is left, never
-// done. reading is ZCARD ws:<s>:reading (#3929). merging prints
-// <read>/<unread> (merging.go, #3900) until a ws:<s>:reading set exists; from
-// then on the unread cards are the reading column and merging is the read
-// cards alone: the same ReadSplit, its other source.
+// review is ZCARD ws:<s>:review: one state for every card past working that
+// is not yet merging (Glenn 2026-09-26 8:20 AM ET, "let's do review": a card
+// whose consumer copy failed and waits for its typed verdict (#4072), and a
+// card whose PR waits for its read; the old reading set and the merging
+// <read>/<unread> split (#3900, #3929) are gone). Every cell is one plain
+// ZCARD; it is left, never done.
 //
 // The consumer table is ONE table (#4071, Glenn 2026-09-25 2:40 PM: "friends
 // can fuck up cards too"): a row per consumer, friends and benches alike,
@@ -35,12 +35,7 @@
 // trip only on the tick a membership set changed; never KEYS, never SCAN):
 //
 //	ws:order                ZRANGE, the streams in rank order (the ws index, #3662)
-//	ws:<s>:<state>          ZCARD for waiting, ready, working, review, reading, merging, landed
-//	EVAL_RO detailScript    read only: ws:<s>:merging with each card's pr:<name>:<n>
-//	                        head/state/stream/reads, cfg:land, every
-//	                        land:<repo>:<slug> of land:<repo>:streams with its PR's
-//	                        ci, and cfg:review max_age with every ws:<s>:review
-//	                        card's review_at
+//	ws:<s>:<state>          ZCARD for waiting, ready, working, review, merging, landed
 //	ws:log                  XRANGE over the last hour: the landed rate for the ETA
 //	friends, benches,       SMEMBERS: the consumers (friends the --friends roster
 //	consumers               when given; then the benches; then any other
@@ -70,12 +65,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// WSStates are the seven per-stream sets the table counts, in reply order.
-// review sits between working and reading (#4072: a failed card waits there
-// for its verdict); reading between working and merging (Glenn 2026-09-25:
-// "split merging into separate reading | merging columns"): a card whose PR
-// is being read.
-var WSStates = []string{"waiting", "ready", "working", "review", "reading", "merging", "landed"}
+// WSStates are the six per-stream sets the table counts, in reply order:
+// the stream line waiting -> ready -> working -> review -> merging -> landed
+// (Glenn 2026-09-26). review is where a card waits for a verdict or a read.
+var WSStates = []string{"waiting", "ready", "working", "review", "merging", "landed"}
 
 // ConsumerSets are the four <kind>:<name>:cards:<set> sets a consumer row
 // counts, in column order (done = ok + fail is derived).
@@ -93,26 +86,17 @@ type SprintConfig struct {
 	// own pipeline (see AcquireLock); the read reports LockLost when it is gone.
 	LockKey, LockToken string
 	LockTTL            time.Duration
-	// ReadingSet takes the merging split from ws:<s>:reading (#3929) even
-	// before any card is in one: merging prints the read count alone, not
-	// <read>/<unread>. Without it the switch happens on the first tick that
-	// finds a reading set non-empty and stays. The reading column is always
-	// printed.
-	ReadingSet bool
 }
 
-// StreamRow is one stream's seven counts, in WSStates order.
+// StreamRow is one stream's six counts, in WSStates order.
 type StreamRow struct {
-	Name                                                      string
-	Waiting, Ready, Working, Review, Reading, Merging, Landed int64
-	// MergingRead is how many cards of merging the lander would take (a
-	// read at head >= cfg:land, no hold), from the PR records; -1 unknown.
-	MergingRead int64
+	Name                                             string
+	Waiting, Ready, Working, Review, Merging, Landed int64
 }
 
-// Total is every task in the stream's seven sets.
+// Total is every task in the stream's six sets.
 func (r StreamRow) Total() int64 {
-	return r.Waiting + r.Ready + r.Working + r.Review + r.Reading + r.Merging + r.Landed
+	return r.Waiting + r.Ready + r.Working + r.Review + r.Merging + r.Landed
 }
 
 // SprintSnapshot is one tick's read.
@@ -123,13 +107,6 @@ type SprintSnapshot struct {
 	LandedHour int64 // ws:log moves to landed in the hour before the read
 	// Consumers are the consumer table's rows, in display order (#4071).
 	Consumers []ConsumerRow
-	// Landings are the open landings, one LAND line each (#3900).
-	Landings []LandRow
-	// Reviews are the streams with a card in review past cfg:review
-	// max_age, one REVIEW line each (#4072).
-	Reviews []ReviewBound
-	// ReadSource is where ReadSplit reads: ReadFromRecords or ReadFromSet.
-	ReadSource string
 	// RoundTrips is how many pipelines the read took: 1 in steady state.
 	RoundTrips int
 	// LockLost says the tick found the writer's lock held by someone else.
@@ -192,9 +169,6 @@ type SprintReader struct {
 	Config                               SprintConfig
 	streams, benches, friends, consumers []string
 	primed                               bool
-	// sawReading is set on the first tick a reading set was non-empty: the
-	// split stays ReadFromSet from then on, so the merging cell never flaps.
-	sawReading bool
 }
 
 // NewSprintReader is a reader with no membership yet: its first Read takes
@@ -276,13 +250,6 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			counts[i] = append(counts[i], pipe.ZCard(ctx, "ws:"+s+":"+state))
 		}
 	}
-	// The merging split from records only while there is no reading set.
-	var fromRecords []string
-	if !cfg.ReadingSet && !r.sawReading {
-		fromRecords = r.streams
-	}
-	repos := landRepos(cfg)
-	detail := pipe.EvalRO(ctx, detailScript, nil, detailArgs(fromRecords, repos, r.streams)...)
 	type consumerCmds struct {
 		cells [4]*redis.IntCmd
 		beat  *redis.SliceCmd
@@ -347,22 +314,12 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 	}
 	for i, s := range r.streams {
-		row := StreamRow{Name: s, MergingRead: -1}
-		cells := []*int64{&row.Waiting, &row.Ready, &row.Working, &row.Review, &row.Reading, &row.Merging, &row.Landed}
+		row := StreamRow{Name: s}
+		cells := []*int64{&row.Waiting, &row.Ready, &row.Working, &row.Review, &row.Merging, &row.Landed}
 		for j, c := range counts[i] {
 			*cells[j] = c.Val()
 		}
-		if row.Reading > 0 {
-			r.sawReading = true
-		}
 		snap.Streams = append(snap.Streams, row)
-	}
-	snap.ReadSource = ReadFromRecords
-	if cfg.ReadingSet || r.sawReading {
-		snap.ReadSource = ReadFromSet
-	}
-	if v, err := detail.Result(); err == nil {
-		applyDetail(snap, v, fromRecords, repos, r.streams, now)
 	}
 	for i, c := range roster {
 		row := ConsumerRow{Consumer: c, Load: "-"}
@@ -409,10 +366,10 @@ func FailedSprint(cfg SprintConfig, last *SprintSnapshot) *SprintSnapshot {
 	return &snap
 }
 
-const streamRule = "-------------------------------+---------+-------+---------+--------+---------+---------+-------\n"
+const streamRule = "--------------------------+---------+-------+---------+--------+---------+-------\n"
 
 // XY is the headline's numbers: y is every task in the streams of ws:order,
-// left is y minus landed (a card in review, reading or merging is not done),
+// left is y minus landed (a card in review or merging is not done),
 // eta is left over the landed rate of the last hour (at least 1 an hour, so
 // a stall shows as a big number, never infinity).
 func (s *SprintSnapshot) XY() (left, y, pct, eta int64) {
@@ -448,7 +405,7 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 	left, y, pct, eta := s.XY()
 	fmt.Fprintf(&b, "%d/%d left, %d%% done -> ~%dm\n\n", left, y, pct, eta)
 
-	s.renderStreams(&b, now)
+	s.renderStreams(&b)
 	writeConsumerTable(&b, s.Consumers)
 	if s.Stale {
 		fmt.Fprintf(&b, "stale: %ds (Redis did not answer; rows are the last good read)\n", now.Unix()-s.LastGood.Unix())
@@ -457,14 +414,14 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 }
 
 // consumerRule is the consumer table's rule line.
-const consumerRule = "---------------------+-------+---------+-------+-------+-------+------+--------+------\n"
+const consumerRule = "--------------------------+-------+---------+-------+-------+-------+------+--------+------\n"
 
 // writeConsumerTable is the one consumer table (#4071): consumer | ready |
 // working | done | ok | fail | ok% | status | load, then a total row whose
 // ok% is derived from the totals. A cell whose ZCARD did not come back
 // prints "?" (and so do done and ok% when ok or fail is one), never a false 0.
 func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
-	fmt.Fprintf(b, "%-20s | %5s | %7s | %5s | %5s | %5s | %4s | %-6s | %s\n", "consumer", "ready", "working", "done", "ok", "fail",
+	fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %5s | %5s | %4s | %-6s | %s\n", "consumer", "ready", "working", "done", "ok", "fail",
 		"ok%", "status", "load")
 	b.WriteString(consumerRule)
 	// The row is the name alone (Glenn 2026-09-25 11:20 PM ET: the friend:/bench:
@@ -498,7 +455,7 @@ func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
 		if r.Up {
 			status = "up"
 		}
-		fmt.Fprintf(b, "%-20s | %5s | %7s | %5s | %5s | %5s | %4s | %-6s | %s\n", name, cell[0], cell[1], done, cell[2], cell[3],
+		fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %5s | %5s | %4s | %-6s | %s\n", name, cell[0], cell[1], done, cell[2], cell[3],
 			pct, status, r.Load)
 	}
 	b.WriteString(consumerRule)
@@ -513,7 +470,7 @@ func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
 	if unread[2] || unread[3] {
 		done, pct = "?", "?"
 	}
-	fmt.Fprintf(b, "%-20s | %5s | %7s | %5s | %5s | %5s | %4s |\n", "total", cell[0], cell[1], done, cell[2], cell[3], pct)
+	fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %5s | %5s | %4s |\n", "total", cell[0], cell[1], done, cell[2], cell[3], pct)
 }
 
 // The writer's lock: one table writer per key, fleet-wide. AcquireLock takes
@@ -556,46 +513,26 @@ func ReleaseLock(ctx context.Context, client redis.UniversalClient, key, token s
 	return client.Eval(ctx, lockReleaseScript, []string{key}, token).Err()
 }
 
-// renderStreams is the stream block, its LAND lines and its REVIEW lines.
-// Every cell is one set's ZCARD, ready, review and reading each their own
-// column (a card is in exactly one set), except the read split: merging
-// prints <read>/<unread> from the records until a reading set exists, then
-// reading is the unread cards and merging the read ones. Both come from
-// ReadSplit.
-func (s *SprintSnapshot) renderStreams(b *strings.Builder, now time.Time) {
-	sets := s.ReadSource == ReadFromSet
-	fmt.Fprintf(b, "%-30s | %7s | %5s | %7s | %6s | %7s | %7s | %6s\n", "stream", "waiting", "ready", "working", "review", "reading",
+// renderStreams is the stream block: one plain ZCARD per cell, every card in
+// exactly one set. No LAND line (#4088), no REVIEW line (Glenn 2026-09-26
+// 8:03 AM ET), no <read>/<unread> split (Glenn 2026-09-26 8:22 AM ET, "Let's
+// remove it, and use review as that state").
+func (s *SprintSnapshot) renderStreams(b *strings.Builder) {
+	fmt.Fprintf(b, "%-25s | %7s | %5s | %7s | %6s | %7s | %6s\n", "stream", "waiting", "ready", "working", "review",
 		"merging", "landed")
 	b.WriteString(streamRule)
 	var tot StreamRow
-	var tread, tunread int64
-	known := true
 	for _, r := range s.Streams {
 		if r.Total() == 0 {
 			continue
 		}
-		read, unread, ok := s.ReadSplit(r)
-		known = known && ok
-		tread, tunread = tread+read, tunread+unread
 		tot.Waiting, tot.Ready, tot.Working, tot.Review = tot.Waiting+r.Waiting, tot.Ready+r.Ready, tot.Working+r.Working, tot.Review+r.Review
-		tot.Reading, tot.Merging, tot.Landed = tot.Reading+r.Reading, tot.Merging+r.Merging, tot.Landed+r.Landed
-		merging := strconv.FormatInt(r.Merging, 10)
-		if !sets {
-			merging = s.mergingCell(r)
-		}
-		fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %6d | %7d | %7s | %6d\n", r.Name, r.Waiting, r.Ready, r.Working, r.Review, r.Reading,
-			merging, r.Landed)
+		tot.Merging, tot.Landed = tot.Merging+r.Merging, tot.Landed+r.Landed
+		fmt.Fprintf(b, "%-25s | %7d | %5d | %7d | %6d | %7d | %6d\n", r.Name, r.Waiting, r.Ready, r.Working, r.Review,
+			r.Merging, r.Landed)
 	}
 	b.WriteString(streamRule)
-	merging := strconv.FormatInt(tot.Merging, 10)
-	if !sets && known {
-		merging = fmt.Sprintf("%d/%d", tread, tunread)
-	}
-	fmt.Fprintf(b, "%-30s | %7d | %5d | %7d | %6d | %7d | %7s | %6d\n", "total", tot.Waiting, tot.Ready, tot.Working, tot.Review,
-		tot.Reading, merging, tot.Landed)
-	// No LAND line (#4088), and no REVIEW line (Glenn 2026-09-26 8:03 AM ET,
-	// "Please remove this line"): the review column carries the count; a
-	// card past cfg:review max_age is an event to the coordinator, not a
-	// table row (s.Reviews stays for that path).
+	fmt.Fprintf(b, "%-25s | %7d | %5d | %7d | %6d | %7d | %6d\n", "total", tot.Waiting, tot.Ready, tot.Working, tot.Review,
+		tot.Merging, tot.Landed)
 	b.WriteByte('\n')
 }

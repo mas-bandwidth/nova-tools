@@ -66,12 +66,12 @@ func TestControl4071OneConsumerTable(t *testing.T) {
 	if strings.Contains(got, "\nfriend     |") || strings.Contains(got, "\nhost       |") {
 		t.Fatalf("a separate friend or host block is still printed:\n%s", got)
 	}
-	want := "consumer             | ready | working |  done |    ok |  fail |  ok% | status | load\n" +
-		"---------------------+-------+---------+-------+-------+-------+------+--------+------\n" +
-		"emma                 |     0 |       0 |     2 |     1 |     1 |  50% | up     | -\n" +
-		"hetzner              |     0 |       0 |     2 |     1 |     1 |  50% | up     | 0.19\n" +
-		"---------------------+-------+---------+-------+-------+-------+------+--------+------\n" +
-		"total                |     0 |       0 |     4 |     2 |     2 |  50% |\n"
+	want := "consumer                  | ready | working |  done |    ok |  fail |  ok% | status | load\n" +
+		"--------------------------+-------+---------+-------+-------+-------+------+--------+------\n" +
+		"emma                      |     0 |       0 |     2 |     1 |     1 |  50% | up     | -\n" +
+		"hetzner                   |     0 |       0 |     2 |     1 |     1 |  50% | up     | 0.19\n" +
+		"--------------------------+-------+---------+-------+-------+-------+------+--------+------\n" +
+		"total                     |     0 |       0 |     4 |     2 |     2 |  50% |\n"
 	if block := consumerBlock(t, got); block != want {
 		t.Fatalf("consumer table:\n%s\nwant:\n%s", block, want)
 	}
@@ -107,11 +107,11 @@ func TestConsumerTableStatusAndOrder(t *testing.T) {
 	}
 	block := consumerBlock(t, snap.Render(now))
 	want := []string{
-		"stella               |     0 |       1 |     0 |     0 |     0 |    - | down   | -",
-		"rowan                |     0 |       0 |     0 |     0 |     0 |    - | up     | -",
-		"hulk                 |     2 |       0 |     0 |     0 |     0 |    - | down   | 0.40",
-		"space                |     0 |       0 |     0 |     0 |     0 |    - | up     | 1.04",
-		"extra                |     0 |       0 |     1 |     1 |     0 | 100% | down   | -",
+		"stella                    |     0 |       1 |     0 |     0 |     0 |    - | down   | -",
+		"rowan                     |     0 |       0 |     0 |     0 |     0 |    - | up     | -",
+		"hulk                      |     2 |       0 |     0 |     0 |     0 |    - | down   | 0.40",
+		"space                     |     0 |       0 |     0 |     0 |     0 |    - | up     | 1.04",
+		"extra                     |     0 |       0 |     1 |     1 |     0 | 100% | down   | -",
 	}
 	rows := strings.Split(block, "\n")[2:7]
 	if strings.Join(rows, "\n") != strings.Join(want, "\n") {
@@ -169,8 +169,8 @@ func TestConsumerTableKeyAllowlist(t *testing.T) {
 }
 
 // TestStreamTableReviewColumn (#4072): review is its own column between
-// working and reading, counted in y and never done (left includes it), and
-// a card in review longer than cfg:review max_age is a REVIEW bound line.
+// working and merging, counted in y and never done (left includes it); a
+// card in review longer than cfg:review max_age prints nothing (#4230).
 func TestStreamTableReviewColumn(t *testing.T) {
 	t.Parallel()
 	now := table.SprintFixtureNow()
@@ -190,11 +190,11 @@ func TestStreamTableReviewColumn(t *testing.T) {
 	}
 	got := snap.Render(now)
 	want := "3/4 left, 25% done -> ~180m\n\n" +
-		"stream                         | waiting | ready | working | review | reading | merging | landed\n" +
-		"-------------------------------+---------+-------+---------+--------+---------+---------+-------\n" +
-		"swarm: cards                   |       0 |     0 |       1 |      2 |       0 |     0/0 |      1\n" +
-		"-------------------------------+---------+-------+---------+--------+---------+---------+-------\n" +
-		"total                          |       0 |     0 |       1 |      2 |       0 |     0/0 |      1\n" +
+		"stream                    | waiting | ready | working | review | merging | landed\n" +
+		"--------------------------+---------+-------+---------+--------+---------+-------\n" +
+		"swarm: cards              |       0 |     0 |       1 |      2 |       0 |      1\n" +
+		"--------------------------+---------+-------+---------+--------+---------+-------\n" +
+		"total                     |       0 |     0 |       1 |      2 |       0 |      1\n" +
 		"\n"
 	if !strings.Contains(got, want) {
 		t.Fatalf("stream table:\n%s\nwant:\n%s", got, want)

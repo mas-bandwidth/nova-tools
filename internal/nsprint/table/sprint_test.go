@@ -201,7 +201,7 @@ func TestControl3530MembershipChange(t *testing.T) {
 		t.Fatalf("changed tick RoundTrips=%d, want 2", snap.RoundTrips)
 	}
 	got := snap.Render(now)
-	if !strings.Contains(got, "late stream                    |       0 |     0 |       1 |      0 |       0 |       0 |      0\n") {
+	if !strings.Contains(got, "late stream               |       0 |     0 |       1 |      0 |       0 |      0\n") {
 		t.Fatalf("the new stream is not on the table:\n%s", got)
 	}
 	if strings.Contains(got, "vision") || strings.Contains(got, "ghost") {
@@ -243,14 +243,14 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "SPRINT TABLE\n\n0/0 left, 0% done -> ~0m\n\n" +
-		"stream                         | waiting | ready | working | review | reading | merging | landed\n" +
-		"-------------------------------+---------+-------+---------+--------+---------+---------+-------\n" +
-		"-------------------------------+---------+-------+---------+--------+---------+---------+-------\n" +
-		"total                          |       0 |     0 |       0 |      0 |       0 |     0/0 |      0\n\n" +
-		"consumer             | ready | working |  done |    ok |  fail |  ok% | status | load\n" +
-		"---------------------+-------+---------+-------+-------+-------+------+--------+------\n" +
-		"---------------------+-------+---------+-------+-------+-------+------+--------+------\n" +
-		"total                |     0 |       0 |     0 |     0 |     0 |    - |\n"
+		"stream                    | waiting | ready | working | review | merging | landed\n" +
+		"--------------------------+---------+-------+---------+--------+---------+-------\n" +
+		"--------------------------+---------+-------+---------+--------+---------+-------\n" +
+		"total                     |       0 |     0 |       0 |      0 |       0 |      0\n\n" +
+		"consumer                  | ready | working |  done |    ok |  fail |  ok% | status | load\n" +
+		"--------------------------+-------+---------+-------+-------+-------+------+--------+------\n" +
+		"--------------------------+-------+---------+-------+-------+-------+------+--------+------\n" +
+		"total                     |     0 |       0 |     0 |     0 |     0 |    - |\n"
 	if got := snap.Render(now); got != want {
 		t.Fatalf("empty keyspace:\n%s", got)
 	}
@@ -320,7 +320,7 @@ func TestControl3530WriterLock(t *testing.T) {
 }
 
 // TestControl3637ClearUnderOneSecond (DONE-WHEN of #3637): table clear moves
-// every landed member to closed, waiting, ready, working, review, reading and
+// every landed member to closed, waiting, ready, working, review and
 // merging untouched, in under one second; the checkpoint names every moved
 // task and every done count. The consumer table is untouched (#4071: its
 // done is ok + fail, ZCARDs with no base from a clear).
@@ -372,7 +372,7 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 	for i, row := range after.Streams {
 		b := before.Streams[i]
 		if row.Landed != 0 || row.Waiting != b.Waiting || row.Ready != b.Ready || row.Working != b.Working || row.Review != b.Review ||
-			row.Reading != b.Reading || row.Merging != b.Merging {
+			row.Merging != b.Merging {
 			t.Fatalf("stream %q after clear %+v, before %+v", row.Name, row, b)
 		}
 	}
