@@ -344,7 +344,7 @@ func TestEmptyCmdlineDeadProcessDoesNotBlockLockCleanup(t *testing.T) {
 	procs, err := classifyViews([]procView{
 		{comm: "git\n"},
 		{comm: "git\n", cmdline: ownerCmd, cwd: dir},
-	})
+	}, 501)
 	if len(procs) != 1 {
 		t.Fatalf("empty cmdline hid the later owner: procs=%+v err=%v", procs, err)
 	}
@@ -365,7 +365,7 @@ func TestEmptyCmdlineDeadProcessDoesNotBlockLockCleanup(t *testing.T) {
 	}
 
 	unused, unusedLock := oldIndexLock(t)
-	deadProcs, deadErr := classifyViews([]procView{{comm: "git\n", dead: true}})
+	deadProcs, deadErr := classifyViews([]procView{{comm: "git\n", dead: true}}, 501)
 	if deadErr != nil || len(deadProcs) != 0 {
 		t.Fatalf("dead cmdline stayed in the scan: procs=%+v err=%v", deadProcs, deadErr)
 	}
@@ -380,7 +380,7 @@ func TestEmptyCmdlineDeadProcessDoesNotBlockLockCleanup(t *testing.T) {
 	}
 
 	live, liveLock := oldIndexLock(t)
-	_, liveErr := classifyViews([]procView{{comm: "git\n"}})
+	_, liveErr := classifyViews([]procView{{comm: "git\n"}}, 501)
 	if liveErr == nil || strings.Contains(liveErr.Error(), "\n") || len(liveErr.Error()) > ownershipDiagCap || !strings.HasPrefix(liveErr.Error(), ownershipUnknown) {
 		t.Fatalf("live empty cmdline diagnostic is not bounded: %q", liveErr)
 	}
@@ -499,7 +499,7 @@ func TestVanishingProcessESRCHDoesNotBlockLockCleanup(t *testing.T) {
 
 	dir, lock := oldIndexLock(t)
 	scan := func() ([]gitProc, error) {
-		return classifyViews([]procView{{commErr: esrch("comm")}, {comm: "bash\n"}})
+		return classifyViews([]procView{{commErr: esrch("comm")}, {comm: "bash\n"}}, 501)
 	}
 	cleared, err := clearStaleIndexLock(dir, time.Now(), scan)
 	if err != nil || !cleared {
@@ -513,7 +513,31 @@ func TestVanishingProcessESRCHDoesNotBlockLockCleanup(t *testing.T) {
 	// still keeps the lock.
 	kept, keptLock := oldIndexLock(t)
 	cleared, err = clearStaleIndexLock(kept, time.Now(), func() ([]gitProc, error) {
-		return classifyViews([]procView{{comm: "git\n", cmdErr: &fs.PathError{Op: "read", Path: "/proc/1/cmdline", Err: syscall.EACCES}}})
+		return classifyViews([]procView{{comm: "git\n", cmdErr: &fs.PathError{Op: "read", Path: "/proc/1/cmdline", Err: syscall.EACCES}}}, 501)
 	})
 	assertLockKept(t, keptLock, cleared, err)
+}
+
+// The linux twin of TestGitScanSkipsAnotherAccountsGit: /proc/<pid>/cwd of another
+// account answers EACCES, which read as a live git of unknown place and refused the
+// wait. A view whose owner is another uid is skipped; our own git beside it is placed;
+// the same unreadable view owned by us is still unknown, and a view whose owner could
+// not be read is judged as before.
+func TestGitScanSkipsAnotherAccountsGitLinux(t *testing.T) {
+	t.Parallel()
+	denied := &fs.PathError{Op: "readlink", Path: "/proc/18772/cwd", Err: syscall.EACCES}
+	foreign := procView{comm: "git\n", cmdline: []byte("git\x00status"), cwdErr: denied, owner: 502, ownerKnown: true}
+	own := procView{comm: "git\n", cmdline: []byte("git\x00fetch"), cwd: "/home/nova/bus", owner: 501, ownerKnown: true}
+	procs, err := classifyViews([]procView{foreign, own}, 501)
+	if err != nil || len(procs) != 1 || procs[0].cwd != "/home/nova/bus" {
+		t.Fatalf("another account's git beside our own: procs=%+v err=%v, want our one and no error", procs, err)
+	}
+	if _, err := classifyViews([]procView{foreign}, 502); err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) {
+		t.Fatalf("our own git with an unreadable cwd: err=%v, want %q", err, ownershipUnknown)
+	}
+	unowned := foreign
+	unowned.ownerKnown = false
+	if _, err := classifyViews([]procView{unowned}, 501); err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) {
+		t.Fatalf("a git whose owner could not be read: err=%v, want %q", err, ownershipUnknown)
+	}
 }
