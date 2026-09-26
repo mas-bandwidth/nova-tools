@@ -91,7 +91,8 @@ func TestCopyEndHarvestsAndEndsOkWithThePR(t *testing.T) {
 			calls++
 			got = r
 			return harvestcopy.Result{Repo: "mas-bandwidth/nova-tools", Branch: r.Branch, Head: r.SHA, PR: 4321,
-				URL: "http://127.0.0.1/pr/4321", Push: "pushed", Open: "opened"}, nil
+				URL: "http://127.0.0.1/pr/4321", Push: "pushed", Open: "opened",
+				Title: "the opened title", Body: "STREAM: swarm: cards\nDONE-WHEN: a work copy reaches ok with a PR open\n"}, nil
 		}}
 	end := doneEnd(t, sha)
 	if code, err := led.End(ctx, end); err != nil || code != 0 {
@@ -119,8 +120,9 @@ func TestCopyEndHarvestsAndEndsOkWithThePR(t *testing.T) {
 	pr := c.HGetAll(ctx, "pr:nova-tools:4321").Val()
 	if pr["head"] != sha || pr["base"] != "dev" || pr["base_sha"] != harvestBaseSHA || pr["stream"] != "swarm: cards" ||
 		pr["branch"] != branch || pr["state"] != "open" || pr["ci"] != "pending" || pr["repo"] != "mas-bandwidth/nova-tools" ||
-		pr["n"] != "4321" || pr["task"] != primary || pr["created_at"] != "1700000000000" {
-		t.Fatalf("pr record %v", pr)
+		pr["n"] != "4321" || pr["task"] != primary || pr["created_at"] != "1700000000000" ||
+		pr["pr_title"] != "the opened title" || pr["pr_body"] != "STREAM: swarm: cards\nDONE-WHEN: a work copy reaches ok with a PR open\n" {
+		t.Fatalf("pr record %v (#4335: pr_title and pr_body are what the PR was opened with)", pr)
 	}
 	// a second end of the ended copy writes nothing and harvests nothing
 	if code, err := led.End(ctx, end); err != nil || code != 0 || calls != 1 {
