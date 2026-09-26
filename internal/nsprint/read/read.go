@@ -465,8 +465,16 @@ func PostMeasured(ctx context.Context, c *redis.Client, repo, n, text, mirror st
 			fmt.Fprintf(stderr, "READ POST SKIPPED repo=%s n=%s %s\n", repo, n, strings.ReplaceAll(s, "\n", " "))
 		}
 	}
+	// a CLOSE line that landed a stitch landed its plan (#4317): named after
+	// the receipt, so the one who posted it closes the plan's issue too
+	plans := func() {
+		for _, plan := range p.Plans {
+			fmt.Fprintf(stdout, "READ POST PLAN repo=%s n=%s %s\n", repo, n, plan)
+		}
+	}
 	if poster == nil {
 		fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=0%s%s\n", repo, n, kind, p.Lines, moves, gates)
+		plans()
 		return 0
 	}
 	id, err := poster.Comment(ctx, repo, n, text)
@@ -475,6 +483,7 @@ func PostMeasured(ctx context.Context, c *redis.Client, repo, n, text, mirror st
 		return 1
 	}
 	fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=1 comment=%d%s%s\n", repo, n, kind, p.Lines, id, moves, gates)
+	plans()
 	return 0
 }
 
