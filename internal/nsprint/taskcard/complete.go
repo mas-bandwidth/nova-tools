@@ -218,6 +218,9 @@ func ResultKind(kind string) (string, error) {
 		return cardhdr.KindMap[kind], nil
 	case kind == "" || kind == "build" || kind == "work":
 		return typedrec.KindFix, nil
+	case kind == KindStitch:
+		// a plan's stitch (#4317) is a build task: it lands one PR
+		return typedrec.KindFix, nil
 	}
 	return "", fmt.Errorf("KIND %q is not a card kind", kind)
 }
