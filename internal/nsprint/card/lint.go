@@ -45,6 +45,9 @@ type VerbResult struct {
 	Code   int
 	Stdout string
 	Stderr string
+	// Lines is a Stderr of receipt lines, one per refusal (the REFUSED
+	// card-lint lines, #4396): the CLI prints them as written, one per line.
+	Lines bool
 }
 
 const (

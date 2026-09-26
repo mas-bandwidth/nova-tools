@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -25,8 +27,19 @@ func pathsStore(t *testing.T) (*redis.Client, func(id, stream, paths string, mor
 	}
 	push := func(id, stream, paths string, more ...string) (int, string) {
 		t.Helper()
+		// a push carrying PATHS carries a card, and a card is one invariant
+		// (#4396): the body rides on --issue <file>
+		card := filepath.Join(t.TempDir(), id+".md")
+		if err := os.WriteFile(card, []byte("DONE-WHEN: "+id+" holds\nINVARIANT: "+id+" holds one thing.\nCLASS-TEST: TestPaths"+strings.Map(func(r rune) rune {
+			if r == '-' {
+				return '_'
+			}
+			return r
+		}, id)+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		args := append([]string{"push", "--redis", addr, "--actor", "rowan", "--id", id, "--stream", stream, "--title", id,
-			"--paths", paths}, more...)
+			"--paths", paths, "--issue", card}, more...)
 		code, out, errOut := runTaskCLI(args...)
 		return code, out + errOut
 	}

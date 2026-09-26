@@ -13,8 +13,9 @@ func pathsRows(rows ...[3]string) string {
 	var b strings.Builder
 	b.WriteString("id\ttitle\tstream\twho\tpaths\tdone-when\tbody\tdepends-on\troute\test\n")
 	for i, r := range rows {
-		fmt.Fprintf(&b, "%s\tCard %d does its thing\t%s\tany\t%s\tgo test ./x -run TestX%d passes\tWhy %d\tnone\tfriend\t30\n",
-			r[0], i+1, r[1], r[2], i+1, i+1)
+		// the body is one invariant (#4396): the lint runs before the paths gate
+		fmt.Fprintf(&b, "%s\tCard %d does its thing\t%s\tany\t%s\tgo test ./x -run TestX%d passes\t%s\tnone\tfriend\t30\n",
+			r[0], i+1, r[1], r[2], i+1, cutInv)
 	}
 	return b.String()
 }

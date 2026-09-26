@@ -28,15 +28,17 @@ func TestCardCutParentRerunChangedPathsConflicts(t *testing.T) {
 	}
 	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "rr", Where: "waiting", Stream: "rerun", Kind: "build",
 		Title: "rerun plan", Repo: "mas-bandwidth/nova-tools", By: "rowan",
-		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "internal/nsprint/taskcard", "done_when", "the plan holds"}}); err != nil {
+		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "internal/nsprint/taskcard", "done_when", "the plan holds",
+			"test", "./cmd/nova-sprint TestCardCutParentRerunChangedPathsConflicts"}}); err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
 	tsv := filepath.Join(dir, "children.tsv")
 	write := func(verbPaths string) {
-		rows := "id\ttitle\tpaths\tdone-when\tdepends-on\troute\n" +
-			"rr-model\tthe model\tinternal/nsprint/taskcard/hierarchy.go\tPlan.State is derived\tnone\tpro\n" +
-			"rr-verb\tthe verb\t" + verbPaths + "\tcard cut --parent\trr-model\tfriend\n"
+		// one-invariant bodies (#4396) and a TEST cell on the swarm row (#4313)
+		rows := "id\ttitle\tpaths\tdone-when\tbody\tdepends-on\troute\ttest\n" +
+			"rr-model\tthe model\tinternal/nsprint/taskcard/hierarchy.go\tPlan.State is derived\t" + cutInv + "\tnone\tpro\t./internal/nsprint/taskcard TestPlanStateIsDerived\n" +
+			"rr-verb\tthe verb\t" + verbPaths + "\tcard cut --parent\t" + cutInv + "\trr-model\tfriend\t\n"
 		if err := os.WriteFile(tsv, []byte(rows), 0o644); err != nil {
 			t.Fatal(err)
 		}
