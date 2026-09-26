@@ -1,6 +1,10 @@
 package table
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
+)
 
 // Fleet fixture sizes (#3893): the shape of the fleet store on 2026-09-25,
 // rounded up, so the wide table is proven to render at the size it refused.
@@ -93,12 +97,12 @@ func FleetFixtureOf(n int) [][]string {
 			"origin", "https://github.com/mas-bandwidth/nova-tools/issues/" + fmt.Sprint(3000+i),
 			"stream", stream, "where", where, "created_at", created, "where_at", created,
 			"bench", bench})
-		add("Z ws:"+stream+":"+where, created, id)
+		add("Z "+ws.KeyAt(0, stream, where), created, id)
 		add("Z sprint:"+sprint+":cards", created, id)
 		add("S s:"+sprint+":idx:card:"+fleetState[where], id)
 		switch where {
 		case "ready":
-			add("Z s:"+sprint+":pool", created, id)
+			add("Z "+ws.SprintListAt(0, sprint, "pool"), created, id)
 		case "working":
 			add("Z s:"+sprint+":bench:"+bench+":queue", created, id)
 		case "done":

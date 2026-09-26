@@ -105,7 +105,7 @@ func PlanClear(ctx context.Context, client redis.UniversalClient, friends []stri
 	for i, s := range p.Streams {
 		zs, err := landed[i].Result()
 		if err != nil && !errors.Is(err, redis.Nil) {
-			return nil, fmt.Errorf("zrange ws:%s:landed: %w", s, err)
+			return nil, fmt.Errorf("zrange %s: %w", ws.KeyAt(p.Epoch, s, ws.Landed), err)
 		}
 		if len(zs) > 0 {
 			p.Landed[s] = zs

@@ -108,9 +108,12 @@ local function lease_reap(keys, args)
   local out, n = { 'REAPED', '0' }, 0
   local benches = redis.call('SMEMBERS', 'benches')
   table.sort(benches)
+  -- the leases the dealer counts are the current epoch's (nova-tools#4238);
+  -- an older epoch's working set is the old-epoch reaper's
+  local e = NS.card.epoch()
   for _, b in ipairs(benches) do
     local freed = 0
-    for _, id in ipairs(redis.call('ZRANGE', 'bench:' .. b .. ':cards:working', 0, -1)) do
+    for _, id in ipairs(redis.call('ZRANGE', NS.card.ckey(e, 'bench:' .. b, 'working'), 0, -1)) do
       local S = string.match(id, '^s:([-a-z0-9]+):card:[A-Za-z0-9][A-Za-z0-9._-]*$')
       if S and cg_closed(S) then
         local st = redis.call('HGET', id, 'state')

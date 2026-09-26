@@ -163,8 +163,6 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 	}
 	benchKeys := dedupSorted(keys)
 
-	pipe := client.Pipeline()
-
 	type friendCmds struct {
 		row  *redis.SliceCmd
 		down *redis.StringCmd
@@ -174,38 +172,71 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		downReason *redis.StringCmd
 		downExists *redis.IntCmd
 	}
-	fc := make([]friendCmds, len(cfg.Friends))
-	for i, name := range cfg.Friends {
-		fc[i].row = pipe.HMGet(ctx, "friend:"+name, "at", "up", "ready", "working", "done", "epoch")
-		fc[i].down = pipe.Get(ctx, "friend:"+name+":down")
-		fc[i].downReason = pipe.HGet(ctx, "friend:"+name+":down", "reason")
-		fc[i].downExists = pipe.Exists(ctx, "friend:"+name+":down")
-	}
-	mget := pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy")
-	// The pit stop is the verb's hash, read in the same pipeline (#3887).
-	var pit *redis.MapStringStringCmd
-	if cfg.Sprint != "" {
-		pit = pipe.HGetAll(ctx, pitstop.Key(cfg.Sprint))
-	}
-	poolView := pipe.ZCard(ctx, PoolViewKeyAt(epoch))
-	var roster *redis.IntCmd
-	if cfg.Sprint != "" {
-		roster = pipe.Exists(ctx, "sprint:"+cfg.Sprint+":cards")
-	}
-	hashes := make([]*redis.MapStringStringCmd, len(benchKeys))
-	cards := make([][]*redis.IntCmd, len(benchKeys))
-	nomirror := make([]*redis.StringSliceCmd, len(benchKeys))
-	for i, key := range benchKeys {
-		hashes[i] = pipe.HGetAll(ctx, key)
-		if name := strings.TrimPrefix(key, "bench:"); name != "pool" && !strings.Contains(name, ":") {
-			for _, w := range benchCardCells {
-				cards[i] = append(cards[i], pipe.ZCard(ctx, ws.ConsumerKeyAt(epoch, key, w)))
-			}
-			nomirror[i] = pipe.SMembers(ctx, NoMirrorKey(name))
+	var (
+		fc       []friendCmds
+		mget     *redis.SliceCmd
+		pit      *redis.MapStringStringCmd
+		poolView *redis.IntCmd
+		roster   *redis.IntCmd
+		hashes   []*redis.MapStringStringCmd
+		cards    [][]*redis.IntCmd
+		nomirror []*redis.StringSliceCmd
+	)
+	for try := 1; ; try++ {
+		pipe := client.Pipeline()
+		fc = make([]friendCmds, len(cfg.Friends))
+		for i, name := range cfg.Friends {
+			fc[i].row = pipe.HMGet(ctx, "friend:"+name, "at", "up", "ready", "working", "done", "epoch")
+			fc[i].down = pipe.Get(ctx, "friend:"+name+":down")
+			fc[i].downReason = pipe.HGet(ctx, "friend:"+name+":down", "reason")
+			fc[i].downExists = pipe.Exists(ctx, "friend:"+name+":down")
 		}
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
-		return nil, fmt.Errorf("pipeline: %w", err)
+		mget = pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy")
+		// The pit stop is the verb's hash, read in the same pipeline (#3887).
+		pit = nil
+		if cfg.Sprint != "" {
+			pit = pipe.HGetAll(ctx, pitstop.Key(cfg.Sprint))
+		}
+		poolView = pipe.ZCard(ctx, PoolViewKeyAt(epoch))
+		roster = nil
+		if cfg.Sprint != "" {
+			roster = pipe.Exists(ctx, "sprint:"+cfg.Sprint+":cards")
+		}
+		hashes = make([]*redis.MapStringStringCmd, len(benchKeys))
+		cards = make([][]*redis.IntCmd, len(benchKeys))
+		nomirror = make([]*redis.StringSliceCmd, len(benchKeys))
+		for i, key := range benchKeys {
+			hashes[i] = pipe.HGetAll(ctx, key)
+			if name := strings.TrimPrefix(key, "bench:"); name != "pool" && !strings.Contains(name, ":") {
+				for _, w := range benchCardCells {
+					cards[i] = append(cards[i], pipe.ZCard(ctx, ws.ConsumerKeyAt(epoch, key, w)))
+				}
+				nomirror[i] = pipe.SMembers(ctx, NoMirrorKey(name))
+			}
+		}
+		// THE EPOCH AGAIN, after every cell (nova-tools#4238): a clear that
+		// lands before or between the cells shows here as another epoch, and
+		// the cells are read again under it, so the table never shows a frame
+		// of the old epoch's cells after the clear.
+		after := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
+			return nil, fmt.Errorf("pipeline: %w", err)
+		}
+		v, err := after.Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, fmt.Errorf("hget %s %s: %w", ws.EpochKey, ws.EpochField, err)
+		}
+		now, err := ws.ParseEpoch(v)
+		if err != nil {
+			return nil, err
+		}
+		if now == epoch {
+			break
+		}
+		if try == liveEpochReads {
+			return nil, fmt.Errorf("%s moved on %d reads in a row", ws.EpochKey, liveEpochReads)
+		}
+		epoch = now
 	}
 	// The friend block is all-or-nothing, as in the bash: a failed MGET
 	// means the connection is not answering.
@@ -310,10 +341,12 @@ func quoteJoin(xs []string) string {
 	return strings.Join(q, ",")
 }
 
-// PoolViewKey is the undealt pool, the card move's bench view for cards with
-// no bench (card.BenchCardsKey("_pool", "ready")).
-// PoolViewKeyAt is the undealt pool under epoch e (nova-tools#4238).
+// liveEpochReads bounds the cell reads of one ReadLive: the epoch moving
+// under the read three times in a row is an error, not a frame.
+const liveEpochReads = 3
 
+// PoolViewKeyAt is the undealt pool under epoch e, the card move's bench
+// view for cards with no bench (bench:_pool's ready set, nova-tools#4238).
 func PoolViewKeyAt(e uint64) string { return ws.ConsumerKeyAt(e, "bench:_pool", "ready") }
 
 // poolFromView sets the pool line from the undealt view (#2733): the dealer's

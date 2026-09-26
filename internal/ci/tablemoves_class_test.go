@@ -34,9 +34,13 @@ var legacyLedgerWriters = map[string]int{}
 // knownTableWriters are table-set writes outside the move file the rule
 // tolerates, per file, a ratchet that only goes down: the stream lander's
 // standalone EVAL script (internal/nsprint/land/stream/land_stream.lua,
-// swept since nova-tools#4238) moves a member between ws sets itself. The
-// follow-up folds that move into ns_tcard_land_stream and lowers this to 0.
-var knownTableWriters = map[string]int{"land/stream/land_stream.lua": 2}
+// swept since nova-tools#4238) moves a member between ws sets itself, and
+// ns_card_resume (card_pool.lua) puts a parked card back in its sprint's
+// pool (s:<S>[:<e>]:pool, a name the rule knows through NS.card.skey and
+// ws.SprintListAt since #4238) with its own ZADD. The follow-ups fold the
+// first into ns_tcard_land_stream and the second into CARD.move, and lower
+// these to 0.
+var knownTableWriters = map[string]int{"land/stream/land_stream.lua": 2, "card_pool.lua": 1}
 
 // theMoveFile is the one writer.
 const theMoveFile = "02_card_move.lua"
@@ -48,7 +52,7 @@ var (
 	// the epoch-keyed helpers of 02_card_move.lua (NS.card.ckey|wskey, a
 	// file's CARD alias, cm_ckey|cm_wskey), by W.key, DF.key, TM.key, or by
 	// the lander script's own wskey (nova-tools#4238)
-	tmLuaHelper = `(NS\.card\.|CARD\.|cm_)(ckey|wskey)\(|(W|DF|TM)\.key\(|wskey\(`
+	tmLuaHelper = `(NS\.card\.|CARD\.|cm_|DF\.)(ckey|wskey|skey)\(|(W|DF|TM)\.key\(|wskey\(`
 	tmLuaTable  = regexp.MustCompile(`^('ws:'\s*\.\.|` + tmLuaHelper + `|'(bench|friend):'\s*\.\..*':cards:)`)
 	tmLuaLedger = regexp.MustCompile(`^'(bench|friend):'\s*\.\..*':(living|starting)'`)
 	tmLuaBind   = regexp.MustCompile(`local\s+(\w+)\s*=\s*('ws:'\s*\.\..*|(` + tmLuaHelper + `).*|'(bench|friend):'\s*\.\..*':cards:.*|'(bench|friend):'\s*\.\..*':(living|starting)'.*)$`)
@@ -60,7 +64,7 @@ var (
 	// and their package twins (nova-tools#4238)
 	tmGoKey = regexp.MustCompile(`^("ws:"\s*\+|"(bench|friend):"\s*\+.*":cards:|"(bench|friend):"\s*\+.*":(living|starting)"|` +
 		`(\w+\.)?(BenchStartingKey|BenchLivingKey|FriendCardsKey|StreamKey|FriendKey|WSKey|BenchCardsKey|BenchWorkingKey|PoolViewKey|` +
-		`KeyAt|ConsumerKeyAt|StreamKeyAt|FriendKeyAt|BenchCardsKeyAt|BenchWorkingKeyAt|WSKeyAt|FriendCardsKeyAt|PoolViewKeyAt)\(|` +
+		`KeyAt|ConsumerKeyAt|SprintListAt|StreamKeyAt|FriendKeyAt|BenchCardsKeyAt|BenchWorkingKeyAt|WSKeyAt|FriendCardsKeyAt|PoolViewKeyAt)\(|` +
 		`\w+\.Key\(("(ready|working|ok|fail)"|col)|\w+\.KeyAt\()`)
 	tmGoRaw = regexp.MustCompile(`"(ZADD|ZREM|SADD|SREM|SMOVE|DEL|RENAME)", "(ws:|(bench|friend):[^"]*:cards:|(bench|friend):[^"]*:(living|starting))`)
 )
@@ -254,6 +258,10 @@ func TestTableSetsRuleCatchesAnInjectedWriter(t *testing.T) {
 		"redis.call('ZADD', wskey(s, 'merging'), 1, id)",
 		"redis.call('ZADD', 'ws:' .. e .. ':' .. s .. ':waiting', 1, id)",
 		"local k = NS.card.ckey(e, c, 'working')\n  redis.call('ZADD', k, 1, id)",
+		"redis.call('ZADD', NS.card.skey(e, S, 'pool'), 1, label)",
+		"redis.call('SREM', cm_skey(e, S, 'waiting'), label)",
+		"redis.call('ZREM', DF.ckey(f, 'ready'), id)",
+		"local pool = CARD.skey(e, S, 'pool')\n  redis.call('ZADD', pool, 1, id)",
 	}
 	for _, line := range bad {
 		src := "local function evil(b, f, s, id, at, member, c)\n  " + line + "\nend\n"
@@ -279,6 +287,8 @@ func TestTableSetsRuleCatchesAnInjectedWriter(t *testing.T) {
 		`c.ZAdd(ctx, "bench:"+b+":"+e+":cards:working", redis.Z{Score: 1, Member: id})`,
 		`{"ZADD", "bench:b:1:cards:ready", "1", "x"},`,
 		`{"ZADD", "ws:1:s:ready", "1", "x"},`,
+		`c.ZAdd(ctx, ws.SprintListAt(e, sprint, "pool"), redis.Z{Score: 1, Member: label})`,
+		`pipe.SRem(ctx, ws.SprintListAt(e, sprint, "waiting"), label)`,
 	} {
 
 		if got := goTableWrites("cmd/nova-sprint/evil.go", line); len(got) == 0 {

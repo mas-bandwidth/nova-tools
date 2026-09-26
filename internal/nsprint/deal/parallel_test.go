@@ -144,16 +144,18 @@ func (l *eventLog) all() []string {
 	return append([]string(nil), l.ev...)
 }
 
-// TestPassSixBenchesOneWindow is the DONE-WHEN of #3706: six benches whose
-// sessions each take 1.5 s on the fake ssh are all dealt in ONE pass, and all
-// six sessions are open at the same moment (the barrier fills), so the pass
-// takes the slowest session, not the sum (9 s). The pass time is logged.
+// TestPassSixBenchesOneWindow is the DONE-WHEN of #3706: six benches are all
+// dealt in ONE pass, and all six sessions are open at the same moment (the
+// barrier holds each session until all six have entered it), so the pass
+// takes the slowest session, not the sum. The barrier is the proof, so the
+// fake ssh holds no time of its own after it (it held 1.5 s until the unit
+// tier's 1 s budget, #4328). The pass time is logged.
 func TestPassSixBenchesOneWindow(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t)
 	for _, b := range sixBenches {
-		f.set(t, b, "sleep", "1.5")
+		f.set(t, b, "sleep", "0")
 	}
 	in := twoEach(sixBenches)
 	lease := "lease-" + randHex()
@@ -171,7 +173,7 @@ func TestPassSixBenchesOneWindow(t *testing.T) {
 	for _, br := range res.Benches {
 		sum += br.Took
 	}
-	t.Logf("six benches, 1.5 s sessions: one pass took %s (bench workers summed %s)", took.Round(time.Millisecond), sum.Round(time.Millisecond))
+	t.Logf("six benches: one pass took %s (bench workers summed %s)", took.Round(time.Millisecond), sum.Round(time.Millisecond))
 	if maxOpen, total := d.stats(); maxOpen != len(sixBenches) || total != len(sixBenches) {
 		t.Fatalf("sessions open at once %d of %d, want all %d: the pass did not open them together", maxOpen, total, len(sixBenches))
 	}

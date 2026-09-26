@@ -397,10 +397,6 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	cfg := r.Config
 	pipe := r.Client.Pipeline()
 	order := pipe.ZRange(ctx, "ws:order", 0, -1)
-	// THE EPOCH (nova-tools#4238): read once per tick, in the same
-	// pipeline; every cell below is keyed by the epoch of the last tick,
-	// and a tick whose epoch differs is read again with the new one.
-	epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
 	benchSet := pipe.SMembers(ctx, "benches")
 	consumerSet := pipe.SMembers(ctx, "consumers")
 	var friendSet *redis.StringSliceCmd
@@ -465,6 +461,13 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 	}
 	progress := pipe.HGetAll(ctx, ProgressKey)
+	// THE EPOCH (nova-tools#4238): read once per tick, in the same pipeline
+	// and AFTER every cell: the cells are keyed by the epoch of the last
+	// tick, and a clear that lands anywhere before this read (before or
+	// between the cells) shows here as another epoch, so the tick is read
+	// again with the new one and never shows a frame of the old epoch's
+	// cells after the clear.
+	epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, false, fmt.Errorf("pipeline: %w", err)
 	}
