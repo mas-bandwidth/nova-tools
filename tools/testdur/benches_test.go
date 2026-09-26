@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,22 +8,15 @@ import (
 	"testing"
 )
 
-// benchHeading opens one bench's section of docs/TEST-DURATIONS.md, and
-// budgetMark picks out the ONE whose numbers the budget is enforced against.
+// benchHeading opens one bench's section of docs/TEST-DURATIONS.md.
 //
-// THE BUDGET BELONGS TO A NAMED BENCH. The file has said so since it was written
-// -- "the budget below is this bench's" -- and it only mattered once the file
-// held a second one. A measurement from another machine is EVIDENCE: it is how
-// we know what a Mac costs, which packages are slow for a reason that is not the
-// test, and what ratio to expect on the Windows bench when it arrives. It is not
-// a BUDGET, because a budget is enforced against a change and a change is not
-// answerable for whichever machine somebody measured on. Without this the first
-// darwin table would silently become a second budget, and a package one second
-// over on a laptop would be a red on every pull request in the repository.
-const (
-	benchHeading = "## Bench:"
-	budgetMark   = "[budget]"
-)
+// THE RECORD IS EVIDENCE, NOT A BUDGET (nova-tools#4413, 2026-09-26: one place
+// for every time budget). It is how we know what a Mac costs against a Linux
+// bench and which packages are slow for a reason that is not the test. The one
+// time budget is `nova-ci slowtests` over a live run's go test -json, enforced
+// on the nightly space legs only (internal/ci/slowtests); the record's own
+// sixty-second check and its per-platform budget-factor went with #4413.
+const benchHeading = "## Bench:"
 
 func durationsPath() string { return filepath.Join("..", "..", "docs", "TEST-DURATIONS.md") }
 
@@ -37,13 +28,11 @@ type benchRow struct {
 	secs  float64
 }
 
-// benchSection is one `## Bench:` section: its heading, the platform and budget
-// factor read out of that heading, and its package rows.
+// benchSection is one `## Bench:` section: its heading, the platform read out
+// of that heading, and its package rows.
 type benchSection struct {
 	heading  string
-	platform string  // the `<goos>/<goarch>` the heading names, "" when it names none
-	budget   bool    // marked [budget]
-	factor   float64 // the heading's `budget-factor:`, 1 when it states none
+	platform string // the `<goos>/<goarch>` the heading names, "" when it names none
 	rows     []benchRow
 }
 
@@ -113,51 +102,16 @@ func parseRecord(text string) (benches []benchSection, loose []string, err error
 	return benches, loose, nil
 }
 
-// factorKey is what a heading writes to state its ceiling relative to the
-// budget bench's sixty seconds.
-const factorKey = "budget-factor:"
-
-// parseHeading reads the three things a `## Bench:` heading states: the
-// `<goos>/<goarch>` it was measured on, whether it is the `[budget]` bench, and
-// its `budget-factor:`.
-//
-// A heading states them among commas and prose -- `the Air, darwin/arm64, 8
-// cores, budget-factor: 2.2` -- because the heading is also the line a PERSON
-// reads. So each is found by its shape and not by its position: the platform is
-// the comma-separated field that looks like `<goos>/<goarch>`, and the factor
-// is the word after `budget-factor:`.
-//
-// An unreadable or non-positive factor is a REFUSAL. A budget that quietly fell
-// back to the wrong number would be invisible, and a silent wrong ceiling is
-// worse than no ceiling: no ceiling at least reads as no ceiling.
+// parseHeading reads the platform a `## Bench:` heading states: the
+// comma-separated field that looks like `<goos>/<goarch>`, found by its shape
+// and not by its position, because the heading is also the line a PERSON reads
+// (`the Air, darwin/arm64, 8 cores`).
 func parseHeading(heading string) (benchSection, error) {
-	section := benchSection{
-		heading: heading,
-		budget:  strings.Contains(heading, budgetMark),
-		factor:  1,
-	}
+	section := benchSection{heading: heading}
 	for _, field := range strings.Split(heading, ",") {
-		field = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(field), budgetMark))
-		field = strings.TrimSpace(field)
-		if goosArch(field) {
+		if field = strings.TrimSpace(field); goosArch(field) {
 			section.platform = field
 		}
-	}
-	if i := strings.Index(heading, factorKey); i >= 0 {
-		rest := strings.TrimSpace(strings.TrimPrefix(heading[i:], factorKey))
-		word := strings.TrimSpace(strings.SplitN(strings.TrimSpace(strings.SplitN(rest, ",", 2)[0]), " ", 2)[0])
-		factor, err := strconv.ParseFloat(word, 64)
-		if err != nil {
-			return benchSection{}, fmt.Errorf("the bench heading %q states a %s %q that is not a number", heading, factorKey, word)
-		}
-		if math.IsNaN(factor) || math.IsInf(factor, 0) || factor <= 0 {
-			return benchSection{}, fmt.Errorf("the bench heading %q states a %s of %v; a ceiling is a finite positive multiple of the budget", heading, factorKey, factor)
-		}
-		ceiling := budgetSeconds * factor
-		if math.IsNaN(ceiling) || math.IsInf(ceiling, 0) {
-			return benchSection{}, fmt.Errorf("the bench heading %q states a %s of %v; the calculated ceiling is not finite", heading, factorKey, factor)
-		}
-		section.factor = factor
 	}
 	return section, nil
 }
@@ -192,71 +146,10 @@ func readRecord(t *testing.T) (rows []benchRow, benches []string, loose []string
 	return rows, benches, loose
 }
 
-// budgetFor answers the ceiling a package total is judged against when the
-// suite is running on `platform`, and the bench that ceiling came from.
-//
-// THE PLATFORM'S OWN SECTION FIRST, at `60 s x its factor`. That is what gives
-// a second bench a real ceiling instead of none, while keeping #1411's rule
-// intact: a change is still never answerable for another machine's absolute
-// numbers, only for its own platform's, and the factor is what makes the two
-// comparable.
-//
-// The [budget] bench itself, and any platform the record does not name falling
-// back to it, is strictly the fixed sixty-second baseline. Falling back to
-// nothing would mean a new platform arrives unbudgeted and silently, which is
-// the state this change exists to end; allowing the fallback to expand would
-// violate the sixty-second baseline promise.
-func budgetFor(benches []benchSection, platform string) (float64, benchSection, error) {
-	fallback := benchSection{}
-	found := false
-	for _, b := range benches {
-		if b.platform != "" && b.platform == platform {
-			if b.budget {
-				return budgetSeconds, b, nil
-			}
-			return budgetSeconds * b.factor, b, nil
-		}
-		if b.budget {
-			if found {
-				return 0, benchSection{}, fmt.Errorf("two benches are marked %s -- %q and %q; the budget is one bench's", budgetMark, fallback.heading, b.heading)
-			}
-			fallback, found = b, true
-		}
-	}
-	if !found {
-		return 0, benchSection{}, fmt.Errorf("no `%s … %s` section: the budget has to belong to a named bench", benchHeading, budgetMark)
-	}
-	// Fallback to the budget bench's fixed sixty-second baseline.
-	// Even if the [budget] section states a budget-factor, the fallback cannot expand the 60s baseline.
-	return budgetSeconds, fallback, nil
-}
-
-// budgetBench is the one bench the budget is enforced against, refusing if the
-// file does not say which that is. It is a function rather than a constant for
-// the reason every path in this estate is a flag: the answer lives in the file
-// a person edits, not in a string here that could fall out of step with it.
-func budgetBench(t *testing.T, benches []string) string {
-	t.Helper()
-	budget := ""
-	for _, b := range benches {
-		if !strings.Contains(b, budgetMark) {
-			continue
-		}
-		if budget != "" {
-			t.Fatalf("two benches are marked %s -- %q and %q; the budget is one bench's", budgetMark, budget, b)
-		}
-		budget = b
-	}
-	if budget == "" {
-		t.Fatalf("no `%s … %s` section in %s: the budget has to belong to a named bench", benchHeading, budgetMark, durationsPath())
-	}
-	return budget
-}
-
-// EVERY OTHER BENCH IN THE FILE IS STILL A MEASUREMENT SOMEBODY CAN READ. A
-// second bench's numbers are not enforced, which is exactly why they need a
-// check of their own: an unenforced table is the one nobody would notice had
-// gone empty, or had been written outside its heading where nothing reads it.
+// EVERY BENCH IN THE FILE IS A MEASUREMENT SOMEBODY CAN READ. No bench's
+// numbers are enforced here, which is exactly why they need a check of their
+// own: an unenforced table is the one nobody would notice had gone empty, or
+// had been written outside its heading where nothing reads it.
 func TestEveryRecordedBenchIsNamedAndHasRows(t *testing.T) {
 	rows, benches, loose := readRecord(t)
 	if len(benches) < 2 {
@@ -285,6 +178,37 @@ func TestEveryRecordedBenchIsNamedAndHasRows(t *testing.T) {
 			t.Errorf("the bench heading %q does not name its <goos>/<goarch>", b)
 		}
 	}
-	// And exactly one of them is the budget's.
-	budgetBench(t, benches)
+}
+
+// A bench's package table is the one under its own heading. The record carries
+// other tables inside a bench's section whose second column is a number too,
+// and reading those as package measurements is a second, contradictory row for
+// the same package on the same bench -- silently.
+func TestOnlyTheTableUnderTheHeadingIsTheMeasurement(t *testing.T) {
+	const record = `## Bench: the Air, darwin/arm64, 8 cores
+
+| package | total seconds | slowest test |
+| --- | --- | --- |
+| cmd/nova-wake | 62.9 | - |
+
+### The five biggest, against Space
+
+| package | darwin/arm64 | linux/amd64 | ratio |
+| --- | --- | --- | --- |
+| cmd/nova-wake | 62.9 | 12.4 | 5.1x |
+| cmd/nova-merge | 51.4 | 16.7 | 3.1x |
+`
+	benches, loose, err := parseRecord(record)
+	if err != nil {
+		t.Fatalf("parseRecord: %v", err)
+	}
+	if len(loose) != 0 {
+		t.Errorf("rows inside a bench's sub-table read as loose: %v", loose)
+	}
+	if len(benches) != 1 || benches[0].platform != "darwin/arm64" {
+		t.Fatalf("parsed %+v, want one darwin/arm64 section", benches)
+	}
+	if len(benches[0].rows) != 1 || benches[0].rows[0].pkg != "cmd/nova-wake" {
+		t.Errorf("the Air's package rows = %v, want the one row under its heading", benches[0].rows)
+	}
 }

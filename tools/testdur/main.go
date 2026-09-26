@@ -11,10 +11,10 @@
 // and a paste does not land under the wrong bench. Tests over five seconds
 // come first, then the per-package totals, both sorted slowest first.
 //
-// The platform label is not decoration. Since the record grew a section per
-// bench, the budget a package is judged against is its own platform's
-// (tools/testdur's TestFastSuiteUnderOneMinute), and a table filed under the
-// wrong heading is a ceiling applied to the wrong machine.
+// The platform label is not decoration: the record holds a section per bench,
+// and a table filed under the wrong heading is a measurement of the wrong
+// machine. The record is evidence, not a budget; the one time budget is
+// `nova-ci slowtests` (nova-tools#4413).
 package main
 
 import (

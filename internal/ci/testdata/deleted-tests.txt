@@ -8,3 +8,5 @@
 # allowlist and two of its controls with every check green. Rows are a log and
 # may be trimmed once old; trimming weakens nothing.
 internal/ci/testdata/class-tests.txt the tree-resident list of class tests went with the tree a stale-base squash overwrites (#4381's guard); the classtests rule now reads the merge's deletions out of git
+tools/testdur/budget_test.go TestFastSuiteUnderOneMinute was a second time budget (60 s over docs/TEST-DURATIONS.md); #4413 keeps one, nova-ci slowtests, enforced on the nightly space legs
+tools/testdur/platform_budget_test.go the budget-factor shapes of that second budget; its one record-shape case, TestOnlyTheTableUnderTheHeadingIsTheMeasurement, moved to benches_test.go (#4413)

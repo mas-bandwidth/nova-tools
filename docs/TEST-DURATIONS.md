@@ -1,10 +1,10 @@
 # Test durations
 
 Glenn's two-minute rule (2026-09-10, reaffirmed 2026-09-15): anything we call out to
-answers in one minute ideally, two at most. This file is the MEASUREMENT that rule is
-enforced against -- `tools/testdur`'s `TestFastSuiteUnderOneMinute` reads it and fails
-when a package's total crosses 60 s, so a package that slows down is a red on the
-change that slowed it rather than a CI everyone waits on.
+answers in one minute ideally, two at most. This file is a MEASUREMENT of that rule,
+evidence and not a budget: since nova-tools#4413 (2026-09-26) the one time budget is
+`nova-ci slowtests` over a live run's `go test -json`, enforced only on the nightly
+whole-tree run on the space legs, and nothing here fails a change.
 
 Regenerate it after any change to a test's cost:
 
@@ -19,27 +19,13 @@ the bench's contention rather than the package. Tests over five seconds are list
 name; a test whose cost cannot come down goes behind `//go:build slow`, which the PR
 jobs do not build and `.github/workflows/nightly-slow.yml` does.
 
-**One `## Bench:` section per machine, and exactly one of them marked `[budget]`.**
-Name the bench, its platform and its load when you regenerate: a recording is a fact
-about a machine under a load, and the 2026-09-15 recording on the same core with load
-15-18 beside it is the whole difference between `cmd/nova-bus` at 38.5 s and at 30.4 s.
-
-**Every bench has a ceiling, and it is its own.** The `[budget]` bench's rows are
-judged at a plain 60 s wherever the suite runs -- that is the number CI's Linux legs
-run against, and the one a change is answerable for wherever it was written. A section
-may also state a `budget-factor:` in its heading, what the same suite costs there
-relative to the budget bench, and its rows are judged at `60 s x factor` when the suite
-is RUNNING on that platform. darwin/arm64's factor is 2.2, the whole-suite ratio
-measured below. A platform with no section of its own falls back to the budget bench's
-sixty, so a platform is never silently unbudgeted.
-
-This keeps the rule a second bench arrived with: a change is not answerable for another
-machine's ABSOLUTE seconds, only for its own platform's, and the factor is what makes
-the two comparable. What it ends is the state the darwin section was recorded in --
-`cmd/nova-wake` at 62.9 s, over a minute, with nothing reading the number at all. An
-unenforced number drifts. The sections are checked by `TestFastSuiteUnderOneMinute`
-and `TestEveryRecordedBenchIsNamedAndHasRows`; a `budget-factor:` that is not a
-positive number is a refusal, never a silent fallback.
+**One `## Bench:` section per machine.** Name the bench, its platform and its load
+when you regenerate: a recording is a fact about a machine under a load, and the
+2026-09-15 recording on the same core with load 15-18 beside it is the whole
+difference between `cmd/nova-bus` at 38.5 s and at 30.4 s. A heading's `[budget]`
+mark and `budget-factor:` are history: the sixty-second check that read them
+(`TestFastSuiteUnderOneMinute`) went with #4413, and `TestEveryRecordedBenchIsNamedAndHasRows`
+checks only that every section names its platform and holds rows.
 
 The package table for a bench is the one DIRECTLY UNDER its heading. A table under a
 `###` inside the section -- the tests over five seconds, the ratios against Space --
@@ -49,8 +35,8 @@ is read as prose, not as a second measurement of the same packages.
 
 One package at a time pinned to one core with `taskset -c 12` and `nice -n 10`,
 2026-09-18 at dev `53023587`, load average 3.0 falling to 1.2 on the other fifteen.
-This is the bench the budget belongs to: it is the platform CI runs on, so a red here
-is a red a change can answer for.
+It is the platform CI's space legs run on, the machine the nightly enforcing run's
+times come from.
 
 | package | total seconds | slowest test |
 | --- | --- | --- |

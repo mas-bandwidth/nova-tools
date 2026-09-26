@@ -421,7 +421,7 @@ func (p *Play) Run(ctx context.Context) (PlayResult, error) {
 			why = strings.Join(strings.Fields(runErr.Error()), "_")
 		}
 		res.Err = why
-		p.printf("PLAY ERROR %s err=%s last=%s\n", PlayFile(p.Tag), why, lastLine(out))
+		p.printf("PLAY ABORTED %s err=%s last=%s\n", PlayFile(p.Tag), why, lastLine(out))
 	}
 	if p.DryRun || len(res.Hosts) == 0 {
 		return res, nil
