@@ -282,9 +282,15 @@ func runLandStreamStatus(ctx context.Context, args []string, out, errOut io.Writ
 		if r.PR > 0 && r.CI != "-" && !r.HeadMatch {
 			stale = " record_head=stale"
 		}
-		fmt.Fprintf(out, "STREAM %s streams=%s state=%s branch=%s head=%s members=%s parked=%s pr=%s ci=%s mergeable=%s%s\n",
+		serial := ""
+		if r.Serial != "" {
+			// The durable receipt of a landing that carries fewer members
+			// than the stream had in merging (#4324).
+			serial = fmt.Sprintf(" serial=%s partial_by=%s partial_at=%s", oneline.Field(r.Serial), orDash(r.PartialBy), orDash(r.PartialAt))
+		}
+		fmt.Fprintf(out, "STREAM %s streams=%s state=%s branch=%s head=%s members=%s parked=%s pr=%s ci=%s mergeable=%s%s%s\n",
 			r.Slug, oneline.Field(r.Streams), r.State, orDash(r.Branch), orDash(stream.Short(r.Head)), orDash(strings.Join(mem, ",")),
-			orDash(strings.Join(parked, ",")), pr, r.CI, r.Mergeable, stale)
+			orDash(strings.Join(parked, ",")), pr, r.CI, r.Mergeable, stale, serial)
 	}
 	fmt.Fprintf(out, "LAND STATUS repo=%s streams=%d open=%d green=%d\n", *repo, len(rows), open, green)
 	return 0

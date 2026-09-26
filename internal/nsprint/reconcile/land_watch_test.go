@@ -106,21 +106,30 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	if rec, _ := c.HGetAll(ctx, reconcile.LandSlowKey(s)).Result(); rec["oldest"] != "t1" || rec["stalled"] != "0" || rec["noted"] != "t1@1700000000000" {
 		t.Fatalf("land:slow %v", rec)
 	}
-	if o := pass(12 * time.Minute); !strings.Contains(o, "LAND-SLOW ") || len(wakes) != 1 {
+	// Pass 4 at twelve: nothing changed, so nothing prints; the record
+	// moved; still one note.
+	if o := pass(12 * time.Minute); o != "" || len(wakes) != 1 {
 		t.Fatalf("pass 4:\n%s wakes=%d", o, len(wakes))
 	}
-	// Pass 5 at thirty-one: LAND-WALL, stalled, still the one note.
+	if v, _ := c.HGet(ctx, reconcile.LandSlowKey(s), "age_ms").Result(); v != "720000" {
+		t.Fatalf("age_ms %q", v)
+	}
+	// Pass 5 at thirty-one: LAND-WALL prints (the word changed), stalled,
+	// and the wall's own note: two wakes for the episode.
 	o = pass(31 * time.Minute)
-	if !strings.Contains(o, "LAND-WALL swarm:\\x20cards oldest=t1 age=31m0s max=30m0s\n") || len(wakes) != 1 {
-		t.Fatalf("pass 5:\n%s wakes=%d", o, len(wakes))
+	if !strings.Contains(o, "LAND-WALL swarm:\\x20cards oldest=t1 age=31m0s max=30m0s\n") || len(wakes) != 2 || !wakes[1].Wall || wakes[1].Max != 30*time.Minute {
+		t.Fatalf("pass 5:\n%s wakes=%+v", o, wakes)
 	}
 	if v, _ := c.HGet(ctx, reconcile.LandSlowKey(s), "stalled").Result(); v != "1" {
 		t.Fatalf("stalled %q", v)
 	}
+	if o := pass(32*time.Minute + 30*time.Second); o != "" || len(wakes) != 2 {
+		t.Fatalf("pass 5b (no change):\n%s wakes=%d", o, len(wakes))
+	}
 	// The merge card ends cross-stream: one escalation to the coordinator,
 	// once; no new merge card while it is open; one when it closes.
 	c.HSet(ctx, "task:merge-swarm-cards-1", "state", "closed", "reason", "BLOCKED cross-stream paths=internal/y.go")
-	o = pass(32 * time.Minute)
+	o = pass(33 * time.Minute)
 	if len(pushed) != 2 || pushed[1].ID != "cross-swarm-cards-1" || pushed[1].Kind != "work" || pushed[1].To != "rowan" || !strings.Contains(pushed[1].Reason, "cross-stream") {
 		t.Fatalf("escalation: %+v", pushed)
 	}
@@ -130,20 +139,36 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	if !strings.Contains(reconcile.MergeTitle(pushed[1]), "cross-stream landing of swarm: cards: BLOCKED cross-stream paths=internal/y.go") {
 		t.Fatalf("escalation title %q", reconcile.MergeTitle(pushed[1]))
 	}
-	if pass(33 * time.Minute); len(pushed) != 2 {
+	if pass(34 * time.Minute); len(pushed) != 2 {
 		t.Fatalf("escalated twice or a new merge card: %+v", pushed)
 	}
 	c.HSet(ctx, "task:cross-swarm-cards-1", "state", "closed")
-	if pass(34 * time.Minute); len(pushed) != 3 || pushed[2].ID != "merge-swarm-cards-2" || pushed[2].Kind != "merge" {
+	if pass(35 * time.Minute); len(pushed) != 3 || pushed[2].ID != "merge-swarm-cards-2" || pushed[2].Kind != "merge" {
 		t.Fatalf("after the escalation closed: %+v", pushed)
 	}
-	// The landing moved the members: both records go, nothing more is cut.
+	// The re-cut dropped the closed card's brief and wrote the new one.
+	if n, _ := c.Exists(ctx, reconcile.LandBriefKey("merge-swarm-cards-1")).Result(); n != 0 {
+		t.Fatal("the closed card's brief is still there")
+	}
+	if n, _ := c.Exists(ctx, reconcile.LandBriefKey("merge-swarm-cards-2")).Result(); n != 1 {
+		t.Fatal("no brief for the new card")
+	}
+	// The landing moved the members: the card fields, the brief, the slow
+	// and first-seen records go; seq stays so the next episode's id is new.
 	c.ZRem(ctx, "ws:"+s+":merging", "t1", "t2")
-	if o := pass(35 * time.Minute); o != "" || len(pushed) != 3 {
+	if o := pass(36 * time.Minute); o != "" || len(pushed) != 3 {
 		t.Fatalf("empty stream: %q pushed=%d", o, len(pushed))
 	}
-	if n, _ := c.Exists(ctx, reconcile.LandSlowKey(s), reconcile.LandMergeKey(s), reconcile.LandMergingKey(s), reconcile.LandBriefKey("merge-swarm-cards-2")).Result(); n != 0 {
+	if n, _ := c.Exists(ctx, reconcile.LandSlowKey(s), reconcile.LandMergingKey(s), reconcile.LandBriefKey("merge-swarm-cards-2")).Result(); n != 0 {
 		t.Fatalf("records left: %d", n)
+	}
+	if rec, _ := c.HGetAll(ctx, reconcile.LandMergeKey(s)).Result(); len(rec) != 1 || rec["seq"] != "2" {
+		t.Fatalf("land:merge after the episode: %v", rec)
+	}
+	// A new episode: the next id, never merge-swarm-cards-1 again.
+	c.ZAdd(ctx, "ws:"+s+":merging", redis.Z{Score: 30, Member: "t3"})
+	if o := pass(37 * time.Minute); len(pushed) != 4 || pushed[3].ID != "merge-swarm-cards-3" || !strings.Contains(o, "MERGE-CARD ") {
+		t.Fatalf("second episode: %+v\n%s", pushed, o)
 	}
 }
 

@@ -18,13 +18,16 @@ package reconcile
 //     it and it wins.
 //   - LAND-SLOW: a stream whose oldest merging member is past cfg:land slow
 //     (seconds, default 600) prints `LAND-SLOW <stream> oldest=<id> age=<d>
-//     max=<d>` every pass, writes land:slow:<stream> (oldest, oldest_at,
-//     age_ms, stalled) for the table and the progress duty (#4319), and
-//     sends ONE wake note per episode (the note is idempotent on
-//     oldest@oldest_at) to the coordinator's bus channel and the declared
-//     notify channel (cfg:land notify), through friend:outbox as a notice.
-//   - LAND-WALL: past cfg:land wall (default 1800) the line is LAND-WALL and
-//     land:slow:<stream> stalled=1: the stream counts as stalled.
+//     max=<d>` when the word or the oldest member changes (not every 1 s
+//     pass), keeps land:slow:<stream> (word, oldest, oldest_at, age_ms,
+//     stalled) current every pass, and sends ONE wake note per episode (the
+//     episode is oldest@oldest_at) to the coordinator's bus channel and the
+//     declared notify channel (cfg:land notify), through friend:outbox as a
+//     notice. The progress duty (#4319) reads stalled into its status; the
+//     table's own LAND-SLOW line is a seam (see the PR).
+//   - LAND-WALL: past cfg:land wall (default 1800) the line is LAND-WALL,
+//     land:slow:<stream> stalled=1 (the stream counts as stalled), and one
+//     more wake note for the episode.
 //   - Merge card per stream: a stream with members in merging and no live
 //     merge task gets ONE (kind merge, to the first friend advertising the
 //     frontier type on its desired record, else the coordinator), its title
@@ -33,8 +36,11 @@ package reconcile
 //     stream's and the sprint's MERGE-NOTEs, at land:brief:<card> (card
 //     render folds it into the friend brief; the task record has one
 //     writer). The brief is refreshed while the card is open.
-//     land:merge:<stream> names the card. When merging empties (the landing
-//     moved the members) the records go.
+//     land:merge:<stream> names the card (task, to, cut_at, members; its seq
+//     field survives an episode so ids never repeat). When merging empties
+//     (the landing moved the members) the card fields, the brief and the
+//     slow record go. The land duty never lands a stream whose merge card
+//     is live (MergeCardLive): one writer per stream.
 //   - Escalation typed: a merge card closed with a reason naming
 //     cross-stream (the merge child could not land inside its stream's
 //     PATHS) cuts one escalation task to the coordinator (kind work, both
@@ -156,6 +162,7 @@ type watchStream struct {
 	slow       map[string]string
 	merge      map[string]string
 	seen       map[string]string // land:merging:<stream>: id -> first-seen ms
+	notes      []string          // ws:<stream>:notes
 }
 
 // Run is one pass.
@@ -179,6 +186,10 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 	}
 	cfg := pipe.HMGet(ctx, "cfg:land", "slow", "wall", "repos", "notify")
 	sprints := pipe.ZRange(ctx, "sprint:order", 0, 0)
+	streamNotes := make([]*redis.StringSliceCmd, len(streams))
+	for i, s := range streams {
+		streamNotes[i] = pipe.LRange(ctx, note.StreamKey(s), 0, -1)
+	}
 	if err := execPipe(ctx, pipe); err != nil {
 		return Counts{}, fmt.Errorf("land watch: %w", err)
 	}
@@ -205,7 +216,8 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 	}
 	var ws []watchStream
 	for i, s := range streams {
-		ws = append(ws, watchStream{name: s, members: zs[i].Val(), slow: slows[i].Val(), merge: merges[i].Val(), seen: seens[i].Val()})
+		ws = append(ws, watchStream{name: s, members: zs[i].Val(), slow: slows[i].Val(), merge: merges[i].Val(), seen: seens[i].Val(),
+			notes: streamNotes[i].Val()})
 	}
 
 	// Pipeline 2: stamp the first-seen ms on the watch's record and read
@@ -230,8 +242,16 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 			cards[esc] = pipe.HMGet(ctx, "task:"+esc, "state", "reason", "dest")
 		}
 	}
+	var sprintNotes *redis.StringSliceCmd
+	if sprint != "" {
+		sprintNotes = pipe.LRange(ctx, note.SprintKey(sprint), 0, -1)
+	}
 	if err := execPipe(ctx, pipe); err != nil {
 		return Counts{}, fmt.Errorf("land watch: %w", err)
+	}
+	var sprintNoteLines []string
+	if sprintNotes != nil {
+		sprintNoteLines = sprintNotes.Val()
 	}
 
 	pipe = c.Pipeline()
@@ -242,7 +262,9 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 				pipe.Del(ctx, LandSlowKey(st.name))
 			}
 			if len(st.merge) > 0 {
-				pipe.Del(ctx, LandMergeKey(st.name))
+				// The card fields go; seq stays so the next episode's id is
+				// new (task.Push answers CONFLICT or CLOSED to a repeated id).
+				pipe.HDel(ctx, LandMergeKey(st.name), "task", "to", "cut_at", "members", "escalated", "escalation")
 				if mid := st.merge["task"]; mid != "" {
 					pipe.Del(ctx, LandBriefKey(mid))
 				}
@@ -305,7 +327,7 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 		}
 		age := now.Sub(oldest.MergingAt)
 		w.watchSlow(ctx, pipe, st, oldest, age, slow, wall, notify, &errs)
-		if err := w.watchCard(ctx, pipe, st, cards, repo, sprint, members, paths, now); err != nil {
+		if err := w.watchCard(ctx, pipe, st, cards, repo, sprint, members, paths, sprintNoteLines, now); err != nil {
 			errs = append(errs, st.name+": "+err.Error())
 		}
 	}
@@ -332,11 +354,21 @@ func (w *LandWatch) watchSlow(ctx context.Context, pipe redis.Pipeliner, st watc
 		word, max, stalled = "LAND-WALL", wall, "1"
 	}
 	line := fmt.Sprintf("%s %s oldest=%s age=%s max=%s", word, oneline.Field(st.name), oldest.Task, age.Truncate(time.Second), max.Truncate(time.Second))
-	w.printf("%s", line)
+	// The line prints on change (the word or the oldest member), never
+	// every one-second pass; the record moves every pass.
+	if st.slow["word"] != word || st.slow["oldest"] != oldest.Task {
+		w.printf("%s", line)
+	}
 	episode := fmt.Sprintf("%s@%d", oldest.Task, oldest.MergingAt.UnixMilli())
-	pipe.HSet(ctx, LandSlowKey(st.name), "oldest", oldest.Task, "oldest_at", strconv.FormatInt(oldest.MergingAt.UnixMilli(), 10),
+	pipe.HSet(ctx, LandSlowKey(st.name), "word", word, "oldest", oldest.Task, "oldest_at", strconv.FormatInt(oldest.MergingAt.UnixMilli(), 10),
 		"age_ms", strconv.FormatInt(age.Milliseconds(), 10), "stalled", stalled, "at", strconv.FormatInt(w.now().UnixMilli(), 10))
-	if st.slow["noted"] == episode {
+	// One note per episode for the slow word and one more for the wall,
+	// each keyed on the episode so a restart never sends it twice.
+	notedField := "noted"
+	if stalled == "1" {
+		notedField = "noted_wall"
+	}
+	if st.slow[notedField] == episode {
 		return
 	}
 	wake := LandWake{Stream: st.name, Oldest: oldest.Task, Age: age, Max: max, Wall: stalled == "1", Line: line}
@@ -347,8 +379,26 @@ func (w *LandWatch) watchSlow(ctx context.Context, pipe redis.Pipeliner, st watc
 		*errs = append(*errs, fmt.Sprintf("%s note: %v", st.name, err))
 		return
 	}
-	pipe.HSet(ctx, LandSlowKey(st.name), "noted", episode)
-	w.printf("LAND-NOTE %s oldest=%s age=%s sent=1", oneline.Field(st.name), oldest.Task, age.Truncate(time.Second))
+	pipe.HSet(ctx, LandSlowKey(st.name), notedField, episode)
+	w.printf("LAND-NOTE %s %s oldest=%s age=%s sent=1", word, oneline.Field(st.name), oldest.Task, age.Truncate(time.Second))
+}
+
+// MergeCardLive reports the stream's merge card when one is cut and not
+// closed: the land duty then leaves the stream to it (one writer per
+// stream; the card's child runs `nova-sprint land`).
+func MergeCardLive(ctx context.Context, c redis.Cmdable, stream string) (id string, live bool, err error) {
+	id, err = c.HGet(ctx, LandMergeKey(stream), "task").Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return "", false, err
+	}
+	if id == "" {
+		return "", false, nil
+	}
+	state, err := c.HGet(ctx, "task:"+id, "state").Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return id, false, err
+	}
+	return id, state != "" && state != "closed", nil
 }
 
 func (w *LandWatch) notify(ctx context.Context, wake LandWake, notify string) error {
@@ -423,7 +473,7 @@ func (w *LandWatch) frontier(ctx context.Context) (string, error) {
 
 // watchCard keeps one live merge card per stream with members in merging,
 // and cuts the escalation once when the card ended cross-stream.
-func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watchStream, cards map[string]*redis.SliceCmd, repo, sprint string, members []MergeMember, paths []string, now time.Time) error {
+func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watchStream, cards map[string]*redis.SliceCmd, repo, sprint string, members []MergeMember, paths []string, sprintNotes []string, now time.Time) error {
 	mid := st.merge["task"]
 	state, reason := "", ""
 	if mid != "" {
@@ -434,10 +484,7 @@ func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watc
 		}
 	}
 	live := mid != "" && state != "" && state != "closed"
-	notes, err := note.ForCopy(ctx, w.Client, st.name, sprint)
-	if err != nil {
-		return err
-	}
+	notes := append(append([]string(nil), st.notes...), sprintNotes...)
 	base := w.Base
 	if base == "" {
 		base = "dev"
@@ -496,6 +543,9 @@ func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watc
 	seq, err := w.Client.HIncrBy(ctx, LandMergeKey(st.name), "seq", 1).Result()
 	if err != nil {
 		return err
+	}
+	if mid != "" {
+		pipe.Del(ctx, LandBriefKey(mid)) // the closed card's brief
 	}
 	card.ID = fmt.Sprintf("merge-%s-%d", st.slug, seq)
 	card.To = to

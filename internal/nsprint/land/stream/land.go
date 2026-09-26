@@ -182,6 +182,42 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	}
 	l := Landing{Repo: o.Repo, Slug: slug, Streams: strings.Join(o.Streams, ","), Base: o.Base, BaseSHA: res.BaseSHA,
 		Branch: rep.Branch, Head: res.Head, Members: res.Kept, Parked: res.Parked, Tests: res.Tests, Workdir: o.Workdir}
+	// The build can drop members too (a conflict parked, a red bisected
+	// out, a head that moved): the PR would carry fewer than the stream
+	// has in merging. The same line, after the build: with Partial it
+	// prints and goes on the landing record (serial, partial_by,
+	// partial_at); without it the parks still happen (the member leaves
+	// merging with its PARKED receipt, the duty's rebase task follows) and
+	// the run refuses: nothing is pushed, no PR opens, the stream lands
+	// whole on the next run.
+	var dropped []Skip
+	for _, p := range res.Parked {
+		dropped = append(dropped, Skip{Task: p.Task, N: p.N, Why: p.Why})
+	}
+	for _, m := range res.Moved {
+		dropped = append(dropped, Skip{Task: m.Task, N: m.N, Why: m.Why})
+	}
+	if len(dropped) > 0 && res.Conflict == nil && !res.BaseRed && len(res.Kept) > 0 {
+		rep.LeftOut = LeftOut(append(append([]Skip(nil), rep.LeftOut...), dropped...))
+		rep.Serial = SerialLine(o.Streams, len(res.Kept), rep.LeftOut)
+		if !o.Partial {
+			l.State = "serial"
+			l.Serial = rep.Serial
+			rep.State = l.State
+			rep.ParkedMoved, err = SaveBuilt(ctx, c, l, o.By)
+			if err != nil {
+				return rep, err
+			}
+			removeWorkdir(o.Workdir)
+			return rep, &Refusal{Why: rep.Serial + " (after the build)", Remedy: "the parked members left merging with their receipts; the stream lands whole on the next run, or --partial"}
+		}
+		if o.Log != nil {
+			fmt.Fprintf(o.Log, "%s allowed=partial\n", rep.Serial)
+		}
+	}
+	if rep.Serial != "" && o.Partial {
+		l.Serial, l.PartialBy, l.PartialAt = rep.Serial, o.By, now()
+	}
 	if len(res.Kept) > 0 && res.Conflict == nil && !res.BaseRed {
 		// The issues each kept member's commits close, while the clone is
 		// here: land merge closes them with the ones its body closes.

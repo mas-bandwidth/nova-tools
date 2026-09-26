@@ -149,13 +149,43 @@ func TestLandStreamEndToEnd(t *testing.T) {
 
 	// Real run: #2 is red and parked by bisect; one PR is opened.
 	work := filepath.Join(t.TempDir(), "clone")
+	// Without --partial the red member's park is a LAND-SERIAL refusal after
+	// the build (#4324): the park happens (t2 leaves merging with its
+	// receipt), nothing is pushed, no PR opens.
 	code, out, errOut = runSprint("land", "stream", "--redis", addr, "--repo", lsRepo, "--stream", lsStream,
 		"--remote", url, "--mirror", "none", "--workdir", work, "--api", gh.srv.URL)
+	if code != 2 || !strings.Contains(errOut, "REFUSED LAND-SERIAL stream=") || !strings.Contains(errOut, "left_out=#2:red:batch-test (after the build)") {
+		t.Fatalf("land stream without --partial: %d\n%s\n%s", code, out, errOut)
+	}
+	if len(gh.Calls()) != 0 {
+		t.Fatalf("a refused landing called GitHub: %v", gh.Calls())
+	}
+	if st, _ := c.HGet(ctx, "task:t2", "state").Result(); st != "working" {
+		t.Fatalf("parked member task state %q after the refusal", st)
+	}
+	if code, out, _ := runSprint("land", "status", "--redis", addr, "--repo", lsRepo); code != 0 || !strings.Contains(out, "state=serial") || !strings.Contains(out, " serial=LAND-SERIAL") {
+		t.Fatalf("status after the refusal: %d\n%s", code, out)
+	}
+	// t2 is back in merging for the --partial run: the same build, the
+	// line printed as allowed and kept on the landing record.
+	// (Seeded the way the fixture seeds: the one move refuses a primary
+	// into merging outside a read copy's end, NOCOPY.)
+	c.ZRem(ctx, "ws:"+lsStream+":working", "t2")
+	c.ZAdd(ctx, "ws:"+lsStream+":merging", redis.Z{Score: 300, Member: "t2"})
+	c.HSet(ctx, "task:t2", "state", "merging")
+	c.HSet(ctx, "pr:nova-tools:2", "state", "open")
+	fsck("t2 back in merging")
+	work = filepath.Join(t.TempDir(), "clone2")
+	code, out, errOut = runSprint("land", "stream", "--redis", addr, "--repo", lsRepo, "--stream", lsStream,
+		"--remote", url, "--mirror", "none", "--workdir", work, "--api", gh.srv.URL, "--partial")
 	if code != 0 {
 		t.Fatalf("land stream: %d\n%s\n%s", code, out, errOut)
 	}
 	if !strings.Contains(out, "members=#3,#1 parked=#2:red:batch-test moved=1 tests=5 pr=#900 reused=false state=open") {
 		t.Fatalf("receipt:\n%s", out)
+	}
+	if !strings.Contains(out, "left_out=#2:red:batch-test allowed=partial\n") {
+		t.Fatalf("no LAND-SERIAL allowed line:\n%s", out)
 	}
 	calls := gh.Calls()
 	if len(calls) != 1 || !strings.HasPrefix(calls[0], "POST /repos/"+lsRepo+"/pulls stream/"+lsSlug) || !strings.Contains(calls[0], "STREAM: "+lsStream) {
@@ -177,7 +207,8 @@ func TestLandStreamEndToEnd(t *testing.T) {
 
 	// Status reads the landing and the stream PR record: ci pending.
 	code, out, _ = runSprint("land", "status", "--redis", addr, "--repo", lsRepo)
-	if code != 0 || !strings.Contains(out, "STREAM "+lsSlug+" streams=") || !strings.Contains(out, "pr=#900 ci=pending mergeable=-") {
+	if code != 0 || !strings.Contains(out, "STREAM "+lsSlug+" streams=") || !strings.Contains(out, "pr=#900 ci=pending mergeable=-") ||
+		!strings.Contains(out, " serial=LAND-SERIAL") || !strings.Contains(out, " partial_by=rowan partial_at=") {
 		t.Fatalf("status: %d\n%s", code, out)
 	}
 
@@ -259,9 +290,10 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if cl := c.HGet(ctx, "pr:nova-tools:1", "closes").Val(); cl != "101" {
 		t.Fatalf("#1 closes %q, want 101 from its body", cl)
 	}
-	// park, the landing, five lands walked step by step through the one move
-	// (#3778: a ready member goes ready -> working -> landed, one receipt each)
-	if log, _ := c.XLen(ctx, "ws:log").Result(); log != 10 {
+	// the refused run's park, the --partial run's park, the landing, five
+	// lands walked step by step through the one move (#3778: a ready member
+	// goes ready -> working -> landed, one receipt each)
+	if log, _ := c.XLen(ctx, "ws:log").Result(); log != 11 {
 		t.Fatalf("ws:log %d", log)
 	}
 	// The table reads the sets: the stream's landed cell is 2.

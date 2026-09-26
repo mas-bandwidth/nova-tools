@@ -116,6 +116,9 @@ type LandDuty struct {
 	TTL time.Duration
 	// Out receives the LAND-DUTY receipt lines; Log the build's own lines.
 	Out, Log io.Writer
+	// Land runs one stream's whole landing; nil is stream.Run. A test swaps
+	// it to see the options the duty passes (cfg:land partial).
+	Land func(ctx context.Context, c stream.Client, o stream.RunOptions) (stream.RunReport, error)
 
 	mu     sync.Mutex
 	busy   map[string]bool
@@ -138,6 +141,9 @@ type LandLine struct {
 	Rebase             []string // rebase task ids pushed (or found)
 	CI                 string   // the CI request's status word
 	Err                string
+	// Card is the stream's live merge card (nova-tools #4324): the duty
+	// leaves the stream to it (State merge-card); one writer per stream.
+	Card string
 }
 
 // String is the receipt line.
@@ -154,9 +160,9 @@ func (r LandLine) String() string {
 	if r.PR > 0 {
 		pr = "#" + strconv.Itoa(r.PR)
 	}
-	return fmt.Sprintf("LAND-DUTY repo=%s stream=%s state=%s pr=%s members=%s unread=%s skip=%s parked=%s rebase=%s ci=%s err=%s",
+	return fmt.Sprintf("LAND-DUTY repo=%s stream=%s state=%s pr=%s members=%s unread=%s skip=%s parked=%s rebase=%s ci=%s card=%s err=%s",
 		r.Repo, wrField(r.Stream), r.State, pr, numList(r.Members), numList(r.Unread), wrList(skips),
-		oneline.Field(wrList(parked)), wrList(r.Rebase), orDashStr(r.CI), oneline.Field(orDashStr(r.Err)))
+		oneline.Field(wrList(parked)), wrList(r.Rebase), orDashStr(r.CI), orDashStr(r.Card), oneline.Field(orDashStr(r.Err)))
 }
 
 func numList(ns []int) string {
@@ -467,6 +473,16 @@ func (d *LandDuty) land(ctx context.Context, repo string) ([]LandLine, error) {
 			out = append(out, LandLine{Repo: repo, Stream: s, State: "error", Err: "slug: " + err.Error()})
 			continue
 		}
+		// One writer per stream (nova-tools #4324): a live merge card's
+		// child lands the stream with `nova-sprint land`; the duty builds,
+		// pushes and merges nothing for it while the card is open.
+		if card, live, err := MergeCardLive(ctx, c, s); err != nil {
+			out = append(out, LandLine{Repo: repo, Stream: s, Slug: slug, State: "error", Err: "merge card: " + err.Error()})
+			continue
+		} else if live {
+			out = append(out, LandLine{Repo: repo, Stream: s, Slug: slug, State: "merge-card", Card: card})
+			continue
+		}
 		members, skips, err := stream.Members(ctx, c, repo, []string{s}, cfg.MinScore)
 		if err != nil {
 			out = append(out, LandLine{Repo: repo, Stream: s, Slug: slug, State: "error", Err: err.Error()})
@@ -562,7 +578,11 @@ func (d *LandDuty) landStream(ctx context.Context, repo, s, slug string, gh *str
 		// resumes the open landing at its wait.
 		CIWait: 0, Tick: time.Second, Request: d.Request, CIURL: d.CIURL, BaseTip: d.BaseTip,
 	}
-	rep, err := stream.Run(ctx, d.Client, o)
+	land := d.Land
+	if land == nil {
+		land = stream.Run
+	}
+	rep, err := land(ctx, d.Client, o)
 	line.State, line.CI = rep.State, rep.CIRequest
 	if line.State == "" {
 		line.State = "error"

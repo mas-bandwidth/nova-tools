@@ -180,9 +180,13 @@ func benchTurn(t *testing.T, addr string, before func()) *int {
 // landArgs runs the fixture's batch test locally (--test, a seat that is not
 // the coordinator's) so the bisect parks #2; with no --test land runs none
 // and CI is the batch test (#3899, land_nolocal_test.go).
+// landArgs passes --partial: the fixture's #2 is red and bisected out, and
+// without it the run is a LAND-SERIAL refusal after the build (#4324: the
+// PR never carries fewer members than the stream has in merging in
+// silence); these tests are about the landing that follows.
 func landArgs(addr, url, work string, g *mergeForge, extra ...string) []string {
 	return append([]string{"land", "--redis", addr, "--repo", lsRepo, "--stream", lsStream, "--remote", url, "--ci-url", url,
-		"--mirror", "none", "--workdir", work, "--api", g.srv.URL, "--tick", "1ms", "--test", "test ! -e red.txt"}, extra...)
+		"--mirror", "none", "--workdir", work, "--api", g.srv.URL, "--tick", "1ms", "--test", "test ! -e red.txt", "--partial"}, extra...)
 }
 
 func TestLandBatchMergesOldestFirst(t *testing.T) {

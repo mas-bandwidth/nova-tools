@@ -115,3 +115,19 @@ func TestStepsPrintTheWall(t *testing.T) {
 		t.Fatalf("serial line %q", got)
 	}
 }
+
+// TestLandingFieldsCarryTheSerialReceipt: the LAND-SERIAL line a --partial
+// landing was allowed with, who allowed it and when, survive the land hash
+// round trip; a landing with none writes no such field.
+func TestLandingFieldsCarryTheSerialReceipt(t *testing.T) {
+	t.Parallel()
+	l := Landing{Repo: "o/r", Slug: "s", Streams: "s", Base: "dev", State: "open", PR: 9,
+		Serial: "LAND-SERIAL stream=s carrying=1 merging=2 left_out=#2:red:x", PartialBy: "rowan", PartialAt: "1700000000000"}
+	got := landingFrom("o/r", l.fields())
+	if got.Serial != l.Serial || got.PartialBy != "rowan" || got.PartialAt != "1700000000000" || got.PR != 9 {
+		t.Fatalf("round trip: %+v", got)
+	}
+	if f := (Landing{Repo: "o/r", Slug: "s"}).fields(); f["serial"] != "" || f["partial_by"] != "" {
+		t.Fatalf("empty serial written: %v", f)
+	}
+}

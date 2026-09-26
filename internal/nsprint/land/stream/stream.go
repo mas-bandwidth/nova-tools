@@ -596,6 +596,11 @@ type Landing struct {
 	// CommitCloses is, per kept member, the issues its commit messages
 	// close; SaveBuilt stores it on the member's record (commit_closes).
 	CommitCloses map[int]string
+	// Serial is the LAND-SERIAL line of a landing that carries fewer
+	// members than the stream has in merging (nova-tools #4324); PartialBy
+	// and PartialAt say who allowed it (--partial) and when. State serial
+	// is a build the line refused after the parks.
+	Serial, PartialBy, PartialAt string
 }
 
 func (l Landing) fields() map[string]string {
@@ -617,13 +622,16 @@ func (l Landing) fields() map[string]string {
 	if l.PR > 0 {
 		f["pr"] = strconv.Itoa(l.PR)
 	}
+	if l.Serial != "" {
+		f["serial"], f["partial_by"], f["partial_at"] = l.Serial, l.PartialBy, l.PartialAt
+	}
 	return f
 }
 
 func landingFrom(repo string, m map[string]string) Landing {
 	l := Landing{Repo: repo, Slug: m["slug"], Streams: m["streams"], Base: m["base"], BaseSHA: m["base_sha"],
 		Branch: m["branch"], Head: m["head"], State: m["state"], Workdir: m["workdir"], At: m["at"],
-		MergeSHA: m["merge_sha"]}
+		MergeSHA: m["merge_sha"], Serial: m["serial"], PartialBy: m["partial_by"], PartialAt: m["partial_at"]}
 	l.PR, _ = strconv.Atoi(m["pr"])
 	l.Tests, _ = strconv.Atoi(m["tests"])
 	mem := strings.Fields(m["members"])
