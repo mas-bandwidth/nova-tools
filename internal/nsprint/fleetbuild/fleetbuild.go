@@ -23,7 +23,10 @@
 // nova-sprint version line; this machine does the same locally. A bench whose
 // version line names the release gets its receipt, one pipeline of
 // `HSET bench:<b> build <V> build_sha <sha40> build_at <utc>`; a bench that
-// fails or answers another version keeps its old receipt. Last, the freshly
+// fails or answers another version keeps its old receipt. Every target's
+// probe result, "<OK|MISMATCH|FAIL> <V> <utc>", goes on its beat as
+// bench:<b>:beat probe when the beat exists (nova-tools#4237): a probe is a
+// build check, not consumer work, and never touches <consumer>:cards:*. Last, the freshly
 // installed nova-sprint here runs `fn deploy`, so the store's function library
 // is the one this release carries.
 package fleetbuild
@@ -359,6 +362,39 @@ func lastLine(s string) string {
 	return ""
 }
 
+// BeatKey is a bench's beat, where its probe result lives (nova-tools#4237);
+// BeatTTL bounds a probe write that finds the beat just expired (the beat's
+// own life, life.BenchBeatTTL).
+func BeatKey(bench string) string { return "bench:" + bench + ":beat" }
+
+const BeatTTL = 3 * time.Second
+
+// ProbeResult is the beat's probe field after an install: the probe's
+// status (OK, MISMATCH, FAIL), the release it probed for and when.
+func ProbeResult(status, version, at string) string {
+	return status + " " + version + " " + at
+}
+
+// beatsExist reads, in one pipeline, whether each line's bench beat exists.
+func (d *Deployer) beatsExist(ctx context.Context, lines []Line) ([]bool, error) {
+	out := make([]bool, len(lines))
+	if len(lines) == 0 {
+		return out, nil
+	}
+	pipe := d.Client.Pipeline()
+	cmds := make([]*redis.IntCmd, len(lines))
+	for i, l := range lines {
+		cmds[i] = pipe.Exists(ctx, BeatKey(l.Bench))
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+	for i, c := range cmds {
+		out[i] = c.Val() == 1
+	}
+	return out, nil
+}
+
 // probe judges a nova-sprint version line against the release.
 func probe(p Plan, t Target, out string, err error) Line {
 	l := Line{Bench: t.Bench, Platform: t.Platform}
@@ -458,11 +494,30 @@ func (d *Deployer) Deploy(ctx context.Context, p Plan) (Result, error) {
 		now = d.Now
 	}
 	at := now().UTC().Format(time.RFC3339)
-	pipe := d.Client.Pipeline()
+	// Each target's probe result goes on its bench beat (nova-tools#4237),
+	// never into a consumer's cards: the beats that exist are read first, so
+	// a bench with no beat gets no phantom beat, only its PROBE line.
+	beats, err := d.beatsExist(ctx, r.Lines)
+	if err != nil {
+		return r, fmt.Errorf("read beats: %w", err)
+	}
+	pipe := d.Client.TxPipeline()
 	n := 0
 	selfOK := false
-	for _, l := range r.Lines {
+	for i, l := range r.Lines {
 		d.printf("%s %s platform=%s: %s\n", l.Status, l.Bench, l.Platform, l.Detail)
+		result := ProbeResult(l.Status, p.Version, at)
+		if beats[i] {
+			pipe.HSet(ctx, BeatKey(l.Bench), "probe", result)
+			// the beat expired between the read and this write: bounded to
+			// one beat's life, never a beat with no expiry
+			pipe.ExpireNX(ctx, BeatKey(l.Bench), BeatTTL)
+			n++
+			d.printf("PROBE %s beat=%s probe=%q\n", l.Bench, BeatKey(l.Bench), result)
+		} else {
+			d.printf("PROBE NOBEAT %s probe=%q: %s does not exist; the result is this line and the bench:%s receipt only\n",
+				l.Bench, result, BeatKey(l.Bench), l.Bench)
+		}
 		if l.Status != "OK" {
 			continue
 		}
