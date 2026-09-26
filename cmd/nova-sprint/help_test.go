@@ -61,6 +61,7 @@ var helpCases = [][]string{
 	{"result", "contract"}, {"result", "check"}, {"result", "show"}, {"result", "disposition"},
 	{"rote"}, {"route", "report"}, {"routes"},
 	{"scope", "keep"}, {"scope", "park"}, {"scope", "unpark"}, {"scope", "ls"},
+	{"self", "update"},
 	{"spec", "mark"}, {"spec", "list"},
 	{"sprint", "open"}, {"sprint", "close"}, {"sprint", "status"},
 	{"stream", "ls"}, {"stream", "order"}, {"stream", "rename"},
