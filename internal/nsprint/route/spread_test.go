@@ -72,10 +72,7 @@ func TestSpreadRoutesAreValid(t *testing.T) {
 func TestSpreadPickCoversEveryProvider(t *testing.T) {
 	t.Parallel()
 
-	tab, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
+	tab := loadNoProbe(t)
 	for _, tc := range []struct {
 		tier string
 		n    int
@@ -180,10 +177,7 @@ spread:
 func TestProSpreadKimiShareGoesToQwen(t *testing.T) {
 	t.Parallel()
 
-	tab, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
+	tab := loadNoProbe(t)
 	shares := map[string]int{}
 	for _, s := range tab.Spread("pro") {
 		shares[s.Provider] = s.Share
@@ -251,4 +245,60 @@ func TestParseSpreadShare(t *testing.T) {
 			t.Errorf("share %s parsed: %v", bad, err)
 		}
 	}
+}
+
+// TestProbeRunsEveryRouteOfTheRung (Glenn 2026-09-26 11:05 AM ET: "turn all
+// models back on to try again, in case it is our fault"): while a tier has a
+// probe row, Pick spreads its cards over every listed route, one slot each,
+// and Check admits a probed route whatever its state; the states themselves
+// are untouched.
+func TestProbeRunsEveryRouteOfTheRung(t *testing.T) {
+	t.Parallel()
+	tab, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tier := range []string{"flash", "pro"} {
+		pr := tab.Probe(tier)
+		if pr == nil {
+			t.Fatalf("no probe row for %s", tier)
+		}
+		picked := map[string]bool{}
+		for i := 0; i < 2000; i++ {
+			r, s, err := tab.Pick(tier, fmt.Sprintf("probe-%s-%d", tier, i))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s.Via != r.Via || s.Routes[0] != r.Route {
+				t.Fatalf("%s: pick row %+v does not carry the route %s", tier, s, r.Route)
+			}
+			picked[r.Route] = true
+			if err := tab.Check(Card{Rung: tier, Route: r.Route}); err != nil {
+				t.Fatalf("%s: a probed route is refused: %v", tier, err)
+			}
+		}
+		for _, route := range pr.Routes {
+			if !picked[route] {
+				t.Errorf("%s: probe never picked %s over 2000 labels", tier, route)
+			}
+			if tab.rows[tab.byRoute[route]].Rung != tier {
+				t.Errorf("%s: probe names %s of another rung", tier, route)
+			}
+		}
+		if len(pr.Routes) != len(tab.Allowed(tier, "")) && len(pr.Routes) < len(tab.Allowed(tier, "")) {
+			t.Errorf("%s: the probe lists fewer routes than the rung allows", tier)
+		}
+	}
+}
+
+// loadNoProbe loads the embedded table without its probe rows: the tests of
+// the rule and the measured spread hold to the table as derived, whatever
+// probe is on for the next run.
+func loadNoProbe(t *testing.T) *Table {
+	t.Helper()
+	tab, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tab.WithoutProbe()
 }

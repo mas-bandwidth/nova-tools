@@ -600,3 +600,16 @@ spread:
     share: 2
     routes: [ocqwenplus, ocminimax]
     why: "the two allowed pro routes, both opencode and not DeepSeek; share 2 is kimi-k3's former third (#3949): qwen3.6-plus 17 ok and 2 crash of 19 in swarm-0925a, the best measured pro"
+
+# probe: a dated trial of every route of a rung, one slot each, whatever the
+# route's measured state; the allowed check admits a probed route. The states
+# above stay as the rule derives them; deleting the section returns the spread.
+probe:
+  - tier: flash
+    until: "2026-09-30"
+    routes: [orqwen38, ords41, ormimo26, ormimo, ords, ocflash, ocglmflash, orglmflash, orqwen, mercury, dsflash, orgptnano, orgeminilite, ornemotron]
+    why: "Glenn 2026-09-26 11:05 AM ET: turn all models back on to try again, in case it is our fault; every route of the rung, one slot each, for the next quack (#4232); delete this section to return to the measured spread"
+  - tier: pro
+    until: "2026-09-30"
+    routes: [ocqwenplus, ocminimax, orkimi3, ormimo26pro, ormimopro, orqwenplus, ocpro, ordspro, ocglm53, orglm53, dspro, orkimicode, orminimax, orgemini25pro, orhaiku, ordevstral, ocmuse, ormuse]
+    why: "Glenn 2026-09-26 11:05 AM ET: turn all models back on to try again, in case it is our fault; every route of the rung, one slot each, for the next quack (#4232); delete this section to return to the measured spread"

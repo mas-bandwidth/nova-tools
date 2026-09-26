@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 )
 
 // ViaDatacenter is Mercury's via: the route's model carries the harness's
@@ -70,6 +71,10 @@ func SpreadIndex(label string, n int) int {
 func (t *Table) Pick(tier, label string) (Row, SpreadRow, error) {
 	if label == "" {
 		return Row{}, SpreadRow{}, fmt.Errorf("an empty card label picks no provider")
+	}
+	if pr := t.Probe(tier); pr != nil {
+		r := t.rows[t.byRoute[pr.Routes[SpreadIndex(label, len(pr.Routes))]]]
+		return r, SpreadRow{Tier: tier, Provider: providerOf(r.Via), Via: r.Via, Share: 1, Routes: []string{r.Route}, Why: pr.Why}, nil
 	}
 	rows := t.Spread(tier)
 	if len(rows) == 0 {
@@ -198,4 +203,128 @@ func (t *Table) checkSpread() error {
 		}
 	}
 	return nil
+}
+
+// The probe (Glenn 2026-09-26 11:05 AM ET: "turn all models back on to try
+// again, in case it is our fault"): a dated section that, while present,
+// runs a tier's cards over every listed route, one slot each, whatever the
+// route's measured state, and admits the route at the allowed check. It is
+// the wrapper's trial, not the table's verdict: the states stay as the rule
+// derives them, and deleting the section returns the measured spread.
+type ProbeRow struct {
+	Tier   string
+	Routes []string
+	Until  string // the date the probe ends, YYYY-MM-DD
+	Why    string
+}
+
+// Probe returns the probe row of one tier, nil when the tier has none.
+func (t *Table) Probe(tier string) *ProbeRow {
+	for i := range t.probe {
+		if t.probe[i].Tier == tier {
+			return &t.probe[i]
+		}
+	}
+	return nil
+}
+
+// probed says a route is on its rung's probe row.
+func (t *Table) probed(rung, route string) bool {
+	pr := t.Probe(rung)
+	if pr == nil {
+		return false
+	}
+	for _, r := range pr.Routes {
+		if r == route {
+			return true
+		}
+	}
+	return false
+}
+
+// providerOf is the spread's provider name for a via.
+func providerOf(via string) string {
+	if via == "datacenter" {
+		return "mercury"
+	}
+	return via
+}
+
+func (t *Table) addProbe(it map[string]string) error {
+	var p ProbeRow
+	for key, raw := range it {
+		if key == "\x00section" {
+			continue
+		}
+		switch key {
+		case "tier", "until", "why":
+			v, err := scalar(raw)
+			if err != nil {
+				return err
+			}
+			switch key {
+			case "tier":
+				p.Tier = v
+			case "until":
+				p.Until = v
+			case "why":
+				p.Why = v
+			}
+		case "routes":
+			if !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
+				return fmt.Errorf("probe routes wants a [flow, list] of routes")
+			}
+			for _, a := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(raw, "["), "]"), ",") {
+				if a = strings.TrimSpace(a); a != "" {
+					p.Routes = append(p.Routes, a)
+				}
+			}
+		default:
+			return fmt.Errorf("unknown probe key %q", key)
+		}
+	}
+	if p.Tier == "" || len(p.Routes) == 0 || p.Why == "" || p.Until == "" {
+		return fmt.Errorf("a probe row needs tier, routes, until and why")
+	}
+	if _, err := time.Parse("2006-01-02", p.Until); err != nil {
+		return fmt.Errorf("probe until %q wants YYYY-MM-DD", p.Until)
+	}
+	t.probe = append(t.probe, p)
+	return nil
+}
+
+// checkProbe refuses a probe row that names an unknown route, a route of
+// another rung, a tier twice, or a route twice.
+func (t *Table) checkProbe() error {
+	seenTier := map[string]bool{}
+	for _, p := range t.probe {
+		if seenTier[p.Tier] {
+			return fmt.Errorf("probe %s appears twice", p.Tier)
+		}
+		seenTier[p.Tier] = true
+		seen := map[string]bool{}
+		for _, route := range p.Routes {
+			i, ok := t.byRoute[route]
+			if !ok {
+				return fmt.Errorf("probe %s names %s, which is not a route", p.Tier, route)
+			}
+			if t.rows[i].Rung != p.Tier {
+				return fmt.Errorf("probe %s names %s, a rung %s route", p.Tier, route, t.rows[i].Rung)
+			}
+			if seen[route] {
+				return fmt.Errorf("probe %s names %s twice", p.Tier, route)
+			}
+			seen[route] = true
+		}
+	}
+	return nil
+}
+
+// WithoutProbe is the table with its probe rows removed: the measured
+// spread and the rule's verdicts as they stand, which is what the table's
+// own tests hold to while a probe is on.
+func (t *Table) WithoutProbe() *Table {
+	c := *t
+	c.probe = nil
+	return &c
 }

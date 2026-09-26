@@ -10,10 +10,7 @@ import (
 func TestAllowedRoutesRefusesADroppedRoute(t *testing.T) {
 	t.Parallel()
 
-	tab, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
+	tab := loadNoProbe(t)
 	flashDropped := []string{"orgptnano", "ornemotron", "orgeminilite"}
 	proDropped := []string{"ocpro", "ordspro", "ocglm53", "orkimicode", "orminimax", "orqwenplus", "orgemini25pro", "orhaiku", "ordevstral", "ocmuse", "ormuse", "ormimo26pro"}
 	types := append([]string{""}, tab.Types()...)
@@ -79,10 +76,7 @@ func TestAllowedRoutesPerRungFromTheRanking(t *testing.T) {
 func TestAllowedRoutesRefusesWrongRungHeldAndUnknown(t *testing.T) {
 	t.Parallel()
 
-	tab, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
+	tab := loadNoProbe(t)
 	for _, tc := range []struct {
 		card Card
 		want string
@@ -103,10 +97,7 @@ func TestAllowedRoutesRefusesWrongRungHeldAndUnknown(t *testing.T) {
 func TestAllowedRoutesWorkTypeRowWidensOnlyThatType(t *testing.T) {
 	t.Parallel()
 
-	tab, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
+	tab := loadNoProbe(t)
 	if err := tab.Check(Card{Rung: "pro", Type: "cell3", Route: "orkimi3"}); err != nil {
 		t.Errorf("kimi-k3 on cell3: %v", err)
 	}
@@ -242,10 +233,7 @@ func TestDeriveMovesARowWhenItsNumbersMove(t *testing.T) {
 func TestAllowedRoutesCodeOverrideIsExactlyTheThreeThatLanded(t *testing.T) {
 	t.Parallel()
 
-	tab, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
+	tab := loadNoProbe(t)
 	want := "ocqwenplus orhaiku ordspro"
 	if got := strings.Join(tab.Allowed("pro", "code"), " "); got != want {
 		t.Fatalf("allowed pro/code = %q, want %q", got, want)
