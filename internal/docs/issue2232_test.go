@@ -12,7 +12,7 @@ import (
 // per card"): one single-node k3s per bench (not one fleet cluster), and one
 // card gets one pod with its own cgroup, env, log stream, and
 // activeDeadlineSeconds. It finds the reference implementation types the spec
-// carries for the internal/fleetkube package and checks that they render a
+// carries for the fleet-kube reference implementation and checks that they render a
 // single-node per bench and at most one pod per card.
 
 func TestIssue2232(t *testing.T) {
@@ -34,7 +34,7 @@ func TestIssue2232(t *testing.T) {
 	}
 
 	// The spec must carry the reference implementation types for
-	// internal/fleetkube, from which per-bench k3s and Job-per-card
+	// the fleet-kube model, from which per-bench k3s and Job-per-card
 	// templates are built. A BenchNode declares one single-node k3s
 	// per bench (one node, not a fleet cluster; Studio is not a
 	// node). A CardJob declares one Job per card (one pod, its own

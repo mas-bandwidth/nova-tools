@@ -12,7 +12,6 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprintcol"
 )
 
 // fqPush is `friend-queue push --to <to> --id <id> --kind <kind> --ref <ref>
@@ -85,8 +84,7 @@ func (f *firstReadFixture) fqShape(id, to string) map[string]string {
 // ws:names (the live 06:55Z condition that wrote state=ready), a first read
 // is a task card that bin/friend-queue still reads as its own push: the
 // fields it reads equal the reference push's, the index sets and the one
-// q:<f> entry are the same, and the table's queue column (sprintcol) counts
-// it; and it is a card: where=ready, in exactly ws:swarm:ready and
+// q:<f> entry are the same; and it is a card: where=ready, in exactly ws:swarm:ready and
 // friend:emma:cards:ready, with one ws:log receipt.
 func TestFirstReadIsFriendQueueShape(t *testing.T) {
 	t.Parallel()
@@ -126,16 +124,6 @@ func TestFirstReadIsFriendQueueShape(t *testing.T) {
 	}
 	if n, _ := f.client.XLen(f.ctx, "ws:log").Result(); n != 1 {
 		t.Fatalf("ws:log has %d entries, want the push", n)
-	}
-
-	col, err := sprintcol.Open(f.client.Options().Addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer col.Close()
-	cell, err := sprintcol.Queue{Sprint: f.S}.Render(f.ctx, col, nil, "emma")
-	if err != nil || cell.N != 2 {
-		t.Fatalf("queue column for emma = %+v (%v), want 2 (the first read and the reference push)", cell, err)
 	}
 }
 

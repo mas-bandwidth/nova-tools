@@ -172,14 +172,14 @@ func TestLintPathsResolveAtBase(t *testing.T) {
 	// A repair card's PATHS are the PR's own files: an entry the PR adds resolves at
 	// PR-HEAD, a PR-HEAD the repository does not hold is MISSING, and an entry at
 	// neither is refused.
-	prHead := addCommit(t, repo, "internal/harvest/effect.go")
-	if fs := findingsFor(LintCardBase(baseCard(map[string]string{"base-sha": sha, "PATHS": "internal/harvest/effect.go", "PR-HEAD": prHead}), bc), "paths-at-base"); len(fs) != 0 {
+	prHead := addCommit(t, repo, "internal/swarm/effect.go")
+	if fs := findingsFor(LintCardBase(baseCard(map[string]string{"base-sha": sha, "PATHS": "internal/swarm/effect.go", "PR-HEAD": prHead}), bc), "paths-at-base"); len(fs) != 0 {
 		t.Fatalf("a file the PR adds resolves at PR-HEAD, got %v", fs)
 	}
-	if fs := findingsFor(LintCardBase(baseCard(map[string]string{"base-sha": sha, "PATHS": "internal/harvest/effect.go", "PR-HEAD": "ec4230ddde17b45706a2e93136f55e564d67f778"}), bc), "paths-at-base"); len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "MISSING") {
+	if fs := findingsFor(LintCardBase(baseCard(map[string]string{"base-sha": sha, "PATHS": "internal/swarm/effect.go", "PR-HEAD": "ec4230ddde17b45706a2e93136f55e564d67f778"}), bc), "paths-at-base"); len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "MISSING") {
 		t.Fatalf("a PR-HEAD the repository does not hold is MISSING, got %v", fs)
 	}
-	if fs := findingsFor(LintCardBase(baseCard(map[string]string{"base-sha": sha, "PATHS": "internal/harvest/nowhere.go", "PR-HEAD": prHead}), bc), "paths-at-base"); len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "PR-HEAD") {
+	if fs := findingsFor(LintCardBase(baseCard(map[string]string{"base-sha": sha, "PATHS": "internal/swarm/nowhere.go", "PR-HEAD": prHead}), bc), "paths-at-base"); len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "PR-HEAD") {
 		t.Fatalf("an entry at neither base nor PR-HEAD is refused, got %v", fs)
 	}
 

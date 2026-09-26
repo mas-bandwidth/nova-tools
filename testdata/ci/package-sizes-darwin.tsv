@@ -106,7 +106,6 @@ github.com/mas-bandwidth/nova-tools/internal/dogfood	-	1.1
 github.com/mas-bandwidth/nova-tools/cmd/nova-decide	-	1.0
 github.com/mas-bandwidth/nova-tools/cmd/nova-post	-	1.0
 github.com/mas-bandwidth/nova-tools/internal/decide	-	1.0
-github.com/mas-bandwidth/nova-tools/internal/specwork	-	0.9
 github.com/mas-bandwidth/nova-tools/internal/worklang	-	0.9
 github.com/mas-bandwidth/nova-tools/internal/board	-	0.8
 github.com/mas-bandwidth/nova-tools/internal/docs	-	0.8
@@ -121,7 +120,6 @@ github.com/mas-bandwidth/nova-tools/internal/oneline	-	0.7
 github.com/mas-bandwidth/nova-tools/cmd/nova-ci	-	0.6
 github.com/mas-bandwidth/nova-tools/internal/bounded	-	0.6
 github.com/mas-bandwidth/nova-tools/internal/buildinfo	-	0.6
-github.com/mas-bandwidth/nova-tools/internal/chat	-	0.6
 github.com/mas-bandwidth/nova-tools/internal/ci/slowtests	-	0.6
 github.com/mas-bandwidth/nova-tools/internal/dispatch	-	0.6
 github.com/mas-bandwidth/nova-tools/internal/fleet	-	0.6

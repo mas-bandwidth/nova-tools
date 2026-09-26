@@ -93,7 +93,6 @@ is a red a change can answer for.
 | internal/decide | 0.0 | - |
 | internal/selftalk | 0.0 | - |
 | cmd/nova-cairn | 0.0 | - |
-| internal/specwork | 0.0 | - |
 | internal/oneline | 0.0 | - |
 | internal/fuse | 0.0 | - |
 | internal/fleet | 0.0 | - |
@@ -103,7 +102,6 @@ is a red a change can answer for.
 | internal/bounded | 0.0 | - |
 | internal/safepath | 0.0 | - |
 | internal/worklang | 0.0 | - |
-| internal/chat | 0.0 | - |
 | internal/goenv | 0.0 | - |
 | internal/jobs | 0.0 | - |
 | internal/buildinfo | 0.0 | - |
@@ -178,7 +176,6 @@ five of its tests are over 5 s and every one of them is a real `exec`.
 | cmd/nova-memory | 0.6 | - |
 | internal/tokens | 0.6 | - |
 | internal/release | 0.4 | - |
-| internal/chat | 0.4 | - |
 | internal/check | 0.4 | - |
 | internal/docs | 0.4 | - |
 | cmd/nova-work | 0.4 | - |
@@ -205,7 +202,6 @@ five of its tests are over 5 s and every one of them is a real `exec`.
 | internal/jobs | 0.2 | - |
 | internal/log | 0.2 | - |
 | internal/goenv | 0.2 | - |
-| internal/specwork | 0.2 | - |
 | cmd/nova-ci | 0.2 | - |
 | tools/testdur | 0.2 | - |
 

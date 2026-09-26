@@ -668,11 +668,6 @@ internal/bus/replydraft_test.go:TestTheSecondPublishIsUsedWhenTheFirstIsNotAvail
 internal/bus/timeout_test.go:TestAGitThatHangsIsKilledAndNamed serial: t.Setenv
 internal/check/corpus_test.go:TestARelativeRootIsNotReadAsASymlinkEscape serial: t.Chdir
 internal/ci/redis_ci_test.go:TestRedisBackedTestsDoNotSkipUnderCI serial: t.Setenv
-internal/control/durable_fault_test.go:TestWriteDurableJSON_DirectorySyncFailureIsAmbiguous serial: swaps package var control.durableClose, swaps package var control.durableRename, swaps package var control.durableSyncDir, swaps package var control.durableSyncFile, swaps package var control.durableWrite
-internal/control/durable_fault_test.go:TestWriteDurableJSON_FileSyncFailureKeepsOldBytes serial: swaps package var control.durableClose, swaps package var control.durableRename, swaps package var control.durableSyncDir, swaps package var control.durableSyncFile, swaps package var control.durableWrite
-internal/control/durable_fault_test.go:TestWriteDurableJSON_RenameErrorAfterLandingIsAmbiguous serial: swaps package var control.durableClose, swaps package var control.durableRename, swaps package var control.durableSyncDir, swaps package var control.durableSyncFile, swaps package var control.durableWrite
-internal/control/durable_fault_test.go:TestWriteDurableJSON_RenameFailureBeforeLandingKeepsOldBytes serial: swaps package var control.durableClose, swaps package var control.durableRename, swaps package var control.durableSyncDir, swaps package var control.durableSyncFile, swaps package var control.durableWrite
-internal/control/durable_fault_test.go:TestWriteDurableJSON_WriteFailureKeepsOldBytes serial: swaps package var control.durableClose, swaps package var control.durableRename, swaps package var control.durableSyncDir, swaps package var control.durableSyncFile, swaps package var control.durableWrite
 internal/ctxindex/ctxindex_test.go:TestLookupReadsOnlyItsBucket serial: swaps package var ctxindex.BucketSize
 internal/ctxindex/ctxindex_test.go:TestPartialBuildLeavesThePreviousIndexWhole serial: swaps package var ctxindex.afterBuckets
 internal/decide/answers_test.go:TestChoiceAnswerOutsideTheCriteriaIsAProviderError serial: t.Setenv
@@ -683,12 +678,6 @@ internal/decide/decide_test.go:TestRequestSendsDocumentedBody serial: t.Setenv
 internal/decide/decisions_test.go:TestDecideRecordsOneRowPerAnswer serial: t.Setenv
 internal/decide/questionfile_test.go:TestTheBytesOnTheWireCarryTheNamedCriteriaAndNothingElse serial: t.Setenv
 internal/decide/record_concurrent_test.go:TestOneClientRecordsFromManyGoroutinesWithoutARace serial: t.Setenv
-internal/fleetkube/pod_test.go:TestAJobWithTheFixtureCardProducesRESULTmdAndAUsageTsv serial: t.Setenv
-internal/fleetkube/pod_test.go:TestAPodAppendsToTheLauncherUsageTsv serial: t.Setenv
-internal/fleetkube/pod_test.go:TestClipIsThePodLastStep serial: t.Setenv
-internal/fleetkube/pod_test.go:TestJobCommandRunsHarnessUsageThenClip serial: t.Setenv
-internal/friendqueue/queue_test.go:TestClosedEntryInStreamHistoryDoesNotCountAsLiveQueued serial: t.Chdir
-internal/friendqueue/queue_test.go:TestSeededStreamEntryAppearsAndPriorityTSVDoesNotOverrideIt serial: t.Chdir
 internal/merge/cisource_test.go:TestChecksMapsTheRecordWord serial: t.Setenv
 internal/merge/fetchedreporttip_test.go:TestWithFetchedReportTipRefusesInvalidBranchAndReservationCollision serial: swaps package var merge.newReportFetchNonce
 internal/merge/foldfetchedtip_test.go:TestFoldFetchedTipRereadsOnlyProblemPaths serial: swaps package var merge.Sleep

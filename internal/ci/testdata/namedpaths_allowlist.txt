@@ -72,6 +72,13 @@ internal/swarm/pull SPEC-WORKLANG's example test subject `test:internal/swarm/pu
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
 
+internal/chat/allow.go internal/chat deleted 2026-09-26 (nothing imported it); SPEC-CHAT.md's file table names it as the plan
+internal/chat/session.go internal/chat deleted 2026-09-26 (nothing imported it); SPEC-CHAT.md's file table names it as the plan
+internal/chat/state.go internal/chat deleted 2026-09-26 (nothing imported it); SPEC-CHAT.md's file table names it as the plan
+internal/chat/transport.go internal/chat deleted 2026-09-26 (nothing imported it); SPEC-CHAT.md names it as the plan
+internal/fleetkube internal/fleetkube deleted 2026-09-26 (nothing imported it); SPEC-FLEET-KUBE.md carries its reference types
+internal/friendqueue/ internal/friendqueue deleted 2026-09-26 (nothing imported it); SPEC-WORK.md row (d) names it as where task push would go
+internal/outbound/ internal/outbound deleted 2026-09-26 (nothing imported it); SPEC-WORK.md row (h) names it as the cutover's dispatcher
 cmd/nova-merge/queue.go retired with the per-PR lander on 2026-09-24; internal/merge/queuegh.go names it as where its caller was
 docs/FIXED-FORM-OWED-ROWS.md SPEC-BOARD.md cites it in the SCHEMA repository, not here
 docs/PORTING.md the file `nova-review port` reads out of the pull request's own head, not out of this tree
