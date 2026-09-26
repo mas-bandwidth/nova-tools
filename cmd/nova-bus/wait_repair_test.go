@@ -2,12 +2,15 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
 // #2627: a killed git leaves index.lock, and the beat it was writing stays dirty. The next
@@ -312,5 +315,52 @@ func TestWaitRepairDoesNotClaimWhatItDidNotDo(t *testing.T) {
 	}
 	if string(got) != harness {
 		t.Fatalf("--no-beat rewrote a BEAT it does not own:\n%q", got)
+	}
+}
+
+// #4420, end to end: a stale index.lock owned by another account is refused by the wait
+// with one line naming the uid, and the lock stays. A fresh one of the same owner is
+// left alone exactly as TestWaitRepairFreshLockLeftAlone says, with no owner line. The
+// owner is set on this test's own lock file through bus.SetIndexLockOwnerForTest, which
+// matches that one file, so no other test's lock and no environment is touched.
+func TestWaitRefusesAnotherAccountsStaleLock(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	other := uint32(os.Geteuid() + 1)
+	want := fmt.Sprintf("WAIT REFUSED: index.lock is owned by uid %d, not this account; ask its owner or the bench admin\n", other)
+
+	checkout, bare := busDir(t)
+	pushAhead(t, bare, "from-bo/arrived.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:03:00 UTC 2026\nId: bo-222222222222\nSubject: Arrived\n\nA note on the bus.\n")
+	lock := plantLock(t, checkout, 2*time.Minute)
+	restore, err := bus.SetIndexLockOwnerForTest(lock, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restore()
+	r := invoke(t, "", waitFlags(checkout, "Ada", "2s")...).mustCode(t, 1)
+	if r.stderr != want {
+		t.Fatalf("stderr = %q, want %q", r.stderr, want)
+	}
+	if lines := waitRepairLines(r); len(lines) != 0 {
+		t.Fatalf("claimed a repair of another account's lock: %q", lines)
+	}
+	if _, err := os.Lstat(lock); err != nil {
+		t.Fatalf("another account's stale index.lock was removed: %v", err)
+	}
+
+	fresh, freshBare := busDir(t)
+	pushAhead(t, freshBare, "from-bo/arrived.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:03:00 UTC 2026\nId: bo-222222222222\nSubject: Arrived\n\nA note on the bus.\n")
+	freshLock := plantLock(t, fresh, 0)
+	restoreFresh, err := bus.SetIndexLockOwnerForTest(freshLock, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restoreFresh()
+	r = invoke(t, "", waitFlags(fresh, "Ada", "2s")...)
+	if strings.Contains(r.stderr, "is owned by uid") {
+		t.Fatalf("a fresh lock of another account was refused by owner:\n%s", r.stderr)
+	}
+	if _, err := os.Lstat(freshLock); err != nil {
+		t.Fatalf("fresh index.lock was removed: %v", err)
 	}
 }

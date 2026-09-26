@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -746,5 +747,76 @@ func TestIndexLockOwnerIsTheWriter(t *testing.T) {
 	uid, ok := lockFileOwner(fi)
 	if !ok || uid != effectiveUID() {
 		t.Fatalf("lock owner: uid=%d ok=%v, want %d", uid, ok, effectiveUID())
+	}
+}
+
+// Only the inspected lock is removed. Each case changes the lock path during the supplied
+// scan and expects ErrIndexLockChanged with the lock left: (1) a new inode at the path,
+// the old one kept aside so the inode cannot be reused; (2) the same inode touched to a
+// newer mtime; (3) the same inode read as another owner after the scan. (4) A lock gone
+// during the scan is not cleared and is not an error. (5) Unchanged: cleared.
+func TestIndexLockRevalidatedBeforeRemove(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	self := effectiveUID()
+	owners := func(first, later uint32) func(os.FileInfo) (uint32, bool) {
+		n := 0
+		return func(os.FileInfo) (uint32, bool) {
+			n++
+			if n == 1 {
+				return first, true
+			}
+			return later, true
+		}
+	}
+	const want = "index.lock changed during the scan; waiting"
+	check := func(name string, dir, lock string, scan func() ([]gitProc, error), lockOwner func(os.FileInfo) (uint32, bool), keep []byte) {
+		t.Helper()
+		cleared, err := clearStaleIndexLockAs(dir, time.Now(), scan, lockOwner, self)
+		if cleared || !errors.Is(err, ErrIndexLockChanged) || err.Error() != want {
+			t.Fatalf("%s: cleared=%v err=%v, want %q", name, cleared, err, want)
+		}
+		got, readErr := os.ReadFile(lock)
+		if readErr != nil || string(got) != string(keep) {
+			t.Fatalf("%s: lock at the path lost: %v %q", name, readErr, got)
+		}
+	}
+
+	dir, lock := oldIndexLock(t)
+	check("(1) replaced", dir, lock, func() ([]gitProc, error) {
+		if err := os.Rename(lock, lock+".old"); err != nil {
+			t.Fatal(err)
+		}
+		return nil, os.WriteFile(lock, []byte("new"), 0o600)
+	}, lockFileOwner, []byte("new"))
+
+	dir, lock = oldIndexLock(t)
+	check("(2) touched", dir, lock, func() ([]gitProc, error) {
+		fi, err := os.Lstat(lock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		later := fi.ModTime().Add(time.Second)
+		return nil, os.Chtimes(lock, later, later)
+	}, lockFileOwner, nil)
+
+	dir, lock = oldIndexLock(t)
+	check("(3) owner changed", dir, lock, func() ([]gitProc, error) { return nil, nil }, owners(self, self+1), nil)
+
+	dir, lock = oldIndexLock(t)
+	cleared, err := clearStaleIndexLockAs(dir, time.Now(), func() ([]gitProc, error) {
+		return nil, os.Remove(lock)
+	}, lockFileOwner, self)
+	if cleared || err != nil {
+		t.Fatalf("(4) gone during the scan: cleared=%v err=%v, want not cleared and no error", cleared, err)
+	}
+
+	dir, lock = oldIndexLock(t)
+	cleared, err = clearStaleIndexLockAs(dir, time.Now(), func() ([]gitProc, error) { return nil, nil }, lockFileOwner, self)
+	if err != nil || !cleared {
+		t.Fatalf("(5) unchanged: cleared=%v err=%v, want removed", cleared, err)
+	}
+	if _, statErr := os.Lstat(lock); !os.IsNotExist(statErr) {
+		t.Fatalf("(5) lock still present: %v", statErr)
 	}
 }

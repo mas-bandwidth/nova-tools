@@ -3213,7 +3213,9 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// not yet born. The repair is recorded only after it has happened, and printed once,
 	// from the poll, together with whatever the fast-forward itself had to discard.
 	repairs := &repairLog{}
-	if cleared, err := bus.ClearStaleIndexLock(*busDir, time.Now()); err != nil {
+	if cleared, err := bus.ClearStaleIndexLock(*busDir, time.Now()); errors.Is(err, bus.ErrIndexLockChanged) {
+		fmt.Fprintf(stderr, "WAIT: %s\n", oneline.Err(err))
+	} else if err != nil {
 		fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.Err(err))
 		return 1
 	} else if cleared {
@@ -3510,6 +3512,9 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	// dirty file it does not own refuses the poll and is not touched. See
 	// bus.RecoverWaitFastForward.
 	rec, err := bus.RecoverWaitFastForward(o.busDir, o.remote, o.branch, waitOwnedPaths(o), time.Now())
+	if rec.LockChanged {
+		fmt.Fprintf(stderr, "WAIT: %s\n", oneline.Err(bus.ErrIndexLockChanged))
+	}
 	if rec.LockCleared {
 		repairs.add("index.lock")
 	}

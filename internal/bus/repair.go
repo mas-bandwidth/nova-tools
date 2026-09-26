@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -28,6 +29,9 @@ type WaitRecovery struct {
 	Moved       bool
 	LockCleared bool
 	Discarded   []string
+	// LockChanged is true when the stale index.lock was replaced or touched during the
+	// process scan and so was left in place (ErrIndexLockChanged).
+	LockChanged bool
 }
 
 // ClearStaleIndexLock removes the checkout's git index.lock when it is older than
@@ -54,7 +58,47 @@ func ClearStaleIndexLock(dir string, now time.Time) (bool, error) {
 // A test hands back an incomplete scan — a cwd git with no -C whose cwd could
 // not be read, or a permission error — and the lock must still be here afterwards.
 func clearStaleIndexLock(dir string, now time.Time, scan func() ([]gitProc, error)) (bool, error) {
-	return clearStaleIndexLockAs(dir, now, scan, lockFileOwner, effectiveUID())
+	return clearStaleIndexLockAs(dir, now, scan, indexLockOwner, effectiveUID())
+}
+
+// indexLockOwnerOverrides holds the owners the CLI tests set on their own fixture locks,
+// which cannot be chowned without root. An entry matches one lock file by os.SameFile,
+// so a test running in parallel with its own lock is never touched. Nothing but
+// SetIndexLockOwnerForTest writes it.
+var indexLockOwnerOverrides sync.Map // *indexLockOwnerOverride -> struct{}
+
+type indexLockOwnerOverride struct {
+	fi  os.FileInfo
+	uid uint32
+}
+
+// SetIndexLockOwnerForTest makes ClearStaleIndexLock read the lock file at path as owned
+// by uid, until the returned restore runs. It is for tests outside this package that
+// drive the wait end to end; the file itself is not changed.
+func SetIndexLockOwnerForTest(path string, uid uint32) (restore func(), err error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	o := &indexLockOwnerOverride{fi: fi, uid: uid}
+	indexLockOwnerOverrides.Store(o, struct{}{})
+	return func() { indexLockOwnerOverrides.Delete(o) }, nil
+}
+
+// indexLockOwner is lockFileOwner unless a test has set this lock's owner.
+func indexLockOwner(fi os.FileInfo) (uint32, bool) {
+	uid, found := uint32(0), false
+	indexLockOwnerOverrides.Range(func(k, _ any) bool {
+		if o := k.(*indexLockOwnerOverride); os.SameFile(o.fi, fi) {
+			uid, found = o.uid, true
+			return false
+		}
+		return true
+	})
+	if found {
+		return uid, true
+	}
+	return lockFileOwner(fi)
 }
 
 // effectiveUID is this process's account as the lock owner and the process scan compare
@@ -112,6 +156,18 @@ func clearStaleIndexLockAs(dir string, now time.Time, scan func() ([]gitProc, er
 	if owns {
 		return false, nil
 	}
+	// The scan took time, and the path may now hold a different lock: the old one finished
+	// and a new git took the path, or someone touched it. Only the lock that was inspected
+	// is removed: the same device and inode, the same owner, and no newer mtime.
+	if changed, err := indexLockChanged(lock, fi, owner, lockOwner); err != nil || changed {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		if err == nil {
+			err = ErrIndexLockChanged
+		}
+		return false, err
+	}
 	if err := os.Remove(lock); err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -122,6 +178,29 @@ func clearStaleIndexLockAs(dir string, now time.Time, scan func() ([]gitProc, er
 		return false, fmt.Errorf("index.lock is still there after removing it")
 	}
 	return true, nil
+}
+
+// ErrIndexLockChanged is the answer when the index.lock at the path is no longer the one
+// that was inspected by the time the scan finished. Nothing is removed; the wait prints
+// "WAIT: " and this sentence and goes on, as it does for a fresh lock.
+var ErrIndexLockChanged = errors.New("index.lock changed during the scan; waiting")
+
+// indexLockChanged re-reads the lock path after the scan. A path now empty is returned as
+// the Lstat error (IsNotExist). changed is true when the file there is not the inspected
+// one (os.SameFile: device and inode), its owner is not the inspected owner, or its mtime
+// is newer than the inspected mtime.
+func indexLockChanged(lock string, inspected os.FileInfo, owner uint32, lockOwner func(os.FileInfo) (uint32, bool)) (bool, error) {
+	now, err := os.Lstat(lock)
+	if err != nil {
+		return false, err
+	}
+	if !os.SameFile(inspected, now) {
+		return true, nil
+	}
+	if uid, ok := lockOwner(now); !ok || uid != owner {
+		return true, nil
+	}
+	return now.ModTime().After(inspected.ModTime()), nil
 }
 
 // indexLockPath is the lock file beside this checkout's index. It is asked of git, because
@@ -277,6 +356,10 @@ func RecoverWaitFastForward(dir, remote, branch string, owned []string, now time
 		return rec, err
 	}
 	cleared, err := ClearStaleIndexLock(dir, now)
+	if errors.Is(err, ErrIndexLockChanged) {
+		rec.LockChanged = true
+		err = nil
+	}
 	if err != nil {
 		return rec, err
 	}
@@ -463,9 +546,12 @@ const ownershipDiagCap = 200
 // coordinator's gits). The skip removes no other account's lock: that account's git
 // holds its own lock file, which the first rule refuses. What stays out of sight is a
 // git of another account working in this checkout, with no absolute location on its
-// command line, under a lock this account made. The account is the effective uid
-// (os.Geteuid, ps uid, the owner of /proc/<pid> and of the lock file) because lsof, /proc
-// and file ownership follow it.
+// command line, under a lock this account made. On linux the account is the owner of
+// /proc/<pid>, and a non-dumpable process (one that changed credentials, or set
+// PR_SET_DUMPABLE to 0) has its /proc/<pid> owned by root: a git of this account in that
+// state reads as another account's and, when nothing places it, is skipped too. The
+// account is the effective uid (os.Geteuid, ps uid, the owner of /proc/<pid> and of the
+// lock file) because lsof, /proc and file ownership follow it.
 const ownershipUnknown = "cannot tell whether a git process owns this checkout"
 
 func ownershipUnknownErr(why string) error {
