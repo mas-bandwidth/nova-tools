@@ -2,41 +2,63 @@ package card_test
 
 import (
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 )
 
-// TestQuackRowVerdicts: a stage over its bar fails there, a card ended
-// failed fails at the first stage it never reached with its reason, a row
-// still moving waits, and the missing stage is named only once the probe
-// has timed out.
-func TestQuackRowVerdicts(t *testing.T) {
+// TestQuackIssue: the rendered primary carries every header line the push
+// reads (taskcard.ParseIssue completes it with nothing missing for a swarm
+// route), its one fixture path and line name the sprint and the id, the DO
+// and DONE-WHEN lines quote that same line, and a bad tier, id or base-sha is
+// refused before anything is rendered.
+func TestQuackIssue(t *testing.T) {
 	t.Parallel()
 
-	bars := card.DefaultQuackBars
-	full := card.QuackProgress{At: map[string]int64{"push": 1000, "deal": 3000, "launch": 4000, "end": 60000, "harvest": 70000, "read": 80000}}
-	if _, ok, v := card.QuackRow(full, 1000, bars, false); !ok || v != "PASS" {
-		t.Fatalf("full row: %v %q, want PASS", ok, v)
+	sha := strings.Repeat("ab", 20)
+	in := card.QuackInput{Sprint: "quack-0926", Stream: "quack", ID: card.QuackID(7), Tier: "flash",
+		Repo: "mas-bandwidth/quack", Base: "dev", BaseSHA: sha}
+	text, err := card.QuackIssue(in)
+	if err != nil {
+		t.Fatal(err)
 	}
-	slow := card.QuackProgress{At: map[string]int64{"push": 1000, "deal": 3000, "launch": 4000, "end": 1000 + 121000}}
-	if cols, _, v := card.QuackRow(slow, 1000, bars, false); v != "FAIL end over bar=120s" || !strings.Contains(cols, "end=121 harvest=-") {
-		t.Fatalf("slow end: %q %q", cols, v)
+	spec := taskcard.ParseIssue(text)
+	if missing := spec.Complete("mas-bandwidth/nova-tools#4232", ""); len(missing) != 0 {
+		t.Fatalf("a swarm card lacks %v:\n%s", missing, text)
 	}
-	moving := card.QuackProgress{At: map[string]int64{"push": 1000, "deal": 3000}}
-	if _, _, v := card.QuackRow(moving, 1000, bars, false); v != "WAIT" {
-		t.Fatalf("moving row: %q, want WAIT", v)
+	path, line := card.QuackFixture("quack-0926", "quack-007")
+	if path != "docs/fixtures/quack-quack-0926-quack-007.txt" || line != "quack quack-0926 quack-007" {
+		t.Fatalf("fixture %q %q", path, line)
 	}
-	if _, _, v := card.QuackRow(moving, 1000, bars, true); v != "FAIL launch missing" {
-		t.Fatalf("timed out: %q, want FAIL launch missing", v)
+	for k, want := range map[string]string{"Stream": spec.Stream, "Route": spec.Route, "Repo": spec.Repo, "Base": spec.Base,
+		"BaseSHA": spec.BaseSHA, "Paths": spec.Paths, "Task": spec.Task, "Source": spec.Source, "Kind": spec.Kind, "Priority": spec.Priority} {
+		got := map[string]string{"Stream": "quack", "Route": "flash", "Repo": "mas-bandwidth/quack", "Base": "dev", "BaseSHA": sha,
+			"Paths": path, "Task": "quack-007", "Source": "quack", "Kind": "fix", "Priority": "100"}[k]
+		if want != got {
+			t.Fatalf("%s=%q, want %q", k, want, got)
+		}
 	}
-	failed := card.QuackProgress{At: moving.At, Failed: "outcome=BLOCKED reason=wall"}
-	if !failed.Done() {
-		t.Fatal("a failed card is done")
+	for _, s := range []string{"NO-SUBAGENTS: ", "UNATTENDED: ", "DO: create " + path + " containing exactly the line " + strconv.Quote(line),
+		"DONE-WHEN: the file " + path + " exists in the commit and its whole content is the single line " + strconv.Quote(line)} {
+		if !strings.Contains(text, s) {
+			t.Fatalf("missing %q in:\n%s", s, text)
+		}
 	}
-	if _, _, v := card.QuackRow(failed, 1000, bars, false); v != "FAIL launch outcome=BLOCKED reason=wall" {
-		t.Fatalf("failed card: %q", v)
+	if card.QuackTitle("quack-007", "flash") != "quack quack-007 flash" || card.QuackID(100) != "quack-100" {
+		t.Fatal("title or id shape")
+	}
+	for name, bad := range map[string]card.QuackInput{
+		"tier": {Sprint: "s", Stream: "q", ID: "quack-001", Tier: "max", Repo: "o/r", Base: "dev", BaseSHA: sha},
+		"id":   {Sprint: "s", Stream: "q", ID: "probe-1", Tier: "pro", Repo: "o/r", Base: "dev", BaseSHA: sha},
+		"sha":  {Sprint: "s", Stream: "q", ID: "quack-001", Tier: "pro", Repo: "o/r", Base: "dev", BaseSHA: "abc"},
+		"repo": {Sprint: "s", Stream: "q", ID: "quack-001", Tier: "pro", Base: "dev", BaseSHA: sha},
+	} {
+		if _, err := card.QuackIssue(bad); err == nil {
+			t.Fatalf("bad %s: want a refusal", name)
+		}
 	}
 }
 

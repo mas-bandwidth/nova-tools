@@ -1,3 +1,27 @@
+// The quack verbs (nova-tools#4307): a probe run's cards, cut and started as
+// two verbs instead of the morning's hand steps (a bash loop of a hundred
+// task push calls from a template, the pit stop set and lifted by hand, the
+// base sha read by hand).
+//
+//	nova-sprint quack cut --n <N> --repo <owner/name> --stream <s> --sprint <S>
+//	    [--tiers flash,pro] [--base dev] [--base-sha <sha40>] [--ref <owner/name#n>] [--actor <a>] [--redis <addr>]
+//	nova-sprint quack run --sprint <S> [--slots hetzner=8,hulk=16,...] [--actor <a>] [--redis <addr>]
+//
+// quack cut sets the sprint's pit stop (why: cutting N quack cards), pushes
+// N primaries quack-001..quack-NNN into the stream's waiting set (the
+// template card.QuackIssue rendered per card, tiers round-robin over
+// --tiers, one ns_tcard_push through taskcard.Push per card, never a child
+// process) and prints one CUT line. An id that already exists is SKIPPED
+// with a line and the cut goes on. The stop stays set and the CUT line says
+// so: quack run lifts it. The base sha is --base-sha, else the tip of --base
+// in this host's mirror (~/nova-bench/mirror/<name>.git); with neither the
+// verb refuses and names the remedy, before anything is written.
+//
+// quack run sets each --slots bench's slots through the capacity path
+// (capacity.SetBenchWith, the bench's recorded machine) and lifts the pit
+// stop, one receipt line each, then one QUACK RUN line.
+//
+// Exit 0 done, 1 refused with the remedy named (or a bench refused), 2 usage.
 package main
 
 import (
@@ -5,179 +29,283 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/capacity"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 func init() {
 	register(Verb{
 		Name:    "quack",
-		Summary: "--benches a,b [--tiers pro,flash]: push one probe card per bench x tier into a fresh sprint and print the per-stage timing table",
+		Summary: "cut --n <N> --repo <owner/name> --stream <s> --sprint <S> [--tiers flash,pro] | run --sprint <S> [--slots b=n,...]: cut a probe run's primaries under the pit stop, then lift it with the benches' slots (#4307)",
 		Run:     runQuack,
 	})
 }
 
-// quackNow is the probe's clock; a test may replace it.
+// quackNow is the verbs' clock for the ms= field; a test may replace it.
 var quackNow = time.Now
 
-// runQuack is nova-tools#3648, the per-bench end-to-end probe that replaces
-// the hand quack test (a bash generator, one card push per card, timings
-// copied by hand): it opens a fresh sprint, pushes one card per bench x tier
-// in one batch (card.QuackCard, pinned by BENCH:, tier by ROUTE:), reads the
-// card records every tick (card.ReadQuack, three pipelines at most) until
-// every card has its first read or has failed, or --timeout, and prints one
-// row per card with the seconds from T0 to push, deal, launch, end, harvest
-// and first read, judged against the bars in cfg:quack (card.DefaultQuackBars
-// where the hash sets none). Exit 0 every row PASS, 1 any FAIL or a refusal
-// with the remedy named, 2 usage.
-func runQuack(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := verbflag.New("quack")
-	benches := fs.String("benches", "", "")
-	tiers := fs.String("tiers", "pro,flash", "")
+func runQuack(ctx context.Context, args []string, out, errOut io.Writer) int {
+	if len(args) == 0 {
+		return refuse(errOut, "quack", "want cut or run")
+	}
+	switch args[0] {
+	case "cut":
+		return runQuackCut(ctx, args[1:], out, errOut)
+	case "run":
+		return runQuackRun(ctx, args[1:], out, errOut)
+	}
+	return refuse(errOut, "quack", fmt.Sprintf("unknown subverb %s; want cut or run", args[0]))
+}
+
+// quackActor is --actor, else the seat (NOVA_FRIEND).
+func quackActor(flag string) string {
+	if flag != "" {
+		return flag
+	}
+	return os.Getenv(seatEnv)
+}
+
+func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int {
+	const verb = "quack cut"
+	fs := taskFlags(verb)
+	n := fs.Int("n", 0, "")
+	repo := fs.String("repo", "", "")
+	stream := fs.String("stream", "", "")
 	name := fs.String("sprint", "", "")
-	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
-	repo := fs.String("repo", "mas-bandwidth/nova-tools", "")
+	tiers := fs.String("tiers", cardhdr.DefaultTiers, "")
 	base := fs.String("base", "dev", "")
 	baseSHA := fs.String("base-sha", "", "")
-	stream := fs.String("stream", "swarm: cards", "")
-	timeout := fs.Duration("timeout", 20*time.Minute, "")
-	tick := fs.Duration("tick", 2*time.Second, "")
-	const want = "wants --benches <a,b> [--tiers pro,flash] [--sprint <S>] [--base dev] [--base-sha <sha40>] [--timeout 20m] [--tick 2s] and --redis <addr> (or NOVA_SPRINT_REDIS)"
-	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *addr == "" || *timeout <= 0 || *tick <= 0 {
-		return refuse(stderr, "quack", want)
+	ref := fs.String("ref", "", "")
+	actor := fs.String("actor", "", "")
+	addr := fs.String("redis", "", "")
+	const want = "wants --n <N> --repo <owner/name> --stream <s> --sprint <S> [--tiers flash,pro] [--base dev] [--base-sha <sha40>] [--ref <owner/name#n>] [--actor <a>] [--redis <addr>]"
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, verb, err.Error())
 	}
-	benchList, tierList := splitList(*benches), splitList(*tiers)
-	if len(benchList) == 0 || len(tierList) == 0 {
-		return refuse(stderr, "quack", want)
+	if fs.NArg() > 0 {
+		return refuse(errOut, verb, "takes flags, not "+strconv.Quote(fs.Arg(0)))
 	}
-	if *name == "" {
-		*name = "quack-" + quackNow().UTC().Format("0102-150405")
+	if *n <= 0 || !landRepoOK(*repo) || strings.TrimSpace(*stream) == "" || *name == "" || *base == "" {
+		return refuse(errOut, verb, want)
 	}
 	if !sprint.ValidName(*name) {
-		return refuse(stderr, "quack", "--sprint must match [a-z0-9-]{1,40}")
+		return refuse(errOut, verb, "--sprint must match [a-z0-9-]{1,40}")
 	}
+	tierList := splitList(*tiers)
+	if len(tierList) == 0 {
+		return refuse(errOut, verb, "--tiers names at least one of "+cardhdr.RouteList)
+	}
+	for _, t := range tierList {
+		if !cardhdr.IsRoute(t) {
+			return refuse(errOut, verb, fmt.Sprintf("tier %q is not %s", t, cardhdr.RouteList))
+		}
+	}
+	who := quackActor(*actor)
+	if who == "" {
+		return refuse(errOut, verb, "--actor is required when "+seatEnv+" is empty")
+	}
+	raddr := taskAddr(*addr)
+	if raddr == "" {
+		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")
+	}
+	S := oneline.Field(*name)
 	if *baseSHA == "" {
 		sha, err := card.MirrorBranchSHA(*repo, *base)
 		if err != nil {
-			fmt.Fprintf(stdout, "REFUSED quack sprint=%s why=%s remedy=%s\n", *name, oneline.Field(err.Error()), oneline.Field("pass --base-sha <sha40> or refresh the mirror"))
+			fmt.Fprintf(out, "CUT REFUSED sprint=%s repo=%s why=%s remedy=%s\n", S, *repo, oneline.Field(err.Error()),
+				oneline.Quote("pass --base-sha <sha40>, or nova-sprint mirror refresh so "+card.MirrorPath(*repo)+" holds "+*base))
 			return 1
 		}
 		*baseSHA = sha
 	}
-	var files []card.CardFile
-	var labels []string
-	for _, b := range benchList {
-		for _, tier := range tierList {
-			f, err := card.QuackCard(card.QuackInput{Sprint: *name, Bench: b, Tier: tier, Repo: *repo, Base: *base, BaseSHA: *baseSHA, Stream: *stream})
-			if err != nil {
-				return refuse(stderr, "quack", err.Error())
-			}
-			files = append(files, f)
-			labels = append(labels, card.QuackLabel(b, tier))
-		}
+	// Every card is rendered before Redis is touched: a bad input refuses
+	// with nothing written.
+	type cut struct {
+		id, tier string
+		spec     taskcard.Spec
 	}
-
-	openCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	st, err := store.Open(openCtx, *addr)
-	if err != nil {
-		fmt.Fprintf(stdout, "REFUSED quack sprint=%s redis=down remedy=%s\n", *name, oneline.Field("check --redis or NOVA_SPRINT_REDIS"))
-		return 1
-	}
-	defer st.Close()
-	client := st.Client()
-	bars, barSource, err := card.ReadQuackBars(openCtx, client)
-	if err != nil {
-		fmt.Fprintf(stdout, "REFUSED quack sprint=%s why=%s remedy=%s\n", *name, oneline.Field(err.Error()), oneline.Field("fix or delete "+card.QuackBarsKey))
-		return 1
-	}
-	// Fresh means no record of the sprint at all: a probe in a reused sprint
-	// would time the old cards (run #4 reused run #3's labels).
-	if n, err := client.Exists(openCtx, "s:"+*name, "s:"+*name+":pool").Result(); err != nil || n > 0 {
-		fmt.Fprintf(stdout, "REFUSED quack sprint=%s why=%s remedy=%s\n", *name, "sprint-not-fresh", oneline.Field("name a new --sprint"))
-		return 1
-	}
-	now := quackNow()
-	if line, err := sprint.Begin(openCtx, st, *name, "", "", now); err != nil || line != "" {
-		return quackOpenRefused(stdout, *name, line, err)
-	}
-	if line, err := sprint.Finish(openCtx, st, *name, "", "", now, nil); err != nil || line != "" {
-		return quackOpenRefused(stdout, *name, line, err)
-	}
-	for _, res := range card.PushBatch(openCtx, client, *name, files, card.PushOptions{}) {
-		if res.Code != 0 {
-			fmt.Fprintf(stdout, "REFUSED quack sprint=%s push=%d why=%s\n", *name, res.Code, oneline.Field(strings.TrimSpace(res.Stderr)))
-			return 1
-		}
-	}
-	fmt.Fprintf(stdout, "QUACK PUSHED sprint=%s cards=%d base-sha=%s bars=%s timeout=%s\n", *name, len(files), (*baseSHA)[:12], barSource, *timeout)
-
-	deadline := quackNow().Add(*timeout)
-	var rows []card.QuackProgress
-	timedOut := false
-	for {
-		readCtx, cancelRead := context.WithTimeout(ctx, 10*time.Second)
-		rows, err = card.ReadQuack(readCtx, client, *name, labels)
-		cancelRead()
+	cuts := make([]cut, 0, *n)
+	for i := 1; i <= *n; i++ {
+		id, tier := card.QuackID(i), tierList[(i-1)%len(tierList)]
+		text, err := card.QuackIssue(card.QuackInput{Sprint: *name, Stream: *stream, ID: id, Tier: tier,
+			Repo: *repo, Base: *base, BaseSHA: *baseSHA})
 		if err != nil {
-			fmt.Fprintf(stdout, "REFUSED quack sprint=%s why=%s\n", *name, oneline.Field(err.Error()))
-			return 1
+			return refuse(errOut, verb, err.Error())
 		}
-		all := true
-		for _, r := range rows {
-			all = all && r.Done()
-		}
-		if all {
-			break
-		}
-		if !quackNow().Before(deadline) {
-			timedOut = true
-			break
-		}
-		select {
-		case <-ctx.Done():
-			timedOut = true
-		case <-time.After(*tick):
-		}
-		if timedOut {
-			break
-		}
+		cuts = append(cuts, cut{id: id, tier: tier, spec: taskcard.ParseIssue(text)})
 	}
-	t0 := int64(0)
-	for _, r := range rows {
-		if at := r.At["push"]; at > 0 && (t0 == 0 || at < t0) {
-			t0 = at
-		}
+
+	start := quackNow()
+	st, err := store.Open(ctx, raddr)
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
 	}
-	pass := 0
-	for i, r := range rows {
-		b, tier := benchList[i/len(tierList)], tierList[i%len(tierList)]
-		cols, ok, verdict := card.QuackRow(r, t0, bars, timedOut)
-		if ok {
-			pass++
-		}
-		fmt.Fprintf(stdout, "%s %s %s pr=%s %s\n", b, tier, cols, orDash(r.PR), verdict)
+	defer func() { _ = st.Close() }()
+	cl := st.Client()
+
+	// The stop first, so nothing deals a card before the whole run is in.
+	stop, err := pitstop.Set(ctx, cl, *name, who, fmt.Sprintf("quack cut: cutting %d quack cards into %s", *n, *stream), false, "quack-cut-"+*name)
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
 	}
-	fmt.Fprintf(stdout, "QUACK sprint=%s rows=%d pass=%d fail=%d timed_out=%t\n", *name, len(rows), pass, len(rows)-pass, timedOut)
-	if pass != len(rows) {
+	pit := "set"
+	switch stop.Outcome {
+	case pitstop.Unknown:
+		fmt.Fprintf(out, "CUT REFUSED sprint=%s why=sprint-unknown remedy=%s\n", S, oneline.Quote("nova-sprint sprint open --sprint "+*name+" first"))
+		return 1
+	case pitstop.Exists:
+		pit = "held" // a stop already there is the same stop: nothing deals until quack run
+	}
+
+	pushed, skipped, refused := 0, 0, 0
+	for i := range cuts {
+		c := &cuts[i]
+		_, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: c.id, Where: "waiting", Stream: *stream, Sprint: *name,
+			Ref: *ref, Title: card.QuackTitle(c.id, c.tier), Repo: *repo, By: who, Why: "quack cut", Spec: &c.spec})
+		if err == nil {
+			pushed++
+			continue
+		}
+		why, ok := taskcard.IsRefused(err)
+		if !ok {
+			return refuse(errOut, verb, err.Error())
+		}
+		if strings.HasPrefix(why, "EXISTS ") {
+			skipped++
+			fmt.Fprintf(out, "SKIPPED id=%s why=exists\n", c.id)
+			continue
+		}
+		refused++
+		fmt.Fprintf(out, "REFUSED id=%s why=%s\n", c.id, quoteField(why))
+	}
+	fmt.Fprintf(out, "CUT n=%d stream=%s sprint=%s repo=%s tiers=%s pushed=%d skipped=%d refused=%d base-sha=%s pitstop=%s lift=%s ms=%d\n",
+		*n, oneline.Field(*stream), S, *repo, strings.Join(tierList, ","), pushed, skipped, refused, (*baseSHA)[:12], pit,
+		oneline.Quote("nova-sprint quack run --sprint "+*name), quackNow().Sub(start).Milliseconds())
+	if refused > 0 {
 		return 1
 	}
 	return 0
 }
 
-func quackOpenRefused(stdout io.Writer, name, line string, err error) int {
-	why := line
-	if err != nil {
-		why = err.Error()
+func runQuackRun(ctx context.Context, args []string, out, errOut io.Writer) int {
+	const verb = "quack run"
+	fs := taskFlags(verb)
+	name := fs.String("sprint", "", "")
+	slots := fs.String("slots", "", "")
+	actor := fs.String("actor", "", "")
+	addr := fs.String("redis", "", "")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, verb, err.Error())
 	}
-	fmt.Fprintf(stdout, "REFUSED quack sprint=%s open=%s\n", name, oneline.Field(why))
-	return 1
+	if fs.NArg() > 0 {
+		return refuse(errOut, verb, "takes flags, not "+strconv.Quote(fs.Arg(0)))
+	}
+	if *name == "" {
+		return refuse(errOut, verb, "wants --sprint <S> [--slots <bench>=<n>,...] [--actor <a>] [--redis <addr>]")
+	}
+	benches, err := parseSlots(*slots)
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	who := quackActor(*actor)
+	if who == "" {
+		return refuse(errOut, verb, "--actor is required when "+seatEnv+" is empty")
+	}
+	raddr := taskAddr(*addr)
+	if raddr == "" {
+		return refuse(errOut, verb, "needs --redis <addr> or NOVA_SPRINT_REDIS")
+	}
+	start := quackNow()
+	st, err := store.Open(ctx, raddr)
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	defer func() { _ = st.Close() }()
+	cl := st.Client()
+	S := oneline.Field(*name)
+
+	refused := 0
+	for _, b := range benches {
+		machine := existingMachine(ctx, st, capacity.KindBench, b.name)
+		if machine == "" {
+			refused++
+			fmt.Fprintf(out, "SLOTS REFUSED bench=%s slots=%d why=no-machine remedy=%s\n", oneline.Field(b.name), b.slots,
+				oneline.Quote("nova-sprint capacity bench --as "+who+" --machine <m> "+b.name+" "+strconv.Itoa(b.slots)))
+			continue
+		}
+		r, err := capacity.SetBenchWith(ctx, st, b.name, machine, b.slots, who, "quack-run-"+*name+"-"+b.name, capacity.DesiredOpts{})
+		if err != nil {
+			refused++
+			fmt.Fprintf(out, "SLOTS REFUSED bench=%s slots=%d why=%s\n", oneline.Field(b.name), b.slots, oneline.Field(err.Error()))
+			continue
+		}
+		status := r.Status
+		if status == "" {
+			status = "SET"
+		}
+		fmt.Fprintf(out, "SLOTS %s bench=%s machine=%s slots=%d desired=%d/%d\n", status, oneline.Field(b.name), oneline.Field(machine), r.Slots, r.Sum, r.Ceiling)
+	}
+
+	lifted := "none"
+	r, err := pitstop.Clear(ctx, cl, *name, who, "quack-run-"+*name)
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	switch r.Outcome {
+	case pitstop.None:
+		fmt.Fprintf(out, "PITSTOP NONE sprint=%s\n", S)
+	default:
+		lifted = "lifted"
+		fmt.Fprintf(out, "PITSTOP CLEAR sprint=%s by=%s at=%d was_by=%s was_why=%s\n", S, oneline.Field(who), r.At,
+			oneline.Field(r.Prior.By), oneline.Quote(r.Prior.Why))
+	}
+	fmt.Fprintf(out, "QUACK RUN sprint=%s benches=%d refused=%d pitstop=%s ms=%d\n", S, len(benches)-refused, refused, lifted, quackNow().Sub(start).Milliseconds())
+	if refused > 0 {
+		return 1
+	}
+	return 0
+}
+
+// benchSlots is one --slots entry.
+type benchSlots struct {
+	name  string
+	slots int
+}
+
+// parseSlots reads --slots <bench>=<n>,...: names once each, in name order.
+func parseSlots(s string) ([]benchSlots, error) {
+	seen := map[string]bool{}
+	var out []benchSlots
+	for _, e := range strings.Split(s, ",") {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		name, v, ok := strings.Cut(e, "=")
+		name = strings.TrimSpace(name)
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if !ok || name == "" || strings.ContainsAny(name, " \t") || err != nil || n < 0 {
+			return nil, fmt.Errorf("--slots wants <bench>=<n>,... with n a nonnegative integer, not %q", e)
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("--slots names %s twice", name)
+		}
+		seen[name] = true
+		out = append(out, benchSlots{name: name, slots: n})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out, nil
 }
 
 func splitList(s string) []string {

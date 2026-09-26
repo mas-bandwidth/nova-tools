@@ -4089,6 +4089,41 @@ nova-sprint pitstop clear --sprint nova-sprint-0924 --by rowan --scope nova-work
 PITSTOP NARROW sprint=nova-sprint-0924 by=rowan at=1790000060000 lifted="nova-work" was_by=rowan was_at=1790000000000 was_why="Glenn 8:00 PM: rest tonight"
 ```
 
+### quack cut, quack run
+
+`nova-sprint quack cut --n <N> --repo <owner/name> --stream <s> --sprint <S> [--tiers flash,pro] [--base dev] [--base-sha <sha40>] [--ref <owner/name#n>] [--actor <a>] [--redis <addr>]`
+`nova-sprint quack run --sprint <S> [--slots <bench>=<n>,...] [--actor <a>] [--redis <addr>]`
+
+A quack run is N one-file probe cards in one stream, each a primary the copy model fans out to the benches (#4307; the morning of 2026-09-26 pushed a hundred of them by hand from a template, with the pit stop set and lifted by hand and the base sha read by hand). `quack cut` does that as one verb: it sets the sprint's pit stop (why: `quack cut: cutting N quack cards into <s>`), pushes `quack-001`..`quack-NNN` into `ws:<s>:waiting` through the one task push (`ns_tcard_push`, one call per card, never a child process), and prints one `CUT` line. Each card is the template rendered for its id: `REPO` is `--repo` (the quack repository, `mas-bandwidth/quack`, whose card creates `docs/fixtures/quack-<S>-<id>.txt` holding the one line `quack <S> <id>`), `ROUTE` round-robins over `--tiers` (card 1 the first tier, card 2 the second, ...), `BASE` is `--base` at `--base-sha`, else the tip of that branch in this host's mirror (`~/nova-bench/mirror/<name>.git`); with neither the cut is refused naming the remedy before anything is written. An id that already exists is `SKIPPED id=<id> why=exists` and the cut goes on; the `CUT` line counts `pushed`, `skipped` and `refused`. The stop stays set (`pitstop=set`, or `held` when one was already there) and the line names what lifts it. `--actor` defaults to `NOVA_FRIEND`. Every card is rendered before Redis is touched, and a sprint nobody opened is refused (`CUT REFUSED ... why=sprint-unknown`). Exit 0 cut, 1 refused or a card refused, 2 usage.
+
+`quack run` starts the run: each `--slots <bench>=<n>` goes through the capacity path (`capacity.SetBenchWith` on the bench's recorded machine; a bench with no machine is `SLOTS REFUSED ... why=no-machine` naming the capacity verb), then the pit stop is lifted (`PITSTOP CLEAR`, or `PITSTOP NONE` when none was set), one receipt line each and one `QUACK RUN` line. Exit 0, 1 when a bench was refused, 2 usage.
+
+```text
+nova-sprint quack cut --n 100 --repo mas-bandwidth/quack --stream quack --sprint quack-0926 --tiers flash,pro --ref mas-bandwidth/nova-tools#4232 --actor rowan
+# prints
+CUT n=100 stream=quack sprint=quack-0926 repo=mas-bandwidth/quack tiers=flash,pro pushed=100 skipped=0 refused=0 base-sha=5f2e1c9a7b3d pitstop=set lift="nova-sprint quack run --sprint quack-0926" ms=412
+nova-sprint quack run --sprint quack-0926 --slots hetzner=8,hulk=16 --actor rowan
+# prints
+SLOTS SET bench=hetzner machine=hetzner slots=8 desired=8/64
+SLOTS SET bench=hulk machine=hulk slots=16 desired=16/64
+PITSTOP CLEAR sprint=quack-0926 by=rowan at=1790000060000 was_by=rowan was_why="quack cut: cutting 100 quack cards into quack"
+QUACK RUN sprint=quack-0926 benches=2 refused=0 pitstop=lifted ms=9
+```
+
+### land pr
+
+`nova-sprint land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]`
+
+One pull request to its merge commit in one pass (#4311; the scratch script that ran about twenty times on 2026-09-26, as a verb). It reads the PR by REST (one call), then reads its head's check state from Redis, `ci:<repo>:<head>:gh`, which the webhook ingest writes from GitHub's `check_run` and `workflow_run` deliveries (internal/nsprint/webhook); it never reads the check-runs or workflow-runs endpoints and never calls GraphQL (nova-sprint is REST only, and GitHub is events only). It prints `PR <n> CHECKS <word> <pass>/<total> head=<sha8>`. Green: it merges the PR by REST at exactly that head (GitHub refuses when the head moved), skipping the merge queue whose run re-proves the same tree (Glenn 2026-09-26), and prints `MERGED <sha>`. Red: `FAILED <first red run>` (`kind:name`). Pending or nothing recorded yet: `WAITING` and it returns at once; there is no loop and no sleep, so run it again once the webhook has written green. A merged PR is `MERGED <sha>`, a closed one `FAILED closed without a merge`, and `mergeable_state=dirty` is `FAILED conflict`. A final `LAND PR` line carries the state, head, check word, merge sha and REST calls made (at most two; the budget is three). The token comes from the environment (`GH_TOKEN`, then `GITHUB_TOKEN`, as the lander reads it); it never runs `gh`. No token is the typed refusal `REFUSED no GitHub token remedy=...`. `--repo` defaults to `mas-bandwidth/nova-tools`; `--redis` defaults to `NOVA_REDIS_ADDR`. Exit 0 merged, 1 failed, closed or in conflict, 2 usage or refused, 3 waiting, 6 no Redis.
+
+```text
+nova-sprint land pr 4304
+# prints
+PR 4304 CHECKS green 6/6 head=9c41d7e2
+PR 4304 MERGED 635eaca1c7b0e4f2a9d8c6b5a4e3f2d1c0b9a8f7
+LAND PR repo=mas-bandwidth/nova-tools pr=#4304 state=merged head=9c41d7e2 ci=green merge=635eaca1 failed=- rest_calls=2
+```
+
 ### adopt
 
 `nova-sprint adopt receipt --verb <verb> --pov <coordinator|bench|reader|friend> --state <state> [--gap <repo>#<n>] [--hand <text>] [--note <text>] [--as <who>] [--redis <addr>]`

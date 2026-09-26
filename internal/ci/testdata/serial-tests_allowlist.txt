@@ -315,6 +315,7 @@ cmd/nova-sprint/land_eval_shadow_test.go:TestLandEvalShadowNoLinesRefuses serial
 cmd/nova-sprint/land_eval_test.go:TestNoStateAPI serial: swaps package var http.DefaultTransport
 cmd/nova-sprint/land_nolocal_test.go:TestLandRefusesLocalTestOnCoordinator serial: swaps package var main.landRunSleep, swaps package var main.landStreamToken, t.Setenv
 cmd/nova-sprint/land_nolocal_test.go:TestPreflightReportsLocalGoTest serial: swaps package var main.preflightProcs, t.Setenv
+cmd/nova-sprint/land_pr_test.go:TestLandPRVerb serial: swaps package var main.landStreamToken, t.Setenv
 cmd/nova-sprint/land_run_test.go:TestLandFenceArmIsMonotonic serial: swaps package var http.DefaultTransport, t.Setenv
 cmd/nova-sprint/land_run_test.go:TestLandGateAtHeadNoReadGate serial: swaps package var http.DefaultTransport, t.Setenv
 cmd/nova-sprint/land_run_test.go:TestLandLeaseLapseRequeues serial: swaps package var http.DefaultTransport, t.Setenv
@@ -351,8 +352,6 @@ cmd/nova-sprint/pr_reap_test.go:TestPRReapVerb serial: swaps package var main.la
 cmd/nova-sprint/preflight_test.go:TestPreflightAuthenticatesAsTheNamedUser serial: t.Setenv
 cmd/nova-sprint/preflight_test.go:TestPreflightFleetRows serial: swaps package var main.fleetLibrary, t.Setenv
 cmd/nova-sprint/preflight_test.go:TestPreflightVerbPrintsEveryCheckAndExitsOneOnRed serial: t.Setenv
-cmd/nova-sprint/quack_test.go:TestQuack serial: t.Setenv
-cmd/nova-sprint/quack_test.go:TestQuackPassAndBars serial: t.Setenv
 cmd/nova-sprint/read_test.go:TestReadBriefVerbByTaskID serial: t.Setenv
 cmd/nova-sprint/read_test.go:TestReadBriefVerbWritesTheBriefWithZeroGitHubCalls serial: t.Setenv
 cmd/nova-sprint/read_test.go:TestReadPostVerbNoGitHub serial: t.Setenv
