@@ -16,12 +16,14 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// clock is the injected clock: Now reads it, Sleep advances it and records
-// the waits. No test here waits on the wall.
+// clock is the injected clock: Now reads it, Sleep advances it (and the
+// store's TIME when mr is set, the way a real second passes for both) and
+// records the waits. No test here waits on the wall.
 type clock struct {
 	mu    sync.Mutex
 	t     time.Time
 	slept []time.Duration
+	mr    *miniredis.Miniredis
 }
 
 func (c *clock) Now() time.Time {
@@ -35,15 +37,26 @@ func (c *clock) Sleep(_ context.Context, d time.Duration) error {
 	defer c.mu.Unlock()
 	c.slept = append(c.slept, d)
 	c.t = c.t.Add(d)
+	if c.mr != nil {
+		c.mr.SetTime(c.t)
+	}
 	return nil
 }
 
+// newStore is a store at t0 for the tests that make no paced write.
 func newStore(t *testing.T) *redis.Client {
+	c, _ := newStoreAt(t, t0)
+	return c
+}
+
+// newStoreAt is a store whose TIME stands at at until a Sleep moves it.
+func newStoreAt(t *testing.T, at time.Time) (*redis.Client, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
+	mr.SetTime(at)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = c.Close() })
-	return c
+	return c, mr
 }
 
 // forge answers a scripted list of replies in order and records requests.
@@ -108,8 +121,8 @@ func newClient(f *forge, rdb redis.Cmdable, ck *clock, verb string) (*Client, *b
 // the rate record from X-RateLimit-Remaining; gh budget reads it back.
 func TestDoCountsPerVerbAndEndpoint(t *testing.T) {
 	t.Parallel()
-	rdb := newStore(t)
-	ck := &clock{t: t0}
+	rdb, mr := newStoreAt(t, t0)
+	ck := &clock{t: t0, mr: mr}
 	f := newForge(t, ok("4990", `{"number":7}`), ok("4989", `{"number":8}`))
 	c, _ := newClient(f, rdb, ck, "land stream")
 	ctx := context.Background()
@@ -153,8 +166,8 @@ func TestDoCountsPerVerbAndEndpoint(t *testing.T) {
 // retry is a call of its own, counted, and the wait is one RETRY line.
 func TestSecondaryLimitRetriedAfterRetryAfter(t *testing.T) {
 	t.Parallel()
-	rdb := newStore(t)
-	ck := &clock{t: t0}
+	rdb, mr := newStoreAt(t, t0)
+	ck := &clock{t: t0, mr: mr}
 	f := newForge(t, secondary("7"), ok("4000", `{"id":55}`))
 	c, log := newClient(f, rdb, ck, "read post")
 	id, err := c.Comment(context.Background(), "o/r", 3, "SCORE 9 who=x head=abc")
@@ -261,11 +274,12 @@ func TestNon2xxIsHTTPErrorWithMessage(t *testing.T) {
 
 // TestOneWriterPacesPerSecondAcrossClients: two clients on one store are
 // one writer: with Rate 2 the third write in a second waits for the next
-// second, whichever client makes it; reads are not paced.
+// second, whichever client makes it; reads are not paced. The second is
+// the store's TIME, not either process's clock.
 func TestOneWriterPacesPerSecondAcrossClients(t *testing.T) {
 	t.Parallel()
-	rdb := newStore(t)
-	ck := &clock{t: t0.Add(300 * time.Millisecond)}
+	rdb, mr := newStoreAt(t, t0.Add(300*time.Millisecond))
+	ck := &clock{t: t0.Add(300 * time.Millisecond), mr: mr}
 	f := newForge(t, ok("", `{"id":1}`), ok("", `{"id":2}`), ok("", `{"id":3}`), ok("", `{}`), ok("", `{"id":4}`))
 	a, _ := newClient(f, rdb, ck, "a")
 	b, _ := newClient(f, rdb, ck, "b")
@@ -296,6 +310,57 @@ func TestOneWriterPacesPerSecondAcrossClients(t *testing.T) {
 	}
 	if n := len(rdb.HGetAll(ctx, WriterKey).Val()); n > 2 {
 		t.Fatalf("writer hash keeps %d seconds; it self-prunes", n)
+	}
+	// An idle gap: the next write prunes every older second, not just one.
+	ck.Sleep(ctx, time.Hour)
+	f.replies = append(f.replies, ok("", `{"id":5}`))
+	if _, err := a.Comment(ctx, "o/r", 5, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if m := rdb.HGetAll(ctx, WriterKey).Val(); len(m) != 1 {
+		t.Fatalf("after an hour idle the writer hash holds %v, want the one second", m)
+	}
+}
+
+// TestRetriesDoNotSpendTheBudget: land pr's budget of 3 survives a
+// retried 403; the retry is not a call of the run.
+func TestRetriesDoNotSpendTheBudget(t *testing.T) {
+	t.Parallel()
+	ck := &clock{t: t0}
+	f := newForge(t, ok("", `{"number":1,"head":{"sha":"h"}}`), secondary("1"), ok("", `{"merged":true,"sha":"m"}`))
+	c, _ := newClient(f, nil, ck, "land pr")
+	c.Budget = 2
+	if _, err := c.ViewPR(context.Background(), "o/r", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.MergePR(context.Background(), "o/r", 1, "h", "t"); err != nil {
+		t.Fatalf("the second call's retry spent the budget: %v", err)
+	}
+	if c.Calls != 3 || c.Retries != 1 {
+		t.Fatalf("calls=%d retries=%d", c.Calls, c.Retries)
+	}
+	if err := c.Close(context.Background(), "o/r", 1); !errors.Is(err, ErrBudget) {
+		t.Fatalf("third call: %v, want ErrBudget", err)
+	}
+}
+
+// TestEmptyTokenIsReadOnce: a client built without a token reads it once
+// from the environment; a client whose read fails refuses every call with
+// the same line and makes no request.
+func TestEmptyTokenIsReadOnce(t *testing.T) {
+	t.Setenv("GH_TOKEN", "env-tok")
+	t.Setenv("GITHUB_TOKEN", "")
+	ck := &clock{t: t0}
+	f := newForge(t, ok("", `{"body":"b"}`), ok("", `{"body":"b"}`))
+	c, _ := newClient(f, nil, ck, "x")
+	c.Token = ""
+	for range 2 {
+		if _, err := c.PRBody(context.Background(), "o/r", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if c.Token != "env-tok" || !strings.HasSuffix(f.reqs[1], "auth=Bearer env-tok") {
+		t.Fatalf("token %q reqs %v", c.Token, f.reqs)
 	}
 }
 

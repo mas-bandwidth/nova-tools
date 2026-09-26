@@ -402,7 +402,7 @@ func runCICompare(ctx context.Context, args []string, out, errOut io.Writer) int
 		return refuse(errOut, "ci compare", err.Error())
 	}
 	defer st.Close()
-	p, err := ci.Compare(ctx, st, ci.CompareRequest{Repo: *repo, SHA: *sha, Owner: *owner, BaseURL: *api, Token: tok})
+	p, err := ci.Compare(ctx, st, ci.CompareRequest{Repo: *repo, SHA: *sha, Owner: *owner, BaseURL: *api, Token: tok, Redis: st.Client()})
 	if err != nil {
 		return refuse(errOut, "ci compare", err.Error())
 	}

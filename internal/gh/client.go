@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,9 +62,11 @@ var ErrBudget = errors.New("REST budget spent")
 // and the refusal prints the reset time.
 var ErrQuota = errors.New("GitHub primary quota exhausted")
 
-// Client is the one GitHub client. A zero API is DefaultAPI; a nil HTTP is
-// a 30 s client; a nil Redis counts nothing (a test without a store); nil
-// Now and Sleep are the wall clock.
+// Client is the one GitHub client. A zero API is DefaultAPI; an empty
+// Token is read once by Token() on the first call; a nil HTTP is a 30 s
+// client; a nil Redis counts nothing and paces in-process (a test without
+// a store: every production client has one, TestEveryProductionClientHasAStore);
+// nil Now and Sleep are the wall clock; a nil Log is stderr.
 type Client struct {
 	API   string
 	Token string
@@ -88,8 +91,9 @@ type Client struct {
 	// Log takes the retry and refusal lines; nil discards them.
 	Log io.Writer
 
-	mu    sync.Mutex
-	local map[int64]int // the writer's pace when Redis is nil
+	mu     sync.Mutex
+	local  map[int64]int // the writer's pace when Redis is nil
+	tokErr error         // Token() failed once; every call after refuses the same way
 }
 
 // Response is one reply. Remaining is X-RateLimit-Remaining, -1 when the
@@ -142,7 +146,28 @@ func (c *Client) log() io.Writer {
 	if c.Log != nil {
 		return c.Log
 	}
-	return io.Discard
+	return os.Stderr
+}
+
+// token is the bearer token, read once by Token() when the client was built
+// without one.
+func (c *Client) token() (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Token != "" {
+		return c.Token, nil
+	}
+	if c.tokErr != nil {
+		return "", c.tokErr
+	}
+	tok, err := Token()
+	if err != nil {
+		c.tokErr = err
+		fmt.Fprintf(c.log(), "gh: REFUSED %s: %v\n", c.verb(), err)
+		return "", err
+	}
+	c.Token = tok
+	return tok, nil
 }
 
 func (c *Client) verb() string {
@@ -195,8 +220,13 @@ func (c *Client) Do(ctx context.Context, method, path string, body any, out any)
 	if retries <= 0 {
 		retries = DefaultRetries
 	}
+	if _, err := c.token(); err != nil {
+		return Response{Remaining: -1}, err
+	}
 	for attempt := 0; ; attempt++ {
-		if c.Budget > 0 && c.Calls >= c.Budget {
+		// The budget is spent by calls, not by the retries of one: a call
+		// that waits out a secondary limit is still one call of the run.
+		if attempt == 0 && c.Budget > 0 && c.Calls-c.Retries >= c.Budget {
 			return Response{Remaining: -1}, ErrBudget
 		}
 		if isWrite(method) {

@@ -14,7 +14,8 @@ import (
 // hand-rolled net/http call.
 // The REST host is spelled in two literals so the CI-NET class test, which
 // reads every string literal of a test as a URL, sees no host here.
-var ghUse = regexp.MustCompile(`Command(Context)?\(\s*(ctx,\s*)?"gh"|\{"gh",|google/go-github|https://` + `api\.github\.com|api\.github\.com/`)
+var ghUse = regexp.MustCompile(`Command(Context)?\(\s*(ctx,\s*)?"gh"|\{"gh",|(?i:(program|bin|path)\w*) = "gh"\s*$|google/go-github|https://` + `api\.github\.com|api\.github\.com/` +
+	`|(\.(gh|run|api)|\bgh)\([^)]*"api"`)
 
 // ghAllowed are the files outside nova-sprint (cmd/nova-sprint,
 // internal/nsprint) that still talk to GitHub on their own, each with its
@@ -22,15 +23,28 @@ var ghUse = regexp.MustCompile(`Command(Context)?\(\s*(ctx,\s*)?"gh"|\{"gh",|goo
 // follow-up moves each onto internal/gh or retires it. Inside nova-sprint
 // there is no allowlist: every verb uses the one client.
 var ghAllowed = map[string]string{
+	"cmd/nova-decide/review.go":    "nova-decide reads check-runs through its gh wrapper; not a nova-sprint verb",
 	"cmd/nova-review/main.go":      "nova-review, not a nova-sprint verb",
 	"cmd/nova-review/reads.go":     "nova-review, not a nova-sprint verb",
 	"cmd/nova-sandbox/worktree.go": "nova-sandbox, not a nova-sprint verb",
 	"internal/ci/events_gh.go":     "the old ci events forge, not a nova-sprint verb",
 	"internal/ghcapture/record.go": "the read-only GraphQL recorder, not a nova-sprint verb",
+	"internal/board/issue.go":      "nova-board reads issues through its gh wrapper; not a nova-sprint verb",
+	"internal/ci/failed_forge.go":  "the old ci failed-run reader through its gh wrapper; not a nova-sprint verb",
+	"internal/converge/forge.go":   "nova-converge's gh binary seam; not a nova-sprint verb",
 	"internal/landed/landed.go":    "nova-work landed criterion, not a nova-sprint verb",
+	"internal/merge/enqueue.go":    "nova-merge's merge-queue GraphQL through its gh wrapper; not a nova-sprint verb",
+	"internal/merge/flaky.go":      "nova-merge reads a run's jobs through its gh wrapper; not a nova-sprint verb",
+	"internal/merge/host.go":       "nova-merge reads a branch sha through its gh wrapper; not a nova-sprint verb",
+	"internal/merge/sweepgh.go":    "nova-merge's sweep GraphQL through its gh wrapper; not a nova-sprint verb",
+	"internal/secrets/seal.go":     "nova-secrets' gh binary seam; not a nova-sprint verb",
+	"internal/release/edges.go":    "nova-release reads check-runs through its gh wrapper; not a nova-sprint verb",
 	"internal/update/latest.go":    "the self-update's releases read, not a nova-sprint verb",
+	"internal/wake/branch.go":      "nova-wake reads a branch through its gh wrapper; not a nova-sprint verb",
 	"internal/wake/entry.go":       "nova-wake, not a nova-sprint verb",
+	"internal/wake/pr.go":          "nova-wake reads PRs through its gh wrapper; not a nova-sprint verb",
 	"internal/wake/forge.go":       "nova-wake, not a nova-sprint verb",
+	"internal/wake/run.go":         "nova-wake reads check-runs through its gh wrapper; not a nova-sprint verb",
 }
 
 // TestOneGitHubClient (#4343 BUILD 1): every GitHub call in nova-sprint
@@ -45,6 +59,10 @@ func TestOneGitHubClient(t *testing.T) {
 		`out, err := exec.Command("gh", "auth", "token").Output()`,
 		`api := fs.String("api", "https://` + `api.github.com", "")`,
 		`"github.com/google/go-github/v60/github"`,
+		`		program = "gh"`, // a program variable defaulting to gh
+		`	meta, err := h.gh("api", fmt.Sprintf("repos/%s/actions/runs/%d", h.Repo, id))`, // a gh wrapper
+		`	out, err := g.gh(false, "api", fmt.Sprintf("repos/%s/actions/runs", g.Repo))`,
+		`	rawRuns, err := gh(ctx, r.Timeout, &r.calls, "api",`,
 	} {
 		if !ghUse.MatchString(sample) {
 			t.Fatalf("the pattern misses %q; the test would pass on nothing", sample)
@@ -179,5 +197,60 @@ func TestBodyReadersAreImportAndLanded(t *testing.T) {
 		if !hits[rel] {
 			t.Errorf("reader %s no longer reads a body (or is gone): drop its row", rel)
 		}
+	}
+}
+
+// clientLiteral is a production construction of a client or of a seam that
+// builds one; storeSet is the deferred form, when the store opens after the
+// token gate (the landing verbs).
+var (
+	clientLiteral = regexp.MustCompile(`(gh\.Client|stream\.GitHub|&GitHub|RESTFiler|RESTPRHost|read\.Poster|deal\.GH|card\.GHIssues)\{`)
+	storeSet      = regexp.MustCompile(`\.Redis = `)
+)
+
+// TestEveryProductionClientHasAStore (#4343 BUILD 1, the read of #4371):
+// every client built in production code names its Redis where it is built,
+// or the file sets it once the store is open; a client without a store
+// counts nothing and paces alone, and that is a test's shape only.
+func TestEveryProductionClientHasAStore(t *testing.T) {
+	t.Parallel()
+	if !clientLiteral.MatchString(`c := &gh.Client{API: f.BaseURL, Token: f.Token}`) || !storeSet.MatchString(`	gh.Redis = st.Client()`) {
+		t.Fatal("the pattern misses a known construction; the test would pass on nothing")
+	}
+	root := moduleRoot(t)
+	n := 0
+	for _, dir := range []string{"cmd", "internal"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+				return err
+			}
+			rel, _ := filepath.Rel(root, p)
+			rel = filepath.ToSlash(rel)
+			if strings.HasPrefix(rel, "internal/gh/") {
+				return nil
+			}
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			body := string(b)
+			for i, line := range strings.Split(body, "\n") {
+				if !clientLiteral.MatchString(line) {
+					continue
+				}
+				n++
+				if strings.Contains(line, "Redis:") || storeSet.MatchString(body) {
+					continue
+				}
+				t.Errorf("client built without a store: %s:%d: %s", rel, i+1, strings.TrimSpace(line))
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n < 5 {
+		t.Fatalf("saw %d client constructions; the walk is broken", n)
 	}
 }

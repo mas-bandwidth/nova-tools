@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/gh"
+	"github.com/redis/go-redis/v9"
 	"os"
 	"os/exec"
 	"strings"
@@ -102,8 +103,8 @@ func Run(ctx context.Context, c Client, o RunOptions) (RunReport, error) {
 		if o.Sleep != nil {
 			sleep := o.Sleep
 			o.Await = func(ctx context.Context, _ string, d time.Duration) error { return sleep(ctx, d) }
-		} else {
-			o.Await = awaitHead(c)
+		} else if o.Await, err = awaitHead(ctx, c); err != nil {
+			return rep, err
 		}
 	}
 	if o.Sleep == nil {
@@ -253,20 +254,17 @@ func waitCI(ctx context.Context, c Client, o RunOptions, l Landing, deadline tim
 }
 
 // awaitHead is the production Await: one XREAD BLOCK on ev:github from
-// the stream's tip, kept across calls so no delivery is missed between
-// two waits.
-func awaitHead(c Client) func(ctx context.Context, head string, d time.Duration) error {
-	tip := ""
+// the stream's tip, taken now (before the first pass, so a delivery
+// between the pass and the wait is not missed) and kept across calls.
+func awaitHead(ctx context.Context, c redis.Cmdable) (func(ctx context.Context, head string, d time.Duration) error, error) {
+	tip, err := gh.Tip(ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	return func(ctx context.Context, head string, d time.Duration) error {
-		var err error
-		if tip == "" {
-			if tip, err = gh.Tip(ctx, c); err != nil {
-				return err
-			}
-		}
 		tip, _, err = gh.Await(ctx, c, tip, d, gh.HeadEvent(head))
 		return err
-	}
+	}, nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {

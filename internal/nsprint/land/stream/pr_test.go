@@ -208,10 +208,10 @@ func TestLandPRWaitsRedAndDone(t *testing.T) {
 }
 
 // TestLandPRWaitBlocksOnTheHeadsEvent (#4343: events over polling): with
-// Wait set, a WAITING pass waits on ev:github for the head and passes
-// again; the wait is the injected seam (no clock, no GitHub call), and the
-// pass after the webhook's green is the merge. The deadline ends a wait
-// that never wakes.
+// Wait set, a WAITING pass waits on ev:github and, after each wake, reads
+// only the Redis leg: a timeout or a head event with the leg still pending
+// costs no GitHub call; the wake after the webhook's green is the merge
+// (one read, one merge). The wait is the injected seam: no clock.
 func TestLandPRWaitBlocksOnTheHeadsEvent(t *testing.T) {
 	t.Parallel()
 
@@ -220,13 +220,18 @@ func TestLandPRWaitBlocksOnTheHeadsEvent(t *testing.T) {
 	t.Cleanup(srv.Close)
 	now := time.Date(2026, 9, 26, 16, 0, 0, 0, time.UTC)
 	var waits []string
-	await := func(_ context.Context, head string, d time.Duration) error {
+	await := func(_ context.Context, head string, d time.Duration) (string, error) {
 		waits = append(waits, head[:4]+" "+d.String())
 		now = now.Add(d)
-		if len(waits) == 2 {
-			ghLeg(t, c, "gh", "green", "check:lint", "green 1 x") // the webhook wrote green
+		switch len(waits) {
+		case 1:
+			return "", nil // a timeout: nothing to read
+		case 2:
+			ghLeg(t, c, "gh", "pending", "check:lint", "green 1 x") // a head event, still pending
+			return "head", nil
 		}
-		return nil
+		ghLeg(t, c, "gh", "green", "check:lint", "green 1 x") // the webhook wrote green
+		return "head", nil
 	}
 	var log bytes.Buffer
 	gh := &GitHub{API: srv.URL, Token: "t0k", HTTP: srv.Client()}
@@ -236,20 +241,66 @@ func TestLandPRWaitBlocksOnTheHeadsEvent(t *testing.T) {
 	if err != nil || rep.State != "merged" || rep.MergeSHA != f.mergeSHA || len(f.merges) != 1 {
 		t.Fatalf("%v %+v merges=%d\n%s", err, rep, len(f.merges), log.String())
 	}
-	if strings.Join(waits, ",") != "hhhh 30s,hhhh 30s" || gh.Calls != 4 {
-		t.Fatalf("waits %v calls %d: two waits on the head, then the read and the merge", waits, gh.Calls)
+	if strings.Join(waits, ",") != "hhhh 30s,hhhh 30s,hhhh 30s" || gh.Calls != 3 {
+		t.Fatalf("waits %v calls %d: three waits, GitHub only on the first pass and the green pass", waits, gh.Calls)
+	}
+	if !strings.Contains(log.String(), "PR 7 WAITING ci:r:"+prHead+":gh has gh=- after -\n") ||
+		!strings.Contains(log.String(), "PR 7 WAITING ci:r:"+prHead+":gh has gh=pending after head\n") {
+		t.Fatalf("log:\n%s", log.String())
 	}
 
-	// Never green: the wait ends at the deadline, still waiting, no merge.
-	f2, c2 := newFakeForge(), prRedis(t)
-	srv2 := httptest.NewServer(f2.handler(t))
-	t.Cleanup(srv2.Close)
+	// A red leg after a wake ends the wait with no call; a pull_request
+	// event re-reads the PR (closed here) with one call.
+	for _, tc := range []struct {
+		wake  string
+		leg   []string
+		pr    map[string]any
+		state string
+		calls int
+	}{
+		{"head", []string{"gh", "red", "gh_fail", "check:go", "check:go", "red 2 x"}, nil, "failed", 1},
+		{"pr", nil, map[string]any{"state": "closed", "merged": false, "head": map[string]any{"sha": prHead}}, "closed", 2},
+	} {
+		f2, c2 := newFakeForge(), prRedis(t)
+		srv2 := httptest.NewServer(f2.handler(t))
+		t.Cleanup(srv2.Close)
+		gh2 := &GitHub{API: srv2.URL, Token: "t0k", HTTP: srv2.Client()}
+		o2 := LandPROptions{Repo: "o/r", N: f2.n, Wait: time.Minute, Tick: 30 * time.Second,
+			Now: func() time.Time { return now },
+			Await: func(_ context.Context, _ string, d time.Duration) (string, error) {
+				now = now.Add(d)
+				if tc.leg != nil {
+					ghLeg(t, c2, tc.leg...)
+				}
+				if tc.pr != nil {
+					f2.mu.Lock()
+					f2.pr = tc.pr
+					f2.mu.Unlock()
+				}
+				return tc.wake, nil
+			}}
+		rep, err := LandPRWait(context.Background(), gh2, c2, o2)
+		if err != nil || rep.State != tc.state || gh2.Calls != tc.calls || len(f2.merges) != 0 {
+			t.Fatalf("%s: %v %+v calls=%d", tc.wake, err, rep, gh2.Calls)
+		}
+	}
+
+	// Never green: the wait ends at the deadline, still waiting, no merge,
+	// and no GitHub call past the first pass.
+	f3, c3 := newFakeForge(), prRedis(t)
+	srv3 := httptest.NewServer(f3.handler(t))
+	t.Cleanup(srv3.Close)
 	n := 0
-	o2 := LandPROptions{Repo: "o/r", N: f2.n, Wait: 70 * time.Second, Tick: 30 * time.Second,
-		Now:   func() time.Time { return now },
-		Await: func(_ context.Context, _ string, d time.Duration) error { n++; now = now.Add(d); return nil }}
-	rep, err = LandPRWait(context.Background(), &GitHub{API: srv2.URL, Token: "t0k", HTTP: srv2.Client()}, c2, o2)
-	if err != nil || rep.State != "waiting" || n != 3 || len(f2.merges) != 0 {
-		t.Fatalf("deadline: %v %+v waits=%d (30s, 30s, then the 10s left)", err, rep, n)
+	gh3 := &GitHub{API: srv3.URL, Token: "t0k", HTTP: srv3.Client()}
+	o3 := LandPROptions{Repo: "o/r", N: f3.n, Wait: 70 * time.Second, Tick: 30 * time.Second,
+		Now: func() time.Time { return now },
+		Await: func(_ context.Context, _ string, d time.Duration) (string, error) {
+			n++
+			now = now.Add(d)
+			return "", nil
+		}}
+	rep, err = LandPRWait(context.Background(), gh3, c3, o3)
+	if err != nil || rep.State != "waiting" || n != 3 || len(f3.merges) != 0 || gh3.Calls != 1 {
+		t.Fatalf("deadline: %v %+v waits=%d calls=%d (30s, 30s, then the 10s left; one call)", err, rep, n, gh3.Calls)
 	}
 }

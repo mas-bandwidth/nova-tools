@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
 	"os"
 	"path/filepath"
@@ -44,8 +45,11 @@ func runCardPool(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	}
 }
 
-// cardCutSource is card cut's forge seam; tests replace it.
-var cardCutSource card.IssueSource = card.GHIssues{}
+// cardCutSource is card cut's forge seam, the one GitHub client over the
+// store (#4343); tests replace it.
+var cardCutSource = func(st *store.Store) card.IssueSource {
+	return card.GHIssues{Client: &gh.Client{Verb: "card cut", Redis: st.Client()}}
+}
 
 // cmdCardCut is nova-tools#3623, the retired pulse cutter's job: one GitHub issue
 // becomes one card record in Redis (card.Cut: render, store the body at its
@@ -94,7 +98,7 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return 1
 	}
 	defer st.Close()
-	c, res, err := card.Cut(ctx, st.Client(), cardCutSource, card.CutInput{
+	c, res, err := card.Cut(ctx, st.Client(), cardCutSource(st), card.CutInput{
 		Sprint: *sprint, Repo: *repo, Issue: *issue, Spec: *spec, Index: *index, Stream: *stream, Base: *base,
 	})
 	if err != nil {

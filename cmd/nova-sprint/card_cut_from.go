@@ -620,7 +620,7 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 			return taskcard.PushMany(ctx, st.Client(), reqs)
 		}
 		if !o.NoGitHub {
-			is, err := file.NewIssuer(file.Deps{Token: githubToken})
+			is, err := file.NewIssuer(file.Deps{Token: githubToken, Redis: st.Client()})
 			if err != nil {
 				return refuse(stderr, verb, err.Error()+"; nothing filed (--no-github pushes the cards alone)")
 			}

@@ -42,6 +42,7 @@ func TestNoPollingPathsRemain(t *testing.T) {
 	root := moduleRoot(t)
 	var hits []string
 	n := 0
+	allowedHit := map[string]bool{}
 	for _, dir := range []string{"cmd", "internal"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d os.DirEntry, err error) error {
 			if err != nil {
@@ -58,18 +59,21 @@ func TestNoPollingPathsRemain(t *testing.T) {
 			}
 			rel, _ := filepath.Rel(root, p)
 			rel = filepath.ToSlash(rel)
-			if _, ok := pollAllowed[rel]; ok {
-				return nil
-			}
+			_, allowed := pollAllowed[rel]
 			n++
 			b, err := os.ReadFile(p)
 			if err != nil {
 				return err
 			}
 			for i, line := range strings.Split(string(b), "\n") {
-				if pollRx.MatchString(line) {
-					hits = append(hits, rel+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
+				if !pollRx.MatchString(line) {
+					continue
 				}
+				if allowed {
+					allowedHit[rel] = true
+					continue
+				}
+				hits = append(hits, rel+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
 			}
 			return nil
 		})
@@ -84,8 +88,8 @@ func TestNoPollingPathsRemain(t *testing.T) {
 		t.Errorf("GitHub check-state read left outside the allowlist: %s", h)
 	}
 	for rel := range pollAllowed {
-		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
-			t.Errorf("allowed file %s is gone: drop its row", rel)
+		if !allowedHit[rel] {
+			t.Errorf("allowed file %s no longer reads a check state (or is gone): drop its row", rel)
 		}
 	}
 }

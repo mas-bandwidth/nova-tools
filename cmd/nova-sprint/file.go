@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"github.com/redis/go-redis/v9"
 	"io"
+	"os"
 
 	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/file"
@@ -33,7 +35,18 @@ func cmdFile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return file.Main(ctx, args, stdout, stderr, file.Deps{
 		Token: githubToken,
 		Push:  pushFiledTask,
+		Open:  openFileStore,
 	})
+}
+
+// openFileStore is the store the file verb counts its calls in (#4343):
+// NOVA_REDIS_ADDR, or the seat's address.
+func openFileStore(ctx context.Context) (redis.Cmdable, func(), error) {
+	st, err := store.Open(ctx, os.Getenv("NOVA_REDIS_ADDR"))
+	if err != nil {
+		return nil, nil, err
+	}
+	return st.Client(), func() { _ = st.Close() }, nil
 }
 
 // githubToken is GH_TOKEN, then GITHUB_TOKEN, then `gh auth token` (which

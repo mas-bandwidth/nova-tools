@@ -32,33 +32,44 @@ func Tip(ctx context.Context, rdb redis.Cmdable) (string, error) {
 	return msgs[0].ID, nil
 }
 
-// Await reads ev:github after tip, blocking up to block for the first
-// entry (block <= 0 does not block), and returns the cursor to continue
-// from and whether an entry matched. Entries after the match are left for
-// the next wait.
+// Await reads ev:github after tip until an entry matches or block passes
+// (block <= 0 reads what is there and does not block): a batch of entries
+// that match nothing keeps the wait blocking for the time left. It returns
+// the cursor to continue from and whether an entry matched; entries after
+// the match are left for the next wait.
 func Await(ctx context.Context, rdb redis.Cmdable, tip string, block time.Duration, match Match) (string, bool, error) {
 	if tip == "" {
 		tip = "0-0"
 	}
-	if block <= 0 {
-		block = -1 // go-redis: no BLOCK
-	}
-	res, err := rdb.XRead(ctx, &redis.XReadArgs{Streams: []string{ghevent.Stream, tip}, Count: 100, Block: block}).Result()
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return tip, false, nil
-		}
-		return tip, false, fmt.Errorf("XREAD %s: %w", ghevent.Stream, err)
-	}
-	for _, s := range res {
-		for _, m := range s.Messages {
-			tip = m.ID
-			if match != nil && match(m.Values) {
-				return tip, true, nil
+	deadline := time.Now().Add(block)
+	for {
+		left := time.Duration(-1) // go-redis: no BLOCK
+		if block > 0 {
+			if left = time.Until(deadline); left <= 0 {
+				return tip, false, nil
 			}
 		}
+		res, err := rdb.XRead(ctx, &redis.XReadArgs{Streams: []string{ghevent.Stream, tip}, Count: 100, Block: left}).Result()
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				return tip, false, nil
+			}
+			return tip, false, fmt.Errorf("XREAD %s: %w", ghevent.Stream, err)
+		}
+		n := 0
+		for _, s := range res {
+			for _, m := range s.Messages {
+				n++
+				tip = m.ID
+				if match != nil && match(m.Values) {
+					return tip, true, nil
+				}
+			}
+		}
+		if block <= 0 || n == 0 {
+			return tip, false, nil
+		}
 	}
-	return tip, false, nil
 }
 
 // HeadEvent matches a check_run, check_suite, workflow_run or pull_request

@@ -112,7 +112,7 @@ func cmdLineup(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	run.Enrich = func(in *preflight.LineupInput) {
 		in.GraphQL = preflight.GraphQLBudget{Remaining: *remaining, CallsPerPass: *perPass, Cadence: *cadence, Known: *remaining >= 0}
 		if !in.GraphQL.Known {
-			if n, err := ghGraphQLRemaining(ctx); err == nil {
+			if n, err := ghGraphQLRemaining(ctx, client); err == nil {
 				in.GraphQL.Remaining, in.GraphQL.Known = n, true
 			} else {
 				fmt.Fprintf(stderr, "nova-sprint lineup: GraphQL budget: %s\n", oneline.Err(err))
@@ -162,12 +162,8 @@ func runConformPublish(ctx context.Context, argv []string, marker string, stderr
 // ghGraphQLRemaining reads the login's GraphQL budget by REST (GET
 // /rate_limit through the one GitHub client, #4343), never by a GraphQL
 // call.
-func ghGraphQLRemaining(ctx context.Context) (int, error) {
-	tok, err := gh.Token()
-	if err != nil {
-		return 0, err
-	}
-	c := &gh.Client{Token: tok, Verb: "lineup"}
+func ghGraphQLRemaining(ctx context.Context, rdb redis.Cmdable) (int, error) {
+	c := &gh.Client{Verb: "lineup", Redis: rdb}
 	_, graphql, err := c.RateLimit(ctx)
 	return graphql, err
 }

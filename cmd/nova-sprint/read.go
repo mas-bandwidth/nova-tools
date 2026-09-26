@@ -147,7 +147,7 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 				fmt.Fprintf(errOut, "READ POST REFUSED repo=%s n=%s why=no GH_TOKEN or GITHUB_TOKEN in the environment for the comment mirror; run under nova-secrets exec --only GH_TOKEN, or pass --no-github (Redis only)\n", *repo, *n)
 				return 1
 			}
-			poster = &read.Poster{BaseURL: os.Getenv("GITHUB_API_URL"), Owner: *owner, Token: token}
+			poster = &read.Poster{BaseURL: os.Getenv("GITHUB_API_URL"), Owner: *owner, Token: token, Redis: st.Client()}
 		}
 		return read.PostMeasured(ctx, st.Client(), *repo, *n, *typed, readMirror(*mirror, *repo), poster, out, errOut)
 	}

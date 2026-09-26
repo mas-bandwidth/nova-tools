@@ -51,8 +51,11 @@ type Deps struct {
 	HTTP  *http.Client
 	Token func() (string, error)
 	Push  func(ctx context.Context, redisAddr string, req task.PushRequest) (task.PushResult, error)
-	// Redis counts the calls under file when set.
+	// Redis counts the calls under file when set; Open supplies it once
+	// every refusal has been checked (the verb's flags are parsed first),
+	// with the close to run when the verb is done.
 	Redis redis.Cmdable
+	Open  func(ctx context.Context) (redis.Cmdable, func(), error)
 }
 
 // Usage is the verb's help text.
@@ -136,6 +139,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, d Deps) 
 	if err != nil {
 		return refuse(stderr, err.Error())
 	}
+	defer c.Close()
 
 	if *comment > 0 {
 		id, err := c.createComment(ctx, r, *comment, string(body))
@@ -358,7 +362,8 @@ func (i *Issuer) Post(ctx context.Context, repo, title, body string) (int, strin
 // client is the REST seam, the one GitHub client (internal/gh, #4343):
 // two POSTs and two GETs of the issues API, counted under file.
 type client struct {
-	gh *gh.Client
+	gh    *gh.Client
+	close func()
 }
 
 func newClient(d Deps) (*client, error) {
@@ -376,7 +381,22 @@ func newClient(d Deps) (*client, error) {
 	if h == nil {
 		h = &http.Client{Timeout: 60 * time.Second}
 	}
-	return &client{gh: &gh.Client{API: d.API, HTTP: h, Token: strings.TrimSpace(tok), Verb: "file", Redis: d.Redis}}, nil
+	rdb, closeStore := d.Redis, func() {}
+	if rdb == nil && d.Open != nil {
+		c, cl, err := d.Open(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("no store for the call count: %w", err)
+		}
+		rdb, closeStore = c, cl
+	}
+	return &client{gh: &gh.Client{API: d.API, HTTP: h, Token: strings.TrimSpace(tok), Verb: "file", Redis: rdb}, close: closeStore}, nil
+}
+
+// Close releases the store the client opened.
+func (c *client) Close() {
+	if c.close != nil {
+		c.close()
+	}
 }
 
 func (c *client) createIssue(ctx context.Context, repo, title, body string) (int, string, error) {
