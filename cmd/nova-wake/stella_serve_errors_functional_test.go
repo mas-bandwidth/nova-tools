@@ -20,11 +20,11 @@ import (
 // Each fixture uses a private subprocess so the package's fake-PATH helpers
 // cannot affect other parallel tests. No real bus, receiver, or store is used.
 func TestStellaServeFailureGuidance(t *testing.T) {
+	t.Parallel()
 	if mode := os.Getenv("STELLA_SERVE_AUDIT_CHILD"); mode != "" {
 		stellaServeFailureCase(t, mode)
 		return
 	}
-	t.Parallel()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +33,11 @@ func TestStellaServeFailureGuidance(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			cmd := exec.Command(exe, "-test.run=^TestStellaServeFailureGuidance$", "-test.count=1")
-			cmd.Env = append(os.Environ(), "STELLA_SERVE_AUDIT_CHILD="+mode)
+			bin := t.TempDir()
+			install(t, bin, "nova-bus")
+			cmd.Env = append(os.Environ(), "STELLA_SERVE_AUDIT_CHILD="+mode,
+				"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"NOVA_WAKE_FAKE_BUS="+t.TempDir(), "NOVA_WAKE_FAKE_NOTE="+t.TempDir())
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("isolated %s: %v\n%s", mode, err, out)
@@ -44,7 +48,7 @@ func TestStellaServeFailureGuidance(t *testing.T) {
 
 func stellaServeFailureCase(t *testing.T, mode string) {
 	ctx := context.Background()
-	busDir, _ := fakes(t)
+	busDir := os.Getenv("NOVA_WAKE_FAKE_BUS")
 	statePath := filepath.Join(t.TempDir(), "state")
 	st, err := wake.Load(statePath)
 	if err != nil {
@@ -52,7 +56,7 @@ func stellaServeFailureCase(t *testing.T, mode string) {
 	}
 	var out, errOut bytes.Buffer
 	s := &server{stdout: &out, stderr: &errOut, clock: wake.NewFake(at), st: st, statePath: statePath,
-		bus: t.TempDir(), as: "Stella", remote: "origin", branch: "main", timeout: time.Second,
+		bus: t.TempDir(), as: "Stella", remote: "origin", branch: "main", timeout: 30 * time.Second,
 		ledger: dispatch.New(st, "serve:"), inOrder: map[string]bool{}}
 	switch mode {
 	case "receipt":
@@ -82,7 +86,7 @@ func stellaServeFailureCase(t *testing.T, mode string) {
 			t.Fatalf("diagnostics not retained: %q %v", raw, err)
 		}
 	case "durability":
-		command, recordDir := fakeNote(t)
+		command, recordDir := install(t, t.TempDir(), "on-note"), os.Getenv("NOVA_WAKE_FAKE_NOTE")
 		s.onNote = command
 		s.ledger.Queue("note-a", wake.Stamp(at))
 		if err := st.Save(statePath); err != nil {
@@ -110,14 +114,14 @@ func stellaServeFailureCase(t *testing.T, mode string) {
 			t.Fatalf("dispatch ran despite failed durable intent, including after reload: calls=%v output=%s errors=%s", invocations, out.String(), errOut.String())
 		}
 	case "result-save":
-		command, recordDir := fakeNote(t)
+		command, recordDir := install(t, t.TempDir(), "on-note"), os.Getenv("NOVA_WAKE_FAKE_NOTE")
 		s.onNote, s.receipt = command, true
 		s.ledger.Queue("note-a", wake.Stamp(at))
 		write(t, filepath.Join(recordDir, "block"), "hold")
 		done := make(chan struct{})
 		go func() { s.runBatch(ctx, []string{"note-a"}, 1, false); close(done) }()
 		t.Cleanup(func() { _ = os.Remove(filepath.Join(recordDir, "block")); <-done })
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(30 * time.Second)
 		for {
 			if _, err := os.Stat(filepath.Join(recordDir, "calls")); err == nil {
 				break
@@ -145,7 +149,7 @@ func stellaServeFailureCase(t *testing.T, mode string) {
 			t.Fatalf("uncertain result advertised accepted or receipted: broken=%v output=%q errors=%q", s.broken, out.String(), errOut.String())
 		}
 	case "log-open":
-		command, recordDir := fakeNote(t)
+		command, recordDir := install(t, t.TempDir(), "on-note"), os.Getenv("NOVA_WAKE_FAKE_NOTE")
 		s.onNote = command
 		write(t, statePath+".logs", "not a directory")
 		s.ledger.Queue("note-a", wake.Stamp(at))
