@@ -1,3 +1,5 @@
+//go:build functional
+
 package card_test
 
 import (

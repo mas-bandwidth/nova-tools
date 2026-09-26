@@ -64,8 +64,25 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	index := fs.String("index", "", "")
 	stream := fs.String("stream", "", "")
 	base := fs.String("base", "", "")
-	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || *repo == "" || *issue <= 0 || *spec < 0 || fs.NArg() > 0 {
-		fmt.Fprintln(stderr, "nova-sprint card: cut wants --sprint <S> --repo <owner/name> --issue <n> and --redis <addr> (or NOVA_SPRINT_REDIS), optional --spec <n> --index <ctxindex dir> --stream <name> --base <branch>; run: nova-sprint help")
+	from := fs.String("from", "", "")
+	dryRun := fs.Bool("dry-run", false, "")
+	noGitHub := fs.Bool("no-github", false, "")
+	baseSHA := fs.String("base-sha", "", "")
+	actor := fs.String("actor", "", "")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(stderr, "nova-sprint card: cut: "+oneline.Escape(err.Error())+"; run: nova-sprint help")
+		return 2
+	}
+	if *from != "" {
+		if *issue != 0 || *spec != 0 || *index != "" || fs.NArg() > 0 {
+			fmt.Fprintln(stderr, "nova-sprint card: cut --from takes no --issue, --spec, --index or argument; run: nova-sprint help")
+			return 2
+		}
+		return cmdCardCutFrom(ctx, cutFromOpts{From: *from, Repo: *repo, Stream: *stream, Sprint: *sprint, Base: *base,
+			BaseSHA: *baseSHA, Actor: *actor, DryRun: *dryRun, NoGitHub: *noGitHub}, *addr, stdout, stderr)
+	}
+	if *sprint == "" || *addr == "" || *repo == "" || *issue <= 0 || *spec < 0 || fs.NArg() > 0 || *dryRun || *noGitHub || *baseSHA != "" || *actor != "" {
+		fmt.Fprintln(stderr, "nova-sprint card: cut wants --sprint <S> --repo <owner/name> --issue <n> and --redis <addr> (or NOVA_SPRINT_REDIS), optional --spec <n> --index <ctxindex dir> --stream <name> --base <branch>; or many cards: --from <cards.tsv|-> --repo <owner/name> [--stream <s>] [--sprint <S>] [--base dev] [--base-sha <sha40>] [--actor <a>] [--dry-run] [--no-github]; run: nova-sprint help")
 		return 2
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)

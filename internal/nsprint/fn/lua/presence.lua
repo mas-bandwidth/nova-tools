@@ -272,11 +272,17 @@ local function bench_beat(keys, args)
   -- and load read at, which is not epoch-keyed
   redis.call('HSET', 'bench:' .. bench .. ':beat',
     'host', host or '', 'user', user or '', 'load1', load1 or '',
-    'ssh', ssh or '', 'probe', probe or '', 'launcher', launcher or '',
+    'ssh', ssh or '', 'launcher', launcher or '',
     'live', '0', 'why', why or '', 'build', build or '',
     'harness', harness or '', 'mirrors', mirrors or '', 'disk_gib', disk_gib or '',
     'epoch', tostring(NS.card.epoch()),
     'at', tostring(at))
+  -- probe is the bench's last probe result, written by fleet build after an
+  -- install (nova-tools#4237: a probe's result lives here, never in the
+  -- consumer sets); a beat that names none leaves it as it is.
+  if probe and probe ~= '' then
+    redis.call('HSET', 'bench:' .. bench .. ':beat', 'probe', probe)
+  end
   redis.call('PEXPIRE', 'bench:' .. bench .. ':beat', ttl)
   redis.call('SET', owner_key, session, 'PX', ttl)
 

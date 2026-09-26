@@ -11,6 +11,8 @@ import (
 	"testing"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // namedPathsAllowlistPath is the shrink-only list of the names that LOOK like a path in
@@ -83,12 +85,12 @@ func TestEveryNamedRepoPathExists(t *testing.T) {
 		for line, text := range strings.Split(string(raw), "\n") {
 			for _, name := range namedPathsIn(text) {
 				if namedPathExists(root, name) {
-					if allow[name] {
+					if allow.Has(name) {
 						realNow[name] = true
 					}
 					continue
 				}
-				if allow[name] {
+				if allow.Has(name) {
 					earning[name] = true
 					continue
 				}
@@ -107,11 +109,18 @@ func TestEveryNamedRepoPathExists(t *testing.T) {
 			sites[name], name, namedPathsAllowlistPath)
 	}
 
+	// The measured set is every name the list must hold: a listed name still
+	// missing (earning) and every missing name nobody listed.
+	measured := map[string]bool{}
+	for name := range earning {
+		measured[name] = true
+	}
+	for _, name := range missing {
+		measured[name] = true
+	}
 	var stale []string
-	for name := range allow {
-		if !earning[name] {
-			stale = append(stale, name)
-		}
+	for _, row := range allowlist.Check(t, allow, measured).Stale {
+		stale = append(stale, row.Key)
 	}
 	sort.Strings(stale)
 	for _, name := range stale {
@@ -316,23 +325,13 @@ func namedPathSources(t *testing.T, root string) []string {
 }
 
 // readNamedPathAllowlist reads the shrink-only list. One name per line, then its reason.
-func readNamedPathAllowlist(t *testing.T) map[string]bool {
+func readNamedPathAllowlist(t *testing.T) *allowlist.List {
 	t.Helper()
-	raw, err := os.ReadFile(namedPathsAllowlistPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allow := map[string]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+	allow := loadAllowlist(t, namedPathsAllowlistPath, shrinkOnly)
+	for _, row := range allow.Rows() {
+		if _, reason, _ := strings.Cut(row.Text, " "); strings.TrimSpace(reason) == "" {
+			t.Errorf("%s: %q carries no reason; every narrowing says why it is one", namedPathsAllowlistPath, row.Key)
 		}
-		name, reason, _ := strings.Cut(line, " ")
-		if strings.TrimSpace(reason) == "" {
-			t.Errorf("%s: %q carries no reason; every narrowing says why it is one", namedPathsAllowlistPath, name)
-		}
-		allow[strings.TrimSpace(name)] = true
 	}
 	return allow
 }

@@ -32,7 +32,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
@@ -125,8 +124,7 @@ func readStatus(ctx context.Context, c *redis.Client) (friendStatus, error) {
 			working: p2.ZCard(ctx, ws.ConsumerKeyAt(epoch, "friend:"+f, "working")),
 		}
 	}
-
-	if err := pipeerr.Exec(ctx, p2); err != nil {
+	if _, err := p2.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return st, fmt.Errorf("rebalance: read friends: %w", err)
 	}
 	for i, f := range st.names {

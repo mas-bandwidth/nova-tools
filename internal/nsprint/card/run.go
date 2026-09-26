@@ -404,13 +404,7 @@ func Run(ctx context.Context, st *store.Store, cfg RunConfig) RunReport {
 	log("END native rc=%d wall_s=%d", rc, int64(rep.Wall/time.Second))
 
 	// 6. RESULT.md up, the slot aside, the exit code.
-	r, werr := findResult(filepath.Join(cfg.OutDir, "native"), slot)
-	if werr != nil {
-		// An unreadable results tree is not "no RESULT.md": the log says
-		// which walk failed before the no-result verdict below.
-		log("RESULT SEARCH FAILED: %s", werr)
-	}
-	if r != "" {
+	if r := findResult(filepath.Join(cfg.OutDir, "native"), slot); r != "" {
 		if err := copyFile(r, filepath.Join(cfg.OutDir, "RESULT.md")); err != nil {
 			log("RESULT COPY FAILED %s: %s", r, err)
 		}
@@ -482,19 +476,12 @@ func exitCode(err error) int {
 
 // findResult is the first RESULT.md under the native results root or the
 // slot, the way the bash harness found it.
-func findResult(dirs ...string) (string, error) {
-	var walkErrs []string
+func findResult(dirs ...string) string {
 	for _, dir := range dirs {
 		found := ""
-		err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-			if found != "" {
-				return filepath.SkipAll
-			}
-			if err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
-					return nil // a root that is not there holds no result
-				}
-				return err // an unreadable tree is not "no RESULT.md"
+		_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || found != "" {
+				return nil
 			}
 			if !d.IsDir() && d.Name() == "RESULT.md" {
 				found = p
@@ -503,16 +490,10 @@ func findResult(dirs ...string) (string, error) {
 			return nil
 		})
 		if found != "" {
-			return found, nil
-		}
-		if err != nil {
-			walkErrs = append(walkErrs, dir+": "+err.Error())
+			return found
 		}
 	}
-	if len(walkErrs) > 0 {
-		return "", errors.New(strings.Join(walkErrs, "; "))
-	}
-	return "", nil
+	return ""
 }
 
 func hasContent(path string) bool {

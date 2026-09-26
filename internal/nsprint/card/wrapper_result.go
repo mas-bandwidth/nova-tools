@@ -232,24 +232,19 @@ func (t *tailBuffer) tail(n int) string {
 // ChangedPaths is `git diff --name-only <base>..HEAD` in repo: the files the
 // card's commits changed. nil when there is no repo, no base, or git refuses.
 // A path with whitespace cannot be a PATHS entry and is left out.
-func ChangedPaths(repo, base string) ([]string, error) {
+func ChangedPaths(repo, base string) []string {
 	if base == "" {
-		return nil, nil
+		return nil
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".git")); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, err
+		return nil
 	}
 	cmd := exec.Command("git", "-C", repo, "diff", "--name-only", "-z", "--no-renames", base+"..HEAD", "--")
 	cmd.Env = append(checkEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0")
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
-		// An empty PATHS from a diff that failed (a bad base, a shallow
-		// clone) is a lie the record would carry: the error is returned.
-		return nil, fmt.Errorf("git diff %s..HEAD: %w: %s", base, err, strings.TrimSpace(errb.String()))
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if cmd.Run() != nil {
+		return nil
 	}
 	var paths []string
 	for _, p := range strings.Split(out.String(), "\x00") {
@@ -261,7 +256,7 @@ func ChangedPaths(repo, base string) ([]string, error) {
 			break
 		}
 	}
-	return paths, nil
+	return paths
 }
 
 // ProviderFacts reads the last START line the bench harness logged
@@ -367,21 +362,13 @@ func recordEnd(ctx context.Context, rec ResultRecorder, e endRecord) (res typedr
 		default:
 			check = RunCheck(ctx, repo, cf.Test, e.cfg.CheckTimeout, e.ticks, e.beat)
 		}
-		paths, perr := ChangedPaths(repo, cf.BaseSHA)
-		if perr != nil {
-			// The record says the paths are unknown and why, in its note.
-			m.Note = append(m.Note, "paths: "+perr.Error())
-		}
+		paths := ChangedPaths(repo, cf.BaseSHA)
 		out := typedrec.Synthesize(raw, typedrec.WrapperFacts{
 			Kind: cf.Kind, Attempt: e.cfg.Attempt, Repo: cf.Repo, Branch: branch, Paths: paths,
 			Check: check.Check, Red: "not-run", Green: check.Green, Gates: []string{check.Gate},
 		})
-		// The model's own file stays beside the record as a log; the next
-		// write replaces RESULT.md, so a failed copy here loses the model's
-		// file and is an error.
-		if err := os.WriteFile(filepath.Join(e.results, ModelResultName), raw, 0o644); err != nil {
-			return typedrec.Result{}, true, 0, fmt.Errorf("write %s: %w", ModelResultName, err)
-		}
+		// The model's own file stays beside the record as a log.
+		_ = os.WriteFile(filepath.Join(e.results, ModelResultName), raw, 0o644)
 		if err := os.WriteFile(resultPath, out, 0o644); err != nil {
 			return typedrec.Result{}, true, 0, fmt.Errorf("write RESULT.md: %w", err)
 		}

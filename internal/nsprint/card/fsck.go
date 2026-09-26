@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
@@ -113,7 +112,7 @@ func Unplaced(ctx context.Context, client redis.UniversalClient, sprint string) 
 		cmds[i] = pipe.HGet(ctx, id, "where")
 	}
 	if len(ids) > 0 {
-		if err := pipeerr.Exec(ctx, pipe); err != nil {
+		if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 			return nil, err
 		}
 	}

@@ -34,6 +34,10 @@ type Counts struct {
 	// and drift the fsck duty repaired plus closed-sprint cards it retired.
 	Reaped   int
 	Repaired int
+	// Refused is the duty's own refusals this pass (#4319 item 4: every
+	// duty prints its refusals as counts on its DUTY line; the progress
+	// duty records the pass's sum on proc:progress for the table).
+	Refused int
 }
 
 func (c *Counts) add(o Counts) {
@@ -48,6 +52,7 @@ func (c *Counts) add(o Counts) {
 	c.Carried += o.Carried
 	c.Reaped += o.Reaped
 	c.Repaired += o.Repaired
+	c.Refused += o.Refused
 }
 
 // Zero is true when the pass moved nothing.
@@ -55,8 +60,8 @@ func (c Counts) Zero() bool { return c == Counts{} }
 
 // Line is the counts as receipt words, in a fixed order.
 func (c Counts) Line() string {
-	return fmt.Sprintf("dealt=%d routed=%d expired=%d retried=%d ambiguous=%d reads=%d fixes=%d merging=%d carried=%d reaped=%d repaired=%d",
-		c.Dealt, c.Routed, c.Expired, c.Retried, c.Ambiguous, c.Reads, c.Fixes, c.Merging, c.Carried, c.Reaped, c.Repaired)
+	return fmt.Sprintf("dealt=%d routed=%d expired=%d retried=%d ambiguous=%d reads=%d fixes=%d merging=%d carried=%d reaped=%d repaired=%d refused=%d",
+		c.Dealt, c.Routed, c.Expired, c.Retried, c.Ambiguous, c.Reads, c.Fixes, c.Merging, c.Carried, c.Reaped, c.Repaired, c.Refused)
 }
 
 // Duty is one reconciler duty (spec 5.2): deal (#2743), refill (#2935),

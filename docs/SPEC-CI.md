@@ -633,7 +633,14 @@ directions: an offender that is not listed is red, and a listed entry that names
 no offender is also red, so fixing a site means deleting its row in the same
 change and a new row parks nothing. The newer lists are matched by **file and
 kind, never by line**, so a merge that shifts lines in a listed file does not
-turn dev red. And every entry below names its **narrowings** — the false
+turn dev red. Every list is read and written by the one helper,
+`internal/ci/allowlist` (`allowlist.Load`, `allowlist.Check`; #4339): under
+`NOVA_CI_UPDATE=1` a class test rewrites its list to the set it measured --
+stale rows dropped, comments and kept rows byte for byte -- and fails once with
+`updated, rerun`, so a removal regenerates every list with one variable and no
+script edits a list file. Every list here is ceiling-only: under the update it
+refuses to grow and says so, one line per key ([TESTING.md](TESTING.md)). And
+every entry below names its **narrowings** — the false
 negatives the heuristic accepts on purpose — because a class test with false
 positives is one people learn to edit around, and a narrowing nobody wrote down
 is read as coverage.
@@ -1660,6 +1667,37 @@ from those files``.
 reaches `go test`: whole-line YAML comments are dropped first, so prose ABOUT a
 tag never stands in for a job that runs it. A tag assembled at run time, or
 passed through a variable the step does not expand inline, is not seen.
+### `functional` — no untagged test file starts a redis-server
+
+**The rule.** Every `_test.go` that calls a helper which execs redis-server
+(`testutil.Start`, `testutil.Program`, `wstest.Start`) carries `//go:build
+functional`, joined with `&&` to any constraint it already has. A file that
+mixes redis-backed and pure tests is split: the pure tests stay in the
+untagged file, the redis-backed ones live in `<name>_functional_test.go`.
+**The hurt.** Glenn, 2026-09-26 11:20 AM ET (nova-tools #4328): "unit tests
+be < 2s (ideally <1) but also they must not be so aggressive that they fill a
+whole machine cores ... we should run functional tests, not on every small PR
+being merged or worked on, but only as we merge whole work streams". Every
+pull request's shards started a throwaway redis-server for each of several
+hundred tests.
+**The test.** `TestRedisBackedTestsCarryTheFunctionalTag`
+(`internal/ci/functionaltag_class_test.go`) walks every `_test.go`, finds the
+direct calls through each file's own import of the two helper packages, and
+fails on each file whose build constraint is still true without `functional`.
+`TestNeedsFunctionalReadsTheConstraint` and
+`TestStartsRedisSeesTheHelpersThroughTheirImport` pin the two readers it uses.
+**Its allowlist.** None.
+**Its remedy line.** ``<file> starts a redis-server but builds without `-tags
+functional`: put `//go:build functional` (joined with && to any constraint it
+has) on its first line, or move its redis-backed tests to
+<name>_functional_test.go and keep the pure ones here (nova-tools #4328)``.
+**Its narrowings.** Only the direct call is read. A file that reaches redis
+through a package-local helper is held by the compiler instead: the helper's
+file is tagged, so an untagged caller does not build, and the lint job's
+`go vet ./...` is red on it. The functional tier runs where a whole stream
+lands (`make check`, ci.yml's merge-group and push shards) and nightly
+(nightly-slow.yml's `functional` leg); the lint job's `make vet-functional`
+compiles it on every change.
 ### `cardtemplates` — no card template carries a command only one platform has
 
 **The rule.** A card template is the text a worker is handed verbatim; nothing
@@ -2067,13 +2105,14 @@ package map (`go test -race` found nova-sprint's `verbs`).
 **Its allowlist.** `internal/ci/testdata/serial-tests_allowlist.txt`, one
 `path:TestName serial: <reason>` per line (`t.Setenv`, `t.Chdir`, `os.Chdir`,
 `swaps package var <pkg>.<name>`, or a sentence); shrink-only both ways, a row
-without a `serial:` reason is refused, and `serialTestsCeiling` caps the count
-so the list can only come down.
+without a `serial:` reason is refused, and the list's own `# ceiling: N` line
+caps the count so the list can only come down (`NOVA_CI_UPDATE=1` lowers it
+with the rows it drops, and never raises it).
 **Its remedy lines.** `does not open with t.Parallel(); make it the first
 statement, or give the test a per-test seam (cmd.Env, an injected clock,
 t.TempDir) instead of t.Setenv, os.Chdir or a package-level swap`; for a stale
-row, `delete the stale entry and lower serialTestsCeiling (the list only
-shrinks)`.
+row, `delete the stale entry and lower its ceiling line (the list only
+shrinks; NOVA_CI_UPDATE=1 does both)`.
 **Its narrowings.** It reads the syntax only: a `t.Parallel()` later in the body
 does not count, a test that opens with `t.Parallel()` and then races a shared
 resource is not seen (that is `go test -race`'s job), and subtests are not
@@ -2109,6 +2148,32 @@ the test behind //go:build slow (nightly-slow.yml runs it)`; for a stale row,
 `sleep` inside a fake's script, a provider retry wait inside the code under
 test and a poll that never sees its event are all invisible to it. The
 per-package budget (`slowtests`) and the measured table are the net under those.
+
+### `allowlist` — every list is read through the one helper
+
+**The rule.** Every list file under `internal/ci/testdata/` (`*allowlist*.txt`,
+`*.allow`, `*_examples.txt`) is loaded by a call to `loadAllowlist` or
+`allowlist.Load` in `internal/ci`, and nothing there reads one with
+`os.ReadFile`, `os.Open` or `readFile`.
+**The hurt.** 2026-09-26 (#4339): each class test had its own list format and
+no update path, so removals were followed by hand-written scripts
+(`fix-ci-serial2/3/4.py`, `drain_test_rewrite.py`, `prune.py`) rewriting
+`serial-tests_allowlist.txt` and the sleeps list, a round trip per list per
+change. The helper gives every list one reader and one `NOVA_CI_UPDATE=1`
+writer; a list read any other way has no update path.
+**The test.** `TestEveryAllowlistIsReadThroughTheOneHelper`
+(`internal/ci/allowlist_update_test.go`); the helper's own contract is
+`internal/ci/allowlist/allowlist_test.go`.
+**Its allowlist.** None.
+**Its remedy lines.** `is not read through allowlist.Load (loadAllowlist in a
+test)`; `reads a list file directly; read it with loadAllowlist or
+allowlist.Load`.
+**Its narrowings.** The walk is syntactic: a call's path is resolved through
+string literals (`filepath.Join` parts included), package constants, a variable
+assigned in the same function and one level of parameter; a path computed any
+other way is not seen. It reads `internal/ci` only, so a list read from another
+package (`internal/nsprint/land/guard` reads `namedpaths_allowlist.txt` for the
+lander) is not held here.
 
 ### `seatwrap` — no script wraps `nova-secrets exec` around a seat tool for its Redis password
 
@@ -2219,51 +2284,6 @@ with a Go stack before the job cap kills it without one.
 per functional program), move a process-in-the-loop test behind the `slow` tag
 into the nightly functional matrix, or put the leg on a machine that compiles the
 set in seconds. Never a larger number.
-
-### `silent` — no silent failure on the copy model's live path
-
-**The rule.** Glenn, 2026-09-25: "every verb must return an error that you see,
-for breadcrumbs as you work, failing silent is not allowed. Without this every
-thing we have done shows it is not possible to make a reliable system"; and
-2026-09-26 11:30 AM ET: "every verb in nova tools related to current work should
-not fail silently. Scan for silent failures and fix." In the live packages
-(`cmd/nova-sprint`, `cmd/nova-card`, `internal/nsprint/{reconcile, taskcard,
-table, card, launch, fn, capacity, pipeerr}`), no non-test `.go` file holds
-`_ = err` (any error-named identifier assigned to the blank identifier) or a
-`|| true` inside a Go string literal (an embedded script step whose exit is
-thrown away). A failure is returned, printed as one typed line (`REFUSED <verb>:
-<why>` on stderr with exit 1, or the verb's own receipt vocabulary) or, in a
-loop, counted and printed once per pass (the reconciler's `DUTY <name> ...
-err=<text>` line is the model).
-**The hurt.** The 2026-09-26 sweep (`rowan/no-silent-failures`): a `card render`
-that reported a Redis outage as `NOTASK`; a copy whose refused `card end` left
-only `code=2` on a line written to `/dev/null`; a reconciler deal duty that threw
-its pass's `REFUSED` lines away and returned clean counts; a consumer whose
-`slots` field would not parse and was skipped every pass with no line; a lapsed
-copy the expire sweep could not end, left in `working` with nothing said, every
-sweep; a go-redis pipeline whose first absent field (`redis.Nil`) hid a later
-`NOPERM` and read the rest as zero. Each was a card that sat still while the
-table said nothing.
-**The test.** `TestNoSilentFailureOnTheLivePath`
-(`internal/ci/silent_class_test.go`), with the rule proved over source in
-`TestSilentRuleReadsTheTwoShapes` (the two shapes refused; a discarded value
-that is not an error and a `|| true` in a comment are not).
-**Its allowlist.** `internal/ci/testdata/silent_allowlist.txt`, one
-`file:function` per row (a package-level literal is `file:<package>`); EMPTY
-today, shrink-only in both directions.
-**Its remedy lines.** `` `_ = err` drops the failure where it happened; return
-it, print one typed line (REFUSED <verb>: <why>) or count it into the pass's
-DUTY line``; `` `|| true` inside a Go string literal hides an embedded script
-step's failure; drop it and read the step's exit``; for a stale row, `delete the
-stale entry (the list only shrinks)`.
-**Its narrowings.** Non-test `.go` files of the live packages only. It reads the
-two shapes by their syntax: `_, _ = f()` (a discarded multi-value), `_ =
-f.Close()`, an `err` assigned and never read, and an `if err != nil { return
-nil }` are not read (`go vet`, errcheck and the reviewer's eye are theirs), and
-neither is a Lua function that returns `nil` where a `REFUSED <why>` belongs.
-The go-redis pipeline shape has its own remedy rather than a rule:
-`internal/nsprint/pipeerr.Exec` walks every command of a pipeline whose fields
-may be absent and returns the first error that is not `redis.Nil`.
 
 ## Parked class tests
 
@@ -2508,7 +2528,6 @@ fix and integration-4 is what it costs`.
 `pull_request` event in their text; a Windows runner reached through a reusable
 workflow or a matrix value built elsewhere would not be counted.
 
-
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source, and for a while
@@ -2534,7 +2553,8 @@ walk with extra bookkeeping.
 the walk can see, so nothing invalidates the cache and the second walk was never
 buying anything. That is also why the rules are safe to run concurrently: each
 class test carries `t.Parallel()` and reads the shared tree and its own
-`testdata/` allowlist, and writes only to its own `t.TempDir()`. A test that
+`testdata/` allowlist, and writes only to its own `t.TempDir()` -- or, under
+`NOVA_CI_UPDATE=1`, to its own list, which no walk reads. A test that
 chdirs, sets an environment variable, or writes shared state does NOT get
 `t.Parallel()`, and the shared tree is not a licence to add one.
 

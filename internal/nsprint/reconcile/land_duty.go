@@ -278,25 +278,12 @@ func (d *LandDuty) Stop(ctx context.Context) []string {
 	var released []string
 	for r, tok := range held {
 		reply, err := d.Client.FCall(context.WithoutCancel(ctx), fnLandRelease, nil, r, inst, tok).StringSlice()
-		switch {
-		case err == nil && word(reply, 0) == "OK":
+		if err == nil && word(reply, 0) == "OK" {
 			released = append(released, r)
-		case d.Out != nil:
-			// A lease not given back on the way out is held until its TTL:
-			// the next instance waits that long, so the line says so.
-			fmt.Fprintf(d.Out, "LAND-DUTY repo=%s release=refused reply=%s%s\n", r, oneline.Field(strings.Join(reply, " ")), errField(err))
 		}
 	}
 	sort.Strings(released)
 	return released
-}
-
-// errField is " err=<text>" for a non-nil error, "" otherwise.
-func errField(err error) string {
-	if err == nil {
-		return ""
-	}
-	return " err=" + oneline.Field(err.Error())
 }
 
 func (d *LandDuty) print(p LandPass, err error) {
@@ -363,7 +350,6 @@ func (d *LandDuty) Pass(ctx context.Context, instance, repo string) (LandPass, e
 	start := time.Now()
 	pctx, cancel := context.WithCancel(ctx)
 	lost := make(chan string, 1)
-	renewErr := make(chan string, 1)
 	beat := make(chan struct{})
 	go func() {
 		defer close(beat)
@@ -380,14 +366,6 @@ func (d *LandDuty) Pass(ctx context.Context, instance, repo string) (LandPass, e
 					cancel()
 					return
 				}
-				if pctx.Err() == nil && (err != nil || word(r, 0) != "OK") {
-					// A renew that did not land is on the pass line once
-					// (its first failure), never a quiet retry every TTL/3.
-					select {
-					case renewErr <- fmt.Sprintf("renew: reply=%s%s", oneline.Field(strings.Join(r, " ")), errField(err)):
-					default:
-					}
-				}
 			}
 		}
 	}()
@@ -395,11 +373,6 @@ func (d *LandDuty) Pass(ctx context.Context, instance, repo string) (LandPass, e
 	cancel()
 	<-beat
 	p.Lines, p.Took = lines, time.Since(start)
-	select {
-	case r := <-renewErr:
-		p.Lines = append(p.Lines, LandLine{Repo: repo, State: "error", Err: r})
-	default:
-	}
 	select {
 	case h := <-lost:
 		d.setHeld(repo, token, false)
@@ -462,9 +435,6 @@ func (d *LandDuty) land(ctx context.Context, repo string) ([]LandLine, error) {
 		}
 		slug, err := stream.Slug(s)
 		if err != nil {
-			// A stream whose name makes no slug is on the pass line as an
-			// error, never skipped in silence.
-			out = append(out, LandLine{Repo: repo, Stream: s, State: "error", Err: "slug: " + err.Error()})
 			continue
 		}
 		members, skips, err := stream.Members(ctx, c, repo, []string{s}, cfg.MinScore)

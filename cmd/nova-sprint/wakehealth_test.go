@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 // #3048 rev 3: the friend's bus tie is a checked and repaired unit. These

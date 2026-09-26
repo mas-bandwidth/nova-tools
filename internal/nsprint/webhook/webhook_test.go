@@ -1,3 +1,5 @@
+//go:build functional
+
 package webhook_test
 
 // The DONE-WHEN of nova-tools #3597's GitHub leg: a signed check_run or

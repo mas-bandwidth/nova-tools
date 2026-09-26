@@ -1,3 +1,5 @@
+//go:build functional
+
 package pitstop_test
 
 import (

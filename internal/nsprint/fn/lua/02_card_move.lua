@@ -226,6 +226,62 @@ local function cm_record(m)
   return nil
 end
 
+-- PROBES NEVER RIDE THE CONSUMER SETS (nova-tools#4237). Seen 2026-09-26
+-- 8:45-9:20 AM ET: after sprint clear zeroed both tables, a fleet roll ran
+-- its pro+flash probe per bench on the card model and retired the probes
+-- into bench:<b>:cards:ok and :fail, so every bench row showed done 2 again.
+-- Glenn: "clearing the table also means the consume table is cleared. all
+-- zeros except for status and load." A probe is a build check, not consumer
+-- work: its result goes on the bench beat (bench:<b>:beat probe, written by
+-- fleet build), and a record that names a probe in its probe field (fleet,
+-- quack, route, lineup, ...) is a kind the consumer sets refuse.
+--
+-- cm_consumer_set(k): k is a consumer set, <bench|friend>:<name>:cards:<set>
+-- (bench:_pool included: a probe is never dealt from there either).
+-- cm_probe(m): the probe m's record names, else nil: a card id reads its
+-- s:<S>:card record, a lease member <S>/<id>/<n> reads task:<id>, any other
+-- id (a task, a copy <p>~<n>) task:<id>. A copy is never cut from a probe
+-- (TM.cut), so a copy names one only when its own record was written so.
+-- cm_probe_refused(k, m): the PROBE refusal when k is a consumer set and m a
+-- probe, else nil. The moves call it before any write (card_create,
+-- card_move, card_add, TK.create, TK.move, TM.cut), so a probe is refused
+-- with its reason and nothing written.
+-- cm_zadd(k, ...): the ONE ZADD into a table set in this file (the class
+-- test in internal/nsprint/fn holds it). It raises the same refusal when a
+-- probe would enter a consumer set: the last guard, never the path.
+local function cm_consumer_set(k)
+  if type(k) ~= 'string' then return false end
+  local kind = string.match(k, '^(%l+):[^:]+:cards:%l+$')
+  return kind == 'bench' or kind == 'friend'
+end
+
+local function cm_probe_of(key)
+  local v = redis.pcall('HGET', key, 'probe')
+  if type(v) == 'string' and v ~= '' then return v end
+  return nil
+end
+
+local function cm_probe(m)
+  if type(m) ~= 'string' or m == '' then return nil end
+  if cm_split(m) then return cm_probe_of(m) end
+  return cm_probe_of('task:' .. (string.match(m, '^[^/]+/(.+)/%d+$') or m))
+end
+
+local function cm_probe_refused(k, m)
+  if not cm_consumer_set(k) then return nil end
+  local v = cm_probe(m)
+  if not v then return nil end
+  return 'PROBE ' .. tostring(m) .. ' is a probe (probe=' .. v .. '); ' .. k ..
+    ' holds consumer work only: a probe result goes on bench:<b>:beat probe (nova-tools#4237)'
+end
+
+local function cm_zadd(k, ...)
+  local args = { ... }
+  local why = cm_probe_refused(k, args[#args])
+  if why then error(why) end
+  return redis.call('ZADD', k, ...)
+end
+
 -- card_add(k, score, m): the one add into a table set (ws:<stream>:<where>,
 -- bench:<b>:cards:*, friend:<f>:cards:*) outside the task move. card_move's
 -- views add through it here, and another file adds as NS.card.add; the task
@@ -235,7 +291,9 @@ end
 -- NOTACARD <set> <member>, and nothing is written.
 local function card_add(k, score, m)
   if not cm_record(m) then return 'NOTACARD ' .. k .. ' ' .. tostring(m) end
-  redis.call('ZADD', k, score, m)
+  local why = cm_probe_refused(k, m)
+  if why then return why end
+  cm_zadd(k, score, m)
   return nil
 end
 
@@ -271,9 +329,8 @@ local function cm_add(e, score)
   elseif e.t == 'l' then
     redis.call('ZADD', e.k, score, e.m)
   else
-    return card_add(e.k, score, e.m)
+    card_add(e.k, score, e.m)
   end
-  return nil
 end
 
 local function cm_rem(e)
@@ -482,6 +539,11 @@ local function card_move(id, to, o)
   if err then return 'DRIFT ' .. err .. ' ' .. id .. '; run nova-sprint card fsck --sprint ' .. S .. ' --repair' end
 
   local old, new = cm_views(S, label, id, cur), cm_views(S, label, id, nxt)
+  -- a probe never enters a consumer set (nova-tools#4237): refused before any write
+  for _, e in ipairs(new) do
+    local why = e.t == 'z' and cm_probe_refused(e.k, e.m)
+    if why then return why end
+  end
   local was, keep = {}, {}
   for _, e in ipairs(old) do was[e.k] = true end
   for _, e in ipairs(new) do keep[e.k] = true end
@@ -538,6 +600,12 @@ local function card_create(id, fields, o)
   if not S then return 'BADID ' .. tostring(id) end
   for i = 1, #fields, 2 do
     if CM_POINTER[fields[i]] then return 'FIELD ' .. fields[i] .. ' is the pointer' end
+    -- every placed card has a bench view (_pool when undealt): a probe
+    -- never becomes a card (nova-tools#4237)
+    if fields[i] == 'probe' and fields[i + 1] and fields[i + 1] ~= '' then
+      return 'PROBE ' .. id .. ' is a probe (probe=' .. tostring(fields[i + 1]) ..
+        '); a card is consumer work only: a probe result goes on bench:<b>:beat probe (nova-tools#4237)'
+    end
   end
   local created = cm_now()
   local h = { id }
@@ -670,16 +738,15 @@ local function card_fsck(S, write)
             if not cm_has(e) then
               note('unlinked ' .. e.k .. ' ' .. e.m)
               if write then
-                -- a link the add refused is a line, never counted fixed
-                local err = cm_add(e, c.created)
-                if err then note('repair refused ' .. err) else fixed = fixed + 1 end
+                cm_add(e, c.created)
+                fixed = fixed + 1
               end
             elseif e.t ~= 's' and tonumber(redis.call('ZSCORE', e.k, e.m)) ~= c.created then
               -- every ZSET is scored by the card's created_at, uniformly
               note('score ' .. e.k .. ' ' .. e.m)
               if write then
-                local err = cm_add(e, c.created)
-                if err then note('repair refused ' .. err) else fixed = fixed + 1 end
+                cm_add(e, c.created)
+                fixed = fixed + 1
               end
             end
           end
@@ -1451,6 +1518,11 @@ function TK.move(id, to, o)
   end
   local err = TK.edge(id, cur, nxt, ok, o)
   if err then return err end
+  -- a probe never enters a consumer set (nova-tools#4237): refused before any write
+  if nxt.friend ~= '' then
+    err = cm_probe_refused('friend:' .. nxt.friend .. ':cards:' .. to, id)
+    if err then return err end
+  end
   local front = TK.str(o.front)
   local state = o.state or TK.STATE[to]
   if TK.WHERE_OF[state] ~= to then return 'STATE ' .. TK.str(state) .. ' is not ' .. to end
@@ -1475,7 +1547,7 @@ function TK.move(id, to, o)
     if not keep[k] then redis.call('ZREM', k, id) end
   end
   for _, k in ipairs(new) do
-    if not was[k] then redis.call('ZADD', k, created, id) end
+    if not was[k] then cm_zadd(k, created, id) end
   end
   if nxt.stream ~= cur.stream then TK.register(nxt.stream) end
   local at = cm_now()
@@ -1584,6 +1656,15 @@ function TK.create(id, fields, o)
   if not TK.valid_stream(stream) then return 'STREAM bad name ' .. stream end
   local where = o.where or 'waiting'
   if where ~= 'waiting' and where ~= 'ready' then return 'OFFGRAPH a new task starts in waiting or ready' end
+  -- a probe never enters a consumer set (nova-tools#4237): refused before any write
+  if TK.str(o.friend) ~= '' then
+    for i = 1, #fields, 2 do
+      if fields[i] == 'probe' and TK.str(fields[i + 1]) ~= '' then
+        return 'PROBE ' .. id .. ' is a probe (probe=' .. TK.str(fields[i + 1]) .. '); friend:' .. TK.str(o.friend) ..
+          ':cards:' .. where .. ' holds consumer work only: a probe result goes on bench:<b>:beat probe (nova-tools#4237)'
+      end
+    end
+  end
   local h = { 'task:' .. id }
   for i = 1, #fields do h[#h + 1] = fields[i] end
   for _, kv in ipairs({ { 'where', '' }, { 'where_ok', '-' }, { 'state', '' }, { 'stream', stream },
@@ -1680,7 +1761,7 @@ function TK.adopt(id, p, o, dry)
   end
   if dry then return nil, w, ok end
   local created = p.created or cm_now()
-  for _, k in ipairs(TK.views(q)) do redis.call('ZADD', k, 'NX', created, id) end
+  for _, k in ipairs(TK.views(q)) do cm_zadd(k, 'NX', created, id) end
   TK.register(p.stream)
   redis.call('HSET', 'task:' .. id, 'where', w, 'where_ok', ok, 'stream', p.stream, 'friend', p.friend,
     'owner', p.friend, 'created_at', string.format('%.0f', created))
@@ -1777,7 +1858,7 @@ function TK.place(id, where, ok, o)
       end
     end
   end
-  for k in pairs(target) do redis.call('ZADD', k, created, id) end
+  for k in pairs(target) do cm_zadd(k, created, id) end
   if not p.placed then redis.call('HSET', 'task:' .. id, 'epoch', cm_estr(e)) end
   TK.register(p.stream)
   local at = cm_now()
@@ -2082,7 +2163,7 @@ function TK.reap(f, by, now)
       local why, p = TK.stray(id, f)
       if why then
         if p and p.placed and TK.IS[p.where] then
-          for _, k in ipairs(TK.views(p)) do redis.call('ZADD', k, 'NX', p.created or cm_now(), id) end
+          for _, k in ipairs(TK.views(p)) do cm_zadd(k, 'NX', p.created or cm_now(), id) end
         end
         redis.call('ZREM', fk, id)
         redis.call('XADD', 'ws:log', 'MAXLEN', '~', TK.LOG_MAX, '*', 'id', id, 'stream', p and p.stream or '',
@@ -2443,6 +2524,9 @@ end
 -- more primary fields, o.extra more copy fields (the finding). o.dry checks
 -- only. Returns nil and the copy id, or the refusal.
 function TM.cut(c, id, leg, o)
+  -- a probe is never cut onto a consumer (nova-tools#4237): refused before any write
+  local probe = cm_probe_refused(TM.key(c, 'ready'), id)
+  if probe then return probe end
   local n = (tonumber(redis.call('HGET', 'task:' .. id, 'copies')) or 0) + 1
   local cid = id .. '~' .. n
   if redis.call('EXISTS', 'task:' .. cid) == 1 then return 'DRIFT task:' .. cid .. ' exists; run nova-sprint card fsck' end
@@ -2492,7 +2576,7 @@ function TM.cut(c, id, leg, o)
   end
   for _, v in ipairs(o.extra or {}) do h[#h + 1] = v end
   redis.call('HSET', unpack(h))
-  redis.call('ZADD', TM.key(c, 'ready'), created, cid)
+  cm_zadd(TM.key(c, 'ready'), created, cid)
   TM.log(cid, p[2], '', c .. ':ready', o.by, leg .. ' copy of ' .. id, c)
   return nil, cid
 end
@@ -2538,25 +2622,19 @@ function TM.deal(c, by, k, stream, ids)
         end
         table.sort(rows, function(a, b) return a[2] < b[2] or (a[2] == b[2] and a[1] < b[1]) end)
         for _, row in ipairs(rows) do
-          if (#out - 2) / 2 >= k then return nil end
+          if (#out - 2) / 2 >= k then return end
           local id = row[1]
           if not TK.card_id(id) and not TK.copy_id(id) then
             local leg = TM.leg(id, TK.read(id))
             if leg == want and not TM.may(c, d, id, leg) and not TM.cut(c, id, leg, { by = by, dry = true }) then
-              -- the dry run passed: a cut refused here is drift, named
-              -- like the named path's, never a copy quietly left out
-              local err = cut(id, leg)
-              if err then return err end
+              cut(id, leg)
             end
           end
         end
       end
-      return nil
     end
-    local err = pass({ 'review' }, 'read')
-    if err then return { 'REFUSED', 'DRIFT-AFTER ' .. err } end
-    err = pass({ 'ready', 'waiting' }, 'work')
-    if err then return { 'REFUSED', 'DRIFT-AFTER ' .. err } end
+    pass({ 'review' }, 'read')
+    pass({ 'ready', 'waiting' }, 'work')
   end
   out[2] = tostring((#out - 2) / 2)
   return out
@@ -2600,7 +2678,7 @@ function TM.work(c, by, k, fill, ids)
     local r = redis.call('HMGET', 'task:' .. id, 'consumer', 'where', 'created_at', 'stream')
     if r[1] ~= c or r[2] ~= 'ready' then return { 'REFUSED', 'DRIFT task:' .. id .. ' is ' .. TK.str(r[1]) .. ':' .. TK.str(r[2]) } end
     redis.call('ZREM', TM.key(c, 'ready'), id)
-    redis.call('ZADD', TM.key(c, 'working'), TK.ms(r[3]) or at, id)
+    cm_zadd(TM.key(c, 'working'), TK.ms(r[3]) or at, id)
     local token = id .. '@' .. tostring(at)
     redis.call('HSET', 'task:' .. id, 'where', 'working', 'where_at', tostring(at), 'leased_at', tostring(at),
       'lease_until', tostring(at + TM.LEASE), 'token', token)
@@ -2633,7 +2711,7 @@ end
 function TM.retire(id, c, w, outcome, why, fields, by, stream)
   local at = cm_now()
   redis.call('ZREM', TM.key(c, w), id)
-  redis.call('ZADD', TM.key(c, outcome), at, id)
+  cm_zadd(TM.key(c, outcome), at, id)
   local h = { 'task:' .. id, 'where', outcome, 'where_at', tostring(at), 'ended_at', tostring(at), 'outcome', outcome,
     'why', TK.str(why) }
   for _, v in ipairs(fields or {}) do h[#h + 1] = v end
@@ -3025,7 +3103,7 @@ function TM.demote(id, why, by, stream)
   local score = TM.parse(c) and redis.call('ZSCORE', TM.key(c, 'ok'), id)
   if not score then return end
   redis.call('ZREM', TM.key(c, 'ok'), id)
-  redis.call('ZADD', TM.key(c, 'fail'), score, id)
+  cm_zadd(TM.key(c, 'fail'), score, id)
   redis.call('HSET', 'task:' .. id, 'where', 'fail', 'outcome', 'fail', 'why', why)
   TM.log(id, stream, c .. ':ok', c .. ':fail', by, why, c)
 end
@@ -3656,19 +3734,6 @@ function TM.expire(by, consumers)
   consumers = named
   local now = cm_now()
   local out = { 'EXPIRED', '0' }
-  local n = 0
-  -- a finish the move refused is in the reply as the pair id, 'REFUSED
-  -- <why>' (never counted in n): a lapsed copy that stays in working with
-  -- no line was the silent shape, repeated every sweep
-  local function ended(id, err, info)
-    out[#out + 1] = id
-    if err then
-      out[#out + 1] = 'REFUSED ' .. tostring(err)
-    else
-      out[#out + 1] = info.to
-      n = n + 1
-    end
-  end
   for _, c in ipairs(consumers) do
     -- a consumer whose beat is older than a lease holds no ready copy: each
     -- goes back to its primary (no attempt counted)
@@ -3679,7 +3744,10 @@ function TM.expire(by, consumers)
       for _, id in ipairs(redis.call('ZRANGE', TM.key(c, 'ready'), 0, -1)) do
         if TK.copy_id(id) then
           local err, info = TM.finish(id, { outcome = 'fail', why = 'consumer down', keep = true, by = by })
-          ended(id, err, info)
+          if not err then
+            out[#out + 1] = id
+            out[#out + 1] = info.to
+          end
         end
       end
     end
@@ -3692,12 +3760,15 @@ function TM.expire(by, consumers)
           -- (#4094 c); a lapsed work or fix copy is a fail, to review (#4072)
           local keep = TK.str(redis.call('HGET', 'task:' .. id, 'leg')) == 'read'
           local err, info = TM.finish(id, { outcome = 'fail', why = 'lease lapsed', keep = keep, by = by })
-          ended(id, err, info)
+          if not err then
+            out[#out + 1] = id
+            out[#out + 1] = info.to
+          end
         end
       end
     end
   end
-  out[2] = tostring(n)
+  out[2] = tostring((#out - 2) / 2)
   return out
 end
 
@@ -3726,7 +3797,15 @@ function TM.fsck(write)
       local rows = redis.call('ZRANGE', k, 0, -1, 'WITHSCORES')
       for i = 1, #rows, 2 do
         local id = rows[i]
-        if TK.copy_id(id) then
+        local probe = cm_probe(id)
+        if probe then
+          -- a probe in a consumer set is drift whatever its shape (nova-tools#4237)
+          note('probe ' .. k .. ' ' .. id .. ' (probe=' .. probe .. ')')
+          if write then
+            redis.call('ZREM', k, id)
+            fixed = fixed + 1
+          end
+        elseif TK.copy_id(id) then
           local r = redis.call('HMGET', 'task:' .. id, 'primary', 'consumer', 'where', 'created_at', 'ended_at', 'leg')
           if not r[1] then
             note('gone ' .. k .. ' ' .. id)
@@ -3747,7 +3826,7 @@ function TM.fsck(write)
             if want and tonumber(rows[i + 1]) ~= want then
               note('score ' .. k .. ' ' .. id)
               if write then
-                redis.call('ZADD', k, want, id)
+                cm_zadd(k, want, id)
                 fixed = fixed + 1
               end
             end
@@ -3808,19 +3887,17 @@ function TM.fsck(write)
               if write then
                 local to = w
                 if w == 'working' then to = 'waiting' end
-                -- a repair the move refused is a line with its why, never
-                -- a drift that stays and prints nothing
-                local err = TK.move(id, to, { by = 'fsck', why = 'fsck: copy ' .. cp .. ' lost', copy = '' })
-                if err then note('repair refused task:' .. id .. ' ' .. err) else fixed = fixed + 1 end
+                if not TK.move(id, to, { by = 'fsck', why = 'fsck: copy ' .. cp .. ' lost', copy = '' }) then
+                  fixed = fixed + 1
+                end
               end
             end
           elseif w == 'working' and friend == '' then
             -- (review with no copy waits for its read deal; a working
             -- primary is always its copy's: nothing waits on CI there)
             note('bare task:' .. id .. ' is working with no copy and no friend')
-            if write then
-              local err = TK.move(id, 'waiting', { by = 'fsck', why = 'fsck: working with no copy', copy = '' })
-              if err then note('repair refused task:' .. id .. ' ' .. err) else fixed = fixed + 1 end
+            if write and not TK.move(id, 'waiting', { by = 'fsck', why = 'fsck: working with no copy', copy = '' }) then
+              fixed = fixed + 1
             end
           end
         end
@@ -3936,7 +4013,7 @@ function TM.lease_hold(c, member, at)
   if not TM.parse(c) or not TM.lease_id(member) then return 0 end
   local id = string.match(member, '^[^/]+/(.+)/%d+$')
   if id and redis.call('ZSCORE', TM.key(c, 'working'), id) then return 0 end
-  return redis.call('ZADD', TM.key(c, 'working'), 'NX', at, member)
+  return cm_zadd(TM.key(c, 'working'), 'NX', at, member)
 end
 
 function TM.lease_drop(c, member)

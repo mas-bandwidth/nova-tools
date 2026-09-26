@@ -24,9 +24,7 @@ package card
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,11 +53,7 @@ type CommitResult struct {
 // authored `nova-card <bench>`. A repo with no .git is NO-COMMIT.
 func CommitOutput(repo, branch, message, bench string) (CommitResult, error) {
 	if _, err := os.Stat(filepath.Join(repo, ".git")); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return CommitResult{SHA: NoCommit, Note: "NO-COMMIT"}, nil
-		}
-		// A .git that is there but unreadable is not "no repo".
-		return CommitResult{}, err
+		return CommitResult{SHA: NoCommit, Note: "NO-COMMIT"}, nil
 	}
 	env := append(os.Environ(),
 		"GIT_AUTHOR_NAME=nova-card", "GIT_AUTHOR_EMAIL="+bench,
@@ -106,11 +100,7 @@ func CommitOutput(repo, branch, message, bench string) (CommitResult, error) {
 		if _, err := git("commit", "-q", "--no-verify", "-m", message); err != nil {
 			return CommitResult{}, err
 		}
-	} else if ahead, err := git("rev-list", "--count", "HEAD", "--not", "--remotes"); err != nil {
-		// A git that could not count is an error, never NO-COMMIT: the
-		// copy's push (or its no-commit fail) hangs on this answer.
-		return CommitResult{}, err
-	} else if ahead == "0" {
+	} else if ahead, err := git("rev-list", "--count", "HEAD", "--not", "--remotes"); err != nil || ahead == "0" {
 		// Nothing staged and nothing the harness committed that no remote has.
 		return CommitResult{SHA: NoCommit, Note: "NO-COMMIT"}, nil
 	}

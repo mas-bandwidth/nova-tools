@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // hostseam_class_test.go is the class rule bought on 2026-09-18: a unit test in
@@ -66,6 +68,8 @@ func TestNoTestReachesAHostThroughAnUnfakedSeam(t *testing.T) {
 
 	root := repoRoot(t)
 	allow := readHostSeamAllowlist(t)
+	// seen is the measured set: a listed seam still here, or a seam that
+	// fails the guard rule. A guarded, unlisted seam needs no row.
 	seen := map[string]bool{}
 	var violations []string
 
@@ -105,18 +109,20 @@ func TestNoTestReachesAHostThroughAnUnfakedSeam(t *testing.T) {
 					continue
 				}
 				key := rel + ":" + removeAllFuncName(fn)
-				seen[key] = true
-				if allow[key] {
+				if allow.Has(key) {
+					seen[key] = true
 					continue
 				}
 				guard := guardCallPos(fn)
 				if guard == token.NoPos {
+					seen[key] = true
 					violations = append(violations, fmt.Sprintf(
 						"%s:%d: %s reaches a host (%s) and does not call testguard.RefuseHosts; add `testguard.RefuseHosts(<program>, <args>...)` before the child runs, or list it in %s with a reason",
 						rel, fset.Position(fn.Pos()).Line, removeAllFuncName(fn), why, hostSeamAllowlistPath))
 					continue
 				}
 				if first := firstExecPos(fn); first != token.NoPos && guard > first {
+					seen[key] = true
 					violations = append(violations, fmt.Sprintf(
 						"%s:%d: %s calls testguard.RefuseHosts AFTER the child is started; a guard that runs once the host has been reached guards nothing",
 						rel, fset.Position(guard).Line, removeAllFuncName(fn)))
@@ -130,12 +136,11 @@ func TestNoTestReachesAHostThroughAnUnfakedSeam(t *testing.T) {
 	}
 	// Both directions: an entry whose function is gone (or no longer a seam) is
 	// a red run, so a row parks nothing and the list only shrinks.
-	for key := range allow {
-		if !seen[key] {
-			violations = append(violations, fmt.Sprintf(
-				"%s lists %s, but no host seam by that name is there any more; delete the stale entry (the list only shrinks)",
-				hostSeamAllowlistPath, key))
-		}
+	for _, row := range allowlist.Check(t, allow, seen).Stale {
+		key := row.Key
+		violations = append(violations, fmt.Sprintf(
+			"%s lists %s, but no host seam by that name is there any more; delete the stale entry (the list only shrinks)",
+			hostSeamAllowlistPath, key))
 	}
 	// The other half of the rule: the guard is armed for every run of the
 	// suite. A tree full of guard calls and a Makefile that never sets the
@@ -326,26 +331,16 @@ func TestNoHostSeamIsFoundByASubstring(t *testing.T) {
 	}
 }
 
-func readHostSeamAllowlist(t *testing.T) map[string]bool {
+func readHostSeamAllowlist(t *testing.T) *allowlist.List {
 	t.Helper()
-	raw, err := os.ReadFile(hostSeamAllowlistPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allow := map[string]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
+	allow := loadAllowlist(t, hostSeamAllowlistPath, shrinkOnly)
+	for _, row := range allow.Rows() {
 		// `file:function  # reason`: the reason is required, because an
 		// exception nobody explained is one nobody can ever remove.
-		i := strings.Index(line, "#")
-		if i < 0 || strings.TrimSpace(line[i+1:]) == "" {
-			t.Errorf("%s: %q carries no reason; every exception says why, or nobody can ever delete it", hostSeamAllowlistPath, line)
-			continue
+		i := strings.Index(row.Text, "#")
+		if i < 0 || strings.TrimSpace(row.Text[i+1:]) == "" {
+			t.Errorf("%s: %q carries no reason; every exception says why, or nobody can ever delete it", hostSeamAllowlistPath, row.Text)
 		}
-		allow[strings.TrimSpace(line[:i])] = true
 	}
 	return allow
 }

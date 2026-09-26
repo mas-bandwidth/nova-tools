@@ -1,0 +1,724 @@
+//go:build functional
+
+package reconcile_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/redis/go-redis/v9"
+)
+
+const fence = "rc-1.0123456789abcdef"
+
+// Control 8 (#2930 rev 5): the PR open is idempotent from Redis alone. The
+// forge serves only POST /pulls; any read of it fails the test (GitHub is a
+// git remote only). A lost reply leaves the key pending (IN-FLIGHT, never a
+// second open); a pending key past open_ms and every 422 that does not prove
+// "no PR" is ambiguous (terminal for the machine, one unresolved item); only
+// the exact validation allowlist is REJECTED and clears the key; a friend's
+// `idem resolve` is the one writer of the ambiguous transition, fenced by
+// compare-and-set on --was.
+func TestControl08NoSecondPR(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, client := newSprint(t)
+	const sprint, repo = "control-08a0b1c2", "ctl-org/ctl-repo"
+	forge := newFakeForge(t)
+	host := reconcile.RESTPRHost{BaseURL: forge.srv.URL, Token: "t"}
+	idem := card.IdemKey(sprint)
+	unresolved := "s:" + sprint + ":unresolved"
+	pendingIdx := reconcile.PendingIndexKey(sprint)
+	head := func(s string) string { return "nova/" + sprint + "/" + s + "-a1" }
+	request := func(branch, who string) reconcile.PRRequest {
+		return reconcile.PRRequest{Sprint: sprint, Repo: repo, Branch: branch, Base: "dev", Title: "c8", Who: who, Fence: fence}
+	}
+	ensure := func(t *testing.T, req reconcile.PRRequest) reconcile.PRResult {
+		t.Helper()
+		got, err := reconcile.EnsurePR(ctx, st, host, req)
+		if err != nil {
+			t.Fatalf("ensure pr %s: %v", req.Branch, err)
+		}
+		return got
+	}
+	// retries runs n EnsurePR calls by a new worker and wants status each
+	// time, with no forge request at all.
+	retries := func(t *testing.T, branch, status string, n int) {
+		t.Helper()
+		calls := forge.calls.Load()
+		for i := 0; i < n; i++ {
+			got := ensure(t, request(branch, fmt.Sprintf("harvest-r%d", i)))
+			if got.Code != 4 || got.Status != status || got.URL != "" {
+				t.Fatalf("retry %d on %s: %+v, want code 4 %s", i, branch, got, status)
+			}
+		}
+		if forge.calls.Load() != calls {
+			t.Fatalf("retries on %s asked the forge: calls %d -> %d", branch, calls, forge.calls.Load())
+		}
+	}
+	value := func(branch string) string {
+		v, _ := client.HGet(ctx, idem, reconcile.PRKey(repo, branch)).Result()
+		return v
+	}
+	ambiguousItems := func(branch string) int {
+		n := 0
+		for f := range hashAll(t, ctx, client, unresolved) {
+			if f == reconcile.UnresolvedField(reconcile.PRKey(repo, branch)) {
+				n++
+			}
+		}
+		return n
+	}
+	wantAmbiguousOnce := func(t *testing.T, branch string) {
+		t.Helper()
+		key := reconcile.PRKey(repo, branch)
+		if v := value(branch); !strings.HasPrefix(v, "ambiguous:") {
+			t.Fatalf("idem %s = %q, want ambiguous:*", key, v)
+		}
+		if zHas(t, ctx, client, pendingIdx, key) {
+			t.Fatalf("%s still in the pending index", key)
+		}
+		if n := ambiguousItems(branch); n != 1 {
+			t.Fatalf("pr-ambiguous items for %s = %d, want 1", branch, n)
+		}
+		if n := receiptsTo(t, ctx, client, sprint, key, "ambiguous"); n != 1 {
+			t.Fatalf("ambiguous receipts for %s = %d, want 1", key, n)
+		}
+	}
+	onePost := func(t *testing.T, branch string) {
+		t.Helper()
+		if p := forge.postsTo(branch); p != 1 {
+			t.Fatalf("POSTs for %s = %d, want 1", branch, p)
+		}
+		if g := forge.reads.Load(); g != 0 {
+			t.Fatalf("forge reads = %d, want 0", g)
+		}
+	}
+
+	t.Run("crash_after_open_in_flight", func(t *testing.T) {
+		a := head("c8")
+		forge.crashAfterOpen.Store(true) // the PR exists; the reply is lost
+		if _, err := reconcile.EnsurePR(ctx, st, host, request(a, "harvest-a")); err == nil {
+			t.Fatal("the crashed open reported success")
+		}
+		forge.crashAfterOpen.Store(false)
+		onePost(t, a)
+		if v := value(a); !strings.HasPrefix(v, "pending:harvest-a:") {
+			t.Fatalf("idem key after the crash = %q, want pending:harvest-a:<at_ms>", v)
+		}
+		if !zHas(t, ctx, client, pendingIdx, reconcile.PRKey(repo, a)) {
+			t.Fatal("the pending key is not in the pending index")
+		}
+		retries(t, a, "IN-FLIGHT", 5)
+		onePost(t, a)
+	})
+
+	t.Run("pending_past_open_ms_ambiguous", func(t *testing.T) {
+		a := head("c8")
+		key := reconcile.PRKey(repo, a)
+		was := value(a)
+		// Seed the pending age past open_ms (the sweep's selection); the
+		// transition itself is the sweep's one call.
+		must(t, client.ZAdd(ctx, pendingIdx, redis.Z{Score: 1, Member: key}).Err())
+		res, err := reconcile.MarkAmbiguous(ctx, st, sprint, key, was, fence)
+		if err != nil || res.Code != 0 || res.Status != "AMBIGUOUS" || res.Receipt == "" {
+			t.Fatalf("mark ambiguous: %+v %v", res, err)
+		}
+		wantAmbiguousOnce(t, a)
+		n := xlen(t, ctx, client, sprint)
+		again, err := reconcile.MarkAmbiguous(ctx, st, sprint, key, "", fence)
+		if err != nil || again.Receipt != res.Receipt || xlen(t, ctx, client, sprint) != n {
+			t.Fatalf("ambiguous replay: %+v %v (log %d -> %d)", again, err, n, xlen(t, ctx, client, sprint))
+		}
+		retries(t, a, "AMBIGUOUS", 5)
+		wantAmbiguousOnce(t, a)
+		onePost(t, a)
+		if n := forge.prsOn(a); n != 1 {
+			t.Fatalf("PRs on %s = %d, want 1", a, n)
+		}
+	})
+
+	t.Run("conflict_422_ambiguous", func(t *testing.T) {
+		b := head("c8b")
+		forge.reply(b, http.StatusUnprocessableEntity, `{"message":"Validation Failed","errors":[{"resource":"PullRequest","code":"custom","message":"A pull request already exists for ctl-org:`+b+`."}]}`)
+		got := ensure(t, request(b, "harvest-a"))
+		if got.Code != 4 || got.Status != "AMBIGUOUS" || got.Opened {
+			t.Fatalf("conflict: %+v", got)
+		}
+		onePost(t, b)
+		wantAmbiguousOnce(t, b)
+		retries(t, b, "AMBIGUOUS", 5)
+		onePost(t, b)
+		if n := forge.prsOn(b); n > 1 {
+			t.Fatalf("a second PR on %s", b)
+		}
+	})
+
+	t.Run("unreadable_422_ambiguous", func(t *testing.T) {
+		c := head("c8c")
+		forge.reply(c, http.StatusUnprocessableEntity, "")
+		got := ensure(t, request(c, "harvest-a"))
+		if got.Code != 4 || got.Status != "AMBIGUOUS" {
+			t.Fatalf("empty 422: %+v", got)
+		}
+		onePost(t, c)
+		wantAmbiguousOnce(t, c)
+	})
+
+	t.Run("unknown_422_ambiguous", func(t *testing.T) {
+		for i, body := range []string{`{}`, `{"message":"Validation Failed","errors":[{"code":"custom","message":"something new"}]}`} {
+			d := head(fmt.Sprintf("c8d%d", i))
+			forge.reply(d, http.StatusUnprocessableEntity, body)
+			got := ensure(t, request(d, "harvest-a"))
+			if got.Code != 4 || got.Status != "AMBIGUOUS" {
+				t.Fatalf("unknown 422 %s: %+v", body, got)
+			}
+			onePost(t, d)
+			wantAmbiguousOnce(t, d)
+			retries(t, d, "AMBIGUOUS", 5)
+			onePost(t, d)
+		}
+	})
+
+	t.Run("validation_422_rejected", func(t *testing.T) {
+		for i, msgOf := range []func(string) string{
+			func(string) string {
+				return `{"message":"Validation Failed","errors":[{"resource":"PullRequest","field":"base","code":"invalid"}]}`
+			},
+			func(branch string) string {
+				return `{"message":"Validation Failed","errors":[{"resource":"PullRequest","code":"custom","message":"No commits between dev and ` + branch + `"}]}`
+			},
+		} {
+			e := head(fmt.Sprintf("c8e%d", i))
+			key := reconcile.PRKey(repo, e)
+			forge.reply(e, http.StatusUnprocessableEntity, msgOf(e))
+			items, _ := client.HLen(ctx, unresolved).Result()
+			got := ensure(t, request(e, "harvest-a"))
+			if got.Code != 4 || got.Status != "REJECTED" || got.Msg == "" || got.Opened {
+				t.Fatalf("validation 422 %d: %+v", i, got)
+			}
+			onePost(t, e)
+			if v := value(e); v != "" {
+				t.Fatalf("idem %s after REJECTED = %q, want absent", key, v)
+			}
+			if zHas(t, ctx, client, pendingIdx, key) {
+				t.Fatalf("%s still in the pending index", key)
+			}
+			if n := receiptsTo(t, ctx, client, sprint, key, "rejected-open"); n != 1 {
+				t.Fatalf("rejected-open receipts = %d, want 1", n)
+			}
+			if after, _ := client.HLen(ctx, unresolved).Result(); after != items {
+				t.Fatalf("a rejected open added an unresolved item: %d -> %d", items, after)
+			}
+			// A replay of the rejection returns the first receipt and writes nothing.
+			first, was := rejectedReceipt(t, ctx, client, sprint, key)
+			before, n := hashAll(t, ctx, client, idem), xlen(t, ctx, client, sprint)
+			if r := fcall(t, ctx, client, "ns_idem_rejected", sprint, key, was, "422", "replay", fence); r != "0|REJECTED||"+first {
+				t.Fatalf("ns_idem_rejected replay = %q, want 0|REJECTED||%s", r, first)
+			}
+			sameHash(t, "rejected replay", before, hashAll(t, ctx, client, idem))
+			if xlen(t, ctx, client, sprint) != n {
+				t.Fatal("rejected replay wrote a receipt")
+			}
+			// The caller fixes its request; the forge now opens: one more POST.
+			forge.reply(e, http.StatusCreated, "")
+			again := ensure(t, request(e, "harvest-a"))
+			if again.Code != 0 || !again.Opened || again.URL == "" || value(e) != again.URL {
+				t.Fatalf("open after the fix: %+v (idem %q)", again, value(e))
+			}
+			if p := forge.postsTo(e); p != 2 {
+				t.Fatalf("POSTs for %s after the fix = %d, want 2", e, p)
+			}
+		}
+	})
+
+	t.Run("classify422", func(t *testing.T) {
+		unknown := `{"code":"custom","message":"something new"}`
+		base := `{"resource":"PullRequest","field":"base","code":"invalid"}`
+		rows := []struct {
+			name, body string
+			rejected   bool
+		}{
+			{"conflict", `{"message":"Validation Failed","errors":[{"resource":"PullRequest","code":"custom","message":"A pull request already exists for ctl-org:x."}]}`, false},
+			{"conflict_wins", `{"message":"Validation Failed","errors":[` + base + `,{"resource":"PullRequest","code":"custom","message":"A pull request already exists for ctl-org:x."}]}`, false},
+			{"base_invalid", `{"message":"Validation Failed","errors":[` + base + `]}`, true},
+			{"head_invalid", `{"message":"Validation Failed","errors":[{"resource":"PullRequest","field":"head","code":"invalid"}]}`, true},
+			{"no_commits", `{"message":"Validation Failed","errors":[{"resource":"PullRequest","code":"custom","message":"No commits between dev and x"}]}`, true},
+			{"empty_body", ``, false},
+			{"non_json", `<html>busy</html>`, false},
+			{"empty_object", `{}`, false},
+			{"message_only", `{"message":"Validation Failed"}`, false},
+			{"empty_errors", `{"message":"Validation Failed","errors":[]}`, false},
+			{"unknown_entry", `{"errors":[` + unknown + `]}`, false},
+			{"allowlisted_with_unknown", `{"message":"Validation Failed","errors":[` + base + `,` + unknown + `]}`, false},
+			{"base_other_code", `{"errors":[{"resource":"PullRequest","field":"base","code":"missing_field"}]}`, false},
+			{"head_other_resource", `{"errors":[{"resource":"Issue","field":"head","code":"invalid"}]}`, false},
+			{"conflict_top_level_wins", `{"message":"A pull request already exists for ctl-org:x.","errors":[` + base + `]}`, false},
+			{"conflict_whitespace", `{"message":"Validation Failed","errors":[{"resource":"PullRequest","code":"custom","message":"  A pull request already exists for ctl-org:x.  "}]}`, false},
+			{"no_commits_whitespace", `{"message":"Validation Failed","errors":[{"resource":"PullRequest","code":"custom","message":"  No commits between dev and x  "}]}`, true},
+		}
+		for i, row := range rows {
+			t.Run(row.name, func(t *testing.T) {
+				branch := head(fmt.Sprintf("c8t%d", i))
+				forge.reply(branch, http.StatusUnprocessableEntity, row.body)
+				_, err := host.Open(ctx, repo, branch, "dev", "c8", "")
+				var rej *reconcile.ErrForgeRejected
+				switch {
+				case row.rejected && !errors.As(err, &rej):
+					t.Fatalf("%s: err = %v, want ErrForgeRejected", row.name, err)
+				case row.rejected && rej.Msg == "":
+					t.Fatalf("%s: ErrForgeRejected with no Msg", row.name)
+				case !row.rejected && !errors.Is(err, reconcile.ErrForgeHasPR):
+					t.Fatalf("%s: err = %v, want ErrForgeHasPR", row.name, err)
+				}
+				onePost(t, branch)
+			})
+		}
+	})
+
+	t.Run("resolve_url", func(t *testing.T) {
+		a := head("c8")
+		key := reconcile.PRKey(repo, a)
+		was := value(a)
+		url := forge.url(forge.prsNumber(a))
+		res, err := reconcile.ResolveIdem(ctx, st, reconcile.IdemResolveRequest{Sprint: sprint, Key: key, Was: was, URL: url, Who: "ctl-friend"})
+		if err != nil || res.Code != 0 || res.Status != "RESOLVED" || res.Receipt == "" {
+			t.Fatalf("resolve --url: %+v %v", res, err)
+		}
+		if ambiguousItems(a) != 0 || value(a) != url {
+			t.Fatalf("after resolve --url: idem %q items %d", value(a), ambiguousItems(a))
+		}
+		if n := receiptsTo(t, ctx, client, sprint, key, "resolved"); n != 1 {
+			t.Fatalf("resolved receipts = %d, want 1", n)
+		}
+		calls := forge.calls.Load()
+		got := ensure(t, request(a, "harvest-z"))
+		if got.Code != 0 || got.URL != url || forge.calls.Load() != calls {
+			t.Fatalf("after resolve --url: %+v (forge calls %d -> %d)", got, calls, forge.calls.Load())
+		}
+	})
+
+	t.Run("resolve_none", func(t *testing.T) {
+		c := head("c8c")
+		key := reconcile.PRKey(repo, c)
+		res, err := reconcile.ResolveIdem(ctx, st, reconcile.IdemResolveRequest{Sprint: sprint, Key: key, Was: value(c), None: true, Who: "ctl-friend"})
+		if err != nil || res.Code != 0 || res.Status != "RESOLVED" || res.Receipt == "" {
+			t.Fatalf("resolve --none: %+v %v", res, err)
+		}
+		if value(c) != "" || ambiguousItems(c) != 0 {
+			t.Fatalf("after resolve --none: idem %q items %d", value(c), ambiguousItems(c))
+		}
+		forge.reply(c, http.StatusCreated, "")
+		got := ensure(t, request(c, "harvest-z"))
+		if got.Code != 0 || !got.Opened || forge.postsTo(c) != 2 {
+			t.Fatalf("open after resolve --none: %+v posts=%d, want one more POST", got, forge.postsTo(c))
+		}
+		again := ensure(t, request(c, "harvest-y"))
+		if again.URL != got.URL || forge.postsTo(c) != 2 {
+			t.Fatalf("second ensure after resolve --none: %+v posts=%d", again, forge.postsTo(c))
+		}
+	})
+
+	t.Run("resolve_stale_was_state", func(t *testing.T) {
+		d := head("c8d0")
+		f := head("c8f")
+		// A pending key on f.
+		if r := fcall(t, ctx, client, "ns_idem_begin", sprint, reconcile.PRKey(repo, f), "harvest-p", fence); !strings.HasPrefix(r, "0|BEGUN||pending:harvest-p:") {
+			t.Fatalf("ns_idem_begin = %q", r)
+		}
+		cases := []struct{ name, key, was string }{
+			{"stale_was", reconcile.PRKey(repo, d), value(d) + "0"},
+			{"other_friend_was", reconcile.PRKey(repo, d), "ambiguous:someone-else:1"},
+			{"pending", reconcile.PRKey(repo, f), value(f)},
+			{"url", reconcile.PRKey(repo, head("c8")), value(head("c8"))},
+			{"absent", reconcile.PRKey(repo, head("c8-none")), "ambiguous:harvest-a:1"},
+		}
+		for _, c := range cases {
+			before, items, n, calls := hashAll(t, ctx, client, idem), hashAll(t, ctx, client, unresolved), xlen(t, ctx, client, sprint), forge.calls.Load()
+			stored, _ := client.HGet(ctx, idem, c.key).Result()
+			for _, none := range []bool{false, true} {
+				req := reconcile.IdemResolveRequest{Sprint: sprint, Key: c.key, Was: c.was, Who: "ctl-friend", None: none}
+				if !none {
+					req.URL = forge.url(99)
+				}
+				res, err := reconcile.ResolveIdem(ctx, st, req)
+				if err != nil || res.Code != 2 || res.Status != "STATE" || res.Value != stored {
+					t.Fatalf("%s (none=%v): %+v %v, want STATE value=%q", c.name, none, res, err, stored)
+				}
+			}
+			sameHash(t, c.name+" idem", before, hashAll(t, ctx, client, idem))
+			sameHash(t, c.name+" unresolved", items, hashAll(t, ctx, client, unresolved))
+			if xlen(t, ctx, client, sprint) != n || forge.calls.Load() != calls {
+				t.Fatalf("%s wrote a receipt or asked the forge", c.name)
+			}
+		}
+	})
+
+	t.Run("ensure_pr_validation", func(t *testing.T) {
+		dbsizeBefore := client.DBSize(ctx).Val()
+		for _, bad := range []struct {
+			name string
+			h    reconcile.PRHost
+			req  reconcile.PRRequest
+		}{
+			{"nil host", nil, request("head", "w")},
+			{"missing repo", host, reconcile.PRRequest{Sprint: sprint, Branch: "head", Who: "w"}},
+			{"missing branch", host, reconcile.PRRequest{Sprint: sprint, Repo: repo, Who: "w"}},
+			{"missing who", host, reconcile.PRRequest{Sprint: sprint, Repo: repo, Branch: "head"}},
+		} {
+			calls := forge.calls.Load()
+			_, err := reconcile.EnsurePR(ctx, st, bad.h, bad.req)
+			if err == nil || !strings.Contains(err.Error(), "host, repo, branch and who are required") {
+				t.Fatalf("%s: err = %v, want required error", bad.name, err)
+			}
+			if forge.calls.Load() != calls {
+				t.Fatalf("%s asked the forge", bad.name)
+			}
+			if client.DBSize(ctx).Val() != dbsizeBefore {
+				t.Fatalf("%s modified redis keyspace", bad.name)
+			}
+		}
+	})
+
+	t.Run("stale_fence_writes_nothing", func(t *testing.T) {
+		d := head("c8d1")
+		g := head("c8g")
+		before, items, n, calls := hashAll(t, ctx, client, idem), hashAll(t, ctx, client, unresolved), xlen(t, ctx, client, sprint), forge.calls.Load()
+		stale := request(g, "harvest-s")
+		stale.Fence = "rc-0.old"
+		if _, err := reconcile.EnsurePR(ctx, st, host, stale); err == nil || !strings.Contains(err.Error(), "FENCED") {
+			t.Fatalf("stale fence ensure pr: err = %v, want FENCED", err)
+		}
+		pendingF := reconcile.PRKey(repo, head("c8f"))
+		was := value(head("c8f"))
+		checks := func(label, token string) {
+			for _, c := range []struct {
+				name string
+				args []any
+			}{
+				{"ns_idem_begin", []any{sprint, reconcile.PRKey(repo, g), "harvest-s", token}},
+				{"ns_idem_ambiguous", []any{sprint, pendingF, token, was}},
+				{"ns_idem_rejected", []any{sprint, pendingF, was, "422", "x", token}},
+				{"ns_idem_commit", []any{sprint, pendingF, forge.url(9), "harvest-s", "pr-opened", token}},
+			} {
+				if got := fcall(t, ctx, client, c.name, c.args...); got != "3|FENCED||" {
+					t.Fatalf("%s %s = %q, want 3|FENCED||", label, c.name, got)
+				}
+			}
+			if r, err := reconcile.MarkAmbiguous(ctx, st, sprint, pendingF, was, token); err != nil || r.Code != 3 || r.Status != "FENCED" {
+				t.Fatalf("%s MarkAmbiguous: %+v %v, want 3 FENCED", label, r, err)
+			}
+			if r, err := reconcile.MarkAmbiguous(ctx, st, sprint, reconcile.PRKey(repo, d), "", token); err != nil || r.Code != 3 {
+				t.Fatalf("%s MarkAmbiguous replay: %+v %v, want 3 FENCED", label, r, err)
+			}
+		}
+		checks("stale", "rc-0.old")
+		checks("missing", "")
+		// A missing lease fences even the last good token.
+		must(t, client.HDel(ctx, "lease:reconciler", "token").Err())
+		checks("no-lease", fence)
+		must(t, client.HSet(ctx, "lease:reconciler", "token", fence).Err())
+		sameHash(t, "stale fence idem", before, hashAll(t, ctx, client, idem))
+		sameHash(t, "stale fence unresolved", items, hashAll(t, ctx, client, unresolved))
+		if xlen(t, ctx, client, sprint) != n || forge.calls.Load() != calls {
+			t.Fatalf("a fenced call wrote a receipt or asked the forge: log %d -> %d, calls %d -> %d",
+				n, xlen(t, ctx, client, sprint), calls, forge.calls.Load())
+		}
+	})
+}
+
+// rejectedReceipt returns the rejected-open receipt id for key and the
+// pending value it rejected (the replay's --was).
+func rejectedReceipt(t *testing.T, ctx context.Context, client *redis.Client, sprint, key string) (string, string) {
+	t.Helper()
+	msgs, err := client.XRange(ctx, card.LogKey(sprint), "-", "+").Result()
+	must(t, err)
+	for _, m := range msgs {
+		if m.Values["id"] == key && m.Values["to"] == "rejected-open" {
+			if m.Values["status"] != "422" || m.Values["msg"] == "" || m.Values["at"] == "" {
+				t.Fatalf("rejected-open receipt fields: %v", m.Values)
+			}
+			return m.ID, fmt.Sprint(m.Values["from"])
+		}
+	}
+	t.Fatalf("no rejected-open receipt for %s", key)
+	return "", ""
+}
+
+// fcall calls one loaded nova_sprint function directly (the Go wrappers have
+// loaded the library by the time a control uses it).
+func fcall(t *testing.T, ctx context.Context, client *redis.Client, name string, args ...any) string {
+	t.Helper()
+	out, err := client.FCall(ctx, name, nil, args...).Text()
+	must(t, err)
+	return out
+}
+
+func hashAll(t *testing.T, ctx context.Context, client *redis.Client, key string) map[string]string {
+	t.Helper()
+	h, err := client.HGetAll(ctx, key).Result()
+	must(t, err)
+	return h
+}
+
+func sameHash(t *testing.T, what string, want, got map[string]string) {
+	t.Helper()
+	if len(want) != len(got) {
+		t.Fatalf("%s: idem hash changed: %d fields -> %d (%v)", what, len(want), len(got), got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("%s: idem %s changed: %q -> %q", what, k, v, got[k])
+		}
+	}
+}
+
+// Control 9: two concurrent refills route one ready task, and a crash can
+// land only before or after the one function call: exactly one assignment
+// and one durable receipt, and the retry after a crash writes nothing new.
+func TestControl09OneAssignmentOneReceipt(t *testing.T) {
+	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
+
+	ctx := context.Background()
+	st, client := newSprint(t)
+	const sprint, id = "control-09a0b1c2", "t9"
+	must(t, client.SAdd(ctx, "friends", "ctl-a", "ctl-b").Err())
+	must(t, client.HSet(ctx, "task:"+id, "state", "open", "owner", "", "attempt", "0", "kind", "build").Err())
+	must(t, client.ZAdd(ctx, "s:"+sprint+":ready", redis.Z{Score: 5, Member: id}).Err())
+
+	var wg sync.WaitGroup
+	results := make([]reconcile.Result, 32)
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			consumer := []string{"ctl-a", "ctl-b"}[i%2]
+			r, err := reconcile.Assign(ctx, st, reconcile.AssignRequest{Sprint: sprint, ID: id, Consumer: consumer, Fence: fence})
+			if err != nil {
+				t.Error(err)
+			}
+			results[i] = r
+		}(i)
+	}
+	wg.Wait()
+	owner, _ := client.HGet(ctx, "task:"+id, "owner").Result()
+	if owner != "ctl-a" && owner != "ctl-b" {
+		t.Fatalf("owner = %q", owner)
+	}
+	for i, r := range results {
+		consumer := []string{"ctl-a", "ctl-b"}[i%2]
+		if consumer == owner && r.Code != 0 {
+			t.Fatalf("winner's call %d: %+v", i, r)
+		}
+		if consumer != owner && r.Code == 0 {
+			t.Fatalf("loser's call %d succeeded: %+v", i, r)
+		}
+	}
+	queued := 0
+	for _, c := range []string{"ctl-a", "ctl-b"} {
+		if _, err := client.ZScore(ctx, "s:"+sprint+":open:"+c, id).Result(); err == nil {
+			queued++
+		}
+	}
+	if queued != 1 {
+		t.Fatalf("task is in %d consumer queues, want 1", queued)
+	}
+	if n, _ := client.ZCard(ctx, "s:"+sprint+":ready").Result(); n != 0 {
+		t.Fatal("task still ready after assignment")
+	}
+	if n := receiptsTo(t, ctx, client, sprint, id, "open:"+owner); n != 1 {
+		t.Fatalf("assignment receipts = %d, want 1", n)
+	}
+
+	// Crash: the client dies with the call in flight. The function ran whole
+	// or not at all; the retry returns the stored receipt and adds none.
+	must(t, client.HSet(ctx, "task:u9", "state", "open", "owner", "", "attempt", "0").Err())
+	must(t, client.ZAdd(ctx, "s:"+sprint+":ready", redis.Z{Score: 1, Member: "u9"}).Err())
+	dying := redis.NewClient(&redis.Options{Addr: client.Options().Addr})
+	cctx, cancel := context.WithCancel(ctx)
+	go func() { time.Sleep(time.Millisecond); cancel() }()
+	_, _ = reconcile.Assign(cctx, store.New(dying), reconcile.AssignRequest{Sprint: sprint, ID: "u9", Consumer: "ctl-a", Fence: fence})
+	_ = dying.Close()
+	time.Sleep(50 * time.Millisecond)
+	r, err := reconcile.Assign(ctx, st, reconcile.AssignRequest{Sprint: sprint, ID: "u9", Consumer: "ctl-a", Fence: fence})
+	if err != nil || r.Code != 0 {
+		t.Fatalf("retry after crash: %+v %v", r, err)
+	}
+	ownerU, _ := client.HGet(ctx, "task:u9", "owner").Result()
+	if ownerU != "ctl-a" || receiptsTo(t, ctx, client, sprint, "u9", "open:ctl-a") != 1 {
+		t.Fatalf("after crash and retry: owner %q receipts %d", ownerU, receiptsTo(t, ctx, client, sprint, "u9", "open:ctl-a"))
+	}
+	// Every owner has its receipt: no state without its receipt.
+	for _, tid := range []string{id, "u9"} {
+		o, _ := client.HGet(ctx, "task:"+tid, "owner").Result()
+		if receiptsTo(t, ctx, client, sprint, tid, "open:"+o) != 1 {
+			t.Fatalf("%s owned by %s without exactly one receipt", tid, o)
+		}
+	}
+	// A stale reconciler cannot route.
+	must(t, client.HSet(ctx, "task:v9", "state", "open", "owner", "", "attempt", "0").Err())
+	must(t, client.ZAdd(ctx, "s:"+sprint+":ready", redis.Z{Score: 1, Member: "v9"}).Err())
+	if r, _ := reconcile.Assign(ctx, st, reconcile.AssignRequest{Sprint: sprint, ID: "v9", Consumer: "ctl-a", Fence: "rc-0.old"}); r.Code != 3 {
+		t.Fatalf("stale fence assign: %+v", r)
+	}
+}
+
+// fakeForge serves only POST /repos/ctl-org/ctl-repo/pulls. Any other method
+// or path is a forge read and fails the test (#2930 rev 5). The reply is 201
+// with a new PR unless reply() set a status and body for that head; a 201 on
+// a head records one PR there.
+type fakeForge struct {
+	srv            *httptest.Server
+	mu             sync.Mutex
+	prs            map[string][]int // head branch -> PR numbers opened there
+	posts          map[string]int   // head branch -> POSTs
+	replies        map[string]forgeReply
+	next           int
+	calls, reads   atomic.Int64
+	crashAfterOpen atomic.Bool
+}
+
+type forgeReply struct {
+	status int
+	body   string
+}
+
+func (f *fakeForge) url(n int) string {
+	return fmt.Sprintf("https://github.test/ctl-org/ctl-repo/pull/%d", n)
+}
+
+func (f *fakeForge) reply(head string, status int, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.replies[head] = forgeReply{status: status, body: body}
+}
+
+func (f *fakeForge) postsTo(head string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.posts[head]
+}
+
+func (f *fakeForge) prsOn(head string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.prs[head])
+}
+
+func (f *fakeForge) prsNumber(head string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.prs[head]) == 0 {
+		return 0
+	}
+	return f.prs[head][0]
+}
+
+func newFakeForge(t *testing.T) *fakeForge {
+	f := &fakeForge{prs: map[string][]int{}, posts: map[string]int{}, replies: map[string]forgeReply{}}
+	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.calls.Add(1)
+		if r.Method != http.MethodPost || r.URL.Path != "/repos/ctl-org/ctl-repo/pulls" {
+			f.reads.Add(1)
+			t.Errorf("forge read: %s %s", r.Method, r.URL)
+			http.NotFound(w, r)
+			return
+		}
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		headName := body["head"]
+		f.posts[headName]++
+		rep, ok := f.replies[headName]
+		if ok && rep.status != http.StatusCreated {
+			if strings.Contains(rep.body, "A pull request already exists") && len(f.prs[headName]) == 0 {
+				// The conflict is real: a PR is on the head.
+				f.next++
+				f.prs[headName] = append(f.prs[headName], f.next)
+			}
+			w.WriteHeader(rep.status)
+			_, _ = w.Write([]byte(rep.body))
+			return
+		}
+		// This forge does not refuse a second PR on one head, so a worker
+		// that opens without its idem key opens a second PR.
+		f.next++
+		f.prs[headName] = append(f.prs[headName], f.next)
+		if f.crashAfterOpen.Load() {
+			// The PR exists; the reply never reaches the worker.
+			hj, _ := w.(http.Hijacker)
+			conn, _, _ := hj.Hijack()
+			_ = conn.Close()
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]string{"html_url": f.url(f.next)})
+	}))
+	t.Cleanup(f.srv.Close)
+	return f
+}
+
+func hashOf(t *testing.T, ctx context.Context, client *redis.Client, sprint, label string) map[string]string {
+	t.Helper()
+	h, err := client.HGetAll(ctx, card.CardKey(sprint, label)).Result()
+	must(t, err)
+	return h
+}
+
+func zHas(t *testing.T, ctx context.Context, client *redis.Client, key, member string) bool {
+	_, err := client.ZScore(ctx, key, member).Result()
+	return err == nil
+}
+
+func xlen(t *testing.T, ctx context.Context, client *redis.Client, sprint string) int64 {
+	n, err := client.XLen(ctx, card.LogKey(sprint)).Result()
+	must(t, err)
+	return n
+}
+
+// receiptsTo counts log entries for id whose to field is to.
+func receiptsTo(t *testing.T, ctx context.Context, client *redis.Client, sprint, id, to string) int {
+	t.Helper()
+	msgs, err := client.XRange(ctx, card.LogKey(sprint), "-", "+").Result()
+	must(t, err)
+	n := 0
+	for _, m := range msgs {
+		if m.Values["id"] == id && m.Values["to"] == to {
+			n++
+		}
+	}
+	return n
+}
+
+func newSprint(t *testing.T) (*store.Store, *redis.Client) {
+	t.Helper()
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	// The owner converges the server, as ns-deploy does on the fleet: the
+	// card path never loads the library itself (#3551).
+	must(t, fn.Load(context.Background(), client))
+	// The reconciler lease this test acts under (#2726 owns its renewal).
+	must(t, client.HSet(context.Background(), "lease:reconciler", "instance", "ctl", "token", fence).Err())
+	return store.New(client), client
+}

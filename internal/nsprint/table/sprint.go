@@ -25,7 +25,13 @@
 // named <kind>:<name> (friend:emma, bench:hetzner) so the kind shows. Every
 // cell is one ZCARD of <kind>:<name>:cards:<set> for set = ready, working,
 // ok, fail; done = ok + fail and ok% = ok / done are derived, never stored,
-// with no sprint window and no base from a clear. status is up when the
+// with no sprint window and no base from a clear. The cells count consumer
+// work only, by structure (nova-tools#4237): a record naming a probe is
+// refused by every move into <kind>:<name>:cards:<set> (cm_zadd and the
+// move gates in 02_card_move.lua), and a probe's result lives on the bench
+// beat (bench:<b>:beat probe, fleet build), which this table never counts;
+// after sprint clear and a fleet roll every row reads 0 | 0 | 0 | -.
+// status is up when the
 // consumer's own beat (<kind>:<name>:beat at, ms) is under a minute old and
 // <kind>:<name>:down does not exist, else down (the row still shows its
 // cards); an up consumer whose desired hash has paused 1 (worker pause,
@@ -92,23 +98,10 @@ type SprintConfig struct {
 	LockTTL            time.Duration
 }
 
-// StreamRow is one stream's six counts, in WSStates order. Unread marks a
-// cell whose ZCARD did not come back: it prints "?", never a false 0 (a 0
-// there would also feed XY's left, pct and eta).
+// StreamRow is one stream's six counts, in WSStates order.
 type StreamRow struct {
 	Name                                             string
 	Waiting, Ready, Working, Review, Merging, Landed int64
-	Unread                                           [6]bool
-}
-
-// AnyUnread says a cell of the row did not come back.
-func (r StreamRow) AnyUnread() bool {
-	for _, u := range r.Unread {
-		if u {
-			return true
-		}
-	}
-	return false
 }
 
 // Total is every task in the stream's six sets.
@@ -126,6 +119,10 @@ type SprintSnapshot struct {
 	Pitstop    bool
 	Streams    []StreamRow
 	LandedHour int64 // ws:log moves to landed in the hour before the read
+	// Events is proc:progress as the progress duty wrote it (#4319): the
+	// asks so far, the last EVENT line, and the last pass's duty refusals.
+	// The table prints one EVENTS line from it only when non-zero.
+	Events ProgressEvents
 	// Consumers are the consumer table's rows, in display order (#4071).
 	Consumers []ConsumerRow
 	// RoundTrips is how many pipelines the read took: 1 in steady state.
@@ -135,10 +132,6 @@ type SprintSnapshot struct {
 	// Stale is set when this tick's read failed; the rows are LastGood's.
 	Stale    bool
 	LastGood time.Time
-	// Errors are the tick's partial failures (a pit stop key, the ws:log
-	// window or the Studio beat that did not come back): the rows stand,
-	// and each prints as one ERR line under the tables, never nothing.
-	Errors []string
 }
 
 // Consumer is one consumer of copies: <Kind>:<Name>, bench or friend.
@@ -429,6 +422,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	// load1. The proper fix is the friend beat carrying its own machine's
 	// load1 like the bench beat does; then this read goes.
 	studio := pipe.HMGet(ctx, FriendHostBeatKey, "load1", "ncpu", "cpu")
+	progress := pipe.HGetAll(ctx, ProgressKey)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, false, fmt.Errorf("pipeline: %w", err)
 	}
@@ -443,36 +437,20 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	epochVal, err := epochCmd.Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, false, fmt.Errorf("hget %s %s: %w", ws.EpochKey, ws.EpochField, err)
-
 	}
 	gotEpoch, err := ws.ParseEpoch(epochVal)
 	if err != nil {
 		return nil, false, err
 	}
-	// A membership set that did not come back would empty its rows without
-	// a word: the tick fails instead, and the loop publishes the last good
-	// rows with the stale line naming the read.
-	sorted := func(name string, c *redis.StringSliceCmd) ([]string, error) {
-		got, err := c.Result()
-		if err != nil && !errors.Is(err, redis.Nil) {
-			return nil, fmt.Errorf("smembers %s: %w", name, err)
-		}
+	sorted := func(c *redis.StringSliceCmd) []string {
+		got, _ := c.Result()
 		sort.Strings(got)
-		return got, nil
+		return got
 	}
-	gotBenches, err := sorted("benches", benchSet)
-	if err != nil {
-		return nil, false, err
-	}
-	gotConsumers, err := sorted("consumers", consumerSet)
-	if err != nil {
-		return nil, false, err
-	}
+	gotBenches, gotConsumers := sorted(benchSet), sorted(consumerSet)
 	var gotFriends []string
 	if friendSet != nil {
-		if gotFriends, err = sorted("friends", friendSet); err != nil {
-			return nil, false, err
-		}
+		gotFriends = sorted(friendSet)
 	}
 	var gotSprints []string
 	open := ""
@@ -495,19 +473,10 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 
 	snap := &SprintSnapshot{Config: cfg, Epoch: gotEpoch}
-
-	if pit != nil {
-		if n, err := pit.Result(); err != nil && !errors.Is(err, redis.Nil) {
-			// A stop that could not be read is not "no stop".
-			snap.Errors = append(snap.Errors, "pit stop s:"+pitSprint+":pitstop not read: "+err.Error())
-		} else if n > 0 {
-			snap.Pitstop = true
-		}
+	if pit != nil && pit.Val() > 0 {
+		snap.Pitstop = true
 	}
-	if msgs, err := log.Result(); err != nil && !errors.Is(err, redis.Nil) {
-		// The ETA rate would read as 1 an hour with no word.
-		snap.Errors = append(snap.Errors, "ws:log not read (eta rate unknown): "+err.Error())
-	} else {
+	if msgs, err := log.Result(); err == nil {
 		for _, m := range msgs {
 			if to, _ := m.Values["to"].(string); to == "landed" {
 				snap.LandedHour++
@@ -519,16 +488,20 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			snap.LockLost = true
 		}
 	}
+	if h, err := progress.Result(); err != nil && !errors.Is(err, redis.Nil) {
+		// An EVENTS line that could not be read is said, never a quiet none.
+		snap.Events = ProgressEvents{Unread: err.Error()}
+	} else {
+		snap.Events = ParseProgressEvents(h)
+	}
 	for i, s := range r.streams {
 		row := StreamRow{Name: s}
 		cells := []*int64{&row.Waiting, &row.Ready, &row.Working, &row.Review, &row.Merging, &row.Landed}
 		for j, c := range counts[i] {
-			n, err := c.Result()
-			*cells[j], row.Unread[j] = n, err != nil && !errors.Is(err, redis.Nil)
+			*cells[j] = c.Val()
 		}
 		snap.Streams = append(snap.Streams, row)
 	}
-	studioNoted := false
 	for i, c := range roster {
 		row := ConsumerRow{Consumer: c, Load: "-"}
 		cells := []*int64{&row.Ready, &row.Working, &row.OK, &row.Fail}
@@ -541,9 +514,6 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			if !ok && c.Kind == "friend" {
 				if got, err := studio.Result(); err == nil && len(got) == 3 {
 					v, raw, ok = loadValue(pipeValue(got[2]), pipeValue(got[0]), pipeValue(got[1]))
-				} else if err != nil && !errors.Is(err, redis.Nil) && !studioNoted {
-					studioNoted = true
-					snap.Errors = append(snap.Errors, FriendHostBeatKey+" not read (friend loads unknown): "+err.Error())
 				}
 			}
 			switch {
@@ -630,13 +600,13 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 
 	s.renderStreams(&b)
 	writeConsumerTable(&b, s.Consumers)
+	if line := s.Events.Line(); line != "" {
+		// One EVENTS line, only when there is one to show (#4319 item 4:
+		// less is more).
+		b.WriteString(line + "\n")
+	}
 	if s.Stale {
 		fmt.Fprintf(&b, "stale: %ds (Redis did not answer; rows are the last good read)\n", now.Unix()-s.LastGood.Unix())
-	}
-	for _, e := range s.Errors {
-		// One line per partial failure of the tick: the screen says what it
-		// could not read rather than showing a quiet default.
-		b.WriteString("ERR " + strings.Join(strings.Fields(e), " ") + "\n")
 	}
 	return b.String()
 }
@@ -755,7 +725,7 @@ func (s *SprintSnapshot) renderStreams(b *strings.Builder) {
 	// line is the only gap before the worker table.
 	any := false
 	for _, r := range s.Streams {
-		if r.Total() != 0 || r.AnyUnread() {
+		if r.Total() != 0 {
 			any = true
 			break
 		}
@@ -768,31 +738,16 @@ func (s *SprintSnapshot) renderStreams(b *strings.Builder) {
 	b.WriteString(streamRule)
 	var tot StreamRow
 	for _, r := range s.Streams {
-		if r.Total() == 0 && !r.AnyUnread() {
+		if r.Total() == 0 {
 			continue
 		}
-		vals := [6]int64{r.Waiting, r.Ready, r.Working, r.Review, r.Merging, r.Landed}
-		tots := []*int64{&tot.Waiting, &tot.Ready, &tot.Working, &tot.Review, &tot.Merging, &tot.Landed}
-		var cell [6]string
-		for j, v := range vals {
-			*tots[j] += v
-			cell[j] = strconv.FormatInt(v, 10)
-			if r.Unread[j] {
-				// A ZCARD that did not come back prints "?", never a false 0.
-				cell[j], tot.Unread[j] = "?", true
-			}
-		}
-		fmt.Fprintf(b, "%-25s | %7s | %5s | %7s | %6s | %7s | %6s\n", r.Name, cell[0], cell[1], cell[2], cell[3], cell[4], cell[5])
+		tot.Waiting, tot.Ready, tot.Working, tot.Review = tot.Waiting+r.Waiting, tot.Ready+r.Ready, tot.Working+r.Working, tot.Review+r.Review
+		tot.Merging, tot.Landed = tot.Merging+r.Merging, tot.Landed+r.Landed
+		fmt.Fprintf(b, "%-25s | %7d | %5d | %7d | %6d | %7d | %6d\n", r.Name, r.Waiting, r.Ready, r.Working, r.Review,
+			r.Merging, r.Landed)
 	}
 	b.WriteString(streamRule)
-	totVals := [6]int64{tot.Waiting, tot.Ready, tot.Working, tot.Review, tot.Merging, tot.Landed}
-	var cell [6]string
-	for j, v := range totVals {
-		cell[j] = strconv.FormatInt(v, 10)
-		if tot.Unread[j] {
-			cell[j] = "?"
-		}
-	}
-	fmt.Fprintf(b, "%-25s | %7s | %5s | %7s | %6s | %7s | %6s\n", "total", cell[0], cell[1], cell[2], cell[3], cell[4], cell[5])
+	fmt.Fprintf(b, "%-25s | %7d | %5d | %7d | %6d | %7d | %6d\n", "total", tot.Waiting, tot.Ready, tot.Working, tot.Review,
+		tot.Merging, tot.Landed)
 	b.WriteByte('\n')
 }

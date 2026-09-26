@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 func TestIssue2218(t *testing.T) {
@@ -66,10 +68,11 @@ func TestIssue2218(t *testing.T) {
 		}
 
 		listPath := filepath.Join("testdata", "unexecuted_examples.txt")
-		headList := readFile(t, listPath)
+		unexecuted := loadAllowlist(t, listPath, unexecutedListOptions)
+		headList := unexecuted.Text()
 		allow := make(map[string]bool)
-		for _, r := range ListRows(headList) {
-			allow[r] = true
+		for _, r := range unexecuted.Rows() {
+			allow[r.Key] = true
 		}
 
 		// Shrink-only: every row the change adds to the list is a new
@@ -96,10 +99,22 @@ func TestIssue2218(t *testing.T) {
 		}
 
 		comparedPath := filepath.Join("testdata", "compared_examples.txt")
-		compared := readCompared(t, comparedPath)
+		comparedList := loadAllowlist(t, comparedPath, comparedListOptions)
+		compared := parseCompared(t, comparedPath, comparedList)
+		// The measured set of compared_examples.txt is every entry that is
+		// still a real example; a test is named by hand, so it never grows here.
+		comparedMeasured := map[string]bool{}
+		for ex := range compared {
+			if seen[ex] {
+				comparedMeasured[ex] = true
+			}
+		}
+		for _, row := range allowlist.Check(t, comparedList, comparedMeasured).Stale {
+			t.Errorf("%s:%d names %q, which is not a pasted example of the named docs or a help banner; delete the stale entry", comparedPath, row.Line, row.Key)
+		}
 		for ex, c := range compared {
-			if !seen[ex] {
-				t.Errorf("%s:%d names %q, which is not a pasted example of the named docs or a help banner; delete the stale entry", comparedPath, c.line, ex)
+			if !comparedMeasured[ex] {
+				continue
 			}
 			if allow[ex] {
 				t.Errorf("%q is in both %s and %s; a compared example leaves the unexecuted list", ex, comparedPath, listPath)
@@ -113,17 +128,25 @@ func TestIssue2218(t *testing.T) {
 			}
 		}
 
-		var stale []string
+		unmatched := unlistedExamples(examples, allow, compared)
+		// The measured set of unexecuted_examples.txt is every real example no
+		// test executes yet: a listed one still here and not moved to
+		// compared_examples.txt, and every unmatched one (which the ceiling
+		// refuses to add).
+		measured := map[string]bool{}
 		for entry := range allow {
-			if !seen[entry] {
-				stale = append(stale, entry)
+			if seen[entry] && compared[entry].test == "" {
+				measured[entry] = true
 			}
 		}
-		sort.Strings(stale)
-		unmatched := unlistedExamples(examples, allow, compared)
-
-		for _, s := range stale {
-			t.Errorf("%s lists %q which is not a pasted example of the named docs or a help banner; delete the stale entry (the list only shrinks)", listPath, s)
+		for _, u := range unmatched {
+			measured[u] = true
+		}
+		for _, row := range allowlist.Check(t, unexecuted, measured).Stale {
+			if seen[row.Key] {
+				continue // moved to compared_examples.txt: the "in both" line above says so
+			}
+			t.Errorf("%s lists %q which is not a pasted example of the named docs or a help banner; delete the stale entry (the list only shrinks)", listPath, row.Key)
 		}
 		if len(unmatched) > 0 {
 			t.Errorf("%d unlisted pasted example(s) in the named docs or the help banners are not covered by a test through onboarding.Compare; %s is shrink-only and does not grow to match new examples -- cover each with a comparator test and name it in %s instead of listing it", len(unmatched), listPath, comparedPath)
@@ -166,39 +189,38 @@ type comparedExample struct {
 	ex   string // the pasted example, exactly as in the doc or banner
 }
 
-// readCompared reads testdata/compared_examples.txt: one
-// `<test file>:<TestName> <$ line | example: line>` per line, blank lines and
-// '#' lines skipped. An `example:` entry is a help banner's example line, so a
-// test that executes it moves it here off the unexecuted list like any $ line.
-func readCompared(t *testing.T, path string) map[string]comparedExample {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return parseCompared(t, path, string(raw))
+// unexecutedListOptions keys a row of unexecuted_examples.txt by the whole
+// example line; the list is shrink-only against its base as well.
+var unexecutedListOptions = allowlist.Options{Key: allowlist.WholeRow, Ceiling: true}
+
+// comparedListOptions keys a row of compared_examples.txt by its example: one
+// `<test file>:<TestName> <$ line | example: line>` per line. An `example:`
+// entry is a help banner's example line, so a test that executes it moves it
+// here off the unexecuted list like any $ line. The row names a test, which no
+// walk can measure, so an update only ever drops a row here.
+var comparedListOptions = allowlist.Options{Key: comparedExampleKey, Ceiling: true}
+
+func comparedExampleKey(row string) string {
+	_, ex, _ := strings.Cut(row, " ")
+	return strings.TrimSpace(ex)
 }
 
-func parseCompared(t *testing.T, path, raw string) map[string]comparedExample {
+func parseCompared(t *testing.T, path string, list *allowlist.List) map[string]comparedExample {
 	t.Helper()
 	out := make(map[string]comparedExample)
-	for i, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		ref, ex, ok := strings.Cut(line, " ")
+	for _, row := range list.Rows() {
+		ref, ex, ok := strings.Cut(row.Text, " ")
 		file, test, okRef := strings.Cut(ref, ":")
 		ex = strings.TrimSpace(ex)
 		if !ok || !okRef || file == "" || test == "" || !(strings.HasPrefix(ex, "$ ") || strings.HasPrefix(ex, "example: ")) {
-			t.Errorf("%s:%d: want `<test file>:<TestName> $ <example>` or `<test file>:<TestName> example: <line>`, got %q", path, i+1, line)
+			t.Errorf("%s:%d: want `<test file>:<TestName> $ <example>` or `<test file>:<TestName> example: <line>`, got %q", path, row.Line, row.Text)
 			continue
 		}
 		if prev, dup := out[ex]; dup {
-			t.Errorf("%s:%d: %q is already listed at line %d", path, i+1, ex, prev.line)
+			t.Errorf("%s:%d: %q is already listed at line %d", path, row.Line, ex, prev.line)
 			continue
 		}
-		out[ex] = comparedExample{file: file, test: test, line: i + 1, ex: ex}
+		out[ex] = comparedExample{file: file, test: test, line: row.Line, ex: ex}
 	}
 	return out
 }

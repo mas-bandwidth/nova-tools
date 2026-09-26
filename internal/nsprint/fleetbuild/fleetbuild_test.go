@@ -409,3 +409,61 @@ func TestFleetBuildLegacyBuildCmd(t *testing.T) {
 		t.Fatalf("legacy argv = %q, want %q", got, want)
 	}
 }
+
+// TestFleetBuildProbeGoesOnTheBeat is nova-tools#4237: every target's probe
+// result goes on its bench beat as probe (OK, MISMATCH, FAIL with the
+// release and the time), a bench with no beat gets its PROBE NOBEAT line and
+// no phantom beat, and nothing is written under any <consumer>:cards:* key.
+func TestFleetBuildProbeGoesOnTheBeat(t *testing.T) {
+	t.Parallel()
+
+	mr, c := seed(t)
+	for _, b := range []string{"hulk", "batman", "studio"} {
+		mr.HSet(BeatKey(b), "at", "1")
+		mr.SetTTL(BeatKey(b), 3*time.Second)
+	}
+	f := &fakeBench{t: t, home: t.TempDir(), answer: map[string]string{"hulk": "v0.15.2"}, sshFail: map[string]bool{"batman": true}}
+	_, out := deploy(t, c, f)
+
+	const at = "2026-09-25T13:00:00Z"
+	for b, want := range map[string]string{
+		"hulk":   "MISMATCH " + testV + " " + at,
+		"batman": "FAIL " + testV + " " + at,
+		"studio": "OK " + testV + " " + at,
+	} {
+		if got := mr.HGet(BeatKey(b), "probe"); got != want {
+			t.Errorf("%s probe = %q, want %q\n%s", BeatKey(b), got, want, out)
+		}
+		if !strings.Contains(out, "PROBE "+b+" beat="+BeatKey(b)+" probe=\""+want+"\"\n") {
+			t.Errorf("no PROBE line for %s:\n%s", b, out)
+		}
+		if ttl := mr.TTL(BeatKey(b)); ttl <= 0 || ttl > 3*time.Second {
+			t.Errorf("%s ttl %v: the probe write must keep the beat's own life", BeatKey(b), ttl)
+		}
+	}
+	if mr.Exists(BeatKey("space")) {
+		t.Error("space had no beat and now has one: a phantom beat")
+	}
+	if !strings.Contains(out, "PROBE NOBEAT space probe=\"OK "+testV+" "+at+"\"") {
+		t.Errorf("no PROBE NOBEAT line for space:\n%s", out)
+	}
+	for _, k := range mr.Keys() {
+		if strings.Contains(k, ":cards:") {
+			t.Errorf("fleet build wrote %s; a probe never touches a consumer's cards", k)
+		}
+	}
+}
+
+// TestFleetBuildProbeWriteNeverLeavesABeatWithoutExpiry: a beat that
+// expires between the read and the write is bounded to one beat's life.
+func TestFleetBuildProbeWriteNeverLeavesABeatWithoutExpiry(t *testing.T) {
+	t.Parallel()
+
+	mr, c := seed(t)
+	mr.HSet(BeatKey("hulk"), "at", "1") // no TTL: the write's ExpireNX gives it one
+	f := &fakeBench{t: t, home: t.TempDir()}
+	deploy(t, c, f, "hulk")
+	if ttl := mr.TTL(BeatKey("hulk")); ttl != BeatTTL {
+		t.Fatalf("%s ttl %v, want %v", BeatKey("hulk"), ttl, BeatTTL)
+	}
+}

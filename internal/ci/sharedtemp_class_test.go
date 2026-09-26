@@ -5,11 +5,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // sharedtemp_class_test.go is the READ side of the temp directory rule, and the
@@ -81,7 +81,7 @@ func TestNoTestGlobsTheSharedTempDir(t *testing.T) {
 	t.Parallel()
 
 	tree := repoTree(t)
-	allow := readSharedTempAllowlist(t)
+	allow := loadAllowlist(t, sharedTempAllowlistPath, shrinkOnly)
 	seen := map[string]bool{}
 	var violations []string
 
@@ -98,18 +98,17 @@ func TestNoTestGlobsTheSharedTempDir(t *testing.T) {
 			for _, f := range sharedTempReadsIn(src.Rel, tree.FSet, src.AST) {
 				key := f.File + ":" + f.Func
 				seen[key] = true
-				if !allow[key] {
+				if !allow.Has(key) {
 					violations = append(violations, f.String()+"\n  (or add "+key+" to internal/ci/"+sharedTempAllowlistPath+" with a reason)")
 				}
 			}
 		}
 	}
-	for key := range allow {
-		if !seen[key] {
-			violations = append(violations, fmt.Sprintf(
-				"%s lists %s, but no shared-temp listing is there any more; delete the stale entry (the list only shrinks)",
-				sharedTempAllowlistPath, key))
-		}
+	for _, row := range allowlist.Check(t, allow, seen).Stale {
+		key := row.Key
+		violations = append(violations, fmt.Sprintf(
+			"%s lists %s, but no shared-temp listing is there any more; delete the stale entry (the list only shrinks)",
+			sharedTempAllowlistPath, key))
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
@@ -291,24 +290,4 @@ func namesTheSharedTempDir(expr ast.Expr, tainted map[string]bool) bool {
 		return !found
 	})
 	return found
-}
-
-func readSharedTempAllowlist(t *testing.T) map[string]bool {
-	t.Helper()
-	raw, err := os.ReadFile(sharedTempAllowlistPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allow := map[string]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if i := strings.Index(line, " #"); i >= 0 {
-			line = strings.TrimSpace(line[:i])
-		}
-		allow[line] = true
-	}
-	return allow
 }

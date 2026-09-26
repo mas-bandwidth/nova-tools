@@ -1,0 +1,9 @@
+VERSION: review-v1
+
+A copy of this card failed. From the evidence (the failure shape, how often the same shape failed on this card and on this consumer, the model, the exit, the last typed line, the reads) pick the verdict that gets the card landed soonest.
+
+OPTIONS:
+- drop: the work is no longer needed or already done: close it
+- reassign: this consumer or model keeps failing this shape: give the card to another consumer
+- recut: the card itself is the problem (unclear, too big, wrong base): rewrite it and start again
+- redeal: a transient failure (a crash, a lapsed lease, an outage): deal the same card again

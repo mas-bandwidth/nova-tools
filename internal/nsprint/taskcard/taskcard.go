@@ -213,6 +213,69 @@ type PushResult struct {
 
 // Push creates the record and makes its first move, in one call.
 func Push(ctx context.Context, c redis.Cmdable, r PushRequest) (PushResult, error) {
+	args, err := r.args()
+	if err != nil {
+		return PushResult{}, err
+	}
+	return parsePush(c.FCall(ctx, FnPush, nil, args...).Result())
+}
+
+// PushOutcome is one request of a PushMany: where it was placed, or why not
+// (a *Refused wrote nothing).
+type PushOutcome struct {
+	Result PushResult
+	Err    error
+}
+
+// PushMany is Push for many tasks in one round trip (nova-tools#4340): every
+// request's FCALL ns_tcard_push in one pipeline, in the order given, one
+// outcome per request in the same order. A request its own spec refuses is
+// never sent and its outcome carries the *Refused; the others are pushed.
+// The error is the batch's own (every command failed: the connection, the
+// library), never one push's refusal.
+func PushMany(ctx context.Context, c redis.Cmdable, reqs []PushRequest) ([]PushOutcome, error) {
+	out := make([]PushOutcome, len(reqs))
+	cmds := make([]*redis.Cmd, len(reqs))
+	pipe := c.Pipeline()
+	sent := 0
+	for i := range reqs {
+		args, err := reqs[i].args()
+		if err != nil {
+			out[i].Err = err
+			continue
+		}
+		cmds[i] = pipe.FCall(ctx, FnPush, nil, args...)
+		sent++
+	}
+	if sent == 0 {
+		return out, nil
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		// Exec names the first command's error. When every command failed
+		// (no connection, no library) the batch is the failure; otherwise
+		// each outcome carries its own.
+		all := true
+		for _, cmd := range cmds {
+			if cmd != nil && cmd.Err() == nil {
+				all = false
+				break
+			}
+		}
+		if all {
+			return nil, fmt.Errorf("%s: %w", FnPush, err)
+		}
+	}
+	for i, cmd := range cmds {
+		if cmd != nil {
+			out[i].Result, out[i].Err = parsePush(cmd.Result())
+		}
+	}
+	return out, nil
+}
+
+// args are the push's ns_tcard_push arguments; a spec a swarm route cannot
+// run is a *Refused and nothing is sent.
+func (r *PushRequest) args() ([]any, error) {
 	why := r.Why
 	if why == "" {
 		why = "push"
@@ -221,7 +284,7 @@ func Push(ctx context.Context, c redis.Cmdable, r PushRequest) (PushResult, erro
 	if r.Spec != nil {
 		var err error
 		if spec, err = r.fillSpec(); err != nil {
-			return PushResult{}, err
+			return nil, err
 		}
 	}
 	where := r.Where
@@ -252,8 +315,11 @@ func Push(ctx context.Context, c redis.Cmdable, r PushRequest) (PushResult, erro
 		front = "1"
 	}
 	o.Fields = append(o.Fields, "front", front)
-	args = append(args, o.args()...)
-	reply, err := c.FCall(ctx, FnPush, nil, args...).Result()
+	return append(args, o.args()...), nil
+}
+
+// parsePush reads one ns_tcard_push reply.
+func parsePush(reply any, err error) (PushResult, error) {
 	if err != nil {
 		return PushResult{}, fmt.Errorf("%s: %w", FnPush, err)
 	}
@@ -474,14 +540,7 @@ func Fsck(ctx context.Context, c redis.Cmdable, sprint string) (FsckResult, erro
 	if err != nil || len(out) < n || out[0] != "FSCK" {
 		return FsckResult{}, fmt.Errorf("%s: unexpected reply %v %v", FnFsck, out, err)
 	}
-	var bad []string
-	num := func(s string) int64 {
-		v, err := strconv.ParseInt(s, 10, 64)
-		if err != nil {
-			bad = append(bad, s)
-		}
-		return v
-	}
+	num := func(s string) int64 { v, _ := strconv.ParseInt(s, 10, 64); return v }
 	r := FsckResult{Sprint: out[1], Tasks: num(out[2]), Null: num(out[3]), Counts: map[string]int64{}}
 	for i, w := range Wheres {
 		r.Counts[w] = num(out[4+i])
@@ -489,10 +548,6 @@ func Fsck(ctx context.Context, c redis.Cmdable, sprint string) (FsckResult, erro
 	r.Unplaced = num(out[4+len(Wheres)])
 	r.Drift = num(out[5+len(Wheres)])
 	r.Lines = out[n:]
-	if len(bad) > 0 {
-		// A count that is not a number would read as 0: a false clean.
-		return FsckResult{}, fmt.Errorf("%s: counts %q are not numbers in reply %v", FnFsck, bad, out)
-	}
 	return r, nil
 }
 

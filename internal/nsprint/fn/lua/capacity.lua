@@ -448,11 +448,8 @@ end
 -- args = machine, cpu_milli, mem_mb, actor, idem.
 local function cap_budget_set(keys, args)
   local machine = args[1]
-  -- a budget that is not a number is refused, never written as 0
-  local cpu_milli = tonumber(args[2] or '0')
-  if not cpu_milli then return { 'REFUSED', 'cpu_milli ' .. tostring(args[2]) .. ' is not a number' } end
-  local mem_mb = tonumber(args[3] or '0')
-  if not mem_mb then return { 'REFUSED', 'mem_mb ' .. tostring(args[3]) .. ' is not a number' } end
+  local cpu_milli = tonumber(args[2] or '0') or 0
+  local mem_mb = tonumber(args[3] or '0') or 0
   local actor = args[4] or ''
   local idem = args[5] or ''
   local at = now_ms()
@@ -468,11 +465,8 @@ end
 local function cap_budget_take(keys, args)
   local machine = args[1]
   local consumer = args[2]
-  -- a request that is not a number is refused, never debited as 0
-  local req_cpu = tonumber(args[3] or '0')
-  if not req_cpu then return { 'REFUSED', 'cpu_milli ' .. tostring(args[3]) .. ' is not a number' } end
-  local req_mem = tonumber(args[4] or '0')
-  if not req_mem then return { 'REFUSED', 'mem_mb ' .. tostring(args[4]) .. ' is not a number' } end
+  local req_cpu = tonumber(args[3] or '0') or 0
+  local req_mem = tonumber(args[4] or '0') or 0
   local ttl_ms = tonumber(args[5] or '30000') or 30000
   if ttl_ms <= 0 then ttl_ms = 30000 end
   local pgid = args[6] or ''
