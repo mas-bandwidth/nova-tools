@@ -3170,8 +3170,9 @@ the unit tier CI runs for your change: the packages
 budgets) under `nice -n 15` with `GOMAXPROCS=2`, `GOTEST_P=2` and `-count=1`. It
 prints one `PKG` line per package with its seconds and one `RED` line per failing
 test with its output; exit 0 is green, 1 a red test or build, 2 over the budgets
-or a step that could not run. `--functional` adds `make test-functional` over the
-same packages ([TESTING.md](../TESTING.md)).
+or a step that could not run. `--functional` adds the functional build tag
+(`GOTEST_TAGS=functional`), as CI's merge-group and push legs do
+([TESTING.md](../TESTING.md)).
 
 See [SPEC-CI.md](SPEC-CI.md).
 

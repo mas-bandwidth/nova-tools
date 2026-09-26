@@ -64,7 +64,7 @@ func (f *localFake) call(prefix string) *localCmd {
 const localMergeBase = "0123456789abcdef0123456789abcdef01234567"
 
 // localCheckout makes a checkout with the select script and a Makefile holding
-// the given targets.
+// the given targets; with more than one, the test target takes GOTEST_TAGS.
 func localCheckout(t *testing.T, targets ...string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -76,6 +76,9 @@ func localCheckout(t *testing.T, targets ...string) string {
 	}
 	var mk strings.Builder
 	mk.WriteString("GO ?= go\n")
+	if len(targets) > 1 {
+		mk.WriteString("GOTEST_TAGS ?=\n")
+	}
 	for _, target := range targets {
 		mk.WriteString(target + ": PKGS := ./cmd/...\n" + target + ":\n\t@true\n")
 	}
@@ -137,7 +140,7 @@ func TestLocalGreenRunsTheUnitTierAsCIDoes(t *testing.T) {
 	if mk == nil {
 		t.Fatalf("make test was not run; calls: %+v", f.calls)
 	}
-	if got, want := strings.Join(mk.Argv, "|"), "nice|-n|15|make|test|PKGS=./cmd/a ./internal/ci|GOTEST_P=2|GOTEST_COUNT_FLAG=-count=1"; got != want {
+	if got, want := strings.Join(mk.Argv, "|"), "nice|-n|15|make|test|PKGS=./cmd/a ./internal/ci|GOTEST_P=2|GOTEST_COUNT_FLAG=-count=1|GOTEST_TAGS="; got != want {
 		t.Errorf("make argv = %s, want %s", got, want)
 	}
 	env := strings.Join(mk.Env, " ")
@@ -149,7 +152,7 @@ func TestLocalGreenRunsTheUnitTierAsCIDoes(t *testing.T) {
 		"PKG ok      0.4s example.com/m/cmd/a",
 		"PKG ok      1.6s example.com/m/internal/ci",
 		"CI-SLOW OK packages=2",
-		"unit tier packages=2 seconds=2.0s red=0 make-exit=0",
+		"nova-ci local: packages=2 seconds=2.0s red=0 make-exit=0",
 		"nova-ci local: exit=0",
 	} {
 		if !strings.Contains(stdout, want) {
@@ -158,9 +161,6 @@ func TestLocalGreenRunsTheUnitTierAsCIDoes(t *testing.T) {
 	}
 	if strings.Contains(stdout, `"Action"`) {
 		t.Errorf("stdout carries raw TestEvent JSON:\n%s", stdout)
-	}
-	if f.call("nice -n 15 make test-functional") != nil {
-		t.Error("make test-functional ran without --functional")
 	}
 }
 
@@ -247,23 +247,24 @@ func TestLocalNothingSelectedRunsNothing(t *testing.T) {
 	}
 }
 
-// --functional adds make test-functional over the same packages; its red is
-// the verb's red.
-func TestLocalFunctionalAddsTheFunctionalTier(t *testing.T) {
+// --functional runs the same make test with the functional build tag, as CI's
+// merge-group and push legs do; its red is the verb's red.
+func TestLocalFunctionalAddsTheTag(t *testing.T) {
 	t.Parallel()
-	f := localFixture(t, "./cmd/a\n",
-		localReply{prefix: "nice -n 15 make test-functional", stdout: "--- FAIL: TestStore (0.50s)\nFAIL\texample.com/m/cmd/a\t0.6s\n", code: 2},
-		localReply{prefix: "nice -n 15 make test ", stdout: localGreenStream},
-	)
+	stream := `{"Action":"output","Package":"example.com/m/cmd/a","Test":"TestStore","Output":"    store_test.go:12: redis: connection refused\n"}
+{"Action":"fail","Package":"example.com/m/cmd/a","Test":"TestStore","Elapsed":0.5}
+{"Action":"fail","Package":"example.com/m/cmd/a","Elapsed":0.6}
+`
+	f := localFixture(t, "./cmd/a\n", localReply{prefix: "nice -n 15 make test ", stdout: stream, code: 2})
 	code, stdout, _ := runLocal(t, f, "--functional")
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1\n%s", code, stdout)
 	}
-	fn := f.call("nice -n 15 make test-functional")
-	if fn == nil || strings.Join(fn.Argv, "|") != "nice|-n|15|make|test-functional|PKGS=./cmd/a|GOTEST_P=2" {
-		t.Fatalf("functional call = %+v", fn)
+	mk := f.call("nice -n 15 make test ")
+	if mk == nil || strings.Join(mk.Argv, "|") != "nice|-n|15|make|test|PKGS=./cmd/a|GOTEST_P=2|GOTEST_COUNT_FLAG=-count=1|GOTEST_TAGS=functional" {
+		t.Fatalf("make call = %+v, want the test target with GOTEST_TAGS=functional", mk)
 	}
-	for _, want := range []string{"--- FAIL: TestStore", "functional tier red: make test-functional exited 2"} {
+	for _, want := range []string{"RED package=example.com/m/cmd/a test=TestStore", "redis: connection refused"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, stdout)
 		}
@@ -302,11 +303,11 @@ func TestLocalRefusalsPrint(t *testing.T) {
 			f.root = t.TempDir()
 			return f
 		}, nil, "go test -p 2 -count=1 <packages>"},
-		{"no functional target", func(t *testing.T) *localFake {
+		{"no functional tags", func(t *testing.T) *localFake {
 			f := plain(t)
 			f.root = localCheckout(t, "test")
 			return f
-		}, []string{"--functional"}, "no test-functional target"},
+		}, []string{"--functional"}, "takes no GOTEST_TAGS"},
 		{"no merge base", func(t *testing.T) *localFake {
 			f := plain(t)
 			f.replies = append([]localReply{{prefix: "git merge-base", stderr: "fatal: Not a valid object name origin/dev", code: 128}}, f.replies...)

@@ -4,7 +4,7 @@
 
 ```sh
 nova-ci local                  # the unit tier CI runs for this diff
-nova-ci local --functional     # and the functional tier over the same packages
+nova-ci local --functional     # with the functional build tag, as the merge queue runs it
 nova-ci local --base origin/main
 ```
 
@@ -17,6 +17,8 @@ change (nova-tools#4336), so your answer is CI's answer before the push:
   test packages every run carries;
 - **the run** is the Makefile's `test` target, the one entry CI's legs call:
   its `go test` flags, its `-timeout`, and its `nova-ci slowtests` budgets;
+  `--functional` passes `GOTEST_TAGS=functional`, as the merge-group and push
+  legs do, so the redis-backed tests behind `//go:build functional` run too;
 - **the machine** is shared, so everything runs under `nice -n 15` with
   `GOMAXPROCS=2` and `GOTEST_P=2` (`go test -p 2`, two cores, as a CI leg is
   held to), `-count=1`, and a private `RUNNER_TEMP`.

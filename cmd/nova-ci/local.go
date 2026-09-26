@@ -18,8 +18,9 @@ package main
 //   - the run is the Makefile's `test` target, the one entry CI's legs call:
 //     its go test flags, its -timeout, its `nova-ci slowtests` budgets and
 //     allowlist and its exit status are whatever that target holds today;
-//   - --functional adds the Makefile's `test-functional` target, the tier that
-//     runs the tests behind the functional build tag.
+//   - --functional adds the functional build tag the way CI's merge-group and
+//     push legs do: the same `make test` with GOTEST_TAGS=functional, so the
+//     redis-backed tests behind `//go:build functional` build and run too.
 //
 // What the verb adds is the machine it runs on: everything it starts runs under
 // `nice -n 15` with GOMAXPROCS=2 and GOTEST_P=2 (go test -p 2, at most two
@@ -114,7 +115,7 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	base := fs.String("base", localDefaultBase, "the ref the change lands on; the diff is read from its merge base with HEAD")
-	functional := fs.Bool("functional", false, "also run the functional tier (make test-functional) over the same packages")
+	functional := fs.Bool("functional", false, "add the functional build tag, as CI's merge-group and push legs do (make test GOTEST_TAGS=functional)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " local", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -141,8 +142,12 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
 	if !localHasTarget(makefile, "test") {
 		return refuse(stderr, " local", fmt.Sprintf("%s's Makefile has no test target, the one entry CI's unit legs call", oneline.Field(root)))
 	}
-	if *functional && !localHasTarget(makefile, "test-functional") {
-		return refuse(stderr, " local", "--functional: this checkout's Makefile has no test-functional target (the functional tier, nova-tools#4328); run without --functional")
+	if *functional && !bytes.Contains(makefile, []byte("GOTEST_TAGS")) {
+		return refuse(stderr, " local", "--functional: this checkout's Makefile test target takes no GOTEST_TAGS (the functional tier, nova-tools#4328); run without --functional")
+	}
+	tags := ""
+	if *functional {
+		tags = "functional"
 	}
 
 	mergeBase, code, errText, err := localCapture(runner, root, nil, "git", "merge-base", *base, "HEAD")
@@ -185,33 +190,16 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
 		}
 	}()
 
-	fmt.Fprintf(stdout, "nova-ci local: unit tier: nice -n %s make test %q GOTEST_P=%s GOTEST_COUNT_FLAG=-count=1 (GOMAXPROCS=%s)\n", localNice, pkgArg, localCores, localCores)
+	fmt.Fprintf(stdout, "nova-ci local: nice -n %s make test %q GOTEST_P=%s GOTEST_COUNT_FLAG=-count=1 GOTEST_TAGS=%s (GOMAXPROCS=%s)\n", localNice, pkgArg, localCores, tags, localCores)
 	col := &localCollector{out: stdout, pkgs: map[string]*localPkg{}}
 	lines := &localLines{line: col.line}
-	unitArgv := append(append([]string{}, nice...), "make", "test", pkgArg, "GOTEST_P="+localCores, "GOTEST_COUNT_FLAG=-count=1")
+	unitArgv := append(append([]string{}, nice...), "make", "test", pkgArg, "GOTEST_P="+localCores, "GOTEST_COUNT_FLAG=-count=1", "GOTEST_TAGS="+tags)
 	unitCode, err := runner(localCmd{Dir: root, Env: append(cores, "RUNNER_TEMP="+tmp), Argv: unitArgv, Stdout: lines, Stderr: stderr})
 	lines.flush()
 	if err != nil {
 		return refuse(stderr, " local", fmt.Sprintf("could not start make test: %s", oneline.Err(err)))
 	}
 	exit := col.finish(unitCode)
-
-	if *functional {
-		fmt.Fprintf(stdout, "nova-ci local: functional tier: nice -n %s make test-functional %q GOTEST_P=%s (GOMAXPROCS=%s)\n", localNice, pkgArg, localCores, localCores)
-		funcArgv := append(append([]string{}, nice...), "make", "test-functional", pkgArg, "GOTEST_P="+localCores)
-		funcCode, err := runner(localCmd{Dir: root, Env: cores, Argv: funcArgv, Stdout: stdout, Stderr: stderr})
-		if err != nil {
-			return refuse(stderr, " local", fmt.Sprintf("could not start make test-functional: %s", oneline.Err(err)))
-		}
-		if funcCode != 0 {
-			fmt.Fprintf(stdout, "nova-ci local: functional tier red: make test-functional exited %d (its FAIL lines are above)\n", funcCode)
-			if exit == 0 {
-				exit = 1
-			}
-		} else {
-			fmt.Fprintln(stdout, "nova-ci local: functional tier green")
-		}
-	}
 	fmt.Fprintf(stdout, "nova-ci local: exit=%d\n", exit)
 	return exit
 }
@@ -404,7 +392,7 @@ func (c *localCollector) finish(makeCode int) int {
 			reds++
 		}
 	}
-	fmt.Fprintf(c.out, "nova-ci local: unit tier packages=%d seconds=%s red=%d make-exit=%d\n", len(c.order), slowtests.Seconds(total), reds, makeCode)
+	fmt.Fprintf(c.out, "nova-ci local: packages=%d seconds=%s red=%d make-exit=%d\n", len(c.order), slowtests.Seconds(total), reds, makeCode)
 	switch {
 	case makeCode == 0:
 		return 0

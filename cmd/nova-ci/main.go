@@ -38,9 +38,10 @@ usage:
                       slowtests budgets) under nice -n 15 at -p 2, GOMAXPROCS=2
                       and -count=1; one PKG line per package with its seconds,
                       one RED line per failing test with its output.
-                      --functional adds make test-functional over the same
-                      packages. Exit 0 green, 1 a red test or build, 2 over
-                      the unit budgets or could not run.
+                      --functional adds the functional build tag, as CI's
+                      merge-group and push legs do (GOTEST_TAGS=functional).
+                      Exit 0 green, 1 a red test or build, 2 over the
+                      budgets or could not run.
   nova-ci new-rule [--root <checkout>] <rule-name>
                       scaffold a new class rule skeleton: class test, fixture, and makefile
   nova-ci new-verb [--root <checkout>] <tool> <verb>
