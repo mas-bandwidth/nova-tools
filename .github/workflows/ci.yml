@@ -812,7 +812,10 @@ jobs:
         # Not a global -short: that would also skip internal/bus's multi-process tests, the darwin evidence this leg is for.
         env:
           NOVA_CI_PR_STUDIO: ${{ matrix.entry.group == 'macOS' && github.event_name == 'pull_request' && '1' || '' }}
-        run: make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="110s"
+        # GOTEST_COUNT_FLAG= turns Go's test cache on (Makefile): a shard whose
+        # packages did not change since the last run on this machine is
+        # served from the cache instead of recompiled and re-executed.
+        run: make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="110s" GOTEST_COUNT_FLAG=
 
   test-race-queue:
     # THE QUEUE AND LEASE PACKAGE UNDER -race, and the one place the race

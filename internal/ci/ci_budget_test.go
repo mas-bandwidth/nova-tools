@@ -526,3 +526,32 @@ func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
 		t.Errorf("Makefile carries %q; under make 3.81 it lets `test: PKGS :=` beat the shard's PKGS", m)
 	}
 }
+
+// TestShardsUseTheGoTestCache (Glenn 2026-09-26 9:42 AM ET, the Studio at
+// 100% CPU on its own PR: "We aren't doing anything that should be this
+// heavy in CPU use"): every `make test` shard step in ci.yml passes
+// GOTEST_COUNT_FLAG= so Go's test cache serves unchanged packages; a
+// -count=1 in CI would make every one of a landing's three runs recompile
+// and re-execute every shard. By hand `make test` keeps -count=1 (the
+// Makefile default).
+func TestShardsUseTheGoTestCache(t *testing.T) {
+	t.Parallel()
+	ci := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	steps := 0
+	for _, line := range strings.Split(ci, "\n") {
+		if !strings.Contains(line, "make test ") {
+			continue
+		}
+		steps++
+		if !strings.Contains(line, "GOTEST_COUNT_FLAG=") || strings.Contains(line, "GOTEST_COUNT_FLAG=-") {
+			t.Errorf("a shard step runs the suite with the cache off: %s", strings.TrimSpace(line))
+		}
+	}
+	if steps == 0 {
+		t.Fatal("no `make test` shard step in ci.yml")
+	}
+	mk := readFile(t, filepath.Join(repoRoot(t), "Makefile"))
+	if !strings.Contains(mk, "GOTEST_COUNT_FLAG ?= -count=1") || !strings.Contains(mk, "$(GOTEST_COUNT_FLAG)") {
+		t.Fatal("the Makefile's test target does not take GOTEST_COUNT_FLAG (-count=1 by hand, empty in CI)")
+	}
+}
