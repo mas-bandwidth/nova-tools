@@ -107,3 +107,7 @@ func DropKey(head string, recSeq int64) string {
 	}
 	return fmt.Sprintf("%s:%d", h8, recSeq)
 }
+
+// BenchLandKey is the bench's landing record (p99 step times per class, and
+// the benched flag the reclaim sweep once set).
+func BenchLandKey(bench string) string { return "bench:" + bench + ":land" }

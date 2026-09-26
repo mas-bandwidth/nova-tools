@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +14,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
@@ -96,18 +94,6 @@ func (h *harness) mustHead(unit, head, cardLabel string) int64 {
 	return seq
 }
 
-func (h *harness) read(unit, who, head, verdict, kind string) error {
-	_, err := land.CallRead(h.ctx, h.c, h.S, unit, who, head, verdict, "9", kind, "", "")
-	return err
-}
-
-func (h *harness) mustRead(unit, who, head, verdict, kind string) {
-	h.t.Helper()
-	if err := h.read(unit, who, head, verdict, kind); err != nil {
-		h.t.Fatalf("ns_read %s %s %s@%s: %v", unit, who, verdict, head, err)
-	}
-}
-
 func (h *harness) rec(unit string) map[string]string {
 	h.t.Helper()
 	rec, err := h.c.HGetAll(h.ctx, land.UnitKey(h.S, unit)).Result()
@@ -129,99 +115,9 @@ func (h *harness) field(unit, name string) (string, bool) {
 	return v, true
 }
 
-func (h *harness) set(unit, name, value string) {
-	h.t.Helper()
-	if err := h.c.HSet(h.ctx, land.UnitKey(h.S, unit), name, value).Err(); err != nil {
-		h.t.Fatalf("hset %s %s: %v", unit, name, err)
-	}
-}
-
-func (h *harness) inputs(unit string) pr.Input {
-	h.t.Helper()
-	in, err := pr.Inputs(h.rec(unit))
-	if err != nil {
-		h.t.Fatalf("Inputs(%s): %v", unit, err)
-	}
-	return in
-}
-
-func (h *harness) redisNow() time.Time {
-	h.t.Helper()
-	now, err := h.c.Time(h.ctx).Result()
-	if err != nil {
-		h.t.Fatalf("redis TIME: %v", err)
-	}
-	return now
-}
-
-func atoi(t *testing.T, s string) int64 {
-	t.Helper()
-	n, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		t.Fatalf("not a whole number: %q", s)
-	}
-	return n
-}
-
 // landing is one unit landed through the real lander functions.
 type landing struct {
 	batch, trainHead, mergeSHA string
-}
-
-// land takes one unit from ns_unit_eval through ns_batch_plan, the gate,
-// ns_land_intent and ns_land, and returns what a replay needs.
-func (h *harness) land(unit, head string) landing {
-	h.t.Helper()
-	if h.lease == "" {
-		gen, err := land.CallWriter(h.ctx, h.c, testRepo, testBase, "nova-sprint", "fixture")
-		if err != nil {
-			h.t.Fatalf("writer: %v", err)
-		}
-		h.lease = fmt.Sprintf("%d:lease-token-1", gen)
-		if err := h.c.Set(h.ctx, land.LeaseKey(testRepo, testBase), h.lease, time.Hour).Err(); err != nil {
-			h.t.Fatalf("lease: %v", err)
-		}
-		if err := h.c.HSet(h.ctx, land.TipKey(testRepo, testBase), "sha", testBaseSHA, "at", "1", "by", "init").Err(); err != nil {
-			h.t.Fatalf("tip: %v", err)
-		}
-		if err := land.CallPolicySet(h.ctx, h.c, testRepo, testBase, "pol-1", "req-1", "runner-1"); err != nil {
-			h.t.Fatalf("policy: %v", err)
-		}
-	}
-	// A fresh inbound consumer for this intent.
-	if err := h.c.HSet(h.ctx, "ev:github:consumer:land", "pending", "0", "at", strconv.FormatInt(h.redisNow().Unix(), 10)).Err(); err != nil {
-		h.t.Fatalf("consumer: %v", err)
-	}
-	h.landed++
-	l := landing{
-		batch:     fmt.Sprintf("batch-%d", h.landed),
-		trainHead: fmt.Sprintf("%040x", 0x7000+h.landed),
-		mergeSHA:  fmt.Sprintf("%040x", 0x8000+h.landed),
-	}
-	tip, err := h.c.HGet(h.ctx, land.TipKey(testRepo, testBase), "sha").Result()
-	if err != nil {
-		h.t.Fatalf("tip: %v", err)
-	}
-	if _, err := land.CallUnitEval(h.ctx, h.c, h.S, unit, testRepo, testBase, 0); err != nil {
-		h.t.Fatalf("eval %s: %v", unit, err)
-	}
-	token, _, err := land.CallBatchPlan(h.ctx, h.c, h.S, testRepo, testBase, l.batch, h.lease, unit+"@"+head, "", "go", tip, "in-"+l.batch)
-	if err != nil {
-		h.t.Fatalf("plan %s: %v", unit, err)
-	}
-	if res, err := land.CallGateClaim(h.ctx, h.c, testRepo, testBase, l.batch, 1, token, "bench-1", "slot-1"); err != nil || res != "OK" {
-		h.t.Fatalf("claim %s: %s %v", unit, res, err)
-	}
-	if res, err := land.CallGateReceipt(h.ctx, h.c, testRepo, testBase, l.batch, 1, token, "GREEN", "bench-1", "worker-1", l.trainHead, "tree", "in-"+l.batch, "", "", "", "", "1"); err != nil || res != "OK" {
-		h.t.Fatalf("receipt %s: %s %v", unit, res, err)
-	}
-	if _, err := land.CallLandIntent(h.ctx, h.c, h.S, testRepo, testBase, l.batch, h.lease); err != nil {
-		h.t.Fatalf("intent %s: %v", unit, err)
-	}
-	if res, err := land.CallLand(h.ctx, h.c, h.S, testRepo, testBase, l.batch, h.lease, l.trainHead, l.mergeSHA, "1"); err != nil || res != "OK" {
-		h.t.Fatalf("ns_land %s: %s %v", unit, res, err)
-	}
-	return l
 }
 
 // repoServer answers the card lint's public-repository probe on loopback.

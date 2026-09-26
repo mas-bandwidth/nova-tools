@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,74 +34,6 @@ type WorkerConfig struct {
 	// Log receives one line per gate fault (a failed read, a refused receipt,
 	// an infrastructure ERROR); nil is os.Stderr.
 	Log io.Writer
-}
-
-// RequeuedBatch records a batch requeued by SweepReclaim.
-type RequeuedBatch struct {
-	BatchID  string
-	Attempt  int
-	Token    string
-	EntryID  string
-	OldBench string
-	OldSlot  string
-}
-
-// SweepReclaim sweeps batches in gating state; if worker heartbeat is absent,
-// requeues the attempt (spec 5.6, control L5).
-func SweepReclaim(ctx context.Context, c *redis.Client, repo, base string) ([]RequeuedBatch, error) {
-	chainKey := ChainKey(repo, base)
-	batchIDs, err := c.ZRange(ctx, chainKey, 0, -1).Result()
-	if err != nil {
-		return nil, fmt.Errorf("sweep reclaim zrange: %w", err)
-	}
-	// The attribution gates of a red batch (§6.1) live outside the chain, under its split record.
-	gates, err := SplitGates(ctx, c, repo, base)
-	if err != nil {
-		return nil, fmt.Errorf("sweep reclaim splits: %w", err)
-	}
-	batchIDs = append(batchIDs, gates...)
-
-	var requeued []RequeuedBatch
-	for _, bID := range batchIDs {
-		bkey := BatchKey(repo, base, bID)
-		vals, err := c.HMGet(ctx, bkey, "state", "bench", "slot", "attempt", "token").Result()
-		if err != nil || len(vals) < 5 || vals[0] == nil {
-			continue
-		}
-		state, _ := vals[0].(string)
-		if state != "gating" {
-			continue
-		}
-		bench, _ := vals[1].(string)
-		slot, _ := vals[2].(string)
-		if bench == "" || slot == "" {
-			continue
-		}
-
-		wkey := fmt.Sprintf("worker:%s:%s", bench, slot)
-		exists, err := c.Exists(ctx, wkey).Result()
-		if err != nil {
-			continue
-		}
-		if exists == 0 {
-			// Heartbeat expired or worker dead: requeue (spec 5.6)
-			token, entryID, err := CallRequeue(ctx, c, repo, base, bID)
-			if err != nil {
-				continue
-			}
-			attStr, _ := vals[3].(string)
-			att, _ := strconv.Atoi(attStr)
-			requeued = append(requeued, RequeuedBatch{
-				BatchID:  bID,
-				Attempt:  att + 1,
-				Token:    token,
-				EntryID:  entryID,
-				OldBench: bench,
-				OldSlot:  slot,
-			})
-		}
-	}
-	return requeued, nil
 }
 
 // Worker executes gate attempts across benches and slots (spec 5).

@@ -550,7 +550,7 @@ func makeRecipe(makefile, target string) string {
 // integration-4 also moved the command itself: ci.yml's `test` step is now `make test
 // PKGS=...` and the Makefile's `test` target holds the flags. So this reads BOTH -- that
 // ci.yml still delegates to `make test`, and what that target actually runs -- and
-// ciTestArgs must mirror the target.
+// the merge step table must mirror the target.
 func TestTheGateTestsTheWayCIDoes(t *testing.T) {
 	t.Parallel()
 	yml, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
@@ -558,7 +558,7 @@ func TestTheGateTestsTheWayCIDoes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(yml), "make test PKGS=") {
-		t.Fatal("ci.yml's test step no longer runs `make test PKGS=...`; the gate mirrors whatever CI runs, so find the command CI runs now and update ciTestArgs in batch.go with it")
+		t.Fatal("ci.yml's test step no longer runs `make test PKGS=...`; the gate mirrors whatever CI runs, so find the command CI runs now and update the test step in internal/merge/step.go with it")
 	}
 	raw, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
 	if err != nil {
@@ -566,7 +566,7 @@ func TestTheGateTestsTheWayCIDoes(t *testing.T) {
 	}
 	recipe := makeRecipe(string(raw), "test")
 	if !strings.Contains(recipe, "test") {
-		t.Fatalf("the Makefile's `test` target has no recipe, but ci.yml runs `make test`; update ciTestArgs in batch.go with whatever CI runs now\nrecipe: %q", recipe)
+		t.Fatalf("the Makefile's `test` target has no recipe, but ci.yml runs `make test`; update the test step in internal/merge/step.go with whatever CI runs now\nrecipe: %q", recipe)
 	}
 	got := strings.Join(ciTestArgs(), " ")
 	// -json travels as GOFLAGS=-json on CI's outer command and as an argv flag on the
@@ -876,4 +876,19 @@ func TestResolveRequiredCheckPrefersTheFlagThenTheFileThenCiOk(t *testing.T) {
 	if got != "ci-ok" {
 		t.Fatalf("the flag wins over the file, got %q", got)
 	}
+}
+
+// ciTestArgs is the gate's test command, read off internal/merge's step table --
+// the ONE list the gate runs -- so these assertions follow it the day it moves.
+// Every flag on it is there for a reason: -json because CI reads that stream
+// with cmd/nova-ci slowtests (and it changes what a tool under test sees), and
+// -count=1 because no cached result may stand in for a run on the merged tree.
+// TestTheGateTestsTheWayCIDoes holds it to ci.yml and the Makefile.
+func ciTestArgs() []string {
+	for _, step := range merge.FullClassSteps {
+		if step.Name == "test" {
+			return strings.Fields(step.Command)
+		}
+	}
+	panic("internal/merge FullClassSteps has no test step")
 }

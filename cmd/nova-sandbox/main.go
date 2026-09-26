@@ -171,6 +171,10 @@ example:
                --secret /Users/me/.config/anthropic/env
 `
 
+// version is empty in every ordinary build and is the one override: a release
+// stamps it with -ldflags "-X main.version=<tag>", the shape cmd/nova-bus uses.
+var version string
+
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Environ())) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string) int {

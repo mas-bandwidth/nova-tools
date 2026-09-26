@@ -130,55 +130,6 @@ const crossVetStep = "vet-windows"
 // guessed from anything the shell happened to carry.
 const sdkDir = "sdk"
 
-// ciTestArgs IS THE ONE LIST: the test command CI runs, mirrored here so that the gate
-// tests the way CI tests.
-//
-// WHERE THAT COMMAND LIVES MOVED IN integration-4. It used to be written out inline in
-// the `test` step of the `test` job in .github/workflows/ci.yml; that step now reads
-//
-//	run: make test PKGS="${{ matrix.entry.packages }}"
-//
-// and the command itself is the Makefile's `test` target, which is
-//
-//	GOFLAGS=-json $(GO) test -count=1 $(PKGS) | tee $RUNNER_TEMP/test.json
-//	$(GO) run ./cmd/nova-ci slowtests --budget "$budget" < $RUNNER_TEMP/test.json
-//
-// and every flag on it is on the gate for a reason:
-//
-//	-json        CI reads that stream with cmd/nova-ci slowtests, so every leg runs its
-//	             tests under -json -- which turns the verbose stream on in every test
-//	             binary and changes what a tool under test sees. integration-4 went green
-//	             on hulk under a plain `go test ./...` and three CI legs then failed. CI
-//	             delivers it as GOFLAGS=-json on the OUTER command; the gate writes it as
-//	             an argv flag, which is the same thing for that command and survives the
-//	             goenv.Clean environment every step runs in -- Clean strips GOFLAGS on
-//	             purpose, so that an INNER go command a test spawns cannot inherit it.
-//	-count=1     no cached result may stand in for a run; a gate reading a cache from
-//	             before the merge is a gate reading the wrong tree.
-//
-// THERE IS NO -timeout HERE ANY MORE. The old inline step carried `-timeout 5m` and the
-// gate carried it too; the Makefile's `test` target does not, so neither does the gate --
-// the per-package deadline is go's own default and this verb's --timeout still bounds the
-// whole step. A gate that kept a 5 m package deadline CI does not set is a gate that can
-// go red on a tree CI passes, which is the divergence this list exists to prevent.
-//
-// ./... stands where CI writes ${{ matrix.entry.packages }}: CI splits the tree across a
-// matrix and the union of those legs is the tree, which one gate run covers in one
-// command.
-//
-// WHAT IS DELIBERATELY NOT MIRRORED is the fair-share step's GOMAXPROCS. That is the
-// MACHINE's fact -- its cores divided by NOVA_RUNNERS_PER_MACHINE, which the runner
-// service exports -- and row 9 of #828 is what writing such a divisor into a file costs:
-// it stayed 4 the day the fleet went to 8. This package reads no environment variable
-// (rule 13), so the share is --gomaxprocs, passed by the caller on a bench that is also
-// running CI.
-//
-// TestTheGateTestsTheWayCIDoes reads ci.yml, the Makefile and this list together, so the
-// day any one of them moves is the day it goes red.
-func ciTestArgs() []string {
-	return []string{"go", "test", "-json", "-count=1", "./..."}
-}
-
 // batchTempVars are the variables a child reads to find its temp directory, and this ONE
 // LINE is the only place in this binary that names any of them. It is a SET and never a
 // read: the gate hands every check a temp directory inside the batch's own working
@@ -1484,17 +1435,6 @@ func batchRefused(stderr io.Writer, err error) int {
 // the caller can put that directory in front of the step's own PATH.
 func stepUnavailable(step batchStep, clone string) (why, binDir string) {
 	return merge.StepUnavailable(step.toMerge(), clone)
-}
-
-// lookInSDK is the one place off PATH this gate looks: `~/sdk/<anything>/bin/<program>`.
-// It answers the directory, so the step's environment gets it in front of PATH and the
-// SCRIPT the step runs finds the program too -- `sh tools/ci/lisp-test.sh` calls sbcl by
-// name, so an absolute path handed only to the shell would not have reached it.
-//
-// The newest match wins by name, which is how these directories sort: sbcl-2.5.8 after
-// sbcl-2.4.0. A directory that holds no such program is skipped rather than guessed at.
-func lookInSDK(program string) string {
-	return merge.LookInSDK(program)
 }
 
 // parsePRList reads the pull request numbers, separated by commas or spaces, in the

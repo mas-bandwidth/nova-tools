@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -206,57 +207,6 @@ func RebalanceFriend(ctx context.Context, c *redis.Client, f, actor string) (Reb
 	return r, nil
 }
 
-// rebalance is the deal duty's first step: every friend whose status changed
-// since the last pass, and every down friend with cards still on its ready
-// or working set (a lease lapses after the change), is rebalanced with the
-// lease's token; the new statuses are recorded in one HSET.
-func (d *FriendDeal) rebalance(ctx context.Context, token string) ([]Rebalanced, error) {
-	c := d.Client
-	st, err := readStatus(ctx, c)
-	if err != nil {
-		return nil, err
-	}
-	var out []Rebalanced
-	var errs []string
-	seen := []any{}
-	for _, f := range st.names {
-		now, was := st.status(f), st.seen[f]
-		if now != was {
-			seen = append(seen, f, now)
-		}
-		changed := now != was && was != ""
-		sweep := now == StatusDown && st.ready[f]+st.working[f] > 0
-		if !changed && !sweep {
-			continue
-		}
-		r, err := rebalanceOne(ctx, c, token, d.actor(), st, f)
-		if errors.Is(err, ErrFenced) {
-			return out, err
-		}
-		if err != nil {
-			errs = append(errs, err.Error())
-			continue
-		}
-		// A change always prints; a sweep of a friend already down prints
-		// only when it moved or refused something.
-		if changed || len(r.Moves)+len(r.Refused) > 0 || r.Reason != "" {
-			out = append(out, r)
-		}
-		if now == StatusDown {
-			// the moves changed the targets' queues; the next friend re-reads
-			if st, err = readStatus(ctx, c); err != nil {
-				return out, err
-			}
-		}
-	}
-	if len(seen) > 0 {
-		if err := c.HSet(ctx, SeenKey, seen...).Err(); err != nil {
-			errs = append(errs, fmt.Sprintf("rebalance: seen: %v", err))
-		}
-	}
-	return out, joinErrs(errs)
-}
-
 // pairsOf reads (a, b) pairs from reply[from:].
 func pairsOf(reply []any, from int) [][2]string {
 	var out [][2]string
@@ -278,4 +228,35 @@ func shownPairs(pairs [][2]string) string {
 		b.WriteString(" " + p[0] + ":" + p[1])
 	}
 	return b.String()
+}
+
+// FriendLive is how recent a friend's beat must be for the friend to count as
+// up (the presence TTL, internal/presence DefaultTTL).
+const FriendLive = 90 * time.Second
+
+// NoConsumer is the why a card returned to its stream's ready set carries on
+// its record and in the receipt (deal_friend.lua writes it).
+const NoConsumer = "no-consumer"
+
+// beatLive is true when the friend row's at is within FriendLive of now. at
+// is RFC3339 (the beat's stamp) or epoch seconds or milliseconds.
+func beatLive(at string, now time.Time) bool {
+	at = strings.TrimSpace(at)
+	if at == "" {
+		return false
+	}
+	var t time.Time
+	if n, err := strconv.ParseInt(at, 10, 64); err == nil {
+		if n > 1e12 {
+			t = time.UnixMilli(n)
+		} else {
+			t = time.Unix(n, 0)
+		}
+	} else if p, err := time.Parse(time.RFC3339, at); err == nil {
+		t = p
+	} else {
+		return false
+	}
+	age := now.Sub(t)
+	return age < FriendLive && age > -FriendLive
 }

@@ -31,11 +31,11 @@ func TestControl27RedisAtomicCeiling(t *testing.T) {
 
 	st, c := redisControl(t)
 	ctx := context.Background()
-	if _, err := capacity.SetMachine(ctx, st, "ctl-machine", 64, 64, 128, "test", ""); err != nil {
+	if _, err := capacity.SetMachineBudget(ctx, st, "ctl-machine", 64, 64, 128, 0, 0, "test", ""); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := capacity.SetBench(ctx, st, "bench-zero", "ctl-machine", 0, "test", ""); err != nil {
+	if _, err := capacity.SetBenchWith(ctx, st, "bench-zero", "ctl-machine", 0, "test", "", capacity.DesiredOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if c.SIsMember(ctx, "benches", "bench-zero").Val() != true {
@@ -74,7 +74,7 @@ func TestControl27RedisAtomicCeiling(t *testing.T) {
 	if width.Desired != 32 || width.Leased != 2 || width.Free != 30 {
 		t.Fatalf("width=%+v", width)
 	}
-	if _, err := capacity.SetMachine(ctx, st, "ctl-machine", 64, 0, 0, "test", ""); err != nil {
+	if _, err := capacity.SetMachineBudget(ctx, st, "ctl-machine", 64, 0, 0, 0, 0, "test", ""); err != nil {
 		t.Fatal(err)
 	}
 	if cores := c.HGet(ctx, "machine:ctl-machine:ceiling", "cores").Val(); cores != "64" {

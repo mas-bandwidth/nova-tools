@@ -337,11 +337,6 @@ func SetFriend(ctx context.Context, st *store.Store, name, machine string, slots
 	return setDesired(ctx, st, KindFriend, name, machine, slots, actor, idem)
 }
 
-// SetBench writes bench:<b>:desired under the machine ceiling.
-func SetBench(ctx context.Context, st *store.Store, name, machine string, slots int, actor, idem string) (Result, error) {
-	return setDesired(ctx, st, KindBench, name, machine, slots, actor, idem)
-}
-
 // DesiredOpts are the optional seventh and eighth args of
 // ns_capacity_desired (#3206 rev 4 PR A). Paused "" keeps the stored value,
 // "0" or "1" sets it, on a friend or a bench (#4308: worker pause|resume is
@@ -494,11 +489,6 @@ func setDesiredWith(ctx context.Context, st *store.Store, kind, name, machine st
 		return Result{}, fmt.Errorf("capacity %s %s: %w", kind, name, err)
 	}
 	return parseDesiredReply(reply, kind, name, machine, slots)
-}
-
-// SetMachine writes machine:<m>:ceiling and sets budget if resources are provided.
-func SetMachine(ctx context.Context, st *store.Store, machine string, slots, cores, memGB int, actor, idem string) (Result, error) {
-	return SetMachineBudget(ctx, st, machine, slots, cores, memGB, 0, 0, actor, idem)
 }
 
 // SetMachineBudget writes machine:<m>:ceiling and machine:<m>:budget (spec 5.1).

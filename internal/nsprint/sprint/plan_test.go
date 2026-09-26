@@ -394,7 +394,7 @@ func TestPlanControls(t *testing.T) {
 		if r := applyPlan(t, Applier{Store: st, User: "default"}, s, "good.tsv"); r.code != 0 {
 			t.Fatalf("apply: %+v", r)
 		}
-		if _, err := capacity.SetBench(ctx, st, "a", "m1", 8, "test", ""); err != nil {
+		if _, err := capacity.SetBenchWith(ctx, st, "a", "m1", 8, "test", "", capacity.DesiredOpts{}); err != nil {
 			t.Fatal(err)
 		}
 		r := showPlan(t, st, s)

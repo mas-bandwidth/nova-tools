@@ -228,6 +228,17 @@ func CallPolicySet(ctx context.Context, c *redis.Client, repo, base, policyID, r
 	return nil
 }
 
+// GateTakeResult holds the outcome of calling ns_gate_take.
+type GateTakeResult struct {
+	Status  string // "OK", "NOBUDGET", "NODATA", "STALE", "VOID"
+	Base    string
+	BatchID string
+	Attempt int
+	Token   string
+	EntryID string
+	Reason  string
+}
+
 // CallWriter calls ns_writer.
 func CallWriter(ctx context.Context, c *redis.Client, repo, base, toOwner, by string) (int64, error) {
 	res, err := c.FCall(ctx, "ns_writer", nil, repo, base, toOwner, by).Slice()
@@ -242,43 +253,6 @@ func CallWriter(ctx context.Context, c *redis.Client, repo, base, toOwner, by st
 		return 0, err
 	}
 	return gen, nil
-}
-
-// CallGateReceiptWrite calls ns_gate_receipt_write.
-func CallGateReceiptWrite(ctx context.Context, c *redis.Client, repo, head, gid, verdict, kind, base, baseSHA, requiredSetID, policyID, runnerID, receipt, bench, pkg, test string) (string, error) {
-	return c.FCall(ctx, "ns_gate_receipt_write", nil, repo, head, gid, verdict, kind, base, baseSHA, requiredSetID, policyID, runnerID, receipt, bench, pkg, test).Text()
-}
-
-// CallBatchPlan calls ns_batch_plan.
-func CallBatchPlan(ctx context.Context, c *redis.Client, sprint, repo, base, batchID, leaseVal, membersCSV, pathsCSV, class, fromTip, inputID string) (token, entryID string, err error) {
-	res, err := c.FCall(ctx, "ns_batch_plan", nil, sprint, repo, base, batchID, leaseVal, membersCSV, pathsCSV, class, fromTip, inputID).Slice()
-	if err != nil {
-		return "", "", err
-	}
-	if len(res) < 2 {
-		return "", "", fmt.Errorf("unexpected ns_batch_plan reply: %v", res)
-	}
-	if res[0] == "REFUSED" {
-		return "", "", fmt.Errorf("REFUSED %v", res[1])
-	}
-	if res[0] == "REUSE" {
-		return "REUSE", fmt.Sprint(res[1]), nil
-	}
-	if res[0] != "OK" || len(res) < 3 {
-		return "", "", fmt.Errorf("ns_batch_plan failed: %v", res)
-	}
-	return fmt.Sprint(res[1]), fmt.Sprint(res[2]), nil
-}
-
-// GateTakeResult holds the outcome of calling ns_gate_take.
-type GateTakeResult struct {
-	Status  string // "OK", "NOBUDGET", "NODATA", "STALE", "VOID"
-	Base    string
-	BatchID string
-	Attempt int
-	Token   string
-	EntryID string
-	Reason  string
 }
 
 // CallGateTake calls ns_gate_take (spec 5.2).
@@ -320,11 +294,6 @@ func CallGateTake(ctx context.Context, c *redis.Client, repo, bench, slot, class
 	}
 }
 
-// CallGateClaim calls ns_gate_claim.
-func CallGateClaim(ctx context.Context, c *redis.Client, repo, base, batchID string, attempt int, token, bench, slot string) (string, error) {
-	return c.FCall(ctx, "ns_gate_claim", nil, repo, base, batchID, strconv.Itoa(attempt), token, bench, slot).Text()
-}
-
 // GateReceiptGIDParams holds optional gid receipt parameters for CallGateReceiptWithGID.
 type GateReceiptGIDParams struct {
 	GID           string
@@ -336,11 +305,6 @@ type GateReceiptGIDParams struct {
 	RunnerID      string
 	Pkg           string
 	Test          string
-}
-
-// CallGateReceipt calls ns_gate_receipt.
-func CallGateReceipt(ctx context.Context, c *redis.Client, repo, base, batchID string, attempt int, token, verdict, bench, worker, trainHead, trainTree, inputID, selection, steps, failing, flakyRerun, coreS string) (string, error) {
-	return CallGateReceiptWithGID(ctx, c, repo, base, batchID, attempt, token, verdict, bench, worker, trainHead, trainTree, inputID, selection, steps, failing, flakyRerun, coreS, nil)
 }
 
 // CallGateReceiptWithGID calls ns_gate_receipt with optional gid receipt parameters.
@@ -357,156 +321,4 @@ func CallGateReceiptWithGID(ctx context.Context, c *redis.Client, repo, base, ba
 		)
 	}
 	return c.FCall(ctx, "ns_gate_receipt", nil, args...).Text()
-}
-
-// CallRequeue calls ns_requeue.
-func CallRequeue(ctx context.Context, c *redis.Client, repo, base, batchID string) (token, entryID string, err error) {
-	res, err := c.FCall(ctx, "ns_requeue", nil, repo, base, batchID).Slice()
-	if err != nil {
-		return "", "", err
-	}
-	if len(res) < 3 || res[0] != "OK" {
-		return "", "", fmt.Errorf("ns_requeue failed: %v", res)
-	}
-	return fmt.Sprint(res[1]), fmt.Sprint(res[2]), nil
-}
-
-// CallBatchVoid calls ns_batch_void (lease-fenced like every batcher write, 2.3): a stale caller
-// gets a *RefusedError and nothing is written.
-func CallBatchVoid(ctx context.Context, c *redis.Client, sprint, repo, base, batchID, leaseVal, reason string) error {
-	res, err := c.FCall(ctx, "ns_batch_void", nil, sprint, repo, base, batchID, leaseVal, reason).StringSlice()
-	if err != nil {
-		return err
-	}
-	if len(res) >= 2 && res[0] == "REFUSED" {
-		return &RefusedError{Fn: "ns_batch_void", Reason: res[1]}
-	}
-	if len(res) == 0 || res[0] != "OK" {
-		return fmt.Errorf("ns_batch_void %s: %v", batchID, res)
-	}
-	return nil
-}
-
-// CallLandIntent calls ns_land_intent.
-func CallLandIntent(ctx context.Context, c *redis.Client, sprint, repo, base, batchID, leaseVal string) (int64, error) {
-	res, err := c.FCall(ctx, "ns_land_intent", nil, sprint, repo, base, batchID, leaseVal).Slice()
-	if err != nil {
-		return 0, err
-	}
-	if len(res) < 2 {
-		return 0, fmt.Errorf("unexpected ns_land_intent reply: %v", res)
-	}
-	if res[0] == "REFUSED" {
-		return 0, fmt.Errorf("REFUSED %v", res[1])
-	}
-	if res[0] != "OK" {
-		return 0, fmt.Errorf("ns_land_intent failed: %v", res)
-	}
-	seq, err := strconv.ParseInt(fmt.Sprint(res[1]), 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return seq, nil
-}
-
-// CallPubState calls ns_pub_state.
-func CallPubState(ctx context.Context, c *redis.Client, repo, base, batchID, state string) error {
-	res, err := c.FCall(ctx, "ns_pub_state", nil, repo, base, batchID, state).Text()
-	if err != nil {
-		return err
-	}
-	if res != "OK" {
-		return fmt.Errorf("ns_pub_state failed: %s", res)
-	}
-	return nil
-}
-
-// CallLand calls ns_land.
-func CallLand(ctx context.Context, c *redis.Client, sprint, repo, base, batchID, leaseVal, trainHead, mergeSHAsCSV, landCycle string) (string, error) {
-	return c.FCall(ctx, "ns_land", nil, sprint, repo, base, batchID, leaseVal, trainHead, mergeSHAsCSV, landCycle).Text()
-}
-
-// PlanParams names one ns_batch_plan call (4.4). An empty BatchID is minted as b<seq>; ChainMax 0
-// means the spec's starting depth, 4.
-type PlanParams struct {
-	Sprint, Repo, Base, BatchID, Lease string
-	Members                            []string // ordered unit@head
-	Paths                              []string
-	Class, FromTip, InputID, Parent    string
-	ChainMax                           int
-}
-
-// PlanRefusedError is ns_batch_plan's refusal; Reason is the PLAN REFUSED text (overlap=<path>,
-// roadmap-path=<p>, stack-parent=<u>, no unit, chain_max, ...).
-type PlanRefusedError struct{ Reason string }
-
-func (e *PlanRefusedError) Error() string { return "REFUSED " + e.Reason }
-
-// CallPlan calls ns_batch_plan with the parent and chain depth; it returns the batch id it wrote.
-func CallPlan(ctx context.Context, c *redis.Client, p PlanParams) (batchID, token, entryID string, err error) {
-	chainMax := ""
-	if p.ChainMax > 0 {
-		chainMax = strconv.Itoa(p.ChainMax)
-	}
-	res, err := c.FCall(ctx, "ns_batch_plan", nil, p.Sprint, p.Repo, p.Base, p.BatchID, p.Lease,
-		strings.Join(p.Members, ","), strings.Join(p.Paths, ","), p.Class, p.FromTip, p.InputID, p.Parent, chainMax).Slice()
-	if err != nil {
-		return "", "", "", err
-	}
-	if len(res) >= 2 && res[0] == "REFUSED" {
-		return "", "", "", &PlanRefusedError{Reason: fmt.Sprint(res[1])}
-	}
-	if len(res) < 4 || res[0] != "OK" {
-		return "", "", "", fmt.Errorf("ns_batch_plan failed: %v", res)
-	}
-	return fmt.Sprint(res[3]), fmt.Sprint(res[1]), fmt.Sprint(res[2]), nil
-}
-
-// RefusedError is a nova_sprint write function's refusal: the writer gen or the publisher lease
-// did not match (lease mismatch, lease gen mismatch, writer owner not nova-sprint), so it wrote
-// nothing.
-type RefusedError struct{ Fn, Reason string }
-
-func (e *RefusedError) Error() string { return e.Fn + " REFUSED " + e.Reason }
-
-func refusedText(fn, r string) (string, error) {
-	if reason, ok := strings.CutPrefix(r, "REFUSED "); ok {
-		return "", &RefusedError{Fn: fn, Reason: reason}
-	}
-	return r, nil
-}
-
-// CallBatchBind calls ns_batch_bind under the lease: OK or STALE; a lost lease is a *RefusedError.
-func CallBatchBind(ctx context.Context, c *redis.Client, repo, base, batchID, leaseVal, fromTip, inputID string) (string, error) {
-	r, err := c.FCall(ctx, "ns_batch_bind", nil, repo, base, batchID, leaseVal, fromTip, inputID).Text()
-	if err != nil {
-		return "", err
-	}
-	return refusedText("ns_batch_bind", r)
-}
-
-// CallUnitDrop calls ns_unit_drop under the lease: OK, ALREADY, STALE or NOTFOUND; a lost lease is a
-// *RefusedError. A non-empty task queues one task of that kind on q:<author>.
-func CallUnitDrop(ctx context.Context, c *redis.Client, sprint, unit, repo, base, leaseVal, head, reason, task string) (string, error) {
-	r, err := c.FCall(ctx, "ns_unit_drop", nil, sprint, unit, repo, base, leaseVal, head, reason, task).Text()
-	if err != nil {
-		return "", err
-	}
-	return refusedText("ns_unit_drop", r)
-}
-
-// CallChainVoid calls ns_chain_void under the lease; it returns the batches voided behind batchID,
-// in chain order. A lost lease is a *RefusedError.
-func CallChainVoid(ctx context.Context, c *redis.Client, sprint, repo, base, batchID, leaseVal, reason string) ([]string, error) {
-	res, err := c.FCall(ctx, "ns_chain_void", nil, sprint, repo, base, batchID, leaseVal, reason).StringSlice()
-	if err != nil {
-		return nil, err
-	}
-	if len(res) >= 2 && res[0] == "REFUSED" {
-		return nil, &RefusedError{Fn: "ns_chain_void", Reason: res[1]}
-	}
-	if len(res) == 0 || res[0] != "OK" {
-		return nil, fmt.Errorf("ns_chain_void %s: %v", batchID, res)
-	}
-	return res[1:], nil
 }

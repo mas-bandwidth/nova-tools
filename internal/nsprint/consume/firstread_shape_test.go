@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-
 )
 
 // fqPush is `friend-queue push --to <to> --id <id> --kind <kind> --ref <ref>
