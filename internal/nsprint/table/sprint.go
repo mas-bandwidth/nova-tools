@@ -132,7 +132,7 @@ func (r StreamRow) Total() int64 {
 
 // SprintSnapshot is one tick's read.
 type SprintSnapshot struct {
-	Config     SprintConfig
+	Config  SprintConfig
 	Pitstop bool
 	// Streams is Counts.Streams as rows, for readers of one stream's cells.
 	Streams []StreamRow
