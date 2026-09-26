@@ -3691,7 +3691,9 @@ not `bench:<b>` or `friend:<f>` is a usage refusal, exit 2. `worker show
 tiers=<list|-> kinds=<list|-> machine=<m|->` line per worker, the
 `friends` and `benches` registries plus the `consumers` SET each once,
 sorted by id, from the desired record alone (one read-only call), or the
-one line for the worker named.
+one line for the worker named; the listing of every worker ends with
+`WORKERS n=<n> registries=friends,benches,consumers`, so an empty registry
+is a line and not silence.
 
 Renders the sprint table from Redis. `table --redis <addr>` makes one
 `FCALL_RO ns_snapshot` per render over the `s:<S>:*`, `bench:*` and
@@ -3704,11 +3706,27 @@ temp file is gone after each tick. There is still no `--fixture` and no
 `--refresh pending`: a reader runs the verb and reads stdout or the published
 file, and a restarted unit re-renders from Redis on its next tick. `table --check --redis <addr>` renders the
 fixture keyspace on a throwaway server and compares it byte for byte.
-`refresh -- <command>` runs that command in its own session (POSIX setsid) and
+`refresh [--dir <state dir>] -- <command>` runs that command in its own session (POSIX setsid) and
 returns without waiting, so `launchctl kickstart -k` of the loop unit does not
 kill it. The unit plist `fleet/templates/nova-loop.plist.j2`, which
 `fleet/loops.yml` renders for every loop, sets `AbandonProcessGroup` so launchd
-itself signals only the unit's pid.
+itself signals only the unit's pid. Exit 0 is a launch receipt, `REFRESH
+SESSION pid=<n> log=<session>/log result=<session>/result`, and the work's
+outcome is durable and discoverable: the command is started by a supervisor
+(this binary re-executed as `refresh --supervise <session> -- <command>`, the
+process in the new session, so it outlives the verb and the unit restart)
+that appends the command's stdout and stderr to `log` and, when the command
+ends, writes `result` by rename: `REFRESH RESULT exit=<n> cmd=<argv0>
+started=<t> ended=<t> log=<file> [wait=<error>]` and the log's last 4 KiB. A
+command that could not start is `exit=-1 wait=start: <error>`; a result the
+supervisor cannot write is `REFRESH RESULT-WRITE-FAILED result=<file> exit=<n>
+err=<error>` on the log, exit 1, so the exit status is never lost silently.
+The session directory is `<state dir>/<utc stamp>-<random>` under `--dir`,
+else `$XDG_STATE_HOME/nova-sprint/refresh`, else
+`~/.local/state/nova-sprint/refresh`. `refresh show <session>` prints the
+result (exit 0), or `REFRESH RUNNING session=<dir> log=<file>` with the log
+so far (exit 3) while the command runs, and refuses a directory that is no
+session (exit 2).
 
 `table --layout live [--redis <addr>] [--sprint <name>] [--friends <a,b,...>]
 [--once | --loop [<seconds>]] [--out <file>]` is the whole sprint table Glenn

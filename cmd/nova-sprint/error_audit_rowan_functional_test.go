@@ -215,6 +215,45 @@ func TestRowanAuditSweep(t *testing.T) {
 	}
 }
 
+// TestRowanAuditRefreshKeepsChildOutcome: refresh is a launch receipt (exit 0
+// is right), but main.go:156-176 leaves the child's stdout and stderr nil and
+// drops Wait's error, and the receipt names only the pid. A child that
+// writes both streams and exits 7 leaves nothing to inspect. The receipt must
+// name a durable channel (log and terminal result) that holds the output and
+// the exit status once the child ends.
+func TestRowanAuditRefreshKeepsChildOutcome(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	done := filepath.Join(dir, "done")
+	script := fmt.Sprintf("echo audit-out; echo audit-err >&2; touch %q; exit 7", done)
+	code, stdout, stderr := runSprint("refresh", "--", "/bin/sh", "-c", script)
+	if code != 0 {
+		t.Fatalf("refresh exit %d stderr %q; a launch receipt is exit 0", code, stderr)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(done); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond)
+	fields := strings.Fields(stdout)
+	var channel string
+	for _, f := range fields {
+		if strings.HasPrefix(f, "log=") || strings.HasPrefix(f, "result=") {
+			channel = strings.SplitN(f, "=", 2)[1]
+		}
+	}
+	if channel == "" {
+		t.Fatalf("refresh receipt %q names no log or result for the child; its output and exit 7 are gone", strings.TrimSpace(stdout))
+	}
+	b, err := os.ReadFile(channel)
+	if err != nil || !strings.Contains(string(b), "audit-err") || !strings.Contains(string(b), "7") {
+		t.Fatalf("refresh channel %s does not hold the child's stderr and exit 7: %q %v", channel, b, err)
+	}
+}
+
 func rowanStore(t *testing.T) string {
 	t.Helper()
 	addr := testutil.Start(t)

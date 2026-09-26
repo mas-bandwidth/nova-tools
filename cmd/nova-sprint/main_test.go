@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -13,6 +14,16 @@ import (
 // rather than after go-redis's 1.7 s of retry waits (nova-tools#4328): a test
 // asserts the refusal, never the library's backoff.
 func init() { store.NoRetryWaits() }
+
+// TestMain: refresh re-executes this binary as its supervisor
+// (refreshSelf), and under NOVA_SPRINT_REEXEC=1 the test binary is
+// nova-sprint, so the tests prove the same supervisor path the release runs.
+func TestMain(m *testing.M) {
+	if os.Getenv(refreshReexecEnv) == "1" {
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	}
+	os.Exit(m.Run())
+}
 
 func runSprint(args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
@@ -62,12 +73,20 @@ func TestRefreshOwnSession(t *testing.T) {
 		}
 		return
 	}
-	code, stdout, stderr := runSprint("refresh", "--", "/usr/bin/true")
+	// The session directory is not t.TempDir(): the supervisor, a process in
+	// its own session, writes result after this test returns, so the cleanup
+	// is best effort and never a wait on it.
+	dir, err := os.MkdirTemp("", "refresh-own-session-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	code, stdout, stderr := runSprint("refresh", "--dir", dir, "--", "/usr/bin/true")
 	if code != 0 {
 		t.Fatalf("exit %d; stderr %s", code, stderr)
 	}
-	if !strings.HasPrefix(stdout, "REFRESH SESSION pid=") {
-		t.Fatalf("stdout %q, want REFRESH SESSION pid=", stdout)
+	if !strings.HasPrefix(stdout, "REFRESH SESSION pid=") || !strings.Contains(stdout, " log=") || !strings.Contains(stdout, " result=") {
+		t.Fatalf("stdout %q, want REFRESH SESSION pid=<n> log=<file> result=<file>", stdout)
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -43,7 +44,8 @@ usage:
   nova-sprint table --layout live [--redis <addr>] [--sprint <name>] [--friends <a,b,...>] [--once | --loop [<seconds>]] [--out <file>] [--lock <key>]
   nova-sprint table clear --checkpoint <file> [--redis <addr>] [--friends <a,b,...>] [--by <name>]
   nova-sprint table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...> [--xy-file <file>]
-  nova-sprint refresh -- <command> [arg...]
+  nova-sprint refresh [--dir <state dir>] -- <command> [arg...]
+  nova-sprint refresh show <session dir>
   nova-sprint <verb> [<subverb>] -h
   nova-sprint redis-cli [--redis <addr>] -- <redis command...>
 
@@ -73,7 +75,13 @@ refresh runs the command after -- in its own session (POSIX setsid) and
 returns without waiting, so a unit restart does not kill it. The loop
 plist sets AbandonProcessGroup (fleet/templates/nova-loop.plist.j2), which
 stops launchd from signalling the unit's process group; setsid is the
-refresh leaving that group itself.
+refresh leaving that group itself. Exit 0 is the launch receipt, REFRESH
+SESSION pid=<n> log=<file> result=<file>, under a session directory in
+--dir (else $XDG_STATE_HOME/nova-sprint/refresh, else
+~/.local/state/nova-sprint/refresh): the command's stdout and stderr go to
+log, and when it ends the supervisor that outlives this process writes
+result (its exit status and the log's tail). refresh show <session dir>
+prints the result (exit 0), or RUNNING with the log so far (exit 3).
 
 -h on any verb or subverb prints its usage line and every flag it takes on
 stdout, and exits 2.
@@ -210,7 +218,35 @@ func storeRefusal(what string) (string, int) {
 	return what + "; run: nova-sprint help", 2
 }
 
+// refreshReexecEnv marks a re-execution of this binary as refresh's
+// supervisor: main runs run either way, and a test binary's TestMain runs
+// run under it (main_test.go), so the same path is proved in the test tier.
+const refreshReexecEnv = "NOVA_SPRINT_REEXEC"
+
+// refreshSelf is the binary the supervisor is; a test does not replace it.
+var refreshSelf = os.Executable
+
+// refreshTailBytes is how much of the log the result quotes.
+const refreshTailBytes = 4096
+
+// cmdRefresh is refresh [--dir <d>] -- <command...>: a launch receipt (exit
+// 0 means accepted), with the asynchronous work's durable, discoverable
+// result. The command is started by a supervisor, this binary re-executed
+// as `refresh --supervise <session> -- <command...>` in its own session, so
+// neither this process's return nor a unit restart loses the command's
+// outcome: the supervisor holds the log open, waits, and writes result.
+// refresh show <session> prints them.
 func cmdRefresh(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "show" {
+		return refreshShow(args[1:], stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "--supervise" {
+		return refreshSupervise(args[1:], stderr)
+	}
+	dir := ""
+	if len(args) >= 2 && args[0] == "--dir" {
+		dir, args = args[1], args[2:]
+	}
 	if len(args) == 0 || args[0] != "--" {
 		return refuse(stderr, "refresh", "needs -- and the command to run in its own session, for example: nova-sprint refresh -- /usr/bin/true")
 	}
@@ -218,12 +254,151 @@ func cmdRefresh(args []string, stdout, stderr io.Writer) int {
 	if len(argv) == 0 {
 		return refuse(stderr, "refresh", "needs a command after --; that command is what survives the unit restart")
 	}
-	pid, err := startOwnSession(argv)
+	session, err := refreshSession(dir)
 	if err != nil {
 		return refuse(stderr, "refresh", err.Error())
 	}
-	fmt.Fprintf(stdout, "REFRESH SESSION pid=%d\n", pid)
+	self, err := refreshSelf()
+	if err != nil {
+		return refuse(stderr, "refresh", "cannot find this executable for the supervisor: "+err.Error())
+	}
+	sup := append([]string{self, "refresh", "--supervise", session, "--"}, argv...)
+	log, result := filepath.Join(session, "log"), filepath.Join(session, "result")
+	pid, err := startOwnSessionLogEnv(sup, log, append(os.Environ(), refreshReexecEnv+"=1"))
+	if err != nil {
+		return refuse(stderr, "refresh", err.Error())
+	}
+	fmt.Fprintf(stdout, "REFRESH SESSION pid=%d log=%s result=%s\n", pid, log, result)
 	return 0
+}
+
+// refreshSession makes one session directory under dir (else the state
+// dir): <dir>/<utc stamp>-<random>, so two refreshes in the same second do
+// not share a log.
+func refreshSession(dir string) (string, error) {
+	if dir == "" {
+		dir = os.Getenv("XDG_STATE_HOME")
+		if dir == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", fmt.Errorf("no --dir and no home for the state directory: %v", err)
+			}
+			dir = filepath.Join(home, ".local", "state")
+		}
+		dir = filepath.Join(dir, "nova-sprint", "refresh")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("refresh directory %s: %v", dir, err)
+	}
+	session, err := os.MkdirTemp(dir, time.Now().UTC().Format("20060102-150405")+"-")
+	if err != nil {
+		return "", fmt.Errorf("refresh session under %s: %v", dir, err)
+	}
+	return session, nil
+}
+
+// refreshSupervise is `refresh --supervise <session> -- <command...>`, the
+// process refresh starts in its own session: it runs the command with its
+// stdout and stderr appended to <session>/log, waits, and writes
+// <session>/result (the exit status and the log's tail) by rename, so a
+// reader sees a whole result or none. A result it cannot write is named on
+// its own stderr (the log, when refresh started it) with the exit status
+// it could not record, exit 1; a command it cannot start is a result with
+// exit=-1 and the error.
+func refreshSupervise(args []string, stderr io.Writer) int {
+	if len(args) < 3 || args[1] != "--" {
+		fmt.Fprintln(stderr, "nova-sprint refresh --supervise: wants <session> -- <command...>")
+		return 2
+	}
+	session, argv := args[0], args[2:]
+	log, result := filepath.Join(session, "log"), filepath.Join(session, "result")
+	f, err := os.OpenFile(log, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		fmt.Fprintf(stderr, "REFRESH SUPERVISE REFUSED session=%s err=%v\n", session, err)
+		return 2
+	}
+	defer func() { _ = f.Close() }()
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Stdout, cmd.Stderr = f, f
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, refreshReexecEnv+"=") {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
+	started := time.Now()
+	exit, wait := -1, ""
+	if err := cmd.Start(); err != nil {
+		wait = "start: " + err.Error()
+	} else {
+		if err := cmd.Wait(); err != nil {
+			if _, ok := err.(*exec.ExitError); !ok {
+				wait = "wait: " + err.Error()
+			}
+		}
+		exit = cmd.ProcessState.ExitCode()
+	}
+	ended := time.Now()
+	var b strings.Builder
+	fmt.Fprintf(&b, "REFRESH RESULT exit=%d cmd=%s started=%s ended=%s log=%s", exit, oneline.Field(argv[0]),
+		started.UTC().Format(time.RFC3339), ended.UTC().Format(time.RFC3339), log)
+	if wait != "" {
+		fmt.Fprintf(&b, " wait=%s", oneline.Field(wait))
+	}
+	b.WriteString("\n")
+	tail := refreshTail(log)
+	fmt.Fprintf(&b, "--- log tail (%d bytes) ---\n%s", len(tail), tail)
+	if len(tail) > 0 && !strings.HasSuffix(tail, "\n") {
+		b.WriteString("\n")
+	}
+	tmp := result + ".tmp"
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err == nil {
+		err = os.Rename(tmp, result)
+		if err == nil {
+			return 0
+		}
+		_ = os.Remove(tmp)
+		fmt.Fprintf(stderr, "REFRESH RESULT-WRITE-FAILED result=%s exit=%d err=%v\n", result, exit, err)
+		return 1
+	} else {
+		fmt.Fprintf(stderr, "REFRESH RESULT-WRITE-FAILED result=%s exit=%d err=%v\n", result, exit, err)
+		return 1
+	}
+}
+
+// refreshTail is the last refreshTailBytes of the log, or "".
+func refreshTail(log string) string {
+	b, err := os.ReadFile(log)
+	if err != nil {
+		return ""
+	}
+	if len(b) > refreshTailBytes {
+		b = b[len(b)-refreshTailBytes:]
+	}
+	return string(b)
+}
+
+// refreshShow is `refresh show <session>`: the result when the command has
+// ended (exit 0), RUNNING with the log so far when it has not (exit 3), and
+// a refusal for a directory that is no session.
+func refreshShow(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 {
+		return refuse(stderr, "refresh show", "wants one session directory, the one REFRESH SESSION named (log=<session>/log)")
+	}
+	session := args[0]
+	if b, err := os.ReadFile(filepath.Join(session, "result")); err == nil {
+		_, _ = stdout.Write(b)
+		return 0
+	}
+	log := filepath.Join(session, "log")
+	if _, err := os.Stat(log); err != nil {
+		return refuse(stderr, "refresh show", "no refresh session at "+session+": neither result nor log ("+err.Error()+")")
+	}
+	tail := refreshTail(log)
+	fmt.Fprintf(stdout, "REFRESH RUNNING session=%s log=%s: no result yet, the command has not ended\n--- log tail (%d bytes) ---\n%s", session, log, len(tail), tail)
+	if len(tail) > 0 && !strings.HasSuffix(tail, "\n") {
+		fmt.Fprintln(stdout)
+	}
+	return 3
 }
 
 // startOwnSession is refresh's start: argv in its own session (POSIX
@@ -236,7 +411,14 @@ func startOwnSession(argv []string) (int, error) { return startOwnSessionLog(arg
 // pull, card work and task take start a friend's beat loop through it, so a
 // loop that backs off says why somewhere (seat-keeps-beat).
 func startOwnSessionLog(argv []string, log string) (int, error) {
+	return startOwnSessionLogEnv(argv, log, nil)
+}
+
+// startOwnSessionLogEnv is startOwnSessionLog with the started process's
+// environment (nil inherits this one's).
+func startOwnSessionLogEnv(argv []string, log string, env []string) (int, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = env
 	if err := sprinttable.ApplyOwnSession(cmd); err != nil {
 		return 0, err
 	}
