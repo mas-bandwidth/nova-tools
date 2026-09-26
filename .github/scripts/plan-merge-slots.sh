@@ -7,19 +7,30 @@ set -euo pipefail
 base=$1; head=$2
 mod=$(awk '$1=="module"{print $2; exit}' go.mod)
 changed=$(git diff --name-only "$base" "$head")
-# A whole-tree group (go.mod or go.sum changed) deals twelve hosted slots: six
-# crossed the two-minute cap on run 36207910988 (shard 0 finished 102 of 160
-# packages). Hosted Linux runners do not share a machine, so more slots is not
-# more contention there.
-if printf '%s\n' "$changed" | grep -q -E '^(go\.mod|go\.sum)$'; then echo 12; exit 0; fi
-dirs=$(printf '%s\n' "$changed" | grep -E '\.go$' | xargs -r -n1 dirname | sort -u || true)
-[ -n "$dirs" ] || { echo 1; exit 0; }
+# Slots scale with the group's package count: about ten packages per hosted
+# slot, so a shard's one `go test` call (build and run, two hosted cores)
+# stays under the two-minute cap; a group that touches go.mod or go.sum is
+# the whole tree. Calibrated on queue run 36208535525 (2026-09-25): six slots
+# over 160 packages cancelled at the cap. Never fewer than the old plan gave
+# (1, 3 or 6), never more than 24.
+if printf '%s\n' "$changed" | grep -q -E '^(go\.mod|go\.sum)$'; then
+  n=$(go list ./... | wc -l | tr -d ' ')
+else
+  dirs=$(printf '%s\n' "$changed" | grep -E '\.go$' | xargs -r -n1 dirname | sort -u || true)
+  [ -n "$dirs" ] || { echo 1; exit 0; }
+  n=$(printf '%s\n' "$dirs" | wc -l | tr -d ' ')
+fi
 sum=0; big=0
-for d in $dirs; do
+for d in ${dirs:-}; do
   [ "$d" = "." ] && pkg="$mod" || pkg="$mod/$d"
   secs=$(awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }' testdata/ci/package-sizes.tsv)
   [ -n "$secs" ] || secs=10
   if awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then big=1; fi
   sum=$(awk -v a="$sum" -v b="$secs" 'BEGIN { printf "%.1f", a + b }')
 done
-if [ "$big" = 1 ]; then echo 6; elif awk -v s="$sum" 'BEGIN { exit !(s < 20) }'; then echo 1; else echo 3; fi
+if [ "$big" = 1 ]; then floor=6; elif awk -v s="$sum" 'BEGIN { exit !(s < 20) }'; then floor=1; else floor=3; fi
+byCount=$(( (n + 9) / 10 ))
+slots=$floor
+[ "$byCount" -gt "$slots" ] && slots=$byCount
+[ "$slots" -gt 24 ] && slots=24
+echo "$slots"

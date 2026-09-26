@@ -1020,7 +1020,8 @@ jobs:
           base="${{ github.event.merge_group.base_sha }}"
           git fetch -q --depth=1 origin "$base" 2>/dev/null || true
           slots=$(bash .github/scripts/plan-merge-slots.sh "$base" HEAD)
-          case "$slots" in 1) shards='[0]';; 3) shards='[0,1,2]';; 12) shards='[0,1,2,3,4,5,6,7,8,9,10,11]';; *) slots=6; shards='[0,1,2,3,4,5]';; esac
+          shards=$(seq -s, 0 $((slots - 1)))
+          shards="[$shards]"
           echo "plan-merge: slots=$slots"
           echo "slots=$slots" >> "$GITHUB_OUTPUT"
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
@@ -1261,19 +1262,19 @@ jobs:
           w=0
           for pkg in ${{ steps.pkgs.outputs.pkgs }}; do
             secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
-            case "$secs" in
-              ''|'-'|*+) split="$split $pkg" ;;
-              *)
-                if awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then
-                  split="$split $pkg"
-                elif [ $((w % slots)) -eq "$shard" ]; then
-                  whole="$whole $pkg"
-                  w=$((w + 1))
-                else
-                  w=$((w + 1))
-                fi
-                ;;
-            esac
+            # Only a package MEASURED over 40 s splits by test name; an
+            # unmeasured package is dealt whole (queue run 36208535525: the
+            # table measured 8 of 160 packages and the other 152 went one at
+            # a time through the split loop, 81 of them on shard 0 before the
+            # cap).
+            if [ -n "$secs" ] && [ "$secs" != "-" ] && awk -v s="$secs" 'BEGIN { exit !(s + 0 > 40) }'; then
+              split="$split $pkg"
+            elif [ $((w % slots)) -eq "$shard" ]; then
+              whole="$whole $pkg"
+              w=$((w + 1))
+            else
+              w=$((w + 1))
+            fi
           done
           if [ -n "$whole" ]; then
             echo "shard $shard of $slots: whole packages in one call:$whole"
