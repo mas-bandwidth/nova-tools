@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 // The verb face of our own CI (#3597, #3349): request, run and status

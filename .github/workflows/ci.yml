@@ -281,6 +281,13 @@ jobs:
       - name: vet
         run: make vet
 
+      - name: vet-functional
+        # nova-tools #4328: the redis-backed tests are behind `//go:build
+        # functional` and a pull request does not run them, but every change
+        # still COMPILES them here, once for the whole tree, so a PR that
+        # breaks one is red now rather than at the stream's landing.
+        run: make vet-functional
+
       - name: vet-laws
         # tools/analyzers/cmd/vetlaw as a go vet -vettool= analyzer over
         # ./cmd/..., enforcing verb laws #2573 (exit-zero-with-zero-bytes),
@@ -870,8 +877,14 @@ jobs:
         # parallel lab tests ran 660 s at GOMAXPROCS=4 (Go's 11m timeout) and 12 min (the cap) on a loaded Studio.
         # They run in full on the same PR's Linux leg, on every push to dev (8 Studio shards) and in the merge group.
         # Not a global -short: that would also skip internal/bus's multi-process tests, the darwin evidence this leg is for.
+        # GOTEST_TAGS (nova-tools #4328, Glenn 2026-09-26 11:20 AM ET: functional
+        # tests run "not on every small PR being merged or worked on, but only as we
+        # merge whole work streams"): a pull request's legs build without the
+        # `functional` tag, so no redis-server starts; the merge group and an
+        # unproved push to dev are the landing, and they run the functional tier.
         env:
           NOVA_CI_PR_STUDIO: ${{ matrix.entry.group == 'macOS' && github.event_name == 'pull_request' && '1' || '' }}
+          GOTEST_TAGS: ${{ github.event_name != 'pull_request' && 'functional' || '' }}
         # GOTEST_COUNT_FLAG= turns Go's test cache on (Makefile): a shard whose
         # packages did not change since the last run on this machine is
         # served from the cache instead of recompiled and re-executed.

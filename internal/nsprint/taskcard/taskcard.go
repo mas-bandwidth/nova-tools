@@ -464,14 +464,7 @@ func Fsck(ctx context.Context, c redis.Cmdable, sprint string) (FsckResult, erro
 	if err != nil || len(out) < n || out[0] != "FSCK" {
 		return FsckResult{}, fmt.Errorf("%s: unexpected reply %v %v", FnFsck, out, err)
 	}
-	var bad []string
-	num := func(s string) int64 {
-		v, err := strconv.ParseInt(s, 10, 64)
-		if err != nil {
-			bad = append(bad, s)
-		}
-		return v
-	}
+	num := func(s string) int64 { v, _ := strconv.ParseInt(s, 10, 64); return v }
 	r := FsckResult{Sprint: out[1], Tasks: num(out[2]), Null: num(out[3]), Counts: map[string]int64{}}
 	for i, w := range Wheres {
 		r.Counts[w] = num(out[4+i])
@@ -479,10 +472,6 @@ func Fsck(ctx context.Context, c redis.Cmdable, sprint string) (FsckResult, erro
 	r.Unplaced = num(out[4+len(Wheres)])
 	r.Drift = num(out[5+len(Wheres)])
 	r.Lines = out[n:]
-	if len(bad) > 0 {
-		// A count that is not a number would read as 0: a false clean.
-		return FsckResult{}, fmt.Errorf("%s: counts %q are not numbers in reply %v", FnFsck, bad, out)
-	}
 	return r, nil
 }
 

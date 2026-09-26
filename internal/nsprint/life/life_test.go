@@ -1,3 +1,5 @@
+//go:build functional
+
 package life_test
 
 import (

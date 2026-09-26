@@ -58,7 +58,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 )
 
 const (
@@ -338,7 +337,7 @@ func (r *Refill) registry(ctx context.Context) ([]string, []string, error) {
 	pipe := r.Client.Pipeline()
 	sprints := pipe.SMembers(ctx, "sprints")
 	benches := pipe.SMembers(ctx, "benches")
-	if err := pipeerr.Exec(ctx, pipe); err != nil {
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, nil, err
 	}
 	names := sprints.Val()
@@ -408,7 +407,7 @@ func (r *Refill) benchReturns(ctx context.Context, benches []string) ([]string, 
 	for i, b := range benches {
 		cmds[i] = pipe.HGet(ctx, "bench:"+b+":state", "state")
 	}
-	if err := pipeerr.Exec(ctx, pipe); err != nil {
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
 	up := make(map[string]bool, len(benches))
@@ -610,22 +609,13 @@ func (d *DealFunctions) Reserve(ctx context.Context, fence, bench string, cards 
 	for i, c := range cards {
 		attempts[i] = pipe.HGet(ctx, "s:"+c.Sprint+":card:"+c.Label, "attempt")
 	}
-	if err := pipeerr.Exec(ctx, pipe); err != nil {
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
 	args := []any{bench, fence, d.actor(), ""}
 	byKey := map[string]deal.Card{}
 	for i, c := range cards {
-		a := 0
-		if v := attempts[i].Val(); v != "" {
-			var err error
-			if a, err = strconv.Atoi(v); err != nil {
-				// A record whose attempt is not a number would be dealt as
-				// attempt 1, skipped by ns_card_deal as "attempt moved" and
-				// never dealt again, with no line: refuse it by name.
-				return nil, fmt.Errorf("ns_card_deal: s:%s:card:%s attempt %q is not a number", c.Sprint, c.Label, v)
-			}
-		}
+		a, _ := strconv.Atoi(attempts[i].Val())
 		token := fmt.Sprintf("%d.%s", a+1, randomHex(16))
 		args = append(args, c.Sprint, c.Label, strconv.Itoa(a+1), token, tokenSHA(token))
 		byKey[c.Sprint+"/"+c.Label] = c

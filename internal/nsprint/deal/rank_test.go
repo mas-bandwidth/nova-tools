@@ -1,3 +1,5 @@
+//go:build functional
+
 package deal_test
 
 import (

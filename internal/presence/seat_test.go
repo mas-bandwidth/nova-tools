@@ -1,3 +1,5 @@
+//go:build functional
+
 package presence_test
 
 import (

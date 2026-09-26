@@ -1,3 +1,5 @@
+//go:build functional
+
 package ci_test
 
 // ci run stages the claimed head from the bench mirror, never from the

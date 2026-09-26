@@ -69,13 +69,14 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-slow test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp verify-roadmap measure-roadmap check clean darwin-timeout map new-rule new-verb
+.PHONY: help build fmt vet vet-functional vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp verify-roadmap measure-roadmap check clean darwin-timeout map new-rule new-verb
 
 help:
 	@echo "make help        this list"
 	@echo "make build       go build ./..."
 	@echo "make fmt         report files that are not gofmt-clean"
 	@echo "make vet         go vet PKGS (default ./...)"
+	@echo "make vet-functional go vet -tags functional PKGS (the redis-backed test files compiled too)"
 	@echo "make vet-laws    build tools/analyzers/cmd/vetlaw and vet ./cmd/... with it"
 	@echo "make vet-windows GOOS=windows go vet ./... (the one Windows guard on the CL path)"
 	@echo "make lint        fmt and vet"
@@ -83,6 +84,7 @@ help:
 	@echo "make test        go test -count=1 PKGS plus the 60s slowtests budget (the fast tier)"
 	@echo "make test-full   go test -count=1 ./... (the whole tree)"
 	@echo "make test-short  go test -short -count=1 -timeout 12m PKGS"
+	@echo "make test-functional go test -count=1 -tags functional PKGS (the redis-backed tier: stream landings and nightly)"
 	@echo "make test-slow   go test -count=1 -tags slow ./... (the nightly tier: the tests too slow for a commit)"
 	@echo "make test-merge  go test -count=1 -timeout MERGE_TIMEOUT -run RUN PKGS"
 	@echo "make test-race   go test -race ./... (the certification tier)"
@@ -122,6 +124,16 @@ fmt:
 vet:
 	$(GO) vet $(PKGS)
 
+# THE FUNCTIONAL TIER (nova-tools #4328, Glenn 2026-09-26 11:20 AM ET: "we
+# should run functional tests, not on every small PR being merged or worked on,
+# but only as we merge whole work streams"). Every test that starts a
+# redis-server is behind `//go:build functional`, so `vet` and `test` above do
+# not compile it. vet-functional compiles those files on every change, so a PR
+# that breaks one is red at once even though it does not run it;
+# internal/ci's TestRedisBackedTestsCarryTheFunctionalTag keeps the tag on.
+vet-functional:
+	$(GO) vet -tags functional $(PKGS)
+
 # THE VERB-LAW GUARD, its own target rather than folded into `vet` because
 # `vet` is also the SHARDED per-package leg (ci.yml's test-packages job calls
 # `make vet PKGS=<shard>` once per shard): vetlaw's checks are a whole-tree
@@ -156,7 +168,7 @@ vet-laws:
 vet-windows:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) vet ./...
 
-lint: fmt vet vet-laws
+lint: fmt vet vet-functional vet-laws
 
 # preflight is the standard check for swarm cards and developers (#2498 S4):
 # gofmt + go vet + go test -count=1
@@ -204,9 +216,14 @@ GOTEST_COUNT_FLAG ?= -count=1
 # 51% CPU on the Studio, 2026-09-26 9:47 AM ET) and a debug-info-free binary
 # is smaller for the malware scan that follows every fresh executable.
 GOTEST_LDFLAGS ?=
+# GOTEST_TAGS: empty on a pull request, so the redis-backed tests behind
+# `//go:build functional` are not built; `functional` where a whole stream
+# lands (ci.yml's merge-group and push-to-dev legs, and `make check`, the
+# stream lander's batch test). nova-tools #4328.
+GOTEST_TAGS ?=
 test: PKGS := $(CL_PKGS)
 test:
-	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
+	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) -tags=$(GOTEST_TAGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
 
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)
@@ -222,6 +239,12 @@ test-short:
 # go-test-internal, do not build these files.
 test-slow:
 	$(GO) test -count=1 -tags slow ./...
+
+# The functional tier by hand: the redis-backed tests (and the unit tests beside
+# them). nightly-slow.yml's functional leg adds `slow` for the four files that
+# are both.
+test-functional:
+	$(GO) test -count=1 -tags functional $(PKGS)
 
 # `test-pr` LIVED HERE, the sharded hosted PR leg's entry, and it went with
 # test-windows-pr on 2026-09-18: it had exactly one caller, and the caller is
@@ -271,6 +294,9 @@ measure-roadmap:
 # What CI runs on a pull request: the self-hosted lint job, the sharded test
 # job, the friend sequences and the nova-work acceptance suite (run once, by
 # verify-roadmap, with the roadmap's verified criteria judged against it).
+# The stream lander's batch test lands a whole stream, so it runs the
+# functional tier (#4328): the tag rides into `test` as a target variable.
+check: GOTEST_TAGS := functional
 check: build lint test test-e2e verify-roadmap
 
 # An explicit list, never a computed path: clean removes the two directories a

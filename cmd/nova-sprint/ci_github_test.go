@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 // The verb face of the GitHub leg (#3597): an ev:github check_run entry,

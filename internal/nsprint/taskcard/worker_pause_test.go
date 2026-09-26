@@ -1,3 +1,5 @@
+//go:build functional
+
 package taskcard_test
 
 import (

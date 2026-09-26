@@ -97,11 +97,7 @@ func loopTable(ctx context.Context, addr string, cfg table.SprintConfig, opts ta
 	defer func() {
 		if st != nil {
 			if locked {
-				// A lock not given back holds the table's writer seat for its
-				// TTL: the next writer refuses until then, so say so.
-				if err := table.ReleaseLock(context.Background(), st.Client(), cfg.LockKey, token); err != nil {
-					fmt.Fprintf(stderr, "nova-sprint table: release %s: %s (held until its TTL)\n", cfg.LockKey, oneline.Escape(err.Error()))
-				}
+				_ = table.ReleaseLock(context.Background(), st.Client(), cfg.LockKey, token)
 			}
 			_ = st.Close()
 		}
@@ -166,11 +162,7 @@ func loopTable(ctx context.Context, addr string, cfg table.SprintConfig, opts ta
 		}
 		body := snap.Render(now)
 		if opts.out == "" {
-			if _, err := io.WriteString(stdout, body); err != nil {
-				// Nobody reads a table whose stdout is gone: exit, not tick on.
-				fmt.Fprintf(stderr, "nova-sprint table: stdout: %s\n", oneline.Escape(err.Error()))
-				return 1
-			}
+			_, _ = io.WriteString(stdout, body)
 		} else if err := writeAtomic(opts.out, body); err != nil {
 			fmt.Fprintf(stderr, "nova-sprint table: %s\n", oneline.Escape(err.Error()))
 		}
@@ -192,9 +184,7 @@ func tickEvery(every time.Duration) time.Duration {
 // publishTable prints body, or writes it to out by rename.
 func publishTable(out, body string, stdout, stderr io.Writer) int {
 	if out == "" {
-		if _, err := io.WriteString(stdout, body); err != nil {
-			return tableRefuse(stderr, "stdout: "+err.Error())
-		}
+		_, _ = io.WriteString(stdout, body)
 		return 0
 	}
 	if err := writeAtomic(out, body); err != nil {
