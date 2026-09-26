@@ -658,7 +658,7 @@ func planRows(ctx context.Context, o *cutFromOpts, d cutFromDeps, rows []*cutRow
 	}
 	facts.Stitch, facts.Restitch = stitch, restitch
 	if rec["stream"] == "" {
-		return nil, facts, fmt.Errorf("task:%s has no stream: nova-sprint task move --id %s --to-stream <s> first", o.Parent, o.Parent)
+		return nil, facts, fmt.Errorf("task:%s has no stream: nova-sprint task move --actor <a> --id %s --to-stream <s> first", o.Parent, o.Parent)
 	}
 	facts.Children = map[string]bool{}
 	for _, id := range strings.Fields(rec[taskcard.FieldChildren]) {
@@ -679,7 +679,7 @@ func planRows(ctx context.Context, o *cutFromOpts, d cutFromDeps, rows []*cutRow
 	}
 	doneWhen := strings.TrimSpace(rec["done_when"])
 	if doneWhen == "" {
-		return nil, facts, fmt.Errorf("task:%s has no DONE-WHEN; the stitch's DONE-WHEN is the parent's: nova-sprint task move --id %s --set done_when", o.Parent, o.Parent)
+		return nil, facts, fmt.Errorf("task:%s has no DONE-WHEN; the stitch's DONE-WHEN is the parent's: push the parent with one (nova-sprint task push --actor <a> --id %s --issue <ref> reads the issue's DONE-WHEN: line; nova-sprint card push takes a DONE-WHEN header)", o.Parent, o.Parent)
 	}
 	seen := map[string]bool{}
 	var paths []string

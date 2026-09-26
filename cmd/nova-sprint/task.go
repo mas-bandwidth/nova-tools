@@ -84,7 +84,12 @@ func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 	case "width":
 		return runTaskWidth(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "task", fmt.Sprintf("unknown subverb %s; want push, take, beat, done, cancel, list or width", args[0]))
+		if cardByID[args[0]] || cardAlways[args[0]] {
+			// A card subverb without --actor is not unknown: name what it
+			// takes rather than the list that omits it.
+			return refuse(errOut, "task "+args[0], fmt.Sprintf("is a task card verb and needs --actor <a> (and --id <id>); see nova-sprint task %s --help", args[0]))
+		}
+		return refuse(errOut, "task", fmt.Sprintf("unknown subverb %s; want push, take, beat, done, cancel, list or width, or a task card verb with --actor: land, cancel, block, unblock, front, move, beat, expire, ls, fsck", args[0]))
 	}
 }
 

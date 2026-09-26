@@ -287,6 +287,25 @@ func TestRowanAuditHoldReleaseNoUnitNamesTheUnit(t *testing.T) {
 	}
 }
 
+// TestRowanAuditCutParentRemedyRuns: card cut --parent refuses a parent with
+// no stream or no DONE-WHEN and names `nova-sprint task move --id <p>
+// --to-stream <s>` and `... task move --id <p> --set done_when`
+// (card_cut_from.go:614,635). Without --actor the dispatcher answers
+// `unknown subverb move`, and task move has no --set flag at all.
+func TestRowanAuditCutParentRemedyRuns(t *testing.T) {
+	t.Parallel()
+	addr := rowanStore(t)
+	for _, remedy := range [][]string{
+		{"task", "move", "--id", "p", "--to-stream", "s1"},
+		{"task", "move", "--id", "p", "--set", "done_when"},
+	} {
+		_, out, errOut := runSprint(append(remedy, "--redis", addr)...)
+		if strings.Contains(errOut, "unknown subverb") || strings.Contains(errOut, "not defined") {
+			t.Errorf("the card cut remedy `nova-sprint %s` answers %q", strings.Join(remedy, " "), strings.TrimSpace(out+errOut))
+		}
+	}
+}
+
 // TestRowanAuditHoldShowMalformedParkIsNamed: hold show drops json.Unmarshal's
 // error on a parked record (hold.go:350-352) and prints the zero Park:
 // `parked x id= role= reason= age=<epoch>s`, a row that looks real.
