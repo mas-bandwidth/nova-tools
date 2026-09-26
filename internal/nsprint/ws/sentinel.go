@@ -10,8 +10,10 @@ import (
 // sentinel card, task:<slug>:sentinel, created in the stream's waiting set
 // when the stream is registered (its first push, or stream order;
 // cm_register in fn/lua/02_card_move.lua) and landed by task land with the
-// merge sha only when every other card of the stream is landed or done
-// (TK.edge). It is never dealt. A dependency across streams is one
+// merge sha only when every other card of the stream is landed or done,
+// by the coordinator's acceptance alone (TK.edge, TK.accepts: the actor
+// holds the coordinator role; nova-tools#4412), never with the last card.
+// It is never dealt. A dependency across streams is one
 // horizontal edge from a card to another stream's sentinel: DEPENDS-ON
 // <slug>:sentinel (or task:<slug>:sentinel) on the first card of the stream
 // that waits, resolved by the waiting resolver like any task id.
