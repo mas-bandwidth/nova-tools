@@ -109,7 +109,11 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 		switch status {
 		case TakeBlocked:
 			if id != "" {
-				return claims, &BlockedError{Sprint: name, ID: taskID, Needs: strings.Fields(detail)}
+				classes := ""
+				if len(values) > 4 {
+					classes = fmt.Sprint(values[4])
+				}
+				return claims, &BlockedError{Sprint: name, ID: taskID, Needs: strings.Fields(detail), Classes: classes}
 			}
 			// Without --id a task with unmet needs is passed over.
 		case "RETRY":
@@ -298,11 +302,14 @@ func Take(ctx context.Context, st *store.Store, req TakeRequest) (Claim, bool, e
 	case "NONE", "NOTFOUND":
 		return Claim{}, false, nil
 	case TakeBlocked:
-		needs := ""
+		needs, classes := "", ""
 		if len(values) > 1 {
 			needs = fmt.Sprint(values[1])
 		}
-		return Claim{}, false, &BlockedError{Sprint: req.Sprint, ID: req.ID, Needs: strings.Fields(needs)}
+		if len(values) > 2 {
+			classes = fmt.Sprint(values[2])
+		}
+		return Claim{}, false, &BlockedError{Sprint: req.Sprint, ID: req.ID, Needs: strings.Fields(needs), Classes: classes}
 	case "DOWN", "FULL":
 		return Claim{}, false, fmt.Errorf("task take %s: friend %s is %s", req.ID, req.As, status)
 	case TakeClaimed:
@@ -343,21 +350,35 @@ func parseClaim(values []any) (Claim, error) {
 // TakeStatus words returned by ns_task_take.
 const (
 	TakeClaimed = "CLAIMED"
-	// TakeBlocked is a task whose needs are not all closed (#2939).
+	// TakeBlocked is a task whose needs are not all met (#2939): the one
+	// dependency rule, ws.DepMet.
 	TakeBlocked = "BLOCKED"
 )
 
-// BlockedError is a take refused because the task needs ids that are not
-// closed yet (#2939). `task take --id` prints it as BLOCKED needs <ids> and
-// exits 7; a take without --id passes over the task.
+// BlockedError is a take refused because the task needs ids the one
+// dependency rule does not call met (#2939). `task take --id` prints it as
+// BLOCKED needs <id> <class> [<where>]; ... and exits 7; a take without --id
+// passes over the task.
 type BlockedError struct {
 	Sprint string
 	ID     string
 	Needs  []string
+	// Classes is each unmet need with its class (ws.DepClass: waiting,
+	// parked, dead or unknown) and where, joined by "; "; empty from a
+	// library that predates it.
+	Classes string
+}
+
+// Unmet is each unmet need with its class, or the ids alone.
+func (e *BlockedError) Unmet() string {
+	if e.Classes != "" {
+		return e.Classes
+	}
+	return strings.Join(e.Needs, " ")
 }
 
 func (e *BlockedError) Error() string {
-	return fmt.Sprintf("task take %s/%s: blocked, needs %s", e.Sprint, e.ID, strings.Join(e.Needs, " "))
+	return fmt.Sprintf("task take %s/%s: blocked, needs %s", e.Sprint, e.ID, e.Unmet())
 }
 
 // DoneRequest is one task done (spec 4.2). A review task's Evidence must name

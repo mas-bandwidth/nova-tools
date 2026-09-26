@@ -181,6 +181,10 @@ type PushResult struct {
 	// Waiting is the number of unmet DEPENDS-ON conditions of a CREATED task
 	// that is waiting; 0 when it is ready.
 	Waiting int
+	// Classes is each unmet condition of a waiting task with its class
+	// (ws.DepClass: waiting, parked or unknown, and the where), joined by
+	// "; "; empty from a library that predates it.
+	Classes string
 	// OnMet is a CREATED task whose DEPENDS-ON conditions all held at push.
 	OnMet bool
 }
@@ -331,6 +335,9 @@ func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushRes
 		res := PushResult{Status: PushCreated, Sprint: req.Sprint}
 		if values, _ := reply.([]any); len(values) > 2 && second == "waiting" {
 			res.Waiting, _ = strconv.Atoi(fmt.Sprint(values[2]))
+			if len(values) > 3 {
+				res.Classes = fmt.Sprint(values[3])
+			}
 		}
 		res.OnMet = second == "on-met"
 		return res, nil

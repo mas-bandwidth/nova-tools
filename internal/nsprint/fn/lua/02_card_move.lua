@@ -1758,6 +1758,10 @@ end
 --            its stream (TK.live_siblings)
 --   UNKNOWN  a stream sentinel with no record: no stream has that slug, so
 --            nothing will ever land it
+--   DEAD     an edge the class table (NS.dep.class) calls dead: a record in
+--            done that is not met (done/fail, a sentinel done by hand)
+-- A task id with no record that is not a sentinel is not refused: the task
+-- may be pushed after the edge that names it (its class is unknown).
 function TK.dep_refusal(id, stream, text)
   local named = NS.dep.ids(text)
   if #named == 0 then return nil end
@@ -1788,6 +1792,10 @@ function TK.dep_refusal(id, stream, text)
     if TK.is_sentinel(d) and redis.call('EXISTS', 'task:' .. d) == 0 then
       return 'UNKNOWN task:' .. d .. ' has no record: no stream with the slug ' .. string.sub(d, 1, -10) ..
         ' is registered (nova-sprint stream ls), so nothing would ever land it'
+    end
+    local class, detail = NS.dep.class(d)
+    if class == 'dead' then
+      return 'DEAD task:' .. d .. ' ' .. NS.dep.text(class, detail) .. ': it is done and not met, so the edge would wait for ever'
     end
   end
   return nil
@@ -2715,7 +2723,10 @@ function TM.leg(id, p)
       -- the one rule (NS.dep) says is unmet
       local ids = NS.dep.ids(dep)
       for _, d in ipairs(ids) do
-        if not NS.dep.met(d) then return nil, 'DEPENDS task:' .. id .. ' waits on task:' .. d .. ' (of ' .. dep .. ')' end
+        local class, detail = NS.dep.class(d)
+        if class ~= 'met' then
+          return nil, 'DEPENDS task:' .. id .. ' waits on task:' .. d .. ' ' .. NS.dep.text(class, detail) .. ' (of ' .. dep .. ')'
+        end
       end
       if #ids == 0 then return nil, 'DEPENDS task:' .. id .. ' waits on ' .. dep end
       return nil, 'DEPENDS task:' .. id .. ' waits on ' .. dep .. ' (its task edges are met: the waiting resolver releases it)'

@@ -184,21 +184,28 @@ type ReleaseResult struct {
 	Refused []IDWhy
 }
 
+// ErrUnguarded is Release's refusal on a store whose nova_sprint library
+// predates the guarded release (ns_ws_move_many refuses waiting>ready as an
+// unknown where): nothing moved. Release never falls back to the unguarded
+// move, which pulls a card another pass released and a dealer dealt from
+// working back to ready (a double release); the remedy is `nova-sprint fn
+// load`.
+var ErrUnguarded = errors.New("the store's nova_sprint library has no guarded release (ns_ws_move_many waiting>ready)")
+
 // Release is the waiting resolver's guarded move (ns_ws_move_many with to
 // waiting>ready): each id moves waiting -> ready only while it is waiting,
 // so two releases racing move a card once and never pull a dealt card back.
+// On a library without the guard it moves nothing and returns ErrUnguarded.
 func Release(ctx context.Context, c redis.Cmdable, by, why string, ids []string) (ReleaseResult, error) {
 	guarded := Waiting + ">" + Ready
 	r, err := MoveMany(ctx, c, guarded, by, why, ids)
 	if err != nil {
 		return ReleaseResult{}, err
 	}
-	// A store still on a library without the guard refuses every id with
-	// WHERE waiting>ready: move unguarded, as before, until fn load.
+	// A library without the guard refuses every id WHERE waiting>ready
+	// before any write (TK.edge): nothing moved, and nothing will.
 	if len(ids) > 0 && len(r.Refused) == len(ids) && strings.HasPrefix(r.Refused[0].Why, "WHERE "+guarded) {
-		if r, err = MoveMany(ctx, c, Ready, by, why, ids); err != nil {
-			return ReleaseResult{}, err
-		}
+		return ReleaseResult{}, ErrUnguarded
 	}
 	var out ReleaseResult
 	left := map[string]bool{}

@@ -26,23 +26,22 @@
 // The first blocker is one line, its first word the class:
 //
 //	WAIT <dep> pr#<n> open
-//	WAIT <dep> sentinel-<where>
+//	WAIT <dep> waiting|parked [<where>]
 //	WAIT PATHS <other>
 //	DEAD <dep> pr#<n> closed-unmerged
 //	UNKNOWN <dep> pr#<n> base-unresolved
 //
 // plus the rarer WAIT <dep> issue#<n> open, WAIT <dep> card-<state> no-pr,
-// WAIT <dep> pr#<n> merged-into <b> not <base>, DEAD <dep> no-such-card,
+// WAIT <dep> pr#<n> merged-into <b> not <base>, DEAD <dep> dead <where>,
 // DEAD <dep> card-<state>, and UNKNOWN <dep> ... forge/state/repo lines.
 //
 // A dependency on a task record (task:<id>, or an id with no sprint card,
-// a stream's <slug>:sentinel among them) is met by the one dependency rule,
-// ws.DepMet: landed, or done/ok; a sentinel only when landed. One that is
-// not prints WAIT <dep> task-<where> (sentinel-<where> for a stream's stop),
-// or DEAD <dep> task-done/fail; a sentinel with no record prints UNKNOWN
-// <dep> no-such-stream. A waiting task is a candidate too, so --why
-// names what it waits on; one whose dependencies are all met waits only for
-// its release: WAIT <wait_on> for a durable wait, else WAIT release.
+// a stream's <slug>:sentinel among them) is read through the class table,
+// ws.DepClass, the one every reader of an edge prints: met (not a blocker),
+// or WAIT <dep> waiting|parked [<where>], DEAD <dep> dead <where>, UNKNOWN
+// <dep> unknown (no record has the id). A waiting task is a candidate too,
+// so --why names what it waits on; one whose dependencies are all met waits
+// only for its release: WAIT <wait_on> for a durable wait, else WAIT release.
 //
 // Evaluate never writes; the forge is the dealer's one seam (deal.PRs), so
 // a test hands in a map and no host is reached.
@@ -218,14 +217,9 @@ func (f *forge) entryBlocker(ctx context.Context, snap Snapshot, c Item, e strin
 	id, isTask := strings.CutPrefix(e, "task:")
 	d, ok := snap.Deps[c.Sprint+"/"+e]
 	if isTask || ws.IsSentinel(id) || !ok || !d.Found {
-		if t, ok := snap.Tasks[id]; ok {
-			return taskBlocker(e, id, t)
-		}
-		if ws.IsSentinel(id) {
-			// never met, and named: no stream has that slug
-			return "UNKNOWN " + e + " no-such-stream"
-		}
-		return "DEAD " + e + " no-such-card"
+		// a task record, or an id no sprint card has: the class table
+		// (ws.DepClass); no record at all is unknown
+		return taskBlocker(e, id, snap.Tasks[id])
 	}
 	switch {
 	case d.State == "landed":
@@ -260,26 +254,24 @@ func (f *forge) entryBlocker(ctx context.Context, snap Snapshot, c Item, e strin
 	return "WAIT " + e + " card-" + state + " no-pr"
 }
 
-// taskBlocker is the one dependency rule (ws.DepMet) on a task record as a
-// blocker line; empty when it is met.
+// taskBlocker is the class table (ws.DepClass) on a task record as a
+// blocker line, empty when the edge is met: its first word ready's (WAIT for
+// waiting and parked, DEAD, UNKNOWN), then the entry, the class and the
+// record's where when the class does not say it.
 func taskBlocker(e, id string, t TaskDep) string {
-	if ws.DepMet(id, t.State, t.Where, t.WhereOK) {
+	class, detail := ws.DepClass(id, t.State, t.Where, t.WhereOK)
+	lead := "WAIT"
+	switch class {
+	case ws.DepClassMet:
 		return ""
+	case ws.DepClassDead:
+		lead = "DEAD"
+	case ws.DepClassUnknown:
+		lead = "UNKNOWN"
+	case ws.DepClassCycle:
+		lead = "CYCLE"
 	}
-	if t.State == "cancelled" || (t.Where == ws.Done && t.WhereOK == "fail") {
-		return "DEAD " + e + " task-done/fail"
-	}
-	w := t.Where
-	if w == "" {
-		w = t.State
-	}
-	if w == "" {
-		w = "unknown"
-	}
-	if ws.IsSentinel(id) {
-		return "WAIT " + e + " sentinel-" + w
-	}
-	return "WAIT " + e + " task-" + w
+	return lead + " " + e + " " + ws.DepText(class, detail)
 }
 
 // refBlocker reads one forge answer against the dependent's base. An unknown

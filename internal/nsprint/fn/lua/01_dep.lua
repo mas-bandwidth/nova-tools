@@ -50,6 +50,64 @@ function DP.met(id)
   return DP.met_of(id, s(f[1]), s(f[2]), s(f[3]))
 end
 
+-- The dependency classes (ws.DepClass in internal/nsprint/ws/dep.go, the
+-- same table; fn's TestDepClassOneTable runs both): the one word every
+-- reader of an edge prints for it.
+--   met      the rule above says met
+--   waiting  a live record, not met yet
+--   parked   a record in parked
+--   dead     a record in done that is not met (done/fail, a sentinel done
+--            by hand)
+--   unknown  no record has the id
+--   cycle    the edge leads back to the task naming it (TK.dep_refusal
+--            refuses it at the write doors, so no reader meets one)
+DP.LEGACY = { closed = 'done', cancelled = 'done', done = 'done', open = 'ready', claimed = 'working' }
+
+-- DP.class_of(id, state, where, ok): the class and the detail a reader
+-- prints after it (the record's where, done with /where_ok; '' when the
+-- class already says it).
+function DP.class_of(id, state, where, ok)
+  state, where, ok = state or '', where or '', ok or ''
+  if state == '' and where == '' then return 'unknown', '' end
+  local w = where
+  if w == '' then w = DP.LEGACY[state] or state end
+  local done = w == 'done'
+  if done then
+    if ok ~= '' then
+      w = w .. '/' .. ok
+    elseif state == 'cancelled' then
+      w = w .. '/fail'
+    end
+  end
+  local class = 'waiting'
+  if DP.met_of(id, state, where, ok) then
+    class = 'met'
+  elseif done then
+    class = 'dead'
+  elseif w == 'parked' then
+    class = 'parked'
+  end
+  if w == class then w = '' end
+  return class, w
+end
+
+-- DP.class(id): the class and detail of task:<id> as Redis holds it now.
+function DP.class(id)
+  local f = redis.call('HMGET', 'task:' .. id, 'state', 'where', 'where_ok')
+  local function s(v)
+    if v == false or v == nil then return '' end
+    return v
+  end
+  return DP.class_of(id, s(f[1]), s(f[2]), s(f[3]))
+end
+
+-- DP.text(class, detail): 'dead done/fail', 'waiting working', 'unknown'
+-- (ws.DepText).
+function DP.text(class, detail)
+  if detail == nil or detail == '' then return class end
+  return class .. ' ' .. detail
+end
+
 -- DP.ids(text): the task ids a DEPENDS-ON value names (a card's blocked_on
 -- or a queue task's depends_on; entries split on ',', ';' and white space):
 -- task:<id> names id, a bare id (a stream sentinel's among them) names
@@ -73,4 +131,5 @@ function DP.ids(text)
   return out
 end
 
-NS.dep = { is_sentinel = DP.is_sentinel, met_of = DP.met_of, met = DP.met, ids = DP.ids }
+NS.dep = { is_sentinel = DP.is_sentinel, met_of = DP.met_of, met = DP.met, ids = DP.ids,
+  class_of = DP.class_of, class = DP.class, text = DP.text }

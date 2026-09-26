@@ -7,8 +7,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
+
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ready"
@@ -44,19 +47,26 @@ func runReady(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "ready", err.Error())
 	}
 	defer st.Close()
-	snap, err := ready.Read(ctx, st.Client(), *sprint)
+	return readyReport(ctx, st.Client(), readyForge(st), *sprint, *why, out, errOut)
+}
+
+// readyReport is the ready verb on an open client and a forge, both passed
+// in as values (a test hands in its throwaway store and a map forge, with no
+// environment and no package-level swap).
+func readyReport(ctx context.Context, c *redis.Client, prs deal.PRs, sprint, why string, out, errOut io.Writer) int {
+	snap, err := ready.Read(ctx, c, sprint)
 	if err != nil {
 		return refuse(errOut, "ready", err.Error())
 	}
-	verdicts := ready.Evaluate(ctx, snap, readyForge(st))
+	verdicts := ready.Evaluate(ctx, snap, prs)
 
-	if *why != "" {
-		v, ok, err := ready.Find(verdicts, *why)
+	if why != "" {
+		v, ok, err := ready.Find(verdicts, why)
 		if err != nil {
 			return refuse(errOut, "ready --why", err.Error())
 		}
 		if !ok {
-			return refuse(errOut, "ready --why", *why+" is not a queued card or an open task")
+			return refuse(errOut, "ready --why", why+" is not a queued card or an open task")
 		}
 		if v.Ready {
 			fmt.Fprintf(out, "READY %s/%s\n", v.Item.Sprint, v.Item.ID)

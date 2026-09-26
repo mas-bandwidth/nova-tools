@@ -14,8 +14,8 @@ package reconcile
 // owner/repo#n issues or PRs, joined by ',' or ';'), and checks every entry
 // against the records:
 //
-//   - task:<id> (or a bare id) is met by the one dependency rule, ws.DepMet
-//     (landed, or where done with where_ok not fail); a stream's
+//   - task:<id> (or a bare id) is read through the class table, ws.DepClass
+//     (met: landed, or where done with where_ok not fail); a stream's
 //     sentinel, <slug>:sentinel (nova-tools #4318, ws.SentinelID), is a
 //     task id like any other, so a stream that must wait for another whole
 //     stream puts DEPENDS-ON <slug>:sentinel on its first card and that is
@@ -24,7 +24,8 @@ package reconcile
 //     names it is landed;
 //   - an entry with no record (no task:<id>; no task in any ws set naming the
 //     repo#n; any other form) is NOT met and is reported in unknown=, never
-//     guessed: no evidence is not negative evidence;
+//     guessed: no evidence is not negative evidence; an unmet entry with a
+//     record is reported by its class: waiting=, parked= or dead=;
 //   - blocked_on "none" or "-" has nothing to wait on and is met; an empty
 //     blocked_on is no evidence either way and the task stays waiting.
 //
@@ -48,7 +49,13 @@ package reconcile
 // never a SCAN or KEYS. The duty prints one receipt line per stream with
 // waiting tasks when it moves something or what is still waiting changed:
 //
-//	RESOLVE stream=<s> ready=<k> still=<n> on=<unmet deps> unknown=<deps>
+//	RESOLVE stream=<s> ready=<k> still=<n> waiting=<deps> parked=<deps> dead=<deps> unknown=<deps>
+//
+// On a store whose library predates the guarded release (ws.ErrUnguarded)
+// the pass moves nothing and prints, instead of falling back to the
+// unguarded move that can pull a dealt card back to ready:
+//
+//	RESOLVE REFUSED library=<fn.Sum loaded> wants=<fn.Sum embedded> remedy="nova-sprint fn load"
 //
 // Every write is bounded by the lease (#3322, #3805): no move starts with
 // less than the write margin of the lease left, and a fenced lease stops the
@@ -67,6 +74,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
@@ -89,11 +97,17 @@ type WaitingResolve struct {
 
 // ResolveLine is one stream's receipt for one pass.
 type ResolveLine struct {
-	Stream  string
-	Ready   []string   // ids moved to ready, oldest first
-	Still   int        // tasks left waiting
-	On      []string   // unmet dependencies that have a record
-	Unknown []string   // dependencies with no record
+	Stream string
+	Ready  []string // ids moved to ready, oldest first
+	Still  int      // tasks left waiting
+	// The unmet dependencies by class (ws.DepClass, the word every reader
+	// of an edge prints): a live record not met yet (an owner/repo#n whose
+	// task has not landed among them), one in parked, one in done that is
+	// not met, and one no record has.
+	Waiting []string
+	Parked  []string
+	Dead    []string
+	Unknown []string
 	Refused []ws.IDWhy // ids ns_ws_move_many refused (left waiting, counted in Still)
 	// Stop is the stream's waiting sentinel with no live card left (its
 	// landing by structure had no last landing: the last card was cancelled).
@@ -108,8 +122,14 @@ func (r ResolveLine) StopLine() string {
 
 // String is the receipt line.
 func (r ResolveLine) String() string {
-	return fmt.Sprintf("RESOLVE stream=%s ready=%d still=%d on=%s unknown=%s",
-		wrField(r.Stream), len(r.Ready), r.Still, wrList(r.On), wrList(r.Unknown))
+	return fmt.Sprintf("RESOLVE stream=%s ready=%d still=%d %s",
+		wrField(r.Stream), len(r.Ready), r.Still, r.classes())
+}
+
+// classes is the line's unmet dependencies by class.
+func (r ResolveLine) classes() string {
+	return fmt.Sprintf("%s=%s %s=%s %s=%s %s=%s", ws.DepClassWaiting, wrList(r.Waiting), ws.DepClassParked, wrList(r.Parked),
+		ws.DepClassDead, wrList(r.Dead), ws.DepClassUnknown, wrList(r.Unknown))
 }
 
 func wrField(s string) string {
@@ -137,6 +157,10 @@ func (d *WaitingResolve) Run(ctx context.Context, l *Lease) (Counts, error) {
 		c.Refused += len(r.Refused)
 	}
 	d.print(lines)
+	var stale *UnguardedError
+	if errors.As(err, &stale) && d.Out != nil {
+		_, _ = fmt.Fprintln(d.Out, stale.Line())
+	}
 	return c, err
 }
 
@@ -150,7 +174,7 @@ func (d *WaitingResolve) print(lines []ResolveLine) {
 	for _, r := range lines {
 		// What is still waiting, and on what: an idle pass over the same
 		// waiting set prints nothing.
-		held := fmt.Sprintf("%d %s %s %s", r.Still, wrList(r.On), wrList(r.Unknown), r.Stop)
+		held := fmt.Sprintf("%d %s %s", r.Still, r.classes(), r.Stop)
 		if len(r.Ready) == 0 && d.last[r.Stream] == held {
 			continue
 		}
@@ -242,14 +266,9 @@ func wrParse(text string) (deps []wrDep, none bool) {
 	return deps, false
 }
 
-// wrStatus is what the records say of one dependency.
-type wrStatus int
-
-const (
-	wrUnknown wrStatus = iota // no record
-	wrUnmet                   // a record, not landed
-	wrMet
-)
+// wrStatus is what the records say of one dependency: its class in the
+// class table (ws.DepClass).
+type wrStatus = string
 
 type wrWaiter struct {
 	id, stream, blockedOn string
@@ -344,9 +363,9 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		for _, dep := range w.deps {
 			switch dep.kind {
 			case wrTask:
-				taskDeps[dep.key] = wrUnknown
+				taskDeps[dep.key] = ws.DepClassUnknown
 			case wrRef:
-				refDeps[dep.key] = wrUnknown
+				refDeps[dep.key] = ws.DepClassUnknown
 			}
 		}
 	}
@@ -372,15 +391,8 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	}
 	for i, id := range taskIDs {
 		v := taskCmds[i].Val()
-		state, where, ok := wrStr(v, 0), wrStr(v, 1), wrStr(v, 2)
-		switch {
-		case state == "" && where == "":
-			taskDeps[id] = wrUnknown
-		case ws.DepMet(id, state, where, ok): // the one rule: a stop by its landing alone
-			taskDeps[id] = wrMet
-		default:
-			taskDeps[id] = wrUnmet
-		}
+		// the class table: a stop is met by its landing alone
+		taskDeps[id], _ = ws.DepClass(id, wrStr(v, 0), wrStr(v, 1), wrStr(v, 2))
 	}
 
 	// Round 5: the members' names (pr, ref, origin) and whether each landed.
@@ -410,13 +422,13 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 			landed := ws.DepMet(members[i], wrStr(v, 0), wrStr(v, 1), wrStr(v, 2))
 			for _, k := range wrNames(wrStr(v, 3), wrStr(v, 4), wrStr(v, 5), wrStr(v, 6)) {
 				st, named := refDeps[k]
-				if !named || st == wrMet {
+				if !named || st == ws.DepClassMet {
 					continue
 				}
 				if landed {
-					refDeps[k] = wrMet
+					refDeps[k] = ws.DepClassMet
 				} else {
-					refDeps[k] = wrUnmet
+					refDeps[k] = ws.DepClassWaiting
 				}
 			}
 		}
@@ -449,7 +461,7 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		if !w.none && len(w.deps) > 0 {
 			met = true
 			for _, dep := range w.deps {
-				st := wrUnknown
+				st := ws.DepClassUnknown
 				switch dep.kind {
 				case wrTask:
 					st = taskDeps[dep.key]
@@ -457,10 +469,14 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 					st = refDeps[dep.key]
 				}
 				switch st {
-				case wrMet:
+				case ws.DepClassMet:
 					continue
-				case wrUnmet:
-					r.On = wrAdd(r.On, dep.raw)
+				case ws.DepClassWaiting:
+					r.Waiting = wrAdd(r.Waiting, dep.raw)
+				case ws.DepClassParked:
+					r.Parked = wrAdd(r.Parked, dep.raw)
+				case ws.DepClassDead:
+					r.Dead = wrAdd(r.Dead, dep.raw)
 				default:
 					r.Unknown = wrAdd(r.Unknown, dep.raw)
 				}
@@ -513,6 +529,14 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		// so two passes at once release a card exactly once.
 		res, err := ws.Release(ctx, c, d.actor(), g.why, g.ids)
 		r := byStream[g.stream]
+		if errors.Is(err, ws.ErrUnguarded) {
+			// The store's library has no guarded release: refuse the pass
+			// rather than move unguarded (a double release). Nothing moved.
+			for _, rest := range groups[gi:] {
+				byStream[rest.stream].Still += len(rest.ids)
+			}
+			return lines, unguarded(ctx, c)
+		}
 		if err != nil {
 			r.Still += len(g.ids)
 			errs = append(errs, fmt.Sprintf("stream %s: %v", g.stream, err))
@@ -541,13 +565,48 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		}
 	}
 	for i := range lines {
-		sort.Strings(lines[i].On)
-		sort.Strings(lines[i].Unknown)
+		for _, xs := range [][]string{lines[i].Waiting, lines[i].Parked, lines[i].Dead, lines[i].Unknown} {
+			sort.Strings(xs)
+		}
 	}
 	if len(errs) > 0 {
 		return lines, fmt.Errorf("waiting-resolve: %s", strings.Join(errs, "; "))
 	}
 	return lines, nil
+}
+
+// UnguardedError is the pass refused on a store whose nova_sprint library
+// predates the guarded release (ws.ErrUnguarded): Library is the loaded
+// library's fn.Sum ("none" when it holds none, "unreadable" when FUNCTION
+// LIST is refused), Wants this binary's.
+type UnguardedError struct {
+	Library, Wants string
+}
+
+// Line is the refusal receipt the duty prints.
+func (e *UnguardedError) Line() string {
+	return fmt.Sprintf("RESOLVE REFUSED library=%s wants=%s remedy=%q", e.Library, e.Wants, "nova-sprint fn load")
+}
+
+func (e *UnguardedError) Error() string {
+	return "waiting-resolve: " + e.Line() + ": " + ws.ErrUnguarded.Error() + "; nothing moved"
+}
+
+func (e *UnguardedError) Unwrap() error { return ws.ErrUnguarded }
+
+// unguarded names the store's library and this binary's for the refusal.
+func unguarded(ctx context.Context, c *redis.Client) *UnguardedError {
+	e := &UnguardedError{Library: "unreadable", Wants: "unreadable"}
+	if src, err := fn.Source(); err == nil {
+		e.Wants = fn.Sum(src)
+	}
+	if code, found, err := fn.Loaded(ctx, c); err == nil {
+		e.Library = "none"
+		if found {
+			e.Library = fn.Sum(code)
+		}
+	}
+	return e
 }
 
 // wrStopsReady reads, for every stream with a waiting sentinel, whether any

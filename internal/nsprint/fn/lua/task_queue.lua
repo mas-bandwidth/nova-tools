@@ -24,8 +24,9 @@
 -- Conditions (the one DEPENDS-ON form, nova-tools#3409):
 --   task:<id>            met by the one dependency rule (NS.dep, 01_dep.lua):
 --                        task:<id> landed, or done/ok (closed); a stream
---                        sentinel only when landed. A bare sentinel id
---                        (<slug>:sentinel) is stored as task:<slug>:sentinel.
+--                        sentinel only when landed. A task named bare (P3,
+--                        or a sentinel <slug>:sentinel) is stored as
+--                        task:<id> (NS.dep.ids, the card door's reading).
 --                        The move that meets it releases its waiters
 --                        (TK.release_waiters, 02_card_move.lua).
 --   key:<k>=<v>          met when GET k equals v
@@ -80,14 +81,27 @@ function DEP.parse(text)
   for raw in string.gmatch(text, '[^;,]+') do
     local c = string.match(raw, '^%s*(.-)%s*$')
     if c ~= '' then
-      if string.find(c, '%s') or not (string.find(c, ':') or string.find(c, '/') or string.find(c, '#')) then
+      if string.find(c, '%s') then
+        return out, c
+      end
+      -- a task named bare (P3, or a stream's sentinel <slug>:sentinel) is
+      -- the task edge task:<id>, the card door's reading: NS.dep.ids is the
+      -- one parser of which entries name a task
+      local bare = not string.find(c, '/') and not string.find(c, '#') and
+        (not string.find(c, ':') or NS.dep.is_sentinel(c))
+      if bare then
+        local ids = NS.dep.ids(c)
+        if #ids ~= 1 then
+          return out, c
+        end
+        c = 'task:' .. ids[1]
+      end
+      if not (string.find(c, ':') or string.find(c, '/') or string.find(c, '#')) then
         return out, c
       end
       if string.sub(c, 1, 4) == 'key:' and not string.match(c, '^key:[^=]+=.*$') then
         return out, c
       end
-      -- a stream's sentinel named bare is the task edge task:<slug>:sentinel
-      if NS.dep.is_sentinel(c) then c = 'task:' .. c end
       if not seen[c] then
         seen[c] = true
         out[#out + 1] = c

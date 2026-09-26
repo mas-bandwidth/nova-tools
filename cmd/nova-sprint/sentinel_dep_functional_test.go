@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -34,11 +36,12 @@ const (
 )
 
 // sdStore is a throwaway store with the library loaded, one open sprint and
-// one registered friend f1.
-func sdStore(t *testing.T) (string, *redis.Client, *store.Store) {
+// one registered friend f1. It reads no environment and swaps no package
+// variable, so every test here runs in parallel: ready --why gets the
+// client and a map forge as values (sdWhy, readyReport).
+func sdStore(t *testing.T) (*redis.Client, *store.Store) {
 	t.Helper()
-	t.Setenv(store.UserEnv, "")
-	addr, c := wstest.Start(t)
+	_, c := wstest.Start(t)
 	ctx := context.Background()
 	pipe := c.Pipeline()
 	pipe.HSet(ctx, "s:"+sdSprint, "status", "open")
@@ -50,10 +53,7 @@ func sdStore(t *testing.T) (string, *redis.Client, *store.Store) {
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	old := readyForge
-	t.Cleanup(func() { readyForge = old })
-	readyForge = func(*store.Store) deal.PRs { return mapForge{} } // no forge: no entry here is a PR
-	return addr, c, store.New(c)
+	return c, store.New(c)
 }
 
 // sdQueue pushes one task-queue task (ns_task_push) to f1.
@@ -93,11 +93,13 @@ func sdLand(t *testing.T, c *redis.Client, id string) {
 	}
 }
 
-// sdWhy is `ready --why <id>`: its one line and exit code.
-func sdWhy(t *testing.T, addr, id string) (string, int) {
+// sdWhy is `ready --why <id>` (readyReport, the verb's body) on the
+// throwaway store with a map forge (no entry here is a PR): its one line and
+// exit code.
+func sdWhy(t *testing.T, c *redis.Client, id string) (string, int) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code := run([]string{"ready", "--redis", addr, "--why", id}, &out, &errOut)
+	code := readyReport(context.Background(), c, mapForge{}, "", id, &out, &errOut)
 	if code == 2 {
 		t.Fatalf("ready --why %s could not run: %s", id, errOut.String())
 	}
@@ -117,7 +119,8 @@ func sdField(t *testing.T, c *redis.Client, id, f string) string {
 // landed card and a closed task meet an edge, a card done/fail does not;
 // and probe 1: a sentinel set done by hand (not landed) meets nothing.
 func TestSentinelDepReleasedWhenStopLands(t *testing.T) {
-	addr, c, st := sdStore(t)
+	t.Parallel()
+	c, st := sdStore(t)
 	ctx := context.Background()
 	const stop = "alpha:sentinel"
 
@@ -136,15 +139,15 @@ func TestSentinelDepReleasedWhenStopLands(t *testing.T) {
 	if err := sdCard(t, c, "C", "beta", stop); err != nil {
 		t.Fatal(err)
 	}
-	if got, code := sdWhy(t, addr, "B"); got != "WAIT task:"+stop+" sentinel-waiting" || code != 1 {
+	if got, code := sdWhy(t, c, "B"); got != "WAIT task:"+stop+" waiting" || code != 1 {
 		t.Fatalf("ready --why B = %q exit %d", got, code)
 	}
-	if got, code := sdWhy(t, addr, "C"); got != "WAIT "+stop+" sentinel-waiting" || code != 1 {
+	if got, code := sdWhy(t, c, "C"); got != "WAIT "+stop+" waiting" || code != 1 {
 		t.Fatalf("ready --why C = %q exit %d", got, code)
 	}
 	k, _ := taskcard.ParseConsumer("friend:f1")
 	if _, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: k, N: 1, IDs: []string{"C"}, By: "test"}); err == nil ||
-		!strings.Contains(err.Error(), "DEPENDS task:C waits on task:"+stop) {
+		!strings.Contains(err.Error(), "DEPENDS task:C waits on task:"+stop+" waiting (of "+stop+")") {
 		t.Fatalf("deal C before the stop landed: %v", err)
 	}
 
@@ -165,11 +168,10 @@ func TestSentinelDepReleasedWhenStopLands(t *testing.T) {
 	if _, err := taskcard.Cancel(ctx, c, "X", "test", "not needed"); err != nil {
 		t.Fatal(err)
 	}
-	if res := sdQueue(t, st, "F", "task:X"); res.Waiting != 1 {
-		t.Fatalf("push F on a card done/fail: %+v, want waiting", res)
-	}
-	if got, _ := sdWhy(t, addr, "F"); got != "DEAD task:X task-done/fail" {
-		t.Fatalf("ready --why F = %q", got)
+	// a card done/fail meets nothing: its class is dead, and the queue door
+	// refuses the edge by class instead of letting F wait for ever
+	if res := sdQueue(t, st, "F", "task:X"); res.Status != task.PushInvalid || !strings.HasPrefix(res.Reason, "DEAD task:X dead done/fail") {
+		t.Fatalf("push F on a card done/fail: %+v, want refused DEAD", res)
 	}
 	claim, ok, err := task.Take(ctx, st, task.TakeRequest{Sprint: sdSprint, ID: "T", As: "f1"})
 	if err != nil || !ok {
@@ -193,10 +195,10 @@ func TestSentinelDepReleasedWhenStopLands(t *testing.T) {
 			t.Fatalf("%s after the landing: state %q waits_on %q, want open", id, s, w)
 		}
 	}
-	if s := sdField(t, c, "F", "state"); s != "waiting" {
-		t.Fatalf("F: %q, want waiting (a card done/fail never meets)", s)
+	if n := c.Exists(ctx, "task:F").Val(); n != 0 {
+		t.Fatal("task:F written by a refused push")
 	}
-	if got, code := sdWhy(t, addr, "B"); got != "READY "+sdSprint+"/B" || code != 0 {
+	if got, code := sdWhy(t, c, "B"); got != "READY "+sdSprint+"/B" || code != 0 {
 		t.Fatalf("ready --why B after the stop landed = %q exit %d", got, code)
 	}
 	var readies int
@@ -239,7 +241,8 @@ func TestSentinelDepReleasedWhenStopLands(t *testing.T) {
 	t.Logf("receipt: %s", strings.TrimSpace(out.String()))
 
 	// Probe 1: a sentinel done by hand. The graph refuses the move; a hand
-	// edit to done/ok still meets nothing.
+	// edit to done/ok still meets nothing: its class is dead, so both push
+	// doors refuse an edge on it, and an edge written around them is DEAD.
 	const gstop = "gamma:sentinel"
 	if _, err := taskcard.Move(ctx, c, gstop, "done", taskcard.Opts{By: "test", OK: "ok", Why: "by hand"}); err == nil ||
 		!strings.Contains(err.Error(), "SENTINEL task:"+gstop) {
@@ -248,37 +251,47 @@ func TestSentinelDepReleasedWhenStopLands(t *testing.T) {
 	if err := c.HSet(ctx, "task:"+gstop, "where", "done", "where_ok", "ok", "state", "closed").Err(); err != nil {
 		t.Fatal(err)
 	}
-	if res := sdQueue(t, st, "G", gstop); res.Waiting != 1 || res.OnMet {
-		t.Fatalf("push G on a sentinel done by hand: %+v, want waiting", res)
+	if res := sdQueue(t, st, "G", gstop); res.Status != task.PushInvalid || !strings.HasPrefix(res.Reason, "DEAD task:"+gstop+" dead done/ok") {
+		t.Fatalf("push G on a sentinel done by hand: %+v, want refused DEAD", res)
 	}
-	got, code := sdWhy(t, addr, "G")
-	if got != "WAIT task:"+gstop+" sentinel-done" || code != 1 {
-		t.Fatalf("ready --why G = %q exit %d", got, code)
+	if err := sdCard(t, c, "K", "epsilon", gstop); err == nil || !strings.Contains(err.Error(), "DEAD task:"+gstop+" dead done/ok") {
+		t.Fatalf("card push K on a sentinel done by hand: %v, want refused DEAD", err)
 	}
-	t.Logf("probe 1: ready --why G = %s", got)
-
-	// ws show --order's edge state is the same rule: C's edge on alpha's
-	// landed stop is met, K's on gamma's stop done by hand is not.
-	if err := sdCard(t, c, "K", "epsilon", gstop); err != nil {
+	// K's edge written around the push (a hand edit)
+	if err := sdCard(t, c, "K", "epsilon", ""); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := taskcard.Move(ctx, c, "K", "waiting", taskcard.Opts{By: "test", Why: "hand"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.HSet(ctx, "task:K", "blocked_on", gstop).Err(); err != nil {
+		t.Fatal(err)
+	}
+	got, code := sdWhy(t, c, "K")
+	if got != "DEAD "+gstop+" dead done/ok" || code != 1 {
+		t.Fatalf("ready --why K = %q exit %d", got, code)
+	}
+	t.Logf("probe 1: ready --why K = %s", got)
+
+	// ws show --order's edge state is the same table: C's edge on alpha's
+	// landed stop is met, K's on gamma's stop done by hand is dead.
 	streams, err := ws.Show(ctx, c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	edges := map[string]bool{}
+	edges := map[string]string{}
 	for _, s := range streams {
 		for _, card := range s.Cards {
 			for _, d := range card.Deps {
-				edges[card.ID+" "+d.Raw] = d.Landed
+				edges[card.ID+" "+d.Raw] = ws.DepText(d.Class, d.Detail)
 			}
 		}
 	}
-	if met, ok := edges["C "+stop]; !ok || !met {
-		t.Fatalf("ws show: C's edge on %s met=%v (present %v), want met", stop, met, ok)
+	if cl := edges["C "+stop]; cl != "met landed" {
+		t.Fatalf("ws show: C's edge on %s is %q, want met landed", stop, cl)
 	}
-	if met, ok := edges["K "+gstop]; !ok || met {
-		t.Fatalf("ws show: K's edge on %s met=%v (present %v), want not met", gstop, met, ok)
+	if cl := edges["K "+gstop]; cl != "dead done/ok" {
+		t.Fatalf("ws show: K's edge on %s is %q, want dead done/ok", gstop, cl)
 	}
 }
 
@@ -288,7 +301,8 @@ func TestSentinelDepReleasedWhenStopLands(t *testing.T) {
 // the push is never met and is named: UNKNOWN by ready --why, unknown= by
 // the resolver.
 func TestSentinelDepUnknownStreamIsNamed(t *testing.T) {
-	addr, c, st := sdStore(t)
+	t.Parallel()
+	c, st := sdStore(t)
 	ctx := context.Background()
 	const ghost = "nosuch:sentinel"
 	res := sdQueue(t, st, "H", ghost)
@@ -314,8 +328,8 @@ func TestSentinelDepUnknownStreamIsNamed(t *testing.T) {
 	if err := c.HSet(ctx, "task:J", "blocked_on", ghost).Err(); err != nil {
 		t.Fatal(err)
 	}
-	got, code := sdWhy(t, addr, "J")
-	if got != "UNKNOWN "+ghost+" no-such-stream" || code != 1 {
+	got, code := sdWhy(t, c, "J")
+	if got != "UNKNOWN "+ghost+" unknown" || code != 1 {
 		t.Fatalf("ready --why J = %q exit %d", got, code)
 	}
 	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test"})
@@ -336,7 +350,8 @@ func TestSentinelDepUnknownStreamIsNamed(t *testing.T) {
 // 50 trials, release the dependent card exactly once each: one ws:log
 // waiting -> ready entry and one Ready line across the two passes.
 func TestSentinelDepRaceReleasesOnce(t *testing.T) {
-	_, c, st := sdStore(t)
+	t.Parallel()
+	c, st := sdStore(t)
 	ctx := context.Background()
 	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test"})
 	if err != nil {
@@ -399,7 +414,8 @@ func TestSentinelDepRaceReleasesOnce(t *testing.T) {
 // card whose edge leads through another stream back to its own stop, and
 // the same through the task queue's door.
 func TestSentinelDepCycleRefusedAtPush(t *testing.T) {
-	_, c, st := sdStore(t)
+	t.Parallel()
+	c, st := sdStore(t)
 	ctx := context.Background()
 	if err := sdCard(t, c, "P1", "p", ""); err != nil {
 		t.Fatal(err)
@@ -432,4 +448,422 @@ func TestSentinelDepCycleRefusedAtPush(t *testing.T) {
 		t.Fatalf("stream p waiting %v -> %v: a refused push wrote", before, after)
 	}
 	t.Logf("probe 5: %v | %s", err, res.Reason)
+}
+
+// sdSprintCard seeds one queued card of the sprint store (s:<S>:card:<label>
+// in the pool) with a DEPENDS-ON, the record the Go dealer's gate reads.
+func sdSprintCard(t *testing.T, c *redis.Client, label, deps string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := c.HSet(ctx, "s:"+sdSprint+":card:"+label, "state", "queued", "depends_on", deps).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ZAdd(ctx, "s:"+sdSprint+":pool", redis.Z{Score: 1, Member: label}).Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// sdGate is the Go dealer's DEPENDS-ON gate (deal.Ready) on the store as
+// deal.RedisSource reads it: each held sprint card's why, keyed by label.
+func sdGate(t *testing.T, c *redis.Client) map[string]string {
+	t.Helper()
+	ctx := context.Background()
+	in, err := deal.RedisSource{Client: c}.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, blocked := deal.Ready(ctx, in, mapForge{})
+	why := map[string]string{}
+	for _, b := range blocked {
+		why[b.Label] = b.Why
+	}
+	return why
+}
+
+// sdLease is the reconciler lease a test's resolver passes run under.
+func sdLease(t *testing.T, st *store.Store) *reconcile.Lease {
+	t.Helper()
+	lease, err := reconcile.Acquire(context.Background(), st, reconcile.AcquireOptions{Host: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lease
+}
+
+// sdResolve is one waiting-resolver pass: its receipt lines.
+func sdResolve(c *redis.Client, lease *reconcile.Lease) (string, int, error) {
+	var out bytes.Buffer
+	counts, err := (&reconcile.WaitingResolve{Client: c, Out: &out}).Run(context.Background(), lease)
+	return out.String(), counts.Routed, err
+}
+
+// sdEdges is ws show's class text for every edge, keyed "<card> <entry>".
+func sdEdges(t *testing.T, c *redis.Client) map[string]string {
+	t.Helper()
+	streams, err := ws.Show(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges := map[string]string{}
+	for _, s := range streams {
+		for _, card := range s.Cards {
+			for _, d := range card.Deps {
+				edges[card.ID+" "+d.Raw] = ws.DepText(d.Class, d.Detail)
+			}
+		}
+	}
+	return edges
+}
+
+// TestDepClassEveryReader is the DOORS clause: one table of target states,
+// and for each row every reader of an edge on that target gives the same
+// class word (ws.DepClass / NS.dep.class_of): task take's needs, the queue
+// door (task push, both spellings task:<id> and the bare <id>), ready --why,
+// the dealer (the stream deal's DEPENDS line and the Go gate deal.Ready),
+// the waiting resolver and ws show. The cycle row is the write doors': the
+// card push and the queue push refuse it and nothing is written, so no
+// reader ever meets one.
+func TestDepClassEveryReader(t *testing.T) {
+	t.Parallel()
+	c, st := sdStore(t)
+	ctx := context.Background()
+	rows := []struct {
+		name, target, class, text string
+	}{
+		{"met", "XM", ws.DepClassMet, "met landed"},
+		{"waiting", "XW", ws.DepClassWaiting, "waiting working"},
+		{"parked", "XP", ws.DepClassParked, "parked"},
+		{"dead", "XD", ws.DepClassDead, "dead done/fail"},
+		{"unknown", "GH", ws.DepClassUnknown, "unknown"},
+	}
+	// The targets start ready in stream tgt (GH is never written), and each
+	// row's edges are written while its target is live: a stream card
+	// C<row> in stream dep-<row>, a sprint card D<row>, a queue task
+	// N<row> that needs it.
+	for _, r := range rows {
+		if r.target != "GH" {
+			if err := sdCard(t, c, r.target, "tgt", ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := sdCard(t, c, "C"+r.name, "dep-"+r.name, r.target); err != nil {
+			t.Fatalf("card push C%s on %s: %v", r.name, r.target, err)
+		}
+		sdSprintCard(t, c, "D"+r.name, r.target)
+		if _, err := task.PushChecked(ctx, st, task.PushRequest{Sprint: sdSprint, ID: "N" + r.name, Kind: task.KindWork,
+			Title: "needs " + r.target, Effects: task.EffectsNone, To: "f1", Needs: []string{r.target}, Actor: "test"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Each target moves to its row's state.
+	sdLand(t, c, "XM")
+	if _, err := taskcard.Move(ctx, c, "XW", "working", taskcard.Opts{By: "test", As: "f1", Friend: "f1", SetFriend: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Move(ctx, c, "XP", "parked", taskcard.Opts{By: "test", Why: "held"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Cancel(ctx, c, "XD", "test", "not needed"); err != nil {
+		t.Fatal(err)
+	}
+
+	gate := sdGate(t, c)
+	edges := sdEdges(t, c)
+	var receipts []string
+	for _, r := range rows {
+		met := r.class == ws.DepClassMet
+		lead := map[string]string{ws.DepClassWaiting: "WAIT", ws.DepClassParked: "WAIT", ws.DepClassDead: "DEAD", ws.DepClassUnknown: "UNKNOWN"}[r.class]
+
+		// the queue door, both spellings, pushed now
+		for _, spell := range []string{"task:" + r.target, r.target} {
+			id := "Q" + r.name
+			if spell == r.target {
+				id = "QB" + r.name
+			}
+			res := sdQueue(t, st, id, spell)
+			switch r.class {
+			case ws.DepClassMet:
+				if res.Status != task.PushCreated || res.Waiting != 0 {
+					t.Errorf("%s: push %s on %s: %+v, want created open", r.name, id, spell, res)
+				}
+			case ws.DepClassDead:
+				if res.Status != task.PushInvalid || !strings.HasPrefix(res.Reason, "DEAD task:"+r.target+" "+r.text) {
+					t.Errorf("%s: push %s on %s: %+v, want refused DEAD", r.name, id, spell, res)
+				}
+				continue
+			default:
+				if res.Status != task.PushCreated || res.Classes != "task:"+r.target+" "+r.text {
+					t.Errorf("%s: push %s on %s: %+v, want waiting on task:%s %s", r.name, id, spell, res, r.target, r.text)
+				}
+			}
+			if d := sdField(t, c, id, "depends_on"); d != "task:"+r.target {
+				t.Errorf("%s: %s depends_on %q, want task:%s", r.name, id, d, r.target)
+			}
+			if got, _ := sdWhy(t, c, id); !met && got != lead+" task:"+r.target+" "+r.text {
+				t.Errorf("%s: ready --why %s = %q, want %s task:%s %s", r.name, id, got, lead, r.target, r.text)
+			} else if met && got != "READY "+sdSprint+"/"+id && !strings.HasPrefix(got, "WAIT PATHS ") {
+				// met: no dependency blocks it (XW, working with no PATHS,
+				// overlaps it: the whole repo)
+				t.Errorf("%s: ready --why %s = %q, want no dependency blocker", r.name, id, got)
+			}
+		}
+
+		// ready --why on the stream card (met: only its release is left)
+		got, _ := sdWhy(t, c, "C"+r.name)
+		want := lead + " " + r.target + " " + r.text
+		if met {
+			want = "WAIT release"
+		}
+		if got != want {
+			t.Errorf("%s: ready --why C%s = %q, want %q", r.name, r.name, got, want)
+		}
+
+		// task take's needs (after the queue door: a claim is in flight, and
+		// ready would name its PATHS)
+		_, ok, err := task.Take(ctx, st, task.TakeRequest{Sprint: sdSprint, ID: "N" + r.name, As: "f1"})
+		var blocked *task.BlockedError
+		switch {
+		case met && (!ok || err != nil):
+			t.Errorf("%s: take N%s: ok %v err %v, want claimed", r.name, r.name, ok, err)
+		case !met && (!errors.As(err, &blocked) || blocked.Unmet() != r.target+" "+r.text):
+			t.Errorf("%s: take N%s: %v, want BLOCKED needs %s %s", r.name, r.name, err, r.target, r.text)
+		}
+
+		// the dealer: the stream deal's DEPENDS line and the Go gate
+		k, _ := taskcard.ParseConsumer("friend:f1")
+		_, derr := taskcard.Deal(ctx, c, taskcard.DealRequest{To: k, N: 1, IDs: []string{"C" + r.name}, By: "test"})
+		wantDeal := "waits on task:" + r.target + " " + r.text + " (of " + r.target + ")"
+		if met {
+			wantDeal = "its task edges are met"
+		}
+		if derr == nil || !strings.Contains(derr.Error(), wantDeal) {
+			t.Errorf("%s: deal C%s: %v, want %q", r.name, r.name, derr, wantDeal)
+		}
+		if w, held := gate["D"+r.name]; met && held || !met && w != r.target+" "+r.text {
+			t.Errorf("%s: gate D%s held %v why %q, want %q", r.name, r.name, held, w, r.target+" "+r.text)
+		}
+
+		// ws show
+		if e := edges["C"+r.name+" "+r.target]; e != r.text {
+			t.Errorf("%s: ws show C%s's edge = %q, want %q", r.name, r.name, e, r.text)
+		}
+		receipts = append(receipts, fmt.Sprintf("%s: take=%q deal=%q", r.name, blockedText(blocked), wantDeal))
+	}
+
+	// the waiting resolver, one pass: its line per stream names each
+	// unmet edge under its class, and releases the met row's card
+	out, routed, err := sdResolve(c, sdLease(t, st))
+	if err != nil || routed != 1 || sdField(t, c, "Cmet", "where") != "ready" {
+		t.Fatalf("resolver: routed %d err %v (%s)", routed, err, out)
+	}
+	for _, r := range rows {
+		want := "RESOLVE stream=dep-" + r.name + " ready=0 still=1 "
+		for _, cl := range []string{ws.DepClassWaiting, ws.DepClassParked, ws.DepClassDead, ws.DepClassUnknown} {
+			v := "-"
+			if cl == r.class {
+				v = r.target
+			}
+			want += cl + "=" + v + " "
+		}
+		want = strings.TrimSpace(want)
+		if r.class == ws.DepClassMet {
+			want = "RESOLVE stream=dep-met ready=1 still=0 waiting=- parked=- dead=- unknown=-"
+		}
+		if !strings.Contains(out, want+"\n") {
+			t.Errorf("%s: resolver receipt lacks %q:\n%s", r.name, want, out)
+		}
+	}
+
+	// the cycle row: the write doors refuse it by class, nothing written
+	if err := sdCard(t, c, "CY1", "cy", "cy:sentinel"); err == nil || !strings.Contains(err.Error(), "CYCLE task:CY1 -> cy:sentinel") {
+		t.Errorf("cycle: card push CY1 on its own stop: %v", err)
+	}
+	res, qerr := task.PushChecked(ctx, st, task.PushRequest{Sprint: sdSprint, ID: "CY2", Kind: task.KindWork,
+		Title: "STREAM: cy | CY2", Effects: task.EffectsNone, To: "f1", DependsOn: "cy:sentinel", Actor: "test"})
+	if qerr != nil || res.Status != task.PushInvalid || !strings.HasPrefix(res.Reason, "CYCLE task:CY2 -> cy:sentinel") {
+		t.Errorf("cycle: queue push CY2 on its own stop: %+v %v", res, qerr)
+	}
+	for _, id := range []string{"CY1", "CY2"} {
+		if c.Exists(ctx, "task:"+id).Val() != 0 {
+			t.Errorf("cycle: task:%s written by a refused push", id)
+		}
+	}
+	t.Logf("doors: %s", strings.Join(receipts, " | "))
+	t.Logf("doors: %s", strings.ReplaceAll(strings.TrimSpace(out), "\n", " | "))
+}
+
+func blockedText(b *task.BlockedError) string {
+	if b == nil {
+		return "CLAIMED"
+	}
+	return "BLOCKED needs " + b.Unmet()
+}
+
+// TestSentinelDepCancelledNeedBlocksTake is probe (a): a need cancelled
+// (state closed, where done/fail, in the sprint's closed index) is dead, not
+// met: task take refuses the task naming the need and its class, and
+// nothing is written.
+func TestSentinelDepCancelledNeedBlocksTake(t *testing.T) {
+	t.Parallel()
+	c, st := sdStore(t)
+	ctx := context.Background()
+	if res := sdQueue(t, st, "X", ""); res.Status != task.PushCreated {
+		t.Fatalf("push X: %+v", res)
+	}
+	if _, err := taskcard.Cancel(ctx, c, "X", "test", "not needed"); err != nil {
+		t.Fatalf("cancel X: %v", err)
+	}
+	h := c.HGetAll(ctx, "task:X").Val()
+	if !c.SIsMember(ctx, "s:"+sdSprint+":idx:task:closed", "X").Val() || h["where"] != "done" || h["where_ok"] != "fail" {
+		t.Fatalf("X after cancel: %v closed-index %v, want done/fail in the closed index", h, c.SIsMember(ctx, "s:"+sdSprint+":idx:task:closed", "X").Val())
+	}
+	if _, err := task.PushChecked(ctx, st, task.PushRequest{Sprint: sdSprint, ID: "N", Kind: task.KindWork, Title: "needs X",
+		Effects: task.EffectsNone, To: "f1", Needs: []string{"X"}, Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	_, ok, err := task.Take(ctx, st, task.TakeRequest{Sprint: sdSprint, ID: "N", As: "f1"})
+	var blocked *task.BlockedError
+	if ok || !errors.As(err, &blocked) || blocked.Unmet() != "X dead done/fail" {
+		t.Fatalf("take N needing cancelled X: ok %v err %v, want BLOCKED needs X dead done/fail", ok, err)
+	}
+	if s := sdField(t, c, "N", "state"); s != "open" || sdField(t, c, "N", "attempt") != "0" {
+		t.Fatalf("N after the refused take: state %q attempt %q, want open 0", s, sdField(t, c, "N", "attempt"))
+	}
+	t.Logf("probe a: BLOCKED needs %s", blocked.Unmet())
+}
+
+// TestSentinelDepGhostIsUnknownEverywhere is probe (b): task:ghost, an id no
+// record has, is unknown in ready --why, in both dealers and in the
+// resolver, and the queue door names it unknown while it waits.
+func TestSentinelDepGhostIsUnknownEverywhere(t *testing.T) {
+	t.Parallel()
+	c, st := sdStore(t)
+	ctx := context.Background()
+	res := sdQueue(t, st, "G", "task:ghost")
+	if res.Status != task.PushCreated || res.Waiting != 1 || res.Classes != "task:ghost unknown" {
+		t.Fatalf("push G on task:ghost: %+v", res)
+	}
+	if err := sdCard(t, c, "J", "delta", "task:ghost"); err != nil {
+		t.Fatal(err)
+	}
+	sdSprintCard(t, c, "D", "task:ghost")
+	var lines []string
+	for _, id := range []string{"G", "J"} {
+		got, code := sdWhy(t, c, id)
+		if got != "UNKNOWN task:ghost unknown" || code != 1 {
+			t.Fatalf("ready --why %s = %q exit %d", id, got, code)
+		}
+		lines = append(lines, "ready --why "+id+" = "+got)
+	}
+	k, _ := taskcard.ParseConsumer("friend:f1")
+	if _, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: k, N: 1, IDs: []string{"J"}, By: "test"}); err == nil ||
+		!strings.Contains(err.Error(), "DEPENDS task:J waits on task:ghost unknown") {
+		t.Fatalf("deal J: %v", err)
+	} else {
+		lines = append(lines, "deal J: "+err.Error())
+	}
+	if why := sdGate(t, c)["D"]; why != "task:ghost unknown" {
+		t.Fatalf("gate D: %q", why)
+	}
+	out, routed, err := sdResolve(c, sdLease(t, st))
+	if err != nil || routed != 0 || !strings.Contains(out, "RESOLVE stream=delta ready=0 still=1 waiting=- parked=- dead=- unknown=task:ghost\n") {
+		t.Fatalf("resolver: routed %d err %v: %q", routed, err, out)
+	}
+	lines = append(lines, "gate D: task:ghost unknown", strings.TrimSpace(out))
+	t.Logf("probe b: %s", strings.Join(lines, " | "))
+}
+
+// TestSentinelDepBareIDAtQueueDoor is probe (c): a bare P3 at the queue door
+// is stored as task:P3, exactly as task:P3 is, and both are met and released
+// in the call that lands P3.
+func TestSentinelDepBareIDAtQueueDoor(t *testing.T) {
+	t.Parallel()
+	c, st := sdStore(t)
+	if err := sdCard(t, c, "P3", "pstream", ""); err != nil {
+		t.Fatal(err)
+	}
+	for id, deps := range map[string]string{"QB": "P3", "QT": "task:P3"} {
+		res := sdQueue(t, st, id, deps)
+		if res.Status != task.PushCreated || res.Waiting != 1 || res.Classes != "task:P3 waiting ready" {
+			t.Fatalf("push %s on %q: %+v", id, deps, res)
+		}
+		if d, w := sdField(t, c, id, "depends_on"), sdField(t, c, id, "waits_on"); d != "task:P3" || w != "task:P3" {
+			t.Fatalf("%s on %q: depends_on %q waits_on %q, want task:P3", id, deps, d, w)
+		}
+	}
+	if res := sdQueue(t, st, "QX", "P3 junk"); res.Status != task.PushInvalid || res.Reason != "depends-on P3 junk" {
+		t.Fatalf("push on two words: %+v, want INVALID", res)
+	}
+	sdLand(t, c, "P3")
+	for _, id := range []string{"QB", "QT"} {
+		if s, w := sdField(t, c, id, "state"), sdField(t, c, id, "waits_on"); s != "open" || w != "" {
+			t.Fatalf("%s after P3 landed: state %q waits_on %q, want open", id, s, w)
+		}
+	}
+	t.Logf("probe c: QB (P3) and QT (task:P3) stored task:P3, both open after P3 landed")
+}
+
+// wsGuard is the guarded release's parse in ws.lua's ns_ws_move_many; a
+// library without it is dev be3e5f8ef's.
+const wsGuard = "local f, t = string.match(to or '', '^(%a+)>(%a+)$')"
+
+// TestSentinelDepStaleLibraryRefuses is probe (d): on a store whose library
+// has no guarded release, one resolver pass prints RESOLVE REFUSED with the
+// loaded and wanted library and the remedy, and moves nothing; the release
+// of a card a dealer already dealt is refused, not pulled back to ready.
+// After the remedy (fn load, the embedded library) the pass releases.
+func TestSentinelDepStaleLibraryRefuses(t *testing.T) {
+	t.Parallel()
+	c, st := sdStore(t)
+	ctx := context.Background()
+	if err := sdCard(t, c, "SX", "sx", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := sdCard(t, c, "SB", "sy", "SX"); err != nil {
+		t.Fatal(err)
+	}
+	if err := sdCard(t, c, "SW", "sz", ""); err != nil {
+		t.Fatal(err)
+	}
+	sdLand(t, c, "SX")
+	if _, err := taskcard.Move(ctx, c, "SW", "working", taskcard.Opts{By: "test", As: "f1", Friend: "f1", SetFriend: true}); err != nil {
+		t.Fatal(err)
+	}
+	src, err := fn.Source()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := strings.Replace(src, wsGuard, "local f, t = nil, nil", 1)
+	if stale == src {
+		t.Fatal("ws.lua carries no guard line to strip")
+	}
+	if err := c.FunctionLoadReplace(ctx, stale).Err(); err != nil {
+		t.Fatal(err)
+	}
+	logBefore := c.XLen(ctx, "ws:log").Val()
+
+	lease := sdLease(t, st)
+	out, routed, err := sdResolve(c, lease)
+	want := fmt.Sprintf("RESOLVE REFUSED library=%s wants=%s remedy=%q\n", fn.Sum(stale), fn.Sum(src), "nova-sprint fn load")
+	var ue *reconcile.UnguardedError
+	if routed != 0 || !errors.As(err, &ue) || !errors.Is(err, ws.ErrUnguarded) || !strings.HasSuffix(out, want) {
+		t.Fatalf("stale pass: routed %d err %v out %q, want %q", routed, err, out, want)
+	}
+	if _, err := ws.Release(ctx, c, "test", "a stale read", []string{"SW"}); !errors.Is(err, ws.ErrUnguarded) {
+		t.Fatalf("release of dealt SW on the stale library: %v, want ErrUnguarded", err)
+	}
+	if w, b := sdField(t, c, "SW", "where"), sdField(t, c, "SB", "where"); w != "working" || b != "waiting" {
+		t.Fatalf("after the refused pass: SW %q SB %q, want working and waiting", w, b)
+	}
+	if n := c.XLen(ctx, "ws:log").Val(); n != logBefore {
+		t.Fatalf("ws:log %d -> %d: the refused pass wrote", logBefore, n)
+	}
+
+	if _, _, err := fn.Ensure(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if out2, routed, err := sdResolve(c, lease); err != nil || routed != 1 || sdField(t, c, "SB", "where") != "ready" {
+		t.Fatalf("after fn load: routed %d err %v (%s)", routed, err, out2)
+	}
+	t.Logf("probe d: %s", strings.ReplaceAll(strings.TrimSpace(out), "\n", " | "))
 }

@@ -68,20 +68,16 @@ type TaskDep struct {
 	State, Where, WhereOK string
 }
 
-// Why is empty when the edge on task record id is met by the one rule, else
-// why not: done/fail can no longer land; anything else is not landed yet.
+// Why is empty when the edge on task record id is met, else the entry and
+// its class from the class table (ws.DepClass, the word every reader of an
+// edge prints): waiting or parked with the where, dead with the where, or
+// unknown when no record has the id (the zero TaskDep).
 func (t TaskDep) Why(entry, id string) string {
-	if ws.DepMet(id, t.State, t.Where, t.WhereOK) {
+	class, detail := ws.DepClass(id, t.State, t.Where, t.WhereOK)
+	if class == ws.DepClassMet {
 		return ""
 	}
-	if t.State == "cancelled" || (t.Where == ws.Done && t.WhereOK == "fail") {
-		return entry + " can no longer land: task done/fail"
-	}
-	w := t.Where
-	if w == "" {
-		w = t.State
-	}
-	return entry + " not landed: task " + w
+	return entry + " " + ws.DepText(class, detail)
 }
 
 // Ref is the forge's answer for one number: a PR (IsPR) with its merge state
@@ -249,14 +245,9 @@ func (r *resolver) entryWhy(ctx context.Context, in Input, c Card, entry string)
 	id, isTask := strings.CutPrefix(entry, "task:")
 	d := in.Deps[c.Sprint+"/"+entry]
 	if isTask || ws.IsSentinel(id) || !d.Found {
-		// a task record, a stream's sentinel among them: the one rule
-		if t, ok := in.Tasks[id]; ok {
-			return t.Why(entry, id)
-		}
-		if ws.IsSentinel(id) {
-			return entry + " unknown: no stream with that slug is registered"
-		}
-		return entry + " can no longer land: no such card in sprint " + c.Sprint
+		// a task record, a stream's sentinel among them, or an id no sprint
+		// card has: the class table; no record at all is unknown
+		return in.Tasks[id].Why(entry, id)
 	}
 	switch {
 	case d.State == "landed":

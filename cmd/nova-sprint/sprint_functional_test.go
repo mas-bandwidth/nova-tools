@@ -435,7 +435,7 @@ func TestControl22(t *testing.T) {
 	if _, err := fmt.Sscanf(out, "CLAIMED "+s+"/a attempt=1 token=%s", &token); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, 7, "BLOCKED needs a\n", "task", "take", "--redis", addr, "--sprint", s, "--as", fxFriend, "--id", "b")
+	expect(t, 7, "BLOCKED needs a waiting working\n", "task", "take", "--redis", addr, "--sprint", s, "--as", fxFriend, "--id", "b")
 	expect(t, 0, "DONE DONE id=a\n", "task", "done", "--redis", addr, "--sprint", s, "--id", "a",
 		"--token", token, "--evidence", "fixture done")
 	code, out, errOut = runSprint("task", "take", "--redis", addr, "--sprint", s, "--as", fxFriend, "--id", "b")

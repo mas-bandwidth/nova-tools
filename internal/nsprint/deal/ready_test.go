@@ -115,7 +115,7 @@ func TestReadyNamesEveryEntry(t *testing.T) {
 		"issue-open":       "o/r#5 open",
 		"unanswered":       "o/r#99 unknown: forge did not answer",
 		"cancelled":        "dep-cancelled can no longer land: card cancelled without a PR",
-		"missing":          "dep-gone can no longer land: no such card in sprint s",
+		"missing":          "dep-gone unknown",
 		"dep-pr-open":      "dep-open (o/r#6) open",
 		"two":              "o/r#6 open",
 		"pr-base-unknown":  "o/r#7 unknown: base-unresolved",

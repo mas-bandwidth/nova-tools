@@ -100,3 +100,57 @@ func TestDepIDsNamesTaskEdges(t *testing.T) {
 		t.Fatalf("ids %v", ids)
 	}
 }
+
+// TestDepClassOneTable is the class table's test: NS.dep.class_of
+// (lua/01_dep.lua: task take's needs, task push's waits and its DEAD
+// refusal, the dealer's DEPENDS line) and ws.DepClass (ready --why, the
+// dealer's gate, the waiting resolver, ws show) give the same class and
+// detail on every row, and the class agrees with the one rule: met exactly
+// when NS.dep.met_of says met.
+func TestDepClassOneTable(t *testing.T) {
+	t.Parallel()
+	L, dep := depRule(t)
+	for _, tc := range []struct {
+		name, id, state, where, ok string
+		class, detail              string
+	}{
+		{"card landed", "A1", "landed", "landed", "ok", "met", "landed"},
+		{"task closed (done/ok)", "T1", "closed", "done", "ok", "met", "done/ok"},
+		{"legacy closed, no where", "L1", "closed", "", "", "met", "done"},
+		{"card working", "W1", "working", "working", "-", "waiting", "working"},
+		{"card waiting", "W2", "waiting", "waiting", "-", "waiting", ""},
+		{"card ready", "W3", "open", "ready", "-", "waiting", "ready"},
+		{"card review", "R1", "review", "review", "-", "waiting", "review"},
+		{"legacy open, no where", "L3", "open", "", "", "waiting", "ready"},
+		{"card parked", "P1", "parked", "parked", "-", "parked", ""},
+		{"card done/fail (cancelled)", "X1", "closed", "done", "fail", "dead", "done/fail"},
+		{"task cancelled", "X2", "cancelled", "done", "fail", "dead", "done/fail"},
+		{"legacy cancelled, no where", "X3", "cancelled", "", "", "dead", "done/fail"},
+		{"no record", "ghost", "", "", "", "unknown", ""},
+		{"sentinel landed", "alpha:sentinel", "landed", "landed", "ok", "met", "landed"},
+		{"sentinel waiting", "alpha:sentinel", "waiting", "waiting", "-", "waiting", ""},
+		{"sentinel parked", "alpha:sentinel", "parked", "parked", "-", "parked", ""},
+		{"sentinel done by hand (done/ok)", "alpha:sentinel", "closed", "done", "ok", "dead", "done/ok"},
+		{"sentinel done/fail (a rename)", "alpha:sentinel", "closed", "done", "fail", "dead", "done/fail"},
+		{"sentinel, no record", "nosuch:sentinel", "", "", "", "unknown", ""},
+	} {
+		fn := L.GetField(dep, "class_of")
+		if err := L.CallByParam(lua.P{Fn: fn, NRet: 2, Protect: true},
+			lua.LString(tc.id), lua.LString(tc.state), lua.LString(tc.where), lua.LString(tc.ok)); err != nil {
+			t.Fatalf("NS.dep.class_of: %v", err)
+		}
+		lc, ld := L.Get(-2).String(), L.Get(-1).String()
+		L.Pop(2)
+		gc, gd := ws.DepClass(tc.id, tc.state, tc.where, tc.ok)
+		if lc != tc.class || ld != tc.detail || gc != tc.class || gd != tc.detail {
+			t.Errorf("%s: lua %s %q go %s %q, want %s %q", tc.name, lc, ld, gc, gd, tc.class, tc.detail)
+		}
+		met := depCall(t, L, dep, "met_of", tc.id, tc.state, tc.where, tc.ok) == lua.LTrue
+		if met != (tc.class == ws.DepClassMet) || ws.DepMet(tc.id, tc.state, tc.where, tc.ok) != met {
+			t.Errorf("%s: class %s but met_of %v", tc.name, tc.class, met)
+		}
+		if lt, gt := depCall(t, L, dep, "text", lc, ld).String(), ws.DepText(gc, gd); lt != gt {
+			t.Errorf("%s: text lua %q go %q", tc.name, lt, gt)
+		}
+	}
+}

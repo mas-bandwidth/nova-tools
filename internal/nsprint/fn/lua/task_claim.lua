@@ -150,7 +150,15 @@ local function task_push(keys, args)
   if #unmet > 0 then
     DEP.wait(S, id, key, to, unmet, at)
     receipt(S, 'task push', id, '', 'waiting', 0, '', actor, to, 'depends-on ' .. table.concat(unmet, ';'), '', idem, at)
-    return { 'CREATED', 'waiting', tostring(#unmet) }
+    -- each unmet condition with its class (NS.dep.class for a task edge; any
+    -- other condition waits on its fact)
+    local classes = {}
+    for _, c in ipairs(unmet) do
+      local class, detail = 'waiting', ''
+      if string.sub(c, 1, 5) == 'task:' then class, detail = NS.dep.class(string.sub(c, 6)) end
+      classes[#classes + 1] = c .. ' ' .. NS.dep.text(class, detail)
+    end
+    return { 'CREATED', 'waiting', tostring(#unmet), table.concat(classes, '; ') }
   end
   receipt(S, 'task push', id, '', 'open', 0, '', actor, to, '', '', idem, at)
   if #conds > 0 then
@@ -188,19 +196,24 @@ local function task_take(keys, args)
   end
 
   -- A task whose needs are not all met is passed over (#2939): the reply
-  -- names the unmet ids and nothing is written. A need is met by the one
-  -- dependency rule (NS.dep: landed, or done/ok; a sentinel only landed), or
-  -- by the sprint's closed index the rule's closed state writes.
+  -- names the unmet ids and, per id, its class (NS.dep.class: waiting,
+  -- parked, dead or unknown, and the where), and nothing is written. A need
+  -- is met by the one dependency rule alone (NS.dep: landed, or done/ok; a
+  -- sentinel only landed). The sprint's closed index is not the rule: a task
+  -- cancelled is closed there too, and a cancelled need is dead, not met.
   local needs = redis.call('HGET', key, 'needs')
   if needs and needs ~= '' then
-    local unmet = {}
+    local unmet, classes = {}, {}
     for need in string.gmatch(needs, '%S+') do
-      if redis.call('SISMEMBER', 's:' .. S .. ':idx:task:closed', need) == 0 and not NS.dep.met(need) then
+      local nid = NS.dep.ids(need)[1] or need
+      local class, detail = NS.dep.class(nid)
+      if class ~= 'met' then
         unmet[#unmet + 1] = need
+        classes[#classes + 1] = need .. ' ' .. NS.dep.text(class, detail)
       end
     end
     if #unmet > 0 then
-      return { 'BLOCKED', table.concat(unmet, ' ') }
+      return { 'BLOCKED', table.concat(unmet, ' '), table.concat(classes, '; ') }
     end
   end
 
