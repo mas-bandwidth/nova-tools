@@ -413,6 +413,17 @@ const ownershipDiagCap = 200
 // ownershipUnknown is the sentence every incomplete scan returns. The reason after
 // the colon is short and has no newline: cwd unreadable, lsof failed, a permission
 // error collapsed onto one line.
+//
+// The scan is the calling account's git processes only: on darwin the ps rows whose
+// effective uid is ours, on linux the /proc/<pid> entries we own. Another account's git
+// is neither an owner nor an unknown. Its cwd cannot be read from this account (lsof
+// omits it, /proc/<pid>/cwd answers EACCES), so counting it made every wait on a shared
+// bench refuse whenever any other account ran git (CI run 36268521205: the runner
+// account `nova` refused on the coordinator's gits). A checkout owned by another
+// account's git is therefore out of this scan's sight. That is acceptable because the
+// lock this scan guards is removed only from a checkout this account can write, a git
+// of this account that is working in it is still seen, and a same-account git whose
+// cwd cannot be read still makes the scan unknown and keeps the lock.
 const ownershipUnknown = "cannot tell whether a git process owns this checkout"
 
 func ownershipUnknownErr(why string) error {
@@ -471,6 +482,10 @@ type procView struct {
 	cwdErr  error
 	cwd     string
 	dead    bool
+	// owner is the process's effective uid when ownerKnown. A process owned by another
+	// account is outside the scan (see ownershipUnknown).
+	owner      uint32
+	ownerKnown bool
 }
 
 // procStatDead reads the state character out of /proc/pid/stat. Z and X are not
@@ -555,10 +570,15 @@ func gitProcFromView(v procView) (gitProc, bool, error) {
 // classifyViews finishes the scan. A process that cannot be classified is remembered
 // and the rest are still classified, so a known owner later in the list is not dropped
 // on the floor because an earlier cmdline was empty.
-func classifyViews(views []procView) ([]gitProc, error) {
+// A view whose known owner is not self is another account's process and is skipped
+// before anything else of it is judged.
+func classifyViews(views []procView, self uint32) ([]gitProc, error) {
 	var procs []gitProc
 	var unknown error
 	for _, v := range views {
+		if v.ownerKnown && v.owner != self {
+			continue
+		}
 		p, skip, err := gitProcFromView(v)
 		if err != nil {
 			if unknown == nil {

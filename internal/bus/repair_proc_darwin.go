@@ -5,8 +5,10 @@ package bus
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -14,30 +16,40 @@ import (
 // checkout path is not cut off mid-spelling; lsof supplies the cwd for a git that was
 // started inside the checkout and so does not carry -C. An lsof or ps failure is not an
 // empty cwd. A git with no absolute -C whose cwd we could not read makes the scan
-// unknown, and the lock stays.
+// unknown, and the lock stays. ps names each process's effective uid, and only the
+// calling account's gits are scanned (see ownershipUnknown in repair.go).
 func gitProcesses() ([]gitProc, error) {
-	out, err := exec.Command("ps", "-axww", "-o", "pid=", "-o", "command=").Output()
+	out, err := exec.Command("ps", "-axww", "-o", "uid=", "-o", "pid=", "-o", "command=").Output()
 	if err != nil {
 		return nil, ownershipUnknownErr("ps failed")
 	}
 	cwds, cwdErr := darwinGitCwd()
-	return gitProcsFromPS(string(out), cwds, cwdErr, darwinPIDAlive)
+	return gitProcsFromPS(string(out), strconv.Itoa(os.Geteuid()), cwds, cwdErr, darwinPIDAlive)
 }
 
-// gitProcsFromPS turns one ps snapshot into git processes. cwdErr set means lsof did not
-// run; a pid missing from cwds after a successful lsof is checked with alive. A vanished
-// pid is skipped. A still-present git whose cwd is missing and whose command line does
-// not name an absolute work tree is an incomplete scan, not proof that nobody owns the
-// checkout.
-func gitProcsFromPS(psOut string, cwds map[string]string, cwdErr error, alive func(pid string) (bool, error)) ([]gitProc, error) {
+// gitProcsFromPS turns one ps snapshot (uid, pid, command per line) into git processes.
+// A row whose uid is not self is another account's process: it is skipped before its cwd
+// is looked up, because lsof as this account cannot read it and it cannot be told from a
+// live owner. cwdErr set means lsof did not run; a pid missing from cwds after a
+// successful lsof is checked with alive. A vanished pid is skipped. A still-present git
+// of this account whose cwd is missing and whose command line does not name an absolute
+// work tree is an incomplete scan, not proof that nobody owns the checkout.
+func gitProcsFromPS(psOut, self string, cwds map[string]string, cwdErr error, alive func(pid string) (bool, error)) ([]gitProc, error) {
 	var procs []gitProc
 	for _, line := range strings.Split(psOut, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		pid, cmd, ok := strings.Cut(line, " ")
+		uid, rest, ok := strings.Cut(line, " ")
 		if !ok {
+			continue
+		}
+		pid, cmd, ok := strings.Cut(strings.TrimSpace(rest), " ")
+		if !ok {
+			continue
+		}
+		if uid != self {
 			continue
 		}
 		cmd = strings.TrimSpace(cmd)
