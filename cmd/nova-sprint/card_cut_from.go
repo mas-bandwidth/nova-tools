@@ -23,7 +23,7 @@
 // line:
 //
 //	CARD CUT row=<n> id=<id> ref=<owner/name#n|-> stream=<s> to=waiting|already depends=<ids|none>
-//	CARD CUT REFUSED row=<n> line=<l> id=<id|-> why=<why>
+//	CARD CUT REFUSED row=<n> line=<l> id=<id|-> why=<why> [remedy=<what to run>]
 //	CARD CUT DRY row=<n> id=<id|-> stream=<s> who=<w> route=<r> est=<e> depends=<d> title=<t>
 //	CARD CUT FROM file=<f> rows=<n> cut=<k> already=<a> refused=<r> filed=<f> reused=<u> github=on|off ms=<ms>
 //
@@ -146,6 +146,7 @@ type cutRow struct {
 	depRow                                    []int    // per entry: the row its id names, 0 outside the file
 	rowDeps                                   []int    // the rows this row depends on
 	why                                       string   // a refusal
+	remedy                                    string   // what to run about a filing refusal ("" none)
 	ref, origin                               string   // the filed issue
 	fromLedger, already                       bool     // the issue came from the ledger; the card was pushed before
 	stitch                                    bool     // the plan's stitch row (#4317): its edges are set by planRows
@@ -524,7 +525,25 @@ func cutField(s string) string {
 }
 
 func cutRefused(out io.Writer, r *cutRow) {
-	fmt.Fprintf(out, "CARD CUT REFUSED row=%s line=%d id=%s why=%s\n", cutRowN(r), r.line, cutField(r.id), cutField(r.why))
+	remedy := ""
+	if r.remedy != "" {
+		remedy = " remedy=" + cutField(r.remedy)
+	}
+	fmt.Fprintf(out, "CARD CUT REFUSED row=%s line=%d id=%s why=%s%s\n", cutRowN(r), r.line, cutField(r.id), cutField(r.why), remedy)
+}
+
+// cutRerun is a filing refusal's remedy (#4317 fix round): rerun the cut
+// as it was run; the ledger (a re-cut stitch's own, RecutLedgerKey) holds
+// every issue filed, so a rerun files none twice.
+func cutRerun(o cutFromOpts, key string) string {
+	cmd := "nova-sprint card cut"
+	if o.Parent != "" {
+		cmd += " --parent " + o.Parent
+	}
+	if o.From != "" {
+		cmd += " --from " + o.From
+	}
+	return "rerun " + cmd + " with the same flags; " + key + " holds every issue filed, so none is filed twice"
 }
 
 // cutRowN is a receipt's row: its number, or stitch for the plan's stitch.
@@ -846,17 +865,18 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		if r.fromLedger || r.already {
 			continue // the ledger's issue, or a waiting stitch: never filed again
 		}
+		key, row := ledgerOf(r)
 		if stopped != "" {
 			r.why = "not filed: the filing stopped at row " + stopped
+			r.remedy = cutRerun(o, key)
 			continue
 		}
 		n, url, err := d.File(ctx, o.Repo, r.title, cutIssueText(r, rows, o))
 		if n > 0 {
 			filed++
-			key, row := ledgerOf(r)
 			if lerr := d.LedgerWrite(ctx, key, o.Repo, row, n); lerr != nil {
-				r.why = fmt.Sprintf("ledger: %v; %s#%d is filed but not in the ledger, so a rerun files it again: record it first with redis-cli HSET %s repo %s %d %d",
-					lerr, o.Repo, n, key, o.Repo, row, n)
+				r.why = fmt.Sprintf("ledger: %v; %s#%d is filed but not in the ledger, so a rerun files it again", lerr, o.Repo, n)
+				r.remedy = fmt.Sprintf("record it first with redis-cli HSET %s repo %s %d %d, then %s", key, o.Repo, row, n, cutRerun(o, key))
 				stopped = strconv.Itoa(r.n)
 				continue
 			}
@@ -866,6 +886,7 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 			if n > 0 {
 				r.why += fmt.Sprintf("; %s#%d is in the ledger, so a rerun pushes its card without filing it again", o.Repo, n)
 			}
+			r.remedy = cutRerun(o, key)
 			stopped = strconv.Itoa(r.n)
 			continue
 		}

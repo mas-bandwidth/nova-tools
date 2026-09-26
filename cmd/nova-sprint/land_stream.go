@@ -77,7 +77,13 @@ func hasRepoFlag(args []string) bool {
 // under verb in the store, paced, retrying a secondary limit; its retry and
 // refusal lines go to stderr.
 func landGitHub(verb, api string, budget int, rdb redis.Cmdable) (*stream.GitHub, error) {
-	tok, err := landStreamToken()
+	return landGitHubFrom(landStreamToken, verb, api, budget, rdb)
+}
+
+// landGitHubFrom is landGitHub with the token from token: the per-call seam
+// a parallel test passes its own token through (no package-level swap).
+func landGitHubFrom(token func() (string, error), verb, api string, budget int, rdb redis.Cmdable) (*stream.GitHub, error) {
+	tok, err := token()
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +290,12 @@ func runLandStreamStatus(ctx context.Context, args []string, out, errOut io.Writ
 }
 
 func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int {
+	return landMerge(ctx, args, out, errOut, landStreamToken)
+}
+
+// landMerge is land merge with its GitHub token from token (runLandMerge
+// passes landStreamToken; a parallel test passes its own).
+func landMerge(ctx context.Context, args []string, out, errOut io.Writer, token func() (string, error)) int {
 	const verb = "land merge"
 	fs := taskFlags(verb)
 	var streams multiFlag
@@ -310,7 +322,7 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 	}
 	defer st.Close()
 	// The token is needed only past the Redis gates; refuse on them first.
-	gh, tokErr := landGitHub(verb, *api, *budget, st.Client())
+	gh, tokErr := landGitHubFrom(token, verb, *api, *budget, st.Client())
 	o := stream.MergeOptions{Repo: *repo, Streams: streams, By: *by}
 	if tokErr == nil {
 		o.GH = gh

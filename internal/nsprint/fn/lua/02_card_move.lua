@@ -1556,6 +1556,20 @@ function TK.land_parent(id, o)
   return parent
 end
 
+-- TK.writes_pr(fields): the HSET pairs write the task's pr field. Every
+-- door that writes pr (task done --pr, task move --set pr, a push with pr,
+-- the route's merging move) goes through TK.move or TK.create, and both
+-- index the task's refs (NS.tref.index, 01_task_ref.lua) in the same call
+-- when it does, so a CLOSE line on the PR finds the task whichever door
+-- wrote it (nova-tools#4317: task done --pr on a stitch, then a CLOSE on
+-- the PR, moved nothing).
+function TK.writes_pr(fields)
+  for i = 1, #(fields or {}), 2 do
+    if fields[i] == 'pr' then return true end
+  end
+  return false
+end
+
 -- TK.move(id, to, o): the one move. Returns nil and {from, to, xid} when
 -- moved (to == from with nothing to change is a no-op: info.same, which
 -- writes only o.fields), else the refusal; a refusal writes nothing but the
@@ -1618,6 +1632,7 @@ function TK.move(id, to, o)
   if cur.where == to and nxt.stream == cur.stream and nxt.friend == cur.friend and front ~= '1' and ok == cur.ok and
       state == cur.state and (o.copy == nil or o.copy == cur.copy) then
     if #fields > 0 then redis.call('HSET', 'task:' .. id, unpack(fields)) end
+    if TK.writes_pr(fields) and NS.tref then NS.tref.index(id) end
     return nil, { from = to, to = to, same = true }
   end
 
@@ -1684,6 +1699,7 @@ function TK.move(id, to, o)
   for _, v in ipairs(lh) do h[#h + 1] = v end
   for i = 1, #fields do h[#h + 1] = fields[i] end
   redis.call('HSET', unpack(h))
+  if TK.writes_pr(fields) and NS.tref then NS.tref.index(id) end
   if clear then redis.call('HDEL', 'task:' .. id, 'queue', 'xid') end
   if cur.where == 'working' and to ~= 'working' then redis.call('HDEL', 'task:' .. id, 'lease_until') end
   -- After: the new views hold the id and the dropped ones do not.
@@ -1791,6 +1807,7 @@ function TK.create(id, fields, o)
     h[#h + 1] = kv[2]
   end
   redis.call('HSET', unpack(h))
+  if TK.writes_pr(fields) and NS.tref then NS.tref.index(id) end
   TK.register(stream)
   return TK.move(id, where, { by = o.by, why = o.why or 'push', front = o.front, sprint = o.sprint, state = o.state,
     qscore = o.qscore, sentinel = o.sentinel })
@@ -2240,7 +2257,10 @@ end)
 
 -- ns_tcard_done(id, by, evidence[, pr]) -> MOVED working merging|done |
 -- REFUSED <why>: working -> merging when the task names a PR (its pr field,
--- or pr given), else working -> done/ok.
+-- or pr given), else working -> done/ok. A task that goes to merging is
+-- indexed under its PR's ref in the same call (NS.tref.index; TK.move does
+-- it for a pr given, and this call for a pr the record already carried), so
+-- a CLOSE line on the PR lands it (nova-tools#4317).
 redis.register_function('ns_tcard_done', function(keys, args)
   local id, by, evidence, pr = args[1], args[2], args[3] or '', args[4] or ''
   local fields = { 'evidence', evidence }
@@ -2252,7 +2272,9 @@ redis.register_function('ns_tcard_done', function(keys, args)
   end
   local to, ok = 'done', 'ok'
   if pr ~= '' and pr ~= '0' then to, ok = 'merging', nil end
-  return TK.reply(TK.move(id, to, { by = by, why = 'done', ok = ok, fields = fields }))
+  local err, info = TK.move(id, to, { by = by, why = 'done', ok = ok, fields = fields })
+  if not err and to == 'merging' and NS.tref then NS.tref.index(id) end
+  return TK.reply(err, info)
 end)
 
 -- ns_tcard_beat(id, as) -> BEAT <lease_until> | REFUSED <why>: the holder

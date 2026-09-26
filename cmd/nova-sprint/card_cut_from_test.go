@@ -318,11 +318,14 @@ func TestCardCutFromRefusalsPrint(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
+	// a filing refusal names its remedy: the rerun, the ledger holding what was filed
+	rerun := ` remedy="rerun nova-sprint card cut --from cards.tsv with the same flags; ` + taskcard.CutLedgerKey([]byte(rows)) +
+		` holds every issue filed, so none is filed twice"` + "\n"
 	for _, want := range []string{
 		"CARD CUT row=1 id=nova-tools-5000 ref=mas-bandwidth/nova-tools#5000 stream=s to=waiting depends=none\n",
 		"CARD CUT REFUSED row=2 line=2 id=nova-tools-5001 why=\"push refused: EXISTS task:nova-tools-5001\"\n",
-		"CARD CUT REFUSED row=3 line=3 id=- why=\"file: HTTP 403: rate limited\"\n",
-		"CARD CUT REFUSED row=4 line=4 id=- why=\"not filed: the filing stopped at row 3\"\n",
+		"CARD CUT REFUSED row=3 line=3 id=- why=\"file: HTTP 403: rate limited\"" + rerun,
+		"CARD CUT REFUSED row=4 line=4 id=- why=\"not filed: the filing stopped at row 3\"" + rerun,
 		"CARD CUT FROM file=cards.tsv rows=4 cut=1 already=0 refused=3 filed=2 reused=0 github=on",
 	} {
 		if !strings.Contains(out, want) {
@@ -427,8 +430,8 @@ func TestCardCutFromLedgerRefusals(t *testing.T) {
 
 	st = &fakeCutStore{noWrite: errors.New("READONLY")}
 	code, out = runCutFrom(cutFromOpts{Text: []byte(rows)}, cutDeps(forge, st))
-	want := "CARD CUT REFUSED row=1 line=1 id=- why=\"ledger: READONLY; mas-bandwidth/nova-tools#5000 is filed but not in the ledger, so a rerun files it again: record it first with redis-cli HSET " +
-		key + " repo mas-bandwidth/nova-tools 1 5000\"\n"
+	want := "CARD CUT REFUSED row=1 line=1 id=- why=\"ledger: READONLY; mas-bandwidth/nova-tools#5000 is filed but not in the ledger, so a rerun files it again\" remedy=\"record it first with redis-cli HSET " +
+		key + " repo mas-bandwidth/nova-tools 1 5000, then rerun nova-sprint card cut --from cards.tsv with the same flags; " + key + " holds every issue filed, so none is filed twice\"\n"
 	if code != 1 || len(forge.titles) != 1 || len(st.batches) != 0 || !strings.Contains(out, want) ||
 		!strings.Contains(out, "row=2 line=2 id=- why=\"not filed: the filing stopped at row 1\"") {
 		t.Fatalf("unwritable ledger: exit %d filed %d pushed %d:\n%s", code, len(forge.titles), len(st.batches), out)

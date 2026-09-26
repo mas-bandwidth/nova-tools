@@ -34,8 +34,12 @@ local TE = {
   PATH = {
     merging = { waiting = { 'ready', 'working', 'merging' }, ready = { 'working', 'merging' },
       working = { 'merging' } },
+    -- review -> landed: a primary a copy's card end --ok --pr put in
+    -- review whose PR a person's CLOSE line (or the stream lander) says
+    -- landed; the move retires its open read copies (TM.after_move), and a
+    -- plan's stitch lands its plan (nova-tools#4317)
     landed = { waiting = { 'ready', 'working', 'landed' }, ready = { 'working', 'landed' },
-      working = { 'landed' }, merging = { 'landed' }, parked = { 'ready', 'working', 'landed' } },
+      working = { 'landed' }, merging = { 'landed' }, review = { 'landed' }, parked = { 'ready', 'working', 'landed' } },
   },
 }
 

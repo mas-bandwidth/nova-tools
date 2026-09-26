@@ -283,7 +283,7 @@ func TestCancelledStitchIsStuckThenRecutLandsThePlan(t *testing.T) {
 		return runSprint(append(args, "--redis", addr)...)
 	}
 	const stream = "autonomy"
-	const ref, origin = "mas-bandwidth/nova-tools#4317", "https://github.com/mas-bandwidth/nova-tools/issues/4317"
+	const ref, origin = "mas-bandwidth/nova-tools#4317", "https://forge.test/mas-bandwidth/nova-tools/issues/4317"
 	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "pc", Where: "waiting", Stream: stream, Kind: "build",
 		Ref: ref, Origin: origin, Title: "plan cancel", Repo: "mas-bandwidth/nova-tools", By: "rowan",
 		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "the plan holds"}}); err != nil {
@@ -440,6 +440,54 @@ func TestRecutStitchFilesItsOwnIssueWithGitHubOn(t *testing.T) {
 	}
 	if got := c.HGet(ctx, taskcard.Key("pa"), "stitch").Val(); got != "pa-stitch-3" {
 		t.Fatalf("pa's stitch %q", got)
+	}
+}
+
+// TestRecutStitchFilingRefusalNamesItsRemedy is the third fix round's owed
+// (3): a bare re-cut whose stitch issue the forge refuses prints the row's
+// refusal with a remedy= field (rerun the cut; the re-cut's own ledger
+// holds every issue filed), exits 1 and binds nothing; the rerun it names
+// files the stitch's issue once and cuts it.
+func TestRecutStitchFilingRefusalNamesItsRemedy(t *testing.T) {
+	t.Parallel()
+	_, c := wstest.Start(t)
+	ctx := context.Background()
+	forge := &fakeCutForge{}
+	d := cutDepsRedis(forge, c)
+	d.Plan = func(ctx context.Context, id string) (planFacts, error) { return readPlanFacts(ctx, c, id) }
+	d.Bind = func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error) {
+		return taskcard.BindPlan(ctx, c, parent, children, stitch, by)
+	}
+	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "rf", Where: "waiting", Stream: "autonomy", Kind: "build",
+		Ref: "mas-bandwidth/nova-tools#1", Title: "plan rf", Repo: "mas-bandwidth/nova-tools", By: "rowan",
+		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds"}}); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := runCutFrom(cutFromOpts{Text: []byte("id\ttitle\tpaths\tdone-when\nrf-c1\tone\ta.go\tholds\n"), Parent: "rf"}, d); code != 0 {
+		t.Fatalf("cut rf exit %d:\n%s", code, out)
+	}
+	if _, err := taskcard.Cancel(ctx, c, "rf-stitch", "rowan", "wrong approach"); err != nil {
+		t.Fatal(err)
+	}
+	bare := func() (int, string) {
+		var b strings.Builder
+		return cardCutFrom(ctx, cutFromOpts{Parent: "rf", Base: "dev", Actor: "rowan"}, d, &b), b.String()
+	}
+	forge.failAt = len(forge.titles) + 1
+	code, out := bare()
+	want := `why="file: HTTP 403: rate limited" remedy="rerun nova-sprint card cut --parent rf with the same flags; ` +
+		taskcard.RecutLedgerKey("rf", "rf-stitch-2") + ` holds every issue filed, so none is filed twice"` + "\n"
+	if code != 1 || !strings.Contains(out, "CARD CUT REFUSED row=stitch ") || !strings.Contains(out, want) || strings.Contains(out, "CARD CUT PLAN") {
+		t.Fatalf("refused re-cut filing: exit %d, want %q:\n%s", code, want, out)
+	}
+	if got := c.HGet(ctx, taskcard.Key("rf"), "stitch").Val(); got != "rf-stitch" {
+		t.Fatalf("a refused re-cut bound stitch %q", got)
+	}
+	forge.failAt = 0
+	code, out = bare()
+	if code != 0 || !strings.Contains(out, "CARD CUT row=stitch id=rf-stitch-2 ref=mas-bandwidth/nova-tools#5002 stream=autonomy to=waiting depends=rf-c1\n") ||
+		!strings.Contains(out, " filed=1 ") || len(forge.titles) != 3 {
+		t.Fatalf("the rerun the remedy names: exit %d filed %v:\n%s", code, forge.titles, out)
 	}
 }
 

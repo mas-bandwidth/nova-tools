@@ -15,8 +15,10 @@
 -- n, build-<n>-<slug> and fix-<n>-<slug> name issue n. Issues and PRs share a
 -- repository's numbers, so one key serves both.
 --
--- TR.index(id) is called by every writer of those fields (push, done with a
--- PR, the lander for its member task), so an event's lookup is complete. This
+-- TR.index(id) is called by every writer of the pr field (TK.move and
+-- TK.create when their fields carry pr: a push with pr, done with a PR, task
+-- move --set pr, the route's merging move; a copy's end with a PR; the
+-- lander for its member task), so an event's lookup by PR is complete. This
 -- file loads before 02_card_move.lua and reads nothing from NS, so the card
 -- model's push can call it; it exports NS.tref.
 
