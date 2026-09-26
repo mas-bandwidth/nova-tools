@@ -44,11 +44,18 @@ func TestDealPassFillsEveryConsumerInOnePass(t *testing.T) {
 	}
 	// expire + the reading column (#4094) + (deal + work) per consumer
 	// with room: 1 + 1 + 2 + 2
-	if n := countCalls(c) - calls; n != 6 {
-		t.Fatalf("pass took %d calls, want 6: %v", n, r.Lines)
+	if n := countCalls(c) - calls; n != 4 {
+		t.Fatalf("pass took %d calls, want 4: %v", n, r.Lines)
 	}
-	if r.Dealt != 42 || r.Worked != 42 {
+	if r.Dealt != 42 {
 		t.Fatalf("pass %+v", r)
+	}
+	// The pass deals only; each consumer takes its own copies (a bench's beat
+	// session, a friend's serve), here by hand.
+	for _, k := range []taskcard.Consumer{b, f} {
+		if _, err := taskcard.Work(ctx, c, k, k.Name, 0, true); err != nil {
+			t.Fatal(err)
+		}
 	}
 	wantCells(t, cellsOf(t, c, b), "bench", 0, 40, 0, 0)
 	wantCells(t, cellsOf(t, c, f), "friend", 0, 2, 0, 0)
@@ -65,10 +72,10 @@ func TestDealPassFillsEveryConsumerInOnePass(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, err = taskcard.DealPass(ctx, c, "reconciler", now)
-	if err != nil || r.Dealt != 1 || r.Worked != 1 {
+	if err != nil || r.Dealt != 1 {
 		t.Fatalf("refill %+v %v", r, err)
 	}
-	wantCells(t, cellsOf(t, c, b), "refill", 0, 40, 0, 1)
+	wantCells(t, cellsOf(t, c, b), "refill", 1, 39, 0, 1)
 	cleanMoves(t, c, "refill")
 
 	// a stale beat is not dealt
