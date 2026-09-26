@@ -71,6 +71,7 @@ var DefaultCatalog = []Entry{
 	E("internal/friendread", "per-friend read done counts", "go test ./internal/friendread", "go test ./internal/friendread"),
 	E("internal/friends", "friend registry and signatures", "go test ./internal/friends", "go test ./internal/friends"),
 	E("internal/fuse", "workspace isolation boundaries", "go test ./internal/fuse", "go test ./internal/fuse"),
+	E("internal/gh", "the one GitHub client: every call counted per verb, one paced writer, events over polling (#4343)", "go test ./internal/gh", "go test ./internal/gh"),
 	E("internal/ghcapture", "read-only GitHub issue adapter for nova-work", "go test ./internal/ghcapture/...", "go test ./internal/ghcapture/..."),
 	E("internal/ghevent", "GitHub webhook to Redis stream", "go test ./internal/ghevent", "go test ./internal/ghevent"),
 	E("internal/goenv", "Go environment scrubber for child processes", "go test ./internal/goenv", "go test ./internal/goenv"),
