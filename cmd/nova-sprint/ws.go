@@ -99,6 +99,12 @@ func (w *wsCmd) done(err error, line string) int {
 	var r *ws.Refused
 	switch {
 	case errors.As(err, &r):
+		if no, ok := ws.ParseRefusal(r.Why); ok {
+			// the paths gate (an unpark, #4322): its one receipt line
+			no.Remedy = moveRemedy(no.Stream)
+			fmt.Fprintf(w.out, "%s ms=%s\n", no.Receipt(), w.ms())
+			return 1
+		}
 		fmt.Fprintf(w.out, "REFUSED %s ms=%s\n", r.Why, w.ms())
 		return 1
 	case err != nil:
@@ -106,6 +112,13 @@ func (w *wsCmd) done(err error, line string) int {
 	}
 	fmt.Fprintf(w.out, "%s ms=%s\n", line, w.ms())
 	return 0
+}
+
+// moveRemedy is the overlap receipt's remedy for a move (an unpark, task
+// move --to-stream, #4322): a move has no --join; the stream it would
+// overlap releases those paths when it is parked (or its cards land).
+func moveRemedy(stream string) string {
+	return "nova-sprint scope park --stream " + ws.JoinArg(stream)
 }
 
 func subverb(args []string, verb, want string, errOut io.Writer) (string, []string, int, bool) {
@@ -430,6 +443,15 @@ func runScopeUnpark(ctx context.Context, args []string, out, errOut io.Writer) i
 	}
 	defer st.Close()
 	n, err := ws.UnparkStream(ctx, st.Client(), *stream, *w.by, whyOr(*w.why, "scope unpark"))
+	var r *ws.Refused
+	if errors.As(err, &r) {
+		if no, ok := ws.ParseRefusal(r.Why); ok {
+			// the paths gate refused the unpark whole (#4322): both streams named
+			no.Remedy = moveRemedy(no.Stream)
+			fmt.Fprintf(out, "%s unpark=%s ms=%s\n", no.Receipt(), oneline.Field(*stream), w.ms())
+			return 1
+		}
+	}
 	return w.done(err, fmt.Sprintf("UNPARKED stream=%s unparked=%d", strconv.Quote(*stream), n))
 }
 

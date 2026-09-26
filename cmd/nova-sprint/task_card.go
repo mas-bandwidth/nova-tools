@@ -29,6 +29,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -121,7 +122,7 @@ type cardCmd struct {
 	kind, ref, origin, title, head, pr, repo, on    *string
 	evidence, sha, where, toFriend, toStream, toWhr *string
 	ok                                              *string
-	issue, route, base, baseSHA, paths              *string
+	issue, route, base, baseSHA, paths, join        *string
 	n                                               *int
 	waiting, front, help, repair                    *bool
 	friends                                         multiFlag
@@ -158,6 +159,7 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	c.base = fs.String("base", "", "")
 	c.baseSHA = fs.String("base-sha", "", "")
 	c.paths = fs.String("paths", "", "")
+	c.join = fs.String("join", "", "")
 	c.n = fs.Int("n", 1, "")
 	c.waiting = fs.Bool("waiting", false, "")
 	c.repair = fs.Bool("repair", false, "")
@@ -265,6 +267,14 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 	ms := func() int64 { return time.Since(start).Milliseconds() }
 	refused := func(err error) int {
 		if why, ok := taskcard.IsRefused(err); ok {
+			// the paths gate's refusal (SP.gate, #4322) is its one receipt line
+			if no, ok := ws.ParseRefusal(why); ok {
+				if sub != "push" {
+					no.Remedy = moveRemedy(no.Stream)
+				}
+				_, _ = fmt.Fprintf(out, "%s id=%s ms=%d\n", no.Receipt(), *c.id, ms())
+				return 1
+			}
 			_, _ = fmt.Fprintf(out, "TASK %s REFUSED id=%s why=%s ms=%d\n", sub, *c.id, quoteField(why), ms())
 			return 1
 		}
@@ -291,7 +301,7 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		r, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: *c.id, Stream: *c.stream, Friend: *c.friend,
 			Sprint: *c.sprint, Kind: *c.kind, Ref: *c.ref, Origin: *c.origin, Title: *c.title, Head: *c.head,
 			PR: *c.pr, Repo: *c.repo, DependsOn: *c.on, Front: *c.front, By: *c.actor, Why: *c.why,
-			Where: map[bool]string{true: "waiting", false: ""}[*c.waiting], Spec: spec})
+			Where: map[bool]string{true: "waiting", false: ""}[*c.waiting], Spec: spec, Join: *c.join})
 		if err != nil {
 			return refused(err)
 		}

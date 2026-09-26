@@ -261,13 +261,18 @@ end
 -- SP: the stream's paths (nova-tools #4322): no path belongs to two open
 -- streams. ws:paths is a HASH, field <stream>, value the union of its live
 -- cards' stream_paths (each record's PATHS as internal/nsprint/ws.SplitPaths
--- reads them, written by the pusher), sorted and comma-joined; a stream with
--- none has no field. SP.moved is its one writer, called by card_move and
--- TK.move after every move: a record entering a live set of its stream adds
--- its paths (SP.add); one leaving recomputes the union from the records
--- still live (SP.recompute), so a landing or a cancel frees its paths.
--- Push reads the hash (one HGETALL) and refuses a card whose paths overlap
--- another stream's; ws check recomputes it from the records.
+-- reads them, written by the pusher), sorted and comma-joined, '' for a
+-- stream whose live cards name none. A registered stream that holds a live
+-- card and has no field is unbuilt (a store cut before #4322, or a lost
+-- key): its paths are unknown, so every gated move is refused until
+-- nova-sprint ws check --repair builds it; no move builds it by accident.
+-- SP.moved is its one writer, called by card_move and TK.move after every
+-- move: a record entering a live set of its stream adds its paths (SP.add);
+-- one leaving recomputes the union from the records still live
+-- (SP.recompute), so a landing or a cancel frees its paths. SP.gate is the
+-- one check, run before any write in the same call as the move it guards
+-- (card_create, card_move, TK.create, TK.move, ns_ws_unpark_stream), so two
+-- concurrent pushes serialize on it and exactly one of two overlapping wins.
 local SP = { KEY = 'ws:paths', FIELD = 'stream_paths',
   WHERE = { 'waiting', 'ready', 'working', 'review', 'merging' },
   LIVE = { waiting = true, ready = true, working = true, review = true, merging = true } }
@@ -281,10 +286,6 @@ end
 function SP.put(stream, seen)
   local out = {}
   for p in pairs(seen) do out[#out + 1] = p end
-  if #out == 0 then
-    redis.call('HDEL', SP.KEY, stream)
-    return
-  end
   table.sort(out)
   redis.call('HSET', SP.KEY, stream, table.concat(out, ','))
 end
@@ -294,40 +295,155 @@ function SP.into(seen, csv)
   for p in string.gmatch(csv, '[^,]+') do seen[p] = true end
 end
 
--- SP.recompute(stream): the union over every record in the stream's live sets.
-function SP.recompute(stream)
-  if type(stream) ~= 'string' or stream == '' then return end
+-- SP.list(csv): the stored form read back, a list.
+function SP.list(csv)
+  local out = {}
+  if type(csv) ~= 'string' then return out end
+  for p in string.gmatch(csv, '[^,]+') do out[#out + 1] = p end
+  return out
+end
+
+-- SP.live_other(stream, member): the stream holds a live member other than
+-- member and its stop (<slug>:sentinel). Three of a set cover member, the
+-- stop and one more.
+function SP.live_other(stream, member)
+  for _, w in ipairs(SP.WHERE) do
+    for _, m in ipairs(redis.call('ZRANGE', 'ws:' .. stream .. ':' .. w, 0, 2)) do
+      if m ~= member and not string.match(m, '^[a-z0-9][a-z0-9%-]*:sentinel$') then return true end
+    end
+  end
+  return false
+end
+
+-- SP.union(stream, skip): the paths of every record in the stream's live
+-- sets but member skip, as a seen table.
+function SP.union(stream, skip)
   local seen = {}
   for _, w in ipairs(SP.WHERE) do
     for _, m in ipairs(redis.call('ZRANGE', 'ws:' .. stream .. ':' .. w, 0, -1)) do
-      SP.into(seen, redis.call('HGET', SP.key(m), SP.FIELD))
+      if m ~= skip then SP.into(seen, redis.call('HGET', SP.key(m), SP.FIELD)) end
     end
   end
-  SP.put(stream, seen)
+  return seen
 end
 
--- SP.add(stream, key): the record's paths joined into its stream's.
-function SP.add(stream, key)
-  local mine = redis.call('HGET', key, SP.FIELD)
-  if type(mine) ~= 'string' or mine == '' then return end
+-- SP.recompute(stream): the union over every record in the stream's live
+-- sets. An unbuilt stream stays unbuilt while it holds a live card (its
+-- records may predate stream_paths); one left with none is built, empty.
+function SP.recompute(stream)
+  if type(stream) ~= 'string' or stream == '' then return end
+  if redis.call('HEXISTS', SP.KEY, stream) == 0 then
+    if not SP.live_other(stream, '') then redis.call('HSET', SP.KEY, stream, '') end
+    return
+  end
+  SP.put(stream, SP.union(stream, ''))
+end
+
+-- SP.add(stream, member): the record's paths joined into its stream's. An
+-- unbuilt stream that holds another live card stays unbuilt.
+function SP.add(stream, member)
+  local cur = redis.call('HGET', SP.KEY, stream)
+  if cur == false and SP.live_other(stream, member) then return end
   local seen = {}
-  SP.into(seen, redis.call('HGET', SP.KEY, stream))
-  SP.into(seen, mine)
+  SP.into(seen, cur)
+  SP.into(seen, redis.call('HGET', SP.key(member), SP.FIELD))
   SP.put(stream, seen)
 end
 
--- SP.moved(key, s0, w0, s1, w1): record key moved from stream s0 set w0 to
--- stream s1 set w1. A record with no paths changes no union, so its moves
--- read nothing more (a stream of 1,000 path-less tasks lands in one call).
-function SP.moved(key, s0, w0, s1, w1)
+-- SP.hits(a, b): the rule, equal or one a prefix of the other at a /.
+function SP.hits(a, b)
+  return a == b or string.sub(b, 1, #a + 1) == a .. '/' or string.sub(a, 1, #b + 1) == b .. '/'
+end
+
+-- SP.overlap(mine, theirs): every entry of either side that overlaps an
+-- entry of the other, sorted; nil when disjoint (ws.OverlappingPaths).
+function SP.overlap(mine, theirs)
+  local hit, out = {}, {}
+  for _, a in ipairs(mine) do
+    for _, b in ipairs(theirs) do
+      if SP.hits(a, b) then
+        hit[a], hit[b] = true, true
+      end
+    end
+  end
+  for p in pairs(hit) do out[#out + 1] = p end
+  if #out == 0 then return nil end
+  table.sort(out)
+  return out
+end
+
+-- SP.gate(member, mine, s0, w0, s1, join): the check of record member (its
+-- stream_paths mine) entering a live set of stream s1 from set w0 of s0,
+-- before any write. Returns the stream it enters (s1, or join when mine
+-- overlaps join's paths: --join) and nil, or nil and the typed refusal:
+--   PATHS unbuilt stream=<s>             a registered stream with a live card has no field
+--   PATHS notopen stream=<s>             join names a stream with no live card (parked, landed, unknown)
+--   PATHS overlap paths=<a,b> stream=<s> mine overlaps another open stream's
+-- (the stream last: a name may hold a space). Other streams are compared in
+-- name order; s0, when the record is live there, without the record itself.
+-- A record with no paths, or entering no stream, is not gated.
+function SP.gate(member, mine, s0, w0, s1, join)
+  join = join or ''
+  local paths = SP.list(mine)
+  if #paths == 0 or ((s1 or '') == '' and join == '') then return s1 end
+  local have = {}
+  local all = redis.call('HGETALL', SP.KEY)
+  for i = 1, #all, 2 do have[all[i]] = all[i + 1] end
+  local names = redis.call('SMEMBERS', 'ws:names')
+  table.sort(names)
+  for _, s in ipairs(names) do
+    if have[s] == nil and SP.live_other(s, member) then return nil, 'PATHS unbuilt stream=' .. s end
+  end
+  if join ~= '' and join ~= s1 and not SP.live_other(join, member) then return nil, 'PATHS notopen stream=' .. join end
+  local target = s1
+  if join ~= '' and join ~= s1 and SP.overlap(paths, SP.list(have[join])) then target = join end
+  local streams = {}
+  for s in pairs(have) do streams[#streams + 1] = s end
+  table.sort(streams)
+  for _, s in ipairs(streams) do
+    if s ~= target then
+      local theirs
+      if s == s0 and SP.LIVE[w0] == true then
+        theirs = {}
+        for p in pairs(SP.union(s0, member)) do theirs[#theirs + 1] = p end
+      else
+        theirs = SP.list(have[s])
+      end
+      local ov = SP.overlap(paths, theirs)
+      if ov then return nil, 'PATHS overlap paths=' .. table.concat(ov, ',') .. ' stream=' .. s end
+    end
+  end
+  return target
+end
+
+-- SP.entering(s0, w0, s1, w1): the move puts the record into a live set of
+-- s1 it was not live in (a push, an unpark, a change of stream).
+function SP.entering(s0, w0, s1, w1)
+  local l0 = s0 ~= '' and SP.LIVE[w0] == true
+  local l1 = s1 ~= '' and SP.LIVE[w1] == true
+  return l1 and (not l0 or s0 ~= s1)
+end
+
+-- SP.moved(member, s0, w0, s1, w1): record member moved from stream s0 set
+-- w0 to stream s1 set w1. A record with no paths changes no union, so its
+-- moves read nothing more (a stream of 1,000 path-less tasks lands in one
+-- call); entering a stream with no field, it builds the field empty when
+-- it is the stream's only live card.
+function SP.moved(member, s0, w0, s1, w1)
   local l0 = s0 ~= '' and SP.LIVE[w0] == true
   local l1 = s1 ~= '' and SP.LIVE[w1] == true
   if l0 == l1 and s0 == s1 then return end
   if not (l0 or l1) then return end
-  local mine = redis.call('HGET', key, SP.FIELD)
-  if type(mine) ~= 'string' or mine == '' then return end
-  if l0 and (not l1 or s0 ~= s1) then SP.recompute(s0) end
-  if l1 and (not l0 or s0 ~= s1) then SP.add(s1, key) end
+  local mine = redis.call('HGET', SP.key(member), SP.FIELD)
+  local has = type(mine) == 'string' and mine ~= ''
+  if has and l0 and (not l1 or s0 ~= s1) then SP.recompute(s0) end
+  if l1 and (not l0 or s0 ~= s1) then
+    if has then
+      SP.add(s1, member)
+    elseif redis.call('HEXISTS', SP.KEY, s1) == 0 and not SP.live_other(s1, member) then
+      redis.call('HSET', SP.KEY, s1, '')
+    end
+  end
 end
 
 -- The pool's members are labels (not a table set of ids): added as they are.
@@ -559,6 +675,11 @@ local function card_move(id, to, o)
     local why = e.t == 'z' and cm_probe_refused(e.k, e.m)
     if why then return why end
   end
+  -- no path belongs to two open streams (#4322): refused before any write
+  if not o.gated and SP.entering(cur.stream, cur.where, nxt.stream, to) then
+    local _, perr = SP.gate(id, redis.call('HGET', id, SP.FIELD), cur.stream, cur.where, nxt.stream, '')
+    if perr then return perr end
+  end
   local was, keep = {}, {}
   for _, e in ipairs(old) do was[e.k] = true end
   for _, e in ipairs(new) do keep[e.k] = true end
@@ -624,8 +745,21 @@ local function card_create(id, fields, o)
     end
   end
   local cstream = o.stream
+  local mine = ''
   for i = 1, #fields, 2 do
     if fields[i] == 'stream' and (cstream == nil or cstream == '') then cstream = fields[i + 1] end
+    if fields[i] == SP.FIELD then mine = fields[i + 1] end
+  end
+  -- no path belongs to two open streams (#4322): refused before any write;
+  -- o.join (--join) names the one stream the card may join instead of its own
+  local target, perr = SP.gate(id, mine, '', '', cstream or '', o.join)
+  if perr then return perr end
+  if target ~= (cstream or '') then
+    cstream = target
+    o.stream = target
+    for i = 1, #fields, 2 do
+      if fields[i] == 'stream' then fields[i + 1] = target end
+    end
   end
   if cm_slug_check then
     local serr = cm_slug_check(cstream)
@@ -651,7 +785,7 @@ local function card_create(id, fields, o)
   redis.call('HSET', unpack(h))
   redis.call('ZADD', 'sprint:' .. S .. ':cards', created, id)
   redis.call('SADD', cm_idx(S, 'queued'), label)
-  return card_move(id, 'waiting', { by = o.by, why = 'push' })
+  return card_move(id, 'waiting', { by = o.by, why = 'push', gated = true })
 end
 
 -- cm_lease_member(m, w): m is a lease member of a working set, <S>/<id>/<attempt>
@@ -1687,6 +1821,13 @@ function TK.move(id, to, o)
     err = TK.verify(id, cur, { nxt.stream }, { nxt.friend })
     if err then return 'DRIFT ' .. err .. ' task:' .. id .. '; run nova-sprint task fsck' end
   end
+  -- no path belongs to two open streams (#4322): an unpark, a move to
+  -- another stream or a push's first move is refused before any write; a
+  -- rename moves the whole stream (its paths with it) and is not gated
+  if not o.gated and not o.rename and SP.entering(cur.stream, cur.where, nxt.stream, to) then
+    local _, perr = SP.gate(id, redis.call('HGET', 'task:' .. id, SP.FIELD), cur.stream, cur.where, nxt.stream, '')
+    if perr then return perr end
+  end
   if o.dry then return nil end
   if cur.where == to and nxt.stream == cur.stream and nxt.friend == cur.friend and front ~= '1' and ok == cur.ok and
       state == cur.state and (o.copy == nil or o.copy == cur.copy) then
@@ -1766,7 +1907,7 @@ function TK.move(id, to, o)
   for _, k in ipairs(old) do
     if not keep[k] and redis.call('ZSCORE', k, id) then return 'DRIFT-AFTER twice ' .. k .. ' task:' .. id end
   end
-  SP.moved('task:' .. id, cur.stream, cur.where, nxt.stream, to)
+  SP.moved(id, cur.stream, cur.where, nxt.stream, to)
   local from, dest = cur.where, to
   if from == 'done' then from = 'done/' .. cur.ok end
   if to == 'done' then dest = 'done/' .. ok end
@@ -1840,6 +1981,18 @@ function TK.create(id, fields, o)
   end
   local stream = TK.stream_of(o.stream, title)
   if not TK.valid_stream(stream) then return 'STREAM bad name ' .. stream end
+  -- no path belongs to two open streams (#4322): refused before any write;
+  -- o.join (--join) names the one stream the task may join instead
+  local mine = ''
+  for i = 1, #fields, 2 do
+    if fields[i] == SP.FIELD then mine = fields[i + 1] end
+  end
+  local where0 = o.where or 'waiting'
+  if SP.LIVE[where0] then
+    local target, perr = SP.gate(id, mine, '', '', stream, o.join)
+    if perr then return perr end
+    stream = target
+  end
   if TK.is_sentinel(id) and not (o.sentinel and TK.sentinel_id(stream) == id) then
     return 'SENTINEL ' .. id .. ' is a stream sentinel id: registration creates a stream\'s own (the first push into it); pick another id'
   end
@@ -1867,7 +2020,7 @@ function TK.create(id, fields, o)
   redis.call('HSET', unpack(h))
   TK.register(stream)
   return TK.move(id, where, { by = o.by, why = o.why or 'push', front = o.front, sprint = o.sprint, state = o.state,
-    qscore = o.qscore, sentinel = o.sentinel })
+    qscore = o.qscore, sentinel = o.sentinel, gated = true })
 end
 
 -- TK.derive: the place a record's own facts imply, for adoption and
@@ -2237,7 +2390,7 @@ end
 -- field.
 function TK.opts(args, from, o)
   local known = { ok = true, friend = true, stream = true, sha = true, sprint = true, front = true, as = true,
-    state = true, qscore = true }
+    state = true, qscore = true, join = true }
   o.fields = o.fields or {}
   for i = from, #args - 1, 2 do
     local k, v = args[i], args[i + 1]
@@ -4327,6 +4480,12 @@ NS.task = { move = TK.move, create = TK.create, place = TK.place, read = TK.read
   -- the stream sentinel (#4318): its id for a stream, and whether an id is one
   sentinel_id = TK.sentinel_id, is_sentinel = TK.is_sentinel, slug = TK.slug, slug_clash = TK.slug_clash,
   live_siblings = TK.live_siblings,
+  -- gate(id, stream): SP.gate of parked member id returning to stream (an
+  -- unpark, #4322): nil, or the PATHS refusal.
+  gate = function(id, stream)
+    local _, perr = SP.gate(id, redis.call('HGET', SP.key(id), SP.FIELD), stream, 'parked', stream, '')
+    return perr
+  end,
   -- set(id, state, o): the move to the where a fine state names (cancelled is
   -- done/fail), writing that state: the sprint store's transitions.
   -- renew(id, at): a live holder's beat renews the task's lease.

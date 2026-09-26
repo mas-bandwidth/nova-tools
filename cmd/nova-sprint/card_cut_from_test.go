@@ -47,12 +47,13 @@ type fakeCutStore struct {
 	paths ws.StreamPaths
 }
 
-func (f *fakeCutStore) streamPaths(context.Context) (ws.StreamPaths, error) {
-	out := ws.StreamPaths{}
+func (f *fakeCutStore) streamPaths(context.Context) (ws.GateView, error) {
+	v := ws.GateView{Paths: ws.StreamPaths{}, Open: map[string]bool{}}
 	for s, p := range f.paths {
-		out[s] = p
+		v.Paths[s] = p
+		v.Open[s] = true
 	}
-	return out, nil
+	return v, nil
 }
 
 func (f *fakeCutStore) push(_ context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {

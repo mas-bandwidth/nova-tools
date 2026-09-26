@@ -194,6 +194,12 @@ type PushRequest struct {
 	// Spec, when set, is the card content (#3911): its fields go on the
 	// record, and a swarm route lacking one is refused at push, named.
 	Spec *Spec
+
+	// Join (--join, nova-tools#4322) names the one open stream whose paths
+	// the task's PATHS may overlap: it is pushed onto that stream instead.
+	// The push is gated in its FCALL (SP.gate): an overlap otherwise is a
+	// *Refused whose why ws.ParseRefusal reads.
+	Join string
 }
 
 // PushResult is where the task was placed and its ready entry (q:<friend>).
@@ -317,7 +323,11 @@ func (r *PushRequest) args() ([]any, error) {
 		front = "1"
 	}
 	o.Fields = append(o.Fields, "front", front)
-	return append(args, o.args()...), nil
+	args = append(args, o.args()...)
+	if r.Join != "" {
+		args = append(args, "join", r.Join)
+	}
+	return args, nil
 }
 
 // parsePush reads one ns_tcard_push reply.

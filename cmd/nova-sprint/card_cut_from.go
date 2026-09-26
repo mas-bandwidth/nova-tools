@@ -126,9 +126,10 @@ type cutFromDeps struct {
 	LedgerWrite func(ctx context.Context, key, repo string, row, issue int) error
 	BaseSHA     func(repo, base string) (string, error)
 	Now         func() time.Time
-	// StreamPaths reads every open stream's paths (ws.ReadStreamPaths); nil
-	// (a dry run) gates nothing.
-	StreamPaths func(ctx context.Context) (ws.StreamPaths, error)
+	// StreamPaths reads what the paths gate reads (ws.ReadGateView); nil (a
+	// dry run with no --redis) gates nothing. The push's own FCALL gates
+	// each row again, atomically (SP.gate, #4322).
+	StreamPaths func(ctx context.Context) (ws.GateView, error)
 	// Plan reads the parent (--parent); Bind makes it a plan after the push.
 	Plan func(ctx context.Context, id string) (planFacts, error)
 	Bind func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error)
@@ -521,6 +522,11 @@ func cutField(s string) string {
 }
 
 func cutRefused(out io.Writer, r *cutRow) {
+	if strings.HasPrefix(r.why, "REFUSED PATHS ") {
+		// the push's own paths gate (#4322): its receipt, as the check prints it
+		fmt.Fprintf(out, "%s row=%s line=%d id=%s\n", r.why, cutRowN(r), r.line, cutField(r.id))
+		return
+	}
 	fmt.Fprintf(out, "CARD CUT REFUSED row=%s line=%d id=%s why=%s\n", cutRowN(r), r.line, cutField(r.id), cutField(r.why))
 }
 
@@ -739,8 +745,9 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 	}
 	// No path belongs to two open streams (nova-tools #4322): every row is
 	// gated, in file order, against every OTHER open stream's paths and the
-	// rows before it, before any issue is filed; --join names the one stream
-	// a row may join instead of its own.
+	// rows before it, before any issue is filed (and in a dry run with
+	// --redis, reported); --join names the one open stream a row may join
+	// instead of its own. The push's FCALL gates each row again, atomically.
 	if d.StreamPaths != nil {
 		open, err := d.StreamPaths(ctx)
 		if err != nil {
@@ -759,7 +766,7 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 				continue
 			}
 			r.stream = to
-			open.Add(to, paths)
+			open.Paths.Add(to, paths)
 		}
 		if bad > 0 {
 			summary(len(rows), bad)
@@ -868,7 +875,7 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		}
 		reqs = append(reqs, taskcard.PushRequest{ID: r.id, Where: "waiting", Stream: r.stream, Sprint: o.Sprint,
 			Ref: r.ref, Origin: r.origin, Title: r.title, Repo: o.Repo, DependsOn: blocked,
-			By: o.Actor, Why: why, Fields: r.fields, Spec: &spec})
+			By: o.Actor, Why: why, Fields: r.fields, Spec: &spec, Join: o.Join})
 	}
 	var outcomes []taskcard.PushOutcome
 	if len(reqs) > 0 {
@@ -889,6 +896,9 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 					continue
 				}
 				r.why = "push refused: " + why
+				if no, ok := ws.ParseRefusal(why); ok {
+					r.why = no.Receipt() // the push's own gate (SP.gate, #4322): a race the check above lost
+				}
 			} else {
 				r.why = "push: " + oc.Err.Error()
 			}
@@ -983,6 +993,18 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 		return refuse(stderr, verb, "cannot read --from: "+err.Error())
 	}
 	d := cutFromDeps{Now: time.Now, BaseSHA: card.MirrorBranchSHA}
+	if raddr := taskAddr(addr); o.DryRun && o.Parent == "" && raddr != "" {
+		// a dry run with a store reports every row the paths gate would
+		// refuse (#4322); it reads, and writes nothing
+		st, err := store.Open(ctx, raddr)
+		if err != nil {
+			return refuse(stderr, verb, "redis: "+err.Error()+"; nothing filed")
+		}
+		defer func() { _ = st.Close() }()
+		d.StreamPaths = func(ctx context.Context) (ws.GateView, error) {
+			return ws.ReadGateView(ctx, st.Client())
+		}
+	}
 	if !o.DryRun || o.Parent != "" {
 		if !o.DryRun {
 			if o.Actor = quackActor(o.Actor); o.Actor == "" {
@@ -1001,8 +1023,8 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 		d.Push = func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
 			return taskcard.PushMany(ctx, st.Client(), reqs)
 		}
-		d.StreamPaths = func(ctx context.Context) (ws.StreamPaths, error) {
-			return ws.ReadStreamPaths(ctx, st.Client())
+		d.StreamPaths = func(ctx context.Context) (ws.GateView, error) {
+			return ws.ReadGateView(ctx, st.Client())
 		}
 		d.LedgerRead = func(ctx context.Context, key string) (taskcard.CutLedger, error) {
 			return taskcard.ReadCutLedger(ctx, st.Client(), key)

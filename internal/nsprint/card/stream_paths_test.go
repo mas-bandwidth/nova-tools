@@ -112,11 +112,17 @@ func TestCardPushStreamsPathsDisjoint(t *testing.T) {
 
 	// ws check: a store whose record is lost (cut before #4322) is stale
 	// and repaired from the records; two streams that already overlap (a
-	// task pushed past no gate) are named.
-	if _, err := taskcard.Push(ctx, client, taskcard.PushRequest{ID: "sp-u", Stream: "old", Title: "u", By: "test",
-		Fields: []string{"paths", "cmd/nova-sprint/ci.go"}}); err != nil {
+	// task whose PATHS were edited past the gate) are named. The gate
+	// refuses the same task pushed with those paths.
+	_, err := taskcard.Push(ctx, client, taskcard.PushRequest{ID: "sp-u", Stream: "old", Title: "u", By: "test",
+		Fields: []string{"paths", "cmd/nova-sprint/ci.go"}})
+	if why, _ := taskcard.IsRefused(err); why != "PATHS overlap paths=cmd/nova-sprint/ci.go stream=ci" {
+		t.Fatalf("task push overlapping ci: %v", err)
+	}
+	if _, err := taskcard.Push(ctx, client, taskcard.PushRequest{ID: "sp-u", Stream: "old", Title: "u", By: "test"}); err != nil {
 		t.Fatal(err)
 	}
+	client.HSet(ctx, "task:sp-u", "paths", "cmd/nova-sprint/ci.go")
 	client.Del(ctx, ws.PathsKey)
 	client.HDel(ctx, keyCard("sp-c"), ws.PathsField)
 	live, stored, cards, err := ws.LivePaths(ctx, client)
@@ -134,8 +140,8 @@ func TestCardPushStreamsPathsDisjoint(t *testing.T) {
 		t.Fatalf("overlaps = %q", lines)
 	}
 	streams, records, err := ws.RepairPaths(ctx, client, live, stored, cards)
-	if err != nil || streams != 4 || records != 1 {
-		t.Fatalf("repair: streams %d records %d err %v; want 4 and 1", streams, records, err)
+	if err != nil || streams != 4 || records != 2 {
+		t.Fatalf("repair: streams %d records %d err %v; want 4 and 2 (sp-c's and sp-u's stream_paths)", streams, records, err)
 	}
 	if got := streamPaths(t, ctx, client, "work"); got != "internal/nsprint/ws/check.go" {
 		t.Fatalf("repaired ws:paths work = %q", got)

@@ -19,11 +19,15 @@ import (
 //
 // PathsKey is the stream record's paths: a HASH, field <stream>, value the
 // union of its live cards' PATHS (PathsField of each record in the stream's
-// Live sets), sorted and comma-joined; a stream with none has no field. The
-// one writer is 02_card_move.lua's SP: a card entering a live set of its
-// stream adds its paths, one leaving recomputes the union. Push reads the
-// whole hash in one HGETALL and refuses a card whose PATHS overlap another
-// stream's (Gate); ws check recomputes it from the records (LivePaths).
+// Live sets), sorted and comma-joined, "" when they name none. A stream
+// that holds a live card and has no field is unbuilt: its paths are
+// unknown, and every gated move is refused (PATHS unbuilt) until ws check
+// --repair builds it. The one writer and the one check are
+// 02_card_move.lua's SP: a card entering a live set of its stream is gated
+// (SP.gate, in the same FCALL as the move, before any write) and adds its
+// paths; one leaving recomputes the union. ws check recomputes it from the
+// records (LivePaths). Gate is the same rule in Go, for card cut --from's
+// check before it files any issue.
 const (
 	PathsKey   = "ws:paths"
 	PathsField = "stream_paths"
@@ -43,8 +47,9 @@ var (
 // tokens split on space, comma and semicolon; parentheticals, quotes, the
 // markers "-" and "none", ~ exclusions and a repo: tag dropped; ./ and
 // trailing slashes trimmed; a glob cut to the directory above its first
-// wildcard segment (internal/b/** and internal/b/*.go hold internal/b). A
-// glob at the root holds no one path and is dropped. Sorted, unique.
+// wildcard segment (internal/nsprint/ws/** and internal/nsprint/ws/*.go hold
+// internal/nsprint/ws). A glob at the root holds no one path and is dropped.
+// Sorted, unique.
 func SplitPaths(text string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -136,9 +141,7 @@ func StreamPathsOf(cmd *redis.MapStringStringCmd) (StreamPaths, error) {
 	}
 	sp := StreamPaths{}
 	for s, csv := range m {
-		if p := ParsePaths(csv); len(p) > 0 {
-			sp[s] = p
-		}
+		sp[s] = ParsePaths(csv) // a field of "" is present: built, no paths
 	}
 	return sp, nil
 }
@@ -171,18 +174,65 @@ func (sp StreamPaths) Add(stream string, paths []string) {
 	sp[stream] = SplitPaths(strings.Join(append(append([]string{}, sp[stream]...), paths...), ","))
 }
 
-// PathsRefusal is a push refused because its PATHS overlap another open
-// stream's: the stream and the overlapping paths of both sides.
+// PathsRefusal is a push or move refused because its PATHS overlap another
+// open stream's (the stream and the overlapping paths of both sides), or
+// because a stream's paths are unbuilt (Unbuilt: the stream holds live
+// cards and ws:paths has no field for it). Remedy, when set, replaces the
+// overlap's default remedy (--join <stream>).
 type PathsRefusal struct {
-	Stream string
-	Paths  []string
+	Stream  string
+	Paths   []string
+	Unbuilt bool
+	// NotOpen: --join named a stream that holds no live card (parked,
+	// landed or unknown); a card joins only an open stream.
+	NotOpen bool
+	Remedy  string
 }
 
-// Receipt is the one refusal line; the remedy is the flag that pushes the
-// card onto that stream instead.
+// RepairRemedy is the unbuilt refusal's remedy; StreamsRemedy the not-open
+// join's (it lists the streams and their counts).
+const (
+	RepairRemedy  = "nova-sprint ws check --repair"
+	StreamsRemedy = "nova-sprint stream ls"
+)
+
+// Receipt is the one refusal line; the overlap's remedy is the flag that
+// pushes the card onto that stream instead.
 func (r *PathsRefusal) Receipt() string {
+	if r.Unbuilt {
+		return fmt.Sprintf("REFUSED PATHS unbuilt stream=%s remedy=%s", oneline.Field(r.Stream), strconv.Quote(RepairRemedy))
+	}
+	if r.NotOpen {
+		return fmt.Sprintf("REFUSED PATHS notopen stream=%s remedy=%s", oneline.Field(r.Stream), strconv.Quote(StreamsRemedy))
+	}
+	remedy := r.Remedy
+	if remedy == "" {
+		remedy = "--join " + JoinArg(r.Stream)
+	}
 	return fmt.Sprintf("REFUSED PATHS overlap stream=%s paths=%s remedy=%s",
-		oneline.Field(r.Stream), oneline.Field(JoinPaths(r.Paths)), strconv.Quote("--join "+JoinArg(r.Stream)))
+		oneline.Field(r.Stream), oneline.Field(JoinPaths(r.Paths)), strconv.Quote(remedy))
+}
+
+// ParseRefusal reads SP.gate's typed refusal (02_card_move.lua), the reply
+// of ns_card_push or the why of a REFUSED task move, push or unpark:
+// "PATHS overlap paths=<a,b> stream=<s>" or "PATHS unbuilt stream=<s>" (the
+// stream last: a name may hold a space). ok is false for any other why.
+func ParseRefusal(why string) (*PathsRefusal, bool) {
+	if rest, ok := strings.CutPrefix(why, "PATHS unbuilt stream="); ok && rest != "" {
+		return &PathsRefusal{Stream: rest, Unbuilt: true}, true
+	}
+	if rest, ok := strings.CutPrefix(why, "PATHS notopen stream="); ok && rest != "" {
+		return &PathsRefusal{Stream: rest, NotOpen: true}, true
+	}
+	rest, ok := strings.CutPrefix(why, "PATHS overlap paths=")
+	if !ok {
+		return nil, false
+	}
+	csv, stream, ok := strings.Cut(rest, " stream=")
+	if !ok || csv == "" || stream == "" {
+		return nil, false
+	}
+	return &PathsRefusal{Stream: stream, Paths: ParsePaths(csv)}, true
 }
 
 func (r *PathsRefusal) Error() string { return r.Receipt() }
@@ -218,6 +268,81 @@ func (sp StreamPaths) Gate(stream string, paths []string, join string) (string, 
 		}
 	}
 	return target, nil
+}
+
+// GateView is what SP.gate reads, for a check in Go before a write that
+// the Lua gate then makes atomic (card cut --from checks every row before
+// it files any issue, and its --dry-run reports what would be refused):
+// every stream's paths, the streams holding a live card, and the unbuilt
+// ones (a live card, no field), in name order.
+type GateView struct {
+	Paths   StreamPaths
+	Open    map[string]bool
+	Unbuilt []string
+}
+
+// ReadGateView reads the view in two pipelined round trips: ws:paths and
+// ws:names, then the first three members of each stream's Live sets.
+func ReadGateView(ctx context.Context, c redis.Cmdable) (GateView, error) {
+	pipe := c.Pipeline()
+	rec := QueueStreamPaths(ctx, pipe)
+	names := pipe.SMembers(ctx, "ws:names")
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return GateView{}, fmt.Errorf("read %s: %w", PathsKey, err)
+	}
+	v := GateView{Open: map[string]bool{}}
+	var err error
+	if v.Paths, err = StreamPathsOf(rec); err != nil {
+		return GateView{}, err
+	}
+	streams := names.Val()
+	sort.Strings(streams)
+	if len(streams) == 0 {
+		return v, nil
+	}
+	pipe = c.Pipeline()
+	sets := make([][]*redis.StringSliceCmd, len(streams))
+	for i, s := range streams {
+		for _, w := range Live {
+			sets[i] = append(sets[i], pipe.ZRange(ctx, Key(s, w), 0, 2))
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return GateView{}, fmt.Errorf("read the live sets: %w", err)
+	}
+	for i, s := range streams {
+		for _, cmd := range sets[i] {
+			for _, m := range cmd.Val() {
+				if m != SentinelID(s) {
+					v.Open[s] = true
+				}
+			}
+		}
+		if _, built := v.Paths[s]; v.Open[s] && !built {
+			v.Unbuilt = append(v.Unbuilt, s)
+		}
+	}
+	return v, nil
+}
+
+// Gate is SP.gate's rule over the view: an unbuilt stream refuses every
+// gated card, a --join naming a stream that is not open refuses, then
+// StreamPaths.Gate. An accepted card's stream is open for the rows after it.
+func (v GateView) Gate(stream string, paths []string, join string) (string, *PathsRefusal) {
+	if len(paths) == 0 || (stream == "" && join == "") {
+		return stream, nil
+	}
+	if len(v.Unbuilt) > 0 {
+		return "", &PathsRefusal{Stream: v.Unbuilt[0], Unbuilt: true}
+	}
+	if join != "" && join != stream && !v.Open[join] {
+		return "", &PathsRefusal{Stream: join, NotOpen: true}
+	}
+	to, no := v.Paths.Gate(stream, paths, join)
+	if no == nil && to != "" && v.Open != nil {
+		v.Open[to] = true
+	}
+	return to, no
 }
 
 // PathsPair is two open streams sharing paths.
@@ -320,6 +445,9 @@ func LivePaths(ctx context.Context, c redis.Cmdable) (live, stored StreamPaths, 
 		v := hm[i].Val()
 		cards[i].Raw, _ = v[0].(string)
 		cards[i].Stored, _ = v[1].(string)
+		if _, ok := live[cards[i].Stream]; !ok {
+			live[cards[i].Stream] = nil // a stream with a live card is in live, paths or not
+		}
 		live.Add(cards[i].Stream, SplitPaths(cards[i].Raw))
 	}
 	return live, stored, cards, nil
@@ -331,7 +459,8 @@ func SamePaths(a, b []string) bool {
 }
 
 // Stale is every stream whose stored paths (PathsKey) are not its live
-// cards' paths, in name order.
+// cards' paths, or that holds a live card (a key of live) and has no field
+// in stored (unbuilt), in name order.
 func Stale(live, stored StreamPaths) []string {
 	names := map[string]bool{}
 	for s := range live {
@@ -342,7 +471,9 @@ func Stale(live, stored StreamPaths) []string {
 	}
 	var out []string
 	for s := range names {
-		if !SamePaths(live[s], stored[s]) {
+		_, holds := live[s]
+		_, built := stored[s]
+		if !SamePaths(live[s], stored[s]) || (holds && !built) {
 			out = append(out, s)
 		}
 	}
@@ -370,10 +501,10 @@ func RepairPaths(ctx context.Context, c redis.Cmdable, live, stored StreamPaths,
 		records++
 	}
 	for _, s := range Stale(live, stored) {
-		if len(live[s]) == 0 {
-			pipe.HDel(ctx, PathsKey, s)
+		if _, holds := live[s]; holds {
+			pipe.HSet(ctx, PathsKey, s, JoinPaths(live[s])) // "" builds a stream whose cards name no path
 		} else {
-			pipe.HSet(ctx, PathsKey, s, JoinPaths(live[s]))
+			pipe.HDel(ctx, PathsKey, s)
 		}
 		streams++
 	}

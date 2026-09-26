@@ -67,6 +67,10 @@ redis.register_function('ns_card_push', function(keys, args)
   -- compares them (ws.SplitPaths, comma-joined); the move into waiting adds
   -- them to ws:paths[<stream>] (SP, 02_card_move.lua). Empty: not stored.
   local stream_paths = args[20]
+  -- join (arg 21, --join, #4322): the one open stream whose paths the card
+  -- may overlap; the card is pushed onto it instead of its own STREAM.
+  -- CARD.create gates the push (SP.gate) before any write, in this call.
+  local join = args[21] or ''
   if type(depends_on) ~= 'string' then
     depends_on = ''
   end
@@ -138,7 +142,12 @@ redis.register_function('ns_card_push', function(keys, args)
     table.insert(fields, 'stream_paths')
     table.insert(fields, stream_paths)
   end
-  local err = CARD.create(card, fields, { bench = bench, stream = stream, by = 'card-push' })
+  local err = CARD.create(card, fields, { bench = bench, stream = stream, by = 'card-push', join = join })
+  if err and string.sub(err, 1, 6) == 'PATHS ' then
+    -- the typed refusal, nothing written: PATHS overlap paths=<a,b> stream=<s>
+    -- or PATHS unbuilt stream=<s> (card.PushBatch prints the receipt)
+    return err
+  end
   if not err and place == 'pool' then
     err = CARD.move(card, 'ready', { by = 'card-push', why = 'push: no unmet dependency' })
   end

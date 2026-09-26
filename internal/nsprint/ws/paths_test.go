@@ -106,3 +106,29 @@ func TestPathsOverlapsNamesEveryPair(t *testing.T) {
 		t.Fatalf("add = %q", sp["c"])
 	}
 }
+
+// TestPathsParseRefusalReadsTheGate: SP.gate's typed refusals (the Lua
+// reply of ns_card_push, the why of a REFUSED task push, move or unpark)
+// read back into the one receipt line: an overlap with its default remedy
+// (--join) or a move's, a stream name with a space, and the unbuilt
+// refusal with the repair remedy; any other why is not one.
+func TestPathsParseRefusalReadsTheGate(t *testing.T) {
+	t.Parallel()
+	no, ok := ws.ParseRefusal("PATHS overlap paths=internal/x,internal/x/y.go stream=swarm: cards")
+	if !ok || no.Receipt() != `REFUSED PATHS overlap stream=swarm:\x20cards paths=internal/x,internal/x/y.go remedy="--join \"swarm: cards\""` {
+		t.Fatalf("overlap: %v %v", ok, no)
+	}
+	no.Remedy = "nova-sprint scope park --stream work"
+	if no.Receipt() != `REFUSED PATHS overlap stream=swarm:\x20cards paths=internal/x,internal/x/y.go remedy="nova-sprint scope park --stream work"` {
+		t.Fatalf("move remedy: %q", no.Receipt())
+	}
+	no, ok = ws.ParseRefusal("PATHS unbuilt stream=work")
+	if !ok || !no.Unbuilt || no.Receipt() != `REFUSED PATHS unbuilt stream=work remedy="nova-sprint ws check --repair"` {
+		t.Fatalf("unbuilt: %v %v", ok, no)
+	}
+	for _, why := range []string{"EXISTS task:x", "PATHS overlap paths= stream=a", "PATHS overlap paths=a", "PATHS unbuilt stream="} {
+		if _, ok := ws.ParseRefusal(why); ok {
+			t.Errorf("ParseRefusal(%q) read a refusal", why)
+		}
+	}
+}

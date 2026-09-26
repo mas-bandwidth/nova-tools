@@ -171,13 +171,24 @@ local function ws_unpark_stream(keys, args)
   if not W.known(stream) then
     return { 'REFUSED', 'unknown stream ' .. tostring(stream) }
   end
+  -- No path belongs to two open streams (#4322): every parked task is
+  -- gated (NS.task.gate, the one check) before any moves, so an unpark that
+  -- would overlap another open stream is refused whole, the first overlap
+  -- named, and nothing leaves parked.
+  local parked = redis.call('ZRANGE', W.key(stream, 'parked'), 0, -1)
+  for _, id in ipairs(parked) do
+    local perr = NS.task.gate(id, stream)
+    if perr then
+      return { 'REFUSED', perr }
+    end
+  end
   local n = 0
-  for _, id in ipairs(redis.call('ZRANGE', W.key(stream, 'parked'), 0, -1)) do
+  for _, id in ipairs(parked) do
     local to = redis.call('HGET', 'task:' .. id, 'parked_from')
     if to ~= 'ready' then
       to = 'waiting'
     end
-    if not NS.task.move(id, to, { by = by, why = why }) then
+    if not NS.task.move(id, to, { by = by, why = why, gated = true }) then
       redis.call('HDEL', 'task:' .. id, 'parked_from')
       if not NS.task.is_sentinel(id) then n = n + 1 end
     end

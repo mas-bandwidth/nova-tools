@@ -41,6 +41,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -187,6 +188,10 @@ func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int 
 			continue
 		}
 		refused++
+		if no, ok := ws.ParseRefusal(why); ok {
+			fmt.Fprintf(out, "%s id=%s\n", no.Receipt(), c.id) // the paths gate (SP.gate, #4322)
+			continue
+		}
 		fmt.Fprintf(out, "REFUSED id=%s why=%s\n", c.id, quoteField(why))
 	}
 	fmt.Fprintf(out, "CUT n=%d stream=%s sprint=%s repo=%s tiers=%s pushed=%d skipped=%d refused=%d base-sha=%s pitstop=%s lift=%s ms=%d\n",

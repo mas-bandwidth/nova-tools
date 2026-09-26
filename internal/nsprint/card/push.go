@@ -33,7 +33,7 @@ type PushOptions struct {
 	MapKind bool
 	// Join names an open stream a card's PATHS may overlap (nova-tools
 	// #4322): a card overlapping it is pushed onto it instead of its own
-	// STREAM; "" joins none, and an overlap refuses the batch.
+	// STREAM; "" joins none, and an overlap refuses that card.
 	Join string
 }
 
@@ -89,34 +89,17 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 		docs[i] = doc
 		bodies[i] = body
 	}
-	// No path belongs to two open streams (nova-tools #4322): every new card
-	// on a stream is gated against every OTHER open stream's paths, read in
-	// the dependency pipeline, and the cards before it in this batch; an
-	// overlap refuses the whole batch before any write, unless --join names
-	// that stream. A label already stored is answered by the push itself
-	// (EXISTS or CONFLICT), as the task path lint does. A batch with no
-	// stream and no --join reads nothing more.
-	gate := opts.Join != ""
+	// No path belongs to two open streams (nova-tools #4322): each card's
+	// PATHS as its stream holds them go with its FCALL, and ns_card_push
+	// gates it there (SP.gate, before any write, in the same call as the
+	// write), against every other open stream's paths and the cards before
+	// it in this batch; --join names the one stream it may join instead.
 	for i := range docs {
 		docs[i].StreamPaths = ws.JoinPaths(ws.SplitPaths(docs[i].Paths))
-		gate = gate || (docs[i].Stream != "" && docs[i].StreamPaths != "")
 	}
-	ready, open, stored, i, err := batchDependenciesReady(ctx, client, sprint, docs, gate)
+	ready, i, err := batchDependenciesReady(ctx, client, sprint, docs)
 	if err != nil {
 		return []VerbResult{refused(named(files[i].Name, err.Error()))}
-	}
-	for i := range docs {
-		if !gate || stored[i] {
-			continue
-		}
-		paths := ws.ParsePaths(docs[i].StreamPaths)
-		stream, no := open.Gate(docs[i].Stream, paths, opts.Join)
-		if no != nil {
-			return []VerbResult{{Code: exitRefused, Stdout: no.Receipt() + " card=" + oneline.Field(docs[i].Label) + "\n",
-				Stderr: oneline.Escape(named(files[i].Name, no.Receipt())) + "\n"}}
-		}
-		docs[i].Stream = stream
-		open.Add(stream, paths)
 	}
 	pipe := client.Pipeline()
 	cmds := make([]*redis.Cmd, len(docs))
@@ -136,11 +119,11 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 		}
 		// Arguments 14-18 are bench, est, test, stream and origin (#3650,
 		// #3653, #3689, #3692); 19 is leg (#3255); 20 is stream_paths, the
-		// card's PATHS as its stream holds them (#4322).
+		// card's PATHS as its stream holds them, and 21 join (#4322).
 		cmds[i] = pipe.FCall(ctx, "ns_card_push", keys,
 			doc.Label, doc.Payload, doc.Priority, doc.Base, doc.BaseSHA, doc.Paths, doc.Repo, doc.Kind,
 			doc.DependsOn, doc.Type, doc.TypedDependsOn, boolString(ready[i]), doc.Route, doc.Bench, doc.Est, doc.Test,
-			doc.Stream, doc.Origin, doc.Leg, doc.StreamPaths,
+			doc.Stream, doc.Origin, doc.Leg, doc.StreamPaths, opts.Join,
 		)
 		// Then, in the same pipeline, ns_card_header writes the card's
 		// DONE-WHEN line (harvest's PR body, #2932) and its TASK line (the
@@ -158,6 +141,12 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 		}
 		if err == nil && reply == "NOBENCH" {
 			out[i] = refused(named(files[i].Name, unregisteredBench(ctx, client, doc.Bench)))
+			continue
+		}
+		if no, ok := ws.ParseRefusal(reply); err == nil && ok {
+			// #4322: the gate's typed refusal, nothing written; one receipt line
+			out[i] = VerbResult{Code: exitRefused, Stdout: no.Receipt() + " card=" + oneline.Field(doc.Label) + "\n",
+				Stderr: oneline.Escape(named(files[i].Name, no.Receipt())) + "\n"}
 			continue
 		}
 		if err == nil && strings.HasPrefix(reply, "ROLE ") {
@@ -222,47 +211,26 @@ func unregisteredBench(ctx context.Context, client *redis.Client, bench string) 
 // batch pushes counts as present and not ready: that card is queued, not
 // landed, which is what a push one at a time would have read. On error it
 // returns the index of the card refused.
-//
-// With gate (#4322) the same pipeline reads every open stream's paths
-// (ws:paths, one HGETALL) and whether each card's label is already stored.
-func batchDependenciesReady(ctx context.Context, client *redis.Client, sprint string, docs []cardDoc, gate bool) ([]bool, ws.StreamPaths, []bool, int, error) {
+func batchDependenciesReady(ctx context.Context, client *redis.Client, sprint string, docs []cardDoc) ([]bool, int, error) {
 	pipe := client.Pipeline()
 	reads := make([][]*redis.MapStringStringCmd, len(docs))
 	for i, doc := range docs {
 		reads[i] = queueDependencyReads(ctx, pipe, sprint, doc.Deps)
 	}
-	var paths *redis.MapStringStringCmd
-	exists := make([]*redis.IntCmd, len(docs))
-	if gate {
-		paths = ws.QueueStreamPaths(ctx, pipe)
-		for i, doc := range docs {
-			exists[i] = pipe.Exists(ctx, keyCard(sprint, doc.Label))
-		}
-	}
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
-		return nil, nil, nil, 0, fmt.Errorf("read DEPENDS-ON: %w", err)
-	}
-	open, stored := ws.StreamPaths{}, make([]bool, len(docs))
-	if gate {
-		var err error
-		if open, err = ws.StreamPathsOf(paths); err != nil {
-			return nil, nil, nil, 0, err
-		}
-		for i := range docs {
-			stored[i] = exists[i].Val() == 1
-		}
+		return nil, 0, fmt.Errorf("read DEPENDS-ON: %w", err)
 	}
 	ready := make([]bool, len(docs))
 	earlier := map[string]bool{}
 	for i, doc := range docs {
 		ok, err := dependenciesReady(sprint, doc.Deps, reads[i], earlier)
 		if err != nil {
-			return nil, nil, nil, i, err
+			return nil, i, err
 		}
 		ready[i] = ok
 		earlier[doc.Label] = true
 	}
-	return ready, open, stored, 0, nil
+	return ready, 0, nil
 }
 
 func queueDependencyReads(ctx context.Context, pipe redis.Pipeliner, sprint string, deps []dependency) []*redis.MapStringStringCmd {
