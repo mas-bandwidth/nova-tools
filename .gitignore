@@ -36,3 +36,6 @@ tending/
 
 # a card's TMPDIR lives beside the clone, never in it (79 junk files reached dev on 2026-09-18)
 scratch/
+
+# a `go build ./cmd/nova-sprint` at the root (#4399 committed one twice)
+/nova-sprint
