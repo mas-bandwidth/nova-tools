@@ -1,0 +1,183 @@
+# The SLEEPS ledger: pkg<TAB>Func<TAB>where. One row per unit-test function allowed
+# to wait on the wall clock today, the debt the tree owes (Glenn 2026-09-25: "unit
+# tests must not have real sleeps or waits"; nova-tools #4221, #4413).
+#
+# TWO KINDS OF ROW, ONE KEY (package directory, top-level function):
+#   - a Test that skips itself with t.Skip("SLEEPS: ...") (the skips of 2026-09-25,
+#     where = the measurement the skip's own comment names). make test runs `nova-ci
+#     slowtests --sleeps` with this file: a SLEEPS skip that is not a row here is a
+#     CI-SLEEPS line and exit 2 on every leg;
+#   - a function (a Test, a helper, a method Type.Method) in a unit-tier _test.go
+#     that calls time.Sleep/After/Tick/NewTimer/NewTicker/AfterFunc, hands one of
+#     them to a seam, or waits on a context deadline (internal/ci:
+#     TestNoUnitTestWaitsOnTheWallClock).
+#
+# THE SEED (#4413): generated from the tree of dev be3e5f8ef plus #4413's own
+# changes by TestNoUnitTestWaitsOnTheWallClock on 2026-09-26: 114 wall-clock waits
+# in 95 functions of 1210 unit-tier test files; the 85 SLEEPS rows below were
+# already here, and the 72 rows marked "seed #4413" grandfather the 85 waits in
+# functions no SLEEPS row named (where = the first wait and how many more).
+#
+# IT ONLY SHRINKS. internal/ci holds this file to the tree both ways
+# (TestSleepsLedgerIsTheTreesSleepsSkips: a SLEEPS skip or wait with no row, or a
+# row that names neither, is red) and to its merge base
+# (TestSleepsLedgerOnlyShrinksAgainstTheMergeParent: a row the ledger at the merge
+# base lacks is red, so a wait and its row in one change is red). The remedy
+# for a row is an injected clock seam or //go:build functional, then delete it.
+cmd/nova-bus	TestRetryAfterAPartialResumesAtNext	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-bus	TestEarlierGapSurvivesLaterPages	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-bus	TestSnapshotTokenValidationAndBound	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-bus	TestInboxParsesOnlyWhatIsNewSinceTheCursor	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-bus	TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor	#4221 calls time.Sleep
+cmd/nova-ci	TestNewVerbYieldsABuildingTestingSkeleton	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-redis	TestRestartOnTheSameDirKeepsTheStore	#4221 calls time.Sleep
+cmd/nova-review	TestIssue2063	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-review	TestMutateSeedFlagCombinationsAreRefused	#4221 calls time.Sleep
+cmd/nova-sandbox	TestTheCheckScriptPassesAgainstTheToolsProfile	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-sandbox	TestAForkedChildIsReapedWithTheCallersGroup	#4221 calls time.Sleep
+cmd/nova-sandbox	TestWindowsHasNo128PlusN	#4221 calls time.Sleep
+cmd/nova-sprint	TestHoldRouteCrashReplay	#4221 calls time.Sleep
+cmd/nova-sprint	TestLandTakesStreamPRsOldestFirst	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-sprint	TestLandGateAtHeadNoReadGate	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-sprint	TestBenchBeatReconnectsWithBackoff	#4221 calls time.Sleep
+cmd/nova-sprint	TestReconcileVerbDealsOnEvent	#4221 calls time.Sleep
+cmd/nova-sprint	TestRoutesCheckReadsFold	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-sprint	TestControl3530LoopPublishesOneWriter	#4221 calls time.Sleep
+cmd/nova-sprint	TestTableOutAtomic	#4221 calls time.Sleep
+cmd/nova-swarm	TestLiveSamplerNeverRunsTwoReadsAtOnce	#4221 calls time.Sleep
+cmd/nova-swarm	TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt	#4221 calls time.Sleep
+cmd/nova-swarm	TestNativeBudgetStopsTheCardAndKeepsWhatItPublished	#4221 calls time.Sleep
+cmd/nova-swarm	TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild	#4221 calls time.Sleep
+cmd/nova-swarm	TestNativeTermFromOutsideWritesUsage	#4221 calls time.Sleep
+cmd/nova-swarm	TestASecondNativeInOneSlotControlWithoutTheSlotLeaseIsAdmitted	#4221 calls time.Sleep
+cmd/nova-swarm	TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown	#4221 calls time.Sleep
+cmd/nova-swarm	TestProviderDelayedHeadersInsideTheWaitAreNotUnknown	#4221 calls time.Sleep
+cmd/nova-tokens	TestConcurrentWritersDoNotMutateTheBareRemote	#4221 calls time.Sleep
+cmd/nova-update	TestHelpExampleLinesRunAsPrinted	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-wake	TestTheRealBusRelaysNewMailWithinTwoAdvancingPolls	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-wake	TestTheRealBusAdvanceRecoversAnInterruptedRead	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-wake	TestTheRecoveryReadsTheCountAndNeverAConstant	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-wake	TestBlocksRatherThanTicks	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-wake	TestTheBoundedCorrelationRead	#4221 measured over 5 s on the 2026-09-25 PR run
+cmd/nova-work	TestSetCheckEvaluateDerivesDoneFromCriteria	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/bus	TestTwoConcurrentRunsSerialiseOnOneCheckout	#4221 calls time.Sleep
+internal/bus	TestSendPreparedProcessDeathRecovery	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/bus	TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries	#4221 calls time.Sleep
+internal/bus	TestStaleIndexLockWithALiveGitIsLeftAlone	#4221 calls time.Sleep
+internal/bus	TestStaleLockStaysForCwdGitWithoutDashC	#4221 calls time.Sleep
+internal/bus	TestStellaPreparedAttributePrefixesPublishExactBytes	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/ci	TestWaitsRefusesFixedSleep	#4221 calls time.Sleep
+internal/ci	TestWaitsAllowlistSurvivesShiftedLines	#4221 calls time.Sleep
+internal/ci	TestSlowWaitsRuleSeesEveryShape	#4221 calls time.Sleep
+internal/nsprint/capacity	TestL20b	#4221 calls time.Sleep
+internal/nsprint/card	TestWrapperOwnsOneCardEndToEnd	#4221 calls time.Sleep
+internal/nsprint/card	TestWrapperFillsTheResult	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/nsprint/ci	TestControl54CancelledLegRerunsOnceThenEndsRed	#4221 calls time.Sleep
+internal/nsprint/ci	TestControl54TimedOutLegRerunsOnceThenEndsRed	#4221 waits on the wall clock, failed on a 2026-09-25 run
+internal/nsprint/ci	TestParityCountsEveryActionsPassedHead	#4221 calls time.Sleep
+internal/nsprint/land	TestL15	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/nsprint/land/guard	TestGuardsOnThisRepository	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/nsprint/life	TestBenchBeatSingleInstance	#4221 calls time.Sleep
+internal/nsprint/reconcile	TestControl09OneAssignmentOneReceipt	#4221 calls time.Sleep
+internal/nsprint/reconcile	TestHeartbeatHoldsLeaseThroughLongDuty	#4221 calls time.Sleep
+internal/nsprint/reconcile	TestLandDutyLandsEveryReadStreamInOneBatch	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/nsprint/reconcile	TestLandDutyOneWorkerPerRepoAndNextTickMerges	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/nsprint/reconcile	TestControl10StaleInstanceCannotDeal	#4221 calls time.Sleep
+internal/nsprint/reconcile	TestRouteConsumerSweepBoundsRestarts	#4221 calls time.Sleep
+internal/nsprint/verbs	TestVerbsUnused	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/nsprint/webhook	TestWorkflowRunEventWritesCI	#4221 calls time.Sleep
+internal/secrets	TestSealNoPRMakesNoGHCalls	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/sprinttable	TestRefreshInTheUnitGroupDiesWithTheUnit	#4221 calls time.Sleep
+internal/swarm	TestOSProcessTreeCPUAccrual	#4221 calls time.Sleep
+internal/swarm	TestBatchPrefixLine1WithLongerTailAccepted	#4221 waits on the wall clock, failed on a 2026-09-25 run
+internal/swarm	TestIdleWatchEndsACardThatOnlyDribblesIntoItsLog	#4221 waits on the wall clock, failed on a 2026-09-25 run
+internal/swarm	TestIdleWatchKeepsACardWhoseLogGrowsAPage	#4221 calls time.Sleep
+internal/swarm	TestABatchNeverExceedsItsRouteCap	#4221 calls time.Sleep
+internal/swarm	TestWithNoStallAfterASilentCardIsNotStalled	#4221 waits on the wall clock, failed on a 2026-09-25 run
+internal/swarm	TestBatchCardsPutsTheWordInTheLocalNativeArgv	#4221 waits on the wall clock, failed on a 2026-09-25 run
+internal/swarm	TestARouteNamesTheProfileNeverTheSecret	#4221 calls time.Sleep
+internal/swarm	TestPausePointThreadDirected	#4221 calls time.Sleep
+internal/swarm	TestJobLeaseHeartbeatsItsMtime	#4221 calls time.Sleep
+internal/swarm	TestBodyThatResumesInsideTheDeadlineIsNotUnknown	#4221 calls time.Sleep
+internal/swarm	TestDelayedHeadersInsideTheWaitPassThrough	#4221 calls time.Sleep
+internal/swarm	TestNoSlotIsEverHeldTwice	#4221 calls time.Sleep
+internal/swarm	TestConcurrentTakesKeepEveryTake	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/typedrec	TestEveryConsumerRefusesMissingFieldByName	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/update	TestMovedIsBoundedByTheClock	#4221 waits on the wall clock, failed on a 2026-09-25 run
+internal/update	TestRemoveStaleGitTransactionLocksNamesOnly	#4221 calls time.Sleep
+internal/update	TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp	#4221 calls time.Sleep
+internal/wake	TestTheBoundedReadSpendsWhatItSaysItSpends	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/wake	TestTheAnswerIsFoundOnThePollThatReachesIt	#4221 measured over 5 s on the 2026-09-25 PR run
+internal/wake	TestSlotLeaseHeartbeatLoop	#4221 calls time.Sleep
+cmd/nova-merge	realLockClock	seed #4413: time.Sleep as a value at helpers_test.go:118
+cmd/nova-sandbox	TestTheAgentSocketIsUnreachable	seed #4413: time.After at main_test.go:332
+cmd/nova-sprint	waitFor	seed #4413: time.Sleep at table_loop_test.go:35
+cmd/nova-swarm	TestNativeDoesNotBlockOnAPlantedFIFOAtResult	seed #4413: time.After at planted_result_unix_test.go:68
+cmd/nova-swarm	TestNativeHarnessStateDoesNotBlockOnAPlantedFIFO	seed #4413: time.After at planted_result_unix_test.go:87
+cmd/nova-swarm	assertNoSurvivingSupervisor	seed #4413: time.Sleep at recovery_test.go:276
+cmd/nova-swarm	awaitNativeFile	seed #4413: time.Sleep at native_slot_shared_test.go:166
+cmd/nova-swarm	captureStageLine	seed #4413: time.After at native_stage_test.go:50
+cmd/nova-swarm	deadlineOnATree	seed #4413: time.NewTicker at native_deadline_test.go:123 and 1 more
+cmd/nova-swarm	noteSupervisor	seed #4413: time.Sleep at recovery_test.go:258
+cmd/nova-swarm	pidGoneWithin	seed #4413: time.Sleep at native_deadline_test.go:179
+cmd/nova-swarm	waitForFile	seed #4413: time.Sleep at recovery_test.go:214
+cmd/nova-swarm	waitForSlotLaunched	seed #4413: time.Sleep at recovery_test.go:229
+cmd/nova-swarm	waitGone	seed #4413: time.Sleep at recovery_test.go:77
+cmd/nova-swarm	waitGroupGone	seed #4413: time.Sleep at recovery_test.go:97
+cmd/nova-swarm	waitIdentified	seed #4413: time.Sleep at recovery_test.go:165
+cmd/nova-swarm	waitStopped	seed #4413: time.Sleep at recovery_test.go:132
+cmd/nova-tokens	fakeSqlite3Main	seed #4413: time.Sleep at helpers_test.go:236
+cmd/nova-wake	TestWatchStoreWakesOnEvGithubWithNoGhAndNoGit	seed #4413: time.After at storewatch_test.go:143
+cmd/nova-wake	waitFor	seed #4413: time.Sleep at storewatch_test.go:98
+cmd/nova-work	TestAFarFutureDeadlineStillGivesUpOnASilentSession	seed #4413: time.After at deadline_test.go:59
+cmd/nova-work	TestAMalformedDeadlineRefusesBeforeAnythingIsDialled	seed #4413: time.After at deadline_test.go:158
+cmd/nova-work	TestASessionThatNeverAnswersIsRefusedAtTwoAndNotCalledMissing	seed #4413: time.After at main_test.go:912
+cmd/nova-work	TestAnExpiredDeadlineRefusesBeforeAnythingIsDialled	seed #4413: time.After at deadline_test.go:42
+cmd/nova-work	TestAnExplicitEmptyDeadlineRefusesBeforeAnythingIsDialled	seed #4413: time.After at deadline_test.go:207
+cmd/nova-work	TestIssue1696	seed #4413: time.After at issue1696_test.go:52
+cmd/nova-work	awaitRequest	seed #4413: time.After at main_test.go:79
+cmd/nova-work	recvBy	seed #4413: time.After at main_test.go:464
+internal/bus	TestFriendSequencePlantedIndexIsRefused	seed #4413: time.After at planted_index_sequence_unix_test.go:58
+internal/bus	TestReadLaneIndexDoesNotBlockOnAPlantedFIFO	seed #4413: time.After at fifo_test.go:41
+internal/ci	TestReactorRunReturnsAtItsDeadline	seed #4413: time.After at events_test.go:470 and 1 more
+internal/ci	noMessage	seed #4413: time.After at events_test.go:93
+internal/ci	recvBy	seed #4413: time.After at events_test.go:61
+internal/fleet	TestRunBenchesConcurrentlyOverlapsCallbacks	seed #4413: time.NewTimer at parallel_test.go:101
+internal/merge	TestWithFetchedReportTipKeepsConcurrentPinsThroughGC	seed #4413: time.After at fetchedreporttip_test.go:174
+internal/nsprint/card	fakeHarness	seed #4413: time.Sleep at wrapper_test.go:82
+internal/nsprint/card	harnessRun.report	seed #4413: time.After at wrapper_test.go:219
+internal/nsprint/card	harnessRun.waitFile	seed #4413: time.Sleep at wrapper_test.go:210
+internal/nsprint/card	harnessRun.waitFor	seed #4413: time.After at wrapper_test.go:193
+internal/nsprint/deal	barrierSession.Run	seed #4413: time.After at parallel_test.go:111
+internal/nsprint/deal	processGone	seed #4413: time.After at pass_test.go:400 and 1 more
+internal/nsprint/deal	runPass	seed #4413: time.After at pass_test.go:391
+internal/nsprint/deal	wedgedSession.Run	seed #4413: time.After at parallel_test.go:222
+internal/nsprint/launch	fixtureWrapper	seed #4413: time.Sleep at launch_test.go:73
+internal/nsprint/launch	waitReady	seed #4413: time.Sleep at launch_test.go:127
+internal/nsprint/lessons	TestMain	seed #4413: time.Sleep at lessons_test.go:31
+internal/nsprint/lessons	TestWaitersRaceAnOldLockAndEveryAcknowledgedRowSurvives	seed #4413: time.NewTimer at lessons_test.go:299
+internal/nsprint/pr	until	seed #4413: time.After at harness_test.go:35
+internal/nsprint/preflight	fakeSession.LaunchDry	seed #4413: time.After at fleet_test.go:44
+internal/sandbox	TestAncestorsTerminatesOnAWindowsPath	seed #4413: time.After at winpath_test.go:77
+internal/sprinttable	startRefresh	seed #4413: time.After at session_unix_test.go:194
+internal/sprinttable	waitUnit	seed #4413: time.After at session_unix_test.go:217
+internal/swarm	TestAnIdleSlotAsksOnAnEventNotAPoll	seed #4413: time.After at slotwait_test.go:37 and 1 more
+internal/swarm	TestCountRefusalsDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:195
+internal/swarm	TestFriendSequencePlantedResultIsRefused	seed #4413: time.After at planted_gather_test.go:81
+internal/swarm	TestIssue1983	seed #4413: time.After at batch_clock_test.go:203
+internal/swarm	TestReadFileSteadyDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:145
+internal/swarm	TestReadJSONDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:169
+internal/swarm	TestTheCapIsPerRouteAndNotGlobal	seed #4413: time.After at inflight_test.go:113
+internal/swarm	idleBench.tick	seed #4413: time.After at nativeidle_test.go:76 and 1 more
+internal/swarm	manualClock.giveUpBound	seed #4413: time.After at batch_clock_test.go:133
+internal/swarm	manualClock.tick	seed #4413: time.After at batch_clock_test.go:123
+internal/swarm	waitFor	seed #4413: time.Sleep at inflight_test.go:197
+internal/update	TestHelperProcess	seed #4413: time.Sleep at update_test.go:50 and 2 more
+internal/update	TestRule25SnapshotSurvivesAReporterKilledWhileWriting	seed #4413: time.NewTimer at rules_test.go:259 and 1 more
+internal/update	fakeBus	seed #4413: time.Sleep at delivery_test.go:72
+internal/update	joinWrapper	seed #4413: time.Sleep at join_test.go:424 and 1 more
+internal/update	reporter.killReporterWhen	seed #4413: time.Sleep at join_test.go:848 and 2 more
+internal/workclient	TestExchangeAdmitsASlowButAnsweringSession	seed #4413: time.After at workclient_test.go:180 and 1 more
+internal/workclient	TestExchangeCarriesTheRequestAndReturnsTheOneReplyLine	seed #4413: time.After at workclient_test.go:91
+internal/workclient	TestExchangeFramedCarriesAMultiRowListing	seed #4413: time.After at frame_test.go:106 and 1 more
+internal/workclient	within	seed #4413: time.After at workclient_test.go:57

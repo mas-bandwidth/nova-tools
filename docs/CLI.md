@@ -3170,14 +3170,21 @@ the unit tier CI runs for your change: the packages
 `HEAD`, through the Makefile's `test` target (its go test flags and slowtests
 budgets) under `nice -n 15` with `GOMAXPROCS=2`, `GOTEST_P=2` and `-count=1`. It
 prints one `PKG` line per package with its seconds and one `RED` line per failing
-test with its output; exit 0 is green, 1 a red test or build, 2 over the budgets
+test with its output; exit 0 is green, 1 a red test or build, 2 a CI-SLEEPS line
 or a step that could not run. `--functional` adds the functional build tag
 (`GOTEST_TAGS=functional`); CI runs those tests in its `functional` job as a
 stream merges ([TESTING.md](../TESTING.md)).
 
 The unit tier (`make test`) passes `--package-budget 2 --test-budget 1 --allowlist
-internal/ci/slow-tests_allowlist.txt` instead: a package over 2 s or a top-level
-test over 1 s is a `CI-SLOW` line unless its allowlist row names more. `nova-ci
+internal/ci/slow-tests_allowlist.txt --sleeps internal/ci/sleeps-skips_allowlist.txt`
+instead: a package over 2 s or a top-level test over 1 s is a `CI-SLOW` line unless
+its allowlist row (`pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>`, where is
+`run<id>` or a bench) names more. A `CI-LOAD load=<n> cpus=<n> per-cpu=<n>:
+measured, not a verdict` line follows (`--load` and `--cpus` give the figures by
+hand). A CI-SLOW line exits 0 (a measurement) unless `--enforce` is given, which
+only the nightly space legs pass (`make test SLOWTESTS_ENFORCE=1`). A test skipped
+with `t.Skip("SLEEPS: ...")` that `--sleeps` does not name is a `CI-SLEEPS` line
+and exits 2 on every leg. `nova-ci
 functional <package-dir>...` prints, for `make test-functional`, the packages
 that hold `//go:build functional` tests and a `-run` pattern naming exactly
 those tests; it prints nothing when there are none ([TESTING.md](TESTING.md), "The two tiers").

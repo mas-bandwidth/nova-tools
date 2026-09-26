@@ -1,3 +1,5 @@
+//go:build functional
+
 package stream
 
 import (
@@ -7,6 +9,15 @@ import (
 	"strings"
 	"testing"
 )
+
+// The git-bound tests of this package (git_functional_test.go,
+// duty_parts_git_functional_test.go) are functional: every one runs real git
+// processes against a bare repo on disk, and on the darwin runner of run
+// 36261817989 (2026-09-26) TestBuildStopsOnAConflict and TestBuildRedBaseStops
+// ran 1.0-1.1 s against the unit tier's 1 s, with TestBuildParkConflictsLandsTheRest,
+// TestBuildParksTheRedMemberByBisect and TestBuildTestTimeoutIsRed already on
+// internal/ci/slow-tests_allowlist.txt. A real process is the functional tier
+// (nova-tools #4328).
 
 // fixture is a local bare repo standing in for GitHub: a dev branch and
 // refs/pull/<n>/head for each member branch. No network (CI-NET).

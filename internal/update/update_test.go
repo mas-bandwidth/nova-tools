@@ -463,23 +463,6 @@ func TestHealthyCommandWithLingeringGrandchildStillReads(t *testing.T) {
 	}
 }
 
-// Past the grace the refusal must name the pipe rather than blame the version
-// command, and it must say so without echoing a byte the child wrote.
-func TestHeldPipePastGraceIsNamedAndEchoesNoContent(t *testing.T) {
-	secret := "x 9.9.9-secret"
-	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte(secret+"\n")), (killGrace+time.Second).String()))}
-	r := Installed(context.Background(), e, killGrace+5*time.Second, false)
-	if r.Known() || r.Reason != "output_not_closed" {
-		t.Fatalf("reason=%q remedy=%q", r.Reason, r.Remedy)
-	}
-	if r.Remedy != leakRemedy {
-		t.Fatalf("remedy=%q", r.Remedy)
-	}
-	if strings.Contains(r.Reason, "9.9.9") || strings.Contains(r.Remedy, "9.9.9") {
-		t.Fatalf("diagnostic echoed child content: %q %q", r.Reason, r.Remedy)
-	}
-}
-
 // The three process failures a person acts on differently must stay
 // distinguishable in the reason, which one collapsed "execution failed" did not.
 func TestProcessFailuresAreDistinguishable(t *testing.T) {

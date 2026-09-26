@@ -281,7 +281,7 @@ with its sweep of the tree or it does not land.
 `outputs`, `windows-pr`, `windows-sizes`, `windows-table`, `one-windows-leg`,
 `darwin-sizes`, `darwin-table`, `cache`, `pinned-actions`, `ci-ok`, `failed`,
 `benchname`, `nightly-tags`, `functional` (a test that starts a redis-server, execs a whole program or asserts a real-time bound is behind `//go:build functional`), `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
-`kernel-components`, `asd-closing-line`, `ciworkspace`, `lisptemppath`, `admitkind`, `namedpaths`, `lispduplicate`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `forestwriter`, `forestscript`, `parallel`, `slowwaits`, `allowlist`,
+`kernel-components`, `asd-closing-line`, `ciworkspace`, `lisptemppath`, `admitkind`, `namedpaths`, `lispduplicate`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `forestwriter`, `forestscript`, `parallel`, `slowwaits`, `unitwaits`, `allowlist`,
 `seatwrap`, `tiers`, `seatredis` (every nova-sprint `--redis` defaults to the seat's address), `wholetree` (no doc or card spells a whole-tree `go test`; run `nova-ci local`), `silent` (no `_ = err` and no `|| true` literal on the copy model's live path), `classtests` (no merge deletes a `_test.go` or an `internal/ci/testdata` list that its first parent had unless the same change declares it in `deleted-tests.txt`), `ci-receipt` (ci-ok reports every run to Redis from the runner, every field, failing loudly). Every entry — the ten above too — is written out in
 [SPEC-CI.md](SPEC-CI.md) under **The class tests** with its rule, the hurt
 that bought it, its allowlist, its remedy line and its narrowings. Read the entry, not
