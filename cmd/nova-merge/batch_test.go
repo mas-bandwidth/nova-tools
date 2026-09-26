@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -539,7 +540,21 @@ func makeRecipe(makefile, target string) string {
 		}
 		in = strings.HasPrefix(line, target+":")
 	}
-	return strings.Join(out, "\n")
+	recipe := strings.Join(out, "\n")
+	// A flag the recipe carries through a variable -- `$(GOTEST_COUNT_FLAG)`,
+	// whose default is `-count=1` -- is still the flag `make test` runs by hand, so
+	// each `$(NAME)` is expanded from the Makefile's own `NAME ?= value` line the
+	// way make expands it. A variable with no default expands to nothing, which is
+	// what make does too, and the flag check below then names the loss.
+	for _, m := range regexp.MustCompile(`\$\(([A-Z_]+)\)`).FindAllStringSubmatch(recipe, -1) {
+		def := regexp.MustCompile(`(?m)^` + m[1] + `\s*\??=[ \t]*(.*)$`).FindStringSubmatch(makefile)
+		value := ""
+		if def != nil {
+			value = strings.TrimSpace(def[1])
+		}
+		recipe = strings.ReplaceAll(recipe, m[0], value)
+	}
+	return recipe
 }
 
 // THE GATE TESTS THE WAY CI TESTS, and this reads every side so it goes red the day any
