@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"strings"
 	"testing"
 
@@ -63,7 +64,7 @@ func TestReadyWhy(t *testing.T) {
 
 	old := readyForge
 	t.Cleanup(func() { readyForge = old })
-	readyForge = func() deal.PRs {
+	readyForge = func(*store.Store) deal.PRs {
 		return mapForge{
 			repo + "#42": {IsPR: true, State: "open", Base: "dev"},
 			repo + "#43": {IsPR: true, Merged: true, State: "closed", Base: ""},

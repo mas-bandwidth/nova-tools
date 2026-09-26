@@ -273,6 +273,18 @@ number RECORDED and enforced against nothing: `cmd/nova-wake` was recorded at
 62.9 s on the Air -- over a minute -- and until the per-platform ceiling above,
 nothing read it.
 
+**The unit tier's budgets (2026-09-26, nova-tools#4328).** `make test` runs
+`nova-ci slowtests --package-budget 2 --test-budget 1 --allowlist
+internal/ci/slow-tests_allowlist.txt`: a package over 2 s is the line above,
+and a top-level test over 1 s is `CI-SLOW test=<name> package=<pkg>
+seconds=<s> budget=<b>`, both exit 2, unless an allowlist row
+(`pkg<TAB>test<TAB>seconds`, `-` in the test column for the package's own row)
+names a higher budget for exactly that package or test. The list was seeded
+from the CI-SLOW lines of #4345's run 36255893861 at two cores a leg, at 1.5x,
+and only shrinks
+(`TestSlowAllowlistOnlyShrinks`). A push or manual run over the whole tree,
+which is not yet cut to these budgets, keeps `--budget 60`.
+
 **Red tests.** `internal/ci/slowtests/slowtests_test.go` feeds canned TestEvent
 lines through the parser and the summer, and `cmd/nova-ci/main_test.go` runs the
 verb end to end:
@@ -798,8 +810,9 @@ brings everything to a crawl.
 `TestSlowTestsOverPackagesAreOrderedWorstFirst`
 (`internal/ci/slowtests/slowtests_test.go`), with the verb run end to end in
 `cmd/nova-ci/main_test.go`.
-**Its allowlist.** None: the budget is a number on the command line, and a
-package over it is named every time.
+**Its allowlist.** `internal/ci/slow-tests_allowlist.txt`, one row per package
+or test allowed over the unit tier's 2 s / 1 s budgets, each at 1.5x its
+measured time at two cores a leg; it only shrinks (`TestSlowAllowlistOnlyShrinks`).
 **Its remedy lines.** `remedy="stdin is not newline-delimited go test -json"` and
 `remedy="--budget must be a whole number of seconds greater than zero"`.
 **Its narrowings.** It judges on the PACKAGE total only; the test-level rows are
@@ -1304,6 +1317,40 @@ triggers on it, so a run on that event would report success with no step run`.
 `on:` and nowhere else is not noticed until somebody adds it here; the check is
 that the guard EXISTS, not that the step behind it asserts the right needs.
 
+### `tiers` — unit tests on every change, functional tests as streams merge
+
+**The rule.** nova-tools#4328, Glenn 2026-09-26 11:20 AM ET: "Only run tests
+that you actually need to, according to the changes being made." The unit tier
+(ci.yml's `test` matrix) takes at most two cores a leg — the share step's
+min(share, 2) and the Makefile's `GOTEST_P ?= 2` on `go test -p` and
+`-parallel` — and its PATH holds a `redis-server` that prints `unit tier:
+redis-server is functional-only (build tag functional)` and exits 86, so
+`testutil.Start` fails closed under `NOVA_CI=1`. The functional tier (the
+`functional` job, `make test-functional`) runs only the `//go:build functional`
+tests of the selected packages, on `merge_group`, `schedule` and
+`workflow_dispatch`, never on `pull_request`, four space shards under the
+two-minute cap; `ci-ok` requires it when it ran. The unit budgets are 2 s a
+package and 1 s a test, with an allowlist that only shrinks.
+**The hurt.** "The constant bottleneck in our working process in CI. This is the
+real 'blocker' for merging." Four shards of every PR each took the whole of a
+box, 133 test files started a redis-server each, and 13 tests ran over a
+second (merge-group run 36251462268: cmd/nova-sprint 23.7 s, internal/ci 11.4 s).
+**The test.** `TestUnitTierRefusesRedisServer` (runs the shim step: exit 86
+and its line), `TestStartFailsClosedOnTheUnitTierShim` (functional-tagged, in
+`internal/ci/redis_ci_test.go`: `testutil.Start` against that shim fails
+closed), `TestUnitLegTakesAtMostTwoCores` (runs the share
+step with one runner on the box), `TestFunctionalTierRunsOnlyAsStreamsMerge` and
+`TestSlowAllowlistOnlyShrinks` (`internal/ci/unit_tier_class_test.go`).
+**Its allowlist.** `internal/ci/slow-tests_allowlist.txt`, capped by
+`slowAllowlistCeiling`, which only goes down.
+**Its remedy line.** Tag a test that needs a real server, binary or process
+`//go:build functional`; make a slow unit test fast, or delete its allowlist row
+once it is.
+**Its narrowings.** The class tests read ci.yml and the Makefile; they do not
+prove GitHub prepends GITHUB_PATH in step order, which the leg's own `test` step
+checks (`command -v redis-server` must be the shim). A test that starts a
+server by an absolute path is not caught by the shim.
+
 ### `onboarding` — every command meets the onboarding standard
 
 **The rule.** `docs/ONBOARDING.md`, asserted for EVERY directory under `cmd/` by
@@ -1695,7 +1742,7 @@ has) on its first line, or move its redis-backed tests to
 through a package-local helper is held by the compiler instead: the helper's
 file is tagged, so an untagged caller does not build, and the lint job's
 `go vet ./...` is red on it. The functional tier runs where a whole stream
-lands (`make check`, ci.yml's merge-group and push shards) and nightly
+lands (`make check`, ci.yml's `functional` job on merge_group and schedule) and nightly
 (nightly-slow.yml's `functional` leg); the lint job's `make vet-functional`
 compiles it on every change.
 ### `cardtemplates` — no card template carries a command only one platform has

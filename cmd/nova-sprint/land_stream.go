@@ -37,6 +37,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
 	"os"
 	"path/filepath"
@@ -47,6 +48,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/redis/go-redis/v9"
 )
 
 // landStreamToken supplies the GitHub token; a test swaps it.
@@ -71,7 +73,10 @@ func hasRepoFlag(args []string) bool {
 	return false
 }
 
-func landGitHub(api string, budget int) (*stream.GitHub, error) {
+// landGitHub is the one GitHub client for a landing verb (#4343): counted
+// under verb in the store, paced, retrying a secondary limit; its retry and
+// refusal lines go to stderr.
+func landGitHub(verb, api string, budget int, rdb redis.Cmdable) (*stream.GitHub, error) {
 	tok, err := landStreamToken()
 	if err != nil {
 		return nil, err
@@ -79,7 +84,7 @@ func landGitHub(api string, budget int) (*stream.GitHub, error) {
 	if tok == "" {
 		return nil, errors.New("GitHub token is empty; set GH_TOKEN")
 	}
-	return &stream.GitHub{API: api, Token: tok, Budget: budget}, nil
+	return &stream.GitHub{API: api, Token: tok, Budget: budget, Verb: verb, Redis: rdb, Log: os.Stderr}, nil
 }
 
 func landExit(errOut io.Writer, verb string, err error) int {
@@ -115,7 +120,7 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 	testTimeout := fs.Duration("test-timeout", 20*time.Minute, "")
 	minScore := fs.Int("min-score", -1, "")
 	by := fs.String("by", "rowan", "")
-	api := fs.String("api", "https://api.github.com", "")
+	api := fs.String("api", gh.DefaultAPI, "")
 	budget := fs.Int("budget", 4, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -137,7 +142,7 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, verb, err.Error())
 	}
 	if !*dry {
-		gh, err := landGitHub(*api, *budget)
+		gh, err := landGitHub(verb, *api, *budget, nil)
 		if err != nil {
 			return refuse(errOut, verb, err.Error())
 		}
@@ -165,6 +170,9 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 		return 6
 	}
 	defer st.Close()
+	if opts.GH != nil {
+		opts.GH.Redis = st.Client() // the calls are counted in the store (#4343)
+	}
 	rep, err := stream.LandStream(ctx, st.Client(), opts)
 	if rep.State == "dry-run" && err == nil {
 		for i, m := range rep.Members {
@@ -283,7 +291,7 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	by := fs.String("by", "rowan", "")
-	api := fs.String("api", "https://api.github.com", "")
+	api := fs.String("api", gh.DefaultAPI, "")
 	budget := fs.Int("budget", 64, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -302,7 +310,7 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 	}
 	defer st.Close()
 	// The token is needed only past the Redis gates; refuse on them first.
-	gh, tokErr := landGitHub(*api, *budget)
+	gh, tokErr := landGitHub(verb, *api, *budget, st.Client())
 	o := stream.MergeOptions{Repo: *repo, Streams: streams, By: *by}
 	if tokErr == nil {
 		o.GH = gh

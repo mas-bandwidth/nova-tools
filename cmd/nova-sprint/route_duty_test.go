@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ func routeFixture(t *testing.T, S string) (context.Context, *redis.Client, strin
 	}
 	ssh := &verbSSH{}
 	seams := reconcileSeams
-	reconcileSeams = func() (deal.Dialer, deal.PRs) { return ssh, verbForge{} }
+	reconcileSeams = func(*store.Store) (deal.Dialer, deal.PRs) { return ssh, verbForge{} }
 	readers := reconcileReaders
 	t.Cleanup(func() { reconcileSeams, reconcileReaders = seams, readers })
 	pipe := c.TxPipeline()

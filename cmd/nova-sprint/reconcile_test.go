@@ -126,7 +126,7 @@ func TestReconcileVerbDealsOnEvent(t *testing.T) {
 
 	ssh := &verbSSH{}
 	seams := reconcileSeams
-	reconcileSeams = func() (deal.Dialer, deal.PRs) { return ssh, verbForge{} }
+	reconcileSeams = func(*store.Store) (deal.Dialer, deal.PRs) { return ssh, verbForge{} }
 	registered := reconcileDuties
 	// This control is the refill and the registration seam, so it runs with
 	// only its own two duties; the consumer duties (#3323) have their own
@@ -256,7 +256,7 @@ func TestReconcileOnceSurfacesDutyErrors(t *testing.T) {
 		t.Fatalf("load nova_sprint library: %v", err)
 	}
 	seams := reconcileSeams
-	reconcileSeams = func() (deal.Dialer, deal.PRs) { return &verbSSH{}, verbForge{} }
+	reconcileSeams = func(*store.Store) (deal.Dialer, deal.PRs) { return &verbSSH{}, verbForge{} }
 	registered := reconcileDuties
 	t.Cleanup(func() { reconcileSeams, reconcileDuties = seams, registered })
 
@@ -331,7 +331,7 @@ func TestReconcileVerbServesDealerMetrics(t *testing.T) {
 	}
 	ssh := &verbSSH{}
 	seams := reconcileSeams
-	reconcileSeams = func() (deal.Dialer, deal.PRs) { return ssh, verbForge{} }
+	reconcileSeams = func(*store.Store) (deal.Dialer, deal.PRs) { return ssh, verbForge{} }
 	registered := reconcileDuties
 	t.Cleanup(func() { reconcileSeams, reconcileDuties = seams, registered })
 	scraped := metricstest.AtClose(t)

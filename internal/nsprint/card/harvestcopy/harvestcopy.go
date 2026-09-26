@@ -40,7 +40,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/redis/go-redis/v9"
 )
 
 // TokenEnv names the bench's push credential in the nova-card process's
@@ -55,7 +57,7 @@ const AskpassEnv = "NOVA_CARD_ASKPASS"
 const ClaudeLine = "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 
 // DefaultAPI is the GitHub REST endpoint a Request without API uses.
-const DefaultAPI = "https://api.github.com"
+const DefaultAPI = gh.DefaultAPI
 
 // The typed refusals. Reason maps any error Harvest returns to the one word
 // the copy's end carries.
@@ -116,6 +118,8 @@ type Request struct {
 	API string
 	// HTTP is the client for the REST calls; nil is a 30 s client.
 	HTTP *http.Client
+	// Redis counts the REST calls under card-harvest when set.
+	Redis redis.Cmdable
 	// Askpass is the program git asks for the credential, run with AskpassEnv
 	// set and TokenEnv holding Token; "" is this executable (os.Executable).
 	Askpass string

@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
 	"os"
 	"os/signal"
@@ -77,9 +78,12 @@ func registerReconcileDuty(name string, build func(st *store.Store) (reconcileDu
 }
 
 // reconcileSeams are the deal pass's two host seams: the system ssh to each
-// bench and the forge by `gh api` REST. A test swaps in its fixture sshd and
-// forge map (CI-NET: no host in a test); nothing else in the loop changes.
-var reconcileSeams = func() (deal.Dialer, deal.PRs) { return deal.Remote{}, deal.GH{} }
+// bench and the forge through the one GitHub client over the store's copy
+// (#4343). A test swaps in its fixture sshd and forge map (CI-NET: no host
+// in a test); nothing else in the loop changes.
+var reconcileSeams = func(st *store.Store) (deal.Dialer, deal.PRs) {
+	return deal.Remote{}, deal.GH{Client: gh.New("reconcile", st.Client()), Redis: st.Client()}
+}
 
 // stoppableDuty is a duty with work of its own past its Run (the harvest
 // workers, #3737): Stop ends it before the verb exits, until ctx ends.
@@ -92,7 +96,7 @@ type stoppableDuty interface {
 // receives the deal pass's metrics (nx-g61); nil exports nothing. stops are
 // the Stop of every duty with work of its own past its Run, for the way out.
 func productionDuties(st *store.Store, set *metrics.Set) (duties []reconcile.Duty, names []string, stops []stoppableDuty, err error) {
-	dialer, prs := reconcileSeams()
+	dialer, prs := reconcileSeams(st)
 	refill := &reconcile.Refill{
 		Client: st.Client(),
 		Deal:   &deal.Pass{Dialer: dialer, PRs: prs, Metrics: set},
