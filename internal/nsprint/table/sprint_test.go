@@ -250,7 +250,7 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 		"consumer                  | ready | working |  done |  ok% | status | load\n" +
 		"--------------------------+-------+---------+-------+------+--------+------\n" +
 		"--------------------------+-------+---------+-------+------+--------+------\n" +
-		"total                     |     0 |       0 |   0/0 |    - |\n"
+		"total                     |     0 |       0 |     0 |    - |\n"
 	if got := snap.Render(now); got != want {
 		t.Fatalf("empty keyspace:\n%s", got)
 	}

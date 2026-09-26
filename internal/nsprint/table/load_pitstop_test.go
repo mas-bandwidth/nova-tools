@@ -28,8 +28,8 @@ func TestLoadPrintsAsPercentOfCores(t *testing.T) {
 	}
 	got := snap.Render(now)
 	for _, want := range []string{
-		"alpha                     |     0 |       0 |   0/0 |    - | up     | 20.0%\n",
-		"beta                      |     0 |       0 |   0/0 |    - | up     | 0.45\n",
+		"alpha                     |     0 |       0 |     0 |    - | up     | 20.0%\n",
+		"beta                      |     0 |       0 |     0 |    - | up     | 0.45\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("load cell: want %q in:\n%s", want, got)

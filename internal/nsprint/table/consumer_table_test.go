@@ -68,10 +68,10 @@ func TestControl4071OneConsumerTable(t *testing.T) {
 	}
 	want := "consumer                  | ready | working |  done |  ok% | status | load\n" +
 		"--------------------------+-------+---------+-------+------+--------+------\n" +
-		"emma                      |     0 |       0 |   1/2 |  50% | up     | -\n" +
-		"hetzner                   |     0 |       0 |   1/2 |  50% | up     | 0.19\n" +
+		"emma                      |     0 |       0 |     2 |  50% | up     | -\n" +
+		"hetzner                   |     0 |       0 |     2 |  50% | up     | 0.19\n" +
 		"--------------------------+-------+---------+-------+------+--------+------\n" +
-		"total                     |     0 |       0 |   2/4 |  50% |\n"
+		"total                     |     0 |       0 |     4 |  50% |\n"
 	if block := consumerBlock(t, got); block != want {
 		t.Fatalf("consumer table:\n%s\nwant:\n%s", block, want)
 	}
@@ -107,11 +107,11 @@ func TestConsumerTableStatusAndOrder(t *testing.T) {
 	}
 	block := consumerBlock(t, snap.Render(now))
 	want := []string{
-		"stella                    |     0 |       1 |   0/0 |    - | down   | -",
-		"rowan                     |     0 |       0 |   0/0 |    - | up     | -",
-		"hulk                      |     2 |       0 |   0/0 |    - | down   | 0.40",
-		"space                     |     0 |       0 |   0/0 |    - | up     | 1.04",
-		"extra                     |     0 |       0 |   1/1 | 100% | down   | -",
+		"stella                    |     0 |       1 |     0 |    - | down   | -",
+		"rowan                     |     0 |       0 |     0 |    - | up     | -",
+		"hulk                      |     2 |       0 |     0 |    - | down   | 0.40",
+		"space                     |     0 |       0 |     0 |    - | up     | 1.04",
+		"extra                     |     0 |       0 |     1 | 100% | down   | -",
 	}
 	rows := strings.Split(block, "\n")[2:7]
 	if strings.Join(rows, "\n") != strings.Join(want, "\n") {
