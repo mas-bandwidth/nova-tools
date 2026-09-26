@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/acl"
 )
 
 const aclRowsFixture = "../../internal/nsprint/acl/testdata/acl-rows.tsv"
@@ -22,28 +24,33 @@ func aclEnv(password string) func(string) string {
 	}
 }
 
-// cannedACL is a store read answering the redis-server 8.10.2 listing of the
-// mirror rows, edited by edit; it records the login the verb dialled with.
-func cannedACL(t *testing.T, edit func([]string) []string, err error) (aclLister, *[3]string) {
+// cannedACL is a store read answering the redis-server 8.10.2 capture of
+// the mirror rows, its listing edited by edit; it records the login the verb
+// dialled with.
+func cannedACL(t *testing.T, edit func([]string) []string, err error) (aclReader, *[3]string) {
 	t.Helper()
-	b, rerr := os.ReadFile("../../internal/nsprint/acl/testdata/acl-list-redis-8.10.2.txt")
+	f, rerr := os.Open("../../internal/nsprint/acl/testdata/redis-8.10.2.acl")
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
-	ls := strings.Split(strings.TrimSpace(string(b)), "\n")
+	defer f.Close()
+	server, rerr := acl.ParseCapture(f)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
 	if edit != nil {
-		ls = edit(ls)
+		server.List = edit(server.List)
 	}
 	got := new([3]string)
-	return func(_ context.Context, addr, user, password string) ([]string, error) {
+	return func(_ context.Context, addr, user, password string) (acl.Server, error) {
 		*got = [3]string{addr, user, password}
-		return ls, err
+		return server, err
 	}, got
 }
 
-func runACLCheck(getenv func(string) string, list aclLister, args ...string) (int, string, string) {
+func runACLCheck(getenv func(string) string, read aclReader, args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
-	code := aclCheck(context.Background(), args, &stdout, &stderr, getenv, list)
+	code := aclCheck(context.Background(), args, &stdout, &stderr, getenv, read)
 	return code, stdout.String(), stderr.String()
 }
 
@@ -53,7 +60,7 @@ func TestACLCheckClean(t *testing.T) {
 
 	list, got := cannedACL(t, nil, nil)
 	code, stdout, stderr := runACLCheck(aclEnv("pw"), list, "check", "--redis", "127.0.0.1:9", "--rows", aclRowsFixture)
-	if code != 0 || stderr != "" || stdout != "ACL CHECK OK store=127.0.0.1:9 users=12 rows="+aclRowsFixture+"\n" {
+	if code != 0 || stderr != "" || stdout != "ACL CHECK OK store=127.0.0.1:9 redis=8.10.2 users=12 rows="+aclRowsFixture+"\n" {
 		t.Fatalf("exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
 	if *got != [3]string{"127.0.0.1:9", "admin", "pw"} {
@@ -68,14 +75,14 @@ func TestACLCheckDrift(t *testing.T) {
 	list, _ := cannedACL(t, func(ls []string) []string {
 		for i, l := range ls {
 			if strings.HasPrefix(l, "user bench ") {
-				ls[i] = strings.Replace(l, " ~cfg:ci ", " ", 1) + " +keys"
+				ls[i] = strings.Replace(l, " ~cfg:ci ", " ", 1) + " +keys -hset"
 			}
 		}
 		return ls
 	}, nil)
 	code, stdout, stderr := runACLCheck(aclEnv("pw"), list, "check", "--redis", "127.0.0.1:9", "--rows", aclRowsFixture)
-	want := `ACL DRIFT user=bench missing="~cfg:ci" extra="+keys"` + "\n" +
-		`ACL CHECK DRIFT store=127.0.0.1:9 drifted=1 users=12 rows=` + aclRowsFixture + ` converge="make -C rowan-tools/fleet store"` + "\n"
+	want := `ACL DRIFT user=bench missing="+hset ~cfg:ci" extra="+keys"` + "\n" +
+		`ACL CHECK DRIFT store=127.0.0.1:9 redis=8.10.2 drifted=1 users=12 rows=` + aclRowsFixture + ` converge="make -C rowan-tools/fleet store"` + "\n"
 	if code != 1 || stderr != "" || stdout != want {
 		t.Fatalf("exit %d stdout %q stderr %q; want\n%s", code, stdout, stderr, want)
 	}

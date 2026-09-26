@@ -37,6 +37,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
@@ -214,7 +215,7 @@ func openSprints(ctx context.Context, c *redis.Client) ([]string, error) {
 	for i, s := range names {
 		cmds[i] = pipe.HGet(ctx, "s:"+s, "status")
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, err
 	}
 	var open []string
@@ -233,7 +234,7 @@ func (d *RouteDuty) liveReaders(ctx context.Context) ([]string, error) {
 		pipe := d.Client.Pipeline()
 		readers := pipe.SMembers(ctx, "readers")
 		friends := pipe.SMembers(ctx, "friends")
-		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		if err := pipeerr.Exec(ctx, pipe); err != nil {
 			return nil, err
 		}
 		names = readers.Val()
@@ -251,7 +252,7 @@ func (d *RouteDuty) liveReaders(ctx context.Context) ([]string, error) {
 		member[i] = pipe.SIsMember(ctx, "friends", f)
 		beat[i] = pipe.Exists(ctx, "friend:"+f+":beat")
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, err
 	}
 	var live []string
@@ -366,7 +367,11 @@ func (d *RouteDuty) fixes(ctx context.Context, token, S, stream string, _ []stri
 		if err := d.bounded(); err != nil {
 			// Unacked entries stay pending and are claimed next pass.
 			if len(ack) > 0 {
-				_ = d.Client.XAck(ctx, ev, RouteGroup, ack...).Err()
+				if aerr := d.Client.XAck(ctx, ev, RouteGroup, ack...).Err(); aerr != nil {
+					// The skipped entries are claimed again next pass: the
+					// ack that did not land joins the margin error.
+					return fmt.Errorf("%w; xack %s: %v", err, ev, aerr)
+				}
 			}
 			return err
 		}
@@ -454,7 +459,7 @@ func (d *RouteDuty) merging(ctx context.Context, token, S, stream string, _ []st
 	for i, u := range pending {
 		rows[i] = pipe.HMGet(ctx, "s:"+S+":u:"+u, "head", "state", "repo", "pr", "holds_open")
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return fmt.Errorf("%s: units: %w", S, err)
 	}
 	type cand struct{ unit, key string }
@@ -477,7 +482,7 @@ func (d *RouteDuty) merging(ctx context.Context, token, S, stream string, _ []st
 	if len(cands) == 0 {
 		return nil
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return fmt.Errorf("%s: ci: %w", S, err)
 	}
 	for i, c := range cands {
@@ -524,7 +529,7 @@ func (d *RouteDuty) coordinator(ctx context.Context) (string, error) {
 	for i, f := range names {
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return "", err
 	}
 	fallback := ""
@@ -589,7 +594,7 @@ func (d *RouteDuty) prCandidates(ctx context.Context, stream string) ([]prCand, 
 	pipe := d.Client.Pipeline()
 	working := pipe.ZRange(ctx, "ws:"+stream+":working", 0, -1)
 	merging := pipe.ZRange(ctx, "ws:"+stream+":merging", 0, -1)
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, err
 	}
 	ids := append(working.Val(), merging.Val()...)
@@ -601,7 +606,7 @@ func (d *RouteDuty) prCandidates(ctx context.Context, stream string) ([]prCand, 
 	for i, id := range ids {
 		rows[i] = pipe.HMGet(ctx, "task:"+id, "pr", "repo", "ref")
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, err
 	}
 	seen := map[prCand]bool{}
@@ -644,7 +649,7 @@ func (d *RouteDuty) prLegs(ctx context.Context, token, S, stream string, readers
 	for i, c := range cands {
 		rows[i] = pipe.HMGet(ctx, prkey.Key(c.repo, c.n), "head", "state", "reads")
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return fmt.Errorf("%s: pr records: %w", S, err)
 	}
 	for i, c := range cands {

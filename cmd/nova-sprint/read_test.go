@@ -30,6 +30,18 @@ func TestReadUsageRefusalsOpenNoStore(t *testing.T) {
 		{"read", "brief", "--id", "read-3-x", "--repo", "nova-tools", "--out", "d", "--redis", mr.Addr()},
 		{"read", "post", "--id", "read-3-x", "--line", "SCORE who=r head=abcdef0 score=9/10", "--redis", mr.Addr()},
 		{"read", "brief", "--id", "read-3-x", "--out", "d"},
+		// #4335: brief --pr and post --file
+		{"read", "brief", "--pr", "7"},
+		{"read", "brief", "--pr", "7", "--n", "3", "--redis", mr.Addr()},
+		{"read", "brief", "--pr", "7", "--out", "d", "--redis", mr.Addr()},
+		{"read", "brief", "--pr", "x", "--redis", mr.Addr()},
+		{"read", "brief", "--pr", "7", "--repo", "a/b/c", "--redis", mr.Addr()},
+		{"read", "brief", "--issue", "4335", "--redis", mr.Addr()},
+		{"read", "post", "--pr", "7", "--redis", mr.Addr()},
+		{"read", "brief", "--file", "s.tsv", "--redis", mr.Addr()},
+		{"read", "post", "--file", "s.tsv"},
+		{"read", "post", "--file", "s.tsv", "--line", "SCORE who=r head=abcdef0 score=9/10", "--redis", mr.Addr()},
+		{"read", "post", "--file", "s.tsv", "--repo", "nova-tools", "--redis", mr.Addr()},
 	} {
 		code, stdout, stderr := runSprint(args...)
 		if code != 2 || stdout != "" || !strings.HasPrefix(stderr, "nova-sprint read") {

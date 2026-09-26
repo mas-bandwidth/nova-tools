@@ -134,16 +134,28 @@ func Sum(source string) string {
 // Loaded returns the code of the nova_sprint library the server holds, and
 // false when it holds none.
 func Loaded(ctx context.Context, client *redis.Client) (string, bool, error) {
-	libs, err := client.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: Library, WithCode: true}).Result()
+	libs, err := client.FunctionList(ctx, ListQuery).Result()
 	if err != nil {
 		return "", false, fmt.Errorf("list %s function library: %w", Library, err)
 	}
+	code, found := FromList(libs)
+	return code, found, nil
+}
+
+// ListQuery is the FUNCTION LIST that Loaded sends: the nova_sprint library
+// with its code. A reader that pipelines it with other reads passes the reply
+// to FromList and Judge.
+var ListQuery = redis.FunctionListQuery{LibraryNamePattern: Library, WithCode: true}
+
+// FromList is the nova_sprint library's code in a FUNCTION LIST reply, and
+// false when the reply holds none.
+func FromList(libs []redis.Library) (string, bool) {
 	for _, lib := range libs {
 		if lib.Name == Library {
-			return lib.Code, true, nil
+			return lib.Code, true
 		}
 	}
-	return "", false, nil
+	return "", false
 }
 
 // Ensure loads the embedded library only when the server does not already
@@ -194,11 +206,36 @@ func Check(ctx context.Context, client *redis.Client) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	st := State{Want: Sum(source)}
 	code, found, err := Loaded(ctx, client)
 	if err != nil {
-		return st, err
+		return State{Want: Sum(source)}, err
 	}
+	st, ours := judge(source, code, found)
+	if !ours {
+		return st, nil
+	}
+	reply, err := client.FCall(ctx, "ns_ping", nil).Result()
+	st.Ping = PingReply(reply, err)
+	return st, nil
+}
+
+// Judge is Check's verdict on the code a server holds (found false: none),
+// with no round trip: Want, Loaded and Missing, and ours true only when that
+// code is exactly the embedded source, the one case in which the caller may
+// call ns_ping and set Ping with PingReply. When ours is false Ping is
+// PingSkipped, as Check leaves it. `nova-sprint doctor` pipelines FUNCTION
+// LIST (ListQuery) with its other reads and judges the reply here.
+func Judge(code string, found bool) (State, bool, error) {
+	source, err := Source()
+	if err != nil {
+		return State{}, false, err
+	}
+	st, ours := judge(source, code, found)
+	return st, ours, nil
+}
+
+func judge(source, code string, found bool) (State, bool) {
+	st := State{Want: Sum(source)}
 	if !found {
 		st.Missing = true
 	} else {
@@ -206,13 +243,16 @@ func Check(ctx context.Context, client *redis.Client) (State, error) {
 	}
 	if !found || code != source {
 		st.Ping = PingSkipped
-		return st, nil
+		return st, false
 	}
-	reply, err := client.FCall(ctx, "ns_ping", nil).Result()
+	return st, true
+}
+
+// PingReply is State.Ping for an FCALL ns_ping 0 answer: the reply, or the
+// error text.
+func PingReply(reply any, err error) string {
 	if err != nil {
-		st.Ping = err.Error()
-	} else {
-		st.Ping = fmt.Sprint(reply)
+		return err.Error()
 	}
-	return st, nil
+	return fmt.Sprint(reply)
 }

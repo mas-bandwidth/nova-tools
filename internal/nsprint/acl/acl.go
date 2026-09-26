@@ -21,16 +21,20 @@
 // testdata/acl-rows.tsv is the mirror of rowan-tools/fleet/redis.yml at rowan-tools
 // main 2026-09-26.
 //
-// COMPARISON is by rule tokens, not text: ACL LIST prints the rules in its own
-// canonical form (key patterns first, `%RW~` as `~`, `resetchannels` and a
-// leading `-@all` spelled out, `allkeys` as `~*`), so both sides are reduced
-// to one token set per user. The reset tokens and a user's leading `-@all`
-// (the state a new user starts in) carry no grant and are dropped; `allkeys`,
-// `allchannels`, `allcommands` and `nocommands` become `~*`, `&*`, `+@all`
-// and `-@all`; commands are lower-cased (keys and channels are not); a
-// selector `( ... )` is one token of its own sorted, reduced inner tokens.
-// A drifted user prints the tokens the live server lacks (missing) and the
-// ones it holds beyond the rows (extra).
+// COMPARISON is by effective grant, not text: a server renders the rules it
+// holds in its own form, and that form differs by version. redis-server 8.x
+// prints them as written (`+@all -@dangerous +info`); 7.0 prints a
+// compaction of its command bitmap (`+@all -@admin -flushall ... -swapdb`).
+// So each side's command rules are applied in order over the SERVER'S OWN
+// categories (ACL CAT, read in the same pipeline as ACL LIST) into the set of
+// commands and subcommands the user may run; a first-argument grant such as
+// `+fcall|ns_ping` stays a token of its own unless the whole command is
+// granted. Key and channel patterns compare as tokens (`%RW~` read as `~`,
+// `allkeys` as `~*`, `allchannels` as `&*`; the reset tokens dropped); a
+// selector `( ... )` is one token of its own reduced grants. A drifted user
+// prints the grants the live server lacks (missing) and the ones it holds
+// beyond the rows (extra); a run of commands that is a whole category of the
+// server prints as `+@<category>`.
 package acl
 
 import (
@@ -49,8 +53,8 @@ const DefaultRowsPath = "/var/lib/nova-redis/acl-rows.tsv"
 // which runs rowan-tools/fleet/redis.yml (users.acl from the declared users, ACL LOAD).
 const PlayCommand = "make -C rowan-tools/fleet store"
 
-// User is one user's rules reduced to tokens: On is its state, Rules its
-// grant tokens sorted and unique. Line is the rows file line (0 when live).
+// User is one user's rules: On is its state, Rules its normalized rule
+// tokens in order (Reduce). Line is the rows file line (0 when live).
 type User struct {
 	Name  string
 	On    bool
@@ -112,16 +116,16 @@ func ParseList(lines []string) (map[string]User, error) {
 	return out, nil
 }
 
-// Reduce turns one rules string into the user's state and its sorted, unique
-// grant tokens. declared refuses password tokens (a rows file never holds
-// one); a live line's are dropped unread.
+// Reduce turns one rules string into the user's state and its rule tokens
+// in order, spellings normalized (see the package doc). declared refuses
+// password tokens (a rows file never holds one); a live line's are dropped
+// unread.
 func Reduce(rules string, declared bool) (on bool, toks []string, err error) {
 	raw, err := split(rules)
 	if err != nil {
 		return false, nil, err
 	}
 	on = declared // a declared user is on unless it says off; a live one says which
-	var grants []string
 	for _, t := range raw {
 		switch lt := strings.ToLower(t); {
 		case lt == "on":
@@ -136,66 +140,61 @@ func Reduce(rules string, declared bool) (on bool, toks []string, err error) {
 		case lt == "sanitize-payload" || lt == "skip-sanitize-payload":
 			// a payload flag, not a grant
 		default:
-			grants = append(grants, t)
+			n, keep, err := normalize(t)
+			if err != nil {
+				return false, nil, err
+			}
+			if keep {
+				toks = append(toks, n)
+			}
 		}
 	}
-	toks, err = reduceGrants(grants)
-	return on, toks, err
+	return on, toks, nil
 }
 
-func reduceGrants(grants []string) ([]string, error) {
-	set := map[string]bool{}
-	first := true // the first command rule: a leading -@all is a new user's state
-	for _, t := range grants {
-		if strings.HasPrefix(t, "(") {
-			inner, err := reduceGrants(strings.Fields(strings.TrimSuffix(strings.TrimPrefix(t, "("), ")")))
+// normalize is one rule token in its compared spelling; keep is false for a
+// reset token, which grants nothing. A selector's inner tokens are normalized
+// in order and kept inside its parentheses.
+func normalize(t string) (string, bool, error) {
+	if strings.HasPrefix(t, "(") {
+		var inner []string
+		for _, f := range strings.Fields(strings.TrimSuffix(strings.TrimPrefix(t, "("), ")")) {
+			n, keep, err := normalize(f)
 			if err != nil {
-				return nil, err
+				return "", false, err
 			}
-			set["("+strings.Join(inner, " ")+")"] = true
-			continue
-		}
-		lt := strings.ToLower(t)
-		switch {
-		case lt == "reset" || lt == "resetkeys" || lt == "resetchannels":
-			continue
-		case lt == "allkeys":
-			t = "~*"
-		case lt == "allchannels":
-			t = "&*"
-		case lt == "allcommands":
-			t = "+@all"
-		case lt == "nocommands":
-			t = "-@all"
-		case strings.HasPrefix(lt, "%rw~") || strings.HasPrefix(lt, "%wr~"):
-			t = "~" + t[4:]
-		case strings.HasPrefix(t, "%"):
-			i := strings.IndexByte(t, '~')
-			if i < 0 {
-				return nil, fmt.Errorf("key rule %s has no ~", t)
+			if keep {
+				inner = append(inner, n)
 			}
-			t = strings.ToUpper(t[:i]) + t[i:]
-		case strings.HasPrefix(t, "~") || strings.HasPrefix(t, "&"):
-		case strings.HasPrefix(t, "+") || strings.HasPrefix(t, "-"):
-			t = lt
-		default:
-			return nil, fmt.Errorf("unknown rule %s", t)
 		}
-		if t[0] == '+' || t[0] == '-' {
-			if first && t == "-@all" {
-				first = false
-				continue
-			}
-			first = false
-		}
-		set[t] = true
+		return "(" + strings.Join(inner, " ") + ")", true, nil
 	}
-	out := make([]string, 0, len(set))
-	for t := range set {
-		out = append(out, t)
+	lt := strings.ToLower(t)
+	switch {
+	case lt == "reset" || lt == "resetkeys" || lt == "resetchannels":
+		return "", false, nil
+	case lt == "allkeys":
+		return "~*", true, nil
+	case lt == "allchannels":
+		return "&*", true, nil
+	case lt == "allcommands":
+		return "+@all", true, nil
+	case lt == "nocommands":
+		return "-@all", true, nil
+	case strings.HasPrefix(lt, "%rw~") || strings.HasPrefix(lt, "%wr~"):
+		return "~" + t[4:], true, nil
+	case strings.HasPrefix(t, "%"):
+		i := strings.IndexByte(t, '~')
+		if i < 0 {
+			return "", false, fmt.Errorf("key rule %s has no ~", t)
+		}
+		return strings.ToUpper(t[:i]) + t[i:], true, nil
+	case strings.HasPrefix(t, "~") || strings.HasPrefix(t, "&"):
+		return t, true, nil
+	case strings.HasPrefix(t, "+") || strings.HasPrefix(t, "-"):
+		return lt, true, nil
 	}
-	sort.Strings(out)
-	return out, nil
+	return "", false, fmt.Errorf("unknown rule %s", t)
 }
 
 // split is strings.Fields with a selector `( ... )` kept as one token.
@@ -259,9 +258,10 @@ func (d Drift) Line() string {
 	return b.String()
 }
 
-// Diff compares the declared users with the live ones: declared users in
-// rows order, then the undeclared live users by name.
-func Diff(declared []User, live map[string]User) []Drift {
+// Diff compares the declared users with the live ones over the server's
+// categories: declared users in rows order, then the undeclared live users
+// by name.
+func Diff(declared []User, live map[string]User, cats Cats) []Drift {
 	var out []Drift
 	named := map[string]bool{}
 	for _, d := range declared {
@@ -278,7 +278,8 @@ func Diff(declared []User, live map[string]User) []Drift {
 				dr.State = "on"
 			}
 		}
-		dr.Missing, dr.Extra = minus(d.Rules, l.Rules), minus(l.Rules, d.Rules)
+		want, have := cats.Grants(d.Rules), cats.Grants(l.Rules)
+		dr.Missing, dr.Extra = cats.compress(minus(want, have)), cats.compress(minus(have, want))
 		if dr.State != "" || len(dr.Missing) > 0 || len(dr.Extra) > 0 {
 			out = append(out, dr)
 		}

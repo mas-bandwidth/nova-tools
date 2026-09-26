@@ -169,6 +169,9 @@ func TestHarvestPushesTheBranchAndOpensThePR(t *testing.T) {
 	if !strings.HasSuffix(strings.TrimRight(body, "\n"), harvestcopy.ClaudeLine) {
 		t.Fatalf("PR body does not end with the Claude Code line:\n%s", body)
 	}
+	if res.Title != pr["title"] || res.Body != body {
+		t.Fatalf("result title/body %q %q, want what the PR was opened with (#4335: the record keeps them)", res.Title, res.Body)
+	}
 	for _, a := range auth {
 		if a != "Bearer t-4227" {
 			t.Fatalf("REST call authorization %q", a)
@@ -182,7 +185,7 @@ func TestHarvestPushesTheBranchAndOpensThePR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second harvest: %v", err)
 	}
-	if again.PR != 4321 || again.Head != sha || again.Push != "already" || again.Open != "already" {
+	if again.PR != 4321 || again.Head != sha || again.Push != "already" || again.Open != "already" || again.Title != "" || again.Body != "" {
 		t.Fatalf("second harvest %+v, want the same PR, already pushed and already open", again)
 	}
 	f.mu.Lock()

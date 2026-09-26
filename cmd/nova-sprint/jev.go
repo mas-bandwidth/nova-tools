@@ -14,7 +14,9 @@
 //	JEV who=jev pass=mech head=<sha> gate=ok|fail lint=<w> scope=<w> base=<w> why=<one line>
 //
 // The line is never a read (stream.ReadAt skips who=jev*); the stream
-// lander reads it as a gate (cfg:land jev). The same line already last at
+// lander reads it as a gate (cfg:land jev). A new line is also a gate row in
+// the decision ledger (jev:row:gate:<name>#<n>@<head12>), whose outcome the
+// lander joins when the head lands. The same line already last at
 // head is not appended again.
 //
 // Exit 0 recorded with gate=ok; 1 recorded with gate=fail (the remedy on
@@ -152,6 +154,14 @@ func jevMech(ctx context.Context, c *redis.Client, name string, n int, body, mir
 	} else if _, err := stream.AddLine(ctx, c, name, n, line); err != nil {
 		fmt.Fprintf(errOut, "JEV REFUSED %s why=%s; remedy: nova-sprint pr record first, then rerun\n", key, oneline.Escape(err.Error()))
 		return 1
+	}
+	if outcome == "RECORDED" {
+		// the gate is a decision (#4316): one row at this head; the lander
+		// joins the head's landing to it
+		if err := ledger.RecordGate(ctx, c, name, n, head, string(l.Gate()), line); err != nil {
+			fmt.Fprintf(errOut, "JEV REFUSED %s ledger why=%s; remedy: the JEV line stands; nova-sprint jev report shows the gate rows\n",
+				key, oneline.Escape(err.Error()))
+		}
 	}
 	receipt := fmt.Sprintf("JEV %s %s head=%s gate=%s lint=%s scope=%s base=%s", outcome, key, stream.Short(head),
 		l.Gate(), l.Lint.Word, l.Scope.Word, l.Base.Word)

@@ -134,6 +134,10 @@ type Result struct {
 	Push string
 	// Open is "opened" or "already" (an open PR for the head existed).
 	Open string
+	// Title and Body are what the PR was opened with, set when Open is
+	// "opened" (the caller keeps them on the PR record, so a read brief has
+	// the body from Redis, nova-tools #4335); "" when the PR already existed.
+	Title, Body string
 }
 
 // Line is the one-line receipt.
@@ -168,6 +172,9 @@ func Harvest(ctx context.Context, req Request) (Result, error) {
 		return res, err
 	}
 	res.PR, res.URL, res.Open = pr.Number, pr.HTMLURL, pr.open
+	if pr.open == "opened" {
+		res.Title, res.Body = prTitle(req), PRBody(req)
+	}
 	return res, nil
 }
 
