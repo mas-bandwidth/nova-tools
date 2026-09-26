@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,9 +12,14 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 const cutFromSHA = "0123456789abcdef0123456789abcdef01234567"
+
+// cutInv is a body cell that makes a row one invariant (#4396): its
+// INVARIANT and CLASS-TEST lines, a newline written \n as a cell writes it.
+const cutInv = `INVARIANT: the card holds one thing.\nCLASS-TEST: TestTheCard`
 
 // fakeCutForge is the one GitHub writer in tests: issues numbered from 5000,
 // every title and body kept; failAt makes that call fail.
@@ -42,6 +48,17 @@ type fakeCutStore struct {
 	pushed  map[string]bool
 	ledger  map[string]map[string]string
 	noWrite error
+	// paths is ws:paths, every open stream's paths (#4322); nil gates nothing.
+	paths ws.StreamPaths
+}
+
+func (f *fakeCutStore) streamPaths(context.Context) (ws.GateView, error) {
+	v := ws.GateView{Paths: ws.StreamPaths{}, Open: map[string]bool{}}
+	for s, p := range f.paths {
+		v.Paths[s] = p
+		v.Open[s] = true
+	}
+	return v, nil
 }
 
 func (f *fakeCutStore) push(_ context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
@@ -93,11 +110,16 @@ func cutDeps(forge *fakeCutForge, st *fakeCutStore) cutFromDeps {
 	}
 	if st != nil {
 		d.Push, d.LedgerRead, d.LedgerWrite = st.push, st.ledgerRead, st.ledgerWrite
+		if st.paths != nil {
+			d.StreamPaths = st.streamPaths
+		}
 	}
 	return d
 }
 
-func runCutFrom(o cutFromOpts, d cutFromDeps) (int, string) {
+// runCutFrom runs card cut --from on o and d: the exit code and stdout, and
+// stderr with it (as a terminal shows both) unless errOut is given.
+func runCutFrom(o cutFromOpts, d cutFromDeps, errOut ...io.Writer) (int, string) {
 	var b strings.Builder
 	if o.Repo == "" {
 		o.Repo = "mas-bandwidth/nova-tools"
@@ -111,7 +133,18 @@ func runCutFrom(o cutFromOpts, d cutFromDeps) (int, string) {
 	if o.From == "" {
 		o.From = "cards.tsv"
 	}
-	return cardCutFrom(context.Background(), o, d, &b), b.String()
+	var e io.Writer = &b
+	if len(errOut) > 0 {
+		e = errOut[0]
+	}
+	return cardCutFrom(context.Background(), o, d, &b, e), b.String()
+}
+
+// runCutFromErr is runCutFrom with stdout and stderr apart.
+func runCutFromErr(o cutFromOpts, d cutFromDeps) (int, string, string) {
+	var errOut strings.Builder
+	code, out := runCutFrom(o, d, &errOut)
+	return code, out, errOut.String()
 }
 
 // hundredRows is a header and 100 card rows; row 2 names c7 (row 7's id
@@ -135,8 +168,8 @@ func hundredRows() string {
 		if i%2 == 0 {
 			route = "pro"
 		}
-		fmt.Fprintf(&b, "%s\tCard %d does its thing\tswarm: cards\tany\tcmd/nova-sprint/c%d.go\tgo test ./cmd/nova-sprint -run TestC%d passes\tWhy %d:\\nline two\t%s\t%s\t30\n",
-			id, i, i, i, i, dep, route)
+		fmt.Fprintf(&b, "%s\tCard %d does its thing\tswarm: cards\tany\tcmd/nova-sprint/c%d.go\tgo test ./cmd/nova-sprint -run TestC%d passes\tWhy %d:\\nline two\\n%s\t%s\t%s\t30\n",
+			id, i, i, i, i, cutInv, dep, route)
 	}
 	return b.String()
 }
@@ -219,6 +252,7 @@ func TestCardCutFromBadRowsAreNamed(t *testing.T) {
 		"self\tSelf dep\ts\tany\tp.go\tdone\tbody\tself\t\t",
 		"loop-a\tTwice\ts\tany\tp.go\tdone\tbody\tnone\t\t",
 	}, "\n")
+	rows = strings.ReplaceAll(rows, "\tdone\tbody\t", "\tdone\t"+cutInv+"\t")
 	forge, st := &fakeCutForge{}, &fakeCutStore{}
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows)}, cutDeps(forge, st))
 	if code != 1 || len(forge.titles) != 0 || len(st.batches) != 0 || len(st.ledger) != 0 {
@@ -253,14 +287,14 @@ func TestCardCutFromBadRowsAreNamed(t *testing.T) {
 // id cell) is refused the same way, naming the row. Nothing is written.
 func TestCardCutFromDependedRowNeedsID(t *testing.T) {
 	t.Parallel()
-	rows := "title\tpaths\tdone-when\tdepends-on\nBase work\tp.go\tdone\t\nOn top\tp.go\tdone\trow:1\n"
+	rows := "title\tpaths\tdone-when\tbody\tdepends-on\nBase work\tp.go\tdone\t" + cutInv + "\t\nOn top\tp.go\tdone\t" + cutInv + "\trow:1\n"
 	forge, st := &fakeCutForge{}, &fakeCutStore{}
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows), Stream: "s"}, cutDeps(forge, st))
 	if code != 1 || len(forge.titles) != 0 || len(st.batches) != 0 ||
 		!strings.Contains(out, "CARD CUT REFUSED row=2 line=3 id=- why=\"depends-on row:1 is refused (#3409: one DEPENDS-ON form); add an id column (a header row naming id), give row 1 an id and name that id\"\n") {
 		t.Fatalf("row:<n>: exit %d filed %d pushed %d:\n%s", code, len(forge.titles), len(st.batches), out)
 	}
-	rows = "title\tpaths\tdone-when\tdepends-on\nBase work\tp.go\tdone\t\nOn top\tp.go\tdone\tbase-work\n"
+	rows = "title\tpaths\tdone-when\tbody\tdepends-on\nBase work\tp.go\tdone\t" + cutInv + "\t\nOn top\tp.go\tdone\t" + cutInv + "\tbase-work\n"
 	code, out = runCutFrom(cutFromOpts{Text: []byte(rows), Stream: "s", NoGitHub: true}, cutDeps(nil, st))
 	if code != 1 || len(st.batches) != 0 ||
 		!strings.Contains(out, "CARD CUT REFUSED row=2 line=3 id=on-top why=\"depends-on base-work is row 1's title, and a row that is depended on needs an id; add an id column (a header row naming id) and give row 1 an id\"\n") {
@@ -273,13 +307,14 @@ func TestCardCutFromDependedRowNeedsID(t *testing.T) {
 func TestCardCutFromDryRun(t *testing.T) {
 	t.Parallel()
 	rows := "id\ttitle\tstream\twho\tpaths\tdone-when\tbody\tdepends-on\troute\test\n" +
-		"\tsecond\ts\tonly rowan,stella\tp.go\tdone\tb\tfirst-id\tflash\t45 min\nfirst-id\tfirst\ts\t\tp.go\tdone\tb\t#12\t\t\n"
+		"\tsecond\ts\tonly rowan,stella\tp.go\tgo test ./p -run TestP passes\t" + cutInv + "\tfirst-id\tflash\t45 min\nfirst-id\tfirst\ts\t\tp.go\tdone\t" + cutInv + "\t#12\t\t\n"
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows), DryRun: true, NoGitHub: true}, cutDeps(nil, nil))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	want := "CARD CUT DRY row=2 id=first-id stream=s who=any route=friend est=30 depends=mas-bandwidth/nova-tools#12 title=first\n" +
 		"CARD CUT DRY row=1 id=second stream=s who=\"only rowan,stella\" route=flash est=\"45 min\" depends=first-id title=second\n" +
+		"CARD CUT DRY PATHS unchecked rows=2 why=\"no --redis: the paths gate reads the store\" remedy=\"pass --redis <addr>\"\n" +
 		"CARD CUT FROM file=cards.tsv rows=2 cut=0 already=0 refused=0 filed=0 reused=0 github=off ms=0\n"
 	if out != want {
 		t.Fatalf("dry run:\n%s\nwant:\n%s", out, want)
@@ -290,7 +325,8 @@ func TestCardCutFromDryRun(t *testing.T) {
 // an id cell), no issue filed, no ref on the record.
 func TestCardCutFromNoGitHub(t *testing.T) {
 	t.Parallel()
-	rows := "id\ttitle\tpaths\tdone-when\tdepends-on\n\tSpeed up the Table!\tp.go\tdone\t\nmy-id\tNamed\tp.go\tdone\tbase\nbase\tBase\tp.go\tdone\t\n"
+	rows := "id\ttitle\tpaths\tdone-when\tbody\tdepends-on\n\tSpeed up the Table!\tp.go\tdone\t" + cutInv + "\t\nmy-id\tNamed\tp.go\tdone\t" +
+		cutInv + "\tbase\nbase\tBase\tp.go\tdone\t" + cutInv + "\t\n"
 	st := &fakeCutStore{}
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows), NoGitHub: true, Stream: "nova-sprint"}, cutDeps(nil, st))
 	if code != 0 {
@@ -311,7 +347,7 @@ func TestCardCutFromNoGitHub(t *testing.T) {
 // before the failure are still pushed.
 func TestCardCutFromRefusalsPrint(t *testing.T) {
 	t.Parallel()
-	rows := "a\ts\tany\tp\td\tb\t\t\t\nb\ts\tany\tp\td\tb\t\t\t\nc\ts\tany\tp\td\tb\t\t\t\nd\ts\tany\tp\td\tb\t\t\t\n"
+	rows := strings.ReplaceAll("a\ts\tany\tp\td\tb\t\t\t\nb\ts\tany\tp\td\tb\t\t\t\nc\ts\tany\tp\td\tb\t\t\t\nd\ts\tany\tp\td\tb\t\t\t\n", "\td\tb\t", "\td\t"+cutInv+"\t")
 	forge := &fakeCutForge{failAt: 3}
 	st := &fakeCutStore{refuse: map[string]string{"nova-tools-5001": "EXISTS task:nova-tools-5001"}}
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows)}, cutDeps(forge, st))
@@ -342,7 +378,7 @@ func TestCardCutFromRefusalsPrint(t *testing.T) {
 func TestCardCutFromFlags(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "cards.tsv")
-	if err := os.WriteFile(path, []byte("one\ts\tany\tp.go\tdone\tbody\tnone\t\t\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("one\ts\tany\tp.go\tdone\t"+cutInv+"\tnone\t\t\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	code, out, errOut := runSprint("card", "cut", "--from", path, "--repo", "o/r", "--dry-run")
@@ -367,8 +403,8 @@ func TestCardCutFromFlags(t *testing.T) {
 // rows 3 and 4 alone; a third run files nothing and exits 0.
 func TestCardCutFromRerunFilesNothingTwice(t *testing.T) {
 	t.Parallel()
-	rows := "id\ttitle\tstream\tpaths\tdone-when\tdepends-on\n" +
-		"a\tA\ts\tp\td\t\n\tB\ts\tp\td\ta\n\tC\ts\tp\td\ta\n\tD\ts\tp\td\t\n"
+	rows := strings.ReplaceAll("id\ttitle\tstream\tpaths\tdone-when\tbody\tdepends-on\n"+
+		"a\tA\ts\tp\td\tI\t\n\tB\ts\tp\td\tI\ta\n\tC\ts\tp\td\tI\ta\n\tD\ts\tp\td\tI\t\n", "\tI\t", "\t"+cutInv+"\t")
 	forge, st := &fakeCutForge{failAt: 3}, &fakeCutStore{}
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows)}, cutDeps(forge, st))
 	if code != 1 || !strings.Contains(out, "rows=4 cut=2 already=0 refused=2 filed=2 reused=0 ") {
@@ -409,7 +445,7 @@ func TestCardCutFromRerunFilesNothingTwice(t *testing.T) {
 // the issue.
 func TestCardCutFromLedgerRefusals(t *testing.T) {
 	t.Parallel()
-	rows := "a\ts\tany\tp\td\tb\t\t\t\nb\ts\tany\tp\td\tb\t\t\t\n"
+	rows := strings.ReplaceAll("a\ts\tany\tp\td\tb\t\t\t\nb\ts\tany\tp\td\tb\t\t\t\n", "\td\tb\t", "\td\t"+cutInv+"\t")
 	key := taskcard.CutLedgerKey([]byte(rows))
 
 	forge, st := &fakeCutForge{}, &fakeCutStore{}
@@ -435,5 +471,75 @@ func TestCardCutFromLedgerRefusals(t *testing.T) {
 	if code != 1 || len(forge.titles) != 1 || len(st.batches) != 0 || !strings.Contains(out, want) ||
 		!strings.Contains(out, "row=2 line=2 id=- why=\"not filed: the filing stopped at row 1\"") {
 		t.Fatalf("unwritable ledger: exit %d filed %d pushed %d:\n%s", code, len(forge.titles), len(st.batches), out)
+	}
+}
+
+// TestCardCutFromSwarmRowNeedsATest (#4313): a swarm row whose done-when
+// names no `go test <pkg> -run <TestName>` and whose test cell is empty or a
+// bare none is refused with the remedy, before anything is written; a test
+// cell of `<package> <TestName>` or `none <why>` is cut and its TEST line is
+// on the issue. A friend row is not held to it here.
+func TestCardCutFromSwarmRowNeedsATest(t *testing.T) {
+	t.Parallel()
+	// every row is one invariant (#4396) so the lint passes and the TEST
+	// rule is what refuses
+	head := "title\tpaths\tdone-when\tbody\troute\ttest\n"
+	for _, tc := range []struct{ row, want string }{
+		{"No test\tp.go\tthe page reads right\t" + cutInv + "\tflash\t", "no TEST line"},
+		{"Bare none\tp.go\tthe page reads right\t" + cutInv + "\tflash\tnone", "TEST: none says no why"},
+	} {
+		forge, st := &fakeCutForge{}, &fakeCutStore{}
+		code, out := runCutFrom(cutFromOpts{Text: []byte(head + tc.row + "\n"), Stream: "s", BaseSHA: cutFromSHA}, cutDeps(forge, st))
+		if code != 1 || len(forge.titles) != 0 || len(st.batches) != 0 || !strings.Contains(out, "CARD CUT REFUSED row=1 line=2 id=- why=\"a flash card lacks TEST (") ||
+			!strings.Contains(out, tc.want) || !strings.Contains(out, "TEST: none <why") {
+			t.Fatalf("%q: exit %d filed %d pushed %d:\n%s", tc.row, code, len(forge.titles), len(st.batches), out)
+		}
+	}
+	rows := head + "Named\tp.go\tthe page reads right\t" + cutInv + "\tflash\t./cmd/nova-sprint TestCardCutFromSwarmRowNeedsATest\n" +
+		"Excused\tp.md\tthe page reads right\t" + cutInv + "\tflash\tnone one docs page; the reader checks it\n" +
+		"Friend\tp.go\tthe page reads right\t" + cutInv + "\tfriend\t\n"
+	forge, st := &fakeCutForge{}, &fakeCutStore{}
+	code, out := runCutFrom(cutFromOpts{Text: []byte(rows), Stream: "s", BaseSHA: cutFromSHA}, cutDeps(forge, st))
+	if code != 0 || len(forge.titles) != 3 {
+		t.Fatalf("exit %d filed %d:\n%s", code, len(forge.titles), out)
+	}
+	for i, want := range []string{"TEST: ./cmd/nova-sprint TestCardCutFromSwarmRowNeedsATest\n", "TEST: none one docs page; the reader checks it\n", ""} {
+		body := forge.bodies[i]
+		// a TEST: line, not the body's CLASS-TEST: line (#4396)
+		if want == "" && strings.Contains(body, "\nTEST: ") || want != "" && !strings.Contains(body, want) {
+			t.Errorf("issue %d body:\n%s\nwant %q", i+1, body, want)
+		}
+	}
+}
+
+// TestCardCutFromRefusesNotOneInvariant (#4396): a row that is not one
+// invariant (a body that says "build issue #N as written", with no INVARIANT
+// or CLASS-TEST line) is refused, exit 2, its receipt on stdout and one
+// REFUSED card-lint line per rule on stderr, and nothing is filed or pushed.
+func TestCardCutFromRefusesNotOneInvariant(t *testing.T) {
+	t.Parallel()
+	rows := "good\ts\tany\tp.go\tdone\t" + cutInv + "\tnone\t\t\n" +
+		"list\ts\tany\tp.go\tdone\tbuild issue #4396 as written\tnone\t\t\n"
+	forge, st := &fakeCutForge{}, &fakeCutStore{}
+	code, out, errOut := runCutFromErr(cutFromOpts{Text: []byte(rows)}, cutDeps(forge, st))
+	if code != 2 || len(forge.titles) != 0 || len(st.batches) != 0 {
+		t.Fatalf("exit %d filed %d pushed %d; want 2 and nothing written:\n%s", code, len(forge.titles), len(st.batches), out)
+	}
+	for _, want := range []string{
+		`CARD CUT REFUSED row=2 line=2 id=- why="card-lint invariant-missing,class-test-missing,build-issue: not one invariant"` + "\n",
+		"rows=2 cut=0 already=0 refused=1 filed=0 ",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, out)
+		}
+	}
+	wantErr := `REFUSED card-lint rule=invariant-missing line="" remedy="add INVARIANT: <the one sentence the class test proves>" row=2` + "\n" +
+		`REFUSED card-lint rule=class-test-missing line="" remedy="add CLASS-TEST: Test<Name>, the one Go test that proves the invariant" row=2` + "\n" +
+		`REFUSED card-lint rule=build-issue line="build issue #4396 as written" remedy="cut as a parent with children: card cut --parent" row=2` + "\n"
+	if errOut != wantErr || strings.Contains(out, "card-lint rule=") {
+		t.Errorf("stderr\n%s\nwant\n%s\nstdout\n%s", errOut, wantErr, out)
+	}
+	if strings.Contains(out, "row=1 ") {
+		t.Errorf("the one-invariant row printed a line:\n%s", out)
 	}
 }

@@ -8,7 +8,8 @@
 //	TASK <verb> id=<id> from=<w> to=<w> ms=<n>
 //	TASK <verb> REFUSED id=<id> why=<why> ms=<n>
 //
-// Exit 0 done, 1 refused (nothing written) or drift found, 2 could not run.
+// Exit 0 done, 1 refused (nothing written) or drift found, 2 could not run
+// or a push refused card-lint (nothing written, #4396).
 // They are the card form of the task subverbs: push with --actor, take with
 // --actor and no --as;
 // done, cancel, block, unblock, front, move and beat with --actor and --id and
@@ -26,9 +27,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -122,7 +126,7 @@ type cardCmd struct {
 	kind, ref, origin, title, head, pr, repo, on    *string
 	evidence, sha, where, toFriend, toStream, toWhr *string
 	ok                                              *string
-	issue, route, base, baseSHA, paths              *string
+	issue, route, base, baseSHA, paths, join        *string
 	n                                               *int
 	waiting, front, help, repair                    *bool
 	friends                                         multiFlag
@@ -159,6 +163,7 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	c.base = fs.String("base", "", "")
 	c.baseSHA = fs.String("base-sha", "", "")
 	c.paths = fs.String("paths", "", "")
+	c.join = fs.String("join", "", "")
 	c.n = fs.Int("n", 1, "")
 	c.waiting = fs.Bool("waiting", false, "")
 	c.repair = fs.Bool("repair", false, "")
@@ -266,6 +271,14 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 	ms := func() int64 { return time.Since(start).Milliseconds() }
 	refused := func(err error) int {
 		if why, ok := taskcard.IsRefused(err); ok {
+			// the paths gate's refusal (SP.gate, #4322) is its one receipt line
+			if no, ok := ws.ParseRefusal(why); ok {
+				if sub != "push" {
+					no.Remedy = moveRemedy(no.Stream)
+				}
+				_, _ = fmt.Fprintf(out, "%s id=%s ms=%d\n", no.Receipt(), *c.id, ms())
+				return 1
+			}
 			_, _ = fmt.Fprintf(out, "TASK %s REFUSED id=%s why=%s ms=%d\n", sub, *c.id, quoteField(why), ms())
 			return 1
 		}
@@ -295,10 +308,27 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if err != nil {
 			return refuse(errOut, c.verb, err.Error())
 		}
+		// A push that carries a card is one invariant (#4396), and every
+		// push, a card or none, keeps the title-and-kind lint (no stitch, no
+		// plan with no card, no "build issue #N as written" title): refused
+		// before any write, the receipt on stdout, one REFUSED card-lint line
+		// per rule on stderr, exit 2 (as card push).
+		var rs cardhdr.Refusals
+		kind := *c.kind
+		if spec != nil {
+			kind = firstOf(kind, spec.Kind)
+			repo := firstOf(*c.repo, spec.Repo)
+			rs = cardhdr.LintOneInvariant(cardhdr.Card{Text: taskLintText(*c.kind, spec), Files: card.FilesAt(repo, spec.BaseSHA)})
+		}
+		if rs = rs.Merge(cardhdr.LintTitleKind(kind, *c.title, spec != nil)); rs != nil {
+			_, _ = fmt.Fprintf(out, "TASK push REFUSED id=%s why=%s ms=%d\n", *c.id, quoteField("card-lint "+rs.Rules()), ms())
+			_, _ = fmt.Fprint(errOut, card.LintLines(*c.id, rs))
+			return 2
+		}
 		r, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: *c.id, Stream: *c.stream, Friend: *c.friend,
 			Sprint: *c.sprint, Kind: *c.kind, Ref: *c.ref, Origin: *c.origin, Title: *c.title, Head: *c.head,
 			PR: *c.pr, Repo: *c.repo, DependsOn: *c.on, Front: *c.front, By: *c.actor, Why: *c.why,
-			Where: map[bool]string{true: "waiting", false: ""}[*c.waiting], Spec: spec})
+			Where: map[bool]string{true: "waiting", false: ""}[*c.waiting], Spec: spec, Join: *c.join})
 		if err != nil {
 			return refused(err)
 		}
@@ -349,6 +379,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if taskcard.IsCopy(*c.id) {
 			// task done of a copy is card end (#3929): the copy returns to its
 			// primary (ok; with --pr <n> --head <sha> the primary moves to review).
+			// A code copy's ok with a PR is held to its spec first
+			// (#4313): this door has no checkout, so it names the ones
+			// that run the gate (nova-tools#4401 read, DOORS).
+			if *c.pr != "" && cl.HGet(ctx, taskcard.Key(*c.id), "leg").Val() != "read" {
+				return refused(&taskcard.Refused{Why: card.GateNoTest + " task done --pr of a code copy skips the spec gate: nova-sprint friend done --as friend:<f> --id " + *c.id +
+					" --ok --pr <repo>#<n> --head <sha> --repo <your checkout at that head> [--test <finding test>] runs it before the end"})
+			}
 			r := taskcard.EndRequest{IDs: []string{*c.id}, OK: true, PR: *c.pr, Head: *c.head, By: *c.actor,
 				Fields: []string{"evidence", *c.evidence}}
 			if *c.pr != "" {
@@ -509,6 +546,20 @@ func (c *cardCmd) spec() (*taskcard.Spec, error) {
 		}
 	}
 	return &s, nil
+}
+
+// taskLintText is the card a task push is linted as (#4396): the KIND,
+// PATHS and DONE-WHEN it is pushed with (a flag over the issue's line), then
+// the issue text.
+func taskLintText(kind string, s *taskcard.Spec) string {
+	var b strings.Builder
+	for _, kv := range [][2]string{{"KIND", firstOf(kind, s.Kind)}, {"PATHS", s.Paths}, {"DONE-WHEN", s.DoneWhen}} {
+		if kv[1] != "" {
+			fmt.Fprintf(&b, "%s: %s\n", kv[0], kv[1])
+		}
+	}
+	b.WriteString("\n" + s.Body + "\n")
+	return b.String()
 }
 
 // replace is front and move: the one move to the task's own where (front,

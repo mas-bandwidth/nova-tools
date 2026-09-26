@@ -23,11 +23,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 )
 
 func init() {
-	register(Verb{Name: "ws", Summary: "the ws index: counts, checkpoint to TSV, show --order (every stream's cards with their DEPENDS-ON edges and sentinel)", Run: runWS})
+	register(Verb{Name: "ws", Summary: "the ws index: counts, checkpoint to TSV, show --order (every stream's cards with their DEPENDS-ON edges and sentinel), check (PATHS OVERLAP between open streams; --repair the stream paths)", Run: runWS})
 	register(Verb{Name: "scope", Summary: "keep, park, unpark or list the streams in the sprint's scope", Run: runScope})
 	register(Verb{Name: "stream", Summary: "list, order or rename the work streams; open, rebase, pr, status or close a stream branch", Run: runStream})
 }
@@ -98,6 +99,12 @@ func (w *wsCmd) done(err error, line string) int {
 	var r *ws.Refused
 	switch {
 	case errors.As(err, &r):
+		if no, ok := ws.ParseRefusal(r.Why); ok {
+			// the paths gate (an unpark, #4322): its one receipt line
+			no.Remedy = moveRemedy(no.Stream)
+			fmt.Fprintf(w.out, "%s ms=%s\n", no.Receipt(), w.ms())
+			return 1
+		}
 		fmt.Fprintf(w.out, "REFUSED %s ms=%s\n", r.Why, w.ms())
 		return 1
 	case err != nil:
@@ -105,6 +112,13 @@ func (w *wsCmd) done(err error, line string) int {
 	}
 	fmt.Fprintf(w.out, "%s ms=%s\n", line, w.ms())
 	return 0
+}
+
+// moveRemedy is the overlap receipt's remedy for a move (an unpark, task
+// move --to-stream, #4322): a move has no --join; the stream it would
+// overlap releases those paths when it is parked (or its cards land).
+func moveRemedy(stream string) string {
+	return "nova-sprint scope park --stream " + ws.JoinArg(stream)
 }
 
 func subverb(args []string, verb, want string, errOut io.Writer) (string, []string, int, bool) {
@@ -115,11 +129,13 @@ func subverb(args []string, verb, want string, errOut io.Writer) (string, []stri
 }
 
 func runWS(ctx context.Context, args []string, out, errOut io.Writer) int {
-	sub, rest, code, ok := subverb(args, "ws", "counts, checkpoint or show", errOut)
+	sub, rest, code, ok := subverb(args, "ws", "counts, checkpoint, show or check", errOut)
 	if !ok {
 		return code
 	}
 	switch sub {
+	case "check":
+		return runWSCheck(ctx, rest, out, errOut)
 	case "counts":
 		return runWSCounts(ctx, rest, out, errOut)
 	case "checkpoint":
@@ -127,7 +143,63 @@ func runWS(ctx context.Context, args []string, out, errOut io.Writer) int {
 	case "show":
 		return runWSShow(ctx, rest, out, errOut)
 	}
-	return refuse(errOut, "ws", "unknown subverb "+sub+"; want counts, checkpoint or show")
+	return refuse(errOut, "ws", "unknown subverb "+sub+"; want counts, checkpoint, show or check")
+}
+
+// runWSCheck is `ws check [--repair]` (nova-tools #4322): no path belongs to
+// two open streams. It recomputes every stream's paths from its live cards'
+// records (ws.LivePaths, three pipelined reads) and prints one PATHS
+// OVERLAP line per pair of streams sharing a path and one PATHS STALE line
+// per stream whose record (ws:paths) differs; --repair first writes the
+// records in one FCALL (ws.RepairPaths: the backfill, every stream's field
+// from the live sets as they are in that call; a record whose PATHS
+// overlap another stream's is written too, so the gate refuses a push into
+// either side naming both) and prints one REPAIR REFUSED line per record
+// found changed since the read, its remedy with it, then reports the store
+// as the repair left it. Then one receipt. Exit 0 clean (or repaired with
+// no overlap and no refusal), 1 otherwise: an overlap is reported until
+// one side is parked, cancelled or lands.
+func runWSCheck(ctx context.Context, args []string, out, errOut io.Writer) int {
+	w := newWSCmd("ws check", out, errOut)
+	repair := w.fs.Bool("repair", false, "")
+	if _, code, ok := w.parse(args, 0, "ws check --redis <addr> [--repair]"); !ok {
+		return code
+	}
+	st, code, ok := w.open(ctx)
+	if !ok {
+		return code
+	}
+	defer st.Close()
+	live, stored, cards, err := ws.LivePaths(ctx, st.Client())
+	if err != nil {
+		return w.done(err, "")
+	}
+	var r ws.Repair
+	if *repair {
+		if r, err = ws.RepairPaths(ctx, st.Client(), cards); err != nil {
+			return w.done(err, "")
+		}
+		for _, line := range r.Refused {
+			fmt.Fprintf(out, "REPAIR REFUSED %s remedy=%s\n", line, strconv.Quote(ws.RepairRemedy))
+		}
+		if live, stored, cards, err = ws.LivePaths(ctx, st.Client()); err != nil {
+			return w.done(err, "")
+		}
+	}
+	pairs := live.Overlaps()
+	for _, p := range pairs {
+		fmt.Fprintln(out, p.Line())
+	}
+	stale := ws.Stale(live, stored)
+	for _, s := range stale {
+		fmt.Fprintf(out, "PATHS STALE stream=%s record=%d live=%d\n", oneline.Field(s), len(stored[s]), len(live[s]))
+	}
+	fmt.Fprintf(out, "CHECK streams=%d cards=%d overlaps=%d stale=%d repaired=%d records=%d unbuilt=%d refused=%d ms=%s\n",
+		len(live), len(cards), len(pairs), len(stale), r.Streams, r.Records, r.Unbuilt, len(r.Refused), w.ms())
+	if len(pairs) > 0 || len(stale) > 0 || len(r.Refused) > 0 {
+		return 1
+	}
+	return 0
 }
 
 // runWSShow is `ws show --order [--stream <s>]` (nova-tools #4318): every
@@ -383,6 +455,15 @@ func runScopeUnpark(ctx context.Context, args []string, out, errOut io.Writer) i
 	}
 	defer st.Close()
 	n, err := ws.UnparkStream(ctx, st.Client(), *stream, *w.by, whyOr(*w.why, "scope unpark"))
+	var r *ws.Refused
+	if errors.As(err, &r) {
+		if no, ok := ws.ParseRefusal(r.Why); ok {
+			// the paths gate refused the unpark whole (#4322): both streams named
+			no.Remedy = moveRemedy(no.Stream)
+			fmt.Fprintf(out, "%s unpark=%s ms=%s\n", no.Receipt(), oneline.Field(*stream), w.ms())
+			return 1
+		}
+	}
 	return w.done(err, fmt.Sprintf("UNPARKED stream=%s unparked=%d", strconv.Quote(*stream), n))
 }
 
@@ -472,9 +553,14 @@ func runStreamLs(ctx context.Context, args []string, out, errOut io.Writer) int 
 			}
 		}
 	}
+	// paths: the count of the stream record's paths (ws:paths, #4322)
+	var paths ws.StreamPaths
+	if err == nil {
+		paths, err = ws.ReadStreamPaths(ctx, st.Client())
+	}
 	for _, r := range rows {
-		fmt.Fprintf(out, "%d %s waiting=%d ready=%d working=%d merging=%d landed=%d parked=%d\n",
-			r.Rank, strconv.Quote(r.Stream), r.Waiting, r.Ready, r.Working, r.Merging, r.Landed, r.Parked)
+		fmt.Fprintf(out, "%d %s waiting=%d ready=%d working=%d merging=%d landed=%d parked=%d paths=%d\n",
+			r.Rank, strconv.Quote(r.Stream), r.Waiting, r.Ready, r.Working, r.Merging, r.Landed, r.Parked, len(paths[r.Stream]))
 		for _, p := range plans[r.Stream] {
 			fmt.Fprintf(out, "  %s\n", p.Line())
 			if !*expand {
