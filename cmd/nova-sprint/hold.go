@@ -23,6 +23,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/disposition"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
 func init() {
@@ -51,8 +52,15 @@ func runHold(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 }
 
-func holdClient(addr string) *redis.Client {
-	return redis.NewClient(&redis.Options{Addr: lifeAddr(addr)})
+// holdClient dials the way every store verb does (internal/nsprint/store), so
+// hold authenticates under --seat or the environment's seat (#4330) instead of
+// dialing as the default user.
+func holdClient(addr string) (*redis.Client, error) {
+	st, err := store.Open(context.Background(), lifeAddr(addr))
+	if err != nil {
+		return nil, err
+	}
+	return st.Client(), nil
 }
 
 // holdSplitArgs separates leading positional arguments from flags, so
@@ -105,7 +113,10 @@ func runHoldIngest(ctx context.Context, args []string, out, errOut io.Writer) in
 	if err != nil {
 		return refuse(errOut, "hold ingest", err.Error())
 	}
-	c := holdClient(*addr)
+	c, err := holdClient(*addr)
+	if err != nil {
+		return refuse(errOut, "hold ingest", err.Error())
+	}
 	defer func() { _ = c.Close() }()
 	res, err := disposition.Ingest(ctx, c, disposition.IngestRequest{
 		Sprint: *sprint, Repo: *repo, PR: *pr, URL: *url, Body: string(body), Actor: *as,
@@ -135,7 +146,10 @@ func runHoldRelease(ctx context.Context, args []string, out, errOut io.Writer) i
 		return refuse(errOut, "hold release", err.Error())
 	}
 	holder := strings.TrimPrefix(pos[1], "h:")
-	c := holdClient(*addr)
+	c, err := holdClient(*addr)
+	if err != nil {
+		return refuse(errOut, "hold release", err.Error())
+	}
 	defer func() { _ = c.Close() }()
 	reply, err := disposition.Release(ctx, c, *sprint, repo, n, holder, *as, *head, *evidence)
 	if err != nil {
@@ -163,7 +177,10 @@ func runHoldRoute(ctx context.Context, args []string, out, errOut io.Writer) int
 	if *reclaim < 1 {
 		return refuse(errOut, "hold route", "--reclaim-idle must be at least 1 ms")
 	}
-	c := holdClient(*addr)
+	c, err := holdClient(*addr)
+	if err != nil {
+		return refuse(errOut, "hold route", err.Error())
+	}
 	defer func() { _ = c.Close() }()
 	token, err := leaseToken()
 	if err != nil {
@@ -280,7 +297,10 @@ func runHoldShow(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if err != nil {
 		return refuse(errOut, "hold show", err.Error())
 	}
-	c := holdClient(*addr)
+	c, err := holdClient(*addr)
+	if err != nil {
+		return refuse(errOut, "hold show", err.Error())
+	}
 	defer func() { _ = c.Close() }()
 	short := disposition.ShortRepo(repo)
 	unit, err := c.Get(ctx, fmt.Sprintf("s:%s:prunit:%s:%d", *sprint, short, n)).Result()

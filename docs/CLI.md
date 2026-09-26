@@ -4207,6 +4207,45 @@ nova-sprint table --seat studio --redis 100.115.99.19:6380 --once
 nova-sprint redis-cli --seat studio --redis 100.115.99.19:6380 -- ZCARD sprint:S:cards
 ```
 
+### Seat profiles: `nova-sprint --seat coordinator <verb>` and `nova-sprint redis`
+
+The seat is a fact of the machine, not of the shell (nova-tools #4330). The
+fleet play writes `$XDG_CONFIG_HOME/nova-sprint/seats.tsv` (else
+`~/.config/nova-sprint/seats.tsv`), one tab-separated row per seat: name, redis
+addr, redis user, secret env, store, key. Blank lines and `#` lines are
+skipped; a leading `~/` in store or key is `$HOME`. The key's file name names
+the seat's file in the store (`studio.key` opens `<store>/studio.yaml`).
+
+```
+coordinator	100.115.99.19:6380	coordinator	NOVA_REDIS_COORDINATOR_PASSWORD	~/nova-bench/secrets	~/.config/nova-secrets/studio.key
+```
+
+`nova-sprint --seat coordinator <verb>` (or `NOVA_SPRINT_SEAT=coordinator`,
+which wins over `NOVA_SEAT`) reads the row: the verb logs in as the row's user
+with the password the seat's file holds under the row's secret env, read in
+process through `internal/seatcred` as above (never printed, never in the
+environment). The row's address becomes the default of every verb whose
+`--redis` falls back to `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR` or `NOVA_REDIS`,
+and the address a store dial uses when its verb names none; a `--redis` on the
+line still wins. A seat with no row is the #4052 seat above; when that does not
+open either, the refusal names `seats.tsv` and the row it wants. A malformed
+row is refused before any verb runs, as `seats.tsv:<line>`, exit 2.
+
+`nova-sprint [--seat <name>] redis [--redis <host:port>] [--] <cmd...>` sends
+one raw command over the same dial (no redis-cli, the password never leaves the
+process) and prints the reply as redis-cli does to a pipe: one line per value,
+arrays and maps flattened (map keys sorted), nil an empty line. The receipt is
+one line on stderr, `REDIS seat=<s> user=<u> key=<k> addr=<a> cmd=<c> exit=0`;
+a Redis refusal (NOPERM, WRONGTYPE, NOAUTH, unreachable) prints `REDIS REFUSED
+... why=<error>` there and exits 1; 2 is could not run (no command, no
+address, a seat that cannot be read). The address is the row's, else
+`NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then `NOVA_REDIS`.
+
+```
+nova-sprint --seat coordinator redis ZCARD sprint:S:cards
+NOVA_SPRINT_SEAT=coordinator nova-sprint sprint status
+```
+
 ### `nova-sprint fleet build`
 
 `nova-sprint fleet build [--redis <addr>] [--bench <b>[,<b>...]] [--build-cmd <path>] [--machines <file>] [--dry-run]` is the fleet deploy (nova-tools #3310), with its whole plan in Redis: the `fleet:release` hash holds `version` (`v<x>.<y>.<z>-dev.<sha8>`), `commit` (the full sha of that `<sha8>`), `builder` (the bench that builds), `self` (this machine's bench name), an optional `tools` list (default `nova-sprint,nova-swarm,nova-card,nova-wake`) and `platform:<bench>` (`<goos>-<goarch>`) for every bench and for `self`; the `benches` set names where to install. One pipeline reads both, and a gap is refused (`FLEET BUILD REFUSED: <why> (<remedy>)`, exit 1) before any child starts. The run: the builder builds the release once for the distinct platforms, in one ssh session running the nova-sprint the last fleet build installed there (`ssh -n <builder> .local/bin/nova-sprint fleet build compile --version <v> --commit <sha> --platform <list>`, which skips a platform already built; `--build-cmd <path>` runs that command locally with rowan-tools' space-build argv `--host <builder> --version <v> --commit <sha> --platform <list>` instead), and the `BUILD OK` line carries its last line; every bench, in one ssh session each and all at once, rsyncs its platform's tools from `<builder>:nova-bench/release/<v>/<platform>/` (the builder from its own disk) into `~/.local/bin.new`, renames each into `~/.local/bin` and prints its `nova-sprint version` line; this machine does the same locally. Each target prints `OK|MISMATCH|FAIL <bench> platform=<p>: <detail>`; a target whose version line names the release gets its receipt in one pipeline, `bench:<b>` fields `build`, `build_sha`, `build_at`, and a failed or mismatched one keeps its old receipt. Last, the new nova-sprint here runs `fn deploy --redis <addr>`, so the store's function library is this release's. The final line is `FLEET BUILD OK version=<v> commit=<sha12> benches=<n> fn=ok` (exit 0) or `FLEET BUILD FAIL ... at=build|install|fn ok=<n> failed=<list>` (exit 1). `--dry-run` prints `WOULD BUILD`/`WOULD INSTALL` lines and starts nothing. `nova-sprint fleet build set [--redis <addr>] <key>=<value>...` validates and writes `fleet:release` fields in one HSET. `nova-sprint fleet build compile --version <v> --commit <sha40> [--platform <p>[,<p>...]] [--repo-url <url>] [--dry-run]` is the builder half (nova-tools #4080; internal/nsprint/fleetbuild/compile.go), space-build's steps in Go: a platform already published under `~/nova-bench/release/<v>/<p>/` whose SHA256SUMS verifies prints `OK <p>` and is not rebuilt; the commit and the v* tags are fetched from GitHub into `~/nova-bench/space-build/src/nova-tools` (the mirror only an object alternate); a missing linux-amd64 reference at `~/nova-bench/build/<v>` is built first (`REFERENCE BUILT ...`); every cmd/nova-* is built per platform with `CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=<v>"` under the reference's toolchain, headers checked, the linux-amd64 build held file for file to the reference's sha256 (`IDENTICAL`), and each platform renamed into the release root (`PUBLISHED`). Every go child runs with the build's OWN Go state, `GOMODCACHE=~/nova-bench/space-build/go/mod`, `GOCACHE=~/nova-bench/space-build/go/build` and `GOTOOLCHAIN=<the reference's toolchain>` (a downloaded toolchain lands in that module cache), on top of the sanitized environment, so it never shares a cache or a toolchain extraction with a CI runner on the same machine; `BUILT <v> platforms=<list> tools=<n> toolchain=<go> gomodcache=<dir> gocache=<dir> log=<file>` is the receipt, and the last line is `FLEET COMPILE OK <v> commit=<sha> platforms=<list> built=<list>|none [go=<dir>]` (exit 0) or `FLEET COMPILE REFUSED: <why> (<remedy>)` (exit 1); 2 is usage. The loops that run the old binaries are not restarted by this verb.
