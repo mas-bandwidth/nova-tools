@@ -8,7 +8,9 @@
 // A consumer is bench:<b> or friend:<f>; no verb branches on which.
 //
 //	card deal  --to <consumer> [--n <k>] [--stream <s>] [--ids @file|a,b]
-//	card work  --as <consumer> (--fill | --n <k> | --ids @file|a,b)
+//	card work  --as <consumer> (--fill | --n <k> | --ids @file|a,b) [--model <m>] [--harness <h>] [--child <id>]
+//	           (who works them, onto each copy's record: taskcard.Who; for a
+//	           friend, its beat loop is kept running: ensureFriendBeat)
 //	card end   (--id <copy> | --ids @file|a,b) (--ok [--pr <repo>#<n> --head <sha>] [--done-already <sha>] |
 //	           --score <N>/10 [--gates <g>] [--finding <text>] [--reader <who>] | --fail <why>) [--token <t>] [result flags]
 //	           (a --fail moves the primary to review, #4072; --exit <rc> is its evidence; see review.go)
@@ -91,6 +93,7 @@ type moveCmd struct {
 	redis, actor, to, as, stream, ids, id, why, sha *string
 	pr, head, doneAlready, score, gates, finding    *string
 	reader, fail, add, rm, token, wrapper           *string
+	harness, child                                  *string
 	n                                               *int
 	fill, ok, repair, revoke, brief, each           *bool
 	result                                          map[string]*string
@@ -125,6 +128,8 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	m.rm = fs.String("rm", "", "")
 	m.token = fs.String("token", "", "")
 	m.wrapper = fs.String("wrapper", "", "")
+	m.harness = fs.String("harness", "", "")
+	m.child = fs.String("child", "", "")
 	m.revoke = fs.Bool("revoke", false, "")
 	m.n = fs.Int("n", 0, "")
 	m.fill = fs.Bool("fill", false, "")
@@ -319,12 +324,20 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		if err != nil {
 			return refuse(errOut, "card work", err.Error())
 		}
-		w, err := taskcard.Work(ctx, c, as, *m.actor, *m.n, *m.fill, ids...)
+		who := taskcard.Who{Model: *m.result["model"], Harness: *m.harness, Child: *m.child}
+		if err := who.Check(); err != nil {
+			return refuse(errOut, "card work", err.Error())
+		}
+		w, err := taskcard.WorkAs(ctx, c, as, *m.actor, *m.n, *m.fill, who, ids...)
 		if err != nil {
 			return refused(err, "as="+as.String())
 		}
+		code := 0
+		if !printFriendBeat(ctx, c, as, redisArg(*m.redis), out) {
+			code = 1
+		}
 		fmt.Fprintf(out, "CARD WORK as=%s n=%d free=%d ids=%s ms=%d\n", as, len(w.IDs), w.Free, dash(strings.Join(w.IDs, ",")), ms())
-		return 0
+		return code
 	case "end":
 		r := taskcard.EndRequest{IDs: ids, OK: *m.fail == "", Why: *m.fail, Head: *m.head, DoneAlready: *m.doneAlready,
 			Gates: *m.gates, Finding: *m.finding, Reader: *m.reader, Token: *m.token, By: *m.actor}
