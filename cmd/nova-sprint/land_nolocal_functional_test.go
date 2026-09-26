@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -77,8 +79,11 @@ func TestLandRefusesLocalTestOnCoordinator(t *testing.T) {
 	if n := goTests(); n != 0 {
 		t.Fatalf("%d local go test invocations, want 0", n)
 	}
-	// the three members and the stream's stop, landed by structure with the last (#4318)
-	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":landed").Result(); n != 4 {
-		t.Fatalf("landed %d, want 3 and the stop", n)
+	// the three members landed, by identity; the stream's sentinel waits for
+	// the coordinator's acceptance (#4412)
+	landed := c.ZRange(ctx, "ws:"+lsStream+":landed", 0, -1).Val()
+	sort.Strings(landed)
+	if strings.Join(landed, " ") != "t1 t2 t3" || c.HGet(ctx, "task:"+ws.SentinelID(lsStream), "where").Val() != "waiting" {
+		t.Fatalf("landed %v, want the three members; the sentinel waiting", landed)
 	}
 }
