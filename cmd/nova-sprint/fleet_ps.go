@@ -51,10 +51,10 @@ func parseSince(s string, now time.Time) (time.Time, error) {
 
 func runFleetPSAt(ctx context.Context, args []string, out, errOut io.Writer, clock func() time.Time) int {
 	fs := verbflag.New("fleet ps")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	bench := fs.String("bench", "", "")
-	stray := fs.Bool("stray", false, "")
-	sinceFlag := fs.String("since", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	bench := fs.String("bench", "", "one bench only (default every registered bench)")
+	stray := fs.Bool("stray", false, "print only the undeclared units and the processes older than the last play")
+	sinceFlag := fs.String("since", "", verbflag.HelpSince)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fleet ps", err.Error())
 	}

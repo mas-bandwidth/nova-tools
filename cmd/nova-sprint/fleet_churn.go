@@ -46,9 +46,9 @@ func churnArgv(m fleetbuild.Machine, goos string) ([]string, error) {
 
 func runFleetChurnWith(ctx context.Context, args []string, out, errOut io.Writer, runner fleetbuild.Runner, getenv func(string) string) int {
 	fs := verbflag.New("fleet churn")
-	seconds := fs.Int("seconds", fleet.DefaultWindow, "")
-	machines := fs.String("machines", "", "")
-	onlyList := fs.String("only", "", "")
+	seconds := fs.Int("seconds", fleet.DefaultWindow, "the sample window in seconds")
+	machines := fs.String("machines", "", "the machines registry file (default NOVA_FLEET_MACHINES)")
+	onlyList := fs.String("only", "", "the machines to sample, comma-separated")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fleet churn", err.Error())
 	}
