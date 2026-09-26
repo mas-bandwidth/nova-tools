@@ -28,8 +28,8 @@ func TestLoadPrintsAsPercentOfCores(t *testing.T) {
 	}
 	got := snap.Render(now)
 	for _, want := range []string{
-		"alpha                     |     0 |       0 |   0/0 |    - | up     | 20.0%\n",
-		"beta                      |     0 |       0 |   0/0 |    - | up     | 0.45\n",
+		"alpha                     |     0 |       0 |     0 |    - | up     | 20.0%\n",
+		"beta                      |     0 |       0 |     0 |    - | up     | 0.45\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("load cell: want %q in:\n%s", want, got)
@@ -46,9 +46,9 @@ func TestPitstopOfTheOpenSprintWithoutAFlag(t *testing.T) {
 	now := table.SprintFixtureNow()
 	client, _ := consumerStore(t, [][]string{
 		{"ZADD", "sprint:order", "1", "old", "2", "cur"},
-		{"HSET", "s:old:status", "state", "closed"},
+		{"HSET", "s:old", "status", "closed", "opened_at", "1"},
 		{"HSET", "s:old:pitstop", "by", "rowan"},
-		{"HSET", "s:cur:status", "state", "open"},
+		{"HSET", "s:cur", "status", "open", "opened_at", "2"},
 	})
 	r := table.NewSprintReader(client, table.SprintConfig{})
 	snap, err := r.Read(context.Background(), now)

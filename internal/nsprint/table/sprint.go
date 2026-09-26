@@ -267,7 +267,9 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		sprintOrder = pipe.ZRange(ctx, "sprint:order", 0, -1)
 		states = make([]*redis.StringCmd, len(r.sprints))
 		for i, name := range r.sprints {
-			states[i] = pipe.HGet(ctx, "s:"+name+":status", "state")
+			// the sprint's status field on s:<S> (what sprint open, close
+			// and pitstop.read use): "closed" is out, anything else is open
+			states[i] = pipe.HGet(ctx, "s:"+name, "status")
 		}
 		pitSprint = r.openSprint
 	}
@@ -331,7 +333,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	if sprintOrder != nil {
 		gotSprints = sprintOrder.Val()
 		for i, name := range r.sprints {
-			if i < len(states) && states[i] != nil && states[i].Val() != "closed" && states[i].Val() != "" {
+			if i < len(states) && states[i] != nil && states[i].Err() == nil && states[i].Val() != "closed" {
 				open = name
 			}
 		}
@@ -467,11 +469,11 @@ const consumerRule = "--------------------------+-------+---------+-------+-----
 
 // writeConsumerTable is the one consumer table (#4071): consumer | ready |
 // working | done | ok% | status | load, then a total row whose ok% is
-// derived from the totals. done is one visible cell, <ok>/<ok + fail>
-// (Glenn 2026-09-26 9:12 AM ET: "merge ok/fail columns for consumers into
-// one VISIBLE column (not logical, visible only), that prints this x/y";
-// "do not refactor the internals. this is just for display only"): the
-// ok and fail sets are still read and counted apart. A cell whose ZCARD did
+// derived from the totals. done is ok + fail as one number and ok% is
+// ok over done (Glenn 2026-09-26 9:12 AM ET: the ok and fail columns
+// folded away, "display only"; 9:20 AM: "done x/y is giving me clutter
+// vibes. can we just make it one scalar 'done' again. the ok% is enough to
+// see the rest"): the ok and fail sets are still read and counted apart. A cell whose ZCARD did
 // not come back prints "?" (and so do done and ok% when ok or fail is
 // one), never a false 0.
 func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
@@ -501,7 +503,7 @@ func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
 			}
 			tot[j] += n
 		}
-		done, pct := cell[2]+"/"+strconv.FormatInt(r.Done(), 10), okPct(r.OK, r.Done())
+		done, pct := strconv.FormatInt(r.Done(), 10), okPct(r.OK, r.Done())
 		if r.Unread[2] || r.Unread[3] {
 			done, pct = "?", "?"
 		}
@@ -519,7 +521,7 @@ func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
 			cell[j] = "?"
 		}
 	}
-	done, pct := cell[2]+"/"+strconv.FormatInt(tot[2]+tot[3], 10), okPct(tot[2], tot[2]+tot[3])
+	done, pct := strconv.FormatInt(tot[2]+tot[3], 10), okPct(tot[2], tot[2]+tot[3])
 	if unread[2] || unread[3] {
 		done, pct = "?", "?"
 	}
