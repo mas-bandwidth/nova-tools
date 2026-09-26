@@ -4,11 +4,13 @@ package life_test
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -24,7 +26,15 @@ func TestBeatLoopWithFriendBeat(t *testing.T) {
 	ctx := context.Background()
 	for i, id := range []string{"p1~1", "p2~1", "p3~1"} {
 		client.ZAdd(ctx, "friend:rowan:cards:working", redis.Z{Score: float64(i + 1), Member: id})
-		client.HSet(ctx, "task:"+id, "consumer", "friend:rowan", "where", "working", "lease_until", "1")
+		client.HSet(ctx, "task:"+id, "consumer", "friend:rowan", "where", "working", "lease_until", time.Now().Add(time.Minute).UnixMilli(), "token", id+"-token")
+		host, _ := os.Hostname()
+		sample := life.ProbeProcess(os.Getpid())
+		if sample.Err != nil {
+			t.Fatal(sample.Err)
+		}
+		if err := taskcard.BindOwner(ctx, client, taskcard.Consumer{Kind: "friend", Name: "rowan"}, id, id+"-token", taskcard.ProcessOwner{Host: host, PID: os.Getpid(), Start: sample.Start}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	client.HSet(ctx, "task:p1~1", "model", "opus-5.5")
 	client.HSet(ctx, "task:p3~1", "model", "sonnet-5")
@@ -50,8 +60,8 @@ func TestBeatLoopWithFriendBeat(t *testing.T) {
 	if done, why, err := l.Step(ctx, now.Add(time.Second)); done || err != nil {
 		t.Fatalf("first idle step: done=%v why=%q err=%v", done, why, err)
 	}
-	if client.HExists(ctx, "friend:rowan:beat", "models").Val() {
-		t.Fatal("models kept after the copies left working")
+	if got := client.HGet(ctx, "friend:rowan:beat", "at").Val(); got != beat["at"] {
+		t.Fatal("no-owner loop refreshed presence")
 	}
 	done, why, err := l.Step(ctx, now.Add(2*time.Second))
 	if err != nil || !done || !strings.HasPrefix(why, "IDLE ") || client.Exists(ctx, life.BeatLoopKey("rowan")).Val() != 0 {
