@@ -203,6 +203,59 @@ func Work(ctx context.Context, c redis.Cmdable, as Consumer, by string, n int, f
 	return w, nil
 }
 
+// Who is who works a copy (seat-keeps-beat, 2026-09-26: a working copy
+// named no model, harness or child, so neither the card nor the table could
+// say who held it): the model, the harness it runs in and the child's id,
+// each one word, written onto task:<copy> as model, harness and child by
+// the verb that moved it to working (card work, friend pull). An empty
+// field is not written.
+type Who struct{ Model, Harness, Child string }
+
+// Fields is who as HSET field, value pairs, empty ones left out.
+func (w Who) Fields() []any {
+	var f []any
+	for _, kv := range [][2]string{{"model", w.Model}, {"harness", w.Harness}, {"child", w.Child}} {
+		if v := strings.TrimSpace(kv[1]); v != "" {
+			f = append(f, kv[0], v)
+		}
+	}
+	return f
+}
+
+// Check refuses a field that is not one word.
+func (w Who) Check() error {
+	for _, kv := range [][2]string{{"model", w.Model}, {"harness", w.Harness}, {"child", w.Child}} {
+		if v := strings.TrimSpace(kv[1]); v != "" && strings.ContainsAny(v, " \t\r\n") {
+			return fmt.Errorf("--%s wants one word, got %q", kv[0], kv[1])
+		}
+	}
+	return nil
+}
+
+// QueueWho queues who's HSET onto each copy's record in pipe; nothing for
+// an empty who.
+func QueueWho(ctx context.Context, pipe redis.Pipeliner, ids []string, w Who) {
+	if f := w.Fields(); len(f) > 0 {
+		for _, id := range ids {
+			pipe.HSet(ctx, Key(id), f...)
+		}
+	}
+}
+
+// RecordWho writes who onto each copy's record in one round trip; nothing
+// for an empty who or no id.
+func RecordWho(ctx context.Context, c redis.Cmdable, ids []string, w Who) error {
+	if len(w.Fields()) == 0 || len(ids) == 0 {
+		return nil
+	}
+	pipe := c.Pipeline()
+	QueueWho(ctx, pipe, ids, w)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("record who: %w", err)
+	}
+	return nil
+}
+
 // EndRequest is one card end over IDs (copies), each with the same result.
 // OK with PR (and Head, which the PR record pr:<name>:<n> must hold, on the
 // card's base) returns a work copy's primary to working to wait for CI at

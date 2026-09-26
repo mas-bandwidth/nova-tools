@@ -56,6 +56,10 @@ type CopyCard struct {
 	// carries once its PR is open (TM.CARRY takes it to the copy): what a
 	// fix copy commits on and the wrapper pushes to.
 	Branch string
+	// Model, Harness and Child are who works the copy (taskcard.Who: what
+	// card work and friend pull record); the card's WORKER line (not WHO,
+	// which is the primary's who-may-do-it header, cut.go cutKeys).
+	Model, Harness, Child string
 }
 
 // CopyCardFrom reads a copy's record (HGETALL task:<copy>) as a CopyCard.
@@ -64,7 +68,19 @@ func CopyCardFrom(id string, rec map[string]string) CopyCard {
 		PR: rec["pr"], Head: rec["head"], Base: rec["base"], BaseSHA: rec["base_sha"], Paths: rec["paths"],
 		DoneWhen: rec["done_when"], Title: rec["title"], Origin: rec["origin"], Stream: rec["stream"],
 		Finding: rec["finding"], Route: rec["route"], Consumer: rec["consumer"], Review: rec["review"], Body: rec["body"],
-		Branch: rec["branch"]}
+		Branch: rec["branch"], Model: rec["model"], Harness: rec["harness"], Child: rec["child"]}
+}
+
+// WorkerLine is the copy's WORKER value: model=<m> harness=<h> child=<c>, each
+// only when recorded; "" when none is.
+func (c CopyCard) WorkerLine() string {
+	var parts []string
+	for _, kv := range [][2]string{{"model", c.Model}, {"harness", c.Harness}, {"child", c.Child}} {
+		if v := oneLine(kv[1]); v != "" {
+			parts = append(parts, kv[0]+"="+v)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // ScoreLine is the read copy's one typed line, RESULT.md line 2 (#4270):
@@ -337,6 +353,7 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 	if c.Leg == "fix" {
 		line("BRANCH", c.Branch)
 	}
+	line("WORKER", c.WorkerLine())
 	b.WriteString("\n")
 	b.WriteString(body)
 	if r := oneLine(c.Review); r != "" {

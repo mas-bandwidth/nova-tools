@@ -7,11 +7,13 @@
 // Its own session, on any machine, runs these three verbs, each one the
 // copy model's own move and nothing beside it:
 //
-//	friend pull --as friend:<f> [--n <k>] [--dir <d>]
-//	    card work --as friend:<f> (--fill, or --n k) in one call, then each
-//	    copy's brief (card.RenderCopy: the person's brief for a friend)
+//	friend pull --as friend:<f> [--n <k>] [--dir <d>] [--model <m>] [--harness <h>] [--child <id>]
+//	    card work --as friend:<f> (--fill, or --n k) in one call, then who
+//	    works them (model, harness, child: taskcard.Who) onto each copy and
+//	    each copy's brief (card.RenderCopy: the person's brief for a friend)
 //	    written to <d>/<copy label>.card; one PULLED line per copy naming
-//	    the path, the leg and the token, then the receipt.
+//	    the path, the leg and the token, then the friend's beat loop
+//	    (ensureFriendBeat: one BEATLOOP line) and the receipt.
 //	friend done --as friend:<f> --id <copy> (--ok [--pr <repo>#<n> --head <sha> [--branch <b>]] [--done-already <sha>]
 //	    | --score N/10 [--gates <g>] [--finding <text>] | --fail <why>) [--token <t>]
 //	    card end --id <copy> with the same evidence, refused (NOTMINE) for a
@@ -19,13 +21,18 @@
 //	    (card.RecordPR, what the wrapper's harvest writes) so the end is
 //	    not refused NOPR; --branch is the PR's branch when it is not the
 //	    brief's (the copy's branch, else the wrapper's name for it).
-//	friend beat --as friend:<f> [--host <h>] [--once]
+//	friend beat --as friend:<f> [--host <h>] [--once | --loop [--lease <token>]]
 //	    the zero-token tick, one round trip: the friend's beat (host, at,
 //	    load1, ncpu, cpu of the machine this session runs on: its status
 //	    and load on the consumer table, the deal duty's liveness) and the
 //	    lease of every copy it holds (ns_cm_beat over its working set in
 //	    the same pipeline). Without --once it ticks each second until
-//	    interrupted; a refused tick backs off and says why.
+//	    interrupted; a refused tick backs off and says why. --loop is the
+//	    friend's one beat loop (life.BeatLoop): it holds
+//	    friend:<f>:beatloop (--lease: the token the starting verb claimed
+//	    it with) and exits when the friend holds no working copy for two
+//	    ticks; friend pull and card work --as friend:<f> start it in its
+//	    own session (the refresh start) when no loop holds the lease.
 //
 // The retired `friend serve` (#4327) dispatched a friend's copies through
 // the bench wrapper on the Studio; nothing here launches a model.
@@ -90,7 +97,14 @@ func runFriendPull(ctx context.Context, args []string, out, errOut io.Writer) in
 	as := fs.String("as", "", "")
 	n := fs.Int("n", 0, "")
 	dir := fs.String("dir", "", "")
+	model := fs.String("model", "", "")
+	harness := fs.String("harness", "", "")
+	child := fs.String("child", "", "")
 	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	who := taskcard.Who{Model: *model, Harness: *harness, Child: *child}
+	if err := who.Check(); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
 	if fs.NArg() != 0 {
@@ -134,6 +148,9 @@ func runFriendPull(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, verb, err.Error())
 	}
 	pipe := c.Pipeline()
+	// who works the copies goes on their records in the same round trip,
+	// before the read, so each brief carries its WORKER line
+	taskcard.QueueWho(ctx, pipe, w.IDs, who)
 	recs := make([]*redis.MapStringStringCmd, len(w.IDs))
 	for i, id := range w.IDs {
 		recs[i] = pipe.HGetAll(ctx, taskcard.Key(id))
@@ -164,8 +181,73 @@ func runFriendPull(ctx context.Context, args []string, out, errOut io.Writer) in
 		pulled++
 		fmt.Fprintf(out, "PULLED %s leg=%s token=%s card=%s\n", id, dash(rec["leg"]), w.Tokens[i], path)
 	}
+	if line, err := ensureFriendBeat(ctx, c, k, redisArg(*redisAddr), friendBeatStart, time.Now()); err != nil {
+		fmt.Fprintf(out, "BEATLOOP REFUSED as=%s why=%s\n", k, quoteField(err.Error()))
+		code = 1
+	} else if line != "" {
+		fmt.Fprintln(out, line)
+	}
 	fmt.Fprintf(out, "FRIEND PULL as=%s n=%d free=%d dir=%s ms=%d\n", k, pulled, w.Free, *dir, ms())
 	return code
+}
+
+// friendBeatStart starts a friend's beat loop in its own session; the
+// package's tests replace it (their binary is not nova-sprint).
+var friendBeatStart = startOwnSession
+
+// redisArg is the --redis a started loop is given: the verb's own when it
+// is not the default, so the loop reads the store the verb wrote; else
+// none, and the loop resolves the same default from the same environment.
+func redisArg(flag string) string {
+	if flag == redisDefault() {
+		return ""
+	}
+	return flag
+}
+
+// ensureFriendBeat keeps a friend that holds working copies beating: when
+// k holds any copy in working and no loop holds friend:<f>:beatloop, it
+// claims the lease (SET NX PX) and starts `nova-sprint friend beat --as
+// friend:<f> --loop --lease <token>` through start, which adopts it; a
+// start that fails releases the claim and is the error. The line says
+// what it found: started (with the pid) or running; "" when k holds none.
+// The verb calls it after its move, so a loop that saw no copy and let go
+// of the lease is replaced (life.BeatLoop.Step).
+func ensureFriendBeat(ctx context.Context, c redis.Cmdable, k taskcard.Consumer, redisFlag string, start func([]string) (int, error), now time.Time) (string, error) {
+	if k.Kind != "friend" {
+		return "", nil
+	}
+	n, err := c.ZCard(ctx, k.Key("working")).Result()
+	if err != nil {
+		return "", fmt.Errorf("zcard %s: %w", k.Key("working"), err)
+	}
+	if n == 0 {
+		return "", nil
+	}
+	host, _ := os.Hostname()
+	token := fmt.Sprintf("%s:%d:%d", host, os.Getpid(), now.UnixNano())
+	took, err := life.ClaimBeatLoop(ctx, c, k.Name, token)
+	if err != nil {
+		return "", err
+	}
+	if !took {
+		return fmt.Sprintf("BEATLOOP as=%s running working=%d", k, n), nil
+	}
+	exe, err := os.Executable()
+	if err == nil {
+		argv := []string{exe, "friend", "beat", "--as", k.String(), "--loop", "--lease", token}
+		if redisFlag != "" {
+			argv = append(argv, "--redis", redisFlag)
+		}
+		var pid int
+		if pid, err = start(argv); err == nil {
+			return fmt.Sprintf("BEATLOOP as=%s started pid=%d working=%d", k, pid, n), nil
+		}
+	}
+	if relErr := life.ReleaseBeatLoop(ctx, c, k.Name, token); relErr != nil {
+		return "", fmt.Errorf("start beat loop: %v; %v", err, relErr)
+	}
+	return "", fmt.Errorf("start beat loop: %w", err)
 }
 
 func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -306,11 +388,19 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 	as := fs.String("as", "", "")
 	host := fs.String("host", "", "")
 	once := fs.Bool("once", false, "")
+	loop := fs.Bool("loop", false, "")
+	lease := fs.String("lease", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
 	if fs.NArg() != 0 {
 		return refuse(errOut, verb, "takes flags, not positional arguments")
+	}
+	if *once && *loop {
+		return refuse(errOut, verb, "--once and --loop are two ways; take one")
+	}
+	if *lease != "" && !*loop {
+		return refuse(errOut, verb, "--lease goes with --loop")
 	}
 	k, err := friendConsumer(*as)
 	if err != nil {
@@ -329,6 +419,9 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, verb, err.Error())
 	}
 	defer func() { _ = st.Close() }()
+	if *loop {
+		return runFriendBeatLoop(ctx, st, k, *host, *lease, out, errOut)
+	}
 	res, err := friendBeatOnce(ctx, st, k, *host, time.Now())
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -361,6 +454,66 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 				continue
 			}
 			backoff, next = 0, time.Time{}
+		}
+	}
+}
+
+// runFriendBeatLoop is friend beat --loop: the friend's one beat loop. It
+// holds friend:<f>:beatloop (token: the starting verb's claim, else its own
+// claim, and a loop already holding it is left alone) and steps each
+// second (life.BeatLoop.Step: renew the lease, beat, count idle ticks)
+// until the friend holds no working copy for two ticks, another loop holds
+// the lease, or a signal (which releases the lease).
+func runFriendBeatLoop(ctx context.Context, st *store.Store, k taskcard.Consumer, host, token string, out, errOut io.Writer) int {
+	c := st.Client()
+	if token == "" {
+		token = fmt.Sprintf("%s:%d:%d", host, os.Getpid(), time.Now().UnixNano())
+		took, err := life.ClaimBeatLoop(ctx, c, k.Name, token)
+		if err != nil {
+			return refuse(errOut, "friend beat", err.Error())
+		}
+		if !took {
+			fmt.Fprintf(out, "FRIEND BEAT LOOP as=%s held key=%s\n", k, life.BeatLoopKey(k.Name))
+			return 0
+		}
+	}
+	l := &life.BeatLoop{Client: c, Friend: k.Name, Token: token,
+		Tick: func(ctx context.Context, now time.Time) (int, error) {
+			res, err := friendBeatOnce(ctx, st, k, host, now)
+			return res.Working, err
+		}}
+	fmt.Fprintf(out, "FRIEND BEAT LOOP as=%s host=%s key=%s pid=%d\n", k, host, life.BeatLoopKey(k.Name), os.Getpid())
+	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ticker := time.NewTicker(life.BeatInterval)
+	defer ticker.Stop()
+	var backoff time.Duration
+	var next time.Time
+	now := time.Now()
+	for {
+		if !now.Before(next) {
+			done, why, err := l.Step(signalCtx, now)
+			switch {
+			case err != nil && signalCtx.Err() == nil:
+				backoff = benchBeatBackoff(backoff, life.BeatInterval)
+				next = now.Add(backoff)
+				fmt.Fprintf(errOut, "friend %s beat loop: %v; retry in %s\n", k.Name, err, backoff)
+			case done:
+				fmt.Fprintf(out, "FRIEND BEAT LOOP END as=%s why=%s\n", k, quoteField(why))
+				return 0
+			default:
+				backoff, next = 0, time.Time{}
+			}
+		}
+		select {
+		case <-signalCtx.Done():
+			// a stopped loop lets go at once, so the next verb starts one
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			_ = life.ReleaseBeatLoop(rctx, c, k.Name, token)
+			cancel()
+			fmt.Fprintf(out, "FRIEND BEAT LOOP END as=%s why=signal\n", k)
+			return 0
+		case now = <-ticker.C:
 		}
 	}
 }
