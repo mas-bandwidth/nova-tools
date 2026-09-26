@@ -54,7 +54,7 @@ func TestGrammarTheColdSessionLinesReachTheStore(t *testing.T) {
 		// (line.go, read.go, spec.go, land_writer.go) now read the one
 		// resolver, so NOVA_SPRINT_REDIS alone reaches the store
 		{"line list --repo nova-tools --n 4373", ""},
-		{"read digest --repo nova-tools --n 4371", ""},
+		{"read brief --repo nova-tools --n 4371", ""},
 		{"spec list", ""},
 		{"land writer --repo nova-tools --base dev", ""},
 	} {
