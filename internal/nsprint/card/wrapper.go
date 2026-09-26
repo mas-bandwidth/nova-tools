@@ -1150,17 +1150,15 @@ func noteWrapperLine(results, line string) error {
 	return f.Close()
 }
 
+// resultLine is line 1 of the job's RESULT.md, the card line the model
+// wrote back ("" without one), read by the one typed parser: a scanner here
+// made every value under it look parsed, and finish's DONE compares with it.
 func resultLine(results string) string {
-	f, err := os.Open(filepath.Join(results, "RESULT.md"))
+	raw, err := os.ReadFile(filepath.Join(results, "RESULT.md"))
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	if sc.Scan() {
-		return sc.Text()
-	}
-	return ""
+	return typedrec.SplitModel(raw, "").Line1
 }
 
 func ledgerCode(code int, err error) int {

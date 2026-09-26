@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -228,29 +229,19 @@ func (r *PathsRefusal) Receipt() string {
 
 // ParseRefusal reads SP.gate's typed refusal (02_card_move.lua), the reply
 // of ns_card_push or the why of a REFUSED task move, push or unpark:
-// "PATHS overlap paths=<a,b> stream=<s>[|<s2>...]" or "PATHS unbuilt
-// stream=<s>" (the streams last: a name may hold a space, never a '|'). ok
-// is false for any other why.
+// "PATHS overlap paths=<a,b> stream=<s>[|<s2>...]", "PATHS unbuilt
+// stream=<s>" or "PATHS notopen stream=<s>", through the one typed parser
+// (typedrec.ParsePathsRefusal). ok is false for any other why.
 func ParseRefusal(why string) (*PathsRefusal, bool) {
-	if rest, ok := strings.CutPrefix(why, "PATHS unbuilt stream="); ok && rest != "" {
-		return &PathsRefusal{Stream: rest, Unbuilt: true}, true
-	}
-	if rest, ok := strings.CutPrefix(why, "PATHS notopen stream="); ok && rest != "" {
-		return &PathsRefusal{Stream: rest, NotOpen: true}, true
-	}
-	rest, ok := strings.CutPrefix(why, "PATHS overlap paths=")
+	r, ok := typedrec.ParsePathsRefusal(why)
 	if !ok {
 		return nil, false
 	}
-	csv, stream, ok := strings.Cut(rest, " stream=")
-	if !ok || csv == "" || stream == "" {
-		return nil, false
+	no := &PathsRefusal{Stream: r.Stream, Also: r.Also, Unbuilt: r.Unbuilt, NotOpen: r.NotOpen}
+	if r.Paths != "" {
+		no.Paths = ParsePaths(r.Paths)
 	}
-	streams := strings.Split(stream, "|")
-	if streams[0] == "" {
-		return nil, false
-	}
-	return &PathsRefusal{Stream: streams[0], Also: streams[1:], Paths: ParsePaths(csv)}, true
+	return no, true
 }
 
 func (r *PathsRefusal) Error() string { return r.Receipt() }
