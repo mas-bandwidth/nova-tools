@@ -21,7 +21,7 @@ import (
 // route is refused at render.
 func cardRenderFromIssuePush(t *testing.T) {
 	t.Helper()
-	newSeat(t)
+	seat := newSeat(t)
 	t.Setenv("FRIEND_QUEUE_SPRINT", seatSprint)
 	t.Setenv("NOVA_FRIEND", "")
 	mirror := t.TempDir()
@@ -80,11 +80,16 @@ func cardRenderFromIssuePush(t *testing.T) {
 	if err := os.WriteFile(list, []byte("STREAM: swarm: cards\nPATHS: internal/x/x.go\n"+inv+"DONE-WHEN: x passes. y passes."), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ = runTaskCLI("push", "--actor", "rowan", "--id", "l1", "--waiting", "--ref", "mas-bandwidth/nova-tools#1",
+	keys := seat.client.DBSize(context.Background()).Val()
+	code, out, errOut = runTaskCLI("push", "--actor", "rowan", "--id", "l1", "--waiting", "--ref", "mas-bandwidth/nova-tools#1",
 		"--issue", list, "--route", "pro", "--base", "dev", "--base-sha", sha)
 	lint := `REFUSED card-lint rule=done-when-sentences line="DONE-WHEN: x passes. y passes." remedy="cut as a parent with children: card cut --parent" card="l1"` + "\n"
-	if code != 1 || !strings.HasPrefix(out, `TASK push REFUSED id=l1 why="card-lint done-when-sentences" ms=`) || !strings.HasSuffix(out, "\n"+lint) {
-		t.Errorf("push of a two-sentence DONE-WHEN = %d %q", code, out)
+	// the receipt on stdout, the card-lint lines on stderr (as card push)
+	if code != 2 || !strings.HasPrefix(out, `TASK push REFUSED id=l1 why="card-lint done-when-sentences" ms=`) || strings.Count(out, "\n") != 1 || errOut != lint {
+		t.Errorf("push of a two-sentence DONE-WHEN = %d stdout %q stderr %q", code, out, errOut)
+	}
+	if n := seat.client.DBSize(context.Background()).Val(); n != keys {
+		t.Errorf("a card-lint refusal changed the key count %d -> %d", keys, n)
 	}
 	if code, out, _ := render("--id", "l1"); code != 1 || !strings.Contains(out, "NOTASK") {
 		t.Errorf("a refused push left a record: render = %d %q", code, out)
@@ -94,7 +99,7 @@ func cardRenderFromIssuePush(t *testing.T) {
 	// A plan is no swarm card (its children are), so it rides route friend.
 	plan := filepath.Join(dir, "plan.md")
 	planText := "KIND: plan\nSTREAM: swarm: cards\nPATHS: internal/a/a.go internal/b/ internal/c/ internal/d/\n" +
-		"INVARIANT: x holds everywhere.\nDONE-WHEN: the children land. The stitch lands."
+		"INVARIANT: x holds everywhere.\nDONE-WHEN: the children land. The stitch lands.\n\nBUILD:\na. the child card-a\nb. the child card-b\n"
 	if err := os.WriteFile(plan, []byte(planText), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +113,32 @@ func cardRenderFromIssuePush(t *testing.T) {
 	if err := os.WriteFile(plan, []byte(strings.Replace(planText, "KIND: plan", "KIND: fix", 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if code, out, _ := pushPlan("pl2"); code != 1 || !strings.HasPrefix(out, `TASK push REFUSED id=pl2 why="card-lint done-when-sentences,class-test-missing,paths-packages" ms=`) {
+	if code, out, _ := pushPlan("pl2"); code != 2 || !strings.HasPrefix(out, `TASK push REFUSED id=pl2 why="card-lint done-when-sentences,class-test-missing,paths-packages,build-list" ms=`) {
 		t.Errorf("push of the plan card as KIND: fix = %d %q", code, out)
+	}
+	// a hand-written KIND: stitch is linted like any card (#4396): only card
+	// cut --parent's own stitch row goes unlinted, by its writer.
+	stitchText := "KIND: stitch\nSTREAM: swarm: cards\nPATHS: internal/a/a.go internal/b/ internal/c/ internal/d/ internal/e/\n" +
+		"DONE-WHEN: the children land.\n\nBuild issue #4352, as written.\n\nBUILD:\n- the parser\n- the linter\n"
+	if err := os.WriteFile(plan, []byte(stitchText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	keys = seat.client.DBSize(context.Background()).Val()
+	if code, out, errOut := pushPlan("st1"); code != 2 ||
+		!strings.HasPrefix(out, `TASK push REFUSED id=st1 why="card-lint invariant-missing,class-test-missing,paths-packages,build-issue,build-list" ms=`) ||
+		strings.Count(errOut, "REFUSED card-lint rule=") != 5 {
+		t.Errorf("push of a hand-written KIND: stitch = %d stdout %q stderr %q", code, out, errOut)
+	}
+	if n := seat.client.DBSize(context.Background()).Val(); n != keys {
+		t.Errorf("a refused stitch push changed the key count %d -> %d", keys, n)
+	}
+	// a plan with no children under BUILD: is refused plan-children
+	if err := os.WriteFile(plan, []byte(strings.Replace(planText, "\n\nBUILD:\na. the child card-a\nb. the child card-b\n", "", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := pushPlan("pl3"); code != 2 || !strings.HasPrefix(out, `TASK push REFUSED id=pl3 why="card-lint plan-children" ms=`) ||
+		!strings.HasPrefix(errOut, `REFUSED card-lint rule=plan-children line="KIND: plan" `) {
+		t.Errorf("push of a plan with no children = %d stdout %q stderr %q", code, out, errOut)
 	}
 	if code, out, _ := push("fr1", "friend"); code != 0 {
 		t.Fatalf("push friend = %d %q", code, out)

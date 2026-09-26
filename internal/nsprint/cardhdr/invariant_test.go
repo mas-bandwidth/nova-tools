@@ -66,6 +66,7 @@ func TestLintOneInvariantRefusesEachRule(t *testing.T) {
 		{RulePlatforms, cardWith("PLATFORMS:", "PLATFORMS: darwin,windows"), "PLATFORMS: darwin,windows", remedyPlatforms},
 		{RuleBuildIssue, cardWith("BUILD:", "Build issue #4396 as written."), "Build issue #4396 as written.", RemedyParent},
 		{RuleBuildList, cardWith("BUILD:", "BUILD:\n- the parser\n- the linter"), "BUILD:", RemedyParent},
+		{RulePlanChildren, cardWith("KIND:", "KIND: plan"), "KIND: plan", remedyPlanChildren},
 	}
 	if len(rows) != len(rules) {
 		t.Fatalf("%d rows for %d rules: every rule has its own row", len(rows), len(rules))
@@ -112,42 +113,51 @@ func TestLintOneInvariantReadsIssueText(t *testing.T) {
 	}
 }
 
-// TestLintOneInvariantExemptsPlanAndStitch: a KIND plan (taskcard.KindPlan,
-// #4388) carries no DONE-WHEN rule, no CLASS-TEST and PATHS over any number of
-// packages, since its children carry them; a KIND stitch (the row card cut
-// --parent writes: the plan's DONE-WHEN, the children's PATHS, a generated
-// body) is read by no rule. The same cards under any other KIND are refused.
-func TestLintOneInvariantExemptsPlanAndStitch(t *testing.T) {
+// TestLintOneInvariantExemptsPlanNotStitch: a KIND plan (taskcard.KindPlan,
+// #4388) carries no DONE-WHEN rule, no CLASS-TEST, PATHS over any number of
+// packages and a BUILD: list of its children, since its children carry them.
+// A KIND stitch header grants nothing: a hand-written stitch (a pointer to an
+// issue, five packages, a BUILD: list) is refused like a KIND fix, since only
+// card cut --parent's own stitch row goes unlinted, and that by its writer.
+func TestLintOneInvariantExemptsPlanNotStitch(t *testing.T) {
 	t.Parallel()
 	plan := cardWith("KIND:", "KIND: plan")
 	plan = strings.Replace(plan, goodCardLines[4]+"\n", "", 1) // no CLASS-TEST
 	plan = strings.Replace(plan, goodCardLines[6]+"\n", "", 1) // no DONE-WHEN
 	plan = strings.Replace(plan, goodCardLines[3], "PATHS: a/b/x.go, a/c/, a/d/, a/e/", 1)
+	plan = strings.Replace(plan, goodCardLines[8], "BUILD:\n1. the child card-lint-a\n2. the child card-lint-b", 1)
 	if got := LintOneInvariant(Card{Text: plan}); got != nil {
-		t.Errorf("KIND: plan (no DONE-WHEN, no CLASS-TEST, four packages) is refused:\n%v", got)
+		t.Errorf("KIND: plan (no DONE-WHEN, no CLASS-TEST, four packages, a BUILD: list of its children) is refused:\n%v", got)
 	}
 	if got := LintOneInvariant(Card{Text: strings.Replace(plan, "KIND: plan", "KIND: plan\nDONE-WHEN: the children land. The stitch lands.", 1)}); got != nil {
 		t.Errorf("KIND: plan with a two-sentence DONE-WHEN is refused:\n%v", got)
 	}
+	// a plan with no children (no BUILD: item) is refused plan-children
+	for _, build := range []string{"BUILD: the children, later.", ""} {
+		noKids := strings.Replace(plan, "BUILD:\n1. the child card-lint-a\n2. the child card-lint-b", build, 1)
+		if got := LintOneInvariant(Card{Text: noKids}); got.Rules() != RulePlanChildren || got[0].Line != "KIND: plan" {
+			t.Errorf("KIND: plan with BUILD %q: refusals %v, want plan-children on the KIND line", build, got)
+		}
+	}
 	for _, kind := range []string{"KIND: fix", "KIND: parent"} {
-		want := RuleDoneWhenMissing + "," + RuleClassTestMissing + "," + RulePathsPackages
+		want := RuleDoneWhenMissing + "," + RuleClassTestMissing + "," + RulePathsPackages + "," + RuleBuildList
 		if got := LintOneInvariant(Card{Text: strings.Replace(plan, "KIND: plan", kind, 1)}); got.Rules() != want {
 			t.Errorf("the plan card as %s: rules %q, want %s", kind, got.Rules(), want)
 		}
 	}
-	stitch := "KIND: stitch\nPATHS: a/b/x.go a/c/ a/d/ a/e/\nDONE-WHEN: the children land. The stitch lands.\n\n" +
-		"Stitch of plan p: read every child's PR.\n\nBUILD:\n- child one\n- child two\nBuild issue #1 as written.\n"
-	if got := LintOneInvariant(Card{Text: stitch}); got != nil {
-		t.Errorf("KIND: stitch is refused:\n%v", got)
-	}
+	stitch := "KIND: stitch\nPATHS: a/b/x.go a/c/ a/d/ a/e/ a/f/\nDONE-WHEN: the children land. The stitch lands.\n\n" +
+		"Build issue #4352, as written.\n\nBUILD:\n- child one\n- child two\n"
 	want := "invariant-missing,done-when-sentences,class-test-missing,paths-packages,build-issue,build-list"
-	if got := LintOneInvariant(Card{Text: strings.Replace(stitch, "KIND: stitch", "KIND: fix", 1)}); got.Rules() != want {
-		t.Errorf("the stitch card as KIND: fix: rules %q, want %s", got.Rules(), want)
+	for _, kind := range []string{"KIND: stitch", "KIND: fix"} {
+		if got := LintOneInvariant(Card{Text: strings.Replace(stitch, "KIND: stitch", kind, 1)}); got.Rules() != want {
+			t.Errorf("the hand-written stitch as %s: rules %q, want %s", kind, got.Rules(), want)
+		}
 	}
 }
 
 // TestLintOneInvariantReadsLetteredBuildList: a BUILD: list lettered A. B.
-// (the #4352 A-F shape) or A) B) is a list, refused build-list like - and 1.
+// (the #4352 A-F shape), a. b., a) b), (a) (b), numbered (1) (2) or roman
+// i. ii., (i) (ii), I. II. is a list, refused build-list like - and 1.
 func TestLintOneInvariantReadsLetteredBuildList(t *testing.T) {
 	t.Parallel()
 	for name, list := range map[string]string{
@@ -155,12 +165,21 @@ func TestLintOneInvariantReadsLetteredBuildList(t *testing.T) {
 		"A)":   "BUILD:\nA) the parser\nB) the linter",
 		"dash": "BUILD:\n- the parser\n- the linter",
 		"1.":   "BUILD:\n1. the parser\n2. the linter",
+		"(1)":  "BUILD:\n(1) the parser\n(2) the linter",
+		"a.":   "BUILD:\na. the parser.\nb. the linter.",
+		"a)":   "BUILD:\na) the parser\nb) the linter",
+		"(a)":  "BUILD:\n(a) the parser\n(b) the linter",
+		"i.":   "BUILD:\ni. the parser\nii. the linter\niii. the docs",
+		"(i)":  "BUILD:\n(i) the parser\n(ii) the linter",
+		"I.":   "BUILD:\nI. the parser\nII. the linter",
+		"1)":   "BUILD:\n1) the parser\n2) the linter",
 	} {
 		if got := LintOneInvariant(Card{Text: cardWith("BUILD:", list)}); got.Rules() != RuleBuildList {
 			t.Errorf("%s: rules %q, want build-list", name, got.Rules())
 		}
 	}
-	for _, one := range []string{"BUILD:\nA. the parser.", "BUILD: the parser.\nA good test names the rule."} {
+	for _, one := range []string{"BUILD:\nA. the parser.", "BUILD: the parser.\nA good test names the rule.",
+		"BUILD:\na. the parser.", "BUILD:\n(i) the parser.\ne.g. the linter reads it.\nivory is no numeral."} {
 		if got := LintOneInvariant(Card{Text: cardWith("BUILD:", one)}); got != nil {
 			t.Errorf("%q: refused %q, want accepted (one item)", one, got.Rules())
 		}
@@ -189,6 +208,22 @@ func TestLintOneInvariantReadsBuildIssueForms(t *testing.T) {
 	}
 }
 
+// TestLintOneInvariantReadsAbbreviationsAsOneSentence: e.g., i.e., vs. and
+// etc. inside a DONE-WHEN or an INVARIANT end no sentence, so the line is
+// one sentence and accepted; a real second sentence after one is refused.
+func TestLintOneInvariantReadsAbbreviationsAsOneSentence(t *testing.T) {
+	t.Parallel()
+	done := "DONE-WHEN: the class test passes on each platform, e.g. darwin, i.e. the Studio, vs. linux, etc. in under 2 s."
+	inv := "INVARIANT: every push path (e.g. card push, i.e. the one writer, vs. task push, etc.) lints the card."
+	card := strings.Replace(cardWith("DONE-WHEN:", done), goodCardLines[2], inv, 1)
+	if got := LintOneInvariant(Card{Text: card}); got != nil {
+		t.Errorf("abbreviations counted as sentence ends:\n%v", got)
+	}
+	if got := LintOneInvariant(Card{Text: cardWith("DONE-WHEN:", done+" Then it lands.")}); got.Rules() != RuleDoneWhenSentences {
+		t.Errorf("a second sentence after the abbreviations: rules %q, want done-when-sentences", got.Rules())
+	}
+}
+
 // TestSentences pins the count. A boundary inside a `code span` is opaque
 // (the span is one sentence's words); a code span that is itself a sentence
 // after a prose sentence is a second sentence.
@@ -210,6 +245,13 @@ func TestSentences(t *testing.T) {
 		// the boundary is inside the span: one
 		"exits 1 when `go test ./x. passes` fails.": 1,
 		"`go test ./x -run TestA passes.`":          1,
+		// e.g., i.e., vs. and etc. end no sentence
+		"a card, e.g. this one, holds.":        1,
+		"one package (i.e. cardhdr) holds.":    1,
+		"push vs. cut: both lint.":             1,
+		"PATHS, CLASS-TEST, etc. are read.":    1,
+		"E.g. a plan holds. Its children land": 2,
+		"lists a, b, etc.":                     1,
 	} {
 		if got := Sentences(s); got != want {
 			t.Errorf("Sentences(%q) = %d, want %d", s, got, want)

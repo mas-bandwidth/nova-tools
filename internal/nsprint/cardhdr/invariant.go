@@ -11,8 +11,12 @@ package cardhdr
 // any, PLATFORMS of darwin and linux only; a body that says "build issue #N
 // as written", or a BUILD: section that lists two or more items, is refused.
 // Each refusal is one line naming the rule, the line and the remedy. A KIND
-// plan skips the DONE-WHEN, CLASS-TEST and PATHS rules and a KIND stitch
-// every rule (KindPlan, KindStitch).
+// plan skips the DONE-WHEN, CLASS-TEST, PATHS and BUILD-list rules (its
+// children carry the test and the packages) and must list its children under
+// BUILD: (plan-children: a plan with none is refused).
+// A KIND stitch is linted like any card: the one stitch no rule reads is the
+// row card cut --parent generates, which that writer never lints (its row
+// check returns before the lint); a KIND: stitch header is no exemption.
 
 import (
 	"fmt"
@@ -36,10 +40,13 @@ const (
 
 // The hierarchy's KINDs (#4388; taskcard.KindPlan and taskcard.KindStitch
 // are these constants). A plan is a card cut as a parent with children: its
-// children carry the DONE-WHEN, the CLASS-TEST and the packages, so a plan is
-// exempt from those rules. A stitch is the card card cut --parent writes for
-// the plan's second phase: its DONE-WHEN is the plan's, its PATHS the union
-// of the children's and its body generated, so no rule reads it.
+// children carry the DONE-WHEN, the CLASS-TEST and the packages, and its
+// BUILD: lists them, so a plan is exempt from the done-when-*, class-test-*,
+// paths-packages and build-list rules, and refused plan-children when its
+// BUILD: lists no child. A stitch is the card card cut --parent
+// writes for the plan's second phase; the header grants it nothing, since any
+// author can type KIND: stitch (card cut --parent passes the exemption by not
+// linting the stitch row it generates).
 const (
 	KindPlan   = "plan"
 	KindStitch = "stitch"
@@ -66,6 +73,7 @@ const (
 	RulePlatforms          = "platforms"
 	RuleBuildIssue         = "build-issue"
 	RuleBuildList          = "build-list"
+	RulePlanChildren       = "plan-children"
 )
 
 // Refusal is one broken rule: its name, the offending line as written ("" when
@@ -113,9 +121,24 @@ type Card struct {
 	Files []string
 }
 
+// abbreviations are the words whose period ends no sentence (lower case,
+// without the last period): "e.g. x", "i.e. x", "a vs. b", "a, b, etc. c".
+var abbreviations = map[string]bool{"e.g": true, "i.e": true, "vs": true, "etc": true}
+
+// abbreviationAt reports whether the period at s[i] closes an abbreviation:
+// the word before it (back to a space or an opening bracket or quote) is one.
+func abbreviationAt(s string, i int) bool {
+	j := i
+	for j > 0 && !strings.ContainsRune(" \t\n([{\"'", rune(s[j-1])) {
+		j--
+	}
+	return abbreviations[strings.ToLower(s[j:i])]
+}
+
 // Sentences counts the sentences in s: a sentence ends in . ! or ? followed
 // by a space or the end, and a `code span` is opaque (a period inside one ends
-// nothing). Text after the last end is one more sentence; "" is none.
+// nothing); the period of e.g., i.e., vs. or etc. ends nothing. Text after the
+// last end is one more sentence; "" is none.
 func Sentences(s string) int {
 	s = strings.TrimSpace(s)
 	n, open, pending := 0, false, false
@@ -126,6 +149,8 @@ func Sentences(s string) int {
 			open = !open
 			pending = true
 		case open:
+		case c == '.' && abbreviationAt(s, i):
+			pending = true
 		case (c == '.' || c == '!' || c == '?') && (i+1 == len(s) || s[i+1] == ' ' || s[i+1] == '\t' || s[i+1] == '\n'):
 			n++
 			pending = false
@@ -303,9 +328,10 @@ var (
 	// written.", "Build nova-tools#4352, as written." (any words, any
 	// punctuation, between).
 	buildIssueRE = regexp.MustCompile(`(?i)\bbuild\b.*#\d+\b.*\bas written\b`)
-	// listItemRE is one list item: - * + markers, 1. 1) numbers and A. A)
-	// letters (the #4352 A-F shape).
-	listItemRE = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)]|[A-Z][.)])\s+\S`)
+	// listItemRE is one list item: - * + markers; and a number, a letter
+	// (upper or lower case: the #4352 A-F shape, a. b.) or a roman numeral
+	// (i. ii., I. II.) written 1. or 1) or (1).
+	listItemRE = regexp.MustCompile(`^\s*(?:[-*+]|(?:\d+|[A-Za-z]|[ivx]+|[IVX]+)[.)]|\((?:\d+|[A-Za-z]|[ivx]+|[IVX]+)\))\s+\S`)
 )
 
 const (
@@ -313,6 +339,8 @@ const (
 	remedyDoneWhen  = "add DONE-WHEN: <one sentence a test can fail>"
 	remedyClassTest = "add CLASS-TEST: Test<Name>, the one Go test that proves the invariant"
 	remedyPlatforms = "write PLATFORMS: darwin,linux (or darwin, or linux)"
+	// remedyPlanChildren: a plan names its children, or is not a plan.
+	remedyPlanChildren = "list each child under BUILD: (one item per child card), or push it as one card: KIND: fix"
 )
 
 // rules is every check, in the order a card's refusals are printed.
@@ -384,41 +412,61 @@ var rules = []rule{
 		return nil
 	}},
 	{RuleBuildList, func(lc *lintCard) *Refusal {
-		for i, line := range lc.lines {
-			if k, _, ok := KeyValue(line); !ok || k != KeyBuild {
-				continue
-			}
-			items := 0
-			for _, next := range lc.lines[i+1:] {
-				if listItemRE.MatchString(next) {
-					items++
-					continue
-				}
-				if _, _, ok := KeyValue(next); ok || strings.HasPrefix(next, "#") || strings.TrimSpace(next) == "---" {
-					break
-				}
-			}
-			if items >= 2 {
-				return &Refusal{Line: line, Remedy: RemedyParent}
-			}
+		if lc.plan() {
+			return nil // a plan's BUILD: lists its children (plan-children)
+		}
+		if line, items := lc.buildList(); items >= 2 {
+			return &Refusal{Line: line, Remedy: RemedyParent}
+		}
+		return nil
+	}},
+	{RulePlanChildren, func(lc *lintCard) *Refusal {
+		if !lc.plan() {
+			return nil
+		}
+		if _, items := lc.buildList(); items == 0 {
+			return &Refusal{Line: lc.keys[keyKind].text, Remedy: remedyPlanChildren}
 		}
 		return nil
 	}},
 }
 
+// buildList is the card's longest BUILD: list: the BUILD: line and its list
+// items (listItemRE), read up to the next KEY: line, heading or rule; ""
+// and 0 when no BUILD: line has an item.
+func (lc *lintCard) buildList() (string, int) {
+	best, most := "", 0
+	for i, line := range lc.lines {
+		if k, _, ok := KeyValue(line); !ok || k != KeyBuild {
+			continue
+		}
+		items := 0
+		for _, next := range lc.lines[i+1:] {
+			if listItemRE.MatchString(next) {
+				items++
+				continue
+			}
+			if _, _, ok := KeyValue(next); ok || strings.HasPrefix(next, "#") || strings.TrimSpace(next) == "---" {
+				break
+			}
+		}
+		if items > most {
+			best, most = line, items
+		}
+	}
+	return best, most
+}
+
 // LintOneInvariant is every rule's refusal for card, in rule order; nil when
-// the card is one invariant, and nil for a KIND stitch (generated by card cut
-// --parent, not written by an author). Every push path runs it before any
-// write.
+// the card is one invariant. Every push path runs it before any write, on
+// every KIND (a KIND: stitch included); the stitch card cut --parent
+// generates is the one card no push path lints.
 func LintOneInvariant(c Card) Refusals {
 	return lintWith(c, rules)
 }
 
 func lintWith(c Card, rs []rule) Refusals {
 	lc := readCard(c)
-	if lc.kind == KindStitch {
-		return nil
-	}
 	var out Refusals
 	for _, r := range rs {
 		if ref := r.check(lc); ref != nil {

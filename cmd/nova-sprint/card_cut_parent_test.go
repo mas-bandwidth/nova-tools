@@ -112,9 +112,9 @@ func TestCardCutParentCutsChildrenAndStitchInOneCall(t *testing.T) {
 // --parent writes carries the plan's DONE-WHEN (two sentences here), the
 // union of the children's PATHS (four packages) and a generated body with no
 // INVARIANT or CLASS-TEST, and is cut, not refused card-lint: the row check
-// returns for the stitch before the lint, and as a card it is KIND stitch,
-// which cardhdr.LintOneInvariant exempts on every other push path. Each
-// child is still linted.
+// returns for the stitch before the lint, so the writer passes the
+// exemption (a KIND: stitch header passes nothing on any other push path).
+// Each child is still linted.
 func TestCardCutParentStitchIsNotLinted(t *testing.T) {
 	t.Parallel()
 	forge, st := &fakeCutForge{}, &fakeCutStore{}
@@ -135,7 +135,7 @@ func TestCardCutParentStitchIsNotLinted(t *testing.T) {
 		t.Fatalf("stitch spec %+v", *stitch.Spec)
 	}
 	code, out = runCutFrom(cutFromOpts{Text: []byte(strings.Replace(rows, cutInv, "build it", 1)), Parent: "p"}, d)
-	if code != 1 || !strings.Contains(out, "REFUSED card-lint rule=invariant-missing line=\"\" remedy=\"add INVARIANT: <the one sentence the class test proves>\" row=1\n") {
+	if code != 2 || !strings.Contains(out, "REFUSED card-lint rule=invariant-missing line=\"\" remedy=\"add INVARIANT: <the one sentence the class test proves>\" row=1\n") {
 		t.Fatalf("a child with no INVARIANT: exit %d:\n%s", code, out)
 	}
 }

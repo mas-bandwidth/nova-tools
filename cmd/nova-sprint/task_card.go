@@ -8,7 +8,8 @@
 //	TASK <verb> id=<id> from=<w> to=<w> ms=<n>
 //	TASK <verb> REFUSED id=<id> why=<why> ms=<n>
 //
-// Exit 0 done, 1 refused (nothing written) or drift found, 2 could not run.
+// Exit 0 done, 1 refused (nothing written) or drift found, 2 could not run
+// or a push refused card-lint (nothing written, #4396).
 // They are the card form of the task subverbs: push with --actor, take with
 // --actor and no --as;
 // done, cancel, block, unblock, front, move and beat with --actor and --id and
@@ -291,13 +292,15 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			return refuse(errOut, c.verb, err.Error())
 		}
 		// A push that carries a card is one invariant (#4396): refused
-		// before any write, one REFUSED card-lint line per rule.
+		// before any write, the receipt on stdout, one REFUSED card-lint
+		// line per rule on stderr, exit 2 (as card push). KIND: stitch is
+		// linted like any kind.
 		if spec != nil {
 			repo := firstOf(*c.repo, spec.Repo)
 			if rs := cardhdr.LintOneInvariant(cardhdr.Card{Text: taskLintText(*c.kind, spec), Files: card.FilesAt(repo, spec.BaseSHA)}); rs != nil {
 				_, _ = fmt.Fprintf(out, "TASK push REFUSED id=%s why=%s ms=%d\n", *c.id, quoteField("card-lint "+rs.Rules()), ms())
-				_, _ = fmt.Fprint(out, card.LintLines(*c.id, rs))
-				return 1
+				_, _ = fmt.Fprint(errOut, card.LintLines(*c.id, rs))
+				return 2
 			}
 		}
 		r, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: *c.id, Stream: *c.stream, Friend: *c.friend,

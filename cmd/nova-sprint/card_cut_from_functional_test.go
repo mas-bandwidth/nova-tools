@@ -149,3 +149,31 @@ func TestCardCutFromLedgerFilesNothingTwice(t *testing.T) {
 		t.Fatalf("row 3 blocked_on %q, want base", got)
 	}
 }
+
+// TestCardCutFromLintRefusalWritesNothing (#4396) on a real store: a file
+// with one good row and one row that is a list (a lower-case a./b. BUILD:
+// list) exits 2, prints one REFUSED card-lint line on stderr, files no issue
+// and leaves the store's key count unchanged.
+func TestCardCutFromLintRefusalWritesNothing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	rows := "id\ttitle\tstream\tpaths\tdone-when\tbody\n" +
+		"good\tGood\tlint\tp1.go\tgo test passes\t" + cutInv + "\n" +
+		"list\tList\tlint\tp2.go\tgo test passes\t" + cutInv + `\nBUILD:\na. the parser\nb. the linter` + "\n"
+	keys := client.DBSize(ctx).Val()
+	forge := &fakeCutForge{}
+	code, out, errOut := runCutFromErr(cutFromOpts{Text: []byte(rows)}, cutDepsRedis(forge, client))
+	want := `REFUSED card-lint rule=build-list line="BUILD:" remedy="cut as a parent with children: card cut --parent" row=2` + "\n"
+	if code != 2 || errOut != want || len(forge.titles) != 0 || !strings.Contains(out, `CARD CUT REFUSED row=2 line=3 id=list why="card-lint build-list: not one invariant"`) {
+		t.Fatalf("exit %d filed %d stdout\n%s\nstderr\n%s\nwant exit 2 and\n%s", code, len(forge.titles), out, errOut, want)
+	}
+	if n := client.DBSize(ctx).Val(); n != keys {
+		t.Fatalf("a card-lint refusal changed the key count %d -> %d", keys, n)
+	}
+}

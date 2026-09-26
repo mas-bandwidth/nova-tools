@@ -61,8 +61,8 @@ var cardCutSource = func(st *store.Store) card.IssueSource {
 // inlined when --index names a ctxindex directory. It refuses an issue with no
 // STREAM (and no --stream), an unparsable DEPENDS-ON, a missing PATHS or
 // DONE-WHEN, and a card that is not one invariant (cardhdr.LintOneInvariant,
-// one REFUSED card-lint line per rule, #4396) before any write. One receipt line; exit 0 cut, 1 refused with
-// the remedy named, 2 usage.
+// one REFUSED card-lint line per rule on stderr, exit 2 as card push, #4396) before any write. One receipt line; exit 0
+// cut, 1 refused with the remedy named, 2 usage or card-lint.
 func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card cut")
 	sprint := fs.String("sprint", "", "")
@@ -120,9 +120,10 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	})
 	var lint cardhdr.Refusals
 	if errors.As(err, &lint) {
-		// one card, one invariant (#4396): each refusal is its own line
-		fmt.Fprint(stdout, card.LintLines(c.Label, lint))
-		return 1
+		// one card, one invariant (#4396): each refusal is its own line,
+		// on stderr as card push prints them
+		fmt.Fprint(stderr, card.LintLines(c.Label, lint))
+		return 2
 	}
 	if err != nil {
 		fmt.Fprintf(stdout, "REFUSED card cut %s why=%s\n", who, oneline.Field(err.Error()))

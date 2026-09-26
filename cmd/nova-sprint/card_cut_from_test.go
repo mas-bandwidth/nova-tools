@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,7 +102,9 @@ func cutDeps(forge *fakeCutForge, st *fakeCutStore) cutFromDeps {
 	return d
 }
 
-func runCutFrom(o cutFromOpts, d cutFromDeps) (int, string) {
+// runCutFrom runs card cut --from on o and d: the exit code and stdout, and
+// stderr with it (as a terminal shows both) unless errOut is given.
+func runCutFrom(o cutFromOpts, d cutFromDeps, errOut ...io.Writer) (int, string) {
 	var b strings.Builder
 	if o.Repo == "" {
 		o.Repo = "mas-bandwidth/nova-tools"
@@ -115,7 +118,18 @@ func runCutFrom(o cutFromOpts, d cutFromDeps) (int, string) {
 	if o.From == "" {
 		o.From = "cards.tsv"
 	}
-	return cardCutFrom(context.Background(), o, d, &b), b.String()
+	var e io.Writer = &b
+	if len(errOut) > 0 {
+		e = errOut[0]
+	}
+	return cardCutFrom(context.Background(), o, d, &b, e), b.String()
+}
+
+// runCutFromErr is runCutFrom with stdout and stderr apart.
+func runCutFromErr(o cutFromOpts, d cutFromDeps) (int, string, string) {
+	var errOut strings.Builder
+	code, out := runCutFrom(o, d, &errOut)
+	return code, out, errOut.String()
 }
 
 // hundredRows is a header and 100 card rows; row 2 names c7 (row 7's id
@@ -258,14 +272,14 @@ func TestCardCutFromBadRowsAreNamed(t *testing.T) {
 // id cell) is refused the same way, naming the row. Nothing is written.
 func TestCardCutFromDependedRowNeedsID(t *testing.T) {
 	t.Parallel()
-	rows := "title\tpaths\tdone-when\tdepends-on\nBase work\tp.go\tdone\t\nOn top\tp.go\tdone\trow:1\n"
+	rows := "title\tpaths\tdone-when\tbody\tdepends-on\nBase work\tp.go\tdone\t" + cutInv + "\t\nOn top\tp.go\tdone\t" + cutInv + "\trow:1\n"
 	forge, st := &fakeCutForge{}, &fakeCutStore{}
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows), Stream: "s"}, cutDeps(forge, st))
 	if code != 1 || len(forge.titles) != 0 || len(st.batches) != 0 ||
 		!strings.Contains(out, "CARD CUT REFUSED row=2 line=3 id=- why=\"depends-on row:1 is refused (#3409: one DEPENDS-ON form); add an id column (a header row naming id), give row 1 an id and name that id\"\n") {
 		t.Fatalf("row:<n>: exit %d filed %d pushed %d:\n%s", code, len(forge.titles), len(st.batches), out)
 	}
-	rows = "title\tpaths\tdone-when\tdepends-on\nBase work\tp.go\tdone\t\nOn top\tp.go\tdone\tbase-work\n"
+	rows = "title\tpaths\tdone-when\tbody\tdepends-on\nBase work\tp.go\tdone\t" + cutInv + "\t\nOn top\tp.go\tdone\t" + cutInv + "\tbase-work\n"
 	code, out = runCutFrom(cutFromOpts{Text: []byte(rows), Stream: "s", NoGitHub: true}, cutDeps(nil, st))
 	if code != 1 || len(st.batches) != 0 ||
 		!strings.Contains(out, "CARD CUT REFUSED row=2 line=3 id=on-top why=\"depends-on base-work is row 1's title, and a row that is depended on needs an id; add an id column (a header row naming id) and give row 1 an id\"\n") {
@@ -443,27 +457,30 @@ func TestCardCutFromLedgerRefusals(t *testing.T) {
 
 // TestCardCutFromRefusesNotOneInvariant (#4396): a row that is not one
 // invariant (a body that says "build issue #N as written", with no INVARIANT
-// or CLASS-TEST line) is refused with one REFUSED card-lint line per rule,
-// and nothing is filed or pushed.
+// or CLASS-TEST line) is refused, exit 2, its receipt on stdout and one
+// REFUSED card-lint line per rule on stderr, and nothing is filed or pushed.
 func TestCardCutFromRefusesNotOneInvariant(t *testing.T) {
 	t.Parallel()
 	rows := "good\ts\tany\tp.go\tdone\t" + cutInv + "\tnone\t\t\n" +
 		"list\ts\tany\tp.go\tdone\tbuild issue #4396 as written\tnone\t\t\n"
 	forge, st := &fakeCutForge{}, &fakeCutStore{}
-	code, out := runCutFrom(cutFromOpts{Text: []byte(rows)}, cutDeps(forge, st))
-	if code != 1 || len(forge.titles) != 0 || len(st.batches) != 0 {
-		t.Fatalf("exit %d filed %d pushed %d; want 1 and nothing written:\n%s", code, len(forge.titles), len(st.batches), out)
+	code, out, errOut := runCutFromErr(cutFromOpts{Text: []byte(rows)}, cutDeps(forge, st))
+	if code != 2 || len(forge.titles) != 0 || len(st.batches) != 0 {
+		t.Fatalf("exit %d filed %d pushed %d; want 2 and nothing written:\n%s", code, len(forge.titles), len(st.batches), out)
 	}
 	for _, want := range []string{
 		`CARD CUT REFUSED row=2 line=2 id=- why="card-lint invariant-missing,class-test-missing,build-issue: not one invariant"` + "\n",
-		`REFUSED card-lint rule=invariant-missing line="" remedy="add INVARIANT: <the one sentence the class test proves>" row=2` + "\n",
-		`REFUSED card-lint rule=class-test-missing line="" remedy="add CLASS-TEST: Test<Name>, the one Go test that proves the invariant" row=2` + "\n",
-		`REFUSED card-lint rule=build-issue line="build issue #4396 as written" remedy="cut as a parent with children: card cut --parent" row=2` + "\n",
 		"rows=2 cut=0 already=0 refused=1 filed=0 ",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("output lacks %q:\n%s", want, out)
+			t.Errorf("stdout lacks %q:\n%s", want, out)
 		}
+	}
+	wantErr := `REFUSED card-lint rule=invariant-missing line="" remedy="add INVARIANT: <the one sentence the class test proves>" row=2` + "\n" +
+		`REFUSED card-lint rule=class-test-missing line="" remedy="add CLASS-TEST: Test<Name>, the one Go test that proves the invariant" row=2` + "\n" +
+		`REFUSED card-lint rule=build-issue line="build issue #4396 as written" remedy="cut as a parent with children: card cut --parent" row=2` + "\n"
+	if errOut != wantErr || strings.Contains(out, "card-lint rule=") {
+		t.Errorf("stderr\n%s\nwant\n%s\nstdout\n%s", errOut, wantErr, out)
 	}
 	if strings.Contains(out, "row=1 ") {
 		t.Errorf("the one-invariant row printed a line:\n%s", out)

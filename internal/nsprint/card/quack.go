@@ -44,11 +44,17 @@ func QuackFixture(sprint, id string) (path, line string) {
 	return quackDir + "/quack-" + sprint + "-" + id + ".txt", "quack " + sprint + " " + id
 }
 
+// QuackClassTest is a quack card's CLASS-TEST (#4396): the test that renders
+// the quack card and proves its fixture path and line (the quack repo has no
+// Go test of its own).
+const QuackClassTest = "TestQuackIssue"
+
 // QuackIssue renders the primary's issue text, the template the push reads
 // through taskcard.ParseIssue: the header lines a card carries (STREAM, WHO,
 // KIND, TYPE, REPO, BASE, base-sha, PATHS, TEST, DEPENDS-ON, PRIORITY, ROUTE,
-// EST, SOURCE, TASK), then the NO-SUBAGENTS, UNATTENDED, DO and DONE-WHEN
-// lines the model reads.
+// EST, SOURCE, TASK, INVARIANT, CLASS-TEST), then the NO-SUBAGENTS,
+// UNATTENDED, DO and DONE-WHEN lines the model reads. The card is one
+// invariant (cardhdr.LintOneInvariant accepts it), and quack cut lints it.
 func QuackIssue(in QuackInput) (string, error) {
 	if !cardhdr.IsRoute(in.Tier) {
 		return "", fmt.Errorf("tier %q is not %s", in.Tier, cardhdr.RouteList)
@@ -68,6 +74,7 @@ func QuackIssue(in QuackInput) (string, error) {
 		{"STREAM", in.Stream}, {"WHO", "any"}, {"KIND", "fix"}, {"TYPE", "code"}, {"REPO", in.Repo},
 		{"BASE", in.Base}, {"base-sha", in.BaseSHA}, {"PATHS", path}, {"TEST", "none"}, {"DEPENDS-ON", "none"},
 		{"PRIORITY", "100"}, {"ROUTE", in.Tier}, {"EST", "2"}, {"SOURCE", "quack"}, {"TASK", in.ID},
+		{"INVARIANT", fmt.Sprintf("the file %s holds exactly the line %q.", path, line)}, {"CLASS-TEST", QuackClassTest},
 	} {
 		b.WriteString(kv[0] + ": " + kv[1] + "\n")
 	}

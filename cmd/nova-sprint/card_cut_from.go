@@ -24,7 +24,7 @@
 //
 //	CARD CUT row=<n> id=<id> ref=<owner/name#n|-> stream=<s> to=waiting|already depends=<ids|none>
 //	CARD CUT REFUSED row=<n> line=<l> id=<id|-> why=<why>
-//	REFUSED card-lint rule=<name> line="<the offending line>" remedy="<exact command>" row=<n>
+//	REFUSED card-lint rule=<name> line="<the offending line>" remedy="<exact command>" row=<n>   (stderr)
 //	CARD CUT DRY row=<n> id=<id|-> stream=<s> who=<w> route=<r> est=<e> depends=<d> title=<t>
 //	CARD CUT FROM file=<f> rows=<n> cut=<k> already=<a> refused=<r> filed=<f> reused=<u> github=on|off ms=<ms>
 //
@@ -39,7 +39,8 @@
 // ONE INVARIANT (#4396). Every row is linted as one card
 // (cardhdr.LintOneInvariant over its PATHS and DONE-WHEN cells and its body,
 // which carries the INVARIANT, CLASS-TEST and PLATFORMS lines): a row that is
-// not one invariant is refused with one REFUSED card-lint line per rule.
+// not one invariant is refused with one REFUSED card-lint line per rule on
+// stderr. The plan's stitch row is not linted: card cut --parent writes it.
 //
 // A cell writes a newline as \n, a tab as \t and a backslash as \\. A row's
 // id is <repo name>-<issue n> (the card cut label), or with --no-github a
@@ -51,7 +52,8 @@
 // cell (#3409: one DEPENDS-ON form, so row:<n> is refused, naming the id
 // column).
 //
-// Exit 0 every row cut or already, 1 a row refused (named), 2 usage.
+// Exit 0 every row cut or already, 1 a row refused (named), 2 usage or a
+// row refused card-lint (nothing filed or pushed, as card push exits 2).
 //
 // THE HIERARCHY (nova-tools#4317). `card cut --parent <id> --from
 // <children.tsv>` cuts the rows as the CHILDREN of an existing card and one
@@ -536,10 +538,12 @@ func cutField(s string) string {
 	return s
 }
 
-func cutRefused(out io.Writer, r *cutRow) {
+// cutRefused prints a refused row: its receipt on out, and each of its
+// REFUSED card-lint lines (#4396) on errOut, as card push prints them.
+func cutRefused(out, errOut io.Writer, r *cutRow) {
 	fmt.Fprintf(out, "CARD CUT REFUSED row=%s line=%d id=%s why=%s\n", cutRowN(r), r.line, cutField(r.id), cutField(r.why))
 	for _, l := range r.lint {
-		fmt.Fprintf(out, "%s row=%s\n", l, cutRowN(r))
+		fmt.Fprintf(errOut, "%s row=%s\n", l, cutRowN(r))
 	}
 }
 
@@ -675,7 +679,7 @@ func cutOneLine(s string) string {
 }
 
 // cardCutFrom is the verb below its flags.
-func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Writer) int {
+func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out, errOut io.Writer) int {
 	start := d.Now()
 	github := "on"
 	if o.NoGitHub {
@@ -746,17 +750,22 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		}
 	}
 	order := orderCutRows(rows)
-	refused := 0
+	refused, linted := 0, false
 	for _, r := range rows {
 		if r.why != "" {
 			refused++
-			cutRefused(out, r)
+			linted = linted || r.lint != nil
+			cutRefused(out, errOut, r)
 		}
 	}
 	if refused > 0 {
 		// Nothing is filed or pushed while a row is bad: the fixed file
-		// reruns whole, with no duplicate issue.
+		// reruns whole, with no duplicate issue. A card-lint refusal exits
+		// 2, as card push does (#4396).
 		summary(len(rows), refused)
+		if linted {
+			return 2
+		}
 		return 1
 	}
 	if o.DryRun {
@@ -893,7 +902,7 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 	stitchOK := false
 	for _, r := range order {
 		if r.why != "" {
-			cutRefused(out, r)
+			cutRefused(out, errOut, r)
 			continue
 		}
 		to := "waiting"
@@ -1007,7 +1016,7 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 			return taskcard.BindPlan(ctx, st.Client(), parent, children, stitch, by)
 		}
 		if o.DryRun {
-			return cardCutFrom(ctx, o, d, stdout)
+			return cardCutFrom(ctx, o, d, stdout, stderr)
 		}
 		if !o.NoGitHub {
 			is, err := file.NewIssuer(file.Deps{Token: githubToken, Redis: st.Client()})
@@ -1017,7 +1026,7 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 			d.File = is.Post
 		}
 	}
-	return cardCutFrom(ctx, o, d, stdout)
+	return cardCutFrom(ctx, o, d, stdout, stderr)
 }
 
 // readPlanFacts reads --parent's record and, when it has a stitch, where the
