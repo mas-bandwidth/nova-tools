@@ -12,13 +12,18 @@
 //	    copy's brief (card.RenderCopy: the person's brief for a friend)
 //	    written to <d>/<copy label>.card; one PULLED line per copy naming
 //	    the path, the leg and the token, then the receipt.
-//	friend done --as friend:<f> --id <copy> (--ok [--pr <repo>#<n> --head <sha> [--branch <b>]] [--done-already <sha>]
+//	friend done --as friend:<f> --id <copy> (--ok [--pr <repo>#<n> --head <sha> --repo <dir> [--test <t>] [--branch <b>]] [--done-already <sha>]
 //	    | --score N/10 [--gates <g>] [--finding <text>] | --fail <why>) [--token <t>]
 //	    card end --id <copy> with the same evidence, refused (NOTMINE) for a
-//	    copy that is not this friend's. --ok --pr first records the PR
-//	    (card.RecordPR, what the wrapper's harvest writes) so the end is
-//	    not refused NOPR; --branch is the PR's branch when it is not the
-//	    brief's (the copy's branch, else the wrapper's name for it).
+//	    copy that is not this friend's. --ok --pr on a work or fix copy first
+//	    runs the spec gate (#4313, card.GateFriendCopy) in --repo, the
+//	    friend's checkout at --head: the copy's TEST (a fix's own finding
+//	    test, --test) red at its base and green at the head, then nova-ci
+//	    local; a red refuses the end (GATE lines, then FRIEND DONE REFUSED)
+//	    and records nothing. A green then records the PR (card.RecordPR,
+//	    what the wrapper's harvest writes) so the end is not refused NOPR;
+//	    --branch is the PR's branch when it is not the brief's (the copy's
+//	    branch, else the wrapper's name for it).
 //	friend beat --as friend:<f> [--host <h>] [--once]
 //	    the zero-token tick, one round trip: the friend's beat (host, at,
 //	    load1, ncpu, cpu of the machine this session runs on: its status
@@ -179,6 +184,8 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 	head := fs.String("head", "", "")
 	doneAlready := fs.String("done-already", "", "")
 	branch := fs.String("branch", "", "")
+	repoDir := fs.String("repo", "", "")
+	findingTest := fs.String("test", "", "")
 	score := fs.String("score", "", "")
 	gates := fs.String("gates", "", "")
 	finding := fs.String("finding", "", "")
@@ -234,7 +241,11 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 	}
 	start := time.Now()
 	ms := func() int64 { return time.Since(start).Milliseconds() }
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// the store's calls are bounded by 30 s each side of the gate; the gate
+	// runs under the caller's context, each command under its own cap
+	// (DefaultCheckTimeout): a gate is go test, not a round trip
+	parent := ctx
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	st, err := store.Open(ctx, taskAddr(*redisAddr))
 	if err != nil {
@@ -256,6 +267,19 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 	case holder != k.String():
 		fmt.Fprintf(out, "FRIEND DONE REFUSED id=%s why=%s ms=%d\n", *id, quoteField("NOTMINE task:"+*id+" is "+holder+"'s copy, not "+k.String()+"'s"), ms())
 		return 1
+	}
+	if r.PR != "" {
+		// The spec gate (#4313) a bench's copy passes in its wrapper: a
+		// friend has none, so the verb runs it in the friend's checkout
+		// before anything is recorded.
+		if why := gateCopyEnd(parent, c, *id, rec, *repoDir, *findingTest, *head, out); why != "" {
+			fmt.Fprintf(out, "FRIEND DONE REFUSED id=%s why=%s ms=%d\n", *id, quoteField(why), ms())
+			return 1
+		}
+		// the end's own round trips get their 30 s after the gate
+		after, cancelAfter := context.WithTimeout(parent, 30*time.Second)
+		defer cancelAfter()
+		ctx = after
 	}
 	if r.PR != "" {
 		// The PR the friend opened is recorded before the end, as the
