@@ -14,7 +14,7 @@ import (
 
 func runLandEval(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("land eval")
-	redisAddr := fs.String("redis", "", "Redis address")
+	redisAddr := fs.String("redis", redisDefault(), "Redis address")
 	sprint := fs.String("sprint", "", "Sprint ID")
 	repo := fs.String("repo", "", "Target repository")
 	policyPath := fs.String("policy", "", "Path to repo policy file")

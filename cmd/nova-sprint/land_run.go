@@ -126,7 +126,7 @@ func runLandRun(ctx context.Context, args []string, out, errOut io.Writer) int {
 	mirror := fs.String("mirror", "", "")
 	remote := fs.String("remote", "", "")
 	dry := fs.Bool("dry-run", false, "")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -254,7 +254,7 @@ func runLandOffer(ctx context.Context, args []string, out, errOut io.Writer) int
 	body := fs.String("body-first", "", "")
 	as := fs.String("as", "", "")
 	withdraw := fs.Bool("withdraw", false, "")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	if err := fs.Parse(flags); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -308,7 +308,7 @@ func runLandList(ctx context.Context, args []string, out, errOut io.Writer) int 
 	sprint := fs.String("sprint", "", "")
 	repo := fs.String("repo", "", "")
 	base := fs.String("base", "", "")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}

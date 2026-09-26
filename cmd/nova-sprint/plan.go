@@ -37,7 +37,7 @@ func runPlanVerb(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	verb := "plan " + sub
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	name := fs.String("sprint", "", "")
 	file := fs.String("plan", "", "")
 	if err := fs.Parse(args[1:]); err != nil {

@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 )
 
 // profileEnv is a fake environment: a HOME and XDG_CONFIG_HOME under dir, sops
@@ -159,5 +162,95 @@ func TestRedisRawRefusesWithoutCommandOrAddress(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := redisRaw(context.Background(), &sel, noenv, []string{"--redis", "127.0.0.1:1", "PING"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "file does not exist") {
 		t.Fatalf("unreadable seat: exit %d stderr %q; want 2 and the seat's refusal printed", code, errOut.String())
+	}
+}
+
+// TestRedisDefaultIsEnvThenSeat is #4330's first gap: a verb given no --redis
+// under a seat dials the seat's address; a verb's own environment default
+// still comes first, and with no seat and no environment it is "".
+func TestRedisDefaultIsEnvThenSeat(t *testing.T) {
+	t.Parallel()
+
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	var none, sel seatcred.Selection
+	sel.SelectWith("coordinator", "seat.invalid:6380", nil)
+	for _, c := range []struct {
+		sel  *seatcred.Selection
+		env  map[string]string
+		envs []string
+		want string
+	}{
+		{&none, nil, nil, ""},
+		{&sel, nil, nil, "seat.invalid:6380"},
+		{&sel, map[string]string{"NOVA_SPRINT_REDIS": "env.invalid:1"}, nil, "seat.invalid:6380"},
+		{&sel, map[string]string{"NOVA_SPRINT_REDIS": "env.invalid:1"}, []string{"NOVA_SPRINT_REDIS"}, "env.invalid:1"},
+		{&none, map[string]string{"NOVA_REDIS_ADDR": "env.invalid:2"}, []string{"NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"}, "env.invalid:2"},
+	} {
+		if got := redisDefaultFrom(c.sel, env(c.env), c.envs...); got != c.want {
+			t.Fatalf("seat %q env %v envs %v: %q, want %q", c.sel.Selected(), c.env, c.envs, got, c.want)
+		}
+	}
+}
+
+// TestSelectSeatCarriesTheGitHubColumn: a seven-column row's token env is the
+// selection's, known without decrypting anything.
+func TestSelectSeatCarriesTheGitHubColumn(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeSeats(t, dir, "coordinator\th:1\tcoordinator\tNOVA_REDIS_COORDINATOR_PASSWORD\t/s\t/k/studio.key\tGH_GATE_TOKEN\n"+
+		"bench\th:1\tbench\tNOVA_REDIS_BENCH_PASSWORD\t/s\t/k/air.key\n")
+	for seat, want := range map[string]string{"coordinator": "GH_GATE_TOKEN", "bench": ""} {
+		var sel seatcred.Selection
+		if _, err := selectSeat(&sel, []string{"--seat", seat, "land"}, profileEnv(dir, nil), func(string, string) error { return nil }); err != nil || sel.GitHubEnv() != want {
+			t.Fatalf("seat %s: GitHubEnv %q err %v; want %q", seat, sel.GitHubEnv(), err, want)
+		}
+	}
+}
+
+// TestSeatGitHubTokenReadsTheSeatOrSaysOnce is #4330's second gap at the
+// verb seam: a row naming a token env hands the GitHub verbs the seat's
+// token; a row without one is the old behaviour, said once per process; no
+// seat says nothing.
+func TestSeatGitHubTokenReadsTheSeatOrSaysOnce(t *testing.T) {
+	t.Parallel()
+
+	const tok = "seat-gh-unit-token-4330"
+	var note bytes.Buffer
+	var once sync.Once
+
+	var none seatcred.Selection
+	if got, ok, err := seatGitHubToken(&none, &note, &once); got != "" || ok || err != nil || note.Len() != 0 {
+		t.Fatalf("no seat: %v %v; note %q", ok, err, note.String())
+	}
+
+	var bare seatcred.Selection
+	bare.SelectWith("bench", "h:1", func(string) (seatcred.Cred, error) {
+		t.Fatal("decrypted for a row with no token column")
+		return seatcred.Cred{}, nil
+	})
+	for i := 0; i < 2; i++ {
+		if got, ok, err := seatGitHubToken(&bare, &note, &once); got != "" || ok || err != nil {
+			t.Fatalf("no column: %v %v", ok, err)
+		}
+	}
+	if n := strings.Count(note.String(), "\n"); n != 1 || !strings.Contains(note.String(), "seat bench") || !strings.Contains(note.String(), "GH_TOKEN") {
+		t.Fatalf("no column: note %q; want one line naming the seat and GH_TOKEN", note.String())
+	}
+
+	var sel seatcred.Selection
+	sel.SelectProfile(seatcred.Profile{Name: "coordinator", Addr: "h:1", GitHubEnv: "GH_GATE_TOKEN"}, func(s string) (seatcred.Cred, error) {
+		return seatcred.Cred{Seat: s, GitHubKey: "GH_GATE_TOKEN", GitHub: secrets.NewSecret(tok)}, nil
+	})
+	if got, ok, err := seatGitHubToken(&sel, &note, &once); got != tok || !ok || err != nil {
+		t.Fatalf("column: ok %v err %v; want the seat's token", ok, err)
+	}
+
+	var missing seatcred.Selection
+	missing.SelectProfile(seatcred.Profile{Name: "coordinator", Addr: "h:1", GitHubEnv: "GH_GATE_TOKEN"}, func(s string) (seatcred.Cred, error) {
+		return seatcred.Cred{Seat: s, GitHubKey: "GH_GATE_TOKEN", GitHubErr: errors.New("seat coordinator: f.yaml holds no GH_GATE_TOKEN")}, nil
+	})
+	if _, ok, err := seatGitHubToken(&missing, &note, &once); !ok || err == nil || !strings.Contains(err.Error(), "GH_GATE_TOKEN") {
+		t.Fatalf("column, file without it: ok %v err %v; want the refusal", ok, err)
 	}
 }

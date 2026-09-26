@@ -89,7 +89,7 @@ func splitPositional(args []string) (flags []string, pos []string) {
 
 func runCICut(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci cut")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	repo := fs.String("repo", "", "")
 	pr := fs.Int("pr", 0, "")
@@ -122,7 +122,7 @@ func runCICut(ctx context.Context, args []string, out, errOut io.Writer) int {
 func runCIShow(ctx context.Context, args []string, out, errOut io.Writer) int {
 	flags, pos := splitPositional(args)
 	fs := taskFlags("ci show")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "nova-tools", "")
 	_ = fs.String("sprint", "", "")
 	if err := fs.Parse(flags); err != nil {
@@ -146,7 +146,7 @@ func runCIShow(ctx context.Context, args []string, out, errOut io.Writer) int {
 func runCIRerun(ctx context.Context, args []string, out, errOut io.Writer) int {
 	flags, pos := splitPositional(args)
 	fs := taskFlags("ci rerun")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	repo := fs.String("repo", "nova-tools", "")
 	pr := fs.Int("pr", 0, "")
@@ -192,7 +192,7 @@ func runCIRerun(ctx context.Context, args []string, out, errOut io.Writer) int {
 func runCIDispose(ctx context.Context, args []string, out, errOut io.Writer) int {
 	flags, pos := splitPositional(args)
 	fs := taskFlags("ci dispose")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	repo := fs.String("repo", "nova-tools", "")
 	disposition := fs.String("disposition", "", "")
@@ -221,7 +221,7 @@ func runCIDispose(ctx context.Context, args []string, out, errOut io.Writer) int
 // --repo and --sha print one head's request record and its check rows.
 func runCIStatus(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci status")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	repo := fs.String("repo", "", "")
 	sha := fs.String("sha", "", "")
@@ -260,7 +260,7 @@ func runCIStatus(ctx context.Context, args []string, out, errOut io.Writer) int 
 // or under --min heads (the gate is n/n, n >= 20).
 func runCIParity(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci parity")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	minHeads := fs.Int("min", 20, "")
 	if err := fs.Parse(args); err != nil {
@@ -284,7 +284,7 @@ func runCIParity(ctx context.Context, args []string, out, errOut io.Writer) int 
 // re-pools it (RESET), the one way back after a capped FAIL.
 func runCIRequest(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci request")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	sha := fs.String("sha", "", "")
 	pr := fs.Int("pr", 0, "")
@@ -328,7 +328,7 @@ func runCIRequest(ctx context.Context, args []string, out, errOut io.Writer) int
 // request went back to the pool.
 func runCIRun(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci run")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	bench := fs.String("bench", "", "")
 	results := fs.String("results", "", "")
 	scratch := fs.String("scratch", "", "")
@@ -381,7 +381,7 @@ func runCIRun(ctx context.Context, args []string, out, errOut io.Writer) int {
 // check conclusions for the sha. Exit 0 when every check agrees.
 func runCICompare(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci compare")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	sha := fs.String("sha", "", "")
 	owner := fs.String("owner", "mas-bandwidth", "")
@@ -392,9 +392,9 @@ func runCICompare(ctx context.Context, args []string, out, errOut io.Writer) int
 	if *repo == "" || *sha == "" {
 		return refuse(errOut, "ci compare", "needs --repo <r> and --sha <full sha>")
 	}
-	tok := strings.TrimSpace(os.Getenv("GH_TOKEN"))
-	if tok == "" {
-		tok = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+	tok, err := envGitHubToken()
+	if err != nil {
+		return refuse(errOut, "ci compare", err.Error())
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
@@ -420,7 +420,7 @@ func runCICompare(ctx context.Context, args []string, out, errOut io.Writer) int
 // drained, 1 a pass failed, 2 usage.
 func runCIGitHub(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci github")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	consumer := fs.String("consumer", "", "")
 	once := fs.Bool("once", false, "")
 	if err := fs.Parse(args); err != nil {

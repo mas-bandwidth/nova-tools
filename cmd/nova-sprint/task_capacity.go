@@ -13,7 +13,7 @@ import (
 
 func runTaskList(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("task list")
-	addr := fs.String("redis", "", "")
+	addr := fs.String("redis", redisDefault(), "")
 	as := fs.String("as", "", "")
 	sprint := fs.String("sprint", "", "")
 	state := fs.String("state", "", "")
@@ -44,7 +44,7 @@ func runTaskList(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 func runTaskWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("task width")
-	addr := fs.String("redis", "", "")
+	addr := fs.String("redis", redisDefault(), "")
 	as := fs.String("as", "", "")
 	actor := fs.String("actor", "", "")
 	idem := fs.String("idem", "", "")

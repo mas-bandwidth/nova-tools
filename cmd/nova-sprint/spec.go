@@ -42,7 +42,7 @@ func runSpec(ctx context.Context, args []string, out, errOut io.Writer) int {
 	sub := args[0]
 	pos, flags := holdSplitArgs(args[1:], map[string]bool{"rev": true, "who": true, "score": true, "stream": true, "sprint": true, "redis": true})
 	fs := taskFlags("spec " + sub)
-	redisAddr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	rev := fs.Int("rev", 0, "")
 	who := fs.String("who", "", "")
 	score := fs.Int("score", -1, "")

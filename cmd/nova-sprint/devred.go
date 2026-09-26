@@ -118,7 +118,7 @@ func runDevRed(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	name := "dev-red " + sub
 	fs := taskFlags(name)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	base := fs.String("base", "dev", "")
 	sprint := fs.String("sprint", "", "")

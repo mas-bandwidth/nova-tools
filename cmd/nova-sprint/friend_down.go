@@ -19,7 +19,7 @@ func runFriendDown(ctx context.Context, on bool, args []string, out, errOut io.W
 		verb = "friend down"
 	}
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	actor := fs.String("as", "", "")
 	reason := fs.String("reason", "", "")
 	idem := fs.String("idem", "", "")

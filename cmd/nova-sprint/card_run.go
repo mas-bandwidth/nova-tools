@@ -44,6 +44,9 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return cardUsage(stderr, err.Error(), want)
 	}
+	if a := redisOr(flags["redis"]); a != "" {
+		flags["redis"] = a // the seat's address when --redis is absent (#4330)
+	}
 	if len(pos) != 1 {
 		return cardUsage(stderr, "wants one label", want)
 	}

@@ -29,7 +29,7 @@ func runBackpressure(ctx context.Context, args []string, out, errOut io.Writer) 
 		return refuse(errOut, "backpressure", "want the subverb check; "+backpressureUsage)
 	}
 	fs := taskFlags("backpressure check")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, "backpressure check", err.Error()+"; "+backpressureUsage)

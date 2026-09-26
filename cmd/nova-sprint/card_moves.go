@@ -103,7 +103,7 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	verb := "card " + sub
 	fs := verbflag.New(verb) // -h prints the move's usage and flags, exit 2 (#3254)
 	m := &moveCmd{result: map[string]*string{}}
-	m.redis = fs.String("redis", "", "")
+	m.redis = fs.String("redis", redisDefault(), "")
 	m.actor = fs.String("actor", "", "")
 	m.to = fs.String("to", "", "")
 	m.stream = fs.String("stream", "", "")

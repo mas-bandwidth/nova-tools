@@ -18,7 +18,7 @@ func init() {
 
 func runRank(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("rank")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	as := fs.String("as", "", "")
 	if err := fs.Parse(args); err != nil {

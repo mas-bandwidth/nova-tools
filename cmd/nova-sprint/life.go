@@ -103,7 +103,7 @@ func runBench(ctx context.Context, args []string, out, errOut io.Writer) int {
 // then the local test endpoint. A real production host is never hardcoded.
 func lifeFlags(name string) (*flag.FlagSet, *string) {
 	fs := verbflag.New(name)
-	addr := fs.String("redis", "", "redis address (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
+	addr := fs.String("redis", redisDefault(), "redis address (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
 	return fs, addr
 }
 

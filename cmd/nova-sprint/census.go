@@ -35,7 +35,7 @@ func init() {
 
 func runCensus(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("census")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	set := fs.String("set", "", "")
 	keysFrom := fs.String("keys-from", "", "")
 	fields := fs.String("fields", "", "")

@@ -21,7 +21,7 @@ const tableClearWants = "table clear --checkpoint <file> [--redis <addr>] [--fri
 
 func cmdTableClear(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("table clear")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	friends := fs.String("friends", "", "")
 	checkpoint := fs.String("checkpoint", "", "")
 	by := fs.String("by", "", "")

@@ -146,7 +146,7 @@ func adminPassword(env string, deps releaseDeps) (pw, seat, why string) {
 
 func runFleetReleaseWith(ctx context.Context, args []string, out, errOut io.Writer, deps releaseDeps) int {
 	fs := verbflag.New("fleet release")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	bench := fs.String("bench", "", "")
 	machines := fs.String("machines", "", "")
 	benches := fs.String("benches", "", "")

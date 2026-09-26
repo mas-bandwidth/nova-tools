@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -39,17 +38,16 @@ func cmdFile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	})
 }
 
-// githubToken is GH_TOKEN, then GITHUB_TOKEN, then `gh auth token` (which
+// githubToken is the seat's GitHub token when its seats.tsv row names one
+// (#4330), else GH_TOKEN, then GITHUB_TOKEN, then `gh auth token` (which
 // honours GH_CONFIG_DIR, the fleet's per-seat gh config).
 func githubToken() (string, error) {
-	for _, k := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
-		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
-			return v, nil
-		}
+	if v, err := envGitHubToken(); v != "" || err != nil {
+		return v, err
 	}
 	out, err := exec.Command("gh", "auth", "token").Output()
 	if err != nil {
-		return "", errors.New("no GH_TOKEN or GITHUB_TOKEN, and gh auth token failed: " + err.Error())
+		return "", errors.New("no GH_TOKEN or GITHUB_TOKEN and no seat token, and gh auth token failed (" + strings.TrimSpace(err.Error()) + "); name the seat's GitHub token env in its seats.tsv row (the seventh column) and pass --seat")
 	}
 	return strings.TrimSpace(string(out)), nil
 }

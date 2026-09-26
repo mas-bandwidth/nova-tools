@@ -48,7 +48,7 @@ var digestNow = time.Now
 
 func runDigest(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := verbflag.New("digest")
-	addr := fs.String("redis", "", "")
+	addr := fs.String("redis", redisDefault(), "")
 	sinceS := fs.String("since", "", "")
 	untilS := fs.String("until", "", "")
 	var repos repoList
