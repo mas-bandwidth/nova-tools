@@ -133,8 +133,8 @@ func runWS(ctx context.Context, args []string, out, errOut io.Writer) int {
 // has. `stream order --show` is the same listing.
 func runWSShow(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("ws show", out, errOut)
-	order := w.fs.Bool("order", false, "")
-	stream := w.fs.String("stream", "", "")
+	order := w.fs.Bool("order", false, "every stream's cards in order, one line each, with their edges")
+	stream := w.fs.String("stream", "", verbflag.HelpStream)
 	if _, code, ok := w.parse(args, 0, "ws show --redis <addr> --order [--stream <s>]"); !ok {
 		return code
 	}

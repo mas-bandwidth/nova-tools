@@ -343,7 +343,7 @@ func (p *Play) check() error {
 	}
 	for _, b := range p.Limit {
 		if !known[b] {
-			return refused("--bench %s is not a machine in the registry %s (--limit names registry machines, comma separated)", b, p.Registry)
+			return refused("--bench %s is not a machine in the registry %s (--bench names registry machines, comma separated)", b, p.Registry)
 		}
 	}
 	if p.Client == nil && !p.DryRun {
