@@ -26,6 +26,11 @@ func TestSeatGivesTheCardEndWriterItsLogin(t *testing.T) {
 	if _, err := seatcred.FromArgs([]string{"native", "--seat", "swarm-x"}, os.Getenv); err != nil {
 		t.Fatal(err)
 	}
+	// seatEventLogin drops an unreadable seat silently when the writer has no
+	// Log; ask the seat first so a failure names its cause, not an empty user.
+	if _, ok, err := seatcred.Active(); !ok || err != nil {
+		t.Fatalf("seat swarm-x selected %v, unreadable: %v", ok, err)
+	}
 	opt := seatEventLogin(events.WriterOptions{Addr: "h:1"})
 	if opt.Username != "bench" || opt.Lookup == nil || opt.Lookup(events.DefaultPasswordEnv) != pw {
 		t.Fatalf("seat login: user %q; want bench with the seat's password behind the lookup", opt.Username)
