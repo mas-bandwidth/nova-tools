@@ -37,6 +37,13 @@ func init() {
 		}
 		return landDuty(st), nil
 	})
+	// The land watch (nova-tools #4324) touches no host: merging_at stamps,
+	// the LAND-SLOW / LAND-WALL alarms with one wake note per episode, one
+	// merge card per stream with members in merging, and the cross-stream
+	// escalation. It runs every pass, under the test guard too.
+	registerReconcileDuty("land-watch", func(st *store.Store) (reconcileDuty, error) {
+		return &reconcile.LandWatch{Client: st.Client(), Out: landDutyOut}, nil
+	})
 }
 
 // landDuty builds the duty over a store with the production seams: the
