@@ -41,7 +41,8 @@ func TestFriendCopyRendersThePersonsBrief(t *testing.T) {
 			"commit on nova/copies/p1-c2-a2 with the DONE-WHEN summary as the first line, push nova/copies/p1-c2-a2 and open the PR against dev",
 			"END: nova-sprint friend done --as friend:rowan --id p1~2 --ok --pr nova-tools#<n> --head <sha>",
 			"nova-sprint friend done --as friend:rowan --id p1~2 --fail '<why>'",
-			"BEAT: your session's nova-sprint friend beat --as friend:rowan renews this copy's lease every second",
+			"nova-sprint card owner --as friend:rowan --id p1~2 --token <claim-token> --pid <harness-pid>",
+			"Missing, remote or unreadable identity is UNKNOWN and does not renew;",
 			"quoted below (issue:nova-tools#4233)",
 			"\n---\n> the issue text\n",
 		}},
@@ -60,7 +61,8 @@ func TestFriendCopyRendersThePersonsBrief(t *testing.T) {
 			"the read found: PATHS too narrow. Change only PATHS, close the finding, commit on top of " + strings.Repeat("cd", 20),
 			"push to nova/copies/p1-c1-a1 under your own GitHub identity",
 			"END: nova-sprint friend done --as friend:rowan --id p1~2 --ok --pr nova-tools#<n> --head <sha>",
-			"BEAT: your session's nova-sprint friend beat --as friend:rowan renews this copy's lease every second",
+			"nova-sprint card owner --as friend:rowan --id p1~2 --token <claim-token> --pid <harness-pid>",
+			"Missing, remote or unreadable identity is UNKNOWN and does not renew;",
 		}},
 	} {
 		body, err := card.RenderCopy(friendCopy(tc.leg))
@@ -72,7 +74,7 @@ func TestFriendCopyRendersThePersonsBrief(t *testing.T) {
 				t.Fatalf("%s brief lacks %q:\n%s", tc.leg, want, body)
 			}
 		}
-		for _, never := range []string{"the wrapper", "never push", "never open a PR", "RESULT.md", "NO-SUBAGENTS", "card end", "--once"} {
+		for _, never := range []string{"the wrapper", "never push", "never open a PR", "RESULT.md", "NO-SUBAGENTS", "card end", "your session's"} {
 			if strings.Contains(string(body), never) {
 				t.Fatalf("%s brief still says %q (a friend has no wrapper):\n%s", tc.leg, never, body)
 			}

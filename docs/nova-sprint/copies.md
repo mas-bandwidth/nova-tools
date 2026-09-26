@@ -136,3 +136,44 @@ program or the in-process Go harness) and `runnerEnv` (nova-swarm native)
 strip `GH_PUSH_TOKEN` and `NOVA_CARD_ASKPASS` by name, and a test holds them
 to it. A path remote (a local bare repository, what a test pushes to) needs
 no credential.
+
+## Friend copy owner observations
+
+A detached heartbeat is not evidence that the friend harness still exists.
+After `friend pull` (or `card work --as friend:<name>`), bind each copy to
+its actual local harness process before the startup lease expires:
+
+```text
+nova-sprint card owner --as friend:<name> --id <copy> --token <claim-token> --pid <harness-pid>
+nova-sprint friend beat --as friend:<name> --once
+```
+
+Use the claim token printed by the taking verb. The owner command reads the
+local hostname and the OS process creation identity; it does not trust a
+child UUID, a model name, or the detached beat daemon as an owner. Binding
+never renews a lease, and an existing binding cannot change within its token.
+The host adapter must supply the process that actually does this copy's work.
+A harness without a supported process identity must report that limitation
+to the coordinator instead of inventing a PID.
+
+The detached loop batches observations and renews only owners observed alive
+on its host, with the same creation identity. PID reuse, a dead process,
+permission errors, another host and missing bindings cannot renew. Dead and
+unknown copies are named by `friend beat --once`; state changes appear once
+in the loop log. The copy retains `owner_state` and `owner_at` for inspection.
+The loop exits after two ticks without an observed live owner. The owner
+command starts it again if binding happens after that idle exit.
+
+Observations use Redis time sampled before the OS check and are refused when
+older than two seconds. Redis rechecks the working membership, claim token,
+process identity and unexpired lease atomically. An expired lease cannot be
+revived even when the owner is alive. Copies with unknown owners lapse through
+the normal expiry path. The daemon refreshes friend presence only when at
+least one observed live copy was renewed; unrelated presence producers retain
+their records. Legacy friend-queue tasks continue to use `task beat`.
+
+The kernel adapter supports Linux (`/proc` start ticks plus boot identity) and
+64-bit macOS (`kern.proc.pid` creation time). Other platforms report unknown.
+The friend seat requires the narrow `ns_cm_owner` function grant supplied by
+`store/acl.go`; loading a new binary alone does not deploy that grant or the
+updated Redis function library.

@@ -179,11 +179,24 @@ type Worked struct {
 // Work is card work: ready -> working for as, n copies (fill: as many as
 // are free), or the named ones; one call.
 func Work(ctx context.Context, c redis.Cmdable, as Consumer, by string, n int, fill bool, ids ...string) (Worked, error) {
+	return WorkAs(ctx, c, as, by, n, fill, Who{}, ids...)
+}
+
+// WorkAs is Work that also names who works the copies: ns_cm_work writes
+// who's fields onto each worked copy's record in the same move
+// (seat-keeps-beat: the one writer of task:<id>, never a second HSET).
+func WorkAs(ctx context.Context, c redis.Cmdable, as Consumer, by string, n int, fill bool, who Who, ids ...string) (Worked, error) {
+	if err := who.Check(); err != nil {
+		return Worked{}, err
+	}
 	k := any(n)
 	if fill {
 		k = "fill"
 	}
 	args := []any{as.String(), by, k}
+	for _, a := range who.Args() {
+		args = append(args, a)
+	}
 	for _, id := range ids {
 		args = append(args, id)
 	}
@@ -201,6 +214,35 @@ func Work(ctx context.Context, c redis.Cmdable, as Consumer, by string, n int, f
 		w.Tokens = append(w.Tokens, out[i+1])
 	}
 	return w, nil
+}
+
+// Who is who works a copy (seat-keeps-beat, 2026-09-26: a working copy
+// named no model, harness or child, so neither the card nor the table could
+// say who held it): the model, the harness it runs in and the child's id,
+// each one word, written onto task:<copy> as model, harness and child by
+// ns_cm_work as it moves the copy to working (WorkAs: card work, friend
+// pull, task take). An empty field is not written.
+type Who struct{ Model, Harness, Child string }
+
+// Args is who as ns_cm_work's who words (field=value), empty ones left out.
+func (w Who) Args() []string {
+	var a []string
+	for _, kv := range [][2]string{{"model", w.Model}, {"harness", w.Harness}, {"child", w.Child}} {
+		if v := strings.TrimSpace(kv[1]); v != "" {
+			a = append(a, kv[0]+"="+v)
+		}
+	}
+	return a
+}
+
+// Check refuses a field that is not one word.
+func (w Who) Check() error {
+	for _, kv := range [][2]string{{"model", w.Model}, {"harness", w.Harness}, {"child", w.Child}} {
+		if v := strings.TrimSpace(kv[1]); v != "" && strings.ContainsAny(v, " \t\r\n") {
+			return fmt.Errorf("--%s wants one word, got %q", kv[0], kv[1])
+		}
+	}
+	return nil
 }
 
 // EndRequest is one card end over IDs (copies), each with the same result.
@@ -387,7 +429,8 @@ func CancelEach(ctx context.Context, c redis.Cmdable, by, why string, ids ...str
 }
 
 // BeatCopies renews as's working copies' leases; it returns the new
-// lease_until (ms).
+// lease_until (ms). With no id it renews every copy in working, and a
+// friend-queue task there is skipped (ns_cm_beat names it after the lease).
 func BeatCopies(ctx context.Context, c redis.Cmdable, as Consumer, ids ...string) (int64, error) {
 	args := []any{as.String()}
 	for _, id := range ids {
@@ -397,7 +440,7 @@ func BeatCopies(ctx context.Context, c redis.Cmdable, as Consumer, ids ...string
 	if err != nil {
 		return 0, err
 	}
-	if len(out) != 3 || out[0] != "BEAT" {
+	if len(out) < 3 || out[0] != "BEAT" {
 		return 0, fmt.Errorf("%s: unexpected reply %v", FnBeatCopy, out)
 	}
 	return strconv.ParseInt(out[2], 10, 64)

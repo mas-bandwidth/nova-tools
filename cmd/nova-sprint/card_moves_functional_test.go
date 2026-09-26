@@ -111,7 +111,8 @@ func TestCardMovesCLI(t *testing.T) {
 		t.Fatalf("render = %d %q", code, out)
 	}
 	code, out, _ = runTaskCLI("take", "--actor", "emma")
-	if code != 0 || !strings.HasPrefix(out, "TASK take n=1 ids=c0~2 ms=") {
+	// the friend now holds a working copy: task take keeps its one beat loop
+	if code != 0 || !strings.HasPrefix(out, "BEATLOOP as=friend:emma started pid=4242 working=1 log=") || !strings.Contains(out, "\nTASK take n=1 ids=c0~2 ms=") {
 		t.Fatalf("task take of a copy = %d %q", code, out)
 	}
 	// CI gates the read copy: a passing score waits for CI OK at the head
