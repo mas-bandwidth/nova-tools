@@ -51,12 +51,9 @@ func init() {
 func landDuty(st *store.Store) *reconcile.LandDuty {
 	host, _ := os.Hostname()
 	api := os.Getenv("GITHUB_API_URL")
-	if api == "" {
-		api = "https://api.github.com"
-	}
 	return &reconcile.LandDuty{
 		Client: st.Client(), Host: host, Out: landDutyOut,
-		GitHub: func() (*stream.GitHub, error) { return landGitHub(api, landDutyBudget) },
+		GitHub: func() (*stream.GitHub, error) { return landGitHub("reconcile land", api, landDutyBudget, st.Client()) },
 		Request: func(ctx context.Context, repo, sha string, pr int, url string) (string, error) {
 			r, err := ci.Request(ctx, st, ci.RequestRequest{Repo: bareRepo(repo), SHA: sha, PR: pr, URL: url})
 			if err != nil {

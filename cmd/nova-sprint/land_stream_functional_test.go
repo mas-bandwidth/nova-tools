@@ -238,8 +238,12 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":merging").Result(); n != 0 {
 		t.Fatalf("merging %d", n)
 	}
-	if n, _ := c.ZCard(ctx, "ws:"+swarm+":landed").Result(); n != 3 {
-		t.Fatalf("the closed issues' tasks: %s landed %d, want 3", swarm, n)
+	// the three tasks and the stream's stop, landed by structure with the last (#4318)
+	if n, _ := c.ZCard(ctx, "ws:"+swarm+":landed").Result(); n != 4 {
+		t.Fatalf("the closed issues' tasks: %s landed %d, want 3 and the stop", swarm, n)
+	}
+	if h := c.HGetAll(ctx, "task:"+ws.SentinelID(swarm)).Val(); h["where"] != "landed" || !strings.HasPrefix(h["merge_sha"], "dddddddd") {
+		t.Fatalf("%s's stop after its last landing: %v", swarm, h)
 	}
 	for _, id := range []string{"t1", "t3", "build-101-one", "build-103-three", "build-7-seven"} {
 		if why := c.HGet(ctx, "task:"+id, "why").Val(); why != "landed with nova-tools#900 (dddddddd)" {
@@ -292,8 +296,10 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	}
 	// the refused run's park, the --partial run's park, the landing, five
 	// lands walked step by step through the one move (#3778: a ready member
-	// goes ready -> working -> landed, one receipt each)
-	if log, _ := c.XLen(ctx, "ws:log").Result(); log != 11 {
+	// goes ready -> working -> landed, one receipt each) (and the two
+	// streams' sentinels created at registration, and the swarm's landed
+	// with its last card, #4318)
+	if log, _ := c.XLen(ctx, "ws:log").Result(); log != 14 {
 		t.Fatalf("ws:log %d", log)
 	}
 	// The table reads the sets: the stream's landed cell is 2.

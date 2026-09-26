@@ -481,7 +481,7 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 	}
 	notLanded := []string{ws.Waiting, ws.Ready, ws.Working, ws.Review, ws.Merging}
 	type streamCmds struct {
-		counts  [6]*redis.IntCmd
+		counts  [6]*ws.CardCountCmd
 		oldest  [5]*redis.ZSliceCmd
 		state   *redis.MapStringStringCmd
 		stalled *redis.StringCmd // land:slow:<stream> stalled (the land watch)
@@ -495,11 +495,13 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 	pipe := p.Client.Pipeline()
 	scs := make([]streamCmds, len(streams))
 	for i, s := range streams {
+		// the counts and the oldest card leave the stream's stop out (#4318):
+		// a set's two oldest, so the sentinel beside a card never hides it
 		for j, state := range ws.Stream {
-			scs[i].counts[j] = pipe.ZCard(ctx, taskcard.StreamKey(s, state))
+			scs[i].counts[j] = ws.QueueCardCount(ctx, pipe, s, state)
 		}
 		for j, state := range notLanded {
-			scs[i].oldest[j] = pipe.ZRangeWithScores(ctx, taskcard.StreamKey(s, state), 0, 0)
+			scs[i].oldest[j] = pipe.ZRangeWithScores(ctx, taskcard.StreamKey(s, state), 0, 1)
 		}
 		scs[i].state = pipe.HGetAll(ctx, ProgressStreamKey(s))
 		scs[i].stalled = pipe.HGet(ctx, LandSlowKey(s), "stalled")
@@ -556,7 +558,9 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 			stream, _ := m.Values["stream"].(string)
 			from, _ := m.Values["from"].(string)
 			to, _ := m.Values["to"].(string)
+			id, _ := m.Values["id"].(string)
 			switch {
+			case ws.IsSentinel(id): // the stream's stop is not a card
 			case to == ws.Landed:
 				landed[stream]++
 			case from == ws.Working && (to == ws.Ready || to == ws.Waiting):
@@ -574,8 +578,14 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 			*cells[j] = c.Val()
 		}
 		for _, z := range scs[i].oldest {
-			if zs := z.Val(); len(zs) > 0 && (smp.OldestAt == 0 || int64(zs[0].Score) < smp.OldestAt) {
-				smp.OldestAt = int64(zs[0].Score)
+			for _, m := range z.Val() {
+				if id, _ := m.Member.(string); ws.IsSentinel(id) {
+					continue
+				}
+				if smp.OldestAt == 0 || int64(m.Score) < smp.OldestAt {
+					smp.OldestAt = int64(m.Score)
+				}
+				break
 			}
 		}
 		_, smp.Held = holds.Stream(s)

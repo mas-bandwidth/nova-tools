@@ -415,7 +415,7 @@ func (l *CopyLedger) harvest(ctx context.Context, end WrapperEnd, c CopyCard, br
 	res, err := h(ctx, harvestcopy.Request{
 		RepoDir: end.RepoDir, SHA: end.PushedSHA, Branch: branch, Onto: onto, Repo: c.Repo, Base: c.Base,
 		Title: c.Title, Stream: c.Stream, Origin: c.Origin, DoneWhen: c.DoneWhen,
-		Token: l.PushToken, Askpass: l.Askpass,
+		Token: l.PushToken, Askpass: l.Askpass, Redis: l.Client,
 	})
 	if err != nil {
 		return fail(harvestcopy.Reason(err), err.Error())

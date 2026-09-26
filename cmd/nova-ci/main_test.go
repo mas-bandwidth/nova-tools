@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -119,5 +121,49 @@ func TestSlowtestsRefusesANonPositiveBudget(t *testing.T) {
 		if !strings.Contains(stderr, "budget") {
 			t.Errorf("--budget %s: stderr = %q, want it to name the budget", budget, stderr)
 		}
+	}
+}
+
+// The unit tier's invocation: two seconds a package, one a test, and the
+// allowlist row that raises exactly one of them.
+func TestSlowtestsUnitTierBudgetsReadTheAllowlist(t *testing.T) {
+	t.Parallel()
+
+	allow := filepath.Join(t.TempDir(), "allow.txt")
+	if err := os.WriteFile(allow, []byte("pkg\tTestA\t4.5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdin := `{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
+{"Action":"pass","Package":"example.com/pkg","Test":"TestB","Elapsed":1.3}
+{"Action":"pass","Package":"example.com/pkg","Elapsed":4.6}
+`
+	code, stdout, stderr := runCI(t, []string{"slowtests", "--package-budget", "2", "--test-budget", "1", "--allowlist", allow}, stdin)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2; stderr: %s", code, stderr)
+	}
+	want := "CI-SLOW package=example.com/pkg seconds=4.6s budget=2s slowest=TestA:3.2s,TestB:1.3s\n" +
+		"CI-SLOW test=TestB package=example.com/pkg seconds=1.3s budget=1s\n"
+	if stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+
+	code, _, stderr = runCI(t, []string{"slowtests", "--package-budget", "2", "--allowlist", filepath.Join(t.TempDir(), "absent")}, "")
+	if code != 2 || !strings.Contains(stderr, "--allowlist") {
+		t.Errorf("a missing allowlist: exit %d stderr %q, want a refusal naming --allowlist", code, stderr)
+	}
+}
+
+// functional with no package is a refusal; with packages that hold no
+// functional test it prints nothing and exits 0, so make runs nothing.
+func TestFunctionalSelectsNothingWithoutTheTag(t *testing.T) {
+	t.Parallel()
+
+	code, _, stderr := runCI(t, []string{"functional"}, "")
+	if code != 2 || !strings.Contains(stderr, "run: nova-ci help") {
+		t.Errorf("bare functional: exit %d stderr %q, want a refusal", code, stderr)
+	}
+	code, stdout, stderr := runCI(t, []string{"functional", "."}, "")
+	if code != 0 || stdout != "" {
+		t.Errorf("functional .: exit %d stdout %q stderr %q, want 0 and nothing", code, stdout, stderr)
 	}
 }

@@ -33,6 +33,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
 	"os"
 	"path/filepath"
@@ -66,7 +67,7 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 	testTimeout := fs.Duration("test-timeout", 20*time.Minute, "")
 	minScore := fs.Int("min-score", -1, "")
 	by := fs.String("by", "rowan", "")
-	api := fs.String("api", "https://api.github.com", "")
+	api := fs.String("api", gh.DefaultAPI, "")
 	budget := fs.Int("budget", 64, "")
 	ciWait := fs.Duration("ci-wait", 45*time.Minute, "")
 	tick := fs.Duration("tick", 10*time.Second, "")
@@ -97,7 +98,7 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
-	gh, err := landGitHub(*api, *budget)
+	gh, err := landGitHub(verb, *api, *budget, nil)
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -132,6 +133,7 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 		return 6
 	}
 	defer st.Close()
+	gh.Redis = st.Client() // the calls are counted in the store (#4343)
 	o.Request = func(ctx context.Context, repo, sha string, pr int, url string) (string, error) {
 		r, err := ci.Request(ctx, st, ci.RequestRequest{Repo: bareRepo(repo), SHA: sha, PR: pr, URL: url})
 		if err != nil {

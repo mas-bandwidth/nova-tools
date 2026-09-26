@@ -71,7 +71,7 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 		}
 	}
 	got := after.Render(now)
-	if !strings.Contains(got, "\n592/592 left, 0% done -> ~11840m\n") {
+	if !strings.Contains(got, "\n592/592 left, 0% done -> ~11840m gh 0/h\n") {
 		t.Fatalf("after clear:\n%s", got)
 	}
 	if b, a := before.Render(now), got; b[strings.Index(b, "\nworker "):] != a[strings.Index(a, "\nworker "):] {

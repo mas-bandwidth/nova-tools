@@ -74,7 +74,7 @@ func TestStreamsTableFromRecords(t *testing.T) {
 	}
 	out := snap.Render(now)
 	rule := "--------------------------+---------+-------+---------+--------+---------+-------\n"
-	want := "SPRINT TABLE\n\n100/106 left, 5% done -> ~6000m\n\n" +
+	want := "SPRINT TABLE\n\n100/106 left, 5% done -> ~6000m gh 0/h\n\n" +
 		"stream                    | waiting | ready | working | review | merging | landed\n" + rule +
 		"nova-sprint + merge + bus |      56 |    12 |       3 |      4 |       2 |      1\n" +
 		"swarm: cards              |       4 |     0 |       7 |      2 |       0 |      5\n" +
@@ -138,7 +138,7 @@ func TestTableTickMakesNoRestCall(t *testing.T) {
 	if !keys["ZCARD ws:fleet, ci, secrets, jev:review"] {
 		t.Fatal("the tick never read the review cell of fleet, ci, secrets, jev")
 	}
-	allowed := map[string]bool{"ZRANGE": true, "ZCARD": true, "SMEMBERS": true, "EXISTS": true, "XRANGE": true, "HGETALL": true, "HGET": true, "HMGET": true, "ZCOUNT": true, "EVAL": true, "EVALSHA": true, "EVAL_RO": true}
+	allowed := map[string]bool{"ZRANGE": true, "ZCARD": true, "ZSCORE": true, "SMEMBERS": true, "EXISTS": true, "XRANGE": true, "HGETALL": true, "HGET": true, "HMGET": true, "ZCOUNT": true, "EVAL": true, "EVALSHA": true, "EVAL_RO": true}
 	names, _ := log.reset()
 	if len(names) == 0 {
 		t.Fatal("no commands logged")

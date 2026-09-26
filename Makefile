@@ -81,10 +81,10 @@ help:
 	@echo "make vet-windows GOOS=windows go vet ./... (the one Windows guard on the CL path)"
 	@echo "make lint        fmt and vet"
 	@echo "make preflight   gofmt, go vet, and go test -count=1 (PKGS)"
-	@echo "make test        go test -count=1 PKGS plus the 60s slowtests budget (the fast tier)"
+	@echo "make test        the unit tier: go test -p GOTEST_P PKGS plus the 2 s package / 1 s test slowtests budgets"
+	@echo "make test-functional the functional tier: only the tests behind //go:build functional in PKGS, -p GOTEST_P"
 	@echo "make test-full   go test -count=1 ./... (the whole tree)"
 	@echo "make test-short  go test -short -count=1 -timeout 12m PKGS"
-	@echo "make test-functional go test -count=1 -tags functional PKGS (the redis-backed tier: stream landings and nightly)"
 	@echo "make test-slow   go test -count=1 -tags slow ./... (the nightly tier: the tests too slow for a commit)"
 	@echo "make test-merge  go test -count=1 -timeout MERGE_TIMEOUT -run RUN PKGS"
 	@echo "make test-race   go test -race ./... (the certification tier)"
@@ -191,11 +191,24 @@ preflight:
 # though slowtests runs after it — a failing go test stops the verdict before
 # slowtests, exactly as the workflow did when this lived inline in ci.yml.
 #
-# The budget is 60 s (the two-minute law) except, until cards 9352 to 9354 make
-# cmd/nova-swarm and internal/swarm fast, on the Intel Mac
-# benches (about 3x slower per core than the Studio), where the alert still
-# prints every CI-SLOW line but the budget is 300 s. Dated exception,
-# 2026-09-18; remove with those cards.
+# THE UNIT TIER'S BUDGETS (Glenn 2026-09-26 11:20 AM ET, nova-tools#4328: "unit
+# tests be < 2s (ideally <1) but also they must not be so aggressive that they
+# fill a whole machine cores"): a package over 2 s or a top-level test over 1 s
+# is a CI-SLOW line and a red leg, unless internal/ci/slow-tests_allowlist.txt
+# names a higher budget for exactly that row; that list only shrinks
+# (internal/ci: TestSlowAllowlistOnlyShrinks). SLOWTESTS_FLAGS is the whole
+# slowtests invocation, so the push run over the whole tree, which is not cut
+# to these budgets yet, passes the old package budget instead (ci.yml), with
+# SLOWTESTS_ENFORCE=0: its CI-SLOW lines print and do not fail the leg, as
+# before. Everywhere else a CI-SLOW line fails the target.
+SLOWTESTS_FLAGS ?= --package-budget 2 --test-budget 1 --allowlist internal/ci/slow-tests_allowlist.txt
+SLOWTESTS_ENFORCE ?= 1
+#
+# GOTEST_P IS THE LEG'S CORES: `go test -p` (packages at once) and `-parallel`
+# (tests at once in a package) are both held to it, and ci.yml caps the leg's
+# GOMAXPROCS at the same two, so a leg never takes more than two cores however
+# many runners share the box (internal/ci: TestUnitLegTakesAtMostTwoCores).
+GOTEST_P ?= 2
 #
 # GOTEST_TIMEOUT is `go test -timeout` for this target; the default is Go's own
 # 10m. The workflow sets it per leg to fit the leg's job cap.
@@ -216,21 +229,28 @@ GOTEST_COUNT_FLAG ?= -count=1
 # 51% CPU on the Studio, 2026-09-26 9:47 AM ET) and a debug-info-free binary
 # is smaller for the malware scan that follows every fresh executable.
 GOTEST_LDFLAGS ?=
-# GOTEST_TAGS: empty on a pull request, so the redis-backed tests behind
-# `//go:build functional` are not built; `functional` where a whole stream
-# lands (ci.yml's merge-group and push-to-dev legs, and `make check`, the
-# stream lander's batch test). nova-tools #4328.
+# GOTEST_TAGS: empty in every CI leg of the unit tier (ci.yml never sets it;
+# the functional tier is its own job and `make test-functional`). `nova-ci
+# local --functional` sets it to build and run the redis-backed tests behind
+# `//go:build functional` beside the unit tests, on a developer's machine.
 GOTEST_TAGS ?=
-#
-# GOTEST_P IS THE LEG'S CORES: `go test -p` (packages at once) and `-parallel`
-# (tests at once in a package) are both held to it when it is set. `nova-ci
-# local` sets it to 2 (nova-tools#4336), with GOMAXPROCS=2, so a child's run
-# takes at most two cores of a shared bench; empty here, and in CI until a leg
-# sets it, Go's own default (GOMAXPROCS) stands.
-GOTEST_P ?=
 test: PKGS := $(CL_PKGS)
 test:
-	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) $(if $(GOTEST_P),-p $(GOTEST_P) -parallel $(GOTEST_P)) -tags=$(GOTEST_TAGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
+	@bash -o pipefail -c 'GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) -p $(GOTEST_P) -parallel $(GOTEST_P) -tags=$(GOTEST_TAGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests $(SLOWTESTS_FLAGS) < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json" || { [ "$(SLOWTESTS_ENFORCE)" != 1 ] || [ "$$status" -ne 0 ] || status=2; }; exit $$status'
+
+# THE FUNCTIONAL TIER (nova-tools#4328; Glenn 2026-09-26 11:20 AM ET: "we should
+# run functional tests, not on every small PR being merged or worked on, but
+# only as we merge whole work streams"). A functional test is one in a _test.go
+# built only under `//go:build functional`: it starts a real redis-server, a
+# real binary, a real process. ci.yml's `functional` job runs this target on
+# merge_group, schedule and workflow_dispatch only, never on a pull request.
+# `nova-ci functional` picks, among PKGS, the packages holding such files and a
+# -run pattern naming exactly their tests, so the unit tests of those packages
+# are not run a second time; PKGS with no functional file run nothing.
+FUNCTIONAL_TIMEOUT ?= 100s
+test-functional: PKGS := $(CL_PKGS)
+test-functional:
+	@bash -o pipefail -c 'sel=$$($(GO) run ./cmd/nova-ci functional $(PKGS)) || exit 2; if [ -z "$$sel" ]; then echo "functional: no test in these packages carries the functional build tag; nothing to run"; exit 0; fi; pkgs=$$(printf "%s\n" "$$sel" | sed -n 1p); run=$$(printf "%s\n" "$$sel" | sed -n 2p); echo "functional: $$pkgs"; $(GO) test -tags functional -p $(GOTEST_P) -count=1 -timeout $(FUNCTIONAL_TIMEOUT) -run "$$run" $$pkgs'
 
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)
@@ -246,12 +266,6 @@ test-short:
 # go-test-internal, do not build these files.
 test-slow:
 	$(GO) test -count=1 -tags slow ./...
-
-# The functional tier by hand: the redis-backed tests (and the unit tests beside
-# them). nightly-slow.yml's functional leg adds `slow` for the four files that
-# are both.
-test-functional:
-	$(GO) test -count=1 -tags functional $(PKGS)
 
 # `test-pr` LIVED HERE, the sharded hosted PR leg's entry, and it went with
 # test-windows-pr on 2026-09-18: it had exactly one caller, and the caller is
@@ -302,9 +316,12 @@ measure-roadmap:
 # job, the friend sequences and the nova-work acceptance suite (run once, by
 # verify-roadmap, with the roadmap's verified criteria judged against it).
 # The stream lander's batch test lands a whole stream, so it runs the
-# functional tier (#4328): the tag rides into `test` as a target variable.
-check: GOTEST_TAGS := functional
-check: build lint test test-e2e verify-roadmap
+# functional tier too (#4328). Over the whole tree the unit budgets are
+# printed, not enforced (the tree is not cut to 2 s / 1 s yet); the target
+# variables ride into `test` as its prerequisite.
+check: SLOWTESTS_FLAGS := --budget 60
+check: SLOWTESTS_ENFORCE := 0
+check: build lint test test-functional test-e2e verify-roadmap
 
 # An explicit list, never a computed path: clean removes the two directories a
 # local build and a worker's notes land in, and nothing else.

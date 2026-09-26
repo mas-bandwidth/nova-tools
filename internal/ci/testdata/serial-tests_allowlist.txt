@@ -650,7 +650,6 @@ internal/bus/replydraft_test.go:TestNoCreateExclusivePublishQuotesWhatEachCallSa
 internal/bus/replydraft_test.go:TestTheSecondPublishIsUsedWhenTheFirstIsNotAvailable serial: swaps package var bus.linkFile, swaps package var bus.noReplacePublish
 internal/bus/timeout_test.go:TestAGitThatHangsIsKilledAndNamed serial: t.Setenv
 internal/check/corpus_test.go:TestARelativeRootIsNotReadAsASymlinkEscape serial: t.Chdir
-internal/ci/redis_ci_test.go:TestRedisBackedTestsDoNotSkipUnderCI serial: t.Setenv
 internal/ci/source_functional_test.go:TestTheSourceSeamsAnswerAsTheDiskDoes serial: swaps package var ci.walkSourceDir, ci.readSourceFile, ci.parseSource
 internal/ctxindex/ctxindex_test.go:TestLookupReadsOnlyItsBucket serial: swaps package var ctxindex.BucketSize
 internal/ctxindex/ctxindex_test.go:TestPartialBuildLeavesThePreviousIndexWhole serial: swaps package var ctxindex.afterBuckets

@@ -38,6 +38,7 @@ var helpCases = [][]string{
 	{"fn", "load"}, {"fn", "check"}, {"fn", "deploy"},
 	{"fold"},
 	{"friend", "pull"}, {"friend", "done"}, {"friend", "beat"},
+	{"gh", "budget"},
 	{"friend", "hello"}, {"friend", "bye"}, {"friend", "wake"}, {"friend", "row"},
 	{"friend", "roles"}, {"friend", "report"}, {"friend", "show"}, {"friend", "sweep"},
 	{"friend", "down"}, {"friend", "up"}, {"friend", "declare"}, {"friend", "wake-health"},
@@ -73,7 +74,7 @@ var helpCases = [][]string{
 	{"verbs", "unused"},
 	{"why"}, {"width"},
 	{"worker", "pause"}, {"worker", "resume"}, {"worker", "show"},
-	{"ws", "counts"}, {"ws", "checkpoint"},
+	{"ws", "counts"}, {"ws", "checkpoint"}, {"ws", "show"},
 }
 
 // ownHelp is the verbs whose hand-written usage answers -h, with the exit

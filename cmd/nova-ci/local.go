@@ -18,9 +18,9 @@ package main
 //   - the run is the Makefile's `test` target, the one entry CI's legs call:
 //     its go test flags, its -timeout, its `nova-ci slowtests` budgets and
 //     allowlist and its exit status are whatever that target holds today;
-//   - --functional adds the functional build tag the way CI's merge-group and
-//     push legs do: the same `make test` with GOTEST_TAGS=functional, so the
-//     redis-backed tests behind `//go:build functional` build and run too.
+//   - --functional adds the functional build tag: the same `make test` with
+//     GOTEST_TAGS=functional, so the redis-backed tests behind `//go:build
+//     functional` build and run too (CI runs them in its functional job).
 //
 // What the verb adds is the machine it runs on: everything it starts runs under
 // `nice -n 15` with GOMAXPROCS=2 and GOTEST_P=2 (go test -p 2, at most two
@@ -121,7 +121,7 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	base := fs.String("base", localDefaultBase, "the ref the change lands on; the diff is read from its merge base with HEAD")
-	functional := fs.Bool("functional", false, "add the functional build tag, as CI's merge-group and push legs do (make test GOTEST_TAGS=functional)")
+	functional := fs.Bool("functional", false, "add the functional build tag (make test GOTEST_TAGS=functional), the tests CI's functional job runs")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " local", oneline.Cap(err.Error(), oneline.TailBytes))
 	}

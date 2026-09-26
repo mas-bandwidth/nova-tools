@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -69,8 +70,9 @@ type dependencyKind string
 const (
 	dependencyCard   dependencyKind = "card"
 	dependencyGitHub dependencyKind = "github"
-	dependencyStream dependencyKind = "stream"
-	dependencyTask   dependencyKind = "task"
+	// (the stream/<slug> kind is retired, #4318: a stream is waited for
+	// through its sentinel, task:<slug>:sentinel, one kind of edge)
+	dependencyTask dependencyKind = "task"
 )
 
 type dependency struct {
@@ -420,9 +422,7 @@ func parseDepends(label, value string) (string, []dependency, error) {
 	entries := make([]string, len(deps))
 	for i, dep := range deps {
 		entries[i] = dep.Value
-		if dep.Kind == dependencyStream {
-			entries[i] = "stream/" + dep.Value
-		} else if dep.Kind == dependencyTask {
+		if dep.Kind == dependencyTask {
 			entries[i] = "task:" + dep.Value
 		}
 	}
@@ -434,19 +434,25 @@ func parseDependency(entry string) (dependency, error) {
 		return dependency{Kind: dependencyGitHub, Value: entry}, nil
 	}
 	if slug, ok := strings.CutPrefix(entry, "stream/"); ok {
+		// the older spelling of a stream edge: the stream's sentinel (#4318)
 		if !streamRE.MatchString(slug) {
-			return dependency{}, fmt.Errorf("DEPENDS-ON: %s is not stream/<slug>", entry)
+			return dependency{}, fmt.Errorf("DEPENDS-ON: %s is not stream/<slug>; a stream is waited for as %s:sentinel", entry, slug)
 		}
-		return dependency{Kind: dependencyStream, Value: slug}, nil
+		return dependency{Kind: dependencyTask, Value: slug + ws.SentinelSuffix}, nil
 	}
 	if id, ok := strings.CutPrefix(entry, "task:"); ok {
-		if !idRE.MatchString(id) {
+		if !idRE.MatchString(id) && !ws.IsSentinel(id) {
 			return dependency{}, fmt.Errorf("DEPENDS-ON: %s is not task:<id>", entry)
 		}
 		return dependency{Kind: dependencyTask, Value: id}, nil
 	}
+	// a stream's sentinel (nova-tools #4318): the task record the stream
+	// lands last, one edge like any other
+	if ws.IsSentinel(entry) {
+		return dependency{Kind: dependencyTask, Value: entry}, nil
+	}
 	if !idRE.MatchString(entry) {
-		return dependency{}, fmt.Errorf("DEPENDS-ON: %s is not a card id, owner/repo#n, stream/<slug>, or task:<id>", entry)
+		return dependency{}, fmt.Errorf("DEPENDS-ON: %s is not a card id, owner/repo#n, <slug>:sentinel or task:<id>", entry)
 	}
 	return dependency{Kind: dependencyCard, Value: entry}, nil
 }
