@@ -164,8 +164,8 @@ func TestACLSeatsRunTheCardVerbs(t *testing.T) {
 	fc := as("ns-friend")
 	pipe := fc.Pipeline()
 	pipe.HGet(ctx, friend.DesiredKey(), "slots")
-	pipe.ZCard(ctx, friend.Key("working"))
-	pipe.ZCard(ctx, friend.Key("ready"))
+	pipe.ZCard(ctx, friend.KeyAt(0, "working"))
+	pipe.ZCard(ctx, friend.KeyAt(0, "ready"))
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatalf("ns-friend slot read: %v", err)
 	}
