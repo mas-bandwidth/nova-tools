@@ -272,6 +272,20 @@ func dash(v string) string {
 	return v
 }
 
+// The standard lines every harness card carries (RenderHeader for a primary,
+// card.RenderCopy for its work copy: the first copy-model quack's model got a
+// card with the title alone and wandered, 2026-09-25 11:43 PM ET).
+const (
+	LineNoSubagents = "work in this session only; do not spawn an Explore, Task or child agent."
+	LineWall        = "read and write only inside the job dir; the repo clone is under it; never read $HOME or ~/rowan-working outside the job dir (the job dir itself sits under ~/rowan-working/tmp, so never walk above it); a read outside is refused by the wall and ends the card."
+	LineTests       = "every new Go test opens with t.Parallel(); no time.Sleep, no real-time poll, no real deadline (inject the clock); no service, process or socket in a unit test (mock the seam; a test that needs the real thing goes behind //go:build slow); keep the package's tests under one minute. Every CI job is capped at two minutes: a red at the cap is your defect to fix, never a number to raise."
+	LineUnattended  = "never ask a question and never offer to proceed; decide, and record the decision in RESULT.md."
+	LineOutput      = "RESULT.md, notes and scratch go in the job directory, outside repo/, and are never committed; the harness moves them to the results root at card end and deletes the job directory."
+)
+
+// Quote renders an issue text as the quoted block under a card's --- line.
+func Quote(body string) string { return quote(body) }
+
 // RenderHeader is the harness card a bench runs, rendered from the record
 // alone: the RESULT contract line, the typed header, the standard lines and
 // DO: with the issue text. It refuses (naming the header keys) a record a
@@ -315,13 +329,13 @@ func RenderHeader(id string, rec map[string]string) ([]byte, error) {
 	line("SOURCE", s.Source)
 	line("TASK", task)
 	line("DONE-WHEN", s.DoneWhen)
-	line("NO-SUBAGENTS", "work in this session only; do not spawn an Explore, Task or child agent.")
-	line("WALL", "read and write only inside the job dir; the repo clone is under it; never read $HOME or ~/rowan-working outside the job dir (the job dir itself sits under ~/rowan-working/tmp, so never walk above it); a read outside is refused by the wall and ends the card.")
+	line("NO-SUBAGENTS", LineNoSubagents)
+	line("WALL", LineWall)
 	line("RESULT-FORMAT", fmt.Sprintf("RESULT.md in the job dir, outside repo/: line 1 is line 1 of this card verbatim; line 2 is DONE, ABSTAIN <why> or BLOCKED <why>; then SCHEMA: v2, KIND: %s, ATTEMPT: 1, CHECK: pass|fail|not-run, REPO: %s, BRANCH: <branch you committed>, PATHS: <space-separated paths changed>, RED: <the test failing on base-sha>, GREEN: <the same test passing at your head>; then a \"## Gates\" section and a \"## Left owed\" section, each with at least one \"- \" row.", kind, s.Repo))
 	line("COMMIT", fmt.Sprintf("make your change in repo/ on a new branch %s (git checkout -b %s) and commit it there with the DONE-WHEN summary as the first line; never push and never open a PR; harvest pushes the branch and opens the PR from your commit; an uncommitted change counts as NO-COMMIT and the card is refused.", branch, branch))
-	line("TESTS", "every new Go test opens with t.Parallel(); no time.Sleep, no real-time poll, no real deadline (inject the clock); no service, process or socket in a unit test (mock the seam; a test that needs the real thing goes behind //go:build slow); keep the package's tests under one minute. Every CI job is capped at two minutes: a red at the cap is your defect to fix, never a number to raise.")
-	line("UNATTENDED", "never ask a question and never offer to proceed; decide, and record the decision in RESULT.md.")
-	line("OUTPUT", "RESULT.md, notes and scratch go in the job directory, outside repo/, and are never committed; the harness moves them to the results root at card end and deletes the job directory.")
+	line("TESTS", LineTests)
+	line("UNATTENDED", LineUnattended)
+	line("OUTPUT", LineOutput)
 	line("PR-BODY", fmt.Sprintf("the PR body must carry `STREAM: %s` and the DONE-WHEN line above, verbatim; put both lines, verbatim, in the commit message body under line 1.", dash(rec["stream"])))
 	line("DO", fmt.Sprintf("the work is the issue text quoted below (%s): change only PATHS, make DONE-WHEN hold, run TEST, write RESULT.md per RESULT-FORMAT, and exit.", dash(firstNonEmpty(rec["origin"], rec["ref"]))))
 	b.WriteString("\n---\n")
