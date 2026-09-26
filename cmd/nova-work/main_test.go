@@ -525,7 +525,7 @@ func TestReadyPrintsEachRowsBlockerAndResolver(t *testing.T) {
 		t.Fatalf("ready --node a exit = %d, want 0 (stderr=%q)", code, stderr)
 	}
 	line := strings.TrimSpace(stdout)
-	for _, want := range []string{"node=a", "ready=false", "blocker=b", "state=open", `resolver="nova-merge queue"`} {
+	for _, want := range []string{"node=a", "ready=false", "blocker=b", "state=open", `resolver="nova-sprint land pr"`} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("ready --node a line %q does not name %q", line, want)
 		}

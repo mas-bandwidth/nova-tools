@@ -1011,7 +1011,7 @@ $ nova-work dependencies --graph ./deps.json --node a --needs b
 DEPENDENCIES OK nodes=2 edges=1
 
 $ nova-work ready --node a --graph ./deps.json
-READY node=a ready=false blocker=b state=open resolver="nova-merge queue"
+READY node=a ready=false blocker=b state=open resolver="nova-sprint land pr"
 
 $ nova-work ready --node b --graph ./deps.json
 READY node=b ready=true

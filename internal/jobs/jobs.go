@@ -359,7 +359,7 @@ func AcceptArgs(args []string) (string, error) {
 }
 
 // State names a node's progress: open, merged, or accepted. A merged node that is not
-// yet green is the blocker nova-sprint card harvest settles.
+// yet green is the blocker nova-work accept settles.
 func (n Node) State() string {
 	switch {
 	case n.Merged && n.Green:
@@ -399,14 +399,23 @@ func (g *Graph) Ready(id string) (bool, *Blocker) {
 	return true, nil
 }
 
-// resolver names the join that settles a need. nova-merge queue lands an open PR; once
-// it has merged, nova-sprint card harvest settles the green and re-evaluates dependents.
+// resolver names the join that settles a need, as a verb that runs (FG-A fix 3;
+// nova-merge queue and nova-sprint card harvest are retired). nova-sprint land pr
+// merges an open PR by REST once its check state in Redis is green; once it has
+// merged, nova-work accept records the green in the graph and re-evaluates dependents.
 func resolver(n Node) string {
 	if !n.Merged {
-		return "nova-merge queue"
+		return ResolverOpen
 	}
-	return "nova-sprint card harvest"
+	return ResolverMerged
 }
+
+// The two resolvers, each a verb of a binary in this module: cmd/nova-sprint's land
+// pr and cmd/nova-work's accept (TestRowanAuditBlockerResolverVerbExists runs them).
+const (
+	ResolverOpen   = "nova-sprint land pr"
+	ResolverMerged = "nova-work accept"
+)
 
 // ReadySet is the mechanical ready set: the nodes with no unmet need, in seed order.
 func (g *Graph) ReadySet() []string {

@@ -43,8 +43,8 @@ func TestLaunchReadsTheReadySetNotTheQueue(t *testing.T) {
 	if blocker.State != "open" {
 		t.Fatalf("a's blocker state = %q, want open (an open PR)", blocker.State)
 	}
-	if blocker.Resolver != "nova-merge queue" {
-		t.Fatalf("a's resolver = %q, want the nova-merge queue join", blocker.Resolver)
+	if blocker.Resolver != "nova-sprint land pr" {
+		t.Fatalf("a's resolver = %q, want the nova-sprint land pr join", blocker.Resolver)
 	}
 
 	// The queue holds a first. Launch must read the ready set, so a stays off a slot.
