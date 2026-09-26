@@ -8,9 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // THE SUPERVISOR: the child the runner forks, and the process that owns a job.
@@ -89,7 +92,7 @@ func Supervise(in SuperviseInput) int {
 	// after the job's whole process group is dead.
 	attest, err := NewExitAttest()
 	if err != nil {
-		return abort(in, jobDir, err)
+		return abort(in, jobDir, fmt.Errorf("the exit attestation could not be minted: %s", redactedReason(err)))
 	}
 	identity := SlotFile{
 		State: SlotLaunched, Pid: self, Pgid: pgidOf(self), PidStarted: StartStamp(self),
@@ -103,7 +106,7 @@ func Supervise(in SuperviseInput) int {
 		Job: in.Task, Slot: in.Slot, State: SlotLaunched, Pid: self, Pgid: pgidOf(self),
 		PidStarted: identity.PidStarted, Started: Stamp(started),
 	}); err != nil {
-		return abort(in, jobDir, err)
+		return abort(in, jobDir, fmt.Errorf("the pid record %s could not be written: %s", PidPath(jobDir), redactedReason(err)))
 	}
 
 	// (5) RELEASE TO WORK: the harness, as this supervisor's child, in a process group of
@@ -174,14 +177,7 @@ func Supervise(in SuperviseInput) int {
 	// whether the pid they hold is still the process they meant. It travels WITH the pid,
 	// into the job's own records and into every call below.
 	jobStarted := StartStamp(jobPgid)
-	_ = WriteJSON(PidPath(jobDir), PidRecord{
-		Job: in.Task, Slot: in.Slot, State: SlotLaunched, Pid: self, Pgid: pgidOf(self), JobPgid: jobPgid,
-		PidStarted: identity.PidStarted, JobStarted: jobStarted, Started: Stamp(started),
-	})
-	_ = p.UpdateSlot(in.Slot, in.Nonce, func(sf SlotFile) SlotFile {
-		sf.JobPgid, sf.JobStarted = jobPgid, jobStarted
-		return sf
-	})
+	recordStart(in, jobDir, self, identity.PidStarted, jobPgid, jobStarted, started)
 	CheckKillPoint("supervisor-after-release")
 
 	record := watch(in, cmd, jobDir, jobPgid, jobStarted, started)
@@ -477,21 +473,61 @@ func poolRootGone(p *Pool) bool {
 	return os.IsNotExist(err)
 }
 
+// recordStart puts the job's own identity, learned at the one moment it is not in doubt,
+// into the pid record and the slot file. The harness is already running, so a write that
+// fails is not an abort: the line names the record, the cause, that the job runs (this
+// supervisor still watches it to its end), what a reader of the record will lack, and the
+// way to inspect (Stella's audit stella-e6353bf80360, finding 5's post-start writes).
+func recordStart(in SuperviseInput, jobDir string, self int, pidStarted string, jobPgid int, jobStarted string, started time.Time) {
+	if err := WriteJSON(PidPath(jobDir), PidRecord{
+		Job: in.Task, Slot: in.Slot, State: SlotLaunched, Pid: self, Pgid: pgidOf(self), JobPgid: jobPgid,
+		PidStarted: pidStarted, JobStarted: jobStarted, Started: Stamp(started),
+	}); err != nil {
+		fmt.Fprintf(in.Stderr, "SUPERVISE WARN slot=%d id=%s: the pid record %s could not take the job's group after the harness started: %s; the harness runs (job pgid %d) and this supervisor watches it to its end, but the record still reads the pre-start identity, so a replacement dispatcher cannot find the job's group from it; inspect: the record and ps -eo pid,pgid,comm for pgid %d\n",
+			in.Slot, oneline.Field(in.Task), oneline.Field(PidPath(jobDir)), oneline.Escape(redactedReason(err)), jobPgid, jobPgid)
+	}
+	if in.Pool == nil {
+		return
+	}
+	if err := in.Pool.UpdateSlot(in.Slot, in.Nonce, func(sf SlotFile) SlotFile {
+		sf.JobPgid, sf.JobStarted = jobPgid, jobStarted
+		return sf
+	}); err != nil {
+		fmt.Fprintf(in.Stderr, "SUPERVISE WARN slot=%d id=%s: the slot file %s could not take the job's group after the harness started: %s; the harness runs (job pgid %d) and this supervisor watches it to its end, but the slot does not name the job's group, and a slot that is no longer this launch's means another writer took it while the job runs; inspect: nova-swarm slots and the slot file, and do not free the slot while pgid %d is alive\n",
+			in.Slot, oneline.Field(in.Task), oneline.Field(in.Pool.slotPath(in.Slot)), oneline.Escape(redactedReason(err)), jobPgid, jobPgid)
+	}
+}
+
 // abort is rule 18's losing path, and its ORDER is the rule: never spawn the harness; count
 // the processes in its own group other than itself; write aborted.json through .tmp, fsync
 // and rename, SO THE DURABLE ACKNOWLEDGEMENT EXISTS BEFORE ITS OWN DEATH CAN BE OBSERVED;
-// then exit 2. It never claims an absence it did not observe.
+// then exit 2. It never claims an absence it did not observe -- and it never claims the
+// acknowledgement exists when the write failed: the line keeps the cause, names the
+// evidence path, and when the write failed says so, so a recovery reading the line does
+// not infer an aborted.json that is not there (Stella's audit stella-e6353bf80360,
+// finding 5).
 func abort(in SuperviseInput, jobDir string, cause error) int {
 	survivors := 0
 	if n, ok := GroupMembers(pgidOf(os.Getpid()), os.Getpid()); ok {
 		survivors = n
 	}
-	_ = os.MkdirAll(jobDir, 0o755)
-	_ = WriteJSON(AbortedPath(jobDir), AbortedRecord{
+	evidence := AbortedPath(jobDir)
+	var writeErr error
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		writeErr = fmt.Errorf("the job directory could not be made: %s", redactedReason(err))
+	} else if err := WriteJSON(evidence, AbortedRecord{
 		Nonce: in.Nonce, Reason: cause.Error(), At: Stamp(in.Now()), Survivors: survivors,
-	})
+	}); err != nil {
+		writeErr = fmt.Errorf("aborted.json could not be written: %s", redactedReason(err))
+	}
 	CheckKillPoint("between-aborted-and-exit")
-	fmt.Fprintf(in.Stderr, "SUPERVISE ABORTED slot=%d id=%s: reservation changed\n", in.Slot, in.Task)
+	line := fmt.Sprintf("SUPERVISE ABORTED slot=%d id=%s: %s; no harness was started; evidence=%s",
+		in.Slot, oneline.Field(in.Task), oneline.Escape(cause.Error()), oneline.Field(evidence))
+	if writeErr != nil {
+		line += " NOT WRITTEN: " + oneline.Escape(writeErr.Error()) + "; the durable acknowledgement does not exist, so recovery must not infer it from this line: rule 17 decides slot " +
+			strconv.Itoa(in.Slot) + " from the slot file alone; inspect: " + oneline.Field(jobDir) + " and nova-swarm slots"
+	}
+	fmt.Fprintln(in.Stderr, line)
 	return 2
 }
 
