@@ -11,7 +11,7 @@
 --   a person posts a CLOSE line (ns_read_post)                -> the same landing
 --   a reader posts a SCORE line (ns_read_post)
 --       the PR's read task read-<n>-<head8> working -> merging (the read is done)
---       and, for each primary of the PR in reading, the reader's read copy
+--       and, for each primary of the PR in review, the reader's read copy
 --       ends through the one finish (NS.tm.score, 02_card_move.lua): 8+ at
 --       the record head moves the PRIMARY to merging, under 8 cuts one fix
 --       copy on the author's queue (#4094, #4097)
@@ -205,7 +205,7 @@ function TE.event(repo, n, key, first)
     if redis.call('HGET', 'task:' .. id, 'state') == 'working' then
       r = TE.apply({ id }, 'merging', who, 'read: SCORE by ' .. who .. ' at ' .. string.sub(head, 1, 8))
     end
-    -- The reader's read copy of every primary of the PR in reading ends
+    -- The reader's read copy of every primary of the PR in review ends
     -- through the one finish (NS.tm.score, 02_card_move.lua, #4094, #4097):
     -- 8+ at the record head moves the primary to merging, under 8 cuts one
     -- fix copy. The line store (ns_line_post) and ns_read_post both come here.

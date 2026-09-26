@@ -18,8 +18,8 @@ import (
 
 // TestReadPostVerbMovesThePrimary is the verb-level half of nova-tools
 // #4094 and #4097: through nova-sprint read post (--no-github), a SCORE 9
-// at the record head moves the PRIMARY reading -> merging in the same call
-// (tasks_moved=1), and a SCORE 6 leaves it in reading and cuts one fix copy
+// at the record head moves the PRIMARY review -> merging in the same call
+// (tasks_moved=1), and a SCORE 6 leaves it in review and cuts one fix copy
 // on the author's queue carrying the line (copies_cut=1); nova-sprint pr
 // record --head (the fix's new head) then cuts one fresh read copy.
 func TestReadPostVerbMovesThePrimary(t *testing.T) {
@@ -48,7 +48,7 @@ func TestReadPostVerbMovesThePrimary(t *testing.T) {
 	}
 	c.HSet(ctx, "friend:emma:roles", "roles", "reader")
 	head := func(i int) string { return fmt.Sprintf("%040x", 0xb0000+i) }
-	reading := func(id string, pr int) string {
+	review := func(id string, pr int) string {
 		t.Helper()
 		if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: id, Where: "waiting", Stream: s, Kind: "build",
 			Repo: "mas-bandwidth/nova-tools", Title: "t " + id, By: "rowan",
@@ -68,7 +68,7 @@ func TestReadPostVerbMovesThePrimary(t *testing.T) {
 		}
 		e, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{d[0].Copy}, OK: true, Repo: "nova-tools",
 			PR: strconv.Itoa(pr), Head: head(pr), By: "f"})
-		if err != nil || e[0].To != "reading" || e[0].Next == "" || strings.Contains(e[0].Next, ",") {
+		if err != nil || e[0].To != "review" || e[0].Next == "" || strings.Contains(e[0].Next, ",") {
 			t.Fatalf("end ok %v %v (want reading and one friend read copy)", e, err)
 		}
 		return e[0].Next
@@ -85,7 +85,7 @@ func TestReadPostVerbMovesThePrimary(t *testing.T) {
 	}
 
 	// SCORE 9 at the record head: the primary advances in the same call
-	r1 := reading("v1", 1)
+	r1 := review("v1", 1)
 	c.HSet(ctx, "ci:nova-tools:"+head(1), "final", "OK")
 	out := post(1, "SCORE who=emma head="+head(1)+" score=9/10 gates=ci:ok,base:ok,scope:ok")
 	if !strings.Contains(out, "kind=SCORE") || !strings.Contains(out, "tasks_moved=1") || where("v1") != "merging" ||
@@ -94,11 +94,11 @@ func TestReadPostVerbMovesThePrimary(t *testing.T) {
 	}
 
 	// SCORE 6: the primary stays; one fix copy on the author's queue
-	r2 := reading("v2", 2)
+	r2 := review("v2", 2)
 	line := "SCORE who=emma head=" + head(2) + " score=6/10 gates=ci:ok,base:ok,scope:ok: no failing test"
 	out = post(2, line)
 	fix := c.HGet(ctx, "task:v2", "copy").Val()
-	if !strings.Contains(out, "tasks_moved=0 copies_cut=1") || where("v2") != "reading" || where(r2) != "ok" || fix == "" {
+	if !strings.Contains(out, "tasks_moved=0 copies_cut=1") || where("v2") != "review" || where(r2) != "ok" || fix == "" {
 		t.Fatalf("SCORE 6: %q primary=%s copy=%s fix=%q", out, where("v2"), where(r2), fix)
 	}
 	if f := c.HGetAll(ctx, "task:"+fix).Val(); f["kind"] != "fix" || f["consumer"] != "friend:f" || f["finding"] != line {
@@ -111,7 +111,7 @@ func TestReadPostVerbMovesThePrimary(t *testing.T) {
 		t.Fatalf("pr record --head = %d %q %q", code, out, errOut)
 	}
 	fresh := strings.Fields(c.HGet(ctx, "task:v2", "reads").Val())
-	if len(fresh) != 1 || c.HGet(ctx, "task:"+fresh[0], "head").Val() != head(20) || where(fix) != "ok" || where("v2") != "reading" {
+	if len(fresh) != 1 || c.HGet(ctx, "task:"+fresh[0], "head").Val() != head(20) || where(fix) != "ok" || where("v2") != "review" {
 		t.Fatalf("after the new head: reads=%v fix=%s primary=%s", fresh, where(fix), where("v2"))
 	}
 	r, err := taskcard.FsckMoves(ctx, c, false)

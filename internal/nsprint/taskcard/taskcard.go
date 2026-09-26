@@ -3,7 +3,7 @@
 // and "Tasks are cards"). A task is one record, task:<id>, never deleted,
 // whose pointer `where` names the one set it is in (or none):
 //
-//	where      "" | waiting | ready | working | reading | merging | landed | done | parked
+//	where      "" | waiting | ready | working | review | merging | landed | done | parked
 //	where_ok   ok | fail once done (landed is ok), - before
 //	stream     ws:<stream>:<where> holds the id while it has a stream
 //	friend     friend:<friend>:cards:<where> holds the id while a friend has it
@@ -47,7 +47,7 @@ const (
 )
 
 // Wheres are the sets a task can be in, in the fsck reply's order.
-var Wheres = []string{"waiting", "ready", "working", "review", "reading", "merging", "landed", "done", "parked"}
+var Wheres = []string{"waiting", "ready", "working", "review", "merging", "landed", "done", "parked"}
 
 // Key is a task's record.
 func Key(id string) string { return "task:" + id }

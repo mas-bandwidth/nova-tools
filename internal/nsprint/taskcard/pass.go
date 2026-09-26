@@ -14,8 +14,8 @@ import (
 
 // The deal duty's pass (nova-tools #3929, the table moves; it supersedes
 // the friend-only deal of #3908 and is the one deal over every consumer,
-// Glenn 12:55 PM ET): lapsed copies return to their primaries, the reading
-// column is kept (EnsureReads: a moved head re-headed, a reading primary
+// Glenn 12:55 PM ET): lapsed copies return to their primaries, the review
+// column is kept (EnsureReads: a moved head re-headed, a review primary
 // with no live copy given its read copies; #4094), then every
 // enrolled consumer (the consumers SET) that is live, not down and not
 // paused, ranked by free slots (most first, then by id), is dealt what it

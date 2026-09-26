@@ -17,7 +17,7 @@
 // (SCORE who=<w> head=<sha> score=N/10 ..., DISPOSITION ..., HOLD ...) to reads.
 // --branch-gone marks the PR's head branch gone (branch_gone), one of the
 // three records pr reap (pr_reap.go) closes a PR on. A --head is the PR's
-// head move (#4094, #4097): every primary of the PR in reading at another
+// head move (#4094, #4097): every primary of the PR in review at another
 // head has its live fix copy ended ok, its open read copies retired and
 // fresh read copies cut at the new head (one ns_cm_head call; a line
 // PR REHEAD task=<id> reads=<copies> each; a refusal is a PR REHEAD
@@ -142,7 +142,7 @@ func runPRRecord(ctx context.Context, args []string, out, errOut io.Writer) int 
 	recut, err := taskcard.Rehead(ctx, st.Client(), *repo, *n, "pr record")
 	if err != nil {
 		// the record is written (exit 0); the refusal is named, and the
-		// deal pass's reading duty re-heads on its next tick
+		// deal pass's review reads duty re-heads on its next tick
 		fmt.Fprintf(errOut, "PR REHEAD REFUSED %s why=%s; the record is written, the deal pass re-cuts the reads\n",
 			stream.PRKey(*repo, *n), oneline.Field(err.Error()))
 		return 0

@@ -58,7 +58,7 @@ every verb also takes --redis <addr> (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR) a
 done moves working -> merging when the task names a PR (its pr field or --pr), else -> done.
 take, done, beat and cancel are card work, end, beat and cancel for a friend's consumer copies
 (<primary>~<n>, #3929): take works the friend's ready copies first, then takes friend-queue
-tasks; done of a copy returns it to its primary (--pr <n> --head <sha>: the primary is reading).
+tasks; done of a copy returns it to its primary (--pr <n> --head <sha>: the primary is review).
 land moves merging (or working) -> landed at the merge sha; land --stream moves every
 member of ws:<s>:merging and prints LANDED <id> ref=<repo#n> origin=<url> per member (the
 lander closes those PRs and issues with the CLOSE line). take starts a lease the child
@@ -344,7 +344,7 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 	case "done":
 		if taskcard.IsCopy(*c.id) {
 			// task done of a copy is card end (#3929): the copy returns to its
-			// primary (ok; with --pr <n> --head <sha> the primary moves to reading).
+			// primary (ok; with --pr <n> --head <sha> the primary moves to review).
 			r := taskcard.EndRequest{IDs: []string{*c.id}, OK: true, PR: *c.pr, Head: *c.head, By: *c.actor,
 				Fields: []string{"evidence", *c.evidence}}
 			if *c.pr != "" {

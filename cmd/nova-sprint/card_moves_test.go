@@ -87,9 +87,9 @@ func TestCardMovesCLI(t *testing.T) {
 	endOK := []string{"card", "end", "--id", "c0~1", "--ok", "--pr", "nova-tools#77", "--head", h, "--line1", "RESULT: c0",
 		"--base", "dev", "--base-sha", strings.Repeat("1", 40), "--paths", "a.go"}
 	code, out, _ = runCLI(endOK...)
-	// the work copy's ok with a PR moves the primary to reading (no reader
+	// the work copy's ok with a PR moves the primary to review (no reader
 	// enrolled: the read deal cuts its copy)
-	if code != 0 || !strings.HasPrefix(out, "ENDED c0~1 primary=c0 from=working to=reading next=-\nCARD END n=1 ms=") {
+	if code != 0 || !strings.HasPrefix(out, "ENDED c0~1 primary=c0 from=working to=review next=-\nCARD END n=1 ms=") {
 		t.Fatalf("end ok with a PR = %d %q", code, out)
 	}
 	code, out, _ = runCLI(endOK...)
@@ -121,7 +121,7 @@ func TestCardMovesCLI(t *testing.T) {
 	if code, out, _ = runCLI("card", "ci", "--repo", "nova-tools", "--head", h, "--ok"); code == 0 || strings.Contains(out, "CARD CI") {
 		t.Fatalf("card ci = %d %q, want a refusal (the verb is gone)", code, out)
 	}
-	if w := c.HGet(ctx, "task:c0", "where").Val(); w != "reading" {
+	if w := c.HGet(ctx, "task:c0", "where").Val(); w != "review" {
 		t.Fatalf("c0 is %s after card ci, want reading", w)
 	}
 	code, out, _ = runCLI("card", "deal", "--to", "friend:emma", "--n", "1")
@@ -141,12 +141,12 @@ func TestCardMovesCLI(t *testing.T) {
 	if code != 1 || !strings.Contains(out, "why=\"CIPENDING") {
 		t.Fatalf("read end before CI = %d %q", code, out)
 	}
-	if w := c.HGet(ctx, "task:c0", "where").Val(); w != "reading" {
+	if w := c.HGet(ctx, "task:c0", "where").Val(); w != "review" {
 		t.Fatalf("c0 is %s after a refused read end, want reading", w)
 	}
 	c.HSet(ctx, "ci:nova-tools:"+h, "final", "OK", "ci", "green")
 	code, out, _ = runCLI("card", "end", "--id", "c0~2", "--score", "9/10", "--gates", "ci:green,base:ok,scope:ok")
-	if code != 0 || !strings.HasPrefix(out, "ENDED c0~2 primary=c0 from=reading to=merging next=-\n") {
+	if code != 0 || !strings.HasPrefix(out, "ENDED c0~2 primary=c0 from=review to=merging next=-\n") {
 		t.Fatalf("read end = %d %q", code, out)
 	}
 	if got := c.HGet(ctx, "pr:nova-tools:77", "reads").Val(); got != "SCORE who=emma head="+h+" score=9/10 gates=ci:green,base:ok,scope:ok" {

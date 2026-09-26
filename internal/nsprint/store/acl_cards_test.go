@@ -193,8 +193,8 @@ func TestACLSeatsRunTheCardVerbs(t *testing.T) {
 		}
 	}
 
-	if where := admin.HGet(ctx, taskcard.Key(taskcard.PrimaryOf(w.IDs[0])), "where").Val(); where != "reading" {
-		t.Errorf("primary of %s after its ok with a PR: where=%q, want reading", w.IDs[0], where)
+	if where := admin.HGet(ctx, taskcard.Key(taskcard.PrimaryOf(w.IDs[0])), "where").Val(); where != "review" {
+		t.Errorf("primary of %s after its ok with a PR: where=%q, want review", w.IDs[0], where)
 	}
 
 	// The table reads the sets (the given-back copy counts as a fail): nothing left ready or working on either seat.

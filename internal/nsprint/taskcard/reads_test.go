@@ -14,13 +14,13 @@ import (
 )
 
 // The reading column's machinery (nova-tools #4094, #4097; Glenn 2026-09-25
-// 4:50 PM ET: "As soon as something new lands in reading, it should
+// 4:50 PM ET: "As soon as something new lands in review, it should
 // generate friend/swarm work cards that back reference to it."): the move
-// of a primary into reading cuts its read copies in the same call (one to a
+// of a primary into review cuts its read copies in the same call (one to a
 // friend reader with room, else four on the swarm), each naming the
 // primary and the head; a SCORE 8+ at the record head ends the copy and
 // moves the PRIMARY to merging in the same call; a SCORE under 8 ends the
-// copy ok with its finding, leaves the primary in reading and cuts one fix
+// copy ok with its finding, leaves the primary in review and cuts one fix
 // copy on the author's queue; the fix's new head (its card end, or pr
 // record --head) cuts fresh read copies; a head move retires the open read
 // copies and cuts fresh ones.
@@ -49,7 +49,7 @@ func enroll(t *testing.T, c *redis.Client, s string, slots int, roles string) ta
 }
 
 // toReading deals primary id to its author, works it and ends it ok with PR
-// pr at h: the move into reading. It returns the end.
+// pr at h: the move into review. It returns the end.
 func toReading(t *testing.T, c *redis.Client, author taskcard.Consumer, id string, pr int, h string) taskcard.Ended {
 	t.Helper()
 	ctx := context.Background()
@@ -68,7 +68,7 @@ func toReading(t *testing.T, c *redis.Client, author taskcard.Consumer, id strin
 		t.Fatalf("end ok %s: %v %v", d[0].Copy, e, err)
 	}
 	if n := countCalls(c) - calls; n != 1 {
-		t.Fatalf("the move into reading took %d calls, want 1 (the read copies are cut in the same call)", n)
+		t.Fatalf("the move into review took %d calls, want 1 (the read copies are cut in the same call)", n)
 	}
 	return e[0]
 }
@@ -116,7 +116,7 @@ func ciOK(c *redis.Client, h string) {
 
 // TestReadingCutsAFriendReaderCopy (#4094 DONE-WHEN 1, 2): a friend with
 // the reader role and open slots gets the one read copy, cut in the same
-// call as the move into reading; the copy names its primary, kind read,
+// call as the move into review; the copy names its primary, kind read,
 // the PR and the head; the primary names it.
 func TestReadingCutsAFriendReaderCopy(t *testing.T) {
 	t.Parallel()
@@ -128,7 +128,7 @@ func TestReadingCutsAFriendReaderCopy(t *testing.T) {
 	ids := pushPrimaries(t, c, 1)
 	e := toReading(t, c, author, ids[0], 8100, head(0))
 	cp := split(e.Next)
-	if e.To != "reading" || len(cp) != 1 {
+	if e.To != "review" || len(cp) != 1 {
 		t.Fatalf("end ok: to=%s next=%q, want reading and one read copy (a friend reader has room)", e.To, e.Next)
 	}
 	r := rec(c, cp[0])
@@ -146,7 +146,7 @@ func TestReadingCutsAFriendReaderCopy(t *testing.T) {
 }
 
 // TestReadingCutsFourSwarmReadCopies (#4094 DONE-WHEN 2): with no friend
-// reader with room, the move into reading cuts four read copies on the
+// reader with room, the move into review cuts four read copies on the
 // swarm (never on the author), each naming the primary and the head.
 func TestReadingCutsFourSwarmReadCopies(t *testing.T) {
 	t.Parallel()
@@ -158,7 +158,7 @@ func TestReadingCutsFourSwarmReadCopies(t *testing.T) {
 	ids := pushPrimaries(t, c, 1)
 	e := toReading(t, c, author, ids[0], 8200, head(0))
 	cp := split(e.Next)
-	if e.To != "reading" || len(cp) != 4 {
+	if e.To != "review" || len(cp) != 4 {
 		t.Fatalf("end ok: to=%s next=%q, want reading and four swarm read copies", e.To, e.Next)
 	}
 	on := map[string]int{}
@@ -205,7 +205,7 @@ func TestReadingCutsFourSwarmReadCopies(t *testing.T) {
 
 // TestReadPostScoreAdvancesThePrimary (#4094 DONE-WHEN 3): read post with
 // a SCORE 9 at the record head ends the reader's copy ok and moves the
-// PRIMARY reading -> merging in the same call.
+// PRIMARY review -> merging in the same call.
 func TestReadPostScoreAdvancesThePrimary(t *testing.T) {
 	t.Parallel()
 	c := start(t)
@@ -262,7 +262,7 @@ func TestUnderEightCutsAFixCopy(t *testing.T) {
 		t.Fatalf("read post 6: %q", out)
 	}
 	p := rec(c, ids[0])
-	if p["where"] != "reading" || p["copy"] == "" || p["reads"] != "" {
+	if p["where"] != "review" || p["copy"] == "" || p["reads"] != "" {
 		t.Fatalf("primary after SCORE 6: %v", p)
 	}
 	fix := rec(c, p["copy"])
@@ -291,7 +291,7 @@ func TestUnderEightCutsAFixCopy(t *testing.T) {
 	}
 	p2 := rec(c, ids[0])
 	fresh := liveReads(c, ids[0])
-	if p2["where"] != "reading" || p2["copy"] != "" || p2["head"] != head(1) || len(fresh) != 1 {
+	if p2["where"] != "review" || p2["copy"] != "" || p2["head"] != head(1) || len(fresh) != 1 {
 		t.Fatalf("after pr record --head: %v primary %v", got, p2)
 	}
 	if r := rec(c, fresh[0]); r["head"] != head(1) || r["consumer"] != emma.String() || r["kind"] != "read" {
@@ -317,7 +317,7 @@ func TestFixCopyEndCutsAFreshRead(t *testing.T) {
 	cp := split(e.Next)
 	workCopy(t, c, cp[0])
 	x, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: cp, OK: true, Score: 5, Finding: "scope over", By: "emma"})
-	if err != nil || x[0].To != "reading" || len(split(x[0].Next)) != 1 {
+	if err != nil || x[0].To != "review" || len(split(x[0].Next)) != 1 {
 		t.Fatalf("score 5: %v %v", x, err)
 	}
 	fixID := split(x[0].Next)[0]
@@ -331,13 +331,13 @@ func TestFixCopyEndCutsAFreshRead(t *testing.T) {
 	recordPR(c, 8500, head(1))
 	y, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{fixID}, OK: true, Repo: "nova-tools", PR: "8500",
 		Head: head(1), By: "b"})
-	if err != nil || y[0].To != "reading" || len(split(y[0].Next)) != 1 {
+	if err != nil || y[0].To != "review" || len(split(y[0].Next)) != 1 {
 		t.Fatalf("fix ok with a new head: %v %v", y, err)
 	}
 	if r := rec(c, split(y[0].Next)[0]); r["head"] != head(1) || r["kind"] != "read" || r["primary"] != ids[0] {
 		t.Fatalf("fresh read copy %v", r)
 	}
-	if p := rec(c, ids[0]); p["where"] != "reading" || p["head"] != head(1) || p["copy"] != "" {
+	if p := rec(c, ids[0]); p["where"] != "review" || p["head"] != head(1) || p["copy"] != "" {
 		t.Fatalf("primary %v", p)
 	}
 	cleanMoves(t, c, "fix end")
@@ -345,7 +345,7 @@ func TestFixCopyEndCutsAFreshRead(t *testing.T) {
 
 // TestHeadMoveRetiresAndRecutsReads (#4094 DONE-WHEN 4): a head move retires
 // the open read copies and cuts fresh ones at the new head; a lapsed read
-// copy is re-cut on the next tick of the deal pass; the reading column
+// copy is re-cut on the next tick of the deal pass; the review column
 // never holds a primary with zero live copies while a reader exists.
 func TestHeadMoveRetiresAndRecutsReads(t *testing.T) {
 	t.Parallel()
@@ -405,7 +405,7 @@ func TestHeadMoveRetiresAndRecutsReads(t *testing.T) {
 	}
 	again := liveReads(c, ids[1])
 	if len(again) == 0 {
-		t.Fatalf("the reading primary holds zero live copies after the tick: %v", rec(c, ids[1]))
+		t.Fatalf("the review primary holds zero live copies after the tick: %v", rec(c, ids[1]))
 	}
 	cleanMoves(t, c, "lapsed")
 }

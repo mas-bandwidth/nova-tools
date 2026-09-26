@@ -259,7 +259,7 @@ func TestReadUnderEightTwiceGoesToReview(t *testing.T) {
 	cp := dealWork(t, c, k, ids[0])
 	recordPR(c, 6000, head(10))
 	e, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{cp}, OK: true, Repo: "nova-tools", PR: "6000", Head: head(10), By: "b"})
-	if err != nil || e[0].To != "reading" || e[0].Next == "" {
+	if err != nil || e[0].To != "review" || e[0].Next == "" {
 		t.Fatalf("end ok %v %v", e, err)
 	}
 	read1 := e[0].Next
@@ -268,9 +268,9 @@ func TestReadUnderEightTwiceGoesToReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	e, err = taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{read1}, OK: true, Score: 5, Finding: "no test", By: "reader"})
-	// the first read under 8: the primary stays in reading with one fix copy
+	// the first read under 8: the primary stays in review with one fix copy
 	// cut to the author (#4097)
-	if err != nil || e[0].To != "reading" || e[0].Next == "" {
+	if err != nil || e[0].To != "review" || e[0].Next == "" {
 		t.Fatalf("first read under 8: %v %v", e, err)
 	}
 	fix := e[0].Next
@@ -279,7 +279,7 @@ func TestReadUnderEightTwiceGoesToReview(t *testing.T) {
 	}
 	recordPR(c, 6000, head(11))
 	e, err = taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{fix}, OK: true, Repo: "nova-tools", PR: "6000", Head: head(11), By: "b"})
-	if err != nil || e[0].To != "reading" || e[0].Next == "" {
+	if err != nil || e[0].To != "review" || e[0].Next == "" {
 		t.Fatalf("fix ok %v %v", e, err)
 	}
 	read2 := e[0].Next
