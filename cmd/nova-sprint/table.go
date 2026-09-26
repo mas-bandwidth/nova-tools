@@ -26,8 +26,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// tableWants is the whole table verb, named in every refusal.
-const tableWants = "the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]"
 
 type tableOpts struct {
 	once    bool
@@ -65,7 +63,7 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&opts.friends, "friends", "", "the friends to show, comma-separated")
 	fs.StringVar(&opts.xyFile, "xy-file", "", "the x/y line's file")
 	if err := fs.Parse(args); err != nil {
-		return tableRefuse(stderr, err.Error()+"; "+tableWants)
+		return tableRefuse(stderr, err.Error())
 	}
 	if fs.NArg() > 0 {
 		return tableRefuse(stderr, "takes flags, not positional arguments")
@@ -95,7 +93,7 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 		return cmdTableCheck(opts.redis, stdout, stderr)
 	}
 	if opts.redis == "" {
-		return tableRefuse(stderr, "--redis <addr> is required; "+tableWants)
+		return tableRefuse(stderr, "--redis <addr> is required (or NOVA_SPRINT_REDIS): the wide table is read from Redis and written nowhere")
 	}
 	if opts.loop && opts.once {
 		return tableRefuse(stderr, "--redis takes either --once or --loop, not both")

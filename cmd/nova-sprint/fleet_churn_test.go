@@ -120,7 +120,7 @@ func TestFleetChurnRefusals(t *testing.T) {
 		{[]string{"--machines", reg, "--seconds", "0"}, "--seconds must be >= 1"},
 		{[]string{"--machines", reg, "--only", "nobody"}, "names machines the registry does not: nobody"},
 		{[]string{"--machines", filepath.Join(t.TempDir(), "missing.tsv")}, "machines registry:"},
-		{[]string{"--machines", reg, "--nope"}, "flag provided but not defined"},
+		{[]string{"--machines", reg, "--nope"}, "--nope is not a flag of nova-sprint fleet churn"},
 	} {
 		f := &churnFake{}
 		var out, errOut bytes.Buffer

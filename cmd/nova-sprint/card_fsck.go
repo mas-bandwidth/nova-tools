@@ -31,8 +31,11 @@ func cmdCardFsck(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	repair := fs.Bool("repair", false, "repair every drift found")
-	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || fs.NArg() > 0 {
-		return refuse(stderr, "card", "fsck needs --sprint <name> and --redis <addr> [--repair]")
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, "card fsck", err.Error())
+	}
+	if *sprint == "" || *addr == "" || fs.NArg() > 0 {
+		return refuse(stderr, "card fsck", "needs --sprint <name> and --redis <addr> [--repair]")
 	}
 	return runFsck(ctx, *addr, *sprint, *repair, "CARD FSCK", "card fsck --sprint "+*sprint+" --repair", stdout, stderr)
 }
@@ -45,8 +48,11 @@ func runBenchReindex(ctx context.Context, args []string, stdout, stderr io.Write
 	fs := verbflag.New("bench reindex")
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
-	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || fs.NArg() > 0 {
-		return refuse(stderr, "bench", "reindex needs --sprint <name> and --redis <addr>")
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, "bench reindex", err.Error())
+	}
+	if *sprint == "" || *addr == "" || fs.NArg() > 0 {
+		return refuse(stderr, "bench reindex", "needs --sprint <name> and --redis <addr>")
 	}
 	return runFsck(ctx, *addr, *sprint, true, "BENCH REINDEX", "card fsck --sprint "+*sprint, stdout, stderr)
 }
@@ -130,8 +136,11 @@ func cmdCardLs(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	unplaced := fs.Bool("unplaced", false, "list only the cards no table set holds")
-	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || !*unplaced || fs.NArg() > 0 {
-		return refuse(stderr, "card", "ls needs --unplaced --sprint <name> --redis <addr>")
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, "card ls", err.Error())
+	}
+	if *sprint == "" || *addr == "" || !*unplaced || fs.NArg() > 0 {
+		return refuse(stderr, "card ls", "needs --unplaced --sprint <name> --redis <addr>")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

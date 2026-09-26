@@ -87,14 +87,14 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "consume "+group, "wants once or run")
 	}
 	mode := args[1]
-	fs := taskFlags("consume " + group)
+	fs := taskFlags("consume " + group + " " + mode)
 	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	consumer := fs.String("as", "", verbflag.HelpAs)
 	every := fs.Duration("every", time.Second, "how often a run pass ticks")
 	actor := &group
 	if err := fs.Parse(args[2:]); err != nil {
-		return refuse(errOut, "consume "+group, err.Error())
+		return refuse(errOut, "consume "+group+" "+mode, err.Error())
 	}
 	if fs.NArg() > 0 {
 		return refuse(errOut, "consume "+group, "takes flags after once|run, not positional arguments")

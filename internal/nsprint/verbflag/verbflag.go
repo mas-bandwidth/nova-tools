@@ -13,6 +13,7 @@
 package verbflag
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -94,10 +95,15 @@ func (s *sink) Write(p []byte) (int, error) {
 
 // Set is a verb's flag set: a ContinueOnError flag.FlagSet named for the
 // noun and verb ("task push"), quiet on a parse error, Help on -h, and a
-// Parse that refuses a retired spelling naming the current one.
-type Set struct{ *flag.FlagSet }
+// Parse that refuses a retired spelling with the whole corrected line.
+type Set struct {
+	*flag.FlagSet
+	spelled map[string]string // this verb's own old spellings (Spelled)
+}
 
-// New returns the verb's Set.
+// New returns the verb's Set. Its name is the verb's path in Usages
+// ("stream open"): -h prints that path's usage and a corrected line starts
+// with it, so a set named for another verb prints another verb's usage.
 func New(name string) *Set {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	s := &sink{}
@@ -112,12 +118,28 @@ func New(name string) *Set {
 	return &Set{FlagSet: fs}
 }
 
+// Spelled records a spelling this verb alone retired (task ls --state is
+// spelled --where): Parse refuses it the way it refuses a Retired one, with
+// the corrected whole line. It is never defined, so it is never an alias.
+func (s *Set) Spelled(old, now string) {
+	if s.spelled == nil {
+		s.spelled = map[string]string{}
+	}
+	s.spelled[old] = now
+}
+
 // notDefined is the flag package's message for an unknown flag.
 const notDefined = "flag provided but not defined: -"
 
-// Parse parses args. An unknown flag whose spelling the grammar retired comes
-// back as `--old is spelled --new` when this set defines --new, else as
-// `--old is retired; nova-sprint <verb> -h lists the flags`.
+// Parse parses args. A flag the grammar retired (Retired, or this verb's
+// Spelled) whose new spelling this set defines comes back as
+//
+//	--old is spelled --new; run: nova-sprint <verb> <args, respelled>
+//
+// the whole line corrected, so the next line a session types is that one.
+// A retired flag this set has no new spelling for, and a flag no verb ever
+// spelled, come back naming the flags this verb takes; neither is the flag
+// package's own message (#4399: `reconcile --sprint` printed Go's).
 //
 // --n names the pull request on a verb that takes --pr and counts nothing
 // (nova-tools#4352 A): pr record and pr lines spell the PR number --n, so
@@ -136,14 +158,105 @@ func (s *Set) Parse(args []string) error {
 		return err
 	}
 	old = strings.TrimLeft(old, "-")
-	now, retired := Retired[old]
+	now, retired := s.spelled[old]
 	if !retired {
-		return err
+		now, retired = Retired[old]
 	}
-	if s.Lookup(now) != nil {
-		return fmt.Errorf("--%s is spelled --%s", old, now)
+	if retired && s.Lookup(now) != nil {
+		return &RetiredError{Old: old, New: now, Line: "nova-sprint " + s.Name() + " " + Join(s.respell(args))}
 	}
-	return fmt.Errorf("--%s is retired; nova-sprint %s -h lists the flags", old, s.Name())
+	if retired {
+		return fmt.Errorf("--%s is retired and nova-sprint %s has no --%s; it takes %s", old, s.Name(), now, s.flagList())
+	}
+	msg := fmt.Sprintf("--%s is not a flag of nova-sprint %s; it takes %s", old, s.Name(), s.flagList())
+	if rest, ok := without(args, old); ok {
+		msg += "; without it: " + strings.TrimSpace("nova-sprint "+s.Name()+" "+Join(rest))
+	}
+	return errors.New(msg)
+}
+
+// without is args less the first spelling of --name and, when it has no
+// =value and the next word is no flag, that word as its value; ok is false
+// when args has no such flag before a "--".
+func without(args []string, name string) ([]string, bool) {
+	for i, a := range args {
+		if a == "--" {
+			return nil, false
+		}
+		n, _, eq := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if !strings.HasPrefix(a, "-") || n != name {
+			continue
+		}
+		end := i + 1
+		if !eq && end < len(args) && !strings.HasPrefix(args[end], "-") {
+			end++
+		}
+		return append(append([]string{}, args[:i]...), args[end:]...), true
+	}
+	return nil, false
+}
+
+// RetiredError is Parse's refusal of a retired spelling: the new spelling
+// and the whole line with every retired spelling respelled.
+type RetiredError struct{ Old, New, Line string }
+
+func (e *RetiredError) Error() string {
+	return fmt.Sprintf("--%s is spelled --%s; run: %s", e.Old, e.New, e.Line)
+}
+
+// respell is args with every retired spelling this set has a new one for
+// spelled the new way, up to a "--".
+func (s *Set) respell(args []string) []string {
+	out := make([]string, len(args))
+	copy(out, args)
+	for i, a := range out {
+		if a == "--" {
+			break
+		}
+		if !strings.HasPrefix(a, "-") {
+			continue
+		}
+		name, value, eq := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		now, ok := s.spelled[name]
+		if !ok {
+			now, ok = Retired[name]
+		}
+		if !ok || s.Lookup(now) == nil {
+			continue
+		}
+		out[i] = "--" + now
+		if eq {
+			out[i] += "=" + value
+		}
+	}
+	return out
+}
+
+// flagList is every flag the set defines, --a, --b and --c.
+func (s *Set) flagList() string {
+	var names []string
+	s.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
+	sort.Strings(names)
+	switch len(names) {
+	case 0:
+		return "no flags"
+	case 1:
+		return names[0]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// Join is argv as one shell line: a word with a space or a shell
+// metacharacter is single-quoted.
+func Join(argv []string) string {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		if a == "" || strings.ContainsAny(a, " \t\n'\"\\$`|&;<>()*?[]{}!") || strings.HasPrefix(a, "#") || strings.HasPrefix(a, "~") {
+			a = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		}
+		out[i] = a
+	}
+	return strings.Join(out, " ")
 }
 
 // PRFromN is args with every --n (-n, --n=<v>, -n=<v>) before a "--"
@@ -178,8 +291,9 @@ func List(v string) []string {
 	return out
 }
 
-// Recover is deferred by the dispatcher. A Help panic becomes the usage text
-// on out and *code 2; any other panic goes on unwinding.
+// Recover is deferred by the dispatcher. A Help panic becomes the verb's
+// usage on out (WriteHelp: its path's forms from Usages, its flags, its
+// examples) and *code 2; any other panic goes on unwinding.
 func Recover(out io.Writer, prog string, code *int) {
 	r := recover()
 	if r == nil {
@@ -189,35 +303,6 @@ func Recover(out io.Writer, prog string, code *int) {
 	if !ok {
 		panic(r)
 	}
-	Print(out, prog, h.FS)
+	WriteHelp(out, h.FS.Name(), h.FS)
 	*code = 2
-}
-
-// Print writes `usage: <prog> <name> [flags]`, one line per flag the set
-// defines (sorted, with its value type and its one-line help; no defaults,
-// since a default can come from the environment and a help line must never
-// print a secret), and the exit codes.
-func Print(out io.Writer, prog string, fs *flag.FlagSet) {
-	var b strings.Builder
-	fmt.Fprintf(&b, "usage: %s %s [flags]\n", prog, fs.Name())
-	var names []string
-	fs.VisitAll(func(f *flag.Flag) { names = append(names, f.Name) })
-	sort.Strings(names)
-	if len(names) > 0 {
-		b.WriteString("flags:\n")
-	}
-	for _, n := range names {
-		f := fs.Lookup(n)
-		kind, text := flag.UnquoteUsage(f)
-		line := "  --" + n
-		if kind != "" {
-			line += " <" + kind + ">"
-		}
-		if text != "" {
-			line += "  " + text
-		}
-		b.WriteString(line + "\n")
-	}
-	b.WriteString("exit codes: 0 done, 1 refused, 2 usage\n")
-	_, _ = io.WriteString(out, b.String())
 }

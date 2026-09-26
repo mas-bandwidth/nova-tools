@@ -78,29 +78,24 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	stitchRoute := fs.String("stitch-route", "", "the stitch card's route (with --parent)")
 	stitchEst := fs.String("stitch-est", "", "the stitch card's estimate in minutes (with --parent)")
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(stderr, "nova-sprint card: cut: "+oneline.Escape(err.Error())+"; run: nova-sprint help")
-		return 2
+		return refuse(stderr, "card cut", err.Error())
 	}
 	if *from != "" {
 		if *issue != 0 || *spec != 0 || *index != "" || fs.NArg() > 0 {
-			fmt.Fprintln(stderr, "nova-sprint card: cut --from takes no --issue, --spec, --index or argument; run: nova-sprint help")
-			return 2
+			return refuse(stderr, "card cut", "--from takes no --issue, --spec, --index or argument")
 		}
 		if *parent != "" && *stream != "" {
-			fmt.Fprintln(stderr, "nova-sprint card: cut --parent takes no --stream: the children ride the parent's stream; run: nova-sprint help")
-			return 2
+			return refuse(stderr, "card cut", "--parent takes no --stream: the children ride the parent's stream")
 		}
 		return cmdCardCutFrom(ctx, cutFromOpts{From: *from, Repo: *repo, Stream: *stream, Sprint: *sprint, Base: *base,
 			BaseSHA: *baseSHA, Actor: seatActor(), DryRun: *dryRun, NoGitHub: *noGitHub,
 			Parent: *parent, StitchRoute: *stitchRoute, StitchEst: *stitchEst}, *addr, stdout, stderr)
 	}
 	if *parent != "" || *stitchRoute != "" || *stitchEst != "" {
-		fmt.Fprintln(stderr, "nova-sprint card: cut --parent <id> wants --from <children.tsv|->: the rows are the plan's children and the stitch is cut behind them (#4317); run: nova-sprint help")
-		return 2
+		return refuse(stderr, "card cut", "--parent <id> wants --from <children.tsv|->: the rows are the plan's children and the stitch is cut behind them (#4317)")
 	}
 	if *sprint == "" || *addr == "" || *repo == "" || *issue <= 0 || *spec < 0 || fs.NArg() > 0 || *dryRun || *noGitHub || *baseSHA != "" {
-		fmt.Fprintln(stderr, "nova-sprint card: cut wants --sprint <S> --repo <owner/name> --issue <n> and --redis <addr> (or NOVA_SPRINT_REDIS), optional --spec <n> --index <ctxindex dir> --stream <name> --base <branch>; or many cards: --from <cards.tsv|-> --repo <owner/name> [--stream <s>] [--sprint <S>] [--base dev] [--base-sha <sha40>] [--dry-run] [--no-github]; or a plan's children and stitch: --parent <id> --from <children.tsv|-> [--stitch-route frontier] [--stitch-est 60]; run: nova-sprint help")
-		return 2
+		return refuse(stderr, "card cut", "wants one issue (--issue <n>) or many cards (--from <cards.tsv|->)")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -142,8 +137,11 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	stdin := fs.Bool("stdin", false, "read the card file(s) from stdin")
 	dir := fs.String("dir", "", "a directory of card files, pushed in name order")
 	mapKind := fs.Bool("map-kind", false, "push a classification KIND as the card's RESULT kind")
-	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" {
-		return refuse(stderr, "card", "push needs --sprint <name>, --redis <addr>, and card files (or --dir <cards/>, or --stdin); --map-kind pushes a classification KIND as its RESULT kind")
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, "card push", err.Error())
+	}
+	if *sprint == "" || *addr == "" {
+		return refuse(stderr, "card push", "needs --sprint <name> and --redis <addr> (or NOVA_SPRINT_REDIS)")
 	}
 	sources := 0
 	for _, on := range []bool{*stdin, *dir != "", fs.NArg() > 0} {
@@ -152,14 +150,14 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		}
 	}
 	if sources > 1 {
-		return refuse(stderr, "card", "push reads card files, --dir or --stdin, one of them")
+		return refuse(stderr, "card push", "reads card files, --dir or --stdin, one of them")
 	}
 	if sources == 0 {
-		return refuse(stderr, "card", "push needs card files, --dir <cards/>, or --stdin")
+		return refuse(stderr, "card push", "needs card files, --dir <cards/>, or --stdin: "+card.FileShape())
 	}
 	files, err := readCardFiles(*stdin, *dir, fs.Args())
 	if err != nil {
-		return refuse(stderr, "card", err.Error())
+		return refuse(stderr, "card push", err.Error())
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -170,7 +168,7 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	defer client.Close()
 	first := 0
 	for _, res := range card.PushBatch(ctx, client, *sprint, files, card.PushOptions{MapKind: *mapKind}) {
-		if wrote := writeCardResult(stdout, stderr, res); wrote != 0 && first == 0 {
+		if wrote := writeCardResult(stdout, stderr, "card push", res); wrote != 0 && first == 0 {
 			first = wrote
 		}
 	}
@@ -217,8 +215,11 @@ func cmdCardRelease(ctx context.Context, args []string, stdout, stderr io.Writer
 	fs := verbflag.New("card release")
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
-	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || fs.NArg() > 0 {
-		return refuse(stderr, "card", "release needs --sprint <name> and --redis <addr>, and no card file")
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, "card release", err.Error())
+	}
+	if *sprint == "" || *addr == "" || fs.NArg() > 0 {
+		return refuse(stderr, "card release", "release needs --sprint <name> and --redis <addr>, and no card file")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -227,7 +228,7 @@ func cmdCardRelease(ctx context.Context, args []string, stdout, stderr io.Writer
 		return code
 	}
 	defer client.Close()
-	return writeCardResult(stdout, stderr, card.Release(ctx, client, *sprint))
+	return writeCardResult(stdout, stderr, "card release", card.Release(ctx, client, *sprint))
 }
 
 func openCardRedis(ctx context.Context, addr string, stderr io.Writer) (*redis.Client, int) {
@@ -238,9 +239,9 @@ func openCardRedis(ctx context.Context, addr string, stderr io.Writer) (*redis.C
 	return st.Client(), 0
 }
 
-func writeCardResult(stdout, stderr io.Writer, res card.VerbResult) int {
+func writeCardResult(stdout, stderr io.Writer, verb string, res card.VerbResult) int {
 	if res.Code != 0 {
-		fmt.Fprintf(stderr, "nova-sprint card: %s; run: nova-sprint help\n", oneline.Escape(strings.TrimSpace(res.Stderr)))
+		fmt.Fprintln(stderr, verbflag.Refusal(verb, strings.TrimSpace(res.Stderr)))
 		return res.Code
 	}
 	if _, err := io.WriteString(stdout, res.Stdout); err != nil {
@@ -285,8 +286,10 @@ func cmdCardShow(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	err := fs.Parse(args)
 	label := oneID(*ids)
 	if err != nil || *sprint == "" || label == "" || *addr == "" || fs.NArg() > 0 {
-		fmt.Fprintln(stderr, "nova-sprint card: show wants --sprint <S> --ids <label> and --redis <addr> (or NOVA_SPRINT_REDIS); run: nova-sprint help")
-		return 2
+		if err != nil {
+			return refuse(stderr, "card show", err.Error())
+		}
+		return refuse(stderr, "card show", "wants --sprint <S>, one --ids <label> and --redis <addr> (or NOVA_SPRINT_REDIS)")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

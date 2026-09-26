@@ -46,13 +46,17 @@ func init() {
 	})
 }
 
-const lineUsage = "want post --repo <r> --n <n> (--line <typed line> | --kind <K> --as <w> --head <sha> [--score N] [--gates <g>] [--body-file <f>]) [--mirror <dir>] [--redis <addr>], list --repo <r> --n <n> [--head <sha>] [--redis <addr>] or import --repo <r> --n <n> --comments-file <f|-> [--redis <addr>]"
 
 func runLine(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "line", lineUsage)
+		return refuse(errOut, "line", "wants a subverb")
 	}
 	sub := args[0]
+	switch sub {
+	case "post", "list", "import":
+	default:
+		return refuse(errOut, "line", "unknown subverb "+sub)
+	}
 	verb := "line " + sub
 	fs := taskFlags(verb)
 	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
@@ -67,15 +71,16 @@ func runLine(ctx context.Context, args []string, out, errOut io.Writer) int {
 	bodyFile := fs.String("body-file", "", "the comment body as posted, a file")
 	mirror := fs.String("mirror", "", "the bench mirror of the repo (default ~/nova-bench/mirror/<repo>.git)")
 	commentsFile := fs.String("comments-file", "", "the PR's comments as JSON, a file or - for stdin")
-	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
-		return refuse(errOut, verb, lineUsage)
+	if err := fs.Parse(args[1:]); err != nil {
+		return refuse(errOut, verb, err.Error())
 	}
-	if *redisAddr == "" {
-		*redisAddr = os.Getenv("NOVA_REDIS_ADDR")
+	if fs.NArg() != 0 {
+		return refuse(errOut, verb, "takes flags, not positional arguments")
 	}
+	*redisAddr = redisOr(*redisAddr) // the one resolver (seat.go)
 	_, name, rerr := prkey.Split(*repo)
 	if num, err := strconv.Atoi(*n); err != nil || num <= 0 || rerr != nil || *redisAddr == "" {
-		return refuse(errOut, verb, "needs --repo <owner/name|name>, --n <positive number> and --redis <addr> (or NOVA_SPRINT_REDIS); "+lineUsage)
+		return refuse(errOut, verb, "needs --repo <owner/name|name>, --n <positive number> and --redis <addr> (or NOVA_SPRINT_REDIS)")
 	}
 	built := *kind != "" || *who != "" || *score >= 0 || *gates != "" || *bodyFile != ""
 	switch sub {
@@ -96,14 +101,12 @@ func runLine(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 	case "list":
 		if *typed != "" || built || *mirror != "" || *commentsFile != "" {
-			return refuse(errOut, verb, "want --repo <r> --n <n> [--head <sha>] [--redis <addr>]")
+			return refuse(errOut, verb, "takes no --line, --kind, --as, --score, --gates, --body-file, --mirror or --comments-file")
 		}
 	case "import":
 		if *commentsFile == "" || *typed != "" || built || *head != "" || *mirror != "" {
-			return refuse(errOut, verb, "want --repo <r> --n <n> --comments-file <f|-> [--redis <addr>]")
+			return refuse(errOut, verb, "wants --comments-file <f|-> and no --line, --kind, --as, --score, --gates, --body-file, --head or --mirror")
 		}
-	default:
-		return refuse(errOut, "line", "unknown subverb "+sub+"; "+lineUsage)
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {

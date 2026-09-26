@@ -75,7 +75,7 @@ func TestRoteNoteRefuses(t *testing.T) {
 		{"rote", "--since", "yesterday", "--redis", mr.Addr()},
 	} {
 		code, stdout, stderr := runSprint(args...)
-		if code != 2 || stdout != "" || !strings.Contains(stderr, "run: nova-sprint help") {
+		if code != 2 || stdout != "" || !strings.Contains(stderr, "; usage: nova-sprint ") {
 			t.Errorf("%v: exit %d stdout %q stderr %q, want a refusal", args, code, stdout, stderr)
 		}
 	}

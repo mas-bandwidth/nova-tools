@@ -196,7 +196,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, d Deps) 
 }
 
 func refuse(stderr io.Writer, what string) int {
-	fmt.Fprintf(stderr, "nova-sprint file: %s; run: nova-sprint help\n", oneline.Escape(what))
+	_ = verbflag.Refuse(stderr, "file", what)
 	return 2
 }
 

@@ -27,11 +27,18 @@ const Usage = "sync [--n <moves>] | ask [--n <rows>] [--key-env <VAR>] [--base-u
 type env struct {
 	newAsker func(baseURL, keyEnv string) (Asker, error)
 	getenv   func(string) string
+	resolve  func() string // the one resolver (DefaultAddr); nil in a test's env
 }
 
 var realEnv = env{
 	newAsker: func(baseURL, keyEnv string) (Asker, error) { return decide.New(baseURL, keyEnv) },
 	getenv:   os.Getenv,
+	resolve: func() string {
+		if DefaultAddr != nil {
+			return DefaultAddr()
+		}
+		return ""
+	},
 }
 
 // Main is `nova-sprint jev sync|ask|report|outcome` (nova-tools #4316):
@@ -52,7 +59,7 @@ func Main(ctx context.Context, args []string, out, errOut io.Writer) int {
 
 func run(ctx context.Context, args []string, out, errOut io.Writer, e env) int {
 	if len(args) == 0 {
-		return usage(errOut, "", "want "+Usage)
+		return usage(errOut, "", "wants a subverb")
 	}
 	switch args[0] {
 	case "sync":
@@ -64,7 +71,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer, e env) int {
 	case "outcome":
 		return runOutcome(ctx, args[1:], out, errOut, e)
 	}
-	return usage(errOut, "", "unknown subverb "+args[0]+"; want "+Usage)
+	return usage(errOut, "", "unknown subverb "+args[0])
 }
 
 func usage(errOut io.Writer, sub, what string) int {
@@ -72,8 +79,7 @@ func usage(errOut io.Writer, sub, what string) int {
 	if sub != "" {
 		verb += " " + sub
 	}
-	fmt.Fprintf(errOut, "nova-sprint %s: %s; run: nova-sprint help\n", verb, oneline.Escape(what))
-	return 2
+	return verbflag.Refuse(errOut, verb, what)
 }
 
 // refused is every refusal's one line.
@@ -82,8 +88,17 @@ func refused(out io.Writer, sub, why, remedy string) int {
 	return 1
 }
 
-// addr is --redis, else NOVA_SPRINT_REDIS, else NOVA_REDIS_ADDR.
+// DefaultAddr is nova-sprint's one Redis resolver (cmd/nova-sprint/seat.go:
+// the seat's address, else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, NOVA_REDIS),
+// set by the verb's registration; nil in a test that passes its own env.
+var DefaultAddr func() string
+
+// addr is --redis, else the one resolver's address; with no resolver set,
+// NOVA_SPRINT_REDIS, else NOVA_REDIS_ADDR from e.
 func (e env) addr(flagVal string) string {
+	if flagVal == "" && e.resolve != nil {
+		flagVal = e.resolve()
+	}
 	for _, v := range []string{flagVal, e.getenv("NOVA_SPRINT_REDIS"), e.getenv("NOVA_REDIS_ADDR")} {
 		if v != "" {
 			return v
@@ -108,8 +123,11 @@ func runSync(ctx context.Context, args []string, out, errOut io.Writer, e env) i
 	fs := verbflag.New("jev sync")
 	redisAddr := fs.String("redis", seatcred.Addr(), verbflag.HelpRedis)
 	n := fs.Int64("n", 1000, verbflag.HelpN)
-	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *n <= 0 {
-		return usage(errOut, "sync", "want sync [--n <moves, 1 or more>] [--redis <addr>]")
+	if err := fs.Parse(args); err != nil {
+		return usage(errOut, "sync", err.Error())
+	}
+	if fs.NArg() > 0 || *n <= 0 {
+		return usage(errOut, "sync", "takes flags alone, and --n is 1 or more")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -139,8 +157,11 @@ func runAsk(ctx context.Context, args []string, out, errOut io.Writer, e env) in
 	n := fs.Int64("n", 16, verbflag.HelpN)
 	keyEnv := fs.String("key-env", decide.DefaultKeyEnv, "the environment variable holding the TypeSafe Jev key")
 	baseURL := fs.String("base-url", "", "the Jev API base url (default the provider's)")
-	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *n <= 0 || *n > 256 {
-		return usage(errOut, "ask", "want ask [--n <rows, 1-256>] [--key-env <VAR>] [--base-url <url>] [--redis <addr>]")
+	if err := fs.Parse(args); err != nil {
+		return usage(errOut, "ask", err.Error())
+	}
+	if fs.NArg() > 0 || *n <= 0 || *n > 256 {
+		return usage(errOut, "ask", "takes flags alone, and --n is 1 to 256")
 	}
 	asker, err := e.newAsker(*baseURL, *keyEnv)
 	if err != nil {
@@ -200,8 +221,11 @@ func runReport(ctx context.Context, args []string, out, errOut io.Writer, e env)
 	redisAddr := fs.String("redis", seatcred.Addr(), verbflag.HelpRedis)
 	typ := fs.String("type", "", "report one decision type only")
 	version := fs.String("version", "", "report one prompt version only")
-	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
-		return usage(errOut, "report", "want report [--type <t>] [--version <v>] [--redis <addr>]")
+	if err := fs.Parse(args); err != nil {
+		return usage(errOut, "report", err.Error())
+	}
+	if fs.NArg() > 0 {
+		return usage(errOut, "report", "takes flags, not positional arguments")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -240,9 +264,11 @@ func runOutcome(ctx context.Context, args []string, out, errOut io.Writer, e env
 	outcome := fs.String("outcome", "", "what happened: the outcome word the type defines")
 	why := fs.String("why", "", verbflag.HelpWhy)
 	by := fs.String("as", "", verbflag.HelpAs)
-	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *typ == "" || *subject == "" || *outcome == "" ||
-		strings.TrimSpace(*why) == "" {
-		return usage(errOut, "outcome", "want outcome --type <t> --subject <s> --outcome <o> --why <text> [--as <who>] [--redis <addr>]")
+	if err := fs.Parse(args); err != nil {
+		return usage(errOut, "outcome", err.Error())
+	}
+	if fs.NArg() > 0 || *typ == "" || *subject == "" || *outcome == "" || strings.TrimSpace(*why) == "" {
+		return usage(errOut, "outcome", "wants --type, --subject, --outcome and --why, and no positional argument")
 	}
 	if *by == "" {
 		*by = e.getenv("NOVA_FRIEND")

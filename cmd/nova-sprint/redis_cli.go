@@ -42,7 +42,10 @@ func cmdRedisCLI(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		}
 		return refuse(stderr, "redis-cli", "no command after --; "+redisCLIWants)
 	}
-	if err := fs.Parse(args[:i]); err != nil || fs.NArg() > 0 {
+	if err := fs.Parse(args[:i]); err != nil {
+		return refuse(stderr, "redis-cli", err.Error())
+	}
+	if fs.NArg() > 0 {
 		return refuse(stderr, "redis-cli", redisCLIWants)
 	}
 	host, port, err := net.SplitHostPort(strings.TrimSpace(*addr))

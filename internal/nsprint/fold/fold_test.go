@@ -279,7 +279,7 @@ func TestMainFlagsAndExitCodes(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	if code := fold.Main(context.Background(), []string{"--redis", mr.Addr()}, &stdout, &stderr); code != 2 ||
-		!strings.Contains(stderr.String(), "run: nova-sprint help") {
+		!strings.Contains(stderr.String(), "; usage: nova-sprint fold ") {
 		t.Fatalf("no sprint name: exit %d stderr %q", code, stderr.String())
 	}
 }
@@ -745,7 +745,7 @@ func TestFoldVerbs(t *testing.T) {
 		mr, client, fx := seed(t)
 		tools, repo, receipts, _ := verbsFixture(t, true)
 		code, out, errOut := main(mr, fx, workRepo(t), "--tools", tools, "--repo", repo, "--receipts", receipts)
-		if code != 5 || !strings.Contains(out, "FOLD VERBS sprint="+fx.Sprint+" nova-sprint verbs: inventory tool=nova-fix") {
+		if code != 5 || !strings.Contains(out, "FOLD VERBS sprint="+fx.Sprint+" nova-sprint verbs unused: inventory tool=nova-fix") {
 			t.Fatalf("exit %d, want 5\nstdout %s\nstderr %s", code, out, errOut)
 		}
 		if !strings.Contains(errOut, "run: nova-sprint verbs unused --redis "+mr.Addr()+" --tools "+tools) {
@@ -767,7 +767,7 @@ func TestFoldVerbs(t *testing.T) {
 		tools, _, _, _ := verbsFixture(t, false)
 		work := workRepo(t)
 		code, out, errOut := main(mr, fx, work, "--tools", tools)
-		if code != 2 || !strings.Contains(errOut, "run: nova-sprint help") {
+		if code != 2 || !strings.Contains(errOut, "; usage: nova-sprint fold ") {
 			t.Fatalf("exit %d, want 2\nstdout %s\nstderr %s", code, out, errOut)
 		}
 		if st := client.HGet(ctx, "s:"+fx.Sprint, "status").Val(); st != "closed" {

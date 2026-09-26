@@ -123,6 +123,6 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func refuse(stderr io.Writer, what string) int {
-	fmt.Fprintf(stderr, "nova-sprint fold: %s; run: nova-sprint help\n", oneline.Escape(what))
+	_ = verbflag.Refuse(stderr, "fold", what)
 	return 2
 }

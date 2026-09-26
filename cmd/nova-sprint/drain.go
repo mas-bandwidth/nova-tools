@@ -35,7 +35,10 @@ func runDrain(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	control := fs.String("control", "", "the control run id to drain")
 	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	resumeFlag := fs.String("resume", "", "the workers to resume after the drain, comma-separated: bench:<b> or friend:<f>")
-	if err := fs.Parse(args); err != nil || (*sprint == "" && *control == "") || *addr == "" || fs.NArg() > 0 {
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, "drain", err.Error())
+	}
+	if (*sprint == "" && *control == "") || *addr == "" || fs.NArg() > 0 {
 		return refuse(stderr, "drain", "needs (--sprint <name> | --control <id>) and --redis <addr>; --resume bench:<b>,friend:<f> is a comma list")
 	}
 	resume := multiFlag(verbflag.List(*resumeFlag))
@@ -51,7 +54,7 @@ func runDrain(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		return refuse(stderr, "drain", err.Error())
 	}
 	if res.Code != 0 && res.Stderr != "" {
-		return writeCardResult(stdout, stderr, res)
+		return writeCardResult(stdout, stderr, "drain", res)
 	}
 	return res.Code
 }

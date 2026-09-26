@@ -376,19 +376,7 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	}
 	for i, id := range taskIDs {
 		v := taskCmds[i].Val()
-		state, where, ok := wrStr(v, 0), wrStr(v, 1), wrStr(v, 2)
-		switch {
-		case state == "" && where == "":
-			taskDeps[id] = wrUnknown
-		case ws.IsSentinel(id) && (state == "landed" || where == "landed"):
-			taskDeps[id] = wrMet // a stop is met by its landing alone
-		case ws.IsSentinel(id):
-			taskDeps[id] = wrUnmet
-		case wrLanded(state, where, ok):
-			taskDeps[id] = wrMet
-		default:
-			taskDeps[id] = wrUnmet
-		}
+		taskDeps[id] = wrTaskStatus(id, wrStr(v, 0), wrStr(v, 1), wrStr(v, 2))
 	}
 
 	// Round 5: the members' names (pr, ref, origin) and whether each landed.
@@ -403,30 +391,8 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 				}
 			}
 		}
-		pipe = c.Pipeline()
-		memCmds := make([]*redis.SliceCmd, len(members))
-		for i, m := range members {
-			memCmds[i] = pipe.HMGet(ctx, "task:"+m, "state", "where", "where_ok", "pr", "ref", "origin", "repo")
-		}
-		if len(members) > 0 {
-			if err := pipeerr.Exec(ctx, pipe); err != nil {
-				return nil, fmt.Errorf("waiting-resolve: members: %w", err)
-			}
-		}
-		for i := range members {
-			v := memCmds[i].Val()
-			landed := wrLanded(wrStr(v, 0), wrStr(v, 1), wrStr(v, 2))
-			for _, k := range wrNames(wrStr(v, 3), wrStr(v, 4), wrStr(v, 5), wrStr(v, 6)) {
-				st, named := refDeps[k]
-				if !named || st == wrMet {
-					continue
-				}
-				if landed {
-					refDeps[k] = wrMet
-				} else {
-					refDeps[k] = wrUnmet
-				}
-			}
+		if err := wrMembersStatus(ctx, c, members, refDeps); err != nil {
+			return nil, err
 		}
 	}
 
@@ -614,6 +580,164 @@ func wrNames(pr, ref, origin, repo string) []string {
 		}
 	}
 	return out
+}
+
+// wrTaskStatus is what a task record's state, where and where_ok say of a
+// task-id dependency.
+func wrTaskStatus(id, state, where, ok string) wrStatus {
+	switch {
+	case state == "" && where == "":
+		return wrUnknown
+	case ws.IsSentinel(id) && (state == "landed" || where == "landed"):
+		return wrMet // a stop is met by its landing alone
+	case ws.IsSentinel(id):
+		return wrUnmet
+	case wrLanded(state, where, ok):
+		return wrMet
+	}
+	return wrUnmet
+}
+
+// wrMembersStatus reads the members' names (pr, ref, origin) and whether each
+// landed, one pipelined round, and settles each owner/repo#n in refDeps.
+func wrMembersStatus(ctx context.Context, c redis.Cmdable, members []string, refDeps map[string]wrStatus) error {
+	if len(members) == 0 {
+		return nil
+	}
+	pipe := c.Pipeline()
+	memCmds := make([]*redis.SliceCmd, len(members))
+	for i, m := range members {
+		memCmds[i] = pipe.HMGet(ctx, "task:"+m, "state", "where", "where_ok", "pr", "ref", "origin", "repo")
+	}
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
+		return fmt.Errorf("waiting-resolve: members: %w", err)
+	}
+	for i := range members {
+		v := memCmds[i].Val()
+		landed := wrLanded(wrStr(v, 0), wrStr(v, 1), wrStr(v, 2))
+		for _, k := range wrNames(wrStr(v, 3), wrStr(v, 4), wrStr(v, 5), wrStr(v, 6)) {
+			st, named := refDeps[k]
+			if !named || st == wrMet {
+				continue
+			}
+			if landed {
+				refDeps[k] = wrMet
+			} else {
+				refDeps[k] = wrUnmet
+			}
+		}
+	}
+	return nil
+}
+
+// Why is one task card as the duty's next pass reads it: where it is and,
+// when it waits, each DEPENDS-ON entry met, unmet (On) or with no record
+// (Unknown). Empty is a waiting card with no blocked_on at all: no evidence,
+// which the duty leaves waiting.
+type Why struct {
+	ID, Stream, Where, BlockedOn string
+	None, Empty                  bool
+	Met, On, Unknown             []string
+}
+
+// Explain reads task:<id> (a bare id or task:<id>) and, when it waits, each
+// of its dependencies the way Pass does (nova-tools#4399: `ready --why` on a
+// waiting card). found is false when there is no such task record. It only
+// reads.
+func Explain(ctx context.Context, c redis.Cmdable, id string) (w Why, found bool, err error) {
+	id = strings.TrimPrefix(strings.TrimSpace(id), "task:")
+	w.ID = id
+	v, err := c.HMGet(ctx, "task:"+id, "where", "stream", "blocked_on").Result()
+	if err != nil {
+		return w, false, fmt.Errorf("why %s: %w", id, err)
+	}
+	w.Where, w.Stream, w.BlockedOn = wrStr(v, 0), wrStr(v, 1), strings.TrimSpace(wrStr(v, 2))
+	if w.Where == "" {
+		return w, false, nil
+	}
+	if w.Where != ws.Waiting {
+		return w, true, nil
+	}
+	deps, none := wrParse(w.BlockedOn)
+	w.None, w.Empty = none, !none && len(deps) == 0
+	taskDeps, refDeps := map[string]wrStatus{}, map[string]wrStatus{}
+	for _, d := range deps {
+		switch d.kind {
+		case wrTask:
+			taskDeps[d.key] = wrUnknown
+		case wrRef:
+			refDeps[d.key] = wrUnknown
+		}
+	}
+	pipe := c.Pipeline()
+	taskIDs := wrKeys(taskDeps)
+	taskCmds := make([]*redis.SliceCmd, len(taskIDs))
+	for i, t := range taskIDs {
+		taskCmds[i] = pipe.HMGet(ctx, "task:"+t, "state", "where", "where_ok")
+	}
+	var order *redis.StringSliceCmd
+	if len(refDeps) > 0 {
+		order = pipe.ZRange(ctx, "ws:order", 0, -1)
+	}
+	if len(taskIDs) > 0 || order != nil {
+		if err := pipeerr.Exec(ctx, pipe); err != nil {
+			return w, true, fmt.Errorf("why %s: %w", id, err)
+		}
+	}
+	for i, t := range taskIDs {
+		tv := taskCmds[i].Val()
+		taskDeps[t] = wrTaskStatus(t, wrStr(tv, 0), wrStr(tv, 1), wrStr(tv, 2))
+	}
+	if order != nil {
+		pipe = c.Pipeline()
+		var setCmds []*redis.StringSliceCmd
+		for _, s := range order.Val() {
+			for _, st := range ws.States {
+				setCmds = append(setCmds, pipe.ZRange(ctx, ws.Key(s, st), 0, -1))
+			}
+		}
+		if len(setCmds) > 0 {
+			if err := pipeerr.Exec(ctx, pipe); err != nil {
+				return w, true, fmt.Errorf("why %s: %w", id, err)
+			}
+		}
+		seen := map[string]bool{}
+		var members []string
+		for _, cmd := range setCmds {
+			for _, m := range cmd.Val() {
+				if !seen[m] {
+					seen[m] = true
+					members = append(members, m)
+				}
+			}
+		}
+		if err := wrMembersStatus(ctx, c, members, refDeps); err != nil {
+			return w, true, err
+		}
+	}
+	for _, d := range deps {
+		st := wrUnknown
+		switch d.kind {
+		case wrTask:
+			st = taskDeps[d.key]
+		case wrRef:
+			st = refDeps[d.key]
+		}
+		switch st {
+		case wrMet:
+			w.Met = wrAdd(w.Met, d.raw)
+		case wrUnmet:
+			w.On = wrAdd(w.On, d.raw)
+		default:
+			w.Unknown = wrAdd(w.Unknown, d.raw)
+		}
+	}
+	return w, true, nil
+}
+
+// Released is whether the duty's next pass moves the card to ready.
+func (w Why) Released() bool {
+	return w.Where == ws.Waiting && !w.Empty && len(w.On) == 0 && len(w.Unknown) == 0
 }
 
 func wrStr(v []any, i int) string {

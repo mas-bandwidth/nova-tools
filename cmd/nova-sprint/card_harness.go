@@ -27,7 +27,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
-const cardRunWant = "run wants --sprint <S> --ids <L> --attempt <a> [--redis <addr>] [--out <dir>] [--job <dir>]; the rest is the bench's card.env in the environment"
 
 func runCardRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return runCardRunEnv(ctx, args, stdout, stderr, os.Getenv)
@@ -42,15 +41,15 @@ func runCardRunEnv(ctx context.Context, args []string, stdout, stderr io.Writer,
 	out := fs.String("out", getenv("NOVA_CARD_OUT"), "the results directory (default NOVA_CARD_OUT)")
 	job := fs.String("job", getenv("NOVA_CARD_JOB"), "the job directory (default NOVA_CARD_JOB)")
 	if err := fs.Parse(args); err != nil {
-		return cardUsage(stderr, err.Error(), cardRunWant)
+		return cardUsage(stderr, "card run", err.Error())
 	}
 	if fs.NArg() != 0 {
-		return cardUsage(stderr, "takes flags, not positional arguments", cardRunWant)
+		return cardUsage(stderr, "card run", "takes flags, not positional arguments")
 	}
 	a, err := strconv.Atoi(*attempt)
 	label := oneID(*ids)
 	if *sprint == "" || label == "" || err != nil || a < 1 {
-		return cardUsage(stderr, "wants --sprint, --ids <label> and --attempt (a positive integer)", cardRunWant)
+		return cardUsage(stderr, "card run", "wants --sprint, --ids <label> and --attempt (a positive integer)")
 	}
 	cfg, missing := card.RunConfigFromEnv(getenv)
 	if *addr == "" {
@@ -63,14 +62,14 @@ func runCardRunEnv(ctx context.Context, args []string, stdout, stderr io.Writer,
 		missing = append(missing, "NOVA_CARD_JOB (or --job)")
 	}
 	if len(missing) > 0 {
-		return cardUsage(stderr, "missing "+strings.Join(missing, ", "), cardRunWant)
+		return cardUsage(stderr, "card run", "missing "+strings.Join(missing, ", "))
 	}
 	cfg.Sprint, cfg.Label, cfg.Attempt = *sprint, label, a
 	if cfg.OutDir, err = filepath.Abs(*out); err != nil {
-		return cardUsage(stderr, "--out: "+err.Error(), cardRunWant)
+		return cardUsage(stderr, "card run", "--out: "+err.Error())
 	}
 	if cfg.JobDir, err = filepath.Abs(*job); err != nil {
-		return cardUsage(stderr, "--job: "+err.Error(), cardRunWant)
+		return cardUsage(stderr, "card run", "--job: "+err.Error())
 	}
 	st, err := store.Open(ctx, *addr)
 	if err != nil {

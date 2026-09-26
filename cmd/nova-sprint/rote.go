@@ -10,7 +10,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fold"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // rote and note --rote (nova-tools #3110; #2756 v6 4.11 and 11.9): each
@@ -26,8 +25,7 @@ func init() {
 var roteNow = time.Now
 
 func refuseVerb(stderr io.Writer, verb, what string) int {
-	fmt.Fprintf(stderr, "nova-sprint %s: %s; run: nova-sprint help\n", verb, oneline.Escape(what))
-	return 2
+	return verbflag.Refuse(stderr, verb, what)
 }
 
 func quietFlags(name string) *verbflag.Set {

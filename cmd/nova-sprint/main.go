@@ -17,8 +17,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+		"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/sprinttable"
 )
 
@@ -91,7 +90,12 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		return refuse(stderr, "", err.Error())
 	}
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb; table renders, refresh detaches")
+		return refuse(stderr, "", "no verb; the verbs are "+verbNames()+"; nova-sprint <verb> -h prints one's usage")
+	}
+	// -h anywhere before a "--": the path's usage from the one table
+	// (verbflag.Usages), its flags and its examples; never another verb's.
+	if run, ok := helpRunner(args[0]); ok && helpAsked(args[1:]) {
+		return helpFor(run, args, stdout)
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
@@ -114,17 +118,15 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		if code, ok := runRegistered(args[0], args[1:], stdout, stderr); ok {
 			return code
 		}
-		return refuse(stderr, "", fmt.Sprintf("unknown verb %s; table renders, refresh detaches", args[0]))
+		return refuse(stderr, "", fmt.Sprintf("unknown verb %s; the verbs are %s; nova-sprint <verb> -h prints one's usage", args[0], verbNames()))
 	}
 }
 
+// refuse prints the verb's one refusal line (verbflag.Refusal): what, then
+// the verb's own usage from the one table, or the corrected line when what
+// carries one; never the help tail. Exit 2.
 func refuse(stderr io.Writer, verb, what string) int {
-	where := ""
-	if verb != "" {
-		where = " " + verb
-	}
-	fmt.Fprintf(stderr, "nova-sprint%s: %s; run: nova-sprint help\n", where, oneline.Escape(what))
-	return 2
+	return verbflag.Refuse(stderr, verb, what)
 }
 
 func cmdRefresh(args []string, stdout, stderr io.Writer) int {

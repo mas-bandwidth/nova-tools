@@ -29,6 +29,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -156,6 +157,9 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	c.waiting = fs.Bool("waiting", false, "push the card to waiting instead of ready (push)")
 	c.repair = fs.Bool("repair", false, "create every registered stream's missing sentinel card (fsck)")
 	c.front = fs.Bool("front", false, "push the card to the front of its column (push)")
+	if sub == "ls" {
+		fs.Spelled("state", "where") // the column is --where on the card verbs (#4399)
+	}
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -171,7 +175,9 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	// set) --as, when given, must name it; a coordinator shell (none set)
 	// is its user.
 	c.actor = seatActor()
-	if seat := os.Getenv(seatEnv); seat != "" && *c.as != "" && sub != "ls" && sub != "expire" && strings.TrimPrefix(*c.as, "friend:") != seat {
+	// A bench is no seat: take --as bench:<b> works the bench's copies from
+	// any seat, as card work --as bench:<b> does (#4399: the help offers it).
+	if seat := os.Getenv(seatEnv); seat != "" && *c.as != "" && sub != "ls" && sub != "expire" && !strings.HasPrefix(*c.as, "bench:") && strings.TrimPrefix(*c.as, "friend:") != seat {
 		return refuse(errOut, verb, fmt.Sprintf("--as %s is not the seat (%s=%s)", *c.as, seatEnv, seat))
 	}
 	if *c.sprint == "" {
@@ -207,9 +213,8 @@ func (c *cardCmd) missing(sub string) string {
 	case "fsck":
 		checks = append(checks, need(c.sprint, "sprint"))
 	case "ls":
-		checks = append(checks, need(c.where, "where"))
-		if (*c.stream == "") == (*c.as == "") {
-			checks = append(checks, "want exactly one of --stream <s> and --as friend:<f>")
+		if *c.stream != "" && *c.as != "" {
+			checks = append(checks, "want at most one of --stream <s> and --as friend:<f>")
 		}
 	}
 	switch sub {
@@ -289,6 +294,16 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		var ids []string
 		if c.id != "" {
 			ids = []string{c.id}
+		}
+		// --as bench:<b> is card work for the bench (#4399): its ready
+		// copies; a bench has no friend queue, so nothing else is taken.
+		if k, err := taskcard.ParseConsumer(*c.as); err == nil && k.Kind == "bench" {
+			w, err := taskcard.Work(ctx, cl, k, c.actor, *c.n, false, ids...)
+			if err != nil {
+				return refused(err)
+			}
+			_, _ = fmt.Fprintf(out, "TASK take n=%d ids=%s ms=%d\n", len(w.IDs), strings.Join(w.IDs, ","), ms())
+			return 0
 		}
 		// task take is card work for a friend harness (#3929): the friend's
 		// ready copies first (card work --as friend:<f>), then friend-queue
@@ -408,21 +423,24 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			len(r.Unlinked), strings.Join(r.Unlinked, ","), ms())
 		return 0
 	case "ls":
-		var ids []string
-		var err error
-		if *c.stream != "" {
-			ids, err = taskcard.Ls(ctx, cl, *c.stream, *c.where)
-		} else {
-			ids, err = taskcard.LsFriend(ctx, cl, asFriend, *c.where)
+		if *c.where != "" && (*c.stream != "" || *c.as != "") {
+			var ids []string
+			var err error
+			if *c.stream != "" {
+				ids, err = taskcard.Ls(ctx, cl, *c.stream, *c.where)
+			} else {
+				ids, err = taskcard.LsFriend(ctx, cl, asFriend, *c.where)
+			}
+			if err != nil {
+				return refuse(errOut, c.verb, err.Error())
+			}
+			for _, id := range ids {
+				_, _ = fmt.Fprintln(out, id)
+			}
+			_, _ = fmt.Fprintf(out, "TASK ls n=%d where=%s ms=%d\n", len(ids), *c.where, ms())
+			return 0
 		}
-		if err != nil {
-			return refuse(errOut, c.verb, err.Error())
-		}
-		for _, id := range ids {
-			_, _ = fmt.Fprintln(out, id)
-		}
-		_, _ = fmt.Fprintf(out, "TASK ls n=%d where=%s ms=%d\n", len(ids), *c.where, ms())
-		return 0
+		return c.lsWide(ctx, cl, asFriend, out, errOut, ms)
 	case "fsck":
 		if *c.repair {
 			// the one repair: every registered stream has its sentinel (#4318)
@@ -564,4 +582,61 @@ func init() {
 	registerReconcileDuty("task-lease", func(st *store.Store) (reconcileDuty, error) {
 		return &taskLeaseDuty{st: st}, nil
 	})
+}
+
+// lsWide is task ls without the one column or the one stream (#4399: the
+// cold session typed `task ls`, `task ls --stream <s>` and was refused
+// twice): every live column (--where, else waiting through landed) of the
+// stream, the friend (--as), or every stream in ws:order, one pipelined
+// round, one line per card:
+//
+//	<id> stream=<s> where=<w>
+//	TASK ls n=<n> streams=<k> where=<w|live> ms=<ms>
+func (c *cardCmd) lsWide(ctx context.Context, cl *redis.Client, asFriend string, out, errOut io.Writer, ms func() int64) int {
+	wheres := ws.Stream
+	label := "live"
+	if *c.where != "" {
+		wheres, label = []string{*c.where}, *c.where
+	}
+	var streams []string
+	switch {
+	case *c.stream != "":
+		streams = verbflag.List(*c.stream)
+	case *c.as != "":
+	default:
+		var err error
+		if streams, err = cl.ZRange(ctx, "ws:order", 0, -1).Result(); err != nil {
+			return refuse(errOut, c.verb, err.Error())
+		}
+	}
+	type key struct{ stream, where string }
+	var keys []key
+	pipe := cl.Pipeline()
+	var cmds []*redis.StringSliceCmd
+	if *c.as != "" {
+		for _, w := range wheres {
+			keys = append(keys, key{"friend:" + asFriend, w})
+			cmds = append(cmds, pipe.ZRange(ctx, taskcard.FriendKey(asFriend, w), 0, -1))
+		}
+	}
+	for _, s := range streams {
+		for _, w := range wheres {
+			keys = append(keys, key{s, w})
+			cmds = append(cmds, pipe.ZRange(ctx, taskcard.StreamKey(s, w), 0, -1))
+		}
+	}
+	if len(cmds) > 0 {
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return refuse(errOut, c.verb, err.Error())
+		}
+	}
+	n := 0
+	for i, cmd := range cmds {
+		for _, id := range cmd.Val() {
+			n++
+			_, _ = fmt.Fprintf(out, "%s stream=%s where=%s\n", id, quoteField(keys[i].stream), keys[i].where)
+		}
+	}
+	_, _ = fmt.Fprintf(out, "TASK ls n=%d streams=%d where=%s ms=%d\n", n, len(streams), label, ms())
+	return 0
 }

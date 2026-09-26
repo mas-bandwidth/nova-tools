@@ -37,6 +37,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // VerbResult is one card verb (push, release, land, lint). Code 0 wrote or found the same card. Code 2 is a
@@ -122,6 +123,18 @@ type cardDoc struct {
 	Payload        string
 }
 
+// LabelLine is where a card file names its id: the refusal of a file with
+// none says it (the cold read of #4399 found it only here, in the source).
+const LabelLine = "a card names its id on a first line RESULT: <id> or a LABEL: <id> header line, the id [A-Za-z0-9._-] (docs/CLI.md, card push: the card file)"
+
+// FileShape is what a card file is, for card push's refusal of a call with
+// none: the header lines it must carry and the values KIND takes.
+func FileShape() string {
+	return "a card file is KEY: value header lines, then the body; " + LabelLine + "; it carries " +
+		strings.Join(requiredKeys, ", ") + " (BASE-SHA 40 lowercase hex) and KIND: one of " +
+		strings.Join(typedrec.Kinds, ", ") + " (runner kinds: " + strings.Join(RunnerKinds, ", ") + ")"
+}
+
 func refused(reason string) VerbResult {
 	return VerbResult{Code: exitRefused, Stderr: oneline.Escape(reason) + "\n"}
 }
@@ -157,7 +170,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		label = header["LABEL"]
 	}
 	if !idRE.MatchString(label) {
-		return cardDoc{}, errors.New("missing label; the contract line names the card id")
+		return cardDoc{}, fmt.Errorf("missing label: %s", LabelLine)
 	}
 	baseSHA := header["BASE-SHA"]
 	if !shaRE.MatchString(baseSHA) {

@@ -224,8 +224,8 @@ func TestFleetReleaseUsage(t *testing.T) {
 		{[]string{"--sha", verbSha, "--benches-only"}, "--benches-only is retired: fleet release --sha <sha> is the whole roll"},
 		{[]string{"--sha", verbSha, "--wait", "-1s"}, "--wait must be >= 0"},
 		{[]string{"--sha", verbSha, "--play", "../x.yml"}, "--play names a play file"},
-		{[]string{"--nope", "--sha", verbSha}, "flag provided but not defined"},
-		{[]string{"--sha", verbSha, "--benches", "hulk"}, "flag provided but not defined: -benches"},
+		{[]string{"--nope", "--sha", verbSha}, "--nope is not a flag of nova-sprint fleet release"},
+		{[]string{"--sha", verbSha, "--benches", "hulk"}, "--benches is not a flag of nova-sprint fleet release"},
 	} {
 		var out, errOut bytes.Buffer
 		code := runFleetReleaseWith(context.Background(), tc.args, &out, &errOut, deps)

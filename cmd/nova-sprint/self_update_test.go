@@ -98,7 +98,7 @@ func TestSelfUpdateVerbRefusalsPrint(t *testing.T) {
 		{nil, selfCmdFake{}, 2, "wants the subverb update"},
 		{[]string{"upgrade"}, selfCmdFake{}, 2, "wants the subverb update"},
 		{[]string{"update", "extra"}, selfCmdFake{}, 2, "takes no arguments"},
-		{[]string{"update", "--nope"}, selfCmdFake{}, 2, "not defined"},
+		{[]string{"update", "--nope"}, selfCmdFake{}, 2, "--nope is not a flag of nova-sprint self update"},
 		{[]string{"update", "--sha", "zz"}, selfCmdFake{}, 1, "SELF UPDATE REFUSED: --sha"},
 		{[]string{"update"}, selfCmdFake{offDev: true}, 1, "SELF UPDATE REFUSED: 4eabff79cc2e is not on origin/dev"},
 	} {

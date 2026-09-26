@@ -8,7 +8,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 func init() {
@@ -31,7 +30,7 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runCardRun(ctx, args[1:], stdout, stderr)
 	}
 	if len(args) == 0 {
-		return cardUsage(stderr, "", "wants cut, push, release, stop, show, run, launched, beat, or end")
+		return cardUsage(stderr, "card", "wants a subverb")
 	}
 	sub := args[0]
 	return runCardAttempt(ctx, sub, args[1:], stdout, stderr)
@@ -43,9 +42,8 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 // positional). end and beat with --sprint are this form; without it they are
 // the table moves (card_moves.go).
 func runCardAttempt(ctx context.Context, sub string, args []string, stdout, stderr io.Writer) int {
-	want, ok := cardWant(sub)
-	if !ok {
-		return cardUsage(stderr, "unknown verb "+sub, "wants cut, push, release, stop, show, run, launched, beat, or end")
+	if !cardWant(sub) {
+		return cardUsage(stderr, "card", "unknown subverb "+sub)
 	}
 	fs := verbflag.New("card " + sub)
 	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
@@ -63,26 +61,25 @@ func runCardAttempt(ctx context.Context, sub string, args []string, stdout, stde
 		results = fs.String("results", "", "the results directory, a Unix absolute path on the bench")
 	}
 	if err := fs.Parse(args); err != nil {
-		return cardUsage(stderr, err.Error(), want)
+		return cardUsage(stderr, "card "+sub, err.Error())
 	}
 	if fs.NArg() > 0 {
-		return cardUsage(stderr, "takes flags, not positional arguments", want)
+		return cardUsage(stderr, "card "+sub, "takes flags, not positional arguments")
 	}
 	label := oneID(*ids)
 	if label == "" {
-		return cardUsage(stderr, "wants --ids <label>, one label", want)
+		return cardUsage(stderr, "card "+sub, "wants --ids <label>, one label")
 	}
 	for _, f := range []struct{ name, v string }{{"redis", *redisAddr}, {"sprint", *sprint}, {"token", *token},
 		{"branch", *branch}, {"jobdir", *jobdir}, {"outcome", *outcome}, {"why", *why}, {"results", *results}} {
 		if f.v == "" && cardFlagAllowed(sub, f.name) {
-			return cardUsage(stderr, "missing --"+f.name, want)
+			return cardUsage(stderr, "card "+sub, "missing --"+f.name)
 		}
 	}
 	if sub == "end" && !card.AbsResults(*results) {
 		// #3329: results is the card hash field harvest pushes from; it is
 		// absolute so no reader needs a root typed on its argv.
-		return cardUsage(stderr, "--results "+*results+" is relative or not a Unix path",
-			"results must be a Unix absolute path on the bench (leading /, no //, no backslash, no ..; the card hash field s:<S>:card:<label> results); "+want)
+		return cardUsage(stderr, "card "+sub, "--results "+*results+" is relative or not a Unix path: results must be a Unix absolute path on the bench (leading /, no //, no backslash, no ..; the card hash field s:<S>:card:<label> results)")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
@@ -114,24 +111,16 @@ func runCardAttempt(ctx context.Context, sub string, args []string, stdout, stde
 		return 6
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-sprint card: %s; run: nova-sprint help\n", oneline.Escape(err.Error()))
-		return 2
+		return refuse(stderr, "card "+sub, err.Error())
 	}
 	fmt.Fprintln(stdout, res.Line())
 	return res.Code
 }
 
-func cardWant(sub string) (string, bool) {
-	switch sub {
-	case "launched":
-		return "launched wants --redis <addr> --sprint <S> --ids <label> --token <t> --branch <b> --jobdir <d>", true
-	case "beat":
-		return "beat wants --redis <addr> --sprint <S> --ids <label> --token <t>", true
-	case "end":
-		return "end wants --redis <addr> --sprint <S> --ids <label> --token <t> --outcome DONE,ABSTAIN,BLOCKED,FAILED --why <code> --results <dir>", true
-	default:
-		return "", false
-	}
+// cardWant is whether sub is an attempt-form subverb (launched, beat, end
+// with --sprint); their forms are the one usage table's.
+func cardWant(sub string) bool {
+	return sub == "launched" || sub == "beat" || sub == "end"
 }
 
 func cardFlagNames(sub string) []string {
@@ -156,11 +145,9 @@ func cardFlagAllowed(sub, name string) bool {
 	return false
 }
 
-func cardUsage(stderr io.Writer, detail, want string) int {
-	msg := want
-	if detail != "" {
-		msg = oneline.Escape(detail) + "; " + want
-	}
-	fmt.Fprintf(stderr, "nova-sprint card: %s; run: nova-sprint help\n", msg)
+// cardUsage is the attempt form's refusal (exit 1): detail, then the card
+// path's usage from the one table.
+func cardUsage(stderr io.Writer, verb, detail string) int {
+	fmt.Fprintln(stderr, verbflag.Refusal(verb, detail))
 	return 1
 }

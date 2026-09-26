@@ -40,13 +40,13 @@ func TestDigestFlagsRefuseBeforeReading(t *testing.T) {
 
 	addr, accepts := countingListener(t)
 	pre := "nova-sprint digest: "
-	post := "; run: nova-sprint help\n"
+	post := "; usage: nova-sprint digest [--repo <r,...>] [--since <d>] [--until <RFC3339>]\n"
 	for _, tc := range []struct {
 		args []string
 		want string
 	}{
 		{[]string{"--redis", addr, "--since", digestSince, "extra"}, "takes flags, not positional arguments"},
-		{[]string{"--bogus"}, "flag provided but not defined: -bogus"},
+		{[]string{"--bogus"}, "--bogus is not a flag of nova-sprint digest; it takes --redis, --repo, --since and --until; without it: nova-sprint digest"},
 		{[]string{"--since", digestSince}, "wants --redis <host:port>"},
 		{[]string{"--redis", addr}, "wants --since <RFC3339 UTC>"},
 		{[]string{"--redis", addr, "--since", "2026-09-23"}, "wants --since <RFC3339 UTC>"},

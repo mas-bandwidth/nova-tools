@@ -3887,13 +3887,13 @@ sprint-table.txt` publishes it by atomic rename.
 
 ```text
 $ nova-sprint table --once --fixture table.txt
-! nova-sprint table: flag provided but not defined: -fixture; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
+! nova-sprint table: --fixture is not a flag of nova-sprint table; it takes --check, --compare, --friends, --layout, --live, --lock, --loop, --once, --out, --redis, --sprint and --xy-file; without it: nova-sprint table --once; usage: nova-sprint table [--sprint <S>] [--once | --loop] [--out <file>] | nova-sprint table --layout live [--sprint <S>] [--friends <a,b>] [--once | --loop] | nova-sprint table --check | nova-sprint table --compare <file> --sprint <S> --friends <a,b> [--xy-file <file>]
 
 $ nova-sprint table --once
-! nova-sprint table: --redis <addr> is required; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
+! nova-sprint table: --redis <addr> is required (or NOVA_SPRINT_REDIS): the wide table is read from Redis and written nowhere; usage: nova-sprint table [--sprint <S>] [--once | --loop] [--out <file>] | nova-sprint table --layout live [--sprint <S>] [--friends <a,b>] [--once | --loop] | nova-sprint table --check | nova-sprint table --compare <file> --sprint <S> --friends <a,b> [--xy-file <file>]
 
 $ nova-sprint table --check
-! nova-sprint table: --check needs --redis <addr>, a throwaway server for the fixture keyspace; run: nova-sprint help
+! nova-sprint table: --check needs --redis <addr>, a throwaway server for the fixture keyspace; usage: nova-sprint table [--sprint <S>] [--once | --loop] [--out <file>] | nova-sprint table --layout live [--sprint <S>] [--friends <a,b>] [--once | --loop] | nova-sprint table --check | nova-sprint table --compare <file> --sprint <S> --friends <a,b> [--xy-file <file>]
 ```
 
 What a first run gets wrong, and what each one wants:
@@ -4564,7 +4564,7 @@ The file is tab separated, one card per line; blank lines and lines starting wit
 | `paths` | the card's PATHS | required |
 | `done-when` | the card's DONE-WHEN | required |
 | `body` | the issue text below the card lines | empty |
-| `depends-on` | `#<n>` (an issue of `--repo`), `owner/name#<n>`, or a task id (`task:<id>` or `<id>`), comma separated; `none` or `-` is none | none |
+| `depends-on` | `#<n>` (an issue of `--repo`), `owner/name#<n>`, or a task id (`task:<id>` or `<id>`), comma separated; `none` (or `-`, the TSV's empty marker) is none, written as `blocked_on=none` so the waiting resolver releases the card to ready; an empty cell is refused (`depends-on is empty: write none or the ids`) | required |
 | `route` | `frontier`, `pro`, `flash` (a swarm card, complete at push, with `base-sha`) or `friend` | `friend` |
 | `est` | minutes: `30`, `45 min`, `2 h` | `30` |
 | `id` | the task id; only a header row can name this column | `<repo name>-<issue n>`, or with `--no-github` the title's slug |
@@ -4595,6 +4595,10 @@ The rules in the one writer (`02_card_move.lua`): a plan is never dealt (`card d
 The stitch's brief is regenerated when the waiting resolver releases the stitch to ready (after every child landed), so the coordinator's stitch child starts with the whole picture. `nova-sprint card stitch --ids <parent|stitch> [--write]` prints the plan's line, one line per child and the brief as the records hold it now; `--write` stores it onto the stitch's body (a refresh after a late read). Receipt: `PLAN id=<parent> state=<s> children=<n> stitch=<id>:<where> written=<0|1> ms=<ms>`.
 
 A plan lands with its stitch by every door (`TK.land_parent` in the one move: the stream landing, `task land --ids <stitch>`, a verdict's drop), from waiting or ready; a plan is never moved to ready (refused by name; the resolver skips it). A cancelled child leaves the plan `stuck` (its edge is never met); the brief and `card stitch` name the remedy, `nova-sprint card stitch --drop <child>`, which drops a done child from the parent's children and the stitch's edges through the one move and rewrites the brief (`STITCH DROP parent=<p> child=<c> children=<n> state=<s>`); a live, landed or plan-less child is refused by name. `task cancel --id <plan>` cascades: the live children and the stitch are cancelled first (why `plan <id> cancelled: <why>`), then the plan; a child in flight (working, review, merging) refuses the whole cancel by name before any write, and a hand move of a plan to done while children are live is refused by the one writer.
+
+### card push: the card file
+
+`nova-sprint card push --sprint <S> <card file>... | --dir <cards/> | --stdin [--map-kind]` pushes card files. A card file is a header of `KEY: value` lines, then the body. The card's id is its first line `RESULT: <id>` (the contract line) or a `LABEL: <id>` header line, the id `[A-Za-z0-9._-]`. The header carries `BASE:`, `BASE-SHA:` (40 lowercase hex), `PATHS:`, `DEPENDS-ON:` and `DONE-WHEN:`, and `KIND:` one of the RESULT kinds (`fix`, `recut`, `port`, `docs-guard`, `report`, `read`) or a runner kind; `--map-kind` pushes a classification kind as the RESULT kind it maps to. `card push` with no file names all of this in its refusal (internal/nsprint/card/lint.go `FileShape`), and a file with no id names the two lines (`LabelLine`).
 
 ### The card model: `nova-sprint card fsck`, `card ls --unplaced`, `bench reindex`
 
@@ -4633,7 +4637,7 @@ The first stumble is a missing `--redis`; every refusal is one line on stderr, e
 
 ```text
 nova-sprint digest --since 2026-09-23T00:00:00Z
-nova-sprint digest: wants --redis <host:port>; run: nova-sprint help
+nova-sprint digest: wants --redis <host:port>; usage: nova-sprint digest [--repo <r,...>] [--since <d>] [--until <RFC3339>]
 ```
 
 The other refusals name their remedy the same way: `wants --since <RFC3339 UTC>`, `wants --until <RFC3339 UTC>`, `since must be before until`, `takes flags, not positional arguments`, a `--repo` that is not `<owner>/<name>` (the parser's `invalid value` line), and `redis <addr>: <error>` when the store cannot be reached. A read that fails after that exits 1.

@@ -43,10 +43,7 @@ func runLandWriter(ctx context.Context, args []string, out, errOut io.Writer) in
 	by := new(string)
 	*by = seatActor()
 
-	addr := *redisAddr
-	if addr == "" {
-		addr = os.Getenv("NOVA_REDIS_ADDR")
-	}
+	addr := redisOr(*redisAddr) // the one resolver (seat.go)
 	if addr == "" {
 		addr = os.Getenv("REDIS_ADDR")
 	}

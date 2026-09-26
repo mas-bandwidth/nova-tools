@@ -131,7 +131,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func refuse(stderr io.Writer, what string) int {
-	fmt.Fprintf(stderr, "nova-sprint verbs: %s; run: nova-sprint help\n", oneline.Escape(what))
+	_ = verbflag.Refuse(stderr, "verbs unused", what)
 	return ExitRefused
 }
 
@@ -260,7 +260,7 @@ func Unused(ctx context.Context, client *redis.Client, cfg Config, stdout, stder
 	e := entry{At: until, Days: cfg.Days, Since: since, Until: until, DevSHA: devSHA, Verbs: r.listed}
 	id, err := appendEntry(ctx, client, e, r.resolve, cfg.beforeExec)
 	if errors.Is(err, errPrevMoved) {
-		fmt.Fprintf(stderr, "nova-sprint verbs: prev-moved tries=%d; nothing appended; run: nova-sprint help\n", Tries)
+		fmt.Fprintf(stderr, "nova-sprint verbs: prev-moved tries=%d; nothing appended; the log moved under every try, so the same line again appends\n", Tries)
 		return ExitFenced
 	}
 	if err != nil {

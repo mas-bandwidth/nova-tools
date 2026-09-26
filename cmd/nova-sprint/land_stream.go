@@ -105,7 +105,13 @@ func landExit(errOut io.Writer, verb string, err error) int {
 }
 
 func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) int {
-	const verb = "land stream"
+	return runLandStreamAs(ctx, "land stream", args, out, errOut)
+}
+
+// runLandStreamAs is land stream under the verb path it was called as (stream open, rebase
+// and pr are land stream's, stream status is land status's, stream close is
+// land merge's), so -h and every refusal name that path.
+func runLandStreamAs(ctx context.Context, verb string, args []string, out, errOut io.Writer) int {
 	fs := taskFlags(verb)
 	streamsFlag := fs.String("stream", "", verbflag.HelpStream)
 	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
@@ -230,7 +236,13 @@ func memberIndex(ms []stream.Member, n int) int {
 }
 
 func runLandStreamStatus(ctx context.Context, args []string, out, errOut io.Writer) int {
-	const verb = "land status"
+	return runLandStreamStatusAs(ctx, "land status", args, out, errOut)
+}
+
+// runLandStreamStatusAs is land status under the verb path it was called as (stream open, rebase
+// and pr are land stream's, stream status is land status's, stream close is
+// land merge's), so -h and every refusal name that path.
+func runLandStreamStatusAs(ctx context.Context, verb string, args []string, out, errOut io.Writer) int {
 	fs := taskFlags(verb)
 	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	repo := fs.String("repo", "", verbflag.HelpRepo)
@@ -286,7 +298,13 @@ func runLandStreamStatus(ctx context.Context, args []string, out, errOut io.Writ
 }
 
 func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int {
-	const verb = "land merge"
+	return runLandMergeAs(ctx, "land merge", args, out, errOut)
+}
+
+// runLandMergeAs is land merge under the verb path it was called as (stream open, rebase
+// and pr are land stream's, stream status is land status's, stream close is
+// land merge's), so -h and every refusal name that path.
+func runLandMergeAs(ctx context.Context, verb string, args []string, out, errOut io.Writer) int {
 	fs := taskFlags(verb)
 	streamsFlag := fs.String("stream", "", verbflag.HelpStream)
 	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)

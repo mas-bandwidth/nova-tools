@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/redis/go-redis/v9"
 	"io"
-	"os"
 
 	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/file"
@@ -28,10 +27,6 @@ func init() {
 }
 
 func cmdFile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
-		_, _ = io.WriteString(stdout, file.Usage)
-		return 2
-	}
 	return file.Main(ctx, args, stdout, stderr, file.Deps{
 		Token: githubToken,
 		Push:  pushFiledTask,
@@ -50,9 +45,10 @@ func githubToken() (string, error) {
 }
 
 // openFileStore is the store the file verb counts its calls in (#4343):
-// NOVA_REDIS_ADDR, or the seat's address.
+// the one resolver's address (seat.go: the seat's, else NOVA_SPRINT_REDIS,
+// NOVA_REDIS_ADDR, NOVA_REDIS).
 func openFileStore(ctx context.Context) (redis.Cmdable, func(), error) {
-	st, err := store.Open(ctx, os.Getenv("NOVA_REDIS_ADDR"))
+	st, err := store.Open(ctx, redisDefault())
 	if err != nil {
 		return nil, nil, err
 	}

@@ -52,6 +52,7 @@ import (
 )
 
 func init() {
+	ledger.DefaultAddr = func() string { return redisDefault() } // the one resolver (seat.go)
 	register(Verb{
 		Name: "jev",
 		Summary: "mech --repo <r> --n <n> --body-file <f>: Jev's mechanical passes (lint, scope, base) as one JEV line on the PR record, before any friend read; never a read. " +
@@ -76,7 +77,10 @@ func runJev(ctx context.Context, args []string, out, errOut io.Writer) int {
 	n := fs.Int("n", 0, verbflag.HelpN)
 	bodyFile := fs.String("body-file", "", "the PR body, a file")
 	mirror := fs.String("mirror", "", "the bench mirror of the repo (default ~/nova-bench/mirror/<repo>.git)")
-	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
+	if err := fs.Parse(args[1:]); err != nil {
+		return refuse(errOut, verb, err.Error())
+	}
+	if fs.NArg() != 0 {
 		return refuse(errOut, verb, jevUsage)
 	}
 	_, name, rerr := prkey.Split(*repo)

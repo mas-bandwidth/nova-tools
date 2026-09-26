@@ -133,6 +133,7 @@ type cutRow struct {
 	title, stream, who, paths, doneWhen, body string
 	route, est, id                            string
 	deps                                      []string // entries as written, none dropped
+	depsEmpty                                 bool     // the depends-on cell is empty: refused, naming none
 	depRow                                    []int    // per entry: the row its id names, 0 outside the file
 	rowDeps                                   []int    // the rows this row depends on
 	why                                       string   // a refusal
@@ -245,8 +246,9 @@ func parseCutRows(text []byte) ([]*cutRow, error) {
 		r.deps = strings.FieldsFunc(get["depends-on"], func(c rune) bool {
 			return c == ',' || c == ';' || c == ' ' || c == '\t' || c == '\n'
 		})
+		r.depsEmpty = len(r.deps) == 0
 		if len(r.deps) == 1 && (r.deps[0] == "none" || r.deps[0] == "-") {
-			r.deps = nil
+			r.deps = nil // - is the TSV's empty marker, normalized to the one spelling, none
 		}
 		rows = append(rows, r)
 	}
@@ -337,6 +339,12 @@ func checkCutRow(r *cutRow, byID, slugs map[string]int, o cutFromOpts) {
 			}
 		}
 		return
+	}
+	if r.depsEmpty {
+		// A cutter who forgot the cell must not get a card that silently
+		// depends on nothing, nor one that never leaves waiting (an empty
+		// blocked_on is no evidence to the resolver): none is the spelling.
+		fail("depends-on is empty: write none or the ids")
 	}
 	r.depRow = make([]int, len(r.deps))
 	for i, d := range r.deps {
@@ -821,10 +829,11 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		}
 		text := cutIssueText(r, rows, o)
 		spec := cutSpec(r, o, text)
+		// none is written as none: the waiting-resolve duty reads blocked_on
+		// none as met and releases the card to ready, where an empty
+		// blocked_on is no evidence and stays waiting (RESOLVE ready=0 still=10
+		// on the cold walk of #4399).
 		blocked := cutDepends(r, rows, o.Repo, false)
-		if blocked == "none" {
-			blocked = ""
-		}
 		push = append(push, r)
 		why := "card cut --from"
 		if o.Parent != "" {

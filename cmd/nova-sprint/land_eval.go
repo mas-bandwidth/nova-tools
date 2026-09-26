@@ -28,10 +28,7 @@ func runLandEval(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return refuse(errOut, "land eval", err.Error())
 	}
 	if *shadow {
-		addr := *redisAddr
-		if addr == "" {
-			addr = os.Getenv("NOVA_REDIS_ADDR")
-		}
+		addr := redisOr(*redisAddr) // the one resolver (seat.go)
 		if addr == "" {
 			addr = "127.0.0.1:6379"
 		}
@@ -42,11 +39,8 @@ func runLandEval(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return refuse(errOut, "land eval", "needs --repo <repo>")
 	}
 
-	if *redisAddr == "" {
-		*redisAddr = os.Getenv("NOVA_REDIS_ADDR")
-		if *redisAddr == "" {
-			*redisAddr = "127.0.0.1:6379"
-		}
+	if *redisAddr = redisOr(*redisAddr); *redisAddr == "" { // the one resolver (seat.go)
+		*redisAddr = "127.0.0.1:6379"
 	}
 
 	if *sprint == "" {

@@ -1098,13 +1098,13 @@ still be empty afterwards: the wide table is read from Redis and written nowhere
 
 ```text
 $ nova-sprint table --once --fixture table.txt
-! nova-sprint table: flag provided but not defined: -fixture; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
+! nova-sprint table: --fixture is not a flag of nova-sprint table; it takes --check, --compare, --friends, --layout, --live, --lock, --loop, --once, --out, --redis, --sprint and --xy-file; without it: nova-sprint table --once; usage: nova-sprint table [--sprint <S>] [--once | --loop] [--out <file>] | nova-sprint table --layout live [--sprint <S>] [--friends <a,b>] [--once | --loop] | nova-sprint table --check | nova-sprint table --compare <file> --sprint <S> --friends <a,b> [--xy-file <file>]
 
 $ nova-sprint table --once
-! nova-sprint table: --redis <addr> is required; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
+! nova-sprint table: --redis <addr> is required (or NOVA_SPRINT_REDIS): the wide table is read from Redis and written nowhere; usage: nova-sprint table [--sprint <S>] [--once | --loop] [--out <file>] | nova-sprint table --layout live [--sprint <S>] [--friends <a,b>] [--once | --loop] | nova-sprint table --check | nova-sprint table --compare <file> --sprint <S> --friends <a,b> [--xy-file <file>]
 
 $ nova-sprint table --check
-! nova-sprint table: --check needs --redis <addr>, a throwaway server for the fixture keyspace; run: nova-sprint help
+! nova-sprint table: --check needs --redis <addr>, a throwaway server for the fixture keyspace; usage: nova-sprint table [--sprint <S>] [--once | --loop] [--out <file>] | nova-sprint table --layout live [--sprint <S>] [--friends <a,b>] [--once | --loop] | nova-sprint table --check | nova-sprint table --compare <file> --sprint <S> --friends <a,b> [--xy-file <file>]
 ```
 
 The first is the deleted file cut: `--fixture` and `--refresh` are unknown

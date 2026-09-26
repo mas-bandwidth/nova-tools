@@ -98,7 +98,7 @@ func TestIdemResolveLinesAndExits(t *testing.T) {
 	refused := func(what string, code int, out, errOut string) {
 		t.Helper()
 		if code != 2 || out != "" || strings.Count(errOut, "\n") != 1 ||
-			!strings.HasPrefix(errOut, "nova-sprint idem") || !strings.HasSuffix(errOut, "; run: nova-sprint help\n") {
+			!strings.HasPrefix(errOut, "nova-sprint idem") || !strings.Contains(errOut, "; usage: nova-sprint idem ") {
 			t.Fatalf("%s: exit %d stdout %q stderr %q, want exit 2 and one refuse line", what, code, out, errOut)
 		}
 	}

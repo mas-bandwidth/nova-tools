@@ -194,7 +194,7 @@ func TestCardCutFromHundredRows(t *testing.T) {
 	if !strings.Contains(ten.Spec.Body, "Why 10:\nline two") || ten.Sprint != "s1" || ten.By != "rowan" {
 		t.Fatalf("row 10 body %q sprint %q by %q", ten.Spec.Body, ten.Sprint, ten.By)
 	}
-	if byTitle["1"].DependsOn != "" || byTitle["1"].Spec.Route != "friend" || byTitle["1"].Spec.BaseSHA != "" {
+	if byTitle["1"].DependsOn != "none" || byTitle["1"].Spec.Route != "friend" || byTitle["1"].Spec.BaseSHA != "" {
 		t.Fatalf("row 1 push %+v spec %+v", byTitle["1"], byTitle["1"].Spec)
 	}
 }
@@ -290,7 +290,7 @@ func TestCardCutFromDryRun(t *testing.T) {
 // an id cell), no issue filed, no ref on the record.
 func TestCardCutFromNoGitHub(t *testing.T) {
 	t.Parallel()
-	rows := "id\ttitle\tpaths\tdone-when\tdepends-on\n\tSpeed up the Table!\tp.go\tdone\t\nmy-id\tNamed\tp.go\tdone\tbase\nbase\tBase\tp.go\tdone\t\n"
+	rows := "id\ttitle\tpaths\tdone-when\tdepends-on\n\tSpeed up the Table!\tp.go\tdone\tnone\nmy-id\tNamed\tp.go\tdone\tbase\nbase\tBase\tp.go\tdone\t-\n"
 	st := &fakeCutStore{}
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows), NoGitHub: true, Stream: "nova-sprint"}, cutDeps(nil, st))
 	if code != 0 {
@@ -311,7 +311,7 @@ func TestCardCutFromNoGitHub(t *testing.T) {
 // before the failure are still pushed.
 func TestCardCutFromRefusalsPrint(t *testing.T) {
 	t.Parallel()
-	rows := "a\ts\tany\tp\td\tb\t\t\t\nb\ts\tany\tp\td\tb\t\t\t\nc\ts\tany\tp\td\tb\t\t\t\nd\ts\tany\tp\td\tb\t\t\t\n"
+	rows := "a\ts\tany\tp\td\tb\tnone\t\t\nb\ts\tany\tp\td\tb\tnone\t\t\nc\ts\tany\tp\td\tb\tnone\t\t\nd\ts\tany\tp\td\tb\tnone\t\t\n"
 	forge := &fakeCutForge{failAt: 3}
 	st := &fakeCutStore{refuse: map[string]string{"nova-tools-5001": "EXISTS task:nova-tools-5001"}}
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows)}, cutDeps(forge, st))
@@ -365,7 +365,7 @@ func TestCardCutFromFlags(t *testing.T) {
 func TestCardCutFromRerunFilesNothingTwice(t *testing.T) {
 	t.Parallel()
 	rows := "id\ttitle\tstream\tpaths\tdone-when\tdepends-on\n" +
-		"a\tA\ts\tp\td\t\n\tB\ts\tp\td\ta\n\tC\ts\tp\td\ta\n\tD\ts\tp\td\t\n"
+		"a\tA\ts\tp\td\tnone\n\tB\ts\tp\td\ta\n\tC\ts\tp\td\ta\n\tD\ts\tp\td\t-\n"
 	forge, st := &fakeCutForge{failAt: 3}, &fakeCutStore{}
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows)}, cutDeps(forge, st))
 	if code != 1 || !strings.Contains(out, "rows=4 cut=2 already=0 refused=2 filed=2 reused=0 ") {
@@ -406,7 +406,7 @@ func TestCardCutFromRerunFilesNothingTwice(t *testing.T) {
 // the issue.
 func TestCardCutFromLedgerRefusals(t *testing.T) {
 	t.Parallel()
-	rows := "a\ts\tany\tp\td\tb\t\t\t\nb\ts\tany\tp\td\tb\t\t\t\n"
+	rows := "a\ts\tany\tp\td\tb\tnone\t\t\nb\ts\tany\tp\td\tb\tnone\t\t\n"
 	key := taskcard.CutLedgerKey([]byte(rows))
 
 	forge, st := &fakeCutForge{}, &fakeCutStore{}

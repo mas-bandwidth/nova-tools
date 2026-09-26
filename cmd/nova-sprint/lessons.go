@@ -19,7 +19,7 @@ func init() {
 
 func cmdLesson(_ context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuseVerb(stderr, "lesson", "want append or supersede; run nova-sprint help")
+		return refuseVerb(stderr, "lesson", "want append or supersede")
 	}
 	switch args[0] {
 	case "append":
@@ -27,7 +27,7 @@ func cmdLesson(_ context.Context, args []string, stdout, stderr io.Writer) int {
 	case "supersede":
 		return cmdLessonSupersede(args[1:], stdout, stderr)
 	default:
-		return refuseVerb(stderr, "lesson", "want append or supersede; run nova-sprint help")
+		return refuseVerb(stderr, "lesson", "want append or supersede")
 	}
 }
 

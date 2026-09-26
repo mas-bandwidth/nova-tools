@@ -178,8 +178,11 @@ func runRouteReport(ctx context.Context, args []string, out, errOut io.Writer) i
 	fs := taskFlags("route report")
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
 	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
-	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *sprint == "" || *addr == "" {
-		return refuse(errOut, "route", "report needs --sprint <S> and --redis <addr> (or NOVA_SPRINT_REDIS)")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, "route report", err.Error())
+	}
+	if fs.NArg() > 0 || *sprint == "" || *addr == "" {
+		return refuse(errOut, "route report", "report needs --sprint <S> and --redis <addr> (or NOVA_SPRINT_REDIS)")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

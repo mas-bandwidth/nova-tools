@@ -88,15 +88,24 @@ defines one):
 
 ```
 $ nova-sprint card work --actor friend:rowan
-nova-sprint card work: --actor is spelled --as; run: nova-sprint help
+nova-sprint card work: --actor is spelled --as; run: nova-sprint card work --as friend:rowan
 ```
 
 ## Help
 
-`<verb> -h` prints `usage: <tool> <noun> <verb> [flags]`, one example line,
-one line per flag (`--name <type>  <one sentence>`; every flag has one, the
-class test refuses an empty help) and the exit codes, on stdout, exit 2,
-without dialling anything. `<tool> help` lists the nouns with one line each.
+One table holds every verb path's usage: `internal/nsprint/verbflag`'s
+`Usages`, each path's forms and whole example lines. `<noun> -h` prints the
+noun's subverbs, each with its forms, and one example each; `<noun> <verb>
+-h` prints `usage: <tool> <noun> <verb> <form>`, one line per flag its flag
+set defines (`--name <type>  <one sentence>`; every flag has one, the class
+test refuses an empty help), its examples and the exit codes, on stdout,
+exit 2, without dialling anything. A refusal ends in its path's own forms
+(`usage: nova-sprint <noun> <verb> ...`), never in `run: <tool> help`; a
+retired spelling ends in the whole corrected line (above); an unknown flag
+names the flags the verb takes and the line without it. The class test
+`TestGrammarEveryPathHelp` (cmd/nova-sprint/help_test.go) runs -h on every
+noun and path, each example with -h, and a flag no verb spells on every
+path. `<tool> help` lists the nouns with one line each.
 
 ## Receipts
 

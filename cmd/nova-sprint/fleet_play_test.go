@@ -125,8 +125,8 @@ func TestFleetPlayUsage(t *testing.T) {
 	}{
 		{nil, nil, "", 2, "wants --play <tag>"},
 		{[]string{"tools"}, nil, "", 2, "takes flags, not positional arguments"},
-		{[]string{"--play", "tools", "--nope"}, nil, "", 2, "flag provided but not defined"},
-		{[]string{"--play", "tools", "--limit", "hulk"}, nil, "", 2, "flag provided but not defined: -limit"},
+		{[]string{"--play", "tools", "--nope"}, nil, "", 2, "--nope is not a flag of nova-sprint fleet play"},
+		{[]string{"--play", "tools", "--limit", "hulk"}, nil, "", 2, "--limit is not a flag of nova-sprint fleet play"},
 		{[]string{"--play", "tools", "--redis", mr.Addr()}, nil, "", 1, "FLEET PLAY REFUSED: the play's inventory reads the machines registry"},
 		{[]string{"--play", "tools", "--machines", filepath.Join(t.TempDir(), "none.tsv")}, nil, "", 1, "FLEET PLAY REFUSED: machines registry:"},
 		{[]string{"--play", "tools", "--redis", mr.Addr(), "--machines", reg, "--play-dir", t.TempDir()}, nil, "", 1, "FLEET PLAY REFUSED: the fleet play directory"},
