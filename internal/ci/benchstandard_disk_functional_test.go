@@ -1,5 +1,11 @@
+//go:build functional
+
 package ci
 
+// This file runs tools/bench-standard.sh, a whole bash program, under a fake
+// PATH: exec of a whole program is the functional tier's, not a unit test
+// (Glenn 2026-09-26, nova-tools#4328: unit tests under 2 s and frugal).
+//
 // Issue #1048, item 3. Its first two parts landed -- `native` points GOMODCACHE and GOCACHE
 // at a per-bench cache (#1195, TestNativeSharedGoCaches), and the reaper deletes by lease
 // and age -- but the third did not, and the third is the one that NOTICES.

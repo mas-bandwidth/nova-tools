@@ -61,7 +61,7 @@ func TestEveryNamedRepoPathExists(t *testing.T) {
 
 	root := repoRoot(t)
 	allow := readNamedPathAllowlist(t)
-	files := namedPathSources(t, root)
+	files := namedPathSources(repoTree(t))
 	if len(files) == 0 {
 		t.Fatal("no Go source or docs to read; this test is looking in the wrong place")
 	}
@@ -77,10 +77,15 @@ func TestEveryNamedRepoPathExists(t *testing.T) {
 	sites := map[string]string{}
 	var missing []string
 
-	for _, rel := range files {
-		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-		if err != nil {
-			t.Fatal(err)
+	for _, f := range files {
+		rel := f.Rel
+		// The bytes are the shared tree's: it keeps them for .go and docs/*.md.
+		raw := f.Src
+		if raw == nil {
+			var err error
+			if raw, err = os.ReadFile(f.Path); err != nil {
+				t.Fatal(err)
+			}
 		}
 		for line, text := range strings.Split(string(raw), "\n") {
 			for _, name := range namedPathsIn(text) {
@@ -137,6 +142,11 @@ func TestEveryNamedRepoPathExists(t *testing.T) {
 // namedPathsIn returns the repository paths one line of text names. It is the whole
 // heuristic, and TestTheNamedPathHeuristicReadsWhatItClaims holds it to hand-written lines.
 func namedPathsIn(text string) []string {
+	// Every candidate carries a slash; a line without one is not handed to the
+	// regexp at all, which is most of the lines this rule reads.
+	if strings.IndexByte(text, '/') < 0 {
+		return nil
+	}
 	var found []string
 	for _, loc := range namedPathRe.FindAllStringIndex(text, -1) {
 		start, end := loc[0], loc[1]
@@ -234,6 +244,23 @@ func namedPathTrimmed(name string) string {
 // package holds its allowlist as `const … = "testdata/…"` -- so such a name is looked for
 // under every package, not only at the root.
 func namedPathExists(root, name string) bool {
+	// The same name is written in many places; each is looked up on disk once per
+	// test process (nova-tools#4328: the rule spent most of its second in stat).
+	key := root + "\x00" + name
+	if known, ok := namedPathKnown.Load(key); ok {
+		return known.(bool)
+	}
+	exists := namedPathLookup(root, name)
+	namedPathKnown.Store(key, exists)
+	return exists
+}
+
+// namedPathKnown memoizes namedPathExists by root and name. The tree is read-only
+// under these tests, so an answer never goes stale inside one process.
+var namedPathKnown sync.Map
+
+// namedPathLookup is namedPathExists without the memo.
+func namedPathLookup(root, name string) bool {
 	if namedPathAt(root, name) {
 		return true
 	}
@@ -250,7 +277,20 @@ func namedPathExists(root, name string) bool {
 
 // namedPathAt is the plain question: is this name a file or a directory under base?
 func namedPathAt(base, name string) bool {
-	info, err := os.Stat(filepath.Join(base, filepath.FromSlash(strings.TrimSuffix(name, "/"))))
+	full := filepath.Join(base, filepath.FromSlash(strings.TrimSuffix(name, "/")))
+	// The shared tree's index answers "it is there" without a syscall: a
+	// directory it holds, or (for a name without the trailing slash) a file it
+	// holds. Anything it does not hold -- a symlink's target, a name that is
+	// missing -- is asked of the disk, as before.
+	if idx, err := sharedRepoTree(); err == nil {
+		if _, dir := idx.dirEntries()[full]; dir {
+			return true
+		}
+		if !strings.HasSuffix(name, "/") && idx.ByPath(full) != nil {
+			return true
+		}
+	}
+	info, err := os.Stat(full)
 	if err != nil {
 		return false
 	}
@@ -285,42 +325,25 @@ var namedPathTestdataDirs = func() func(root string) []string {
 	}
 }()
 
-// namedPathSources lists what the rule reads, repo-relative and slash-separated: every
-// non-test `.go` file in the tree, and every `.md` file under `docs/`. Test files and
+// namedPathSources lists what the rule reads from the shared tree, in walk order:
+// every non-test `.go` file, and every `.md` file under `docs/`. Test files and
 // fixtures under a `testdata/` directory are not read -- their whole job is to be an
-// invented tree, and `internal/check/nocode_test.go` alone writes eight of them -- and
-// neither is anything under `.git`.
-func namedPathSources(t *testing.T, root string) []string {
-	t.Helper()
-	var files []string
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-		rel = filepath.ToSlash(rel)
-		if d.IsDir() {
-			base := d.Name()
-			if rel != "." && (base == ".git" || base == "testdata" || base == "vendor" || base == "node_modules") {
-				return filepath.SkipDir
-			}
-			return nil
+// invented tree, and `internal/check/nocode_test.go` alone writes eight of them --
+// and neither is anything under `.git`, `vendor` or `node_modules`.
+func namedPathSources(tree *repoTreeIndex) []*treeFile {
+	var files []*treeFile
+	for _, f := range tree.Files {
+		if f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("node_modules") {
+			continue
 		}
 		switch {
-		case strings.HasSuffix(rel, ".go") && !strings.HasSuffix(rel, "_test.go"):
-			files = append(files, rel)
-		case strings.HasSuffix(rel, ".md") && strings.HasPrefix(rel, "docs/"):
-			files = append(files, rel)
+		case f.Go && !f.Test:
+			files = append(files, f)
+		case strings.HasSuffix(f.Rel, ".md") && f.InDir("docs"):
+			files = append(files, f)
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-	sort.Strings(files)
+	sort.Slice(files, func(i, j int) bool { return files[i].Rel < files[j].Rel })
 	return files
 }
 

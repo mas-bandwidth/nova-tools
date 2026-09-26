@@ -1,7 +1,6 @@
 package swarm
 
 import (
-	"bytes"
 	"os"
 	"sync"
 	"testing"
@@ -24,6 +23,9 @@ type manualClock struct {
 	gone      chan struct{}
 	afterOnce sync.Once
 	tickOnce  sync.Once
+	// giveUp, when set, is tick's give-up bound in place of testWait(): a test
+	// that proves the give-up path fires it at once instead of waiting it out.
+	giveUp func() <-chan time.Time
 }
 
 func newManualClock() *manualClock {
@@ -110,7 +112,7 @@ func (c *manualClock) tick() {
 	case c.tickCh <- now:
 	case <-c.gone:
 		return
-	case <-time.After(testWait()):
+	case <-c.giveUpBound():
 		// Nothing received the tick within the allowed poll bound: the monitor is gone
 		// without a batch to close c.gone (TestIssue1983, nova-tools #1983). Drop it.
 		return
@@ -122,21 +124,13 @@ func (c *manualClock) tick() {
 	}
 }
 
-// runBatchClock drives one Batch under the given manual clock. drive runs while the
-// batch is under way; it is where a test advances time or waits for a file the
-// runner wrote. The process is a real executable and its exit is real: only the
-// clock the kill logic reads is injected.
-func runBatchClock(in BatchInput, clk *manualClock, drive func()) (int, string, string) {
-	in.clock = clk
-	in.polled = func() { clk.polled <- struct{}{} }
-	var out, errb bytes.Buffer
-	in.Stdout = &out
-	in.Stderr = &errb
-	done := make(chan int, 1)
-	go func() { done <- Batch(in); close(clk.gone) }()
-	drive()
-	code := <-done
-	return code, out.String(), errb.String()
+// giveUpBound is how long tick holds a tick nothing receives: testWait(), or the
+// test's own bound when it set giveUp.
+func (c *manualClock) giveUpBound() <-chan time.Time {
+	if c.giveUp != nil {
+		return c.giveUp()
+	}
+	return time.After(testWait())
 }
 
 // fakeTreeSampler provides deterministic per-card CPU activity snapshots.
@@ -168,34 +162,6 @@ func (s *fakeTreeSampler) TreeCPU(pid int) (uint64, bool) {
 	return 0, false
 }
 
-// waitForFile waits, against a thirty-second real bound and never an assertion,
-// until path exists. The runner is a real process and this is a readiness wait on
-// its work, not a claim about the machine.
-func waitForFile(t *testing.T, path string) {
-	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if fileExists(path) {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("waiting for %s: timed out", path)
-}
-
-// waitForLog waits until path holds want non-header output lines.
-func waitForLog(t *testing.T, path string, want int) {
-	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if logOutputLines(path) >= want {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("waiting for %s to hold %d log lines: timed out", path, want)
-}
-
 // TestIssue1983 reproduces nova-tools #1983 as its title states it:
 // TestBatchIdleDoesNotKillAWritingCard hangs the whole internal/swarm package
 // for 10m under the gate's capped flags. The hang is the fixture's, not any
@@ -212,11 +178,18 @@ func waitForLog(t *testing.T, path string, want int) {
 // the fault fails one test in seconds instead of hanging the package for ten
 // minutes.
 func TestIssue1983(t *testing.T) {
+	t.Parallel()
+
 	// The give-up bound this reproduction runs under: the no-receiver state is
-	// built here by construction, never won from the machine's scheduler, so a
-	// short bound is the arrangement under proof, not a bet on load.
-	t.Setenv("NOVA_TEST_WAIT", "1s") // wall-ok: this test's own arranged give-up bound, never a machine bet
+	// built here by construction, never won from the machine's scheduler, and the
+	// bound is the test's to fire -- it has already passed -- so the proof waits
+	// out no wall clock (nova-tools#4328; it used to be NOVA_TEST_WAIT=1s).
 	clk := newManualClock()
+	clk.giveUp = func() <-chan time.Time {
+		passed := make(chan time.Time)
+		close(passed)
+		return passed
+	}
 	// The monitor has taken its ticker and is gone, exactly as it is once the
 	// batch has ended: nothing is left to receive a tick.
 	clk.NewTicker(idlePollInterval)

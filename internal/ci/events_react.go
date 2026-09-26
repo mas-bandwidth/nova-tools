@@ -79,6 +79,10 @@ type Reactor struct {
 	Dropped int
 
 	sent map[int]string
+
+	// subscribed, when set, is called once Run's subscription is confirmed. It is the
+	// tests' seam: a test ends Run's context after the subscribe, never after a timer.
+	subscribed func()
 }
 
 // NewReactor returns a reactor over one bus, one forge, one gate and one door.
@@ -222,6 +226,9 @@ func (r *Reactor) Run(ctx context.Context) error {
 	defer sub.Close()
 	if _, err := sub.Receive(ctx); err != nil {
 		return fmt.Errorf("subscribe: %w", err)
+	}
+	if r.subscribed != nil {
+		r.subscribed()
 	}
 	ch := sub.Channel()
 	for {

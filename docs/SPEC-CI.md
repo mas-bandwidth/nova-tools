@@ -1853,7 +1853,7 @@ The standard had been silent about all of it.
 **The test.** `TestBenchStandardDriftsOnAToolTheWallCannotExecute` and
 `TestBenchStandardAcceptsAToolUnderAGrantedRoot`
 (`internal/ci/benchstandard_wall_toolchain_test.go`), in the shape
-`benchstandard_disk_test.go` already uses: run the REAL script with a FAKE PATH
+`benchstandard_disk_functional_test.go` already uses: run the REAL script with a FAKE PATH
 layout and a HOME of its own. The negative half puts the tool at
 `$HOME/.local/bin` — where the fleet's sbcl actually was — and demands exactly
 one DRIFT line carrying the remedy. The positive half puts it at

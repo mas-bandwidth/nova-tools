@@ -5,7 +5,14 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
+
+// Every store client this test binary opens refuses a closed port at once
+// rather than after go-redis's 1.7 s of retry waits (nova-tools#4328): a test
+// asserts the refusal, never the library's backoff.
+func init() { store.NoRetryWaits() }
 
 func runSprint(args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer

@@ -1146,7 +1146,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// `Operation not permitted` on a path are the OS wall's words in the same capture. A run
 	// with either and no result ends `wall`, and the usage row and the report line say so.
 	// ONLY WITHOUT A RESULT. A card that published despite the line is done, and naming it
-	// walled would take a finished report away from the harvester (wall_batch_test.go).
+	// walled would take a finished report away from the harvester (wall_batch_functional_test.go).
 	//
 	// AND IT IS THE REFUSAL THE CARD NEVER MOVED PAST, not the first one in the file
 	// (WallStopped, not WallRefused). `js-under-20-bytes` took a refusal in the harness's
