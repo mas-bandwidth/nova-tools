@@ -1,0 +1,86 @@
+
+PLAY [benches] *****************************************************************
+
+TASK [Gathering Facts] *********************************************************
+Saturday 26 September 2026  12:15:50 -0400 (0:00:00.006)       0:00:00.006 **** 
+[ERROR]: Task failed: Failed to connect to the host via ssh: ssh: connect to host 127.0.0.1 port 1: Connection refused
+fatal: [hetzner]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Failed to connect to the host via ssh: ssh: connect to host 127.0.0.1 port 1: Connection refused", "unreachable": true}
+ok: [hulk]
+ok: [batman]
+ok: [space]
+
+TASK [bench : bats-core unarchive] *********************************************
+Saturday 26 September 2026  12:15:50 -0400 (0:00:00.547)       0:00:00.553 **** 
+ok: [batman]
+changed: [space]
+[ERROR]: Task failed: Module failed: The command exited with a non-zero return code.
+Origin: fleet/roles/bench/tasks/main.yml:1:3
+
+1 - name: bats-core unarchive
+    ^ column 3
+
+fatal: [hulk]: FAILED! => {"changed": false, "changed_when_result": false, "cmd": ["false"], "delta": "0:00:00.005122", "end": "2026-09-26 12:15:51.102336", "msg": "The command exited with a non-zero return code.", "rc": 1, "start": "2026-09-26 12:15:51.097214", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+
+TASK [bench : an ignored failure] **********************************************
+Saturday 26 September 2026  12:15:51 -0400 (0:00:00.335)       0:00:00.889 **** 
+skipping: [space]
+[ERROR]: Task failed: Module failed: The command exited with a non-zero return code.
+Origin: fleet/roles/bench/tasks/main.yml:4:3
+
+2   ansible.builtin.command: "{{ 'false' if inventory_hostname == 'hulk' else 'true' }}"
+3   changed_when: inventory_hostname == 'space'
+4 - name: an ignored failure
+    ^ column 3
+
+fatal: [batman]: FAILED! => {"changed": true, "cmd": ["false"], "delta": "0:00:00.005310", "end": "2026-09-26 12:15:51.370115", "msg": "The command exited with a non-zero return code.", "rc": 1, "start": "2026-09-26 12:15:51.364805", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+...ignoring
+
+TASK [bench : loop] ************************************************************
+Saturday 26 September 2026  12:15:51 -0400 (0:00:00.265)       0:00:01.154 **** 
+ok: [batman] => (item=a) => {
+    "msg": "a"
+}
+ok: [batman] => (item=b) => {
+    "msg": "b"
+}
+ok: [space] => (item=a) => {
+    "msg": "a"
+}
+ok: [space] => (item=b) => {
+    "msg": "b"
+}
+
+TASK [tools : install] *********************************************************
+Saturday 26 September 2026  12:15:51 -0400 (0:00:00.025)       0:00:01.180 **** 
+changed: [batman]
+ok: [space]
+
+TASK [tools : skip on space] ***************************************************
+Saturday 26 September 2026  12:15:51 -0400 (0:00:00.274)       0:00:01.454 **** 
+ok: [batman] => {
+    "msg": "x"
+}
+skipping: [space]
+
+PLAY [coordinator] *************************************************************
+
+TASK [fn check] ****************************************************************
+Saturday 26 September 2026  12:15:51 -0400 (0:00:00.018)       0:00:01.473 **** 
+ok: [space]
+
+PLAY RECAP *********************************************************************
+batman                     : ok=6    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   
+hetzner                    : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0   
+hulk                       : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+space                      : ok=5    changed=1    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   
+
+
+ROLES RECAP ********************************************************************
+Saturday 26 September 2026  12:15:51 -0400 (0:00:00.241)       0:00:01.715 **** 
+=============================================================================== 
+bench ------------------------------------------------------------------- 0.63s
+gather_facts ------------------------------------------------------------ 0.55s
+tools ------------------------------------------------------------------- 0.29s
+ansible.builtin.command ------------------------------------------------- 0.24s
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
+total ------------------------------------------------------------------- 1.71s
