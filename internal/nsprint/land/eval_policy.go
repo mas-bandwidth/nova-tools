@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -125,117 +126,199 @@ func LoadPolicy(path string) (*RepoPolicy, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ParsePolicy(string(data))
+	rp, err := ParsePolicy(string(data))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return rp, nil
 }
 
-// ParsePolicy parses yaml string for repo policy.
+// The policy file's grammar (fleet/land/<repo>.yml): `repo:` and `bases:` at
+// the margin, a base name at two spaces, its fields at four, and a field's
+// list items or the deadlines' step/gate at six. Every field a base may
+// carry is named here, and a line the grammar does not know is an error that
+// names the line, the key and the shape wanted: a review policy is never
+// silently reinterpreted (Stella's audit stella-e6353bf80360, finding 2).
+var (
+	policyIntFields  = map[string]bool{"land_bar": true, "readers": true}
+	policyListFields = map[string]bool{"required_steps": true, "security_paths": true, "alone_paths": true, "sel_goos": true, "build_tags": true}
+	policyBaseFields = "land_bar, readers, merge_style, required_steps, security_paths, alone_paths, sel_goos, build_tags, deadlines"
+)
+
+// policyLineError is one line the grammar refuses, with what it wanted.
+func policyLineError(n int, line, want string) error {
+	return fmt.Errorf("policy line %d: %s: %s", n, strings.TrimSpace(line), want)
+}
+
+// ParsePolicy parses yaml string for repo policy. An empty policy, a field
+// under no base, an unknown key, a malformed number or duration, a list
+// item under no list, a duplicate base or an indent the grammar has no
+// level for is an error naming the line; a policy with no repo or no base
+// is refused whole.
 func ParsePolicy(content string) (*RepoPolicy, error) {
 	rp := &RepoPolicy{
 		Bases: make(map[string]*BasePolicy),
 	}
-
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	var currentBase *BasePolicy
 	var currentList *[]string
+	currentKey, lineNo, declared, seenBases := "", 0, 0, false
 
 	for scanner.Scan() {
+		lineNo++
 		line := scanner.Text()
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-
-		// Check for repo:
-		if strings.HasPrefix(trimmed, "repo:") {
-			rp.Repo = strings.TrimSpace(strings.TrimPrefix(trimmed, "repo:"))
-			currentList = nil
-			continue
+		declared++
+		if strings.HasPrefix(line, "\t") {
+			return nil, policyLineError(lineNo, line, "indented with a tab; the policy indents with spaces (2, 4, 6)")
 		}
-
-		if strings.HasPrefix(trimmed, "bases:") {
-			currentList = nil
-			continue
-		}
-
 		indent := len(line) - len(strings.TrimLeft(line, " "))
+		key, val, hasColon := trimmed, "", false
+		if i := strings.Index(trimmed, ":"); i >= 0 {
+			key, val, hasColon = strings.TrimSpace(trimmed[:i]), strings.TrimSpace(trimmed[i+1:]), true
+		}
 
-		// Base level (2 spaces, e.g. "  dev:")
-		if indent == 2 && strings.HasSuffix(trimmed, ":") {
-			baseName := strings.TrimSuffix(trimmed, ":")
+		switch indent {
+		case 0:
+			currentBase, currentList, currentKey = nil, nil, ""
+			switch {
+			case !hasColon:
+				return nil, policyLineError(lineNo, line, "not a key (want repo: <name> or bases:)")
+			case key == "repo":
+				if val == "" {
+					return nil, policyLineError(lineNo, line, "repo: wants the repository name")
+				}
+				rp.Repo = val
+			case key == "bases":
+				if val != "" {
+					return nil, policyLineError(lineNo, line, "bases: takes no value; the bases follow at two spaces")
+				}
+				seenBases = true
+			default:
+				return nil, policyLineError(lineNo, line, fmt.Sprintf("unknown top-level key %q (want repo: and bases:)", key))
+			}
+		case 2:
+			// Base level (2 spaces, e.g. "  dev:")
+			if !hasColon || val != "" || key == "" {
+				return nil, policyLineError(lineNo, line, "a base is `  <name>:` with nothing after the colon")
+			}
+			if !seenBases {
+				return nil, policyLineError(lineNo, line, "a base before bases:; write bases: first")
+			}
+			if _, dup := rp.Bases[key]; dup {
+				return nil, policyLineError(lineNo, line, fmt.Sprintf("base %s is declared twice", key))
+			}
 			currentBase = &BasePolicy{
-				Base:       baseName,
+				Base:       key,
 				LandBar:    10,
 				Readers:    0,
 				MergeStyle: "merge",
 			}
-			rp.Bases[baseName] = currentBase
-			currentList = nil
-			continue
-		}
-
-		if currentBase == nil {
-			continue
-		}
-
-		// Field level under base (4 spaces)
-		if indent == 4 {
-			currentList = nil
-			parts := strings.SplitN(trimmed, ":", 2)
-			key := strings.TrimSpace(parts[0])
-			val := ""
-			if len(parts) > 1 {
-				val = strings.TrimSpace(parts[1])
+			rp.Bases[key] = currentBase
+			currentList, currentKey = nil, ""
+		case 4:
+			// Field level under base (4 spaces)
+			if currentBase == nil {
+				return nil, policyLineError(lineNo, line, "a base field under no base; declare `  <base>:` above it")
 			}
-
-			switch key {
-			case "land_bar":
-				if n, err := strconv.Atoi(val); err == nil {
-					currentBase.LandBar = n
+			if !hasColon || key == "" {
+				return nil, policyLineError(lineNo, line, "a base field is `    <key>: <value>` (keys: "+policyBaseFields+")")
+			}
+			currentList, currentKey = nil, key
+			switch {
+			case policyIntFields[key]:
+				n, err := strconv.Atoi(val)
+				if err != nil || n < 0 {
+					return nil, policyLineError(lineNo, line, fmt.Sprintf("field %s: value %q is not a whole number (want %s: <n>, n >= 0)", key, val, key))
 				}
-			case "readers":
-				if n, err := strconv.Atoi(val); err == nil {
+				if key == "land_bar" {
+					currentBase.LandBar = n
+				} else {
 					currentBase.Readers = n
 				}
-			case "merge_style":
+			case key == "merge_style":
+				if val == "" {
+					return nil, policyLineError(lineNo, line, "field merge_style: wants a value (merge, squash or rebase)")
+				}
 				currentBase.MergeStyle = val
-			case "required_steps":
-				currentList = &currentBase.RequiredSteps
-			case "security_paths":
-				currentList = &currentBase.SecurityPaths
-			case "alone_paths":
-				currentList = &currentBase.AlonePaths
-			case "sel_goos":
-				currentList = &currentBase.SelGOOS
-			case "build_tags":
-				currentList = &currentBase.BuildTags
+			case policyListFields[key]:
+				if val != "" && val != "[]" {
+					return nil, policyLineError(lineNo, line, fmt.Sprintf("field %s: is a list; write [] for none, or its items as `      - <item>` lines under it", key))
+				}
+				switch key {
+				case "required_steps":
+					currentList = &currentBase.RequiredSteps
+				case "security_paths":
+					currentList = &currentBase.SecurityPaths
+				case "alone_paths":
+					currentList = &currentBase.AlonePaths
+				case "sel_goos":
+					currentList = &currentBase.SelGOOS
+				case "build_tags":
+					currentList = &currentBase.BuildTags
+				}
+				if val == "[]" {
+					currentList = nil
+				}
+			case key == "deadlines":
+				if val != "" {
+					return nil, policyLineError(lineNo, line, "field deadlines: takes no value; step: and gate: follow at six spaces")
+				}
+			default:
+				return nil, policyLineError(lineNo, line, fmt.Sprintf("unknown base field %q (keys: %s)", key, policyBaseFields))
 			}
-			continue
-		}
-
-		// Deadlines or list items under base (6 spaces)
-		if indent == 6 {
-			if strings.HasPrefix(trimmed, "- ") && currentList != nil {
+		case 6:
+			// List items, or the deadlines' step and gate (6 spaces)
+			if currentBase == nil {
+				return nil, policyLineError(lineNo, line, "under no base")
+			}
+			if strings.HasPrefix(trimmed, "- ") {
+				if currentList == nil {
+					if policyListFields[currentKey] {
+						return nil, policyLineError(lineNo, line, fmt.Sprintf("a list item under %s: [], which declared the list empty", currentKey))
+					}
+					return nil, policyLineError(lineNo, line, fmt.Sprintf("a list item under %q, which is not a list field", currentKey))
+				}
 				item := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+				if item == "" {
+					return nil, policyLineError(lineNo, line, "an empty list item")
+				}
 				*currentList = append(*currentList, item)
 				continue
 			}
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) == 2 {
-				k := strings.TrimSpace(parts[0])
-				v := strings.TrimSpace(parts[1])
-				switch k {
-				case "step":
-					currentBase.StepDeadline = v
-				case "gate":
-					currentBase.GateDeadline = v
-				}
+			if currentKey != "deadlines" || !hasColon {
+				return nil, policyLineError(lineNo, line, fmt.Sprintf("under %q: want `      - <item>` for a list, or step:/gate: under deadlines:", currentKey))
 			}
-			continue
+			if _, err := time.ParseDuration(val); err != nil {
+				return nil, policyLineError(lineNo, line, fmt.Sprintf("deadline %s: value %q is not a duration (want e.g. %s: 10m)", key, val, key))
+			}
+			switch key {
+			case "step":
+				currentBase.StepDeadline = val
+			case "gate":
+				currentBase.GateDeadline = val
+			default:
+				return nil, policyLineError(lineNo, line, fmt.Sprintf("unknown deadline %q (want step: and gate:)", key))
+			}
+		default:
+			return nil, policyLineError(lineNo, line, fmt.Sprintf("indent of %d spaces; the policy indents by 2 (base), 4 (field) and 6 (item or deadline)", indent))
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		return nil, err
+	}
+	if declared == 0 {
+		return nil, fmt.Errorf("policy is empty: wants repo: <name> and bases: with at least one base")
+	}
+	if rp.Repo == "" {
+		return nil, fmt.Errorf("policy names no repo: add `repo: <name>` at the top")
+	}
+	if len(rp.Bases) == 0 {
+		return nil, fmt.Errorf("policy declares no base: add `bases:` and `  <base>:` under it")
 	}
 	return rp, nil
 }
