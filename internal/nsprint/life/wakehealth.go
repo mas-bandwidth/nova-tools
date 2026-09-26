@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"os"
 	"os/exec"
 	"runtime"
@@ -132,12 +133,18 @@ var (
 // BeatReader reports whether a friend's beat is within its TTL.
 type BeatReader func(ctx context.Context, friend string) (bool, error)
 
-// RedisBeats reads the presence beat presence.lua keeps with a TTL: the key
-// exists exactly while the beat is within it.
+// RedisBeats reads the presence beat: up is its at under beat.Window old
+// (#4233: the beat has no TTL, so its existence says nothing).
 func RedisBeats(st *store.Store) BeatReader {
 	return func(ctx context.Context, friend string) (bool, error) {
-		n, err := st.Client().Exists(ctx, "friend:"+friend+":beat").Result()
-		return n == 1, err
+		at, err := beat.Read(ctx, st.Client(), friend).Result()
+		if errors.Is(err, redis.Nil) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return beat.Up(at, time.Now()), nil
 	}
 }
 
@@ -660,19 +667,19 @@ func ReadWake(ctx context.Context, c redis.Cmdable) (WakeSnapshot, error) {
 	}
 	type cmds struct {
 		path, health *redis.MapStringStringCmd
-		beat         *redis.IntCmd
+		beat         *redis.StringCmd
 	}
 	cs := make([]cmds, len(names))
 	p = c.Pipeline()
 	for i, n := range names {
-		cs[i] = cmds{p.HGetAll(ctx, WakePathKey(n)), p.HGetAll(ctx, WakeHealthKey(n)), p.Exists(ctx, "friend:"+n+":beat")}
+		cs[i] = cmds{p.HGetAll(ctx, WakePathKey(n)), p.HGetAll(ctx, WakeHealthKey(n)), beat.Read(ctx, p, n)}
 	}
 	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return WakeSnapshot{}, fmt.Errorf("read wake paths: %w", err)
 	}
 	for i, n := range names {
 		s.Friends = append(s.Friends, FriendWake{Name: n, Declared: isDecl[n],
-			Path: cs[i].path.Val(), Health: cs[i].health.Val(), BeatLive: cs[i].beat.Val() == 1})
+			Path: cs[i].path.Val(), Health: cs[i].health.Val(), BeatLive: beat.UpCmd(cs[i].beat, time.Now())})
 	}
 	return s, nil
 }

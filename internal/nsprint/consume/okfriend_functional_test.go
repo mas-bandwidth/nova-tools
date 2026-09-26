@@ -54,7 +54,7 @@ func seedSprint(t *testing.T, client *redis.Client, sprint string) {
 		must(t, client.SAdd(ctx, "friends", f).Err())
 		must(t, client.HSet(ctx, "friend:"+f+":desired", "slots", "4", "paused", "0").Err())
 		if f != "ctl-down" {
-			must(t, client.HSet(ctx, "friend:"+f+":beat", "harness", "ctl", "at", "1").Err())
+			must(t, client.HSet(ctx, "friend:"+f+":beat", "harness", "ctl", "at", strconv.FormatInt(time.Now().UnixMilli(), 10)).Err())
 		}
 	}
 }

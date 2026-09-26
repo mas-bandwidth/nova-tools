@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -44,7 +46,7 @@ func TestSprintOpenLetsTaskTakeClaim(t *testing.T) {
 	t.Setenv("NOVA_FRIEND", "ctl-open") // #2929: push and take run from a seat
 	client.SAdd(ctx, "friends", "ctl-open")
 	client.HSet(ctx, "friend:ctl-open:desired", "slots", 2, "paused", "0")
-	client.HSet(ctx, "friend:ctl-open:beat", "host", "fixture")
+	client.HSet(ctx, "friend:ctl-open:beat", "host", "fixture", "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
 
 	step := func(want string, args ...string) {
 		t.Helper()
@@ -115,7 +117,7 @@ func registerFriend(t *testing.T, c *redis.Client, name string, slots int) {
 	for _, err := range []error{
 		c.SAdd(ctx, "friends", name).Err(),
 		c.HSet(ctx, "friend:"+name+":desired", "slots", slots, "paused", "0").Err(),
-		c.HSet(ctx, "friend:"+name+":beat", "host", "fixture").Err(),
+		c.HSet(ctx, "friend:"+name+":beat", "host", "fixture", "at", strconv.FormatInt(time.Now().UnixMilli(), 10)).Err(),
 	} {
 		if err != nil {
 			t.Fatal(err)

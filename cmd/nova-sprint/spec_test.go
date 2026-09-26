@@ -10,8 +10,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/spec"
@@ -38,7 +40,7 @@ func specStore(t *testing.T) (string, *redis.Client, *store.Store, string) {
 	c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: S})
 	c.SAdd(ctx, "friends", "a")
 	c.HSet(ctx, "friend:a:desired", "slots", 4, "paused", "0")
-	c.HSet(ctx, "friend:a:beat", "host", "fixture")
+	c.HSet(ctx, "friend:a:beat", "host", "fixture", "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
 	return addr, c, store.New(c), S
 }
 

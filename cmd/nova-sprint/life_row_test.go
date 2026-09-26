@@ -6,7 +6,10 @@ import (
 	"bytes"
 	"context"
 	"regexp"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
@@ -29,7 +32,8 @@ func TestFriendRowAndBenchBeatWriteTheTableRows(t *testing.T) {
 	}
 	client.SAdd(ctx, "sprint:s1:idx:walter:working", "a")
 	client.HSet(ctx, "friend:walter:desired", "slots", "8")
-	client.HSet(ctx, "friend:walter:beat", "at", "1")
+	// up is the beat's at under a minute old (#4233), not the key's existence
+	client.HSet(ctx, "friend:walter:beat", "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
 
 	var out, errOut bytes.Buffer
 	if code := runFriend(ctx, []string{"row", "--redis", addr, "--as", "walter", "--sprint", "s1", "--once"}, &out, &errOut); code != 0 {
@@ -43,6 +47,12 @@ func TestFriendRowAndBenchBeatWriteTheTableRows(t *testing.T) {
 	}
 	if code := runFriend(ctx, []string{"row", "--redis", addr, "--as", "walter", "--once"}, &out, &errOut); code == 0 {
 		t.Fatal("friend row with no --sprint was not refused")
+	}
+	// a beat two minutes old, with no TTL to expire it, reads down
+	client.HSet(ctx, "friend:walter:beat", "at", strconv.FormatInt(time.Now().Add(-2*time.Minute).UnixMilli(), 10))
+	out.Reset()
+	if code := runFriend(ctx, []string{"row", "--redis", addr, "--as", "walter", "--sprint", "s1", "--once"}, &out, &errOut); code != 0 || !strings.HasPrefix(out.String(), "walter row up=0 ") {
+		t.Fatalf("stale beat: exit %d receipt %q %s", code, out.String(), errOut.String())
 	}
 
 	out.Reset()

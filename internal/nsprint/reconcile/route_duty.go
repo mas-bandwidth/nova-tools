@@ -30,6 +30,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/beat"
 	"sort"
 	"strconv"
 	"strings"
@@ -247,17 +248,17 @@ func (d *RouteDuty) liveReaders(ctx context.Context) ([]string, error) {
 	}
 	pipe := d.Client.Pipeline()
 	member := make([]*redis.BoolCmd, len(names))
-	beat := make([]*redis.IntCmd, len(names))
+	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
 		member[i] = pipe.SIsMember(ctx, "friends", f)
-		beat[i] = pipe.Exists(ctx, "friend:"+f+":beat")
+		beats[i] = beat.Read(ctx, pipe, f) // up is the beat's at under a minute (#4233), never EXISTS
 	}
 	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, err
 	}
 	var live []string
 	for i, f := range names {
-		if member[i].Val() && beat[i].Val() == 1 && f != "jev" {
+		if member[i].Val() && beat.UpCmd(beats[i], time.Now()) && f != "jev" {
 			live = append(live, f)
 		}
 	}

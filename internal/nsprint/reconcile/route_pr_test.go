@@ -4,8 +4,10 @@ package reconcile_test
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -56,7 +58,7 @@ func newPRFixture(t *testing.T, S string) *prFixture {
 	pipe.SAdd(ctx, "ws:names", prStream)
 	for _, f := range []string{"rowan", "emma", "stella"} {
 		pipe.SAdd(ctx, "friends", f)
-		pipe.HSet(ctx, "friend:"+f+":beat", "harness", "ctl", "at", "1")
+		pipe.HSet(ctx, "friend:"+f+":beat", "harness", "ctl", "at", strconv.FormatInt(time.Now().UnixMilli(), 10))
 	}
 	pipe.HSet(ctx, "friend:rowan:roles", "roles", "coordinator,may-hold,builder")
 	pipe.SAdd(ctx, "readers", "rowan", "emma", "stella")

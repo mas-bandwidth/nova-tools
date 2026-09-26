@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -41,11 +42,20 @@ func newFirstReadFixture(t *testing.T, S string, policy ...string) *firstReadFix
 		pr: &PRRead{Store: st, Sprint: S, Consumer: "t-" + S, Instance: "t-" + S, Actor: "pr-to-read", Out: out}}
 }
 
-// up sets friend:<f> as the friend row writer does.
+// up sets friend:<f> as the friend row writer does, and the friend's beat
+// (friend:<f>:beat at, ms) fresh for "1" and an hour old otherwise: the
+// reader pool judges up from the beat, not the row (#4233).
 func (f *firstReadFixture) up(name, up string, ready, working int) {
 	f.t.Helper()
-	if err := f.client.HSet(f.ctx, "friend:"+name, "up", up, "ready", strconv.Itoa(ready),
-		"working", strconv.Itoa(working), "at", "20260925T050600Z").Err(); err != nil {
+	beatAt := time.Now().Add(-time.Hour)
+	if up == "1" {
+		beatAt = time.Now()
+	}
+	pipe := f.client.TxPipeline()
+	pipe.HSet(f.ctx, "friend:"+name, "up", up, "ready", strconv.Itoa(ready),
+		"working", strconv.Itoa(working), "at", "20260925T050600Z")
+	pipe.HSet(f.ctx, "friend:"+name+":beat", "at", strconv.FormatInt(beatAt.UnixMilli(), 10))
+	if _, err := pipe.Exec(f.ctx); err != nil {
 		f.t.Fatal(err)
 	}
 }

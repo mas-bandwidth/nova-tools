@@ -434,22 +434,31 @@ func (l *CopyLedger) harvest(ctx context.Context, end WrapperEnd, c CopyCard, br
 // card moves: a new record starts open, ci pending, and asks for CI at the
 // head (ci:<name>:<head>) when cfg:ci:<name> names checks.
 func (l *CopyLedger) recordPR(ctx context.Context, res harvestcopy.Result, c CopyCard) error {
+	return RecordPR(ctx, l.Client, l.Now, res, c)
+}
+
+// RecordPR is recordPR for any writer of a copy's PR record: the wrapper's
+// harvest and `friend done --ok --pr` (#4233), which records the PR the
+// friend opened itself before its card end. now nil is time.Now.
+func RecordPR(ctx context.Context, client redis.Cmdable, now func() time.Time, res harvestcopy.Result, c CopyCard) error {
+	if client == nil || res.Repo == "" || res.PR <= 0 || res.Head == "" {
+		return errors.New("pr record: repo, pr and head are required")
+	}
 	name := prkey.Name(res.Repo)
 	key := prkey.Key(res.Repo, res.PR)
 	ciKey := "ci:" + name + ":" + res.Head
-	pipe := l.Client.Pipeline()
+	pipe := client.Pipeline()
 	head := pipe.HGet(ctx, key, "head")
 	checks := pipe.HGet(ctx, "cfg:ci:"+name, "checks")
 	ciThere := pipe.Exists(ctx, ciKey)
 	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return fmt.Errorf("pr record %s: %w", key, err)
 	}
-	now := l.Now
 	if now == nil {
 		now = time.Now
 	}
 	at := strconv.FormatInt(now().UnixMilli(), 10)
-	pipe = l.Client.Pipeline()
+	pipe = client.Pipeline()
 	if head.Val() == "" {
 		pipe.HSet(ctx, key, "repo", res.Repo, "n", strconv.Itoa(res.PR), "state", "open", "ci", "pending",
 			"mergeable", "", "created_at", at)
