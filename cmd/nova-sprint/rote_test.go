@@ -25,7 +25,7 @@ func TestRote(t *testing.T) {
 		{"width-check", "#3090"},
 		{"issue-body-repair", ""},
 	} {
-		args := []string{"note", "--rote", n.class, "--as", "rowan", "--store", addr, "--what", "by hand"}
+		args := []string{"note", "--rote", n.class, "--as", "rowan", "--redis", addr, "--what", "by hand"}
 		if n.mech != "" {
 			args = append(args, "--mech", n.mech)
 		}
@@ -41,7 +41,7 @@ func TestRote(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, stdout, stderr := runSprint("rote", "--store", addr)
+	code, stdout, stderr := runSprint("rote", "--redis", addr)
 	if code != 0 || stderr != "" {
 		t.Fatalf("rote: exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
@@ -68,11 +68,11 @@ func TestRoteNoteRefuses(t *testing.T) {
 
 	mr := miniredis.RunT(t)
 	for _, args := range [][]string{
-		{"note", "--rote", "width-check", "--store", mr.Addr()},
-		{"note", "--as", "rowan", "--store", mr.Addr()},
-		{"note", "--rote", "Width Check", "--as", "rowan", "--store", mr.Addr()},
+		{"note", "--rote", "width-check", "--redis", mr.Addr()},
+		{"note", "--as", "rowan", "--redis", mr.Addr()},
+		{"note", "--rote", "Width Check", "--as", "rowan", "--redis", mr.Addr()},
 		{"note", "--rote", "width-check", "--as", "rowan"},
-		{"rote", "--since", "yesterday", "--store", mr.Addr()},
+		{"rote", "--since", "yesterday", "--redis", mr.Addr()},
 	} {
 		code, stdout, stderr := runSprint(args...)
 		if code != 2 || stdout != "" || !strings.Contains(stderr, "run: nova-sprint help") {
@@ -90,17 +90,17 @@ func TestRoteSince(t *testing.T) {
 	t.Parallel()
 
 	mr := miniredis.RunT(t)
-	if code, _, stderr := runSprint("note", "--rote", "width-check", "--as", "stella", "--store", mr.Addr()); code != 0 {
+	if code, _, stderr := runSprint("note", "--rote", "width-check", "--as", "stella", "--redis", mr.Addr()); code != 0 {
 		t.Fatalf("note: %s", stderr)
 	}
-	code, stdout, stderr := runSprint("rote", "--store", mr.Addr(), "--since", "2999-01-01T00:00:00Z")
+	code, stdout, stderr := runSprint("rote", "--redis", mr.Addr(), "--since", "2999-01-01T00:00:00Z")
 	if code != 0 || stderr != "" {
 		t.Fatalf("rote --since: exit %d %q", code, stderr)
 	}
 	if stdout != "ROTE NEXT class=- n=0 minds=0 mech=-\n" {
 		t.Fatalf("rote --since in the future: %q", stdout)
 	}
-	code, stdout, _ = runSprint("rote", "--store", mr.Addr(), "--since", "2000-01-01T00:00:00Z")
+	code, stdout, _ = runSprint("rote", "--redis", mr.Addr(), "--since", "2000-01-01T00:00:00Z")
 	if code != 0 || !strings.Contains(stdout, "ROTE MIND mind=stella verbs=0 notes=1 share=100% top=width-check top_n=1\n") {
 		t.Fatalf("rote --since in the past: exit %d %q", code, stdout)
 	}

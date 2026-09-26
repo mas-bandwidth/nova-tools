@@ -58,10 +58,10 @@ const (
 )
 
 // NoteSummary is the `note` verb's line on nova-sprint help.
-const NoteSummary = "note --rote <class> --as <mind> --store <host:port> [--what <text>] [--mech <verb or issue>]: one piece of hand work that has no verb yet, for rote"
+const NoteSummary = "note --rote <class> --as <mind> --redis <host:port> [--what <text>] [--mech <verb or issue>]: one piece of hand work that has no verb yet, for rote"
 
 // RoteSummary is the `rote` verb's line on nova-sprint help.
-const RoteSummary = "rote --store <host:port> [--since <t>] [--until <t>] [--sprint <S>]: per mind, control-verb receipts by verb and noted hand work by class; the top class is the next mechanism"
+const RoteSummary = "rote --redis <host:port> [--since <t>] [--until <t>] [--sprint <S>]: per mind, control-verb receipts by verb and noted hand work by class; the top class is the next mechanism"
 
 var roteName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
