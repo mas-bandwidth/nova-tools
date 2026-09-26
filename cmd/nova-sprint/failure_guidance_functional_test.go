@@ -57,3 +57,21 @@ func TestLandEvalReceiptNamesThePolicy(t *testing.T) {
 		}
 	}
 }
+
+// TestHoldShowAbsentIsNotAnError keeps absent distinct from failed (finding
+// 4's other half): a unit nobody ingested is "no unit" with the key that is
+// absent and the ingest to run, exit 2, and never a store error.
+func TestHoldShowAbsentIsNotAnError(t *testing.T) {
+	t.Parallel()
+	c, _ := sdStore(t)
+	var out, errOut bytes.Buffer
+	code := runHoldShow(context.Background(), []string{"--redis", c.Options().Addr, "--sprint", sdSprint, "nova-tools#8"}, &out, &errOut)
+	for _, want := range []string{"no unit for nova-tools#8 in sprint " + sdSprint, "s:" + sdSprint + ":prunit:nova-tools:8 is absent", "nova-sprint hold ingest"} {
+		if code != 2 || !strings.Contains(errOut.String(), want) {
+			t.Fatalf("absent unit: exit=%d stderr=%q (want %q)", code, errOut.String(), want)
+		}
+	}
+	if strings.Contains(errOut.String(), "unknown") {
+		t.Fatalf("an absent unit reported as unknown: %q", errOut.String())
+	}
+}

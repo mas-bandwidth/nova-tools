@@ -24,6 +24,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/disposition"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 func init() {
@@ -303,9 +304,23 @@ func runHoldShow(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	defer func() { _ = c.Close() }()
 	short := disposition.ShortRepo(repo)
-	unit, err := c.Get(ctx, fmt.Sprintf("s:%s:prunit:%s:%d", *sprint, short, n)).Result()
+	// The unit lookup: only redis.Nil is an absent unit. A store that did
+	// not answer (exit 6), or answered with an error (a wrong type at the
+	// key, a denied ACL: exit 2), is neither absent nor present, and the
+	// line says so with the key to inspect (Stella's audit
+	// stella-e6353bf80360, finding 4).
+	unitKey := fmt.Sprintf("s:%s:prunit:%s:%d", *sprint, short, n)
+	unit, err := c.Get(ctx, unitKey).Result()
+	if errors.Is(err, redis.Nil) {
+		return refuse(errOut, "hold show", fmt.Sprintf("no unit for %s#%d in sprint %s (%s is absent: nothing ingested for that PR there); check --sprint and <repo>#<n>, or ingest first: nova-sprint hold ingest --as <f> --sprint %s --repo <owner/repo> --pr %d --url <u> --body-file <f>",
+			short, n, *sprint, unitKey, *sprint, n))
+	}
 	if err != nil {
-		return refuse(errOut, "hold show", fmt.Sprintf("no unit for %s#%d", short, n))
+		if storeDown(errOut, "hold show", err) {
+			return 6
+		}
+		return refuse(errOut, "hold show", fmt.Sprintf("unit lookup for %s#%d: GET %s: %v; whether the unit exists is unknown; inspect the key (TYPE %s, then GET or HGETALL it) at %s and repair it, then rerun",
+			short, n, unitKey, err, unitKey, lifeAddr(*addr)))
 	}
 	friends, err := c.SMembers(ctx, "friends").Result()
 	if err != nil {
@@ -348,7 +363,12 @@ func runHoldShow(ctx context.Context, args []string, out, errOut io.Writer) int 
 			continue
 		}
 		var p disposition.Park
-		_ = json.Unmarshal([]byte(parks.Val()[k]), &p)
+		if err := json.Unmarshal([]byte(parks.Val()[k]), &p); err != nil {
+			// A park record that does not parse is named, not printed as
+			// an empty park: the field to read and fix is on the line.
+			fmt.Fprintf(out, "parked %s MALFORMED: %s (inspect: HGET %s %s)\n", strings.TrimPrefix(k, prefix), oneline.Err(err), disposition.ParkKey(*sprint), k)
+			continue
+		}
 		fmt.Fprintf(out, "parked %s id=%s role=%s reason=%s age=%ds\n", strings.TrimPrefix(k, prefix), p.ID, p.Role, p.Reason, (now-p.ParkedAt)/1000)
 	}
 	return 0
