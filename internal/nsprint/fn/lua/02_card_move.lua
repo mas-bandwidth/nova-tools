@@ -4285,13 +4285,37 @@ NS.tm = { score = TM.score }
 -- waiting, ready and merging sets holds it, as its score there (cm_ws_score
 -- carries it through every later move). An id that is no record of the
 -- stream is skipped, never an error: the order was read a round trip ago.
--- A score that is not a number refuses the call before any write. Returns
--- nil and { ranked, rescored, skipped }, or the refusal.
+-- A score that is not a number refuses the call before any write. The
+-- write is conditional (the #4322 fix round): the ids are every live card
+-- the read saw, and when the stream's live sets (waiting, ready, working,
+-- review, merging) no longer hold exactly those ids (a push or a move came
+-- between the read and this call) the call is refused ORDER STALE before
+-- any write, so a stale order is never written; ws.Reorder reads again.
+-- Returns nil and { ranked, rescored, skipped }, or the refusal.
 function TK.reorder(stream, args, from)
   if not TK.valid_stream(stream) then return 'STREAM bad name ' .. TK.str(stream) end
   if (#args - from + 1) % 2 ~= 0 then return 'ARGS want id score pairs' end
   for i = from, #args, 2 do
     if not tonumber(args[i + 1]) then return 'SCORE ' .. TK.str(args[i + 1]) .. ' for ' .. TK.str(args[i]) end
+  end
+  local live, n = {}, 0
+  for _, w in ipairs({ 'waiting', 'ready', 'working', 'review', 'merging' }) do
+    for _, m in ipairs(redis.call('ZRANGE', 'ws:' .. stream .. ':' .. w, 0, -1)) do
+      if not live[m] then
+        live[m] = true
+        n = n + 1
+      end
+    end
+  end
+  local sent = 0
+  for i = from, #args, 2 do
+    if not live[args[i]] then
+      return 'ORDER STALE ' .. TK.str(args[i]) .. ' is no live card of the stream since the read'
+    end
+    sent = sent + 1
+  end
+  if sent ~= n then
+    return 'ORDER STALE the stream has ' .. n .. ' live cards, the order read ' .. sent
   end
   local ranked, rescored, skipped = 0, 0, 0
   for i = from, #args, 2 do

@@ -29,6 +29,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -259,6 +260,13 @@ func (c *cardCmd) missing(sub string) string {
 	return ""
 }
 
+// movesOrder are the subverbs whose move can change a stream's order
+// (#4322 fix round): out of the live sets (done, land, cancel), into
+// another stream (move --to-stream) or within one (block, unblock, front,
+// move).
+var movesOrder = map[string]bool{"done": true, "land": true, "cancel": true, "block": true, "unblock": true,
+	"front": true, "move": true}
+
 func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, errOut io.Writer) int {
 	cl := st.Client()
 	start := time.Now()
@@ -270,6 +278,14 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		}
 		return refuse(errOut, c.verb, err.Error())
 	}
+	// The stream the task is in before a move (#4322 fix round): a move
+	// out of a stream's live sets, into another stream or within one
+	// recomputes that stream's order, and the new stream's; one ORDER line
+	// each after the TASK line. One read, before the move.
+	var before string
+	if movesOrder[sub] && *c.id != "" && !taskcard.IsCopy(*c.id) {
+		before = cl.HGet(ctx, taskcard.Key(*c.id), "stream").Val()
+	}
 	moved := func(r taskcard.Result, err error) int {
 		if err != nil {
 			return refused(err)
@@ -279,6 +295,7 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			from = "-"
 		}
 		_, _ = fmt.Fprintf(out, "TASK %s id=%s from=%s to=%s ms=%d\n", sub, *c.id, from, r.To, ms())
+		reorderLines(ctx, cl, []string{before, *c.toStream}, *c.actor, out)
 		return 0
 	}
 	o := taskcard.Opts{By: *c.actor, Why: *c.why, Sprint: *c.sprint}
@@ -287,6 +304,17 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		spec, err := c.spec()
 		if err != nil {
 			return refuse(errOut, c.verb, err.Error())
+		}
+		// A push that closes a DEPENDS-ON cycle in its stream is refused
+		// before any write (the #4322 fix round): nothing of it is stored.
+		paths := ""
+		if spec != nil {
+			paths = spec.Paths
+		}
+		if why := orderCycle(ctx, cl, ws.StreamOfTitle(*c.stream, *c.title),
+			ws.PushCard{ID: *c.id, Ref: *c.ref, Origin: *c.origin, Paths: paths, DependsOn: *c.on}); why != "" {
+			_, _ = fmt.Fprintf(out, "TASK push REFUSED id=%s why=%s ms=%d\n", *c.id, quoteField(why), ms())
+			return 1
 		}
 		r, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: *c.id, Stream: *c.stream, Friend: *c.friend,
 			Sprint: *c.sprint, Kind: *c.kind, Ref: *c.ref, Origin: *c.origin, Title: *c.title, Head: *c.head,
@@ -380,6 +408,7 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			_, _ = fmt.Fprintf(out, "REFUSED %s why=%s\n", id, quoteField(r.Refused[id]))
 		}
 		_, _ = fmt.Fprintf(out, "TASK land stream=%s sha=%s n=%d refused=%d ms=%d\n", quoteField(*c.stream), *c.sha, len(r.Landed), len(r.Refused), ms())
+		reorderLines(ctx, cl, []string{*c.stream}, *c.actor, out)
 		if len(r.Refused) > 0 {
 			return 1
 		}

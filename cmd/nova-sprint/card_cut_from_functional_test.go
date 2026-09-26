@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -36,6 +37,14 @@ func TestCardCutFromLandsHundredInWaiting(t *testing.T) {
 	}
 	if n := strings.Count("\n"+out, "\nCARD CUT row="); n != 100 {
 		t.Fatalf("%d receipts, want 100:\n%s", n, out)
+	}
+	// card cut --from is a door (#4322 fix round): one ORDER line, and the
+	// 100 cards and the sentinel stored in their work order.
+	if n := strings.Count(out, "\nORDER stream=\"swarm: cards\" order=101 "); n != 1 {
+		t.Fatalf("%d ORDER lines for swarm: cards, want 1:\n%s", n, out)
+	}
+	if so, err := ws.ReadOrder(ctx, client, "swarm: cards"); err != nil || so.Stale() {
+		t.Fatalf("swarm: cards after the cut: stale %v %v", so.Stale(), err)
 	}
 	if n := client.ZCard(ctx, taskcard.StreamKey("swarm: cards", "waiting")).Val(); n != 101 { // 100 cards and the stream's sentinel (#4318)
 		t.Fatalf("ws:swarm: cards:waiting holds %d, want 100 cards and the sentinel", n)
@@ -74,6 +83,9 @@ func cutDepsRedis(forge *fakeCutForge, client *redis.Client) cutFromDeps {
 	}
 	d.LedgerWrite = func(ctx context.Context, key, repo string, row, issue int) error {
 		return taskcard.WriteCutLedger(ctx, client, key, repo, row, issue)
+	}
+	d.Order = func(ctx context.Context, streams []string, out io.Writer) {
+		reorderLines(ctx, client, streams, "test", out)
 	}
 	return d
 }

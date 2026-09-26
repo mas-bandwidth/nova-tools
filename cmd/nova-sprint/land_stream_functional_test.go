@@ -14,6 +14,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -202,6 +203,14 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	}
 	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":landed").Result(); n != 2 {
 		t.Fatalf("landed %d", n)
+	}
+	// the move to landed is a door (#4322 fix round): the stream's order is
+	// written over what is left live, one ORDER line
+	if !regexp.MustCompile(`(?m)^ORDER stream=` + regexp.QuoteMeta(quoteField(lsStream)) + ` order=\d+$`).MatchString(out) {
+		t.Fatalf("no ORDER line for %s after the merge:\n%s", lsStream, out)
+	}
+	if so, err := ws.ReadOrder(ctx, c, lsStream); err != nil || so.Stale() {
+		t.Fatalf("%s after the merge: stale %v %v", lsStream, so.Stale(), err)
 	}
 	landedRelease(t, ctx, c, addr, out)
 	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":merging").Result(); n != 0 {

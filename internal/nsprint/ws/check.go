@@ -126,10 +126,10 @@ func Check(ctx context.Context, c redis.Cmdable, ids []string) error {
 			order, _ := v[4].(string)
 			if n, err := strconv.ParseFloat(order, 64); err == nil && ordered(w.state) {
 				if n != w.score {
-					add("%s scores %.0f in %s, not its order_score %q", id, w.score, Key(w.stream, w.state), order)
+					add("%s scores %s in %s, not its order_score %q", id, ScoreText(w.score), Key(w.stream, w.state), order)
 				}
 			} else if ms, ok := CreatedMS(created); !ok || ms != w.score {
-				add("%s scores %.0f in %s, not its created_at %q", id, w.score, Key(w.stream, w.state), created)
+				add("%s scores %s in %s, not its created_at %q", id, ScoreText(w.score), Key(w.stream, w.state), created)
 			}
 		}
 	}
@@ -160,3 +160,8 @@ func isCardID(id string) bool {
 func ordered(state string) bool {
 	return state == Waiting || state == Ready || state == Merging
 }
+
+// ScoreText is a set score as the INVARIANTS lines print it: every digit it
+// has, so a fractional score (a hand ZADD of 1.5) is never read as a whole
+// one ('f', -1: the shortest exact form).
+func ScoreText(s float64) string { return strconv.FormatFloat(s, 'f', -1, 64) }

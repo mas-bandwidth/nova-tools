@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,6 +50,7 @@ func RecordKey(id string) string {
 type orderRec struct {
 	deps, paths, ref, origin string
 	created                  float64
+	order                    float64 // its order_score; -1 when it has none
 }
 
 func readOrderRec(v []any) orderRec {
@@ -57,6 +59,10 @@ func readOrderRec(v []any) orderRec {
 		r.deps = showStr(v, 1)
 	}
 	r.created, _ = CreatedMS(showStr(v, 5))
+	r.order = -1
+	if n, err := strconv.ParseFloat(showStr(v, 6), 64); err == nil {
+		r.order = n
+	}
 	return r
 }
 
@@ -109,6 +115,29 @@ type StreamOrder struct {
 	Stored   []string          // the members of waiting, ready and merging by stored score, then id
 	Computed []string          // Order's sequence over those same members
 	Err      error             // a *CycleError: nothing is ordered
+	// StoredScore is each waiting, ready and merging member's set score;
+	// OrderScore each live record's order_score (absent: none).
+	StoredScore, OrderScore map[string]float64
+}
+
+// Stale is whether any stored score is not the computed one: a member of
+// waiting, ready or merging whose set score, or a live record whose
+// order_score, differs from its rank's score. It is Drift and more: a base
+// gone stale (the oldest card landed) or a card pushed and never ranked
+// reads the same sequence but other scores.
+func (s StreamOrder) Stale() bool {
+	if s.Err != nil {
+		return false
+	}
+	for r, o := range s.Order {
+		if got, ok := s.OrderScore[o.ID]; !ok || got != s.Scores[r] {
+			return true
+		}
+		if got, ok := s.StoredScore[o.ID]; ok && got != s.Scores[r] {
+			return true
+		}
+	}
+	return false
 }
 
 // Drift is whether the stored scores read another sequence than the order.
@@ -131,8 +160,31 @@ func (s StreamOrder) Drift() bool {
 // pipelined round trips for all the streams, and computes each order. A
 // stream whose DEPENDS-ON closes a cycle carries the *CycleError in Err.
 func ReadOrders(ctx context.Context, c redis.Cmdable, streams []string) ([]StreamOrder, error) {
+	members, recs, err := readLive(ctx, c, streams)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]StreamOrder, len(streams))
+	for i, s := range streams {
+		if out[i], err = orderOf(s, members[i], recs); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// liveMember is one member of a stream's live sets.
+type liveMember struct {
+	id    string
+	score float64
+	where string
+}
+
+// readLive is ReadOrders' two pipelined round trips: each stream's live
+// sets, then every member's order fields.
+func readLive(ctx context.Context, c redis.Cmdable, streams []string) ([][]liveMember, map[string]orderRec, error) {
 	if len(streams) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	pipe := c.Pipeline()
 	sets := make([][]*redis.ZSliceCmd, len(streams))
@@ -143,14 +195,9 @@ func ReadOrders(ctx context.Context, c redis.Cmdable, streams []string) ([]Strea
 		}
 	}
 	if err := showExec(ctx, pipe); err != nil {
-		return nil, fmt.Errorf("ws order: sets: %w", err)
+		return nil, nil, fmt.Errorf("ws order: sets: %w", err)
 	}
-	type member struct {
-		id    string
-		score float64
-		where string
-	}
-	members := make([][]member, len(streams))
+	members := make([][]liveMember, len(streams))
 	var ids []string
 	for i := range streams {
 		for j, w := range OrderLive {
@@ -159,7 +206,7 @@ func ReadOrders(ctx context.Context, c redis.Cmdable, streams []string) ([]Strea
 				if id == "" {
 					continue
 				}
-				members[i] = append(members[i], member{id, z.Score, w})
+				members[i] = append(members[i], liveMember{id, z.Score, w})
 				ids = append(ids, id)
 			}
 		}
@@ -172,62 +219,135 @@ func ReadOrders(ctx context.Context, c redis.Cmdable, streams []string) ([]Strea
 			cmds[k] = pipe.HMGet(ctx, RecordKey(id), orderFields...)
 		}
 		if err := showExec(ctx, pipe); err != nil {
-			return nil, fmt.Errorf("ws order: records: %w", err)
+			return nil, nil, fmt.Errorf("ws order: records: %w", err)
 		}
 		for k, id := range ids {
 			recs[id] = readOrderRec(cmds[k].Val())
 		}
 	}
-	out := make([]StreamOrder, len(streams))
-	for i, s := range streams {
-		so := StreamOrder{Stream: s, Where: map[string]string{}}
-		var live []string
-		var stored []member
-		for _, m := range members[i] {
-			if _, twice := so.Where[m.id]; twice {
-				continue // in two sets: ws.Check names it; order it once
-			}
-			so.Where[m.id] = m.where
-			live = append(live, m.id)
-			if m.where == Waiting || m.where == Ready || m.where == Merging {
-				stored = append(stored, m)
-			}
+	return members, recs, nil
+}
+
+// orderOf computes one stream's order from its live members and their
+// records. The score base is the created_at of the stream's oldest live
+// card that is not its sentinel (the sentinel's only when it is the one
+// live card), so the least order score reads the oldest live card's age
+// and PROGRESS oldest= is that card's, never the stream's.
+func orderOf(s string, members []liveMember, recs map[string]orderRec) (StreamOrder, error) {
+	so := StreamOrder{Stream: s, Where: map[string]string{}, StoredScore: map[string]float64{}, OrderScore: map[string]float64{}}
+	var live []string
+	var stored []liveMember
+	for _, m := range members {
+		if _, twice := so.Where[m.id]; twice {
+			continue // in two sets: ws.Check names it; order it once
 		}
-		sort.SliceStable(stored, func(a, b int) bool {
-			if stored[a].score != stored[b].score {
-				return stored[a].score < stored[b].score
-			}
-			return stored[a].id < stored[b].id
-		})
-		for _, m := range stored {
-			so.Stored = append(so.Stored, m.id)
+		so.Where[m.id] = m.where
+		live = append(live, m.id)
+		if r, ok := recs[m.id]; ok && r.order >= 0 {
+			so.OrderScore[m.id] = r.order
 		}
-		so.Order, so.Reasons, so.Err = Order(orderCards(s, live, recs))
-		if so.Err != nil {
-			var ce *CycleError
-			if !errors.As(so.Err, &ce) {
-				return nil, fmt.Errorf("ws order: stream %s: %w", strconv.Quote(s), so.Err)
-			}
-			out[i] = so
-			continue
+		if m.where == Waiting || m.where == Ready || m.where == Merging {
+			stored = append(stored, m)
+			so.StoredScore[m.id] = m.score
 		}
-		base := 0.0
-		for _, o := range so.Order {
-			if cr := recs[o.ID].created; cr > 0 && (base == 0 || cr < base) {
-				base = cr
-			}
-		}
-		so.Scores = make([]float64, len(so.Order))
-		for r, o := range so.Order {
-			so.Scores[r] = base + float64(r)
-			switch so.Where[o.ID] {
-			case Waiting, Ready, Merging:
-				so.Computed = append(so.Computed, o.ID)
-			}
-		}
-		out[i] = so
 	}
-	return out, nil
+	sort.SliceStable(stored, func(a, b int) bool {
+		if stored[a].score != stored[b].score {
+			return stored[a].score < stored[b].score
+		}
+		return stored[a].id < stored[b].id
+	})
+	for _, m := range stored {
+		so.Stored = append(so.Stored, m.id)
+	}
+	so.Order, so.Reasons, so.Err = Order(orderCards(s, live, recs))
+	if so.Err != nil {
+		var ce *CycleError
+		if !errors.As(so.Err, &ce) {
+			return StreamOrder{}, fmt.Errorf("ws order: stream %s: %w", strconv.Quote(s), so.Err)
+		}
+		return so, nil
+	}
+	so.Scores = make([]float64, len(so.Order))
+	base := Base(so.Order, func(id string) float64 { return recs[id].created })
+	for r, o := range so.Order {
+		so.Scores[r] = base + float64(r)
+		switch so.Where[o.ID] {
+		case Waiting, Ready, Merging:
+			so.Computed = append(so.Computed, o.ID)
+		}
+	}
+	return so, nil
+}
+
+// Base is the order's score base: the least created_at (ms, > 0) among
+// its cards that are not the sentinel, else the sentinel's, else 0.
+func Base(order []Ordered, created func(id string) float64) float64 {
+	base, stop := 0.0, 0.0
+	for _, o := range order {
+		cr := created(o.ID)
+		switch {
+		case cr <= 0:
+		case o.Sentinel:
+			stop = cr
+		case base == 0 || cr < base:
+			base = cr
+		}
+	}
+	if base == 0 {
+		return stop
+	}
+	return base
+}
+
+// PushCard is one card a push is about to write onto a stream, as the
+// order reads it: its id, ref and origin (the issue number), PATHS and
+// DEPENDS-ON.
+type PushCard struct {
+	ID, Ref, Origin, Paths, DependsOn string
+}
+
+// WouldCycle is the push's check before any write (nova-tools #4322 fix
+// round: a push that closes a DEPENDS-ON cycle is refused and writes
+// nothing): the stream's live cards (ReadOrders' two round trips) with the
+// pushed cards added (a pushed id already live is replaced) are ordered, and
+// a cycle is returned as its *CycleError; nil when the order holds. A
+// stream with no name is never checked.
+func WouldCycle(ctx context.Context, c redis.Cmdable, stream string, adds []PushCard) error {
+	if stream == "" || len(adds) == 0 {
+		return nil
+	}
+	members, recs, err := readLive(ctx, c, []string{stream})
+	if err != nil {
+		return err
+	}
+	ms := members[0]
+	for _, a := range adds {
+		if _, ok := recs[a.ID]; !ok {
+			ms = append(ms, liveMember{id: a.ID, where: Waiting})
+		}
+		recs[a.ID] = orderRec{deps: a.DependsOn, paths: a.Paths, ref: a.Ref, origin: a.Origin, created: 1}
+	}
+	so, err := orderOf(stream, ms, recs)
+	if err != nil {
+		return err
+	}
+	return so.Err
+}
+
+var titleStreamRE = regexp.MustCompile(`^\s*STREAM:\s*(.*?)\s*\|`)
+
+// StreamOfTitle is the stream a friend-queue task push lands in: --stream
+// when named, else the title's "STREAM: <s> |" prefix (TK.stream_of in
+// fn/lua/02_card_move.lua), else "".
+func StreamOfTitle(stream, title string) string {
+	if stream != "" {
+		return stream
+	}
+	if m := titleStreamRE.FindStringSubmatch(title); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 // ReadOrder is ReadOrders for one stream.
@@ -242,27 +362,75 @@ func ReadOrder(ctx context.Context, c redis.Cmdable, stream string) (StreamOrder
 // ReorderResult is what Reorder wrote: Ranked records took an order_score,
 // Rescored set members a new score, Skipped ids were no record of the
 // stream by the write; RoundTrips is the round trips it took (two pipelined
-// reads and the one write; no write when the stream has no live card).
+// reads and the one write per attempt); Stale is the attempts refused ORDER
+// STALE (a push or a move changed the stream between the read and the
+// write) and read again.
 type ReorderResult struct {
 	StreamOrder
-	Ranked, Rescored, Skipped, RoundTrips int
+	Ranked, Rescored, Skipped, RoundTrips, Stale int
+}
+
+// ReorderAttempts bounds Reorder's reads after an ORDER STALE refusal.
+const ReorderAttempts = 5
+
+// IsStale is whether err is ns_ws_reorder's ORDER STALE refusal.
+func IsStale(err error) bool {
+	var r *Refused
+	return errors.As(err, &r) && strings.HasPrefix(r.Why, "ORDER STALE")
 }
 
 // Reorder recomputes a stream's order and writes it, the scores of its
 // waiting, ready and merging sets and every ranked record's order_score, in
-// one FCALL of ns_ws_reorder. A cycle is refused (*CycleError) and nothing
-// is written; an unknown stream is a *Refused.
+// one FCALL of ns_ws_reorder (WriteOrder). A cycle is refused (*CycleError)
+// and nothing is written; an unknown stream is a *Refused. The write is
+// conditional: it names every live card the read saw, and the FCALL refuses
+// ORDER STALE and writes nothing when the stream's live cards are no longer
+// those (a concurrent push or move); Reorder then reads again, at most
+// ReorderAttempts times.
+//
+// Why two round trips and not one: the order is ws.Order, a Go function
+// (topological sort, paths edges, reasons); computing it inside the FCALL
+// would be a second copy of it in Lua, and two copies drift. The read stays
+// in Go and the write is guarded by the stream's live membership instead,
+// so a stale order is never written.
 func Reorder(ctx context.Context, c redis.Cmdable, stream, by string) (ReorderResult, error) {
-	so, err := ReadOrder(ctx, c, stream)
-	r := ReorderResult{StreamOrder: so, RoundTrips: 2}
-	if err != nil {
+	var r ReorderResult
+	for attempt := 1; ; attempt++ {
+		so, err := ReadOrder(ctx, c, stream)
+		r.StreamOrder = so
+		r.RoundTrips += 2
+		if err != nil {
+			return r, err
+		}
+		if so.Err != nil {
+			return r, so.Err
+		}
+		w, err := WriteOrder(ctx, c, so, by)
+		r.RoundTrips += w.RoundTrips
+		r.Ranked, r.Rescored, r.Skipped = w.Ranked, w.Rescored, w.Skipped
+		if IsStale(err) && attempt < ReorderAttempts {
+			r.Stale++
+			continue
+		}
+		if IsStale(err) {
+			r.Stale++
+		}
 		return r, err
 	}
+}
+
+// WriteOrder is Reorder's write of an order already read (so, from
+// ReadOrders): one FCALL of ns_ws_reorder with the stream's live cards as
+// read, each with its rank's score. It refuses a cycle (so.Err) before any
+// call; the FCALL refuses ORDER STALE when the stream's live cards are no
+// longer so's.
+func WriteOrder(ctx context.Context, c redis.Cmdable, so StreamOrder, by string) (ReorderResult, error) {
+	r := ReorderResult{StreamOrder: so}
 	if so.Err != nil {
 		return r, so.Err
 	}
 	args := make([]any, 0, 2+2*len(so.Order))
-	args = append(args, stream, by)
+	args = append(args, so.Stream, by)
 	for k, o := range so.Order {
 		args = append(args, o.ID, strconv.FormatFloat(so.Scores[k], 'f', 0, 64))
 	}

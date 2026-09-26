@@ -442,7 +442,13 @@ func runScopePark(ctx context.Context, args []string, out, errOut io.Writer) int
 	why := whyOr(*w.why, "scope park")
 	if ids == nil {
 		n, err := ws.ParkStream(ctx, st.Client(), *stream, *w.by, why)
-		return w.done(err, fmt.Sprintf("PARKED stream=%s parked=%d checkpoint=%s rows=%d", strconv.Quote(*stream), n, c.Path, c.Rows))
+		if err != nil {
+			return w.done(err, "")
+		}
+		// park is a door (#4322 fix round): the stream's order is written
+		// over what is still live.
+		order := pushReorder(ctx, st.Client(), *stream, "", *w.by, out)
+		return w.done(nil, fmt.Sprintf("PARKED stream=%s parked=%d checkpoint=%s rows=%d %s", strconv.Quote(*stream), n, c.Path, c.Rows, order))
 	}
 	// --ids parks those tasks only; each must be in --stream (one pipelined
 	// read of their stream fields), else nothing moves.
@@ -464,12 +470,16 @@ func runScopePark(ctx context.Context, args []string, out, errOut io.Writer) int
 		return w.done(&ws.Refused{Why: fmt.Sprintf("%d of %d ids are not in stream %s (first %s)", len(other), len(ids), strconv.Quote(*stream), other[0])}, "")
 	}
 	r, err := ws.MoveMany(ctx, st.Client(), "parked", *w.by, why, ids)
+	order := ""
+	if err == nil {
+		order = " " + pushReorder(ctx, st.Client(), *stream, "", *w.by, out)
+	}
 	if err == nil && len(r.Refused) > 0 {
 		fmt.Fprintf(out, "PARKED stream=%s parked=%d same=%d refused=%d first=%s:%s checkpoint=%s ms=%s\n",
 			strconv.Quote(*stream), r.Moved, r.Same, len(r.Refused), r.Refused[0].ID, strconv.Quote(r.Refused[0].Why), c.Path, w.ms())
 		return 1
 	}
-	return w.done(err, fmt.Sprintf("PARKED stream=%s parked=%d same=%d checkpoint=%s rows=%d", strconv.Quote(*stream), r.Moved, r.Same, c.Path, c.Rows))
+	return w.done(err, fmt.Sprintf("PARKED stream=%s parked=%d same=%d checkpoint=%s rows=%d%s", strconv.Quote(*stream), r.Moved, r.Same, c.Path, c.Rows, order))
 }
 
 func runScopeUnpark(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -487,7 +497,12 @@ func runScopeUnpark(ctx context.Context, args []string, out, errOut io.Writer) i
 	}
 	defer st.Close()
 	n, err := ws.UnparkStream(ctx, st.Client(), *stream, *w.by, whyOr(*w.why, "scope unpark"))
-	return w.done(err, fmt.Sprintf("UNPARKED stream=%s unparked=%d", strconv.Quote(*stream), n))
+	if err != nil {
+		return w.done(err, "")
+	}
+	// unpark is a door (#4322 fix round): the returned cards are ordered.
+	order := pushReorder(ctx, st.Client(), *stream, "", *w.by, out)
+	return w.done(nil, fmt.Sprintf("UNPARKED stream=%s unparked=%d %s", strconv.Quote(*stream), n, order))
 }
 
 // scopeOf is a stream's place in the scope: parked (everything not yet

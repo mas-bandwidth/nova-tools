@@ -14,6 +14,7 @@ import (
 
 	jevledger "github.com/mas-bandwidth/nova-tools/internal/nsprint/jev"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
@@ -26,6 +27,14 @@ func (r *Refusal) Error() string { return "REFUSED " + r.Why + " remedy=" + r.Re
 type Client interface {
 	redis.Cmdable
 	redis.Scripter
+}
+
+// StreamOrderLine is one stream's work order written by the lander:
+// Ranked cards, or Err (a DEPENDS-ON cycle is a *ws.CycleError).
+type StreamOrderLine struct {
+	Stream string
+	Ranked int
+	Err    error
 }
 
 // Options is one land stream run.
@@ -291,7 +300,10 @@ type MergeOptions struct {
 
 // MergeReport is what one land merge did.
 type MergeReport struct {
-	Landing  Landing
+	Landing Landing
+	// Orders is each landed stream's order written after the move to
+	// landed (ws.Reorder), in the streams' order.
+	Orders   []StreamOrderLine
 	MergeSHA string
 	Moved    int
 	Missing  int
@@ -416,6 +428,13 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 		return rep, err
 	}
 	rep.Moved, rep.Missing, rep.Lines, rep.Skipped = landed.Moved, landed.Missing, landed.Lines, landed.Skipped
+	// The members left their streams' live sets: each stream's work order
+	// is recomputed over what is still live (nova-tools #4322 fix round:
+	// the move to landed is a door), never a reason to refuse the land.
+	for _, s := range o.Streams {
+		r, err := ws.Reorder(ctx, c, s, o.By)
+		rep.Orders = append(rep.Orders, StreamOrderLine{Stream: s, Ranked: r.Ranked, Err: err})
+	}
 	// The Jev gate at each member's head is a decision; its landing is the
 	// outcome (#4316): one call, never a reason to refuse the land.
 	heads := make([]jevledger.GateHead, len(l.Members))

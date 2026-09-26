@@ -126,6 +126,9 @@ type cutFromDeps struct {
 	// Plan reads the parent (--parent); Bind makes it a plan after the push.
 	Plan func(ctx context.Context, id string) (planFacts, error)
 	Bind func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error)
+	// Order writes each named stream's work order after the push and the
+	// bind (#4322 fix round), one ORDER line per stream; nil writes none.
+	Order func(ctx context.Context, streams []string, out io.Writer)
 }
 
 // cutRow is one card row.
@@ -874,6 +877,21 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		fmt.Fprintf(out, "CARD CUT row=%s id=%s ref=%s stream=%s to=%s depends=%s\n", cutRowN(r), r.id, cutField(r.ref),
 			cutField(r.stream), to, cutField(cutDepends(r, rows, o.Repo, false)))
 	}
+	// Every stream a row was pushed onto (and the parent's) has its work
+	// order written once the push and the bind are done (#4322 fix round):
+	// card cut --from and --parent, children and stitch, are doors.
+	orderAll := func() {
+		if d.Order == nil || cut == 0 {
+			return
+		}
+		var streams []string
+		for _, r := range order {
+			if r.why == "" && !r.already {
+				streams = append(streams, r.stream)
+			}
+		}
+		d.Order(ctx, append(streams, o.Stream), out)
+	}
 	// The parent is bound last, once its children and stitch exist: a cut
 	// whose stitch was refused leaves the parent as it was (the children
 	// stand as cards of the stream; a rerun with the fix cuts the stitch).
@@ -886,11 +904,13 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 				why = w
 			}
 			fmt.Fprintf(out, "CARD CUT REFUSED parent=%s why=%s\n", o.Parent, cutField("bind: "+why))
+			orderAll()
 			summary(len(rows), len(rows)-cut-already)
 			return 1
 		}
 		fmt.Fprintf(out, "CARD CUT PLAN parent=%s children=%d stitch=%s parent_to=%s depends=%s\n", o.Parent, len(childIDs), stitch, res.To, stitch)
 	}
+	orderAll()
 	summary(len(rows), len(rows)-cut-already)
 	if cut+already < len(rows) {
 		return 1
@@ -968,6 +988,9 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 		}
 		d.Bind = func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error) {
 			return taskcard.BindPlan(ctx, st.Client(), parent, children, stitch, by)
+		}
+		d.Order = func(ctx context.Context, streams []string, out io.Writer) {
+			reorderLines(ctx, st.Client(), streams, o.Actor, out)
 		}
 		if o.DryRun {
 			return cardCutFrom(ctx, o, d, stdout)

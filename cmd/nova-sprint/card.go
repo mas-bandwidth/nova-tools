@@ -171,6 +171,14 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	defer client.Close()
 	first := 0
 	opts := card.PushOptions{MapKind: *mapKind}
+	// A batch that closes a DEPENDS-ON cycle in any stream is refused whole
+	// before any write (#4322 fix round): one ORDER CYCLE line, exit 2.
+	streams, adds := card.StreamCards(ctx, *sprint, files, opts)
+	for _, s := range streams {
+		if why := orderCycle(ctx, client, s, adds[s]...); why != "" {
+			return refuse(stderr, "card", "push refused, nothing written: "+why)
+		}
+	}
 	for _, res := range card.PushBatch(ctx, client, *sprint, files, opts) {
 		if wrote := writeCardResult(stdout, stderr, res); wrote != 0 && first == 0 {
 			first = wrote
@@ -178,9 +186,7 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	}
 	// Each stream the batch pushed onto gets its work order written (#4322),
 	// one ORDER line per stream.
-	for _, s := range card.Streams(ctx, files, opts) {
-		fmt.Fprintf(stdout, "ORDER stream=%s %s\n", quoteField(s), pushReorder(ctx, client, s, "", "card push", stdout))
-	}
+	reorderLines(ctx, client, streams, "card push", stdout)
 	return first
 }
 

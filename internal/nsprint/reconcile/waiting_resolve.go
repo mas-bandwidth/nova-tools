@@ -83,7 +83,28 @@ type WaitingResolve struct {
 	// Out receives the RESOLVE receipt lines; nil prints nothing.
 	Out io.Writer
 
+	// Orders is the last pass's order writes (the order door, below).
+	Orders []OrderLine
+
 	last map[string]string // stream -> what its last printed line held waiting
+}
+
+// OrderLine is one stream whose stored work order the pass rewrote: its
+// stored scores were not the computed ones (ws.StreamOrder.Stale: a move to
+// ready, a card that landed, parked or was done so the base went stale, a
+// hand ZADD), Ranked cards written, or Err.
+type OrderLine struct {
+	Stream string
+	Ranked int
+	Err    error
+}
+
+// String is the receipt line: ORDER stream=<s> order=<ranked> why=stale.
+func (o OrderLine) String() string {
+	if o.Err != nil {
+		return fmt.Sprintf("ORDER stream=%s order=error:%s why=stale", wrField(o.Stream), wrField(o.Err.Error()))
+	}
+	return fmt.Sprintf("ORDER stream=%s order=%d why=stale", wrField(o.Stream), o.Ranked)
 }
 
 // ResolveLine is one stream's receipt for one pass.
@@ -136,6 +157,11 @@ func (d *WaitingResolve) Run(ctx context.Context, l *Lease) (Counts, error) {
 		c.Refused += len(r.Refused)
 	}
 	d.print(lines)
+	if d.Out != nil {
+		for _, o := range d.Orders {
+			_, _ = fmt.Fprintln(d.Out, o.String())
+		}
+	}
 	return c, err
 }
 
@@ -263,8 +289,27 @@ type wrWaiter struct {
 }
 
 // Pass resolves every stream's waiting set once and returns one line per
-// stream that had waiting tasks, in ws:order.
+// stream that had waiting tasks, in ws:order; then, under the same lease,
+// the order door (order, below) writes every stream whose stored order is
+// stale into d.Orders.
 func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, error) {
+	d.Orders = nil
+	lines, err := d.resolve(ctx, l)
+	if d.Client == nil || l == nil || l.fencedErr() != nil {
+		return lines, err
+	}
+	streams, rerr := d.Client.ZRange(ctx, "ws:order", 0, -1).Result()
+	if rerr != nil && !errors.Is(rerr, redis.Nil) {
+		return lines, errors.Join(err, fmt.Errorf("waiting-resolve: order: ws:order: %w", rerr))
+	}
+	if errs := d.order(ctx, l, streams); len(errs) > 0 {
+		err = errors.Join(err, fmt.Errorf("waiting-resolve: %s", strings.Join(errs, "; ")))
+	}
+	return lines, err
+}
+
+// resolve is the waiting -> ready half of Pass.
+func (d *WaitingResolve) resolve(ctx context.Context, l *Lease) ([]ResolveLine, error) {
 	if d.Client == nil || l == nil {
 		return nil, errors.New("waiting-resolve: client and lease are required")
 	}
@@ -640,4 +685,44 @@ func wrKeys(m map[string]wrStatus) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// order is the pass's order door (nova-tools #4322 fix round): every
+// stream in ws:order (a held one too: an order moves no card) is read in
+// two pipelined round trips (ws.ReadOrders) and each whose stored scores
+// are not its computed order (Stale) is written through ns_ws_reorder, so
+// the resolver's own moves, and any door that moved a card without
+// writing the order (a friend-queue done, a reap), are ordered within one
+// pass and the base is always the oldest live card's created_at: PROGRESS
+// oldest= reads that card. A stream on a DEPENDS-ON cycle is left for ws
+// check; an ORDER STALE write reads the stream again (ws.Reorder). Every
+// write keeps the lease's write margin. It returns the errors, one per
+// stream.
+func (d *WaitingResolve) order(ctx context.Context, l *Lease, streams []string) []string {
+	if len(streams) == 0 {
+		return nil
+	}
+	orders, err := ws.ReadOrders(ctx, d.Client, streams)
+	if err != nil {
+		return []string{"order: " + err.Error()}
+	}
+	var errs []string
+	for _, so := range orders {
+		if !so.Stale() {
+			continue
+		}
+		if l.fencedErr() != nil || l.Remaining() < d.margin(l) {
+			errs = append(errs, fmt.Sprintf("order: stream %s not written: LEASE-MARGIN", so.Stream))
+			break
+		}
+		r, err := ws.WriteOrder(ctx, d.Client, so, d.actor())
+		if ws.IsStale(err) {
+			r, err = ws.Reorder(ctx, d.Client, so.Stream, d.actor())
+		}
+		d.Orders = append(d.Orders, OrderLine{Stream: so.Stream, Ranked: r.Ranked, Err: err})
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("order: stream %s: %v", so.Stream, err))
+		}
+	}
+	return errs
 }

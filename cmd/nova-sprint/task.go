@@ -19,6 +19,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 func init() {
@@ -134,6 +135,15 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return refuse(errOut, "task push", err.Error())
 	}
 	defer st.Close()
+	// The work order (nova-tools #4322 fix round): a task whose title names a
+	// stream (STREAM: <s> |, the stream TK.create files it in) is checked
+	// before any write, and a push that closes a DEPENDS-ON cycle there is
+	// PUSH INVALID with the cycle, nothing written.
+	stream := ws.StreamOfTitle("", *title)
+	if why := orderCycle(ctx, st.Client(), stream, ws.PushCard{ID: *id, Ref: *ref, DependsOn: *dependsOn}); why != "" {
+		_, _ = fmt.Fprintf(out, "PUSH %s id=%s why=%s\n", task.PushInvalid, *id, quoteField(why))
+		return task.PushInvalid.ExitCode()
+	}
 	res, err := task.PushChecked(ctx, st, task.PushRequest{
 		Sprint: *sprint, ID: *id, Kind: task.Kind(*kind), Title: *title,
 		Effects: task.Effects(*effects), Repo: *repo, PR: *pr, Head: *head,
@@ -172,6 +182,10 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 		_, _ = fmt.Fprintf(out, "PUSH %s id=%s on-met\n", res.Status, *id)
 	default:
 		_, _ = fmt.Fprintf(out, "PUSH %s id=%s\n", res.Status, *id)
+	}
+	if res.Status == task.PushCreated && stream != "" {
+		// the friend-queue push writes the order too: one ORDER line
+		reorderLines(ctx, st.Client(), []string{stream}, initiator, out)
 	}
 	return res.Status.ExitCode()
 }

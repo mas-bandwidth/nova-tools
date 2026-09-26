@@ -425,7 +425,9 @@ end
 -- skipped | REFUSED why: the stream's computed work order (nova-tools #4322;
 -- internal/nsprint/ws.Reorder computes it with ws.Order and sends it) as
 -- the scores of its waiting, ready and merging sets, through the one writer
--- (NS.task.reorder, 02_card_move.lua). by is the receipt's.
+-- (NS.task.reorder, 02_card_move.lua). by is the receipt's. The ids are
+-- every live card the caller read; REFUSED ORDER STALE when the stream's
+-- live cards changed since (nothing written; the caller reads again).
 local function ws_reorder(keys, args)
   local stream = args[1]
   if not W.known(stream) then

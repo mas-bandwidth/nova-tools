@@ -59,8 +59,11 @@ func TestReorderWritesTheOrderAndMovesCarryIt(t *testing.T) {
 	if got := strings.Join(so.Computed, ","); got != "a,b,c,d,e,land-order:sentinel" {
 		t.Fatalf("computed %s", got)
 	}
-	if !so.Drift() {
-		t.Fatalf("age order %v read as the work order", so.Stored)
+	// Pushed by the library (no door): no card has an order score yet, so
+	// the stored order is stale whether or not the age order happens to read
+	// the same sequence (pushes inside one millisecond tie on created_at).
+	if !so.Stale() {
+		t.Fatalf("unranked cards %v read as a written order", so.Stored)
 	}
 
 	r, err := ws.Reorder(ctx, c, orStream, "test")
