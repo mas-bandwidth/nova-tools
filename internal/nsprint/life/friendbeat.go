@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -26,7 +27,8 @@ import (
 //	ns_cm_beat        friend:<f> with no id: every copy in
 //	                  friend:<f>:cards:working gets a fresh lease, in the
 //	                  same pipeline, so no copy can end between a read of
-//	                  the set and its beat
+//	                  the set and its beat; a friend-queue task in the set
+//	                  (task take) is skipped and named (Skipped)
 //	friend:<f>:beat   models: the distinct models of the copies it holds in
 //	models            working (task:<copy> model, what card work --model
 //	                  and friend pull --model record), comma joined, in the
@@ -63,6 +65,9 @@ type FriendBeatResult struct {
 	LeaseUntil int64
 	// Models is the models field the beat wrote ("" when it removed it).
 	Models string
+	// Skipped is each member of the working set ns_cm_beat left alone as
+	// no copy: a friend-queue task (task take), which task beat renews.
+	Skipped []string
 }
 
 // FriendBeatHarness is the harness field a friend beat writes, naming its
@@ -115,7 +120,7 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 	if len(words) == 2 && words[0] == "REFUSED" {
 		return FriendBeatResult{}, fmt.Errorf("friend beat %s: leases: %s", friend, words[1])
 	}
-	if len(words) != 3 || words[0] != "BEAT" {
+	if len(words) < 3 || words[0] != "BEAT" {
 		return FriendBeatResult{}, fmt.Errorf("friend beat %s: leases: unexpected reply %v", friend, words)
 	}
 	n, _ := strconv.Atoi(words[1])
@@ -126,17 +131,20 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 	// The models are a second round trip, only when there is something to
 	// write or remove: ns_friend_models declares every key it reads (the
 	// beat, the working set, task:<copy> for each copy the first trip saw).
+	skipped := words[3:]
 	ids, m := held.Val(), had.Val()
 	if len(ids) > 0 || m != "" {
 		keys := []string{beat, working}
 		for _, id := range ids {
-			keys = append(keys, "task:"+id)
+			if !slices.Contains(skipped, id) {
+				keys = append(keys, "task:"+id)
+			}
 		}
 		if m, err = st.Client().FCall(ctx, FnFriendModels, keys).Text(); err != nil {
 			return FriendBeatResult{}, fmt.Errorf("friend beat %s: models: %w", friend, err)
 		}
 	}
-	return FriendBeatResult{Friend: friend, AtMS: ms, Working: n, LeaseUntil: until, Models: m}, nil
+	return FriendBeatResult{Friend: friend, AtMS: ms, Working: n, LeaseUntil: until, Models: m, Skipped: skipped}, nil
 }
 
 // FnFriendModels writes the beat's models field from the named working

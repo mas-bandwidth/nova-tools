@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -625,4 +626,162 @@ func TestEndedCopyNotRenewedByLoop(t *testing.T) {
 func readFile(path string) string {
 	b, _ := os.ReadFile(path)
 	return string(b)
+}
+
+// takeCopiesAndTask is the reviewer's shape on a throwaway store: friend me
+// holds two copies and one friend-queue task (fq-probe-1) in working, all
+// three by one `task take --n 3`, which starts the friend's beat loop.
+func takeCopiesAndTask(t *testing.T) (addr string, c *redis.Client, me string, cps []string) {
+	t.Helper()
+	addr, c = loadedStore(t)
+	ctx := context.Background()
+	me = beatSeat()
+	cps = beatStore(t, c, me, 2, 2)
+	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "fq-probe-1", Stream: "friends", Friend: me, By: "rowan"}); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runSprint("task", "take", "--actor", me, "--n", "3", "--redis", addr)
+	if code != 0 || !strings.Contains(out, "BEATLOOP as=friend:"+me+" started pid=4242 working=2 ") {
+		t.Fatalf("task take exit %d:\n%s%s", code, out, errOut)
+	}
+	working := c.ZRange(ctx, "friend:"+me+":cards:working", 0, -1).Val()
+	if len(working) != 3 || !slices.Contains(working, "fq-probe-1") {
+		t.Fatalf("working %v", working)
+	}
+	return addr, c, me, cps
+}
+
+// TestFriendBeatOnceSkipsFriendQueueTask (seat-beat-fix3, probe a): with
+// two copies and a friend-queue task in working, `friend beat --once`
+// renews both copies' leases, prints one SKIPPED line naming the task and
+// exits 0, and leaves the task's lease to task beat. The loop's tick (the
+// same life.FriendBeat through life.BeatLoop.Step) renews them too. Named
+// ids stay all or nothing: `card beat --ids <copy>,fq-probe-1` is still
+// refused NOTWORKING.
+func TestFriendBeatOnceSkipsFriendQueueTask(t *testing.T) {
+	t.Parallel()
+	addr, c, me, cps := takeCopiesAndTask(t)
+	ctx := context.Background()
+	for _, id := range append([]string{"fq-probe-1"}, cps...) {
+		c.HSet(ctx, taskcard.Key(id), "lease_until", "1")
+	}
+	code, out, errOut := runSprint("friend", "beat", "--as", "friend:"+me, "--once", "--redis", addr)
+	want := "FRIEND BEAT SKIPPED as=friend:" + me + " id=fq-probe-1 why=\"not a copy: task beat renews a friend-queue task\"\n" +
+		"FRIEND BEAT as=friend:" + me + " "
+	if code != 0 || !strings.HasPrefix(out, want) || !strings.Contains(out, " working=2 ") || strings.Count(out, "SKIPPED") != 1 {
+		t.Fatalf("friend beat --once exit %d:\n%s%s", code, out, errOut)
+	}
+	for _, id := range cps {
+		if v := c.HGet(ctx, taskcard.Key(id), "lease_until").Val(); v == "1" {
+			t.Fatalf("copy %s not renewed", id)
+		}
+	}
+	if v := c.HGet(ctx, taskcard.Key("fq-probe-1"), "lease_until").Val(); v != "1" {
+		t.Fatalf("the friend beat wrote the task's lease: %s", v)
+	}
+	st, err := store.OpenSingle(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	k, _ := taskcard.ParseConsumer("friend:" + me)
+	token := c.HGet(ctx, life.BeatLoopKey(me), "token").Val()
+	host, _ := os.Hostname()
+	l := &life.BeatLoop{Lease: life.StoreLease{Client: c, Friend: me, Me: life.LoopHolder{Token: token, Host: host, PID: 4242}}, Friend: me,
+		Tick: func(ctx context.Context, now time.Time) (int, error) {
+			res, err := friendBeatOnce(ctx, st, k, host, now)
+			return res.Working, err
+		}}
+	if done, why, err := l.Step(ctx, time.Now()); done || err != nil || l.RetryIn() != 0 {
+		t.Fatalf("loop step: done=%v why=%q err=%v retry=%s", done, why, err, l.RetryIn())
+	}
+	code, out, _ = runSprint("card", "beat", "--as", "friend:"+me, "--ids", cps[0]+",fq-probe-1", "--redis", addr)
+	if code == 0 || !strings.Contains(out, "NOTWORKING fq-probe-1 ") {
+		t.Fatalf("named non-copy: exit %d %s", code, out)
+	}
+}
+
+// countingLease is the store's lease (ns_friend_loop_renew), counting the
+// renewals that held.
+type countingLease struct {
+	life.StoreLease
+	held atomic.Int32
+}
+
+func (l *countingLease) Renew(ctx context.Context) (bool, error) {
+	ok, err := l.StoreLease.Renew(ctx)
+	if ok {
+		l.held.Add(1)
+	}
+	return ok, err
+}
+
+// TestBeatLoopInErrorsKeepsLeaseAndPullSaysRunning (seat-beat-fix3, probe
+// b) on a throwaway store: friend beat --loop's own stepping
+// (stepBeatLoop, the loop the verb started: its claimed token, pid 4242) is
+// fed one tick a second for 25 s of its clock while its tick is refused for
+// the first 20 s. Every one of the 26 steps renews the lease
+// (ns_friend_loop_renew) and its PTTL is a fresh BeatLoopLease after each
+// (it never lapses while the loop is alive), the log names
+// seven errors (1, 2, 4, 4 ... s apart), and a `friend pull` at 20 s says
+// running pid=4242 and starts nothing. When the refusals stop the copies'
+// leases are renewed again; the end releases the lease.
+func TestBeatLoopInErrorsKeepsLeaseAndPullSaysRunning(t *testing.T) {
+	t.Parallel()
+	addr, c, me, cps := takeCopiesAndTask(t)
+	ctx := context.Background()
+	st, err := store.OpenSingle(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	k, _ := taskcard.ParseConsumer("friend:" + me)
+	token := c.HGet(ctx, life.BeatLoopKey(me), "token").Val()
+	host, _ := os.Hostname()
+	t0 := time.Now()
+	lease := &countingLease{StoreLease: life.StoreLease{Client: c, Friend: me, Me: life.LoopHolder{Token: token, Host: host, PID: 4242}}}
+	l := &life.BeatLoop{Lease: lease, Friend: me,
+		Tick: func(ctx context.Context, now time.Time) (int, error) {
+			if now.Sub(t0) < 20*time.Second {
+				return 0, errors.New("friend beat: leases: REFUSED (forced)")
+			}
+			res, err := friendBeatOnce(ctx, st, k, host, now)
+			return res.Working, err
+		}}
+	c.HSet(ctx, taskcard.Key(cps[0]), "lease_until", "1")
+	lctx, stop := context.WithCancel(ctx)
+	ticks := make(chan time.Time)
+	var out, errOut strings.Builder
+	ended := make(chan int)
+	go func() {
+		ended <- stepBeatLoop(lctx, l, t0, ticks, func() { _ = life.ReleaseBeatLoop(ctx, c, me, token) }, k, &out, &errOut)
+	}()
+	for i := 1; i <= 25; i++ {
+		ticks <- t0.Add(time.Duration(i) * time.Second) // step i-1 is done
+		if ttl := c.PTTL(ctx, life.BeatLoopKey(me)).Val(); ttl < life.BeatLoopLease-time.Second {
+			t.Fatalf("after step %d: lease PTTL %s, want a fresh %s", i-1, ttl, life.BeatLoopLease)
+		}
+		if i == 21 {
+			code, pout, perr := runSprint("friend", "pull", "--as", "friend:"+me, "--redis", addr, "--dir", t.TempDir())
+			if !strings.Contains(pout, "BEATLOOP as=friend:"+me+" running pid=4242 ") || len(startsFor(addr)) != 1 {
+				t.Fatalf("pull at 20 s exit %d, %d starts:\n%s%s", code, len(startsFor(addr)), pout, perr)
+			}
+		}
+	}
+	stop()
+	if code := <-ended; code != 0 || !strings.HasSuffix(out.String(), "FRIEND BEAT LOOP END as=friend:"+me+" why=signal\n") {
+		t.Fatalf("loop exit %d: %s", code, out.String())
+	}
+	if n := strings.Count(errOut.String(), "retry in "); n != 7 || !strings.Contains(errOut.String(), "; retry in 4s\n") || strings.Contains(errOut.String(), "retry in 8s") {
+		t.Fatalf("%d errors logged:\n%s", n, errOut.String())
+	}
+	if n := lease.held.Load(); n != 26 {
+		t.Fatalf("the lease was renewed on %d of 26 steps", n)
+	}
+	if v := c.HGet(ctx, taskcard.Key(cps[0]), "lease_until").Val(); v == "1" {
+		t.Fatalf("copy %s not renewed after the refusals stopped", cps[0])
+	}
+	if c.Exists(ctx, life.BeatLoopKey(me)).Val() != 0 {
+		t.Fatal("the ended loop kept its lease")
+	}
 }

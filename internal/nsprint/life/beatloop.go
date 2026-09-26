@@ -39,6 +39,12 @@ const BeatLoopLease = 10 * time.Second
 // loop.
 const BeatLoopIdleTicks = 2
 
+// BeatLoopMaxBackoff caps how long a loop in errors waits before it steps
+// again: under BeatLoopLease, so a loop whose renewals fail and then come
+// back renews before its lease lapses. A tick's error never delays the
+// renewal at all (BeatLoop.Step).
+const BeatLoopMaxBackoff = 4 * time.Second
+
 // The lease's functions (fn/lua/friend_beatloop.lua).
 const (
 	FnLoopClaim   = "ns_friend_loop_claim"
@@ -139,30 +145,59 @@ type BeatLoop struct {
 	// in working (FriendBeatResult.Working).
 	Tick func(ctx context.Context, now time.Time) (working int, err error)
 	idle int
+	// backoff is the wait after the last error, next when it ends, and
+	// renewing says the error was the lease's (the renewal waits too),
+	// not the tick's (the renewal goes on each step).
+	backoff  time.Duration
+	next     time.Time
+	renewing bool
+}
+
+// RetryIn is how long the loop waits after its last error before it tries
+// again (0 after a step with none).
+func (l *BeatLoop) RetryIn() time.Duration { return l.backoff }
+
+// fail backs the loop off after err: from BeatInterval, doubling, capped at
+// BeatLoopMaxBackoff.
+func (l *BeatLoop) fail(now time.Time, err error, renewing bool) error {
+	l.backoff = min(max(2*l.backoff, BeatInterval), BeatLoopMaxBackoff)
+	l.next, l.renewing = now.Add(l.backoff), renewing
+	return err
 }
 
 // Step is one tick at now. done says the loop exits, why names it: LOST
 // (another loop holds the lease), IDLE (no working copy for
 // BeatLoopIdleTicks ticks; the lease is released) or HANDED (a copy came in
-// as it released and another loop took the lease). An error is the tick's;
-// the loop backs off and steps again.
+// as it released and another loop took the lease). After an error the loop
+// backs off (RetryIn, capped at BeatLoopMaxBackoff) and a step before then
+// does nothing, except that a tick's error leaves the lease renewed every
+// step: a loop alive in errors keeps its lease, so no verb starts a second
+// one beside it.
 //
 // The idle exit releases the lease and THEN ticks once more: a verb works
 // its copies before it looks for the lease, so a copy worked before that
 // last tick is seen here (the loop takes the lease back and stays), and one
 // worked after it finds no lease and starts a loop of its own.
 func (l *BeatLoop) Step(ctx context.Context, now time.Time) (done bool, why string, err error) {
+	waiting := now.Before(l.next)
+	if waiting && l.renewing {
+		return false, "", nil
+	}
 	held, err := l.Lease.Renew(ctx)
 	if err != nil {
-		return false, "", err
+		return false, "", l.fail(now, err, true)
 	}
 	if !held {
 		return true, "LOST " + BeatLoopKey(l.Friend) + " is another loop's", nil
 	}
+	if waiting {
+		return false, "", nil
+	}
 	n, err := l.Tick(ctx, now)
 	if err != nil {
-		return false, "", err
+		return false, "", l.fail(now, err, false)
 	}
+	l.backoff, l.next = 0, time.Time{}
 	if n > 0 {
 		l.idle = 0
 		return false, "", nil
@@ -171,14 +206,14 @@ func (l *BeatLoop) Step(ctx context.Context, now time.Time) (done bool, why stri
 		return false, "", nil
 	}
 	if err := l.Lease.Release(ctx); err != nil {
-		return false, "", err
+		return false, "", l.fail(now, err, true)
 	}
 	if n, err := l.Tick(ctx, now); err == nil && n == 0 {
 		return true, fmt.Sprintf("IDLE no working copy for %d ticks", l.idle), nil
 	}
 	took, err := l.Lease.Claim(ctx)
 	if err != nil {
-		return false, "", err
+		return false, "", l.fail(now, err, true)
 	}
 	if !took {
 		return true, "HANDED " + BeatLoopKey(l.Friend) + " was taken by another loop", nil

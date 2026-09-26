@@ -212,16 +212,6 @@ type loopStarter struct {
 
 var friendLoop = loopStarter{start: startOwnSessionLog, alive: pidAlive, log: friendBeatLog}
 
-// pidAlive is kill(pid, 0): the process exists (EPERM: it does, another
-// user's).
-func pidAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
-
 // friendBeatLog is friend f's beat loop log, in the seat's state dir beside
 // friend pull's briefs (friendCardsDir): ~/.nova-sprint/friend/<f>/beatloop.log.
 func friendBeatLog(friend string) (string, error) {
@@ -496,6 +486,7 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
+	printBeatSkipped(out, k, res.Skipped)
 	fmt.Fprintf(out, "FRIEND BEAT as=%s host=%s working=%d lease_until=%d at=%d\n", k, *host, res.Working, res.LeaseUntil, res.AtMS)
 	if *once {
 		return 0
@@ -525,6 +516,14 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 			}
 			backoff, next = 0, time.Time{}
 		}
+	}
+}
+
+// printBeatSkipped is one SKIPPED line per member of the friend's working
+// set the beat left alone as no copy (life.FriendBeatResult.Skipped).
+func printBeatSkipped(out io.Writer, k taskcard.Consumer, ids []string) {
+	for _, id := range ids {
+		fmt.Fprintf(out, "FRIEND BEAT SKIPPED as=%s id=%s why=%s\n", k, id, quoteField("not a copy: task beat renews a friend-queue task"))
 	}
 }
 
@@ -559,33 +558,34 @@ func runFriendBeatLoop(ctx context.Context, st *store.Store, k taskcard.Consumer
 	defer stop()
 	ticker := time.NewTicker(life.BeatInterval)
 	defer ticker.Stop()
-	var backoff time.Duration
-	var next time.Time
-	now := time.Now()
+	return stepBeatLoop(signalCtx, l, time.Now(), ticker.C, func() {
+		// a stopped loop lets go at once, so the next verb starts one
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		_ = life.ReleaseBeatLoop(rctx, c, k.Name, me.Token)
+		cancel()
+	}, k, out, errOut)
+}
+
+// stepBeatLoop steps l at now and at each time ticks sends until it is
+// done, or ctx ends (release lets go of the lease). The loop's backoff is
+// its own (life.BeatLoop.Step): every tick steps it, and a tick in errors
+// still renews the lease.
+func stepBeatLoop(ctx context.Context, l *life.BeatLoop, now time.Time, ticks <-chan time.Time, release func(), k taskcard.Consumer, out, errOut io.Writer) int {
 	for {
-		if !now.Before(next) {
-			done, why, err := l.Step(signalCtx, now)
-			switch {
-			case err != nil && signalCtx.Err() == nil:
-				backoff = benchBeatBackoff(backoff, life.BeatInterval)
-				next = now.Add(backoff)
-				fmt.Fprintf(errOut, "friend %s beat loop: %v; retry in %s\n", k.Name, err, backoff)
-			case done:
-				fmt.Fprintf(out, "FRIEND BEAT LOOP END as=%s why=%s\n", k, quoteField(why))
-				return 0
-			default:
-				backoff, next = 0, time.Time{}
-			}
+		done, why, err := l.Step(ctx, now)
+		switch {
+		case err != nil && ctx.Err() == nil:
+			fmt.Fprintf(errOut, "friend %s beat loop: %v; retry in %s\n", k.Name, err, l.RetryIn())
+		case done:
+			fmt.Fprintf(out, "FRIEND BEAT LOOP END as=%s why=%s\n", k, quoteField(why))
+			return 0
 		}
 		select {
-		case <-signalCtx.Done():
-			// a stopped loop lets go at once, so the next verb starts one
-			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-			_ = life.ReleaseBeatLoop(rctx, c, k.Name, me.Token)
-			cancel()
+		case <-ctx.Done():
+			release()
 			fmt.Fprintf(out, "FRIEND BEAT LOOP END as=%s why=signal\n", k)
 			return 0
-		case now = <-ticker.C:
+		case now = <-ticks:
 		}
 	}
 }
