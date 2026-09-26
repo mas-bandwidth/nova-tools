@@ -73,6 +73,17 @@ func TestOrderGateWaitConflictAndMergeRevalidates(t *testing.T) {
 		}
 		t.Logf("%s", rep.Order[0].Line())
 	})
+	t.Run("merging-left-out", func(t *testing.T) {
+		t.Parallel()
+		c := setup(t, "merging")
+		c.HSet(ctx, PRKey(repo, 1), "state", "draft") // t1 in merging, its PR not open: Members skips it
+		rep := dry(t, c)
+		want := "ORDER WAIT stream=" + q + " before=t1 where=merging:state:draft held=t2"
+		if len(rep.Members) != 0 || len(rep.Order) != 1 || rep.Order[0].Line() != want {
+			t.Fatalf("members %v skips %v order %v", rep.Members, rep.Skips, rep.Order)
+		}
+		t.Logf("a merging predecessor left out holds the rest: %s", rep.Order[0].Line())
+	})
 	t.Run("done-dep-waits", func(t *testing.T) {
 		t.Parallel()
 		c := setup(t, "waiting")
