@@ -69,13 +69,13 @@ func TestBenchBeatCarriesNCPU(t *testing.T) {
 	ctx := context.Background()
 	res, err := life.BenchBeat(ctx, st, life.BenchRequest{
 		Bench: "b2", Host: "host-b", Session: "sess-b", Actor: "bench", Load1: "3.20",
-		RowAt: time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC), NCPU: 16,
+		RowAt: time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC), NCPU: 16, CPU: "37.5",
 	})
 	if err != nil || !res.Accepted {
 		t.Fatalf("bench beat: %+v %v", res, err)
 	}
-	beat := client.HMGet(ctx, "bench:b2:beat", "load1", "ncpu").Val()
-	if beat[0] != "3.20" || beat[1] != "16" {
-		t.Fatalf("beat load1/ncpu = %v, want 3.20 and 16", beat)
+	beat := client.HMGet(ctx, "bench:b2:beat", "load1", "ncpu", "cpu").Val()
+	if beat[0] != "3.20" || beat[1] != "16" || beat[2] != "37.5" {
+		t.Fatalf("beat load1/ncpu/cpu = %v, want 3.20, 16 and 37.5", beat)
 	}
 }

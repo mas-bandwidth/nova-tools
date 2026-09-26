@@ -69,3 +69,31 @@ func TestPitstopOfTheOpenSprintWithoutAFlag(t *testing.T) {
 		t.Fatalf("the open sprint's stop is not the banner:\n%s", snap.Render(now))
 	}
 }
+
+// TestLoadPrefersTheBeatsCPUPercent (Glenn 2026-09-26 9:35 AM ET, beside an
+// Activity Monitor at 50% while the table said 154%): a beat with cpu prints
+// that busy percent; without it the load average over cores stays the
+// fallback.
+func TestLoadPrefersTheBeatsCPUPercent(t *testing.T) {
+	t.Parallel()
+	now := table.SprintFixtureNow()
+	at := strconv.FormatInt(now.UnixMilli(), 10)
+	client, _ := consumerStore(t, [][]string{
+		{"SADD", "benches", "gamma", "delta"},
+		{"HSET", "bench:gamma:beat", "load1", "48.0", "ncpu", "32", "cpu", "50.7", "at", at},
+		{"HSET", "bench:delta:beat", "load1", "48.0", "ncpu", "32", "at", at},
+	})
+	snap, err := table.NewSprintReader(client, table.SprintConfig{}).Read(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := snap.Render(now)
+	for _, want := range []string{
+		"gamma                     |     0 |       0 |     0 |    - | up     | 50.7%\n",
+		"delta                     |     0 |       0 |     0 |    - | up     | 150.0%\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("load cell: want %q in:\n%s", want, got)
+		}
+	}
+}
