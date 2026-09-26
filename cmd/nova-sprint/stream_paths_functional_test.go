@@ -86,7 +86,7 @@ func TestPathsRemedyRunsVerbatim(t *testing.T) {
 	if code != 1 || !strings.HasPrefix(out, want) {
 		t.Fatalf("unbuilt: %d %q; want prefix %q", code, out, want)
 	}
-	if code, out, errOut := cli(remedyArgs(t, out)...); code != 0 || !strings.Contains(out, " stale=1 repaired=1 records=1 ") {
+	if code, out, errOut := cli(remedyArgs(t, out)...); code != 0 || !strings.Contains(out, " stale=0 repaired=1 records=1 unbuilt=0 ") {
 		t.Fatalf("ws check --repair: %d %q %q", code, out, errOut)
 	}
 

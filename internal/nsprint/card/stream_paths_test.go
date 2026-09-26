@@ -139,13 +139,12 @@ func TestCardPushStreamsPathsDisjoint(t *testing.T) {
 	if strings.Join(lines, "\n") != "PATHS OVERLAP stream=ci other=old paths=cmd/nova-sprint/ci.go" {
 		t.Fatalf("overlaps = %q", lines)
 	}
-	// The repair backfills in one call, gated (#4322): sp-c's PATHS join ci;
-	// sp-u's overlap ci's, so it keeps none and its stream old is left
-	// unbuilt (its paths unknown to the gate), named with its remedy.
+	// The repair backfills in one call (#4322): sp-c's PATHS join ci; sp-u's
+	// overlap ci's and are written too (the repair knows them), so both
+	// streams hold the path, the pair is reported, and nothing is unbuilt.
 	r, err := ws.RepairPaths(ctx, client, cards)
-	if err != nil || r.Streams != 3 || r.Records != 1 || r.Unbuilt != 1 ||
-		strings.Join(r.Refused, "|") != "PATHS overlap paths=cmd/nova-sprint/ci.go stream=ci id=sp-u in=old" {
-		t.Fatalf("repair: %+v %v; want 3 streams (ci docs work), 1 record (sp-c), old unbuilt by sp-u's overlap", r, err)
+	if err != nil || r.Streams != 4 || r.Records != 2 || r.Unbuilt != 0 || len(r.Refused) != 0 {
+		t.Fatalf("repair: %+v %v; want 4 streams (ci docs old work), 2 records (sp-c sp-u), none unbuilt", r, err)
 	}
 	if got := streamPaths(t, ctx, client, "work"); got != "internal/nsprint/ws/check.go" {
 		t.Fatalf("repaired ws:paths work = %q", got)
@@ -153,13 +152,22 @@ func TestCardPushStreamsPathsDisjoint(t *testing.T) {
 	if client.HGet(ctx, keyCard("sp-c"), ws.PathsField).Val() != "cmd/nova-sprint/ci.go" {
 		t.Fatal("repair did not restore sp-c's stream_paths")
 	}
-	if client.HExists(ctx, "task:sp-u", ws.PathsField).Val() || client.HExists(ctx, ws.PathsKey, "old").Val() {
-		t.Fatal("the refused backfill wrote sp-u's stream_paths or built old")
+	if client.HGet(ctx, "task:sp-u", ws.PathsField).Val() != "cmd/nova-sprint/ci.go" || streamPaths(t, ctx, client, "old") != "cmd/nova-sprint/ci.go" {
+		t.Fatal("the overlapping backfill did not write sp-u's stream_paths and build old")
 	}
-	_, err = taskcard.Push(ctx, client, taskcard.PushRequest{ID: "sp-v", Stream: "new", Title: "v", By: "test",
-		Fields: []string{"paths", "elsewhere/v.go"}})
-	if why, _ := taskcard.IsRefused(err); why != "PATHS unbuilt stream=old" {
-		t.Fatalf("push while old is unbuilt: %v", err)
+	// an unrelated push passes; a push into the shared path names both
+	if _, err := taskcard.Push(ctx, client, taskcard.PushRequest{ID: "sp-v", Stream: "new", Title: "v", By: "test",
+		Fields: []string{"paths", "elsewhere/v.go"}}); err != nil {
+		t.Fatalf("unrelated push after the repair: %v", err)
+	}
+	_, err = taskcard.Push(ctx, client, taskcard.PushRequest{ID: "sp-w", Stream: "new", Title: "w", By: "test",
+		Fields: []string{"paths", "cmd/nova-sprint"}})
+	if why, _ := taskcard.IsRefused(err); why != "PATHS overlap paths=cmd/nova-sprint,cmd/nova-sprint/ci.go stream=ci|old" {
+		t.Fatalf("push into the shared path: %v", err)
+	}
+	live, stored, _, _ = ws.LivePaths(ctx, client)
+	if len(live.Overlaps()) != 1 || len(ws.Stale(live, stored)) != 0 {
+		t.Fatalf("after the repair: overlaps %v stale %q; want the one pair, none stale", live.Overlaps(), ws.Stale(live, stored))
 	}
 	// the remedy: old parked releases its paths; the repair is clean
 	if _, err := ws.ParkStream(ctx, client, "old", "test", "park"); err != nil {
@@ -170,7 +178,7 @@ func TestCardPushStreamsPathsDisjoint(t *testing.T) {
 		t.Fatalf("repair after old parked: %+v %v", r, err)
 	}
 	live, stored, _, _ = ws.LivePaths(ctx, client)
-	if s := ws.Stale(live, stored); len(s) != 0 {
-		t.Fatalf("stale after repair: %q", s)
+	if s := ws.Stale(live, stored); len(s) != 0 || len(live.Overlaps()) != 0 {
+		t.Fatalf("after old parked: stale %q overlaps %v", s, live.Overlaps())
 	}
 }

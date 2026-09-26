@@ -150,12 +150,15 @@ func runWS(ctx context.Context, args []string, out, errOut io.Writer) int {
 // two open streams. It recomputes every stream's paths from its live cards'
 // records (ws.LivePaths, three pipelined reads) and prints one PATHS
 // OVERLAP line per pair of streams sharing a path and one PATHS STALE line
-// per stream whose record (ws:paths) differs; --repair writes the records
-// in one FCALL (ws.RepairPaths: the backfill gated, every stream's field
-// from the live sets as they are in that call) and prints one REPAIR
-// REFUSED line per record the gate refused or found changed, its remedy
-// with it. Then one receipt. Exit 0 clean (or repaired with no overlap and
-// no refusal), 1 otherwise.
+// per stream whose record (ws:paths) differs; --repair first writes the
+// records in one FCALL (ws.RepairPaths: the backfill, every stream's field
+// from the live sets as they are in that call; a record whose PATHS
+// overlap another stream's is written too, so the gate refuses a push into
+// either side naming both) and prints one REPAIR REFUSED line per record
+// found changed since the read, its remedy with it, then reports the store
+// as the repair left it. Then one receipt. Exit 0 clean (or repaired with
+// no overlap and no refusal), 1 otherwise: an overlap is reported until
+// one side is parked, cancelled or lands.
 func runWSCheck(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("ws check", out, errOut)
 	repair := w.fs.Bool("repair", false, "")
@@ -171,6 +174,18 @@ func runWSCheck(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return w.done(err, "")
 	}
+	var r ws.Repair
+	if *repair {
+		if r, err = ws.RepairPaths(ctx, st.Client(), cards); err != nil {
+			return w.done(err, "")
+		}
+		for _, line := range r.Refused {
+			fmt.Fprintf(out, "REPAIR REFUSED %s remedy=%s\n", line, strconv.Quote(ws.RepairRemedy))
+		}
+		if live, stored, cards, err = ws.LivePaths(ctx, st.Client()); err != nil {
+			return w.done(err, "")
+		}
+	}
 	pairs := live.Overlaps()
 	for _, p := range pairs {
 		fmt.Fprintln(out, p.Line())
@@ -179,33 +194,12 @@ func runWSCheck(ctx context.Context, args []string, out, errOut io.Writer) int {
 	for _, s := range stale {
 		fmt.Fprintf(out, "PATHS STALE stream=%s record=%d live=%d\n", oneline.Field(s), len(stored[s]), len(live[s]))
 	}
-	var r ws.Repair
-	if *repair {
-		if r, err = ws.RepairPaths(ctx, st.Client(), cards); err != nil {
-			return w.done(err, "")
-		}
-		for _, line := range r.Refused {
-			fmt.Fprintf(out, "REPAIR REFUSED %s remedy=%s\n", line, strconv.Quote(repairRemedy(line)))
-		}
-	}
 	fmt.Fprintf(out, "CHECK streams=%d cards=%d overlaps=%d stale=%d repaired=%d records=%d unbuilt=%d refused=%d ms=%s\n",
 		len(live), len(cards), len(pairs), len(stale), r.Streams, r.Records, r.Unbuilt, len(r.Refused), w.ms())
-	if len(pairs) > 0 || (len(stale) > 0 && !*repair) || len(r.Refused) > 0 {
+	if len(pairs) > 0 || len(stale) > 0 || len(r.Refused) > 0 {
 		return 1
 	}
 	return 0
-}
-
-// repairRemedy is a repair refusal's remedy: a record whose PATHS overlap
-// another stream's leaves its own stream unbuilt until that stream is
-// parked (its paths released; the other keeps its own), a record read
-// before its PATHS changed is read again.
-func repairRemedy(line string) string {
-	if !strings.HasPrefix(line, "PATHS overlap ") {
-		return ws.RepairRemedy
-	}
-	in := line[strings.LastIndex(line, " in=")+len(" in="):]
-	return moveRemedy(in)
 }
 
 // runWSShow is `ws show --order [--stream <s>]` (nova-tools #4318): every

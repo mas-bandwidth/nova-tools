@@ -132,3 +132,35 @@ func TestPathsParseRefusalReadsTheGate(t *testing.T) {
 		}
 	}
 }
+
+// TestPathsGateNamesEveryOverlappingStream (#4322, fix round 4): two
+// streams that ws check --repair wrote overlapping (s1 lib/core, s2
+// lib/core/x.go) both hold their paths. A card into lib/core/y.go overlaps
+// s1 alone and names it (--join s1); one into lib/core/x.go or lib/core
+// names s1 and s2 (also=, remedy park the second); an unrelated card
+// passes. The Lua reply's '|'-joined streams read back the same.
+func TestPathsGateNamesEveryOverlappingStream(t *testing.T) {
+	t.Parallel()
+	sp := ws.StreamPaths{"s1": {"lib/core"}, "s2": {"lib/core/x.go"}, "s3": {"app/c"}}
+	_, no := sp.Gate("s3", []string{"lib/core/y.go"}, "")
+	if want := `REFUSED PATHS overlap stream=s1 paths=lib/core,lib/core/y.go remedy="--join s1"`; no == nil || no.Receipt() != want {
+		t.Fatalf("lib/core/y.go: %v; want %q", no, want)
+	}
+	want := `REFUSED PATHS overlap stream=s1 also=s2 paths=lib/core,lib/core/x.go remedy="nova-sprint scope park --stream s2"`
+	if _, no := sp.Gate("s3", []string{"lib/core/x.go"}, ""); no == nil || no.Receipt() != want {
+		t.Fatalf("lib/core/x.go: %v; want %q", no, want)
+	}
+	if _, no := sp.Gate("s3", []string{"lib/core"}, ""); no == nil || no.Stream != "s1" || strings.Join(no.Also, ",") != "s2" {
+		t.Fatalf("lib/core: %v; want s1 also s2", no)
+	}
+	if to, no := sp.Gate("s3", []string{"app/d", "lib/zz"}, ""); no != nil || to != "s3" {
+		t.Fatalf("unrelated: to=%q %v", to, no)
+	}
+	no, ok := ws.ParseRefusal("PATHS overlap paths=lib/core,lib/core/x.go stream=s1|s2")
+	if !ok || no.Receipt() != want {
+		t.Fatalf("parse s1|s2: %v %v; want %q", ok, no, want)
+	}
+	if _, ok := ws.ParseRefusal("PATHS overlap paths=a stream=|s2"); ok {
+		t.Fatal("ParseRefusal read an empty first stream")
+	}
+}

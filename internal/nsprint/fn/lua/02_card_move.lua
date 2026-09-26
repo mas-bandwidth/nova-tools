@@ -378,9 +378,12 @@ end
 -- overlaps join's paths: --join) and nil, or nil and the typed refusal:
 --   PATHS unbuilt stream=<s>             a registered stream with a live card has no field
 --   PATHS notopen stream=<s>             join names a stream with no live card (parked, landed, unknown)
---   PATHS overlap paths=<a,b> stream=<s> mine overlaps another open stream's
--- (the stream last: a name may hold a space). Other streams are compared in
--- name order; s0, when the record is live there, without the record itself.
+--   PATHS overlap paths=<a,b> stream=<s>[|<s2>...] mine overlaps other open streams'
+-- (the streams last, every one mine overlaps in name order, joined by '|':
+-- a name may hold a space, never a '|'; two streams whose paths overlap,
+-- written so by ws check --repair, are both named by a push into the
+-- path they share). s0, when the record is live there, is compared
+-- without the record itself.
 -- A record with no paths, or entering no stream, is not gated.
 function SP.gate(member, mine, s0, w0, s1, join)
   join = join or ''
@@ -400,6 +403,7 @@ function SP.gate(member, mine, s0, w0, s1, join)
   local streams = {}
   for s in pairs(have) do streams[#streams + 1] = s end
   table.sort(streams)
+  local hit, seen = {}, {}
   for _, s in ipairs(streams) do
     if s ~= target then
       local theirs
@@ -410,8 +414,17 @@ function SP.gate(member, mine, s0, w0, s1, join)
         theirs = SP.list(have[s])
       end
       local ov = SP.overlap(paths, theirs)
-      if ov then return nil, 'PATHS overlap paths=' .. table.concat(ov, ',') .. ' stream=' .. s end
+      if ov then
+        hit[#hit + 1] = s
+        for _, p in ipairs(ov) do seen[p] = true end
+      end
     end
+  end
+  if #hit > 0 then
+    local ov = {}
+    for p in pairs(seen) do ov[#ov + 1] = p end
+    table.sort(ov)
+    return nil, 'PATHS overlap paths=' .. table.concat(ov, ',') .. ' stream=' .. table.concat(hit, '|')
   end
   return target
 end
@@ -451,14 +464,16 @@ end
 -- ns_tcard_move ... stream zeta stream_paths pkg/evil was MOVED): the gate
 -- reads the stored stream_paths before the move's HSET writes a new one.
 -- stream_paths is written only by the push (SP.gate in the create) and by
--- ws check --repair (SP.repair, gated); paths only by the push and by a
--- card end's result (result: the paths the work touched, TM.finish), which
--- reach stream_paths only through the gated repair. nil when k may ride.
-function SP.field(k, result)
+-- ws check --repair (SP.repair); paths only by the push. A card end's
+-- paths (the paths the work touched) are recorded as result_paths
+-- (TM.recorded), never as the card's PATHS: the repair backfills
+-- stream_paths from paths, so a card end writing paths would change its
+-- stream's paths past the gate. nil when k may ride.
+function SP.field(k)
   if k == SP.FIELD then
     return 'FIELD stream_paths is the stream\'s paths: only the push and ws check --repair write it (#4322)'
   end
-  if k == 'paths' and not result then
+  if k == 'paths' then
     return 'FIELD paths is the card\'s PATHS, fixed at its push (#4322): cut another card for other paths'
   end
   return nil
@@ -497,18 +512,18 @@ end
 -- record key -> { raw, want }: a live record's PATHS as ws check read them
 -- (raw) and their stored form (want, ws.SplitPaths comma-joined), for the
 -- records it found with no stream_paths. In this one call, over the live
--- sets as they are now: a record with stream_paths holds them (they are
--- only ever written gated); a record with none and no PATHS holds none; a
--- record with none whose PATHS are still raw is backfilled with want once
--- SP.gate's rule (SP.overlap) passes it against every other stream's
--- paths as the repair builds them (stream name order, then set, then
--- member), and a refused one keeps none and leaves its stream unbuilt (its
--- paths are unknown to the gate), as does a record whose PATHS changed
--- since the read. Then each stream's field is written: the union, '' for
+-- sets as they are now: a record with stream_paths holds them; a record
+-- with none and no PATHS holds none; a record with none whose PATHS are
+-- still raw is backfilled with want, even when they overlap another
+-- stream's: the repair knows those paths, so it stores them and the gate
+-- stays complete (a push into either side is refused naming both
+-- streams, SP.gate) while ws check reports the pair (PATHS OVERLAP, exit
+-- 1) until one side is parked, cancelled or lands. Only a record whose
+-- PATHS changed since the read is unknown: it keeps none and leaves its
+-- stream unbuilt. Then each stream's field is written: the union, '' for
 -- one with no live card, none for an unbuilt one; a field of a stream not
 -- in ws:names goes. Returns REPAIRED streams records unbuilt, then one
--- line per refusal: PATHS overlap paths=<a,b> stream=<other> id=<member>
--- in=<stream>, or PATHS unread id=<member> in=<stream>.
+-- line per record left unknown: PATHS unread id=<member> in=<stream>.
 function SP.repair(cands)
   local names = redis.call('SMEMBERS', 'ws:names')
   table.sort(names)
@@ -543,22 +558,7 @@ function SP.repair(cands)
   for _, s in ipairs(names) do
     for _, p in ipairs(per[s].pend) do
       local mine = SP.list(p.want)
-      local ov, other
-      for _, s2 in ipairs(names) do
-        if s2 ~= s then
-          local theirs = {}
-          for q in pairs(per[s2].seen) do theirs[#theirs + 1] = q end
-          ov = SP.overlap(mine, theirs)
-          if ov then
-            other = s2
-            break
-          end
-        end
-      end
-      if ov then
-        per[s].unknown = true
-        lines[#lines + 1] = 'PATHS overlap paths=' .. table.concat(ov, ',') .. ' stream=' .. other .. ' id=' .. p.m .. ' in=' .. s
-      elseif #mine > 0 then
+      if #mine > 0 then
         redis.call('HSET', p.key, SP.FIELD, table.concat(mine, ','))
         records = records + 1
         for _, q in ipairs(mine) do per[s].seen[q] = true end
@@ -599,7 +599,7 @@ function SP.repair(cands)
 end
 
 -- ns_ws_paths_repair(by, [key, raw, want]...) -> REPAIRED streams records
--- unbuilt, then the refusal lines: SP.repair (ws check --repair).
+-- unbuilt, then the unread lines: SP.repair (ws check --repair).
 redis.register_function('ns_ws_paths_repair', function(keys, args)
   local cands = {}
   for i = 2, #args - 2, 3 do cands[args[i]] = { raw = args[i + 1], want = args[i + 2] } end
@@ -803,7 +803,7 @@ local function card_move(id, to, o)
   for i = 1, #fields, 2 do
     if CM_POINTER[fields[i]] then return 'FIELD ' .. fields[i] .. ' is the pointer' end
     -- no move changes a record's paths past the gate (#4322)
-    local ferr = SP.field(fields[i], o.result)
+    local ferr = SP.field(fields[i])
     if ferr then return ferr end
   end
   local cur = cm_read(id)
@@ -1950,7 +1950,7 @@ function TK.move(id, to, o)
   for i = 1, #fields, 2 do
     if TK.POINTER[fields[i]] then return 'FIELD ' .. fields[i] .. ' is the pointer' end
     -- no move changes a record's paths past the gate (#4322)
-    local ferr = SP.field(fields[i], o.result)
+    local ferr = SP.field(fields[i])
     if ferr then return ferr end
   end
   local cur = TK.read(id)
@@ -2999,12 +2999,16 @@ function TM.cut(c, id, leg, o)
       fields = fields, dry = o.dry, verdict = o.verdict })
     if err or o.dry then return err end
   end
-  local p = redis.call('HMGET', 'task:' .. id, 'created_at', 'stream', unpack(TM.CARRY))
+  local p = redis.call('HMGET', 'task:' .. id, 'created_at', 'stream', 'result_paths', unpack(TM.CARRY))
   local created, at = TK.ms(p[1]) or cm_now(), cm_now()
   local h = { 'task:' .. cid, 'card', 'copy', 'leg', leg, 'primary', id, 'consumer', c, 'where', 'ready',
     'where_at', tostring(at), 'cut_at', tostring(at), 'created_at', string.format('%.0f', created) }
   for i, f in ipairs(TM.CARRY) do
-    local v = TK.str(p[i + 2])
+    local v = TK.str(p[i + 3])
+    -- a primary with no PATHS carries the paths its work touched (a card
+    -- end's result_paths, TM.recorded) to the copy's brief; the copy is in
+    -- no stream set, so they never reach the stream's paths (#4322)
+    if f == 'paths' and v == '' then v = TK.str(p[3]) end
     if v ~= '' then
       h[#h + 1] = f
       h[#h + 1] = v
@@ -3256,6 +3260,18 @@ end
 -- without counting an attempt). Returns nil and {copy, primary, from, to,
 -- next (the copies cut, comma-joined)} or the refusal; with o.dry nil when
 -- it would end.
+-- TM.recorded(f): a card end's result pairs as they are written, its
+-- paths (the paths the work touched) as result_paths: a card's PATHS are
+-- fixed at its push, and the repair reads paths as them (SP.field, #4322).
+function TM.recorded(f)
+  local out = {}
+  for i = 1, #f - 1, 2 do
+    out[#out + 1] = f[i] == 'paths' and 'result_paths' or f[i]
+    out[#out + 1] = f[i + 1]
+  end
+  return out
+end
+
 function TM.finish(id, o)
   if not TK.copy_id(id) then return 'NOTCOPY ' .. TK.str(id) .. ' is not a consumer copy (<id>~<n>)' end
   local r = redis.call('HMGET', 'task:' .. id, 'primary', 'consumer', 'where', 'leg', 'stream', 'end_sig', 'token',
@@ -3308,7 +3324,7 @@ function TM.finish(id, o)
       (leg == 'work' and 'working' or 'review')
   end
   local pf = { 'last_copy', id }
-  for _, v in ipairs(f) do pf[#pf + 1] = v end
+  for _, v in ipairs(TM.recorded(f)) do pf[#pf + 1] = v end
   local cf = {}
   local to, pok, why, sha = nil, nil, TK.str(o.why), TK.str(o.sha)
   local outcome = o.outcome
@@ -3452,9 +3468,9 @@ function TM.finish(id, o)
   end
   -- the primary's copy pointer clears when it names this copy; a live fix
   -- copy stays named while a read of the same head ends
-  -- result: a card end's result fields ride the move, paths among them
-  -- (the paths the work touched; SP.field, #4322)
-  local mo = { by = o.by, why = why, ok = pok, fields = pf, dry = o.dry, review = review ~= nil, result = true }
+  -- a card end's result fields ride the move, its paths as result_paths
+  -- (TM.recorded; SP.field, #4322)
+  local mo = { by = o.by, why = why, ok = pok, fields = pf, dry = o.dry, review = review ~= nil }
   if p.copy == id or not stay then mo.copy = '' end
   if sha ~= '' then mo.sha = sha end
   if score then mo.reads_why = 'superseded: ' .. id .. ' read ' .. score .. '/10' end
@@ -3462,7 +3478,7 @@ function TM.finish(id, o)
     if stay then return nil end
     return TK.move(pid, to, mo)
   end
-  for _, v in ipairs(f) do cf[#cf + 1] = v end
+  for _, v in ipairs(TM.recorded(f)) do cf[#cf + 1] = v end
   cf[#cf + 1] = 'end_sig'
   cf[#cf + 1] = sig
   TM.retire(id, c, w, outcome, why, cf, o.by, r[5])

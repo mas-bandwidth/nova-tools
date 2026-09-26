@@ -174,13 +174,15 @@ func (sp StreamPaths) Add(stream string, paths []string) {
 	sp[stream] = SplitPaths(strings.Join(append(append([]string{}, sp[stream]...), paths...), ","))
 }
 
-// PathsRefusal is a push or move refused because its PATHS overlap another
-// open stream's (the stream and the overlapping paths of both sides), or
+// PathsRefusal is a push or move refused because its PATHS overlap other
+// open streams' (Stream the first by name, Also the rest, and the
+// overlapping paths of every side), or
 // because a stream's paths are unbuilt (Unbuilt: the stream holds live
 // cards and ws:paths has no field for it). Remedy, when set, replaces the
 // overlap's default remedy (--join <stream>).
 type PathsRefusal struct {
 	Stream  string
+	Also    []string
 	Paths   []string
 	Unbuilt bool
 	// NotOpen: --join named a stream that holds no live card (parked,
@@ -197,7 +199,9 @@ const (
 )
 
 // Receipt is the one refusal line; the overlap's remedy is the flag that
-// pushes the card onto that stream instead.
+// pushes the card onto that stream instead. A card overlapping two streams
+// (a pair ws check --repair wrote overlapping) joins neither: the remedy
+// parks the second, after which --join the first passes.
 func (r *PathsRefusal) Receipt() string {
 	if r.Unbuilt {
 		return fmt.Sprintf("REFUSED PATHS unbuilt stream=%s remedy=%s", oneline.Field(r.Stream), strconv.Quote(RepairRemedy))
@@ -206,17 +210,24 @@ func (r *PathsRefusal) Receipt() string {
 		return fmt.Sprintf("REFUSED PATHS notopen stream=%s remedy=%s", oneline.Field(r.Stream), strconv.Quote(StreamsRemedy))
 	}
 	remedy := r.Remedy
-	if remedy == "" {
+	if remedy == "" && len(r.Also) > 0 {
+		remedy = "nova-sprint scope park --stream " + JoinArg(r.Also[0])
+	} else if remedy == "" {
 		remedy = "--join " + JoinArg(r.Stream)
 	}
-	return fmt.Sprintf("REFUSED PATHS overlap stream=%s paths=%s remedy=%s",
-		oneline.Field(r.Stream), oneline.Field(JoinPaths(r.Paths)), strconv.Quote(remedy))
+	also := ""
+	if len(r.Also) > 0 {
+		also = " also=" + oneline.Field(strings.Join(r.Also, "|"))
+	}
+	return fmt.Sprintf("REFUSED PATHS overlap stream=%s%s paths=%s remedy=%s",
+		oneline.Field(r.Stream), also, oneline.Field(JoinPaths(r.Paths)), strconv.Quote(remedy))
 }
 
 // ParseRefusal reads SP.gate's typed refusal (02_card_move.lua), the reply
 // of ns_card_push or the why of a REFUSED task move, push or unpark:
-// "PATHS overlap paths=<a,b> stream=<s>" or "PATHS unbuilt stream=<s>" (the
-// stream last: a name may hold a space). ok is false for any other why.
+// "PATHS overlap paths=<a,b> stream=<s>[|<s2>...]" or "PATHS unbuilt
+// stream=<s>" (the streams last: a name may hold a space, never a '|'). ok
+// is false for any other why.
 func ParseRefusal(why string) (*PathsRefusal, bool) {
 	if rest, ok := strings.CutPrefix(why, "PATHS unbuilt stream="); ok && rest != "" {
 		return &PathsRefusal{Stream: rest, Unbuilt: true}, true
@@ -232,7 +243,11 @@ func ParseRefusal(why string) (*PathsRefusal, bool) {
 	if !ok || csv == "" || stream == "" {
 		return nil, false
 	}
-	return &PathsRefusal{Stream: stream, Paths: ParsePaths(csv)}, true
+	streams := strings.Split(stream, "|")
+	if streams[0] == "" {
+		return nil, false
+	}
+	return &PathsRefusal{Stream: streams[0], Also: streams[1:], Paths: ParsePaths(csv)}, true
 }
 
 func (r *PathsRefusal) Error() string { return r.Receipt() }
@@ -248,7 +263,7 @@ func JoinArg(stream string) string {
 
 // Gate is push's check of one card with its PATHS on stream against every
 // OTHER open stream: the stream the card is pushed onto, or the refusal
-// naming the first overlapping stream (by name). join names a stream the
+// naming every overlapping stream (by name; SP.gate's rule). join names a stream the
 // card may overlap: a card overlapping it is pushed onto it instead. A card
 // with no paths, or with neither a stream nor a join, is not gated.
 func (sp StreamPaths) Gate(stream string, paths []string, join string) (string, *PathsRefusal) {
@@ -259,13 +274,24 @@ func (sp StreamPaths) Gate(stream string, paths []string, join string) (string, 
 	if join != "" && join != stream && OverlappingPaths(paths, sp[join]) != nil {
 		target = join
 	}
+	var no *PathsRefusal
+	var ovs []string
 	for _, s := range sp.names() {
 		if s == target {
 			continue
 		}
 		if ov := OverlappingPaths(paths, sp[s]); ov != nil {
-			return "", &PathsRefusal{Stream: s, Paths: ov}
+			if no == nil {
+				no = &PathsRefusal{Stream: s}
+			} else {
+				no.Also = append(no.Also, s)
+			}
+			ovs = append(ovs, ov...)
 		}
+	}
+	if no != nil {
+		no.Paths = SplitPaths(JoinPaths(ovs))
+		return "", no
 	}
 	return target, nil
 }
@@ -493,10 +519,9 @@ func Stale(live, stored StreamPaths) []string {
 const RepairFunction = "ns_ws_paths_repair"
 
 // Repair is what RepairPaths wrote: the streams whose field changed, the
-// records backfilled, the streams left unbuilt, and one line per record the
-// gate refused (PATHS overlap paths=<a,b> stream=<other> id=<member>
-// in=<stream>) or found changed since the read (PATHS unread id=<member>
-// in=<stream>).
+// records backfilled (overlapping another stream's or not: ws check
+// reports the pair), the streams left unbuilt, and one line per record
+// found changed since the read (PATHS unread id=<member> in=<stream>).
 type Repair struct {
 	Streams, Records, Unbuilt int
 	Refused                   []string
@@ -504,9 +529,9 @@ type Repair struct {
 
 // RepairPaths is ws check --repair: one FCALL of ns_ws_paths_repair with
 // the live cards LivePaths found holding PATHS and no PathsField, each as
-// its record key, the PATHS read and their stored form. The Lua gates each
-// backfill against every other stream's paths as it builds them and writes
-// every stream's field from the live sets in the same call. It is the
+// its record key, the PATHS read and their stored form. The Lua backfills
+// each whose PATHS are still those read and writes every stream's field
+// from the live sets in the same call. It is the
 // backfill of the records cut before #4322 and the fix of any drift since.
 func RepairPaths(ctx context.Context, c redis.Cmdable, cards []LiveCard) (Repair, error) {
 	args := []any{"ws check --repair"}
