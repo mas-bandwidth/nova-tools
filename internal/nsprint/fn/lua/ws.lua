@@ -428,7 +428,12 @@ end
 -- (NS.task.reorder, 02_card_move.lua). by is the receipt's. The ids are
 -- every live card the caller read; REFUSED ORDER STALE when the stream's
 -- live cards changed since (nothing written; the caller reads again).
+-- ns_ws_reorder(PROBE) -> PROBE, reading and writing nothing: a push door
+-- calls it before its write (the #4322 fix round), so a seat whose ACL
+-- lacks +fcall|ns_ws_reorder is refused NOPERM before it writes a card
+-- whose order it could not write.
 local function ws_reorder(keys, args)
+  if #args == 1 and args[1] == 'PROBE' then return { 'PROBE' } end
   local stream = args[1]
   if not W.known(stream) then
     return { 'REFUSED', 'unknown stream ' .. tostring(stream) }

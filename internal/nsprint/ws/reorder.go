@@ -300,28 +300,25 @@ func Base(order []Ordered, created func(id string) float64) float64 {
 	return base
 }
 
-// PushCard is one card a push is about to write onto a stream, as the
-// order reads it: its id, ref and origin (the issue number), PATHS and
-// DEPENDS-ON.
+// PushCard is one card of a batch push, as the order reads it: its id, ref
+// and origin (the issue number), PATHS and DEPENDS-ON.
 type PushCard struct {
 	ID, Ref, Origin, Paths, DependsOn string
 }
 
-// WouldCycle is the push's check before any write (nova-tools #4322 fix
-// round: a push that closes a DEPENDS-ON cycle is refused and writes
-// nothing): the stream's live cards (ReadOrders' two round trips) with the
-// pushed cards added (a pushed id already live is replaced) are ordered, and
-// a cycle is returned as its *CycleError; nil when the order holds. A
-// stream with no name is never checked.
-func WouldCycle(ctx context.Context, c redis.Cmdable, stream string, adds []PushCard) error {
+// BatchCycle is card push's check of its own batch, before any write
+// (nova-tools #4322): the batch's cards for one stream, ordered alone, and
+// a DEPENDS-ON cycle among them is returned as its *CycleError, so the
+// whole batch is refused rather than written up to the card that closes it.
+// It reads no store: a cycle through a card already live is the push
+// FCALL's own refusal (cm_order_cycle in fn/lua/02_card_move.lua, on the
+// live edge set at that instant).
+func BatchCycle(stream string, adds []PushCard) error {
 	if stream == "" || len(adds) == 0 {
 		return nil
 	}
-	members, recs, err := readLive(ctx, c, []string{stream})
-	if err != nil {
-		return err
-	}
-	ms := members[0]
+	var ms []liveMember
+	recs := map[string]orderRec{}
 	for _, a := range adds {
 		if _, ok := recs[a.ID]; !ok {
 			ms = append(ms, liveMember{id: a.ID, where: Waiting})
@@ -333,6 +330,30 @@ func WouldCycle(ctx context.Context, c redis.Cmdable, stream string, adds []Push
 		return err
 	}
 	return so.Err
+}
+
+// IsCycleRefusal is whether a push's refusal text is its FCALL's ORDER
+// CYCLE (cm_order_cycle): the push closed a DEPENDS-ON cycle through the
+// card it writes, and nothing of it was written.
+func IsCycleRefusal(why string) bool { return strings.HasPrefix(why, "ORDER CYCLE ") }
+
+// ProbeReorder is a push door's grant check before its write (the #4322 fix
+// round; decided: refuse, not write): FCALL ns_ws_reorder PROBE reads and
+// writes nothing, and a seat whose ACL lacks +fcall|ns_ws_reorder is
+// refused NOPERM by the store. A push that went ahead would store a card
+// whose work order its seat cannot write (the cold read's
+// order=error:"ns_ws_reorder: NOPERM" with the card written), and the push
+// FCALL cannot write the order itself without a second copy of ws.Order in
+// Lua. nil when the seat holds the grant.
+func ProbeReorder(ctx context.Context, c redis.Cmdable) error {
+	out, err := call(ctx, c, FnReorder, false, "PROBE")
+	if err != nil {
+		return err // "ns_ws_reorder: NOPERM ..." names the function
+	}
+	if len(out) != 1 || out[0] != "PROBE" {
+		return fmt.Errorf("%s PROBE: unexpected reply %v (a library older than this binary: nova-sprint fn load)", FnReorder, out)
+	}
+	return nil
 }
 
 var titleStreamRE = regexp.MustCompile(`^\s*STREAM:\s*(.*?)\s*\|`)

@@ -241,6 +241,11 @@ end
 -- in those three sets, so a move, a place and a repair carry the order and
 -- the lander and the dealer read it as the sets' order. Every other set,
 -- and a record the order has not ranked yet, is scored by created_at.
+-- CM_ORDER_LIVE: the places whose cards a stream's work order ranks
+-- (ws.OrderLive): a move into one of them from outside is a door of the
+-- order's DEPENDS-ON check (cm_order_cycle).
+local CM_ORDER_LIVE = { waiting = true, ready = true, working = true, review = true, merging = true }
+
 local function cm_ws_score(k, created, order)
   local n = tonumber(order)
   if n and type(k) == 'string' and string.sub(k, 1, 3) == 'ws:' and
@@ -267,6 +272,10 @@ end
 -- slug would share a sentinel id: refused before any write by cm_slug_check,
 -- assigned below TK, at every door a stream enters through).
 local cm_sentinel, cm_slug_check
+-- cm_order_cycle(stream, id, blocked_on, depends_on): the work order's
+-- DEPENDS-ON check (nova-tools #4322), assigned below TK; nil or the ORDER
+-- CYCLE refusal.
+local cm_order_cycle
 local function cm_register(stream)
   if type(stream) ~= 'string' or stream == '' then return end
   redis.call('SADD', 'ws:names', stream)
@@ -435,7 +444,8 @@ end
 local function cm_adopt(id, S, label)
   local w, ok = cm_derive(S, label, id)
   if not w then return 'STATE ' .. tostring(redis.call('HGET', id, 'state')) .. ' has no place' end
-  local c = redis.call('HMGET', id, 'created_at', 'cut_at', 'bench', 'stream', 'owner', 'state', 'priority')
+  local c = redis.call('HMGET', id, 'created_at', 'cut_at', 'bench', 'stream', 'owner', 'state', 'priority',
+    'order_score')
   local created = tonumber(c[1])
   if not created then
     created = tonumber(c[2]) or cm_now()
@@ -448,7 +458,8 @@ local function cm_adopt(id, S, label)
   local legacy = redis.call('ZSCORE', 's:' .. S .. ':pool', label)
   if legacy and not c[7] then redis.call('HSET', id, 'priority', tostring(legacy)) end
   redis.call('ZADD', 'sprint:' .. S .. ':cards', created, id)
-  for _, e in ipairs(cm_views(S, label, id, p)) do cm_add(e, created) end
+  -- a stream's waiting, ready and merging sets take the order score (#4322)
+  for _, e in ipairs(cm_views(S, label, id, p)) do cm_add(e, cm_ws_score(e.k, created, c[8])) end
   if w ~= 'ready' then redis.call('ZREM', 's:' .. S .. ':pool', label) end
   if w ~= 'waiting' then redis.call('SREM', 's:' .. S .. ':waiting', label) end
   redis.call('SADD', cm_idx(S, c[6]), label)
@@ -509,6 +520,23 @@ local function card_move(id, to, o)
   for _, e in ipairs(new) do
     local why = e.t == 'z' and cm_probe_refused(e.k, e.m)
     if why then return why end
+  end
+  -- the work order (#4322): a move back into the stream's live cards (card
+  -- create checked its own push), or one that edits the DEPENDS-ON, is
+  -- refused when it closes a cycle through the card, before any write
+  if CM_ORDER_LIVE[to] and cm_order_cycle then
+    local bo, dep, edits = nil, nil, false
+    for i = 1, #fields, 2 do
+      if fields[i] == 'blocked_on' then bo, edits = fields[i + 1], true end
+      if fields[i] == 'depends_on' then dep, edits = fields[i + 1], true end
+    end
+    if edits or (cur.where ~= '' and not CM_ORDER_LIVE[cur.where]) then
+      local c = redis.call('HMGET', id, 'blocked_on', 'depends_on')
+      if bo == nil then bo = c[1] end
+      if dep == nil then dep = c[2] end
+      err = cm_order_cycle(nxt.stream, id, bo, dep)
+      if err then return err end
+    end
   end
   local was, keep = {}, {}
   for _, e in ipairs(old) do was[e.k] = true end
@@ -580,6 +608,17 @@ local function card_create(id, fields, o)
   if cm_slug_check then
     local serr = cm_slug_check(cstream)
     if serr then return serr end
+  end
+  -- the work order (#4322): a push that closes a DEPENDS-ON cycle through
+  -- itself in its stream is refused here, before any write
+  if cm_order_cycle then
+    local bo, dep = nil, nil
+    for i = 1, #fields, 2 do
+      if fields[i] == 'blocked_on' then bo = fields[i + 1] end
+      if fields[i] == 'depends_on' then dep = fields[i + 1] end
+    end
+    local cerr = cm_order_cycle(cstream, id, bo, dep)
+    if cerr then return cerr end
   end
   local created = cm_now()
   local h = { id }
@@ -1638,6 +1677,24 @@ function TK.move(id, to, o)
     err = TK.verify(id, cur, { nxt.stream }, { nxt.friend })
     if err then return 'DRIFT ' .. err .. ' task:' .. id .. '; run nova-sprint task fsck' end
   end
+  -- the work order (#4322): a move into the stream's live cards from outside
+  -- them (another stream, or a place the order does not rank), or one that
+  -- edits the DEPENDS-ON, is refused when it closes a cycle through the
+  -- record, before any write (TK.create checked its own push already)
+  if not o.order_checked and TK.ORDER_LIVE_IS[to] then
+    local bo, dep, edits = nil, nil, false
+    for i = 1, #fields, 2 do
+      if fields[i] == 'blocked_on' then bo, edits = fields[i + 1], true end
+      if fields[i] == 'depends_on' then dep, edits = fields[i + 1], true end
+    end
+    if edits or nxt.stream ~= cur.stream or not TK.ORDER_LIVE_IS[cur.where] then
+      local c = redis.call('HMGET', 'task:' .. id, 'blocked_on', 'depends_on')
+      if bo == nil then bo = c[1] end
+      if dep == nil then dep = c[2] end
+      err = cm_order_cycle(nxt.stream, id, bo, dep)
+      if err then return err end
+    end
+  end
   if o.dry then return nil end
   if cur.where == to and nxt.stream == cur.stream and nxt.friend == cur.friend and front ~= '1' and ok == cur.ok and
       state == cur.state and (o.copy == nil or o.copy == cur.copy) then
@@ -1810,6 +1867,15 @@ function TK.create(id, fields, o)
       end
     end
   end
+  -- the work order (#4322): a push that closes a DEPENDS-ON cycle through
+  -- itself in its stream is refused here, before any write
+  local bo, dep = nil, nil
+  for i = 1, #fields, 2 do
+    if fields[i] == 'blocked_on' then bo = fields[i + 1] end
+    if fields[i] == 'depends_on' then dep = fields[i + 1] end
+  end
+  local cerr = cm_order_cycle(stream, id, bo, dep)
+  if cerr then return cerr end
   local h = { 'task:' .. id }
   for i = 1, #fields do h[#h + 1] = fields[i] end
   for _, kv in ipairs({ { 'where', '' }, { 'where_ok', '-' }, { 'state', '' }, { 'stream', stream },
@@ -1821,7 +1887,7 @@ function TK.create(id, fields, o)
   redis.call('HSET', unpack(h))
   TK.register(stream)
   return TK.move(id, where, { by = o.by, why = o.why or 'push', front = o.front, sprint = o.sprint, state = o.state,
-    qscore = o.qscore, sentinel = o.sentinel })
+    qscore = o.qscore, sentinel = o.sentinel, order_checked = true })
 end
 
 -- TK.derive: the place a record's own facts imply, for adoption and
@@ -4400,6 +4466,130 @@ cm_sentinel = function(stream)
 end
 
 cm_slug_check = TK.slug_clash
+
+-- THE WORK ORDER'S DEPENDS-ON CHECK (nova-tools #4322 fix round 3; card
+-- land-order-1). A stream's order is the topological order of its live cards'
+-- DEPENDS-ON edges (internal/nsprint/ws.Order), so a cycle among them leaves
+-- the stream with no order at all. The cold read of 9aad08b5f found the check
+-- was a Go read before a separate write: two racing pushes, x on y and y on
+-- x, each read a stream without the other and both were stored (1 cycle in
+-- 10 barrier pairs, 3 of 3 runs). The check is here instead, inside the
+-- FCALL that writes, on the live edge set at that instant: every door that
+-- brings a record into a stream's live cards or edits its DEPENDS-ON calls it
+-- before its first write (TK.create: ns_tcard_push, ns_task_push, card cut
+-- --from and --parent; card_create: ns_card_push; TK.move and card_move:
+-- a DEPENDS-ON field edit such as card cut --parent's bind, a move into
+-- another stream, a move back into the live cards such as an unpark).
+--
+-- Only a cycle through the record the door writes refuses it: a stream that
+-- already holds a cycle (from a hand edit, older data or a race before this
+-- check) still takes every push the cycle does not run through.
+--
+-- The edges are ws.Order's, read the way ws.ReadOrders reads them: the live
+-- cards are the members of the stream's waiting, ready, working, review and
+-- merging sets, plus the record being written; a record's DEPENDS-ON is its
+-- blocked_on, else its depends_on (readOrderRec); an entry is ws.SplitDeps'
+-- and ws.DepID's (split on , ; and white space, none and - dropped, task:
+-- stripped, an owner/repo#n or URL is no edge); a card's bare label names
+-- its sprint's card id when that card is live (orderCards); an entry that
+-- names no live card, the record itself or the stream's sentinel is no
+-- edge, and the sentinel's own DEPENDS-ON is none (Order). Records are read
+-- lazily, only those reachable from the one written.
+
+-- cm_dep_ids(text): the ids a DEPENDS-ON value names (ws.SplitDeps, ws.DepID).
+local function cm_dep_ids(text)
+  local parts = {}
+  for p in string.gmatch(TK.str(text), '[^,; \t\r\n]+') do parts[#parts + 1] = p end
+  if #parts == 1 and (parts[1] == 'none' or parts[1] == '-') then return {} end
+  local out, seen = {}, {}
+  for _, p in ipairs(parts) do
+    if p ~= 'none' and p ~= '-' and not seen[p] then
+      seen[p] = true
+      if not string.find(p, '#', 1, true) and not string.find(p, '://', 1, true) then
+        if string.sub(p, 1, 5) == 'task:' then p = string.sub(p, 6) end
+        if p ~= '' then out[#out + 1] = p end
+      end
+    end
+  end
+  return out
+end
+
+-- TK.deps_text(blocked_on, depends_on): a record's DEPENDS-ON as the order
+-- reads it: blocked_on, else depends_on.
+function TK.deps_text(blocked_on, depends_on)
+  local b = TK.str(blocked_on)
+  if b ~= '' then return b end
+  return TK.str(depends_on)
+end
+
+-- TK.order_live: the places whose cards the order ranks (ws.OrderLive).
+TK.ORDER_LIVE = { 'waiting', 'ready', 'working', 'review', 'merging' }
+TK.ORDER_LIVE_IS = CM_ORDER_LIVE
+
+-- cm_order_cycle(stream, id, blocked_on, depends_on): nil when record id,
+-- live in stream with that DEPENDS-ON (TK.deps_text), closes no cycle
+-- through itself; else the refusal
+-- ORDER CYCLE stream="<s>" DEPENDS-ON cycle id -> ... -> id, the first
+-- cycle a depth-first walk from id finds, each record's edges in id order.
+cm_order_cycle = function(stream, id, blocked_on, depends_on)
+  stream = TK.str(stream)
+  if stream == '' or type(id) ~= 'string' then return nil end
+  local sid = TK.sentinel_id(stream)
+  if id == sid then return nil end
+  local mine = cm_dep_ids(TK.deps_text(blocked_on, depends_on))
+  if #mine == 0 then return nil end
+  local live = { [id] = true }
+  for _, w in ipairs(TK.ORDER_LIVE) do
+    for _, m in ipairs(redis.call('ZRANGE', 'ws:' .. stream .. ':' .. w, 0, -1)) do live[m] = true end
+  end
+  local edges = {}
+  local function out(n)
+    if edges[n] then return edges[n] end
+    local raw = mine
+    if n ~= id then
+      if n == sid then
+        raw = {}
+      else
+        local key = n
+        if not TK.card_id(n) then key = 'task:' .. n end
+        local c = redis.call('HMGET', key, 'blocked_on', 'depends_on')
+        raw = cm_dep_ids(TK.deps_text(c[1], c[2]))
+      end
+    end
+    local S = string.match(n, '^s:([-a-z0-9]+):card:')
+    local list, seen = {}, {}
+    for _, d in ipairs(raw) do
+      if not live[d] and S and live['s:' .. S .. ':card:' .. d] then d = 's:' .. S .. ':card:' .. d end
+      if live[d] and d ~= n and d ~= sid and not seen[d] then
+        seen[d] = true
+        list[#list + 1] = d
+      end
+    end
+    table.sort(list)
+    edges[n] = list
+    return list
+  end
+  local visited = { [id] = true }
+  local stack = { { n = id, i = 0, e = out(id) } }
+  while #stack > 0 do
+    local top = stack[#stack]
+    top.i = top.i + 1
+    local nx = top.e[top.i]
+    if nx == nil then
+      stack[#stack] = nil
+    elseif nx == id then
+      local names = {}
+      for _, f in ipairs(stack) do names[#names + 1] = f.n end
+      names[#names + 1] = id
+      return 'ORDER CYCLE stream="' .. string.gsub(stream, '["\\]', '\\%0') .. '" DEPENDS-ON cycle ' ..
+        table.concat(names, ' -> ')
+    elseif not visited[nx] then
+      visited[nx] = true
+      stack[#stack + 1] = { n = nx, i = 0, e = out(nx) }
+    end
+  end
+  return nil
+end
 
 -- ns_tcard_sentinels(write) -> SENTINELS missing created, then per missing
 -- stream its name and sentinel id: every registered stream without a

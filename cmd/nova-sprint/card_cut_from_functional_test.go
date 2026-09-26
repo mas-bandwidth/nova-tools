@@ -71,13 +71,11 @@ func TestCardCutFromLandsHundredInWaiting(t *testing.T) {
 	}
 }
 
-// cutDepsRedis are the verb's seams on a real store: the push and the cut
-// ledger through taskcard, the forge a fake.
+// cutDepsRedis are the verb's seams on a real store: the verb's own push
+// (cutPush) and the cut ledger through taskcard, the forge a fake.
 func cutDepsRedis(forge *fakeCutForge, client *redis.Client) cutFromDeps {
 	d := cutDeps(forge, nil)
-	d.Push = func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
-		return taskcard.PushMany(ctx, client, reqs)
-	}
+	d.Push = cutPush(client) // the verb's own push: the grant check, then the pipeline
 	d.LedgerRead = func(ctx context.Context, key string) (taskcard.CutLedger, error) {
 		return taskcard.ReadCutLedger(ctx, client, key)
 	}

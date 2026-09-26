@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
@@ -37,7 +39,9 @@ func storeSnapshot(t *testing.T, c *redis.Client) string {
 // TestOrderDoorsCLI is the #4322 fix round's push and move doors on a
 // throwaway store. (1) A push that closes a DEPENDS-ON cycle is REFUSED and
 // writes nothing (keys, ws:log length and every ZSET unchanged), in each
-// form: task push --actor, friend-queue task push (no --actor), card push.
+// form: task push --actor, friend-queue task push (no --actor), card push
+// (a batch cycle, refused whole before any write, and a cycle through a
+// live card, refused by ns_card_push itself).
 // (5) A friend-queue task push onto a stream (its title's STREAM:) writes
 // the order: one ORDER line. task move --to-stream orders both streams;
 // scope park and unpark carry order= in their receipts.
@@ -64,7 +68,7 @@ func TestOrderDoorsCLI(t *testing.T) {
 	before := storeSnapshot(t, c)
 	code, out, _ = runTaskCLI("push", "--actor", "rowan", "--id", "y", "--stream", s, "--kind", "build",
 		"--title", "y", "--ref", "mas-bandwidth/nova-tools#2", "--on", "x")
-	if code != 1 || !regexp.MustCompile(`^TASK push REFUSED id=y why="ORDER CYCLE stream=\\"order: doors\\" DEPENDS-ON cycle x -> y -> x" ms=\d+\n$`).MatchString(out) {
+	if code != 1 || !regexp.MustCompile(`^TASK push REFUSED id=y why="ORDER CYCLE stream=\\"order: doors\\" DEPENDS-ON cycle y -> x -> y" ms=\d+\n$`).MatchString(out) {
 		t.Fatalf("push y on x: %d %q", code, out)
 	}
 	if after := storeSnapshot(t, c); after != before {
@@ -90,14 +94,58 @@ func TestOrderDoorsCLI(t *testing.T) {
 	f.as("a")
 	before = storeSnapshot(t, c)
 	code, out, _ = runTaskCLI("push", "--to", "a", "--id", "fq2", "--kind", "work", "--ref", "mas-bandwidth/nova-tools#5",
-		"--title", "STREAM: "+s2+" | fq two", "--on", "z")
-	if code != 2 || !strings.HasPrefix(out, `PUSH INVALID id=fq2 why="ORDER CYCLE stream=\"order: queue\" DEPENDS-ON cycle z -> fq2 -> z"`) {
+		"--title", "STREAM: "+s2+" | fq two", "--on", "task:z")
+	if code != 2 || out != `PUSH INVALID id=fq2 why="ORDER CYCLE stream=\"order: queue\" DEPENDS-ON cycle fq2 -> z -> fq2"`+"\n" {
 		t.Fatalf("friend-queue push closing a cycle: %d %q", code, out)
 	}
 	if after := storeSnapshot(t, c); after != before {
 		t.Fatalf("the refused friend-queue push wrote:\n%s---\n%s", before, after)
 	}
 	t.Logf("friend-queue cycle: %s", strings.TrimSpace(out))
+
+	// friend-queue task push onto a stream that holds a cycle (the fix
+	// round 3, probe (a)): z and fq1 name each other by a hand edit; fq3 on
+	// z is outside the cycle and is written, fq4 on fq1 joins it (fq1 names
+	// fq4) and is refused, nothing written.
+	c.HSet(ctx, "task:z", "blocked_on", "fq1")
+	c.HSet(ctx, "task:fq1", "depends_on", "task:z;task:fq4")
+	code, out, errOut = runTaskCLI("push", "--to", "a", "--id", "fq3", "--kind", "work", "--ref", "mas-bandwidth/nova-tools#6",
+		"--title", "STREAM: "+s2+" | fq three", "--on", "task:z")
+	if code != 0 || !c.HExists(ctx, "task:fq3", "where").Val() ||
+		!strings.Contains(out, "\nORDER CYCLE stream=\"order: queue\" DEPENDS-ON cycle fq1 -> z -> fq1\n") {
+		t.Fatalf("friend-queue push beside a cycle: %d %q %q", code, out, errOut)
+	}
+	t.Logf("friend-queue, unrelated: exit %d, %s", code, strings.ReplaceAll(strings.TrimSpace(out), "\n", " | "))
+	before = storeSnapshot(t, c)
+	code, out, _ = runTaskCLI("push", "--to", "a", "--id", "fq4", "--kind", "work", "--ref", "mas-bandwidth/nova-tools#7",
+		"--title", "STREAM: "+s2+" | fq four", "--on", "task:fq1")
+	if code != 2 || out != `PUSH INVALID id=fq4 why="ORDER CYCLE stream=\"order: queue\" DEPENDS-ON cycle fq4 -> fq1 -> fq4"`+"\n" {
+		t.Fatalf("friend-queue push joining the cycle: %d %q", code, out)
+	}
+	if after := storeSnapshot(t, c); after != before {
+		t.Fatalf("the refused friend-queue push wrote:\n%s---\n%s", before, after)
+	}
+	t.Logf("friend-queue, joining: exit %d, %s", code, strings.TrimSpace(out))
+
+	// friend-queue task push by a seat without +fcall|ns_ws_reorder (probe
+	// (c)): refused before any write, PUSH INVALID with ORDER GRANT.
+	if err := c.Do(ctx, "ACL", "SETUSER", "fqbare", "on", ">fqbare-pass", "~*", "&*", "+@all", "-fcall", "+fcall|ns_task_push").Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(store.UserEnv, "fqbare")
+	t.Setenv(redisauth.PasswordEnvEnv, "ORDER_DOORS_FQ_PASS")
+	t.Setenv("ORDER_DOORS_FQ_PASS", "fqbare-pass")
+	before = storeSnapshot(t, c)
+	code, out, _ = runTaskCLI("push", "--to", "a", "--id", "fq5", "--kind", "work", "--ref", "mas-bandwidth/nova-tools#8",
+		"--title", "STREAM: "+s2+" | fq five")
+	if code != 2 || !strings.HasPrefix(out, `PUSH INVALID id=fq5 why="ORDER GRANT ns_ws_reorder: NOPERM User fqbare has no permissions to run the 'fcall' command;`) {
+		t.Fatalf("friend-queue push without the grant: %d %q", code, out)
+	}
+	if after := storeSnapshot(t, c); after != before {
+		t.Fatalf("the refused friend-queue push wrote:\n%s---\n%s", before, after)
+	}
+	t.Logf("friend-queue, no grant: exit %d, %s", code, strings.TrimSpace(out))
+	t.Setenv(store.UserEnv, "")
 	f.as("")
 	t.Setenv("NOVA_FRIEND", "")
 
@@ -124,9 +172,26 @@ func TestOrderDoorsCLI(t *testing.T) {
 	}
 	t.Logf("card push cycle: %s", strings.TrimSpace(errOut))
 
+	// card push, a cycle through a live card (the fix round 3: ns_card_push
+	// refuses it itself): three is live and, by a hand edit (card push
+	// refuses a DEPENDS-ON on no card), on four; then four is pushed on three.
+	if code, out, errOut = runSprint("card", "push", "--sprint", "sp1", "--redis", addr, cardFile("three", "9", "none")); code != 0 {
+		t.Fatalf("card push three: %d %q %q", code, out, errOut)
+	}
+	c.HSet(ctx, "s:sp1:card:three", "depends_on", "four")
+	before = storeSnapshot(t, c)
+	code, out, errOut = runSprint("card", "push", "--sprint", "sp1", "--redis", addr, cardFile("four", "10", "three"))
+	if code == 0 || !strings.Contains(errOut, `ns_card_push: ORDER CYCLE stream="order: doors" DEPENDS-ON cycle s:sp1:card:four -> s:sp1:card:three -> s:sp1:card:four`) {
+		t.Fatalf("card push closing a cycle through a live card: %d %q %q", code, out, errOut)
+	}
+	if after := storeSnapshot(t, c); after != before {
+		t.Fatalf("the refused card push wrote:\n%s---\n%s", before, after)
+	}
+	t.Logf("card push cycle through a live card: %s", strings.TrimSpace(errOut))
+
 	// task move --to-stream: both streams ordered, one ORDER line each.
 	code, out, _ = runTaskCLI("move", "--actor", "rowan", "--id", "x", "--to-stream", s3)
-	if code != 0 || !regexp.MustCompile(`\nORDER stream="order: doors" order=1 order_rt=3 order_ms=[0-9.]+\nORDER stream="order: moved" order=2 order_rt=3 order_ms=[0-9.]+\n$`).MatchString(out) {
+	if code != 0 || !regexp.MustCompile(`\nORDER stream="order: doors" order=2 order_rt=3 order_ms=[0-9.]+\nORDER stream="order: moved" order=2 order_rt=3 order_ms=[0-9.]+\n$`).MatchString(out) {
 		t.Fatalf("move --to-stream: %d %q", code, out)
 	}
 	stale(s)

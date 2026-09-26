@@ -92,12 +92,13 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 	pipe := client.Pipeline()
 	cmds := make([]*redis.Cmd, len(docs))
 	headers := make([]*redis.Cmd, len(docs))
+	bodySet := make([]*redis.BoolCmd, len(docs))
 	for i, doc := range docs {
 		// The body the wrapper runs (card run reads BodyKey(sprint,
 		// payload_sha), nova-tools#4101): stored by every push path, in the
 		// same pipeline, once (SETNX; the sha names the bytes), with the
 		// retired pusher's 7-day TTL (#3809).
-		pipe.SetNX(ctx, BodyKey(sprint, doc.Payload), bodies[i], BodyTTL)
+		bodySet[i] = pipe.SetNX(ctx, BodyKey(sprint, doc.Payload), bodies[i], BodyTTL)
 		keys := []string{
 			keyCard(sprint, doc.Label),
 			keyPool(sprint),
@@ -135,6 +136,12 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 			re := benchrole.Refused(doc.Bench, strings.TrimPrefix(reply, "ROLE "), "no swarm card is dealt to a friends bench; "+named(files[i].Name, "drop the BENCH: line or name a fleet bench"))
 			out[i] = VerbResult{Code: re.ExitCode(), Stderr: oneline.Escape(re.Error()) + "\n"}
 			continue
+		}
+		if err != nil && strings.Contains(err.Error(), "ORDER CYCLE ") && bodySet[i].Val() {
+			// the card closed a DEPENDS-ON cycle and ns_card_push wrote
+			// nothing of it (#4322): the body this pipeline stored for it
+			// goes too, so a refused push leaves the store as it was
+			_ = client.Del(ctx, BodyKey(sprint, doc.Payload)).Err()
 		}
 		out[i] = pushResult(sprint, doc.Label, reply, err)
 		// The header reply counts only for a card this push stored.
@@ -315,8 +322,9 @@ func ensure(ctx context.Context, client *redis.Client) error {
 }
 
 // StreamCards is a batch's cards by stream, as the work order reads them
-// (nova-tools #4322: card push checks each stream's order before any write
-// and writes it after the insert): the distinct STREAM: lines in file order
+// (nova-tools #4322: card push refuses a batch whose own cards close a
+// DEPENDS-ON cycle before any write, and writes each stream's order after
+// the insert): the distinct STREAM: lines in file order
 // and, for each, its cards (id s:<sprint>:card:<label>, ORIGIN, PATHS,
 // DEPENDS-ON). A file that does not lint names none (PushBatch refuses it).
 func StreamCards(ctx context.Context, sprint string, files []CardFile, opts PushOptions) ([]string, map[string][]ws.PushCard) {

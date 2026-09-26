@@ -20,8 +20,9 @@ import (
 // order=<ranked> order_rt=<round trips> order_ms=<ms> (and order_stale=<n>
 // when a concurrent push or move made the write read again), order=- for a
 // task in no stream; a DEPENDS-ON cycle prints its ORDER CYCLE line first
-// and is order=cycle (nothing of the order is written; the push's own
-// check, orderCycle, refuses a push that closes one before it writes).
+// and is order=cycle (nothing of the order is written: the stream already
+// held the cycle, since the push's own FCALL refuses a push that closes one
+// through the card it writes).
 func pushReorder(ctx context.Context, c redis.Cmdable, stream, id, by string, out io.Writer) string {
 	_, fields := streamReorder(ctx, c, stream, id, by, out)
 	return fields
@@ -71,19 +72,38 @@ func reorderLines(ctx context.Context, c redis.Cmdable, streams []string, by str
 	}
 }
 
-// orderCycle is a push's check before any write (the #4322 fix round: a
-// push that closes a DEPENDS-ON cycle is refused and writes nothing): the
-// refusal text `ORDER CYCLE stream=<s> DEPENDS-ON cycle <a -> b -> a>`, or
-// "" when the stream's order holds with the pushed cards added. A read that
-// fails is its own refusal text.
-func orderCycle(ctx context.Context, c redis.Cmdable, stream string, adds ...ws.PushCard) string {
-	err := ws.WouldCycle(ctx, c, stream, adds)
+// orderGrant is a push door's check before its write (the #4322 fix
+// round): a push onto a named stream is refused, nothing written, when the
+// seat cannot write the stream's work order (ws.ProbeReorder: FCALL
+// ns_ws_reorder PROBE, refused NOPERM without +fcall|ns_ws_reorder). The
+// refusal text `ORDER GRANT <err>; ...remedy`, or "" when the seat holds
+// the grant or the push names no stream. A DEPENDS-ON cycle is not checked
+// here: the push's own FCALL refuses one through the card it writes
+// (cm_order_cycle), on the live edge set at that instant.
+func orderGrant(ctx context.Context, c redis.Cmdable, streams ...string) string {
+	for _, s := range streams {
+		if s == "" {
+			continue
+		}
+		if err := ws.ProbeReorder(ctx, c); err != nil {
+			return "ORDER GRANT " + err.Error() + "; this seat cannot write stream " + strconv.Quote(s) +
+				"'s work order, so the push is refused and nothing is written: grant +fcall|" + ws.FnReorder +
+				" (store.ACLRules; the fleet's redis-acl.rules)"
+		}
+		return ""
+	}
+	return ""
+}
+
+// batchCycle is card push's check of its own batch before any write (pure:
+// no store read): `ORDER CYCLE stream=<s> DEPENDS-ON cycle <a -> b -> a>`
+// when the batch's cards for one stream close a cycle among themselves, "".
+func batchCycle(stream string, adds []ws.PushCard) string {
 	var ce *ws.CycleError
-	switch {
-	case errors.As(err, &ce):
+	if err := ws.BatchCycle(stream, adds); errors.As(err, &ce) {
 		return "ORDER CYCLE stream=" + strconv.Quote(stream) + " " + ce.Error()
-	case err != nil:
-		return "ORDER READ " + err.Error()
+	} else if err != nil {
+		return "ORDER " + err.Error()
 	}
 	return ""
 }

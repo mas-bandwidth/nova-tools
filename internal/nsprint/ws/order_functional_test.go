@@ -127,9 +127,12 @@ func TestReorderWritesTheOrderAndMovesCarryIt(t *testing.T) {
 		t.Fatalf("reorder did not repair: %v", so.Stored)
 	}
 
-	// A cycle: f waits on g, g on f. Refused by name; nothing written.
+	// A cycle: f waits on g, g on f. Refused by name; nothing written. A
+	// push cannot store one (the fix round 3: TK.create refuses a push that
+	// closes a cycle through itself), so g's edge to f is a hand edit.
 	orPush(t, c, "f", 60, "internal/f", "g")
-	orPush(t, c, "g", 61, "internal/g", "f")
+	orPush(t, c, "g", 61, "internal/g", "")
+	c.HSet(ctx, "task:g", "blocked_on", "f")
 	before, _ := c.ZRangeWithScores(ctx, ws.Key(orStream, "waiting"), 0, -1).Result()
 	_, err = ws.Reorder(ctx, c, orStream, "test")
 	var ce *ws.CycleError

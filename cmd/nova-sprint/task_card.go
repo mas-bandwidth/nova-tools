@@ -129,6 +129,23 @@ type cardCmd struct {
 }
 
 func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.Writer) int {
+	c, code, done := parseTaskCard(sub, args, out, errOut, os.Getenv)
+	if done {
+		return code
+	}
+	st, err := store.Open(ctx, taskAddr(*c.redis))
+	if err != nil {
+		return refuse(errOut, c.verb, err.Error())
+	}
+	defer func() { _ = st.Close() }()
+	return c.run(ctx, st, sub, out, errOut)
+}
+
+// parseTaskCard is runTaskCard before the store: the flags, the usage and
+// the seat check, with the environment read through getenv (a test passes
+// its own, so it runs in parallel). done is true when the verb has already
+// answered with code.
+func parseTaskCard(sub string, args []string, out, errOut io.Writer, getenv func(string) string) (*cardCmd, int, bool) {
 	verb := "task " + sub
 	fs := taskFlags(verb)
 	c := &cardCmd{verb: verb}
@@ -175,32 +192,27 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 		}
 	}
 	if err := fs.Parse(args); err != nil {
-		return refuse(errOut, verb, err.Error()+"; see nova-sprint task "+sub+" --help")
+		return nil, refuse(errOut, verb, err.Error()+"; see nova-sprint task "+sub+" --help"), true
 	}
 	if *c.help {
 		_, _ = io.WriteString(out, taskCardUsage)
-		return 0
+		return nil, 0, true
 	}
 	if fs.NArg() > 0 {
-		return refuse(errOut, verb, "takes flags, not positional arguments")
+		return nil, refuse(errOut, verb, "takes flags, not positional arguments"), true
 	}
 	if *c.sprint == "" {
-		*c.sprint = os.Getenv("FRIEND_QUEUE_SPRINT")
+		*c.sprint = getenv("FRIEND_QUEUE_SPRINT")
 	}
 	// #2929: a seat's verbs act as the seat. Under a harness (NOVA_FRIEND
 	// set) --actor must name it; a coordinator shell (none set) names itself.
-	if seat := os.Getenv(seatEnv); seat != "" && *c.actor != "" && *c.actor != seat {
-		return refuse(errOut, verb, fmt.Sprintf("--actor %s is not the seat (%s=%s)", *c.actor, seatEnv, seat))
+	if seat := getenv(seatEnv); seat != "" && *c.actor != "" && *c.actor != seat {
+		return nil, refuse(errOut, verb, fmt.Sprintf("--actor %s is not the seat (%s=%s)", *c.actor, seatEnv, seat)), true
 	}
 	if want := c.missing(sub); want != "" {
-		return refuse(errOut, verb, want)
+		return nil, refuse(errOut, verb, want), true
 	}
-	st, err := store.Open(ctx, taskAddr(*c.redis))
-	if err != nil {
-		return refuse(errOut, verb, err.Error())
-	}
-	defer func() { _ = st.Close() }()
-	return c.run(ctx, st, sub, out, errOut)
+	return c, 0, false
 }
 
 // missing names the first required flag a verb lacks, or "".
@@ -305,14 +317,11 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if err != nil {
 			return refuse(errOut, c.verb, err.Error())
 		}
-		// A push that closes a DEPENDS-ON cycle in its stream is refused
-		// before any write (the #4322 fix round): nothing of it is stored.
-		paths := ""
-		if spec != nil {
-			paths = spec.Paths
-		}
-		if why := orderCycle(ctx, cl, ws.StreamOfTitle(*c.stream, *c.title),
-			ws.PushCard{ID: *c.id, Ref: *c.ref, Origin: *c.origin, Paths: paths, DependsOn: *c.on}); why != "" {
+		// A seat that cannot write the stream's work order is refused
+		// before any write (the #4322 fix round). A push that closes a
+		// DEPENDS-ON cycle through its card is refused by ns_tcard_push
+		// itself (TK.create), and prints as every refusal: TASK push REFUSED.
+		if why := orderGrant(ctx, cl, ws.StreamOfTitle(*c.stream, *c.title)); why != "" {
 			_, _ = fmt.Fprintf(out, "TASK push REFUSED id=%s why=%s ms=%d\n", *c.id, quoteField(why), ms())
 			return 1
 		}

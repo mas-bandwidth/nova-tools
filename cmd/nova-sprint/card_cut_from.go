@@ -918,6 +918,24 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 	return 0
 }
 
+// cutPush is card cut's push on a store (--from and --parent, children and
+// stitch): one pipeline of ns_tcard_push. A seat that cannot write the
+// streams' work order pushes nothing (#4322 fix round, orderGrant); a row
+// that closes a DEPENDS-ON cycle through its card is refused by its own
+// ns_tcard_push (TK.create, cm_order_cycle), nothing of it written.
+func cutPush(c redis.Cmdable) func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
+	return func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
+		streams := make([]string, 0, len(reqs))
+		for _, r := range reqs {
+			streams = append(streams, ws.StreamOfTitle(r.Stream, r.Title))
+		}
+		if why := orderGrant(ctx, c, streams...); why != "" {
+			return nil, errors.New(why)
+		}
+		return taskcard.PushMany(ctx, c, reqs)
+	}
+}
+
 // cmdCardCutFrom wires card cut --from: the file, the task store (opened
 // before any issue is filed, so a store that is down files nothing) and the
 // one GitHub writer (nova-sprint file's Issuer).
@@ -974,9 +992,7 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 			return refuse(stderr, verb, "redis: "+err.Error()+"; nothing filed")
 		}
 		defer func() { _ = st.Close() }()
-		d.Push = func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
-			return taskcard.PushMany(ctx, st.Client(), reqs)
-		}
+		d.Push = cutPush(st.Client())
 		d.LedgerRead = func(ctx context.Context, key string) (taskcard.CutLedger, error) {
 			return taskcard.ReadCutLedger(ctx, st.Client(), key)
 		}

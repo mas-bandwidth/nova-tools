@@ -136,11 +136,12 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	defer st.Close()
 	// The work order (nova-tools #4322 fix round): a task whose title names a
-	// stream (STREAM: <s> |, the stream TK.create files it in) is checked
-	// before any write, and a push that closes a DEPENDS-ON cycle there is
-	// PUSH INVALID with the cycle, nothing written.
+	// stream (STREAM: <s> |, the stream TK.create files it in) is refused
+	// before any write when the seat cannot write that stream's order; a
+	// push that closes a DEPENDS-ON cycle through it is PUSH INVALID from
+	// ns_task_push itself (TK.create), nothing written.
 	stream := ws.StreamOfTitle("", *title)
-	if why := orderCycle(ctx, st.Client(), stream, ws.PushCard{ID: *id, Ref: *ref, DependsOn: *dependsOn}); why != "" {
+	if why := orderGrant(ctx, st.Client(), stream); why != "" {
 		_, _ = fmt.Fprintf(out, "PUSH %s id=%s why=%s\n", task.PushInvalid, *id, quoteField(why))
 		return task.PushInvalid.ExitCode()
 	}
@@ -159,6 +160,10 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 		// #2929 rev 5: exit 7 means only DOWN, so a router can tell "pick
 		// another friend" from "fix the call".
 		_, _ = fmt.Fprintf(out, "PUSH DOWN id=%s to=%s down=%s\n", *id, *to, res.Down)
+		return res.Status.ExitCode()
+	}
+	if res.Status == task.PushInvalid && ws.IsCycleRefusal(res.Reason) {
+		_, _ = fmt.Fprintf(out, "PUSH %s id=%s why=%s\n", res.Status, *id, quoteField(res.Reason))
 		return res.Status.ExitCode()
 	}
 	if res.Status == task.PushInvalid && res.Reason != "" {
