@@ -76,6 +76,7 @@ var helpCases = [][]string{
 	{"task", "rebalance"}, {"task", "block"}, {"task", "unblock"}, {"task", "sweep"},
 	{"verbs", "unused"},
 	{"why"}, {"width"}, {"width", "fill"},
+	{"worker", "pause"}, {"worker", "resume"}, {"worker", "show"},
 	{"ws", "migrate"}, {"ws", "counts"}, {"ws", "checkpoint"},
 	{"xy"},
 }

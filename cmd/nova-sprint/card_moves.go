@@ -15,7 +15,7 @@
 //	card assign --id <primary> --to <consumer> [--revoke] [--why <why>]
 //	card beat  --as <consumer> (--id <copy> | --ids ...)
 //	card land  --stream <s> --sha <merge sha>
-//	card cancel (--id <id> | --ids ...) --why <why>
+//	card cancel (--id <id> | --ids ...) --why <why> [--each]   (--each: every id on its own, #4309)
 //	card expire [--as <consumer>]...
 //	card fsck  [--repair]                 (no --sprint: the copy links; --sprint is the sprint card fsck)
 //	card table [--as <consumer>]...       the consumer cells: ready working done ok fail ok%
@@ -90,7 +90,7 @@ type moveCmd struct {
 	pr, head, doneAlready, score, gates, finding    *string
 	reader, fail, add, rm, token, wrapper           *string
 	n                                               *int
-	fill, ok, repair, revoke, brief                 *bool
+	fill, ok, repair, revoke, brief, each           *bool
 	result                                          map[string]*string
 	consumers                                       multiFlag
 }
@@ -129,6 +129,7 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	m.ok = fs.Bool("ok", false, "")
 	m.repair = fs.Bool("repair", false, "")
 	m.brief = fs.Bool("brief", false, "")
+	m.each = fs.Bool("each", false, "")
 	if sub == "table" || sub == "expire" {
 		fs.Var(&m.consumers, "as", "")
 		m.as = new(string)
@@ -387,6 +388,29 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		}
 		return 0
 	case "cancel":
+		// --each (#4309): every id on its own, a receipt per id, exit 1 when
+		// any refused; without it the batch is all or nothing.
+		if *m.each {
+			r, err := taskcard.CancelEach(ctx, c, *m.actor, *m.why, ids...)
+			if err != nil {
+				return refused(err, "ids="+strings.Join(ids, ","))
+			}
+			ok, no := 0, 0
+			for _, x := range r {
+				if x.Why != "" {
+					no++
+					fmt.Fprintf(out, "REFUSED %s why=%s\n", x.ID, quoteField(x.Why))
+					continue
+				}
+				ok++
+				fmt.Fprintf(out, "CANCELLED %s to=%s\n", x.ID, x.To)
+			}
+			fmt.Fprintf(out, "CARD CANCEL n=%d refused=%d ms=%d\n", ok, no, ms())
+			if no > 0 {
+				return 1
+			}
+			return 0
+		}
 		e, err := taskcard.CancelCards(ctx, c, *m.actor, *m.why, ids...)
 		if err != nil {
 			return refused(err, "ids="+strings.Join(ids, ","))

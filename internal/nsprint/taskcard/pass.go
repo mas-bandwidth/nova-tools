@@ -27,7 +27,9 @@ import (
 //
 // one FCALL each, no per-pass cap: a consumer with free slots and dealable
 // cards is never idle past one pass. WHO, read_who, readers, tiers and
-// kinds decide which consumer may take which card (TM.may).
+// kinds decide which consumer may take which card (TM.may). paused is the
+// desired hash's flag, a bench's or a friend's alike (worker pause|resume,
+// #4308): a paused consumer is dealt nothing and keeps what it holds.
 
 // Live is how recent a consumer's beat must be for it to be dealt.
 const Live = 90 * time.Second

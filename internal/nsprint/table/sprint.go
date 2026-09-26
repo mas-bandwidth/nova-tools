@@ -28,7 +28,9 @@
 // with no sprint window and no base from a clear. status is up when the
 // consumer's own beat (<kind>:<name>:beat at, ms) is under a minute old and
 // <kind>:<name>:down does not exist, else down (the row still shows its
-// cards); load is the beat's load1 (a bench's; - when the beat has none).
+// cards); an up consumer whose desired hash has paused 1 (worker pause,
+// #4308) prints paused instead; load is the beat's load1 (a bench's; - when
+// the beat has none).
 // The old friend:<f> row hash and bench:<b> hash are never read.
 //
 // Keys, every one read in ONE pipelined round trip per tick (a second round
@@ -43,6 +45,7 @@
 //	<c>:cards:<set>         ZCARD for set = ready, working, ok, fail
 //	<c>:beat                HMGET load1 at
 //	<c>:down                EXISTS (a string or a hash; either means down)
+//	<c>:desired             HGET paused (1: the status reads paused while up)
 //	s:<S>:pitstop           EXISTS, with the legacy sprint:<S>:pitstop
 //
 // The membership of ws:order, friends, benches and consumers is kept from
@@ -134,13 +137,26 @@ func parseConsumer(s string) (Consumer, bool) {
 // ConsumerRow is one row of the consumer table (#4071): the four ZCARDs of
 // <kind>:<name>:cards:ready|working|ok|fail, Unread per cell when its ZCARD
 // did not come back (it prints "?", never a false 0), Up from the beat and
-// the down key, Load from the beat ("-" when it has none).
+// the down key, Paused from the desired hash (worker pause, #4308), Load
+// from the beat ("-" when it has none).
 type ConsumerRow struct {
 	Consumer
 	Ready, Working, OK, Fail int64
 	Unread                   [4]bool
 	Up                       bool
+	Paused                   bool
 	Load                     string
+}
+
+// Status is the row's status cell: down, paused (up and paused) or up.
+func (r ConsumerRow) Status() string {
+	switch {
+	case !r.Up:
+		return "down"
+	case r.Paused:
+		return "paused"
+	}
+	return "up"
 }
 
 // Done is every copy that ended on the consumer: ok plus fail.
@@ -362,9 +378,10 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 	}
 	type consumerCmds struct {
-		cells [4]*redis.IntCmd
-		beat  *redis.SliceCmd
-		down  *redis.IntCmd
+		cells  [4]*redis.IntCmd
+		beat   *redis.SliceCmd
+		down   *redis.IntCmd
+		paused *redis.StringCmd
 	}
 	roster := r.roster()
 	cmds := make([]consumerCmds, len(roster))
@@ -374,6 +391,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 		cmds[i].beat = pipe.HMGet(ctx, c.ID()+":beat", "load1", "at", "ncpu", "cpu")
 		cmds[i].down = pipe.Exists(ctx, c.ID()+":down")
+		cmds[i].paused = pipe.HGet(ctx, c.ID()+":desired", "paused")
 	}
 	// HARDCODED (Glenn 2026-09-25 11:25 PM ET, "everybody is on studio"): a
 	// friend's load is the load of the machine it lives on, and today every
@@ -471,6 +489,9 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 		if n, err := cmds[i].down.Result(); err != nil || n > 0 {
 			row.Up = false
+		}
+		if v, err := cmds[i].paused.Result(); err == nil && v == "1" {
+			row.Paused = true
 		}
 		snap.Consumers = append(snap.Consumers, row)
 	}
@@ -591,11 +612,7 @@ func writeConsumerTable(b *strings.Builder, rows []ConsumerRow) {
 		if r.Unread[2] || r.Unread[3] {
 			done, pct = "?", "?"
 		}
-		status := "down"
-		if r.Up {
-			status = "up"
-		}
-		fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %4s | %-6s | %s\n", name, cell[0], cell[1], done, pct, status, r.Load)
+		fmt.Fprintf(b, "%-25s | %5s | %7s | %5s | %4s | %-6s | %s\n", name, cell[0], cell[1], done, pct, r.Status(), r.Load)
 	}
 	b.WriteString(consumerRule)
 	cell := [4]string{}

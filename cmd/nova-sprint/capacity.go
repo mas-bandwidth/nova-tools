@@ -73,9 +73,9 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	fs.StringVar(actor, "as", "", "")
 	fs.StringVar(actor, "actor", "", "")
 	idem := fs.String("idem", "", "")
-	// #3206 rev 4 PR A: --paused 0|1 sets the paused flag (omitted keeps it)
-	// and --register is accepted and implied (#2934: every capacity friend
-	// write adds the friend to `friends`).
+	// #3206 rev 4 PR A: --paused 0|1 sets the paused flag (omitted keeps it;
+	// a bench's too since #4308) and --register is accepted and implied
+	// (#2934: every capacity friend write adds the friend to `friends`).
 	paused := fs.String("paused", "", "")
 	register := fs.Bool("register", false, "")
 	// #3349: --legs go,schema declares a bench's CI legs on its desired hash
@@ -133,8 +133,10 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	if *paused != "" && *paused != "0" && *paused != "1" {
 		return refuse(errOut, "capacity "+kind, "--paused wants 0 or 1")
 	}
-	if kind == capacity.KindBench && (*paused != "" || *register) {
-		return refuse(errOut, "capacity "+kind, "--paused and --register are friend flags")
+	// #4308: --paused is a friend's or a bench's (worker pause|resume is the
+	// one verb over it); --register stays a friend flag.
+	if kind == capacity.KindBench && *register {
+		return refuse(errOut, "capacity "+kind, "--register is a friend flag")
 	}
 	rest := fs.Args()
 	if len(rest) != 2 {
@@ -163,7 +165,7 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	var result capacity.Result
 	if kind == capacity.KindBench {
 		result, err = capacity.SetBenchWith(ctx, st, name, resolved, slots, *actor, *idem,
-			capacity.DesiredOpts{Legs: legs, Role: role, Kinds: kinds, Tiers: tiers})
+			capacity.DesiredOpts{Paused: *paused, Legs: legs, Role: role, Kinds: kinds, Tiers: tiers})
 	} else {
 		result, err = capacity.SetFriendWith(ctx, st, name, resolved, slots, *actor, *idem,
 			capacity.DesiredOpts{Paused: *paused, Register: *register, Kinds: kinds, Tiers: tiers})
