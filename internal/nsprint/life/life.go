@@ -262,6 +262,9 @@ type BenchRequest struct {
 	// its load (Load1Now measures it).
 	RowAt time.Time
 	NCPU  int
+	// CPU is the machine's CPU busy percent over the last beat interval
+	// (CPUBusyNow); empty when the platform cannot measure.
+	CPU string
 }
 
 // BenchResult is one bench beat. Accepted is false when another live session
@@ -304,7 +307,7 @@ func BenchBeat(ctx context.Context, st *store.Store, req BenchRequest) (BenchRes
 		launcher, strings.Join(req.Live, liveSeparator), req.Why,
 		req.Session, req.Actor, req.Idem, build,
 		req.Facts.Harness, req.Facts.Mirrors, req.Facts.DiskGiB, ttl.Milliseconds(),
-		rowAt, ncpu).Result()
+		rowAt, ncpu, req.CPU).Result()
 	if err != nil {
 		return BenchResult{}, fmt.Errorf("bench beat %s: %w", req.Bench, err)
 	}

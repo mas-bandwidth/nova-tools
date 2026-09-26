@@ -158,6 +158,18 @@ func okPct(ok, done int64) string {
 // (the Studio; hardcoded, see readOnce).
 const FriendHostBeatKey = "bench:studio:beat"
 
+// loadCell is the load cell: the beat's cpu (CPU busy percent over the beat
+// interval, what Activity Monitor and top print; Glenn 2026-09-26 9:35 AM ET:
+// "You are not yet normalizing by cores", beside an Activity Monitor at 50%
+// while the table said 154%: a load average counts waiting threads) when the
+// beat has one, else loadPercent.
+func loadCell(cpu, load1, ncpu string) string {
+	if v, err := strconv.ParseFloat(strings.TrimSpace(cpu), 64); err == nil && v >= 0 {
+		return fmt.Sprintf("%.1f%%", v)
+	}
+	return loadPercent(load1, ncpu)
+}
+
 // loadPercent is the load cell: the beat's load1 over its ncpu as a percent
 // of every core busy, one decimal (Glenn 2026-09-26 8:33 AM ET: "normalize it
 // so that 100% is total usage of all cores at 100%"; 8:38 AM: "show the load
@@ -300,7 +312,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		for j, set := range ConsumerSets {
 			cmds[i].cells[j] = pipe.ZCard(ctx, c.ID()+":cards:"+set)
 		}
-		cmds[i].beat = pipe.HMGet(ctx, c.ID()+":beat", "load1", "at", "ncpu")
+		cmds[i].beat = pipe.HMGet(ctx, c.ID()+":beat", "load1", "at", "ncpu", "cpu")
 		cmds[i].down = pipe.Exists(ctx, c.ID()+":down")
 	}
 	// HARDCODED (Glenn 2026-09-25 11:25 PM ET, "everybody is on studio"): a
@@ -308,7 +320,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	// friend lives on the Studio, so friend rows show bench:studio:beat's
 	// load1. The proper fix is the friend beat carrying its own machine's
 	// load1 like the bench beat does; then this read goes.
-	studio := pipe.HMGet(ctx, FriendHostBeatKey, "load1", "ncpu")
+	studio := pipe.HMGet(ctx, FriendHostBeatKey, "load1", "ncpu", "cpu")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, false, fmt.Errorf("pipeline: %w", err)
 	}
@@ -379,13 +391,13 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			n, err := cmd.Result()
 			*cells[j], row.Unread[j] = n, err != nil
 		}
-		if got, err := cmds[i].beat.Result(); err == nil && len(got) == 3 {
-			if load := loadPercent(pipeValue(got[0]), pipeValue(got[2])); load != "" {
+		if got, err := cmds[i].beat.Result(); err == nil && len(got) == 4 {
+			if load := loadCell(pipeValue(got[3]), pipeValue(got[0]), pipeValue(got[2])); load != "" {
 				row.Load = load
 			}
 			if c.Kind == "friend" && row.Load == "-" {
-				if got, err := studio.Result(); err == nil && len(got) == 2 {
-					if load := loadPercent(pipeValue(got[0]), pipeValue(got[1])); load != "" {
+				if got, err := studio.Result(); err == nil && len(got) == 3 {
+					if load := loadCell(pipeValue(got[2]), pipeValue(got[0]), pipeValue(got[1])); load != "" {
 						row.Load = load
 					}
 				}

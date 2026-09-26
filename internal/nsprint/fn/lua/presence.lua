@@ -233,7 +233,8 @@ end
 -- args[17] is the TTL in ms the caller's loop promises (3 x its interval,
 -- #3372); a missing or non-positive value keeps PL_BEAT_MS. args[18] is the
 -- host row's at (RFC 3339 UTC) and args[19] the bench's ncpu; an empty
--- args[18] writes no row (#3440).
+-- args[18] writes no row (#3440). args[20] is the CPU busy percent over the
+-- beat interval, on the beat as cpu (empty when unmeasured).
 local function bench_beat(keys, args)
   local bench = args[1]
   if not bench or bench == '' then
@@ -300,7 +301,7 @@ local function bench_beat(keys, args)
     -- ncpu on the beat too: the table prints load1 / ncpu as a percent of
     -- every core (Glenn 2026-09-26 8:33 AM ET); the beat is the row the
     -- table reads, never the host row
-    redis.call('HSET', 'bench:' .. bench .. ':beat', 'ncpu', ncpu or '')
+    redis.call('HSET', 'bench:' .. bench .. ':beat', 'ncpu', ncpu or '', 'cpu', args[20] or '')
   end
   if first == 0 then
     pl_caplog('bench-up', bench, '', actor, idem, at)
