@@ -13,6 +13,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 )
 
 // playRecap is ansible-playbook's real output (ansible-core 2.21, the
@@ -323,6 +325,21 @@ func TestPlayRefusesBeforeThePlay(t *testing.T) {
 		}
 		if len(f.plays()) != 0 || len(mr.Keys()) != 0 {
 			t.Errorf("%s: the play ran or a receipt was written", tc.name)
+		}
+	}
+}
+
+// TestPlayReceiptSpellingIsTheTables: the table reads the receipt this
+// package writes under its own spelling (fleetbuild's tests import table,
+// so table cannot import fleetbuild); the two agree.
+func TestPlayReceiptSpellingIsTheTables(t *testing.T) {
+	t.Parallel()
+	if table.BenchPlayKey("hulk") != PlayKey("hulk") {
+		t.Errorf("table key %q, fleetbuild key %q", table.BenchPlayKey("hulk"), PlayKey("hulk"))
+	}
+	for _, h := range []HostPlay{{Host: "hulk"}, {Host: "hulk", Failed: "tools"}, {Host: "hulk", Failed: FactsRole}} {
+		if got, want := table.PlayBehind(h.Result()), BehindRole(h.Result()); got != want || got != h.Failed {
+			t.Errorf("result %q: table %q, fleetbuild %q", h.Result(), got, want)
 		}
 	}
 }

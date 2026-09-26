@@ -77,7 +77,6 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleetbuild"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
@@ -196,6 +195,21 @@ func (r ConsumerRow) Status() string {
 		return "paused"
 	}
 	return "up"
+}
+
+// BenchPlayKey is the bench's fleet play receipt, and PlayBehind the role
+// its result says the play stopped in ("" for ok): the table's own spelling
+// of fleetbuild.PlayKey and fleetbuild.BehindRole (#4356), since fleetbuild's
+// tests import this package; TestPlayReceiptSpellingIsTheTables holds the
+// two to one another.
+func BenchPlayKey(bench string) string { return "bench:" + bench + ":play" }
+
+// PlayBehind is the role a play receipt's result names after failed:.
+func PlayBehind(result string) string {
+	if role, ok := strings.CutPrefix(result, "failed:"); ok {
+		return role
+	}
+	return ""
 }
 
 // Done is every copy that ended on the consumer: ok plus fail.
@@ -429,7 +443,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		cmds[i].down = pipe.Exists(ctx, c.ID()+":down")
 		cmds[i].paused = pipe.HGet(ctx, c.ID()+":desired", "paused")
 		if c.Kind == "bench" {
-			cmds[i].play = pipe.HGet(ctx, fleetbuild.PlayKey(c.Name), "result")
+			cmds[i].play = pipe.HGet(ctx, BenchPlayKey(c.Name), "result")
 		}
 	}
 	progress := pipe.HGetAll(ctx, ProgressKey)
@@ -557,7 +571,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 		if cmds[i].play != nil {
 			if v, err := cmds[i].play.Result(); err == nil {
-				row.Behind = fleetbuild.BehindRole(v)
+				row.Behind = PlayBehind(v)
 			}
 		}
 		snap.Consumers = append(snap.Consumers, row)
