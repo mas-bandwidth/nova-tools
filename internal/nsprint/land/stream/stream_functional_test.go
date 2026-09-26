@@ -417,8 +417,15 @@ func TestLuaOnRealRedis(t *testing.T) {
 	// the park, the landing, the stream's registration by the land through
 	// the one move (the stop into waiting, #4318), the land; the parked
 	// member is live, so the stop does not land
-	if n, _ := c.XLen(ctx, "ws:log").Result(); n != 4 {
-		t.Fatalf("ws:log %d entries, want 4", n)
+	log, _ := c.XRange(ctx, "ws:log", "-", "+").Result()
+	if len(log) != 4 {
+		t.Fatalf("ws:log %d entries, want 4", len(log))
+	}
+	if log[2].Values["id"] != ws.SentinelID(strm) || log[2].Values["to"] != "waiting" {
+		t.Fatalf("registration entry %v, want the stop into waiting", log[2].Values)
+	}
+	if w := c.HGet(ctx, "task:"+ws.SentinelID(strm), "where").Val(); w != "waiting" {
+		t.Fatalf("the stop is %q with the parked member live, want waiting", w)
 	}
 }
 
