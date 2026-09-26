@@ -101,7 +101,7 @@ func TestLintCardAcceptsKindReportAndRefusesANonsenseKind(t *testing.T) {
 	text := writeLintCard(t, "text.card", typedCardText(t,
 		"KIND: text",
 		"PATHS: none",
-		"TEST: none",
+		"TEST: none a text card changes no Go package",
 		"LEGS: go",
 		"SOURCE: mas-bandwidth/nova-tools#1651",
 	))

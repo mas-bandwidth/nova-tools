@@ -402,6 +402,27 @@ parallel amendment PRs that merge without conflict are its evidence.
 **Expires** when the layout changes. **Rollback:** the single-file specs.
 **Held by:** Rowan.
 
+## 27. The card is a spec: TEST names the class test, and the wrapper proves it
+
+Glenn, 2026-09-26 ~11:05 AM ET, the quality lens: "how can I make the quality of the
+friends+swarm work as good as, or better than software built yourself?" The day's child
+builds had what the swarm's did not: the spec carried the evidence, the worker ran the
+touched tests before pushing, and every change carried its red test. So the card carries a
+`TEST:` line (`<package> <TestName>`, or `none <why>`), derived from a `go test <pkg> -run
+<TestName>` in `DONE-WHEN` when the issue names none, and the cut refuses a `DONE-WHEN` no
+test can fail, with the remedy (nova-tools#4313; `nova-sprint card cut`, `card cut --from`,
+`task push` for a swarm route). The copy wrapper holds the commit to it before its end pushes
+anything: the diff adds or changes a test file; `TEST` passes at head and fails at `base-sha`
+with the diff's test files over it; `nova-ci local` (or the touched packages) is green. A red
+is a typed fail (`no-test`, `test-not-green`, `test-not-red`, `ci-red`), no PR, the red names
+under `## Gates` in `RESULT.md` and in the why. A `TEST: none <why>` card skips the class
+test, never CI, and the why reaches the copy's card, `RESULT.md` and the PR body, so the
+reader sees it (practices 4 and 23 as a gate the wrapper runs, not prose the model reads).
+**Measured:** the gate on a fake runner and through the wrapper (`TestSpecGateHoldsTheCardToItsSpec`,
+`TestCopyWrapperRefusesThePROnARed`). **Not measured:** a swarm run under it. **Expires**
+when a run shows a class the gate lets through. **Rollback:** practices 4 and 23 as prose.
+**Held by:** Rowan.
+
 ## The depends-on token (#2636)
 
 `depends-on` is not one of the four §5 tokens above, and it is not one of the twelve
