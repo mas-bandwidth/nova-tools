@@ -64,6 +64,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -259,9 +260,13 @@ func ensureFriendBeat(ctx context.Context, c redis.Cmdable, k taskcard.Consumer,
 	}
 	// the loop beats copies (ns_cm_beat); a friend-queue task in the same
 	// set is renewed by task beat, and alone it starts no loop
-	members, err := c.ZRange(ctx, k.Key("working"), 0, -1).Result()
+	epoch, err := ws.Epoch(ctx, c)
 	if err != nil {
-		return "", fmt.Errorf("zrange %s: %w", k.Key("working"), err)
+		return "", err
+	}
+	members, err := c.ZRange(ctx, k.KeyAt(epoch, "working"), 0, -1).Result()
+	if err != nil {
+		return "", fmt.Errorf("zrange %s: %w", k.KeyAt(epoch, "working"), err)
 	}
 	n := 0
 	for _, id := range members {

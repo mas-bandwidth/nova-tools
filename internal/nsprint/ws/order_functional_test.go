@@ -70,7 +70,7 @@ func TestReorderWritesTheOrderAndMovesCarryIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Ranked != 6 || r.Skipped != 0 || r.RoundTrips != 3 {
+	if r.Ranked != 6 || r.Skipped != 0 || r.RoundTrips != 4 {
 		t.Fatalf("reorder %+v", r)
 	}
 	so, _ = ws.ReadOrder(ctx, c, orStream)
@@ -103,13 +103,13 @@ func TestReorderWritesTheOrderAndMovesCarryIt(t *testing.T) {
 			t.Fatalf("b in %s: task fsck %+v %v", to, f, err)
 		}
 	}
-	bScore, _ := c.ZScore(ctx, ws.Key(orStream, "merging"), "b").Result()
+	bScore, _ := c.ZScore(ctx, ws.KeyAt(0, orStream, "merging"), "b").Result()
 	if want := so.Scores[1]; bScore != want {
 		t.Fatalf("b scores %.0f in merging, want its order_score %.0f", bScore, want)
 	}
 
 	// A hand ZADD puts e before a: ORDER DRIFT, both sequences named.
-	if err := c.ZAdd(ctx, ws.Key(orStream, "ready"), redis.Z{Score: 1, Member: "e"}).Err(); err != nil {
+	if err := c.ZAdd(ctx, ws.KeyAt(0, orStream, "ready"), redis.Z{Score: 1, Member: "e"}).Err(); err != nil {
 		t.Fatal(err)
 	}
 	so, _ = ws.ReadOrder(ctx, c, orStream)
@@ -133,13 +133,13 @@ func TestReorderWritesTheOrderAndMovesCarryIt(t *testing.T) {
 	orPush(t, c, "f", 60, "internal/f", "g")
 	orPush(t, c, "g", 61, "internal/g", "")
 	c.HSet(ctx, "task:g", "blocked_on", "f")
-	before, _ := c.ZRangeWithScores(ctx, ws.Key(orStream, "waiting"), 0, -1).Result()
+	before, _ := c.ZRangeWithScores(ctx, ws.KeyAt(0, orStream, "waiting"), 0, -1).Result()
 	_, err = ws.Reorder(ctx, c, orStream, "test")
 	var ce *ws.CycleError
 	if !errors.As(err, &ce) || err.Error() != "DEPENDS-ON cycle f -> g -> f" {
 		t.Fatalf("cycle: %v", err)
 	}
-	after, _ := c.ZRangeWithScores(ctx, ws.Key(orStream, "waiting"), 0, -1).Result()
+	after, _ := c.ZRangeWithScores(ctx, ws.KeyAt(0, orStream, "waiting"), 0, -1).Result()
 	if len(before) != len(after) {
 		t.Fatalf("a refused reorder wrote: %v -> %v", before, after)
 	}

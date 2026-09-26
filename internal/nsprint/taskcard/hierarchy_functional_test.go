@@ -197,13 +197,16 @@ func TestPlanBindsLandsWithItsStitchAndIsNeverDealt(t *testing.T) {
 	if s := state(); s != "landed" {
 		t.Fatalf("state %s, want landed", s)
 	}
-	// Five landed: two children, the stitch, the parent, and the stream's
-	// sentinel (#4318), which the parent's landing landed as the last live
-	// card (the two hooks in the one move compose).
-	landedIDs := c.ZRange(ctx, taskcard.StreamKey(hierStream, "landed"), 0, -1).Val()
+	// Four landed by identity: two children, the stitch and the parent; the
+	// stream's sentinel (#4318) stays waiting for the coordinator's
+	// acceptance (#4412), though the parent's landing left no card live.
+	landedIDs := c.ZRange(ctx, taskcard.StreamKeyAt(0, hierStream, "landed"), 0, -1).Val()
 	sort.Strings(landedIDs)
-	if got := strings.Join(landedIDs, " "); got != "5001 5002 autonomy:sentinel "+parent+" "+stitch {
-		t.Fatalf("ws:%s:landed is %q, want the children, the sentinel, the parent and the stitch", hierStream, got)
+	if got := strings.Join(landedIDs, " "); got != "5001 5002 "+parent+" "+stitch {
+		t.Fatalf("ws:%s:landed is %q, want the children, the parent and the stitch", hierStream, got)
+	}
+	if w := c.HGet(ctx, taskcard.Key("autonomy:sentinel"), "where").Val(); w != "waiting" {
+		t.Fatalf("the sentinel is %q after the plan landed, want waiting for acceptance", w)
 	}
 	// Plans lists the plan for the stream, its children in order.
 	plans, err := taskcard.Plans(ctx, c, []string{hierStream, "no such stream"})
@@ -309,7 +312,7 @@ func TestStitchLandedByAnyDoorLandsThePlan(t *testing.T) {
 	if rec["where"] != "landed" || rec["merge_sha"] != head(32) || !strings.Contains(rec["why"], "stitch "+stitch+" landed") {
 		t.Fatalf("parent after task land on the stitch: where=%s merge_sha=%s why=%q", rec["where"], rec["merge_sha"], rec["why"])
 	}
-	if n := c.ZCard(ctx, taskcard.StreamKey(hierStream, "ready")).Val(); n != 0 {
+	if n := c.ZCard(ctx, taskcard.StreamKeyAt(0, hierStream, "ready")).Val(); n != 0 {
 		t.Fatalf("ws:ready holds %d, want 0 (a plan is never ready)", n)
 	}
 	clean(t, c, "after the hand landing")
@@ -362,7 +365,7 @@ func TestCancelOfAPlanCascadesOrRefuses(t *testing.T) {
 		}
 	}
 	// Nothing of the plan is left waiting: only the stream's sentinel (#4318).
-	if got := strings.Join(c.ZRange(ctx, taskcard.StreamKey(hierStream, "waiting"), 0, -1).Val(), " "); got != "autonomy:sentinel" {
+	if got := strings.Join(c.ZRange(ctx, taskcard.StreamKeyAt(0, hierStream, "waiting"), 0, -1).Val(), " "); got != "autonomy:sentinel" {
 		t.Fatalf("ws:waiting holds %q after the cascade, want only the sentinel", got)
 	}
 	if p, err := taskcard.ReadPlan(ctx, c, parent); err != nil || p.State() != "done" {

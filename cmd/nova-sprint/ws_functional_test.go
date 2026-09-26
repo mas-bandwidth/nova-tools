@@ -53,7 +53,7 @@ func TestWSVerbsOnAThousandTasks(t *testing.T) {
 		want  string
 		lines int
 	}{
-		{[]string{"ws", "counts"}, "COUNTS streams=10 waiting=400 ready=200 working=150 merging=100 landed=100 parked=0 ", 1},
+		{[]string{"ws", "counts"}, `COUNTS sprint=- streams=10 waiting=400 ready=200 working=150 review=0 merging=100 landed=100 parked=0 total=950 done=100/950 pct=10 left=850 eta="?" `, 1},
 		{[]string{"stream", "ls"}, "STREAMS n=10 ", 11},
 		{[]string{"scope", "keep", "--streams", s(0) + "|" + s(1)}, "KEPT streams=2 parked_streams=8 parked=480 checkpoint=" + cpDir + "/ws-", 1},
 		{[]string{"scope", "ls"}, "SCOPE streams=10 kept=2 parked=8 partial=0 ", 11},
@@ -139,14 +139,17 @@ func TestWSShowOrder(t *testing.T) {
 	push("A", "swarm: cards", "")
 	push("B", "swarm: cards", "A")
 	push("C", "ci", "swarm-cards:sentinel")
-	want := `STREAM 1 "swarm: cards" cards=3 live=2 landed=0 sentinel=waiting
+	// cards, live and landed are the one count: the sentinel is the
+	// stream's stop, listed last, counted nowhere; the listing is the
+	// computed work order, one reason per edge (#4322)
+	want := `STREAM 1 "swarm: cards" cards=2 live=2 landed=0 sentinel=waiting
   1 waiting A
   2 waiting B <- A(waiting) (reason: depends-on)
   3 waiting swarm-cards:sentinel <- every other card of the stream (reason: sentinel; live 2)
-STREAM 2 "ci" cards=2 live=1 landed=0 sentinel=waiting
+STREAM 2 "ci" cards=1 live=1 landed=0 sentinel=waiting
   1 waiting C <- swarm-cards:sentinel(waiting) (reason: depends-on)
   2 waiting ci:sentinel <- every other card of the stream (reason: sentinel; live 1)
-SHOW streams=2 cards=5 edges=5 ms=`
+SHOW streams=2 cards=3 edges=5 ms=`
 	for _, args := range [][]string{{"ws", "show", "--redis", addr, "--order"}, {"stream", "order", "--redis", addr, "--show"}} {
 		code, stdout, stderr := runSprint(args...)
 		if code != 0 || stderr != "" || !strings.HasPrefix(stdout, want) {
@@ -154,7 +157,7 @@ SHOW streams=2 cards=5 edges=5 ms=`
 		}
 	}
 	code, stdout, _ := runSprint("ws", "show", "--redis", addr, "--order", "--stream", "ci")
-	if code != 0 || !strings.HasPrefix(stdout, "STREAM 2 \"ci\" cards=2") || !strings.Contains(stdout, "SHOW streams=1 cards=2 edges=2 ms=") {
+	if code != 0 || !strings.HasPrefix(stdout, "STREAM 2 \"ci\" cards=1") || !strings.Contains(stdout, "SHOW streams=1 cards=1 edges=2 ms=") {
 		t.Fatalf("--stream ci: exit %d\n%s", code, stdout)
 	}
 	code, stdout, _ = runSprint("ws", "show", "--redis", addr, "--order", "--stream", "nope")

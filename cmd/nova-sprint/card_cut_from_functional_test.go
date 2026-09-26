@@ -46,7 +46,7 @@ func TestCardCutFromLandsHundredInWaiting(t *testing.T) {
 	if so, err := ws.ReadOrder(ctx, client, "swarm: cards"); err != nil || so.Stale() {
 		t.Fatalf("swarm: cards after the cut: stale %v %v", so.Stale(), err)
 	}
-	if n := client.ZCard(ctx, taskcard.StreamKey("swarm: cards", "waiting")).Val(); n != 101 { // 100 cards and the stream's sentinel (#4318)
+	if n := client.ZCard(ctx, taskcard.StreamKeyAt(0, "swarm: cards", "waiting")).Val(); n != 101 { // 100 cards and the stream's sentinel (#4318)
 		t.Fatalf("ws:swarm: cards:waiting holds %d, want 100 cards and the sentinel", n)
 	}
 	rec, err := client.HGetAll(ctx, taskcard.Key("nova-tools-5006")).Result() // row 2, filed seventh
@@ -66,7 +66,7 @@ func TestCardCutFromLandsHundredInWaiting(t *testing.T) {
 		!strings.Contains(out, "rows=100 cut=0 already=100 refused=0 filed=0 reused=100 ") {
 		t.Fatalf("rerun: exit %d filed %d, want 0, nothing filed and 100 already:\n%s", code, len(forge2.titles), out)
 	}
-	if n := client.ZCard(ctx, taskcard.StreamKey("swarm: cards", "waiting")).Val(); n != 101 { // the 100 and the sentinel
+	if n := client.ZCard(ctx, taskcard.StreamKeyAt(0, "swarm: cards", "waiting")).Val(); n != 101 { // the 100 and the sentinel
 		t.Fatalf("rerun left %d in waiting, want 100 cards and the sentinel", n)
 	}
 }

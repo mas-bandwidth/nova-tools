@@ -11,6 +11,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -86,8 +87,8 @@ func Fixture(t *testing.T, c *redis.Client, n, streams int) []string {
 		pipe.HSet(ctx, "task:"+id, "stream", stream, "where", where, "where_ok", ok, "state", mirror, "order", fmt.Sprint(1000+j),
 			"created_at", fmt.Sprint(Created(i)), "title", fmt.Sprintf("STREAM: %s | task %d", stream, i), "owner", "f1",
 			"friend", "f1", "kind", "code")
-		pipe.ZAdd(ctx, "ws:"+stream+":"+where, redis.Z{Score: score, Member: id})
-		pipe.ZAdd(ctx, "friend:f1:cards:"+where, redis.Z{Score: score, Member: id})
+		pipe.ZAdd(ctx, ws.KeyAt(0, stream, where), redis.Z{Score: score, Member: id})
+		pipe.ZAdd(ctx, ws.ConsumerKeyAt(0, "friend:f1", where), redis.Z{Score: score, Member: id})
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatal(err)

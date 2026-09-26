@@ -638,11 +638,14 @@ func (c *cardCmd) spec() (*taskcard.Spec, error) {
 // the issue text.
 func taskLintText(kind string, s *taskcard.Spec) string {
 	var b strings.Builder
-	for _, kv := range [][2]string{{"KIND", firstOf(kind, s.Kind)}, {"PATHS", s.Paths}, {"DONE-WHEN", s.DoneWhen}} {
-		if kv[1] != "" {
-			fmt.Fprintf(&b, "%s: %s\n", kv[0], kv[1])
+	line := func(k, v string) {
+		if v != "" {
+			fmt.Fprintf(&b, "%s: %s\n", k, v)
 		}
 	}
+	line("KIND", firstOf(kind, s.Kind))
+	line("PATHS", s.Paths)
+	line("DONE-WHEN", s.DoneWhen)
 	b.WriteString("\n" + s.Body + "\n")
 	return b.String()
 }

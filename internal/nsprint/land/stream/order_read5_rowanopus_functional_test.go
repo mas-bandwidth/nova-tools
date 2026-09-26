@@ -80,7 +80,7 @@ func twoLive(t *testing.T, c *redis.Client, t1where string) {
 	seed(t, c, 2, head, 200, score("rowan", head, 10))
 	c.HSet(ctx, "task:t2", "where", "merging", "paths", "internal/shared.go", "ref", "nova-tools#2")
 	if t1where != "" {
-		c.ZAdd(ctx, WSKey(strm, t1where), redis.Z{Score: 100, Member: "t1"})
+		c.ZAdd(ctx, WSKeyAt(0, strm, t1where), redis.Z{Score: 100, Member: "t1"})
 		c.HSet(ctx, "task:t1", "stream", strm, "where", t1where, "state", t1where, "created_at", "100", "paths", "internal/shared.go", "ref", "nova-tools#1")
 	}
 }
@@ -97,7 +97,7 @@ func TestReadStreamLandGateWindow_RowanOpus(t *testing.T) {
 	if h, err := StreamLandGate(ctx, c, strm); err != nil || h != nil {
 		t.Fatalf("gate at t2 alone: %v %v", h, err)
 	}
-	c.ZAdd(ctx, WSKey(strm, "ready"), redis.Z{Score: 50, Member: "t0"})
+	c.ZAdd(ctx, WSKeyAt(0, strm, "ready"), redis.Z{Score: 50, Member: "t0"})
 	c.HSet(ctx, "task:t0", "stream", strm, "where", "ready", "state", "ready", "created_at", "50", "paths", "internal/shared.go", "ref", "nova-tools#1")
 	if h, _ := StreamLandGate(ctx, c, strm); h != nil {
 		t.Logf("the gate now would say: %s", h.Line())
@@ -184,7 +184,7 @@ func TestReadThirdCardFlipsTwo_RowanOpus(t *testing.T) {
 	c.HSet(ctx, LandKey(repo, slug), "state", "open", "pr", 900, "head", head)
 	Record(ctx, c, repo, 900, RecordFields{Head: head, Base: "dev", CI: "green", Mergeable: "true"})
 	t.Logf("built tasks=%q", c.HGet(ctx, LandKey(repo, slug), "tasks").Val())
-	c.ZAdd(ctx, WSKey(strm, "ready"), redis.Z{Score: 400, Member: "t3"})
+	c.ZAdd(ctx, WSKeyAt(0, strm, "ready"), redis.Z{Score: 400, Member: "t3"})
 	c.HSet(ctx, "task:t3", "stream", strm, "where", "ready", "state", "ready", "created_at", "400", "ref", "nova-tools#3", "paths", "internal/b.go")
 	_, err = Merge(ctx, c, MergeOptions{Repo: repo, Streams: []string{strm}, By: "test"})
 	t.Logf("after t3 (#3, youngest) pushed: %v", err)

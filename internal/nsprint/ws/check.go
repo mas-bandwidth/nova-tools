@@ -27,6 +27,8 @@ func Check(ctx context.Context, c redis.Cmdable, ids []string) error {
 	pipe := c.Pipeline()
 	order := pipe.ZRange(ctx, "ws:order", 0, -1)
 	names := pipe.SMembers(ctx, "ws:names")
+	// the sets under the current epoch (nova-tools#4238), read in this round
+	epochCmd := pipe.HGet(ctx, EpochKey, EpochField)
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return err
 	}
@@ -58,12 +60,17 @@ func Check(ctx context.Context, c redis.Cmdable, ids []string) error {
 		w   where
 		cmd *redis.ZSliceCmd
 	}
+	epoch, err := ParseEpoch(epochCmd.Val())
+	if err != nil {
+		return err
+	}
 	var sets []set
 	for _, s := range names.Val() {
 		for _, st := range Wheres {
-			sets = append(sets, set{where{s, st, 0}, pipe.ZRangeWithScores(ctx, Key(s, st), 0, -1)})
+			sets = append(sets, set{where{s, st, 0}, pipe.ZRangeWithScores(ctx, KeyAt(epoch, s, st), 0, -1)})
 		}
 	}
+
 	if len(sets) > 0 {
 		if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 			return err
@@ -76,7 +83,7 @@ func Check(ctx context.Context, c redis.Cmdable, ids []string) error {
 				continue
 			}
 			if prev, ok := at[id]; ok {
-				add("%s in %s and %s", id, Key(prev.stream, prev.state), Key(s.w.stream, s.w.state))
+				add("%s in %s and %s", id, KeyAt(epoch, prev.stream, prev.state), KeyAt(epoch, s.w.stream, s.w.state))
 				continue
 			}
 			at[id] = where{s.w.stream, s.w.state, z.Score}
@@ -115,21 +122,21 @@ func Check(ctx context.Context, c redis.Cmdable, ids []string) error {
 		w, inSet := at[id]
 		switch {
 		case state == Closed && inSet:
-			add("%s is closed but in %s", id, Key(w.stream, w.state))
+			add("%s is closed but in %s", id, KeyAt(epoch, w.stream, w.state))
 		case state == Closed, stream == "" && !inSet:
 			// closed, or a task with no stream: outside every set, rightly
 		case !inSet:
 			add("%s (stream %q state %q) is in no set", id, stream, state)
 		case w.stream != stream || w.state != state:
-			add("%s is in %s but its hash says stream %q state %q", id, Key(w.stream, w.state), stream, state)
+			add("%s is in %s but its hash says stream %q state %q", id, KeyAt(epoch, w.stream, w.state), stream, state)
 		default:
 			order, _ := v[4].(string)
 			if n, err := strconv.ParseFloat(order, 64); err == nil && ordered(w.state) {
 				if n != w.score {
-					add("%s scores %s in %s, not its order_score %q", id, ScoreText(w.score), Key(w.stream, w.state), order)
+					add("%s scores %s in %s, not its order_score %q", id, ScoreText(w.score), KeyAt(epoch, w.stream, w.state), order)
 				}
 			} else if ms, ok := CreatedMS(created); !ok || ms != w.score {
-				add("%s scores %s in %s, not its created_at %q", id, ScoreText(w.score), Key(w.stream, w.state), created)
+				add("%s scores %s in %s, not its created_at %q", id, ScoreText(w.score), KeyAt(epoch, w.stream, w.state), created)
 			}
 		}
 	}

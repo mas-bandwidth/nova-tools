@@ -69,14 +69,30 @@ func TestTaskCardCLI(t *testing.T) {
 	if m := cardLine.FindStringSubmatch(out); code != 0 || m == nil || m[3] != "working" || m[4] != "merging" || zc("merging") != 1 {
 		t.Fatalf("done = %d %q", code, out)
 	}
-	// the last card's landing lands the stream's stop with it (#4318): two in landed
+	// the last card's landing leaves the stream's sentinel waiting for the
+	// coordinator's acceptance (#4412): one in landed
+	sid := ws.SentinelID(s)
 	code, out, _ = runTaskCLI("land", "--actor", "lander", "--id", "build-1", "--sha", "0123abcd")
-	if m := cardLine.FindStringSubmatch(out); code != 0 || m == nil || m[4] != "landed" || zc("landed") != 2 || zc("merging") != 0 {
+	if m := cardLine.FindStringSubmatch(out); code != 0 || m == nil || m[4] != "landed" || zc("landed") != 1 || zc("merging") != 0 ||
+		c.HGet(ctx, "task:"+sid, "where").Val() != "waiting" {
 		t.Fatalf("land = %d %q", code, out)
 	}
-	// ls lists the set as it is: the card and the stream's stop
+	// the acceptance, the waiting-resolve receipt's command run verbatim: a
+	// seat without the coordinator role is refused, the coordinator's lands it
+	code, out, _ = runTaskCLI("land", "--actor", "a", "--id", sid, "--sha", "0123abcd")
+	if code != 1 || !strings.Contains(out, "SENTINEL task:"+sid+" lands by the coordinator's acceptance alone") || zc("landed") != 1 {
+		t.Fatalf("land the sentinel as a = %d %q", code, out)
+	}
+	if err := c.HSet(ctx, "friend:rowan:roles", "roles", "coordinator").Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = runTaskCLI("land", "--actor", "rowan", "--id", sid, "--sha", "0123abcd")
+	if m := cardLine.FindStringSubmatch(out); code != 0 || m == nil || m[3] != "waiting" || m[4] != "landed" || zc("landed") != 2 {
+		t.Fatalf("the coordinator's acceptance = %d %q", code, out)
+	}
+	// ls lists the set as it is: the card and the stream's accepted sentinel
 	code, out, _ = runTaskCLI("ls", "--stream", s, "--where", "landed")
-	if code != 0 || !strings.HasPrefix(out, "build-1\n"+ws.SentinelID(s)+"\nTASK ls n=2 where=landed ms=") {
+	if code != 0 || !strings.HasPrefix(out, "build-1\n"+sid+"\nTASK ls n=2 where=landed ms=") {
 		t.Fatalf("ls = %d %q", code, out)
 	}
 	code, out, _ = runTaskCLI("fsck", "--sprint", seatSprint)

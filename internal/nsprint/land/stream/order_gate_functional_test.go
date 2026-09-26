@@ -36,7 +36,7 @@ func TestOrderGateWaitConflictAndMergeRevalidates(t *testing.T) {
 		if t1Where == "merging" {
 			seed(t, c, 1, head, 100, score("rowan", head, 10))
 		} else {
-			c.ZAdd(ctx, WSKey(strm, t1Where), redis.Z{Score: 100, Member: "t1"})
+			c.ZAdd(ctx, WSKeyAt(0, strm, t1Where), redis.Z{Score: 100, Member: "t1"})
 		}
 		c.HSet(ctx, "task:t1", "stream", strm, "where", t1Where, "state", t1Where, "created_at", "100",
 			"paths", "internal/shared.go", "ref", "nova-tools#1")
@@ -113,13 +113,13 @@ func TestOrderGateWaitConflictAndMergeRevalidates(t *testing.T) {
 		c := setup(t, "merging")
 		c.HSet(ctx, "task:t1", "blocked_on", "t2")
 		c.HSet(ctx, "task:t2", "blocked_on", "t1")
-		before := fmt.Sprint(c.ZRangeWithScores(ctx, WSKey(strm, "merging"), 0, -1).Val())
+		before := fmt.Sprint(c.ZRangeWithScores(ctx, WSKeyAt(0, strm, "merging"), 0, -1).Val())
 		rep := dry(t, c)
 		if len(rep.Members) != 0 || len(rep.Order) != 1 || rep.Order[0].Kind != OrderConflict || rep.Order[0].Why != "cycle" ||
 			!strings.HasSuffix(rep.Order[0].Line(), " held=t1,t2 escalate=coordinator") {
 			t.Fatalf("members %v order %v", rep.Members, rep.Order)
 		}
-		if after := fmt.Sprint(c.ZRangeWithScores(ctx, WSKey(strm, "merging"), 0, -1).Val()); after != before {
+		if after := fmt.Sprint(c.ZRangeWithScores(ctx, WSKeyAt(0, strm, "merging"), 0, -1).Val()); after != before {
 			t.Fatalf("the gate reordered: %s -> %s", before, after)
 		}
 		t.Logf("%s; merging scores unchanged %s", rep.Order[0].Line(), before)
@@ -127,7 +127,7 @@ func TestOrderGateWaitConflictAndMergeRevalidates(t *testing.T) {
 	t.Run("sequence", func(t *testing.T) {
 		t.Parallel()
 		c := setup(t, "merging")
-		c.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: 50, Member: "t2"}) // stored scores read t2 first
+		c.ZAdd(ctx, WSKeyAt(0, strm, "merging"), redis.Z{Score: 50, Member: "t2"}) // stored scores read t2 first
 		rep := dry(t, c)
 		if len(rep.Members) != 2 || rep.Members[0].Task != "t1" || rep.Members[1].Task != "t2" {
 			t.Fatalf("selection is not the computed sequence t1,t2: %v", rep.Members)
@@ -172,7 +172,7 @@ func TestOrderGateWaitConflictAndMergeRevalidates(t *testing.T) {
 			t.Fatal(err)
 		}
 		// after the selection: t0 is pushed ready and t1 now depends on it
-		c.ZAdd(ctx, WSKey(strm, "ready"), redis.Z{Score: 50, Member: "t0"})
+		c.ZAdd(ctx, WSKeyAt(0, strm, "ready"), redis.Z{Score: 50, Member: "t0"})
 		c.HSet(ctx, "task:t0", "stream", strm, "where", "ready", "state", "ready", "created_at", "50", "ref", "nova-tools#3")
 		c.HSet(ctx, "task:t1", "blocked_on", "t0")
 		_, err := Merge(ctx, c, MergeOptions{Repo: repo, Streams: []string{strm}, By: "test"})

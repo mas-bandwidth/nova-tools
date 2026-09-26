@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,9 +61,14 @@ type ShowStream struct {
 	Rank     int
 	Cards    []ShowCard
 	Sentinel string // the sentinel's where, or "none" when the stream has no sentinel record
-	Live     int    // cards in waiting, ready, working, review, merging or parked, the sentinel aside
+	Live     int    // cards in waiting, ready, working, review, merging or parked, the sentinel aside: what the sentinel waits on
 	Landed   int    // cards in landed
 	Cycle    string // the stream's DEPENDS-ON cycle (Order refused it); "" when it is ordered
+	// Counts is the stream's one count (count.go's rule: each set's
+	// members less the stream's sentinel), from the sets this read listed:
+	// the STREAM line's cards, live and landed are its Sum, Sum less
+	// landed, and landed, the numbers ws counts and the table print.
+	Counts StreamCounts
 }
 
 // SplitDeps splits a stored blocked_on (DEPENDS-ON) value into its entries:
@@ -138,13 +144,18 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 		return nil, nil
 	}
 
-	// Round 2: every set of every stream, with scores.
+	// Round 2: every set of every stream under the current epoch
+	// (nova-tools#4238), with scores.
+	epoch, err := Epoch(ctx, c)
+	if err != nil {
+		return nil, fmt.Errorf("ws show: %w", err)
+	}
 	pipe = c.Pipeline()
 	setCmds := make([][]*redis.ZSliceCmd, len(streams))
 	for i, s := range streams {
 		setCmds[i] = make([]*redis.ZSliceCmd, len(Wheres))
 		for j, w := range Wheres {
-			setCmds[i][j] = pipe.ZRangeWithScores(ctx, Key(s, w), 0, -1)
+			setCmds[i][j] = pipe.ZRangeWithScores(ctx, KeyAt(epoch, s, w), 0, -1)
 		}
 	}
 	if err := showExec(ctx, pipe); err != nil {
@@ -154,13 +165,20 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 	var members []string
 	whereOf := map[string]string{}
 	for i, s := range streams {
-		out[i] = ShowStream{Stream: s, Rank: i + 1, Sentinel: "none"}
+		out[i] = ShowStream{Stream: s, Rank: i + 1, Sentinel: "none", Counts: StreamCounts{Stream: s}}
 		sid := SentinelID(s)
 		for j, w := range Wheres {
 			for _, z := range setCmds[i][j].Val() {
 				id, _ := z.Member.(string)
 				if id == "" {
 					continue
+				}
+				if id != sid {
+					if k := slices.Index(Stream, w); k >= 0 {
+						out[i].Counts.Cells[k]++
+					} else if w == Parked {
+						out[i].Counts.Parked++
+					}
 				}
 				card := ShowCard{ID: id, Where: w, Score: z.Score, Sentinel: id == sid}
 				out[i].Cards = append(out[i].Cards, card)

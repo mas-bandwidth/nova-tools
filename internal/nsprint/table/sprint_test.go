@@ -227,11 +227,15 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 	ctx, now := context.Background(), table.SprintFixtureNow()
 	cfg := table.SprintFixtureConfig()
 	cfg.Sprint = ""
+	// no sprint named and none open: the fixture's s:fix leaves sprint:order
+	if err := client.Del(ctx, "sprint:order").Err(); err != nil {
+		t.Fatal(err)
+	}
 	snap, err := table.NewSprintReader(client, cfg).Read(ctx, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := snap.Render(now); !strings.HasPrefix(got, "SPRINT TABLE\n\n592/598 left, 1% done -> ~11840m gh 0/h\n\n") {
+	if got := snap.Render(now); !strings.HasPrefix(got, "SPRINT TABLE\n\n6/598 done 1%, left 592, eta 01:50 ET +9d gh 0/h\n\n") {
 		t.Fatalf("headline:\n%s", got)
 	}
 	mr := miniredis.RunT(t)

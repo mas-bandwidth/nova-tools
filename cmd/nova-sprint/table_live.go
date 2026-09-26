@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,7 +18,9 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/redis/go-redis/v9"
 )
 
 // cmdTableLive is `--layout live`: the whole sprint table (#3530) from the
@@ -37,7 +40,7 @@ func cmdTableLive(opts tableOpts, stdout, stderr io.Writer) int {
 		problems = append(problems, "--layout live takes no --check")
 	}
 	if opts.xyFile != "" {
-		problems = append(problems, "--xy-file belongs to --compare")
+		problems = append(problems, xyFileRetired)
 	}
 	if opts.loop && opts.once {
 		problems = append(problems, "--loop takes no --once")
@@ -49,8 +52,9 @@ func cmdTableLive(opts tableOpts, stdout, stderr io.Writer) int {
 		return tableRefuse(stderr, strings.Join(problems, "; "))
 	}
 	cfg := table.SprintConfig{Sprint: opts.sprint, Friends: splitRoster(opts.friends)}
+	named := "--sprint"
 	if cfg.Sprint == "" {
-		cfg.Sprint = os.Getenv("NOVA_SPRINT")
+		cfg.Sprint, named = os.Getenv("NOVA_SPRINT"), "NOVA_SPRINT"
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -60,14 +64,49 @@ func cmdTableLive(opts tableOpts, stdout, stderr io.Writer) int {
 			return tableRefuse(stderr, err.Error())
 		}
 		defer st.Close()
-		snap, err := table.NewSprintReader(st.Client(), cfg).Read(ctx, time.Now())
+		body, err := tableOnce(ctx, st.Client(), cfg, time.Now())
+		if code, ok := tableNotOpen(err, named, stdout); ok {
+			return code
+		}
 		if err != nil {
 			return tableRefuse(stderr, err.Error())
 		}
-		snap.LastGood = time.Now()
-		return publishTable(opts.out, snap.Render(time.Now()), stdout, stderr)
+		return publishTable(opts.out, body, stdout, stderr)
 	}
-	return loopTable(ctx, addr, cfg, opts, stdout, stderr)
+	return loopTable(ctx, addr, cfg, named, opts, stdout, stderr)
+}
+
+// tableNotOpen refuses a live table whose named sprint is not the open one
+// (#4411, as sprint status refuses it): the one count is the open sprint's,
+// never printed beside another sprint's pit stop. One line on stdout, exit
+// 1, naming the open sprint; named is where the name came from, --sprint or
+// NOVA_SPRINT, and the remedy drops it.
+func tableNotOpen(err error, named string, stdout io.Writer) (int, bool) {
+	var notOpen *ws.NotOpen
+	if !errors.As(err, &notOpen) {
+		return 0, false
+	}
+	open := notOpen.Open
+	if open == "" {
+		open = "-"
+	}
+	spelled, remedy := "--sprint "+notOpen.Name, "nova-sprint table --layout live"
+	if named == "NOVA_SPRINT" {
+		spelled, remedy = "NOVA_SPRINT="+notOpen.Name, "unset NOVA_SPRINT"
+	}
+	fmt.Fprintf(stdout, "REFUSED table --layout live %s: not the open sprint; open=%s remedy=%q\n", spelled, open, remedy)
+	return 1, true
+}
+
+// tableOnce is one render of the whole table read for now (the one-shot
+// --layout live): a fresh reader, so it learns the memberships first.
+func tableOnce(ctx context.Context, client redis.UniversalClient, cfg table.SprintConfig, now time.Time) (string, error) {
+	snap, err := table.NewSprintReader(client, cfg).Read(ctx, now)
+	if err != nil {
+		return "", err
+	}
+	snap.LastGood = now
+	return snap.Render(now), nil
 }
 
 // defaultTableLock is the one writer lock of the published table.
@@ -80,7 +119,7 @@ const defaultTableLock = "lock:nova-sprint-table"
 // table a second (a unit's log is a file too). Without --out every tick is
 // printed. A tick whose read fails publishes the last good rows with a stale
 // line; stderr hears about a failure once, and once more on recovery.
-func loopTable(ctx context.Context, addr string, cfg table.SprintConfig, opts tableOpts, stdout, stderr io.Writer) int {
+func loopTable(ctx context.Context, addr string, cfg table.SprintConfig, named string, opts tableOpts, stdout, stderr io.Writer) int {
 	token := ""
 	if opts.out != "" {
 		host, _ := os.Hostname()
@@ -137,6 +176,11 @@ func loopTable(ctx context.Context, addr string, cfg table.SprintConfig, opts ta
 				reader = table.NewSprintReader(st.Client(), cfg)
 			}
 			snap, err = reader.Read(ctx, now)
+			if code, ok := tableNotOpen(err, named, stdout); ok {
+				// the named sprint is not (or no longer) the open one:
+				// refused, never a stale table under its name
+				return code
+			}
 		}
 		if snap != nil && snap.LockLost {
 			fmt.Fprintf(stderr, "nova-sprint table: REFUSED: %s no longer holds this writer's token; exiting\n", cfg.LockKey)
@@ -242,6 +286,10 @@ func splitRoster(list string) []string {
 	return strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == ' ' })
 }
 
+// xyFileRetired refuses --xy-file: the live layout's progress line is the one
+// count (ws.Counts, #4411), never sprint-xy's key or its SPRINT-XY.txt.
+const xyFileRetired = `--xy-file is retired: the progress line is the one count; remedy="nova-sprint ws counts"`
+
 // cmdTableCompare is `--compare <file>` (#2674): the bash-parity render of
 // the live Redis diffed against the file the bash of record publishes.
 func cmdTableCompare(opts tableOpts, stdout, stderr io.Writer) int {
@@ -258,10 +306,13 @@ func cmdTableCompare(opts tableOpts, stdout, stderr io.Writer) int {
 	if opts.check || opts.loop || opts.once || opts.out != "" {
 		problems = append(problems, "--compare takes none of --check, --loop, --once, --out")
 	}
+	if opts.xyFile != "" {
+		problems = append(problems, xyFileRetired)
+	}
 	if len(problems) > 0 {
 		return tableRefuse(stderr, strings.Join(problems, "; "))
 	}
-	cfg := table.LiveConfig{Sprint: opts.sprint, XYFile: opts.xyFile, Friends: splitRoster(opts.friends), RowStale: 10 * time.Second}
+	cfg := table.LiveConfig{Sprint: opts.sprint, Friends: splitRoster(opts.friends), RowStale: 10 * time.Second}
 	ctx := context.Background()
 	st, err := store.Open(ctx, opts.redis)
 	if err != nil {
@@ -280,6 +331,9 @@ func cmdTableCompare(opts tableOpts, stdout, stderr io.Writer) int {
 func compareLive(ctx context.Context, st *store.Store, cfg table.LiveConfig, path string, stdout, stderr io.Writer) int {
 	waitForPublish(path, comparePublishWait)
 	snap, err := table.ReadLive(ctx, st.Client(), cfg)
+	if code, ok := tableNotOpen(err, "--sprint", stdout); ok {
+		return code
+	}
 	if err != nil {
 		return tableRefuse(stderr, err.Error())
 	}
@@ -287,8 +341,10 @@ func compareLive(ctx context.Context, st *store.Store, cfg table.LiveConfig, pat
 	if err != nil {
 		return tableRefuse(stderr, "--compare: "+err.Error())
 	}
-	want := maskVolatile(string(wantBytes))
-	got := maskVolatile(snap.RenderLive(time.Now()))
+	// the progress line is the one count against the bash's sprint-xy line
+	// (#4411): table.MaskXY masks it and the xy stale lines on both sides
+	want := maskVolatile(table.MaskXY(string(wantBytes)))
+	got := maskVolatile(table.MaskXY(snap.RenderLive(time.Now())))
 	if got == want {
 		fmt.Fprintln(stdout, "MATCH (load and age masked)")
 		return 0

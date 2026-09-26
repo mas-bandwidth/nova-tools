@@ -504,7 +504,7 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 		}
 		// The stream's MERGE-NOTEs were the merge card's; it landed.
 		for _, s := range o.Streams {
-			n, err := note.Drop(ctx, c, note.StreamKey(s))
+			n, err := note.Drop(ctx, c, note.StreamNotesKey(s))
 			if err != nil {
 				return rep, fmt.Errorf("notes of %s: %w", s, err)
 			}

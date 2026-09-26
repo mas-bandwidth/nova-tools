@@ -425,7 +425,11 @@ func orderRefusal(h OrderHold) *Refusal {
 // whole live order, none of them unable to finish (orderGate). The first
 // hold, or nil. Nothing is written.
 func StreamLandGate(ctx context.Context, c redis.Cmdable, stream string) (*OrderHold, error) {
-	ids, err := c.ZRange(ctx, WSKey(stream, "merging"), 0, -1).Result()
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := c.ZRange(ctx, WSKeyAt(epoch, stream, "merging"), 0, -1).Result()
 	if err != nil {
 		return nil, err
 	}

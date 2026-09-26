@@ -367,16 +367,16 @@ func TestRenameMovesAStreamHoldingACycleWhole(t *testing.T) {
 			t.Fatalf("task:%s stream %q after the rename, want %q", id, got, b)
 		}
 	}
-	live := append(c.ZRange(ctx, ws.Key(b, "waiting"), 0, -1).Val(), c.ZRange(ctx, ws.Key(b, "ready"), 0, -1).Val()...)
-	done := c.ZRange(ctx, ws.Key(b, "done"), 0, -1).Val()
+	live := append(c.ZRange(ctx, ws.KeyAt(0, b, "waiting"), 0, -1).Val(), c.ZRange(ctx, ws.KeyAt(0, b, "ready"), 0, -1).Val()...)
+	done := c.ZRange(ctx, ws.KeyAt(0, b, "done"), 0, -1).Val()
 	sort.Strings(live)
 	if strings.Join(live, " ") != "rn-b:sentinel rx ry rz" || strings.Join(done, " ") != "rn-a:sentinel" ||
 		c.HGet(ctx, "task:rn-a:sentinel", "where_ok").Val() != "fail" {
 		t.Fatalf("after the rename: waiting and ready %v, done %v (ok=%s)", live, done, c.HGet(ctx, "task:rn-a:sentinel", "where_ok").Val())
 	}
 	for _, w := range []string{"waiting", "ready", "working", "review", "merging", "parked", "landed", "done"} {
-		if n := c.ZCard(ctx, ws.Key(a, w)).Val(); n != 0 {
-			t.Fatalf("%s still holds %d", ws.Key(a, w), n)
+		if n := c.ZCard(ctx, ws.KeyAt(0, a, w)).Val(); n != 0 {
+			t.Fatalf("%s still holds %d", ws.KeyAt(0, a, w), n)
 		}
 	}
 	if c.SIsMember(ctx, "ws:names", a).Val() || !c.SIsMember(ctx, "ws:names", b).Val() {
@@ -462,7 +462,7 @@ func TestRenameRefusedOnTheThirdTaskMovesNothing(t *testing.T) {
 	}
 	var tasks []string
 	for _, w := range []string{"waiting", "ready"} {
-		for _, id := range c.ZRange(ctx, ws.Key(a, w), 0, -1).Val() {
+		for _, id := range c.ZRange(ctx, ws.KeyAt(0, a, w), 0, -1).Val() {
 			if !strings.HasSuffix(id, ":sentinel") {
 				tasks = append(tasks, w+":"+id)
 			}
@@ -498,9 +498,9 @@ func TestCardLandStreamRunsTheOrderGate(t *testing.T) {
 	ctx := context.Background()
 	const s = "gate: doors"
 	c.SAdd(ctx, "ws:names", s)
-	c.ZAdd(ctx, ws.Key(s, "working"), redis.Z{Score: 100, Member: "t1"})
+	c.ZAdd(ctx, ws.KeyAt(0, s, "working"), redis.Z{Score: 100, Member: "t1"})
 	c.HSet(ctx, "task:t1", "stream", s, "where", "working", "state", "working", "created_at", "100", "ref", "nova-tools#1")
-	c.ZAdd(ctx, ws.Key(s, "merging"), redis.Z{Score: 200, Member: "t2"})
+	c.ZAdd(ctx, ws.KeyAt(0, s, "merging"), redis.Z{Score: 200, Member: "t2"})
 	c.HSet(ctx, "task:t2", "stream", s, "where", "merging", "state", "merging", "created_at", "200", "ref", "nova-tools#2")
 	want := `ORDER WAIT stream=\"gate: doors\" before=t1 where=working held=t2`
 	sha := strings.Repeat("c", 40)

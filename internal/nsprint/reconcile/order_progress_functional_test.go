@@ -49,7 +49,7 @@ func TestProgressOldestFollowsTheOrderWithinOnePass(t *testing.T) {
 		if id == stop {
 			w = "waiting"
 		}
-		pipe.ZAdd(ctx, ws.Key(stream, w), redis.Z{Score: at, Member: id})
+		pipe.ZAdd(ctx, ws.KeyAt(0, stream, w), redis.Z{Score: at, Member: id})
 	}
 	pipe.HSet(ctx, "s:"+S, "status", "open")
 	pipe.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: S})

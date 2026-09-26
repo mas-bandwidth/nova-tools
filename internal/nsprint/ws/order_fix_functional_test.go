@@ -54,7 +54,7 @@ func TestOrderBaseIsTheOldestLiveCard(t *testing.T) {
 	old := createdAt(t, c, "a") - 8400
 	pipe := c.Pipeline()
 	pipe.HSet(ctx, "task:"+stop, "created_at", strconv.FormatFloat(old, 'f', 0, 64))
-	pipe.ZAdd(ctx, ws.Key(orStream, "waiting"), redis.Z{Score: old, Member: stop})
+	pipe.ZAdd(ctx, ws.KeyAt(0, orStream, "waiting"), redis.Z{Score: old, Member: stop})
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestOrderBaseIsTheOldestLiveCard(t *testing.T) {
 	}
 	least := 0.0
 	for _, w := range ws.OrderedSets {
-		zs, _ := c.ZRangeWithScores(ctx, ws.Key(orStream, w), 0, 0).Result()
+		zs, _ := c.ZRangeWithScores(ctx, ws.KeyAt(0, orStream, w), 0, 0).Result()
 		if len(zs) > 0 && (least == 0 || zs[0].Score < least) {
 			least = zs[0].Score
 		}
@@ -120,8 +120,8 @@ func TestOrderSentinelOnlyAndMidMove(t *testing.T) {
 	if _, err := taskcard.Move(ctx, c, "a", "working", taskcard.Opts{By: "test", As: "f1", Friend: "f1", SetFriend: true}); err != nil {
 		t.Fatal(err)
 	}
-	working, _ := c.ZScore(ctx, ws.Key(orStream, "working"), "a").Result()
-	if err := c.ZAdd(ctx, ws.Key(orStream, "ready"), redis.Z{Score: 1.5, Member: "e"}).Err(); err != nil {
+	working, _ := c.ZScore(ctx, ws.KeyAt(0, orStream, "working"), "a").Result()
+	if err := c.ZAdd(ctx, ws.KeyAt(0, orStream, "ready"), redis.Z{Score: 1.5, Member: "e"}).Err(); err != nil {
 		t.Fatal(err)
 	}
 	if err := ws.Check(ctx, c, append(orIDs, "solo")); err == nil || !strings.Contains(err.Error(), "e scores 1.5 in ") {
@@ -131,7 +131,7 @@ func TestOrderSentinelOnlyAndMidMove(t *testing.T) {
 	if err != nil || r.Rescored != 1 || r.Ranked != 6 {
 		t.Fatalf("mid-move reorder: %+v %v", r, err)
 	}
-	if got, _ := c.ZScore(ctx, ws.Key(orStream, "working"), "a").Result(); got != working || got != createdAt(t, c, "a") {
+	if got, _ := c.ZScore(ctx, ws.KeyAt(0, orStream, "working"), "a").Result(); got != working || got != createdAt(t, c, "a") {
 		t.Fatalf("a's working score %.0f moved (was %.0f)", got, working)
 	}
 	if got, _ := c.HGet(ctx, "task:a", "order_score").Result(); got != strconv.FormatFloat(r.Scores[0], 'f', 0, 64) {
@@ -253,7 +253,7 @@ func TestTwoPushesAtOnceRace50(t *testing.T) {
 	}
 	seen := map[float64]string{}
 	for _, w := range ws.OrderedSets {
-		for _, z := range c.ZRangeWithScores(ctx, ws.Key(orStream, w), 0, -1).Val() {
+		for _, z := range c.ZRangeWithScores(ctx, ws.KeyAt(0, orStream, w), 0, -1).Val() {
 			if other, dup := seen[z.Score]; dup {
 				t.Fatalf("%v and %s share the score %.0f", z.Member, other, z.Score)
 			}

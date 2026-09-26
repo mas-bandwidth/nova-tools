@@ -21,9 +21,9 @@ func TestLandPRMergesAMemberOnlyAsTheHead(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	seedPair := func(c *redis.Client, kind string) {
-		c.ZAdd(ctx, WSKey(strm, "working"), redis.Z{Score: 100, Member: "t1"})
+		c.ZAdd(ctx, WSKeyAt(0, strm, "working"), redis.Z{Score: 100, Member: "t1"})
 		c.HSet(ctx, "task:t1", "stream", strm, "where", "working", "state", "working", "created_at", "100", "ref", "nova-tools#1")
-		c.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: 200, Member: "t2"})
+		c.ZAdd(ctx, WSKeyAt(0, strm, "merging"), redis.Z{Score: 200, Member: "t2"})
 		c.HSet(ctx, "task:t2", "stream", strm, "where", "merging", "state", "merging", "created_at", "200", "ref", "nova-tools#2")
 		c.SAdd(ctx, "ws:names", strm)
 		c.HSet(ctx, PRKey("o/r", 7), "head", prHead, "stream", strm, "task", "t2", "kind", kind)
@@ -38,16 +38,16 @@ func TestLandPRMergesAMemberOnlyAsTheHead(t *testing.T) {
 		t.Fatalf("member behind t1: %v, merges %v, log %q", err, f.merges, log)
 	}
 	t.Logf("member t2 behind t1: %v", err)
-	c.ZRem(ctx, WSKey(strm, "working"), "t1")
-	c.ZAdd(ctx, WSKey(strm, "landed"), redis.Z{Score: 100, Member: "t1"})
+	c.ZRem(ctx, WSKeyAt(0, strm, "working"), "t1")
+	c.ZAdd(ctx, WSKeyAt(0, strm, "landed"), redis.Z{Score: 100, Member: "t1"})
 	c.HSet(ctx, "task:t1", "where", "landed")
 	rep, log, _, err := runLandPR(t, f, c)
 	if err != nil || rep.State != "merged" || len(f.merges) != 1 || !strings.Contains(log, "PR 7 CLAIMED t2 until ") ||
 		!strings.Contains(log, "PR 7 MERGED "+f.mergeSHA+"\n") || rep.CardMove != "merging->landed" {
 		t.Fatalf("t2 as the head: %+v %v %q", rep, err, log)
 	}
-	if n, _ := c.HLen(ctx, WSKey(strm, "landing")).Result(); n != 0 {
-		t.Fatalf("the landing left a claim: %v", c.HGetAll(ctx, WSKey(strm, "landing")).Val())
+	if n, _ := c.HLen(ctx, WSKeyAt(0, strm, "landing")).Result(); n != 0 {
+		t.Fatalf("the landing left a claim: %v", c.HGetAll(ctx, WSKeyAt(0, strm, "landing")).Val())
 	}
 	t.Logf("t2 as the head: claimed, merged, landed: %s", strings.ReplaceAll(strings.TrimSpace(log), "\n", " | "))
 

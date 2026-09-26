@@ -94,21 +94,41 @@ end
 
 -- TE.apply(ids, to, by, why, sha) -> {moved, same, skipped, notes}: notes
 -- are 'id: why' for each skipped id, and TE.plan_note for each plan a
--- landed stitch landed (not counted in skipped).
+-- landed stitch landed (not counted in skipped). A landing's ids land as
+-- a set (#4322 round 6): each move runs the work order's gate, and an id
+-- held ORDER WAIT behind a sibling of the same set lands once the sibling
+-- has, so the ids' order never matters; passes repeat while one lands,
+-- and an id still held at the end is skipped with its ORDER WAIT line.
 function TE.apply(ids, to, by, why, sha)
   local r = { moved = 0, same = 0, skipped = 0, notes = {} }
-  for _, id in ipairs(ids) do
-    local status, note = TE.move(id, to, by, why, sha)
-    if status == 'MOVED' then
-      r.moved = r.moved + 1
-      if note then r.notes[#r.notes + 1] = TE.plan_note(note) end
-    elseif status == 'SAME' then
-      r.same = r.same + 1
-    else
-      r.skipped = r.skipped + 1
-      r.notes[#r.notes + 1] = id .. ': ' .. note
+  local pending = ids
+  repeat
+    local again, held, progress = {}, {}, false
+    for _, id in ipairs(pending) do
+      local status, note = TE.move(id, to, by, why, sha)
+      if status == 'MOVED' then
+        r.moved = r.moved + 1
+        progress = true
+        if note then r.notes[#r.notes + 1] = TE.plan_note(note) end
+      elseif status == 'SAME' then
+        r.same = r.same + 1
+      elseif to == 'landed' and type(note) == 'string' and string.sub(note, 1, 11) == 'ORDER WAIT ' then
+        again[#again + 1] = id
+        held[id] = note
+      else
+        r.skipped = r.skipped + 1
+        r.notes[#r.notes + 1] = id .. ': ' .. note
+      end
     end
-  end
+    pending = again
+    if not progress then
+      for _, id in ipairs(pending) do
+        r.skipped = r.skipped + 1
+        r.notes[#r.notes + 1] = id .. ': ' .. held[id]
+      end
+      pending = {}
+    end
+  until #pending == 0
   return r
 end
 

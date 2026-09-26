@@ -80,7 +80,7 @@ func TestOrderDoorsCLI(t *testing.T) {
 	f.as("a")
 	code, out, errOut = runTaskCLI("push", "--to", "a", "--id", "fq1", "--kind", "work", "--ref", "mas-bandwidth/nova-tools#3",
 		"--title", "STREAM: "+s2+" | fq one")
-	if code != 0 || !regexp.MustCompile(`^PUSH CREATED id=fq1\nORDER stream="order: queue" order=2 order_rt=3 order_ms=[0-9.]+\n$`).MatchString(out) {
+	if code != 0 || !regexp.MustCompile(`^PUSH CREATED id=fq1\nORDER stream="order: queue" order=2 order_rt=4 order_ms=[0-9.]+\n$`).MatchString(out) {
 		t.Fatalf("friend-queue push: %d %q %q", code, out, errOut)
 	}
 	stale(s2)
@@ -191,7 +191,7 @@ func TestOrderDoorsCLI(t *testing.T) {
 
 	// task move --to-stream: both streams ordered, one ORDER line each.
 	code, out, _ = runTaskCLI("move", "--actor", "rowan", "--id", "x", "--to-stream", s3)
-	if code != 0 || !regexp.MustCompile(`\nORDER stream="order: doors" order=2 order_rt=3 order_ms=[0-9.]+\nORDER stream="order: moved" order=2 order_rt=3 order_ms=[0-9.]+\n$`).MatchString(out) {
+	if code != 0 || !regexp.MustCompile(`\nORDER stream="order: doors" order=2 order_rt=4 order_ms=[0-9.]+\nORDER stream="order: moved" order=2 order_rt=4 order_ms=[0-9.]+\n$`).MatchString(out) {
 		t.Fatalf("move --to-stream: %d %q", code, out)
 	}
 	stale(s)
@@ -201,11 +201,11 @@ func TestOrderDoorsCLI(t *testing.T) {
 	// scope park and unpark: order= in the receipt.
 	// (everything parked: nothing is live, order=0)
 	code, out, _ = runSprint("scope", "park", "--redis", addr, "--stream", s3, "--checkpoint", filepath.Join(dir, "cp.tsv"))
-	if code != 0 || !regexp.MustCompile(`^PARKED stream="order: moved" parked=\d+ checkpoint=\S+ rows=\d+ order=0 order_rt=3 order_ms=[0-9.]+ ms=`).MatchString(out) {
+	if code != 0 || !regexp.MustCompile(`^PARKED stream="order: moved" parked=\d+ checkpoint=\S+ rows=\d+ order=0 order_rt=4 order_ms=[0-9.]+ ms=`).MatchString(out) {
 		t.Fatalf("park: %d %q", code, out)
 	}
 	code, out, _ = runSprint("scope", "unpark", "--redis", addr, "--stream", s3)
-	if code != 0 || !regexp.MustCompile(`^UNPARKED stream="order: moved" unparked=\d+ order=2 order_rt=3 order_ms=[0-9.]+ ms=`).MatchString(out) {
+	if code != 0 || !regexp.MustCompile(`^UNPARKED stream="order: moved" unparked=\d+ order=2 order_rt=4 order_ms=[0-9.]+ ms=`).MatchString(out) {
 		t.Fatalf("unpark: %d %q", code, out)
 	}
 	stale(s3)

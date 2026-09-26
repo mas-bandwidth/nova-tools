@@ -171,18 +171,23 @@ type liveMember struct {
 	where string
 }
 
-// readLive is ReadOrders' two pipelined round trips: each stream's live
-// sets, then every member's order fields.
+// readLive is ReadOrders' three pipelined round trips: the sprint epoch
+// (the sets are the current epoch's, #4238), each stream's live sets, then
+// every member's order fields.
 func readLive(ctx context.Context, c redis.Cmdable, streams []string) ([][]liveMember, map[string]orderRec, error) {
 	if len(streams) == 0 {
 		return nil, nil, nil
+	}
+	epoch, err := Epoch(ctx, c)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ws order: %w", err)
 	}
 	pipe := c.Pipeline()
 	sets := make([][]*redis.ZSliceCmd, len(streams))
 	for i, s := range streams {
 		sets[i] = make([]*redis.ZSliceCmd, len(OrderLive))
 		for j, w := range OrderLive {
-			sets[i][j] = pipe.ZRangeWithScores(ctx, Key(s, w), 0, -1)
+			sets[i][j] = pipe.ZRangeWithScores(ctx, KeyAt(epoch, s, w), 0, -1)
 		}
 	}
 	if err := showExec(ctx, pipe); err != nil {
@@ -410,7 +415,7 @@ func Reorder(ctx context.Context, c redis.Cmdable, stream, by string) (ReorderRe
 	for attempt := 1; ; attempt++ {
 		so, err := ReadOrder(ctx, c, stream)
 		r.StreamOrder = so
-		r.RoundTrips += 2
+		r.RoundTrips += 3
 		if err != nil {
 			return r, err
 		}

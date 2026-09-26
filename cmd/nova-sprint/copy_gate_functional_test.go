@@ -208,7 +208,7 @@ func TestEveryOkDoorRunsTheSpecGate(t *testing.T) {
 	if ended != 1 || already != n-1 {
 		t.Fatalf("%d ended and %d already of %d, want exactly one end", ended, already, n)
 	}
-	if where, ok := c.HGet(ctx, taskcard.Key(two), "where").Val(), c.ZCard(ctx, friend.Key("ok")).Val(); where != "ok" || ok != 1 {
+	if where, ok := c.HGet(ctx, taskcard.Key(two), "where").Val(), c.ZCard(ctx, friend.KeyAt(0, "ok")).Val(); where != "ok" || ok != 1 {
 		t.Fatalf("after the race the copy is %s and %d copies are ok, want ok and 1", where, ok)
 	}
 	if wt := rgit("worktree", "list", "--porcelain"); strings.Count(wt, "worktree ") != 1 {

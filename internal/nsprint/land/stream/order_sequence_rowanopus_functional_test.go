@@ -27,7 +27,7 @@ func TestOrderSequenceRealMoves_RowanOpus(t *testing.T) {
 	c := newRedis(t)
 	seed(t, c, 2, head, 200, score("rowan", head, 10))
 	c.HSet(ctx, "task:t2", "where", "merging", "paths", "internal/shared.go", "ref", "nova-tools#2")
-	c.ZAdd(ctx, WSKey(strm, "working"), redis.Z{Score: 100, Member: "t1"})
+	c.ZAdd(ctx, WSKeyAt(0, strm, "working"), redis.Z{Score: 100, Member: "t1"})
 	c.HSet(ctx, "task:t1", "stream", strm, "where", "working", "state", "working", "created_at", "100", "paths", "internal/shared.go", "ref", "nova-tools#1")
 	dry := func() Report {
 		rep, err := LandStream(ctx, c, Options{Repo: repo, Streams: []string{strm}, DryRun: true, MinScore: 8})
@@ -62,7 +62,7 @@ func TestOrderSequenceRealMoves_RowanOpus(t *testing.T) {
 		t.Fatal(err)
 	}
 	// t0: older, lower issue, shares the path; no DEPENDS-ON edit anywhere.
-	c.ZAdd(ctx, WSKey(strm, "ready"), redis.Z{Score: 50, Member: "t0"})
+	c.ZAdd(ctx, WSKeyAt(0, strm, "ready"), redis.Z{Score: 50, Member: "t0"})
 	c.HSet(ctx, "task:t0", "stream", strm, "where", "ready", "state", "ready", "created_at", "50", "paths", "internal/shared.go", "ref", "nova-tools#1")
 	_, err = Merge(ctx, c, MergeOptions{Repo: repo, Streams: []string{strm}, By: "test"})
 	var r *Refusal
@@ -112,7 +112,7 @@ func TestSelectionSequenceFollowsScoresNotOrder_RowanOpus(t *testing.T) {
 	c.HSet(ctx, "task:t2", "where", "merging", "paths", "internal/two.go", "ref", "nova-tools#2")
 	// the drift: t1 (older, #1) is first in the computed order (created_at
 	// is the position's one key, round 6) but its stored score puts it last
-	c.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: 500, Member: "t1"})
+	c.ZAdd(ctx, WSKeyAt(0, strm, "merging"), redis.Z{Score: 500, Member: "t1"})
 	orders, _ := ws.ReadOrders(ctx, c, []string{strm})
 	rep, err := LandStream(ctx, c, Options{Repo: repo, Streams: []string{strm}, DryRun: true, MinScore: 8})
 	var ids, ord []string

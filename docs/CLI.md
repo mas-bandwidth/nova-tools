@@ -3698,17 +3698,26 @@ itself signals only the unit's pid.
 [--once | --loop [<seconds>]] [--out <file>]` is the whole sprint table Glenn
 watches (#3530): the headline (`SPRINT TABLE *** PIT STOP ***` while
 `s:<name>:pitstop` or `sprint:<name>:pitstop` exists), the
-`<left>/<y> left, <z>% done -> ~<eta>m` line, the streams block and the
+`<landed>/<total> done <z>%, left <l>, eta <HH:MM> ET` line, the streams block and the
 worker table, one blank line between them. The streams are the
 rows of `ws:order` (the ws index, #3662) with
 the ZCARDs of their `waiting`, `ready`, `working`, `review`, `reading`,
-`merging` and `landed` sets (`ws:<stream>:<where>`), one column each in that
+`merging` and `landed` sets (`ws:<stream>:<where>`, `ws:<e>:<stream>:<where>`
+after a `sprint clear`), one column each in that
 order (nothing folded: `review` is its own column between `working` and
 `reading`, and `reading` between `review` and `merging`); rows
-with all zeros are hidden. The total row sums each column. y is every task in
-those sets, left is y minus landed (a card in `review`, `reading` or
-`merging` is left, not done), and the ETA is left over the moves to `landed`
-in the last hour of `ws:log` (at least one an hour). Below the total, one
+with all zeros are hidden. The headline, the rows and the total row are one
+read of the one count, `ws.Counts` (internal/nsprint/ws/progress.go), the
+numbers `sprint status` and `ws counts` print too: total is every card in
+the six sets of the streams of `ws:order` (each stream's sentinel is its
+stop, not work, and counted nowhere; parked and done cards are in none of
+them; after `sprint clear` every count is 0, parked included: a clear is not
+a cancel, a parked card stays parked in the epoch the clear left, and the
+receipt says `parked_kept=<n>`), done is landed, left
+is total minus done (a card in `review` or `merging` is left, not done), and
+the ETA is now plus left over the cards (sentinels aside) moved to `landed` in
+the last hour of `ws:log`, in Eastern (`+<n>d` when days out; `?` with no
+landing in the hour; `-` with no card). Below the total, one
 `LAND` line per open landing and one `REVIEW stream=<s> over=<n>
 oldest=<id> age=<d> max=<d>` line per stream holding cards in review longer
 than `cfg:review max_age` (seconds; one hour when unset; a card with no
@@ -3718,7 +3727,8 @@ status | load`, one row per worker named `<kind>:<name>` (`friend:emma`,
 `bench:hetzner`): the friends (the `--friends` roster, else the `friends`
 SET sorted), then the `benches` SET, then any other member of the
 `consumers` SET, each once, and a total row. Every cell is one ZCARD of
-`<kind>:<name>:cards:<set>` for set = `ready`, `working`, `ok`, `fail`; done
+`<kind>:<name>:cards:<set>` (`<kind>:<name>:<e>:cards:<set>` at epoch e,
+`sprint clear`) for set = `ready`, `working`, `ok`, `fail`; done
 is ok + fail and ok% is ok over done, derived, with no sprint window and no
 base from a `table clear`; a set that does not read prints `?`, never 0.
 status is `up` when the worker's own beat (`<kind>:<name>:beat` at, ms)
@@ -3729,7 +3739,13 @@ beat's load1 (`-` for a beat with none, a friend's). The old `friend:<f>` row ha
 are not read. Every tick is ONE
 pipeline (a second one only on the tick a set's membership changed), never
 KEYS or SCAN, zero GitHub. `--redis` defaults to `NOVA_SPRINT_REDIS`, then
-`NOVA_REDIS_ADDR`; `--sprint` to `NOVA_SPRINT`. `--loop 1` renders once a
+`NOVA_REDIS_ADDR`; `--sprint` to `NOVA_SPRINT`, which names the pit stop
+read and must be the open sprint: another name is refused, as `sprint
+status` refuses it, one line on stdout, exit 1 (the one-shot, the loop on
+its tick, and `--compare`), `REFUSED table --layout live --sprint <S>: not
+the open sprint; open=<open|-> remedy="nova-sprint table --layout live"`
+(`NOVA_SPRINT=<S>` and `remedy="unset NOVA_SPRINT"` when the name came
+from the environment) (#4411). `--loop 1` renders once a
 second until SIGTERM; with `--out <file>` it is the table's one writer: it
 takes the Redis lock `lock:nova-sprint-table` (`--lock <key>` names another),
 refuses with exit 3 when another writer holds it, and publishes each tick by
@@ -3746,6 +3762,51 @@ each), stores the done counts in `ws:done0` (which the table no longer
 reads) and the receipt in `ws:checkpoint`, and prints `CLEARED ... ms=<n>`.
 Waiting, ready, working, review, reading and merging and the worker table
 are untouched.
+
+`sprint clear --why <text> [--force] [--checkpoint <file>] [--by <name>]
+[--redis <addr>]` (#4238) is the sprint table to zeros as ONE call,
+`ns_sprint_clear`: one `HINCRBY sprint:epoch n 1`. Nothing is moved or
+deleted. Every set behind a table is named by the sprint epoch it was
+written under, so the next tick reads the new epoch's empty sets and the old
+epoch's members are invisible for good:
+
+| set | epoch 0 (the name before the first clear) | epoch e |
+| --- | --- | --- |
+| a stream's tasks | `ws:<stream>:<where>` | `ws:<e>:<stream>:<where>` |
+| a consumer's copies | `<kind>:<name>:cards:<col>` | `<kind>:<name>:<e>:cards:<col>` |
+| a sprint's dealer lists | `s:<S>:pool`, `s:<S>:waiting` | `s:<S>:<e>:pool`, `s:<S>:<e>:waiting` |
+
+A store never cleared reads as it did (epoch 0 is the old names, no
+migration). A record carries the epoch it was created under (its `epoch`
+field; absent is 0) and lives in that epoch's sets for good: a move, a beat
+or an end of an older epoch's card stays in its own epoch (an old copy's
+beat or end refuses `NOTWORKING`), so a writer holding the old epoch never
+makes a current cell non-zero. Every reader keys by the current epoch: the
+tick reads `sprint:epoch n` after its cells in the same pipeline and reads
+again when it moved, and `ReadLive` does the same. The names are spelled by
+one rule (`ws.KeyAt`, `ws.ConsumerKeyAt`, `ws.SprintListAt`; `NS.card.ckey`,
+`wskey`, `skey` in the library); `TestEveryTableSetIsNamedByTheEpochRule`
+refuses any other spelling. A stream name may not start with `<digits>:`
+(`STREAM bad name <s>: a leading <digits>: is the sprint epoch segment of
+the set names`). Cards working or merging are in flight and refuse the
+clear (`REFUSED sprint clear: INFLIGHT <n> cards working or merging; sprint
+clear --force leaves them to epoch <e>`) unless `--force`. The pit stop is
+kept, never lifted. `--checkpoint` writes every ws set's members (the
+current epoch's) before the increment. The receipt:
+
+```
+CLEARED streams=10 cards=598 copies=38 consumers=11 epoch=1 parked_kept=0 by=rowan ms=0
+PITSTOP kept sprint=fix
+STREAM swarm: cards cards=164
+```
+
+`PITSTOP none` when no open sprint has a stop; one `STREAM` line per stream
+with what the clear made invisible; `ms` is the one call's own time. The
+same receipt rides the `sprint:epoch` hash (`n`, `at`, `by`, `why`, `from`,
+`streams`, `cards`, `copies`, `consumers`, `pitstop`, `pitstop_sprint`) with
+one `ws:log` entry (`epoch/<e>` to `epoch/<e+1>`). The old epochs' sets
+stay until a reaper takes them (not built). Exit 0 cleared, 1 refused, 2
+could not run.
 
 `review post --id <primary> --verdict recut|redeal|reassign:<consumer>|drop
 --why <text> [--to <consumer>] [--redis <addr>] [--actor <a>]` (#4072) is
@@ -3784,8 +3845,11 @@ why=<why>` with exit 1 (a card not in review, a consumer with no slots).
 
 `table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...>`
 renders the #2674 port of rowan-tools `bin/sprint-table-redis` (the keys
-that script reads, the bytes it prints), waits for the file's next publish,
-and prints `MATCH` or a unified diff and exits 1.
+that script reads, the bytes it prints, but for its progress line: the one
+count's `<landed>/<total> done <z>%, left <l>, eta <HH:MM> ET`, never
+sprint-xy's `sprint:<S>:xy`, masked with the bash's xy stale lines on both
+sides, #4411; `--xy-file` is refused as retired), waits for the file's next
+publish, and prints `MATCH` or a unified diff and exits 1.
 
 ### Unused verbs and the fold's verbs step (#3160)
 
@@ -4155,10 +4219,11 @@ Exit 0 written or already so (RECORDED, NEW_REV, DONE, SAME), 1 refused
 
 The ws index (#3662) is the sprint's work-stream data structure: `ws:names`, `ws:order` (rank), and per stream one ZSET per state, `ws:<stream>:waiting|ready|working|merging|landed|parked`, with `task:<id>` fields `stream` and `state` naming the one set a task is in (`closed` is in none) and every move receipted in the `ws:log` stream. Each verb is one FCALL of an `ns_ws_*` function (library file `internal/nsprint/fn/lua/ws.lua`, Go wrappers in `internal/nsprint/ws`), prints one receipt line ending `ms=<n>` (the list verbs print their rows first), and exits 0 done, 1 refused (`REFUSED <why>`, nothing written), 2 could not run. Every verb takes `--redis <addr>` (default `$NOVA_SPRINT_REDIS`) and `--as <actor>` (default `$USER`); the writing verbs take `--why <text>` for the log.
 
-- `nova-sprint ws counts` prints the totals over every stream; `nova-sprint ws checkpoint --out <path>` writes every stream's six sets with the task fields as TSV and records the receipt in `ws:checkpoint`.
+- `nova-sprint ws counts` prints the one count (the numbers `sprint status` and the table print): `COUNTS sprint=<S> streams=<n> waiting= ready= working= review= merging= landed= parked= total= done=<landed>/<total> pct= left= eta=`; `nova-sprint ws checkpoint --out <path>` writes every stream's six sets with the task fields as TSV and records the receipt in `ws:checkpoint`.
+- `nova-sprint sprint status [--sprint <S>]` prints the one count as `<S> <status> <landed>/<total> done <z>%, left <l>, eta <HH:MM> ET` (`eta -` with no card) for the open sprint only: the ws index holds one sprint's streams, so `--sprint` naming another is refused, exit 1, `REFUSED sprint status --sprint <S>: not the open sprint; open=<open|-> remedy="nova-sprint sprint status"`. `ws show --order` prints each stream's `cards= live= landed=` from the same count. The wide `table --once` prints every open sprint's pipeline row as `pipeline <S> REFUSED pipeline reads a retired key family; remedy="nova-sprint ws counts"`, and `census --sprint <S>` prints `REFUSED census reads a retired key family; remedy="nova-sprint ws counts"` (exit 1, no Redis read), whatever that family (`s:<S>:idx:card:*`, `s:<S>:pool`, `s:<S>:waiting`, `sprint:<S>:cards`) holds: it is not a count of the sprint's work, and card push still writes it, so a number there would disagree with the one count (#4411). `card fsck` labels its counts of that family `family=retired`.
 - `nova-sprint ws show --order [--stream <s>]` (also `stream order --show`; #4318, #4322) prints every stream's cards in its computed work order, one line each, `<rank> <where> <id> <- <edges>` (rank `-` for a landed, done or parked card), one reason per edge: `<dep> (reason: depends-on)` for each DEPENDS-ON entry (one not landed carries its set in parentheses, one with no record `(no record)`), `<id> (reason: paths <path>)` and `<id> (reason: issue)` for the tie-breaks, the stream's sentinel last, then `SHOW streams=<n> cards=<n> edges=<n>`; a stream whose DEPENDS-ON closes a cycle prints `ORDER CYCLE <cycle>` and its cards unranked.
 - The stream's work order (#4322, #4324): the topological order of its live cards' DEPENDS-ON edges (waiting, ready, working, review, merging), ties broken by PATHS overlap (two cards sharing a path, or a path and a directory above it, go lower issue first unless DEPENDS-ON says otherwise) and then by issue number (from the card's ref or origin; none last, by id), the sentinel last. It is stored as the score of every card in the stream's waiting, ready and merging sets (the created_at ms of the oldest live card that is not the sentinel, plus rank-1, so PROGRESS `oldest=` reads that card; and as the record's `order_score`, which every move into those sets carries), so the lander and the dealer read it as the sets' order. `nova-sprint ws reorder --stream <s>` recomputes it in Go and writes it in one FCALL (`REORDERED stream=<s> cards=<n> rescored=<n> skipped=<n> rt=3`); the write is conditional: ns_ws_reorder refuses `ORDER STALE` and writes nothing when the stream's live cards changed since the read, and the verb reads again (at most 5 times). The doors write it: `task push` (with or without `--actor`), `card push` of cards with `STREAM:`, `card cut --from` and `--parent`, `task done|land|cancel|block|unblock|front|move` (both streams on `--to-stream`), `scope park|unpark`, `land merge` (`order=<n> order_rt=<n> order_ms=<ms>` in the receipt, or one `ORDER stream=<s> ...` line per stream), and every waiting-resolve pass writes each stream whose stored scores are not its computed order (`ORDER stream=<s> order=<n> why=stale`). A push that closes a DEPENDS-ON cycle through the card it writes is refused by its own FCALL, on the stream's live cards at that instant, and writes nothing: `TASK push REFUSED ... why="ORDER CYCLE stream=<s> DEPENDS-ON cycle <id> -> ... -> <id>"` (exit 1), `PUSH INVALID ... why="ORDER CYCLE ..."` (friend-queue, exit 2), `nova-sprint card: ns_card_push: ORDER CYCLE ...` (exit 2; a batch whose own cards close a cycle is refused whole first), `CARD CUT REFUSED ... why="push refused: ORDER CYCLE ..."`, and `card cut --parent`'s bind `why="bind: ORDER CYCLE ..."`; a move into another stream or back into the live cards (unpark) that would close one is refused the same way. A stream that already holds a cycle takes every push the cycle does not run through (its `ORDER CYCLE` line prints and the receipt says `order=cycle`). A seat without `+fcall|ns_ws_reorder` is refused before any write when it pushes onto a stream (`why="ORDER GRANT ns_ws_reorder: NOPERM ..."`), since it could not write the order. `nova-sprint ws check [--stream <s>] [--repair]` checks the stream paths (below), the ws invariants and each stream's order: `ORDER DRIFT stream=<s> stored=<ids> computed=<ids>` when the stored scores read another sequence, `ORDER CYCLE`, `INVARIANTS <what>`, then the one receipt `CHECK streams=<n> cards=<n> overlaps=<n> stale=<n> repaired=<n> records=<n> unbuilt=<n> refused=<n> drift=<n> cycles=<n> invariants=ok|bad` (streams counts the streams holding live cards; --stream limits the order check); exit 1 with any finding.
-- The stream sentinel (#4318): every stream has one sentinel card, `<slug>:sentinel` (the stream name lower-cased, runs of other characters one `-`; two names with one slug are refused, `SLUG ...`), created in the stream's waiting set when the stream is registered (its first push, `stream order`, a rename, a migrate; `task fsck` names a registered stream without one, or whose stop sits in another stream, as `NOSENTINEL`, and `task fsck --repair` creates it or moves it home). It is the stream's stop, and its graph is structure in the one move: waiting -> landed when the stream's last live card lands (at that sha, in the same call) or by `task land --id <slug>:sentinel --sha <merge sha>` once no other card is live (refused by name until then; the waiting resolver prints `SENTINEL ... ready-to-land` with the remedy when the last card was cancelled instead); waiting <-> parked with its stream (`scope park` and `unpark` count cards, the stop moves uncounted); done only by a rename (a rename to the same slug keeps the stop; a renamed landed stream's old stop ends done/ok and the new name's lands at the same sha); never dealt, never ready, working, review or merging, never done by task done, cancel or sprint clear, never owned, never moved to another stream or to none, and a move that stays in place carries no fields. It is counted in no column (the table, `ws counts` and the progress duty count cards without it). A stream that must wait for another whole stream puts `DEPENDS-ON <slug>:sentinel` on its first card; the resolver treats it like any card edge, met by the sentinel's landing alone, and there is no second kind of dependency (`stream/<slug>`, the older spelling, is read as `<slug>:sentinel`).
+- The stream sentinel (#4318): every stream has one sentinel card, `<slug>:sentinel` (the stream name lower-cased, runs of other characters one `-`; two names with one slug are refused, `SLUG ...`), created in the stream's waiting set when the stream is registered (its first push, `stream order`, a rename, a migrate; `task fsck` names a registered stream without one, or whose stop sits in another stream, as `NOSENTINEL`, and `task fsck --repair` creates it or moves it home). It is the stream's stop, and its graph is structure in the one move: waiting -> landed when the stream's last live card lands (at that sha, in the same call) or by `task land --id <slug>:sentinel --sha <merge sha>` once no other card is live (refused by name until then; the waiting resolver prints `SENTINEL ... ready-to-land` with the remedy when the last card was cancelled instead); waiting <-> parked with its stream (`scope park` and `unpark` count cards, the stop moves uncounted); done only by a rename (a rename to the same slug keeps the stop; a renamed landed stream's old stop ends done/ok and the new name's lands at the same sha); never dealt, never ready, working, review or merging, never done by task done, cancel or sprint clear, never owned, never moved to another stream or to none, and a move that stays in place carries no fields. It is counted nowhere: the one count (`sprint status`, the table, `ws counts`, `ws show`, `stream ls`, `scope ls`, the progress duty's `PROGRESS left=`) counts cards without it, so a stream holding only its sentinel counts 0 (#4411). A stream that must wait for another whole stream puts `DEPENDS-ON <slug>:sentinel` on its first card; the resolver treats it like any card edge, met by the sentinel's landing alone, and there is no second kind of dependency (`stream/<slug>`, the older spelling, is read as `<slug>:sentinel`).
 - `nova-sprint scope keep --streams "<a>|<b>"` parks every stream not named (waiting and ready move to parked; every set is scored by the task's `created_at` ms, so a list reads oldest first and a move never changes the score); `scope park --stream <s> [--ids @file]` parks one stream, or only the listed ids of it; `scope unpark --stream <s>` returns each parked task to the set it came from; `scope ls` prints each stream as kept, parked or partial. `scope keep` and `scope park` write a checkpoint first, to `--checkpoint <path>` or a new file in `$NOVA_SPRINT_CHECKPOINT_DIR` (default `nova-sprint/ws` under the user cache directory, newest 32 kept).
 - `nova-sprint stream ls --tree` (nova-tools#4317) adds every plan of a stream under its line, collapsed: `plan <id> <derived state> children=<n> waiting=.. ready=.. working=.. review=.. merging=.. landed=.. done=.. parked=.. stitch=<id>:<where>`, the children's counts folded in and no new column; `--tree --expand` lists each child (`child <id> <where> pr=<repo#n> score=<n>`) and the stitch under the parent; the receipt is `STREAMS n=<n> plans=<k>`.
 - Stream paths (nova-tools#4322): no path belongs to two open streams. `ws:paths` (HASH, field `<stream>`) holds the union of the stream's live cards' PATHS (each record's `stream_paths`, the PATHS line as `ws.SplitPaths` reads it), `""` when they name none; a registered stream holding a live card with no field is unbuilt. The gate is Lua (SP.gate in 02_card_move.lua), in the same FCALL as the write and before it: ns_card_push (card push, card cut), ns_tcard_push (task push, quack cut, card cut --from and --parent), task move into another stream (`task move --to-stream`, `ws move`) and `scope unpark` (refused whole). It refuses a card whose PATHS overlap another open stream's (equal, or one a prefix of the other at a `/`): `REFUSED PATHS overlap stream=<s> paths=<a,b> remedy="--join <s>"` (a move's remedy is `nova-sprint scope park --stream <s>`; an unpark's line adds `unpark=<stream>`); a card overlapping two or more streams names every one: `REFUSED PATHS overlap stream=<s1> also=<s2> paths=<...> remedy="nova-sprint scope park --stream <s2>"`; any gated write while a stream is unbuilt: `REFUSED PATHS unbuilt stream=<s> remedy="nova-sprint ws check --repair"`; and `--join <s>` (card push, card cut, task push) naming a stream with no live card: `REFUSED PATHS notopen stream=<s> remedy="nova-sprint stream ls"`. `--join <s>` pushes a card that overlaps open stream `<s>` onto it instead. Cards of one stream may share paths. A move never carries `stream_paths` (only the push and the repair write it) nor `paths` (fixed at the push; `card end --paths` records the paths the work touched as `result_paths`, which a copy's brief carries when the primary has no PATHS, and never changes the card's PATHS or its stream's): `REFUSED FIELD stream_paths ...`, `REFUSED FIELD paths ...`. An adoption of a record that predates the where field (task and card), the reap's relink of a stray's views and `card fsck --repair`'s relink of a stream view are gated the same way. `card cut --from` checks every row the same way before it files any issue, and its `--dry-run` with `--redis` reports the refusals; without a store it prints `CARD CUT DRY PATHS unchecked rows=<n> why=... remedy="pass --redis <addr>"`. A rerun whose row's PATHS differ from its pushed card's is refused: `why="CONFLICT task:<id> paths=<old> new=<new>: ..."`. `stream ls` prints each stream's `paths=<n>`. `nova-sprint ws check [--repair]` recomputes every stream's paths from its live records (each record's `stream_paths`, else its PATHS), prints `PATHS OVERLAP stream=<a> other=<b> paths=<...>` for two open streams sharing a path and `PATHS STALE stream=<s> record=<n> live=<m>` for a record that differs or is unbuilt; `--repair` is one FCALL (`ns_ws_paths_repair`): each live record with PATHS and no `stream_paths` is backfilled, even when its paths overlap another stream's (both streams then hold the path, a push into it is refused naming both, and the pair's `PATHS OVERLAP` line is printed, exit 1, until one side is parked, cancelled or lands), and every stream's field is written from the live sets as they are in that call; only a record whose PATHS changed since the read keeps none and leaves its stream unbuilt: `REPAIR REFUSED PATHS unread id=<id> in=<s> remedy="nova-sprint ws check --repair"`. With `--repair` the lines report the store as the repair left it. Then the one receipt `CHECK streams=<n> cards=<n> overlaps=<n> stale=<n> repaired=<n> records=<n> unbuilt=<n> refused=<n> drift=<n> cycles=<n> invariants=ok|bad` (the order and invariant checks above run in the same call); exit 1 on an overlap, a repair refusal, a stale record or any order finding. Deploy: the store fails closed. After `fn deploy` loads the library that carries the gate (the `fn` step of `fleet release`), every gated write is refused as unbuilt until `nova-sprint ws check --repair` has run once on that store, so run it right after the `fn` step.
@@ -4595,9 +4660,9 @@ A plan never sits in a state with no way on (the fix of the #4317 cold read). A 
 
 ### The card model: `nova-sprint card fsck`, `card ls --unplaced`, `bench reindex`
 
-ONE PLACE (nova-tools#3692). Glenn: "cards are not allowed to disappear." A card is its record `s:<S>:card:<label>` (the card id), never deleted, listed forever in `sprint:<S>:cards`. Its `where` names its one place (`waiting`, `ready`, `working`, `done`, `parked`, or empty: null, in no table set), `where_ok` is `ok` or `fail` once done. The places are ZSETs of card ids, every score the card's `created_at`: `bench:<b>:cards:<where>` (plus `:ok` and `:fail`; `_pool` while the card has no bench), `ws:<stream>:<where>` for a card with a `STREAM:` line, `friend:<owner>:cards:<where>` for a card a friend holds, and the dealer's lists: `s:<S>:pool` (ready) and `s:<S>:waiting`. Every ZSET, the pool included, is scored by `created_at`, uniformly, so every list reads oldest first; the deal priority is the record's `priority` field (lower deals first), and the dealer reads the pool by age and deals by that field, age breaking ties. A count the host table could not read prints `?`, never 0. One Lua primitive (`internal/nsprint/fn/lua/02_card_move.lua`) is the only writer of the pointer and the sets, in one call; the host table's ready, working, done, ok and fail are those ZCARDs.
+ONE PLACE (nova-tools#3692). Glenn: "cards are not allowed to disappear." A card is its record `s:<S>:card:<label>` (the card id), never deleted, listed forever in `sprint:<S>:cards`. Its `where` names its one place (`waiting`, `ready`, `working`, `done`, `parked`, or empty: null, in no table set), `where_ok` is `ok` or `fail` once done. The places are ZSETs of card ids, every score the card's `created_at`: `bench:<b>:cards:<where>` (plus `:ok` and `:fail`; `_pool` while the card has no bench), `ws:<stream>:<where>` for a card with a `STREAM:` line, `friend:<owner>:cards:<where>` for a card a friend holds, and the dealer's lists: `s:<S>:pool` (ready) and `s:<S>:waiting`, each named at epoch 0 as here and with the sprint epoch after a clear (`ws:<e>:...`, `<kind>:<name>:<e>:cards:...`, `s:<S>:<e>:...`; see `sprint clear`). Every ZSET, the pool included, is scored by `created_at`, uniformly, so every list reads oldest first; the deal priority is the record's `priority` field (lower deals first), and the dealer reads the pool by age and deals by that field, age breaking ties. A count the host table could not read prints `?`, never 0. One Lua primitive (`internal/nsprint/fn/lua/02_card_move.lua`) is the only writer of the pointer and the sets, in one call; the host table's ready, working, done, ok and fail are those ZCARDs.
 
-- `nova-sprint card fsck --sprint <S> --redis <addr> [--repair]` walks both directions (every card in exactly one place per dimension at its created_at score, every set member pointing back, the places summing to the roster) and prints one `CARD FSCK` line; exit 1 names `--repair`.
+- `nova-sprint card fsck --sprint <S> --redis <addr> [--repair]` walks both directions (every card in exactly one place per dimension at its created_at score, every set member pointing back, the places summing to the roster) and prints one `CARD FSCK sprint=<S> family=retired cards=<n> ...` line (its counts are the s:<S>:card records of `sprint:<S>:cards`, labelled so they never read as the sprint's progress, #4411); exit 1 names `--repair`.
 - `nova-sprint bench reindex --sprint <S> --redis <addr>` is the one-time rebuild for a sprint whose cards predate the model: it adopts them from the sprint's state indexes and fills every view.
 - `nova-sprint card ls --unplaced --sprint <S> --redis <addr>` lists the null cards.
 

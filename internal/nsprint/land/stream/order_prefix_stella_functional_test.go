@@ -27,7 +27,7 @@ func TestLandSelectionRespectsEarlierLiveMember_Stella(t *testing.T) {
 			if err := c.HSet(ctx, "task:t2", "where", "merging", "paths", "internal/shared.go", "ref", "nova-tools#2").Err(); err != nil {
 				t.Fatal(err)
 			}
-			if err := c.ZAdd(ctx, WSKey(strm, earlier), redis.Z{Score: 100, Member: "t1"}).Err(); err != nil {
+			if err := c.ZAdd(ctx, WSKeyAt(0, strm, earlier), redis.Z{Score: 100, Member: "t1"}).Err(); err != nil {
 				t.Fatal(err)
 			}
 			if err := c.HSet(ctx, "task:t1", "stream", strm, "where", earlier, "state", earlier, "created_at", "100", "paths", "internal/shared.go", "ref", "nova-tools#1").Err(); err != nil {

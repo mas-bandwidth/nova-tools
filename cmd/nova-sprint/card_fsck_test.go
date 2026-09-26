@@ -43,7 +43,7 @@ func TestCardFsckAndBenchReindexVerbs(t *testing.T) {
 	if code, out, errOut := run(cmdCardFsck, "--sprint", sprint, "--redis", addr); code != 1 || !strings.Contains(errOut, "DRIFT unlisted "+id) || !strings.Contains(out, "cards=0") {
 		t.Fatalf("fsck before reindex: %d %q %q", code, out, errOut)
 	}
-	if code, out, errOut := run(runBenchReindex, "--sprint", sprint, "--redis", addr); code != 0 || !strings.HasPrefix(out, "BENCH REINDEX sprint="+sprint+" cards=1 null=0 waiting=0 ready=0 working=1 ") {
+	if code, out, errOut := run(runBenchReindex, "--sprint", sprint, "--redis", addr); code != 0 || !strings.HasPrefix(out, "BENCH REINDEX sprint="+sprint+" family=retired cards=1 null=0 waiting=0 ready=0 working=1 ") {
 		t.Fatalf("reindex: %d %q %q", code, out, errOut)
 	}
 	if code, out, errOut := run(cmdCardFsck, "--sprint", sprint, "--redis", addr); code != 0 || !strings.Contains(out, "drift=0") {

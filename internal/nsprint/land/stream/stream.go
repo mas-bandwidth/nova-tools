@@ -40,6 +40,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/jev"
@@ -70,8 +71,10 @@ func LandKey(repo, slug string) string { return "land:" + repo + ":" + slug }
 // IndexKey lists every slug with a land hash for the repo.
 func IndexKey(repo string) string { return "land:" + repo + ":streams" }
 
-// WSKey is one ws-index set of a stream.
-func WSKey(stream, state string) string { return "ws:" + stream + ":" + state }
+// WSKeyAt is one ws-index set of a stream under epoch e (nova-tools#4238; a
+// reader keys by ws.Epoch).
+
+func WSKeyAt(e uint64, stream, state string) string { return ws.KeyAt(e, stream, state) }
 
 // reserved slugs would collide with the lander's own land:<repo>:<word> keys.
 var reserved = map[string]bool{"streams": true, "gates": true, "events": true, "tok": true}
@@ -464,10 +467,13 @@ func prNumber(field, repo string) (int, bool) {
 // cfg:land jev_passes names the passes that gate (empty: every pass).
 func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string, minScore int) ([]Member, []Skip, error) {
 	pipe := c.Pipeline()
-	zs := make([]*redis.ZSliceCmd, len(streams))
+	// each stream's merging set under the current epoch, read in this one
+	// pipeline (nova-tools#4238)
+	zs := make([]*redis.Cmd, len(streams))
 	for i, s := range streams {
-		zs[i] = pipe.ZRangeWithScores(ctx, WSKey(s, "merging"), 0, -1)
+		zs[i] = ws.StreamRangeWithScores(ctx, pipe, s, "merging")
 	}
+
 	jevCfg := pipe.HMGet(ctx, "cfg:land", "jev", "jev_passes")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, nil, err
@@ -484,10 +490,15 @@ func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string
 	}
 	var cands []cand
 	for i, s := range streams {
-		for _, z := range zs[i].Val() {
+		members, err := ws.Zs(zs[i])
+		if err != nil {
+			return nil, nil, fmt.Errorf("merging of %s: %w", s, err)
+		}
+		for _, z := range members {
 			cands = append(cands, cand{task: fmt.Sprint(z.Member), stream: s, order: int64(z.Score)})
 		}
 	}
+
 	if len(cands) == 0 {
 		return nil, nil, nil
 	}
@@ -889,38 +900,106 @@ type Landed struct {
 // landed with why "landed with <repo>#<pr> (<merge sha8>)". closes maps a
 // member to the issues its body closes ("-" none); a member missing from it
 // keeps its record's closes field. A re-run adds and moves nothing twice.
+// The members land as a set (#4322 round 6): every move runs the work
+// order's gate, so a task held ORDER WAIT behind one that another member
+// of the same landing lands (its own call comes later in the pipeline)
+// lands in a second pipeline over the held members, and passes repeat
+// while one moves; a task still held at the end is in Skipped with its
+// ORDER WAIT line. With no hold there is the one pipeline.
 func LandMembers(ctx context.Context, c redis.Cmdable, l Landing, by, mergeSHA string, closes map[int]string) (Landed, error) {
 	var out Landed
 	if len(l.Members) == 0 {
 		return out, nil
 	}
 	why := fmt.Sprintf("landed with %s (%s)", LandedWith(l.Repo, l.PR), short(mergeSHA))
-	pipe := c.Pipeline()
-	cmds := make([]*redis.Cmd, len(l.Members))
-	for i, m := range l.Members {
-		cmds[i] = pipe.FCall(ctx, FunctionLandMember, nil, l.Repo, l.Slug, mergeSHA, strconv.Itoa(m.N), m.Task,
-			CloseLine(m.Head, l.Branch, l.Head, l.Repo, l.PR, mergeSHA), by, why, closes[m.N])
+	type landed struct {
+		moved, matched, lines int
+		notes                 []string
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return out, fmt.Errorf("%s: %w", FunctionLandMember, err)
+	pass := func(ms []Member) ([]landed, error) {
+		pipe := c.Pipeline()
+		cmds := make([]*redis.Cmd, len(ms))
+		for i, m := range ms {
+			cmds[i] = pipe.FCall(ctx, FunctionLandMember, nil, l.Repo, l.Slug, mergeSHA, strconv.Itoa(m.N), m.Task,
+				CloseLine(m.Head, l.Branch, l.Head, l.Repo, l.PR, mergeSHA), by, why, closes[m.N])
+		}
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return nil, fmt.Errorf("%s: %w", FunctionLandMember, err)
+		}
+		rs := make([]landed, len(ms))
+		for i, m := range ms {
+			res, err := cmds[i].StringSlice()
+			if err != nil {
+				return nil, fmt.Errorf("%s #%d: %w", FunctionLandMember, m.N, err)
+			}
+			if len(res) < 6 || res[0] != "OK" {
+				return nil, fmt.Errorf("%s #%d: %s", FunctionLandMember, m.N, strings.Join(res, " "))
+			}
+			rs[i].moved, _ = strconv.Atoi(res[1])
+			rs[i].matched, _ = strconv.Atoi(res[4])
+			rs[i].lines, _ = strconv.Atoi(res[5])
+			rs[i].notes = res[6:]
+		}
+		return rs, nil
 	}
-	for i, m := range l.Members {
-		res, err := cmds[i].StringSlice()
+	held := func(r landed) bool {
+		for _, note := range r.notes {
+			if strings.Contains(note, ": "+OrderWait+" ") {
+				return true
+			}
+		}
+		return false
+	}
+	results, err := pass(l.Members)
+	if err != nil {
+		return out, err
+	}
+	// a hold is released only by a move of this landing: a pass that moved
+	// nothing is the last
+	progress := false
+	for _, r := range results {
+		progress = progress || r.moved > 0
+	}
+	for progress {
+		var again []int
+		for i, r := range results {
+			if held(r) {
+				again = append(again, i)
+			}
+		}
+		if len(again) == 0 {
+			break
+		}
+		ms := make([]Member, len(again))
+		for j, i := range again {
+			ms[j] = l.Members[i]
+		}
+		rs, err := pass(ms)
 		if err != nil {
-			return out, fmt.Errorf("%s #%d: %w", FunctionLandMember, m.N, err)
+			return out, err
 		}
-		if len(res) < 6 || res[0] != "OK" {
-			return out, fmt.Errorf("%s #%d: %s", FunctionLandMember, m.N, strings.Join(res, " "))
+		progress = false
+		for j, i := range again {
+			progress = progress || rs[j].moved > 0
+			results[i].moved += rs[j].moved
+			results[i].lines += rs[j].lines
+			// the retry's notes replace the hold; a plan note stays
+			var keep []string
+			for _, n := range results[i].notes {
+				if strings.HasPrefix(n, PlanNote) {
+					keep = append(keep, n)
+				}
+			}
+			results[i].notes = append(keep, rs[j].notes...)
 		}
-		moved, _ := strconv.Atoi(res[1])
-		matched, _ := strconv.Atoi(res[4])
-		lines, _ := strconv.Atoi(res[5])
-		out.Moved += moved
-		out.Lines += lines
-		if matched == 0 {
+	}
+	for _, r := range results {
+		out.Moved += r.moved
+		out.Lines += r.lines
+		if r.matched == 0 {
 			out.Missing++
 		}
-		for _, note := range res[6:] {
+		for _, note := range r.notes {
 			if plan, ok := strings.CutPrefix(note, PlanNote); ok {
 				out.Plans = append(out.Plans, plan)
 				continue

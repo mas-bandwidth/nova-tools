@@ -66,6 +66,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/metrics"
@@ -843,10 +844,17 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	// forgives; any other command's error (a lost connection, a NOPERM on the
 	// registries) fails the read as before.
 	maxSessions := pipe.HGet(ctx, MaxSessionsKey, "max_sessions")
+	// the sprint epoch (nova-tools#4238) rides this round: the benches'
+	// working sets below are keyed by it
+	epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		if err := roundErr(maxSessions, clock, benchNames, order, open); err != nil {
 			return Input{}, err
 		}
+	}
+	epoch, err := ws.ParseEpoch(epochCmd.Val())
+	if err != nil {
+		return Input{}, err
 	}
 	in := Input{Now: clock.Val()}
 	if n, err := strconv.Atoi(maxSessions.Val()); err == nil && n > 0 && maxSessions.Err() == nil {
@@ -866,6 +874,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	sort.Strings(names)
 
 	pipe = c.Pipeline()
+
 	type benchCmds struct {
 		desired, beat, ssh *redis.MapStringStringCmd
 		state              *redis.StringCmd
@@ -878,9 +887,10 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			beat:    pipe.HGetAll(ctx, "bench:"+b+":beat"),
 			state:   pipe.HGet(ctx, "bench:"+b+":state", "state"),
 			ssh:     pipe.HGetAll(ctx, RowKey(b)),
-			working: pipe.ZCard(ctx, "bench:"+b+":cards:working"),
+			working: pipe.ZCard(ctx, ws.ConsumerKeyAt(epoch, "bench:"+b, "working")),
 		}
 	}
+
 	type sprintCmds struct {
 		meta, policy, bp *redis.MapStringStringCmd
 		stop             *redis.IntCmd
@@ -945,8 +955,11 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 		// The pool is scored by age (created_at, #3692), not priority, so
 		// the whole pool is read (O(n)) and the priority comes from each
 		// record.
-		pools[i] = pipe.ZRangeWithScores(ctx, "s:"+s+":pool", 0, -1)
-		waits[i] = pipe.SMembers(ctx, "s:"+s+":waiting")
+		// the dealer's lists under the current epoch (nova-tools#4238): a
+		// card pushed after a clear is in the epoch's pool, an older one is not
+		pools[i] = pipe.ZRangeWithScores(ctx, ws.SprintListAt(epoch, s, "pool"), 0, -1)
+		waits[i] = pipe.SMembers(ctx, ws.SprintListAt(epoch, s, "waiting"))
+
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return Input{}, err
