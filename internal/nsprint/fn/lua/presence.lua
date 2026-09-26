@@ -122,6 +122,9 @@ end
 
 -- friend_beat refreshes one live friend's beat. A friend that is not
 -- registered returns DOWN, never a silent re-registration.
+-- args[5] is the count of CI legs running on the friend's machine (one
+-- Runner.Worker per running job, nova-tools#4293), on the beat as ci every
+-- beat; the deal takes them off the friend's slots. Empty when unmeasured.
 local function friend_beat(keys, args)
   local friend, harness, host, session = args[1], args[2], args[3], args[4]
   if not friend or friend == '' then
@@ -137,7 +140,7 @@ local function friend_beat(keys, args)
   local at = pl_now_ms()
   redis.call('HSET', beat_key,
     'harness', harness or '', 'host', host or '', 'session', session,
-    'at', tostring(at))
+    'ci', args[5] or '', 'at', tostring(at))
   redis.call('PEXPIRE', beat_key, PL_BEAT_MS)
   return { 'OK' }
 end
@@ -234,7 +237,11 @@ end
 -- #3372); a missing or non-positive value keeps PL_BEAT_MS. args[18] is the
 -- host row's at (RFC 3339 UTC) and args[19] the bench's ncpu; an empty
 -- args[18] writes no row (#3440). args[20] is the CPU busy percent over the
--- beat interval, on the beat as cpu (empty when unmeasured).
+-- beat interval, on the beat as cpu (empty when unmeasured). args[21] is the
+-- count of CI legs running on the bench (one Runner.Worker per running job,
+-- nova-tools#4293), on the beat as ci every beat: the deal passes and
+-- ns_cm_work's fill take it off the bench's slots, so a copy is never put
+-- beside a leg it would slow; empty when unmeasured (nothing is taken off).
 local function bench_beat(keys, args)
   local bench = args[1]
   if not bench or bench == '' then
@@ -273,7 +280,7 @@ local function bench_beat(keys, args)
     'ssh', ssh or '', 'launcher', launcher or '',
     'live', '0', 'why', why or '', 'build', build or '',
     'harness', harness or '', 'mirrors', mirrors or '', 'disk_gib', disk_gib or '',
-    'at', tostring(at))
+    'ci', args[21] or '', 'at', tostring(at))
   -- probe is the bench's last probe result, written by fleet build after an
   -- install (nova-tools#4237: a probe's result lives here, never in the
   -- consumer sets); a beat that names none leaves it as it is.

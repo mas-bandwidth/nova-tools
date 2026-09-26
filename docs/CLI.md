@@ -3150,6 +3150,7 @@ through the child environment. Drafting and showing do not authorize a send.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
+Reads Go test events and reports packages whose accumulated elapsed time exceeds
 a budget. It also reports its own build with `nova-ci version`.
 
 ```sh

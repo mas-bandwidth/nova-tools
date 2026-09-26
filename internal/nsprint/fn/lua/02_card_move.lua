@@ -2243,6 +2243,14 @@ end
 
 function TM.key(c, col) return c .. ':cards:' .. col end
 
+-- TM.ci_legs: the CI legs running on the machine consumer c runs on, as
+-- its beat's ci field counts them (<consumer>:beat, a bench's or a
+-- friend's; nova-tools#4293: the Studio hosts friends and CI both), 0 for
+-- an unmeasured beat. Each holds a slot while it runs.
+function TM.ci_legs(c)
+  return tonumber(redis.call('HGET', c .. ':beat', 'ci')) or 0
+end
+
 -- TM.set: the name list of a comma or space separated field, as a set; nil
 -- when the field is empty (no restriction).
 function TM.set(v)
@@ -2513,15 +2521,17 @@ function TM.deal(c, by, k, stream, ids)
 end
 
 -- TM.work(c, by, k, fill, ids): consumer ready -> working, k = min(free,
--- |ready copies|) (fill; else also at most k), free = slots - |working|;
--- named copies all or nothing. Each starts a lease its holder renews with
+-- |ready copies|) (fill; else also at most k), free = slots - ci -
+-- |working|, ci the CI legs running on the consumer's machine as its beat
+-- counts them (nova-tools#4293: a copy is never put beside a leg it would
+-- slow); named copies all or nothing. Each starts a lease its holder renews with
 -- card beat, and a token its end may present (a stale one is FENCED).
 -- Returns the reply WORKED n free, then per copy its id and token.
 function TM.work(c, by, k, fill, ids)
   if not TM.parse(c) then return { 'REFUSED', 'CONSUMER ' .. TK.str(c) .. ' is not bench:<b> or friend:<f>' } end
   local d = TM.desired(c)
   if not d.slots then return { 'REFUSED', 'SLOTS ' .. c .. ':desired has no slots; run nova-sprint capacity' } end
-  local free = d.slots - redis.call('ZCARD', TM.key(c, 'working'))
+  local free = d.slots - TM.ci_legs(c) - redis.call('ZCARD', TM.key(c, 'working'))
   local take = {}
   if #ids > 0 then
     local seen = {}
@@ -3073,12 +3083,13 @@ function TM.role(name, role)
   return false
 end
 
--- TM.room: consumer c's desired slots less its working and ready copies,
--- and whether it may be dealt at all (slots declared, not paused, not
--- down, its beat live).
+-- TM.room: consumer c's desired slots less the CI legs running on it
+-- (TM.ci_legs, nova-tools#4293) less its working and ready copies, and
+-- whether it may be dealt at all (slots declared, not paused, not down, its
+-- beat live).
 function TM.room(c, d)
   if not d.slots or d.paused or redis.call('EXISTS', c .. ':down') == 1 or not TM.live(c) then return nil end
-  return d.slots - redis.call('ZCARD', TM.key(c, 'working')) - redis.call('ZCARD', TM.key(c, 'ready'))
+  return d.slots - TM.ci_legs(c) - redis.call('ZCARD', TM.key(c, 'working')) - redis.call('ZCARD', TM.key(c, 'ready'))
 end
 
 -- TM.read_route(id): the consumers primary id's read copies go to (#4094):

@@ -45,7 +45,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/yield"
 )
+
+// localNice is yield.Nice: one number for the copies and the local runs.
+var _ = [1]struct{}{}[yield.Nice-15] // compile-time: localNice == yield.Nice
 
 const (
 	// localDefaultBase is the branch every card and stream lands on.
@@ -53,7 +57,9 @@ const (
 	// localSelectScript is CI's package selection, relative to the checkout.
 	localSelectScript = ".github/scripts/select-packages.sh"
 	// localNice is the niceness of everything the verb starts: the tests share
-	// the bench with the work they test.
+	// the bench with the work they test. It is yield.Nice, the copies' own
+	// (nova-tools#4293), and the verb steps itself down to it before it
+	// starts anything (yield.ToCI), so the nice -n is belt and braces.
 	localNice = "15"
 	// localCores is the cores a CI unit leg may take, and so the most a local
 	// run takes: go test -p, GOMAXPROCS and the Makefile's GOTEST_P.
@@ -124,6 +130,10 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
 	}
 	if strings.TrimSpace(*base) == "" {
 		return refuse(stderr, " local", "--base wants the ref the change lands on (origin/dev)")
+	}
+	// CI over work (nova-tools#4293): this process and everything it starts.
+	if err := yield.ToCI(); err != nil {
+		return refuse(stderr, " local", "yield to CI: "+oneline.Err(err))
 	}
 	cores := []string{"GOMAXPROCS=" + localCores}
 	nice := []string{"nice", "-n", localNice}

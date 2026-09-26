@@ -449,7 +449,7 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 		desired *redis.SliceCmd
 		working *redis.IntCmd
 		down    *redis.IntCmd
-		at      *redis.StringCmd
+		at, ci  *redis.StringCmd
 	}
 	pipe := p.Client.Pipeline()
 	scs := make([]streamCmds, len(streams))
@@ -469,6 +469,7 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 			working: pipe.ZCard(ctx, k.Key(ws.Working)),
 			down:    pipe.Exists(ctx, k.DownKey()),
 			at:      pipe.HGet(ctx, k.BeatKey(), "at"),
+			ci:      pipe.HGet(ctx, k.MachineBeatKey(), "ci"),
 		}
 	}
 	status := make([]*redis.StringCmd, len(sprints))
@@ -491,7 +492,9 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 	}
 	for i := range roster {
 		// Room as the deal pass measures it (taskcard.DealPass): live by
-		// beat, not down, not paused, slots above working.
+		// beat, not down, not paused, slots above the CI legs running on
+		// the consumer's machine (its beat's ci, nova-tools#4293) plus
+		// working.
 		d := ccs[i].desired.Val()
 		slots, err := strconv.ParseInt(fmt.Sprint(valueAt(d, 0)), 10, 64)
 		if err != nil {
@@ -499,7 +502,8 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 		}
 		t, ok := taskcard.BeatAt(ccs[i].at.Val())
 		live := ok && now.Sub(t) < taskcard.Live && t.Sub(now) < taskcard.Live
-		if live && ccs[i].down.Val() == 0 && fmt.Sprint(valueAt(d, 1)) != "1" && slots-ccs[i].working.Val() > 0 {
+		ci, _ := strconv.ParseInt(ccs[i].ci.Val(), 10, 64)
+		if live && ccs[i].down.Val() == 0 && fmt.Sprint(valueAt(d, 1)) != "1" && taskcard.FreeSlots(slots, ccs[i].working.Val(), ci) > 0 {
 			run.Room = true
 		}
 	}
