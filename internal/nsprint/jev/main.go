@@ -106,8 +106,8 @@ func (e env) open(ctx context.Context, sub, flagVal string, out io.Writer) (*sto
 
 func runSync(ctx context.Context, args []string, out, errOut io.Writer, e env) int {
 	fs := verbflag.New("jev sync")
-	redisAddr := fs.String("redis", seatcred.Addr(), "")
-	n := fs.Int64("n", 1000, "")
+	redisAddr := fs.String("redis", seatcred.Addr(), verbflag.HelpRedis)
+	n := fs.Int64("n", 1000, verbflag.HelpN)
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *n <= 0 {
 		return usage(errOut, "sync", "want sync [--n <moves, 1 or more>] [--redis <addr>]")
 	}
@@ -135,10 +135,10 @@ func runSync(ctx context.Context, args []string, out, errOut io.Writer, e env) i
 
 func runAsk(ctx context.Context, args []string, out, errOut io.Writer, e env) int {
 	fs := verbflag.New("jev ask")
-	redisAddr := fs.String("redis", seatcred.Addr(), "")
-	n := fs.Int64("n", 16, "")
-	keyEnv := fs.String("key-env", decide.DefaultKeyEnv, "")
-	baseURL := fs.String("base-url", "", "")
+	redisAddr := fs.String("redis", seatcred.Addr(), verbflag.HelpRedis)
+	n := fs.Int64("n", 16, verbflag.HelpN)
+	keyEnv := fs.String("key-env", decide.DefaultKeyEnv, "the environment variable holding the TypeSafe Jev key")
+	baseURL := fs.String("base-url", "", "the Jev API base url (default the provider's)")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *n <= 0 || *n > 256 {
 		return usage(errOut, "ask", "want ask [--n <rows, 1-256>] [--key-env <VAR>] [--base-url <url>] [--redis <addr>]")
 	}
@@ -197,9 +197,9 @@ func ask(ctx context.Context, c redis.Cmdable, a Asker, n int64, out io.Writer) 
 
 func runReport(ctx context.Context, args []string, out, errOut io.Writer, e env) int {
 	fs := verbflag.New("jev report")
-	redisAddr := fs.String("redis", seatcred.Addr(), "")
-	typ := fs.String("type", "", "")
-	version := fs.String("version", "", "")
+	redisAddr := fs.String("redis", seatcred.Addr(), verbflag.HelpRedis)
+	typ := fs.String("type", "", "report one decision type only")
+	version := fs.String("version", "", "report one prompt version only")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
 		return usage(errOut, "report", "want report [--type <t>] [--version <v>] [--redis <addr>]")
 	}
@@ -234,15 +234,15 @@ func Print(out io.Writer, rows []Row, pending int64, typ, version string) {
 
 func runOutcome(ctx context.Context, args []string, out, errOut io.Writer, e env) int {
 	fs := verbflag.New("jev outcome")
-	redisAddr := fs.String("redis", seatcred.Addr(), "")
-	typ := fs.String("type", "", "")
-	subject := fs.String("subject", "", "")
-	outcome := fs.String("outcome", "", "")
-	why := fs.String("why", "", "")
-	by := fs.String("by", "", "")
+	redisAddr := fs.String("redis", seatcred.Addr(), verbflag.HelpRedis)
+	typ := fs.String("type", "", "the decision type the outcome is of")
+	subject := fs.String("subject", "", "the decision's subject: the card, PR or read it was about")
+	outcome := fs.String("outcome", "", "what happened: the outcome word the type defines")
+	why := fs.String("why", "", verbflag.HelpWhy)
+	by := fs.String("as", "", verbflag.HelpAs)
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *typ == "" || *subject == "" || *outcome == "" ||
 		strings.TrimSpace(*why) == "" {
-		return usage(errOut, "outcome", "want outcome --type <t> --subject <s> --outcome <o> --why <text> [--by <who>] [--redis <addr>]")
+		return usage(errOut, "outcome", "want outcome --type <t> --subject <s> --outcome <o> --why <text> [--as <who>] [--redis <addr>]")
 	}
 	if *by == "" {
 		*by = e.getenv("NOVA_FRIEND")

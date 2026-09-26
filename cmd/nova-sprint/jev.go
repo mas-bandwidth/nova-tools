@@ -35,6 +35,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"strconv"
@@ -70,11 +71,11 @@ func runJev(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	const verb = "jev mech"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	repo := fs.String("repo", "", "")
-	n := fs.Int("n", 0, "")
-	bodyFile := fs.String("body-file", "", "")
-	mirror := fs.String("mirror", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	n := fs.Int("n", 0, verbflag.HelpN)
+	bodyFile := fs.String("body-file", "", "the PR body, a file")
+	mirror := fs.String("mirror", "", "the bench mirror of the repo (default ~/nova-bench/mirror/<repo>.git)")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return refuse(errOut, verb, jevUsage)
 	}
