@@ -33,16 +33,16 @@ func cmdLesson(_ context.Context, args []string, stdout, stderr io.Writer) int {
 
 func cmdLessonAppend(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("lesson append")
-	repo := fs.String("repo", "", "")
+	repo := fs.String("repo", "", verbflag.HelpRepo)
 	l := lessons.Lesson{}
-	fs.StringVar(&l.ID, "id", "", "")
-	fs.StringVar(&l.Component, "component", "", "")
-	fs.StringVar(&l.Kind, "kind", "", "")
-	fs.StringVar(&l.Failure, "failure", "", "")
-	fs.StringVar(&l.Prevention, "prevention", "", "")
-	fs.StringVar(&l.Evidence, "evidence", "", "")
-	fs.StringVar(&l.Status, "status", "", "")
-	fs.StringVar(&l.ReviewedBy, "reviewed-by", "", "")
+	fs.StringVar(&l.ID, "ids", "", verbflag.HelpIDs)
+	fs.StringVar(&l.Component, "component", "", "the component the lesson is about")
+	fs.StringVar(&l.Kind, "kind", "", "the lesson's kind")
+	fs.StringVar(&l.Failure, "failure", "", "what failed")
+	fs.StringVar(&l.Prevention, "prevention", "", "what prevents it next time")
+	fs.StringVar(&l.Evidence, "evidence", "", "the evidence url")
+	fs.StringVar(&l.Status, "status", "", "the lesson's status")
+	fs.StringVar(&l.ReviewedBy, "reviewed-by", "", "who reviewed it")
 	if err := fs.Parse(args); err != nil {
 		return refuseVerb(stderr, "lesson append", err.Error())
 	}
@@ -63,8 +63,8 @@ func cmdLessonAppend(args []string, stdout, stderr io.Writer) int {
 
 func cmdLessonSupersede(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("lesson supersede")
-	repo := fs.String("repo", "", "")
-	id := fs.String("id", "", "")
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	id := fs.String("ids", "", verbflag.HelpIDs)
 	if err := fs.Parse(args); err != nil {
 		return refuseVerb(stderr, "lesson supersede", err.Error())
 	}

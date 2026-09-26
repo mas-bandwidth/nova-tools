@@ -130,10 +130,10 @@ func Supersede(repo, id string) (SupersedeResult, error) {
 		return SupersedeResult{}, errors.New("--repo <dir> is required")
 	}
 	if !idPattern.MatchString(id) {
-		return SupersedeResult{}, errors.New("--id must match [a-z0-9][a-z0-9._-]*")
+		return SupersedeResult{}, errors.New("--ids must match [a-z0-9][a-z0-9._-]*")
 	}
 	if id == "id" {
-		return SupersedeResult{}, errors.New("--id id is reserved for the table header")
+		return SupersedeResult{}, errors.New("--ids id is reserved for the table header")
 	}
 	path := filepath.Join(filepath.Clean(repo), filepath.FromSlash(RelativePath))
 	var result SupersedeResult
@@ -215,10 +215,10 @@ func supersedeLocked(path, id string) (SupersedeResult, error) {
 
 func (l Lesson) validate() error {
 	if !idPattern.MatchString(l.ID) {
-		return errors.New("--id must match [a-z0-9][a-z0-9._-]*")
+		return errors.New("--ids must match [a-z0-9][a-z0-9._-]*")
 	}
 	if l.ID == "id" {
-		return errors.New("--id id is reserved for the table header")
+		return errors.New("--ids id is reserved for the table header")
 	}
 	fields := []struct{ name, value string }{
 		{"--component", l.Component}, {"--kind", l.Kind}, {"--failure", l.Failure},
